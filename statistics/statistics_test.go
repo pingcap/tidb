@@ -271,6 +271,8 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	c.Check(int(count), Equals, 19999)
 	count = col.betweenRowCount(encodeKey(types.NewIntDatum(30000)), encodeKey(types.NewIntDatum(35000)))
 	c.Check(int(count), Equals, 4999)
+	count = col.betweenRowCount(encodeKey(types.MinNotNullDatum()), encodeKey(types.NewIntDatum(0)))
+	c.Check(int(count), Equals, 0)
 	count = col.lessRowCount(encodeKey(types.NewIntDatum(0)))
 	c.Check(int(count), Equals, 0)
 

@@ -365,7 +365,7 @@ func flattenPushDownPlan(p PhysicalPlan) []PhysicalPlan {
 		if len(p.Children()) == 0 {
 			break
 		}
-		p = p.Children()[0].(PhysicalPlan)
+		p = p.Children()[0]
 	}
 	for i := 0; i < len(plans)/2; i++ {
 		j := len(plans) - i - 1

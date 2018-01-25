@@ -290,7 +290,7 @@ func (h *rpcHandler) buildStreamAgg(ctx *dagContext, executor *tipb.Executor) (*
 	}
 	aggCtxs := make([]*aggregation.AggEvaluateContext, 0, len(aggs))
 	for _, agg := range aggs {
-		aggCtxs = append(aggCtxs, agg.CreateContext())
+		aggCtxs = append(aggCtxs, agg.CreateContext(ctx.evalCtx.sc))
 	}
 
 	return &streamAggExec{

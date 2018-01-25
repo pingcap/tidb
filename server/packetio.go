@@ -95,7 +95,7 @@ func (p *packetIO) readPacket() ([]byte, error) {
 		return data, nil
 	}
 
-	// handle muliti-packet
+	// handle multi-packet
 	for {
 		buf, err := p.readOnePacket()
 		if err != nil {

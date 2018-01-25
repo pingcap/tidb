@@ -218,7 +218,7 @@ func (e *AnalyzeIndexExec) buildStats() (hist *statistics.Histogram, cms *statis
 	hist = &statistics.Histogram{}
 	cms = statistics.NewCMSketch(defaultCMSketchDepth, defaultCMSketchWidth)
 	for {
-		data, err := e.result.NextRaw()
+		data, err := e.result.NextRaw(goctx.TODO())
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -346,7 +346,7 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 		}
 	}
 	for {
-		data, err1 := e.resultHandler.nextRaw()
+		data, err1 := e.resultHandler.nextRaw(goctx.TODO())
 		if err1 != nil {
 			return nil, nil, errors.Trace(err1)
 		}
@@ -372,7 +372,7 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 	timeZone := e.ctx.GetSessionVars().GetTimeZone()
 	if e.pkInfo != nil {
 		pkHist.ID = e.pkInfo.ID
-		err := pkHist.DecodeTo(&e.pkInfo.FieldType, timeZone)
+		err = pkHist.DecodeTo(&e.pkInfo.FieldType, timeZone)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}

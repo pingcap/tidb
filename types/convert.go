@@ -68,7 +68,7 @@ var SignedLowerBound = map[byte]int64{
 }
 
 // ConvertFloatToInt converts a float64 value to a int value.
-func ConvertFloatToInt(sc *stmtctx.StatementContext, fval float64, lowerBound, upperBound int64, tp byte) (int64, error) {
+func ConvertFloatToInt(fval float64, lowerBound, upperBound int64, tp byte) (int64, error) {
 	val := RoundFloat(fval)
 	if val < float64(lowerBound) {
 		return lowerBound, overflow(val, tp)
@@ -124,7 +124,7 @@ func ConvertUintToUint(val uint64, upperBound uint64, tp byte) (uint64, error) {
 }
 
 // ConvertFloatToUint converts a float value to an uint value.
-func ConvertFloatToUint(sc *stmtctx.StatementContext, fval float64, upperBound uint64, tp byte) (uint64, error) {
+func ConvertFloatToUint(fval float64, upperBound uint64, tp byte) (uint64, error) {
 	val := RoundFloat(fval)
 	if val < 0 {
 		return uint64(int64(val)), overflow(val, tp)
@@ -340,10 +340,10 @@ func ConvertJSONToInt(sc *stmtctx.StatementContext, j json.BinaryJSON, unsigned 
 		if !unsigned {
 			lBound := SignedLowerBound[mysql.TypeLonglong]
 			uBound := SignedUpperBound[mysql.TypeLonglong]
-			return ConvertFloatToInt(sc, f, lBound, uBound, mysql.TypeDouble)
+			return ConvertFloatToInt(f, lBound, uBound, mysql.TypeDouble)
 		}
 		bound := UnsignedUpperBound[mysql.TypeLonglong]
-		u, err := ConvertFloatToUint(sc, f, bound, mysql.TypeDouble)
+		u, err := ConvertFloatToUint(f, bound, mysql.TypeDouble)
 		return int64(u), errors.Trace(err)
 	case json.TypeCodeString:
 		return StrToInt(sc, hack.String(j.GetString()))

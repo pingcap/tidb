@@ -57,6 +57,7 @@ var LookupTableTaskChannelSize int32 = 50
 // contains the handles in those index keys.
 type lookupTableTask struct {
 	handles []int64
+	rowIdx  []int // rowIdx represents the handle index for every row. Only used when keep order.
 	rows    []chunk.Row
 	cursor  int
 
@@ -67,6 +68,19 @@ type lookupTableTask struct {
 	// The handles fetched from index is originally ordered by index, but we need handles to be ordered by itself
 	// to do table request.
 	indexOrder map[int64]int
+}
+
+func (task *lookupTableTask) Len() int {
+	return len(task.rows)
+}
+
+func (task *lookupTableTask) Less(i, j int) bool {
+	return task.rowIdx[i] < task.rowIdx[j]
+}
+
+func (task *lookupTableTask) Swap(i, j int) {
+	task.rowIdx[i], task.rowIdx[j] = task.rowIdx[j], task.rowIdx[i]
+	task.rows[i], task.rows[j] = task.rows[j], task.rows[i]
 }
 
 func (task *lookupTableTask) getRow(schema *expression.Schema) (Row, error) {
@@ -808,16 +822,18 @@ func (w *tableWorker) executeTask(goCtx goctx.Context, task *lookupTableTask) {
 		if chk.NumRows() == 0 {
 			break
 		}
-		for row := chk.Begin(); row != chk.End(); row = row.Next() {
+		iter := chunk.NewIterator4Chunk(chk)
+		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			task.rows = append(task.rows, row)
 		}
 	}
 	if w.keepOrder {
-		sort.Slice(task.rows, func(i, j int) bool {
-			hI := task.rows[i].GetInt64(w.handleIdx)
-			hJ := task.rows[j].GetInt64(w.handleIdx)
-			return task.indexOrder[hI] < task.indexOrder[hJ]
-		})
+		task.rowIdx = make([]int, 0, len(task.rows))
+		for i := range task.rows {
+			handle := task.rows[i].GetInt64(w.handleIdx)
+			task.rowIdx = append(task.rowIdx, task.indexOrder[handle])
+		}
+		sort.Sort(task)
 	}
 }
 
@@ -1051,9 +1067,9 @@ func (tr *tableResultHandler) nextChunk(goCtx goctx.Context, chk *chunk.Chunk) e
 	return tr.result.NextChunk(goCtx, chk)
 }
 
-func (tr *tableResultHandler) nextRaw() (data []byte, err error) {
+func (tr *tableResultHandler) nextRaw(goCtx goctx.Context) (data []byte, err error) {
 	if !tr.optionalFinished {
-		data, err = tr.optionalResult.NextRaw()
+		data, err = tr.optionalResult.NextRaw(goCtx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1062,7 +1078,7 @@ func (tr *tableResultHandler) nextRaw() (data []byte, err error) {
 		}
 		tr.optionalFinished = true
 	}
-	data, err = tr.result.NextRaw()
+	data, err = tr.result.NextRaw(goCtx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

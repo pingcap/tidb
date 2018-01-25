@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mvmap"
+	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
 
@@ -76,6 +77,7 @@ type HashJoinExec struct {
 	joinChkResourceCh  []chan *chunk.Chunk
 	joinResultCh       chan *hashjoinWorkerResult
 	hashTableValBufs   [][][]byte
+	totalMemoryUsage   int64
 }
 
 // outerChkResource stores the result of the join outer fetch worker,
@@ -105,10 +107,6 @@ type hashJoinBuffer struct {
 func (e *HashJoinExec) Close() error {
 	close(e.closeCh)
 	e.finished.Store(true)
-	if err := e.baseExecutor.Close(); err != nil {
-		return errors.Trace(err)
-	}
-
 	if e.prepared {
 		if e.resultBufferCh != nil {
 			for range e.resultBufferCh {
@@ -136,9 +134,10 @@ func (e *HashJoinExec) Close() error {
 			e.joinChkResourceCh = nil
 		}
 	}
-
 	e.resultBuffer = nil
-	return nil
+
+	err := e.baseExecutor.Close()
+	return errors.Trace(err)
 }
 
 // Open implements the Executor Open interface.
@@ -162,7 +161,6 @@ func (e *HashJoinExec) Open(goCtx goctx.Context) error {
 	e.closeCh = make(chan struct{})
 	e.finished.Store(false)
 	e.workerWaitGroup = sync.WaitGroup{}
-
 	e.resultCursor = 0
 	return nil
 }
@@ -332,8 +330,10 @@ func (e *HashJoinExec) fetchOuterChunks(goCtx goctx.Context) {
 // and append them to e.innerResult.
 func (e *HashJoinExec) fetchSelectedInnerRows(goCtx goctx.Context) (err error) {
 	innerExecChk := e.childrenResults[e.innerIdx]
+	innerIter := chunk.NewIterator4Chunk(innerExecChk)
 	selected := make([]bool, 0, chunk.InitialCapacity)
 	innerResult := chunk.NewList(e.innerExec.retTypes(), e.maxChunkSize)
+	memExceedThreshold, execMemThreshold := false, e.ctx.GetSessionVars().MemThreshold
 	for {
 		innerExecChk.Reset()
 		err = e.innerExec.NextChunk(goCtx, innerExecChk)
@@ -343,7 +343,7 @@ func (e *HashJoinExec) fetchSelectedInnerRows(goCtx goctx.Context) (err error) {
 		if innerExecChk.NumRows() == 0 {
 			break
 		}
-		selected, err = expression.VectorizedFilter(e.ctx, e.innerFilter, innerExecChk, selected)
+		selected, err = expression.VectorizedFilter(e.ctx, e.innerFilter, innerIter, selected)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -351,6 +351,11 @@ func (e *HashJoinExec) fetchSelectedInnerRows(goCtx goctx.Context) (err error) {
 			if selected[idx] {
 				innerResult.AppendRow(innerExecChk.GetRow(idx))
 			}
+		}
+		innerMemUsage := innerResult.MemoryUsage()
+		if !memExceedThreshold && innerMemUsage > execMemThreshold {
+			memExceedThreshold = true
+			log.Warnf(ErrMemExceedThreshold.GenByArgs("HashJoin", innerMemUsage, execMemThreshold).Error())
 		}
 	}
 	e.innerResult = innerResult
@@ -691,7 +696,7 @@ func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID int, outerRow chunk.Ro
 		innerRows = append(innerRows, matchedInner)
 	}
 
-	err = e.resultGenerators[workerID].emitToChunk(outerRow, chunk.NewSliceIterator(innerRows), chk)
+	err = e.resultGenerators[workerID].emitToChunk(outerRow, chunk.NewIterator4Slice(innerRows), chk)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -713,7 +718,7 @@ func (e *HashJoinExec) getNewJoinResult(workerID int) (bool, *hashjoinWorkerResu
 
 func (e *HashJoinExec) join2Chunk(workerID int, outerChk *chunk.Chunk, joinResultChkBuffer *chunk.Chunk, joinResult *hashjoinWorkerResult, selected []bool) (ok bool, _ *hashjoinWorkerResult) {
 	var err error
-	selected, err = expression.VectorizedFilter(e.ctx, e.outerFilter, outerChk, selected)
+	selected, err = expression.VectorizedFilter(e.ctx, e.outerFilter, chunk.NewIterator4Chunk(outerChk), selected)
 	if err != nil {
 		joinResult.err = errors.Trace(err)
 		return false, joinResult
@@ -875,6 +880,7 @@ func (e *NestedLoopApplyExec) fetchOuterRow(goCtx goctx.Context) (Row, bool, err
 }
 
 func (e *NestedLoopApplyExec) fetchSelectedOuterRow(goCtx goctx.Context) (*chunk.Row, error) {
+	outerIter := chunk.NewIterator4Chunk(e.outerChunk)
 	for {
 		if e.outerChunkCursor >= e.outerChunk.NumRows() {
 			err := e.outerExec.NextChunk(goCtx, e.outerChunk)
@@ -884,7 +890,7 @@ func (e *NestedLoopApplyExec) fetchSelectedOuterRow(goCtx goctx.Context) (*chunk
 			if e.outerChunk.NumRows() == 0 {
 				return nil, nil
 			}
-			e.outerSelected, err = expression.VectorizedFilter(e.ctx, e.outerFilter, e.outerChunk, e.outerSelected)
+			e.outerSelected, err = expression.VectorizedFilter(e.ctx, e.outerFilter, outerIter, e.outerSelected)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -939,6 +945,7 @@ func (e *NestedLoopApplyExec) fetchAllInners(goCtx goctx.Context) error {
 		return errors.Trace(err)
 	}
 	e.innerList.Reset()
+	innerIter := chunk.NewIterator4Chunk(e.innerChunk)
 	for {
 		err := e.innerExec.NextChunk(goCtx, e.innerChunk)
 		if err != nil {
@@ -947,11 +954,12 @@ func (e *NestedLoopApplyExec) fetchAllInners(goCtx goctx.Context) error {
 		if e.innerChunk.NumRows() == 0 {
 			return nil
 		}
-		e.innerSelected, err = expression.VectorizedFilter(e.ctx, e.innerFilter, e.innerChunk, e.innerSelected)
+
+		e.innerSelected, err = expression.VectorizedFilter(e.ctx, e.innerFilter, innerIter, e.innerSelected)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		for row := e.innerChunk.Begin(); row != e.innerChunk.End(); row = row.Next() {
+		for row := innerIter.Begin(); row != innerIter.End(); row = innerIter.Next() {
 			if e.innerSelected[row.Idx()] {
 				e.innerList.AppendRow(row)
 			}
@@ -1060,7 +1068,7 @@ func (e *NestedLoopApplyExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) e
 			return errors.Trace(err)
 		}
 		e.resultChunk.Reset()
-		iter := chunk.NewListIterator(e.innerList)
+		iter := chunk.NewIterator4List(e.innerList)
 		err = e.resultGenerator.emitToChunk(*outerRow, iter, e.resultChunk)
 		if err != nil {
 			return errors.Trace(err)
