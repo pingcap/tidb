@@ -503,7 +503,7 @@ func appendRow(chk *Chunk, row Row) {
 
 func BenchmarkAppendBytes1024(b *testing.B) {
 	chk := NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)})
-	var bs = make([]byte, 10, 1000)
+	var bs = make([]byte, 256)
 	for i := 0; i < b.N; i++ {
 		appendBytes(chk, bs, 1024)
 	}
@@ -511,7 +511,7 @@ func BenchmarkAppendBytes1024(b *testing.B) {
 
 func BenchmarkAppendBytes512(b *testing.B) {
 	chk := NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)})
-	var bs = make([]byte, 10, 1000)
+	var bs = make([]byte, 256)
 	for i := 0; i < b.N; i++ {
 		appendBytes(chk, bs, 512)
 	}
@@ -519,7 +519,7 @@ func BenchmarkAppendBytes512(b *testing.B) {
 
 func BenchmarkAppendBytes256(b *testing.B) {
 	chk := NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)})
-	var bs = make([]byte, 10, 1000)
+	var bs = make([]byte, 256)
 	for i := 0; i < b.N; i++ {
 		appendBytes(chk, bs, 256)
 	}
@@ -527,7 +527,7 @@ func BenchmarkAppendBytes256(b *testing.B) {
 
 func BenchmarkAppendBytes128(b *testing.B) {
 	chk := NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)})
-	var bs = make([]byte, 10, 1000)
+	var bs = make([]byte, 256)
 	for i := 0; i < b.N; i++ {
 		appendBytes(chk, bs, 128)
 	}
@@ -535,7 +535,7 @@ func BenchmarkAppendBytes128(b *testing.B) {
 
 func BenchmarkAppendBytes64(b *testing.B) {
 	chk := NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)})
-	var bs = make([]byte, 10, 1000)
+	var bs = make([]byte, 256)
 	for i := 0; i < b.N; i++ {
 		appendBytes(chk, bs, 64)
 	}
@@ -543,7 +543,7 @@ func BenchmarkAppendBytes64(b *testing.B) {
 
 func BenchmarkAppendBytes32(b *testing.B) {
 	chk := NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)})
-	var bs = make([]byte, 10, 1000)
+	var bs = make([]byte, 256)
 	for i := 0; i < b.N; i++ {
 		appendBytes(chk, bs, 32)
 	}
@@ -551,7 +551,7 @@ func BenchmarkAppendBytes32(b *testing.B) {
 
 func BenchmarkAppendBytes16(b *testing.B) {
 	chk := NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)})
-	var bs = make([]byte, 10, 1000)
+	var bs = make([]byte, 256)
 	for i := 0; i < b.N; i++ {
 		appendBytes(chk, bs, 16)
 	}
@@ -559,7 +559,7 @@ func BenchmarkAppendBytes16(b *testing.B) {
 
 func BenchmarkAppendBytes8(b *testing.B) {
 	chk := NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)})
-	var bs = make([]byte, 10, 1000)
+	var bs = make([]byte, 256)
 	for i := 0; i < b.N; i++ {
 		appendBytes(chk, bs, 8)
 	}
@@ -567,7 +567,7 @@ func BenchmarkAppendBytes8(b *testing.B) {
 
 func BenchmarkAppendBytes4(b *testing.B) {
 	chk := NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)})
-	var bs = make([]byte, 10, 1000)
+	var bs = make([]byte, 256)
 	for i := 0; i < b.N; i++ {
 		appendBytes(chk, bs, 4)
 	}
@@ -575,7 +575,7 @@ func BenchmarkAppendBytes4(b *testing.B) {
 
 func BenchmarkAppendBytes2(b *testing.B) {
 	chk := NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)})
-	var bs = make([]byte, 10, 1000)
+	var bs = make([]byte, 256)
 	for i := 0; i < b.N; i++ {
 		appendBytes(chk, bs, 2)
 	}
@@ -583,7 +583,7 @@ func BenchmarkAppendBytes2(b *testing.B) {
 
 func BenchmarkAppendBytes1(b *testing.B) {
 	chk := NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)})
-	var bs = make([]byte, 1000, 1000)
+	var bs = make([]byte, 256)
 	for i := 0; i < b.N; i++ {
 		appendBytes(chk, bs, 1)
 	}
