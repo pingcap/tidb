@@ -14,7 +14,6 @@
 package plan
 
 import (
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 )
 
@@ -70,7 +69,7 @@ func resolveExprAndReplace(origin expression.Expression, replace map[string]*exp
 
 func doPhysicalProjectionElimination(p PhysicalPlan) PhysicalPlan {
 	for i, child := range p.Children() {
-		p.Children()[i] = doPhysicalProjectionElimination(child.(PhysicalPlan))
+		p.Children()[i] = doPhysicalProjectionElimination(child)
 	}
 
 	proj, isProj := p.(*PhysicalProjection)
@@ -78,7 +77,7 @@ func doPhysicalProjectionElimination(p PhysicalPlan) PhysicalPlan {
 		return p
 	}
 	child := p.Children()[0]
-	return child.(PhysicalPlan)
+	return child
 }
 
 // eliminatePhysicalProjection should be called after physical optimization to eliminate the redundant projection
@@ -100,9 +99,9 @@ type projectionEliminater struct {
 }
 
 // optimize implements the logicalOptRule interface.
-func (pe *projectionEliminater) optimize(lp LogicalPlan, _ context.Context) (LogicalPlan, error) {
+func (pe *projectionEliminater) optimize(lp LogicalPlan) (LogicalPlan, error) {
 	root := pe.eliminate(lp, make(map[string]*expression.Column), false)
-	return root.(LogicalPlan), nil
+	return root, nil
 }
 
 // eliminate eliminates the redundant projection in a logical plan.
@@ -115,7 +114,7 @@ func (pe *projectionEliminater) eliminate(p LogicalPlan, replace map[string]*exp
 		childFlag = true
 	}
 	for i, child := range p.Children() {
-		p.Children()[i] = pe.eliminate(child.(LogicalPlan), replace, childFlag)
+		p.Children()[i] = pe.eliminate(child, replace, childFlag)
 	}
 
 	switch x := p.(type) {
@@ -137,7 +136,7 @@ func (pe *projectionEliminater) eliminate(p LogicalPlan, replace map[string]*exp
 	for i, col := range proj.Schema().Columns {
 		replace[string(col.HashCode())] = exprs[i].(*expression.Column)
 	}
-	return p.Children()[0].(LogicalPlan)
+	return p.Children()[0]
 }
 
 func (p *LogicalJoin) replaceExprColumns(replace map[string]*expression.Column) {

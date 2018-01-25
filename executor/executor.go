@@ -68,6 +68,7 @@ var (
 	ErrBatchInsertFail      = terror.ClassExecutor.New(codeBatchInsertFail, "Batch insert failed, please clean the table and try again.")
 	ErrWrongValueCountOnRow = terror.ClassExecutor.New(codeWrongValueCountOnRow, "Column count doesn't match value count at row %d")
 	ErrPasswordFormat       = terror.ClassExecutor.New(codePasswordFormat, "The password hash doesn't have the expected format. Check if the correct password algorithm is being used with the PASSWORD() function.")
+	ErrMemExceedThreshold   = terror.ClassExecutor.New(codeMemExceedThreshold, mysql.MySQLErrName[mysql.ErrMemExceedThreshold])
 )
 
 // Error codes.
@@ -82,6 +83,7 @@ const (
 	CodeCannotUser           terror.ErrCode = 1396 // MySQL error code
 	codeWrongValueCountOnRow terror.ErrCode = 1136 // MySQL error code
 	codePasswordFormat       terror.ErrCode = 1827 // MySQL error code
+	codeMemExceedThreshold   terror.ErrCode = 8001
 )
 
 // Row represents a result set row, it may be returned from a table, a join, or a projection.
@@ -459,10 +461,11 @@ func (e *SelectLockExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error 
 	txnCtx := e.ctx.GetSessionVars().TxnCtx
 	txnCtx.ForUpdate = true
 	keys := make([]kv.Key, 0, chk.NumRows())
+	iter := chunk.NewIterator4Chunk(chk)
 	for id, cols := range e.Schema().TblID2Handle {
 		for _, col := range cols {
 			keys = keys[:0]
-			for row := chk.Begin(); row != chk.End(); row = row.Next() {
+			for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 				keys = append(keys, tablecodec.EncodeRowKeyWithHandle(id, row.GetInt64(col.Index)))
 			}
 			err = txn.LockKeys(keys...)
@@ -700,10 +703,11 @@ func (e *TableDualExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 type SelectionExec struct {
 	baseExecutor
 
-	batched  bool
-	filters  []expression.Expression
-	selected []bool
-	inputRow chunk.Row
+	batched   bool
+	filters   []expression.Expression
+	selected  []bool
+	inputIter *chunk.Iterator4Chunk
+	inputRow  chunk.Row
 }
 
 // Open implements the Executor Open interface.
@@ -715,7 +719,8 @@ func (e *SelectionExec) Open(goCtx goctx.Context) error {
 	if e.batched {
 		e.selected = make([]bool, 0, chunk.InitialCapacity)
 	}
-	e.inputRow = e.childrenResults[0].End()
+	e.inputIter = chunk.NewIterator4Chunk(e.childrenResults[0])
+	e.inputRow = e.inputIter.End()
 	return nil
 }
 
@@ -757,7 +762,7 @@ func (e *SelectionExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	}
 
 	for {
-		for ; e.inputRow != e.childrenResults[0].End(); e.inputRow = e.inputRow.Next() {
+		for ; e.inputRow != e.inputIter.End(); e.inputRow = e.inputIter.Next() {
 			if !e.selected[e.inputRow.Idx()] {
 				continue
 			}
@@ -770,15 +775,15 @@ func (e *SelectionExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		e.inputRow = e.childrenResults[0].Begin()
 		// no more data.
 		if e.childrenResults[0].NumRows() == 0 {
 			return nil
 		}
-		e.selected, err = expression.VectorizedFilter(e.ctx, e.filters, e.childrenResults[0], e.selected)
+		e.selected, err = expression.VectorizedFilter(e.ctx, e.filters, e.inputIter, e.selected)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		e.inputRow = e.inputIter.Begin()
 	}
 }
 
@@ -787,14 +792,14 @@ func (e *SelectionExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 // we have to set batch size to 1 to do the evaluation of filter and projection.
 func (e *SelectionExec) unBatchedNextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	for {
-		for ; e.inputRow != e.childrenResults[0].End(); e.inputRow = e.inputRow.Next() {
+		for ; e.inputRow != e.inputIter.End(); e.inputRow = e.inputIter.Next() {
 			selected, err := expression.EvalBool(e.filters, e.inputRow, e.ctx)
 			if err != nil {
 				return errors.Trace(err)
 			}
 			if selected {
 				chk.AppendRow(e.inputRow)
-				e.inputRow = e.inputRow.Next()
+				e.inputRow = e.inputIter.Next()
 				return nil
 			}
 		}
@@ -802,7 +807,7 @@ func (e *SelectionExec) unBatchedNextChunk(goCtx goctx.Context, chk *chunk.Chunk
 		if err != nil {
 			return errors.Trace(err)
 		}
-		e.inputRow = e.childrenResults[0].Begin()
+		e.inputRow = e.inputIter.Begin()
 		// no more data.
 		if e.childrenResults[0].NumRows() == 0 {
 			return nil
@@ -1315,6 +1320,10 @@ func (e *UnionExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 func (e *UnionExec) Close() error {
 	e.rows = nil
 	close(e.finished)
+	if e.resultPool != nil {
+		for range e.resultPool {
+		}
+	}
 	e.resourcePools = nil
 	return errors.Trace(e.baseExecutor.Close())
 }

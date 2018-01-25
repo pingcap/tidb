@@ -76,6 +76,7 @@ type readerIterator struct {
 	firstRow4Key   chunk.Row
 	curRow         chunk.Row
 	curResult      *chunk.Chunk
+	curIter        *chunk.Iterator4Chunk
 	curResultInUse bool
 	curSelected    []bool
 	resultQueue    []*chunk.Chunk
@@ -158,8 +159,9 @@ func (ri *readerIterator) initForChunk(chk4Reader *chunk.Chunk) (err error) {
 	}
 	ri.stmtCtx = ri.ctx.GetSessionVars().StmtCtx
 	ri.curResult = chk4Reader
+	ri.curIter = chunk.NewIterator4Chunk(ri.curResult)
+	ri.curRow = ri.curIter.End()
 	ri.curSelected = make([]bool, 0, ri.ctx.GetSessionVars().MaxChunkSize)
-	ri.curRow = chk4Reader.End()
 	ri.curResultInUse = false
 	ri.resultQueue = append(ri.resultQueue, chk4Reader)
 	ri.firstRow4Key, err = ri.nextSelectedRow()
@@ -175,7 +177,7 @@ func (ri *readerIterator) rowsWithSameKey() ([]chunk.Row, error) {
 	ri.resourceQueue = append(ri.resourceQueue, ri.resultQueue[0:lastResultIdx]...)
 	ri.resultQueue = ri.resultQueue[lastResultIdx:]
 	// no more data.
-	if ri.firstRow4Key == ri.curResult.End() {
+	if ri.firstRow4Key == ri.curIter.End() {
 		return nil, nil
 	}
 	ri.sameKeyRows = ri.sameKeyRows[:0]
@@ -183,8 +185,8 @@ func (ri *readerIterator) rowsWithSameKey() ([]chunk.Row, error) {
 	for {
 		selectedRow, err := ri.nextSelectedRow()
 		// error happens or no more data.
-		if err != nil || selectedRow == ri.curResult.End() {
-			ri.firstRow4Key = ri.curResult.End()
+		if err != nil || selectedRow == ri.curIter.End() {
+			ri.firstRow4Key = ri.curIter.End()
 			return ri.sameKeyRows, errors.Trace(err)
 		}
 		compareResult := compareChunkRow(ri.compareFuncs, selectedRow, ri.firstRow4Key, ri.joinKeys, ri.joinKeys)
@@ -199,31 +201,33 @@ func (ri *readerIterator) rowsWithSameKey() ([]chunk.Row, error) {
 
 func (ri *readerIterator) nextSelectedRow() (chunk.Row, error) {
 	for {
-		for ; ri.curRow != ri.curResult.End(); ri.curRow = ri.curRow.Next() {
+		for ; ri.curRow != ri.curIter.End(); ri.curRow = ri.curIter.Next() {
 			if ri.curSelected[ri.curRow.Idx()] {
 				result := ri.curRow
 				ri.curResultInUse = true
-				ri.curRow = ri.curRow.Next()
+				ri.curRow = ri.curIter.Next()
 				return result, nil
 			} else if ri.joinResultGenerator != nil {
 				// If this iterator works on the outer table, we should emit the un-matched outer row to result Chunk.
 				err := ri.joinResultGenerator.emitToChunk(ri.curRow, nil, ri.joinResult)
 				if err != nil {
-					return ri.curResult.End(), errors.Trace(err)
+					return ri.curIter.End(), errors.Trace(err)
 				}
 			}
 		}
 		ri.reallocReaderResult()
-		ri.curRow = ri.curResult.Begin()
 		err := ri.reader.NextChunk(ri.goCtx, ri.curResult)
 		// error happens or no more data.
 		if err != nil || ri.curResult.NumRows() == 0 {
-			return ri.curResult.End(), errors.Trace(err)
+			ri.curRow = ri.curIter.End()
+			return ri.curRow, errors.Trace(err)
 		}
-		ri.curSelected, err = expression.VectorizedFilter(ri.ctx, ri.filter, ri.curResult, ri.curSelected)
+		ri.curSelected, err = expression.VectorizedFilter(ri.ctx, ri.filter, ri.curIter, ri.curSelected)
 		if err != nil {
-			return ri.curResult.End(), errors.Trace(err)
+			ri.curRow = ri.curIter.End()
+			return ri.curRow, errors.Trace(err)
 		}
+		ri.curRow = ri.curIter.Begin()
 	}
 }
 
@@ -244,6 +248,7 @@ func (ri *readerIterator) reallocReaderResult() {
 
 	// NOTE: "ri.curResult" is always the last element of "resultQueue".
 	ri.curResult = ri.resourceQueue[0]
+	ri.curIter = chunk.NewIterator4Chunk(ri.curResult)
 	ri.resourceQueue = ri.resourceQueue[1:]
 	ri.resultQueue = append(ri.resultQueue, ri.curResult)
 	ri.curResult.Reset()
@@ -523,7 +528,7 @@ func (e *MergeJoinExec) joinToResultChunk() (bool, error) {
 			}
 		} else {
 			for _, outer := range e.outerChunkRows {
-				err = e.resultGenerator.emitToChunk(outer, chunk.NewSliceIterator(e.innerChunkRows), e.resultChunk)
+				err = e.resultGenerator.emitToChunk(outer, chunk.NewIterator4Slice(e.innerChunkRows), e.resultChunk)
 				if err != nil {
 					return false, errors.Trace(err)
 				}
