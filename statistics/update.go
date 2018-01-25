@@ -71,10 +71,10 @@ func (s *SessionStatsCollector) Delete() {
 }
 
 // Update will updates the delta info for one table id.
-func (s *SessionStatsCollector) Update(h *Handle, id int64, delta *TableDelta) {
+func (s *SessionStatsCollector) Update(sc *stmtctx.StatementContext, h *Handle, id int64, delta *TableDelta) {
 	s.Lock()
 	defer s.Unlock()
-	s.mapper.update(h.ctx.GetSessionVars().StmtCtx, id, delta, h.GetTableStats(id))
+	s.mapper.update(sc, id, delta, h.GetTableStats(id))
 }
 
 func mergeQueryFeedback(lq []*QueryFeedback, rq []*QueryFeedback) []*QueryFeedback {

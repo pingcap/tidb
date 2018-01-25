@@ -1908,9 +1908,10 @@ func updateTableDelta(ctx context.Context, tableInfo *model.TableInfo, row []typ
 		return
 	}
 	txn := ctx.GetSessionVars().TxnCtx
-	if txn.GetTableDelta(tableInfo.ID) == nil {
-		txn.TableDeltaMap[tableInfo.ID] = &statistics.TableDelta{}
+	d := txn.GetTableDelta(tableInfo.ID)
+	if d == nil {
+		d = &statistics.TableDelta{}
+		txn.TableDeltaMap[tableInfo.ID] = d
 	}
-	d := txn.GetTableDelta(tableInfo.ID).(*statistics.TableDelta)
-	d.Update(h, tableInfo, row, delta, count)
+	d.(*statistics.TableDelta).Update(h, tableInfo, row, delta, count)
 }

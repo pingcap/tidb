@@ -49,6 +49,7 @@ func (delta *TableDelta) Update(h *Handle, tableInfo *model.TableInfo, row []typ
 	delta.Delta += deltaCount
 	delta.Count += count
 	table := h.GetTableStats(tableInfo.ID)
+	// Update the primary key's histogram.
 	if tableInfo.PKIsHandle {
 		pk := tableInfo.GetPkColInfo()
 		c, ok := table.Columns[pk.ID]
@@ -60,6 +61,7 @@ func (delta *TableDelta) Update(h *Handle, tableInfo *model.TableInfo, row []typ
 			delta.PKDelta.update(h.ctx.GetSessionVars().StmtCtx, &c.Histogram, &row[pk.Offset], deltaCount)
 		}
 	}
+	// Update the indices' histogram.
 	for _, idxInfo := range tableInfo.Indices {
 		if idxInfo.State != model.StatePublic {
 			continue
@@ -81,7 +83,6 @@ func (delta *TableDelta) Update(h *Handle, tableInfo *model.TableInfo, row []typ
 		idxDelta := delta.IdxDeltas[idxInfo.ID]
 		idxDelta.update(h.ctx.GetSessionVars().StmtCtx, &idx.Histogram, value, deltaCount)
 	}
-	return
 }
 
 func encodeValue(sc *stmtctx.StatementContext, idxInfo *model.IndexInfo, row []types.Datum) *types.Datum {
@@ -164,6 +165,7 @@ func (delta *BktDelta) merge(sc *stmtctx.StatementContext, rDelta *BktDelta, isL
 }
 
 func (delta *HistDelta) merge(sc *stmtctx.StatementContext, rDelta *HistDelta, hg *Histogram) {
+	// Make sure that the two delta's histogram version are up to date.
 	delta.update(sc, hg, nil, 0)
 	rDelta.update(sc, hg, nil, 0)
 	for id, rBkt := range rDelta.BktDeltas {
@@ -218,16 +220,19 @@ func (delta *HistDelta) updateHistogram(sc *stmtctx.StatementContext, oldHg *His
 	hg := NewHistogram(oldHg.ID, oldHg.NDV, oldHg.NullCount, oldHg.LastUpdateVersion, oldHg.tp, oldHg.Len())
 	for bktID := 0; bktID < oldHg.Len(); bktID++ {
 		hg.Buckets = append(hg.Buckets, Bucket{})
+		// First calculate the bucket count before update, because we may have update the prior bucket's count.
 		if bktID == 0 {
 			hg.Buckets[0] = oldHg.Buckets[0]
 		} else {
 			hg.Buckets[bktID] = hg.Buckets[bktID-1]
 			hg.Buckets[bktID].Count += oldHg.Buckets[bktID].Count - oldHg.Buckets[bktID-1].Count
 		}
+		// Then update the bucket's count.
 		bkt, ok := delta.BktDeltas[bktID]
 		if ok {
 			hg.Buckets[bktID].Count = mathutil.MaxInt64(0, hg.Buckets[bktID].Count+bkt.Count)
 		}
+		// Finally update the bucket's lower bound.
 		if !ok || bkt.Bound == nil {
 			hg.Bounds.AppendDatum(0, oldHg.GetLower(bktID))
 		} else {
@@ -235,6 +240,7 @@ func (delta *HistDelta) updateHistogram(sc *stmtctx.StatementContext, oldHg *His
 		}
 		hg.Bounds.AppendDatum(0, oldHg.GetUpper(bktID))
 	}
+	// Update the last bucket's upper bound.
 	if bkt, ok := delta.BktDeltas[oldHg.Len()]; ok {
 		bktID := oldHg.Len() - 1
 		hg.Buckets[bktID].Count = mathutil.MaxInt64(0, bkt.Count+hg.Buckets[bktID].Count)
