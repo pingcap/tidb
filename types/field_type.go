@@ -698,7 +698,7 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		//mysql.TypeLonglong     mysql.TypeInt24
 		mysql.TypeLonglong, mysql.TypeLonglong,
 		//mysql.TypeDate         mysql.TypeTime
-		mysql.TypeNewDate, mysql.TypeDuration,
+		mysql.TypeDate, mysql.TypeDuration,
 		//mysql.TypeDatetime     mysql.TypeYear
 		mysql.TypeDatetime, mysql.TypeYear,
 		//mysql.TypeNewDate      mysql.TypeVarchar
@@ -826,11 +826,11 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		//mysql.TypeFloat        mysql.TypeDouble
 		mysql.TypeVarchar, mysql.TypeVarchar,
 		//mysql.TypeNull         mysql.TypeTimestamp
-		mysql.TypeNewDate, mysql.TypeDatetime,
+		mysql.TypeDate, mysql.TypeDatetime,
 		//mysql.TypeLonglong     mysql.TypeInt24
 		mysql.TypeVarchar, mysql.TypeVarchar,
 		//mysql.TypeDate         mysql.TypeTime
-		mysql.TypeNewDate, mysql.TypeDatetime,
+		mysql.TypeDate, mysql.TypeDatetime,
 		//mysql.TypeDatetime     mysql.TypeYear
 		mysql.TypeDatetime, mysql.TypeVarchar,
 		//mysql.TypeNewDate      mysql.TypeVarchar
