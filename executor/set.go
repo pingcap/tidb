@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
@@ -116,7 +115,7 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 			return errors.Trace(err)
 		}
 		oldSnapshotTS := sessionVars.SnapshotTS
-		err = varsutil.SetSessionSystemVar(sessionVars, name, value)
+		err = variable.SetSessionSystemVar(sessionVars, name, value)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -145,7 +144,8 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 	}
 
 	if name == variable.TxnIsolation {
-		if sessionVars.Systems[variable.TxnIsolation] == ast.ReadCommitted {
+		isoLevel, _ := sessionVars.GetSystemVar(variable.TxnIsolation)
+		if isoLevel == ast.ReadCommitted {
 			e.ctx.Txn().SetOption(kv.IsolationLevel, kv.RC)
 		}
 	}
@@ -222,7 +222,7 @@ func validateSnapshot(ctx context.Context, snapshotTS uint64) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	safePointTS := varsutil.GoTimeToTS(safePointTime)
+	safePointTS := variable.GoTimeToTS(safePointTime)
 	if safePointTS > snapshotTS {
 		return variable.ErrSnapshotTooOld.GenByArgs(safePointString)
 	}
@@ -239,9 +239,9 @@ func (e *SetExecutor) setCharset(cs, co string) error {
 	}
 	sessionVars := e.ctx.GetSessionVars()
 	for _, v := range variable.SetNamesVariables {
-		sessionVars.Systems[v] = cs
+		terror.Log(errors.Trace(sessionVars.SetSystemVar(v, cs)))
 	}
-	sessionVars.Systems[variable.CollationConnection] = co
+	terror.Log(errors.Trace(sessionVars.SetSystemVar(variable.CollationConnection, co)))
 	return nil
 }
 
@@ -253,7 +253,7 @@ func (e *SetExecutor) getVarValue(v *expression.VarAssignment, sysVar *variable.
 		if sysVar != nil {
 			value = types.NewStringDatum(sysVar.Value)
 		} else {
-			s, err1 := varsutil.GetGlobalSystemVar(e.ctx.GetSessionVars(), v.Name)
+			s, err1 := variable.GetGlobalSystemVar(e.ctx.GetSessionVars(), v.Name)
 			if err1 != nil {
 				return value, errors.Trace(err1)
 			}
