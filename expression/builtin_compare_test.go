@@ -191,7 +191,7 @@ func (s *testEvaluatorSuite) TestCoalesce(c *C) {
 		{[]interface{}{1, types.NewDecFromFloatForTest(123.456)}, types.NewDecFromInt(1), false, false},
 		{[]interface{}{nil, duration}, duration, false, false},
 		{[]interface{}{nil, tm, nil}, tm, false, false},
-		{[]interface{}{nil, dt, nil}, dt.String(), false, false},
+		{[]interface{}{nil, dt, nil}, dt, false, false},
 		{[]interface{}{tm, dt}, tm, false, false},
 	}
 

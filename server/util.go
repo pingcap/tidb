@@ -209,7 +209,7 @@ func dumpBinaryDateTime(data []byte, t types.Time, loc *time.Location) ([]byte, 
 		data = dumpUint16(data, uint16(year))
 		data = append(data, byte(mon), byte(day), byte(t.Time.Hour()), byte(t.Time.Minute()), byte(t.Time.Second()))
 		data = dumpUint32(data, uint32(t.Time.Microsecond()))
-	case mysql.TypeDate, mysql.TypeNewDate:
+	case mysql.TypeDate:
 		data = append(data, 4)
 		data = dumpUint16(data, uint16(year)) //year
 		data = append(data, byte(mon), byte(day))
