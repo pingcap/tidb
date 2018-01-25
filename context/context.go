@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
+	binlog "github.com/pingcap/tipb/go-binlog"
 	goctx "golang.org/x/net/context"
 )
 
@@ -70,6 +71,13 @@ type Context interface {
 
 	// StoreQueryFeedback stores the query feedback.
 	StoreQueryFeedback(feedback interface{})
+
+	// StmtCommit flush all changes by the statement to the underlying transaction.
+	StmtCommit() error
+	// StmtRollback provides statement level rollback.
+	StmtRollback()
+	// StmtGetMutation gets the binlog mutation for current statement.
+	StmtGetMutation(int64) *binlog.TableMutation
 }
 
 type basicCtxType int

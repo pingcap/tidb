@@ -169,9 +169,9 @@ func runStmt(goCtx goctx.Context, ctx context.Context, s ast.Statement) (ast.Rec
 		GetHistory(ctx).Add(0, s, se.sessionVars.StmtCtx)
 		if txn := ctx.Txn(); txn != nil {
 			if err != nil {
-				txn.StmtRollback()
+				ctx.StmtRollback()
 			} else {
-				terror.Log(txn.StmtCommit())
+				terror.Log(ctx.StmtCommit())
 			}
 		}
 	}
