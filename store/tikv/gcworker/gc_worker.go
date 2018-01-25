@@ -408,7 +408,7 @@ func resolveLocks(ctx goctx.Context, store tikv.Storage, safePoint uint64, ident
 	gcWorkerCounter.WithLabelValues("resolve_locks").Inc()
 
 	// for scan lock request, we must return all locks even if they are generated
-	// by the same transaction. because gc worker need to make sure all locks to be
+	// by the same transaction. because gc worker need to make sure all locks have been
 	// cleaned.
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdScanLock,
@@ -431,9 +431,11 @@ func resolveLocks(ctx goctx.Context, store tikv.Storage, safePoint uint64, ident
 		default:
 		}
 
-		// we'd better keep 'req.ScanLock.StartKey' the same as 'key' to avoid
+		// We'd better keep 'req.ScanLock.StartKey' the same as 'key' to avoid
 		// the error 'key is not in region' when the region split for several pieces, or
 		// merge into one piece.
+		// If get region error here, we will retry to get the new region info
+		// and reset start key of the request, also keep it the same as the region start key.
 		req.ScanLock.StartKey = key
 		loc, err := store.GetRegionCache().LocateKey(bo, key)
 		if err != nil {
