@@ -16,6 +16,7 @@ package variable
 import (
 	"crypto/tls"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/juju/errors"
@@ -468,6 +469,10 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		return ErrReadOnly
 	case TiDBMaxChunkSize:
 		s.MaxChunkSize = tidbOptPositiveInt(val, DefMaxChunkSize)
+	case TiDBMemThreshold:
+		s.MemThreshold = int64(tidbOptPositiveInt(val, DefMemThreshold))
+	case TiDBGeneralLog:
+		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt(val, DefTiDBGeneralLog)))
 	}
 	s.systems[name] = val
 	return nil
