@@ -767,3 +767,13 @@ func (s *testSuite) TestIssue5255(c *C) {
 	tk.MustExec("insert into t2 values(1)")
 	tk.MustQuery("select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t1.a=t2.a").Check(testkit.Rows("1 2017-11-29 2.2 1"))
 }
+
+func (s *testSuite) TestIssue5278(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, tt")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("create table tt(a varchar(10), b int)")
+	tk.MustExec("insert into t values(1, 1)")
+	tk.MustQuery("select * from t left join tt on t.a=tt.a left join t ttt on t.a=ttt.a").Check(testkit.Rows("1 1 <nil> <nil> 1 1"))
+}
