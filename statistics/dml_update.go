@@ -45,7 +45,7 @@ type BktDelta struct {
 }
 
 // Update updates the table delta according to the changed row.
-func (delta *TableDelta) Update(h *Handle, tableInfo *model.TableInfo, row []types.Datum, deltaCount, count int64) {
+func (delta *TableDelta) Update(sc *stmtctx.StatementContext, h *Handle, tableInfo *model.TableInfo, row []types.Datum, deltaCount, count int64) {
 	delta.Delta += deltaCount
 	delta.Count += count
 	table := h.GetTableStats(tableInfo.ID)
@@ -58,7 +58,7 @@ func (delta *TableDelta) Update(h *Handle, tableInfo *model.TableInfo, row []typ
 				delta.PKID = pk.ID
 				delta.PKDelta = &HistDelta{}
 			}
-			delta.PKDelta.update(h.ctx.GetSessionVars().StmtCtx, &c.Histogram, &row[pk.Offset], deltaCount)
+			delta.PKDelta.update(sc, &c.Histogram, &row[pk.Offset], deltaCount)
 		}
 	}
 	// Update the indices' histogram.
@@ -81,7 +81,7 @@ func (delta *TableDelta) Update(h *Handle, tableInfo *model.TableInfo, row []typ
 			delta.IdxDeltas[idxInfo.ID] = &HistDelta{}
 		}
 		idxDelta := delta.IdxDeltas[idxInfo.ID]
-		idxDelta.update(h.ctx.GetSessionVars().StmtCtx, &idx.Histogram, value, deltaCount)
+		idxDelta.update(sc, &idx.Histogram, value, deltaCount)
 	}
 }
 

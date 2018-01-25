@@ -1913,5 +1913,5 @@ func updateTableDelta(ctx context.Context, tableInfo *model.TableInfo, row []typ
 		d = &statistics.TableDelta{}
 		txn.TableDeltaMap[tableInfo.ID] = d
 	}
-	d.(*statistics.TableDelta).Update(h, tableInfo, row, delta, count)
+	d.(*statistics.TableDelta).Update(ctx.GetSessionVars().StmtCtx, h, tableInfo, row, delta, count)
 }
