@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/auth"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
 	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
@@ -934,21 +935,21 @@ func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo) error {
 func (cc *clientConn) writeChunks(goCtx goctx.Context, rs ResultSet, binary bool, more bool) error {
 	data := make([]byte, 4, 1024)
 	chk := rs.NewChunk()
+	iter := chunk.NewIterator4Chunk(chk)
 	for {
 		err := rs.NextChunk(goCtx, chk)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		rowCount := chk.NumRows()
-		if rowCount == 0 {
+		if chk.NumAllRows() == 0 {
 			break
 		}
-		for i := 0; i < rowCount; i++ {
+		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			data = data[0:4]
 			if binary {
-				data, err = dumpBinaryRow(data, rs.Columns(), chk.GetRow(i))
+				data, err = dumpBinaryRow(data, rs.Columns(), row)
 			} else {
-				data, err = dumpTextRow(data, rs.Columns(), chk.GetRow(i))
+				data, err = dumpTextRow(data, rs.Columns(), row)
 			}
 			if err != nil {
 				return errors.Trace(err)

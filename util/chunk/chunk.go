@@ -30,7 +30,8 @@ var _ types.Row = Row{}
 // Values are appended in compact format and can be directly accessed without decoding.
 // When the chunk is done processing, we can reuse the allocated memory by resetting it.
 type Chunk struct {
-	columns []*column
+	columns  []*column
+	validIdx []int32
 	// numVirtualRows indicates the number of virtual rows, witch have zero columns.
 	// It is used only when this Chunk doesn't hold any data, i.e. "len(columns)==0".
 	numVirtualRows int
@@ -55,6 +56,43 @@ func NewChunkWithCapacity(fields []*types.FieldType, cap int) *Chunk {
 		chk.addColumnByFieldType(f, cap)
 	}
 	return chk
+}
+
+func (c *Chunk) GetValid() []int32 {
+	if c.validIdx == nil {
+		c.validIdx = make([]int32, 0, c.NumAllRows())
+		c.SetAllToValid()
+	}
+	return c.validIdx
+}
+
+func (c *Chunk) SetValid(validIdx []int32) {
+	c.validIdx = validIdx
+}
+
+func (c *Chunk) SetAllToValid() {
+	c.validIdx = c.validIdx[:0]
+	for i, length := 0, c.NumAllRows(); i < length; i++ {
+		c.validIdx = append(c.validIdx, int32(i))
+	}
+}
+
+func (c *Chunk) GetIsValid(isValid []bool) []bool {
+	isValid = isValid[:0]
+	for i, length := 0, c.NumAllRows(); i < length; i++ {
+		isValid = append(isValid, c.validIdx == nil)
+	}
+	for _, i := range c.validIdx {
+		isValid[i] = true
+	}
+	return isValid
+}
+
+func (c *Chunk) NumValidRows() int {
+	if c.validIdx == nil {
+		return c.NumAllRows()
+	}
+	return len(c.validIdx)
 }
 
 // MemoryUsage returns the total memory usage of a Chunk in B.
@@ -115,10 +153,11 @@ func (c *Chunk) SwapColumn(colIdx int, other *Chunk, otherIdx int) {
 	c.columns[colIdx], other.columns[otherIdx] = other.columns[otherIdx], c.columns[colIdx]
 }
 
-// SwapColumns swaps columns with another Chunk.
-func (c *Chunk) SwapColumns(other *Chunk) {
+// Swap swaps columns with another Chunk.
+func (c *Chunk) Swap(other *Chunk) {
 	c.columns, other.columns = other.columns, c.columns
 	c.numVirtualRows, other.numVirtualRows = other.numVirtualRows, c.numVirtualRows
+	c.validIdx, other.validIdx = other.validIdx, c.validIdx
 }
 
 // SetNumVirtualRows sets the virtual row number for a Chunk.
@@ -130,6 +169,9 @@ func (c *Chunk) SetNumVirtualRows(numVirtualRows int) {
 // Reset resets the chunk, so the memory it allocated can be reused.
 // Make sure all the data in the chunk is not used anymore before you reuse this chunk.
 func (c *Chunk) Reset() {
+	if c.validIdx != nil {
+		c.validIdx = c.validIdx[:0]
+	}
 	for _, c := range c.columns {
 		c.reset()
 	}
@@ -141,8 +183,8 @@ func (c *Chunk) NumCols() int {
 	return len(c.columns)
 }
 
-// NumRows returns the number of rows in the chunk.
-func (c *Chunk) NumRows() int {
+// NumAllRows returns the number of rows in the chunk.
+func (c *Chunk) NumAllRows() int {
 	if c.NumCols() == 0 {
 		return c.numVirtualRows
 	}
@@ -162,6 +204,9 @@ func (c *Chunk) AppendRow(row Row) {
 
 // AppendPartialRow appends a row to the chunk.
 func (c *Chunk) AppendPartialRow(colIdx int, row Row) {
+	if colIdx == 0 && c.validIdx != nil {
+		c.validIdx = append(c.validIdx, int32(c.NumAllRows()))
+	}
 	for i, rowCol := range row.c.columns {
 		chkCol := c.columns[colIdx+i]
 		chkCol.appendNullBitmap(!rowCol.isNull(row.idx))
@@ -178,30 +223,44 @@ func (c *Chunk) AppendPartialRow(colIdx int, row Row) {
 	}
 }
 
-// Append appends rows in [begin, end) in another Chunk to a Chunk.
+// Append appends valid rows between [begin, end) in another Chunk to a Chunk.
 func (c *Chunk) Append(other *Chunk, begin, end int) {
+	actualBegin, actualEnd := begin, end
+	if c.validIdx != nil {
+		numAllRows := c.NumAllRows()
+		for i := begin; i < end; i++ {
+			c.validIdx = append(c.validIdx, int32(numAllRows+i-begin))
+		}
+	}
+
 	for colID, src := range other.columns {
 		dst := c.columns[colID]
 		if src.isFixed() {
 			elemLen := len(src.elemBuf)
-			dst.data = append(dst.data, src.data[begin*elemLen:end*elemLen]...)
+			dst.data = append(dst.data, src.data[actualBegin*elemLen:actualEnd*elemLen]...)
 		} else {
-			beginOffset, endOffset := src.offsets[begin], src.offsets[end]
+			beginOffset, endOffset := src.offsets[actualBegin], src.offsets[actualEnd]
 			dst.data = append(dst.data, src.data[beginOffset:endOffset]...)
-			for i := begin; i < end; i++ {
+			for i := actualBegin; i < actualEnd; i++ {
 				dst.offsets = append(dst.offsets, dst.offsets[len(dst.offsets)-1]+src.offsets[i+1]-src.offsets[i])
 			}
 		}
-		for i := begin; i < end; i++ {
+		for i := actualBegin; i < actualEnd; i++ {
 			dst.appendNullBitmap(!src.isNull(i))
 			dst.length++
 		}
 	}
-	c.numVirtualRows += end - begin
+	c.numVirtualRows += actualEnd - actualBegin
 }
 
-// TruncateTo truncates rows from tail to head in a Chunk to "numRows" rows.
+// TruncateTo truncates rows from tail to head in a Chunk to "numRows" valid rows.
 func (c *Chunk) TruncateTo(numRows int) {
+	if c.validIdx != nil {
+		if numRows > 0 {
+			numRows = int(c.validIdx[numRows-1]) + 1
+		}
+		c.validIdx = c.validIdx[:numRows]
+	}
 	for _, col := range c.columns {
 		if col.isFixed() {
 			elemLen := len(col.elemBuf)

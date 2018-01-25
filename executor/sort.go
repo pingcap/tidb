@@ -42,6 +42,7 @@ type SortExec struct {
 	err     error
 	schema  *expression.Schema
 
+	isValid  []bool
 	keyExprs []expression.Expression
 	keyTypes []*types.FieldType
 	// keyColumns is the column index of the by items.
@@ -168,7 +169,7 @@ func (e *SortExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 		}
 		e.fetched = true
 	}
-	for chk.NumRows() < e.maxChunkSize {
+	for chk.NumAllRows() < e.maxChunkSize {
 		if e.Idx >= len(e.rowPtrs) {
 			return nil
 		}
@@ -185,24 +186,21 @@ func (e *SortExec) fetchRowChunks(goCtx goctx.Context) error {
 	for {
 		chk := chunk.NewChunk(fields)
 		err := e.children[0].NextChunk(goCtx, chk)
-		if err != nil {
+		if err != nil || chk.NumAllRows() == 0 {
+			// errors happend or no more data.
 			return errors.Trace(err)
-		}
-		rowCount := chk.NumRows()
-		if rowCount == 0 {
-			break
 		}
 		e.rowChunks.Add(chk)
 	}
-	return nil
 }
 
 func (e *SortExec) initPointers() {
 	e.rowPtrs = make([]chunk.RowPtr, 0, e.rowChunks.Len())
 	for chkIdx := 0; chkIdx < e.rowChunks.NumChunks(); chkIdx++ {
 		rowChk := e.rowChunks.GetChunk(chkIdx)
-		for rowIdx := 0; rowIdx < rowChk.NumRows(); rowIdx++ {
-			e.rowPtrs = append(e.rowPtrs, chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
+		iter := chunk.NewIterator4Chunk(rowChk)
+		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+			e.rowPtrs = append(e.rowPtrs, chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(row.Idx())})
 		}
 	}
 }
@@ -245,8 +243,7 @@ func (e *SortExec) buildKeyChunks() error {
 	e.keyChunks = chunk.NewList(e.keyTypes, e.maxChunkSize)
 	for chkIdx := 0; chkIdx < e.rowChunks.NumChunks(); chkIdx++ {
 		keyChk := chunk.NewChunk(e.keyTypes)
-		childIter := chunk.NewIterator4Chunk(e.rowChunks.GetChunk(chkIdx))
-		err := expression.VectorizedExecute(e.ctx, e.keyExprs, childIter, keyChk)
+		err := expression.VectorizedExecute(e.ctx, e.keyExprs, e.rowChunks.GetChunk(chkIdx), e.isValid, keyChk)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -480,7 +477,7 @@ func (e *TopNExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	if e.Idx >= len(e.rowPtrs) {
 		return nil
 	}
-	for chk.NumRows() < e.maxChunkSize && e.Idx < len(e.rowPtrs) {
+	for chk.NumAllRows() < e.maxChunkSize && e.Idx < len(e.rowPtrs) {
 		row := e.rowChunks.GetRow(e.rowPtrs[e.Idx])
 		chk.AppendRow(row)
 		e.Idx++
@@ -497,7 +494,7 @@ func (e *TopNExec) loadChunksUntilTotalLimit(goCtx goctx.Context) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if srcChk.NumRows() == 0 {
+		if srcChk.NumAllRows() == 0 {
 			break
 		}
 		e.rowChunks.Add(srcChk)
@@ -533,7 +530,7 @@ func (e *TopNExec) executeTopN(goCtx goctx.Context) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if childRowChk.NumRows() == 0 {
+		if childRowChk.NumAllRows() == 0 {
 			break
 		}
 		err = e.processChildChk(childRowChk, childKeyChk)
@@ -558,12 +555,14 @@ func (e *TopNExec) executeTopN(goCtx goctx.Context) error {
 func (e *TopNExec) processChildChk(childRowChk, childKeyChk *chunk.Chunk) error {
 	if childKeyChk != nil {
 		childKeyChk.Reset()
-		err := expression.VectorizedExecute(e.ctx, e.keyExprs, chunk.NewIterator4Chunk(childRowChk), childKeyChk)
+		err := expression.VectorizedExecute(e.ctx, e.keyExprs, childRowChk, e.isValid, childKeyChk)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
-	for i := 0; i < childRowChk.NumRows(); i++ {
+	inputIter := chunk.NewIterator4Chunk(childRowChk)
+	for row := inputIter.Begin(); row != inputIter.End(); row = inputIter.Next() {
+		i := row.Idx()
 		heapMaxPtr := e.rowPtrs[0]
 		var heapMax, next chunk.Row
 		if childKeyChk != nil {
@@ -571,11 +570,11 @@ func (e *TopNExec) processChildChk(childRowChk, childKeyChk *chunk.Chunk) error 
 			next = childKeyChk.GetRow(i)
 		} else {
 			heapMax = e.rowChunks.GetRow(heapMaxPtr)
-			next = childRowChk.GetRow(i)
+			next = row
 		}
 		if e.chkHeap.greaterRow(heapMax, next) {
 			// Evict heap max, keep the next row.
-			e.rowPtrs[0] = e.rowChunks.AppendRow(childRowChk.GetRow(i))
+			e.rowPtrs[0] = e.rowChunks.AppendRow(row)
 			if childKeyChk != nil {
 				e.keyChunks.AppendRow(childKeyChk.GetRow(i))
 			}

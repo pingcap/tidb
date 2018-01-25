@@ -224,7 +224,7 @@ func GetRows4Test(goCtx goctx.Context, rs ast.RecordSet) ([]types.Row, error) {
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			if chk.NumRows() == 0 {
+			if chk.NumAllRows() == 0 {
 				break
 			}
 

@@ -152,7 +152,7 @@ func (r *selectResult) NextRaw(goCtx goctx.Context) ([]byte, error) {
 // NextChunk reads data to the chunk.
 func (r *selectResult) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	chk.Reset()
-	for chk.NumRows() < r.ctx.GetSessionVars().MaxChunkSize {
+	for chk.NumAllRows() < r.ctx.GetSessionVars().MaxChunkSize {
 		if r.selectResp == nil || r.respChkIdx == len(r.selectResp.Chunks) {
 			err := r.getSelectResp()
 			if err != nil || r.selectResp == nil {
@@ -206,7 +206,7 @@ func (r *selectResult) readRowsData(chk *chunk.Chunk) (err error) {
 	rowsData := r.selectResp.Chunks[r.respChkIdx].RowsData
 	maxChunkSize := r.ctx.GetSessionVars().MaxChunkSize
 	timeZone := r.ctx.GetSessionVars().GetTimeZone()
-	for chk.NumRows() < maxChunkSize && len(rowsData) > 0 {
+	for chk.NumAllRows() < maxChunkSize && len(rowsData) > 0 {
 		for i := 0; i < r.rowLen; i++ {
 			rowsData, err = codec.DecodeOneToChunk(rowsData, chk, i, r.fieldTypes[i], timeZone)
 			if err != nil {

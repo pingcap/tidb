@@ -460,7 +460,7 @@ func (e *SelectLockExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error 
 	txn := e.ctx.Txn()
 	txnCtx := e.ctx.GetSessionVars().TxnCtx
 	txnCtx.ForUpdate = true
-	keys := make([]kv.Key, 0, chk.NumRows())
+	keys := make([]kv.Key, 0, chk.NumAllRows())
 	iter := chunk.NewIterator4Chunk(chk)
 	for id, cols := range e.Schema().TblID2Handle {
 		for _, col := range cols {
@@ -524,43 +524,38 @@ func (e *LimitExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	if e.cursor >= e.end {
 		return nil
 	}
-	for !e.meetFirstBatch {
-		err := e.children[0].NextChunk(goCtx, e.childrenResults[0])
-		if err != nil {
+
+	for {
+		err := e.children[0].NextChunk(goCtx, chk)
+		if err != nil || chk.NumAllRows() == 0 {
+			// error happened or no more data.
 			return errors.Trace(err)
 		}
-		batchSize := uint64(e.childrenResults[0].NumRows())
-		// no more data.
-		if batchSize == 0 {
-			return nil
+
+		batchSize := uint64(chk.NumValidRows())
+		if e.cursor+batchSize <= e.begin {
+			e.cursor += batchSize
+			continue
 		}
-		if newCursor := e.cursor + batchSize; newCursor >= e.begin {
-			e.meetFirstBatch = true
-			begin, end := e.begin-e.cursor, batchSize
-			if newCursor > e.end {
-				end = e.end - e.cursor
-			}
-			chk.Append(e.childrenResults[0], int(begin), int(end))
-			e.cursor += end
-			return nil
+
+		begin, end := uint64(0), batchSize
+		if e.cursor < e.begin {
+			begin = e.begin - e.cursor
 		}
-		e.cursor += batchSize
-	}
-	err := e.children[0].NextChunk(goCtx, chk)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	batchSize := uint64(chk.NumRows())
-	// no more data.
-	if batchSize == 0 {
+		if e.cursor+batchSize > e.end {
+			end = e.end - e.cursor
+		}
+
+		e.cursor += end
+		validIdx := chk.GetValid()
+
+		for i := begin; i < end; i++ {
+			validIdx[i-begin] = validIdx[i]
+		}
+		validIdx = validIdx[:end-begin]
+		chk.SetValid(validIdx)
 		return nil
 	}
-	if e.cursor+batchSize > e.end {
-		chk.TruncateTo(int(e.end - e.cursor))
-		batchSize = e.end - e.cursor
-	}
-	e.cursor += batchSize
-	return nil
 }
 
 // Open implements the Executor Open interface.
@@ -652,7 +647,9 @@ func (e *ProjectionExec) Next(goCtx goctx.Context) (retRow Row, err error) {
 // NextChunk implements the Executor NextChunk interface.
 func (e *ProjectionExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	chk.Reset()
-	if err := e.children[0].NextChunk(goCtx, e.childrenResults[0]); err != nil {
+	err := e.children[0].NextChunk(goCtx, e.childrenResults[0])
+	if err != nil || e.childrenResults[0].NumAllRows() == 0 {
+		// error happened or no more data.
 		return errors.Trace(err)
 	}
 	return errors.Trace(e.evaluatorSuit.Run(e.ctx, e.childrenResults[0], chk))
@@ -762,28 +759,20 @@ func (e *SelectionExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	}
 
 	for {
-		for ; e.inputRow != e.inputIter.End(); e.inputRow = e.inputIter.Next() {
-			if !e.selected[e.inputRow.Idx()] {
-				continue
-			}
-			if chk.NumRows() == e.maxChunkSize {
-				return nil
-			}
-			chk.AppendRow(e.inputRow)
+		err := e.children[0].NextChunk(goCtx, chk)
+		if err != nil || chk.NumAllRows() == 0 {
+			// error happened or no more data.
+			return errors.Trace(err)
 		}
-		err := e.children[0].NextChunk(goCtx, e.childrenResults[0])
+
+		err = expression.VectorizedFilter(e.ctx, e.filters, chunk.NewIterator4Chunk(chk))
 		if err != nil {
 			return errors.Trace(err)
 		}
-		// no more data.
-		if e.childrenResults[0].NumRows() == 0 {
+
+		if chk.NumValidRows() > 0 {
 			return nil
 		}
-		e.selected, err = expression.VectorizedFilter(e.ctx, e.filters, e.inputIter, e.selected)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		e.inputRow = e.inputIter.Begin()
 	}
 }
 
@@ -792,24 +781,28 @@ func (e *SelectionExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 // we have to set batch size to 1 to do the evaluation of filter and projection.
 func (e *SelectionExec) unBatchedNextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	for {
-		for ; e.inputRow != e.inputIter.End(); e.inputRow = e.inputIter.Next() {
-			selected, err := expression.EvalBool(e.filters, e.inputRow, e.ctx)
+		err := e.children[0].NextChunk(goCtx, e.childrenResults[0])
+		if err != nil || e.childrenResults[0].NumAllRows() == 0 {
+			// No more data or error happened.
+			return errors.Trace(err)
+		}
+
+		validIdx := e.inputIter.GetChunk().GetValid()
+		validIdx = validIdx[:0]
+
+		for row := e.inputIter.Begin(); row != e.inputIter.End(); row = e.inputIter.Next() {
+			selected, err := expression.EvalBool(e.filters, row, e.ctx)
 			if err != nil {
 				return errors.Trace(err)
 			}
 			if selected {
-				chk.AppendRow(e.inputRow)
-				e.inputRow = e.inputIter.Next()
-				return nil
+				validIdx = append(validIdx, int32(row.Idx()))
 			}
 		}
-		err := e.children[0].NextChunk(goCtx, e.childrenResults[0])
-		if err != nil {
-			return errors.Trace(err)
-		}
-		e.inputRow = e.inputIter.Begin()
-		// no more data.
-		if e.childrenResults[0].NumRows() == 0 {
+
+		if len(validIdx) > 0 {
+			e.childrenResults[0].SetValid(validIdx)
+			chk.Swap(e.childrenResults[0])
 			return nil
 		}
 	}
@@ -884,7 +877,7 @@ func (e *TableScanExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	}
 
 	mutableRow := chunk.MutRowFromTypes(e.retTypes())
-	for chk.NumRows() < e.maxChunkSize {
+	for chk.NumAllRows() < e.maxChunkSize {
 		row, err := e.getRow(handle)
 		if err != nil {
 			return errors.Trace(err)
@@ -920,7 +913,7 @@ func (e *TableScanExec) nextChunk4InfoSchema(goCtx goctx.Context, chk *chunk.Chu
 	}
 	virtualTableChunk := e.virtualTableChunkList.GetChunk(e.virtualTableChunkIdx)
 	e.virtualTableChunkIdx++
-	chk.SwapColumns(virtualTableChunk)
+	chk.Swap(virtualTableChunk)
 	return nil
 }
 
@@ -1037,7 +1030,7 @@ func (e *ExistsExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if e.childrenResults[0].NumRows() > 0 {
+		if e.childrenResults[0].NumAllRows() > 0 {
 			chk.AppendInt64(0, 1)
 		} else {
 			chk.AppendInt64(0, 0)
@@ -1093,24 +1086,24 @@ func (e *MaxOneRowExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 		return nil
 	}
 	e.evaluated = true
-	err := e.children[0].NextChunk(goCtx, e.childrenResults[0])
+	err := e.children[0].NextChunk(goCtx, chk)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if chk.NumRows() > 1 {
-		return errors.New("subquery returns more than 1 row")
-	}
-	if chk.NumRows() == 0 {
+	if chk.NumAllRows() == 0 {
 		for i := range e.schema.Columns {
 			chk.AppendNull(i)
 		}
 	} else {
-		chk2 := e.children[0].newChunk()
+		if chk.NumValidRows() > 1 {
+			return errors.New("subquery returns more than 1 row")
+		}
+		chk2 := e.childrenResults[0]
 		err2 := e.children[0].NextChunk(goCtx, chk2)
 		if err2 != nil {
 			return errors.Trace(err2)
 		}
-		if chk2.NumRows() != 0 {
+		if chk2.NumAllRows() != 0 {
 			return errors.New("subquery returns more than 1 row")
 		}
 	}
@@ -1260,7 +1253,7 @@ func (e *UnionExec) resultPuller(goCtx goctx.Context, childID int) {
 		case result.chk = <-e.resourcePools[childID]:
 		}
 		result.err = errors.Trace(e.children[childID].NextChunk(goCtx, result.chk))
-		if result.err == nil && result.chk.NumRows() == 0 {
+		if result.err == nil && result.chk.NumAllRows() == 0 {
 			return
 		}
 		e.resultPool <- result
@@ -1311,7 +1304,7 @@ func (e *UnionExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 		return errors.Trace(result.err)
 	}
 
-	chk.SwapColumns(result.chk)
+	chk.Swap(result.chk)
 	result.src <- result.chk
 	return nil
 }

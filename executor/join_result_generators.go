@@ -155,16 +155,14 @@ func (outputer *baseJoinResultGenerator) filterResult(resultBuffer []Row, origin
 }
 
 func (outputer *baseJoinResultGenerator) filterChunk(input, output *chunk.Chunk) (matched bool, err error) {
-	outputer.selected, err = expression.VectorizedFilter(outputer.ctx, outputer.filter, chunk.NewIterator4Chunk(input), outputer.selected)
+	inputIter := chunk.NewIterator4Chunk(input)
+	err = expression.VectorizedFilter(outputer.ctx, outputer.filter, inputIter)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	for i := 0; i < len(outputer.selected); i++ {
-		if !outputer.selected[i] {
-			continue
-		}
+	for row := inputIter.Begin(); row != inputIter.End(); row = inputIter.Next() {
 		matched = true
-		output.AppendRow(input.GetRow(i))
+		output.AppendRow(row)
 	}
 	return matched, nil
 }

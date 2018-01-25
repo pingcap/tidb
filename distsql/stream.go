@@ -55,7 +55,7 @@ func (r *streamResult) Next(goCtx goctx.Context) (PartialResult, error) {
 func (r *streamResult) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	maxChunkSize := r.ctx.GetSessionVars().MaxChunkSize
-	for chk.NumRows() < maxChunkSize {
+	for chk.NumAllRows() < maxChunkSize {
 		err := r.readDataIfNecessary(goCtx)
 		if err != nil {
 			return errors.Trace(err)
@@ -126,7 +126,7 @@ func (r *streamResult) flushToChunk(chk *chunk.Chunk) (err error) {
 	remainRowsData := r.curr.RowsData
 	maxChunkSize := r.ctx.GetSessionVars().MaxChunkSize
 	timeZone := r.ctx.GetSessionVars().GetTimeZone()
-	for chk.NumRows() < maxChunkSize && len(remainRowsData) > 0 {
+	for chk.NumAllRows() < maxChunkSize && len(remainRowsData) > 0 {
 		for i := 0; i < r.rowLen; i++ {
 			remainRowsData, err = codec.DecodeOneToChunk(remainRowsData, chk, i, r.fieldTypes[i], timeZone)
 			if err != nil {

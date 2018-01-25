@@ -52,9 +52,10 @@ func hasUnVectorizableFunc(expr Expression) bool {
 }
 
 // VectorizedExecute evaluates a list of expressions column by column and append their results to "output" Chunk.
-func VectorizedExecute(ctx context.Context, exprs []Expression, iterator *chunk.Iterator4Chunk, output *chunk.Chunk) error {
+func VectorizedExecute(ctx context.Context, exprs []Expression, input *chunk.Chunk, isValid []bool, output *chunk.Chunk) error {
+	isValid = input.GetIsValid(isValid)
 	for colID, expr := range exprs {
-		err := evalOneColumn(ctx, expr, iterator, output, colID)
+		err := evalOneColumn(ctx, expr, input, isValid, output, colID)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -62,35 +63,63 @@ func VectorizedExecute(ctx context.Context, exprs []Expression, iterator *chunk.
 	return nil
 }
 
-func evalOneColumn(ctx context.Context, expr Expression, iterator *chunk.Iterator4Chunk, output *chunk.Chunk, colID int) (err error) {
+func evalOneColumn(ctx context.Context, expr Expression, input *chunk.Chunk, isValid []bool, output *chunk.Chunk, colID int) (err error) {
 	switch fieldType, evalType := expr.GetType(), expr.GetType().EvalType(); evalType {
 	case types.ETInt:
-		for row := iterator.Begin(); err == nil && row != iterator.End(); row = iterator.Next() {
-			err = executeToInt(ctx, expr, fieldType, row, output, colID)
+		for i, length := 0, input.NumAllRows(); i < length; i++ {
+			if !isValid[i] {
+				output.AppendNull(colID)
+				continue
+			}
+			err = executeToInt(ctx, expr, fieldType, input.GetRow(i), output, colID)
 		}
 	case types.ETReal:
-		for row := iterator.Begin(); err == nil && row != iterator.End(); row = iterator.Next() {
-			err = executeToReal(ctx, expr, fieldType, row, output, colID)
+		for i, length := 0, input.NumAllRows(); i < length; i++ {
+			if !isValid[i] {
+				output.AppendNull(colID)
+				continue
+			}
+			err = executeToReal(ctx, expr, fieldType, input.GetRow(i), output, colID)
 		}
 	case types.ETDecimal:
-		for row := iterator.Begin(); err == nil && row != iterator.End(); row = iterator.Next() {
-			err = executeToDecimal(ctx, expr, fieldType, row, output, colID)
+		for i, length := 0, input.NumAllRows(); i < length; i++ {
+			if !isValid[i] {
+				output.AppendNull(colID)
+				continue
+			}
+			err = executeToDecimal(ctx, expr, fieldType, input.GetRow(i), output, colID)
 		}
 	case types.ETDatetime, types.ETTimestamp:
-		for row := iterator.Begin(); err == nil && row != iterator.End(); row = iterator.Next() {
-			err = executeToDatetime(ctx, expr, fieldType, row, output, colID)
+		for i, length := 0, input.NumAllRows(); i < length; i++ {
+			if !isValid[i] {
+				output.AppendNull(colID)
+				continue
+			}
+			err = executeToDatetime(ctx, expr, fieldType, input.GetRow(i), output, colID)
 		}
 	case types.ETDuration:
-		for row := iterator.Begin(); err == nil && row != iterator.End(); row = iterator.Next() {
-			err = executeToDuration(ctx, expr, fieldType, row, output, colID)
+		for i, length := 0, input.NumAllRows(); i < length; i++ {
+			if !isValid[i] {
+				output.AppendNull(colID)
+				continue
+			}
+			err = executeToDuration(ctx, expr, fieldType, input.GetRow(i), output, colID)
 		}
 	case types.ETJson:
-		for row := iterator.Begin(); err == nil && row != iterator.End(); row = iterator.Next() {
-			err = executeToJSON(ctx, expr, fieldType, row, output, colID)
+		for i, length := 0, input.NumAllRows(); i < length; i++ {
+			if !isValid[i] {
+				output.AppendNull(colID)
+				continue
+			}
+			err = executeToJSON(ctx, expr, fieldType, input.GetRow(i), output, colID)
 		}
 	case types.ETString:
-		for row := iterator.Begin(); err == nil && row != iterator.End(); row = iterator.Next() {
-			err = executeToString(ctx, expr, fieldType, row, output, colID)
+		for i, length := 0, input.NumAllRows(); i < length; i++ {
+			if !isValid[i] {
+				output.AppendNull(colID)
+				continue
+			}
+			err = executeToString(ctx, expr, fieldType, input.GetRow(i), output, colID)
 		}
 	}
 	return errors.Trace(err)
@@ -235,35 +264,43 @@ func executeToString(ctx context.Context, expr Expression, fieldType *types.Fiel
 // VectorizedFilter applies a list of filters to a Chunk and
 // returns a bool slice, which indicates whether a row is passed the filters.
 // Filters is executed vectorized.
-func VectorizedFilter(ctx context.Context, filters []Expression, iterator *chunk.Iterator4Chunk, selected []bool) ([]bool, error) {
-	selected = selected[:0]
-	for i, numRows := 0, iterator.Len(); i < numRows; i++ {
-		selected = append(selected, true)
-	}
+func VectorizedFilter(ctx context.Context, filters []Expression, iterator *chunk.Iterator4Chunk) error {
+	validIdx := iterator.GetChunk().GetValid()
+
 	for _, filter := range filters {
+		// Reset validIdx before execution.
+		validIdx = validIdx[:0]
+
 		isIntType := true
 		if filter.GetType().EvalType() != types.ETInt {
 			isIntType = false
 		}
+
+		// Iterate on the valid rows within the Chunk.
 		for row := iterator.Begin(); row != iterator.End(); row = iterator.Next() {
-			if !selected[row.Idx()] {
-				continue
-			}
 			if isIntType {
 				filterResult, isNull, err := filter.EvalInt(ctx, row)
 				if err != nil {
-					return nil, errors.Trace(err)
+					return errors.Trace(err)
 				}
-				selected[row.Idx()] = selected[row.Idx()] && !isNull && (filterResult != 0)
+				if isNull || filterResult == 0 {
+					continue
+				}
 			} else {
 				// TODO: should rewrite the filter to `cast(expr as SIGNED) != 0` and always use `EvalInt`.
-				bVal, err := EvalBool([]Expression{filter}, row, ctx)
+				selected, err := EvalBool([]Expression{filter}, row, ctx)
 				if err != nil {
-					return nil, errors.Trace(err)
+					return errors.Trace(err)
 				}
-				selected[row.Idx()] = selected[row.Idx()] && bVal
+				if !selected {
+					continue
+				}
 			}
+			validIdx = append(validIdx, int32(row.Idx()))
 		}
+
+		// Reset valid row indeies in Chunk with the evaluated "validIdx".
+		iterator.GetChunk().SetValid(validIdx)
 	}
-	return selected, nil
+	return nil
 }

@@ -86,21 +86,26 @@ type Iterator4Chunk struct {
 	cursor int
 }
 
+func (it *Iterator4Chunk) GetChunk() *Chunk {
+	return it.chk
+}
+
 // Begin implements the Iterator interface
 func (it *Iterator4Chunk) Begin() Row {
-	if it.chk.NumRows() == 0 {
-		return it.End()
-	}
-	it.cursor = 1
-	return it.chk.GetRow(0)
+	it.cursor = 0
+	return it.Next()
 }
 
 // Next implements the Iterator interface
 func (it *Iterator4Chunk) Next() Row {
-	if it.cursor == it.chk.NumRows() {
+	if it.cursor >= it.chk.NumValidRows() {
 		return it.End()
 	}
-	row := it.chk.GetRow(it.cursor)
+	rowIdx := it.cursor
+	if it.chk.validIdx != nil {
+		rowIdx = int(it.chk.validIdx[it.cursor])
+	}
+	row := it.chk.GetRow(rowIdx)
 	it.cursor++
 	return row
 }
@@ -112,7 +117,7 @@ func (it *Iterator4Chunk) End() Row {
 
 // Len implements the Iterator interface
 func (it *Iterator4Chunk) Len() int {
-	return it.chk.NumRows()
+	return it.chk.NumValidRows()
 }
 
 // NewIterator4List returns a Iterator for List.
@@ -127,33 +132,30 @@ type iterator4List struct {
 }
 
 func (it *iterator4List) Begin() Row {
-	if it.chkCursor == it.li.NumChunks() {
-		return it.End()
-	}
-	chk := it.li.GetChunk(0)
-	row := chk.GetRow(0)
-	if chk.NumRows() == 1 {
-		it.chkCursor = 1
-		it.rowCursor = 0
-	} else {
-		it.chkCursor = 0
-		it.rowCursor = 1
-	}
-	return row
+	it.chkCursor, it.rowCursor = 0, 0
+	return it.Next()
 }
 
 func (it *iterator4List) Next() Row {
-	if it.chkCursor == it.li.NumChunks() {
-		return it.End()
+	for it.chkCursor < it.li.NumChunks() {
+		chk := it.li.GetChunk(it.chkCursor)
+		if chk.NumValidRows() == 0 {
+			it.chkCursor++
+			it.rowCursor = 0
+			continue
+		}
+		rowIdx := it.rowCursor
+		if chk.validIdx != nil {
+			rowIdx = int(chk.validIdx[it.rowCursor])
+		}
+		it.rowCursor++
+		if it.rowCursor == chk.NumValidRows() {
+			it.rowCursor = 0
+			it.chkCursor++
+		}
+		return chk.GetRow(rowIdx)
 	}
-	chk := it.li.GetChunk(it.chkCursor)
-	row := chk.GetRow(it.rowCursor)
-	it.rowCursor++
-	if it.rowCursor == chk.NumRows() {
-		it.rowCursor = 0
-		it.chkCursor++
-	}
-	return row
+	return it.End()
 }
 
 func (it *iterator4List) End() Row {

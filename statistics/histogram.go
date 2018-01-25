@@ -318,7 +318,7 @@ func (hg *Histogram) greaterAndEqRowCount(value types.Datum) float64 {
 // lessRowCount estimates the row count where the column less than value.
 func (hg *Histogram) lessRowCount(value types.Datum) float64 {
 	index, match := hg.Bounds.LowerBound(0, &value)
-	if index == hg.Bounds.NumRows() {
+	if index == hg.Bounds.NumAllRows() {
 		return hg.totalRowCount()
 	}
 	// Since we store the lower and upper bound together, so dividing the index by 2 will get the bucket index.
@@ -426,7 +426,7 @@ func HistogramFromProto(protoHg *tipb.Histogram) *Histogram {
 func (hg *Histogram) popFirstBucket() {
 	hg.Buckets = hg.Buckets[1:]
 	c := chunk.NewChunk([]*types.FieldType{hg.tp, hg.tp})
-	c.Append(hg.Bounds, 2, hg.Bounds.NumRows())
+	c.Append(hg.Bounds, 2, hg.Bounds.NumAllRows())
 	hg.Bounds = c
 }
 
