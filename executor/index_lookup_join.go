@@ -55,6 +55,8 @@ type IndexLookUpJoin struct {
 	task             *lookUpJoinTask
 	joinResult       *chunk.Chunk
 	joinResultCursor int
+	innerIter        chunk.Iterator
+	innerRowBuffer   chunk.Row
 
 	resultGenerator joinResultGenerator
 
@@ -177,22 +179,8 @@ func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWork
 // NextChunk implements the Executor interface.
 func (e *IndexLookUpJoin) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	chk.Reset()
-	for {
-		err := e.prepareJoinResult(goCtx)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if e.joinResult.NumRows() == 0 {
-			return nil
-		}
-		for e.joinResultCursor < e.joinResult.NumRows() {
-			if chk.NumRows() == e.maxChunkSize {
-				return nil
-			}
-			chk.AppendRow(e.joinResult.GetRow(e.joinResultCursor))
-			e.joinResultCursor++
-		}
-	}
+	err := e.prepareJoinResult(goCtx, chk, true)
+	return errors.Trace(err)
 }
 
 // Next implements the Executor interface.
@@ -200,7 +188,7 @@ func (e *IndexLookUpJoin) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error
 // support chunk, so we have to implement Next.
 func (e *IndexLookUpJoin) Next(goCtx goctx.Context) (Row, error) {
 	for {
-		err := e.prepareJoinResult(goCtx)
+		err := e.prepareJoinResult(goCtx, e.joinResult, false)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -220,12 +208,12 @@ func (e *IndexLookUpJoin) Next(goCtx goctx.Context) (Row, error) {
 	}
 }
 
-func (e *IndexLookUpJoin) prepareJoinResult(goCtx goctx.Context) error {
-	if e.joinResultCursor < e.joinResult.NumRows() {
+func (e *IndexLookUpJoin) prepareJoinResult(goCtx goctx.Context, chk *chunk.Chunk, forChunk bool) error {
+	if !forChunk && e.joinResultCursor < chk.NumRows() {
 		return nil
 	}
-	e.joinResult.Reset()
 	e.joinResultCursor = 0
+	e.joinResult.Reset()
 	for {
 		task, err := e.getFinishedTask(goCtx)
 		if err != nil {
@@ -234,16 +222,24 @@ func (e *IndexLookUpJoin) prepareJoinResult(goCtx goctx.Context) error {
 		if task == nil {
 			return nil
 		}
-		for task.cursor < task.outerResult.NumRows() {
+		if e.innerIter == nil || e.innerRowBuffer == e.innerIter.End() {
 			e.lookUpMatchedInners(task, task.cursor)
-			outerRow := task.outerResult.GetRow(task.cursor)
-			task.cursor++
-			err = e.resultGenerator.emitToChunk(outerRow, chunk.NewIterator4Slice(task.matchedInners), e.joinResult)
-			if err != nil {
+			e.innerIter = chunk.NewIterator4Slice(task.matchedInners)
+			e.innerRowBuffer = e.innerIter.Begin()
+		}
+
+		outerRow := task.outerResult.GetRow(task.cursor)
+		task.cursor++
+		if e.innerIter.Len() == 0 {
+			_, err = e.resultGenerator.emitToChunk(outerRow, nil, chunk.Row{}, chk)
+			if err != nil || chk.NumRows() == e.maxChunkSize {
 				return errors.Trace(err)
 			}
-			if e.joinResult.NumRows() > 0 {
-				return nil
+		}
+		for e.innerRowBuffer != e.innerIter.End() {
+			e.innerRowBuffer, err = e.resultGenerator.emitToChunk(outerRow, e.innerIter, e.innerRowBuffer, chk)
+			if err != nil || chk.NumRows() == e.maxChunkSize {
+				return errors.Trace(err)
 			}
 		}
 	}

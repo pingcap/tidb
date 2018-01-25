@@ -18,7 +18,6 @@ import (
 	"sync/atomic"
 	"unsafe"
 
-	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/plan"
@@ -592,7 +591,6 @@ func (e *HashJoinExec) runJoinWorker4Chunk(workerID int) {
 	}
 
 	// Read and filter outerResult, and join the outerResult with the inner rows.
-	joinResultBuffer := e.newChunk()
 	emptyOuterResult := &outerChkResource{
 		dest: e.outerResultChs[workerID],
 	}
@@ -608,7 +606,7 @@ func (e *HashJoinExec) runJoinWorker4Chunk(workerID int) {
 		if !ok {
 			break
 		}
-		ok, joinResult = e.join2Chunk(workerID, outerResult, joinResultBuffer, joinResult, selected)
+		ok, joinResult = e.join2Chunk(workerID, outerResult, joinResult, selected)
 		if !ok {
 			break
 		}
@@ -667,27 +665,28 @@ func (e *HashJoinExec) joinOuterRow(workerID int, outerRow Row, resultBuffer *ex
 	return true
 }
 
-func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID int, outerRow chunk.Row, chk *chunk.Chunk) error {
+func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID int, outerRow chunk.Row, joinResult *hashjoinWorkerResult) (bool, *hashjoinWorkerResult) {
 	buffer := e.hashJoinBuffers[workerID]
 	hasNull, joinKey, err := e.getJoinKeyFromChkRow(true, outerRow, buffer.bytes)
 	if err != nil {
-		return errors.Trace(err)
+		joinResult.err = errors.Trace(err)
+		return false, joinResult
 	}
 	if hasNull {
-		err = e.resultGenerators[workerID].emitToChunk(outerRow, nil, chk)
+		_, err = e.resultGenerators[workerID].emitToChunk(outerRow, nil, chunk.Row{}, joinResult.chk)
 		if err != nil {
-			return errors.Trace(err)
+			joinResult.err = errors.Trace(err)
 		}
-		return nil
+		return err == nil, joinResult
 	}
 	e.hashTableValBufs[workerID] = e.hashTable.Get(joinKey, e.hashTableValBufs[workerID][:0])
 	innerPtrs := e.hashTableValBufs[workerID]
 	if len(innerPtrs) == 0 {
-		err = e.resultGenerators[workerID].emitToChunk(outerRow, nil, chk)
+		_, err = e.resultGenerators[workerID].emitToChunk(outerRow, nil, chunk.Row{}, joinResult.chk)
 		if err != nil {
-			return errors.Trace(err)
+			joinResult.err = errors.Trace(err)
 		}
-		return nil
+		return err == nil, joinResult
 	}
 	innerRows := make([]chunk.Row, 0, len(innerPtrs))
 	for _, b := range innerPtrs {
@@ -695,12 +694,23 @@ func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID int, outerRow chunk.Ro
 		matchedInner := e.innerResult.GetRow(ptr)
 		innerRows = append(innerRows, matchedInner)
 	}
-
-	err = e.resultGenerators[workerID].emitToChunk(outerRow, chunk.NewIterator4Slice(innerRows), chk)
-	if err != nil {
-		return errors.Trace(err)
+	iter := chunk.NewIterator4Slice(innerRows)
+	for inner := iter.Begin(); inner != iter.End(); {
+		inner, err = e.resultGenerators[workerID].emitToChunk(outerRow, iter, inner, joinResult.chk)
+		if err != nil {
+			joinResult.err = errors.Trace(err)
+			break
+		}
+		if joinResult.chk.NumRows() == e.maxChunkSize {
+			ok := true
+			e.joinResultCh <- joinResult
+			ok, joinResult = e.getNewJoinResult(workerID)
+			if !ok {
+				return false, joinResult
+			}
+		}
 	}
-	return nil
+	return joinResult.err == nil, joinResult
 }
 
 func (e *HashJoinExec) getNewJoinResult(workerID int) (bool, *hashjoinWorkerResult) {
@@ -716,7 +726,7 @@ func (e *HashJoinExec) getNewJoinResult(workerID int) (bool, *hashjoinWorkerResu
 	return ok, joinResult
 }
 
-func (e *HashJoinExec) join2Chunk(workerID int, outerChk *chunk.Chunk, joinResultChkBuffer *chunk.Chunk, joinResult *hashjoinWorkerResult, selected []bool) (ok bool, _ *hashjoinWorkerResult) {
+func (e *HashJoinExec) join2Chunk(workerID int, outerChk *chunk.Chunk, joinResult *hashjoinWorkerResult, selected []bool) (ok bool, _ *hashjoinWorkerResult) {
 	var err error
 	selected, err = expression.VectorizedFilter(e.ctx, e.outerFilter, chunk.NewIterator4Chunk(outerChk), selected)
 	if err != nil {
@@ -724,29 +734,24 @@ func (e *HashJoinExec) join2Chunk(workerID int, outerChk *chunk.Chunk, joinResul
 		return false, joinResult
 	}
 	for i := range selected {
-		joinResultChkBuffer.Reset()
 		if !selected[i] { // process unmatched outer rows
-			err = e.resultGenerators[workerID].emitToChunk(outerChk.GetRow(i), nil, joinResultChkBuffer)
-		} else { // process matched outer rows
-			err = e.joinMatchedOuterRow2Chunk(workerID, outerChk.GetRow(i), joinResultChkBuffer)
-		}
-		if err != nil {
-			joinResult.err = errors.Trace(err)
-			return false, joinResult
-		}
-		// Splitting the joinResultChkBuffer into chunks that reach e.maxChunkSize.
-		numAppended := 0
-		for numAppended < joinResultChkBuffer.NumRows() {
-			if joinResult.chk.NumRows() == e.maxChunkSize {
-				e.joinResultCh <- joinResult
-				ok, joinResult = e.getNewJoinResult(workerID)
-				if !ok {
-					return false, joinResult
-				}
+			_, err = e.resultGenerators[workerID].emitToChunk(outerChk.GetRow(i), nil, chunk.Row{}, joinResult.chk)
+			if err != nil {
+				joinResult.err = errors.Trace(err)
+				return false, joinResult
 			}
-			numBatchSize := mathutil.Min(e.maxChunkSize-joinResult.chk.NumRows(), joinResultChkBuffer.NumRows()-numAppended)
-			joinResult.chk.Append(joinResultChkBuffer, numAppended, numAppended+numBatchSize)
-			numAppended += numBatchSize
+		} else { // process matched outer rows
+			ok, joinResult = e.joinMatchedOuterRow2Chunk(workerID, outerChk.GetRow(i), joinResult)
+			if !ok {
+				return ok, joinResult
+			}
+		}
+		if joinResult.chk.NumRows() == e.maxChunkSize {
+			e.joinResultCh <- joinResult
+			ok, joinResult = e.getNewJoinResult(workerID)
+			if !ok {
+				return false, joinResult
+			}
 		}
 	}
 	return true, joinResult
@@ -839,7 +844,9 @@ type NestedLoopApplyExec struct {
 	innerList        *chunk.List
 	innerChunk       *chunk.Chunk
 	innerSelected    []bool
-	resultChunk      *chunk.Chunk
+	innerIter        chunk.Iterator
+	innerRowBuffer   chunk.Row
+	outerRowBuffer   *chunk.Row
 }
 
 // Close implements the Executor interface.
@@ -879,7 +886,7 @@ func (e *NestedLoopApplyExec) fetchOuterRow(goCtx goctx.Context) (Row, bool, err
 	}
 }
 
-func (e *NestedLoopApplyExec) fetchSelectedOuterRow(goCtx goctx.Context) (*chunk.Row, error) {
+func (e *NestedLoopApplyExec) fetchSelectedOuterRow(goCtx goctx.Context, chk *chunk.Chunk) (*chunk.Row, error) {
 	outerIter := chunk.NewIterator4Chunk(e.outerChunk)
 	for {
 		if e.outerChunkCursor >= e.outerChunk.NumRows() {
@@ -902,8 +909,8 @@ func (e *NestedLoopApplyExec) fetchSelectedOuterRow(goCtx goctx.Context) (*chunk
 		if selected {
 			return &outerRow, nil
 		} else if e.outer {
-			err := e.resultGenerator.emitToChunk(outerRow, nil, e.resultChunk)
-			if err != nil {
+			_, err := e.resultGenerator.emitToChunk(outerRow, nil, chunk.Row{}, chk)
+			if err != nil || chk.NumRows() == e.maxChunkSize {
 				return nil, errors.Trace(err)
 			}
 		}
@@ -1045,34 +1052,28 @@ func (e *HashJoinExec) buildHashTableForList() error {
 }
 
 // NextChunk implements the Executor interface.
-func (e *NestedLoopApplyExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+func (e *NestedLoopApplyExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) (err error) {
 	chk.Reset()
 	for {
-		appendSize := mathutil.Min(e.resultChunk.NumRows()-e.cursor, e.maxChunkSize)
-		if appendSize > 0 {
-			chk.Append(e.resultChunk, e.cursor, e.cursor+appendSize)
-			e.cursor += appendSize
-			if chk.NumRows() == e.maxChunkSize {
-				return nil
+		if e.innerIter == nil || e.innerRowBuffer == e.innerIter.End() {
+			e.outerRowBuffer, err = e.fetchSelectedOuterRow(goCtx, chk)
+			if e.outerRowBuffer == nil || err != nil {
+				return errors.Trace(err)
 			}
+			for _, col := range e.outerSchema {
+				*col.Data = e.outerRowBuffer.GetDatum(col.Index, col.RetType)
+			}
+			err = e.fetchAllInners(goCtx)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			e.innerIter = chunk.NewIterator4List(e.innerList)
+			e.innerRowBuffer = e.innerIter.Begin()
 		}
-		outerRow, err := e.fetchSelectedOuterRow(goCtx)
-		if outerRow == nil || err != nil {
+
+		e.innerRowBuffer, err = e.resultGenerator.emitToChunk(*e.outerRowBuffer, e.innerIter, e.innerRowBuffer, chk)
+		if err != nil || chk.NumRows() == e.maxChunkSize {
 			return errors.Trace(err)
 		}
-		for _, col := range e.outerSchema {
-			*col.Data = outerRow.GetDatum(col.Index, col.RetType)
-		}
-		err = e.fetchAllInners(goCtx)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		e.resultChunk.Reset()
-		iter := chunk.NewIterator4List(e.innerList)
-		err = e.resultGenerator.emitToChunk(*outerRow, iter, e.resultChunk)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		e.cursor = 0
 	}
 }
