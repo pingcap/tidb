@@ -529,7 +529,7 @@ func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (as
 	}
 	np = er.b.buildExists(np)
 	if len(np.extractCorrelatedCols()) > 0 {
-		er.p = er.b.buildSemiApply(er.p, np.Children()[0].(LogicalPlan), nil, er.asScalar, false)
+		er.p = er.b.buildSemiApply(er.p, np.Children()[0], nil, er.asScalar, false)
 		if !er.asScalar {
 			return v, true
 		}
