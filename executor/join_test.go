@@ -709,7 +709,7 @@ func (s *testSuite) TestJoinLeak(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (d int)")
 	tk.MustExec("begin")
-	for i := 0; i < 998; i++ {
+	for i := 0; i < 1002; i++ {
 		tk.MustExec("insert t values (1)")
 	}
 	tk.MustExec("commit")

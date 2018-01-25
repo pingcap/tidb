@@ -229,7 +229,7 @@ var defaultConf = Config{
 		CrossJoin:       true,
 		StatsLease:      "3s",
 		RunAutoAnalyze:  true,
-		StmtCountLimit:  1000,
+		StmtCountLimit:  5000,
 	},
 	XProtocol: XProtocol{
 		XHost: "0.0.0.0",

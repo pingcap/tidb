@@ -1839,9 +1839,10 @@ func (s *testSessionSuite) TestStatementErrorInTransaction(c *C) {
 func (s *testSessionSuite) TestStatementCountLimit(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table stmt_count_limit (id int)")
+	saved := config.GetGlobalConfig().Performance.StmtCountLimit
 	config.GetGlobalConfig().Performance.StmtCountLimit = 3
 	defer func() {
-		config.GetGlobalConfig().Performance.StmtCountLimit = 1000
+		config.GetGlobalConfig().Performance.StmtCountLimit = saved
 	}()
 	tk.MustExec("begin")
 	tk.MustExec("insert into stmt_count_limit values (1)")
