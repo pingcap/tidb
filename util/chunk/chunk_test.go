@@ -501,6 +501,101 @@ func appendRow(chk *Chunk, row Row) {
 	}
 }
 
+func BenchmarkAppendBytes1024(b *testing.B) {
+	chk := NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)})
+	var bs = make([]byte, 256)
+	for i := 0; i < b.N; i++ {
+		appendBytes(chk, bs, 1024)
+	}
+}
+
+func BenchmarkAppendBytes512(b *testing.B) {
+	chk := NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)})
+	var bs = make([]byte, 256)
+	for i := 0; i < b.N; i++ {
+		appendBytes(chk, bs, 512)
+	}
+}
+
+func BenchmarkAppendBytes256(b *testing.B) {
+	chk := NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)})
+	var bs = make([]byte, 256)
+	for i := 0; i < b.N; i++ {
+		appendBytes(chk, bs, 256)
+	}
+}
+
+func BenchmarkAppendBytes128(b *testing.B) {
+	chk := NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)})
+	var bs = make([]byte, 256)
+	for i := 0; i < b.N; i++ {
+		appendBytes(chk, bs, 128)
+	}
+}
+
+func BenchmarkAppendBytes64(b *testing.B) {
+	chk := NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)})
+	var bs = make([]byte, 256)
+	for i := 0; i < b.N; i++ {
+		appendBytes(chk, bs, 64)
+	}
+}
+
+func BenchmarkAppendBytes32(b *testing.B) {
+	chk := NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)})
+	var bs = make([]byte, 256)
+	for i := 0; i < b.N; i++ {
+		appendBytes(chk, bs, 32)
+	}
+}
+
+func BenchmarkAppendBytes16(b *testing.B) {
+	chk := NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)})
+	var bs = make([]byte, 256)
+	for i := 0; i < b.N; i++ {
+		appendBytes(chk, bs, 16)
+	}
+}
+
+func BenchmarkAppendBytes8(b *testing.B) {
+	chk := NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)})
+	var bs = make([]byte, 256)
+	for i := 0; i < b.N; i++ {
+		appendBytes(chk, bs, 8)
+	}
+}
+
+func BenchmarkAppendBytes4(b *testing.B) {
+	chk := NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)})
+	var bs = make([]byte, 256)
+	for i := 0; i < b.N; i++ {
+		appendBytes(chk, bs, 4)
+	}
+}
+
+func BenchmarkAppendBytes2(b *testing.B) {
+	chk := NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)})
+	var bs = make([]byte, 256)
+	for i := 0; i < b.N; i++ {
+		appendBytes(chk, bs, 2)
+	}
+}
+
+func BenchmarkAppendBytes1(b *testing.B) {
+	chk := NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)})
+	var bs = make([]byte, 256)
+	for i := 0; i < b.N; i++ {
+		appendBytes(chk, bs, 1)
+	}
+}
+
+func appendBytes(chk *Chunk, bs []byte, times int) {
+	chk.Reset()
+	for i := 0; i < times; i++ {
+		chk.AppendBytes(0, bs)
+	}
+}
+
 func BenchmarkAccess(b *testing.B) {
 	b.StopTimer()
 	rowChk := newChunk(8)
