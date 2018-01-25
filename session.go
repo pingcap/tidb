@@ -992,10 +992,10 @@ func (s *session) StmtCommit() error {
 	})
 
 	// Need to flush binlog.
-	for key, value := range st.mutations {
-		mutation := getBinlogMutation(s, key)
+	for tableID, delta := range st.mutations {
+		mutation := getBinlogMutation(s, tableID)
 		if err == nil {
-			mergeToMutation(mutation, value)
+			mergeToMutation(mutation, delta)
 		}
 	}
 	return errors.Trace(err)
@@ -1029,9 +1029,6 @@ func getBinlogMutation(ctx context.Context, tableID int64) *binlog.TableMutation
 }
 
 func mergeToMutation(m1, m2 *binlog.TableMutation) {
-	if m1.TableId != m2.TableId {
-		log.Fatal("m1.TableId must equal to m2.TableId")
-	}
 	m1.InsertedRows = append(m1.InsertedRows, m2.InsertedRows...)
 	m1.UpdatedRows = append(m1.UpdatedRows, m2.UpdatedRows...)
 	m1.DeletedIds = append(m1.DeletedIds, m2.DeletedIds...)
