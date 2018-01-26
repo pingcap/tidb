@@ -19,12 +19,17 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
 func (s *testStatsUpdateSuite) TestDMLUpdate(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
+	statistics.RunDynamicUpdate = true
+	defer func() {
+		statistics.RunDynamicUpdate = false
+	}()
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a int, b int, primary key(a), index idx(a,b))")
 	testKit.MustExec("insert into t values (1,1), (3,3)")

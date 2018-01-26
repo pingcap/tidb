@@ -44,10 +44,16 @@ type BktDelta struct {
 	Bound *types.Datum // Bound is the new lower bound of the bucket. For the last bucket, it is also used to store the new upper bound of the bucket.
 }
 
+// RunDynamicUpdate indicates if this TiDB server run dynamic update.
+var RunDynamicUpdate = false
+
 // UpdateTableDelta updates the table delta according to the changed row.
 func (delta *TableDelta) UpdateTableDelta(sc *stmtctx.StatementContext, h *Handle, tableInfo *model.TableInfo, row []types.Datum, deltaCount, count int64) {
 	delta.Delta += deltaCount
 	delta.Count += count
+	if !RunDynamicUpdate {
+		return
+	}
 	table := h.GetTableStats(tableInfo.ID)
 	if table.Pseudo {
 		return
