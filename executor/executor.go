@@ -589,10 +589,10 @@ func init() {
 		}
 		goCtx := goctx.TODO()
 		err = exec.Open(goCtx)
+		defer exec.Close()
 		if err != nil {
 			return rows, errors.Trace(err)
 		}
-		defer exec.Close()
 		if ctx.GetSessionVars().EnableChunk {
 			for {
 				chk := exec.newChunk()
