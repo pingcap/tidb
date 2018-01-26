@@ -43,7 +43,7 @@ func (s *testStatsUpdateSuite) TestDMLUpdate(c *C) {
 	testKit.MustExec("insert into t values (2,2)")
 	testKit.MustExec("insert into t values (0,0)")
 	delta := h.GetStatsDelta(tableInfo.ID)
-	newTable := delta.UpdateStats(sc, t)
+	newTable := delta.UpdateTable(sc, t)
 	c.Assert(newTable.Columns[colID].String(), Equals, "column:1 ndv:2\n[0, 1] 1 2\n[2, 3] 1 4")
 	c.Assert(newTable.Indices[idxID].String(), Equals, "index:1 ndv:2\n[(0, 0), (1, 1)] 1 2\n[(2, 2), (3, 3)] 1 4")
 
@@ -53,32 +53,32 @@ func (s *testStatsUpdateSuite) TestDMLUpdate(c *C) {
 	}
 	testKit.MustExec("commit")
 	delta = h.GetStatsDelta(tableInfo.ID)
-	newTable = delta.UpdateStats(sc, t)
+	newTable = delta.UpdateTable(sc, t)
 	c.Assert(newTable.Columns[colID].String(), Equals, "column:1 ndv:2\n[0, 1] 1 2\n[2, 2051] 1 2052")
 	c.Assert(newTable.Indices[idxID].String(), Equals, "index:1 ndv:2\n[(0, 0), (1, 1)] 1 2\n[(2, 2), (2051, 2051)] 1 2052")
 
 	testKit.MustExec("delete from t where a >= 4")
 	delta = h.GetStatsDelta(tableInfo.ID)
-	newTable = delta.UpdateStats(sc, t)
+	newTable = delta.UpdateTable(sc, t)
 	c.Assert(newTable.Columns[colID].String(), Equals, "column:1 ndv:2\n[0, 1] 1 2\n[2, 2051] 1 4")
 	c.Assert(newTable.Indices[idxID].String(), Equals, "index:1 ndv:2\n[(0, 0), (1, 1)] 1 2\n[(2, 2), (2051, 2051)] 1 4")
 
 	testKit.MustExec("delete from t where a = 0")
 	testKit.MustExec("delete from t where a = 2")
 	delta = h.GetStatsDelta(tableInfo.ID)
-	newTable = delta.UpdateStats(sc, t)
+	newTable = delta.UpdateTable(sc, t)
 	c.Assert(newTable.Columns[colID].String(), Equals, "column:1 ndv:2\n[0, 1] 1 1\n[2, 2051] 1 2")
 	c.Assert(newTable.Indices[idxID].String(), Equals, "index:1 ndv:2\n[(0, 0), (1, 1)] 1 1\n[(2, 2), (2051, 2051)] 1 2")
 
 	testKit.MustExec("update t set a = a - 2")
 	delta = h.GetStatsDelta(tableInfo.ID)
-	newTable = delta.UpdateStats(sc, t)
+	newTable = delta.UpdateTable(sc, t)
 	c.Assert(newTable.Columns[colID].String(), Equals, "column:1 ndv:2\n[-1, 1] 1 2\n[2, 2051] 1 2")
 	c.Assert(newTable.Indices[idxID].String(), Equals, "index:1 ndv:2\n[(-1, 1), (1, 1)] 1 1\n[(1, 3), (2051, 2051)] 1 2")
 
 	testKit.MustExec("replace into t(a, b) values (1, 0)")
 	delta = h.GetStatsDelta(tableInfo.ID)
-	newTable = delta.UpdateStats(sc, t)
+	newTable = delta.UpdateTable(sc, t)
 	c.Assert(newTable.Columns[colID].String(), Equals, "column:1 ndv:2\n[-1, 1] 1 2\n[2, 2051] 1 2")
 	c.Assert(newTable.Indices[idxID].String(), Equals, "index:1 ndv:2\n[(-1, 1), (1, 1)] 1 2\n[(1, 3), (2051, 2051)] 1 2")
 }

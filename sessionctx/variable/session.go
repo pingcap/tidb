@@ -98,9 +98,6 @@ func (tc *TransactionContext) GetTableDelta(tableID int64) interface{} {
 	if tc.TableDeltaMap == nil {
 		tc.TableDeltaMap = make(map[int64]interface{})
 	}
-	if _, ok := tc.TableDeltaMap[tableID]; !ok {
-		tc.TableDeltaMap[tableID] = nil
-	}
 	return tc.TableDeltaMap[tableID]
 }
 

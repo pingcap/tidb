@@ -44,11 +44,14 @@ type BktDelta struct {
 	Bound *types.Datum // Bound is the new lower bound of the bucket. For the last bucket, it is also used to store the new upper bound of the bucket.
 }
 
-// Update updates the table delta according to the changed row.
-func (delta *TableDelta) Update(sc *stmtctx.StatementContext, h *Handle, tableInfo *model.TableInfo, row []types.Datum, deltaCount, count int64) {
+// UpdateTableDelta updates the table delta according to the changed row.
+func (delta *TableDelta) UpdateTableDelta(sc *stmtctx.StatementContext, h *Handle, tableInfo *model.TableInfo, row []types.Datum, deltaCount, count int64) {
 	delta.Delta += deltaCount
 	delta.Count += count
 	table := h.GetTableStats(tableInfo.ID)
+	if table.Pseudo {
+		return
+	}
 	// Update the primary key's histogram.
 	if tableInfo.PKIsHandle {
 		pk := tableInfo.GetPkColInfo()
@@ -58,7 +61,7 @@ func (delta *TableDelta) Update(sc *stmtctx.StatementContext, h *Handle, tableIn
 				delta.PKID = pk.ID
 				delta.PKDelta = &HistDelta{}
 			}
-			delta.PKDelta.update(sc, &c.Histogram, &row[pk.Offset], deltaCount)
+			delta.PKDelta.updateHistDelta(sc, &c.Histogram, &row[pk.Offset], deltaCount)
 		}
 	}
 	// Update the indices' histogram.
@@ -70,7 +73,7 @@ func (delta *TableDelta) Update(sc *stmtctx.StatementContext, h *Handle, tableIn
 		if !ok {
 			continue
 		}
-		value := encodeValue(h.ctx.GetSessionVars().StmtCtx, idxInfo, row)
+		value := encodeIndexValue(h.ctx.GetSessionVars().StmtCtx, idxInfo, row)
 		if value == nil {
 			continue
 		}
@@ -81,11 +84,11 @@ func (delta *TableDelta) Update(sc *stmtctx.StatementContext, h *Handle, tableIn
 			delta.IdxDeltas[idxInfo.ID] = &HistDelta{}
 		}
 		idxDelta := delta.IdxDeltas[idxInfo.ID]
-		idxDelta.update(sc, &idx.Histogram, value, deltaCount)
+		idxDelta.updateHistDelta(sc, &idx.Histogram, value, deltaCount)
 	}
 }
 
-func encodeValue(sc *stmtctx.StatementContext, idxInfo *model.IndexInfo, row []types.Datum) *types.Datum {
+func encodeIndexValue(sc *stmtctx.StatementContext, idxInfo *model.IndexInfo, row []types.Datum) *types.Datum {
 	values := make([]types.Datum, 0, len(idxInfo.Columns))
 	for _, col := range idxInfo.Columns {
 		if col.Offset < 0 || col.Offset >= len(row) {
@@ -102,7 +105,7 @@ func encodeValue(sc *stmtctx.StatementContext, idxInfo *model.IndexInfo, row []t
 	return &d
 }
 
-func (delta *BktDelta) update(sc *stmtctx.StatementContext, value *types.Datum, result int) {
+func (delta *BktDelta) updateBktBound(sc *stmtctx.StatementContext, value *types.Datum, isUpper bool) {
 	if delta.Bound == nil {
 		delta.Bound = value
 		return
@@ -112,12 +115,12 @@ func (delta *BktDelta) update(sc *stmtctx.StatementContext, value *types.Datum, 
 		terror.Log(err)
 		return
 	}
-	if cmp == result {
+	if (isUpper && cmp == -1) || (!isUpper && cmp == 1) {
 		delta.Bound = value
 	}
 }
 
-func (delta *HistDelta) update(sc *stmtctx.StatementContext, hg *Histogram, value *types.Datum, deltaCount int64) {
+func (delta *HistDelta) updateHistDelta(sc *stmtctx.StatementContext, hg *Histogram, value *types.Datum, deltaCount int64) {
 	if hg.Len() == 0 {
 		return
 	}
@@ -127,7 +130,7 @@ func (delta *HistDelta) update(sc *stmtctx.StatementContext, hg *Histogram, valu
 		bktDelta := delta.BktDeltas
 		delta.BktDeltas = nil
 		for _, bkt := range bktDelta {
-			delta.update(sc, hg, bkt.Bound, 0)
+			delta.updateHistDelta(sc, hg, bkt.Bound, 0)
 		}
 	}
 	if value == nil {
@@ -144,41 +147,33 @@ func (delta *HistDelta) update(sc *stmtctx.StatementContext, hg *Histogram, valu
 	bkt.Count += deltaCount
 	// This value falls outside the whole histogram, so we need to update the last bucket's upper bound.
 	if idx == hg.Bounds.NumRows() {
-		bkt.update(sc, value, -1)
+		bkt.updateBktBound(sc, value, true)
 		return
 	}
 	if idx%2 == 0 && !match {
-		bkt.update(sc, value, 1)
+		bkt.updateBktBound(sc, value, false)
 	}
 }
 
-func (delta *BktDelta) merge(sc *stmtctx.StatementContext, rDelta *BktDelta, isLast bool) {
-	delta.Count += rDelta.Count
-	if rDelta.Bound == nil {
-		return
-	}
-	if isLast {
-		delta.update(sc, rDelta.Bound, -1)
-	} else {
-		delta.update(sc, rDelta.Bound, 1)
-	}
-}
-
-func (delta *HistDelta) merge(sc *stmtctx.StatementContext, rDelta *HistDelta, hg *Histogram) {
+func (delta *HistDelta) mergeHistDelta(sc *stmtctx.StatementContext, rDelta *HistDelta, hg *Histogram) {
 	// Make sure that the two delta's histogram version are up to date.
-	delta.update(sc, hg, nil, 0)
-	rDelta.update(sc, hg, nil, 0)
+	delta.updateHistDelta(sc, hg, nil, 0)
+	rDelta.updateHistDelta(sc, hg, nil, 0)
 	for id, rBkt := range rDelta.BktDeltas {
 		bkt, ok := delta.BktDeltas[id]
 		if !ok {
 			delta.BktDeltas[id] = rBkt
 			continue
 		}
-		bkt.merge(sc, rBkt, id == hg.Len())
+		bkt.Count += rBkt.Count
+		if rBkt.Bound == nil {
+			continue
+		}
+		bkt.updateBktBound(sc, rBkt.Bound, id == hg.Len())
 	}
 }
 
-func (delta *TableDelta) merge(sc *stmtctx.StatementContext, rDelta *TableDelta, table *Table) {
+func (delta *TableDelta) mergeTableDelta(sc *stmtctx.StatementContext, rDelta *TableDelta, table *Table) {
 	delta.Count += rDelta.Count
 	delta.Delta += rDelta.Delta
 	if delta.IdxDeltas == nil {
@@ -195,7 +190,7 @@ func (delta *TableDelta) merge(sc *stmtctx.StatementContext, rDelta *TableDelta,
 				delta.IdxDeltas[id] = rd
 				continue
 			}
-			d.merge(sc, rd, &idx.Histogram)
+			d.mergeHistDelta(sc, rd, &idx.Histogram)
 		}
 	}
 	if rDelta.PKDelta != nil {
@@ -208,7 +203,7 @@ func (delta *TableDelta) merge(sc *stmtctx.StatementContext, rDelta *TableDelta,
 			delta.PKID, delta.PKDelta = rDelta.PKID, rDelta.PKDelta
 			return
 		}
-		delta.PKDelta.merge(sc, rDelta.PKDelta, &col.Histogram)
+		delta.PKDelta.mergeHistDelta(sc, rDelta.PKDelta, &col.Histogram)
 	}
 }
 
@@ -216,7 +211,7 @@ func (delta *HistDelta) updateHistogram(sc *stmtctx.StatementContext, oldHg *His
 	if oldHg.Len() == 0 {
 		return oldHg
 	}
-	delta.update(sc, oldHg, nil, 0)
+	delta.updateHistDelta(sc, oldHg, nil, 0)
 	hg := NewHistogram(oldHg.ID, oldHg.NDV, oldHg.NullCount, oldHg.LastUpdateVersion, oldHg.tp, oldHg.Len())
 	for bktID := 0; bktID < oldHg.Len(); bktID++ {
 		hg.Buckets = append(hg.Buckets, Bucket{})
@@ -250,8 +245,8 @@ func (delta *HistDelta) updateHistogram(sc *stmtctx.StatementContext, oldHg *His
 	return hg
 }
 
-// UpdateStats update the stats according to the delta info.
-func (delta *TableDelta) UpdateStats(sc *stmtctx.StatementContext, oldTable *Table) *Table {
+// UpdateTable update the stats according to the delta info.
+func (delta *TableDelta) UpdateTable(sc *stmtctx.StatementContext, oldTable *Table) *Table {
 	t := oldTable.copy()
 	if delta.PKDelta != nil {
 		col, ok := t.Columns[delta.PKID]

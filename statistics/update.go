@@ -37,7 +37,7 @@ func (m tableDeltaMap) update(sc *stmtctx.StatementContext, id int64, delta *Tab
 		m[id] = delta
 		return
 	}
-	m[id].merge(sc, delta, table)
+	m[id].mergeTableDelta(sc, delta, table)
 }
 
 func (h *Handle) merge(s *SessionStatsCollector) {

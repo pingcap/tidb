@@ -440,7 +440,9 @@ func (e *SelectLockExec) Next(goCtx goctx.Context) (Row, error) {
 				return nil, errors.Trace(err)
 			}
 			// This operation is only for schema validator check.
-			txnCtx.GetTableDelta(id)
+			if txnCtx.GetTableDelta(id) == nil {
+				txnCtx.TableDeltaMap[id] = nil
+			}
 		}
 	}
 	return row, nil
@@ -473,7 +475,9 @@ func (e *SelectLockExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error 
 				return errors.Trace(err)
 			}
 			// This operation is only for schema validator check.
-			txnCtx.GetTableDelta(id)
+			if txnCtx.GetTableDelta(id) == nil {
+				txnCtx.TableDeltaMap[id] = nil
+			}
 		}
 	}
 	return nil
