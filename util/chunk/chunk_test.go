@@ -396,7 +396,7 @@ func (s *testChunkSuite) TestGetDecimalDatum(c *check.C) {
 }
 
 func (s *testChunkSuite) TestChunkMemoryUsage(c *check.C) {
-	fieldTypes := make([]*types.FieldType, 0, 3)
+	fieldTypes := make([]*types.FieldType, 0, 5)
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeVarchar})
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeJSON})
@@ -610,4 +610,28 @@ func BenchmarkAccess(b *testing.B) {
 		}
 	}
 	fmt.Println(sum)
+}
+
+func BenchmarkChunkMemoryUsage(b *testing.B) {
+	fieldTypes := make([]*types.FieldType, 0, 4)
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeVarchar})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeDatetime})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeDuration})
+
+	initCap := 10
+	chk := NewChunkWithCapacity(fieldTypes, initCap)
+	timeObj := types.Time{Time: types.FromGoTime(time.Now()), Fsp: 0, Type: mysql.TypeDatetime}
+	durationObj := types.Duration{Duration: math.MaxInt64, Fsp: 0}
+
+	for i := 0; i < initCap; i++ {
+		chk.AppendFloat64(0, 123.123)
+		chk.AppendString(1, "123")
+		chk.AppendTime(2, timeObj)
+		chk.AppendDuration(3, durationObj)
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		chk.MemoryUsage()
+	}
 }
