@@ -14,9 +14,14 @@
 package chunk
 
 import (
+	"math"
+	"testing"
+	"time"
+
 	"github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 )
 
 func (s *testChunkSuite) TestList(c *check.C) {
@@ -72,4 +77,70 @@ func (s *testChunkSuite) TestList(c *check.C) {
 	})
 	c.Assert(err, check.IsNil)
 	c.Assert(results, check.DeepEquals, expected)
+}
+
+func (s *testChunkSuite) TestListMemoryUsage(c *check.C) {
+	fieldTypes := make([]*types.FieldType, 0, 5)
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeVarchar})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeJSON})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeDatetime})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeDuration})
+
+	maxChunkSize := 2
+	list := NewList(fieldTypes, maxChunkSize)
+	c.Assert(list.MemoryUsage(), check.Equals, int64(0))
+
+	initCap := 10
+	srcChk := NewChunkWithCapacity(fieldTypes, initCap)
+
+	jsonObj, err := json.ParseBinaryFromString("1")
+	c.Assert(err, check.IsNil)
+	timeObj := types.Time{Time: types.FromGoTime(time.Now()), Fsp: 0, Type: mysql.TypeDatetime}
+	durationObj := types.Duration{Duration: math.MaxInt64, Fsp: 0}
+
+	srcChk.AppendFloat32(0, 12.4)
+	srcChk.AppendString(1, "123")
+	srcChk.AppendJSON(2, jsonObj)
+	srcChk.AppendTime(3, timeObj)
+	srcChk.AppendDuration(4, durationObj)
+
+	row := srcChk.GetRow(0)
+	list.AppendRow(row)
+
+	memUsage := NewChunk(fieldTypes).MemoryUsage()
+	c.Assert(list.MemoryUsage(), check.Equals, memUsage)
+
+	list.Reset()
+	c.Assert(list.MemoryUsage(), check.Equals, memUsage)
+
+	list.Add(srcChk)
+	c.Assert(list.MemoryUsage(), check.Equals, memUsage+srcChk.MemoryUsage())
+}
+
+func BenchmarkListMemoryUsage(b *testing.B) {
+	fieldTypes := make([]*types.FieldType, 0, 4)
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeVarchar})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeDatetime})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeDuration})
+
+	chk := NewChunkWithCapacity(fieldTypes, 2)
+	timeObj := types.Time{Time: types.FromGoTime(time.Now()), Fsp: 0, Type: mysql.TypeDatetime}
+	durationObj := types.Duration{Duration: math.MaxInt64, Fsp: 0}
+	chk.AppendFloat64(0, 123.123)
+	chk.AppendString(1, "123")
+	chk.AppendTime(2, timeObj)
+	chk.AppendDuration(3, durationObj)
+	row := chk.GetRow(0)
+
+	initCap := 50
+	list := NewList(fieldTypes, 2)
+	for i := 0; i < initCap; i++ {
+		list.AppendRow(row)
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		list.MemoryUsage()
+	}
 }
