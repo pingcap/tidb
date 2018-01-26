@@ -11,23 +11,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package varsutil
+package variable
 
 import (
-	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
 )
-
-func TestT(t *testing.T) {
-	TestingT(t)
-}
 
 var _ = Suite(&testVarsutilSuite{})
 
@@ -58,7 +52,7 @@ func (s *testVarsutilSuite) TestTiDBOptOn(c *C) {
 
 func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	defer testleak.AfterTest(c)()
-	v := variable.NewSessionVars()
+	v := NewSessionVars()
 	v.GlobalVarsAccessor = newMockGlobalAccessor()
 
 	SetSessionSystemVar(v, "autocommit", types.NewStringDatum("1"))
@@ -84,22 +78,22 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(SetSessionSystemVar(v, "character_set_results", types.Datum{}), IsNil)
 
 	// Test case for get TiDBImportingData session variable.
-	val, err = GetSessionSystemVar(v, variable.TiDBImportingData)
+	val, err = GetSessionSystemVar(v, TiDBImportingData)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "0")
 
 	// Test case for tidb_import_data
 	c.Assert(v.ImportingData, IsFalse)
-	SetSessionSystemVar(v, variable.TiDBImportingData, types.NewStringDatum("0"))
+	SetSessionSystemVar(v, TiDBImportingData, types.NewStringDatum("0"))
 	c.Assert(v.ImportingData, IsFalse)
-	SetSessionSystemVar(v, variable.TiDBImportingData, types.NewStringDatum("1"))
+	SetSessionSystemVar(v, TiDBImportingData, types.NewStringDatum("1"))
 	c.Assert(v.ImportingData, IsTrue)
-	SetSessionSystemVar(v, variable.TiDBImportingData, types.NewStringDatum("0"))
+	SetSessionSystemVar(v, TiDBImportingData, types.NewStringDatum("0"))
 	c.Assert(v.ImportingData, IsFalse)
 
 	// Test case for change TiDBImportingData session variable.
-	SetSessionSystemVar(v, variable.TiDBImportingData, types.NewStringDatum("1"))
-	val, err = GetSessionSystemVar(v, variable.TiDBImportingData)
+	SetSessionSystemVar(v, TiDBImportingData, types.NewStringDatum("1"))
+	val, err = GetSessionSystemVar(v, TiDBImportingData)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "1")
 
@@ -118,19 +112,19 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 		{"-6:00", "UTC", true, 6 * time.Hour},
 	}
 	for _, tt := range tests {
-		err = SetSessionSystemVar(v, variable.TimeZone, types.NewStringDatum(tt.input))
+		err = SetSessionSystemVar(v, TimeZone, types.NewStringDatum(tt.input))
 		c.Assert(err, IsNil)
 		c.Assert(v.TimeZone.String(), Equals, tt.expect)
 		if tt.compareValue {
-			SetSessionSystemVar(v, variable.TimeZone, types.NewStringDatum(tt.input))
+			SetSessionSystemVar(v, TimeZone, types.NewStringDatum(tt.input))
 			t1 := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
 			t2 := time.Date(2000, 1, 1, 0, 0, 0, 0, v.TimeZone)
 			c.Assert(t2.Sub(t1), Equals, tt.diff)
 		}
 	}
-	err = SetSessionSystemVar(v, variable.TimeZone, types.NewStringDatum("6:00"))
+	err = SetSessionSystemVar(v, TimeZone, types.NewStringDatum("6:00"))
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, variable.ErrUnknownTimeZone), IsTrue)
+	c.Assert(terror.ErrorEqual(err, ErrUnknownTimeZone), IsTrue)
 
 	// Test case for sql mode.
 	for str, mode := range mysql.Str2SQLMode {
@@ -149,16 +143,16 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 
 	// Test case for tidb_index_serial_scan_concurrency.
 	c.Assert(v.IndexSerialScanConcurrency, Equals, 1)
-	SetSessionSystemVar(v, variable.TiDBIndexSerialScanConcurrency, types.NewStringDatum("4"))
+	SetSessionSystemVar(v, TiDBIndexSerialScanConcurrency, types.NewStringDatum("4"))
 	c.Assert(v.IndexSerialScanConcurrency, Equals, 4)
 
 	// Test case for tidb_batch_insert.
 	c.Assert(v.BatchInsert, IsFalse)
-	SetSessionSystemVar(v, variable.TiDBBatchInsert, types.NewStringDatum("1"))
+	SetSessionSystemVar(v, TiDBBatchInsert, types.NewStringDatum("1"))
 	c.Assert(v.BatchInsert, IsTrue)
 
 	c.Assert(v.MaxChunkSize, Equals, 1024)
-	SetSessionSystemVar(v, variable.TiDBMaxChunkSize, types.NewStringDatum("2"))
+	SetSessionSystemVar(v, TiDBMaxChunkSize, types.NewStringDatum("2"))
 	c.Assert(v.MaxChunkSize, Equals, 2)
 }
 
@@ -170,7 +164,7 @@ func newMockGlobalAccessor() *mockGlobalAccessor {
 	m := &mockGlobalAccessor{
 		vars: make(map[string]string),
 	}
-	for name, val := range variable.SysVars {
+	for name, val := range SysVars {
 		m.vars[name] = val.Value
 	}
 	return m

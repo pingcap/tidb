@@ -16,8 +16,10 @@ package variable
 import (
 	"crypto/tls"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/mysql"
@@ -137,8 +139,8 @@ type SessionVars struct {
 	UsersLock sync.RWMutex
 	// Users are user defined variables.
 	Users map[string]string
-	// Systems are system variables.
-	Systems map[string]string
+	// systems variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
+	systems map[string]string
 	// PreparedStmts stores prepared statement.
 	PreparedStmts        map[uint32]interface{}
 	PreparedStmtNameToID map[string]uint32
@@ -283,7 +285,7 @@ type SessionVars struct {
 func NewSessionVars() *SessionVars {
 	return &SessionVars{
 		Users:                      make(map[string]string),
-		Systems:                    make(map[string]string),
+		systems:                    make(map[string]string),
 		PreparedStmts:              make(map[uint32]interface{}),
 		PreparedStmtNameToID:       make(map[string]uint32),
 		PreparedParams:             make([]interface{}, 10),
@@ -327,8 +329,8 @@ func (s *SessionVars) CleanBuffers() {
 // have their own collation, which has a higher collation precedence.
 // See https://dev.mysql.com/doc/refman/5.7/en/charset-connection.html
 func (s *SessionVars) GetCharsetInfo() (charset, collation string) {
-	charset = s.Systems[CharacterSetConnection]
-	collation = s.Systems[CollationConnection]
+	charset = s.systems[CharacterSetConnection]
+	collation = s.systems[CollationConnection]
 	return
 }
 
@@ -389,6 +391,88 @@ func (s *SessionVars) ResetPrevAffectedRows() {
 			s.PrevAffectedRows = -1
 		}
 	}
+}
+
+// GetSystemVar gets the string value of a system variable.
+func (s *SessionVars) GetSystemVar(name string) (string, bool) {
+	val, ok := s.systems[name]
+	return val, ok
+}
+
+// deleteSystemVar deletes a system variable.
+func (s *SessionVars) deleteSystemVar(name string) error {
+	if name != CharacterSetResults {
+		return ErrCantSetToNull
+	}
+	delete(s.systems, name)
+	return nil
+}
+
+// SetSystemVar sets the value of a system variable.
+func (s *SessionVars) SetSystemVar(name string, val string) error {
+	switch name {
+	case TimeZone:
+		tz, err := parseTimeZone(val)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		s.TimeZone = tz
+	case SQLModeVar:
+		val = mysql.FormatSQLModeStr(val)
+		// Modes is a list of different modes separated by commas.
+		sqlMode, err2 := mysql.GetSQLMode(val)
+		if err2 != nil {
+			return errors.Trace(err2)
+		}
+		s.StrictSQLMode = sqlMode.HasStrictMode()
+		s.SQLMode = sqlMode
+		s.SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, sqlMode.HasNoBackslashEscapesMode())
+	case TiDBSnapshot:
+		err := setSnapshotTS(s, val)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	case AutocommitVar:
+		isAutocommit := tidbOptOn(val)
+		s.SetStatusFlag(mysql.ServerStatusAutocommit, isAutocommit)
+		if isAutocommit {
+			s.SetStatusFlag(mysql.ServerStatusInTrans, false)
+		}
+	case TiDBImportingData:
+		s.ImportingData = tidbOptOn(val)
+	case TiDBSkipUTF8Check:
+		s.SkipUTF8Check = tidbOptOn(val)
+	case TiDBOptAggPushDown:
+		s.AllowAggPushDown = tidbOptOn(val)
+	case TiDBOptInSubqUnFolding:
+		s.AllowInSubqueryUnFolding = tidbOptOn(val)
+	case TiDBIndexLookupConcurrency:
+		s.IndexLookupConcurrency = tidbOptPositiveInt(val, DefIndexLookupConcurrency)
+	case TiDBIndexJoinBatchSize:
+		s.IndexJoinBatchSize = tidbOptPositiveInt(val, DefIndexJoinBatchSize)
+	case TiDBIndexLookupSize:
+		s.IndexLookupSize = tidbOptPositiveInt(val, DefIndexLookupSize)
+	case TiDBDistSQLScanConcurrency:
+		s.DistSQLScanConcurrency = tidbOptPositiveInt(val, DefDistSQLScanConcurrency)
+	case TiDBIndexSerialScanConcurrency:
+		s.IndexSerialScanConcurrency = tidbOptPositiveInt(val, DefIndexSerialScanConcurrency)
+	case TiDBBatchInsert:
+		s.BatchInsert = tidbOptOn(val)
+	case TiDBBatchDelete:
+		s.BatchDelete = tidbOptOn(val)
+	case TiDBDMLBatchSize:
+		s.DMLBatchSize = tidbOptPositiveInt(val, DefDMLBatchSize)
+	case TiDBCurrentTS:
+		return ErrReadOnly
+	case TiDBMaxChunkSize:
+		s.MaxChunkSize = tidbOptPositiveInt(val, DefMaxChunkSize)
+	case TiDBMemThreshold:
+		s.MemThreshold = int64(tidbOptPositiveInt(val, DefMemThreshold))
+	case TiDBGeneralLog:
+		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt(val, DefTiDBGeneralLog)))
+	}
+	s.systems[name] = val
+	return nil
 }
 
 // special session variables.
