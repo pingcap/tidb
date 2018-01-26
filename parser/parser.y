@@ -4366,7 +4366,7 @@ SubSelect:
 		parser.setLastSelectFieldText(s, endOffset)
 		src := parser.src
 		// See the implementation of yyParse function
-		s.SetText(src[yyS[yypt-1].offset-1:yyS[yypt].offset-1])
+		s.SetText(src[yyS[yypt-1].offset:yyS[yypt].offset])
 		$$ = &ast.SubqueryExpr{Query: s}
 	}
 |	'(' UnionStmt ')'
@@ -4374,7 +4374,7 @@ SubSelect:
 		s := $2.(*ast.UnionStmt)
 		src := parser.src
 		// See the implementation of yyParse function
-		s.SetText(src[yyS[yypt-1].offset-1:yyS[yypt].offset-1])
+		s.SetText(src[yyS[yypt-1].offset:yyS[yypt].offset])
 		$$ = &ast.SubqueryExpr{Query: s}
 	}
 
