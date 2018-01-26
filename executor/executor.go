@@ -1102,6 +1102,7 @@ func (e *MaxOneRowExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 		for i := range e.schema.Columns {
 			chk.AppendNull(i)
 		}
+		return nil
 	} else if num == 1 {
 		return nil
 	}
