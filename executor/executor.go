@@ -592,6 +592,7 @@ func init() {
 		if err != nil {
 			return rows, errors.Trace(err)
 		}
+		defer exec.Close()
 		if ctx.GetSessionVars().EnableChunk {
 			for {
 				chk := exec.newChunk()
@@ -600,7 +601,7 @@ func init() {
 					return rows, errors.Trace(err)
 				}
 				if chk.NumRows() == 0 {
-					return rows, errors.Trace(exec.Close())
+					return rows, nil
 				}
 				iter := chunk.NewIterator4Chunk(chk)
 				for r := iter.Begin(); r != iter.End(); r = iter.Next() {
@@ -615,7 +616,7 @@ func init() {
 				return rows, errors.Trace(err)
 			}
 			if row == nil {
-				return rows, errors.Trace(exec.Close())
+				return rows, nil
 			}
 			rows = append(rows, row)
 		}
