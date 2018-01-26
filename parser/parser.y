@@ -532,6 +532,7 @@ import (
 	InsertIntoStmt			"INSERT INTO statement"
 	KillStmt			"Kill statement"
 	LoadDataStmt			"Load data statement"
+	LoadStatsStmt			"Load statistic statement"
 	LockTablesStmt			"Lock tables statement"
 	PreparedStmt			"PreparedStmt"
 	SelectStmt			"SELECT statement"
@@ -5111,6 +5112,7 @@ Statement:
 |	InsertIntoStmt
 |	KillStmt
 |	LoadDataStmt
+|   LoadStatsStmt
 |	PreparedStmt
 |	RollbackStmt
 |	RenameTableStmt
@@ -6419,6 +6421,16 @@ KillOrKillTiDB:
 |	"KILL" "TIDB"
 	{
 		$$ = true
+	}
+
+/*******************************************************************************************/
+
+LoadStatsStmt:
+	"LOAD" "STATS" stringLit
+	{
+		$$ = &ast.LoadStatsStmt{
+			Path:       $3,
+		}
 	}
 
 %%

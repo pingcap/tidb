@@ -339,6 +339,13 @@ type LoadData struct {
 	GenCols InsertGeneratedColumns
 }
 
+// LoadStats represents a loadstats plan.
+type LoadStats struct {
+	basePlan
+
+	Path       string
+}
+
 // DDL represents a DDL statement plan.
 type DDL struct {
 	baseSchemaProducer

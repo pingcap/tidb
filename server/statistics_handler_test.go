@@ -15,15 +15,16 @@ package server
 
 import (
 	"database/sql"
-	"encoding/json"
 	"net/http"
+	"os"
+	"io/ioutil"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/mocktikv"
+	"github.com/go-sql-driver/mysql"
 )
 
 type testDumpStatsSuite struct {
@@ -40,12 +41,15 @@ func (ds *testDumpStatsSuite) TestDumpStatsAPI(c *C) {
 	resp, err := http.Get("http://127.0.0.1:10090/stats/dump/tidb/test")
 	c.Assert(err, IsNil)
 
-	decoder := json.NewDecoder(resp.Body)
-	var jsonTbl statistics.JSONTable
-	err = decoder.Decode(&jsonTbl)
+	path := "/tmp/stats.json"
+	fp, err := os.Create(path)
 	c.Assert(err, IsNil)
-	c.Assert(jsonTbl.DatabaseName, Equals, "tidb")
-	c.Assert(jsonTbl.TableName, Equals, "test")
+	c.Assert(fp, NotNil)
+
+	js, err := ioutil.ReadAll(resp.Body)
+	c.Assert(err, IsNil)
+	fp.Write(js)
+	ds.checkData(c)
 }
 
 func (ds *testDumpStatsSuite) startServer(c *C) {
@@ -89,4 +93,27 @@ func (ds *testDumpStatsSuite) prepareData(c *C) {
 	dbt.mustExec("create index c on test (a, b)")
 	dbt.mustExec("insert test values (1, 2)")
 	dbt.mustExec("analyze table test")
+}
+
+func (ds *testDumpStatsSuite) checkData(c *C) {
+	db, err := sql.Open("mysql", getDSN(func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Strict = false
+	}))
+	c.Assert(err, IsNil, Commentf("Error connecting"))
+	defer db.Close()
+	dbt := &DBTest{c, db}
+	dbt.mustExec("use tidb")
+	dbt.mustExec("drop stats test")
+	_, err = dbt.db.Exec("load stats '/tmp/stats.json'")
+	c.Assert(err, IsNil)
+
+	rows := dbt.mustQuery("show stats_histograms")
+	dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+	var dbName, tableName, colName string
+	var other interface{}
+	err = rows.Scan(&dbName, &tableName, &colName, &other, &other, &other, &other)
+	dbt.Check(err, IsNil)
+	dbt.Check(dbName, Equals, "tidb")
+	dbt.Check(tableName, Equals, "test")
 }

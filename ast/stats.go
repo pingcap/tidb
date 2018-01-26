@@ -18,6 +18,7 @@ import "github.com/pingcap/tidb/model"
 var (
 	_ StmtNode = &AnalyzeTableStmt{}
 	_ StmtNode = &DropStatsStmt{}
+	_ StmtNode = &LoadStatsStmt{}
 )
 
 // AnalyzeTableStmt is used to create table statistics.
@@ -67,5 +68,21 @@ func (n *DropStatsStmt) Accept(v Visitor) (Node, bool) {
 		return n, false
 	}
 	n.Table = node.(*TableName)
+	return v.Leave(n)
+}
+// LoadStatsStmt is the statement node for loading statistic.
+type LoadStatsStmt struct {
+	stmtNode
+
+	Path string
+}
+
+// Accept implements Node Accept interface.
+func (n *LoadStatsStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*LoadStatsStmt)
 	return v.Leave(n)
 }

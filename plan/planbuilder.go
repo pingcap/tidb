@@ -188,6 +188,8 @@ func (b *planBuilder) build(node ast.Node) Plan {
 		return b.buildInsert(x)
 	case *ast.LoadDataStmt:
 		return b.buildLoadData(x)
+	case *ast.LoadStatsStmt:
+		return b.buildLoadStats(x)
 	case *ast.PrepareStmt:
 		return b.buildPrepare(x)
 	case *ast.SelectStmt:
@@ -968,6 +970,11 @@ func (b *planBuilder) buildLoadData(ld *ast.LoadDataStmt) Plan {
 	mockTablePlan := LogicalTableDual{}.init(b.ctx)
 	mockTablePlan.SetSchema(schema)
 	p.GenCols = b.resolveGeneratedColumns(tableInPlan.Cols(), nil, mockTablePlan)
+	return p
+}
+
+func (b *planBuilder) buildLoadStats(ld *ast.LoadStatsStmt) Plan {
+	p := &LoadStats{Path: ld.Path}
 	return p
 }
 

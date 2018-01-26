@@ -38,6 +38,7 @@ import (
 	"bytes"
 	"crypto/tls"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -60,6 +61,9 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
+	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/model"
 )
 
 // clientConn represents a connection between server and client, it maintains connection specific state,
@@ -796,9 +800,69 @@ func (cc *clientConn) handleLoadData(goCtx goctx.Context, loadDataInfo *executor
 	return errors.Trace(txn.Commit(goCtx))
 }
 
+// handleLoadStats does the additional work after processing the 'load stats' query.
+// It sends client a file path, then reads the file content from client, loads it into the cache.
+func (cc *clientConn) handleLoadStats(goCtx goctx.Context, loadStats *executor.LoadStatsInfo) error {
+	// If the server handles the load data request, the client has to set the ClientLocalFiles capability.
+	if cc.capability&mysql.ClientLocalFiles == 0 {
+		return errNotAllowedCommand
+	}
+	if loadStats == nil {
+		return errors.New("Load stats: info is empty")
+	}
+	err := cc.writeReq(loadStats.Path)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	var prevData, curData []byte
+	for {
+		curData, err = cc.readPacket()
+		if err != nil {
+			if terror.ErrorNotEqual(err, io.EOF) {
+				log.Error(errors.ErrorStack(err))
+				break
+			}
+		}
+		if len(curData) == 0 {
+			break
+		}
+		prevData = append(prevData, curData...)
+	}
+	if len(prevData) != 0 {
+		jsonTbl := &statistics.JSONTable{}
+		if err := json.Unmarshal(prevData, jsonTbl); err != nil {
+			return errors.Trace(err)
+		}
+
+		dbName := jsonTbl.DatabaseName
+		tableName := jsonTbl.TableName
+
+		if dbName == "" || tableName == "" {
+			return errors.New("Load stats: table_name or database_name not found in the json file")
+		}
+
+		do := domain.GetDomain(loadStats.Ctx)
+		is := do.InfoSchema()
+
+		tableInfo, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		h := do.StatsHandle()
+		tbl, err := h.LoadStatsFromJSON(tableInfo.Meta(), jsonTbl)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		h.UpdateTableStats([]*statistics.Table{tbl}, nil)
+	}
+	return nil
+}
+
 // handleQuery executes the sql query string and writes result set or result ok to the client.
 // As the execution time of this function represents the performance of TiDB, we do time log and metrics here.
 // There is a special query `load data` that does not return result, which is handled differently.
+// Query `load stats` does not return result either.
 func (cc *clientConn) handleQuery(goCtx goctx.Context, sql string) (err error) {
 	rs, err := cc.ctx.Execute(goCtx, sql)
 	if err != nil {
@@ -819,6 +883,15 @@ func (cc *clientConn) handleQuery(goCtx goctx.Context, sql string) (err error) {
 				return errors.Trace(err)
 			}
 		}
+
+		loadStats := cc.ctx.Value(executor.LoadStatsVarKey)
+		if loadStats != nil {
+			defer cc.ctx.SetValue(executor.LoadStatsVarKey, nil)
+			if err = cc.handleLoadStats(goCtx, loadStats.(*executor.LoadStatsInfo)); err != nil {
+				return errors.Trace(err)
+			}
+		}
+
 		err = cc.writeOK()
 	}
 	return errors.Trace(err)
