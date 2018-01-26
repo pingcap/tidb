@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
@@ -548,14 +547,6 @@ func (la *LogicalAggregation) getStreamAggs(prop *requiredProp) []PhysicalPlan {
 			// Second read in the double can't meet the stream aggregation's require prop.
 			if tp == copDoubleReadTaskType {
 				continue
-			}
-			// Now we only support pushing down stream aggregation on mocktikv.
-			// TODO: Remove it after TiKV supports stream aggregation.
-			if tp == copSingleReadTaskType {
-				client := la.ctx.GetClient()
-				if !client.IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeStreamAgg) {
-					continue
-				}
 			}
 			childProp := &requiredProp{
 				taskTp:      tp,
