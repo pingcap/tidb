@@ -589,8 +589,26 @@ func init() {
 		}
 		goCtx := goctx.TODO()
 		err = exec.Open(goCtx)
+		defer terror.Call(exec.Close)
 		if err != nil {
 			return rows, errors.Trace(err)
+		}
+		if ctx.GetSessionVars().EnableChunk {
+			for {
+				chk := exec.newChunk()
+				err = exec.NextChunk(goCtx, chk)
+				if err != nil {
+					return rows, errors.Trace(err)
+				}
+				if chk.NumRows() == 0 {
+					return rows, nil
+				}
+				iter := chunk.NewIterator4Chunk(chk)
+				for r := iter.Begin(); r != iter.End(); r = iter.Next() {
+					row := r.GetDatumRow(exec.retTypes())
+					rows = append(rows, row)
+				}
+			}
 		}
 		for {
 			row, err := exec.Next(goCtx)
@@ -598,7 +616,7 @@ func init() {
 				return rows, errors.Trace(err)
 			}
 			if row == nil {
-				return rows, errors.Trace(exec.Close())
+				return rows, nil
 			}
 			rows = append(rows, row)
 		}
