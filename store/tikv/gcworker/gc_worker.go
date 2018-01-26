@@ -36,6 +36,19 @@ import (
 	goctx "golang.org/x/net/context"
 )
 
+type resolveLockTask struct {
+	startKey  kv.Key
+	endKey    kv.Key
+	safePoint uint64
+}
+
+type resolveLockRes struct {
+	task               *resolveLockTask
+	regions            uint64
+	totalResolvedLocks uint64
+	err                error
+}
+
 // GCWorker periodically triggers GC process on tikv server.
 type GCWorker struct {
 	uuid        string
@@ -45,6 +58,8 @@ type GCWorker struct {
 	lastFinish  time.Time
 	cancel      goctx.CancelFunc
 	done        chan error
+
+	resolveLockResChan chan *resolveLockRes
 
 	session tidb.Session
 }
@@ -66,6 +81,8 @@ func NewGCWorker(store tikv.Storage) (tikv.GCHandler, error) {
 		gcIsRunning: false,
 		lastFinish:  time.Now(),
 		done:        make(chan error),
+
+		resolveLockResChan: make(chan *resolveLockRes, gcDefaultJobConcurrency),
 	}
 	return worker, nil
 }
@@ -102,6 +119,9 @@ const (
 	gcDefaultLifeTime        = time.Minute * 10
 	gcSafePointKey           = "tikv_gc_safe_point"
 	gcSafePointCacheInterval = tikv.GcSafePointCacheInterval
+
+	gcJobConcurrency        = "tikv_gc_job_concurrency"
+	gcDefaultJobConcurrency = 100
 )
 
 var gcVariableComments = map[string]string{
@@ -112,6 +132,7 @@ var gcVariableComments = map[string]string{
 	gcRunIntervalKey: "GC run interval, at least 10m, in Go format.",
 	gcLifeTimeKey:    "All versions within life time will not be collected by GC, at least 10m, in Go format.",
 	gcSafePointKey:   "All versions after safe point can be accessed. (DO NOT EDIT)",
+	gcJobConcurrency: "How many go routines used to resolve lock parallel, default 100",
 }
 
 func (w *GCWorker) start(ctx goctx.Context, wg *sync.WaitGroup) {
@@ -289,7 +310,15 @@ func (w *GCWorker) calculateNewSafePoint(now time.Time) (*time.Time, error) {
 
 // RunGCJob sends GC command to KV. it is exported for testing purpose, do not use it with GCWorker at the same time.
 func RunGCJob(ctx goctx.Context, s tikv.Storage, safePoint uint64, identifier string) error {
-	err := resolveLocks(ctx, s, safePoint, identifier)
+	bo := tikv.NewBackoffer(tikv.GcResolveLockMaxBackoff, goctx.Background())
+	startTime := time.Now()
+	log.Infof("[manual gc] %s start resolve locks, safePoint: %v.", identifier, safePoint)
+
+	regions, totalResolvedLocks, err := resolveLocks(ctx, s, bo, identifier, &resolveLockTask{safePoint: safePoint})
+
+	log.Infof("[manual gc] %s finish resolve locks, safePoint: %v, regions: %v, total resolved: %v, cost time: %s",
+		identifier, safePoint, regions, totalResolvedLocks, time.Since(startTime))
+
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -300,9 +329,116 @@ func RunGCJob(ctx goctx.Context, s tikv.Storage, safePoint uint64, identifier st
 	return nil
 }
 
+func (w *GCWorker) getNextResolveLockTask(lastKey kv.Key, bo *tikv.Backoffer, safePoint uint64) (*resolveLockTask, error) {
+	loc, err := w.store.GetRegionCache().LocateKey(bo, lastKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	task := &resolveLockTask{
+		startKey:  lastKey,
+		endKey:    loc.EndKey,
+		safePoint: safePoint,
+	}
+	return task, nil
+}
+
+func (w *GCWorker) resolveLockSingleGap(ctx goctx.Context, bo *tikv.Backoffer, resChan chan *resolveLockRes, task *resolveLockTask) {
+	backOff, cancel := bo.Fork()
+	defer cancel()
+	regions, resolvedLocks, err := resolveLocks(ctx, w.store, backOff, w.uuid, task)
+	// if someone changed job concurrency, resChan may be closed and reallocated, but ctx must be closed before closing resChan,
+	// So we need to check ctx before we put the res into resChan.
+	select {
+	case <-ctx.Done():
+		return
+	default:
+		resChan <- &resolveLockRes{task, regions, resolvedLocks, err}
+	}
+}
+
+//
+func (w *GCWorker) resolveLocksParallel(ctx goctx.Context, safePoint uint64) error {
+	var lastKey kv.Key
+	remained := 0
+
+	gcJobConcurrency, err := w.loadJobConcurrencyWithDefault()
+	if err != nil {
+		log.Errorf("")
+		gcJobConcurrency = gcDefaultJobConcurrency
+	}
+
+	if cap(w.resolveLockResChan) != gcJobConcurrency {
+		close(w.resolveLockResChan)
+		w.resolveLockResChan = make(chan *resolveLockRes, gcJobConcurrency)
+	}
+
+	bo := tikv.NewBackoffer(tikv.GcResolveLockMaxBackoff, goctx.Background())
+	jobCtx, cancel := goctx.WithCancel(ctx)
+	defer cancel()
+
+	var regions, totalResolvedLocks uint64
+	regions, totalResolvedLocks = 0, 0
+
+	startTime := time.Now()
+	log.Infof("[gc worker] %s start resolve locks, safePoint: %v.", w.uuid, safePoint)
+	for i := 0; i < gcJobConcurrency; i++ {
+		task, err := w.getNextResolveLockTask(lastKey, bo, safePoint)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		if task != nil {
+			go w.resolveLockSingleGap(jobCtx, bo, w.resolveLockResChan, task)
+			remained++
+			lastKey = task.endKey
+		}
+
+		if len(lastKey) == 0 {
+			break
+		}
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return errors.New("[gc worker] gc job canceled")
+		case res := <-w.resolveLockResChan:
+			regions += res.regions
+			totalResolvedLocks += res.totalResolvedLocks
+
+			if res.err != nil {
+				return res.err
+			}
+
+			remained--
+			if remained == 0 {
+				log.Infof("[gc worker] %s finish resolve locks, safePoint: %v, regions: %v, total resolved: %v, cost time: %s",
+					w.uuid, safePoint, regions, totalResolvedLocks, time.Since(startTime))
+				return nil
+			}
+
+			if len(lastKey) == 0 {
+				continue
+			}
+
+			task, err := w.getNextResolveLockTask(lastKey, bo, safePoint)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			if task != nil {
+				go w.resolveLockSingleGap(jobCtx, bo, w.resolveLockResChan, task)
+				remained++
+				lastKey = task.endKey
+			}
+		}
+	}
+}
+
 func (w *GCWorker) runGCJob(ctx goctx.Context, safePoint uint64) {
 	gcWorkerCounter.WithLabelValues("run_job").Inc()
-	err := resolveLocks(ctx, w.store, safePoint, w.uuid)
+	err := w.resolveLocksParallel(ctx, safePoint)
 	if err != nil {
 		gcFailureCounter.WithLabelValues("resolve_lock").Inc()
 		w.done <- errors.Trace(err)
@@ -406,53 +542,56 @@ func (w *GCWorker) deleteRanges(ctx goctx.Context, safePoint uint64) error {
 	return nil
 }
 
-func resolveLocks(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier string) error {
+func resolveLocks(ctx goctx.Context, store tikv.Storage, bo *tikv.Backoffer, identifier string, task *resolveLockTask) (uint64, uint64, error) {
 	gcWorkerCounter.WithLabelValues("resolve_locks").Inc()
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdScanLock,
 		ScanLock: &kvrpcpb.ScanLockRequest{
-			MaxVersion: safePoint,
+			MaxVersion: task.safePoint,
 		},
 	}
-	bo := tikv.NewBackoffer(tikv.GcResolveLockMaxBackoff, goctx.Background())
 
-	log.Infof("[gc worker] %s start resolve locks, safePoint: %v.", identifier, safePoint)
+	var regions, totalResolvedLocks uint64
+	regions, totalResolvedLocks = 0, 0
+
 	startTime := time.Now()
-	regions, totalResolvedLocks := 0, 0
-
-	var key []byte
+	key := task.startKey
 	for {
 		select {
 		case <-ctx.Done():
-			return errors.New("[gc worker] gc job canceled")
+			return regions, totalResolvedLocks, errors.New("[gc worker] gc job canceled")
 		default:
+		}
+
+		if len(task.endKey) != 0 && key.Cmp(task.endKey) >= 0 {
+			break
 		}
 
 		loc, err := store.GetRegionCache().LocateKey(bo, key)
 		if err != nil {
-			return errors.Trace(err)
+			return regions, totalResolvedLocks, errors.Trace(err)
 		}
 		resp, err := store.SendReq(bo, req, loc.Region, tikv.ReadTimeoutMedium)
 		if err != nil {
-			return errors.Trace(err)
+			return regions, totalResolvedLocks, errors.Trace(err)
 		}
 		regionErr, err := resp.GetRegionError()
 		if err != nil {
-			return errors.Trace(err)
+			return regions, totalResolvedLocks, errors.Trace(err)
 		}
 		if regionErr != nil {
 			err = bo.Backoff(tikv.BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
-				return errors.Trace(err)
+				return regions, totalResolvedLocks, errors.Trace(err)
 			}
 			continue
 		}
 		locksResp := resp.ScanLock
 		if locksResp == nil {
-			return errors.Trace(tikv.ErrBodyMissing)
+			return regions, totalResolvedLocks, errors.Trace(tikv.ErrBodyMissing)
 		}
 		if locksResp.GetError() != nil {
-			return errors.Errorf("unexpected scanlock error: %s", locksResp)
+			return regions, totalResolvedLocks, errors.Errorf("unexpected scanlock error: %s", locksResp)
 		}
 		locksInfo := locksResp.GetLocks()
 		locks := make([]*tikv.Lock, len(locksInfo))
@@ -461,25 +600,24 @@ func resolveLocks(ctx goctx.Context, store tikv.Storage, safePoint uint64, ident
 		}
 		ok, err1 := store.GetLockResolver().ResolveLocks(bo, locks)
 		if err1 != nil {
-			return errors.Trace(err1)
+			return regions, totalResolvedLocks, errors.Trace(err1)
 		}
 		if !ok {
 			err = bo.Backoff(tikv.BoTxnLock, errors.Errorf("remain locks: %d", len(locks)))
 			if err != nil {
-				return errors.Trace(err)
+				return regions, totalResolvedLocks, errors.Trace(err)
 			}
 			continue
 		}
 		regions++
-		totalResolvedLocks += len(locks)
+		totalResolvedLocks += uint64(len(locks))
 		key = loc.EndKey
 		if len(key) == 0 {
 			break
 		}
 	}
-	log.Infof("[gc worker] %s finish resolve locks, safePoint: %v, regions: %v, total resolved: %v, cost time: %s", identifier, safePoint, regions, totalResolvedLocks, time.Since(startTime))
 	gcHistogram.WithLabelValues("resolve_locks").Observe(time.Since(startTime).Seconds())
-	return nil
+	return regions, totalResolvedLocks, nil
 }
 
 func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier string) error {
@@ -685,6 +823,26 @@ func (w *GCWorker) loadDurationWithDefault(key string, def time.Duration) (*time
 		return &def, nil
 	}
 	return d, nil
+}
+
+func (w *GCWorker) loadJobConcurrencyWithDefault() (int, error) {
+	str, err := w.loadValueFromSysTable(gcJobConcurrency, w.session)
+	if err != nil {
+		return gcDefaultJobConcurrency, errors.Trace(err)
+	}
+	if str == "" {
+		err = w.saveValueToSysTable(gcJobConcurrency, strconv.Itoa(gcDefaultJobConcurrency), w.session)
+		if err != nil {
+			return gcDefaultJobConcurrency, errors.Trace(err)
+		}
+		return gcDefaultJobConcurrency, nil
+	}
+
+	jobConcurrency, err := strconv.Atoi(str)
+	if err != nil {
+		return gcDefaultJobConcurrency, err
+	}
+	return jobConcurrency, nil
 }
 
 func (w *GCWorker) loadValueFromSysTable(key string, s tidb.Session) (string, error) {

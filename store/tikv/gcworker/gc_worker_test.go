@@ -21,6 +21,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/store/tikv"
+	"strconv"
 )
 
 var (
@@ -72,7 +73,7 @@ func (s *testGCWorkerSuite) TestGetOracleTime(c *C) {
 	s.timeEqual(c, t2, t1.Add(time.Second*10), time.Millisecond*10)
 }
 
-func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
+func (s *testGCWorkerSuite) TestSystemTableInGC(c *C) {
 	now, err := s.gcWorker.getOracleTime()
 	c.Assert(err, IsNil)
 	close(s.gcWorker.done)
@@ -113,4 +114,14 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 	safePoint, err = s.gcWorker.loadTime(gcSafePointKey, s.gcWorker.session)
 	c.Assert(err, IsNil)
 	s.timeEqual(c, safePoint.Add(time.Minute*30), now, 2*time.Second)
+
+	// Change GC Jon Concurrency
+	var jobCurrency int
+	jobCurrency, err = s.gcWorker.loadJobConcurrencyWithDefault()
+	c.Assert(err, IsNil)
+	c.Assert(jobCurrency, Equals, gcDefaultJobConcurrency)
+	s.gcWorker.saveValueToSysTable(gcJobConcurrency, strconv.Itoa(1000), s.gcWorker.session)
+	jobCurrency, err = s.gcWorker.loadJobConcurrencyWithDefault()
+	c.Assert(err, IsNil)
+	c.Assert(jobCurrency, Equals, 1000)
 }
