@@ -896,6 +896,13 @@ func (s *testSuite) TestUnion(c *C) {
 	// If set unspecified column flen to 0, it will cause bug in union.
 	// This test is used to prevent the bug reappear.
 	tk.MustQuery("select c from t1 union (select c from t2) order by c").Check(testkit.Rows("73", "930"))
+
+	// issue 5703
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a date)")
+	tk.MustExec("insert into t value ('2017-01-01'), ('2017-01-02')")
+	r = tk.MustQuery("(select a from t where a < 0) union (select a from t where a > 0) order by a")
+	r.Check(testkit.Rows("2017-01-01", "2017-01-02"))
 }
 
 func (s *testSuite) TestIn(c *C) {

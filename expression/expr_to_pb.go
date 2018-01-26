@@ -106,7 +106,7 @@ func (pc PbConverter) constantToPBExpr(con *Constant) *tipb.Expr {
 	case types.KindUint64:
 		tp = tipb.ExprType_Uint64
 		val = codec.EncodeUint(nil, d.GetUint64())
-	case types.KindString:
+	case types.KindString, types.KindBinaryLiteral:
 		tp = tipb.ExprType_String
 		val = d.GetBytes()
 	case types.KindBytes:

@@ -543,7 +543,7 @@ import (
 	ShowStmt			"Show engines/databases/tables/columns/warnings/status statement"
 	Statement			"statement"
 	ExplainableStmt			"explainable statement"
-	TruncateTableStmt		"TRANSACTION TABLE statement"
+	TruncateTableStmt		"TRUNCATE TABLE statement"
 	UnlockTablesStmt		"Unlock tables statement"
 	UpdateStmt			"UPDATE statement"
 	UnionStmt			"Union select state ment"

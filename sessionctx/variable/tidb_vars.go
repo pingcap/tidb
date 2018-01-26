@@ -21,7 +21,7 @@ package variable
 	3. Add SysVar instance in 'defaultSysVars' slice with the default value.
 	4. Add a field in `SessionVars`.
 	5. Update the `NewSessionVars` function to set the field to its default value.
-	6. Update the `varsutil.SetSessionSystemVar` function to use the new value when SET statement is executed.
+	6. Update the `variable.SetSessionSystemVar` function to use the new value when SET statement is executed.
 	7. If it is a global variable, add it in `tidb.loadCommonGlobalVarsSQL`.
 	8. Use this variable to control the behavior in code.
 */

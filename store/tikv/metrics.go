@@ -172,6 +172,14 @@ var (
 			Name:      "load_safepoint_total",
 			Help:      "Counter of load safepoint.",
 		}, []string{"type"})
+
+	secondaryLockCleanupFailureCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "lock_cleanup_task_total",
+			Help:      "failure statistic of secondary lock cleanup task.",
+		}, []string{"type"})
 )
 
 func reportRegionError(e *errorpb.Error) {
@@ -213,4 +221,5 @@ func init() {
 	prometheus.MustRegister(rawkvSizeHistogram)
 	prometheus.MustRegister(txnRegionsNumHistogram)
 	prometheus.MustRegister(loadSafepointCounter)
+	prometheus.MustRegister(secondaryLockCleanupFailureCounter)
 }
