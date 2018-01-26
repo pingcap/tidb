@@ -62,6 +62,24 @@ import (
 	goctx "golang.org/x/net/context"
 )
 
+const (
+	connStatusDispatching int32 = iota
+	connStatusReading
+	connStatusShutdown     // Closed by server.
+	connStatusWaitShutdown // Notified by server to close.
+)
+
+// newClientConn creates a *clientConn object.
+func newClientConn(s *Server) *clientConn {
+	return &clientConn{
+		server:       s,
+		connectionID: atomic.AddUint32(&baseConnID, 1),
+		collation:    mysql.DefaultCollationID,
+		alloc:        arena.NewAllocator(32 * 1024),
+		status:       connStatusDispatching,
+	}
+}
+
 // clientConn represents a connection between server and client, it maintains connection specific state,
 // handles client query.
 type clientConn struct {
@@ -87,13 +105,6 @@ type clientConn struct {
 		cancelFunc goctx.CancelFunc
 	}
 }
-
-const (
-	connStatusDispatching int32 = iota
-	connStatusReading
-	connStatusShutdown     // Closed by server.
-	connStatusWaitShutdown // Notified by server to close.
-)
 
 func (cc *clientConn) String() string {
 	collationStr := mysql.Collations[cc.collation]
@@ -848,7 +859,7 @@ func (cc *clientConn) handleFieldList(sql string) (err error) {
 	return errors.Trace(cc.flush())
 }
 
-// writeResultset writes a resultset.
+// writeResultset writes data into a resultset and uses rs.Next to get row data back.
 // If binary is true, the data would be encoded in BINARY format.
 // If more is true, a flag bit would be set to indicate there are more
 // resultsets, it's used to support the MULTI_RESULTS capability in mysql protocol.
@@ -931,6 +942,9 @@ func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo) error {
 	return nil
 }
 
+// writeChunks writrs data from a Chunk, which filled data by a ResultSet, into a a connection.
+// binary specifies the way to dump data. It throws any error whiling dumping data.
+// more will be passed into writeEOF.
 func (cc *clientConn) writeChunks(goCtx goctx.Context, rs ResultSet, binary bool, more bool) error {
 	data := make([]byte, 4, 1024)
 	chk := rs.NewChunk()

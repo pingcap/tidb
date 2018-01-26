@@ -110,13 +110,7 @@ func (s *Server) releaseToken(token *Token) {
 // newConn creates a new *clientConn from a net.Conn.
 // It allocates a connection ID and random salt data for authentication.
 func (s *Server) newConn(conn net.Conn) *clientConn {
-	cc := &clientConn{
-		server:       s,
-		connectionID: atomic.AddUint32(&baseConnID, 1),
-		collation:    mysql.DefaultCollationID,
-		alloc:        arena.NewAllocator(32 * 1024),
-		status:       connStatusDispatching,
-	}
+	cc := newClientConn(s)
 	log.Infof("[%d] new connection %s", cc.connectionID, conn.RemoteAddr().String())
 	if s.cfg.Performance.TCPKeepAlive {
 		if tcpConn, ok := conn.(*net.TCPConn); ok {
