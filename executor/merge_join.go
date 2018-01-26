@@ -78,9 +78,11 @@ type readerIterator struct {
 	curResult      *chunk.Chunk
 	curIter        *chunk.Iterator4Chunk
 	curResultInUse bool
-	curSelected    []bool
 	resultQueue    []*chunk.Chunk
 	resourceQueue  []*chunk.Chunk
+
+	isValidBeforeFilter []bool
+	isValidAfterFilter  []bool
 
 	// joinResultGenerator is "nil" means this iterator works on the inner table,
 	// otherwise it works on the outer table and is used to emits the un-matched
@@ -161,7 +163,8 @@ func (ri *readerIterator) initForChunk(chk4Reader *chunk.Chunk) (err error) {
 	ri.curResult = chk4Reader
 	ri.curIter = chunk.NewIterator4Chunk(ri.curResult)
 	ri.curRow = ri.curIter.End()
-	ri.curSelected = make([]bool, 0, ri.ctx.GetSessionVars().MaxChunkSize)
+	ri.isValidBeforeFilter = make([]bool, 0, ri.ctx.GetSessionVars().MaxChunkSize)
+	ri.isValidAfterFilter = make([]bool, 0, ri.ctx.GetSessionVars().MaxChunkSize)
 	ri.curResultInUse = false
 	ri.resultQueue = append(ri.resultQueue, chk4Reader)
 	ri.firstRow4Key, err = ri.nextSelectedRow()
@@ -202,32 +205,42 @@ func (ri *readerIterator) rowsWithSameKey() ([]chunk.Row, error) {
 func (ri *readerIterator) nextSelectedRow() (chunk.Row, error) {
 	for {
 		for ; ri.curRow != ri.curIter.End(); ri.curRow = ri.curIter.Next() {
-			if ri.curSelected[ri.curRow.Idx()] {
-				result := ri.curRow
-				ri.curResultInUse = true
-				ri.curRow = ri.curIter.Next()
-				return result, nil
-			} else if ri.joinResultGenerator != nil {
-				// If this iterator works on the outer table, we should emit the un-matched outer row to result Chunk.
-				err := ri.joinResultGenerator.emitToChunk(ri.curRow, nil, ri.joinResult)
-				if err != nil {
-					return ri.curIter.End(), errors.Trace(err)
-				}
-			}
+			result := ri.curRow
+			ri.curResultInUse = true
+			ri.curRow = ri.curIter.Next()
+			return result, nil
 		}
 		ri.reallocReaderResult()
 		err := ri.reader.NextChunk(ri.goCtx, ri.curResult)
 		// error happens or no more data.
-		if err != nil || ri.curResult.NumRows() == 0 {
+		if err != nil || ri.curResult.NumAllRows() == 0 {
 			ri.curRow = ri.curIter.End()
 			return ri.curRow, errors.Trace(err)
 		}
-		ri.curSelected, err = expression.VectorizedFilter(ri.ctx, ri.filter, ri.curIter, ri.curSelected)
+		if ri.joinResultGenerator != nil {
+			ri.isValidBeforeFilter = ri.curResult.GetIsValid(ri.isValidBeforeFilter)
+		}
+		err = expression.VectorizedFilter(ri.ctx, ri.filter, ri.curIter)
 		if err != nil {
 			ri.curRow = ri.curIter.End()
 			return ri.curRow, errors.Trace(err)
 		}
 		ri.curRow = ri.curIter.Begin()
+
+		// Handle the unselected rows.
+		if ri.joinResultGenerator == nil {
+			continue
+		}
+		ri.isValidAfterFilter = ri.curResult.GetIsValid(ri.isValidAfterFilter)
+		for i := range ri.isValidBeforeFilter {
+			if !ri.isValidBeforeFilter[i] || ri.isValidAfterFilter[i] {
+				continue
+			}
+			err := ri.joinResultGenerator.emitToChunk(ri.curResult.GetRow(i), nil, ri.joinResult)
+			if err != nil {
+				return ri.curIter.End(), errors.Trace(err)
+			}
+		}
 	}
 }
 
@@ -475,14 +488,14 @@ func (e *MergeJoinExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 		}
 	}
 	for {
-		numRequiredRows := e.maxChunkSize - chk.NumRows()
-		numRetainedRows := e.resultChunk.NumRows()
+		numRequiredRows := e.maxChunkSize - chk.NumAllRows()
+		numRetainedRows := e.resultChunk.NumAllRows()
 		numAppendedRows := mathutil.Min(numRequiredRows, numRetainedRows)
 
-		chk.Append(e.resultChunk, e.resultChunk.NumRows()-numAppendedRows, e.resultChunk.NumRows())
-		e.resultChunk.TruncateTo(e.resultChunk.NumRows() - numAppendedRows)
+		chk.Append(e.resultChunk, e.resultChunk.NumAllRows()-numAppendedRows, e.resultChunk.NumAllRows())
+		e.resultChunk.TruncateTo(e.resultChunk.NumAllRows() - numAppendedRows)
 
-		if chk.NumRows() == e.maxChunkSize {
+		if chk.NumAllRows() == e.maxChunkSize {
 			return nil
 		}
 
@@ -542,7 +555,7 @@ func (e *MergeJoinExec) joinToResultChunk() (bool, error) {
 		if err != nil {
 			return false, errors.Trace(err)
 		}
-		if e.resultChunk.NumRows() > 0 {
+		if e.resultChunk.NumAllRows() > 0 {
 			return true, nil
 		}
 	}

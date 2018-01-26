@@ -105,15 +105,14 @@ func (a *recordSet) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 		a.lastErr = err
 		return errors.Trace(err)
 	}
-	numRows := chk.NumRows()
-	if numRows == 0 {
+	if chk.NumAllRows() == 0 {
 		if a.stmt != nil {
 			a.stmt.Ctx.GetSessionVars().LastFoundRows = a.stmt.Ctx.GetSessionVars().StmtCtx.FoundRows()
 		}
 		return nil
 	}
 	if a.stmt != nil {
-		a.stmt.Ctx.GetSessionVars().StmtCtx.AddFoundRows(uint64(numRows))
+		a.stmt.Ctx.GetSessionVars().StmtCtx.AddFoundRows(uint64(chk.NumValidRows()))
 	}
 	return nil
 }

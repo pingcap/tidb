@@ -65,7 +65,7 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if chk.NumRows() == 0 {
+		if chk.NumAllRows() == 0 {
 			break
 		}
 		initStatsMeta4Chunk(is, tables, iter)
@@ -132,7 +132,7 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables statsCache
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if chk.NumRows() == 0 {
+		if chk.NumAllRows() == 0 {
 			break
 		}
 		initStatsHistograms4Chunk(is, tables, iter)
@@ -202,7 +202,7 @@ func (h *Handle) initStatsBuckets(tables statsCache) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if chk.NumRows() == 0 {
+		if chk.NumAllRows() == 0 {
 			break
 		}
 		initStatsBuckets4Chunk(h.ctx, tables, iter)

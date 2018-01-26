@@ -342,7 +342,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(goCtx goctx.Context) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if chk.NumRows() == 0 {
+		if chk.NumAllRows() == 0 {
 			break
 		}
 
@@ -422,7 +422,7 @@ func (e *DeleteExec) deleteMultiTablesByChunk(goCtx goctx.Context) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if chk.NumRows() == 0 {
+		if chk.NumAllRows() == 0 {
 			break
 		}
 
@@ -1367,7 +1367,7 @@ func (e *InsertValues) getRowsSelectChunk(goCtx goctx.Context, cols []*table.Col
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if chk.NumRows() == 0 {
+		if chk.NumAllRows() == 0 {
 			break
 		}
 
@@ -1849,11 +1849,11 @@ func (e *UpdateExec) fetchChunkRows(goCtx goctx.Context) error {
 			return errors.Trace(err)
 		}
 
-		if chk.NumRows() == 0 {
+		if chk.NumAllRows() == 0 {
 			break
 		}
 
-		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
+		for rowIdx := 0; rowIdx < chk.NumAllRows(); rowIdx++ {
 			chunkRow := chk.GetRow(rowIdx)
 			datumRow := chunkRow.GetDatumRow(fields)
 			newRow, err1 := e.composeNewRow(datumRow)

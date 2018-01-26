@@ -39,13 +39,15 @@ type defaultEvaluator struct {
 	outputIdxes  []int
 	exprs        []Expression
 	vectorizable bool
+	isValid      []bool
 }
 
 func (e *defaultEvaluator) run(ctx context.Context, input, output *chunk.Chunk) error {
 	iter := chunk.NewIterator4Chunk(input)
+	e.isValid = input.GetIsValid(e.isValid)
 	if e.vectorizable {
 		for i := range e.outputIdxes {
-			err := evalOneColumn(ctx, e.exprs[i], iter, output, e.outputIdxes[i])
+			err := evalOneColumn(ctx, e.exprs[i], input, e.isValid, output, e.outputIdxes[i])
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -105,6 +107,9 @@ func NewEvaluatorSuit(exprs []Expression) *EvaluatorSuit {
 // Run evaluates all the expressions hold by this EvaluatorSuit.
 // NOTE: "defaultEvaluator" must be evaluated before "columnEvaluator".
 func (e *EvaluatorSuit) Run(ctx context.Context, input, output *chunk.Chunk) error {
+	inputValidIdx := input.GetValid()
+	outputValidIdx := output.GetValid()
+
 	if e.defaultEvaluator != nil {
 		err := e.defaultEvaluator.run(ctx, input, output)
 		if err != nil {
@@ -115,5 +120,9 @@ func (e *EvaluatorSuit) Run(ctx context.Context, input, output *chunk.Chunk) err
 	if e.columnEvaluator != nil {
 		e.columnEvaluator.run(ctx, input, output)
 	}
+
+	input.SetValid(outputValidIdx)
+	output.SetValid(inputValidIdx)
+
 	return nil
 }

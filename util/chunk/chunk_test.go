@@ -51,7 +51,7 @@ func (s *testChunkSuite) TestChunk(c *check.C) {
 		chk.AppendJSON(5, json.CreateBinary(str))
 	}
 	c.Assert(chk.NumCols(), check.Equals, numCols)
-	c.Assert(chk.NumRows(), check.Equals, numRows)
+	c.Assert(chk.NumAllRows(), check.Equals, numRows)
 	for i := 0; i < numRows; i++ {
 		row := chk.GetRow(i)
 		c.Assert(row.GetInt64(0), check.Equals, int64(0))
@@ -109,7 +109,7 @@ func (s *testChunkSuite) TestChunk(c *check.C) {
 	chk.AppendPartialRow(1, chk2.GetRow(0))
 	c.Assert(chk.GetRow(0).GetInt64(0), check.Equals, int64(1))
 	c.Assert(chk.GetRow(0).GetInt64(1), check.Equals, int64(1))
-	c.Assert(chk.NumRows(), check.Equals, 1)
+	c.Assert(chk.NumAllRows(), check.Equals, 1)
 
 	// Test Reset.
 	chk = newChunk(0)

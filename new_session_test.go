@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/auth"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -1591,7 +1592,7 @@ func (s *testSchemaSuite) TestTableReaderChunk(c *C) {
 	for {
 		err = rs.NextChunk(goctx.TODO(), chk)
 		c.Assert(err, IsNil)
-		numRows := chk.NumRows()
+		numRows := chk.NumAllRows()
 		if numRows == 0 {
 			break
 		}
@@ -1625,11 +1626,11 @@ func (s *testSchemaSuite) TestInsertExecChunk(c *C) {
 		chk := rs.NewChunk()
 		err = rs.NextChunk(goctx.TODO(), chk)
 		c.Assert(err, IsNil)
-		if chk.NumRows() == 0 {
+		if chk.NumAllRows() == 0 {
 			break
 		}
 
-		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
+		for rowIdx := 0; rowIdx < chk.NumAllRows(); rowIdx++ {
 			row := chk.GetRow(rowIdx)
 			c.Assert(row.GetInt64(0), Equals, int64(idx))
 			idx++
@@ -1660,11 +1661,11 @@ func (s *testSchemaSuite) TestUpdateExecChunk(c *C) {
 		chk := rs.NewChunk()
 		err = rs.NextChunk(goctx.TODO(), chk)
 		c.Assert(err, IsNil)
-		if chk.NumRows() == 0 {
+		if chk.NumAllRows() == 0 {
 			break
 		}
 
-		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
+		for rowIdx := 0; rowIdx < chk.NumAllRows(); rowIdx++ {
 			row := chk.GetRow(rowIdx)
 			c.Assert(row.GetInt64(0), Equals, int64(idx+100))
 			idx++
@@ -1696,7 +1697,7 @@ func (s *testSchemaSuite) TestDeleteExecChunk(c *C) {
 	chk := rs.NewChunk()
 	err = rs.NextChunk(goctx.TODO(), chk)
 	c.Assert(err, IsNil)
-	c.Assert(chk.NumRows(), Equals, 1)
+	c.Assert(chk.NumAllRows(), Equals, 1)
 
 	row := chk.GetRow(0)
 	c.Assert(row.GetInt64(0), Equals, int64(99))
@@ -1725,17 +1726,17 @@ func (s *testSchemaSuite) TestDeleteMultiTableExecChunk(c *C) {
 	c.Assert(err, IsNil)
 
 	var idx int
+	chk := rs.NewChunk()
+	iter := chunk.NewIterator4Chunk(chk)
 	for {
-		chk := rs.NewChunk()
 		err = rs.NextChunk(goctx.TODO(), chk)
 		c.Assert(err, IsNil)
 
-		if chk.NumRows() == 0 {
+		if chk.NumAllRows() == 0 {
 			break
 		}
 
-		for i := 0; i < chk.NumRows(); i++ {
-			row := chk.GetRow(i)
+		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			c.Assert(row.GetInt64(0), Equals, int64(idx+50))
 			idx++
 		}
@@ -1746,10 +1747,9 @@ func (s *testSchemaSuite) TestDeleteMultiTableExecChunk(c *C) {
 	rs, err = tk.Exec("select * from chk2")
 	c.Assert(err, IsNil)
 
-	chk := rs.NewChunk()
 	err = rs.NextChunk(goctx.TODO(), chk)
 	c.Assert(err, IsNil)
-	c.Assert(chk.NumRows(), Equals, 0)
+	c.Assert(chk.NumAllRows(), Equals, 0)
 	rs.Close()
 }
 
@@ -1774,7 +1774,7 @@ func (s *testSchemaSuite) TestIndexLookUpReaderChunk(c *C) {
 	for {
 		err = rs.NextChunk(goctx.TODO(), chk)
 		c.Assert(err, IsNil)
-		numRows := chk.NumRows()
+		numRows := chk.NumAllRows()
 		if numRows == 0 {
 			break
 		}
@@ -1794,7 +1794,7 @@ func (s *testSchemaSuite) TestIndexLookUpReaderChunk(c *C) {
 	for {
 		err = rs.NextChunk(goctx.TODO(), chk)
 		c.Assert(err, IsNil)
-		numRows := chk.NumRows()
+		numRows := chk.NumAllRows()
 		if numRows == 0 {
 			break
 		}

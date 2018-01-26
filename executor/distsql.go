@@ -179,10 +179,10 @@ func (w *indexWorker) extractTaskHandles(goCtx goctx.Context, chk *chunk.Chunk, 
 			err = errors.Trace(e0)
 			return
 		}
-		if chk.NumRows() == 0 {
+		if chk.NumAllRows() == 0 {
 			return
 		}
-		for i := 0; i < chk.NumRows(); i++ {
+		for i := 0; i < chk.NumAllRows(); i++ {
 			handles = append(handles, chk.GetRow(i).GetInt64(0))
 		}
 	}
@@ -368,6 +368,9 @@ func (e *TableReaderExecutor) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) e
 	if err != nil {
 		e.feedback.Invalidate()
 	}
+	if err == nil && chk.GetValid() != nil {
+		chk.SetAllToValid()
+	}
 	return errors.Trace(err)
 }
 
@@ -541,6 +544,9 @@ func (e *IndexReaderExecutor) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) e
 	err := e.result.NextChunk(goCtx, chk)
 	if err != nil {
 		e.feedback.Invalidate()
+	}
+	if err == nil && chk.GetValid() != nil {
+		chk.SetAllToValid()
 	}
 	return errors.Trace(err)
 }
@@ -819,7 +825,7 @@ func (w *tableWorker) executeTask(goCtx goctx.Context, task *lookupTableTask) {
 			log.Error(err)
 			return
 		}
-		if chk.NumRows() == 0 {
+		if chk.NumAllRows() == 0 {
 			break
 		}
 		iter := chunk.NewIterator4Chunk(chk)
@@ -903,7 +909,7 @@ func (e *IndexLookUpExecutor) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) e
 		for resultTask.cursor < len(resultTask.rows) {
 			chk.AppendRow(resultTask.rows[resultTask.cursor])
 			resultTask.cursor++
-			if chk.NumRows() >= e.maxChunkSize {
+			if chk.NumAllRows() >= e.maxChunkSize {
 				return nil
 			}
 		}
@@ -1060,7 +1066,7 @@ func (tr *tableResultHandler) nextChunk(goCtx goctx.Context, chk *chunk.Chunk) e
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if chk.NumRows() > 0 {
+		if chk.NumAllRows() > 0 {
 			return nil
 		}
 		tr.optionalFinished = true

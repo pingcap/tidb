@@ -104,7 +104,7 @@ func (e *HashAggExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 		}
 		e.mutableRow.SetDatums(e.rowBuffer...)
 		chk.AppendRow(e.mutableRow.ToRow())
-		if chk.NumRows() == e.maxChunkSize {
+		if chk.NumAllRows() == e.maxChunkSize {
 			return nil
 		}
 	}
@@ -119,7 +119,7 @@ func (e *HashAggExec) execute(goCtx goctx.Context) (err error) {
 			return errors.Trace(err)
 		}
 		// no more data.
-		if e.childrenResults[0].NumRows() == 0 {
+		if e.childrenResults[0].NumAllRows() == 0 {
 			return nil
 		}
 		for row := inputIter.Begin(); row != inputIter.End(); row = inputIter.Next() {
@@ -332,7 +332,7 @@ func (e *StreamAggExec) Next(goCtx goctx.Context) (Row, error) {
 func (e *StreamAggExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 
-	for !e.executed && chk.NumRows() < e.maxChunkSize {
+	for !e.executed && chk.NumAllRows() < e.maxChunkSize {
 		err := e.consumeOneGroup(goCtx, chk)
 		if err != nil {
 			e.executed = true
@@ -380,7 +380,7 @@ func (e *StreamAggExec) fetchChildIfNecessary(goCtx goctx.Context, chk *chunk.Ch
 		return errors.Trace(err)
 	}
 	// No more data.
-	if e.childrenResults[0].NumRows() == 0 {
+	if e.childrenResults[0].NumAllRows() == 0 {
 		if e.hasData || len(e.GroupByItems) == 0 {
 			e.appendResult2Chunk(chk)
 		}
@@ -388,7 +388,7 @@ func (e *StreamAggExec) fetchChildIfNecessary(goCtx goctx.Context, chk *chunk.Ch
 		return nil
 	}
 
-	// Reach here, "e.childrenResults[0].NumRows() > 0" is guaranteed.
+	// Reach here, "e.childrenResults[0].NumAllRows() > 0" is guaranteed.
 	e.inputRow = e.inputIter.Begin()
 	e.hasData = true
 	return nil

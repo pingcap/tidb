@@ -61,13 +61,13 @@ func (l *List) GetChunk(chkIdx int) *Chunk {
 // AppendRow appends a row to the List, the row is copied to the List.
 func (l *List) AppendRow(row Row) RowPtr {
 	chkIdx := len(l.chunks) - 1
-	if chkIdx == -1 || l.chunks[chkIdx].NumRows() >= l.maxChunkSize {
+	if chkIdx == -1 || l.chunks[chkIdx].NumAllRows() >= l.maxChunkSize {
 		newChk := l.allocChunk()
 		l.chunks = append(l.chunks, newChk)
 		chkIdx++
 	}
 	chk := l.chunks[chkIdx]
-	rowIdx := chk.NumRows()
+	rowIdx := chk.NumAllRows()
 	chk.AppendRow(row)
 	l.length++
 	return RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)}
@@ -76,11 +76,11 @@ func (l *List) AppendRow(row Row) RowPtr {
 // Add adds a chunk to the List, the chunk may be modified later by the list.
 // Caller must make sure the input chk is not empty and not used any more and has the same field types.
 func (l *List) Add(chk *Chunk) {
-	if chk.NumRows() == 0 {
+	if chk.NumAllRows() == 0 {
 		panic(" add empty chunk")
 	}
 	l.chunks = append(l.chunks, chk)
-	l.length += chk.NumRows()
+	l.length += chk.NumValidRows()
 	return
 }
 
@@ -116,7 +116,7 @@ type ListWalkFunc = func(row Row) error
 func (l *List) Walk(walkFunc ListWalkFunc) error {
 	for i := 0; i < len(l.chunks); i++ {
 		chk := l.chunks[i]
-		for j := 0; j < chk.NumRows(); j++ {
+		for j := 0; j < chk.NumAllRows(); j++ {
 			err := walkFunc(chk.GetRow(j))
 			if err != nil {
 				return errors.Trace(err)
