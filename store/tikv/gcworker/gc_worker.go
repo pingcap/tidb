@@ -434,11 +434,6 @@ func resolveLocks(ctx goctx.Context, store tikv.Storage, safePoint uint64, ident
 		default:
 		}
 
-		// We'd better keep 'req.ScanLock.StartKey' the same as 'key' to avoid
-		// the error 'key is not in region' when the region split for several pieces, or
-		// merge into one piece.
-		// If get region error here, we will retry to get the new region info
-		// and reset start key of the request, also keep it the same as the region start key.
 		req.ScanLock.StartKey = key
 		loc, err := store.GetRegionCache().LocateKey(bo, key)
 		if err != nil {
