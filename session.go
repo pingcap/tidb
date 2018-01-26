@@ -984,6 +984,9 @@ func (st *StmtTxn) cleanup() {
 	for key := range st.mutations {
 		delete(st.mutations, key)
 	}
+	if st.dirtyTableOP != nil {
+		st.dirtyTableOP = st.dirtyTableOP[:0]
+	}
 }
 
 // StmtCommit implements the context.Context interface.
@@ -1010,7 +1013,6 @@ func (s *session) StmtCommit() error {
 		for _, op := range st.dirtyTableOP {
 			mergeToDirtyDB(dirtyDB, op)
 		}
-		s.dirtyTableOP = s.dirtyTableOP[:0]
 	}
 	return errors.Trace(err)
 }

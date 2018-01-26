@@ -448,8 +448,11 @@ func (e *DeleteExec) removeRowsInTblRowMap(tblRowMap tableRowMapType) error {
 }
 
 const (
+	// DirtyTableAddRow is the constants for dirty table operation type.
 	DirtyTableAddRow = iota
+	// DirtyTableDeleteRow is the constants for dirty table operation type.
 	DirtyTableDeleteRow
+	// DirtyTableTruncate is the constants for dirty table operation type.
 	DirtyTableTruncate
 )
 

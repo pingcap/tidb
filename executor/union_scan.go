@@ -32,6 +32,7 @@ type DirtyDB struct {
 	tables map[int64]*DirtyTable
 }
 
+// AddRow adds a row to the DirtyDB.
 func (udb *DirtyDB) AddRow(tid, handle int64, row []types.Datum) {
 	dt := udb.GetDirtyTable(tid)
 	for i := range row {
@@ -42,18 +43,21 @@ func (udb *DirtyDB) AddRow(tid, handle int64, row []types.Datum) {
 	dt.addedRows[handle] = row
 }
 
+// DeleteRow deletes a row from the DirtyDB.
 func (udb *DirtyDB) DeleteRow(tid int64, handle int64) {
 	dt := udb.GetDirtyTable(tid)
 	delete(dt.addedRows, handle)
 	dt.deletedRows[handle] = struct{}{}
 }
 
+// TruncateTable truncates a table.
 func (udb *DirtyDB) TruncateTable(tid int64) {
 	dt := udb.GetDirtyTable(tid)
 	dt.addedRows = make(map[int64]Row)
 	dt.truncated = true
 }
 
+// GetDirtyTable gets the DirtyTable by id from the DirtyDB.
 func (udb *DirtyDB) GetDirtyTable(tid int64) *DirtyTable {
 	dt, ok := udb.tables[tid]
 	if !ok {
@@ -66,6 +70,7 @@ func (udb *DirtyDB) GetDirtyTable(tid int64) *DirtyTable {
 	return dt
 }
 
+// DirtyTable stores uncommitted write operation for a transaction.
 type DirtyTable struct {
 	// addedRows ...
 	// the key is handle.
@@ -74,6 +79,7 @@ type DirtyTable struct {
 	truncated   bool
 }
 
+// GetDirtyDB returns the DirtyDB bind to the context.
 func GetDirtyDB(ctx context.Context) *DirtyDB {
 	var udb *DirtyDB
 	x := ctx.GetSessionVars().TxnCtx.DirtyDB
