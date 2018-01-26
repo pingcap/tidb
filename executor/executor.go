@@ -781,28 +781,24 @@ func (e *SelectionExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 // we have to set batch size to 1 to do the evaluation of filter and projection.
 func (e *SelectionExec) unBatchedNextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	for {
-		err := e.children[0].NextChunk(goCtx, e.childrenResults[0])
-		if err != nil || e.childrenResults[0].NumAllRows() == 0 {
-			// No more data or error happened.
-			return errors.Trace(err)
-		}
-
-		validIdx := e.inputIter.GetChunk().GetValid()
-		validIdx = validIdx[:0]
-
-		for row := e.inputIter.Begin(); row != e.inputIter.End(); row = e.inputIter.Next() {
-			selected, err := expression.EvalBool(e.filters, row, e.ctx)
+		for ; e.inputRow != e.inputIter.End(); e.inputRow = e.inputIter.Next() {
+			selected, err := expression.EvalBool(e.filters, e.inputRow, e.ctx)
 			if err != nil {
 				return errors.Trace(err)
 			}
 			if selected {
-				validIdx = append(validIdx, int32(row.Idx()))
+				chk.AppendRow(e.inputRow)
+				e.inputRow = e.inputIter.Next()
+				return nil
 			}
 		}
-
-		if len(validIdx) > 0 {
-			e.childrenResults[0].SetValid(validIdx)
-			chk.Swap(e.childrenResults[0])
+		err := e.children[0].NextChunk(goCtx, e.childrenResults[0])
+		if err != nil {
+			return errors.Trace(err)
+		}
+		e.inputRow = e.inputIter.Begin()
+		// no more data.
+		if e.childrenResults[0].NumAllRows() == 0 {
 			return nil
 		}
 	}

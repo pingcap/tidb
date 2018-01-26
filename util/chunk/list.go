@@ -80,7 +80,7 @@ func (l *List) Add(chk *Chunk) {
 		panic(" add empty chunk")
 	}
 	l.chunks = append(l.chunks, chk)
-	l.length += chk.NumAllRows()
+	l.length += chk.NumValidRows()
 	return
 }
 
