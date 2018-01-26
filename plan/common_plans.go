@@ -341,9 +341,9 @@ type LoadData struct {
 
 // LoadStats represents a loadstats plan.
 type LoadStats struct {
-	basePlan
+	baseSchemaProducer
 
-	Path       string
+	Path string
 }
 
 // DDL represents a DDL statement plan.

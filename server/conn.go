@@ -52,18 +52,18 @@ import (
 	"github.com/juju/errors"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/hack"
 	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
-	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/model"
 )
 
 // clientConn represents a connection between server and client, it maintains connection specific state,

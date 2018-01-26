@@ -15,16 +15,16 @@ package server
 
 import (
 	"database/sql"
+	"io/ioutil"
 	"net/http"
 	"os"
-	"io/ioutil"
 
+	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/mocktikv"
-	"github.com/go-sql-driver/mysql"
 )
 
 type testDumpStatsSuite struct {

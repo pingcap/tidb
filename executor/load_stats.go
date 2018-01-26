@@ -15,9 +15,9 @@ package executor
 
 import (
 	"github.com/juju/errors"
-	goctx "golang.org/x/net/context"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/util/chunk"
+	goctx "golang.org/x/net/context"
 )
 
 var _ Executor = &LoadStatsExec{}
@@ -30,9 +30,10 @@ type LoadStatsExec struct {
 
 // LoadStatsInfo saves the information of loading statistic operation.
 type LoadStatsInfo struct {
-	Path       string
-	Ctx        context.Context
+	Path string
+	Ctx  context.Context
 }
+
 // loadStatsVarKeyType is a dummy type to avoid naming collision in context.
 type loadStatsVarKeyType int
 
@@ -58,7 +59,6 @@ func (e *LoadStatsExec) exec(goCtx goctx.Context) (Row, error) {
 
 	return nil, nil
 }
-
 
 // Next implements the Executor Next interface.
 func (e *LoadStatsExec) Next(goCtx goctx.Context) (Row, error) {

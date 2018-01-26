@@ -70,6 +70,7 @@ func (n *DropStatsStmt) Accept(v Visitor) (Node, bool) {
 	n.Table = node.(*TableName)
 	return v.Leave(n)
 }
+
 // LoadStatsStmt is the statement node for loading statistic.
 type LoadStatsStmt struct {
 	stmtNode
