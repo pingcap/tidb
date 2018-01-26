@@ -229,18 +229,19 @@ func (e *IndexLookUpJoin) prepareJoinResult(goCtx goctx.Context, chk *chunk.Chun
 		}
 
 		outerRow := task.outerResult.GetRow(task.cursor)
-		task.cursor++
 		if e.innerIter.Len() == 0 {
 			_, err = e.resultGenerator.emitToChunk(outerRow, nil, chunk.Row{}, chk)
-			if err != nil || chk.NumRows() == e.maxChunkSize {
-				return errors.Trace(err)
-			}
-		}
-		for e.innerRowBuffer != e.innerIter.End() {
+		} else if e.innerRowBuffer != e.innerIter.End() {
 			e.innerRowBuffer, err = e.resultGenerator.emitToChunk(outerRow, e.innerIter, e.innerRowBuffer, chk)
-			if err != nil || chk.NumRows() == e.maxChunkSize {
-				return errors.Trace(err)
-			}
+		}
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if e.innerIter.Len() == 0 || e.innerRowBuffer == e.innerIter.End() {
+			task.cursor++
+		}
+		if chk.NumRows() == e.maxChunkSize {
+			return nil
 		}
 	}
 }
