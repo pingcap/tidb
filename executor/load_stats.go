@@ -14,8 +14,12 @@
 package executor
 
 import (
+	"encoding/json"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/chunk"
 	goctx "golang.org/x/net/context"
 )
@@ -79,5 +83,36 @@ func (e *LoadStatsExec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *LoadStatsExec) Open(goCtx goctx.Context) error {
+	return nil
+}
+
+// Update updates the stats of the corresponding table according to the data.
+func (e *LoadStatsInfo) Update(data []byte) error {
+	jsonTbl := &statistics.JSONTable{}
+	if err := json.Unmarshal(data, jsonTbl); err != nil {
+		return errors.Trace(err)
+	}
+
+	dbName := jsonTbl.DatabaseName
+	tableName := jsonTbl.TableName
+
+	if dbName == "" || tableName == "" {
+		return errors.New("Load stats: table_name or database_name not found in the json file")
+	}
+
+	do := domain.GetDomain(e.Ctx)
+	is := do.InfoSchema()
+
+	tableInfo, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	h := do.StatsHandle()
+	tbl, err := h.LoadStatsFromJSON(tableInfo.Meta(), jsonTbl)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	h.UpdateTableStats([]*statistics.Table{tbl}, nil)
 	return nil
 }

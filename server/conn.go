@@ -38,7 +38,6 @@ import (
 	"bytes"
 	"crypto/tls"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -52,12 +51,9 @@ import (
 	"github.com/juju/errors"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/auth"
@@ -804,15 +800,15 @@ func (cc *clientConn) handleLoadData(goCtx goctx.Context, loadDataInfo *executor
 
 // handleLoadStats does the additional work after processing the 'load stats' query.
 // It sends client a file path, then reads the file content from client, loads it into the cache.
-func (cc *clientConn) handleLoadStats(goCtx goctx.Context, loadStats *executor.LoadStatsInfo) error {
+func (cc *clientConn) handleLoadStats(goCtx goctx.Context, loadStatsInfo *executor.LoadStatsInfo) error {
 	// If the server handles the load data request, the client has to set the ClientLocalFiles capability.
 	if cc.capability&mysql.ClientLocalFiles == 0 {
 		return errNotAllowedCommand
 	}
-	if loadStats == nil {
+	if loadStatsInfo == nil {
 		return errors.New("Load stats: info is empty")
 	}
-	err := cc.writeReq(loadStats.Path)
+	err := cc.writeReq(loadStatsInfo.Path)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -822,7 +818,7 @@ func (cc *clientConn) handleLoadStats(goCtx goctx.Context, loadStats *executor.L
 		if err != nil {
 			if terror.ErrorNotEqual(err, io.EOF) {
 				log.Error(errors.ErrorStack(err))
-				break
+				return errors.Trace(err)
 			}
 		}
 		if len(curData) == 0 {
@@ -831,32 +827,9 @@ func (cc *clientConn) handleLoadStats(goCtx goctx.Context, loadStats *executor.L
 		prevData = append(prevData, curData...)
 	}
 	if len(prevData) != 0 {
-		jsonTbl := &statistics.JSONTable{}
-		if err := json.Unmarshal(prevData, jsonTbl); err != nil {
+		if err = loadStatsInfo.Update(prevData); err != nil {
 			return errors.Trace(err)
 		}
-
-		dbName := jsonTbl.DatabaseName
-		tableName := jsonTbl.TableName
-
-		if dbName == "" || tableName == "" {
-			return errors.New("Load stats: table_name or database_name not found in the json file")
-		}
-
-		do := domain.GetDomain(loadStats.Ctx)
-		is := do.InfoSchema()
-
-		tableInfo, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		h := do.StatsHandle()
-		tbl, err := h.LoadStatsFromJSON(tableInfo.Meta(), jsonTbl)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		h.UpdateTableStats([]*statistics.Table{tbl}, nil)
 	}
 	return nil
 }

@@ -339,7 +339,7 @@ type LoadData struct {
 	GenCols InsertGeneratedColumns
 }
 
-// LoadStats represents a loadstats plan.
+// LoadStats represents a load stats plan.
 type LoadStats struct {
 	baseSchemaProducer
 

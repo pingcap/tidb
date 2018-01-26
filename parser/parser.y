@@ -5126,7 +5126,7 @@ Statement:
 |	InsertIntoStmt
 |	KillStmt
 |	LoadDataStmt
-|   LoadStatsStmt
+|	LoadStatsStmt
 |	PreparedStmt
 |	RollbackStmt
 |	RenameTableStmt

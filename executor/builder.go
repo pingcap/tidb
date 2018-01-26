@@ -411,11 +411,12 @@ func (b *executorBuilder) buildLoadData(v *plan.LoadData) Executor {
 }
 
 func (b *executorBuilder) buildLoadStats(v *plan.LoadStats) Executor {
-	loadStatsExec := &LoadStatsExec{
+	e := &LoadStatsExec{
 		baseExecutor: newBaseExecutor(nil, b.ctx),
 		info:         &LoadStatsInfo{v.Path, b.ctx},
 	}
-	return loadStatsExec
+	e.supportChk = true
+	return e
 }
 
 func (b *executorBuilder) buildReplace(vals *InsertValues) Executor {

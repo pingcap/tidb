@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"os"
 
+	"fmt"
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
@@ -46,10 +47,17 @@ func (ds *testDumpStatsSuite) TestDumpStatsAPI(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(fp, NotNil)
 
+	defer func() {
+		err = fp.Close()
+		c.Assert(err, IsNil)
+		err = os.Remove(path)
+		c.Assert(err, IsNil)
+	}()
+
 	js, err := ioutil.ReadAll(resp.Body)
 	c.Assert(err, IsNil)
 	fp.Write(js)
-	ds.checkData(c)
+	ds.checkData(c, path)
 }
 
 func (ds *testDumpStatsSuite) startServer(c *C) {
@@ -95,7 +103,7 @@ func (ds *testDumpStatsSuite) prepareData(c *C) {
 	dbt.mustExec("analyze table test")
 }
 
-func (ds *testDumpStatsSuite) checkData(c *C) {
+func (ds *testDumpStatsSuite) checkData(c *C, path string) {
 	db, err := sql.Open("mysql", getDSN(func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Strict = false
@@ -105,14 +113,14 @@ func (ds *testDumpStatsSuite) checkData(c *C) {
 	dbt := &DBTest{c, db}
 	dbt.mustExec("use tidb")
 	dbt.mustExec("drop stats test")
-	_, err = dbt.db.Exec("load stats '/tmp/stats.json'")
+	_, err = dbt.db.Exec(fmt.Sprintf("load stats '%s'", path))
 	c.Assert(err, IsNil)
 
 	rows := dbt.mustQuery("show stats_histograms")
 	dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
-	var dbName, tableName, colName string
+	var dbName, tableName string
 	var other interface{}
-	err = rows.Scan(&dbName, &tableName, &colName, &other, &other, &other, &other)
+	err = rows.Scan(&dbName, &tableName, &other, &other, &other, &other, &other)
 	dbt.Check(err, IsNil)
 	dbt.Check(dbName, Equals, "tidb")
 	dbt.Check(tableName, Equals, "test")
