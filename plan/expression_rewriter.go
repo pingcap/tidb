@@ -301,7 +301,7 @@ func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) 
 	if er.err != nil {
 		return v, true
 	}
-	// Only (a,b,c) = all (...) and (a,b,c) != any () can use row expression.
+	// Only (a,b,c) = any (...) and (a,b,c) != all (...) can use row expression.
 	canMultiCol := (!v.All && v.Op == opcode.EQ) || (v.All && v.Op == opcode.NE)
 	if !canMultiCol && (getRowLen(lexpr) != 1 || np.Schema().Len() != 1) {
 		er.err = ErrOperandColumns.GenByArgs(1)

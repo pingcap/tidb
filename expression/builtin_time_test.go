@@ -884,11 +884,13 @@ func (s *testEvaluatorSuite) TestSysDate(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.Sysdate]
 
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().StmtCtx.TimeZone = time.Local
 	timezones := []types.Datum{types.NewDatum(1234), types.NewDatum(0)}
 	for _, timezone := range timezones {
 		// sysdate() result is not affected by "timestamp" session variable.
-		variable.SetSessionSystemVar(s.ctx.GetSessionVars(), "timestamp", timezone)
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants(nil))
+		variable.SetSessionSystemVar(ctx.GetSessionVars(), "timestamp", timezone)
+		f, err := fc.getFunction(ctx, s.datumsToConstants(nil))
 		c.Assert(err, IsNil)
 		v, err := evalBuiltinFunc(f, nil)
 		last := time.Now()
@@ -898,14 +900,14 @@ func (s *testEvaluatorSuite) TestSysDate(c *C) {
 	}
 
 	last := time.Now()
-	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(6)))
+	f, err := fc.getFunction(ctx, s.datumsToConstants(types.MakeDatums(6)))
 	c.Assert(err, IsNil)
 	v, err := evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
 	n := v.GetMysqlTime()
 	c.Assert(n.String(), GreaterEqual, last.Format(types.TimeFormat))
 
-	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(-2)))
+	f, err = fc.getFunction(ctx, s.datumsToConstants(types.MakeDatums(-2)))
 	c.Assert(err, IsNil)
 	_, err = evalBuiltinFunc(f, nil)
 	c.Assert(err, NotNil)
