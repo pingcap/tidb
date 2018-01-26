@@ -999,13 +999,14 @@ func (s *session) StmtCommit() error {
 		}
 		return errors.Trace(st.Transaction.Set(k, v))
 	})
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	// Need to flush binlog.
-	for key, value := range st.mutations {
-		mutation := getBinlogMutation(s, key)
-		if err == nil {
-			mergeToMutation(mutation, value)
-		}
+	for tableID, delta := range st.mutations {
+		mutation := getBinlogMutation(s, tableID)
+		mergeToMutation(mutation, delta)
 	}
 
 	if len(st.dirtyTableOP) > 0 {
@@ -1014,7 +1015,7 @@ func (s *session) StmtCommit() error {
 			mergeToDirtyDB(dirtyDB, op)
 		}
 	}
-	return errors.Trace(err)
+	return nil
 }
 
 // StmtRollback implements the context.Context interface.
