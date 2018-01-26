@@ -589,7 +589,7 @@ func init() {
 		}
 		goCtx := goctx.TODO()
 		err = exec.Open(goCtx)
-		defer exec.Close()
+		defer terror.Call(exec.Close)
 		if err != nil {
 			return rows, errors.Trace(err)
 		}
