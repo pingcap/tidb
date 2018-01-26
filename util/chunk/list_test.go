@@ -14,13 +14,14 @@
 package chunk
 
 import (
+	"math"
+	"testing"
+	"time"
+
 	"github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
-	"math"
-	"testing"
-	"time"
 )
 
 func (s *testChunkSuite) TestList(c *check.C) {
