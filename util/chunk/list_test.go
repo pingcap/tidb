@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"math"
+	"testing"
 	"time"
 )
 
@@ -78,7 +79,7 @@ func (s *testChunkSuite) TestList(c *check.C) {
 }
 
 func (s *testChunkSuite) TestListMemoryUsage(c *check.C) {
-	fieldTypes := make([]*types.FieldType, 0, 3)
+	fieldTypes := make([]*types.FieldType, 0, 5)
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeVarchar})
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeJSON})
@@ -114,4 +115,31 @@ func (s *testChunkSuite) TestListMemoryUsage(c *check.C) {
 
 	list.Add(srcChk)
 	c.Assert(list.MemoryUsage(), check.Equals, memUsage+srcChk.MemoryUsage())
+}
+
+func BenchmarkListMemoryUsage(b *testing.B) {
+	fieldTypes := make([]*types.FieldType, 0, 4)
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeVarchar})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeDatetime})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeDuration})
+
+	chk := NewChunkWithCapacity(fieldTypes, 2)
+	timeObj := types.Time{Time: types.FromGoTime(time.Now()), Fsp: 0, Type: mysql.TypeDatetime}
+	durationObj := types.Duration{Duration: math.MaxInt64, Fsp: 0}
+	chk.AppendFloat64(0, 123.123)
+	chk.AppendString(1, "123")
+	chk.AppendTime(2, timeObj)
+	chk.AppendDuration(3, durationObj)
+	row := chk.GetRow(0)
+
+	initCap := 50
+	list := NewList(fieldTypes, 2)
+	for i := 0; i < initCap; i++ {
+		list.AppendRow(row)
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		list.MemoryUsage()
+	}
 }
