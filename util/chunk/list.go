@@ -25,6 +25,9 @@ type List struct {
 	length       int
 	chunks       []*Chunk
 	freelist     []*Chunk
+	// memUsage[0] is the memory usage of `chunks`,
+	// memUsage[1] is the memory usage of `freelist`.
+	memUsage []int64
 }
 
 // RowPtr is used to get a row from a list.
@@ -39,6 +42,7 @@ func NewList(fieldTypes []*types.FieldType, maxChunkSize int) *List {
 	l := &List{
 		fieldTypes:   fieldTypes,
 		maxChunkSize: maxChunkSize,
+		memUsage:     make([]int64, 2),
 	}
 	return l
 }
@@ -64,6 +68,9 @@ func (l *List) AppendRow(row Row) RowPtr {
 	if chkIdx == -1 || l.chunks[chkIdx].NumRows() >= l.maxChunkSize {
 		newChk := l.allocChunk()
 		l.chunks = append(l.chunks, newChk)
+		if chkIdx != -1 {
+			l.memUsage[0] += l.chunks[chkIdx].MemoryUsage()
+		}
 		chkIdx++
 	}
 	chk := l.chunks[chkIdx]
@@ -76,8 +83,12 @@ func (l *List) AppendRow(row Row) RowPtr {
 // Add adds a chunk to the List, the chunk may be modified later by the list.
 // Caller must make sure the input chk is not empty and not used any more and has the same field types.
 func (l *List) Add(chk *Chunk) {
+	// FixMe: we should avoid add a Chunk that chk.NumRows() > list.maxChunkSize.
 	if chk.NumRows() == 0 {
 		panic(" add empty chunk")
+	}
+	if chkIdx := len(l.chunks) - 1; chkIdx != -1 {
+		l.memUsage[0] += l.chunks[chkIdx].MemoryUsage()
 	}
 	l.chunks = append(l.chunks, chk)
 	l.length += chk.NumRows()
@@ -90,6 +101,7 @@ func (l *List) allocChunk() (chk *Chunk) {
 		chk = l.freelist[lastIdx]
 		chk.Reset()
 		l.freelist = l.freelist[:lastIdx]
+		l.memUsage[1] -= chk.MemoryUsage()
 		return
 	}
 	return NewChunk(l.fieldTypes)
@@ -103,6 +115,8 @@ func (l *List) GetRow(ptr RowPtr) Row {
 
 // Reset resets the List.
 func (l *List) Reset() {
+	l.memUsage[1] = l.MemoryUsage()
+	l.memUsage[0] = 0
 	l.freelist = append(l.freelist, l.chunks...)
 	l.chunks = l.chunks[:0]
 	l.length = 0
@@ -128,11 +142,10 @@ func (l *List) Walk(walkFunc ListWalkFunc) error {
 
 // MemoryUsage calculates the total memory usage of a list.
 func (l *List) MemoryUsage() (sum int64) {
-	for _, c := range l.chunks {
-		sum += c.MemoryUsage()
+	sum += l.memUsage[0] + l.memUsage[1]
+	chkIdx := len(l.chunks) - 1
+	if chkIdx == -1 {
+		return
 	}
-	for _, f := range l.freelist {
-		sum += f.MemoryUsage()
-	}
-	return sum
+	return sum + l.chunks[chkIdx].MemoryUsage()
 }
