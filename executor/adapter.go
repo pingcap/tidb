@@ -119,7 +119,7 @@ func (a *recordSet) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 }
 
 func (a *recordSet) NewChunk() *chunk.Chunk {
-	return chunk.NewChunk(a.executor.Schema().GetTypes())
+	return chunk.NewChunk(a.executor.retTypes())
 }
 
 func (a *recordSet) SupportChunk() bool {
@@ -197,19 +197,19 @@ func (a *ExecStmt) Exec(goCtx goctx.Context) (ast.RecordSet, error) {
 	a.startTime = time.Now()
 	ctx := a.Ctx
 	if _, ok := a.Plan.(*plan.Analyze); ok && ctx.GetSessionVars().InRestrictedSQL {
-		oriStats := ctx.GetSessionVars().Systems[variable.TiDBBuildStatsConcurrency]
+		oriStats, _ := ctx.GetSessionVars().GetSystemVar(variable.TiDBBuildStatsConcurrency)
 		oriScan := ctx.GetSessionVars().DistSQLScanConcurrency
 		oriIndex := ctx.GetSessionVars().IndexSerialScanConcurrency
-		oriIso := ctx.GetSessionVars().Systems[variable.TxnIsolation]
-		ctx.GetSessionVars().Systems[variable.TiDBBuildStatsConcurrency] = "1"
+		oriIso, _ := ctx.GetSessionVars().GetSystemVar(variable.TxnIsolation)
+		terror.Log(errors.Trace(ctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, "1")))
 		ctx.GetSessionVars().DistSQLScanConcurrency = 1
 		ctx.GetSessionVars().IndexSerialScanConcurrency = 1
-		ctx.GetSessionVars().Systems[variable.TxnIsolation] = ast.ReadCommitted
+		terror.Log(errors.Trace(ctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, ast.ReadCommitted)))
 		defer func() {
-			ctx.GetSessionVars().Systems[variable.TiDBBuildStatsConcurrency] = oriStats
+			terror.Log(errors.Trace(ctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, oriStats)))
 			ctx.GetSessionVars().DistSQLScanConcurrency = oriScan
 			ctx.GetSessionVars().IndexSerialScanConcurrency = oriIndex
-			ctx.GetSessionVars().Systems[variable.TxnIsolation] = oriIso
+			terror.Log(errors.Trace(ctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, oriIso)))
 		}()
 	}
 
@@ -349,17 +349,25 @@ func (a *ExecStmt) buildExecutor(ctx context.Context) (Executor, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		a.Text = executorExec.Stmt.Text()
+		a.Text = executorExec.stmt.Text()
 		a.isPreparedStmt = true
-		a.Plan = executorExec.Plan
-		e = executorExec.StmtExec
+		a.Plan = executorExec.plan
+		e = executorExec.stmtExec
 	}
 	return e, nil
 }
 
 func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
+	level := log.GetLevel()
+	if level < log.WarnLevel {
+		return
+	}
 	cfg := config.GetGlobalConfig()
 	costTime := time.Since(a.startTime)
+	threshold := time.Duration(cfg.Log.SlowThreshold) * time.Millisecond
+	if costTime < threshold && level < log.DebugLevel {
+		return
+	}
 	sql := a.Text
 	if len(sql) > cfg.Log.QueryLogMaxLen {
 		sql = fmt.Sprintf("%.*q(len:%d)", cfg.Log.QueryLogMaxLen, sql, len(a.Text))
@@ -374,7 +382,7 @@ func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
 		"sql":          sql,
 		"txnStartTS":   txnTS,
 	}
-	if costTime < time.Duration(cfg.Log.SlowThreshold)*time.Millisecond {
+	if costTime < threshold {
 		logEntry.WithField("type", "query").WithField("succ", succ).Debugf("query")
 	} else {
 		logEntry.WithField("type", "slow-query").WithField("succ", succ).Warnf("slow-query")
@@ -413,7 +421,7 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx context.Context, p plan.Plan) b
 		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx)
 	case *plan.PhysicalTableReader:
 		tableScan := v.TablePlans[0].(*plan.PhysicalTableScan)
-		return len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint()
+		return len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint(ctx.GetSessionVars().StmtCtx)
 	default:
 		return false
 	}

@@ -620,6 +620,15 @@ func (s *testParserSuite) TestExpression(c *C) {
 		// for timestamp literal
 		{"select timestamp '1989-09-10 11:11:11'", true},
 		{"select timestamp 19890910", false},
+
+		// The ODBC syntax for time/date/timestamp literal.
+		// See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html
+		{"select {ts '1989-09-10 11:11:11'}", true},
+		{"select {d '1989-09-10'}", true},
+		{"select {t '00:00:00.111'}", true},
+		// If the identifier is not in (t, d, ts), we just ignore it and consider the following expression as a string literal.
+		// This is the same behavior with MySQL.
+		{"select {ts123 '1989-09-10 11:11:11'}", true},
 	}
 	s.RunTest(c, table)
 }
@@ -1747,6 +1756,25 @@ func (s *testParserSuite) TestCommentErrMsg(c *C) {
 	s.RunErrMsgTest(c, table)
 }
 
+type subqueryChecker struct {
+	text string
+	c    *C
+}
+
+// Enter implements ast.Visitor interface.
+func (sc *subqueryChecker) Enter(inNode ast.Node) (outNode ast.Node, skipChildren bool) {
+	if expr, ok := inNode.(*ast.SubqueryExpr); ok {
+		sc.c.Assert(expr.Query.Text(), Equals, sc.text)
+		return inNode, true
+	}
+	return inNode, false
+}
+
+// Leave implements ast.Visitor interface.
+func (sc *subqueryChecker) Leave(inNode ast.Node) (node ast.Node, ok bool) {
+	return inNode, true
+}
+
 func (s *testParserSuite) TestSubquery(c *C) {
 	defer testleak.AfterTest(c)()
 	table := []testCase{
@@ -1766,6 +1794,23 @@ func (s *testParserSuite) TestSubquery(c *C) {
 		{"SELECT - NOT EXISTS (select 1)", false},
 	}
 	s.RunTest(c, table)
+
+	tests := []struct {
+		input string
+		text  string
+	}{
+		{"SELECT 1 > (select 1)", "select 1"},
+		{"SELECT 1 > (select 1 union select 2)", "select 1 union select 2"},
+	}
+	parser := New()
+	for _, t := range tests {
+		stmt, err := parser.ParseOneStmt(t.input, "", "")
+		c.Assert(err, IsNil)
+		stmt.Accept(&subqueryChecker{
+			text: t.text,
+			c:    c,
+		})
+	}
 }
 func (s *testParserSuite) TestUnion(c *C) {
 	defer testleak.AfterTest(c)()

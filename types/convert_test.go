@@ -174,13 +174,6 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(vv.(Time).String(), Equals, "2010-10-10 10:11:11.1")
 
-	// For mysql.TypeNewDate.
-	ft = NewFieldType(mysql.TypeNewDate)
-	ft.Decimal = 3
-	v, err = Convert("2010-10-10 10:11:11.12345", ft)
-	c.Assert(err, IsNil)
-	c.Assert(v.(Time).String(), Equals, "2010-10-10 10:11:11.123")
-
 	// For TypeLonglong
 	ft = NewFieldType(mysql.TypeLonglong)
 	v, err = Convert("100", ft)
@@ -714,24 +707,24 @@ func testConvertTimeTimeZone(c *C, sc *stmtctx.StatementContext) {
 		expect Time
 	}{
 		{
-			input:  Time{Type: mysql.TypeDatetime, Time: raw, TimeZone: sc.TimeZone},
+			input:  Time{Type: mysql.TypeDatetime, Time: raw},
 			target: NewFieldType(mysql.TypeTimestamp),
-			expect: Time{Type: mysql.TypeTimestamp, Time: raw, TimeZone: sc.TimeZone},
+			expect: Time{Type: mysql.TypeTimestamp, Time: raw},
 		},
 		{
-			input:  Time{Type: mysql.TypeDatetime, Time: raw, TimeZone: nil},
+			input:  Time{Type: mysql.TypeDatetime, Time: raw},
 			target: NewFieldType(mysql.TypeTimestamp),
-			expect: Time{Type: mysql.TypeTimestamp, Time: raw, TimeZone: sc.TimeZone},
+			expect: Time{Type: mysql.TypeTimestamp, Time: raw},
 		},
 		{
-			input:  Time{Type: mysql.TypeDatetime, Time: raw, TimeZone: time.UTC},
+			input:  Time{Type: mysql.TypeDatetime, Time: raw},
 			target: NewFieldType(mysql.TypeTimestamp),
-			expect: Time{Type: mysql.TypeTimestamp, Time: raw, TimeZone: sc.TimeZone},
+			expect: Time{Type: mysql.TypeTimestamp, Time: raw},
 		},
 		{
-			input:  Time{Type: mysql.TypeTimestamp, Time: raw, TimeZone: sc.TimeZone},
+			input:  Time{Type: mysql.TypeTimestamp, Time: raw},
 			target: NewFieldType(mysql.TypeDatetime),
-			expect: Time{Type: mysql.TypeDatetime, Time: raw, TimeZone: nil},
+			expect: Time{Type: mysql.TypeDatetime, Time: raw},
 		},
 	}
 
@@ -743,9 +736,6 @@ func testConvertTimeTimeZone(c *C, sc *stmtctx.StatementContext) {
 		t := nd.GetMysqlTime()
 		c.Assert(t.Type, Equals, test.expect.Type)
 		c.Assert(t.Time, Equals, test.expect.Time)
-		if test.expect.Type == mysql.TypeTimestamp {
-			c.Assert(t.TimeZone, Equals, test.expect.TimeZone)
-		}
 	}
 }
 

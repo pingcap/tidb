@@ -14,12 +14,15 @@
 package executor
 
 import (
+	"time"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
@@ -167,8 +170,8 @@ func (s *testExecSuite) TestBuildKvRangesForIndexJoin(c *C) {
 	joinKeyRows = append(joinKeyRows, generateDatumSlice(2, 3))
 
 	keyOff2IdxOff := []int{1, 3}
-
-	kvRanges, err := buildKvRangesForIndexJoin(0, 0, joinKeyRows, indexRanges, keyOff2IdxOff)
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	kvRanges, err := buildKvRangesForIndexJoin(sc, 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff)
 	c.Assert(err, IsNil)
 	// Check the kvRanges is in order.
 	for i, kvRange := range kvRanges {

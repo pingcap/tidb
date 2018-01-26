@@ -14,7 +14,6 @@ package plan
 
 import (
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
@@ -24,11 +23,9 @@ import (
 // For SQL like `select max(id) from t;`, we could optimize it to `select max(id) from (select id from t order by id desc limit 1 where id is not null) t;`.
 // For SQL like `select min(id) from t;`, we could optimize it to `select max(id) from (select id from t order by id limit 1 where id is not null) t;`.
 type maxMinEliminator struct {
-	ctx context.Context
 }
 
-func (a *maxMinEliminator) optimize(p LogicalPlan, ctx context.Context) (LogicalPlan, error) {
-	a.ctx = ctx
+func (a *maxMinEliminator) optimize(p LogicalPlan) (LogicalPlan, error) {
 	a.eliminateMaxMin(p)
 	return p, nil
 }
@@ -42,19 +39,20 @@ func (a *maxMinEliminator) eliminateMaxMin(p LogicalPlan) {
 			return
 		}
 		f := agg.AggFuncs[0]
-		if f.GetName() != ast.AggFuncMax && f.GetName() != ast.AggFuncMin {
+		if f.Name != ast.AggFuncMax && f.Name != ast.AggFuncMin {
 			return
 		}
 
 		child := p.Children()[0]
+		ctx := p.context()
 
 		// If there's no column in f.GetArgs()[0], we still need limit and read data from real table because the result should NULL if the below is empty.
-		if len(expression.ExtractColumns(f.GetArgs()[0])) > 0 {
+		if len(expression.ExtractColumns(f.Args[0])) > 0 {
 			// If it can be NULL, we need to filter NULL out first.
-			if !mysql.HasNotNullFlag(f.GetArgs()[0].GetType().Flag) {
-				sel := LogicalSelection{}.init(a.ctx)
-				isNullFunc := expression.NewFunctionInternal(a.ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), f.GetArgs()[0])
-				notNullFunc := expression.NewFunctionInternal(a.ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNullFunc)
+			if !mysql.HasNotNullFlag(f.Args[0].GetType().Flag) {
+				sel := LogicalSelection{}.init(ctx)
+				isNullFunc := expression.NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), f.Args[0])
+				notNullFunc := expression.NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNullFunc)
 				sel.Conditions = []expression.Expression{notNullFunc}
 				sel.SetChildren(p.Children()[0])
 				child = sel
@@ -62,16 +60,16 @@ func (a *maxMinEliminator) eliminateMaxMin(p LogicalPlan) {
 
 			// Add Sort and Limit operators.
 			// For max function, the sort order should be desc.
-			desc := f.GetName() == ast.AggFuncMax
+			desc := f.Name == ast.AggFuncMax
 			// Compose Sort operator.
-			sort := LogicalSort{}.init(a.ctx)
-			sort.ByItems = append(sort.ByItems, &ByItems{f.GetArgs()[0], desc})
+			sort := LogicalSort{}.init(ctx)
+			sort.ByItems = append(sort.ByItems, &ByItems{f.Args[0], desc})
 			sort.SetChildren(child)
 			child = sort
 		}
 
 		// Compose Limit operator.
-		li := LogicalLimit{Count: 1}.init(a.ctx)
+		li := LogicalLimit{Count: 1}.init(ctx)
 		li.SetChildren(child)
 
 		// If no data in the child, we need to return NULL instead of empty. This cannot be done by sort and limit themselves.
@@ -81,6 +79,6 @@ func (a *maxMinEliminator) eliminateMaxMin(p LogicalPlan) {
 	}
 
 	for _, child := range p.Children() {
-		a.eliminateMaxMin(child.(LogicalPlan))
+		a.eliminateMaxMin(child)
 	}
 }

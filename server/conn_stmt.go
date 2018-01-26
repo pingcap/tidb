@@ -149,7 +149,7 @@ func (cc *clientConn) handleStmtExecute(goCtx goctx.Context, data []byte) (err e
 			}
 
 			paramTypes = data[pos : pos+(numParams<<1)]
-			pos += (numParams << 1)
+			pos += numParams << 1
 			paramValues = data[pos:]
 			// Just the first StmtExecute packet contain parameters type,
 			// we need save it for further use.
@@ -283,7 +283,7 @@ func parseStmtArgs(args []interface{}, boundParams [][]byte, nullBitmap, paramTy
 			mysql.TypeBit, mysql.TypeEnum, mysql.TypeSet, mysql.TypeTinyBlob,
 			mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob,
 			mysql.TypeVarString, mysql.TypeString, mysql.TypeGeometry,
-			mysql.TypeDate, mysql.TypeNewDate,
+			mysql.TypeDate,
 			mysql.TypeTimestamp, mysql.TypeDatetime, mysql.TypeDuration:
 			if len(paramValues) < (pos + 1) {
 				err = mysql.ErrMalformPacket

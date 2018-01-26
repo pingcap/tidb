@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/codec"
@@ -47,56 +46,48 @@ func (col *CorrelatedColumn) Eval(row types.Row) (types.Datum, error) {
 }
 
 // EvalInt returns int representation of CorrelatedColumn.
-func (col *CorrelatedColumn) EvalInt(row types.Row, sc *stmtctx.StatementContext) (int64, bool, error) {
+func (col *CorrelatedColumn) EvalInt(ctx context.Context, row types.Row) (int64, bool, error) {
 	if col.Data.IsNull() {
 		return 0, true, nil
 	}
 	if col.GetType().Hybrid() {
-		res, err := col.Data.ToInt64(sc)
+		res, err := col.Data.ToInt64(ctx.GetSessionVars().StmtCtx)
 		return res, err != nil, errors.Trace(err)
 	}
 	return col.Data.GetInt64(), false, nil
 }
 
 // EvalReal returns real representation of CorrelatedColumn.
-func (col *CorrelatedColumn) EvalReal(row types.Row, sc *stmtctx.StatementContext) (float64, bool, error) {
+func (col *CorrelatedColumn) EvalReal(ctx context.Context, row types.Row) (float64, bool, error) {
 	if col.Data.IsNull() {
 		return 0, true, nil
-	}
-	if col.GetType().Hybrid() {
-		res, err := col.Data.ToFloat64(sc)
-		return res, err != nil, errors.Trace(err)
 	}
 	return col.Data.GetFloat64(), false, nil
 }
 
 // EvalString returns string representation of CorrelatedColumn.
-func (col *CorrelatedColumn) EvalString(row types.Row, sc *stmtctx.StatementContext) (string, bool, error) {
+func (col *CorrelatedColumn) EvalString(ctx context.Context, row types.Row) (string, bool, error) {
 	if col.Data.IsNull() {
 		return "", true, nil
 	}
 	res, err := col.Data.ToString()
 	resLen := len([]rune(res))
-	if resLen < col.RetType.Flen && sc.PadCharToFullLength {
+	if resLen < col.RetType.Flen && ctx.GetSessionVars().StmtCtx.PadCharToFullLength {
 		res = res + strings.Repeat(" ", col.RetType.Flen-resLen)
 	}
 	return res, err != nil, errors.Trace(err)
 }
 
 // EvalDecimal returns decimal representation of CorrelatedColumn.
-func (col *CorrelatedColumn) EvalDecimal(row types.Row, sc *stmtctx.StatementContext) (*types.MyDecimal, bool, error) {
+func (col *CorrelatedColumn) EvalDecimal(ctx context.Context, row types.Row) (*types.MyDecimal, bool, error) {
 	if col.Data.IsNull() {
 		return nil, true, nil
-	}
-	if col.GetType().Hybrid() {
-		res, err := col.Data.ToDecimal(sc)
-		return res, err != nil, errors.Trace(err)
 	}
 	return col.Data.GetMysqlDecimal(), false, nil
 }
 
 // EvalTime returns DATE/DATETIME/TIMESTAMP representation of CorrelatedColumn.
-func (col *CorrelatedColumn) EvalTime(row types.Row, sc *stmtctx.StatementContext) (types.Time, bool, error) {
+func (col *CorrelatedColumn) EvalTime(ctx context.Context, row types.Row) (types.Time, bool, error) {
 	if col.Data.IsNull() {
 		return types.Time{}, true, nil
 	}
@@ -104,7 +95,7 @@ func (col *CorrelatedColumn) EvalTime(row types.Row, sc *stmtctx.StatementContex
 }
 
 // EvalDuration returns Duration representation of CorrelatedColumn.
-func (col *CorrelatedColumn) EvalDuration(row types.Row, sc *stmtctx.StatementContext) (types.Duration, bool, error) {
+func (col *CorrelatedColumn) EvalDuration(ctx context.Context, row types.Row) (types.Duration, bool, error) {
 	if col.Data.IsNull() {
 		return types.Duration{}, true, nil
 	}
@@ -112,7 +103,7 @@ func (col *CorrelatedColumn) EvalDuration(row types.Row, sc *stmtctx.StatementCo
 }
 
 // EvalJSON returns JSON representation of CorrelatedColumn.
-func (col *CorrelatedColumn) EvalJSON(row types.Row, sc *stmtctx.StatementContext) (json.BinaryJSON, bool, error) {
+func (col *CorrelatedColumn) EvalJSON(ctx context.Context, row types.Row) (json.BinaryJSON, bool, error) {
 	if col.Data.IsNull() {
 		return json.BinaryJSON{}, true, nil
 	}
@@ -204,13 +195,13 @@ func (col *Column) Eval(row types.Row) (types.Datum, error) {
 }
 
 // EvalInt returns int representation of Column.
-func (col *Column) EvalInt(row types.Row, sc *stmtctx.StatementContext) (int64, bool, error) {
+func (col *Column) EvalInt(ctx context.Context, row types.Row) (int64, bool, error) {
 	if col.GetType().Hybrid() {
 		val := row.GetDatum(col.Index, col.RetType)
 		if val.IsNull() {
 			return 0, true, nil
 		}
-		res, err := val.ToInt64(sc)
+		res, err := val.ToInt64(ctx.GetSessionVars().StmtCtx)
 		return res, err != nil, errors.Trace(err)
 	}
 	if row.IsNull(col.Index) {
@@ -220,14 +211,9 @@ func (col *Column) EvalInt(row types.Row, sc *stmtctx.StatementContext) (int64, 
 }
 
 // EvalReal returns real representation of Column.
-func (col *Column) EvalReal(row types.Row, sc *stmtctx.StatementContext) (float64, bool, error) {
+func (col *Column) EvalReal(ctx context.Context, row types.Row) (float64, bool, error) {
 	if row.IsNull(col.Index) {
 		return 0, true, nil
-	}
-	if col.GetType().Hybrid() {
-		val := row.GetDatum(col.Index, col.RetType)
-		res, err := val.ToFloat64(sc)
-		return res, err != nil, errors.Trace(err)
 	}
 	if col.GetType().Tp == mysql.TypeFloat {
 		return float64(row.GetFloat32(col.Index)), false, nil
@@ -236,7 +222,10 @@ func (col *Column) EvalReal(row types.Row, sc *stmtctx.StatementContext) (float6
 }
 
 // EvalString returns string representation of Column.
-func (col *Column) EvalString(row types.Row, sc *stmtctx.StatementContext) (string, bool, error) {
+func (col *Column) EvalString(ctx context.Context, row types.Row) (string, bool, error) {
+	if row.IsNull(col.Index) {
+		return "", true, nil
+	}
 	if col.GetType().Hybrid() {
 		val := row.GetDatum(col.Index, col.RetType)
 		if val.IsNull() {
@@ -244,16 +233,13 @@ func (col *Column) EvalString(row types.Row, sc *stmtctx.StatementContext) (stri
 		}
 		res, err := val.ToString()
 		resLen := len([]rune(res))
-		if sc.PadCharToFullLength && col.GetType().Tp == mysql.TypeString && resLen < col.RetType.Flen {
+		if ctx.GetSessionVars().StmtCtx.PadCharToFullLength && col.GetType().Tp == mysql.TypeString && resLen < col.RetType.Flen {
 			res = res + strings.Repeat(" ", col.RetType.Flen-resLen)
 		}
 		return res, err != nil, errors.Trace(err)
 	}
-	if row.IsNull(col.Index) {
-		return "", true, nil
-	}
 	val := row.GetString(col.Index)
-	if sc.PadCharToFullLength && col.GetType().Tp == mysql.TypeString {
+	if ctx.GetSessionVars().StmtCtx.PadCharToFullLength && col.GetType().Tp == mysql.TypeString {
 		valLen := len([]rune(val))
 		if valLen < col.RetType.Flen {
 			val = val + strings.Repeat(" ", col.RetType.Flen-valLen)
@@ -263,25 +249,15 @@ func (col *Column) EvalString(row types.Row, sc *stmtctx.StatementContext) (stri
 }
 
 // EvalDecimal returns decimal representation of Column.
-func (col *Column) EvalDecimal(row types.Row, sc *stmtctx.StatementContext) (*types.MyDecimal, bool, error) {
-	val := row.GetDatum(col.Index, col.RetType)
-	if val.IsNull() {
+func (col *Column) EvalDecimal(ctx context.Context, row types.Row) (*types.MyDecimal, bool, error) {
+	if row.IsNull(col.Index) {
 		return nil, true, nil
 	}
-	if col.GetType().Hybrid() {
-		res, err := val.ToDecimal(sc)
-		return res, err != nil, errors.Trace(err)
-	}
-	// We can not use val.GetMyDecimal() here directly,
-	// for sql like: `select sum(1.2e2) * 0.1` may cause an panic here,
-	// since we infer the result type of `SUM` as `mysql.TypeNewDecimal`,
-	// but what we actually get is store as float64 in Datum.
-	res, err := val.ToDecimal(sc)
-	return res, false, errors.Trace(err)
+	return row.GetMyDecimal(col.Index), false, nil
 }
 
 // EvalTime returns DATE/DATETIME/TIMESTAMP representation of Column.
-func (col *Column) EvalTime(row types.Row, sc *stmtctx.StatementContext) (types.Time, bool, error) {
+func (col *Column) EvalTime(ctx context.Context, row types.Row) (types.Time, bool, error) {
 	if row.IsNull(col.Index) {
 		return types.Time{}, true, nil
 	}
@@ -289,7 +265,7 @@ func (col *Column) EvalTime(row types.Row, sc *stmtctx.StatementContext) (types.
 }
 
 // EvalDuration returns Duration representation of Column.
-func (col *Column) EvalDuration(row types.Row, sc *stmtctx.StatementContext) (types.Duration, bool, error) {
+func (col *Column) EvalDuration(ctx context.Context, row types.Row) (types.Duration, bool, error) {
 	if row.IsNull(col.Index) {
 		return types.Duration{}, true, nil
 	}
@@ -297,7 +273,7 @@ func (col *Column) EvalDuration(row types.Row, sc *stmtctx.StatementContext) (ty
 }
 
 // EvalJSON returns JSON representation of Column.
-func (col *Column) EvalJSON(row types.Row, sc *stmtctx.StatementContext) (json.BinaryJSON, bool, error) {
+func (col *Column) EvalJSON(ctx context.Context, row types.Row) (json.BinaryJSON, bool, error) {
 	if row.IsNull(col.Index) {
 		return json.BinaryJSON{}, true, nil
 	}

@@ -78,16 +78,16 @@ func (s *testCodecSuite) TestCodecKey(c *C) {
 			types.MakeDatums(uint64(1), uint64(1)),
 		},
 	}
-
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	for i, t := range table {
 		comment := Commentf("%d %v", i, t)
-		b, err := EncodeKey(nil, t.Input...)
+		b, err := EncodeKey(sc, nil, t.Input...)
 		c.Assert(err, IsNil, comment)
 		args, err := Decode(b, 1)
 		c.Assert(err, IsNil)
 		c.Assert(args, DeepEquals, t.Expect)
 
-		b, err = EncodeValue(nil, t.Input...)
+		b, err = EncodeValue(sc, nil, t.Input...)
 		c.Assert(err, IsNil)
 		args, err = Decode(b, 1)
 		c.Assert(err, IsNil)
@@ -193,12 +193,12 @@ func (s *testCodecSuite) TestCodecKeyCompare(c *C) {
 			-1,
 		},
 	}
-
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	for _, t := range table {
-		b1, err := EncodeKey(nil, t.Left...)
+		b1, err := EncodeKey(sc, nil, t.Left...)
 		c.Assert(err, IsNil)
 
-		b2, err := EncodeKey(nil, t.Right...)
+		b2, err := EncodeKey(sc, nil, t.Right...)
 		c.Assert(err, IsNil)
 
 		c.Assert(bytes.Compare(b1, b2), Equals, t.Expect, Commentf("%v - %v - %v - %v - %v", t.Left, t.Right, b1, b2, t.Expect))
@@ -524,18 +524,17 @@ func (s *testCodecSuite) TestTime(c *C) {
 		"2011-01-01 00:00:00",
 		"0001-01-01 00:00:00",
 	}
-
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	for _, t := range tbl {
 		m := types.NewDatum(parseTime(c, t))
 
-		b, err := EncodeKey(nil, m)
+		b, err := EncodeKey(sc, nil, m)
 		c.Assert(err, IsNil)
 		v, err := Decode(b, 1)
 		c.Assert(err, IsNil)
 		var t types.Time
 		t.Type = mysql.TypeDatetime
 		t.FromPackedUint(v[0].GetUint64())
-		t.TimeZone = nil
 		c.Assert(types.NewDatum(t), DeepEquals, m)
 	}
 
@@ -553,9 +552,9 @@ func (s *testCodecSuite) TestTime(c *C) {
 		m1 := types.NewDatum(parseTime(c, t.Arg1))
 		m2 := types.NewDatum(parseTime(c, t.Arg2))
 
-		b1, err := EncodeKey(nil, m1)
+		b1, err := EncodeKey(sc, nil, m1)
 		c.Assert(err, IsNil)
-		b2, err := EncodeKey(nil, m2)
+		b2, err := EncodeKey(sc, nil, m2)
 		c.Assert(err, IsNil)
 
 		ret := bytes.Compare(b1, b2)
@@ -570,11 +569,11 @@ func (s *testCodecSuite) TestDuration(c *C) {
 		"00:00:00",
 		"1 11:11:11",
 	}
-
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	for _, t := range tbl {
 		m := parseDuration(c, t)
 
-		b, err := EncodeKey(nil, types.NewDatum(m))
+		b, err := EncodeKey(sc, nil, types.NewDatum(m))
 		c.Assert(err, IsNil)
 		v, err := Decode(b, 1)
 		c.Assert(err, IsNil)
@@ -596,9 +595,9 @@ func (s *testCodecSuite) TestDuration(c *C) {
 		m1 := parseDuration(c, t.Arg1)
 		m2 := parseDuration(c, t.Arg2)
 
-		b1, err := EncodeKey(nil, types.NewDatum(m1))
+		b1, err := EncodeKey(sc, nil, types.NewDatum(m1))
 		c.Assert(err, IsNil)
-		b2, err := EncodeKey(nil, types.NewDatum(m2))
+		b2, err := EncodeKey(sc, nil, types.NewDatum(m2))
 		c.Assert(err, IsNil)
 
 		ret := bytes.Compare(b1, b2)
@@ -624,12 +623,12 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 		"-12.340",
 		"-0.1234",
 	}
-
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	for _, t := range tbl {
 		dec := new(types.MyDecimal)
 		err := dec.FromString([]byte(t))
 		c.Assert(err, IsNil)
-		b, err := EncodeKey(nil, types.NewDatum(dec))
+		b, err := EncodeKey(sc, nil, types.NewDatum(dec))
 		c.Assert(err, IsNil)
 		v, err := Decode(b, 1)
 		c.Assert(err, IsNil)
@@ -703,7 +702,6 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 		{uint64(math.MaxUint64), uint64(0), 1},
 		{uint64(0), uint64(math.MaxUint64), -1},
 	}
-	sc := new(stmtctx.StatementContext)
 	for _, t := range tblCmp {
 		d1 := types.NewDatum(t.Arg1)
 		dec1, err := d1.ToDecimal(sc)
@@ -718,9 +716,9 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 		d1.SetFrac(6)
 		d2.SetLength(30)
 		d2.SetFrac(6)
-		b1, err := EncodeKey(nil, d1)
+		b1, err := EncodeKey(sc, nil, d1)
 		c.Assert(err, IsNil)
-		b2, err := EncodeKey(nil, d2)
+		b2, err := EncodeKey(sc, nil, d2)
 		c.Assert(err, IsNil)
 
 		ret := bytes.Compare(b1, b2)
@@ -736,7 +734,7 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 		d.SetLength(20)
 		d.SetFrac(6)
 		d.SetMysqlDecimal(dec)
-		decs = append(decs, EncodeDecimal(nil, d))
+		decs = append(decs, EncodeDecimal(nil, d.GetMysqlDecimal(), d.Length(), d.Frac()))
 	}
 	for i := 0; i < len(decs)-1; i++ {
 		cmp := bytes.Compare(decs[i], decs[i+1])
@@ -760,11 +758,11 @@ func (s *testCodecSuite) TestJSON(c *C) {
 		datums = append(datums, d)
 	}
 
-	bytes := make([]byte, 0, 4096)
-	bytes, err := encode(bytes, datums, false, false)
+	buf := make([]byte, 0, 4096)
+	buf, err := encode(nil, buf, datums, false, false)
 	c.Assert(err, IsNil)
 
-	datums1, err := Decode(bytes, 2)
+	datums1, err := Decode(buf, 2)
 	c.Assert(err, IsNil)
 
 	for i := range datums1 {
@@ -822,16 +820,17 @@ func (s *testCodecSuite) TestCut(c *C) {
 			types.MakeDatums(types.NewDecFromInt(0), types.NewDecFromFloatForTest(-1.3)),
 		},
 	}
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	for i, t := range table {
 		comment := Commentf("%d %v", i, t)
-		b, err := EncodeKey(nil, t.Input...)
+		b, err := EncodeKey(sc, nil, t.Input...)
 		c.Assert(err, IsNil, comment)
 		var d []byte
 		for j, e := range t.Expect {
 			d, b, err = CutOne(b)
 			c.Assert(err, IsNil)
 			c.Assert(d, NotNil)
-			ed, err1 := EncodeKey(nil, e)
+			ed, err1 := EncodeKey(sc, nil, e)
 			c.Assert(err1, IsNil)
 			c.Assert(d, DeepEquals, ed, Commentf("%d:%d %#v", i, j, e))
 		}
@@ -839,14 +838,14 @@ func (s *testCodecSuite) TestCut(c *C) {
 	}
 	for i, t := range table {
 		comment := Commentf("%d %v", i, t)
-		b, err := EncodeValue(nil, t.Input...)
+		b, err := EncodeValue(sc, nil, t.Input...)
 		c.Assert(err, IsNil, comment)
 		var d []byte
 		for j, e := range t.Expect {
 			d, b, err = CutOne(b)
 			c.Assert(err, IsNil)
 			c.Assert(d, NotNil)
-			ed, err1 := EncodeValue(nil, e)
+			ed, err1 := EncodeValue(sc, nil, e)
 			c.Assert(err1, IsNil)
 			c.Assert(d, DeepEquals, ed, Commentf("%d:%d %#v", i, j, e))
 		}
@@ -855,15 +854,16 @@ func (s *testCodecSuite) TestCut(c *C) {
 }
 
 func (s *testCodecSuite) TestSetRawValues(c *C) {
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	datums := types.MakeDatums(1, "abc", 1.1, []byte("def"))
-	rowData, err := EncodeValue(nil, datums...)
+	rowData, err := EncodeValue(sc, nil, datums...)
 	c.Assert(err, IsNil)
 	values := make([]types.Datum, 4)
 	err = SetRawValues(rowData, values)
 	c.Assert(err, IsNil)
 	for i, rawVal := range values {
 		c.Assert(rawVal.Kind(), Equals, types.KindRaw)
-		encoded, err1 := EncodeValue(nil, datums[i])
+		encoded, err1 := EncodeValue(sc, nil, datums[i])
 		c.Assert(err1, IsNil)
 		c.Assert(encoded, BytesEquals, rawVal.GetBytes())
 	}
@@ -894,9 +894,8 @@ func (s *testCodecSuite) TestDecodeOneToChunk(c *C) {
 		{types.CurrentTime(mysql.TypeDatetime), types.NewFieldType(mysql.TypeDatetime)},
 		{types.CurrentTime(mysql.TypeDate), types.NewFieldType(mysql.TypeDate)},
 		{types.Time{
-			Time:     types.FromGoTime(time.Now()),
-			Type:     mysql.TypeTimestamp,
-			TimeZone: time.Local,
+			Time: types.FromGoTime(time.Now()),
+			Type: mysql.TypeTimestamp,
 		}, types.NewFieldType(mysql.TypeTimestamp)},
 		{types.Duration{Duration: time.Second, Fsp: 1}, types.NewFieldType(mysql.TypeDuration)},
 		{types.Enum{Name: "a", Value: 0}, &types.FieldType{Tp: mysql.TypeEnum, Elems: []string{"a"}}},
@@ -905,6 +904,7 @@ func (s *testCodecSuite) TestDecodeOneToChunk(c *C) {
 		{json.CreateBinary("abc"), types.NewFieldType(mysql.TypeJSON)},
 		{int64(1), types.NewFieldType(mysql.TypeYear)},
 	}
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 
 	datums := make([]types.Datum, 0, len(table))
 	tps := make([]*types.FieldType, 0, len(table))
@@ -915,7 +915,7 @@ func (s *testCodecSuite) TestDecodeOneToChunk(c *C) {
 	chk := chunk.NewChunk(tps)
 	rowCount := 3
 	for rowIdx := 0; rowIdx < rowCount; rowIdx++ {
-		encoded, err := EncodeValue(nil, datums...)
+		encoded, err := EncodeValue(sc, nil, datums...)
 		c.Assert(err, IsNil)
 		for colIdx, t := range table {
 			encoded, err = DecodeOneToChunk(encoded, chk, colIdx, t.tp, time.Local)
@@ -923,7 +923,6 @@ func (s *testCodecSuite) TestDecodeOneToChunk(c *C) {
 		}
 	}
 
-	sc := new(stmtctx.StatementContext)
 	for colIdx, t := range table {
 		for rowIdx := 0; rowIdx < rowCount; rowIdx++ {
 			got := chk.GetRow(rowIdx).GetDatum(colIdx, t.tp)

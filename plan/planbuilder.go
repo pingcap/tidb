@@ -389,7 +389,7 @@ func findIndexByName(indices []*model.IndexInfo, name model.CIStr) *model.IndexI
 	return nil
 }
 
-func (b *planBuilder) buildSelectLock(src Plan, lock ast.SelectLockType) *LogicalLock {
+func (b *planBuilder) buildSelectLock(src LogicalPlan, lock ast.SelectLockType) *LogicalLock {
 	selectLock := LogicalLock{Lock: lock}.init(b.ctx)
 	selectLock.SetChildren(src)
 	return selectLock
@@ -644,6 +644,7 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 			}
 			p.Conditions = append(p.Conditions, expr)
 		}
+		p.ResolveIndices()
 	}
 	return p
 }
@@ -936,7 +937,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 				return nil
 			}
 		}
-		insertPlan.SelectPlan, b.err = doOptimize(b.optFlag, selectPlan.(LogicalPlan), b.ctx)
+		insertPlan.SelectPlan, b.err = doOptimize(b.optFlag, selectPlan.(LogicalPlan))
 		if b.err != nil {
 			return nil
 		}
@@ -947,6 +948,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 	if b.err != nil {
 		return nil
 	}
+	insertPlan.ResolveIndices()
 	return insertPlan
 }
 
@@ -1022,11 +1024,11 @@ func (b *planBuilder) buildDDL(node ast.DDLNode) Plan {
 			table:     v.Table.Name.L,
 		})
 	case *ast.DropTableStmt:
-		for _, table := range v.Tables {
+		for _, tableVal := range v.Tables {
 			b.visitInfo = append(b.visitInfo, visitInfo{
 				privilege: mysql.DropPriv,
-				db:        table.Schema.L,
-				table:     table.Name.L,
+				db:        tableVal.Schema.L,
+				table:     tableVal.Name.L,
 			})
 		}
 	case *ast.TruncateTableStmt:

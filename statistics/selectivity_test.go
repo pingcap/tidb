@@ -18,6 +18,7 @@ import (
 	"os"
 	"runtime/pprof"
 	"testing"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
@@ -25,7 +26,9 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -63,6 +66,7 @@ func (s *testSelectivitySuite) generateIntDatum(dimension, num int) ([]types.Dat
 			ret[i] = types.NewIntDatum(int64(i))
 		}
 	} else {
+		sc := &stmtctx.StatementContext{TimeZone: time.Local}
 		// In this way, we can guarantee the datum is in order.
 		for i := 0; i < len; i++ {
 			data := make([]types.Datum, dimension)
@@ -71,7 +75,7 @@ func (s *testSelectivitySuite) generateIntDatum(dimension, num int) ([]types.Dat
 				data[dimension-k-1].SetInt64(int64(j % num))
 				j = j / num
 			}
-			bytes, err := codec.EncodeKey(nil, data...)
+			bytes, err := codec.EncodeKey(sc, nil, data...)
 			if err != nil {
 				return nil, err
 			}
@@ -82,17 +86,11 @@ func (s *testSelectivitySuite) generateIntDatum(dimension, num int) ([]types.Dat
 }
 
 // mockStatsHistogram will create a statistics.Histogram, of which the data is uniform distribution.
-func mockStatsHistogram(id int64, values []types.Datum, repeat int64) *statistics.Histogram {
+func mockStatsHistogram(id int64, values []types.Datum, repeat int64, tp *types.FieldType) *statistics.Histogram {
 	ndv := len(values)
-	histogram := &statistics.Histogram{
-		ID:      id,
-		NDV:     int64(ndv),
-		Buckets: make([]statistics.Bucket, ndv),
-	}
+	histogram := statistics.NewHistogram(id, int64(ndv), 0, 0, tp, ndv)
 	for i := 0; i < ndv; i++ {
-		histogram.Buckets[i].Repeats = repeat
-		histogram.Buckets[i].Count = repeat * int64(i+1)
-		histogram.Buckets[i].UpperBound = values[i]
+		histogram.AppendBucket(&values[i], &values[i], repeat*int64(i+1), repeat)
 	}
 	return histogram
 }
@@ -123,14 +121,15 @@ func (s *testSelectivitySuite) prepareSelectivity(testKit *testkit.TestKit, c *C
 	// Set the value of columns' histogram.
 	colValues, _ := s.generateIntDatum(1, 54)
 	for i := 1; i <= 5; i++ {
-		statsTbl.Columns[int64(i)] = &statistics.Column{Histogram: *mockStatsHistogram(int64(i), colValues, 10), Info: tbl.Columns[i-1]}
+		statsTbl.Columns[int64(i)] = &statistics.Column{Histogram: *mockStatsHistogram(int64(i), colValues, 10, types.NewFieldType(mysql.TypeLonglong)), Info: tbl.Columns[i-1]}
 	}
 
 	// Set the value of two indices' histograms.
 	idxValues, err := s.generateIntDatum(2, 3)
 	c.Assert(err, IsNil)
-	statsTbl.Indices[1] = &statistics.Index{Histogram: *mockStatsHistogram(1, idxValues, 60), Info: tbl.Indices[0]}
-	statsTbl.Indices[2] = &statistics.Index{Histogram: *mockStatsHistogram(2, idxValues, 60), Info: tbl.Indices[1]}
+	tp := types.NewFieldType(mysql.TypeBlob)
+	statsTbl.Indices[1] = &statistics.Index{Histogram: *mockStatsHistogram(1, idxValues, 60, tp), Info: tbl.Indices[0]}
+	statsTbl.Indices[2] = &statistics.Index{Histogram: *mockStatsHistogram(2, idxValues, 60, tp), Info: tbl.Indices[1]}
 	return statsTbl
 }
 
@@ -187,12 +186,12 @@ func (s *testSelectivitySuite) TestSelectivity(c *C) {
 		c.Assert(err, IsNil, comment)
 		p, err := plan.BuildLogicalPlan(ctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for building plan, expr %s", err, tt.exprs))
-		ratio, err := statsTbl.Selectivity(ctx, p.Children()[0].(*plan.LogicalSelection).Conditions)
+		ratio, err := statsTbl.Selectivity(ctx, p.(plan.LogicalPlan).Children()[0].(*plan.LogicalSelection).Conditions)
 		c.Assert(err, IsNil, comment)
 		c.Assert(math.Abs(ratio-tt.selectivity) < eps, IsTrue, Commentf("for %s, needed: %v, got: %v", tt.exprs, tt.selectivity, ratio))
 
 		statsTbl.Count *= 10
-		ratio, err = statsTbl.Selectivity(ctx, p.Children()[0].(*plan.LogicalSelection).Conditions)
+		ratio, err = statsTbl.Selectivity(ctx, p.(plan.LogicalPlan).Children()[0].(*plan.LogicalSelection).Conditions)
 		c.Assert(err, IsNil, comment)
 		c.Assert(math.Abs(ratio-tt.selectivity) < eps, IsTrue, Commentf("for %s, needed: %v, got: %v", tt.exprs, tt.selectivity, ratio))
 		statsTbl.Count /= 10
@@ -227,7 +226,7 @@ func BenchmarkSelectivity(b *testing.B) {
 	b.Run("selectivity", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_, err := statsTbl.Selectivity(ctx, p.Children()[0].(*plan.LogicalSelection).Conditions)
+			_, err := statsTbl.Selectivity(ctx, p.(plan.LogicalPlan).Children()[0].(*plan.LogicalSelection).Conditions)
 			c.Assert(err, IsNil)
 		}
 		b.ReportAllocs()

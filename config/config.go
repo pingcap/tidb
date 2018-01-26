@@ -82,7 +82,7 @@ type Security struct {
 func (s *Security) ToTLSConfig() (*tls.Config, error) {
 	var tlsConfig *tls.Config
 	if len(s.ClusterSSLCA) != 0 {
-		certificates := []tls.Certificate{}
+		var certificates = make([]tls.Certificate, 0)
 		if len(s.ClusterSSLCert) != 0 && len(s.ClusterSSLKey) != 0 {
 			// Load the client certificates from disk
 			certificate, err := tls.LoadX509KeyPair(s.ClusterSSLCert, s.ClusterSSLKey)
@@ -123,12 +123,14 @@ type Status struct {
 
 // Performance is the performance section of the config.
 type Performance struct {
+	MaxProcs        int    `toml:"max-procs" json:"max-procs"`
 	TCPKeepAlive    bool   `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
 	RetryLimit      int    `toml:"retry-limit" json:"retry-limit"`
 	JoinConcurrency int    `toml:"join-concurrency" json:"join-concurrency"`
 	CrossJoin       bool   `toml:"cross-join" json:"cross-join"`
 	StatsLease      string `toml:"stats-lease" json:"stats-lease"`
 	RunAutoAnalyze  bool   `toml:"run-auto-analyze" json:"run-auto-analyze"`
+	StmtCountLimit  int    `toml:"stmt-count-limit" json:"stmt-count-limit"`
 }
 
 // XProtocol is the XProtocol section of the config.
@@ -227,6 +229,7 @@ var defaultConf = Config{
 		CrossJoin:       true,
 		StatsLease:      "3s",
 		RunAutoAnalyze:  true,
+		StmtCountLimit:  5000,
 	},
 	XProtocol: XProtocol{
 		XHost: "0.0.0.0",

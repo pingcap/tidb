@@ -252,7 +252,7 @@ func checkColumnCantHaveDefaultValue(col *table.Column, value interface{}) (err 
 
 // columnDefToCol converts ColumnDef to Col and TableConstraints.
 func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*table.Column, []*ast.Constraint, error) {
-	constraints := []*ast.Constraint{}
+	var constraints = make([]*ast.Constraint, 0)
 	col := table.ToColumn(&model.ColumnInfo{
 		Offset:    offset,
 		Name:      colDef.Name.Name,
@@ -269,12 +269,12 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 	setOnUpdateNow := false
 	hasDefaultValue := false
 	if colDef.Options != nil {
-		len := types.UnspecifiedLength
+		length := types.UnspecifiedLength
 
 		keys := []*ast.IndexColName{
 			{
 				Column: colDef.Name,
-				Length: len,
+				Length: length,
 			},
 		}
 
@@ -633,8 +633,9 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constr
 			continue
 		}
 		if constr.Tp == ast.ConstraintPrimaryKey {
+			var col *table.Column
 			for _, key := range constr.Keys {
-				col := table.FindCol(cols, key.Column.Name.O)
+				col = table.FindCol(cols, key.Column.Name.O)
 				if col == nil {
 					return nil, errKeyColumnDoesNotExits.Gen("key column %s doesn't exist in table", key.Column.Name)
 				}
@@ -644,11 +645,6 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constr
 				}
 			}
 			if len(constr.Keys) == 1 {
-				key := constr.Keys[0]
-				col := table.FindCol(cols, key.Column.Name.O)
-				if col == nil {
-					return nil, errKeyColumnDoesNotExits.Gen("key column %s doesn't exist in table", key.Column.Name)
-				}
 				switch col.Tp {
 				case mysql.TypeLong, mysql.TypeLonglong,
 					mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24:

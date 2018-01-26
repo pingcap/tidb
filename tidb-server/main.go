@@ -131,8 +131,6 @@ func main() {
 		os.Exit(0)
 	}
 
-	runtime.GOMAXPROCS(runtime.NumCPU())
-
 	registerStores()
 	loadConfig()
 	overrideConfig()
@@ -336,6 +334,7 @@ func validateConfig() {
 func setGlobalVars() {
 	ddlLeaseDuration := parseLease(cfg.Lease)
 	tidb.SetSchemaLease(ddlLeaseDuration)
+	runtime.GOMAXPROCS(cfg.Performance.MaxProcs)
 	statsLeaseDuration := parseLease(cfg.Performance.StatsLease)
 	tidb.SetStatsLease(statsLeaseDuration)
 	domain.RunAutoAnalyze = cfg.Performance.RunAutoAnalyze

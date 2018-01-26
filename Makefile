@@ -1,5 +1,3 @@
-### Makefile for tidb
-
 GOPATH ?= $(shell go env GOPATH)
 
 # Ensure GOPATH is set before running build process.
@@ -8,13 +6,13 @@ ifeq "$(GOPATH)" ""
 endif
 
 CURDIR := $(shell pwd)
-path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(CURDIR)/_vendor:$(GOPATH)))
+path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH)))
 export PATH := $(path_to_add):$(PATH)
 
 GO        := go
-GOBUILD   := GOPATH=$(CURDIR)/_vendor:$(GOPATH) CGO_ENABLED=0 $(GO) build $(BUILD_FLAG)
-GOTEST    := GOPATH=$(CURDIR)/_vendor:$(GOPATH) CGO_ENABLED=1 $(GO) test -p 3
-OVERALLS  := GOPATH=$(CURDIR)/_vendor:$(GOPATH) CGO_ENABLED=1 overalls
+GOBUILD   := CGO_ENABLED=0 $(GO) build $(BUILD_FLAG)
+GOTEST    := CGO_ENABLED=1 $(GO) test -p 3
+OVERALLS  := CGO_ENABLED=1 overalls
 GOVERALLS := goveralls
 
 ARCH      := "`uname -s`"
@@ -31,6 +29,7 @@ LDFLAGS += -X "github.com/pingcap/tidb/mysql.TiDBReleaseVersion=$(shell git desc
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBBuildTS=$(shell date -u '+%Y-%m-%d %I:%M:%S')"
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitHash=$(shell git rev-parse HEAD)"
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitBranch=$(shell git rev-parse --abbrev-ref HEAD)"
+LDFLAGS += -X "github.com/pingcap/tidb/util/printer.GoVersion=$(shell go version)"
 
 TARGET = ""
 
@@ -79,9 +78,9 @@ check: errcheck
 	@ go tool vet -all -shadow $(TOPDIRS) 2>&1 | awk '{print} END{if(NR>0) {exit 1}}'
 	@ go tool vet -all -shadow *.go 2>&1 | awk '{print} END{if(NR>0) {exit 1}}'
 	@echo "golint"
-	@ golint ./... 2>&1 | grep -vE 'context\.Context|LastInsertId|NewLexer|\.pb\.go' | awk '{print} END{if(NR>0) {exit 1}}'
+	@ golint ./... 2>&1 | grep -vE 'vendor|context\.Context|LastInsertId|NewLexer|\.pb\.go' | awk '{print} END{if(NR>0) {exit 1}}'
 	@echo "gofmt (simplify)"
-	@ gofmt -s -l -w $(FILES) 2>&1 | grep -v "parser/parser.go" | awk '{print} END{if(NR>0) {exit 1}}'
+	@ gofmt -s -l -w $(FILES) 2>&1 | grep -v "vendor|parser/parser.go" | awk '{print} END{if(NR>0) {exit 1}}'
 
 goword:
 	go get github.com/chzchzchz/goword
@@ -90,7 +89,7 @@ goword:
 
 errcheck:
 	go get github.com/kisielk/errcheck
-	@ GOPATH=$(CURDIR)/_vendor:$(GOPATH) errcheck -blank $(PACKAGES) | grep -v "_test\.go" | awk '{print} END{if(NR>0) {exit 1}}'
+	@ GOPATH=$(GOPATH) errcheck -blank $(PACKAGES) | grep -v "_test\.go" | awk '{print} END{if(NR>0) {exit 1}}'
 
 clean:
 	$(GO) clean -i ./...
@@ -135,7 +134,7 @@ tikv_integration_test: parserlib
 RACE_FLAG = 
 ifeq ("$(WITH_RACE)", "1")
 	RACE_FLAG = -race
-	GOBUILD   = GOPATH=$(CURDIR)/_vendor:$(GOPATH) CGO_ENABLED=1 $(GO) build
+	GOBUILD   = GOPATH=$(GOPATH) CGO_ENABLED=1 $(GO) build
 endif
 
 server: parserlib
@@ -153,29 +152,27 @@ benchraw:
 
 benchdb:
 	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/benchdb cmd/benchdb/main.go
+importer:
+	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/importer ./cmd/importer
 
 update:
-	which glide >/dev/null || curl https://glide.sh/get | sh
-	which glide-vc || go get -v -u github.com/sgotti/glide-vc
-	rm -r vendor && mv _vendor/src vendor || true
-	rm -rf _vendor
+	which dep 2>/dev/null || go get -u github.com/golang/dep/cmd/dep
 ifdef PKG
-	glide get -s -v --skip-test ${PKG}
+	dep ensure -add ${PKG}
 else
-	glide update -s -v -u --skip-test
+	dep ensure -update
 endif
 	@echo "removing test files"
-	glide vc --only-code --no-tests
-	mkdir -p _vendor
-	mv vendor _vendor/src
+	dep prune
+	bash ./hack/clean_vendor.sh
 
 checklist:
 	cat checklist.md
 
 gofail-enable:
-	# Converting gofail failpoints...
+# Converting gofail failpoints...
 	@$(GOFAIL_ENABLE)
 
 gofail-disable:
-	# Restoring gofail failpoints...
+# Restoring gofail failpoints...
 	@$(GOFAIL_DISABLE)

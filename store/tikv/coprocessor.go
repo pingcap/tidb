@@ -19,6 +19,7 @@ import (
 	"io"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/juju/errors"
@@ -345,6 +346,9 @@ type copIterator struct {
 	req         *kv.Request
 	concurrency int
 	finished    chan struct{}
+	// There are two cases we need to close the `finished` channel, one is when context is done, the other one is
+	// when the Close is called. we use atomic.CompareAndSwap `closed` to to make sure the channel is not closed twice.
+	closed uint32
 
 	// If keepOrder, results are stored in copTask.respChan, read them out one by one.
 	tasks []*copTask
@@ -395,8 +399,6 @@ func (it *copIterator) work(goCtx goctx.Context, taskCh <-chan *copTask) {
 		select {
 		case <-it.finished:
 			return
-		case <-goCtx.Done():
-			return
 		default:
 		}
 	}
@@ -408,18 +410,14 @@ func (it *copIterator) run(ctx goctx.Context) {
 	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency; i++ {
 		copIteratorGP.Go(func() {
-			childCtx, cancel := goctx.WithCancel(ctx)
-			defer cancel()
-			it.work(childCtx, taskCh)
+			it.work(ctx, taskCh)
 		})
 	}
 
 	copIteratorGP.Go(func() {
 		// Send tasks to feed the worker goroutines.
-		childCtx, cancel := goctx.WithCancel(ctx)
-		defer cancel()
 		for _, t := range it.tasks {
-			exit := it.sendToTaskCh(childCtx, t, taskCh)
+			exit := it.sendToTaskCh(t, taskCh)
 			if exit {
 				break
 			}
@@ -434,23 +432,34 @@ func (it *copIterator) run(ctx goctx.Context) {
 	})
 }
 
-func (it *copIterator) sendToTaskCh(ctx goctx.Context, t *copTask, taskCh chan<- *copTask) (exit bool) {
+func (it *copIterator) recvFromRespCh(ctx goctx.Context, respCh <-chan copResponse) (resp copResponse, ok bool, exit bool) {
 	select {
-	case taskCh <- t:
+	case resp, ok = <-respCh:
 	case <-it.finished:
 		exit = true
 	case <-ctx.Done():
+		// We select the ctx.Done() in the thread of `Next` instead of in the worker to avoid the cost of `WithCancel`.
+		if atomic.CompareAndSwapUint32(&it.closed, 0, 1) {
+			close(it.finished)
+		}
 		exit = true
 	}
 	return
 }
 
-func (it *copIterator) sendToRespCh(goCtx goctx.Context, resp copResponse, respCh chan copResponse) (exit bool) {
+func (it *copIterator) sendToTaskCh(t *copTask, taskCh chan<- *copTask) (exit bool) {
+	select {
+	case taskCh <- t:
+	case <-it.finished:
+		exit = true
+	}
+	return
+}
+
+func (it *copIterator) sendToRespCh(resp copResponse, respCh chan copResponse) (exit bool) {
 	select {
 	case respCh <- resp:
 	case <-it.finished:
-		exit = true
-	case <-goCtx.Done():
 		exit = true
 	}
 	return
@@ -459,7 +468,7 @@ func (it *copIterator) sendToRespCh(goCtx goctx.Context, resp copResponse, respC
 // Next returns next coprocessor result.
 // NOTE: Use nil to indicate finish, so if the returned values is a slice with
 // size 0, reader should continue to call Next().
-func (it *copIterator) Next() ([]byte, error) {
+func (it *copIterator) Next(ctx goctx.Context) ([]byte, error) {
 	coprocessorCounter.WithLabelValues("next").Inc()
 
 	var (
@@ -475,13 +484,18 @@ func (it *copIterator) Next() ([]byte, error) {
 			return nil, nil
 		}
 	} else {
+		var closed bool
 		for {
 			if it.curr >= len(it.tasks) {
 				// Resp will be nil if iterator is finished.
 				return nil, nil
 			}
 			task := it.tasks[it.curr]
-			resp, ok = <-task.respChan
+			resp, ok, closed = it.recvFromRespCh(ctx, task.respChan)
+			if closed {
+				// Close() is already called, so Next() is invalid.
+				return nil, nil
+			}
 			if ok {
 				break
 			}
@@ -613,7 +627,7 @@ func (it *copIterator) handleCopResponse(bo *Backoffer, resp *coprocessor.Respon
 		log.Warnf("coprocessor err: %v", err)
 		return nil, errors.Trace(err)
 	}
-	it.sendToRespCh(bo, copResponse{resp, nil}, ch)
+	it.sendToRespCh(copResponse{resp, nil}, ch)
 	return nil, nil
 }
 
@@ -642,7 +656,9 @@ func calculateRemain(ranges *copRanges, split *coprocessor.KeyRange, desc bool) 
 }
 
 func (it *copIterator) Close() error {
-	close(it.finished)
+	if atomic.CompareAndSwapUint32(&it.closed, 0, 1) {
+		close(it.finished)
+	}
 	it.wg.Wait()
 	return nil
 }
@@ -650,7 +666,7 @@ func (it *copIterator) Close() error {
 // copErrorResponse returns error when calling Next()
 type copErrorResponse struct{ error }
 
-func (it copErrorResponse) Next() ([]byte, error) {
+func (it copErrorResponse) Next(ctx goctx.Context) ([]byte, error) {
 	return nil, it.error
 }
 

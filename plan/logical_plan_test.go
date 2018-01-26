@@ -538,7 +538,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		c.Assert(err, IsNil, comment)
 		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
-		p, err = logicalOptimize(flagPredicatePushDown|flagDecorrelate|flagPrunColumns, p.(LogicalPlan), s.ctx)
+		p, err = logicalOptimize(flagPredicatePushDown|flagDecorrelate|flagPrunColumns, p.(LogicalPlan))
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
 	}
@@ -622,7 +622,7 @@ func (s *testPlanSuite) TestSubquery(c *C) {
 		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
 		if lp, ok := p.(LogicalPlan); ok {
-			p, err = logicalOptimize(flagBuildKeyInfo|flagDecorrelate|flagPrunColumns, lp, s.ctx)
+			p, err = logicalOptimize(flagBuildKeyInfo|flagDecorrelate|flagPrunColumns, lp)
 			c.Assert(err, IsNil)
 		}
 		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
@@ -681,7 +681,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
 		if lp, ok := p.(LogicalPlan); ok {
-			p, err = logicalOptimize(flagPrunColumns, lp, s.ctx)
+			p, err = logicalOptimize(flagPrunColumns, lp)
 			c.Assert(err, IsNil)
 		}
 		c.Assert(ToString(p), Equals, ca.plan, Commentf("for %s", ca.sql))
@@ -726,7 +726,7 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 
 		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
-		p, err = logicalOptimize(flagPredicatePushDown, p.(LogicalPlan), s.ctx)
+		p, err = logicalOptimize(flagPredicatePushDown, p.(LogicalPlan))
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -823,7 +823,7 @@ func (s *testPlanSuite) TestEagerAggregation(c *C) {
 
 		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
-		p, err = logicalOptimize(flagBuildKeyInfo|flagPredicatePushDown|flagPrunColumns|flagAggregationOptimize, p.(LogicalPlan), s.ctx)
+		p, err = logicalOptimize(flagBuildKeyInfo|flagPredicatePushDown|flagPrunColumns|flagAggregationOptimize, p.(LogicalPlan))
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -952,9 +952,9 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 
 		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
-		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns, p.(LogicalPlan), s.ctx)
+		lp, err := logicalOptimize(flagPredicatePushDown|flagPrunColumns, p.(LogicalPlan))
 		c.Assert(err, IsNil)
-		checkDataSourceCols(p, c, tt.ans, comment)
+		checkDataSourceCols(lp, c, tt.ans, comment)
 	}
 }
 
@@ -965,7 +965,7 @@ func (s *testPlanSuite) TestAllocID(c *C) {
 	c.Assert(pA.id+1, Equals, pB.id)
 }
 
-func checkDataSourceCols(p Plan, c *C, ans map[int][]string, comment CommentInterface) {
+func checkDataSourceCols(p LogicalPlan, c *C, ans map[int][]string, comment CommentInterface) {
 	switch p.(type) {
 	case *DataSource:
 		colList, ok := ans[p.ID()]
@@ -1118,7 +1118,7 @@ func (s *testPlanSuite) TestValidate(c *C) {
 	}
 }
 
-func checkUniqueKeys(p Plan, c *C, ans map[int][][]string, sql string) {
+func checkUniqueKeys(p LogicalPlan, c *C, ans map[int][][]string, sql string) {
 	keyList, ok := ans[p.ID()]
 	c.Assert(ok, IsTrue, Commentf("for %s, %v not found", sql, p.ID()))
 	c.Assert(len(p.Schema().Keys), Equals, len(keyList), Commentf("for %s, %v, the number of key doesn't match, the schema is %s", sql, p.ID(), p.Schema()))
@@ -1207,9 +1207,9 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 
 		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
-		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagBuildKeyInfo, p.(LogicalPlan), s.ctx)
+		lp, err := logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagBuildKeyInfo, p.(LogicalPlan))
 		c.Assert(err, IsNil)
-		checkUniqueKeys(p, c, tt.ans, tt.sql)
+		checkUniqueKeys(lp, c, tt.ans, tt.sql)
 	}
 }
 
@@ -1249,7 +1249,7 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
 
-		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagBuildKeyInfo|flagAggregationOptimize, p.(LogicalPlan), s.ctx)
+		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagBuildKeyInfo|flagAggregationOptimize, p.(LogicalPlan))
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, tt.best, comment)
 	}
@@ -1578,7 +1578,7 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		}
 		c.Assert(builder.err, IsNil)
 		p := builder.build(stmt).(LogicalPlan)
-		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan), builder.ctx)
+		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan))
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, tt.best, comment)
 	}

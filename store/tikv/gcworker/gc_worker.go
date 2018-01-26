@@ -304,16 +304,19 @@ func (w *GCWorker) runGCJob(ctx goctx.Context, safePoint uint64) {
 	gcWorkerCounter.WithLabelValues("run_job").Inc()
 	err := resolveLocks(ctx, w.store, safePoint, w.uuid)
 	if err != nil {
+		gcFailureCounter.WithLabelValues("resolve_lock").Inc()
 		w.done <- errors.Trace(err)
 		return
 	}
 	err = w.deleteRanges(ctx, safePoint)
 	if err != nil {
+		gcFailureCounter.WithLabelValues("delete_range").Inc()
 		w.done <- errors.Trace(err)
 		return
 	}
 	err = doGC(ctx, w.store, safePoint, w.uuid)
 	if err != nil {
+		gcFailureCounter.WithLabelValues("gc").Inc()
 		log.Error("do GC returns an error", err)
 		w.gcIsRunning = false
 		w.done <- errors.Trace(err)
@@ -688,6 +691,9 @@ func (w *GCWorker) loadValueFromSysTable(key string, s tidb.Session) (string, er
 	goCtx := goctx.Background()
 	stmt := fmt.Sprintf(`SELECT (variable_value) FROM mysql.tidb WHERE variable_name='%s' FOR UPDATE`, key)
 	rs, err := s.Execute(goCtx, stmt)
+	if len(rs) > 0 {
+		defer terror.Call(rs[0].Close)
+	}
 	if err != nil {
 		return "", errors.Trace(err)
 	}

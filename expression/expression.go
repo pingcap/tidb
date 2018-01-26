@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -40,34 +39,31 @@ type Expression interface {
 	Eval(row types.Row) (types.Datum, error)
 
 	// EvalInt returns the int64 representation of expression.
-	EvalInt(row types.Row, sc *stmtctx.StatementContext) (val int64, isNull bool, err error)
+	EvalInt(ctx context.Context, row types.Row) (val int64, isNull bool, err error)
 
 	// EvalReal returns the float64 representation of expression.
-	EvalReal(row types.Row, sc *stmtctx.StatementContext) (val float64, isNull bool, err error)
+	EvalReal(ctx context.Context, row types.Row) (val float64, isNull bool, err error)
 
 	// EvalString returns the string representation of expression.
-	EvalString(row types.Row, sc *stmtctx.StatementContext) (val string, isNull bool, err error)
+	EvalString(ctx context.Context, row types.Row) (val string, isNull bool, err error)
 
 	// EvalDecimal returns the decimal representation of expression.
-	EvalDecimal(row types.Row, sc *stmtctx.StatementContext) (val *types.MyDecimal, isNull bool, err error)
+	EvalDecimal(ctx context.Context, row types.Row) (val *types.MyDecimal, isNull bool, err error)
 
 	// EvalTime returns the DATE/DATETIME/TIMESTAMP representation of expression.
-	EvalTime(row types.Row, sc *stmtctx.StatementContext) (val types.Time, isNull bool, err error)
+	EvalTime(ctx context.Context, row types.Row) (val types.Time, isNull bool, err error)
 
 	// EvalDuration returns the duration representation of expression.
-	EvalDuration(row types.Row, sc *stmtctx.StatementContext) (val types.Duration, isNull bool, err error)
+	EvalDuration(ctx context.Context, row types.Row) (val types.Duration, isNull bool, err error)
 
 	// EvalJSON returns the JSON representation of expression.
-	EvalJSON(row types.Row, sc *stmtctx.StatementContext) (val json.BinaryJSON, isNull bool, err error)
+	EvalJSON(ctx context.Context, row types.Row) (val json.BinaryJSON, isNull bool, err error)
 
 	// GetType gets the type that the expression returns.
 	GetType() *types.FieldType
 
 	// Clone copies an expression totally.
 	Clone() Expression
-
-	// HashCode create the hashcode for expression
-	HashCode() []byte
 
 	// Equal checks whether two expressions are equal.
 	Equal(e Expression, ctx context.Context) bool
@@ -314,24 +310,8 @@ func NewValuesFunc(offset int, retTp *types.FieldType, ctx context.Context) *Sca
 	}
 }
 
-// IsHybridType checks whether a ClassString expression is a hybrid type value which will return different types of value in different context.
-//
-// For ENUM/SET which is consist of a string attribute `Name` and an int attribute `Value`,
-// it will cause an error if we convert ENUM/SET to int as a string value.
-//
-// For BinaryLiteral/MysqlBit, we will get a wrong result if we convert it to int as a string value.
-// For example, when convert `0b101` to int, the result should be 5, but we will get 101 if we regard it as a string.
-func IsHybridType(expr Expression) bool {
-	if expr.GetType().Hybrid() {
-		return true
-	}
-
-	// For a constant, the field type will be inferred as `VARCHAR` when the kind of it is BinaryLiteral
-	if con, ok := expr.(*Constant); ok {
-		switch con.Value.Kind() {
-		case types.KindBinaryLiteral:
-			return true
-		}
-	}
-	return false
+// IsBinaryLiteral checks whether an expression is a binary literal
+func IsBinaryLiteral(expr Expression) bool {
+	con, ok := expr.(*Constant)
+	return ok && con.Value.Kind() == types.KindBinaryLiteral
 }

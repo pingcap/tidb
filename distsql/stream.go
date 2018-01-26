@@ -42,10 +42,10 @@ func (r *streamResult) ScanCount() int64 {
 
 func (r *streamResult) Fetch(goctx.Context) {}
 
-func (r *streamResult) Next(goctx.Context) (PartialResult, error) {
+func (r *streamResult) Next(goCtx goctx.Context) (PartialResult, error) {
 	var ret streamPartialResult
 	ret.rowLen = r.rowLen
-	finished, err := r.readDataFromResponse(r.resp, &ret.Chunk)
+	finished, err := r.readDataFromResponse(goCtx, r.resp, &ret.Chunk)
 	if err != nil || finished {
 		return nil, errors.Trace(err)
 	}
@@ -56,7 +56,7 @@ func (r *streamResult) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	maxChunkSize := r.ctx.GetSessionVars().MaxChunkSize
 	for chk.NumRows() < maxChunkSize {
-		err := r.readDataIfNecessary()
+		err := r.readDataIfNecessary(goCtx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -73,8 +73,8 @@ func (r *streamResult) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 }
 
 // readDataFromResponse read the data to result. Returns true means the resp is finished.
-func (r *streamResult) readDataFromResponse(resp kv.Response, result *tipb.Chunk) (bool, error) {
-	data, err := resp.Next()
+func (r *streamResult) readDataFromResponse(goCtx goctx.Context, resp kv.Response, result *tipb.Chunk) (bool, error) {
+	data, err := resp.Next(goCtx)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -104,13 +104,13 @@ func (r *streamResult) readDataFromResponse(resp kv.Response, result *tipb.Chunk
 }
 
 // readDataIfNecessary ensures there are some data in current chunk. If no more data, r.curr == nil.
-func (r *streamResult) readDataIfNecessary() error {
+func (r *streamResult) readDataIfNecessary(goCtx goctx.Context) error {
 	if r.curr != nil && len(r.curr.RowsData) > 0 {
 		return nil
 	}
 
 	tmp := new(tipb.Chunk)
-	finish, err := r.readDataFromResponse(r.resp, tmp)
+	finish, err := r.readDataFromResponse(goCtx, r.resp, tmp)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -142,8 +142,8 @@ func (r *streamResult) flushToChunk(chk *chunk.Chunk) (err error) {
 	return nil
 }
 
-func (r *streamResult) NextRaw() ([]byte, error) {
-	return r.resp.Next()
+func (r *streamResult) NextRaw(goCtx goctx.Context) ([]byte, error) {
+	return r.resp.Next(goCtx)
 }
 
 func (r *streamResult) Close() error {

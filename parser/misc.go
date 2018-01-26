@@ -25,7 +25,7 @@ func isLetter(ch rune) bool {
 }
 
 func isDigit(ch rune) bool {
-	return (ch >= '0' && ch <= '9')
+	return ch >= '0' && ch <= '9'
 }
 
 func isIdentChar(ch rune) bool {
@@ -102,6 +102,8 @@ func init() {
 	initTokenByte('\\', int('\\'))
 	initTokenByte('?', paramMarker)
 	initTokenByte('=', eq)
+	initTokenByte('{', int('{'))
+	initTokenByte('}', int('}'))
 
 	initTokenString("||", pipes)
 	initTokenString("&&", andand)

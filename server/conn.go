@@ -291,8 +291,8 @@ func parseHandshakeResponseBody(packet *handshakeResponse41, data []byte, offset
 		}
 		if num, null, off := parseLengthEncodedInt(data[offset:]); !null {
 			offset += off
-			kv := data[offset : offset+int(num)]
-			attrs, err := parseAttrs(kv)
+			row := data[offset : offset+int(num)]
+			attrs, err := parseAttrs(row)
 			if err != nil {
 				log.Warn("parse attrs error:", errors.ErrorStack(err))
 				return nil
@@ -412,6 +412,7 @@ func (cc *clientConn) Run() {
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
 			log.Errorf("lastCmd %s, %v, %s", cc.lastCmd, r, buf)
+			panicCounter.Add(1)
 		}
 		if !closedOutside {
 			err := cc.Close()
@@ -718,7 +719,7 @@ func (cc *clientConn) writeReq(filePath string) error {
 	return errors.Trace(cc.flush())
 }
 
-var defaultLoadDataBatchCnt = 20000
+var defaultLoadDataBatchCnt uint64 = 20000
 
 func insertDataWithCommit(goCtx goctx.Context, prevData, curData []byte, loadDataInfo *executor.LoadDataInfo) ([]byte, error) {
 	var err error
@@ -760,7 +761,7 @@ func (cc *clientConn) handleLoadData(goCtx goctx.Context, loadDataInfo *executor
 	var shouldBreak bool
 	var prevData, curData []byte
 	// TODO: Make the loadDataRowCnt settable.
-	loadDataInfo.SetBatchCount(int64(defaultLoadDataBatchCnt))
+	loadDataInfo.SetMaxRowsInBatch(defaultLoadDataBatchCnt)
 	err = loadDataInfo.Ctx.NewTxn()
 	if err != nil {
 		return errors.Trace(err)
@@ -789,6 +790,7 @@ func (cc *clientConn) handleLoadData(goCtx goctx.Context, loadDataInfo *executor
 	}
 
 	txn := loadDataInfo.Ctx.Txn()
+	terror.Log(loadDataInfo.Ctx.StmtCommit())
 	if err != nil {
 		if txn != nil && txn.Valid() {
 			if err1 := txn.Rollback(); err1 != nil {

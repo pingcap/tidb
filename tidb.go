@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/chunk"
 	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 	"google.golang.org/grpc"
@@ -92,7 +93,8 @@ var (
 	}
 	stores = make(map[string]kv.Driver)
 	// store.UUID()-> IfBootstrapped
-	storeBootstrapped = make(map[string]bool)
+	storeBootstrapped     = make(map[string]bool)
+	storeBootstrappedLock sync.Mutex
 
 	// schemaLease is the time for re-updating remote schema.
 	// In online DDL, we must wait 2 * SchemaLease time to guarantee
@@ -163,7 +165,16 @@ func runStmt(goCtx goctx.Context, ctx context.Context, s ast.Statement) (ast.Rec
 	rs, err = s.Exec(goCtx)
 	span.SetTag("txn.id", se.sessionVars.TxnCtx.StartTS)
 	// All the history should be added here.
-	GetHistory(ctx).Add(0, s, se.sessionVars.StmtCtx)
+	if !s.IsReadOnly() {
+		GetHistory(ctx).Add(0, s, se.sessionVars.StmtCtx)
+		if txn := ctx.Txn(); txn != nil {
+			if err != nil {
+				ctx.StmtRollback()
+			} else {
+				terror.Log(ctx.StmtCommit())
+			}
+		}
+	}
 	if !se.sessionVars.InTxn() {
 		if err != nil {
 			log.Info("RollbackTxn for ddl/autocommit error.")
@@ -171,6 +182,16 @@ func runStmt(goCtx goctx.Context, ctx context.Context, s ast.Statement) (ast.Rec
 			terror.Log(errors.Trace(err1))
 		} else {
 			err = se.CommitTxn(ctx1)
+		}
+	} else {
+		// If the user insert, insert, insert ... but never commit, TiDB would OOM.
+		// So we limit the statement count in a transaction here.
+		history := GetHistory(ctx)
+		if history.Count() > config.GetGlobalConfig().Performance.StmtCountLimit {
+			err1 := se.RollbackTxn(ctx1)
+			terror.Log(errors.Trace(err1))
+			return rs, errors.Errorf("statement count %d exceeds the transaction limitation, autocommit = %t",
+				history.Count(), ctx.GetSessionVars().IsAutocommit())
 		}
 	}
 	return rs, errors.Trace(err)
@@ -197,6 +218,8 @@ func GetRows4Test(goCtx goctx.Context, rs ast.RecordSet) ([]types.Row, error) {
 		for {
 			// Since we collect all the rows, we can not reuse the chunk.
 			chk := rs.NewChunk()
+			iter := chunk.NewIterator4Chunk(chk)
+
 			err := rs.NextChunk(goCtx, chk)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -204,7 +227,8 @@ func GetRows4Test(goCtx goctx.Context, rs ast.RecordSet) ([]types.Row, error) {
 			if chk.NumRows() == 0 {
 				break
 			}
-			for row := chk.Begin(); row != chk.End(); row = row.Next() {
+
+			for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 				rows = append(rows, row)
 			}
 		}
@@ -249,24 +273,24 @@ func NewStore(path string) (kv.Storage, error) {
 }
 
 func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
-	url, err := url.Parse(path)
+	storeURL, err := url.Parse(path)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	name := strings.ToLower(url.Scheme)
+	name := strings.ToLower(storeURL.Scheme)
 	d, ok := stores[name]
 	if !ok {
 		return nil, errors.Errorf("invalid uri format, storage %s is not registered", name)
 	}
 
 	var s kv.Storage
-	err1 := util.RunWithRetry(maxRetries, util.RetryInterval, func() (bool, error) {
+	err = util.RunWithRetry(maxRetries, util.RetryInterval, func() (bool, error) {
 		log.Infof("new store")
 		s, err = d.Open(path)
 		return kv.IsRetryableError(err), err
 	})
-	return s, errors.Trace(err1)
+	return s, errors.Trace(err)
 }
 
 // DialPumpClientWithRetry tries to dial to binlogSocket,

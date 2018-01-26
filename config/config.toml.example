@@ -103,6 +103,11 @@ metrics-addr = ""
 metrics-interval = 15
 
 [performance]
+# Max CPUs to use, 0 use number of CPUs in the machine.
+max-procs = 0
+# StmtCountLimit limits the max count of statement inside a transaction.
+stmt-count-limit = 5000
+
 # Set keep alive option for tcp connection.
 tcp-keep-alive = true
 

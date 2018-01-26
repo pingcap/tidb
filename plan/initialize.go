@@ -82,9 +82,9 @@ const (
 	TypeIndexReader = "IndexReader"
 )
 
-func (p LogicalAggregation) init(ctx context.Context) *LogicalAggregation {
-	p.baseLogicalPlan = newBaseLogicalPlan(TypeAgg, ctx, &p)
-	return &p
+func (la LogicalAggregation) init(ctx context.Context) *LogicalAggregation {
+	la.baseLogicalPlan = newBaseLogicalPlan(TypeAgg, ctx, &la)
+	return &la
 }
 
 func (p LogicalJoin) init(ctx context.Context) *LogicalJoin {
@@ -92,14 +92,14 @@ func (p LogicalJoin) init(ctx context.Context) *LogicalJoin {
 	return &p
 }
 
-func (p DataSource) init(ctx context.Context) *DataSource {
-	p.baseLogicalPlan = newBaseLogicalPlan(TypeTableScan, ctx, &p)
-	return &p
+func (ds DataSource) init(ctx context.Context) *DataSource {
+	ds.baseLogicalPlan = newBaseLogicalPlan(TypeTableScan, ctx, &ds)
+	return &ds
 }
 
-func (p LogicalApply) init(ctx context.Context) *LogicalApply {
-	p.baseLogicalPlan = newBaseLogicalPlan(TypeApply, ctx, &p)
-	return &p
+func (la LogicalApply) init(ctx context.Context) *LogicalApply {
+	la.baseLogicalPlan = newBaseLogicalPlan(TypeApply, ctx, &la)
+	return &la
 }
 
 func (p LogicalSelection) init(ctx context.Context) *LogicalSelection {
@@ -143,9 +143,9 @@ func (p PhysicalUnionAll) init(ctx context.Context, stats *statsInfo, props ...*
 	return &p
 }
 
-func (p LogicalSort) init(ctx context.Context) *LogicalSort {
-	p.baseLogicalPlan = newBaseLogicalPlan(TypeSort, ctx, &p)
-	return &p
+func (ls LogicalSort) init(ctx context.Context) *LogicalSort {
+	ls.baseLogicalPlan = newBaseLogicalPlan(TypeSort, ctx, &ls)
+	return &ls
 }
 
 func (p PhysicalSort) init(ctx context.Context, stats *statsInfo, props ...*requiredProp) *PhysicalSort {
@@ -161,9 +161,9 @@ func (p NominalSort) init(ctx context.Context, props ...*requiredProp) *NominalS
 	return &p
 }
 
-func (p LogicalTopN) init(ctx context.Context) *LogicalTopN {
-	p.baseLogicalPlan = newBaseLogicalPlan(TypeTopN, ctx, &p)
-	return &p
+func (lt LogicalTopN) init(ctx context.Context) *LogicalTopN {
+	lt.baseLogicalPlan = newBaseLogicalPlan(TypeTopN, ctx, &lt)
+	return &lt
 }
 
 func (p PhysicalTopN) init(ctx context.Context, stats *statsInfo, props ...*requiredProp) *PhysicalTopN {
@@ -365,7 +365,7 @@ func flattenPushDownPlan(p PhysicalPlan) []PhysicalPlan {
 		if len(p.Children()) == 0 {
 			break
 		}
-		p = p.Children()[0].(PhysicalPlan)
+		p = p.Children()[0]
 	}
 	for i := 0; i < len(plans)/2; i++ {
 		j := len(plans) - i - 1

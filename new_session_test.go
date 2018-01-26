@@ -22,6 +22,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
@@ -347,6 +348,24 @@ func (s *testSessionSuite) TestRetryCleanTxn(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(tk.Se.Txn(), IsNil)
 	c.Assert(tk.Se.GetSessionVars().InTxn(), IsFalse)
+}
+
+func (s *testSessionSuite) TestReadOnlyNotInHistory(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table history (a int)")
+	tk.MustExec("insert history values (1), (2), (3)")
+	tk.MustExec("set @@autocommit = 0")
+	tk.MustQuery("select * from history")
+	history := tidb.GetHistory(tk.Se)
+	c.Assert(history.Count(), Equals, 0)
+
+	tk.MustExec("insert history values (4)")
+	tk.MustExec("insert history values (5)")
+	c.Assert(history.Count(), Equals, 2)
+	tk.MustExec("commit")
+	tk.MustQuery("select * from history")
+	history = tidb.GetHistory(tk.Se)
+	c.Assert(history.Count(), Equals, 0)
 }
 
 // TestTruncateAlloc tests that the auto_increment ID does not reuse the old table's allocator.
@@ -1314,6 +1333,22 @@ func (s *testSessionSuite) TestDeletePanic(c *C) {
 	tk.MustExec("delete from `t` where `c` = ?", 2)
 }
 
+func (s *testSessionSuite) TestInformationSchemaCreateTime(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t (c int)")
+	ret := tk.MustQuery("select create_time from information_schema.tables where table_name='t';")
+	// Make sure t1 is greater than t.
+	time.Sleep(time.Second)
+	tk.MustExec("alter table t modify c int default 11")
+	ret1 := tk.MustQuery("select create_time from information_schema.tables where table_name='t';")
+	t, err := types.ParseDatetime(nil, ret.Rows()[0][0].(string))
+	c.Assert(err, IsNil)
+	t1, err := types.ParseDatetime(nil, ret1.Rows()[0][0].(string))
+	c.Assert(err, IsNil)
+	r := t1.Compare(t)
+	c.Assert(r, Equals, 1)
+}
+
 var _ = Suite(&testSchemaSuite{})
 
 type testSchemaSuite struct {
@@ -1770,4 +1805,56 @@ func (s *testSchemaSuite) TestIndexLookUpReaderChunk(c *C) {
 	}
 	c.Assert(count, Equals, 90)
 	rs.Close()
+}
+
+func (s *testSessionSuite) TestStatementErrorInTransaction(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table statement_side_effect (c int primary key)")
+	tk.MustExec("begin")
+	tk.MustExec("insert into statement_side_effect values (1)")
+	_, err := tk.Exec("insert into statement_side_effect value (2),(3),(4),(1)")
+	c.Assert(err, NotNil)
+	// TODO: Fix here, dirty table should not be touched, too.
+	// tk.MustQuery(`select * from statement_side_effect`).Check(testkit.Rows("1"))
+	tk.MustExec("commit")
+	tk.MustQuery(`select * from statement_side_effect`).Check(testkit.Rows("1"))
+
+	tk.MustExec("drop table if exists test;")
+	tk.MustExec(`create table test (
+ 		  a int(11) DEFAULT NULL,
+ 		  b int(11) DEFAULT NULL
+ 	) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;`)
+	tk.MustExec("insert into test values (1, 2), (1, 2), (1, 1), (1, 1);")
+
+	tk.MustExec("start transaction;")
+	// In the transaction, statement error should not rollback the transaction.
+	_, err = tk.Exec("update tset set b=11 where a=1 and b=2;")
+	c.Assert(err, NotNil)
+	// Test for a bug that last line rollback and exit transaction, this line autocommit.
+	tk.MustExec("update test set b = 11 where a = 1 and b = 2;")
+	tk.MustExec("rollback")
+	tk.MustQuery("select * from test where a = 1 and b = 11").Check(testkit.Rows())
+}
+
+func (s *testSessionSuite) TestStatementCountLimit(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table stmt_count_limit (id int)")
+	saved := config.GetGlobalConfig().Performance.StmtCountLimit
+	config.GetGlobalConfig().Performance.StmtCountLimit = 3
+	defer func() {
+		config.GetGlobalConfig().Performance.StmtCountLimit = saved
+	}()
+	tk.MustExec("begin")
+	tk.MustExec("insert into stmt_count_limit values (1)")
+	tk.MustExec("insert into stmt_count_limit values (2)")
+	_, err := tk.Exec("insert into stmt_count_limit values (3)")
+	c.Assert(err, NotNil)
+
+	// begin is counted into history but this one is not.
+	tk.MustExec("SET SESSION autocommit = false")
+	tk.MustExec("insert into stmt_count_limit values (1)")
+	tk.MustExec("insert into stmt_count_limit values (2)")
+	tk.MustExec("insert into stmt_count_limit values (3)")
+	_, err = tk.Exec("insert into stmt_count_limit values (4)")
+	c.Assert(err, NotNil)
 }

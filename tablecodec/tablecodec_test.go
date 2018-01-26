@@ -72,7 +72,8 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 	for _, col := range cols {
 		colIDs = append(colIDs, col.id)
 	}
-	bs, err := EncodeRow(row, colIDs, time.Local)
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	bs, err := EncodeRow(sc, row, colIDs, nil, nil)
 	c.Assert(err, IsNil)
 	c.Assert(bs, NotNil)
 
@@ -85,7 +86,6 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(r, NotNil)
 	c.Assert(r, HasLen, 3)
-	sc := new(stmtctx.StatementContext)
 	// Compare decoded row and original row
 	for i, col := range cols {
 		v, ok := r[col.id]
@@ -128,7 +128,7 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 	}
 
 	// Make sure empty row return not nil value.
-	bs, err = EncodeRow([]types.Datum{}, []int64{}, time.Local)
+	bs, err = EncodeRow(sc, []types.Datum{}, []int64{}, nil, nil)
 	c.Assert(err, IsNil)
 	c.Assert(bs, HasLen, 1)
 
@@ -162,7 +162,8 @@ func (s *testTableCodecSuite) TestTimeCodec(c *C) {
 	for _, col := range cols {
 		colIDs = append(colIDs, col.id)
 	}
-	bs, err := EncodeRow(row, colIDs, time.Local)
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	bs, err := EncodeRow(sc, row, colIDs, nil, nil)
 	c.Assert(err, IsNil)
 	c.Assert(bs, NotNil)
 
@@ -175,7 +176,6 @@ func (s *testTableCodecSuite) TestTimeCodec(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(r, NotNil)
 	c.Assert(r, HasLen, colLen)
-	sc := new(stmtctx.StatementContext)
 	// Compare decoded row and original row
 	for i, col := range cols {
 		v, ok := r[col.id]
@@ -200,19 +200,20 @@ func (s *testTableCodecSuite) TestCutRow(c *C) {
 	row[1] = types.NewBytesDatum([]byte("abc"))
 	row[2] = types.NewDecimalDatum(types.NewDecFromInt(1))
 
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	data := make([][]byte, 3)
-	data[0], err = EncodeValue(row[0], time.Local)
+	data[0], err = EncodeValue(sc, row[0])
 	c.Assert(err, IsNil)
-	data[1], err = EncodeValue(row[1], time.Local)
+	data[1], err = EncodeValue(sc, row[1])
 	c.Assert(err, IsNil)
-	data[2], err = EncodeValue(row[2], time.Local)
+	data[2], err = EncodeValue(sc, row[2])
 	c.Assert(err, IsNil)
 	// Encode
 	colIDs := make([]int64, 0, 3)
 	for _, col := range cols {
 		colIDs = append(colIDs, col.id)
 	}
-	bs, err := EncodeRow(row, colIDs, time.Local)
+	bs, err := EncodeRow(sc, row, colIDs, nil, nil)
 	c.Assert(err, IsNil)
 	c.Assert(bs, NotNil)
 
@@ -235,7 +236,8 @@ func (s *testTableCodecSuite) TestCutKeyNew(c *C) {
 	values := []types.Datum{types.NewIntDatum(1), types.NewBytesDatum([]byte("abc")), types.NewFloat64Datum(5.5)}
 	handle := types.NewIntDatum(100)
 	values = append(values, handle)
-	encodedValue, err := codec.EncodeKey(nil, values...)
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	encodedValue, err := codec.EncodeKey(sc, nil, values...)
 	c.Assert(err, IsNil)
 	tableID := int64(4)
 	indexID := int64(5)
@@ -257,7 +259,8 @@ func (s *testTableCodecSuite) TestCutKey(c *C) {
 	values := []types.Datum{types.NewIntDatum(1), types.NewBytesDatum([]byte("abc")), types.NewFloat64Datum(5.5)}
 	handle := types.NewIntDatum(100)
 	values = append(values, handle)
-	encodedValue, err := codec.EncodeKey(nil, values...)
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	encodedValue, err := codec.EncodeKey(sc, nil, values...)
 	c.Assert(err, IsNil)
 	tableID := int64(4)
 	indexID := int64(5)

@@ -25,7 +25,6 @@ import (
 )
 
 type aggregationOptimizer struct {
-	ctx context.Context
 }
 
 // isDecomposable checks if an aggregate function is decomposable. An aggregation function $F$ is decomposable
@@ -34,25 +33,25 @@ type aggregationOptimizer struct {
 // It's easy to see that max, min, first row is decomposable, no matter whether it's distinct, but sum(distinct) and
 // count(distinct) is not.
 // Currently we don't support avg and concat.
-func (a *aggregationOptimizer) isDecomposable(fun aggregation.Aggregation) bool {
-	switch fun.GetName() {
+func (a *aggregationOptimizer) isDecomposable(fun *aggregation.AggFuncDesc) bool {
+	switch fun.Name {
 	case ast.AggFuncAvg, ast.AggFuncGroupConcat:
 		// TODO: Support avg push down.
 		return false
 	case ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncFirstRow:
 		return true
 	case ast.AggFuncSum, ast.AggFuncCount:
-		return !fun.IsDistinct()
+		return !fun.HasDistinct
 	default:
 		return false
 	}
 }
 
 // getAggFuncChildIdx gets which children it belongs to, 0 stands for left, 1 stands for right, -1 stands for both.
-func (a *aggregationOptimizer) getAggFuncChildIdx(aggFunc aggregation.Aggregation, schema *expression.Schema) int {
+func (a *aggregationOptimizer) getAggFuncChildIdx(aggFunc *aggregation.AggFuncDesc, schema *expression.Schema) int {
 	fromLeft, fromRight := false, false
 	var cols []*expression.Column
-	cols = expression.ExtractColumnsFromExpressions(cols, aggFunc.GetArgs(), nil)
+	cols = expression.ExtractColumnsFromExpressions(cols, aggFunc.Args, nil)
 	for _, col := range cols {
 		if schema.Contains(col) {
 			fromLeft = true
@@ -71,7 +70,7 @@ func (a *aggregationOptimizer) getAggFuncChildIdx(aggFunc aggregation.Aggregatio
 // collectAggFuncs collects all aggregate functions and splits them into two parts: "leftAggFuncs" and "rightAggFuncs" whose
 // arguments are all from left child or right child separately. If some aggregate functions have the arguments that have
 // columns both from left and right children, the whole aggregation is forbidden to push down.
-func (a *aggregationOptimizer) collectAggFuncs(agg *LogicalAggregation, join *LogicalJoin) (valid bool, leftAggFuncs, rightAggFuncs []aggregation.Aggregation) {
+func (a *aggregationOptimizer) collectAggFuncs(agg *LogicalAggregation, join *LogicalJoin) (valid bool, leftAggFuncs, rightAggFuncs []*aggregation.AggFuncDesc) {
 	valid = true
 	leftChild := join.children[0]
 	for _, aggFunc := range agg.AggFuncs {
@@ -98,6 +97,7 @@ func (a *aggregationOptimizer) collectAggFuncs(agg *LogicalAggregation, join *Lo
 // treated as group by columns in join subquery.
 func (a *aggregationOptimizer) collectGbyCols(agg *LogicalAggregation, join *LogicalJoin) (leftGbyCols, rightGbyCols []*expression.Column) {
 	leftChild := join.children[0]
+	ctx := agg.ctx
 	for _, gbyExpr := range agg.GroupByItems {
 		cols := expression.ExtractColumns(gbyExpr)
 		for _, col := range cols {
@@ -110,24 +110,24 @@ func (a *aggregationOptimizer) collectGbyCols(agg *LogicalAggregation, join *Log
 	}
 	// extract equal conditions
 	for _, eqFunc := range join.EqualConditions {
-		leftGbyCols = a.addGbyCol(leftGbyCols, eqFunc.GetArgs()[0].(*expression.Column))
-		rightGbyCols = a.addGbyCol(rightGbyCols, eqFunc.GetArgs()[1].(*expression.Column))
+		leftGbyCols = a.addGbyCol(ctx, leftGbyCols, eqFunc.GetArgs()[0].(*expression.Column))
+		rightGbyCols = a.addGbyCol(ctx, rightGbyCols, eqFunc.GetArgs()[1].(*expression.Column))
 	}
 	for _, leftCond := range join.LeftConditions {
 		cols := expression.ExtractColumns(leftCond)
-		leftGbyCols = a.addGbyCol(leftGbyCols, cols...)
+		leftGbyCols = a.addGbyCol(ctx, leftGbyCols, cols...)
 	}
 	for _, rightCond := range join.RightConditions {
 		cols := expression.ExtractColumns(rightCond)
-		rightGbyCols = a.addGbyCol(rightGbyCols, cols...)
+		rightGbyCols = a.addGbyCol(ctx, rightGbyCols, cols...)
 	}
 	for _, otherCond := range join.OtherConditions {
 		cols := expression.ExtractColumns(otherCond)
 		for _, col := range cols {
 			if leftChild.Schema().Contains(col) {
-				leftGbyCols = a.addGbyCol(leftGbyCols, col)
+				leftGbyCols = a.addGbyCol(ctx, leftGbyCols, col)
 			} else {
-				rightGbyCols = a.addGbyCol(rightGbyCols, col)
+				rightGbyCols = a.addGbyCol(ctx, rightGbyCols, col)
 			}
 		}
 	}
@@ -135,7 +135,7 @@ func (a *aggregationOptimizer) collectGbyCols(agg *LogicalAggregation, join *Log
 }
 
 func (a *aggregationOptimizer) splitAggFuncsAndGbyCols(agg *LogicalAggregation, join *LogicalJoin) (valid bool,
-	leftAggFuncs, rightAggFuncs []aggregation.Aggregation,
+	leftAggFuncs, rightAggFuncs []*aggregation.AggFuncDesc,
 	leftGbyCols, rightGbyCols []*expression.Column) {
 	valid, leftAggFuncs, rightAggFuncs = a.collectAggFuncs(agg, join)
 	if !valid {
@@ -146,11 +146,11 @@ func (a *aggregationOptimizer) splitAggFuncsAndGbyCols(agg *LogicalAggregation, 
 }
 
 // addGbyCol adds a column to gbyCols. If a group by column has existed, it will not be added repeatedly.
-func (a *aggregationOptimizer) addGbyCol(gbyCols []*expression.Column, cols ...*expression.Column) []*expression.Column {
+func (a *aggregationOptimizer) addGbyCol(ctx context.Context, gbyCols []*expression.Column, cols ...*expression.Column) []*expression.Column {
 	for _, c := range cols {
 		duplicate := false
 		for _, gbyCol := range gbyCols {
-			if c.Equal(gbyCol, a.ctx) {
+			if c.Equal(gbyCol, ctx) {
 				duplicate = true
 				break
 			}
@@ -169,25 +169,25 @@ func (a *aggregationOptimizer) checkValidJoin(join *LogicalJoin) bool {
 
 // decompose splits an aggregate function to two parts: a final mode function and a partial mode function. Currently
 // there are no differences between partial mode and complete mode, so we can confuse them.
-func (a *aggregationOptimizer) decompose(aggFunc aggregation.Aggregation, schema *expression.Schema, id int) ([]aggregation.Aggregation, *expression.Schema) {
+func (a *aggregationOptimizer) decompose(aggFunc *aggregation.AggFuncDesc, schema *expression.Schema, id int) ([]*aggregation.AggFuncDesc, *expression.Schema) {
 	// Result is a slice because avg should be decomposed to sum and count. Currently we don't process this case.
-	result := []aggregation.Aggregation{aggFunc.Clone()}
+	result := []*aggregation.AggFuncDesc{aggFunc.Clone()}
 	for _, aggFunc := range result {
 		schema.Append(&expression.Column{
 			ColName:  model.NewCIStr(fmt.Sprintf("join_agg_%d", schema.Len())), // useless but for debug
 			FromID:   id,
 			Position: schema.Len(),
-			RetType:  aggFunc.GetType(),
+			RetType:  aggFunc.RetTp,
 		})
 	}
-	aggFunc.SetArgs(expression.Column2Exprs(schema.Columns[schema.Len()-len(result):]))
-	aggFunc.SetMode(aggregation.FinalMode)
+	aggFunc.Args = expression.Column2Exprs(schema.Columns[schema.Len()-len(result):])
+	aggFunc.Mode = aggregation.FinalMode
 	return result, schema
 }
 
-func (a *aggregationOptimizer) allFirstRow(aggFuncs []aggregation.Aggregation) bool {
+func (a *aggregationOptimizer) allFirstRow(aggFuncs []*aggregation.AggFuncDesc) bool {
 	for _, fun := range aggFuncs {
-		if fun.GetName() != ast.AggFuncFirstRow {
+		if fun.Name != ast.AggFuncFirstRow {
 			return false
 		}
 	}
@@ -197,8 +197,8 @@ func (a *aggregationOptimizer) allFirstRow(aggFuncs []aggregation.Aggregation) b
 // tryToPushDownAgg tries to push down an aggregate function into a join path. If all aggFuncs are first row, we won't
 // process it temporarily. If not, We will add additional group by columns and first row functions. We make a new aggregation operator.
 // If the pushed aggregation is grouped by unique key, it's no need to push it down.
-func (a *aggregationOptimizer) tryToPushDownAgg(aggFuncs []aggregation.Aggregation, gbyCols []*expression.Column, join *LogicalJoin, childIdx int) LogicalPlan {
-	child := join.children[childIdx].(LogicalPlan)
+func (a *aggregationOptimizer) tryToPushDownAgg(aggFuncs []*aggregation.AggFuncDesc, gbyCols []*expression.Column, join *LogicalJoin, childIdx int) LogicalPlan {
+	child := join.children[childIdx]
 	if a.allFirstRow(aggFuncs) {
 		return child
 	}
@@ -212,7 +212,7 @@ func (a *aggregationOptimizer) tryToPushDownAgg(aggFuncs []aggregation.Aggregati
 			return child
 		}
 	}
-	agg := a.makeNewAgg(aggFuncs, gbyCols)
+	agg := a.makeNewAgg(join.ctx, aggFuncs, gbyCols)
 	agg.SetChildren(child)
 	// If agg has no group-by item, it will return a default value, which may cause some bugs.
 	// So here we add a group-by item forcely.
@@ -234,7 +234,7 @@ func (a *aggregationOptimizer) tryToPushDownAgg(aggFuncs []aggregation.Aggregati
 func (a *aggregationOptimizer) getDefaultValues(agg *LogicalAggregation) ([]types.Datum, bool) {
 	defaultValues := make([]types.Datum, 0, agg.Schema().Len())
 	for _, aggFunc := range agg.AggFuncs {
-		value, existsDefaultValue := aggFunc.CalculateDefaultValue(agg.children[0].Schema(), a.ctx)
+		value, existsDefaultValue := aggFunc.CalculateDefaultValue(agg.ctx, agg.children[0].Schema())
 		if !existsDefaultValue {
 			return nil, false
 		}
@@ -243,53 +243,56 @@ func (a *aggregationOptimizer) getDefaultValues(agg *LogicalAggregation) ([]type
 	return defaultValues, true
 }
 
-func (a *aggregationOptimizer) checkAnyCountAndSum(aggFuncs []aggregation.Aggregation) bool {
+func (a *aggregationOptimizer) checkAnyCountAndSum(aggFuncs []*aggregation.AggFuncDesc) bool {
 	for _, fun := range aggFuncs {
-		if fun.GetName() == ast.AggFuncSum || fun.GetName() == ast.AggFuncCount {
+		if fun.Name == ast.AggFuncSum || fun.Name == ast.AggFuncCount {
 			return true
 		}
 	}
 	return false
 }
 
-func (a *aggregationOptimizer) makeNewAgg(aggFuncs []aggregation.Aggregation, gbyCols []*expression.Column) *LogicalAggregation {
+func (a *aggregationOptimizer) makeNewAgg(ctx context.Context, aggFuncs []*aggregation.AggFuncDesc, gbyCols []*expression.Column) *LogicalAggregation {
 	agg := LogicalAggregation{
 		GroupByItems: expression.Column2Exprs(gbyCols),
 		groupByCols:  gbyCols,
-	}.init(a.ctx)
+	}.init(ctx)
 	aggLen := len(aggFuncs) + len(gbyCols)
-	newAggFuncs := make([]aggregation.Aggregation, 0, aggLen)
+	newAggFuncDescs := make([]*aggregation.AggFuncDesc, 0, aggLen)
 	schema := expression.NewSchema(make([]*expression.Column, 0, aggLen)...)
 	for _, aggFunc := range aggFuncs {
-		var newFuncs []aggregation.Aggregation
+		var newFuncs []*aggregation.AggFuncDesc
 		newFuncs, schema = a.decompose(aggFunc, schema, agg.ID())
-		newAggFuncs = append(newAggFuncs, newFuncs...)
+		newAggFuncDescs = append(newAggFuncDescs, newFuncs...)
 	}
 	for _, gbyCol := range gbyCols {
-		firstRow := aggregation.NewAggFunction(ast.AggFuncFirstRow, []expression.Expression{gbyCol.Clone()}, false)
-		newAggFuncs = append(newAggFuncs, firstRow)
+		firstRow := aggregation.NewAggFuncDesc(agg.ctx, ast.AggFuncFirstRow, []expression.Expression{gbyCol.Clone()}, false)
+		newAggFuncDescs = append(newAggFuncDescs, firstRow)
 		schema.Append(gbyCol.Clone().(*expression.Column))
 	}
-	agg.AggFuncs = newAggFuncs
+	agg.AggFuncs = newAggFuncDescs
 	agg.SetSchema(schema)
+	// TODO: Add a Projection if any argument of aggregate funcs or group by items are scala functions.
+	// agg.buildProjectionIfNecessary()
 	return agg
 }
 
 // pushAggCrossUnion will try to push the agg down to the union. If the new aggregation's group-by columns doesn't contain unique key.
 // We will return the new aggregation. Otherwise we will transform the aggregation to projection.
 func (a *aggregationOptimizer) pushAggCrossUnion(agg *LogicalAggregation, unionSchema *expression.Schema, unionChild LogicalPlan) LogicalPlan {
+	ctx := agg.ctx
 	newAgg := LogicalAggregation{
-		AggFuncs:     make([]aggregation.Aggregation, 0, len(agg.AggFuncs)),
+		AggFuncs:     make([]*aggregation.AggFuncDesc, 0, len(agg.AggFuncs)),
 		GroupByItems: make([]expression.Expression, 0, len(agg.GroupByItems)),
-	}.init(a.ctx)
+	}.init(ctx)
 	newAgg.SetSchema(agg.schema.Clone())
 	for _, aggFunc := range agg.AggFuncs {
 		newAggFunc := aggFunc.Clone()
-		newArgs := make([]expression.Expression, 0, len(newAggFunc.GetArgs()))
-		for _, arg := range newAggFunc.GetArgs() {
+		newArgs := make([]expression.Expression, 0, len(newAggFunc.Args))
+		for _, arg := range newAggFunc.Args {
 			newArgs = append(newArgs, expression.ColumnSubstitute(arg, unionSchema, expression.Column2Exprs(unionChild.Schema().Columns)))
 		}
-		newAggFunc.SetArgs(newArgs)
+		newAggFunc.Args = newArgs
 		newAgg.AggFuncs = append(newAgg.AggFuncs, newAggFunc)
 	}
 	for _, gbyExpr := range agg.GroupByItems {
@@ -303,7 +306,7 @@ func (a *aggregationOptimizer) pushAggCrossUnion(agg *LogicalAggregation, unionS
 	// this will cause error during executor phase.
 	for _, key := range unionChild.Schema().Keys {
 		if tmpSchema.ColumnsIndices(key) != nil {
-			proj := a.convertAggToProj(newAgg, a.ctx)
+			proj := a.convertAggToProj(newAgg)
 			proj.SetChildren(unionChild)
 			return proj
 		}
@@ -312,11 +315,10 @@ func (a *aggregationOptimizer) pushAggCrossUnion(agg *LogicalAggregation, unionS
 	return newAgg
 }
 
-func (a *aggregationOptimizer) optimize(p LogicalPlan, ctx context.Context) (LogicalPlan, error) {
-	if !ctx.GetSessionVars().AllowAggPushDown {
+func (a *aggregationOptimizer) optimize(p LogicalPlan) (LogicalPlan, error) {
+	if !p.context().GetSessionVars().AllowAggPushDown {
 		return p, nil
 	}
-	a.ctx = ctx
 	a.aggPushDown(p)
 	return p, nil
 }
@@ -337,12 +339,12 @@ func (a *aggregationOptimizer) aggPushDown(p LogicalPlan) LogicalPlan {
 					rightInvalid := a.checkAnyCountAndSum(leftAggFuncs)
 					leftInvalid := a.checkAnyCountAndSum(rightAggFuncs)
 					if rightInvalid {
-						rChild = join.children[1].(LogicalPlan)
+						rChild = join.children[1]
 					} else {
 						rChild = a.tryToPushDownAgg(rightAggFuncs, rightGbyCols, join, 1)
 					}
 					if leftInvalid {
-						lChild = join.children[0].(LogicalPlan)
+						lChild = join.children[0]
 					} else {
 						lChild = a.tryToPushDownAgg(leftAggFuncs, leftGbyCols, join, 0)
 					}
@@ -362,30 +364,30 @@ func (a *aggregationOptimizer) aggPushDown(p LogicalPlan) LogicalPlan {
 				}
 				agg.collectGroupByColumns()
 				for _, aggFunc := range agg.AggFuncs {
-					newArgs := make([]expression.Expression, 0, len(aggFunc.GetArgs()))
-					for _, arg := range aggFunc.GetArgs() {
+					newArgs := make([]expression.Expression, 0, len(aggFunc.Args))
+					for _, arg := range aggFunc.Args {
 						newArgs = append(newArgs, expression.ColumnSubstitute(arg, proj.schema, proj.Exprs))
 					}
-					aggFunc.SetArgs(newArgs)
+					aggFunc.Args = newArgs
 				}
 				projChild := proj.children[0]
 				agg.SetChildren(projChild)
 			} else if union, ok1 := child.(*LogicalUnionAll); ok1 {
 				var gbyCols []*expression.Column
 				gbyCols = expression.ExtractColumnsFromExpressions(gbyCols, agg.GroupByItems, nil)
-				pushedAgg := a.makeNewAgg(agg.AggFuncs, gbyCols)
-				newChildren := make([]Plan, 0, len(union.children))
+				pushedAgg := a.makeNewAgg(agg.ctx, agg.AggFuncs, gbyCols)
+				newChildren := make([]LogicalPlan, 0, len(union.children))
 				for _, child := range union.children {
-					newChild := a.pushAggCrossUnion(pushedAgg, union.Schema(), child.(LogicalPlan))
+					newChild := a.pushAggCrossUnion(pushedAgg, union.Schema(), child)
 					newChildren = append(newChildren, newChild)
 				}
 				union.SetChildren(newChildren...)
 			}
 		}
 	}
-	newChildren := make([]Plan, 0, len(p.Children()))
+	newChildren := make([]LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
-		newChild := a.aggPushDown(child.(LogicalPlan))
+		newChild := a.aggPushDown(child)
 		newChildren = append(newChildren, newChild)
 	}
 	p.SetChildren(newChildren...)
@@ -407,69 +409,69 @@ func (a *aggregationOptimizer) tryToEliminateAggregation(agg *LogicalAggregation
 	}
 	if coveredByUniqueKey {
 		// GroupByCols has unique key, so this aggregation can be removed.
-		proj := a.convertAggToProj(agg, a.ctx)
+		proj := a.convertAggToProj(agg)
 		proj.SetChildren(agg.children[0])
 		return proj
 	}
 	return nil
 }
 
-func (a *aggregationOptimizer) convertAggToProj(agg *LogicalAggregation, ctx context.Context) *LogicalProjection {
+func (a *aggregationOptimizer) convertAggToProj(agg *LogicalAggregation) *LogicalProjection {
 	proj := LogicalProjection{
 		Exprs: make([]expression.Expression, 0, len(agg.AggFuncs)),
-	}.init(a.ctx)
+	}.init(agg.ctx)
 	for _, fun := range agg.AggFuncs {
-		expr := a.rewriteExpr(fun)
+		expr := a.rewriteExpr(agg.ctx, fun)
 		proj.Exprs = append(proj.Exprs, expr)
 	}
 	proj.SetSchema(agg.schema.Clone())
 	return proj
 }
 
-func (a *aggregationOptimizer) rewriteCount(exprs []expression.Expression) expression.Expression {
+func (a *aggregationOptimizer) rewriteCount(ctx context.Context, exprs []expression.Expression) expression.Expression {
 	// If is count(expr), we will change it to if(isnull(expr), 0, 1).
 	// If is count(distinct x, y, z) we will change it to if(isnull(x) or isnull(y) or isnull(z), 0, 1).
 	isNullExprs := make([]expression.Expression, 0, len(exprs))
 	for _, expr := range exprs {
-		isNullExpr := expression.NewFunctionInternal(a.ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr.Clone())
+		isNullExpr := expression.NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr.Clone())
 		isNullExprs = append(isNullExprs, isNullExpr)
 	}
-	innerExpr := expression.ComposeDNFCondition(a.ctx, isNullExprs...)
-	newExpr := expression.NewFunctionInternal(a.ctx, ast.If, types.NewFieldType(mysql.TypeLonglong), innerExpr, expression.Zero, expression.One)
+	innerExpr := expression.ComposeDNFCondition(ctx, isNullExprs...)
+	newExpr := expression.NewFunctionInternal(ctx, ast.If, types.NewFieldType(mysql.TypeLonglong), innerExpr, expression.Zero, expression.One)
 	return newExpr
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/group-by-functions.html
 // The SUM() and AVG() functions return a DECIMAL value for exact-value arguments (integer or DECIMAL),
 // and a DOUBLE value for approximate-value arguments (FLOAT or DOUBLE).
-func (a *aggregationOptimizer) rewriteSumOrAvg(exprs []expression.Expression) expression.Expression {
+func (a *aggregationOptimizer) rewriteSumOrAvg(ctx context.Context, exprs []expression.Expression) expression.Expression {
 	// FIXME: Consider the case that avg is final mode.
 	expr := exprs[0].Clone()
 	switch expr.GetType().Tp {
 	// Integer type should be cast to decimal.
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-		return expression.BuildCastFunction(a.ctx, expr, types.NewFieldType(mysql.TypeNewDecimal))
+		return expression.BuildCastFunction(ctx, expr, types.NewFieldType(mysql.TypeNewDecimal))
 	// Double and Decimal doesn't need to be cast.
 	case mysql.TypeDouble, mysql.TypeNewDecimal:
 		return expr
 	// Float should be cast to double. And other non-numeric type should be cast to double too.
 	default:
-		return expression.BuildCastFunction(a.ctx, expr, types.NewFieldType(mysql.TypeDouble))
+		return expression.BuildCastFunction(ctx, expr, types.NewFieldType(mysql.TypeDouble))
 	}
 }
 
 // rewriteExpr will rewrite the aggregate function to expression doesn't contain aggregate function.
-func (a *aggregationOptimizer) rewriteExpr(aggFunc aggregation.Aggregation) expression.Expression {
-	switch aggFunc.GetName() {
+func (a *aggregationOptimizer) rewriteExpr(ctx context.Context, aggFunc *aggregation.AggFuncDesc) expression.Expression {
+	switch aggFunc.Name {
 	case ast.AggFuncCount:
-		if aggFunc.GetMode() == aggregation.FinalMode {
-			return a.rewriteSumOrAvg(aggFunc.GetArgs())
+		if aggFunc.Mode == aggregation.FinalMode {
+			return a.rewriteSumOrAvg(ctx, aggFunc.Args)
 		}
-		return a.rewriteCount(aggFunc.GetArgs())
+		return a.rewriteCount(ctx, aggFunc.Args)
 	case ast.AggFuncSum, ast.AggFuncAvg:
-		return a.rewriteSumOrAvg(aggFunc.GetArgs())
+		return a.rewriteSumOrAvg(ctx, aggFunc.Args)
 	default:
 		// Default we do nothing about expr.
-		return aggFunc.GetArgs()[0].Clone()
+		return aggFunc.Args[0].Clone()
 	}
 }

@@ -27,7 +27,7 @@ import (
 
 // UnspecifiedLength is unspecified length.
 const (
-	UnspecifiedLength int = -1
+	UnspecifiedLength = -1
 )
 
 // FieldType records field type information.
@@ -280,46 +280,46 @@ func (ft *FieldType) FormatAsCastType(w io.Writer) {
 	switch ft.Tp {
 	case mysql.TypeVarString:
 		if ft.Charset == charset.CharsetBin && ft.Collate == charset.CollationBin {
-			fmt.Fprintf(w, "BINARY")
+			fmt.Fprint(w, "BINARY")
 		} else {
-			fmt.Fprintf(w, "CHAR")
+			fmt.Fprint(w, "CHAR")
 		}
 		if ft.Flen != UnspecifiedLength {
 			fmt.Fprintf(w, "(%d)", ft.Flen)
 		}
 		if ft.Flag&mysql.BinaryFlag != 0 {
-			fmt.Fprintf(w, " BINARY")
+			fmt.Fprint(w, " BINARY")
 		}
 		if ft.Charset != charset.CharsetBin && ft.Charset != charset.CharsetUTF8 {
 			fmt.Fprintf(w, " %s", ft.Charset)
 		}
 	case mysql.TypeDate:
-		fmt.Fprintf(w, "DATE")
+		fmt.Fprint(w, "DATE")
 	case mysql.TypeDatetime:
-		fmt.Fprintf(w, "DATETIME")
+		fmt.Fprint(w, "DATETIME")
 		if ft.Decimal > 0 {
 			fmt.Fprintf(w, "(%d)", ft.Decimal)
 		}
 	case mysql.TypeNewDecimal:
-		fmt.Fprintf(w, "DECIMAL")
+		fmt.Fprint(w, "DECIMAL")
 		if ft.Flen > 0 && ft.Decimal > 0 {
 			fmt.Fprintf(w, "(%d, %d)", ft.Flen, ft.Decimal)
 		} else if ft.Flen > 0 {
 			fmt.Fprintf(w, "(%d)", ft.Flen)
 		}
 	case mysql.TypeDuration:
-		fmt.Fprintf(w, "TIME")
+		fmt.Fprint(w, "TIME")
 		if ft.Decimal > 0 {
 			fmt.Fprintf(w, "(%d)", ft.Decimal)
 		}
 	case mysql.TypeLonglong:
 		if ft.Flag&mysql.UnsignedFlag != 0 {
-			fmt.Fprintf(w, "UNSIGNED")
+			fmt.Fprint(w, "UNSIGNED")
 		} else {
-			fmt.Fprintf(w, "SIGNED")
+			fmt.Fprint(w, "SIGNED")
 		}
 	case mysql.TypeJSON:
-		fmt.Fprintf(w, "JSON")
+		fmt.Fprint(w, "JSON")
 	}
 }
 
@@ -698,7 +698,7 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		//mysql.TypeLonglong     mysql.TypeInt24
 		mysql.TypeLonglong, mysql.TypeLonglong,
 		//mysql.TypeDate         mysql.TypeTime
-		mysql.TypeNewDate, mysql.TypeDuration,
+		mysql.TypeDate, mysql.TypeDuration,
 		//mysql.TypeDatetime     mysql.TypeYear
 		mysql.TypeDatetime, mysql.TypeYear,
 		//mysql.TypeNewDate      mysql.TypeVarchar
@@ -826,11 +826,11 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		//mysql.TypeFloat        mysql.TypeDouble
 		mysql.TypeVarchar, mysql.TypeVarchar,
 		//mysql.TypeNull         mysql.TypeTimestamp
-		mysql.TypeNewDate, mysql.TypeDatetime,
+		mysql.TypeDate, mysql.TypeDatetime,
 		//mysql.TypeLonglong     mysql.TypeInt24
 		mysql.TypeVarchar, mysql.TypeVarchar,
 		//mysql.TypeDate         mysql.TypeTime
-		mysql.TypeNewDate, mysql.TypeDatetime,
+		mysql.TypeDate, mysql.TypeDatetime,
 		//mysql.TypeDatetime     mysql.TypeYear
 		mysql.TypeDatetime, mysql.TypeVarchar,
 		//mysql.TypeNewDate      mysql.TypeVarchar

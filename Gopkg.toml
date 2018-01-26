@@ -1,0 +1,89 @@
+# Gopkg.toml example
+#
+# Refer to https://github.com/golang/dep/blob/master/docs/Gopkg.toml.md
+# for detailed Gopkg.toml documentation.
+#
+# required = ["github.com/user/thing/cmd/thing"]
+# ignored = ["github.com/user/project/pkgX", "bitbucket.org/user/project/pkgA/pkgY"]
+#
+# [[constraint]]
+#   name = "github.com/user/project"
+#   version = "1.0.0"
+#
+# [[constraint]]
+#   name = "github.com/user/project2"
+#   branch = "dev"
+#   source = "github.com/myfork/project2"
+#
+# [[override]]
+#  name = "github.com/x/y"
+#  version = "2.4.0"
+
+ignored = ["github.com/coreos/etcd/etcdserver", "github.com/coreos/etcd/mvcc", "github.com/coreos/etcd/auth"]
+
+[[constraint]]
+  branch = "master"
+  name = "github.com/BurntSushi/toml"
+
+[[constraint]]
+  branch = "master"
+  name = "github.com/blacktear23/go-proxyprotocol"
+
+# lock etcd version at 3.2.14
+[[constraint]]
+  name = "github.com/coreos/etcd"
+  version = "=3.2.14"
+
+# lock grpc version at 1.7.5 becuase etcd depdens on this version
+[[constraint]]
+  name = "google.golang.org/grpc"
+  source = "https://github.com/grpc/grpc-go.git"
+  version = "=1.7.5"
+
+[[constraint]]
+  branch = "master"
+  name = "github.com/coreos/gofail"
+
+[[constraint]]
+  branch = "master"
+  name = "github.com/cznic/parser"
+
+[[constraint]]
+  branch = "master"
+  name = "github.com/cznic/sortutil"
+
+[[constraint]]
+  branch = "master"
+  name = "github.com/google/btree"
+
+[[constraint]]
+  name = "github.com/grpc-ecosystem/go-grpc-prometheus"
+  version = "1.1.0"
+
+[[constraint]]
+  branch = "master"
+  name = "github.com/ngaut/pools"
+
+[[constraint]]
+  name = "github.com/opentracing/opentracing-go"
+  version = "1.0.0"
+
+[[constraint]]
+  branch = "master"
+  name = "github.com/pingcap/check"
+
+[[constraint]]
+  name = "github.com/prometheus/client_golang"
+  version = "0.8.0"
+
+[[constraint]]
+  name = "github.com/spaolacci/murmur3"
+  version = "1.0.0"
+
+[[constraint]]
+  name = "github.com/uber/jaeger-client-go"
+  version = "2.8.0"
+
+[[constraint]]
+  name = "gopkg.in/natefinch/lumberjack.v2"
+  version = "2.0.0"

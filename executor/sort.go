@@ -180,7 +180,7 @@ func (e *SortExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 }
 
 func (e *SortExec) fetchRowChunks(goCtx goctx.Context) error {
-	fields := e.schema.GetTypes()
+	fields := e.retTypes()
 	e.rowChunks = chunk.NewList(fields, e.maxChunkSize)
 	for {
 		chk := chunk.NewChunk(fields)
@@ -245,7 +245,8 @@ func (e *SortExec) buildKeyChunks() error {
 	e.keyChunks = chunk.NewList(e.keyTypes, e.maxChunkSize)
 	for chkIdx := 0; chkIdx < e.rowChunks.NumChunks(); chkIdx++ {
 		keyChk := chunk.NewChunk(e.keyTypes)
-		err := expression.VectorizedExecute(e.ctx, e.keyExprs, e.rowChunks.GetChunk(chkIdx), keyChk)
+		childIter := chunk.NewIterator4Chunk(e.rowChunks.GetChunk(chkIdx))
+		err := expression.VectorizedExecute(e.ctx, e.keyExprs, childIter, keyChk)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -489,7 +490,7 @@ func (e *TopNExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 
 func (e *TopNExec) loadChunksUntilTotalLimit(goCtx goctx.Context) error {
 	e.chkHeap = &topNChunkHeap{e}
-	e.rowChunks = chunk.NewList(e.schema.GetTypes(), e.maxChunkSize)
+	e.rowChunks = chunk.NewList(e.retTypes(), e.maxChunkSize)
 	for e.rowChunks.Len() < e.totalLimit {
 		srcChk := e.children[0].newChunk()
 		err := e.children[0].NextChunk(goCtx, srcChk)
@@ -557,7 +558,7 @@ func (e *TopNExec) executeTopN(goCtx goctx.Context) error {
 func (e *TopNExec) processChildChk(childRowChk, childKeyChk *chunk.Chunk) error {
 	if childKeyChk != nil {
 		childKeyChk.Reset()
-		err := expression.VectorizedExecute(e.ctx, e.keyExprs, childRowChk, childKeyChk)
+		err := expression.VectorizedExecute(e.ctx, e.keyExprs, chunk.NewIterator4Chunk(childRowChk), childKeyChk)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -589,7 +590,7 @@ func (e *TopNExec) processChildChk(childRowChk, childKeyChk *chunk.Chunk) error 
 // but we want descending top N, then we will keep all data in memory.
 // But if data is distributed randomly, this function will be called log(n) times.
 func (e *TopNExec) doCompaction() error {
-	newRowChunks := chunk.NewList(e.schema.GetTypes(), e.maxChunkSize)
+	newRowChunks := chunk.NewList(e.retTypes(), e.maxChunkSize)
 	newRowPtrs := make([]chunk.RowPtr, 0, e.rowChunks.Len())
 	for _, rowPtr := range e.rowPtrs {
 		newRowPtr := newRowChunks.AppendRow(e.rowChunks.GetRow(rowPtr))

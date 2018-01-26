@@ -46,7 +46,7 @@ const (
 
 // Priority value for transaction priority.
 const (
-	PriorityNormal int = iota
+	PriorityNormal = iota
 	PriorityLow
 	PriorityHigh
 )
@@ -109,6 +109,11 @@ type MemBuffer interface {
 	Size() int
 	// Len returns the number of entries in the DB.
 	Len() int
+	// Reset cleanup the MemBuffer
+	Reset()
+	// SetCap sets the MemBuffer capability, to reduce memory allocations.
+	// Please call it before you use the MemBuffer, otherwise it will not works.
+	SetCap(cap int)
 }
 
 // Transaction defines the interface for operations inside a Transaction.
@@ -137,6 +142,8 @@ type Transaction interface {
 	Valid() bool
 	// GetMemBuffer return the MemBuffer binding to this transaction.
 	GetMemBuffer() MemBuffer
+	// GetSnapshot returns the snapshot of this transaction.
+	GetSnapshot() Snapshot
 }
 
 // Client is used to send request to KV layer.
@@ -198,7 +205,7 @@ type Response interface {
 	// Next returns a resultSubset from a single storage unit.
 	// When full result set is returned, nil is returned.
 	// TODO: Find a better interface for resultSubset that can avoid allocation and reuse bytes.
-	Next() (resultSubset []byte, err error)
+	Next(ctx goctx.Context) (resultSubset []byte, err error)
 	// Close response.
 	Close() error
 }

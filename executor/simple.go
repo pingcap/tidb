@@ -20,7 +20,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
@@ -103,8 +102,8 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 	// The server sets this variable whenever the default database changes.
 	// See http://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_character_set_database
 	sessionVars := e.ctx.GetSessionVars()
-	sessionVars.Systems[variable.CharsetDatabase] = dbinfo.Charset
-	sessionVars.Systems[variable.CollationDatabase] = dbinfo.Collate
+	terror.Log(errors.Trace(sessionVars.SetSystemVar(variable.CharsetDatabase, dbinfo.Charset)))
+	terror.Log(errors.Trace(sessionVars.SetSystemVar(variable.CollationDatabase, dbinfo.Collate)))
 	return nil
 }
 
@@ -335,6 +334,5 @@ func (e *SimpleExec) executeDropStats(s *ast.DropStatsStmt) error {
 		}
 		return errors.Trace(h.Update(GetInfoSchema(e.ctx)))
 	}
-	h.DDLEventCh() <- &util.Event{Tp: model.ActionDropTable, TableInfo: s.Table.TableInfo}
 	return nil
 }

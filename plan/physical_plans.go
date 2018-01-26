@@ -90,13 +90,13 @@ type PhysicalIndexScan struct {
 	AccessCondition []expression.Expression
 	filterCondition []expression.Expression
 
-	Table      *model.TableInfo
-	Index      *model.IndexInfo
-	Ranges     []*ranger.NewRange
-	Columns    []*model.ColumnInfo
-	DBName     model.CIStr
-	Desc       bool
-	OutOfOrder bool
+	Table     *model.TableInfo
+	Index     *model.IndexInfo
+	Ranges    []*ranger.NewRange
+	Columns   []*model.ColumnInfo
+	DBName    model.CIStr
+	Desc      bool
+	KeepOrder bool
 	// DoubleRead means if the index executor will read kv two times.
 	// If the query requires the columns that don't belong to index, DoubleRead will be true.
 	DoubleRead bool
@@ -128,14 +128,14 @@ type PhysicalMemTable struct {
 	TableAsName *model.CIStr
 }
 
-func needCount(af aggregation.Aggregation) bool {
-	return af.GetName() == ast.AggFuncCount || af.GetName() == ast.AggFuncAvg
+func needCount(af *aggregation.AggFuncDesc) bool {
+	return af.Name == ast.AggFuncCount || af.Name == ast.AggFuncAvg
 }
 
-func needValue(af aggregation.Aggregation) bool {
-	return af.GetName() == ast.AggFuncSum || af.GetName() == ast.AggFuncAvg || af.GetName() == ast.AggFuncFirstRow ||
-		af.GetName() == ast.AggFuncMax || af.GetName() == ast.AggFuncMin || af.GetName() == ast.AggFuncGroupConcat ||
-		af.GetName() == ast.AggFuncBitOr || af.GetName() == ast.AggFuncBitAnd || af.GetName() == ast.AggFuncBitXor
+func needValue(af *aggregation.AggFuncDesc) bool {
+	return af.Name == ast.AggFuncSum || af.Name == ast.AggFuncAvg || af.Name == ast.AggFuncFirstRow ||
+		af.Name == ast.AggFuncMax || af.Name == ast.AggFuncMin || af.Name == ast.AggFuncGroupConcat ||
+		af.Name == ast.AggFuncBitOr || af.Name == ast.AggFuncBitAnd || af.Name == ast.AggFuncBitXor
 }
 
 // PhysicalTableScan represents a table scan plan.
@@ -150,7 +150,7 @@ type PhysicalTableScan struct {
 	Columns []*model.ColumnInfo
 	DBName  model.CIStr
 	Desc    bool
-	Ranges  []ranger.IntColumnRange
+	Ranges  []*ranger.NewRange
 	pkCol   *expression.Column
 
 	TableAsName *model.CIStr
@@ -220,7 +220,6 @@ type PhysicalIndexJoin struct {
 	RightConditions expression.CNFExprs
 	OtherConditions expression.CNFExprs
 	OuterIndex      int
-	KeepOrder       bool
 	outerSchema     *expression.Schema
 	innerPlan       PhysicalPlan
 
@@ -300,7 +299,7 @@ func (at AggregationType) String() string {
 type basePhysicalAgg struct {
 	physicalSchemaProducer
 
-	AggFuncs     []aggregation.Aggregation
+	AggFuncs     []*aggregation.AggFuncDesc
 	GroupByItems []expression.Expression
 }
 

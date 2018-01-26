@@ -102,11 +102,11 @@ func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (executor, *tipb
 		return nil, nil, errors.Trace(err)
 	}
 	sc := flagsToStatementContext(dagReq.Flags)
-	timeZone := time.FixedZone("UTC", int(dagReq.TimeZoneOffset))
+	sc.TimeZone = time.FixedZone("UTC", int(dagReq.TimeZoneOffset))
 	ctx := &dagContext{
 		dagReq:    dagReq,
 		keyRanges: req.Ranges,
-		evalCtx:   &evalContext{sc: sc, timeZone: timeZone},
+		evalCtx:   &evalContext{sc: sc},
 	}
 	e, err := h.buildDAG(ctx, dagReq.Executors)
 	if err != nil {
@@ -290,7 +290,7 @@ func (h *rpcHandler) buildStreamAgg(ctx *dagContext, executor *tipb.Executor) (*
 	}
 	aggCtxs := make([]*aggregation.AggEvaluateContext, 0, len(aggs))
 	for _, agg := range aggs {
-		aggCtxs = append(aggCtxs, agg.CreateContext())
+		aggCtxs = append(aggCtxs, agg.CreateContext(ctx.evalCtx.sc))
 	}
 
 	return &streamAggExec{
@@ -343,7 +343,6 @@ type evalContext struct {
 	columnInfos []*tipb.ColumnInfo
 	fieldTps    []*types.FieldType
 	sc          *stmtctx.StatementContext
-	timeZone    *time.Location
 }
 
 func (e *evalContext) setColumnInfo(cols []*tipb.ColumnInfo) {
@@ -363,7 +362,7 @@ func (e *evalContext) setColumnInfo(cols []*tipb.ColumnInfo) {
 func (e *evalContext) decodeRelatedColumnVals(relatedColOffsets []int, value [][]byte, row []types.Datum) error {
 	var err error
 	for _, offset := range relatedColOffsets {
-		row[offset], err = tablecodec.DecodeColumnValue(value[offset], e.fieldTps[offset], e.timeZone)
+		row[offset], err = tablecodec.DecodeColumnValue(value[offset], e.fieldTps[offset], e.sc.TimeZone)
 		if err != nil {
 			return errors.Trace(err)
 		}

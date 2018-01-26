@@ -358,12 +358,9 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 func (do *Domain) mustRestartSyncer() error {
 	ctx := goctx.Background()
 	syncer := do.ddl.SchemaSyncer()
-	timeout := 5 * time.Second
 
 	for {
-		childCtx, cancel := goctx.WithTimeout(ctx, timeout)
-		err := syncer.Restart(childCtx)
-		cancel()
+		err := syncer.Restart(ctx)
 		if err == nil {
 			return nil
 		}
@@ -586,20 +583,38 @@ func (do *Domain) UpdateTableStatsLoop(ctx context.Context) error {
 	statsHandle := statistics.NewHandle(ctx, do.statsLease)
 	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(statsHandle))
 	do.ddl.RegisterEventCh(statsHandle.DDLEventCh())
-	lease := do.statsLease
-	if lease <= 0 {
+	if do.statsLease <= 0 {
 		return nil
 	}
+	owner := do.newStatsOwner()
 	do.wg.Add(1)
-	go do.updateStatsWorker(ctx, lease)
+	go do.updateStatsWorker(ctx, owner)
 	if RunAutoAnalyze {
 		do.wg.Add(1)
-		go do.autoAnalyzeWorker(lease)
+		go do.autoAnalyzeWorker(owner)
 	}
 	return nil
 }
 
-func (do *Domain) updateStatsWorker(ctx context.Context, lease time.Duration) {
+func (do *Domain) newStatsOwner() owner.Manager {
+	id := do.ddl.OwnerManager().ID()
+	cancelCtx, cancelFunc := goctx.WithCancel(goctx.Background())
+	var statsOwner owner.Manager
+	if do.etcdClient == nil {
+		statsOwner = owner.NewMockManager(id, cancelFunc)
+	} else {
+		statsOwner = owner.NewOwnerManager(do.etcdClient, statistics.StatsPrompt, id, statistics.StatsOwnerKey, cancelFunc)
+	}
+	// TODO: Need to do something when err is not nil.
+	err := statsOwner.CampaignOwner(cancelCtx)
+	if err != nil {
+		log.Warnf("[stats] campaign owner fail:", errors.ErrorStack(err))
+	}
+	return statsOwner
+}
+
+func (do *Domain) updateStatsWorker(ctx context.Context, owner owner.Manager) {
+	lease := do.statsLease
 	deltaUpdateDuration := lease * 5
 	loadTicker := time.NewTicker(lease)
 	defer loadTicker.Stop()
@@ -607,6 +622,8 @@ func (do *Domain) updateStatsWorker(ctx context.Context, lease time.Duration) {
 	defer deltaUpdateTicker.Stop()
 	loadHistogramTicker := time.NewTicker(lease)
 	defer loadHistogramTicker.Stop()
+	gcStatsTicker := time.NewTicker(100 * lease)
+	defer gcStatsTicker.Stop()
 	statsHandle := do.StatsHandle()
 	t := time.Now()
 	err := statsHandle.InitStats(do.InfoSchema())
@@ -639,37 +656,35 @@ func (do *Domain) updateStatsWorker(ctx context.Context, lease time.Duration) {
 				}
 			}
 		case <-deltaUpdateTicker.C:
-			statsHandle.DumpStatsDeltaToKV()
+			err := statsHandle.DumpStatsDeltaToKV()
+			if err != nil {
+				log.Error("[stats] dump stats delta fail: ", errors.ErrorStack(err))
+			}
 		case <-loadHistogramTicker.C:
 			err := statsHandle.LoadNeededHistograms()
 			if err != nil {
 				log.Error("[stats] load histograms fail: ", errors.ErrorStack(err))
 			}
+		case <-gcStatsTicker.C:
+			if !owner.IsOwner() {
+				continue
+			}
+			err := statsHandle.GCStats(do.InfoSchema(), do.DDL().GetLease())
+			if err != nil {
+				log.Error("[stats] gc stats fail: ", errors.ErrorStack(err))
+			}
 		}
 	}
 }
 
-func (do *Domain) autoAnalyzeWorker(lease time.Duration) {
-	id := do.ddl.OwnerManager().ID()
-	cancelCtx, cancelFunc := goctx.WithCancel(goctx.Background())
-	var statsOwner owner.Manager
-	if do.etcdClient == nil {
-		statsOwner = owner.NewMockManager(id, cancelFunc)
-	} else {
-		statsOwner = owner.NewOwnerManager(do.etcdClient, statistics.StatsPrompt, id, statistics.StatsOwnerKey, cancelFunc)
-	}
-	// TODO: Need to do something when err is not nil.
-	err := statsOwner.CampaignOwner(cancelCtx)
-	if err != nil {
-		log.Warnf("[stats] campaign owner fail:", errors.ErrorStack(err))
-	}
+func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 	statsHandle := do.StatsHandle()
-	analyzeTicker := time.NewTicker(lease)
+	analyzeTicker := time.NewTicker(do.statsLease)
 	defer analyzeTicker.Stop()
 	for {
 		select {
 		case <-analyzeTicker.C:
-			if statsOwner.IsOwner() {
+			if owner.IsOwner() {
 				err := statsHandle.HandleAutoAnalyze(do.InfoSchema())
 				if err != nil {
 					log.Error("[stats] auto analyze fail:", errors.ErrorStack(err))
@@ -688,8 +703,8 @@ const privilegeKey = "/tidb/privilege"
 // the key will get notification.
 func (do *Domain) NotifyUpdatePrivilege(ctx context.Context) {
 	if do.etcdClient != nil {
-		kv := do.etcdClient.KV
-		_, err := kv.Put(goctx.Background(), privilegeKey, "")
+		row := do.etcdClient.KV
+		_, err := row.Put(goctx.Background(), privilegeKey, "")
 		if err != nil {
 			log.Warn("notify update privilege failed:", err)
 		}

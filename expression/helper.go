@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/varsutil"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 )
@@ -115,9 +115,6 @@ func GetTimeValue(ctx context.Context, v interface{}, tp byte, fsp int) (d types
 	default:
 		return d, nil
 	}
-	if tp == mysql.TypeTimestamp {
-		value.TimeZone = ctx.GetSessionVars().GetTimeZone()
-	}
 	d.SetMysqlTime(value)
 	return d, nil
 }
@@ -130,7 +127,7 @@ func getSystemTimestamp(ctx context.Context) (time.Time, error) {
 	}
 
 	sessionVars := ctx.GetSessionVars()
-	timestampStr, err := varsutil.GetSessionSystemVar(sessionVars, "timestamp")
+	timestampStr, err := variable.GetSessionSystemVar(sessionVars, "timestamp")
 	if err != nil {
 		return now, errors.Trace(err)
 	}

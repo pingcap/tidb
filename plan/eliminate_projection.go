@@ -14,7 +14,6 @@
 package plan
 
 import (
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 )
 
@@ -70,7 +69,7 @@ func resolveExprAndReplace(origin expression.Expression, replace map[string]*exp
 
 func doPhysicalProjectionElimination(p PhysicalPlan) PhysicalPlan {
 	for i, child := range p.Children() {
-		p.Children()[i] = doPhysicalProjectionElimination(child.(PhysicalPlan))
+		p.Children()[i] = doPhysicalProjectionElimination(child)
 	}
 
 	proj, isProj := p.(*PhysicalProjection)
@@ -78,7 +77,7 @@ func doPhysicalProjectionElimination(p PhysicalPlan) PhysicalPlan {
 		return p
 	}
 	child := p.Children()[0]
-	return child.(PhysicalPlan)
+	return child
 }
 
 // eliminatePhysicalProjection should be called after physical optimization to eliminate the redundant projection
@@ -100,9 +99,9 @@ type projectionEliminater struct {
 }
 
 // optimize implements the logicalOptRule interface.
-func (pe *projectionEliminater) optimize(lp LogicalPlan, _ context.Context) (LogicalPlan, error) {
+func (pe *projectionEliminater) optimize(lp LogicalPlan) (LogicalPlan, error) {
 	root := pe.eliminate(lp, make(map[string]*expression.Column), false)
-	return root.(LogicalPlan), nil
+	return root, nil
 }
 
 // eliminate eliminates the redundant projection in a logical plan.
@@ -115,14 +114,14 @@ func (pe *projectionEliminater) eliminate(p LogicalPlan, replace map[string]*exp
 		childFlag = true
 	}
 	for i, child := range p.Children() {
-		p.Children()[i] = pe.eliminate(child.(LogicalPlan), replace, childFlag)
+		p.Children()[i] = pe.eliminate(child, replace, childFlag)
 	}
 
 	switch x := p.(type) {
 	case *LogicalJoin:
-		x.schema = buildJoinSchema(x.JoinType, x)
+		x.schema = buildLogicalJoinSchema(x.JoinType, x)
 	case *LogicalApply:
-		x.schema = buildJoinSchema(x.JoinType, x)
+		x.schema = buildLogicalJoinSchema(x.JoinType, x)
 	default:
 		for _, dst := range p.Schema().Columns {
 			resolveColumnAndReplace(dst, replace)
@@ -137,7 +136,7 @@ func (pe *projectionEliminater) eliminate(p LogicalPlan, replace map[string]*exp
 	for i, col := range proj.Schema().Columns {
 		replace[string(col.HashCode())] = exprs[i].(*expression.Column)
 	}
-	return p.Children()[0].(LogicalPlan)
+	return p.Children()[0]
 }
 
 func (p *LogicalJoin) replaceExprColumns(replace map[string]*expression.Column) {
@@ -161,16 +160,16 @@ func (p *LogicalProjection) replaceExprColumns(replace map[string]*expression.Co
 	}
 }
 
-func (p *LogicalAggregation) replaceExprColumns(replace map[string]*expression.Column) {
-	for _, agg := range p.AggFuncs {
-		for _, aggExpr := range agg.GetArgs() {
+func (la *LogicalAggregation) replaceExprColumns(replace map[string]*expression.Column) {
+	for _, agg := range la.AggFuncs {
+		for _, aggExpr := range agg.Args {
 			resolveExprAndReplace(aggExpr, replace)
 		}
 	}
-	for _, gbyItem := range p.GroupByItems {
+	for _, gbyItem := range la.GroupByItems {
 		resolveExprAndReplace(gbyItem, replace)
 	}
-	p.collectGroupByColumns()
+	la.collectGroupByColumns()
 }
 
 func (p *LogicalSelection) replaceExprColumns(replace map[string]*expression.Column) {
@@ -179,9 +178,9 @@ func (p *LogicalSelection) replaceExprColumns(replace map[string]*expression.Col
 	}
 }
 
-func (p *LogicalApply) replaceExprColumns(replace map[string]*expression.Column) {
-	p.LogicalJoin.replaceExprColumns(replace)
-	for _, coCol := range p.corCols {
+func (la *LogicalApply) replaceExprColumns(replace map[string]*expression.Column) {
+	la.LogicalJoin.replaceExprColumns(replace)
+	for _, coCol := range la.corCols {
 		dst := replace[string(coCol.Column.HashCode())]
 		if dst != nil {
 			coCol.Column = *dst
@@ -189,14 +188,14 @@ func (p *LogicalApply) replaceExprColumns(replace map[string]*expression.Column)
 	}
 }
 
-func (p *LogicalSort) replaceExprColumns(replace map[string]*expression.Column) {
-	for _, byItem := range p.ByItems {
+func (ls *LogicalSort) replaceExprColumns(replace map[string]*expression.Column) {
+	for _, byItem := range ls.ByItems {
 		resolveExprAndReplace(byItem.Expr, replace)
 	}
 }
 
-func (p *LogicalTopN) replaceExprColumns(replace map[string]*expression.Column) {
-	for _, byItem := range p.ByItems {
+func (lt *LogicalTopN) replaceExprColumns(replace map[string]*expression.Column) {
+	for _, byItem := range lt.ByItems {
 		resolveExprAndReplace(byItem.Expr, replace)
 	}
 }

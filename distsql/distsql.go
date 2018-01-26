@@ -45,7 +45,7 @@ type SelectResult interface {
 	// Next gets the next partial result.
 	Next(goctx.Context) (PartialResult, error)
 	// NextRaw gets the next raw result.
-	NextRaw() ([]byte, error)
+	NextRaw(goctx.Context) ([]byte, error)
 	// NextChunk reads the data into chunk.
 	NextChunk(goctx.Context, *chunk.Chunk) error
 	// Close closes the iterator.
@@ -103,7 +103,7 @@ func (r *selectResult) fetch(goCtx goctx.Context) {
 		queryHistgram.WithLabelValues(r.label).Observe(duration.Seconds())
 	}()
 	for {
-		resultSubset, err := r.resp.Next()
+		resultSubset, err := r.resp.Next(goCtx)
 		if err != nil {
 			r.results <- newResultWithErr{err: errors.Trace(err)}
 			return
@@ -144,7 +144,7 @@ func (r *selectResult) Next(goCtx goctx.Context) (PartialResult, error) {
 }
 
 // NextRaw returns the next raw partial result.
-func (r *selectResult) NextRaw() ([]byte, error) {
+func (r *selectResult) NextRaw(goCtx goctx.Context) ([]byte, error) {
 	re := <-r.results
 	return re.result, errors.Trace(re.err)
 }
@@ -248,11 +248,11 @@ func (pr *partialResult) unmarshal(resultSubset []byte) error {
 // Next returns the next row of the sub result.
 // If no more row to return, data would be nil.
 func (pr *partialResult) Next(goCtx goctx.Context) (data []types.Datum, err error) {
-	chunk := pr.getChunk()
-	if chunk == nil {
+	nextChunk := pr.getChunk()
+	if nextChunk == nil {
 		return nil, nil
 	}
-	return readRowFromChunk(chunk, pr.rowLen)
+	return readRowFromChunk(nextChunk, pr.rowLen)
 }
 
 func readRowFromChunk(chunk *tipb.Chunk, numCols int) (row []types.Datum, err error) {
@@ -273,9 +273,9 @@ func (pr *partialResult) getChunk() *tipb.Chunk {
 		if pr.chunkIdx >= len(pr.resp.Chunks) {
 			return nil
 		}
-		chunk := &pr.resp.Chunks[pr.chunkIdx]
-		if len(chunk.RowsData) > 0 {
-			return chunk
+		currentChunk := &pr.resp.Chunks[pr.chunkIdx]
+		if len(currentChunk.RowsData) > 0 {
+			return currentChunk
 		}
 		pr.chunkIdx++
 	}

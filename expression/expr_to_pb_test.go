@@ -215,7 +215,6 @@ func (s *testEvaluatorSuite) TestColumn2Pb(c *C) {
 	colExprs = append(colExprs, dg.genColumn(mysql.TypeDuration, 11))
 	colExprs = append(colExprs, dg.genColumn(mysql.TypeDatetime, 12))
 	colExprs = append(colExprs, dg.genColumn(mysql.TypeYear, 13))
-	colExprs = append(colExprs, dg.genColumn(mysql.TypeNewDate, 14))
 	colExprs = append(colExprs, dg.genColumn(mysql.TypeVarchar, 15))
 	colExprs = append(colExprs, dg.genColumn(mysql.TypeJSON, 16))
 	colExprs = append(colExprs, dg.genColumn(mysql.TypeNewDecimal, 17))
@@ -230,8 +229,7 @@ func (s *testEvaluatorSuite) TestColumn2Pb(c *C) {
 	c.Assert(len(remained), Equals, 0)
 	js, err := json.Marshal(pbExpr)
 	c.Assert(err, IsNil)
-	c.Assert(string(js), Equals, "{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAM=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAQ=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAU=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAY=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAc=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAg=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAk=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAo=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAs=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAw=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAA0=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAA4=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAA8=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAABA=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAABE=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAABI=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAABM=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAABQ=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAABU=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAABY=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAABc=\",\"sig\":0}],\"sig\":0}")
-
+	c.Assert(string(js), Equals, "{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":2301,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAM=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAQ=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAU=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAY=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAc=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAg=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAk=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAo=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAs=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAAw=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAA0=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAAA8=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAABA=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAABE=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAABI=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAABM=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAABQ=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAABU=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAABY=\",\"sig\":0}],\"sig\":0},{\"tp\":201,\"val\":\"gAAAAAAAABc=\",\"sig\":0}],\"sig\":0}")
 	pbExprs = ExpressionsToPBList(sc, colExprs, client)
 	jsons := []string{
 		"{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0}",
@@ -247,7 +245,6 @@ func (s *testEvaluatorSuite) TestColumn2Pb(c *C) {
 		"{\"tp\":201,\"val\":\"gAAAAAAAAAs=\",\"sig\":0}",
 		"{\"tp\":201,\"val\":\"gAAAAAAAAAw=\",\"sig\":0}",
 		"{\"tp\":201,\"val\":\"gAAAAAAAAA0=\",\"sig\":0}",
-		"{\"tp\":201,\"val\":\"gAAAAAAAAA4=\",\"sig\":0}",
 		"{\"tp\":201,\"val\":\"gAAAAAAAAA8=\",\"sig\":0}",
 		"{\"tp\":201,\"val\":\"gAAAAAAAABA=\",\"sig\":0}",
 		"{\"tp\":201,\"val\":\"gAAAAAAAABE=\",\"sig\":0}",
@@ -281,7 +278,7 @@ func (s *testEvaluatorSuite) TestColumn2Pb(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestCompareFunc2Pb(c *C) {
-	var compareExprs []Expression
+	var compareExprs = make([]Expression, 0)
 	sc := new(stmtctx.StatementContext)
 	client := new(mockKvClient)
 	dg := new(dataGen4Expr2PbTest)
@@ -353,7 +350,7 @@ func (s *testEvaluatorSuite) TestLikeFunc2Pb(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestArithmeticalFunc2Pb(c *C) {
-	var arithmeticalFuncs []Expression
+	var arithmeticalFuncs = make([]Expression, 0)
 	sc := new(stmtctx.StatementContext)
 	client := new(mockKvClient)
 	dg := new(dataGen4Expr2PbTest)
@@ -408,7 +405,7 @@ func (s *testEvaluatorSuite) TestDateFunc2Pb(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestLogicalFunc2Pb(c *C) {
-	var logicalFuncs []Expression
+	var logicalFuncs = make([]Expression, 0)
 	sc := new(stmtctx.StatementContext)
 	client := new(mockKvClient)
 	dg := new(dataGen4Expr2PbTest)
@@ -444,7 +441,7 @@ func (s *testEvaluatorSuite) TestLogicalFunc2Pb(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestBitwiseFunc2Pb(c *C) {
-	var bitwiseFuncs []Expression
+	var bitwiseFuncs = make([]Expression, 0)
 	sc := new(stmtctx.StatementContext)
 	client := new(mockKvClient)
 	dg := new(dataGen4Expr2PbTest)
@@ -474,7 +471,7 @@ func (s *testEvaluatorSuite) TestBitwiseFunc2Pb(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestControlFunc2Pb(c *C) {
-	var controlFuncs []Expression
+	var controlFuncs = make([]Expression, 0)
 	sc := new(stmtctx.StatementContext)
 	client := new(mockKvClient)
 	dg := new(dataGen4Expr2PbTest)
@@ -515,7 +512,7 @@ func (s *testEvaluatorSuite) TestControlFunc2Pb(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestOtherFunc2Pb(c *C) {
-	var otherFuncs []Expression
+	var otherFuncs = make([]Expression, 0)
 	sc := new(stmtctx.StatementContext)
 	client := new(mockKvClient)
 	dg := new(dataGen4Expr2PbTest)

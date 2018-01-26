@@ -98,8 +98,8 @@ func (s *testBinlogSuite) SetUpSuite(c *C) {
 	_, err = tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	s.tk.MustExec("use test")
-	domain := domain.GetDomain(s.tk.Se.(context.Context))
-	s.ddl = domain.DDL()
+	sessionDomain := domain.GetDomain(s.tk.Se.(context.Context))
+	s.ddl = sessionDomain.DDL()
 
 	binlogClient := binlog.NewPumpClient(clientCon)
 	s.tk.Se.GetSessionVars().BinlogClient = binlogClient
@@ -216,6 +216,19 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 		binlog.MutationType_Update,
 	})
 
+	// Test statement rollback.
+	tk.MustExec("create table local_binlog5 (c1 int primary key")
+	tk.MustExec("begin")
+	tk.MustExec("insert into local_binlog5 value (1)")
+	// This statement execute fail and should not write binlog.
+	_, err := tk.Exec("insert into local_binlog5 value (4),(3),(1),(2)")
+	c.Assert(err, NotNil)
+	tk.MustExec("commit")
+	prewriteVal = getLatestBinlogPrewriteValue(c, pump)
+	c.Assert(prewriteVal.Mutations[0].Sequence, DeepEquals, []binlog.MutationType{
+		binlog.MutationType_Insert,
+	})
+
 	checkBinlogCount(c, pump)
 
 	pump.mu.Lock()
@@ -306,7 +319,7 @@ func checkBinlogCount(c *C, pump *mockBinlogPump) {
 }
 
 func mutationRowsToRows(c *C, mutationRows [][]byte, firstColumn, secondColumn int) [][]types.Datum {
-	var rows [][]types.Datum
+	var rows = make([][]types.Datum, 0)
 	for _, mutationRow := range mutationRows {
 		datums, err := codec.Decode(mutationRow, 5)
 		c.Assert(err, IsNil)

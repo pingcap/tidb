@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/tablecodec"
 	log "github.com/sirupsen/logrus"
@@ -200,6 +201,10 @@ func (e *kvEncoder) initial(dbName string, idAlloc autoid.Allocator) (err error)
 		}
 	}()
 
+	plan.PreparedPlanCacheEnabled = true
+	plan.PreparedPlanCacheCapacity = 10
+	// disable stats update.
+	tidb.SetStatsLease(0)
 	store, dom, err = newMockTikvWithBootstrap()
 	if err != nil {
 		err = errors.Trace(err)
@@ -226,6 +231,7 @@ func (e *kvEncoder) initial(dbName string, idAlloc autoid.Allocator) (err error)
 
 	se.GetSessionVars().IDAllocator = idAlloc
 	se.GetSessionVars().ImportingData = true
+	se.GetSessionVars().SkipUTF8Check = true
 	e.se = se
 	e.store = store
 	e.dom = dom

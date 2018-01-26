@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
@@ -546,7 +545,7 @@ func dataForSessionVar(ctx context.Context) (records [][]types.Datum, err error)
 	sessionVars := ctx.GetSessionVars()
 	for _, v := range variable.SysVars {
 		var value string
-		value, err = varsutil.GetSessionSystemVar(sessionVars, v.Name)
+		value, err = variable.GetSessionSystemVar(sessionVars, v.Name)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -615,7 +614,7 @@ var filesCols = []columnInfo{
 }
 
 func dataForSchemata(schemas []*model.DBInfo) [][]types.Datum {
-	rows := [][]types.Datum{}
+	var rows [][]types.Datum
 	for _, schema := range schemas {
 		record := types.MakeDatums(
 			catalogVal,                 // CATALOG_NAME
@@ -629,10 +628,15 @@ func dataForSchemata(schemas []*model.DBInfo) [][]types.Datum {
 	return rows
 }
 
-func dataForTables(schemas []*model.DBInfo) [][]types.Datum {
-	rows := [][]types.Datum{}
+func dataForTables(ctx context.Context, schemas []*model.DBInfo) [][]types.Datum {
+	var rows [][]types.Datum
+	createTimeTp := tablesCols[15].tp
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
+			createTime := types.Time{
+				Time: types.FromGoTime(table.GetUpdateTime()),
+				Type: createTimeTp,
+			}
 			record := types.MakeDatums(
 				catalogVal,      // TABLE_CATALOG
 				schema.Name.O,   // TABLE_SCHEMA
@@ -648,7 +652,7 @@ func dataForTables(schemas []*model.DBInfo) [][]types.Datum {
 				uint64(0),       // INDEX_LENGTH
 				uint64(0),       // DATA_FREE
 				table.AutoIncID, // AUTO_INCREMENT
-				nil,             // CREATE_TIME
+				createTime,      // CREATE_TIME
 				nil,             // UPDATE_TIME
 				nil,             // CHECK_TIME
 				table.Collate,   // TABLE_COLLATION
@@ -663,7 +667,7 @@ func dataForTables(schemas []*model.DBInfo) [][]types.Datum {
 }
 
 func dataForColumns(schemas []*model.DBInfo) [][]types.Datum {
-	rows := [][]types.Datum{}
+	var rows [][]types.Datum
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
 			rs := dataForColumnsInTable(schema, table)
@@ -674,7 +678,7 @@ func dataForColumns(schemas []*model.DBInfo) [][]types.Datum {
 }
 
 func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types.Datum {
-	rows := [][]types.Datum{}
+	var rows [][]types.Datum
 	for i, col := range tbl.Columns {
 		colLen, decimal := col.Flen, col.Decimal
 		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(col.Tp)
@@ -718,7 +722,7 @@ func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types
 }
 
 func dataForStatistics(schemas []*model.DBInfo) [][]types.Datum {
-	rows := [][]types.Datum{}
+	var rows [][]types.Datum
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
 			rs := dataForStatisticsInTable(schema, table)
@@ -729,7 +733,7 @@ func dataForStatistics(schemas []*model.DBInfo) [][]types.Datum {
 }
 
 func dataForStatisticsInTable(schema *model.DBInfo, table *model.TableInfo) [][]types.Datum {
-	rows := [][]types.Datum{}
+	var rows [][]types.Datum
 	if table.PKIsHandle {
 		for _, col := range table.Columns {
 			if mysql.HasPriKeyFlag(col.Flag) {
@@ -802,7 +806,7 @@ const (
 
 // dataForTableConstraints constructs data for table information_schema.constraints.See https://dev.mysql.com/doc/refman/5.7/en/table-constraints-table.html
 func dataForTableConstraints(schemas []*model.DBInfo) [][]types.Datum {
-	rows := [][]types.Datum{}
+	var rows [][]types.Datum
 	for _, schema := range schemas {
 		for _, tbl := range schema.Tables {
 			if tbl.PKIsHandle {
@@ -856,7 +860,7 @@ func dataForKeyColumnUsage(schemas []*model.DBInfo) [][]types.Datum {
 }
 
 func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]types.Datum {
-	rows := [][]types.Datum{}
+	var rows [][]types.Datum
 	if table.PKIsHandle {
 		for _, col := range table.Columns {
 			if mysql.HasPriKeyFlag(col.Flag) {
@@ -939,7 +943,7 @@ func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]typ
 	return rows
 }
 
-var tableNameToColumns = map[string]([]columnInfo){
+var tableNameToColumns = map[string][]columnInfo{
 	tableSchemata:                           schemataCols,
 	tableTables:                             tablesCols,
 	tableColumns:                            columnsCols,
@@ -1014,7 +1018,7 @@ func (it *infoschemaTable) getRows(ctx context.Context, cols []*table.Column) (f
 	case tableSchemata:
 		fullRows = dataForSchemata(dbs)
 	case tableTables:
-		fullRows = dataForTables(dbs)
+		fullRows = dataForTables(ctx, dbs)
 	case tableColumns:
 		fullRows = dataForColumns(dbs)
 	case tableStatistics:

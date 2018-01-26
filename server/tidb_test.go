@@ -227,11 +227,11 @@ func generateCert(sn int, commonName string, parentCert *x509.Certificate, paren
 // See https://godoc.org/github.com/go-sql-driver/mysql#RegisterTLSConfig for details.
 func registerTLSConfig(configName string, caCertPath string, clientCertPath string, clientKeyPath string, serverName string, verifyServer bool) error {
 	rootCertPool := x509.NewCertPool()
-	pem, err := ioutil.ReadFile(caCertPath)
+	data, err := ioutil.ReadFile(caCertPath)
 	if err != nil {
 		return err
 	}
-	if ok := rootCertPool.AppendCertsFromPEM(pem); !ok {
+	if ok := rootCertPool.AppendCertsFromPEM(data); !ok {
 		return errors.New("Failed to append PEM")
 	}
 	clientCert := make([]tls.Certificate, 0, 1)
@@ -414,6 +414,76 @@ func (ts *TidbTestSuite) TestCreateTableFlen(c *C) {
 	c.Assert(len(cols), Equals, 2)
 	c.Assert(int(cols[0].ColumnLength), Equals, 21)
 	c.Assert(int(cols[1].ColumnLength), Equals, 22)
+}
+
+func checkColNames(c *C, columns []*ColumnInfo, names ...string) {
+	for i, name := range names {
+		c.Assert(columns[i].Name, Equals, name)
+		c.Assert(columns[i].OrgName, Equals, name)
+	}
+}
+
+func (ts *TidbTestSuite) TestFieldList(c *C) {
+	ctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	c.Assert(err, IsNil)
+	_, err = ctx.Execute(goctx.Background(), "use test;")
+	c.Assert(err, IsNil)
+
+	goCtx := goctx.Background()
+	testSQL := `create table t (
+		c_bit bit(10),
+		c_int_d int,
+		c_bigint_d bigint,
+		c_float_d float,
+		c_double_d double,
+		c_decimal decimal(6, 3),
+		c_datetime datetime(2),
+		c_time time(3),
+		c_date date,
+		c_timestamp timestamp(4) DEFAULT CURRENT_TIMESTAMP(4),
+		c_char char(20),
+		c_varchar varchar(20),
+		c_text_d text,
+		c_binary binary(20),
+		c_blob_d blob,
+		c_set set('a', 'b', 'c'),
+		c_enum enum('a', 'b', 'c'),
+		c_json JSON,
+		c_year year
+	)`
+	_, err = ctx.Execute(goCtx, testSQL)
+	c.Assert(err, IsNil)
+	colInfos, err := ctx.FieldList("t")
+	c.Assert(err, IsNil)
+	c.Assert(len(colInfos), Equals, 19)
+
+	checkColNames(c, colInfos, "c_bit", "c_int_d", "c_bigint_d", "c_float_d",
+		"c_double_d", "c_decimal", "c_datetime", "c_time", "c_date", "c_timestamp",
+		"c_char", "c_varchar", "c_text_d", "c_binary", "c_blob_d", "c_set", "c_enum",
+		"c_json", "c_year")
+
+	for _, cols := range colInfos {
+		c.Assert(cols.Schema, Equals, "test")
+	}
+
+	for _, cols := range colInfos {
+		c.Assert(cols.Table, Equals, "t")
+	}
+
+	for i, col := range colInfos {
+		switch i {
+		case 10, 11, 12, 15, 16:
+			// c_char char(20), c_varchar varchar(20), c_text_d text,
+			// c_set set('a', 'b', 'c'), c_enum enum('a', 'b', 'c')
+			c.Assert(col.Charset, Equals, uint16(tmysql.CharsetIDs["utf8"]), Commentf("index %d", i))
+			continue
+		}
+
+		c.Assert(col.Charset, Equals, uint16(tmysql.CharsetIDs["binary"]), Commentf("index %d", i))
+	}
+
+	// c_decimal decimal(6, 3)
+	c.Assert(colInfos[5].Decimal, Equals, uint8(3))
 }
 
 func (ts *TidbTestSuite) TestSumAvg(c *C) {

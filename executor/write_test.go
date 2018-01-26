@@ -346,7 +346,7 @@ func (s *testSuite) TestInsertIgnore(c *C) {
 	tk := testkit.NewTestKit(c, kv.NewInjectedStore(s.store, &cfg))
 	tk.MustExec("use test")
 	testSQL := `drop table if exists t;
-    create table t (id int PRIMARY KEY AUTO_INCREMENT, c1 int);`
+    create table t (id int PRIMARY KEY AUTO_INCREMENT, c1 int unique key);`
 	tk.MustExec(testSQL)
 	testSQL = `insert into t values (1, 2);`
 	tk.MustExec(testSQL)
@@ -356,11 +356,21 @@ func (s *testSuite) TestInsertIgnore(c *C) {
 	r.Check(testkit.Rows(rowStr))
 
 	tk.MustExec("insert ignore into t values (1, 3), (2, 3)")
-
 	r = tk.MustQuery("select * from t;")
-	rowStr = fmt.Sprintf("%v %v", "1", "2")
 	rowStr1 := fmt.Sprintf("%v %v", "2", "3")
 	r.Check(testkit.Rows(rowStr, rowStr1))
+
+	tk.MustExec("insert ignore into t values (3, 4), (3, 4)")
+	r = tk.MustQuery("select * from t;")
+	rowStr2 := fmt.Sprintf("%v %v", "3", "4")
+	r.Check(testkit.Rows(rowStr, rowStr1, rowStr2))
+
+	tk.MustExec("begin")
+	tk.MustExec("insert ignore into t values (4, 4), (4, 5), (4, 6)")
+	r = tk.MustQuery("select * from t;")
+	rowStr3 := fmt.Sprintf("%v %v", "4", "5")
+	r.Check(testkit.Rows(rowStr, rowStr1, rowStr2, rowStr3))
+	tk.MustExec("commit")
 
 	cfg.SetGetError(errors.New("foo"))
 	_, err := tk.Exec("insert ignore into t values (1, 3)")
@@ -1063,7 +1073,7 @@ func makeLoadDataInfo(column int, specifiedColumns []string, ctx context.Context
 	fields := &ast.FieldsClause{Terminated: "\t"}
 	lines := &ast.LinesClause{Starting: "", Terminated: "\n"}
 	ld = executor.NewLoadDataInfo(make([]types.Datum, column), ctx, tbl, columns)
-	ld.SetBatchCount(0)
+	ld.SetMaxRowsInBatch(0)
 	ld.FieldsInfo = fields
 	ld.LinesInfo = lines
 	return

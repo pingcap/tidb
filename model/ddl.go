@@ -144,9 +144,25 @@ type Job struct {
 	Version int64 `json:"version"`
 }
 
-// startTime gets the job generation time.
-func (job *Job) startTime() time.Time {
-	t := int64(job.StartTS >> 18) // 18 is for the logical time.
+// FinishTableJob is called when a job is finished.
+// It updates the job's state information and adds tblInfo to the binlog.
+func (job *Job) FinishTableJob(jobState JobState, schemaState SchemaState, ver int64, tblInfo *TableInfo) {
+	job.State = jobState
+	job.SchemaState = schemaState
+	job.BinlogInfo.AddTableInfo(ver, tblInfo)
+}
+
+// FinishDBJob is called when a job is finished.
+// It updates the job's state information and adds dbInfo the binlog.
+func (job *Job) FinishDBJob(jobState JobState, schemaState SchemaState, ver int64, dbInfo *DBInfo) {
+	job.State = jobState
+	job.SchemaState = schemaState
+	job.BinlogInfo.AddDBInfo(ver, dbInfo)
+}
+
+// tsConvert2Time converts timestamp to time.
+func tsConvert2Time(ts uint64) time.Time {
+	t := int64(ts >> 18) // 18 is for the logical time.
 	return time.Unix(t/1e3, (t%1e3)*1e6)
 }
 
@@ -203,7 +219,7 @@ func (job *Job) DecodeArgs(args ...interface{}) error {
 func (job *Job) String() string {
 	rowCount := job.GetRowCount()
 	return fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v",
-		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args), job.startTime())
+		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args), tsConvert2Time(job.StartTS))
 }
 
 // IsFinished returns whether job is finished or not.

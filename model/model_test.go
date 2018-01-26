@@ -104,6 +104,8 @@ func (*testModelSuite) TestModelBasic(c *C) {
 	c.Assert(tp.String(), Equals, "")
 	has := index.HasPrefixIndex()
 	c.Assert(has, Equals, true)
+	t := table.GetUpdateTime()
+	c.Assert(t, Equals, tsConvert2Time(table.UpdateTS))
 
 	// Corner cases
 	column.Flag ^= mysql.PriKeyFlag
@@ -129,7 +131,7 @@ func (*testModelSuite) TestJobStartTime(c *C) {
 		BinlogInfo: &HistoryInfo{},
 	}
 	t := time.Unix(0, 0)
-	c.Assert(t, Equals, job.startTime())
+	c.Assert(t, Equals, tsConvert2Time(job.StartTS))
 	ret := fmt.Sprintf("%s", job)
 	c.Assert(job.String(), Equals, ret)
 }
