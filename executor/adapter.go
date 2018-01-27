@@ -174,11 +174,10 @@ func (a *ExecStmt) IsPrepared() bool {
 	return a.isPreparedStmt
 }
 
-// IsReadOnly return true if stmt is read only.
-// First fetch a to be checked statement from ExecStme
-// and update it if plan is a execute plan.
-// Last step uses ast.IsReadOnly function to determine a statment
-// is read only or not.
+// IsReadOnly return true if a statement is read only.
+// It will update readOnlyCheckStmt if current ExecStmt can be conveted to
+// a plan.Execute. Last step is using ast.IsReadOnly function to determine
+// a statment is read only or not.
 func (a *ExecStmt) IsReadOnly() bool {
 	readOnlyCheckStmt := a.StmtNode
 	if checkPlan, ok := a.Plan.(*plan.Execute); ok {
