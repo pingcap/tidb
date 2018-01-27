@@ -1044,7 +1044,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		// c is type int which will be added cast to specified type when building function signature, no index can be used.
 		{
 			sql:  `select a from t where c like '1'`,
-			best: "TableReader(Table(t))->Sel([like(cast(test.t.c), 1, 92)])->Projection",
+			best: "TableReader(Table(t)->Sel([like(cast(test.t.c), 1, 92)]))->Projection",
 		},
 		//{
 		//	sql:  `select a from t where c = 1.9 and d > 3`,
@@ -1068,11 +1068,11 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		},
 		{
 			sql:  `select a from t where c = 123456789098765432101234`,
-			best: "TableReader(Table(t))->Sel([eq(cast(test.t.c), 123456789098765432101234)])->Projection",
+			best: "TableReader(Table(t)->Sel([eq(cast(test.t.c), 123456789098765432101234)]))->Projection",
 		},
 		{
-			sql:  `select a from t where c = 'hanfei'`,
-			best: "TableReader(Table(t))->Sel([eq(cast(test.t.c), cast(hanfei))])->Projection",
+			sql:  `select a from t where c = 'teststr'`,
+			best: "TableReader(Table(t)->Sel([eq(cast(test.t.c), cast(teststr))]))->Projection",
 		},
 	}
 	for _, tt := range tests {

@@ -20,7 +20,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -39,7 +38,7 @@ func (s *testSuite) TestStatementContext(c *C) {
 	tk.MustQuery("select * from sc where a > cast(1.1 as decimal)").Check(testkit.Rows("2"))
 	_, err := tk.Exec(`select * from sc where a > cast(1.1 as decimal);
 		        update sc set a = 4 where a > cast(1.1 as decimal)`)
-	c.Check(terror.ErrorEqual(err, types.ErrTruncated), IsTrue)
+	c.Check(err.Error(), Equals, "other error: [types:1265]Data Truncated")
 
 	tk.MustExec(nonStrictModeSQL)
 	tk.MustExec("update sc set a = 3 where a > cast(1.1 as decimal)")
