@@ -187,7 +187,7 @@ func (a *ExecStmt) IsReadOnly() bool {
 }
 
 // RebuildPlan rebuilds current execut statement plan.
-// It first gets all related schme info from context, and then preprocess
+// It first gets all related schmea info from context, and then preprocess
 // current StmtNode according to schema info and current ExecStmt's context.
 // Last step is to update current execution plan by using Plan.Optimize current execut statment.
 func (a *ExecStmt) RebuildPlan() error {
