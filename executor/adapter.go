@@ -80,6 +80,9 @@ func schema2ResultFields(schema *expression.Schema, defaultDB string) (rfs []*as
 	return rfs
 }
 
+// Next uses recordSet's executor to get next available row.
+// If row is nil, then updates LastFoundRows in session variable.
+// If stmt and row are not nil, increase current FoundRows by 1.
 func (a *recordSet) Next(goCtx goctx.Context) (types.Row, error) {
 	row, err := a.executor.Next(goCtx)
 	if err != nil {
@@ -99,6 +102,11 @@ func (a *recordSet) Next(goCtx goctx.Context) (types.Row, error) {
 	return row, nil
 }
 
+// NextChunk use uses recordSet's executor to get next available chunk for later usage.
+// If chunk do not contain any rows, then we update last query found rows in session variable as current found rows.
+// The reason we need update is that chunk with 0 rows indicating we already finished current query, we need prepare for
+// next query.
+// If stmt is not nil and chunk with some rows inside, we simply update last query found rows by the number of row in chunk.
 func (a *recordSet) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	err := a.executor.NextChunk(goCtx, chk)
 	if err != nil {
@@ -118,6 +126,7 @@ func (a *recordSet) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
+// NewChunk create a new chunk using NewChunk function in chunk package.
 func (a *recordSet) NewChunk() *chunk.Chunk {
 	return chunk.NewChunk(a.executor.retTypes())
 }
@@ -155,17 +164,21 @@ type ExecStmt struct {
 	isPreparedStmt bool
 }
 
-// OriginText implements ast.Statement interface.
+// OriginText returns original statement as a string.
 func (a *ExecStmt) OriginText() string {
 	return a.Text
 }
 
-// IsPrepared implements ast.Statement interface.
+// IsPrepared return true if stmt is already prepared.
 func (a *ExecStmt) IsPrepared() bool {
 	return a.isPreparedStmt
 }
 
-// IsReadOnly implements ast.Statement interface.
+// IsReadOnly return true if stmt is read only.
+// First fetch a to be checked statement from ExecStme
+// and update it if plan is a execute plan.
+// Last step uses ast.IsReadOnly function to determine a statment
+// is read only or not.
 func (a *ExecStmt) IsReadOnly() bool {
 	readOnlyCheckStmt := a.StmtNode
 	if checkPlan, ok := a.Plan.(*plan.Execute); ok {
@@ -174,7 +187,10 @@ func (a *ExecStmt) IsReadOnly() bool {
 	return ast.IsReadOnly(readOnlyCheckStmt)
 }
 
-// RebuildPlan implements ast.Statement interface.
+// RebuildPlan rebuilds current execut statement plan.
+// It first gets all related schme info from context, and then preprocess
+// current StmtNode according to schema info and current ExecStmt's context.
+// Last step is to update current execution plan by using Plan.Optimize current execut statment.
 func (a *ExecStmt) RebuildPlan() error {
 	is := GetInfoSchema(a.Ctx)
 	a.InfoSchema = is
@@ -189,8 +205,7 @@ func (a *ExecStmt) RebuildPlan() error {
 	return nil
 }
 
-// Exec implements the ast.Statement Exec interface.
-// This function builds an Executor from a plan. If the Executor doesn't return result,
+// Exec builds an Executor from a plan. If the Executor doesn't return result,
 // like the INSERT, UPDATE statements, it executes in this function, if the Executor returns
 // result, execution is done after this function returns, in the returned ast.RecordSet Next method.
 func (a *ExecStmt) Exec(goCtx goctx.Context) (ast.RecordSet, error) {

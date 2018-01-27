@@ -949,6 +949,7 @@ func (cc *clientConn) writeChunks(goCtx goctx.Context, rs ResultSet, binary bool
 	data := make([]byte, 4, 1024)
 	chk := rs.NewChunk()
 	for {
+		// here server.tidbResultSet implements NextChunk method.
 		err := rs.NextChunk(goCtx, chk)
 		if err != nil {
 			return errors.Trace(err)
