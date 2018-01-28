@@ -27,11 +27,13 @@ import (
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/terror"
+	tidbutil "github.com/pingcap/tidb/util"
 	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
@@ -124,6 +126,14 @@ func (w *GCWorker) start(ctx goctx.Context, wg *sync.WaitGroup) {
 
 	ticker := time.NewTicker(gcWorkerTickInterval)
 	defer ticker.Stop()
+	defer func() {
+		r := recover()
+		if r != nil {
+			buf := tidbutil.GetStack()
+			log.Errorf("gcWorker %v %s", r, buf)
+			metrics.PanicCounter.WithLabelValues(metrics.LabelGCWorker).Inc()
+		}
+	}()
 	for {
 		select {
 		case <-ticker.C:
