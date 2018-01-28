@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
+	"google.golang.org/grpc"
 )
 
 const (
@@ -127,10 +128,19 @@ func NewSession(ctx goctx.Context, logPrefix string, etcdCli *clientv3.Client, r
 	var etcdSession *concurrency.Session
 	failedCnt := 0
 	for i := 0; i < retryCnt; i++ {
-		if isContextDone(ctx) {
-			return etcdSession, errors.Trace(ctx.Err())
+		if err = contextDone(ctx, err); err != nil {
+			return etcdSession, errors.Trace(err)
 		}
 
+		// gofail: var closeClient bool
+		//	if closeClient {
+		//		etcdCli.Close()
+		//	}
+
+		// gofail: var closeGrpc bool
+		//	if closeGrpc {
+		//		etcdCli.ActiveConnection().Close()
+		//	}
 		etcdSession, err = concurrency.NewSession(etcdCli,
 			concurrency.WithTTL(ttl), concurrency.WithContext(ctx))
 		if err == nil {
@@ -201,6 +211,7 @@ func (m *ownerManager) campaignLoop(ctx goctx.Context, etcdSession *concurrency.
 		m.SetOwner(true)
 		m.watchOwner(ctx, etcdSession, ownerKey)
 		m.SetOwner(false)
+		log.Warnf("%s isn't the owner", logPrefix)
 	}
 }
 
@@ -277,11 +288,17 @@ func init() {
 	}
 }
 
-func isContextDone(ctx goctx.Context) bool {
+func contextDone(ctx goctx.Context, err error) error {
 	select {
 	case <-ctx.Done():
-		return true
+		return errors.Trace(ctx.Err())
 	default:
 	}
-	return false
+	if terror.ErrorEqual(err, goctx.Canceled) ||
+		terror.ErrorEqual(err, goctx.DeadlineExceeded) ||
+		terror.ErrorEqual(err, grpc.ErrClientConnClosing) {
+		return errors.Trace(err)
+	}
+
+	return nil
 }

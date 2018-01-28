@@ -1,0 +1,85 @@
+// Copyright 2018 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package owner
+
+import (
+	"math"
+	"net"
+	"os"
+	"testing"
+	"time"
+
+	"github.com/coreos/etcd/clientv3"
+	gofail "github.com/coreos/gofail/runtime"
+	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/testleak"
+	goctx "golang.org/x/net/context"
+	"google.golang.org/grpc"
+)
+
+func TestT(t *testing.T) {
+	CustomVerboseFlag = true
+	logLevel := os.Getenv("log_level")
+	logutil.InitLogger(&logutil.LogConfig{
+		Level:  logLevel,
+		Format: "highlight",
+	})
+	TestingT(t)
+}
+
+var _ = Suite(&testSuite{})
+
+type testSuite struct {
+	ln net.Listener
+}
+
+func (s *testSuite) SetUpSuite(c *C) {
+	ln, err := net.Listen("unix", "new_session:12379")
+	c.Assert(err, IsNil)
+	s.ln = ln
+}
+
+func (s *testSuite) TearDownSuite(c *C) {
+	err := s.ln.Close()
+	c.Assert(err, IsNil)
+}
+
+var (
+	endpoints   = []string{"unix://new_session:12379"}
+	dialTimeout = 5 * time.Second
+	retryCnt    = int(math.MaxInt32)
+)
+
+func (s *testSuite) TestFailNewSession(c *C) {
+	defer testleak.AfterTest(c)()
+
+	cli, err := clientv3.New(clientv3.Config{
+		Endpoints:   endpoints,
+		DialTimeout: dialTimeout,
+	})
+	gofail.Enable("github.com/pingcap/tidb/owner/closeClient", `return(true)`)
+	_, err = NewSession(goctx.Background(), "fail_new_serssion", cli, retryCnt, ManagerSessionTTL)
+	isContextDone := terror.ErrorEqual(grpc.ErrClientConnClosing, err) || terror.ErrorEqual(grpc.ErrClientConnClosing, err)
+	c.Assert(isContextDone, IsTrue, Commentf("err %v", err))
+
+	cli, err = clientv3.New(clientv3.Config{
+		Endpoints:   endpoints,
+		DialTimeout: dialTimeout,
+	})
+	gofail.Enable("github.com/pingcap/tidb/owner/closeGrpc", `return(true)`)
+	_, err = NewSession(goctx.Background(), "fail_new_serssion", cli, retryCnt, ManagerSessionTTL)
+	c.Assert(terror.ErrorEqual(err, grpc.ErrClientConnClosing), IsTrue)
+}
