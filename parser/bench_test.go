@@ -32,7 +32,22 @@ func BenchmarkSysbenchSelect(b *testing.B) {
 	b.ReportAllocs()
 }
 
-func BenchmarkParse(b *testing.B) {
+func BenchmarkParseDecimal(b *testing.B) {
+	var sql = "select 1234567890123456789012345678901230947.0;"
+	parser := New()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for j := 0; j < 10240; j++ {
+			_, err := parser.Parse(sql, "", "")
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	}
+	b.ReportAllocs()
+}
+
+func BenchmarkParseInt(b *testing.B) {
 	var table = []string{
 		"insert into t values (1), (2), (3)",
 		"insert into t values (4), (5), (6), (7)",
