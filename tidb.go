@@ -169,9 +169,9 @@ func runStmt(goCtx goctx.Context, ctx context.Context, s ast.Statement) (ast.Rec
 		GetHistory(ctx).Add(0, s, se.sessionVars.StmtCtx)
 		if txn := ctx.Txn(); txn != nil {
 			if err != nil {
-				txn.StmtRollback()
+				ctx.StmtRollback()
 			} else {
-				terror.Log(txn.StmtCommit())
+				terror.Log(ctx.StmtCommit())
 			}
 		}
 	}
@@ -182,6 +182,16 @@ func runStmt(goCtx goctx.Context, ctx context.Context, s ast.Statement) (ast.Rec
 			terror.Log(errors.Trace(err1))
 		} else {
 			err = se.CommitTxn(ctx1)
+		}
+	} else {
+		// If the user insert, insert, insert ... but never commit, TiDB would OOM.
+		// So we limit the statement count in a transaction here.
+		history := GetHistory(ctx)
+		if history.Count() > config.GetGlobalConfig().Performance.StmtCountLimit {
+			err1 := se.RollbackTxn(ctx1)
+			terror.Log(errors.Trace(err1))
+			return rs, errors.Errorf("statement count %d exceeds the transaction limitation, autocommit = %t",
+				history.Count(), ctx.GetSessionVars().IsAutocommit())
 		}
 	}
 	return rs, errors.Trace(err)

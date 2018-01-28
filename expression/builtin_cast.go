@@ -1395,7 +1395,7 @@ func WrapWithCastAsTime(ctx context.Context, expr Expression, tp *types.FieldTyp
 		return expr
 	}
 	switch x := expr.GetType(); x.Tp {
-	case mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeNewDate, mysql.TypeDate, mysql.TypeDuration:
+	case mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeDate, mysql.TypeDuration:
 		tp.Decimal = x.Decimal
 	default:
 		tp.Decimal = types.MaxFsp
@@ -1422,7 +1422,7 @@ func WrapWithCastAsDuration(ctx context.Context, expr Expression) Expression {
 	}
 	tp := types.NewFieldType(mysql.TypeDuration)
 	switch x := expr.GetType(); x.Tp {
-	case mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeNewDate, mysql.TypeDate:
+	case mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeDate:
 		tp.Decimal = x.Decimal
 	default:
 		tp.Decimal = types.MaxFsp

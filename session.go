@@ -45,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/terror"
@@ -204,9 +203,9 @@ func (s *session) SetCollation(coID int) error {
 		return errors.Trace(err)
 	}
 	for _, v := range variable.SetNamesVariables {
-		s.sessionVars.Systems[v] = cs
+		terror.Log(errors.Trace(s.sessionVars.SetSystemVar(v, cs)))
 	}
-	s.sessionVars.Systems[variable.CollationConnection] = co
+	terror.Log(errors.Trace(s.sessionVars.SetSystemVar(variable.CollationConnection, co)))
 	return nil
 }
 
@@ -477,10 +476,10 @@ func (s *session) retry(goCtx goctx.Context, maxCnt int) error {
 			s.sessionVars.StmtCtx.ResetForRetry()
 			_, err = st.Exec(goCtx)
 			if err != nil {
-				s.Txn().StmtRollback()
+				s.StmtRollback()
 				break
 			}
-			terror.Log(s.Txn().StmtCommit())
+			terror.Log(s.StmtCommit())
 		}
 		if hook := ctx.Value("preCommitHook"); hook != nil {
 			// For testing purpose.
@@ -571,7 +570,7 @@ func createSessionFunc(store kv.Storage) pools.Factory {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = varsutil.SetSessionSystemVar(se.sessionVars, variable.AutocommitVar, types.NewStringDatum("1"))
+		err = variable.SetSessionSystemVar(se.sessionVars, variable.AutocommitVar, types.NewStringDatum("1"))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -587,7 +586,7 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = varsutil.SetSessionSystemVar(se.sessionVars, variable.AutocommitVar, types.NewStringDatum("1"))
+		err = variable.SetSessionSystemVar(se.sessionVars, variable.AutocommitVar, types.NewStringDatum("1"))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -917,8 +916,8 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 type StmtTxn struct {
 	kv.Transaction
 
-	buf kv.MemBuffer
-	// TODO: Add binlog related data here.
+	buf       kv.MemBuffer
+	mutations map[int64]*binlog.TableMutation
 	// TODO: DirtyDB need to be statement level too.
 }
 
@@ -973,22 +972,68 @@ func (st *StmtTxn) SeekReverse(k kv.Key) (kv.Iterator, error) {
 	return kv.NewUnionIter(bufferIt, retrieverIt, true)
 }
 
-// StmtCommit implements the Transaction interface.
-func (st *StmtTxn) StmtCommit() error {
-	err := kv.WalkMemBuffer(st.buf, func(k kv.Key, v []byte) error {
+func (st *StmtTxn) cleanup() {
+	st.buf.Reset()
+	for key := range st.mutations {
+		delete(st.mutations, key)
+	}
+}
+
+// StmtCommit implements the context.Context interface.
+func (s *session) StmtCommit() error {
+	defer s.StmtTxn.cleanup()
+	st := &s.StmtTxn
+	err := kv.WalkMemBuffer(s.buf, func(k kv.Key, v []byte) error {
 		if len(v) == 0 {
 			return errors.Trace(st.Transaction.Delete(k))
 		}
 		return errors.Trace(st.Transaction.Set(k, v))
 	})
-	st.buf.Reset()
+
+	// Need to flush binlog.
+	for tableID, delta := range st.mutations {
+		mutation := getBinlogMutation(s, tableID)
+		if err == nil {
+			mergeToMutation(mutation, delta)
+		}
+	}
 	return errors.Trace(err)
 }
 
-// StmtRollback implements the Transaction interface.
-func (st *StmtTxn) StmtRollback() {
-	st.buf.Reset()
+// StmtRollback implements the context.Context interface.
+func (s *session) StmtRollback() {
+	s.StmtTxn.cleanup()
 	return
+}
+
+// StmtGetMutation implements the context.Context interface.
+func (s *session) StmtGetMutation(tableID int64) *binlog.TableMutation {
+	st := &s.StmtTxn
+	if _, ok := st.mutations[tableID]; !ok {
+		st.mutations[tableID] = &binlog.TableMutation{TableId: tableID}
+	}
+	return st.mutations[tableID]
+}
+
+func getBinlogMutation(ctx context.Context, tableID int64) *binlog.TableMutation {
+	bin := binloginfo.GetPrewriteValue(ctx, true)
+	for i := range bin.Mutations {
+		if bin.Mutations[i].TableId == tableID {
+			return &bin.Mutations[i]
+		}
+	}
+	idx := len(bin.Mutations)
+	bin.Mutations = append(bin.Mutations, binlog.TableMutation{TableId: tableID})
+	return &bin.Mutations[idx]
+}
+
+func mergeToMutation(m1, m2 *binlog.TableMutation) {
+	m1.InsertedRows = append(m1.InsertedRows, m2.InsertedRows...)
+	m1.UpdatedRows = append(m1.UpdatedRows, m2.UpdatedRows...)
+	m1.DeletedIds = append(m1.DeletedIds, m2.DeletedIds...)
+	m1.DeletedPks = append(m1.DeletedPks, m2.DeletedPks...)
+	m1.DeletedRows = append(m1.DeletedRows, m2.DeletedRows...)
+	m1.Sequence = append(m1.Sequence, m2.Sequence...)
 }
 
 func (s *session) Txn() kv.Transaction {
@@ -1226,6 +1271,7 @@ func createSession(store kv.Storage) (*session, error) {
 	s.sessionVars.GlobalVarsAccessor = s
 	s.sessionVars.BinlogClient = binloginfo.GetPumpClient()
 	s.StmtTxn.buf = kv.NewMemDbBuffer(kv.DefaultTxnMembufCap)
+	s.StmtTxn.mutations = make(map[int64]*binlog.TableMutation)
 	return s, nil
 }
 
@@ -1247,6 +1293,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
 	s.StmtTxn.buf = kv.NewMemDbBuffer(kv.DefaultTxnMembufCap)
+	s.StmtTxn.mutations = make(map[int64]*binlog.TableMutation)
 	return s, nil
 }
 
@@ -1335,8 +1382,8 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	for _, row := range rows {
 		varName := row.GetString(0)
 		varVal := row.GetDatum(1, &fields[1].Column.FieldType)
-		if _, ok := vars.Systems[varName]; !ok {
-			err = varsutil.SetSessionSystemVar(s.sessionVars, varName, varVal)
+		if _, ok := vars.GetSystemVar(varName); !ok {
+			err = variable.SetSessionSystemVar(s.sessionVars, varName, varVal)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -1419,7 +1466,8 @@ func (s *session) ActivePendingTxn() error {
 	txn.SetCap(s.getMembufCap())
 	s.Transaction = txn
 	s.sessionVars.TxnCtx.StartTS = s.Transaction.StartTS()
-	if s.sessionVars.Systems[variable.TxnIsolation] == ast.ReadCommitted {
+	isoLevel, _ := s.sessionVars.GetSystemVar(variable.TxnIsolation)
+	if isoLevel == ast.ReadCommitted {
 		txn.SetOption(kv.IsolationLevel, kv.RC)
 	}
 	return nil

@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
@@ -403,12 +402,12 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 			// 1. try to fetch value from SessionVars.Systems;
 			// 2. if this variable is session-only, fetch value from SysVars
 			//		otherwise, fetch the value from table `mysql.Global_Variables`.
-			value, ok, err = varsutil.GetSessionOnlySysVars(sessionVars, v.Name)
+			value, ok, err = variable.GetSessionOnlySysVars(sessionVars, v.Name)
 		} else {
 			// If the scope of a system variable is ScopeNone,
 			// it's a read-only variable, so we return the default value of it.
 			// Otherwise, we have to fetch the values from table `mysql.Global_Variables` for global variable names.
-			value, ok, err = varsutil.GetScopeNoneSystemVar(v.Name)
+			value, ok, err = variable.GetScopeNoneSystemVar(v.Name)
 		}
 		if err != nil {
 			return errors.Trace(err)

@@ -144,11 +144,6 @@ type Transaction interface {
 	GetMemBuffer() MemBuffer
 	// GetSnapshot returns the snapshot of this transaction.
 	GetSnapshot() Snapshot
-
-	// StmtCommit flush all changes by the statement to the underlying transaction.
-	StmtCommit() error
-	// StmtRollback provides statement level rollback.
-	StmtRollback()
 }
 
 // Client is used to send request to KV layer.
@@ -210,7 +205,7 @@ type Response interface {
 	// Next returns a resultSubset from a single storage unit.
 	// When full result set is returned, nil is returned.
 	// TODO: Find a better interface for resultSubset that can avoid allocation and reuse bytes.
-	Next() (resultSubset []byte, err error)
+	Next(ctx goctx.Context) (resultSubset []byte, err error)
 	// Close response.
 	Close() error
 }
