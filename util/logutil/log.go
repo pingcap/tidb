@@ -163,13 +163,13 @@ func (f *textFormatter) Format(entry *log.Entry) ([]byte, error) {
 	if f.EnableEntryOrder {
 		keys := make([]string, 0, len(entry.Data))
 		for k := range entry.Data {
-			keys = append(keys, k)
+			if k != "file" && k != "line" {
+				keys = append(keys, k)
+			}
 		}
 		sort.Strings(keys)
 		for _, k := range keys {
-			if k != "file" && k != "line" {
-				fmt.Fprintf(b, " %v=%v", k, entry.Data[k])
-			}
+			fmt.Fprintf(b, " %v=%v", k, entry.Data[k])
 		}
 	} else {
 		for k, v := range entry.Data {
