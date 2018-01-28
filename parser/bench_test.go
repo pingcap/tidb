@@ -22,7 +22,7 @@ func BenchmarkSysbenchSelect(b *testing.B) {
 	sql := "SELECT pad FROM sbtest1 WHERE id=1;"
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		for j := 0; j < 1024; j++ {
+		for j := 0; j < 10240; j++ {
 			_, err := parser.Parse(sql, "", "")
 			if err != nil {
 				b.Fatal(err)
@@ -41,7 +41,7 @@ func BenchmarkParse(b *testing.B) {
 	parser := New()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		for j := 0; j < 1024; j++ {
+		for j := 0; j < 10240; j++ {
 			for _, v := range table {
 				_, err := parser.Parse(v, "", "")
 				if err != nil {
