@@ -57,7 +57,7 @@ func (s *testStateChangeSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	_, err = s.se.Execute(goctx.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
-	s.p = parser.New()
+	s.p = parser.NewParser()
 }
 
 func (s *testStateChangeSuite) TearDownSuite(c *C) {

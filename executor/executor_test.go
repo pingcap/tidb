@@ -78,7 +78,7 @@ var mockTikv = flag.Bool("mockTikv", true, "use mock tikv store in executor test
 func (s *testSuite) SetUpSuite(c *C) {
 	s.autoIDStep = autoid.GetStep()
 	autoid.SetStep(5000)
-	s.Parser = parser.New()
+	s.Parser = parser.NewParser()
 	flag.Lookup("mockTikv")
 	useMockTikv := *mockTikv
 	if useMockTikv {

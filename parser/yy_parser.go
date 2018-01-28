@@ -76,8 +76,8 @@ type stmtTexter interface {
 	stmtText() string
 }
 
-// New returns a Parser object.
-func New() *Parser {
+// NewParser returns a Parser object.
+func NewParser() *Parser {
 	return &Parser{
 		cache: make([]yySymType, 200),
 	}

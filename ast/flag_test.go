@@ -33,7 +33,7 @@ type testFlagSuite struct {
 }
 
 func (ts *testFlagSuite) SetUpSuite(c *C) {
-	ts.Parser = parser.New()
+	ts.Parser = parser.NewParser()
 }
 
 func (ts *testFlagSuite) TestHasAggFlag(c *C) {

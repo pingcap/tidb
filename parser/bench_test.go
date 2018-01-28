@@ -27,7 +27,7 @@ func sysebchSelect(parser *Parser, sql string, num int, b *testing.B) {
 }
 
 func BenchmarkSysbenchSelect1024(b *testing.B) {
-	parser := New()
+	parser := NewParser()
 	sql := "SELECT pad FROM sbtest1 WHERE id=1;"
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -37,7 +37,7 @@ func BenchmarkSysbenchSelect1024(b *testing.B) {
 }
 
 func BenchmarkSysbenchSelect256(b *testing.B) {
-	parser := New()
+	parser := NewParser()
 	sql := "SELECT pad FROM sbtest1 WHERE id=1;"
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -47,7 +47,7 @@ func BenchmarkSysbenchSelect256(b *testing.B) {
 }
 
 func BenchmarkSysbenchSelect128(b *testing.B) {
-	parser := New()
+	parser := NewParser()
 	sql := "SELECT pad FROM sbtest1 WHERE id=1;"
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -57,7 +57,7 @@ func BenchmarkSysbenchSelect128(b *testing.B) {
 }
 
 func BenchmarkParseInt4096(b *testing.B) {
-	parser := New()
+	parser := NewParser()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for _, v := range table {
@@ -68,7 +68,7 @@ func BenchmarkParseInt4096(b *testing.B) {
 }
 
 func BenchmarkParseInt1024(b *testing.B) {
-	parser := New()
+	parser := NewParser()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for _, v := range table {
@@ -86,7 +86,7 @@ var table = []string{
 }
 
 func BenchmarkParseInt512(b *testing.B) {
-	parser := New()
+	parser := NewParser()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for _, v := range table {
@@ -107,7 +107,7 @@ func parseInt(parser *Parser, sql string, num int, b *testing.B) {
 }
 
 func BenchmarkParseInt256(b *testing.B) {
-	parser := New()
+	parser := NewParser()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for _, v := range table {

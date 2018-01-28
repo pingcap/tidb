@@ -52,7 +52,7 @@ type testPlanSuite struct {
 func (s *testPlanSuite) SetUpSuite(c *C) {
 	s.is = infoschema.MockInfoSchema([]*model.TableInfo{MockTable()})
 	s.ctx = mockContext()
-	s.Parser = parser.New()
+	s.Parser = parser.NewParser()
 }
 
 func newLongType() types.FieldType {

@@ -1259,7 +1259,7 @@ func createSession(store kv.Storage) (*session, error) {
 	}
 	s := &session{
 		store:       store,
-		parser:      parser.New(),
+		parser:      parser.NewParser(),
 		sessionVars: variable.NewSessionVars(),
 	}
 	if plan.PreparedPlanCacheEnabled {
@@ -1282,7 +1282,7 @@ func createSession(store kv.Storage) (*session, error) {
 func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, error) {
 	s := &session{
 		store:       store,
-		parser:      parser.New(),
+		parser:      parser.NewParser(),
 		sessionVars: variable.NewSessionVars(),
 	}
 	if plan.PreparedPlanCacheEnabled {

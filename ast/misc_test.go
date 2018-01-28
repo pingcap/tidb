@@ -97,7 +97,7 @@ jobAbbr char(4) not null,
 constraint foreign key (jobabbr) references ffxi_jobtype (jobabbr) on delete cascade on update cascade
 );
 `
-	parse := parser.New()
+	parse := parser.NewParser()
 	stmts, err := parse.Parse(sql, "", "")
 	c.Assert(err, IsNil)
 	for _, stmt := range stmts {
@@ -116,7 +116,7 @@ update t1 set col1 = col1 + 1, col2 = col1;
 show create table t;
 load data infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by 'b';`
 
-	p := parser.New()
+	p := parser.NewParser()
 	stmts, err := p.Parse(sql, "", "")
 	c.Assert(err, IsNil)
 	for _, stmt := range stmts {

@@ -120,7 +120,7 @@ func (e *PrepareExec) DoPrepare() error {
 	if sqlParser, ok := e.ctx.(sqlexec.SQLParser); ok {
 		stmts, err = sqlParser.ParseSQL(e.sqlText, charset, collation)
 	} else {
-		stmts, err = parser.New().Parse(e.sqlText, charset, collation)
+		stmts, err = parser.NewParser().Parse(e.sqlText, charset, collation)
 	}
 	if err != nil {
 		return errors.Trace(err)
