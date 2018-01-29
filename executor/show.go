@@ -457,6 +457,15 @@ func (e *ShowExec) fetchShowStatus() error {
 	return nil
 }
 
+func getDefaultCollate(charsetName string) string {
+	for _, c := range charset.GetAllCharsets() {
+		if strings.EqualFold(c.Name, charsetName) {
+			return c.DefaultCollation
+		}
+	}
+	return ""
+}
+
 func (e *ShowExec) fetchShowCreateTable() error {
 	tb, err := e.getTable()
 	if err != nil {
@@ -604,12 +613,19 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		charsetName = charset.CharsetUTF8
 	}
 	collate := tb.Meta().Collate
+	// Set default collate if collate is not specified.
 	if len(collate) == 0 {
-		collate = charset.CollationUTF8
+		collate = getDefaultCollate(charsetName)
 	}
 	// Because we only support case sensitive utf8_bin collate, we need to explicitly set the default charset and collation
 	// to make it work on MySQL server which has default collate utf8_general_ci.
-	buf.WriteString(fmt.Sprintf(" DEFAULT CHARSET=%s COLLATE=%s", charsetName, collate))
+	if len(collate) == 0 {
+		// If we can not find default collate for the given charset,
+		// do not show the collate part.
+		buf.WriteString(fmt.Sprintf(" DEFAULT CHARSET=%s", charsetName))
+	} else {
+		buf.WriteString(fmt.Sprintf(" DEFAULT CHARSET=%s COLLATE=%s", charsetName, collate))
+	}
 
 	if hasAutoIncID {
 		autoIncID, err := tb.Allocator(e.ctx).NextGlobalAutoID(tb.Meta().ID)
