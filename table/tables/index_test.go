@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -66,7 +67,8 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	c.Assert(err, IsNil)
 
 	values := types.MakeDatums(1, 2)
-	_, err = index.Create(txn, values, 1)
+	mockCtx := mock.NewContext()
+	_, err = index.Create(mockCtx, txn, values, 1)
 	c.Assert(err, IsNil)
 
 	it, err := index.SeekFirst(txn)
@@ -98,7 +100,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	c.Assert(terror.ErrorEqual(err, io.EOF), IsTrue)
 	it.Close()
 
-	_, err = index.Create(txn, values, 0)
+	_, err = index.Create(mockCtx, txn, values, 0)
 	c.Assert(err, IsNil)
 
 	_, err = index.SeekFirst(txn)
@@ -149,10 +151,10 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	txn, err = s.s.Begin()
 	c.Assert(err, IsNil)
 
-	_, err = index.Create(txn, values, 1)
+	_, err = index.Create(mockCtx, txn, values, 1)
 	c.Assert(err, IsNil)
 
-	_, err = index.Create(txn, values, 2)
+	_, err = index.Create(mockCtx, txn, values, 2)
 	c.Assert(err, NotNil)
 
 	it, err = index.SeekFirst(txn)
@@ -203,7 +205,7 @@ func (s *testIndexSuite) TestCombineIndexSeek(c *C) {
 	c.Assert(err, IsNil)
 
 	values := types.MakeDatums("abc", "def")
-	_, err = index.Create(txn, values, 1)
+	_, err = index.Create(mock.NewContext(), txn, values, 1)
 	c.Assert(err, IsNil)
 
 	index2 := tables.NewIndex(tblInfo, tblInfo.Indices[0])

@@ -214,3 +214,7 @@ func (txn *tikvTxn) Len() int {
 func (txn *tikvTxn) Size() int {
 	return txn.us.Size()
 }
+
+func (txn *tikvTxn) GetSnapshot() kv.Snapshot {
+	return txn.snapshot
+}

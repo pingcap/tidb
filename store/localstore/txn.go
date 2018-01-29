@@ -125,6 +125,10 @@ func (txn *dbTxn) Commit() error {
 	return errors.Trace(txn.doCommit())
 }
 
+func (txn *dbTxn) GetSnapshot() kv.Snapshot {
+	return newSnapshot(txn.store, kv.Version{Ver: txn.tid})
+}
+
 type schemaLeaseChecker interface {
 	Check(txnTS uint64) error
 }
