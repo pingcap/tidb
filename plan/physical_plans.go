@@ -102,12 +102,6 @@ type PhysicalIndexScan struct {
 	// If the query requires the columns that don't belong to index, DoubleRead will be true.
 	DoubleRead bool
 
-	// accessInAndEqCounts stores the numbers of equal or in function. It's a slice because
-	// if top layer the original expression is DNF. Then every item of it have an accessInAndEqCounts.
-	accessInAndEqCounts []int
-	// condTopLayerIsCNF indicates whether the top layer is CNF.
-	condTopLayerIsCNF bool
-
 	TableAsName *model.CIStr
 
 	// dataSourceSchema is the original schema of DataSource. The schema of index scan in KV and index reader in TiDB

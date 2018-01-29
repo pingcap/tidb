@@ -289,7 +289,7 @@ func DetachCondAndBuildRangeForIndex(sc *stmtctx.StatementContext, conditions []
 	return detachCNFCondAndBuildRangeForIndex(sc, conditions, cols, newTpSlice, lengths)
 }
 
-// DetachIndexConditions will detach the index filters from table filters.
+// DetachSimpleCondAndBuildRangeForIndex will detach the index filters from table filters.
 // It will first find the point query column and then extract the range query column.
 func DetachSimpleCondAndBuildRangeForIndex(sc *stmtctx.StatementContext, conditions []expression.Expression,
 	cols []*expression.Column, lengths []int) (ranges []*NewRange, accessConds []expression.Expression, err error) {
