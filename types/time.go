@@ -840,13 +840,14 @@ func (d Duration) ToNumber() *MyDecimal {
 // ConvertToTime converts duration to Time.
 // Tp is TypeDatetime, TypeTimestamp and TypeDate.
 func (d Duration) ConvertToTime(tp uint8) (Time, error) {
-	year, month, day := gotime.Now().Date()
-	// just use current year, month and day.
-	n := gotime.Date(year, month, day, 0, 0, 0, 0, gotime.Local)
-	n = n.Add(d.Duration)
+	year, month, day := gotime.Now().In(gotime.UTC).Date()
+	sign, hour, minute, second, frac := splitDuration(d.Duration)
+	datePart := FromDate(year, int(month), day, 0, 0, 0, 0)
+	timePart := FromDate(0, 0, 0, hour, minute, second, frac)
+	mixDateAndTime(&datePart, &timePart, sign < 0)
 
 	t := Time{
-		Time: FromGoTime(n),
+		Time: datePart,
 		Type: mysql.TypeDatetime,
 		Fsp:  d.Fsp,
 	}
