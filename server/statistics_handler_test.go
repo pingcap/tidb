@@ -18,8 +18,8 @@ import (
 	"io/ioutil"
 	"net/http"
 	"os"
-
 	"fmt"
+
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"

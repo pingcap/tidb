@@ -799,7 +799,7 @@ func (cc *clientConn) handleLoadData(goCtx goctx.Context, loadDataInfo *executor
 }
 
 // handleLoadStats does the additional work after processing the 'load stats' query.
-// It sends client a file path, then reads the file content from client, loads it into the cache.
+// It sends client a file path, then reads the file content from client, loads it into the storage.
 func (cc *clientConn) handleLoadStats(goCtx goctx.Context, loadStatsInfo *executor.LoadStatsInfo) error {
 	// If the server handles the load data request, the client has to set the ClientLocalFiles capability.
 	if cc.capability&mysql.ClientLocalFiles == 0 {
