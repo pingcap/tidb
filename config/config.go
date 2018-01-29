@@ -130,6 +130,7 @@ type Performance struct {
 	CrossJoin       bool   `toml:"cross-join" json:"cross-join"`
 	StatsLease      string `toml:"stats-lease" json:"stats-lease"`
 	RunAutoAnalyze  bool   `toml:"run-auto-analyze" json:"run-auto-analyze"`
+	StmtCountLimit  int    `toml:"stmt-count-limit" json:"stmt-count-limit"`
 }
 
 // XProtocol is the XProtocol section of the config.
@@ -228,6 +229,7 @@ var defaultConf = Config{
 		CrossJoin:       true,
 		StatsLease:      "3s",
 		RunAutoAnalyze:  true,
+		StmtCountLimit:  5000,
 	},
 	XProtocol: XProtocol{
 		XHost: "0.0.0.0",

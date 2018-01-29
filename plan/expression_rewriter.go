@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -302,7 +301,7 @@ func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) 
 	if er.err != nil {
 		return v, true
 	}
-	// Only (a,b,c) = all (...) and (a,b,c) != any () can use row expression.
+	// Only (a,b,c) = any (...) and (a,b,c) != all (...) can use row expression.
 	canMultiCol := (!v.All && v.Op == opcode.EQ) || (v.All && v.Op == opcode.NE)
 	if !canMultiCol && (getRowLen(lexpr) != 1 || np.Schema().Len() != 1) {
 		er.err = ErrOperandColumns.GenByArgs(1)
@@ -813,17 +812,17 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 	var val string
 	var err error
 	if v.IsGlobal {
-		val, err = varsutil.GetGlobalSystemVar(sessionVars, name)
+		val, err = variable.GetGlobalSystemVar(sessionVars, name)
 	} else {
-		val, err = varsutil.GetSessionSystemVar(sessionVars, name)
+		val, err = variable.GetSessionSystemVar(sessionVars, name)
 	}
 	if err != nil {
 		er.err = errors.Trace(err)
 		return
 	}
 	e := datumToConstant(types.NewStringDatum(val), mysql.TypeVarString)
-	e.RetType.Charset = er.ctx.GetSessionVars().Systems[variable.CharacterSetConnection]
-	e.RetType.Collate = er.ctx.GetSessionVars().Systems[variable.CollationConnection]
+	e.RetType.Charset, _ = er.ctx.GetSessionVars().GetSystemVar(variable.CharacterSetConnection)
+	e.RetType.Collate, _ = er.ctx.GetSessionVars().GetSystemVar(variable.CollationConnection)
 	er.ctxStack = append(er.ctxStack, e)
 }
 

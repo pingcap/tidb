@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
@@ -812,15 +811,7 @@ func shouldWriteBinlog(ctx context.Context) bool {
 }
 
 func (t *Table) getMutation(ctx context.Context) *binlog.TableMutation {
-	bin := binloginfo.GetPrewriteValue(ctx, true)
-	for i := range bin.Mutations {
-		if bin.Mutations[i].TableId == t.ID {
-			return &bin.Mutations[i]
-		}
-	}
-	idx := len(bin.Mutations)
-	bin.Mutations = append(bin.Mutations, binlog.TableMutation{TableId: t.ID})
-	return &bin.Mutations[idx]
+	return ctx.StmtGetMutation(t.ID)
 }
 
 // canSkip is for these cases, we can skip the columns in encoded row:

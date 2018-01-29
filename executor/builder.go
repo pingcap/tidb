@@ -873,9 +873,11 @@ func (b *executorBuilder) buildMaxOneRow(v *plan.PhysicalMaxOneRow) Executor {
 		b.err = errors.Trace(b.err)
 		return nil
 	}
-	return &MaxOneRowExec{
+	e := &MaxOneRowExec{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, childExec),
 	}
+	e.supportChk = true
+	return e
 }
 
 func (b *executorBuilder) buildUnionAll(v *plan.PhysicalUnionAll) Executor {
