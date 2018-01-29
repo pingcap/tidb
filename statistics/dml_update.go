@@ -15,11 +15,12 @@ package statistics
 
 import (
 	"github.com/cznic/mathutil"
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	log "github.com/sirupsen/logrus"
 )
 
 // TableDelta stands for the changed stats for one table.
@@ -97,6 +98,7 @@ func (delta *TableDelta) UpdateTableDelta(sc *stmtctx.StatementContext, h *Handl
 func encodeIndexValue(sc *stmtctx.StatementContext, idxInfo *model.IndexInfo, row []types.Datum) *types.Datum {
 	values := make([]types.Datum, 0, len(idxInfo.Columns))
 	for _, col := range idxInfo.Columns {
+		// Make sure that the following code won't panic.
 		if col.Offset < 0 || col.Offset >= len(row) {
 			return nil
 		}
@@ -104,13 +106,15 @@ func encodeIndexValue(sc *stmtctx.StatementContext, idxInfo *model.IndexInfo, ro
 	}
 	b, err := codec.EncodeKey(sc, nil, values...)
 	if err != nil {
-		terror.Log(err)
+		log.Errorf("Error occurred when encoding index value in dml update: %s", errors.ErrorStack(err))
 		return nil
 	}
 	d := types.NewBytesDatum(b)
 	return &d
 }
 
+// updateBktBound updates the bucket delta's bound. If the `isUpper` is true, then we will update if the value is
+// larger than the bound. If the `isUpper` is false, then we will update if the value is smaller than the bound.
 func (delta *BktDelta) updateBktBound(sc *stmtctx.StatementContext, value *types.Datum, isUpper bool) {
 	if delta.Bound == nil {
 		delta.Bound = value
@@ -118,7 +122,7 @@ func (delta *BktDelta) updateBktBound(sc *stmtctx.StatementContext, value *types
 	}
 	cmp, err := delta.Bound.CompareDatum(sc, value)
 	if err != nil {
-		terror.Log(err)
+		log.Errorf("Error occurred when updating bucket boundary: %s", errors.ErrorStack(err))
 		return
 	}
 	if (isUpper && cmp == -1) || (!isUpper && cmp == 1) {
@@ -130,7 +134,8 @@ func (delta *HistDelta) updateHistDelta(sc *stmtctx.StatementContext, hg *Histog
 	if hg.Len() == 0 {
 		return
 	}
-	// The histogram version has changed, so we need to migrate the old delta info to the new histogram.
+	// The histogram version has changed, the bucket's boundaries may have been completed changed,
+	// so we need to migrate the old delta info to the new histogram.
 	if hg.LastUpdateVersion != delta.HistVersion {
 		delta.HistVersion = hg.LastUpdateVersion
 		bktDelta := delta.BktDeltas
@@ -142,20 +147,23 @@ func (delta *HistDelta) updateHistDelta(sc *stmtctx.StatementContext, hg *Histog
 	if value == nil {
 		return
 	}
+	// Find the bucket that value falls in.
 	idx, match := hg.Bounds.LowerBound(0, value)
 	if delta.BktDeltas == nil {
 		delta.BktDeltas = make(map[int]*BktDelta)
 	}
-	if delta.BktDeltas[idx/2] == nil {
-		delta.BktDeltas[idx/2] = &BktDelta{}
+	bktIdx := idx / 2
+	if delta.BktDeltas[bktIdx] == nil {
+		delta.BktDeltas[bktIdx] = &BktDelta{}
 	}
-	bkt := delta.BktDeltas[idx/2]
+	bkt := delta.BktDeltas[bktIdx]
 	bkt.Count += deltaCount
 	// This value falls outside the whole histogram, so we need to update the last bucket's upper bound.
 	if idx == hg.Bounds.NumRows() {
 		bkt.updateBktBound(sc, value, true)
 		return
 	}
+	// This values falls outside the bucket boundaries, we should update the lower bound.
 	if idx%2 == 0 && !match {
 		bkt.updateBktBound(sc, value, false)
 	}
@@ -187,6 +195,7 @@ func (delta *TableDelta) mergeTableDelta(sc *stmtctx.StatementContext, rDelta *T
 	} else {
 		for id, rd := range rDelta.IdxDeltas {
 			idx, ok := table.Indices[id]
+			// The index has been dropped, we do not need to merge anymore.
 			if !ok {
 				delete(delta.IdxDeltas, id)
 				continue
@@ -201,6 +210,7 @@ func (delta *TableDelta) mergeTableDelta(sc *stmtctx.StatementContext, rDelta *T
 	}
 	if rDelta.PKDelta != nil {
 		col, ok := table.Columns[rDelta.PKID]
+		// The column has been dropped, we do not need to merge anymore.
 		if !ok {
 			delta.PKDelta = nil
 			return
@@ -251,7 +261,7 @@ func (delta *HistDelta) updateHistogram(sc *stmtctx.StatementContext, oldHg *His
 	return hg
 }
 
-// UpdateTable update the stats according to the delta info.
+// UpdateTable update the stats according to the delta info. Exported for test.
 func (delta *TableDelta) UpdateTable(sc *stmtctx.StatementContext, oldTable *Table) *Table {
 	t := oldTable.copy()
 	if delta.PKDelta != nil {

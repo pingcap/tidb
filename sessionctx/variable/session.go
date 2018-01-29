@@ -99,6 +99,7 @@ type TransactionContext struct {
 func (tc *TransactionContext) GetTableDelta(tableID int64) interface{} {
 	if tc.TableDeltaMap == nil {
 		tc.TableDeltaMap = make(map[int64]interface{})
+		return nil
 	}
 	return tc.TableDeltaMap[tableID]
 }
