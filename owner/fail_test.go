@@ -81,5 +81,6 @@ func (s *testSuite) TestFailNewSession(c *C) {
 	})
 	gofail.Enable("github.com/pingcap/tidb/owner/closeGrpc", `return(true)`)
 	_, err = NewSession(goctx.Background(), "fail_new_serssion", cli, retryCnt, ManagerSessionTTL)
+	isContextDone = terror.ErrorEqual(grpc.ErrClientConnClosing, err) || terror.ErrorEqual(goctx.Canceled, err)
 	c.Assert(isContextDone, IsTrue, Commentf("err %v", err))
 }
