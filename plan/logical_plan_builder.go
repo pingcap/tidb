@@ -118,7 +118,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 	plan4Agg.SetChildren(p)
 	plan4Agg.GroupByItems = gbyItems
 	plan4Agg.SetSchema(schema4Agg)
-	// TODO: Add a Projection if any argument of aggregate funcs or group by items are scala functions.
+	// TODO: Add a Projection if any argument of aggregate funcs or group by items are scalar functions.
 	// plan4Agg.buildProjectionIfNecessary()
 	// b.optFlag = b.optFlag | flagEliminateProjection
 	plan4Agg.collectGroupByColumns()
