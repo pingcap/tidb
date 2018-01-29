@@ -15,6 +15,7 @@ package domain
 
 import (
 	"crypto/tls"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -325,7 +326,7 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 	// Use lease/2 here as recommend by paper.
 	ticker := time.NewTicker(lease / 2)
 	defer ticker.Stop()
-	defer recoverInDomain("loadSchemaInLoop")
+	defer recoverInDomain("loadSchemaInLoop", true)
 	syncer := do.ddl.SchemaSyncer()
 
 	for {
@@ -529,7 +530,7 @@ func (do *Domain) LoadPrivilegeLoop(ctx context.Context) error {
 	}
 
 	go func() {
-		defer recoverInDomain("loadPrivilegeInLoop")
+		defer recoverInDomain("loadPrivilegeInLoop", false)
 		var count int
 		for {
 			ok := true
@@ -636,7 +637,7 @@ func (do *Domain) updateStatsWorker(ctx context.Context, owner owner.Manager) {
 	} else {
 		log.Info("[stats] init stats info takes ", time.Now().Sub(t))
 	}
-	defer recoverInDomain("updateStatsWorker")
+	defer recoverInDomain("updateStatsWorker", false)
 	for {
 		select {
 		case <-loadTicker.C:
@@ -686,7 +687,7 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 	statsHandle := do.StatsHandle()
 	analyzeTicker := time.NewTicker(do.statsLease)
 	defer analyzeTicker.Stop()
-	defer recoverInDomain("autoAnalyzeWorker")
+	defer recoverInDomain("autoAnalyzeWorker", false)
 	for {
 		select {
 		case <-analyzeTicker.C:
@@ -717,12 +718,17 @@ func (do *Domain) NotifyUpdatePrivilege(ctx context.Context) {
 	}
 }
 
-func recoverInDomain(funcName string) {
+func recoverInDomain(funcName string, quit bool) {
 	r := recover()
 	if r != nil {
 		buf := util.GetStack()
 		log.Errorf("%s, %v, %s", funcName, r, buf)
 		metrics.PanicCounter.WithLabelValues(metrics.LabelDomain).Inc()
+	}
+	if quit {
+		// Wait for metrics to be pushed.
+		time.Sleep(time.Second * 15)
+		os.Exit(1)
 	}
 }
 
