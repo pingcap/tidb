@@ -61,7 +61,7 @@ var actionMap = map[ActionType]string{
 	ActionTruncateTable:   "truncate table",
 	ActionModifyColumn:    "modify column",
 	ActionRebaseAutoID:    "rebase auto_increment ID",
-	ActionRenameTableAA:   "rename table",
+	ActionRenameTable:     "rename table",
 	ActionSetDefaultValue: "set default value",
 	ActionShardRowID:      "shard row ID",
 }
