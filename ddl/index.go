@@ -689,7 +689,8 @@ func (w *worker) doBackfillIndexTaskInTxn(t table.Table, txn kv.Transaction, col
 		}
 
 		// Create the index.
-		handle, err := w.index.Create(txn, idxRecord.vals, idxRecord.handle)
+		handle, err := w.index.Create(w.ctx, txn, idxRecord.vals,
+			idxRecord.handle)
 		if err != nil {
 			if kv.ErrKeyExists.Equal(err) && idxRecord.handle == handle {
 				// Index already exists, skip it.

@@ -360,6 +360,7 @@ type StatementContext struct {
 	TimeZone     *time.Location
 	Priority     mysql.PriorityEnum
 	NotFillCache bool
+	BatchCheck   bool
 }
 
 // AddAffectedRows adds affected rows.

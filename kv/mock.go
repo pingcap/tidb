@@ -94,6 +94,12 @@ func (t *mockTxn) Size() int {
 	return 0
 }
 
+func (t *mockTxn) GetSnapshot() Snapshot {
+	return &mockSnapshot{
+		store: NewMemDbBuffer(),
+	}
+}
+
 // mockStorage is used to start a must commit-failed txn.
 type mockStorage struct {
 }

@@ -14,6 +14,7 @@
 package table
 
 import (
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/types"
@@ -30,7 +31,8 @@ type Index interface {
 	// Meta returns IndexInfo.
 	Meta() *model.IndexInfo
 	// Create supports insert into statement.
-	Create(rm kv.RetrieverMutator, indexedValues []types.Datum, h int64) (int64, error)
+	Create(ctx context.Context, rm kv.RetrieverMutator,
+		indexedValues []types.Datum, h int64) (int64, error)
 	// Delete supports delete from statement.
 	Delete(m kv.Mutator, indexedValues []types.Datum, h int64) error
 	// Drop supports drop table, drop index statements.
