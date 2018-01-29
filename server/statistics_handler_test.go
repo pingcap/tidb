@@ -15,10 +15,10 @@ package server
 
 import (
 	"database/sql"
+	"fmt"
 	"io/ioutil"
 	"net/http"
 	"os"
-	"fmt"
 
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
