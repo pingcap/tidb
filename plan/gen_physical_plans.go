@@ -173,7 +173,7 @@ func (p *LogicalJoin) getHashJoin(prop *requiredProp, innerIdx int) *PhysicalHas
 		JoinType:        p.JoinType,
 		Concurrency:     JoinConcurrency,
 		DefaultValues:   p.DefaultValues,
-		SmallChildIdx:   innerIdx,
+		InnerChildIdx:   innerIdx,
 	}.init(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt), chReqProps...)
 	hashJoin.SetSchema(p.schema)
 	return hashJoin
