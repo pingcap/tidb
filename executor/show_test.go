@@ -296,6 +296,26 @@ func (s *testSuite) TestShow(c *C) {
 			"  `e` bigint(20) DEFAULT NULL\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin",
 	}
+	for i, r := range row {
+		c.Check(r, Equals, expectedRow[i])
+	}
+
+	// The following two cases are for https://github.com/pingcap/docs-cn/issues/537
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t (a int) default charset=utf8mb4`)
+	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
+		"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t (a int) default charset=abcdefg`)
+	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
+		"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=abcdefg",
+	))
 }
 
 func (s *testSuite) TestShowVisibility(c *C) {
