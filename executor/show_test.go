@@ -300,7 +300,7 @@ func (s *testSuite) TestShow(c *C) {
 		c.Check(r, Equals, expectedRow[i])
 	}
 
-	// The following two cases are for https://github.com/pingcap/docs-cn/issues/537
+	// Test get default collate for a specified charset.
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`create table t (a int) default charset=utf8mb4`)
 	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",

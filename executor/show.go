@@ -457,7 +457,7 @@ func (e *ShowExec) fetchShowStatus() error {
 	return nil
 }
 
-func setDefaultCollate(charsetName string) string {
+func getDefaultCollate(charsetName string) string {
 	for _, c := range charset.GetAllCharsets() {
 		if strings.EqualFold(c.Name, charsetName) {
 			return c.DefaultCollation
@@ -615,7 +615,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	collate := tb.Meta().Collate
 	// Set default collate if collate is not specified.
 	if len(collate) == 0 {
-		collate = setDefaultCollate(charsetName)
+		collate = getDefaultCollate(charsetName)
 	}
 	// Because we only support case sensitive utf8_bin collate, we need to explicitly set the default charset and collation
 	// to make it work on MySQL server which has default collate utf8_general_ci.
