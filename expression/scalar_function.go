@@ -52,7 +52,8 @@ func (sf *ScalarFunction) GetCtx() sessionctx.Context {
 
 // String implements fmt.Stringer interface.
 func (sf *ScalarFunction) String() string {
-	buffer := bytes.NewBufferString(fmt.Sprintf("%s(", sf.FuncName.L))
+	var buffer bytes.Buffer
+	fmt.Fprintf(&buffer, "%s(", sf.FuncName.L)
 	for i, arg := range sf.GetArgs() {
 		buffer.WriteString(arg.String())
 		if i+1 != len(sf.GetArgs()) {
