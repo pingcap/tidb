@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -41,6 +42,10 @@ type testLogSuite struct {
 }
 
 func (s *testLogSuite) SetUpSuite(c *C) {
+	s.buf = &bytes.Buffer{}
+}
+
+func (s *testLogSuite) SetUpTest(c *C) {
 	s.buf = &bytes.Buffer{}
 }
 
@@ -104,4 +109,43 @@ func (s *testLogSuite) TestSlowQueryLogger(c *C) {
 		c.Assert(str, Matches, logPattern)
 	}
 	c.Assert(err, Equals, io.EOF)
+}
+
+func (s *testLogSuite) TestSlowQueryLoggerKeepOrder(c *C) {
+	fileName := "slow_query"
+	conf := &LogConfig{Level: "warn", File: FileLogConfig{}, Format: "text", DisableTimestamp: true, SlowQueryFile: fileName}
+	c.Assert(InitLogger(conf), IsNil)
+	defer os.Remove(fileName)
+	ft, ok := SlowQueryLogger.Formatter.(*textFormatter)
+	c.Assert(ok, IsTrue)
+	c.Assert(ft.EnableEntryOrder, IsTrue)
+	SlowQueryLogger.Out = s.buf
+	logEntry := log.NewEntry(SlowQueryLogger)
+	logEntry.Data = log.Fields{
+		"connectionId": 1,
+		"costTime":     "1",
+		"database":     "test",
+		"sql":          "select 1",
+		"txnStartTS":   1,
+	}
+
+	_, _, line, _ := runtime.Caller(0)
+	logEntry.WithField("type", "slow-query").WithField("succ", true).Warnf("slow-query")
+	expectMsg := fmt.Sprintf("log_test.go:%v: [warning] slow-query connectionId=1 costTime=1 database=test sql=select 1 succ=true txnStartTS=1 type=slow-query\n", line+1)
+	c.Assert(s.buf.String(), Equals, expectMsg)
+
+	s.buf.Reset()
+	logEntry.Data = log.Fields{
+		"a": "a",
+		"d": "d",
+		"e": "e",
+		"b": "b",
+		"f": "f",
+		"c": "c",
+	}
+
+	_, _, line, _ = runtime.Caller(0)
+	logEntry.Warnf("slow-query")
+	expectMsg = fmt.Sprintf("log_test.go:%v: [warning] slow-query a=a b=b c=c d=d e=e f=f\n", line+1)
+	c.Assert(s.buf.String(), Equals, expectMsg)
 }
