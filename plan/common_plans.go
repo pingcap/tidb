@@ -203,15 +203,15 @@ func (e *Execute) rebuildRange(p Plan) error {
 func (e *Execute) buildRangeForIndexScan(sc *stmtctx.StatementContext, is *PhysicalIndexScan) ([]*ranger.NewRange, error) {
 	cols := expression.ColumnInfos2ColumnsWithDBName(is.DBName, is.Table.Name, is.Columns)
 	idxCols, colLengths := expression.IndexInfo2Cols(cols, is.Index)
-	newRanges := ranger.FullNewRange()
+	ranges := ranger.FullNewRange()
 	if len(idxCols) > 0 {
-		ranges, err := ranger.BuildIndexRange(sc, idxCols, colLengths, is.accessInAndEqCounts, is.condTopLayerIsCNF, is.AccessCondition)
+		var err error
+		ranges, _, _, _, err = ranger.DetachCondAndBuildRangeForIndex(sc, is.conditions, idxCols, colLengths)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		newRanges = ranges
 	}
-	return newRanges, nil
+	return ranges, nil
 }
 
 // Deallocate represents deallocate plan.

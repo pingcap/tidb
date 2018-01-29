@@ -142,6 +142,19 @@ func FullNewRange() []*NewRange {
 	return []*NewRange{{LowVal: []types.Datum{{}}, HighVal: []types.Datum{types.MaxValueDatum()}}}
 }
 
+func IsFullRange(ranges []*NewRange) bool {
+	if len(ranges) != 1 {
+		return false
+	}
+	if len(ranges[0].LowVal) != 1 || len(ranges[0].HighVal) != 1 {
+		return false
+	}
+	if !ranges[0].LowVal[0].IsNull() || ranges[0].HighVal[0].Kind() != types.KindMaxValue {
+		return false
+	}
+	return true
+}
+
 // builder is the range builder struct.
 type builder struct {
 	err error

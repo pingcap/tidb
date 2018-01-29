@@ -86,7 +86,8 @@ type PhysicalIndexLookUpReader struct {
 type PhysicalIndexScan struct {
 	physicalSchemaProducer
 
-	// AccessCondition is used to calculate range.
+	// conditions stores the original conditions, when it's prepare && execute, we use it to build ranges.
+	conditions      []expression.Expression
 	AccessCondition []expression.Expression
 	filterCondition []expression.Expression
 
@@ -143,7 +144,7 @@ func needValue(af *aggregation.AggFuncDesc) bool {
 type PhysicalTableScan struct {
 	physicalSchemaProducer
 
-	// AccessCondition is used to calculate range.
+	// conditions is used to calculate range.
 	AccessCondition []expression.Expression
 	filterCondition []expression.Expression
 

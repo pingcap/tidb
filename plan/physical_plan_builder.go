@@ -17,7 +17,6 @@ import (
 	"math"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -308,10 +307,11 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInf
 	sc := ds.ctx.GetSessionVars().StmtCtx
 	idxCols, colLengths := expression.IndexInfo2Cols(ds.Schema().Columns, idx)
 	is.Ranges = ranger.FullNewRange()
+	eqCount := 0
 	if len(ds.pushedDownConds) > 0 {
+		is.conditions = ds.pushedDownConds
 		if len(idxCols) > 0 {
-			is.AccessCondition, is.filterCondition, is.accessInAndEqCounts, is.condTopLayerIsCNF = ranger.DetachIndexConditions(ds.pushedDownConds, idxCols, colLengths)
-			is.Ranges, err = ranger.BuildIndexRange(sc, idxCols, colLengths, is.accessInAndEqCounts, is.condTopLayerIsCNF, is.AccessCondition)
+			is.Ranges, is.AccessCondition, is.filterCondition, eqCount, err = ranger.DetachCondAndBuildRangeForIndex(sc, ds.pushedDownConds, idxCols, colLengths)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -341,18 +341,12 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInf
 	// Check if this plan matches the property.
 	matchProperty := false
 	if !prop.isEmpty() {
-		inAndEqCnt := 0
-		if is.condTopLayerIsCNF && len(is.accessInAndEqCounts) > 0 {
-			inAndEqCnt = is.accessInAndEqCounts[0]
-		}
 		for i, col := range idx.Columns {
 			// not matched
 			if col.Name.L == prop.cols[0].ColName.L {
 				matchProperty = matchIndicesProp(idx.Columns[i:], prop.cols)
 				break
-			} else if i >= inAndEqCnt {
-				break
-			} else if sf, ok := is.AccessCondition[i].(*expression.ScalarFunction); !ok || sf.FuncName.L != ast.EQ {
+			} else if i >= eqCount {
 				break
 			}
 		}

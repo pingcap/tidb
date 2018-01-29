@@ -260,15 +260,14 @@ func BuildColumnRange(conds []expression.Expression, sc *stmtctx.StatementContex
 	return ranges, nil
 }
 
-// BuildCNFIndexRange builds the range for index where the top layer is CNF.
-func BuildCNFIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column, lengths []int, eqAndInCount int,
-	accessCondition []expression.Expression) ([]*NewRange, error) {
+// buildCNFIndexRange builds the range for index where the top layer is CNF.
+func buildCNFIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column, newTp []*types.FieldType, lengths []int,
+	eqAndInCount int, accessCondition []expression.Expression) ([]*NewRange, error) {
 	rb := builder{sc: sc}
 	var (
 		ranges []*NewRange
 		err    error
 	)
-	newTp := make([]*types.FieldType, 0, len(cols))
 	for _, col := range cols {
 		newTp = append(newTp, newFieldType(col.RetType))
 	}
@@ -331,28 +330,6 @@ func BuildCNFIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column,
 	return ranges, nil
 }
 
-// buildDNFIndexRange builds the range for index where the top layer is DNF.
-// it will construct range for every item and union them.
-func buildDNFIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column, lengths, eqAndInCounts []int,
-	dnfItems []expression.Expression) ([]*NewRange, error) {
-	totalRanges := make([]*NewRange, 0, len(dnfItems))
-	var err error
-	for i, arg := range dnfItems {
-		var partRanges []*NewRange
-		if sf, ok := arg.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicAnd {
-			cnfItems := expression.FlattenCNFConditions(sf)
-			partRanges, err = BuildCNFIndexRange(sc, cols, lengths, eqAndInCounts[i], cnfItems)
-		} else {
-			partRanges, err = BuildCNFIndexRange(sc, cols, lengths, eqAndInCounts[i], []expression.Expression{arg})
-		}
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		totalRanges = append(totalRanges, partRanges...)
-	}
-	return unionNewRanges(sc, totalRanges)
-}
-
 type sortRange struct {
 	originalValue *NewRange
 	encodedStart  []byte
@@ -403,18 +380,6 @@ func unionNewRanges(sc *stmtctx.StatementContext, ranges []*NewRange) ([]*NewRan
 	}
 	ranges = append(ranges, lastRange.originalValue)
 	return ranges, nil
-}
-
-// BuildIndexRange builds the range for index.
-func BuildIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column, lengths, eqOrInCounts []int, isCNF bool,
-	accessConditions []expression.Expression) ([]*NewRange, error) {
-	if len(accessConditions) == 0 {
-		return FullNewRange(), nil
-	}
-	if isCNF {
-		return BuildCNFIndexRange(sc, cols, lengths, eqOrInCounts[0], accessConditions)
-	}
-	return buildDNFIndexRange(sc, cols, lengths, eqOrInCounts, accessConditions)
 }
 
 func hasPrefix(lengths []int) bool {

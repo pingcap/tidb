@@ -302,14 +302,32 @@ func (p *LogicalJoin) buildRangeForIndexJoin(indexInfo *model.IndexInfo, innerPl
 		return nil, nil, nil
 	}
 
-	accesses, remained, keyOff2IdxOff, eqAndInCounts := p.buildAccessCondsForIndexJoin(innerJoinKeys, idxCols, colLengths, innerPlan)
+	conds, eqConds, keyOff2IdxOff := p.buildFakeEqCondsForIndexJoin(innerJoinKeys, idxCols, colLengths, innerPlan)
 
-	// If there's no access condition, this index should be useless.
-	if len(accesses) == 0 {
+	if len(keyOff2IdxOff) == 0 {
 		return nil, nil, nil
 	}
 
-	ranges, err := ranger.BuildIndexRange(p.ctx.GetSessionVars().StmtCtx, idxCols, colLengths, eqAndInCounts, true, accesses)
+	maxIdxOff := 0
+	for _, idxOff := range keyOff2IdxOff {
+		if maxIdxOff < idxOff {
+			maxIdxOff = idxOff
+		}
+	}
+
+	// After constant propagation, there won'be cases that t1.a=t2.a and t2.a=1 occur in the same time.
+	// And if there're cases like t1.a=t2.a and t1.a > 1, we can also guarantee that t1.a > 1 won't be chosen as access condition.
+	// So DetachCondAndBuildRangeForIndex won't miss the equal conditions we generate.
+	ranges, accesses, remained, _, err := ranger.DetachCondAndBuildRangeForIndex(p.ctx.GetSessionVars().StmtCtx, conds, idxCols, colLengths)
+
+	// We should guarantee that all the join's equal condition is used. Check that last one is in the access conditions is enough.
+	// Here the last means that the corresponding index column's position is maximum.
+	for _, eqCond := range eqConds {
+		if !expression.Contains(accesses, eqCond) {
+			return nil, nil, nil
+		}
+	}
+
 	if err != nil {
 		terror.Log(errors.Trace(err))
 		return nil, nil, nil
@@ -317,19 +335,19 @@ func (p *LogicalJoin) buildRangeForIndexJoin(indexInfo *model.IndexInfo, innerPl
 	return ranges, remained, keyOff2IdxOff
 }
 
-func (p *LogicalJoin) buildAccessCondsForIndexJoin(keys, idxCols []*expression.Column, colLengths []int,
-	innerPlan *DataSource) (accesses, remained []expression.Expression, keyOff2IdxOff, eqAndInCounts []int) {
+func (p *LogicalJoin) buildFakeEqCondsForIndexJoin(keys, idxCols []*expression.Column, colLengths []int,
+	innerPlan *DataSource) (accesses, eqConds []expression.Expression, keyOff2IdxOff []int) {
 	// Check whether all join keys match one column from index.
 	keyOff2IdxOff = joinKeysMatchIndex(keys, idxCols, colLengths)
 	if keyOff2IdxOff == nil {
-		return nil, nil, nil, nil
+		return nil, nil, nil
 	}
 
 	// After predicate push down, the one side conditions of join must be the conditions that cannot be pushed down and
 	// cannot calculate range either. So we only need the innerPlan.pushedDownConds and the eq conditions that we generate.
 	// TODO: There may be a selection that block the index join.
 	conds := make([]expression.Expression, 0, len(keys)+len(innerPlan.pushedDownConds))
-	eqConds := make([]expression.Expression, 0, len(keys))
+	eqConds = make([]expression.Expression, 0, len(keys))
 	// Construct a fake equal expression for calculating the range.
 	for _, key := range keys {
 		// Int datum 1 can convert to all column's type(numeric type, string type, json, time type, enum, set) safely.
@@ -340,20 +358,7 @@ func (p *LogicalJoin) buildAccessCondsForIndexJoin(keys, idxCols []*expression.C
 	}
 
 	conds = append(conds, innerPlan.pushedDownConds...)
-	// After constant propagation, there won'be cases that t1.a=t2.a and t2.a=1 occur in the same time.
-	// And if there're cases like t1.a=t2.a and t1.a > 1, we can also guarantee that t1.a > 1 won't be chosen as access condition.
-	// So DetachIndexConditions won't miss the equal conditions we generate.
-	accesses, remained, eqAndInCounts, _ = ranger.DetachIndexConditions(conds, idxCols, colLengths)
-
-	// We should guarantee that all the join's equal condition is used. Check that last one is in the access conditions is enough.
-	// Here the last means that the corresponding index column's position is maximum.
-	for _, eqCond := range eqConds {
-		if !expression.Contains(accesses, eqCond) {
-			return nil, nil, nil, nil
-		}
-	}
-
-	return accesses, remained, keyOff2IdxOff, eqAndInCounts
+	return conds, eqConds, keyOff2IdxOff
 }
 
 // tryToGetIndexJoin will get index join by hints. If we can generate a valid index join by hint, the second return value
