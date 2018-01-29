@@ -294,6 +294,9 @@ func contextDone(ctx goctx.Context, err error) error {
 		return errors.Trace(ctx.Err())
 	default:
 	}
+	// Sometime the ctx isn't closed, but the etcd client is closed,
+	// we need to treat it as if context is done.
+	// TODO: Make sure ctx is closed with etcd client.
 	if terror.ErrorEqual(err, goctx.Canceled) ||
 		terror.ErrorEqual(err, goctx.DeadlineExceeded) ||
 		terror.ErrorEqual(err, grpc.ErrClientConnClosing) {
