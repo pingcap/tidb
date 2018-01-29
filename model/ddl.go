@@ -47,43 +47,31 @@ const (
 	ActionShardRowID
 )
 
+var actionMap = map[ActionType]string{
+	ActionCreateSchema:    "create schema",
+	ActionDropSchema:      "drop schema",
+	ActionCreateTable:     "create table",
+	ActionDropTable:       "drop table",
+	ActionAddColumn:       "add column",
+	ActionDropColumn:      "drop column",
+	ActionAddIndex:        "add index",
+	ActionDropIndex:       "drop index",
+	ActionAddForeignKey:   "add foreign key",
+	ActionDropForeignKey:  "drop foreign key",
+	ActionTruncateTable:   "truncate table",
+	ActionModifyColumn:    "modify column",
+	ActionRebaseAutoID:    "rebase auto_increment ID",
+	ActionRenameTableAA:   "rename table",
+	ActionSetDefaultValue: "set default value",
+	ActionShardRowID:      "shard row ID",
+}
+
+// String return current ddl action in string
 func (action ActionType) String() string {
-	switch action {
-	case ActionCreateSchema:
-		return "create schema"
-	case ActionDropSchema:
-		return "drop schema"
-	case ActionCreateTable:
-		return "create table"
-	case ActionDropTable:
-		return "drop table"
-	case ActionAddColumn:
-		return "add column"
-	case ActionDropColumn:
-		return "drop column"
-	case ActionAddIndex:
-		return "add index"
-	case ActionDropIndex:
-		return "drop index"
-	case ActionAddForeignKey:
-		return "add foreign key"
-	case ActionDropForeignKey:
-		return "drop foreign key"
-	case ActionTruncateTable:
-		return "truncate table"
-	case ActionModifyColumn:
-		return "modify column"
-	case ActionRebaseAutoID:
-		return "rebase auto_increment ID"
-	case ActionRenameTable:
-		return "rename table"
-	case ActionSetDefaultValue:
-		return "set default value"
-	case ActionShardRowID:
-		return "shard row ID"
-	default:
-		return "none"
+	if v, ok := actionMap[action]; ok {
+		return v
 	}
+	return "none"
 }
 
 // HistoryInfo is used for binlog.
