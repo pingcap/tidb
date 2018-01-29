@@ -720,11 +720,12 @@ func (do *Domain) NotifyUpdatePrivilege(ctx context.Context) {
 
 func recoverInDomain(funcName string, quit bool) {
 	r := recover()
-	if r != nil {
-		buf := util.GetStack()
-		log.Errorf("%s, %v, %s", funcName, r, buf)
-		metrics.PanicCounter.WithLabelValues(metrics.LabelDomain).Inc()
+	if r == nil {
+		return
 	}
+	buf := util.GetStack()
+	log.Errorf("%s, %v, %s", funcName, r, buf)
+	metrics.PanicCounter.WithLabelValues(metrics.LabelDomain).Inc()
 	if quit {
 		// Wait for metrics to be pushed.
 		time.Sleep(time.Second * 15)
