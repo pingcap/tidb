@@ -56,23 +56,23 @@ func BenchmarkSysbenchSelect128(b *testing.B) {
 	b.ReportAllocs()
 }
 
-func BenchmarkParseInt4096(b *testing.B) {
+func BenchmarkParse4096(b *testing.B) {
 	parser := New()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for _, v := range table {
-			parseInt(parser, v, 4096, b)
+			parse(parser, v, 4096, b)
 		}
 	}
 	b.ReportAllocs()
 }
 
-func BenchmarkParseInt1024(b *testing.B) {
+func BenchmarkParse1024(b *testing.B) {
 	parser := New()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for _, v := range table {
-			parseInt(parser, v, 1024, b)
+			parse(parser, v, 1024, b)
 		}
 	}
 	b.ReportAllocs()
@@ -85,19 +85,19 @@ var table = []string{
 	"select c from t where c > 1234567890123456789012345678901234567890.0;",
 }
 
-func BenchmarkParseInt512(b *testing.B) {
+func BenchmarkParse512(b *testing.B) {
 	parser := New()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for _, v := range table {
-			parseInt(parser, v, 512, b)
+			parse(parser, v, 512, b)
 		}
 
 	}
 	b.ReportAllocs()
 }
 
-func parseInt(parser *Parser, sql string, num int, b *testing.B) {
+func parse(parser *Parser, sql string, num int, b *testing.B) {
 	for i := 0; i < num; i++ {
 		_, err := parser.Parse(sql, "", "")
 		if err != nil {
@@ -106,12 +106,12 @@ func parseInt(parser *Parser, sql string, num int, b *testing.B) {
 	}
 }
 
-func BenchmarkParseInt256(b *testing.B) {
+func BenchmarkParse256(b *testing.B) {
 	parser := New()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for _, v := range table {
-			parseInt(parser, v, 256, b)
+			parse(parser, v, 256, b)
 		}
 
 	}
