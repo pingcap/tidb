@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
@@ -175,6 +176,10 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 		{
 			sql:  "select * from t use index(e_d_c_str_prefix) where t.c_str = 'abcdefghijk' and t.d_str = 'd' and t.e_str = 'e'",
 			best: "IndexLookUp(Index(t.e_d_c_str_prefix)[[e d [97 98 99 100 101 102 103 104 105 106],e d [97 98 99 100 101 102 103 104 105 106]]], Table(t)->Sel([eq(test.t.c_str, abcdefghijk)]))",
+		},
+		{
+			sql:  "select * from t use index(e_d_c_str_prefix) where t.e_str = b'1110000'",
+			best: "IndexLookUp(Index(t.e_d_c_str_prefix)[[p,p]], Table(t))",
 		},
 	}
 	for _, tt := range tests {
@@ -696,7 +701,8 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnionScan(c *C) {
 		err = se.NewTxn()
 		c.Assert(err, IsNil)
 		// Make txn not read only.
-		se.Txn().Set(nil, nil)
+		se.Txn().Set(kv.Key("AAA"), []byte("BBB"))
+		se.StmtCommit()
 		p, err := plan.Optimize(se, stmt, s.is)
 		c.Assert(err, IsNil)
 		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))

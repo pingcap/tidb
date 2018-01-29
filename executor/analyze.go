@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -125,7 +124,7 @@ func (e *AnalyzeExec) run(goCtx goctx.Context) error {
 
 func getBuildStatsConcurrency(ctx context.Context) (int, error) {
 	sessionVars := ctx.GetSessionVars()
-	concurrency, err := varsutil.GetSessionSystemVar(sessionVars, variable.TiDBBuildStatsConcurrency)
+	concurrency, err := variable.GetSessionSystemVar(sessionVars, variable.TiDBBuildStatsConcurrency)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -218,7 +217,7 @@ func (e *AnalyzeIndexExec) buildStats() (hist *statistics.Histogram, cms *statis
 	hist = &statistics.Histogram{}
 	cms = statistics.NewCMSketch(defaultCMSketchDepth, defaultCMSketchWidth)
 	for {
-		data, err := e.result.NextRaw()
+		data, err := e.result.NextRaw(goctx.TODO())
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -346,7 +345,7 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 		}
 	}
 	for {
-		data, err1 := e.resultHandler.nextRaw()
+		data, err1 := e.resultHandler.nextRaw(goctx.TODO())
 		if err1 != nil {
 			return nil, nil, errors.Trace(err1)
 		}
@@ -372,9 +371,9 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 	timeZone := e.ctx.GetSessionVars().GetTimeZone()
 	if e.pkInfo != nil {
 		pkHist.ID = e.pkInfo.ID
-		err1 := pkHist.DecodeTo(&e.pkInfo.FieldType, timeZone)
-		if err1 != nil {
-			return nil, nil, errors.Trace(err1)
+		err = pkHist.DecodeTo(&e.pkInfo.FieldType, timeZone)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
 		}
 		hists = append(hists, pkHist)
 		cms = append(cms, nil)

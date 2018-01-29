@@ -304,16 +304,19 @@ func (w *GCWorker) runGCJob(ctx goctx.Context, safePoint uint64) {
 	gcWorkerCounter.WithLabelValues("run_job").Inc()
 	err := resolveLocks(ctx, w.store, safePoint, w.uuid)
 	if err != nil {
+		gcFailureCounter.WithLabelValues("resolve_lock").Inc()
 		w.done <- errors.Trace(err)
 		return
 	}
 	err = w.deleteRanges(ctx, safePoint)
 	if err != nil {
+		gcFailureCounter.WithLabelValues("delete_range").Inc()
 		w.done <- errors.Trace(err)
 		return
 	}
 	err = doGC(ctx, w.store, safePoint, w.uuid)
 	if err != nil {
+		gcFailureCounter.WithLabelValues("gc").Inc()
 		log.Error("do GC returns an error", err)
 		w.gcIsRunning = false
 		w.done <- errors.Trace(err)

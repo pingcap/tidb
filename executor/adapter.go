@@ -197,19 +197,19 @@ func (a *ExecStmt) Exec(goCtx goctx.Context) (ast.RecordSet, error) {
 	a.startTime = time.Now()
 	ctx := a.Ctx
 	if _, ok := a.Plan.(*plan.Analyze); ok && ctx.GetSessionVars().InRestrictedSQL {
-		oriStats := ctx.GetSessionVars().Systems[variable.TiDBBuildStatsConcurrency]
+		oriStats, _ := ctx.GetSessionVars().GetSystemVar(variable.TiDBBuildStatsConcurrency)
 		oriScan := ctx.GetSessionVars().DistSQLScanConcurrency
 		oriIndex := ctx.GetSessionVars().IndexSerialScanConcurrency
-		oriIso := ctx.GetSessionVars().Systems[variable.TxnIsolation]
-		ctx.GetSessionVars().Systems[variable.TiDBBuildStatsConcurrency] = "1"
+		oriIso, _ := ctx.GetSessionVars().GetSystemVar(variable.TxnIsolation)
+		terror.Log(errors.Trace(ctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, "1")))
 		ctx.GetSessionVars().DistSQLScanConcurrency = 1
 		ctx.GetSessionVars().IndexSerialScanConcurrency = 1
-		ctx.GetSessionVars().Systems[variable.TxnIsolation] = ast.ReadCommitted
+		terror.Log(errors.Trace(ctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, ast.ReadCommitted)))
 		defer func() {
-			ctx.GetSessionVars().Systems[variable.TiDBBuildStatsConcurrency] = oriStats
+			terror.Log(errors.Trace(ctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, oriStats)))
 			ctx.GetSessionVars().DistSQLScanConcurrency = oriScan
 			ctx.GetSessionVars().IndexSerialScanConcurrency = oriIndex
-			ctx.GetSessionVars().Systems[variable.TxnIsolation] = oriIso
+			terror.Log(errors.Trace(ctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, oriIso)))
 		}()
 	}
 
@@ -358,8 +358,16 @@ func (a *ExecStmt) buildExecutor(ctx context.Context) (Executor, error) {
 }
 
 func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
+	level := log.GetLevel()
+	if level < log.WarnLevel {
+		return
+	}
 	cfg := config.GetGlobalConfig()
 	costTime := time.Since(a.startTime)
+	threshold := time.Duration(cfg.Log.SlowThreshold) * time.Millisecond
+	if costTime < threshold && level < log.DebugLevel {
+		return
+	}
 	sql := a.Text
 	if len(sql) > cfg.Log.QueryLogMaxLen {
 		sql = fmt.Sprintf("%.*q(len:%d)", cfg.Log.QueryLogMaxLen, sql, len(a.Text))
@@ -374,7 +382,7 @@ func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
 		"sql":          sql,
 		"txnStartTS":   txnTS,
 	}
-	if costTime < time.Duration(cfg.Log.SlowThreshold)*time.Millisecond {
+	if costTime < threshold {
 		logEntry.WithField("type", "query").WithField("succ", succ).Debugf("query")
 	} else {
 		logEntry.WithField("type", "slow-query").WithField("succ", succ).Warnf("slow-query")

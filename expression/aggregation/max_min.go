@@ -25,35 +25,35 @@ type maxMinFunction struct {
 }
 
 // GetResult implements Aggregation interface.
-func (mmf *maxMinFunction) GetResult(ctx *AggEvaluateContext) (d types.Datum) {
-	return ctx.Value
+func (mmf *maxMinFunction) GetResult(evalCtx *AggEvaluateContext) (d types.Datum) {
+	return evalCtx.Value
 }
 
 // GetPartialResult implements Aggregation interface.
-func (mmf *maxMinFunction) GetPartialResult(ctx *AggEvaluateContext) []types.Datum {
-	return []types.Datum{mmf.GetResult(ctx)}
+func (mmf *maxMinFunction) GetPartialResult(evalCtx *AggEvaluateContext) []types.Datum {
+	return []types.Datum{mmf.GetResult(evalCtx)}
 }
 
 // Update implements Aggregation interface.
-func (mmf *maxMinFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
+func (mmf *maxMinFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
 	a := mmf.Args[0]
 	value, err := a.Eval(row)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if ctx.Value.IsNull() {
-		ctx.Value = value
+	if evalCtx.Value.IsNull() {
+		evalCtx.Value = value
 	}
 	if value.IsNull() {
 		return nil
 	}
 	var c int
-	c, err = ctx.Value.CompareDatum(sc, &value)
+	c, err = evalCtx.Value.CompareDatum(sc, &value)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if (mmf.isMax && c == -1) || (!mmf.isMax && c == 1) {
-		ctx.Value = value
+		evalCtx.Value = value
 	}
 	return nil
 }

@@ -16,7 +16,8 @@ type testUtilSuite struct {
 
 func (s *testUtilSuite) TestDistinct(c *check.C) {
 	defer testleak.AfterTest(c)()
-	dc := createDistinctChecker()
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	dc := createDistinctChecker(sc)
 	tests := []struct {
 		vals   []interface{}
 		expect bool
@@ -28,9 +29,8 @@ func (s *testUtilSuite) TestDistinct(c *check.C) {
 		{[]interface{}{1, nil}, true},
 		{[]interface{}{1, nil}, false},
 	}
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	for _, tt := range tests {
-		d, err := dc.Check(sc, types.MakeDatums(tt.vals...))
+		d, err := dc.Check(types.MakeDatums(tt.vals...))
 		c.Assert(err, check.IsNil)
 		c.Assert(d, check.Equals, tt.expect)
 	}
