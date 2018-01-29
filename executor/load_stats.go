@@ -49,31 +49,29 @@ func (k loadStatsVarKeyType) String() string {
 // LoadStatsVarKey is a variable key for load statistic.
 const LoadStatsVarKey loadStatsVarKeyType = 0
 
-func (e *LoadStatsExec) exec(goCtx goctx.Context) (Row, error) {
+func (e *LoadStatsExec) exec(goCtx goctx.Context) error {
 	if len(e.info.Path) == 0 {
-		return nil, errors.New("Load Stats: file path is empty")
+		return errors.New("Load Stats: file path is empty")
 	}
-	ctx := e.ctx
-	val := ctx.Value(LoadStatsVarKey)
+	val := e.ctx.Value(LoadStatsVarKey)
 	if val != nil {
-		ctx.SetValue(LoadStatsVarKey, nil)
-		return nil, errors.New("Load Stats: previous load stats option isn't closed normally")
+		e.ctx.SetValue(LoadStatsVarKey, nil)
+		return errors.New("Load Stats: previous load stats option isn't closed normally")
 	}
-	ctx.SetValue(LoadStatsVarKey, e.info)
+	e.ctx.SetValue(LoadStatsVarKey, e.info)
 
-	return nil, nil
+	return nil
 }
 
 // Next implements the Executor Next interface.
 func (e *LoadStatsExec) Next(goCtx goctx.Context) (Row, error) {
-	return e.exec(goCtx)
+	return nil, e.exec(goCtx)
 }
 
 // NextChunk implements the Executor NextChunk interface.
 func (e *LoadStatsExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	chk.Reset()
-	_, err := e.exec(goCtx)
-	return errors.Trace(err)
+	return errors.Trace(e.exec(goCtx))
 }
 
 // Close implements the Executor Close interface.
@@ -93,26 +91,39 @@ func (e *LoadStatsInfo) Update(data []byte) error {
 		return errors.Trace(err)
 	}
 
-	dbName := jsonTbl.DatabaseName
-	tableName := jsonTbl.TableName
-
-	if dbName == "" || tableName == "" {
-		return errors.New("Load stats: table_name or database_name not found in the json file")
-	}
-
 	do := domain.GetDomain(e.Ctx)
 	is := do.InfoSchema()
 
-	tableInfo, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
+	tableInfo, err := is.TableByName(model.NewCIStr(jsonTbl.DatabaseName), model.NewCIStr(jsonTbl.TableName))
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	h := do.StatsHandle()
+	if h == nil {
+		return errors.New("Load Stats: handle is nil")
+	}
+
 	tbl, err := h.LoadStatsFromJSON(tableInfo.Meta(), jsonTbl)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	h.UpdateTableStats([]*statistics.Table{tbl}, nil)
+
+	for _, col := range tbl.Columns {
+		err = statistics.SaveStatsToStorage(e.Ctx, tbl.TableID, tbl.Count, 0, &col.Histogram, col.CMSketch)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	for _, idx := range tbl.Indices {
+		err = statistics.SaveStatsToStorage(e.Ctx, tbl.TableID, tbl.Count, 1, &idx.Histogram, idx.CMSketch)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	err = h.Update(GetInfoSchema(e.Ctx))
+	if err != nil {
+		return errors.Trace(err)
+	}
 	return nil
 }
