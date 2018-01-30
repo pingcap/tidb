@@ -57,7 +57,7 @@ type iterator4Slice struct {
 
 // Begin implements the Iterator interface.
 func (it *iterator4Slice) Begin() Row {
-	if len(it.rows) == 0 {
+	if it.Len() == 0 {
 		return it.End()
 	}
 	it.cursor = 1
@@ -66,8 +66,8 @@ func (it *iterator4Slice) Begin() Row {
 
 // Next implements the Iterator interface.
 func (it *iterator4Slice) Next() Row {
-	if it.cursor >= len(it.rows) {
-		it.cursor = len(it.rows) + 1
+	if len := it.Len(); it.cursor >= len {
+		it.cursor = len + 1
 		return it.End()
 	}
 	row := it.rows[it.cursor]
@@ -90,7 +90,7 @@ func (it *iterator4Slice) End() Row {
 
 // ReachEnd implements the Iterator interface.
 func (it *iterator4Slice) ReachEnd() {
-	it.cursor = len(it.rows) + 1
+	it.cursor = it.Len() + 1
 }
 
 // Len implements the Iterator interface.
@@ -237,7 +237,7 @@ type iterator4RowPtr struct {
 
 // Begin implements the Iterator interface.
 func (it *iterator4RowPtr) Begin() Row {
-	if len(it.ptrs) == 0 {
+	if it.Len() == 0 {
 		return it.End()
 	}
 	it.cursor = 1
@@ -246,8 +246,8 @@ func (it *iterator4RowPtr) Begin() Row {
 
 // Next implements the Iterator interface.
 func (it *iterator4RowPtr) Next() Row {
-	if it.cursor >= len(it.ptrs) {
-		it.cursor = len(it.ptrs) + 1
+	if len := it.Len(); it.cursor >= len {
+		it.cursor = len + 1
 		return it.End()
 	}
 	row := it.li.GetRow(it.ptrs[it.cursor])
