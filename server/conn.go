@@ -826,6 +826,9 @@ func (cc *clientConn) handleLoadStats(goCtx goctx.Context, loadStatsInfo *execut
 		}
 		prevData = append(prevData, curData...)
 	}
+	if len(prevData) == 0 {
+		return nil
+	}
 	return errors.Trace(loadStatsInfo.Update(prevData))
 }
 

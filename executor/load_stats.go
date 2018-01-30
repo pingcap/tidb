@@ -110,6 +110,37 @@ func (e *LoadStatsInfo) Update(data []byte) error {
 		return errors.Trace(err)
 	}
 
+	if h.Lease > 0 {
+		hists := make([]*statistics.Histogram, 0, len(tbl.Columns))
+		cms := make([]*statistics.CMSketch, 0, len(tbl.Columns))
+		for _, col := range tbl.Columns {
+			hists = append(hists, &col.Histogram)
+			cms = append(cms, col.CMSketch)
+		}
+		do.StatsHandle().AnalyzeResultCh() <- &statistics.AnalyzeResult{
+			TableID: tbl.TableID,
+			Hist:    hists,
+			Cms:     cms,
+			Count:   tbl.Count,
+			IsIndex: 0,
+			Err:     nil}
+
+		hists = make([]*statistics.Histogram, 0, len(tbl.Indices))
+		cms = make([]*statistics.CMSketch, 0, len(tbl.Indices))
+		for _, idx := range tbl.Indices {
+			hists = append(hists, &idx.Histogram)
+			cms = append(cms, idx.CMSketch)
+		}
+		do.StatsHandle().AnalyzeResultCh() <- &statistics.AnalyzeResult{
+			TableID: tbl.TableID,
+			Hist:    hists,
+			Cms:     cms,
+			Count:   tbl.Count,
+			IsIndex: 1,
+			Err:     nil}
+
+		return nil
+	}
 	for _, col := range tbl.Columns {
 		err = statistics.SaveStatsToStorage(e.Ctx, tbl.TableID, tbl.Count, 0, &col.Histogram, col.CMSketch)
 		if err != nil {
