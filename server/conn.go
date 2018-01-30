@@ -815,11 +815,8 @@ func (cc *clientConn) handleLoadStats(goCtx goctx.Context, loadStatsInfo *execut
 	var prevData, curData []byte
 	for {
 		curData, err = cc.readPacket()
-		if err != nil {
-			if terror.ErrorNotEqual(err, io.EOF) {
-				log.Error(errors.ErrorStack(err))
-				return errors.Trace(err)
-			}
+		if err != nil && terror.ErrorNotEqual(err, io.EOF) {
+			return errors.Trace(err)
 		}
 		if len(curData) == 0 {
 			break

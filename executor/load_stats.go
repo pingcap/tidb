@@ -117,7 +117,7 @@ func (e *LoadStatsInfo) Update(data []byte) error {
 			hists = append(hists, &col.Histogram)
 			cms = append(cms, col.CMSketch)
 		}
-		do.StatsHandle().AnalyzeResultCh() <- &statistics.AnalyzeResult{
+		h.AnalyzeResultCh() <- &statistics.AnalyzeResult{
 			TableID: tbl.TableID,
 			Hist:    hists,
 			Cms:     cms,
@@ -131,7 +131,7 @@ func (e *LoadStatsInfo) Update(data []byte) error {
 			hists = append(hists, &idx.Histogram)
 			cms = append(cms, idx.CMSketch)
 		}
-		do.StatsHandle().AnalyzeResultCh() <- &statistics.AnalyzeResult{
+		h.AnalyzeResultCh() <- &statistics.AnalyzeResult{
 			TableID: tbl.TableID,
 			Hist:    hists,
 			Cms:     cms,
