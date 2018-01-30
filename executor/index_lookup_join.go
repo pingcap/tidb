@@ -56,7 +56,6 @@ type IndexLookUpJoin struct {
 	joinResult       *chunk.Chunk
 	joinResultCursor int
 	innerIter        chunk.Iterator
-	innerRowBuffer   chunk.Row
 
 	resultGenerator joinResultGenerator
 
@@ -222,22 +221,22 @@ func (e *IndexLookUpJoin) prepareJoinResult(goCtx goctx.Context, chk *chunk.Chun
 		if task == nil {
 			return nil
 		}
-		if e.innerIter == nil || e.innerRowBuffer == e.innerIter.End() {
+		if e.innerIter == nil || e.innerIter.Current() == e.innerIter.End() {
 			e.lookUpMatchedInners(task, task.cursor)
 			e.innerIter = chunk.NewIterator4Slice(task.matchedInners)
-			e.innerRowBuffer = e.innerIter.Begin()
+			e.innerIter.Begin()
 		}
 
 		outerRow := task.outerResult.GetRow(task.cursor)
 		if e.innerIter.Len() == 0 {
-			_, err = e.resultGenerator.emitToChunk(outerRow, nil, chunk.Row{}, chk)
-		} else if e.innerRowBuffer != e.innerIter.End() {
-			e.innerRowBuffer, err = e.resultGenerator.emitToChunk(outerRow, e.innerIter, e.innerRowBuffer, chk)
+			err = e.resultGenerator.emitToChunk(outerRow, nil, chk)
+		} else if e.innerIter.Current() != e.innerIter.End() {
+			err = e.resultGenerator.emitToChunk(outerRow, e.innerIter, chk)
 		}
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if e.innerIter.Len() == 0 || e.innerRowBuffer == e.innerIter.End() {
+		if e.innerIter.Current() == e.innerIter.End() {
 			task.cursor++
 		}
 		if chk.NumRows() == e.maxChunkSize {

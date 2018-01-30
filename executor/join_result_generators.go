@@ -47,8 +47,9 @@ type joinResultGenerator interface {
 	// Otherwise, the outer row is matched and some joined rows is appended to the result buffer.
 	emit(outer Row, inners []Row, resultBuffer []Row) ([]Row, error)
 
-	// emitToChunk takes the same operation as emit, but the joined rows is appended to a Chunk instead of a result buffer.
-	emitToChunk(outer chunk.Row, inners chunk.Iterator, inner chunk.Row, chk *chunk.Chunk) (chunk.Row, error)
+	// emitToChunk takes the same operation as emit, but the joined rows is appended to `chk` instead of a result buffer.
+	// The size of `chk` is MaxChunkSize at most.
+	emitToChunk(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) error
 }
 
 func newJoinResultGenerator(ctx context.Context, joinType plan.JoinType,
@@ -208,16 +209,17 @@ func (outputer *semiJoinResultGenerator) emit(outer Row, inners []Row, resultBuf
 }
 
 // emitToChunk implements joinResultGenerator interface.
-func (outputer *semiJoinResultGenerator) emitToChunk(outer chunk.Row, inners chunk.Iterator, inner chunk.Row, chk *chunk.Chunk) (chunk.Row, error) {
+func (outputer *semiJoinResultGenerator) emitToChunk(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) error {
 	if inners == nil || inners.Len() == 0 {
-		return inner, nil
+		return nil
 	}
 	if len(outputer.filter) == 0 {
 		chk.AppendPartialRow(0, outer)
-		return inners.End(), nil
+		inners.ReachEnd()
+		return nil
 	}
 
-	for ; inner != inners.End(); inner = inners.Next() {
+	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
 		outputer.chk.Reset()
 		if outputer.outerIsRight {
 			outputer.makeJoinRowToChunk(outputer.chk, inner, outer)
@@ -226,14 +228,17 @@ func (outputer *semiJoinResultGenerator) emitToChunk(outer chunk.Row, inners chu
 		}
 		selected, err := expression.EvalBool(outputer.filter, outputer.chk.GetRow(0), outputer.ctx)
 		if err != nil {
-			return inners.End(), errors.Trace(err)
+			inners.ReachEnd()
+			return errors.Trace(err)
 		}
 		if selected {
 			chk.AppendRow(outer)
-			return inners.End(), nil
+			inners.ReachEnd()
+			return nil
 		}
 	}
-	return inners.End(), nil
+	inners.ReachEnd()
+	return nil
 }
 
 type antiSemiJoinResultGenerator struct {
@@ -273,16 +278,17 @@ func (outputer *antiSemiJoinResultGenerator) emit(outer Row, inners []Row, resul
 }
 
 // emitToChunk implements joinResultGenerator interface.
-func (outputer *antiSemiJoinResultGenerator) emitToChunk(outer chunk.Row, inners chunk.Iterator, inner chunk.Row, chk *chunk.Chunk) (chunk.Row, error) {
+func (outputer *antiSemiJoinResultGenerator) emitToChunk(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) error {
 	if inners == nil || inners.Len() == 0 {
 		chk.AppendRow(outer)
-		return inner, nil
+		return nil
 	}
 	if len(outputer.filter) == 0 {
-		return inners.End(), nil
+		inners.ReachEnd()
+		return nil
 	}
 
-	for ; inner != inners.End(); inner = inners.Next() {
+	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
 		outputer.chk.Reset()
 		if outputer.outerIsRight {
 			outputer.makeJoinRowToChunk(outputer.chk, inner, outer)
@@ -292,14 +298,15 @@ func (outputer *antiSemiJoinResultGenerator) emitToChunk(outer chunk.Row, inners
 
 		matched, err := expression.EvalBool(outputer.filter, outputer.chk.GetRow(0), outputer.ctx)
 		if err != nil {
-			return inner, errors.Trace(err)
+			return errors.Trace(err)
 		}
 		if matched {
-			return inners.End(), nil
+			inners.ReachEnd()
+			return nil
 		}
 	}
 	chk.AppendRow(outer)
-	return inner, nil
+	return nil
 }
 
 type leftOuterSemiJoinResultGenerator struct {
@@ -336,34 +343,38 @@ func (outputer *leftOuterSemiJoinResultGenerator) emit(outer Row, inners []Row, 
 }
 
 // emitToChunk implements joinResultGenerator interface.
-func (outputer *leftOuterSemiJoinResultGenerator) emitToChunk(outer chunk.Row, inners chunk.Iterator, inner chunk.Row, chk *chunk.Chunk) (chunk.Row, error) {
+func (outputer *leftOuterSemiJoinResultGenerator) emitToChunk(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) error {
 	if inners == nil || inners.Len() == 0 {
 		chk.AppendPartialRow(0, outer)
 		chk.AppendInt64(outer.Len(), 0)
-		return inner, nil
+		return nil
 	}
 	if len(outputer.filter) == 0 {
 		chk.AppendPartialRow(0, outer)
 		chk.AppendInt64(outer.Len(), 1)
-		return inners.End(), nil
+		inners.ReachEnd()
+		return nil
 	}
 
-	for ; inner != inners.End(); inner = inners.Next() {
+	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
 		outputer.chk.Reset()
 		outputer.makeJoinRowToChunk(outputer.chk, outer, inner)
 		matched, err := expression.EvalBool(outputer.filter, outputer.chk.GetRow(0), outputer.ctx)
 		if err != nil {
-			return inners.End(), errors.Trace(err)
+			inners.ReachEnd()
+			return errors.Trace(err)
 		}
 		if matched {
 			chk.AppendPartialRow(0, outer)
 			chk.AppendInt64(outer.Len(), 1)
-			return inners.End(), nil
+			inners.ReachEnd()
+			return nil
 		}
 	}
 	chk.AppendPartialRow(0, outer)
 	chk.AppendInt64(outer.Len(), 0)
-	return inners.End(), nil
+	inners.ReachEnd()
+	return nil
 }
 
 // emitUnMatchedOuter implements joinResultGenerator interface.
@@ -407,39 +418,43 @@ func (outputer *antiLeftOuterSemiJoinResultGenerator) emit(outer Row, inners []R
 }
 
 // emitToChunk implements joinResultGenerator interface.
-func (outputer *antiLeftOuterSemiJoinResultGenerator) emitToChunk(outer chunk.Row, inners chunk.Iterator, inner chunk.Row, chk *chunk.Chunk) (chunk.Row, error) {
+func (outputer *antiLeftOuterSemiJoinResultGenerator) emitToChunk(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) error {
 	// outer row can not be joined with any inner row.
 	if inners == nil || inners.Len() == 0 {
 		chk.AppendPartialRow(0, outer)
 		chk.AppendInt64(outer.Len(), 1)
-		return inner, nil
+		return nil
 	}
 
 	// outer row can be joined with an inner row.
 	if len(outputer.filter) == 0 {
 		chk.AppendPartialRow(0, outer)
 		chk.AppendInt64(outer.Len(), 0)
-		return inners.End(), nil
+		inners.ReachEnd()
+		return nil
 	}
-	for ; inner != inners.End(); inner = inners.Next() {
+
+	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
 		outputer.chk.Reset()
 		outputer.makeJoinRowToChunk(outputer.chk, outer, inner)
 		matched, err := expression.EvalBool(outputer.filter, outputer.chk.GetRow(0), outputer.ctx)
 		if err != nil {
-			return inner, errors.Trace(err)
+			return errors.Trace(err)
 		}
 		// outer row can be joined with an inner row.
 		if matched {
 			chk.AppendPartialRow(0, outer)
 			chk.AppendInt64(outer.Len(), 0)
-			return inners.End(), nil
+			inners.ReachEnd()
+			return nil
 		}
 	}
 
 	// outer row can not be joined with any inner row.
 	chk.AppendPartialRow(0, outer)
 	chk.AppendInt64(outer.Len(), 1)
-	return inners.End(), nil
+	inners.ReachEnd()
+	return nil
 }
 
 // emitUnMatchedOuter implements joinResultGenerator interface.
@@ -480,39 +495,40 @@ func (outputer *leftOuterJoinResultGenerator) emit(outer Row, inners []Row, resu
 }
 
 // emitToChunk implements joinResultGenerator interface.
-func (outputer *leftOuterJoinResultGenerator) emitToChunk(outer chunk.Row, inners chunk.Iterator, inner chunk.Row, chk *chunk.Chunk) (chunk.Row, error) {
+func (outputer *leftOuterJoinResultGenerator) emitToChunk(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) error {
 	// outer row can not be joined with any inner row.
 	if inners == nil || inners.Len() == 0 {
 		chk.AppendPartialRow(0, outer)
 		chk.AppendPartialRow(outer.Len(), outputer.defaultChunkInner)
-		return inner, nil
+		return nil
 	}
 	outputer.chk.Reset()
 	chkForJoin := outputer.chk
 	if len(outputer.filter) == 0 {
 		chkForJoin = chk
 	}
-	for numToAppend := outputer.maxChunkSize - chk.NumRows(); inner != inners.End() && numToAppend != 0; numToAppend = outputer.maxChunkSize - chk.NumRows() {
+	for inner, numToAppend := inners.Current(), outputer.maxChunkSize-chk.NumRows(); inner != inners.End() && numToAppend > 0; numToAppend = outputer.maxChunkSize - chk.NumRows() {
 		for i := 0; inner != inners.End() && i < numToAppend; inner = inners.Next() {
 			outputer.makeJoinRowToChunk(chkForJoin, outer, inner)
 			i++
 		}
 		if len(outputer.filter) == 0 {
-			return inner, nil
+			return nil
 		}
 
 		// reach here, chkForJoin is outputer.chk
 		matched, err := outputer.filterChunk(chkForJoin, chk)
 		if err != nil {
-			return inner, errors.Trace(err)
+			return errors.Trace(err)
 		}
+		chkForJoin.Reset()
 		if !matched {
 			// outer row can not be joined with any inner row.
 			chk.AppendPartialRow(0, outer)
 			chk.AppendPartialRow(outer.Len(), outputer.defaultChunkInner)
 		}
 	}
-	return inner, nil
+	return nil
 }
 
 type rightOuterJoinResultGenerator struct {
@@ -546,39 +562,40 @@ func (outputer *rightOuterJoinResultGenerator) emit(outer Row, inners []Row, res
 }
 
 // emitToChunk implements joinResultGenerator interface.
-func (outputer *rightOuterJoinResultGenerator) emitToChunk(outer chunk.Row, inners chunk.Iterator, inner chunk.Row, chk *chunk.Chunk) (chunk.Row, error) {
+func (outputer *rightOuterJoinResultGenerator) emitToChunk(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) error {
 	// outer row can not be joined with any inner row.
 	if inners == nil || inners.Len() == 0 {
 		chk.AppendPartialRow(0, outputer.defaultChunkInner)
 		chk.AppendPartialRow(outputer.defaultChunkInner.Len(), outer)
-		return inner, nil
+		return nil
 	}
 	outputer.chk.Reset()
 	chkForJoin := outputer.chk
 	if len(outputer.filter) == 0 {
 		chkForJoin = chk
 	}
-	for numToAppend := outputer.maxChunkSize - chk.NumRows(); inner != inners.End() && numToAppend != 0; numToAppend = outputer.maxChunkSize - chk.NumRows() {
+	for inner, numToAppend := inners.Current(), outputer.maxChunkSize-chk.NumRows(); inner != inners.End() && numToAppend > 0; numToAppend = outputer.maxChunkSize - chk.NumRows() {
 		for i := 0; inner != inners.End() && i < numToAppend; inner = inners.Next() {
 			outputer.makeJoinRowToChunk(chkForJoin, inner, outer)
 			i++
 		}
 		if len(outputer.filter) == 0 {
-			return inner, nil
+			return nil
 		}
 
 		// reach here, chkForJoin is outputer.chk
 		matched, err := outputer.filterChunk(chkForJoin, chk)
 		if err != nil {
-			return inner, errors.Trace(err)
+			return errors.Trace(err)
 		}
+		chkForJoin.Reset()
 		// outer row can not be joined with any inner row.
 		if !matched {
 			chk.AppendPartialRow(0, outputer.defaultChunkInner)
 			chk.AppendPartialRow(outputer.defaultChunkInner.Len(), outer)
 		}
 	}
-	return inner, nil
+	return nil
 }
 
 type innerJoinResultGenerator struct {
@@ -611,16 +628,16 @@ func (outputer *innerJoinResultGenerator) emit(outer Row, inners []Row, resultBu
 }
 
 // emitToChunk implements joinResultGenerator interface.
-func (outputer *innerJoinResultGenerator) emitToChunk(outer chunk.Row, inners chunk.Iterator, inner chunk.Row, chk *chunk.Chunk) (chunk.Row, error) {
+func (outputer *innerJoinResultGenerator) emitToChunk(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) error {
 	if inners == nil || inners.Len() == 0 {
-		return inner, nil
+		return nil
 	}
 	outputer.chk.Reset()
 	chkForJoin := outputer.chk
 	if len(outputer.filter) == 0 {
 		chkForJoin = chk
 	}
-	for numToAppend := outputer.maxChunkSize - chk.NumRows(); inner != inners.End() && numToAppend != 0; numToAppend = outputer.maxChunkSize - chk.NumRows() {
+	for inner, numToAppend := inners.Current(), outputer.maxChunkSize-chk.NumRows(); inner != inners.End() && numToAppend > 0; numToAppend = outputer.maxChunkSize - chk.NumRows() {
 		if outputer.outerIsRight {
 			for i := 0; inner != inners.End() && i < numToAppend; inner = inners.Next() {
 				// TODO: If numToAppend and selectivity are both small, this may cause bad performance.
@@ -634,14 +651,15 @@ func (outputer *innerJoinResultGenerator) emitToChunk(outer chunk.Row, inners ch
 			}
 		}
 		if len(outputer.filter) == 0 {
-			return inner, nil
+			return nil
 		}
 		// reach here, chkForJoin is outputer.chk
 		_, err := outputer.filterChunk(chkForJoin, chk)
 		if err != nil {
-			return inner, errors.Trace(err)
+			return errors.Trace(err)
 		}
+		chkForJoin.Reset()
 	}
 
-	return inner, nil
+	return nil
 }
