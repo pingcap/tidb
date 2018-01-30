@@ -92,6 +92,8 @@ metrics-interval = 15
 [performance]
 # Set keep alive option for tcp connection.
 tcp-keep-alive = true
+# StmtCountLimit limits the max count of statement inside a transaction.
+stmt-count-limit = 5000
 
 # The maximum number of retries when commit a transaction.
 retry-limit = 10

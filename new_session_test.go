@@ -22,6 +22,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
@@ -1349,6 +1350,29 @@ type testSchemaSuite struct {
 	lease     time.Duration
 	dom       *domain.Domain
 	checkLeak func()
+}
+
+func (s *testSessionSuite) TestStatementCountLimit(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table stmt_count_limit (id int)")
+	saved := config.GetGlobalConfig().Performance.StmtCountLimit
+	config.GetGlobalConfig().Performance.StmtCountLimit = 3
+	defer func() {
+		config.GetGlobalConfig().Performance.StmtCountLimit = saved
+	}()
+	tk.MustExec("begin")
+	tk.MustExec("insert into stmt_count_limit values (1)")
+	tk.MustExec("insert into stmt_count_limit values (2)")
+	_, err := tk.Exec("insert into stmt_count_limit values (3)")
+	c.Assert(err, NotNil)
+
+	// begin is counted into history but this one is not.
+	tk.MustExec("SET SESSION autocommit = false")
+	tk.MustExec("insert into stmt_count_limit values (1)")
+	tk.MustExec("insert into stmt_count_limit values (2)")
+	tk.MustExec("insert into stmt_count_limit values (3)")
+	_, err = tk.Exec("insert into stmt_count_limit values (4)")
+	c.Assert(err, NotNil)
 }
 
 func (s *testSchemaSuite) TearDownTest(c *C) {

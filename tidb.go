@@ -26,6 +26,7 @@ import (
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
@@ -169,6 +170,16 @@ func runStmt(ctx context.Context, s ast.Statement) (ast.RecordSet, error) {
 			terror.Log(errors.Trace(err1))
 		} else {
 			err = se.CommitTxn()
+		}
+	} else {
+		// If the user insert, insert, insert ... but never commit, TiDB would OOM.
+		// So we limit the statement count in a transaction here.
+		history := GetHistory(ctx)
+		if history.Count() > config.GetGlobalConfig().Performance.StmtCountLimit {
+			err1 := se.RollbackTxn()
+			terror.Log(errors.Trace(err1))
+			return rs, errors.Errorf("statement count %d exceeds the transaction limitation, autocommit = %t",
+				history.Count(), ctx.GetSessionVars().IsAutocommit())
 		}
 	}
 	return rs, errors.Trace(err)
