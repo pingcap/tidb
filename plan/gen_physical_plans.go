@@ -319,19 +319,18 @@ func (p *LogicalJoin) buildRangeForIndexJoin(indexInfo *model.IndexInfo, innerPl
 	// And if there're cases like t1.a=t2.a and t1.a > 1, we can also guarantee that t1.a > 1 won't be chosen as access condition.
 	// So DetachCondAndBuildRangeForIndex won't miss the equal conditions we generate.
 	ranges, accesses, remained, _, err := ranger.DetachCondAndBuildRangeForIndex(p.ctx.GetSessionVars().StmtCtx, conds, idxCols, colLengths)
+	if err != nil {
+		terror.Log(errors.Trace(err))
+		return nil, nil, nil
+	}
 
-	// We should guarantee that all the join's equal condition is used. Check that last one is in the access conditions is enough.
-	// Here the last means that the corresponding index column's position is maximum.
+	// We should guarantee that all the join's equal condition is used.
 	for _, eqCond := range eqConds {
 		if !expression.Contains(accesses, eqCond) {
 			return nil, nil, nil
 		}
 	}
 
-	if err != nil {
-		terror.Log(errors.Trace(err))
-		return nil, nil, nil
-	}
 	return ranges, remained, keyOff2IdxOff
 }
 
