@@ -246,13 +246,14 @@ func (s *testSuite) TestDropStats(c *C) {
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
-	testKit.MustExec("analyze table t")
 	do := domain.GetDomain(testKit.Se)
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
 	h := do.StatsHandle()
+	h.Clear()
+	testKit.MustExec("analyze table t")
 	statsTbl := h.GetTableStats(tableInfo.ID)
 	c.Assert(statsTbl.Pseudo, IsFalse)
 
@@ -260,4 +261,16 @@ func (s *testSuite) TestDropStats(c *C) {
 	h.Update(is)
 	statsTbl = h.GetTableStats(tableInfo.ID)
 	c.Assert(statsTbl.Pseudo, IsTrue)
+
+	testKit.MustExec("analyze table t")
+	statsTbl = h.GetTableStats(tableInfo.ID)
+	c.Assert(statsTbl.Pseudo, IsFalse)
+
+	h.Lease = 1
+	testKit.MustExec("drop stats t")
+	h.HandleDDLEvent(<-h.DDLEventCh())
+	h.Update(is)
+	statsTbl = h.GetTableStats(tableInfo.ID)
+	c.Assert(statsTbl.Pseudo, IsTrue)
+	h.Lease = 0
 }

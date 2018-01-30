@@ -633,17 +633,16 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 	leftExec := b.build(v.Children()[0])
 	rightExec := b.build(v.Children()[1])
 
-	// for hash join, inner table is always the smaller one.
 	e := &HashJoinExec{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, leftExec, rightExec),
 		concurrency:  v.Concurrency,
 		joinType:     v.JoinType,
-		innerIdx:     v.SmallChildIdx,
+		innerIdx:     v.InnerChildIdx,
 	}
 
 	defaultValues := v.DefaultValues
 	lhsTypes, rhsTypes := leftExec.retTypes(), rightExec.retTypes()
-	if v.SmallChildIdx == 0 {
+	if v.InnerChildIdx == 0 {
 		e.innerExec = leftExec
 		e.outerExec = rightExec
 		e.innerFilter = v.LeftConditions
@@ -666,7 +665,7 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 	}
 	e.resultGenerators = make([]joinResultGenerator, e.concurrency)
 	for i := 0; i < e.concurrency; i++ {
-		e.resultGenerators[i] = newJoinResultGenerator(b.ctx, v.JoinType, v.SmallChildIdx == 0, defaultValues,
+		e.resultGenerators[i] = newJoinResultGenerator(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues,
 			v.OtherConditions, lhsTypes, rhsTypes)
 	}
 	e.supportChk = true
@@ -837,13 +836,13 @@ func (b *executorBuilder) buildApply(apply *plan.PhysicalApply) *NestedLoopApply
 	otherConditions := append(expression.ScalarFuncs2Exprs(v.EqualConditions), v.OtherConditions...)
 	defaultValues := v.DefaultValues
 	if defaultValues == nil {
-		defaultValues = make([]types.Datum, v.Children()[v.SmallChildIdx].Schema().Len())
+		defaultValues = make([]types.Datum, v.Children()[v.InnerChildIdx].Schema().Len())
 	}
-	generator := newJoinResultGenerator(b.ctx, v.JoinType, v.SmallChildIdx == 0,
+	generator := newJoinResultGenerator(b.ctx, v.JoinType, v.InnerChildIdx == 0,
 		defaultValues, otherConditions, leftChild.retTypes(), rightChild.retTypes())
 	outerExec, innerExec := leftChild, rightChild
 	outerFilter, innerFilter := v.LeftConditions, v.RightConditions
-	if v.SmallChildIdx == 0 {
+	if v.InnerChildIdx == 0 {
 		outerExec, innerExec = rightChild, leftChild
 		outerFilter, innerFilter = v.RightConditions, v.LeftConditions
 	}
