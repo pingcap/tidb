@@ -921,6 +921,8 @@ type StmtTxn struct {
 	dirtyTableOP []dirtyTableOperation
 }
 
+// dirtyTableOperation represents an operation to dirtyTable, we log the operation
+// first and apply the operation log when statement commit.
 type dirtyTableOperation struct {
 	kind   int
 	tid    int64
