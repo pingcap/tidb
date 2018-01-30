@@ -1033,7 +1033,7 @@ func (s *session) StmtGetMutation(tableID int64) *binlog.TableMutation {
 	return st.mutations[tableID]
 }
 
-func (s *session) StmtLogDirtyTables(op int, tid int64, handle int64, row []types.Datum) {
+func (s *session) StmtLogDirtyOP(op int, tid int64, handle int64, row []types.Datum) {
 	s.StmtTxn.dirtyTableOP = append(s.StmtTxn.dirtyTableOP, dirtyTableOperation{op, tid, handle, row})
 }
 
