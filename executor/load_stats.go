@@ -123,8 +123,5 @@ func (e *LoadStatsInfo) Update(data []byte) error {
 		}
 	}
 	err = h.Update(GetInfoSchema(e.Ctx))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return nil
+	return errors.Trace(err)
 }

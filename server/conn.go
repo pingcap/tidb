@@ -826,12 +826,7 @@ func (cc *clientConn) handleLoadStats(goCtx goctx.Context, loadStatsInfo *execut
 		}
 		prevData = append(prevData, curData...)
 	}
-	if len(prevData) != 0 {
-		if err = loadStatsInfo.Update(prevData); err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
+	return errors.Trace(loadStatsInfo.Update(prevData))
 }
 
 // handleQuery executes the sql query string and writes result set or result ok to the client.
