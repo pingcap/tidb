@@ -1600,24 +1600,23 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	}
 	avalableIndices := avalableIndices{indices: indices, includeTableScan: includeTableScan}
 
-	ds := DataSource{
-		indexHints:       tn.IndexHints,
-		tableInfo:        tableInfo,
-		statisticTable:   statisticTable,
-		DBName:           schemaName,
-		Columns:          make([]*model.ColumnInfo, 0, len(tableInfo.Columns)),
-		availableIndices: &avalableIndices,
-	}.init(b.ctx)
-	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, schemaName.L, tableInfo.Name.L, "")
-
 	var columns []*table.Column
 	if b.inUpdateStmt {
 		columns = tbl.WritableCols()
 	} else {
 		columns = tbl.Cols()
 	}
+	ds := DataSource{
+		indexHints:       tn.IndexHints,
+		tableInfo:        tableInfo,
+		statisticTable:   statisticTable,
+		DBName:           schemaName,
+		Columns:          make([]*model.ColumnInfo, 0, len(columns)),
+		availableIndices: &avalableIndices,
+	}.init(b.ctx)
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, schemaName.L, tableInfo.Name.L, "")
+
 	var handleCol *expression.Column
-	ds.Columns = make([]*model.ColumnInfo, 0, len(columns))
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(columns))...)
 	for i, col := range columns {
 		ds.Columns = append(ds.Columns, col.ToInfo())
