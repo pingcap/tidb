@@ -310,7 +310,9 @@ func (do *Domain) Reload() error {
 
 	lease := do.DDL().GetLease()
 	sub := time.Since(startTime)
-	if sub > lease && lease > 0 {
+	// Reload interval is lease / 2, if load schema time elapses more than this interval,
+	// some query maybe responded by ErrInfoSchemaExpired error.
+	if sub > (lease/2) && lease > 0 {
 		log.Warnf("[ddl] loading schema takes a long time %v", sub)
 	}
 
