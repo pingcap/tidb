@@ -201,11 +201,6 @@ func (e *ShowExec) fetchShowProcessList() error {
 
 	pl := sm.ShowProcessList()
 	for _, pi := range pl {
-		var t uint64
-		if len(pi.Info) != 0 {
-			t = uint64(time.Since(pi.Time) / time.Second)
-		}
-
 		var info string
 		if e.Full {
 			info = pi.Info
@@ -219,7 +214,7 @@ func (e *ShowExec) fetchShowProcessList() error {
 			pi.Host,
 			pi.DB,
 			pi.Command,
-			t,
+			uint64(time.Since(pi.Time) / time.Second),
 			fmt.Sprintf("%d", pi.State),
 			info,
 		})
