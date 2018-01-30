@@ -502,7 +502,7 @@ func (e *MergeJoinExec) joinToChunk(chk *chunk.Chunk) (hasMore bool, err error) 
 			cmpResult = compareChunkRow(e.compareFuncs, e.outerChunkRows[0], e.innerChunkRows[0], e.outerKeys, e.innerKeys)
 		}
 		if cmpResult > 0 {
-			if err = e.fetchInnerRows(); err != nil {
+			if err = e.fetchNextInnerRows(); err != nil {
 				return false, errors.Trace(err)
 			}
 			continue
@@ -529,7 +529,7 @@ func (e *MergeJoinExec) joinToChunk(chk *chunk.Chunk) (hasMore bool, err error) 
 			e.innerIter4Row = chunk.NewIterator4Slice(e.innerChunkRows)
 			e.innerIter4Row.Begin()
 		}
-		if err = e.fetchInnerRows(); err != nil {
+		if err = e.fetchNextInnerRows(); err != nil {
 			return false, errors.Trace(err)
 		}
 		if err = e.fetchNextOuterRows(); err != nil {
@@ -540,7 +540,7 @@ func (e *MergeJoinExec) joinToChunk(chk *chunk.Chunk) (hasMore bool, err error) 
 	return false, nil
 }
 
-func (e *MergeJoinExec) fetchInnerRows() (err error) {
+func (e *MergeJoinExec) fetchNextInnerRows() (err error) {
 	e.innerChunkRows, err = e.innerIter.rowsWithSameKey()
 	if err != nil {
 		return errors.Trace(err)

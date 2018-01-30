@@ -213,9 +213,9 @@ func (outputer *semiJoinResultGenerator) emitToChunk(outer chunk.Row, inners chu
 	if inners == nil || inners.Len() == 0 {
 		return nil
 	}
+	defer inners.ReachEnd()
 	if len(outputer.filter) == 0 {
 		chk.AppendPartialRow(0, outer)
-		inners.ReachEnd()
 		return nil
 	}
 
@@ -228,16 +228,13 @@ func (outputer *semiJoinResultGenerator) emitToChunk(outer chunk.Row, inners chu
 		}
 		selected, err := expression.EvalBool(outputer.filter, outputer.chk.GetRow(0), outputer.ctx)
 		if err != nil {
-			inners.ReachEnd()
 			return errors.Trace(err)
 		}
 		if selected {
 			chk.AppendRow(outer)
-			inners.ReachEnd()
 			return nil
 		}
 	}
-	inners.ReachEnd()
 	return nil
 }
 
@@ -283,8 +280,8 @@ func (outputer *antiSemiJoinResultGenerator) emitToChunk(outer chunk.Row, inners
 		chk.AppendRow(outer)
 		return nil
 	}
+	defer inners.ReachEnd()
 	if len(outputer.filter) == 0 {
-		inners.ReachEnd()
 		return nil
 	}
 
@@ -301,7 +298,6 @@ func (outputer *antiSemiJoinResultGenerator) emitToChunk(outer chunk.Row, inners
 			return errors.Trace(err)
 		}
 		if matched {
-			inners.ReachEnd()
 			return nil
 		}
 	}
@@ -349,10 +345,11 @@ func (outputer *leftOuterSemiJoinResultGenerator) emitToChunk(outer chunk.Row, i
 		chk.AppendInt64(outer.Len(), 0)
 		return nil
 	}
+
+	defer inners.ReachEnd()
 	if len(outputer.filter) == 0 {
 		chk.AppendPartialRow(0, outer)
 		chk.AppendInt64(outer.Len(), 1)
-		inners.ReachEnd()
 		return nil
 	}
 
@@ -361,19 +358,16 @@ func (outputer *leftOuterSemiJoinResultGenerator) emitToChunk(outer chunk.Row, i
 		outputer.makeJoinRowToChunk(outputer.chk, outer, inner)
 		matched, err := expression.EvalBool(outputer.filter, outputer.chk.GetRow(0), outputer.ctx)
 		if err != nil {
-			inners.ReachEnd()
 			return errors.Trace(err)
 		}
 		if matched {
 			chk.AppendPartialRow(0, outer)
 			chk.AppendInt64(outer.Len(), 1)
-			inners.ReachEnd()
 			return nil
 		}
 	}
 	chk.AppendPartialRow(0, outer)
 	chk.AppendInt64(outer.Len(), 0)
-	inners.ReachEnd()
 	return nil
 }
 
@@ -426,11 +420,11 @@ func (outputer *antiLeftOuterSemiJoinResultGenerator) emitToChunk(outer chunk.Ro
 		return nil
 	}
 
+	defer inners.ReachEnd()
 	// outer row can be joined with an inner row.
 	if len(outputer.filter) == 0 {
 		chk.AppendPartialRow(0, outer)
 		chk.AppendInt64(outer.Len(), 0)
-		inners.ReachEnd()
 		return nil
 	}
 
@@ -445,7 +439,6 @@ func (outputer *antiLeftOuterSemiJoinResultGenerator) emitToChunk(outer chunk.Ro
 		if matched {
 			chk.AppendPartialRow(0, outer)
 			chk.AppendInt64(outer.Len(), 0)
-			inners.ReachEnd()
 			return nil
 		}
 	}
@@ -453,7 +446,6 @@ func (outputer *antiLeftOuterSemiJoinResultGenerator) emitToChunk(outer chunk.Ro
 	// outer row can not be joined with any inner row.
 	chk.AppendPartialRow(0, outer)
 	chk.AppendInt64(outer.Len(), 1)
-	inners.ReachEnd()
 	return nil
 }
 
