@@ -511,6 +511,7 @@ func (e *MergeJoinExec) joinToChunk(chk *chunk.Chunk) (hasMore bool, err error) 
 			for ; e.outerIter4Row.Current() != e.outerIter4Row.End(); e.outerIter4Row.Next() {
 				err = e.resultGenerator.emitToChunk(e.outerIter4Row.Current(), nil, chk)
 				if err != nil || chk.NumRows() == e.maxChunkSize {
+					e.outerIter4Row.Next()
 					return err == nil, errors.Trace(err)
 				}
 			}
