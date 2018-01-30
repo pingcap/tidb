@@ -695,7 +695,6 @@ func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID int, outerRow chunk.Ro
 		innerRows = append(innerRows, matchedInner)
 	}
 	iter := chunk.NewIterator4Slice(innerRows)
-	log.Warning("before loop ", joinResult.chk.NumRows())
 	for iter.Begin(); iter.Current() != iter.End(); {
 		err = e.resultGenerators[workerID].emitToChunk(outerRow, iter, joinResult.chk)
 		if err != nil {
