@@ -276,7 +276,7 @@ func (d *ddl) onShardRowID(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 	tblInfo.ShardRowIDBits = shardRowIDBits
-	job.State = model.JobCancelled
+	job.State = model.JobDone
 	job.BinlogInfo.AddTableInfo(ver, tblInfo)
 	ver, err = updateTableInfo(t, job, tblInfo, tblInfo.State)
 	if err != nil {

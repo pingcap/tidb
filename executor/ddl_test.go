@@ -310,4 +310,6 @@ func (s *testSuite) TestShardRowIDBits(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(count, Equals, 100)
 	c.Assert(hasShardedID, IsTrue)
+
+	tk.MustExec("alter table t shard_row_id_bits = 5")
 }
