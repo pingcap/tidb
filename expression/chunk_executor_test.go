@@ -186,14 +186,3 @@ func BenchmarkUnVectorizedExecute(b *testing.B) {
 		}
 	}
 }
-
-func BenchmarkEvaluatorSuit(b *testing.B) {
-	h := benchHelper{}
-	h.init()
-	suit := NewEvaluatorSuit(h.exprs)
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		suit.Run(h.ctx, h.inputChunk, h.outputChunk)
-	}
-}
