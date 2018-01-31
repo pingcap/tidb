@@ -421,7 +421,6 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck 
 		}
 	}
 	sessVars.StmtCtx.AddAffectedRows(1)
-	sessVars.TxnCtx.UpdateDeltaForTable(t.ID, 1, 1)
 	return recordID, nil
 }
 

@@ -21,9 +21,12 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
@@ -160,7 +163,8 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 		sc.AddAffectedRows(1)
 	}
 
-	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.Meta().ID, 0, 1)
+	updateTableDelta(ctx, t.Meta(), oldData, -1, 0)
+	updateTableDelta(ctx, t.Meta(), newData, 1, 1)
 	return true, nil
 }
 
@@ -455,7 +459,7 @@ func (e *DeleteExec) removeRow(ctx context.Context, t table.Table, h int64, data
 	}
 	getDirtyDB(ctx).deleteRow(t.Meta().ID, h)
 	ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
-	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.Meta().ID, -1, 1)
+	updateTableDelta(ctx, t.Meta(), data, -1, 1)
 	return nil
 }
 
@@ -753,6 +757,8 @@ func (e *LoadDataInfo) insertData(row types.DatumRow) {
 	if err != nil {
 		warnLog := fmt.Sprintf("Load Data: insert data:%v failed:%v", row, errors.ErrorStack(err))
 		e.insertVal.handleLoadDataWarnings(err, warnLog)
+	} else {
+		updateTableDelta(e.insertVal.ctx, e.Table.Meta(), row, 1, 1)
 	}
 }
 
@@ -920,6 +926,7 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 		if err == nil {
 			if !sessVars.ImportingData {
 				getDirtyDB(e.ctx).addRow(e.Table.Meta().ID, h, row)
+				updateTableDelta(e.ctx, e.Table.Meta(), row, 1, 1)
 			}
 			rowCount++
 			continue
@@ -1638,6 +1645,7 @@ func (e *ReplaceExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, erro
 		row := rows[idx]
 		h, err1 := e.Table.AddRecord(e.ctx, row, false)
 		if err1 == nil {
+			updateTableDelta(e.ctx, e.Table.Meta(), row, 1, 1)
 			getDirtyDB(e.ctx).addRow(e.Table.Meta().ID, h, row)
 			idx++
 			continue
@@ -1664,6 +1672,7 @@ func (e *ReplaceExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, erro
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
+		updateTableDelta(e.ctx, e.Table.Meta(), oldRow, -1, 1)
 		getDirtyDB(e.ctx).deleteRow(e.Table.Meta().ID, h)
 		e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 	}
@@ -1914,4 +1923,18 @@ func (e *UpdateExec) Close() error {
 // Open implements the Executor Open interface.
 func (e *UpdateExec) Open(goCtx goctx.Context) error {
 	return e.SelectExec.Open(goCtx)
+}
+
+func updateTableDelta(ctx context.Context, tableInfo *model.TableInfo, row []types.Datum, delta int64, count int64) {
+	h := domain.GetDomain(ctx).StatsHandle()
+	if h == nil {
+		return
+	}
+	txn := ctx.GetSessionVars().TxnCtx
+	d := txn.GetTableDelta(tableInfo.ID)
+	if d == nil {
+		d = &statistics.TableDelta{}
+		txn.TableDeltaMap[tableInfo.ID] = d
+	}
+	d.(*statistics.TableDelta).UpdateTableDelta(ctx.GetSessionVars().StmtCtx, h, tableInfo, row, delta, count)
 }

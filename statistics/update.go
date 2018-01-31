@@ -21,7 +21,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -29,20 +29,22 @@ import (
 	goctx "golang.org/x/net/context"
 )
 
-type tableDeltaMap map[int64]variable.TableDelta
+type tableDeltaMap map[int64]*TableDelta
 
-func (m tableDeltaMap) update(id int64, delta int64, count int64) {
+func (m tableDeltaMap) update(sc *stmtctx.StatementContext, id int64, delta *TableDelta, table *Table) {
 	item := m[id]
-	item.Delta += delta
-	item.Count += count
-	m[id] = item
+	if item == nil {
+		m[id] = delta
+		return
+	}
+	m[id].mergeTableDelta(sc, delta, table)
 }
 
 func (h *Handle) merge(s *SessionStatsCollector) {
 	s.Lock()
 	defer s.Unlock()
 	for id, item := range s.mapper {
-		h.globalMap.update(id, item.Delta, item.Count)
+		h.globalMap.update(h.ctx.GetSessionVars().StmtCtx, id, item, h.GetTableStats(id))
 	}
 	h.feedback = mergeQueryFeedback(h.feedback, s.feedback)
 	s.mapper = make(tableDeltaMap)
@@ -68,11 +70,11 @@ func (s *SessionStatsCollector) Delete() {
 	s.deleted = true
 }
 
-// Update will updates the delta and count for one table id.
-func (s *SessionStatsCollector) Update(id int64, delta int64, count int64) {
+// Update will updates the delta info for one table id.
+func (s *SessionStatsCollector) Update(sc *stmtctx.StatementContext, h *Handle, id int64, delta *TableDelta) {
 	s.Lock()
 	defer s.Unlock()
-	s.mapper.update(id, delta, count)
+	s.mapper.update(sc, id, delta, h.GetTableStats(id))
 }
 
 func mergeQueryFeedback(lq []*QueryFeedback, rq []*QueryFeedback) []*QueryFeedback {
@@ -131,14 +133,24 @@ func (h *Handle) NewSessionStatsCollector() *SessionStatsCollector {
 	return newCollector
 }
 
-// DumpStatsDeltaToKV sweeps the whole list and updates the global map. Then we dumps every table that held in map to KV.
-func (h *Handle) DumpStatsDeltaToKV() error {
+func (h *Handle) mergeStatsDelta() {
 	h.listHead.Lock()
 	for collector := h.listHead.next; collector != nil; collector = collector.next {
 		collector.tryToRemoveFromList()
 		h.merge(collector)
 	}
 	h.listHead.Unlock()
+}
+
+// GetStatsDelta gets the stats delta. Exported for test.
+func (h *Handle) GetStatsDelta(id int64) *TableDelta {
+	h.mergeStatsDelta()
+	return h.globalMap[id]
+}
+
+// DumpStatsDeltaToKV sweeps the whole list and updates the global map. Then we dumps every table that held in map to KV.
+func (h *Handle) DumpStatsDeltaToKV() error {
+	h.mergeStatsDelta()
 	for id, item := range h.globalMap {
 		updated, err := h.dumpTableStatDeltaToKV(id, item)
 		if err != nil {
@@ -152,7 +164,7 @@ func (h *Handle) DumpStatsDeltaToKV() error {
 }
 
 // dumpTableStatDeltaToKV dumps a single delta with some table to KV and updates the version.
-func (h *Handle) dumpTableStatDeltaToKV(id int64, delta variable.TableDelta) (bool, error) {
+func (h *Handle) dumpTableStatDeltaToKV(id int64, delta *TableDelta) (bool, error) {
 	if delta.Count == 0 {
 		return true, nil
 	}

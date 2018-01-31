@@ -126,6 +126,9 @@ stats-lease = "3s"
 # Run auto analyze worker on this tidb-server.
 run-auto-analyze = true
 
+# Run dynamic update on this tidb-server.
+run-dynamic-update = false
+
 [xprotocol]
 # Start TiDB x server.
 xserver = false

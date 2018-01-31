@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/gcworker"
 	"github.com/pingcap/tidb/terror"
@@ -338,6 +339,7 @@ func setGlobalVars() {
 	statsLeaseDuration := parseLease(cfg.Performance.StatsLease)
 	tidb.SetStatsLease(statsLeaseDuration)
 	domain.RunAutoAnalyze = cfg.Performance.RunAutoAnalyze
+	statistics.RunDynamicUpdate = cfg.Performance.RunDynamicUpdate
 	ddl.RunWorker = cfg.RunDDL
 	ddl.EnableSplitTableRegion = cfg.SplitTable
 	tidb.SetCommitRetryLimit(cfg.Performance.RetryLimit)
