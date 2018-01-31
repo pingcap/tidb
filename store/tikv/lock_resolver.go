@@ -182,7 +182,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 		}
 		txnInfos[l.TxnID] = uint64(status)
 	}
-	log.Infof("BatchResolveLocks: it takes %v to lookup %v txn status", time.Since(startTime), len(txnInfos))
+	log.Infof("BatchResolveLocks: it took %v to lookup %v txn status", time.Since(startTime), len(txnInfos))
 
 	var listTxnInfos []*kvrpcpb.TxnInfo
 	for txnID, status := range txnInfos {
@@ -225,7 +225,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 		return false, errors.Errorf("unexpected resolve err: %s", keyErr)
 	}
 
-	log.Infof("BatchResolveLocks: it takes %v cost to resolve %v locks in a batch.", time.Since(startTime), len(expiredLocks))
+	log.Infof("BatchResolveLocks: it took %v to resolve %v locks in a batch.", time.Since(startTime), len(expiredLocks))
 	return true, nil
 }
 
