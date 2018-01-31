@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/model"
 )
 
-// StatsHandler is the handler for dump statistics.
+// StatsHandler is the handler for dumping statistics.
 type StatsHandler struct {
 	do *domain.Domain
 }
@@ -47,7 +47,6 @@ func (sh StatsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	is := sh.do.InfoSchema()
 	h := sh.do.StatsHandle()
-
 	tbl, err := is.TableByName(model.NewCIStr(params[pDBName]), model.NewCIStr(params[pTableName]))
 	if err != nil {
 		writeError(w, err)
