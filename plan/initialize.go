@@ -270,7 +270,7 @@ func (p PhysicalMemTable) init(ctx context.Context, stats *statsInfo) *PhysicalM
 
 func (p PhysicalHashJoin) init(ctx context.Context, stats *statsInfo, props ...*requiredProp) *PhysicalHashJoin {
 	tp := TypeHashRightJoin
-	if p.SmallChildIdx == 1 {
+	if p.InnerChildIdx == 1 {
 		tp = TypeHashLeftJoin
 	}
 	p.basePhysicalPlan = newBasePhysicalPlan(tp, ctx, &p)

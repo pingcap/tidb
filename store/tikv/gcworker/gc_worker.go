@@ -27,11 +27,13 @@ import (
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/terror"
+	tidbutil "github.com/pingcap/tidb/util"
 	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
@@ -102,6 +104,7 @@ const (
 	gcDefaultLifeTime        = time.Minute * 10
 	gcSafePointKey           = "tikv_gc_safe_point"
 	gcSafePointCacheInterval = tikv.GcSafePointCacheInterval
+	gcScanLockLimit          = 1000
 )
 
 var gcVariableComments = map[string]string{
@@ -124,6 +127,14 @@ func (w *GCWorker) start(ctx goctx.Context, wg *sync.WaitGroup) {
 
 	ticker := time.NewTicker(gcWorkerTickInterval)
 	defer ticker.Stop()
+	defer func() {
+		r := recover()
+		if r != nil {
+			buf := tidbutil.GetStack()
+			log.Errorf("gcWorker %v %s", r, buf)
+			metrics.PanicCounter.WithLabelValues(metrics.LabelGCWorker).Inc()
+		}
+	}()
 	for {
 		select {
 		case <-ticker.C:
@@ -408,10 +419,15 @@ func (w *GCWorker) deleteRanges(ctx goctx.Context, safePoint uint64) error {
 
 func resolveLocks(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier string) error {
 	gcWorkerCounter.WithLabelValues("resolve_locks").Inc()
+
+	// for scan lock request, we must return all locks even if they are generated
+	// by the same transaction. because gc worker need to make sure all locks have been
+	// cleaned.
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdScanLock,
 		ScanLock: &kvrpcpb.ScanLockRequest{
 			MaxVersion: safePoint,
+			Limit:      gcScanLockLimit,
 		},
 	}
 	bo := tikv.NewBackoffer(tikv.GcResolveLockMaxBackoff, goctx.Background())
@@ -428,6 +444,7 @@ func resolveLocks(ctx goctx.Context, store tikv.Storage, safePoint uint64, ident
 		default:
 		}
 
+		req.ScanLock.StartKey = key
 		loc, err := store.GetRegionCache().LocateKey(bo, key)
 		if err != nil {
 			return errors.Trace(err)
@@ -470,11 +487,16 @@ func resolveLocks(ctx goctx.Context, store tikv.Storage, safePoint uint64, ident
 			}
 			continue
 		}
-		regions++
+
 		totalResolvedLocks += len(locks)
-		key = loc.EndKey
-		if len(key) == 0 {
-			break
+		if len(locks) < gcScanLockLimit {
+			regions++
+			key = loc.EndKey
+			if len(key) == 0 {
+				break
+			}
+		} else {
+			key = locks[len(locks)-1].Key
 		}
 	}
 	log.Infof("[gc worker] %s finish resolve locks, safePoint: %v, regions: %v, total resolved: %v, cost time: %s", identifier, safePoint, regions, totalResolvedLocks, time.Since(startTime))
