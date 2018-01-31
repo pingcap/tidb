@@ -18,7 +18,6 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -557,7 +556,7 @@ func (s *testSuite) TestSubquery(c *C) {
 	result.Sort().Check(testkit.Rows("1", "<nil>", "<nil>"))
 	rs, err := tk.Exec("select (select t.id from t where t.id = t.v and t.v != s.id) from t s")
 	c.Check(err, IsNil)
-	_, err = tidb.GetRows4Test(goctx.Background(), rs)
+	_, err = tidb.GetRows4Test(goctx.Background(), tk.Se, rs)
 	c.Check(err, NotNil)
 	c.Check(rs.Close(), IsNil)
 
@@ -770,26 +769,21 @@ func (s *testSuite) TestIssue5278(c *C) {
 }
 
 func (s *testSuite) TestIndexLookupJoin(c *C) {
-	cfg := config.GetGlobalConfig()
-	oldEnableChunk := cfg.EnableChunk
-	defer func() {
-		cfg.EnableChunk = oldEnableChunk
-	}()
 	tk := testkit.NewTestKit(c, s.store)
-	for _, enableChk := range []bool{true, false} {
-		cfg.EnableChunk = enableChk
-		tk.MustExec("use test")
-		tk.MustExec("set @@tidb_max_chunk_size=2")
-		tk.MustExec("DROP TABLE IF EXISTS t")
-		tk.MustExec("CREATE TABLE `t` (`a` int, pk integer auto_increment,`b` char (20),primary key (pk))")
-		tk.MustExec("CREATE INDEX idx_t_a ON t(`a`)")
-		tk.MustExec("CREATE INDEX idx_t_b ON t(`b`)")
-		tk.MustExec("INSERT INTO t VALUES (148307968, DEFAULT, 'nndsjofmpdxvhqv') ,  (-1327693824, DEFAULT, 'pnndsjofmpdxvhqvfny') ,  (-277544960, DEFAULT, 'fpnndsjo')")
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_max_chunk_size=2")
+	tk.MustExec("DROP TABLE IF EXISTS t")
+	tk.MustExec("CREATE TABLE `t` (`a` int, pk integer auto_increment,`b` char (20),primary key (pk))")
+	tk.MustExec("CREATE INDEX idx_t_a ON t(`a`)")
+	tk.MustExec("CREATE INDEX idx_t_b ON t(`b`)")
+	tk.MustExec("INSERT INTO t VALUES (148307968, DEFAULT, 'nndsjofmpdxvhqv') ,  (-1327693824, DEFAULT, 'pnndsjofmpdxvhqvfny') ,  (-277544960, DEFAULT, 'fpnndsjo')")
 
-		tk.MustExec("DROP TABLE IF EXISTS s")
-		tk.MustExec("CREATE TABLE `s` (`a` int, `b` char (20))")
-		tk.MustExec("CREATE INDEX idx_s_a ON s(`a`)")
-		tk.MustExec("INSERT INTO s VALUES (-277544960, 'fpnndsjo') ,  (2, 'kfpnndsjof') ,  (2, 'vtdiockfpn'), (-277544960, 'fpnndsjo') ,  (2, 'kfpnndsjof') ,  (6, 'ckfp')")
+	tk.MustExec("DROP TABLE IF EXISTS s")
+	tk.MustExec("CREATE TABLE `s` (`a` int, `b` char (20))")
+	tk.MustExec("CREATE INDEX idx_s_a ON s(`a`)")
+	tk.MustExec("INSERT INTO s VALUES (-277544960, 'fpnndsjo') ,  (2, 'kfpnndsjof') ,  (2, 'vtdiockfpn'), (-277544960, 'fpnndsjo') ,  (2, 'kfpnndsjof') ,  (6, 'ckfp')")
+	for _, enableChk := range []bool{true, false} {
+		tk.Se.GetSessionVars().EnableChunk = enableChk
 		tk.MustQuery("select /*+ TIDB_INLJ(t, s) */ t.a from t join s on t.a = s.a").Check(testkit.Rows("-277544960", "-277544960"))
 		tk.MustQuery("select /*+ TIDB_INLJ(t, s) */ t.a from t left join s on t.a = s.a").Check(testkit.Rows("148307968", "-1327693824", "-277544960", "-277544960"))
 		tk.MustQuery("select /*+ TIDB_INLJ(t, s) */ t.a from t right join s on t.a = s.a").Check(testkit.Rows("-277544960", "<nil>", "<nil>", "-277544960", "<nil>", "<nil>"))
