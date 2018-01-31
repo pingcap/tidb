@@ -508,6 +508,8 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{"show stats_buckets", true},
 		{"show stats_buckets where col_name = 'a'", true},
 
+		// for load stats
+		{"load stats '/tmp/stats.json'", true},
 		// set
 		// user defined
 		{"SET @a = 1", true},

@@ -152,13 +152,14 @@ func (t *Table) Selectivity(ctx context.Context, exprs []expression.Expression) 
 
 func getMaskAndRanges(ctx context.Context, exprs []expression.Expression, rangeType ranger.RangeType,
 	lengths []int, cols ...*expression.Column) (mask int64, ranges []*ranger.NewRange, err error) {
-	accessConds := ranger.ExtractAccessConditions(exprs, rangeType, cols, lengths)
 	sc := ctx.GetSessionVars().StmtCtx
+	var accessConds []expression.Expression
 	switch rangeType {
 	case ranger.ColumnRangeType:
+		accessConds = ranger.ExtractAccessConditionsForColumn(exprs, cols[0].ColName)
 		ranges, err = ranger.BuildColumnRange(accessConds, sc, cols[0].RetType)
 	case ranger.IndexRangeType:
-		ranges, err = ranger.BuildIndexRange(sc, cols, lengths, accessConds)
+		ranges, accessConds, err = ranger.DetachSimpleCondAndBuildRangeForIndex(sc, exprs, cols, lengths)
 	default:
 		panic("should never be here")
 	}

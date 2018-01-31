@@ -86,6 +86,8 @@ type PhysicalIndexLookUpReader struct {
 type PhysicalIndexScan struct {
 	physicalSchemaProducer
 
+	// conditions stores the original conditions, when it's prepare && execute, we use it to build ranges.
+	conditions []expression.Expression
 	// AccessCondition is used to calculate range.
 	AccessCondition []expression.Expression
 	filterCondition []expression.Expression
@@ -100,11 +102,6 @@ type PhysicalIndexScan struct {
 	// DoubleRead means if the index executor will read kv two times.
 	// If the query requires the columns that don't belong to index, DoubleRead will be true.
 	DoubleRead bool
-
-	// accessInAndEqCount is counter of all conditions in AccessCondition[accessEqualCount:accessInAndEqCount].
-	accessInAndEqCount int
-	// accessEqualCount is counter of all conditions in AccessCondition[:accessEqualCount].
-	accessEqualCount int
 
 	TableAsName *model.CIStr
 
@@ -203,8 +200,11 @@ type PhysicalHashJoin struct {
 	LeftConditions  []expression.Expression
 	RightConditions []expression.Expression
 	OtherConditions []expression.Expression
-	SmallChildIdx   int
-	Concurrency     int
+	// InnerChildIdx indicates which child is to build the hash table.
+	// For inner join, the smaller one will be chosen.
+	// For outer join or semi join, it's exactly the inner one.
+	InnerChildIdx int
+	Concurrency   int
 
 	DefaultValues []types.Datum
 }
