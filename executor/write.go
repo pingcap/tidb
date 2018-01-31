@@ -904,7 +904,6 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 			terror.Log(e.ctx.StmtCommit())
 			if err := e.ctx.NewTxn(); err != nil {
 				// We should return a special error for batch insert.
-				log.Error(errors.ErrorStack(err))
 				return nil, ErrBatchInsertFail.Gen("BatchInsert failed with error: %v", err)
 			}
 			txn = e.ctx.Txn()
