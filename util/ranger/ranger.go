@@ -14,14 +14,18 @@
 package ranger
 
 import (
+	"bytes"
 	"math"
+	"sort"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/codec"
 )
 
 // points2NewRanges build index ranges from range points.
@@ -256,32 +260,30 @@ func BuildColumnRange(conds []expression.Expression, sc *stmtctx.StatementContex
 	return ranges, nil
 }
 
-// BuildIndexRange builds the range for index.
-func BuildIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column, lengths []int,
-	accessCondition []expression.Expression) ([]*NewRange, error) {
+// buildCNFIndexRange builds the range for index where the top layer is CNF.
+func buildCNFIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column, newTp []*types.FieldType, lengths []int,
+	eqAndInCount int, accessCondition []expression.Expression) ([]*NewRange, error) {
 	rb := builder{sc: sc}
 	var (
-		ranges       []*NewRange
-		eqAndInCount int
-		err          error
+		ranges []*NewRange
+		err    error
 	)
-	newTp := make([]*types.FieldType, 0, len(cols))
 	for _, col := range cols {
 		newTp = append(newTp, newFieldType(col.RetType))
 	}
-	for eqAndInCount = 0; eqAndInCount < len(accessCondition) && eqAndInCount < len(cols); eqAndInCount++ {
-		if sf, ok := accessCondition[eqAndInCount].(*expression.ScalarFunction); !ok || (sf.FuncName.L != ast.EQ && sf.FuncName.L != ast.In) {
+	for i := 0; i < eqAndInCount; i++ {
+		if sf, ok := accessCondition[i].(*expression.ScalarFunction); !ok || (sf.FuncName.L != ast.EQ && sf.FuncName.L != ast.In) {
 			break
 		}
 		// Build ranges for equal or in access conditions.
-		point := rb.build(accessCondition[eqAndInCount])
+		point := rb.build(accessCondition[i])
 		if rb.err != nil {
 			return nil, errors.Trace(rb.err)
 		}
-		if eqAndInCount == 0 {
-			ranges, err = points2NewRanges(sc, point, newTp[eqAndInCount])
+		if i == 0 {
+			ranges, err = points2NewRanges(sc, point, newTp[i])
 		} else {
-			ranges, err = appendPoints2NewRanges(sc, ranges, point, newTp[eqAndInCount])
+			ranges, err = appendPoints2NewRanges(sc, ranges, point, newTp[i])
 		}
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -325,6 +327,58 @@ func BuildIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column, le
 			}
 		}
 	}
+	return ranges, nil
+}
+
+type sortRange struct {
+	originalValue *NewRange
+	encodedStart  []byte
+	encodedEnd    []byte
+}
+
+func unionNewRanges(sc *stmtctx.StatementContext, ranges []*NewRange) ([]*NewRange, error) {
+	if len(ranges) == 0 {
+		return nil, nil
+	}
+	objects := make([]*sortRange, 0, len(ranges))
+	for _, ran := range ranges {
+		left, err := codec.EncodeKey(sc, nil, ran.LowVal...)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if ran.LowExclude {
+			left = kv.Key(left).PrefixNext()
+		}
+		right, err := codec.EncodeKey(sc, nil, ran.HighVal...)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if !ran.HighExclude {
+			right = kv.Key(right).PrefixNext()
+		}
+		objects = append(objects, &sortRange{originalValue: ran, encodedStart: left, encodedEnd: right})
+	}
+	sort.Slice(objects, func(i, j int) bool {
+		return bytes.Compare(objects[i].encodedStart, objects[j].encodedStart) < 0
+	})
+	ranges = ranges[:0]
+	lastRange := objects[0]
+	for i := 1; i < len(objects); i++ {
+		// For two intervals [a, b], [c, d], we have guaranteed that a >= c. If b >= c. Then two intervals are overlapped.
+		// And this two can be merged as [a, max(b, d)].
+		// Otherwise they aren't overlapped.
+		if bytes.Compare(lastRange.encodedEnd, objects[i].encodedStart) >= 0 {
+			if bytes.Compare(lastRange.encodedEnd, objects[i].encodedEnd) < 0 {
+				lastRange.encodedEnd = objects[i].encodedEnd
+				lastRange.originalValue.HighVal = objects[i].originalValue.HighVal
+				lastRange.originalValue.HighExclude = objects[i].originalValue.HighExclude
+			}
+		} else {
+			ranges = append(ranges, lastRange.originalValue)
+			lastRange = objects[i]
+		}
+	}
+	ranges = append(ranges, lastRange.originalValue)
 	return ranges, nil
 }
 
