@@ -77,7 +77,7 @@ func (it *iterator4Slice) Next() Row {
 
 // Current implements the Iterator interface.
 func (it *iterator4Slice) Current() Row {
-	if len := it.Len(); len == 0 || it.cursor > len {
+	if it.cursor == 0 || it.cursor > it.Len() {
 		return it.End()
 	}
 	return it.rows[it.cursor-1]
@@ -131,7 +131,7 @@ func (it *Iterator4Chunk) Next() Row {
 
 // Current implements the Iterator interface.
 func (it *Iterator4Chunk) Current() Row {
-	if len := it.Len(); len == 0 || it.cursor > len {
+	if it.cursor == 0 || it.cursor > it.Len() {
 		return it.End()
 	}
 	return it.chk.GetRow(it.cursor - 1)
@@ -198,7 +198,7 @@ func (it *iterator4List) Next() Row {
 
 // Current implements the Iterator interface.
 func (it *iterator4List) Current() Row {
-	if len := it.li.NumChunks(); len == 0 || it.chkCursor > len {
+	if (it.chkCursor == 0 && it.rowCursor == 0) || it.chkCursor > it.li.NumChunks() {
 		return it.End()
 	}
 	if it.rowCursor == 0 {
@@ -257,7 +257,7 @@ func (it *iterator4RowPtr) Next() Row {
 
 // Current implements the Iterator interface.
 func (it *iterator4RowPtr) Current() Row {
-	if len := it.Len(); len == 0 || it.cursor > len {
+	if it.cursor == 0 || it.cursor > it.Len() {
 		return it.End()
 	}
 	return it.li.GetRow(it.ptrs[it.cursor-1])
