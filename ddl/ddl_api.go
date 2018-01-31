@@ -591,13 +591,15 @@ func checkConstraintNames(constraints []*ast.Constraint) error {
 	return nil
 }
 
-func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constraints []*ast.Constraint, ctx context.Context) (tbInfo *model.TableInfo, err error) {
+func buildTableInfo(d *ddl, tableName model.CIStr, cols []*table.Column, constraints []*ast.Constraint, ctx context.Context) (tbInfo *model.TableInfo, err error) {
 	tbInfo = &model.TableInfo{
 		Name: tableName,
 	}
-	tbInfo.ID, err = d.genGlobalID()
-	if err != nil {
-		return nil, errors.Trace(err)
+	if d != nil {
+		tbInfo.ID, err = d.genGlobalID()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 	for _, v := range cols {
 		v.ID = allocateColumnID(tbInfo)
@@ -732,6 +734,20 @@ func (d *ddl) CreateTableWithLike(ctx context.Context, ident, referIdent ast.Ide
 	return errors.Trace(err)
 }
 
+// MockTableInfo mocks a table info by create table stmt ast and a specified table id.
+func MockTableInfo(ctx context.Context, stmt *ast.CreateTableStmt, tableID int64) (*model.TableInfo, error) {
+	cols, newConstraints, err := buildColumnsAndConstraints(ctx, stmt.Cols, stmt.Constraints)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	tbl, err := buildTableInfo(nil, stmt.Table.Name, cols, newConstraints, ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	tbl.ID = tableID
+	return tbl, nil
+}
+
 func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.ColumnDef,
 	constraints []*ast.Constraint, options []*ast.TableOption) (err error) {
 	is := d.GetInformationSchema()
@@ -768,7 +784,7 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 		return errors.Trace(err)
 	}
 
-	tbInfo, err := d.buildTableInfo(ident.Name, cols, newConstraints, ctx)
+	tbInfo, err := buildTableInfo(d, ident.Name, cols, newConstraints, ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -32,6 +32,8 @@ func NewConfig() *Config {
 	fs.StringVar(&cfg.DDLCfg.TableSQL, "t", "", "create table sql")
 	fs.StringVar(&cfg.DDLCfg.IndexSQL, "i", "", "create index sql")
 
+	fs.StringVar(&cfg.StatsCfg.Path, "s", "", "load stats file path")
+
 	fs.IntVar(&cfg.SysCfg.WorkerCount, "c", 2, "parallel worker count")
 	fs.IntVar(&cfg.SysCfg.JobCount, "n", 10000, "total job count")
 	fs.IntVar(&cfg.SysCfg.Batch, "b", 1000, "insert batch commit count")
@@ -85,6 +87,10 @@ type SysConfig struct {
 	Batch int `toml:"batch" json:"batch"`
 }
 
+type StatsConfig struct {
+	Path string `toml:"stats-file-path" json:"stats-file-path"`
+}
+
 // Config is the configuration.
 type Config struct {
 	*flag.FlagSet `json:"-"`
@@ -92,6 +98,8 @@ type Config struct {
 	DBCfg DBConfig `toml:"db" json:"db"`
 
 	DDLCfg DDLConfig `toml:"ddl" json:"ddl"`
+
+	StatsCfg StatsConfig `toml:"stats" json:"stats"`
 
 	SysCfg SysConfig `toml:"sys" json:"sys"`
 
