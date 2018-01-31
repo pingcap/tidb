@@ -58,7 +58,7 @@ func (s *testSuite) TestStmtLabel(c *C) {
 	}
 	var ignore bool
 	for _, tt := range tests {
-		stmtNode, err := parser.New().ParseOneStmt(tt.sql, "", "")
+		stmtNode, err := parser.NewParser().ParseOneStmt(tt.sql, "", "")
 		c.Check(err, IsNil)
 		is := executor.GetInfoSchema(tk.Se)
 		err = plan.Preprocess(tk.Se.(context.Context), stmtNode, is, false)

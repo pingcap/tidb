@@ -219,7 +219,7 @@ func parseTable(t *table, stmt *ast.CreateTableStmt) error {
 }
 
 func parseTableSQL(table *table, sql string) error {
-	stmt, err := parser.New().ParseOneStmt(sql, "", "")
+	stmt, err := parser.NewParser().ParseOneStmt(sql, "", "")
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -256,7 +256,7 @@ func parseIndexSQL(table *table, sql string) error {
 		return nil
 	}
 
-	stmt, err := parser.New().ParseOneStmt(sql, "", "")
+	stmt, err := parser.NewParser().ParseOneStmt(sql, "", "")
 	if err != nil {
 		return errors.Trace(err)
 	}

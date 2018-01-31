@@ -17,34 +17,103 @@ import (
 	"testing"
 )
 
-func BenchmarkSysbenchSelect(b *testing.B) {
-	parser := New()
-	sql := "SELECT pad FROM sbtest1 WHERE id=1;"
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+func sysebchSelect(parser *Parser, sql string, num int, b *testing.B) {
+	for i := 0; i < num; i++ {
 		_, err := parser.Parse(sql, "", "")
 		if err != nil {
 			b.Fatal(err)
 		}
 	}
+}
+
+func BenchmarkSysbenchSelect1024(b *testing.B) {
+	parser := NewParser()
+	sql := "SELECT pad FROM sbtest1 WHERE id=1;"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		sysebchSelect(parser, sql, 1024, b)
+	}
 	b.ReportAllocs()
 }
 
-func BenchmarkParse(b *testing.B) {
-	var table = []string{
-		"insert into t values (1), (2), (3)",
-		"insert into t values (4), (5), (6), (7)",
-		"select c from t where c > 2",
+func BenchmarkSysbenchSelect256(b *testing.B) {
+	parser := NewParser()
+	sql := "SELECT pad FROM sbtest1 WHERE id=1;"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		sysebchSelect(parser, sql, 256, b)
 	}
-	parser := New()
+	b.ReportAllocs()
+}
+
+func BenchmarkSysbenchSelect128(b *testing.B) {
+	parser := NewParser()
+	sql := "SELECT pad FROM sbtest1 WHERE id=1;"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		sysebchSelect(parser, sql, 128, b)
+	}
+	b.ReportAllocs()
+}
+
+func BenchmarkParseInt4096(b *testing.B) {
+	parser := NewParser()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for _, v := range table {
-			_, err := parser.Parse(v, "", "")
-			if err != nil {
-				b.Failed()
-			}
+			parseInt(parser, v, 4096, b)
 		}
+	}
+	b.ReportAllocs()
+}
+
+func BenchmarkParseInt1024(b *testing.B) {
+	parser := NewParser()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for _, v := range table {
+			parseInt(parser, v, 1024, b)
+		}
+	}
+	b.ReportAllocs()
+}
+
+var table = []string{
+	"insert into t values (1), (2), (3)",
+	"insert into t values (4), (5), (6), (7)",
+	"select c from t where c > 2",
+	"select c from t where c > 1234567890123456789012345678901234567890.0;",
+}
+
+func BenchmarkParseInt512(b *testing.B) {
+	parser := NewParser()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for _, v := range table {
+			parseInt(parser, v, 512, b)
+		}
+
+	}
+	b.ReportAllocs()
+}
+
+func parseInt(parser *Parser, sql string, num int, b *testing.B) {
+	for i := 0; i < num; i++ {
+		_, err := parser.Parse(sql, "", "")
+		if err != nil {
+			b.Failed()
+		}
+	}
+}
+
+func BenchmarkParseInt256(b *testing.B) {
+	parser := NewParser()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for _, v := range table {
+			parseInt(parser, v, 256, b)
+		}
+
 	}
 	b.ReportAllocs()
 }

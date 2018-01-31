@@ -52,7 +52,7 @@ type testInferTypeSuite struct {
 }
 
 func (s *testInferTypeSuite) SetUpSuite(c *C) {
-	s.Parser = parser.New()
+	s.Parser = parser.NewParser()
 }
 
 func (s *testInferTypeSuite) TearDownSuite(c *C) {

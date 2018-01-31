@@ -16,6 +16,7 @@ package types
 import (
 	"math"
 	"strconv"
+	"sync"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
@@ -162,6 +163,12 @@ func digitsToWords(digits int) int {
 // MyDecimalStructSize is the struct size of MyDecimal.
 const MyDecimalStructSize = 40
 
+var decimalTree = sync.Pool{
+	New: func() interface{} {
+		return new(MyDecimal)
+	},
+}
+
 // MyDecimal represents a decimal value.
 type MyDecimal struct {
 	digitsInt int8 // the number of *decimal* digits before the point.
@@ -175,6 +182,22 @@ type MyDecimal struct {
 	//  wordBuf is an array of int32 words.
 	// A word is an int32 value can hold 9 digits.(0 <= word < wordBase)
 	wordBuf [maxWordBufLen]int32
+}
+
+// NewMyDecimal gets a mydecimal object from Pool.
+func NewMyDecimal() *MyDecimal {
+	return decimalTree.Get().(*MyDecimal)
+}
+
+// Free puts current mydecimal obecjt back to sync.Pool
+func (d *MyDecimal) Free() {
+	for i := 0; i < len(d.wordBuf); i++ {
+		d.wordBuf[i] = 0
+	}
+	d.negative = false
+	d.resultFrac = 0
+	d.digitsInt = 0
+	decimalTree.Put(d)
 }
 
 // IsNegative returns whether a decimal is negative.

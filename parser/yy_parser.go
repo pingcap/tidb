@@ -76,8 +76,8 @@ type stmtTexter interface {
 	stmtText() string
 }
 
-// New returns a Parser object.
-func New() *Parser {
+// NewParser returns a Parser object.
+func NewParser() *Parser {
 	return &Parser{
 		cache: make([]yySymType, 200),
 	}
@@ -185,11 +185,14 @@ func toInt(l yyLexer, lval *yySymType, str string) int {
 	default:
 		lval.item = n
 	}
+	if d, ok := lval.item.(*types.MyDecimal); ok {
+		d.Free()
+	}
 	return intLit
 }
 
 func toDecimal(l yyLexer, lval *yySymType, str string) int {
-	dec := new(types.MyDecimal)
+	dec := types.NewMyDecimal()
 	err := dec.FromString(hack.Slice(str))
 	if err != nil {
 		l.Errorf("decimal literal: %v", err)

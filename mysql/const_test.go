@@ -46,7 +46,7 @@ type testMySQLConstSuite struct {
 var mockTikv = flag.Bool("mockTikv", true, "use mock tikv store in executor test")
 
 func (s *testMySQLConstSuite) SetUpSuite(c *C) {
-	s.Parser = parser.New()
+	s.Parser = parser.NewParser()
 	flag.Lookup("mockTikv")
 	useMockTikv := *mockTikv
 	if useMockTikv {

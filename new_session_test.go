@@ -339,7 +339,7 @@ func (s *testSessionSuite) TestRetryCleanTxn(c *C) {
 
 	// Hijack retry history, add a statement that returns error.
 	history := tidb.GetHistory(tk.Se)
-	stmtNode, err := parser.New().ParseOneStmt("insert retrytxn values (2, 'a')", "", "")
+	stmtNode, err := parser.NewParser().ParseOneStmt("insert retrytxn values (2, 'a')", "", "")
 	c.Assert(err, IsNil)
 	stmt, _ := tidb.Compile(goctx.TODO(), tk.Se, stmtNode)
 	executor.ResetStmtCtx(tk.Se, stmtNode)

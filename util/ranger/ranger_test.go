@@ -45,7 +45,7 @@ type testRangerSuite struct {
 }
 
 func (s *testRangerSuite) SetUpSuite(c *C) {
-	s.Parser = parser.New()
+	s.Parser = parser.NewParser()
 }
 
 func newStoreWithBootstrap(c *C) (kv.Storage, error) {

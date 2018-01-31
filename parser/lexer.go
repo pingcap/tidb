@@ -97,7 +97,8 @@ func (s *Scanner) reset(sql string) {
 }
 
 func (s *Scanner) stmtText() string {
-	endPos := s.r.pos().Offset
+	var endPos int
+	endPos = s.r.pos().Offset
 	if s.r.s[endPos-1] == '\n' {
 		endPos = endPos - 1 // trim new line
 	}
@@ -134,9 +135,8 @@ func (s *Scanner) Lex(v *yySymType) int {
 	v.ident = lit
 	if tok == identifier {
 		tok = handleIdent(v)
-	}
-	if tok == identifier {
-		if tok1 := s.isTokenIdentifier(lit, pos.Offset); tok1 != 0 {
+		var tok1 int
+		if tok1 = s.isTokenIdentifier(lit, pos.Offset); tok1 != 0 {
 			tok = tok1
 		}
 	}

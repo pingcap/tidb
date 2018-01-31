@@ -36,7 +36,7 @@ type testExpressionSuite struct {
 }
 
 func (s *testExpressionSuite) SetUpSuite(c *C) {
-	s.Parser = parser.New()
+	s.Parser = parser.NewParser()
 	s.ctx = mock.NewContext()
 }
 

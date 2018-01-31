@@ -36,7 +36,7 @@ type testPlanSuite struct {
 
 func (s *testPlanSuite) SetUpSuite(c *C) {
 	s.is = infoschema.MockInfoSchema([]*model.TableInfo{plan.MockTable()})
-	s.Parser = parser.New()
+	s.Parser = parser.NewParser()
 }
 
 func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
