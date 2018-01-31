@@ -14,6 +14,7 @@
 package util
 
 import (
+	"runtime"
 	"time"
 
 	"github.com/juju/errors"
@@ -42,4 +43,13 @@ func RunWithRetry(retryCnt int, backoff uint64, f func() (bool, error)) (err err
 		time.Sleep(sleepTime)
 	}
 	return errors.Trace(err)
+}
+
+// GetStack gets the stacktrace.
+func GetStack() []byte {
+	const size = 4096
+	buf := make([]byte, size)
+	stackSize := runtime.Stack(buf, false)
+	buf = buf[:stackSize]
+	return buf
 }
