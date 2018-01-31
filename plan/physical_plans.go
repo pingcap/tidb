@@ -203,8 +203,11 @@ type PhysicalHashJoin struct {
 	LeftConditions  []expression.Expression
 	RightConditions []expression.Expression
 	OtherConditions []expression.Expression
-	SmallChildIdx   int
-	Concurrency     int
+	// InnerChildIdx indicates which child is to build the hash table.
+	// For inner join, the smaller one will be chosen.
+	// For outer join or semi join, it's exactly the inner one.
+	InnerChildIdx int
+	Concurrency   int
 
 	DefaultValues []types.Datum
 }

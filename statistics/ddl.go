@@ -34,6 +34,9 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 		return h.insertTableStats2KV(t.TableInfo)
 	case model.ActionAddColumn:
 		return h.insertColStats2KV(t.TableInfo.ID, t.ColumnInfo)
+	// For drop stats statement.
+	case model.ActionDropTable:
+		return h.DeleteTableStatsFromKV(t.TableInfo.ID)
 	}
 	return nil
 }
