@@ -82,6 +82,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildInsert(v)
 	case *plan.LoadData:
 		return b.buildLoadData(v)
+	case *plan.LoadStats:
+		return b.buildLoadStats(v)
 	case *plan.PhysicalLimit:
 		return b.buildLimit(v)
 	case *plan.Prepare:
@@ -406,6 +408,15 @@ func (b *executorBuilder) buildLoadData(v *plan.LoadData) Executor {
 
 	loadDataExec.supportChk = true
 	return loadDataExec
+}
+
+func (b *executorBuilder) buildLoadStats(v *plan.LoadStats) Executor {
+	e := &LoadStatsExec{
+		baseExecutor: newBaseExecutor(nil, b.ctx),
+		info:         &LoadStatsInfo{v.Path, b.ctx},
+	}
+	e.supportChk = true
+	return e
 }
 
 func (b *executorBuilder) buildReplace(vals *InsertValues) Executor {
