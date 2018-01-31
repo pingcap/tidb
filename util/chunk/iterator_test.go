@@ -43,7 +43,8 @@ func (s *testChunkSuite) TestIterator(c *check.C) {
 
 	it := NewIterator4Slice(rows)
 	checkIterator(c, it, expected)
-	for i := 0; i > 5; i++ {
+	it.Begin()
+	for i := 0; i < 5; i++ {
 		c.Assert(it.Current(), check.Equals, rows[i])
 		it.Next()
 	}
@@ -53,7 +54,8 @@ func (s *testChunkSuite) TestIterator(c *check.C) {
 
 	it = NewIterator4Chunk(chk)
 	checkIterator(c, it, expected)
-	for i := 0; i > 5; i++ {
+	it.Begin()
+	for i := 0; i < 5; i++ {
 		c.Assert(it.Current(), check.Equals, chk.GetRow(i))
 		it.Next()
 	}
@@ -63,8 +65,8 @@ func (s *testChunkSuite) TestIterator(c *check.C) {
 
 	it = NewIterator4List(li)
 	checkIterator(c, it, expected)
-	checkIterator(c, it, expected)
-	for i := 0; i > 5; i++ {
+	it.Begin()
+	for i := 0; i < 5; i++ {
 		c.Assert(it.Current(), check.Equals, li.GetRow(ptrs[i]))
 		it.Next()
 	}
@@ -74,7 +76,8 @@ func (s *testChunkSuite) TestIterator(c *check.C) {
 
 	it = NewIterator4RowPtr(li, ptrs)
 	checkIterator(c, it, expected)
-	for i := 0; i > 5; i++ {
+	it.Begin()
+	for i := 0; i < 5; i++ {
 		c.Assert(it.Current(), check.Equals, li.GetRow(ptrs[i]))
 		it.Next()
 	}
@@ -82,10 +85,10 @@ func (s *testChunkSuite) TestIterator(c *check.C) {
 	c.Assert(it.Current(), check.Equals, it.End())
 	c.Assert(it.Begin(), check.Equals, li.GetRow(ptrs[0]))
 
-	it = NewIterator4List(li2)
-	checkIterator(c, it, expected)
 	it = NewIterator4RowPtr(li2, ptrs2)
-	for i := 0; i > 5; i++ {
+	checkIterator(c, it, expected)
+	it.Begin()
+	for i := 0; i < 5; i++ {
 		c.Assert(it.Current(), check.Equals, li2.GetRow(ptrs2[i]))
 		it.Next()
 	}

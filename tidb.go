@@ -214,7 +214,7 @@ func GetRows4Test(goCtx goctx.Context, rs ast.RecordSet) ([]types.Row, error) {
 		return nil, nil
 	}
 	var rows []types.Row
-	if rs.SupportChunk() {
+	if config.GetGlobalConfig().EnableChunk && rs.SupportChunk() {
 		for {
 			// Since we collect all the rows, we can not reuse the chunk.
 			chk := rs.NewChunk()
