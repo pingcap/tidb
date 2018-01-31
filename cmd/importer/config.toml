@@ -6,7 +6,7 @@ table-sql = "create table t(a int primary key, b double, c varchar(10), d date u
 index-sql = "create unique index u_b on t(b);"
 
 [stats]
-stats-file-path = "./t.json"
+stats-file-path = "./stats.json"
 
 [sys]
 log-level = "info"
