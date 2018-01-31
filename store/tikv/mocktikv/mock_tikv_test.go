@@ -399,10 +399,11 @@ func (s *testMockTiKVSuite) TestResolveLock(c *C) {
 func (s *testMockTiKVSuite) TestBatchResolveLock(c *C) {
 	s.mustPrewriteOK(c, putMutations("p1", "v5", "s1", "v5"), "p1", 5)
 	s.mustPrewriteOK(c, putMutations("p2", "v10", "s2", "v10"), "p2", 10)
-	var txninfos = make(map[uint64]uint64)
-	txninfos[5] = 0
-	txninfos[10] = 20
-	s.mustBatchResolveLock(c, txninfos)
+	txnInfos := map[uint64]uint64{
+		5: 0,
+		10: 20,
+	}
+	s.mustBatchResolveLock(c, txnInfos)
 	s.mustGetNone(c, "p1", 20)
 	s.mustGetNone(c, "s1", 30)
 	s.mustGetOK(c, "p2", 20, "v10")

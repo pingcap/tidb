@@ -39,8 +39,6 @@ type LockResolver struct {
 		resolved       map[uint64]TxnStatus
 		recentResolved *list.List
 	}
-	cntTxnStatus  int
-	costTxnStatus time.Duration
 }
 
 func newLockResolver(store Storage) *LockResolver {
@@ -155,7 +153,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 		return true, nil
 	}
 
-	lockResolverCounter.WithLabelValues("resolve").Inc()
+	lockResolverCounter.WithLabelValues("batch_resolve").Inc()
 
 	var expiredLocks []*Lock
 	for _, l := range locks {
@@ -166,13 +164,12 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 			lockResolverCounter.WithLabelValues("not_expired").Inc()
 		}
 	}
-	if len(expiredLocks) == 0 {
-		log.Error("This should not occur!")
-		return true, nil
+	if len(expiredLocks) != len(locks) {
+		log.Errorf("BatchResolveLocks: get %d Locks, but only %d are expired, maybe safe point is wrong!", len(locks), len(expiredLocks))
+		return false, nil
 	}
 
-	lr.cntTxnStatus = 0
-	lr.costTxnStatus = 0
+	startTime := time.Now()
 	txnInfos := make(map[uint64]uint64)
 	count := 0
 	for _, l := range expiredLocks {
@@ -183,7 +180,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 		}
 		txnInfos[l.TxnID] = uint64(status)
 	}
-	log.Infof("BatchResolveLocks: it takes %v cost to lookup %v txn status from %v txn status", lr.costTxnStatus, lr.cntTxnStatus, count)
+	log.Infof("BatchResolveLocks: it takes %v cost to lookup %v txn status", time.Since(startTime), len(txnInfos))
 
 	var listTxnInfos []*kvrpcpb.TxnInfo
 	for txnID, status := range txnInfos {
@@ -199,9 +196,8 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 			TxnInfos: listTxnInfos,
 		},
 	}
-	startTime := time.Now()
+	startTime = time.Now()
 	resp, err := lr.store.SendReq(bo, req, loc, readTimeoutShort)
-	log.Infof("BatchResolveLocks: it takes %v cost to resolve %v locks in a batch.", time.Since(startTime), len(expiredLocks))
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -219,6 +215,15 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 		return false, nil
 	}
 
+	cmdResp := resp.ResolveLock
+	if cmdResp == nil {
+		return false, errors.Trace(ErrBodyMissing)
+	}
+	if keyErr := cmdResp.GetError(); keyErr != nil {
+		return false, errors.Errorf("unexpected resolve err: %s", keyErr)
+	}
+
+	log.Infof("BatchResolveLocks: it takes %v cost to resolve %v locks in a batch.", time.Since(startTime), len(expiredLocks))
 	return true, nil
 }
 
@@ -288,7 +293,6 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 	if s, ok := lr.getResolved(txnID); ok {
 		return s, nil
 	}
-	lr.cntTxnStatus++
 	lockResolverCounter.WithLabelValues("query_txn_status").Inc()
 
 	var status TxnStatus
@@ -305,11 +309,9 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 			return status, errors.Trace(err)
 		}
 		resp, err := lr.store.SendReq(bo, req, loc.Region, readTimeoutShort)
-		tempTime := time.Now()
 		if err != nil {
 			return status, errors.Trace(err)
 		}
-		lr.costTxnStatus += time.Since(tempTime)
 		regionErr, err := resp.GetRegionError()
 		if err != nil {
 			return status, errors.Trace(err)
