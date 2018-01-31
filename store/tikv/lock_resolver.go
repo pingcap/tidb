@@ -171,16 +171,18 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 
 	startTime := time.Now()
 	txnInfos := make(map[uint64]uint64)
-	count := 0
 	for _, l := range expiredLocks {
-		count = count + 1
+		if _, ok := txnInfos[l.TxnID]; ok {
+			continue
+		}
+
 		status, err := lr.getTxnStatus(bo, l.TxnID, l.Primary)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
 		txnInfos[l.TxnID] = uint64(status)
 	}
-	log.Infof("BatchResolveLocks: it takes %v cost to lookup %v txn status", time.Since(startTime), len(txnInfos))
+	log.Infof("BatchResolveLocks: it takes %v to lookup %v txn status", time.Since(startTime), len(txnInfos))
 
 	var listTxnInfos []*kvrpcpb.TxnInfo
 	for txnID, status := range txnInfos {
