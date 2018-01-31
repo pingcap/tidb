@@ -464,7 +464,10 @@ func (d *ddl) doDDLJob(ctx context.Context, job *model.Job) error {
 			return nil
 		}
 
-		return errors.Trace(historyJob.Error)
+		if historyJob.Error != nil {
+			return errors.Trace(historyJob.Error)
+		}
+		panic("When the state is JobCancel, historyJob.Error should never be nil")
 	}
 }
 
