@@ -136,31 +136,18 @@ func getEqOrInColOffset(expr expression.Expression, cols []*expression.Column) i
 	return -1
 }
 
-func extractAccessAndFilterConds(conditions, accessConds, filterConds []expression.Expression, colName model.CIStr,
-	length int) ([]expression.Expression, []expression.Expression) {
-	checker := &conditionChecker{
-		colName:       colName,
-		length:        length,
-		shouldReserve: length != types.UnspecifiedLength,
-	}
-	accesses, filters := detachColumnCNFConditions(conditions, checker)
-	accessConds = append(accessConds, accesses...)
-	filterConds = append(filterConds, filters...)
-	return accessConds, filterConds
-}
-
 // detachCNFCondAndBuildRangeForIndex will detach the index filters from table filters. These conditions are connected with `and`
 // It will first find the point query column and then extract the range query column.
 // Simple is true means it will not take a deep look into the DNF conditions.
 func detachCNFCondAndBuildRangeForIndex(sc *stmtctx.StatementContext, conditions []expression.Expression, cols []*expression.Column,
-	tpSlice []*types.FieldType, lengths []int) ([]*NewRange, []expression.Expression, []expression.Expression, int, error) {
+	tpSlice []*types.FieldType, lengths []int, considerDNF bool) ([]*NewRange, []expression.Expression, []expression.Expression, int, error) {
 	var (
 		eqCount int
 		ranges  []*NewRange
 		err     error
 	)
 
-	accessConds, filterConds := extractEqAndInCondAndBuildRange(conditions, cols, lengths)
+	accessConds, filterConds := extractEqAndInCondition(conditions, cols, lengths)
 
 	for ; eqCount < len(accessConds); eqCount++ {
 		if accessConds[eqCount].(*expression.ScalarFunction).FuncName.L != ast.EQ {
@@ -179,12 +166,29 @@ func detachCNFCondAndBuildRangeForIndex(sc *stmtctx.StatementContext, conditions
 		}
 		return ranges, accessConds, filterConds, eqCount, nil
 	}
-	accessConds, filterConds = extractAccessAndFilterConds(conditions, accessConds, filterConds, cols[eqOrInCount].ColName, lengths[eqOrInCount])
+	checker := &conditionChecker{
+		colName:       cols[eqOrInCount].ColName,
+		length:        lengths[eqOrInCount],
+		shouldReserve: lengths[eqOrInCount] != types.UnspecifiedLength,
+	}
+	if considerDNF {
+		accesses, filters := detachColumnCNFConditions(conditions, checker)
+		accessConds = append(accessConds, accesses...)
+		filterConds = append(filterConds, filters...)
+	} else {
+		for _, cond := range conditions {
+			if !checker.check(cond) {
+				filterConds = append(filterConds, cond)
+				continue
+			}
+			accessConds = append(accessConds, cond)
+		}
+	}
 	ranges, err = buildCNFIndexRange(sc, cols, tpSlice, lengths, eqOrInCount, accessConds)
 	return ranges, accessConds, filterConds, eqCount, errors.Trace(err)
 }
 
-func extractEqAndInCondAndBuildRange(conditions []expression.Expression, cols []*expression.Column,
+func extractEqAndInCondition(conditions []expression.Expression, cols []*expression.Column,
 	lengths []int) (accesses, filters []expression.Expression) {
 	accesses = make([]expression.Expression, len(cols))
 	for _, cond := range conditions {
@@ -223,7 +227,7 @@ func detachDNFCondAndBuildRangeForIndex(sc *stmtctx.StatementContext, condition 
 		if sf, ok := item.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicAnd {
 			cnfItems := expression.FlattenCNFConditions(sf)
 			var accesses, filters []expression.Expression
-			ranges, accesses, filters, _, err := detachCNFCondAndBuildRangeForIndex(sc, cnfItems, cols, newTpSlice, lengths)
+			ranges, accesses, filters, _, err := detachCNFCondAndBuildRangeForIndex(sc, cnfItems, cols, newTpSlice, lengths, true)
 			if err != nil {
 				return nil, nil, false, nil
 			}
@@ -235,7 +239,7 @@ func detachDNFCondAndBuildRangeForIndex(sc *stmtctx.StatementContext, condition 
 			}
 			totalRanges = append(totalRanges, ranges...)
 			newAccessItems = append(newAccessItems, expression.ComposeCNFCondition(nil, accesses...))
-		} else if ok := firstColumnChecker.check(item); ok {
+		} else if firstColumnChecker.check(item) {
 			if firstColumnChecker.shouldReserve {
 				hasResidual = true
 				firstColumnChecker.shouldReserve = lengths[0] != types.UnspecifiedLength
@@ -282,7 +286,7 @@ func DetachCondAndBuildRangeForIndex(sc *stmtctx.StatementContext, conditions []
 			return ranges, accesses, nil, 0, nil
 		}
 	}
-	return detachCNFCondAndBuildRangeForIndex(sc, conditions, cols, newTpSlice, lengths)
+	return detachCNFCondAndBuildRangeForIndex(sc, conditions, cols, newTpSlice, lengths, true)
 }
 
 // DetachSimpleCondAndBuildRangeForIndex will detach the index filters from table filters.
@@ -293,27 +297,7 @@ func DetachSimpleCondAndBuildRangeForIndex(sc *stmtctx.StatementContext, conditi
 	for _, col := range cols {
 		newTpSlice = append(newTpSlice, newFieldType(col.RetType))
 	}
-	accessConds, _ = extractEqAndInCondAndBuildRange(conditions, cols, lengths)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-	equalOrInCount := len(accessConds)
-	// We should remove all accessConds, so that they will not be added to filter conditions.
-	conditions = removeAccessConditions(conditions, accessConds)
-	if equalOrInCount < len(cols) {
-		checker := &conditionChecker{
-			colName:       cols[equalOrInCount].ColName,
-			length:        lengths[equalOrInCount],
-			shouldReserve: lengths[equalOrInCount] != types.UnspecifiedLength,
-		}
-		for _, cond := range conditions {
-			if !checker.check(cond) {
-				continue
-			}
-			accessConds = append(accessConds, cond)
-		}
-	}
-	ranges, err = buildCNFIndexRange(sc, cols, newTpSlice, lengths, equalOrInCount, accessConds)
+	ranges, accessConds, _, _, err = detachCNFCondAndBuildRangeForIndex(sc, conditions, cols, newTpSlice, lengths, false)
 	return ranges, accessConds, nil
 }
 
