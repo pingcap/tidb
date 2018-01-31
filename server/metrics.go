@@ -62,15 +62,6 @@ var (
 			Name:      "critical_error",
 			Help:      "Counter of critical errors.",
 		})
-
-	// panicCounter measures the count of panics.
-	panicCounter = prometheus.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "server",
-			Name:      "panic",
-			Help:      "Counter of panic.",
-		})
 )
 
 func init() {
@@ -78,7 +69,6 @@ func init() {
 	prometheus.MustRegister(queryCounter)
 	prometheus.MustRegister(connGauge)
 	prometheus.MustRegister(criticalErrorCounter)
-	prometheus.MustRegister(panicCounter)
 }
 
 func executeErrorToLabel(err error) string {
