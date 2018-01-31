@@ -839,8 +839,8 @@ func (d Duration) ToNumber() *MyDecimal {
 
 // ConvertToTime converts duration to Time.
 // Tp is TypeDatetime, TypeTimestamp and TypeDate.
-func (d Duration) ConvertToTime(tp uint8) (Time, error) {
-	year, month, day := gotime.Now().In(gotime.UTC).Date()
+func (d Duration) ConvertToTime(sc *stmtctx.StatementContext, tp uint8) (Time, error) {
+	year, month, day := gotime.Now().In(sc.TimeZone).Date()
 	sign, hour, minute, second, frac := splitDuration(d.Duration)
 	datePart := FromDate(year, int(month), day, 0, 0, 0, 0)
 	timePart := FromDate(0, 0, 0, hour, minute, second, frac)
