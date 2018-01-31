@@ -29,12 +29,12 @@ func NewConfig() *Config {
 
 	fs.StringVar(&cfg.configFile, "config", "", "Config file")
 
-	fs.StringVar(&cfg.TableSQL, "t", "", "create table sql")
-	fs.StringVar(&cfg.IndexSQL, "i", "", "create index sql")
+	fs.StringVar(&cfg.DDLCfg.TableSQL, "t", "", "create table sql")
+	fs.StringVar(&cfg.DDLCfg.IndexSQL, "i", "", "create index sql")
 
-	fs.IntVar(&cfg.WorkerCount, "c", 2, "parallel worker count")
-	fs.IntVar(&cfg.JobCount, "n", 10000, "total job count")
-	fs.IntVar(&cfg.Batch, "b", 1000, "insert batch commit count")
+	fs.IntVar(&cfg.SysCfg.WorkerCount, "c", 2, "parallel worker count")
+	fs.IntVar(&cfg.SysCfg.JobCount, "n", 10000, "total job count")
+	fs.IntVar(&cfg.SysCfg.Batch, "b", 1000, "insert batch commit count")
 
 	fs.StringVar(&cfg.DBCfg.Host, "h", "127.0.0.1", "set the database host ip")
 	fs.StringVar(&cfg.DBCfg.User, "u", "root", "set the database user")
@@ -42,7 +42,7 @@ func NewConfig() *Config {
 	fs.StringVar(&cfg.DBCfg.Name, "D", "test", "set the database name")
 	fs.IntVar(&cfg.DBCfg.Port, "P", 3306, "set the database host port")
 
-	fs.StringVar(&cfg.LogLevel, "L", "info", "log level: debug, info, warn, error, fatal")
+	fs.StringVar(&cfg.SysCfg.LogLevel, "L", "info", "log level: debug, info, warn, error, fatal")
 
 	return cfg
 }
@@ -67,14 +67,15 @@ func (c *DBConfig) String() string {
 	return fmt.Sprintf("DBConfig(%+v)", *c)
 }
 
-// Config is the configuration.
-type Config struct {
-	*flag.FlagSet `json:"-"`
-
+//DDLConfig is the configuration for ddl statements.
+type DDLConfig struct {
 	TableSQL string `toml:"table-sql" json:"table-sql"`
 
 	IndexSQL string `toml:"index-sql" json:"index-sql"`
+}
 
+// SysConfig is the configuration for job/worker count, batch size, etc.
+type SysConfig struct {
 	LogLevel string `toml:"log-level" json:"log-level"`
 
 	WorkerCount int `toml:"worker-count" json:"worker-count"`
@@ -82,8 +83,17 @@ type Config struct {
 	JobCount int `toml:"job-count" json:"job-count"`
 
 	Batch int `toml:"batch" json:"batch"`
+}
+
+// Config is the configuration.
+type Config struct {
+	*flag.FlagSet `json:"-"`
 
 	DBCfg DBConfig `toml:"db" json:"db"`
+
+	DDLCfg DDLConfig `toml:"ddl" json:"ddl"`
+
+	SysCfg SysConfig `toml:"sys" json:"sys"`
 
 	configFile string
 }

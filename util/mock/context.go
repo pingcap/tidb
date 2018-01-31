@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
 	binlog "github.com/pingcap/tipb/go-binlog"
@@ -201,6 +202,10 @@ func (c *Context) StmtRollback() {
 // StmtGetMutation implements the context.Context interface.
 func (c *Context) StmtGetMutation(tableID int64) *binlog.TableMutation {
 	return nil
+}
+
+// StmtAddDirtyTableOP implements the context.Context interface.
+func (c *Context) StmtAddDirtyTableOP(op int, tid int64, handle int64, row []types.Datum) {
 }
 
 // NewContext creates a new mocked context.Context.

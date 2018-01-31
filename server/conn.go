@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/arena"
@@ -408,7 +409,7 @@ func (cc *clientConn) Run() {
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
 			log.Errorf("lastCmd %s, %v, %s", cc.lastCmd, r, buf)
-			panicCounter.Add(1)
+			metrics.PanicCounter.WithLabelValues(metrics.LabelSession).Inc()
 		}
 		if !closedOutside {
 			err := cc.Close()

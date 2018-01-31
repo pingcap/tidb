@@ -1814,8 +1814,7 @@ func (s *testSessionSuite) TestStatementErrorInTransaction(c *C) {
 	tk.MustExec("insert into statement_side_effect values (1)")
 	_, err := tk.Exec("insert into statement_side_effect value (2),(3),(4),(1)")
 	c.Assert(err, NotNil)
-	// TODO: Fix here, dirty table should not be touched, too.
-	// tk.MustQuery(`select * from statement_side_effect`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select * from statement_side_effect`).Check(testkit.Rows("1"))
 	tk.MustExec("commit")
 	tk.MustQuery(`select * from statement_side_effect`).Check(testkit.Rows("1"))
 
