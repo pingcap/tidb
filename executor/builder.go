@@ -480,7 +480,7 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 	switch x := src.(type) {
 	case *TableReaderExecutor:
 		us.desc = x.desc
-		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
+		us.dirty = GetDirtyDB(b.ctx).GetDirtyTable(x.table.Meta().ID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
 		b.err = us.buildAndSortAddedRows()
@@ -494,7 +494,7 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 				}
 			}
 		}
-		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
+		us.dirty = GetDirtyDB(b.ctx).GetDirtyTable(x.table.Meta().ID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
 		b.err = us.buildAndSortAddedRows()
@@ -508,7 +508,7 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 				}
 			}
 		}
-		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
+		us.dirty = GetDirtyDB(b.ctx).GetDirtyTable(x.table.Meta().ID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
 		b.err = us.buildAndSortAddedRows()
