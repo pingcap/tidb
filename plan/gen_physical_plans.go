@@ -308,13 +308,6 @@ func (p *LogicalJoin) buildRangeForIndexJoin(indexInfo *model.IndexInfo, innerPl
 		return nil, nil, nil
 	}
 
-	maxIdxOff := 0
-	for _, idxOff := range keyOff2IdxOff {
-		if maxIdxOff < idxOff {
-			maxIdxOff = idxOff
-		}
-	}
-
 	// After constant propagation, there won'be cases that t1.a=t2.a and t2.a=1 occur in the same time.
 	// And if there're cases like t1.a=t2.a and t1.a > 1, we can also guarantee that t1.a > 1 won't be chosen as access condition.
 	// So DetachCondAndBuildRangeForIndex won't miss the equal conditions we generate.

@@ -138,7 +138,7 @@ func getEqOrInColOffset(expr expression.Expression, cols []*expression.Column) i
 
 // detachCNFCondAndBuildRangeForIndex will detach the index filters from table filters. These conditions are connected with `and`
 // It will first find the point query column and then extract the range query column.
-// Simple is true means it will not take a deep look into the DNF conditions.
+// considerDNF is true means it will try to extract access conditions from the DNF expressions.
 func detachCNFCondAndBuildRangeForIndex(sc *stmtctx.StatementContext, conditions []expression.Expression, cols []*expression.Column,
 	tpSlice []*types.FieldType, lengths []int, considerDNF bool) ([]*NewRange, []expression.Expression, []expression.Expression, int, error) {
 	var (
