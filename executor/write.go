@@ -150,8 +150,8 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 	}
 
 	tid := t.Meta().ID
-	ctx.StmtLogDirtyOP(DirtyTableDeleteRow, tid, h, nil)
-	ctx.StmtLogDirtyOP(DirtyTableAddRow, tid, h, newData)
+	ctx.StmtAddDirtyTableOP(DirtyTableDeleteRow, tid, h, nil)
+	ctx.StmtAddDirtyTableOP(DirtyTableAddRow, tid, h, newData)
 
 	if onDup {
 		sc.AddAffectedRows(2)
@@ -461,7 +461,7 @@ func (e *DeleteExec) removeRow(ctx context.Context, t table.Table, h int64, data
 	if err != nil {
 		return errors.Trace(err)
 	}
-	ctx.StmtLogDirtyOP(DirtyTableDeleteRow, t.Meta().ID, h, nil)
+	ctx.StmtAddDirtyTableOP(DirtyTableDeleteRow, t.Meta().ID, h, nil)
 	ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.Meta().ID, -1, 1)
 	return nil
@@ -927,7 +927,7 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 		txn.DelOption(kv.PresumeKeyNotExists)
 		if err == nil {
 			if !sessVars.ImportingData {
-				e.ctx.StmtLogDirtyOP(DirtyTableAddRow, e.Table.Meta().ID, h, row)
+				e.ctx.StmtAddDirtyTableOP(DirtyTableAddRow, e.Table.Meta().ID, h, row)
 			}
 			rowCount++
 			continue
@@ -1646,7 +1646,7 @@ func (e *ReplaceExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, erro
 		row := rows[idx]
 		h, err1 := e.Table.AddRecord(e.ctx, row, false)
 		if err1 == nil {
-			e.ctx.StmtLogDirtyOP(DirtyTableAddRow, e.Table.Meta().ID, h, row)
+			e.ctx.StmtAddDirtyTableOP(DirtyTableAddRow, e.Table.Meta().ID, h, row)
 			idx++
 			continue
 		}
@@ -1672,7 +1672,7 @@ func (e *ReplaceExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, erro
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
-		e.ctx.StmtLogDirtyOP(DirtyTableDeleteRow, e.Table.Meta().ID, h, nil)
+		e.ctx.StmtAddDirtyTableOP(DirtyTableDeleteRow, e.Table.Meta().ID, h, nil)
 		e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 	}
 

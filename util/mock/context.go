@@ -204,8 +204,8 @@ func (c *Context) StmtGetMutation(tableID int64) *binlog.TableMutation {
 	return nil
 }
 
-// StmtLogDirtyOP implements the context.Context interface.
-func (c *Context) StmtLogDirtyOP(op int, tid int64, handle int64, row []types.Datum) {
+// StmtAddDirtyTableOP implements the context.Context interface.
+func (c *Context) StmtAddDirtyTableOP(op int, tid int64, handle int64, row []types.Datum) {
 }
 
 // NewContext creates a new mocked context.Context.

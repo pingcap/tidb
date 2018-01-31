@@ -79,8 +79,8 @@ type Context interface {
 	StmtRollback()
 	// StmtGetMutation gets the binlog mutation for current statement.
 	StmtGetMutation(int64) *binlog.TableMutation
-	// StmtDirtyTablesOP logs the dirty tables operations for current statement.
-	StmtLogDirtyOP(op int, tid int64, handle int64, row []types.Datum)
+	// StmtAddDirtyTableOP adds the dirty table operation for current statement.
+	StmtAddDirtyTableOP(op int, tid int64, handle int64, row []types.Datum)
 }
 
 type basicCtxType int
