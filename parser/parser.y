@@ -423,6 +423,7 @@ import (
 	statsMeta       "STATS_META"
 	statsHistograms "STATS_HISTOGRAMS"
 	statsBuckets    "STATS_BUCKETS"
+	statsHealthy    "STATS_HEALTHY"
 	tidb		"TIDB"
 	tidbHJ		"TIDB_HJ"
 	tidbSMJ		"TIDB_SMJ"
@@ -4832,6 +4833,20 @@ ShowStmt:
 	{
 		stmt := &ast.ShowStmt{
 			Tp: ast.ShowStatsBuckets,
+		}
+		if $3 != nil {
+			if x, ok := $3.(*ast.PatternLikeExpr); ok {
+				stmt.Pattern = x
+			} else {
+				stmt.Where = $3.(ast.ExprNode)
+			}
+		}
+		$$ = stmt
+	}
+|   "SHOW" "STATS_HEALTHY" ShowLikeOrWhereOpt
+	{
+		stmt := &ast.ShowStmt{
+			Tp: ast.ShowStatsHealthy,
 		}
 		if $3 != nil {
 			if x, ok := $3.(*ast.PatternLikeExpr); ok {

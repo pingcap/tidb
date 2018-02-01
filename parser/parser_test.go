@@ -507,6 +507,9 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		// for show stats_buckets
 		{"show stats_buckets", true},
 		{"show stats_buckets where col_name = 'a'", true},
+		// for show stats_healthy.
+		{"show stats_healthy", true},
+		{"show stats_healthy where table_name = 't'", true},
 
 		// for load stats
 		{"load stats '/tmp/stats.json'", true},
