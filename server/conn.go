@@ -729,6 +729,7 @@ func insertDataWithCommit(goCtx goctx.Context, prevData, curData []byte, loadDat
 		if !reachLimit {
 			break
 		}
+		loadDataInfo.Ctx.StmtCommit()
 		// Make sure that there are no retries when committing.
 		if err = loadDataInfo.Ctx.RefreshTxnCtx(goCtx); err != nil {
 			return nil, errors.Trace(err)
