@@ -87,6 +87,7 @@ type SysConfig struct {
 	Batch int `toml:"batch" json:"batch"`
 }
 
+// StatsConfig is the configuration for statistics file.
 type StatsConfig struct {
 	Path string `toml:"stats-file-path" json:"stats-file-path"`
 }
