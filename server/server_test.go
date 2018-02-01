@@ -28,6 +28,7 @@ import (
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/kv"
 	tmysql "github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
@@ -321,6 +322,11 @@ func runTestLoadData(c *C, server *Server) {
 		"xxx row4_col1	- 		900\n" +
 		"xxx row5_col1	- 	row5_col3")
 	c.Assert(err, IsNil)
+
+	originalTxnTotalSizeLimit := kv.TxnTotalSizeLimit
+	// If the MemBuffer can't be committed once in each batch, it will return an error like "transaction is too large".
+	kv.TxnTotalSizeLimit = 10240
+	defer func() { kv.TxnTotalSizeLimit = originalTxnTotalSizeLimit }()
 
 	// support ClientLocalFiles capability
 	runTestsOnNewDB(c, func(config *mysql.Config) {
