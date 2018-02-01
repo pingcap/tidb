@@ -24,9 +24,9 @@ var (
 			Help:      "Gauge of jobs.",
 		}, []string{"action"})
 
-	// handle job result state.
-	handleJobSucc      = "handle_job_succ"
-	handleJobFailed    = "handle_job_failed"
+	// operation result state
+	opSucc             = "op_succ"
+	opFailed           = "op_failed"
 	handleJobHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
@@ -36,22 +36,62 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 20),
 		}, []string{"action", "result_state"})
 
-	// handle batch data type.
-	batchAddCol              = "batch_add_col"
-	batchAddIdx              = "batch_add_idx"
-	batchDelData             = "batch_del_data"
-	batchHandleDataHistogram = prometheus.NewHistogramVec(
+	batchAddIdxHistogram = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
-			Name:      "batch_add_or_del_data_succ",
+			Name:      "batch_add_idx_succ",
 			Help:      "Bucketed histogram of processing time (s) of batch handle data",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20),
-		}, []string{"handle_data_type"})
+		})
+
+	// The syncer inits, restarts or clears.
+	syncerInit            = "syncer_init"
+	syncerRestart         = "syncer_restart"
+	syncerClear           = "syncer_clear"
+	deploySyncerHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "ddl",
+			Name:      "deploy_syncer_duration_seconds",
+			Help:      "Bucketed histogram of processing time (s) of deploy syncer",
+			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 20),
+		}, []string{"state", "result_state"})
+	// The syncer updates its own version.
+	updateSelfVersionHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "ddl",
+			Name:      "update_self_ver_duration_seconds",
+			Help:      "Bucketed histogram of processing time (s) of update self version",
+			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 20),
+		}, []string{"result_state"})
+	// The owner handles syncer's version.
+	ownerUpdateGlobalVersion   = "update_global_version"
+	ownerGetGlobalVersion      = "get_global_version"
+	ownerCheckAllVersions      = "check_all_versions"
+	ownerHandleSyncerHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "ddl",
+			Name:      "owner_handle_syncer_duration_seconds",
+			Help:      "Bucketed histogram of processing time (s) of handle syncer",
+			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 20),
+		}, []string{"op", "result_state"})
 )
 
 func init() {
 	prometheus.MustRegister(jobsGauge)
 	prometheus.MustRegister(handleJobHistogram)
-	prometheus.MustRegister(batchHandleDataHistogram)
+	prometheus.MustRegister(batchAddIdxHistogram)
+	prometheus.MustRegister(deploySyncerHistogram)
+	prometheus.MustRegister(updateSelfVersionHistogram)
+	prometheus.MustRegister(ownerHandleSyncerHistogram)
+}
+
+func returnRetLable(err error) string {
+	if err == nil {
+		return opSucc
+	}
+	return opFailed
 }
