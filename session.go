@@ -841,6 +841,9 @@ func (s *session) PrepareStmt(goCtx goctx.Context, sql string) (stmtID uint32,
 	s.PrepareTxnCtx(goCtx)
 	prepareExec := executor.NewPrepareExec(s, executor.GetInfoSchema(s), sql)
 	err = prepareExec.DoPrepare()
+	if err == nil {
+		err = s.doCommit(goCtx)
+	}
 	return prepareExec.ID, prepareExec.ParamCount, prepareExec.Fields, errors.Trace(err)
 }
 
