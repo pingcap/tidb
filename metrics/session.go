@@ -15,6 +15,7 @@ package metrics
 
 import "github.com/prometheus/client_golang/prometheus"
 
+// Session metrics.
 var (
 	SessionExecuteParseDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
@@ -79,6 +80,7 @@ var (
 		})
 )
 
+// Label constants.
 const (
 	LblUnretryable = "unretryable"
 	LblReachMax    = "reach_max"
