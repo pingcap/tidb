@@ -824,7 +824,7 @@ func (mvcc *MVCCLevelDB) ResolveLock(startKey, endKey []byte, startTS, commitTS 
 }
 
 // BatchResolveLock implements the MVCCStore interface.
-func (mvcc *MVCCLevelDB) BatchResolveLock(startKey, endKey []byte, txninfos map[uint64]uint64) error {
+func (mvcc *MVCCLevelDB) BatchResolveLock(startKey, endKey []byte, txnInfos map[uint64]uint64) error {
 	mvcc.mu.Lock()
 	defer mvcc.mu.Unlock()
 
@@ -842,7 +842,7 @@ func (mvcc *MVCCLevelDB) BatchResolveLock(startKey, endKey []byte, txninfos map[
 			return errors.Trace(err)
 		}
 		if ok {
-			if commitTS, ok := txninfos[dec.lock.startTS]; ok {
+			if commitTS, ok := txnInfos[dec.lock.startTS]; ok {
 				if commitTS > 0 {
 					err = commitLock(batch, dec.lock, currKey, dec.lock.startTS, commitTS)
 				} else {
