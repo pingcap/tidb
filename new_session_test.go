@@ -711,7 +711,7 @@ func (s *testSessionSuite) TestPrepare(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t(id TEXT)")
 	tk.MustExec(`INSERT INTO t VALUES ("id");`)
-	id, ps, _, err := tk.Se.PrepareStmt("select id+? from t")
+	id, ps, _, err := tk.Se.PrepareStmt(goctx.TODO(), "select id+? from t")
 	goCtx := goctx.Background()
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, uint32(1))
@@ -736,7 +736,8 @@ func (s *testSessionSuite) TestPrepare(c *C) {
 	// Execute prepared statements for more than one time.
 	tk.MustExec("create table multiexec (a int, b int)")
 	tk.MustExec("insert multiexec values (1, 1), (2, 2)")
-	id, _, _, err = tk.Se.PrepareStmt("select a from multiexec where b = ? order by b")
+	id, _, _, err = tk.Se.PrepareStmt(goctx.TODO(),
+		"select a from multiexec where b = ? order by b")
 	c.Assert(err, IsNil)
 	rs, err := tk.Se.ExecutePreparedStmt(goCtx, id, 1)
 	c.Assert(err, IsNil)

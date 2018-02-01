@@ -69,7 +69,8 @@ type Session interface {
 	CommitTxn(goctx.Context) error
 	RollbackTxn(goctx.Context) error
 	// PrepareStmt executes prepare statement in binary protocol.
-	PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error)
+	PrepareStmt(goCtx goctx.Context, sql string) (stmtID uint32,
+		paramCount int, fields []*ast.ResultField, err error)
 	// ExecutePreparedStmt executes a prepared statement.
 	ExecutePreparedStmt(goCtx goctx.Context, stmtID uint32, param ...interface{}) (ast.RecordSet, error)
 	DropPreparedStmt(stmtID uint32) error
@@ -825,7 +826,8 @@ func (s *session) Execute(goCtx goctx.Context, sql string) (recordSets []ast.Rec
 }
 
 // PrepareStmt is used for executing prepare statement in binary protocol
-func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error) {
+func (s *session) PrepareStmt(goCtx goctx.Context, sql string) (stmtID uint32,
+	paramCount int, fields []*ast.ResultField, err error) {
 	if s.sessionVars.TxnCtx.InfoSchema == nil {
 		// We don't need to create a transaction for prepare statement, just get information schema will do.
 		s.sessionVars.TxnCtx.InfoSchema = domain.GetDomain(s).InfoSchema()
@@ -836,6 +838,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 		return
 	}
 
+	s.PrepareTxnCtx(goCtx)
 	prepareExec := executor.NewPrepareExec(s, executor.GetInfoSchema(s), sql)
 	err = prepareExec.DoPrepare()
 	return prepareExec.ID, prepareExec.ParamCount, prepareExec.Fields, errors.Trace(err)

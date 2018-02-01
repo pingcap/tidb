@@ -258,8 +258,9 @@ func (tc *TiDBContext) GetStatement(stmtID int) PreparedStatement {
 }
 
 // Prepare implements QueryCtx Prepare method.
-func (tc *TiDBContext) Prepare(sql string) (statement PreparedStatement, columns, params []*ColumnInfo, err error) {
-	stmtID, paramCount, fields, err := tc.session.PrepareStmt(sql)
+func (tc *TiDBContext) Prepare(goCtx goctx.Context, sql string) (
+	statement PreparedStatement, columns, params []*ColumnInfo, err error) {
+	stmtID, paramCount, fields, err := tc.session.PrepareStmt(goCtx, sql)
 	if err != nil {
 		return
 	}

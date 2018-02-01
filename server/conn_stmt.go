@@ -45,8 +45,8 @@ import (
 	goctx "golang.org/x/net/context"
 )
 
-func (cc *clientConn) handleStmtPrepare(sql string) error {
-	stmt, columns, params, err := cc.ctx.Prepare(sql)
+func (cc *clientConn) handleStmtPrepare(goCtx goctx.Context, sql string) error {
+	stmt, columns, params, err := cc.ctx.Prepare(goCtx, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}

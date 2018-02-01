@@ -66,7 +66,8 @@ type QueryCtx interface {
 	SetClientCapability(uint32)
 
 	// Prepare prepares a statement.
-	Prepare(sql string) (statement PreparedStatement, columns, params []*ColumnInfo, err error)
+	Prepare(goCtx goctx.Context, sql string) (statement PreparedStatement,
+		columns, params []*ColumnInfo, err error)
 
 	// GetStatement gets PreparedStatement by statement ID.
 	GetStatement(stmtID int) PreparedStatement

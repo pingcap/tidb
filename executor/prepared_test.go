@@ -68,7 +68,7 @@ func (s *testSuite) TestPrepared(c *C) {
 
 		// Call Session PrepareStmt directly to get stmtId.
 		query := "select c1, c2 from prepare_test where c1 = ?"
-		stmtId, _, _, err := tk.Se.PrepareStmt(query)
+		stmtId, _, _, err := tk.Se.PrepareStmt(goctx.TODO(), query)
 		c.Assert(err, IsNil)
 		_, err = tk.Se.ExecutePreparedStmt(goCtx, stmtId, 1)
 		c.Assert(err, IsNil)
@@ -113,25 +113,29 @@ func (s *testSuite) TestPrepared(c *C) {
 		_, err = tk.Exec("execute stmt")
 		c.Assert(err, NotNil)
 
-		_, _, fields, err := tk.Se.PrepareStmt("select a from prepare3")
+		_, _, fields, err := tk.Se.PrepareStmt(goctx.TODO(),
+			"select a from prepare3")
 		c.Assert(err, IsNil)
 		c.Assert(fields[0].DBName.L, Equals, "test")
 		c.Assert(fields[0].TableAsName.L, Equals, "prepare3")
 		c.Assert(fields[0].ColumnAsName.L, Equals, "a")
 
-		_, _, fields, err = tk.Se.PrepareStmt("select a from prepare3 where ?")
+		_, _, fields, err = tk.Se.PrepareStmt(goctx.TODO(),
+			"select a from prepare3 where ?")
 		c.Assert(err, IsNil)
 		c.Assert(fields[0].DBName.L, Equals, "test")
 		c.Assert(fields[0].TableAsName.L, Equals, "prepare3")
 		c.Assert(fields[0].ColumnAsName.L, Equals, "a")
 
-		_, _, fields, err = tk.Se.PrepareStmt("select (1,1) in (select 1,1)")
+		_, _, fields, err = tk.Se.PrepareStmt(goctx.TODO(),
+			"select (1,1) in (select 1,1)")
 		c.Assert(err, IsNil)
 		c.Assert(fields[0].DBName.L, Equals, "")
 		c.Assert(fields[0].TableAsName.L, Equals, "")
 		c.Assert(fields[0].ColumnAsName.L, Equals, "(1,1) in (select 1,1)")
 
-		_, _, fields, err = tk.Se.PrepareStmt("select * from prepare3 as t1 join prepare3 as t2")
+		_, _, fields, err = tk.Se.PrepareStmt(goctx.TODO(),
+			"select * from prepare3 as t1 join prepare3 as t2")
 		c.Assert(err, IsNil)
 		c.Assert(fields[0].DBName.L, Equals, "test")
 		c.Assert(fields[0].TableAsName.L, Equals, "t1")
@@ -140,7 +144,8 @@ func (s *testSuite) TestPrepared(c *C) {
 		c.Assert(fields[1].TableAsName.L, Equals, "t2")
 		c.Assert(fields[1].ColumnAsName.L, Equals, "a")
 
-		_, _, fields, err = tk.Se.PrepareStmt("update prepare3 set a = ?")
+		_, _, fields, err = tk.Se.PrepareStmt(goctx.TODO(),
+			"update prepare3 set a = ?")
 		c.Assert(err, IsNil)
 		c.Assert(len(fields), Equals, 0)
 
@@ -179,7 +184,8 @@ func (s *testSuite) TestPreparedLimitOffset(c *C) {
 		_, err := tk.Exec("execute stmt_test_1 using @c, @c")
 		c.Assert(plan.ErrWrongArguments.Equal(err), IsTrue)
 
-		stmtID, _, _, err := tk.Se.PrepareStmt("select id from prepare_test limit ?")
+		stmtID, _, _, err := tk.Se.PrepareStmt(goctx.TODO(),
+			"select id from prepare_test limit ?")
 		c.Assert(err, IsNil)
 		_, err = tk.Se.ExecutePreparedStmt(goCtx, stmtID, 1)
 		c.Assert(err, IsNil)

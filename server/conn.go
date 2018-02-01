@@ -602,7 +602,7 @@ func (cc *clientConn) dispatch(data []byte) error {
 	case mysql.ComFieldList:
 		return cc.handleFieldList(hack.String(data))
 	case mysql.ComStmtPrepare:
-		return cc.handleStmtPrepare(hack.String(data))
+		return cc.handleStmtPrepare(goCtx1, hack.String(data))
 	case mysql.ComStmtExecute:
 		return cc.handleStmtExecute(goCtx1, data)
 	case mysql.ComStmtClose:
