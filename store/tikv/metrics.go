@@ -69,15 +69,6 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 20),
 		})
 
-	connPoolHistogram = prometheus.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Namespace: "tidb",
-			Subsystem: "tikvclient",
-			Name:      "get_conn_seconds",
-			Help:      "Bucketed histogram of taking conn from conn pool.",
-			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 20),
-		}, []string{"type"})
-
 	sendReqHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
@@ -138,6 +129,15 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 21),
 		})
 
+	txnRegionsNumHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "txn_regions_num",
+			Help:      "Number of regions in a transaction.",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 20),
+		}, []string{"type"})
+
 	rawkvCmdHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
@@ -154,15 +154,6 @@ var (
 			Name:      "rawkv_kv_size",
 			Help:      "Size of key/value to put, in bytes.",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 21),
-		}, []string{"type"})
-
-	txnRegionsNumHistogram = prometheus.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Namespace: "tidb",
-			Subsystem: "tikvclient",
-			Name:      "txn_regions_num",
-			Help:      "Number of regions in a transaction.",
-			Buckets:   prometheus.ExponentialBuckets(1, 2, 20),
 		}, []string{"type"})
 
 	loadSafepointCounter = prometheus.NewCounterVec(
@@ -210,16 +201,15 @@ func init() {
 	prometheus.MustRegister(backoffCounter)
 	prometheus.MustRegister(backoffHistogram)
 	prometheus.MustRegister(sendReqHistogram)
-	prometheus.MustRegister(connPoolHistogram)
 	prometheus.MustRegister(coprocessorCounter)
 	prometheus.MustRegister(coprocessorHistogram)
 	prometheus.MustRegister(lockResolverCounter)
 	prometheus.MustRegister(regionErrorCounter)
 	prometheus.MustRegister(txnWriteKVCountHistogram)
 	prometheus.MustRegister(txnWriteSizeHistogram)
+	prometheus.MustRegister(txnRegionsNumHistogram)
 	prometheus.MustRegister(rawkvCmdHistogram)
 	prometheus.MustRegister(rawkvSizeHistogram)
-	prometheus.MustRegister(txnRegionsNumHistogram)
 	prometheus.MustRegister(loadSafepointCounter)
 	prometheus.MustRegister(secondaryLockCleanupFailureCounter)
 }
