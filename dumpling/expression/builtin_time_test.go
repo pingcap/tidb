@@ -2224,7 +2224,7 @@ func (s *testEvaluatorSuite) TestWithTimeZone(c *C) {
 		return result
 	}
 	durationToGoTime := func(d types.Datum, loc *time.Location) time.Time {
-		t, _ := d.GetMysqlDuration().ConvertToTime(mysql.TypeDatetime)
+		t, _ := d.GetMysqlDuration().ConvertToTime(sv.StmtCtx, mysql.TypeDatetime)
 		result, _ := t.Time.GoTime(sv.TimeZone)
 		return result
 	}
