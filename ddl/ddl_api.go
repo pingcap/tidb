@@ -595,6 +595,8 @@ func buildTableInfo(d *ddl, tableName model.CIStr, cols []*table.Column, constra
 	tbInfo = &model.TableInfo{
 		Name: tableName,
 	}
+	// When this function is called by MockTableInfo, we should set a particular table id.
+	// So the `ddl` structure may be nil.
 	if d != nil {
 		tbInfo.ID, err = d.genGlobalID()
 		if err != nil {
@@ -732,20 +734,6 @@ func (d *ddl) CreateTableWithLike(ctx context.Context, ident, referIdent ast.Ide
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
-}
-
-// MockTableInfo mocks a table info by create table stmt ast and a specified table id.
-func MockTableInfo(ctx context.Context, stmt *ast.CreateTableStmt, tableID int64) (*model.TableInfo, error) {
-	cols, newConstraints, err := buildColumnsAndConstraints(ctx, stmt.Cols, stmt.Constraints)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	tbl, err := buildTableInfo(nil, stmt.Table.Name, cols, newConstraints, ctx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	tbl.ID = tableID
-	return tbl, nil
 }
 
 func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.ColumnDef,
