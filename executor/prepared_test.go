@@ -135,6 +135,14 @@ func (s *testSuite) TestPrepared(c *C) {
 		c.Assert(fields[0].ColumnAsName.L, Equals, "(1,1) in (select 1,1)")
 
 		_, _, fields, err = tk.Se.PrepareStmt(goctx.TODO(),
+			"select a from prepare3 where a = ("+
+				"select a from prepare2 where a = ?)")
+		c.Assert(err, IsNil)
+		c.Assert(fields[0].DBName.L, Equals, "test")
+		c.Assert(fields[0].TableAsName.L, Equals, "prepare3")
+		c.Assert(fields[0].ColumnAsName.L, Equals, "a")
+
+		_, _, fields, err = tk.Se.PrepareStmt(goctx.TODO(),
 			"select * from prepare3 as t1 join prepare3 as t2")
 		c.Assert(err, IsNil)
 		c.Assert(fields[0].DBName.L, Equals, "test")
