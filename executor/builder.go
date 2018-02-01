@@ -645,7 +645,6 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 	if v.InnerChildIdx == 0 {
 		e.innerExec = leftExec
 		e.outerExec = rightExec
-		e.innerFilter = v.LeftConditions
 		e.outerFilter = v.RightConditions
 		e.innerKeys = leftHashKey
 		e.outerKeys = rightHashKey
@@ -655,7 +654,6 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 	} else {
 		e.innerExec = rightExec
 		e.outerExec = leftExec
-		e.innerFilter = v.RightConditions
 		e.outerFilter = v.LeftConditions
 		e.innerKeys = rightHashKey
 		e.outerKeys = leftHashKey
@@ -1087,7 +1085,6 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Execut
 		innerCtx: innerCtx{
 			readerBuilder: &dataReaderBuilder{innerPlan, b},
 			rowTypes:      innerTypes,
-			filter:        innerFilter,
 		},
 		workerWg:        new(sync.WaitGroup),
 		resultGenerator: newJoinResultGenerator(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, leftTypes, rightTypes),
