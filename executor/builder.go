@@ -643,9 +643,12 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 	defaultValues := v.DefaultValues
 	lhsTypes, rhsTypes := leftExec.retTypes(), rightExec.retTypes()
 	if v.InnerChildIdx == 0 {
+		if len(v.LeftConditions) > 0 {
+			b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
+			return nil
+		}
 		e.innerExec = leftExec
 		e.outerExec = rightExec
-		e.innerFilter = v.LeftConditions
 		e.outerFilter = v.RightConditions
 		e.innerKeys = leftHashKey
 		e.outerKeys = rightHashKey
@@ -653,9 +656,12 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 			defaultValues = make([]types.Datum, e.innerExec.Schema().Len())
 		}
 	} else {
+		if len(v.RightConditions) > 0 {
+			b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
+			return nil
+		}
 		e.innerExec = rightExec
 		e.outerExec = leftExec
-		e.innerFilter = v.RightConditions
 		e.outerFilter = v.LeftConditions
 		e.innerKeys = rightHashKey
 		e.outerKeys = leftHashKey
@@ -1067,12 +1073,26 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Execut
 	for i, col := range innerPlan.Schema().Columns {
 		innerTypes[i] = col.RetType
 	}
-	outerFilter, innerFilter := v.LeftConditions, v.RightConditions
-	leftTypes, rightTypes := outerTypes, innerTypes
+
+	var (
+		outerFilter           []expression.Expression
+		leftTypes, rightTypes []*types.FieldType
+	)
 
 	if v.OuterIndex == 1 {
 		leftTypes, rightTypes = innerTypes, outerTypes
-		outerFilter, innerFilter = innerFilter, outerFilter
+		outerFilter = v.RightConditions
+		if len(v.LeftConditions) > 0 {
+			b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
+			return nil
+		}
+	} else {
+		leftTypes, rightTypes = outerTypes, innerTypes
+		outerFilter = v.LeftConditions
+		if len(v.RightConditions) > 0 {
+			b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
+			return nil
+		}
 	}
 	defaultValues := v.DefaultValues
 	if defaultValues == nil {
@@ -1087,7 +1107,6 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Execut
 		innerCtx: innerCtx{
 			readerBuilder: &dataReaderBuilder{innerPlan, b},
 			rowTypes:      innerTypes,
-			filter:        innerFilter,
 		},
 		workerWg:        new(sync.WaitGroup),
 		resultGenerator: newJoinResultGenerator(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, leftTypes, rightTypes),
