@@ -633,7 +633,7 @@ func (c *twoPhaseCommitter) execute(ctx goctx.Context) error {
 		return errors.Annotate(err, txnRetryableMark)
 	}
 
-	err = c.commitKeys(NewBackoffer(commitMaxBackoff, ctx), c.keys)
+	err = c.commitKeys(NewBackoffer(CommitMaxBackoff, ctx), c.keys)
 	if err != nil {
 		if undeterminedErr := c.getUndeterminedErr(); undeterminedErr != nil {
 			log.Warnf("2PC commit result undetermined, err: %v, rpcErr: %v, tid: %v", err, undeterminedErr, c.startTS)

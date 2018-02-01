@@ -131,6 +131,7 @@ type Performance struct {
 	StatsLease      string `toml:"stats-lease" json:"stats-lease"`
 	RunAutoAnalyze  bool   `toml:"run-auto-analyze" json:"run-auto-analyze"`
 	StmtCountLimit  int    `toml:"stmt-count-limit" json:"stmt-count-limit"`
+	CommitTimeout   string `toml:"commit-timeout" json:"commit-timeout"`
 }
 
 // XProtocol is the XProtocol section of the config.
@@ -230,6 +231,7 @@ var defaultConf = Config{
 		StatsLease:      "3s",
 		RunAutoAnalyze:  true,
 		StmtCountLimit:  5000,
+		CommitTimeout:   "41s",
 	},
 	XProtocol: XProtocol{
 		XHost: "0.0.0.0",

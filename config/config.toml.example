@@ -126,6 +126,9 @@ stats-lease = "3s"
 # Run auto analyze worker on this tidb-server.
 run-auto-analyze = true
 
+# max time for commit command, must be twice bigger than raft election timeout.
+commit-timeout = "41s"
+
 [xprotocol]
 # Start TiDB x server.
 xserver = false
