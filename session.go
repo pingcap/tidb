@@ -722,7 +722,7 @@ func (s *session) executeStatement(goCtx goctx.Context, connID uint64, stmtNode 
 		s.ClearValue(context.LastExecuteDDL)
 	}
 	logStmt(stmtNode, s.sessionVars)
-	startTS := time.Now()
+	startTime := time.Now()
 	recordSet, err := runStmt(goCtx, s, stmt)
 	if err != nil {
 		if !kv.ErrKeyExists.Equal(err) {
@@ -730,7 +730,7 @@ func (s *session) executeStatement(goCtx goctx.Context, connID uint64, stmtNode 
 		}
 		return nil, errors.Trace(err)
 	}
-	metrics.SessionExecuteRunDuration.Observe(time.Since(startTS).Seconds())
+	metrics.SessionExecuteRunDuration.Observe(time.Since(startTime).Seconds())
 
 	if recordSet != nil {
 		recordSets = append(recordSets, recordSet)
