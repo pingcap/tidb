@@ -323,8 +323,11 @@ func runTestLoadData(c *C, server *Server) {
 		"xxx row5_col1	- 	row5_col3")
 	c.Assert(err, IsNil)
 
+	originalTxnTotalSizeLimit := kv.TxnTotalSizeLimit
 	// If the MemBuffer can't be committed once in each batch, it will return an error like "transaction is too large".
 	kv.TxnTotalSizeLimit = 10240
+	defer func() { kv.TxnTotalSizeLimit = originalTxnTotalSizeLimit }()
+
 	// support ClientLocalFiles capability
 	runTestsOnNewDB(c, func(config *mysql.Config) {
 		config.AllowAllFiles = true
