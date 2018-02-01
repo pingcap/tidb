@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2018 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package server
+package metrics
 
 import (
 	"strconv"
@@ -21,8 +21,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+// Metrics
 var (
-	queryHistogram = prometheus.NewHistogram(
+	QueryDurationHistogram = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
@@ -31,7 +32,7 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 22),
 		})
 
-	queryCounter = prometheus.NewCounterVec(
+	QueryTotalCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
@@ -39,7 +40,7 @@ var (
 			Help:      "Counter of queries.",
 		}, []string{"type", "status"})
 
-	connGauge = prometheus.NewGauge(
+	ConnGauge = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
@@ -47,7 +48,7 @@ var (
 			Help:      "Number of connections.",
 		})
 
-	executeErrorCounter = prometheus.NewCounterVec(
+	ExecuteErrorCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
@@ -55,7 +56,7 @@ var (
 			Help:      "Counter of execute errors.",
 		}, []string{"type"})
 
-	criticalErrorCounter = prometheus.NewCounter(
+	CriticalErrorCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
@@ -65,13 +66,15 @@ var (
 )
 
 func init() {
-	prometheus.MustRegister(queryHistogram)
-	prometheus.MustRegister(queryCounter)
-	prometheus.MustRegister(connGauge)
-	prometheus.MustRegister(criticalErrorCounter)
+	prometheus.MustRegister(QueryDurationHistogram)
+	prometheus.MustRegister(QueryTotalCounter)
+	prometheus.MustRegister(ConnGauge)
+	prometheus.MustRegister(ExecuteErrorCounter)
+	prometheus.MustRegister(CriticalErrorCounter)
 }
 
-func executeErrorToLabel(err error) string {
+// ExecuteErrorToLabel converts an execute error to label.
+func ExecuteErrorToLabel(err error) string {
 	err = errors.Cause(err)
 	switch x := err.(type) {
 	case *terror.Error:
