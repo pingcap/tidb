@@ -133,7 +133,7 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (ast.RecordSet, error) 
 		}
 		return nil, errors.Trace(err)
 	}
-	stmtID, _, _, err := tk.Se.PrepareStmt(goCtx, sql)
+	stmtID, _, _, err := tk.Se.PrepareStmt(sql)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

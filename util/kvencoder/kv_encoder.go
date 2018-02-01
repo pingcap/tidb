@@ -131,7 +131,7 @@ func (e *kvEncoder) getKvPairsInMemBuffer(tableID int64) (kvPairs []KvPair, affe
 }
 
 func (e *kvEncoder) PrepareStmt(query string) (stmtID uint32, err error) {
-	stmtID, _, _, err = e.se.PrepareStmt(goctx.TODO(), query)
+	stmtID, _, _, err = e.se.PrepareStmt(query)
 	return
 }
 

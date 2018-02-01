@@ -216,7 +216,7 @@ func exec(se Session, sql string, args ...interface{}) (ast.RecordSet, error) {
 		}
 		return nil, err
 	}
-	stmtID, _, _, err := se.PrepareStmt(goCtx, sql)
+	stmtID, _, _, err := se.PrepareStmt(sql)
 	if err != nil {
 		return nil, err
 	}
