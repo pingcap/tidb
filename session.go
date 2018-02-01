@@ -335,7 +335,10 @@ func (s *session) doCommitWithRetry(ctx goctx.Context) error {
 	}
 	err := s.doCommit(ctx)
 	if err != nil {
-		if s.isRetryableError(err) {
+		// Don't retry in BatchInsert mode. As a counter-example, insert into t1 select * from t2,
+		// BatchInsert already commit the first batch 1000 rows, then it commit 1000-2000 and retry the statement,
+		// Finally t1 will have more data than t2, with no errors return to user!
+		if s.isRetryableError(err) && !s.sessionVars.BatchInsert {
 			log.Warnf("[%d] retryable error: %v, txn: %v", s.sessionVars.ConnectionID, err, s.Transaction)
 			// Transactions will retry 2 ~ commitRetryLimit times.
 			// We make larger transactions retry less times to prevent cluster resource outage.
@@ -922,9 +925,18 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 type StmtTxn struct {
 	kv.Transaction
 
-	buf       kv.MemBuffer
-	mutations map[int64]*binlog.TableMutation
-	// TODO: DirtyDB need to be statement level too.
+	buf          kv.MemBuffer
+	mutations    map[int64]*binlog.TableMutation
+	dirtyTableOP []dirtyTableOperation
+}
+
+// dirtyTableOperation represents an operation to dirtyTable, we log the operation
+// first and apply the operation log when statement commit.
+type dirtyTableOperation struct {
+	kind   int
+	tid    int64
+	handle int64
+	row    []types.Datum
 }
 
 // Get overrides the Transaction interface.
@@ -983,6 +995,9 @@ func (st *StmtTxn) cleanup() {
 	for key := range st.mutations {
 		delete(st.mutations, key)
 	}
+	if st.dirtyTableOP != nil {
+		st.dirtyTableOP = st.dirtyTableOP[:0]
+	}
 }
 
 // StmtCommit implements the context.Context interface.
@@ -995,15 +1010,23 @@ func (s *session) StmtCommit() error {
 		}
 		return errors.Trace(st.Transaction.Set(k, v))
 	})
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	// Need to flush binlog.
 	for tableID, delta := range st.mutations {
 		mutation := getBinlogMutation(s, tableID)
-		if err == nil {
-			mergeToMutation(mutation, delta)
+		mergeToMutation(mutation, delta)
+	}
+
+	if len(st.dirtyTableOP) > 0 {
+		dirtyDB := executor.GetDirtyDB(s)
+		for _, op := range st.dirtyTableOP {
+			mergeToDirtyDB(dirtyDB, op)
 		}
 	}
-	return errors.Trace(err)
+	return nil
 }
 
 // StmtRollback implements the context.Context interface.
@@ -1019,6 +1042,10 @@ func (s *session) StmtGetMutation(tableID int64) *binlog.TableMutation {
 		st.mutations[tableID] = &binlog.TableMutation{TableId: tableID}
 	}
 	return st.mutations[tableID]
+}
+
+func (s *session) StmtAddDirtyTableOP(op int, tid int64, handle int64, row []types.Datum) {
+	s.StmtTxn.dirtyTableOP = append(s.StmtTxn.dirtyTableOP, dirtyTableOperation{op, tid, handle, row})
 }
 
 func getBinlogMutation(ctx context.Context, tableID int64) *binlog.TableMutation {
@@ -1040,6 +1067,17 @@ func mergeToMutation(m1, m2 *binlog.TableMutation) {
 	m1.DeletedPks = append(m1.DeletedPks, m2.DeletedPks...)
 	m1.DeletedRows = append(m1.DeletedRows, m2.DeletedRows...)
 	m1.Sequence = append(m1.Sequence, m2.Sequence...)
+}
+
+func mergeToDirtyDB(dirtyDB *executor.DirtyDB, op dirtyTableOperation) {
+	switch op.kind {
+	case executor.DirtyTableAddRow:
+		dirtyDB.AddRow(op.tid, op.handle, op.row)
+	case executor.DirtyTableDeleteRow:
+		dirtyDB.DeleteRow(op.tid, op.handle)
+	case executor.DirtyTableTruncate:
+		dirtyDB.TruncateTable(op.tid)
+	}
 }
 
 func (s *session) Txn() kv.Transaction {
