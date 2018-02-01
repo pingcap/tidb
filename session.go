@@ -334,7 +334,10 @@ func (s *session) doCommitWithRetry(ctx goctx.Context) error {
 	}
 	err := s.doCommit(ctx)
 	if err != nil {
-		if s.isRetryableError(err) {
+		// Don't retry in BatchInsert mode. As a counter-example, insert into t1 select * from t2,
+		// BatchInsert already commit the first batch 1000 rows, then it commit 1000-2000 and retry the statement,
+		// Finally t1 will have more data than t2, with no errors return to user!
+		if s.isRetryableError(err) && !s.sessionVars.BatchInsert {
 			log.Warnf("[%d] retryable error: %v, txn: %v", s.sessionVars.ConnectionID, err, s.Transaction)
 			// Transactions will retry 2 ~ commitRetryLimit times.
 			// We make larger transactions retry less times to prevent cluster resource outage.
