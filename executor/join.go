@@ -324,7 +324,7 @@ func (e *HashJoinExec) fetchOuterChunks(goCtx goctx.Context) {
 	}
 }
 
-// fetchInnerRows fetches all the selected rows from inner executor,
+// fetchInnerRows fetches all rows from inner executor,
 // and append them to e.innerResult.
 func (e *HashJoinExec) fetchInnerRows(goCtx goctx.Context) (err error) {
 	innerResult := chunk.NewList(e.innerExec.retTypes(), e.maxChunkSize)
