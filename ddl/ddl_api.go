@@ -591,13 +591,17 @@ func checkConstraintNames(constraints []*ast.Constraint) error {
 	return nil
 }
 
-func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constraints []*ast.Constraint, ctx context.Context) (tbInfo *model.TableInfo, err error) {
+func buildTableInfo(d *ddl, tableName model.CIStr, cols []*table.Column, constraints []*ast.Constraint, ctx context.Context) (tbInfo *model.TableInfo, err error) {
 	tbInfo = &model.TableInfo{
 		Name: tableName,
 	}
-	tbInfo.ID, err = d.genGlobalID()
-	if err != nil {
-		return nil, errors.Trace(err)
+	// When this function is called by MockTableInfo, we should set a particular table id.
+	// So the `ddl` structure may be nil.
+	if d != nil {
+		tbInfo.ID, err = d.genGlobalID()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 	for _, v := range cols {
 		v.ID = allocateColumnID(tbInfo)
@@ -768,7 +772,7 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 		return errors.Trace(err)
 	}
 
-	tbInfo, err := d.buildTableInfo(ident.Name, cols, newConstraints, ctx)
+	tbInfo, err := buildTableInfo(d, ident.Name, cols, newConstraints, ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
