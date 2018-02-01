@@ -787,7 +787,7 @@ func (cc *clientConn) handleLoadData(goCtx goctx.Context, loadDataInfo *executor
 	}
 
 	txn := loadDataInfo.Ctx.Txn()
-	terror.Log(loadDataInfo.Ctx.StmtCommit())
+	loadDataInfo.Ctx.StmtCommit()
 	if err != nil {
 		if txn != nil && txn.Valid() {
 			if err1 := txn.Rollback(); err1 != nil {
