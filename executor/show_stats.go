@@ -168,6 +168,8 @@ func (e *ShowExec) fetchShowStatsHealthy() {
 				var healthy int64
 				if statsTbl.ModifyCount < statsTbl.Count {
 					healthy = int64((1.0 - float64(statsTbl.ModifyCount)/float64(statsTbl.Count)) * 100.0)
+				} else if statsTbl.ModifyCount == 0 {
+					healthy = 100
 				}
 				e.appendRow([]interface{}{
 					db.Name.O,
