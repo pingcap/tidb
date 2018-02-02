@@ -216,7 +216,11 @@ func genColumnData(table *table, column *column) (string, error) {
 		if isUnique {
 			data = float64(uniqInt64Value(column, -limit, limit)) * scale
 		} else {
-			data = float64(randInt64Value(column, -limit, limit)) * scale
+			if isUnsigned {
+				data = float64(randInt64Value(column, 0, limit)) * scale
+			} else {
+				data = float64(randInt64Value(column, -limit, limit)) * scale
+			}
 		}
 		return strconv.FormatFloat(data, 'f', -1, 64), nil
 	default:
