@@ -165,10 +165,14 @@ func (e *ShowExec) fetchShowStatsHealthy() {
 		for _, tbl := range db.Tables {
 			statsTbl := h.GetTableStats(tbl.ID)
 			if !statsTbl.Pseudo {
+				var healthy int64
+				if statsTbl.ModifyCount < statsTbl.Count {
+					healthy = int64((1.0 - float64(statsTbl.ModifyCount)/float64(statsTbl.Count)) * 100.0)
+				}
 				e.appendRow([]interface{}{
 					db.Name.O,
 					tbl.Name.O,
-					int64((1 - float64(statsTbl.ModifyCount)/float64(statsTbl.Count)) * 100.0),
+					healthy,
 				})
 			}
 		}

@@ -71,6 +71,7 @@ func (s *testSuite) TestShowStatsHealthy(c *C) {
 	tk.MustExec("create table t (a int)")
 	tk.MustExec("create index idx on t(a)")
 	tk.MustExec("analyze table t")
+	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t 0"))
 	tk.MustExec("insert into t values (1), (2)")
 	do, _ := tidb.GetDomain(s.store)
 	do.StatsHandle().DumpStatsDeltaToKV()
@@ -82,4 +83,8 @@ func (s *testSuite) TestShowStatsHealthy(c *C) {
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t 19"))
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t 100"))
+	tk.MustExec("delete from t")
+	do.StatsHandle().DumpStatsDeltaToKV()
+	do.StatsHandle().Update(do.InfoSchema())
+	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t 0"))
 }
