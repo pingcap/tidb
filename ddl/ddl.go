@@ -437,7 +437,7 @@ func (d *ddl) doDDLJob(ctx context.Context, job *model.Job) error {
 	defer func() {
 		ticker.Stop()
 		jobsGauge.WithLabelValues(job.Type.String()).Dec()
-		handleJobHistogram.WithLabelValues(job.Type.String(), returnRetLable(err)).Observe(time.Since(startTime).Seconds())
+		handleJobHistogram.WithLabelValues(job.Type.String(), retLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
 	for {
 		select {

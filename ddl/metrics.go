@@ -89,7 +89,7 @@ func init() {
 	prometheus.MustRegister(ownerHandleSyncerHistogram)
 }
 
-func returnRetLable(err error) string {
+func retLabel(err error) string {
 	if err == nil {
 		return opSucc
 	}

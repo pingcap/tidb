@@ -119,7 +119,7 @@ func (s *schemaVersionSyncer) Init(ctx goctx.Context) error {
 	startTime := time.Now()
 	var err error
 	defer func() {
-		deploySyncerHistogram.WithLabelValues(syncerInit, returnRetLable(err)).Observe(time.Since(startTime).Seconds())
+		deploySyncerHistogram.WithLabelValues(syncerInit, retLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
 
 	_, err = s.etcdCli.Txn(ctx).
@@ -150,7 +150,7 @@ func (s *schemaVersionSyncer) Restart(ctx goctx.Context) error {
 	startTime := time.Now()
 	var err error
 	defer func() {
-		deploySyncerHistogram.WithLabelValues(syncerRestart, returnRetLable(err)).Observe(time.Since(startTime).Seconds())
+		deploySyncerHistogram.WithLabelValues(syncerRestart, retLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
 
 	logPrefix := fmt.Sprintf("[%s] %s", ddlPrompt, s.selfSchemaVerPath)
@@ -181,7 +181,7 @@ func (s *schemaVersionSyncer) UpdateSelfVersion(ctx goctx.Context, version int64
 	err := s.putKV(ctx, putKeyNoRetry, s.selfSchemaVerPath, ver,
 		clientv3.WithLease(s.session.Lease()))
 
-	updateSelfVersionHistogram.WithLabelValues(returnRetLable(err)).Observe(time.Since(startTime).Seconds())
+	updateSelfVersionHistogram.WithLabelValues(retLabel(err)).Observe(time.Since(startTime).Seconds())
 	return errors.Trace(err)
 }
 
@@ -191,7 +191,7 @@ func (s *schemaVersionSyncer) OwnerUpdateGlobalVersion(ctx goctx.Context, versio
 	ver := strconv.FormatInt(version, 10)
 	err := s.putKV(ctx, putKeyRetryUnlimited, DDLGlobalSchemaVersion, ver)
 
-	ownerHandleSyncerHistogram.WithLabelValues(ownerUpdateGlobalVersion, returnRetLable(err)).Observe(time.Since(startTime).Seconds())
+	ownerHandleSyncerHistogram.WithLabelValues(ownerUpdateGlobalVersion, retLabel(err)).Observe(time.Since(startTime).Seconds())
 	return errors.Trace(err)
 }
 
@@ -200,7 +200,7 @@ func (s *schemaVersionSyncer) RemoveSelfVersionPath() error {
 	startTime := time.Now()
 	var err error
 	defer func() {
-		deploySyncerHistogram.WithLabelValues(syncerClear, returnRetLable(err)).Observe(time.Since(startTime).Seconds())
+		deploySyncerHistogram.WithLabelValues(syncerClear, retLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
 
 	ctx := goctx.Background()
@@ -225,7 +225,7 @@ func (s *schemaVersionSyncer) MustGetGlobalVersion(ctx goctx.Context) (int64, er
 	intervalCnt := int(time.Second / keyOpRetryInterval)
 
 	defer func() {
-		ownerHandleSyncerHistogram.WithLabelValues(ownerGetGlobalVersion, returnRetLable(err)).Observe(time.Since(startTime).Seconds())
+		ownerHandleSyncerHistogram.WithLabelValues(ownerGetGlobalVersion, retLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
 	for {
 		if err != nil {
@@ -274,7 +274,7 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx goctx.Context, latestVer
 
 	var err error
 	defer func() {
-		ownerHandleSyncerHistogram.WithLabelValues(ownerGetGlobalVersion, returnRetLable(err)).Observe(time.Since(startTime).Seconds())
+		ownerHandleSyncerHistogram.WithLabelValues(ownerGetGlobalVersion, retLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
 	for {
 		if isContextDone(ctx) {
