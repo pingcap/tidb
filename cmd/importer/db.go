@@ -23,6 +23,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	log "github.com/sirupsen/logrus"
+	"strings"
 )
 
 func intRangeValue(column *column, min int64, max int64) (int64, int64) {
@@ -210,19 +211,31 @@ func genColumnData(table *table, column *column) (string, error) {
 		data = append(data, '\'')
 		return string(data), nil
 	case mysql.TypeNewDecimal:
-		var data float64
+		var data string
 		var limit = int64(math.Pow10(tp.Flen))
-		var scale = math.Pow10(-tp.Decimal)
 		if isUnique {
-			data = float64(uniqInt64Value(column, -limit, limit)) * scale
+			data = fmt.Sprintf("%d", uniqInt64Value(column, 0, limit-1))
 		} else {
 			if isUnsigned {
-				data = float64(randInt64Value(column, 0, limit)) * scale
+				data = fmt.Sprintf("%d", randInt64Value(column, 0, limit-1))
 			} else {
-				data = float64(randInt64Value(column, -limit, limit)) * scale
+				data = fmt.Sprintf("%d", randInt64Value(column, -limit+1, limit-1))
 			}
 		}
-		return strconv.FormatFloat(data, 'f', -1, 64), nil
+		// add leading zero
+		if len(data) < tp.Decimal {
+			data = strings.Repeat("0", tp.Decimal-len(data)) + data
+		}
+
+		dec := data[len(data)-tp.Decimal:]
+		if data = data[:len(data)-tp.Decimal]; data == "" {
+			data = "0"
+		}
+		if dec != "" {
+			data = data + "." + dec
+		}
+
+		return data, nil
 	default:
 		return "", errors.Errorf("unsupported column type - %v", column)
 	}
