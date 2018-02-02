@@ -97,7 +97,6 @@ func (task *lookupTableTask) getRow(schema *expression.Schema) (Row, error) {
 	return nil, nil
 }
 
-//
 func tableRangesToKVRanges(tid int64, ranges []*ranger.NewRange) []kv.KeyRange {
 	krs := make([]kv.KeyRange, 0, len(ranges))
 	for _, ran := range ranges {
