@@ -1586,12 +1586,16 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	}
 	tableInfo := tbl.Meta()
 	handle := domain.GetDomain(b.ctx).StatsHandle()
-	var statisticTable *statistics.Table
+	var statsTbl *statistics.Table
 	if handle == nil {
 		// When the first session is created, the handle hasn't been initialized.
-		statisticTable = statistics.PseudoTable(tableInfo.ID)
+		statsTbl = statistics.PseudoTable(tableInfo.ID)
 	} else {
-		statisticTable = handle.GetTableStats(tableInfo.ID)
+		statsTbl = handle.GetTableStats(tableInfo.ID)
+		// TODO: We should consider to add it to metric.
+		if statsTbl.Count == 0 || float64(statsTbl.ModifyCount) / float64(statsTbl.Count) > 0.7 {
+			statsTbl = statistics.PseudoTable(tableInfo.ID)
+		}
 	}
 	indices, includeTableScan, err := availableIndices(tn.IndexHints, tableInfo)
 	if err != nil {
@@ -1609,7 +1613,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	ds := DataSource{
 		indexHints:       tn.IndexHints,
 		tableInfo:        tableInfo,
-		statisticTable:   statisticTable,
+		statisticTable:   statsTbl,
 		DBName:           schemaName,
 		Columns:          make([]*model.ColumnInfo, 0, len(columns)),
 		availableIndices: &avalableIndices,

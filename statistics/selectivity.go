@@ -84,13 +84,13 @@ func (t *Table) Selectivity(ctx context.Context, exprs []expression.Expression) 
 	if t.Count == 0 {
 		return 1, nil
 	}
+	if len(exprs) == 0 {
+		return 1.0, nil
+	}
 	// TODO: If len(exprs) is bigger than 63, we could use bitset structure to replace the int64.
 	// This will simplify some code and speed up if we use this rather than a boolean slice.
 	if t.Pseudo || len(exprs) > 63 || (len(t.Columns) == 0 && len(t.Indices) == 0) {
 		return pseudoSelectivity(exprs), nil
-	}
-	if len(exprs) == 0 {
-		return 1.0, nil
 	}
 	var sets []*exprSet
 	sc := ctx.GetSessionVars().StmtCtx
