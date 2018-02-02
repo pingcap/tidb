@@ -122,7 +122,7 @@ func (h *StmtHistory) Count() int {
 type session struct {
 	// processInfo is used by ShowProcess(), and should be modified atomically.
 	processInfo atomic.Value
-	txn         StmtTxn
+	txn         TxnState
 
 	mu struct {
 		sync.RWMutex
@@ -908,11 +908,11 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 	return nil
 }
 
-// StmtTxn wraps kv.Transaction to provide a new kv.Transaction.
+// TxnState wraps kv.Transaction to provide a new kv.Transaction.
 // 1. It holds all statement related modification in the buffer before flush to the txn,
 // so if execute statement meets error, the txn won't be made dirty.
 // 2. It's a lazy transaction, that means it's a txnFuture befort StartTS() is really need.
-type StmtTxn struct {
+type TxnState struct {
 	kv.Transaction
 	txnFuture *txnFuture
 
@@ -925,27 +925,45 @@ type StmtTxn struct {
 	fail error
 }
 
-func (st *StmtTxn) init() {
+func (st *TxnState) init() {
 	st.buf = kv.NewMemDbBuffer(kv.DefaultTxnMembufCap)
 	st.mutations = make(map[int64]*binlog.TableMutation)
 }
 
 // Valid overrides Transaction interface.
-func (st *StmtTxn) Valid() bool {
+func (st *TxnState) Valid() bool {
 	return st.Transaction != nil && st.Transaction.Valid()
 }
 
-func (st *StmtTxn) changeInvalidToValid(txn kv.Transaction) {
+func (st *TxnState) validEx() bool {
+	return st.txnFuture != nil || st.Valid()
+}
+
+func (st *TxnState) String() string {
+	if st.Transaction != nil {
+		return st.Transaction.String()
+	}
+	if st.txnFuture != nil {
+		return "txnFuture"
+	}
+	return "invalid transaction"
+}
+
+func (st *TxnState) changeInvalidToValid(txn kv.Transaction) {
 	st.Transaction = txn
 	st.txnFuture = nil
 }
 
-func (st *StmtTxn) changeInvalidToFuture(future *txnFuture) {
+func (st *TxnState) changeInvalidToFuture(future *txnFuture) {
 	st.Transaction = nil
 	st.txnFuture = future
 }
 
-func (st *StmtTxn) changeFutureToValid() error {
+func (st *TxnState) changeFutureToValid() error {
+	if st.txnFuture == nil {
+		return errors.New("transaction future is not set")
+	}
+
 	future := st.txnFuture
 	st.txnFuture = nil
 
@@ -958,7 +976,7 @@ func (st *StmtTxn) changeFutureToValid() error {
 	return nil
 }
 
-func (st *StmtTxn) changeToInvalid() {
+func (st *TxnState) changeToInvalid() {
 	st.Transaction = nil
 	st.txnFuture = nil
 }
@@ -973,7 +991,7 @@ type dirtyTableOperation struct {
 }
 
 // Commit overrides the Transaction interface.
-func (st *StmtTxn) Commit(goCtx goctx.Context) error {
+func (st *TxnState) Commit(goCtx goctx.Context) error {
 	if st.fail != nil {
 		// If any error happen during StmtCommit, don't commit this transaction.
 		err := st.fail
@@ -984,7 +1002,7 @@ func (st *StmtTxn) Commit(goCtx goctx.Context) error {
 }
 
 // Rollback overrides the Transaction interface.
-func (st *StmtTxn) Rollback() error {
+func (st *TxnState) Rollback() error {
 	if st.fail != nil {
 		log.Error(errors.Trace(st.fail))
 		st.fail = nil
@@ -993,7 +1011,7 @@ func (st *StmtTxn) Rollback() error {
 }
 
 // Get overrides the Transaction interface.
-func (st *StmtTxn) Get(k kv.Key) ([]byte, error) {
+func (st *TxnState) Get(k kv.Key) ([]byte, error) {
 	val, err := st.buf.Get(k)
 	if kv.IsErrNotFound(err) {
 		val, err = st.Transaction.Get(k)
@@ -1008,17 +1026,17 @@ func (st *StmtTxn) Get(k kv.Key) ([]byte, error) {
 }
 
 // Set overrides the Transaction interface.
-func (st *StmtTxn) Set(k kv.Key, v []byte) error {
+func (st *TxnState) Set(k kv.Key, v []byte) error {
 	return st.buf.Set(k, v)
 }
 
 // Delete overrides the Transaction interface.
-func (st *StmtTxn) Delete(k kv.Key) error {
+func (st *TxnState) Delete(k kv.Key) error {
 	return st.buf.Delete(k)
 }
 
 // Seek overrides the Transaction interface.
-func (st *StmtTxn) Seek(k kv.Key) (kv.Iterator, error) {
+func (st *TxnState) Seek(k kv.Key) (kv.Iterator, error) {
 	bufferIt, err := st.buf.Seek(k)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1031,7 +1049,7 @@ func (st *StmtTxn) Seek(k kv.Key) (kv.Iterator, error) {
 }
 
 // SeekReverse overrides the Transaction interface.
-func (st *StmtTxn) SeekReverse(k kv.Key) (kv.Iterator, error) {
+func (st *TxnState) SeekReverse(k kv.Key) (kv.Iterator, error) {
 	bufferIt, err := st.buf.SeekReverse(k)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1043,7 +1061,7 @@ func (st *StmtTxn) SeekReverse(k kv.Key) (kv.Iterator, error) {
 	return kv.NewUnionIter(bufferIt, retrieverIt, true)
 }
 
-func (st *StmtTxn) cleanup() {
+func (st *TxnState) cleanup() {
 	st.buf.Reset()
 	for key := range st.mutations {
 		delete(st.mutations, key)
@@ -1062,6 +1080,10 @@ func (s *session) StmtCommit() {
 	defer s.txn.cleanup()
 	st := &s.txn
 	err := kv.WalkMemBuffer(st.buf, func(k kv.Key, v []byte) error {
+		// gofail: var mockStmtCommitError bool
+		// if mockStmtCommitError {
+		// 	return errors.New("mock stmt commit error")
+		// }
 		if len(v) == 0 {
 			return errors.Trace(st.Transaction.Delete(k))
 		}
@@ -1138,7 +1160,7 @@ func mergeToDirtyDB(dirtyDB *executor.DirtyDB, op dirtyTableOperation) {
 }
 
 func (s *session) Txn() kv.Transaction {
-	if s.txn.Transaction == nil {
+	if !s.txn.Valid() {
 		return nil
 	}
 	return &s.txn
@@ -1521,7 +1543,7 @@ func (s *session) getTxnFuture(ctx goctx.Context) *txnFuture {
 // PrepareTxnCtx starts a goroutine to begin a transaction if needed, and creates a new transaction context.
 // It is called before we execute a sql query.
 func (s *session) PrepareTxnCtx(ctx goctx.Context) {
-	if s.txn.Valid() || s.txn.txnFuture != nil {
+	if s.txn.validEx() {
 		return
 	}
 
@@ -1551,10 +1573,7 @@ func (s *session) ActivePendingTxn() error {
 	if s.txn.Valid() {
 		return nil
 	}
-	if s.txn.txnFuture == nil {
-		return errors.New("transaction future is not set")
-	}
-	// The transaction status should be StmtTxnFuture.
+	// The transaction status should be TxnStateFuture.
 	if err := s.txn.changeFutureToValid(); err != nil {
 		return errors.Trace(err)
 	}
@@ -1570,9 +1589,6 @@ func (s *session) ActivePendingTxn() error {
 func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	if s.txn.Valid() {
 		return nil
-	}
-	if s.txn.txnFuture == nil {
-		return errors.New("transaction channel is not set")
 	}
 
 	// no need to get txn from txnFutureCh since txn should init with startTs
