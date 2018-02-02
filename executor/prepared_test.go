@@ -16,6 +16,7 @@ package executor_test
 import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/plan"
@@ -70,8 +71,30 @@ func (s *testSuite) TestPrepared(c *C) {
 		query := "select c1, c2 from prepare_test where c1 = ?"
 		stmtId, _, _, err := tk.Se.PrepareStmt(query)
 		c.Assert(err, IsNil)
-		_, err = tk.Se.ExecutePreparedStmt(goCtx, stmtId, 1)
+		rs, err := tk.Se.ExecutePreparedStmt(goCtx, stmtId, 1)
+		rows, err := tidb.GetRows4Test(goCtx, tk.Se, rs)
 		c.Assert(err, IsNil)
+		c.Assert(rows, NotNil)
+		c.Assert(rs.Close(), IsNil)
+
+		tk.MustExec("insert prepare_test (c1) values (2),(2),(NULL)")
+		rs, err = tk.Se.ExecutePreparedStmt(goCtx, stmtId, 2)
+		rows, err = tidb.GetRows4Test(goCtx, tk.Se, rs)
+		c.Assert(err, IsNil)
+		c.Assert(rows, NotNil)
+		c.Assert(rs.Close(), IsNil)
+
+		tk.MustExec("begin")
+		tk.MustExec("insert prepare_test (c1) values (3),(2),(NULL)")
+		query = "select c1, c2 from prepare_test where c1 = ?"
+		stmtId, _, _, err = tk.Se.PrepareStmt(query)
+		c.Assert(err, IsNil)
+		tk.MustExec("rollback")
+		rs, err = tk.Se.ExecutePreparedStmt(goCtx, stmtId, 3)
+		rows, err = tidb.GetRows4Test(goCtx, tk.Se, rs)
+		c.Assert(err, IsNil)
+		c.Assert(rows, IsNil)
+		c.Assert(rs.Close(), IsNil)
 
 		// Check that ast.Statement created by executor.CompileExecutePreparedStmt has query text.
 		stmt, err := executor.CompileExecutePreparedStmt(tk.Se, stmtId, 1)
@@ -82,7 +105,7 @@ func (s *testSuite) TestPrepared(c *C) {
 		tk.Se.PrepareTxnCtx(goCtx)
 		err = stmt.RebuildPlan()
 		c.Assert(err, IsNil)
-		rs, err := stmt.Exec(goCtx)
+		rs, err = stmt.Exec(goCtx)
 		c.Assert(err, IsNil)
 		_, err = rs.Next(goCtx)
 		c.Assert(err, IsNil)
