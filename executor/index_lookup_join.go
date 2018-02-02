@@ -74,7 +74,6 @@ type innerCtx struct {
 	readerBuilder *dataReaderBuilder
 	rowTypes      []*types.FieldType
 	keyCols       []int
-	filter        expression.CNFExprs
 }
 
 type lookUpJoinTask struct {
@@ -485,8 +484,6 @@ func (iw *innerWorker) fetchInnerResults(goCtx goctx.Context, task *lookUpJoinTa
 	}
 	defer terror.Call(innerExec.Close)
 	innerResult := chunk.NewList(innerExec.retTypes(), iw.ctx.GetSessionVars().MaxChunkSize)
-	innerIter := chunk.NewIterator4Chunk(iw.executorChk)
-	selected := make([]bool, 0, iw.ctx.GetSessionVars().MaxChunkSize)
 	for {
 		err := innerExec.NextChunk(goCtx, iw.executorChk)
 		if err != nil {
@@ -495,20 +492,8 @@ func (iw *innerWorker) fetchInnerResults(goCtx goctx.Context, task *lookUpJoinTa
 		if iw.executorChk.NumRows() == 0 {
 			break
 		}
-		if iw.filter == nil {
-			innerResult.Add(iw.executorChk)
-			iw.executorChk = chunk.NewChunk(iw.innerCtx.rowTypes)
-			continue
-		}
-		selected, err = expression.VectorizedFilter(iw.ctx, iw.filter, innerIter, selected)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		for row := innerIter.Begin(); row != innerIter.End(); row = innerIter.Next() {
-			if selected[row.Idx()] {
-				innerResult.AppendRow(row)
-			}
-		}
+		innerResult.Add(iw.executorChk)
+		iw.executorChk = chunk.NewChunk(iw.innerCtx.rowTypes)
 	}
 	task.innerResult = innerResult
 	return nil

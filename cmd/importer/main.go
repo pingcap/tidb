@@ -50,6 +50,13 @@ func main() {
 	}
 	defer closeDBs(dbs)
 
+	if len(cfg.StatsCfg.Path) > 0 {
+		table.statsInfo, err = loadStats(table.tblInfo, cfg.StatsCfg.Path)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+
 	err = execSQL(dbs[0], cfg.DDLCfg.TableSQL)
 	if err != nil {
 		log.Fatal(err)

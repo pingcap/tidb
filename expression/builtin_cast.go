@@ -1176,11 +1176,11 @@ func (b *builtinCastDurationAsTimeSig) evalTime(row types.Row) (res types.Time, 
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	res, err = val.ConvertToTime(b.tp.Tp)
+	sc := b.ctx.GetSessionVars().StmtCtx
+	res, err = val.ConvertToTime(sc, b.tp.Tp)
 	if err != nil {
 		return res, false, errors.Trace(err)
 	}
-	sc := b.ctx.GetSessionVars().StmtCtx
 	res, err = res.RoundFrac(sc, b.tp.Decimal)
 	return res, false, errors.Trace(err)
 }
