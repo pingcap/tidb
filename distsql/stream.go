@@ -152,7 +152,7 @@ func (r *streamResult) NextRaw(goCtx goctx.Context) ([]byte, error) {
 }
 
 func (r *streamResult) Close() error {
-	if r.scanKeys > 0 {
+	if r.scanKeys >= 0 {
 		metrics.DistSQLScanKeysHistogram.Observe(float64(r.scanKeys))
 	}
 	metrics.DistSQLPartialCountHistogram.Observe(float64(r.partialCount))

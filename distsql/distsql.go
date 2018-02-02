@@ -82,8 +82,8 @@ type selectResult struct {
 	selectResp *tipb.SelectResponse
 	respChkIdx int
 
-	scanKeys     int64
-	partialCount int64
+	scanKeys     int64 // number of keys scanned by TiKV.
+	partialCount int64 // number of partial results.
 }
 
 type newResultWithErr struct {
@@ -230,10 +230,10 @@ func (r *selectResult) readRowsData(chk *chunk.Chunk) (err error) {
 // Close closes selectResult.
 func (r *selectResult) Close() error {
 	// Close this channel tell fetch goroutine to exit.
-	if r.scanKeys > 0 {
+	if r.scanKeys >= 0 {
 		metrics.DistSQLScanKeysHistogram.Observe(float64(r.scanKeys))
-		metrics.DistSQLPartialCountHistogram.Observe(float64(r.partialCount))
 	}
+	metrics.DistSQLPartialCountHistogram.Observe(float64(r.partialCount))
 	close(r.closed)
 	return r.resp.Close()
 }
