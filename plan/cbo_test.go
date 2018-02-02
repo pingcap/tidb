@@ -388,7 +388,7 @@ func (s *testAnalyzeSuite) TestOutdatedAnalyze(c *C) {
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	// FIXME: The count for table scan is wrong.
 	testKit.MustQuery("explain select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
-		"TableScan_5 Selection_6  cop table:t, range:[-inf,+inf], keep order:false 28.799999999999997",
+		"TableScan_5 Selection_6  cop table:t, range:[-inf,+inf], keep order:false 80",
 		"Selection_6  TableScan_5 cop le(test.t.a, 5), le(test.t.b, 5) 28.799999999999997",
 		"TableReader_7   root data:Selection_6 28.799999999999997",
 	))
