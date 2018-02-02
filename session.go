@@ -838,7 +838,6 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 
 	goCtx := goctx.Background()
 	inTxn := s.GetSessionVars().InTxn()
-	isAutocommit := s.GetSessionVars().IsAutocommit()
 	s.PrepareTxnCtx(goCtx)
 	prepareExec := executor.NewPrepareExec(s, executor.GetInfoSchema(s), sql)
 	err = prepareExec.DoPrepare()
@@ -846,7 +845,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 		err = errors.Trace(err)
 		return
 	}
-	if !inTxn && isAutocommit {
+	if !inTxn {
 		err = s.CommitTxn(goCtx)
 		if err != nil {
 			err = errors.Trace(err)
