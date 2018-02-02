@@ -152,6 +152,14 @@ func (e *PrepareExec) DoPrepare() {
 	}
 	if result, ok := stmt.(ast.ResultSetNode); ok {
 		e.Fields = result.GetResultFields()
+		for _, fields := range e.Fields {
+			if fields.TableAsName.O == "" {
+				fields.TableAsName = fields.Table.Name
+			}
+			if fields.ColumnAsName.O == "" {
+				fields.ColumnAsName = fields.Column.Name
+			}
+		}
 	}
 
 	// The parameter markers are appended in visiting order, which may not
