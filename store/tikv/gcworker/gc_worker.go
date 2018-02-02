@@ -104,7 +104,8 @@ const (
 	gcDefaultLifeTime        = time.Minute * 10
 	gcSafePointKey           = "tikv_gc_safe_point"
 	gcSafePointCacheInterval = tikv.GcSafePointCacheInterval
-	gcScanLockLimit          = 1000
+	// we don't want gc to sweep out the cached info belong to other processes, like coprocessor
+	gcScanLockLimit          = tikv.ResolvedCacheSize / 2
 )
 
 var gcVariableComments = map[string]string{
@@ -496,6 +497,8 @@ func resolveLocks(ctx goctx.Context, store tikv.Storage, safePoint uint64, ident
 				break
 			}
 		} else {
+			log.Infof("[gc worker] %s, region %d has more than %d locks", identifier, loc.Region.GetID(), gcScanLockLimit)
+			gcRegionTooMuchLocksCounter.Inc()
 			key = locks[len(locks)-1].Key
 		}
 	}

@@ -241,7 +241,7 @@ func (s *tikvStore) runSafePointChecker() {
 				d = gcSafePointUpdateInterval
 			} else {
 				loadSafepointCounter.WithLabelValues("fail").Inc()
-				log.Errorf("[tikv] fail to load safepoint: %v", err)
+				log.Errorf("[check visibility] fail to load safepoint from pd: %v", err)
 				d = gcSafePointQuickRepeatInterval
 			}
 		case <-s.Closed():

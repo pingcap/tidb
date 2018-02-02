@@ -100,10 +100,12 @@ func (a *connArray) Init(addr string, security config.Security) error {
 			grpc_prometheus.StreamClientInterceptor,
 			grpc_opentracing.StreamClientInterceptor(),
 		)
-		conn, err := grpc.Dial(
+
+		ctx, cancel := goctx.WithTimeout(goctx.Background(), dialTimeout)
+		conn, err := grpc.DialContext(
+			ctx,
 			addr,
 			opt,
-			grpc.WithTimeout(dialTimeout),
 			grpc.WithInitialWindowSize(grpcInitialWindowSize),
 			grpc.WithInitialConnWindowSize(grpcInitialConnWindowSize),
 			grpc.WithUnaryInterceptor(unaryInterceptor),
@@ -111,7 +113,7 @@ func (a *connArray) Init(addr string, security config.Security) error {
 			grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(MaxCallMsgSize)),
 			grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(MaxSendMsgSize)),
 		)
-
+		cancel()
 		if err != nil {
 			// Cleanup if the initialization fails.
 			a.Close()
