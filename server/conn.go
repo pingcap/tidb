@@ -137,7 +137,7 @@ func (cc *clientConn) Close() error {
 	delete(cc.server.clients, cc.connectionID)
 	connections := len(cc.server.clients)
 	cc.server.rwlock.Unlock()
-	connGauge.Set(float64(connections))
+	metrics.ConnGauge.Set(float64(connections))
 	err := cc.bufReadConn.Close()
 	terror.Log(errors.Trace(err))
 	if cc.ctx != nil {
@@ -462,7 +462,7 @@ func (cc *clientConn) Run() {
 			} else if terror.ErrCritical.Equal(err) {
 				log.Errorf("[%d] critical error, stop the server listener %s",
 					cc.connectionID, errors.ErrorStack(err))
-				criticalErrorCounter.Add(1)
+				metrics.CriticalErrorCounter.Add(1)
 				select {
 				case cc.server.stopListenerCh <- struct{}{}:
 				default:
@@ -547,11 +547,11 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 		label = strconv.Itoa(int(cmd))
 	}
 	if err != nil {
-		queryCounter.WithLabelValues(label, "Error").Inc()
+		metrics.QueryTotalCounter.WithLabelValues(label, "Error").Inc()
 	} else {
-		queryCounter.WithLabelValues(label, "OK").Inc()
+		metrics.QueryTotalCounter.WithLabelValues(label, "OK").Inc()
 	}
-	queryHistogram.Observe(time.Since(startTime).Seconds())
+	metrics.QueryDurationHistogram.Observe(time.Since(startTime).Seconds())
 }
 
 // dispatch handles client request based on command which is the first byte of the data.
@@ -729,6 +729,7 @@ func insertDataWithCommit(goCtx goctx.Context, prevData, curData []byte, loadDat
 		if !reachLimit {
 			break
 		}
+		terror.Log(loadDataInfo.Ctx.StmtCommit())
 		// Make sure that there are no retries when committing.
 		if err = loadDataInfo.Ctx.RefreshTxnCtx(goCtx); err != nil {
 			return nil, errors.Trace(err)
@@ -837,7 +838,7 @@ func (cc *clientConn) handleLoadStats(goCtx goctx.Context, loadStatsInfo *execut
 func (cc *clientConn) handleQuery(goCtx goctx.Context, sql string) (err error) {
 	rs, err := cc.ctx.Execute(goCtx, sql)
 	if err != nil {
-		executeErrorCounter.WithLabelValues(executeErrorToLabel(err)).Inc()
+		metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
 		return errors.Trace(err)
 	}
 	if rs != nil {
