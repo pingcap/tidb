@@ -26,6 +26,7 @@ import (
 	"github.com/coreos/etcd/etcdserver/api/v3rpc/rpctypes"
 	"github.com/coreos/etcd/mvcc/mvccpb"
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/terror"
 	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
@@ -125,6 +126,11 @@ func setManagerSessionTTL() error {
 // NewSession creates a new etcd session.
 func NewSession(ctx goctx.Context, logPrefix string, etcdCli *clientv3.Client, retryCnt, ttl int) (*concurrency.Session, error) {
 	var err error
+	startTime := time.Now()
+	defer func() {
+		metrics.NewSessionHistogram.WithLabelValues(logPrefix, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+	}()
+
 	var etcdSession *concurrency.Session
 	failedCnt := 0
 	for i := 0; i < retryCnt; i++ {
@@ -149,7 +155,10 @@ func NewSession(ctx goctx.Context, logPrefix string, etcdCli *clientv3.Client, r
 		if failedCnt%logIntervalCnt == 0 {
 			log.Warnf("%s failed to new session, err %v", logPrefix, err)
 		}
+
+		metrics.NewSessionHistogram.WithLabelValues(logPrefix, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 		time.Sleep(newSessionRetryInterval)
+		startTime = time.Now()
 		failedCnt++
 	}
 	return etcdSession, errors.Trace(err)
@@ -171,6 +180,10 @@ func (m *ownerManager) campaignLoop(ctx goctx.Context, etcdSession *concurrency.
 	logPrefix := fmt.Sprintf("[%s] %s ownerManager %s", m.prompt, m.key, m.id)
 	var err error
 	for {
+		if err != nil {
+			metrics.CampaignOwnerHistogram.WithLabelValues(logPrefix, err.Error()).Inc()
+		}
+
 		select {
 		case <-etcdSession.Done():
 			log.Infof("%s etcd session is done, creates a new one", logPrefix)
@@ -211,6 +224,8 @@ func (m *ownerManager) campaignLoop(ctx goctx.Context, etcdSession *concurrency.
 		m.SetOwner(true)
 		m.watchOwner(ctx, etcdSession, ownerKey)
 		m.SetOwner(false)
+
+		metrics.CampaignOwnerHistogram.WithLabelValues(logPrefix, metrics.NoLongerOwner).Inc()
 		log.Warnf("%s isn't the owner", logPrefix)
 	}
 }
@@ -263,19 +278,23 @@ func (m *ownerManager) watchOwner(ctx goctx.Context, etcdSession *concurrency.Se
 		select {
 		case resp := <-watchCh:
 			if resp.Canceled {
+				metrics.WatchOwnerHistogram.WithLabelValues(logPrefix, metrics.Cancelled).Inc()
 				log.Infof("%s failed, no owner", logPrefix)
 				return
 			}
 
 			for _, ev := range resp.Events {
 				if ev.Type == mvccpb.DELETE {
+					metrics.WatchOwnerHistogram.WithLabelValues(logPrefix, metrics.Deleted).Inc()
 					log.Infof("%s failed, owner is deleted", logPrefix)
 					return
 				}
 			}
 		case <-etcdSession.Done():
+			metrics.WatchOwnerHistogram.WithLabelValues(logPrefix, metrics.SessionDone).Inc()
 			return
 		case <-ctx.Done():
+			metrics.WatchOwnerHistogram.WithLabelValues(logPrefix, metrics.CtxDone).Inc()
 			return
 		}
 	}
