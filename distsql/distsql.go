@@ -152,6 +152,7 @@ func (r *selectResult) Next(goCtx goctx.Context) (PartialResult, error) {
 func (r *selectResult) NextRaw(goCtx goctx.Context) ([]byte, error) {
 	re := <-r.results
 	r.partialCount++
+	r.scanKeys = -1
 	return re.result, errors.Trace(re.err)
 }
 

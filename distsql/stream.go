@@ -148,6 +148,8 @@ func (r *streamResult) flushToChunk(chk *chunk.Chunk) (err error) {
 }
 
 func (r *streamResult) NextRaw(goCtx goctx.Context) ([]byte, error) {
+	r.partialCount++
+	r.scanKeys = -1
 	return r.resp.Next(goCtx)
 }
 
