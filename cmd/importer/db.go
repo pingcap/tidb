@@ -141,7 +141,7 @@ func genColumnData(table *table, column *column) (string, error) {
 			data = uniqInt64Value(column, 0, math.MaxInt64)
 		} else {
 			if isUnsigned {
-				data = randInt64Value(column, 0, math.MaxInt64)
+				data = randInt64Value(column, 0, math.MaxInt64-1)
 			} else {
 				data = randInt64Value(column, math.MinInt32, math.MaxInt32)
 			}
@@ -163,7 +163,7 @@ func genColumnData(table *table, column *column) (string, error) {
 			data = float64(uniqInt64Value(column, 0, math.MaxInt64))
 		} else {
 			if isUnsigned {
-				data = float64(randInt64Value(column, 0, math.MaxInt64))
+				data = float64(randInt64Value(column, 0, math.MaxInt64-1))
 			} else {
 				data = float64(randInt64Value(column, math.MinInt32, math.MaxInt32))
 			}
@@ -209,6 +209,16 @@ func genColumnData(table *table, column *column) (string, error) {
 
 		data = append(data, '\'')
 		return string(data), nil
+	case mysql.TypeNewDecimal:
+		var data float64
+		var limit = int64(math.Pow10(tp.Flen))
+		var scale = math.Pow10(-tp.Decimal)
+		if isUnique {
+			data = float64(uniqInt64Value(column, -limit, limit)) * scale
+		} else {
+			data = float64(randInt64Value(column, -limit, limit)) * scale
+		}
+		return strconv.FormatFloat(data, 'f', -1, 64), nil
 	default:
 		return "", errors.Errorf("unsupported column type - %v", column)
 	}
