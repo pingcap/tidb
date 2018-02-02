@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
@@ -272,10 +273,10 @@ func (s *schemaLeaseChecker) Check(txnTS uint64) error {
 		case domain.ResultSucc:
 			return nil
 		case domain.ResultFail:
-			schemaLeaseErrorCounter.WithLabelValues("changed").Inc()
+			metrics.SchemaLeaseErrorCounter.WithLabelValues("changed").Inc()
 			return domain.ErrInfoSchemaChanged
 		case domain.ResultUnknown:
-			schemaLeaseErrorCounter.WithLabelValues("outdated").Inc()
+			metrics.SchemaLeaseErrorCounter.WithLabelValues("outdated").Inc()
 			time.Sleep(time.Duration(schemaOutOfDateRetryInterval))
 		}
 
@@ -334,7 +335,10 @@ func (s *session) doCommitWithRetry(ctx goctx.Context) error {
 	}
 	err := s.doCommit(ctx)
 	if err != nil {
-		if s.isRetryableError(err) {
+		// Don't retry in BatchInsert mode. As a counter-example, insert into t1 select * from t2,
+		// BatchInsert already commit the first batch 1000 rows, then it commit 1000-2000 and retry the statement,
+		// Finally t1 will have more data than t2, with no errors return to user!
+		if s.isRetryableError(err) && !s.sessionVars.BatchInsert {
 			log.Warnf("[%d] retryable error: %v, txn: %v", s.sessionVars.ConnectionID, err, s.Transaction)
 			// Transactions will retry 2 ~ commitRetryLimit times.
 			// We make larger transactions retry less times to prevent cluster resource outage.
@@ -364,11 +368,11 @@ func (s *session) CommitTxn(ctx goctx.Context) error {
 	}
 
 	err := s.doCommitWithRetry(ctx)
-	label := "OK"
+	label := metrics.LblOK
 	if err != nil {
-		label = "Error"
+		label = metrics.LblError
 	}
-	transactionCounter.WithLabelValues(label).Inc()
+	metrics.TransactionCounter.WithLabelValues(label).Inc()
 	return errors.Trace(err)
 }
 
@@ -381,6 +385,7 @@ func (s *session) RollbackTxn(ctx goctx.Context) error {
 	var err error
 	if s.Transaction != nil && s.Transaction.Valid() {
 		err = s.Transaction.Rollback()
+		metrics.TransactionCounter.WithLabelValues(metrics.LblRollback).Inc()
 	}
 	s.cleanRetryInfo()
 	s.Transaction = nil
@@ -445,7 +450,8 @@ func (s *session) retry(goCtx goctx.Context, maxCnt int) error {
 	retryCnt := 0
 	defer func() {
 		s.sessionVars.RetryInfo.Retrying = false
-		sessionRetry.Observe(float64(retryCnt))
+		// retryCnt only increments on retryable error, so +1 here.
+		metrics.SessionRetry.Observe(float64(retryCnt + 1))
 		s.Transaction = nil
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	}()
@@ -492,12 +498,14 @@ func (s *session) retry(goCtx goctx.Context, maxCnt int) error {
 			}
 		}
 		if !s.isRetryableError(err) {
-			log.Warnf("[%d] session:%v, err:%v", connID, s, err)
+			log.Warnf("[%d] session:%v, err:%v in retry", connID, s, err)
+			metrics.SessionRetryErrorCounter.WithLabelValues(metrics.LblUnretryable)
 			return errors.Trace(err)
 		}
 		retryCnt++
 		if retryCnt >= maxCnt {
 			log.Warnf("[%d] Retry reached max count %d", connID, retryCnt)
+			metrics.SessionRetryErrorCounter.WithLabelValues(metrics.LblReachMax)
 			return errors.Trace(err)
 		}
 		log.Warnf("[%d] retryable error: %v, txn: %v", connID, err, s.Transaction)
@@ -536,6 +544,7 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) ([]types.Ro
 	}
 	se := tmp.(*session)
 	defer s.sysSessionPool().Put(tmp)
+	metrics.SessionRestrictedSQLCounter.Inc()
 
 	recordSets, err := se.Execute(goCtx, sql)
 	if err != nil {
@@ -716,7 +725,7 @@ func (s *session) executeStatement(goCtx goctx.Context, connID uint64, stmtNode 
 		s.ClearValue(context.LastExecuteDDL)
 	}
 	logStmt(stmtNode, s.sessionVars)
-	startTS := time.Now()
+	startTime := time.Now()
 	recordSet, err := runStmt(goCtx, s, stmt)
 	if err != nil {
 		if !kv.ErrKeyExists.Equal(err) {
@@ -724,7 +733,7 @@ func (s *session) executeStatement(goCtx goctx.Context, connID uint64, stmtNode 
 		}
 		return nil, errors.Trace(err)
 	}
-	sessionExecuteRunDuration.Observe(time.Since(startTS).Seconds())
+	metrics.SessionExecuteRunDuration.Observe(time.Since(startTime).Seconds())
 
 	if recordSet != nil {
 		recordSets = append(recordSets, recordSet)
@@ -785,7 +794,7 @@ func (s *session) Execute(goCtx goctx.Context, sql string) (recordSets []ast.Rec
 			log.Warnf("[%d] parse error:\n%v\n%s", connID, err, sql)
 			return nil, errors.Trace(err)
 		}
-		sessionExecuteParseDuration.Observe(time.Since(startTS).Seconds())
+		metrics.SessionExecuteParseDuration.Observe(time.Since(startTS).Seconds())
 
 		compiler := executor.Compiler{Ctx: s}
 		for _, stmtNode := range stmtNodes {
@@ -800,7 +809,7 @@ func (s *session) Execute(goCtx goctx.Context, sql string) (recordSets []ast.Rec
 				log.Warnf("[%d] compile error:\n%v\n%s", connID, err, sql)
 				return nil, errors.Trace(err)
 			}
-			sessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
+			metrics.SessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
 
 			// Step3: Cache the physical plan if possible.
 			if plan.PlanCacheEnabled && stmt.Cacheable && len(stmtNodes) == 1 && !s.GetSessionVars().StmtCtx.HistogramsNotLoad() {
@@ -916,9 +925,18 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 type StmtTxn struct {
 	kv.Transaction
 
-	buf       kv.MemBuffer
-	mutations map[int64]*binlog.TableMutation
-	// TODO: DirtyDB need to be statement level too.
+	buf          kv.MemBuffer
+	mutations    map[int64]*binlog.TableMutation
+	dirtyTableOP []dirtyTableOperation
+}
+
+// dirtyTableOperation represents an operation to dirtyTable, we log the operation
+// first and apply the operation log when statement commit.
+type dirtyTableOperation struct {
+	kind   int
+	tid    int64
+	handle int64
+	row    []types.Datum
 }
 
 // Get overrides the Transaction interface.
@@ -977,6 +995,9 @@ func (st *StmtTxn) cleanup() {
 	for key := range st.mutations {
 		delete(st.mutations, key)
 	}
+	if st.dirtyTableOP != nil {
+		st.dirtyTableOP = st.dirtyTableOP[:0]
+	}
 }
 
 // StmtCommit implements the context.Context interface.
@@ -989,15 +1010,23 @@ func (s *session) StmtCommit() error {
 		}
 		return errors.Trace(st.Transaction.Set(k, v))
 	})
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	// Need to flush binlog.
 	for tableID, delta := range st.mutations {
 		mutation := getBinlogMutation(s, tableID)
-		if err == nil {
-			mergeToMutation(mutation, delta)
+		mergeToMutation(mutation, delta)
+	}
+
+	if len(st.dirtyTableOP) > 0 {
+		dirtyDB := executor.GetDirtyDB(s)
+		for _, op := range st.dirtyTableOP {
+			mergeToDirtyDB(dirtyDB, op)
 		}
 	}
-	return errors.Trace(err)
+	return nil
 }
 
 // StmtRollback implements the context.Context interface.
@@ -1013,6 +1042,10 @@ func (s *session) StmtGetMutation(tableID int64) *binlog.TableMutation {
 		st.mutations[tableID] = &binlog.TableMutation{TableId: tableID}
 	}
 	return st.mutations[tableID]
+}
+
+func (s *session) StmtAddDirtyTableOP(op int, tid int64, handle int64, row []types.Datum) {
+	s.StmtTxn.dirtyTableOP = append(s.StmtTxn.dirtyTableOP, dirtyTableOperation{op, tid, handle, row})
 }
 
 func getBinlogMutation(ctx context.Context, tableID int64) *binlog.TableMutation {
@@ -1034,6 +1067,17 @@ func mergeToMutation(m1, m2 *binlog.TableMutation) {
 	m1.DeletedPks = append(m1.DeletedPks, m2.DeletedPks...)
 	m1.DeletedRows = append(m1.DeletedRows, m2.DeletedRows...)
 	m1.Sequence = append(m1.Sequence, m2.Sequence...)
+}
+
+func mergeToDirtyDB(dirtyDB *executor.DirtyDB, op dirtyTableOperation) {
+	switch op.kind {
+	case executor.DirtyTableAddRow:
+		dirtyDB.AddRow(op.tid, op.handle, op.row)
+	case executor.DirtyTableDeleteRow:
+		dirtyDB.DeleteRow(op.tid, op.handle)
+	case executor.DirtyTableTruncate:
+		dirtyDB.TruncateTable(op.tid)
+	}
 }
 
 func (s *session) Txn() kv.Transaction {
