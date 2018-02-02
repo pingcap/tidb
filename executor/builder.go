@@ -82,6 +82,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildInsert(v)
 	case *plan.LoadData:
 		return b.buildLoadData(v)
+	case *plan.LoadStats:
+		return b.buildLoadStats(v)
 	case *plan.PhysicalLimit:
 		return b.buildLimit(v)
 	case *plan.Prepare:
@@ -408,6 +410,15 @@ func (b *executorBuilder) buildLoadData(v *plan.LoadData) Executor {
 	return loadDataExec
 }
 
+func (b *executorBuilder) buildLoadStats(v *plan.LoadStats) Executor {
+	e := &LoadStatsExec{
+		baseExecutor: newBaseExecutor(nil, b.ctx),
+		info:         &LoadStatsInfo{v.Path, b.ctx},
+	}
+	e.supportChk = true
+	return e
+}
+
 func (b *executorBuilder) buildReplace(vals *InsertValues) Executor {
 	replaceExec := &ReplaceExec{
 		InsertValues: vals,
@@ -480,7 +491,7 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 	switch x := src.(type) {
 	case *TableReaderExecutor:
 		us.desc = x.desc
-		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
+		us.dirty = GetDirtyDB(b.ctx).GetDirtyTable(x.table.Meta().ID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
 		b.err = us.buildAndSortAddedRows()
@@ -494,7 +505,7 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 				}
 			}
 		}
-		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
+		us.dirty = GetDirtyDB(b.ctx).GetDirtyTable(x.table.Meta().ID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
 		b.err = us.buildAndSortAddedRows()
@@ -508,7 +519,7 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 				}
 			}
 		}
-		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
+		us.dirty = GetDirtyDB(b.ctx).GetDirtyTable(x.table.Meta().ID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
 		b.err = us.buildAndSortAddedRows()
@@ -622,20 +633,22 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 	leftExec := b.build(v.Children()[0])
 	rightExec := b.build(v.Children()[1])
 
-	// for hash join, inner table is always the smaller one.
 	e := &HashJoinExec{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, leftExec, rightExec),
 		concurrency:  v.Concurrency,
 		joinType:     v.JoinType,
-		innerIdx:     v.SmallChildIdx,
+		innerIdx:     v.InnerChildIdx,
 	}
 
 	defaultValues := v.DefaultValues
 	lhsTypes, rhsTypes := leftExec.retTypes(), rightExec.retTypes()
-	if v.SmallChildIdx == 0 {
+	if v.InnerChildIdx == 0 {
+		if len(v.LeftConditions) > 0 {
+			b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
+			return nil
+		}
 		e.innerExec = leftExec
 		e.outerExec = rightExec
-		e.innerFilter = v.LeftConditions
 		e.outerFilter = v.RightConditions
 		e.innerKeys = leftHashKey
 		e.outerKeys = rightHashKey
@@ -643,9 +656,12 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 			defaultValues = make([]types.Datum, e.innerExec.Schema().Len())
 		}
 	} else {
+		if len(v.RightConditions) > 0 {
+			b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
+			return nil
+		}
 		e.innerExec = rightExec
 		e.outerExec = leftExec
-		e.innerFilter = v.RightConditions
 		e.outerFilter = v.LeftConditions
 		e.innerKeys = rightHashKey
 		e.outerKeys = leftHashKey
@@ -655,7 +671,7 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 	}
 	e.resultGenerators = make([]joinResultGenerator, e.concurrency)
 	for i := 0; i < e.concurrency; i++ {
-		e.resultGenerators[i] = newJoinResultGenerator(b.ctx, v.JoinType, v.SmallChildIdx == 0, defaultValues,
+		e.resultGenerators[i] = newJoinResultGenerator(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues,
 			v.OtherConditions, lhsTypes, rhsTypes)
 	}
 	e.supportChk = true
@@ -826,13 +842,13 @@ func (b *executorBuilder) buildApply(apply *plan.PhysicalApply) *NestedLoopApply
 	otherConditions := append(expression.ScalarFuncs2Exprs(v.EqualConditions), v.OtherConditions...)
 	defaultValues := v.DefaultValues
 	if defaultValues == nil {
-		defaultValues = make([]types.Datum, v.Children()[v.SmallChildIdx].Schema().Len())
+		defaultValues = make([]types.Datum, v.Children()[v.InnerChildIdx].Schema().Len())
 	}
-	generator := newJoinResultGenerator(b.ctx, v.JoinType, v.SmallChildIdx == 0,
+	generator := newJoinResultGenerator(b.ctx, v.JoinType, v.InnerChildIdx == 0,
 		defaultValues, otherConditions, leftChild.retTypes(), rightChild.retTypes())
 	outerExec, innerExec := leftChild, rightChild
 	outerFilter, innerFilter := v.LeftConditions, v.RightConditions
-	if v.SmallChildIdx == 0 {
+	if v.InnerChildIdx == 0 {
 		outerExec, innerExec = rightChild, leftChild
 		outerFilter, innerFilter = v.RightConditions, v.LeftConditions
 	}
@@ -848,7 +864,6 @@ func (b *executorBuilder) buildApply(apply *plan.PhysicalApply) *NestedLoopApply
 		outerChunk:      outerExec.newChunk(),
 		innerChunk:      innerExec.newChunk(),
 	}
-	e.resultChunk = e.newChunk()
 	e.innerList = chunk.NewList(innerExec.retTypes(), e.maxChunkSize)
 	e.supportChk = true
 	return e
@@ -1058,12 +1073,26 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Execut
 	for i, col := range innerPlan.Schema().Columns {
 		innerTypes[i] = col.RetType
 	}
-	outerFilter, innerFilter := v.LeftConditions, v.RightConditions
-	leftTypes, rightTypes := outerTypes, innerTypes
+
+	var (
+		outerFilter           []expression.Expression
+		leftTypes, rightTypes []*types.FieldType
+	)
 
 	if v.OuterIndex == 1 {
 		leftTypes, rightTypes = innerTypes, outerTypes
-		outerFilter, innerFilter = innerFilter, outerFilter
+		outerFilter = v.RightConditions
+		if len(v.LeftConditions) > 0 {
+			b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
+			return nil
+		}
+	} else {
+		leftTypes, rightTypes = outerTypes, innerTypes
+		outerFilter = v.LeftConditions
+		if len(v.RightConditions) > 0 {
+			b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
+			return nil
+		}
 	}
 	defaultValues := v.DefaultValues
 	if defaultValues == nil {
@@ -1078,7 +1107,6 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Execut
 		innerCtx: innerCtx{
 			readerBuilder: &dataReaderBuilder{innerPlan, b},
 			rowTypes:      innerTypes,
-			filter:        innerFilter,
 		},
 		workerWg:        new(sync.WaitGroup),
 		resultGenerator: newJoinResultGenerator(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, leftTypes, rightTypes),

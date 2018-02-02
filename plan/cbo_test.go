@@ -60,7 +60,7 @@ func (s *testAnalyzeSuite) TestCBOWithoutAnalyze(c *C) {
 		"TableReader_11 HashLeftJoin_8  root data:TableScan_10 6",
 		"TableScan_12   cop table:t2, range:[-inf,+inf], keep order:false 6",
 		"TableReader_13 HashLeftJoin_8  root data:TableScan_12 6",
-		"HashLeftJoin_8  TableReader_11,TableReader_13 root inner join, small:TableReader_13, equal:[eq(test.t1.a, test.t2.a)] 7.499999999999999",
+		"HashLeftJoin_8  TableReader_11,TableReader_13 root inner join, inner:TableReader_13, equal:[eq(test.t1.a, test.t2.a)] 7.499999999999999",
 	))
 }
 

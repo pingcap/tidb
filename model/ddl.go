@@ -28,23 +28,23 @@ type ActionType byte
 
 // List DDL actions.
 const (
-	ActionNone ActionType = iota
-	ActionCreateSchema
-	ActionDropSchema
-	ActionCreateTable
-	ActionDropTable
-	ActionAddColumn
-	ActionDropColumn
-	ActionAddIndex
-	ActionDropIndex
-	ActionAddForeignKey
-	ActionDropForeignKey
-	ActionTruncateTable
-	ActionModifyColumn
-	ActionRebaseAutoID
-	ActionRenameTable
-	ActionSetDefaultValue
-	ActionShardRowID
+	ActionNone            ActionType = 0
+	ActionCreateSchema    ActionType = 1
+	ActionDropSchema      ActionType = 2
+	ActionCreateTable     ActionType = 3
+	ActionDropTable       ActionType = 4
+	ActionAddColumn       ActionType = 5
+	ActionDropColumn      ActionType = 6
+	ActionAddIndex        ActionType = 7
+	ActionDropIndex       ActionType = 8
+	ActionAddForeignKey   ActionType = 9
+	ActionDropForeignKey  ActionType = 10
+	ActionTruncateTable   ActionType = 11
+	ActionModifyColumn    ActionType = 12
+	ActionRebaseAutoID    ActionType = 13
+	ActionRenameTable     ActionType = 14
+	ActionSetDefaultValue ActionType = 15
+	ActionShardRowID      ActionType = 16
 )
 
 var actionMap = map[ActionType]string{
@@ -251,20 +251,20 @@ type JobState byte
 
 // List job states.
 const (
-	JobStateNone JobState = iota
-	JobStateRunning
+	JobStateNone    JobState = 0
+	JobStateRunning JobState = 1
 	// When DDL encountered an unrecoverable error at reorganization state,
 	// some keys has been added already, we need to remove them.
 	// JobStateRollingback is the state to do the rolling back job.
-	JobStateRollingback
-	JobStateRollbackDone
-	JobStateDone
-	JobStateCancelled
+	JobStateRollingback  JobState = 2
+	JobStateRollbackDone JobState = 3
+	JobStateDone         JobState = 4
+	JobStateCancelled    JobState = 5
 	// JobStateSynced is used to mark the information about the completion of this job
 	// has been synchronized to all servers.
-	JobStateSynced
+	JobStateSynced JobState = 6
 	// JobStateCancelling is used to mark the DDL job is cancelled by the client, but the DDL work hasn't handle it.
-	JobStateCancelling
+	JobStateCancelling JobState = 7
 )
 
 // String implements fmt.Stringer interface.

@@ -1814,8 +1814,7 @@ func (s *testSessionSuite) TestStatementErrorInTransaction(c *C) {
 	tk.MustExec("insert into statement_side_effect values (1)")
 	_, err := tk.Exec("insert into statement_side_effect value (2),(3),(4),(1)")
 	c.Assert(err, NotNil)
-	// TODO: Fix here, dirty table should not be touched, too.
-	// tk.MustQuery(`select * from statement_side_effect`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select * from statement_side_effect`).Check(testkit.Rows("1"))
 	tk.MustExec("commit")
 	tk.MustQuery(`select * from statement_side_effect`).Check(testkit.Rows("1"))
 
@@ -1857,4 +1856,15 @@ func (s *testSessionSuite) TestStatementCountLimit(c *C) {
 	tk.MustExec("insert into stmt_count_limit values (3)")
 	_, err = tk.Exec("insert into stmt_count_limit values (4)")
 	c.Assert(err, NotNil)
+}
+
+func (s *testSessionSuite) TestCastTimeToDate(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set time_zone = '-8:00'")
+	date := time.Now().In(time.FixedZone("UTC", -8*int(time.Hour/time.Second)))
+	tk.MustQuery("select cast(time('12:23:34') as date)").Check(testkit.Rows(date.Format("2006-01-02")))
+
+	tk.MustExec("set time_zone = '+08:00'")
+	date = time.Now().In(time.FixedZone("UTC", 8*int(time.Hour/time.Second)))
+	tk.MustQuery("select cast(time('12:23:34') as date)").Check(testkit.Rows(date.Format("2006-01-02")))
 }

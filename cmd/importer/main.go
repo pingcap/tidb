@@ -34,31 +34,38 @@ func main() {
 	}
 
 	table := newTable()
-	err = parseTableSQL(table, cfg.TableSQL)
+	err = parseTableSQL(table, cfg.DDLCfg.TableSQL)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	err = parseIndexSQL(table, cfg.IndexSQL)
+	err = parseIndexSQL(table, cfg.DDLCfg.IndexSQL)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	dbs, err := createDBs(cfg.DBCfg, cfg.WorkerCount)
+	dbs, err := createDBs(cfg.DBCfg, cfg.SysCfg.WorkerCount)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer closeDBs(dbs)
 
-	err = execSQL(dbs[0], cfg.TableSQL)
+	if len(cfg.StatsCfg.Path) > 0 {
+		table.statsInfo, err = loadStats(table.tblInfo, cfg.StatsCfg.Path)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+
+	err = execSQL(dbs[0], cfg.DDLCfg.TableSQL)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	err = execSQL(dbs[0], cfg.IndexSQL)
+	err = execSQL(dbs[0], cfg.DDLCfg.IndexSQL)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	doProcess(table, dbs, cfg.JobCount, cfg.WorkerCount, cfg.Batch)
+	doProcess(table, dbs, cfg.SysCfg.JobCount, cfg.SysCfg.WorkerCount, cfg.SysCfg.Batch)
 }
