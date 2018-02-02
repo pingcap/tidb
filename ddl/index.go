@@ -597,7 +597,7 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 			return errors.Trace(err)
 		}
 		d.reorgCtx.setRowCountAndHandle(addedCount, nextHandle)
-		batchHandleDataHistogram.WithLabelValues(batchAddIdx).Observe(sub)
+		batchAddIdxHistogram.Observe(sub)
 		log.Infof("[ddl] total added index for %d rows, this task [%d,%d) added index for %d rows, batch %d, take time %v",
 			addedCount, logStartHandle, nextHandle, taskAddedCount, currentBatchSize, sub)
 
