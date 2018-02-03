@@ -348,11 +348,6 @@ func (e *TableReaderExecutor) Next(goCtx goctx.Context) (Row, error) {
 			e.feedback.Invalidate()
 			return nil, errors.Trace(err)
 		}
-		//TODO: isn't better we let its caller handle this situation?
-		// If partial result return a nil row and a nil error, it means
-		// we already drained all result.
-		// To me, it is kind of wired using a loop to do the logic
-		// that should not be in here.
 		if rowData == nil {
 			// Finish the current partial result and get the next one.
 			err = e.partialResult.Close()
