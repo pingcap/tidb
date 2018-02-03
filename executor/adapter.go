@@ -103,7 +103,7 @@ func (a *recordSet) Next(goCtx goctx.Context) (types.Row, error) {
 }
 
 // NextChunk use uses recordSet's executor to get next available chunk for later usage.
-// If chunk do not contain any rows, then we update last query found rows in session variable as current found rows.
+// If chunk does not contain any rows, then we update last query found rows in session variable as current found rows.
 // The reason we need update is that chunk with 0 rows indicating we already finished current query, we need prepare for
 // next query.
 // If stmt is not nil and chunk with some rows inside, we simply update last query found rows by the number of row in chunk.
@@ -169,7 +169,7 @@ func (a *ExecStmt) OriginText() string {
 	return a.Text
 }
 
-// IsPrepared return true if stmt is already prepared.
+// IsPrepared return true if stmt is a prepare statement.
 func (a *ExecStmt) IsPrepared() bool {
 	return a.isPreparedStmt
 }
@@ -186,12 +186,8 @@ func (a *ExecStmt) IsReadOnly() bool {
 	return ast.IsReadOnly(readOnlyCheckStmt)
 }
 
-// RebuildPlan rebuilds current execut statement plan.
+// RebuildPlan rebuilds current execute statement plan.
 func (a *ExecStmt) RebuildPlan() error {
-	// It first gets all related schmea info from context, and then preprocess
-	// current StmtNode according to schema info and current ExecStmt's context.
-	// Last step is to update current execution plan by using Plan.Optimize along
-	// with current execut statment.
 	is := GetInfoSchema(a.Ctx)
 	a.InfoSchema = is
 	if err := plan.Preprocess(a.Ctx, a.StmtNode, is, false); err != nil {
