@@ -28,11 +28,11 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 22),
 		}, []string{"type", "result_state"})
 
-	Cancelled           = "cancelled"
-	Deleted             = "deleted"
-	SessionDone         = "session_done"
-	CtxDone             = "context_done"
-	WatchOwnerHistogram = prometheus.NewCounterVec(
+	Cancelled         = "cancelled"
+	Deleted           = "deleted"
+	SessionDone       = "session_done"
+	CtxDone           = "context_done"
+	WatchOwnerCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "owner",
@@ -40,8 +40,8 @@ var (
 			Help:      "Bucketed histogram of processing time (s) of watch owner.",
 		}, []string{"type", "return_reason"})
 
-	NoLongerOwner          = "no_longer_owner"
-	CampaignOwnerHistogram = prometheus.NewCounterVec(
+	NoLongerOwner        = "no_longer_owner"
+	CampaignOwnerCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "owner",
@@ -52,6 +52,6 @@ var (
 
 func init() {
 	prometheus.MustRegister(NewSessionHistogram)
-	prometheus.MustRegister(WatchOwnerHistogram)
-	prometheus.MustRegister(CampaignOwnerHistogram)
+	prometheus.MustRegister(WatchOwnerCounter)
+	prometheus.MustRegister(CampaignOwnerCounter)
 }

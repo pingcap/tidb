@@ -181,7 +181,7 @@ func (m *ownerManager) campaignLoop(ctx goctx.Context, etcdSession *concurrency.
 	var err error
 	for {
 		if err != nil {
-			metrics.CampaignOwnerHistogram.WithLabelValues(logPrefix, err.Error()).Inc()
+			metrics.CampaignOwnerCounter.WithLabelValues(logPrefix, err.Error()).Inc()
 		}
 
 		select {
@@ -225,7 +225,7 @@ func (m *ownerManager) campaignLoop(ctx goctx.Context, etcdSession *concurrency.
 		m.watchOwner(ctx, etcdSession, ownerKey)
 		m.SetOwner(false)
 
-		metrics.CampaignOwnerHistogram.WithLabelValues(logPrefix, metrics.NoLongerOwner).Inc()
+		metrics.CampaignOwnerCounter.WithLabelValues(logPrefix, metrics.NoLongerOwner).Inc()
 		log.Warnf("%s isn't the owner", logPrefix)
 	}
 }
@@ -278,23 +278,23 @@ func (m *ownerManager) watchOwner(ctx goctx.Context, etcdSession *concurrency.Se
 		select {
 		case resp := <-watchCh:
 			if resp.Canceled {
-				metrics.WatchOwnerHistogram.WithLabelValues(logPrefix, metrics.Cancelled).Inc()
+				metrics.WatchOwnerCounter.WithLabelValues(logPrefix, metrics.Cancelled).Inc()
 				log.Infof("%s failed, no owner", logPrefix)
 				return
 			}
 
 			for _, ev := range resp.Events {
 				if ev.Type == mvccpb.DELETE {
-					metrics.WatchOwnerHistogram.WithLabelValues(logPrefix, metrics.Deleted).Inc()
+					metrics.WatchOwnerCounter.WithLabelValues(logPrefix, metrics.Deleted).Inc()
 					log.Infof("%s failed, owner is deleted", logPrefix)
 					return
 				}
 			}
 		case <-etcdSession.Done():
-			metrics.WatchOwnerHistogram.WithLabelValues(logPrefix, metrics.SessionDone).Inc()
+			metrics.WatchOwnerCounter.WithLabelValues(logPrefix, metrics.SessionDone).Inc()
 			return
 		case <-ctx.Done():
-			metrics.WatchOwnerHistogram.WithLabelValues(logPrefix, metrics.CtxDone).Inc()
+			metrics.WatchOwnerCounter.WithLabelValues(logPrefix, metrics.CtxDone).Inc()
 			return
 		}
 	}
