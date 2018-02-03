@@ -942,14 +942,14 @@ func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo) error {
 	return nil
 }
 
-// writeChunks writes data from a Chunk, which filled data by a ResultSet, into a a connection.
-// binary specifies the way to dump data. It throws any error whiling dumping data.
+// writeChunks writes data from a Chunk, which filled data by a ResultSet, into a connection.
+// binary specifies the way to dump data. It throws any error while dumping data.
 // more will be passed into writeEOF.
 func (cc *clientConn) writeChunks(goCtx goctx.Context, rs ResultSet, binary bool, more bool) error {
 	data := make([]byte, 4, 1024)
 	chk := rs.NewChunk()
 	for {
-		// here server.tidbResultSet implements NextChunk method.
+		// Here server.tidbResultSet implements NextChunk method.
 		err := rs.NextChunk(goCtx, chk)
 		if err != nil {
 			return errors.Trace(err)
