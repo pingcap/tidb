@@ -15,8 +15,8 @@ package metrics
 
 import "github.com/prometheus/client_golang/prometheus"
 
+// Metrics for the DDL package.
 var (
-	// JobsGauge is the metrics for waiting ddl job.
 	JobsGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
@@ -25,7 +25,6 @@ var (
 			Help:      "Gauge of jobs.",
 		}, []string{"action"})
 
-	// HandleJobHistogram is the metrics for handle ddl job duration.
 	HandleJobHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
@@ -35,7 +34,6 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 20),
 		}, []string{"action", "result_state"})
 
-	// BatchAddIdxHistogram is the histogram of processing time (s) of batch handle data.
 	BatchAddIdxHistogram = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
@@ -45,14 +43,10 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20),
 		})
 
-	// SyncerInit event.
-	SyncerInit = "syncer_init"
-	// SyncerRestart event.
+	SyncerInit    = "syncer_init"
 	SyncerRestart = "syncer_restart"
-	// SyncerClear event.
-	SyncerClear = "syncer_clear"
+	SyncerClear   = "syncer_clear"
 
-	// DeploySyncerHistogram is the histogram of processing time (s) of deploy syncer.
 	DeploySyncerHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
@@ -62,7 +56,6 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 20),
 		}, []string{"state", "result_state"})
 
-	// UpdateSelfVersionHistogram is the histogram of processing time (s) of update self version.
 	UpdateSelfVersionHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
@@ -72,13 +65,9 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 20),
 		}, []string{"result_state"})
 
-	// OwnerUpdateGlobalVersion is the action of updating global schema version by DDL owner.
-	OwnerUpdateGlobalVersion = "update_global_version"
-	// OwnerGetGlobalVersion is the action of getting global schema version by DDL owner.
-	OwnerGetGlobalVersion = "get_global_version"
-	// OwnerCheckAllVersions is the action of checking global schema version by DDL owner.
-	OwnerCheckAllVersions = "check_all_versions"
-	// OwnerHandleSyncerHistogram is the histogram of processing time (s) of handle syncer.
+	OwnerUpdateGlobalVersion   = "update_global_version"
+	OwnerGetGlobalVersion      = "get_global_version"
+	OwnerCheckAllVersions      = "check_all_versions"
 	OwnerHandleSyncerHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
