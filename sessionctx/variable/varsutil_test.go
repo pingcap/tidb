@@ -14,15 +14,15 @@
 package variable
 
 import (
-	"time"
 	"encoding/json"
+	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/config"
 )
 
 var _ = Suite(&testVarsutilSuite{})

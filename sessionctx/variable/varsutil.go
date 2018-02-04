@@ -14,17 +14,17 @@
 package variable
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
-	"encoding/json"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/config"
 )
 
 // GetSessionSystemVar gets a system variable.

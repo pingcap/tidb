@@ -15,12 +15,12 @@ package printer
 
 import (
 	"bytes"
-	"fmt"
 	"encoding/json"
+	"fmt"
 
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/mysql"
 	log "github.com/sirupsen/logrus"
-	"github.com/pingcap/tidb/config"
 )
 
 // Version information.
