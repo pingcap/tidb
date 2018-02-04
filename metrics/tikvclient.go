@@ -185,7 +185,7 @@ var (
 			Subsystem: "tikvclient",
 			Name:      "region_cache",
 			Help:      "Counter of region cache.",
-		}, []string{"type"})
+		}, []string{"type", "result_state"})
 )
 
 func init() {
