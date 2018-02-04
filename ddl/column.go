@@ -303,7 +303,6 @@ func (d *ddl) addTableColumn(t table.Table, columnInfo *model.ColumnInfo, reorgI
 		}
 
 		d.reorgCtx.setRowCountAndHandle(count, seekHandle)
-		batchHandleDataHistogram.WithLabelValues(batchAddCol).Observe(sub)
 		log.Infof("[ddl] added column for %v rows, take time %v", count, sub)
 	}
 }
