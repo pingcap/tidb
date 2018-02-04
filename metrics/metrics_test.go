@@ -13,26 +13,21 @@
 
 package metrics
 
-import "github.com/prometheus/client_golang/prometheus"
+import (
+	"testing"
 
-var (
-	// PanicCounter measures the count of panics.
-	PanicCounter = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Name:      "panic",
-			Help:      "Counter of panic.",
-		}, []string{LblType})
+	. "github.com/pingcap/check"
 )
 
-// metrics labels.
-const (
-	LabelSession  = "session"
-	LabelDomain   = "domain"
-	LabelDDL      = "ddl"
-	LabelGCWorker = "gcworker"
-)
+func TestT(t *testing.T) {
+	TestingT(t)
+}
 
-func init() {
-	prometheus.MustRegister(PanicCounter)
+var _ = Suite(&testSuite{})
+
+type testSuite struct {
+}
+
+func (s *testSuite) TestMetrics(c *C) {
+	PanicCounter.WithLabelValues(LabelDomain).Inc()
 }
