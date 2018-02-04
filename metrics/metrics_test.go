@@ -29,5 +29,6 @@ type testSuite struct {
 }
 
 func (s *testSuite) TestMetrics(c *C) {
+	// Make sure it doesn't panic.
 	PanicCounter.WithLabelValues(LabelDomain).Inc()
 }
