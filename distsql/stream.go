@@ -17,6 +17,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -32,12 +33,13 @@ type streamResult struct {
 	ctx        context.Context
 
 	// NOTE: curr == nil means stream finish, while len(curr.RowsData) == 0 doesn't.
-	curr      *tipb.Chunk
-	scanCount int64
+	curr         *tipb.Chunk
+	scanKeys     int64
+	partialCount int64
 }
 
-func (r *streamResult) ScanCount() int64 {
-	return r.scanCount
+func (r *streamResult) ScanKeys() int64 {
+	return r.scanKeys
 }
 
 func (r *streamResult) Fetch(goctx.Context) {}
@@ -98,8 +100,11 @@ func (r *streamResult) readDataFromResponse(goCtx goctx.Context, resp kv.Respons
 		return false, errors.Trace(err)
 	}
 	if len(stream.OutputCounts) > 0 {
-		r.scanCount += stream.OutputCounts[0]
+		partialScanKeys := stream.OutputCounts[0]
+		metrics.DistSQLScanKeysPartialHistogram.Observe(float64(partialScanKeys))
+		r.scanKeys += partialScanKeys
 	}
+	r.partialCount++
 	return false, nil
 }
 
@@ -143,10 +148,16 @@ func (r *streamResult) flushToChunk(chk *chunk.Chunk) (err error) {
 }
 
 func (r *streamResult) NextRaw(goCtx goctx.Context) ([]byte, error) {
+	r.partialCount++
+	r.scanKeys = -1
 	return r.resp.Next(goCtx)
 }
 
 func (r *streamResult) Close() error {
+	if r.scanKeys >= 0 {
+		metrics.DistSQLScanKeysHistogram.Observe(float64(r.scanKeys))
+	}
+	metrics.DistSQLPartialCountHistogram.Observe(float64(r.partialCount))
 	return nil
 }
 
