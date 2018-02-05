@@ -55,7 +55,7 @@ var (
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
-			Name:      "gc_region_too_much_locks",
+			Name:      "gc_region_too_many_locks",
 			Help:      "Counter of gc scan lock request more than once in the same region.",
 		})
 )
