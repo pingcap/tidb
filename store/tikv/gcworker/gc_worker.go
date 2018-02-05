@@ -515,19 +515,48 @@ func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier st
 	// Sleep to wait for all other tidb instances update their safepoint cache.
 	time.Sleep(gcSafePointCacheInterval)
 
+	log.Infof("[gc worker] %s start gc, safePoint: %v.", identifier, safePoint)
+	startTime := time.Now()
+	regions := 0
+
+	bo := tikv.NewBackoffer(tikv.GcOneRegionMaxBackoff, goctx.Background())
+	var key []byte
+	for {
+		select {
+		case <-ctx.Done():
+			return errors.New("[gc worker] gc job canceled")
+		default:
+		}
+
+		loc, err := store.GetRegionCache().LocateKey(bo, key)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		if err = doGCForOneRegion(ctx, store, safePoint, identifier, loc.StartKey, loc.EndKey); err != nil {
+			regions++
+		}
+
+		key = loc.EndKey
+		if len(key) == 0 {
+			break
+		}
+	}
+	log.Infof("[gc worker] %s finish gc, safePoint: %v, regions: %v, cost time: %s", identifier, safePoint, regions, time.Since(startTime))
+	gcHistogram.WithLabelValues("do_gc").Observe(time.Since(startTime).Seconds())
+	return nil
+}
+
+func doGCForOneRegion(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier string, startKey []byte, endKey []byte) error {
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdGC,
 		GC: &kvrpcpb.GCRequest{
 			SafePoint: safePoint,
 		},
 	}
-	bo := tikv.NewBackoffer(tikv.GcMaxBackoff, goctx.Background())
 
-	log.Infof("[gc worker] %s start gc, safePoint: %v.", identifier, safePoint)
-	startTime := time.Now()
-	regions := 0
-
-	var key []byte
+	bo := tikv.NewBackoffer(tikv.GcOneRegionMaxBackoff, goctx.Background())
+	key := startKey
 	for {
 		select {
 		case <-ctx.Done():
@@ -561,14 +590,11 @@ func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier st
 		if gcResp.GetError() != nil {
 			return errors.Errorf("unexpected gc error: %s", gcResp.GetError())
 		}
-		regions++
 		key = loc.EndKey
-		if len(key) == 0 {
+		if len(key) == 0 || bytes.Compare(key, endKey) >= 0 {
 			break
 		}
 	}
-	log.Infof("[gc worker] %s finish gc, safePoint: %v, regions: %v, cost time: %s", identifier, safePoint, regions, time.Since(startTime))
-	gcHistogram.WithLabelValues("do_gc").Observe(time.Since(startTime).Seconds())
 	return nil
 }
 
