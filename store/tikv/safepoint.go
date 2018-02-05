@@ -27,7 +27,7 @@ import (
 
 // Safe point constants.
 const (
-	// this is almost the same as 'tikv_gc_safe_point' in the table 'mysql.tidb',
+	// This is almost the same as 'tikv_gc_safe_point' in the table 'mysql.tidb',
 	// save this to pd instead of tikv, because we can't use interface of table
 	// if the safepoint on tidb is expired.
 	GcSavedSafePoint = "/tidb/store/gcworker/saved_safe_point"
