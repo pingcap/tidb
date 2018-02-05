@@ -29,7 +29,7 @@ import (
 )
 
 // ResolvedCacheSize max number of cached txn status.
-const ResolvedCacheSize = 2048
+const ResolvedCacheSize = 512
 
 // LockResolver resolves locks and also caches resolved txn status.
 type LockResolver struct {
