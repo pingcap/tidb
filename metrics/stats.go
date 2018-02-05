@@ -40,7 +40,7 @@ var (
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "statistics",
-			Name:      "stats_error_rate",
+			Name:      "stats_inaccuracy_rate",
 			Help:      "Bucketed histogram of stats inaccuracy rate.",
 			Buckets:   prometheus.LinearBuckets(5, 5, 20),
 		})
