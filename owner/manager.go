@@ -126,10 +126,6 @@ func setManagerSessionTTL() error {
 // NewSession creates a new etcd session.
 func NewSession(ctx goctx.Context, logPrefix string, etcdCli *clientv3.Client, retryCnt, ttl int) (*concurrency.Session, error) {
 	var err error
-	startTime := time.Now()
-	defer func() {
-		metrics.NewSessionHistogram.WithLabelValues(logPrefix, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
-	}()
 
 	var etcdSession *concurrency.Session
 	failedCnt := 0
@@ -147,8 +143,10 @@ func NewSession(ctx goctx.Context, logPrefix string, etcdCli *clientv3.Client, r
 		//	if closeGrpc {
 		//		etcdCli.ActiveConnection().Close()
 		//	}
+		startTime := time.Now()
 		etcdSession, err = concurrency.NewSession(etcdCli,
 			concurrency.WithTTL(ttl), concurrency.WithContext(ctx))
+		metrics.NewSessionHistogram.WithLabelValues(logPrefix, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 		if err == nil {
 			break
 		}
@@ -156,9 +154,7 @@ func NewSession(ctx goctx.Context, logPrefix string, etcdCli *clientv3.Client, r
 			log.Warnf("%s failed to new session, err %v", logPrefix, err)
 		}
 
-		metrics.NewSessionHistogram.WithLabelValues(logPrefix, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 		time.Sleep(newSessionRetryInterval)
-		startTime = time.Now()
 		failedCnt++
 	}
 	return etcdSession, errors.Trace(err)
