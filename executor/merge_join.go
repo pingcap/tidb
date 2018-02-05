@@ -523,10 +523,12 @@ func (e *MergeJoinExec) joinToChunk(chk *chunk.Chunk) (hasMore bool, err error) 
 		for ; e.outerIter4Row.Current() != e.outerIter4Row.End(); e.outerIter4Row.Next() {
 			err = e.resultGenerator.emitToChunk(e.outerIter4Row.Current(), e.innerIter4Row, chk)
 			if err != nil || chk.NumRows() == e.maxChunkSize {
-				e.outerIter4Row.Next()
+				if e.innerIter4Row.Current() == e.innerIter4Row.End() {
+					e.outerIter4Row.Next()
+					e.innerIter4Row.Begin()
+				}
 				return err == nil, errors.Trace(err)
 			}
-			e.innerIter4Row = chunk.NewIterator4Slice(e.innerChunkRows)
 			e.innerIter4Row.Begin()
 		}
 		if err = e.fetchNextInnerRows(); err != nil {
