@@ -42,7 +42,7 @@ var (
 			Subsystem: "statistics",
 			Name:      "stats_inaccuracy_rate",
 			Help:      "Bucketed histogram of stats inaccuracy rate.",
-			Buckets:   prometheus.LinearBuckets(5, 5, 20),
+			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 14),
 		})
 )
 
