@@ -37,7 +37,7 @@ var (
 			Namespace: "tidb",
 			Subsystem: "owner",
 			Name:      "watch_owner",
-			Help:      "Bucketed histogram of processing time (s) of watch owner.",
+			Help:      "Counter of watch owner.",
 		}, []string{"type", "return_reason"})
 
 	NoLongerOwner        = "no_longer_owner"
@@ -46,7 +46,7 @@ var (
 			Namespace: "tidb",
 			Subsystem: "owner",
 			Name:      "campaign_owner",
-			Help:      "Bucketed histogram of processing time (s) of campaign owner.",
+			Help:      "Counter of campaign owner.",
 		}, []string{"type", "retry_reason"})
 )
 
