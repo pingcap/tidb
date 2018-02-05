@@ -90,14 +90,18 @@ func mergeQueryFeedback(lq []*QueryFeedback, rq []*QueryFeedback) []*QueryFeedba
 // StoreQueryFeedback will merges the feedback into stats collector.
 func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}) {
 	q := feedback.(*QueryFeedback)
-	// TODO: If the error rate is small is small, we do not need to store the feed back.
-	minActualCount := int64(100)
-	if q.histVersion == 0 || q.actual < minActualCount || !q.valid {
+	// TODO: If the error rate is small or actual scan count is small, we do not need to store the feed back.
+	if q.histVersion == 0 || q.actual < 0 || !q.valid {
 		return
 	}
 
-	rate := math.Abs(float64(q.expected-q.actual)/float64(q.actual)) * 100
-	rate = math.Min(100, rate)
+	var rate float64
+	if q.actual == 0 {
+		rate = 100
+	} else {
+		rate = math.Abs(float64(q.expected-q.actual)/float64(q.actual)) * 100
+		rate = math.Min(100, rate)
+	}
 	metrics.StatsErrorRate.Observe(rate)
 
 	s.Lock()
