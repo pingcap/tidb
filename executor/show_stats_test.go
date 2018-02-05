@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -61,4 +62,29 @@ func (s *testSuite) TestShowStatsBuckets(c *C) {
 	result.Sort().Check(testkit.Rows("test t a 0 0 1 1 1 1", "test t b 0 0 1 1 1 1", "test t idx 1 0 1 1 (1, 1) (1, 1)"))
 	result = tk.MustQuery("show stats_buckets where column_name = 'idx'")
 	result.Check(testkit.Rows("test t idx 1 0 1 1 (1, 1) (1, 1)"))
+}
+
+func (s *testSuite) TestShowStatsHealthy(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("create index idx on t(a)")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t 100"))
+	tk.MustExec("insert into t values (1), (2)")
+	do, _ := tidb.GetDomain(s.store)
+	do.StatsHandle().DumpStatsDeltaToKV()
+	tk.MustExec("analyze table t")
+	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t 100"))
+	tk.MustExec("insert into t values (3), (4), (5), (6), (7), (8), (9), (10)")
+	do.StatsHandle().DumpStatsDeltaToKV()
+	do.StatsHandle().Update(do.InfoSchema())
+	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t 19"))
+	tk.MustExec("analyze table t")
+	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t 100"))
+	tk.MustExec("delete from t")
+	do.StatsHandle().DumpStatsDeltaToKV()
+	do.StatsHandle().Update(do.InfoSchema())
+	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t 0"))
 }
