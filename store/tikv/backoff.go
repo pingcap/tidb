@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	log "github.com/sirupsen/logrus"
@@ -184,7 +185,7 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 	default:
 	}
 
-	backoffCounter.WithLabelValues(typ.String()).Inc()
+	metrics.TiKVBackoffCounter.WithLabelValues(typ.String()).Inc()
 	// Lazy initialize.
 	if b.fn == nil {
 		b.fn = make(map[backoffType]func(goctx.Context) int)
