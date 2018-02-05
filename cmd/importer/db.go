@@ -65,6 +65,24 @@ func uniqInt64Value(column *column, min int64, max int64) int64 {
 	return column.data.uniqInt64()
 }
 
+func intToDecimalString(intValue int64, decimal int) string {
+	data := fmt.Sprintf("%d", intValue)
+
+	// add leading zero
+	if len(data) < decimal {
+		data = strings.Repeat("0", decimal-len(data)) + data
+	}
+
+	dec := data[len(data)-decimal:]
+	if data = data[:len(data)-decimal]; data == "" {
+		data = "0"
+	}
+	if dec != "" {
+		data = data + "." + dec
+	}
+	return data
+}
+
 func genRowDatas(table *table, count int) ([]string, error) {
 	datas := make([]string, 0, count)
 	for i := 0; i < count; i++ {
@@ -211,31 +229,21 @@ func genColumnData(table *table, column *column) (string, error) {
 		data = append(data, '\'')
 		return string(data), nil
 	case mysql.TypeNewDecimal:
-		var data string
 		var limit = int64(math.Pow10(tp.Flen))
+		var intVal int64
+		if limit < 0 {
+			limit = math.MaxInt64
+		}
 		if isUnique {
-			data = fmt.Sprintf("%d", uniqInt64Value(column, 0, limit-1))
+			intVal = uniqInt64Value(column, 0, limit-1)
 		} else {
 			if isUnsigned {
-				data = fmt.Sprintf("%d", randInt64Value(column, 0, limit-1))
+				intVal = randInt64Value(column, 0, limit-1)
 			} else {
-				data = fmt.Sprintf("%d", randInt64Value(column, -limit+1, limit-1))
+				intVal = randInt64Value(column, -limit+1, limit-1)
 			}
 		}
-		// add leading zero
-		if len(data) < tp.Decimal {
-			data = strings.Repeat("0", tp.Decimal-len(data)) + data
-		}
-
-		dec := data[len(data)-tp.Decimal:]
-		if data = data[:len(data)-tp.Decimal]; data == "" {
-			data = "0"
-		}
-		if dec != "" {
-			data = data + "." + dec
-		}
-
-		return data, nil
+		return intToDecimalString(intVal, tp.Decimal), nil
 	default:
 		return "", errors.Errorf("unsupported column type - %v", column)
 	}
