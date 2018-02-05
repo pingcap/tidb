@@ -15,11 +15,13 @@ package statistics
 
 import (
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -88,10 +90,16 @@ func mergeQueryFeedback(lq []*QueryFeedback, rq []*QueryFeedback) []*QueryFeedba
 // StoreQueryFeedback will merges the feedback into stats collector.
 func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}) {
 	q := feedback.(*QueryFeedback)
-	// TODO: If the error rate is small or actual scan count is small, we do not need to store the feed back.
-	if q.histVersion == 0 || q.actual < 0 || !q.valid {
+	// TODO: If the error rate is small is small, we do not need to store the feed back.
+	minActualCount := int64(100)
+	if q.histVersion == 0 || q.actual < minActualCount || !q.valid {
 		return
 	}
+
+	rate := math.Abs(float64(q.expected-q.actual)/float64(q.actual)) * 100
+	rate = math.Min(100, rate)
+	metrics.StatsErrorRate.Observe(rate)
+
 	s.Lock()
 	defer s.Unlock()
 	if len(s.feedback) >= maxQueryFeedBackCount {
@@ -292,11 +300,11 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) error {
 func (h *Handle) execAutoAnalyze(sql string) error {
 	startTime := time.Now()
 	_, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, sql)
-	autoAnalyzeHistgram.Observe(time.Since(startTime).Seconds())
+	metrics.AutoAnalyzeHistogram.Observe(time.Since(startTime).Seconds())
 	if err != nil {
-		autoAnalyzeCounter.WithLabelValues("failed").Inc()
+		metrics.AutoAnalyzeCounter.WithLabelValues("failed").Inc()
 	} else {
-		autoAnalyzeCounter.WithLabelValues("succ").Inc()
+		metrics.AutoAnalyzeCounter.WithLabelValues("succ").Inc()
 	}
 	return errors.Trace(err)
 }
