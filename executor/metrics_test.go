@@ -65,6 +65,6 @@ func (s *testSuite) TestStmtLabel(c *C) {
 		c.Assert(err, IsNil)
 		p, err := plan.Optimize(tk.Se, stmtNode, is)
 		c.Assert(err, IsNil)
-		c.Assert(executor.StatementLabel(stmtNode, p, &ignore), Equals, tt.label)
+		c.Assert(executor.statementLabel(stmtNode, p, &ignore), Equals, tt.label)
 	}
 }
