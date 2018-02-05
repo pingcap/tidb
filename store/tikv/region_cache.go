@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/pd/pd-client"
+	"github.com/pingcap/tidb/metrics"
 	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
@@ -319,6 +320,7 @@ func (c *RegionCache) dropRegionFromCache(verID RegionVerID) {
 	if !ok {
 		return
 	}
+	metrics.TiKVRegionCacheCounter.WithLabelValues("drop_region_from_cache", metrics.RetLabel(nil)).Inc()
 	c.mu.sorted.Delete(newBtreeItem(r.region))
 	delete(c.mu.regions, verID)
 }
@@ -333,8 +335,8 @@ func (c *RegionCache) loadRegion(bo *Backoffer, key []byte) (*Region, error) {
 				return nil, errors.Trace(err)
 			}
 		}
-
 		meta, leader, err := c.pdClient.GetRegion(bo, key)
+		metrics.TiKVRegionCacheCounter.WithLabelValues("get_region", metrics.RetLabel(err)).Inc()
 		if err != nil {
 			backoffErr = errors.Errorf("loadRegion from PD failed, key: %q, err: %v", key, err)
 			continue
@@ -367,8 +369,8 @@ func (c *RegionCache) loadRegionByID(bo *Backoffer, regionID uint64) (*Region, e
 				return nil, errors.Trace(err)
 			}
 		}
-
 		meta, leader, err := c.pdClient.GetRegionByID(bo, regionID)
+		metrics.TiKVRegionCacheCounter.WithLabelValues("get_region_by_id", metrics.RetLabel(err)).Inc()
 		if err != nil {
 			backoffErr = errors.Errorf("loadRegion from PD failed, regionID: %v, err: %v", regionID, err)
 			continue
@@ -429,6 +431,7 @@ func (c *RegionCache) ClearStoreByID(id uint64) {
 func (c *RegionCache) loadStoreAddr(bo *Backoffer, id uint64) (string, error) {
 	for {
 		store, err := c.pdClient.GetStore(bo, id)
+		metrics.TiKVRegionCacheCounter.WithLabelValues("get_store", metrics.RetLabel(err)).Inc()
 		if err != nil {
 			if errors.Cause(err) == goctx.Canceled {
 				return "", errors.Trace(err)
