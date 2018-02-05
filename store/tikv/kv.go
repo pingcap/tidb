@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
@@ -236,12 +237,12 @@ func (s *tikvStore) runSafePointChecker() {
 		case spCachedTime := <-time.After(d):
 			cachedSafePoint, err := loadSafePoint(s.GetSafePointKV(), GcSavedSafePoint)
 			if err == nil {
-				loadSafepointCounter.WithLabelValues("ok").Inc()
+				metrics.TiKVLoadSafepointCounter.WithLabelValues("ok").Inc()
 				s.UpdateSPCache(cachedSafePoint, spCachedTime)
 				d = gcSafePointUpdateInterval
 			} else {
-				loadSafepointCounter.WithLabelValues("fail").Inc()
-				log.Errorf("[check visibility] fail to load safepoint from pd: %v", err)
+				metrics.TiKVLoadSafepointCounter.WithLabelValues("fail").Inc()
+				log.Errorf("fail to load safepoint from pd: %v", err)
 				d = gcSafePointQuickRepeatInterval
 			}
 		case <-s.Closed():
@@ -337,7 +338,7 @@ func (s *tikvStore) Begin() (kv.Transaction, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	txnCounter.Inc()
+	metrics.TiKVTxnCounter.Inc()
 	return txn, nil
 }
 
@@ -347,13 +348,13 @@ func (s *tikvStore) BeginWithStartTS(startTS uint64) (kv.Transaction, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	txnCounter.Inc()
+	metrics.TiKVTxnCounter.Inc()
 	return txn, nil
 }
 
 func (s *tikvStore) GetSnapshot(ver kv.Version) (kv.Snapshot, error) {
 	snapshot := newTiKVSnapshot(s, ver)
-	snapshotCounter.Inc()
+	metrics.TiKVSnapshotCounter.Inc()
 	return snapshot, nil
 }
 
@@ -403,7 +404,7 @@ func (s *tikvStore) getTimestampWithRetry(bo *Backoffer) (uint64, error) {
 }
 
 func (s *tikvStore) GetClient() kv.Client {
-	txnCmdCounter.WithLabelValues("get_client").Inc()
+	metrics.TiKVTxnCmdCounter.WithLabelValues("get_client").Inc()
 	return &CopClient{
 		store: s,
 	}
