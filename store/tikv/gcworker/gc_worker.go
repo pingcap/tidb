@@ -518,6 +518,7 @@ func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier st
 	log.Infof("[gc worker] %s start gc, safePoint: %v.", identifier, safePoint)
 	startTime := time.Now()
 	regions := 0
+	errRegions := 0
 
 	bo := tikv.NewBackoffer(tikv.GcOneRegionMaxBackoff, goctx.Background())
 	var key []byte
@@ -535,6 +536,8 @@ func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier st
 
 		if err = doGCForOneRegion(ctx, store, safePoint, identifier, loc.StartKey, loc.EndKey); err != nil {
 			regions++
+		} else {
+			errRegions++
 		}
 
 		key = loc.EndKey
@@ -542,7 +545,7 @@ func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier st
 			break
 		}
 	}
-	log.Infof("[gc worker] %s finish gc, safePoint: %v, regions: %v, cost time: %s", identifier, safePoint, regions, time.Since(startTime))
+	log.Infof("[gc worker] %s finish gc, safePoint: %v, regions: %v, ignored regions: %v, cost time: %s", identifier, safePoint, regions, errRegions, time.Since(startTime))
 	gcHistogram.WithLabelValues("do_gc").Observe(time.Since(startTime).Seconds())
 	return nil
 }
