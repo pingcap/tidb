@@ -18,12 +18,12 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	log "github.com/sirupsen/logrus"
-	"strings"
 )
 
 func intRangeValue(column *column, min int64, max int64) (int64, int64) {
@@ -240,7 +240,7 @@ func genColumnData(table *table, column *column) (string, error) {
 			if isUnsigned {
 				intVal = randInt64Value(column, 0, limit-1)
 			} else {
-				intVal = randInt64Value(column, -limit+1, limit-1)
+				intVal = randInt64Value(column, (-limit+1)/2, (limit-1)/2)
 			}
 		}
 		return intToDecimalString(intVal, tp.Decimal), nil
