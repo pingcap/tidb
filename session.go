@@ -941,7 +941,7 @@ func (st *TxnState) Valid() bool {
 	return st.Transaction != nil && st.Transaction.Valid()
 }
 
-func (st *TxnState) validEx() bool {
+func (st *TxnState) validOrPending() bool {
 	return st.txnFuture != nil || st.Valid()
 }
 
@@ -960,12 +960,12 @@ func (st *TxnState) changeInvalidToValid(txn kv.Transaction) {
 	st.txnFuture = nil
 }
 
-func (st *TxnState) changeInvalidToFuture(future *txnFuture) {
+func (st *TxnState) changeInvalidToPending(future *txnFuture) {
 	st.Transaction = nil
 	st.txnFuture = future
 }
 
-func (st *TxnState) changeFutureToValid() error {
+func (st *TxnState) changePendingToValid() error {
 	if st.txnFuture == nil {
 		return errors.New("transaction future is not set")
 	}
@@ -1549,12 +1549,12 @@ func (s *session) getTxnFuture(ctx goctx.Context) *txnFuture {
 // PrepareTxnCtx starts a goroutine to begin a transaction if needed, and creates a new transaction context.
 // It is called before we execute a sql query.
 func (s *session) PrepareTxnCtx(ctx goctx.Context) {
-	if s.txn.validEx() {
+	if s.txn.validOrPending() {
 		return
 	}
 
 	txnFuture := s.getTxnFuture(ctx)
-	s.txn.changeInvalidToFuture(txnFuture)
+	s.txn.changeInvalidToPending(txnFuture)
 	is := domain.GetDomain(s).InfoSchema()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
 		InfoSchema:    is,
@@ -1580,7 +1580,7 @@ func (s *session) ActivePendingTxn() error {
 		return nil
 	}
 	// The transaction status should be TxnStateFuture.
-	if err := s.txn.changeFutureToValid(); err != nil {
+	if err := s.txn.changePendingToValid(); err != nil {
 		return errors.Trace(err)
 	}
 	s.sessionVars.TxnCtx.StartTS = s.txn.StartTS()
