@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser"
+	_ "github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	log "github.com/sirupsen/logrus"
