@@ -10,7 +10,6 @@
 // distributed under the License is distributed on an "AS IS" BASIS,
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// +build !leak,!race
 
 package tidb_test
 
@@ -20,7 +19,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testSessionSuite) TestStatementCommitFail(c *C) {
+func (s *testSessionSuite) TestFailStatementCommit(c *C) {
 	defer gofail.Disable("github.com/pingcap/tidb/mockStmtCommitError")
 
 	tk := testkit.NewTestKitWithInit(c, s.store)
