@@ -51,9 +51,9 @@ func main() {
 	defer closeDBs(dbs)
 
 	if len(cfg.StatsCfg.Path) > 0 {
-		statsInfo, err := loadStats(table.tblInfo, cfg.StatsCfg.Path)
-		if err != nil {
-			log.Fatal(err)
+		statsInfo, err1 := loadStats(table.tblInfo, cfg.StatsCfg.Path)
+		if err1 != nil {
+			log.Fatal(err1)
 		}
 		for _, idxInfo := range table.tblInfo.Indices {
 			offset := idxInfo.Columns[0].Offset
