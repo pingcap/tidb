@@ -36,12 +36,12 @@ var (
 			Help:      "Counter of auto analyze.",
 		}, []string{"type"})
 
-	StatsErrorRate = prometheus.NewHistogram(
+	StatsInaccuracyRate = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "statistics",
 			Name:      "stats_error_rate",
-			Help:      "Bucketed histogram of stats error rate.",
+			Help:      "Bucketed histogram of stats inaccuracy rate.",
 			Buckets:   prometheus.LinearBuckets(5, 5, 20),
 		})
 )
@@ -49,5 +49,5 @@ var (
 func init() {
 	prometheus.MustRegister(AutoAnalyzeHistogram)
 	prometheus.MustRegister(AutoAnalyzeCounter)
-	prometheus.MustRegister(StatsErrorRate)
+	prometheus.MustRegister(StatsInaccuracyRate)
 }

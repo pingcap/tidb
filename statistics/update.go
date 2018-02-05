@@ -102,7 +102,7 @@ func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}) {
 		rate = math.Abs(float64(q.expected-q.actual)/float64(q.actual)) * 100
 		rate = math.Min(100, rate)
 	}
-	metrics.StatsErrorRate.Observe(rate)
+	metrics.StatsInaccuracyRate.Observe(rate)
 
 	s.Lock()
 	defer s.Unlock()
