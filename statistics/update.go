@@ -97,7 +97,11 @@ func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}) {
 
 	var rate float64
 	if q.actual == 0 {
-		rate = 100
+		if q.expected == 0 {
+			rate = 0
+		} else {
+			rate = 100
+		}
 	} else {
 		rate = math.Abs(float64(q.expected-q.actual)/float64(q.actual)) * 100
 		rate = math.Min(100, rate)
