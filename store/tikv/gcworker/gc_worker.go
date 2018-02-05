@@ -104,7 +104,7 @@ const (
 	gcDefaultLifeTime        = time.Minute * 10
 	gcSafePointKey           = "tikv_gc_safe_point"
 	gcSafePointCacheInterval = tikv.GcSafePointCacheInterval
-	// we don't want gc to sweep out the cached info belong to other processes, like coprocessor
+	// We don't want gc to sweep out the cached info belong to other processes, like coprocessor.
 	gcScanLockLimit = tikv.ResolvedCacheSize / 2
 )
 
