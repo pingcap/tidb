@@ -919,7 +919,7 @@ func (d *Datum) convertToMysqlTimestamp(sc *stmtctx.StatementContext, target *Fi
 		t = d.GetMysqlTime()
 		t, err = t.RoundFrac(sc, fsp)
 	case KindMysqlDuration:
-		t, err = d.GetMysqlDuration().ConvertToTime(mysql.TypeTimestamp)
+		t, err = d.GetMysqlDuration().ConvertToTime(sc, mysql.TypeTimestamp)
 		if err != nil {
 			ret.SetValue(t)
 			return ret, errors.Trace(err)
@@ -960,7 +960,7 @@ func (d *Datum) convertToMysqlTime(sc *stmtctx.StatementContext, target *FieldTy
 		}
 		t, err = t.RoundFrac(sc, fsp)
 	case KindMysqlDuration:
-		t, err = d.GetMysqlDuration().ConvertToTime(tp)
+		t, err = d.GetMysqlDuration().ConvertToTime(sc, tp)
 		if err != nil {
 			ret.SetValue(t)
 			return ret, errors.Trace(err)

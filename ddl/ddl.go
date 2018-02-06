@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/owner"
@@ -433,15 +434,11 @@ func (d *ddl) doDDLJob(ctx context.Context, job *model.Job) error {
 	// But we use etcd to speed up, normally it takes less than 1s now, so we use 1s or 3s as the max value.
 	ticker := time.NewTicker(chooseLeaseTime(10*d.lease, checkJobMaxInterval(job)))
 	startTime := time.Now()
-	jobsGauge.WithLabelValues(job.Type.String()).Inc()
+	metrics.JobsGauge.WithLabelValues(job.Type.String()).Inc()
 	defer func() {
 		ticker.Stop()
-		jobsGauge.WithLabelValues(job.Type.String()).Dec()
-		retLabel := handleJobSucc
-		if err != nil {
-			retLabel = handleJobFailed
-		}
-		handleJobHistogram.WithLabelValues(job.Type.String(), retLabel).Observe(time.Since(startTime).Seconds())
+		metrics.JobsGauge.WithLabelValues(job.Type.String()).Dec()
+		metrics.HandleJobHistogram.WithLabelValues(job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
 	for {
 		select {

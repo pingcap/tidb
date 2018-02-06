@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
@@ -272,10 +273,10 @@ func (s *schemaLeaseChecker) Check(txnTS uint64) error {
 		case domain.ResultSucc:
 			return nil
 		case domain.ResultFail:
-			schemaLeaseErrorCounter.WithLabelValues("changed").Inc()
+			metrics.SchemaLeaseErrorCounter.WithLabelValues("changed").Inc()
 			return domain.ErrInfoSchemaChanged
 		case domain.ResultUnknown:
-			schemaLeaseErrorCounter.WithLabelValues("outdated").Inc()
+			metrics.SchemaLeaseErrorCounter.WithLabelValues("outdated").Inc()
 			time.Sleep(time.Duration(schemaOutOfDateRetryInterval))
 		}
 
@@ -367,11 +368,11 @@ func (s *session) CommitTxn(ctx goctx.Context) error {
 	}
 
 	err := s.doCommitWithRetry(ctx)
-	label := "OK"
+	label := metrics.LblOK
 	if err != nil {
-		label = "Error"
+		label = metrics.LblError
 	}
-	transactionCounter.WithLabelValues(label).Inc()
+	metrics.TransactionCounter.WithLabelValues(label).Inc()
 	return errors.Trace(err)
 }
 
@@ -384,6 +385,7 @@ func (s *session) RollbackTxn(ctx goctx.Context) error {
 	var err error
 	if s.Transaction != nil && s.Transaction.Valid() {
 		err = s.Transaction.Rollback()
+		metrics.TransactionCounter.WithLabelValues(metrics.LblRollback).Inc()
 	}
 	s.cleanRetryInfo()
 	s.Transaction = nil
@@ -448,7 +450,8 @@ func (s *session) retry(goCtx goctx.Context, maxCnt int) error {
 	retryCnt := 0
 	defer func() {
 		s.sessionVars.RetryInfo.Retrying = false
-		sessionRetry.Observe(float64(retryCnt))
+		// retryCnt only increments on retryable error, so +1 here.
+		metrics.SessionRetry.Observe(float64(retryCnt + 1))
 		s.Transaction = nil
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	}()
@@ -495,12 +498,14 @@ func (s *session) retry(goCtx goctx.Context, maxCnt int) error {
 			}
 		}
 		if !s.isRetryableError(err) {
-			log.Warnf("[%d] session:%v, err:%v", connID, s, err)
+			log.Warnf("[%d] session:%v, err:%v in retry", connID, s, err)
+			metrics.SessionRetryErrorCounter.WithLabelValues(metrics.LblUnretryable)
 			return errors.Trace(err)
 		}
 		retryCnt++
 		if retryCnt >= maxCnt {
 			log.Warnf("[%d] Retry reached max count %d", connID, retryCnt)
+			metrics.SessionRetryErrorCounter.WithLabelValues(metrics.LblReachMax)
 			return errors.Trace(err)
 		}
 		log.Warnf("[%d] retryable error: %v, txn: %v", connID, err, s.Transaction)
@@ -539,6 +544,7 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) ([]types.Ro
 	}
 	se := tmp.(*session)
 	defer s.sysSessionPool().Put(tmp)
+	metrics.SessionRestrictedSQLCounter.Inc()
 
 	recordSets, err := se.Execute(goCtx, sql)
 	if err != nil {
@@ -719,7 +725,7 @@ func (s *session) executeStatement(goCtx goctx.Context, connID uint64, stmtNode 
 		s.ClearValue(context.LastExecuteDDL)
 	}
 	logStmt(stmtNode, s.sessionVars)
-	startTS := time.Now()
+	startTime := time.Now()
 	recordSet, err := runStmt(goCtx, s, stmt)
 	if err != nil {
 		if !kv.ErrKeyExists.Equal(err) {
@@ -727,7 +733,7 @@ func (s *session) executeStatement(goCtx goctx.Context, connID uint64, stmtNode 
 		}
 		return nil, errors.Trace(err)
 	}
-	sessionExecuteRunDuration.Observe(time.Since(startTS).Seconds())
+	metrics.SessionExecuteRunDuration.Observe(time.Since(startTime).Seconds())
 
 	if recordSet != nil {
 		recordSets = append(recordSets, recordSet)
@@ -788,7 +794,7 @@ func (s *session) Execute(goCtx goctx.Context, sql string) (recordSets []ast.Rec
 			log.Warnf("[%d] parse error:\n%v\n%s", connID, err, sql)
 			return nil, errors.Trace(err)
 		}
-		sessionExecuteParseDuration.Observe(time.Since(startTS).Seconds())
+		metrics.SessionExecuteParseDuration.Observe(time.Since(startTS).Seconds())
 
 		compiler := executor.Compiler{Ctx: s}
 		for _, stmtNode := range stmtNodes {
@@ -803,7 +809,7 @@ func (s *session) Execute(goCtx goctx.Context, sql string) (recordSets []ast.Rec
 				log.Warnf("[%d] compile error:\n%v\n%s", connID, err, sql)
 				return nil, errors.Trace(err)
 			}
-			sessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
+			metrics.SessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
 
 			// Step3: Cache the physical plan if possible.
 			if plan.PlanCacheEnabled && stmt.Cacheable && len(stmtNodes) == 1 && !s.GetSessionVars().StmtCtx.HistogramsNotLoad() {
@@ -1586,6 +1592,6 @@ func logStmt(node ast.StmtNode, vars *variable.SessionVars) {
 
 func logQuery(query string, vars *variable.SessionVars) {
 	if atomic.LoadUint32(&variable.ProcessGeneralLog) != 0 && !vars.InRestrictedSQL {
-		log.Infof("[%d] %s", vars.ConnectionID, query)
+		log.Infof("[con:%d][txn:%d] %s", vars.ConnectionID, vars.TxnCtx.StartTS, query)
 	}
 }

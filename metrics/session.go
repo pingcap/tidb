@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2018 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,14 +11,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tidb
+package metrics
 
-import (
-	"github.com/prometheus/client_golang/prometheus"
-)
+import "github.com/prometheus/client_golang/prometheus"
 
+// Session metrics.
 var (
-	sessionExecuteParseDuration = prometheus.NewHistogram(
+	SessionExecuteParseDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
@@ -26,7 +25,7 @@ var (
 			Help:      "Bucketed histogram of processing time (s) in parse SQL.",
 			Buckets:   prometheus.LinearBuckets(0.00004, 0.00001, 13),
 		})
-	sessionExecuteCompileDuration = prometheus.NewHistogram(
+	SessionExecuteCompileDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
@@ -34,7 +33,7 @@ var (
 			Help:      "Bucketed histogram of processing time (s) in query optimize.",
 			Buckets:   prometheus.LinearBuckets(0.00004, 0.00001, 13),
 		})
-	sessionExecuteRunDuration = prometheus.NewHistogram(
+	SessionExecuteRunDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
@@ -42,14 +41,14 @@ var (
 			Help:      "Bucketed histogram of processing time (s) in running executor.",
 			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 13),
 		})
-	schemaLeaseErrorCounter = prometheus.NewCounterVec(
+	SchemaLeaseErrorCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
 			Name:      "schema_lease_error_counter",
 			Help:      "Counter of schema lease error",
-		}, []string{"type"})
-	sessionRetry = prometheus.NewHistogram(
+		}, []string{LblType})
+	SessionRetry = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
@@ -57,20 +56,47 @@ var (
 			Help:      "Bucketed histogram of session retry count.",
 			Buckets:   prometheus.LinearBuckets(0, 1, 10),
 		})
-	transactionCounter = prometheus.NewCounterVec(
+	SessionRetryErrorCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "session_retry_error",
+			Help:      "Counter of session retry error.",
+		}, []string{LblType})
+	TransactionCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
 			Name:      "transaction_total",
 			Help:      "Counter of transactions.",
-		}, []string{"type"})
+		}, []string{LblType})
+
+	SessionRestrictedSQLCounter = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "session_restricted_sql_counter",
+			Help:      "Counter of internal restricted sql.",
+		})
+)
+
+// Label constants.
+const (
+	LblUnretryable = "unretryable"
+	LblReachMax    = "reach_max"
+	LblOK          = "ok"
+	LblError       = "error"
+	LblRollback    = "rollback"
+	LblType        = "type"
 )
 
 func init() {
-	prometheus.MustRegister(sessionExecuteParseDuration)
-	prometheus.MustRegister(sessionExecuteCompileDuration)
-	prometheus.MustRegister(sessionExecuteRunDuration)
-	prometheus.MustRegister(schemaLeaseErrorCounter)
-	prometheus.MustRegister(sessionRetry)
-	prometheus.MustRegister(transactionCounter)
+	prometheus.MustRegister(SessionExecuteParseDuration)
+	prometheus.MustRegister(SessionExecuteCompileDuration)
+	prometheus.MustRegister(SessionExecuteRunDuration)
+	prometheus.MustRegister(SchemaLeaseErrorCounter)
+	prometheus.MustRegister(SessionRetry)
+	prometheus.MustRegister(SessionRetryErrorCounter)
+	prometheus.MustRegister(TransactionCounter)
+	prometheus.MustRegister(SessionRestrictedSQLCounter)
 }
