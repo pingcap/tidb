@@ -72,7 +72,7 @@ func (s *testSuite) TestPrepared(c *C) {
 		c.Assert(err, IsNil)
 		rs, err := tk.Se.ExecutePreparedStmt(goCtx, stmtId, 1)
 		c.Assert(err, IsNil)
-		tk.ResultsToStr(rs, Commentf("%v", rs)).Check(testkit.Rows("1 <nil>"))
+		tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 <nil>"))
 
 		tk.MustExec("delete from prepare_test")
 		query = "select c1 from prepare_test where c1 = (select c1 from prepare_test where c1 = ?)"
@@ -81,7 +81,7 @@ func (s *testSuite) TestPrepared(c *C) {
 		tk1.MustExec("insert prepare_test (c1) values (3)")
 		rs, err = tk.Se.ExecutePreparedStmt(goCtx, stmtId, 3)
 		c.Assert(err, IsNil)
-		tk.ResultsToStr(rs, Commentf("%v", rs)).Check(testkit.Rows("3"))
+		tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("3"))
 
 		tk.MustExec("begin")
 		tk.MustExec("insert prepare_test (c1) values (4)")
@@ -91,7 +91,7 @@ func (s *testSuite) TestPrepared(c *C) {
 		tk.MustExec("rollback")
 		rs, err = tk.Se.ExecutePreparedStmt(goCtx, stmtId, 4)
 		c.Assert(err, IsNil)
-		tk.ResultsToStr(rs, Commentf("%v", rs)).Check(testkit.Rows())
+		tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows())
 
 		// Check that ast.Statement created by executor.CompileExecutePreparedStmt has query text.
 		stmt, err := executor.CompileExecutePreparedStmt(tk.Se, stmtId, 1)
