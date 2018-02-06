@@ -15,8 +15,10 @@ package printer
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/mysql"
 	log "github.com/sirupsen/logrus"
 )
@@ -37,6 +39,11 @@ func PrintTiDBInfo() {
 	log.Infof("Git Branch: %s", TiDBGitBranch)
 	log.Infof("UTC Build Time:  %s", TiDBBuildTS)
 	log.Infof("GoVersion:  %s", GoVersion)
+	configJSON, err := json.Marshal(config.GetGlobalConfig())
+	if err != nil {
+		panic(err)
+	}
+	log.Infof("Config: %s", configJSON)
 }
 
 // PrintRawTiDBInfo prints the TiDB version information without log info.
