@@ -45,6 +45,14 @@ func intRangeValue(column *column, min int64, max int64) (int64, int64) {
 	return min, max
 }
 
+func randStringValue(column *column, n int) string {
+	if len(column.set) > 0 {
+		idx := randInt(0, len(column.set)-1)
+		return column.set[idx]
+	}
+	return randString(randInt(1, n))
+}
+
 func randInt64Value(column *column, min int64, max int64) int64 {
 	if column.hist != nil {
 		return column.hist.randInt()
@@ -174,7 +182,7 @@ func genColumnData(table *table, column *column) (string, error) {
 		if isUnique {
 			data = append(data, []byte(column.data.uniqString(tp.Flen))...)
 		} else {
-			data = append(data, []byte(randString(randInt(1, tp.Flen)))...)
+			data = append(data, []byte(randStringValue(column, tp.Flen))...)
 		}
 
 		data = append(data, '\'')
