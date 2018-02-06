@@ -348,7 +348,7 @@ func (w *GCWorker) deleteRanges(ctx goctx.Context, safePoint uint64) error {
 		return errors.Trace(err)
 	}
 
-	bo := tikv.NewBackoffer(tikv.GcDeleteRangeMaxBackoff, goctx.Background())
+	bo := tikv.NewBackoffer(tikv.GcDeleteRangeMaxBackoff, ctx)
 	log.Infof("[gc worker] %s start delete %v ranges", w.uuid, len(ranges))
 	startTime := time.Now()
 	regions := 0
@@ -432,7 +432,7 @@ func resolveLocks(ctx goctx.Context, store tikv.Storage, safePoint uint64, ident
 			Limit:      gcScanLockLimit,
 		},
 	}
-	bo := tikv.NewBackoffer(tikv.GcResolveLockMaxBackoff, goctx.Background())
+	bo := tikv.NewBackoffer(tikv.GcResolveLockMaxBackoff, ctx)
 
 	log.Infof("[gc worker] %s start resolve locks, safePoint: %v.", identifier, safePoint)
 	startTime := time.Now()
@@ -525,7 +525,14 @@ func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier st
 	ticker := time.NewTicker(gcJobLogTickInterval)
 	defer ticker.Stop()
 
-	bo := tikv.NewBackoffer(tikv.GcLocalRegionMaxBackoff, goctx.Background())
+	req := &tikvrpc.Request{
+		Type: tikvrpc.CmdGC,
+		GC: &kvrpcpb.GCRequest{
+			SafePoint: safePoint,
+		},
+	}
+
+	bo := tikv.NewBackoffer(tikv.GcOneRegionMaxBackoff, ctx)
 	var key []byte
 	for {
 		select {
@@ -543,12 +550,17 @@ func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier st
 		}
 
 		var regionErr *errorpb.Error
-		regionErr, err = doGCForOneRegion(store, safePoint, loc)
+		regionErr, err = doGCForOneRegion(bo, store, req, loc)
 
 		if err != nil {
 			errRegions++
 		} else if regionErr != nil {
-			continue
+			err = bo.Backoff(tikv.BoRegionMiss, errors.New(regionErr.String()))
+			if err != nil {
+				errRegions++
+			} else {
+				continue
+			}
 		} else {
 			regions++
 		}
@@ -557,6 +569,7 @@ func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier st
 		if len(key) == 0 {
 			break
 		}
+		bo = tikv.NewBackoffer(tikv.GcOneRegionMaxBackoff, ctx)
 	}
 	log.Infof("[gc worker] %s finish gc, safePoint: %v, regions: %v, ignored regions: %v, cost time: %s",
 		identifier, safePoint, regions, errRegions, time.Since(startTime))
@@ -564,15 +577,7 @@ func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier st
 	return nil
 }
 
-func doGCForOneRegion(store tikv.Storage, safePoint uint64, loc *tikv.KeyLocation) (*errorpb.Error, error) {
-	req := &tikvrpc.Request{
-		Type: tikvrpc.CmdGC,
-		GC: &kvrpcpb.GCRequest{
-			SafePoint: safePoint,
-		},
-	}
-
-	bo := tikv.NewBackoffer(tikv.GcOneRegionMaxBackoff, goctx.Background())
+func doGCForOneRegion(bo *tikv.Backoffer, store tikv.Storage, req *tikvrpc.Request, loc *tikv.KeyLocation) (*errorpb.Error, error) {
 	resp, err := store.SendReq(bo, req, loc.Region, tikv.GCTimeout)
 	if err != nil {
 		return nil, errors.Trace(err)
