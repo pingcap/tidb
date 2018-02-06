@@ -329,7 +329,6 @@ func (w *GCWorker) runGCJob(ctx goctx.Context, safePoint uint64) {
 	}
 	err = doGC(ctx, w.store, safePoint, w.uuid)
 	if err != nil {
-		gcFailureCounter.WithLabelValues("gc").Inc()
 		log.Error("do GC returns an error", err)
 		w.gcIsRunning = false
 		w.done <- errors.Trace(err)
@@ -550,14 +549,18 @@ func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier st
 		}
 
 		var regionErr *errorpb.Error
-		regionErr, err = doGCForOneRegion(bo, store, req, loc)
+		regionErr, err = doGCForOneRegion(bo, store, req, loc.Region)
 
 		if err != nil {
 			errRegions++
+			log.Warnf("[gc worker] %s failed to do gc on region(%s, %s), ignore it", identifier, string(loc.StartKey), string(loc.EndKey))
+			gcFailureCounter.WithLabelValues("gc").Inc()
 		} else if regionErr != nil {
 			err = bo.Backoff(tikv.BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				errRegions++
+				log.Warnf("[gc worker] %s failed to do gc on region(%s, %s), ignore it", identifier, string(loc.StartKey), string(loc.EndKey))
+				gcFailureCounter.WithLabelValues("gc").Inc()
 			} else {
 				continue
 			}
@@ -577,8 +580,8 @@ func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier st
 	return nil
 }
 
-func doGCForOneRegion(bo *tikv.Backoffer, store tikv.Storage, req *tikvrpc.Request, loc *tikv.KeyLocation) (*errorpb.Error, error) {
-	resp, err := store.SendReq(bo, req, loc.Region, tikv.GCTimeout)
+func doGCForOneRegion(bo *tikv.Backoffer, store tikv.Storage, req *tikvrpc.Request, region tikv.RegionVerID) (*errorpb.Error, error) {
+	resp, err := store.SendReq(bo, req, region, tikv.GCTimeout)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
