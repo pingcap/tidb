@@ -155,15 +155,15 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 		return true, nil
 	}
 
-	lockResolverCounter.WithLabelValues("batch_resolve").Inc()
+	metrics.TiKVLockResolverCounter.WithLabelValues("batch_resolve").Inc()
 
 	var expiredLocks []*Lock
 	for _, l := range locks {
 		if lr.store.GetOracle().IsExpired(l.TxnID, l.TTL) {
-			lockResolverCounter.WithLabelValues("expired").Inc()
+			metrics.TiKVLockResolverCounter.WithLabelValues("expired").Inc()
 			expiredLocks = append(expiredLocks, l)
 		} else {
-			lockResolverCounter.WithLabelValues("not_expired").Inc()
+			metrics.TiKVLockResolverCounter.WithLabelValues("not_expired").Inc()
 		}
 	}
 	if len(expiredLocks) != len(locks) {
