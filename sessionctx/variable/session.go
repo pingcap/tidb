@@ -465,7 +465,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.BatchDelete = tidbOptOn(val)
 	case TiDBDMLBatchSize:
 		s.DMLBatchSize = tidbOptPositiveInt(val, DefDMLBatchSize)
-	case TiDBCurrentTS:
+	case TiDBCurrentTS, TiDBConfig:
 		return ErrReadOnly
 	case TiDBMaxChunkSize:
 		s.MaxChunkSize = tidbOptPositiveInt(val, DefMaxChunkSize)
