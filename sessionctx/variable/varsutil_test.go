@@ -14,9 +14,11 @@
 package variable
 
 import (
+	"encoding/json"
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
@@ -154,6 +156,15 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(v.MaxChunkSize, Equals, 1024)
 	SetSessionSystemVar(v, TiDBMaxChunkSize, types.NewStringDatum("2"))
 	c.Assert(v.MaxChunkSize, Equals, 2)
+
+	// Test case for TiDBConfig session variable.
+	err = SetSessionSystemVar(v, TiDBConfig, types.NewStringDatum("abc"))
+	c.Assert(terror.ErrorEqual(err, ErrReadOnly), IsTrue)
+	val, err = GetSessionSystemVar(v, TiDBConfig)
+	c.Assert(err, IsNil)
+	bVal, err := json.MarshalIndent(config.GetGlobalConfig(), "", "\t")
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, string(bVal))
 }
 
 type mockGlobalAccessor struct {
