@@ -104,7 +104,8 @@ const (
 	gcDefaultLifeTime        = time.Minute * 10
 	gcSafePointKey           = "tikv_gc_safe_point"
 	gcSafePointCacheInterval = tikv.GcSafePointCacheInterval
-	gcScanLockLimit          = 1000
+	// We don't want gc to sweep out the cached info belong to other processes, like coprocessor.
+	gcScanLockLimit = tikv.ResolvedCacheSize / 2
 )
 
 var gcVariableComments = map[string]string{

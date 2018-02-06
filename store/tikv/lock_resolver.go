@@ -28,7 +28,8 @@ import (
 	goctx "golang.org/x/net/context"
 )
 
-const resolvedCacheSize = 512
+// ResolvedCacheSize is max number of cached txn status.
+const ResolvedCacheSize = 2048
 
 // LockResolver resolves locks and also caches resolved txn status.
 type LockResolver struct {
@@ -132,7 +133,7 @@ func (lr *LockResolver) saveResolved(txnID uint64, status TxnStatus) {
 	}
 	lr.mu.resolved[txnID] = status
 	lr.mu.recentResolved.PushBack(txnID)
-	if len(lr.mu.resolved) > resolvedCacheSize {
+	if len(lr.mu.resolved) > ResolvedCacheSize {
 		front := lr.mu.recentResolved.Front()
 		delete(lr.mu.resolved, front.Value.(uint64))
 		lr.mu.recentResolved.Remove(front)
