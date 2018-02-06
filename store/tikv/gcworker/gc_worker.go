@@ -551,19 +551,19 @@ func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier st
 		var regionErr *errorpb.Error
 		regionErr, err = doGCForOneRegion(bo, store, req, loc.Region)
 
+		// we check regionErr here first, because we know 'regionErr' and 'err' should not return together, to keep it to
+		// make the process correct.
+		if regionErr != nil {
+			err = bo.Backoff(tikv.BoRegionMiss, errors.New(regionErr.String()))
+			if err == nil {
+				continue
+			}
+		}
+
 		if err != nil {
 			errRegions++
 			log.Warnf("[gc worker] %s failed to do gc on region(%s, %s), ignore it", identifier, string(loc.StartKey), string(loc.EndKey))
 			gcFailureCounter.WithLabelValues("gc").Inc()
-		} else if regionErr != nil {
-			err = bo.Backoff(tikv.BoRegionMiss, errors.New(regionErr.String()))
-			if err != nil {
-				errRegions++
-				log.Warnf("[gc worker] %s failed to do gc on region(%s, %s), ignore it", identifier, string(loc.StartKey), string(loc.EndKey))
-				gcFailureCounter.WithLabelValues("gc").Inc()
-			} else {
-				continue
-			}
 		} else {
 			regions++
 		}
@@ -580,6 +580,7 @@ func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier st
 	return nil
 }
 
+// these two errors should not return together, for more, see the func 'doGC'
 func doGCForOneRegion(bo *tikv.Backoffer, store tikv.Storage, req *tikvrpc.Request, region tikv.RegionVerID) (*errorpb.Error, error) {
 	resp, err := store.SendReq(bo, req, region, tikv.GCTimeout)
 	if err != nil {
