@@ -654,6 +654,7 @@ func (s *testSuite) TestUpdate(c *C) {
 	tk.MustExec("insert into decimals values (201)")
 	// A warning rather than data truncated error.
 	tk.MustExec("update decimals set a = a + 1.23;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1265 Data Truncated"))
 	r = tk.MustQuery("select * from decimals")
 	r.Check(testkit.Rows("202"))
 }
