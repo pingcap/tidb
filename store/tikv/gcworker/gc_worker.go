@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/ddl/util"
@@ -541,8 +542,13 @@ func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier st
 			return errors.Trace(err)
 		}
 
-		if err = doGCForOneRegion(ctx, store, safePoint, identifier, loc); err != nil {
+		var regionErr *errorpb.Error
+		regionErr, err = doGCForOneRegion(store, safePoint, loc)
+
+		if err != nil {
 			errRegions++
+		} else if regionErr != nil {
+			continue
 		} else {
 			regions++
 		}
@@ -558,7 +564,7 @@ func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier st
 	return nil
 }
 
-func doGCForOneRegion(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier string, gap *tikv.KeyLocation) error {
+func doGCForOneRegion(store tikv.Storage, safePoint uint64, loc *tikv.KeyLocation) (*errorpb.Error, error) {
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdGC,
 		GC: &kvrpcpb.GCRequest{
@@ -567,47 +573,27 @@ func doGCForOneRegion(ctx goctx.Context, store tikv.Storage, safePoint uint64, i
 	}
 
 	bo := tikv.NewBackoffer(tikv.GcOneRegionMaxBackoff, goctx.Background())
-	key := gap.StartKey
-	for {
-		select {
-		case <-ctx.Done():
-			return errors.New("[gc worker] gc job canceled")
-		default:
-		}
-
-		loc, err := store.GetRegionCache().LocateKey(bo, key)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		resp, err := store.SendReq(bo, req, loc.Region, tikv.ReadTimeoutLong)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		regionErr, err := resp.GetRegionError()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if regionErr != nil {
-			err = bo.Backoff(tikv.BoRegionMiss, errors.New(regionErr.String()))
-			if err != nil {
-				return errors.Trace(err)
-			}
-			continue
-		}
-
-		gcResp := resp.GC
-		if gcResp == nil {
-			return errors.Trace(tikv.ErrBodyMissing)
-		}
-		if gcResp.GetError() != nil {
-			return errors.Errorf("unexpected gc error: %s", gcResp.GetError())
-		}
-		key = loc.EndKey
-		if len(key) == 0 || bytes.Compare(key, gap.EndKey) >= 0 {
-			break
-		}
+	resp, err := store.SendReq(bo, req, loc.Region, tikv.GCTimeout)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
-	return nil
+	regionErr, err := resp.GetRegionError()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if regionErr != nil {
+		return regionErr, nil
+	}
+
+	gcResp := resp.GC
+	if gcResp == nil {
+		return nil, errors.Trace(tikv.ErrBodyMissing)
+	}
+	if gcResp.GetError() != nil {
+		return nil, errors.Errorf("unexpected gc error: %s", gcResp.GetError())
+	}
+
+	return nil, nil
 }
 
 func (w *GCWorker) checkLeader() (bool, error) {
