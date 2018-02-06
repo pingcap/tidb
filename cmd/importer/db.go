@@ -54,6 +54,9 @@ func randStringValue(column *column, n int) string {
 }
 
 func randInt64Value(column *column, min int64, max int64) int64 {
+	if column.hist != nil {
+		return column.hist.randInt()
+	}
 	if len(column.set) > 0 {
 		idx := randInt(0, len(column.set)-1)
 		data, err := strconv.ParseInt(column.set[idx], 10, 64)
