@@ -46,6 +46,8 @@ type histogram struct {
 	index *model.IndexInfo
 }
 
+// When the cnt falls in the middle of bucket, we return the idx of lower bound which is an even number.
+// When the cnt falls in the end of bucket, we return the upper bound which is odd.
 func (h *histogram) getRandomBoundIdx() int {
 	cnt := h.Buckets[len(h.Buckets)-1].Count
 	randCnt := randInt64(0, cnt)
