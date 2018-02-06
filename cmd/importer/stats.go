@@ -16,6 +16,7 @@ package main
 import (
 	"encoding/json"
 	"io/ioutil"
+	"math/rand"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/model"
@@ -82,4 +83,38 @@ func (h *histogram) randInt() int64 {
 		return randInt64(lower, upper)
 	}
 	return h.Bounds.GetRow(idx).GetInt64(0)
+}
+
+func getValidPrefix(lower, upper string) string {
+	prefixLen := 0
+	for i := range lower {
+		if i >= len(upper) {
+			log.Fatal("lower %s is larger than upper %s", lower, upper)
+		}
+		if lower[i] != upper[i] {
+			randCh := uint8(rand.Intn(int(upper[i]-lower[i]))) + lower[i]
+			newBytes := make([]byte, i, i+1)
+			copy(newBytes, lower[:i])
+			newBytes = append(newBytes, byte(randCh))
+			return string(newBytes)
+		}
+		prefixLen++
+	}
+	return lower
+}
+
+func (h *histogram) randString(l int) string {
+	idx := h.getRandomBoundIdx()
+	if idx%2 == 0 {
+		lower := h.Bounds.GetRow(idx).GetString(0)
+		upper := h.Bounds.GetRow(idx + 1).GetString(0)
+		prefix := getValidPrefix(lower, upper)
+		restLen := l - len(prefix)
+		if restLen > 0 {
+			prefix = prefix + randString(restLen)
+		}
+		log.Warnf("prefix %s", prefix)
+		return prefix
+	}
+	return h.Bounds.GetRow(idx).GetString(0)
 }
