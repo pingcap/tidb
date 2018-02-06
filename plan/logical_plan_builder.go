@@ -1576,7 +1576,7 @@ func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
 
 // RatioOfPseudoEstimate means if modifyCount / statsTblCount is greater than this ratio, we think the stats is invalid
 // and use pseudo estimation.
-var RatioOfPseudoEstimate float64 = 0.7
+var RatioOfPseudoEstimate = 0.7
 
 func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	schemaName := tn.Schema
