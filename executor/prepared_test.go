@@ -16,7 +16,6 @@ package executor_test
 import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/plan"
@@ -72,29 +71,27 @@ func (s *testSuite) TestPrepared(c *C) {
 		stmtId, _, _, err := tk.Se.PrepareStmt(query)
 		c.Assert(err, IsNil)
 		rs, err := tk.Se.ExecutePreparedStmt(goCtx, stmtId, 1)
-		rows, err := tidb.GetRows4Test(goCtx, tk.Se, rs)
 		c.Assert(err, IsNil)
-		c.Assert(rows, NotNil)
-		c.Assert(rs.Close(), IsNil)
+		tk.ResultsToStr(rs, Commentf("%v", rs)).Check(testkit.Rows("1 <nil>"))
 
-		tk.MustExec("insert prepare_test (c1) values (2),(2),(NULL)")
-		rs, err = tk.Se.ExecutePreparedStmt(goCtx, stmtId, 2)
-		rows, err = tidb.GetRows4Test(goCtx, tk.Se, rs)
+		tk.MustExec("delete from prepare_test")
+		query = "select c1 from prepare_test where c1 = (select c1 from prepare_test where c1 = ?)"
+		stmtId, _, _, err = tk.Se.PrepareStmt(query)
+		tk1 := testkit.NewTestKitWithInit(c, s.store)
+		tk1.MustExec("insert prepare_test (c1) values (3)")
+		rs, err = tk.Se.ExecutePreparedStmt(goCtx, stmtId, 3)
 		c.Assert(err, IsNil)
-		c.Assert(rows, NotNil)
-		c.Assert(rs.Close(), IsNil)
+		tk.ResultsToStr(rs, Commentf("%v", rs)).Check(testkit.Rows("3"))
 
 		tk.MustExec("begin")
-		tk.MustExec("insert prepare_test (c1) values (3),(2),(NULL)")
+		tk.MustExec("insert prepare_test (c1) values (4)")
 		query = "select c1, c2 from prepare_test where c1 = ?"
 		stmtId, _, _, err = tk.Se.PrepareStmt(query)
 		c.Assert(err, IsNil)
 		tk.MustExec("rollback")
-		rs, err = tk.Se.ExecutePreparedStmt(goCtx, stmtId, 3)
-		rows, err = tidb.GetRows4Test(goCtx, tk.Se, rs)
+		rs, err = tk.Se.ExecutePreparedStmt(goCtx, stmtId, 4)
 		c.Assert(err, IsNil)
-		c.Assert(rows, IsNil)
-		c.Assert(rs.Close(), IsNil)
+		tk.ResultsToStr(rs, Commentf("%v", rs)).Check(testkit.Rows())
 
 		// Check that ast.Statement created by executor.CompileExecutePreparedStmt has query text.
 		stmt, err := executor.CompileExecutePreparedStmt(tk.Se, stmtId, 1)
@@ -120,6 +117,8 @@ func (s *testSuite) TestPrepared(c *C) {
 		c.Assert(err, IsNil)
 
 		// Drop a column so the prepared statement become invalid.
+		query = "select c1, c2 from prepare_test where c1 = ?"
+		stmtId, _, _, err = tk.Se.PrepareStmt(query)
 		tk.MustExec("alter table prepare_test drop column c2")
 
 		_, err = tk.Se.ExecutePreparedStmt(goCtx, stmtId, 1)
