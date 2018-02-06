@@ -995,6 +995,9 @@ LOOP:
 	c.Assert(count, Greater, int64(0))
 }
 
+// This test is for insert value with a to-be-dropped column when do drop column.
+// Column info from schema when the server build-insert-plan should be public only,
+// otherwise they will not be consist with Table.Col(), then the server will panic.
 func (s *testDBSuite) testDropColumn2(c *C) {
 	num := 100
 	dmlDone := make(chan error, num)
