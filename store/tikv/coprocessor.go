@@ -99,6 +99,8 @@ func (c *CopClient) supportExpr(exprType tipb.ExprType) bool {
 	// date functions.
 	case tipb.ExprType_DateFormat:
 		return true
+	case tipb.ExprType_Cast:
+		return true
 	case kv.ReqSubTypeDesc:
 		return true
 	case kv.ReqSubTypeSignature:

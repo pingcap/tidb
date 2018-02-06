@@ -213,6 +213,9 @@ func (r *selectResult) ScanKeys() int64 {
 }
 
 func (r *selectResult) readRowsData(chk *chunk.Chunk) (err error) {
+	for _, warning := range r.selectResp.Warnings {
+		r.ctx.GetSessionVars().StmtCtx.AppendWarning(terror.ClassTiKV.New(terror.ErrCode(warning.Code), warning.Msg))
+	}
 	rowsData := r.selectResp.Chunks[r.respChkIdx].RowsData
 	maxChunkSize := r.ctx.GetSessionVars().MaxChunkSize
 	timeZone := r.ctx.GetSessionVars().GetTimeZone()

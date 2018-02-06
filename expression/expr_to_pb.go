@@ -218,6 +218,8 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 		return pc.jsonFuncToPBExpr(expr)
 	case ast.DateFormat:
 		return pc.dateFuncToPBExpr(expr)
+	case ast.Cast:
+		return pc.convertToPBExpr(expr, tipb.ExprType_Cast)
 	default:
 		return nil
 	}
