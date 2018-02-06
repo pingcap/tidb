@@ -28,8 +28,8 @@ import (
 	goctx "golang.org/x/net/context"
 )
 
-// ResolvedCacheSize max number of cached txn status.
-const ResolvedCacheSize = 512
+// ResolvedCacheSize is max number of cached txn status.
+const ResolvedCacheSize = 2048
 
 // LockResolver resolves locks and also caches resolved txn status.
 type LockResolver struct {
