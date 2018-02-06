@@ -22,7 +22,7 @@ var (
 			Namespace: "tidb",
 			Name:      "panic",
 			Help:      "Counter of panic.",
-		}, []string{LabelSession, LabelDomain, LabelDDL})
+		}, []string{LblType})
 )
 
 // metrics labels.

@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
@@ -597,7 +598,7 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 			return errors.Trace(err)
 		}
 		d.reorgCtx.setRowCountAndHandle(addedCount, nextHandle)
-		batchAddIdxHistogram.Observe(sub)
+		metrics.BatchAddIdxHistogram.Observe(sub)
 		log.Infof("[ddl] total added index for %d rows, this task [%d,%d) added index for %d rows, batch %d, take time %v",
 			addedCount, logStartHandle, nextHandle, taskAddedCount, currentBatchSize, sub)
 

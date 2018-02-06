@@ -429,7 +429,7 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 		}
 		if tableConds != nil {
 			copTask.finishIndexPlan()
-			tableSel := PhysicalSelection{Conditions: tableConds}.init(is.ctx, p.stats.scaleByExpectCnt(expectedCnt))
+			tableSel := PhysicalSelection{Conditions: tableConds}.init(is.ctx, p.statsAfterSelect.scaleByExpectCnt(expectedCnt))
 			tableSel.SetChildren(copTask.tablePlan)
 			copTask.tablePlan = tableSel
 			copTask.cst += copTask.count() * cpuFactor
@@ -586,7 +586,7 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp) (task task, err err
 		}
 		ts.KeepOrder = true
 		copTask.keepOrder = true
-		ts.addPushedDownSelection(copTask, ds.stats.scaleByExpectCnt(prop.expectedCnt))
+		ts.addPushedDownSelection(copTask, ds.statsAfterSelect.scaleByExpectCnt(prop.expectedCnt))
 	} else {
 		expectedCnt := math.MaxFloat64
 		if prop.isEmpty() {
@@ -594,7 +594,7 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp) (task task, err err
 		} else {
 			return invalidTask, nil
 		}
-		ts.addPushedDownSelection(copTask, ds.stats.scaleByExpectCnt(expectedCnt))
+		ts.addPushedDownSelection(copTask, ds.statsAfterSelect.scaleByExpectCnt(expectedCnt))
 	}
 	if prop.taskTp == rootTaskType {
 		task = finishCopTask(task, ds.ctx)

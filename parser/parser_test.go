@@ -95,7 +95,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"enable", "disable", "reverse", "space", "privileges", "get_lock", "release_lock", "sleep", "no", "greatest", "least",
 		"binlog", "hex", "unhex", "function", "indexes", "from_unixtime", "processlist", "events", "less", "than", "timediff",
 		"ln", "log", "log2", "log10", "timestampdiff", "pi", "quote", "none", "super", "shared", "exclusive",
-		"always", "stats", "stats_meta", "stats_histogram", "stats_buckets", "tidb_version", "replication", "slave", "client",
+		"always", "stats", "stats_meta", "stats_histogram", "stats_buckets", "stats_healthy", "tidb_version", "replication", "slave", "client",
 		"max_connections_per_hour", "max_queries_per_hour", "max_updates_per_hour", "max_user_connections", "event", "reload", "routine", "temporary",
 	}
 	for _, kw := range unreservedKws {
@@ -507,6 +507,9 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		// for show stats_buckets
 		{"show stats_buckets", true},
 		{"show stats_buckets where col_name = 'a'", true},
+		// for show stats_healthy.
+		{"show stats_healthy", true},
+		{"show stats_healthy where table_name = 't'", true},
 
 		// for load stats
 		{"load stats '/tmp/stats.json'", true},

@@ -14,6 +14,7 @@
 package variable
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -21,6 +22,7 @@ import (
 	"time"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
 )
@@ -55,6 +57,13 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		return fmt.Sprintf("%d", s.TxnCtx.StartTS), true, nil
 	case TiDBGeneralLog:
 		return fmt.Sprintf("%d", atomic.LoadUint32(&ProcessGeneralLog)), true, nil
+	case TiDBConfig:
+		conf := config.GetGlobalConfig()
+		j, err := json.MarshalIndent(conf, "", "\t")
+		if err != nil {
+			return "", false, errors.Trace(err)
+		}
+		return string(j), true, nil
 	}
 	sVal, ok := s.systems[key]
 	if ok {
