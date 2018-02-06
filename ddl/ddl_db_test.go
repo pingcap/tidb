@@ -1005,12 +1005,10 @@ func (s *testDBSuite) testDropColumn2(c *C) {
 	for i := 0; i < num/2; i++ {
 		multiDDL = append(multiDDL, "alter table t2 add column c4 int", "alter table t2 drop column c4")
 	}
-	multiDML := make([]string, 0, num)
-	for i := 0; i < num; i++ {
-		multiDML = append(multiDML, "insert into t2 set c1 = 1, c2 = 1, c3 = 1, c4 = 1")
-	}
 	execMultiSQLInGoroutine(c, s.store, multiDDL, ddlDone)
-	execMultiSQLInGoroutine(c, s.store, multiDML, dmlDone)
+	for i := 0; i < num; i++ {
+		sessionExecInGoroutine(c, s.store, "insert into t2 set c1 = 1, c2 = 1, c3 = 1, c4 = 1", dmlDone)
+	}
 	for i := 0; i < num; i++ {
 		select {
 		case err := <-ddlDone:
