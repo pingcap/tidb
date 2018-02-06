@@ -51,9 +51,25 @@ func main() {
 	defer closeDBs(dbs)
 
 	if len(cfg.StatsCfg.Path) > 0 {
-		table.statsInfo, err = loadStats(table.tblInfo, cfg.StatsCfg.Path)
-		if err != nil {
-			log.Fatal(err)
+		statsInfo, err1 := loadStats(table.tblInfo, cfg.StatsCfg.Path)
+		if err1 != nil {
+			log.Fatal(err1)
+		}
+		for _, idxInfo := range table.tblInfo.Indices {
+			offset := idxInfo.Columns[0].Offset
+			if hist, ok := statsInfo.Indices[idxInfo.ID]; ok && len(hist.Buckets) > 0 {
+				table.columns[offset].hist = &histogram{
+					Histogram: hist.Histogram,
+					index:     hist.Info,
+				}
+			}
+		}
+		for i, colInfo := range table.tblInfo.Columns {
+			if hist, ok := statsInfo.Columns[colInfo.ID]; ok && table.columns[i].hist == nil && len(hist.Buckets) > 0 {
+				table.columns[i].hist = &histogram{
+					Histogram: hist.Histogram,
+				}
+			}
 		}
 	}
 
