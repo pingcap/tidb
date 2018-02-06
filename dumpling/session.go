@@ -842,9 +842,26 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 		return
 	}
 
+	goCtx := goctx.Background()
+	inTxn := s.GetSessionVars().InTxn()
+	// NewPrepareExec may need startTS to build the executor, for example prepare statement has subquery in int.
+	// So we have to call PrepareTxnCtx here.
+	s.PrepareTxnCtx(goCtx)
 	prepareExec := executor.NewPrepareExec(s, executor.GetInfoSchema(s), sql)
 	err = prepareExec.DoPrepare()
-	return prepareExec.ID, prepareExec.ParamCount, prepareExec.Fields, errors.Trace(err)
+	if err != nil {
+		err = errors.Trace(err)
+		return
+	}
+	if !inTxn {
+		// We could start a transaction to build the prepare executor before, we should rollback it here.
+		err = s.RollbackTxn(goCtx)
+		if err != nil {
+			err = errors.Trace(err)
+			return
+		}
+	}
+	return prepareExec.ID, prepareExec.ParamCount, prepareExec.Fields, nil
 }
 
 // checkArgs makes sure all the arguments' types are known and can be handled.
