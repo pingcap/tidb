@@ -624,6 +624,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBMemThreshold, strconv.Itoa(DefMemThreshold)},
 	/* The following variable is defined as session scope but is actually server scope. */
 	{ScopeSession, TiDBGeneralLog, strconv.Itoa(DefTiDBGeneralLog)},
+	{ScopeSession, TiDBConfig, ""},
 }
 
 // SynonymsSysVariables is synonyms of system variables.

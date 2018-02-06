@@ -92,6 +92,7 @@ func (ds *DataSource) getStatsByFilter(conds expression.CNFExprs) *statsInfo {
 			profile.cardinality[i] = profile.count * distinctFactor
 		}
 	}
+	ds.stats = profile
 	selectivity, err := ds.statisticTable.Selectivity(ds.ctx, conds)
 	if err != nil {
 		log.Warnf("An error happened: %v, we have to use the default selectivity", err.Error())
@@ -105,8 +106,8 @@ func (ds *DataSource) deriveStats() *statsInfo {
 	for i, expr := range ds.pushedDownConds {
 		ds.pushedDownConds[i] = expression.PushDownNot(expr, false, nil)
 	}
-	ds.stats = ds.getStatsByFilter(ds.pushedDownConds)
-	return ds.stats
+	ds.statsAfterSelect = ds.getStatsByFilter(ds.pushedDownConds)
+	return ds.statsAfterSelect
 }
 
 func (p *LogicalSelection) deriveStats() *statsInfo {
