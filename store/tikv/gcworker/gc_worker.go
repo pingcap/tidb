@@ -90,6 +90,7 @@ func (w *GCWorker) Close() {
 const (
 	gcTimeFormat         = "20060102-15:04:05 -0700 MST"
 	gcWorkerTickInterval = time.Minute
+	gcJobLogTickInterval = time.Minute * 10
 	gcWorkerLease        = time.Minute * 2
 	gcLeaderUUIDKey      = "tikv_gc_leader_uuid"
 	gcLeaderDescKey      = "tikv_gc_leader_desc"
@@ -520,12 +521,18 @@ func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier st
 	regions := 0
 	errRegions := 0
 
-	bo := tikv.NewBackoffer(tikv.GcOneRegionMaxBackoff, goctx.Background())
+	ticker := time.NewTicker(gcJobLogTickInterval)
+	defer ticker.Stop()
+
+	bo := tikv.NewBackoffer(tikv.GcLocalRegionMaxBackoff, goctx.Background())
 	var key []byte
 	for {
 		select {
 		case <-ctx.Done():
 			return errors.New("[gc worker] gc job canceled")
+		case <-ticker.C:
+			log.Infof("[gc worker] %s gc in process, safePoint: %v, regions: %v, ignored regions: %v, cost time: %s",
+				identifier, safePoint, regions, errRegions, time.Since(startTime))
 		default:
 		}
 
@@ -534,10 +541,10 @@ func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier st
 			return errors.Trace(err)
 		}
 
-		if err = doGCForOneRegion(ctx, store, safePoint, identifier, loc.StartKey, loc.EndKey); err != nil {
-			regions++
-		} else {
+		if err = doGCForOneRegion(ctx, store, safePoint, identifier, loc); err != nil {
 			errRegions++
+		} else {
+			regions++
 		}
 
 		key = loc.EndKey
@@ -545,12 +552,13 @@ func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier st
 			break
 		}
 	}
-	log.Infof("[gc worker] %s finish gc, safePoint: %v, regions: %v, ignored regions: %v, cost time: %s", identifier, safePoint, regions, errRegions, time.Since(startTime))
+	log.Infof("[gc worker] %s finish gc, safePoint: %v, regions: %v, ignored regions: %v, cost time: %s",
+		identifier, safePoint, regions, errRegions, time.Since(startTime))
 	gcHistogram.WithLabelValues("do_gc").Observe(time.Since(startTime).Seconds())
 	return nil
 }
 
-func doGCForOneRegion(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier string, startKey []byte, endKey []byte) error {
+func doGCForOneRegion(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier string, gap *tikv.KeyLocation) error {
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdGC,
 		GC: &kvrpcpb.GCRequest{
@@ -559,7 +567,7 @@ func doGCForOneRegion(ctx goctx.Context, store tikv.Storage, safePoint uint64, i
 	}
 
 	bo := tikv.NewBackoffer(tikv.GcOneRegionMaxBackoff, goctx.Background())
-	key := startKey
+	key := gap.StartKey
 	for {
 		select {
 		case <-ctx.Done():
@@ -586,6 +594,7 @@ func doGCForOneRegion(ctx goctx.Context, store tikv.Storage, safePoint uint64, i
 			}
 			continue
 		}
+
 		gcResp := resp.GC
 		if gcResp == nil {
 			return errors.Trace(tikv.ErrBodyMissing)
@@ -594,7 +603,7 @@ func doGCForOneRegion(ctx goctx.Context, store tikv.Storage, safePoint uint64, i
 			return errors.Errorf("unexpected gc error: %s", gcResp.GetError())
 		}
 		key = loc.EndKey
-		if len(key) == 0 || bytes.Compare(key, endKey) >= 0 {
+		if len(key) == 0 || bytes.Compare(key, gap.EndKey) >= 0 {
 			break
 		}
 	}

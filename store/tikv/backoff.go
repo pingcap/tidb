@@ -148,6 +148,7 @@ const (
 	getMaxBackoff           = 20000
 	prewriteMaxBackoff      = 20000
 	cleanupMaxBackoff       = 20000
+	GcLocalRegionMaxBackoff = 20000
 	GcOneRegionMaxBackoff   = 20000
 	GcResolveLockMaxBackoff = 100000
 	GcDeleteRangeMaxBackoff = 100000
