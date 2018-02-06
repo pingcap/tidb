@@ -2090,10 +2090,10 @@ func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
 	cli.priority = pb.CommandPri_Low
 	tk.MustQuery("select count(*) from t")
 
-	cli.priority = pb.CommandPri_Low
+	cli.priority = pb.CommandPri_Normal
 	tk.MustExec("update t set id = 3")
 
-	cli.priority = pb.CommandPri_Low
+	cli.priority = pb.CommandPri_Normal
 	tk.MustExec("delete from t")
 
 	cli.priority = pb.CommandPri_Normal

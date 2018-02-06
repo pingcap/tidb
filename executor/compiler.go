@@ -50,10 +50,7 @@ func (c *Compiler) Compile(goCtx goctx.Context, stmtNode ast.StmtNode) (*ExecStm
 	}
 
 	CountStmtNode(stmtNode, c.Ctx.GetSessionVars().InRestrictedSQL)
-	isExpensive := isExpensive(finalPlan)
-	if isExpensive {
-		logExpensiveQuery(stmtNode)
-	}
+	isExpensive := logExpensiveQuery(stmtNode, finalPlan)
 
 	return &ExecStmt{
 		InfoSchema: infoSchema,
@@ -66,27 +63,46 @@ func (c *Compiler) Compile(goCtx goctx.Context, stmtNode ast.StmtNode) (*ExecStm
 	}, nil
 }
 
-func logExpensiveQuery(stmtNode ast.StmtNode) {
-	const logSQLLen = 1024
+func logExpensiveQuery(stmtNode ast.StmtNode, finalPlan plan.Plan) (expensive bool) {
+	expensive = isExpensiveQuery(finalPlan)
+	if !expensive {
+		return
+	}
 
+	const logSQLLen = 1024
 	sql := stmtNode.Text()
 	if len(sql) > logSQLLen {
 		sql = fmt.Sprintf("%s len(%d)", sql[:logSQLLen], len(sql))
 	}
 	log.Warnf("[EXPENSIVE_QUERY] %s", sql)
+	return
 }
 
-func isExpensive(p plan.Plan) bool {
+func isExpensiveQuery(p plan.Plan) bool {
 	switch x := p.(type) {
 	case plan.PhysicalPlan:
 		return isPhysicalPlanExpensive(x)
-	default:
-		return false
+	case *plan.Execute:
+		return isExpensiveQuery(x.Plan)
+	case *plan.Insert:
+		if x.SelectPlan != nil {
+			return isPhysicalPlanExpensive(x.SelectPlan)
+		}
+	case *plan.Delete:
+		if x.SelectPlan != nil {
+			return isPhysicalPlanExpensive(x.SelectPlan)
+		}
+	case *plan.Update:
+		if x.SelectPlan != nil {
+			return isPhysicalPlanExpensive(x.SelectPlan)
+		}
 	}
+	return false
 }
 
 func isPhysicalPlanExpensive(p plan.PhysicalPlan) bool {
-	if p.StatsInfo().Count() > 10000 {
+	const expensiveRowThreshold = 10000
+	if p.StatsInfo().Count() > expensiveRowThreshold {
 		return true
 	}
 
@@ -104,7 +120,7 @@ func isPhysicalPlanExpensive(p plan.PhysicalPlan) bool {
 	case *plan.NominalSort:
 		return true
 	case *plan.PhysicalLimit:
-		return x.Offset > 10000
+		return x.Offset+x.Count > expensiveRowThreshold
 	case *plan.PhysicalIndexLookUpReader:
 		return true
 	case *plan.PhysicalHashAgg:
@@ -127,11 +143,11 @@ func CountStmtNode(stmtNode ast.StmtNode, inRestrictedSQL bool) {
 	if inRestrictedSQL {
 		return
 	}
-	metrics.StmtNodeCounter.WithLabelValues(getStmtLabel(stmtNode)).Inc()
+	metrics.StmtNodeCounter.WithLabelValues(GetStmtLabel(stmtNode)).Inc()
 }
 
-// getStmtLabel generates a label for a statement.
-func getStmtLabel(stmtNode ast.StmtNode) string {
+// GetStmtLabel generates a label for a statement.
+func GetStmtLabel(stmtNode ast.StmtNode) string {
 	switch x := stmtNode.(type) {
 	case *ast.AlterTableStmt:
 		return "AlterTable"
