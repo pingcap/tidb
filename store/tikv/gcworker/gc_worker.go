@@ -524,13 +524,6 @@ func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier st
 	ticker := time.NewTicker(gcJobLogTickInterval)
 	defer ticker.Stop()
 
-	req := &tikvrpc.Request{
-		Type: tikvrpc.CmdGC,
-		GC: &kvrpcpb.GCRequest{
-			SafePoint: safePoint,
-		},
-	}
-
 	bo := tikv.NewBackoffer(tikv.GcOneRegionMaxBackoff, ctx)
 	var key []byte
 	for {
@@ -549,7 +542,7 @@ func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier st
 		}
 
 		var regionErr *errorpb.Error
-		regionErr, err = doGCForOneRegion(bo, store, req, loc.Region)
+		regionErr, err = doGCForOneRegion(bo, store, safePoint, loc.Region)
 
 		// we check regionErr here first, because we know 'regionErr' and 'err' should not return together, to keep it to
 		// make the process correct.
@@ -581,7 +574,14 @@ func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier st
 }
 
 // these two errors should not return together, for more, see the func 'doGC'
-func doGCForOneRegion(bo *tikv.Backoffer, store tikv.Storage, req *tikvrpc.Request, region tikv.RegionVerID) (*errorpb.Error, error) {
+func doGCForOneRegion(bo *tikv.Backoffer, store tikv.Storage, safePoint uint64, region tikv.RegionVerID) (*errorpb.Error, error) {
+	req := &tikvrpc.Request{
+		Type: tikvrpc.CmdGC,
+		GC: &kvrpcpb.GCRequest{
+			SafePoint: safePoint,
+		},
+	}
+
 	resp, err := store.SendReq(bo, req, region, tikv.GCTimeout)
 	if err != nil {
 		return nil, errors.Trace(err)
