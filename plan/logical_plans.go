@@ -282,6 +282,9 @@ type DataSource struct {
 	// pushedDownConds are the conditions that will be pushed down to coprocessor.
 	pushedDownConds []expression.Expression
 
+	// statsAfterSelect is the statsInfo for dataSource and selection.
+	statsAfterSelect *statsInfo
+
 	statisticTable *statistics.Table
 
 	// availableIndices is used for storing result of avalableIndices function.
