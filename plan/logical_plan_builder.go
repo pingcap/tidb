@@ -1574,6 +1574,10 @@ func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
 	}
 }
 
+// RatioOfPseudoEstimate means if modifyCount / statsTblCount is greater than this ratio, we think the stats is invalid
+// and use pseudo estimation.
+var RatioOfPseudoEstimate float64 = 0.7
+
 func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	schemaName := tn.Schema
 	if schemaName.L == "" {
@@ -1593,8 +1597,16 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	} else {
 		statsTbl = handle.GetTableStats(tableInfo.ID)
 		// TODO: We should consider to add it to metric.
-		if statsTbl.Count == 0 || float64(statsTbl.ModifyCount) / float64(statsTbl.Count) > 0.7 {
+		if statsTbl.Count == 0 || float64(statsTbl.ModifyCount)/float64(statsTbl.Count) > RatioOfPseudoEstimate {
+			originCnt := statsTbl.Count
 			statsTbl = statistics.PseudoTable(tableInfo.ID)
+			if originCnt > 0 {
+				// The count of stats table is always proper.
+				statsTbl.Count = originCnt
+			} else {
+				// Zero count always brings some strange problem.
+				statsTbl.Count = 100
+			}
 		}
 	}
 	indices, includeTableScan, err := availableIndices(tn.IndexHints, tableInfo)
