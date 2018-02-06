@@ -236,7 +236,7 @@ const (
 	StatsPrompt = "stats"
 )
 
-// AutoAnalyzeMinCount means if the count of table is less than this value, we needn't do auto analyze.
+// AutoAnalyzeMinCnt means if the count of table is less than this value, we needn't do auto analyze.
 var AutoAnalyzeMinCnt int64 = 1000
 
 func needAnalyzeTable(tbl *Table, limit time.Duration) bool {
