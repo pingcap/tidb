@@ -14,6 +14,8 @@
 package plan
 
 import (
+	"fmt"
+
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
@@ -83,7 +85,7 @@ func (p *PhysicalTableScan) ToPB(ctx context.Context) (*tipb.Executor, error) {
 		Columns: distsql.ColumnsToProto(columns, p.Table.PKIsHandle),
 		Desc:    p.Desc,
 	}
-	log.Infof("[table scan] to pb, table %v, columns %v", p.Table.Name, columns)
+	log.Infof("[table scan] to pb, table %v, columns %#v", p.Table.Name, columns)
 	err := setPBColumnsDefaultValue(ctx, tsExec.Columns, p.Columns)
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tsExec}, errors.Trace(err)
 }
@@ -107,7 +109,13 @@ func (p *PhysicalIndexScan) ToPB(ctx context.Context) (*tipb.Executor, error) {
 		Columns: distsql.ColumnsToProto(columns, p.Table.PKIsHandle),
 		Desc:    p.Desc,
 	}
-	log.Infof("[index scan] to pb, table %v, columns %v, unique %v ", p.Table.Name, columns, p.Index.Unique)
+
+	var colStr string
+	for _, col := range idxExec.Columns {
+		colStr += fmt.Sprintf("%#v; ", col)
+	}
+	log.Infof("[index scan] to pb, table %v, columns %#v, unique %v ", p.Table.Name, colStr, p.Index.Unique)
+
 	return &tipb.Executor{Tp: tipb.ExecType_TypeIndexScan, IdxScan: idxExec}, nil
 }
 
