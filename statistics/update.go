@@ -251,8 +251,11 @@ const (
 	StatsPrompt = "stats"
 )
 
+// AutoAnalyzeMinCnt means if the count of table is less than this value, we needn't do auto analyze.
+var AutoAnalyzeMinCnt int64 = 1000
+
 func needAnalyzeTable(tbl *Table, limit time.Duration) bool {
-	if tbl.ModifyCount == 0 {
+	if tbl.ModifyCount == 0 || tbl.Count < AutoAnalyzeMinCnt {
 		return false
 	}
 	t := time.Unix(0, oracle.ExtractPhysical(tbl.Version)*int64(time.Millisecond))
