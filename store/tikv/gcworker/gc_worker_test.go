@@ -16,15 +16,15 @@ package gcworker
 import (
 	"flag"
 	"math"
-	"time"
 	"testing"
+	"time"
 
 	gofail "github.com/coreos/gofail/runtime"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/store/tikv"
 	goctx "golang.org/x/net/context"
-	"github.com/pingcap/kvproto/pkg/errorpb"
 )
 
 var (
