@@ -34,7 +34,7 @@ func (s *testConfigSuite) TestConfig(c *C) {
 	conf := new(Config)
 	conf.BinlogSocket = "/tmp/socket"
 	conf.Performance.RetryLimit = 20
-	conf.Performance.CommitTimeout = "10s"
+	conf.TiKVClient.CommitTimeout = "10s"
 
 	_, filename, _, _ := runtime.Caller(0)
 	configFile := path.Join(path.Dir(filename), "config.toml.example")
@@ -47,7 +47,7 @@ func (s *testConfigSuite) TestConfig(c *C) {
 	// Test that the value will be overwritten by the config file.
 	c.Assert(conf.Performance.RetryLimit, Equals, 10)
 
-	c.Assert(conf.Performance.CommitTimeout, Equals, "41s")
+	c.Assert(conf.TiKVClient.CommitTimeout, Equals, "41s")
 
 	// Reset
 	conf.BinlogSocket = ""

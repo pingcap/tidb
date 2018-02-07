@@ -131,7 +131,6 @@ type Performance struct {
 	StatsLease      string `toml:"stats-lease" json:"stats-lease"`
 	RunAutoAnalyze  bool   `toml:"run-auto-analyze" json:"run-auto-analyze"`
 	StmtCountLimit  int    `toml:"stmt-count-limit" json:"stmt-count-limit"`
-	CommitTimeout   string `toml:"commit-timeout" json:"commit-timeout"`
 }
 
 // XProtocol is the XProtocol section of the config.
@@ -197,6 +196,8 @@ type TiKVClient struct {
 	// GrpcConnectionCount is the max gRPC connections that will be established
 	// with each tikv-server.
 	GrpcConnectionCount int `toml:"grpc-connection-count" json:"grpc-connection-count"`
+	// CommitTimeout is the max time which command 'commit' will wait.
+	CommitTimeout   string `toml:"commit-timeout" json:"commit-timeout"`
 }
 
 var defaultConf = Config{
@@ -231,7 +232,6 @@ var defaultConf = Config{
 		StatsLease:      "3s",
 		RunAutoAnalyze:  true,
 		StmtCountLimit:  5000,
-		CommitTimeout:   "41s",
 	},
 	XProtocol: XProtocol{
 		XHost: "0.0.0.0",
@@ -260,6 +260,7 @@ var defaultConf = Config{
 	},
 	TiKVClient: TiKVClient{
 		GrpcConnectionCount: 16,
+		CommitTimeout:   "41s",
 	},
 }
 

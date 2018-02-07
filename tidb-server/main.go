@@ -361,7 +361,7 @@ func setGlobalVars() {
 		tikv.MaxConnectionCount = cfg.TiKVClient.GrpcConnectionCount
 	}
 
-	tikv.CommitMaxBackoff = int(parseLease(cfg.Performance.CommitTimeout).Seconds() * 1000)
+	tikv.CommitMaxBackoff = int(parseLease(cfg.TiKVClient.CommitTimeout).Seconds() * 1000)
 }
 
 func setupLog() {
