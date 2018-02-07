@@ -525,9 +525,7 @@ func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier st
 	log.Infof("[gc worker] %s start gc, safePoint: %v.", identifier, safePoint)
 	startTime := time.Now()
 	successRegions := 0
-	lastSuccessRegions := 0
 	failedRegions := 0
-	lastFailedRegions := 0
 
 	ticker := time.NewTicker(gcJobLogTickInterval)
 	defer ticker.Stop()
@@ -539,11 +537,6 @@ func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier st
 		case <-ctx.Done():
 			return errors.New("[gc worker] gc job canceled")
 		case <-ticker.C:
-			gcActionRegionResultCounter.WithLabelValues("success").Add(float64(successRegions - lastSuccessRegions))
-			gcActionRegionResultCounter.WithLabelValues("fail").Add(float64(failedRegions - lastFailedRegions))
-			lastSuccessRegions = successRegions
-			lastFailedRegions = failedRegions
-
 			log.Infof("[gc worker] %s gc in process, safePoint: %v, successful regions: %v, failed regions: %v, cost time: %s",
 				identifier, safePoint, successRegions, failedRegions, time.Since(startTime))
 		default:
@@ -568,9 +561,11 @@ func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier st
 
 		if err != nil {
 			failedRegions++
+			gcActionRegionResultCounter.WithLabelValues("fail").Inc()
 			log.Warnf("[gc worker] %s failed to do gc on region(%s, %s), ignore it", identifier, string(loc.StartKey), string(loc.EndKey))
 		} else {
 			successRegions++
+			gcActionRegionResultCounter.WithLabelValues("success").Inc()
 		}
 
 		key = loc.EndKey
