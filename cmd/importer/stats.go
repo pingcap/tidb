@@ -86,10 +86,9 @@ func (h *histogram) randInt() int64 {
 }
 
 func getValidPrefix(lower, upper string) string {
-	prefixLen := 0
 	for i := range lower {
 		if i >= len(upper) {
-			log.Fatal("lower %s is larger than upper %s", lower, upper)
+			log.Fatalf("lower %s is larger than upper %s", lower, upper)
 		}
 		if lower[i] != upper[i] {
 			randCh := uint8(rand.Intn(int(upper[i]-lower[i]))) + lower[i]
@@ -98,7 +97,6 @@ func getValidPrefix(lower, upper string) string {
 			newBytes = append(newBytes, byte(randCh))
 			return string(newBytes)
 		}
-		prefixLen++
 	}
 	return lower
 }
