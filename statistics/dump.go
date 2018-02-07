@@ -39,11 +39,11 @@ type jsonColumn struct {
 	LastUpdateVersion uint64          `json:"last_update_version"`
 }
 
-func dumpJSONCol(hist *Histogram, CMSketch *CMSketch, NullCount int64, LastUpdateVersion uint64) *jsonColumn {
+func dumpJSONCol(hist *Histogram, CMSketch *CMSketch) *jsonColumn {
 	jsonCol := &jsonColumn{
 		Histogram:         HistogramToProto(hist),
-		NullCount:         NullCount,
-		LastUpdateVersion: LastUpdateVersion,
+		NullCount:         hist.NullCount,
+		LastUpdateVersion: hist.LastUpdateVersion,
 	}
 	if CMSketch != nil {
 		jsonCol.CMSketch = CMSketchToProto(CMSketch)
@@ -71,11 +71,11 @@ func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo) (*JS
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		jsonTbl.Columns[col.Info.Name.L] = dumpJSONCol(hist, col.CMSketch, col.NullCount, col.LastUpdateVersion)
+		jsonTbl.Columns[col.Info.Name.L] = dumpJSONCol(hist, col.CMSketch)
 	}
 
 	for _, idx := range tbl.Indices {
-		jsonTbl.Indices[idx.Info.Name.L] = dumpJSONCol(&idx.Histogram, idx.CMSketch, idx.NullCount, idx.LastUpdateVersion)
+		jsonTbl.Indices[idx.Info.Name.L] = dumpJSONCol(&idx.Histogram, idx.CMSketch)
 	}
 	return jsonTbl, nil
 }
