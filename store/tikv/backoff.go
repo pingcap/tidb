@@ -142,7 +142,7 @@ const (
 	getMaxBackoff           = 20000
 	prewriteMaxBackoff      = 20000
 	cleanupMaxBackoff       = 20000
-	gcMaxBackoff            = 100000
+	gcOneRegionMaxBackoff   = 20000
 	gcResolveLockMaxBackoff = 100000
 	gcDeleteRangeMaxBackoff = 100000
 	rawkvMaxBackoff         = 20000
