@@ -643,6 +643,9 @@ func (w *GCWorker) checkLeader() (bool, error) {
 		return true, nil
 	}
 
+	_, err = session.Execute(goCtx, "ROLLBACK")
+	terror.Log(errors.Trace(err))
+
 	_, err = session.Execute(goCtx, "BEGIN")
 	if err != nil {
 		return false, errors.Trace(err)
