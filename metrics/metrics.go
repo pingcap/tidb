@@ -22,7 +22,7 @@ var (
 			Namespace: "tidb",
 			Name:      "panic",
 			Help:      "Counter of panic.",
-		}, []string{LabelSession, LabelDomain, LabelDDL})
+		}, []string{LblType})
 )
 
 // metrics labels.
@@ -31,7 +31,19 @@ const (
 	LabelDomain   = "domain"
 	LabelDDL      = "ddl"
 	LabelGCWorker = "gcworker"
+
+	opSucc   = "op_succ"
+	opFailed = "op_failed"
 )
+
+// RetLabel returns "op_succ" when err == nil and "op_failed" when err != nil.
+// This could be useful when you need to observe the operation result.
+func RetLabel(err error) string {
+	if err == nil {
+		return opSucc
+	}
+	return opFailed
+}
 
 func init() {
 	prometheus.MustRegister(PanicCounter)

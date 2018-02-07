@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
@@ -148,8 +149,27 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 	return errors.Trace(err)
 }
 
+func regionErrorToLabel(e *errorpb.Error) string {
+	if e.GetNotLeader() != nil {
+		return "not_leader"
+	} else if e.GetRegionNotFound() != nil {
+		return "region_not_found"
+	} else if e.GetKeyNotInRegion() != nil {
+		return "key_not_in_region"
+	} else if e.GetStaleEpoch() != nil {
+		return "stale_epoch"
+	} else if e.GetServerIsBusy() != nil {
+		return "server_is_busy"
+	} else if e.GetStaleCommand() != nil {
+		return "stale_command"
+	} else if e.GetStoreNotMatch() != nil {
+		return "store_not_match"
+	}
+	return "unknown"
+}
+
 func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, regionErr *errorpb.Error) (retry bool, err error) {
-	reportRegionError(regionErr)
+	metrics.TiKVRegionErrorCounter.WithLabelValues(regionErrorToLabel(regionErr)).Inc()
 	if notLeader := regionErr.GetNotLeader(); notLeader != nil {
 		// Retry if error is `NotLeader`.
 		log.Debugf("tikv reports `NotLeader`: %s, ctx: %v, retry later", notLeader, ctx)

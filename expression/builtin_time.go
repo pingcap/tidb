@@ -3191,7 +3191,7 @@ func strDatetimeSubDuration(sc *stmtctx.StatementContext, d string, arg1 types.D
 	if err != nil {
 		return "", errors.Trace(err)
 	}
-	arg1time, err := arg1.ConvertToTime(uint8(getFsp(arg1.String())))
+	arg1time, err := arg1.ConvertToTime(sc, uint8(getFsp(arg1.String())))
 	if err != nil {
 		return "", errors.Trace(err)
 	}
@@ -3200,7 +3200,7 @@ func strDatetimeSubDuration(sc *stmtctx.StatementContext, d string, arg1 types.D
 	if tmpDuration.MicroSecond() == 0 {
 		fsp = types.MinFsp
 	}
-	resultDuration, err := tmpDuration.ConvertToTime(mysql.TypeDatetime)
+	resultDuration, err := tmpDuration.ConvertToTime(sc, mysql.TypeDatetime)
 	if err != nil {
 		return "", errors.Trace(err)
 	}
@@ -4045,13 +4045,13 @@ func (b *builtinSubDatetimeAndDurationSig) evalTime(row types.Row) (types.Time, 
 	if isNull || err != nil {
 		return types.ZeroDatetime, isNull, errors.Trace(err)
 	}
-	arg1time, err := arg1.ConvertToTime(mysql.TypeDatetime)
+	sc := b.ctx.GetSessionVars().StmtCtx
+	arg1time, err := arg1.ConvertToTime(sc, mysql.TypeDatetime)
 	if err != nil {
 		return arg1time, true, errors.Trace(err)
 	}
-	sc := b.ctx.GetSessionVars().StmtCtx
 	tmpDuration := arg0.Sub(sc, &arg1time)
-	result, err := tmpDuration.ConvertToTime(arg0.Type)
+	result, err := tmpDuration.ConvertToTime(sc, arg0.Type)
 	return result, err != nil, errors.Trace(err)
 }
 
@@ -4080,13 +4080,13 @@ func (b *builtinSubDatetimeAndStringSig) evalTime(row types.Row) (types.Time, bo
 	if err != nil {
 		return types.ZeroDatetime, true, errors.Trace(err)
 	}
-	arg1time, err := arg1.ConvertToTime(mysql.TypeDatetime)
+	sc := b.ctx.GetSessionVars().StmtCtx
+	arg1time, err := arg1.ConvertToTime(sc, mysql.TypeDatetime)
 	if err != nil {
 		return types.ZeroDatetime, true, errors.Trace(err)
 	}
-	sc := b.ctx.GetSessionVars().StmtCtx
 	tmpDuration := arg0.Sub(sc, &arg1time)
-	result, err := tmpDuration.ConvertToTime(mysql.TypeDatetime)
+	result, err := tmpDuration.ConvertToTime(sc, mysql.TypeDatetime)
 	return result, err != nil, errors.Trace(err)
 }
 
