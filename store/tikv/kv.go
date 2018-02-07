@@ -36,6 +36,8 @@ import (
 	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 	"google.golang.org/grpc"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/errorpb"
 )
 
 type storeCache struct {
@@ -422,6 +424,22 @@ func (s *tikvStore) SupportDeleteRange() (supported bool) {
 }
 
 func (s *tikvStore) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
+	// gofail: var tikvStoreSendReqResult string
+	// switch tikvStoreSendReqResult {
+	// case "timeout":
+	// 	 return nil, errors.New("timeout")
+	// case "GCNotLeader":
+	//	 return &tikvrpc.Response{
+	//		 Type:   tikvrpc.CmdGC,
+	//		 GC: &kvrpcpb.GCResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
+	//	 }, nil
+	// case "GCServerIsBusy":
+	//	 return &tikvrpc.Response{
+	//		 Type:   tikvrpc.CmdGC,
+	//		 GC: &kvrpcpb.GCResponse{RegionError: &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}}},
+	//	 }, nil
+	// }
+
 	sender := NewRegionRequestSender(s.regionCache, s.client)
 	return sender.SendReq(bo, req, regionID, timeout)
 }

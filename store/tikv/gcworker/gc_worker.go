@@ -224,7 +224,7 @@ func (w *GCWorker) leaderTick(ctx goctx.Context) error {
 	}
 
 	w.gcIsRunning = true
-	log.Infof("[gc worker] %s starts GC job, safePoint: %v", w.uuid, safePoint)
+	log.Infof("[gc worker] %s starts the whole job, safePoint: %v", w.uuid, safePoint)
 	go w.runGCJob(ctx, safePoint)
 	return nil
 }
@@ -318,20 +318,23 @@ func (w *GCWorker) runGCJob(ctx goctx.Context, safePoint uint64) {
 	gcWorkerCounter.WithLabelValues("run_job").Inc()
 	err := resolveLocks(ctx, w.store, safePoint, w.uuid)
 	if err != nil {
-		gcFailureCounter.WithLabelValues("resolve_lock").Inc()
+		log.Errorf("[gc worker] %s resolve locks returns an error %v", w.uuid, err)
+		gcJobFailureCounter.WithLabelValues("resolve_lock").Inc()
 		w.done <- errors.Trace(err)
 		return
 	}
 	err = w.deleteRanges(ctx, safePoint)
 	if err != nil {
-		gcFailureCounter.WithLabelValues("delete_range").Inc()
+		log.Errorf("[gc worker] %s delete range returns an error %v", w.uuid, err)
+		gcJobFailureCounter.WithLabelValues("delete_range").Inc()
 		w.done <- errors.Trace(err)
 		return
 	}
 	err = doGC(ctx, w.store, safePoint, w.uuid)
 	if err != nil {
-		log.Error("do GC returns an error", err)
+		log.Errorf("[gc worker] %s do GC returns an error %v", w.uuid, err)
 		w.gcIsRunning = false
+		gcJobFailureCounter.WithLabelValues("gc").Inc()
 		w.done <- errors.Trace(err)
 		return
 	}
@@ -499,7 +502,7 @@ func resolveLocks(ctx goctx.Context, store tikv.Storage, safePoint uint64, ident
 			}
 		} else {
 			log.Infof("[gc worker] %s, region %d has more than %d locks", identifier, loc.Region.GetID(), gcScanLockLimit)
-			gcRegionTooMuchLocksCounter.Inc()
+			gcRegionTooManyLocksCounter.Inc()
 			key = locks[len(locks)-1].Key
 		}
 	}
@@ -522,7 +525,9 @@ func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier st
 	log.Infof("[gc worker] %s start gc, safePoint: %v.", identifier, safePoint)
 	startTime := time.Now()
 	successRegions := 0
+	lastSuccessRegions := 0
 	failedRegions := 0
+	lastFailedRegions := 0
 
 	ticker := time.NewTicker(gcJobLogTickInterval)
 	defer ticker.Stop()
@@ -534,6 +539,11 @@ func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier st
 		case <-ctx.Done():
 			return errors.New("[gc worker] gc job canceled")
 		case <-ticker.C:
+			gcActionRegionResultCounter.WithLabelValues("success").Add(float64(successRegions - lastSuccessRegions))
+			gcActionRegionResultCounter.WithLabelValues("fail").Add(float64(failedRegions - lastFailedRegions))
+			lastSuccessRegions = successRegions
+			lastFailedRegions = failedRegions
+
 			log.Infof("[gc worker] %s gc in process, safePoint: %v, successful regions: %v, failed regions: %v, cost time: %s",
 				identifier, safePoint, successRegions, failedRegions, time.Since(startTime))
 		default:
@@ -559,7 +569,6 @@ func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier st
 		if err != nil {
 			failedRegions++
 			log.Warnf("[gc worker] %s failed to do gc on region(%s, %s), ignore it", identifier, string(loc.StartKey), string(loc.EndKey))
-			gcFailureCounter.WithLabelValues("gc").Inc()
 		} else {
 			successRegions++
 		}
