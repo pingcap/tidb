@@ -61,10 +61,6 @@ func (s *testMySQLConstSuite) SetUpSuite(c *C) {
 		s.store = store
 		tidb.SetSchemaLease(0)
 		tidb.SetStatsLease(0)
-	} else {
-		store, err := tidb.NewStore("memory://test/test")
-		c.Assert(err, IsNil)
-		s.store = store
 	}
 	_, err := tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
