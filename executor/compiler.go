@@ -117,8 +117,6 @@ func isPhysicalPlanExpensive(p plan.PhysicalPlan) bool {
 		return true
 	case *plan.PhysicalSort:
 		return true
-	case *plan.NominalSort:
-		return true
 	case *plan.PhysicalLimit:
 		return x.Offset+x.Count > expensiveRowThreshold
 	case *plan.PhysicalIndexLookUpReader:
