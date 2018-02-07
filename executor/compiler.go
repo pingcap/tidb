@@ -112,28 +112,6 @@ func isPhysicalPlanExpensive(p plan.PhysicalPlan) bool {
 		}
 	}
 
-	switch x := p.(type) {
-	case *plan.PhysicalTopN:
-		return true
-	case *plan.PhysicalSort:
-		return true
-	case *plan.PhysicalLimit:
-		return x.Offset+x.Count > expensiveRowThreshold
-	case *plan.PhysicalIndexLookUpReader:
-		return true
-	case *plan.PhysicalHashAgg:
-		return true
-	case *plan.PhysicalStreamAgg:
-		return true
-	case *plan.PhysicalApply:
-		return true
-	case *plan.PhysicalIndexJoin:
-		return true
-	case *plan.PhysicalHashJoin:
-		return true
-	case *plan.PhysicalMergeJoin:
-		return true
-	}
 	return false
 }
 

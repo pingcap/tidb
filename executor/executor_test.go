@@ -2083,7 +2083,7 @@ func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
 	tk.MustQuery("select id from t where id = 1")
 	tk.MustQuery("select * from t1 where id = 1")
 
-	cli.priority = pb.CommandPri_Low
+	cli.priority = pb.CommandPri_Normal
 	tk.MustQuery("select count(*) from t")
 
 	cli.priority = pb.CommandPri_Normal
