@@ -80,12 +80,6 @@ func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo) (*JS
 	return jsonTbl, nil
 }
 
-func loadHist(hist *Histogram, ID, NullCount int64, LastUpdateVersion uint64) Histogram {
-	hist.ID, hist.NullCount, hist.LastUpdateVersion = ID, NullCount, LastUpdateVersion
-	hist.PreCalculateScalar()
-	return *hist
-}
-
 // LoadStatsFromJSON load statistic from json.
 func (h *Handle) LoadStatsFromJSON(tableInfo *model.TableInfo, jsonTbl *JSONTable) (*Table, error) {
 	tbl := &Table{
@@ -102,8 +96,10 @@ func (h *Handle) LoadStatsFromJSON(tableInfo *model.TableInfo, jsonTbl *JSONTabl
 			if idxInfo.Name.L != id {
 				continue
 			}
+			hist := HistogramFromProto(jsonIdx.Histogram)
+			hist.ID, hist.NullCount, hist.LastUpdateVersion = idxInfo.ID, jsonIdx.NullCount, jsonIdx.LastUpdateVersion
 			idx := &Index{
-				Histogram: loadHist(HistogramFromProto(jsonIdx.Histogram), idxInfo.ID, jsonIdx.NullCount, jsonIdx.LastUpdateVersion),
+				Histogram: *hist,
 				CMSketch:  CMSketchFromProto(jsonIdx.CMSketch),
 				Info:      idxInfo,
 			}
@@ -121,8 +117,9 @@ func (h *Handle) LoadStatsFromJSON(tableInfo *model.TableInfo, jsonTbl *JSONTabl
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+			hist.ID, hist.NullCount, hist.LastUpdateVersion = colInfo.ID, jsonCol.NullCount, jsonCol.LastUpdateVersion
 			col := &Column{
-				Histogram: loadHist(hist, colInfo.ID, jsonCol.NullCount, jsonCol.LastUpdateVersion),
+				Histogram: *hist,
 				CMSketch:  CMSketchFromProto(jsonCol.CMSketch),
 				Info:      colInfo,
 				Count:     count,
