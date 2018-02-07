@@ -34,6 +34,7 @@ const (
 	readTimeoutShort    = 20 * time.Second  // For requests that read/write several key-values.
 	readTimeoutMedium   = 60 * time.Second  // For requests that may need scan region.
 	readTimeoutLong     = 150 * time.Second // For requests that may need scan region multiple times.
+	gcTimeout           = 5 * time.Minute
 
 	grpcInitialWindowSize     = 1 << 30
 	grpcInitialConnWindowSize = 1 << 30

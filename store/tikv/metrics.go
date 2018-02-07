@@ -130,6 +130,22 @@ var (
 		}, []string{"type"},
 	)
 
+	gcJobFailureCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "gc_failure",
+			Help:      "Counter of gc job failure.",
+		}, []string{"type"})
+
+	gcActionRegionResultCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "gc_action_result",
+			Help:      "Counter of gc action result on region level.",
+		}, []string{"type"})
+
 	lockResolverCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
