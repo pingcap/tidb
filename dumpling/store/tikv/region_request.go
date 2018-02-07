@@ -60,6 +60,23 @@ func NewRegionRequestSender(regionCache *RegionCache, client Client) *RegionRequ
 
 // SendReq sends a request to tikv server.
 func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
+
+	// gofail: var tikvStoreSendReqResult string
+	// switch tikvStoreSendReqResult {
+	// case "timeout":
+	// 	 return nil, errors.New("timeout")
+	// case "GCNotLeader":
+	//	 return &tikvrpc.Response{
+	//		 Type:   tikvrpc.CmdGC,
+	//		 GC: &kvrpcpb.GCResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
+	//	 }, nil
+	// case "GCServerIsBusy":
+	//	 return &tikvrpc.Response{
+	//		 Type:   tikvrpc.CmdGC,
+	//		 GC: &kvrpcpb.GCResponse{RegionError: &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}}},
+	//	 }, nil
+	// }
+
 	for {
 		ctx, err := s.regionCache.GetRPCContext(bo, regionID)
 		if err != nil {
