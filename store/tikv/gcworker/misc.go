@@ -43,7 +43,7 @@ var (
 			Help:      "Gauge of GC configs.",
 		}, []string{"type"})
 
-	gcFailureCounter = prometheus.NewCounterVec(
+	gcJobFailureCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
@@ -51,7 +51,15 @@ var (
 			Help:      "Counter of gc job failure.",
 		}, []string{"type"})
 
-	gcRegionTooMuchLocksCounter = prometheus.NewCounter(
+	gcActionRegionResultCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "gc_action_result",
+			Help:      "Counter of gc action result on region level.",
+		}, []string{"type"})
+
+	gcRegionTooManyLocksCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
@@ -64,6 +72,7 @@ func init() {
 	prometheus.MustRegister(gcWorkerCounter)
 	prometheus.MustRegister(gcConfigGauge)
 	prometheus.MustRegister(gcHistogram)
-	prometheus.MustRegister(gcFailureCounter)
-	prometheus.MustRegister(gcRegionTooMuchLocksCounter)
+	prometheus.MustRegister(gcJobFailureCounter)
+	prometheus.MustRegister(gcActionRegionResultCounter)
+	prometheus.MustRegister(gcRegionTooManyLocksCounter)
 }
