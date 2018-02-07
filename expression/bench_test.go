@@ -13,6 +13,8 @@
 
 package expression
 
+// This file contains benchmarks of our expression evaluation.
+
 import (
 	"fmt"
 	"testing"
@@ -71,6 +73,7 @@ func (h *benchHelper) init() {
 		Collate: charset.CollationBin,
 	})
 
+	// Use 20 string columns to show the cache performance.
 	for i := 0; i < 20; i++ {
 		h.inputTypes = append(h.inputTypes, &types.FieldType{
 			Tp:      mysql.TypeVarString,
@@ -169,20 +172,6 @@ func BenchmarkVectorizedExecute(b *testing.B) {
 		h.outputChunk.Reset()
 		if err := VectorizedExecute(h.ctx, h.exprs, inputIter, h.outputChunk); err != nil {
 			panic("errors happend during \"VectorizedExecute\"")
-		}
-	}
-}
-
-func BenchmarkUnVectorizedExecute(b *testing.B) {
-	h := benchHelper{}
-	h.init()
-	inputIter := chunk.NewIterator4Chunk(h.inputChunk)
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		h.outputChunk.Reset()
-		if err := UnVectorizedExecute(h.ctx, h.exprs, inputIter, h.outputChunk); err != nil {
-			panic("errors happend during \"UnVectorizedExecute\"")
 		}
 	}
 }
