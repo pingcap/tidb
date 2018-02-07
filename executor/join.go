@@ -44,7 +44,6 @@ type HashJoinExec struct {
 	outerExec   Executor
 	innerExec   Executor
 	outerFilter expression.CNFExprs
-	innerFilter expression.CNFExprs
 	outerKeys   []*expression.Column
 	innerKeys   []*expression.Column
 
@@ -325,32 +324,21 @@ func (e *HashJoinExec) fetchOuterChunks(goCtx goctx.Context) {
 	}
 }
 
-// fetchSelectedInnerRows fetches all the selected rows from inner executor,
+// fetchInnerRows fetches all rows from inner executor,
 // and append them to e.innerResult.
-func (e *HashJoinExec) fetchSelectedInnerRows(goCtx goctx.Context) (err error) {
-	innerExecChk := e.childrenResults[e.innerIdx]
-	innerIter := chunk.NewIterator4Chunk(innerExecChk)
-	selected := make([]bool, 0, chunk.InitialCapacity)
+func (e *HashJoinExec) fetchInnerRows(goCtx goctx.Context) (err error) {
 	innerResult := chunk.NewList(e.innerExec.retTypes(), e.maxChunkSize)
 	memExceedThreshold, execMemThreshold := false, e.ctx.GetSessionVars().MemThreshold
 	for {
-		innerExecChk.Reset()
-		err = e.innerExec.NextChunk(goCtx, innerExecChk)
+		chk := e.children[e.innerIdx].newChunk()
+		err = e.innerExec.NextChunk(goCtx, chk)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if innerExecChk.NumRows() == 0 {
+		if chk.NumRows() == 0 {
 			break
 		}
-		selected, err = expression.VectorizedFilter(e.ctx, e.innerFilter, innerIter, selected)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		for idx := range selected {
-			if selected[idx] {
-				innerResult.AppendRow(innerExecChk.GetRow(idx))
-			}
-		}
+		innerResult.Add(chk)
 		innerMemUsage := innerResult.MemoryUsage()
 		if !memExceedThreshold && innerMemUsage > execMemThreshold {
 			memExceedThreshold = true
@@ -426,14 +414,6 @@ func (e *HashJoinExec) prepare4Row(goCtx goctx.Context) error {
 		}
 		if innerRow == nil {
 			break
-		}
-
-		matched, err := expression.EvalBool(e.innerFilter, innerRow, e.ctx)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if !matched {
-			continue
 		}
 
 		hasNull, joinKey, err := getJoinKey(e.ctx.GetSessionVars().StmtCtx, e.innerKeys, innerRow, e.hashJoinBuffers[0].data, nil)
@@ -795,7 +775,7 @@ func (e *HashJoinExec) Next(goCtx goctx.Context) (Row, error) {
 // step 2. fetch data from outer child in a background goroutine and probe the hash table in multiple join workers.
 func (e *HashJoinExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) (err error) {
 	if !e.prepared {
-		if err = e.fetchSelectedInnerRows(goCtx); err != nil {
+		if err = e.fetchInnerRows(goCtx); err != nil {
 			return errors.Trace(err)
 		}
 		if err = e.buildHashTableForList(); err != nil {

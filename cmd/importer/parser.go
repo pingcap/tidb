@@ -20,8 +20,12 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser"
+	_ "github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/mock"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -37,6 +41,8 @@ type column struct {
 	set     []string
 
 	table *table
+
+	hist *histogram
 }
 
 func (col *column) String() string {
@@ -117,12 +123,12 @@ func (col *column) parseColumnOptions(ops []*ast.ColumnOption) {
 }
 
 type table struct {
-	name         string
-	columns      []*column
-	columnList   string
-	indices      map[string]*column
-	uniqIndices  map[string]*column
-	unsignedCols map[string]*column
+	name        string
+	columns     []*column
+	columnList  string
+	indices     map[string]*column
+	uniqIndices map[string]*column
+	tblInfo     *model.TableInfo
 }
 
 func (t *table) printColumns() string {
@@ -160,9 +166,8 @@ func (t *table) String() string {
 
 func newTable() *table {
 	return &table{
-		indices:      make(map[string]*column),
-		uniqIndices:  make(map[string]*column),
-		unsignedCols: make(map[string]*column),
+		indices:     make(map[string]*column),
+		uniqIndices: make(map[string]*column),
 	}
 }
 
@@ -203,6 +208,12 @@ func (t *table) buildColumnList() {
 func parseTable(t *table, stmt *ast.CreateTableStmt) error {
 	t.name = stmt.Table.Name.L
 	t.columns = make([]*column, 0, len(stmt.Cols))
+
+	mockTbl, err := ddl.MockTableInfo(mock.NewContext(), stmt, 1)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	t.tblInfo = mockTbl
 
 	for i, col := range stmt.Cols {
 		column := &column{idx: i + 1, table: t, step: defaultStep, data: newDatum()}

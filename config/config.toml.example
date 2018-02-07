@@ -6,7 +6,7 @@ host = "0.0.0.0"
 # TiDB server port.
 port = 4000
 
-# Registered store name, [memory, goleveldb, boltdb, tikv, mocktikv]
+# Registered store name, [tikv, mocktikv]
 store = "mocktikv"
 
 # TiDB storage path.
