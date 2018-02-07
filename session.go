@@ -936,6 +936,10 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 // so if execute statement meets error, the txn won't be made dirty.
 // 2. It's a lazy transaction, that means it's a txnFuture befort StartTS() is really need.
 type TxnState struct {
+	// States of a TxnState should be one of the followings:
+	// Invalid: kv.Transaction == nil && txnFuture == nil
+	// Pending: kv.Transaction == nil && txnFuture != nil
+	// Valid:	kv.Transaction != nil && txnFuture == nil
 	kv.Transaction
 	txnFuture *txnFuture
 
