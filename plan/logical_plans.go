@@ -289,7 +289,7 @@ type DataSource struct {
 
 	statisticTable *statistics.Table
 
-	// availableIndices is used for storing result of avalableIndices function.
+	// availableIndices is used for storing result of availableIndices function.
 	availableIndices *avalableIndices
 }
 
