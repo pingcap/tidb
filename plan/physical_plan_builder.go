@@ -201,7 +201,6 @@ func (ds *DataSource) convert2PhysicalPlan(prop *requiredProp) (task, error) {
 		return t, nil
 	}
 
-	// TODO: We have not checked if this table has a predicate. If not, we can only consider table scan.
 	indices := ds.availableIndices.indices
 	includeTableScan := ds.availableIndices.includeTableScan
 	t = invalidTask
@@ -212,7 +211,10 @@ func (ds *DataSource) convert2PhysicalPlan(prop *requiredProp) (task, error) {
 		}
 	}
 	if !includeTableScan || len(ds.pushedDownConds) > 0 || len(prop.cols) > 0 {
-		for _, idx := range indices {
+		for i, idx := range indices {
+			if !ds.validIndices[i] && len(prop.cols) == 0 {
+				continue
+			}
 			idxTask, err := ds.convertToIndexScan(prop, idx)
 			if err != nil {
 				return nil, errors.Trace(err)

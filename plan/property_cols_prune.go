@@ -25,6 +25,20 @@ func (ds *DataSource) preparePossibleProperties() (result [][]*expression.Column
 		if col != nil {
 			result = append(result, []*expression.Column{col})
 		}
+		cols := expression.ExtractColumnsFromExpressions(make([]*expression.Column, 0, 10), ds.pushedDownConds, nil)
+		ds.validIndices = make([]bool, len(indices))
+		for _, col := range cols {
+			for i, idx := range indices {
+				if !ds.validIndices[i] && col.ColName.L == idx.Columns[0].Name.L {
+					ds.validIndices[i] = true
+				}
+			}
+		}
+	} else {
+		ds.validIndices = make([]bool, len(indices))
+		for i := range ds.validIndices {
+			ds.validIndices[i] = true
+		}
 	}
 	for _, idx := range indices {
 		cols, _ := expression.IndexInfo2Cols(ds.schema.Columns, idx)
