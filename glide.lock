@@ -1,5 +1,5 @@
-hash: c478c01828fcb1cc64c867d184887920674563c9a0b6549e36463ef7a518f07d
-updated: 2018-02-07T15:25:46.034782+08:00
+hash: 8d417eb10577464722137ba91ba0d045cccf47b81f9ea4f21d9e133410f3cf46
+updated: 2017-10-23T20:08:13.880281979+08:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -24,6 +24,14 @@ imports:
   - etcdserver/etcdserverpb
   - mvcc/mvccpb
   - pkg/tlsutil
+- name: github.com/coreos/go-systemd
+  version: 48702e0da86bd25e76cfef347e2adeb434a0d0a6
+  subpackages:
+  - journal
+- name: github.com/coreos/pkg
+  version: 3ac0863d7acf3bc44daf49afef8919af12f704ef
+  subpackages:
+  - capnslog
 - name: github.com/cznic/golex
   version: da5a7153a51074477ecac5c45a7e5182a0c72448
   subpackages:
@@ -122,6 +130,8 @@ imports:
   - pkg/pdpb
   - pkg/raft_serverpb
   - pkg/tikvpb
+- name: github.com/pingcap/mysqlx-driver
+  version: 2d8314d333881ae8b5947623d6ff49741707a31a
 - name: github.com/pingcap/mysqlx_driver
   version: 2d8314d333881ae8b5947623d6ff49741707a31a
   repo: git@github.com:pingcap/mysqlx-driver.git
@@ -129,6 +139,7 @@ imports:
   version: 91e4257196bb714005f80a6e075bc1e19a9687b1
   subpackages:
   - pd-client
+  - pkg/logutil
 - name: github.com/pingcap/tipb
   version: eccd39c3992538c382a6351430a77233f42b1344
   subpackages:
@@ -166,6 +177,10 @@ imports:
   version: ba1b36c82c5e05c4f912a88eab0dcd91a171688f
 - name: github.com/spaolacci/murmur3
   version: 0d12bf811670bf6a1a63828dfbd003eded177fce
+- name: github.com/syndtr/goleveldb
+  version: b89cc31ef7977104127d34c1bd31ebd1a9db2199
+  subpackages:
+  - leveldb/comparer
 - name: github.com/twinj/uuid
   version: 70cac2bcd273ef6a371bb96cde363d28b68734c3
 - name: golang.org/x/net
