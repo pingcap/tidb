@@ -81,7 +81,7 @@ var (
 	configPath = flag.String(nmConfig, "", "config file path")
 
 	// Base
-	store        = flag.String(nmStore, "mocktikv", "registered store name, [memory, goleveldb, boltdb, tikv, mocktikv]")
+	store        = flag.String(nmStore, "mocktikv", "registered store name, [tikv, mocktikv]")
 	storePath    = flag.String(nmStorePath, "/tmp/tidb", "tidb storage path")
 	host         = flag.String(nmHost, "0.0.0.0", "tidb server host")
 	port         = flag.String(nmPort, "4000", "tidb server port")
