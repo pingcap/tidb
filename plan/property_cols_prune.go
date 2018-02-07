@@ -54,10 +54,8 @@ func (p *LogicalSelection) preparePossibleProperties() (result [][]*expression.C
 }
 
 func (p *baseLogicalPlan) preparePossibleProperties() [][]*expression.Column {
-	if len(p.children) > 0 {
-		for _, ch := range p.children {
-			ch.preparePossibleProperties()
-		}
+	for _, ch := range p.children {
+		ch.preparePossibleProperties()
 	}
 	return nil
 }
