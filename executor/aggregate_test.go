@@ -502,8 +502,13 @@ func (s *testSuite) TestAggEliminator(c *C) {
 func (s *testSuite) TestIssue5663(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
-	plan.PlanCacheEnabled = true
 	plan.GlobalPlanCache = kvcache.NewShardedLRUCache(2, 1)
+	if plan.GlobalPlanCache != nil {
+		plan.PlanCacheEnabled = true
+		defer func() {
+			plan.PlanCacheEnabled = false
+		}()
+	}
 
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1 (i int unsigned, primary key(i));")
