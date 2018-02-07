@@ -280,6 +280,7 @@ func (a *ExecStmt) buildExecutor(ctx context.Context) (Executor, error) {
 	}
 
 	b := newExecutorBuilder(ctx, a.InfoSchema, priority)
+	a.Ctx.GetSessionVars().StmtCtx.DebugLog += fmt.Sprintf("-------[exec] ver %v;", a.InfoSchema.SchemaMetaVersion())
 	e := b.build(a.Plan)
 	if b.err != nil {
 		return nil, errors.Trace(b.err)

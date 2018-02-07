@@ -16,7 +16,7 @@ package plan
 import (
 	"fmt"
 
-	log "github.com/Sirupsen/logrus"
+	// log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/distsql"
@@ -90,7 +90,7 @@ func (p *PhysicalTableScan) ToPB(ctx context.Context) (*tipb.Executor, error) {
 	for _, col := range tsExec.Columns {
 		colStr += fmt.Sprintf("%#v; ", col)
 	}
-	p.ctx.GetSessionVars().StmtCtx.DebugLog += fmt.Sprintf("[table scan] to pb, table %v, columns %#v\n", p.Table.Name, colStr)
+	p.ctx.GetSessionVars().StmtCtx.DebugLog += fmt.Sprintf("-------[[table scan] to pb, table %v, columns %#v\n", p.Table.Name, colStr)
 	// log.Infof("[table scan] to pb, table %v, columns %#v", p.Table.Name, colStr)
 	err := setPBColumnsDefaultValue(ctx, tsExec.Columns, p.Columns)
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tsExec}, errors.Trace(err)
@@ -108,7 +108,9 @@ func (p *PhysicalIndexScan) ToPB(ctx context.Context) (*tipb.Executor, error) {
 			})
 			colStr += "has extra handle; "
 		} else {
-			columns = append(columns, p.Table.Columns[col.Position])
+			c := p.Table.Columns[col.Position]
+			colStr += fmt.Sprintf("offset:%v, col name:%v, id:%v; ", col.Position, c.Name, c.ID)
+			columns = append(columns, c)
 		}
 	}
 	idxExec := &tipb.IndexScan{
@@ -119,17 +121,10 @@ func (p *PhysicalIndexScan) ToPB(ctx context.Context) (*tipb.Executor, error) {
 	}
 
 	colStr += fmt.Sprintf("pk is handle %v; ", p.Table.PKIsHandle)
-	isPrint := true
-	for _, col := range idxExec.Columns {
-		if col.PkHandle {
-			isPrint = false
-		}
-		colStr += fmt.Sprintf("%#v; ", col)
+	for i, col := range idxExec.Columns {
+		colStr += fmt.Sprintf("pk handle:%v, %#v; ", col.PkHandle, columns[i])
 	}
-	p.ctx.GetSessionVars().StmtCtx.DebugLog += fmt.Sprintf("[index scan] to pb, table %v, columns %#v, unique %v ", p.Table.Name, colStr, p.Index.Unique)
-	if isPrint {
-		log.Infof("%v", p.ctx.GetSessionVars().StmtCtx.DebugLog)
-	}
+	p.ctx.GetSessionVars().StmtCtx.DebugLog += fmt.Sprintf("-------[index scan] to pb, table %v, columns %#v, unique %v\n", p.Table.Name, colStr, p.Index.Unique)
 
 	return &tipb.Executor{Tp: tipb.ExecType_TypeIndexScan, IdxScan: idxExec}, nil
 }

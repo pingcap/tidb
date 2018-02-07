@@ -813,13 +813,13 @@ func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, isDoubleRe
 	var colStr string
 	for _, col := range idx.Columns {
 		indexCols = append(indexCols, &expression.Column{FromID: id, Position: col.Offset})
-		colStr += fmt.Sprintf("%#v; ", col)
+		colStr += fmt.Sprintf("offset:%v, %#v; ", col.Offset, is.Columns[col.Offset])
 	}
 	setHandle := false
 	for _, col := range is.Columns {
 		if (mysql.HasPriKeyFlag(col.Flag) && is.Table.PKIsHandle) || col.ID == model.ExtraHandleID {
 			indexCols = append(indexCols, &expression.Column{FromID: id, ID: col.ID, Position: col.Offset})
-			colStr += fmt.Sprintf("%#v; ", col)
+			colStr += fmt.Sprintf("handle col:%#v; ", col)
 			setHandle = true
 			break
 		}
@@ -831,7 +831,7 @@ func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, isDoubleRe
 		indexCols = append(indexCols, col)
 		colStr += fmt.Sprintf("is double read %v, %#v; ", isDoubleRead, col)
 	}
-	is.ctx.GetSessionVars().StmtCtx.DebugLog = fmt.Sprintf("init schema: table %v, idx col %#v\n", is.Table.Name, colStr)
+	is.ctx.GetSessionVars().StmtCtx.DebugLog += fmt.Sprintf("-------[init schema] table %v, idx col %#v\n", is.Table.Name, colStr)
 	is.SetSchema(expression.NewSchema(indexCols...))
 }
 
