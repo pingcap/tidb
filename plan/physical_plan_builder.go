@@ -213,7 +213,7 @@ func (ds *DataSource) convert2PhysicalPlan(prop *requiredProp) (task, error) {
 	if !includeTableScan || len(ds.pushedDownConds) > 0 || len(prop.cols) > 0 {
 		for i, idx := range indices {
 			// TODO: We can also check if the prop matches the index columns.
-			if !ds.validIndices[i] && len(prop.cols) == 0 {
+			if !ds.relevantIndices[i] && len(prop.cols) == 0 {
 				continue
 			}
 			idxTask, err := ds.convertToIndexScan(prop, idx)

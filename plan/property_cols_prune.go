@@ -20,7 +20,7 @@ import (
 func (ds *DataSource) preparePossibleProperties() (result [][]*expression.Column) {
 	indices := ds.availableIndices.indices
 	includeTS := ds.availableIndices.includeTableScan
-	ds.validIndices = make([]bool, len(indices))
+	ds.relevantIndices = make([]bool, len(indices))
 	if includeTS {
 		col := ds.getPKIsHandleCol()
 		if col != nil {
@@ -30,14 +30,14 @@ func (ds *DataSource) preparePossibleProperties() (result [][]*expression.Column
 		for i, idx := range indices {
 			for _, col := range cols {
 				if col.ColName.L == idx.Columns[0].Name.L {
-					ds.validIndices[i] = true
+					ds.relevantIndices[i] = true
 					break
 				}
 			}
 		}
 	} else {
-		for i := range ds.validIndices {
-			ds.validIndices[i] = true
+		for i := range ds.relevantIndices {
+			ds.relevantIndices[i] = true
 		}
 	}
 	for _, idx := range indices {

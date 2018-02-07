@@ -282,7 +282,8 @@ type DataSource struct {
 	// pushedDownConds are the conditions that will be pushed down to coprocessor.
 	pushedDownConds []expression.Expression
 
-	validIndices []bool
+	// relevantIndices means the indices match the push down conditions
+	relevantIndices []bool
 
 	// statsAfterSelect is the statsInfo for dataSource and selection.
 	statsAfterSelect *statsInfo
