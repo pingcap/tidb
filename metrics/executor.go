@@ -18,6 +18,7 @@ import (
 )
 
 var (
+	// ExecutorCounter records the number of expensive executors.
 	ExecutorCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
@@ -27,6 +28,7 @@ var (
 		}, []string{LblType},
 	)
 
+	// StmtNodeCounter records the number of statement with the same type.
 	StmtNodeCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
