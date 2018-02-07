@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/goroutine_pool"
 	"github.com/pingcap/tipb/go-tipb"
@@ -109,7 +110,7 @@ func (c *CopClient) supportExpr(exprType tipb.ExprType) bool {
 
 // Send builds the request and gets the coprocessor iterator response.
 func (c *CopClient) Send(ctx goctx.Context, req *kv.Request) kv.Response {
-	coprocessorCounter.WithLabelValues("send").Inc()
+	metrics.TiKVCoprocessorCounter.WithLabelValues("send").Inc()
 
 	bo := NewBackoffer(copBuildTaskMaxBackoff, ctx)
 	tasks, err := buildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req.Desc, req.Streaming)
@@ -263,7 +264,7 @@ func (r *copRanges) split(key []byte) (*copRanges, *copRanges) {
 }
 
 func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bool, streaming bool) ([]*copTask, error) {
-	coprocessorCounter.WithLabelValues("build_task").Inc()
+	metrics.TiKVCoprocessorCounter.WithLabelValues("build_task").Inc()
 
 	start := time.Now()
 	rangesLen := ranges.len()
@@ -330,7 +331,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 	if elapsed := time.Since(start); elapsed > time.Millisecond*500 {
 		log.Warnf("buildCopTasks takes too much time (%v), range len %v, task len %v", elapsed, rangesLen, len(tasks))
 	}
-	txnRegionsNumHistogram.WithLabelValues("coprocessor").Observe(float64(len(tasks)))
+	metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("coprocessor").Observe(float64(len(tasks)))
 	return tasks, nil
 }
 
@@ -388,10 +389,10 @@ func (it *copIterator) work(goCtx goctx.Context, taskCh <-chan *copTask) {
 		if costTime > minLogCopTaskTime {
 			log.Infof("[TIME_COP_TASK] %s%s %s", costTime, bo, task)
 		}
-		coprocessorCounter.WithLabelValues("handle_task").Inc()
-		coprocessorHistogram.Observe(costTime.Seconds())
+		metrics.TiKVCoprocessorCounter.WithLabelValues("handle_task").Inc()
+		metrics.TiKVCoprocessorHistogram.Observe(costTime.Seconds())
 		if bo.totalSleep > 0 {
-			backoffHistogram.Observe(float64(bo.totalSleep) / 1000)
+			metrics.TiKVBackoffHistogram.Observe(float64(bo.totalSleep) / 1000)
 		}
 		if it.req.KeepOrder {
 			close(ch)
@@ -469,7 +470,7 @@ func (it *copIterator) sendToRespCh(resp copResponse, respCh chan copResponse) (
 // NOTE: Use nil to indicate finish, so if the returned values is a slice with
 // size 0, reader should continue to call Next().
 func (it *copIterator) Next(ctx goctx.Context) ([]byte, error) {
-	coprocessorCounter.WithLabelValues("next").Inc()
+	metrics.TiKVCoprocessorCounter.WithLabelValues("next").Inc()
 
 	var (
 		resp copResponse
@@ -606,7 +607,7 @@ func (it *copIterator) handleCopResponse(bo *Backoffer, resp *coprocessor.Respon
 			return nil, errors.Trace(err)
 		}
 		// We may meet RegionError at the first packet, but not during visiting the stream.
-		coprocessorCounter.WithLabelValues("rebuild_task").Inc()
+		metrics.TiKVCoprocessorCounter.WithLabelValues("rebuild_task").Inc()
 		return buildCopTasks(bo, it.store.regionCache, task.ranges, it.req.Desc, it.req.Streaming)
 	}
 	if lockErr := resp.GetLocked(); lockErr != nil {

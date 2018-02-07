@@ -285,6 +285,9 @@ func TableInfo2SchemaWithDBName(dbName model.CIStr, tbl *model.TableInfo) *Schem
 func ColumnInfos2ColumnsWithDBName(dbName, tblName model.CIStr, colInfos []*model.ColumnInfo) []*Column {
 	columns := make([]*Column, 0, len(colInfos))
 	for i, col := range colInfos {
+		if col.State != model.StatePublic {
+			continue
+		}
 		newCol := &Column{
 			ColName:  col.Name,
 			TblName:  tblName,
