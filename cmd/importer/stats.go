@@ -44,7 +44,8 @@ func loadStats(tblInfo *model.TableInfo, path string) (*stats.Table, error) {
 type histogram struct {
 	stats.Histogram
 
-	index *model.IndexInfo
+	index  *model.IndexInfo
+	avgLen int
 }
 
 // When the cnt falls in the middle of bucket, we return the idx of lower bound which is an even number.
@@ -101,13 +102,29 @@ func getValidPrefix(lower, upper string) string {
 	return lower
 }
 
-func (h *histogram) randString(l int) string {
+func (h *histogram) getAvgLen(maxLen int) int {
+	l := h.Bounds.NumRows()
+	totalLen := 0
+	for i := 0; i < l; i++ {
+		totalLen += len(h.Bounds.GetRow(i).GetString(0))
+	}
+	avg := totalLen / l
+	if avg > maxLen {
+		avg = maxLen
+	}
+	if avg == 0 {
+		avg = 1
+	}
+	return avg
+}
+
+func (h *histogram) randString() string {
 	idx := h.getRandomBoundIdx()
 	if idx%2 == 0 {
 		lower := h.Bounds.GetRow(idx).GetString(0)
 		upper := h.Bounds.GetRow(idx + 1).GetString(0)
 		prefix := getValidPrefix(lower, upper)
-		restLen := l - len(prefix)
+		restLen := h.avgLen - len(prefix)
 		if restLen > 0 {
 			prefix = prefix + randString(restLen)
 		}

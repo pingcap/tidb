@@ -47,7 +47,10 @@ func intRangeValue(column *column, min int64, max int64) (int64, int64) {
 
 func randStringValue(column *column, n int) string {
 	if column.hist != nil {
-		return column.hist.randString(randInt(1, n))
+		if column.hist.avgLen == 0 {
+			column.hist.avgLen = column.hist.getAvgLen(n)
+		}
+		return column.hist.randString()
 	}
 	if len(column.set) > 0 {
 		idx := randInt(0, len(column.set)-1)
