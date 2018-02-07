@@ -986,7 +986,7 @@ func (st *TxnState) changeInvalidToPending(future *txnFuture) {
 	st.txnFuture = future
 }
 
-func (st *TxnState) changePendingToValid() error {
+func (st *TxnState) changePendingToValid(txnCap int) error {
 	if st.txnFuture == nil {
 		return errors.New("transaction future is not set")
 	}
@@ -999,6 +999,7 @@ func (st *TxnState) changePendingToValid() error {
 		st.Transaction = nil
 		return errors.Trace(err)
 	}
+	txn.SetCap(txnCap)
 	st.Transaction = txn
 	return nil
 }
@@ -1600,8 +1601,9 @@ func (s *session) ActivePendingTxn() error {
 	if s.txn.Valid() {
 		return nil
 	}
+	txnCap := s.getMembufCap()
 	// The transaction status should be TxnStateFuture.
-	if err := s.txn.changePendingToValid(); err != nil {
+	if err := s.txn.changePendingToValid(txnCap); err != nil {
 		return errors.Trace(err)
 	}
 	s.sessionVars.TxnCtx.StartTS = s.txn.StartTS()
