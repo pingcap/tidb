@@ -81,11 +81,9 @@ func pseudoSelectivity(exprs []expression.Expression) float64 {
 // TODO: support expressions that the top layer is a DNF.
 // Currently the time complexity is o(n^2).
 func (t *Table) Selectivity(ctx context.Context, exprs []expression.Expression) (float64, error) {
-	if t.Count == 0 {
+	// If table's count is zero or conditions are empty, we should return 100% selectivity.
+	if t.Count == 0 || len(exprs) == 0 {
 		return 1, nil
-	}
-	if len(exprs) == 0 {
-		return 1.0, nil
 	}
 	// TODO: If len(exprs) is bigger than 63, we could use bitset structure to replace the int64.
 	// This will simplify some code and speed up if we use this rather than a boolean slice.
