@@ -797,6 +797,7 @@ func (s *testDBSuite) TestColumn(c *C) {
 	s.tk.MustExec("create table t2 (c1 int, c2 int, c3 int)")
 	s.testAddColumn(c)
 	s.testDropColumn(c)
+	s.testDropColumn2(c)
 	s.tk.MustExec("drop table t2")
 }
 
@@ -812,6 +813,10 @@ func sessionExec(c *C, s kv.Storage, sql string) {
 }
 
 func sessionExecInGoroutine(c *C, s kv.Storage, sql string, done chan error) {
+	execMultiSQLInGoroutine(c, s, []string{sql}, done)
+}
+
+func execMultiSQLInGoroutine(c *C, s kv.Storage, multiSQL []string, done chan error) {
 	go func() {
 		se, err := tidb.CreateSession4Test(s)
 		if err != nil {
@@ -824,16 +829,18 @@ func sessionExecInGoroutine(c *C, s kv.Storage, sql string, done chan error) {
 			done <- errors.Trace(err)
 			return
 		}
-		rs, err := se.Execute(goctx.Background(), sql)
-		if err != nil {
-			done <- errors.Trace(err)
-			return
+		for _, sql := range multiSQL {
+			rs, err := se.Execute(goctx.Background(), sql)
+			if err != nil {
+				done <- errors.Trace(err)
+				return
+			}
+			if rs != nil {
+				done <- errors.Errorf("RecordSet should be empty.")
+				return
+			}
+			done <- nil
 		}
-		if rs != nil {
-			done <- errors.Errorf("RecordSet should be empty.")
-			return
-		}
-		done <- nil
 	}()
 }
 
@@ -986,6 +993,31 @@ LOOP:
 	count, err := strconv.ParseInt(rows[0][0].(string), 10, 64)
 	c.Assert(err, IsNil)
 	c.Assert(count, Greater, int64(0))
+}
+
+// This test is for insert value with a to-be-dropped column when do drop column.
+// Column info from schema in build-insert-plan should be public only,
+// otherwise they will not be consist with Table.Col(), then the server will panic.
+func (s *testDBSuite) testDropColumn2(c *C) {
+	num := 100
+	dmlDone := make(chan error, num)
+	ddlDone := make(chan error, num)
+	s.mustExec(c, "delete from t2")
+
+	multiDDL := make([]string, 0, num)
+	for i := 0; i < num/2; i++ {
+		multiDDL = append(multiDDL, "alter table t2 add column c4 int", "alter table t2 drop column c4")
+	}
+	execMultiSQLInGoroutine(c, s.store, multiDDL, ddlDone)
+	for i := 0; i < num; i++ {
+		sessionExecInGoroutine(c, s.store, "insert into t2 set c1 = 1, c2 = 1, c3 = 1, c4 = 1", dmlDone)
+	}
+	for i := 0; i < num; i++ {
+		select {
+		case err := <-ddlDone:
+			c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
+		}
+	}
 }
 
 func (s *testDBSuite) TestPrimaryKey(c *C) {
