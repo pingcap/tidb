@@ -85,7 +85,13 @@ func (p *PhysicalTableScan) ToPB(ctx context.Context) (*tipb.Executor, error) {
 		Columns: distsql.ColumnsToProto(columns, p.Table.PKIsHandle),
 		Desc:    p.Desc,
 	}
-	log.Infof("[table scan] to pb, table %v, columns %#v", p.Table.Name, columns)
+	var colStr string
+	colStr += fmt.Sprintf("pk is handle %v; ", p.Table.PKIsHandle)
+	for _, col := range tsExec.Columns {
+		colStr += fmt.Sprintf("%#v; ", col)
+	}
+	p.ctx.GetSessionVars().StmtCtx.DebugLog += fmt.Sprintf("[table scan] to pb, table %v, columns %#v\n", p.Table.Name, colStr)
+	// log.Infof("[table scan] to pb, table %v, columns %#v", p.Table.Name, colStr)
 	err := setPBColumnsDefaultValue(ctx, tsExec.Columns, p.Columns)
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tsExec}, errors.Trace(err)
 }
@@ -93,12 +99,14 @@ func (p *PhysicalTableScan) ToPB(ctx context.Context) (*tipb.Executor, error) {
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalIndexScan) ToPB(ctx context.Context) (*tipb.Executor, error) {
 	columns := make([]*model.ColumnInfo, 0, p.schema.Len())
+	var colStr string
 	for _, col := range p.schema.Columns {
 		if col.ID == model.ExtraHandleID {
 			columns = append(columns, &model.ColumnInfo{
 				ID:   model.ExtraHandleID,
 				Name: model.NewCIStr("_rowid"),
 			})
+			colStr += "has extra handle; "
 		} else {
 			columns = append(columns, p.Table.Columns[col.Position])
 		}
@@ -110,11 +118,18 @@ func (p *PhysicalIndexScan) ToPB(ctx context.Context) (*tipb.Executor, error) {
 		Desc:    p.Desc,
 	}
 
-	var colStr string
+	colStr += fmt.Sprintf("pk is handle %v; ", p.Table.PKIsHandle)
+	isPrint := true
 	for _, col := range idxExec.Columns {
+		if col.PkHandle {
+			isPrint = false
+		}
 		colStr += fmt.Sprintf("%#v; ", col)
 	}
-	log.Infof("[index scan] to pb, table %v, columns %#v, unique %v ", p.Table.Name, colStr, p.Index.Unique)
+	p.ctx.GetSessionVars().StmtCtx.DebugLog += fmt.Sprintf("[index scan] to pb, table %v, columns %#v, unique %v ", p.Table.Name, colStr, p.Index.Unique)
+	if isPrint {
+		log.Infof("%v", p.ctx.GetSessionVars().StmtCtx.DebugLog)
+	}
 
 	return &tipb.Executor{Tp: tipb.ExecType_TypeIndexScan, IdxScan: idxExec}, nil
 }

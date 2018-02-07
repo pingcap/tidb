@@ -348,6 +348,8 @@ type StatementContext struct {
 	OverflowAsWarning      bool
 	InShowWarning          bool
 
+	DebugLog string
+
 	// mu struct holds variables that change during execution.
 	mu struct {
 		sync.Mutex
