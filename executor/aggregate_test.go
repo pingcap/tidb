@@ -505,6 +505,9 @@ func (s *testSuite) TestIssue5663(c *C) {
 	plan.GlobalPlanCache = kvcache.NewShardedLRUCache(2, 1)
 	if plan.GlobalPlanCache != nil {
 		plan.PlanCacheEnabled = true
+		defer func() {
+			plan.PlanCacheEnabled = false
+		}()
 	}
 
 	tk.MustExec("drop table if exists t1;")
