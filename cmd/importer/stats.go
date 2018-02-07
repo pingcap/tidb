@@ -48,8 +48,8 @@ type histogram struct {
 	avgLen int
 }
 
-// When the cnt falls in the middle of bucket, we return the idx of lower bound which is an even number.
-// When the cnt falls in the end of bucket, we return the upper bound which is odd.
+// When the randCnt falls in the middle of bucket, we return the idx of lower bound which is an even number.
+// When the randCnt falls in the end of bucket, we return the upper bound which is odd.
 func (h *histogram) getRandomBoundIdx() int {
 	cnt := h.Buckets[len(h.Buckets)-1].Count
 	randCnt := randInt64(0, cnt)
@@ -128,7 +128,6 @@ func (h *histogram) randString() string {
 		if restLen > 0 {
 			prefix = prefix + randString(restLen)
 		}
-		log.Warnf("prefix %s", prefix)
 		return prefix
 	}
 	return h.Bounds.GetRow(idx).GetString(0)
