@@ -813,7 +813,7 @@ func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, isDoubleRe
 	var colStr string
 	for _, col := range idx.Columns {
 		indexCols = append(indexCols, &expression.Column{FromID: id, Position: col.Offset})
-		colStr += fmt.Sprintf("offset:%v, %#v; ", col.Offset, is.Columns[col.Offset])
+		colStr += fmt.Sprintf("offset:%v, %#v; ", col.Offset, is.Table.Columns[col.Offset])
 	}
 	setHandle := false
 	for _, col := range is.Columns {
