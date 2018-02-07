@@ -96,7 +96,7 @@ func (p *PhysicalIndexScan) ToPB(ctx context.Context) (*tipb.Executor, error) {
 				Name: model.NewCIStr("_rowid"),
 			})
 		} else {
-			columns = append(columns, p.Table.Columns[col.Position])
+			columns = append(columns, p.Columns[col.Position])
 		}
 	}
 	idxExec := &tipb.IndexScan{
