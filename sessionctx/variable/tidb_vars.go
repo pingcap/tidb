@@ -52,6 +52,9 @@ const (
 	// It is read-only.
 	TiDBCurrentTS = "tidb_current_ts"
 
+	// tidb_config is a read-only variable that shows the config of the current server.
+	TiDBConfig = "tidb_config"
+
 	/* Session and global */
 
 	// tidb_distsql_scan_concurrency is used to set the concurrency of a distsql scan task.

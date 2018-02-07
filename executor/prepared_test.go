@@ -70,8 +70,28 @@ func (s *testSuite) TestPrepared(c *C) {
 		query := "select c1, c2 from prepare_test where c1 = ?"
 		stmtId, _, _, err := tk.Se.PrepareStmt(query)
 		c.Assert(err, IsNil)
-		_, err = tk.Se.ExecutePreparedStmt(goCtx, stmtId, 1)
+		rs, err := tk.Se.ExecutePreparedStmt(goCtx, stmtId, 1)
 		c.Assert(err, IsNil)
+		tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 <nil>"))
+
+		tk.MustExec("delete from prepare_test")
+		query = "select c1 from prepare_test where c1 = (select c1 from prepare_test where c1 = ?)"
+		stmtId, _, _, err = tk.Se.PrepareStmt(query)
+		tk1 := testkit.NewTestKitWithInit(c, s.store)
+		tk1.MustExec("insert prepare_test (c1) values (3)")
+		rs, err = tk.Se.ExecutePreparedStmt(goCtx, stmtId, 3)
+		c.Assert(err, IsNil)
+		tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("3"))
+
+		tk.MustExec("begin")
+		tk.MustExec("insert prepare_test (c1) values (4)")
+		query = "select c1, c2 from prepare_test where c1 = ?"
+		stmtId, _, _, err = tk.Se.PrepareStmt(query)
+		c.Assert(err, IsNil)
+		tk.MustExec("rollback")
+		rs, err = tk.Se.ExecutePreparedStmt(goCtx, stmtId, 4)
+		c.Assert(err, IsNil)
+		tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows())
 
 		// Check that ast.Statement created by executor.CompileExecutePreparedStmt has query text.
 		stmt, err := executor.CompileExecutePreparedStmt(tk.Se, stmtId, 1)
@@ -82,7 +102,7 @@ func (s *testSuite) TestPrepared(c *C) {
 		tk.Se.PrepareTxnCtx(goCtx)
 		err = stmt.RebuildPlan()
 		c.Assert(err, IsNil)
-		rs, err := stmt.Exec(goCtx)
+		rs, err = stmt.Exec(goCtx)
 		c.Assert(err, IsNil)
 		_, err = rs.Next(goCtx)
 		c.Assert(err, IsNil)
@@ -97,6 +117,8 @@ func (s *testSuite) TestPrepared(c *C) {
 		c.Assert(err, IsNil)
 
 		// Drop a column so the prepared statement become invalid.
+		query = "select c1, c2 from prepare_test where c1 = ?"
+		stmtId, _, _, err = tk.Se.PrepareStmt(query)
 		tk.MustExec("alter table prepare_test drop column c2")
 
 		_, err = tk.Se.ExecutePreparedStmt(goCtx, stmtId, 1)
@@ -130,6 +152,13 @@ func (s *testSuite) TestPrepared(c *C) {
 		c.Assert(fields[0].DBName.L, Equals, "")
 		c.Assert(fields[0].TableAsName.L, Equals, "")
 		c.Assert(fields[0].ColumnAsName.L, Equals, "(1,1) in (select 1,1)")
+
+		_, _, fields, err = tk.Se.PrepareStmt("select a from prepare3 where a = (" +
+			"select a from prepare2 where a = ?)")
+		c.Assert(err, IsNil)
+		c.Assert(fields[0].DBName.L, Equals, "test")
+		c.Assert(fields[0].TableAsName.L, Equals, "prepare3")
+		c.Assert(fields[0].ColumnAsName.L, Equals, "a")
 
 		_, _, fields, err = tk.Se.PrepareStmt("select * from prepare3 as t1 join prepare3 as t2")
 		c.Assert(err, IsNil)

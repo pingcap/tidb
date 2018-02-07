@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser"
-	stats "github.com/pingcap/tidb/statistics"
+	_ "github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	log "github.com/sirupsen/logrus"
@@ -41,6 +41,8 @@ type column struct {
 	set     []string
 
 	table *table
+
+	hist *histogram
 }
 
 func (col *column) String() string {
@@ -127,7 +129,6 @@ type table struct {
 	indices     map[string]*column
 	uniqIndices map[string]*column
 	tblInfo     *model.TableInfo
-	statsInfo   *stats.Table
 }
 
 func (t *table) printColumns() string {
