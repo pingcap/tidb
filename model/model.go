@@ -114,9 +114,6 @@ type TableInfo struct {
 	// Now it only uses for compatibility with the old version that already uses this field.
 	OldSchemaID int64 `json:"old_schema_id,omitempty"`
 
-	publicColumns   []*ColumnInfo
-	writableColumns []*ColumnInfo
-
 	// ShardRowIDBits specify if the implicit row ID is sharded.
 	ShardRowIDBits uint64
 }
@@ -177,9 +174,6 @@ func (t *TableInfo) GetPkColInfo() *ColumnInfo {
 
 // Cols returns the columns of the table in public state.
 func (t *TableInfo) Cols() []*ColumnInfo {
-	if len(t.publicColumns) > 0 {
-		return t.publicColumns
-	}
 	publicColumns := make([]*ColumnInfo, len(t.Columns))
 	maxOffset := -1
 	for _, col := range t.Columns {
@@ -197,9 +191,6 @@ func (t *TableInfo) Cols() []*ColumnInfo {
 // WritableCols returns columns of the table in writable states.
 // Writable states includes Public, WriteOnly, WriteOnlyReorganization.
 func (t *TableInfo) WritableCols() []*ColumnInfo {
-	if len(t.writableColumns) > 0 {
-		return t.writableColumns
-	}
 	writableColumns := make([]*ColumnInfo, len(t.Columns))
 	maxOffset := -1
 	for _, col := range t.Columns {
