@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2018 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,14 +11,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package statistics
+package metrics
 
 import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+// Stats metrics.
 var (
-	autoAnalyzeHistgram = prometheus.NewHistogram(
+	AutoAnalyzeHistogram = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "statistics",
@@ -27,16 +28,26 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 20),
 		})
 
-	autoAnalyzeCounter = prometheus.NewCounterVec(
+	AutoAnalyzeCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "statistics",
 			Name:      "auto_analyze_total",
 			Help:      "Counter of auto analyze.",
 		}, []string{"type"})
+
+	StatsInaccuracyRate = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "statistics",
+			Name:      "stats_inaccuracy_rate",
+			Help:      "Bucketed histogram of stats inaccuracy rate.",
+			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 14),
+		})
 )
 
 func init() {
-	prometheus.MustRegister(autoAnalyzeHistgram)
-	prometheus.MustRegister(autoAnalyzeCounter)
+	prometheus.MustRegister(AutoAnalyzeHistogram)
+	prometheus.MustRegister(AutoAnalyzeCounter)
+	prometheus.MustRegister(StatsInaccuracyRate)
 }
