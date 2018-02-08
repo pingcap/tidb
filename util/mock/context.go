@@ -191,8 +191,7 @@ func (c *Context) GoCtx() goctx.Context {
 func (c *Context) StoreQueryFeedback(_ interface{}) {}
 
 // StmtCommit implements the context.Context interface.
-func (c *Context) StmtCommit() error {
-	return nil
+func (c *Context) StmtCommit() {
 }
 
 // StmtRollback implements the context.Context interface.
