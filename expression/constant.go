@@ -53,6 +53,7 @@ type Constant struct {
 	Value        types.Datum
 	RetType      *types.FieldType
 	DeferredExpr Expression // parameter getter expression
+	hashcode     []byte
 }
 
 // String implements fmt.Stringer interface.
@@ -318,13 +319,16 @@ func (c *Constant) Decorrelate(_ *Schema) Expression {
 
 // HashCode implements Expression interface.
 func (c *Constant) HashCode(sc *stmtctx.StatementContext) []byte {
+	if len(c.hashcode) > 0 {
+		return c.hashcode
+	}
 	_, err := c.Eval(nil)
 	if err != nil {
 		terror.Log(errors.Trace(err))
 	}
-	code, err := codec.EncodeValue(sc, nil, c.Value)
+	c.hashcode, err = codec.EncodeValue(sc, nil, c.Value)
 	terror.Log(errors.Trace(err))
-	return code
+	return c.hashcode
 }
 
 // ResolveIndices implements Expression interface.

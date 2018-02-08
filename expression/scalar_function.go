@@ -36,6 +36,7 @@ type ScalarFunction struct {
 	// TODO: Implement type inference here, now we use ast's return type temporarily.
 	RetType  *types.FieldType
 	Function builtinFunc
+	hashcode []byte
 }
 
 // GetArgs gets arguments of function.
@@ -254,17 +255,21 @@ func (sf *ScalarFunction) EvalJSON(ctx context.Context, row types.Row) (json.Bin
 
 // HashCode implements Expression interface.
 func (sf *ScalarFunction) HashCode(sc *stmtctx.StatementContext) []byte {
+	if len(sf.hashcode) > 0 {
+		return sf.hashcode
+	}
 	v := make([]types.Datum, 0, len(sf.GetArgs())+1)
-	bytes, err := codec.EncodeValue(sc, nil, types.NewStringDatum(sf.FuncName.L))
+	var err error
+	sf.hashcode, err = codec.EncodeValue(sc, nil, types.NewStringDatum(sf.FuncName.L))
 	terror.Log(errors.Trace(err))
-	v = append(v, types.NewBytesDatum(bytes))
+	v = append(v, types.NewBytesDatum(sf.hashcode))
 	for _, arg := range sf.GetArgs() {
 		v = append(v, types.NewBytesDatum(arg.HashCode(sc)))
 	}
-	bytes = bytes[:0]
-	bytes, err = codec.EncodeValue(sc, bytes, v...)
+	sf.hashcode = sf.hashcode[:0]
+	sf.hashcode, err = codec.EncodeValue(sc, sf.hashcode, v...)
 	terror.Log(errors.Trace(err))
-	return bytes
+	return sf.hashcode
 }
 
 // ResolveIndices implements Expression interface.
