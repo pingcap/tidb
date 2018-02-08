@@ -27,8 +27,8 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mvmap"
-	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
 
@@ -75,7 +75,8 @@ type HashJoinExec struct {
 	joinChkResourceCh  []chan *chunk.Chunk
 	joinResultCh       chan *hashjoinWorkerResult
 	hashTableValBufs   [][][]byte
-	totalMemoryUsage   int64
+
+	memTracker *memory.MemoryTracker // track memory usage.
 }
 
 // outerChkResource stores the result of the join outer fetch worker,
@@ -145,6 +146,7 @@ func (e *HashJoinExec) Open(goCtx goctx.Context) error {
 	}
 
 	e.prepared = false
+	e.memTracker = memory.NewMemoryTracker("HashJoinExec", e.ctx.GetSessionVars().MemThreshold)
 
 	e.hashTableValBufs = make([][][]byte, e.concurrency)
 	e.hashJoinBuffers = make([]*hashJoinBuffer, 0, e.concurrency)
@@ -327,25 +329,17 @@ func (e *HashJoinExec) fetchOuterChunks(goCtx goctx.Context) {
 // fetchInnerRows fetches all rows from inner executor,
 // and append them to e.innerResult.
 func (e *HashJoinExec) fetchInnerRows(goCtx goctx.Context) (err error) {
-	innerResult := chunk.NewList(e.innerExec.retTypes(), e.maxChunkSize)
-	memExceedThreshold, execMemThreshold := false, e.ctx.GetSessionVars().MemThreshold
+	e.innerResult = chunk.NewList(e.innerExec.retTypes(), e.maxChunkSize)
+	e.innerResult.GetMemTracker().AttachTo(e.memTracker)
+	e.innerResult.GetMemTracker().SetLabel("innerResult")
 	for {
 		chk := e.children[e.innerIdx].newChunk()
 		err = e.innerExec.NextChunk(goCtx, chk)
-		if err != nil {
+		if err != nil || chk.NumRows() == 0 {
 			return errors.Trace(err)
 		}
-		if chk.NumRows() == 0 {
-			break
-		}
-		innerResult.Add(chk)
-		innerMemUsage := innerResult.MemoryUsage()
-		if !memExceedThreshold && innerMemUsage > execMemThreshold {
-			memExceedThreshold = true
-			log.Warnf(ErrMemExceedThreshold.GenByArgs("HashJoin", innerMemUsage, execMemThreshold).Error())
-		}
+		e.innerResult.Add(chk)
 	}
-	e.innerResult = innerResult
 	return nil
 }
 

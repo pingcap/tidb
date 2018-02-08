@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/memory"
 	goctx "golang.org/x/net/context"
 )
 
@@ -54,11 +55,14 @@ type SortExec struct {
 	rowChunks *chunk.List
 	// rowPointer store the chunk index and row index for each row.
 	rowPtrs []chunk.RowPtr
+
+	memTracker *memory.MemoryTracker
 }
 
 // Close implements the Executor Close interface.
 func (e *SortExec) Close() error {
 	e.Rows = nil
+	e.memTracker = nil
 	return errors.Trace(e.children[0].Close())
 }
 
@@ -67,6 +71,7 @@ func (e *SortExec) Open(goCtx goctx.Context) error {
 	e.fetched = false
 	e.Idx = 0
 	e.Rows = nil
+	e.memTracker = memory.NewMemoryTracker("SortExec", e.ctx.GetSessionVars().MemThreshold)
 	return errors.Trace(e.children[0].Open(goCtx))
 }
 
@@ -182,6 +187,8 @@ func (e *SortExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 func (e *SortExec) fetchRowChunks(goCtx goctx.Context) error {
 	fields := e.retTypes()
 	e.rowChunks = chunk.NewList(fields, e.maxChunkSize)
+	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
+	e.rowChunks.GetMemTracker().SetLabel("rowChunks")
 	for {
 		chk := chunk.NewChunk(fields)
 		err := e.children[0].NextChunk(goCtx, chk)
@@ -199,6 +206,7 @@ func (e *SortExec) fetchRowChunks(goCtx goctx.Context) error {
 
 func (e *SortExec) initPointers() {
 	e.rowPtrs = make([]chunk.RowPtr, 0, e.rowChunks.Len())
+	e.memTracker.Consume(int64(8 * e.rowChunks.Len()))
 	for chkIdx := 0; chkIdx < e.rowChunks.NumChunks(); chkIdx++ {
 		rowChk := e.rowChunks.GetChunk(chkIdx)
 		for rowIdx := 0; rowIdx < rowChk.NumRows(); rowIdx++ {
@@ -242,7 +250,15 @@ func (e *SortExec) buildKeyExprsAndTypes() {
 }
 
 func (e *SortExec) buildKeyChunks() error {
-	e.keyChunks = chunk.NewList(e.keyTypes, e.maxChunkSize)
+	keyChunks := chunk.NewList(e.keyTypes, e.maxChunkSize)
+	if memTracker4Key := keyChunks.GetMemTracker(); e.keyChunks != nil {
+		e.memTracker.ReplaceChild(e.keyChunks.GetMemTracker(), memTracker4Key)
+	} else {
+		memTracker4Key.AttachTo(e.memTracker)
+		memTracker4Key.SetLabel("keyChunks")
+	}
+	e.keyChunks = keyChunks
+
 	for chkIdx := 0; chkIdx < e.rowChunks.NumChunks(); chkIdx++ {
 		keyChk := chunk.NewChunk(e.keyTypes)
 		childIter := chunk.NewIterator4Chunk(e.rowChunks.GetChunk(chkIdx))
@@ -491,6 +507,8 @@ func (e *TopNExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 func (e *TopNExec) loadChunksUntilTotalLimit(goCtx goctx.Context) error {
 	e.chkHeap = &topNChunkHeap{e}
 	e.rowChunks = chunk.NewList(e.retTypes(), e.maxChunkSize)
+	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
+	e.rowChunks.GetMemTracker().SetLabel("rowChunks")
 	for e.rowChunks.Len() < e.totalLimit {
 		srcChk := e.children[0].newChunk()
 		err := e.children[0].NextChunk(goCtx, srcChk)
@@ -574,7 +592,7 @@ func (e *TopNExec) processChildChk(childRowChk, childKeyChk *chunk.Chunk) error 
 			next = childRowChk.GetRow(i)
 		}
 		if e.chkHeap.greaterRow(heapMax, next) {
-			// Evict heap max, keep the next row.
+			// Evicl heap max, keep the next row.
 			e.rowPtrs[0] = e.rowChunks.AppendRow(childRowChk.GetRow(i))
 			if childKeyChk != nil {
 				e.keyChunks.AppendRow(childKeyChk.GetRow(i))
@@ -596,8 +614,13 @@ func (e *TopNExec) doCompaction() error {
 		newRowPtr := newRowChunks.AppendRow(e.rowChunks.GetRow(rowPtr))
 		newRowPtrs = append(newRowPtrs, newRowPtr)
 	}
+	e.memTracker.ReplaceChild(e.rowChunks.GetMemTracker(), newRowChunks.GetMemTracker())
 	e.rowChunks = newRowChunks
+
+	e.memTracker.Consume(int64(-8 * len(e.rowPtrs)))
+	e.memTracker.Consume(int64(8 * len(newRowPtrs)))
 	e.rowPtrs = newRowPtrs
+
 	if e.keyChunks != nil {
 		err := e.buildKeyChunks()
 		if err != nil {
