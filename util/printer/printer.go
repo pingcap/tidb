@@ -57,7 +57,7 @@ func PrintRawTiDBInfo() {
 
 // GetTiDBInfo returns the git hash and build time of this tidb-server binary.
 func GetTiDBInfo() string {
-	return fmt.Sprintf("Release Version: %s\nGit Commit Hash: %s\nGit Branch: %s\nUTC Build Time: %s", mysql.TiDBReleaseVersion, TiDBGitHash, TiDBGitBranch, TiDBBuildTS)
+	return fmt.Sprintf("Release Version: %s\nGit Commit Hash: %s\nGit Branch: %s\nUTC Build Time: %s\nGoVersion: %s", mysql.TiDBReleaseVersion, TiDBGitHash, TiDBGitBranch, TiDBBuildTS, GoVersion)
 }
 
 // checkValidity checks whether cols and every data have the same length.
