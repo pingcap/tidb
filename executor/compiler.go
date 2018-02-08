@@ -19,6 +19,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
@@ -101,7 +102,7 @@ func isExpensiveQuery(p plan.Plan) bool {
 }
 
 func isPhysicalPlanExpensive(p plan.PhysicalPlan) bool {
-	const expensiveRowThreshold = 10000
+	expensiveRowThreshold := int64(config.GetGlobalConfig().Log.ExpensiveThreshold)
 	if p.StatsInfo().Count() > expensiveRowThreshold {
 		return true
 	}

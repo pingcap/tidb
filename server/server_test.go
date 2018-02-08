@@ -709,6 +709,7 @@ func runTestStmtCount(t *C) {
 		dbt.mustExec("execute stmt1")
 		dbt.mustExec("prepare stmt2 from 'select * from test'")
 		dbt.mustExec("execute stmt2")
+		dbt.mustExec("replace into test(a) values(6);")
 
 		currentStmtCnt := getStmtCnt(string(getMetrics(t)))
 		t.Assert(currentStmtCnt["CreateTable"], Equals, originStmtCnt["CreateTable"]+1)
@@ -718,6 +719,7 @@ func runTestStmtCount(t *C) {
 		t.Assert(currentStmtCnt["Select"], Equals, originStmtCnt["Select"]+3)
 		t.Assert(currentStmtCnt["Prepare"], Equals, originStmtCnt["Prepare"]+2)
 		t.Assert(currentStmtCnt["Execute"], Equals, originStmtCnt["Execute"]+2)
+		t.Assert(currentStmtCnt["Replace"], Equals, originStmtCnt["Replace"]+1)
 	})
 }
 
