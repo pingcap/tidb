@@ -338,13 +338,6 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 				break
 			}
 			checkErr = checkResult(result, testkit.Rows("t 0 PRIMARY 1 c1 A 0 <nil> <nil>  BTREE  "))
-		case model.StatePublic:
-			result, err := s.execQuery(tk, showIndexSQL)
-			if err != nil {
-				checkErr = err
-				break
-			}
-			checkErr = checkResult(result, testkit.Rows("t 0 PRIMARY 1 c1 A 0 <nil> <nil>  BTREE  ", "t 1 c2 1 c2 A 0 <nil> <nil> YES BTREE  "))
 		}
 	}
 
@@ -355,6 +348,10 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 
+	result, err := s.execQuery(tk, showIndexSQL)
+	c.Assert(err, IsNil)
+	err = checkResult(result, testkit.Rows("t 0 PRIMARY 1 c1 A 0 <nil> <nil>  BTREE  ", "t 1 c2 1 c2 A 0 <nil> <nil> YES BTREE  "))
+	c.Assert(err, IsNil)
 	callback = &ddl.TestDDLCallback{}
 	d.SetHook(callback)
 }
