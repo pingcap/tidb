@@ -151,3 +151,16 @@ func (s *testGCWorkerSuite) TestDoGCForOneRegion(c *C) {
 	c.Assert(err, IsNil)
 	gofail.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult")
 }
+
+func (s *testGCWorkerSuite) TestResolveLocks(c *C) {
+	ctx := goctx.Background()
+	bo := tikv.NewBackoffer(tikv.GcOneRegionMaxBackoff, ctx)
+	loc, err := s.store.GetRegionCache().LocateKey(bo, []byte(""))
+	c.Assert(err, IsNil)
+	var regionErr *errorpb.Error
+	regionErr, err = doGCForOneRegion(bo, s.store, 20, loc.Region)
+	c.Assert(regionErr, IsNil)
+	c.Assert(err, IsNil)
+
+	err = resolveLocks(ctx, s.store, 20, "testResolveLocks")
+}
