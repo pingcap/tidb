@@ -241,12 +241,12 @@ func (s *propagateConstantSolver) solve(conditions []Expression) []Expression {
 }
 
 func (s *propagateConstantSolver) getColID(col *Column) int {
-	code := col.HashCode()
+	code := col.HashCode(nil)
 	return s.colMapper[string(code)]
 }
 
 func (s *propagateConstantSolver) insertCol(col *Column) {
-	code := col.HashCode()
+	code := col.HashCode(nil)
 	_, ok := s.colMapper[string(code)]
 	if !ok {
 		s.colMapper[string(code)] = len(s.colMapper)

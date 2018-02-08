@@ -125,7 +125,7 @@ func (p *requiredProp) hashCode() []byte {
 	p.hashcode = codec.EncodeInt(p.hashcode, int64(p.taskTp))
 	p.hashcode = codec.EncodeFloat(p.hashcode, p.expectedCnt)
 	for i, length := 0, len(p.cols); i < length; i++ {
-		p.hashcode = append(p.hashcode, p.cols[i].HashCode()...)
+		p.hashcode = append(p.hashcode, p.cols[i].HashCode(nil)...)
 	}
 	return p.hashcode
 }

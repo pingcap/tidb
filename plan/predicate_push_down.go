@@ -147,6 +147,29 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	return ret, p.self
 }
 
+/*
+
+func (p *LogicalJoin) extractFiltersFromDNFs(conditions []expression.Expression) ([]*expression.ScalarFunction, []expression.Expression) {
+	for _, cond := range conditions {
+		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
+
+		}
+	}
+	return nil, nil
+}
+
+func (p *LogicalJoin) extractFiltersFromDNF(dnfFunc *expression.ScalarFunction) ([]*expression.ScalarFunction, []expression.Expression) {
+	dnfItems := expression.FlattenDNFConditions(dnfFunc)
+	codeMap := make(map[string]struct{})
+	for _, item := range dnfItems {
+		if sf, ok := item.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicAnd {
+		} else {
+			code := item.(*expression.Column).HashCode()
+		}
+	}
+}
+*/
+
 // updateEQCond will extract the arguments of a equal condition that connect two expressions.
 func (p *LogicalJoin) updateEQCond() {
 	lChild, rChild := p.children[0], p.children[1]

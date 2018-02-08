@@ -14,10 +14,13 @@
 package expression
 
 import (
+	"time"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -54,8 +57,10 @@ func (s *testEvaluatorSuite) TestEvaluateExprWithNull(c *C) {
 func (s *testEvaluatorSuite) TestConstant(c *C) {
 	defer testleak.AfterTest(c)()
 
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	c.Assert(Zero.IsCorrelated(), IsFalse)
 	c.Assert(Zero.Decorrelate(nil).Equal(Zero, s.ctx), IsTrue)
+	c.Assert(Zero.HashCode(sc), DeepEquals, []byte{0x8, 0x0})
 	c.Assert(Zero.Equal(One, s.ctx), IsFalse)
 	res, err := Zero.MarshalJSON()
 	c.Assert(err, IsNil)
