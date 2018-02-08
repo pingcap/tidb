@@ -116,7 +116,7 @@ func (s *testExecSuite) TestShowProcessList(c *C) {
 
 	// Compose executor.
 	e := &ShowExec{
-		baseExecutor: newBaseExecutor(schema, ctx),
+		baseExecutor: newBaseExecutor(schema, ctx, ""),
 		Tp:           ast.ShowProcessList,
 	}
 

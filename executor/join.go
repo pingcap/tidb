@@ -338,6 +338,9 @@ func (e *HashJoinExec) fetchInnerRows(goCtx goctx.Context) (err error) {
 		if err != nil || chk.NumRows() == 0 {
 			return errors.Trace(err)
 		}
+		if chk.NumRows() == 0 {
+			break
+		}
 		e.innerResult.Add(chk)
 	}
 	return nil
