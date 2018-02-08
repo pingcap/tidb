@@ -781,6 +781,7 @@ func (s *session) Execute(sql string) (recordSets []ast.RecordSet, err error) {
 
 			// Step4: Execute the physical plan.
 			if recordSets, err = s.executeStatement(connID, stmtNode, stmt, recordSets); err != nil {
+				log.Infof("xyz %v", s.GetSessionVars().StmtCtx.DebugLog)
 				return nil, errors.Trace(err)
 			}
 		}

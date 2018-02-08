@@ -14,6 +14,8 @@
 package executor
 
 import (
+	"fmt"
+
 	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -83,5 +85,6 @@ func GetInfoSchema(ctx context.Context) infoschema.InfoSchema {
 	} else {
 		is = sessVar.TxnCtx.InfoSchema.(infoschema.InfoSchema)
 	}
+	ctx.GetSessionVars().StmtCtx.DebugLog += fmt.Sprintf("-------[get infoschema] ver %v;", is.SchemaMetaVersion())
 	return is
 }

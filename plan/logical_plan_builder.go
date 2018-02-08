@@ -1256,6 +1256,12 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	} else {
 		columns = tbl.Cols()
 	}
+	colsStr := ""
+	for _, col := range columns {
+		colsStr += fmt.Sprintf("%v, ", col)
+	}
+	p.ctx.GetSessionVars().StmtCtx.DebugLog += fmt.Sprintf("-------[data source] ver %v, table %v, is updata %v, columns: %v\n",
+		b.is.SchemaMetaVersion(), tableInfo.Name, b.inUpdateStmt, colsStr)
 	var pkCol *expression.Column
 	p.Columns = make([]*model.ColumnInfo, 0, len(columns))
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(columns))...)
