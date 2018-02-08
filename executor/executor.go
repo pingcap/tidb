@@ -99,6 +99,7 @@ type Row = types.DatumRow
 
 type baseExecutor struct {
 	ctx             context.Context
+	id              string
 	schema          *expression.Schema
 	supportChk      bool
 	maxChunkSize    int
@@ -167,10 +168,11 @@ func (e *baseExecutor) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
-func newBaseExecutor(schema *expression.Schema, ctx context.Context, children ...Executor) baseExecutor {
+func newBaseExecutor(schema *expression.Schema, ctx context.Context, id string, children ...Executor) baseExecutor {
 	e := baseExecutor{
 		children:     children,
 		ctx:          ctx,
+		id:           id,
 		schema:       schema,
 		maxChunkSize: ctx.GetSessionVars().MaxChunkSize,
 	}
