@@ -210,7 +210,7 @@ func genColumnData(table *table, column *column) (string, error) {
 		if isUnique {
 			data = append(data, []byte(column.data.uniqDate())...)
 		} else {
-			data = append(data, []byte(randDate(column.min, column.max))...)
+			data = append(data, []byte(randDate(column))...)
 		}
 
 		data = append(data, '\'')
