@@ -198,7 +198,8 @@ type Executor interface {
 	retTypes() []*types.FieldType
 	supportChunk() bool
 	newChunk() *chunk.Chunk
-	// NextChunk fills a chunk, which is passed by reference, with multiple rows.
+	// NextChunk fills a chunk with multiple rows
+	// NOTE: chunk has to call Reset() method before any use.
 	NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error
 }
 
