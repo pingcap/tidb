@@ -39,6 +39,8 @@ type StatementContext struct {
 	PadCharToFullLength    bool
 	BatchCheck             bool
 
+	DebugLog string
+
 	// mu struct holds variables that change during execution.
 	mu struct {
 		sync.Mutex

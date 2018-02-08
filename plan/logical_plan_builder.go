@@ -1632,6 +1632,14 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 			handleCol = schema.Columns[schema.Len()-1]
 		}
 	}
+
+	colsStr := ""
+	for _, col := range columns {
+		colsStr += fmt.Sprintf("%v, ", col)
+	}
+	b.ctx.GetSessionVars().StmtCtx.DebugLog += fmt.Sprintf("-------[data source] ver %v, table %v, is updata %v, columns: %v\n",
+		b.is.SchemaMetaVersion(), tableInfo.Name, b.inUpdateStmt, colsStr)
+
 	ds.SetSchema(schema)
 	isMemDB := infoschema.IsMemoryDB(ds.DBName.L)
 	// We append an extra handle column to the schema when "ds" is not a memory
