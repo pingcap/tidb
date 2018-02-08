@@ -18,7 +18,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/structure"
 	"github.com/pingcap/tidb/util/testleak"
 	goctx "golang.org/x/net/context"
@@ -37,7 +37,7 @@ type testTxStructureSuite struct {
 
 func (s *testTxStructureSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
-	store, err := tikv.NewMockTikvStore()
+	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	s.store = store
 }
