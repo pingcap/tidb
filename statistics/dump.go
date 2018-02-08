@@ -26,7 +26,7 @@ type JSONTable struct {
 	DatabaseName string                 `json:"database_name"`
 	TableName    string                 `json:"table_name"`
 	Columns      map[string]*jsonColumn `json:"columns"`
-	Indices      map[string]*jsonIndex  `json:"indices"`
+	Indices      map[string]*jsonColumn `json:"indices"`
 	Count        int64                  `json:"count"`
 	ModifyCount  int64                  `json:"modify_count"`
 	Version      uint64                 `json:"version"`
@@ -35,21 +35,24 @@ type JSONTable struct {
 type jsonColumn struct {
 	Histogram         *tipb.Histogram `json:"histogram"`
 	CMSketch          *tipb.CMSketch  `json:"cm_sketch"`
-	AlreadyLoad       bool            `json:"already_load"`
 	NullCount         int64           `json:"null_count"`
 	LastUpdateVersion uint64          `json:"last_update_version"`
 }
 
-type jsonIndex struct {
-	Histogram         *tipb.Histogram `json:"histogram"`
-	CMSketch          *tipb.CMSketch  `json:"cm_sketch"`
-	NullCount         int64           `json:"null_count"`
-	LastUpdateVersion uint64          `json:"last_update_version"`
+func dumpJSONCol(hist *Histogram, CMSketch *CMSketch) *jsonColumn {
+	jsonCol := &jsonColumn{
+		Histogram:         HistogramToProto(hist),
+		NullCount:         hist.NullCount,
+		LastUpdateVersion: hist.LastUpdateVersion,
+	}
+	if CMSketch != nil {
+		jsonCol.CMSketch = CMSketchToProto(CMSketch)
+	}
+	return jsonCol
 }
 
 // DumpStatsToJSON dumps statistic to json.
 func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo) (*JSONTable, error) {
-	statsTable := h.statsCache.Load().(statsCache)[tableInfo.ID]
 	tbl, err := h.tableStatsFromStorage(tableInfo, true)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -58,40 +61,21 @@ func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo) (*JS
 		DatabaseName: dbName,
 		TableName:    tableInfo.Name.L,
 		Columns:      make(map[string]*jsonColumn, len(tbl.Columns)),
-		Indices:      make(map[string]*jsonIndex, len(tbl.Indices)),
+		Indices:      make(map[string]*jsonColumn, len(tbl.Indices)),
 		Count:        tbl.Count,
 		ModifyCount:  tbl.ModifyCount,
 		Version:      tbl.Version,
 	}
-	for id, col := range tbl.Columns {
+	for _, col := range tbl.Columns {
 		hist, err := col.ConvertTo(h.ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeBlob))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		// c is the Column in Cache.
-		c := statsTable.Columns[id]
-		jsonCol := &jsonColumn{
-			Histogram:         HistogramToProto(hist),
-			AlreadyLoad:       !(c.Count > 0 && c.Len() == 0),
-			NullCount:         col.NullCount,
-			LastUpdateVersion: col.LastUpdateVersion,
-		}
-		if col.CMSketch != nil {
-			jsonCol.CMSketch = CMSketchToProto(col.CMSketch)
-		}
-		jsonTbl.Columns[col.Info.Name.L] = jsonCol
+		jsonTbl.Columns[col.Info.Name.L] = dumpJSONCol(hist, col.CMSketch)
 	}
 
 	for _, idx := range tbl.Indices {
-		jsonIdx := &jsonIndex{
-			Histogram:         HistogramToProto(&idx.Histogram),
-			NullCount:         idx.NullCount,
-			LastUpdateVersion: idx.LastUpdateVersion,
-		}
-		if idx.CMSketch != nil {
-			jsonIdx.CMSketch = CMSketchToProto(idx.CMSketch)
-		}
-		jsonTbl.Indices[idx.Info.Name.L] = jsonIdx
+		jsonTbl.Indices[idx.Info.Name.L] = dumpJSONCol(&idx.Histogram, idx.CMSketch)
 	}
 	return jsonTbl, nil
 }
@@ -114,7 +98,6 @@ func (h *Handle) LoadStatsFromJSON(tableInfo *model.TableInfo, jsonTbl *JSONTabl
 			}
 			hist := HistogramFromProto(jsonIdx.Histogram)
 			hist.ID, hist.NullCount, hist.LastUpdateVersion = idxInfo.ID, jsonIdx.NullCount, jsonIdx.LastUpdateVersion
-			hist.PreCalculateScalar()
 			idx := &Index{
 				Histogram: *hist,
 				CMSketch:  CMSketchFromProto(jsonIdx.CMSketch),
@@ -128,24 +111,19 @@ func (h *Handle) LoadStatsFromJSON(tableInfo *model.TableInfo, jsonTbl *JSONTabl
 			if colInfo.Name.L != id {
 				continue
 			}
-			col := &Column{
-				Histogram: Histogram{ID: colInfo.ID, NullCount: jsonCol.NullCount, LastUpdateVersion: jsonCol.LastUpdateVersion, NDV: jsonCol.Histogram.Ndv},
-				Info:      colInfo,
-			}
 			hist := HistogramFromProto(jsonCol.Histogram)
-			col.Count = int64(hist.totalRowCount())
-			if !jsonCol.AlreadyLoad {
-				tbl.Columns[col.ID] = col
-				continue
-			}
-			col.CMSketch = CMSketchFromProto(jsonCol.CMSketch)
+			count := int64(hist.totalRowCount())
 			hist, err := hist.ConvertTo(h.ctx.GetSessionVars().StmtCtx, &colInfo.FieldType)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			hist.ID, hist.NullCount, hist.LastUpdateVersion = col.ID, col.NullCount, col.LastUpdateVersion
-			hist.PreCalculateScalar()
-			col.Histogram = *hist
+			hist.ID, hist.NullCount, hist.LastUpdateVersion = colInfo.ID, jsonCol.NullCount, jsonCol.LastUpdateVersion
+			col := &Column{
+				Histogram: *hist,
+				CMSketch:  CMSketchFromProto(jsonCol.CMSketch),
+				Info:      colInfo,
+				Count:     count,
+			}
 			tbl.Columns[col.ID] = col
 		}
 	}
