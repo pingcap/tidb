@@ -631,7 +631,16 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 	}
 
 	leftExec := b.build(v.Children()[0])
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
+	}
+
 	rightExec := b.build(v.Children()[1])
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
+	}
 
 	e := &HashJoinExec{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, v.ExplainID(), leftExec, rightExec),
