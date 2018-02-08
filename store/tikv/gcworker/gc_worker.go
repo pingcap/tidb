@@ -100,7 +100,7 @@ const (
 	gcLastRunTimeKey     = "tikv_gc_last_run_time"
 	gcRunIntervalKey     = "tikv_gc_run_interval"
 	gcDefaultRunInterval = time.Minute * 10
-	gcWaitTime           = time.Minute * 10
+	gcWaitTime           = time.Minute * 1
 
 	gcLifeTimeKey            = "tikv_gc_life_time"
 	gcDefaultLifeTime        = time.Minute * 10
