@@ -543,7 +543,6 @@ func (h *parseFormatHelper) parse() []string {
 	for h.valid() {
 		str := h.parseNumber()
 		h.parseSeperate()
-		// fmt.Println("parse number = ", str)
 		seps = append(seps, str)
 	}
 	if h.idx < 0 {
