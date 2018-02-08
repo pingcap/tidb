@@ -97,6 +97,7 @@ const (
 // Otherwise the executor's returned rows don't need to store the handle information.
 type Row = types.DatumRow
 
+// baseExecutor contains an Executor's array and it implements visitor pattern.
 type baseExecutor struct {
 	ctx             sessionctx.Context
 	id              string
@@ -108,8 +109,8 @@ type baseExecutor struct {
 	retFieldTypes   []*types.FieldType
 }
 
-// Open implements the Executor Open interface.
-func (e *baseExecutor) Open(ctx context.Context) error {
+// Open opens all executors and initializes childrenResults according to executors' length.
+func (e *baseExecutor) Open(goCtx goctx.Context) error {
 	for _, child := range e.children {
 		err := child.Open(ctx)
 		if err != nil {
@@ -123,7 +124,7 @@ func (e *baseExecutor) Open(ctx context.Context) error {
 	return nil
 }
 
-// Close implements the Executor Close interface.
+// Close closes all executors and assigns nil to childrenResults for clearing all reference pointing to it.
 func (e *baseExecutor) Close() error {
 	for _, child := range e.children {
 		err := child.Close()
@@ -135,7 +136,7 @@ func (e *baseExecutor) Close() error {
 	return nil
 }
 
-// Schema implements the Executor Schema interface.
+// Schema returns current baseExecutor's schema. If its value is nil, then create a new one.
 func (e *baseExecutor) Schema() *expression.Schema {
 	if e.schema == nil {
 		return expression.NewSchema()
@@ -143,11 +144,12 @@ func (e *baseExecutor) Schema() *expression.Schema {
 	return e.schema
 }
 
+// newChunk creates a new chunk for future use.
 func (e *baseExecutor) newChunk() *chunk.Chunk {
 	return chunk.NewChunk(e.retTypes())
 }
 
-// retTypes implements the Executor retTypes interface.
+// retTypes returns partial column types which only used current query.
 func (e *baseExecutor) retTypes() []*types.FieldType {
 	return e.retFieldTypes
 }
@@ -164,7 +166,8 @@ func (e *baseExecutor) supportChunk() bool {
 	return true
 }
 
-func (e *baseExecutor) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+// NextChunk fills mutiple rows into a chunk.
+func (e *baseExecutor) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
