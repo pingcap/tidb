@@ -23,9 +23,12 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	goctx "golang.org/x/net/context"
 )
+
+var errStopped = errors.New("stopped")
 
 type testStoreSuite struct {
 	store *tikvStore
@@ -34,7 +37,7 @@ type testStoreSuite struct {
 var _ = Suite(&testStoreSuite{})
 
 func (s *testStoreSuite) SetUpTest(c *C) {
-	store, err := NewMockTikvStore()
+	store, err := newTestTiKVStore()
 	c.Check(err, IsNil)
 	s.store = store.(*tikvStore)
 }
@@ -53,7 +56,7 @@ func (s *testStoreSuite) TestParsePath(c *C) {
 }
 
 func (s *testStoreSuite) TestOracle(c *C) {
-	o := &MockOracle{}
+	o := &mockoracle.MockOracle{}
 	s.store.oracle = o
 
 	ctx := goctx.Background()
@@ -67,11 +70,11 @@ func (s *testStoreSuite) TestOracle(c *C) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	o.disable()
+	o.Disable()
 	go func() {
 		defer wg.Done()
 		time.Sleep(time.Millisecond * 100)
-		o.enable()
+		o.Enable()
 	}()
 
 	go func() {

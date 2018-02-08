@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
@@ -177,13 +177,13 @@ func (s *testMainSuite) TestSysSessionPoolGoroutineLeak(c *C) {
 }
 
 func newStore(c *C, dbPath string) kv.Storage {
-	store, err := tikv.NewMockTikvStore()
+	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	return store
 }
 
 func newStoreWithBootstrap(c *C, dbPath string) (kv.Storage, *domain.Domain) {
-	store, err := tikv.NewMockTikvStore()
+	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	dom, err := BootstrapSession(store)
 	c.Assert(err, IsNil)
