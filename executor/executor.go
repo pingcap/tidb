@@ -136,7 +136,7 @@ func (e *baseExecutor) Close() error {
 	return nil
 }
 
-// Schema returns current baseExecutor's schema. If its value is nil, then create a new one.
+// Schema returns the current baseExecutor's schema. If its value is nil, then create a new one.
 func (e *baseExecutor) Schema() *expression.Schema {
 	if e.schema == nil {
 		return expression.NewSchema()
