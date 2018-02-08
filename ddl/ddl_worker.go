@@ -238,10 +238,6 @@ func (d *ddl) handleDDLJobQueue() error {
 			return nil
 		}
 
-		d.hookMu.Lock()
-		d.hook.OnJobUpdated(job)
-		d.hookMu.Unlock()
-
 		// Here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
 		// If the job is done or still running, we will wait 2 * lease time to guarantee other servers to update
 		// the newest schema.
@@ -251,6 +247,10 @@ func (d *ddl) handleDDLJobQueue() error {
 		if job.IsSynced() {
 			asyncNotify(d.ddlJobDoneCh)
 		}
+
+		d.hookMu.Lock()
+		d.hook.OnJobUpdated(job)
+		d.hookMu.Unlock()
 	}
 }
 
