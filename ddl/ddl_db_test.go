@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	tmysql "github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -82,7 +82,7 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 	s.autoIDStep = autoid.GetStep()
 	autoid.SetStep(5000)
 
-	s.store, err = tikv.NewMockTikvStore()
+	s.store, err = mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 
 	s.dom, err = tidb.BootstrapSession(s.store)
