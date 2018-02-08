@@ -169,12 +169,12 @@ func (a *ExecStmt) OriginText() string {
 	return a.Text
 }
 
-// IsPrepared return true if stmt is a prepare statement.
+// IsPrepared returns true if stmt is a prepare statement.
 func (a *ExecStmt) IsPrepared() bool {
 	return a.isPreparedStmt
 }
 
-// IsReadOnly return true if a statement is read only.
+// IsReadOnly returns true if a statement is read only.
 // It will update readOnlyCheckStmt if current ExecStmt can be conveted to
 // a plan.Execute. Last step is using ast.IsReadOnly function to determine
 // a statment is read only or not.
