@@ -124,7 +124,7 @@ func (e *baseExecutor) Open(goCtx goctx.Context) error {
 	return nil
 }
 
-// Close closes all executors and release all resource.
+// Close closes all executors and release all resources.
 func (e *baseExecutor) Close() error {
 	for _, child := range e.children {
 		err := child.Close()
