@@ -76,6 +76,19 @@ var (
 			Help:      "Bucketed histogram of processing time (s) of handle syncer",
 			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 20),
 		}, []string{"op", "result_state"})
+
+	// Metrics for ddl_worker.go.
+	WorkerAddDDLJob         = "add_ddl_job"
+	WorkerFinishDDLJob      = "finish_ddl_job"
+	WorkerWaitSchemaChanged = "wait_schema_changed"
+	DDLWorkerHistogram      = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "ddl",
+			Name:      "ddl_worker_operation",
+			Help:      "Bucketed histogram of processing time (s) of ddl worker operations",
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20),
+		}, []string{"op", "result_state"})
 )
 
 func init() {
@@ -85,4 +98,5 @@ func init() {
 	prometheus.MustRegister(DeploySyncerHistogram)
 	prometheus.MustRegister(UpdateSelfVersionHistogram)
 	prometheus.MustRegister(OwnerHandleSyncerHistogram)
+	prometheus.MustRegister(DDLWorkerHistogram)
 }
