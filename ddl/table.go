@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/charset"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -42,12 +41,6 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	err := checkTableNotExists(t, job, schemaID, tbInfo.Name.L)
 	if err != nil {
 		return ver, errors.Trace(err)
-	}
-
-	if !charset.ValidCharsetAndCollation(tbInfo.Charset, tbInfo.Collate) {
-		// Invalid Charset, cancel this job.
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(errUnsupportedCharset.GenByArgs(tbInfo.Charset, tbInfo.Collate))
 	}
 
 	ver, err = updateSchemaVersion(t, job)
