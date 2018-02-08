@@ -339,6 +339,7 @@ type StatementContext struct {
 	// Set the following variables before execution
 
 	InInsertStmt           bool
+	InUpdateStmt           bool
 	InUpdateOrDeleteStmt   bool
 	InSelectStmt           bool
 	IgnoreTruncate         bool
