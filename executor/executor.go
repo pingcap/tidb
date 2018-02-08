@@ -198,7 +198,8 @@ type Executor interface {
 	retTypes() []*types.FieldType
 	supportChunk() bool
 	newChunk() *chunk.Chunk
-	NextChunk(ctx context.Context, chk *chunk.Chunk) error
+	// NextChunk fills a chunk, which is passed by reference, with multiple rows.
+	NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error
 }
 
 // CancelDDLJobsExec represents a cancel DDL jobs executor.
