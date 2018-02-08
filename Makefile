@@ -30,7 +30,6 @@ LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBBuildTS=$(shell date -u 
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitHash=$(shell git rev-parse HEAD)"
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitBranch=$(shell git rev-parse --abbrev-ref HEAD)"
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.GoVersion=$(shell go version)"
-LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBBuildPlatform=$(shell uname -a)"
 
 TARGET = ""
 
