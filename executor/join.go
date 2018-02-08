@@ -342,7 +342,7 @@ func (e *HashJoinExec) fetchInnerRows(goCtx goctx.Context) (err error) {
 		innerMemUsage := innerResult.MemoryUsage()
 		if !memExceedThreshold && innerMemUsage > execMemThreshold {
 			memExceedThreshold = true
-			log.Warnf(ErrMemExceedThreshold.GenByArgs("HashJoin", innerMemUsage, execMemThreshold).Error())
+			log.Warnf(ErrMemExceedThreshold.GenByArgs(e.id, innerMemUsage, execMemThreshold).Error())
 		}
 	}
 	e.innerResult = innerResult
