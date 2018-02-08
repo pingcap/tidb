@@ -569,7 +569,7 @@ func (h *parseFormatHelper) parseSeperate() {
 	}
 	// Separator is a single none-number char or whitespaces.
 	switch h.format[h.idx] {
-	case ':', '-', '^', '+':
+	case ':', '-', '^', '+', '/':
 		h.idx++
 	case 'T':
 		if h.hasT {
