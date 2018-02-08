@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	goctx "golang.org/x/net/context"
@@ -48,7 +48,7 @@ type testStateChangeSuite struct {
 func (s *testStateChangeSuite) SetUpSuite(c *C) {
 	s.lease = 200 * time.Millisecond
 	var err error
-	s.store, err = tikv.NewMockTikvStore()
+	s.store, err = mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	tidb.SetSchemaLease(s.lease)
 	s.dom, err = tidb.BootstrapSession(s.store)

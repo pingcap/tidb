@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/mockstore"
 )
 
 func TestT(t *testing.T) {
@@ -39,7 +39,7 @@ type testSuite struct {
 }
 
 func (*testSuite) TestT(c *C) {
-	store, err := tikv.NewMockTikvStore()
+	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 
@@ -132,7 +132,7 @@ func (*testSuite) TestT(c *C) {
 // TestConcurrentAlloc is used for the test that
 // multiple alloctors allocate ID with the same table ID concurrently.
 func (*testSuite) TestConcurrentAlloc(c *C) {
-	store, err := tikv.NewMockTikvStore()
+	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 	autoid.SetStep(100)
@@ -195,7 +195,7 @@ func (*testSuite) TestConcurrentAlloc(c *C) {
 // TestRollbackAlloc tests that when the allocation transaction commit failed,
 // the local variable base and end doesn't change.
 func (*testSuite) TestRollbackAlloc(c *C) {
-	store, err := tikv.NewMockTikvStore()
+	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 	dbID := int64(1)
