@@ -24,8 +24,8 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/mocktikv"
+	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 )
 
 type testDumpStatsSuite struct {
@@ -62,7 +62,7 @@ func (ds *testDumpStatsSuite) TestDumpStatsAPI(c *C) {
 
 func (ds *testDumpStatsSuite) startServer(c *C) {
 	mvccStore := mocktikv.NewMvccStore()
-	store, err := tikv.NewMockTikvStore(tikv.WithMVCCStore(mvccStore))
+	store, err := mockstore.NewMockTikvStore(mockstore.WithMVCCStore(mvccStore))
 	c.Assert(err, IsNil)
 
 	_, err = tidb.BootstrapSession(store)
