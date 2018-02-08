@@ -712,7 +712,7 @@ type tableWorker struct {
 
 func (e *IndexLookUpExecutor) buildTableReader(goCtx goctx.Context, handles []int64) (Executor, error) {
 	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(goCtx, &TableReaderExecutor{
-		baseExecutor: newBaseExecutor(e.schema, e.ctx),
+		baseExecutor: newBaseExecutor(e.schema, e.ctx, e.id+"_tableReader"),
 		table:        e.table,
 		tableID:      e.tableID,
 		dagPB:        e.tableRequest,

@@ -96,19 +96,6 @@ func evalOneColumn(ctx context.Context, expr Expression, iterator *chunk.Iterato
 	return errors.Trace(err)
 }
 
-// UnVectorizedExecute evaluates a list of expressions row by row and append their results to "output" Chunk.
-func UnVectorizedExecute(ctx context.Context, exprs []Expression, iterator *chunk.Iterator4Chunk, output *chunk.Chunk) error {
-	for row := iterator.Begin(); row != iterator.End(); row = iterator.Next() {
-		for colID, expr := range exprs {
-			err := evalOneCell(ctx, expr, row, output, colID)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
-	}
-	return nil
-}
-
 func evalOneCell(ctx context.Context, expr Expression, row chunk.Row, output *chunk.Chunk, colID int) (err error) {
 	switch fieldType, evalType := expr.GetType(), expr.GetType().EvalType(); evalType {
 	case types.ETInt:
