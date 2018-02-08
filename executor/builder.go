@@ -152,7 +152,7 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 
 func (b *executorBuilder) buildCancelDDLJobs(v *plan.CancelDDLJobs) Executor {
 	e := &CancelDDLJobsExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, v.ExplainID()),
 		jobIDs:       v.JobIDs,
 	}
 	e.errs, b.err = admin.CancelJobs(e.ctx.Txn(), e.jobIDs)
@@ -169,7 +169,7 @@ func (b *executorBuilder) buildShowDDL(v *plan.ShowDDL) Executor {
 	// next will be called after transaction has been committed.
 	// We need the transaction to get DDLInfo.
 	e := &ShowDDLExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, v.ExplainID()),
 	}
 
 	var err error
@@ -195,7 +195,7 @@ func (b *executorBuilder) buildShowDDL(v *plan.ShowDDL) Executor {
 
 func (b *executorBuilder) buildShowDDLJobs(v *plan.ShowDDLJobs) Executor {
 	e := &ShowDDLJobsExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, v.ExplainID()),
 	}
 	e.supportChk = true
 	return e
@@ -203,7 +203,7 @@ func (b *executorBuilder) buildShowDDLJobs(v *plan.ShowDDLJobs) Executor {
 
 func (b *executorBuilder) buildCheckTable(v *plan.CheckTable) Executor {
 	e := &CheckTableExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, v.ExplainID()),
 		tables:       v.Tables,
 		is:           b.is,
 	}
@@ -213,7 +213,7 @@ func (b *executorBuilder) buildCheckTable(v *plan.CheckTable) Executor {
 
 func (b *executorBuilder) buildDeallocate(v *plan.Deallocate) Executor {
 	e := &DeallocateExec{
-		baseExecutor: newBaseExecutor(nil, b.ctx),
+		baseExecutor: newBaseExecutor(nil, b.ctx, v.ExplainID()),
 		Name:         v.Name,
 	}
 	e.supportChk = true
@@ -234,7 +234,7 @@ func (b *executorBuilder) buildSelectLock(v *plan.PhysicalLock) Executor {
 		return src
 	}
 	e := &SelectLockExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, src),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, v.ExplainID(), src),
 		Lock:         v.Lock,
 	}
 	e.supportChk = true
@@ -248,7 +248,7 @@ func (b *executorBuilder) buildLimit(v *plan.PhysicalLimit) Executor {
 		return nil
 	}
 	e := &LimitExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, childExec),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, v.ExplainID(), childExec),
 		begin:        v.Offset,
 		end:          v.Offset + v.Count,
 	}
@@ -258,7 +258,7 @@ func (b *executorBuilder) buildLimit(v *plan.PhysicalLimit) Executor {
 
 func (b *executorBuilder) buildPrepare(v *plan.Prepare) Executor {
 	e := &PrepareExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, v.ExplainID()),
 		is:           b.is,
 		name:         v.Name,
 		sqlText:      v.SQLText,
@@ -269,7 +269,7 @@ func (b *executorBuilder) buildPrepare(v *plan.Prepare) Executor {
 
 func (b *executorBuilder) buildExecute(v *plan.Execute) Executor {
 	e := &ExecuteExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, v.ExplainID()),
 		is:           b.is,
 		name:         v.Name,
 		usingVars:    v.UsingVars,
@@ -283,7 +283,7 @@ func (b *executorBuilder) buildExecute(v *plan.Execute) Executor {
 
 func (b *executorBuilder) buildShow(v *plan.Show) Executor {
 	e := &ShowExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, v.ExplainID()),
 		Tp:           v.Tp,
 		DBName:       model.NewCIStr(v.DBName),
 		Table:        v.Table,
@@ -302,7 +302,7 @@ func (b *executorBuilder) buildShow(v *plan.Show) Executor {
 		return e
 	}
 	sel := &SelectionExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, e),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, v.ExplainID(), e),
 		filters:      v.Conditions,
 	}
 	sel.supportChk = true
@@ -317,7 +317,7 @@ func (b *executorBuilder) buildSimple(v *plan.Simple) Executor {
 		return b.buildRevoke(s)
 	}
 	e := &SimpleExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, v.ExplainID()),
 		Statement:    v.Statement,
 		is:           b.is,
 	}
@@ -327,7 +327,7 @@ func (b *executorBuilder) buildSimple(v *plan.Simple) Executor {
 
 func (b *executorBuilder) buildSet(v *plan.Set) Executor {
 	e := &SetExecutor{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, v.ExplainID()),
 		vars:         v.VarAssigns,
 	}
 	e.supportChk = true
@@ -342,9 +342,9 @@ func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 	}
 	var baseExec baseExecutor
 	if selectExec != nil {
-		baseExec = newBaseExecutor(nil, b.ctx, selectExec)
+		baseExec = newBaseExecutor(nil, b.ctx, v.ExplainID(), selectExec)
 	} else {
-		baseExec = newBaseExecutor(nil, b.ctx)
+		baseExec = newBaseExecutor(nil, b.ctx, v.ExplainID())
 	}
 
 	ivs := &InsertValues{
@@ -379,7 +379,7 @@ func (b *executorBuilder) buildLoadData(v *plan.LoadData) Executor {
 		return nil
 	}
 	insertVal := &InsertValues{
-		baseExecutor: newBaseExecutor(nil, b.ctx),
+		baseExecutor: newBaseExecutor(nil, b.ctx, v.ExplainID()),
 		Table:        tbl,
 		Columns:      v.Columns,
 		GenColumns:   v.GenCols.Columns,
@@ -392,7 +392,7 @@ func (b *executorBuilder) buildLoadData(v *plan.LoadData) Executor {
 		return nil
 	}
 	loadDataExec := &LoadData{
-		baseExecutor: newBaseExecutor(nil, b.ctx),
+		baseExecutor: newBaseExecutor(nil, b.ctx, v.ExplainID()),
 		IsLocal:      v.IsLocal,
 		loadDataInfo: &LoadDataInfo{
 			row:        make([]types.Datum, len(columns)),
@@ -412,7 +412,7 @@ func (b *executorBuilder) buildLoadData(v *plan.LoadData) Executor {
 
 func (b *executorBuilder) buildLoadStats(v *plan.LoadStats) Executor {
 	e := &LoadStatsExec{
-		baseExecutor: newBaseExecutor(nil, b.ctx),
+		baseExecutor: newBaseExecutor(nil, b.ctx, v.ExplainID()),
 		info:         &LoadStatsInfo{v.Path, b.ctx},
 	}
 	e.supportChk = true
@@ -429,7 +429,7 @@ func (b *executorBuilder) buildReplace(vals *InsertValues) Executor {
 
 func (b *executorBuilder) buildGrant(grant *ast.GrantStmt) Executor {
 	e := &GrantExec{
-		baseExecutor: newBaseExecutor(nil, b.ctx),
+		baseExecutor: newBaseExecutor(nil, b.ctx, "GrantStmt"),
 		Privs:        grant.Privs,
 		ObjectType:   grant.ObjectType,
 		Level:        grant.Level,
@@ -456,7 +456,7 @@ func (b *executorBuilder) buildRevoke(revoke *ast.RevokeStmt) Executor {
 
 func (b *executorBuilder) buildDDL(v *plan.DDL) Executor {
 	e := &DDLExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, v.ExplainID()),
 		stmt:         v.Statement,
 		is:           b.is,
 	}
@@ -466,7 +466,7 @@ func (b *executorBuilder) buildDDL(v *plan.DDL) Executor {
 
 func (b *executorBuilder) buildExplain(v *plan.Explain) Executor {
 	e := &ExplainExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, v.ExplainID()),
 	}
 	e.rows = make([][]string, 0, len(v.Rows))
 	for _, row := range v.Rows {
@@ -482,7 +482,7 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 		b.err = errors.Trace(b.err)
 		return nil
 	}
-	us := &UnionScanExec{baseExecutor: newBaseExecutor(v.Schema(), b.ctx, src)}
+	us := &UnionScanExec{baseExecutor: newBaseExecutor(v.Schema(), b.ctx, v.ExplainID(), src)}
 	// Get the handle column index of the below plan.
 	// We can guarantee that there must be only one col in the map.
 	for _, cols := range v.Children()[0].Schema().TblID2Handle {
@@ -595,7 +595,7 @@ func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 	lhsColTypes := leftExec.retTypes()
 	rhsColTypes := rightExec.retTypes()
 	e := &MergeJoinExec{
-		baseExecutor:    newBaseExecutor(v.Schema(), b.ctx, leftExec, rightExec),
+		baseExecutor:    newBaseExecutor(v.Schema(), b.ctx, v.ExplainID(), leftExec, rightExec),
 		resultGenerator: newJoinResultGenerator(b.ctx, v.JoinType, v.JoinType == plan.RightOuterJoin, defaultValues, v.OtherConditions, lhsColTypes, rhsColTypes),
 		stmtCtx:         b.ctx.GetSessionVars().StmtCtx,
 		// left is the outer side by default.
@@ -631,10 +631,19 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 	}
 
 	leftExec := b.build(v.Children()[0])
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
+	}
+
 	rightExec := b.build(v.Children()[1])
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
+	}
 
 	e := &HashJoinExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, leftExec, rightExec),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, v.ExplainID(), leftExec, rightExec),
 		concurrency:  v.Concurrency,
 		joinType:     v.JoinType,
 		innerIdx:     v.InnerChildIdx,
@@ -685,7 +694,7 @@ func (b *executorBuilder) buildHashAgg(v *plan.PhysicalHashAgg) Executor {
 		return nil
 	}
 	e := &HashAggExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, src),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, v.ExplainID(), src),
 		sc:           b.ctx.GetSessionVars().StmtCtx,
 		AggFuncs:     make([]aggregation.Aggregation, 0, len(v.AggFuncs)),
 		GroupByItems: v.GroupByItems,
@@ -704,7 +713,7 @@ func (b *executorBuilder) buildStreamAgg(v *plan.PhysicalStreamAgg) Executor {
 		return nil
 	}
 	e := &StreamAggExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, src),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, v.ExplainID(), src),
 		StmtCtx:      b.ctx.GetSessionVars().StmtCtx,
 		AggFuncs:     make([]aggregation.Aggregation, 0, len(v.AggFuncs)),
 		GroupByItems: v.GroupByItems,
@@ -723,7 +732,7 @@ func (b *executorBuilder) buildSelection(v *plan.PhysicalSelection) Executor {
 		return nil
 	}
 	e := &SelectionExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, childExec),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, v.ExplainID(), childExec),
 		filters:      v.Conditions,
 	}
 	e.supportChk = true
@@ -737,7 +746,7 @@ func (b *executorBuilder) buildProjection(v *plan.PhysicalProjection) Executor {
 		return nil
 	}
 	e := &ProjectionExec{
-		baseExecutor:     newBaseExecutor(v.Schema(), b.ctx, childExec),
+		baseExecutor:     newBaseExecutor(v.Schema(), b.ctx, v.ExplainID(), childExec),
 		exprs:            v.Exprs,
 		evaluatorSuit:    expression.NewEvaluatorSuit(v.Exprs),
 		calculateNoDelay: v.CalculateNoDelay,
@@ -752,7 +761,7 @@ func (b *executorBuilder) buildTableDual(v *plan.PhysicalTableDual) Executor {
 		return nil
 	}
 	e := &TableDualExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, v.ExplainID()),
 		numDualRows:  v.RowCount,
 	}
 	e.supportChk = true
@@ -776,7 +785,7 @@ func (b *executorBuilder) getStartTS() uint64 {
 func (b *executorBuilder) buildMemTable(v *plan.PhysicalMemTable) Executor {
 	tb, _ := b.is.TableByID(v.Table.ID)
 	e := &TableScanExec{
-		baseExecutor:   newBaseExecutor(v.Schema(), b.ctx),
+		baseExecutor:   newBaseExecutor(v.Schema(), b.ctx, v.ExplainID()),
 		t:              tb,
 		columns:        v.Columns,
 		seekHandle:     math.MinInt64,
@@ -794,7 +803,7 @@ func (b *executorBuilder) buildSort(v *plan.PhysicalSort) Executor {
 		return nil
 	}
 	sortExec := SortExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, childExec),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, v.ExplainID(), childExec),
 		ByItems:      v.ByItems,
 		schema:       v.Schema(),
 	}
@@ -809,7 +818,7 @@ func (b *executorBuilder) buildTopN(v *plan.PhysicalTopN) Executor {
 		return nil
 	}
 	sortExec := SortExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, childExec),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, v.ExplainID(), childExec),
 		ByItems:      v.ByItems,
 		schema:       v.Schema(),
 	}
@@ -853,7 +862,7 @@ func (b *executorBuilder) buildApply(apply *plan.PhysicalApply) *NestedLoopApply
 		outerFilter, innerFilter = v.RightConditions, v.LeftConditions
 	}
 	e := &NestedLoopApplyExec{
-		baseExecutor:    newBaseExecutor(apply.Schema(), b.ctx, outerExec, innerExec),
+		baseExecutor:    newBaseExecutor(apply.Schema(), b.ctx, v.ExplainID(), outerExec, innerExec),
 		innerExec:       innerExec,
 		outerExec:       outerExec,
 		outerFilter:     outerFilter,
@@ -876,7 +885,7 @@ func (b *executorBuilder) buildExists(v *plan.PhysicalExists) Executor {
 		return nil
 	}
 	e := &ExistsExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, childExec),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, v.ExplainID(), childExec),
 	}
 	e.supportChk = true
 	return e
@@ -889,7 +898,7 @@ func (b *executorBuilder) buildMaxOneRow(v *plan.PhysicalMaxOneRow) Executor {
 		return nil
 	}
 	e := &MaxOneRowExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, childExec),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, v.ExplainID(), childExec),
 	}
 	e.supportChk = true
 	return e
@@ -905,7 +914,7 @@ func (b *executorBuilder) buildUnionAll(v *plan.PhysicalUnionAll) Executor {
 		}
 	}
 	e := &UnionExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, childExecs...),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, v.ExplainID(), childExecs...),
 	}
 	e.supportChk = true
 	return e
@@ -922,7 +931,7 @@ func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
 		return nil
 	}
 	updateExec := &UpdateExec{
-		baseExecutor: newBaseExecutor(nil, b.ctx, selExec),
+		baseExecutor: newBaseExecutor(nil, b.ctx, v.ExplainID(), selExec),
 		SelectExec:   selExec,
 		OrderedList:  v.OrderedList,
 		tblID2table:  tblID2table,
@@ -943,7 +952,7 @@ func (b *executorBuilder) buildDelete(v *plan.Delete) Executor {
 		return nil
 	}
 	deleteExec := &DeleteExec{
-		baseExecutor: newBaseExecutor(nil, b.ctx, selExec),
+		baseExecutor: newBaseExecutor(nil, b.ctx, v.ExplainID(), selExec),
 		SelectExec:   selExec,
 		Tables:       v.Tables,
 		IsMultiTable: v.IsMultiTable,
@@ -1018,7 +1027,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plan.AnalyzeColumnsTa
 
 func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 	e := &AnalyzeExec{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, v.ExplainID()),
 		tasks:        make([]*analyzeTask, 0, len(v.ColTasks)+len(v.IdxTasks)),
 	}
 	for _, task := range v.ColTasks {
@@ -1099,7 +1108,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Execut
 		defaultValues = make([]types.Datum, len(innerTypes))
 	}
 	e := &IndexLookUpJoin{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, outerExec),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, v.ExplainID(), outerExec),
 		outerCtx: outerCtx{
 			rowTypes: outerTypes,
 			filter:   outerFilter,
@@ -1153,7 +1162,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plan.PhysicalTableReader) (*
 		}
 	}
 	e := &TableReaderExecutor{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, v.ExplainID()),
 		dagPB:        dagReq,
 		tableID:      ts.Table.ID,
 		table:        table,
@@ -1196,7 +1205,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plan.PhysicalIndexReader) (*
 	is := v.IndexPlans[0].(*plan.PhysicalIndexScan)
 	table, _ := b.is.TableByID(is.Table.ID)
 	e := &IndexReaderExecutor{
-		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx, v.ExplainID()),
 		dagPB:        dagReq,
 		tableID:      is.Table.ID,
 		table:        table,
@@ -1250,7 +1259,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plan.PhysicalIndexLook
 	}
 
 	e := &IndexLookUpExecutor{
-		baseExecutor:      newBaseExecutor(v.Schema(), b.ctx),
+		baseExecutor:      newBaseExecutor(v.Schema(), b.ctx, v.ExplainID()),
 		dagPB:             indexReq,
 		tableID:           is.Table.ID,
 		table:             table,
