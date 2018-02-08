@@ -166,6 +166,7 @@ func (p *LogicalJoin) extractFiltersFromDNFs(conditions []expression.Expression)
 	return append(conditions, allExtracted...)
 }
 
+// extractFiltersFromDNF extracts the same condition that occurs in every DNF item.
 func (p *LogicalJoin) extractFiltersFromDNF(dnfFunc *expression.ScalarFunction) ([]expression.Expression, expression.Expression) {
 	dnfItems := expression.FlattenDNFConditions(dnfFunc)
 	sc := p.ctx.GetSessionVars().StmtCtx
@@ -173,6 +174,9 @@ func (p *LogicalJoin) extractFiltersFromDNF(dnfFunc *expression.ScalarFunction) 
 	hashcode2Expr := make(map[string]expression.Expression)
 	firstRun := true
 	for _, dnfItem := range dnfItems {
+		// We need this because there may be the case like `select * from t, t1 where (t.a=t1.a and t.a=t1.a) or (something).
+		// We should make sure that the two `t.a=t1.a` contributes only once.
+		innerMap := make(map[string]struct{})
 		if sf, ok := dnfItem.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicAnd {
 			cnfItems := expression.FlattenCNFConditions(sf)
 			for _, cnfItem := range cnfItems {
@@ -181,7 +185,10 @@ func (p *LogicalJoin) extractFiltersFromDNF(dnfFunc *expression.ScalarFunction) 
 					codeMap[hack.String(code)] = 1
 					hashcode2Expr[hack.String(code)] = cnfItem
 				} else if _, ok = codeMap[hack.String(code)]; ok {
-					codeMap[hack.String(code)]++
+					if _, ok := innerMap[hack.String(code)]; !ok {
+						codeMap[hack.String(code)]++
+						innerMap[hack.String(code)] = struct{}{}
+					}
 				}
 			}
 		} else {
@@ -190,11 +197,15 @@ func (p *LogicalJoin) extractFiltersFromDNF(dnfFunc *expression.ScalarFunction) 
 				codeMap[hack.String(code)] = 1
 				hashcode2Expr[hack.String(code)] = dnfItem
 			} else if _, ok = codeMap[hack.String(code)]; ok {
-				codeMap[hack.String(code)]++
+				if _, ok := innerMap[hack.String(code)]; !ok {
+					codeMap[hack.String(code)]++
+					innerMap[hack.String(code)] = struct{}{}
+				}
 			}
 		}
 		firstRun = false
 	}
+	// We should make sure that this item occurs in every DNF item.
 	for hashcode, cnt := range codeMap {
 		if cnt < len(dnfItems) {
 			delete(hashcode2Expr, hashcode)
@@ -212,6 +223,7 @@ func (p *LogicalJoin) extractFiltersFromDNF(dnfFunc *expression.ScalarFunction) 
 					newCNFItems = append(newCNFItems, cnfItem)
 				}
 			}
+			// There may be the case that all the CNF is extracted.
 			if len(newCNFItems) == 1 {
 				newDNFItems = append(newDNFItems, newCNFItems[0])
 			} else if len(newCNFItems) > 1 {
