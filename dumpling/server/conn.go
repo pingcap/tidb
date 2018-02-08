@@ -729,7 +729,7 @@ func insertDataWithCommit(goCtx goctx.Context, prevData, curData []byte, loadDat
 		if !reachLimit {
 			break
 		}
-		terror.Log(loadDataInfo.Ctx.StmtCommit())
+		loadDataInfo.Ctx.StmtCommit()
 		// Make sure that there are no retries when committing.
 		if err = loadDataInfo.Ctx.RefreshTxnCtx(goCtx); err != nil {
 			return nil, errors.Trace(err)
@@ -788,7 +788,7 @@ func (cc *clientConn) handleLoadData(goCtx goctx.Context, loadDataInfo *executor
 	}
 
 	txn := loadDataInfo.Ctx.Txn()
-	terror.Log(loadDataInfo.Ctx.StmtCommit())
+	loadDataInfo.Ctx.StmtCommit()
 	if err != nil {
 		if txn != nil && txn.Valid() {
 			if err1 := txn.Rollback(); err1 != nil {
