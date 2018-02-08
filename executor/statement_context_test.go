@@ -20,7 +20,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -37,9 +36,7 @@ func (s *testSuite) TestStatementContext(c *C) {
 
 	tk.MustExec(strictModeSQL)
 	tk.MustQuery("select * from sc where a > cast(1.1 as decimal)").Check(testkit.Rows("2"))
-	_, err := tk.Exec(`select * from sc where a > cast(1.1 as decimal);
-		        update sc set a = 4 where a > cast(1.1 as decimal)`)
-	c.Check(terror.ErrorEqual(err, types.ErrTruncated), IsTrue)
+	tk.MustExec("update sc set a = 4 where a > cast(1.1 as decimal)")
 
 	tk.MustExec(nonStrictModeSQL)
 	tk.MustExec("update sc set a = 3 where a > cast(1.1 as decimal)")
@@ -53,7 +50,7 @@ func (s *testSuite) TestStatementContext(c *C) {
 	// Handle coprocessor flags, '1x' is an invalid int.
 	// UPDATE and DELETE do select request first which is handled by coprocessor.
 	// In strict mode we expect error.
-	_, err = tk.Exec("update sc set a = 4 where a > '1x'")
+	_, err := tk.Exec("update sc set a = 4 where a > '1x'")
 	c.Assert(err, NotNil)
 	_, err = tk.Exec("delete from sc where a < '1x'")
 	c.Assert(err, NotNil)

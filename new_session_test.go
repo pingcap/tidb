@@ -453,7 +453,7 @@ func (s *testSessionSuite) TestInTrans(c *C) {
 	tk.MustExec("insert t values ()")
 	c.Assert(tk.Se.Txn().Valid(), IsTrue)
 	tk.MustExec("rollback")
-	c.Assert(tk.Se.Txn().Valid(), IsFalse)
+	c.Assert(tk.Se.Txn(), IsNil)
 }
 
 func (s *testSessionSuite) TestRetryPreparedStmt(c *C) {
