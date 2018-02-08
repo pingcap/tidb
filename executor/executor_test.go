@@ -228,7 +228,7 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 			c.Assert(data, DeepEquals, tt.restData,
 				Commentf("data1:%v, data2:%v, data:%v", string(tt.data1), string(tt.data2), string(data)))
 		}
-		terror.Log(ctx.StmtCommit())
+		ctx.StmtCommit()
 		err1 = ctx.Txn().Commit(goctx.Background())
 		c.Assert(err1, IsNil)
 		r := tk.MustQuery(selectSQL)
