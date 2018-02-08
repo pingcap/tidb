@@ -1087,8 +1087,9 @@ func ProduceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *stmtctx.Statem
 				return nil, errors.Trace(err)
 			}
 			if !dec.IsZero() && frac > decimal && dec.Compare(&old) != 0 {
-				if sc.InInsertStmt {
+				if sc.InInsertStmt || sc.InUpdateOrDeleteStmt {
 					// fix https://github.com/pingcap/tidb/issues/3895
+					// fix https://github.com/pingcap/tidb/issues/5532
 					sc.AppendWarning(ErrTruncated)
 					err = nil
 				} else {
