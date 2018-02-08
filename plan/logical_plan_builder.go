@@ -188,33 +188,25 @@ func extractCorColumns(expr expression.Expression) (cols []*expression.Correlate
 	return
 }
 
-func isJoinKeyCond(cond expression.Expression, lSchema, rSchema *expression.Schema) *expression.ScalarFunction {
-	sf, ok := cond.(*expression.ScalarFunction)
-	if !ok || sf.FuncName.L != ast.EQ {
-		return nil
-	}
-	ln, lOK := sf.GetArgs()[0].(*expression.Column)
-	rn, rOK := sf.GetArgs()[1].(*expression.Column)
-	if !lOK || !rOK {
-		return nil
-	}
-	if lSchema.Contains(ln) && rSchema.Contains(rn) {
-		return sf
-	}
-	if rSchema.Contains(ln) && lSchema.Contains(rn) {
-		return expression.NewFunctionInternal(sf.GetCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), rn, ln).(*expression.ScalarFunction)
-	}
-	return nil
-}
-
 func extractOnCondition(conditions []expression.Expression, left LogicalPlan, right LogicalPlan) (
 	eqCond []*expression.ScalarFunction, leftCond []expression.Expression, rightCond []expression.Expression,
 	otherCond []expression.Expression) {
 	for _, expr := range conditions {
-		binOp := isJoinKeyCond(expr, left.Schema(), right.Schema())
-		if binOp != nil {
-			eqCond = append(eqCond, binOp)
-			continue
+		binop, ok := expr.(*expression.ScalarFunction)
+		if ok && binop.FuncName.L == ast.EQ {
+			ln, lOK := binop.GetArgs()[0].(*expression.Column)
+			rn, rOK := binop.GetArgs()[1].(*expression.Column)
+			if lOK && rOK {
+				if left.Schema().Contains(ln) && right.Schema().Contains(rn) {
+					eqCond = append(eqCond, binop)
+					continue
+				}
+				if left.Schema().Contains(rn) && right.Schema().Contains(ln) {
+					cond := expression.NewFunctionInternal(binop.GetCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), rn, ln)
+					eqCond = append(eqCond, cond.(*expression.ScalarFunction))
+					continue
+				}
+			}
 		}
 		columns := expression.ExtractColumns(expr)
 		allFromLeft, allFromRight := true, true
