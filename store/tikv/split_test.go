@@ -16,7 +16,7 @@ package tikv
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv/mocktikv"
+	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"golang.org/x/net/context"
 	goctx "golang.org/x/net/context"
 )
@@ -32,7 +32,10 @@ var _ = Suite(&testSplitSuite{})
 func (s *testSplitSuite) SetUpTest(c *C) {
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(s.cluster)
-	store, err := NewMockTikvStore(WithCluster(s.cluster))
+	client, pdClient, err := mocktikv.NewTestClient(s.cluster, nil, "")
+	c.Assert(err, IsNil)
+
+	store, err := NewTestTiKVStore(client, pdClient, nil, nil)
 	c.Check(err, IsNil)
 	s.store = store.(*tikvStore)
 	s.bo = NewBackoffer(5000, context.Background())

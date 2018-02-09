@@ -23,7 +23,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testleak"
 	goctx "golang.org/x/net/context"
@@ -51,7 +51,7 @@ type testKVSuite struct {
 }
 
 func (s *testKVSuite) SetUpSuite(c *C) {
-	store, err := tikv.NewMockTikvStore()
+	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	s.s = store
 }
@@ -522,7 +522,7 @@ func (s *testKVSuite) TestConditionUpdate(c *C) {
 func (s *testKVSuite) TestDBClose(c *C) {
 	c.Skip("don't know why it fails.")
 	defer testleak.AfterTest(c)()
-	store, err := tikv.NewMockTikvStore()
+	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 
 	txn, err := store.Begin()
