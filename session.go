@@ -733,9 +733,6 @@ func (s *session) executeStatement(goCtx goctx.Context, connID uint64, stmtNode 
 		}
 		return nil, errors.Trace(err)
 	}
-	if !s.sessionVars.InRestrictedSQL {
-		log.Infof("xyz %v", s.GetSessionVars().StmtCtx.DebugLog)
-	}
 	metrics.SessionExecuteRunDuration.Observe(time.Since(startTime).Seconds())
 
 	if recordSet != nil {
