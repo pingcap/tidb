@@ -310,9 +310,6 @@ func (s *testSuite) TestShow(c *C) {
 	))
 
 	tk.MustExec(`drop table if exists t`)
-
-	_, err := tk.Exec("create table t (a int) default charset=abcdefg")
-	c.Assert(err, NotNil)
 }
 
 func (s *testSuite) TestShowVisibility(c *C) {
