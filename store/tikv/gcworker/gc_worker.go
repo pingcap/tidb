@@ -538,6 +538,38 @@ type gcResult struct {
 	lastErr        error
 }
 
+type gcTaskWorker struct {
+	store    tikv.Storage
+	taskCh   chan *gcTask
+	resultCh chan *gcResult
+}
+
+func newGCTaskWorker(store tikv.Storage, taskCh chan *gcTask, resultCh chan *gcResult) *gcTaskWorker {
+	return &gcTaskWorker{store, taskCh, resultCh}
+}
+
+func (w *gcTaskWorker) run() {
+	for {
+		task := <-w.taskCh
+		if task == nil {
+			w.resultCh <- nil
+			return
+		}
+
+		res, err := doGCForRange(w.store, task.startKey, task.endKey, task.safePoint)
+		if err != nil {
+			res = &gcResult{
+				successRegions: 0,
+				failedRegions:  0,
+				lastErr:        err,
+			}
+		}
+		if res != nil {
+			w.resultCh <- res
+		}
+	}
+}
+
 func (w *GCWorker) loadGcConcurrencyWithDefault() (int, error) {
 	str, err := w.loadValueFromSysTable(gcConcurrencyKey, w.session)
 	if err != nil {
@@ -579,28 +611,6 @@ func genNextGCTask(store tikv.Storage, bo *tikv.Backoffer, safePoint uint64, key
 		safePoint: safePoint,
 	}
 	return task, nil
-}
-
-func gcTaskWorker(store tikv.Storage, taskCh chan *gcTask, resultCh chan *gcResult) {
-	for {
-		task := <-taskCh
-		if task == nil {
-			resultCh <- nil
-			return
-		}
-
-		res, err := doGCForRange(store, task.startKey, task.endKey, task.safePoint)
-		if err != nil {
-			res = &gcResult{
-				successRegions: 0,
-				failedRegions:  0,
-				lastErr:        err,
-			}
-		}
-		if res != nil {
-			resultCh <- res
-		}
-	}
 }
 
 func sendQuitToTaskWorkers(gcTaskCh chan *gcTask, concurrency int) {
@@ -645,7 +655,8 @@ func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier st
 	gcTaskCh := make(chan *gcTask, concurrency)
 	gcResultCh := make(chan *gcResult, concurrency*2)
 	for i := 0; i < concurrency; i++ {
-		go gcTaskWorker(store, gcTaskCh, gcResultCh)
+		w := newGCTaskWorker(store, gcTaskCh, gcResultCh)
+		go w.run()
 	}
 
 	var lastErr error

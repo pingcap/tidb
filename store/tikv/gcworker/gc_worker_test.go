@@ -130,23 +130,23 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(concurrency, Equals, gcDefaultConcurrency)
 
-	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(1), s.gcWorker.session)
+	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcMinConcurrency), s.gcWorker.session)
 	c.Assert(err, IsNil)
 	concurrency, err = s.gcWorker.loadGcConcurrencyWithDefault()
 	c.Assert(err, IsNil)
-	c.Assert(concurrency, Equals, 1)
+	c.Assert(concurrency, Equals, gcMinConcurrency)
 
 	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(-1), s.gcWorker.session)
 	c.Assert(err, IsNil)
 	concurrency, err = s.gcWorker.loadGcConcurrencyWithDefault()
 	c.Assert(err, IsNil)
-	c.Assert(concurrency, Equals, 1)
+	c.Assert(concurrency, Equals, gcMinConcurrency)
 
 	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(1000000), s.gcWorker.session)
 	c.Assert(err, IsNil)
 	concurrency, err = s.gcWorker.loadGcConcurrencyWithDefault()
 	c.Assert(err, IsNil)
-	c.Assert(concurrency, Equals, 1024)
+	c.Assert(concurrency, Equals, gcMaxConcurrency)
 }
 
 func (s *testGCWorkerSuite) TestDoGCForOneRegion(c *C) {
