@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"math"
+	"strconv"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -101,4 +102,27 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 	safePoint, err = s.gcWorker.loadTime(gcSafePointKey, s.gcWorker.session)
 	c.Assert(err, IsNil)
 	s.timeEqual(c, safePoint.Add(time.Minute*30), now, 2*time.Second)
+
+	// Change GC concurrency.
+	concurrency, err := s.gcWorker.loadGCConcurrencyWithDefault()
+	c.Assert(err, IsNil)
+	c.Assert(concurrency, Equals, gcDefaultConcurrency)
+
+	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcMinConcurrency), s.gcWorker.session)
+	c.Assert(err, IsNil)
+	concurrency, err = s.gcWorker.loadGCConcurrencyWithDefault()
+	c.Assert(err, IsNil)
+	c.Assert(concurrency, Equals, gcMinConcurrency)
+
+	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(-1), s.gcWorker.session)
+	c.Assert(err, IsNil)
+	concurrency, err = s.gcWorker.loadGCConcurrencyWithDefault()
+	c.Assert(err, IsNil)
+	c.Assert(concurrency, Equals, gcMinConcurrency)
+
+	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(1000000), s.gcWorker.session)
+	c.Assert(err, IsNil)
+	concurrency, err = s.gcWorker.loadGCConcurrencyWithDefault()
+	c.Assert(err, IsNil)
+	c.Assert(concurrency, Equals, gcMaxConcurrency)
 }
