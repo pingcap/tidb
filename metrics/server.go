@@ -63,6 +63,14 @@ var (
 			Name:      "critical_error",
 			Help:      "Counter of critical errors.",
 		})
+
+	ServerStartCounter = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "server_start",
+			Help:      "Counter of server start times.",
+		})
 )
 
 func init() {
@@ -71,6 +79,7 @@ func init() {
 	prometheus.MustRegister(ConnGauge)
 	prometheus.MustRegister(ExecuteErrorCounter)
 	prometheus.MustRegister(CriticalErrorCounter)
+	prometheus.MustRegister(ServerStartCounter)
 }
 
 // ExecuteErrorToLabel converts an execute error to label.
