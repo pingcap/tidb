@@ -131,24 +131,24 @@ func (s *testGCWorkerSuite) TestDoGCForOneRegion(c *C) {
 	loc, err := s.store.GetRegionCache().LocateKey(bo, []byte(""))
 	c.Assert(err, IsNil)
 	var regionErr *errorpb.Error
-	regionErr, err = doGCForOneRegion(bo, s.store, 20, loc.Region)
+	regionErr, err = doGCForRegion(bo, s.store, 20, loc.Region)
 	c.Assert(regionErr, IsNil)
 	c.Assert(err, IsNil)
 
 	gofail.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("timeout")`)
-	regionErr, err = doGCForOneRegion(bo, s.store, 20, loc.Region)
+	regionErr, err = doGCForRegion(bo, s.store, 20, loc.Region)
 	c.Assert(regionErr, IsNil)
 	c.Assert(err, NotNil)
 	gofail.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult")
 
 	gofail.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("GCNotLeader")`)
-	regionErr, err = doGCForOneRegion(bo, s.store, 20, loc.Region)
+	regionErr, err = doGCForRegion(bo, s.store, 20, loc.Region)
 	c.Assert(regionErr.GetNotLeader(), NotNil)
 	c.Assert(err, IsNil)
 	gofail.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult")
 
 	gofail.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("GCServerIsBusy")`)
-	regionErr, err = doGCForOneRegion(bo, s.store, 20, loc.Region)
+	regionErr, err = doGCForRegion(bo, s.store, 20, loc.Region)
 	c.Assert(regionErr.GetServerIsBusy(), NotNil)
 	c.Assert(err, IsNil)
 	gofail.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult")

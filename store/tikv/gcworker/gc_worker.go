@@ -106,9 +106,12 @@ const (
 	gcDefaultLifeTime        = time.Minute * 10
 	gcSafePointKey           = "tikv_gc_safe_point"
 	gcSafePointCacheInterval = tikv.GcSafePointCacheInterval
+	gcConcurrencyKey         = "tikv_gc_concurrency"
+	gcDefaultConcurrency     = 32
+	gcMinConcurrency         = 1
+	gcMaxConcurrency         = 1024
 	// We don't want gc to sweep out the cached info belong to other processes, like coprocessor.
 	gcScanLockLimit = tikv.ResolvedCacheSize / 2
-	gcConcurrency = 32
 )
 
 var gcVariableComments = map[string]string{
@@ -119,6 +122,7 @@ var gcVariableComments = map[string]string{
 	gcRunIntervalKey: "GC run interval, at least 10m, in Go format.",
 	gcLifeTimeKey:    "All versions within life time will not be collected by GC, at least 10m, in Go format.",
 	gcSafePointKey:   "All versions after safe point can be accessed. (DO NOT EDIT)",
+	gcConcurrencyKey: "How many go routines used to do GC parallel, [1, 1024], default 32",
 }
 
 func (w *GCWorker) start(ctx goctx.Context, wg *sync.WaitGroup) {
@@ -308,13 +312,22 @@ func RunGCJob(ctx goctx.Context, s tikv.Storage, safePoint uint64, identifier st
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = doGC(ctx, s, safePoint, identifier)
+	err = doGC(ctx, s, safePoint, identifier, gcDefaultConcurrency)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	return nil
 }
 
+func (w *GCWorker) doGC(ctx goctx.Context, safePoint uint64) error {
+	gcConcurrency, err := w.loadGcConcurrencyWithDefault()
+	if err != nil {
+		log.Errorf("")
+		gcConcurrency = gcDefaultConcurrency
+	}
+
+	return doGC(ctx, w.store, safePoint, w.uuid, gcConcurrency)
+}
 func (w *GCWorker) runGCJob(ctx goctx.Context, safePoint uint64) {
 	gcWorkerCounter.WithLabelValues("run_job").Inc()
 	err := resolveLocks(ctx, w.store, safePoint, w.uuid)
@@ -331,7 +344,7 @@ func (w *GCWorker) runGCJob(ctx goctx.Context, safePoint uint64) {
 		w.done <- errors.Trace(err)
 		return
 	}
-	err = doGC(ctx, w.store, safePoint, w.uuid)
+	err = w.doGC(ctx,safePoint)
 	if err != nil {
 		log.Errorf("[gc worker] %s do GC returns an error %v", w.uuid, err)
 		w.gcIsRunning = false
@@ -524,6 +537,35 @@ type gcResult struct {
 	lastErr error
 }
 
+func (w *GCWorker) loadGcConcurrencyWithDefault() (int, error) {
+	str, err := w.loadValueFromSysTable(gcConcurrencyKey, w.session)
+	if err != nil {
+		return gcDefaultConcurrency, errors.Trace(err)
+	}
+	if str == "" {
+		err = w.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcDefaultConcurrency), w.session)
+		if err != nil {
+			return gcDefaultConcurrency, errors.Trace(err)
+		}
+		return gcDefaultConcurrency, nil
+	}
+
+	jobConcurrency, err := strconv.Atoi(str)
+	if err != nil {
+		return gcDefaultConcurrency, err
+	}
+
+	if jobConcurrency < gcMinConcurrency {
+		jobConcurrency = gcMinConcurrency
+	}
+
+	if jobConcurrency > gcMaxConcurrency {
+		jobConcurrency = gcMaxConcurrency
+	}
+
+	return jobConcurrency, nil
+}
+
 func genNextGCTask(store tikv.Storage, bo *tikv.Backoffer, safePoint uint64, key kv.Key) (*gcTask, error) {
 	loc, err := store.GetRegionCache().LocateKey(bo, key)
 	if err != nil {
@@ -560,26 +602,26 @@ func gcTaskWorker(store tikv.Storage, taskCh chan *gcTask, resultCh chan *gcResu
 	}
 }
 
-func sendQuitToTaskWorkers(gcTaskCh chan *gcTask) {
-	for i := 0; i < gcConcurrency; i++ {
+func sendQuitToTaskWorkers(gcTaskCh chan *gcTask, concurrency int) {
+	for i := 0; i < concurrency; i++ {
 		gcTaskCh <- nil
 	}
 }
 
-func waitTaskWorkersDone(gcResultCh chan *gcResult) {
+func waitTaskWorkersDone(gcResultCh chan *gcResult, concurrency int) {
 	count := 0
 	for {
 		res := <- gcResultCh
 		if res == nil {
 			count++
-			if count == gcConcurrency {
+			if count == concurrency {
 				break
 			}
 		}
 	}
 }
 
-func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier string) error {
+func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier string, concurrency int) error {
 	gcWorkerCounter.WithLabelValues("do_gc").Inc()
 
 	err := saveSafePoint(store.GetSafePointKV(), tikv.GcSavedSafePoint, safePoint)
@@ -599,9 +641,9 @@ func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier st
 	defer ticker.Stop()
 
 	// create task queue and task result queue, and start task workers
-	gcTaskCh := make(chan *gcTask, gcConcurrency)
-	gcResultCh := make(chan *gcResult, 1024)
-	for i := 0; i < gcConcurrency; i++ {
+	gcTaskCh := make(chan *gcTask, concurrency)
+	gcResultCh := make(chan *gcResult, concurrency * 2)
+	for i := 0; i < concurrency; i++ {
 		go gcTaskWorker(store, gcTaskCh, gcResultCh)
 	}
 
@@ -611,7 +653,7 @@ func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier st
 	for {
 		select {
 		case <-ctx.Done():
-			sendQuitToTaskWorkers(gcTaskCh)
+			sendQuitToTaskWorkers(gcTaskCh, concurrency)
 			lastErr = errors.New("[gc worker] gc job canceled")
 			break GCLoop
 		case taskRes := <-gcResultCh:
@@ -631,7 +673,7 @@ func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier st
 		bo := tikv.NewBackoffer(tikv.GcOneRegionMaxBackoff, ctx)
 		task, err := genNextGCTask(store, bo, safePoint, key)
 		if err != nil {
-			sendQuitToTaskWorkers(gcTaskCh)
+			sendQuitToTaskWorkers(gcTaskCh, concurrency)
 			lastErr = errors.Trace(err)
 			break GCLoop
 		}
@@ -642,12 +684,12 @@ func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier st
 
 		if len(key) == 0 {
 			lastErr = nil
-			sendQuitToTaskWorkers(gcTaskCh)
+			sendQuitToTaskWorkers(gcTaskCh, concurrency)
 			break GCLoop
 		}
 	}
 
-	waitTaskWorkersDone(gcResultCh)
+	waitTaskWorkersDone(gcResultCh, concurrency)
 
 	log.Infof("[gc worker] %s finish gc, safePoint: %v, successful regions: %v, failed regions: %v, cost time: %s",
 		identifier, safePoint, successRegions, failedRegions, time.Since(startTime))
