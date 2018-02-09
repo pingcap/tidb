@@ -92,7 +92,7 @@ var (
 
 	CreateDDL       = "create_ddl"
 	CreateDDLWorker = "create_ddl_worker"
-	IsDDLOwner      = "is_ddl_worker"
+	IsDDLOwner      = "is_ddl_owner"
 	DDLCounter      = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",

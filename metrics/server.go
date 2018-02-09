@@ -66,7 +66,7 @@ var (
 
 	EventStart        = "server_start"
 	EventGracefulDown = "server_graceful_shutdown"
-	// EventHange occurs when the server.Kill() function is called.
+	// Eventkill occurs when the server.Kill() function is called.
 	EventKill = "server_kill"
 	// EventHang occurs when server meet some critical error. It will close the listening port and hang for ever.
 	EventHang          = "server_hang"
