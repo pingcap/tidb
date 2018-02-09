@@ -19,7 +19,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/hack"
 )
 
 type ppdSolver struct{}
@@ -97,7 +96,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		leftPushCond, rightPushCond, otherCond []expression.Expression
 	)
 	if p.JoinType != InnerJoin {
-		predicates = p.extractFiltersFromDNFs(predicates)
+		predicates = expression.ExtractFiltersFromDNFs(p.ctx, predicates)
 		equalCond, leftPushCond, rightPushCond, otherCond = extractOnCondition(predicates, leftPlan, rightPlan)
 	} else {
 		tempCond := make([]expression.Expression, 0, len(p.LeftConditions)+len(p.RightConditions)+len(p.EqualConditions)+len(p.OtherConditions)+len(predicates))
@@ -106,7 +105,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		tempCond = append(tempCond, expression.ScalarFuncs2Exprs(p.EqualConditions)...)
 		tempCond = append(tempCond, p.OtherConditions...)
 		tempCond = append(tempCond, predicates...)
-		tempCond = p.extractFiltersFromDNFs(tempCond)
+		tempCond = expression.ExtractFiltersFromDNFs(p.ctx, tempCond)
 		equalCond, leftPushCond, rightPushCond, otherCond = extractOnCondition(expression.PropagateConstant(p.ctx, tempCond), leftPlan, rightPlan)
 	}
 	switch p.JoinType {
@@ -148,110 +147,6 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	p.mergeSchema()
 	p.buildKeyInfo()
 	return ret, p.self
-}
-
-func (p *LogicalJoin) extractFiltersFromDNFs(conditions []expression.Expression) []expression.Expression {
-	var allExtracted []expression.Expression
-	for i := len(conditions) - 1; i >= 0; i-- {
-		if sf, ok := conditions[i].(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
-			extracted, remained := p.extractFiltersFromDNF(sf)
-			allExtracted = append(allExtracted, extracted...)
-			if remained == nil {
-				conditions = append(conditions[:i], conditions[i+1:]...)
-			} else {
-				conditions[i] = remained
-			}
-		}
-	}
-	return append(conditions, allExtracted...)
-}
-
-// extractFiltersFromDNF extracts the same condition that occurs in every DNF item.
-func (p *LogicalJoin) extractFiltersFromDNF(dnfFunc *expression.ScalarFunction) ([]expression.Expression, expression.Expression) {
-	dnfItems := expression.FlattenDNFConditions(dnfFunc)
-	sc := p.ctx.GetSessionVars().StmtCtx
-	codeMap := make(map[string]int)
-	hashcode2Expr := make(map[string]expression.Expression)
-	firstRun := true
-	for _, dnfItem := range dnfItems {
-		// We need this because there may be the case like `select * from t, t1 where (t.a=t1.a and t.a=t1.a) or (something).
-		// We should make sure that the two `t.a=t1.a` contributes only once.
-		innerMap := make(map[string]struct{})
-		if sf, ok := dnfItem.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicAnd {
-			cnfItems := expression.FlattenCNFConditions(sf)
-			for _, cnfItem := range cnfItems {
-				code := cnfItem.HashCode(sc)
-				if firstRun {
-					codeMap[hack.String(code)] = 1
-					hashcode2Expr[hack.String(code)] = cnfItem
-				} else if _, ok = codeMap[hack.String(code)]; ok {
-					if _, ok := innerMap[hack.String(code)]; !ok {
-						codeMap[hack.String(code)]++
-						innerMap[hack.String(code)] = struct{}{}
-					}
-				}
-			}
-		} else {
-			code := dnfItem.HashCode(sc)
-			if firstRun {
-				codeMap[hack.String(code)] = 1
-				hashcode2Expr[hack.String(code)] = dnfItem
-			} else if _, ok = codeMap[hack.String(code)]; ok {
-				if _, ok := innerMap[hack.String(code)]; !ok {
-					codeMap[hack.String(code)]++
-					innerMap[hack.String(code)] = struct{}{}
-				}
-			}
-		}
-		firstRun = false
-	}
-	// We should make sure that this item occurs in every DNF item.
-	for hashcode, cnt := range codeMap {
-		if cnt < len(dnfItems) {
-			delete(hashcode2Expr, hashcode)
-		}
-	}
-	if len(hashcode2Expr) == 0 {
-		return nil, dnfFunc
-	}
-	newDNFItems := make([]expression.Expression, 0, len(dnfItems))
-	for _, dnfItem := range dnfItems {
-		if sf, ok := dnfItem.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicAnd {
-			cnfItems := expression.FlattenCNFConditions(sf)
-			newCNFItems := make([]expression.Expression, 0, len(cnfItems))
-			for _, cnfItem := range cnfItems {
-				code := cnfItem.HashCode(sc)
-				_, ok := hashcode2Expr[hack.String(code)]
-				if !ok {
-					newCNFItems = append(newCNFItems, cnfItem)
-				}
-			}
-			// There may be the case that all the CNF is extracted.
-			if len(newCNFItems) == 1 {
-				newDNFItems = append(newDNFItems, newCNFItems[0])
-			} else if len(newCNFItems) > 1 {
-				newDNFItems = append(newDNFItems, expression.ComposeCNFCondition(p.ctx, newCNFItems...))
-			}
-		} else {
-			code := dnfItem.HashCode(sc)
-			_, ok := hashcode2Expr[hack.String(code)]
-			if !ok {
-				newDNFItems = append(newDNFItems, dnfItem)
-			}
-		}
-	}
-	extractedExpr := make([]expression.Expression, 0, len(hashcode2Expr))
-	for _, expr := range hashcode2Expr {
-		extractedExpr = append(extractedExpr, expr)
-	}
-	switch len(newDNFItems) {
-	case 0:
-		return extractedExpr, nil
-	case 1:
-		return extractedExpr, newDNFItems[0]
-	default:
-		return extractedExpr, expression.ComposeDNFCondition(p.ctx, newDNFItems...)
-	}
 }
 
 // updateEQCond will extract the arguments of a equal condition that connect two expressions.

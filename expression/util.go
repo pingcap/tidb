@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/hack"
 )
 
 // Filter the input expressions, append the results to result.
@@ -272,4 +273,108 @@ func Contains(exprs []Expression, e Expression) bool {
 		}
 	}
 	return false
+}
+
+func ExtractFiltersFromDNFs(ctx context.Context, conditions []Expression) []Expression {
+	var allExtracted []Expression
+	for i := len(conditions) - 1; i >= 0; i-- {
+		if sf, ok := conditions[i].(*ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
+			extracted, remained := extractFiltersFromDNF(ctx, sf)
+			allExtracted = append(allExtracted, extracted...)
+			if remained == nil {
+				conditions = append(conditions[:i], conditions[i+1:]...)
+			} else {
+				conditions[i] = remained
+			}
+		}
+	}
+	return append(conditions, allExtracted...)
+}
+
+// extractFiltersFromDNF extracts the same condition that occurs in every DNF item.
+func extractFiltersFromDNF(ctx context.Context, dnfFunc *ScalarFunction) ([]Expression, Expression) {
+	dnfItems := FlattenDNFConditions(dnfFunc)
+	sc := ctx.GetSessionVars().StmtCtx
+	codeMap := make(map[string]int)
+	hashcode2Expr := make(map[string]Expression)
+	firstRun := true
+	for _, dnfItem := range dnfItems {
+		// We need this because there may be the case like `select * from t, t1 where (t.a=t1.a and t.a=t1.a) or (something).
+		// We should make sure that the two `t.a=t1.a` contributes only once.
+		innerMap := make(map[string]struct{})
+		if sf, ok := dnfItem.(*ScalarFunction); ok && sf.FuncName.L == ast.LogicAnd {
+			cnfItems := FlattenCNFConditions(sf)
+			for _, cnfItem := range cnfItems {
+				code := cnfItem.HashCode(sc)
+				if firstRun {
+					codeMap[hack.String(code)] = 1
+					hashcode2Expr[hack.String(code)] = cnfItem
+				} else if _, ok = codeMap[hack.String(code)]; ok {
+					if _, ok := innerMap[hack.String(code)]; !ok {
+						codeMap[hack.String(code)]++
+						innerMap[hack.String(code)] = struct{}{}
+					}
+				}
+			}
+		} else {
+			code := dnfItem.HashCode(sc)
+			if firstRun {
+				codeMap[hack.String(code)] = 1
+				hashcode2Expr[hack.String(code)] = dnfItem
+			} else if _, ok = codeMap[hack.String(code)]; ok {
+				if _, ok := innerMap[hack.String(code)]; !ok {
+					codeMap[hack.String(code)]++
+					innerMap[hack.String(code)] = struct{}{}
+				}
+			}
+		}
+		firstRun = false
+	}
+	// We should make sure that this item occurs in every DNF item.
+	for hashcode, cnt := range codeMap {
+		if cnt < len(dnfItems) {
+			delete(hashcode2Expr, hashcode)
+		}
+	}
+	if len(hashcode2Expr) == 0 {
+		return nil, dnfFunc
+	}
+	newDNFItems := make([]Expression, 0, len(dnfItems))
+	for _, dnfItem := range dnfItems {
+		if sf, ok := dnfItem.(*ScalarFunction); ok && sf.FuncName.L == ast.LogicAnd {
+			cnfItems := FlattenCNFConditions(sf)
+			newCNFItems := make([]Expression, 0, len(cnfItems))
+			for _, cnfItem := range cnfItems {
+				code := cnfItem.HashCode(sc)
+				_, ok := hashcode2Expr[hack.String(code)]
+				if !ok {
+					newCNFItems = append(newCNFItems, cnfItem)
+				}
+			}
+			// There may be the case that all the CNF is extracted.
+			if len(newCNFItems) == 1 {
+				newDNFItems = append(newDNFItems, newCNFItems[0])
+			} else if len(newCNFItems) > 1 {
+				newDNFItems = append(newDNFItems, ComposeCNFCondition(ctx, newCNFItems...))
+			}
+		} else {
+			code := dnfItem.HashCode(sc)
+			_, ok := hashcode2Expr[hack.String(code)]
+			if !ok {
+				newDNFItems = append(newDNFItems, dnfItem)
+			}
+		}
+	}
+	extractedExpr := make([]Expression, 0, len(hashcode2Expr))
+	for _, expr := range hashcode2Expr {
+		extractedExpr = append(extractedExpr, expr)
+	}
+	switch len(newDNFItems) {
+	case 0:
+		return extractedExpr, nil
+	case 1:
+		return extractedExpr, newDNFItems[0]
+	default:
+		return extractedExpr, ComposeDNFCondition(ctx, newDNFItems...)
+	}
 }
