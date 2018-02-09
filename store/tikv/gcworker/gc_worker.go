@@ -689,7 +689,7 @@ func doGCForRange(store tikv.Storage, startKey []byte, endKey []byte, safePoint 
 		}
 
 		key = loc.EndKey
-		if len(key) == 0 {
+		if len(key) == 0 || bytes.Compare(key, endKey) >= 0 {
 			break
 		}
 	}
