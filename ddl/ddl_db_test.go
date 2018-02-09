@@ -1364,6 +1364,9 @@ func (s *testDBSuite) TestCreateTable(c *C) {
 	c.Assert(d, Equals, "2.0")
 
 	s.tk.MustExec("drop table t")
+
+	_, err = s.tk.Exec("CREATE TABLE `t` (`a` int) DEFAULT CHARSET=abcdefg")
+	c.Assert(err, NotNil)
 }
 
 func (s *testDBSuite) TestTruncateTable(c *C) {
