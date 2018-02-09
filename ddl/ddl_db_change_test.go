@@ -332,9 +332,9 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 		}
 		switch job.SchemaState {
 		case model.StateDeleteOnly, model.StateWriteOnly, model.StateWriteReorganization:
-			result, err := s.execQuery(tk, showIndexSQL)
-			if err != nil {
-				checkErr = err
+			result, err1 := s.execQuery(tk, showIndexSQL)
+			if err1 != nil {
+				checkErr = err1
 				break
 			}
 			checkErr = checkResult(result, testkit.Rows("t 0 PRIMARY 1 c1 A 0 <nil> <nil>  BTREE  "))
