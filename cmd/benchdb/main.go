@@ -76,8 +76,6 @@ func main() {
 			ut.updateRangeRows(spec)
 		case "select":
 			ut.selectRows(spec)
-		case "gc":
-			ut.manualGC(nil)
 		case "query":
 			ut.query(spec)
 		default:
@@ -270,24 +268,6 @@ func (ut *benchDB) selectRows(spec string) {
 		selectQuery := fmt.Sprintf("select * from %s where id >= %d and id < %d", *tableName, start, end)
 		ut.mustExec(selectQuery)
 	})
-}
-
-// manualGC manually triggers GC and sends to done channel after finished.
-func (ut *benchDB) manualGC(done chan bool) {
-	cLog("GC started")
-	start := time.Now()
-	ver, err := ut.store.CurrentVersion()
-	if err != nil {
-		log.Fatal(err)
-	}
-	err = tikv.RunGCJob(context.Background(), ut.store, ver.Ver, "benchDB")
-	if err != nil {
-		log.Fatal(err)
-	}
-	cLog("GC finished, duration ", time.Since(start))
-	if done != nil {
-		done <- true
-	}
 }
 
 func (ut *benchDB) query(spec string) {
