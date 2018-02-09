@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
 	goctx "golang.org/x/net/context"
+	"strconv"
 )
 
 var (
@@ -123,6 +124,29 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 	safePoint, err = s.gcWorker.loadTime(gcSafePointKey, s.gcWorker.session)
 	c.Assert(err, IsNil)
 	s.timeEqual(c, safePoint.Add(time.Minute*30), now, 2*time.Second)
+
+	// change GC concurrency
+	concurrency, err := s.gcWorker.loadGcConcurrencyWithDefault()
+	c.Assert(err, IsNil)
+	c.Assert(concurrency, Equals, gcDefaultConcurrency)
+
+	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(1), s.gcWorker.session)
+	c.Assert(err, IsNil)
+	concurrency, err = s.gcWorker.loadGcConcurrencyWithDefault()
+	c.Assert(err, IsNil)
+	c.Assert(concurrency, Equals, 1)
+
+	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(-1), s.gcWorker.session)
+	c.Assert(err, IsNil)
+	concurrency, err = s.gcWorker.loadGcConcurrencyWithDefault()
+	c.Assert(err, IsNil)
+	c.Assert(concurrency, Equals, 1)
+
+	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(1000000), s.gcWorker.session)
+	c.Assert(err, IsNil)
+	concurrency, err = s.gcWorker.loadGcConcurrencyWithDefault()
+	c.Assert(err, IsNil)
+	c.Assert(concurrency, Equals, 1024)
 }
 
 func (s *testGCWorkerSuite) TestDoGCForOneRegion(c *C) {
@@ -152,4 +176,26 @@ func (s *testGCWorkerSuite) TestDoGCForOneRegion(c *C) {
 	c.Assert(regionErr.GetServerIsBusy(), NotNil)
 	c.Assert(err, IsNil)
 	gofail.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult")
+}
+
+func (s *testGCWorkerSuite) TestDoGC(c *C) {
+	ctx := goctx.Background()
+	bo := tikv.NewBackoffer(tikv.GcOneRegionMaxBackoff, ctx)
+	loc, err := s.store.GetRegionCache().LocateKey(bo, []byte(""))
+	c.Assert(err, IsNil)
+	var regionErr *errorpb.Error
+	regionErr, err = doGCForRegion(bo, s.store, 20, loc.Region)
+	c.Assert(regionErr, IsNil)
+	c.Assert(err, IsNil)
+
+	gcSafePointCacheInterval = 1
+
+	err = doGC(ctx, s.store, 20, s.gcWorker.uuid, gcDefaultConcurrency)
+	c.Assert(err, IsNil)
+
+	err = doGC(ctx, s.store, 20, s.gcWorker.uuid, gcMinConcurrency)
+	c.Assert(err, IsNil)
+
+	err = doGC(ctx, s.store, 20, s.gcWorker.uuid, gcMaxConcurrency)
+	c.Assert(err, IsNil)
 }

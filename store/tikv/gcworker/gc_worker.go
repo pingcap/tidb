@@ -102,17 +102,18 @@ const (
 	gcDefaultRunInterval = time.Minute * 10
 	gcWaitTime           = time.Minute * 1
 
-	gcLifeTimeKey            = "tikv_gc_life_time"
-	gcDefaultLifeTime        = time.Minute * 10
-	gcSafePointKey           = "tikv_gc_safe_point"
-	gcSafePointCacheInterval = tikv.GcSafePointCacheInterval
-	gcConcurrencyKey         = "tikv_gc_concurrency"
-	gcDefaultConcurrency     = 32
-	gcMinConcurrency         = 1
-	gcMaxConcurrency         = 1024
+	gcLifeTimeKey        = "tikv_gc_life_time"
+	gcDefaultLifeTime    = time.Minute * 10
+	gcSafePointKey       = "tikv_gc_safe_point"
+	gcConcurrencyKey     = "tikv_gc_concurrency"
+	gcDefaultConcurrency = 2
+	gcMinConcurrency     = 1
+	gcMaxConcurrency     = 128
 	// We don't want gc to sweep out the cached info belong to other processes, like coprocessor.
 	gcScanLockLimit = tikv.ResolvedCacheSize / 2
 )
+
+var gcSafePointCacheInterval = tikv.GcSafePointCacheInterval
 
 var gcVariableComments = map[string]string{
 	gcLeaderUUIDKey:  "Current GC worker leader UUID. (DO NOT EDIT)",
@@ -155,7 +156,7 @@ func (w *GCWorker) start(ctx goctx.Context, wg *sync.WaitGroup) {
 				break
 			}
 		case <-ctx.Done():
-			log.Infof("[gc worker] (%s) quit.", w.uuid)
+			log.Infof("[gc worker] %s quit.", w.uuid)
 			return
 		}
 	}
@@ -344,7 +345,7 @@ func (w *GCWorker) runGCJob(ctx goctx.Context, safePoint uint64) {
 		w.done <- errors.Trace(err)
 		return
 	}
-	err = w.doGC(ctx,safePoint)
+	err = w.doGC(ctx, safePoint)
 	if err != nil {
 		log.Errorf("[gc worker] %s do GC returns an error %v", w.uuid, err)
 		w.gcIsRunning = false
@@ -526,15 +527,15 @@ func resolveLocks(ctx goctx.Context, store tikv.Storage, safePoint uint64, ident
 }
 
 type gcTask struct {
-	startKey []byte
-	endKey []byte
+	startKey  []byte
+	endKey    []byte
 	safePoint uint64
 }
 
 type gcResult struct {
 	successRegions int
-	failedRegions int
-	lastErr error
+	failedRegions  int
+	lastErr        error
 }
 
 func (w *GCWorker) loadGcConcurrencyWithDefault() (int, error) {
@@ -572,9 +573,9 @@ func genNextGCTask(store tikv.Storage, bo *tikv.Backoffer, safePoint uint64, key
 		return nil, errors.Trace(err)
 	}
 
-	task := &gcTask {
-		startKey: key,
-		endKey: loc.EndKey,
+	task := &gcTask{
+		startKey:  key,
+		endKey:    loc.EndKey,
 		safePoint: safePoint,
 	}
 	return task, nil
@@ -582,7 +583,7 @@ func genNextGCTask(store tikv.Storage, bo *tikv.Backoffer, safePoint uint64, key
 
 func gcTaskWorker(store tikv.Storage, taskCh chan *gcTask, resultCh chan *gcResult) {
 	for {
-		task := <- taskCh
+		task := <-taskCh
 		if task == nil {
 			resultCh <- nil
 			return
@@ -590,10 +591,10 @@ func gcTaskWorker(store tikv.Storage, taskCh chan *gcTask, resultCh chan *gcResu
 
 		res, err := doGCForRange(store, task.startKey, task.endKey, task.safePoint)
 		if err != nil {
-			res = &gcResult {
+			res = &gcResult{
 				successRegions: 0,
-				failedRegions: 0,
-				lastErr: err,
+				failedRegions:  0,
+				lastErr:        err,
 			}
 		}
 		if res != nil {
@@ -611,7 +612,7 @@ func sendQuitToTaskWorkers(gcTaskCh chan *gcTask, concurrency int) {
 func waitTaskWorkersDone(gcResultCh chan *gcResult, concurrency int) {
 	count := 0
 	for {
-		res := <- gcResultCh
+		res := <-gcResultCh
 		if res == nil {
 			count++
 			if count == concurrency {
@@ -642,14 +643,14 @@ func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier st
 
 	// create task queue and task result queue, and start task workers
 	gcTaskCh := make(chan *gcTask, concurrency)
-	gcResultCh := make(chan *gcResult, concurrency * 2)
+	gcResultCh := make(chan *gcResult, concurrency*2)
 	for i := 0; i < concurrency; i++ {
 		go gcTaskWorker(store, gcTaskCh, gcResultCh)
 	}
 
-	var lastErr error = nil
+	var lastErr error
 	var key []byte
-	GCLoop:
+GCLoop:
 	for {
 		select {
 		case <-ctx.Done():
@@ -702,7 +703,7 @@ func doGCForRange(store tikv.Storage, startKey []byte, endKey []byte, safePoint 
 	successRegions := 0
 	failedRegions := 0
 	key := startKey
-	var lastErr error = nil
+	var lastErr error
 	for {
 		bo := tikv.NewBackoffer(tikv.GcOneRegionMaxBackoff, goctx.Background())
 		loc, err := store.GetRegionCache().LocateKey(bo, key)
@@ -736,10 +737,10 @@ func doGCForRange(store tikv.Storage, startKey []byte, endKey []byte, safePoint 
 		}
 	}
 
-	res := &gcResult {
+	res := &gcResult{
 		successRegions: successRegions,
-		failedRegions: failedRegions,
-		lastErr: lastErr,
+		failedRegions:  failedRegions,
+		lastErr:        lastErr,
 	}
 
 	return res, nil
