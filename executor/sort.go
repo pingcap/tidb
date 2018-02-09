@@ -71,7 +71,7 @@ func (e *SortExec) Open(goCtx goctx.Context) error {
 	e.fetched = false
 	e.Idx = 0
 	e.Rows = nil
-	e.memTracker = memory.NewMemoryTracker("SortExec", e.ctx.GetSessionVars().MemThreshold)
+	e.memTracker = memory.NewMemoryTracker(e.id, e.ctx.GetSessionVars().MemThreshold)
 	return errors.Trace(e.children[0].Open(goCtx))
 }
 

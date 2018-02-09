@@ -146,7 +146,7 @@ func (e *HashJoinExec) Open(goCtx goctx.Context) error {
 	}
 
 	e.prepared = false
-	e.memTracker = memory.NewMemoryTracker("HashJoinExec", e.ctx.GetSessionVars().MemThreshold)
+	e.memTracker = memory.NewMemoryTracker(e.id, e.ctx.GetSessionVars().MemThreshold)
 
 	e.hashTableValBufs = make([][][]byte, e.concurrency)
 	e.hashJoinBuffers = make([]*hashJoinBuffer, 0, e.concurrency)

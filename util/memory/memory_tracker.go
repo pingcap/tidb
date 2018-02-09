@@ -14,6 +14,8 @@
 package memory
 
 import (
+	"bytes"
+	"fmt"
 	"sync"
 
 	"github.com/pingcap/tidb/mysql"
@@ -111,7 +113,23 @@ func (m *MemoryTracker) logOnceIfExceed() {
 		return
 	}
 	m.logged = true
-	log.Warnf(ErrMemExceedThreshold.GenByArgs(m.label, m.bytesConsumed, m.bytesLimit).Error())
+	buffer := bytes.NewBufferString("\n")
+	m.prettyString("", buffer)
+	log.Warnf(ErrMemExceedThreshold.GenByArgs(m.label, m.bytesConsumed, m.bytesLimit, buffer.String()).Error())
+}
+
+func (m *MemoryTracker) prettyString(indent string, buffer *bytes.Buffer) {
+	buffer.WriteString(fmt.Sprintf("%s\"%s\"{\n", indent, m.label))
+	if m.bytesLimit > 0 {
+		buffer.WriteString(fmt.Sprintf("%s  \"limit\": %v bytes\n", indent, m.bytesLimit))
+	}
+	buffer.WriteString(fmt.Sprintf("%s  \"consumed\": %v bytes\n", indent, m.bytesConsumed))
+	for i := range m.children {
+		if m.children[i] != nil {
+			m.children[i].prettyString(indent+"  ", buffer)
+		}
+	}
+	buffer.WriteString(indent + "}\n")
 }
 
 var (
