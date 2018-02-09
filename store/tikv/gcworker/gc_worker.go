@@ -17,9 +17,10 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"time"
 	"strconv"
 	"sync"
-	"time"
+	"sync/atomic"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/errorpb"
@@ -37,7 +38,6 @@ import (
 	tidbutil "github.com/pingcap/tidb/util"
 	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
-	"sync/atomic"
 )
 
 // GCWorker periodically triggers GC process on tikv server.
@@ -314,7 +314,7 @@ func RunGCJob(ctx goctx.Context, s tikv.Storage, safePoint uint64, identifier st
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = doGC(ctx, s, safePoint, identifier, gcDefaultConcurrency)
+	err = doGCParallel(ctx, s, safePoint, identifier, gcDefaultConcurrency)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -324,11 +324,11 @@ func RunGCJob(ctx goctx.Context, s tikv.Storage, safePoint uint64, identifier st
 func (w *GCWorker) doGC(ctx goctx.Context, safePoint uint64) error {
 	gcConcurrency, err := w.loadGCConcurrencyWithDefault()
 	if err != nil {
-		log.Errorf("")
+		log.Errorf("[gc worker] %s failed to load gcConcurrency, err %s", err)
 		gcConcurrency = gcDefaultConcurrency
 	}
 
-	return doGC(ctx, w.store, safePoint, w.uuid, gcConcurrency)
+	return doGCParallel(ctx, w.store, safePoint, w.uuid, gcConcurrency)
 }
 func (w *GCWorker) runGCJob(ctx goctx.Context, safePoint uint64) {
 	gcWorkerCounter.WithLabelValues("run_job").Inc()
@@ -588,7 +588,8 @@ func (w *gcTaskWorker) run() {
 	for task := range w.taskCh {
 		err := w.doGCForRange(task.startKey, task.endKey, task.safePoint)
 		if err != nil {
-			log.Errorf("[gc worker] %s, gc interupted because get region error, err %v", w.identifier, errors.Trace(err))
+			log.Errorf("[gc worker] %s, gc interupted because get region(%v, %v) error, err %v",
+				w.identifier, task.startKey, task.endKey, errors.Trace(err))
 		}
 	}
 }
@@ -638,7 +639,7 @@ func (w *gcTaskWorker) doGCForRange(startKey []byte, endKey []byte, safePoint ui
 	return nil
 }
 
-// these two errors should not return together, for more, see the func 'doGC'
+// these two errors should not return together, for more, see the func 'doGCParallel'
 func (w *gcTaskWorker) doGCForRegion(bo *tikv.Backoffer, safePoint uint64, region tikv.RegionVerID) (*errorpb.Error, error) {
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdGC,
@@ -684,7 +685,7 @@ func genNextGCTask(store tikv.Storage, bo *tikv.Backoffer, safePoint uint64, key
 	return task, nil
 }
 
-func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier string, concurrency int) error {
+func doGCParallel(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier string, concurrency int) error {
 	gcWorkerCounter.WithLabelValues("do_gc").Inc()
 
 	err := saveSafePoint(store.GetSafePointKV(), tikv.GcSavedSafePoint, safePoint)
@@ -703,9 +704,9 @@ func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier st
 	ticker := time.NewTicker(gcJobLogTickInterval)
 	defer ticker.Stop()
 
-	// create task queue and task result queue, and start task workers
+	// Create task queue and start task workers.
 	gcTaskCh := make(chan *gcTask, concurrency)
-	wg := sync.WaitGroup{}
+	var wg sync.WaitGroup
 	for i := 0; i < concurrency; i++ {
 		w := newGCTaskWorker(store, gcTaskCh, &wg, identifier, &successRegions, &failedRegions)
 		wg.Add(1)
@@ -721,7 +722,6 @@ func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier st
 		gcHistogram.WithLabelValues("do_gc").Observe(time.Since(startTime).Seconds())
 	}()
 
-	bo := tikv.NewBackoffer(tikv.GcOneRegionMaxBackoff, ctx)
 	for {
 		select {
 		case <-ctx.Done():
@@ -732,9 +732,9 @@ func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier st
 		default:
 		}
 
+		bo := tikv.NewBackoffer(tikv.GcOneRegionMaxBackoff, ctx)
 		task, err := genNextGCTask(store, bo, safePoint, key)
 		if err != nil {
-			log.Errorf("[gc worker] %s, gc interupted because get region error, err %v", identifier, errors.Trace(err))
 			return errors.Trace(err)
 		}
 		if task != nil {

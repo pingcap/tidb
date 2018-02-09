@@ -125,7 +125,7 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 	c.Assert(err, IsNil)
 	s.timeEqual(c, safePoint.Add(time.Minute*30), now, 2*time.Second)
 
-	// change GC concurrency
+	// Change GC concurrency.
 	concurrency, err := s.gcWorker.loadGCConcurrencyWithDefault()
 	c.Assert(err, IsNil)
 	c.Assert(concurrency, Equals, gcDefaultConcurrency)
@@ -188,12 +188,12 @@ func (s *testGCWorkerSuite) TestDoGC(c *C) {
 
 	gcSafePointCacheInterval = 1
 
-	err = doGC(ctx, s.store, 20, s.gcWorker.uuid, gcDefaultConcurrency)
+	err = doGCParallel(ctx, s.store, 20, s.gcWorker.uuid, gcDefaultConcurrency)
 	c.Assert(err, IsNil)
 
-	err = doGC(ctx, s.store, 20, s.gcWorker.uuid, gcMinConcurrency)
+	err = doGCParallel(ctx, s.store, 20, s.gcWorker.uuid, gcMinConcurrency)
 	c.Assert(err, IsNil)
 
-	err = doGC(ctx, s.store, 20, s.gcWorker.uuid, gcMaxConcurrency)
+	err = doGCParallel(ctx, s.store, 20, s.gcWorker.uuid, gcMaxConcurrency)
 	c.Assert(err, IsNil)
 }
