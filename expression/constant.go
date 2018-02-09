@@ -327,7 +327,9 @@ func (c *Constant) HashCode(sc *stmtctx.StatementContext) []byte {
 		terror.Log(errors.Trace(err))
 	}
 	c.hashcode, err = codec.EncodeValue(sc, nil, c.Value)
-	terror.Log(errors.Trace(err))
+	if err != nil {
+		terror.Log(errors.Trace(err))
+	}
 	return c.hashcode
 }
 

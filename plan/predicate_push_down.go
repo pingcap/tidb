@@ -211,6 +211,9 @@ func (p *LogicalJoin) extractFiltersFromDNF(dnfFunc *expression.ScalarFunction) 
 			delete(hashcode2Expr, hashcode)
 		}
 	}
+	if len(hashcode2Expr) == 0 {
+		return nil, dnfFunc
+	}
 	newDNFItems := make([]expression.Expression, 0, len(dnfItems))
 	for _, dnfItem := range dnfItems {
 		if sf, ok := dnfItem.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicAnd {
