@@ -81,7 +81,6 @@ var (
 	WorkerAddDDLJob         = "add_ddl_job"
 	WorkerFinishDDLJob      = "finish_ddl_job"
 	WorkerWaitSchemaChanged = "wait_schema_changed"
-	CreateDDLWorker         = "create_ddl_worker"
 	DDLWorkerHistogram      = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
@@ -91,13 +90,16 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20),
 		}, []string{"op", "result_state"})
 
-	DDLOwnerCounter = prometheus.NewCounter(
+	CreateDDL       = "create_ddl"
+	CreateDDLWorker = "create_ddl_worker"
+	IsDDLOwner      = "is_ddl_worker"
+	DDLCounter      = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
-			Name:      "ddl_owner",
-			Help:      "Counter of isOwner.",
-		})
+			Name:      "ddl_counter",
+			Help:      "Counter of creating ddl/worker and isowner.",
+		}, []string{"type"})
 )
 
 func init() {

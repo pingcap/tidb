@@ -293,7 +293,7 @@ func newDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
 	variable.RegisterStatistics(d)
 
 	log.Infof("[ddl] start DDL:%s", d.uuid)
-	metrics.DDLWorkerHistogram.WithLabelValues(metrics.CreateDDLWorker, metrics.RetLabel(nil)).Observe(time.Since(startTime).Seconds())
+	metrics.DDLCounter.WithLabelValues(metrics.CreateDDL).Inc()
 	return d
 }
 
@@ -317,6 +317,7 @@ func (d *ddl) start(ctx goctx.Context) {
 		terror.Log(errors.Trace(err))
 		d.wait.Add(1)
 		go d.onDDLWorker()
+		metrics.DDLCounter.WithLabelValues(metrics.CreateDDLWorker).Inc()
 	}
 
 	// For every start, we will send a fake job to let worker
