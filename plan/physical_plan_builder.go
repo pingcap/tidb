@@ -17,7 +17,6 @@ import (
 	"math"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -202,7 +201,6 @@ func (ds *DataSource) convert2PhysicalPlan(prop *requiredProp) (task, error) {
 		return t, nil
 	}
 
-	// TODO: We have not checked if this table has a predicate. If not, we can only consider table scan.
 	indices := ds.availableIndices.indices
 	includeTableScan := ds.availableIndices.includeTableScan
 	t = invalidTask
@@ -213,7 +211,11 @@ func (ds *DataSource) convert2PhysicalPlan(prop *requiredProp) (task, error) {
 		}
 	}
 	if !includeTableScan || len(ds.pushedDownConds) > 0 || len(prop.cols) > 0 {
-		for _, idx := range indices {
+		for i, idx := range indices {
+			// TODO: We can also check if the prop matches the index columns.
+			if !ds.relevantIndices[i] && len(prop.cols) == 0 {
+				continue
+			}
 			idxTask, err := ds.convertToIndexScan(prop, idx)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -308,10 +310,11 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInf
 	sc := ds.ctx.GetSessionVars().StmtCtx
 	idxCols, colLengths := expression.IndexInfo2Cols(ds.Schema().Columns, idx)
 	is.Ranges = ranger.FullNewRange()
+	eqCount := 0
 	if len(ds.pushedDownConds) > 0 {
+		is.conditions = ds.pushedDownConds
 		if len(idxCols) > 0 {
-			is.AccessCondition, is.filterCondition = ranger.DetachIndexConditions(ds.pushedDownConds, idxCols, colLengths)
-			is.Ranges, err = ranger.BuildIndexRange(sc, idxCols, colLengths, is.AccessCondition)
+			is.Ranges, is.AccessCondition, is.filterCondition, eqCount, err = ranger.DetachCondAndBuildRangeForIndex(sc, ds.pushedDownConds, idxCols, colLengths)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -346,9 +349,7 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInf
 			if col.Name.L == prop.cols[0].ColName.L {
 				matchProperty = matchIndicesProp(idx.Columns[i:], prop.cols)
 				break
-			} else if i >= len(is.AccessCondition) {
-				break
-			} else if sf, ok := is.AccessCondition[i].(*expression.ScalarFunction); !ok || sf.FuncName.L != ast.EQ {
+			} else if i >= eqCount {
 				break
 			}
 		}
@@ -431,7 +432,7 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 		}
 		if tableConds != nil {
 			copTask.finishIndexPlan()
-			tableSel := PhysicalSelection{Conditions: tableConds}.init(is.ctx, p.stats.scaleByExpectCnt(expectedCnt))
+			tableSel := PhysicalSelection{Conditions: tableConds}.init(is.ctx, p.statsAfterSelect.scaleByExpectCnt(expectedCnt))
 			tableSel.SetChildren(copTask.tablePlan)
 			copTask.tablePlan = tableSel
 			copTask.cst += copTask.count() * cpuFactor
@@ -492,13 +493,19 @@ func checkIndexCondition(condition expression.Expression, indexColumns []*model.
 	return true
 }
 
-func (ds *DataSource) forceToTableScan() PhysicalPlan {
+func (ds *DataSource) forceToTableScan(pk *expression.Column) PhysicalPlan {
+	var ranges []*ranger.NewRange
+	if pk != nil {
+		ranges = ranger.FullIntNewRange(mysql.HasUnsignedFlag(pk.RetType.Flag))
+	} else {
+		ranges = ranger.FullIntNewRange(false)
+	}
 	ts := PhysicalTableScan{
 		Table:       ds.tableInfo,
 		Columns:     ds.Columns,
 		TableAsName: ds.TableAsName,
 		DBName:      ds.DBName,
-		Ranges:      ranger.FullIntNewRange(),
+		Ranges:      ranges,
 	}.init(ds.ctx)
 	ts.SetSchema(ds.schema)
 	ts.stats = ds.stats
@@ -527,7 +534,6 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp) (task task, err err
 	}.init(ds.ctx)
 	ts.SetSchema(ds.schema)
 	sc := ds.ctx.GetSessionVars().StmtCtx
-	ts.Ranges = ranger.FullIntNewRange()
 	var pkCol *expression.Column
 	if ts.Table.PKIsHandle {
 		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
@@ -536,6 +542,11 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp) (task task, err err
 				ts.HistVersion = ds.statisticTable.Columns[pkColInfo.ID].LastUpdateVersion
 			}
 		}
+	}
+	if pkCol != nil {
+		ts.Ranges = ranger.FullIntNewRange(mysql.HasUnsignedFlag(pkCol.RetType.Flag))
+	} else {
+		ts.Ranges = ranger.FullIntNewRange(false)
 	}
 	statsTbl := ds.statisticTable
 	rowCount := float64(statsTbl.Count)
@@ -578,7 +589,7 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp) (task task, err err
 		}
 		ts.KeepOrder = true
 		copTask.keepOrder = true
-		ts.addPushedDownSelection(copTask, ds.stats.scaleByExpectCnt(prop.expectedCnt))
+		ts.addPushedDownSelection(copTask, ds.statsAfterSelect.scaleByExpectCnt(prop.expectedCnt))
 	} else {
 		expectedCnt := math.MaxFloat64
 		if prop.isEmpty() {
@@ -586,7 +597,7 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp) (task task, err err
 		} else {
 			return invalidTask, nil
 		}
-		ts.addPushedDownSelection(copTask, ds.stats.scaleByExpectCnt(expectedCnt))
+		ts.addPushedDownSelection(copTask, ds.statsAfterSelect.scaleByExpectCnt(expectedCnt))
 	}
 	if prop.taskTp == rootTaskType {
 		task = finishCopTask(task, ds.ctx)

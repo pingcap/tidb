@@ -15,7 +15,6 @@ package plan
 
 import (
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
@@ -25,7 +24,7 @@ import (
 type columnPruner struct {
 }
 
-func (s *columnPruner) optimize(lp LogicalPlan, _ context.Context) (LogicalPlan, error) {
+func (s *columnPruner) optimize(lp LogicalPlan) (LogicalPlan, error) {
 	lp.PruneColumns(lp.Schema().Columns)
 	return lp, nil
 }
@@ -94,7 +93,7 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 	}
 	var selfUsedCols []*expression.Column
 	for _, aggrFunc := range la.AggFuncs {
-		selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, aggrFunc.GetArgs(), nil)
+		selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, aggrFunc.Args, nil)
 	}
 	if len(la.GroupByItems) > 0 {
 		for i := len(la.GroupByItems) - 1; i >= 0; i-- {
@@ -163,10 +162,6 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) {
 		ds.Columns = append(ds.Columns, model.NewExtraHandleColInfo())
 		ds.schema.Append(ds.newExtraHandleSchemaCol())
 	}
-}
-
-// PruneColumns implements LogicalPlan interface.
-func (p *LogicalTableDual) PruneColumns(_ []*expression.Column) {
 }
 
 // PruneColumns implements LogicalPlan interface.

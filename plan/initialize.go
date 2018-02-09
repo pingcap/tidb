@@ -270,7 +270,7 @@ func (p PhysicalMemTable) init(ctx context.Context, stats *statsInfo) *PhysicalM
 
 func (p PhysicalHashJoin) init(ctx context.Context, stats *statsInfo, props ...*requiredProp) *PhysicalHashJoin {
 	tp := TypeHashRightJoin
-	if p.SmallChildIdx == 1 {
+	if p.InnerChildIdx == 1 {
 		tp = TypeHashLeftJoin
 	}
 	p.basePhysicalPlan = newBasePhysicalPlan(tp, ctx, &p)
@@ -365,7 +365,7 @@ func flattenPushDownPlan(p PhysicalPlan) []PhysicalPlan {
 		if len(p.Children()) == 0 {
 			break
 		}
-		p = p.Children()[0].(PhysicalPlan)
+		p = p.Children()[0]
 	}
 	for i := 0; i < len(plans)/2; i++ {
 		j := len(plans) - i - 1

@@ -29,8 +29,9 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/mocktikv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 )
@@ -194,7 +195,7 @@ func (ts *TidbRegionHandlerTestSuite) TestRegionsFromMeta(c *C) {
 
 func (ts *TidbRegionHandlerTestSuite) startServer(c *C) {
 	mvccStore := mocktikv.NewMvccStore()
-	store, err := tikv.NewMockTikvStore(tikv.WithMVCCStore(mvccStore))
+	store, err := mockstore.NewMockTikvStore(mockstore.WithMVCCStore(mvccStore))
 	c.Assert(err, IsNil)
 	_, err = tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)

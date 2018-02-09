@@ -80,6 +80,9 @@ func schema2ResultFields(schema *expression.Schema, defaultDB string) (rfs []*as
 	return rfs
 }
 
+// Next uses recordSet's executor to get next available row.
+// If row is nil, then updates LastFoundRows in session variable.
+// If stmt and row are not nil, increase current FoundRows by 1.
 func (a *recordSet) Next(goCtx goctx.Context) (types.Row, error) {
 	row, err := a.executor.Next(goCtx)
 	if err != nil {
@@ -99,6 +102,11 @@ func (a *recordSet) Next(goCtx goctx.Context) (types.Row, error) {
 	return row, nil
 }
 
+// NextChunk use uses recordSet's executor to get next available chunk for later usage.
+// If chunk does not contain any rows, then we update last query found rows in session variable as current found rows.
+// The reason we need update is that chunk with 0 rows indicating we already finished current query, we need prepare for
+// next query.
+// If stmt is not nil and chunk with some rows inside, we simply update last query found rows by the number of row in chunk.
 func (a *recordSet) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	err := a.executor.NextChunk(goCtx, chk)
 	if err != nil {
@@ -118,6 +126,7 @@ func (a *recordSet) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
+// NewChunk create a new chunk using NewChunk function in chunk package.
 func (a *recordSet) NewChunk() *chunk.Chunk {
 	return chunk.NewChunk(a.executor.retTypes())
 }
@@ -155,17 +164,20 @@ type ExecStmt struct {
 	isPreparedStmt bool
 }
 
-// OriginText implements ast.Statement interface.
+// OriginText returns original statement as a string.
 func (a *ExecStmt) OriginText() string {
 	return a.Text
 }
 
-// IsPrepared implements ast.Statement interface.
+// IsPrepared returns true if stmt is a prepare statement.
 func (a *ExecStmt) IsPrepared() bool {
 	return a.isPreparedStmt
 }
 
-// IsReadOnly implements ast.Statement interface.
+// IsReadOnly returns true if a statement is read only.
+// It will update readOnlyCheckStmt if current ExecStmt can be conveted to
+// a plan.Execute. Last step is using ast.IsReadOnly function to determine
+// a statment is read only or not.
 func (a *ExecStmt) IsReadOnly() bool {
 	readOnlyCheckStmt := a.StmtNode
 	if checkPlan, ok := a.Plan.(*plan.Execute); ok {
@@ -174,7 +186,7 @@ func (a *ExecStmt) IsReadOnly() bool {
 	return ast.IsReadOnly(readOnlyCheckStmt)
 }
 
-// RebuildPlan implements ast.Statement interface.
+// RebuildPlan rebuilds current execute statement plan.
 func (a *ExecStmt) RebuildPlan() error {
 	is := GetInfoSchema(a.Ctx)
 	a.InfoSchema = is
@@ -189,27 +201,26 @@ func (a *ExecStmt) RebuildPlan() error {
 	return nil
 }
 
-// Exec implements the ast.Statement Exec interface.
-// This function builds an Executor from a plan. If the Executor doesn't return result,
+// Exec builds an Executor from a plan. If the Executor doesn't return result,
 // like the INSERT, UPDATE statements, it executes in this function, if the Executor returns
 // result, execution is done after this function returns, in the returned ast.RecordSet Next method.
 func (a *ExecStmt) Exec(goCtx goctx.Context) (ast.RecordSet, error) {
 	a.startTime = time.Now()
 	ctx := a.Ctx
 	if _, ok := a.Plan.(*plan.Analyze); ok && ctx.GetSessionVars().InRestrictedSQL {
-		oriStats := ctx.GetSessionVars().Systems[variable.TiDBBuildStatsConcurrency]
+		oriStats, _ := ctx.GetSessionVars().GetSystemVar(variable.TiDBBuildStatsConcurrency)
 		oriScan := ctx.GetSessionVars().DistSQLScanConcurrency
 		oriIndex := ctx.GetSessionVars().IndexSerialScanConcurrency
-		oriIso := ctx.GetSessionVars().Systems[variable.TxnIsolation]
-		ctx.GetSessionVars().Systems[variable.TiDBBuildStatsConcurrency] = "1"
+		oriIso, _ := ctx.GetSessionVars().GetSystemVar(variable.TxnIsolation)
+		terror.Log(errors.Trace(ctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, "1")))
 		ctx.GetSessionVars().DistSQLScanConcurrency = 1
 		ctx.GetSessionVars().IndexSerialScanConcurrency = 1
-		ctx.GetSessionVars().Systems[variable.TxnIsolation] = ast.ReadCommitted
+		terror.Log(errors.Trace(ctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, ast.ReadCommitted)))
 		defer func() {
-			ctx.GetSessionVars().Systems[variable.TiDBBuildStatsConcurrency] = oriStats
+			terror.Log(errors.Trace(ctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, oriStats)))
 			ctx.GetSessionVars().DistSQLScanConcurrency = oriScan
 			ctx.GetSessionVars().IndexSerialScanConcurrency = oriIndex
-			ctx.GetSessionVars().Systems[variable.TxnIsolation] = oriIso
+			terror.Log(errors.Trace(ctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, oriIso)))
 		}()
 	}
 
@@ -358,8 +369,16 @@ func (a *ExecStmt) buildExecutor(ctx context.Context) (Executor, error) {
 }
 
 func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
+	level := log.GetLevel()
+	if level < log.WarnLevel {
+		return
+	}
 	cfg := config.GetGlobalConfig()
 	costTime := time.Since(a.startTime)
+	threshold := time.Duration(cfg.Log.SlowThreshold) * time.Millisecond
+	if costTime < threshold && level < log.DebugLevel {
+		return
+	}
 	sql := a.Text
 	if len(sql) > cfg.Log.QueryLogMaxLen {
 		sql = fmt.Sprintf("%.*q(len:%d)", cfg.Log.QueryLogMaxLen, sql, len(a.Text))
@@ -374,7 +393,7 @@ func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
 		"sql":          sql,
 		"txnStartTS":   txnTS,
 	}
-	if costTime < time.Duration(cfg.Log.SlowThreshold)*time.Millisecond {
+	if costTime < threshold {
 		logEntry.WithField("type", "query").WithField("succ", succ).Debugf("query")
 	} else {
 		logEntry.WithField("type", "slow-query").WithField("succ", succ).Warnf("slow-query")

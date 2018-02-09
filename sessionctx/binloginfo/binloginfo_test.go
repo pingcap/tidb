@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
@@ -77,7 +77,7 @@ type testBinlogSuite struct {
 }
 
 func (s *testBinlogSuite) SetUpSuite(c *C) {
-	store, err := tikv.NewMockTikvStore()
+	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	s.store = store
 	tidb.SetSchemaLease(0)
@@ -214,6 +214,19 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 		binlog.MutationType_DeleteRow,
 		binlog.MutationType_Insert,
 		binlog.MutationType_Update,
+	})
+
+	// Test statement rollback.
+	tk.MustExec("create table local_binlog5 (c1 int primary key")
+	tk.MustExec("begin")
+	tk.MustExec("insert into local_binlog5 value (1)")
+	// This statement execute fail and should not write binlog.
+	_, err := tk.Exec("insert into local_binlog5 value (4),(3),(1),(2)")
+	c.Assert(err, NotNil)
+	tk.MustExec("commit")
+	prewriteVal = getLatestBinlogPrewriteValue(c, pump)
+	c.Assert(prewriteVal.Mutations[0].Sequence, DeepEquals, []binlog.MutationType{
+		binlog.MutationType_Insert,
 	})
 
 	checkBinlogCount(c, pump)

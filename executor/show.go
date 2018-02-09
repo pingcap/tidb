@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
@@ -158,6 +157,9 @@ func (e *ShowExec) fetchAll() error {
 		return e.fetchShowStatsHistogram()
 	case ast.ShowStatsBuckets:
 		return e.fetchShowStatsBuckets()
+	case ast.ShowStatsHealthy:
+		e.fetchShowStatsHealthy()
+		return nil
 	case ast.ShowPlugins:
 		return e.fetchShowPlugins()
 	case ast.ShowProfiles:
@@ -346,7 +348,11 @@ func (e *ShowExec) fetchShowIndex() error {
 		})
 	}
 	for _, idx := range tb.Indices() {
-		for i, col := range idx.Meta().Columns {
+		idxInfo := idx.Meta()
+		if idxInfo.State != model.StatePublic {
+			continue
+		}
+		for i, col := range idxInfo.Columns {
 			nonUniq := 1
 			if idx.Meta().Unique {
 				nonUniq = 0
@@ -403,12 +409,12 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 			// 1. try to fetch value from SessionVars.Systems;
 			// 2. if this variable is session-only, fetch value from SysVars
 			//		otherwise, fetch the value from table `mysql.Global_Variables`.
-			value, ok, err = varsutil.GetSessionOnlySysVars(sessionVars, v.Name)
+			value, ok, err = variable.GetSessionOnlySysVars(sessionVars, v.Name)
 		} else {
 			// If the scope of a system variable is ScopeNone,
 			// it's a read-only variable, so we return the default value of it.
 			// Otherwise, we have to fetch the values from table `mysql.Global_Variables` for global variable names.
-			value, ok, err = varsutil.GetScopeNoneSystemVar(v.Name)
+			value, ok, err = variable.GetScopeNoneSystemVar(v.Name)
 		}
 		if err != nil {
 			return errors.Trace(err)
@@ -456,6 +462,15 @@ func (e *ShowExec) fetchShowStatus() error {
 		e.appendRow([]interface{}{status, value})
 	}
 	return nil
+}
+
+func getDefaultCollate(charsetName string) string {
+	for _, c := range charset.GetAllCharsets() {
+		if strings.EqualFold(c.Name, charsetName) {
+			return c.DefaultCollation
+		}
+	}
+	return ""
 }
 
 func (e *ShowExec) fetchShowCreateTable() error {
@@ -605,12 +620,19 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		charsetName = charset.CharsetUTF8
 	}
 	collate := tb.Meta().Collate
+	// Set default collate if collate is not specified.
 	if len(collate) == 0 {
-		collate = charset.CollationUTF8
+		collate = getDefaultCollate(charsetName)
 	}
 	// Because we only support case sensitive utf8_bin collate, we need to explicitly set the default charset and collation
 	// to make it work on MySQL server which has default collate utf8_general_ci.
-	buf.WriteString(fmt.Sprintf(" DEFAULT CHARSET=%s COLLATE=%s", charsetName, collate))
+	if len(collate) == 0 {
+		// If we can not find default collate for the given charset,
+		// do not show the collate part.
+		buf.WriteString(fmt.Sprintf(" DEFAULT CHARSET=%s", charsetName))
+	} else {
+		buf.WriteString(fmt.Sprintf(" DEFAULT CHARSET=%s COLLATE=%s", charsetName, collate))
+	}
 
 	if hasAutoIncID {
 		autoIncID, err := tb.Allocator(e.ctx).NextGlobalAutoID(tb.Meta().ID)

@@ -21,6 +21,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/opentracing/opentracing-go"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
@@ -144,7 +145,7 @@ func (xcc *xClientConn) Close() error {
 	delete(xcc.server.clients, xcc.connectionID)
 	connections := len(xcc.server.clients)
 	xcc.server.rwlock.Unlock()
-	connGauge.Set(float64(connections))
+	metrics.ConnGauge.Set(float64(connections))
 	if err := xcc.conn.Close(); err != nil {
 		return errors.Trace(err)
 	}

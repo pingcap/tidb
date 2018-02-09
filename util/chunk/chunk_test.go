@@ -18,6 +18,7 @@ import (
 	"math"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
@@ -394,6 +395,61 @@ func (s *testChunkSuite) TestGetDecimalDatum(c *check.C) {
 	c.Assert(decDatum.Frac(), check.Equals, decFromChk.Frac())
 }
 
+func (s *testChunkSuite) TestChunkMemoryUsage(c *check.C) {
+	fieldTypes := make([]*types.FieldType, 0, 5)
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeVarchar})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeJSON})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeDatetime})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeDuration})
+
+	initCap := 10
+	chk := NewChunkWithCapacity(fieldTypes, initCap)
+
+	//cap(c.nullBitmap) + cap(c.offsets)*4 + cap(c.data) + cap(c.elemBuf)
+	colUsage := make([]int, len(fieldTypes))
+	colUsage[0] = initCap>>3 + 0 + initCap*4 + 4
+	colUsage[1] = initCap>>3 + (initCap+1)*4 + initCap*4 + 0
+	colUsage[2] = initCap>>3 + (initCap+1)*4 + initCap*4 + 0
+	colUsage[3] = initCap>>3 + 0 + initCap*16 + 16
+	colUsage[4] = initCap>>3 + 0 + initCap*16 + 16
+
+	expectedUsage := 0
+	for i := range colUsage {
+		expectedUsage += colUsage[i] + int(unsafe.Sizeof(*chk.columns[i]))
+	}
+	memUsage := chk.MemoryUsage()
+	c.Assert(memUsage, check.Equals, int64(expectedUsage))
+
+	jsonObj, err := json.ParseBinaryFromString("1")
+	c.Assert(err, check.IsNil)
+	timeObj := types.Time{Time: types.FromGoTime(time.Now()), Fsp: 0, Type: mysql.TypeDatetime}
+	durationObj := types.Duration{Duration: math.MaxInt64, Fsp: 0}
+
+	chk.AppendFloat32(0, 12.4)
+	chk.AppendString(1, "123")
+	chk.AppendJSON(2, jsonObj)
+	chk.AppendTime(3, timeObj)
+	chk.AppendDuration(4, durationObj)
+
+	memUsage = chk.MemoryUsage()
+	c.Assert(memUsage, check.Equals, int64(expectedUsage))
+
+	chk.AppendFloat32(0, 12.4)
+	chk.AppendString(1, "123111111111111111111111111111111111111111111111")
+	chk.AppendJSON(2, jsonObj)
+	chk.AppendTime(3, timeObj)
+	chk.AppendDuration(4, durationObj)
+
+	memUsage = chk.MemoryUsage()
+	colUsage[1] = initCap>>3 + (initCap+1)*4 + cap(chk.columns[1].data) + 0
+	expectedUsage = 0
+	for i := range colUsage {
+		expectedUsage += colUsage[i] + int(unsafe.Sizeof(*chk.columns[i]))
+	}
+	c.Assert(memUsage, check.Equals, int64(expectedUsage))
+}
+
 func BenchmarkAppendInt(b *testing.B) {
 	b.ReportAllocs()
 	chk := newChunk(8)
@@ -445,6 +501,101 @@ func appendRow(chk *Chunk, row Row) {
 	}
 }
 
+func BenchmarkAppendBytes1024(b *testing.B) {
+	chk := NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)})
+	var bs = make([]byte, 256)
+	for i := 0; i < b.N; i++ {
+		appendBytes(chk, bs, 1024)
+	}
+}
+
+func BenchmarkAppendBytes512(b *testing.B) {
+	chk := NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)})
+	var bs = make([]byte, 256)
+	for i := 0; i < b.N; i++ {
+		appendBytes(chk, bs, 512)
+	}
+}
+
+func BenchmarkAppendBytes256(b *testing.B) {
+	chk := NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)})
+	var bs = make([]byte, 256)
+	for i := 0; i < b.N; i++ {
+		appendBytes(chk, bs, 256)
+	}
+}
+
+func BenchmarkAppendBytes128(b *testing.B) {
+	chk := NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)})
+	var bs = make([]byte, 256)
+	for i := 0; i < b.N; i++ {
+		appendBytes(chk, bs, 128)
+	}
+}
+
+func BenchmarkAppendBytes64(b *testing.B) {
+	chk := NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)})
+	var bs = make([]byte, 256)
+	for i := 0; i < b.N; i++ {
+		appendBytes(chk, bs, 64)
+	}
+}
+
+func BenchmarkAppendBytes32(b *testing.B) {
+	chk := NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)})
+	var bs = make([]byte, 256)
+	for i := 0; i < b.N; i++ {
+		appendBytes(chk, bs, 32)
+	}
+}
+
+func BenchmarkAppendBytes16(b *testing.B) {
+	chk := NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)})
+	var bs = make([]byte, 256)
+	for i := 0; i < b.N; i++ {
+		appendBytes(chk, bs, 16)
+	}
+}
+
+func BenchmarkAppendBytes8(b *testing.B) {
+	chk := NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)})
+	var bs = make([]byte, 256)
+	for i := 0; i < b.N; i++ {
+		appendBytes(chk, bs, 8)
+	}
+}
+
+func BenchmarkAppendBytes4(b *testing.B) {
+	chk := NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)})
+	var bs = make([]byte, 256)
+	for i := 0; i < b.N; i++ {
+		appendBytes(chk, bs, 4)
+	}
+}
+
+func BenchmarkAppendBytes2(b *testing.B) {
+	chk := NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)})
+	var bs = make([]byte, 256)
+	for i := 0; i < b.N; i++ {
+		appendBytes(chk, bs, 2)
+	}
+}
+
+func BenchmarkAppendBytes1(b *testing.B) {
+	chk := NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)})
+	var bs = make([]byte, 256)
+	for i := 0; i < b.N; i++ {
+		appendBytes(chk, bs, 1)
+	}
+}
+
+func appendBytes(chk *Chunk, bs []byte, times int) {
+	chk.Reset()
+	for i := 0; i < times; i++ {
+		chk.AppendBytes(0, bs)
+	}
+}
+
 func BenchmarkAccess(b *testing.B) {
 	b.StopTimer()
 	rowChk := newChunk(8)
@@ -459,4 +610,28 @@ func BenchmarkAccess(b *testing.B) {
 		}
 	}
 	fmt.Println(sum)
+}
+
+func BenchmarkChunkMemoryUsage(b *testing.B) {
+	fieldTypes := make([]*types.FieldType, 0, 4)
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeVarchar})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeDatetime})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeDuration})
+
+	initCap := 10
+	chk := NewChunkWithCapacity(fieldTypes, initCap)
+	timeObj := types.Time{Time: types.FromGoTime(time.Now()), Fsp: 0, Type: mysql.TypeDatetime}
+	durationObj := types.Duration{Duration: math.MaxInt64, Fsp: 0}
+
+	for i := 0; i < initCap; i++ {
+		chk.AppendFloat64(0, 123.123)
+		chk.AppendString(1, "123")
+		chk.AppendTime(2, timeObj)
+		chk.AppendDuration(3, durationObj)
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		chk.MemoryUsage()
+	}
 }

@@ -25,7 +25,8 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
 	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
@@ -168,7 +169,7 @@ func (e *kvEncoder) ExecDDLSQL(sql string) error {
 }
 
 func newMockTikvWithBootstrap() (kv.Storage, *domain.Domain, error) {
-	store, err := tikv.NewMockTikvStore()
+	store, err := mockstore.NewMockTikvStore()
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -199,6 +200,9 @@ func (e *kvEncoder) initial(dbName string, idAlloc autoid.Allocator) (err error)
 			se.Close()
 		}
 	}()
+
+	plan.PreparedPlanCacheEnabled = true
+	plan.PreparedPlanCacheCapacity = 10
 	// disable stats update.
 	tidb.SetStatsLease(0)
 	store, dom, err = newMockTikvWithBootstrap()

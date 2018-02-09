@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/owner"
@@ -251,7 +252,6 @@ func newDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
 	if hook == nil {
 		hook = &BaseCallback{}
 	}
-
 	id := uuid.NewV4().String()
 	ctx, cancelFunc := goctx.WithCancel(ctx)
 	var manager owner.Manager
@@ -290,7 +290,9 @@ func newDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
 
 	d.start(ctx)
 	variable.RegisterStatistics(d)
+
 	log.Infof("[ddl] start DDL:%s", d.uuid)
+	metrics.DDLCounter.WithLabelValues(metrics.CreateDDL).Inc()
 	return d
 }
 
@@ -314,6 +316,7 @@ func (d *ddl) start(ctx goctx.Context) {
 		terror.Log(errors.Trace(err))
 		d.wait.Add(1)
 		go d.onDDLWorker()
+		metrics.DDLCounter.WithLabelValues(metrics.CreateDDLWorker).Inc()
 	}
 
 	// For every start, we will send a fake job to let worker
@@ -433,15 +436,11 @@ func (d *ddl) doDDLJob(ctx context.Context, job *model.Job) error {
 	// But we use etcd to speed up, normally it takes less than 1s now, so we use 1s or 3s as the max value.
 	ticker := time.NewTicker(chooseLeaseTime(10*d.lease, checkJobMaxInterval(job)))
 	startTime := time.Now()
-	jobsGauge.WithLabelValues(job.Type.String()).Inc()
+	metrics.JobsGauge.WithLabelValues(job.Type.String()).Inc()
 	defer func() {
 		ticker.Stop()
-		jobsGauge.WithLabelValues(job.Type.String()).Dec()
-		retLabel := handleJobSucc
-		if err != nil {
-			retLabel = handleJobFailed
-		}
-		handleJobHistogram.WithLabelValues(job.Type.String(), retLabel).Observe(time.Since(startTime).Seconds())
+		metrics.JobsGauge.WithLabelValues(job.Type.String()).Dec()
+		metrics.HandleJobHistogram.WithLabelValues(job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
 	for {
 		select {
@@ -464,7 +463,10 @@ func (d *ddl) doDDLJob(ctx context.Context, job *model.Job) error {
 			return nil
 		}
 
-		return errors.Trace(historyJob.Error)
+		if historyJob.Error != nil {
+			return errors.Trace(historyJob.Error)
+		}
+		panic("When the state is JobCancel, historyJob.Error should never be nil")
 	}
 }
 

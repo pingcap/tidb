@@ -16,7 +16,10 @@ package executor_test
 import (
 	"flag"
 	"fmt"
+	"math"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -25,6 +28,7 @@ import (
 	. "github.com/pingcap/check"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
@@ -35,8 +39,9 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
@@ -82,18 +87,14 @@ func (s *testSuite) SetUpSuite(c *C) {
 		s.cluster = mocktikv.NewCluster()
 		mocktikv.BootstrapWithSingleStore(s.cluster)
 		s.mvccStore = mocktikv.NewMvccStore()
-		store, err := tikv.NewMockTikvStore(
-			tikv.WithCluster(s.cluster),
-			tikv.WithMVCCStore(s.mvccStore),
+		store, err := mockstore.NewMockTikvStore(
+			mockstore.WithCluster(s.cluster),
+			mockstore.WithMVCCStore(s.mvccStore),
 		)
 		c.Assert(err, IsNil)
 		s.store = store
 		tidb.SetSchemaLease(0)
 		tidb.SetStatsLease(0)
-	} else {
-		store, err := tidb.NewStore("memory://test/test")
-		c.Assert(err, IsNil)
-		s.store = store
 	}
 	_, err := tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
@@ -229,6 +230,7 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 			c.Assert(data, DeepEquals, tt.restData,
 				Commentf("data1:%v, data2:%v, data:%v", string(tt.data1), string(tt.data2), string(data)))
 		}
+		ctx.StmtCommit()
 		err1 = ctx.Txn().Commit(goctx.Background())
 		c.Assert(err1, IsNil)
 		r := tk.MustQuery(selectSQL)
@@ -892,6 +894,13 @@ func (s *testSuite) TestUnion(c *C) {
 	// If set unspecified column flen to 0, it will cause bug in union.
 	// This test is used to prevent the bug reappear.
 	tk.MustQuery("select c from t1 union (select c from t2) order by c").Check(testkit.Rows("73", "930"))
+
+	// issue 5703
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a date)")
+	tk.MustExec("insert into t value ('2017-01-01'), ('2017-01-02')")
+	r = tk.MustQuery("(select a from t where a < 0) union (select a from t where a > 0) order by a")
+	r.Check(testkit.Rows("2017-01-01", "2017-01-02"))
 }
 
 func (s *testSuite) TestIn(c *C) {
@@ -2041,8 +2050,8 @@ func (s *testContextOptionSuite) SetUpSuite(c *C) {
 	s.cli = cli
 
 	var err error
-	s.store, err = tikv.NewMockTikvStore(
-		tikv.WithHijackClient(hijackClient),
+	s.store, err = mockstore.NewMockTikvStore(
+		mockstore.WithHijackClient(hijackClient),
 	)
 	c.Assert(err, IsNil)
 	s.dom, err = tidb.BootstrapSession(s.store)
@@ -2072,21 +2081,33 @@ func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
 	cli.mu.Lock()
 	cli.mu.checkFlags = checkRequestPriority
 	cli.mu.Unlock()
+
+	cli.priority = pb.CommandPri_High
+	tk.MustQuery("select id from t where id = 1")
+	tk.MustQuery("select * from t1 where id = 1")
+
+	cli.priority = pb.CommandPri_Normal
+	tk.MustQuery("select count(*) from t")
+	tk.MustExec("update t set id = 3")
+	tk.MustExec("delete from t")
+	tk.MustExec("insert into t values (2)")
+	tk.MustExec("delete from t")
+
+	// Insert some data to make sure plan build IndexLookup for t.
+	tk.MustExec("insert into t values (1), (2)")
+
+	oldThreshold := config.GetGlobalConfig().Log.ExpensiveThreshold
+	config.GetGlobalConfig().Log.ExpensiveThreshold = 0
+	defer func() { config.GetGlobalConfig().Log.ExpensiveThreshold = oldThreshold }()
+
 	cli.priority = pb.CommandPri_High
 	tk.MustQuery("select id from t where id = 1")
 	tk.MustQuery("select * from t1 where id = 1")
 
 	cli.priority = pb.CommandPri_Low
 	tk.MustQuery("select count(*) from t")
-
-	cli.priority = pb.CommandPri_Low
-	tk.MustExec("update t set id = 3")
-
-	cli.priority = pb.CommandPri_Low
 	tk.MustExec("delete from t")
-
-	cli.priority = pb.CommandPri_Normal
-	tk.MustExec("insert into t values (2)")
+	tk.MustExec("insert into t values (3)")
 
 	// TODO: Those are not point get, but they should be high priority.
 	// cli.priority = pb.CommandPri_High
@@ -2305,4 +2326,50 @@ func (s *testSuite) TestTableScanWithPointRanges(c *C) {
 	tk.MustExec("create table t(id int, PRIMARY KEY (id))")
 	tk.MustExec("insert into t values(1), (5), (10)")
 	tk.MustQuery("select * from t where id in(1, 2, 10)").Check(testkit.Rows("1", "10"))
+}
+
+func (s *testSuite) TestUnsignedPk(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id bigint unsigned primary key)")
+	var num1, num2 uint64 = math.MaxInt64 + 1, math.MaxInt64 + 2
+	tk.MustExec(fmt.Sprintf("insert into t values(%v), (%v), (1), (2)", num1, num2))
+	num1Str := strconv.FormatUint(num1, 10)
+	num2Str := strconv.FormatUint(num2, 10)
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1", "2", num1Str, num2Str))
+	tk.MustQuery("select * from t where id not in (2)").Check(testkit.Rows(num1Str, num2Str, "1"))
+}
+
+func (s *testSuite) TestEarlyClose(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table earlyclose (id int primary key)")
+
+	// Insert 1000 rows.
+	var values []string
+	for i := 0; i < 1000; i++ {
+		values = append(values, fmt.Sprintf("(%d)", i))
+	}
+	tk.MustExec("insert earlyclose values " + strings.Join(values, ","))
+
+	// Get table ID for split.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("earlyclose"))
+	c.Assert(err, IsNil)
+	tblID := tbl.Meta().ID
+
+	// Split the table.
+	s.cluster.SplitTable(s.mvccStore, tblID, 500)
+
+	goCtx := goctx.Background()
+	for i := 0; i < 500; i++ {
+		rss, err := tk.Se.Execute(goCtx, "select * from earlyclose order by id")
+		c.Assert(err, IsNil)
+		rs := rss[0]
+		_, err = rs.Next(goCtx)
+		c.Assert(err, IsNil)
+		rs.Close()
+	}
 }

@@ -21,7 +21,7 @@ package variable
 	3. Add SysVar instance in 'defaultSysVars' slice with the default value.
 	4. Add a field in `SessionVars`.
 	5. Update the `NewSessionVars` function to set the field to its default value.
-	6. Update the `varsutil.SetSessionSystemVar` function to use the new value when SET statement is executed.
+	6. Update the `variable.SetSessionSystemVar` function to use the new value when SET statement is executed.
 	7. If it is a global variable, add it in `tidb.loadCommonGlobalVarsSQL`.
 	8. Use this variable to control the behavior in code.
 */
@@ -51,6 +51,9 @@ const (
 	// TiDBCurrentTS is used to get the current transaction timestamp.
 	// It is read-only.
 	TiDBCurrentTS = "tidb_current_ts"
+
+	// tidb_config is a read-only variable that shows the config of the current server.
+	TiDBConfig = "tidb_config"
 
 	/* Session and global */
 
@@ -104,6 +107,13 @@ const (
 
 	// tidb_max_chunk_capacity is used to control the max chunk size during query execution.
 	TiDBMaxChunkSize = "tidb_max_chunk_size"
+
+	// tidb_mem_threshold is used to control the memory usage warning threshold in Byte of an executor during query execution.
+	// When the memory usage hold by an executor exceeds the threshold, a warning log will be printed.
+	TiDBMemThreshold = "tidb_mem_threshold"
+
+	// tidb_general_log is used to log every query in the server in info level.
+	TiDBGeneralLog = "tidb_general_log"
 )
 
 // Default TiDB system variable values.
@@ -112,7 +122,7 @@ const (
 	DefIndexSerialScanConcurrency = 1
 	DefIndexJoinBatchSize         = 25000
 	DefIndexLookupSize            = 20000
-	DefDistSQLScanConcurrency     = 10
+	DefDistSQLScanConcurrency     = 15
 	DefBuildStatsConcurrency      = 4
 	DefSkipUTF8Check              = false
 	DefOptAggPushDown             = false
@@ -122,4 +132,11 @@ const (
 	DefCurretTS                   = 0
 	DefMaxChunkSize               = 1024
 	DefDMLBatchSize               = 20000
+	DefMemThreshold               = 32 * 1024 * 1024 * 1024 // 32 GiB
+	DefTiDBGeneralLog             = 0
+)
+
+// Process global variables.
+var (
+	ProcessGeneralLog uint32
 )

@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
@@ -547,7 +546,7 @@ func dataForSessionVar(ctx context.Context) (records [][]types.Datum, err error)
 	sessionVars := ctx.GetSessionVars()
 	for _, v := range variable.SysVars {
 		var value string
-		value, err = varsutil.GetSessionSystemVar(sessionVars, v.Name)
+		value, err = variable.GetSessionSystemVar(sessionVars, v.Name)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -630,10 +629,15 @@ func dataForSchemata(schemas []*model.DBInfo) [][]types.Datum {
 	return rows
 }
 
-func dataForTables(schemas []*model.DBInfo) [][]types.Datum {
+func dataForTables(ctx context.Context, schemas []*model.DBInfo) [][]types.Datum {
 	var rows [][]types.Datum
+	createTimeTp := tablesCols[15].tp
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
+			createTime := types.Time{
+				Time: types.FromGoTime(table.GetUpdateTime()),
+				Type: createTimeTp,
+			}
 			record := types.MakeDatums(
 				catalogVal,      // TABLE_CATALOG
 				schema.Name.O,   // TABLE_SCHEMA
@@ -649,7 +653,7 @@ func dataForTables(schemas []*model.DBInfo) [][]types.Datum {
 				uint64(0),       // INDEX_LENGTH
 				uint64(0),       // DATA_FREE
 				table.AutoIncID, // AUTO_INCREMENT
-				nil,             // CREATE_TIME
+				createTime,      // CREATE_TIME
 				nil,             // UPDATE_TIME
 				nil,             // CHECK_TIME
 				table.Collate,   // TABLE_COLLATION
@@ -1016,7 +1020,7 @@ func (it *infoschemaTable) getRows(ctx context.Context, cols []*table.Column) (f
 	case tableSchemata:
 		fullRows = dataForSchemata(dbs)
 	case tableTables:
-		fullRows = dataForTables(dbs)
+		fullRows = dataForTables(ctx, dbs)
 	case tableColumns:
 		fullRows = dataForColumns(dbs)
 	case tableStatistics:

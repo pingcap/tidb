@@ -156,3 +156,27 @@ func (e *ShowExec) valueToString(value *types.Datum, size int) (string, error) {
 	}
 	return str, nil
 }
+
+func (e *ShowExec) fetchShowStatsHealthy() {
+	do := domain.GetDomain(e.ctx)
+	h := do.StatsHandle()
+	dbs := do.InfoSchema().AllSchemas()
+	for _, db := range dbs {
+		for _, tbl := range db.Tables {
+			statsTbl := h.GetTableStats(tbl.ID)
+			if !statsTbl.Pseudo {
+				var healthy int64
+				if statsTbl.ModifyCount < statsTbl.Count {
+					healthy = int64((1.0 - float64(statsTbl.ModifyCount)/float64(statsTbl.Count)) * 100.0)
+				} else if statsTbl.ModifyCount == 0 {
+					healthy = 100
+				}
+				e.appendRow([]interface{}{
+					db.Name.O,
+					tbl.Name.O,
+					healthy,
+				})
+			}
+		}
+	}
+}

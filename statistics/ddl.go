@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
 	goctx "golang.org/x/net/context"
@@ -33,6 +34,9 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 		return h.insertTableStats2KV(t.TableInfo)
 	case model.ActionAddColumn:
 		return h.insertColStats2KV(t.TableInfo.ID, t.ColumnInfo)
+	// For drop stats statement.
+	case model.ActionDropTable:
+		return h.DeleteTableStatsFromKV(t.TableInfo.ID)
 	}
 	return nil
 }
@@ -90,6 +94,9 @@ func (h *Handle) insertColStats2KV(tableID int64, colInfo *model.ColumnInfo) err
 		// By this step we can get the count of this table, then we can sure the count and repeats of bucket.
 		var rs []ast.RecordSet
 		rs, err = exec.Execute(goCtx, fmt.Sprintf("select count from mysql.stats_meta where table_id = %d", tableID))
+		if len(rs) > 0 {
+			defer terror.Call(rs[0].Close)
+		}
 		if err != nil {
 			return errors.Trace(err)
 		}

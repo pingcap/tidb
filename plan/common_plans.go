@@ -165,15 +165,15 @@ func (e *Execute) rebuildRange(p Plan) error {
 				pkCol = expression.ColInfo2Col(cols, pkColInfo)
 			}
 		}
-		newRanges := ranger.FullIntNewRange()
 		if pkCol != nil {
-			ranges, err := ranger.BuildTableRange(ts.AccessCondition, sc, pkCol.RetType)
+			var err error
+			ts.Ranges, err = ranger.BuildTableRange(ts.AccessCondition, sc, pkCol.RetType)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			newRanges = ranges
+		} else {
+			ts.Ranges = ranger.FullIntNewRange(false)
 		}
-		ts.Ranges = newRanges
 	case *PhysicalIndexReader:
 		is := x.IndexPlans[0].(*PhysicalIndexScan)
 		var err error
@@ -203,15 +203,15 @@ func (e *Execute) rebuildRange(p Plan) error {
 func (e *Execute) buildRangeForIndexScan(sc *stmtctx.StatementContext, is *PhysicalIndexScan) ([]*ranger.NewRange, error) {
 	cols := expression.ColumnInfos2ColumnsWithDBName(is.DBName, is.Table.Name, is.Columns)
 	idxCols, colLengths := expression.IndexInfo2Cols(cols, is.Index)
-	newRanges := ranger.FullNewRange()
+	ranges := ranger.FullNewRange()
 	if len(idxCols) > 0 {
-		ranges, err := ranger.BuildIndexRange(sc, idxCols, colLengths, is.AccessCondition)
+		var err error
+		ranges, _, _, _, err = ranger.DetachCondAndBuildRangeForIndex(sc, is.conditions, idxCols, colLengths)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		newRanges = ranges
 	}
-	return newRanges, nil
+	return ranges, nil
 }
 
 // Deallocate represents deallocate plan.
@@ -339,6 +339,13 @@ type LoadData struct {
 	GenCols InsertGeneratedColumns
 }
 
+// LoadStats represents a load stats plan.
+type LoadStats struct {
+	baseSchemaProducer
+
+	Path string
+}
+
 // DDL represents a DDL statement plan.
 type DDL struct {
 	baseSchemaProducer
@@ -364,7 +371,7 @@ func (e *Explain) prepareExplainInfo4DAGTask(p PhysicalPlan, taskType string, pa
 	}
 	childrenInfo := strings.Join(childrenIDs, ",")
 	operatorInfo := p.ExplainInfo()
-	count := string(strconv.AppendFloat([]byte{}, p.StatsInfo().count, 'f', -1, 64))
+	count := string(strconv.AppendFloat([]byte{}, p.StatsInfo().count, 'f', 2, 64))
 	row := []string{p.ExplainID(), parentID, childrenInfo, taskType, operatorInfo, count}
 	e.Rows = append(e.Rows, row)
 }

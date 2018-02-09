@@ -173,7 +173,7 @@ func (p *LogicalJoin) getHashJoin(prop *requiredProp, innerIdx int) *PhysicalHas
 		JoinType:        p.JoinType,
 		Concurrency:     JoinConcurrency,
 		DefaultValues:   p.DefaultValues,
-		SmallChildIdx:   innerIdx,
+		InnerChildIdx:   innerIdx,
 	}.init(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt), chReqProps...)
 	hashJoin.SetSchema(p.schema)
 	return hashJoin
@@ -233,9 +233,6 @@ func (p *LogicalJoin) constructIndexJoin(prop *requiredProp, innerJoinKeys, oute
 		Ranges:          ranges,
 	}.init(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt), chReqProps...)
 	join.SetSchema(p.schema)
-	if !prop.isEmpty() {
-		join.KeepOrder = true
-	}
 	return []PhysicalPlan{join}
 }
 
@@ -265,7 +262,7 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 	if includeTableScan && len(innerJoinKeys) == 1 {
 		pkCol := x.getPKIsHandleCol()
 		if pkCol != nil && innerJoinKeys[0].Equal(pkCol, nil) {
-			innerPlan := x.forceToTableScan()
+			innerPlan := x.forceToTableScan(pkCol)
 			return p.constructIndexJoin(prop, innerJoinKeys, outerJoinKeys, outerIdx, innerPlan, nil, nil)
 		}
 	}
@@ -305,23 +302,33 @@ func (p *LogicalJoin) buildRangeForIndexJoin(indexInfo *model.IndexInfo, innerPl
 		return nil, nil, nil
 	}
 
-	accesses, remained, keyOff2IdxOff := p.buildAccessCondsForIndexJoin(innerJoinKeys, idxCols, colLengths, innerPlan)
+	conds, eqConds, keyOff2IdxOff := p.buildFakeEqCondsForIndexJoin(innerJoinKeys, idxCols, colLengths, innerPlan)
 
-	// If there's no access condition, this index should be useless.
-	if len(accesses) == 0 {
+	if len(keyOff2IdxOff) == 0 {
 		return nil, nil, nil
 	}
 
-	ranges, err := ranger.BuildIndexRange(p.ctx.GetSessionVars().StmtCtx, idxCols, colLengths, accesses)
+	// After constant propagation, there won'be cases that t1.a=t2.a and t2.a=1 occur in the same time.
+	// And if there're cases like t1.a=t2.a and t1.a > 1, we can also guarantee that t1.a > 1 won't be chosen as access condition.
+	// So DetachCondAndBuildRangeForIndex won't miss the equal conditions we generate.
+	ranges, accesses, remained, _, err := ranger.DetachCondAndBuildRangeForIndex(p.ctx.GetSessionVars().StmtCtx, conds, idxCols, colLengths)
 	if err != nil {
 		terror.Log(errors.Trace(err))
 		return nil, nil, nil
 	}
+
+	// We should guarantee that all the join's equal condition is used.
+	for _, eqCond := range eqConds {
+		if !expression.Contains(accesses, eqCond) {
+			return nil, nil, nil
+		}
+	}
+
 	return ranges, remained, keyOff2IdxOff
 }
 
-func (p *LogicalJoin) buildAccessCondsForIndexJoin(keys, idxCols []*expression.Column, colLengths []int,
-	innerPlan *DataSource) (accesses, remained []expression.Expression, keyOff2IdxOff []int) {
+func (p *LogicalJoin) buildFakeEqCondsForIndexJoin(keys, idxCols []*expression.Column, colLengths []int,
+	innerPlan *DataSource) (accesses, eqConds []expression.Expression, keyOff2IdxOff []int) {
 	// Check whether all join keys match one column from index.
 	keyOff2IdxOff = joinKeysMatchIndex(keys, idxCols, colLengths)
 	if keyOff2IdxOff == nil {
@@ -332,7 +339,7 @@ func (p *LogicalJoin) buildAccessCondsForIndexJoin(keys, idxCols []*expression.C
 	// cannot calculate range either. So we only need the innerPlan.pushedDownConds and the eq conditions that we generate.
 	// TODO: There may be a selection that block the index join.
 	conds := make([]expression.Expression, 0, len(keys)+len(innerPlan.pushedDownConds))
-	eqConds := make([]expression.Expression, 0, len(keys))
+	eqConds = make([]expression.Expression, 0, len(keys))
 	// Construct a fake equal expression for calculating the range.
 	for _, key := range keys {
 		// Int datum 1 can convert to all column's type(numeric type, string type, json, time type, enum, set) safely.
@@ -343,20 +350,7 @@ func (p *LogicalJoin) buildAccessCondsForIndexJoin(keys, idxCols []*expression.C
 	}
 
 	conds = append(conds, innerPlan.pushedDownConds...)
-	// After constant propagation, there won'be cases that t1.a=t2.a and t2.a=1 occur in the same time.
-	// And if there're cases like t1.a=t2.a and t1.a > 1, we can also guarantee that t1.a > 1 won't be chosen as access condition.
-	// So DetachIndexConditions won't miss the equal conditions we generate.
-	accesses, remained = ranger.DetachIndexConditions(conds, idxCols, colLengths)
-
-	// We should guarantee that all the join's equal condition is used. Check that last one is in the access conditions is enough.
-	// Here the last means that the corresponding index column's position is maximum.
-	for _, eqCond := range eqConds {
-		if !expression.Contains(accesses, eqCond) {
-			return nil, nil, nil
-		}
-	}
-
-	return accesses, remained, keyOff2IdxOff
+	return conds, eqConds, keyOff2IdxOff
 }
 
 // tryToGetIndexJoin will get index join by hints. If we can generate a valid index join by hint, the second return value
@@ -533,7 +527,7 @@ func (la *LogicalAggregation) getStreamAggs(prop *requiredProp) []PhysicalPlan {
 		return nil
 	}
 	for _, aggFunc := range la.AggFuncs {
-		if aggFunc.GetMode() == aggregation.FinalMode {
+		if aggFunc.Mode == aggregation.FinalMode {
 			return nil
 		}
 	}

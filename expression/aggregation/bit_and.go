@@ -17,9 +17,6 @@ import (
 	"math"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 )
@@ -28,59 +25,28 @@ type bitAndFunction struct {
 	aggFunction
 }
 
-// Clone implements Aggregation interface.
-func (bf *bitAndFunction) Clone() Aggregation {
-	nf := *bf
-	for i, arg := range bf.Args {
-		nf.Args[i] = arg.Clone()
-	}
-	return &nf
-}
-
-// CalculateDefaultValue implements Aggregation interface.
-func (bf *bitAndFunction) CalculateDefaultValue(schema *expression.Schema, ctx context.Context) (d types.Datum, valid bool) {
-	arg := bf.Args[0]
-	result := expression.EvaluateExprWithNull(ctx, schema, arg)
-	if con, ok := result.(*expression.Constant); ok {
-		if con.Value.IsNull() {
-			return types.NewDatum(uint64(math.MaxUint64)), true
-		}
-		return con.Value, true
-	}
-	return types.NewDatum(uint64(math.MaxUint64)), true
-}
-
-// GetType implements Aggregation interface.
-func (bf *bitAndFunction) GetType() *types.FieldType {
-	ft := types.NewFieldType(mysql.TypeLonglong)
-	ft.Flen = 21
-	types.SetBinChsClnFlag(ft)
-	ft.Flag |= mysql.UnsignedFlag | mysql.NotNullFlag
-	return ft
-}
-
 // Update implements Aggregation interface.
-func (bf *bitAndFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
+func (bf *bitAndFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
 	a := bf.Args[0]
 	value, err := a.Eval(row)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if ctx.Value.IsNull() {
-		ctx.Value.SetUint64(math.MaxUint64)
+	if evalCtx.Value.IsNull() {
+		evalCtx.Value.SetUint64(math.MaxUint64)
 	}
 	if !value.IsNull() {
-		ctx.Value.SetUint64(ctx.Value.GetUint64() & value.GetUint64())
+		evalCtx.Value.SetUint64(evalCtx.Value.GetUint64() & value.GetUint64())
 	}
 	return nil
 }
 
 // GetResult implements Aggregation interface.
-func (bf *bitAndFunction) GetResult(ctx *AggEvaluateContext) types.Datum {
-	return ctx.Value
+func (bf *bitAndFunction) GetResult(evalCtx *AggEvaluateContext) types.Datum {
+	return evalCtx.Value
 }
 
 // GetPartialResult implements Aggregation interface.
-func (bf *bitAndFunction) GetPartialResult(ctx *AggEvaluateContext) []types.Datum {
-	return []types.Datum{bf.GetResult(ctx)}
+func (bf *bitAndFunction) GetPartialResult(evalCtx *AggEvaluateContext) []types.Datum {
+	return []types.Datum{bf.GetResult(evalCtx)}
 }

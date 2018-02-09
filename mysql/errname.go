@@ -887,6 +887,7 @@ var MySQLErrName = map[uint16]string{
 	ErrInvalidJSONPath:                                       "Invalid JSON path expression %s.",
 	ErrInvalidJSONData:                                       "Invalid data type for JSON data",
 	ErrJSONUsedAsKey:                                         "JSON column '%-.192s' cannot be used in key specification.",
+	ErrMemExceedThreshold:                                    "%s holds %dB memory, exceeds threshold %dB.",
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout:    "PD server timeout",
@@ -894,7 +895,7 @@ var MySQLErrName = map[uint16]string{
 	ErrTiKVServerBusy:     "TiKV server is busy",
 	ErrResolveLockTimeout: "Resolve lock timeout",
 	ErrRegionUnavailable:  "Region is unavailable",
-	ErrGCTooEarly:         "GC Interval shorter than transaction duration",
+	ErrGCTooEarly:         "GC life time is shorter than transaction duration",
 
 	ErrTxnTooLarge: "Transaction is too large",
 

@@ -57,6 +57,7 @@ var LookupTableTaskChannelSize int32 = 50
 // contains the handles in those index keys.
 type lookupTableTask struct {
 	handles []int64
+	rowIdx  []int // rowIdx represents the handle index for every row. Only used when keep order.
 	rows    []chunk.Row
 	cursor  int
 
@@ -67,6 +68,19 @@ type lookupTableTask struct {
 	// The handles fetched from index is originally ordered by index, but we need handles to be ordered by itself
 	// to do table request.
 	indexOrder map[int64]int
+}
+
+func (task *lookupTableTask) Len() int {
+	return len(task.rows)
+}
+
+func (task *lookupTableTask) Less(i, j int) bool {
+	return task.rowIdx[i] < task.rowIdx[j]
+}
+
+func (task *lookupTableTask) Swap(i, j int) {
+	task.rowIdx[i], task.rowIdx[j] = task.rowIdx[j], task.rowIdx[i]
+	task.rows[i], task.rows[j] = task.rows[j], task.rows[i]
 }
 
 func (task *lookupTableTask) getRow(schema *expression.Schema) (Row, error) {
@@ -102,10 +116,8 @@ func tableRangesToKVRanges(tid int64, ranges []*ranger.NewRange) []kv.KeyRange {
 	return krs
 }
 
-/*
- * Convert sorted handle to kv ranges.
- * For continuous handles, we should merge them to a single key range.
- */
+// tableHandlesToKVRanges converts sorted handle to kv ranges.
+// For continuous handles, we should merge them to a single key range.
 func tableHandlesToKVRanges(tid int64, handles []int64) []kv.KeyRange {
 	krs := make([]kv.KeyRange, 0, len(handles))
 	i := 0
@@ -292,30 +304,35 @@ type TableReaderExecutor struct {
 	// columns are only required by union scan.
 	columns []*model.ColumnInfo
 
-	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
-	result        distsql.SelectResult
+	// partialResult store the result from one region.
 	partialResult distsql.PartialResult
+	// resultHandler handles the order of the result. Since (MAXInt64, MAXUint64] stores before [0, MaxInt64] physically
+	// for unsigned int.
+	resultHandler *tableResultHandler
 	priority      int
 	feedback      *statistics.QueryFeedback
 }
 
 // Close implements the Executor Close interface.
 func (e *TableReaderExecutor) Close() error {
-	e.feedback.SetIntRanges(e.ranges).SetActual(e.result.ScanCount())
+	e.feedback.SetIntRanges(e.ranges).SetActual(e.resultHandler.totalCount())
 	e.ctx.StoreQueryFeedback(e.feedback)
-	err := closeAll(e.result, e.partialResult)
-	e.result = nil
+	err := closeAll(e.resultHandler, e.partialResult)
 	e.partialResult = nil
 	return errors.Trace(err)
 }
 
-// Next implements the Executor Next interface.
+// Next returns next available Row. In its process, any error will be returned.
+// It first try to fetch a partial result if current partial result is nil.
+// If any error appears during this stage, it simply return a error to its caller.
+// If it successfully initialize its partial result, it will use this to get next
+// available row.
 func (e *TableReaderExecutor) Next(goCtx goctx.Context) (Row, error) {
 	for {
 		// Get partial result.
 		if e.partialResult == nil {
 			var err error
-			e.partialResult, err = e.result.Next(goCtx)
+			e.partialResult, err = e.resultHandler.next(goCtx)
 			if err != nil {
 				e.feedback.Invalidate()
 				return nil, errors.Trace(err)
@@ -347,22 +364,47 @@ func (e *TableReaderExecutor) Next(goCtx goctx.Context) (Row, error) {
 	}
 }
 
-// NextChunk implements the Executor NextChunk interface.
+// NextChunk fills data into the chunk passed by its caller.
+// The task was actually done by tableReaderHandler.
 func (e *TableReaderExecutor) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
-	err := e.result.NextChunk(goCtx, chk)
+	err := e.resultHandler.nextChunk(goCtx, chk)
 	if err != nil {
 		e.feedback.Invalidate()
 	}
 	return errors.Trace(err)
 }
 
-// Open implements the Executor Open interface.
+// Open initialzes necessary variables for using this executor.
 func (e *TableReaderExecutor) Open(goCtx goctx.Context) error {
 	span, goCtx := startSpanFollowsContext(goCtx, "executor.TableReader.Open")
 	defer span.Finish()
 
+	e.resultHandler = &tableResultHandler{}
+	firstPartRanges, secondPartRanges := splitRanges(e.ranges, e.keepOrder)
+	firstResult, err := e.buildResp(goCtx, firstPartRanges)
+	if err != nil {
+		e.feedback.Invalidate()
+		return errors.Trace(err)
+	}
+	if len(secondPartRanges) == 0 {
+		e.resultHandler.open(nil, firstResult)
+		return nil
+	}
+	var secondResult distsql.SelectResult
+	secondResult, err = e.buildResp(goCtx, secondPartRanges)
+	if err != nil {
+		e.feedback.Invalidate()
+		return errors.Trace(err)
+	}
+	e.resultHandler.open(firstResult, secondResult)
+	return nil
+}
+
+// buildResp first build request and send it to tikv using distsql.SelectDAG. It uses SelectResut returned by the callee
+// to fetch all results.
+func (e *TableReaderExecutor) buildResp(goCtx goctx.Context, ranges []*ranger.NewRange) (distsql.SelectResult, error) {
 	var builder requestBuilder
-	kvReq, err := builder.SetTableRanges(e.tableID, e.ranges).
+	kvReq, err := builder.SetTableRanges(e.tableID, ranges).
 		SetDAGRequest(e.dagPB).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
@@ -370,16 +412,52 @@ func (e *TableReaderExecutor) Open(goCtx goctx.Context) error {
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		Build()
 	if err != nil {
-		e.feedback.Invalidate()
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(goCtx, e.ctx, kvReq, e.retTypes())
+	result, err := distsql.SelectDAG(goCtx, e.ctx, kvReq, e.retTypes())
 	if err != nil {
-		e.feedback.Invalidate()
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-	e.result.Fetch(goCtx)
-	return nil
+	result.Fetch(goCtx)
+	return result, nil
+}
+
+func splitRanges(ranges []*ranger.NewRange, keepOrder bool) ([]*ranger.NewRange, []*ranger.NewRange) {
+	if len(ranges) == 0 || ranges[0].LowVal[0].Kind() == types.KindInt64 {
+		return ranges, nil
+	}
+	idx := sort.Search(len(ranges), func(i int) bool { return ranges[i].HighVal[0].GetUint64() > math.MaxInt64 })
+	if idx == len(ranges) {
+		return ranges, nil
+	}
+	if ranges[idx].LowVal[0].GetUint64() > math.MaxInt64 {
+		signedRanges := ranges[0:idx]
+		unsignedRanges := ranges[idx:]
+		if !keepOrder {
+			return append(unsignedRanges, signedRanges...), nil
+		}
+		return signedRanges, unsignedRanges
+	}
+	signedRanges := make([]*ranger.NewRange, 0, idx+1)
+	unsignedRanges := make([]*ranger.NewRange, 0, len(ranges)-idx)
+	signedRanges = append(signedRanges, ranges[0:idx]...)
+	signedRanges = append(signedRanges, &ranger.NewRange{
+		LowVal:     ranges[idx].LowVal,
+		LowExclude: ranges[idx].LowExclude,
+		HighVal:    []types.Datum{types.NewUintDatum(math.MaxInt64)},
+	})
+	unsignedRanges = append(unsignedRanges, &ranger.NewRange{
+		LowVal:      []types.Datum{types.NewUintDatum(math.MaxInt64 + 1)},
+		HighVal:     ranges[idx].HighVal,
+		HighExclude: ranges[idx].HighExclude,
+	})
+	if idx < len(ranges) {
+		unsignedRanges = append(unsignedRanges, ranges[idx+1:]...)
+	}
+	if !keepOrder {
+		return append(unsignedRanges, signedRanges...), nil
+	}
+	return signedRanges, unsignedRanges
 }
 
 // startSpanFollowContext is similar to opentracing.StartSpanFromContext, but the span reference use FollowsFrom option.
@@ -415,9 +493,9 @@ type IndexReaderExecutor struct {
 	feedback *statistics.QueryFeedback
 }
 
-// Close implements the Executor Close interface.
+// Close clears all resources hold by current object.
 func (e *IndexReaderExecutor) Close() error {
-	e.feedback.SetIndexRanges(e.ranges).SetActual(e.result.ScanCount())
+	e.feedback.SetIndexRanges(e.ranges).SetActual(e.result.ScanKeys())
 	e.ctx.StoreQueryFeedback(e.feedback)
 	err := closeAll(e.result, e.partialResult)
 	e.result = nil
@@ -425,7 +503,11 @@ func (e *IndexReaderExecutor) Close() error {
 	return errors.Trace(err)
 }
 
-// Next implements the Executor Next interface.
+// Next returns next available Row. In its process, any error will be returned.
+// It first try to fetch a partial result if current partial result is nil.
+// If any error appears during this stage, it simply return a error to its caller.
+// If it successfully initialize its partial result, it will use this to get next
+// available row.
 func (e *IndexReaderExecutor) Next(goCtx goctx.Context) (Row, error) {
 	for {
 		// Get partial result.
@@ -581,7 +663,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(goCtx goctx.Context, kvRanges []k
 	go func() {
 		goCtx1, cancel := goctx.WithCancel(goCtx)
 		err := worker.fetchHandles(goCtx1, result)
-		scanCount := result.ScanCount()
+		scanCount := result.ScanKeys()
 		if err != nil {
 			scanCount = -1
 		}
@@ -639,7 +721,7 @@ type tableWorker struct {
 
 func (e *IndexLookUpExecutor) buildTableReader(goCtx goctx.Context, handles []int64) (Executor, error) {
 	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(goCtx, &TableReaderExecutor{
-		baseExecutor: newBaseExecutor(e.schema, e.ctx),
+		baseExecutor: newBaseExecutor(e.schema, e.ctx, e.id+"_tableReader"),
 		table:        e.table,
 		tableID:      e.tableID,
 		dagPB:        e.tableRequest,
@@ -653,7 +735,7 @@ func (e *IndexLookUpExecutor) buildTableReader(goCtx goctx.Context, handles []in
 	return tableReader, nil
 }
 
-// startTableWorker launch some background goroutines which pick tasks from workCh and execute the task.
+// startTableWorker launchs some background goroutines which pick tasks from workCh and execute the task.
 func (e *IndexLookUpExecutor) startTableWorker(goCtx goctx.Context, workCh <-chan *lookupTableTask) {
 	lookupConcurrencyLimit := e.ctx.GetSessionVars().IndexLookupConcurrency
 	e.tblWorkerWg.Add(lookupConcurrencyLimit)
@@ -749,16 +831,18 @@ func (w *tableWorker) executeTask(goCtx goctx.Context, task *lookupTableTask) {
 		if chk.NumRows() == 0 {
 			break
 		}
-		for row := chk.Begin(); row != chk.End(); row = row.Next() {
+		iter := chunk.NewIterator4Chunk(chk)
+		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			task.rows = append(task.rows, row)
 		}
 	}
 	if w.keepOrder {
-		sort.Slice(task.rows, func(i, j int) bool {
-			hI := task.rows[i].GetInt64(w.handleIdx)
-			hJ := task.rows[j].GetInt64(w.handleIdx)
-			return task.indexOrder[hI] < task.indexOrder[hJ]
-		})
+		task.rowIdx = make([]int, 0, len(task.rows))
+		for i := range task.rows {
+			handle := task.rows[i].GetInt64(w.handleIdx)
+			task.rowIdx = append(task.rowIdx, task.indexOrder[handle])
+		}
+		sort.Sort(task)
 	}
 }
 
@@ -920,7 +1004,8 @@ func (builder *requestBuilder) SetKeepOrder(order bool) *requestBuilder {
 }
 
 func getIsolationLevel(sv *variable.SessionVars) kv.IsoLevel {
-	if sv.Systems[variable.TxnIsolation] == ast.ReadCommitted {
+	isoLevel, _ := sv.GetSystemVar(variable.TxnIsolation)
+	if isoLevel == ast.ReadCommitted {
 		return kv.RC
 	}
 	return kv.SI
@@ -936,4 +1021,90 @@ func (builder *requestBuilder) SetFromSessionVars(sv *variable.SessionVars) *req
 func (builder *requestBuilder) SetPriority(priority int) *requestBuilder {
 	builder.Request.Priority = priority
 	return builder
+}
+
+type tableResultHandler struct {
+	// If the pk is unsigned and we have KeepOrder=true.
+	// optionalResult handles the request whose range is in signed int range.
+	// result handles the request whose range is exceed signed int range.
+	// Otherwise, we just set optionalFinished true and the result handles the whole ranges.
+	optionalResult distsql.SelectResult
+	result         distsql.SelectResult
+
+	optionalFinished bool
+}
+
+func (tr *tableResultHandler) open(optionalResult, result distsql.SelectResult) {
+	if optionalResult == nil {
+		tr.optionalFinished = true
+		tr.result = result
+		return
+	}
+	tr.optionalResult = optionalResult
+	tr.result = result
+	tr.optionalFinished = false
+}
+
+func (tr *tableResultHandler) next(goCtx goctx.Context) (partialResult distsql.PartialResult, err error) {
+	if !tr.optionalFinished {
+		partialResult, err = tr.optionalResult.Next(goCtx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if partialResult != nil {
+			return partialResult, nil
+		}
+		tr.optionalFinished = true
+	}
+	partialResult, err = tr.result.Next(goCtx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return partialResult, nil
+}
+
+func (tr *tableResultHandler) nextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+	if !tr.optionalFinished {
+		err := tr.optionalResult.NextChunk(goCtx, chk)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if chk.NumRows() > 0 {
+			return nil
+		}
+		tr.optionalFinished = true
+	}
+	return tr.result.NextChunk(goCtx, chk)
+}
+
+func (tr *tableResultHandler) nextRaw(goCtx goctx.Context) (data []byte, err error) {
+	if !tr.optionalFinished {
+		data, err = tr.optionalResult.NextRaw(goCtx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if data != nil {
+			return data, nil
+		}
+		tr.optionalFinished = true
+	}
+	data, err = tr.result.NextRaw(goCtx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return data, nil
+}
+
+func (tr *tableResultHandler) Close() error {
+	err := closeAll(tr.optionalResult, tr.result)
+	tr.optionalResult, tr.result = nil, nil
+	return errors.Trace(err)
+}
+
+func (tr *tableResultHandler) totalCount() (count int64) {
+	if tr.optionalResult != nil {
+		count += tr.optionalResult.ScanKeys()
+	}
+	count += tr.result.ScanKeys()
+	return count
 }

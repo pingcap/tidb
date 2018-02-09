@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
@@ -38,7 +38,7 @@ type testIndexSuite struct {
 
 func (s *testIndexSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
-	store, err := tikv.NewMockTikvStore()
+	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	s.s = store
 }
@@ -184,7 +184,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	err = txn.Commit(goctx.Background())
 	c.Assert(err, IsNil)
 
-	_, err = index.FetchValues(make([]types.Datum, 0))
+	_, err = index.FetchValues(make([]types.Datum, 0), nil)
 	c.Assert(err, NotNil)
 }
 

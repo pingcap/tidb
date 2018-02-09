@@ -27,8 +27,8 @@ import (
 	goctx "golang.org/x/net/context"
 )
 
-func initStatsMeta4Chunk(is infoschema.InfoSchema, tables statsCache, chk *chunk.Chunk) {
-	for row := chk.Begin(); row != chk.End(); row = row.Next() {
+func initStatsMeta4Chunk(is infoschema.InfoSchema, tables statsCache, iter *chunk.Iterator4Chunk) {
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tableID := row.GetInt64(1)
 		table, ok := is.TableByID(tableID)
 		if !ok {
@@ -51,11 +51,15 @@ func initStatsMeta4Chunk(is infoschema.InfoSchema, tables statsCache, chk *chunk
 func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
 	sql := "select version, table_id, modify_count, count from mysql.stats_meta"
 	rc, err := h.ctx.(sqlexec.SQLExecutor).Execute(goctx.TODO(), sql)
+	if len(rc) > 0 {
+		defer terror.Call(rc[0].Close)
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	tables := statsCache{}
 	chk := rc[0].NewChunk()
+	iter := chunk.NewIterator4Chunk(chk)
 	for {
 		err := rc[0].NextChunk(goctx.TODO(), chk)
 		if err != nil {
@@ -64,13 +68,13 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
 		if chk.NumRows() == 0 {
 			break
 		}
-		initStatsMeta4Chunk(is, tables, chk)
+		initStatsMeta4Chunk(is, tables, iter)
 	}
 	return tables, nil
 }
 
-func initStatsHistograms4Chunk(is infoschema.InfoSchema, tables statsCache, chk *chunk.Chunk) {
-	for row := chk.Begin(); row != chk.End(); row = row.Next() {
+func initStatsHistograms4Chunk(is infoschema.InfoSchema, tables statsCache, iter *chunk.Iterator4Chunk) {
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		table, ok := tables[row.GetInt64(0)]
 		if !ok {
 			continue
@@ -115,10 +119,14 @@ func initStatsHistograms4Chunk(is infoschema.InfoSchema, tables statsCache, chk 
 func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables statsCache) error {
 	sql := "select table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch from mysql.stats_histograms"
 	rc, err := h.ctx.(sqlexec.SQLExecutor).Execute(goctx.TODO(), sql)
+	if len(rc) > 0 {
+		defer terror.Call(rc[0].Close)
+	}
 	if err != nil {
 		return errors.Trace(err)
 	}
 	chk := rc[0].NewChunk()
+	iter := chunk.NewIterator4Chunk(chk)
 	for {
 		err := rc[0].NextChunk(goctx.TODO(), chk)
 		if err != nil {
@@ -127,13 +135,13 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables statsCache
 		if chk.NumRows() == 0 {
 			break
 		}
-		initStatsHistograms4Chunk(is, tables, chk)
+		initStatsHistograms4Chunk(is, tables, iter)
 	}
 	return nil
 }
 
-func initStatsBuckets4Chunk(ctx context.Context, tables statsCache, chk *chunk.Chunk) {
-	for row := chk.Begin(); row != chk.End(); row = row.Next() {
+func initStatsBuckets4Chunk(ctx context.Context, tables statsCache, iter *chunk.Iterator4Chunk) {
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tableID, isIndex, histID := row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
 		table, ok := tables[tableID]
 		if !ok {
@@ -181,10 +189,14 @@ func initStatsBuckets4Chunk(ctx context.Context, tables statsCache, chk *chunk.C
 func (h *Handle) initStatsBuckets(tables statsCache) error {
 	sql := "select table_id, is_index, hist_id, count, repeats, lower_bound, upper_bound from mysql.stats_buckets order by table_id, is_index, hist_id, bucket_id"
 	rc, err := h.ctx.(sqlexec.SQLExecutor).Execute(goctx.TODO(), sql)
+	if len(rc) > 0 {
+		defer terror.Call(rc[0].Close)
+	}
 	if err != nil {
 		return errors.Trace(err)
 	}
 	chk := rc[0].NewChunk()
+	iter := chunk.NewIterator4Chunk(chk)
 	for {
 		err := rc[0].NextChunk(goctx.TODO(), chk)
 		if err != nil {
@@ -193,7 +205,7 @@ func (h *Handle) initStatsBuckets(tables statsCache) error {
 		if chk.NumRows() == 0 {
 			break
 		}
-		initStatsBuckets4Chunk(h.ctx, tables, chk)
+		initStatsBuckets4Chunk(h.ctx, tables, iter)
 	}
 	for _, table := range tables {
 		if h.LastVersion < table.Version {

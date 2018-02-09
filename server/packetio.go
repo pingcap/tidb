@@ -40,6 +40,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/terror"
 )
 
 const defaultWriterSize = 16 * 1024
@@ -95,7 +96,7 @@ func (p *packetIO) readPacket() ([]byte, error) {
 		return data, nil
 	}
 
-	// handle muliti-packet
+	// handle multi-packet
 	for {
 		buf, err := p.readOnePacket()
 		if err != nil {
@@ -140,6 +141,7 @@ func (p *packetIO) writePacket(data []byte) error {
 	data[3] = p.sequence
 
 	if n, err := p.bufWriter.Write(data); err != nil {
+		terror.Log(errors.Trace(err))
 		return errors.Trace(mysql.ErrBadConn)
 	} else if n != len(data) {
 		return errors.Trace(mysql.ErrBadConn)

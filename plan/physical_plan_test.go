@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
@@ -65,11 +66,10 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 			best: "TableReader(Table(t))->Sort->Projection",
 		},
 		// Test DNF condition + Double Read.
-		// FIXME: Some bugs still exist in selectivity.
-		//{
-		//	sql:  "select * from t where (t.c > 0 and t.c < 1) or (t.c > 2 and t.c < 3) or (t.c > 4 and t.c < 5) or (t.c > 6 and t.c < 7) or (t.c > 9 and t.c < 10)",
-		//	best: "IndexLookUp(Index(t.c_d_e)[(0 +inf,1 <nil>) (2 +inf,3 <nil>) (4 +inf,5 <nil>) (6 +inf,7 <nil>) (9 +inf,10 <nil>)], Table(t))",
-		//},
+		{
+			sql:  "select * from t where (t.c > 0 and t.c < 1) or (t.c > 2 and t.c < 3) or (t.c > 4 and t.c < 5) or (t.c > 6 and t.c < 7) or (t.c > 9 and t.c < 10)",
+			best: "IndexLookUp(Index(t.c_d_e)[(0 +inf,1 <nil>) (2 +inf,3 <nil>) (4 +inf,5 <nil>) (6 +inf,7 <nil>) (9 +inf,10 <nil>)], Table(t))",
+		},
 		// Test TopN to table branch in double read.
 		{
 			sql:  "select * from t where t.c = 1 and t.e = 1 order by t.b limit 1",
@@ -175,6 +175,10 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 		{
 			sql:  "select * from t use index(e_d_c_str_prefix) where t.c_str = 'abcdefghijk' and t.d_str = 'd' and t.e_str = 'e'",
 			best: "IndexLookUp(Index(t.e_d_c_str_prefix)[[e d [97 98 99 100 101 102 103 104 105 106],e d [97 98 99 100 101 102 103 104 105 106]]], Table(t)->Sel([eq(test.t.c_str, abcdefghijk)]))",
+		},
+		{
+			sql:  "select * from t use index(e_d_c_str_prefix) where t.e_str = b'1110000'",
+			best: "IndexLookUp(Index(t.e_d_c_str_prefix)[[p,p]], Table(t))",
 		},
 	}
 	for _, tt := range tests {
@@ -326,12 +330,12 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 		// Test Index Join + Order by.
 		{
 			sql:  "select /*+ TIDB_INLJ(t1, t2) */ t1.a, t2.a from t t1, t t2 where t1.a = t2.a order by t1.c",
-			best: "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->Sort->Projection",
+			best: "IndexJoin{IndexReader(Index(t.c_d_e)[[<nil>,+inf]])->TableReader(Table(t))}(t1.a,t2.a)->Projection",
 		},
 		// Test Index Join + Order by.
 		{
 			sql:  "select /*+ TIDB_INLJ(t1, t2) */ t1.a, t2.a from t t1, t t2 where t1.a = t2.a order by t2.c",
-			best: "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->Sort->Projection",
+			best: "IndexJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[<nil>,+inf]])}(t2.a,t1.a)->Projection",
 		},
 		// Test Index Join + TableScan + Rotate.
 		{
@@ -696,7 +700,8 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnionScan(c *C) {
 		err = se.NewTxn()
 		c.Assert(err, IsNil)
 		// Make txn not read only.
-		se.Txn().Set(nil, nil)
+		se.Txn().Set(kv.Key("AAA"), []byte("BBB"))
+		se.StmtCommit()
 		p, err := plan.Optimize(se, stmt, s.is)
 		c.Assert(err, IsNil)
 		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
@@ -914,11 +919,11 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		},
 		{
 			sql:  "select a from t where c = 1 or c = 2 or c = 3",
-			best: "IndexReader(Index(t.c_d_e)[[1,1] [2,2] [3,3]])->Projection",
+			best: "IndexReader(Index(t.c_d_e)[[1,3]])->Projection",
 		},
 		{
 			sql:  "select b from t where c = 1 or c = 2 or c = 3 or c = 4 or c = 5",
-			best: "IndexLookUp(Index(t.c_d_e)[[1,1] [2,2] [3,3] [4,4] [5,5]], Table(t))->Projection",
+			best: "IndexLookUp(Index(t.c_d_e)[[1,5]], Table(t))->Projection",
 		},
 		{
 			sql:  "select a from t where c = 5",
@@ -964,11 +969,10 @@ func (s *testPlanSuite) TestRefine(c *C) {
 			sql:  "select a from t where d in (1, 2, 3)",
 			best: "TableReader(Table(t)->Sel([in(test.t.d, 1, 2, 3)]))->Projection",
 		},
-		// TODO: func in is rewritten to DNF which will influence the extraction behavior of accessCondition.
-		//{
-		//	sql:  "select a from t where c not in (1)",
-		//	best: "Table(t)->Projection",
-		//},
+		{
+			sql:  "select a from t where c not in (1)",
+			best: "IndexReader(Index(t.c_d_e)[(<nil>,1) (1,+inf]])->Projection",
+		},
 		// test like
 		{
 			sql:  "select a from t use index(c_d_e) where c != 1",
@@ -1014,10 +1018,10 @@ func (s *testPlanSuite) TestRefine(c *C) {
 			sql:  `select a from t where c_str like 'abc\\_'`,
 			best: "IndexReader(Index(t.c_d_e_str)[[abc_,abc_]])->Projection",
 		},
-		//		{
-		//			sql:  `select a from t where c_str like 'abc\\\\_'`,
-		//			best: "IndexReader(Index(t.c_d_e_str)[(abc\\ +inf,abc] <nil>)])->Selection->Projection",
-		//		},
+		{
+			sql:  `select a from t where c_str like 'abc\\\\_'`,
+			best: "IndexReader(Index(t.c_d_e_str)[(abc\\,abc])]->Sel([like(test.t.c_str, abc\\\\_, 92)]))->Projection",
+		},
 		{
 			sql:  `select a from t where c_str like 'abc\\_%'`,
 			best: "IndexReader(Index(t.c_d_e_str)[[abc_,abc`)])->Projection",

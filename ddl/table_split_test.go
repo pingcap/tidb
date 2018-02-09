@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/tablecodec"
 	"golang.org/x/net/context"
@@ -28,7 +29,7 @@ type testDDLTableSplitSuite struct{}
 var _ = Suite(&testDDLTableSplitSuite{})
 
 func (s *testDDLTableSplitSuite) TestTableSplit(c *C) {
-	store, err := tikv.NewMockTikvStore()
+	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	tidb.SetSchemaLease(0)
 	tidb.SetStatsLease(0)

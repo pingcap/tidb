@@ -22,8 +22,10 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
+	binlog "github.com/pingcap/tipb/go-binlog"
 	goctx "golang.org/x/net/context"
 )
 
@@ -187,6 +189,23 @@ func (c *Context) GoCtx() goctx.Context {
 
 // StoreQueryFeedback stores the query feedback.
 func (c *Context) StoreQueryFeedback(_ interface{}) {}
+
+// StmtCommit implements the context.Context interface.
+func (c *Context) StmtCommit() {
+}
+
+// StmtRollback implements the context.Context interface.
+func (c *Context) StmtRollback() {
+}
+
+// StmtGetMutation implements the context.Context interface.
+func (c *Context) StmtGetMutation(tableID int64) *binlog.TableMutation {
+	return nil
+}
+
+// StmtAddDirtyTableOP implements the context.Context interface.
+func (c *Context) StmtAddDirtyTableOP(op int, tid int64, handle int64, row []types.Datum) {
+}
 
 // NewContext creates a new mocked context.Context.
 func NewContext() *Context {

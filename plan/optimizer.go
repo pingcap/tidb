@@ -53,7 +53,7 @@ var optRuleList = []logicalOptRule{
 
 // logicalOptRule means a logical optimizing rule, which contains decorrelate, ppd, column pruning, etc.
 type logicalOptRule interface {
-	optimize(LogicalPlan, context.Context) (LogicalPlan, error)
+	optimize(LogicalPlan) (LogicalPlan, error)
 }
 
 // Optimize does optimization and creates a Plan.
@@ -79,7 +79,7 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 	}
 
 	if logic, ok := p.(LogicalPlan); ok {
-		return doOptimize(builder.optFlag, logic, ctx)
+		return doOptimize(builder.optFlag, logic)
 	}
 	if execPlan, ok := p.(*Execute); ok {
 		err := execPlan.optimizePreparedPlan(ctx, is)
@@ -112,8 +112,8 @@ func checkPrivilege(pm privilege.Manager, vs []visitInfo) bool {
 	return true
 }
 
-func doOptimize(flag uint64, logic LogicalPlan, ctx context.Context) (PhysicalPlan, error) {
-	logic, err := logicalOptimize(flag, logic, ctx)
+func doOptimize(flag uint64, logic LogicalPlan) (PhysicalPlan, error) {
+	logic, err := logicalOptimize(flag, logic)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -128,7 +128,7 @@ func doOptimize(flag uint64, logic LogicalPlan, ctx context.Context) (PhysicalPl
 	return finalPlan, nil
 }
 
-func logicalOptimize(flag uint64, logic LogicalPlan, ctx context.Context) (LogicalPlan, error) {
+func logicalOptimize(flag uint64, logic LogicalPlan) (LogicalPlan, error) {
 	var err error
 	for i, rule := range optRuleList {
 		// The order of flags is same as the order of optRule in the list.
@@ -137,7 +137,7 @@ func logicalOptimize(flag uint64, logic LogicalPlan, ctx context.Context) (Logic
 		if flag&(1<<uint(i)) == 0 {
 			continue
 		}
-		logic, err = rule.optimize(logic, ctx)
+		logic, err = rule.optimize(logic)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -162,7 +162,7 @@ func existsCartesianProduct(p LogicalPlan) bool {
 		return join.JoinType == InnerJoin || join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin
 	}
 	for _, child := range p.Children() {
-		if existsCartesianProduct(child.(LogicalPlan)) {
+		if existsCartesianProduct(child) {
 			return true
 		}
 	}
@@ -171,15 +171,15 @@ func existsCartesianProduct(p LogicalPlan) bool {
 
 // Optimizer error codes.
 const (
-	CodeOperandColumns      terror.ErrCode = 1
-	CodeInvalidWildCard                    = 3
-	CodeUnsupported                        = 4
-	CodeInvalidGroupFuncUse                = 5
-	CodeStmtNotFound                       = 7
-	CodeWrongParamCount                    = 8
-	CodeSchemaChanged                      = 9
+	CodeOperandColumns  terror.ErrCode = 1
+	CodeInvalidWildCard                = 3
+	CodeUnsupported                    = 4
+	CodeStmtNotFound                   = 7
+	CodeWrongParamCount                = 8
+	CodeSchemaChanged                  = 9
 
 	// MySQL error code.
+	CodeInvalidGroupFuncUse  = mysql.ErrInvalidGroupFuncUse
 	CodeIllegalReference     = mysql.ErrIllegalReference
 	CodeNoDB                 = mysql.ErrNoDB
 	CodeUnknownExplainFormat = mysql.ErrUnknownExplainFormat

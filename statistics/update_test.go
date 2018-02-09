@@ -14,12 +14,14 @@
 package statistics_test
 
 import (
+	"fmt"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -268,6 +270,11 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a int)")
 
+	statistics.AutoAnalyzeMinCnt = 0
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = 1000
+	}()
+
 	do := s.do
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -363,4 +370,35 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 	h.DumpStatsDeltaToKV()
 	feedback := h.GetQueryFeedback()
 	c.Assert(len(feedback), Equals, 0)
+}
+
+func (s *testStatsUpdateSuite) TestOutOfOrderUpdate(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (a int, b int)")
+	testKit.MustExec("insert into t values (1,2)")
+
+	do := s.do
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := tbl.Meta()
+	h := do.StatsHandle()
+	h.HandleDDLEvent(<-h.DDLEventCh())
+
+	// Simulate the case that another tidb has inserted some value, but delta info has not been dumped to kv yet.
+	testKit.MustExec("insert into t values (2,2),(4,5)")
+	c.Assert(h.DumpStatsDeltaToKV(), IsNil)
+	testKit.MustExec(fmt.Sprintf("update mysql.stats_meta set count = 1 where table_id = %d", tableInfo.ID))
+
+	testKit.MustExec("delete from t")
+	c.Assert(h.DumpStatsDeltaToKV(), IsNil)
+	testKit.MustQuery("select count from mysql.stats_meta").Check(testkit.Rows("1"))
+
+	// Now another tidb has updated the delta info.
+	testKit.MustExec(fmt.Sprintf("update mysql.stats_meta set count = 3 where table_id = %d", tableInfo.ID))
+
+	c.Assert(h.DumpStatsDeltaToKV(), IsNil)
+	testKit.MustQuery("select count from mysql.stats_meta").Check(testkit.Rows("0"))
 }

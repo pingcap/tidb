@@ -15,14 +15,13 @@ package plan
 
 import (
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
 )
 
 type buildKeySolver struct{}
 
-func (s *buildKeySolver) optimize(lp LogicalPlan, _ context.Context) (LogicalPlan, error) {
+func (s *buildKeySolver) optimize(lp LogicalPlan) (LogicalPlan, error) {
 	lp.buildKeyInfo()
 	return lp, nil
 }
@@ -129,7 +128,7 @@ func (p *LogicalProjection) buildKeyInfo() {
 func (p *LogicalJoin) buildKeyInfo() {
 	p.schema.Keys = nil
 	p.baseLogicalPlan.buildKeyInfo()
-	p.maxOneRow = p.children[0].(LogicalPlan).MaxOneRow() && p.children[1].(LogicalPlan).MaxOneRow()
+	p.maxOneRow = p.children[0].MaxOneRow() && p.children[1].MaxOneRow()
 	switch p.JoinType {
 	case SemiJoin, LeftOuterSemiJoin, AntiSemiJoin, AntiLeftOuterSemiJoin:
 		p.schema.Keys = p.children[0].Schema().Clone().Keys

@@ -107,15 +107,14 @@ type builtinInIntSig struct {
 }
 
 func (b *builtinInIntSig) evalInt(row types.Row) (int64, bool, error) {
-	sc, args := b.ctx.GetSessionVars().StmtCtx, b.getArgs()
-	arg0, isNull0, err := args[0].EvalInt(row, sc)
+	arg0, isNull0, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull0 || err != nil {
 		return 0, isNull0, errors.Trace(err)
 	}
-	isUnsigned0 := mysql.HasUnsignedFlag(args[0].GetType().Flag)
+	isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
 	var hasNull bool
-	for _, arg := range args[1:] {
-		evaledArg, isNull, err := arg.EvalInt(row, sc)
+	for _, arg := range b.args[1:] {
+		evaledArg, isNull, err := arg.EvalInt(b.ctx, row)
 		if err != nil {
 			return 0, true, errors.Trace(err)
 		}
@@ -151,14 +150,13 @@ type builtinInStringSig struct {
 }
 
 func (b *builtinInStringSig) evalInt(row types.Row) (int64, bool, error) {
-	sc, args := b.ctx.GetSessionVars().StmtCtx, b.getArgs()
-	arg0, isNull0, err := args[0].EvalString(row, sc)
+	arg0, isNull0, err := b.args[0].EvalString(b.ctx, row)
 	if isNull0 || err != nil {
 		return 0, isNull0, errors.Trace(err)
 	}
 	var hasNull bool
-	for _, arg := range args[1:] {
-		evaledArg, isNull, err := arg.EvalString(row, sc)
+	for _, arg := range b.args[1:] {
+		evaledArg, isNull, err := arg.EvalString(b.ctx, row)
 		if err != nil {
 			return 0, true, errors.Trace(err)
 		}
@@ -179,14 +177,13 @@ type builtinInRealSig struct {
 }
 
 func (b *builtinInRealSig) evalInt(row types.Row) (int64, bool, error) {
-	sc, args := b.ctx.GetSessionVars().StmtCtx, b.getArgs()
-	arg0, isNull0, err := args[0].EvalReal(row, sc)
+	arg0, isNull0, err := b.args[0].EvalReal(b.ctx, row)
 	if isNull0 || err != nil {
 		return 0, isNull0, errors.Trace(err)
 	}
 	var hasNull bool
-	for _, arg := range args[1:] {
-		evaledArg, isNull, err := arg.EvalReal(row, sc)
+	for _, arg := range b.args[1:] {
+		evaledArg, isNull, err := arg.EvalReal(b.ctx, row)
 		if err != nil {
 			return 0, true, errors.Trace(err)
 		}
@@ -207,14 +204,13 @@ type builtinInDecimalSig struct {
 }
 
 func (b *builtinInDecimalSig) evalInt(row types.Row) (int64, bool, error) {
-	sc, args := b.ctx.GetSessionVars().StmtCtx, b.getArgs()
-	arg0, isNull0, err := args[0].EvalDecimal(row, sc)
+	arg0, isNull0, err := b.args[0].EvalDecimal(b.ctx, row)
 	if isNull0 || err != nil {
 		return 0, isNull0, errors.Trace(err)
 	}
 	var hasNull bool
-	for _, arg := range args[1:] {
-		evaledArg, isNull, err := arg.EvalDecimal(row, sc)
+	for _, arg := range b.args[1:] {
+		evaledArg, isNull, err := arg.EvalDecimal(b.ctx, row)
 		if err != nil {
 			return 0, true, errors.Trace(err)
 		}
@@ -235,14 +231,13 @@ type builtinInTimeSig struct {
 }
 
 func (b *builtinInTimeSig) evalInt(row types.Row) (int64, bool, error) {
-	sc, args := b.ctx.GetSessionVars().StmtCtx, b.getArgs()
-	arg0, isNull0, err := args[0].EvalTime(row, sc)
+	arg0, isNull0, err := b.args[0].EvalTime(b.ctx, row)
 	if isNull0 || err != nil {
 		return 0, isNull0, errors.Trace(err)
 	}
 	var hasNull bool
-	for _, arg := range args[1:] {
-		evaledArg, isNull, err := arg.EvalTime(row, sc)
+	for _, arg := range b.args[1:] {
+		evaledArg, isNull, err := arg.EvalTime(b.ctx, row)
 		if err != nil {
 			return 0, true, errors.Trace(err)
 		}
@@ -263,14 +258,13 @@ type builtinInDurationSig struct {
 }
 
 func (b *builtinInDurationSig) evalInt(row types.Row) (int64, bool, error) {
-	sc, args := b.ctx.GetSessionVars().StmtCtx, b.getArgs()
-	arg0, isNull0, err := args[0].EvalDuration(row, sc)
+	arg0, isNull0, err := b.args[0].EvalDuration(b.ctx, row)
 	if isNull0 || err != nil {
 		return 0, isNull0, errors.Trace(err)
 	}
 	var hasNull bool
-	for _, arg := range args[1:] {
-		evaledArg, isNull, err := arg.EvalDuration(row, sc)
+	for _, arg := range b.args[1:] {
+		evaledArg, isNull, err := arg.EvalDuration(b.ctx, row)
 		if err != nil {
 			return 0, true, errors.Trace(err)
 		}
@@ -291,14 +285,13 @@ type builtinInJSONSig struct {
 }
 
 func (b *builtinInJSONSig) evalInt(row types.Row) (int64, bool, error) {
-	sc, args := b.ctx.GetSessionVars().StmtCtx, b.getArgs()
-	arg0, isNull0, err := args[0].EvalJSON(row, sc)
+	arg0, isNull0, err := b.args[0].EvalJSON(b.ctx, row)
 	if isNull0 || err != nil {
 		return 0, isNull0, errors.Trace(err)
 	}
 	var hasNull bool
-	for _, arg := range args[1:] {
-		evaledArg, isNull, err := arg.EvalJSON(row, sc)
+	for _, arg := range b.args[1:] {
+		evaledArg, isNull, err := arg.EvalJSON(b.ctx, row)
 		if err != nil {
 			return 0, true, errors.Trace(err)
 		}
@@ -362,12 +355,11 @@ type builtinSetVarSig struct {
 func (b *builtinSetVarSig) evalString(row types.Row) (res string, isNull bool, err error) {
 	var varName string
 	sessionVars := b.ctx.GetSessionVars()
-	sc := sessionVars.StmtCtx
-	varName, isNull, err = b.args[0].EvalString(row, sc)
+	varName, isNull, err = b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", isNull, errors.Trace(err)
 	}
-	res, isNull, err = b.args[1].EvalString(row, sc)
+	res, isNull, err = b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", isNull, errors.Trace(err)
 	}
@@ -399,8 +391,7 @@ type builtinGetVarSig struct {
 
 func (b *builtinGetVarSig) evalString(row types.Row) (string, bool, error) {
 	sessionVars := b.ctx.GetSessionVars()
-	sc := sessionVars.StmtCtx
-	varName, isNull, err := b.args[0].EvalString(row, sc)
+	varName, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", isNull, errors.Trace(err)
 	}
@@ -627,9 +618,7 @@ type builtinBitCountSig struct {
 // evalInt evals BIT_COUNT(N).
 // See https://dev.mysql.com/doc/refman/5.7/en/bit-functions.html#function_bit-count
 func (b *builtinBitCountSig) evalInt(row types.Row) (int64, bool, error) {
-	sc := b.ctx.GetSessionVars().StmtCtx
-
-	n, isNull, err := b.args[0].EvalInt(row, sc)
+	n, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if err != nil || isNull {
 		if err != nil && types.ErrOverflow.Equal(err) {
 			return 64, false, nil
@@ -667,8 +656,7 @@ type builtinGetParamStringSig struct {
 
 func (b *builtinGetParamStringSig) evalString(row types.Row) (string, bool, error) {
 	sessionVars := b.ctx.GetSessionVars()
-	sc := sessionVars.StmtCtx
-	idx, isNull, err := b.args[0].EvalInt(row, sc)
+	idx, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return "", isNull, errors.Trace(err)
 	}

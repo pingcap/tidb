@@ -85,7 +85,7 @@ type PrepareExec struct {
 // NewPrepareExec creates a new PrepareExec.
 func NewPrepareExec(ctx context.Context, is infoschema.InfoSchema, sqlTxt string) *PrepareExec {
 	return &PrepareExec{
-		baseExecutor: newBaseExecutor(nil, ctx),
+		baseExecutor: newBaseExecutor(nil, ctx, "PrepareStmt"),
 		is:           is,
 		sqlText:      sqlTxt,
 	}
@@ -153,7 +153,7 @@ func (e *PrepareExec) DoPrepare() error {
 		Params:        sorter.markers,
 		SchemaVersion: e.is.SchemaMetaVersion(),
 	}
-	prepared.UseCache = plan.PreparedPlanCacheEnabled && plan.Cacheable(stmt)
+	prepared.UseCache = plan.PreparedPlanCacheEnabled && (vars.ImportingData || plan.Cacheable(stmt))
 
 	// We try to build the real statement of preparedStmt.
 	for i := range prepared.Params {
@@ -222,7 +222,8 @@ func (e *ExecuteExec) Build() error {
 	}
 	e.stmtExec = stmtExec
 	ResetStmtCtx(e.ctx, e.stmt)
-	stmtCount(e.stmt, e.plan, e.ctx.GetSessionVars().InRestrictedSQL)
+	CountStmtNode(e.stmt, e.ctx.GetSessionVars().InRestrictedSQL)
+	logExpensiveQuery(e.stmt, e.plan)
 	return nil
 }
 

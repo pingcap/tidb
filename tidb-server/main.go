@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/gcworker"
 	"github.com/pingcap/tidb/terror"
@@ -80,7 +81,7 @@ var (
 	configPath = flag.String(nmConfig, "", "config file path")
 
 	// Base
-	store        = flag.String(nmStore, "mocktikv", "registered store name, [memory, goleveldb, boltdb, tikv, mocktikv]")
+	store        = flag.String(nmStore, "mocktikv", "registered store name, [tikv, mocktikv]")
 	storePath    = flag.String(nmStorePath, "/tmp/tidb", "tidb storage path")
 	host         = flag.String(nmHost, "0.0.0.0", "tidb server host")
 	port         = flag.String(nmPort, "4000", "tidb server port")
@@ -152,7 +153,7 @@ func registerStores() {
 	err := tidb.RegisterStore("tikv", tikv.Driver{})
 	terror.MustNil(err)
 	tikv.NewGCHandlerFunc = gcworker.NewGCWorker
-	err = tidb.RegisterStore("mocktikv", tikv.MockDriver{})
+	err = tidb.RegisterStore("mocktikv", mockstore.MockDriver{})
 	terror.MustNil(err)
 }
 

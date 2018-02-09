@@ -57,6 +57,17 @@ func NewChunkWithCapacity(fields []*types.FieldType, cap int) *Chunk {
 	return chk
 }
 
+// MemoryUsage returns the total memory usage of a Chunk in B.
+// We ignore the size of column.length and column.nullCount
+// since they have little effect of the total memory usage.
+func (c *Chunk) MemoryUsage() (sum int64) {
+	for _, col := range c.columns {
+		curColMemUsage := int64(unsafe.Sizeof(*col)) + int64(cap(col.nullBitmap)) + int64(cap(col.offsets)*4) + int64(cap(col.data)) + int64(cap(col.elemBuf))
+		sum += curColMemUsage
+	}
+	return
+}
+
 // addFixedLenColumn adds a fixed length column with elemLen and initial data capacity.
 func (c *Chunk) addFixedLenColumn(elemLen, initCap int) {
 	c.columns = append(c.columns, &column{
@@ -141,16 +152,6 @@ func (c *Chunk) NumRows() int {
 // GetRow gets the Row in the chunk with the row index.
 func (c *Chunk) GetRow(idx int) Row {
 	return Row{c: c, idx: idx}
-}
-
-// Begin returns the first valid Row in the Chunk.
-func (c *Chunk) Begin() Row {
-	return c.GetRow(0)
-}
-
-// End returns a Row referring to the past-the-end element in the Chunk.
-func (c *Chunk) End() Row {
-	return c.GetRow(c.NumRows())
 }
 
 // AppendRow appends a row to the chunk.
@@ -465,11 +466,6 @@ func (r Row) Idx() int {
 // Len returns the number of values in the row.
 func (r Row) Len() int {
 	return r.c.NumCols()
-}
-
-// Next returns the next valid Row in the same Chunk.
-func (r Row) Next() (next Row) {
-	return Row{c: r.c, idx: r.idx + 1}
 }
 
 // GetInt64 returns the int64 value with the colIdx.

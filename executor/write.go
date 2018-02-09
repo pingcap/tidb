@@ -148,10 +148,9 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 		return false, errors.Trace(err)
 	}
 
-	dirtyDB := getDirtyDB(ctx)
 	tid := t.Meta().ID
-	dirtyDB.deleteRow(tid, h)
-	dirtyDB.addRow(tid, h, newData)
+	ctx.StmtAddDirtyTableOP(DirtyTableDeleteRow, tid, h, nil)
+	ctx.StmtAddDirtyTableOP(DirtyTableAddRow, tid, h, newData)
 
 	if onDup {
 		sc.AddAffectedRows(2)
@@ -279,6 +278,7 @@ func (e *DeleteExec) deleteSingleTable(goCtx goctx.Context) error {
 	batchSize := e.ctx.GetSessionVars().DMLBatchSize
 	for {
 		if batchDelete && rowCount >= batchSize {
+			e.ctx.StmtCommit()
 			if err := e.ctx.NewTxn(); err != nil {
 				// We should return a special error for batch insert.
 				return ErrBatchInsertFail.Gen("BatchDelete failed with error: %v", err)
@@ -334,17 +334,19 @@ func (e *DeleteExec) deleteSingleTableByChunk(goCtx goctx.Context) error {
 	fields := e.children[0].retTypes()
 	for {
 		chk := e.children[0].newChunk()
+		iter := chunk.NewIterator4Chunk(chk)
+
 		err := e.children[0].NextChunk(goCtx, chk)
 		if err != nil {
 			return errors.Trace(err)
 		}
-
 		if chk.NumRows() == 0 {
 			break
 		}
 
-		for chunkRow := chk.Begin(); chunkRow != chk.End(); chunkRow = chunkRow.Next() {
+		for chunkRow := iter.Begin(); chunkRow != iter.End(); chunkRow = iter.Next() {
 			if batchDelete && rowCount >= batchDMLSize {
+				e.ctx.StmtCommit()
 				if err = e.ctx.NewTxn(); err != nil {
 					// We should return a special error for batch insert.
 					return ErrBatchInsertFail.Gen("BatchDelete failed with error: %v", err)
@@ -412,16 +414,17 @@ func (e *DeleteExec) deleteMultiTablesByChunk(goCtx goctx.Context) error {
 	fields := e.children[0].retTypes()
 	for {
 		chk := e.children[0].newChunk()
+		iter := chunk.NewIterator4Chunk(chk)
+
 		err := e.children[0].NextChunk(goCtx, chk)
 		if err != nil {
 			return errors.Trace(err)
 		}
-
 		if chk.NumRows() == 0 {
 			break
 		}
 
-		for joinedChunkRow := chk.Begin(); joinedChunkRow != chk.End(); joinedChunkRow = joinedChunkRow.Next() {
+		for joinedChunkRow := iter.Begin(); joinedChunkRow != iter.End(); joinedChunkRow = iter.Next() {
 			joinedDatumRow := joinedChunkRow.GetDatumRow(fields)
 			e.composeTblRowMap(tblRowMap, colPosInfos, joinedDatumRow)
 		}
@@ -443,12 +446,21 @@ func (e *DeleteExec) removeRowsInTblRowMap(tblRowMap tableRowMapType) error {
 	return nil
 }
 
+const (
+	// DirtyTableAddRow is the constant for dirty table operation type.
+	DirtyTableAddRow = iota
+	// DirtyTableDeleteRow is the constant for dirty table operation type.
+	DirtyTableDeleteRow
+	// DirtyTableTruncate is the constant for dirty table operation type.
+	DirtyTableTruncate
+)
+
 func (e *DeleteExec) removeRow(ctx context.Context, t table.Table, h int64, data []types.Datum) error {
 	err := t.RemoveRecord(ctx, h, data)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	getDirtyDB(ctx).deleteRow(t.Meta().ID, h)
+	ctx.StmtAddDirtyTableOP(DirtyTableDeleteRow, t.Meta().ID, h, nil)
 	ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.Meta().ID, -1, 1)
 	return nil
@@ -466,7 +478,7 @@ func (e *DeleteExec) Open(goCtx goctx.Context) error {
 
 // NewLoadDataInfo returns a LoadDataInfo structure, and it's only used for tests now.
 func NewLoadDataInfo(row []types.Datum, ctx context.Context, tbl table.Table, cols []*table.Column) *LoadDataInfo {
-	insertVal := &InsertValues{baseExecutor: newBaseExecutor(nil, ctx), Table: tbl}
+	insertVal := &InsertValues{baseExecutor: newBaseExecutor(nil, ctx, "InsertValues"), Table: tbl}
 	return &LoadDataInfo{
 		row:       row,
 		insertVal: insertVal,
@@ -489,9 +501,9 @@ type LoadDataInfo struct {
 	columns    []*table.Column
 }
 
-// SetBatchCount sets the number of rows to insert in a batch.
-func (e *LoadDataInfo) SetBatchCount(limit int64) {
-	e.insertVal.batchRows = limit
+// SetMaxRowsInBatch sets the max number of rows to insert in a batch.
+func (e *LoadDataInfo) SetMaxRowsInBatch(limit uint64) {
+	e.insertVal.maxRowsInBatch = limit
 }
 
 // getValidData returns prevData and curData that starts from starting symbol.
@@ -606,6 +618,7 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 		isEOF = true
 		prevData, curData = curData, prevData
 	}
+	rows := make([][]types.Datum, 0, e.insertVal.maxRowsInBatch)
 	for len(curData) > 0 {
 		line, curData, hasStarting = e.getLine(prevData, curData)
 		prevData = nil
@@ -631,14 +644,21 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 		if err != nil {
 			return nil, false, errors.Trace(err)
 		}
-		e.insertData(cols)
-		e.insertVal.currRow++
-		if e.insertVal.batchRows != 0 && e.insertVal.currRow%e.insertVal.batchRows == 0 {
+		rows = append(rows, e.colsToRow(cols))
+		e.insertVal.rowCount++
+		if e.insertVal.maxRowsInBatch != 0 && e.insertVal.rowCount%e.insertVal.maxRowsInBatch == 0 {
 			reachLimit = true
 			log.Infof("This insert rows has reached the batch %d, current total rows %d",
-				e.insertVal.batchRows, e.insertVal.currRow)
+				e.insertVal.maxRowsInBatch, e.insertVal.rowCount)
 			break
 		}
+	}
+	rows, err := batchMarkDupRows(e.Ctx, e.Table, rows)
+	if err != nil {
+		return nil, reachLimit, errors.Trace(err)
+	}
+	for _, row := range rows {
+		e.insertData(row)
 	}
 	if e.insertVal.lastInsertID != 0 {
 		e.insertVal.ctx.GetSessionVars().SetLastInsertID(e.insertVal.lastInsertID)
@@ -715,7 +735,7 @@ func escapeChar(c byte) byte {
 	return c
 }
 
-func (e *LoadDataInfo) insertData(cols []string) {
+func (e *LoadDataInfo) colsToRow(cols []string) types.DatumRow {
 	for i := 0; i < len(e.row); i++ {
 		if i >= len(cols) {
 			e.row[i].SetString("")
@@ -727,9 +747,16 @@ func (e *LoadDataInfo) insertData(cols []string) {
 	if err != nil {
 		warnLog := fmt.Sprintf("Load Data: insert data:%v failed:%v", e.row, errors.ErrorStack(err))
 		e.insertVal.handleLoadDataWarnings(err, warnLog)
+		return nil
+	}
+	return row
+}
+
+func (e *LoadDataInfo) insertData(row types.DatumRow) {
+	if row == nil {
 		return
 	}
-	_, err = e.Table.AddRecord(e.insertVal.ctx, row, false)
+	_, err := e.Table.AddRecord(e.insertVal.ctx, row, false)
 	if err != nil {
 		warnLog := fmt.Sprintf("Load Data: insert data:%v failed:%v", row, errors.ErrorStack(err))
 		e.insertVal.handleLoadDataWarnings(err, warnLog)
@@ -817,8 +844,8 @@ type defaultVal struct {
 type InsertValues struct {
 	baseExecutor
 
-	currRow               int64
-	batchRows             int64
+	rowCount              uint64
+	maxRowsInBatch        uint64
 	lastInsertID          uint64
 	needFillDefaultValues bool
 
@@ -853,22 +880,23 @@ type InsertExec struct {
 func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error) {
 	// If tidb_batch_insert is ON and not in a transaction, we could use BatchInsert mode.
 	sessVars := e.ctx.GetSessionVars()
+	defer sessVars.CleanBuffers()
 	batchInsert := sessVars.BatchInsert && !sessVars.InTxn()
 	batchSize := sessVars.DMLBatchSize
 
 	txn := e.ctx.Txn()
 	rowCount := 0
-
-	sessVars.BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
-	defer sessVars.CleanBuffers()
-
+	writeBufs := sessVars.GetWriteStmtBufs()
+	if !sessVars.ImportingData {
+		writeBufs.BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
+	}
 	// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
 	// For example, without IGNORE, a row that duplicates an existing UNIQUE index or PRIMARY KEY value in
 	// the table causes a duplicate-key error and the statement is aborted. With IGNORE, the row is discarded and no error occurs.
 	// Using BatchGet in insert ignore to mark rows as duplicated before we add records to the table.
 	if e.IgnoreErr {
 		var err error
-		rows, err = e.batchMarkDupRows(rows)
+		rows, err = batchMarkDupRows(e.ctx, e.Table, rows)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -880,13 +908,16 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 			continue
 		}
 		if batchInsert && rowCount >= batchSize {
+			e.ctx.StmtCommit()
 			if err := e.ctx.NewTxn(); err != nil {
 				// We should return a special error for batch insert.
 				return nil, ErrBatchInsertFail.Gen("BatchInsert failed with error: %v", err)
 			}
 			txn = e.ctx.Txn()
 			rowCount = 0
-			sessVars.BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
+			if !sessVars.ImportingData {
+				writeBufs.BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
+			}
 		}
 		if len(e.OnDuplicate) == 0 && !e.IgnoreErr {
 			txn.SetOption(kv.PresumeKeyNotExists, nil)
@@ -895,7 +926,7 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 		txn.DelOption(kv.PresumeKeyNotExists)
 		if err == nil {
 			if !sessVars.ImportingData {
-				getDirtyDB(e.ctx).addRow(e.Table.Meta().ID, h, row)
+				e.ctx.StmtAddDirtyTableOP(DirtyTableAddRow, e.Table.Meta().ID, h, row)
 			}
 			rowCount++
 			continue
@@ -925,12 +956,12 @@ type keyWithDupError struct {
 	dupErr error
 }
 
-func (e *InsertExec) getRecordIDs(rows [][]types.Datum) ([]int64, error) {
+func getRecordIDs(ctx context.Context, t table.Table, rows [][]types.Datum) ([]int64, error) {
 	recordIDs := make([]int64, 0, len(rows))
-	if e.Table.Meta().PKIsHandle {
+	if t.Meta().PKIsHandle {
 		var handleCol *table.Column
-		for _, col := range e.Table.Cols() {
-			if col.IsPKHandleColumn(e.Table.Meta()) {
+		for _, col := range t.Cols() {
+			if col.IsPKHandleColumn(t.Meta()) {
 				handleCol = col
 				break
 			}
@@ -940,7 +971,7 @@ func (e *InsertExec) getRecordIDs(rows [][]types.Datum) ([]int64, error) {
 		}
 	} else {
 		for range rows {
-			recordID, err := e.Table.AllocAutoID(e.ctx)
+			recordID, err := t.AllocAutoID(ctx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -952,9 +983,9 @@ func (e *InsertExec) getRecordIDs(rows [][]types.Datum) ([]int64, error) {
 
 // getKeysNeedCheck gets keys converted from to-be-insert rows to record keys and unique index keys,
 // which need to be checked whether they are duplicate keys.
-func (e *InsertExec) getKeysNeedCheck(rows [][]types.Datum) ([][]keyWithDupError, error) {
+func getKeysNeedCheck(ctx context.Context, t table.Table, rows [][]types.Datum) ([][]keyWithDupError, error) {
 	nUnique := 0
-	for _, v := range e.Table.WritableIndices() {
+	for _, v := range t.WritableIndices() {
 		if v.Meta().Unique {
 			nUnique++
 		}
@@ -962,7 +993,7 @@ func (e *InsertExec) getKeysNeedCheck(rows [][]types.Datum) ([][]keyWithDupError
 	rowWithKeys := make([][]keyWithDupError, 0, len(rows))
 
 	// get recordIDs
-	recordIDs, err := e.getRecordIDs(rows)
+	recordIDs, err := getRecordIDs(ctx, t, rows)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -970,24 +1001,24 @@ func (e *InsertExec) getKeysNeedCheck(rows [][]types.Datum) ([][]keyWithDupError
 	for i, row := range rows {
 		keysWithErr := make([]keyWithDupError, 0, nUnique+1)
 		// append record keys and errors
-		if e.Table.Meta().PKIsHandle {
-			keysWithErr = append(keysWithErr, keyWithDupError{e.Table.RecordKey(recordIDs[i]), kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key 'PRIMARY'", recordIDs[i])})
+		if t.Meta().PKIsHandle {
+			keysWithErr = append(keysWithErr, keyWithDupError{t.RecordKey(recordIDs[i]), kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key 'PRIMARY'", recordIDs[i])})
 		}
 
 		// append unique keys and errors
-		for _, v := range e.Table.WritableIndices() {
+		for _, v := range t.WritableIndices() {
 			if !v.Meta().Unique {
 				continue
 			}
 			var colVals []types.Datum
-			colVals, err = v.FetchValues(row)
+			colVals, err = v.FetchValues(row, nil)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			var key []byte
 			var distinct bool
-			key, distinct, err = v.GenIndexKey(e.ctx.GetSessionVars().StmtCtx,
-				colVals, recordIDs[i])
+			key, distinct, err = v.GenIndexKey(ctx.GetSessionVars().StmtCtx,
+				colVals, recordIDs[i], nil)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -1004,9 +1035,9 @@ func (e *InsertExec) getKeysNeedCheck(rows [][]types.Datum) ([][]keyWithDupError
 // batchMarkDupRows marks rows with duplicate errors as nil.
 // All duplicate rows were marked and appended as duplicate warnings
 // to the statement context in batch.
-func (e *InsertExec) batchMarkDupRows(rows [][]types.Datum) ([][]types.Datum, error) {
+func batchMarkDupRows(ctx context.Context, t table.Table, rows [][]types.Datum) ([][]types.Datum, error) {
 	// get keys need to be checked
-	rowWithKeys, err := e.getKeysNeedCheck(rows)
+	rowWithKeys, err := getKeysNeedCheck(ctx, t, rows)
 
 	// batch get values
 	nKeys := 0
@@ -1019,7 +1050,7 @@ func (e *InsertExec) batchMarkDupRows(rows [][]types.Datum) ([][]types.Datum, er
 			batchKeys = append(batchKeys, k.key)
 		}
 	}
-	values, err := e.ctx.Txn().GetSnapshot().BatchGet(batchKeys)
+	values, err := ctx.Txn().GetSnapshot().BatchGet(batchKeys)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1030,7 +1061,7 @@ func (e *InsertExec) batchMarkDupRows(rows [][]types.Datum) ([][]types.Datum, er
 			if _, found := values[string(k.key)]; found {
 				// If duplicate keys were found in BatchGet, mark row = nil.
 				rows[i] = nil
-				e.ctx.GetSessionVars().StmtCtx.AppendWarning(k.dupErr)
+				ctx.GetSessionVars().StmtCtx.AppendWarning(k.dupErr)
 				break
 			}
 		}
@@ -1045,7 +1076,7 @@ func (e *InsertExec) batchMarkDupRows(rows [][]types.Datum) ([][]types.Datum, er
 	}
 
 	// this statement was already been checked
-	e.ctx.GetSessionVars().StmtCtx.BatchCheck = true
+	ctx.GetSessionVars().StmtCtx.BatchCheck = true
 	return rows, nil
 }
 
@@ -1237,7 +1268,7 @@ func (e *InsertValues) getRows(cols []*table.Column, ignoreErr bool) (rows [][]t
 		if err = e.checkValueCount(length, len(list), len(e.GenColumns), i, cols); err != nil {
 			return nil, errors.Trace(err)
 		}
-		e.currRow = int64(i)
+		e.rowCount = uint64(i)
 		rows[i], err = e.getRow(cols, list, ignoreErr)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -1289,7 +1320,7 @@ func (e *InsertValues) fillDefaultValues(row []types.Datum, hasValue []bool, ign
 		} else if mysql.HasAutoIncrementFlag(c.Flag) {
 			row[i] = table.GetZeroValue(c.ToInfo())
 		} else {
-			row[i], err = table.GetColDefaultValue(e.ctx, c.ToInfo())
+			row[i], err = e.getColDefaultValue(i, c)
 			hasValue[c.Offset] = true
 			if table.ErrNoDefaultValue.Equal(err) {
 				row[i] = table.GetZeroValue(c.ToInfo())
@@ -1317,7 +1348,7 @@ func (e *InsertValues) getRowsSelect(goCtx goctx.Context, cols []*table.Column, 
 		if innerRow == nil {
 			break
 		}
-		e.currRow = int64(len(rows))
+		e.rowCount = uint64(len(rows))
 		row, err := e.fillRowData(cols, innerRow, ignoreErr)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -1337,6 +1368,8 @@ func (e *InsertValues) getRowsSelectChunk(goCtx goctx.Context, cols []*table.Col
 	fields := selectExec.retTypes()
 	for {
 		chk := selectExec.newChunk()
+		iter := chunk.NewIterator4Chunk(chk)
+
 		err := selectExec.NextChunk(goCtx, chk)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -1345,9 +1378,9 @@ func (e *InsertValues) getRowsSelectChunk(goCtx goctx.Context, cols []*table.Col
 			break
 		}
 
-		for innerChunkRow := chk.Begin(); innerChunkRow != chk.End(); innerChunkRow = innerChunkRow.Next() {
+		for innerChunkRow := iter.Begin(); innerChunkRow != iter.End(); innerChunkRow = iter.Next() {
 			innerRow := innerChunkRow.GetDatumRow(fields)
-			e.currRow = int64(len(rows))
+			e.rowCount = uint64(len(rows))
 			row, err := e.fillRowData(cols, innerRow, ignoreErr)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -1516,7 +1549,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(row []types.Datum, i int, c *tab
 			return errors.Trace(err)
 		}
 		// It's compatible with mysql. So it sets last insert id to the first row.
-		if e.currRow == 0 {
+		if e.rowCount == 0 {
 			e.lastInsertID = uint64(recordID)
 		}
 	}
@@ -1612,7 +1645,7 @@ func (e *ReplaceExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, erro
 		row := rows[idx]
 		h, err1 := e.Table.AddRecord(e.ctx, row, false)
 		if err1 == nil {
-			getDirtyDB(e.ctx).addRow(e.Table.Meta().ID, h, row)
+			e.ctx.StmtAddDirtyTableOP(DirtyTableAddRow, e.Table.Meta().ID, h, row)
 			idx++
 			continue
 		}
@@ -1638,7 +1671,7 @@ func (e *ReplaceExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, erro
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
-		getDirtyDB(e.ctx).deleteRow(e.Table.Meta().ID, h)
+		e.ctx.StmtAddDirtyTableOP(DirtyTableDeleteRow, e.Table.Meta().ID, h, nil)
 		e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 	}
 

@@ -13,6 +13,13 @@
 
 package chunk
 
+var (
+	_ Iterator = (*Iterator4Chunk)(nil)
+	_ Iterator = (*iterator4RowPtr)(nil)
+	_ Iterator = (*iterator4List)(nil)
+	_ Iterator = (*iterator4Slice)(nil)
+)
+
 // Iterator is used to iterate a number of rows.
 //
 // for row := it.Begin(); row != it.End(); row = it.Next() {
@@ -30,28 +37,37 @@ type Iterator interface {
 
 	// Len returns the length.
 	Len() int
+
+	// Current returns the current Row.
+	Current() Row
+
+	// ReachEnd reaches the end of iterator.
+	ReachEnd()
 }
 
-// NewSliceIterator returns a Iterator for Row slice.
-func NewSliceIterator(rows []Row) Iterator {
-	return &sliceIterator{rows: rows}
+// NewIterator4Slice returns a Iterator for Row slice.
+func NewIterator4Slice(rows []Row) Iterator {
+	return &iterator4Slice{rows: rows}
 }
 
-type sliceIterator struct {
+type iterator4Slice struct {
 	rows   []Row
 	cursor int
 }
 
-func (it *sliceIterator) Begin() Row {
-	if len(it.rows) == 0 {
+// Begin implements the Iterator interface.
+func (it *iterator4Slice) Begin() Row {
+	if it.Len() == 0 {
 		return it.End()
 	}
 	it.cursor = 1
 	return it.rows[0]
 }
 
-func (it *sliceIterator) Next() Row {
-	if it.cursor == len(it.rows) {
+// Next implements the Iterator interface.
+func (it *iterator4Slice) Next() Row {
+	if len := it.Len(); it.cursor >= len {
+		it.cursor = len + 1
 		return it.End()
 	}
 	row := it.rows[it.cursor]
@@ -59,25 +75,42 @@ func (it *sliceIterator) Next() Row {
 	return row
 }
 
-func (it *sliceIterator) End() Row {
+// Current implements the Iterator interface.
+func (it *iterator4Slice) Current() Row {
+	if it.cursor == 0 || it.cursor > it.Len() {
+		return it.End()
+	}
+	return it.rows[it.cursor-1]
+}
+
+// End implements the Iterator interface.
+func (it *iterator4Slice) End() Row {
 	return Row{}
 }
 
-func (it *sliceIterator) Len() int {
+// ReachEnd implements the Iterator interface.
+func (it *iterator4Slice) ReachEnd() {
+	it.cursor = it.Len() + 1
+}
+
+// Len implements the Iterator interface.
+func (it *iterator4Slice) Len() int {
 	return len(it.rows)
 }
 
-// NewChunkIterator returns a iterator for Chunk.
-func NewChunkIterator(chk *Chunk) Iterator {
-	return &chunkIterator{chk: chk}
+// NewIterator4Chunk returns a iterator for Chunk.
+func NewIterator4Chunk(chk *Chunk) *Iterator4Chunk {
+	return &Iterator4Chunk{chk: chk}
 }
 
-type chunkIterator struct {
+// Iterator4Chunk is used to iterate rows inside a chunk.
+type Iterator4Chunk struct {
 	chk    *Chunk
 	cursor int
 }
 
-func (it *chunkIterator) Begin() Row {
+// Begin implements the Iterator interface.
+func (it *Iterator4Chunk) Begin() Row {
 	if it.chk.NumRows() == 0 {
 		return it.End()
 	}
@@ -85,8 +118,10 @@ func (it *chunkIterator) Begin() Row {
 	return it.chk.GetRow(0)
 }
 
-func (it *chunkIterator) Next() Row {
-	if it.cursor == it.chk.NumRows() {
+// Next implements the Iterator interface.
+func (it *Iterator4Chunk) Next() Row {
+	if it.cursor >= it.chk.NumRows() {
+		it.cursor = it.chk.NumRows() + 1
 		return it.End()
 	}
 	row := it.chk.GetRow(it.cursor)
@@ -94,27 +129,43 @@ func (it *chunkIterator) Next() Row {
 	return row
 }
 
-func (it *chunkIterator) End() Row {
+// Current implements the Iterator interface.
+func (it *Iterator4Chunk) Current() Row {
+	if it.cursor == 0 || it.cursor > it.Len() {
+		return it.End()
+	}
+	return it.chk.GetRow(it.cursor - 1)
+}
+
+// End implements the Iterator interface.
+func (it *Iterator4Chunk) End() Row {
 	return Row{}
 }
 
-func (it *chunkIterator) Len() int {
+// ReachEnd implements the Iterator interface.
+func (it *Iterator4Chunk) ReachEnd() {
+	it.cursor = it.Len() + 1
+}
+
+// Len implements the Iterator interface
+func (it *Iterator4Chunk) Len() int {
 	return it.chk.NumRows()
 }
 
-// NewListIterator returns a Iterator for List.
-func NewListIterator(li *List) Iterator {
-	return &listIterator{li: li}
+// NewIterator4List returns a Iterator for List.
+func NewIterator4List(li *List) Iterator {
+	return &iterator4List{li: li}
 }
 
-type listIterator struct {
+type iterator4List struct {
 	li        *List
 	chkCursor int
 	rowCursor int
 }
 
-func (it *listIterator) Begin() Row {
-	if it.chkCursor == it.li.NumChunks() {
+// Begin implements the Iterator interface.
+func (it *iterator4List) Begin() Row {
+	if it.li.NumChunks() == 0 {
 		return it.End()
 	}
 	chk := it.li.GetChunk(0)
@@ -129,8 +180,10 @@ func (it *listIterator) Begin() Row {
 	return row
 }
 
-func (it *listIterator) Next() Row {
-	if it.chkCursor == it.li.NumChunks() {
+// Next implements the Iterator interface.
+func (it *iterator4List) Next() Row {
+	if it.chkCursor >= it.li.NumChunks() {
+		it.chkCursor = it.li.NumChunks() + 1
 		return it.End()
 	}
 	chk := it.li.GetChunk(it.chkCursor)
@@ -143,35 +196,58 @@ func (it *listIterator) Next() Row {
 	return row
 }
 
-func (it *listIterator) End() Row {
+// Current implements the Iterator interface.
+func (it *iterator4List) Current() Row {
+	if (it.chkCursor == 0 && it.rowCursor == 0) || it.chkCursor > it.li.NumChunks() {
+		return it.End()
+	}
+	if it.rowCursor == 0 {
+		curChk := it.li.GetChunk(it.chkCursor - 1)
+		return curChk.GetRow(curChk.NumRows() - 1)
+	}
+	curChk := it.li.GetChunk(it.chkCursor)
+	return curChk.GetRow(it.rowCursor - 1)
+}
+
+// End implements the Iterator interface.
+func (it *iterator4List) End() Row {
 	return Row{}
 }
 
-func (it *listIterator) Len() int {
+// ReachEnd implements the Iterator interface.
+func (it *iterator4List) ReachEnd() {
+	it.chkCursor = it.li.NumChunks() + 1
+}
+
+// Len implements the Iterator interface.
+func (it *iterator4List) Len() int {
 	return it.li.Len()
 }
 
-// NewRowPtrIterator returns a Iterator for RowPtrs.
-func NewRowPtrIterator(li *List, ptrs []RowPtr) Iterator {
-	return &rowPtrIterator{li: li, ptrs: ptrs}
+// NewIterator4RowPtr returns a Iterator for RowPtrs.
+func NewIterator4RowPtr(li *List, ptrs []RowPtr) Iterator {
+	return &iterator4RowPtr{li: li, ptrs: ptrs}
 }
 
-type rowPtrIterator struct {
+type iterator4RowPtr struct {
 	li     *List
 	ptrs   []RowPtr
 	cursor int
 }
 
-func (it *rowPtrIterator) Begin() Row {
-	if len(it.ptrs) == 0 {
+// Begin implements the Iterator interface.
+func (it *iterator4RowPtr) Begin() Row {
+	if it.Len() == 0 {
 		return it.End()
 	}
 	it.cursor = 1
 	return it.li.GetRow(it.ptrs[0])
 }
 
-func (it *rowPtrIterator) Next() Row {
-	if it.cursor == len(it.ptrs) {
+// Next implements the Iterator interface.
+func (it *iterator4RowPtr) Next() Row {
+	if len := it.Len(); it.cursor >= len {
+		it.cursor = len + 1
 		return it.End()
 	}
 	row := it.li.GetRow(it.ptrs[it.cursor])
@@ -179,10 +255,25 @@ func (it *rowPtrIterator) Next() Row {
 	return row
 }
 
-func (it *rowPtrIterator) End() Row {
+// Current implements the Iterator interface.
+func (it *iterator4RowPtr) Current() Row {
+	if it.cursor == 0 || it.cursor > it.Len() {
+		return it.End()
+	}
+	return it.li.GetRow(it.ptrs[it.cursor-1])
+}
+
+// End implements the Iterator interface.
+func (it *iterator4RowPtr) End() Row {
 	return Row{}
 }
 
-func (it *rowPtrIterator) Len() int {
+// ReachEnd implements the Iterator interface.
+func (it *iterator4RowPtr) ReachEnd() {
+	it.cursor = it.Len() + 1
+}
+
+// Len implements the Iterator interface.
+func (it *iterator4RowPtr) Len() int {
 	return len(it.ptrs)
 }

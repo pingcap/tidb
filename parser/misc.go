@@ -102,6 +102,8 @@ func init() {
 	initTokenByte('\\', int('\\'))
 	initTokenByte('?', paramMarker)
 	initTokenByte('=', eq)
+	initTokenByte('{', int('{'))
+	initTokenByte('}', int('}'))
 
 	initTokenString("||", pipes)
 	initTokenString("&&", andand)
@@ -426,6 +428,7 @@ var tokenMap = map[string]int{
 	"STATS":                    stats,
 	"STATS_BUCKETS":            statsBuckets,
 	"STATS_HISTOGRAMS":         statsHistograms,
+	"STATS_HEALTHY":            statsHealthy,
 	"STATS_META":               statsMeta,
 	"STATS_PERSISTENT":         statsPersistent,
 	"STATUS":                   status,

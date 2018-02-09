@@ -15,11 +15,13 @@ package statistics
 
 import (
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -92,6 +94,19 @@ func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}) {
 	if q.histVersion == 0 || q.actual < 0 || !q.valid {
 		return
 	}
+
+	var rate float64
+	if q.actual == 0 {
+		if q.expected == 0 {
+			rate = 0
+		} else {
+			rate = 1
+		}
+	} else {
+		rate = math.Abs(float64(q.expected-q.actual) / float64(q.actual))
+	}
+	metrics.StatsInaccuracyRate.Observe(rate)
+
 	s.Lock()
 	defer s.Unlock()
 	if len(s.feedback) >= maxQueryFeedBackCount {
@@ -132,7 +147,7 @@ func (h *Handle) NewSessionStatsCollector() *SessionStatsCollector {
 }
 
 // DumpStatsDeltaToKV sweeps the whole list and updates the global map. Then we dumps every table that held in map to KV.
-func (h *Handle) DumpStatsDeltaToKV() {
+func (h *Handle) DumpStatsDeltaToKV() error {
 	h.listHead.Lock()
 	for collector := h.listHead.next; collector != nil; collector = collector.next {
 		collector.tryToRemoveFromList()
@@ -140,36 +155,40 @@ func (h *Handle) DumpStatsDeltaToKV() {
 	}
 	h.listHead.Unlock()
 	for id, item := range h.globalMap {
-		err := h.dumpTableStatDeltaToKV(id, item)
-		if err == nil {
+		updated, err := h.dumpTableStatDeltaToKV(id, item)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if updated {
 			delete(h.globalMap, id)
-		} else {
-			log.Warnf("Error happens when updating stats table, the error message is %s.", err.Error())
 		}
 	}
+	return nil
 }
 
 // dumpTableStatDeltaToKV dumps a single delta with some table to KV and updates the version.
-func (h *Handle) dumpTableStatDeltaToKV(id int64, delta variable.TableDelta) error {
+func (h *Handle) dumpTableStatDeltaToKV(id int64, delta variable.TableDelta) (bool, error) {
 	if delta.Count == 0 {
-		return nil
+		return true, nil
 	}
 	goCtx := goctx.TODO()
 	_, err := h.ctx.(sqlexec.SQLExecutor).Execute(goCtx, "begin")
 	if err != nil {
-		return errors.Trace(err)
+		return false, errors.Trace(err)
 	}
-	op := "+"
+	var sql string
 	if delta.Delta < 0 {
-		op = "-"
-		delta.Delta = -delta.Delta
+		sql = fmt.Sprintf("update mysql.stats_meta set version = %d, count = count - %d, modify_count = modify_count + %d where table_id = %d and count >= %d", h.ctx.Txn().StartTS(), -delta.Delta, delta.Count, id, -delta.Delta)
+	} else {
+		sql = fmt.Sprintf("update mysql.stats_meta set version = %d, count = count + %d, modify_count = modify_count + %d where table_id = %d", h.ctx.Txn().StartTS(), delta.Delta, delta.Count, id)
 	}
-	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(goCtx, fmt.Sprintf("update mysql.stats_meta set version = %d, count = count %s %d, modify_count = modify_count + %d where table_id = %d", h.ctx.Txn().StartTS(), op, delta.Delta, delta.Count, id))
+	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(goCtx, sql)
 	if err != nil {
-		return errors.Trace(err)
+		return false, errors.Trace(err)
 	}
+	updated := h.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0
 	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(goCtx, "commit")
-	return errors.Trace(err)
+	return updated, errors.Trace(err)
 }
 
 // QueryFeedback is used to represent the query feedback info. It contains the expected scan row count and
@@ -232,8 +251,11 @@ const (
 	StatsPrompt = "stats"
 )
 
+// AutoAnalyzeMinCnt means if the count of table is less than this value, we needn't do auto analyze.
+var AutoAnalyzeMinCnt int64 = 1000
+
 func needAnalyzeTable(tbl *Table, limit time.Duration) bool {
-	if tbl.ModifyCount == 0 {
+	if tbl.ModifyCount == 0 || tbl.Count < AutoAnalyzeMinCnt {
 		return false
 	}
 	t := time.Unix(0, oracle.ExtractPhysical(tbl.Version)*int64(time.Millisecond))
@@ -288,11 +310,11 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) error {
 func (h *Handle) execAutoAnalyze(sql string) error {
 	startTime := time.Now()
 	_, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, sql)
-	autoAnalyzeHistgram.Observe(time.Since(startTime).Seconds())
+	metrics.AutoAnalyzeHistogram.Observe(time.Since(startTime).Seconds())
 	if err != nil {
-		autoAnalyzeCounter.WithLabelValues("failed").Inc()
+		metrics.AutoAnalyzeCounter.WithLabelValues("failed").Inc()
 	} else {
-		autoAnalyzeCounter.WithLabelValues("succ").Inc()
+		metrics.AutoAnalyzeCounter.WithLabelValues("succ").Inc()
 	}
 	return errors.Trace(err)
 }

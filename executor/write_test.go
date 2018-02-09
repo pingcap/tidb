@@ -648,6 +648,15 @@ func (s *testSuite) TestUpdate(c *C) {
 	r1 := tk.MustQuery("select ts from tsup use index (idx);")
 	r2 := tk.MustQuery("select ts from tsup;")
 	r1.Check(r2.Rows())
+
+	// issue 5532
+	tk.MustExec("create table decimals (a decimal(20, 0) not null)")
+	tk.MustExec("insert into decimals values (201)")
+	// A warning rather than data truncated error.
+	tk.MustExec("update decimals set a = a + 1.23;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1265 Data Truncated"))
+	r = tk.MustQuery("select * from decimals")
+	r.Check(testkit.Rows("202"))
 }
 
 // TestUpdateCastOnlyModifiedValues for issue #4514.
@@ -1073,7 +1082,7 @@ func makeLoadDataInfo(column int, specifiedColumns []string, ctx context.Context
 	fields := &ast.FieldsClause{Terminated: "\t"}
 	lines := &ast.LinesClause{Starting: "", Terminated: "\n"}
 	ld = executor.NewLoadDataInfo(make([]types.Datum, column), ctx, tbl, columns)
-	ld.SetBatchCount(0)
+	ld.SetMaxRowsInBatch(0)
 	ld.FieldsInfo = fields
 	ld.LinesInfo = lines
 	return
