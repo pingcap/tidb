@@ -18,6 +18,7 @@ import (
 	"math"
 	"testing"
 	"time"
+	"strconv"
 
 	gofail "github.com/coreos/gofail/runtime"
 	. "github.com/pingcap/check"
@@ -27,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
 	goctx "golang.org/x/net/context"
-	"strconv"
 )
 
 var (
