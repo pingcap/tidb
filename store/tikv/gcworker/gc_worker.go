@@ -17,10 +17,10 @@ import (
 	"bytes"
 	"fmt"
 	"os"
-	"time"
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/errorpb"
@@ -324,7 +324,7 @@ func RunGCJob(ctx goctx.Context, s tikv.Storage, safePoint uint64, identifier st
 func (w *GCWorker) doGC(ctx goctx.Context, safePoint uint64) error {
 	gcConcurrency, err := w.loadGCConcurrencyWithDefault()
 	if err != nil {
-		log.Errorf("[gc worker] %s failed to load gcConcurrency, err %s", err)
+		log.Errorf("[gc worker] %s failed to load gcConcurrency, err %s", w.uuid, err)
 		gcConcurrency = gcDefaultConcurrency
 	}
 
