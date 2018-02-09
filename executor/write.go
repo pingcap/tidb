@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	log "github.com/sirupsen/logrus"
@@ -279,7 +278,7 @@ func (e *DeleteExec) deleteSingleTable(goCtx goctx.Context) error {
 	batchSize := e.ctx.GetSessionVars().DMLBatchSize
 	for {
 		if batchDelete && rowCount >= batchSize {
-			terror.Log(e.ctx.StmtCommit())
+			e.ctx.StmtCommit()
 			if err := e.ctx.NewTxn(); err != nil {
 				// We should return a special error for batch insert.
 				return ErrBatchInsertFail.Gen("BatchDelete failed with error: %v", err)
@@ -347,7 +346,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(goCtx goctx.Context) error {
 
 		for chunkRow := iter.Begin(); chunkRow != iter.End(); chunkRow = iter.Next() {
 			if batchDelete && rowCount >= batchDMLSize {
-				terror.Log(e.ctx.StmtCommit())
+				e.ctx.StmtCommit()
 				if err = e.ctx.NewTxn(); err != nil {
 					// We should return a special error for batch insert.
 					return ErrBatchInsertFail.Gen("BatchDelete failed with error: %v", err)
@@ -909,7 +908,7 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 			continue
 		}
 		if batchInsert && rowCount >= batchSize {
-			terror.Log(e.ctx.StmtCommit())
+			e.ctx.StmtCommit()
 			if err := e.ctx.NewTxn(); err != nil {
 				// We should return a special error for batch insert.
 				return nil, ErrBatchInsertFail.Gen("BatchInsert failed with error: %v", err)

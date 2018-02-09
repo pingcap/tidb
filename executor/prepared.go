@@ -222,7 +222,8 @@ func (e *ExecuteExec) Build() error {
 	}
 	e.stmtExec = stmtExec
 	ResetStmtCtx(e.ctx, e.stmt)
-	stmtCount(e.stmt, e.plan, e.ctx.GetSessionVars().InRestrictedSQL)
+	CountStmtNode(e.stmt, e.ctx.GetSessionVars().InRestrictedSQL)
+	logExpensiveQuery(e.stmt, e.plan)
 	return nil
 }
 

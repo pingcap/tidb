@@ -22,8 +22,8 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/mocktikv"
+	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	goctx "golang.org/x/net/context"
@@ -53,9 +53,9 @@ func (s *testMySQLConstSuite) SetUpSuite(c *C) {
 		s.cluster = mocktikv.NewCluster()
 		mocktikv.BootstrapWithSingleStore(s.cluster)
 		s.mvccStore = mocktikv.NewMvccStore()
-		store, err := tikv.NewMockTikvStore(
-			tikv.WithCluster(s.cluster),
-			tikv.WithMVCCStore(s.mvccStore),
+		store, err := mockstore.NewMockTikvStore(
+			mockstore.WithCluster(s.cluster),
+			mockstore.WithMVCCStore(s.mvccStore),
 		)
 		c.Assert(err, IsNil)
 		s.store = store
