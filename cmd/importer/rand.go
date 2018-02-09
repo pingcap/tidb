@@ -74,7 +74,12 @@ func randDuration(n time.Duration) time.Duration {
 	return time.Duration(duration)
 }
 
-func randDate(min string, max string) string {
+func randDate(col *column) string {
+	if col.hist != nil {
+		return col.hist.randDate()
+	}
+
+	min, max := col.min, col.max
 	if len(min) == 0 {
 		year := time.Now().Year()
 		month := randInt(1, 12)
