@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -308,7 +308,7 @@ func mustExec(c *C, se tidb.Session, sql string) {
 }
 
 func newStore(c *C, dbPath string) kv.Storage {
-	store, err := tikv.NewMockTikvStore()
+	store, err := mockstore.NewMockTikvStore()
 	tidb.SetSchemaLease(0)
 	tidb.SetStatsLease(0)
 	c.Assert(err, IsNil)

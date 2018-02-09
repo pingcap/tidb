@@ -38,8 +38,9 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
@@ -85,9 +86,9 @@ func (s *testSuite) SetUpSuite(c *C) {
 		s.cluster = mocktikv.NewCluster()
 		mocktikv.BootstrapWithSingleStore(s.cluster)
 		s.mvccStore = mocktikv.NewMvccStore()
-		store, err := tikv.NewMockTikvStore(
-			tikv.WithCluster(s.cluster),
-			tikv.WithMVCCStore(s.mvccStore),
+		store, err := mockstore.NewMockTikvStore(
+			mockstore.WithCluster(s.cluster),
+			mockstore.WithMVCCStore(s.mvccStore),
 		)
 		c.Assert(err, IsNil)
 		s.store = store
@@ -228,7 +229,7 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 			c.Assert(data, DeepEquals, tt.restData,
 				Commentf("data1:%v, data2:%v, data:%v", string(tt.data1), string(tt.data2), string(data)))
 		}
-		terror.Log(ctx.StmtCommit())
+		ctx.StmtCommit()
 		err1 = ctx.Txn().Commit(goctx.Background())
 		c.Assert(err1, IsNil)
 		r := tk.MustQuery(selectSQL)
@@ -2048,8 +2049,8 @@ func (s *testContextOptionSuite) SetUpSuite(c *C) {
 	s.cli = cli
 
 	var err error
-	s.store, err = tikv.NewMockTikvStore(
-		tikv.WithHijackClient(hijackClient),
+	s.store, err = mockstore.NewMockTikvStore(
+		mockstore.WithHijackClient(hijackClient),
 	)
 	c.Assert(err, IsNil)
 	s.dom, err = tidb.BootstrapSession(s.store)

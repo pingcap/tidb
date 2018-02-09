@@ -20,6 +20,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/codec"
 	goctx "golang.org/x/net/context"
 )
@@ -29,8 +30,30 @@ var (
 	pdAddrs  = flag.String("pd-addrs", "127.0.0.1:2379", "pd addrs")
 )
 
+func newTestTiKVStore() (kv.Storage, error) {
+	client, pdClient, err := mocktikv.NewTestClient(nil, nil, "")
+	if err != nil {
+		return nil, err
+	}
+	return NewTestTiKVStore(client, pdClient, nil, nil)
+}
+
 func newTestStore(c *C) *tikvStore {
-	store, err := NewTestTiKVStorage(*withTiKV, *pdAddrs)
+	// duplicated code with mockstore NewTestTiKVStorage,
+	// but I have no idea to fix the cycle depenedence
+	// TODO: try to simplify the code later
+	if !flag.Parsed() {
+		flag.Parse()
+	}
+
+	if *withTiKV {
+		var d Driver
+		store, err := d.Open(fmt.Sprintf("tikv://%s", *pdAddrs))
+		c.Assert(err, IsNil)
+		return store.(*tikvStore)
+	}
+
+	store, err := newTestTiKVStore()
 	c.Assert(err, IsNil)
 	return store.(*tikvStore)
 }

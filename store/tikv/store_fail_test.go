@@ -33,11 +33,11 @@ func (s *testStoreSuite) TestFailBusyServerKV(c *C) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	gofail.Enable("github.com/pingcap/tidb/store/tikv/mocktikv/rpcServerBusy", `return(true)`)
+	gofail.Enable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcServerBusy", `return(true)`)
 	go func() {
 		defer wg.Done()
 		time.Sleep(time.Millisecond * 100)
-		gofail.Disable("github.com/pingcap/tidb/store/tikv/mocktikv/rpcServerBusy")
+		gofail.Disable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcServerBusy")
 	}()
 
 	go func() {
