@@ -16,9 +16,9 @@ package gcworker
 import (
 	"flag"
 	"math"
+	"strconv"
 	"testing"
 	"time"
-	"strconv"
 
 	gofail "github.com/coreos/gofail/runtime"
 	. "github.com/pingcap/check"
@@ -188,12 +188,18 @@ func (s *testGCWorkerSuite) TestDoGC(c *C) {
 
 	gcSafePointCacheInterval = 1
 
-	err = doGCParallel(ctx, s.store, 20, s.gcWorker.uuid, gcDefaultConcurrency)
+	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcDefaultConcurrency), s.gcWorker.session)
+	c.Assert(err, IsNil)
+	err = s.gcWorker.doGC(ctx, 20)
 	c.Assert(err, IsNil)
 
-	err = doGCParallel(ctx, s.store, 20, s.gcWorker.uuid, gcMinConcurrency)
+	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcMinConcurrency), s.gcWorker.session)
+	c.Assert(err, IsNil)
+	err = s.gcWorker.doGC(ctx, 20)
 	c.Assert(err, IsNil)
 
-	err = doGCParallel(ctx, s.store, 20, s.gcWorker.uuid, gcMaxConcurrency)
+	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcMaxConcurrency), s.gcWorker.session)
+	c.Assert(err, IsNil)
+	err = s.gcWorker.doGC(ctx, 20)
 	c.Assert(err, IsNil)
 }

@@ -308,31 +308,9 @@ func (w *GCWorker) calculateNewSafePoint(now time.Time) (*time.Time, error) {
 	return &safePoint, nil
 }
 
-// RunGCJob sends GC command to KV. it is exported for testing purpose, do not use it with GCWorker at the same time.
-func RunGCJob(ctx goctx.Context, s tikv.Storage, safePoint uint64, identifier string) error {
-	err := resolveLocks(ctx, s, safePoint, identifier)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = doGCParallel(ctx, s, safePoint, identifier, gcDefaultConcurrency)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return nil
-}
-
-func (w *GCWorker) doGC(ctx goctx.Context, safePoint uint64) error {
-	gcConcurrency, err := w.loadGCConcurrencyWithDefault()
-	if err != nil {
-		log.Errorf("[gc worker] %s failed to load gcConcurrency, err %s", w.uuid, err)
-		gcConcurrency = gcDefaultConcurrency
-	}
-
-	return doGCParallel(ctx, w.store, safePoint, w.uuid, gcConcurrency)
-}
 func (w *GCWorker) runGCJob(ctx goctx.Context, safePoint uint64) {
 	gcWorkerCounter.WithLabelValues("run_job").Inc()
-	err := resolveLocks(ctx, w.store, safePoint, w.uuid)
+	err := w.resolveLocks(ctx, safePoint)
 	if err != nil {
 		log.Errorf("[gc worker] %s resolve locks returns an error %v", w.uuid, errors.ErrorStack(err))
 		gcJobFailureCounter.WithLabelValues("resolve_lock").Inc()
@@ -467,7 +445,7 @@ func (w *GCWorker) loadGCConcurrencyWithDefault() (int, error) {
 	return jobConcurrency, nil
 }
 
-func resolveLocks(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier string) error {
+func (w *GCWorker) resolveLocks(ctx goctx.Context, safePoint uint64) error {
 	gcWorkerCounter.WithLabelValues("resolve_locks").Inc()
 
 	// for scan lock request, we must return all locks even if they are generated
@@ -482,7 +460,7 @@ func resolveLocks(ctx goctx.Context, store tikv.Storage, safePoint uint64, ident
 	}
 	bo := tikv.NewBackoffer(tikv.GcResolveLockMaxBackoff, ctx)
 
-	log.Infof("[gc worker] %s start resolve locks, safePoint: %v.", identifier, safePoint)
+	log.Infof("[gc worker] %s start resolve locks, safePoint: %v.", w.uuid, safePoint)
 	startTime := time.Now()
 	regions, totalResolvedLocks := 0, 0
 
@@ -495,11 +473,11 @@ func resolveLocks(ctx goctx.Context, store tikv.Storage, safePoint uint64, ident
 		}
 
 		req.ScanLock.StartKey = key
-		loc, err := store.GetRegionCache().LocateKey(bo, key)
+		loc, err := w.store.GetRegionCache().LocateKey(bo, key)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		resp, err := store.SendReq(bo, req, loc.Region, tikv.ReadTimeoutMedium)
+		resp, err := w.store.SendReq(bo, req, loc.Region, tikv.ReadTimeoutMedium)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -526,7 +504,7 @@ func resolveLocks(ctx goctx.Context, store tikv.Storage, safePoint uint64, ident
 		for i := range locksInfo {
 			locks[i] = tikv.NewLock(locksInfo[i])
 		}
-		ok, err1 := store.GetLockResolver().ResolveLocks(bo, locks)
+		ok, err1 := w.store.GetLockResolver().ResolveLocks(bo, locks)
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
@@ -546,12 +524,13 @@ func resolveLocks(ctx goctx.Context, store tikv.Storage, safePoint uint64, ident
 				break
 			}
 		} else {
-			log.Infof("[gc worker] %s, region %d has more than %d locks", identifier, loc.Region.GetID(), gcScanLockLimit)
+			log.Infof("[gc worker] %s, region %d has more than %d locks", w.uuid, loc.Region.GetID(), gcScanLockLimit)
 			gcRegionTooManyLocksCounter.Inc()
 			key = locks[len(locks)-1].Key
 		}
 	}
-	log.Infof("[gc worker] %s finish resolve locks, safePoint: %v, regions: %v, total resolved: %v, cost time: %s", identifier, safePoint, regions, totalResolvedLocks, time.Since(startTime))
+	log.Infof("[gc worker] %s finish resolve locks, safePoint: %v, regions: %v, total resolved: %v, cost time: %s",
+		w.uuid, safePoint, regions, totalResolvedLocks, time.Since(startTime))
 	gcHistogram.WithLabelValues("resolve_locks").Observe(time.Since(startTime).Seconds())
 	return nil
 }
@@ -639,7 +618,7 @@ func (w *gcTaskWorker) doGCForRange(startKey []byte, endKey []byte, safePoint ui
 	return nil
 }
 
-// these two errors should not return together, for more, see the func 'doGCParallel'
+// these two errors should not return together, for more, see the func 'doGC'
 func (w *gcTaskWorker) doGCForRegion(bo *tikv.Backoffer, safePoint uint64, region tikv.RegionVerID) (*errorpb.Error, error) {
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdGC,
@@ -671,8 +650,8 @@ func (w *gcTaskWorker) doGCForRegion(bo *tikv.Backoffer, safePoint uint64, regio
 	return nil, nil
 }
 
-func genNextGCTask(store tikv.Storage, bo *tikv.Backoffer, safePoint uint64, key kv.Key) (*gcTask, error) {
-	loc, err := store.GetRegionCache().LocateKey(bo, key)
+func (w *GCWorker) genNextGCTask(bo *tikv.Backoffer, safePoint uint64, key kv.Key) (*gcTask, error) {
+	loc, err := w.store.GetRegionCache().LocateKey(bo, key)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -685,10 +664,10 @@ func genNextGCTask(store tikv.Storage, bo *tikv.Backoffer, safePoint uint64, key
 	return task, nil
 }
 
-func doGCParallel(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier string, concurrency int) error {
+func (w *GCWorker) doGC(ctx goctx.Context, safePoint uint64) error {
 	gcWorkerCounter.WithLabelValues("do_gc").Inc()
 
-	err := saveSafePoint(store.GetSafePointKV(), tikv.GcSavedSafePoint, safePoint)
+	err := w.saveSafePoint(w.store.GetSafePointKV(), tikv.GcSavedSafePoint, safePoint)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -696,7 +675,13 @@ func doGCParallel(ctx goctx.Context, store tikv.Storage, safePoint uint64, ident
 	// Sleep to wait for all other tidb instances update their safepoint cache.
 	time.Sleep(gcSafePointCacheInterval)
 
-	log.Infof("[gc worker] %s start gc, concurrency %v, safePoint: %v.", identifier, concurrency, safePoint)
+	concurrency, err := w.loadGCConcurrencyWithDefault()
+	if err != nil {
+		log.Errorf("[gc worker] %s failed to load gcConcurrency, err %s", w.uuid, err)
+		concurrency = gcDefaultConcurrency
+	}
+
+	log.Infof("[gc worker] %s start gc, concurrency %v, safePoint: %v.", w.uuid, concurrency, safePoint)
 	startTime := time.Now()
 	var successRegions int32
 	var failedRegions int32
@@ -708,7 +693,7 @@ func doGCParallel(ctx goctx.Context, store tikv.Storage, safePoint uint64, ident
 	gcTaskCh := make(chan *gcTask, concurrency)
 	var wg sync.WaitGroup
 	for i := 0; i < concurrency; i++ {
-		w := newGCTaskWorker(store, gcTaskCh, &wg, identifier, &successRegions, &failedRegions)
+		w := newGCTaskWorker(w.store, gcTaskCh, &wg, w.uuid, &successRegions, &failedRegions)
 		wg.Add(1)
 		go w.run()
 	}
@@ -718,7 +703,7 @@ func doGCParallel(ctx goctx.Context, store tikv.Storage, safePoint uint64, ident
 		close(gcTaskCh)
 		wg.Wait()
 		log.Infof("[gc worker] %s finish gc, safePoint: %v, successful regions: %v, failed regions: %v, total cost time: %s",
-			identifier, safePoint, atomic.LoadInt32(&successRegions), atomic.LoadInt32(&failedRegions), time.Since(startTime))
+			w.uuid, safePoint, atomic.LoadInt32(&successRegions), atomic.LoadInt32(&failedRegions), time.Since(startTime))
 		gcHistogram.WithLabelValues("do_gc").Observe(time.Since(startTime).Seconds())
 	}()
 
@@ -728,12 +713,12 @@ func doGCParallel(ctx goctx.Context, store tikv.Storage, safePoint uint64, ident
 			return errors.New("[gc worker] gc job canceled")
 		case <-ticker.C:
 			log.Infof("[gc worker] %s gc in process, safePoint: %v, successful regions: %v, failed regions: %v, total cost time: %s",
-				identifier, safePoint, atomic.LoadInt32(&successRegions), atomic.LoadInt32(&failedRegions), time.Since(startTime))
+				w.uuid, safePoint, atomic.LoadInt32(&successRegions), atomic.LoadInt32(&failedRegions), time.Since(startTime))
 		default:
 		}
 
 		bo := tikv.NewBackoffer(tikv.GcOneRegionMaxBackoff, ctx)
-		task, err := genNextGCTask(store, bo, safePoint, key)
+		task, err := w.genNextGCTask(bo, safePoint, key)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -820,7 +805,7 @@ func (w *GCWorker) checkLeader() (bool, error) {
 	return false, nil
 }
 
-func saveSafePoint(kv tikv.SafePointKV, key string, t uint64) error {
+func (w *GCWorker) saveSafePoint(kv tikv.SafePointKV, key string, t uint64) error {
 	s := strconv.FormatUint(t, 10)
 	err := kv.Put(tikv.GcSavedSafePoint, s)
 	if err != nil {
