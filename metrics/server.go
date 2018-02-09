@@ -63,6 +63,21 @@ var (
 			Name:      "critical_error",
 			Help:      "Counter of critical errors.",
 		})
+
+	EventStart        = "server_start"
+	EventGracefulDown = "server_graceful_shutdown"
+	// Eventkill occurs when the server.Kill() function is called.
+	EventKill = "server_kill"
+	// EventHang occurs when server meet some critical error. It will close the listening port and hang for ever.
+	EventHang          = "server_hang"
+	EventClose         = "server_close"
+	ServerEventCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "server_event",
+			Help:      "Counter of tidb-server event.",
+		}, []string{"type"})
 )
 
 func init() {
@@ -71,6 +86,7 @@ func init() {
 	prometheus.MustRegister(ConnGauge)
 	prometheus.MustRegister(ExecuteErrorCounter)
 	prometheus.MustRegister(CriticalErrorCounter)
+	prometheus.MustRegister(ServerEventCounter)
 }
 
 // ExecuteErrorToLabel converts an execute error to label.
