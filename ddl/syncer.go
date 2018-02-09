@@ -212,7 +212,7 @@ func (s *schemaVersionSyncer) RemoveSelfVersionPath() error {
 		if err == nil {
 			return nil
 		}
-		log.Warnf("remove schema version path %s failed %v no.%d", s.selfSchemaVerPath, err, i)
+		log.Warnf("[syncer] remove schema version path %s failed %v no.%d", s.selfSchemaVerPath, err, i)
 	}
 	return errors.Trace(err)
 }
@@ -279,13 +279,14 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx goctx.Context, latestVer
 	}()
 	for {
 		if isContextDone(ctx) {
+			// ctx is canceld or timeout.
 			err = errors.Trace(ctx.Err())
 			return err
 		}
 
 		resp, err := s.etcdCli.Get(ctx, DDLAllSchemaVersions, clientv3.WithPrefix())
 		if err != nil {
-			log.Infof("[syncer] check all versions failed %v", err)
+			log.Infof("[syncer] check all versions failed %v, continue checking.", err)
 			continue
 		}
 
@@ -297,13 +298,13 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx goctx.Context, latestVer
 
 			ver, err := strconv.Atoi(string(kv.Value))
 			if err != nil {
-				log.Infof("[syncer] check all versions, ddl %s convert %v to int failed %v", kv.Key, kv.Value, err)
+				log.Infof("[syncer] check all versions, ddl %s convert %v to int failed %v, continue checking.", kv.Key, kv.Value, err)
 				succ = false
 				break
 			}
 			if int64(ver) != latestVer {
 				if notMatchVerCnt%intervalCnt == 0 {
-					log.Infof("[syncer] check all versions, ddl %s current ver %v, latest version %v",
+					log.Infof("[syncer] check all versions, ddl %s is not synced, current ver %v, latest version %v, continue checking",
 						kv.Key, ver, latestVer)
 				}
 				succ = false

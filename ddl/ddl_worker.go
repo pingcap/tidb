@@ -373,10 +373,13 @@ func (d *ddl) waitSchemaChanged(ctx goctx.Context, waitTime time.Duration, lates
 	if err != nil {
 		log.Infof("[ddl] update latest schema version %d failed %v", latestSchemaVersion, err)
 		if terror.ErrorEqual(err, goctx.DeadlineExceeded) {
+			// If err is goctx.DeadlineExceeded, means waitTime(2 * lease) is elapsed. so all the schema is synced by ticker,
+			// no need to use etcd to sync, we return directly.
 			return
 		}
 	}
 
+	// OwnerCheckAllVersions return only when goctx is time out(2 * lease) or all TiDB schema is synced.
 	err = d.schemaSyncer.OwnerCheckAllVersions(ctx, latestSchemaVersion)
 	if err != nil {
 		log.Infof("[ddl] wait latest schema version %d to deadline %v", latestSchemaVersion, err)
