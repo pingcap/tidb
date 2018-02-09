@@ -37,6 +37,7 @@ import (
 	tidbutil "github.com/pingcap/tidb/util"
 	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
+	"sync/atomic"
 )
 
 // GCWorker periodically triggers GC process on tikv server.
@@ -106,7 +107,7 @@ const (
 	gcDefaultLifeTime    = time.Minute * 10
 	gcSafePointKey       = "tikv_gc_safe_point"
 	gcConcurrencyKey     = "tikv_gc_concurrency"
-	gcDefaultConcurrency = 2
+	gcDefaultConcurrency = 1
 	gcMinConcurrency     = 1
 	gcMaxConcurrency     = 128
 	// We don't want gc to sweep out the cached info belong to other processes, like coprocessor.
@@ -123,7 +124,7 @@ var gcVariableComments = map[string]string{
 	gcRunIntervalKey: "GC run interval, at least 10m, in Go format.",
 	gcLifeTimeKey:    "All versions within life time will not be collected by GC, at least 10m, in Go format.",
 	gcSafePointKey:   "All versions after safe point can be accessed. (DO NOT EDIT)",
-	gcConcurrencyKey: "How many go routines used to do GC parallel, [1, 1024], default 32",
+	gcConcurrencyKey: "How many go routines used to do GC parallel, [1, 128], default 1",
 }
 
 func (w *GCWorker) start(ctx goctx.Context, wg *sync.WaitGroup) {
@@ -321,7 +322,7 @@ func RunGCJob(ctx goctx.Context, s tikv.Storage, safePoint uint64, identifier st
 }
 
 func (w *GCWorker) doGC(ctx goctx.Context, safePoint uint64) error {
-	gcConcurrency, err := w.loadGcConcurrencyWithDefault()
+	gcConcurrency, err := w.loadGCConcurrencyWithDefault()
 	if err != nil {
 		log.Errorf("")
 		gcConcurrency = gcDefaultConcurrency
@@ -437,6 +438,35 @@ func (w *GCWorker) deleteRanges(ctx goctx.Context, safePoint uint64) error {
 	return nil
 }
 
+func (w *GCWorker) loadGCConcurrencyWithDefault() (int, error) {
+	str, err := w.loadValueFromSysTable(gcConcurrencyKey, w.session)
+	if err != nil {
+		return gcDefaultConcurrency, errors.Trace(err)
+	}
+	if str == "" {
+		err = w.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcDefaultConcurrency), w.session)
+		if err != nil {
+			return gcDefaultConcurrency, errors.Trace(err)
+		}
+		return gcDefaultConcurrency, nil
+	}
+
+	jobConcurrency, err := strconv.Atoi(str)
+	if err != nil {
+		return gcDefaultConcurrency, err
+	}
+
+	if jobConcurrency < gcMinConcurrency {
+		jobConcurrency = gcMinConcurrency
+	}
+
+	if jobConcurrency > gcMaxConcurrency {
+		jobConcurrency = gcMaxConcurrency
+	}
+
+	return jobConcurrency, nil
+}
+
 func resolveLocks(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier string) error {
 	gcWorkerCounter.WithLabelValues("resolve_locks").Inc()
 
@@ -532,73 +562,112 @@ type gcTask struct {
 	safePoint uint64
 }
 
-type gcResult struct {
-	successRegions int
-	failedRegions  int
-	lastErr        error
-}
-
 type gcTaskWorker struct {
-	store    tikv.Storage
-	taskCh   chan *gcTask
-	resultCh chan *gcResult
-	wg       *sync.WaitGroup
+	identifier string
+	store      tikv.Storage
+	taskCh     chan *gcTask
+	wg         *sync.WaitGroup
+	// use atomic to read and set
+	successRegions *int32
+	failedRegions  *int32
 }
 
-func newGCTaskWorker(store tikv.Storage, taskCh chan *gcTask, resultCh chan *gcResult, wg *sync.WaitGroup) *gcTaskWorker {
-	return &gcTaskWorker{store, taskCh, resultCh, wg}
+func newGCTaskWorker(store tikv.Storage, taskCh chan *gcTask, wg *sync.WaitGroup, identifer string, successRegions *int32, failedRegions *int32) *gcTaskWorker {
+	return &gcTaskWorker{
+		identifer,
+		store,
+		taskCh,
+		wg,
+		successRegions,
+		failedRegions,
+	}
 }
 
 func (w *gcTaskWorker) run() {
 	defer w.wg.Done()
-	for {
-		task := <-w.taskCh
-		if task == nil {
-			w.resultCh <- nil
-			return
-		}
-
-		res, err := doGCForRange(w.store, task.startKey, task.endKey, task.safePoint)
+	for task := range w.taskCh {
+		err := w.doGCForRange(task.startKey, task.endKey, task.safePoint)
 		if err != nil {
-			res = &gcResult{
-				successRegions: 0,
-				failedRegions:  0,
-				lastErr:        err,
-			}
-		}
-		if res != nil {
-			w.resultCh <- res
+			log.Errorf("[gc worker] %s, gc interupted because get region error, err %v", w.identifier, errors.Trace(err))
 		}
 	}
 }
 
-func (w *GCWorker) loadGcConcurrencyWithDefault() (int, error) {
-	str, err := w.loadValueFromSysTable(gcConcurrencyKey, w.session)
-	if err != nil {
-		return gcDefaultConcurrency, errors.Trace(err)
-	}
-	if str == "" {
-		err = w.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcDefaultConcurrency), w.session)
+func (w *gcTaskWorker) doGCForRange(startKey []byte, endKey []byte, safePoint uint64) error {
+	var successRegions int32
+	var failedRegions int32
+	defer func() {
+		atomic.AddInt32(w.successRegions, successRegions)
+		atomic.AddInt32(w.failedRegions, failedRegions)
+		gcActionRegionResultCounter.WithLabelValues("success").Add(float64(successRegions))
+		gcActionRegionResultCounter.WithLabelValues("fail").Add(float64(failedRegions))
+	}()
+	key := startKey
+	for {
+		bo := tikv.NewBackoffer(tikv.GcOneRegionMaxBackoff, goctx.Background())
+		loc, err := w.store.GetRegionCache().LocateKey(bo, key)
 		if err != nil {
-			return gcDefaultConcurrency, errors.Trace(err)
+			return errors.Trace(err)
 		}
-		return gcDefaultConcurrency, nil
+
+		var regionErr *errorpb.Error
+		regionErr, err = w.doGCForRegion(bo, safePoint, loc.Region)
+
+		// we check regionErr here first, because we know 'regionErr' and 'err' should not return together, to keep it to
+		// make the process correct.
+		if regionErr != nil {
+			err = bo.Backoff(tikv.BoRegionMiss, errors.New(regionErr.String()))
+			if err == nil {
+				continue
+			}
+		}
+
+		if err != nil {
+			log.Warnf("[gc worker] %s gc for range [%v, %v) safepoint: %v, failed, err: %v", w.identifier, startKey, endKey, safePoint, err)
+			failedRegions++
+		} else {
+			successRegions++
+		}
+
+		key = loc.EndKey
+		if len(key) == 0 || bytes.Compare(key, endKey) >= 0 {
+			break
+		}
 	}
 
-	jobConcurrency, err := strconv.Atoi(str)
+	return nil
+}
+
+// these two errors should not return together, for more, see the func 'doGC'
+func (w *gcTaskWorker) doGCForRegion(bo *tikv.Backoffer, safePoint uint64, region tikv.RegionVerID) (*errorpb.Error, error) {
+	req := &tikvrpc.Request{
+		Type: tikvrpc.CmdGC,
+		GC: &kvrpcpb.GCRequest{
+			SafePoint: safePoint,
+		},
+	}
+
+	resp, err := w.store.SendReq(bo, req, region, tikv.GCTimeout)
 	if err != nil {
-		return gcDefaultConcurrency, err
+		return nil, errors.Trace(err)
+	}
+	regionErr, err := resp.GetRegionError()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if regionErr != nil {
+		return regionErr, nil
 	}
 
-	if jobConcurrency < gcMinConcurrency {
-		jobConcurrency = gcMinConcurrency
+	gcResp := resp.GC
+	if gcResp == nil {
+		return nil, errors.Trace(tikv.ErrBodyMissing)
+	}
+	if gcResp.GetError() != nil {
+		return nil, errors.Errorf("unexpected gc error: %s", gcResp.GetError())
 	}
 
-	if jobConcurrency > gcMaxConcurrency {
-		jobConcurrency = gcMaxConcurrency
-	}
-
-	return jobConcurrency, nil
+	return nil, nil
 }
 
 func genNextGCTask(store tikv.Storage, bo *tikv.Backoffer, safePoint uint64, key kv.Key) (*gcTask, error) {
@@ -628,18 +697,17 @@ func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier st
 
 	log.Infof("[gc worker] %s start gc, concurrency %v, safePoint: %v.", identifier, concurrency, safePoint)
 	startTime := time.Now()
-	successRegions := 0
-	failedRegions := 0
+	var successRegions int32
+	var failedRegions int32
 
 	ticker := time.NewTicker(gcJobLogTickInterval)
 	defer ticker.Stop()
 
 	// create task queue and task result queue, and start task workers
 	gcTaskCh := make(chan *gcTask, concurrency)
-	gcResultCh := make(chan *gcResult, concurrency*2)
 	wg := sync.WaitGroup{}
 	for i := 0; i < concurrency; i++ {
-		w := newGCTaskWorker(store, gcTaskCh, gcResultCh, &wg)
+		w := newGCTaskWorker(store, gcTaskCh, &wg, identifier, &successRegions, &failedRegions)
 		wg.Add(1)
 		go w.run()
 	}
@@ -647,28 +715,9 @@ func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier st
 	var key []byte
 	defer func() {
 		close(gcTaskCh)
-		count := 0
-		for taskRes := range gcResultCh {
-			if taskRes == nil {
-				count++
-				if count == concurrency {
-					close(gcResultCh)
-				}
-				continue
-			}
-
-			successRegions += taskRes.successRegions
-			gcActionRegionResultCounter.WithLabelValues("success").Add(float64(taskRes.successRegions))
-			failedRegions += taskRes.failedRegions
-			gcActionRegionResultCounter.WithLabelValues("fail").Add(float64(taskRes.failedRegions))
-			if taskRes.lastErr != nil {
-				log.Warnf("[gc worker] ignore failed task, err %v,", taskRes.lastErr)
-			}
-		}
-
 		wg.Wait()
 		log.Infof("[gc worker] %s finish gc, safePoint: %v, successful regions: %v, failed regions: %v, total cost time: %s",
-			identifier, safePoint, successRegions, failedRegions, time.Since(startTime))
+			identifier, safePoint, atomic.LoadInt32(&successRegions), atomic.LoadInt32(&failedRegions), time.Since(startTime))
 		gcHistogram.WithLabelValues("do_gc").Observe(time.Since(startTime).Seconds())
 	}()
 
@@ -677,22 +726,15 @@ func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier st
 		select {
 		case <-ctx.Done():
 			return errors.New("[gc worker] gc job canceled")
-		case taskRes := <-gcResultCh:
-			successRegions += taskRes.successRegions
-			gcActionRegionResultCounter.WithLabelValues("success").Add(float64(taskRes.successRegions))
-			failedRegions += taskRes.failedRegions
-			gcActionRegionResultCounter.WithLabelValues("fail").Add(float64(taskRes.failedRegions))
-			if taskRes.lastErr != nil {
-				log.Warnf("[gc worker] ignore failed task, err %v,", taskRes.lastErr)
-			}
 		case <-ticker.C:
 			log.Infof("[gc worker] %s gc in process, safePoint: %v, successful regions: %v, failed regions: %v, total cost time: %s",
-				identifier, safePoint, successRegions, failedRegions, time.Since(startTime))
+				identifier, safePoint, atomic.LoadInt32(&successRegions), atomic.LoadInt32(&failedRegions), time.Since(startTime))
 		default:
 		}
 
 		task, err := genNextGCTask(store, bo, safePoint, key)
 		if err != nil {
+			log.Errorf("[gc worker] %s, gc interupted because get region error, err %v", identifier, errors.Trace(err))
 			return errors.Trace(err)
 		}
 		if task != nil {
@@ -704,85 +746,6 @@ func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier st
 			return nil
 		}
 	}
-}
-
-func doGCForRange(store tikv.Storage, startKey []byte, endKey []byte, safePoint uint64) (*gcResult, error) {
-	successRegions := 0
-	failedRegions := 0
-	key := startKey
-	var lastErr error
-	for {
-		bo := tikv.NewBackoffer(tikv.GcOneRegionMaxBackoff, goctx.Background())
-		loc, err := store.GetRegionCache().LocateKey(bo, key)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-
-		var regionErr *errorpb.Error
-		regionErr, err = doGCForRegion(bo, store, safePoint, loc.Region)
-
-		// we check regionErr here first, because we know 'regionErr' and 'err' should not return together, to keep it to
-		// make the process correct.
-		if regionErr != nil {
-			err = bo.Backoff(tikv.BoRegionMiss, errors.New(regionErr.String()))
-			if err == nil {
-				continue
-			}
-		}
-
-		if err != nil {
-			log.Warnf("[gc worker] gc for range [%v, %v) safepoint: %v, failed, err: %v", startKey, endKey, safePoint, err)
-			lastErr = err
-			failedRegions++
-		} else {
-			successRegions++
-		}
-
-		key = loc.EndKey
-		if len(key) == 0 || bytes.Compare(key, endKey) >= 0 {
-			break
-		}
-	}
-
-	res := &gcResult{
-		successRegions: successRegions,
-		failedRegions:  failedRegions,
-		lastErr:        lastErr,
-	}
-
-	return res, nil
-}
-
-// these two errors should not return together, for more, see the func 'doGC'
-func doGCForRegion(bo *tikv.Backoffer, store tikv.Storage, safePoint uint64, region tikv.RegionVerID) (*errorpb.Error, error) {
-	req := &tikvrpc.Request{
-		Type: tikvrpc.CmdGC,
-		GC: &kvrpcpb.GCRequest{
-			SafePoint: safePoint,
-		},
-	}
-
-	resp, err := store.SendReq(bo, req, region, tikv.GCTimeout)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	regionErr, err := resp.GetRegionError()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if regionErr != nil {
-		return regionErr, nil
-	}
-
-	gcResp := resp.GC
-	if gcResp == nil {
-		return nil, errors.Trace(tikv.ErrBodyMissing)
-	}
-	if gcResp.GetError() != nil {
-		return nil, errors.Errorf("unexpected gc error: %s", gcResp.GetError())
-	}
-
-	return nil, nil
 }
 
 func (w *GCWorker) checkLeader() (bool, error) {

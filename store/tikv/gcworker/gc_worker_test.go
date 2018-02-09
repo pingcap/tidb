@@ -126,67 +126,65 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 	s.timeEqual(c, safePoint.Add(time.Minute*30), now, 2*time.Second)
 
 	// change GC concurrency
-	concurrency, err := s.gcWorker.loadGcConcurrencyWithDefault()
+	concurrency, err := s.gcWorker.loadGCConcurrencyWithDefault()
 	c.Assert(err, IsNil)
 	c.Assert(concurrency, Equals, gcDefaultConcurrency)
 
 	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcMinConcurrency), s.gcWorker.session)
 	c.Assert(err, IsNil)
-	concurrency, err = s.gcWorker.loadGcConcurrencyWithDefault()
+	concurrency, err = s.gcWorker.loadGCConcurrencyWithDefault()
 	c.Assert(err, IsNil)
 	c.Assert(concurrency, Equals, gcMinConcurrency)
 
 	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(-1), s.gcWorker.session)
 	c.Assert(err, IsNil)
-	concurrency, err = s.gcWorker.loadGcConcurrencyWithDefault()
+	concurrency, err = s.gcWorker.loadGCConcurrencyWithDefault()
 	c.Assert(err, IsNil)
 	c.Assert(concurrency, Equals, gcMinConcurrency)
 
 	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(1000000), s.gcWorker.session)
 	c.Assert(err, IsNil)
-	concurrency, err = s.gcWorker.loadGcConcurrencyWithDefault()
+	concurrency, err = s.gcWorker.loadGCConcurrencyWithDefault()
 	c.Assert(err, IsNil)
 	c.Assert(concurrency, Equals, gcMaxConcurrency)
 }
 
 func (s *testGCWorkerSuite) TestDoGCForOneRegion(c *C) {
+	var successRegions int32
+	var failedRegions int32
+	taskWorker := newGCTaskWorker(s.store, nil, nil, s.gcWorker.uuid, &successRegions, &failedRegions)
+
 	ctx := goctx.Background()
 	bo := tikv.NewBackoffer(tikv.GcOneRegionMaxBackoff, ctx)
 	loc, err := s.store.GetRegionCache().LocateKey(bo, []byte(""))
 	c.Assert(err, IsNil)
 	var regionErr *errorpb.Error
-	regionErr, err = doGCForRegion(bo, s.store, 20, loc.Region)
+	regionErr, err = taskWorker.doGCForRegion(bo, 20, loc.Region)
 	c.Assert(regionErr, IsNil)
 	c.Assert(err, IsNil)
 
 	gofail.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("timeout")`)
-	regionErr, err = doGCForRegion(bo, s.store, 20, loc.Region)
+	regionErr, err = taskWorker.doGCForRegion(bo, 20, loc.Region)
 	c.Assert(regionErr, IsNil)
 	c.Assert(err, NotNil)
 	gofail.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult")
 
 	gofail.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("GCNotLeader")`)
-	regionErr, err = doGCForRegion(bo, s.store, 20, loc.Region)
+	regionErr, err = taskWorker.doGCForRegion(bo, 20, loc.Region)
 	c.Assert(regionErr.GetNotLeader(), NotNil)
 	c.Assert(err, IsNil)
 	gofail.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult")
 
 	gofail.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("GCServerIsBusy")`)
-	regionErr, err = doGCForRegion(bo, s.store, 20, loc.Region)
+	regionErr, err = taskWorker.doGCForRegion(bo, 20, loc.Region)
 	c.Assert(regionErr.GetServerIsBusy(), NotNil)
 	c.Assert(err, IsNil)
 	gofail.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult")
 }
 
 func (s *testGCWorkerSuite) TestDoGC(c *C) {
+	var err error
 	ctx := goctx.Background()
-	bo := tikv.NewBackoffer(tikv.GcOneRegionMaxBackoff, ctx)
-	loc, err := s.store.GetRegionCache().LocateKey(bo, []byte(""))
-	c.Assert(err, IsNil)
-	var regionErr *errorpb.Error
-	regionErr, err = doGCForRegion(bo, s.store, 20, loc.Region)
-	c.Assert(regionErr, IsNil)
-	c.Assert(err, IsNil)
 
 	gcSafePointCacheInterval = 1
 
