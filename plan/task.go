@@ -166,7 +166,7 @@ func (p *PhysicalIndexJoin) getCost(lCnt float64) float64 {
 
 func (p *PhysicalHashJoin) getCost(lCnt, rCnt float64) float64 {
 	smallTableCnt := lCnt
-	if p.SmallChildIdx == 1 {
+	if p.InnerChildIdx == 1 {
 		smallTableCnt = rCnt
 	}
 	if smallTableCnt <= 1 {

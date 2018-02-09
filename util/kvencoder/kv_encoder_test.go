@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/store/mockstore"
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
@@ -28,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/structure"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -44,7 +44,7 @@ func TestT(t *testing.T) {
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
-	store, err := tikv.NewMockTikvStore()
+	store, err := mockstore.NewMockTikvStore()
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}

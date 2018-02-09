@@ -26,6 +26,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/terror"
 	goctx "golang.org/x/net/context"
@@ -51,6 +52,7 @@ const (
 	readTimeoutShort  = 20 * time.Second  // For requests that read/write several key-values.
 	ReadTimeoutMedium = 60 * time.Second  // For requests that may need scan region.
 	ReadTimeoutLong   = 150 * time.Second // For requests that may need scan region multiple times.
+	GCTimeout         = 5 * time.Minute
 
 	grpcInitialWindowSize     = 1 << 30
 	grpcInitialConnWindowSize = 1 << 30
@@ -100,10 +102,12 @@ func (a *connArray) Init(addr string, security config.Security) error {
 			grpc_prometheus.StreamClientInterceptor,
 			grpc_opentracing.StreamClientInterceptor(),
 		)
-		conn, err := grpc.Dial(
+
+		ctx, cancel := goctx.WithTimeout(goctx.Background(), dialTimeout)
+		conn, err := grpc.DialContext(
+			ctx,
 			addr,
 			opt,
-			grpc.WithTimeout(dialTimeout),
 			grpc.WithInitialWindowSize(grpcInitialWindowSize),
 			grpc.WithInitialConnWindowSize(grpcInitialConnWindowSize),
 			grpc.WithUnaryInterceptor(unaryInterceptor),
@@ -111,7 +115,7 @@ func (a *connArray) Init(addr string, security config.Security) error {
 			grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(MaxCallMsgSize)),
 			grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(MaxSendMsgSize)),
 		)
-
+		cancel()
 		if err != nil {
 			// Cleanup if the initialization fails.
 			a.Close()
@@ -207,7 +211,9 @@ func (c *rpcClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request
 	start := time.Now()
 	reqType := req.Type.String()
 	storeID := strconv.FormatUint(req.Context.GetPeer().GetStoreId(), 10)
-	defer func() { sendReqHistogram.WithLabelValues(reqType, storeID).Observe(time.Since(start).Seconds()) }()
+	defer func() {
+		metrics.TiKVSendReqHistogram.WithLabelValues(reqType, storeID).Observe(time.Since(start).Seconds())
+	}()
 
 	conn, err := c.getConn(addr)
 	if err != nil {

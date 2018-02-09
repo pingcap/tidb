@@ -170,7 +170,13 @@ func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 	rs, err := tk.Exec(sql, args...)
 	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
 	tk.c.Assert(rs, check.NotNil, comment)
-	rows, err := tidb.GetRows4Test(goctx.Background(), rs)
+	return tk.ResultSetToResult(rs, comment)
+}
+
+// ResultSetToResult converts ast.RecordSet to testkit.Result.
+// It is used to check results of execute statement in binary mode.
+func (tk *TestKit) ResultSetToResult(rs ast.RecordSet, comment check.CommentInterface) *Result {
+	rows, err := tidb.GetRows4Test(goctx.Background(), tk.Se, rs)
 	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
 	err = rs.Close()
 	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)

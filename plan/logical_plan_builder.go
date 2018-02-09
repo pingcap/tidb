@@ -118,7 +118,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 	plan4Agg.SetChildren(p)
 	plan4Agg.GroupByItems = gbyItems
 	plan4Agg.SetSchema(schema4Agg)
-	// TODO: Add a Projection if any argument of aggregate funcs or group by items are scala functions.
+	// TODO: Add a Projection if any argument of aggregate funcs or group by items are scalar functions.
 	// plan4Agg.buildProjectionIfNecessary()
 	// b.optFlag = b.optFlag | flagEliminateProjection
 	plan4Agg.collectGroupByColumns()
@@ -1574,6 +1574,10 @@ func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
 	}
 }
 
+// RatioOfPseudoEstimate means if modifyCount / statsTblCount is greater than this ratio, we think the stats is invalid
+// and use pseudo estimation.
+var RatioOfPseudoEstimate = 0.7
+
 func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	schemaName := tn.Schema
 	if schemaName.L == "" {
@@ -1586,12 +1590,24 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	}
 	tableInfo := tbl.Meta()
 	handle := domain.GetDomain(b.ctx).StatsHandle()
-	var statisticTable *statistics.Table
+	var statsTbl *statistics.Table
 	if handle == nil {
 		// When the first session is created, the handle hasn't been initialized.
-		statisticTable = statistics.PseudoTable(tableInfo.ID)
+		statsTbl = statistics.PseudoTable(tableInfo.ID)
 	} else {
-		statisticTable = handle.GetTableStats(tableInfo.ID)
+		statsTbl = handle.GetTableStats(tableInfo.ID)
+		// TODO: We should consider to add it to metric.
+		if statsTbl.Count == 0 || float64(statsTbl.ModifyCount)/float64(statsTbl.Count) > RatioOfPseudoEstimate {
+			originCnt := statsTbl.Count
+			statsTbl = statistics.PseudoTable(tableInfo.ID)
+			if originCnt > 0 {
+				// The count of stats table is always proper.
+				statsTbl.Count = originCnt
+			} else {
+				// Zero count always brings some strange problem.
+				statsTbl.Count = 100
+			}
+		}
 	}
 	indices, includeTableScan, err := availableIndices(tn.IndexHints, tableInfo)
 	if err != nil {
@@ -1600,24 +1616,23 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	}
 	avalableIndices := avalableIndices{indices: indices, includeTableScan: includeTableScan}
 
-	ds := DataSource{
-		indexHints:       tn.IndexHints,
-		tableInfo:        tableInfo,
-		statisticTable:   statisticTable,
-		DBName:           schemaName,
-		Columns:          make([]*model.ColumnInfo, 0, len(tableInfo.Columns)),
-		availableIndices: &avalableIndices,
-	}.init(b.ctx)
-	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, schemaName.L, tableInfo.Name.L, "")
-
 	var columns []*table.Column
 	if b.inUpdateStmt {
 		columns = tbl.WritableCols()
 	} else {
 		columns = tbl.Cols()
 	}
+	ds := DataSource{
+		indexHints:       tn.IndexHints,
+		tableInfo:        tableInfo,
+		statisticTable:   statsTbl,
+		DBName:           schemaName,
+		Columns:          make([]*model.ColumnInfo, 0, len(columns)),
+		availableIndices: &avalableIndices,
+	}.init(b.ctx)
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, schemaName.L, tableInfo.Name.L, "")
+
 	var handleCol *expression.Column
-	ds.Columns = make([]*model.ColumnInfo, 0, len(columns))
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(columns))...)
 	for i, col := range columns {
 		ds.Columns = append(ds.Columns, col.ToInfo())

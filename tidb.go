@@ -166,12 +166,14 @@ func runStmt(goCtx goctx.Context, ctx context.Context, s ast.Statement) (ast.Rec
 	span.SetTag("txn.id", se.sessionVars.TxnCtx.StartTS)
 	// All the history should be added here.
 	if !s.IsReadOnly() {
-		GetHistory(ctx).Add(0, s, se.sessionVars.StmtCtx)
-		if txn := ctx.Txn(); txn != nil {
+		if err == nil {
+			GetHistory(ctx).Add(0, s, se.sessionVars.StmtCtx)
+		}
+		if ctx.Txn() != nil {
 			if err != nil {
 				ctx.StmtRollback()
 			} else {
-				terror.Log(ctx.StmtCommit())
+				ctx.StmtCommit()
 			}
 		}
 	}
@@ -209,12 +211,12 @@ func GetHistory(ctx context.Context) *StmtHistory {
 }
 
 // GetRows4Test gets all the rows from a RecordSet, only used for test.
-func GetRows4Test(goCtx goctx.Context, rs ast.RecordSet) ([]types.Row, error) {
+func GetRows4Test(goCtx goctx.Context, ctx context.Context, rs ast.RecordSet) ([]types.Row, error) {
 	if rs == nil {
 		return nil, nil
 	}
 	var rows []types.Row
-	if rs.SupportChunk() {
+	if ctx.GetSessionVars().EnableChunk && rs.SupportChunk() {
 		for {
 			// Since we collect all the rows, we can not reuse the chunk.
 			chk := rs.NewChunk()

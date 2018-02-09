@@ -495,7 +495,7 @@ type IndexReaderExecutor struct {
 
 // Close clears all resources hold by current object.
 func (e *IndexReaderExecutor) Close() error {
-	e.feedback.SetIndexRanges(e.ranges).SetActual(e.result.ScanCount())
+	e.feedback.SetIndexRanges(e.ranges).SetActual(e.result.ScanKeys())
 	e.ctx.StoreQueryFeedback(e.feedback)
 	err := closeAll(e.result, e.partialResult)
 	e.result = nil
@@ -663,7 +663,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(goCtx goctx.Context, kvRanges []k
 	go func() {
 		goCtx1, cancel := goctx.WithCancel(goCtx)
 		err := worker.fetchHandles(goCtx1, result)
-		scanCount := result.ScanCount()
+		scanCount := result.ScanKeys()
 		if err != nil {
 			scanCount = -1
 		}
@@ -721,7 +721,7 @@ type tableWorker struct {
 
 func (e *IndexLookUpExecutor) buildTableReader(goCtx goctx.Context, handles []int64) (Executor, error) {
 	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(goCtx, &TableReaderExecutor{
-		baseExecutor: newBaseExecutor(e.schema, e.ctx),
+		baseExecutor: newBaseExecutor(e.schema, e.ctx, e.id+"_tableReader"),
 		table:        e.table,
 		tableID:      e.tableID,
 		dagPB:        e.tableRequest,
@@ -1103,8 +1103,8 @@ func (tr *tableResultHandler) Close() error {
 
 func (tr *tableResultHandler) totalCount() (count int64) {
 	if tr.optionalResult != nil {
-		count += tr.optionalResult.ScanCount()
+		count += tr.optionalResult.ScanKeys()
 	}
-	count += tr.result.ScanCount()
+	count += tr.result.ScanKeys()
 	return count
 }

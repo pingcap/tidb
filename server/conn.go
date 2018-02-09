@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/arena"
@@ -147,7 +148,7 @@ func (cc *clientConn) Close() error {
 	delete(cc.server.clients, cc.connectionID)
 	connections := len(cc.server.clients)
 	cc.server.rwlock.Unlock()
-	connGauge.Set(float64(connections))
+	metrics.ConnGauge.Set(float64(connections))
 	err := cc.bufReadConn.Close()
 	terror.Log(errors.Trace(err))
 	if cc.ctx != nil {
@@ -419,7 +420,7 @@ func (cc *clientConn) Run() {
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
 			log.Errorf("lastCmd %s, %v, %s", cc.lastCmd, r, buf)
-			panicCounter.Add(1)
+			metrics.PanicCounter.WithLabelValues(metrics.LabelSession).Inc()
 		}
 		if !closedOutside {
 			err := cc.Close()
@@ -472,7 +473,7 @@ func (cc *clientConn) Run() {
 			} else if terror.ErrCritical.Equal(err) {
 				log.Errorf("[%d] critical error, stop the server listener %s",
 					cc.connectionID, errors.ErrorStack(err))
-				criticalErrorCounter.Add(1)
+				metrics.CriticalErrorCounter.Add(1)
 				select {
 				case cc.server.stopListenerCh <- struct{}{}:
 				default:
@@ -557,11 +558,11 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 		label = strconv.Itoa(int(cmd))
 	}
 	if err != nil {
-		queryCounter.WithLabelValues(label, "Error").Inc()
+		metrics.QueryTotalCounter.WithLabelValues(label, "Error").Inc()
 	} else {
-		queryCounter.WithLabelValues(label, "OK").Inc()
+		metrics.QueryTotalCounter.WithLabelValues(label, "OK").Inc()
 	}
-	queryHistogram.Observe(time.Since(startTime).Seconds())
+	metrics.QueryDurationHistogram.Observe(time.Since(startTime).Seconds())
 }
 
 // dispatch handles client request based on command which is the first byte of the data.
@@ -739,6 +740,7 @@ func insertDataWithCommit(goCtx goctx.Context, prevData, curData []byte, loadDat
 		if !reachLimit {
 			break
 		}
+		loadDataInfo.Ctx.StmtCommit()
 		// Make sure that there are no retries when committing.
 		if err = loadDataInfo.Ctx.RefreshTxnCtx(goCtx); err != nil {
 			return nil, errors.Trace(err)
@@ -797,7 +799,7 @@ func (cc *clientConn) handleLoadData(goCtx goctx.Context, loadDataInfo *executor
 	}
 
 	txn := loadDataInfo.Ctx.Txn()
-	terror.Log(loadDataInfo.Ctx.StmtCommit())
+	loadDataInfo.Ctx.StmtCommit()
 	if err != nil {
 		if txn != nil && txn.Valid() {
 			if err1 := txn.Rollback(); err1 != nil {
@@ -809,13 +811,45 @@ func (cc *clientConn) handleLoadData(goCtx goctx.Context, loadDataInfo *executor
 	return errors.Trace(txn.Commit(goCtx))
 }
 
+// handleLoadStats does the additional work after processing the 'load stats' query.
+// It sends client a file path, then reads the file content from client, loads it into the storage.
+func (cc *clientConn) handleLoadStats(goCtx goctx.Context, loadStatsInfo *executor.LoadStatsInfo) error {
+	// If the server handles the load data request, the client has to set the ClientLocalFiles capability.
+	if cc.capability&mysql.ClientLocalFiles == 0 {
+		return errNotAllowedCommand
+	}
+	if loadStatsInfo == nil {
+		return errors.New("Load stats: info is empty")
+	}
+	err := cc.writeReq(loadStatsInfo.Path)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	var prevData, curData []byte
+	for {
+		curData, err = cc.readPacket()
+		if err != nil && terror.ErrorNotEqual(err, io.EOF) {
+			return errors.Trace(err)
+		}
+		if len(curData) == 0 {
+			break
+		}
+		prevData = append(prevData, curData...)
+	}
+	if len(prevData) == 0 {
+		return nil
+	}
+	return errors.Trace(loadStatsInfo.Update(prevData))
+}
+
 // handleQuery executes the sql query string and writes result set or result ok to the client.
 // As the execution time of this function represents the performance of TiDB, we do time log and metrics here.
 // There is a special query `load data` that does not return result, which is handled differently.
+// Query `load stats` does not return result either.
 func (cc *clientConn) handleQuery(goCtx goctx.Context, sql string) (err error) {
 	rs, err := cc.ctx.Execute(goCtx, sql)
 	if err != nil {
-		executeErrorCounter.WithLabelValues(executeErrorToLabel(err)).Inc()
+		metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
 		return errors.Trace(err)
 	}
 	if rs != nil {
@@ -832,6 +866,15 @@ func (cc *clientConn) handleQuery(goCtx goctx.Context, sql string) (err error) {
 				return errors.Trace(err)
 			}
 		}
+
+		loadStats := cc.ctx.Value(executor.LoadStatsVarKey)
+		if loadStats != nil {
+			defer cc.ctx.SetValue(executor.LoadStatsVarKey, nil)
+			if err = cc.handleLoadStats(goCtx, loadStats.(*executor.LoadStatsInfo)); err != nil {
+				return errors.Trace(err)
+			}
+		}
+
 		err = cc.writeOK()
 	}
 	return errors.Trace(err)

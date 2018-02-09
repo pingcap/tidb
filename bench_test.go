@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/mockstore"
 	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
@@ -29,7 +29,7 @@ var smallCount = 100
 var bigCount = 10000
 
 func prepareBenchSession() Session {
-	store, err := tikv.NewMockTikvStore()
+	store, err := mockstore.NewMockTikvStore()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -62,6 +62,10 @@ func prepareSortBenchData(se Session, colType string, valueFormat string, valueC
 	mustExecute(se, "begin")
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	for i := 0; i < valueCount; i++ {
+		if i%1000 == 0 {
+			mustExecute(se, "commit")
+			mustExecute(se, "begin")
+		}
 		mustExecute(se, "insert t (col) values ("+fmt.Sprintf(valueFormat, r.Intn(valueCount))+")")
 	}
 	mustExecute(se, "commit")
@@ -93,7 +97,9 @@ func readResult(goCtx goctx.Context, rs ast.RecordSet, count int) {
 
 func BenchmarkBasic(b *testing.B) {
 	goCtx := goctx.Background()
+	b.StopTimer()
 	se := prepareBenchSession()
+	b.StartTimer()
 	for i := 0; i < b.N; i++ {
 		rs, err := se.Execute(goCtx, "select 1")
 		if err != nil {

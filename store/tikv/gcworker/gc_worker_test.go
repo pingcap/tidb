@@ -16,11 +16,17 @@ package gcworker
 import (
 	"flag"
 	"math"
+	"testing"
 	"time"
 
+	gofail "github.com/coreos/gofail/runtime"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/store/mockoracle"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
+	goctx "golang.org/x/net/context"
 )
 
 var (
@@ -28,9 +34,13 @@ var (
 	pdAddrs  = flag.String("pd-addrs", "127.0.0.1:2379", "pd addrs")
 )
 
+func TestT(t *testing.T) {
+	TestingT(t)
+}
+
 type testGCWorkerSuite struct {
 	store    tikv.Storage
-	oracle   *tikv.MockOracle
+	oracle   *mockoracle.MockOracle
 	gcWorker *GCWorker
 }
 
@@ -39,9 +49,9 @@ var _ = Suite(&testGCWorkerSuite{})
 func (s *testGCWorkerSuite) SetUpTest(c *C) {
 	tikv.NewGCHandlerFunc = NewGCWorker
 	var err error
-	s.store, err = tikv.NewTestTiKVStorage(*withTiKV, *pdAddrs)
+	s.store, err = mockstore.NewTestTiKVStorage(*withTiKV, *pdAddrs)
 	c.Assert(err, IsNil)
-	s.oracle = &tikv.MockOracle{}
+	s.oracle = &mockoracle.MockOracle{}
 	s.store.SetOracle(s.oracle)
 	_, err = tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
@@ -113,4 +123,33 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 	safePoint, err = s.gcWorker.loadTime(gcSafePointKey, s.gcWorker.session)
 	c.Assert(err, IsNil)
 	s.timeEqual(c, safePoint.Add(time.Minute*30), now, 2*time.Second)
+}
+
+func (s *testGCWorkerSuite) TestDoGCForOneRegion(c *C) {
+	ctx := goctx.Background()
+	bo := tikv.NewBackoffer(tikv.GcOneRegionMaxBackoff, ctx)
+	loc, err := s.store.GetRegionCache().LocateKey(bo, []byte(""))
+	c.Assert(err, IsNil)
+	var regionErr *errorpb.Error
+	regionErr, err = doGCForOneRegion(bo, s.store, 20, loc.Region)
+	c.Assert(regionErr, IsNil)
+	c.Assert(err, IsNil)
+
+	gofail.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("timeout")`)
+	regionErr, err = doGCForOneRegion(bo, s.store, 20, loc.Region)
+	c.Assert(regionErr, IsNil)
+	c.Assert(err, NotNil)
+	gofail.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult")
+
+	gofail.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("GCNotLeader")`)
+	regionErr, err = doGCForOneRegion(bo, s.store, 20, loc.Region)
+	c.Assert(regionErr.GetNotLeader(), NotNil)
+	c.Assert(err, IsNil)
+	gofail.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult")
+
+	gofail.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("GCServerIsBusy")`)
+	regionErr, err = doGCForOneRegion(bo, s.store, 20, loc.Region)
+	c.Assert(regionErr.GetServerIsBusy(), NotNil)
+	c.Assert(err, IsNil)
+	gofail.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult")
 }
