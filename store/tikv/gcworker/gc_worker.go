@@ -542,13 +542,15 @@ type gcTaskWorker struct {
 	store    tikv.Storage
 	taskCh   chan *gcTask
 	resultCh chan *gcResult
+	wg       *sync.WaitGroup
 }
 
-func newGCTaskWorker(store tikv.Storage, taskCh chan *gcTask, resultCh chan *gcResult) *gcTaskWorker {
-	return &gcTaskWorker{store, taskCh, resultCh}
+func newGCTaskWorker(store tikv.Storage, taskCh chan *gcTask, resultCh chan *gcResult, wg *sync.WaitGroup) *gcTaskWorker {
+	return &gcTaskWorker{store, taskCh, resultCh, wg}
 }
 
 func (w *gcTaskWorker) run() {
+	defer w.wg.Done()
 	for {
 		task := <-w.taskCh
 		if task == nil {
@@ -613,25 +615,6 @@ func genNextGCTask(store tikv.Storage, bo *tikv.Backoffer, safePoint uint64, key
 	return task, nil
 }
 
-func sendQuitToTaskWorkers(gcTaskCh chan *gcTask, concurrency int) {
-	for i := 0; i < concurrency; i++ {
-		gcTaskCh <- nil
-	}
-}
-
-func waitTaskWorkersDone(gcResultCh chan *gcResult, concurrency int) {
-	count := 0
-	for {
-		res := <-gcResultCh
-		if res == nil {
-			count++
-			if count == concurrency {
-				break
-			}
-		}
-	}
-}
-
 func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier string, concurrency int) error {
 	gcWorkerCounter.WithLabelValues("do_gc").Inc()
 
@@ -643,7 +626,7 @@ func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier st
 	// Sleep to wait for all other tidb instances update their safepoint cache.
 	time.Sleep(gcSafePointCacheInterval)
 
-	log.Infof("[gc worker] %s start gc, safePoint: %v.", identifier, safePoint)
+	log.Infof("[gc worker] %s start gc, concurrency %v, safePoint: %v.", identifier, concurrency, safePoint)
 	startTime := time.Now()
 	successRegions := 0
 	failedRegions := 0
@@ -652,22 +635,48 @@ func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier st
 	defer ticker.Stop()
 
 	// create task queue and task result queue, and start task workers
-	gcTaskCh := make(chan *gcTask, concurrency)
+	gcTaskCh := make(chan *gcTask, concurrency*2)
 	gcResultCh := make(chan *gcResult, concurrency*2)
+	wg := sync.WaitGroup{}
 	for i := 0; i < concurrency; i++ {
-		w := newGCTaskWorker(store, gcTaskCh, gcResultCh)
+		w := newGCTaskWorker(store, gcTaskCh, gcResultCh, &wg)
+		wg.Add(1)
 		go w.run()
 	}
 
-	var lastErr error
 	var key []byte
-GCLoop:
+	defer func() {
+		close(gcTaskCh)
+		count := 0
+		for taskRes := range gcResultCh {
+			if taskRes == nil {
+				count++
+				if count == concurrency {
+					close(gcResultCh)
+				}
+				continue
+			}
+
+			successRegions += taskRes.successRegions
+			gcActionRegionResultCounter.WithLabelValues("success").Add(float64(taskRes.successRegions))
+			failedRegions += taskRes.failedRegions
+			gcActionRegionResultCounter.WithLabelValues("fail").Add(float64(taskRes.failedRegions))
+			if taskRes.lastErr != nil {
+				log.Warnf("[gc worker] ignore failed task, err %v,", taskRes.lastErr)
+			}
+		}
+
+		wg.Wait()
+		log.Infof("[gc worker] %s finish gc, safePoint: %v, successful regions: %v, failed regions: %v, total cost time: %s",
+			identifier, safePoint, successRegions, failedRegions, time.Since(startTime))
+		gcHistogram.WithLabelValues("do_gc").Observe(time.Since(startTime).Seconds())
+	}()
+
+	bo := tikv.NewBackoffer(tikv.GcOneRegionMaxBackoff, ctx)
 	for {
 		select {
 		case <-ctx.Done():
-			sendQuitToTaskWorkers(gcTaskCh, concurrency)
-			lastErr = errors.New("[gc worker] gc job canceled")
-			break GCLoop
+			return errors.New("[gc worker] gc job canceled")
 		case taskRes := <-gcResultCh:
 			successRegions += taskRes.successRegions
 			gcActionRegionResultCounter.WithLabelValues("success").Add(float64(taskRes.successRegions))
@@ -677,17 +686,14 @@ GCLoop:
 				log.Warnf("[gc worker] ignore failed task, err %v,", taskRes.lastErr)
 			}
 		case <-ticker.C:
-			log.Infof("[gc worker] %s gc in process, safePoint: %v, successful regions: %v, failed regions: %v, cost time: %s",
+			log.Infof("[gc worker] %s gc in process, safePoint: %v, successful regions: %v, failed regions: %v, total cost time: %s",
 				identifier, safePoint, successRegions, failedRegions, time.Since(startTime))
 		default:
 		}
 
-		bo := tikv.NewBackoffer(tikv.GcOneRegionMaxBackoff, ctx)
 		task, err := genNextGCTask(store, bo, safePoint, key)
 		if err != nil {
-			sendQuitToTaskWorkers(gcTaskCh, concurrency)
-			lastErr = errors.Trace(err)
-			break GCLoop
+			return errors.Trace(err)
 		}
 		if task != nil {
 			gcTaskCh <- task
@@ -695,19 +701,9 @@ GCLoop:
 		}
 
 		if len(key) == 0 {
-			lastErr = nil
-			sendQuitToTaskWorkers(gcTaskCh, concurrency)
-			break GCLoop
+			return nil
 		}
 	}
-
-	waitTaskWorkersDone(gcResultCh, concurrency)
-
-	log.Infof("[gc worker] %s finish gc, safePoint: %v, successful regions: %v, failed regions: %v, cost time: %s",
-		identifier, safePoint, successRegions, failedRegions, time.Since(startTime))
-	gcHistogram.WithLabelValues("do_gc").Observe(time.Since(startTime).Seconds())
-
-	return lastErr
 }
 
 func doGCForRange(store tikv.Storage, startKey []byte, endKey []byte, safePoint uint64) (*gcResult, error) {
