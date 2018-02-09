@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -616,6 +617,7 @@ func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 		e.outerFilter = e.outerIter.filter
 		e.outerIter.filter = nil
 	}
+	metrics.ExecutorCounter.WithLabelValues("MergeJoinExec").Inc()
 	e.supportChk = true
 	return e
 }
@@ -683,6 +685,7 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 		e.resultGenerators[i] = newJoinResultGenerator(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues,
 			v.OtherConditions, lhsTypes, rhsTypes)
 	}
+	metrics.ExecutorCounter.WithLabelValues("HashJoinExec").Inc()
 	e.supportChk = true
 	return e
 }
@@ -703,6 +706,7 @@ func (b *executorBuilder) buildHashAgg(v *plan.PhysicalHashAgg) Executor {
 	for _, aggDesc := range v.AggFuncs {
 		e.AggFuncs = append(e.AggFuncs, aggDesc.GetAggFunc())
 	}
+	metrics.ExecutorCounter.WithLabelValues("HashAggExec").Inc()
 	return e
 }
 
@@ -722,6 +726,7 @@ func (b *executorBuilder) buildStreamAgg(v *plan.PhysicalStreamAgg) Executor {
 	for _, aggDesc := range v.AggFuncs {
 		e.AggFuncs = append(e.AggFuncs, aggDesc.GetAggFunc())
 	}
+	metrics.ExecutorCounter.WithLabelValues("StreamAggExec").Inc()
 	return e
 }
 
@@ -807,6 +812,7 @@ func (b *executorBuilder) buildSort(v *plan.PhysicalSort) Executor {
 		ByItems:      v.ByItems,
 		schema:       v.Schema(),
 	}
+	metrics.ExecutorCounter.WithLabelValues("SortExec").Inc()
 	sortExec.supportChk = true
 	return &sortExec
 }
@@ -822,6 +828,7 @@ func (b *executorBuilder) buildTopN(v *plan.PhysicalTopN) Executor {
 		ByItems:      v.ByItems,
 		schema:       v.Schema(),
 	}
+	metrics.ExecutorCounter.WithLabelValues("TopNExec").Inc()
 	sortExec.supportChk = true
 	return &TopNExec{
 		SortExec: sortExec,
@@ -875,6 +882,7 @@ func (b *executorBuilder) buildApply(apply *plan.PhysicalApply) *NestedLoopApply
 	}
 	e.innerList = chunk.NewList(innerExec.retTypes(), e.maxChunkSize)
 	e.supportChk = true
+	metrics.ExecutorCounter.WithLabelValues("NestedLoopApplyExec").Inc()
 	return e
 }
 
@@ -1134,6 +1142,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Execut
 	}
 	e.innerCtx.keyCols = innerKeyCols
 	e.joinResult = e.newChunk()
+	metrics.ExecutorCounter.WithLabelValues("IndexLookUpJoin").Inc()
 	return e
 }
 
@@ -1292,6 +1301,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 
 	is := v.IndexPlans[0].(*plan.PhysicalIndexScan)
 	ret.ranges = is.Ranges
+	metrics.ExecutorCounter.WithLabelValues("IndexLookUpExecutor").Inc()
 	return ret
 }
 
