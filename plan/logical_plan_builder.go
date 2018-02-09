@@ -1632,7 +1632,6 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 			handleCol = schema.Columns[schema.Len()-1]
 		}
 	}
-
 	ds.SetSchema(schema)
 	isMemDB := infoschema.IsMemoryDB(ds.DBName.L)
 	// We append an extra handle column to the schema when "ds" is not a memory
