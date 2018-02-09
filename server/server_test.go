@@ -27,7 +27,6 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	tmysql "github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/logutil"
@@ -710,16 +709,17 @@ func runTestStmtCount(t *C) {
 		dbt.mustExec("execute stmt1")
 		dbt.mustExec("prepare stmt2 from 'select * from test'")
 		dbt.mustExec("execute stmt2")
+		dbt.mustExec("replace into test(a) values(6);")
 
 		currentStmtCnt := getStmtCnt(string(getMetrics(t)))
-		t.Assert(currentStmtCnt[executor.CreateTable], Equals, originStmtCnt[executor.CreateTable]+1)
-		t.Assert(currentStmtCnt[executor.Insert], Equals, originStmtCnt[executor.Insert]+5)
-		deleteLabel := "DeleteTableFull"
-		t.Assert(currentStmtCnt[deleteLabel], Equals, originStmtCnt[deleteLabel]+1)
-		updateLabel := "UpdateTableFull"
-		t.Assert(currentStmtCnt[updateLabel], Equals, originStmtCnt[updateLabel]+2)
-		selectLabel := "SelectTableFull"
-		t.Assert(currentStmtCnt[selectLabel], Equals, originStmtCnt[selectLabel]+2)
+		t.Assert(currentStmtCnt["CreateTable"], Equals, originStmtCnt["CreateTable"]+1)
+		t.Assert(currentStmtCnt["Insert"], Equals, originStmtCnt["Insert"]+5)
+		t.Assert(currentStmtCnt["Delete"], Equals, originStmtCnt["Delete"]+1)
+		t.Assert(currentStmtCnt["Update"], Equals, originStmtCnt["Update"]+2)
+		t.Assert(currentStmtCnt["Select"], Equals, originStmtCnt["Select"]+3)
+		t.Assert(currentStmtCnt["Prepare"], Equals, originStmtCnt["Prepare"]+2)
+		t.Assert(currentStmtCnt["Execute"], Equals, originStmtCnt["Execute"]+2)
+		t.Assert(currentStmtCnt["Replace"], Equals, originStmtCnt["Replace"]+1)
 	})
 }
 

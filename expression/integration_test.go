@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
@@ -2620,9 +2620,9 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a date)")
 	result = tk.MustQuery("desc select a = a from t")
-	result.Check(testkit.Rows("TableScan_4   cop table:t, range:[-inf,+inf], keep order:false 10000",
-		"TableReader_5 Projection_3  root data:TableScan_4 10000",
-		"Projection_3  TableReader_5 root eq(test.t.a, test.t.a) 8000"))
+	result.Check(testkit.Rows("TableScan_4   cop table:t, range:[-inf,+inf], keep order:false 10000.00",
+		"TableReader_5 Projection_3  root data:TableScan_4 10000.00",
+		"Projection_3  TableReader_5 root eq(test.t.a, test.t.a) 10000.00"))
 
 	// for interval
 	result = tk.MustQuery(`select interval(null, 1, 2), interval(1, 2, 3), interval(2, 1, 3)`)
@@ -3170,7 +3170,7 @@ func (s *testIntegrationSuite) TestIssues(c *C) {
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
-	store, err := tikv.NewMockTikvStore()
+	store, err := mockstore.NewMockTikvStore()
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
