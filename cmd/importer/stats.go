@@ -135,6 +135,7 @@ func (h *histogram) randString() string {
 	return h.Bounds.GetRow(idx).GetString(0)
 }
 
+// randDate randoms a bucket and random a date between upper and lower bound.
 func (h *histogram) randDate() string {
 	idx := h.getRandomBoundIdx()
 	if idx%2 == 0 {
