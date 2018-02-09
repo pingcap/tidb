@@ -109,7 +109,7 @@ type baseExecutor struct {
 	retFieldTypes   []*types.FieldType
 }
 
-// Open opens all executors and initializes childrenResults according to executors' length.
+// Open initializes children recursively and "childrenResults" according to children's schemas.
 func (e *baseExecutor) Open(goCtx goctx.Context) error {
 	for _, child := range e.children {
 		err := child.Open(ctx)
