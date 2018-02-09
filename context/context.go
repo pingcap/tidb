@@ -74,7 +74,7 @@ type Context interface {
 	StoreQueryFeedback(feedback interface{})
 
 	// StmtCommit flush all changes by the statement to the underlying transaction.
-	StmtCommit() error
+	StmtCommit()
 	// StmtRollback provides statement level rollback.
 	StmtRollback()
 	// StmtGetMutation gets the binlog mutation for current statement.
