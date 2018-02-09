@@ -635,7 +635,7 @@ func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier st
 	defer ticker.Stop()
 
 	// create task queue and task result queue, and start task workers
-	gcTaskCh := make(chan *gcTask, concurrency*2)
+	gcTaskCh := make(chan *gcTask, concurrency)
 	gcResultCh := make(chan *gcResult, concurrency*2)
 	wg := sync.WaitGroup{}
 	for i := 0; i < concurrency; i++ {
