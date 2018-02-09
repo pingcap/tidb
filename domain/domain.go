@@ -368,6 +368,7 @@ func (do *Domain) mustRestartSyncer() error {
 	for {
 		err := syncer.Restart(ctx)
 		if err == nil {
+			schemaSyncerRestartGauge.Set(0)
 			return nil
 		}
 		// If the domain has stopped, we return an error immediately.
@@ -378,6 +379,7 @@ func (do *Domain) mustRestartSyncer() error {
 		}
 		time.Sleep(time.Second)
 		log.Infof("[ddl] restart the schema syncer failed %v", err)
+		schemaSyncerRestartGauge.Inc()
 	}
 }
 
