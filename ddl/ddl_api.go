@@ -786,6 +786,10 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 	}
 
 	handleTableOptions(options, tbInfo)
+	err = checkCharsetAndCollation(tbInfo.Charset, tbInfo.Collate)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	err = d.doDDLJob(ctx, job)
 	if err == nil {
 		if tbInfo.AutoIncID > 1 {
@@ -796,6 +800,13 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
+}
+
+func checkCharsetAndCollation(cs string, co string) error {
+	if !charset.ValidCharsetAndCollation(cs, co) {
+		return errUnsupportedCharset.GenByArgs(cs, co)
+	}
+	return nil
 }
 
 // handleAutoIncID handles auto_increment option in DDL. It creates a ID counter for the table and initiates the counter to a proper value.
