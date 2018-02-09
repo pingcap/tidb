@@ -108,6 +108,7 @@ const (
 	gcSafePointCacheInterval = tikv.GcSafePointCacheInterval
 	// We don't want gc to sweep out the cached info belong to other processes, like coprocessor.
 	gcScanLockLimit = tikv.ResolvedCacheSize / 2
+	gcConcurrency = 32
 )
 
 var gcVariableComments = map[string]string{
@@ -511,6 +512,73 @@ func resolveLocks(ctx goctx.Context, store tikv.Storage, safePoint uint64, ident
 	return nil
 }
 
+type gcTask struct {
+	startKey []byte
+	endKey []byte
+	safePoint uint64
+}
+
+type gcResult struct {
+	successRegions int
+	failedRegions int
+	lastErr error
+}
+
+func genNextGCTask(store tikv.Storage, bo *tikv.Backoffer, safePoint uint64, key kv.Key) (*gcTask, error) {
+	loc, err := store.GetRegionCache().LocateKey(bo, key)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	task := &gcTask {
+		startKey: key,
+		endKey: loc.EndKey,
+		safePoint: safePoint,
+	}
+	return task, nil
+}
+
+func gcTaskWorker(store tikv.Storage, taskCh chan *gcTask, resultCh chan *gcResult) {
+	for {
+		task := <- taskCh
+		if task == nil {
+			resultCh <- nil
+			return
+		}
+
+		res, err := doGCForRange(store, task.startKey, task.endKey, task.safePoint)
+		if err != nil {
+			res = &gcResult {
+				successRegions: 0,
+				failedRegions: 0,
+				lastErr: err,
+			}
+		}
+		if res != nil {
+			resultCh <- res
+		}
+	}
+}
+
+func sendQuitToTaskWorkers(gcTaskCh chan *gcTask) {
+	for i := 0; i < gcConcurrency; i++ {
+		gcTaskCh <- nil
+	}
+}
+
+func waitTaskWorkersDone(gcResultCh chan *gcResult) {
+	count := 0
+	for {
+		res := <- gcResultCh
+		if res == nil {
+			count++
+			if count == gcConcurrency {
+				break
+			}
+		}
+	}
+}
+
 func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier string) error {
 	gcWorkerCounter.WithLabelValues("do_gc").Inc()
 
@@ -530,25 +598,78 @@ func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier st
 	ticker := time.NewTicker(gcJobLogTickInterval)
 	defer ticker.Stop()
 
-	bo := tikv.NewBackoffer(tikv.GcOneRegionMaxBackoff, ctx)
+	// create task queue and task result queue, and start task workers
+	gcTaskCh := make(chan *gcTask, gcConcurrency)
+	gcResultCh := make(chan *gcResult, 1024)
+	for i := 0; i < gcConcurrency; i++ {
+		go gcTaskWorker(store, gcTaskCh, gcResultCh)
+	}
+
+	var lastErr error = nil
 	var key []byte
+	GCLoop:
 	for {
 		select {
 		case <-ctx.Done():
-			return errors.New("[gc worker] gc job canceled")
+			sendQuitToTaskWorkers(gcTaskCh)
+			lastErr = errors.New("[gc worker] gc job canceled")
+			break GCLoop
+		case taskRes := <-gcResultCh:
+			successRegions += taskRes.successRegions
+			gcActionRegionResultCounter.WithLabelValues("success").Add(float64(taskRes.successRegions))
+			failedRegions += taskRes.failedRegions
+			gcActionRegionResultCounter.WithLabelValues("fail").Add(float64(taskRes.failedRegions))
+			if taskRes.lastErr != nil {
+				log.Warnf("[gc worker] ignore failed task, err %v,", taskRes.lastErr)
+			}
 		case <-ticker.C:
 			log.Infof("[gc worker] %s gc in process, safePoint: %v, successful regions: %v, failed regions: %v, cost time: %s",
 				identifier, safePoint, successRegions, failedRegions, time.Since(startTime))
 		default:
 		}
 
+		bo := tikv.NewBackoffer(tikv.GcOneRegionMaxBackoff, ctx)
+		task, err := genNextGCTask(store, bo, safePoint, key)
+		if err != nil {
+			sendQuitToTaskWorkers(gcTaskCh)
+			lastErr = errors.Trace(err)
+			break GCLoop
+		}
+		if task != nil {
+			gcTaskCh <- task
+			key = task.endKey
+		}
+
+		if len(key) == 0 {
+			lastErr = nil
+			sendQuitToTaskWorkers(gcTaskCh)
+			break GCLoop
+		}
+	}
+
+	waitTaskWorkersDone(gcResultCh)
+
+	log.Infof("[gc worker] %s finish gc, safePoint: %v, successful regions: %v, failed regions: %v, cost time: %s",
+		identifier, safePoint, successRegions, failedRegions, time.Since(startTime))
+	gcHistogram.WithLabelValues("do_gc").Observe(time.Since(startTime).Seconds())
+
+	return lastErr
+}
+
+func doGCForRange(store tikv.Storage, startKey []byte, endKey []byte, safePoint uint64) (*gcResult, error) {
+	successRegions := 0
+	failedRegions := 0
+	key := startKey
+	var lastErr error = nil
+	for {
+		bo := tikv.NewBackoffer(tikv.GcOneRegionMaxBackoff, goctx.Background())
 		loc, err := store.GetRegionCache().LocateKey(bo, key)
 		if err != nil {
-			return errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 
 		var regionErr *errorpb.Error
-		regionErr, err = doGCForOneRegion(bo, store, safePoint, loc.Region)
+		regionErr, err = doGCForRegion(bo, store, safePoint, loc.Region)
 
 		// we check regionErr here first, because we know 'regionErr' and 'err' should not return together, to keep it to
 		// make the process correct.
@@ -560,28 +681,30 @@ func doGC(ctx goctx.Context, store tikv.Storage, safePoint uint64, identifier st
 		}
 
 		if err != nil {
+			log.Warnf("[gc worker] gc for range [%v, %v) safepoint: %v, failed, err: %v", startKey, endKey, safePoint, err)
+			lastErr = err
 			failedRegions++
-			gcActionRegionResultCounter.WithLabelValues("fail").Inc()
-			log.Warnf("[gc worker] %s failed to do gc on region(%s, %s), ignore it", identifier, string(loc.StartKey), string(loc.EndKey))
 		} else {
 			successRegions++
-			gcActionRegionResultCounter.WithLabelValues("success").Inc()
 		}
 
 		key = loc.EndKey
 		if len(key) == 0 {
 			break
 		}
-		bo = tikv.NewBackoffer(tikv.GcOneRegionMaxBackoff, ctx)
 	}
-	log.Infof("[gc worker] %s finish gc, safePoint: %v, successful regions: %v, failed regions: %v, cost time: %s",
-		identifier, safePoint, successRegions, failedRegions, time.Since(startTime))
-	gcHistogram.WithLabelValues("do_gc").Observe(time.Since(startTime).Seconds())
-	return nil
+
+	res := &gcResult {
+		successRegions: successRegions,
+		failedRegions: failedRegions,
+		lastErr: lastErr,
+	}
+
+	return res, nil
 }
 
 // these two errors should not return together, for more, see the func 'doGC'
-func doGCForOneRegion(bo *tikv.Backoffer, store tikv.Storage, safePoint uint64, region tikv.RegionVerID) (*errorpb.Error, error) {
+func doGCForRegion(bo *tikv.Backoffer, store tikv.Storage, safePoint uint64, region tikv.RegionVerID) (*errorpb.Error, error) {
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdGC,
 		GC: &kvrpcpb.GCRequest{
