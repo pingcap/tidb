@@ -56,7 +56,7 @@ type SortExec struct {
 	// rowPointer store the chunk index and row index for each row.
 	rowPtrs []chunk.RowPtr
 
-	memTracker *memory.MemoryTracker
+	memTracker *memory.MemTracker
 }
 
 // Close implements the Executor Close interface.
@@ -71,7 +71,7 @@ func (e *SortExec) Open(goCtx goctx.Context) error {
 	e.fetched = false
 	e.Idx = 0
 	e.Rows = nil
-	e.memTracker = memory.NewMemoryTracker(e.id, e.ctx.GetSessionVars().MemThreshold)
+	e.memTracker = memory.NewMemTracker(e.id, e.ctx.GetSessionVars().MemThreshold)
 	return errors.Trace(e.children[0].Open(goCtx))
 }
 

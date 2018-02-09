@@ -56,9 +56,9 @@ func (s *testChunkSuite) TestList(c *check.C) {
 	nChunk.AppendNull(0)
 	l.Add(nChunk)
 	ptr := l.AppendRow(srcRow)
-	c.Assert(l.NumChunks(), check.Equals, 1)
-	c.Assert(ptr.ChkIdx, check.Equals, uint32(0))
-	c.Assert(ptr.RowIdx, check.Equals, uint32(1))
+	c.Assert(l.NumChunks(), check.Equals, 2)
+	c.Assert(ptr.ChkIdx, check.Equals, uint32(1))
+	c.Assert(ptr.RowIdx, check.Equals, uint32(0))
 	row := l.GetRow(ptr)
 	c.Assert(row.GetInt64(0), check.Equals, int64(1))
 

@@ -27,8 +27,8 @@ type List struct {
 	chunks       []*Chunk
 	freelist     []*Chunk
 
-	memTracker   *memory.MemoryTracker // track memory usage.
-	lastConsumed bool                  // whether the memory usage of last Chunk in "chunks" has been consumed.
+	memTracker   *memory.MemTracker // track memory usage.
+	lastConsumed bool               // whether the memory usage of last Chunk in "chunks" has been consumed.
 }
 
 // RowPtr is used to get a row from a list.
@@ -43,13 +43,14 @@ func NewList(fieldTypes []*types.FieldType, maxChunkSize int) *List {
 	l := &List{
 		fieldTypes:   fieldTypes,
 		maxChunkSize: maxChunkSize,
-		memTracker:   memory.NewMemoryTracker("chunk.List", -1),
+		memTracker:   memory.NewMemTracker("chunk.List", -1),
 		lastConsumed: true,
 	}
 	return l
 }
 
-func (l *List) GetMemTracker() *memory.MemoryTracker {
+// GetMemTracker returns the memory tracker of this List.
+func (l *List) GetMemTracker() *memory.MemTracker {
 	return l.memTracker
 }
 

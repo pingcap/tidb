@@ -23,9 +23,9 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// MemoryTracker is used to track the memory usage during query execution.
+// MemTracker is used to track the memory usage during query execution.
 // It contains an optional limit and can be arranged into a tree structure
-// such that the consumption tracked by a MemoryTracker is also tracked by
+// such that the consumption tracked by a MemTracker is also tracked by
 // its ancestors. The main idea comes from Apache Impala:
 //
 // https://github.com/cloudera/Impala/blob/cdh5-trunk/be/src/runtime/mem-tracker.h
@@ -34,22 +34,22 @@ import (
 // the tracker itself or to one of its descendents.
 //
 // NOTE: This struct is thread-safe.
-type MemoryTracker struct {
-	label         string      // Label of this "MemoryTracker".
+type MemTracker struct {
+	label         string      // Label of this "MemTracker".
 	mutex         *sync.Mutex // for synchronization.
 	bytesConsumed int64       // Consumed bytes.
 	bytesLimit    int64       // Negative value means no limit.
 	logged        bool        // Whether a log has printed when "bytesConsumed" > "bytesLimit".
 
-	parent   *MemoryTracker   // The parent memory tracker.
-	children []*MemoryTracker // The children memory trackers.
+	parent   *MemTracker   // The parent memory tracker.
+	children []*MemTracker // The children memory trackers.
 }
 
-// NewMemoryTracker creates a memory tracker.
+// NewMemTracker creates a memory tracker.
 //	1. "label" is the label used in the usage string.
 //	2. "bytesLimit < 0" means no limit.
-func NewMemoryTracker(label string, bytesLimit int64) *MemoryTracker {
-	return &MemoryTracker{
+func NewMemTracker(label string, bytesLimit int64) *MemTracker {
+	return &MemTracker{
 		label:         label,
 		mutex:         &sync.Mutex{},
 		bytesConsumed: 0,
@@ -59,14 +59,14 @@ func NewMemoryTracker(label string, bytesLimit int64) *MemoryTracker {
 	}
 }
 
-// SetLabel set the label of a MemoryTracker.
-func (m *MemoryTracker) SetLabel(label string) {
+// SetLabel set the label of a MemTracker.
+func (m *MemTracker) SetLabel(label string) {
 	m.label = label
 }
 
-// AttachTo attach a MemoryTracker as a child to another MemoryTracker.
+// AttachTo attach a MemTracker as a child to another MemTracker.
 // Its consumed memory usage is used to update all its ancestors.
-func (m *MemoryTracker) AttachTo(parent *MemoryTracker) {
+func (m *MemTracker) AttachTo(parent *MemTracker) {
 	if m.parent != nil {
 		m.parent.ReplaceChild(m, nil)
 	}
@@ -78,7 +78,7 @@ func (m *MemoryTracker) AttachTo(parent *MemoryTracker) {
 // ReplaceChild remove the old child specified in "oldChild" and add a new
 // child specified in "newChild". old child's memory consumption will be
 // removed and new child's memory consumption will be added.
-func (m *MemoryTracker) ReplaceChild(oldChild, newChild *MemoryTracker) {
+func (m *MemTracker) ReplaceChild(oldChild, newChild *MemTracker) {
 	for i, child := range m.children {
 		if child != oldChild {
 			continue
@@ -94,7 +94,7 @@ func (m *MemoryTracker) ReplaceChild(oldChild, newChild *MemoryTracker) {
 
 // Consume is used to consume a memory usage.
 // bytes can be a negative value, witch means memory release operations.
-func (m *MemoryTracker) Consume(bytes int64) {
+func (m *MemTracker) Consume(bytes int64) {
 	for tracker := m; tracker != nil; tracker = tracker.parent {
 		tracker.mutex.Lock()
 		tracker.bytesConsumed += bytes
@@ -104,21 +104,21 @@ func (m *MemoryTracker) Consume(bytes int64) {
 }
 
 // BytesConsumed returns the consumed memory usage value in bytes.
-func (m *MemoryTracker) BytesConsumed() int64 {
+func (m *MemTracker) BytesConsumed() int64 {
 	return m.bytesConsumed
 }
 
-func (m *MemoryTracker) logOnceIfExceed() {
+func (m *MemTracker) logOnceIfExceed() {
 	if m.logged || m.bytesLimit < 0 || m.bytesConsumed < m.bytesLimit {
 		return
 	}
 	m.logged = true
 	buffer := bytes.NewBufferString("\n")
 	m.prettyString("", buffer)
-	log.Warnf(ErrMemExceedThreshold.GenByArgs(m.label, m.bytesConsumed, m.bytesLimit, buffer.String()).Error())
+	log.Warnf(errMemExceedThreshold.GenByArgs(m.label, m.bytesConsumed, m.bytesLimit, buffer.String()).Error())
 }
 
-func (m *MemoryTracker) prettyString(indent string, buffer *bytes.Buffer) {
+func (m *MemTracker) prettyString(indent string, buffer *bytes.Buffer) {
 	buffer.WriteString(fmt.Sprintf("%s\"%s\"{\n", indent, m.label))
 	if m.bytesLimit > 0 {
 		buffer.WriteString(fmt.Sprintf("%s  \"limit\": %v bytes\n", indent, m.bytesLimit))
@@ -133,7 +133,7 @@ func (m *MemoryTracker) prettyString(indent string, buffer *bytes.Buffer) {
 }
 
 var (
-	ErrMemExceedThreshold = terror.ClassExecutor.New(codeMemExceedThreshold, mysql.MySQLErrName[mysql.ErrMemExceedThreshold])
+	errMemExceedThreshold = terror.ClassExecutor.New(codeMemExceedThreshold, mysql.MySQLErrName[mysql.ErrMemExceedThreshold])
 )
 
 const (
