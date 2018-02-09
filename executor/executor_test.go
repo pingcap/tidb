@@ -28,6 +28,7 @@ import (
 	. "github.com/pingcap/check"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
@@ -2080,21 +2081,33 @@ func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
 	cli.mu.Lock()
 	cli.mu.checkFlags = checkRequestPriority
 	cli.mu.Unlock()
+
+	cli.priority = pb.CommandPri_High
+	tk.MustQuery("select id from t where id = 1")
+	tk.MustQuery("select * from t1 where id = 1")
+
+	cli.priority = pb.CommandPri_Normal
+	tk.MustQuery("select count(*) from t")
+	tk.MustExec("update t set id = 3")
+	tk.MustExec("delete from t")
+	tk.MustExec("insert into t values (2)")
+	tk.MustExec("delete from t")
+
+	// Insert some data to make sure plan build IndexLookup for t.
+	tk.MustExec("insert into t values (1), (2)")
+
+	oldThreshold := config.GetGlobalConfig().Log.ExpensiveThreshold
+	config.GetGlobalConfig().Log.ExpensiveThreshold = 0
+	defer func() { config.GetGlobalConfig().Log.ExpensiveThreshold = oldThreshold }()
+
 	cli.priority = pb.CommandPri_High
 	tk.MustQuery("select id from t where id = 1")
 	tk.MustQuery("select * from t1 where id = 1")
 
 	cli.priority = pb.CommandPri_Low
 	tk.MustQuery("select count(*) from t")
-
-	cli.priority = pb.CommandPri_Low
-	tk.MustExec("update t set id = 3")
-
-	cli.priority = pb.CommandPri_Low
 	tk.MustExec("delete from t")
-
-	cli.priority = pb.CommandPri_Normal
-	tk.MustExec("insert into t values (2)")
+	tk.MustExec("insert into t values (3)")
 
 	// TODO: Those are not point get, but they should be high priority.
 	// cli.priority = pb.CommandPri_High
