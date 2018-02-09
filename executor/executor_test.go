@@ -2013,7 +2013,6 @@ func (c *checkRequestClient) SendReq(ctx goctx.Context, addr string, req *tikvrp
 		switch req.Type {
 		case tikvrpc.CmdCop:
 			if c.priority != req.Priority {
-				fmt.Printf("expected proority: %v, actual priority: %v\n", c.priority, req.Priority)
 				return nil, errors.New("fail to set priority")
 			}
 		}
