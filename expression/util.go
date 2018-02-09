@@ -275,6 +275,7 @@ func Contains(exprs []Expression, e Expression) bool {
 	return false
 }
 
+// ExtractFiltersFromDNFs checks whether the cond is DNF and extract the same expression in its leaf items.
 func ExtractFiltersFromDNFs(ctx context.Context, conditions []Expression) []Expression {
 	var allExtracted []Expression
 	for i := len(conditions) - 1; i >= 0; i-- {
@@ -310,7 +311,7 @@ func extractFiltersFromDNF(ctx context.Context, dnfFunc *ScalarFunction) ([]Expr
 					codeMap[hack.String(code)] = 1
 					hashcode2Expr[hack.String(code)] = cnfItem
 				} else if _, ok = codeMap[hack.String(code)]; ok {
-					if _, ok := innerMap[hack.String(code)]; !ok {
+					if _, ok1 := innerMap[hack.String(code)]; !ok1 {
 						codeMap[hack.String(code)]++
 						innerMap[hack.String(code)] = struct{}{}
 					}
@@ -357,13 +358,9 @@ func extractFiltersFromDNF(ctx context.Context, dnfFunc *ScalarFunction) ([]Expr
 			} else if len(newCNFItems) > 1 {
 				newDNFItems = append(newDNFItems, ComposeCNFCondition(ctx, newCNFItems...))
 			}
-		} else {
-			code := dnfItem.HashCode(sc)
-			_, ok := hashcode2Expr[hack.String(code)]
-			if !ok {
-				newDNFItems = append(newDNFItems, dnfItem)
-			}
 		}
+		// Since we broke before the for loop by check whether the `hashcode2Expr` is empty.
+		// So the item in CNF that is not a CNF must be extracted out here.
 	}
 	extractedExpr := make([]Expression, 0, len(hashcode2Expr))
 	for _, expr := range hashcode2Expr {

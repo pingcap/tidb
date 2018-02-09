@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
@@ -3167,6 +3168,62 @@ func (s *testIntegrationSuite) TestIssues(c *C) {
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert t values (1)")
 	tk.MustQuery("select * from t where cast(a as binary)").Check(testkit.Rows("1"))
+}
+
+func (s *testIntegrationSuite) TestFilterExtractFromDNF(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer s.cleanEnv(c)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int)")
+
+	tests := []struct {
+		exprStr   string
+		result    string
+		remained  string
+		resultStr string
+	}{
+		{
+			exprStr: "a = 1 or a = 1 or a = 1",
+			result:  "[eq(test.t.a, 1)]",
+		},
+		{
+			exprStr: "a = 1 or a = 1 or (a = 1 and b = 1)",
+			result:  "[eq(test.t.b, 1) eq(test.t.a, 1)]",
+		},
+		{
+			exprStr: "(a = 1 and a = 1) or a = 1 or b = 1",
+			result:  "[or(or(and(eq(test.t.a, 1), eq(test.t.a, 1)), eq(test.t.a, 1)), eq(test.t.b, 1))]",
+		},
+		{
+			exprStr: "(a = 1 and b = 2) or (a = 1 and b = 3) or (a = 1 and b = 4)",
+			result:  "[or(eq(test.t.b, 2), or(eq(test.t.b, 3), eq(test.t.b, 4))) eq(test.t.a, 1)]",
+		},
+		{
+			exprStr: "(a = 1 and b = 1) or (a = 1 and b = 1 and c = 1) or (a = 1 and b = 1 and c > 2 and c < 3)",
+			result:  "[or(eq(test.t.c, 1), and(gt(test.t.c, 2), lt(test.t.c, 3))) eq(test.t.a, 1) eq(test.t.b, 1)]",
+		},
+	}
+
+	for _, tt := range tests {
+		sql := "select * from t where " + tt.exprStr
+		ctx := tk.Se.(context.Context)
+		stmts, err := tidb.Parse(ctx, sql)
+		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
+		c.Assert(stmts, HasLen, 1)
+		is := domain.GetDomain(ctx).InfoSchema()
+		err = plan.Preprocess(ctx, stmts[0], is, false)
+		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
+		p, err := plan.BuildLogicalPlan(ctx, stmts[0], is)
+		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
+		selection := p.(plan.LogicalPlan).Children()[0].(*plan.LogicalSelection)
+		conds := make([]expression.Expression, 0, len(selection.Conditions))
+		for _, cond := range selection.Conditions {
+			conds = append(conds, expression.PushDownNot(cond, false, ctx))
+		}
+		afterFunc := expression.ExtractFiltersFromDNFs(ctx, conds)
+		c.Assert(fmt.Sprintf("%s", afterFunc), Equals, tt.result, Commentf("wrong result for expr: %s", tt.exprStr))
+	}
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
