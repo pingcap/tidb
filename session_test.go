@@ -105,27 +105,6 @@ func (s *testSessionSuite) TestSchemaCheckerSimple(c *C) {
 	c.Assert(result, Equals, domain.ResultUnknown)
 }
 
-func (s *testSessionSuite) TestHaving(c *C) {
-	defer testleak.AfterTest(c)()
-	dbName := "test_having"
-	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
-	se := newSession(c, s.store, dbName)
-	mustExecFailed(c, se, "select c1 from t having c2")
-	mustExecFailed(c, se, "select c1 from t having c2 + 1")
-	mustExecFailed(c, se, "select c1 from t group by c2 + 1 having c2")
-	mustExecFailed(c, se, "select c1 from t group by c2 + 1 having c2 + 1")
-	mustExecFailed(c, se, "select c1 as c2, c2 from t having c2")
-	mustExecFailed(c, se, "select c1 as c2, c2 from t having c2 + 1")
-	mustExecFailed(c, se, "select c1 as a, c2 as a from t having a")
-	mustExecFailed(c, se, "select c1 as a, c2 as a from t having a + 1")
-	mustExecFailed(c, se, "select c1 + 1 from t having c1")
-	mustExecFailed(c, se, "select c1 + 1 from t having c1 + 1")
-	mustExecFailed(c, se, "select a.c1 as c, b.c1 as d from t as a, t as b having c1")
-	mustExecFailed(c, se, "select 1 from t having sum(avg(c1))")
-
-	mustExecSQL(c, se, dropDBSQL)
-}
-
 func (s *testSessionSuite) TestSetGlobalTZ(c *C) {
 	defer testleak.AfterTest(c)()
 	dbName := "testTZ"
