@@ -252,7 +252,7 @@ func newDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
 	if hook == nil {
 		hook = &BaseCallback{}
 	}
-
+	startTime := time.Now()
 	id := uuid.NewV4().String()
 	ctx, cancelFunc := goctx.WithCancel(ctx)
 	var manager owner.Manager
@@ -291,7 +291,9 @@ func newDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
 
 	d.start(ctx)
 	variable.RegisterStatistics(d)
+
 	log.Infof("[ddl] start DDL:%s", d.uuid)
+	metrics.DDLWorkerHistogram.WithLabelValues(metrics.CreateDDLWorker, metrics.RetLabel(nil)).Observe(time.Since(startTime).Seconds())
 	return d
 }
 
