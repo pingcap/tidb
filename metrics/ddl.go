@@ -110,5 +110,5 @@ func init() {
 	prometheus.MustRegister(UpdateSelfVersionHistogram)
 	prometheus.MustRegister(OwnerHandleSyncerHistogram)
 	prometheus.MustRegister(DDLWorkerHistogram)
-	prometheus.MustRegister(DDLOwnerCounter)
+	prometheus.MustRegister(DDLCounter)
 }
