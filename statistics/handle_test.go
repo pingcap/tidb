@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -400,7 +400,7 @@ func (s *testStatsUpdateSuite) TestLoadStats(c *C) {
 }
 
 func newStoreWithBootstrap(statsLease time.Duration) (kv.Storage, *domain.Domain, error) {
-	store, err := tikv.NewMockTikvStore()
+	store, err := mockstore.NewMockTikvStore()
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}

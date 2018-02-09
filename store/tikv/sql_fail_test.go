@@ -20,6 +20,7 @@ import (
 	gofail "github.com/coreos/gofail/runtime"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/terror"
 	goctx "golang.org/x/net/context"
@@ -32,7 +33,7 @@ type testSQLSuite struct {
 }
 
 func (s *testSQLSuite) SetUpSuite(c *C) {
-	s.store, _ = tikv.NewTestTiKVStorage(false, "")
+	s.store, _ = mockstore.NewTestTiKVStorage(false, "")
 }
 
 func (s *testSQLSuite) TestFailBusyServerCop(c *C) {
@@ -45,11 +46,11 @@ func (s *testSQLSuite) TestFailBusyServerCop(c *C) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	gofail.Enable("github.com/pingcap/tidb/store/tikv/mocktikv/rpcServerBusy", `return(true)`)
+	gofail.Enable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcServerBusy", `return(true)`)
 	go func() {
 		defer wg.Done()
 		time.Sleep(time.Millisecond * 100)
-		gofail.Disable("github.com/pingcap/tidb/store/tikv/mocktikv/rpcServerBusy")
+		gofail.Disable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcServerBusy")
 	}()
 
 	go func() {

@@ -23,6 +23,8 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/store/mockoracle"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
 	goctx "golang.org/x/net/context"
 )
@@ -38,7 +40,7 @@ func TestT(t *testing.T) {
 
 type testGCWorkerSuite struct {
 	store    tikv.Storage
-	oracle   *tikv.MockOracle
+	oracle   *mockoracle.MockOracle
 	gcWorker *GCWorker
 }
 
@@ -47,9 +49,9 @@ var _ = Suite(&testGCWorkerSuite{})
 func (s *testGCWorkerSuite) SetUpTest(c *C) {
 	tikv.NewGCHandlerFunc = NewGCWorker
 	var err error
-	s.store, err = tikv.NewTestTiKVStorage(*withTiKV, *pdAddrs)
+	s.store, err = mockstore.NewTestTiKVStorage(*withTiKV, *pdAddrs)
 	c.Assert(err, IsNil)
-	s.oracle = &tikv.MockOracle{}
+	s.oracle = &mockoracle.MockOracle{}
 	s.store.SetOracle(s.oracle)
 	_, err = tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
