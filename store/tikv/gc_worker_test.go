@@ -20,7 +20,6 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
-	goctx "golang.org/x/net/context"
 )
 
 type testGCWorkerSuite struct {
@@ -126,26 +125,4 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 	concurrency, err = s.gcWorker.loadGCConcurrencyWithDefault()
 	c.Assert(err, IsNil)
 	c.Assert(concurrency, Equals, gcMaxConcurrency)
-}
-
-func (s *testGCWorkerSuite) TestDoGC(c *C) {
-	var err error
-	ctx := goctx.Background()
-
-	gcSafePointCacheInterval = 1
-
-	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcDefaultConcurrency), s.gcWorker.session)
-	c.Assert(err, IsNil)
-	err = s.gcWorker.doGC(ctx, 20)
-	c.Assert(err, IsNil)
-
-	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcMinConcurrency), s.gcWorker.session)
-	c.Assert(err, IsNil)
-	err = s.gcWorker.doGC(ctx, 20)
-	c.Assert(err, IsNil)
-
-	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcMaxConcurrency), s.gcWorker.session)
-	c.Assert(err, IsNil)
-	err = s.gcWorker.doGC(ctx, 20)
-	c.Assert(err, IsNil)
 }
