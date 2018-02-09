@@ -333,7 +333,7 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 	s.rwlock.Lock()
 	defer s.rwlock.Unlock()
 	log.Infof("[server] Kill connectionID %d, query %t]", connectionID, query)
-	metrics.ServerEventCounter.WithLabelValues(metrics.EventGracefulDown).Inc()
+	metrics.ServerEventCounter.WithLabelValues(metrics.EventKill).Inc()
 
 	conn, ok := s.clients[uint32(connectionID)]
 	if !ok {
