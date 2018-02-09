@@ -34,9 +34,18 @@ var (
 			Help:      "Bucketed histogram of processing time (s) in load schema.",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 15),
 		})
+
+	schemaSyncerRestartGauge = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "domain",
+			Name:      "syncer_restart_times",
+			Help:      "Schema syncer restart times",
+		})
 )
 
 func init() {
 	prometheus.MustRegister(loadSchemaDuration)
 	prometheus.MustRegister(loadSchemaCounter)
+	prometheus.MustRegister(schemaSyncerRestartGauge)
 }
