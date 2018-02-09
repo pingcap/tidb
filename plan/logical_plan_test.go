@@ -1101,6 +1101,26 @@ func (s *testPlanSuite) TestValidate(c *C) {
 			sql: "select * from t t1 use index(e)",
 			err: ErrKeyDoesNotExist,
 		},
+		{
+			sql: "select a from t having c2",
+			err: ErrUnknownColumn,
+		},
+		{
+			sql: "select a from t group by c2 + 1 having c2",
+			err: ErrUnknownColumn,
+		},
+		{
+			sql: "select a as b, b from t having b",
+			err: ErrAmbiguous,
+		},
+		{
+			sql: "select a + 1 from t having a",
+			err: ErrUnknownColumn,
+		},
+		{
+			sql: "select a from t having sum(avg(a))",
+			err: ErrInvalidGroupFuncUse,
+		},
 	}
 	for _, tt := range tests {
 		sql := tt.sql

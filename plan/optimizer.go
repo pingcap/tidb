@@ -171,15 +171,15 @@ func existsCartesianProduct(p LogicalPlan) bool {
 
 // Optimizer error codes.
 const (
-	CodeOperandColumns      terror.ErrCode = 1
-	CodeInvalidWildCard                    = 3
-	CodeUnsupported                        = 4
-	CodeInvalidGroupFuncUse                = 5
-	CodeStmtNotFound                       = 7
-	CodeWrongParamCount                    = 8
-	CodeSchemaChanged                      = 9
+	CodeOperandColumns  terror.ErrCode = 1
+	CodeInvalidWildCard                = 3
+	CodeUnsupported                    = 4
+	CodeStmtNotFound                   = 7
+	CodeWrongParamCount                = 8
+	CodeSchemaChanged                  = 9
 
 	// MySQL error code.
+	CodeInvalidGroupFuncUse  = mysql.ErrInvalidGroupFuncUse
 	CodeIllegalReference     = mysql.ErrIllegalReference
 	CodeNoDB                 = mysql.ErrNoDB
 	CodeUnknownExplainFormat = mysql.ErrUnknownExplainFormat
