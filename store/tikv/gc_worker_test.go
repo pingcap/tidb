@@ -16,11 +16,11 @@ package tikv
 import (
 	"math"
 	"strconv"
-	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
+	goctx "golang.org/x/net/context"
 )
 
 type testGCWorkerSuite struct {
