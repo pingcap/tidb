@@ -14,8 +14,6 @@
 package plan
 
 import (
-	"fmt"
-
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/distsql"
@@ -120,18 +118,15 @@ func checkCoverIndex(idx *model.IndexInfo, ranges []*ranger.NewRange) bool {
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalIndexScan) ToPB(ctx context.Context) (*tipb.Executor, error) {
 	columns := make([]*model.ColumnInfo, 0, p.schema.Len())
-	var colStr string
+	tableColumns := p.Table.Cols()
 	for _, col := range p.schema.Columns {
 		if col.ID == model.ExtraHandleID {
 			columns = append(columns, &model.ColumnInfo{
 				ID:   model.ExtraHandleID,
 				Name: model.NewCIStr("_rowid"),
 			})
-			colStr += "has extra handle; "
 		} else {
-			c := p.Table.Columns[col.Position]
-			colStr += fmt.Sprintf("offset:%v, col name:%v, id:%v; ", col.Position, c.Name, c.ID)
-			columns = append(columns, c)
+			columns = append(columns, tableColumns[col.Position])
 		}
 	}
 	idxExec := &tipb.IndexScan{
@@ -142,12 +137,6 @@ func (p *PhysicalIndexScan) ToPB(ctx context.Context) (*tipb.Executor, error) {
 	}
 	unique := checkCoverIndex(p.Index, p.Ranges)
 	idxExec.Unique = &unique
-
-	colStr += fmt.Sprintf("pk is handle %v; ", p.Table.PKIsHandle)
-	for i, col := range idxExec.Columns {
-		colStr += fmt.Sprintf("pk handle:%v, %#v; ", col.PkHandle, columns[i])
-	}
-	p.ctx.GetSessionVars().StmtCtx.DebugLog += fmt.Sprintf("-------[index scan] to pb, table %v, columns %#v, unique %v\n", p.Table.Name, colStr, p.Index.Unique)
 
 	return &tipb.Executor{Tp: tipb.ExecType_TypeIndexScan, IdxScan: idxExec}, nil
 }

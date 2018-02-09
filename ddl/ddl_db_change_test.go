@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/testleak"
-	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
 
@@ -288,7 +287,7 @@ func (t *testExecInfo) execSQL(idx int) error {
 func (s *testStateChangeSuite) TestUpdateOrDelete(c *C) {
 	sqls := make([]string, 2)
 	sqls[0] = "delete from t where c2 = 'a'"
-	sqls[1] = "update t set c2 = 'c2_update' where c2 = 'a'"
+	sqls[1] = "update t use index(c2) set c2 = 'c2_update' where c2 = 'a'"
 	alterTableSQL := "alter table t add column a int not null default 1 first"
 	s.runTestInWriteOnly(c, "", alterTableSQL, sqls)
 }
@@ -300,7 +299,7 @@ func (s *testStateChangeSuite) runTestInWriteOnly(c *C, tableName, alterTableSQL
 		c2 varchar(64),
 		c3 enum('N','Y') not null default 'N',
 		c4 timestamp on update current_timestamp,
-		key(c2))`)
+		unique key(c2))`)
 	c.Assert(err, IsNil)
 	defer s.se.Execute(goctx.Background(), "drop table t")
 	_, err = s.se.Execute(goctx.Background(), "insert into t values(8, 'a', 'N', '2017-07-01')")
@@ -326,13 +325,11 @@ func (s *testStateChangeSuite) runTestInWriteOnly(c *C, tableName, alterTableSQL
 			return
 		}
 		for _, sql := range sqls {
-			log.Warnf("..........................................................xxxxx")
 			_, err = se.Execute(goctx.Background(), sql)
 			if err != nil {
 				checkErr = err
 				break
 			}
-			log.Warnf("..........................................................xxxxx1")
 		}
 	}
 	d := s.dom.DDL()
