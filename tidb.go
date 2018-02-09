@@ -173,7 +173,7 @@ func runStmt(goCtx goctx.Context, ctx context.Context, s ast.Statement) (ast.Rec
 			if err != nil {
 				ctx.StmtRollback()
 			} else {
-				terror.Log(ctx.StmtCommit())
+				ctx.StmtCommit()
 			}
 		}
 	}
