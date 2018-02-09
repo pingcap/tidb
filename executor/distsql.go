@@ -116,10 +116,8 @@ func tableRangesToKVRanges(tid int64, ranges []*ranger.NewRange) []kv.KeyRange {
 	return krs
 }
 
-/*
- * Convert sorted handle to kv ranges.
- * For continuous handles, we should merge them to a single key range.
- */
+// tableHandlesToKVRanges converts sorted handle to kv ranges.
+// For continuous handles, we should merge them to a single key range.
 func tableHandlesToKVRanges(tid int64, handles []int64) []kv.KeyRange {
 	krs := make([]kv.KeyRange, 0, len(handles))
 	i := 0
@@ -324,7 +322,11 @@ func (e *TableReaderExecutor) Close() error {
 	return errors.Trace(err)
 }
 
-// Next implements the Executor Next interface.
+// Next returns next available Row. In its process, any error will be returned.
+// It first try to fetch a partial result if current partial result is nil.
+// If any error appears during this stage, it simply return a error to its caller.
+// If it successfully initialize its partial result, it will use this to get next
+// available row.
 func (e *TableReaderExecutor) Next(goCtx goctx.Context) (Row, error) {
 	for {
 		// Get partial result.
@@ -362,7 +364,8 @@ func (e *TableReaderExecutor) Next(goCtx goctx.Context) (Row, error) {
 	}
 }
 
-// NextChunk implements the Executor NextChunk interface.
+// NextChunk fills data into the chunk passed by its caller.
+// The task was actually done by tableReaderHandler.
 func (e *TableReaderExecutor) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	err := e.resultHandler.nextChunk(goCtx, chk)
 	if err != nil {
@@ -371,7 +374,7 @@ func (e *TableReaderExecutor) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) e
 	return errors.Trace(err)
 }
 
-// Open implements the Executor Open interface.
+// Open initialzes necessary variables for using this executor.
 func (e *TableReaderExecutor) Open(goCtx goctx.Context) error {
 	span, goCtx := startSpanFollowsContext(goCtx, "executor.TableReader.Open")
 	defer span.Finish()
@@ -397,6 +400,8 @@ func (e *TableReaderExecutor) Open(goCtx goctx.Context) error {
 	return nil
 }
 
+// buildResp first build request and send it to tikv using distsql.SelectDAG. It uses SelectResut returned by the callee
+// to fetch all results.
 func (e *TableReaderExecutor) buildResp(goCtx goctx.Context, ranges []*ranger.NewRange) (distsql.SelectResult, error) {
 	var builder requestBuilder
 	kvReq, err := builder.SetTableRanges(e.tableID, ranges).
@@ -488,7 +493,7 @@ type IndexReaderExecutor struct {
 	feedback *statistics.QueryFeedback
 }
 
-// Close implements the Executor Close interface.
+// Close clears all resources hold by current object.
 func (e *IndexReaderExecutor) Close() error {
 	e.feedback.SetIndexRanges(e.ranges).SetActual(e.result.ScanKeys())
 	e.ctx.StoreQueryFeedback(e.feedback)
@@ -498,7 +503,11 @@ func (e *IndexReaderExecutor) Close() error {
 	return errors.Trace(err)
 }
 
-// Next implements the Executor Next interface.
+// Next returns next available Row. In its process, any error will be returned.
+// It first try to fetch a partial result if current partial result is nil.
+// If any error appears during this stage, it simply return a error to its caller.
+// If it successfully initialize its partial result, it will use this to get next
+// available row.
 func (e *IndexReaderExecutor) Next(goCtx goctx.Context) (Row, error) {
 	for {
 		// Get partial result.
@@ -726,7 +735,7 @@ func (e *IndexLookUpExecutor) buildTableReader(goCtx goctx.Context, handles []in
 	return tableReader, nil
 }
 
-// startTableWorker launch some background goroutines which pick tasks from workCh and execute the task.
+// startTableWorker launchs some background goroutines which pick tasks from workCh and execute the task.
 func (e *IndexLookUpExecutor) startTableWorker(goCtx goctx.Context, workCh <-chan *lookupTableTask) {
 	lookupConcurrencyLimit := e.ctx.GetSessionVars().IndexLookupConcurrency
 	e.tblWorkerWg.Add(lookupConcurrencyLimit)

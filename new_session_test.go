@@ -32,8 +32,8 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/mocktikv"
+	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
@@ -58,9 +58,9 @@ func (s *testSessionSuite) SetUpSuite(c *C) {
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(s.cluster)
 	s.mvccStore = mocktikv.NewMvccStore()
-	store, err := tikv.NewMockTikvStore(
-		tikv.WithCluster(s.cluster),
-		tikv.WithMVCCStore(s.mvccStore),
+	store, err := mockstore.NewMockTikvStore(
+		mockstore.WithCluster(s.cluster),
+		mockstore.WithMVCCStore(s.mvccStore),
 	)
 	c.Assert(err, IsNil)
 	s.store = store
@@ -453,7 +453,7 @@ func (s *testSessionSuite) TestInTrans(c *C) {
 	tk.MustExec("insert t values ()")
 	c.Assert(tk.Se.Txn().Valid(), IsTrue)
 	tk.MustExec("rollback")
-	c.Assert(tk.Se.Txn().Valid(), IsFalse)
+	c.Assert(tk.Se.Txn(), IsNil)
 }
 
 func (s *testSessionSuite) TestRetryPreparedStmt(c *C) {
@@ -1374,9 +1374,9 @@ func (s *testSchemaSuite) SetUpSuite(c *C) {
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(s.cluster)
 	s.mvccStore = mocktikv.NewMvccStore()
-	store, err := tikv.NewMockTikvStore(
-		tikv.WithCluster(s.cluster),
-		tikv.WithMVCCStore(s.mvccStore),
+	store, err := mockstore.NewMockTikvStore(
+		mockstore.WithCluster(s.cluster),
+		mockstore.WithMVCCStore(s.mvccStore),
 	)
 	c.Assert(err, IsNil)
 	s.store = store
