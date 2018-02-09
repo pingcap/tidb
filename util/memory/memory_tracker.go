@@ -14,24 +14,42 @@
 package memory
 
 import (
+	"sync"
+
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	log "github.com/sirupsen/logrus"
 )
 
+// MemoryTracker is used to track the memory usage during query execution.
+// It contains an optional limit and can be arranged into a tree structure
+// such that the consumption tracked by a MemoryTracker is also tracked by
+// its ancestors. The main idea comes from Apache Impala:
+//
+// https://github.com/cloudera/Impala/blob/cdh5-trunk/be/src/runtime/mem-tracker.h
+//
+// By default, memory consumption is tracked via calls to Consume(), either to
+// the tracker itself or to one of its descendents.
+//
+// NOTE: This struct is thread-safe.
 type MemoryTracker struct {
-	label         string // Label of this "MemoryTracker".
-	bytesConsumed int64  // Comsumed bytes.
-	bytesLimit    int64  // Negative value means no limit.
-	logged        bool   // Whether a log has printed when "bytesConsumed" > "bytesLimit".
+	label         string      // Label of this "MemoryTracker".
+	mutex         *sync.Mutex // for synchronization.
+	bytesConsumed int64       // Consumed bytes.
+	bytesLimit    int64       // Negative value means no limit.
+	logged        bool        // Whether a log has printed when "bytesConsumed" > "bytesLimit".
 
 	parent   *MemoryTracker   // The parent memory tracker.
 	children []*MemoryTracker // The children memory trackers.
 }
 
+// NewMemoryTracker creates a memory tracker.
+//	1. "label" is the label used in the usage string.
+//	2. "bytesLimit < 0" means no limit.
 func NewMemoryTracker(label string, bytesLimit int64) *MemoryTracker {
 	return &MemoryTracker{
 		label:         label,
+		mutex:         &sync.Mutex{},
 		bytesConsumed: 0,
 		bytesLimit:    bytesLimit,
 		logged:        false,
@@ -39,53 +57,54 @@ func NewMemoryTracker(label string, bytesLimit int64) *MemoryTracker {
 	}
 }
 
+// SetLabel set the label of a MemoryTracker.
 func (m *MemoryTracker) SetLabel(label string) {
 	m.label = label
 }
 
+// AttachTo attach a MemoryTracker as a child to another MemoryTracker.
+// Its consumed memory usage is used to update all its ancestors.
 func (m *MemoryTracker) AttachTo(parent *MemoryTracker) {
 	if m.parent != nil {
-		m.parent.Consume(-m.bytesConsumed)
+		m.parent.ReplaceChild(m, nil)
 	}
 	parent.children = append(parent.children, m)
 	m.parent = parent
 	m.parent.Consume(m.bytesConsumed)
 }
 
+// ReplaceChild remove the old child specified in "oldChild" and add a new
+// child specified in "newChild". old child's memory consumption will be
+// removed and new child's memory consumption will be added.
 func (m *MemoryTracker) ReplaceChild(oldChild, newChild *MemoryTracker) {
 	for i, child := range m.children {
-		if child == oldChild {
-			m.Consume(-oldChild.bytesConsumed)
-			m.children[i] = newChild
-			m.Consume(newChild.bytesConsumed)
-			return
+		if child != oldChild {
+			continue
 		}
+		m.Consume(-oldChild.bytesConsumed)
+		m.children[i] = newChild
+		if newChild != nil {
+			m.Consume(newChild.bytesConsumed)
+		}
+		return
 	}
 }
 
+// Consume is used to consume a memory usage.
+// bytes can be a negative value, witch means memory release operations.
 func (m *MemoryTracker) Consume(bytes int64) {
 	for tracker := m; tracker != nil; tracker = tracker.parent {
+		tracker.mutex.Lock()
 		tracker.bytesConsumed += bytes
+		tracker.mutex.Unlock()
 		tracker.logOnceIfExceed()
 	}
 }
 
+// BytesConsumed returns the consumed memory usage value in bytes.
 func (m *MemoryTracker) BytesConsumed() int64 {
 	return m.bytesConsumed
 }
-
-//func (m *MemoryTracker) Reset() {
-//	m.Consume(-m.bytesConsumed)
-//	m.resetSelf()
-//}
-//
-//func (m *MemoryTracker) resetSelf() {
-//	m.bytesConsumed = 0
-//	m.logged = false
-//	for _, child := range m.children {
-//		child.resetSelf()
-//	}
-//}
 
 func (m *MemoryTracker) logOnceIfExceed() {
 	if m.logged || m.bytesLimit < 0 || m.bytesConsumed < m.bytesLimit {

@@ -28,7 +28,7 @@ type List struct {
 	freelist     []*Chunk
 
 	memTracker   *memory.MemoryTracker // track memory usage.
-	lastConsumed bool                  // whether the memory usage of last Chunk in "chunks" has consumed.
+	lastConsumed bool                  // whether the memory usage of last Chunk in "chunks" has been consumed.
 }
 
 // RowPtr is used to get a row from a list.
@@ -71,7 +71,7 @@ func (l *List) GetChunk(chkIdx int) *Chunk {
 // AppendRow appends a row to the List, the row is copied to the List.
 func (l *List) AppendRow(row Row) RowPtr {
 	chkIdx := len(l.chunks) - 1
-	if chkIdx == -1 || l.chunks[chkIdx].NumRows() >= l.maxChunkSize {
+	if chkIdx == -1 || l.chunks[chkIdx].NumRows() >= l.maxChunkSize || l.lastConsumed {
 		newChk := l.allocChunk()
 		l.chunks = append(l.chunks, newChk)
 		if chkIdx != -1 && !l.lastConsumed {
@@ -92,7 +92,11 @@ func (l *List) AppendRow(row Row) RowPtr {
 func (l *List) Add(chk *Chunk) {
 	// FixMe: we should avoid add a Chunk that chk.NumRows() > list.maxChunkSize.
 	if chk.NumRows() == 0 {
-		panic("chunk appended to List should have at least 1 rows")
+		panic("chunk appended to List should have at least 1 row")
+	}
+	if chkIdx := len(l.chunks) - 1; chkIdx > 0 && !l.lastConsumed {
+		l.memTracker.Consume(l.chunks[chkIdx].MemoryUsage())
+		l.lastConsumed = true
 	}
 	l.memTracker.Consume(chk.MemoryUsage())
 	l.lastConsumed = true
