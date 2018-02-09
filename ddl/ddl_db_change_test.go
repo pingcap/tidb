@@ -287,7 +287,7 @@ func (t *testExecInfo) execSQL(idx int) error {
 func (s *testStateChangeSuite) TestUpdateOrDelete(c *C) {
 	sqls := make([]string, 2)
 	sqls[0] = "delete from t where c2 = 'a'"
-	sqls[1] = "update t set c2 = 'c2_update' where c2 = 'a'"
+	sqls[1] = "update t use index(c2) set c2 = 'c2_update' where c2 = 'a'"
 	alterTableSQL := "alter table t add column a int not null default 1 first"
 	s.runTestInWriteOnly(c, "", alterTableSQL, sqls)
 }

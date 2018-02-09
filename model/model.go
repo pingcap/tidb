@@ -188,23 +188,6 @@ func (t *TableInfo) Cols() []*ColumnInfo {
 	return publicColumns[0 : maxOffset+1]
 }
 
-// WritableCols returns columns of the table in writable states.
-// Writable states includes Public, WriteOnly, WriteOnlyReorganization.
-func (t *TableInfo) WritableCols() []*ColumnInfo {
-	writableColumns := make([]*ColumnInfo, len(t.Columns))
-	maxOffset := -1
-	for _, col := range t.Columns {
-		if col.State == StateDeleteOnly || col.State == StateDeleteReorganization {
-			continue
-		}
-		writableColumns[col.Offset] = col
-		if maxOffset < col.Offset {
-			maxOffset = col.Offset
-		}
-	}
-	return writableColumns[0 : maxOffset+1]
-}
-
 // NewExtraHandleColInfo mocks a column info for extra handle column.
 func NewExtraHandleColInfo() *ColumnInfo {
 	colInfo := &ColumnInfo{
