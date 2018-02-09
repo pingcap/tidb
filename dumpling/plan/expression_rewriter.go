@@ -231,10 +231,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			index, ok = er.aggrMap[v]
 		}
 		if !ok {
-			er.err = errors.New("Can't appear aggrFunctions")
-			if er.b.curClause == groupByClause {
-				er.err = ErrInvalidGroupFuncUse
-			}
+			er.err = ErrInvalidGroupFuncUse
 			return inNode, true
 		}
 		er.ctxStack = append(er.ctxStack, er.schema.Columns[index])
