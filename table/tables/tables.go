@@ -325,22 +325,6 @@ func adjustRowValuesBuf(writeBufs *variable.WriteStmtBufs, rowLen int) {
 	writeBufs.AddRowValues = writeBufs.AddRowValues[:adjustLen]
 }
 
-// getRollbackableMemStore get a rollbackable BufferStore, when we are importing data,
-// Just add the kv to transaction's membuf directly.
-func (t *Table) getRollbackableMemStore(ctx context.Context) kv.RetrieverMutator {
-	if ctx.GetSessionVars().ImportingData {
-		return ctx.Txn()
-	}
-
-	bs := ctx.GetSessionVars().GetWriteStmtBufs().BufStore
-	if bs == nil {
-		bs = kv.NewBufferStore(ctx.Txn(), kv.DefaultTxnMembufCap)
-	} else {
-		bs.Reset()
-	}
-	return bs
-}
-
 // AddRecord implements table.Table AddRecord interface.
 func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
 	var hasRecordID bool
@@ -367,9 +351,8 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck 
 		txn.SetOption(kv.SkipCheckForWrite, true)
 	}
 
-	rm := t.getRollbackableMemStore(ctx)
 	// Insert new entries into indices.
-	h, err := t.addIndices(ctx, recordID, r, rm, skipHandleCheck)
+	h, err := t.addIndices(ctx, recordID, r, ctx.Txn(), skipHandleCheck)
 	if err != nil {
 		return h, errors.Trace(err)
 	}
@@ -405,11 +388,6 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck 
 	value := writeBufs.RowValBuf
 	if err = txn.Set(key, value); err != nil {
 		return 0, errors.Trace(err)
-	}
-	if !sessVars.ImportingData {
-		if err = rm.(*kv.BufferStore).SaveTo(txn); err != nil {
-			return 0, errors.Trace(err)
-		}
 	}
 	if shouldWriteBinlog(ctx) {
 		// For insert, TiDB and Binlog can use same row and schema.
