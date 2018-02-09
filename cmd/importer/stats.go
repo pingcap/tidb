@@ -17,10 +17,12 @@ import (
 	"encoding/json"
 	"io/ioutil"
 	"math/rand"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/model"
 	stats "github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
@@ -131,4 +133,33 @@ func (h *histogram) randString() string {
 		return prefix
 	}
 	return h.Bounds.GetRow(idx).GetString(0)
+}
+
+// randDate randoms a bucket and random a date between upper and lower bound.
+func (h *histogram) randDate() string {
+	idx := h.getRandomBoundIdx()
+	if idx%2 == 0 {
+		lower := h.Bounds.GetRow(idx).GetTime(0)
+		upper := h.Bounds.GetRow(idx + 1).GetTime(0)
+		diff := types.TimestampDiff("DAY", lower, upper)
+		if diff == 0 {
+			str, err := lower.DateFormat("%Y-%m-%d")
+			if err != nil {
+				log.Fatal(err)
+			}
+			return str
+		}
+		delta := randInt(0, int(diff)-1)
+		l, err := lower.Time.GoTime(time.Local)
+		if err != nil {
+			log.Fatal(err)
+		}
+		l = l.AddDate(0, 0, delta)
+		return l.Format(dateFormat)
+	}
+	str, err := h.Bounds.GetRow(idx).GetTime(0).DateFormat("%Y-%m-%d")
+	if err != nil {
+		log.Fatal(err)
+	}
+	return str
 }
