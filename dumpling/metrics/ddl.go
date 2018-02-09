@@ -89,6 +89,17 @@ var (
 			Help:      "Bucketed histogram of processing time (s) of ddl worker operations",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20),
 		}, []string{"op", "result_state"})
+
+	CreateDDL       = "create_ddl"
+	CreateDDLWorker = "create_ddl_worker"
+	IsDDLOwner      = "is_ddl_owner"
+	DDLCounter      = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "ddl",
+			Name:      "ddl_counter",
+			Help:      "Counter of creating ddl/worker and isowner.",
+		}, []string{"type"})
 )
 
 func init() {
@@ -99,4 +110,5 @@ func init() {
 	prometheus.MustRegister(UpdateSelfVersionHistogram)
 	prometheus.MustRegister(OwnerHandleSyncerHistogram)
 	prometheus.MustRegister(DDLWorkerHistogram)
+	prometheus.MustRegister(DDLCounter)
 }

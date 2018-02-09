@@ -84,7 +84,7 @@ type Server struct {
 	clients           map[uint32]*clientConn
 	capability        uint32
 
-	// When a critical error occurred, we don't want to exit the process, because there may be
+	// stopListenerCh is used when a critical error occurred, we don't want to exit the process, because there may be
 	// a supervisor automatically restart it, then new client connection will be created, but we can't server it.
 	// So we just stop the listener and store to force clients to chose other TiDB servers.
 	stopListenerCh chan struct{}
@@ -226,6 +226,8 @@ func (s *Server) loadTLSCertificates() {
 
 // Run runs the server.
 func (s *Server) Run() error {
+	metrics.ServerEventCounter.WithLabelValues(metrics.EventStart).Inc()
+
 	// Start HTTP API to report tidb info such as TPS.
 	if s.cfg.Status.ReportStatus {
 		s.startStatusHTTP()
@@ -259,6 +261,7 @@ func (s *Server) Run() error {
 	terror.Log(errors.Trace(err))
 	s.listener = nil
 	for {
+		metrics.ServerEventCounter.WithLabelValues(metrics.EventHang).Inc()
 		log.Errorf("listener stopped, waiting for manual kill.")
 		time.Sleep(time.Minute)
 	}
@@ -283,6 +286,7 @@ func (s *Server) Close() {
 		terror.Log(errors.Trace(err))
 		s.listener = nil
 	}
+	metrics.ServerEventCounter.WithLabelValues(metrics.EventClose).Inc()
 }
 
 // onConn runs in its own goroutine, handles queries from this connection.
@@ -328,6 +332,8 @@ func (s *Server) ShowProcessList() []util.ProcessInfo {
 func (s *Server) Kill(connectionID uint64, query bool) {
 	s.rwlock.Lock()
 	defer s.rwlock.Unlock()
+	log.Infof("[server] Kill connectionID %d, query %t]", connectionID, query)
+	metrics.ServerEventCounter.WithLabelValues(metrics.EventKill).Inc()
 
 	conn, ok := s.clients[uint32(connectionID)]
 	if !ok {
@@ -350,7 +356,8 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 
 // GracefulDown waits all clients to close.
 func (s *Server) GracefulDown() {
-	log.Info("graceful shutdown.")
+	log.Info("[server] graceful shutdown.")
+	metrics.ServerEventCounter.WithLabelValues(metrics.EventGracefulDown).Inc()
 
 	count := s.ConnectionCount()
 	for i := 0; count > 0; i++ {
