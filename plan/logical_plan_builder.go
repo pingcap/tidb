@@ -1251,8 +1251,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, schemaName.L, tableInfo.Name.L, "")
 
 	var columns []*table.Column
-	sc := b.ctx.GetSessionVars().StmtCtx
-	if sc.InUpdateStmt {
+	if b.inUpdateStmt {
 		columns = tbl.WritableCols()
 	} else {
 		columns = tbl.Cols()
@@ -1455,6 +1454,7 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 }
 
 func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) LogicalPlan {
+	b.inUpdateStmt = true
 	b.needColHandle++
 	sel := &ast.SelectStmt{Fields: &ast.FieldList{}, From: update.TableRefs, Where: update.Where, OrderBy: update.Order, Limit: update.Limit}
 	p := b.buildResultSetNode(sel.From.TableRefs)

@@ -123,6 +123,7 @@ type planBuilder struct {
 	ctx           context.Context
 	is            infoschema.InfoSchema
 	outerSchemas  []*expression.Schema
+	inUpdateStmt  bool
 	needColHandle int
 	// colMapper stores the column that must be pre-resolved.
 	colMapper map[*ast.ColumnNameExpr]int
