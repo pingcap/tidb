@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
 	goctx "golang.org/x/net/context"
 )
@@ -286,6 +287,7 @@ func ResetStmtCtx(ctx context.Context, s ast.StmtNode) {
 	sessVars := ctx.GetSessionVars()
 	sc := new(stmtctx.StatementContext)
 	sc.TimeZone = sessVars.GetTimeZone()
+	sc.MemTracker = memory.NewMemTracker(s.Text(), sessVars.MemThreshold)
 
 	switch stmt := s.(type) {
 	case *ast.UpdateStmt:
