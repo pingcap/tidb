@@ -23,7 +23,7 @@ import (
 
 func TestMVMap(t *testing.T) {
 	m := NewMVMap()
-	vals := [][]byte{}
+	var vals [][]byte
 	m.Put([]byte("abc"), []byte("abc1"))
 	m.Put([]byte("abc"), []byte("abc2"))
 	m.Put([]byte("def"), []byte("def1"))
