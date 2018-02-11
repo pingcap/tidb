@@ -83,7 +83,7 @@ var (
 			Name:      "request_seconds",
 			Help:      "Bucketed histogram of sending request duration.",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 20),
-		}, []string{LblType})
+		}, []string{LblType, "store"})
 
 	TiKVCoprocessorCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
