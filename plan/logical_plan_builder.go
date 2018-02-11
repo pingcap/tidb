@@ -1607,8 +1607,8 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 				// Zero count always brings some strange problem.
 				statsTbl.Count = 100
 			}
+			metrics.PseudoEstimation.Inc()
 		}
-		metrics.PseudoEstimation.Inc()
 	}
 	indices, includeTableScan, err := availableIndices(tn.IndexHints, tableInfo)
 	if err != nil {
