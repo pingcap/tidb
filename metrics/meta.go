@@ -20,8 +20,8 @@ import (
 // Metrics
 var (
 	GlobalAutoID      = "global"
-	TableAutoIDAlloc  = "table"
-	TableAutoIDRebase = "table_rebase"
+	TableAutoIDAlloc  = "id_alloc"
+	TableAutoIDRebase = "id_rebase"
 	AutoIDHistogram   = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
