@@ -1012,6 +1012,10 @@ AlterTableSpec:
 		}
 	}
 
+LockClauseOpt:
+	{}
+| 	LockClause {}
+
 LockClause:
 	"LOCK" eq "NONE"
 	{
@@ -1533,7 +1537,7 @@ NumLiteral:
 
 
 CreateIndexStmt:
-	"CREATE" CreateIndexStmtUnique "INDEX" Identifier IndexTypeOpt "ON" TableName '(' IndexColNameList ')' IndexOptionList
+	"CREATE" CreateIndexStmtUnique "INDEX" Identifier IndexTypeOpt "ON" TableName '(' IndexColNameList ')' IndexOptionList LockClauseOpt
 	{
 		var indexOption *ast.IndexOption
 		if $11 != nil {

@@ -64,18 +64,18 @@ var (
 			Help:      "Counter of critical errors.",
 		})
 
-	EventStart        = "server_start"
-	EventGracefulDown = "server_graceful_shutdown"
+	EventStart        = "start"
+	EventGracefulDown = "graceful_shutdown"
 	// Eventkill occurs when the server.Kill() function is called.
-	EventKill = "server_kill"
+	EventKill = "kill"
 	// EventHang occurs when server meet some critical error. It will close the listening port and hang for ever.
-	EventHang          = "server_hang"
-	EventClose         = "server_close"
+	EventHang          = "hang"
+	EventClose         = "close"
 	ServerEventCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
-			Name:      "server_event",
+			Name:      "event_total",
 			Help:      "Counter of tidb-server event.",
 		}, []string{"type"})
 )
