@@ -79,19 +79,20 @@ var (
 			Help:      "Counter of internal restricted sql.",
 		})
 
-	StatementPerTransaction = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
+	StatementPerTransaction = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
 			Name:      "statement_per_transaction",
-			Help:      "Write statements count in each transaction.",
+			Help:      "Buckated histogram of statements count in each transaction.",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 12),
 		}, []string{LblType})
 
 	TransactionDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
-			Name:      "transaction_duration",
+			Name:      "transaction_duration_seconds",
 			Help:      "Bucketed histogram of a transaction execution duration, including retry.",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 16), // range 1ms ~ 64s
 		}, []string{LblType})

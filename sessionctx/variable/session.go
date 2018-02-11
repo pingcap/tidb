@@ -93,7 +93,10 @@ type TransactionContext struct {
 	StartTS       uint64
 	Shard         *int64
 	TableDeltaMap map[int64]TableDelta
-	CreateTime    time.Time
+
+	// For metrics.
+	CreateTime     time.Time
+	StatementCount int
 }
 
 // UpdateDeltaForTable updates the delta info for some table.

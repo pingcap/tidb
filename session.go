@@ -342,10 +342,9 @@ func (s *session) doCommitWithRetry(ctx goctx.Context) error {
 			err = s.retry(ctx, maxRetryCount)
 		}
 	}
-	if count := GetHistory(s).Count(); count > 1 {
-		metrics.StatementPerTransaction.WithLabelValues(metrics.RetLabel(err)).Set(float64(count))
-	}
+	counter := s.sessionVars.TxnCtx.StatementCount
 	duration := time.Since(s.GetSessionVars().TxnCtx.CreateTime).Seconds()
+	metrics.StatementPerTransaction.WithLabelValues(metrics.RetLabel(err)).Observe(float64(counter))
 	metrics.TransactionDuration.WithLabelValues(metrics.RetLabel(err)).Observe(float64(duration))
 	s.cleanRetryInfo()
 	if err != nil {
