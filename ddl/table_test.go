@@ -67,7 +67,7 @@ func testTableInfo(c *C, d *ddl, name string, num int) *model.TableInfo {
 	return tblInfo
 }
 
-func testCreateTable(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
+func testCreateTable(ctx context.Context, c *C, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		TableID:    tblInfo.ID,
@@ -85,7 +85,7 @@ func testCreateTable(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tb
 	return job
 }
 
-func testRenameTable(c *C, ctx context.Context, d *ddl, newSchemaID, oldSchemaID int64, tblInfo *model.TableInfo) *model.Job {
+func testRenameTable(ctx context.Context, c *C, d *ddl, newSchemaID, oldSchemaID int64, tblInfo *model.TableInfo) *model.Job {
 	job := &model.Job{
 		SchemaID:   newSchemaID,
 		TableID:    tblInfo.ID,
@@ -103,7 +103,7 @@ func testRenameTable(c *C, ctx context.Context, d *ddl, newSchemaID, oldSchemaID
 	return job
 }
 
-func testDropTable(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
+func testDropTable(ctx context.Context, c *C, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		TableID:    tblInfo.ID,
@@ -118,7 +118,7 @@ func testDropTable(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblI
 	return job
 }
 
-func testTruncateTable(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
+func testTruncateTable(ctx context.Context, c *C, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
 	newTableID, err := d.genGlobalID()
 	c.Assert(err, IsNil)
 	job := &model.Job{
@@ -206,7 +206,7 @@ func (s *testTableSuite) TestTable(c *C) {
 	ctx := testNewContext(d)
 
 	tblInfo := testTableInfo(c, d, "t", 3)
-	job := testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
+	job := testCreateTable(ctx, c, d, s.dbInfo, tblInfo)
 	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StatePublic)
 	testCheckJobDone(c, d, job, true)
 
@@ -221,22 +221,22 @@ func (s *testTableSuite) TestTable(c *C) {
 		c.Assert(err, IsNil)
 	}
 
-	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
+	job = testDropTable(ctx, c, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)
 
 	// for truncate table
 	tblInfo = testTableInfo(c, d, "tt", 3)
-	job = testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
+	job = testCreateTable(ctx, c, d, s.dbInfo, tblInfo)
 	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StatePublic)
 	testCheckJobDone(c, d, job, true)
-	job = testTruncateTable(c, ctx, d, s.dbInfo, tblInfo)
+	job = testTruncateTable(ctx, c, d, s.dbInfo, tblInfo)
 	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StatePublic)
 	testCheckJobDone(c, d, job, true)
 
 	// for rename table
 	dbInfo1 := testSchemaInfo(c, s.d, "test_rename_table")
 	testCreateSchema(c, testNewContext(s.d), s.d, dbInfo1)
-	job = testRenameTable(c, ctx, d, dbInfo1.ID, s.dbInfo.ID, tblInfo)
+	job = testRenameTable(ctx, c, d, dbInfo1.ID, s.dbInfo.ID, tblInfo)
 	testCheckTableState(c, d, dbInfo1, tblInfo, model.StatePublic)
 	testCheckJobDone(c, d, job, true)
 }

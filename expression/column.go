@@ -111,9 +111,9 @@ func (col *CorrelatedColumn) EvalJSON(ctx context.Context, row types.Row) (json.
 }
 
 // Equal implements Expression interface.
-func (col *CorrelatedColumn) Equal(expr Expression, ctx context.Context) bool {
+func (col *CorrelatedColumn) Equal(ctx context.Context, expr Expression) bool {
 	if cc, ok := expr.(*CorrelatedColumn); ok {
-		return col.Column.Equal(&cc.Column, ctx)
+		return col.Column.Equal(ctx, &cc.Column)
 	}
 	return false
 }
@@ -159,7 +159,7 @@ type Column struct {
 }
 
 // Equal implements Expression interface.
-func (col *Column) Equal(expr Expression, _ context.Context) bool {
+func (col *Column) Equal(_ context.Context, expr Expression) bool {
 	if newCol, ok := expr.(*Column); ok {
 		return newCol.FromID == col.FromID && newCol.Position == col.Position
 	}

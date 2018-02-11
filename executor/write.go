@@ -477,8 +477,8 @@ func (e *DeleteExec) Open(goCtx goctx.Context) error {
 }
 
 // NewLoadDataInfo returns a LoadDataInfo structure, and it's only used for tests now.
-func NewLoadDataInfo(row []types.Datum, ctx context.Context, tbl table.Table, cols []*table.Column) *LoadDataInfo {
-	insertVal := &InsertValues{baseExecutor: newBaseExecutor(nil, ctx, "InsertValues"), Table: tbl}
+func NewLoadDataInfo(ctx context.Context, row []types.Datum, tbl table.Table, cols []*table.Column) *LoadDataInfo {
+	insertVal := &InsertValues{baseExecutor: newBaseExecutor(ctx, nil, "InsertValues"), Table: tbl}
 	return &LoadDataInfo{
 		row:       row,
 		insertVal: insertVal,

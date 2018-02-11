@@ -39,7 +39,7 @@ func (s *testEvaluatorSuite) TestScalarFunction(c *C) {
 	c.Assert(sf.IsCorrelated(), IsFalse)
 	c.Assert(sf.Decorrelate(nil).Equal(sf, s.ctx), IsTrue)
 
-	sf = NewValuesFunc(0, types.NewFieldType(mysql.TypeLonglong), s.ctx)
+	sf = NewValuesFunc(s.ctx, 0, types.NewFieldType(mysql.TypeLonglong))
 	newSf, ok := sf.Clone().(*ScalarFunction)
 	c.Assert(ok, IsTrue)
 	c.Assert(newSf.FuncName.O, Equals, "values")

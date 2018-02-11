@@ -150,7 +150,7 @@ func (a *aggregationOptimizer) addGbyCol(ctx context.Context, gbyCols []*express
 	for _, c := range cols {
 		duplicate := false
 		for _, gbyCol := range gbyCols {
-			if c.Equal(gbyCol, ctx) {
+			if c.Equal(ctx, gbyCol) {
 				duplicate = true
 				break
 			}

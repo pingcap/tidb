@@ -83,7 +83,7 @@ func (s *testForeighKeySuite) testCreateForeignKey(c *C, tblInfo *model.TableInf
 	return job
 }
 
-func testDropForeignKey(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, foreignKeyName string) *model.Job {
+func testDropForeignKey(ctx context.Context, c *C, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, foreignKeyName string) *model.Job {
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		TableID:    tblInfo.ID,
@@ -197,7 +197,7 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	d.Stop()
 	d.start(goctx.Background())
 
-	job = testDropForeignKey(c, ctx, d, s.dbInfo, tblInfo, "c1_fk")
+	job = testDropForeignKey(ctx, c, d, s.dbInfo, tblInfo, "c1_fk")
 	testCheckJobDone(c, d, job, false)
 	mu.Lock()
 	hErr = hookErr

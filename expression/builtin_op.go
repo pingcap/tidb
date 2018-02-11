@@ -546,7 +546,7 @@ func (c *unaryMinusFunctionClass) handleIntOverflow(arg *Constant) (overflow boo
 
 // typeInfer infers unaryMinus function return type. when the arg is an int constant and overflow,
 // typerInfer will infers the return type as types.ETDecimal, not types.ETInt.
-func (c *unaryMinusFunctionClass) typeInfer(argExpr Expression, ctx context.Context) (types.EvalType, bool) {
+func (c *unaryMinusFunctionClass) typeInfer(ctx context.Context, argExpr Expression) (types.EvalType, bool) {
 	tp := argExpr.GetType().EvalType()
 	if tp != types.ETInt && tp != types.ETDecimal {
 		tp = types.ETReal
@@ -570,7 +570,7 @@ func (c *unaryMinusFunctionClass) getFunction(ctx context.Context, args []Expres
 	}
 
 	argExpr, argExprTp := args[0], args[0].GetType()
-	_, intOverflow := c.typeInfer(argExpr, ctx)
+	_, intOverflow := c.typeInfer(ctx, argExpr)
 
 	var bf baseBuiltinFunc
 	switch argExprTp.EvalType() {

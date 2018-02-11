@@ -128,7 +128,7 @@ func MockTableInfo(ctx context.Context, stmt *ast.CreateTableStmt, tableID int64
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	tbl, err := buildTableInfo(nil, stmt.Table.Name, cols, newConstraints, ctx)
+	tbl, err := buildTableInfo(ctx, nil, stmt.Table.Name, cols, newConstraints)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

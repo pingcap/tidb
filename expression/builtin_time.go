@@ -1504,7 +1504,7 @@ type strToDateFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *strToDateFunctionClass) getRetTp(arg Expression, ctx context.Context) (tp byte, fsp int) {
+func (c *strToDateFunctionClass) getRetTp(ctx context.Context, arg Expression) (tp byte, fsp int) {
 	tp = mysql.TypeDatetime
 	if _, ok := arg.(*Constant); !ok {
 		return tp, types.MaxFsp
@@ -1531,7 +1531,7 @@ func (c *strToDateFunctionClass) getFunction(ctx context.Context, args []Express
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	retTp, fsp := c.getRetTp(args[1], ctx)
+	retTp, fsp := c.getRetTp(ctx, args[1])
 	switch retTp {
 	case mysql.TypeDate:
 		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETDatetime, types.ETString, types.ETString)
@@ -4316,12 +4316,12 @@ func (b *builtinTimeFormatSig) evalString(row types.Row) (string, bool, error) {
 	if err != nil || isNull {
 		return "", isNull, errors.Trace(err)
 	}
-	res, err := b.formatTime(dur, formatMask, b.ctx)
+	res, err := b.formatTime(b.ctx, dur, formatMask)
 	return res, isNull, errors.Trace(err)
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_time-format
-func (b *builtinTimeFormatSig) formatTime(t types.Duration, formatMask string, ctx context.Context) (res string, err error) {
+func (b *builtinTimeFormatSig) formatTime(ctx context.Context, t types.Duration, formatMask string) (res string, err error) {
 	t2 := types.Time{
 		Time: types.FromDate(0, 0, 0, t.Hour(), t.Minute(), t.Second(), t.MicroSecond()),
 		Type: mysql.TypeDate, Fsp: 0}

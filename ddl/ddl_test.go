@@ -60,7 +60,7 @@ func testNewDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
 	return newDDL(ctx, etcdCli, store, infoHandle, hook, lease, nil)
 }
 
-func getSchemaVer(c *C, ctx context.Context) int64 {
+func getSchemaVer(ctx context.Context, c *C) int64 {
 	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
 	m := meta.NewMeta(ctx.Txn())
@@ -90,7 +90,7 @@ func checkHistoryJob(c *C, job *model.Job) {
 	c.Assert(job.State, Equals, model.JobStateSynced)
 }
 
-func checkHistoryJobArgs(c *C, ctx context.Context, id int64, args *historyJobArgs) {
+func checkHistoryJobArgs(ctx context.Context, c *C, id int64, args *historyJobArgs) {
 	c.Assert(ctx.NewTxn(), IsNil)
 	t := meta.NewMeta(ctx.Txn())
 	historyJob, err := t.GetHistoryDDLJob(id)
@@ -111,7 +111,7 @@ func checkHistoryJobArgs(c *C, ctx context.Context, id int64, args *historyJobAr
 	}
 }
 
-func testCreateIndex(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bool, indexName string, colName string) *model.Job {
+func testCreateIndex(ctx context.Context, c *C, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bool, indexName string, colName string) *model.Job {
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		TableID:    tblInfo.ID,
@@ -125,12 +125,12 @@ func testCreateIndex(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tb
 
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
-	v := getSchemaVer(c, ctx)
-	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	v := getSchemaVer(ctx, c)
+	checkHistoryJobArgs(ctx, c, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }
 
-func testDropIndex(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, indexName string) *model.Job {
+func testDropIndex(ctx context.Context, c *C, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, indexName string) *model.Job {
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		TableID:    tblInfo.ID,
@@ -141,7 +141,7 @@ func testDropIndex(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblI
 
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
-	v := getSchemaVer(c, ctx)
-	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	v := getSchemaVer(ctx, c)
+	checkHistoryJobArgs(ctx, c, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }

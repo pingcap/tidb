@@ -34,7 +34,7 @@ import (
 var EvalSubquery func(p PhysicalPlan, is infoschema.InfoSchema, ctx context.Context) ([][]types.Datum, error)
 
 // evalAstExpr evaluates ast expression directly.
-func evalAstExpr(expr ast.ExprNode, ctx context.Context) (types.Datum, error) {
+func evalAstExpr(ctx context.Context, expr ast.ExprNode) (types.Datum, error) {
 	if val, ok := expr.(*ast.ValueExpr); ok {
 		return val.Datum, nil
 	}
@@ -275,7 +275,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			er.err = errors.Trace(err)
 			return inNode, false
 		}
-		er.ctxStack = append(er.ctxStack, expression.NewValuesFunc(col.Index, col.RetType, er.ctx))
+		er.ctxStack = append(er.ctxStack, expression.NewValuesFunc(er.ctx, col.Index, col.RetType))
 		return inNode, true
 	default:
 		er.asScalar = true

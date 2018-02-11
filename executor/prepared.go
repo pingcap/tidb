@@ -85,7 +85,7 @@ type PrepareExec struct {
 // NewPrepareExec creates a new PrepareExec.
 func NewPrepareExec(ctx context.Context, is infoschema.InfoSchema, sqlTxt string) *PrepareExec {
 	return &PrepareExec{
-		baseExecutor: newBaseExecutor(nil, ctx, "PrepareStmt"),
+		baseExecutor: newBaseExecutor(ctx, nil, "PrepareStmt"),
 		is:           is,
 		sqlText:      sqlTxt,
 	}

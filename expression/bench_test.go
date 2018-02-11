@@ -171,7 +171,7 @@ func BenchmarkVectorizedExecute(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		h.outputChunk.Reset()
 		if err := VectorizedExecute(h.ctx, h.exprs, inputIter, h.outputChunk); err != nil {
-			panic("errors happend during \"VectorizedExecute\"")
+			panic("errors happened during \"VectorizedExecute\"")
 		}
 	}
 }

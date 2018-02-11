@@ -58,7 +58,7 @@ type testCase struct {
 func (s *testExpressionSuite) runTests(c *C, tests []testCase) {
 	for _, tt := range tests {
 		expr := s.parseExpr(c, tt.exprStr)
-		val, err := evalAstExpr(expr, s.ctx)
+		val, err := evalAstExpr(s.ctx, expr)
 		c.Assert(err, IsNil)
 		valStr := fmt.Sprintf("%v", val.GetValue())
 		c.Assert(valStr, Equals, tt.resultStr, Commentf("for %s", tt.exprStr))
@@ -103,11 +103,11 @@ func (s *testExpressionSuite) TestCaseWhen(c *C) {
 		Value:       valExpr,
 		WhenClauses: []*ast.WhenClause{whenClause},
 	}
-	v, err := evalAstExpr(caseExpr, s.ctx)
+	v, err := evalAstExpr(s.ctx, caseExpr)
 	c.Assert(err, IsNil)
 	c.Assert(v, testutil.DatumEquals, types.NewDatum(int64(1)))
 	valExpr.SetValue(4)
-	v, err = evalAstExpr(caseExpr, s.ctx)
+	v, err = evalAstExpr(s.ctx, caseExpr)
 	c.Assert(err, IsNil)
 	c.Assert(v.Kind(), Equals, types.KindNull)
 }
@@ -121,29 +121,29 @@ func (s *testExpressionSuite) TestCast(c *C) {
 		Tp:   f,
 	}
 	ast.SetFlag(expr)
-	v, err := evalAstExpr(expr, s.ctx)
+	v, err := evalAstExpr(s.ctx, expr)
 	c.Assert(err, IsNil)
 	c.Assert(v, testutil.DatumEquals, types.NewDatum(int64(1)))
 
 	f.Flag |= mysql.UnsignedFlag
-	v, err = evalAstExpr(expr, s.ctx)
+	v, err = evalAstExpr(s.ctx, expr)
 	c.Assert(err, IsNil)
 	c.Assert(v, testutil.DatumEquals, types.NewDatum(uint64(1)))
 
 	f.Tp = mysql.TypeString
 	f.Charset = charset.CharsetBin
-	v, err = evalAstExpr(expr, s.ctx)
+	v, err = evalAstExpr(s.ctx, expr)
 	c.Assert(err, IsNil)
 	c.Assert(v, testutil.DatumEquals, types.NewDatum([]byte("1")))
 
 	f.Tp = mysql.TypeString
 	f.Charset = "utf8"
-	v, err = evalAstExpr(expr, s.ctx)
+	v, err = evalAstExpr(s.ctx, expr)
 	c.Assert(err, IsNil)
 	c.Assert(v, testutil.DatumEquals, types.NewDatum("1"))
 
 	expr.Expr = ast.NewValueExpr(nil)
-	v, err = evalAstExpr(expr, s.ctx)
+	v, err = evalAstExpr(s.ctx, expr)
 	c.Assert(err, IsNil)
 	c.Assert(v.Kind(), Equals, types.KindNull)
 }

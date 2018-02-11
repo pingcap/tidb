@@ -45,7 +45,7 @@ func ExtractColumns(expr Expression) (cols []*Column) {
 	return extractColumns(result, expr, nil)
 }
 
-// ExtractColumnsFromExpressions is a more effecient version of ExtractColumns for batch operation.
+// ExtractColumnsFromExpressions is a more efficient version of ExtractColumns for batch operation.
 // filter can be nil, or a function to filter the result column.
 // It's often observed that the pattern of the caller like this:
 //
@@ -219,41 +219,41 @@ var symmetricOp = map[opcode.Op]opcode.Op{
 }
 
 // PushDownNot pushes the `not` function down to the expression's arguments.
-func PushDownNot(expr Expression, not bool, ctx context.Context) Expression {
+func PushDownNot(ctx context.Context, expr Expression, not bool) Expression {
 	if f, ok := expr.(*ScalarFunction); ok {
 		switch f.FuncName.L {
 		case ast.UnaryNot:
-			return PushDownNot(f.GetArgs()[0], !not, f.GetCtx())
+			return PushDownNot(f.GetCtx(), f.GetArgs()[0], !not)
 		case ast.LT, ast.GE, ast.GT, ast.LE, ast.EQ, ast.NE:
 			if not {
 				return NewFunctionInternal(f.GetCtx(), oppositeOp[f.FuncName.L], f.GetType(), f.GetArgs()...)
 			}
 			for i, arg := range f.GetArgs() {
-				f.GetArgs()[i] = PushDownNot(arg, false, f.GetCtx())
+				f.GetArgs()[i] = PushDownNot(f.GetCtx(), arg, false)
 			}
 			return f
 		case ast.LogicAnd:
 			if not {
 				args := f.GetArgs()
 				for i, a := range args {
-					args[i] = PushDownNot(a, true, f.GetCtx())
+					args[i] = PushDownNot(f.GetCtx(), a, true)
 				}
 				return NewFunctionInternal(f.GetCtx(), ast.LogicOr, f.GetType(), args...)
 			}
 			for i, arg := range f.GetArgs() {
-				f.GetArgs()[i] = PushDownNot(arg, false, f.GetCtx())
+				f.GetArgs()[i] = PushDownNot(f.GetCtx(), arg, false)
 			}
 			return f
 		case ast.LogicOr:
 			if not {
 				args := f.GetArgs()
 				for i, a := range args {
-					args[i] = PushDownNot(a, true, f.GetCtx())
+					args[i] = PushDownNot(f.GetCtx(), a, true)
 				}
 				return NewFunctionInternal(f.GetCtx(), ast.LogicAnd, f.GetType(), args...)
 			}
 			for i, arg := range f.GetArgs() {
-				f.GetArgs()[i] = PushDownNot(arg, false, f.GetCtx())
+				f.GetArgs()[i] = PushDownNot(f.GetCtx(), arg, false)
 			}
 			return f
 		}

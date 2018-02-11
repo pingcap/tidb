@@ -88,7 +88,7 @@ func (p *requiredProp) isPrefix(prop *requiredProp) bool {
 		return false
 	}
 	for i := range p.cols {
-		if !p.cols[i].Equal(prop.cols[i], nil) {
+		if !p.cols[i].Equal(nil, prop.cols[i]) {
 			return false
 		}
 	}
@@ -99,7 +99,7 @@ func (p *requiredProp) isPrefix(prop *requiredProp) bool {
 func (p *requiredProp) matchItems(items []*ByItems) bool {
 	for i, col := range p.cols {
 		sortItem := items[i]
-		if sortItem.Desc != p.desc || !sortItem.Expr.Equal(col, nil) {
+		if sortItem.Desc != p.desc || !sortItem.Expr.Equal(nil, col) {
 			return false
 		}
 	}
@@ -268,7 +268,7 @@ func (p *baseLogicalPlan) buildKeyInfo() {
 	}
 }
 
-func newBasePlan(tp string, ctx context.Context) basePlan {
+func newBasePlan(ctx context.Context, tp string) basePlan {
 	ctx.GetSessionVars().PlanID++
 	id := ctx.GetSessionVars().PlanID
 	return basePlan{
@@ -278,17 +278,17 @@ func newBasePlan(tp string, ctx context.Context) basePlan {
 	}
 }
 
-func newBaseLogicalPlan(tp string, ctx context.Context, self LogicalPlan) baseLogicalPlan {
+func newBaseLogicalPlan(ctx context.Context, tp string, self LogicalPlan) baseLogicalPlan {
 	return baseLogicalPlan{
 		taskMap:  make(map[string]task),
-		basePlan: newBasePlan(tp, ctx),
+		basePlan: newBasePlan(ctx, tp),
 		self:     self,
 	}
 }
 
-func newBasePhysicalPlan(tp string, ctx context.Context, self PhysicalPlan) basePhysicalPlan {
+func newBasePhysicalPlan(ctx context.Context, tp string, self PhysicalPlan) basePhysicalPlan {
 	return basePhysicalPlan{
-		basePlan: newBasePlan(tp, ctx),
+		basePlan: newBasePlan(ctx, tp),
 		self:     self,
 	}
 }

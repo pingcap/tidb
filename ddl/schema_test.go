@@ -44,7 +44,7 @@ func testSchemaInfo(c *C, d *ddl, name string) *model.DBInfo {
 	return dbInfo
 }
 
-func testCreateSchema(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo) *model.Job {
+func testCreateSchema(ctx context.Context, c *C, d *ddl, dbInfo *model.DBInfo) *model.Job {
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		Type:       model.ActionCreateSchema,
@@ -61,7 +61,7 @@ func testCreateSchema(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo) *
 	return job
 }
 
-func testDropSchema(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo) (*model.Job, int64) {
+func testDropSchema(ctx context.Context, c *C, d *ddl, dbInfo *model.DBInfo) (*model.Job, int64) {
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		Type:       model.ActionDropSchema,
@@ -124,7 +124,7 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 	dbInfo := testSchemaInfo(c, d, "test")
 
 	// create a database.
-	job := testCreateSchema(c, ctx, d, dbInfo)
+	job := testCreateSchema(ctx, c, d, dbInfo)
 	testCheckSchemaState(c, d, dbInfo, model.StatePublic)
 	testCheckJobDone(c, d, job, true)
 
@@ -149,7 +149,7 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 		_, err := tbl2.AddRecord(ctx, types.MakeDatums(i, i, i), false)
 		c.Assert(err, IsNil)
 	}
-	job, v := testDropSchema(c, ctx, d, dbInfo)
+	job, v := testDropSchema(ctx, c, d, dbInfo)
 	testCheckSchemaState(c, d, dbInfo, model.StateNone)
 	ids := make(map[int64]struct{})
 	ids[tblInfo1.ID] = struct{}{}
@@ -167,10 +167,10 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 
 	// Drop a database without a table.
 	dbInfo1 := testSchemaInfo(c, d, "test1")
-	job = testCreateSchema(c, ctx, d, dbInfo1)
+	job = testCreateSchema(ctx, c, d, dbInfo1)
 	testCheckSchemaState(c, d, dbInfo1, model.StatePublic)
 	testCheckJobDone(c, d, job, true)
-	job, _ = testDropSchema(c, ctx, d, dbInfo1)
+	job, _ = testDropSchema(ctx, c, d, dbInfo1)
 	testCheckSchemaState(c, d, dbInfo1, model.StateNone)
 	testCheckJobDone(c, d, job, false)
 }
@@ -193,7 +193,7 @@ func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
 	d2.ownerManager.SetOwner(false)
 
 	dbInfo := testSchemaInfo(c, d2, "test")
-	testCreateSchema(c, ctx, d2, dbInfo)
+	testCreateSchema(ctx, c, d2, dbInfo)
 	testCheckSchemaState(c, d2, dbInfo, model.StatePublic)
 
 	// d2 must not be owner.

@@ -99,7 +99,7 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
-			err = s.checkAddWriteOnly(d, ctx1, deleteOnlyTable, writeOnlyTable)
+			err = s.checkAddWriteOnly(ctx1, d, deleteOnlyTable, writeOnlyTable)
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
@@ -111,7 +111,7 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
-			err = s.checkAddPublic(d, ctx1, writeOnlyTable, publicTable)
+			err = s.checkAddPublic(ctx1, d, writeOnlyTable, publicTable)
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
@@ -137,7 +137,7 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
-			err = s.checkDropWriteOnly(d, ctx1, publicTable, writeOnlyTable)
+			err = s.checkDropWriteOnly(ctx1, d, publicTable, writeOnlyTable)
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
@@ -146,7 +146,7 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
-			err = s.checkDropDeleteOnly(d, ctx1, writeOnlyTable, deleteOnlyTable)
+			err = s.checkDropDeleteOnly(ctx1, d, writeOnlyTable, deleteOnlyTable)
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
@@ -180,7 +180,7 @@ func checkIndexExists(ctx context.Context, tbl table.Table, indexValue interface
 	return nil
 }
 
-func (s *testIndexChangeSuite) checkAddWriteOnly(d *ddl, ctx context.Context, delOnlyTbl, writeOnlyTbl table.Table) error {
+func (s *testIndexChangeSuite) checkAddWriteOnly(ctx context.Context, d *ddl, delOnlyTbl, writeOnlyTbl table.Table) error {
 	// DeleteOnlyTable: insert t values (4, 4);
 	err := ctx.NewTxn()
 	if err != nil {
@@ -253,7 +253,7 @@ func (s *testIndexChangeSuite) checkAddWriteOnly(d *ddl, ctx context.Context, de
 	return nil
 }
 
-func (s *testIndexChangeSuite) checkAddPublic(d *ddl, ctx context.Context, writeTbl, publicTbl table.Table) error {
+func (s *testIndexChangeSuite) checkAddPublic(ctx context.Context, d *ddl, writeTbl, publicTbl table.Table) error {
 	// WriteOnlyTable: insert t values (6, 6)
 	err := ctx.NewTxn()
 	if err != nil {
@@ -320,7 +320,7 @@ func (s *testIndexChangeSuite) checkAddPublic(d *ddl, ctx context.Context, write
 	return ctx.Txn().Commit(goctx.Background())
 }
 
-func (s *testIndexChangeSuite) checkDropWriteOnly(d *ddl, ctx context.Context, publicTbl, writeTbl table.Table) error {
+func (s *testIndexChangeSuite) checkDropWriteOnly(ctx context.Context, d *ddl, publicTbl, writeTbl table.Table) error {
 	// WriteOnlyTable insert t values (8, 8)
 	err := ctx.NewTxn()
 	if err != nil {
@@ -360,7 +360,7 @@ func (s *testIndexChangeSuite) checkDropWriteOnly(d *ddl, ctx context.Context, p
 	return ctx.Txn().Commit(goctx.Background())
 }
 
-func (s *testIndexChangeSuite) checkDropDeleteOnly(d *ddl, ctx context.Context, writeTbl, delTbl table.Table) error {
+func (s *testIndexChangeSuite) checkDropDeleteOnly(ctx context.Context, d *ddl, writeTbl, delTbl table.Table) error {
 	// WriteOnlyTable insert t values (9, 9)
 	err := ctx.NewTxn()
 	if err != nil {
