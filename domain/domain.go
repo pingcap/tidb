@@ -298,12 +298,12 @@ func (do *Domain) Reload() error {
 		changedTableIDs []int64
 	)
 	latestSchemaVersion, changedTableIDs, fullLoad, err = do.loadInfoSchema(do.infoHandle, schemaVersion, ver.Ver)
-	loadSchemaDuration.Observe(time.Since(startTime).Seconds())
+	metrics.LoadSchemaDuration.Observe(time.Since(startTime).Seconds())
 	if err != nil {
-		loadSchemaCounter.WithLabelValues("failed").Inc()
+		metrics.LoadSchemaCounter.WithLabelValues("failed").Inc()
 		return errors.Trace(err)
 	}
-	loadSchemaCounter.WithLabelValues("succ").Inc()
+	metrics.LoadSchemaCounter.WithLabelValues("succ").Inc()
 
 	if fullLoad {
 		log.Info("[ddl] full load and reset schema validator.")
@@ -554,6 +554,7 @@ func (do *Domain) LoadPrivilegeLoop(ctx context.Context) error {
 
 			count = 0
 			err := do.privHandle.Update(ctx)
+			metrics.LoadPrivilegeCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 			if err != nil {
 				log.Error("[domain] load privilege fail:", errors.ErrorStack(err))
 			} else {
