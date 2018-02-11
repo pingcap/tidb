@@ -330,6 +330,93 @@ func validateConfig() {
 		log.Error("TiDB run with skip-grant-table need root privilege.")
 		os.Exit(-1)
 	}
+	if cfg.Port < config.MinPortNumber || cfg.Port > config.MaxPortNumber {
+		log.Error("Invalid server port number.")
+		os.Exit(-1)
+	}
+	if _, ok := config.ValidStorage[cfg.Store]; !ok {
+		log.Error("Invalid storage name.")
+		os.Exit(-1)
+	}
+	if cfg.TokenLimit < config.MinTokenLimit || cfg.TokenLimit > config.MaxTokenLimit {
+		log.Error("Invalid token limit value.")
+		os.Exit(-1)
+	}
+	if cfg.Log.File.MaxSize < config.MinLogSize || cfg.Log.File.MaxSize > config.MaxLogSize {
+		log.Error("Invalid log max file size.")
+		os.Exit(-1)
+	}
+	if cfg.Log.File.MaxDays < config.MinLogDays || cfg.Log.File.MaxDays > config.MaxLogDays {
+		log.Error("Invalid log max days.")
+		os.Exit(-1)
+	}
+	if cfg.Log.File.MaxBackups < config.MinBackups || cfg.Log.File.MaxBackups > config.MaxBackups {
+		log.Error("Invalid log max backups.")
+		os.Exit(-1)
+	}
+	if cfg.Log.SlowThreshold < config.MinSlowLogThreshold || cfg.Log.SlowThreshold > config.MaxSlowLogThreshold {
+		log.Error("Invalid slow log threshold.")
+		os.Exit(-1)
+	}
+	if cfg.Log.ExpensiveThreshold < config.MinExpensiveLogThreshold ||
+		cfg.Log.ExpensiveThreshold > config.MaxExpensiveLogThreshold {
+		log.Error("Invalid expensive log threshold.")
+		os.Exit(-1)
+	}
+	if cfg.Log.QueryLogMaxLen < config.MinQueryLogLength || cfg.Log.QueryLogMaxLen > config.MaxQueryLogLength {
+		log.Error("Invalid query log length limit.")
+		os.Exit(-1)
+	}
+	if cfg.Status.MetricsInterval < config.MinMetricsInterval ||
+		cfg.Status.MetricsInterval > config.MaxMetricsInterval {
+		log.Error("Invalid metrics report interval.")
+		os.Exit(-1)
+	}
+	if cfg.Performance.MaxProcs < config.MinProcs || cfg.Performance.MaxProcs > config.MaxProcs {
+		log.Error("Invalid max procs limit.")
+		os.Exit(-1)
+	}
+	if cfg.Performance.RetryLimit < config.MinRetryLimit || cfg.Performance.RetryLimit > config.MaxRetryLimit {
+		log.Error("Invalid max retry limit.")
+		os.Exit(-1)
+	}
+	if cfg.Performance.JoinConcurrency < config.MinJoinConcurrency ||
+		cfg.Performance.JoinConcurrency > config.MaxJoinConcurrency {
+		log.Error("Invalid max join concurrency limit.")
+		os.Exit(-1)
+	}
+	if cfg.Performance.StmtCountLimit < config.MinStmtCountLimit ||
+		cfg.Performance.StmtCountLimit > config.MaxStmtCountLimit {
+		log.Error("Invalid max statements in one transaction.")
+		os.Exit(-1)
+	}
+	if cfg.PlanCache.Capacity < config.MinPlanCacheCap || cfg.PlanCache.Capacity > config.MaxPlanCacheCap {
+		log.Error("Invalid plan cache capacity.")
+		os.Exit(-1)
+	}
+	if cfg.PlanCache.Shards < config.MinPlanCacheShards || cfg.PlanCache.Shards > config.MaxPlanCacheShards {
+		log.Error("Invalid plan cache shards.")
+		os.Exit(-1)
+	}
+	if cfg.PreparedPlanCache.Capacity < config.MinPrePlanCacheCap ||
+		cfg.PreparedPlanCache.Capacity > config.MaxPrePlanCacheCap {
+		log.Error("Invalid prepared plan cache capacity.")
+		os.Exit(-1)
+	}
+	if cfg.ProxyProtocol.HeaderTimeout < config.MinProxyHeaderTimeout ||
+		cfg.ProxyProtocol.HeaderTimeout > config.MaxProxyHeaderTimeout {
+		log.Error("Invalid proxy read header timeout.")
+		os.Exit(-1)
+	}
+	if cfg.TiKVClient.GrpcConnectionCount < config.MinGrpcConnCount ||
+		cfg.TiKVClient.GrpcConnectionCount > config.MaxGrpcConnCount {
+		log.Error("Invalid max tikv client grpc connections.")
+		os.Exit(-1)
+	}
+	if _, ok := config.ValidXServer[cfg.XProtocol.XServer]; !ok {
+		log.Error("Can not start X Server.")
+		os.Exit(-1)
+	}
 }
 
 func setGlobalVars() {
