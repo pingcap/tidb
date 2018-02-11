@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2018 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -382,6 +382,19 @@ func (ts *TidbRegionHandlerTestSuite) TestGetIndexMvcc(c *C) {
 	var data2 kvrpcpb.MvccGetByKeyResponse
 	err = decoder.Decode(&data2)
 	c.Assert(err, NotNil)
+}
+
+func (ts *TidbRegionHandlerTestSuite) TestGetSettings(c *C) {
+	ts.startServer(c)
+	ts.prepareData(c)
+	defer ts.stopServer(c)
+	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:10090/settings"))
+	c.Assert(err, IsNil)
+	decoder := json.NewDecoder(resp.Body)
+	var settings *config.Config
+	err = decoder.Decode(&settings)
+	c.Assert(err, IsNil)
+	c.Assert(settings, DeepEquals, config.GetGlobalConfig())
 }
 
 func (ts *TidbRegionHandlerTestSuite) TestGetSchema(c *C) {
