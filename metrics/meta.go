@@ -29,7 +29,7 @@ var (
 			Name:      "operation_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of handled autoid.",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 22),
-		}, []string{"op", "result_state"})
+		}, []string{LblType, LblResult})
 
 	GetSchemaDiff    = "get_schema_diff"
 	SetSchemaDiff    = "set_schema_diff"
@@ -44,7 +44,7 @@ var (
 			Name:      "operation_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of tidb meta data operations.",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 22),
-		}, []string{"op", "result_state"})
+		}, []string{LblType, LblResult})
 )
 
 func init() {
