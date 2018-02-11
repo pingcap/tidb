@@ -23,7 +23,7 @@ var (
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "statistics",
-			Name:      "auto_analyze_duration",
+			Name:      "auto_analyze_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of auto analyze.",
 			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 20),
 		})
@@ -34,7 +34,7 @@ var (
 			Subsystem: "statistics",
 			Name:      "auto_analyze_total",
 			Help:      "Counter of auto analyze.",
-		}, []string{"type"})
+		}, []string{LblType})
 
 	StatsInaccuracyRate = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
