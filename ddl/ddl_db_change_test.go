@@ -48,6 +48,7 @@ func (s *testStateChangeSuite) SetUpSuite(c *C) {
 	s.store, err = tikv.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	tidb.SetSchemaLease(s.lease)
+	tidb.SetStatsLease(0)
 	s.dom, err = tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 	s.se, err = tidb.CreateSession(s.store)
@@ -280,4 +281,62 @@ func (t *testExecInfo) execSQL(idx int) error {
 		}
 	}
 	return nil
+}
+
+// TestUpdateOrDelete tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
+func (s *testStateChangeSuite) TestUpdateOrDelete(c *C) {
+	sqls := make([]string, 2)
+	sqls[0] = "delete from t where c2 = 'a'"
+	sqls[1] = "update t use index(c2) set c2 = 'c2_update' where c2 = 'a'"
+	alterTableSQL := "alter table t add column a int not null default 1 first"
+	s.runTestInWriteOnly(c, "", alterTableSQL, sqls)
+}
+
+func (s *testStateChangeSuite) runTestInWriteOnly(c *C, tableName, alterTableSQL string, sqls []string) {
+	defer testleak.AfterTest(c)()
+	_, err := s.se.Execute(`create table t (
+		c1 int primary key,
+		c2 varchar(64),
+		c3 enum('N','Y') not null default 'N',
+		c4 timestamp on update current_timestamp,
+		key(c2))`)
+	c.Assert(err, IsNil)
+	defer s.se.Execute("drop table t")
+	_, err = s.se.Execute("insert into t values(8, 'a', 'N', '2017-07-01')")
+	c.Assert(err, IsNil)
+	// Make sure these sqls use the the plan of index scan.
+	_, err = s.se.Execute("drop stats t")
+	c.Assert(err, IsNil)
+
+	callback := &ddl.TestDDLCallback{}
+	prevState := model.StateNone
+	var checkErr error
+	times := 0
+	se, err := tidb.CreateSession(s.store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute("use test_db_state")
+	c.Assert(err, IsNil)
+	callback.OnJobUpdatedExported = func(job *model.Job) {
+		if job.SchemaState == prevState || checkErr != nil || times >= 3 {
+			return
+		}
+		times++
+		if job.SchemaState != model.StateWriteOnly {
+			return
+		}
+		for _, sql := range sqls {
+			_, err = se.Execute(sql)
+			if err != nil {
+				checkErr = err
+				break
+			}
+		}
+	}
+	d := s.dom.DDL()
+	d.SetHook(callback)
+	_, err = s.se.Execute(alterTableSQL)
+	c.Assert(err, IsNil)
+	c.Assert(errors.ErrorStack(checkErr), Equals, "")
+	callback = &ddl.TestDDLCallback{}
+	d.SetHook(callback)
 }

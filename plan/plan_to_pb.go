@@ -89,6 +89,7 @@ func (p *PhysicalTableScan) ToPB(ctx context.Context) (*tipb.Executor, error) {
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalIndexScan) ToPB(ctx context.Context) (*tipb.Executor, error) {
 	columns := make([]*model.ColumnInfo, 0, p.schema.Len())
+	tableColumns := p.Table.Cols()
 	for _, col := range p.schema.Columns {
 		if col.ID == model.ExtraHandleID {
 			columns = append(columns, &model.ColumnInfo{
@@ -96,7 +97,7 @@ func (p *PhysicalIndexScan) ToPB(ctx context.Context) (*tipb.Executor, error) {
 				Name: model.NewCIStr("_rowid"),
 			})
 		} else {
-			columns = append(columns, p.Table.Columns[col.Position])
+			columns = append(columns, tableColumns[col.Position])
 		}
 	}
 	idxExec := &tipb.IndexScan{
