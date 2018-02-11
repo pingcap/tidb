@@ -210,9 +210,8 @@ func (c *rpcClient) closeConns() {
 func (c *rpcClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 	start := time.Now()
 	reqType := req.Type.String()
-	storeID := strconv.FormatUint(req.Context.GetPeer().GetStoreId(), 10)
 	defer func() {
-		metrics.TiKVSendReqHistogram.WithLabelValues(reqType, storeID).Observe(time.Since(start).Seconds())
+		metrics.TiKVSendReqHistogram.WithLabelValues(reqType).Observe(time.Since(start).Seconds())
 	}()
 
 	conn, err := c.getConn(addr)

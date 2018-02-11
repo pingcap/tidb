@@ -39,24 +39,24 @@ var (
 			Subsystem: "tikvclient",
 			Name:      "txn_cmd_total",
 			Help:      "Counter of txn commands.",
-		}, []string{"type"})
+		}, []string{LblType})
 
 	TiKVTxnCmdHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
-			Name:      "txn_cmd_seconds",
+			Name:      "txn_cmd_duration_seconds",
 			Help:      "Bucketed histogram of processing time of txn cmds.",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 20),
-		}, []string{"type"})
+		}, []string{LblType})
 
 	TiKVBackoffCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
-			Name:      "backoff_count",
+			Name:      "backoff_total",
 			Help:      "Counter of backoff.",
-		}, []string{"type"})
+		}, []string{LblType})
 
 	TiKVBackoffHistogram = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
@@ -74,7 +74,7 @@ var (
 			Name:      "get_conn_seconds",
 			Help:      "Bucketed histogram of taking conn from conn pool.",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 20),
-		}, []string{"type"})
+		}, []string{LblType})
 
 	TiKVSendReqHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -83,21 +83,21 @@ var (
 			Name:      "request_seconds",
 			Help:      "Bucketed histogram of sending request duration.",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 20),
-		}, []string{"type", "store"})
+		}, []string{LblType})
 
 	TiKVCoprocessorCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
-			Name:      "cop_count",
+			Name:      "cop_actions_total",
 			Help:      "Counter of coprocessor actions.",
-		}, []string{"type"})
+		}, []string{LblType})
 
 	TiKVCoprocessorHistogram = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
-			Name:      "cop_seconds",
+			Name:      "cop_duration_seconds",
 			Help:      "Run duration of a single coprocessor task, includes backoff time.",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 20),
 		})
@@ -108,7 +108,7 @@ var (
 			Subsystem: "tikvclient",
 			Name:      "lock_resolver_actions_total",
 			Help:      "Counter of lock resolver actions.",
-		}, []string{"type"})
+		}, []string{LblType})
 
 	TiKVRegionErrorCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -116,7 +116,7 @@ var (
 			Subsystem: "tikvclient",
 			Name:      "region_err_total",
 			Help:      "Counter of region errors.",
-		}, []string{"type"})
+		}, []string{LblType})
 
 	TiKVTxnWriteKVCountHistogram = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
@@ -131,8 +131,8 @@ var (
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
-			Name:      "txn_write_size",
-			Help:      "Size of kv pairs to write in a transaction. (KB)",
+			Name:      "txn_write_size_bytes",
+			Help:      "Size of kv pairs to write in a transaction.",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 21),
 		})
 
@@ -143,25 +143,25 @@ var (
 			Name:      "rawkv_cmd_seconds",
 			Help:      "Bucketed histogram of processing time of rawkv cmds.",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 20),
-		}, []string{"type"})
+		}, []string{LblType})
 
 	TiKVRawkvSizeHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
-			Name:      "rawkv_kv_size",
+			Name:      "rawkv_kv_size_bytes",
 			Help:      "Size of key/value to put, in bytes.",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 21),
-		}, []string{"type"})
+		}, []string{LblType})
 
 	TiKVTxnRegionsNumHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
-			Name:      "txn_regions_num",
+			Name:      "txn_regions_count",
 			Help:      "Number of regions in a transaction.",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 20),
-		}, []string{"type"})
+		}, []string{LblType})
 
 	TiKVLoadSafepointCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -169,7 +169,7 @@ var (
 			Subsystem: "tikvclient",
 			Name:      "load_safepoint_total",
 			Help:      "Counter of load safepoint.",
-		}, []string{"type"})
+		}, []string{LblType})
 
 	TiKVSecondaryLockCleanupFailureCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -177,15 +177,15 @@ var (
 			Subsystem: "tikvclient",
 			Name:      "lock_cleanup_task_total",
 			Help:      "failure statistic of secondary lock cleanup task.",
-		}, []string{"type"})
+		}, []string{LblType})
 
 	TiKVRegionCacheCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
-			Name:      "region_cache",
+			Name:      "region_cache_operations_total",
 			Help:      "Counter of region cache.",
-		}, []string{"type", "result_state"})
+		}, []string{LblType, LblResult})
 )
 
 func init() {
