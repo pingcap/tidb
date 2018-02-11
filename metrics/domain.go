@@ -18,6 +18,7 @@ import (
 )
 
 var (
+	// LoadSchemaCounter records the counter of load schema.
 	LoadSchemaCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
@@ -26,6 +27,7 @@ var (
 			Help:      "Counter of load schema",
 		}, []string{"type"})
 
+	// LoadSchemaDuration records the duration of load schema.
 	LoadSchemaDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
@@ -35,6 +37,7 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 15),
 		})
 
+	// LoadPrivilegeCounter records the counter of load privilege.
 	LoadPrivilegeCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
