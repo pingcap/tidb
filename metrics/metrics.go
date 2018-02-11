@@ -20,7 +20,8 @@ var (
 	PanicCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
-			Name:      "panic",
+			Subsystem: "server",
+			Name:      "panic_total",
 			Help:      "Counter of panic.",
 		}, []string{LblType})
 )
