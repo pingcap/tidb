@@ -85,7 +85,7 @@ var (
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
-			Name:      "worker_operation",
+			Name:      "worker_operation_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of ddl worker operations",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20),
 		}, []string{"op", "result_state"})
@@ -97,7 +97,7 @@ var (
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
-			Name:      "worker_counter",
+			Name:      "worker_total",
 			Help:      "Counter of creating ddl/worker and isowner.",
 		}, []string{"type"})
 )

@@ -75,7 +75,7 @@ var (
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
-			Name:      "event",
+			Name:      "event_total",
 			Help:      "Counter of tidb-server event.",
 		}, []string{"type"})
 )
