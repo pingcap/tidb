@@ -13,7 +13,7 @@
 
 package owner
 
-// TODO: Uncomment out these lines after adding gofails.
+// TODO: Uncomment out these lines after adding gofail.
 //
 // import (
 // 	"math"
