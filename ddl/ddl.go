@@ -252,7 +252,6 @@ func newDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
 	if hook == nil {
 		hook = &BaseCallback{}
 	}
-
 	id := uuid.NewV4().String()
 	ctx, cancelFunc := goctx.WithCancel(ctx)
 	var manager owner.Manager
@@ -291,7 +290,9 @@ func newDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
 
 	d.start(ctx)
 	variable.RegisterStatistics(d)
+
 	log.Infof("[ddl] start DDL:%s", d.uuid)
+	metrics.DDLCounter.WithLabelValues(metrics.CreateDDL).Inc()
 	return d
 }
 
@@ -315,6 +316,7 @@ func (d *ddl) start(ctx goctx.Context) {
 		terror.Log(errors.Trace(err))
 		d.wait.Add(1)
 		go d.onDDLWorker()
+		metrics.DDLCounter.WithLabelValues(metrics.CreateDDLWorker).Inc()
 	}
 
 	// For every start, we will send a fake job to let worker

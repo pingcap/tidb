@@ -14,6 +14,7 @@
 package ddl_test
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -28,7 +29,8 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	goctx "golang.org/x/net/context"
 )
@@ -46,7 +48,7 @@ type testStateChangeSuite struct {
 func (s *testStateChangeSuite) SetUpSuite(c *C) {
 	s.lease = 200 * time.Millisecond
 	var err error
-	s.store, err = tikv.NewMockTikvStore()
+	s.store, err = mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	tidb.SetSchemaLease(s.lease)
 	s.dom, err = tidb.BootstrapSession(s.store)
@@ -281,4 +283,75 @@ func (t *testExecInfo) execSQL(idx int) error {
 		}
 	}
 	return nil
+}
+
+func (s *testStateChangeSuite) execQuery(tk *testkit.TestKit, sql string, args ...interface{}) (*testkit.Result, error) {
+	comment := Commentf("sql:%s, args:%v", sql, args)
+	rs, err := tk.Exec(sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	result := tk.ResultSetToResult(rs, comment)
+	return result, nil
+}
+
+func checkResult(result *testkit.Result, expected [][]interface{}) error {
+	got := fmt.Sprintf("%s", result.Rows())
+	need := fmt.Sprintf("%s", expected)
+	if got != need {
+		return fmt.Errorf("need %v, but got %v", need, got)
+	}
+	return nil
+}
+
+func (s *testStateChangeSuite) CheckResult(tk *testkit.TestKit, sql string, args ...interface{}) (*testkit.Result, error) {
+	comment := Commentf("sql:%s, args:%v", sql, args)
+	rs, err := tk.Exec(sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	result := tk.ResultSetToResult(rs, comment)
+	return result, nil
+}
+
+func (s *testStateChangeSuite) TestShowIndex(c *C) {
+	defer testleak.AfterTest(c)()
+	_, err := s.se.Execute(goctx.Background(), `create table t(c1 int primary key, c2 int)`)
+	c.Assert(err, IsNil)
+	defer s.se.Execute(goctx.Background(), "drop table t")
+
+	callback := &ddl.TestDDLCallback{}
+	prevState := model.StateNone
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db_state")
+	showIndexSQL := `show index from t`
+	var checkErr error
+	callback.OnJobUpdatedExported = func(job *model.Job) {
+		if job.SchemaState == prevState || checkErr != nil {
+			return
+		}
+		switch job.SchemaState {
+		case model.StateDeleteOnly, model.StateWriteOnly, model.StateWriteReorganization:
+			result, err1 := s.execQuery(tk, showIndexSQL)
+			if err1 != nil {
+				checkErr = err1
+				break
+			}
+			checkErr = checkResult(result, testkit.Rows("t 0 PRIMARY 1 c1 A 0 <nil> <nil>  BTREE  "))
+		}
+	}
+
+	d := s.dom.DDL()
+	d.SetHook(callback)
+	alterTableSQL := `alter table t add index c2(c2)`
+	_, err = s.se.Execute(goctx.Background(), alterTableSQL)
+	c.Assert(err, IsNil)
+	c.Assert(errors.ErrorStack(checkErr), Equals, "")
+
+	result, err := s.execQuery(tk, showIndexSQL)
+	c.Assert(err, IsNil)
+	err = checkResult(result, testkit.Rows("t 0 PRIMARY 1 c1 A 0 <nil> <nil>  BTREE  ", "t 1 c2 1 c2 A 0 <nil> <nil> YES BTREE  "))
+	c.Assert(err, IsNil)
+	callback = &ddl.TestDDLCallback{}
+	d.SetHook(callback)
 }

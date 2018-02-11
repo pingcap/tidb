@@ -16,6 +16,7 @@ package gcworker
 import (
 	"flag"
 	"math"
+	"strconv"
 	"testing"
 	"time"
 
@@ -23,6 +24,8 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/store/mockoracle"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
 	goctx "golang.org/x/net/context"
 )
@@ -38,7 +41,7 @@ func TestT(t *testing.T) {
 
 type testGCWorkerSuite struct {
 	store    tikv.Storage
-	oracle   *tikv.MockOracle
+	oracle   *mockoracle.MockOracle
 	gcWorker *GCWorker
 }
 
@@ -47,9 +50,9 @@ var _ = Suite(&testGCWorkerSuite{})
 func (s *testGCWorkerSuite) SetUpTest(c *C) {
 	tikv.NewGCHandlerFunc = NewGCWorker
 	var err error
-	s.store, err = tikv.NewTestTiKVStorage(*withTiKV, *pdAddrs)
+	s.store, err = mockstore.NewTestTiKVStorage(*withTiKV, *pdAddrs)
 	c.Assert(err, IsNil)
-	s.oracle = &tikv.MockOracle{}
+	s.oracle = &mockoracle.MockOracle{}
 	s.store.SetOracle(s.oracle)
 	_, err = tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
@@ -121,46 +124,82 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 	safePoint, err = s.gcWorker.loadTime(gcSafePointKey, s.gcWorker.session)
 	c.Assert(err, IsNil)
 	s.timeEqual(c, safePoint.Add(time.Minute*30), now, 2*time.Second)
+
+	// Change GC concurrency.
+	concurrency, err := s.gcWorker.loadGCConcurrencyWithDefault()
+	c.Assert(err, IsNil)
+	c.Assert(concurrency, Equals, gcDefaultConcurrency)
+
+	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcMinConcurrency), s.gcWorker.session)
+	c.Assert(err, IsNil)
+	concurrency, err = s.gcWorker.loadGCConcurrencyWithDefault()
+	c.Assert(err, IsNil)
+	c.Assert(concurrency, Equals, gcMinConcurrency)
+
+	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(-1), s.gcWorker.session)
+	c.Assert(err, IsNil)
+	concurrency, err = s.gcWorker.loadGCConcurrencyWithDefault()
+	c.Assert(err, IsNil)
+	c.Assert(concurrency, Equals, gcMinConcurrency)
+
+	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(1000000), s.gcWorker.session)
+	c.Assert(err, IsNil)
+	concurrency, err = s.gcWorker.loadGCConcurrencyWithDefault()
+	c.Assert(err, IsNil)
+	c.Assert(concurrency, Equals, gcMaxConcurrency)
 }
 
 func (s *testGCWorkerSuite) TestDoGCForOneRegion(c *C) {
+	var successRegions int32
+	var failedRegions int32
+	taskWorker := newGCTaskWorker(s.store, nil, nil, s.gcWorker.uuid, &successRegions, &failedRegions)
+
 	ctx := goctx.Background()
 	bo := tikv.NewBackoffer(tikv.GcOneRegionMaxBackoff, ctx)
 	loc, err := s.store.GetRegionCache().LocateKey(bo, []byte(""))
 	c.Assert(err, IsNil)
 	var regionErr *errorpb.Error
-	regionErr, err = doGCForOneRegion(bo, s.store, 20, loc.Region)
+	regionErr, err = taskWorker.doGCForRegion(bo, 20, loc.Region)
 	c.Assert(regionErr, IsNil)
 	c.Assert(err, IsNil)
 
 	gofail.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("timeout")`)
-	regionErr, err = doGCForOneRegion(bo, s.store, 20, loc.Region)
+	regionErr, err = taskWorker.doGCForRegion(bo, 20, loc.Region)
 	c.Assert(regionErr, IsNil)
 	c.Assert(err, NotNil)
 	gofail.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult")
 
 	gofail.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("GCNotLeader")`)
-	regionErr, err = doGCForOneRegion(bo, s.store, 20, loc.Region)
+	regionErr, err = taskWorker.doGCForRegion(bo, 20, loc.Region)
 	c.Assert(regionErr.GetNotLeader(), NotNil)
 	c.Assert(err, IsNil)
 	gofail.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult")
 
 	gofail.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("GCServerIsBusy")`)
-	regionErr, err = doGCForOneRegion(bo, s.store, 20, loc.Region)
+	regionErr, err = taskWorker.doGCForRegion(bo, 20, loc.Region)
 	c.Assert(regionErr.GetServerIsBusy(), NotNil)
 	c.Assert(err, IsNil)
 	gofail.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult")
 }
 
-func (s *testGCWorkerSuite) TestResolveLocks(c *C) {
+func (s *testGCWorkerSuite) TestDoGC(c *C) {
+	var err error
 	ctx := goctx.Background()
-	bo := tikv.NewBackoffer(tikv.GcOneRegionMaxBackoff, ctx)
-	loc, err := s.store.GetRegionCache().LocateKey(bo, []byte(""))
+
+	gcSafePointCacheInterval = 1
+
+	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcDefaultConcurrency), s.gcWorker.session)
 	c.Assert(err, IsNil)
-	var regionErr *errorpb.Error
-	regionErr, err = doGCForOneRegion(bo, s.store, 20, loc.Region)
-	c.Assert(regionErr, IsNil)
+	err = s.gcWorker.doGC(ctx, 20)
 	c.Assert(err, IsNil)
 
-	err = resolveLocks(ctx, s.store, 20, "testResolveLocks")
+	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcMinConcurrency), s.gcWorker.session)
+	c.Assert(err, IsNil)
+	err = s.gcWorker.doGC(ctx, 20)
+	c.Assert(err, IsNil)
+
+	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcMaxConcurrency), s.gcWorker.session)
+	c.Assert(err, IsNil)
+	err = s.gcWorker.doGC(ctx, 20)
+	c.Assert(err, IsNil)
 }
