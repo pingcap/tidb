@@ -52,7 +52,7 @@ var (
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "session",
-			Name:      "retry_count",
+			Name:      "retry_num",
 			Help:      "Bucketed histogram of session retry count.",
 			Buckets:   prometheus.LinearBuckets(0, 1, 10),
 		})
