@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2018 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,14 +11,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package domain
+package metrics
 
 import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
 var (
-	loadSchemaCounter = prometheus.NewCounterVec(
+	LoadSchemaCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "domain",
@@ -26,7 +26,7 @@ var (
 			Help:      "Counter of load schema",
 		}, []string{"type"})
 
-	loadSchemaDuration = prometheus.NewHistogram(
+	LoadSchemaDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "domain",
@@ -34,9 +34,18 @@ var (
 			Help:      "Bucketed histogram of processing time (s) in load schema.",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 15),
 		})
+
+	LoadPrivilegeCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "domain",
+			Name:      "load_privilege_total",
+			Help:      "Counter of load privilege",
+		}, []string{"type"})
 )
 
 func init() {
-	prometheus.MustRegister(loadSchemaDuration)
-	prometheus.MustRegister(loadSchemaCounter)
+	prometheus.MustRegister(LoadSchemaDuration)
+	prometheus.MustRegister(LoadSchemaCounter)
+	prometheus.MustRegister(LoadPrivilegeCounter)
 }
