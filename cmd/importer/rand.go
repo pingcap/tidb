@@ -71,7 +71,7 @@ func randString(n int) string {
 
 func randDate(col *column) string {
 	if col.hist != nil {
-		return col.hist.randDate("DAY", "%Y-%m-%d %H:%i:%s", dateFormat)
+		return col.hist.randDate("DAY", "%Y-%m-%d", dateFormat)
 	}
 
 	min, max := col.min, col.max
@@ -127,7 +127,7 @@ func randTime(col *column) string {
 
 func randTimestamp(col *column) string {
 	if col.hist != nil {
-		return col.hist.randDate("SECOND", "%Y-%m-%d", dateTimeFormat)
+		return col.hist.randDate("SECOND", "%Y-%m-%d %H:%i:%s", dateTimeFormat)
 	}
 	min, max := col.min, col.max
 	if len(min) == 0 {
