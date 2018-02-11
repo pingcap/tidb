@@ -43,9 +43,9 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20),
 		})
 
-	SyncerInit    = "syncer_init"
-	SyncerRestart = "syncer_restart"
-	SyncerClear   = "syncer_clear"
+	SyncerInit    = "init"
+	SyncerRestart = "restart"
+	SyncerClear   = "clear"
 
 	DeploySyncerHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -78,14 +78,14 @@ var (
 		}, []string{"op", "result_state"})
 
 	// Metrics for ddl_worker.go.
-	WorkerAddDDLJob         = "add_ddl_job"
-	WorkerFinishDDLJob      = "finish_ddl_job"
+	WorkerAddDDLJob         = "add_job"
+	WorkerFinishDDLJob      = "finish_job"
 	WorkerWaitSchemaChanged = "wait_schema_changed"
 	DDLWorkerHistogram      = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
-			Name:      "ddl_worker_operation",
+			Name:      "worker_operation_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of ddl worker operations",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20),
 		}, []string{"op", "result_state"})
@@ -97,7 +97,7 @@ var (
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
-			Name:      "ddl_counter",
+			Name:      "worker_total",
 			Help:      "Counter of creating ddl/worker and isowner.",
 		}, []string{"type"})
 )
