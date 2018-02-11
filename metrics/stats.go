@@ -49,7 +49,7 @@ var (
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "statistics",
-			Name:      "pseudo_estimation",
+			Name:      "pseudo_estimation_total",
 			Help:      "Counter of pseudo estimation caused by outdated stats.",
 		})
 )
