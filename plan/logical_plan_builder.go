@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
@@ -1596,7 +1597,6 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		statsTbl = statistics.PseudoTable(tableInfo.ID)
 	} else {
 		statsTbl = handle.GetTableStats(tableInfo.ID)
-		// TODO: We should consider to add it to metric.
 		if statsTbl.Count == 0 || float64(statsTbl.ModifyCount)/float64(statsTbl.Count) > RatioOfPseudoEstimate {
 			originCnt := statsTbl.Count
 			statsTbl = statistics.PseudoTable(tableInfo.ID)
@@ -1607,6 +1607,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 				// Zero count always brings some strange problem.
 				statsTbl.Count = 100
 			}
+			metrics.PseudoEstimation.Inc()
 		}
 	}
 	indices, includeTableScan, err := availableIndices(tn.IndexHints, tableInfo)
