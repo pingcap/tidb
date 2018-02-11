@@ -125,12 +125,12 @@ func (s *testDDLSuite) TestTableError(c *C) {
 	doDDLJobErr(ctx, c, -1, 1, model.ActionDropTable, nil, d)
 	// Table ID is wrong, so dropping table is failed.
 	dbInfo := testSchemaInfo(c, d, "test")
-	testCreateSchema(c, testNewContext(d), d, dbInfo)
+	testCreateSchema(testNewContext(d), c, d, dbInfo)
 	job := doDDLJobErr(ctx, c, dbInfo.ID, -1, model.ActionDropTable, nil, d)
 
 	// Table ID or schema ID is wrong, so getting table is failed.
 	tblInfo := testTableInfo(c, d, "t", 3)
-	testCreateTable(c, ctx, d, dbInfo, tblInfo)
+	testCreateTable(ctx, c, d, dbInfo, tblInfo)
 	err := kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 		job.SchemaID = -1
 		job.TableID = -1
@@ -168,8 +168,8 @@ func (s *testDDLSuite) TestForeignKeyError(c *C) {
 
 	dbInfo := testSchemaInfo(c, d, "test")
 	tblInfo := testTableInfo(c, d, "t", 3)
-	testCreateSchema(c, ctx, d, dbInfo)
-	testCreateTable(c, ctx, d, dbInfo, tblInfo)
+	testCreateSchema(ctx, c, d, dbInfo)
+	testCreateTable(ctx, c, d, dbInfo, tblInfo)
 	doDDLJobErr(ctx, c, dbInfo.ID, tblInfo.ID, model.ActionDropForeignKey, []interface{}{model.NewCIStr("c1_foreign_key")}, d)
 }
 
@@ -188,8 +188,8 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 
 	dbInfo := testSchemaInfo(c, d, "test")
 	tblInfo := testTableInfo(c, d, "t", 3)
-	testCreateSchema(c, ctx, d, dbInfo)
-	testCreateTable(c, ctx, d, dbInfo, tblInfo)
+	testCreateSchema(ctx, c, d, dbInfo)
+	testCreateTable(ctx, c, d, dbInfo, tblInfo)
 
 	// for adding index
 	doDDLJobErr(ctx, c, dbInfo.ID, tblInfo.ID, model.ActionAddIndex, []interface{}{1}, d)
@@ -199,14 +199,14 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 	doDDLJobErr(ctx, c, dbInfo.ID, tblInfo.ID, model.ActionAddIndex,
 		[]interface{}{false, model.NewCIStr("c1_index"), 1,
 			[]*ast.IndexColName{{Column: &ast.ColumnName{Name: model.NewCIStr("c")}, Length: 256}}}, d)
-	testCreateIndex(c, ctx, d, dbInfo, tblInfo, false, "c1_index", "c1")
+	testCreateIndex(ctx, c, d, dbInfo, tblInfo, false, "c1_index", "c1")
 	doDDLJobErr(ctx, c, dbInfo.ID, tblInfo.ID, model.ActionAddIndex,
 		[]interface{}{false, model.NewCIStr("c1_index"), 1,
 			[]*ast.IndexColName{{Column: &ast.ColumnName{Name: model.NewCIStr("c1")}, Length: 256}}}, d)
 
 	// for dropping index
 	doDDLJobErr(ctx, c, dbInfo.ID, tblInfo.ID, model.ActionDropIndex, []interface{}{1}, d)
-	testDropIndex(c, ctx, d, dbInfo, tblInfo, "c1_index")
+	testDropIndex(ctx, c, d, dbInfo, tblInfo, "c1_index")
 	doDDLJobErr(ctx, c, dbInfo.ID, tblInfo.ID, model.ActionDropIndex, []interface{}{model.NewCIStr("c1_index")}, d)
 }
 
@@ -220,8 +220,8 @@ func (s *testDDLSuite) TestColumnError(c *C) {
 
 	dbInfo := testSchemaInfo(c, d, "test")
 	tblInfo := testTableInfo(c, d, "t", 3)
-	testCreateSchema(c, ctx, d, dbInfo)
-	testCreateTable(c, ctx, d, dbInfo, tblInfo)
+	testCreateSchema(ctx, c, d, dbInfo)
+	testCreateTable(ctx, c, d, dbInfo, tblInfo)
 	col := &model.ColumnInfo{
 		Name:         model.NewCIStr("c4"),
 		Offset:       len(tblInfo.Columns),
@@ -359,14 +359,14 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	d := testNewDDL(goctx.Background(), nil, store, nil, nil, testLease)
 	defer d.Stop()
 	dbInfo := testSchemaInfo(c, d, "test_cancel_job")
-	testCreateSchema(c, testNewContext(d), d, dbInfo)
+	testCreateSchema(testNewContext(d), c, d, dbInfo)
 
 	// create table t (c1 int, c2 int);
 	tblInfo := testTableInfo(c, d, "t", 2)
 	ctx := testNewContext(d)
 	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
-	job := testCreateTable(c, ctx, d, dbInfo, tblInfo)
+	job := testCreateTable(ctx, c, d, dbInfo, tblInfo)
 	// insert t values (1, 2);
 	originTable := testGetTable(c, d, dbInfo.ID, tblInfo.ID)
 	row := types.MakeDatums(1, 2)
@@ -420,7 +420,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddIndex, validArgs, &cancelState)
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 	test = &tests[3]
-	testCreateIndex(c, ctx, d, dbInfo, tblInfo, false, "idx", "c2")
+	testCreateIndex(ctx, c, d, dbInfo, tblInfo, false, "idx", "c2")
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 	c.Assert(ctx.Txn().Commit(goctx.Background()), IsNil)
 
@@ -436,11 +436,11 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionDropIndex, idxName, &test.cancelState)
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 	test = &tests[7]
-	testDropIndex(c, ctx, d, dbInfo, tblInfo, "idx")
+	testDropIndex(ctx, c, d, dbInfo, tblInfo, "idx")
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 
 	// for creating table
 	test = &tests[8]
 	tblInfo = testTableInfo(c, d, "t1", 3)
-	testCreateTable(c, ctx, d, dbInfo, tblInfo)
+	testCreateTable(ctx, c, d, dbInfo, tblInfo)
 }

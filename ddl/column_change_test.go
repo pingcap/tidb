@@ -62,7 +62,7 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 	ctx := testNewContext(d)
 	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
-	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
+	testCreateTable(ctx, c, d, s.dbInfo, tblInfo)
 	// insert t values (1, 2);
 	originTable := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 	row := types.MakeDatums(1, 2)
@@ -104,7 +104,7 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
-			err = s.checkAddWriteOnly(d, hookCtx, deleteOnlyTable, writeOnlyTable, h)
+			err = s.checkAddWriteOnly(hookCtx, d, deleteOnlyTable, writeOnlyTable, h)
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
@@ -114,7 +114,7 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
-			err = s.checkAddPublic(d, hookCtx, writeOnlyTable, publicTable)
+			err = s.checkAddPublic(hookCtx, d, writeOnlyTable, publicTable)
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
@@ -127,17 +127,17 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 	}
 	d.SetHook(tc)
 	defaultValue := int64(3)
-	job := testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, defaultValue)
+	job := testCreateColumn(ctx, c, d, s.dbInfo, tblInfo, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, defaultValue)
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	testCheckJobDone(c, d, job, true)
 	mu.Lock()
 	tb := publicTable
 	mu.Unlock()
-	s.testColumnDrop(c, ctx, d, tb)
-	s.testAddColumnNoDefault(c, ctx, d, tblInfo)
+	s.testColumnDrop(ctx, c, d, tb)
+	s.testAddColumnNoDefault(ctx, c, d, tblInfo)
 }
 
-func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo) {
+func (s *testColumnChangeSuite) testAddColumnNoDefault(ctx context.Context, c *C, d *ddl, tblInfo *model.TableInfo) {
 	d.Stop()
 	tc := &TestDDLCallback{}
 	// set up hook
@@ -179,12 +179,12 @@ func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx context.Context
 	}
 	d.SetHook(tc)
 	d.start(goctx.Background())
-	job := testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, nil)
+	job := testCreateColumn(ctx, c, d, s.dbInfo, tblInfo, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, nil)
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	testCheckJobDone(c, d, job, true)
 }
 
-func (s *testColumnChangeSuite) testColumnDrop(c *C, ctx context.Context, d *ddl, tbl table.Table) {
+func (s *testColumnChangeSuite) testColumnDrop(ctx context.Context, c *C, d *ddl, tbl table.Table) {
 	d.Stop()
 	dropCol := tbl.Cols()[2]
 	tc := &TestDDLCallback{}
@@ -209,10 +209,10 @@ func (s *testColumnChangeSuite) testColumnDrop(c *C, ctx context.Context, d *ddl
 	d.SetHook(tc)
 	d.start(goctx.Background())
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
-	testDropColumn(c, ctx, d, s.dbInfo, tbl.Meta(), dropCol.Name.L, false)
+	testDropColumn(ctx, c, d, s.dbInfo, tbl.Meta(), dropCol.Name.L, false)
 }
 
-func (s *testColumnChangeSuite) checkAddWriteOnly(d *ddl, ctx context.Context, deleteOnlyTable, writeOnlyTable table.Table, h int64) error {
+func (s *testColumnChangeSuite) checkAddWriteOnly(ctx context.Context, d *ddl, deleteOnlyTable, writeOnlyTable table.Table, h int64) error {
 	// WriteOnlyTable: insert t values (2, 3)
 	err := ctx.NewTxn()
 	if err != nil {
@@ -286,7 +286,7 @@ func touchedSlice(t table.Table) []bool {
 	return touched
 }
 
-func (s *testColumnChangeSuite) checkAddPublic(d *ddl, ctx context.Context, writeOnlyTable, publicTable table.Table) error {
+func (s *testColumnChangeSuite) checkAddPublic(ctx context.Context, d *ddl, writeOnlyTable, publicTable table.Table) error {
 	// publicTable Insert t values (4, 4, 4)
 	err := ctx.NewTxn()
 	if err != nil {

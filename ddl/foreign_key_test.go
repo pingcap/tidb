@@ -93,8 +93,8 @@ func testDropForeignKey(ctx context.Context, c *C, d *ddl, dbInfo *model.DBInfo,
 	}
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
-	v := getSchemaVer(c, ctx)
-	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	v := getSchemaVer(ctx, c)
+	checkHistoryJobArgs(ctx, c, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }
 
@@ -118,13 +118,13 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	s.dbInfo = testSchemaInfo(c, d, "test_foreign")
 	ctx := testNewContext(d)
 	s.ctx = ctx
-	testCreateSchema(c, ctx, d, s.dbInfo)
+	testCreateSchema(ctx, c, d, s.dbInfo)
 	tblInfo := testTableInfo(c, d, "t", 3)
 
 	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
 
-	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
+	testCreateTable(ctx, c, d, s.dbInfo, tblInfo)
 
 	err = ctx.Txn().Commit(goctx.Background())
 	c.Assert(err, IsNil)
@@ -168,8 +168,8 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	mu.Unlock()
 	c.Assert(hErr, IsNil)
 	c.Assert(ok, IsTrue)
-	v := getSchemaVer(c, ctx)
-	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	v := getSchemaVer(ctx, c)
+	checkHistoryJobArgs(ctx, c, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 
 	mu.Lock()
 	checkOK = false
@@ -215,7 +215,7 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	d.Stop()
 	d.start(goctx.Background())
 
-	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
+	job = testDropTable(ctx, c, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)
 
 	err = ctx.Txn().Commit(goctx.Background())

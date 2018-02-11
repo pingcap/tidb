@@ -302,7 +302,7 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 		selection := p.(plan.LogicalPlan).Children()[0].(*plan.LogicalSelection)
 		conds := make([]expression.Expression, 0, len(selection.Conditions))
 		for _, cond := range selection.Conditions {
-			conds = append(conds, expression.PushDownNot(cond, false, ctx))
+			conds = append(conds, expression.PushDownNot(ctx, cond, false))
 		}
 		tbl := selection.Children()[0].(*plan.DataSource).TableInfo()
 		col := expression.ColInfo2Col(selection.Schema().Columns, tbl.Columns[0])
@@ -521,7 +521,7 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		c.Assert(selection, NotNil, Commentf("expr:%v", tt.exprStr))
 		conds := make([]expression.Expression, 0, len(selection.Conditions))
 		for _, cond := range selection.Conditions {
-			conds = append(conds, expression.PushDownNot(cond, false, ctx))
+			conds = append(conds, expression.PushDownNot(ctx, cond, false))
 		}
 		cols, lengths := expression.IndexInfo2Cols(selection.Schema().Columns, tbl.Indices[tt.indexPos])
 		c.Assert(cols, NotNil)
@@ -791,7 +791,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 		c.Assert(ok, IsTrue, Commentf("expr:%v", tt.exprStr))
 		conds := make([]expression.Expression, 0, len(sel.Conditions))
 		for _, cond := range sel.Conditions {
-			conds = append(conds, expression.PushDownNot(cond, false, ctx))
+			conds = append(conds, expression.PushDownNot(ctx, cond, false))
 		}
 		col := expression.ColInfo2Col(sel.Schema().Columns, ds.TableInfo().Columns[tt.colPos])
 		c.Assert(col, NotNil)

@@ -78,9 +78,9 @@ func testCreateTable(ctx context.Context, c *C, d *ddl, dbInfo *model.DBInfo, tb
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
 
-	v := getSchemaVer(c, ctx)
+	v := getSchemaVer(ctx, c)
 	tblInfo.State = model.StatePublic
-	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	checkHistoryJobArgs(ctx, c, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	tblInfo.State = model.StateNone
 	return job
 }
@@ -96,9 +96,9 @@ func testRenameTable(ctx context.Context, c *C, d *ddl, newSchemaID, oldSchemaID
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
 
-	v := getSchemaVer(c, ctx)
+	v := getSchemaVer(ctx, c)
 	tblInfo.State = model.StatePublic
-	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	checkHistoryJobArgs(ctx, c, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	tblInfo.State = model.StateNone
 	return job
 }
@@ -113,8 +113,8 @@ func testDropTable(ctx context.Context, c *C, d *ddl, dbInfo *model.DBInfo, tblI
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
 
-	v := getSchemaVer(c, ctx)
-	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	v := getSchemaVer(ctx, c)
+	checkHistoryJobArgs(ctx, c, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }
 
@@ -131,9 +131,9 @@ func testTruncateTable(ctx context.Context, c *C, d *ddl, dbInfo *model.DBInfo, 
 	err = d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
 
-	v := getSchemaVer(c, ctx)
+	v := getSchemaVer(ctx, c)
 	tblInfo.ID = newTableID
-	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	checkHistoryJobArgs(ctx, c, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }
 
@@ -190,11 +190,11 @@ func (s *testTableSuite) SetUpSuite(c *C) {
 	s.d = testNewDDL(goctx.Background(), nil, s.store, nil, nil, testLease)
 
 	s.dbInfo = testSchemaInfo(c, s.d, "test")
-	testCreateSchema(c, testNewContext(s.d), s.d, s.dbInfo)
+	testCreateSchema(testNewContext(s.d), c, s.d, s.dbInfo)
 }
 
 func (s *testTableSuite) TearDownSuite(c *C) {
-	testDropSchema(c, testNewContext(s.d), s.d, s.dbInfo)
+	testDropSchema(testNewContext(s.d), c, s.d, s.dbInfo)
 	s.d.Stop()
 	s.store.Close()
 }
@@ -212,7 +212,7 @@ func (s *testTableSuite) TestTable(c *C) {
 
 	// Create an existing table.
 	newTblInfo := testTableInfo(c, d, "t", 3)
-	doDDLJobErr(c, s.dbInfo.ID, newTblInfo.ID, model.ActionCreateTable, []interface{}{newTblInfo}, ctx, d)
+	doDDLJobErr(ctx, c, s.dbInfo.ID, newTblInfo.ID, model.ActionCreateTable, []interface{}{newTblInfo}, d)
 
 	count := 2000
 	tbl := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
@@ -235,7 +235,7 @@ func (s *testTableSuite) TestTable(c *C) {
 
 	// for rename table
 	dbInfo1 := testSchemaInfo(c, s.d, "test_rename_table")
-	testCreateSchema(c, testNewContext(s.d), s.d, dbInfo1)
+	testCreateSchema(testNewContext(s.d), c, s.d, dbInfo1)
 	job = testRenameTable(ctx, c, d, dbInfo1.ID, s.dbInfo.ID, tblInfo)
 	testCheckTableState(c, d, dbInfo1, tblInfo, model.StatePublic)
 	testCheckJobDone(c, d, job, true)

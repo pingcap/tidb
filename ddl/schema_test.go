@@ -54,9 +54,9 @@ func testCreateSchema(ctx context.Context, c *C, d *ddl, dbInfo *model.DBInfo) *
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
 
-	v := getSchemaVer(c, ctx)
+	v := getSchemaVer(ctx, c)
 	dbInfo.State = model.StatePublic
-	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, db: dbInfo})
+	checkHistoryJobArgs(ctx, c, job.ID, &historyJobArgs{ver: v, db: dbInfo})
 	dbInfo.State = model.StateNone
 	return job
 }
@@ -70,7 +70,7 @@ func testDropSchema(ctx context.Context, c *C, d *ddl, dbInfo *model.DBInfo) (*m
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
 
-	ver := getSchemaVer(c, ctx)
+	ver := getSchemaVer(ctx, c)
 	return job, ver
 }
 
@@ -131,7 +131,7 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 	/*** to drop the schema with two tables. ***/
 	// create table t with 100 records.
 	tblInfo1 := testTableInfo(c, d, "t", 3)
-	tJob1 := testCreateTable(c, ctx, d, dbInfo, tblInfo1)
+	tJob1 := testCreateTable(ctx, c, d, dbInfo, tblInfo1)
 	testCheckTableState(c, d, dbInfo, tblInfo1, model.StatePublic)
 	testCheckJobDone(c, d, tJob1, true)
 	tbl1 := testGetTable(c, d, dbInfo.ID, tblInfo1.ID)
@@ -141,7 +141,7 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 	}
 	// create table t1 with defaultBatchCnt+10 records.
 	tblInfo2 := testTableInfo(c, d, "t1", 3)
-	tJob2 := testCreateTable(c, ctx, d, dbInfo, tblInfo2)
+	tJob2 := testCreateTable(ctx, c, d, dbInfo, tblInfo2)
 	testCheckTableState(c, d, dbInfo, tblInfo2, model.StatePublic)
 	testCheckJobDone(c, d, tJob2, true)
 	tbl2 := testGetTable(c, d, dbInfo.ID, tblInfo2.ID)
@@ -154,7 +154,7 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 	ids := make(map[int64]struct{})
 	ids[tblInfo1.ID] = struct{}{}
 	ids[tblInfo2.ID] = struct{}{}
-	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, db: dbInfo, tblIDs: ids})
+	checkHistoryJobArgs(ctx, c, job.ID, &historyJobArgs{ver: v, db: dbInfo, tblIDs: ids})
 
 	// Drop a non-existent database.
 	job = &model.Job{
@@ -201,7 +201,7 @@ func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
 
 	schemaID, err := d2.genGlobalID()
 	c.Assert(err, IsNil)
-	doDDLJobErr(c, schemaID, 0, model.ActionCreateSchema, []interface{}{dbInfo}, ctx, d2)
+	doDDLJobErr(ctx, c, schemaID, 0, model.ActionCreateSchema, []interface{}{dbInfo}, d2)
 }
 
 func testRunInterruptedJob(c *C, d *ddl, job *model.Job) {

@@ -563,7 +563,7 @@ func (s *testSuite) TestShowTableStatus(c *C) {
 	rs, err := tk.Exec("show table status;")
 	c.Assert(errors.ErrorStack(err), Equals, "")
 	c.Assert(rs, NotNil)
-	rows, err := tidb.GetRows4Test(goctx.Background(), tk.Se, rs)
+	rows, err := tidb.GetRows4Test(tk.Se, goctx.Background(), rs)
 	c.Assert(errors.ErrorStack(err), Equals, "")
 	err = rs.Close()
 	c.Assert(errors.ErrorStack(err), Equals, "")

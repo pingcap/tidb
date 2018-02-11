@@ -58,7 +58,7 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 	ctx := testNewContext(d)
 	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
-	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
+	testCreateTable(ctx, c, d, s.dbInfo, tblInfo)
 	originTable := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
 	// insert t values (1, 1), (2, 2), (3, 3)
@@ -118,7 +118,7 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 		}
 	}
 	d.SetHook(tc)
-	testCreateIndex(c, ctx, d, s.dbInfo, originTable.Meta(), false, "c2", "c2")
+	testCreateIndex(ctx, c, d, s.dbInfo, originTable.Meta(), false, "c2", "c2")
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 	c.Assert(ctx.Txn().Commit(goctx.Background()), IsNil)
 	d.Stop()
@@ -161,7 +161,7 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 		}
 	}
 	d.start(goctx.Background())
-	testDropIndex(c, ctx, d, s.dbInfo, publicTable.Meta(), "c2")
+	testDropIndex(ctx, c, d, s.dbInfo, publicTable.Meta(), "c2")
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 }
 

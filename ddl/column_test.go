@@ -48,11 +48,11 @@ func (s *testColumnSuite) SetUpSuite(c *C) {
 	s.d = testNewDDL(goctx.Background(), nil, s.store, nil, nil, testLease)
 
 	s.dbInfo = testSchemaInfo(c, s.d, "test_column")
-	testCreateSchema(c, testNewContext(s.d), s.d, s.dbInfo)
+	testCreateSchema(testNewContext(s.d), c, s.d, s.dbInfo)
 }
 
 func (s *testColumnSuite) TearDownSuite(c *C) {
-	testDropSchema(c, testNewContext(s.d), s.d, s.dbInfo)
+	testDropSchema(testNewContext(s.d), c, s.d, s.dbInfo)
 	s.d.Stop()
 
 	err := s.store.Close()
@@ -80,8 +80,8 @@ func testCreateColumn(ctx context.Context, c *C, d *ddl, dbInfo *model.DBInfo, t
 
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
-	v := getSchemaVer(c, ctx)
-	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	v := getSchemaVer(ctx, c)
+	checkHistoryJobArgs(ctx, c, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }
 
@@ -99,8 +99,8 @@ func testDropColumn(ctx context.Context, c *C, d *ddl, dbInfo *model.DBInfo, tbl
 		return nil
 	}
 	c.Assert(errors.ErrorStack(err), Equals, "")
-	v := getSchemaVer(c, ctx)
-	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	v := getSchemaVer(ctx, c)
+	checkHistoryJobArgs(ctx, c, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }
 
@@ -109,7 +109,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	tblInfo := testTableInfo(c, s.d, "t1", 3)
 	ctx := testNewContext(s.d)
 
-	testCreateTable(c, ctx, s.d, s.dbInfo, tblInfo)
+	testCreateTable(ctx, c, s.d, s.dbInfo, tblInfo)
 	t := testGetTable(c, s.d, s.dbInfo.ID, tblInfo.ID)
 
 	num := 10
@@ -240,12 +240,12 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	job = testDropColumn(ctx, c, s.d, s.dbInfo, tblInfo, "c4", false)
 	testCheckJobDone(c, s.d, job, false)
 
-	job = testCreateIndex(c, ctx, s.d, s.dbInfo, tblInfo, false, "c5_idx", "c5")
+	job = testCreateIndex(ctx, c, s.d, s.dbInfo, tblInfo, false, "c5_idx", "c5")
 	testCheckJobDone(c, s.d, job, true)
 
 	testDropColumn(ctx, c, s.d, s.dbInfo, tblInfo, "c5", true)
 
-	testDropIndex(c, ctx, s.d, s.dbInfo, tblInfo, "c5_idx")
+	testDropIndex(ctx, c, s.d, s.dbInfo, tblInfo, "c5_idx")
 	testCheckJobDone(c, s.d, job, true)
 
 	job = testDropColumn(ctx, c, s.d, s.dbInfo, tblInfo, "c5", false)
@@ -253,7 +253,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 
 	testDropColumn(ctx, c, s.d, s.dbInfo, tblInfo, "c6", true)
 
-	testDropTable(c, ctx, s.d, s.dbInfo, tblInfo)
+	testDropTable(ctx, c, s.d, s.dbInfo, tblInfo)
 }
 
 func (s *testColumnSuite) checkColumnKVExist(ctx context.Context, t table.Table, handle int64, col *table.Column, columnValue interface{}, isExist bool) error {
@@ -744,7 +744,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
 
-	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
+	testCreateTable(ctx, c, d, s.dbInfo, tblInfo)
 	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
 	oldRow := types.MakeDatums(int64(1), int64(2), int64(3))
@@ -811,7 +811,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 	err = ctx.NewTxn()
 	c.Assert(err, IsNil)
 
-	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
+	job = testDropTable(ctx, c, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)
 
 	err = ctx.Txn().Commit(goctx.Background())
@@ -830,7 +830,7 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
 
-	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
+	testCreateTable(ctx, c, d, s.dbInfo, tblInfo)
 	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
 	colName := "c4"
@@ -885,7 +885,7 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 	err = ctx.NewTxn()
 	c.Assert(err, IsNil)
 
-	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
+	job = testDropTable(ctx, c, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)
 
 	err = ctx.Txn().Commit(goctx.Background())

@@ -42,17 +42,17 @@ func (s *testUtilSuite) TestSubstituteCorCol2Constant(c *check.C) {
 	ans1 := &Constant{Value: types.NewIntDatum(3), RetType: types.NewFieldType(mysql.TypeLonglong)}
 	ret, err := SubstituteCorCol2Constant(plus2)
 	c.Assert(err, check.IsNil)
-	c.Assert(ret.Equal(ans1, ctx), check.IsTrue)
+	c.Assert(ret.Equal(ctx, ans1), check.IsTrue)
 	col1 := &Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
 	ret, err = SubstituteCorCol2Constant(col1)
 	c.Assert(err, check.IsNil)
 	ans2 := col1
-	c.Assert(ret.Equal(ans2, ctx), check.IsTrue)
+	c.Assert(ret.Equal(ctx, ans2), check.IsTrue)
 	plus3 := newFunction(ast.Plus, plus2, col1)
 	ret, err = SubstituteCorCol2Constant(plus3)
 	c.Assert(err, check.IsNil)
 	ans3 := newFunction(ast.Plus, ans1, col1)
-	c.Assert(ret.Equal(ans3, ctx), check.IsTrue)
+	c.Assert(ret.Equal(ctx, ans3), check.IsTrue)
 }
 
 func (s *testUtilSuite) TestPushDownNot(c *check.C) {
@@ -68,8 +68,8 @@ func (s *testUtilSuite) TestPushDownNot(c *check.C) {
 	neFunc := newFunction(ast.NE, col, One)
 	andFunc2 := newFunction(ast.LogicAnd, neFunc, neFunc)
 	orFunc2 := newFunction(ast.LogicOr, andFunc2, neFunc)
-	ret := PushDownNot(notFunc, false, ctx)
-	c.Assert(ret.Equal(orFunc2, ctx), check.IsTrue)
+	ret := PushDownNot(ctx, notFunc, false)
+	c.Assert(ret.Equal(ctx, orFunc2), check.IsTrue)
 }
 
 func (s *testUtilSuite) TestFilter(c *check.C) {
