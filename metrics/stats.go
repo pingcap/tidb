@@ -44,10 +44,19 @@ var (
 			Help:      "Bucketed histogram of stats inaccuracy rate.",
 			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 14),
 		})
+
+	PseudoEstimation = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "statistics",
+			Name:      "pseudo_estimation",
+			Help:      "Counter of pseudo estimation caused by outdated stats.",
+		})
 )
 
 func init() {
 	prometheus.MustRegister(AutoAnalyzeHistogram)
 	prometheus.MustRegister(AutoAnalyzeCounter)
 	prometheus.MustRegister(StatsInaccuracyRate)
+	prometheus.MustRegister(PseudoEstimation)
 }
