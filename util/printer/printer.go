@@ -15,8 +15,10 @@ package printer
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/mysql"
 	log "github.com/sirupsen/logrus"
 )
@@ -40,6 +42,11 @@ func PrintTiDBInfo() {
 	log.Infof("UTC Build Time:  %s", TiDBBuildTS)
 	log.Infof("GoVersion:  %s", GoVersion)
 	log.Infof("TiKV Min Version: %s", TiKVMinVersion)
+	configJSON, err := json.Marshal(config.GetGlobalConfig())
+	if err != nil {
+		panic(err)
+	}
+	log.Infof("Config: %s", configJSON)
 }
 
 // PrintRawTiDBInfo prints the TiDB version information without log info.
@@ -54,8 +61,8 @@ func PrintRawTiDBInfo() {
 
 // GetTiDBInfo returns the git hash and build time of this tidb-server binary.
 func GetTiDBInfo() string {
-	return fmt.Sprintf("Release Version: %s\nGit Commit Hash: %s\nGit Branch: %s\nUTC Build Time: %s\nTiKV Min Version: %s",
-		mysql.TiDBReleaseVersion, TiDBGitHash, TiDBGitBranch, TiDBBuildTS, TiKVMinVersion)
+	return fmt.Sprintf("Release Version: %s\nGit Commit Hash: %s\nGit Branch: %s\nUTC Build Time: %s\nGoVersion: %s\nTiKV Min Version: %s",
+		mysql.TiDBReleaseVersion, TiDBGitHash, TiDBGitBranch, TiDBBuildTS, GoVersion, TiKVMinVersion)
 }
 
 // checkValidity checks whether cols and every data have the same length.

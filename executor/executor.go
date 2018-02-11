@@ -99,6 +99,7 @@ type Row = types.DatumRow
 
 type baseExecutor struct {
 	ctx             context.Context
+	id              string
 	schema          *expression.Schema
 	supportChk      bool
 	maxChunkSize    int
@@ -167,10 +168,11 @@ func (e *baseExecutor) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
-func newBaseExecutor(schema *expression.Schema, ctx context.Context, children ...Executor) baseExecutor {
+func newBaseExecutor(schema *expression.Schema, ctx context.Context, id string, children ...Executor) baseExecutor {
 	e := baseExecutor{
 		children:     children,
 		ctx:          ctx,
+		id:           id,
 		schema:       schema,
 		maxChunkSize: ctx.GetSessionVars().MaxChunkSize,
 	}
@@ -589,8 +591,26 @@ func init() {
 		}
 		goCtx := goctx.TODO()
 		err = exec.Open(goCtx)
+		defer terror.Call(exec.Close)
 		if err != nil {
 			return rows, errors.Trace(err)
+		}
+		if ctx.GetSessionVars().EnableChunk {
+			for {
+				chk := exec.newChunk()
+				err = exec.NextChunk(goCtx, chk)
+				if err != nil {
+					return rows, errors.Trace(err)
+				}
+				if chk.NumRows() == 0 {
+					return rows, nil
+				}
+				iter := chunk.NewIterator4Chunk(chk)
+				for r := iter.Begin(); r != iter.End(); r = iter.Next() {
+					row := r.GetDatumRow(exec.retTypes())
+					rows = append(rows, row)
+				}
+			}
 		}
 		for {
 			row, err := exec.Next(goCtx)
@@ -598,7 +618,7 @@ func init() {
 				return rows, errors.Trace(err)
 			}
 			if row == nil {
-				return rows, errors.Trace(exec.Close())
+				return rows, nil
 			}
 			rows = append(rows, row)
 		}

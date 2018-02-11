@@ -1077,15 +1077,14 @@ func (s *testPlanSuite) TestValidate(c *C) {
 			sql: "insert into t set a = 1, b = values(a) + 1",
 			err: nil,
 		},
-		// TODO: Fix Error Code.
-		//{
-		//	sql: "select a, b, c from t order by 0",
-		//	err: ErrUnknownColumn,
-		//},
-		//{
-		//	sql: "select a, b, c from t order by 4",
-		//	err: ErrUnknownColumn,
-		//},
+		{
+			sql: "select a, b, c from t order by 0",
+			err: ErrUnknownColumn,
+		},
+		{
+			sql: "select a, b, c from t order by 4",
+			err: ErrUnknownColumn,
+		},
 		{
 			sql: "select a as c1, b as c1 from t order by c1",
 			err: ErrAmbiguous,
@@ -1094,13 +1093,33 @@ func (s *testPlanSuite) TestValidate(c *C) {
 			sql: "(select a as b, b from t) union (select a, b from t) order by b",
 			err: ErrAmbiguous,
 		},
-		//{
-		//	sql: "(select a as b, b from t) union (select a, b from t) order by a",
-		//	err: ErrUnknownColumn,
-		//},
+		{
+			sql: "(select a as b, b from t) union (select a, b from t) order by a",
+			err: ErrUnknownColumn,
+		},
 		{
 			sql: "select * from t t1 use index(e)",
 			err: ErrKeyDoesNotExist,
+		},
+		{
+			sql: "select a from t having c2",
+			err: ErrUnknownColumn,
+		},
+		{
+			sql: "select a from t group by c2 + 1 having c2",
+			err: ErrUnknownColumn,
+		},
+		{
+			sql: "select a as b, b from t having b",
+			err: ErrAmbiguous,
+		},
+		{
+			sql: "select a + 1 from t having a",
+			err: ErrUnknownColumn,
+		},
+		{
+			sql: "select a from t having sum(avg(a))",
+			err: ErrInvalidGroupFuncUse,
 		},
 	}
 	for _, tt := range tests {

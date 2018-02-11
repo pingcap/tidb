@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	log "github.com/sirupsen/logrus"
@@ -149,10 +148,9 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 		return false, errors.Trace(err)
 	}
 
-	dirtyDB := getDirtyDB(ctx)
 	tid := t.Meta().ID
-	dirtyDB.deleteRow(tid, h)
-	dirtyDB.addRow(tid, h, newData)
+	ctx.StmtAddDirtyTableOP(DirtyTableDeleteRow, tid, h, nil)
+	ctx.StmtAddDirtyTableOP(DirtyTableAddRow, tid, h, newData)
 
 	if onDup {
 		sc.AddAffectedRows(2)
@@ -280,7 +278,7 @@ func (e *DeleteExec) deleteSingleTable(goCtx goctx.Context) error {
 	batchSize := e.ctx.GetSessionVars().DMLBatchSize
 	for {
 		if batchDelete && rowCount >= batchSize {
-			terror.Log(e.ctx.StmtCommit())
+			e.ctx.StmtCommit()
 			if err := e.ctx.NewTxn(); err != nil {
 				// We should return a special error for batch insert.
 				return ErrBatchInsertFail.Gen("BatchDelete failed with error: %v", err)
@@ -348,7 +346,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(goCtx goctx.Context) error {
 
 		for chunkRow := iter.Begin(); chunkRow != iter.End(); chunkRow = iter.Next() {
 			if batchDelete && rowCount >= batchDMLSize {
-				terror.Log(e.ctx.StmtCommit())
+				e.ctx.StmtCommit()
 				if err = e.ctx.NewTxn(); err != nil {
 					// We should return a special error for batch insert.
 					return ErrBatchInsertFail.Gen("BatchDelete failed with error: %v", err)
@@ -448,12 +446,21 @@ func (e *DeleteExec) removeRowsInTblRowMap(tblRowMap tableRowMapType) error {
 	return nil
 }
 
+const (
+	// DirtyTableAddRow is the constant for dirty table operation type.
+	DirtyTableAddRow = iota
+	// DirtyTableDeleteRow is the constant for dirty table operation type.
+	DirtyTableDeleteRow
+	// DirtyTableTruncate is the constant for dirty table operation type.
+	DirtyTableTruncate
+)
+
 func (e *DeleteExec) removeRow(ctx context.Context, t table.Table, h int64, data []types.Datum) error {
 	err := t.RemoveRecord(ctx, h, data)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	getDirtyDB(ctx).deleteRow(t.Meta().ID, h)
+	ctx.StmtAddDirtyTableOP(DirtyTableDeleteRow, t.Meta().ID, h, nil)
 	ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.Meta().ID, -1, 1)
 	return nil
@@ -471,7 +478,7 @@ func (e *DeleteExec) Open(goCtx goctx.Context) error {
 
 // NewLoadDataInfo returns a LoadDataInfo structure, and it's only used for tests now.
 func NewLoadDataInfo(row []types.Datum, ctx context.Context, tbl table.Table, cols []*table.Column) *LoadDataInfo {
-	insertVal := &InsertValues{baseExecutor: newBaseExecutor(nil, ctx), Table: tbl}
+	insertVal := &InsertValues{baseExecutor: newBaseExecutor(nil, ctx, "InsertValues"), Table: tbl}
 	return &LoadDataInfo{
 		row:       row,
 		insertVal: insertVal,
@@ -901,7 +908,7 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 			continue
 		}
 		if batchInsert && rowCount >= batchSize {
-			terror.Log(e.ctx.StmtCommit())
+			e.ctx.StmtCommit()
 			if err := e.ctx.NewTxn(); err != nil {
 				// We should return a special error for batch insert.
 				return nil, ErrBatchInsertFail.Gen("BatchInsert failed with error: %v", err)
@@ -919,7 +926,7 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 		txn.DelOption(kv.PresumeKeyNotExists)
 		if err == nil {
 			if !sessVars.ImportingData {
-				getDirtyDB(e.ctx).addRow(e.Table.Meta().ID, h, row)
+				e.ctx.StmtAddDirtyTableOP(DirtyTableAddRow, e.Table.Meta().ID, h, row)
 			}
 			rowCount++
 			continue
@@ -1638,7 +1645,7 @@ func (e *ReplaceExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, erro
 		row := rows[idx]
 		h, err1 := e.Table.AddRecord(e.ctx, row, false)
 		if err1 == nil {
-			getDirtyDB(e.ctx).addRow(e.Table.Meta().ID, h, row)
+			e.ctx.StmtAddDirtyTableOP(DirtyTableAddRow, e.Table.Meta().ID, h, row)
 			idx++
 			continue
 		}
@@ -1664,7 +1671,7 @@ func (e *ReplaceExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, erro
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
-		getDirtyDB(e.ctx).deleteRow(e.Table.Meta().ID, h)
+		e.ctx.StmtAddDirtyTableOP(DirtyTableDeleteRow, e.Table.Meta().ID, h, nil)
 		e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 	}
 

@@ -81,16 +81,14 @@ func pseudoSelectivity(exprs []expression.Expression) float64 {
 // TODO: support expressions that the top layer is a DNF.
 // Currently the time complexity is o(n^2).
 func (t *Table) Selectivity(ctx context.Context, exprs []expression.Expression) (float64, error) {
-	if t.Count == 0 {
+	// If table's count is zero or conditions are empty, we should return 100% selectivity.
+	if t.Count == 0 || len(exprs) == 0 {
 		return 1, nil
 	}
 	// TODO: If len(exprs) is bigger than 63, we could use bitset structure to replace the int64.
 	// This will simplify some code and speed up if we use this rather than a boolean slice.
 	if t.Pseudo || len(exprs) > 63 || (len(t.Columns) == 0 && len(t.Indices) == 0) {
 		return pseudoSelectivity(exprs), nil
-	}
-	if len(exprs) == 0 {
-		return 1.0, nil
 	}
 	var sets []*exprSet
 	sc := ctx.GetSessionVars().StmtCtx
@@ -152,13 +150,14 @@ func (t *Table) Selectivity(ctx context.Context, exprs []expression.Expression) 
 
 func getMaskAndRanges(ctx context.Context, exprs []expression.Expression, rangeType ranger.RangeType,
 	lengths []int, cols ...*expression.Column) (mask int64, ranges []*ranger.NewRange, err error) {
-	accessConds := ranger.ExtractAccessConditions(exprs, rangeType, cols, lengths)
 	sc := ctx.GetSessionVars().StmtCtx
+	var accessConds []expression.Expression
 	switch rangeType {
 	case ranger.ColumnRangeType:
+		accessConds = ranger.ExtractAccessConditionsForColumn(exprs, cols[0].ColName)
 		ranges, err = ranger.BuildColumnRange(accessConds, sc, cols[0].RetType)
 	case ranger.IndexRangeType:
-		ranges, err = ranger.BuildIndexRange(sc, cols, lengths, accessConds)
+		ranges, accessConds, err = ranger.DetachSimpleCondAndBuildRangeForIndex(sc, exprs, cols, lengths)
 	default:
 		panic("should never be here")
 	}

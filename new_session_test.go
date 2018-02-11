@@ -32,8 +32,8 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/mocktikv"
+	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
@@ -58,9 +58,9 @@ func (s *testSessionSuite) SetUpSuite(c *C) {
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(s.cluster)
 	s.mvccStore = mocktikv.NewMvccStore()
-	store, err := tikv.NewMockTikvStore(
-		tikv.WithCluster(s.cluster),
-		tikv.WithMVCCStore(s.mvccStore),
+	store, err := mockstore.NewMockTikvStore(
+		mockstore.WithCluster(s.cluster),
+		mockstore.WithMVCCStore(s.mvccStore),
 	)
 	c.Assert(err, IsNil)
 	s.store = store
@@ -453,7 +453,7 @@ func (s *testSessionSuite) TestInTrans(c *C) {
 	tk.MustExec("insert t values ()")
 	c.Assert(tk.Se.Txn().Valid(), IsTrue)
 	tk.MustExec("rollback")
-	c.Assert(tk.Se.Txn().Valid(), IsFalse)
+	c.Assert(tk.Se.Txn(), IsNil)
 }
 
 func (s *testSessionSuite) TestRetryPreparedStmt(c *C) {
@@ -1374,9 +1374,9 @@ func (s *testSchemaSuite) SetUpSuite(c *C) {
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(s.cluster)
 	s.mvccStore = mocktikv.NewMvccStore()
-	store, err := tikv.NewMockTikvStore(
-		tikv.WithCluster(s.cluster),
-		tikv.WithMVCCStore(s.mvccStore),
+	store, err := mockstore.NewMockTikvStore(
+		mockstore.WithCluster(s.cluster),
+		mockstore.WithMVCCStore(s.mvccStore),
 	)
 	c.Assert(err, IsNil)
 	s.store = store
@@ -1814,8 +1814,7 @@ func (s *testSessionSuite) TestStatementErrorInTransaction(c *C) {
 	tk.MustExec("insert into statement_side_effect values (1)")
 	_, err := tk.Exec("insert into statement_side_effect value (2),(3),(4),(1)")
 	c.Assert(err, NotNil)
-	// TODO: Fix here, dirty table should not be touched, too.
-	// tk.MustQuery(`select * from statement_side_effect`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select * from statement_side_effect`).Check(testkit.Rows("1"))
 	tk.MustExec("commit")
 	tk.MustQuery(`select * from statement_side_effect`).Check(testkit.Rows("1"))
 
@@ -1857,4 +1856,15 @@ func (s *testSessionSuite) TestStatementCountLimit(c *C) {
 	tk.MustExec("insert into stmt_count_limit values (3)")
 	_, err = tk.Exec("insert into stmt_count_limit values (4)")
 	c.Assert(err, NotNil)
+}
+
+func (s *testSessionSuite) TestCastTimeToDate(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set time_zone = '-8:00'")
+	date := time.Now().In(time.FixedZone("UTC", -8*int(time.Hour/time.Second)))
+	tk.MustQuery("select cast(time('12:23:34') as date)").Check(testkit.Rows(date.Format("2006-01-02")))
+
+	tk.MustExec("set time_zone = '+08:00'")
+	date = time.Now().In(time.FixedZone("UTC", 8*int(time.Hour/time.Second)))
+	tk.MustQuery("select cast(time('12:23:34') as date)").Check(testkit.Rows(date.Format("2006-01-02")))
 }

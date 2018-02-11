@@ -6,7 +6,7 @@ host = "0.0.0.0"
 # TiDB server port.
 port = 4000
 
-# Registered store name, [memory, goleveldb, boltdb, tikv, mocktikv]
+# Registered store name, [tikv, mocktikv]
 store = "mocktikv"
 
 # TiDB storage path.
@@ -49,6 +49,9 @@ disable-timestamp = false
 
 # Queries with execution time greater than this value will be logged. (Milliseconds)
 slow-threshold = 300
+
+# Queries with internal result greater than this value will be logged.
+expensive-threshold = 10000
 
 # Maximum query length recorded in log.
 query-log-max-len = 2048

@@ -20,10 +20,24 @@ import (
 func (ds *DataSource) preparePossibleProperties() (result [][]*expression.Column) {
 	indices := ds.availableIndices.indices
 	includeTS := ds.availableIndices.includeTableScan
+	ds.relevantIndices = make([]bool, len(indices))
 	if includeTS {
 		col := ds.getPKIsHandleCol()
 		if col != nil {
 			result = append(result, []*expression.Column{col})
+		}
+		cols := expression.ExtractColumnsFromExpressions(make([]*expression.Column, 0, 10), ds.pushedDownConds, nil)
+		for i, idx := range indices {
+			for _, col := range cols {
+				if col.ColName.L == idx.Columns[0].Name.L {
+					ds.relevantIndices[i] = true
+					break
+				}
+			}
+		}
+	} else {
+		for i := range ds.relevantIndices {
+			ds.relevantIndices[i] = true
 		}
 	}
 	for _, idx := range indices {
@@ -40,8 +54,8 @@ func (p *LogicalSelection) preparePossibleProperties() (result [][]*expression.C
 }
 
 func (p *baseLogicalPlan) preparePossibleProperties() [][]*expression.Column {
-	if len(p.children) > 0 {
-		p.children[0].preparePossibleProperties()
+	for _, ch := range p.children {
+		ch.preparePossibleProperties()
 	}
 	return nil
 }

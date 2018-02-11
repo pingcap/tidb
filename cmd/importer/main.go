@@ -34,31 +34,54 @@ func main() {
 	}
 
 	table := newTable()
-	err = parseTableSQL(table, cfg.TableSQL)
+	err = parseTableSQL(table, cfg.DDLCfg.TableSQL)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	err = parseIndexSQL(table, cfg.IndexSQL)
+	err = parseIndexSQL(table, cfg.DDLCfg.IndexSQL)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	dbs, err := createDBs(cfg.DBCfg, cfg.WorkerCount)
+	dbs, err := createDBs(cfg.DBCfg, cfg.SysCfg.WorkerCount)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer closeDBs(dbs)
 
-	err = execSQL(dbs[0], cfg.TableSQL)
+	if len(cfg.StatsCfg.Path) > 0 {
+		statsInfo, err1 := loadStats(table.tblInfo, cfg.StatsCfg.Path)
+		if err1 != nil {
+			log.Fatal(err1)
+		}
+		for _, idxInfo := range table.tblInfo.Indices {
+			offset := idxInfo.Columns[0].Offset
+			if hist, ok := statsInfo.Indices[idxInfo.ID]; ok && len(hist.Buckets) > 0 {
+				table.columns[offset].hist = &histogram{
+					Histogram: hist.Histogram,
+					index:     hist.Info,
+				}
+			}
+		}
+		for i, colInfo := range table.tblInfo.Columns {
+			if hist, ok := statsInfo.Columns[colInfo.ID]; ok && table.columns[i].hist == nil && len(hist.Buckets) > 0 {
+				table.columns[i].hist = &histogram{
+					Histogram: hist.Histogram,
+				}
+			}
+		}
+	}
+
+	err = execSQL(dbs[0], cfg.DDLCfg.TableSQL)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	err = execSQL(dbs[0], cfg.IndexSQL)
+	err = execSQL(dbs[0], cfg.DDLCfg.IndexSQL)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	doProcess(table, dbs, cfg.JobCount, cfg.WorkerCount, cfg.Batch)
+	doProcess(table, dbs, cfg.SysCfg.JobCount, cfg.SysCfg.WorkerCount, cfg.SysCfg.Batch)
 }

@@ -423,6 +423,7 @@ import (
 	statsMeta       "STATS_META"
 	statsHistograms "STATS_HISTOGRAMS"
 	statsBuckets    "STATS_BUCKETS"
+	statsHealthy    "STATS_HEALTHY"
 	tidb		"TIDB"
 	tidbHJ		"TIDB_HJ"
 	tidbSMJ		"TIDB_SMJ"
@@ -532,6 +533,7 @@ import (
 	InsertIntoStmt			"INSERT INTO statement"
 	KillStmt			"Kill statement"
 	LoadDataStmt			"Load data statement"
+	LoadStatsStmt			"Load statistic statement"
 	LockTablesStmt			"Lock tables statement"
 	PreparedStmt			"PreparedStmt"
 	SelectStmt			"SELECT statement"
@@ -2504,7 +2506,7 @@ UnReservedKeyword:
 | "MAX_USER_CONNECTIONS" | "REPLICATION" | "CLIENT" | "SLAVE" | "RELOAD" | "TEMPORARY" | "ROUTINE" | "EVENT" | "ALGORITHM" | "DEFINER" | "INVOKER" | "MERGE" | "TEMPTABLE" | "UNDEFINED" | "SECURITY" | "CASCADED"
 
 TiDBKeyword:
-"ADMIN" | "CANCEL" | "DDL" | "JOBS" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "TIDB" | "TIDB_HJ" | "TIDB_SMJ" | "TIDB_INLJ"
+"ADMIN" | "CANCEL" | "DDL" | "JOBS" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "STATS_HEALTHY" | "TIDB" | "TIDB_HJ" | "TIDB_SMJ" | "TIDB_INLJ"
 
 NotKeywordToken:
  "ADDDATE" | "BIT_AND" | "BIT_OR" | "BIT_XOR" | "CAST" | "COUNT" | "CURTIME" | "DATE_ADD" | "DATE_SUB" | "EXTRACT" | "GET_FORMAT" | "GROUP_CONCAT" | "MIN" | "MAX" | "NOW" | "POSITION"
@@ -4366,7 +4368,7 @@ SubSelect:
 		parser.setLastSelectFieldText(s, endOffset)
 		src := parser.src
 		// See the implementation of yyParse function
-		s.SetText(src[yyS[yypt-1].offset-1:yyS[yypt].offset-1])
+		s.SetText(src[yyS[yypt-1].offset:yyS[yypt].offset])
 		$$ = &ast.SubqueryExpr{Query: s}
 	}
 |	'(' UnionStmt ')'
@@ -4374,7 +4376,7 @@ SubSelect:
 		s := $2.(*ast.UnionStmt)
 		src := parser.src
 		// See the implementation of yyParse function
-		s.SetText(src[yyS[yypt-1].offset-1:yyS[yypt].offset-1])
+		s.SetText(src[yyS[yypt-1].offset:yyS[yypt].offset])
 		$$ = &ast.SubqueryExpr{Query: s}
 	}
 
@@ -4841,6 +4843,20 @@ ShowStmt:
 		}
 		$$ = stmt
 	}
+|   "SHOW" "STATS_HEALTHY" ShowLikeOrWhereOpt
+	{
+		stmt := &ast.ShowStmt{
+			Tp: ast.ShowStatsHealthy,
+		}
+		if $3 != nil {
+			if x, ok := $3.(*ast.PatternLikeExpr); ok {
+				stmt.Pattern = x
+			} else {
+				stmt.Where = $3.(ast.ExprNode)
+			}
+		}
+		$$ = stmt
+	}
 |	"SHOW" "PROFILES"
 	{
 		$$ = &ast.ShowStmt{
@@ -5125,6 +5141,7 @@ Statement:
 |	InsertIntoStmt
 |	KillStmt
 |	LoadDataStmt
+|	LoadStatsStmt
 |	PreparedStmt
 |	RollbackStmt
 |	RenameTableStmt
@@ -6433,6 +6450,16 @@ KillOrKillTiDB:
 |	"KILL" "TIDB"
 	{
 		$$ = true
+	}
+
+/*******************************************************************************************/
+
+LoadStatsStmt:
+	"LOAD" "STATS" stringLit
+	{
+		$$ = &ast.LoadStatsStmt{
+			Path:       $3,
+		}
 	}
 
 %%

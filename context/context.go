@@ -18,6 +18,7 @@ import (
 
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
 	binlog "github.com/pingcap/tipb/go-binlog"
@@ -73,11 +74,13 @@ type Context interface {
 	StoreQueryFeedback(feedback interface{})
 
 	// StmtCommit flush all changes by the statement to the underlying transaction.
-	StmtCommit() error
+	StmtCommit()
 	// StmtRollback provides statement level rollback.
 	StmtRollback()
 	// StmtGetMutation gets the binlog mutation for current statement.
 	StmtGetMutation(int64) *binlog.TableMutation
+	// StmtAddDirtyTableOP adds the dirty table operation for current statement.
+	StmtAddDirtyTableOP(op int, tid int64, handle int64, row []types.Datum)
 }
 
 type basicCtxType int
