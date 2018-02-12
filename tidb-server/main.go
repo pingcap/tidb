@@ -409,7 +409,6 @@ func setupSignalHandler() {
 }
 
 func setupMetrics() {
-
 	systimeErrHandler := func() {
 		metrics.TimeJumpBackCounter.Inc()
 	}
