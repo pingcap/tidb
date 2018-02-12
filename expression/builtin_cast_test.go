@@ -230,7 +230,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	originIgnoreTruncate := sc.IgnoreTruncate
 	originTZ := sc.TimeZone
 	sc.IgnoreTruncate = true
-	sc.TimeZone = time.Local
+	sc.TimeZone = time.UTC
 	defer func() {
 		sc.IgnoreTruncate = originIgnoreTruncate
 		sc.TimeZone = originTZ
