@@ -114,6 +114,14 @@ var (
 			Name:      "time_jump_back_total",
 			Help:      "Counter of system time jumps backward.",
 		})
+
+	keepAliveCounter = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "monitor",
+			Name:      "keep_alive_total",
+			Help:      "Counter of TiDB keep alive.",
+		})
 )
 
 var (
@@ -417,9 +425,13 @@ func setupSignalHandler() {
 
 func setupMetrics() {
 	prometheus.MustRegister(timeJumpBackCounter)
-	go systimemon.StartMonitor(time.Now, func() {
+	systimeErrHandler := func() {
 		timeJumpBackCounter.Inc()
-	})
+	}
+	sucessCallBack := func() {
+		keepAliveCounter.Inc()
+	}
+	go systimemon.StartMonitor(time.Now, systimeErrHandler, sucessCallBack)
 
 	pushMetric(cfg.Status.MetricsAddr, time.Duration(cfg.Status.MetricsInterval)*time.Second)
 }
