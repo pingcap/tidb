@@ -20,6 +20,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/tidb/plan"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
@@ -38,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/auth"
+	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -93,19 +96,34 @@ type mockBinlogPump struct {
 var _ binlog.PumpClient = &mockBinlogPump{}
 
 func (p *mockBinlogPump) WriteBinlog(ctx goctx.Context, in *binlog.WriteBinlogReq, opts ...grpc.CallOption) (*binlog.WriteBinlogResp, error) {
+	return &binlog.WriteBinlogResp{}, nil
+}
+
+type mockPump_PullBinlogsClient struct {
+	grpc.ClientStream
+}
+
+func (m mockPump_PullBinlogsClient) Recv() (*binlog.PullBinlogResp, error) {
 	return nil, nil
 }
 
 func (p *mockBinlogPump) PullBinlogs(ctx goctx.Context, in *binlog.PullBinlogReq, opts ...grpc.CallOption) (binlog.Pump_PullBinlogsClient, error) {
-	return nil, nil
+	return mockPump_PullBinlogsClient{mocktikv.MockGRPCClientStream()}, nil
 }
 
 func (s *testSessionSuite) TestForCoverage(c *C) {
+	planCache := plan.PlanCacheEnabled
+	plan.GlobalPlanCache = kvcache.NewShardedLRUCache(2, 1)
+	defer func() {
+		plan.PlanCacheEnabled = planCache
+	}()
+
 	// Just for test coverage.
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int auto_increment, v int, index (id))")
 	tk.MustExec("insert t values ()")
+	plan.PlanCacheEnabled = true
 	tk.MustExec("insert t values ()")
 	tk.MustExec("insert t values ()")
 
@@ -121,6 +139,8 @@ func (s *testSessionSuite) TestForCoverage(c *C) {
 	tk.MustExec("update t set v = 5 where id = 2")
 	tk.MustExec("insert t values ()")
 	tk.MustExec("rollback")
+
+	c.Check(tk.Se.SetCollation(mysql.DefaultCollationID), IsNil)
 
 	tk.MustExec("show processlist")
 	_, err := tk.Se.FieldList("t")

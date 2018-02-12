@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
 	goctx "golang.org/x/net/context"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 )
 
@@ -391,6 +392,11 @@ func flagsToStatementContext(flags uint64) *stmtctx.StatementContext {
 	sc.TruncateAsWarning = (flags & FlagTruncateAsWarning) > 0
 	sc.PadCharToFullLength = (flags & FlagPadCharToFullLength) > 0
 	return sc
+}
+
+// MockGRPCClientStream is exported for testing purpose.
+func MockGRPCClientStream() grpc.ClientStream {
+	return mockClientStream{}
 }
 
 // mockClientStream implements grpc ClientStream interface, its methods are never called.

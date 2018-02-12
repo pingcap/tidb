@@ -187,7 +187,7 @@ func (st *TxnState) SeekReverse(k kv.Key) (kv.Iterator, error) {
 
 func (st *TxnState) cleanup() {
 	st.buf.Reset()
-	for key, _ := range st.mutations {
+	for key := range st.mutations {
 		delete(st.mutations, key)
 	}
 	if st.dirtyTableOP != nil {
