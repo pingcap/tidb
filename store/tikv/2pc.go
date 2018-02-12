@@ -144,7 +144,7 @@ func newTwoPhaseCommitter(txn *tikvTxn) (*twoPhaseCommitter, error) {
 	}
 
 	metrics.TiKVTxnWriteKVCountHistogram.Observe(float64(len(keys)))
-	metrics.TiKVTxnWriteSizeHistogram.Observe(float64(size / 1024))
+	metrics.TiKVTxnWriteSizeHistogram.Observe(float64(size))
 	return &twoPhaseCommitter{
 		store:     txn.store,
 		txn:       txn,

@@ -25,14 +25,14 @@ var (
 			Subsystem: "domain",
 			Name:      "load_schema_total",
 			Help:      "Counter of load schema",
-		}, []string{"type"})
+		}, []string{LblType})
 
 	// LoadSchemaDuration records the duration of load schema.
 	LoadSchemaDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "domain",
-			Name:      "load_schema_duration",
+			Name:      "load_schema_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) in load schema.",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 15),
 		})
@@ -44,7 +44,7 @@ var (
 			Subsystem: "domain",
 			Name:      "load_privilege_total",
 			Help:      "Counter of load privilege",
-		}, []string{"type"})
+		}, []string{LblType})
 )
 
 func init() {
