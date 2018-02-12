@@ -23,7 +23,7 @@ var (
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "executor",
-			Name:      "expensive_executor_counter",
+			Name:      "expensive_total",
 			Help:      "Counter of Expensive Executors.",
 		}, []string{LblType},
 	)
@@ -33,7 +33,7 @@ var (
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "executor",
-			Name:      "statement_node_total",
+			Name:      "statement_total",
 			Help:      "Counter of StmtNode.",
 		}, []string{LblType})
 )

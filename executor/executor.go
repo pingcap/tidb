@@ -1313,7 +1313,7 @@ func (e *UnionExec) Next(goCtx goctx.Context) (Row, error) {
 func (e *UnionExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if !e.initialized {
-		e.initialize(nil, true)
+		e.initialize(goCtx, true)
 		e.initialized = true
 	}
 	result, ok := <-e.resultPool

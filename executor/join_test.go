@@ -788,4 +788,9 @@ func (s *testSuite) TestIndexLookupJoin(c *C) {
 		tk.MustQuery("select /*+ TIDB_INLJ(t, s) */ t.a from t left join s on t.a = s.a").Check(testkit.Rows("148307968", "-1327693824", "-277544960", "-277544960"))
 		tk.MustQuery("select /*+ TIDB_INLJ(t, s) */ t.a from t right join s on t.a = s.a").Check(testkit.Rows("-277544960", "<nil>", "<nil>", "-277544960", "<nil>", "<nil>"))
 	}
+
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("CREATE TABLE t(a BIGINT PRIMARY KEY, b BIGINT);")
+	tk.MustExec("INSERT INTO t VALUES(1, 2);")
+	tk.MustQuery("SELECT /*+ TIDB_INLJ(t1, t2) */ * FROM t t1 JOIN t t2 ON t1.a=t2.a UNION ALL SELECT /*+ TIDB_INLJ(t1, t2) */ * FROM t t1 JOIN t t2 ON t1.a=t2.a;").Check(testkit.Rows("1 2 1 2", "1 2 1 2"))
 }
