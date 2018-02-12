@@ -1868,3 +1868,37 @@ func (s *testSessionSuite) TestCastTimeToDate(c *C) {
 	date = time.Now().In(time.FixedZone("UTC", 8*int(time.Hour/time.Second)))
 	tk.MustQuery("select cast(time('12:23:34') as date)").Check(testkit.Rows(date.Format("2006-01-02")))
 }
+
+func (s *testSessionSuite) TestSetGlobalTZ(c *C) {
+	defer testleak.AfterTest(c)()
+	goCtx := goctx.Background()
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set time_zone = '+08:00'")
+	rs, err := tk.Exec("show variables like 'time_zone'")
+	c.Assert(err, IsNil)
+	row0, err := rs.Next(goCtx)
+	c.Assert(err, IsNil)
+	c.Assert(row0, NotNil)
+	c.Assert(row0.Len(), Equals, 2)
+	c.Assert(row0.GetBytes(1), BytesEquals, []byte("+08:00"))
+
+	tk.MustExec("set global time_zone = '+00:00'")
+
+	rs, err = tk.Exec("show variables like 'time_zone'")
+	c.Assert(err, IsNil)
+	row0, err = rs.Next(goCtx)
+	c.Assert(err, IsNil)
+	c.Assert(row0, NotNil)
+	c.Assert(row0.Len(), Equals, 2)
+	c.Assert(row0.GetBytes(1), BytesEquals, []byte("+08:00"))
+
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	rs1, err := tk1.Exec("show variables like 'time_zone'")
+	c.Assert(err, IsNil)
+	row1, err := rs1.Next(goCtx)
+	c.Assert(err, IsNil)
+	c.Assert(row1, NotNil)
+	c.Assert(row1.Len(), Equals, 2)
+	c.Assert(row1.GetBytes(1), BytesEquals, []byte("+00:00"))
+}
