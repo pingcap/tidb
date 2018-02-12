@@ -279,7 +279,7 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx goctx.Context, latestVer
 	}()
 	for {
 		if isContextDone(ctx) {
-			// ctx is canceld or timeout.
+			// ctx is canceled or timeout.
 			err = errors.Trace(ctx.Err())
 			return err
 		}
