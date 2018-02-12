@@ -38,7 +38,7 @@ var (
 			Subsystem: "server",
 			Name:      "query_total",
 			Help:      "Counter of queries.",
-		}, []string{"type", "status"})
+		}, []string{LblType, LblResult})
 
 	ConnGauge = prometheus.NewGauge(
 		prometheus.GaugeOpts{
@@ -52,15 +52,15 @@ var (
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
-			Name:      "execute_error",
+			Name:      "execute_error_total",
 			Help:      "Counter of execute errors.",
-		}, []string{"type"})
+		}, []string{LblType})
 
 	CriticalErrorCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
-			Name:      "critical_error",
+			Name:      "critical_error_total",
 			Help:      "Counter of critical errors.",
 		})
 
@@ -77,7 +77,7 @@ var (
 			Subsystem: "server",
 			Name:      "event_total",
 			Help:      "Counter of tidb-server event.",
-		}, []string{"type"})
+		}, []string{LblType})
 )
 
 func init() {
