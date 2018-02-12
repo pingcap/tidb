@@ -32,6 +32,7 @@ func StartMonitor(now func() time.Time, systimeErrHandler func(), successCallbac
 			log.Errorf("system time jump backward, last:%v", last)
 			systimeErrHandler()
 		}
+		// call sucessCallback per second.
 		tickCount++
 		if tickCount >= 10 {
 			tickCount = 0

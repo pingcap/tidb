@@ -119,7 +119,7 @@ var (
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "monitor",
-			Name:      "keep_alive",
+			Name:      "keep_alive_total",
 			Help:      "Counter of TiDB keep alive.",
 		})
 )
