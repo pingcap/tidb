@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/server"
@@ -106,22 +107,6 @@ var (
 	// PROXY Protocol
 	proxyProtocolNetworks      = flag.String(nmProxyProtocolNetworks, "", "proxy protocol networks allowed IP or *, empty mean disable proxy protocol support")
 	proxyProtocolHeaderTimeout = flag.Int(nmProxyProtocolHeaderTimeout, 5, "proxy protocol header read timeout, unit is second.")
-
-	timeJumpBackCounter = prometheus.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "monitor",
-			Name:      "time_jump_back_total",
-			Help:      "Counter of system time jumps backward.",
-		})
-
-	keepAliveCounter = prometheus.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "monitor",
-			Name:      "keep_alive_total",
-			Help:      "Counter of TiDB keep alive.",
-		})
 )
 
 var (
@@ -424,12 +409,12 @@ func setupSignalHandler() {
 }
 
 func setupMetrics() {
-	prometheus.MustRegister(timeJumpBackCounter)
+
 	systimeErrHandler := func() {
-		timeJumpBackCounter.Inc()
+		metrics.TimeJumpBackCounter.Inc()
 	}
 	sucessCallBack := func() {
-		keepAliveCounter.Inc()
+		metrics.KeepAliveCounter.Inc()
 	}
 	go systimemon.StartMonitor(time.Now, systimeErrHandler, sucessCallBack)
 
