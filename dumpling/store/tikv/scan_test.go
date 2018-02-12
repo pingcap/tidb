@@ -70,6 +70,7 @@ func (s *testScanSuite) TestSeek(c *C) {
 
 		txn2 := s.beginTxn(c)
 		val, err := txn2.Get(encodeKey(s.prefix, s08d("key", 0)))
+		c.Assert(err, IsNil)
 		c.Assert(val, BytesEquals, valueBytes(0))
 		scan, err := txn2.Seek(encodeKey(s.prefix, ""))
 		c.Assert(err, IsNil)
