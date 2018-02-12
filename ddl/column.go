@@ -32,7 +32,11 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-func (d *ddl) adjustTableColOffset(tblInfo *model.TableInfo, offset int) {
+// adjustColumnInfo is used to set the correct position of column info.
+// 1. The added column was append at the end of tblInfo.Columns, due to ddl state was not public then.
+//    It should be moved to the correct position when the ddl state to be changed to public.
+// 2. The offset of column should also to be set to the right value.
+func (d *ddl) adjustColumnInfo(tblInfo *model.TableInfo, offset int) {
 	oldCols := tblInfo.Columns
 	newCols := make([]*model.ColumnInfo, 0, len(oldCols))
 	newCols = append(newCols, oldCols[:offset]...)
@@ -165,7 +169,7 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	case model.StateWriteReorganization:
 		// reorganization -> public
 		// Adjust table column offset.
-		d.adjustTableColOffset(tblInfo, offset)
+		d.adjustColumnInfo(tblInfo, offset)
 		columnInfo.State = model.StatePublic
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != columnInfo.State)
 		if err != nil {
