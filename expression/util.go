@@ -298,25 +298,24 @@ func extractFiltersFromDNF(ctx context.Context, dnfFunc *ScalarFunction) ([]Expr
 	sc := ctx.GetSessionVars().StmtCtx
 	codeMap := make(map[string]int)
 	hashcode2Expr := make(map[string]Expression)
-	firstRun := true
-	for _, dnfItem := range dnfItems {
-		// We need this because there may be the case like `select * from t, t1 where (t.a=t1.a and t.a=t1.a) or (something).
-		// We should make sure that the two `t.a=t1.a` contributes only once.
+	for i, dnfItem := range dnfItems {
 		innerMap := make(map[string]struct{})
 		cnfItems := SplitCNFItems(dnfItem)
 		for _, cnfItem := range cnfItems {
 			code := cnfItem.HashCode(sc)
-			if firstRun {
+			if i == 0 {
 				codeMap[hack.String(code)] = 1
 				hashcode2Expr[hack.String(code)] = cnfItem
 			} else if _, ok := codeMap[hack.String(code)]; ok {
+				// We need this check because there may be the case like `select * from t, t1 where (t.a=t1.a and t.a=t1.a) or (something).
+				// We should make sure that the two `t.a=t1.a` contributes only once.
+				// TODO: do this out of this function.
 				if _, ok = innerMap[hack.String(code)]; !ok {
 					codeMap[hack.String(code)]++
 					innerMap[hack.String(code)] = struct{}{}
 				}
 			}
 		}
-		firstRun = false
 	}
 	// We should make sure that this item occurs in every DNF item.
 	for hashcode, cnt := range codeMap {
