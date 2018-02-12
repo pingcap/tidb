@@ -177,7 +177,7 @@ func getCount(ctx context.Context, sql string) (int64, error) {
 		return 0, errors.Trace(err)
 	}
 	if len(rows) != 1 {
-		return 0, errors.New("can not get count")
+		return 0, errors.Errorf("can not get count, sql %s result rows %d", sql, len(rows))
 	}
 	return rows[0].GetInt64(0), nil
 }
