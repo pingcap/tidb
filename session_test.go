@@ -41,7 +41,9 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	binlog "github.com/pingcap/tipb/go-binlog"
 	goctx "golang.org/x/net/context"
+	"google.golang.org/grpc"
 )
 
 var _ = Suite(&testSessionSuite{})
@@ -83,6 +85,50 @@ func (s *testSessionSuite) TearDownTest(c *C) {
 		tableName := tb[0]
 		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
 	}
+}
+
+type mockBinlogPump struct {
+}
+
+var _ binlog.PumpClient = &mockBinlogPump{}
+
+func (p *mockBinlogPump) WriteBinlog(ctx goctx.Context, in *binlog.WriteBinlogReq, opts ...grpc.CallOption) (*binlog.WriteBinlogResp, error) {
+	return nil, nil
+}
+
+func (p *mockBinlogPump) PullBinlogs(ctx goctx.Context, in *binlog.PullBinlogReq, opts ...grpc.CallOption) (binlog.Pump_PullBinlogsClient, error) {
+	return nil, nil
+}
+
+func (s *testSessionSuite) TestForCoverage(c *C) {
+	// Just for test coverage.
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int auto_increment, v int, index (id))")
+	tk.MustExec("insert t values ()")
+	tk.MustExec("insert t values ()")
+	tk.MustExec("insert t values ()")
+
+	// Normal request will not cover txn.Seek.
+	tk.MustExec("admin check table t")
+
+	// Cover dirty table operations in StateTxn.
+	tk.Se.GetSessionVars().BinlogClient = &mockBinlogPump{}
+	tk.MustExec("begin")
+	tk.MustExec("truncate table t")
+	tk.MustExec("insert t values ()")
+	tk.MustExec("delete from t where id = 2")
+	tk.MustExec("update t set v = 5 where id = 2")
+	tk.MustExec("insert t values ()")
+	tk.MustExec("rollback")
+
+	tk.MustExec("show processlist")
+	_, err := tk.Se.FieldList("t")
+	c.Check(err, IsNil)
+
+	// Cover the error branch, althrough this never happen.
+	err = tk.Se.ActivePendingTxn()
+	c.Assert(err, NotNil)
 }
 
 func (s *testSessionSuite) TestErrorRollback(c *C) {
