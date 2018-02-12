@@ -14,7 +14,9 @@
 package expression_test
 
 import (
+	"bytes"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -37,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
 
@@ -3189,7 +3192,7 @@ func (s *testIntegrationSuite) TestFilterExtractFromDNF(c *C) {
 		},
 		{
 			exprStr: "a = 1 or a = 1 or (a = 1 and b = 1)",
-			result:  "[eq(test.t.b, 1) eq(test.t.a, 1)]",
+			result:  "[eq(test.t.a, 1) eq(test.t.b, 1)]",
 		},
 		{
 			exprStr: "(a = 1 and a = 1) or a = 1 or b = 1",
@@ -3197,17 +3200,18 @@ func (s *testIntegrationSuite) TestFilterExtractFromDNF(c *C) {
 		},
 		{
 			exprStr: "(a = 1 and b = 2) or (a = 1 and b = 3) or (a = 1 and b = 4)",
-			result:  "[or(eq(test.t.b, 2), or(eq(test.t.b, 3), eq(test.t.b, 4))) eq(test.t.a, 1)]",
+			result:  "[eq(test.t.a, 1) or(eq(test.t.b, 2), or(eq(test.t.b, 3), eq(test.t.b, 4)))]",
 		},
 		{
 			exprStr: "(a = 1 and b = 1) or (a = 1 and b = 1 and c = 1) or (a = 1 and b = 1 and c > 2 and c < 3)",
-			result:  "[or(eq(test.t.c, 1), and(gt(test.t.c, 2), lt(test.t.c, 3))) eq(test.t.a, 1) eq(test.t.b, 1)]",
+			result:  "[eq(test.t.a, 1) eq(test.t.b, 1) or(eq(test.t.c, 1), and(gt(test.t.c, 2), lt(test.t.c, 3)))]",
 		},
 	}
 
 	for _, tt := range tests {
 		sql := "select * from t where " + tt.exprStr
 		ctx := tk.Se.(context.Context)
+		sc := ctx.GetSessionVars().StmtCtx
 		stmts, err := tidb.Parse(ctx, sql)
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
 		c.Assert(stmts, HasLen, 1)
@@ -3222,6 +3226,10 @@ func (s *testIntegrationSuite) TestFilterExtractFromDNF(c *C) {
 			conds = append(conds, expression.PushDownNot(cond, false, ctx))
 		}
 		afterFunc := expression.ExtractFiltersFromDNFs(ctx, conds)
+		logrus.Warnf("?????? %v", afterFunc)
+		sort.Slice(afterFunc, func(i, j int) bool {
+			return bytes.Compare(afterFunc[i].HashCode(sc), afterFunc[j].HashCode(sc)) < 0
+		})
 		c.Assert(fmt.Sprintf("%s", afterFunc), Equals, tt.result, Commentf("wrong result for expr: %s", tt.exprStr))
 	}
 }
