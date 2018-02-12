@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	pd "github.com/pingcap/pd/pd-client"
+	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb/kv"
 )
 
