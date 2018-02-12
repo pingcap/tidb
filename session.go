@@ -995,21 +995,6 @@ func (s *session) GetSessionVars() *variable.SessionVars {
 	return s.sessionVars
 }
 
-// func (s *session) getPassword(name, host string) (string, error) {
-// 	// Get password for name and host.
-// 	authSQL := fmt.Sprintf("SELECT Password FROM %s.%s WHERE User='%s' and Host='%s';", mysql.SystemDB, mysql.UserTable, name, host)
-// 	pwd, err := s.getExecRet(s, authSQL)
-// 	if err == nil {
-// 		return pwd, nil
-// 	} else if !executor.ErrResultIsEmpty.Equal(err) {
-// 		return "", errors.Trace(err)
-// 	}
-// 	//Try to get user password for name with any host(%).
-// 	authSQL = fmt.Sprintf("SELECT Password FROM %s.%s WHERE User='%s' and Host='%%';", mysql.SystemDB, mysql.UserTable, name)
-// 	pwd, err = s.getExecRet(s, authSQL)
-// 	return pwd, errors.Trace(err)
-// }
-
 func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []byte) bool {
 	pm := privilege.GetPrivilegeManager(s)
 

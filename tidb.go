@@ -131,20 +131,6 @@ func SetCommitRetryLimit(limit int) {
 	commitRetryLimit = limit
 }
 
-// // Parse parses a query string to raw ast.StmtNode.
-// func Parse(ctx context.Context, src string) ([]ast.StmtNode, error) {
-// 	log.Debug("compiling", src)
-// 	charset, collation := ctx.GetSessionVars().GetCharsetInfo()
-// 	p := parser.New()
-// 	p.SetSQLMode(ctx.GetSessionVars().SQLMode)
-// 	stmts, err := p.Parse(src, charset, collation)
-// 	if err != nil {
-// 		log.Warnf("compiling %s, error: %v", src, err)
-// 		return nil, errors.Trace(err)
-// 	}
-// 	return stmts, nil
-// }
-
 // Compile is safe for concurrent use by multiple goroutines.
 func Compile(goCtx goctx.Context, ctx context.Context, stmtNode ast.StmtNode) (ast.Statement, error) {
 	compiler := executor.Compiler{Ctx: ctx}
