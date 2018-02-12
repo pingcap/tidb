@@ -182,16 +182,16 @@ func getCount(ctx context.Context, sql string) (int64, error) {
 	return rows[0].GetInt64(0), nil
 }
 
-// CompareIndexCount compares indexes count with table count.
+// CheckIndicesCount compares indices count with table count.
 // It returns nil if the count from the index is equal to the count from the table columns,
 // otherwise it returns an error with a different information.
-func CompareIndexCount(ctx context.Context, dbName, tableName string, indexes []string) error {
+func CheckIndicesCount(ctx context.Context, dbName, tableName string, indices []string) error {
 	sql := fmt.Sprintf(`SELECT COUNT(*) FROM %s.%s"`, dbName, tableName)
 	tblCnt, err := getCount(ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	for _, idx := range indexes {
+	for _, idx := range indices {
 		sql = fmt.Sprintf(`SELECT COUNT(*) FROM %s.%s USE INDEX(%s)"`, dbName, tableName, idx)
 		idxCnt, err := getCount(ctx, sql)
 		if err != nil {
