@@ -284,10 +284,11 @@ func (t *testExecInfo) execSQL(idx int) error {
 }
 
 // TestUpdateOrDelete tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
-func (s *testStateChangeSuite) TestUpdateOrDelete(c *C) {
-	sqls := make([]string, 2)
-	sqls[0] = "delete from t where c2 = 'a'"
-	sqls[1] = "update t use index(c2) set c2 = 'c2_update' where c2 = 'a'"
+func (s *testStateChangeSuite) TestWrite(c *C) {
+	sqls := make([]string, 3)
+	sqls[0] = "delete from t where c1 = 'a'"
+	sqls[1] = "update t use index(idx2) set c1 = 'c1_update' where c1 = 'a'"
+	sqls[2] = "insert t set c1 = 'c1_insert', c3 = '2018-02-12', c4 = 1"
 	alterTableSQL := "alter table t add column a int not null default 1 first"
 	s.runTestInWriteOnly(c, "", alterTableSQL, sqls)
 }
@@ -295,14 +296,14 @@ func (s *testStateChangeSuite) TestUpdateOrDelete(c *C) {
 func (s *testStateChangeSuite) runTestInWriteOnly(c *C, tableName, alterTableSQL string, sqls []string) {
 	defer testleak.AfterTest(c)()
 	_, err := s.se.Execute(`create table t (
-		c1 int primary key,
-		c2 varchar(64),
-		c3 enum('N','Y') not null default 'N',
-		c4 timestamp on update current_timestamp,
-		key(c2))`)
+		c1 varchar(64),
+		c2 enum('N','Y') not null default 'N',
+		c3 timestamp on update current_timestamp,
+		c4 int primary key,
+		unique key idx2 (c1, c2, c3))`)
 	c.Assert(err, IsNil)
 	defer s.se.Execute("drop table t")
-	_, err = s.se.Execute("insert into t values(8, 'a', 'N', '2017-07-01')")
+	_, err = s.se.Execute("insert into t values('a', 'N', '2017-07-01', 8)")
 	c.Assert(err, IsNil)
 	// Make sure these sqls use the the plan of index scan.
 	_, err = s.se.Execute("drop stats t")

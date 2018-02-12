@@ -30,6 +30,21 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+// adjustColumnInfo is used to set the correct position of column info.
+// 1. The added column was append at the end of tblInfo.Columns, due to ddl state was not public then.
+//    It should be moved to the correct position when the ddl state to be changed to public.
+// 2. The offset of column should also to be set to the right value.
+func (d *ddl) adjustColumnInfo(tblInfo *model.TableInfo, offset int) {
+	oldCols := tblInfo.Columns
+	newCols := make([]*model.ColumnInfo, 0, len(oldCols))
+	newCols = append(newCols, oldCols[:offset]...)
+	newCols = append(newCols, oldCols[len(oldCols)-1])
+	newCols = append(newCols, oldCols[offset:len(oldCols)-1]...)
+	tblInfo.Columns = newCols
+	// Adjust column offset.
+	d.adjustColumnOffset(tblInfo.Columns, tblInfo.Indices, offset, true)
+}
+
 func (d *ddl) adjustColumnOffset(columns []*model.ColumnInfo, indices []*model.IndexInfo, offset int, added bool) {
 	offsetChanged := make(map[int]int)
 	if added {
@@ -82,11 +97,11 @@ func (d *ddl) createColumnInfo(tblInfo *model.TableInfo, colInfo *model.ColumnIn
 	// So that we can use origin column offset to get value from row.
 	colInfo.Offset = len(cols)
 
-	// Insert col into the right place of the column list.
+	// Append the column info to the end of the tblInfo.Columns.
+	// It will reorder to the right position in "Columns" when it state change to public.
 	newCols := make([]*model.ColumnInfo, 0, len(cols)+1)
-	newCols = append(newCols, cols[:position]...)
+	newCols = append(newCols, cols...)
 	newCols = append(newCols, colInfo)
-	newCols = append(newCols, cols[position:]...)
 
 	tblInfo.Columns = newCols
 	return colInfo, position, nil
@@ -146,8 +161,8 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		ver, err = updateTableInfo(t, job, tblInfo, originalState)
 	case model.StateWriteReorganization:
 		// reorganization -> public
-		// Adjust column offset.
-		d.adjustColumnOffset(tblInfo.Columns, tblInfo.Indices, offset, true)
+		// Adjust table column offset.
+		d.adjustColumnInfo(tblInfo, offset)
 		columnInfo.State = model.StatePublic
 		job.SchemaState = model.StatePublic
 		ver, err = updateTableInfo(t, job, tblInfo, originalState)
