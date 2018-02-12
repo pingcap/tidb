@@ -14,6 +14,8 @@
 package ranger
 
 import (
+	"context"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
@@ -97,11 +99,12 @@ func getEqOrInColOffset(expr expression.Expression, cols []*expression.Column) i
 	if !ok {
 		return -1
 	}
+	baseCtx := context.TODO()
 	if f.FuncName.L == ast.EQ {
 		if c, ok := f.GetArgs()[0].(*expression.Column); ok {
 			if _, ok := f.GetArgs()[1].(*expression.Constant); ok {
 				for i, col := range cols {
-					if col.Equal(nil, c) {
+					if col.Equal(baseCtx, c) {
 						return i
 					}
 				}
@@ -110,7 +113,7 @@ func getEqOrInColOffset(expr expression.Expression, cols []*expression.Column) i
 		if c, ok := f.GetArgs()[1].(*expression.Column); ok {
 			if _, ok := f.GetArgs()[0].(*expression.Constant); ok {
 				for i, col := range cols {
-					if col.Equal(nil, c) {
+					if col.Equal(baseCtx, c) {
 						return i
 					}
 				}
@@ -128,7 +131,7 @@ func getEqOrInColOffset(expr expression.Expression, cols []*expression.Column) i
 			}
 		}
 		for i, col := range cols {
-			if col.Equal(nil, c) {
+			if col.Equal(baseCtx, c) {
 				return i
 			}
 		}

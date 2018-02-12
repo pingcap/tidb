@@ -14,6 +14,7 @@
 package plan
 
 import (
+	"context"
 	"math"
 
 	"github.com/juju/errors"
@@ -48,10 +49,11 @@ func getPermutation(cols1, cols2 []*expression.Column) ([]int, []*expression.Col
 
 func findMaxPrefixLen(candidates [][]*expression.Column, keys []*expression.Column) int {
 	maxLen := 0
+	baseCtx := context.TODO()
 	for _, candidateKeys := range candidates {
 		matchedLen := 0
 		for i := range keys {
-			if i < len(candidateKeys) && keys[i].Equal(nil, candidateKeys[i]) {
+			if i < len(candidateKeys) && keys[i].Equal(baseCtx, candidateKeys[i]) {
 				matchedLen++
 			} else {
 				break
@@ -259,9 +261,10 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 	}
 	indices := x.availableIndices.indices
 	includeTableScan := x.availableIndices.includeTableScan
+	baseCtx := context.TODO()
 	if includeTableScan && len(innerJoinKeys) == 1 {
 		pkCol := x.getPKIsHandleCol()
-		if pkCol != nil && innerJoinKeys[0].Equal(nil, pkCol) {
+		if pkCol != nil && innerJoinKeys[0].Equal(baseCtx, pkCol) {
 			innerPlan := x.forceToTableScan(pkCol)
 			return p.constructIndexJoin(prop, innerJoinKeys, outerJoinKeys, outerIdx, innerPlan, nil, nil)
 		}

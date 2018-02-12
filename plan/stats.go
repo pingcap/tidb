@@ -14,6 +14,7 @@
 package plan
 
 import (
+	"context"
 	"fmt"
 	"math"
 
@@ -103,8 +104,9 @@ func (ds *DataSource) getStatsByFilter(conds expression.CNFExprs) *statsInfo {
 
 func (ds *DataSource) deriveStats() *statsInfo {
 	// PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
+	baseCtx := context.TODO()
 	for i, expr := range ds.pushedDownConds {
-		ds.pushedDownConds[i] = expression.PushDownNot(nil, expr, false)
+		ds.pushedDownConds[i] = expression.PushDownNot(baseCtx, expr, false)
 	}
 	ds.statsAfterSelect = ds.getStatsByFilter(ds.pushedDownConds)
 	return ds.statsAfterSelect

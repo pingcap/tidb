@@ -14,6 +14,8 @@
 package plan
 
 import (
+	"context"
+
 	"github.com/pingcap/tidb/expression"
 )
 
@@ -36,9 +38,10 @@ func canProjectionBeEliminatedStrict(p *PhysicalProjection) bool {
 	if p.Schema().Len() != child.Schema().Len() {
 		return false
 	}
+	baseCtx := context.TODO()
 	for i, expr := range p.Exprs {
 		col, ok := expr.(*expression.Column)
-		if !ok || !col.Equal(nil, child.Schema().Columns[i]) {
+		if !ok || !col.Equal(baseCtx, child.Schema().Columns[i]) {
 			return false
 		}
 	}

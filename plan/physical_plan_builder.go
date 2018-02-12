@@ -14,6 +14,7 @@
 package plan
 
 import (
+	"context"
 	"math"
 
 	"github.com/juju/errors"
@@ -571,7 +572,8 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp) (task task, err err
 		indexPlanFinished: true,
 	}
 	task = copTask
-	matchProperty := len(prop.cols) == 1 && pkCol != nil && prop.cols[0].Equal(nil, pkCol)
+	baseCtx := context.TODO()
+	matchProperty := len(prop.cols) == 1 && pkCol != nil && prop.cols[0].Equal(baseCtx, pkCol)
 	if matchProperty && prop.expectedCnt < math.MaxFloat64 {
 		selectivity, err := statsTbl.Selectivity(ds.ctx, ts.filterCondition)
 		if err != nil {

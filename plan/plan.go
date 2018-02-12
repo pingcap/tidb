@@ -14,6 +14,7 @@
 package plan
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/juju/errors"
@@ -87,8 +88,9 @@ func (p *requiredProp) isPrefix(prop *requiredProp) bool {
 	if len(p.cols) > len(prop.cols) || p.desc != prop.desc {
 		return false
 	}
+	baseCtx := context.TODO()
 	for i := range p.cols {
-		if !p.cols[i].Equal(nil, prop.cols[i]) {
+		if !p.cols[i].Equal(baseCtx, prop.cols[i]) {
 			return false
 		}
 	}
@@ -97,9 +99,10 @@ func (p *requiredProp) isPrefix(prop *requiredProp) bool {
 
 // Check if this prop's columns can match by items totally.
 func (p *requiredProp) matchItems(items []*ByItems) bool {
+	baseCtx := context.TODO()
 	for i, col := range p.cols {
 		sortItem := items[i]
-		if sortItem.Desc != p.desc || !sortItem.Expr.Equal(nil, col) {
+		if sortItem.Desc != p.desc || !sortItem.Expr.Equal(baseCtx, col) {
 			return false
 		}
 	}
