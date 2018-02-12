@@ -32,6 +32,17 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+func (d *ddl) adjustTableColOffset(tblInfo *model.TableInfo, offset int) {
+	oldCols := tblInfo.Columns
+	newCols := make([]*model.ColumnInfo, 0, len(oldCols))
+	newCols = append(newCols, oldCols[:offset]...)
+	newCols = append(newCols, oldCols[len(oldCols)-1])
+	newCols = append(newCols, oldCols[offset:len(oldCols)-1]...)
+	tblInfo.Columns = newCols
+	// Adjust column offset.
+	d.adjustColumnOffset(tblInfo.Columns, tblInfo.Indices, offset, true)
+}
+
 func (d *ddl) adjustColumnOffset(columns []*model.ColumnInfo, indices []*model.IndexInfo, offset int, added bool) {
 	offsetChanged := make(map[int]int)
 	if added {
@@ -84,11 +95,10 @@ func (d *ddl) createColumnInfo(tblInfo *model.TableInfo, colInfo *model.ColumnIn
 	// So that we can use origin column offset to get value from row.
 	colInfo.Offset = len(cols)
 
-	// Insert col into the right place of the column list.
+	// Append the column info to the end of the tblInfo.Columns.
 	newCols := make([]*model.ColumnInfo, 0, len(cols)+1)
-	newCols = append(newCols, cols[:position]...)
+	newCols = append(newCols, cols...)
 	newCols = append(newCols, colInfo)
-	newCols = append(newCols, cols[position:]...)
 
 	tblInfo.Columns = newCols
 	return colInfo, position, nil
@@ -153,8 +163,8 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != columnInfo.State)
 	case model.StateWriteReorganization:
 		// reorganization -> public
-		// Adjust column offset.
-		d.adjustColumnOffset(tblInfo.Columns, tblInfo.Indices, offset, true)
+		// Adjust table column offset.
+		d.adjustTableColOffset(tblInfo, offset)
 		columnInfo.State = model.StatePublic
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != columnInfo.State)
 		if err != nil {
