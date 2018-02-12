@@ -20,53 +20,53 @@ var (
 	SessionExecuteParseDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
-			Subsystem: "server",
-			Name:      "session_execute_parse_duration",
+			Subsystem: "session",
+			Name:      "parse_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) in parse SQL.",
 			Buckets:   prometheus.LinearBuckets(0.00004, 0.00001, 13),
 		})
 	SessionExecuteCompileDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
-			Subsystem: "server",
-			Name:      "session_execute_compile_duration",
+			Subsystem: "session",
+			Name:      "compile_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) in query optimize.",
 			Buckets:   prometheus.LinearBuckets(0.00004, 0.00001, 13),
 		})
 	SessionExecuteRunDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
-			Subsystem: "server",
-			Name:      "session_execute_run_duration",
+			Subsystem: "session",
+			Name:      "execute_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) in running executor.",
 			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 13),
 		})
 	SchemaLeaseErrorCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
-			Subsystem: "server",
-			Name:      "schema_lease_error_counter",
+			Subsystem: "session",
+			Name:      "schema_lease_error_total",
 			Help:      "Counter of schema lease error",
 		}, []string{LblType})
 	SessionRetry = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
-			Subsystem: "server",
-			Name:      "session_retry",
+			Subsystem: "session",
+			Name:      "retry_num",
 			Help:      "Bucketed histogram of session retry count.",
 			Buckets:   prometheus.LinearBuckets(0, 1, 10),
 		})
 	SessionRetryErrorCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
-			Subsystem: "server",
-			Name:      "session_retry_error",
+			Subsystem: "session",
+			Name:      "retry_error_total",
 			Help:      "Counter of session retry error.",
 		}, []string{LblType})
 	TransactionCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
-			Subsystem: "server",
+			Subsystem: "session",
 			Name:      "transaction_total",
 			Help:      "Counter of transactions.",
 		}, []string{LblType})
@@ -74,8 +74,8 @@ var (
 	SessionRestrictedSQLCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
-			Subsystem: "server",
-			Name:      "session_restricted_sql_counter",
+			Subsystem: "session",
+			Name:      "restricted_sql_total",
 			Help:      "Counter of internal restricted sql.",
 		})
 )
@@ -88,6 +88,7 @@ const (
 	LblError       = "error"
 	LblRollback    = "rollback"
 	LblType        = "type"
+	LblResult      = "result"
 )
 
 func init() {
