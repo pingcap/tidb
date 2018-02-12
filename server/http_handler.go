@@ -97,7 +97,7 @@ type httpHandlerTool struct {
 	store       kvStore
 }
 
-// newHTTPHandlerTool checks and prepares for region handler.
+// newHTTPHandlerTool checks and prepares for http handler.
 // It would panic when any error happens.
 func (s *Server) newHTTPHandlerTool() *httpHandlerTool {
 	var tikvStore kvStore
