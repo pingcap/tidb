@@ -78,6 +78,24 @@ var (
 			Name:      "restricted_sql_total",
 			Help:      "Counter of internal restricted sql.",
 		})
+
+	StatementPerTransaction = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "session",
+			Name:      "transaction_statement_num",
+			Help:      "Buckated histogram of statements count in each transaction.",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 12),
+		}, []string{LblType})
+
+	TransactionDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "session",
+			Name:      "transaction_duration_seconds",
+			Help:      "Bucketed histogram of a transaction execution duration, including retry.",
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 16), // range 1ms ~ 64s
+		}, []string{LblType})
 )
 
 // Label constants.
@@ -100,4 +118,6 @@ func init() {
 	prometheus.MustRegister(SessionRetryErrorCounter)
 	prometheus.MustRegister(TransactionCounter)
 	prometheus.MustRegister(SessionRestrictedSQLCounter)
+	prometheus.MustRegister(StatementPerTransaction)
+	prometheus.MustRegister(TransactionDuration)
 }
