@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
-	"github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
 
@@ -3226,7 +3225,6 @@ func (s *testIntegrationSuite) TestFilterExtractFromDNF(c *C) {
 			conds = append(conds, expression.PushDownNot(cond, false, ctx))
 		}
 		afterFunc := expression.ExtractFiltersFromDNFs(ctx, conds)
-		logrus.Warnf("?????? %v", afterFunc)
 		sort.Slice(afterFunc, func(i, j int) bool {
 			return bytes.Compare(afterFunc[i].HashCode(sc), afterFunc[j].HashCode(sc)) < 0
 		})
