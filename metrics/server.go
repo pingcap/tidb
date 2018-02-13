@@ -78,6 +78,22 @@ var (
 			Name:      "event_total",
 			Help:      "Counter of tidb-server event.",
 		}, []string{LblType})
+
+	TimeJumpBackCounter = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "monitor",
+			Name:      "time_jump_back_total",
+			Help:      "Counter of system time jumps backward.",
+		})
+
+	KeepAliveCounter = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "monitor",
+			Name:      "keep_alive_total",
+			Help:      "Counter of TiDB keep alive.",
+		})
 )
 
 func init() {
@@ -87,6 +103,8 @@ func init() {
 	prometheus.MustRegister(ExecuteErrorCounter)
 	prometheus.MustRegister(CriticalErrorCounter)
 	prometheus.MustRegister(ServerEventCounter)
+	prometheus.MustRegister(TimeJumpBackCounter)
+	prometheus.MustRegister(KeepAliveCounter)
 }
 
 // ExecuteErrorToLabel converts an execute error to label.
