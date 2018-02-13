@@ -218,7 +218,9 @@ func (s *session) GetSessionManager() util.SessionManager {
 }
 
 func (s *session) StoreQueryFeedback(feedback interface{}) {
-	s.statsCollector.StoreQueryFeedback(feedback)
+	if s.statsCollector != nil {
+		s.statsCollector.StoreQueryFeedback(feedback)
+	}
 }
 
 // FieldList returns fields list of a table.
