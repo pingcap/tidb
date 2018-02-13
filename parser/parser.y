@@ -43,7 +43,7 @@ import (
 	offset int // offset
 	item interface{}
 	ident string
-	expr ast.ExprNode 
+	expr ast.ExprNode
 	statement ast.StmtNode
 }
 
@@ -1185,7 +1185,7 @@ BinlogStmt:
 ColumnDefList:
 	ColumnDef
 	{
-		$$ = []*ast.ColumnDef{$1.(*ast.ColumnDef)}	
+		$$ = []*ast.ColumnDef{$1.(*ast.ColumnDef)}
 	}
 |	ColumnDefList ',' ColumnDef
 	{
@@ -3478,10 +3478,10 @@ OptGConcatSeparator:
             	$$ = ast.NewValueExpr(",")
         }
 | "SEPARATOR" stringLit
-	{ 
+	{
 		$$ = ast.NewValueExpr($2)
 	}
-        
+
 
 FunctionCallGeneric:
 	identifier '(' ExpressionListOpt ')'
@@ -3916,9 +3916,11 @@ SelectStmt:
 		if lastField.Expr != nil && lastField.AsName.O == "" {
 			src := parser.src
 			var lastEnd int
-			if $5 != nil {
+			if $4 != nil {
+				lastEnd = yyS[yypt-2].offset-1
+			} else if $5 != nil {
 				lastEnd = yyS[yypt-1].offset-1
-			} else if $5 != ast.SelectLockNone {
+			} else if $6 != ast.SelectLockNone {
 				lastEnd = yyS[yypt].offset-1
 			} else {
 				lastEnd = len(src)
