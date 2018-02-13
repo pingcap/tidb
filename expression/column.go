@@ -143,7 +143,8 @@ type Column struct {
 	OrigTblName model.CIStr
 	TblName     model.CIStr
 	RetType     *types.FieldType
-	ID          int64
+
+	ID int64
 	// Position means the position of this column that appears in the select fields.
 	// e.g. SELECT name as id , 1 - id as id , 1 + name as id, name as id from src having id = 1;
 	// There are four ids in the same schema, so you can't identify the column through the FromID and ColName.

@@ -249,12 +249,12 @@ func TableInfo2SchemaWithDBName(dbName model.CIStr, tbl *model.TableInfo) *Schem
 		newKey := make([]*Column, 0, len(idx.Columns))
 		for _, idxCol := range idx.Columns {
 			find := false
-			for i, col := range tbl.Columns {
-				if idxCol.Name.L == col.Name.L {
-					if !mysql.HasNotNullFlag(col.Flag) {
+			for _, col := range cols {
+				if idxCol.Name.L == col.ColName.L {
+					if !mysql.HasNotNullFlag(col.RetType.Flag) {
 						break
 					}
-					newKey = append(newKey, cols[i])
+					newKey = append(newKey, col)
 					find = true
 					break
 				}
@@ -269,9 +269,9 @@ func TableInfo2SchemaWithDBName(dbName model.CIStr, tbl *model.TableInfo) *Schem
 		}
 	}
 	if tbl.PKIsHandle {
-		for i, col := range tbl.Columns {
-			if mysql.HasPriKeyFlag(col.Flag) {
-				keys = append(keys, KeyInfo{cols[i]})
+		for _, col := range cols {
+			if mysql.HasPriKeyFlag(col.RetType.Flag) {
+				keys = append(keys, KeyInfo{col})
 				break
 			}
 		}
