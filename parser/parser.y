@@ -3916,7 +3916,7 @@ SelectStmt:
 		if lastField.Expr != nil && lastField.AsName.O == "" {
 			src := parser.src
 			var lastEnd int
-			if $4 != nil {
+			if $5 != nil {
 				lastEnd = yyS[yypt-1].offset-1
 			} else if $5 != ast.SelectLockNone {
 				lastEnd = yyS[yypt].offset-1
