@@ -21,6 +21,7 @@ import (
 	"os/signal"
 	"runtime"
 	"strconv"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -412,8 +413,14 @@ func setupMetrics() {
 	systimeErrHandler := func() {
 		metrics.TimeJumpBackCounter.Inc()
 	}
+	callBackCount := 0
 	sucessCallBack := func() {
-		metrics.KeepAliveCounter.Inc()
+		callBackCount++
+		// It is callback by monitor per second, we increase metrics.KeepAliveCounter per 5s.
+		if callBackCount >= 5 {
+			callBackCount = 0
+			metrics.KeepAliveCounter.Inc()
+		}
 	}
 	go systimemon.StartMonitor(time.Now, systimeErrHandler, sucessCallBack)
 
