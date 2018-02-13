@@ -21,7 +21,6 @@ import (
 	"os/signal"
 	"runtime"
 	"strconv"
-	"sync/atomic"
 	"syscall"
 	"time"
 
