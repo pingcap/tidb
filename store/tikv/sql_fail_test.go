@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/terror"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var _ = Suite(new(testSQLSuite))
@@ -55,12 +55,12 @@ func (s *testSQLSuite) TestFailBusyServerCop(c *C) {
 
 	go func() {
 		defer wg.Done()
-		rs, err := session.Execute(goctx.Background(), `SELECT variable_value FROM mysql.tidb WHERE variable_name="bootstrapped"`)
+		rs, err := session.Execute(context.Background(), `SELECT variable_value FROM mysql.tidb WHERE variable_name="bootstrapped"`)
 		if len(rs) > 0 {
 			defer terror.Call(rs[0].Close)
 		}
 		c.Assert(err, IsNil)
-		row, err := rs[0].Next(goctx.Background())
+		row, err := rs[0].Next(context.Background())
 		c.Assert(err, IsNil)
 		c.Assert(row, NotNil)
 		c.Assert(row.GetString(0), Equals, "True")
