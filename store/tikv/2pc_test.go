@@ -22,7 +22,7 @@ import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/store/tikv/mocktikv"
+	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	goctx "golang.org/x/net/context"
 )
@@ -310,6 +310,7 @@ func (s *testCommitterSuite) TestCommitBeforePrewrite(c *C) {
 	err := txn.Set([]byte("a"), []byte("a1"))
 	c.Assert(err, IsNil)
 	commiter, err := newTwoPhaseCommitter(txn)
+	c.Assert(err, IsNil)
 	ctx := goctx.Background()
 	err = commiter.cleanupKeys(NewBackoffer(cleanupMaxBackoff, ctx), commiter.keys)
 	c.Assert(err, IsNil)
@@ -348,12 +349,13 @@ func (s *testCommitterSuite) TestPrewritePrimaryKeyFailed(c *C) {
 	v, err = txn.Get([]byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(v, BytesEquals, []byte("a1"))
-	v, err = txn.Get([]byte("b"))
+	_, err = txn.Get([]byte("b"))
 	errMsgMustContain(c, err, "key not exist")
 
 	// clean again, shouldn't be failed when a rollback already exist.
 	ctx := goctx.Background()
 	commiter, err := newTwoPhaseCommitter(txn2)
+	c.Assert(err, IsNil)
 	err = commiter.cleanupKeys(NewBackoffer(cleanupMaxBackoff, ctx), commiter.keys)
 	c.Assert(err, IsNil)
 

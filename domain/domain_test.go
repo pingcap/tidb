@@ -22,7 +22,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -47,7 +47,7 @@ func sysMockFactory(dom *Domain) (pools.Resource, error) {
 
 func (*testSuite) TestT(c *C) {
 	defer testleak.AfterTest(c)()
-	store, err := tikv.NewMockTikvStore()
+	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	ddlLease := 80 * time.Millisecond
 	dom := NewDomain(store, ddlLease, 0, mockFactory)

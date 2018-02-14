@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
@@ -77,7 +77,7 @@ type testBinlogSuite struct {
 }
 
 func (s *testBinlogSuite) SetUpSuite(c *C) {
-	store, err := tikv.NewMockTikvStore()
+	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	s.store = store
 	tidb.SetSchemaLease(0)

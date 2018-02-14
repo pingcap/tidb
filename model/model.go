@@ -181,6 +181,22 @@ func (t *TableInfo) GetPkColInfo() *ColumnInfo {
 	return nil
 }
 
+// Cols returns the columns of the table in public state.
+func (t *TableInfo) Cols() []*ColumnInfo {
+	publicColumns := make([]*ColumnInfo, len(t.Columns))
+	maxOffset := -1
+	for _, col := range t.Columns {
+		if col.State != StatePublic {
+			continue
+		}
+		publicColumns[col.Offset] = col
+		if maxOffset < col.Offset {
+			maxOffset = col.Offset
+		}
+	}
+	return publicColumns[0 : maxOffset+1]
+}
+
 // NewExtraHandleColInfo mocks a column info for extra handle column.
 func NewExtraHandleColInfo() *ColumnInfo {
 	colInfo := &ColumnInfo{

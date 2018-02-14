@@ -28,6 +28,7 @@ import (
 	. "github.com/pingcap/check"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
@@ -38,8 +39,9 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
@@ -85,9 +87,9 @@ func (s *testSuite) SetUpSuite(c *C) {
 		s.cluster = mocktikv.NewCluster()
 		mocktikv.BootstrapWithSingleStore(s.cluster)
 		s.mvccStore = mocktikv.NewMvccStore()
-		store, err := tikv.NewMockTikvStore(
-			tikv.WithCluster(s.cluster),
-			tikv.WithMVCCStore(s.mvccStore),
+		store, err := mockstore.NewMockTikvStore(
+			mockstore.WithCluster(s.cluster),
+			mockstore.WithMVCCStore(s.mvccStore),
 		)
 		c.Assert(err, IsNil)
 		s.store = store
@@ -228,7 +230,7 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 			c.Assert(data, DeepEquals, tt.restData,
 				Commentf("data1:%v, data2:%v, data:%v", string(tt.data1), string(tt.data2), string(data)))
 		}
-		terror.Log(ctx.StmtCommit())
+		ctx.StmtCommit()
 		err1 = ctx.Txn().Commit(goctx.Background())
 		c.Assert(err1, IsNil)
 		r := tk.MustQuery(selectSQL)
@@ -2048,8 +2050,8 @@ func (s *testContextOptionSuite) SetUpSuite(c *C) {
 	s.cli = cli
 
 	var err error
-	s.store, err = tikv.NewMockTikvStore(
-		tikv.WithHijackClient(hijackClient),
+	s.store, err = mockstore.NewMockTikvStore(
+		mockstore.WithHijackClient(hijackClient),
 	)
 	c.Assert(err, IsNil)
 	s.dom, err = tidb.BootstrapSession(s.store)
@@ -2079,21 +2081,33 @@ func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
 	cli.mu.Lock()
 	cli.mu.checkFlags = checkRequestPriority
 	cli.mu.Unlock()
+
+	cli.priority = pb.CommandPri_High
+	tk.MustQuery("select id from t where id = 1")
+	tk.MustQuery("select * from t1 where id = 1")
+
+	cli.priority = pb.CommandPri_Normal
+	tk.MustQuery("select count(*) from t")
+	tk.MustExec("update t set id = 3")
+	tk.MustExec("delete from t")
+	tk.MustExec("insert into t values (2)")
+	tk.MustExec("delete from t")
+
+	// Insert some data to make sure plan build IndexLookup for t.
+	tk.MustExec("insert into t values (1), (2)")
+
+	oldThreshold := config.GetGlobalConfig().Log.ExpensiveThreshold
+	config.GetGlobalConfig().Log.ExpensiveThreshold = 0
+	defer func() { config.GetGlobalConfig().Log.ExpensiveThreshold = oldThreshold }()
+
 	cli.priority = pb.CommandPri_High
 	tk.MustQuery("select id from t where id = 1")
 	tk.MustQuery("select * from t1 where id = 1")
 
 	cli.priority = pb.CommandPri_Low
 	tk.MustQuery("select count(*) from t")
-
-	cli.priority = pb.CommandPri_Low
-	tk.MustExec("update t set id = 3")
-
-	cli.priority = pb.CommandPri_Low
 	tk.MustExec("delete from t")
-
-	cli.priority = pb.CommandPri_Normal
-	tk.MustExec("insert into t values (2)")
+	tk.MustExec("insert into t values (3)")
 
 	// TODO: Those are not point get, but they should be high priority.
 	// cli.priority = pb.CommandPri_High
