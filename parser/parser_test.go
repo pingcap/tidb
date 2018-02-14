@@ -430,6 +430,8 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"select 1 where exists (select 2)", false},
 		{"select 1 from dual where not exists (select 2)", true},
 
+		{"select 1 order by 1", true},
+
 		// for https://github.com/pingcap/tidb/issues/320
 		{`(select 1);`, true},
 
