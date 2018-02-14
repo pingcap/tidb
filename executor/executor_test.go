@@ -243,11 +243,14 @@ func (s *testSuite) TestSelectWithoutFrom(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
-	r := tk.MustQuery("select 1 + 2*3")
+	r := tk.MustQuery("select 1 + 2*3;")
 	r.Check(testkit.Rows("7"))
 
 	r = tk.MustQuery(`select _utf8"string";`)
 	r.Check(testkit.Rows("string"))
+
+	r = tk.MustQuery("select 1 order by 1;")
+	r.Check(testkit.Rows("1"))
 }
 
 // TestSelectBackslashN Issue 3685.
