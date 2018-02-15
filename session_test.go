@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/plan"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
