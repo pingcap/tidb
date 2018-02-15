@@ -528,36 +528,78 @@ func TimestampDiff(unit string, t1 Time, t2 Time) int64 {
 	return timestampDiff(unit, t1.Time, t2.Time)
 }
 
+type parseFormatHelper struct {
+	format string
+	idx    int
+	hasT   bool
+}
+
+func (h *parseFormatHelper) valid() bool {
+	return h.idx >= 0 && h.idx < len(h.format)
+}
+
+func (h *parseFormatHelper) parse() []string {
+	var seps []string
+	for h.valid() {
+		str := h.parseNumber()
+		h.parseSeperate()
+		seps = append(seps, str)
+	}
+	if h.idx < 0 {
+		return nil
+	}
+	return seps
+}
+
+func (h *parseFormatHelper) parseNumber() string {
+	start := h.idx
+	for h.valid() && unicode.IsNumber(rune(h.format[h.idx])) {
+		h.idx++
+	}
+	if start != h.idx {
+		return h.format[start:h.idx]
+	}
+	h.idx = -1
+	return ""
+}
+
+func (h *parseFormatHelper) parseSeperate() {
+	if !h.valid() {
+		return
+	}
+	// Separator is a single none-number char or whitespaces.
+	switch h.format[h.idx] {
+	case ':', '-', '^', '+', '/', '@', '~', '.':
+		h.idx++
+	case 'T':
+		if h.hasT {
+			h.idx = -1
+		} else {
+			h.hasT = true
+			h.idx++
+		}
+	case ' ', '\t':
+		for h.valid() && unicode.IsSpace(rune(h.format[h.idx])) {
+			h.idx++
+		}
+	default:
+		h.idx = -1
+	}
+}
+
 // ParseDateFormat parses a formatted date string and returns separated components.
 func ParseDateFormat(format string) []string {
 	format = strings.TrimSpace(format)
-
-	start := 0
-	var seps = make([]string, 0)
-	for i := 0; i < len(format); i++ {
-		// Date format must start and end with number.
-		if i == 0 || i == len(format)-1 {
-			if !unicode.IsNumber(rune(format[i])) {
-				return nil
-			}
-
-			continue
-		}
-
-		// Separator is a single none-number char.
-		if !unicode.IsNumber(rune(format[i])) {
-			if !unicode.IsNumber(rune(format[i-1])) {
-				return nil
-			}
-
-			seps = append(seps, format[start:i])
-			start = i + 1
-		}
-
+	if len(format) == 0 {
+		return nil
+	}
+	// Date format must start and end with number.
+	if !unicode.IsNumber(rune(format[0])) || !unicode.IsNumber(rune(format[len(format)-1])) {
+		return nil
 	}
 
-	seps = append(seps, format[start:])
-	return seps
+	helper := parseFormatHelper{format, 0, false}
+	return helper.parse()
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
@@ -1765,7 +1807,7 @@ func IsClockUnit(unit string) bool {
 // IsDateFormat returns true when the specified time format could contain only date.
 func IsDateFormat(format string) bool {
 	format = strings.TrimSpace(format)
-	seps := ParseDateFormat(format)
+	seps, _ := splitDateTime(format)
 	length := len(format)
 	switch len(seps) {
 	case 1:
