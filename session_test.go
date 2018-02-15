@@ -1870,7 +1870,6 @@ func (s *testSessionSuite) TestCastTimeToDate(c *C) {
 }
 
 func (s *testSessionSuite) TestSetGlobalTZ(c *C) {
-	defer testleak.AfterTest(c)()
 	goCtx := goctx.Background()
 
 	tk := testkit.NewTestKitWithInit(c, s.store)
