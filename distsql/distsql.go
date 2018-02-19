@@ -67,6 +67,11 @@ type PartialResult interface {
 	Close() error
 }
 
+type decodedChk struct {
+	chk *chunk.Chunk
+	err error
+}
+
 type selectResult struct {
 	label     string
 	aggregate bool
@@ -84,6 +89,10 @@ type selectResult struct {
 
 	scanKeys     int64 // number of keys scanned by TiKV.
 	partialCount int64 // number of partial results.
+
+	prepared bool
+	dstChan  chan *decodedChk
+	srcChan  chan *decodedChk
 }
 
 type newResultWithErr struct {
@@ -156,25 +165,80 @@ func (r *selectResult) NextRaw(goCtx goctx.Context) ([]byte, error) {
 	return re.result, errors.Trace(re.err)
 }
 
+func (r *selectResult) prepare(goCtx goctx.Context) {
+	r.dstChan = make(chan *decodedChk, 1)
+	r.srcChan = make(chan *decodedChk, 1)
+
+	buffer := &decodedChk{chk: chunk.NewChunk(r.fieldTypes)}
+	r.srcChan <- buffer
+
+	go r.decode(goCtx)
+}
+
+func (r *selectResult) decode(goCtx goctx.Context) {
+	defer close(r.dstChan)
+	var resource *decodedChk = nil
+	var ok bool = false
+	for {
+		select {
+		case resource, ok = <-r.srcChan:
+			if !ok {
+				return
+			}
+		case <-r.closed:
+			return
+		case <-goCtx.Done():
+			return
+		}
+
+		chk := resource.chk
+		for chk.NumRows() < r.ctx.GetSessionVars().MaxChunkSize {
+			if r.selectResp == nil || r.respChkIdx == len(r.selectResp.Chunks) {
+				err := r.getSelectResp()
+				if err != nil || r.selectResp == nil {
+					resource.err = errors.Trace(err)
+					r.dstChan <- resource
+					return
+				}
+			}
+			err := r.readRowsData(chk)
+			if err != nil {
+				resource.err = errors.Trace(err)
+				r.dstChan <- resource
+				return
+			}
+			if len(r.selectResp.Chunks[r.respChkIdx].RowsData) == 0 {
+				r.respChkIdx++
+			}
+		}
+		r.dstChan <- resource
+	}
+}
+
 // NextChunk reads data to the chunk.
 func (r *selectResult) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	chk.Reset()
-	for chk.NumRows() < r.ctx.GetSessionVars().MaxChunkSize {
-		if r.selectResp == nil || r.respChkIdx == len(r.selectResp.Chunks) {
-			err := r.getSelectResp()
-			if err != nil || r.selectResp == nil {
-				return errors.Trace(err)
-			}
-		}
-		err := r.readRowsData(chk)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if len(r.selectResp.Chunks[r.respChkIdx].RowsData) == 0 {
-			r.respChkIdx++
-		}
+	if !r.prepared {
+		r.prepare(goCtx)
+		r.prepared = true
 	}
-	return nil
+
+	select {
+	case <-r.closed:
+		return nil
+	case <-goCtx.Done():
+		return nil
+	case resource, ok := <-r.dstChan:
+		if !ok {
+			return nil
+		}
+		if resource.err != nil {
+			return errors.Trace(resource.err)
+		}
+		chk.SwapColumns(resource.chk)
+		r.srcChan <- resource
+		return nil
+	}
 }
 
 func (r *selectResult) getSelectResp() error {
