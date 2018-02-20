@@ -287,7 +287,8 @@ func ResetStmtCtx(ctx context.Context, s ast.StmtNode) {
 	sessVars := ctx.GetSessionVars()
 	sc := new(stmtctx.StatementContext)
 	sc.TimeZone = sessVars.GetTimeZone()
-	sc.MemTracker = memory.NewMemTracker(s.Text(), sessVars.MemThreshold)
+	sc.MemTracker = memory.NewTracker(s.Text(), sessVars.MemQuotaQuery)
+	sc.MemTracker.SetActionOnExceed(&memory.PanicOnExceed{})
 
 	switch stmt := s.(type) {
 	case *ast.UpdateStmt:

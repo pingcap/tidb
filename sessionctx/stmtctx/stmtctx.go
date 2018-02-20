@@ -53,7 +53,7 @@ type StatementContext struct {
 	TimeZone     *time.Location
 	Priority     mysql.PriorityEnum
 	NotFillCache bool
-	MemTracker   *memory.MemTracker
+	MemTracker   *memory.Tracker
 }
 
 // AddAffectedRows adds affected rows.

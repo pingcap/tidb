@@ -17,15 +17,11 @@ import (
 	"bytes"
 	"fmt"
 	"sync"
-
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/terror"
-	log "github.com/sirupsen/logrus"
 )
 
-// MemTracker is used to track the memory usage during query execution.
+// Tracker is used to track the memory usage during query execution.
 // It contains an optional limit and can be arranged into a tree structure
-// such that the consumption tracked by a MemTracker is also tracked by
+// such that the consumption tracked by a Tracker is also tracked by
 // its ancestors. The main idea comes from Apache Impala:
 //
 // https://github.com/cloudera/Impala/blob/cdh5-trunk/be/src/runtime/mem-tracker.h
@@ -34,108 +30,126 @@ import (
 // the tracker itself or to one of its descendents.
 //
 // NOTE: This struct is thread-safe.
-type MemTracker struct {
-	label         string      // Label of this "MemTracker".
-	mutex         *sync.Mutex // for synchronization.
-	bytesConsumed int64       // Consumed bytes.
-	bytesLimit    int64       // Negative value means no limit.
-	logged        bool        // Whether a log has printed when "bytesConsumed" > "bytesLimit".
+type Tracker struct {
+	label          string      // Label of this "Tracker".
+	mutex          *sync.Mutex // For synchronization.
+	bytesConsumed  int64       // Consumed bytes.
+	bytesLimit     int64       // Negative value means no limit.
+	actionOnExceed ActionOnExceed
 
-	parent   *MemTracker   // The parent memory tracker.
-	children []*MemTracker // The children memory trackers.
+	parent   *Tracker   // The parent memory tracker.
+	children []*Tracker // The children memory trackers.
 }
 
-// NewMemTracker creates a memory tracker.
+// NewTracker creates a memory tracker.
 //	1. "label" is the label used in the usage string.
 //	2. "bytesLimit < 0" means no limit.
-func NewMemTracker(label string, bytesLimit int64) *MemTracker {
-	return &MemTracker{
-		label:         label,
-		mutex:         &sync.Mutex{},
-		bytesConsumed: 0,
-		bytesLimit:    bytesLimit,
-		logged:        false,
-		parent:        nil,
+func NewTracker(label string, bytesLimit int64) *Tracker {
+	return &Tracker{
+		label:          label,
+		mutex:          &sync.Mutex{},
+		bytesConsumed:  0,
+		bytesLimit:     bytesLimit,
+		actionOnExceed: &LogOnExceed{},
+		parent:         nil,
 	}
 }
 
-// SetLabel set the label of a MemTracker.
-func (m *MemTracker) SetLabel(label string) {
-	m.label = label
+func (t *Tracker) SetActionOnExceed(a ActionOnExceed) {
+	t.actionOnExceed = a
 }
 
-// AttachTo attach a MemTracker as a child to another MemTracker.
+// SetLabel sets the label of a Tracker.
+func (t *Tracker) SetLabel(label string) {
+	t.label = label
+}
+
+// AttachTo attaches it as a child to another Tracker. If it's
 // Its consumed memory usage is used to update all its ancestors.
-func (m *MemTracker) AttachTo(parent *MemTracker) {
-	if m.parent != nil {
-		m.parent.ReplaceChild(m, nil)
+func (t *Tracker) AttachTo(parent *Tracker) {
+	if t.parent != nil {
+		t.parent.ReplaceChild(t, nil)
 	}
-	parent.children = append(parent.children, m)
-	m.parent = parent
-	m.parent.Consume(m.bytesConsumed)
+	parent.children = append(parent.children, t)
+	t.parent = parent
+	t.parent.Consume(t.bytesConsumed)
 }
 
-// ReplaceChild remove the old child specified in "oldChild" and add a new
+// ReplaceChild removes the old child specified in "oldChild" and add a new
 // child specified in "newChild". old child's memory consumption will be
 // removed and new child's memory consumption will be added.
-func (m *MemTracker) ReplaceChild(oldChild, newChild *MemTracker) {
-	for i, child := range m.children {
+func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
+	for i, child := range t.children {
 		if child != oldChild {
 			continue
 		}
-		m.Consume(-oldChild.bytesConsumed)
-		m.children[i] = newChild
+		t.Consume(-oldChild.bytesConsumed)
+		t.children[i] = newChild
 		if newChild != nil {
-			m.Consume(newChild.bytesConsumed)
+			t.Consume(newChild.bytesConsumed)
 		}
 		return
 	}
 }
 
-// Consume is used to consume a memory usage.
-// bytes can be a negative value, witch means memory release operations.
-func (m *MemTracker) Consume(bytes int64) {
-	for tracker := m; tracker != nil; tracker = tracker.parent {
+// Consume is used to consume a memory usage. "bytes" can be a negative value,
+// which means this is a memory release operation.
+func (t *Tracker) Consume(bytes int64) {
+	var rootExceed *Tracker = nil
+	for tracker := t; tracker != nil; tracker = tracker.parent {
 		tracker.mutex.Lock()
 		tracker.bytesConsumed += bytes
+		if tracker.bytesLimit > 0 && tracker.bytesConsumed >= tracker.bytesLimit {
+			rootExceed = tracker
+		}
 		tracker.mutex.Unlock()
-		tracker.logOnceIfExceed()
+	}
+	if rootExceed != nil {
+		rootExceed.actionOnExceed.Action(rootExceed)
 	}
 }
 
 // BytesConsumed returns the consumed memory usage value in bytes.
-func (m *MemTracker) BytesConsumed() int64 {
-	return m.bytesConsumed
+func (t *Tracker) BytesConsumed() int64 {
+	return t.bytesConsumed
 }
 
-func (m *MemTracker) logOnceIfExceed() {
-	if m.logged || m.bytesLimit < 0 || m.bytesConsumed < m.bytesLimit {
-		return
-	}
-	m.logged = true
+// String returns the string representation of this Tracker tree.
+func (t *Tracker) String() string {
 	buffer := bytes.NewBufferString("\n")
-	m.prettyString("", buffer)
-	log.Warnf(errMemExceedThreshold.GenByArgs(m.label, m.bytesConsumed, m.bytesLimit, buffer.String()).Error())
+	t.toString("", buffer)
+	return buffer.String()
 }
 
-func (m *MemTracker) prettyString(indent string, buffer *bytes.Buffer) {
-	buffer.WriteString(fmt.Sprintf("%s\"%s\"{\n", indent, m.label))
-	if m.bytesLimit > 0 {
-		buffer.WriteString(fmt.Sprintf("%s  \"limit\": %v bytes\n", indent, m.bytesLimit))
+func (t *Tracker) toString(indent string, buffer *bytes.Buffer) {
+	buffer.WriteString(fmt.Sprintf("%s\"%s\"{\n", indent, t.label))
+	if t.bytesLimit > 0 {
+		buffer.WriteString(fmt.Sprintf("%s  \"quota\": %s\n", indent, t.bytesToString(t.bytesLimit)))
 	}
-	buffer.WriteString(fmt.Sprintf("%s  \"consumed\": %v bytes\n", indent, m.bytesConsumed))
-	for i := range m.children {
-		if m.children[i] != nil {
-			m.children[i].prettyString(indent+"  ", buffer)
+	buffer.WriteString(fmt.Sprintf("%s  \"consumed\": %s\n", indent, t.bytesToString(t.bytesConsumed)))
+	for i := range t.children {
+		if t.children[i] != nil {
+			t.children[i].toString(indent+"  ", buffer)
 		}
 	}
 	buffer.WriteString(indent + "}\n")
 }
 
-var (
-	errMemExceedThreshold = terror.ClassExecutor.New(codeMemExceedThreshold, mysql.MySQLErrName[mysql.ErrMemExceedThreshold])
-)
+func (t *Tracker) bytesToString(numBytes int64) string {
+	GB := float64(numBytes) / float64(1<<30)
+	if GB > 1 {
+		return fmt.Sprintf("%v GB", GB)
+	}
 
-const (
-	codeMemExceedThreshold terror.ErrCode = 8001
-)
+	MB := float64(numBytes) / float64(1<<20)
+	if MB > 1 {
+		return fmt.Sprintf("%v MB", MB)
+	}
+
+	KB := float64(numBytes) / float64(1<<10)
+	if KB > 1 {
+		return fmt.Sprintf("%v KB", KB)
+	}
+
+	return fmt.Sprintf("%v Bytes", numBytes)
+}

@@ -76,7 +76,7 @@ type HashJoinExec struct {
 	joinResultCh       chan *hashjoinWorkerResult
 	hashTableValBufs   [][][]byte
 
-	memTracker *memory.MemTracker // track memory usage.
+	memTracker *memory.Tracker // track memory usage.
 }
 
 // outerChkResource stores the result of the join outer fetch worker,
@@ -146,7 +146,7 @@ func (e *HashJoinExec) Open(goCtx goctx.Context) error {
 	}
 
 	e.prepared = false
-	e.memTracker = memory.NewMemTracker(e.id, e.ctx.GetSessionVars().MemThreshold)
+	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaHashJoin)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
 	e.hashTableValBufs = make([][][]byte, e.concurrency)

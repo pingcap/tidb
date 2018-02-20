@@ -56,7 +56,7 @@ type SortExec struct {
 	// rowPointer store the chunk index and row index for each row.
 	rowPtrs []chunk.RowPtr
 
-	memTracker *memory.MemTracker
+	memTracker *memory.Tracker
 }
 
 // Close implements the Executor Close interface.
@@ -71,8 +71,12 @@ func (e *SortExec) Open(goCtx goctx.Context) error {
 	e.fetched = false
 	e.Idx = 0
 	e.Rows = nil
-	e.memTracker = memory.NewMemTracker(e.id, e.ctx.GetSessionVars().MemThreshold)
-	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+
+	// To avoid duplicated initialization for TopNExec.
+	if e.memTracker == nil {
+		e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaSort)
+		e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	}
 	return errors.Trace(e.children[0].Open(goCtx))
 }
 
@@ -476,6 +480,12 @@ func (h *topNChunkHeap) Pop() interface{} {
 
 func (h *topNChunkHeap) Swap(i, j int) {
 	h.rowPtrs[i], h.rowPtrs[j] = h.rowPtrs[j], h.rowPtrs[i]
+}
+
+func (e *TopNExec) Open(goCtx goctx.Context) error {
+	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaTopn)
+	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	return errors.Trace(e.SortExec.Open(goCtx))
 }
 
 // NextChunk implements the Executor NextChunk interface.

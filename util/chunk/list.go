@@ -27,7 +27,7 @@ type List struct {
 	chunks       []*Chunk
 	freelist     []*Chunk
 
-	memTracker   *memory.MemTracker // track memory usage.
+	memTracker   *memory.Tracker // track memory usage.
 	lastConsumed bool               // whether the memory usage of last Chunk in "chunks" has been consumed.
 }
 
@@ -43,14 +43,14 @@ func NewList(fieldTypes []*types.FieldType, maxChunkSize int) *List {
 	l := &List{
 		fieldTypes:   fieldTypes,
 		maxChunkSize: maxChunkSize,
-		memTracker:   memory.NewMemTracker("chunk.List", -1),
+		memTracker:   memory.NewTracker("chunk.List", -1),
 		lastConsumed: true,
 	}
 	return l
 }
 
 // GetMemTracker returns the memory tracker of this List.
-func (l *List) GetMemTracker() *memory.MemTracker {
+func (l *List) GetMemTracker() *memory.Tracker {
 	return l.memTracker
 }
 
