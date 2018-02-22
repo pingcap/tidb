@@ -21,9 +21,9 @@ import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -156,7 +156,7 @@ func encodeKey(key types.Datum) types.Datum {
 	return types.NewBytesDatum(buf)
 }
 
-func buildPK(ctx context.Context, numBuckets, id int64, records ast.RecordSet) (int64, *Histogram, error) {
+func buildPK(ctx sessionctx.Context, numBuckets, id int64, records ast.RecordSet) (int64, *Histogram, error) {
 	b := NewSortedBuilder(ctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeLonglong))
 	goCtx := goctx.Background()
 	for {
@@ -176,7 +176,7 @@ func buildPK(ctx context.Context, numBuckets, id int64, records ast.RecordSet) (
 	return b.Count, b.hist, nil
 }
 
-func buildIndex(ctx context.Context, numBuckets, id int64, records ast.RecordSet) (int64, *Histogram, *CMSketch, error) {
+func buildIndex(ctx sessionctx.Context, numBuckets, id int64, records ast.RecordSet) (int64, *Histogram, *CMSketch, error) {
 	b := NewSortedBuilder(ctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeBlob))
 	cms := NewCMSketch(8, 2048)
 	goCtx := goctx.Background()

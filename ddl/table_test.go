@@ -18,12 +18,12 @@ import (
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
@@ -67,7 +67,7 @@ func testTableInfo(c *C, d *ddl, name string, num int) *model.TableInfo {
 	return tblInfo
 }
 
-func testCreateTable(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
+func testCreateTable(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		TableID:    tblInfo.ID,
@@ -85,7 +85,7 @@ func testCreateTable(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tb
 	return job
 }
 
-func testRenameTable(c *C, ctx context.Context, d *ddl, newSchemaID, oldSchemaID int64, tblInfo *model.TableInfo) *model.Job {
+func testRenameTable(c *C, ctx sessionctx.Context, d *ddl, newSchemaID, oldSchemaID int64, tblInfo *model.TableInfo) *model.Job {
 	job := &model.Job{
 		SchemaID:   newSchemaID,
 		TableID:    tblInfo.ID,
@@ -103,7 +103,7 @@ func testRenameTable(c *C, ctx context.Context, d *ddl, newSchemaID, oldSchemaID
 	return job
 }
 
-func testDropTable(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
+func testDropTable(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		TableID:    tblInfo.ID,
@@ -118,7 +118,7 @@ func testDropTable(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblI
 	return job
 }
 
-func testTruncateTable(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
+func testTruncateTable(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
 	newTableID, err := d.genGlobalID()
 	c.Assert(err, IsNil)
 	job := &model.Job{

@@ -20,11 +20,11 @@ import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -59,7 +59,7 @@ func (s *testColumnSuite) TearDownSuite(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func testCreateColumn(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
+func testCreateColumn(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
 	colName string, pos *ast.ColumnPosition, defaultValue interface{}) *model.Job {
 	col := &model.ColumnInfo{
 		Name:               model.NewCIStr(colName),
@@ -85,7 +85,7 @@ func testCreateColumn(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, t
 	return job
 }
 
-func testDropColumn(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName string, isError bool) *model.Job {
+func testDropColumn(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName string, isError bool) *model.Job {
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		TableID:    tblInfo.ID,
@@ -256,7 +256,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	testDropTable(c, ctx, s.d, s.dbInfo, tblInfo)
 }
 
-func (s *testColumnSuite) checkColumnKVExist(ctx context.Context, t table.Table, handle int64, col *table.Column, columnValue interface{}, isExist bool) error {
+func (s *testColumnSuite) checkColumnKVExist(ctx sessionctx.Context, t table.Table, handle int64, col *table.Column, columnValue interface{}, isExist bool) error {
 	err := ctx.NewTxn()
 	if err != nil {
 		return errors.Trace(err)
@@ -291,7 +291,7 @@ func (s *testColumnSuite) checkColumnKVExist(ctx context.Context, t table.Table,
 	return nil
 }
 
-func (s *testColumnSuite) checkNoneColumn(ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *table.Column, columnValue interface{}) error {
+func (s *testColumnSuite) checkNoneColumn(ctx sessionctx.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *table.Column, columnValue interface{}) error {
 	t, err := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
 	if err != nil {
 		return errors.Trace(err)
@@ -307,7 +307,7 @@ func (s *testColumnSuite) checkNoneColumn(ctx context.Context, d *ddl, tblInfo *
 	return nil
 }
 
-func (s *testColumnSuite) checkDeleteOnlyColumn(ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *table.Column, row []types.Datum, columnValue interface{}) error {
+func (s *testColumnSuite) checkDeleteOnlyColumn(ctx sessionctx.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *table.Column, row []types.Datum, columnValue interface{}) error {
 	t, err := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
 	if err != nil {
 		return errors.Trace(err)
@@ -408,7 +408,7 @@ func (s *testColumnSuite) checkDeleteOnlyColumn(ctx context.Context, d *ddl, tbl
 	return nil
 }
 
-func (s *testColumnSuite) checkWriteOnlyColumn(ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *table.Column, row []types.Datum, columnValue interface{}) error {
+func (s *testColumnSuite) checkWriteOnlyColumn(ctx sessionctx.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *table.Column, row []types.Datum, columnValue interface{}) error {
 	t, err := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
 	if err != nil {
 		return errors.Trace(err)
@@ -513,7 +513,7 @@ func (s *testColumnSuite) checkWriteOnlyColumn(ctx context.Context, d *ddl, tblI
 	return nil
 }
 
-func (s *testColumnSuite) checkReorganizationColumn(ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *table.Column, row []types.Datum, columnValue interface{}) error {
+func (s *testColumnSuite) checkReorganizationColumn(ctx sessionctx.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *table.Column, row []types.Datum, columnValue interface{}) error {
 	t, err := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
 	if err != nil {
 		return errors.Trace(err)
@@ -609,7 +609,7 @@ func (s *testColumnSuite) checkReorganizationColumn(ctx context.Context, d *ddl,
 	return nil
 }
 
-func (s *testColumnSuite) checkPublicColumn(ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, newCol *table.Column, oldRow []types.Datum, columnValue interface{}) error {
+func (s *testColumnSuite) checkPublicColumn(ctx sessionctx.Context, d *ddl, tblInfo *model.TableInfo, handle int64, newCol *table.Column, oldRow []types.Datum, columnValue interface{}) error {
 	t, err := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
 	if err != nil {
 		return errors.Trace(err)

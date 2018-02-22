@@ -20,11 +20,11 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -171,7 +171,7 @@ type RecordData struct {
 	Values []types.Datum
 }
 
-func getCount(ctx context.Context, sql string) (int64, error) {
+func getCount(ctx sessionctx.Context, sql string) (int64, error) {
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -185,7 +185,7 @@ func getCount(ctx context.Context, sql string) (int64, error) {
 // CheckIndicesCount compares indices count with table count.
 // It returns nil if the count from the index is equal to the count from the table columns,
 // otherwise it returns an error with a different information.
-func CheckIndicesCount(ctx context.Context, dbName, tableName string, indices []string) error {
+func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices []string) error {
 	// Add `` for some names like `table name`.
 	sql := fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s`", dbName, tableName)
 	tblCnt, err := getCount(ctx, sql)

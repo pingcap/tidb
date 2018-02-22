@@ -15,8 +15,8 @@ package executor
 
 import (
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -62,7 +62,7 @@ const rowBufferSize = 4096
 // readerIterator represents a row block with the same join keys
 type readerIterator struct {
 	stmtCtx   *stmtctx.StatementContext
-	ctx       context.Context
+	ctx       sessionctx.Context
 	reader    Executor
 	filter    []expression.Expression
 	joinKeys  []*expression.Column

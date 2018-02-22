@@ -22,12 +22,12 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
@@ -178,7 +178,7 @@ func (s *testSelectivitySuite) TestSelectivity(c *C) {
 	for _, tt := range tests {
 		sql := "select * from t where " + tt.exprs
 		comment := Commentf("for %s", tt.exprs)
-		ctx := testKit.Se.(context.Context)
+		ctx := testKit.Se.(sessionctx.Context)
 		stmts, err := tidb.Parse(ctx, sql)
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprs))
 		c.Assert(stmts, HasLen, 1)
@@ -210,7 +210,7 @@ func BenchmarkSelectivity(b *testing.B) {
 	exprs := "a > 1 and b < 2 and c > 3 and d < 4 and e > 5"
 	sql := "select * from t where " + exprs
 	comment := Commentf("for %s", exprs)
-	ctx := testKit.Se.(context.Context)
+	ctx := testKit.Se.(sessionctx.Context)
 	stmts, err := tidb.Parse(ctx, sql)
 	c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, exprs))
 	c.Assert(stmts, HasLen, 1)

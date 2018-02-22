@@ -22,13 +22,13 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -252,7 +252,7 @@ func (t *testExecInfo) compileSQL(idx int) (err error) {
 		se := c.session
 		goCtx := goctx.TODO()
 		se.PrepareTxnCtx(goCtx)
-		ctx := se.(context.Context)
+		ctx := se.(sessionctx.Context)
 		executor.ResetStmtCtx(ctx, c.rawStmt)
 
 		c.stmt, err = compiler.Compile(goCtx, c.rawStmt)

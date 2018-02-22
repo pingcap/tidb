@@ -15,7 +15,6 @@ package admin_test
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/context"
 	"testing"
 	"time"
 
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
@@ -283,7 +283,7 @@ func (s *testSuite) TestScan(c *C) {
 
 	s.testTableData(c, tb, []*RecordData{record1, record2})
 
-	ctx := se.(context.Context)
+	ctx := se.(sessionctx.Context)
 	s.testIndex(c, ctx, db.L, tb, tb.Indices()[0])
 
 	c.Assert(s.ctx.NewTxn(), IsNil)
@@ -344,7 +344,7 @@ func (s *testSuite) testTableData(c *C, tb table.Table, rs []*RecordData) {
 	c.Assert(err.Error(), DeepEquals, "[admin:2]handle:1 is repeated in data")
 }
 
-func (s *testSuite) testIndex(c *C, ctx context.Context, dbName string, tb table.Table, idx table.Index) {
+func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb table.Table, idx table.Index) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
