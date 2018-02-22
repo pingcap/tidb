@@ -400,7 +400,7 @@ func (e *TableReaderExecutor) Open(goCtx goctx.Context) error {
 	return nil
 }
 
-// buildResp first build request and send it to tikv using distsql.SelectDAG. It uses SelectResut returned by the callee
+// buildResp first build request and send it to tikv using distsql.Select. It uses SelectResut returned by the callee
 // to fetch all results.
 func (e *TableReaderExecutor) buildResp(goCtx goctx.Context, ranges []*ranger.NewRange) (distsql.SelectResult, error) {
 	var builder requestBuilder
@@ -671,7 +671,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(goCtx goctx.Context, kvRanges []k
 		e.ctx.StoreQueryFeedback(e.feedback)
 		cancel()
 		if err := result.Close(); err != nil {
-			log.Error("close SelectDAG result failed:", errors.ErrorStack(err))
+			log.Error("close Select result failed:", errors.ErrorStack(err))
 		}
 		close(workCh)
 		close(e.resultCh)
