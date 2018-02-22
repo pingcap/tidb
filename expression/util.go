@@ -21,9 +21,9 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 )
@@ -219,7 +219,7 @@ var symmetricOp = map[opcode.Op]opcode.Op{
 }
 
 // PushDownNot pushes the `not` function down to the expression's arguments.
-func PushDownNot(ctx context.Context, expr Expression, not bool) Expression {
+func PushDownNot(ctx sessionctx.Context, expr Expression, not bool) Expression {
 	if f, ok := expr.(*ScalarFunction); ok {
 		switch f.FuncName.L {
 		case ast.UnaryNot:

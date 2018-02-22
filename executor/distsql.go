@@ -23,12 +23,12 @@ import (
 	"github.com/juju/errors"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
@@ -226,7 +226,7 @@ func decodeRawValues(values []types.Datum, schema *expression.Schema, loc *time.
 }
 
 // timeZoneOffset returns the local time zone offset in seconds.
-func timeZoneOffset(ctx context.Context) int64 {
+func timeZoneOffset(ctx sessionctx.Context) int64 {
 	loc := ctx.GetSessionVars().GetTimeZone()
 	_, offset := time.Now().In(loc).Zone()
 	return int64(offset)
@@ -260,7 +260,7 @@ func statementContextToFlags(sc *stmtctx.StatementContext) uint64 {
 	return flags
 }
 
-func setPBColumnsDefaultValue(ctx context.Context, pbColumns []*tipb.ColumnInfo, columns []*model.ColumnInfo) error {
+func setPBColumnsDefaultValue(ctx sessionctx.Context, pbColumns []*tipb.ColumnInfo, columns []*model.ColumnInfo) error {
 	for i, c := range columns {
 		if c.OriginDefaultValue == nil {
 			continue

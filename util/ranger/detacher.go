@@ -16,9 +16,9 @@ package ranger
 import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 )
@@ -326,7 +326,7 @@ func ExtractAccessConditionsForColumn(conds []expression.Expression, colName mod
 
 // DetachCondsForTableRange detaches the conditions used for range calculation form other useless conditions for
 // calculating the table range.
-func DetachCondsForTableRange(ctx context.Context, conds []expression.Expression, col *expression.Column) (accessContditions, otherConditions []expression.Expression) {
+func DetachCondsForTableRange(ctx sessionctx.Context, conds []expression.Expression, col *expression.Column) (accessContditions, otherConditions []expression.Expression) {
 	checker := &conditionChecker{
 		colName: col.ColName,
 		length:  types.UnspecifiedLength,

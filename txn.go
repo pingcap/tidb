@@ -16,9 +16,9 @@ package tidb
 import (
 	"github.com/juju/errors"
 	"github.com/opentracing/opentracing-go"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
@@ -195,7 +195,7 @@ func (st *TxnState) cleanup() {
 	}
 }
 
-func getBinlogMutation(ctx context.Context, tableID int64) *binlog.TableMutation {
+func getBinlogMutation(ctx sessionctx.Context, tableID int64) *binlog.TableMutation {
 	bin := binloginfo.GetPrewriteValue(ctx, true)
 	for i := range bin.Mutations {
 		if bin.Mutations[i].TableId == tableID {
@@ -252,7 +252,7 @@ func (s *session) getTxnFuture(ctx goctx.Context) *txnFuture {
 	return &txnFuture{tsFuture, s.store, span}
 }
 
-// StmtCommit implements the context.Context interface.
+// StmtCommit implements the sessionctx.Context interface.
 func (s *session) StmtCommit() {
 	if s.txn.fail != nil {
 		return
@@ -289,13 +289,13 @@ func (s *session) StmtCommit() {
 	}
 }
 
-// StmtRollback implements the context.Context interface.
+// StmtRollback implements the sessionctx.Context interface.
 func (s *session) StmtRollback() {
 	s.txn.cleanup()
 	return
 }
 
-// StmtGetMutation implements the context.Context interface.
+// StmtGetMutation implements the sessionctx.Context interface.
 func (s *session) StmtGetMutation(tableID int64) *binlog.TableMutation {
 	st := &s.txn
 	if _, ok := st.mutations[tableID]; !ok {

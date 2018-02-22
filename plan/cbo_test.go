@@ -21,10 +21,10 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -210,7 +210,7 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		},
 	}
 	for _, tt := range tests {
-		ctx := testKit.Se.(context.Context)
+		ctx := testKit.Se.(sessionctx.Context)
 		stmts, err := tidb.Parse(ctx, tt.sql)
 		c.Assert(err, IsNil)
 		c.Assert(stmts, HasLen, 1)
@@ -260,7 +260,7 @@ func (s *testAnalyzeSuite) TestEmptyTable(c *C) {
 		},
 	}
 	for _, tt := range tests {
-		ctx := testKit.Se.(context.Context)
+		ctx := testKit.Se.(sessionctx.Context)
 		stmts, err := tidb.Parse(ctx, tt.sql)
 		c.Assert(err, IsNil)
 		c.Assert(stmts, HasLen, 1)
@@ -351,7 +351,7 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 		//},
 	}
 	for _, tt := range tests {
-		ctx := testKit.Se.(context.Context)
+		ctx := testKit.Se.(sessionctx.Context)
 		stmts, err := tidb.Parse(ctx, tt.sql)
 		c.Assert(err, IsNil)
 		c.Assert(stmts, HasLen, 1)
@@ -428,7 +428,7 @@ func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {
 		sql := "select * from t where id = ?"
 		best := "IndexReader(Index(t.id)[])"
 
-		ctx := testKit.Se.(context.Context)
+		ctx := testKit.Se.(sessionctx.Context)
 		stmts, err := tidb.Parse(ctx, sql)
 		stmt := stmts[0]
 
@@ -558,7 +558,7 @@ func BenchmarkOptimize(b *testing.B) {
 		},
 	}
 	for _, tt := range tests {
-		ctx := testKit.Se.(context.Context)
+		ctx := testKit.Se.(sessionctx.Context)
 		stmts, err := tidb.Parse(ctx, tt.sql)
 		c.Assert(err, IsNil)
 		c.Assert(stmts, HasLen, 1)

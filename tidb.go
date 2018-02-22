@@ -27,11 +27,11 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
@@ -133,7 +133,7 @@ func SetCommitRetryLimit(limit int) {
 }
 
 // Parse parses a query string to raw ast.StmtNode.
-func Parse(ctx context.Context, src string) ([]ast.StmtNode, error) {
+func Parse(ctx sessionctx.Context, src string) ([]ast.StmtNode, error) {
 	log.Debug("compiling", src)
 	charset, collation := ctx.GetSessionVars().GetCharsetInfo()
 	p := parser.New()
@@ -147,14 +147,14 @@ func Parse(ctx context.Context, src string) ([]ast.StmtNode, error) {
 }
 
 // Compile is safe for concurrent use by multiple goroutines.
-func Compile(ctx context.Context, goCtx goctx.Context, stmtNode ast.StmtNode) (ast.Statement, error) {
+func Compile(ctx sessionctx.Context, goCtx goctx.Context, stmtNode ast.StmtNode) (ast.Statement, error) {
 	compiler := executor.Compiler{Ctx: ctx}
 	stmt, err := compiler.Compile(goCtx, stmtNode)
 	return stmt, errors.Trace(err)
 }
 
 // runStmt executes the ast.Statement and commit or rollback the current transaction.
-func runStmt(ctx context.Context, goCtx goctx.Context, s ast.Statement) (ast.RecordSet, error) {
+func runStmt(ctx sessionctx.Context, goCtx goctx.Context, s ast.Statement) (ast.RecordSet, error) {
 	span, ctx1 := opentracing.StartSpanFromContext(goCtx, "runStmt")
 	span.LogKV("sql", s.OriginText())
 	defer span.Finish()
@@ -201,7 +201,7 @@ func runStmt(ctx context.Context, goCtx goctx.Context, s ast.Statement) (ast.Rec
 }
 
 // GetHistory get all stmtHistory in current txn. Exported only for test.
-func GetHistory(ctx context.Context) *StmtHistory {
+func GetHistory(ctx sessionctx.Context) *StmtHistory {
 	hist, ok := ctx.GetSessionVars().TxnCtx.Histroy.(*StmtHistory)
 	if ok {
 		return hist
@@ -212,7 +212,7 @@ func GetHistory(ctx context.Context) *StmtHistory {
 }
 
 // GetRows4Test gets all the rows from a RecordSet, only used for test.
-func GetRows4Test(ctx context.Context, goCtx goctx.Context, rs ast.RecordSet) ([]types.Row, error) {
+func GetRows4Test(ctx sessionctx.Context, goCtx goctx.Context, rs ast.RecordSet) ([]types.Row, error) {
 	if rs == nil {
 		return nil, nil
 	}

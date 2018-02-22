@@ -18,8 +18,8 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -37,7 +37,7 @@ type Plan interface {
 	// replaceExprColumns replace all the column reference in the plan's expression node.
 	replaceExprColumns(replace map[string]*expression.Column)
 
-	context() context.Context
+	context() sessionctx.Context
 }
 
 // taskType is the type of execution task.
@@ -195,7 +195,7 @@ type PhysicalPlan interface {
 	attach2Task(...task) task
 
 	// ToPB converts physical plan to tipb executor.
-	ToPB(ctx context.Context) (*tipb.Executor, error)
+	ToPB(ctx sessionctx.Context) (*tipb.Executor, error)
 
 	// ExplainInfo returns operator information to be explained.
 	ExplainInfo() string
@@ -268,7 +268,7 @@ func (p *baseLogicalPlan) buildKeyInfo() {
 	}
 }
 
-func newBasePlan(ctx context.Context, tp string) basePlan {
+func newBasePlan(ctx sessionctx.Context, tp string) basePlan {
 	ctx.GetSessionVars().PlanID++
 	id := ctx.GetSessionVars().PlanID
 	return basePlan{
@@ -278,7 +278,7 @@ func newBasePlan(ctx context.Context, tp string) basePlan {
 	}
 }
 
-func newBaseLogicalPlan(ctx context.Context, tp string, self LogicalPlan) baseLogicalPlan {
+func newBaseLogicalPlan(ctx sessionctx.Context, tp string, self LogicalPlan) baseLogicalPlan {
 	return baseLogicalPlan{
 		taskMap:  make(map[string]task),
 		basePlan: newBasePlan(ctx, tp),
@@ -286,7 +286,7 @@ func newBaseLogicalPlan(ctx context.Context, tp string, self LogicalPlan) baseLo
 	}
 }
 
-func newBasePhysicalPlan(ctx context.Context, tp string, self PhysicalPlan) basePhysicalPlan {
+func newBasePhysicalPlan(ctx sessionctx.Context, tp string, self PhysicalPlan) basePhysicalPlan {
 	return basePhysicalPlan{
 		basePlan: newBasePlan(ctx, tp),
 		self:     self,
@@ -314,7 +314,7 @@ func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column) {
 type basePlan struct {
 	tp    string
 	id    int
-	ctx   context.Context
+	ctx   sessionctx.Context
 	stats *statsInfo
 }
 
@@ -360,7 +360,7 @@ func (p *basePhysicalPlan) SetChildren(children ...PhysicalPlan) {
 	p.children = children
 }
 
-func (p *basePlan) context() context.Context {
+func (p *basePlan) context() sessionctx.Context {
 	return p.ctx
 }
 

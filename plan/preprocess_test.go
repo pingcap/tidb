@@ -17,11 +17,11 @@ import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
@@ -184,7 +184,7 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 	c.Assert(err, IsNil)
 	_, err = se.Execute(goctx.Background(), "use test")
 	c.Assert(err, IsNil)
-	ctx := se.(context.Context)
+	ctx := se.(sessionctx.Context)
 	is := infoschema.MockInfoSchema([]*model.TableInfo{plan.MockTable()})
 	for _, tt := range tests {
 		stmts, err1 := tidb.Parse(ctx, tt.sql)

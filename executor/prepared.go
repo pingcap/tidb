@@ -19,12 +19,12 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -83,7 +83,7 @@ type PrepareExec struct {
 }
 
 // NewPrepareExec creates a new PrepareExec.
-func NewPrepareExec(ctx context.Context, is infoschema.InfoSchema, sqlTxt string) *PrepareExec {
+func NewPrepareExec(ctx sessionctx.Context, is infoschema.InfoSchema, sqlTxt string) *PrepareExec {
 	return &PrepareExec{
 		baseExecutor: newBaseExecutor(ctx, nil, "PrepareStmt"),
 		is:           is,
@@ -256,7 +256,7 @@ func (e *DeallocateExec) run(goCtx goctx.Context) error {
 }
 
 // CompileExecutePreparedStmt compiles a session Execute command to a stmt.Statement.
-func CompileExecutePreparedStmt(ctx context.Context, ID uint32, args ...interface{}) (ast.Statement, error) {
+func CompileExecutePreparedStmt(ctx sessionctx.Context, ID uint32, args ...interface{}) (ast.Statement, error) {
 	execStmt := &ast.ExecuteStmt{ExecID: ID}
 	execStmt.UsingVars = make([]ast.ExprNode, len(args))
 	for i, val := range args {
@@ -282,7 +282,7 @@ func CompileExecutePreparedStmt(ctx context.Context, ID uint32, args ...interfac
 
 // ResetStmtCtx resets the StmtContext.
 // Before every execution, we must clear statement context.
-func ResetStmtCtx(ctx context.Context, s ast.StmtNode) {
+func ResetStmtCtx(ctx sessionctx.Context, s ast.StmtNode) {
 	sessVars := ctx.GetSessionVars()
 	sc := new(stmtctx.StatementContext)
 	sc.TimeZone = sessVars.GetTimeZone()

@@ -15,9 +15,9 @@ package executor
 
 import (
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -52,7 +52,7 @@ type joinResultGenerator interface {
 	emitToChunk(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) error
 }
 
-func newJoinResultGenerator(ctx context.Context, joinType plan.JoinType,
+func newJoinResultGenerator(ctx sessionctx.Context, joinType plan.JoinType,
 	outerIsRight bool, defaultInner Row, filter []expression.Expression,
 	lhsColTypes, rhsColTypes []*types.FieldType) joinResultGenerator {
 	base := baseJoinResultGenerator{
@@ -96,7 +96,7 @@ func newJoinResultGenerator(ctx context.Context, joinType plan.JoinType,
 // baseJoinResultGenerator is not thread-safe,
 // so we should build individual generator for every join goroutine.
 type baseJoinResultGenerator struct {
-	ctx               context.Context
+	ctx               sessionctx.Context
 	filter            []expression.Expression
 	defaultChunkInner chunk.Row
 	outerIsRight      bool

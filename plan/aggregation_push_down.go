@@ -16,11 +16,11 @@ import (
 	"fmt"
 
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -146,7 +146,7 @@ func (a *aggregationOptimizer) splitAggFuncsAndGbyCols(agg *LogicalAggregation, 
 }
 
 // addGbyCol adds a column to gbyCols. If a group by column has existed, it will not be added repeatedly.
-func (a *aggregationOptimizer) addGbyCol(ctx context.Context, gbyCols []*expression.Column, cols ...*expression.Column) []*expression.Column {
+func (a *aggregationOptimizer) addGbyCol(ctx sessionctx.Context, gbyCols []*expression.Column, cols ...*expression.Column) []*expression.Column {
 	for _, c := range cols {
 		duplicate := false
 		for _, gbyCol := range gbyCols {
@@ -252,7 +252,7 @@ func (a *aggregationOptimizer) checkAnyCountAndSum(aggFuncs []*aggregation.AggFu
 	return false
 }
 
-func (a *aggregationOptimizer) makeNewAgg(ctx context.Context, aggFuncs []*aggregation.AggFuncDesc, gbyCols []*expression.Column) *LogicalAggregation {
+func (a *aggregationOptimizer) makeNewAgg(ctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc, gbyCols []*expression.Column) *LogicalAggregation {
 	agg := LogicalAggregation{
 		GroupByItems: expression.Column2Exprs(gbyCols),
 		groupByCols:  gbyCols,
@@ -428,7 +428,7 @@ func (a *aggregationOptimizer) convertAggToProj(agg *LogicalAggregation) *Logica
 	return proj
 }
 
-func (a *aggregationOptimizer) rewriteCount(ctx context.Context, exprs []expression.Expression) expression.Expression {
+func (a *aggregationOptimizer) rewriteCount(ctx sessionctx.Context, exprs []expression.Expression) expression.Expression {
 	// If is count(expr), we will change it to if(isnull(expr), 0, 1).
 	// If is count(distinct x, y, z) we will change it to if(isnull(x) or isnull(y) or isnull(z), 0, 1).
 	isNullExprs := make([]expression.Expression, 0, len(exprs))
@@ -444,7 +444,7 @@ func (a *aggregationOptimizer) rewriteCount(ctx context.Context, exprs []express
 // See https://dev.mysql.com/doc/refman/5.7/en/group-by-functions.html
 // The SUM() and AVG() functions return a DECIMAL value for exact-value arguments (integer or DECIMAL),
 // and a DOUBLE value for approximate-value arguments (FLOAT or DOUBLE).
-func (a *aggregationOptimizer) rewriteSumOrAvg(ctx context.Context, exprs []expression.Expression) expression.Expression {
+func (a *aggregationOptimizer) rewriteSumOrAvg(ctx sessionctx.Context, exprs []expression.Expression) expression.Expression {
 	// FIXME: Consider the case that avg is final mode.
 	expr := exprs[0].Clone()
 	switch expr.GetType().Tp {
@@ -461,7 +461,7 @@ func (a *aggregationOptimizer) rewriteSumOrAvg(ctx context.Context, exprs []expr
 }
 
 // rewriteExpr will rewrite the aggregate function to expression doesn't contain aggregate function.
-func (a *aggregationOptimizer) rewriteExpr(ctx context.Context, aggFunc *aggregation.AggFuncDesc) expression.Expression {
+func (a *aggregationOptimizer) rewriteExpr(ctx sessionctx.Context, aggFunc *aggregation.AggFuncDesc) expression.Expression {
 	switch aggFunc.Name {
 	case ast.AggFuncCount:
 		if aggFunc.Mode == aggregation.FinalMode {

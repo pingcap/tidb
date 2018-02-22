@@ -21,13 +21,13 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
@@ -159,7 +159,7 @@ type ExecStmt struct {
 
 	StmtNode ast.StmtNode
 
-	Ctx            context.Context
+	Ctx            sessionctx.Context
 	startTime      time.Time
 	isPreparedStmt bool
 }
@@ -265,7 +265,7 @@ func (a *ExecStmt) Exec(goCtx goctx.Context) (ast.RecordSet, error) {
 	}, nil
 }
 
-func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, goCtx goctx.Context, e Executor, pi processinfoSetter) (ast.RecordSet, error) {
+func (a *ExecStmt) handleNoDelayExecutor(ctx sessionctx.Context, goCtx goctx.Context, e Executor, pi processinfoSetter) (ast.RecordSet, error) {
 	// Check if "tidb_snapshot" is set for the write executors.
 	// In history read mode, we can not do write operations.
 	switch e.(type) {
@@ -315,7 +315,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, goCtx goctx.Contex
 }
 
 // buildExecutor build a executor from plan, prepared statement may need additional procedure.
-func (a *ExecStmt) buildExecutor(ctx context.Context) (Executor, error) {
+func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 	priority := kv.PriorityNormal
 	if _, ok := a.Plan.(*plan.Execute); !ok {
 		// Do not sync transaction for Execute statement, because the real optimization work is done in
@@ -404,7 +404,7 @@ func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
 //  1. ctx is auto commit tagged
 //  2. txn is nil
 //  2. plan is point get by pk or unique key
-func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx context.Context, p plan.Plan) bool {
+func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p plan.Plan) bool {
 	// check auto commit
 	if !ctx.GetSessionVars().IsAutocommit() {
 		return false

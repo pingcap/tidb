@@ -17,11 +17,11 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
 )
@@ -208,7 +208,7 @@ func (p *PhysicalMergeJoin) attach2Task(tasks ...task) task {
 }
 
 // finishCopTask means we close the coprocessor task and create a root task.
-func finishCopTask(ctx context.Context, task task) task {
+func finishCopTask(ctx sessionctx.Context, task task) task {
 	t, ok := task.(*copTask)
 	if !ok {
 		return task

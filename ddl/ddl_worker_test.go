@@ -19,11 +19,11 @@ import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/mock"
@@ -277,7 +277,7 @@ func testCheckJobCancelled(c *C, d *ddl, job *model.Job, state *model.SchemaStat
 	})
 }
 
-func doDDLJobErrWithSchemaState(ctx context.Context, d *ddl, c *C, schemaID, tableID int64, tp model.ActionType,
+func doDDLJobErrWithSchemaState(ctx sessionctx.Context, d *ddl, c *C, schemaID, tableID int64, tp model.ActionType,
 	args []interface{}, state *model.SchemaState) *model.Job {
 	job := &model.Job{
 		SchemaID:   schemaID,
@@ -294,7 +294,7 @@ func doDDLJobErrWithSchemaState(ctx context.Context, d *ddl, c *C, schemaID, tab
 	return job
 }
 
-func doDDLJobErr(ctx context.Context, c *C, schemaID, tableID int64, tp model.ActionType,
+func doDDLJobErr(ctx sessionctx.Context, c *C, schemaID, tableID int64, tp model.ActionType,
 	args []interface{}, d *ddl) *model.Job {
 	return doDDLJobErrWithSchemaState(ctx, d, c, schemaID, tableID, tp, args, nil)
 }

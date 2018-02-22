@@ -16,8 +16,8 @@ package expression
 import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	log "github.com/sirupsen/logrus"
@@ -68,7 +68,7 @@ type propagateConstantSolver struct {
 	eqList     []*Constant    // if eqList[i] != nil, it means col_i = eqList[i]
 	columns    []*Column      // columns stores all columns appearing in the conditions
 	conditions []Expression
-	ctx        context.Context
+	ctx        sessionctx.Context
 }
 
 // propagateInEQ propagates all in-equal conditions.
@@ -255,7 +255,7 @@ func (s *propagateConstantSolver) insertCol(col *Column) {
 }
 
 // PropagateConstant propagate constant values of equality predicates and inequality predicates in a condition.
-func PropagateConstant(ctx context.Context, conditions []Expression) []Expression {
+func PropagateConstant(ctx sessionctx.Context, conditions []Expression) []Expression {
 	solver := &propagateConstantSolver{
 		colMapper: make(map[string]int),
 		ctx:       ctx,

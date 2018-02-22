@@ -19,8 +19,8 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
@@ -42,7 +42,7 @@ func IsCurrentTimestampExpr(e ast.ExprNode) bool {
 }
 
 // GetTimeValue gets the time value with type tp.
-func GetTimeValue(ctx context.Context, v interface{}, tp byte, fsp int) (d types.Datum, err error) {
+func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int) (d types.Datum, err error) {
 	value := types.Time{
 		Type: tp,
 		Fsp:  fsp,
@@ -119,7 +119,7 @@ func GetTimeValue(ctx context.Context, v interface{}, tp byte, fsp int) (d types
 	return d, nil
 }
 
-func getSystemTimestamp(ctx context.Context) (time.Time, error) {
+func getSystemTimestamp(ctx sessionctx.Context) (time.Time, error) {
 	now := time.Now()
 
 	if ctx == nil {
