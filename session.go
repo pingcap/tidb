@@ -31,7 +31,6 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
@@ -43,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -60,7 +60,7 @@ import (
 
 // Session context
 type Session interface {
-	context.Context
+	sessionctx.Context
 	Status() uint16                                         // Flag of current status, such as autocommit.
 	LastInsertID() uint64                                   // LastInsertID is the last inserted auto_increment ID.
 	AffectedRows() uint64                                   // Affected rows by latest executed stmt.
@@ -531,7 +531,7 @@ func (s *session) sysSessionPool() *pools.ResourcePool {
 // This is used for executing some restricted sql statements, usually executed during a normal statement execution.
 // Unlike normal Exec, it doesn't reset statement status, doesn't commit or rollback the current transaction
 // and doesn't write binlog.
-func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) ([]types.Row, []*ast.ResultField, error) {
+func (s *session) ExecRestrictedSQL(ctx sessionctx.Context, sql string) ([]types.Row, []*ast.ResultField, error) {
 	var span opentracing.Span
 	goCtx := goctx.TODO()
 	span, goCtx = opentracing.StartSpanFromContext(goCtx, "session.ExecRestrictedSQL")
@@ -622,7 +622,7 @@ func drainRecordSet(goCtx goctx.Context, rs ast.RecordSet) ([]types.Row, error) 
 
 // getExecRet executes restricted sql and the result is one column.
 // It returns a string value.
-func (s *session) getExecRet(ctx context.Context, sql string) (string, error) {
+func (s *session) getExecRet(ctx sessionctx.Context, sql string) (string, error) {
 	rows, fields, err := s.ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return "", errors.Trace(err)
@@ -640,7 +640,7 @@ func (s *session) getExecRet(ctx context.Context, sql string) (string, error) {
 
 // GetAllSysVars implements GlobalVarAccessor.GetAllSysVars interface.
 func (s *session) GetAllSysVars() (map[string]string, error) {
-	if s.Value(context.Initing) != nil {
+	if s.Value(sessionctx.Initing) != nil {
 		return nil, nil
 	}
 	sql := `SELECT VARIABLE_NAME, VARIABLE_VALUE FROM %s.%s;`
@@ -659,7 +659,7 @@ func (s *session) GetAllSysVars() (map[string]string, error) {
 
 // GetGlobalSysVar implements GlobalVarAccessor.GetGlobalSysVar interface.
 func (s *session) GetGlobalSysVar(name string) (string, error) {
-	if s.Value(context.Initing) != nil {
+	if s.Value(sessionctx.Initing) != nil {
 		// When running bootstrap or upgrade, we should not access global storage.
 		return "", nil
 	}
@@ -718,11 +718,11 @@ func (s *session) SetProcessInfo(sql string) {
 }
 
 func (s *session) executeStatement(goCtx goctx.Context, connID uint64, stmtNode ast.StmtNode, stmt ast.Statement, recordSets []ast.RecordSet) ([]ast.RecordSet, error) {
-	s.SetValue(context.QueryString, stmt.OriginText())
+	s.SetValue(sessionctx.QueryString, stmt.OriginText())
 	if _, ok := stmtNode.(ast.DDLNode); ok {
-		s.SetValue(context.LastExecuteDDL, true)
+		s.SetValue(sessionctx.LastExecuteDDL, true)
 	} else {
-		s.ClearValue(context.LastExecuteDDL)
+		s.ClearValue(sessionctx.LastExecuteDDL)
 	}
 	logStmt(stmtNode, s.sessionVars)
 	startTime := time.Now()
@@ -1129,10 +1129,10 @@ func runInBootstrapSession(store kv.Storage, bootstrap func(Session)) {
 	}
 	schemaLease = saveLease
 
-	s.SetValue(context.Initing, true)
+	s.SetValue(sessionctx.Initing, true)
 	bootstrap(s)
 	finishBootstrap(store)
-	s.ClearValue(context.Initing)
+	s.ClearValue(sessionctx.Initing)
 
 	dom := domain.GetDomain(s)
 	dom.Close()
@@ -1252,7 +1252,7 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	if vars.CommonGlobalLoaded {
 		return nil
 	}
-	if s.Value(context.Initing) != nil {
+	if s.Value(sessionctx.Initing) != nil {
 		// When running bootstrap or upgrade, we should not access global storage.
 		return nil
 	}

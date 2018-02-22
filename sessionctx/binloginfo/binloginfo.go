@@ -20,8 +20,8 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
@@ -60,7 +60,7 @@ func SetPumpClient(client binlog.PumpClient) {
 }
 
 // GetPrewriteValue gets binlog prewrite value in the context.
-func GetPrewriteValue(ctx context.Context, createIfNotExists bool) *binlog.PrewriteValue {
+func GetPrewriteValue(ctx sessionctx.Context, createIfNotExists bool) *binlog.PrewriteValue {
 	vars := ctx.GetSessionVars()
 	v, ok := vars.TxnCtx.Binlog.(*binlog.PrewriteValue)
 	if !ok && createIfNotExists {

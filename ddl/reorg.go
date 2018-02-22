@@ -18,11 +18,11 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/mock"
 	log "github.com/sirupsen/logrus"
 )
@@ -43,7 +43,7 @@ type reorgCtx struct {
 }
 
 // newContext gets a context. It is only used for adding column in reorganization state.
-func (d *ddl) newContext() context.Context {
+func (d *ddl) newContext() sessionctx.Context {
 	c := mock.NewContext()
 	c.Store = d.store
 	c.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, false)

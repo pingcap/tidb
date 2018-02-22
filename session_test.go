@@ -23,7 +23,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/privilege/privileges"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
@@ -184,7 +184,7 @@ func (s *testSessionSuite) TestQueryString(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	tk.MustExec("create table mutil1 (a int);create table multi2 (a int)")
-	queryStr := tk.Se.Value(context.QueryString)
+	queryStr := tk.Se.Value(sessionctx.QueryString)
 	c.Assert(queryStr, Equals, "create table multi2 (a int)")
 }
 
@@ -1135,9 +1135,9 @@ func (s *testSessionSuite) TestLastExecuteDDLFlag(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(id int)")
-	c.Assert(tk.Se.Value(context.LastExecuteDDL), NotNil)
+	c.Assert(tk.Se.Value(sessionctx.LastExecuteDDL), NotNil)
 	tk.MustExec("insert into t1 values (1)")
-	c.Assert(tk.Se.Value(context.LastExecuteDDL), IsNil)
+	c.Assert(tk.Se.Value(sessionctx.LastExecuteDDL), IsNil)
 }
 
 func (s *testSessionSuite) TestDecimal(c *C) {

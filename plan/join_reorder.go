@@ -18,8 +18,8 @@ import (
 	"sort"
 
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/sessionctx"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -57,7 +57,7 @@ type joinReOrderSolver struct {
 	visited    []bool
 	resultJoin LogicalPlan
 	groupRank  []*rankInfo
-	ctx        context.Context
+	ctx        sessionctx.Context
 }
 
 type edgeList []*rankInfo

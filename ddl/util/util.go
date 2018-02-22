@@ -18,8 +18,8 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/sqlexec"
 	goctx "golang.org/x/net/context"
@@ -43,7 +43,7 @@ func (t DelRangeTask) Range() ([]byte, []byte) {
 }
 
 // LoadDeleteRanges loads delete range tasks from gc_delete_range table.
-func LoadDeleteRanges(ctx context.Context, safePoint uint64) (ranges []DelRangeTask, _ error) {
+func LoadDeleteRanges(ctx sessionctx.Context, safePoint uint64) (ranges []DelRangeTask, _ error) {
 	sql := fmt.Sprintf(loadDeleteRangeSQL, safePoint)
 	rss, err := ctx.(sqlexec.SQLExecutor).Execute(goctx.TODO(), sql)
 	if len(rss) > 0 {
@@ -82,14 +82,14 @@ func LoadDeleteRanges(ctx context.Context, safePoint uint64) (ranges []DelRangeT
 
 // CompleteDeleteRange deletes a record from gc_delete_range table.
 // NOTE: This function WILL NOT start and run in a new transaction internally.
-func CompleteDeleteRange(ctx context.Context, dr DelRangeTask) error {
+func CompleteDeleteRange(ctx sessionctx.Context, dr DelRangeTask) error {
 	sql := fmt.Sprintf(completeDeleteRangeSQL, dr.JobID, dr.ElementID)
 	_, err := ctx.(sqlexec.SQLExecutor).Execute(goctx.TODO(), sql)
 	return errors.Trace(err)
 }
 
 // UpdateDeleteRange is only for emulator.
-func UpdateDeleteRange(ctx context.Context, dr DelRangeTask, newStartKey, oldStartKey kv.Key) error {
+func UpdateDeleteRange(ctx sessionctx.Context, dr DelRangeTask, newStartKey, oldStartKey kv.Key) error {
 	newStartKeyHex := hex.EncodeToString(newStartKey)
 	oldStartKeyHex := hex.EncodeToString(oldStartKey)
 	sql := fmt.Sprintf(updateDeleteRangeSQL, newStartKeyHex, dr.JobID, dr.ElementID, oldStartKeyHex)

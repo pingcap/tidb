@@ -15,7 +15,7 @@ package expression
 
 import (
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -26,7 +26,7 @@ type columnEvaluator struct {
 // run evaluates "Column" expressions.
 // NOTE: It should be called after all the other expressions are evaluated
 //	     since it will change the content of the input Chunk.
-func (e *columnEvaluator) run(ctx context.Context, input, output *chunk.Chunk) {
+func (e *columnEvaluator) run(ctx sessionctx.Context, input, output *chunk.Chunk) {
 	for inputIdx, outputIdxes := range e.inputIdxToOutputIdxes {
 		output.SwapColumn(outputIdxes[0], input, inputIdx)
 		for i, length := 1, len(outputIdxes); i < length; i++ {
@@ -41,7 +41,7 @@ type defaultEvaluator struct {
 	vectorizable bool
 }
 
-func (e *defaultEvaluator) run(ctx context.Context, input, output *chunk.Chunk) error {
+func (e *defaultEvaluator) run(ctx sessionctx.Context, input, output *chunk.Chunk) error {
 	iter := chunk.NewIterator4Chunk(input)
 	if e.vectorizable {
 		for i := range e.outputIdxes {
@@ -104,7 +104,7 @@ func NewEvaluatorSuit(exprs []Expression) *EvaluatorSuit {
 
 // Run evaluates all the expressions hold by this EvaluatorSuit.
 // NOTE: "defaultEvaluator" must be evaluated before "columnEvaluator".
-func (e *EvaluatorSuit) Run(ctx context.Context, input, output *chunk.Chunk) error {
+func (e *EvaluatorSuit) Run(ctx sessionctx.Context, input, output *chunk.Chunk) error {
 	if e.defaultEvaluator != nil {
 		err := e.defaultEvaluator.run(ctx, input, output)
 		if err != nil {
