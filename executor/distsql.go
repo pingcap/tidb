@@ -414,7 +414,7 @@ func (e *TableReaderExecutor) buildResp(goCtx goctx.Context, ranges []*ranger.Ne
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	result, err := distsql.SelectDAG(e.ctx, goCtx, kvReq, e.retTypes())
+	result, err := distsql.Select(e.ctx, goCtx, kvReq, e.retTypes())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -579,7 +579,7 @@ func (e *IndexReaderExecutor) open(goCtx goctx.Context, kvRanges []kv.KeyRange) 
 		e.feedback.Invalidate()
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.SelectDAG(e.ctx, goCtx, kvReq, e.retTypes())
+	e.result, err = distsql.Select(e.ctx, goCtx, kvReq, e.retTypes())
 	if err != nil {
 		e.feedback.Invalidate()
 		return errors.Trace(err)
@@ -643,7 +643,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(goCtx goctx.Context, kvRanges []k
 		return errors.Trace(err)
 	}
 	// Since the first read only need handle information. So its returned col is only 1.
-	result, err := distsql.SelectDAG(e.ctx, goCtx, kvReq, []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)})
+	result, err := distsql.Select(e.ctx, goCtx, kvReq, []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)})
 	if err != nil {
 		return errors.Trace(err)
 	}
