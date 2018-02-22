@@ -302,7 +302,7 @@ func (pr *partialResult) Close() error {
 
 // Select sends a DAG request, returns SelectResult.
 // In kvReq, KeyRanges is required, Concurrency/KeepOrder/Desc/IsolationLevel/Priority are optional.
-func SelectDAG(ctx context.Context, goCtx goctx.Context, kvReq *kv.Request, fieldTypes []*types.FieldType) (SelectResult, error) {
+func Select(ctx context.Context, goCtx goctx.Context, kvReq *kv.Request, fieldTypes []*types.FieldType) (SelectResult, error) {
 	resp := ctx.GetClient().Send(goCtx, kvReq)
 	if resp == nil {
 		err := errors.New("client returns nil response")
