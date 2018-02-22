@@ -231,6 +231,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 		indexInfo.Unique = unique
 		indexInfo.ID = allocateIndexID(tblInfo)
 		tblInfo.Indices = append(tblInfo.Indices, indexInfo)
+		log.Infof("[ddl] add index, run DDL job %s, index info %#v", job, indexInfo)
 	}
 	originalState := indexInfo.State
 	switch indexInfo.State {

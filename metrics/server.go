@@ -38,7 +38,7 @@ var (
 			Subsystem: "server",
 			Name:      "query_total",
 			Help:      "Counter of queries.",
-		}, []string{"type", "status"})
+		}, []string{LblType, LblResult})
 
 	ConnGauge = prometheus.NewGauge(
 		prometheus.GaugeOpts{
@@ -52,32 +52,48 @@ var (
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
-			Name:      "execute_error",
+			Name:      "execute_error_total",
 			Help:      "Counter of execute errors.",
-		}, []string{"type"})
+		}, []string{LblType})
 
 	CriticalErrorCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
-			Name:      "critical_error",
+			Name:      "critical_error_total",
 			Help:      "Counter of critical errors.",
 		})
 
-	EventStart        = "server_start"
-	EventGracefulDown = "server_graceful_shutdown"
+	EventStart        = "start"
+	EventGracefulDown = "graceful_shutdown"
 	// Eventkill occurs when the server.Kill() function is called.
-	EventKill = "server_kill"
+	EventKill = "kill"
 	// EventHang occurs when server meet some critical error. It will close the listening port and hang for ever.
-	EventHang          = "server_hang"
-	EventClose         = "server_close"
+	EventHang          = "hang"
+	EventClose         = "close"
 	ServerEventCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
-			Name:      "server_event",
+			Name:      "event_total",
 			Help:      "Counter of tidb-server event.",
-		}, []string{"type"})
+		}, []string{LblType})
+
+	TimeJumpBackCounter = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "monitor",
+			Name:      "time_jump_back_total",
+			Help:      "Counter of system time jumps backward.",
+		})
+
+	KeepAliveCounter = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "monitor",
+			Name:      "keep_alive_total",
+			Help:      "Counter of TiDB keep alive.",
+		})
 )
 
 func init() {
@@ -87,6 +103,8 @@ func init() {
 	prometheus.MustRegister(ExecuteErrorCounter)
 	prometheus.MustRegister(CriticalErrorCounter)
 	prometheus.MustRegister(ServerEventCounter)
+	prometheus.MustRegister(TimeJumpBackCounter)
+	prometheus.MustRegister(KeepAliveCounter)
 }
 
 // ExecuteErrorToLabel converts an execute error to label.
