@@ -149,7 +149,7 @@ func (e *baseExecutor) newChunk() *chunk.Chunk {
 	return chunk.NewChunk(e.retTypes())
 }
 
-// retTypes returns partial column types which only used current query.
+// retTypes returns all output column types.
 func (e *baseExecutor) retTypes() []*types.FieldType {
 	return e.retFieldTypes
 }
