@@ -218,7 +218,9 @@ func (s *session) GetSessionManager() util.SessionManager {
 }
 
 func (s *session) StoreQueryFeedback(feedback interface{}) {
-	s.statsCollector.StoreQueryFeedback(feedback)
+	if s.statsCollector != nil {
+		s.statsCollector.StoreQueryFeedback(feedback)
+	}
 }
 
 // FieldList returns fields list of a table.
@@ -747,21 +749,22 @@ func (s *session) Execute(goCtx goctx.Context, sql string) (recordSets []ast.Rec
 
 	s.PrepareTxnCtx(goCtx)
 	var (
-		cacheKey      kvcache.Key
-		cacheValue    kvcache.Value
-		useCachedPlan = false
-		connID        = s.sessionVars.ConnectionID
+		cacheKey         kvcache.Key
+		cacheValue       kvcache.Value
+		hitCache         = false
+		connID           = s.sessionVars.ConnectionID
+		planCacheEnabled = plan.PlanCacheEnabled // Read global configuration only once.
 	)
 
-	if plan.PlanCacheEnabled {
+	if planCacheEnabled {
 		schemaVersion := domain.GetDomain(s).InfoSchema().SchemaMetaVersion()
 		readOnly := s.Txn() == nil || s.Txn().IsReadOnly()
 
 		cacheKey = plan.NewSQLCacheKey(s.sessionVars, sql, schemaVersion, readOnly)
-		cacheValue, useCachedPlan = plan.GlobalPlanCache.Get(cacheKey)
+		cacheValue, hitCache = plan.GlobalPlanCache.Get(cacheKey)
 	}
 
-	if useCachedPlan {
+	if hitCache {
 		stmtNode := cacheValue.(*plan.SQLCacheValue).StmtNode
 		stmt := &executor.ExecStmt{
 			InfoSchema: executor.GetInfoSchema(s),
@@ -810,7 +813,7 @@ func (s *session) Execute(goCtx goctx.Context, sql string) (recordSets []ast.Rec
 			metrics.SessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
 
 			// Step3: Cache the physical plan if possible.
-			if plan.PlanCacheEnabled && stmt.Cacheable && len(stmtNodes) == 1 && !s.GetSessionVars().StmtCtx.HistogramsNotLoad() {
+			if planCacheEnabled && stmt.Cacheable && len(stmtNodes) == 1 && !s.GetSessionVars().StmtCtx.HistogramsNotLoad() {
 				plan.GlobalPlanCache.Put(cacheKey, plan.NewSQLCacheValue(stmtNode, stmt.Plan, stmt.Expensive))
 			}
 

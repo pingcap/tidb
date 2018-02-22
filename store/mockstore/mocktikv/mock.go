@@ -15,7 +15,7 @@ package mocktikv
 
 import (
 	"github.com/juju/errors"
-	pd "github.com/pingcap/pd/pd-client"
+	"github.com/pingcap/pd/pd-client"
 )
 
 // NewTestClient creates a TiKV client and PD client from options.
