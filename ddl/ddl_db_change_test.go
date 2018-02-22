@@ -22,13 +22,13 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -252,7 +252,7 @@ func (t *testExecInfo) compileSQL(idx int) (err error) {
 		se := c.session
 		goCtx := goctx.TODO()
 		se.PrepareTxnCtx(goCtx)
-		ctx := se.(context.Context)
+		ctx := se.(sessionctx.Context)
 		executor.ResetStmtCtx(ctx, c.rawStmt)
 
 		c.stmt, err = compiler.Compile(goCtx, c.rawStmt)
@@ -283,6 +283,65 @@ func (t *testExecInfo) execSQL(idx int) error {
 		}
 	}
 	return nil
+}
+
+// TestUpdateOrDelete tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
+func (s *testStateChangeSuite) TestWrite(c *C) {
+	sqls := make([]string, 3)
+	sqls[0] = "delete from t where c1 = 'a'"
+	sqls[1] = "update t use index(idx2) set c1 = 'c1_update' where c1 = 'a'"
+	sqls[2] = "insert t set c1 = 'c1_insert', c3 = '2018-02-12', c4 = 1"
+	alterTableSQL := "alter table t add column a int not null default 1 first"
+	s.runTestInWriteOnly(c, "", alterTableSQL, sqls)
+}
+
+func (s *testStateChangeSuite) runTestInWriteOnly(c *C, tableName, alterTableSQL string, sqls []string) {
+	defer testleak.AfterTest(c)()
+	_, err := s.se.Execute(goctx.Background(), `create table t (
+		c1 varchar(64),
+		c2 enum('N','Y') not null default 'N',
+		c3 timestamp on update current_timestamp,
+		c4 int primary key,
+		unique key idx2 (c1, c2, c3))`)
+	c.Assert(err, IsNil)
+	defer s.se.Execute(goctx.Background(), "drop table t")
+	_, err = s.se.Execute(goctx.Background(), "insert into t values('a', 'N', '2017-07-01', 8)")
+	c.Assert(err, IsNil)
+	// Make sure these sqls use the the plan of index scan.
+	_, err = s.se.Execute(goctx.Background(), "drop stats t")
+	c.Assert(err, IsNil)
+
+	callback := &ddl.TestDDLCallback{}
+	prevState := model.StateNone
+	var checkErr error
+	times := 0
+	se, err := tidb.CreateSession(s.store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(goctx.Background(), "use test_db_state")
+	c.Assert(err, IsNil)
+	callback.OnJobUpdatedExported = func(job *model.Job) {
+		if job.SchemaState == prevState || checkErr != nil || times >= 3 {
+			return
+		}
+		times++
+		if job.SchemaState != model.StateWriteOnly {
+			return
+		}
+		for _, sql := range sqls {
+			_, err = se.Execute(goctx.Background(), sql)
+			if err != nil {
+				checkErr = err
+				break
+			}
+		}
+	}
+	d := s.dom.DDL()
+	d.SetHook(callback)
+	_, err = s.se.Execute(goctx.Background(), alterTableSQL)
+	c.Assert(err, IsNil)
+	c.Assert(errors.ErrorStack(checkErr), Equals, "")
+	callback = &ddl.TestDDLCallback{}
+	d.SetHook(callback)
 }
 
 func (s *testStateChangeSuite) execQuery(tk *testkit.TestKit, sql string, args ...interface{}) (*testkit.Result, error) {

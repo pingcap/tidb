@@ -19,9 +19,9 @@ import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testleak"
@@ -135,7 +135,7 @@ func (s *testEvaluatorSuite) TestLock(c *C) {
 
 // newFunctionForTest creates a new ScalarFunction using funcName and arguments,
 // it is different from expression.NewFunction which needs an additional retType argument.
-func newFunctionForTest(ctx context.Context, funcName string, args ...Expression) (Expression, error) {
+func newFunctionForTest(ctx sessionctx.Context, funcName string, args ...Expression) (Expression, error) {
 	fc, ok := funcs[funcName]
 	if !ok {
 		return nil, errFunctionNotExists.GenByArgs("FUNCTION", funcName)

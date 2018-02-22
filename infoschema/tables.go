@@ -18,12 +18,12 @@ import (
 	"sort"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -541,7 +541,7 @@ func dataForColltions() (records [][]types.Datum) {
 	return records
 }
 
-func dataForSessionVar(ctx context.Context) (records [][]types.Datum, err error) {
+func dataForSessionVar(ctx sessionctx.Context) (records [][]types.Datum, err error) {
 	sessionVars := ctx.GetSessionVars()
 	for _, v := range variable.SysVars {
 		var value string
@@ -555,7 +555,7 @@ func dataForSessionVar(ctx context.Context) (records [][]types.Datum, err error)
 	return
 }
 
-func dataForUserPrivileges(ctx context.Context) [][]types.Datum {
+func dataForUserPrivileges(ctx sessionctx.Context) [][]types.Datum {
 	pm := privilege.GetPrivilegeManager(ctx)
 	return pm.UserPrivilegesTable()
 }
@@ -628,7 +628,7 @@ func dataForSchemata(schemas []*model.DBInfo) [][]types.Datum {
 	return rows
 }
 
-func dataForTables(ctx context.Context, schemas []*model.DBInfo) [][]types.Datum {
+func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Datum {
 	var rows [][]types.Datum
 	createTimeTp := tablesCols[15].tp
 	for _, schema := range schemas {
@@ -1010,7 +1010,7 @@ func (s schemasSorter) Less(i, j int) bool {
 	return s[i].Name.L < s[j].Name.L
 }
 
-func (it *infoschemaTable) getRows(ctx context.Context, cols []*table.Column) (fullRows [][]types.Datum, err error) {
+func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column) (fullRows [][]types.Datum, err error) {
 	is := it.handle.Get()
 	dbs := is.AllSchemas()
 	sort.Sort(schemasSorter(dbs))
@@ -1074,7 +1074,7 @@ func (it *infoschemaTable) getRows(ctx context.Context, cols []*table.Column) (f
 	return rows, nil
 }
 
-func (it *infoschemaTable) IterRecords(ctx context.Context, startKey kv.Key, cols []*table.Column,
+func (it *infoschemaTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols []*table.Column,
 	fn table.RecordIterFunc) error {
 	if len(startKey) != 0 {
 		return table.ErrUnsupportedOp
@@ -1095,12 +1095,12 @@ func (it *infoschemaTable) IterRecords(ctx context.Context, startKey kv.Key, col
 	return nil
 }
 
-func (it *infoschemaTable) RowWithCols(ctx context.Context, h int64, cols []*table.Column) ([]types.Datum, error) {
+func (it *infoschemaTable) RowWithCols(ctx sessionctx.Context, h int64, cols []*table.Column) ([]types.Datum, error) {
 	return nil, table.ErrUnsupportedOp
 }
 
 // Row implements table.Table Row interface.
-func (it *infoschemaTable) Row(ctx context.Context, h int64) ([]types.Datum, error) {
+func (it *infoschemaTable) Row(ctx sessionctx.Context, h int64) ([]types.Datum, error) {
 	return nil, table.ErrUnsupportedOp
 }
 
@@ -1140,27 +1140,27 @@ func (it *infoschemaTable) RecordKey(h int64) kv.Key {
 	return nil
 }
 
-func (it *infoschemaTable) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
+func (it *infoschemaTable) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
 	return 0, table.ErrUnsupportedOp
 }
 
-func (it *infoschemaTable) RemoveRecord(ctx context.Context, h int64, r []types.Datum) error {
+func (it *infoschemaTable) RemoveRecord(ctx sessionctx.Context, h int64, r []types.Datum) error {
 	return table.ErrUnsupportedOp
 }
 
-func (it *infoschemaTable) UpdateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
+func (it *infoschemaTable) UpdateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
 	return table.ErrUnsupportedOp
 }
 
-func (it *infoschemaTable) AllocAutoID(ctx context.Context) (int64, error) {
+func (it *infoschemaTable) AllocAutoID(ctx sessionctx.Context) (int64, error) {
 	return 0, table.ErrUnsupportedOp
 }
 
-func (it *infoschemaTable) Allocator(ctx context.Context) autoid.Allocator {
+func (it *infoschemaTable) Allocator(ctx sessionctx.Context) autoid.Allocator {
 	return nil
 }
 
-func (it *infoschemaTable) RebaseAutoID(ctx context.Context, newBase int64, isSetStep bool) error {
+func (it *infoschemaTable) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool) error {
 	return table.ErrUnsupportedOp
 }
 
@@ -1169,7 +1169,7 @@ func (it *infoschemaTable) Meta() *model.TableInfo {
 }
 
 // Seek is the first method called for table scan, we lazy initialize it here.
-func (it *infoschemaTable) Seek(ctx context.Context, h int64) (int64, bool, error) {
+func (it *infoschemaTable) Seek(ctx sessionctx.Context, h int64) (int64, bool, error) {
 	return 0, false, table.ErrUnsupportedOp
 }
 

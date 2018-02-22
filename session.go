@@ -31,7 +31,6 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
@@ -43,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -60,7 +60,7 @@ import (
 
 // Session context
 type Session interface {
-	context.Context
+	sessionctx.Context
 	Status() uint16                                         // Flag of current status, such as autocommit.
 	LastInsertID() uint64                                   // LastInsertID is the last inserted auto_increment ID.
 	AffectedRows() uint64                                   // Affected rows by latest executed stmt.
@@ -218,7 +218,9 @@ func (s *session) GetSessionManager() util.SessionManager {
 }
 
 func (s *session) StoreQueryFeedback(feedback interface{}) {
-	s.statsCollector.StoreQueryFeedback(feedback)
+	if s.statsCollector != nil {
+		s.statsCollector.StoreQueryFeedback(feedback)
+	}
 }
 
 // FieldList returns fields list of a table.
@@ -342,6 +344,10 @@ func (s *session) doCommitWithRetry(ctx goctx.Context) error {
 			err = s.retry(ctx, maxRetryCount)
 		}
 	}
+	counter := s.sessionVars.TxnCtx.StatementCount
+	duration := time.Since(s.GetSessionVars().TxnCtx.CreateTime).Seconds()
+	metrics.StatementPerTransaction.WithLabelValues(metrics.RetLabel(err)).Observe(float64(counter))
+	metrics.TransactionDuration.WithLabelValues(metrics.RetLabel(err)).Observe(float64(duration))
 	s.cleanRetryInfo()
 	if err != nil {
 		log.Warnf("[%d] finished txn:%v, %v", s.sessionVars.ConnectionID, s.txn, err)
@@ -525,7 +531,7 @@ func (s *session) sysSessionPool() *pools.ResourcePool {
 // This is used for executing some restricted sql statements, usually executed during a normal statement execution.
 // Unlike normal Exec, it doesn't reset statement status, doesn't commit or rollback the current transaction
 // and doesn't write binlog.
-func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) ([]types.Row, []*ast.ResultField, error) {
+func (s *session) ExecRestrictedSQL(ctx sessionctx.Context, sql string) ([]types.Row, []*ast.ResultField, error) {
 	var span opentracing.Span
 	goCtx := goctx.TODO()
 	span, goCtx = opentracing.StartSpanFromContext(goCtx, "session.ExecRestrictedSQL")
@@ -616,7 +622,7 @@ func drainRecordSet(goCtx goctx.Context, rs ast.RecordSet) ([]types.Row, error) 
 
 // getExecRet executes restricted sql and the result is one column.
 // It returns a string value.
-func (s *session) getExecRet(ctx context.Context, sql string) (string, error) {
+func (s *session) getExecRet(ctx sessionctx.Context, sql string) (string, error) {
 	rows, fields, err := s.ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return "", errors.Trace(err)
@@ -634,7 +640,7 @@ func (s *session) getExecRet(ctx context.Context, sql string) (string, error) {
 
 // GetAllSysVars implements GlobalVarAccessor.GetAllSysVars interface.
 func (s *session) GetAllSysVars() (map[string]string, error) {
-	if s.Value(context.Initing) != nil {
+	if s.Value(sessionctx.Initing) != nil {
 		return nil, nil
 	}
 	sql := `SELECT VARIABLE_NAME, VARIABLE_VALUE FROM %s.%s;`
@@ -653,7 +659,7 @@ func (s *session) GetAllSysVars() (map[string]string, error) {
 
 // GetGlobalSysVar implements GlobalVarAccessor.GetGlobalSysVar interface.
 func (s *session) GetGlobalSysVar(name string) (string, error) {
-	if s.Value(context.Initing) != nil {
+	if s.Value(sessionctx.Initing) != nil {
 		// When running bootstrap or upgrade, we should not access global storage.
 		return "", nil
 	}
@@ -712,11 +718,11 @@ func (s *session) SetProcessInfo(sql string) {
 }
 
 func (s *session) executeStatement(goCtx goctx.Context, connID uint64, stmtNode ast.StmtNode, stmt ast.Statement, recordSets []ast.RecordSet) ([]ast.RecordSet, error) {
-	s.SetValue(context.QueryString, stmt.OriginText())
+	s.SetValue(sessionctx.QueryString, stmt.OriginText())
 	if _, ok := stmtNode.(ast.DDLNode); ok {
-		s.SetValue(context.LastExecuteDDL, true)
+		s.SetValue(sessionctx.LastExecuteDDL, true)
 	} else {
-		s.ClearValue(context.LastExecuteDDL)
+		s.ClearValue(sessionctx.LastExecuteDDL)
 	}
 	logStmt(stmtNode, s.sessionVars)
 	startTime := time.Now()
@@ -743,21 +749,22 @@ func (s *session) Execute(goCtx goctx.Context, sql string) (recordSets []ast.Rec
 
 	s.PrepareTxnCtx(goCtx)
 	var (
-		cacheKey      kvcache.Key
-		cacheValue    kvcache.Value
-		useCachedPlan = false
-		connID        = s.sessionVars.ConnectionID
+		cacheKey         kvcache.Key
+		cacheValue       kvcache.Value
+		hitCache         = false
+		connID           = s.sessionVars.ConnectionID
+		planCacheEnabled = plan.PlanCacheEnabled // Read global configuration only once.
 	)
 
-	if plan.PlanCacheEnabled {
+	if planCacheEnabled {
 		schemaVersion := domain.GetDomain(s).InfoSchema().SchemaMetaVersion()
 		readOnly := s.Txn() == nil || s.Txn().IsReadOnly()
 
 		cacheKey = plan.NewSQLCacheKey(s.sessionVars, sql, schemaVersion, readOnly)
-		cacheValue, useCachedPlan = plan.GlobalPlanCache.Get(cacheKey)
+		cacheValue, hitCache = plan.GlobalPlanCache.Get(cacheKey)
 	}
 
-	if useCachedPlan {
+	if hitCache {
 		stmtNode := cacheValue.(*plan.SQLCacheValue).StmtNode
 		stmt := &executor.ExecStmt{
 			InfoSchema: executor.GetInfoSchema(s),
@@ -806,7 +813,7 @@ func (s *session) Execute(goCtx goctx.Context, sql string) (recordSets []ast.Rec
 			metrics.SessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
 
 			// Step3: Cache the physical plan if possible.
-			if plan.PlanCacheEnabled && stmt.Cacheable && len(stmtNodes) == 1 && !s.GetSessionVars().StmtCtx.HistogramsNotLoad() {
+			if planCacheEnabled && stmt.Cacheable && len(stmtNodes) == 1 && !s.GetSessionVars().StmtCtx.HistogramsNotLoad() {
 				plan.GlobalPlanCache.Put(cacheKey, plan.NewSQLCacheValue(stmtNode, stmt.Plan, stmt.Expensive))
 			}
 
@@ -1137,10 +1144,10 @@ func runInBootstrapSession(store kv.Storage, bootstrap func(Session)) {
 	}
 	schemaLease = saveLease
 
-	s.SetValue(context.Initing, true)
+	s.SetValue(sessionctx.Initing, true)
 	bootstrap(s)
 	finishBootstrap(store)
-	s.ClearValue(context.Initing)
+	s.ClearValue(sessionctx.Initing)
 
 	dom := domain.GetDomain(s)
 	dom.Close()
@@ -1260,7 +1267,7 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	if vars.CommonGlobalLoaded {
 		return nil
 	}
-	if s.Value(context.Initing) != nil {
+	if s.Value(sessionctx.Initing) != nil {
 		// When running bootstrap or upgrade, we should not access global storage.
 		return nil
 	}
@@ -1299,6 +1306,7 @@ func (s *session) PrepareTxnCtx(ctx goctx.Context) {
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
 		InfoSchema:    is,
 		SchemaVersion: is.SchemaMetaVersion(),
+		CreateTime:    time.Now(),
 	}
 	if !s.sessionVars.IsAutocommit() {
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
