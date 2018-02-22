@@ -17,9 +17,9 @@ import (
 	"encoding/json"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/chunk"
 	goctx "golang.org/x/net/context"
@@ -36,7 +36,7 @@ type LoadStatsExec struct {
 // LoadStatsInfo saves the information of loading statistic operation.
 type LoadStatsInfo struct {
 	Path string
-	Ctx  context.Context
+	Ctx  sessionctx.Context
 }
 
 // loadStatsVarKeyType is a dummy type to avoid naming collision in context.

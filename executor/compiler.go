@@ -20,17 +20,17 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/sessionctx"
 	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
 
 // Compiler compiles an ast.StmtNode to a physical plan.
 type Compiler struct {
-	Ctx context.Context
+	Ctx sessionctx.Context
 }
 
 // Compile compiles an ast.StmtNode to a physical plan.
@@ -190,7 +190,7 @@ func GetStmtLabel(stmtNode ast.StmtNode) string {
 
 // GetInfoSchema gets TxnCtx InfoSchema if snapshot schema is not set,
 // Otherwise, snapshot schema is returned.
-func GetInfoSchema(ctx context.Context) infoschema.InfoSchema {
+func GetInfoSchema(ctx sessionctx.Context) infoschema.InfoSchema {
 	sessVar := ctx.GetSessionVars()
 	var is infoschema.InfoSchema
 	if snap := sessVar.SnapshotInfoschema; snap != nil {

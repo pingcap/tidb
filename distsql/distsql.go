@@ -17,11 +17,11 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -77,7 +77,7 @@ type selectResult struct {
 
 	rowLen     int
 	fieldTypes []*types.FieldType
-	ctx        context.Context
+	ctx        sessionctx.Context
 
 	selectResp *tipb.SelectResponse
 	respChkIdx int
@@ -302,7 +302,7 @@ func (pr *partialResult) Close() error {
 
 // Select sends a DAG request, returns SelectResult.
 // In kvReq, KeyRanges is required, Concurrency/KeepOrder/Desc/IsolationLevel/Priority are optional.
-func Select(goCtx goctx.Context, ctx context.Context, kvReq *kv.Request, fieldTypes []*types.FieldType) (SelectResult, error) {
+func Select(goCtx goctx.Context, ctx sessionctx.Context, kvReq *kv.Request, fieldTypes []*types.FieldType) (SelectResult, error) {
 	resp := ctx.GetClient().Send(goCtx, kvReq)
 	if resp == nil {
 		err := errors.New("client returns nil response")

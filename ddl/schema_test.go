@@ -17,11 +17,11 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
@@ -44,7 +44,7 @@ func testSchemaInfo(c *C, d *ddl, name string) *model.DBInfo {
 	return dbInfo
 }
 
-func testCreateSchema(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo) *model.Job {
+func testCreateSchema(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo) *model.Job {
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		Type:       model.ActionCreateSchema,
@@ -61,7 +61,7 @@ func testCreateSchema(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo) *
 	return job
 }
 
-func testDropSchema(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo) (*model.Job, int64) {
+func testDropSchema(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo) (*model.Job, int64) {
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		Type:       model.ActionDropSchema,

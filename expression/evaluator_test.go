@@ -19,9 +19,9 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
@@ -37,7 +37,7 @@ func TestT(t *testing.T) {
 
 type testEvaluatorSuite struct {
 	*parser.Parser
-	ctx context.Context
+	ctx sessionctx.Context
 }
 
 func (s *testEvaluatorSuite) SetUpSuite(c *C) {

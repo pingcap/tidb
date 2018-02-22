@@ -18,10 +18,10 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
@@ -58,7 +58,7 @@ func (ts *testSuite) SetUpSuite(c *C) {
 func (ts *testSuite) TestBasic(c *C) {
 	_, err := ts.se.Execute(goctx.Background(), "CREATE TABLE test.t (a int primary key auto_increment, b varchar(255) unique)")
 	c.Assert(err, IsNil)
-	ctx := ts.se.(context.Context)
+	ctx := ts.se.(sessionctx.Context)
 	c.Assert(ctx.NewTxn(), IsNil)
 	dom := domain.GetDomain(ctx)
 	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -137,7 +137,7 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func countEntriesWithPrefix(ctx context.Context, prefix []byte) (int, error) {
+func countEntriesWithPrefix(ctx sessionctx.Context, prefix []byte) (int, error) {
 	cnt := 0
 	err := util.ScanMetaWithPrefix(ctx.Txn(), prefix, func(k kv.Key, v []byte) bool {
 		cnt++
@@ -150,7 +150,7 @@ func (ts *testSuite) TestTypes(c *C) {
 	goCtx := goctx.Background()
 	_, err := ts.se.Execute(goctx.Background(), "CREATE TABLE test.t (c1 tinyint, c2 smallint, c3 int, c4 bigint, c5 text, c6 blob, c7 varchar(64), c8 time, c9 timestamp null default CURRENT_TIMESTAMP, c10 decimal(10,1))")
 	c.Assert(err, IsNil)
-	ctx := ts.se.(context.Context)
+	ctx := ts.se.(sessionctx.Context)
 	dom := domain.GetDomain(ctx)
 	_, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
@@ -194,7 +194,7 @@ func (ts *testSuite) TestTypes(c *C) {
 func (ts *testSuite) TestUniqueIndexMultipleNullEntries(c *C) {
 	_, err := ts.se.Execute(goctx.Background(), "CREATE TABLE test.t (a int primary key auto_increment, b varchar(255) unique)")
 	c.Assert(err, IsNil)
-	ctx := ts.se.(context.Context)
+	ctx := ts.se.(sessionctx.Context)
 	dom := domain.GetDomain(ctx)
 	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
@@ -266,7 +266,7 @@ func (ts *testSuite) TestUnsignedPK(c *C) {
 	ts.se.Execute(goctx.Background(), "DROP TABLE IF EXISTS test.tPK")
 	_, err := ts.se.Execute(goctx.Background(), "CREATE TABLE test.tPK (a bigint unsigned primary key, b varchar(255))")
 	c.Assert(err, IsNil)
-	ctx := ts.se.(context.Context)
+	ctx := ts.se.(sessionctx.Context)
 	dom := domain.GetDomain(ctx)
 	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tPK"))
 	c.Assert(err, IsNil)
@@ -287,7 +287,7 @@ func (ts *testSuite) TestIterRecords(c *C) {
 	c.Assert(err, IsNil)
 	_, err = ts.se.Execute(goctx.Background(), "INSERT test.tIter VALUES (-1, 2), (2, NULL)")
 	c.Assert(err, IsNil)
-	ctx := ts.se.(context.Context)
+	ctx := ts.se.(sessionctx.Context)
 	c.Assert(ctx.NewTxn(), IsNil)
 	dom := domain.GetDomain(ctx)
 	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tIter"))
@@ -307,7 +307,7 @@ func (ts *testSuite) TestTableFromMeta(c *C) {
 	defer testleak.AfterTest(c)()
 	_, err := ts.se.Execute(goctx.Background(), "CREATE TABLE test.meta (a int primary key auto_increment, b varchar(255) unique)")
 	c.Assert(err, IsNil)
-	ctx := ts.se.(context.Context)
+	ctx := ts.se.(sessionctx.Context)
 	c.Assert(ctx.NewTxn(), IsNil)
 	dom := domain.GetDomain(ctx)
 	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("meta"))
