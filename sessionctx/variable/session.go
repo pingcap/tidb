@@ -274,10 +274,6 @@ type SessionVars struct {
 	// MaxChunkSize defines max row count of a Chunk during query execution.
 	MaxChunkSize int
 
-	// MemQuotaSession defines the memory quota for a session.
-	MemQuotaSession int64
-	// MemQuotaTxn defines the memory quota for a transaction.
-	MemQuotaTxn int64
 	// MemQuotaQuery defines the memory quota for a query.
 	MemQuotaQuery int64
 	// MemQuotaHashJoin defines the memory quota for a hash join executor.
