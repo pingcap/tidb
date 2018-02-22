@@ -32,7 +32,6 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// TODO: Index can't cover the add column with offset now, we may check this later.
 // adjustColumnInfoInAddColumn is used to set the correct position of column info when adding column.
 // 1. The added column was append at the end of tblInfo.Columns, due to ddl state was not public then.
 //    It should be moved to the correct position when the ddl state to be changed to public.
@@ -51,6 +50,7 @@ func (d *ddl) adjustColumnInfoInAddColumn(tblInfo *model.TableInfo, offset int) 
 	}
 	newCols[offset].Offset = offset
 	// Update index column offset info.
+	// TODO: There may be some corner cases for index column offsets, we may check this later.
 	for _, idx := range tblInfo.Indices {
 		for _, col := range idx.Columns {
 			newOffset, ok := offsetChanged[col.Offset]
@@ -62,7 +62,6 @@ func (d *ddl) adjustColumnInfoInAddColumn(tblInfo *model.TableInfo, offset int) 
 	tblInfo.Columns = newCols
 }
 
-// TODO: Index can't cover the remove column with offset now, we may check this later.
 // adjustColumnInfoInDropColumn is used to set the correct position of column info when dropping column.
 // 1. The offset of column should to be set to the last of the columns.
 // 2. The dropped column is moved to the end of tblInfo.Columns, due to it was not public any more.
@@ -76,6 +75,7 @@ func (d *ddl) adjustColumnInfoInDropColumn(tblInfo *model.TableInfo, offset int)
 	}
 	oldCols[offset].Offset = len(oldCols) - 1
 	// Update index column offset info.
+	// TODO: There may be some corner cases for index column offsets, we may check this later.
 	for _, idx := range tblInfo.Indices {
 		for _, col := range idx.Columns {
 			newOffset, ok := offsetChanged[col.Offset]
