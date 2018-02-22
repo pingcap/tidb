@@ -14,10 +14,10 @@ package plan
 
 import (
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -263,7 +263,7 @@ func outerJoinSimplify(p *LogicalJoin, predicates []expression.Expression) {
 // If it is a predicate containing a reference to an inner table that evaluates to UNKNOWN or FALSE when one of its arguments is NULL.
 // If it is a conjunction containing a null-rejected condition as a conjunct.
 // If it is a disjunction of null-rejected conditions.
-func isNullRejected(ctx context.Context, schema *expression.Schema, expr expression.Expression) bool {
+func isNullRejected(ctx sessionctx.Context, schema *expression.Schema, expr expression.Expression) bool {
 	result := expression.EvaluateExprWithNull(ctx, schema, expr)
 	x, ok := result.(*expression.Constant)
 	if !ok {

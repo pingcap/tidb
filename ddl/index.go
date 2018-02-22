@@ -20,12 +20,12 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -494,7 +494,7 @@ type indexRecord struct {
 
 type worker struct {
 	id          int
-	ctx         context.Context
+	ctx         sessionctx.Context
 	index       table.Index
 	defaultVals []types.Datum  // It's used to reduce the number of new slice.
 	idxRecords  []*indexRecord // It's used to reduce the number of new slice.
@@ -504,7 +504,7 @@ type worker struct {
 	rowMap      map[int64]types.Datum // It's the index column values map. It is used to reduce the number of making map.
 }
 
-func newWorker(ctx context.Context, id, batch, colsLen, indexColsLen int) *worker {
+func newWorker(ctx sessionctx.Context, id, batch, colsLen, indexColsLen int) *worker {
 	return &worker{
 		id:          id,
 		ctx:         ctx,

@@ -18,9 +18,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/auth"
 )
 
@@ -729,7 +729,7 @@ type Ident struct {
 }
 
 // Full returns an Ident which set schema to the current schema if it is empty.
-func (i Ident) Full(ctx context.Context) (full Ident) {
+func (i Ident) Full(ctx sessionctx.Context) (full Ident) {
 	full.Name = i.Name
 	if i.Schema.O != "" {
 		full.Schema = i.Schema
