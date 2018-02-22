@@ -19,12 +19,12 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
@@ -152,7 +152,7 @@ var clauseMsg = map[clauseCode]string{
 // It just builds the ast node straightforwardly.
 type planBuilder struct {
 	err          error
-	ctx          context.Context
+	ctx          sessionctx.Context
 	is           infoschema.InfoSchema
 	outerSchemas []*expression.Schema
 	inUpdateStmt bool

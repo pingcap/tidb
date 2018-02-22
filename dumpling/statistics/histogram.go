@@ -21,10 +21,10 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
@@ -162,7 +162,7 @@ func HistogramEqual(a, b *Histogram, ignoreID bool) bool {
 }
 
 // SaveStatsToStorage saves the stats to storage.
-func SaveStatsToStorage(ctx context.Context, tableID int64, count int64, isIndex int, hg *Histogram, cms *CMSketch) error {
+func SaveStatsToStorage(ctx sessionctx.Context, tableID int64, count int64, isIndex int, hg *Histogram, cms *CMSketch) error {
 	goCtx := goctx.TODO()
 	exec := ctx.(sqlexec.SQLExecutor)
 	_, err := exec.Execute(goCtx, "begin")
@@ -217,7 +217,7 @@ func SaveStatsToStorage(ctx context.Context, tableID int64, count int64, isIndex
 	return errors.Trace(err)
 }
 
-func histogramFromStorage(ctx context.Context, tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int, ver uint64, nullCount int64) (*Histogram, error) {
+func histogramFromStorage(ctx sessionctx.Context, tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int, ver uint64, nullCount int64) (*Histogram, error) {
 	selSQL := fmt.Sprintf("select count, repeats, lower_bound, upper_bound from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d order by bucket_id", tableID, isIndex, colID)
 	rows, fields, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, selSQL)
 	if err != nil {
@@ -252,7 +252,7 @@ func histogramFromStorage(ctx context.Context, tableID int64, colID int64, tp *t
 	return hg, nil
 }
 
-func columnCountFromStorage(ctx context.Context, tableID, colID int64) (int64, error) {
+func columnCountFromStorage(ctx sessionctx.Context, tableID, colID int64) (int64, error) {
 	selSQL := fmt.Sprintf("select sum(count) from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d", tableID, 0, colID)
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, selSQL)
 	if err != nil {

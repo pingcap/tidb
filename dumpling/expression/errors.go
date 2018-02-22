@@ -14,8 +14,8 @@
 package expression
 
 import (
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 )
@@ -46,7 +46,7 @@ func init() {
 }
 
 // handleInvalidTimeError reports error or warning depend on the context.
-func handleInvalidTimeError(ctx context.Context, err error) error {
+func handleInvalidTimeError(ctx sessionctx.Context, err error) error {
 	if err == nil || !(terror.ErrorEqual(err, types.ErrInvalidTimeFormat) || types.ErrIncorrectDatetimeValue.Equal(err)) {
 		return err
 	}
@@ -59,7 +59,7 @@ func handleInvalidTimeError(ctx context.Context, err error) error {
 }
 
 // handleDivisionByZeroError reports error or warning depend on the context.
-func handleDivisionByZeroError(ctx context.Context) error {
+func handleDivisionByZeroError(ctx sessionctx.Context) error {
 	sc := ctx.GetSessionVars().StmtCtx
 	if sc.InInsertStmt || sc.InUpdateOrDeleteStmt {
 		if !ctx.GetSessionVars().SQLMode.HasErrorForDivisionByZeroMode() {

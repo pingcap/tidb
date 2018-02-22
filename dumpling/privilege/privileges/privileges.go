@@ -16,9 +16,9 @@ package privileges
 import (
 	"strings"
 
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/auth"
@@ -135,7 +135,7 @@ func (p *UserPrivileges) UserPrivilegesTable() [][]types.Datum {
 }
 
 // ShowGrants implements privilege.Manager ShowGrants interface.
-func (p *UserPrivileges) ShowGrants(ctx context.Context, user *auth.UserIdentity) ([]string, error) {
+func (p *UserPrivileges) ShowGrants(ctx sessionctx.Context, user *auth.UserIdentity) ([]string, error) {
 	mysqlPrivilege := p.Handle.Get()
 	return mysqlPrivilege.showGrants(user.Username, user.Hostname), nil
 }
