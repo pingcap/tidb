@@ -65,7 +65,8 @@ func (t *Tracker) SetLabel(label string) {
 	t.label = label
 }
 
-// AttachTo attaches it as a child to another Tracker. If it's
+// AttachTo attaches this memory tracker as a child to another Tracker. If it
+// already has a parent, this function will remove it from the old parent.
 // Its consumed memory usage is used to update all its ancestors.
 func (t *Tracker) AttachTo(parent *Tracker) {
 	if t.parent != nil {
