@@ -18,13 +18,13 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -385,7 +385,7 @@ type columnMeta struct {
 	oldColMap  map[int64]*types.FieldType
 }
 
-func (d *ddl) backfillColumn(ctx context.Context, t table.Table, colMeta *columnMeta, handles []int64, reorgInfo *reorgInfo) error {
+func (d *ddl) backfillColumn(ctx sessionctx.Context, t table.Table, colMeta *columnMeta, handles []int64, reorgInfo *reorgInfo) error {
 	var endIdx int
 	for len(handles) > 0 {
 		if len(handles) >= defaultSmallBatchCnt {

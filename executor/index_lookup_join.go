@@ -19,9 +19,9 @@ import (
 	"unsafe"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
@@ -92,7 +92,7 @@ type lookUpJoinTask struct {
 type outerWorker struct {
 	outerCtx
 
-	ctx      context.Context
+	ctx      sessionctx.Context
 	executor Executor
 
 	executorChk *chunk.Chunk
@@ -109,7 +109,7 @@ type innerWorker struct {
 
 	taskCh      <-chan *lookUpJoinTask
 	outerCtx    outerCtx
-	ctx         context.Context
+	ctx         sessionctx.Context
 	executorChk *chunk.Chunk
 
 	indexRanges   []*ranger.NewRange
