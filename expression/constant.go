@@ -286,7 +286,7 @@ func (c *Constant) EvalJSON(ctx sessionctx.Context, _ types.Row) (json.BinaryJSO
 }
 
 // Equal implements Expression interface.
-func (c *Constant) Equal(b Expression, ctx sessionctx.Context) bool {
+func (c *Constant) Equal(ctx sessionctx.Context, b Expression) bool {
 	y, ok := b.(*Constant)
 	if !ok {
 		return false

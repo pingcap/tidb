@@ -98,7 +98,7 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int) (d ty
 		return d, errors.Trace(errDefaultValue)
 	case *ast.UnaryOperationExpr:
 		// support some expression, like `-1`
-		v, err := EvalAstExpr(x, ctx)
+		v, err := EvalAstExpr(ctx, x)
 		if err != nil {
 			return d, errors.Trace(err)
 		}

@@ -113,7 +113,7 @@ func (ri *readerIterator) nextRow() (types.Row, error) {
 			return nil, nil
 		}
 		if ri.filter != nil {
-			matched, err := expression.EvalBool(ri.filter, row, ri.ctx)
+			matched, err := expression.EvalBool(ri.ctx, ri.filter, row)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -314,7 +314,7 @@ func compareKeys(stmtCtx *stmtctx.StatementContext,
 func (e *MergeJoinExec) doJoin() (err error) {
 	for _, outer := range e.outerRows {
 		if e.outerFilter != nil {
-			matched, err1 := expression.EvalBool(e.outerFilter, outer, e.ctx)
+			matched, err1 := expression.EvalBool(e.ctx, e.outerFilter, outer)
 			if err1 != nil {
 				return errors.Trace(err1)
 			}

@@ -168,7 +168,7 @@ func (e *baseExecutor) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
-func newBaseExecutor(schema *expression.Schema, ctx sessionctx.Context, id string, children ...Executor) baseExecutor {
+func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id string, children ...Executor) baseExecutor {
 	e := baseExecutor{
 		children:     children,
 		ctx:          ctx,
@@ -763,7 +763,7 @@ func (e *SelectionExec) Next(goCtx goctx.Context) (Row, error) {
 		if srcRow == nil {
 			return nil, nil
 		}
-		match, err := expression.EvalBool(e.filters, srcRow, e.ctx)
+		match, err := expression.EvalBool(e.ctx, e.filters, srcRow)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -813,7 +813,7 @@ func (e *SelectionExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 func (e *SelectionExec) unBatchedNextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	for {
 		for ; e.inputRow != e.inputIter.End(); e.inputRow = e.inputIter.Next() {
-			selected, err := expression.EvalBool(e.filters, e.inputRow, e.ctx)
+			selected, err := expression.EvalBool(e.ctx, e.filters, e.inputRow)
 			if err != nil {
 				return errors.Trace(err)
 			}
