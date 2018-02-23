@@ -18,7 +18,7 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
-	pd "github.com/pingcap/pd/pd-client"
+	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"

@@ -17,11 +17,11 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
@@ -85,14 +85,17 @@ func cleanNotify(ch chan struct{}) {
 func (d *ddl) isOwner() bool {
 	isOwner := d.ownerManager.IsOwner()
 	log.Debugf("[ddl] it's the job owner %v, self id %s", isOwner, d.uuid)
+	if isOwner {
+		metrics.DDLCounter.WithLabelValues(metrics.IsDDLOwner).Inc()
+	}
 	return isOwner
 }
 
 // addDDLJob gets a global job ID and puts the DDL job in the DDL queue.
-func (d *ddl) addDDLJob(ctx context.Context, job *model.Job) error {
+func (d *ddl) addDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	startTime := time.Now()
 	job.Version = currentVersion
-	job.Query, _ = ctx.Value(context.QueryString).(string)
+	job.Query, _ = ctx.Value(sessionctx.QueryString).(string)
 	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err error
@@ -384,10 +387,13 @@ func (d *ddl) waitSchemaChanged(ctx goctx.Context, waitTime time.Duration, lates
 	if err != nil {
 		log.Infof("[ddl] update latest schema version %d failed %v", latestSchemaVersion, err)
 		if terror.ErrorEqual(err, goctx.DeadlineExceeded) {
+			// If err is goctx.DeadlineExceeded, it means waitTime(2 * lease) is elapsed. So all the schemas are synced by ticker.
+			// There is no need to use etcd to sync. The function returns directly.
 			return
 		}
 	}
 
+	// OwnerCheckAllVersions returns only when goctx is timeout(2 * lease) or all TiDB schemas are synced.
 	err = d.schemaSyncer.OwnerCheckAllVersions(ctx, latestSchemaVersion)
 	if err != nil {
 		log.Infof("[ddl] wait latest schema version %d to deadline %v", latestSchemaVersion, err)

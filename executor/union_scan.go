@@ -17,9 +17,9 @@ import (
 	"sort"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	goctx "golang.org/x/net/context"
@@ -80,7 +80,7 @@ type DirtyTable struct {
 }
 
 // GetDirtyDB returns the DirtyDB bind to the context.
-func GetDirtyDB(ctx context.Context) *DirtyDB {
+func GetDirtyDB(ctx sessionctx.Context) *DirtyDB {
 	var udb *DirtyDB
 	x := ctx.GetSessionVars().TxnCtx.DirtyDB
 	if x == nil {

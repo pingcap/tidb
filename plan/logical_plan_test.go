@@ -19,13 +19,13 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
@@ -46,7 +46,7 @@ type testPlanSuite struct {
 	*parser.Parser
 
 	is  infoschema.InfoSchema
-	ctx context.Context
+	ctx sessionctx.Context
 }
 
 func (s *testPlanSuite) SetUpSuite(c *C) {
@@ -375,7 +375,7 @@ func (m *mockStore) SupportDeleteRange() bool {
 	return false
 }
 
-func mockContext() context.Context {
+func mockContext() sessionctx.Context {
 	ctx := mock.NewContext()
 	ctx.Store = &mockStore{
 		client: &mockClient{},
@@ -1100,6 +1100,26 @@ func (s *testPlanSuite) TestValidate(c *C) {
 		{
 			sql: "select * from t t1 use index(e)",
 			err: ErrKeyDoesNotExist,
+		},
+		{
+			sql: "select a from t having c2",
+			err: ErrUnknownColumn,
+		},
+		{
+			sql: "select a from t group by c2 + 1 having c2",
+			err: ErrUnknownColumn,
+		},
+		{
+			sql: "select a as b, b from t having b",
+			err: ErrAmbiguous,
+		},
+		{
+			sql: "select a + 1 from t having a",
+			err: ErrUnknownColumn,
+		},
+		{
+			sql: "select a from t having sum(avg(a))",
+			err: ErrInvalidGroupFuncUse,
 		},
 	}
 	for _, tt := range tests {

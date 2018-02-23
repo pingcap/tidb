@@ -18,9 +18,9 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tipb/go-tipb"
@@ -104,7 +104,7 @@ type coalesceFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *coalesceFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
+func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -349,7 +349,7 @@ type greatestFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *greatestFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
+func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -513,7 +513,7 @@ type leastFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *leastFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
+func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -687,7 +687,7 @@ type intervalFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *intervalFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
+func (c *intervalFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -909,7 +909,7 @@ func isTemporalColumn(expr Expression) bool {
 }
 
 // tryToConvertConstantInt tries to convert a constant with other type to a int constant.
-func tryToConvertConstantInt(ctx context.Context, con *Constant) *Constant {
+func tryToConvertConstantInt(ctx sessionctx.Context, con *Constant) *Constant {
 	if con.GetType().EvalType() == types.ETInt {
 		return con
 	}
@@ -930,7 +930,7 @@ func tryToConvertConstantInt(ctx context.Context, con *Constant) *Constant {
 }
 
 // RefineConstantArg changes the constant argument to it's ceiling or flooring result by the given op.
-func RefineConstantArg(ctx context.Context, con *Constant, op opcode.Op) *Constant {
+func RefineConstantArg(ctx sessionctx.Context, con *Constant, op opcode.Op) *Constant {
 	dt, err := con.Eval(nil)
 	if err != nil {
 		return con
@@ -970,7 +970,7 @@ func RefineConstantArg(ctx context.Context, con *Constant, op opcode.Op) *Consta
 
 // refineArgs rewrite the arguments if one of them is int expression and another one is non-int constant.
 // Like a < 1.1 will be changed to a < 2.
-func (c *compareFunctionClass) refineArgs(ctx context.Context, args []Expression) []Expression {
+func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Expression) []Expression {
 	arg0IsInt := args[0].GetType().EvalType() == types.ETInt
 	arg1IsInt := args[1].GetType().EvalType() == types.ETInt
 	arg0, arg0IsCon := args[0].(*Constant)
@@ -989,7 +989,7 @@ func (c *compareFunctionClass) refineArgs(ctx context.Context, args []Expression
 }
 
 // getFunction sets compare built-in function signatures for various types.
-func (c *compareFunctionClass) getFunction(ctx context.Context, rawArgs []Expression) (sig builtinFunc, err error) {
+func (c *compareFunctionClass) getFunction(ctx sessionctx.Context, rawArgs []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(rawArgs); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1000,7 +1000,7 @@ func (c *compareFunctionClass) getFunction(ctx context.Context, rawArgs []Expres
 }
 
 // generateCmpSigs generates compare function signatures.
-func (c *compareFunctionClass) generateCmpSigs(ctx context.Context, args []Expression, tp types.EvalType) (sig builtinFunc, err error) {
+func (c *compareFunctionClass) generateCmpSigs(ctx sessionctx.Context, args []Expression, tp types.EvalType) (sig builtinFunc, err error) {
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, tp, tp)
 	if tp == types.ETJson {
 		// In compare, if we cast string to JSON, we shouldn't parse it.
@@ -1785,7 +1785,7 @@ func resOfNE(val int64, isNull bool, err error) (int64, bool, error) {
 	return val, false, nil
 }
 
-func compareInt(args []Expression, row types.Row, ctx context.Context) (val int64, isNull bool, err error) {
+func compareInt(args []Expression, row types.Row, ctx sessionctx.Context) (val int64, isNull bool, err error) {
 	arg0, isNull0, err := args[0].EvalInt(ctx, row)
 	if isNull0 || err != nil {
 		return 0, isNull0, errors.Trace(err)
@@ -1817,7 +1817,7 @@ func compareInt(args []Expression, row types.Row, ctx context.Context) (val int6
 	return int64(res), false, nil
 }
 
-func compareString(args []Expression, row types.Row, ctx context.Context) (val int64, isNull bool, err error) {
+func compareString(args []Expression, row types.Row, ctx sessionctx.Context) (val int64, isNull bool, err error) {
 	arg0, isNull0, err := args[0].EvalString(ctx, row)
 	if isNull0 || err != nil {
 		return 0, isNull0, errors.Trace(err)
@@ -1829,7 +1829,7 @@ func compareString(args []Expression, row types.Row, ctx context.Context) (val i
 	return int64(types.CompareString(arg0, arg1)), false, nil
 }
 
-func compareReal(args []Expression, row types.Row, ctx context.Context) (val int64, isNull bool, err error) {
+func compareReal(args []Expression, row types.Row, ctx sessionctx.Context) (val int64, isNull bool, err error) {
 	arg0, isNull0, err := args[0].EvalReal(ctx, row)
 	if isNull0 || err != nil {
 		return 0, isNull0, errors.Trace(err)
@@ -1841,7 +1841,7 @@ func compareReal(args []Expression, row types.Row, ctx context.Context) (val int
 	return int64(types.CompareFloat64(arg0, arg1)), false, nil
 }
 
-func compareDecimal(args []Expression, row types.Row, ctx context.Context) (val int64, isNull bool, err error) {
+func compareDecimal(args []Expression, row types.Row, ctx sessionctx.Context) (val int64, isNull bool, err error) {
 	arg0, isNull0, err := args[0].EvalDecimal(ctx, row)
 	if isNull0 || err != nil {
 		return 0, isNull0, errors.Trace(err)
@@ -1856,7 +1856,7 @@ func compareDecimal(args []Expression, row types.Row, ctx context.Context) (val 
 	return int64(arg0.Compare(arg1)), false, nil
 }
 
-func compareTime(args []Expression, row types.Row, ctx context.Context) (int64, bool, error) {
+func compareTime(args []Expression, row types.Row, ctx sessionctx.Context) (int64, bool, error) {
 	arg0, isNull0, err := args[0].EvalTime(ctx, row)
 	if isNull0 || err != nil {
 		return 0, isNull0, errors.Trace(err)
@@ -1868,7 +1868,7 @@ func compareTime(args []Expression, row types.Row, ctx context.Context) (int64, 
 	return int64(arg0.Compare(arg1)), false, nil
 }
 
-func compareDuration(args []Expression, row types.Row, ctx context.Context) (int64, bool, error) {
+func compareDuration(args []Expression, row types.Row, ctx sessionctx.Context) (int64, bool, error) {
 	arg0, isNull0, err := args[0].EvalDuration(ctx, row)
 	if isNull0 || err != nil {
 		return 0, isNull0, errors.Trace(err)
@@ -1880,7 +1880,7 @@ func compareDuration(args []Expression, row types.Row, ctx context.Context) (int
 	return int64(arg0.Compare(arg1)), false, nil
 }
 
-func compareJSON(args []Expression, row types.Row, ctx context.Context) (int64, bool, error) {
+func compareJSON(args []Expression, row types.Row, ctx sessionctx.Context) (int64, bool, error) {
 	arg0, isNull0, err := args[0].EvalJSON(ctx, row)
 	if isNull0 || err != nil {
 		return 0, isNull0, errors.Trace(err)

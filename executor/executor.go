@@ -21,13 +21,13 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
@@ -96,7 +96,7 @@ const (
 type Row = types.DatumRow
 
 type baseExecutor struct {
-	ctx             context.Context
+	ctx             sessionctx.Context
 	id              string
 	schema          *expression.Schema
 	supportChk      bool
@@ -166,7 +166,7 @@ func (e *baseExecutor) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
-func newBaseExecutor(schema *expression.Schema, ctx context.Context, id string, children ...Executor) baseExecutor {
+func newBaseExecutor(schema *expression.Schema, ctx sessionctx.Context, id string, children ...Executor) baseExecutor {
 	e := baseExecutor{
 		children:     children,
 		ctx:          ctx,
@@ -577,7 +577,7 @@ func init() {
 	// While doing optimization in the plan package, we need to execute uncorrelated subquery,
 	// but the plan package cannot import the executor package because of the dependency cycle.
 	// So we assign a function implemented in the executor package to the plan package to avoid the dependency cycle.
-	plan.EvalSubquery = func(p plan.PhysicalPlan, is infoschema.InfoSchema, ctx context.Context) (rows [][]types.Datum, err error) {
+	plan.EvalSubquery = func(p plan.PhysicalPlan, is infoschema.InfoSchema, ctx sessionctx.Context) (rows [][]types.Datum, err error) {
 		err = ctx.ActivePendingTxn()
 		if err != nil {
 			return rows, errors.Trace(err)
@@ -1311,7 +1311,7 @@ func (e *UnionExec) Next(goCtx goctx.Context) (Row, error) {
 func (e *UnionExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if !e.initialized {
-		e.initialize(nil, true)
+		e.initialize(goCtx, true)
 		e.initialized = true
 	}
 	result, ok := <-e.resultPool

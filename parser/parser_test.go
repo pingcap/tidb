@@ -430,6 +430,8 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"select 1 where exists (select 2)", false},
 		{"select 1 from dual where not exists (select 2)", true},
 
+		{"select 1 order by 1", true},
+
 		// for https://github.com/pingcap/tidb/issues/320
 		{`(select 1);`, true},
 
@@ -1548,6 +1550,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"CREATE INDEX idx ON t (a) USING HASH", true},
 		{"CREATE INDEX idx ON t (a) COMMENT 'foo'", true},
 		{"CREATE INDEX idx ON t (a) USING HASH COMMENT 'foo'", true},
+		{"CREATE INDEX idx ON t (a) LOCK=NONE", true},
 		{"CREATE INDEX idx USING BTREE ON t (a) USING HASH COMMENT 'foo'", true},
 		{"CREATE INDEX idx USING BTREE ON t (a)", true},
 

@@ -50,11 +50,11 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/opentracing/opentracing-go"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/auth"
@@ -531,7 +531,7 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 	case mysql.ComQuit:
 		label = "Quit"
 	case mysql.ComQuery:
-		if cc.ctx.Value(context.LastExecuteDDL) != nil {
+		if cc.ctx.Value(sessionctx.LastExecuteDDL) != nil {
 			// Don't take DDL execute time into account.
 			// It's already recorded by other metrics in ddl package.
 			return

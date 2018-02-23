@@ -60,7 +60,7 @@ func NewAllocator(capacity int) *SimpleAllocator {
 // Alloc implements Allocator.AllocBytes interface.
 func (s *SimpleAllocator) Alloc(capacity int) []byte {
 	if s.off+capacity < cap(s.arena) {
-		slice := s.arena[s.off:s.off : s.off+capacity]
+		slice := s.arena[s.off : s.off : s.off+capacity]
 		s.off += capacity
 		return slice
 	}
