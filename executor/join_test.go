@@ -556,7 +556,7 @@ func (s *testSuite) TestSubquery(c *C) {
 	result.Sort().Check(testkit.Rows("1", "<nil>", "<nil>"))
 	rs, err := tk.Exec("select (select t.id from t where t.id = t.v and t.v != s.id) from t s")
 	c.Check(err, IsNil)
-	_, err = tidb.GetRows4Test(tk.Se, goctx.Background(), rs)
+	_, err = tidb.GetRows4Test(goctx.Background(), tk.Se, rs)
 	c.Check(err, NotNil)
 	c.Check(rs.Close(), IsNil)
 

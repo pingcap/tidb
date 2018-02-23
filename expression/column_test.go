@@ -14,8 +14,6 @@
 package expression
 
 import (
-	"context"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -27,12 +25,11 @@ func (s *testEvaluatorSuite) TestColumn(c *C) {
 	defer testleak.AfterTest(c)()
 
 	col := &Column{RetType: types.NewFieldType(mysql.TypeLonglong), FromID: 0, Position: 0}
-	baseCtx := context.TODO()
 
-	c.Assert(col.Equal(baseCtx, col), IsTrue)
-	c.Assert(col.Equal(baseCtx, &Column{FromID: 1}), IsFalse)
+	c.Assert(col.Equal(nil, col), IsTrue)
+	c.Assert(col.Equal(nil, &Column{FromID: 1}), IsFalse)
 	c.Assert(col.IsCorrelated(), IsFalse)
-	c.Assert(col.Equal(baseCtx, col.Decorrelate(nil)), IsTrue)
+	c.Assert(col.Equal(nil, col.Decorrelate(nil)), IsTrue)
 
 	marshal, err := col.MarshalJSON()
 	c.Assert(err, IsNil)
@@ -42,11 +39,11 @@ func (s *testEvaluatorSuite) TestColumn(c *C) {
 	corCol := &CorrelatedColumn{Column: *col, Data: &intDatum}
 	invalidCorCol := &CorrelatedColumn{Column: Column{FromID: 1}}
 	schema := NewSchema(&Column{FromID: 0, Position: 0})
-	c.Assert(corCol.Equal(baseCtx, corCol), IsTrue)
-	c.Assert(corCol.Equal(baseCtx, invalidCorCol), IsFalse)
+	c.Assert(corCol.Equal(nil, corCol), IsTrue)
+	c.Assert(corCol.Equal(nil, invalidCorCol), IsFalse)
 	c.Assert(corCol.IsCorrelated(), IsTrue)
-	c.Assert(corCol.Decorrelate(schema).Equal(baseCtx, col), IsTrue)
-	c.Assert(invalidCorCol.Decorrelate(schema).Equal(baseCtx, invalidCorCol), IsTrue)
+	c.Assert(corCol.Decorrelate(schema).Equal(nil, col), IsTrue)
+	c.Assert(invalidCorCol.Decorrelate(schema).Equal(nil, invalidCorCol), IsTrue)
 
 	intCorCol := &CorrelatedColumn{Column: Column{RetType: types.NewFieldType(mysql.TypeLonglong)},
 		Data: &intDatum}
@@ -120,9 +117,8 @@ func (s *testEvaluatorSuite) TestColumn2Expr(c *C) {
 	}
 
 	exprs := Column2Exprs(cols)
-	baseCtx := context.TODO()
 	for i := range exprs {
-		c.Assert(exprs[i].Equal(baseCtx, cols[i]), IsTrue)
+		c.Assert(exprs[i].Equal(nil, cols[i]), IsTrue)
 	}
 }
 
@@ -133,8 +129,7 @@ func (s *testEvaluatorSuite) TestColInfo2Col(c *C) {
 	cols := []*Column{col0, col1}
 	colInfo := &model.ColumnInfo{Name: model.NewCIStr("col1")}
 	res := ColInfo2Col(cols, colInfo)
-	baseCtx := context.TODO()
-	c.Assert(res.Equal(baseCtx, col1), IsTrue)
+	c.Assert(res.Equal(nil, col1), IsTrue)
 
 	colInfo.Name = model.NewCIStr("col2")
 	res = ColInfo2Col(cols, colInfo)
@@ -149,12 +144,11 @@ func (s *testEvaluatorSuite) TestIndexInfo2Cols(c *C) {
 	indexCol0, indexCol1 := &model.IndexColumn{Name: model.NewCIStr("col0")}, &model.IndexColumn{Name: model.NewCIStr("col1")}
 	indexInfo := &model.IndexInfo{Columns: []*model.IndexColumn{indexCol0, indexCol1}}
 
-	baseCtx := context.TODO()
 	cols := []*Column{col0}
 	resCols, lengths := IndexInfo2Cols(cols, indexInfo)
 	c.Assert(len(resCols), Equals, 1)
 	c.Assert(len(lengths), Equals, 1)
-	c.Assert(resCols[0].Equal(baseCtx, col0), IsTrue)
+	c.Assert(resCols[0].Equal(nil, col0), IsTrue)
 
 	cols = []*Column{col1}
 	resCols, lengths = IndexInfo2Cols(cols, indexInfo)
@@ -165,6 +159,6 @@ func (s *testEvaluatorSuite) TestIndexInfo2Cols(c *C) {
 	resCols, lengths = IndexInfo2Cols(cols, indexInfo)
 	c.Assert(len(resCols), Equals, 2)
 	c.Assert(len(lengths), Equals, 2)
-	c.Assert(resCols[0].Equal(baseCtx, col0), IsTrue)
-	c.Assert(resCols[1].Equal(baseCtx, col1), IsTrue)
+	c.Assert(resCols[0].Equal(nil, col0), IsTrue)
+	c.Assert(resCols[1].Equal(nil, col1), IsTrue)
 }

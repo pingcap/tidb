@@ -726,7 +726,7 @@ func (s *session) executeStatement(goCtx goctx.Context, connID uint64, stmtNode 
 	}
 	logStmt(stmtNode, s.sessionVars)
 	startTime := time.Now()
-	recordSet, err := runStmt(s, goCtx, stmt)
+	recordSet, err := runStmt(goCtx, s, stmt)
 	if err != nil {
 		if !kv.ErrKeyExists.Equal(err) {
 			log.Warnf("[%d] session error:\n%v\n%s", connID, errors.ErrorStack(err), s)
@@ -924,7 +924,7 @@ func (s *session) ExecutePreparedStmt(goCtx goctx.Context, stmtID uint32, args .
 		return nil, errors.Trace(err)
 	}
 	logQuery(st.OriginText(), s.sessionVars)
-	r, err := runStmt(s, goCtx, st)
+	r, err := runStmt(goCtx, s, st)
 	return r, errors.Trace(err)
 }
 

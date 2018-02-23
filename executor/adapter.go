@@ -249,12 +249,12 @@ func (a *ExecStmt) Exec(goCtx goctx.Context) (ast.RecordSet, error) {
 	}
 	// If the executor doesn't return any result to the client, we execute it without delay.
 	if e.Schema().Len() == 0 {
-		return a.handleNoDelayExecutor(ctx, goCtx, e, pi)
+		return a.handleNoDelayExecutor(goCtx, ctx, e, pi)
 	} else if proj, ok := e.(*ProjectionExec); ok && proj.calculateNoDelay {
 		// Currently this is only for the "DO" statement. Take "DO 1, @a=2;" as an example:
 		// the Projection has two expressions and two columns in the schema, but we should
 		// not return the result of the two expressions.
-		return a.handleNoDelayExecutor(ctx, goCtx, e, pi)
+		return a.handleNoDelayExecutor(goCtx, ctx, e, pi)
 	}
 
 	return &recordSet{
@@ -265,7 +265,7 @@ func (a *ExecStmt) Exec(goCtx goctx.Context) (ast.RecordSet, error) {
 	}, nil
 }
 
-func (a *ExecStmt) handleNoDelayExecutor(ctx sessionctx.Context, goCtx goctx.Context, e Executor, pi processinfoSetter) (ast.RecordSet, error) {
+func (a *ExecStmt) handleNoDelayExecutor(goCtx goctx.Context, ctx sessionctx.Context, e Executor, pi processinfoSetter) (ast.RecordSet, error) {
 	// Check if "tidb_snapshot" is set for the write executors.
 	// In history read mode, we can not do write operations.
 	switch e.(type) {
