@@ -31,11 +31,11 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -258,7 +258,7 @@ func (t *httpHandlerTool) schema() (infoschema.InfoSchema, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return domain.GetDomain(session.(context.Context)).InfoSchema(), nil
+	return domain.GetDomain(session.(sessionctx.Context)).InfoSchema(), nil
 }
 
 func (t *httpHandlerTool) handleMvccGetByHex(params map[string]string) (interface{}, error) {

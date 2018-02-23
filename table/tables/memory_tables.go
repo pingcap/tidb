@@ -18,10 +18,10 @@ import (
 
 	"github.com/google/btree"
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -106,7 +106,7 @@ func newMemoryTable(tableID int64, tableName string, cols []*table.Column, alloc
 }
 
 // Seek seeks the handle
-func (t *MemoryTable) Seek(ctx context.Context, handle int64) (int64, bool, error) {
+func (t *MemoryTable) Seek(ctx sessionctx.Context, handle int64) (int64, bool, error) {
 	var found bool
 	var result int64
 	t.mu.RLock()
@@ -175,7 +175,7 @@ func (t *MemoryTable) Truncate() {
 }
 
 // UpdateRecord implements table.Table UpdateRecord interface.
-func (t *MemoryTable) UpdateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
+func (t *MemoryTable) UpdateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	item := t.tree.Get(itemKey(h))
@@ -188,7 +188,7 @@ func (t *MemoryTable) UpdateRecord(ctx context.Context, h int64, oldData, newDat
 }
 
 // AddRecord implements table.Table AddRecord interface.
-func (t *MemoryTable) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
+func (t *MemoryTable) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
 	if t.pkHandleCol != nil {
 		recordID, err = r[t.pkHandleCol.Offset].ToInt64(ctx.GetSessionVars().StmtCtx)
 		if err != nil {
@@ -214,7 +214,7 @@ func (t *MemoryTable) AddRecord(ctx context.Context, r []types.Datum, skipHandle
 }
 
 // RowWithCols implements table.Table RowWithCols interface.
-func (t *MemoryTable) RowWithCols(ctx context.Context, h int64, cols []*table.Column) ([]types.Datum, error) {
+func (t *MemoryTable) RowWithCols(ctx sessionctx.Context, h int64, cols []*table.Column) ([]types.Datum, error) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	item := t.tree.Get(itemKey(h))
@@ -233,7 +233,7 @@ func (t *MemoryTable) RowWithCols(ctx context.Context, h int64, cols []*table.Co
 }
 
 // Row implements table.Table Row interface.
-func (t *MemoryTable) Row(ctx context.Context, h int64) ([]types.Datum, error) {
+func (t *MemoryTable) Row(ctx sessionctx.Context, h int64) ([]types.Datum, error) {
 	r, err := t.RowWithCols(nil, h, t.Cols())
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -242,7 +242,7 @@ func (t *MemoryTable) Row(ctx context.Context, h int64) ([]types.Datum, error) {
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.
-func (t *MemoryTable) RemoveRecord(ctx context.Context, h int64, r []types.Datum) error {
+func (t *MemoryTable) RemoveRecord(ctx sessionctx.Context, h int64, r []types.Datum) error {
 	t.mu.Lock()
 	t.tree.Delete(itemKey(h))
 	t.mu.Unlock()
@@ -250,22 +250,22 @@ func (t *MemoryTable) RemoveRecord(ctx context.Context, h int64, r []types.Datum
 }
 
 // AllocAutoID implements table.Table AllocAutoID interface.
-func (t *MemoryTable) AllocAutoID(ctx context.Context) (int64, error) {
+func (t *MemoryTable) AllocAutoID(ctx sessionctx.Context) (int64, error) {
 	return t.alloc.Alloc(t.ID)
 }
 
 // Allocator implements table.Table Allocator interface.
-func (t *MemoryTable) Allocator(ctx context.Context) autoid.Allocator {
+func (t *MemoryTable) Allocator(ctx sessionctx.Context) autoid.Allocator {
 	return t.alloc
 }
 
 // RebaseAutoID implements table.Table RebaseAutoID interface.
-func (t *MemoryTable) RebaseAutoID(ctx context.Context, newBase int64, isSetStep bool) error {
+func (t *MemoryTable) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool) error {
 	return t.alloc.Rebase(t.ID, newBase, isSetStep)
 }
 
 // IterRecords implements table.Table IterRecords interface.
-func (t *MemoryTable) IterRecords(ctx context.Context, startKey kv.Key, cols []*table.Column,
+func (t *MemoryTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols []*table.Column,
 	fn table.RecordIterFunc) error {
 	return nil
 }

@@ -15,9 +15,9 @@ package distsql
 
 import (
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -30,7 +30,7 @@ type streamResult struct {
 	resp       kv.Response
 	rowLen     int
 	fieldTypes []*types.FieldType
-	ctx        context.Context
+	ctx        sessionctx.Context
 
 	// NOTE: curr == nil means stream finish, while len(curr.RowsData) == 0 doesn't.
 	curr         *tipb.Chunk
