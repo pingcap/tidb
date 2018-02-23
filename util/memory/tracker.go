@@ -73,7 +73,7 @@ func (t *Tracker) AttachTo(parent *Tracker) {
 	}
 	parent.children = append(parent.children, t)
 	t.parent = parent
-	t.parent.Consume(t.bytesConsumed)
+	t.parent.Consume(t.BytesConsumed())
 }
 
 // ReplaceChild removes the old child specified in "oldChild" and add a new
@@ -84,11 +84,17 @@ func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
 		if child != oldChild {
 			continue
 		}
-		t.Consume(-oldChild.bytesConsumed)
-		t.children[i] = newChild
+
+		newConsumed := 0
 		if newChild != nil {
-			t.Consume(newChild.bytesConsumed)
+			newConsumed = newChild.BytesConsumed()
+			newChild.parent = t
 		}
+		newConsumed -= oldChild.BytesConsumed()
+		t.Consume(newConsumed)
+
+		oldChild.parent = nil
+		t.children[i] = newChild
 		return
 	}
 }
@@ -112,7 +118,9 @@ func (t *Tracker) Consume(bytes int64) {
 
 // BytesConsumed returns the consumed memory usage value in bytes.
 func (t *Tracker) BytesConsumed() int64 {
+	t.mutex.Lock()
 	return t.bytesConsumed
+	t.mutex.Unlock()
 }
 
 // String returns the string representation of this Tracker tree.
@@ -127,7 +135,7 @@ func (t *Tracker) toString(indent string, buffer *bytes.Buffer) {
 	if t.bytesLimit > 0 {
 		buffer.WriteString(fmt.Sprintf("%s  \"quota\": %s\n", indent, t.bytesToString(t.bytesLimit)))
 	}
-	buffer.WriteString(fmt.Sprintf("%s  \"consumed\": %s\n", indent, t.bytesToString(t.bytesConsumed)))
+	buffer.WriteString(fmt.Sprintf("%s  \"consumed\": %s\n", indent, t.bytesToString(t.BytesConsumed())))
 	for i := range t.children {
 		if t.children[i] != nil {
 			t.children[i].toString(indent+"  ", buffer)
