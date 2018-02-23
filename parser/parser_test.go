@@ -225,7 +225,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 
 	// for issue #4006
 	src = `insert into tb(v) (select v from tb);`
-	st, err = parser.ParseOneStmt(src, "", "")
+	_, err = parser.ParseOneStmt(src, "", "")
 	c.Assert(err, IsNil)
 }
 

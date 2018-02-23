@@ -104,7 +104,7 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
-			err = s.checkAddWriteOnly(d, hookCtx, deleteOnlyTable, writeOnlyTable, h)
+			err = s.checkAddWriteOnly(hookCtx, d, deleteOnlyTable, writeOnlyTable, h)
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
@@ -114,7 +114,7 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
-			err = s.checkAddPublic(d, hookCtx, writeOnlyTable, publicTable)
+			err = s.checkAddPublic(hookCtx, d, writeOnlyTable, publicTable)
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
@@ -212,7 +212,7 @@ func (s *testColumnChangeSuite) testColumnDrop(c *C, ctx sessionctx.Context, d *
 	testDropColumn(c, ctx, d, s.dbInfo, tbl.Meta(), dropCol.Name.L, false)
 }
 
-func (s *testColumnChangeSuite) checkAddWriteOnly(d *ddl, ctx sessionctx.Context, deleteOnlyTable, writeOnlyTable table.Table, h int64) error {
+func (s *testColumnChangeSuite) checkAddWriteOnly(ctx sessionctx.Context, d *ddl, deleteOnlyTable, writeOnlyTable table.Table, h int64) error {
 	// WriteOnlyTable: insert t values (2, 3)
 	err := ctx.NewTxn()
 	if err != nil {
@@ -286,7 +286,7 @@ func touchedSlice(t table.Table) []bool {
 	return touched
 }
 
-func (s *testColumnChangeSuite) checkAddPublic(d *ddl, ctx sessionctx.Context, writeOnlyTable, publicTable table.Table) error {
+func (s *testColumnChangeSuite) checkAddPublic(ctx sessionctx.Context, d *ddl, writeOnlyTable, publicTable table.Table) error {
 	// publicTable Insert t values (4, 4, 4)
 	err := ctx.NewTxn()
 	if err != nil {

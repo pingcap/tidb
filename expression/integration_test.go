@@ -1819,7 +1819,7 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery("select cast('-34 100:00:00' as time);")
 	result.Check(testkit.Rows("-838:59:59"))
 
-	// fix issue #4324. cast decimal/int/string to time compability.
+	// fix issue #4324. cast decimal/int/string to time compatibility.
 	invalidTimes := []string{
 		"10009010",
 		"239010",
