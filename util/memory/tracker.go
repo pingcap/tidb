@@ -86,7 +86,7 @@ func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
 			continue
 		}
 
-		newConsumed := 0
+		newConsumed := int64(0)
 		if newChild != nil {
 			newConsumed = newChild.BytesConsumed()
 			newChild.parent = t
@@ -120,8 +120,8 @@ func (t *Tracker) Consume(bytes int64) {
 // BytesConsumed returns the consumed memory usage value in bytes.
 func (t *Tracker) BytesConsumed() int64 {
 	t.mutex.Lock()
+	defer t.mutex.Unlock()
 	return t.bytesConsumed
-	t.mutex.Unlock()
 }
 
 // String returns the string representation of this Tracker tree.

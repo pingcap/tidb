@@ -60,3 +60,10 @@ func BenchmarkConcurrentUpdate(b *testing.B) {
 		m.run()
 	}
 }
+
+func BenchmarkConsume(b *testing.B) {
+	tracker := NewTracker("root", -1)
+	for i := 0; i < b.N; i++ {
+		tracker.Consume(256 << 20)
+	}
+}
