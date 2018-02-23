@@ -14,12 +14,15 @@
 package memory
 
 import (
+	"sync"
+
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	log "github.com/sirupsen/logrus"
 )
 
 // ActionOnExceed is the action taken when memory usage exceeds memory quota.
+// NOTE: All the implementors should be thread-safe.
 type ActionOnExceed interface {
 	// Action will be called when memory usage exceeds memory quota by the
 	// corresponding Tracker.
@@ -28,25 +31,34 @@ type ActionOnExceed interface {
 
 // LogOnExceed logs a warning only once when memory usage exceeds memory quota.
 type LogOnExceed struct {
-	logged bool
+	mutex *sync.Mutex // For synchronization.
+	acted bool
 }
 
 // Action logs a warning only once when memory usage exceeds memory quota.
 func (a *LogOnExceed) Action(t *Tracker) {
-	if a.logged {
-		return
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+	if !a.acted {
+		a.acted = true
+		log.Warnf(errMemExceedThreshold.GenByArgs(t.label, t.BytesConsumed(), t.bytesLimit, t.String()).Error())
 	}
-	a.logged = true
-	log.Warnf(errMemExceedThreshold.GenByArgs(t.label, t.bytesConsumed, t.bytesLimit, t.String()).Error())
 }
 
 // PanicOnExceed panics when when memory usage exceeds memory quota.
 type PanicOnExceed struct {
+	mutex *sync.Mutex // For synchronization.
+	acted bool
 }
 
 // Action panics when when memory usage exceeds memory quota.
 func (a *PanicOnExceed) Action(t *Tracker) {
-	panic(PanicMemoryExceed + t.String())
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+	if !a.acted {
+		a.acted = true
+		panic(PanicMemoryExceed + t.String())
+	}
 }
 
 var (
