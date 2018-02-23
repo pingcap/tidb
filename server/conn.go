@@ -918,7 +918,7 @@ func (cc *clientConn) writeResultset(goCtx goctx.Context, rs ResultSet, binary b
 			panic(r)
 		}
 		// TODO(jianzhang.zj: add metrics here)
-		runErr = errors.New(fmt.Sprintf("%v", r))
+		runErr = errors.Errorf("%v", r)
 		buf := make([]byte, 4096)
 		stackSize := runtime.Stack(buf, false)
 		buf = buf[:stackSize]

@@ -55,6 +55,7 @@ func NewTracker(label string, bytesLimit int64) *Tracker {
 	}
 }
 
+// SetActionOnExceed sets the action when memory usage is out of memory quota.
 func (t *Tracker) SetActionOnExceed(a ActionOnExceed) {
 	t.actionOnExceed = a
 }
@@ -95,7 +96,7 @@ func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
 // Consume is used to consume a memory usage. "bytes" can be a negative value,
 // which means this is a memory release operation.
 func (t *Tracker) Consume(bytes int64) {
-	var rootExceed *Tracker = nil
+	var rootExceed *Tracker
 	for tracker := t; tracker != nil; tracker = tracker.parent {
 		tracker.mutex.Lock()
 		tracker.bytesConsumed += bytes

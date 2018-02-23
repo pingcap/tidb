@@ -28,7 +28,7 @@ type List struct {
 	freelist     []*Chunk
 
 	memTracker   *memory.Tracker // track memory usage.
-	lastConsumed bool               // whether the memory usage of last Chunk in "chunks" has been consumed.
+	lastConsumed bool            // whether the memory usage of last Chunk in "chunks" has been consumed.
 }
 
 // RowPtr is used to get a row from a list.

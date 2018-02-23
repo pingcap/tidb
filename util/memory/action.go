@@ -55,5 +55,7 @@ var (
 
 const (
 	codeMemExceedThreshold terror.ErrCode = 8001
-	PanicMemoryExceed      string         = "Out Of Memory Quota!"
+
+	// PanicMemoryExceed represents the panic message when out of memory quota.
+	PanicMemoryExceed string = "Out Of Memory Quota!"
 )
