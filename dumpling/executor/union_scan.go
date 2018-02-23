@@ -271,7 +271,7 @@ func (us *UnionScanExec) buildAndSortAddedRows() error {
 				newData = append(newData, data[col.Offset])
 			}
 		}
-		matched, err := expression.EvalBool(us.conditions, newData, us.ctx)
+		matched, err := expression.EvalBool(us.ctx, us.conditions, newData)
 		if err != nil {
 			return errors.Trace(err)
 		}

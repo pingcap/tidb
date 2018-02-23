@@ -137,7 +137,7 @@ func (sf *ScalarFunction) Clone() Expression {
 		case types.ETJson:
 			offset = sf.Function.(*builtinValuesJSONSig).offset
 		}
-		return NewValuesFunc(offset, sf.GetType(), sf.GetCtx())
+		return NewValuesFunc(sf.GetCtx(), offset, sf.GetType())
 	}
 	newFunc := NewFunctionInternal(sf.GetCtx(), sf.FuncName.L, sf.RetType, newArgs...)
 	return newFunc
@@ -149,7 +149,7 @@ func (sf *ScalarFunction) GetType() *types.FieldType {
 }
 
 // Equal implements Expression interface.
-func (sf *ScalarFunction) Equal(e Expression, ctx sessionctx.Context) bool {
+func (sf *ScalarFunction) Equal(ctx sessionctx.Context, e Expression) bool {
 	fun, ok := e.(*ScalarFunction)
 	if !ok {
 		return false

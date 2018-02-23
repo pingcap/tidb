@@ -358,7 +358,7 @@ func (s *testSuite) TestShowVisibility(c *C) {
 }
 
 // mockSessionManager is a mocked session manager that wraps one session
-// it returns only this session's current proccess info as processlist for test.
+// it returns only this session's current process info as processlist for test.
 type mockSessionManager struct {
 	tidb.Session
 }

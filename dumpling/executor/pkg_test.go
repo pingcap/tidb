@@ -55,7 +55,7 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 	goCtx := goctx.Background()
 	ctx := mock.NewContext()
 	outerExec := &MockExec{
-		baseExecutor: newBaseExecutor(nil, ctx, ""),
+		baseExecutor: newBaseExecutor(ctx, nil, ""),
 		Rows: []Row{
 			types.MakeDatums(1),
 			types.MakeDatums(2),
@@ -81,7 +81,7 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 	generator := newJoinResultGenerator(ctx, plan.InnerJoin, false,
 		make([]types.Datum, innerExec.Schema().Len()), []expression.Expression{otherFilter}, nil, nil)
 	join := &NestedLoopApplyExec{
-		baseExecutor:    newBaseExecutor(nil, ctx, ""),
+		baseExecutor:    newBaseExecutor(ctx, nil, ""),
 		outerExec:       outerExec,
 		innerExec:       innerExec,
 		outerFilter:     []expression.Expression{outerFilter},
