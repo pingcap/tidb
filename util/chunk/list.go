@@ -75,10 +75,10 @@ func (l *List) AppendRow(row Row) RowPtr {
 	if chkIdx == -1 || l.chunks[chkIdx].NumRows() >= l.maxChunkSize || chkIdx == l.consumedIdx {
 		newChk := l.allocChunk()
 		l.chunks = append(l.chunks, newChk)
-		if chkIdx != -1 && chkIdx != l.consumedIdx {
+		if chkIdx != l.consumedIdx {
 			l.memTracker.Consume(l.chunks[chkIdx].MemoryUsage())
+			l.consumedIdx = chkIdx
 		}
-		l.consumedIdx = chkIdx
 		chkIdx++
 	}
 	chk := l.chunks[chkIdx]
@@ -95,7 +95,7 @@ func (l *List) Add(chk *Chunk) {
 	if chk.NumRows() == 0 {
 		panic("chunk appended to List should have at least 1 row")
 	}
-	if chkIdx := len(l.chunks) - 1; chkIdx > 0 && l.consumedIdx != chkIdx {
+	if chkIdx := len(l.chunks) - 1; l.consumedIdx != chkIdx {
 		l.memTracker.Consume(l.chunks[chkIdx].MemoryUsage())
 		l.consumedIdx = chkIdx
 	}
@@ -126,7 +126,7 @@ func (l *List) GetRow(ptr RowPtr) Row {
 
 // Reset resets the List.
 func (l *List) Reset() {
-	if lastIdx := len(l.chunks) - 1; lastIdx >= 0 && lastIdx != l.consumedIdx {
+	if lastIdx := len(l.chunks) - 1; lastIdx != l.consumedIdx {
 		l.memTracker.Consume(l.chunks[lastIdx].MemoryUsage())
 	}
 	l.freelist = append(l.freelist, l.chunks...)
