@@ -20,13 +20,12 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	log "github.com/sirupsen/logrus"
@@ -46,7 +45,7 @@ var (
 // Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
 // ignoreErr indicate that update statement has the `IGNORE` modifier, in this situation, update statement will not update
 // the keys which cause duplicate conflicts and ignore the error.
-func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, modified []bool, t table.Table, onDup, ignoreErr bool) (bool, error) {
+func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datum, modified []bool, t table.Table, onDup, ignoreErr bool) (bool, error) {
 	var sc = ctx.GetSessionVars().StmtCtx
 	var changed, handleChanged = false, false
 	// onUpdateSpecified is for "UPDATE SET ts_field = old_value", the
@@ -149,10 +148,9 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 		return false, errors.Trace(err)
 	}
 
-	dirtyDB := getDirtyDB(ctx)
 	tid := t.Meta().ID
-	dirtyDB.deleteRow(tid, h)
-	dirtyDB.addRow(tid, h, newData)
+	ctx.StmtAddDirtyTableOP(DirtyTableDeleteRow, tid, h, nil)
+	ctx.StmtAddDirtyTableOP(DirtyTableAddRow, tid, h, newData)
 
 	if onDup {
 		sc.AddAffectedRows(2)
@@ -280,7 +278,7 @@ func (e *DeleteExec) deleteSingleTable(goCtx goctx.Context) error {
 	batchSize := e.ctx.GetSessionVars().DMLBatchSize
 	for {
 		if batchDelete && rowCount >= batchSize {
-			terror.Log(e.ctx.StmtCommit())
+			e.ctx.StmtCommit()
 			if err := e.ctx.NewTxn(); err != nil {
 				// We should return a special error for batch insert.
 				return ErrBatchInsertFail.Gen("BatchDelete failed with error: %v", err)
@@ -348,7 +346,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(goCtx goctx.Context) error {
 
 		for chunkRow := iter.Begin(); chunkRow != iter.End(); chunkRow = iter.Next() {
 			if batchDelete && rowCount >= batchDMLSize {
-				terror.Log(e.ctx.StmtCommit())
+				e.ctx.StmtCommit()
 				if err = e.ctx.NewTxn(); err != nil {
 					// We should return a special error for batch insert.
 					return ErrBatchInsertFail.Gen("BatchDelete failed with error: %v", err)
@@ -448,12 +446,21 @@ func (e *DeleteExec) removeRowsInTblRowMap(tblRowMap tableRowMapType) error {
 	return nil
 }
 
-func (e *DeleteExec) removeRow(ctx context.Context, t table.Table, h int64, data []types.Datum) error {
+const (
+	// DirtyTableAddRow is the constant for dirty table operation type.
+	DirtyTableAddRow = iota
+	// DirtyTableDeleteRow is the constant for dirty table operation type.
+	DirtyTableDeleteRow
+	// DirtyTableTruncate is the constant for dirty table operation type.
+	DirtyTableTruncate
+)
+
+func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h int64, data []types.Datum) error {
 	err := t.RemoveRecord(ctx, h, data)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	getDirtyDB(ctx).deleteRow(t.Meta().ID, h)
+	ctx.StmtAddDirtyTableOP(DirtyTableDeleteRow, t.Meta().ID, h, nil)
 	ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.Meta().ID, -1, 1)
 	return nil
@@ -470,8 +477,8 @@ func (e *DeleteExec) Open(goCtx goctx.Context) error {
 }
 
 // NewLoadDataInfo returns a LoadDataInfo structure, and it's only used for tests now.
-func NewLoadDataInfo(row []types.Datum, ctx context.Context, tbl table.Table, cols []*table.Column) *LoadDataInfo {
-	insertVal := &InsertValues{baseExecutor: newBaseExecutor(nil, ctx), Table: tbl}
+func NewLoadDataInfo(row []types.Datum, ctx sessionctx.Context, tbl table.Table, cols []*table.Column) *LoadDataInfo {
+	insertVal := &InsertValues{baseExecutor: newBaseExecutor(nil, ctx, "InsertValues"), Table: tbl}
 	return &LoadDataInfo{
 		row:       row,
 		insertVal: insertVal,
@@ -490,7 +497,7 @@ type LoadDataInfo struct {
 	Table      table.Table
 	FieldsInfo *ast.FieldsClause
 	LinesInfo  *ast.LinesClause
-	Ctx        context.Context
+	Ctx        sessionctx.Context
 	columns    []*table.Column
 }
 
@@ -901,7 +908,7 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 			continue
 		}
 		if batchInsert && rowCount >= batchSize {
-			terror.Log(e.ctx.StmtCommit())
+			e.ctx.StmtCommit()
 			if err := e.ctx.NewTxn(); err != nil {
 				// We should return a special error for batch insert.
 				return nil, ErrBatchInsertFail.Gen("BatchInsert failed with error: %v", err)
@@ -919,7 +926,7 @@ func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error
 		txn.DelOption(kv.PresumeKeyNotExists)
 		if err == nil {
 			if !sessVars.ImportingData {
-				getDirtyDB(e.ctx).addRow(e.Table.Meta().ID, h, row)
+				e.ctx.StmtAddDirtyTableOP(DirtyTableAddRow, e.Table.Meta().ID, h, row)
 			}
 			rowCount++
 			continue
@@ -949,7 +956,7 @@ type keyWithDupError struct {
 	dupErr error
 }
 
-func getRecordIDs(ctx context.Context, t table.Table, rows [][]types.Datum) ([]int64, error) {
+func getRecordIDs(ctx sessionctx.Context, t table.Table, rows [][]types.Datum) ([]int64, error) {
 	recordIDs := make([]int64, 0, len(rows))
 	if t.Meta().PKIsHandle {
 		var handleCol *table.Column
@@ -976,7 +983,7 @@ func getRecordIDs(ctx context.Context, t table.Table, rows [][]types.Datum) ([]i
 
 // getKeysNeedCheck gets keys converted from to-be-insert rows to record keys and unique index keys,
 // which need to be checked whether they are duplicate keys.
-func getKeysNeedCheck(ctx context.Context, t table.Table, rows [][]types.Datum) ([][]keyWithDupError, error) {
+func getKeysNeedCheck(ctx sessionctx.Context, t table.Table, rows [][]types.Datum) ([][]keyWithDupError, error) {
 	nUnique := 0
 	for _, v := range t.WritableIndices() {
 		if v.Meta().Unique {
@@ -1028,7 +1035,7 @@ func getKeysNeedCheck(ctx context.Context, t table.Table, rows [][]types.Datum) 
 // batchMarkDupRows marks rows with duplicate errors as nil.
 // All duplicate rows were marked and appended as duplicate warnings
 // to the statement context in batch.
-func batchMarkDupRows(ctx context.Context, t table.Table, rows [][]types.Datum) ([][]types.Datum, error) {
+func batchMarkDupRows(ctx sessionctx.Context, t table.Table, rows [][]types.Datum) ([][]types.Datum, error) {
 	// get keys need to be checked
 	rowWithKeys, err := getKeysNeedCheck(ctx, t, rows)
 
@@ -1638,7 +1645,7 @@ func (e *ReplaceExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, erro
 		row := rows[idx]
 		h, err1 := e.Table.AddRecord(e.ctx, row, false)
 		if err1 == nil {
-			getDirtyDB(e.ctx).addRow(e.Table.Meta().ID, h, row)
+			e.ctx.StmtAddDirtyTableOP(DirtyTableAddRow, e.Table.Meta().ID, h, row)
 			idx++
 			continue
 		}
@@ -1664,7 +1671,7 @@ func (e *ReplaceExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, erro
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
-		getDirtyDB(e.ctx).deleteRow(e.Table.Meta().ID, h)
+		e.ctx.StmtAddDirtyTableOP(DirtyTableDeleteRow, e.Table.Meta().ID, h, nil)
 		e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 	}
 

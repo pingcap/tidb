@@ -181,7 +181,7 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 }
 
 var (
-	year, month, day     = time.Now().Date()
+	year, month, day     = time.Now().In(time.UTC).Date()
 	curDateInt           = int64(year*10000 + int(month)*100 + day)
 	curTimeInt           = int64(curDateInt*1000000 + 125959)
 	curTimeWithFspReal   = float64(curTimeInt) + 0.555
@@ -230,7 +230,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	originIgnoreTruncate := sc.IgnoreTruncate
 	originTZ := sc.TimeZone
 	sc.IgnoreTruncate = true
-	sc.TimeZone = time.Local
+	sc.TimeZone = time.UTC
 	defer func() {
 		sc.IgnoreTruncate = originIgnoreTruncate
 		sc.TimeZone = originTZ

@@ -21,12 +21,12 @@ import (
 	"github.com/coreos/etcd/clientv3"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
@@ -44,12 +44,12 @@ func TestT(t *testing.T) {
 }
 
 func testCreateStore(c *C, name string) kv.Storage {
-	store, err := tikv.NewMockTikvStore()
+	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	return store
 }
 
-func testNewContext(d *ddl) context.Context {
+func testNewContext(d *ddl) sessionctx.Context {
 	ctx := mock.NewContext()
 	ctx.Store = d.store
 	return ctx
@@ -60,7 +60,7 @@ func testNewDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
 	return newDDL(ctx, etcdCli, store, infoHandle, hook, lease, nil)
 }
 
-func getSchemaVer(c *C, ctx context.Context) int64 {
+func getSchemaVer(c *C, ctx sessionctx.Context) int64 {
 	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
 	m := meta.NewMeta(ctx.Txn())
@@ -90,7 +90,7 @@ func checkHistoryJob(c *C, job *model.Job) {
 	c.Assert(job.State, Equals, model.JobStateSynced)
 }
 
-func checkHistoryJobArgs(c *C, ctx context.Context, id int64, args *historyJobArgs) {
+func checkHistoryJobArgs(c *C, ctx sessionctx.Context, id int64, args *historyJobArgs) {
 	c.Assert(ctx.NewTxn(), IsNil)
 	t := meta.NewMeta(ctx.Txn())
 	historyJob, err := t.GetHistoryDDLJob(id)
@@ -111,7 +111,7 @@ func checkHistoryJobArgs(c *C, ctx context.Context, id int64, args *historyJobAr
 	}
 }
 
-func testCreateIndex(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bool, indexName string, colName string) *model.Job {
+func testCreateIndex(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bool, indexName string, colName string) *model.Job {
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		TableID:    tblInfo.ID,
@@ -130,7 +130,7 @@ func testCreateIndex(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tb
 	return job
 }
 
-func testDropIndex(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, indexName string) *model.Job {
+func testDropIndex(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, indexName string) *model.Job {
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		TableID:    tblInfo.ID,

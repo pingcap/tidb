@@ -21,8 +21,8 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -109,7 +109,7 @@ type MySQLPrivilege struct {
 }
 
 // LoadAll loads the tables from database to memory.
-func (p *MySQLPrivilege) LoadAll(ctx context.Context) error {
+func (p *MySQLPrivilege) LoadAll(ctx sessionctx.Context) error {
 	err := p.LoadUserTable(ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -152,26 +152,26 @@ func noSuchTable(err error) bool {
 }
 
 // LoadUserTable loads the mysql.user table from database.
-func (p *MySQLPrivilege) LoadUserTable(ctx context.Context) error {
+func (p *MySQLPrivilege) LoadUserTable(ctx sessionctx.Context) error {
 	return p.loadTable(ctx, "select Host,User,Password,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Process_priv,Grant_priv,References_priv,Alter_priv,Show_db_priv,Super_priv,Execute_priv,Index_priv,Create_user_priv,Trigger_priv from mysql.user order by host, user;", p.decodeUserTableRow)
 }
 
 // LoadDBTable loads the mysql.db table from database.
-func (p *MySQLPrivilege) LoadDBTable(ctx context.Context) error {
+func (p *MySQLPrivilege) LoadDBTable(ctx sessionctx.Context) error {
 	return p.loadTable(ctx, "select Host,DB,User,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Grant_priv,Index_priv,Alter_priv,Execute_priv from mysql.db order by host, db, user;", p.decodeDBTableRow)
 }
 
 // LoadTablesPrivTable loads the mysql.tables_priv table from database.
-func (p *MySQLPrivilege) LoadTablesPrivTable(ctx context.Context) error {
+func (p *MySQLPrivilege) LoadTablesPrivTable(ctx sessionctx.Context) error {
 	return p.loadTable(ctx, "select Host,DB,User,Table_name,Grantor,Timestamp,Table_priv,Column_priv from mysql.tables_priv", p.decodeTablesPrivTableRow)
 }
 
 // LoadColumnsPrivTable loads the mysql.columns_priv table from database.
-func (p *MySQLPrivilege) LoadColumnsPrivTable(ctx context.Context) error {
+func (p *MySQLPrivilege) LoadColumnsPrivTable(ctx sessionctx.Context) error {
 	return p.loadTable(ctx, "select Host,DB,User,Table_name,Column_name,Timestamp,Column_priv from mysql.columns_priv", p.decodeColumnsPrivTableRow)
 }
 
-func (p *MySQLPrivilege) loadTable(ctx context.Context, sql string,
+func (p *MySQLPrivilege) loadTable(ctx sessionctx.Context, sql string,
 	decodeTableRow func(types.Row, []*ast.ResultField) error) error {
 	goCtx := goctx.Background()
 	tmp, err := ctx.(sqlexec.SQLExecutor).Execute(goCtx, sql)
@@ -593,7 +593,7 @@ func (h *Handle) Get() *MySQLPrivilege {
 }
 
 // Update loads all the privilege info from kv storage.
-func (h *Handle) Update(ctx context.Context) error {
+func (h *Handle) Update(ctx sessionctx.Context) error {
 	var priv MySQLPrivilege
 	err := priv.LoadAll(ctx)
 	if err != nil {

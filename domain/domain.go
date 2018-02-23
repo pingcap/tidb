@@ -15,6 +15,7 @@ package domain
 
 import (
 	"crypto/tls"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -24,17 +25,19 @@ import (
 	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/juju/errors"
 	"github.com/ngaut/pools"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/privilege/privileges"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util"
 	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 	"google.golang.org/grpc"
@@ -295,12 +298,12 @@ func (do *Domain) Reload() error {
 		changedTableIDs []int64
 	)
 	latestSchemaVersion, changedTableIDs, fullLoad, err = do.loadInfoSchema(do.infoHandle, schemaVersion, ver.Ver)
-	loadSchemaDuration.Observe(time.Since(startTime).Seconds())
+	metrics.LoadSchemaDuration.Observe(time.Since(startTime).Seconds())
 	if err != nil {
-		loadSchemaCounter.WithLabelValues("failed").Inc()
+		metrics.LoadSchemaCounter.WithLabelValues("failed").Inc()
 		return errors.Trace(err)
 	}
-	loadSchemaCounter.WithLabelValues("succ").Inc()
+	metrics.LoadSchemaCounter.WithLabelValues("succ").Inc()
 
 	if fullLoad {
 		log.Info("[ddl] full load and reset schema validator.")
@@ -310,7 +313,9 @@ func (do *Domain) Reload() error {
 
 	lease := do.DDL().GetLease()
 	sub := time.Since(startTime)
-	if sub > lease && lease > 0 {
+	// Reload interval is lease / 2, if load schema time elapses more than this interval,
+	// some query maybe responded by ErrInfoSchemaExpired error.
+	if sub > (lease/2) && lease > 0 {
 		log.Warnf("[ddl] loading schema takes a long time %v", sub)
 	}
 
@@ -323,6 +328,7 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 	// Use lease/2 here as recommend by paper.
 	ticker := time.NewTicker(lease / 2)
 	defer ticker.Stop()
+	defer recoverInDomain("loadSchemaInLoop", true)
 	syncer := do.ddl.SchemaSyncer()
 
 	for {
@@ -510,7 +516,7 @@ func (do *Domain) SysSessionPool() *pools.ResourcePool {
 
 // LoadPrivilegeLoop create a goroutine loads privilege tables in a loop, it
 // should be called only once in BootstrapSession.
-func (do *Domain) LoadPrivilegeLoop(ctx context.Context) error {
+func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
 	do.privHandle = privileges.NewHandle()
 	err := do.privHandle.Update(ctx)
@@ -526,6 +532,7 @@ func (do *Domain) LoadPrivilegeLoop(ctx context.Context) error {
 	}
 
 	go func() {
+		defer recoverInDomain("loadPrivilegeInLoop", false)
 		var count int
 		for {
 			ok := true
@@ -547,6 +554,7 @@ func (do *Domain) LoadPrivilegeLoop(ctx context.Context) error {
 
 			count = 0
 			err := do.privHandle.Update(ctx)
+			metrics.LoadPrivilegeCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 			if err != nil {
 				log.Error("[domain] load privilege fail:", errors.ErrorStack(err))
 			} else {
@@ -568,7 +576,7 @@ func (do *Domain) StatsHandle() *statistics.Handle {
 }
 
 // CreateStatsHandle is used only for test.
-func (do *Domain) CreateStatsHandle(ctx context.Context) {
+func (do *Domain) CreateStatsHandle(ctx sessionctx.Context) {
 	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(statistics.NewHandle(ctx, do.statsLease)))
 }
 
@@ -578,7 +586,7 @@ var RunAutoAnalyze = true
 // UpdateTableStatsLoop creates a goroutine loads stats info and updates stats info in a loop.
 // It will also start a goroutine to analyze tables automatically.
 // It should be called only once in BootstrapSession.
-func (do *Domain) UpdateTableStatsLoop(ctx context.Context) error {
+func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
 	statsHandle := statistics.NewHandle(ctx, do.statsLease)
 	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(statsHandle))
@@ -613,7 +621,7 @@ func (do *Domain) newStatsOwner() owner.Manager {
 	return statsOwner
 }
 
-func (do *Domain) updateStatsWorker(ctx context.Context, owner owner.Manager) {
+func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager) {
 	lease := do.statsLease
 	deltaUpdateDuration := lease * 5
 	loadTicker := time.NewTicker(lease)
@@ -632,6 +640,7 @@ func (do *Domain) updateStatsWorker(ctx context.Context, owner owner.Manager) {
 	} else {
 		log.Info("[stats] init stats info takes ", time.Now().Sub(t))
 	}
+	defer recoverInDomain("updateStatsWorker", false)
 	for {
 		select {
 		case <-loadTicker.C:
@@ -681,6 +690,7 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 	statsHandle := do.StatsHandle()
 	analyzeTicker := time.NewTicker(do.statsLease)
 	defer analyzeTicker.Stop()
+	defer recoverInDomain("autoAnalyzeWorker", false)
 	for {
 		select {
 		case <-analyzeTicker.C:
@@ -701,13 +711,28 @@ const privilegeKey = "/tidb/privilege"
 
 // NotifyUpdatePrivilege updates privilege key in etcd, TiDB client that watches
 // the key will get notification.
-func (do *Domain) NotifyUpdatePrivilege(ctx context.Context) {
+func (do *Domain) NotifyUpdatePrivilege(ctx sessionctx.Context) {
 	if do.etcdClient != nil {
 		row := do.etcdClient.KV
 		_, err := row.Put(goctx.Background(), privilegeKey, "")
 		if err != nil {
 			log.Warn("notify update privilege failed:", err)
 		}
+	}
+}
+
+func recoverInDomain(funcName string, quit bool) {
+	r := recover()
+	if r == nil {
+		return
+	}
+	buf := util.GetStack()
+	log.Errorf("%s, %v, %s", funcName, r, buf)
+	metrics.PanicCounter.WithLabelValues(metrics.LabelDomain).Inc()
+	if quit {
+		// Wait for metrics to be pushed.
+		time.Sleep(time.Second * 15)
+		os.Exit(1)
 	}
 }
 

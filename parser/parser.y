@@ -43,7 +43,7 @@ import (
 	offset int // offset
 	item interface{}
 	ident string
-	expr ast.ExprNode 
+	expr ast.ExprNode
 	statement ast.StmtNode
 }
 
@@ -423,6 +423,7 @@ import (
 	statsMeta       "STATS_META"
 	statsHistograms "STATS_HISTOGRAMS"
 	statsBuckets    "STATS_BUCKETS"
+	statsHealthy    "STATS_HEALTHY"
 	tidb		"TIDB"
 	tidbHJ		"TIDB_HJ"
 	tidbSMJ		"TIDB_SMJ"
@@ -532,6 +533,7 @@ import (
 	InsertIntoStmt			"INSERT INTO statement"
 	KillStmt			"Kill statement"
 	LoadDataStmt			"Load data statement"
+	LoadStatsStmt			"Load statistic statement"
 	LockTablesStmt			"Lock tables statement"
 	PreparedStmt			"PreparedStmt"
 	SelectStmt			"SELECT statement"
@@ -1010,6 +1012,10 @@ AlterTableSpec:
 		}
 	}
 
+LockClauseOpt:
+	{}
+| 	LockClause {}
+
 LockClause:
 	"LOCK" eq "NONE"
 	{
@@ -1179,7 +1185,7 @@ BinlogStmt:
 ColumnDefList:
 	ColumnDef
 	{
-		$$ = []*ast.ColumnDef{$1.(*ast.ColumnDef)}	
+		$$ = []*ast.ColumnDef{$1.(*ast.ColumnDef)}
 	}
 |	ColumnDefList ',' ColumnDef
 	{
@@ -1531,7 +1537,7 @@ NumLiteral:
 
 
 CreateIndexStmt:
-	"CREATE" CreateIndexStmtUnique "INDEX" Identifier IndexTypeOpt "ON" TableName '(' IndexColNameList ')' IndexOptionList
+	"CREATE" CreateIndexStmtUnique "INDEX" Identifier IndexTypeOpt "ON" TableName '(' IndexColNameList ')' IndexOptionList LockClauseOpt
 	{
 		var indexOption *ast.IndexOption
 		if $11 != nil {
@@ -2504,7 +2510,7 @@ UnReservedKeyword:
 | "MAX_USER_CONNECTIONS" | "REPLICATION" | "CLIENT" | "SLAVE" | "RELOAD" | "TEMPORARY" | "ROUTINE" | "EVENT" | "ALGORITHM" | "DEFINER" | "INVOKER" | "MERGE" | "TEMPTABLE" | "UNDEFINED" | "SECURITY" | "CASCADED"
 
 TiDBKeyword:
-"ADMIN" | "CANCEL" | "DDL" | "JOBS" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "TIDB" | "TIDB_HJ" | "TIDB_SMJ" | "TIDB_INLJ"
+"ADMIN" | "CANCEL" | "DDL" | "JOBS" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "STATS_HEALTHY" | "TIDB" | "TIDB_HJ" | "TIDB_SMJ" | "TIDB_INLJ"
 
 NotKeywordToken:
  "ADDDATE" | "BIT_AND" | "BIT_OR" | "BIT_XOR" | "CAST" | "COUNT" | "CURTIME" | "DATE_ADD" | "DATE_SUB" | "EXTRACT" | "GET_FORMAT" | "GROUP_CONCAT" | "MIN" | "MAX" | "NOW" | "POSITION"
@@ -3472,10 +3478,10 @@ OptGConcatSeparator:
             	$$ = ast.NewValueExpr(",")
         }
 | "SEPARATOR" stringLit
-	{ 
+	{
 		$$ = ast.NewValueExpr($2)
 	}
-        
+
 
 FunctionCallGeneric:
 	identifier '(' ExpressionListOpt ')'
@@ -3898,21 +3904,23 @@ RollbackStmt:
 	}
 
 SelectStmt:
-	"SELECT" SelectStmtOpts SelectStmtFieldList SelectStmtLimit SelectLockOpt
+	"SELECT" SelectStmtOpts SelectStmtFieldList OrderByOptional SelectStmtLimit SelectLockOpt
 	{
 		st := &ast.SelectStmt {
 			SelectStmtOpts: $2.(*ast.SelectStmtOpts),
 			Distinct:      $2.(*ast.SelectStmtOpts).Distinct,
 			Fields:        $3.(*ast.FieldList),
-			LockTp:	       $5.(ast.SelectLockType),
+			LockTp:	       $6.(ast.SelectLockType),
 		}
 		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
 		if lastField.Expr != nil && lastField.AsName.O == "" {
 			src := parser.src
 			var lastEnd int
 			if $4 != nil {
+				lastEnd = yyS[yypt-2].offset-1
+			} else if $5 != nil {
 				lastEnd = yyS[yypt-1].offset-1
-			} else if $5 != ast.SelectLockNone {
+			} else if $6 != ast.SelectLockNone {
 				lastEnd = yyS[yypt].offset-1
 			} else {
 				lastEnd = len(src)
@@ -3923,7 +3931,10 @@ SelectStmt:
 			lastField.SetText(src[lastField.Offset:lastEnd])
 		}
 		if $4 != nil {
-			st.Limit = $4.(*ast.Limit)
+			st.OrderBy = $4.(*ast.OrderByClause)
+		}
+		if $5 != nil {
+			st.Limit = $5.(*ast.Limit)
 		}
 		$$ = st
 	}
@@ -3963,33 +3974,26 @@ SelectStmt:
 		if opts.TableHints != nil {
 			st.TableHints = opts.TableHints
 		}
-
 		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
 		if lastField.Expr != nil && lastField.AsName.O == "" {
 			lastEnd := parser.endOffset(&yyS[yypt-7])
 			lastField.SetText(parser.src[lastField.Offset:lastEnd])
 		}
-
 		if $6 != nil {
 			st.Where = $6.(ast.ExprNode)
 		}
-
 		if $7 != nil {
 			st.GroupBy = $7.(*ast.GroupByClause)
 		}
-
 		if $8 != nil {
 			st.Having = $8.(*ast.HavingClause)
 		}
-
 		if $9 != nil {
 			st.OrderBy = $9.(*ast.OrderByClause)
 		}
-
 		if $10 != nil {
 			st.Limit = $10.(*ast.Limit)
 		}
-
 		$$ = st
 	}
 
@@ -4841,6 +4845,20 @@ ShowStmt:
 		}
 		$$ = stmt
 	}
+|   "SHOW" "STATS_HEALTHY" ShowLikeOrWhereOpt
+	{
+		stmt := &ast.ShowStmt{
+			Tp: ast.ShowStatsHealthy,
+		}
+		if $3 != nil {
+			if x, ok := $3.(*ast.PatternLikeExpr); ok {
+				stmt.Pattern = x
+			} else {
+				stmt.Where = $3.(ast.ExprNode)
+			}
+		}
+		$$ = stmt
+	}
 |	"SHOW" "PROFILES"
 	{
 		$$ = &ast.ShowStmt{
@@ -5125,6 +5143,7 @@ Statement:
 |	InsertIntoStmt
 |	KillStmt
 |	LoadDataStmt
+|	LoadStatsStmt
 |	PreparedStmt
 |	RollbackStmt
 |	RenameTableStmt
@@ -6433,6 +6452,16 @@ KillOrKillTiDB:
 |	"KILL" "TIDB"
 	{
 		$$ = true
+	}
+
+/*******************************************************************************************/
+
+LoadStatsStmt:
+	"LOAD" "STATS" stringLit
+	{
+		$$ = &ast.LoadStatsStmt{
+			Path:       $3,
+		}
 	}
 
 %%

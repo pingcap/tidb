@@ -17,10 +17,11 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -53,8 +54,8 @@ type SelectResult interface {
 	// Fetch fetches partial results from client.
 	// The caller should call SetFields() before call Fetch().
 	Fetch(goctx.Context)
-	// ScanCount gets the total scan row count.
-	ScanCount() int64
+	// ScanKeys gets the total scan row count.
+	ScanKeys() int64
 }
 
 // PartialResult is the result from a single region server.
@@ -76,12 +77,13 @@ type selectResult struct {
 
 	rowLen     int
 	fieldTypes []*types.FieldType
-	ctx        context.Context
+	ctx        sessionctx.Context
 
 	selectResp *tipb.SelectResponse
 	respChkIdx int
 
-	scanCount int64
+	scanKeys     int64 // number of keys scanned by TiKV.
+	partialCount int64 // number of partial results.
 }
 
 type newResultWithErr struct {
@@ -100,7 +102,7 @@ func (r *selectResult) fetch(goCtx goctx.Context) {
 	defer func() {
 		close(r.results)
 		duration := time.Since(startTime)
-		queryHistgram.WithLabelValues(r.label).Observe(duration.Seconds())
+		metrics.DistSQLQueryHistgram.WithLabelValues(r.label).Observe(duration.Seconds())
 	}()
 	for {
 		resultSubset, err := r.resp.Next(goCtx)
@@ -136,16 +138,21 @@ func (r *selectResult) Next(goCtx goctx.Context) (PartialResult, error) {
 	pr.rowLen = r.rowLen
 	err := pr.unmarshal(re.result)
 	if len(pr.resp.OutputCounts) > 0 {
-		r.scanCount += pr.resp.OutputCounts[0]
+		scanKeysPartial := pr.resp.OutputCounts[0]
+		metrics.DistSQLScanKeysPartialHistogram.Observe(float64(scanKeysPartial))
+		r.scanKeys += scanKeysPartial
 	} else {
-		r.scanCount = -1
+		r.scanKeys = -1
 	}
+	r.partialCount++
 	return pr, errors.Trace(err)
 }
 
 // NextRaw returns the next raw partial result.
 func (r *selectResult) NextRaw(goCtx goctx.Context) ([]byte, error) {
 	re := <-r.results
+	r.partialCount++
+	r.scanKeys = -1
 	return re.result, errors.Trace(re.err)
 }
 
@@ -187,10 +194,13 @@ func (r *selectResult) getSelectResp() error {
 			return errors.Trace(err)
 		}
 		if len(r.selectResp.OutputCounts) > 0 {
-			r.scanCount += r.selectResp.OutputCounts[0]
+			scanCountPartial := r.selectResp.OutputCounts[0]
+			metrics.DistSQLScanKeysPartialHistogram.Observe(float64(scanCountPartial))
+			r.scanKeys += scanCountPartial
 		} else {
-			r.scanCount = -1
+			r.scanKeys = -1
 		}
+		r.partialCount++
 		if len(r.selectResp.Chunks) == 0 {
 			continue
 		}
@@ -198,8 +208,8 @@ func (r *selectResult) getSelectResp() error {
 	}
 }
 
-func (r *selectResult) ScanCount() int64 {
-	return r.scanCount
+func (r *selectResult) ScanKeys() int64 {
+	return r.scanKeys
 }
 
 func (r *selectResult) readRowsData(chk *chunk.Chunk) (err error) {
@@ -221,6 +231,10 @@ func (r *selectResult) readRowsData(chk *chunk.Chunk) (err error) {
 // Close closes selectResult.
 func (r *selectResult) Close() error {
 	// Close this channel tell fetch goroutine to exit.
+	if r.scanKeys >= 0 {
+		metrics.DistSQLScanKeysHistogram.Observe(float64(r.scanKeys))
+	}
+	metrics.DistSQLPartialCountHistogram.Observe(float64(r.partialCount))
 	close(r.closed)
 	return r.resp.Close()
 }
@@ -286,22 +300,12 @@ func (pr *partialResult) Close() error {
 	return nil
 }
 
-// SelectDAG sends a DAG request, returns SelectResult.
+// Select sends a DAG request, returns SelectResult.
 // In kvReq, KeyRanges is required, Concurrency/KeepOrder/Desc/IsolationLevel/Priority are optional.
-func SelectDAG(goCtx goctx.Context, ctx context.Context, kvReq *kv.Request, fieldTypes []*types.FieldType) (SelectResult, error) {
-	var err error
-	defer func() {
-		// Add metrics.
-		if err != nil {
-			queryCounter.WithLabelValues(queryFailed).Inc()
-		} else {
-			queryCounter.WithLabelValues(querySucc).Inc()
-		}
-	}()
-
+func Select(goCtx goctx.Context, ctx sessionctx.Context, kvReq *kv.Request, fieldTypes []*types.FieldType) (SelectResult, error) {
 	resp := ctx.GetClient().Send(goCtx, kvReq)
 	if resp == nil {
-		err = errors.New("client returns nil response")
+		err := errors.New("client returns nil response")
 		return nil, errors.Trace(err)
 	}
 
@@ -327,16 +331,6 @@ func SelectDAG(goCtx goctx.Context, ctx context.Context, kvReq *kv.Request, fiel
 
 // Analyze do a analyze request.
 func Analyze(ctx goctx.Context, client kv.Client, kvReq *kv.Request) (SelectResult, error) {
-	var err error
-	defer func() {
-		// Add metrics.
-		if err != nil {
-			queryCounter.WithLabelValues(queryFailed).Inc()
-		} else {
-			queryCounter.WithLabelValues(querySucc).Inc()
-		}
-	}()
-
 	resp := client.Send(ctx, kvReq)
 	if resp == nil {
 		return nil, errors.New("client returns nil response")

@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2018 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,15 +11,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikv
+package metrics
 
-import (
-	"github.com/pingcap/kvproto/pkg/errorpb"
-	"github.com/prometheus/client_golang/prometheus"
-)
+import "github.com/prometheus/client_golang/prometheus"
 
+// TiKVClient metrics.
 var (
-	txnCounter = prometheus.NewCounter(
+	TiKVTxnCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
@@ -27,7 +25,7 @@ var (
 			Help:      "Counter of created txns.",
 		})
 
-	snapshotCounter = prometheus.NewCounter(
+	TiKVSnapshotCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
@@ -35,32 +33,32 @@ var (
 			Help:      "Counter of snapshots.",
 		})
 
-	txnCmdCounter = prometheus.NewCounterVec(
+	TiKVTxnCmdCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
 			Name:      "txn_cmd_total",
 			Help:      "Counter of txn commands.",
-		}, []string{"type"})
+		}, []string{LblType})
 
-	txnCmdHistogram = prometheus.NewHistogramVec(
+	TiKVTxnCmdHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
-			Name:      "txn_cmd_seconds",
+			Name:      "txn_cmd_duration_seconds",
 			Help:      "Bucketed histogram of processing time of txn cmds.",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 20),
-		}, []string{"type"})
+		}, []string{LblType})
 
-	backoffCounter = prometheus.NewCounterVec(
+	TiKVBackoffCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
-			Name:      "backoff_count",
+			Name:      "backoff_total",
 			Help:      "Counter of backoff.",
-		}, []string{"type"})
+		}, []string{LblType})
 
-	backoffHistogram = prometheus.NewHistogram(
+	TiKVBackoffHistogram = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
@@ -69,157 +67,145 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 20),
 		})
 
-	connPoolHistogram = prometheus.NewHistogramVec(
+	TiKVConnPoolHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
 			Name:      "get_conn_seconds",
 			Help:      "Bucketed histogram of taking conn from conn pool.",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 20),
-		}, []string{"type"})
+		}, []string{LblType})
 
-	sendReqHistogram = prometheus.NewHistogramVec(
+	TiKVSendReqHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
 			Name:      "request_seconds",
 			Help:      "Bucketed histogram of sending request duration.",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 20),
-		}, []string{"type", "store"})
+		}, []string{LblType, "store"})
 
-	coprocessorCounter = prometheus.NewCounterVec(
+	TiKVCoprocessorCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
-			Name:      "cop_count",
+			Name:      "cop_actions_total",
 			Help:      "Counter of coprocessor actions.",
-		}, []string{"type"})
+		}, []string{LblType})
 
-	coprocessorHistogram = prometheus.NewHistogram(
+	TiKVCoprocessorHistogram = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
-			Name:      "cop_seconds",
+			Name:      "cop_duration_seconds",
 			Help:      "Run duration of a single coprocessor task, includes backoff time.",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 20),
 		})
 
-	lockResolverCounter = prometheus.NewCounterVec(
+	TiKVLockResolverCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
 			Name:      "lock_resolver_actions_total",
 			Help:      "Counter of lock resolver actions.",
-		}, []string{"type"})
+		}, []string{LblType})
 
-	regionErrorCounter = prometheus.NewCounterVec(
+	TiKVRegionErrorCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
 			Name:      "region_err_total",
 			Help:      "Counter of region errors.",
-		}, []string{"type"})
+		}, []string{LblType})
 
-	txnWriteKVCountHistogram = prometheus.NewHistogram(
+	TiKVTxnWriteKVCountHistogram = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
-			Name:      "txn_write_kv_count",
+			Name:      "txn_write_kv_num",
 			Help:      "Count of kv pairs to write in a transaction.",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 21),
 		})
 
-	txnWriteSizeHistogram = prometheus.NewHistogram(
+	TiKVTxnWriteSizeHistogram = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
-			Name:      "txn_write_size",
-			Help:      "Size of kv pairs to write in a transaction. (KB)",
+			Name:      "txn_write_size_bytes",
+			Help:      "Size of kv pairs to write in a transaction.",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 21),
 		})
 
-	rawkvCmdHistogram = prometheus.NewHistogramVec(
+	TiKVRawkvCmdHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
 			Name:      "rawkv_cmd_seconds",
 			Help:      "Bucketed histogram of processing time of rawkv cmds.",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 20),
-		}, []string{"type"})
+		}, []string{LblType})
 
-	rawkvSizeHistogram = prometheus.NewHistogramVec(
+	TiKVRawkvSizeHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
-			Name:      "rawkv_kv_size",
+			Name:      "rawkv_kv_size_bytes",
 			Help:      "Size of key/value to put, in bytes.",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 21),
-		}, []string{"type"})
+		}, []string{LblType})
 
-	txnRegionsNumHistogram = prometheus.NewHistogramVec(
+	TiKVTxnRegionsNumHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
 			Name:      "txn_regions_num",
 			Help:      "Number of regions in a transaction.",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 20),
-		}, []string{"type"})
+		}, []string{LblType})
 
-	loadSafepointCounter = prometheus.NewCounterVec(
+	TiKVLoadSafepointCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
 			Name:      "load_safepoint_total",
 			Help:      "Counter of load safepoint.",
-		}, []string{"type"})
+		}, []string{LblType})
 
-	secondaryLockCleanupFailureCounter = prometheus.NewCounterVec(
+	TiKVSecondaryLockCleanupFailureCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
 			Name:      "lock_cleanup_task_total",
 			Help:      "failure statistic of secondary lock cleanup task.",
-		}, []string{"type"})
+		}, []string{LblType})
+
+	TiKVRegionCacheCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "region_cache_operations_total",
+			Help:      "Counter of region cache.",
+		}, []string{LblType, LblResult})
 )
 
-func reportRegionError(e *errorpb.Error) {
-	if e.GetNotLeader() != nil {
-		regionErrorCounter.WithLabelValues("not_leader").Inc()
-	} else if e.GetRegionNotFound() != nil {
-		regionErrorCounter.WithLabelValues("region_not_found").Inc()
-	} else if e.GetKeyNotInRegion() != nil {
-		regionErrorCounter.WithLabelValues("key_not_in_region").Inc()
-	} else if e.GetStaleEpoch() != nil {
-		regionErrorCounter.WithLabelValues("stale_epoch").Inc()
-	} else if e.GetServerIsBusy() != nil {
-		regionErrorCounter.WithLabelValues("server_is_busy").Inc()
-	} else if e.GetStaleCommand() != nil {
-		regionErrorCounter.WithLabelValues("stale_command").Inc()
-	} else if e.GetStoreNotMatch() != nil {
-		regionErrorCounter.WithLabelValues("store_not_match").Inc()
-	} else {
-		regionErrorCounter.WithLabelValues("unknown").Inc()
-	}
-}
-
 func init() {
-	prometheus.MustRegister(txnCounter)
-	prometheus.MustRegister(snapshotCounter)
-	prometheus.MustRegister(txnCmdCounter)
-	prometheus.MustRegister(txnCmdHistogram)
-	prometheus.MustRegister(backoffCounter)
-	prometheus.MustRegister(backoffHistogram)
-	prometheus.MustRegister(sendReqHistogram)
-	prometheus.MustRegister(connPoolHistogram)
-	prometheus.MustRegister(coprocessorCounter)
-	prometheus.MustRegister(coprocessorHistogram)
-	prometheus.MustRegister(lockResolverCounter)
-	prometheus.MustRegister(regionErrorCounter)
-	prometheus.MustRegister(txnWriteKVCountHistogram)
-	prometheus.MustRegister(txnWriteSizeHistogram)
-	prometheus.MustRegister(rawkvCmdHistogram)
-	prometheus.MustRegister(rawkvSizeHistogram)
-	prometheus.MustRegister(txnRegionsNumHistogram)
-	prometheus.MustRegister(loadSafepointCounter)
-	prometheus.MustRegister(secondaryLockCleanupFailureCounter)
+	prometheus.MustRegister(TiKVTxnCounter)
+	prometheus.MustRegister(TiKVSnapshotCounter)
+	prometheus.MustRegister(TiKVTxnCmdHistogram)
+	prometheus.MustRegister(TiKVBackoffCounter)
+	prometheus.MustRegister(TiKVBackoffHistogram)
+	prometheus.MustRegister(TiKVSendReqHistogram)
+	prometheus.MustRegister(TiKVConnPoolHistogram)
+	prometheus.MustRegister(TiKVCoprocessorCounter)
+	prometheus.MustRegister(TiKVCoprocessorHistogram)
+	prometheus.MustRegister(TiKVLockResolverCounter)
+	prometheus.MustRegister(TiKVRegionErrorCounter)
+	prometheus.MustRegister(TiKVTxnWriteKVCountHistogram)
+	prometheus.MustRegister(TiKVTxnWriteSizeHistogram)
+	prometheus.MustRegister(TiKVRawkvCmdHistogram)
+	prometheus.MustRegister(TiKVRawkvSizeHistogram)
+	prometheus.MustRegister(TiKVTxnRegionsNumHistogram)
+	prometheus.MustRegister(TiKVLoadSafepointCounter)
+	prometheus.MustRegister(TiKVSecondaryLockCleanupFailureCounter)
+	prometheus.MustRegister(TiKVRegionCacheCounter)
 }

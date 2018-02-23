@@ -157,6 +157,9 @@ func (e *ShowExec) fetchAll() error {
 		return e.fetchShowStatsHistogram()
 	case ast.ShowStatsBuckets:
 		return e.fetchShowStatsBuckets()
+	case ast.ShowStatsHealthy:
+		e.fetchShowStatsHealthy()
+		return nil
 	case ast.ShowPlugins:
 		return e.fetchShowPlugins()
 	case ast.ShowProfiles:
@@ -340,7 +343,11 @@ func (e *ShowExec) fetchShowIndex() error {
 		})
 	}
 	for _, idx := range tb.Indices() {
-		for i, col := range idx.Meta().Columns {
+		idxInfo := idx.Meta()
+		if idxInfo.State != model.StatePublic {
+			continue
+		}
+		for i, col := range idxInfo.Columns {
 			nonUniq := 1
 			if idx.Meta().Unique {
 				nonUniq = 0

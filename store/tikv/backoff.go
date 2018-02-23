@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	log "github.com/sirupsen/logrus"
@@ -147,7 +148,7 @@ const (
 	getMaxBackoff           = 20000
 	prewriteMaxBackoff      = 20000
 	cleanupMaxBackoff       = 20000
-	GcMaxBackoff            = 100000
+	GcOneRegionMaxBackoff   = 20000
 	GcResolveLockMaxBackoff = 100000
 	GcDeleteRangeMaxBackoff = 100000
 	rawkvMaxBackoff         = 20000
@@ -184,7 +185,7 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 	default:
 	}
 
-	backoffCounter.WithLabelValues(typ.String()).Inc()
+	metrics.TiKVBackoffCounter.WithLabelValues(typ.String()).Inc()
 	// Lazy initialize.
 	if b.fn == nil {
 		b.fn = make(map[backoffType]func(goctx.Context) int)

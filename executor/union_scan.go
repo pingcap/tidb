@@ -17,23 +17,24 @@ import (
 	"sort"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	goctx "golang.org/x/net/context"
 )
 
-// dirtyDB stores uncommitted write operations for a transaction.
+// DirtyDB stores uncommitted write operations for a transaction.
 // It is stored and retrieved by context.Value and context.SetValue method.
-type dirtyDB struct {
+type DirtyDB struct {
 	// tables is a map whose key is tableID.
-	tables map[int64]*dirtyTable
+	tables map[int64]*DirtyTable
 }
 
-func (udb *dirtyDB) addRow(tid, handle int64, row []types.Datum) {
-	dt := udb.getDirtyTable(tid)
+// AddRow adds a row to the DirtyDB.
+func (udb *DirtyDB) AddRow(tid, handle int64, row []types.Datum) {
+	dt := udb.GetDirtyTable(tid)
 	for i := range row {
 		if row[i].Kind() == types.KindString {
 			row[i].SetBytes(row[i].GetBytes())
@@ -42,22 +43,25 @@ func (udb *dirtyDB) addRow(tid, handle int64, row []types.Datum) {
 	dt.addedRows[handle] = row
 }
 
-func (udb *dirtyDB) deleteRow(tid int64, handle int64) {
-	dt := udb.getDirtyTable(tid)
+// DeleteRow deletes a row from the DirtyDB.
+func (udb *DirtyDB) DeleteRow(tid int64, handle int64) {
+	dt := udb.GetDirtyTable(tid)
 	delete(dt.addedRows, handle)
 	dt.deletedRows[handle] = struct{}{}
 }
 
-func (udb *dirtyDB) truncateTable(tid int64) {
-	dt := udb.getDirtyTable(tid)
+// TruncateTable truncates a table.
+func (udb *DirtyDB) TruncateTable(tid int64) {
+	dt := udb.GetDirtyTable(tid)
 	dt.addedRows = make(map[int64]Row)
 	dt.truncated = true
 }
 
-func (udb *dirtyDB) getDirtyTable(tid int64) *dirtyTable {
+// GetDirtyTable gets the DirtyTable by id from the DirtyDB.
+func (udb *DirtyDB) GetDirtyTable(tid int64) *DirtyTable {
 	dt, ok := udb.tables[tid]
 	if !ok {
-		dt = &dirtyTable{
+		dt = &DirtyTable{
 			addedRows:   make(map[int64]Row),
 			deletedRows: make(map[int64]struct{}),
 		}
@@ -66,7 +70,8 @@ func (udb *dirtyDB) getDirtyTable(tid int64) *dirtyTable {
 	return dt
 }
 
-type dirtyTable struct {
+// DirtyTable stores uncommitted write operation for a transaction.
+type DirtyTable struct {
 	// addedRows ...
 	// the key is handle.
 	addedRows   map[int64]Row
@@ -74,14 +79,15 @@ type dirtyTable struct {
 	truncated   bool
 }
 
-func getDirtyDB(ctx context.Context) *dirtyDB {
-	var udb *dirtyDB
+// GetDirtyDB returns the DirtyDB bind to the context.
+func GetDirtyDB(ctx sessionctx.Context) *DirtyDB {
+	var udb *DirtyDB
 	x := ctx.GetSessionVars().TxnCtx.DirtyDB
 	if x == nil {
-		udb = &dirtyDB{tables: make(map[int64]*dirtyTable)}
+		udb = &DirtyDB{tables: make(map[int64]*DirtyTable)}
 		ctx.GetSessionVars().TxnCtx.DirtyDB = udb
 	} else {
-		udb = x.(*dirtyDB)
+		udb = x.(*DirtyDB)
 	}
 	return udb
 }
@@ -90,7 +96,7 @@ func getDirtyDB(ctx context.Context) *dirtyDB {
 type UnionScanExec struct {
 	baseExecutor
 
-	dirty *dirtyTable
+	dirty *DirtyTable
 	// usedIndex is the column offsets of the index which Src executor has used.
 	usedIndex  []int
 	desc       bool

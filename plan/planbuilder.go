@@ -19,12 +19,12 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
@@ -152,7 +152,7 @@ var clauseMsg = map[clauseCode]string{
 // It just builds the ast node straightforwardly.
 type planBuilder struct {
 	err          error
-	ctx          context.Context
+	ctx          sessionctx.Context
 	is           infoschema.InfoSchema
 	outerSchemas []*expression.Schema
 	inUpdateStmt bool
@@ -188,6 +188,8 @@ func (b *planBuilder) build(node ast.Node) Plan {
 		return b.buildInsert(x)
 	case *ast.LoadDataStmt:
 		return b.buildLoadData(x)
+	case *ast.LoadStatsStmt:
+		return b.buildLoadStats(x)
 	case *ast.PrepareStmt:
 		return b.buildPrepare(x)
 	case *ast.SelectStmt:
@@ -973,6 +975,11 @@ func (b *planBuilder) buildLoadData(ld *ast.LoadDataStmt) Plan {
 	return p
 }
 
+func (b *planBuilder) buildLoadStats(ld *ast.LoadStatsStmt) Plan {
+	p := &LoadStats{Path: ld.Path}
+	return p
+}
+
 func (b *planBuilder) buildDDL(node ast.DDLNode) Plan {
 	switch v := node.(type) {
 	case *ast.AlterTableStmt:
@@ -1233,6 +1240,9 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 			"Repeats", "Lower_Bound", "Upper_Bound"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeTiny, mysql.TypeLonglong,
 			mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar}
+	case ast.ShowStatsHealthy:
+		names = []string{"Db_name", "Table_name", "Healthy"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong}
 	case ast.ShowProfiles: // ShowProfiles is deprecated.
 		names = []string{"Query_ID", "Duration", "Query"}
 		ftypes = []byte{mysql.TypeLong, mysql.TypeDouble, mysql.TypeVarchar}

@@ -20,10 +20,10 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
@@ -207,7 +207,7 @@ func (e *SetExecutor) executeSet() error {
 }
 
 // validateSnapshot checks that the newly set snapshot time is after GC safe point time.
-func validateSnapshot(ctx context.Context, snapshotTS uint64) error {
+func validateSnapshot(ctx sessionctx.Context, snapshotTS uint64) error {
 	sql := "SELECT variable_value FROM mysql.tidb WHERE variable_name = 'tikv_gc_safe_point'"
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {

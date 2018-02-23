@@ -21,13 +21,13 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
@@ -80,6 +80,9 @@ func schema2ResultFields(schema *expression.Schema, defaultDB string) (rfs []*as
 	return rfs
 }
 
+// Next uses recordSet's executor to get next available row.
+// If row is nil, then updates LastFoundRows in session variable.
+// If stmt and row are not nil, increase current FoundRows by 1.
 func (a *recordSet) Next(goCtx goctx.Context) (types.Row, error) {
 	row, err := a.executor.Next(goCtx)
 	if err != nil {
@@ -99,6 +102,11 @@ func (a *recordSet) Next(goCtx goctx.Context) (types.Row, error) {
 	return row, nil
 }
 
+// NextChunk use uses recordSet's executor to get next available chunk for later usage.
+// If chunk does not contain any rows, then we update last query found rows in session variable as current found rows.
+// The reason we need update is that chunk with 0 rows indicating we already finished current query, we need prepare for
+// next query.
+// If stmt is not nil and chunk with some rows inside, we simply update last query found rows by the number of row in chunk.
 func (a *recordSet) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	err := a.executor.NextChunk(goCtx, chk)
 	if err != nil {
@@ -118,6 +126,7 @@ func (a *recordSet) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
+// NewChunk create a new chunk using NewChunk function in chunk package.
 func (a *recordSet) NewChunk() *chunk.Chunk {
 	return chunk.NewChunk(a.executor.retTypes())
 }
@@ -150,22 +159,25 @@ type ExecStmt struct {
 
 	StmtNode ast.StmtNode
 
-	Ctx            context.Context
+	Ctx            sessionctx.Context
 	startTime      time.Time
 	isPreparedStmt bool
 }
 
-// OriginText implements ast.Statement interface.
+// OriginText returns original statement as a string.
 func (a *ExecStmt) OriginText() string {
 	return a.Text
 }
 
-// IsPrepared implements ast.Statement interface.
+// IsPrepared returns true if stmt is a prepare statement.
 func (a *ExecStmt) IsPrepared() bool {
 	return a.isPreparedStmt
 }
 
-// IsReadOnly implements ast.Statement interface.
+// IsReadOnly returns true if a statement is read only.
+// It will update readOnlyCheckStmt if current ExecStmt can be conveted to
+// a plan.Execute. Last step is using ast.IsReadOnly function to determine
+// a statment is read only or not.
 func (a *ExecStmt) IsReadOnly() bool {
 	readOnlyCheckStmt := a.StmtNode
 	if checkPlan, ok := a.Plan.(*plan.Execute); ok {
@@ -174,7 +186,7 @@ func (a *ExecStmt) IsReadOnly() bool {
 	return ast.IsReadOnly(readOnlyCheckStmt)
 }
 
-// RebuildPlan implements ast.Statement interface.
+// RebuildPlan rebuilds current execute statement plan.
 func (a *ExecStmt) RebuildPlan() error {
 	is := GetInfoSchema(a.Ctx)
 	a.InfoSchema = is
@@ -189,8 +201,7 @@ func (a *ExecStmt) RebuildPlan() error {
 	return nil
 }
 
-// Exec implements the ast.Statement Exec interface.
-// This function builds an Executor from a plan. If the Executor doesn't return result,
+// Exec builds an Executor from a plan. If the Executor doesn't return result,
 // like the INSERT, UPDATE statements, it executes in this function, if the Executor returns
 // result, execution is done after this function returns, in the returned ast.RecordSet Next method.
 func (a *ExecStmt) Exec(goCtx goctx.Context) (ast.RecordSet, error) {
@@ -254,7 +265,7 @@ func (a *ExecStmt) Exec(goCtx goctx.Context) (ast.RecordSet, error) {
 	}, nil
 }
 
-func (a *ExecStmt) handleNoDelayExecutor(goCtx goctx.Context, e Executor, ctx context.Context, pi processinfoSetter) (ast.RecordSet, error) {
+func (a *ExecStmt) handleNoDelayExecutor(goCtx goctx.Context, e Executor, ctx sessionctx.Context, pi processinfoSetter) (ast.RecordSet, error) {
 	// Check if "tidb_snapshot" is set for the write executors.
 	// In history read mode, we can not do write operations.
 	switch e.(type) {
@@ -304,7 +315,7 @@ func (a *ExecStmt) handleNoDelayExecutor(goCtx goctx.Context, e Executor, ctx co
 }
 
 // buildExecutor build a executor from plan, prepared statement may need additional procedure.
-func (a *ExecStmt) buildExecutor(ctx context.Context) (Executor, error) {
+func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 	priority := kv.PriorityNormal
 	if _, ok := a.Plan.(*plan.Execute); !ok {
 		// Do not sync transaction for Execute statement, because the real optimization work is done in
@@ -393,7 +404,7 @@ func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
 //  1. ctx is auto commit tagged
 //  2. txn is nil
 //  2. plan is point get by pk or unique key
-func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx context.Context, p plan.Plan) bool {
+func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p plan.Plan) bool {
 	// check auto commit
 	if !ctx.GetSessionVars().IsAutocommit() {
 		return false

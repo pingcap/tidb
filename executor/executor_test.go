@@ -28,7 +28,7 @@ import (
 	. "github.com/pingcap/check"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
@@ -37,9 +37,11 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
@@ -85,18 +87,14 @@ func (s *testSuite) SetUpSuite(c *C) {
 		s.cluster = mocktikv.NewCluster()
 		mocktikv.BootstrapWithSingleStore(s.cluster)
 		s.mvccStore = mocktikv.NewMvccStore()
-		store, err := tikv.NewMockTikvStore(
-			tikv.WithCluster(s.cluster),
-			tikv.WithMVCCStore(s.mvccStore),
+		store, err := mockstore.NewMockTikvStore(
+			mockstore.WithCluster(s.cluster),
+			mockstore.WithMVCCStore(s.mvccStore),
 		)
 		c.Assert(err, IsNil)
 		s.store = store
 		tidb.SetSchemaLease(0)
 		tidb.SetStatsLease(0)
-	} else {
-		store, err := tidb.NewStore("memory://test/test")
-		c.Assert(err, IsNil)
-		s.store = store
 	}
 	_, err := tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
@@ -185,7 +183,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	r, err = tk.Exec("admin check table admin_test_error")
 	c.Assert(err, NotNil)
 	// different index values
-	ctx := tk.Se.(context.Context)
+	ctx := tk.Se.(sessionctx.Context)
 	dom := domain.GetDomain(ctx)
 	is := dom.InfoSchema()
 	c.Assert(is, NotNil)
@@ -219,7 +217,7 @@ type testCase struct {
 }
 
 func checkCases(tests []testCase, ld *executor.LoadDataInfo,
-	c *C, tk *testkit.TestKit, ctx context.Context, selectSQL, deleteSQL string) {
+	c *C, tk *testkit.TestKit, ctx sessionctx.Context, selectSQL, deleteSQL string) {
 	for _, tt := range tests {
 		c.Assert(ctx.NewTxn(), IsNil)
 		data, reachLimit, err1 := ld.InsertData(tt.data1, tt.data2)
@@ -232,7 +230,7 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 			c.Assert(data, DeepEquals, tt.restData,
 				Commentf("data1:%v, data2:%v, data:%v", string(tt.data1), string(tt.data2), string(data)))
 		}
-		terror.Log(ctx.StmtCommit())
+		ctx.StmtCommit()
 		err1 = ctx.Txn().Commit(goctx.Background())
 		c.Assert(err1, IsNil)
 		r := tk.MustQuery(selectSQL)
@@ -245,11 +243,14 @@ func (s *testSuite) TestSelectWithoutFrom(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
-	r := tk.MustQuery("select 1 + 2*3")
+	r := tk.MustQuery("select 1 + 2*3;")
 	r.Check(testkit.Rows("7"))
 
 	r = tk.MustQuery(`select _utf8"string";`)
 	r.Check(testkit.Rows("string"))
+
+	r = tk.MustQuery("select 1 order by 1;")
+	r.Check(testkit.Rows("1"))
 }
 
 // TestSelectBackslashN Issue 3685.
@@ -1567,7 +1568,7 @@ func (s *testSuite) TestAdapterStatement(c *C) {
 func (s *testSuite) TestPointGet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use mysql")
-	ctx := tk.Se.(context.Context)
+	ctx := tk.Se.(sessionctx.Context)
 	tests := map[string]bool{
 		"select * from help_topic where name='aaa'":         true,
 		"select * from help_topic where help_topic_id=1":    true,
@@ -1723,7 +1724,7 @@ func (s *testSuite) TestHistoryRead(c *C) {
 	tk.MustExec("insert history_read values (2)")
 	tk.MustQuery("select * from history_read").Check(testkit.Rows("1", "2"))
 	tk.MustExec("set @@tidb_snapshot = '" + snapshotTime.Format("2006-01-02 15:04:05.999999") + "'")
-	ctx := tk.Se.(context.Context)
+	ctx := tk.Se.(sessionctx.Context)
 	snapshotTS := ctx.GetSessionVars().SnapshotTS
 	c.Assert(snapshotTS, Greater, curVer1.Ver)
 	c.Assert(snapshotTS, Less, curVer2.Ver)
@@ -2052,8 +2053,8 @@ func (s *testContextOptionSuite) SetUpSuite(c *C) {
 	s.cli = cli
 
 	var err error
-	s.store, err = tikv.NewMockTikvStore(
-		tikv.WithHijackClient(hijackClient),
+	s.store, err = mockstore.NewMockTikvStore(
+		mockstore.WithHijackClient(hijackClient),
 	)
 	c.Assert(err, IsNil)
 	s.dom, err = tidb.BootstrapSession(s.store)
@@ -2083,21 +2084,33 @@ func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
 	cli.mu.Lock()
 	cli.mu.checkFlags = checkRequestPriority
 	cli.mu.Unlock()
+
+	cli.priority = pb.CommandPri_High
+	tk.MustQuery("select id from t where id = 1")
+	tk.MustQuery("select * from t1 where id = 1")
+
+	cli.priority = pb.CommandPri_Normal
+	tk.MustQuery("select count(*) from t")
+	tk.MustExec("update t set id = 3")
+	tk.MustExec("delete from t")
+	tk.MustExec("insert into t values (2)")
+	tk.MustExec("delete from t")
+
+	// Insert some data to make sure plan build IndexLookup for t.
+	tk.MustExec("insert into t values (1), (2)")
+
+	oldThreshold := config.GetGlobalConfig().Log.ExpensiveThreshold
+	config.GetGlobalConfig().Log.ExpensiveThreshold = 0
+	defer func() { config.GetGlobalConfig().Log.ExpensiveThreshold = oldThreshold }()
+
 	cli.priority = pb.CommandPri_High
 	tk.MustQuery("select id from t where id = 1")
 	tk.MustQuery("select * from t1 where id = 1")
 
 	cli.priority = pb.CommandPri_Low
 	tk.MustQuery("select count(*) from t")
-
-	cli.priority = pb.CommandPri_Low
-	tk.MustExec("update t set id = 3")
-
-	cli.priority = pb.CommandPri_Low
 	tk.MustExec("delete from t")
-
-	cli.priority = pb.CommandPri_Normal
-	tk.MustExec("insert into t values (2)")
+	tk.MustExec("insert into t values (3)")
 
 	// TODO: Those are not point get, but they should be high priority.
 	// cli.priority = pb.CommandPri_High

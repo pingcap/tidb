@@ -93,6 +93,10 @@ type TransactionContext struct {
 	StartTS       uint64
 	Shard         *int64
 	TableDeltaMap map[int64]TableDelta
+
+	// For metrics.
+	CreateTime     time.Time
+	StatementCount int
 }
 
 // UpdateDeltaForTable updates the delta info for some table.
@@ -465,7 +469,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.BatchDelete = tidbOptOn(val)
 	case TiDBDMLBatchSize:
 		s.DMLBatchSize = tidbOptPositiveInt(val, DefDMLBatchSize)
-	case TiDBCurrentTS:
+	case TiDBCurrentTS, TiDBConfig:
 		return ErrReadOnly
 	case TiDBMaxChunkSize:
 		s.MaxChunkSize = tidbOptPositiveInt(val, DefMaxChunkSize)

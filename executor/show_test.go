@@ -310,12 +310,6 @@ func (s *testSuite) TestShow(c *C) {
 	))
 
 	tk.MustExec(`drop table if exists t`)
-	tk.MustExec(`create table t (a int) default charset=abcdefg`)
-	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
-		"t CREATE TABLE `t` (\n"+
-			"  `a` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=abcdefg",
-	))
 }
 
 func (s *testSuite) TestShowVisibility(c *C) {
@@ -569,7 +563,7 @@ func (s *testSuite) TestShowTableStatus(c *C) {
 	rs, err := tk.Exec("show table status;")
 	c.Assert(errors.ErrorStack(err), Equals, "")
 	c.Assert(rs, NotNil)
-	rows, err := tidb.GetRows4Test(goctx.Background(), rs)
+	rows, err := tidb.GetRows4Test(goctx.Background(), tk.Se, rs)
 	c.Assert(errors.ErrorStack(err), Equals, "")
 	err = rs.Close()
 	c.Assert(errors.ErrorStack(err), Equals, "")

@@ -20,15 +20,15 @@ import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/mocktikv"
+	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -52,9 +52,9 @@ func newStoreWithBootstrap(c *C) (kv.Storage, error) {
 	cluster := mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(cluster)
 	mvccStore := mocktikv.NewMvccStore()
-	store, err := tikv.NewMockTikvStore(
-		tikv.WithCluster(cluster),
-		tikv.WithMVCCStore(mvccStore),
+	store, err := mockstore.NewMockTikvStore(
+		mockstore.WithCluster(cluster),
+		mockstore.WithMVCCStore(mvccStore),
 	)
 	c.Assert(err, IsNil)
 	tidb.SetSchemaLease(0)
@@ -290,7 +290,7 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 
 	for _, tt := range tests {
 		sql := "select * from t where " + tt.exprStr
-		ctx := testKit.Se.(context.Context)
+		ctx := testKit.Se.(sessionctx.Context)
 		stmts, err := tidb.Parse(ctx, sql)
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
 		c.Assert(stmts, HasLen, 1)
@@ -468,11 +468,46 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 			filterConds: "[]",
 			resultStr:   "[]",
 		},
+		{
+			indexPos:    0,
+			exprStr:     "(a > 'b' and a < 'bbb') or (a < 'cb' and a > 'a')",
+			accessConds: "[or(and(gt(test.t.a, b), lt(test.t.a, bbb)), and(lt(test.t.a, cb), gt(test.t.a, a)))]",
+			filterConds: "[]",
+			resultStr:   "[(a +inf,cb <nil>)]",
+		},
+		{
+			indexPos:    0,
+			exprStr:     "(a > 'a' and a < 'b') or (a >= 'b' and a < 'c')",
+			accessConds: "[or(and(gt(test.t.a, a), lt(test.t.a, b)), and(ge(test.t.a, b), lt(test.t.a, c)))]",
+			filterConds: "[]",
+			resultStr:   "[(a +inf,c <nil>)]",
+		},
+		{
+			indexPos:    0,
+			exprStr:     "(a > 'a' and a < 'b' and b < 1) or (a >= 'b' and a < 'c')",
+			accessConds: "[or(and(gt(test.t.a, a), lt(test.t.a, b)), and(ge(test.t.a, b), lt(test.t.a, c)))]",
+			filterConds: "[or(and(and(gt(test.t.a, a), lt(test.t.a, b)), lt(test.t.b, 1)), and(ge(test.t.a, b), lt(test.t.a, c)))]",
+			resultStr:   "[(a +inf,c <nil>)]",
+		},
+		{
+			indexPos:    0,
+			exprStr:     "(a in ('a', 'b') and b < 1) or (a >= 'b' and a < 'c')",
+			accessConds: "[or(and(in(test.t.a, a, b), lt(test.t.b, 1)), and(ge(test.t.a, b), lt(test.t.a, c)))]",
+			filterConds: "[]",
+			resultStr:   "[[a -inf,a 1) [b <nil>,c <nil>)]",
+		},
+		{
+			indexPos:    0,
+			exprStr:     "(a > 'a') or (c > 1)",
+			accessConds: "[]",
+			filterConds: "[or(gt(test.t.a, a), gt(test.t.c, 1))]",
+			resultStr:   "[[<nil>,+inf]]",
+		},
 	}
 
 	for _, tt := range tests {
 		sql := "select * from t where " + tt.exprStr
-		ctx := testKit.Se.(context.Context)
+		ctx := testKit.Se.(sessionctx.Context)
 		stmts, err := tidb.Parse(ctx, sql)
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
 		c.Assert(stmts, HasLen, 1)
@@ -490,13 +525,11 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		}
 		cols, lengths := expression.IndexInfo2Cols(selection.Schema().Columns, tbl.Indices[tt.indexPos])
 		c.Assert(cols, NotNil)
-		var filter []expression.Expression
-		conds, filter = ranger.DetachIndexConditions(conds, cols, lengths)
+		ranges, conds, filter, _, err := ranger.DetachCondAndBuildRangeForIndex(ctx.GetSessionVars().StmtCtx, conds, cols, lengths)
+		c.Assert(err, IsNil)
 		c.Assert(fmt.Sprintf("%s", conds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
 		c.Assert(fmt.Sprintf("%s", filter), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))
-		result, err := ranger.BuildIndexRange(new(stmtctx.StatementContext), cols, lengths, conds)
-		c.Assert(err, IsNil)
-		got := fmt.Sprintf("%v", result)
+		got := fmt.Sprintf("%v", ranges)
 		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
 	}
 }
@@ -744,7 +777,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 
 	for _, tt := range tests {
 		sql := "select * from t where " + tt.exprStr
-		ctx := testKit.Se.(context.Context)
+		ctx := testKit.Se.(sessionctx.Context)
 		stmts, err := tidb.Parse(ctx, sql)
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
 		c.Assert(stmts, HasLen, 1)
@@ -762,7 +795,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 		}
 		col := expression.ColInfo2Col(sel.Schema().Columns, ds.TableInfo().Columns[tt.colPos])
 		c.Assert(col, NotNil)
-		conds = ranger.ExtractAccessConditions(conds, ranger.ColumnRangeType, []*expression.Column{col}, nil)
+		conds = ranger.ExtractAccessConditionsForColumn(conds, col.ColName)
 		c.Assert(fmt.Sprintf("%s", conds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
 		result, err := ranger.BuildColumnRange(conds, new(stmtctx.StatementContext), col.RetType)
 		c.Assert(err, IsNil)

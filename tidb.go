@@ -27,11 +27,11 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
@@ -133,7 +133,7 @@ func SetCommitRetryLimit(limit int) {
 }
 
 // Parse parses a query string to raw ast.StmtNode.
-func Parse(ctx context.Context, src string) ([]ast.StmtNode, error) {
+func Parse(ctx sessionctx.Context, src string) ([]ast.StmtNode, error) {
 	log.Debug("compiling", src)
 	charset, collation := ctx.GetSessionVars().GetCharsetInfo()
 	p := parser.New()
@@ -147,14 +147,14 @@ func Parse(ctx context.Context, src string) ([]ast.StmtNode, error) {
 }
 
 // Compile is safe for concurrent use by multiple goroutines.
-func Compile(goCtx goctx.Context, ctx context.Context, stmtNode ast.StmtNode) (ast.Statement, error) {
+func Compile(goCtx goctx.Context, ctx sessionctx.Context, stmtNode ast.StmtNode) (ast.Statement, error) {
 	compiler := executor.Compiler{Ctx: ctx}
 	stmt, err := compiler.Compile(goCtx, stmtNode)
 	return stmt, errors.Trace(err)
 }
 
 // runStmt executes the ast.Statement and commit or rollback the current transaction.
-func runStmt(goCtx goctx.Context, ctx context.Context, s ast.Statement) (ast.RecordSet, error) {
+func runStmt(goCtx goctx.Context, ctx sessionctx.Context, s ast.Statement) (ast.RecordSet, error) {
 	span, ctx1 := opentracing.StartSpanFromContext(goCtx, "runStmt")
 	span.LogKV("sql", s.OriginText())
 	defer span.Finish()
@@ -165,13 +165,16 @@ func runStmt(goCtx goctx.Context, ctx context.Context, s ast.Statement) (ast.Rec
 	rs, err = s.Exec(goCtx)
 	span.SetTag("txn.id", se.sessionVars.TxnCtx.StartTS)
 	// All the history should be added here.
+	se.GetSessionVars().TxnCtx.StatementCount++
 	if !s.IsReadOnly() {
-		GetHistory(ctx).Add(0, s, se.sessionVars.StmtCtx)
-		if txn := ctx.Txn(); txn != nil {
+		if err == nil {
+			GetHistory(ctx).Add(0, s, se.sessionVars.StmtCtx)
+		}
+		if ctx.Txn() != nil {
 			if err != nil {
 				ctx.StmtRollback()
 			} else {
-				terror.Log(ctx.StmtCommit())
+				ctx.StmtCommit()
 			}
 		}
 	}
@@ -198,7 +201,7 @@ func runStmt(goCtx goctx.Context, ctx context.Context, s ast.Statement) (ast.Rec
 }
 
 // GetHistory get all stmtHistory in current txn. Exported only for test.
-func GetHistory(ctx context.Context) *StmtHistory {
+func GetHistory(ctx sessionctx.Context) *StmtHistory {
 	hist, ok := ctx.GetSessionVars().TxnCtx.Histroy.(*StmtHistory)
 	if ok {
 		return hist
@@ -209,12 +212,12 @@ func GetHistory(ctx context.Context) *StmtHistory {
 }
 
 // GetRows4Test gets all the rows from a RecordSet, only used for test.
-func GetRows4Test(goCtx goctx.Context, rs ast.RecordSet) ([]types.Row, error) {
+func GetRows4Test(goCtx goctx.Context, ctx sessionctx.Context, rs ast.RecordSet) ([]types.Row, error) {
 	if rs == nil {
 		return nil, nil
 	}
 	var rows []types.Row
-	if rs.SupportChunk() {
+	if ctx.GetSessionVars().EnableChunk && rs.SupportChunk() {
 		for {
 			// Since we collect all the rows, we can not reuse the chunk.
 			chk := rs.NewChunk()

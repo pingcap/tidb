@@ -16,12 +16,12 @@ package plan_test
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/testleak"
 	goctx "golang.org/x/net/context"
 )
@@ -66,11 +66,10 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 			best: "TableReader(Table(t))->Sort->Projection",
 		},
 		// Test DNF condition + Double Read.
-		// FIXME: Some bugs still exist in selectivity.
-		//{
-		//	sql:  "select * from t where (t.c > 0 and t.c < 1) or (t.c > 2 and t.c < 3) or (t.c > 4 and t.c < 5) or (t.c > 6 and t.c < 7) or (t.c > 9 and t.c < 10)",
-		//	best: "IndexLookUp(Index(t.c_d_e)[(0 +inf,1 <nil>) (2 +inf,3 <nil>) (4 +inf,5 <nil>) (6 +inf,7 <nil>) (9 +inf,10 <nil>)], Table(t))",
-		//},
+		{
+			sql:  "select * from t where (t.c > 0 and t.c < 1) or (t.c > 2 and t.c < 3) or (t.c > 4 and t.c < 5) or (t.c > 6 and t.c < 7) or (t.c > 9 and t.c < 10)",
+			best: "IndexLookUp(Index(t.c_d_e)[(0 +inf,1 <nil>) (2 +inf,3 <nil>) (4 +inf,5 <nil>) (6 +inf,7 <nil>) (9 +inf,10 <nil>)], Table(t))",
+		},
 		// Test TopN to table branch in double read.
 		{
 			sql:  "select * from t where t.c = 1 and t.e = 1 order by t.b limit 1",
@@ -920,11 +919,11 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		},
 		{
 			sql:  "select a from t where c = 1 or c = 2 or c = 3",
-			best: "IndexReader(Index(t.c_d_e)[[1,1] [2,2] [3,3]])->Projection",
+			best: "IndexReader(Index(t.c_d_e)[[1,3]])->Projection",
 		},
 		{
 			sql:  "select b from t where c = 1 or c = 2 or c = 3 or c = 4 or c = 5",
-			best: "IndexLookUp(Index(t.c_d_e)[[1,1] [2,2] [3,3] [4,4] [5,5]], Table(t))->Projection",
+			best: "IndexLookUp(Index(t.c_d_e)[[1,5]], Table(t))->Projection",
 		},
 		{
 			sql:  "select a from t where c = 5",
@@ -970,11 +969,10 @@ func (s *testPlanSuite) TestRefine(c *C) {
 			sql:  "select a from t where d in (1, 2, 3)",
 			best: "TableReader(Table(t)->Sel([in(test.t.d, 1, 2, 3)]))->Projection",
 		},
-		// TODO: func in is rewritten to DNF which will influence the extraction behavior of accessCondition.
-		//{
-		//	sql:  "select a from t where c not in (1)",
-		//	best: "Table(t)->Projection",
-		//},
+		{
+			sql:  "select a from t where c not in (1)",
+			best: "IndexReader(Index(t.c_d_e)[(<nil>,1) (1,+inf]])->Projection",
+		},
 		// test like
 		{
 			sql:  "select a from t use index(c_d_e) where c != 1",
@@ -1020,10 +1018,10 @@ func (s *testPlanSuite) TestRefine(c *C) {
 			sql:  `select a from t where c_str like 'abc\\_'`,
 			best: "IndexReader(Index(t.c_d_e_str)[[abc_,abc_]])->Projection",
 		},
-		//		{
-		//			sql:  `select a from t where c_str like 'abc\\\\_'`,
-		//			best: "IndexReader(Index(t.c_d_e_str)[(abc\\ +inf,abc] <nil>)])->Selection->Projection",
-		//		},
+		{
+			sql:  `select a from t where c_str like 'abc\\\\_'`,
+			best: "IndexReader(Index(t.c_d_e_str)[(abc\\,abc])]->Sel([like(test.t.c_str, abc\\\\_, 92)]))->Projection",
+		},
 		{
 			sql:  `select a from t where c_str like 'abc\\_%'`,
 			best: "IndexReader(Index(t.c_d_e_str)[[abc_,abc`)])->Projection",
@@ -1079,7 +1077,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		comment := Commentf("for %s", tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		sc := se.(context.Context).GetSessionVars().StmtCtx
+		sc := se.(sessionctx.Context).GetSessionVars().StmtCtx
 		sc.IgnoreTruncate = false
 		p, err := plan.Optimize(se, stmt, s.is)
 		c.Assert(err, IsNil)
@@ -1150,7 +1148,7 @@ func (s *testPlanSuite) TestAggEliminater(c *C) {
 		comment := Commentf("for %s", tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		sc := se.(context.Context).GetSessionVars().StmtCtx
+		sc := se.(sessionctx.Context).GetSessionVars().StmtCtx
 		sc.IgnoreTruncate = false
 		p, err := plan.Optimize(se, stmt, s.is)
 		c.Assert(err, IsNil)

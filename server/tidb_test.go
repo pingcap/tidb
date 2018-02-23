@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
 	tmysql "github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/mockstore"
 	goctx "golang.org/x/net/context"
 )
 
@@ -45,7 +45,7 @@ var suite = new(TidbTestSuite)
 var _ = Suite(suite)
 
 func (ts *TidbTestSuite) SetUpSuite(c *C) {
-	store, err := tikv.NewMockTikvStore()
+	store, err := mockstore.NewMockTikvStore()
 	tidb.SetStatsLease(0)
 	c.Assert(err, IsNil)
 	_, err = tidb.BootstrapSession(store)

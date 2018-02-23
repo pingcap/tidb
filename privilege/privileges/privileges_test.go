@@ -19,12 +19,12 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -236,7 +236,7 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 func (s *testPrivilegeSuite) TestDropTablePriv(c *C) {
 	defer testleak.AfterTest(c)()
 	se := newSession(c, s.store, s.dbName)
-	ctx, _ := se.(context.Context)
+	ctx, _ := se.(sessionctx.Context)
 	mustExec(c, se, `CREATE TABLE todrop(c int);`)
 	// ctx.GetSessionVars().User = "root@localhost"
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil), IsTrue)
@@ -308,7 +308,7 @@ func mustExec(c *C, se tidb.Session, sql string) {
 }
 
 func newStore(c *C, dbPath string) kv.Storage {
-	store, err := tikv.NewMockTikvStore()
+	store, err := mockstore.NewMockTikvStore()
 	tidb.SetSchemaLease(0)
 	tidb.SetStatsLease(0)
 	c.Assert(err, IsNil)
