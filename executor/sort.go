@@ -604,7 +604,7 @@ func (e *TopNExec) processChildChk(childRowChk, childKeyChk *chunk.Chunk) error 
 			next = childRowChk.GetRow(i)
 		}
 		if e.chkHeap.greaterRow(heapMax, next) {
-			// Evicl heap max, keep the next row.
+			// Evict heap max, keep the next row.
 			e.rowPtrs[0] = e.rowChunks.AppendRow(childRowChk.GetRow(i))
 			if childKeyChk != nil {
 				e.keyChunks.AppendRow(childKeyChk.GetRow(i))
