@@ -46,7 +46,7 @@ func (s *testStatSuite) TestStat(c *C) {
 	time.Sleep(testLease)
 
 	dbInfo := testSchemaInfo(c, d, "test")
-	testCreateSchema(testNewContext(d), c, d, dbInfo)
+	testCreateSchema(c, testNewContext(d), d, dbInfo)
 
 	// TODO: Get this information from etcd.
 	//	m, err := d.Stats(nil)

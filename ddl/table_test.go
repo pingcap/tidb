@@ -67,7 +67,7 @@ func testTableInfo(c *C, d *ddl, name string, num int) *model.TableInfo {
 	return tblInfo
 }
 
-func testCreateTable(ctx sessionctx.Context, c *C, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
+func testCreateTable(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		TableID:    tblInfo.ID,
@@ -78,14 +78,14 @@ func testCreateTable(ctx sessionctx.Context, c *C, d *ddl, dbInfo *model.DBInfo,
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
 
-	v := getSchemaVer(ctx, c)
+	v := getSchemaVer(c, ctx)
 	tblInfo.State = model.StatePublic
-	checkHistoryJobArgs(ctx, c, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	tblInfo.State = model.StateNone
 	return job
 }
 
-func testRenameTable(ctx sessionctx.Context, c *C, d *ddl, newSchemaID, oldSchemaID int64, tblInfo *model.TableInfo) *model.Job {
+func testRenameTable(c *C, ctx sessionctx.Context, d *ddl, newSchemaID, oldSchemaID int64, tblInfo *model.TableInfo) *model.Job {
 	job := &model.Job{
 		SchemaID:   newSchemaID,
 		TableID:    tblInfo.ID,
@@ -96,14 +96,14 @@ func testRenameTable(ctx sessionctx.Context, c *C, d *ddl, newSchemaID, oldSchem
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
 
-	v := getSchemaVer(ctx, c)
+	v := getSchemaVer(c, ctx)
 	tblInfo.State = model.StatePublic
-	checkHistoryJobArgs(ctx, c, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	tblInfo.State = model.StateNone
 	return job
 }
 
-func testDropTable(ctx sessionctx.Context, c *C, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
+func testDropTable(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		TableID:    tblInfo.ID,
@@ -113,12 +113,12 @@ func testDropTable(ctx sessionctx.Context, c *C, d *ddl, dbInfo *model.DBInfo, t
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
 
-	v := getSchemaVer(ctx, c)
-	checkHistoryJobArgs(ctx, c, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	v := getSchemaVer(c, ctx)
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }
 
-func testTruncateTable(ctx sessionctx.Context, c *C, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
+func testTruncateTable(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
 	newTableID, err := d.genGlobalID()
 	c.Assert(err, IsNil)
 	job := &model.Job{
@@ -131,9 +131,9 @@ func testTruncateTable(ctx sessionctx.Context, c *C, d *ddl, dbInfo *model.DBInf
 	err = d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
 
-	v := getSchemaVer(ctx, c)
+	v := getSchemaVer(c, ctx)
 	tblInfo.ID = newTableID
-	checkHistoryJobArgs(ctx, c, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }
 
@@ -190,11 +190,11 @@ func (s *testTableSuite) SetUpSuite(c *C) {
 	s.d = testNewDDL(goctx.Background(), nil, s.store, nil, nil, testLease)
 
 	s.dbInfo = testSchemaInfo(c, s.d, "test")
-	testCreateSchema(testNewContext(s.d), c, s.d, s.dbInfo)
+	testCreateSchema(c, testNewContext(s.d), s.d, s.dbInfo)
 }
 
 func (s *testTableSuite) TearDownSuite(c *C) {
-	testDropSchema(testNewContext(s.d), c, s.d, s.dbInfo)
+	testDropSchema(c, testNewContext(s.d), s.d, s.dbInfo)
 	s.d.Stop()
 	s.store.Close()
 }
@@ -206,13 +206,13 @@ func (s *testTableSuite) TestTable(c *C) {
 	ctx := testNewContext(d)
 
 	tblInfo := testTableInfo(c, d, "t", 3)
-	job := testCreateTable(ctx, c, d, s.dbInfo, tblInfo)
+	job := testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StatePublic)
 	testCheckJobDone(c, d, job, true)
 
 	// Create an existing table.
 	newTblInfo := testTableInfo(c, d, "t", 3)
-	doDDLJobErr(ctx, c, s.dbInfo.ID, newTblInfo.ID, model.ActionCreateTable, []interface{}{newTblInfo}, d)
+	doDDLJobErr(c, s.dbInfo.ID, newTblInfo.ID, model.ActionCreateTable, []interface{}{newTblInfo}, ctx, d)
 
 	count := 2000
 	tbl := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
@@ -221,22 +221,22 @@ func (s *testTableSuite) TestTable(c *C) {
 		c.Assert(err, IsNil)
 	}
 
-	job = testDropTable(ctx, c, d, s.dbInfo, tblInfo)
+	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)
 
 	// for truncate table
 	tblInfo = testTableInfo(c, d, "tt", 3)
-	job = testCreateTable(ctx, c, d, s.dbInfo, tblInfo)
+	job = testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StatePublic)
 	testCheckJobDone(c, d, job, true)
-	job = testTruncateTable(ctx, c, d, s.dbInfo, tblInfo)
+	job = testTruncateTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StatePublic)
 	testCheckJobDone(c, d, job, true)
 
 	// for rename table
 	dbInfo1 := testSchemaInfo(c, s.d, "test_rename_table")
-	testCreateSchema(testNewContext(s.d), c, s.d, dbInfo1)
-	job = testRenameTable(ctx, c, d, dbInfo1.ID, s.dbInfo.ID, tblInfo)
+	testCreateSchema(c, testNewContext(s.d), s.d, dbInfo1)
+	job = testRenameTable(c, ctx, d, dbInfo1.ID, s.dbInfo.ID, tblInfo)
 	testCheckTableState(c, d, dbInfo1, tblInfo, model.StatePublic)
 	testCheckJobDone(c, d, job, true)
 }

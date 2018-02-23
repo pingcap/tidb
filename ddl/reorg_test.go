@@ -157,10 +157,10 @@ func (s *testDDLSuite) TestReorgOwner(c *C) {
 	defer d2.Stop()
 
 	dbInfo := testSchemaInfo(c, d1, "test")
-	testCreateSchema(ctx, c, d1, dbInfo)
+	testCreateSchema(c, ctx, d1, dbInfo)
 
 	tblInfo := testTableInfo(c, d1, "t", 3)
-	testCreateTable(ctx, c, d1, dbInfo, tblInfo)
+	testCreateTable(c, ctx, d1, dbInfo, tblInfo)
 	t := testGetTable(c, d1, dbInfo.ID, tblInfo.ID)
 
 	num := 10
@@ -181,7 +181,7 @@ func (s *testDDLSuite) TestReorgOwner(c *C) {
 
 	d1.SetHook(tc)
 
-	testDropSchema(ctx, c, d1, dbInfo)
+	testDropSchema(c, ctx, d1, dbInfo)
 
 	err = kv.RunInNewTxn(d1.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)

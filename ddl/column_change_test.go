@@ -62,7 +62,7 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 	ctx := testNewContext(d)
 	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
-	testCreateTable(ctx, c, d, s.dbInfo, tblInfo)
+	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
 	// insert t values (1, 2);
 	originTable := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 	row := types.MakeDatums(1, 2)
@@ -127,17 +127,17 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 	}
 	d.SetHook(tc)
 	defaultValue := int64(3)
-	job := testCreateColumn(ctx, c, d, s.dbInfo, tblInfo, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, defaultValue)
+	job := testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, defaultValue)
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	testCheckJobDone(c, d, job, true)
 	mu.Lock()
 	tb := publicTable
 	mu.Unlock()
-	s.testColumnDrop(ctx, c, d, tb)
-	s.testAddColumnNoDefault(ctx, c, d, tblInfo)
+	s.testColumnDrop(c, ctx, d, tb)
+	s.testAddColumnNoDefault(c, ctx, d, tblInfo)
 }
 
-func (s *testColumnChangeSuite) testAddColumnNoDefault(ctx sessionctx.Context, c *C, d *ddl, tblInfo *model.TableInfo) {
+func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx sessionctx.Context, d *ddl, tblInfo *model.TableInfo) {
 	d.Stop()
 	tc := &TestDDLCallback{}
 	// set up hook
@@ -179,12 +179,12 @@ func (s *testColumnChangeSuite) testAddColumnNoDefault(ctx sessionctx.Context, c
 	}
 	d.SetHook(tc)
 	d.start(goctx.Background())
-	job := testCreateColumn(ctx, c, d, s.dbInfo, tblInfo, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, nil)
+	job := testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, nil)
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	testCheckJobDone(c, d, job, true)
 }
 
-func (s *testColumnChangeSuite) testColumnDrop(ctx sessionctx.Context, c *C, d *ddl, tbl table.Table) {
+func (s *testColumnChangeSuite) testColumnDrop(c *C, ctx sessionctx.Context, d *ddl, tbl table.Table) {
 	d.Stop()
 	dropCol := tbl.Cols()[2]
 	tc := &TestDDLCallback{}
@@ -209,7 +209,7 @@ func (s *testColumnChangeSuite) testColumnDrop(ctx sessionctx.Context, c *C, d *
 	d.SetHook(tc)
 	d.start(goctx.Background())
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
-	testDropColumn(ctx, c, d, s.dbInfo, tbl.Meta(), dropCol.Name.L, false)
+	testDropColumn(c, ctx, d, s.dbInfo, tbl.Meta(), dropCol.Name.L, false)
 }
 
 func (s *testColumnChangeSuite) checkAddWriteOnly(ctx sessionctx.Context, d *ddl, deleteOnlyTable, writeOnlyTable table.Table, h int64) error {

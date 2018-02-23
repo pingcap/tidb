@@ -48,18 +48,18 @@ func (s *testColumnSuite) SetUpSuite(c *C) {
 	s.d = testNewDDL(goctx.Background(), nil, s.store, nil, nil, testLease)
 
 	s.dbInfo = testSchemaInfo(c, s.d, "test_column")
-	testCreateSchema(testNewContext(s.d), c, s.d, s.dbInfo)
+	testCreateSchema(c, testNewContext(s.d), s.d, s.dbInfo)
 }
 
 func (s *testColumnSuite) TearDownSuite(c *C) {
-	testDropSchema(testNewContext(s.d), c, s.d, s.dbInfo)
+	testDropSchema(c, testNewContext(s.d), s.d, s.dbInfo)
 	s.d.Stop()
 
 	err := s.store.Close()
 	c.Assert(err, IsNil)
 }
 
-func testCreateColumn(ctx sessionctx.Context, c *C, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
+func testCreateColumn(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
 	colName string, pos *ast.ColumnPosition, defaultValue interface{}) *model.Job {
 	col := &model.ColumnInfo{
 		Name:               model.NewCIStr(colName),
@@ -80,12 +80,12 @@ func testCreateColumn(ctx sessionctx.Context, c *C, d *ddl, dbInfo *model.DBInfo
 
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
-	v := getSchemaVer(ctx, c)
-	checkHistoryJobArgs(ctx, c, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	v := getSchemaVer(c, ctx)
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }
 
-func testDropColumn(ctx sessionctx.Context, c *C, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName string, isError bool) *model.Job {
+func testDropColumn(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName string, isError bool) *model.Job {
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		TableID:    tblInfo.ID,
@@ -99,8 +99,8 @@ func testDropColumn(ctx sessionctx.Context, c *C, d *ddl, dbInfo *model.DBInfo, 
 		return nil
 	}
 	c.Assert(errors.ErrorStack(err), Equals, "")
-	v := getSchemaVer(ctx, c)
-	checkHistoryJobArgs(ctx, c, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	v := getSchemaVer(c, ctx)
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }
 
@@ -109,7 +109,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	tblInfo := testTableInfo(c, s.d, "t1", 3)
 	ctx := testNewContext(s.d)
 
-	testCreateTable(ctx, c, s.d, s.dbInfo, tblInfo)
+	testCreateTable(c, ctx, s.d, s.dbInfo, tblInfo)
 	t := testGetTable(c, s.d, s.dbInfo.ID, tblInfo.ID)
 
 	num := 10
@@ -134,7 +134,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 
 	c.Assert(table.FindCol(t.Cols(), "c4"), IsNil)
 
-	job := testCreateColumn(ctx, c, s.d, s.dbInfo, tblInfo, "c4", &ast.ColumnPosition{Tp: ast.ColumnPositionAfter, RelativeColumn: &ast.ColumnName{Name: model.NewCIStr("c3")}}, 100)
+	job := testCreateColumn(c, ctx, s.d, s.dbInfo, tblInfo, "c4", &ast.ColumnPosition{Tp: ast.ColumnPositionAfter, RelativeColumn: &ast.ColumnName{Name: model.NewCIStr("c3")}}, 100)
 	testCheckJobDone(c, s.d, job, true)
 
 	t = testGetTable(c, s.d, s.dbInfo.ID, tblInfo.ID)
@@ -164,7 +164,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	c.Assert(values, HasLen, 4)
 	c.Assert(values[3].GetInt64(), Equals, int64(14))
 
-	job = testDropColumn(ctx, c, s.d, s.dbInfo, tblInfo, "c4", false)
+	job = testDropColumn(c, ctx, s.d, s.dbInfo, tblInfo, "c4", false)
 	testCheckJobDone(c, s.d, job, false)
 
 	t = testGetTable(c, s.d, s.dbInfo.ID, tblInfo.ID)
@@ -174,7 +174,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	c.Assert(values, HasLen, 3)
 	c.Assert(values[2].GetInt64(), Equals, int64(13))
 
-	job = testCreateColumn(ctx, c, s.d, s.dbInfo, tblInfo, "c4", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, 111)
+	job = testCreateColumn(c, ctx, s.d, s.dbInfo, tblInfo, "c4", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, 111)
 	testCheckJobDone(c, s.d, job, true)
 
 	t = testGetTable(c, s.d, s.dbInfo.ID, tblInfo.ID)
@@ -184,7 +184,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	c.Assert(values, HasLen, 4)
 	c.Assert(values[3].GetInt64(), Equals, int64(111))
 
-	job = testCreateColumn(ctx, c, s.d, s.dbInfo, tblInfo, "c5", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, 101)
+	job = testCreateColumn(c, ctx, s.d, s.dbInfo, tblInfo, "c5", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, 101)
 	testCheckJobDone(c, s.d, job, true)
 
 	t = testGetTable(c, s.d, s.dbInfo.ID, tblInfo.ID)
@@ -194,7 +194,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	c.Assert(values, HasLen, 5)
 	c.Assert(values[4].GetInt64(), Equals, int64(101))
 
-	job = testCreateColumn(ctx, c, s.d, s.dbInfo, tblInfo, "c6", &ast.ColumnPosition{Tp: ast.ColumnPositionFirst}, 202)
+	job = testCreateColumn(c, ctx, s.d, s.dbInfo, tblInfo, "c6", &ast.ColumnPosition{Tp: ast.ColumnPositionFirst}, 202)
 	testCheckJobDone(c, s.d, job, true)
 
 	t = testGetTable(c, s.d, s.dbInfo.ID, tblInfo.ID)
@@ -220,7 +220,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	c.Assert(values[0].GetInt64(), Equals, int64(202))
 	c.Assert(values[5].GetInt64(), Equals, int64(101))
 
-	job = testDropColumn(ctx, c, s.d, s.dbInfo, tblInfo, "c2", false)
+	job = testDropColumn(c, ctx, s.d, s.dbInfo, tblInfo, "c2", false)
 	testCheckJobDone(c, s.d, job, false)
 
 	t = testGetTable(c, s.d, s.dbInfo.ID, tblInfo.ID)
@@ -231,29 +231,29 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	c.Assert(values[0].GetInt64(), Equals, int64(202))
 	c.Assert(values[4].GetInt64(), Equals, int64(101))
 
-	job = testDropColumn(ctx, c, s.d, s.dbInfo, tblInfo, "c1", false)
+	job = testDropColumn(c, ctx, s.d, s.dbInfo, tblInfo, "c1", false)
 	testCheckJobDone(c, s.d, job, false)
 
-	job = testDropColumn(ctx, c, s.d, s.dbInfo, tblInfo, "c3", false)
+	job = testDropColumn(c, ctx, s.d, s.dbInfo, tblInfo, "c3", false)
 	testCheckJobDone(c, s.d, job, false)
 
-	job = testDropColumn(ctx, c, s.d, s.dbInfo, tblInfo, "c4", false)
+	job = testDropColumn(c, ctx, s.d, s.dbInfo, tblInfo, "c4", false)
 	testCheckJobDone(c, s.d, job, false)
 
-	job = testCreateIndex(ctx, c, s.d, s.dbInfo, tblInfo, false, "c5_idx", "c5")
+	job = testCreateIndex(c, ctx, s.d, s.dbInfo, tblInfo, false, "c5_idx", "c5")
 	testCheckJobDone(c, s.d, job, true)
 
-	testDropColumn(ctx, c, s.d, s.dbInfo, tblInfo, "c5", true)
+	testDropColumn(c, ctx, s.d, s.dbInfo, tblInfo, "c5", true)
 
-	testDropIndex(ctx, c, s.d, s.dbInfo, tblInfo, "c5_idx")
+	testDropIndex(c, ctx, s.d, s.dbInfo, tblInfo, "c5_idx")
 	testCheckJobDone(c, s.d, job, true)
 
-	job = testDropColumn(ctx, c, s.d, s.dbInfo, tblInfo, "c5", false)
+	job = testDropColumn(c, ctx, s.d, s.dbInfo, tblInfo, "c5", false)
 	testCheckJobDone(c, s.d, job, false)
 
-	testDropColumn(ctx, c, s.d, s.dbInfo, tblInfo, "c6", true)
+	testDropColumn(c, ctx, s.d, s.dbInfo, tblInfo, "c6", true)
 
-	testDropTable(ctx, c, s.d, s.dbInfo, tblInfo)
+	testDropTable(c, ctx, s.d, s.dbInfo, tblInfo)
 }
 
 func (s *testColumnSuite) checkColumnKVExist(ctx sessionctx.Context, t table.Table, handle int64, col *table.Column, columnValue interface{}, isExist bool) error {
@@ -744,7 +744,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
 
-	testCreateTable(ctx, c, d, s.dbInfo, tblInfo)
+	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
 	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
 	oldRow := types.MakeDatums(int64(1), int64(2), int64(3))
@@ -798,7 +798,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 	d.Stop()
 	d.start(goctx.Background())
 
-	job := testCreateColumn(ctx, c, d, s.dbInfo, tblInfo, newColName, &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, defaultColValue)
+	job := testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, newColName, &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, defaultColValue)
 
 	testCheckJobDone(c, d, job, true)
 	mu.Lock()
@@ -811,7 +811,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 	err = ctx.NewTxn()
 	c.Assert(err, IsNil)
 
-	job = testDropTable(ctx, c, d, s.dbInfo, tblInfo)
+	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)
 
 	err = ctx.Txn().Commit(goctx.Background())
@@ -830,7 +830,7 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
 
-	testCreateTable(ctx, c, d, s.dbInfo, tblInfo)
+	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
 	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
 	colName := "c4"
@@ -873,7 +873,7 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 	d.Stop()
 	d.start(goctx.Background())
 
-	job := testDropColumn(ctx, c, s.d, s.dbInfo, tblInfo, colName, false)
+	job := testDropColumn(c, ctx, s.d, s.dbInfo, tblInfo, colName, false)
 	testCheckJobDone(c, d, job, false)
 	mu.Lock()
 	hErr := hookErr
@@ -885,7 +885,7 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 	err = ctx.NewTxn()
 	c.Assert(err, IsNil)
 
-	job = testDropTable(ctx, c, d, s.dbInfo, tblInfo)
+	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)
 
 	err = ctx.Txn().Commit(goctx.Background())

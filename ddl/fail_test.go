@@ -32,7 +32,7 @@ func (s *testColumnChangeSuite) TestFailBeforeDecodeArgs(c *C) {
 	ctx := testNewContext(d)
 	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
-	testCreateTable(ctx, c, d, s.dbInfo, tblInfo)
+	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
 	// insert t_fail values (1, 2);
 	originTable := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 	row := types.MakeDatums(1, 2)
@@ -60,7 +60,7 @@ func (s *testColumnChangeSuite) TestFailBeforeDecodeArgs(c *C) {
 	}
 	d.SetHook(tc)
 	defaultValue := int64(3)
-	job := testCreateColumn(ctx, c, d, s.dbInfo, tblInfo, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, defaultValue)
+	job := testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, defaultValue)
 	// Make sure the schema state only appears once.
 	c.Assert(stateCnt, Equals, 1)
 	testCheckJobDone(c, d, job, true)

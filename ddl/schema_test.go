@@ -44,7 +44,7 @@ func testSchemaInfo(c *C, d *ddl, name string) *model.DBInfo {
 	return dbInfo
 }
 
-func testCreateSchema(ctx sessionctx.Context, c *C, d *ddl, dbInfo *model.DBInfo) *model.Job {
+func testCreateSchema(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo) *model.Job {
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		Type:       model.ActionCreateSchema,
@@ -54,14 +54,14 @@ func testCreateSchema(ctx sessionctx.Context, c *C, d *ddl, dbInfo *model.DBInfo
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
 
-	v := getSchemaVer(ctx, c)
+	v := getSchemaVer(c, ctx)
 	dbInfo.State = model.StatePublic
-	checkHistoryJobArgs(ctx, c, job.ID, &historyJobArgs{ver: v, db: dbInfo})
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, db: dbInfo})
 	dbInfo.State = model.StateNone
 	return job
 }
 
-func testDropSchema(ctx sessionctx.Context, c *C, d *ddl, dbInfo *model.DBInfo) (*model.Job, int64) {
+func testDropSchema(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo) (*model.Job, int64) {
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		Type:       model.ActionDropSchema,
@@ -70,7 +70,7 @@ func testDropSchema(ctx sessionctx.Context, c *C, d *ddl, dbInfo *model.DBInfo) 
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
 
-	ver := getSchemaVer(ctx, c)
+	ver := getSchemaVer(c, ctx)
 	return job, ver
 }
 
@@ -124,14 +124,14 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 	dbInfo := testSchemaInfo(c, d, "test")
 
 	// create a database.
-	job := testCreateSchema(ctx, c, d, dbInfo)
+	job := testCreateSchema(c, ctx, d, dbInfo)
 	testCheckSchemaState(c, d, dbInfo, model.StatePublic)
 	testCheckJobDone(c, d, job, true)
 
 	/*** to drop the schema with two tables. ***/
 	// create table t with 100 records.
 	tblInfo1 := testTableInfo(c, d, "t", 3)
-	tJob1 := testCreateTable(ctx, c, d, dbInfo, tblInfo1)
+	tJob1 := testCreateTable(c, ctx, d, dbInfo, tblInfo1)
 	testCheckTableState(c, d, dbInfo, tblInfo1, model.StatePublic)
 	testCheckJobDone(c, d, tJob1, true)
 	tbl1 := testGetTable(c, d, dbInfo.ID, tblInfo1.ID)
@@ -141,7 +141,7 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 	}
 	// create table t1 with defaultBatchCnt+10 records.
 	tblInfo2 := testTableInfo(c, d, "t1", 3)
-	tJob2 := testCreateTable(ctx, c, d, dbInfo, tblInfo2)
+	tJob2 := testCreateTable(c, ctx, d, dbInfo, tblInfo2)
 	testCheckTableState(c, d, dbInfo, tblInfo2, model.StatePublic)
 	testCheckJobDone(c, d, tJob2, true)
 	tbl2 := testGetTable(c, d, dbInfo.ID, tblInfo2.ID)
@@ -149,12 +149,12 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 		_, err := tbl2.AddRecord(ctx, types.MakeDatums(i, i, i), false)
 		c.Assert(err, IsNil)
 	}
-	job, v := testDropSchema(ctx, c, d, dbInfo)
+	job, v := testDropSchema(c, ctx, d, dbInfo)
 	testCheckSchemaState(c, d, dbInfo, model.StateNone)
 	ids := make(map[int64]struct{})
 	ids[tblInfo1.ID] = struct{}{}
 	ids[tblInfo2.ID] = struct{}{}
-	checkHistoryJobArgs(ctx, c, job.ID, &historyJobArgs{ver: v, db: dbInfo, tblIDs: ids})
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, db: dbInfo, tblIDs: ids})
 
 	// Drop a non-existent database.
 	job = &model.Job{
@@ -167,10 +167,10 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 
 	// Drop a database without a table.
 	dbInfo1 := testSchemaInfo(c, d, "test1")
-	job = testCreateSchema(ctx, c, d, dbInfo1)
+	job = testCreateSchema(c, ctx, d, dbInfo1)
 	testCheckSchemaState(c, d, dbInfo1, model.StatePublic)
 	testCheckJobDone(c, d, job, true)
-	job, _ = testDropSchema(ctx, c, d, dbInfo1)
+	job, _ = testDropSchema(c, ctx, d, dbInfo1)
 	testCheckSchemaState(c, d, dbInfo1, model.StateNone)
 	testCheckJobDone(c, d, job, false)
 }
@@ -193,7 +193,7 @@ func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
 	d2.ownerManager.SetOwner(false)
 
 	dbInfo := testSchemaInfo(c, d2, "test")
-	testCreateSchema(ctx, c, d2, dbInfo)
+	testCreateSchema(c, ctx, d2, dbInfo)
 	testCheckSchemaState(c, d2, dbInfo, model.StatePublic)
 
 	// d2 must not be owner.
@@ -201,7 +201,7 @@ func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
 
 	schemaID, err := d2.genGlobalID()
 	c.Assert(err, IsNil)
-	doDDLJobErr(ctx, c, schemaID, 0, model.ActionCreateSchema, []interface{}{dbInfo}, d2)
+	doDDLJobErr(c, schemaID, 0, model.ActionCreateSchema, []interface{}{dbInfo}, ctx, d2)
 }
 
 func testRunInterruptedJob(c *C, d *ddl, job *model.Job) {

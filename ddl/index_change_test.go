@@ -58,7 +58,7 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 	ctx := testNewContext(d)
 	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
-	testCreateTable(ctx, c, d, s.dbInfo, tblInfo)
+	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
 	originTable := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
 	// insert t values (1, 1), (2, 2), (3, 3)
@@ -99,7 +99,7 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
-			err = s.checkAddWriteOnly(ctx1, d, deleteOnlyTable, writeOnlyTable)
+			err = s.checkAddWriteOnly(d, ctx1, deleteOnlyTable, writeOnlyTable)
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
@@ -111,14 +111,14 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
-			err = s.checkAddPublic(ctx1, d, writeOnlyTable, publicTable)
+			err = s.checkAddPublic(d, ctx1, writeOnlyTable, publicTable)
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
 		}
 	}
 	d.SetHook(tc)
-	testCreateIndex(ctx, c, d, s.dbInfo, originTable.Meta(), false, "c2", "c2")
+	testCreateIndex(c, ctx, d, s.dbInfo, originTable.Meta(), false, "c2", "c2")
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 	c.Assert(ctx.Txn().Commit(goctx.Background()), IsNil)
 	d.Stop()
@@ -137,7 +137,7 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
-			err = s.checkDropWriteOnly(ctx1, d, publicTable, writeOnlyTable)
+			err = s.checkDropWriteOnly(d, ctx1, publicTable, writeOnlyTable)
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
@@ -146,7 +146,7 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
-			err = s.checkDropDeleteOnly(ctx1, d, writeOnlyTable, deleteOnlyTable)
+			err = s.checkDropDeleteOnly(d, ctx1, writeOnlyTable, deleteOnlyTable)
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
@@ -161,7 +161,7 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 		}
 	}
 	d.start(goctx.Background())
-	testDropIndex(ctx, c, d, s.dbInfo, publicTable.Meta(), "c2")
+	testDropIndex(c, ctx, d, s.dbInfo, publicTable.Meta(), "c2")
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 }
 
@@ -180,7 +180,7 @@ func checkIndexExists(ctx sessionctx.Context, tbl table.Table, indexValue interf
 	return nil
 }
 
-func (s *testIndexChangeSuite) checkAddWriteOnly(ctx sessionctx.Context, d *ddl, delOnlyTbl, writeOnlyTbl table.Table) error {
+func (s *testIndexChangeSuite) checkAddWriteOnly(d *ddl, ctx sessionctx.Context, delOnlyTbl, writeOnlyTbl table.Table) error {
 	// DeleteOnlyTable: insert t values (4, 4);
 	err := ctx.NewTxn()
 	if err != nil {
@@ -253,7 +253,7 @@ func (s *testIndexChangeSuite) checkAddWriteOnly(ctx sessionctx.Context, d *ddl,
 	return nil
 }
 
-func (s *testIndexChangeSuite) checkAddPublic(ctx sessionctx.Context, d *ddl, writeTbl, publicTbl table.Table) error {
+func (s *testIndexChangeSuite) checkAddPublic(d *ddl, ctx sessionctx.Context, writeTbl, publicTbl table.Table) error {
 	// WriteOnlyTable: insert t values (6, 6)
 	err := ctx.NewTxn()
 	if err != nil {
@@ -320,7 +320,7 @@ func (s *testIndexChangeSuite) checkAddPublic(ctx sessionctx.Context, d *ddl, wr
 	return ctx.Txn().Commit(goctx.Background())
 }
 
-func (s *testIndexChangeSuite) checkDropWriteOnly(ctx sessionctx.Context, d *ddl, publicTbl, writeTbl table.Table) error {
+func (s *testIndexChangeSuite) checkDropWriteOnly(d *ddl, ctx sessionctx.Context, publicTbl, writeTbl table.Table) error {
 	// WriteOnlyTable insert t values (8, 8)
 	err := ctx.NewTxn()
 	if err != nil {
@@ -360,7 +360,7 @@ func (s *testIndexChangeSuite) checkDropWriteOnly(ctx sessionctx.Context, d *ddl
 	return ctx.Txn().Commit(goctx.Background())
 }
 
-func (s *testIndexChangeSuite) checkDropDeleteOnly(ctx sessionctx.Context, d *ddl, writeTbl, delTbl table.Table) error {
+func (s *testIndexChangeSuite) checkDropDeleteOnly(d *ddl, ctx sessionctx.Context, writeTbl, delTbl table.Table) error {
 	// WriteOnlyTable insert t values (9, 9)
 	err := ctx.NewTxn()
 	if err != nil {
