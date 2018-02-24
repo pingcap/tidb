@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 // HandleDDLEvent begins to process a ddl task.
@@ -50,27 +50,27 @@ func (h *Handle) DDLEventCh() chan *util.Event {
 // new columns and indices which belong to this table.
 func (h *Handle) insertTableStats2KV(info *model.TableInfo) error {
 	exec := h.ctx.(sqlexec.SQLExecutor)
-	_, err := exec.Execute(goctx.Background(), "begin")
+	_, err := exec.Execute(context.Background(), "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = exec.Execute(goctx.Background(), fmt.Sprintf("insert into mysql.stats_meta (version, table_id) values(%d, %d)", h.ctx.Txn().StartTS(), info.ID))
+	_, err = exec.Execute(context.Background(), fmt.Sprintf("insert into mysql.stats_meta (version, table_id) values(%d, %d)", h.ctx.Txn().StartTS(), info.ID))
 	if err != nil {
 		return errors.Trace(err)
 	}
 	for _, col := range info.Columns {
-		_, err = exec.Execute(goctx.Background(), fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version) values(%d, 0, %d, 0, %d)", info.ID, col.ID, h.ctx.Txn().StartTS()))
+		_, err = exec.Execute(context.Background(), fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version) values(%d, 0, %d, 0, %d)", info.ID, col.ID, h.ctx.Txn().StartTS()))
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 	for _, idx := range info.Indices {
-		_, err = exec.Execute(goctx.Background(), fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version) values(%d, 1, %d, 0, %d)", info.ID, idx.ID, h.ctx.Txn().StartTS()))
+		_, err = exec.Execute(context.Background(), fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version) values(%d, 1, %d, 0, %d)", info.ID, idx.ID, h.ctx.Txn().StartTS()))
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
-	_, err = exec.Execute(goctx.Background(), "commit")
+	_, err = exec.Execute(context.Background(), "commit")
 	return errors.Trace(err)
 }
 
@@ -78,16 +78,16 @@ func (h *Handle) insertTableStats2KV(info *model.TableInfo) error {
 // This operation also updates version.
 func (h *Handle) insertColStats2KV(tableID int64, colInfo *model.ColumnInfo) error {
 	exec := h.ctx.(sqlexec.SQLExecutor)
-	_, err := exec.Execute(goctx.Background(), "begin")
+	_, err := exec.Execute(context.Background(), "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// First of all, we update the version.
-	_, err = exec.Execute(goctx.Background(), fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d ", h.ctx.Txn().StartTS(), tableID))
+	_, err = exec.Execute(context.Background(), fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d ", h.ctx.Txn().StartTS(), tableID))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	goCtx := goctx.TODO()
+	goCtx := context.TODO()
 	// If we didn't update anything by last SQL, it means the stats of this table does not exist.
 	if h.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0 {
 		exec := h.ctx.(sqlexec.SQLExecutor)

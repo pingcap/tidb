@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 // streamResult implements the SelectResult interface.
@@ -42,9 +42,9 @@ func (r *streamResult) ScanKeys() int64 {
 	return r.scanKeys
 }
 
-func (r *streamResult) Fetch(goctx.Context) {}
+func (r *streamResult) Fetch(context.Context) {}
 
-func (r *streamResult) Next(goCtx goctx.Context) (PartialResult, error) {
+func (r *streamResult) Next(goCtx context.Context) (PartialResult, error) {
 	var ret streamPartialResult
 	ret.rowLen = r.rowLen
 	finished, err := r.readDataFromResponse(goCtx, r.resp, &ret.Chunk)
@@ -54,7 +54,7 @@ func (r *streamResult) Next(goCtx goctx.Context) (PartialResult, error) {
 	return &ret, nil
 }
 
-func (r *streamResult) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+func (r *streamResult) NextChunk(goCtx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	maxChunkSize := r.ctx.GetSessionVars().MaxChunkSize
 	for chk.NumRows() < maxChunkSize {
@@ -75,7 +75,7 @@ func (r *streamResult) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 }
 
 // readDataFromResponse read the data to result. Returns true means the resp is finished.
-func (r *streamResult) readDataFromResponse(goCtx goctx.Context, resp kv.Response, result *tipb.Chunk) (bool, error) {
+func (r *streamResult) readDataFromResponse(goCtx context.Context, resp kv.Response, result *tipb.Chunk) (bool, error) {
 	data, err := resp.Next(goCtx)
 	if err != nil {
 		return false, errors.Trace(err)
@@ -109,7 +109,7 @@ func (r *streamResult) readDataFromResponse(goCtx goctx.Context, resp kv.Respons
 }
 
 // readDataIfNecessary ensures there are some data in current chunk. If no more data, r.curr == nil.
-func (r *streamResult) readDataIfNecessary(goCtx goctx.Context) error {
+func (r *streamResult) readDataIfNecessary(goCtx context.Context) error {
 	if r.curr != nil && len(r.curr.RowsData) > 0 {
 		return nil
 	}
@@ -147,7 +147,7 @@ func (r *streamResult) flushToChunk(chk *chunk.Chunk) (err error) {
 	return nil
 }
 
-func (r *streamResult) NextRaw(goCtx goctx.Context) ([]byte, error) {
+func (r *streamResult) NextRaw(goCtx context.Context) ([]byte, error) {
 	r.partialCount++
 	r.scanKeys = -1
 	return r.resp.Next(goCtx)
@@ -167,7 +167,7 @@ type streamPartialResult struct {
 	rowLen int
 }
 
-func (pr *streamPartialResult) Next(goCtx goctx.Context) (data []types.Datum, err error) {
+func (pr *streamPartialResult) Next(goCtx context.Context) (data []types.Datum, err error) {
 	if len(pr.Chunk.RowsData) == 0 {
 		return nil, nil // partial result finished.
 	}

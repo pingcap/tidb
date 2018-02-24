@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 // MergeJoinExec implements the merge join algorithm.
@@ -68,7 +68,7 @@ type readerIterator struct {
 	joinKeys  []*expression.Column
 	peekedRow types.Row
 	rowCache  []Row
-	goCtx     goctx.Context
+	goCtx     context.Context
 
 	// for chunk executions
 	sameKeyRows    []chunk.Row
@@ -265,7 +265,7 @@ func (e *MergeJoinExec) Close() error {
 }
 
 // Open implements the Executor Open interface.
-func (e *MergeJoinExec) Open(goCtx goctx.Context) error {
+func (e *MergeJoinExec) Open(goCtx context.Context) error {
 	if err := e.baseExecutor.Open(goCtx); err != nil {
 		return errors.Trace(err)
 	}
@@ -389,7 +389,7 @@ func (e *MergeJoinExec) computeJoin() (bool, error) {
 	}
 }
 
-func (e *MergeJoinExec) prepare(goCtx goctx.Context, chk *chunk.Chunk) error {
+func (e *MergeJoinExec) prepare(goCtx context.Context, chk *chunk.Chunk) error {
 	e.outerIter.goCtx = goCtx
 	e.innerIter.goCtx = goCtx
 	// prepare for chunk-oriented execution.
@@ -450,7 +450,7 @@ func (e *MergeJoinExec) prepare(goCtx goctx.Context, chk *chunk.Chunk) error {
 }
 
 // Next implements the Executor Next interface.
-func (e *MergeJoinExec) Next(goCtx goctx.Context) (Row, error) {
+func (e *MergeJoinExec) Next(goCtx context.Context) (Row, error) {
 	if !e.prepared {
 		if err := e.prepare(goCtx, nil); err != nil {
 			return nil, errors.Trace(err)
@@ -474,7 +474,7 @@ func (e *MergeJoinExec) Next(goCtx goctx.Context) (Row, error) {
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (e *MergeJoinExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+func (e *MergeJoinExec) NextChunk(goCtx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if !e.prepared {
 		if err := e.prepare(goCtx, chk); err != nil {

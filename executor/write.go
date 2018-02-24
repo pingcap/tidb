@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	log "github.com/sirupsen/logrus"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var (
@@ -182,7 +182,7 @@ type DeleteExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *DeleteExec) Next(goCtx goctx.Context) (Row, error) {
+func (e *DeleteExec) Next(goCtx context.Context) (Row, error) {
 	if e.finished {
 		return nil, nil
 	}
@@ -197,7 +197,7 @@ func (e *DeleteExec) Next(goCtx goctx.Context) (Row, error) {
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (e *DeleteExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+func (e *DeleteExec) NextChunk(goCtx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.finished {
 		return nil
@@ -224,7 +224,7 @@ type tblColPosInfo struct {
 // the value in map[int64]Row is the deleting row.
 type tableRowMapType map[int64]map[int64]Row
 
-func (e *DeleteExec) deleteMultiTables(goCtx goctx.Context) error {
+func (e *DeleteExec) deleteMultiTables(goCtx context.Context) error {
 	if len(e.Tables) == 0 {
 		return nil
 	}
@@ -261,7 +261,7 @@ func (e *DeleteExec) matchingDeletingTable(tableID int64, col *expression.Column
 	return false
 }
 
-func (e *DeleteExec) deleteSingleTable(goCtx goctx.Context) error {
+func (e *DeleteExec) deleteSingleTable(goCtx context.Context) error {
 	var (
 		id        int64
 		tbl       table.Table
@@ -315,7 +315,7 @@ func (e *DeleteExec) deleteOneRow(tbl table.Table, handleCol *expression.Column,
 	return nil
 }
 
-func (e *DeleteExec) deleteSingleTableByChunk(goCtx goctx.Context) error {
+func (e *DeleteExec) deleteSingleTableByChunk(goCtx context.Context) error {
 	var (
 		id        int64
 		tbl       table.Table
@@ -403,7 +403,7 @@ func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []t
 	}
 }
 
-func (e *DeleteExec) deleteMultiTablesByChunk(goCtx goctx.Context) error {
+func (e *DeleteExec) deleteMultiTablesByChunk(goCtx context.Context) error {
 	if len(e.Tables) == 0 {
 		return nil
 	}
@@ -472,7 +472,7 @@ func (e *DeleteExec) Close() error {
 }
 
 // Open implements the Executor Open interface.
-func (e *DeleteExec) Open(goCtx goctx.Context) error {
+func (e *DeleteExec) Open(goCtx context.Context) error {
 	return e.SelectExec.Open(goCtx)
 }
 
@@ -788,7 +788,7 @@ func (k loadDataVarKeyType) String() string {
 // LoadDataVarKey is a variable key for load data.
 const LoadDataVarKey loadDataVarKeyType = 0
 
-func (e *LoadData) exec(goCtx goctx.Context) (Row, error) {
+func (e *LoadData) exec(goCtx context.Context) (Row, error) {
 	// TODO: support load data without local field.
 	if !e.IsLocal {
 		return nil, errors.New("Load Data: don't support load data without local field")
@@ -813,12 +813,12 @@ func (e *LoadData) exec(goCtx goctx.Context) (Row, error) {
 }
 
 // Next implements the Executor Next interface.
-func (e *LoadData) Next(goCtx goctx.Context) (Row, error) {
+func (e *LoadData) Next(goCtx context.Context) (Row, error) {
 	return e.exec(goCtx)
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (e *LoadData) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+func (e *LoadData) NextChunk(goCtx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	_, err := e.exec(goCtx)
 	return errors.Trace(err)
@@ -830,7 +830,7 @@ func (e *LoadData) Close() error {
 }
 
 // Open implements the Executor Open interface.
-func (e *LoadData) Open(goCtx goctx.Context) error {
+func (e *LoadData) Open(goCtx context.Context) error {
 	return nil
 }
 
@@ -877,7 +877,7 @@ type InsertExec struct {
 	finished bool
 }
 
-func (e *InsertExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error) {
+func (e *InsertExec) exec(goCtx context.Context, rows [][]types.Datum) (Row, error) {
 	// If tidb_batch_insert is ON and not in a transaction, we could use BatchInsert mode.
 	sessVars := e.ctx.GetSessionVars()
 	defer sessVars.CleanBuffers()
@@ -1081,7 +1081,7 @@ func batchMarkDupRows(ctx sessionctx.Context, t table.Table, rows [][]types.Datu
 }
 
 // Next implements the Executor Next interface.
-func (e *InsertExec) Next(goCtx goctx.Context) (Row, error) {
+func (e *InsertExec) Next(goCtx context.Context) (Row, error) {
 	if e.finished {
 		return nil, nil
 	}
@@ -1104,7 +1104,7 @@ func (e *InsertExec) Next(goCtx goctx.Context) (Row, error) {
 }
 
 // NextChunk implements Exec NextChunk interface.
-func (e *InsertExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+func (e *InsertExec) NextChunk(goCtx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.finished {
 		return nil
@@ -1138,7 +1138,7 @@ func (e *InsertExec) Close() error {
 }
 
 // Open implements the Executor Close interface.
-func (e *InsertExec) Open(goCtx goctx.Context) error {
+func (e *InsertExec) Open(goCtx context.Context) error {
 	if e.SelectExec != nil {
 		return e.SelectExec.Open(goCtx)
 	}
@@ -1334,7 +1334,7 @@ func (e *InsertValues) fillDefaultValues(row []types.Datum, hasValue []bool, ign
 	return nil
 }
 
-func (e *InsertValues) getRowsSelect(goCtx goctx.Context, cols []*table.Column, ignoreErr bool) ([][]types.Datum, error) {
+func (e *InsertValues) getRowsSelect(goCtx context.Context, cols []*table.Column, ignoreErr bool) ([][]types.Datum, error) {
 	// process `insert|replace into ... select ... from ...`
 	if e.SelectExec.Schema().Len() != len(cols) {
 		return nil, ErrWrongValueCountOnRow.GenByArgs(1)
@@ -1358,7 +1358,7 @@ func (e *InsertValues) getRowsSelect(goCtx goctx.Context, cols []*table.Column, 
 	return rows, nil
 }
 
-func (e *InsertValues) getRowsSelectChunk(goCtx goctx.Context, cols []*table.Column, ignoreErr bool) ([][]types.Datum, error) {
+func (e *InsertValues) getRowsSelectChunk(goCtx context.Context, cols []*table.Column, ignoreErr bool) ([][]types.Datum, error) {
 	// process `insert|replace into ... select ... from ...`
 	selectExec := e.children[0]
 	if selectExec.Schema().Len() != len(cols) {
@@ -1615,14 +1615,14 @@ func (e *ReplaceExec) Close() error {
 }
 
 // Open implements the Executor Open interface.
-func (e *ReplaceExec) Open(goCtx goctx.Context) error {
+func (e *ReplaceExec) Open(goCtx context.Context) error {
 	if e.SelectExec != nil {
 		return e.SelectExec.Open(goCtx)
 	}
 	return nil
 }
 
-func (e *ReplaceExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, error) {
+func (e *ReplaceExec) exec(goCtx context.Context, rows [][]types.Datum) (Row, error) {
 	/*
 	 * MySQL uses the following algorithm for REPLACE (and LOAD DATA ... REPLACE):
 	 *  1. Try to insert the new row into the table
@@ -1683,7 +1683,7 @@ func (e *ReplaceExec) exec(goCtx goctx.Context, rows [][]types.Datum) (Row, erro
 }
 
 // Next implements the Executor Next interface.
-func (e *ReplaceExec) Next(goCtx goctx.Context) (Row, error) {
+func (e *ReplaceExec) Next(goCtx context.Context) (Row, error) {
 	if e.finished {
 		return nil, nil
 	}
@@ -1706,7 +1706,7 @@ func (e *ReplaceExec) Next(goCtx goctx.Context) (Row, error) {
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (e *ReplaceExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+func (e *ReplaceExec) NextChunk(goCtx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.finished {
 		return nil
@@ -1748,7 +1748,7 @@ type UpdateExec struct {
 	cursor      int
 }
 
-func (e *UpdateExec) exec(goCtx goctx.Context, schema *expression.Schema) (Row, error) {
+func (e *UpdateExec) exec(goCtx context.Context, schema *expression.Schema) (Row, error) {
 	assignFlag, err := getUpdateColumns(e.OrderedList, schema.Len())
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1799,7 +1799,7 @@ func (e *UpdateExec) exec(goCtx goctx.Context, schema *expression.Schema) (Row, 
 }
 
 // Next implements the Executor Next interface.
-func (e *UpdateExec) Next(goCtx goctx.Context) (Row, error) {
+func (e *UpdateExec) Next(goCtx context.Context) (Row, error) {
 	if !e.fetched {
 		err := e.fetchRows(goCtx)
 		if err != nil {
@@ -1812,7 +1812,7 @@ func (e *UpdateExec) Next(goCtx goctx.Context) (Row, error) {
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (e *UpdateExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+func (e *UpdateExec) NextChunk(goCtx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if !e.fetched {
 		err := e.fetchChunkRows(goCtx)
@@ -1847,7 +1847,7 @@ func getUpdateColumns(assignList []*expression.Assignment, schemaLen int) ([]boo
 	return assignFlag, nil
 }
 
-func (e *UpdateExec) fetchChunkRows(goCtx goctx.Context) error {
+func (e *UpdateExec) fetchChunkRows(goCtx context.Context) error {
 	fields := e.children[0].retTypes()
 	for {
 		chk := chunk.NewChunk(fields)
@@ -1886,7 +1886,7 @@ func (e *UpdateExec) composeNewRow(oldRow Row) (Row, error) {
 	return newRowData, nil
 }
 
-func (e *UpdateExec) fetchRows(goCtx goctx.Context) error {
+func (e *UpdateExec) fetchRows(goCtx context.Context) error {
 	for {
 		row, err := e.SelectExec.Next(goCtx)
 		if err != nil {
@@ -1919,6 +1919,6 @@ func (e *UpdateExec) Close() error {
 }
 
 // Open implements the Executor Open interface.
-func (e *UpdateExec) Open(goCtx goctx.Context) error {
+func (e *UpdateExec) Open(goCtx context.Context) error {
 	return e.SelectExec.Open(goCtx)
 }

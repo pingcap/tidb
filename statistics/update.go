@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 type tableDeltaMap map[int64]variable.TableDelta
@@ -171,7 +171,7 @@ func (h *Handle) dumpTableStatDeltaToKV(id int64, delta variable.TableDelta) (bo
 	if delta.Count == 0 {
 		return true, nil
 	}
-	goCtx := goctx.TODO()
+	goCtx := context.TODO()
 	_, err := h.ctx.(sqlexec.SQLExecutor).Execute(goCtx, "begin")
 	if err != nil {
 		return false, errors.Trace(err)

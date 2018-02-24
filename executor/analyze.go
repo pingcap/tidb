@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	log "github.com/sirupsen/logrus"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var _ Executor = &AnalyzeExec{}
@@ -53,16 +53,16 @@ const (
 )
 
 // Next implements the Executor Next interface.
-func (e *AnalyzeExec) Next(goCtx goctx.Context) (Row, error) {
+func (e *AnalyzeExec) Next(goCtx context.Context) (Row, error) {
 	return nil, errors.Trace(e.run(goCtx))
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (e *AnalyzeExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+func (e *AnalyzeExec) NextChunk(goCtx context.Context, chk *chunk.Chunk) error {
 	return errors.Trace(e.run(goCtx))
 }
 
-func (e *AnalyzeExec) run(goCtx goctx.Context) error {
+func (e *AnalyzeExec) run(goCtx context.Context) error {
 	concurrency, err := getBuildStatsConcurrency(e.ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -194,7 +194,7 @@ func (e *AnalyzeIndexExec) open() error {
 		Build()
 	kvReq.Concurrency = e.concurrency
 	kvReq.IsolationLevel = kv.RC
-	goCtx := goctx.TODO()
+	goCtx := context.TODO()
 	e.result, err = distsql.Analyze(goCtx, e.ctx.GetClient(), kvReq)
 	if err != nil {
 		return errors.Trace(err)
@@ -217,7 +217,7 @@ func (e *AnalyzeIndexExec) buildStats() (hist *statistics.Histogram, cms *statis
 	hist = &statistics.Histogram{}
 	cms = statistics.NewCMSketch(defaultCMSketchDepth, defaultCMSketchWidth)
 	for {
-		data, err := e.result.NextRaw(goctx.TODO())
+		data, err := e.result.NextRaw(context.TODO())
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -314,7 +314,7 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.NewRange) (distsql.Selec
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	goCtx := goctx.TODO()
+	goCtx := context.TODO()
 	result, err := distsql.Analyze(goCtx, e.ctx.GetClient(), kvReq)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -345,7 +345,7 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 		}
 	}
 	for {
-		data, err1 := e.resultHandler.nextRaw(goctx.TODO())
+		data, err1 := e.resultHandler.nextRaw(context.TODO())
 		if err1 != nil {
 			return nil, nil, errors.Trace(err1)
 		}

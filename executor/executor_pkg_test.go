@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testExecSuite{})
@@ -120,7 +120,7 @@ func (s *testExecSuite) TestShowProcessList(c *C) {
 		Tp:           ast.ShowProcessList,
 	}
 
-	goCtx := goctx.Background()
+	goCtx := context.Background()
 	// Run test and check results.
 	for _, p := range ps {
 		r, err := e.Next(goCtx)

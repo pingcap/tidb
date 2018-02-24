@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 // Histogram represents statistics for a column or index.
@@ -163,7 +163,7 @@ func HistogramEqual(a, b *Histogram, ignoreID bool) bool {
 
 // SaveStatsToStorage saves the stats to storage.
 func SaveStatsToStorage(ctx sessionctx.Context, tableID int64, count int64, isIndex int, hg *Histogram, cms *CMSketch) error {
-	goCtx := goctx.TODO()
+	goCtx := context.TODO()
 	exec := ctx.(sqlexec.SQLExecutor)
 	_, err := exec.Execute(goCtx, "begin")
 	if err != nil {

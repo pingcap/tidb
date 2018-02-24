@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testleak"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
@@ -56,7 +56,7 @@ func (ts *testSuite) SetUpSuite(c *C) {
 }
 
 func (ts *testSuite) TestBasic(c *C) {
-	_, err := ts.se.Execute(goctx.Background(), "CREATE TABLE test.t (a int primary key auto_increment, b varchar(255) unique)")
+	_, err := ts.se.Execute(context.Background(), "CREATE TABLE test.t (a int primary key auto_increment, b varchar(255) unique)")
 	c.Assert(err, IsNil)
 	ctx := ts.se.(sessionctx.Context)
 	c.Assert(ctx.NewTxn(), IsNil)
@@ -126,7 +126,7 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(handle, Equals, int64(1))
 	c.Assert(found, Equals, true)
 	c.Assert(err, IsNil)
-	_, err = ts.se.Execute(goctx.Background(), "drop table test.t")
+	_, err = ts.se.Execute(context.Background(), "drop table test.t")
 	c.Assert(err, IsNil)
 
 	table.MockTableFromMeta(tb.Meta())
@@ -147,8 +147,8 @@ func countEntriesWithPrefix(ctx sessionctx.Context, prefix []byte) (int, error) 
 }
 
 func (ts *testSuite) TestTypes(c *C) {
-	goCtx := goctx.Background()
-	_, err := ts.se.Execute(goctx.Background(), "CREATE TABLE test.t (c1 tinyint, c2 smallint, c3 int, c4 bigint, c5 text, c6 blob, c7 varchar(64), c8 time, c9 timestamp null default CURRENT_TIMESTAMP, c10 decimal(10,1))")
+	goCtx := context.Background()
+	_, err := ts.se.Execute(context.Background(), "CREATE TABLE test.t (c1 tinyint, c2 smallint, c3 int, c4 bigint, c5 text, c6 blob, c7 varchar(64), c8 time, c9 timestamp null default CURRENT_TIMESTAMP, c10 decimal(10,1))")
 	c.Assert(err, IsNil)
 	ctx := ts.se.(sessionctx.Context)
 	dom := domain.GetDomain(ctx)
@@ -192,7 +192,7 @@ func (ts *testSuite) TestTypes(c *C) {
 }
 
 func (ts *testSuite) TestUniqueIndexMultipleNullEntries(c *C) {
-	_, err := ts.se.Execute(goctx.Background(), "CREATE TABLE test.t (a int primary key auto_increment, b varchar(255) unique)")
+	_, err := ts.se.Execute(context.Background(), "CREATE TABLE test.t (a int primary key auto_increment, b varchar(255) unique)")
 	c.Assert(err, IsNil)
 	ctx := ts.se.(sessionctx.Context)
 	dom := domain.GetDomain(ctx)
@@ -216,7 +216,7 @@ func (ts *testSuite) TestUniqueIndexMultipleNullEntries(c *C) {
 	_, err = tb.AddRecord(ctx, types.MakeDatums(2, nil), false)
 	c.Assert(err, IsNil)
 	c.Assert(ctx.Txn().Rollback(), IsNil)
-	_, err = ts.se.Execute(goctx.Background(), "drop table test.t")
+	_, err = ts.se.Execute(context.Background(), "drop table test.t")
 	c.Assert(err, IsNil)
 }
 
@@ -263,8 +263,8 @@ func (ts *testSuite) TestRowKeyCodec(c *C) {
 
 func (ts *testSuite) TestUnsignedPK(c *C) {
 	defer testleak.AfterTest(c)()
-	ts.se.Execute(goctx.Background(), "DROP TABLE IF EXISTS test.tPK")
-	_, err := ts.se.Execute(goctx.Background(), "CREATE TABLE test.tPK (a bigint unsigned primary key, b varchar(255))")
+	ts.se.Execute(context.Background(), "DROP TABLE IF EXISTS test.tPK")
+	_, err := ts.se.Execute(context.Background(), "CREATE TABLE test.tPK (a bigint unsigned primary key, b varchar(255))")
 	c.Assert(err, IsNil)
 	ctx := ts.se.(sessionctx.Context)
 	dom := domain.GetDomain(ctx)
@@ -277,15 +277,15 @@ func (ts *testSuite) TestUnsignedPK(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(len(row), Equals, 2)
 	c.Assert(row[0].Kind(), Equals, types.KindUint64)
-	c.Assert(ctx.Txn().Commit(goctx.Background()), IsNil)
+	c.Assert(ctx.Txn().Commit(context.Background()), IsNil)
 }
 
 func (ts *testSuite) TestIterRecords(c *C) {
 	defer testleak.AfterTest(c)()
-	ts.se.Execute(goctx.Background(), "DROP TABLE IF EXISTS test.tIter")
-	_, err := ts.se.Execute(goctx.Background(), "CREATE TABLE test.tIter (a int primary key, b int)")
+	ts.se.Execute(context.Background(), "DROP TABLE IF EXISTS test.tIter")
+	_, err := ts.se.Execute(context.Background(), "CREATE TABLE test.tIter (a int primary key, b int)")
 	c.Assert(err, IsNil)
-	_, err = ts.se.Execute(goctx.Background(), "INSERT test.tIter VALUES (-1, 2), (2, NULL)")
+	_, err = ts.se.Execute(context.Background(), "INSERT test.tIter VALUES (-1, 2), (2, NULL)")
 	c.Assert(err, IsNil)
 	ctx := ts.se.(sessionctx.Context)
 	c.Assert(ctx.NewTxn(), IsNil)
@@ -300,12 +300,12 @@ func (ts *testSuite) TestIterRecords(c *C) {
 	})
 	c.Assert(err, IsNil)
 	c.Assert(totalCount, Equals, 2)
-	c.Assert(ctx.Txn().Commit(goctx.Background()), IsNil)
+	c.Assert(ctx.Txn().Commit(context.Background()), IsNil)
 }
 
 func (ts *testSuite) TestTableFromMeta(c *C) {
 	defer testleak.AfterTest(c)()
-	_, err := ts.se.Execute(goctx.Background(), "CREATE TABLE test.meta (a int primary key auto_increment, b varchar(255) unique)")
+	_, err := ts.se.Execute(context.Background(), "CREATE TABLE test.meta (a int primary key auto_increment, b varchar(255) unique)")
 	c.Assert(err, IsNil)
 	ctx := ts.se.(sessionctx.Context)
 	c.Assert(ctx.NewTxn(), IsNil)

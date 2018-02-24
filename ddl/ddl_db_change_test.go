@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testStateChangeSuite{})
@@ -56,15 +56,15 @@ func (s *testStateChangeSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	s.se, err = tidb.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
-	_, err = s.se.Execute(goctx.Background(), "create database test_db_state")
+	_, err = s.se.Execute(context.Background(), "create database test_db_state")
 	c.Assert(err, IsNil)
-	_, err = s.se.Execute(goctx.Background(), "use test_db_state")
+	_, err = s.se.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
 	s.p = parser.New()
 }
 
 func (s *testStateChangeSuite) TearDownSuite(c *C) {
-	s.se.Execute(goctx.Background(), "drop database if exists test_db_state")
+	s.se.Execute(context.Background(), "drop database if exists test_db_state")
 	s.se.Close()
 	s.dom.Close()
 	s.store.Close()
@@ -104,15 +104,15 @@ func (s *testStateChangeSuite) TestTwoStates(c *C) {
 
 func (s *testStateChangeSuite) test(c *C, tableName, alterTableSQL string, testInfo *testExecInfo) {
 	defer testleak.AfterTest(c)()
-	_, err := s.se.Execute(goctx.Background(), `create table t (
+	_, err := s.se.Execute(context.Background(), `create table t (
 		c1 int,
 		c2 varchar(64),
 		c3 enum('N','Y') not null default 'N',
 		c4 timestamp on update current_timestamp,
 		key(c1, c2))`)
 	c.Assert(err, IsNil)
-	defer s.se.Execute(goctx.Background(), "drop table t")
-	_, err = s.se.Execute(goctx.Background(), "insert into t values(1, 'a', 'N', '2017-07-01')")
+	defer s.se.Execute(context.Background(), "drop table t")
+	_, err = s.se.Execute(context.Background(), "insert into t values(1, 'a', 'N', '2017-07-01')")
 	c.Assert(err, IsNil)
 
 	callback := &ddl.TestDDLCallback{}
@@ -171,7 +171,7 @@ func (s *testStateChangeSuite) test(c *C, tableName, alterTableSQL string, testI
 	}
 	d := s.dom.DDL()
 	d.SetHook(callback)
-	_, err = s.se.Execute(goctx.Background(), alterTableSQL)
+	_, err = s.se.Execute(context.Background(), alterTableSQL)
 	c.Assert(err, IsNil)
 	err = testInfo.compileSQL(4)
 	c.Assert(err, IsNil)
@@ -217,7 +217,7 @@ func (t *testExecInfo) createSessions(store kv.Storage, useDB string) error {
 			if err != nil {
 				return errors.Trace(err)
 			}
-			_, err = c.session.Execute(goctx.Background(), "use "+useDB)
+			_, err = c.session.Execute(context.Background(), "use "+useDB)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -251,7 +251,7 @@ func (t *testExecInfo) compileSQL(idx int) (err error) {
 		c := info.cases[idx]
 		compiler := executor.Compiler{Ctx: c.session}
 		se := c.session
-		goCtx := goctx.TODO()
+		goCtx := context.TODO()
 		se.PrepareTxnCtx(goCtx)
 		ctx := se.(sessionctx.Context)
 		executor.ResetStmtCtx(ctx, c.rawStmt)
@@ -267,7 +267,7 @@ func (t *testExecInfo) compileSQL(idx int) (err error) {
 func (t *testExecInfo) execSQL(idx int) error {
 	for _, sqlInfo := range t.sqlInfos {
 		c := sqlInfo.cases[idx]
-		_, err := c.stmt.Exec(goctx.TODO())
+		_, err := c.stmt.Exec(context.TODO())
 		if c.expectedErr != nil {
 			if err == nil {
 				err = errors.Errorf("expected error %s but got nil", c.expectedErr)
@@ -278,7 +278,7 @@ func (t *testExecInfo) execSQL(idx int) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = c.session.CommitTxn(goctx.TODO())
+		err = c.session.CommitTxn(context.TODO())
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -313,18 +313,18 @@ func (s *testStateChangeSuite) TestDeleteOnly(c *C) {
 func (s *testStateChangeSuite) runTestInSchemaState(c *C, state model.SchemaState, tableName, alterTableSQL string,
 	sqlWithErrs []sqlWithErr) {
 	defer testleak.AfterTest(c)()
-	_, err := s.se.Execute(goctx.Background(), `create table t (
+	_, err := s.se.Execute(context.Background(), `create table t (
 		c1 varchar(64),
 		c2 enum('N','Y') not null default 'N',
 		c3 timestamp on update current_timestamp,
 		c4 int primary key,
 		unique key idx2 (c2, c3))`)
 	c.Assert(err, IsNil)
-	defer s.se.Execute(goctx.Background(), "drop table t")
-	_, err = s.se.Execute(goctx.Background(), "insert into t values('a', 'N', '2017-07-01', 8)")
+	defer s.se.Execute(context.Background(), "drop table t")
+	_, err = s.se.Execute(context.Background(), "insert into t values('a', 'N', '2017-07-01', 8)")
 	c.Assert(err, IsNil)
 	// Make sure these sqls use the the plan of index scan.
-	_, err = s.se.Execute(goctx.Background(), "drop stats t")
+	_, err = s.se.Execute(context.Background(), "drop stats t")
 	c.Assert(err, IsNil)
 
 	callback := &ddl.TestDDLCallback{}
@@ -333,7 +333,7 @@ func (s *testStateChangeSuite) runTestInSchemaState(c *C, state model.SchemaStat
 	times := 0
 	se, err := tidb.CreateSession(s.store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(goctx.Background(), "use test_db_state")
+	_, err = se.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
 	callback.OnJobUpdatedExported = func(job *model.Job) {
 		if job.SchemaState == prevState || checkErr != nil || times >= 3 {
@@ -344,7 +344,7 @@ func (s *testStateChangeSuite) runTestInSchemaState(c *C, state model.SchemaStat
 			return
 		}
 		for _, sqlWithErr := range sqlWithErrs {
-			_, err = se.Execute(goctx.Background(), sqlWithErr.sql)
+			_, err = se.Execute(context.Background(), sqlWithErr.sql)
 			if !terror.ErrorEqual(err, sqlWithErr.expectErr) {
 				checkErr = err
 				break
@@ -353,7 +353,7 @@ func (s *testStateChangeSuite) runTestInSchemaState(c *C, state model.SchemaStat
 	}
 	d := s.dom.DDL()
 	d.SetHook(callback)
-	_, err = s.se.Execute(goctx.Background(), alterTableSQL)
+	_, err = s.se.Execute(context.Background(), alterTableSQL)
 	c.Assert(err, IsNil)
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	callback = &ddl.TestDDLCallback{}
@@ -391,9 +391,9 @@ func (s *testStateChangeSuite) CheckResult(tk *testkit.TestKit, sql string, args
 
 func (s *testStateChangeSuite) TestShowIndex(c *C) {
 	defer testleak.AfterTest(c)()
-	_, err := s.se.Execute(goctx.Background(), `create table t(c1 int primary key, c2 int)`)
+	_, err := s.se.Execute(context.Background(), `create table t(c1 int primary key, c2 int)`)
 	c.Assert(err, IsNil)
-	defer s.se.Execute(goctx.Background(), "drop table t")
+	defer s.se.Execute(context.Background(), "drop table t")
 
 	callback := &ddl.TestDDLCallback{}
 	prevState := model.StateNone
@@ -419,7 +419,7 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 	d := s.dom.DDL()
 	d.SetHook(callback)
 	alterTableSQL := `alter table t add index c2(c2)`
-	_, err = s.se.Execute(goctx.Background(), alterTableSQL)
+	_, err = s.se.Execute(context.Background(), alterTableSQL)
 	c.Assert(err, IsNil)
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 

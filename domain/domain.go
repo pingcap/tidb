@@ -39,7 +39,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	log "github.com/sirupsen/logrus"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 )
 
@@ -86,7 +86,7 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 			log.Info("[ddl] not update self schema version to etcd")
 			return
 		}
-		err = do.ddl.SchemaSyncer().UpdateSelfVersion(goctx.Background(), latestSchemaVersion)
+		err = do.ddl.SchemaSyncer().UpdateSelfVersion(context.Background(), latestSchemaVersion)
 		if err != nil {
 			log.Infof("[ddl] update self version from %v to %v failed %v", usedSchemaVersion, latestSchemaVersion, err)
 		}
@@ -362,7 +362,7 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 // mustRestartSyncer tries to restart the SchemaSyncer.
 // It returns until it's successful or the domain is stoped.
 func (do *Domain) mustRestartSyncer() error {
-	ctx := goctx.Background()
+	ctx := context.Background()
 	syncer := do.ddl.SchemaSyncer()
 
 	for {
@@ -485,7 +485,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 		return sysFactory(do)
 	}
 	sysCtxPool := pools.NewResourcePool(sysFac, 2, 2, resourceIdleTimeout)
-	ctx := goctx.Background()
+	ctx := context.Background()
 	callback := &ddlCallback{do: do}
 	do.ddl = ddl.NewDDL(ctx, do.etcdClient, do.store, do.infoHandle, callback, ddlLease, sysCtxPool)
 
@@ -527,7 +527,7 @@ func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
 	var watchCh clientv3.WatchChan
 	duration := 5 * time.Minute
 	if do.etcdClient != nil {
-		watchCh = do.etcdClient.Watch(goctx.Background(), privilegeKey)
+		watchCh = do.etcdClient.Watch(context.Background(), privilegeKey)
 		duration = 10 * time.Minute
 	}
 
@@ -544,7 +544,7 @@ func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
 			}
 			if !ok {
 				log.Error("[domain] load privilege loop watch channel closed.")
-				watchCh = do.etcdClient.Watch(goctx.Background(), privilegeKey)
+				watchCh = do.etcdClient.Watch(context.Background(), privilegeKey)
 				count++
 				if count > 10 {
 					time.Sleep(time.Duration(count) * time.Second)
@@ -606,7 +606,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 
 func (do *Domain) newStatsOwner() owner.Manager {
 	id := do.ddl.OwnerManager().ID()
-	cancelCtx, cancelFunc := goctx.WithCancel(goctx.Background())
+	cancelCtx, cancelFunc := context.WithCancel(context.Background())
 	var statsOwner owner.Manager
 	if do.etcdClient == nil {
 		statsOwner = owner.NewMockManager(id, cancelFunc)
@@ -714,7 +714,7 @@ const privilegeKey = "/tidb/privilege"
 func (do *Domain) NotifyUpdatePrivilege(ctx sessionctx.Context) {
 	if do.etcdClient != nil {
 		row := do.etcdClient.KV
-		_, err := row.Put(goctx.Background(), privilegeKey, "")
+		_, err := row.Put(context.Background(), privilegeKey, "")
 		if err != nil {
 			log.Warn("notify update privilege failed:", err)
 		}

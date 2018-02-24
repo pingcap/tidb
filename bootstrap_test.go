@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testleak"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testBootstrapSuite{})
@@ -49,7 +49,7 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	mustExecSQL(c, se, "USE mysql;")
 	r := mustExecSQL(c, se, `select * from user;`)
 	c.Assert(r, NotNil)
-	goCtx := goctx.Background()
+	goCtx := context.Background()
 	row, err := r.Next(goCtx)
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
@@ -134,7 +134,7 @@ func (s *testBootstrapSuite) bootstrapWithOnlyDDLWork(store kv.Storage, c *C) {
 // When a session failed in bootstrap process (for example, the session is killed after doDDLWorks()).
 // We should make sure that the following session could finish the bootstrap process.
 func (s *testBootstrapSuite) testBootstrapWithError(c *C) {
-	goCtx := goctx.Background()
+	goCtx := context.Background()
 	defer testleak.AfterTest(c)()
 	store := newStore(c, s.dbNameBootstrap)
 	s.bootstrapWithOnlyDDLWork(store, c)
@@ -172,7 +172,7 @@ func (s *testBootstrapSuite) testBootstrapWithError(c *C) {
 
 // TestUpgrade tests upgrading
 func (s *testBootstrapSuite) TestUpgrade(c *C) {
-	goCtx := goctx.Background()
+	goCtx := context.Background()
 	defer testleak.AfterTest(c)()
 	store, _ := newStoreWithBootstrap(c, s.dbName)
 	defer store.Close()
@@ -199,7 +199,7 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	m := meta.NewMeta(txn)
 	err = m.FinishBootstrap(int64(1))
 	c.Assert(err, IsNil)
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 	mustExecSQL(c, se1, `delete from mysql.TiDB where VARIABLE_NAME="tidb_server_version";`)
 	mustExecSQL(c, se1, fmt.Sprintf(`delete from mysql.global_variables where VARIABLE_NAME="%s";`,

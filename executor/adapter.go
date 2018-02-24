@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	log "github.com/sirupsen/logrus"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 type processinfoSetter interface {
@@ -83,7 +83,7 @@ func schema2ResultFields(schema *expression.Schema, defaultDB string) (rfs []*as
 // Next uses recordSet's executor to get next available row.
 // If row is nil, then updates LastFoundRows in session variable.
 // If stmt and row are not nil, increase current FoundRows by 1.
-func (a *recordSet) Next(goCtx goctx.Context) (types.Row, error) {
+func (a *recordSet) Next(goCtx context.Context) (types.Row, error) {
 	row, err := a.executor.Next(goCtx)
 	if err != nil {
 		a.lastErr = err
@@ -107,7 +107,7 @@ func (a *recordSet) Next(goCtx goctx.Context) (types.Row, error) {
 // The reason we need update is that chunk with 0 rows indicating we already finished current query, we need prepare for
 // next query.
 // If stmt is not nil and chunk with some rows inside, we simply update last query found rows by the number of row in chunk.
-func (a *recordSet) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+func (a *recordSet) NextChunk(goCtx context.Context, chk *chunk.Chunk) error {
 	err := a.executor.NextChunk(goCtx, chk)
 	if err != nil {
 		a.lastErr = err
@@ -204,7 +204,7 @@ func (a *ExecStmt) RebuildPlan() error {
 // Exec builds an Executor from a plan. If the Executor doesn't return result,
 // like the INSERT, UPDATE statements, it executes in this function, if the Executor returns
 // result, execution is done after this function returns, in the returned ast.RecordSet Next method.
-func (a *ExecStmt) Exec(goCtx goctx.Context) (ast.RecordSet, error) {
+func (a *ExecStmt) Exec(goCtx context.Context) (ast.RecordSet, error) {
 	a.startTime = time.Now()
 	ctx := a.Ctx
 	if _, ok := a.Plan.(*plan.Analyze); ok && ctx.GetSessionVars().InRestrictedSQL {
@@ -265,7 +265,7 @@ func (a *ExecStmt) Exec(goCtx goctx.Context) (ast.RecordSet, error) {
 	}, nil
 }
 
-func (a *ExecStmt) handleNoDelayExecutor(goCtx goctx.Context, ctx sessionctx.Context, e Executor, pi processinfoSetter) (ast.RecordSet, error) {
+func (a *ExecStmt) handleNoDelayExecutor(goCtx context.Context, ctx sessionctx.Context, e Executor, pi processinfoSetter) (ast.RecordSet, error) {
 	// Check if "tidb_snapshot" is set for the write executors.
 	// In history read mode, we can not do write operations.
 	switch e.(type) {

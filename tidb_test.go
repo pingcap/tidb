@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testleak"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 )
 
@@ -253,7 +253,7 @@ func removeStore(c *C, dbPath string) {
 }
 
 func exec(se Session, sql string, args ...interface{}) (ast.RecordSet, error) {
-	goCtx := goctx.Background()
+	goCtx := context.Background()
 	if len(args) == 0 {
 		rs, err := se.Execute(goCtx, sql)
 		if err == nil && len(rs) > 0 {

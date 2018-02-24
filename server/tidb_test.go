@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	tmysql "github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/store/mockstore"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 type TidbTestSuite struct {
@@ -363,10 +363,10 @@ func (ts *TidbTestSuite) TestCreateTableFlen(c *C) {
 	// issue #4540
 	ctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
 	c.Assert(err, IsNil)
-	_, err = ctx.Execute(goctx.Background(), "use test;")
+	_, err = ctx.Execute(context.Background(), "use test;")
 	c.Assert(err, IsNil)
 
-	goCtx := goctx.Background()
+	goCtx := context.Background()
 	testSQL := "CREATE TABLE `t1` (" +
 		"`a` char(36) NOT NULL," +
 		"`b` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP," +
@@ -426,10 +426,10 @@ func checkColNames(c *C, columns []*ColumnInfo, names ...string) {
 func (ts *TidbTestSuite) TestFieldList(c *C) {
 	ctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
 	c.Assert(err, IsNil)
-	_, err = ctx.Execute(goctx.Background(), "use test;")
+	_, err = ctx.Execute(context.Background(), "use test;")
 	c.Assert(err, IsNil)
 
-	goCtx := goctx.Background()
+	goCtx := context.Background()
 	testSQL := `create table t (
 		c_bit bit(10),
 		c_int_d int,

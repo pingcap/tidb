@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 // Node is the basic element of the AST.
@@ -138,10 +138,10 @@ type RecordSet interface {
 	Fields() []*ResultField
 
 	// Next returns the next row, nil row means there is no more to return.
-	Next(goCtx goctx.Context) (row types.Row, err error)
+	Next(goCtx context.Context) (row types.Row, err error)
 
 	// NextChunk reads records into chunk.
-	NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error
+	NextChunk(goCtx context.Context, chk *chunk.Chunk) error
 
 	// NewChunk creates a new chunk with initial capacity.
 	NewChunk() *chunk.Chunk
@@ -186,7 +186,7 @@ type Statement interface {
 	OriginText() string
 
 	// Exec executes SQL and gets a Recordset.
-	Exec(goCtx goctx.Context) (RecordSet, error)
+	Exec(goCtx context.Context) (RecordSet, error)
 
 	// IsPrepared returns whether this statement is prepared statement.
 	IsPrepared() bool

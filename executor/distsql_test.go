@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/testkit"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 // TestIndexDoubleReadClose checks that when a index double read returns before reading all the rows, the goroutine doesn't
@@ -54,7 +54,7 @@ func (s *testSuite) TestIndexDoubleReadClose(c *C) {
 
 	rs, err := tk.Exec("select * from dist where c_idx between 0 and 100")
 	c.Assert(err, IsNil)
-	_, err = rs.Next(goctx.Background())
+	_, err = rs.Next(context.Background())
 	c.Assert(err, IsNil)
 	keyword := "pickAndExecTask"
 	rs.Close()
@@ -98,7 +98,7 @@ func (s *testSuite) TestCopClientSend(c *C) {
 	// Split the table.
 	s.cluster.SplitTable(s.mvccStore, tblID, 100)
 
-	goCtx := goctx.Background()
+	goCtx := context.Background()
 	// Send coprocessor request when the table split.
 	rs, err := tk.Exec("select sum(id) from copclient")
 	c.Assert(err, IsNil)

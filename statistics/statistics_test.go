@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
@@ -68,7 +68,7 @@ func (r *recordSet) setFields(tps ...uint8) {
 	}
 }
 
-func (r *recordSet) Next(goctx.Context) (types.Row, error) {
+func (r *recordSet) Next(context.Context) (types.Row, error) {
 	if r.cursor == r.count {
 		return nil, nil
 	}
@@ -76,7 +76,7 @@ func (r *recordSet) Next(goctx.Context) (types.Row, error) {
 	return types.DatumRow{r.data[r.cursor-1]}, nil
 }
 
-func (r *recordSet) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+func (r *recordSet) NextChunk(goCtx context.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
@@ -158,7 +158,7 @@ func encodeKey(key types.Datum) types.Datum {
 
 func buildPK(ctx sessionctx.Context, numBuckets, id int64, records ast.RecordSet) (int64, *Histogram, error) {
 	b := NewSortedBuilder(ctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeLonglong))
-	goCtx := goctx.Background()
+	goCtx := context.Background()
 	for {
 		row, err := records.Next(goCtx)
 		if err != nil {
@@ -179,7 +179,7 @@ func buildPK(ctx sessionctx.Context, numBuckets, id int64, records ast.RecordSet
 func buildIndex(ctx sessionctx.Context, numBuckets, id int64, records ast.RecordSet) (int64, *Histogram, *CMSketch, error) {
 	b := NewSortedBuilder(ctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeBlob))
 	cms := NewCMSketch(8, 2048)
-	goCtx := goctx.Background()
+	goCtx := context.Background()
 	for {
 		row, err := records.Next(goCtx)
 		if err != nil {

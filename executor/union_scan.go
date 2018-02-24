@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 // DirtyDB stores uncommitted write operations for a transaction.
@@ -113,13 +113,13 @@ type UnionScanExec struct {
 }
 
 // Next implements Execution Next interface.
-func (us *UnionScanExec) Next(goCtx goctx.Context) (Row, error) {
+func (us *UnionScanExec) Next(goCtx context.Context) (Row, error) {
 	row, err := us.getOneRow(goCtx)
 	return row, errors.Trace(err)
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (us *UnionScanExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+func (us *UnionScanExec) NextChunk(goCtx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	mutableRow := chunk.MutRowFromTypes(us.retTypes())
 	for i, batchSize := 0, us.ctx.GetSessionVars().MaxChunkSize; i < batchSize; i++ {
@@ -138,7 +138,7 @@ func (us *UnionScanExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error 
 }
 
 // getOneRow gets one result row from dirty table or child.
-func (us *UnionScanExec) getOneRow(goCtx goctx.Context) (Row, error) {
+func (us *UnionScanExec) getOneRow(goCtx context.Context) (Row, error) {
 	for {
 		snapshotRow, err := us.getSnapshotRow(goCtx)
 		if err != nil {
@@ -176,7 +176,7 @@ func (us *UnionScanExec) getOneRow(goCtx goctx.Context) (Row, error) {
 	}
 }
 
-func (us *UnionScanExec) getSnapshotRow(goCtx goctx.Context) (Row, error) {
+func (us *UnionScanExec) getSnapshotRow(goCtx context.Context) (Row, error) {
 	if us.dirty.truncated {
 		return nil, nil
 	}

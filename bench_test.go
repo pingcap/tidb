@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/store/mockstore"
 	log "github.com/sirupsen/logrus"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var smallCount = 100
@@ -81,7 +81,7 @@ func prepareJoinBenchData(se Session, colType string, valueFormat string, valueC
 	mustExecute(se, "commit")
 }
 
-func readResult(goCtx goctx.Context, rs ast.RecordSet, count int) {
+func readResult(goCtx context.Context, rs ast.RecordSet, count int) {
 	for count > 0 {
 		x, err := rs.Next(goCtx)
 		if err != nil {
@@ -96,7 +96,7 @@ func readResult(goCtx goctx.Context, rs ast.RecordSet, count int) {
 }
 
 func BenchmarkBasic(b *testing.B) {
-	goCtx := goctx.Background()
+	goCtx := context.Background()
 	b.StopTimer()
 	se := prepareBenchSession()
 	b.StartTimer()
@@ -110,7 +110,7 @@ func BenchmarkBasic(b *testing.B) {
 }
 
 func BenchmarkTableScan(b *testing.B) {
-	goCtx := goctx.Background()
+	goCtx := context.Background()
 	b.StopTimer()
 	se := prepareBenchSession()
 	prepareBenchData(se, "int", "%v", smallCount)
@@ -125,7 +125,7 @@ func BenchmarkTableScan(b *testing.B) {
 }
 
 func BenchmarkExplainTableScan(b *testing.B) {
-	goCtx := goctx.Background()
+	goCtx := context.Background()
 	b.StopTimer()
 	se := prepareBenchSession()
 	prepareBenchData(se, "int", "%v", 0)
@@ -140,7 +140,7 @@ func BenchmarkExplainTableScan(b *testing.B) {
 }
 
 func BenchmarkTableLookup(b *testing.B) {
-	goCtx := goctx.Background()
+	goCtx := context.Background()
 	b.StopTimer()
 	se := prepareBenchSession()
 	prepareBenchData(se, "int", "%d", smallCount)
@@ -155,7 +155,7 @@ func BenchmarkTableLookup(b *testing.B) {
 }
 
 func BenchmarkExplainTableLookup(b *testing.B) {
-	goCtx := goctx.Background()
+	goCtx := context.Background()
 	b.StopTimer()
 	se := prepareBenchSession()
 	prepareBenchData(se, "int", "%d", 0)
@@ -170,7 +170,7 @@ func BenchmarkExplainTableLookup(b *testing.B) {
 }
 
 func BenchmarkStringIndexScan(b *testing.B) {
-	goCtx := goctx.Background()
+	goCtx := context.Background()
 	b.StopTimer()
 	se := prepareBenchSession()
 	prepareBenchData(se, "varchar(255)", "'hello %d'", smallCount)
@@ -185,7 +185,7 @@ func BenchmarkStringIndexScan(b *testing.B) {
 }
 
 func BenchmarkExplainStringIndexScan(b *testing.B) {
-	goCtx := goctx.Background()
+	goCtx := context.Background()
 	b.StopTimer()
 	se := prepareBenchSession()
 	prepareBenchData(se, "varchar(255)", "'hello %d'", 0)
@@ -200,7 +200,7 @@ func BenchmarkExplainStringIndexScan(b *testing.B) {
 }
 
 func BenchmarkStringIndexLookup(b *testing.B) {
-	goCtx := goctx.Background()
+	goCtx := context.Background()
 	b.StopTimer()
 	se := prepareBenchSession()
 	prepareBenchData(se, "varchar(255)", "'hello %d'", smallCount)
@@ -215,7 +215,7 @@ func BenchmarkStringIndexLookup(b *testing.B) {
 }
 
 func BenchmarkIntegerIndexScan(b *testing.B) {
-	goCtx := goctx.Background()
+	goCtx := context.Background()
 	b.StopTimer()
 	se := prepareBenchSession()
 	prepareBenchData(se, "int", "%v", smallCount)
@@ -230,7 +230,7 @@ func BenchmarkIntegerIndexScan(b *testing.B) {
 }
 
 func BenchmarkIntegerIndexLookup(b *testing.B) {
-	goCtx := goctx.Background()
+	goCtx := context.Background()
 	b.StopTimer()
 	se := prepareBenchSession()
 	prepareBenchData(se, "int", "%v", smallCount)
@@ -245,7 +245,7 @@ func BenchmarkIntegerIndexLookup(b *testing.B) {
 }
 
 func BenchmarkDecimalIndexScan(b *testing.B) {
-	goCtx := goctx.Background()
+	goCtx := context.Background()
 	b.StopTimer()
 	se := prepareBenchSession()
 	prepareBenchData(se, "decimal(32,6)", "%v.1234", smallCount)
@@ -260,7 +260,7 @@ func BenchmarkDecimalIndexScan(b *testing.B) {
 }
 
 func BenchmarkDecimalIndexLookup(b *testing.B) {
-	goCtx := goctx.Background()
+	goCtx := context.Background()
 	b.StopTimer()
 	se := prepareBenchSession()
 	prepareBenchData(se, "decimal(32,6)", "%v.1234", smallCount)
@@ -297,7 +297,7 @@ func BenchmarkInsertNoIndex(b *testing.B) {
 }
 
 func BenchmarkSort(b *testing.B) {
-	goCtx := goctx.Background()
+	goCtx := context.Background()
 	b.StopTimer()
 	se := prepareBenchSession()
 	prepareSortBenchData(se, "int", "%v", bigCount)
@@ -312,7 +312,7 @@ func BenchmarkSort(b *testing.B) {
 }
 
 func BenchmarkJoin(b *testing.B) {
-	goCtx := goctx.Background()
+	goCtx := context.Background()
 	b.StopTimer()
 	se := prepareBenchSession()
 	prepareJoinBenchData(se, "int", "%v", smallCount)
@@ -327,7 +327,7 @@ func BenchmarkJoin(b *testing.B) {
 }
 
 func BenchmarkJoinLimit(b *testing.B) {
-	goCtx := goctx.Background()
+	goCtx := context.Background()
 	b.StopTimer()
 	se := prepareBenchSession()
 	prepareJoinBenchData(se, "int", "%v", smallCount)

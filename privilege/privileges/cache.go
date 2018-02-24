@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
 	log "github.com/sirupsen/logrus"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var (
@@ -173,7 +173,7 @@ func (p *MySQLPrivilege) LoadColumnsPrivTable(ctx sessionctx.Context) error {
 
 func (p *MySQLPrivilege) loadTable(ctx sessionctx.Context, sql string,
 	decodeTableRow func(types.Row, []*ast.ResultField) error) error {
-	goCtx := goctx.Background()
+	goCtx := context.Background()
 	tmp, err := ctx.(sqlexec.SQLExecutor).Execute(goCtx, sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -183,7 +183,7 @@ func (p *MySQLPrivilege) loadTable(ctx sessionctx.Context, sql string,
 
 	fs := rs.Fields()
 	for {
-		row, err := rs.Next(goctx.TODO())
+		row, err := rs.Next(context.TODO())
 		if err != nil {
 			return errors.Trace(err)
 		}

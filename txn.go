@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 // TxnState wraps kv.Transaction to provide a new kv.Transaction.
@@ -115,7 +115,7 @@ type dirtyTableOperation struct {
 }
 
 // Commit overrides the Transaction interface.
-func (st *TxnState) Commit(goCtx goctx.Context) error {
+func (st *TxnState) Commit(goCtx context.Context) error {
 	if st.fail != nil {
 		// If any error happen during StmtCommit, don't commit this transaction.
 		err := st.fail
@@ -245,7 +245,7 @@ func (tf *txnFuture) wait() (kv.Transaction, error) {
 	return tf.store.Begin()
 }
 
-func (s *session) getTxnFuture(ctx goctx.Context) *txnFuture {
+func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
 	span, ctx := opentracing.StartSpanFromContext(ctx, "session.getTxnFuture")
 	oracleStore := s.store.GetOracle()
 	tsFuture := oracleStore.GetTimestampAsync(ctx)

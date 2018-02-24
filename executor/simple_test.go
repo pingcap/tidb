@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testkit"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 func (s *testSuite) TestCharsetDatabase(c *C) {
@@ -228,7 +228,7 @@ func (s *testSuite) TestFlushPrivileges(c *C) {
 	defer se.Close()
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "testflush", Hostname: "localhost"}, nil, nil), IsTrue)
 
-	goCtx := goctx.Background()
+	goCtx := context.Background()
 	// Before flush.
 	_, err = se.Execute(goCtx, `SELECT Password FROM mysql.User WHERE User="testflush" and Host="localhost"`)
 	c.Check(err, NotNil)

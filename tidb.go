@@ -37,7 +37,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	log "github.com/sirupsen/logrus"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 )
@@ -147,14 +147,14 @@ func Parse(ctx sessionctx.Context, src string) ([]ast.StmtNode, error) {
 }
 
 // Compile is safe for concurrent use by multiple goroutines.
-func Compile(goCtx goctx.Context, ctx sessionctx.Context, stmtNode ast.StmtNode) (ast.Statement, error) {
+func Compile(goCtx context.Context, ctx sessionctx.Context, stmtNode ast.StmtNode) (ast.Statement, error) {
 	compiler := executor.Compiler{Ctx: ctx}
 	stmt, err := compiler.Compile(goCtx, stmtNode)
 	return stmt, errors.Trace(err)
 }
 
 // runStmt executes the ast.Statement and commit or rollback the current transaction.
-func runStmt(goCtx goctx.Context, ctx sessionctx.Context, s ast.Statement) (ast.RecordSet, error) {
+func runStmt(goCtx context.Context, ctx sessionctx.Context, s ast.Statement) (ast.RecordSet, error) {
 	span, ctx1 := opentracing.StartSpanFromContext(goCtx, "runStmt")
 	span.LogKV("sql", s.OriginText())
 	defer span.Finish()
@@ -212,7 +212,7 @@ func GetHistory(ctx sessionctx.Context) *StmtHistory {
 }
 
 // GetRows4Test gets all the rows from a RecordSet, only used for test.
-func GetRows4Test(goCtx goctx.Context, ctx sessionctx.Context, rs ast.RecordSet) ([]types.Row, error) {
+func GetRows4Test(goCtx context.Context, ctx sessionctx.Context, rs ast.RecordSet) ([]types.Row, error) {
 	if rs == nil {
 		return nil, nil
 	}

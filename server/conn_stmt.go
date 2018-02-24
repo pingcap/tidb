@@ -42,7 +42,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/hack"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 func (cc *clientConn) handleStmtPrepare(sql string) error {
@@ -102,7 +102,7 @@ func (cc *clientConn) handleStmtPrepare(sql string) error {
 	return errors.Trace(cc.flush())
 }
 
-func (cc *clientConn) handleStmtExecute(goCtx goctx.Context, data []byte) (err error) {
+func (cc *clientConn) handleStmtExecute(goCtx context.Context, data []byte) (err error) {
 	if len(data) < 9 {
 		return mysql.ErrMalformPacket
 	}

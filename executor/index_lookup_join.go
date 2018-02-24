@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mvmap"
 	"github.com/pingcap/tidb/util/ranger"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var _ Executor = &IndexLookUpJoin{}
@@ -46,7 +46,7 @@ type IndexLookUpJoin struct {
 	baseExecutor
 
 	resultCh   <-chan *lookUpJoinTask
-	cancelFunc goctx.CancelFunc
+	cancelFunc context.CancelFunc
 	workerWg   *sync.WaitGroup
 
 	outerCtx outerCtx
@@ -117,7 +117,7 @@ type innerWorker struct {
 }
 
 // Open implements the Executor interface.
-func (e *IndexLookUpJoin) Open(goCtx goctx.Context) error {
+func (e *IndexLookUpJoin) Open(goCtx context.Context) error {
 	err := e.children[0].Open(goCtx)
 	if err != nil {
 		return errors.Trace(err)
@@ -127,11 +127,11 @@ func (e *IndexLookUpJoin) Open(goCtx goctx.Context) error {
 	return nil
 }
 
-func (e *IndexLookUpJoin) startWorkers(goCtx goctx.Context) {
+func (e *IndexLookUpJoin) startWorkers(goCtx context.Context) {
 	concurrency := e.ctx.GetSessionVars().IndexLookupConcurrency
 	resultCh := make(chan *lookUpJoinTask, concurrency)
 	e.resultCh = resultCh
-	workerCtx, cancelFunc := goctx.WithCancel(goCtx)
+	workerCtx, cancelFunc := context.WithCancel(goCtx)
 	e.cancelFunc = cancelFunc
 	innerCh := make(chan *lookUpJoinTask, concurrency)
 	e.workerWg.Add(1)
@@ -175,7 +175,7 @@ func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWork
 }
 
 // NextChunk implements the Executor interface.
-func (e *IndexLookUpJoin) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+func (e *IndexLookUpJoin) NextChunk(goCtx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	err := e.prepareJoinResult(goCtx, chk, true)
 	return errors.Trace(err)
@@ -184,7 +184,7 @@ func (e *IndexLookUpJoin) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error
 // Next implements the Executor interface.
 // Even though we only support read children in chunk mode, but we are not sure if our parents
 // support chunk, so we have to implement Next.
-func (e *IndexLookUpJoin) Next(goCtx goctx.Context) (Row, error) {
+func (e *IndexLookUpJoin) Next(goCtx context.Context) (Row, error) {
 	for {
 		err := e.prepareJoinResult(goCtx, e.joinResult, false)
 		if err != nil {
@@ -206,7 +206,7 @@ func (e *IndexLookUpJoin) Next(goCtx goctx.Context) (Row, error) {
 	}
 }
 
-func (e *IndexLookUpJoin) prepareJoinResult(goCtx goctx.Context, chk *chunk.Chunk, forChunk bool) error {
+func (e *IndexLookUpJoin) prepareJoinResult(goCtx context.Context, chk *chunk.Chunk, forChunk bool) error {
 	if !forChunk && e.joinResultCursor < chk.NumRows() {
 		return nil
 	}
@@ -244,7 +244,7 @@ func (e *IndexLookUpJoin) prepareJoinResult(goCtx goctx.Context, chk *chunk.Chun
 	}
 }
 
-func (e *IndexLookUpJoin) getFinishedTask(goCtx goctx.Context) (*lookUpJoinTask, error) {
+func (e *IndexLookUpJoin) getFinishedTask(goCtx context.Context) (*lookUpJoinTask, error) {
 	task := e.task
 	if task != nil && task.cursor < task.outerResult.NumRows() {
 		return task, nil
@@ -281,7 +281,7 @@ func (e *IndexLookUpJoin) lookUpMatchedInners(task *lookUpJoinTask, rowIdx int) 
 	}
 }
 
-func (ow *outerWorker) run(goCtx goctx.Context, wg *sync.WaitGroup) {
+func (ow *outerWorker) run(goCtx context.Context, wg *sync.WaitGroup) {
 	defer func() {
 		close(ow.resultCh)
 		close(ow.innerCh)
@@ -311,7 +311,7 @@ func (ow *outerWorker) run(goCtx goctx.Context, wg *sync.WaitGroup) {
 
 // buildTask builds a lookUpJoinTask and read outer rows.
 // When err is not nil, task must not be nil to send the error to the main thread via task.
-func (ow *outerWorker) buildTask(goCtx goctx.Context) (*lookUpJoinTask, error) {
+func (ow *outerWorker) buildTask(goCtx context.Context) (*lookUpJoinTask, error) {
 	ow.executor.newChunk()
 	task := new(lookUpJoinTask)
 	task.doneCh = make(chan error, 1)
@@ -354,7 +354,7 @@ func (ow *outerWorker) increaseBatchSize() {
 	}
 }
 
-func (iw *innerWorker) run(goCtx goctx.Context, wg *sync.WaitGroup) {
+func (iw *innerWorker) run(goCtx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
 	for {
 		select {
@@ -373,7 +373,7 @@ func (iw *innerWorker) run(goCtx goctx.Context, wg *sync.WaitGroup) {
 	}
 }
 
-func (iw *innerWorker) handleTask(goCtx goctx.Context, task *lookUpJoinTask) error {
+func (iw *innerWorker) handleTask(goCtx context.Context, task *lookUpJoinTask) error {
 	dLookUpKeys, err := iw.constructDatumLookupKeys(task)
 	if err != nil {
 		return errors.Trace(err)
@@ -477,7 +477,7 @@ func compareRow(sc *stmtctx.StatementContext, left, right []types.Datum) int {
 	return 0
 }
 
-func (iw *innerWorker) fetchInnerResults(goCtx goctx.Context, task *lookUpJoinTask, dLookUpKeys [][]types.Datum) error {
+func (iw *innerWorker) fetchInnerResults(goCtx context.Context, task *lookUpJoinTask, dLookUpKeys [][]types.Datum) error {
 	innerExec, err := iw.readerBuilder.buildExecutorForIndexJoin(goCtx, dLookUpKeys, iw.indexRanges, iw.keyOff2IdxOff)
 	if err != nil {
 		return errors.Trace(err)

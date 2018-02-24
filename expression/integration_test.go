@@ -36,7 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testIntegrationSuite{})
@@ -127,7 +127,7 @@ func (s *testIntegrationSuite) TestFuncLpadAndRpad(c *C) {
 }
 
 func (s *testIntegrationSuite) TestMiscellaneousBuiltin(c *C) {
-	goCtx := goctx.Background()
+	goCtx := context.Background()
 	defer s.cleanEnv(c)
 
 	tk := testkit.NewTestKit(c, s.store)
@@ -234,7 +234,7 @@ func (s *testIntegrationSuite) TestConvertToBit(c *C) {
 }
 
 func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
-	goCtx := goctx.Background()
+	goCtx := context.Background()
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -528,7 +528,7 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	goCtx := goctx.Background()
+	goCtx := context.Background()
 
 	// for length
 	tk.MustExec("drop table if exists t")
@@ -892,7 +892,7 @@ func (s *testIntegrationSuite) TestEncryptionBuiltin(c *C) {
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	goCtx := goctx.Background()
+	goCtx := context.Background()
 
 	// for password
 	tk.MustExec("drop table if exists t")
@@ -1740,7 +1740,7 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	goCtx := goctx.Background()
+	goCtx := context.Background()
 
 	// for is true && is false
 	tk.MustExec("drop table if exists t")
@@ -2316,7 +2316,7 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	goCtx := goctx.Background()
+	goCtx := context.Background()
 
 	// for plus
 	tk.MustExec("DROP TABLE IF EXISTS t;")
@@ -2827,7 +2827,7 @@ func (s *testIntegrationSuite) TestOtherBuiltin(c *C) {
 }
 
 func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
-	goCtx := goctx.Background()
+	goCtx := context.Background()
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("USE test;")

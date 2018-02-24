@@ -51,7 +51,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
@@ -127,7 +127,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, index (c1))")
 	tk.MustExec("insert admin_test (c1) values (1),(2),(NULL)")
 
-	goCtx := goctx.Background()
+	goCtx := context.Background()
 	// cancel DDL jobs test
 	r, err := tk.Exec("admin cancel ddl jobs 1")
 	c.Assert(err, IsNil, Commentf("err %v", err))
@@ -192,7 +192,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(tb.Indices(), HasLen, 1)
 	_, err = tb.Indices()[0].Create(mock.NewContext(), txn, types.MakeDatums(int64(10)), 1)
 	c.Assert(err, IsNil)
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 	r, err = tk.Exec("admin check table admin_test")
 	c.Assert(err, NotNil)
@@ -231,7 +231,7 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 				Commentf("data1:%v, data2:%v, data:%v", string(tt.data1), string(tt.data2), string(data)))
 		}
 		ctx.StmtCommit()
-		err1 = ctx.Txn().Commit(goctx.Background())
+		err1 = ctx.Txn().Commit(context.Background())
 		c.Assert(err1, IsNil)
 		r := tk.MustQuery(selectSQL)
 		r.Check(testutil.RowsWithSep("|", tt.expected...))
@@ -718,7 +718,7 @@ func (s *testSuite) TestIssue2612(c *C) {
 	tk.MustExec(`insert into t values ('2016-02-13 15:32:24',  '2016-02-11 17:23:22');`)
 	rs, err := tk.Exec(`select timediff(finish_at, create_at) from t;`)
 	c.Assert(err, IsNil)
-	row, err := rs.Next(goctx.Background())
+	row, err := rs.Next(context.Background())
 	c.Assert(err, IsNil)
 	c.Assert(row.GetDuration(0).String(), Equals, "-46:09:02")
 }
@@ -1554,13 +1554,13 @@ func (s *testSuite) TestAdapterStatement(c *C) {
 	compiler := &executor.Compiler{Ctx: se}
 	stmtNode, err := s.ParseOneStmt("select 1", "", "")
 	c.Check(err, IsNil)
-	stmt, err := compiler.Compile(goctx.TODO(), stmtNode)
+	stmt, err := compiler.Compile(context.TODO(), stmtNode)
 	c.Check(err, IsNil)
 	c.Check(stmt.OriginText(), Equals, "select 1")
 
 	stmtNode, err = s.ParseOneStmt("create table test.t (a int)", "", "")
 	c.Check(err, IsNil)
-	stmt, err = compiler.Compile(goctx.TODO(), stmtNode)
+	stmt, err = compiler.Compile(context.TODO(), stmtNode)
 	c.Check(err, IsNil)
 	c.Check(stmt.OriginText(), Equals, "create table test.t (a int)")
 }
@@ -2008,7 +2008,7 @@ type checkRequestClient struct {
 	}
 }
 
-func (c *checkRequestClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+func (c *checkRequestClient) SendReq(ctx context.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 	resp, err := c.Client.SendReq(ctx, addr, req)
 	c.mu.RLock()
 	checkFlags := c.mu.checkFlags
@@ -2207,7 +2207,7 @@ func (s *testSuite) TestBit(c *C) {
 	c.Assert(err, NotNil)
 	r, err := tk.Exec("select * from t where c1 = 2")
 	c.Assert(err, IsNil)
-	row, err := r.Next(goctx.Background())
+	row, err := r.Next(context.Background())
 	c.Assert(err, IsNil)
 	c.Assert(types.BinaryLiteral(row.GetBytes(0)), DeepEquals, types.NewBinaryLiteralFromUint(2, -1))
 
@@ -2366,7 +2366,7 @@ func (s *testSuite) TestEarlyClose(c *C) {
 	// Split the table.
 	s.cluster.SplitTable(s.mvccStore, tblID, 500)
 
-	goCtx := goctx.Background()
+	goCtx := context.Background()
 	for i := 0; i < 500; i++ {
 		rss, err := tk.Se.Execute(goCtx, "select * from earlyclose order by id")
 		c.Assert(err, IsNil)

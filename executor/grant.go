@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 /***
@@ -54,7 +54,7 @@ type GrantExec struct {
 }
 
 // Next implements Execution Next interface.
-func (e *GrantExec) Next(goCtx goctx.Context) (Row, error) {
+func (e *GrantExec) Next(goCtx context.Context) (Row, error) {
 	if e.done {
 		return nil, nil
 	}
@@ -63,7 +63,7 @@ func (e *GrantExec) Next(goCtx goctx.Context) (Row, error) {
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (e *GrantExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+func (e *GrantExec) NextChunk(goCtx context.Context, chk *chunk.Chunk) error {
 	if e.done {
 		return nil
 	}
@@ -71,7 +71,7 @@ func (e *GrantExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	return errors.Trace(e.run(goCtx))
 }
 
-func (e *GrantExec) run(goCtx goctx.Context) error {
+func (e *GrantExec) run(goCtx context.Context) error {
 	dbName := e.Level.DBName
 	if len(dbName) == 0 {
 		dbName = e.ctx.GetSessionVars().CurrentDB
@@ -99,7 +99,7 @@ func (e *GrantExec) run(goCtx goctx.Context) error {
 
 			user := fmt.Sprintf(`("%s", "%s", "%s")`, user.User.Hostname, user.User.Username, pwd)
 			sql := fmt.Sprintf(`INSERT INTO %s.%s (Host, User, Password) VALUES %s;`, mysql.SystemDB, mysql.UserTable, user)
-			_, err := e.ctx.(sqlexec.SQLExecutor).Execute(goctx.TODO(), sql)
+			_, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 			if err != nil {
 				return errors.Trace(err)
 			}

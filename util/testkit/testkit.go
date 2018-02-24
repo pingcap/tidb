@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/testutil"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 // TestKit is a utility to run sql test.
@@ -124,7 +124,7 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (ast.RecordSet, error) 
 		id := atomic.AddUint64(&connectionID, 1)
 		tk.Se.SetConnectionID(id)
 	}
-	goCtx := goctx.Background()
+	goCtx := context.Background()
 	if len(args) == 0 {
 		var rss []ast.RecordSet
 		rss, err = tk.Se.Execute(goCtx, sql)
@@ -176,7 +176,7 @@ func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 // ResultSetToResult converts ast.RecordSet to testkit.Result.
 // It is used to check results of execute statement in binary mode.
 func (tk *TestKit) ResultSetToResult(rs ast.RecordSet, comment check.CommentInterface) *Result {
-	rows, err := tidb.GetRows4Test(goctx.Background(), tk.Se, rs)
+	rows, err := tidb.GetRows4Test(context.Background(), tk.Se, rs)
 	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
 	err = rs.Close()
 	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)

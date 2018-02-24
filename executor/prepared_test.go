@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testkit"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 func (s *testSuite) TestPrepared(c *C) {
@@ -29,7 +29,7 @@ func (s *testSuite) TestPrepared(c *C) {
 	orgEnable := cfg.PreparedPlanCache.Enabled
 	orgCapacity := cfg.PreparedPlanCache.Capacity
 	flags := []bool{false, true}
-	goCtx := goctx.Background()
+	goCtx := context.Background()
 	for _, flag := range flags {
 		cfg.PreparedPlanCache.Enabled = flag
 		cfg.PreparedPlanCache.Capacity = 100
@@ -187,7 +187,7 @@ func (s *testSuite) TestPreparedLimitOffset(c *C) {
 	orgEnable := cfg.PreparedPlanCache.Enabled
 	orgCapacity := cfg.PreparedPlanCache.Capacity
 	flags := []bool{false, true}
-	goCtx := goctx.Background()
+	goCtx := context.Background()
 	for _, flag := range flags {
 		cfg.PreparedPlanCache.Enabled = flag
 		cfg.PreparedPlanCache.Capacity = 100

@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mvmap"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 type aggCtxsMapper map[string][]*aggregation.AggEvaluateContext
@@ -59,7 +59,7 @@ func (e *HashAggExec) Close() error {
 }
 
 // Open implements the Executor Open interface.
-func (e *HashAggExec) Open(goCtx goctx.Context) error {
+func (e *HashAggExec) Open(goCtx context.Context) error {
 	if err := e.baseExecutor.Open(goCtx); err != nil {
 		return errors.Trace(err)
 	}
@@ -75,7 +75,7 @@ func (e *HashAggExec) Open(goCtx goctx.Context) error {
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (e *HashAggExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+func (e *HashAggExec) NextChunk(goCtx context.Context, chk *chunk.Chunk) error {
 	// In this stage we consider all data from src as a single group.
 	if !e.executed {
 		err := e.execute(goCtx)
@@ -111,7 +111,7 @@ func (e *HashAggExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 }
 
 // innerNextChunk fetches Chunks from src and update each aggregate function for each row in Chunk.
-func (e *HashAggExec) execute(goCtx goctx.Context) (err error) {
+func (e *HashAggExec) execute(goCtx context.Context) (err error) {
 	inputIter := chunk.NewIterator4Chunk(e.childrenResults[0])
 	for {
 		err := e.children[0].NextChunk(goCtx, e.childrenResults[0])
@@ -142,7 +142,7 @@ func (e *HashAggExec) execute(goCtx goctx.Context) (err error) {
 }
 
 // Next implements the Executor Next interface.
-func (e *HashAggExec) Next(goCtx goctx.Context) (Row, error) {
+func (e *HashAggExec) Next(goCtx context.Context) (Row, error) {
 	// In this stage we consider all data from src as a single group.
 	if !e.executed {
 		for {
@@ -198,7 +198,7 @@ func (e *HashAggExec) getGroupKey(row types.Row) ([]byte, error) {
 
 // innerNext fetches a single row from src and update each aggregate function.
 // If the first return value is false, it means there is no more data from src.
-func (e *HashAggExec) innerNext(goCtx goctx.Context) (ret bool, err error) {
+func (e *HashAggExec) innerNext(goCtx context.Context) (ret bool, err error) {
 	srcRow, err := e.children[0].Next(goCtx)
 	if err != nil {
 		return false, errors.Trace(err)
@@ -260,7 +260,7 @@ type StreamAggExec struct {
 }
 
 // Open implements the Executor Open interface.
-func (e *StreamAggExec) Open(goCtx goctx.Context) error {
+func (e *StreamAggExec) Open(goCtx context.Context) error {
 	if err := e.baseExecutor.Open(goCtx); err != nil {
 		return errors.Trace(err)
 	}
@@ -281,7 +281,7 @@ func (e *StreamAggExec) Open(goCtx goctx.Context) error {
 }
 
 // Next implements the Executor Next interface.
-func (e *StreamAggExec) Next(goCtx goctx.Context) (Row, error) {
+func (e *StreamAggExec) Next(goCtx context.Context) (Row, error) {
 	if e.executed {
 		return nil, nil
 	}
@@ -329,7 +329,7 @@ func (e *StreamAggExec) Next(goCtx goctx.Context) (Row, error) {
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (e *StreamAggExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+func (e *StreamAggExec) NextChunk(goCtx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 
 	for !e.executed && chk.NumRows() < e.maxChunkSize {
@@ -342,7 +342,7 @@ func (e *StreamAggExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
-func (e *StreamAggExec) consumeOneGroup(goCtx goctx.Context, chk *chunk.Chunk) error {
+func (e *StreamAggExec) consumeOneGroup(goCtx context.Context, chk *chunk.Chunk) error {
 	for !e.executed {
 		if err := e.fetchChildIfNecessary(goCtx, chk); err != nil {
 			return errors.Trace(err)
@@ -370,7 +370,7 @@ func (e *StreamAggExec) consumeOneGroup(goCtx goctx.Context, chk *chunk.Chunk) e
 	return nil
 }
 
-func (e *StreamAggExec) fetchChildIfNecessary(goCtx goctx.Context, chk *chunk.Chunk) error {
+func (e *StreamAggExec) fetchChildIfNecessary(goCtx context.Context, chk *chunk.Chunk) error {
 	if e.inputRow != e.inputIter.End() {
 		return nil
 	}

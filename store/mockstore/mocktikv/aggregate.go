@@ -19,7 +19,7 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 type aggCtxsMapper map[string][]*aggregation.AggEvaluateContext
@@ -58,7 +58,7 @@ func (e *hashAggExec) Count() int64 {
 	return e.count
 }
 
-func (e *hashAggExec) innerNext(goCtx goctx.Context) (bool, error) {
+func (e *hashAggExec) innerNext(goCtx context.Context) (bool, error) {
 	values, err := e.src.Next(goCtx)
 	if err != nil {
 		return false, errors.Trace(err)
@@ -73,7 +73,7 @@ func (e *hashAggExec) innerNext(goCtx goctx.Context) (bool, error) {
 	return true, nil
 }
 
-func (e *hashAggExec) Next(goCtx goctx.Context) (value [][]byte, err error) {
+func (e *hashAggExec) Next(goCtx context.Context) (value [][]byte, err error) {
 	e.count++
 	if e.aggCtxsMap == nil {
 		e.aggCtxsMap = make(aggCtxsMapper, 0)
@@ -269,7 +269,7 @@ func (e *streamAggExec) meetNewGroup(row [][]byte) (bool, error) {
 	return !firstGroup, nil
 }
 
-func (e *streamAggExec) Next(goCtx goctx.Context) (retRow [][]byte, err error) {
+func (e *streamAggExec) Next(goCtx context.Context) (retRow [][]byte, err error) {
 	e.count++
 	if e.executed {
 		return nil, nil

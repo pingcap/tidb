@@ -55,23 +55,23 @@ import (
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 // Session context
 type Session interface {
 	sessionctx.Context
-	Status() uint16                                         // Flag of current status, such as autocommit.
-	LastInsertID() uint64                                   // LastInsertID is the last inserted auto_increment ID.
-	AffectedRows() uint64                                   // Affected rows by latest executed stmt.
-	Execute(goctx.Context, string) ([]ast.RecordSet, error) // Execute a sql statement.
-	String() string                                         // String is used to debug.
-	CommitTxn(goctx.Context) error
-	RollbackTxn(goctx.Context) error
+	Status() uint16                                           // Flag of current status, such as autocommit.
+	LastInsertID() uint64                                     // LastInsertID is the last inserted auto_increment ID.
+	AffectedRows() uint64                                     // Affected rows by latest executed stmt.
+	Execute(context.Context, string) ([]ast.RecordSet, error) // Execute a sql statement.
+	String() string                                           // String is used to debug.
+	CommitTxn(context.Context) error
+	RollbackTxn(context.Context) error
 	// PrepareStmt executes prepare statement in binary protocol.
 	PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error)
 	// ExecutePreparedStmt executes a prepared statement.
-	ExecutePreparedStmt(goCtx goctx.Context, stmtID uint32, param ...interface{}) (ast.RecordSet, error)
+	ExecutePreparedStmt(goCtx context.Context, stmtID uint32, param ...interface{}) (ast.RecordSet, error)
 	DropPreparedStmt(stmtID uint32) error
 	SetClientCapability(uint32) // Set client capability flags.
 	SetConnectionID(uint64)
@@ -82,7 +82,7 @@ type Session interface {
 	Auth(user *auth.UserIdentity, auth []byte, salt []byte) bool
 	ShowProcess() util.ProcessInfo
 	// PrePareTxnCtx is exported for test.
-	PrepareTxnCtx(goctx.Context)
+	PrepareTxnCtx(context.Context)
 	// FieldList returns fields list of a table.
 	FieldList(tableName string) (fields []*ast.ResultField, err error)
 }
@@ -281,7 +281,7 @@ func (s *schemaLeaseChecker) Check(txnTS uint64) error {
 	return domain.ErrInfoSchemaExpired
 }
 
-func (s *session) doCommit(ctx goctx.Context) error {
+func (s *session) doCommit(ctx context.Context) error {
 	if !s.txn.Valid() {
 		return nil
 	}
@@ -325,7 +325,7 @@ func (s *session) doCommit(ctx goctx.Context) error {
 	return nil
 }
 
-func (s *session) doCommitWithRetry(ctx goctx.Context) error {
+func (s *session) doCommitWithRetry(ctx context.Context) error {
 	var txnSize int
 	if s.txn.Valid() {
 		txnSize = s.txn.Size()
@@ -362,7 +362,7 @@ func (s *session) doCommitWithRetry(ctx goctx.Context) error {
 	return nil
 }
 
-func (s *session) CommitTxn(ctx goctx.Context) error {
+func (s *session) CommitTxn(ctx context.Context) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil {
 		span = opentracing.StartSpan("session.CommitTxn", opentracing.ChildOf(span.Context()))
 		defer span.Finish()
@@ -377,7 +377,7 @@ func (s *session) CommitTxn(ctx goctx.Context) error {
 	return errors.Trace(err)
 }
 
-func (s *session) RollbackTxn(ctx goctx.Context) error {
+func (s *session) RollbackTxn(ctx context.Context) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil {
 		span = opentracing.StartSpan("session.RollbackTxn", opentracing.ChildOf(span.Context()))
 		defer span.Finish()
@@ -438,7 +438,7 @@ func (s *session) isRetryableError(err error) bool {
 	return kv.IsRetryableError(err) || domain.ErrInfoSchemaChanged.Equal(err)
 }
 
-func (s *session) retry(goCtx goctx.Context, maxCnt int) error {
+func (s *session) retry(goCtx context.Context, maxCnt int) error {
 	span, ctx := opentracing.StartSpanFromContext(goCtx, "retry")
 	defer span.Finish()
 
@@ -533,7 +533,7 @@ func (s *session) sysSessionPool() *pools.ResourcePool {
 // and doesn't write binlog.
 func (s *session) ExecRestrictedSQL(ctx sessionctx.Context, sql string) ([]types.Row, []*ast.ResultField, error) {
 	var span opentracing.Span
-	goCtx := goctx.TODO()
+	goCtx := context.TODO()
 	span, goCtx = opentracing.StartSpanFromContext(goCtx, "session.ExecRestrictedSQL")
 	defer span.Finish()
 
@@ -605,7 +605,7 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 	}
 }
 
-func drainRecordSet(goCtx goctx.Context, rs ast.RecordSet) ([]types.Row, error) {
+func drainRecordSet(goCtx context.Context, rs ast.RecordSet) ([]types.Row, error) {
 	var rows []types.Row
 	for {
 		row, err := rs.Next(goCtx)
@@ -692,7 +692,7 @@ func (s *session) SetGlobalSysVar(name string, value string) error {
 	return errors.Trace(err)
 }
 
-func (s *session) ParseSQL(goCtx goctx.Context, sql, charset, collation string) ([]ast.StmtNode, error) {
+func (s *session) ParseSQL(goCtx context.Context, sql, charset, collation string) ([]ast.StmtNode, error) {
 	if span := opentracing.SpanFromContext(goCtx); span != nil {
 		span1 := opentracing.StartSpan("session.ParseSQL", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -717,7 +717,7 @@ func (s *session) SetProcessInfo(sql string) {
 	s.processInfo.Store(pi)
 }
 
-func (s *session) executeStatement(goCtx goctx.Context, connID uint64, stmtNode ast.StmtNode, stmt ast.Statement, recordSets []ast.RecordSet) ([]ast.RecordSet, error) {
+func (s *session) executeStatement(goCtx context.Context, connID uint64, stmtNode ast.StmtNode, stmt ast.Statement, recordSets []ast.RecordSet) ([]ast.RecordSet, error) {
 	s.SetValue(sessionctx.QueryString, stmt.OriginText())
 	if _, ok := stmtNode.(ast.DDLNode); ok {
 		s.SetValue(sessionctx.LastExecuteDDL, true)
@@ -741,7 +741,7 @@ func (s *session) executeStatement(goCtx goctx.Context, connID uint64, stmtNode 
 	return recordSets, nil
 }
 
-func (s *session) Execute(goCtx goctx.Context, sql string) (recordSets []ast.RecordSet, err error) {
+func (s *session) Execute(goCtx context.Context, sql string) (recordSets []ast.RecordSet, err error) {
 	if span := opentracing.SpanFromContext(goCtx); span != nil {
 		span, goCtx = opentracing.StartSpanFromContext(goCtx, "session.Execute")
 		defer span.Finish()
@@ -843,7 +843,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 		return
 	}
 
-	goCtx := goctx.Background()
+	goCtx := context.Background()
 	inTxn := s.GetSessionVars().InTxn()
 	// NewPrepareExec may need startTS to build the executor, for example prepare statement has subquery in int.
 	// So we have to call PrepareTxnCtx here.
@@ -912,7 +912,7 @@ func checkArgs(args ...interface{}) error {
 }
 
 // ExecutePreparedStmt executes a prepared statement.
-func (s *session) ExecutePreparedStmt(goCtx goctx.Context, stmtID uint32, args ...interface{}) (ast.RecordSet, error) {
+func (s *session) ExecutePreparedStmt(goCtx context.Context, stmtID uint32, args ...interface{}) (ast.RecordSet, error) {
 	err := checkArgs(args...)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -946,7 +946,7 @@ func (s *session) Txn() kv.Transaction {
 
 func (s *session) NewTxn() error {
 	if s.txn.Valid() {
-		goCtx := goctx.TODO()
+		goCtx := context.TODO()
 		err := s.CommitTxn(goCtx)
 		if err != nil {
 			return errors.Trace(err)
@@ -987,7 +987,7 @@ func (s *session) Close() {
 	if s.statsCollector != nil {
 		s.statsCollector.Delete()
 	}
-	goCtx := goctx.TODO()
+	goCtx := context.TODO()
 	if err := s.RollbackTxn(goCtx); err != nil {
 		log.Error("session Close error:", errors.ErrorStack(err))
 	}
@@ -1280,7 +1280,7 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 
 // PrepareTxnCtx starts a goroutine to begin a transaction if needed, and creates a new transaction context.
 // It is called before we execute a sql query.
-func (s *session) PrepareTxnCtx(ctx goctx.Context) {
+func (s *session) PrepareTxnCtx(ctx context.Context) {
 	if s.txn.validOrPending() {
 		return
 	}
@@ -1299,7 +1299,7 @@ func (s *session) PrepareTxnCtx(ctx goctx.Context) {
 }
 
 // RefreshTxnCtx implements context.RefreshTxnCtx interface.
-func (s *session) RefreshTxnCtx(goCtx goctx.Context) error {
+func (s *session) RefreshTxnCtx(goCtx context.Context) error {
 	if err := s.doCommit(goCtx); err != nil {
 		return errors.Trace(err)
 	}

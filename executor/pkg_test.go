@@ -11,7 +11,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var _ = Suite(&pkgTestSuite{})
@@ -27,7 +27,7 @@ type MockExec struct {
 	curRowIdx int
 }
 
-func (m *MockExec) Next(goCtx goctx.Context) (Row, error) {
+func (m *MockExec) Next(goCtx context.Context) (Row, error) {
 	if m.curRowIdx >= len(m.Rows) {
 		return nil, nil
 	}
@@ -46,13 +46,13 @@ func (m *MockExec) Close() error {
 	return nil
 }
 
-func (m *MockExec) Open(goCtx goctx.Context) error {
+func (m *MockExec) Open(goCtx context.Context) error {
 	m.curRowIdx = 0
 	return nil
 }
 
 func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
-	goCtx := goctx.Background()
+	goCtx := context.Background()
 	ctx := mock.NewContext()
 	outerExec := &MockExec{
 		baseExecutor: newBaseExecutor(ctx, nil, ""),
