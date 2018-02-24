@@ -41,7 +41,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 // executorBuilder builds an Executor from a Plan.
@@ -175,7 +175,7 @@ func (b *executorBuilder) buildShowDDL(v *plan.ShowDDL) Executor {
 
 	var err error
 	ownerManager := domain.GetDomain(e.ctx).DDL().OwnerManager()
-	ctx, cancel := goctx.WithTimeout(goctx.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	e.ddlOwnerID, err = ownerManager.GetOwnerID(ctx)
 	cancel()
 	if err != nil {
@@ -572,14 +572,14 @@ func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 	}
 
 	lhsIter := &readerIterator{
-		ctx:      b.ctx,
+		sctx:     b.ctx,
 		reader:   leftExec,
 		filter:   v.LeftConditions,
 		joinKeys: leftKeys,
 	}
 
 	rhsIter := &readerIterator{
-		ctx:      b.ctx,
+		sctx:     b.ctx,
 		reader:   rightExec,
 		filter:   v.RightConditions,
 		joinKeys: rightKeys,
@@ -1315,20 +1315,20 @@ type dataReaderBuilder struct {
 	*executorBuilder
 }
 
-func (builder *dataReaderBuilder) buildExecutorForIndexJoin(goCtx goctx.Context, datums [][]types.Datum,
+func (builder *dataReaderBuilder) buildExecutorForIndexJoin(ctx context.Context, datums [][]types.Datum,
 	IndexRanges []*ranger.NewRange, keyOff2IdxOff []int) (Executor, error) {
 	switch v := builder.Plan.(type) {
 	case *plan.PhysicalTableReader:
-		return builder.buildTableReaderForIndexJoin(goCtx, v, datums)
+		return builder.buildTableReaderForIndexJoin(ctx, v, datums)
 	case *plan.PhysicalIndexReader:
-		return builder.buildIndexReaderForIndexJoin(goCtx, v, datums, IndexRanges, keyOff2IdxOff)
+		return builder.buildIndexReaderForIndexJoin(ctx, v, datums, IndexRanges, keyOff2IdxOff)
 	case *plan.PhysicalIndexLookUpReader:
-		return builder.buildIndexLookUpReaderForIndexJoin(goCtx, v, datums, IndexRanges, keyOff2IdxOff)
+		return builder.buildIndexLookUpReaderForIndexJoin(ctx, v, datums, IndexRanges, keyOff2IdxOff)
 	}
 	return nil, errors.New("Wrong plan type for dataReaderBuilder")
 }
 
-func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(goCtx goctx.Context, v *plan.PhysicalTableReader, datums [][]types.Datum) (Executor, error) {
+func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Context, v *plan.PhysicalTableReader, datums [][]types.Datum) (Executor, error) {
 	e, err := buildNoRangeTableReader(builder.executorBuilder, v)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1337,10 +1337,10 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(goCtx goctx.Conte
 	for _, datum := range datums {
 		handles = append(handles, datum[0].GetInt64())
 	}
-	return builder.buildTableReaderFromHandles(goCtx, e, handles)
+	return builder.buildTableReaderFromHandles(ctx, e, handles)
 }
 
-func (builder *dataReaderBuilder) buildTableReaderFromHandles(goCtx goctx.Context, e *TableReaderExecutor, handles []int64) (Executor, error) {
+func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Context, e *TableReaderExecutor, handles []int64) (Executor, error) {
 	sort.Sort(sortutil.Int64Slice(handles))
 	var b requestBuilder
 	kvReq, err := b.SetTableHandles(e.tableID, handles).
@@ -1354,16 +1354,16 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(goCtx goctx.Contex
 		return nil, errors.Trace(err)
 	}
 	e.resultHandler = &tableResultHandler{}
-	result, err := distsql.Select(goCtx, builder.ctx, kvReq, e.retTypes())
+	result, err := distsql.Select(ctx, builder.ctx, kvReq, e.retTypes())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	result.Fetch(goCtx)
+	result.Fetch(ctx)
 	e.resultHandler.open(nil, result)
 	return e, nil
 }
 
-func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(goCtx goctx.Context, v *plan.PhysicalIndexReader,
+func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Context, v *plan.PhysicalIndexReader,
 	values [][]types.Datum, indexRanges []*ranger.NewRange, keyOff2IdxOff []int) (Executor, error) {
 	e, err := buildNoRangeIndexReader(builder.executorBuilder, v)
 	if err != nil {
@@ -1373,11 +1373,11 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(goCtx goctx.Conte
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	err = e.open(goCtx, kvRanges)
+	err = e.open(ctx, kvRanges)
 	return e, errors.Trace(err)
 }
 
-func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(goCtx goctx.Context, v *plan.PhysicalIndexLookUpReader,
+func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context.Context, v *plan.PhysicalIndexLookUpReader,
 	values [][]types.Datum, indexRanges []*ranger.NewRange, keyOff2IdxOff []int) (Executor, error) {
 	e, err := buildNoRangeIndexLookUpReader(builder.executorBuilder, v)
 	if err != nil {
@@ -1387,7 +1387,7 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(goCtx goctx
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	err = e.open(goCtx, kvRanges)
+	err = e.open(ctx, kvRanges)
 	return e, errors.Trace(err)
 }
 

@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var (
@@ -44,7 +44,7 @@ type executor interface {
 	SetSrcExec(executor)
 	GetSrcExec() executor
 	Count() int64
-	Next(goCtx goctx.Context) ([][]byte, error)
+	Next(ctx context.Context) ([][]byte, error)
 }
 
 type tableScanExec struct {
@@ -73,7 +73,7 @@ func (e *tableScanExec) Count() int64 {
 	return e.count
 }
 
-func (e *tableScanExec) Next(goCtx goctx.Context) (value [][]byte, err error) {
+func (e *tableScanExec) Next(ctx context.Context) (value [][]byte, err error) {
 	e.count++
 	for e.cursor < len(e.kvRanges) {
 		ran := e.kvRanges[e.cursor]
@@ -208,7 +208,7 @@ func (e *indexScanExec) isUnique() bool {
 	return e.Unique != nil && *e.Unique
 }
 
-func (e *indexScanExec) Next(goCtx goctx.Context) (value [][]byte, err error) {
+func (e *indexScanExec) Next(ctx context.Context) (value [][]byte, err error) {
 	e.count++
 	for e.cursor < len(e.kvRanges) {
 		ran := e.kvRanges[e.cursor]
@@ -363,10 +363,10 @@ func evalBool(exprs []expression.Expression, row types.DatumRow, ctx *stmtctx.St
 	return true, nil
 }
 
-func (e *selectionExec) Next(goCtx goctx.Context) (value [][]byte, err error) {
+func (e *selectionExec) Next(ctx context.Context) (value [][]byte, err error) {
 	e.count++
 	for {
-		value, err = e.src.Next(goCtx)
+		value, err = e.src.Next(ctx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -413,8 +413,8 @@ func (e *topNExec) Count() int64 {
 	return e.count
 }
 
-func (e *topNExec) innerNext(goCtx goctx.Context) (bool, error) {
-	value, err := e.src.Next(goCtx)
+func (e *topNExec) innerNext(ctx context.Context) (bool, error) {
+	value, err := e.src.Next(ctx)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -428,11 +428,11 @@ func (e *topNExec) innerNext(goCtx goctx.Context) (bool, error) {
 	return true, nil
 }
 
-func (e *topNExec) Next(goCtx goctx.Context) (value [][]byte, err error) {
+func (e *topNExec) Next(ctx context.Context) (value [][]byte, err error) {
 	e.count++
 	if !e.executed {
 		for {
-			hasMore, err := e.innerNext(goCtx)
+			hasMore, err := e.innerNext(ctx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -497,13 +497,13 @@ func (e *limitExec) Count() int64 {
 	return e.count
 }
 
-func (e *limitExec) Next(goCtx goctx.Context) (value [][]byte, err error) {
+func (e *limitExec) Next(ctx context.Context) (value [][]byte, err error) {
 	e.count++
 	if e.cursor >= e.limit {
 		return nil, nil
 	}
 
-	value, err = e.src.Next(goCtx)
+	value, err = e.src.Next(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
