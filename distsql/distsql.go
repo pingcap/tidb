@@ -19,8 +19,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
@@ -68,11 +66,10 @@ type PartialResult interface {
 }
 
 type selectResult struct {
-	label     string
-	aggregate bool
-	resp      kv.Response
+	label string
+	resp  kv.Response
 
-	results chan newResultWithErr
+	results chan resultWithErr
 	closed  chan struct{}
 
 	rowLen     int
@@ -86,7 +83,7 @@ type selectResult struct {
 	partialCount int64 // number of partial results.
 }
 
-type newResultWithErr struct {
+type resultWithErr struct {
 	result []byte
 	err    error
 }
@@ -107,7 +104,7 @@ func (r *selectResult) fetch(goCtx goctx.Context) {
 	for {
 		resultSubset, err := r.resp.Next(goCtx)
 		if err != nil {
-			r.results <- newResultWithErr{err: errors.Trace(err)}
+			r.results <- resultWithErr{err: errors.Trace(err)}
 			return
 		}
 		if resultSubset == nil {
@@ -115,7 +112,7 @@ func (r *selectResult) fetch(goCtx goctx.Context) {
 		}
 
 		select {
-		case r.results <- newResultWithErr{result: resultSubset}:
+		case r.results <- resultWithErr{result: resultSubset}:
 		case <-r.closed:
 			// If selectResult called Close() already, make fetch goroutine exit.
 			return
@@ -321,7 +318,7 @@ func Select(goCtx goctx.Context, ctx sessionctx.Context, kvReq *kv.Request, fiel
 	return &selectResult{
 		label:      "dag",
 		resp:       resp,
-		results:    make(chan newResultWithErr, kvReq.Concurrency),
+		results:    make(chan resultWithErr, kvReq.Concurrency),
 		closed:     make(chan struct{}),
 		rowLen:     len(fieldTypes),
 		fieldTypes: fieldTypes,
@@ -338,7 +335,7 @@ func Analyze(ctx goctx.Context, client kv.Client, kvReq *kv.Request) (SelectResu
 	result := &selectResult{
 		label:   "analyze",
 		resp:    resp,
-		results: make(chan newResultWithErr, kvReq.Concurrency),
+		results: make(chan resultWithErr, kvReq.Concurrency),
 		closed:  make(chan struct{}),
 	}
 	return result, nil
@@ -348,83 +345,3 @@ func Analyze(ctx goctx.Context, client kv.Client, kvReq *kv.Request) (SelectResu
 const (
 	codeInvalidResp = 1
 )
-
-// FieldTypeFromPBColumn creates a types.FieldType from tipb.ColumnInfo.
-func FieldTypeFromPBColumn(col *tipb.ColumnInfo) *types.FieldType {
-	return &types.FieldType{
-		Tp:      byte(col.GetTp()),
-		Flag:    uint(col.Flag),
-		Flen:    int(col.GetColumnLen()),
-		Decimal: int(col.GetDecimal()),
-		Elems:   col.Elems,
-		Collate: mysql.Collations[uint8(col.GetCollation())],
-	}
-}
-
-func columnToProto(c *model.ColumnInfo) *tipb.ColumnInfo {
-	pc := &tipb.ColumnInfo{
-		ColumnId:  c.ID,
-		Collation: collationToProto(c.FieldType.Collate),
-		ColumnLen: int32(c.FieldType.Flen),
-		Decimal:   int32(c.FieldType.Decimal),
-		Flag:      int32(c.Flag),
-		Elems:     c.Elems,
-	}
-	pc.Tp = int32(c.FieldType.Tp)
-	return pc
-}
-
-// TODO: update it when more collate is supported.
-func collationToProto(c string) int32 {
-	v := mysql.CollationNames[c]
-	if v == mysql.BinaryCollationID {
-		return int32(mysql.BinaryCollationID)
-	}
-	// We only support binary and utf8_bin collation.
-	// Setting other collations to utf8_bin for old data compatibility.
-	// For the data created when we didn't enforce utf8_bin collation in create table.
-	return int32(mysql.DefaultCollationID)
-}
-
-// ColumnsToProto converts a slice of model.ColumnInfo to a slice of tipb.ColumnInfo.
-func ColumnsToProto(columns []*model.ColumnInfo, pkIsHandle bool) []*tipb.ColumnInfo {
-	cols := make([]*tipb.ColumnInfo, 0, len(columns))
-	for _, c := range columns {
-		col := columnToProto(c)
-		// TODO: Here `PkHandle`'s meaning is changed, we will change it to `IsHandle` when tikv's old select logic
-		// is abandoned.
-		if (pkIsHandle && mysql.HasPriKeyFlag(c.Flag)) || c.ID == model.ExtraHandleID {
-			col.PkHandle = true
-		} else {
-			col.PkHandle = false
-		}
-		cols = append(cols, col)
-	}
-	return cols
-}
-
-// IndexToProto converts a model.IndexInfo to a tipb.IndexInfo.
-func IndexToProto(t *model.TableInfo, idx *model.IndexInfo) *tipb.IndexInfo {
-	pi := &tipb.IndexInfo{
-		TableId: t.ID,
-		IndexId: idx.ID,
-		Unique:  idx.Unique,
-	}
-	cols := make([]*tipb.ColumnInfo, 0, len(idx.Columns)+1)
-	for _, c := range idx.Columns {
-		cols = append(cols, columnToProto(t.Columns[c.Offset]))
-	}
-	if t.PKIsHandle {
-		// Coprocessor needs to know PKHandle column info, so we need to append it.
-		for _, col := range t.Columns {
-			if mysql.HasPriKeyFlag(col.Flag) {
-				colPB := columnToProto(col)
-				colPB.PkHandle = true
-				cols = append(cols, colPB)
-				break
-			}
-		}
-	}
-	pi.Columns = cols
-	return pi
-}

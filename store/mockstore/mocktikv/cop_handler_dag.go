@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
-	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
@@ -353,7 +352,7 @@ func (e *evalContext) setColumnInfo(cols []*tipb.ColumnInfo) {
 	e.colIDs = make(map[int64]int)
 	e.fieldTps = make([]*types.FieldType, 0, len(e.columnInfos))
 	for i, col := range e.columnInfos {
-		ft := distsql.FieldTypeFromPBColumn(col)
+		ft := fieldTypeFromPBColumn(col)
 		e.fieldTps = append(e.fieldTps, ft)
 		e.colIDs[col.GetColumnId()] = i
 	}
@@ -613,4 +612,16 @@ func extractOffsetsInExpr(expr *tipb.Expr, columns []*tipb.ColumnInfo, collector
 		}
 	}
 	return collector, nil
+}
+
+// fieldTypeFromPBColumn creates a types.FieldType from tipb.ColumnInfo.
+func fieldTypeFromPBColumn(col *tipb.ColumnInfo) *types.FieldType {
+	return &types.FieldType{
+		Tp:      byte(col.GetTp()),
+		Flag:    uint(col.Flag),
+		Flen:    int(col.GetColumnLen()),
+		Decimal: int(col.GetDecimal()),
+		Elems:   col.Elems,
+		Collate: mysql.Collations[uint8(col.GetCollation())],
+	}
 }

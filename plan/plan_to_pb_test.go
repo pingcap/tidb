@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2018 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,25 +11,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package distsql
+package plan
 
 import (
-	"errors"
-	"testing"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tipb/go-tipb"
-	goctx "golang.org/x/net/context"
 )
-
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
-}
 
 var _ = Suite(&testDistsqlSuite{})
 
@@ -45,9 +36,8 @@ func (s *testDistsqlSuite) TestColumnToProto(c *C) {
 		FieldType: *tp,
 	}
 	pc := columnToProto(col)
-	c.Assert(pc.GetFlag(), Equals, int32(10))
-	ntp := FieldTypeFromPBColumn(pc)
-	c.Assert(ntp, DeepEquals, tp)
+	expect := &tipb.ColumnInfo{ColumnId: 0, Tp: 3, Collation: 83, ColumnLen: -1, Decimal: -1, Flag: 10, Elems: []string(nil), DefaultVal: []uint8(nil), PkHandle: false, XXX_unrecognized: []uint8(nil)}
+	c.Assert(pc, DeepEquals, expect)
 
 	cols := []*model.ColumnInfo{col, col}
 	pcs := ColumnsToProto(cols, false)
@@ -130,29 +120,4 @@ func (s *testDistsqlSuite) TestIndexToProto(c *C) {
 	c.Assert(pIdx.TableId, Equals, int64(1))
 	c.Assert(pIdx.IndexId, Equals, int64(1))
 	c.Assert(pIdx.Unique, Equals, true)
-}
-
-type mockResponse struct {
-	count int
-}
-
-func (resp *mockResponse) Next(ctx goctx.Context) ([]byte, error) {
-	resp.count++
-	if resp.count == 100 {
-		return nil, errors.New("error happened")
-	}
-	return mockSubresult(), nil
-}
-
-func (resp *mockResponse) Close() error {
-	return nil
-}
-
-func mockSubresult() []byte {
-	resp := new(tipb.SelectResponse)
-	b, err := resp.Marshal()
-	if err != nil {
-		panic(err)
-	}
-	return b
 }
