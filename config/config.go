@@ -38,6 +38,7 @@ type Config struct {
 	SplitTable   bool   `toml:"split-table" json:"split-table"`
 	TokenLimit   int    `toml:"token-limit" json:"token-limit"`
 	EnableChunk  bool   `toml:"enable-chunk" json:"enable-chunk"`
+	OOMAction    string `toml:"oom-action" json:"oom-action"`
 
 	Log               Log               `toml:"log" json:"log"`
 	Security          Security          `toml:"security" json:"security"`
@@ -209,6 +210,7 @@ var defaultConf = Config{
 	Lease:       "10s",
 	TokenLimit:  1000,
 	EnableChunk: true,
+	OOMAction:   "log",
 	Log: Log{
 		Level:  "info",
 		Format: "text",
@@ -318,3 +320,8 @@ func (t *OpenTracing) ToTracingConfig() *tracing.Configuration {
 	ret.Sampler.SamplingRefreshInterval = t.Sampler.SamplingRefreshInterval
 	return ret
 }
+
+const (
+	OOMActionCancel = "cancel"
+	OOMActionLog    = "log"
+)

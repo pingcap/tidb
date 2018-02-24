@@ -31,7 +31,7 @@ type ActionOnExceed interface {
 
 // LogOnExceed logs a warning only once when memory usage exceeds memory quota.
 type LogOnExceed struct {
-	mutex *sync.Mutex // For synchronization.
+	mutex sync.Mutex // For synchronization.
 	acted bool
 }
 
@@ -47,7 +47,7 @@ func (a *LogOnExceed) Action(t *Tracker) {
 
 // PanicOnExceed panics when when memory usage exceeds memory quota.
 type PanicOnExceed struct {
-	mutex *sync.Mutex // For synchronization.
+	mutex sync.Mutex // For synchronization.
 	acted bool
 }
 

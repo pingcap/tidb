@@ -16,9 +16,11 @@ package executor
 import (
 	"math"
 	"sort"
+	"strings"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -288,7 +290,14 @@ func ResetStmtCtx(ctx sessionctx.Context, s ast.StmtNode) {
 	sc := new(stmtctx.StatementContext)
 	sc.TimeZone = sessVars.GetTimeZone()
 	sc.MemTracker = memory.NewTracker(s.Text(), sessVars.MemQuotaQuery)
-	sc.MemTracker.SetActionOnExceed(&memory.PanicOnExceed{})
+	switch strings.ToLower(config.GetGlobalConfig().OOMAction) {
+	case config.OOMActionCancel:
+		sc.MemTracker.SetActionOnExceed(&memory.PanicOnExceed{})
+	case config.OOMActionLog:
+		sc.MemTracker.SetActionOnExceed(&memory.LogOnExceed{})
+	default:
+		sc.MemTracker.SetActionOnExceed(&memory.LogOnExceed{})
+	}
 
 	switch stmt := s.(type) {
 	case *ast.UpdateStmt:
