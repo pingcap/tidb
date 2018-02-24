@@ -64,8 +64,8 @@ func (ts *TiDBStatement) ID() int {
 }
 
 // Execute implements PreparedStatement Execute method.
-func (ts *TiDBStatement) Execute(goCtx context.Context, args ...interface{}) (rs ResultSet, err error) {
-	tidbRecordset, err := ts.ctx.session.ExecutePreparedStmt(goCtx, ts.id, args...)
+func (ts *TiDBStatement) Execute(ctx context.Context, args ...interface{}) (rs ResultSet, err error) {
+	tidbRecordset, err := ts.ctx.session.ExecutePreparedStmt(ctx, ts.id, args...)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -172,8 +172,8 @@ func (tc *TiDBContext) SetValue(key fmt.Stringer, value interface{}) {
 }
 
 // CommitTxn implements QueryCtx CommitTxn method.
-func (tc *TiDBContext) CommitTxn(goCtx context.Context) error {
-	return tc.session.CommitTxn(goCtx)
+func (tc *TiDBContext) CommitTxn(ctx context.Context) error {
+	return tc.session.CommitTxn(ctx)
 }
 
 // RollbackTxn implements QueryCtx RollbackTxn method.
@@ -197,8 +197,8 @@ func (tc *TiDBContext) WarningCount() uint16 {
 }
 
 // Execute implements QueryCtx Execute method.
-func (tc *TiDBContext) Execute(goCtx context.Context, sql string) (rs []ResultSet, err error) {
-	rsList, err := tc.session.Execute(goCtx, sql)
+func (tc *TiDBContext) Execute(ctx context.Context, sql string) (rs []ResultSet, err error) {
+	rsList, err := tc.session.Execute(ctx, sql)
 	if err != nil {
 		return
 	}
@@ -294,8 +294,8 @@ type tidbResultSet struct {
 	columns   []*ColumnInfo
 }
 
-func (trs *tidbResultSet) Next(goCtx context.Context) (types.Row, error) {
-	return trs.recordSet.Next(goCtx)
+func (trs *tidbResultSet) Next(ctx context.Context) (types.Row, error) {
+	return trs.recordSet.Next(ctx)
 }
 
 func (trs *tidbResultSet) NewChunk() *chunk.Chunk {

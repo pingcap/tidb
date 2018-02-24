@@ -64,7 +64,7 @@ func (r *recordSet) Next(context.Context) (types.Row, error) {
 	return types.DatumRow{types.NewIntDatum(int64(r.cursor)), r.data[r.cursor-1]}, nil
 }
 
-func (r *recordSet) NextChunk(goCtx context.Context, chk *chunk.Chunk) error {
+func (r *recordSet) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	return nil
 }
 

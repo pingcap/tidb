@@ -260,8 +260,8 @@ func checkBootstrapped(s Session) (bool, error) {
 func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s"`,
 		mysql.SystemDB, mysql.TiDBTable, name)
-	goCtx := context.Background()
-	rs, err := s.Execute(goCtx, sql)
+	ctx := context.Background()
+	rs, err := s.Execute(ctx, sql)
 	if err != nil {
 		return "", true, errors.Trace(err)
 	}
@@ -270,7 +270,7 @@ func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 	}
 	r := rs[0]
 	defer terror.Call(r.Close)
-	row, err := r.Next(goCtx)
+	row, err := r.Next(ctx)
 	if err != nil || row == nil {
 		return "", true, errors.Trace(err)
 	}
@@ -464,16 +464,16 @@ func upgradeToVer11(s Session) {
 }
 
 func upgradeToVer12(s Session) {
-	goCtx := context.Background()
-	_, err := s.Execute(goCtx, "BEGIN")
+	ctx := context.Background()
+	_, err := s.Execute(ctx, "BEGIN")
 	terror.MustNil(err)
 	sql := "SELECT user, host, password FROM mysql.user WHERE password != ''"
-	rs, err := s.Execute(goCtx, sql)
+	rs, err := s.Execute(ctx, sql)
 	terror.MustNil(err)
 	r := rs[0]
 	sqls := make([]string, 0, 1)
 	defer terror.Call(r.Close)
-	row, err := r.Next(goCtx)
+	row, err := r.Next(ctx)
 	for err == nil && row != nil {
 		user := row.GetString(0)
 		host := row.GetString(1)
@@ -483,7 +483,7 @@ func upgradeToVer12(s Session) {
 		terror.MustNil(err)
 		updateSQL := fmt.Sprintf(`UPDATE mysql.user set password = "%s" where user="%s" and host="%s"`, newPass, user, host)
 		sqls = append(sqls, updateSQL)
-		row, err = r.Next(goCtx)
+		row, err = r.Next(ctx)
 	}
 	terror.MustNil(err)
 
@@ -508,9 +508,9 @@ func upgradeToVer13(s Session) {
 		"ALTER TABLE mysql.user ADD COLUMN `Alter_routine_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Create_routine_priv`",
 		"ALTER TABLE mysql.user ADD COLUMN `Event_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Create_user_priv`",
 	}
-	goCtx := context.Background()
+	ctx := context.Background()
 	for _, sql := range sqls {
-		_, err := s.Execute(goCtx, sql)
+		_, err := s.Execute(ctx, sql)
 		if err != nil {
 			if terror.ErrorEqual(err, infoschema.ErrColumnExists) {
 				continue
@@ -533,9 +533,9 @@ func upgradeToVer14(s Session) {
 		"ALTER TABLE mysql.db ADD COLUMN `Event_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Execute_priv`",
 		"ALTER TABLE mysql.db ADD COLUMN `Trigger_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Event_priv`",
 	}
-	goCtx := context.Background()
+	ctx := context.Background()
 	for _, sql := range sqls {
-		_, err := s.Execute(goCtx, sql)
+		_, err := s.Execute(ctx, sql)
 		if err != nil {
 			if terror.ErrorEqual(err, infoschema.ErrColumnExists) {
 				continue

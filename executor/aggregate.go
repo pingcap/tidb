@@ -59,8 +59,8 @@ func (e *HashAggExec) Close() error {
 }
 
 // Open implements the Executor Open interface.
-func (e *HashAggExec) Open(goCtx context.Context) error {
-	if err := e.baseExecutor.Open(goCtx); err != nil {
+func (e *HashAggExec) Open(ctx context.Context) error {
+	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
 	e.executed = false
@@ -75,10 +75,10 @@ func (e *HashAggExec) Open(goCtx context.Context) error {
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (e *HashAggExec) NextChunk(goCtx context.Context, chk *chunk.Chunk) error {
+func (e *HashAggExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	// In this stage we consider all data from src as a single group.
 	if !e.executed {
-		err := e.execute(goCtx)
+		err := e.execute(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -111,10 +111,10 @@ func (e *HashAggExec) NextChunk(goCtx context.Context, chk *chunk.Chunk) error {
 }
 
 // innerNextChunk fetches Chunks from src and update each aggregate function for each row in Chunk.
-func (e *HashAggExec) execute(goCtx context.Context) (err error) {
+func (e *HashAggExec) execute(ctx context.Context) (err error) {
 	inputIter := chunk.NewIterator4Chunk(e.childrenResults[0])
 	for {
-		err := e.children[0].NextChunk(goCtx, e.childrenResults[0])
+		err := e.children[0].NextChunk(ctx, e.childrenResults[0])
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -142,11 +142,11 @@ func (e *HashAggExec) execute(goCtx context.Context) (err error) {
 }
 
 // Next implements the Executor Next interface.
-func (e *HashAggExec) Next(goCtx context.Context) (Row, error) {
+func (e *HashAggExec) Next(ctx context.Context) (Row, error) {
 	// In this stage we consider all data from src as a single group.
 	if !e.executed {
 		for {
-			hasMore, err := e.innerNext(goCtx)
+			hasMore, err := e.innerNext(ctx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -198,8 +198,8 @@ func (e *HashAggExec) getGroupKey(row types.Row) ([]byte, error) {
 
 // innerNext fetches a single row from src and update each aggregate function.
 // If the first return value is false, it means there is no more data from src.
-func (e *HashAggExec) innerNext(goCtx context.Context) (ret bool, err error) {
-	srcRow, err := e.children[0].Next(goCtx)
+func (e *HashAggExec) innerNext(ctx context.Context) (ret bool, err error) {
+	srcRow, err := e.children[0].Next(ctx)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -260,8 +260,8 @@ type StreamAggExec struct {
 }
 
 // Open implements the Executor Open interface.
-func (e *StreamAggExec) Open(goCtx context.Context) error {
-	if err := e.baseExecutor.Open(goCtx); err != nil {
+func (e *StreamAggExec) Open(ctx context.Context) error {
+	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -281,13 +281,13 @@ func (e *StreamAggExec) Open(goCtx context.Context) error {
 }
 
 // Next implements the Executor Next interface.
-func (e *StreamAggExec) Next(goCtx context.Context) (Row, error) {
+func (e *StreamAggExec) Next(ctx context.Context) (Row, error) {
 	if e.executed {
 		return nil, nil
 	}
 	retRow := make([]types.Datum, 0, len(e.AggFuncs))
 	for {
-		row, err := e.children[0].Next(goCtx)
+		row, err := e.children[0].Next(ctx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -329,11 +329,11 @@ func (e *StreamAggExec) Next(goCtx context.Context) (Row, error) {
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (e *StreamAggExec) NextChunk(goCtx context.Context, chk *chunk.Chunk) error {
+func (e *StreamAggExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 
 	for !e.executed && chk.NumRows() < e.maxChunkSize {
-		err := e.consumeOneGroup(goCtx, chk)
+		err := e.consumeOneGroup(ctx, chk)
 		if err != nil {
 			e.executed = true
 			return errors.Trace(err)
@@ -342,9 +342,9 @@ func (e *StreamAggExec) NextChunk(goCtx context.Context, chk *chunk.Chunk) error
 	return nil
 }
 
-func (e *StreamAggExec) consumeOneGroup(goCtx context.Context, chk *chunk.Chunk) error {
+func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) error {
 	for !e.executed {
-		if err := e.fetchChildIfNecessary(goCtx, chk); err != nil {
+		if err := e.fetchChildIfNecessary(ctx, chk); err != nil {
 			return errors.Trace(err)
 		}
 		for ; e.inputRow != e.inputIter.End(); e.inputRow = e.inputIter.Next() {
@@ -370,12 +370,12 @@ func (e *StreamAggExec) consumeOneGroup(goCtx context.Context, chk *chunk.Chunk)
 	return nil
 }
 
-func (e *StreamAggExec) fetchChildIfNecessary(goCtx context.Context, chk *chunk.Chunk) error {
+func (e *StreamAggExec) fetchChildIfNecessary(ctx context.Context, chk *chunk.Chunk) error {
 	if e.inputRow != e.inputIter.End() {
 		return nil
 	}
 
-	err := e.children[0].NextChunk(goCtx, e.childrenResults[0])
+	err := e.children[0].NextChunk(ctx, e.childrenResults[0])
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -138,10 +138,10 @@ type RecordSet interface {
 	Fields() []*ResultField
 
 	// Next returns the next row, nil row means there is no more to return.
-	Next(goCtx context.Context) (row types.Row, err error)
+	Next(ctx context.Context) (row types.Row, err error)
 
 	// NextChunk reads records into chunk.
-	NextChunk(goCtx context.Context, chk *chunk.Chunk) error
+	NextChunk(ctx context.Context, chk *chunk.Chunk) error
 
 	// NewChunk creates a new chunk with initial capacity.
 	NewChunk() *chunk.Chunk
@@ -186,7 +186,7 @@ type Statement interface {
 	OriginText() string
 
 	// Exec executes SQL and gets a Recordset.
-	Exec(goCtx context.Context) (RecordSet, error)
+	Exec(ctx context.Context) (RecordSet, error)
 
 	// IsPrepared returns whether this statement is prepared statement.
 	IsPrepared() bool

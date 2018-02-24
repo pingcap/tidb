@@ -369,8 +369,8 @@ const minLogCopTaskTime = 300 * time.Millisecond
 
 // work is a worker function that get a copTask from channel, handle it and
 // send the result back.
-func (it *copIterator) work(goCtx context.Context, taskCh <-chan *copTask) {
-	span, ctx1 := opentracing.StartSpanFromContext(goCtx, "copIterator.work")
+func (it *copIterator) work(ctx context.Context, taskCh <-chan *copTask) {
+	span, ctx1 := opentracing.StartSpanFromContext(ctx, "copIterator.work")
 	defer span.Finish()
 
 	defer it.wg.Done()

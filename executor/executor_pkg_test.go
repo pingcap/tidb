@@ -111,24 +111,24 @@ func (s *testExecSuite) TestShowProcessList(c *C) {
 	sm := &mockSessionManager{
 		PS: ps,
 	}
-	ctx := mock.NewContext()
-	ctx.SetSessionManager(sm)
+	sctx := mock.NewContext()
+	sctx.SetSessionManager(sm)
 
 	// Compose executor.
 	e := &ShowExec{
-		baseExecutor: newBaseExecutor(ctx, schema, ""),
+		baseExecutor: newBaseExecutor(sctx, schema, ""),
 		Tp:           ast.ShowProcessList,
 	}
 
-	goCtx := context.Background()
+	ctx := context.Background()
 	// Run test and check results.
 	for _, p := range ps {
-		r, err := e.Next(goCtx)
+		r, err := e.Next(ctx)
 		c.Assert(err, IsNil)
 		c.Assert(r, NotNil)
 		c.Assert(r[0].GetUint64(), Equals, p.ID)
 	}
-	r, err := e.Next(goCtx)
+	r, err := e.Next(ctx)
 	c.Assert(err, IsNil)
 	c.Assert(r, IsNil)
 }

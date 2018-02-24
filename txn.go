@@ -115,14 +115,14 @@ type dirtyTableOperation struct {
 }
 
 // Commit overrides the Transaction interface.
-func (st *TxnState) Commit(goCtx context.Context) error {
+func (st *TxnState) Commit(ctx context.Context) error {
 	if st.fail != nil {
 		// If any error happen during StmtCommit, don't commit this transaction.
 		err := st.fail
 		st.fail = nil
 		return errors.Trace(err)
 	}
-	return errors.Trace(st.Transaction.Commit(goCtx))
+	return errors.Trace(st.Transaction.Commit(ctx))
 }
 
 // Rollback overrides the Transaction interface.

@@ -29,7 +29,7 @@ type ExplainExec struct {
 }
 
 // Next implements Execution Next interface.
-func (e *ExplainExec) Next(goCtx context.Context) (Row, error) {
+func (e *ExplainExec) Next(ctx context.Context) (Row, error) {
 	if e.cursor >= len(e.rows) {
 		return nil, nil
 	}
@@ -48,7 +48,7 @@ func (e *ExplainExec) Close() error {
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (e *ExplainExec) NextChunk(goCtx context.Context, chk *chunk.Chunk) error {
+func (e *ExplainExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.cursor >= len(e.rows) {
 		return nil

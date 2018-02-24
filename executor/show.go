@@ -65,7 +65,7 @@ type ShowExec struct {
 }
 
 // Next implements Execution Next interface.
-func (e *ShowExec) Next(goCtx context.Context) (Row, error) {
+func (e *ShowExec) Next(ctx context.Context) (Row, error) {
 	if e.rows == nil {
 		e.forChunk = false
 		err := e.fetchAll()
@@ -94,7 +94,7 @@ func (e *ShowExec) Next(goCtx context.Context) (Row, error) {
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (e *ShowExec) NextChunk(goCtx context.Context, chk *chunk.Chunk) error {
+func (e *ShowExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.result == nil {
 		e.result = e.newChunk()

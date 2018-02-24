@@ -64,10 +64,10 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 		chunks []tipb.Chunk
 		rowCnt int
 	)
-	goCtx := context.TODO()
+	ctx := context.TODO()
 	for {
 		var row [][]byte
-		row, err = e.Next(goCtx)
+		row, err = e.Next(ctx)
 		if err != nil {
 			break
 		}
@@ -123,9 +123,9 @@ func (h *rpcHandler) handleCopStream(req *coprocessor.Request) (tikvpb.Tikv_Copr
 	}
 
 	return &mockCopStreamClient{
-		exec:  e,
-		req:   dagReq,
-		goCtx: context.TODO(),
+		exec: e,
+		req:  dagReq,
+		ctx:  context.TODO(),
 	}, nil
 }
 
@@ -414,7 +414,7 @@ type mockCopStreamClient struct {
 
 	req      *tipb.DAGRequest
 	exec     executor
-	goCtx    context.Context
+	ctx      context.Context
 	finished bool
 }
 
@@ -475,7 +475,7 @@ func (mock *mockCopStreamClient) Recv() (*coprocessor.Response, error) {
 func (mock *mockCopStreamClient) readBlockFromExecutor() (tipb.Chunk, bool, error) {
 	var chunk tipb.Chunk
 	for count := 0; count < rowsPerChunk; count++ {
-		row, err := mock.exec.Next(mock.goCtx)
+		row, err := mock.exec.Next(mock.ctx)
 		if err != nil {
 			return chunk, false, errors.Trace(err)
 		}

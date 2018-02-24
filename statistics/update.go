@@ -171,8 +171,8 @@ func (h *Handle) dumpTableStatDeltaToKV(id int64, delta variable.TableDelta) (bo
 	if delta.Count == 0 {
 		return true, nil
 	}
-	goCtx := context.TODO()
-	_, err := h.ctx.(sqlexec.SQLExecutor).Execute(goCtx, "begin")
+	ctx := context.TODO()
+	_, err := h.ctx.(sqlexec.SQLExecutor).Execute(ctx, "begin")
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -182,12 +182,12 @@ func (h *Handle) dumpTableStatDeltaToKV(id int64, delta variable.TableDelta) (bo
 	} else {
 		sql = fmt.Sprintf("update mysql.stats_meta set version = %d, count = count + %d, modify_count = modify_count + %d where table_id = %d", h.ctx.Txn().StartTS(), delta.Delta, delta.Count, id)
 	}
-	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(goCtx, sql)
+	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(ctx, sql)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
 	updated := h.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0
-	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(goCtx, "commit")
+	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(ctx, "commit")
 	return updated, errors.Trace(err)
 }
 

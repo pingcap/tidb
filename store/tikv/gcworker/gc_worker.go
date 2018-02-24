@@ -738,14 +738,14 @@ func (w *GCWorker) checkLeader() (bool, error) {
 	session := createSession(w.store)
 	defer session.Close()
 
-	goCtx := context.Background()
-	_, err := session.Execute(goCtx, "BEGIN")
+	ctx := context.Background()
+	_, err := session.Execute(ctx, "BEGIN")
 	if err != nil {
 		return false, errors.Trace(err)
 	}
 	leader, err := w.loadValueFromSysTable(gcLeaderUUIDKey, session)
 	if err != nil {
-		_, err1 := session.Execute(goCtx, "ROLLBACK")
+		_, err1 := session.Execute(ctx, "ROLLBACK")
 		terror.Log(errors.Trace(err1))
 		return false, errors.Trace(err)
 	}
@@ -753,18 +753,18 @@ func (w *GCWorker) checkLeader() (bool, error) {
 	if leader == w.uuid {
 		err = w.saveTime(gcLeaderLeaseKey, time.Now().Add(gcWorkerLease), session)
 		if err != nil {
-			_, err1 := session.Execute(goCtx, "ROLLBACK")
+			_, err1 := session.Execute(ctx, "ROLLBACK")
 			terror.Log(errors.Trace(err1))
 			return false, errors.Trace(err)
 		}
-		_, err = session.Execute(goCtx, "COMMIT")
+		_, err = session.Execute(ctx, "COMMIT")
 		if err != nil {
 			return false, errors.Trace(err)
 		}
 		return true, nil
 	}
 
-	_, err = session.Execute(goCtx, "BEGIN")
+	_, err = session.Execute(ctx, "BEGIN")
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -778,29 +778,29 @@ func (w *GCWorker) checkLeader() (bool, error) {
 
 		err = w.saveValueToSysTable(gcLeaderUUIDKey, w.uuid, session)
 		if err != nil {
-			_, err1 := session.Execute(goCtx, "ROLLBACK")
+			_, err1 := session.Execute(ctx, "ROLLBACK")
 			terror.Log(errors.Trace(err1))
 			return false, errors.Trace(err)
 		}
 		err = w.saveValueToSysTable(gcLeaderDescKey, w.desc, session)
 		if err != nil {
-			_, err1 := session.Execute(goCtx, "ROLLBACK")
+			_, err1 := session.Execute(ctx, "ROLLBACK")
 			terror.Log(errors.Trace(err1))
 			return false, errors.Trace(err)
 		}
 		err = w.saveTime(gcLeaderLeaseKey, time.Now().Add(gcWorkerLease), session)
 		if err != nil {
-			_, err1 := session.Execute(goCtx, "ROLLBACK")
+			_, err1 := session.Execute(ctx, "ROLLBACK")
 			terror.Log(errors.Trace(err1))
 			return false, errors.Trace(err)
 		}
-		_, err = session.Execute(goCtx, "COMMIT")
+		_, err = session.Execute(ctx, "COMMIT")
 		if err != nil {
 			return false, errors.Trace(err)
 		}
 		return true, nil
 	}
-	_, err1 := session.Execute(goCtx, "ROLLBACK")
+	_, err1 := session.Execute(ctx, "ROLLBACK")
 	terror.Log(errors.Trace(err1))
 	return false, nil
 }
@@ -871,16 +871,16 @@ func (w *GCWorker) loadDurationWithDefault(key string, def time.Duration) (*time
 }
 
 func (w *GCWorker) loadValueFromSysTable(key string, s tidb.Session) (string, error) {
-	goCtx := context.Background()
+	ctx := context.Background()
 	stmt := fmt.Sprintf(`SELECT (variable_value) FROM mysql.tidb WHERE variable_name='%s' FOR UPDATE`, key)
-	rs, err := s.Execute(goCtx, stmt)
+	rs, err := s.Execute(ctx, stmt)
 	if len(rs) > 0 {
 		defer terror.Call(rs[0].Close)
 	}
 	if err != nil {
 		return "", errors.Trace(err)
 	}
-	row, err := rs[0].Next(goCtx)
+	row, err := rs[0].Next(ctx)
 	if err != nil {
 		return "", errors.Trace(err)
 	}

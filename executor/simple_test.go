@@ -228,15 +228,15 @@ func (s *testSuite) TestFlushPrivileges(c *C) {
 	defer se.Close()
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "testflush", Hostname: "localhost"}, nil, nil), IsTrue)
 
-	goCtx := context.Background()
+	ctx := context.Background()
 	// Before flush.
-	_, err = se.Execute(goCtx, `SELECT Password FROM mysql.User WHERE User="testflush" and Host="localhost"`)
+	_, err = se.Execute(ctx, `SELECT Password FROM mysql.User WHERE User="testflush" and Host="localhost"`)
 	c.Check(err, NotNil)
 
 	tk.MustExec("FLUSH PRIVILEGES")
 
 	// After flush.
-	_, err = se.Execute(goCtx, `SELECT Password FROM mysql.User WHERE User="testflush" and Host="localhost"`)
+	_, err = se.Execute(ctx, `SELECT Password FROM mysql.User WHERE User="testflush" and Host="localhost"`)
 	c.Check(err, IsNil)
 
 	privileges.Enable = save

@@ -162,17 +162,17 @@ func HistogramEqual(a, b *Histogram, ignoreID bool) bool {
 }
 
 // SaveStatsToStorage saves the stats to storage.
-func SaveStatsToStorage(ctx sessionctx.Context, tableID int64, count int64, isIndex int, hg *Histogram, cms *CMSketch) error {
-	goCtx := context.TODO()
-	exec := ctx.(sqlexec.SQLExecutor)
-	_, err := exec.Execute(goCtx, "begin")
+func SaveStatsToStorage(sctx sessionctx.Context, tableID int64, count int64, isIndex int, hg *Histogram, cms *CMSketch) error {
+	ctx := context.TODO()
+	exec := sctx.(sqlexec.SQLExecutor)
+	_, err := exec.Execute(ctx, "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
-	txn := ctx.Txn()
+	txn := sctx.Txn()
 	version := txn.StartTS()
 	replaceSQL := fmt.Sprintf("replace into mysql.stats_meta (version, table_id, count) values (%d, %d, %d)", version, tableID, count)
-	_, err = exec.Execute(goCtx, replaceSQL)
+	_, err = exec.Execute(ctx, replaceSQL)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -182,16 +182,16 @@ func SaveStatsToStorage(ctx sessionctx.Context, tableID int64, count int64, isIn
 	}
 	replaceSQL = fmt.Sprintf("replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch) values (%d, %d, %d, %d, %d, %d, X'%X')",
 		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, data)
-	_, err = exec.Execute(goCtx, replaceSQL)
+	_, err = exec.Execute(ctx, replaceSQL)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	deleteSQL := fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d", tableID, isIndex, hg.ID)
-	_, err = exec.Execute(goCtx, deleteSQL)
+	_, err = exec.Execute(ctx, deleteSQL)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	sc := ctx.GetSessionVars().StmtCtx
+	sc := sctx.GetSessionVars().StmtCtx
 	for i := range hg.Buckets {
 		count := hg.Buckets[i].Count
 		if i > 0 {
@@ -208,12 +208,12 @@ func SaveStatsToStorage(ctx sessionctx.Context, tableID int64, count int64, isIn
 			return errors.Trace(err)
 		}
 		insertSQL := fmt.Sprintf("insert into mysql.stats_buckets(table_id, is_index, hist_id, bucket_id, count, repeats, lower_bound, upper_bound) values(%d, %d, %d, %d, %d, %d, X'%X', X'%X')", tableID, isIndex, hg.ID, i, count, hg.Buckets[i].Repeat, lowerBound.GetBytes(), upperBound.GetBytes())
-		_, err = exec.Execute(goCtx, insertSQL)
+		_, err = exec.Execute(ctx, insertSQL)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
-	_, err = exec.Execute(goCtx, "commit")
+	_, err = exec.Execute(ctx, "commit")
 	return errors.Trace(err)
 }
 

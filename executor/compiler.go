@@ -34,8 +34,8 @@ type Compiler struct {
 }
 
 // Compile compiles an ast.StmtNode to a physical plan.
-func (c *Compiler) Compile(goCtx context.Context, stmtNode ast.StmtNode) (*ExecStmt, error) {
-	if span := opentracing.SpanFromContext(goCtx); span != nil {
+func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStmt, error) {
+	if span := opentracing.SpanFromContext(ctx); span != nil {
 		span1 := opentracing.StartSpan("executor.Compile", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 	}

@@ -98,12 +98,12 @@ func (s *testSuite) TestCopClientSend(c *C) {
 	// Split the table.
 	s.cluster.SplitTable(s.mvccStore, tblID, 100)
 
-	goCtx := context.Background()
+	ctx := context.Background()
 	// Send coprocessor request when the table split.
 	rs, err := tk.Exec("select sum(id) from copclient")
 	c.Assert(err, IsNil)
 	defer rs.Close()
-	row, err := rs.Next(goCtx)
+	row, err := rs.Next(ctx)
 	c.Assert(err, IsNil)
 	c.Assert(row.GetMyDecimal(0).String(), Equals, "499500")
 
@@ -116,7 +116,7 @@ func (s *testSuite) TestCopClientSend(c *C) {
 	// Check again.
 	rs, err = tk.Exec("select sum(id) from copclient")
 	c.Assert(err, IsNil)
-	row, err = rs.Next(goCtx)
+	row, err = rs.Next(ctx)
 	c.Assert(err, IsNil)
 	c.Assert(row.GetMyDecimal(0).String(), Equals, "499500")
 	rs.Close()
@@ -124,7 +124,7 @@ func (s *testSuite) TestCopClientSend(c *C) {
 	// Check there is no goroutine leak.
 	rs, err = tk.Exec("select * from copclient order by id")
 	c.Assert(err, IsNil)
-	_, err = rs.Next(goCtx)
+	_, err = rs.Next(ctx)
 	c.Assert(err, IsNil)
 	rs.Close()
 	keyword := "(*copIterator).work"

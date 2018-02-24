@@ -42,7 +42,7 @@ type RestrictedSQLExecutor interface {
 // For example, privilege/privileges package need execute SQL, if it use
 // tidb.Session.Execute, then privilege/privileges and tidb would become a circle.
 type SQLExecutor interface {
-	Execute(goCtx context.Context, sql string) ([]ast.RecordSet, error)
+	Execute(ctx context.Context, sql string) ([]ast.RecordSet, error)
 }
 
 // SQLParser is an interface provides parsing sql statement.

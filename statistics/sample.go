@@ -145,9 +145,9 @@ func (s SampleBuilder) CollectColumnStats() ([]*SampleCollector, *SortedBuilder,
 			collectors[i].CMSketch = NewCMSketch(s.CMSketchDepth, s.CMSketchWidth)
 		}
 	}
-	goCtx := context.TODO()
+	ctx := context.TODO()
 	for {
-		row, err := s.RecordSet.Next(goCtx)
+		row, err := s.RecordSet.Next(ctx)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}

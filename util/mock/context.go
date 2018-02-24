@@ -123,7 +123,7 @@ func (c *Context) NewTxn() error {
 }
 
 // RefreshTxnCtx implements the sessionctx.Context interface.
-func (c *Context) RefreshTxnCtx(goCtx context.Context) error {
+func (c *Context) RefreshTxnCtx(ctx context.Context) error {
 	return errors.Trace(c.NewTxn())
 }
 
@@ -209,13 +209,13 @@ func (c *Context) StmtAddDirtyTableOP(op int, tid int64, handle int64, row []typ
 
 // NewContext creates a new mocked sessionctx.Context.
 func NewContext() *Context {
-	goCtx, cancel := context.WithCancel(context.Background())
-	ctx := &Context{
+	ctx, cancel := context.WithCancel(context.Background())
+	sctx := &Context{
 		values:      make(map[fmt.Stringer]interface{}),
 		sessionVars: variable.NewSessionVars(),
-		ctx:         goCtx,
+		ctx:         ctx,
 		cancel:      cancel,
 	}
-	ctx.sessionVars.MaxChunkSize = 2
-	return ctx
+	sctx.sessionVars.MaxChunkSize = 2
+	return sctx
 }

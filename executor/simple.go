@@ -48,16 +48,16 @@ type SimpleExec struct {
 }
 
 // Next implements Execution Next interface.
-func (e *SimpleExec) Next(goCtx context.Context) (Row, error) {
-	return nil, errors.Trace(e.run(goCtx))
+func (e *SimpleExec) Next(ctx context.Context) (Row, error) {
+	return nil, errors.Trace(e.run(ctx))
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (e *SimpleExec) NextChunk(goCtx context.Context, chk *chunk.Chunk) error {
-	return errors.Trace(e.run(goCtx))
+func (e *SimpleExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+	return errors.Trace(e.run(ctx))
 }
 
-func (e *SimpleExec) run(goCtx context.Context) (err error) {
+func (e *SimpleExec) run(ctx context.Context) (err error) {
 	if e.done {
 		return nil
 	}

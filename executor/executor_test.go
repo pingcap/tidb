@@ -127,11 +127,11 @@ func (s *testSuite) TestAdmin(c *C) {
 	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, index (c1))")
 	tk.MustExec("insert admin_test (c1) values (1),(2),(NULL)")
 
-	goCtx := context.Background()
+	ctx := context.Background()
 	// cancel DDL jobs test
 	r, err := tk.Exec("admin cancel ddl jobs 1")
 	c.Assert(err, IsNil, Commentf("err %v", err))
-	row, err := r.Next(goCtx)
+	row, err := r.Next(ctx)
 	c.Assert(err, IsNil)
 	c.Assert(row.Len(), Equals, 2)
 	c.Assert(row.GetInt64(0), Equals, int64(1))
@@ -139,7 +139,7 @@ func (s *testSuite) TestAdmin(c *C) {
 
 	r, err = tk.Exec("admin show ddl")
 	c.Assert(err, IsNil)
-	row, err = r.Next(goCtx)
+	row, err = r.Next(ctx)
 	c.Assert(err, IsNil)
 	c.Assert(row.Len(), Equals, 4)
 	txn, err := s.store.Begin()
@@ -152,7 +152,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	// ownerInfos := strings.Split(ddlInfo.Owner.String(), ",")
 	// c.Assert(rowOwnerInfos[0], Equals, ownerInfos[0])
 	c.Assert(row.GetString(2), Equals, "")
-	row, err = r.Next(goCtx)
+	row, err = r.Next(ctx)
 	c.Assert(err, IsNil)
 	c.Assert(row, IsNil)
 	err = txn.Rollback()
@@ -161,7 +161,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	// show DDL jobs test
 	r, err = tk.Exec("admin show ddl jobs")
 	c.Assert(err, IsNil)
-	row, err = r.Next(goCtx)
+	row, err = r.Next(ctx)
 	c.Assert(err, IsNil)
 	c.Assert(row.Len(), Equals, 2)
 	txn, err = s.store.Begin()
@@ -183,8 +183,8 @@ func (s *testSuite) TestAdmin(c *C) {
 	r, err = tk.Exec("admin check table admin_test_error")
 	c.Assert(err, NotNil)
 	// different index values
-	ctx := tk.Se.(sessionctx.Context)
-	dom := domain.GetDomain(ctx)
+	sctx := tk.Se.(sessionctx.Context)
+	dom := domain.GetDomain(sctx)
 	is := dom.InfoSchema()
 	c.Assert(is, NotNil)
 	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("admin_test"))
@@ -2366,12 +2366,12 @@ func (s *testSuite) TestEarlyClose(c *C) {
 	// Split the table.
 	s.cluster.SplitTable(s.mvccStore, tblID, 500)
 
-	goCtx := context.Background()
+	ctx := context.Background()
 	for i := 0; i < 500; i++ {
-		rss, err := tk.Se.Execute(goCtx, "select * from earlyclose order by id")
+		rss, err := tk.Se.Execute(ctx, "select * from earlyclose order by id")
 		c.Assert(err, IsNil)
 		rs := rss[0]
-		_, err = rs.Next(goCtx)
+		_, err = rs.Next(ctx)
 		c.Assert(err, IsNil)
 		rs.Close()
 	}

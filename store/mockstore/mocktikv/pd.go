@@ -41,7 +41,7 @@ func NewPDClient(cluster *Cluster) pd.Client {
 	}
 }
 
-func (c *pdClient) GetClusterID(goCtx context.Context) uint64 {
+func (c *pdClient) GetClusterID(ctx context.Context) uint64 {
 	return 1
 }
 

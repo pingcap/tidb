@@ -53,16 +53,16 @@ const (
 )
 
 // Next implements the Executor Next interface.
-func (e *AnalyzeExec) Next(goCtx context.Context) (Row, error) {
-	return nil, errors.Trace(e.run(goCtx))
+func (e *AnalyzeExec) Next(ctx context.Context) (Row, error) {
+	return nil, errors.Trace(e.run(ctx))
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (e *AnalyzeExec) NextChunk(goCtx context.Context, chk *chunk.Chunk) error {
-	return errors.Trace(e.run(goCtx))
+func (e *AnalyzeExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+	return errors.Trace(e.run(ctx))
 }
 
-func (e *AnalyzeExec) run(goCtx context.Context) error {
+func (e *AnalyzeExec) run(ctx context.Context) error {
 	concurrency, err := getBuildStatsConcurrency(e.ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -194,12 +194,12 @@ func (e *AnalyzeIndexExec) open() error {
 		Build()
 	kvReq.Concurrency = e.concurrency
 	kvReq.IsolationLevel = kv.RC
-	goCtx := context.TODO()
-	e.result, err = distsql.Analyze(goCtx, e.ctx.GetClient(), kvReq)
+	ctx := context.TODO()
+	e.result, err = distsql.Analyze(ctx, e.ctx.GetClient(), kvReq)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result.Fetch(goCtx)
+	e.result.Fetch(ctx)
 	return nil
 }
 
@@ -314,12 +314,12 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.NewRange) (distsql.Selec
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	goCtx := context.TODO()
-	result, err := distsql.Analyze(goCtx, e.ctx.GetClient(), kvReq)
+	ctx := context.TODO()
+	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	result.Fetch(goCtx)
+	result.Fetch(ctx)
 	return result, nil
 }
 

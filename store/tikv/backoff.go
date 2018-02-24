@@ -41,10 +41,10 @@ const (
 // NewBackoffFn creates a backoff func which implements exponential backoff with
 // optional jitters.
 // See http://www.awsarchitectureblog.com/2015/03/backoff.html
-func NewBackoffFn(base, cap, jitter int) func(goCtx context.Context) int {
+func NewBackoffFn(base, cap, jitter int) func(ctx context.Context) int {
 	attempts := 0
 	lastSleep := base
-	return func(goCtx context.Context) int {
+	return func(ctx context.Context) int {
 		var sleep int
 		switch jitter {
 		case NoJitter:
@@ -61,7 +61,7 @@ func NewBackoffFn(base, cap, jitter int) func(goCtx context.Context) int {
 
 		select {
 		case <-time.After(time.Duration(sleep) * time.Millisecond):
-		case <-goCtx.Done():
+		case <-ctx.Done():
 		}
 
 		attempts++
@@ -169,7 +169,7 @@ type Backoffer struct {
 }
 
 // NewBackoffer creates a Backoffer with maximum sleep time(in ms).
-func NewBackoffer(maxSleep int, ctx context.Context) *Backoffer {
+func NewBackoffer(ctx context.Context, maxSleep int) *Backoffer {
 	return &Backoffer{
 		Context:  ctx,
 		maxSleep: maxSleep,

@@ -39,26 +39,26 @@ type DDLExec struct {
 }
 
 // Next implements Execution Next interface.
-func (e *DDLExec) Next(goCtx context.Context) (Row, error) {
+func (e *DDLExec) Next(ctx context.Context) (Row, error) {
 	if e.done {
 		return nil, nil
 	}
-	err := e.run(goCtx)
+	err := e.run(ctx)
 	e.done = true
 	return nil, errors.Trace(err)
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (e *DDLExec) NextChunk(goCtx context.Context, chk *chunk.Chunk) error {
+func (e *DDLExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	if e.done {
 		return nil
 	}
-	err := e.run(goCtx)
+	err := e.run(ctx)
 	e.done = true
 	return errors.Trace(err)
 }
 
-func (e *DDLExec) run(goCtx context.Context) (err error) {
+func (e *DDLExec) run(ctx context.Context) (err error) {
 	switch x := e.stmt.(type) {
 	case *ast.TruncateTableStmt:
 		err = e.executeTruncateTable(x)

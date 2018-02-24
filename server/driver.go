@@ -48,7 +48,7 @@ type QueryCtx interface {
 	SetValue(key fmt.Stringer, value interface{})
 
 	// CommitTxn commits the transaction operations.
-	CommitTxn(goCtx context.Context) error
+	CommitTxn(ctx context.Context) error
 
 	// RollbackTxn undoes the transaction operations.
 	RollbackTxn() error
@@ -60,7 +60,7 @@ type QueryCtx interface {
 	CurrentDB() string
 
 	// Execute executes a SQL statement.
-	Execute(goCtx context.Context, sql string) ([]ResultSet, error)
+	Execute(ctx context.Context, sql string) ([]ResultSet, error)
 
 	// SetClientCapability sets client capability flags
 	SetClientCapability(uint32)

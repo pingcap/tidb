@@ -251,12 +251,12 @@ func (t *testExecInfo) compileSQL(idx int) (err error) {
 		c := info.cases[idx]
 		compiler := executor.Compiler{Ctx: c.session}
 		se := c.session
-		goCtx := context.TODO()
-		se.PrepareTxnCtx(goCtx)
-		ctx := se.(sessionctx.Context)
-		executor.ResetStmtCtx(ctx, c.rawStmt)
+		ctx := context.TODO()
+		se.PrepareTxnCtx(ctx)
+		sctx := se.(sessionctx.Context)
+		executor.ResetStmtCtx(sctx, c.rawStmt)
 
-		c.stmt, err = compiler.Compile(goCtx, c.rawStmt)
+		c.stmt, err = compiler.Compile(ctx, c.rawStmt)
 		if err != nil {
 			return errors.Trace(err)
 		}

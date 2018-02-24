@@ -54,24 +54,24 @@ type GrantExec struct {
 }
 
 // Next implements Execution Next interface.
-func (e *GrantExec) Next(goCtx context.Context) (Row, error) {
+func (e *GrantExec) Next(ctx context.Context) (Row, error) {
 	if e.done {
 		return nil, nil
 	}
 	e.done = true
-	return nil, errors.Trace(e.run(goCtx))
+	return nil, errors.Trace(e.run(ctx))
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (e *GrantExec) NextChunk(goCtx context.Context, chk *chunk.Chunk) error {
+func (e *GrantExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	if e.done {
 		return nil
 	}
 	e.done = true
-	return errors.Trace(e.run(goCtx))
+	return errors.Trace(e.run(ctx))
 }
 
-func (e *GrantExec) run(goCtx context.Context) error {
+func (e *GrantExec) run(ctx context.Context) error {
 	dbName := e.Level.DBName
 	if len(dbName) == 0 {
 		dbName = e.ctx.GetSessionVars().CurrentDB

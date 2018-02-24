@@ -62,13 +62,13 @@ const rowBufferSize = 4096
 // readerIterator represents a row block with the same join keys
 type readerIterator struct {
 	stmtCtx   *stmtctx.StatementContext
-	ctx       sessionctx.Context
+	sctx      sessionctx.Context
 	reader    Executor
 	filter    []expression.Expression
 	joinKeys  []*expression.Column
 	peekedRow types.Row
 	rowCache  []Row
-	goCtx     context.Context
+	ctx       context.Context
 
 	// for chunk executions
 	sameKeyRows    []chunk.Row
@@ -93,7 +93,7 @@ func (ri *readerIterator) init() error {
 	if ri.reader == nil || ri.joinKeys == nil || len(ri.joinKeys) == 0 || ri.ctx == nil {
 		return errors.Errorf("Invalid arguments: Empty arguments detected.")
 	}
-	ri.stmtCtx = ri.ctx.GetSessionVars().StmtCtx
+	ri.stmtCtx = ri.sctx.GetSessionVars().StmtCtx
 	var err error
 	ri.peekedRow, err = ri.nextRow()
 	if err != nil {
@@ -105,7 +105,7 @@ func (ri *readerIterator) init() error {
 
 func (ri *readerIterator) nextRow() (types.Row, error) {
 	for {
-		row, err := ri.reader.Next(ri.goCtx)
+		row, err := ri.reader.Next(ri.ctx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -113,7 +113,7 @@ func (ri *readerIterator) nextRow() (types.Row, error) {
 			return nil, nil
 		}
 		if ri.filter != nil {
-			matched, err := expression.EvalBool(ri.ctx, ri.filter, row)
+			matched, err := expression.EvalBool(ri.sctx, ri.filter, row)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -157,11 +157,11 @@ func (ri *readerIterator) initForChunk(chk4Reader *chunk.Chunk) (err error) {
 	if ri.reader == nil || ri.joinKeys == nil || len(ri.joinKeys) == 0 || ri.ctx == nil {
 		return errors.Errorf("Invalid arguments: Empty arguments detected.")
 	}
-	ri.stmtCtx = ri.ctx.GetSessionVars().StmtCtx
+	ri.stmtCtx = ri.sctx.GetSessionVars().StmtCtx
 	ri.curResult = chk4Reader
 	ri.curIter = chunk.NewIterator4Chunk(ri.curResult)
 	ri.curRow = ri.curIter.End()
-	ri.curSelected = make([]bool, 0, ri.ctx.GetSessionVars().MaxChunkSize)
+	ri.curSelected = make([]bool, 0, ri.sctx.GetSessionVars().MaxChunkSize)
 	ri.curResultInUse = false
 	ri.resultQueue = append(ri.resultQueue, chk4Reader)
 	ri.firstRow4Key, err = ri.nextSelectedRow()
@@ -216,13 +216,13 @@ func (ri *readerIterator) nextSelectedRow() (chunk.Row, error) {
 			}
 		}
 		ri.reallocReaderResult()
-		err := ri.reader.NextChunk(ri.goCtx, ri.curResult)
+		err := ri.reader.NextChunk(ri.ctx, ri.curResult)
 		// error happens or no more data.
 		if err != nil || ri.curResult.NumRows() == 0 {
 			ri.curRow = ri.curIter.End()
 			return ri.curRow, errors.Trace(err)
 		}
-		ri.curSelected, err = expression.VectorizedFilter(ri.ctx, ri.filter, ri.curIter, ri.curSelected)
+		ri.curSelected, err = expression.VectorizedFilter(ri.sctx, ri.filter, ri.curIter, ri.curSelected)
 		if err != nil {
 			ri.curRow = ri.curIter.End()
 			return ri.curRow, errors.Trace(err)
@@ -265,8 +265,8 @@ func (e *MergeJoinExec) Close() error {
 }
 
 // Open implements the Executor Open interface.
-func (e *MergeJoinExec) Open(goCtx context.Context) error {
-	if err := e.baseExecutor.Open(goCtx); err != nil {
+func (e *MergeJoinExec) Open(ctx context.Context) error {
+	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
 	e.prepared = false
@@ -389,9 +389,9 @@ func (e *MergeJoinExec) computeJoin() (bool, error) {
 	}
 }
 
-func (e *MergeJoinExec) prepare(goCtx context.Context, chk *chunk.Chunk) error {
-	e.outerIter.goCtx = goCtx
-	e.innerIter.goCtx = goCtx
+func (e *MergeJoinExec) prepare(ctx context.Context, chk *chunk.Chunk) error {
+	e.outerIter.ctx = ctx
+	e.innerIter.ctx = ctx
 	// prepare for chunk-oriented execution.
 	if chk != nil {
 		e.outerIter.filter = e.outerFilter
@@ -450,9 +450,9 @@ func (e *MergeJoinExec) prepare(goCtx context.Context, chk *chunk.Chunk) error {
 }
 
 // Next implements the Executor Next interface.
-func (e *MergeJoinExec) Next(goCtx context.Context) (Row, error) {
+func (e *MergeJoinExec) Next(ctx context.Context) (Row, error) {
 	if !e.prepared {
-		if err := e.prepare(goCtx, nil); err != nil {
+		if err := e.prepare(ctx, nil); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
@@ -474,10 +474,10 @@ func (e *MergeJoinExec) Next(goCtx context.Context) (Row, error) {
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (e *MergeJoinExec) NextChunk(goCtx context.Context, chk *chunk.Chunk) error {
+func (e *MergeJoinExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if !e.prepared {
-		if err := e.prepare(goCtx, chk); err != nil {
+		if err := e.prepare(ctx, chk); err != nil {
 			return errors.Trace(err)
 		}
 	}

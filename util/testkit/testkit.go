@@ -124,10 +124,10 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (ast.RecordSet, error) 
 		id := atomic.AddUint64(&connectionID, 1)
 		tk.Se.SetConnectionID(id)
 	}
-	goCtx := context.Background()
+	ctx := context.Background()
 	if len(args) == 0 {
 		var rss []ast.RecordSet
-		rss, err = tk.Se.Execute(goCtx, sql)
+		rss, err = tk.Se.Execute(ctx, sql)
 		if err == nil && len(rss) > 0 {
 			return rss[0], nil
 		}
@@ -137,7 +137,7 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (ast.RecordSet, error) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	rs, err := tk.Se.ExecutePreparedStmt(goCtx, stmtID, args...)
+	rs, err := tk.Se.ExecutePreparedStmt(ctx, stmtID, args...)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
