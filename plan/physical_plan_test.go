@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/testleak"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testPlanSuite{})
@@ -49,7 +49,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 	}()
 	se, err := tidb.CreateSession4Test(store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(goctx.Background(), "use test")
+	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
 	tests := []struct {
 		sql  string
@@ -204,7 +204,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 	}()
 	se, err := tidb.CreateSession4Test(store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(goctx.Background(), "use test")
+	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	tests := []struct {
@@ -393,7 +393,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSubquery(c *C) {
 	}()
 	se, err := tidb.CreateSession4Test(store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(goctx.Background(), "use test")
+	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	tests := []struct {
@@ -463,7 +463,7 @@ func (s *testPlanSuite) TestDAGPlanTopN(c *C) {
 	}()
 	se, err := tidb.CreateSession4Test(store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(goctx.Background(), "use test")
+	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	tests := []struct {
@@ -521,7 +521,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 	se, err := tidb.CreateSession4Test(store)
 	c.Assert(err, IsNil)
 
-	_, err = se.Execute(goctx.Background(), "use test")
+	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	tests := []struct {
@@ -602,7 +602,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnion(c *C) {
 	}()
 	se, err := tidb.CreateSession4Test(store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(goctx.Background(), "use test")
+	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	tests := []struct {
@@ -651,7 +651,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnionScan(c *C) {
 	}()
 	se, err := tidb.CreateSession4Test(store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(goctx.Background(), "use test")
+	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	tests := []struct {
@@ -718,7 +718,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 	}()
 	se, err := tidb.CreateSession4Test(store)
 	c.Assert(err, IsNil)
-	se.Execute(goctx.Background(), "use test")
+	se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	tests := []struct {
@@ -866,7 +866,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 	}()
 	se, err := tidb.CreateSession4Test(store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(goctx.Background(), "use test")
+	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	tests := []struct {
@@ -1095,7 +1095,7 @@ func (s *testPlanSuite) TestAggEliminater(c *C) {
 	}()
 	se, err := tidb.CreateSession4Test(store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(goctx.Background(), "use test")
+	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	tests := []struct {

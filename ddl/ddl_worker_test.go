@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testDDLSuite{})
@@ -42,13 +42,13 @@ func (s *testDDLSuite) TestCheckOwner(c *C) {
 	store := testCreateStore(c, "test_owner")
 	defer store.Close()
 
-	d1 := testNewDDL(goctx.Background(), nil, store, nil, nil, testLease)
+	d1 := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
 	defer d1.Stop()
 	time.Sleep(testLease)
 	testCheckOwner(c, d1, true)
 
-	d1.SetLease(goctx.Background(), 1*time.Second)
-	d1.SetLease(goctx.Background(), 2*time.Second)
+	d1.SetLease(context.Background(), 1*time.Second)
+	d1.SetLease(context.Background(), 2*time.Second)
 	c.Assert(d1.GetLease(), Equals, 2*time.Second)
 }
 
@@ -59,7 +59,7 @@ func (s *testDDLSuite) TestRunWorker(c *C) {
 	defer store.Close()
 
 	RunWorker = false
-	d := testNewDDL(goctx.Background(), nil, store, nil, nil, testLease)
+	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
 	testCheckOwner(c, d, false)
 	defer d.Stop()
 	ctx := testNewContext(d)
@@ -93,7 +93,7 @@ func (s *testDDLSuite) TestRunWorker(c *C) {
 	})
 	// Make sure the DDL job can be done and exit that goroutine.
 	RunWorker = true
-	d1 := testNewDDL(goctx.Background(), nil, store, nil, nil, testLease)
+	d1 := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
 	testCheckOwner(c, d1, true)
 	defer d1.Stop()
 	asyncNotify(d1.ddlJobCh)
@@ -105,7 +105,7 @@ func (s *testDDLSuite) TestSchemaError(c *C) {
 	store := testCreateStore(c, "test_schema_error")
 	defer store.Close()
 
-	d := testNewDDL(goctx.Background(), nil, store, nil, nil, testLease)
+	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
 	defer d.Stop()
 	ctx := testNewContext(d)
 
@@ -117,7 +117,7 @@ func (s *testDDLSuite) TestTableError(c *C) {
 	store := testCreateStore(c, "test_table_error")
 	defer store.Close()
 
-	d := testNewDDL(goctx.Background(), nil, store, nil, nil, testLease)
+	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
 	defer d.Stop()
 	ctx := testNewContext(d)
 
@@ -159,7 +159,7 @@ func (s *testDDLSuite) TestForeignKeyError(c *C) {
 	store := testCreateStore(c, "test_foreign_key_error")
 	defer store.Close()
 
-	d := testNewDDL(goctx.Background(), nil, store, nil, nil, testLease)
+	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
 	defer d.Stop()
 	ctx := testNewContext(d)
 
@@ -178,7 +178,7 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 	store := testCreateStore(c, "test_index_error")
 	defer store.Close()
 
-	d := testNewDDL(goctx.Background(), nil, store, nil, nil, testLease)
+	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
 	defer d.Stop()
 	ctx := testNewContext(d)
 
@@ -214,7 +214,7 @@ func (s *testDDLSuite) TestColumnError(c *C) {
 	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_column_error")
 	defer store.Close()
-	d := testNewDDL(goctx.Background(), nil, store, nil, nil, testLease)
+	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
 	defer d.Stop()
 	ctx := testNewContext(d)
 
@@ -356,7 +356,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_cancel_job")
 	defer store.Close()
-	d := testNewDDL(goctx.Background(), nil, store, nil, nil, testLease)
+	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
 	defer d.Stop()
 	dbInfo := testSchemaInfo(c, d, "test_cancel_job")
 	testCreateSchema(c, testNewContext(d), d, dbInfo)
@@ -372,7 +372,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	row := types.MakeDatums(1, 2)
 	_, err = originTable.AddRecord(ctx, row, false)
 	c.Assert(err, IsNil)
-	err = ctx.Txn().Commit(goctx.Background())
+	err = ctx.Txn().Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	tc := &TestDDLCallback{}
@@ -394,7 +394,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 			return
 		}
 		checkCancelState(hookCtx.Txn(), job, test)
-		err = hookCtx.Txn().Commit(goctx.Background())
+		err = hookCtx.Txn().Commit(context.Background())
 		if err != nil {
 			checkErr = errors.Trace(err)
 			return
@@ -422,7 +422,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	test = &tests[3]
 	testCreateIndex(c, ctx, d, dbInfo, tblInfo, false, "idx", "c2")
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
-	c.Assert(ctx.Txn().Commit(goctx.Background()), IsNil)
+	c.Assert(ctx.Txn().Commit(context.Background()), IsNil)
 
 	// for dropping index
 	idxName := []interface{}{model.NewCIStr("idx")}

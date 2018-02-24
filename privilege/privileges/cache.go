@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
 	log "github.com/sirupsen/logrus"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var (
@@ -171,10 +171,10 @@ func (p *MySQLPrivilege) LoadColumnsPrivTable(ctx sessionctx.Context) error {
 	return p.loadTable(ctx, "select Host,DB,User,Table_name,Column_name,Timestamp,Column_priv from mysql.columns_priv", p.decodeColumnsPrivTableRow)
 }
 
-func (p *MySQLPrivilege) loadTable(ctx sessionctx.Context, sql string,
+func (p *MySQLPrivilege) loadTable(sctx sessionctx.Context, sql string,
 	decodeTableRow func(types.Row, []*ast.ResultField) error) error {
-	goCtx := goctx.Background()
-	tmp, err := ctx.(sqlexec.SQLExecutor).Execute(goCtx, sql)
+	ctx := context.Background()
+	tmp, err := sctx.(sqlexec.SQLExecutor).Execute(ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -183,7 +183,7 @@ func (p *MySQLPrivilege) loadTable(ctx sessionctx.Context, sql string,
 
 	fs := rs.Fields()
 	for {
-		row, err := rs.Next(goctx.TODO())
+		row, err := rs.Next(context.TODO())
 		if err != nil {
 			return errors.Trace(err)
 		}
