@@ -169,7 +169,7 @@ type Backoffer struct {
 }
 
 // NewBackoffer creates a Backoffer with maximum sleep time(in ms).
-func NewBackoffer(maxSleep int, ctx context.Context) *Backoffer {
+func NewBackoffer(ctx context.Context, maxSleep int) *Backoffer {
 	return &Backoffer{
 		Context:  ctx,
 		maxSleep: maxSleep,

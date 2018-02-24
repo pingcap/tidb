@@ -15,10 +15,10 @@ package plan
 
 import (
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -93,7 +93,7 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error)
 	columns := p.Columns
 	tsExec := &tipb.TableScan{
 		TableId: p.Table.ID,
-		Columns: distsql.ColumnsToProto(columns, p.Table.PKIsHandle),
+		Columns: ColumnsToProto(columns, p.Table.PKIsHandle),
 		Desc:    p.Desc,
 	}
 	err := setPBColumnsDefaultValue(ctx, tsExec.Columns, p.Columns)
@@ -132,7 +132,7 @@ func (p *PhysicalIndexScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error)
 	idxExec := &tipb.IndexScan{
 		TableId: p.Table.ID,
 		IndexId: p.Index.ID,
-		Columns: distsql.ColumnsToProto(columns, p.Table.PKIsHandle),
+		Columns: ColumnsToProto(columns, p.Table.PKIsHandle),
 		Desc:    p.Desc,
 	}
 	unique := checkCoverIndex(p.Index, p.Ranges)
@@ -161,4 +161,72 @@ func setPBColumnsDefaultValue(ctx sessionctx.Context, pbColumns []*tipb.ColumnIn
 		}
 	}
 	return nil
+}
+
+// ColumnsToProto converts a slice of model.ColumnInfo to a slice of tipb.ColumnInfo.
+func ColumnsToProto(columns []*model.ColumnInfo, pkIsHandle bool) []*tipb.ColumnInfo {
+	cols := make([]*tipb.ColumnInfo, 0, len(columns))
+	for _, c := range columns {
+		col := columnToProto(c)
+		// TODO: Here `PkHandle`'s meaning is changed, we will change it to `IsHandle` when tikv's old select logic
+		// is abandoned.
+		if (pkIsHandle && mysql.HasPriKeyFlag(c.Flag)) || c.ID == model.ExtraHandleID {
+			col.PkHandle = true
+		} else {
+			col.PkHandle = false
+		}
+		cols = append(cols, col)
+	}
+	return cols
+}
+
+// IndexToProto converts a model.IndexInfo to a tipb.IndexInfo.
+func IndexToProto(t *model.TableInfo, idx *model.IndexInfo) *tipb.IndexInfo {
+	pi := &tipb.IndexInfo{
+		TableId: t.ID,
+		IndexId: idx.ID,
+		Unique:  idx.Unique,
+	}
+	cols := make([]*tipb.ColumnInfo, 0, len(idx.Columns)+1)
+	for _, c := range idx.Columns {
+		cols = append(cols, columnToProto(t.Columns[c.Offset]))
+	}
+	if t.PKIsHandle {
+		// Coprocessor needs to know PKHandle column info, so we need to append it.
+		for _, col := range t.Columns {
+			if mysql.HasPriKeyFlag(col.Flag) {
+				colPB := columnToProto(col)
+				colPB.PkHandle = true
+				cols = append(cols, colPB)
+				break
+			}
+		}
+	}
+	pi.Columns = cols
+	return pi
+}
+
+func columnToProto(c *model.ColumnInfo) *tipb.ColumnInfo {
+	pc := &tipb.ColumnInfo{
+		ColumnId:  c.ID,
+		Collation: collationToProto(c.FieldType.Collate),
+		ColumnLen: int32(c.FieldType.Flen),
+		Decimal:   int32(c.FieldType.Decimal),
+		Flag:      int32(c.Flag),
+		Elems:     c.Elems,
+	}
+	pc.Tp = int32(c.FieldType.Tp)
+	return pc
+}
+
+// TODO: update it when more collate is supported.
+func collationToProto(c string) int32 {
+	v := mysql.CollationNames[c]
+	if v == mysql.BinaryCollationID {
+		return int32(mysql.BinaryCollationID)
+	}
+	// We only support binary and utf8_bin collation.
+	// Setting other collations to utf8_bin for old data compatibility.
+	// For the data created when we didn't enforce utf8_bin collation in create table.
+	return int32(mysql.DefaultCollationID)
 }
