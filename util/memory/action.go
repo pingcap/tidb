@@ -54,11 +54,13 @@ type PanicOnExceed struct {
 // Action panics when when memory usage exceeds memory quota.
 func (a *PanicOnExceed) Action(t *Tracker) {
 	a.mutex.Lock()
-	defer a.mutex.Unlock()
-	if !a.acted {
-		a.acted = true
-		panic(PanicMemoryExceed + t.String())
+	if a.acted {
+		a.mutex.Unlock()
+		return
 	}
+	a.acted = true
+	a.mutex.Unlock()
+	panic(PanicMemoryExceed + t.String())
 }
 
 var (
