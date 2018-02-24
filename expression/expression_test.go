@@ -28,7 +28,7 @@ import (
 func (s *testEvaluatorSuite) TestNewValuesFunc(c *C) {
 	defer testleak.AfterTest(c)()
 
-	res := NewValuesFunc(0, types.NewFieldType(mysql.TypeLonglong), s.ctx)
+	res := NewValuesFunc(s.ctx, 0, types.NewFieldType(mysql.TypeLonglong))
 	c.Assert(res.FuncName.O, Equals, "values")
 	c.Assert(res.RetType.Tp, Equals, mysql.TypeLonglong)
 	_, ok := res.Function.(*builtinValuesIntSig)
@@ -51,7 +51,7 @@ func (s *testEvaluatorSuite) TestEvaluateExprWithNull(c *C) {
 	schema.Columns = append(schema.Columns, col1)
 	// ifnull(null, ifnull(null, 1))
 	res = EvaluateExprWithNull(s.ctx, schema, ifnullOuter)
-	c.Assert(res.Equal(One, s.ctx), IsTrue)
+	c.Assert(res.Equal(s.ctx, One), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestConstant(c *C) {
@@ -59,9 +59,9 @@ func (s *testEvaluatorSuite) TestConstant(c *C) {
 
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	c.Assert(Zero.IsCorrelated(), IsFalse)
-	c.Assert(Zero.Decorrelate(nil).Equal(Zero, s.ctx), IsTrue)
+	c.Assert(Zero.Decorrelate(nil).Equal(s.ctx, Zero), IsTrue)
 	c.Assert(Zero.HashCode(sc), DeepEquals, []byte{0x8, 0x0})
-	c.Assert(Zero.Equal(One, s.ctx), IsFalse)
+	c.Assert(Zero.Equal(s.ctx, One), IsFalse)
 	res, err := Zero.MarshalJSON()
 	c.Assert(err, IsNil)
 	c.Assert(res, DeepEquals, []byte{0x22, 0x30, 0x22})

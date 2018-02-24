@@ -23,13 +23,13 @@ import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
@@ -47,7 +47,7 @@ var _ = Suite(&testIntegrationSuite{})
 type testIntegrationSuite struct {
 	store kv.Storage
 	dom   *domain.Domain
-	ctx   context.Context
+	ctx   sessionctx.Context
 }
 
 func (s *testIntegrationSuite) cleanEnv(c *C) {
@@ -1822,7 +1822,7 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery("select cast('-34 100:00:00' as time);")
 	result.Check(testkit.Rows("-838:59:59"))
 
-	// fix issue #4324. cast decimal/int/string to time compability.
+	// fix issue #4324. cast decimal/int/string to time compatibility.
 	invalidTimes := []string{
 		"10009010",
 		"239010",
@@ -3064,7 +3064,7 @@ func (s *testIntegrationSuite) TestColumnInfoModified(c *C) {
 	testKit.MustExec("drop table if exists tab0")
 	testKit.MustExec("CREATE TABLE tab0(col0 INTEGER, col1 INTEGER, col2 INTEGER)")
 	testKit.MustExec("SELECT + - (- CASE + col0 WHEN + CAST( col0 AS SIGNED ) THEN col1 WHEN 79 THEN NULL WHEN + - col1 THEN col0 / + col0 END ) * - 16 FROM tab0")
-	ctx := testKit.Se.(context.Context)
+	ctx := testKit.Se.(sessionctx.Context)
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, _ := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tab0"))
 	col := table.FindCol(tbl.Cols(), "col1")
@@ -3207,7 +3207,7 @@ func (s *testIntegrationSuite) TestFilterExtractFromDNF(c *C) {
 
 	for _, tt := range tests {
 		sql := "select * from t where " + tt.exprStr
-		ctx := tk.Se.(context.Context)
+		ctx := tk.Se.(sessionctx.Context)
 		sc := ctx.GetSessionVars().StmtCtx
 		stmts, err := tidb.Parse(ctx, sql)
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
@@ -3220,7 +3220,7 @@ func (s *testIntegrationSuite) TestFilterExtractFromDNF(c *C) {
 		selection := p.(plan.LogicalPlan).Children()[0].(*plan.LogicalSelection)
 		conds := make([]expression.Expression, 0, len(selection.Conditions))
 		for _, cond := range selection.Conditions {
-			conds = append(conds, expression.PushDownNot(cond, false, ctx))
+			conds = append(conds, expression.PushDownNot(ctx, cond, false))
 		}
 		afterFunc := expression.ExtractFiltersFromDNFs(ctx, conds)
 		sort.Slice(afterFunc, func(i, j int) bool {

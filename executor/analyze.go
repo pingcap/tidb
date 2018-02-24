@@ -18,12 +18,12 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/tablecodec"
@@ -122,7 +122,7 @@ func (e *AnalyzeExec) run(goCtx goctx.Context) error {
 	return nil
 }
 
-func getBuildStatsConcurrency(ctx context.Context) (int, error) {
+func getBuildStatsConcurrency(ctx sessionctx.Context) (int, error) {
 	sessionVars := ctx.GetSessionVars()
 	concurrency, err := variable.GetSessionSystemVar(sessionVars, variable.TiDBBuildStatsConcurrency)
 	if err != nil {
@@ -175,7 +175,7 @@ func analyzeIndexPushdown(idxExec *AnalyzeIndexExec) statistics.AnalyzeResult {
 
 // AnalyzeIndexExec represents analyze index push down executor.
 type AnalyzeIndexExec struct {
-	ctx         context.Context
+	ctx         sessionctx.Context
 	tblInfo     *model.TableInfo
 	idxInfo     *model.IndexInfo
 	concurrency int
@@ -264,7 +264,7 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) statistics.AnalyzeResul
 
 // AnalyzeColumnsExec represents Analyze columns push down executor.
 type AnalyzeColumnsExec struct {
-	ctx           context.Context
+	ctx           sessionctx.Context
 	tblInfo       *model.TableInfo
 	colsInfo      []*model.ColumnInfo
 	pkInfo        *model.ColumnInfo

@@ -21,9 +21,9 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hack"
@@ -46,7 +46,7 @@ func ExtractColumns(expr Expression) (cols []*Column) {
 	return extractColumns(result, expr, nil)
 }
 
-// ExtractColumnsFromExpressions is a more effecient version of ExtractColumns for batch operation.
+// ExtractColumnsFromExpressions is a more efficient version of ExtractColumns for batch operation.
 // filter can be nil, or a function to filter the result column.
 // It's often observed that the pattern of the caller like this:
 //
@@ -220,41 +220,41 @@ var symmetricOp = map[opcode.Op]opcode.Op{
 }
 
 // PushDownNot pushes the `not` function down to the expression's arguments.
-func PushDownNot(expr Expression, not bool, ctx context.Context) Expression {
+func PushDownNot(ctx sessionctx.Context, expr Expression, not bool) Expression {
 	if f, ok := expr.(*ScalarFunction); ok {
 		switch f.FuncName.L {
 		case ast.UnaryNot:
-			return PushDownNot(f.GetArgs()[0], !not, f.GetCtx())
+			return PushDownNot(f.GetCtx(), f.GetArgs()[0], !not)
 		case ast.LT, ast.GE, ast.GT, ast.LE, ast.EQ, ast.NE:
 			if not {
 				return NewFunctionInternal(f.GetCtx(), oppositeOp[f.FuncName.L], f.GetType(), f.GetArgs()...)
 			}
 			for i, arg := range f.GetArgs() {
-				f.GetArgs()[i] = PushDownNot(arg, false, f.GetCtx())
+				f.GetArgs()[i] = PushDownNot(f.GetCtx(), arg, false)
 			}
 			return f
 		case ast.LogicAnd:
 			if not {
 				args := f.GetArgs()
 				for i, a := range args {
-					args[i] = PushDownNot(a, true, f.GetCtx())
+					args[i] = PushDownNot(f.GetCtx(), a, true)
 				}
 				return NewFunctionInternal(f.GetCtx(), ast.LogicOr, f.GetType(), args...)
 			}
 			for i, arg := range f.GetArgs() {
-				f.GetArgs()[i] = PushDownNot(arg, false, f.GetCtx())
+				f.GetArgs()[i] = PushDownNot(f.GetCtx(), arg, false)
 			}
 			return f
 		case ast.LogicOr:
 			if not {
 				args := f.GetArgs()
 				for i, a := range args {
-					args[i] = PushDownNot(a, true, f.GetCtx())
+					args[i] = PushDownNot(f.GetCtx(), a, true)
 				}
 				return NewFunctionInternal(f.GetCtx(), ast.LogicAnd, f.GetType(), args...)
 			}
 			for i, arg := range f.GetArgs() {
-				f.GetArgs()[i] = PushDownNot(arg, false, f.GetCtx())
+				f.GetArgs()[i] = PushDownNot(f.GetCtx(), arg, false)
 			}
 			return f
 		}
@@ -276,7 +276,7 @@ func Contains(exprs []Expression, e Expression) bool {
 }
 
 // ExtractFiltersFromDNFs checks whether the cond is DNF and extract the same expression in its leaf items and return them as a slice.
-func ExtractFiltersFromDNFs(ctx context.Context, conditions []Expression) []Expression {
+func ExtractFiltersFromDNFs(ctx sessionctx.Context, conditions []Expression) []Expression {
 	var allExtracted []Expression
 	for i := len(conditions) - 1; i >= 0; i-- {
 		if sf, ok := conditions[i].(*ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
@@ -293,7 +293,7 @@ func ExtractFiltersFromDNFs(ctx context.Context, conditions []Expression) []Expr
 }
 
 // extractFiltersFromDNF extracts the same condition that occurs in every DNF item and remove them from dnf leaves.
-func extractFiltersFromDNF(ctx context.Context, dnfFunc *ScalarFunction) ([]Expression, Expression) {
+func extractFiltersFromDNF(ctx sessionctx.Context, dnfFunc *ScalarFunction) ([]Expression, Expression) {
 	dnfItems := FlattenDNFConditions(dnfFunc)
 	sc := ctx.GetSessionVars().StmtCtx
 	codeMap := make(map[string]int)

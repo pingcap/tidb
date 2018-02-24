@@ -372,6 +372,21 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 	c.Assert(len(feedback), Equals, 0)
 }
 
+func (s *testStatsUpdateSuite) TestUpdateSystemTable(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (a int, b int)")
+	testKit.MustExec("insert into t values (1,2)")
+	testKit.MustExec("analyze table t")
+	testKit.MustExec("analyze table mysql.stats_histograms")
+	h := s.do.StatsHandle()
+	c.Assert(h.Update(s.do.InfoSchema()), IsNil)
+	feedback := h.GetQueryFeedback()
+	// We may have query feedback for system tables, but we do not need to store them.
+	c.Assert(len(feedback), Equals, 0)
+}
+
 func (s *testStatsUpdateSuite) TestOutOfOrderUpdate(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)

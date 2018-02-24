@@ -20,8 +20,8 @@ import (
 	"github.com/coreos/etcd/clientv3"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx"
 	goctx "golang.org/x/net/context"
 )
 
@@ -123,12 +123,12 @@ func (dr *mockDelRange) clear() {
 }
 
 // MockTableInfo mocks a table info by create table stmt ast and a specified table id.
-func MockTableInfo(ctx context.Context, stmt *ast.CreateTableStmt, tableID int64) (*model.TableInfo, error) {
+func MockTableInfo(ctx sessionctx.Context, stmt *ast.CreateTableStmt, tableID int64) (*model.TableInfo, error) {
 	cols, newConstraints, err := buildColumnsAndConstraints(ctx, stmt.Cols, stmt.Constraints)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	tbl, err := buildTableInfo(nil, stmt.Table.Name, cols, newConstraints, ctx)
+	tbl, err := buildTableInfo(ctx, nil, stmt.Table.Name, cols, newConstraints)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

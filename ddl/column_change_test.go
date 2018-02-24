@@ -20,11 +20,11 @@ import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
@@ -104,7 +104,7 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
-			err = s.checkAddWriteOnly(d, hookCtx, deleteOnlyTable, writeOnlyTable, h)
+			err = s.checkAddWriteOnly(hookCtx, d, deleteOnlyTable, writeOnlyTable, h)
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
@@ -114,7 +114,7 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
-			err = s.checkAddPublic(d, hookCtx, writeOnlyTable, publicTable)
+			err = s.checkAddPublic(hookCtx, d, writeOnlyTable, publicTable)
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
@@ -137,7 +137,7 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 	s.testAddColumnNoDefault(c, ctx, d, tblInfo)
 }
 
-func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo) {
+func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx sessionctx.Context, d *ddl, tblInfo *model.TableInfo) {
 	d.Stop()
 	tc := &TestDDLCallback{}
 	// set up hook
@@ -184,7 +184,7 @@ func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx context.Context
 	testCheckJobDone(c, d, job, true)
 }
 
-func (s *testColumnChangeSuite) testColumnDrop(c *C, ctx context.Context, d *ddl, tbl table.Table) {
+func (s *testColumnChangeSuite) testColumnDrop(c *C, ctx sessionctx.Context, d *ddl, tbl table.Table) {
 	d.Stop()
 	dropCol := tbl.Cols()[2]
 	tc := &TestDDLCallback{}
@@ -212,7 +212,7 @@ func (s *testColumnChangeSuite) testColumnDrop(c *C, ctx context.Context, d *ddl
 	testDropColumn(c, ctx, d, s.dbInfo, tbl.Meta(), dropCol.Name.L, false)
 }
 
-func (s *testColumnChangeSuite) checkAddWriteOnly(d *ddl, ctx context.Context, deleteOnlyTable, writeOnlyTable table.Table, h int64) error {
+func (s *testColumnChangeSuite) checkAddWriteOnly(ctx sessionctx.Context, d *ddl, deleteOnlyTable, writeOnlyTable table.Table, h int64) error {
 	// WriteOnlyTable: insert t values (2, 3)
 	err := ctx.NewTxn()
 	if err != nil {
@@ -286,7 +286,7 @@ func touchedSlice(t table.Table) []bool {
 	return touched
 }
 
-func (s *testColumnChangeSuite) checkAddPublic(d *ddl, ctx context.Context, writeOnlyTable, publicTable table.Table) error {
+func (s *testColumnChangeSuite) checkAddPublic(ctx sessionctx.Context, d *ddl, writeOnlyTable, publicTable table.Table) error {
 	// publicTable Insert t values (4, 4, 4)
 	err := ctx.NewTxn()
 	if err != nil {
@@ -347,7 +347,7 @@ func getCurrentTable(d *ddl, schemaID, tableID int64) (table.Table, error) {
 	return tbl, err
 }
 
-func checkResult(ctx context.Context, t table.Table, cols []*table.Column, rows [][]interface{}) error {
+func checkResult(ctx sessionctx.Context, t table.Table, cols []*table.Column, rows [][]interface{}) error {
 	var gotRows [][]interface{}
 	t.IterRecords(ctx, t.FirstKey(), cols, func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
 		gotRows = append(gotRows, datumsToInterfaces(data))

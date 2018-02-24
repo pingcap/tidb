@@ -20,16 +20,16 @@ import (
 // Metrics
 var (
 	GlobalAutoID      = "global"
-	TableAutoIDAlloc  = "table"
-	TableAutoIDRebase = "table_rebase"
+	TableAutoIDAlloc  = "alloc"
+	TableAutoIDRebase = "rebase"
 	AutoIDHistogram   = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
-			Subsystem: "meta",
-			Name:      "autoid_alloc",
+			Subsystem: "autoid",
+			Name:      "operation_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of handled autoid.",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 22),
-		}, []string{"op", "result_state"})
+		}, []string{LblType, LblResult})
 
 	GetSchemaDiff    = "get_schema_diff"
 	SetSchemaDiff    = "set_schema_diff"
@@ -41,10 +41,10 @@ var (
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "meta",
-			Name:      "meta_opt",
+			Name:      "operation_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of tidb meta data operations.",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 22),
-		}, []string{"op", "result_state"})
+		}, []string{LblType, LblResult})
 )
 
 func init() {

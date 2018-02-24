@@ -310,12 +310,6 @@ func (s *testSuite) TestShow(c *C) {
 	))
 
 	tk.MustExec(`drop table if exists t`)
-	tk.MustExec(`create table t (a int) default charset=abcdefg`)
-	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
-		"t CREATE TABLE `t` (\n"+
-			"  `a` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=abcdefg",
-	))
 }
 
 func (s *testSuite) TestShowVisibility(c *C) {
@@ -364,7 +358,7 @@ func (s *testSuite) TestShowVisibility(c *C) {
 }
 
 // mockSessionManager is a mocked session manager that wraps one session
-// it returns only this session's current proccess info as processlist for test.
+// it returns only this session's current process info as processlist for test.
 type mockSessionManager struct {
 	tidb.Session
 }
