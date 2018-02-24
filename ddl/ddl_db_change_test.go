@@ -22,14 +22,15 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	goctx "golang.org/x/net/context"
@@ -252,7 +253,7 @@ func (t *testExecInfo) compileSQL(idx int) (err error) {
 		se := c.session
 		goCtx := goctx.TODO()
 		se.PrepareTxnCtx(goCtx)
-		ctx := se.(context.Context)
+		ctx := se.(sessionctx.Context)
 		executor.ResetStmtCtx(ctx, c.rawStmt)
 
 		c.stmt, err = compiler.Compile(goCtx, c.rawStmt)
@@ -285,24 +286,39 @@ func (t *testExecInfo) execSQL(idx int) error {
 	return nil
 }
 
-// TestUpdateOrDelete tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
-func (s *testStateChangeSuite) TestWrite(c *C) {
-	sqls := make([]string, 3)
-	sqls[0] = "delete from t where c1 = 'a'"
-	sqls[1] = "update t use index(idx2) set c1 = 'c1_update' where c1 = 'a'"
-	sqls[2] = "insert t set c1 = 'c1_insert', c3 = '2018-02-12', c4 = 1"
-	alterTableSQL := "alter table t add column a int not null default 1 first"
-	s.runTestInWriteOnly(c, "", alterTableSQL, sqls)
+type sqlWithErr struct {
+	sql       string
+	expectErr error
 }
 
-func (s *testStateChangeSuite) runTestInWriteOnly(c *C, tableName, alterTableSQL string, sqls []string) {
+// TestWriteOnly tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
+func (s *testStateChangeSuite) TestWriteOnly(c *C) {
+	sqls := make([]sqlWithErr, 3)
+	sqls[0] = sqlWithErr{"delete from t where c1 = 'a'", nil}
+	sqls[1] = sqlWithErr{"update t use index(idx2) set c1 = 'c1_update' where c1 = 'a'", nil}
+	sqls[0] = sqlWithErr{"insert t set c1 = 'c1_insert', c3 = '2018-02-12', c4 = 1", nil}
+	addColumnSQL := "alter table t add column a int not null default 1 first"
+	s.runTestInSchemaState(c, model.StateWriteOnly, "", addColumnSQL, sqls)
+}
+
+// TestDeletaOnly tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
+func (s *testStateChangeSuite) TestDeleteOnly(c *C) {
+	sqls := make([]sqlWithErr, 1)
+	sqls[0] = sqlWithErr{"insert t set c1 = 'c1_insert', c3 = '2018-02-12', c4 = 1",
+		errors.Errorf("Can't find column c1")}
+	dropColumnSQL := "alter table t drop column c1"
+	s.runTestInSchemaState(c, model.StateDeleteOnly, "", dropColumnSQL, sqls)
+}
+
+func (s *testStateChangeSuite) runTestInSchemaState(c *C, state model.SchemaState, tableName, alterTableSQL string,
+	sqlWithErrs []sqlWithErr) {
 	defer testleak.AfterTest(c)()
 	_, err := s.se.Execute(goctx.Background(), `create table t (
 		c1 varchar(64),
 		c2 enum('N','Y') not null default 'N',
 		c3 timestamp on update current_timestamp,
 		c4 int primary key,
-		unique key idx2 (c1, c2, c3))`)
+		unique key idx2 (c2, c3))`)
 	c.Assert(err, IsNil)
 	defer s.se.Execute(goctx.Background(), "drop table t")
 	_, err = s.se.Execute(goctx.Background(), "insert into t values('a', 'N', '2017-07-01', 8)")
@@ -324,12 +340,12 @@ func (s *testStateChangeSuite) runTestInWriteOnly(c *C, tableName, alterTableSQL
 			return
 		}
 		times++
-		if job.SchemaState != model.StateWriteOnly {
+		if job.SchemaState != state {
 			return
 		}
-		for _, sql := range sqls {
-			_, err = se.Execute(goctx.Background(), sql)
-			if err != nil {
+		for _, sqlWithErr := range sqlWithErrs {
+			_, err = se.Execute(goctx.Background(), sqlWithErr.sql)
+			if !terror.ErrorEqual(err, sqlWithErr.expectErr) {
 				checkErr = err
 				break
 			}

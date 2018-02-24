@@ -51,7 +51,7 @@ func findMaxPrefixLen(candidates [][]*expression.Column, keys []*expression.Colu
 	for _, candidateKeys := range candidates {
 		matchedLen := 0
 		for i := range keys {
-			if i < len(candidateKeys) && keys[i].Equal(candidateKeys[i], nil) {
+			if i < len(candidateKeys) && keys[i].Equal(nil, candidateKeys[i]) {
 				matchedLen++
 			} else {
 				break
@@ -261,7 +261,7 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 	includeTableScan := x.availableIndices.includeTableScan
 	if includeTableScan && len(innerJoinKeys) == 1 {
 		pkCol := x.getPKIsHandleCol()
-		if pkCol != nil && innerJoinKeys[0].Equal(pkCol, nil) {
+		if pkCol != nil && innerJoinKeys[0].Equal(nil, pkCol) {
 			innerPlan := x.forceToTableScan(pkCol)
 			return p.constructIndexJoin(prop, innerJoinKeys, outerJoinKeys, outerIdx, innerPlan, nil, nil)
 		}

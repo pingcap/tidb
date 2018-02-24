@@ -22,8 +22,8 @@ import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
@@ -942,7 +942,7 @@ func convertToTime(sc *stmtctx.StatementContext, arg types.Datum, tp byte) (d ty
 	return convertToTimeWithFsp(sc, arg, tp, types.MaxFsp)
 }
 
-func builtinDateFormat(ctx context.Context, args []types.Datum) (d types.Datum, err error) {
+func builtinDateFormat(ctx sessionctx.Context, args []types.Datum) (d types.Datum, err error) {
 	date, err := convertToTime(ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDatetime)
 	if err != nil {
 		return d, errors.Trace(err)
@@ -1073,7 +1073,7 @@ func (s *testEvaluatorSuite) TestCurrentTime(c *C) {
 	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(-1)))
 	c.Assert(err, NotNil)
 
-	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(7)))
+	_, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(7)))
 	c.Assert(err, NotNil)
 }
 

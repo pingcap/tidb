@@ -478,7 +478,7 @@ func (e *HashJoinExec) filterOuters(outerBuffer *execResult, outerFilterResult [
 
 	outerFilterResult = outerFilterResult[:0]
 	for _, outerRow := range outerBuffer.rows {
-		matched, err := expression.EvalBool(e.outerFilter, outerRow, e.ctx)
+		matched, err := expression.EvalBool(e.ctx, e.outerFilter, outerRow)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -853,7 +853,7 @@ func (e *NestedLoopApplyExec) fetchOuterRow(goCtx goctx.Context) (Row, bool, err
 			return nil, false, nil
 		}
 
-		matched, err := expression.EvalBool(e.outerFilter, outerRow, e.ctx)
+		matched, err := expression.EvalBool(e.ctx, e.outerFilter, outerRow)
 		if err != nil {
 			return nil, false, errors.Trace(err)
 		}
@@ -913,7 +913,7 @@ func (e *NestedLoopApplyExec) prepare(goCtx goctx.Context) error {
 			return nil
 		}
 
-		matched, err := expression.EvalBool(e.innerFilter, row, e.ctx)
+		matched, err := expression.EvalBool(e.ctx, e.innerFilter, row)
 		if err != nil {
 			return errors.Trace(err)
 		}

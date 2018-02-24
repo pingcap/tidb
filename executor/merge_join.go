@@ -15,8 +15,8 @@ package executor
 
 import (
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -62,7 +62,7 @@ const rowBufferSize = 4096
 // readerIterator represents a row block with the same join keys
 type readerIterator struct {
 	stmtCtx   *stmtctx.StatementContext
-	ctx       context.Context
+	ctx       sessionctx.Context
 	reader    Executor
 	filter    []expression.Expression
 	joinKeys  []*expression.Column
@@ -113,7 +113,7 @@ func (ri *readerIterator) nextRow() (types.Row, error) {
 			return nil, nil
 		}
 		if ri.filter != nil {
-			matched, err := expression.EvalBool(ri.filter, row, ri.ctx)
+			matched, err := expression.EvalBool(ri.ctx, ri.filter, row)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -314,7 +314,7 @@ func compareKeys(stmtCtx *stmtctx.StatementContext,
 func (e *MergeJoinExec) doJoin() (err error) {
 	for _, outer := range e.outerRows {
 		if e.outerFilter != nil {
-			matched, err1 := expression.EvalBool(e.outerFilter, outer, e.ctx)
+			matched, err1 := expression.EvalBool(e.ctx, e.outerFilter, outer)
 			if err1 != nil {
 				return errors.Trace(err1)
 			}

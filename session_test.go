@@ -23,14 +23,15 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/privilege/privileges"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
@@ -38,10 +39,13 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/auth"
+	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	binlog "github.com/pingcap/tipb/go-binlog"
 	goctx "golang.org/x/net/context"
+	"google.golang.org/grpc"
 )
 
 var _ = Suite(&testSessionSuite{})
@@ -85,6 +89,67 @@ func (s *testSessionSuite) TearDownTest(c *C) {
 	}
 }
 
+type mockBinlogPump struct {
+}
+
+var _ binlog.PumpClient = &mockBinlogPump{}
+
+func (p *mockBinlogPump) WriteBinlog(ctx goctx.Context, in *binlog.WriteBinlogReq, opts ...grpc.CallOption) (*binlog.WriteBinlogResp, error) {
+	return &binlog.WriteBinlogResp{}, nil
+}
+
+type mockPump_PullBinlogsClient struct {
+	grpc.ClientStream
+}
+
+func (m mockPump_PullBinlogsClient) Recv() (*binlog.PullBinlogResp, error) {
+	return nil, nil
+}
+
+func (p *mockBinlogPump) PullBinlogs(ctx goctx.Context, in *binlog.PullBinlogReq, opts ...grpc.CallOption) (binlog.Pump_PullBinlogsClient, error) {
+	return mockPump_PullBinlogsClient{mocktikv.MockGRPCClientStream()}, nil
+}
+
+func (s *testSessionSuite) TestForCoverage(c *C) {
+	planCache := plan.PlanCacheEnabled
+	plan.GlobalPlanCache = kvcache.NewShardedLRUCache(2, 1)
+	defer func() {
+		plan.PlanCacheEnabled = planCache
+	}()
+
+	// Just for test coverage.
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int auto_increment, v int, index (id))")
+	tk.MustExec("insert t values ()")
+	plan.PlanCacheEnabled = true
+	tk.MustExec("insert t values ()")
+	tk.MustExec("insert t values ()")
+
+	// Normal request will not cover txn.Seek.
+	tk.MustExec("admin check table t")
+
+	// Cover dirty table operations in StateTxn.
+	tk.Se.GetSessionVars().BinlogClient = &mockBinlogPump{}
+	tk.MustExec("begin")
+	tk.MustExec("truncate table t")
+	tk.MustExec("insert t values ()")
+	tk.MustExec("delete from t where id = 2")
+	tk.MustExec("update t set v = 5 where id = 2")
+	tk.MustExec("insert t values ()")
+	tk.MustExec("rollback")
+
+	c.Check(tk.Se.SetCollation(mysql.DefaultCollationID), IsNil)
+
+	tk.MustExec("show processlist")
+	_, err := tk.Se.FieldList("t")
+	c.Check(err, IsNil)
+
+	// Cover the error branch, althrough this never happen.
+	err = tk.Se.ActivePendingTxn()
+	c.Assert(err, NotNil)
+}
+
 func (s *testSessionSuite) TestErrorRollback(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t_rollback")
@@ -119,7 +184,7 @@ func (s *testSessionSuite) TestQueryString(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	tk.MustExec("create table mutil1 (a int);create table multi2 (a int)")
-	queryStr := tk.Se.Value(context.QueryString)
+	queryStr := tk.Se.Value(sessionctx.QueryString)
 	c.Assert(queryStr, Equals, "create table multi2 (a int)")
 }
 
@@ -1070,9 +1135,9 @@ func (s *testSessionSuite) TestLastExecuteDDLFlag(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(id int)")
-	c.Assert(tk.Se.Value(context.LastExecuteDDL), NotNil)
+	c.Assert(tk.Se.Value(sessionctx.LastExecuteDDL), NotNil)
 	tk.MustExec("insert into t1 values (1)")
-	c.Assert(tk.Se.Value(context.LastExecuteDDL), IsNil)
+	c.Assert(tk.Se.Value(sessionctx.LastExecuteDDL), IsNil)
 }
 
 func (s *testSessionSuite) TestDecimal(c *C) {
@@ -1870,7 +1935,6 @@ func (s *testSessionSuite) TestCastTimeToDate(c *C) {
 }
 
 func (s *testSessionSuite) TestSetGlobalTZ(c *C) {
-	defer testleak.AfterTest(c)()
 	goCtx := goctx.Background()
 
 	tk := testkit.NewTestKitWithInit(c, s.store)

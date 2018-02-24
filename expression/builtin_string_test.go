@@ -1101,19 +1101,12 @@ func (s *testEvaluatorSuite) TestChar(c *C) {
 		}
 	}
 
-	v := struct {
-		str    string
-		iNum   int64
-		fNum   interface{}
-		result string
-	}{"65", 66, nil, "AB"}
-
 	fc := funcs[ast.CharFunc]
-	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(v.str, v.iNum, nil)))
+	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums("65", 66, nil)))
 	c.Assert(err, IsNil)
 	r, err := evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
-	c.Assert(r, testutil.DatumEquals, types.NewDatum(v.result))
+	c.Assert(r, testutil.DatumEquals, types.NewDatum("AB"))
 }
 
 func (s *testEvaluatorSuite) TestCharLength(c *C) {

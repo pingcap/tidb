@@ -21,13 +21,13 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
@@ -98,7 +98,7 @@ const (
 type Row = types.DatumRow
 
 type baseExecutor struct {
-	ctx             context.Context
+	ctx             sessionctx.Context
 	id              string
 	schema          *expression.Schema
 	supportChk      bool
@@ -168,7 +168,7 @@ func (e *baseExecutor) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
-func newBaseExecutor(schema *expression.Schema, ctx context.Context, id string, children ...Executor) baseExecutor {
+func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id string, children ...Executor) baseExecutor {
 	e := baseExecutor{
 		children:     children,
 		ctx:          ctx,
@@ -579,7 +579,7 @@ func init() {
 	// While doing optimization in the plan package, we need to execute uncorrelated subquery,
 	// but the plan package cannot import the executor package because of the dependency cycle.
 	// So we assign a function implemented in the executor package to the plan package to avoid the dependency cycle.
-	plan.EvalSubquery = func(p plan.PhysicalPlan, is infoschema.InfoSchema, ctx context.Context) (rows [][]types.Datum, err error) {
+	plan.EvalSubquery = func(p plan.PhysicalPlan, is infoschema.InfoSchema, ctx sessionctx.Context) (rows [][]types.Datum, err error) {
 		err = ctx.ActivePendingTxn()
 		if err != nil {
 			return rows, errors.Trace(err)
@@ -763,7 +763,7 @@ func (e *SelectionExec) Next(goCtx goctx.Context) (Row, error) {
 		if srcRow == nil {
 			return nil, nil
 		}
-		match, err := expression.EvalBool(e.filters, srcRow, e.ctx)
+		match, err := expression.EvalBool(e.ctx, e.filters, srcRow)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -813,7 +813,7 @@ func (e *SelectionExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 func (e *SelectionExec) unBatchedNextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	for {
 		for ; e.inputRow != e.inputIter.End(); e.inputRow = e.inputIter.Next() {
-			selected, err := expression.EvalBool(e.filters, e.inputRow, e.ctx)
+			selected, err := expression.EvalBool(e.ctx, e.filters, e.inputRow)
 			if err != nil {
 				return errors.Trace(err)
 			}

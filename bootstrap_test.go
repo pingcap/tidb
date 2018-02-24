@@ -18,11 +18,11 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testleak"
@@ -119,7 +119,7 @@ func (s *testBootstrapSuite) bootstrapWithOnlyDDLWork(store kv.Storage, c *C) {
 		sessionVars: variable.NewSessionVars(),
 	}
 	ss.mu.values = make(map[fmt.Stringer]interface{})
-	ss.SetValue(context.Initing, true)
+	ss.SetValue(sessionctx.Initing, true)
 	dom, err := domap.Get(store)
 	c.Assert(err, IsNil)
 	domain.BindDomain(ss, dom)

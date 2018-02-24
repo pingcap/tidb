@@ -25,7 +25,6 @@ import (
 	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/juju/errors"
 	"github.com/ngaut/pools"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/privilege/privileges"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/terror"
@@ -516,7 +516,7 @@ func (do *Domain) SysSessionPool() *pools.ResourcePool {
 
 // LoadPrivilegeLoop create a goroutine loads privilege tables in a loop, it
 // should be called only once in BootstrapSession.
-func (do *Domain) LoadPrivilegeLoop(ctx context.Context) error {
+func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
 	do.privHandle = privileges.NewHandle()
 	err := do.privHandle.Update(ctx)
@@ -576,7 +576,7 @@ func (do *Domain) StatsHandle() *statistics.Handle {
 }
 
 // CreateStatsHandle is used only for test.
-func (do *Domain) CreateStatsHandle(ctx context.Context) {
+func (do *Domain) CreateStatsHandle(ctx sessionctx.Context) {
 	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(statistics.NewHandle(ctx, do.statsLease)))
 }
 
@@ -586,7 +586,7 @@ var RunAutoAnalyze = true
 // UpdateTableStatsLoop creates a goroutine loads stats info and updates stats info in a loop.
 // It will also start a goroutine to analyze tables automatically.
 // It should be called only once in BootstrapSession.
-func (do *Domain) UpdateTableStatsLoop(ctx context.Context) error {
+func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
 	statsHandle := statistics.NewHandle(ctx, do.statsLease)
 	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(statsHandle))
@@ -621,7 +621,7 @@ func (do *Domain) newStatsOwner() owner.Manager {
 	return statsOwner
 }
 
-func (do *Domain) updateStatsWorker(ctx context.Context, owner owner.Manager) {
+func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager) {
 	lease := do.statsLease
 	deltaUpdateDuration := lease * 5
 	loadTicker := time.NewTicker(lease)
@@ -711,7 +711,7 @@ const privilegeKey = "/tidb/privilege"
 
 // NotifyUpdatePrivilege updates privilege key in etcd, TiDB client that watches
 // the key will get notification.
-func (do *Domain) NotifyUpdatePrivilege(ctx context.Context) {
+func (do *Domain) NotifyUpdatePrivilege(ctx sessionctx.Context) {
 	if do.etcdClient != nil {
 		row := do.etcdClient.KV
 		_, err := row.Put(goctx.Background(), privilegeKey, "")

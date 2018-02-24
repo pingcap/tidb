@@ -26,19 +26,19 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
 )
 
-func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) (err error) {
+func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) (err error) {
 	is := d.GetInformationSchema()
 	_, ok := is.SchemaByName(schema)
 	if ok {
@@ -75,7 +75,7 @@ func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr, charsetInfo 
 	return errors.Trace(err)
 }
 
-func (d *ddl) DropSchema(ctx context.Context, schema model.CIStr) (err error) {
+func (d *ddl) DropSchema(ctx sessionctx.Context, schema model.CIStr) (err error) {
 	is := d.GetInformationSchema()
 	old, ok := is.SchemaByName(schema)
 	if !ok {
@@ -165,7 +165,7 @@ func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constra
 	}
 }
 
-func buildColumnsAndConstraints(ctx context.Context, colDefs []*ast.ColumnDef,
+func buildColumnsAndConstraints(ctx sessionctx.Context, colDefs []*ast.ColumnDef,
 	constraints []*ast.Constraint) ([]*table.Column, []*ast.Constraint, error) {
 	var cols []*table.Column
 	colMap := map[string]*table.Column{}
@@ -225,7 +225,7 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType) error {
 	return nil
 }
 
-func buildColumnAndConstraint(ctx context.Context, offset int,
+func buildColumnAndConstraint(ctx sessionctx.Context, offset int,
 	colDef *ast.ColumnDef) (*table.Column, []*ast.Constraint, error) {
 	err := setCharsetCollationFlenDecimal(colDef.Tp)
 	if err != nil {
@@ -251,7 +251,7 @@ func checkColumnCantHaveDefaultValue(col *table.Column, value interface{}) (err 
 }
 
 // columnDefToCol converts ColumnDef to Col and TableConstraints.
-func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*table.Column, []*ast.Constraint, error) {
+func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef) (*table.Column, []*ast.Constraint, error) {
 	var constraints = make([]*ast.Constraint, 0)
 	col := table.ToColumn(&model.ColumnInfo{
 		Offset:    offset,
@@ -357,7 +357,7 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*ta
 	return col, constraints, nil
 }
 
-func getDefaultValue(ctx context.Context, c *ast.ColumnOption, tp byte, fsp int) (interface{}, error) {
+func getDefaultValue(ctx sessionctx.Context, c *ast.ColumnOption, tp byte, fsp int) (interface{}, error) {
 	if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
 		vd, err := expression.GetTimeValue(ctx, c.Expr, tp, fsp)
 		value := vd.GetValue()
@@ -377,7 +377,7 @@ func getDefaultValue(ctx context.Context, c *ast.ColumnOption, tp byte, fsp int)
 
 		return value, nil
 	}
-	v, err := expression.EvalAstExpr(c.Expr, ctx)
+	v, err := expression.EvalAstExpr(ctx, c.Expr)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -447,7 +447,7 @@ func setNoDefaultValueFlag(c *table.Column, hasDefaultValue bool) {
 	}
 }
 
-func checkDefaultValue(ctx context.Context, c *table.Column, hasDefaultValue bool) error {
+func checkDefaultValue(ctx sessionctx.Context, c *table.Column, hasDefaultValue bool) error {
 	if !hasDefaultValue {
 		return nil
 	}
@@ -591,7 +591,7 @@ func checkConstraintNames(constraints []*ast.Constraint) error {
 	return nil
 }
 
-func buildTableInfo(d *ddl, tableName model.CIStr, cols []*table.Column, constraints []*ast.Constraint, ctx context.Context) (tbInfo *model.TableInfo, err error) {
+func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols []*table.Column, constraints []*ast.Constraint) (tbInfo *model.TableInfo, err error) {
 	tbInfo = &model.TableInfo{
 		Name: tableName,
 	}
@@ -697,7 +697,7 @@ func buildTableInfo(d *ddl, tableName model.CIStr, cols []*table.Column, constra
 	return
 }
 
-func (d *ddl) CreateTableWithLike(ctx context.Context, ident, referIdent ast.Ident) error {
+func (d *ddl) CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.Ident) error {
 	is := d.GetInformationSchema()
 	_, ok := is.SchemaByName(referIdent.Schema)
 	if !ok {
@@ -736,7 +736,7 @@ func (d *ddl) CreateTableWithLike(ctx context.Context, ident, referIdent ast.Ide
 	return errors.Trace(err)
 }
 
-func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.ColumnDef,
+func (d *ddl) CreateTable(ctx sessionctx.Context, ident ast.Ident, colDefs []*ast.ColumnDef,
 	constraints []*ast.Constraint, options []*ast.TableOption) (err error) {
 	is := d.GetInformationSchema()
 	schema, ok := is.SchemaByName(ident.Schema)
@@ -772,7 +772,7 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 		return errors.Trace(err)
 	}
 
-	tbInfo, err := buildTableInfo(d, ident.Name, cols, newConstraints, ctx)
+	tbInfo, err := buildTableInfo(ctx, d, ident.Name, cols, newConstraints)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -859,7 +859,7 @@ func hasAutoIncrementColumn(tbInfo *model.TableInfo) bool {
 	return false
 }
 
-func (d *ddl) AlterTable(ctx context.Context, ident ast.Ident, specs []*ast.AlterTableSpec) (err error) {
+func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.AlterTableSpec) (err error) {
 	// Only handle valid specs, AlterTableLock is ignored.
 	validSpecs := make([]*ast.AlterTableSpec, 0, len(specs))
 	for _, spec := range specs {
@@ -940,7 +940,7 @@ func (d *ddl) AlterTable(ctx context.Context, ident ast.Ident, specs []*ast.Alte
 	return nil
 }
 
-func (d *ddl) RebaseAutoID(ctx context.Context, ident ast.Ident, newBase int64) error {
+func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int64) error {
 	is := d.GetInformationSchema()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
@@ -968,7 +968,7 @@ func (d *ddl) RebaseAutoID(ctx context.Context, ident ast.Ident, newBase int64) 
 }
 
 // ShardRowID shards the implicit row ID by adding shard value to the row ID's first few bits.
-func (d *ddl) ShardRowID(ctx context.Context, tableIdent ast.Ident, uVal uint64) error {
+func (d *ddl) ShardRowID(ctx sessionctx.Context, tableIdent ast.Ident, uVal uint64) error {
 	job, err := d.createJobForTable(tableIdent)
 	if err != nil {
 		return errors.Trace(err)
@@ -1010,7 +1010,7 @@ func checkColumnConstraint(constraints []*ast.ColumnOption) error {
 }
 
 // AddColumn will add a new column to the table.
-func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableSpec) error {
+func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTableSpec) error {
 	specNewColumn := spec.NewColumns[0]
 	// Check whether the added column constraints are supported.
 	err := checkColumnConstraint(specNewColumn.Options)
@@ -1091,7 +1091,7 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 }
 
 // DropColumn will drop a column from the table, now we don't support drop the column with index covered.
-func (d *ddl) DropColumn(ctx context.Context, ti ast.Ident, colName model.CIStr) error {
+func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, colName model.CIStr) error {
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
@@ -1181,7 +1181,7 @@ func modifiable(origin *types.FieldType, to *types.FieldType) error {
 	return errUnsupportedModifyColumn.GenByArgs(msg)
 }
 
-func setDefaultValue(ctx context.Context, col *table.Column, option *ast.ColumnOption) error {
+func setDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) error {
 	value, err := getDefaultValue(ctx, option, col.Tp, col.Decimal)
 	if err != nil {
 		return ErrColumnBadNull.Gen("invalid default value - %s", err)
@@ -1190,8 +1190,8 @@ func setDefaultValue(ctx context.Context, col *table.Column, option *ast.ColumnO
 	return errors.Trace(checkDefaultValue(ctx, col, true))
 }
 
-func setColumnComment(ctx context.Context, col *table.Column, option *ast.ColumnOption) error {
-	value, err := expression.EvalAstExpr(option.Expr, ctx)
+func setColumnComment(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) error {
+	value, err := expression.EvalAstExpr(ctx, option.Expr)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1200,7 +1200,7 @@ func setColumnComment(ctx context.Context, col *table.Column, option *ast.Column
 }
 
 // setDefaultAndComment is only used in getModifiableColumnJob.
-func setDefaultAndComment(ctx context.Context, col *table.Column, options []*ast.ColumnOption) error {
+func setDefaultAndComment(ctx sessionctx.Context, col *table.Column, options []*ast.ColumnOption) error {
 	if len(options) == 0 {
 		return nil
 	}
@@ -1265,7 +1265,7 @@ func setDefaultAndComment(ctx context.Context, col *table.Column, options []*ast
 	return nil
 }
 
-func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, originalColName model.CIStr,
+func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, originalColName model.CIStr,
 	spec *ast.AlterTableSpec) (*model.Job, error) {
 	specNewColumn := spec.NewColumns[0]
 	is := d.infoHandle.Get()
@@ -1346,7 +1346,7 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 // ChangeColumn renames an existing column and modifies the column's definition,
 // currently we only support limited kind of changes
 // that do not need to change or check data on the table.
-func (d *ddl) ChangeColumn(ctx context.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+func (d *ddl) ChangeColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
 	specNewColumn := spec.NewColumns[0]
 	if len(specNewColumn.Name.Schema.O) != 0 && ident.Schema.L != specNewColumn.Name.Schema.L {
 		return ErrWrongDBName.GenByArgs(specNewColumn.Name.Schema.O)
@@ -1373,7 +1373,7 @@ func (d *ddl) ChangeColumn(ctx context.Context, ident ast.Ident, spec *ast.Alter
 
 // ModifyColumn does modification on an existing column, currently we only support limited kind of changes
 // that do not need to change or check data on the table.
-func (d *ddl) ModifyColumn(ctx context.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+func (d *ddl) ModifyColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
 	specNewColumn := spec.NewColumns[0]
 	if len(specNewColumn.Name.Schema.O) != 0 && ident.Schema.L != specNewColumn.Name.Schema.L {
 		return ErrWrongDBName.GenByArgs(specNewColumn.Name.Schema.O)
@@ -1393,7 +1393,7 @@ func (d *ddl) ModifyColumn(ctx context.Context, ident ast.Ident, spec *ast.Alter
 	return errors.Trace(err)
 }
 
-func (d *ddl) AlterColumn(ctx context.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+func (d *ddl) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
 	specNewColumn := spec.NewColumns[0]
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ident.Schema)
@@ -1438,7 +1438,7 @@ func (d *ddl) AlterColumn(ctx context.Context, ident ast.Ident, spec *ast.AlterT
 }
 
 // DropTable will proceed even if some table in the list does not exists.
-func (d *ddl) DropTable(ctx context.Context, ti ast.Ident) (err error) {
+func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident) (err error) {
 	is := d.GetInformationSchema()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
@@ -1462,7 +1462,7 @@ func (d *ddl) DropTable(ctx context.Context, ti ast.Ident) (err error) {
 	return errors.Trace(err)
 }
 
-func (d *ddl) TruncateTable(ctx context.Context, ti ast.Ident) error {
+func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	is := d.GetInformationSchema()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
@@ -1488,7 +1488,7 @@ func (d *ddl) TruncateTable(ctx context.Context, ti ast.Ident) error {
 	return errors.Trace(err)
 }
 
-func (d *ddl) RenameTable(ctx context.Context, oldIdent, newIdent ast.Ident) error {
+func (d *ddl) RenameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident) error {
 	is := d.GetInformationSchema()
 	oldSchema, ok := is.SchemaByName(oldIdent.Schema)
 	if !ok {
@@ -1533,7 +1533,7 @@ func getAnonymousIndex(t table.Table, colName model.CIStr) model.CIStr {
 	return indexName
 }
 
-func (d *ddl) CreateIndex(ctx context.Context, ti ast.Ident, unique bool, indexName model.CIStr,
+func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, unique bool, indexName model.CIStr,
 	idxColNames []*ast.IndexColName, indexOption *ast.IndexOption) error {
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
@@ -1604,7 +1604,7 @@ func buildFKInfo(fkName model.CIStr, keys []*ast.IndexColName, refer *ast.Refere
 
 }
 
-func (d *ddl) CreateForeignKey(ctx context.Context, ti ast.Ident, fkName model.CIStr, keys []*ast.IndexColName, refer *ast.ReferenceDef) error {
+func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName model.CIStr, keys []*ast.IndexColName, refer *ast.ReferenceDef) error {
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
@@ -1635,7 +1635,7 @@ func (d *ddl) CreateForeignKey(ctx context.Context, ti ast.Ident, fkName model.C
 
 }
 
-func (d *ddl) DropForeignKey(ctx context.Context, ti ast.Ident, fkName model.CIStr) error {
+func (d *ddl) DropForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName model.CIStr) error {
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
@@ -1660,7 +1660,7 @@ func (d *ddl) DropForeignKey(ctx context.Context, ti ast.Ident, fkName model.CIS
 	return errors.Trace(err)
 }
 
-func (d *ddl) DropIndex(ctx context.Context, ti ast.Ident, indexName model.CIStr) error {
+func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CIStr) error {
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
