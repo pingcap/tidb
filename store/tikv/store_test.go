@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var errStopped = errors.New("stopped")
@@ -59,7 +59,7 @@ func (s *testStoreSuite) TestOracle(c *C) {
 	o := &mockoracle.MockOracle{}
 	s.store.oracle = o
 
-	ctx := goctx.Background()
+	ctx := context.Background()
 	t1, err := s.store.getTimestampWithRetry(NewBackoffer(ctx, 100))
 	c.Assert(err, IsNil)
 	t2, err := s.store.getTimestampWithRetry(NewBackoffer(ctx, 100))
@@ -107,11 +107,11 @@ func (c *mockPDClient) disable() {
 	c.stop = true
 }
 
-func (c *mockPDClient) GetClusterID(goctx.Context) uint64 {
+func (c *mockPDClient) GetClusterID(context.Context) uint64 {
 	return 1
 }
 
-func (c *mockPDClient) GetTS(ctx goctx.Context) (int64, int64, error) {
+func (c *mockPDClient) GetTS(ctx context.Context) (int64, int64, error) {
 	c.RLock()
 	defer c.RUnlock()
 
@@ -121,11 +121,11 @@ func (c *mockPDClient) GetTS(ctx goctx.Context) (int64, int64, error) {
 	return c.client.GetTS(ctx)
 }
 
-func (c *mockPDClient) GetTSAsync(ctx goctx.Context) pd.TSFuture {
+func (c *mockPDClient) GetTSAsync(ctx context.Context) pd.TSFuture {
 	return nil
 }
 
-func (c *mockPDClient) GetRegion(ctx goctx.Context, key []byte) (*metapb.Region, *metapb.Peer, error) {
+func (c *mockPDClient) GetRegion(ctx context.Context, key []byte) (*metapb.Region, *metapb.Peer, error) {
 	c.RLock()
 	defer c.RUnlock()
 
@@ -135,7 +135,7 @@ func (c *mockPDClient) GetRegion(ctx goctx.Context, key []byte) (*metapb.Region,
 	return c.client.GetRegion(ctx, key)
 }
 
-func (c *mockPDClient) GetRegionByID(ctx goctx.Context, regionID uint64) (*metapb.Region, *metapb.Peer, error) {
+func (c *mockPDClient) GetRegionByID(ctx context.Context, regionID uint64) (*metapb.Region, *metapb.Peer, error) {
 	c.RLock()
 	defer c.RUnlock()
 
@@ -145,7 +145,7 @@ func (c *mockPDClient) GetRegionByID(ctx goctx.Context, regionID uint64) (*metap
 	return c.client.GetRegionByID(ctx, regionID)
 }
 
-func (c *mockPDClient) GetStore(ctx goctx.Context, storeID uint64) (*metapb.Store, error) {
+func (c *mockPDClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {
 	c.RLock()
 	defer c.RUnlock()
 
@@ -162,7 +162,7 @@ type checkRequestClient struct {
 	priority pb.CommandPri
 }
 
-func (c *checkRequestClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+func (c *checkRequestClient) SendReq(ctx context.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 	resp, err := c.Client.SendReq(ctx, addr, req)
 	if c.priority != req.Priority {
 		if resp.Get != nil {
@@ -187,7 +187,7 @@ func (s *testStoreSuite) TestRequestPriority(c *C) {
 	txn.SetOption(kv.Priority, kv.PriorityHigh)
 	err = txn.Set([]byte("key"), []byte("value"))
 	c.Assert(err, IsNil)
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	// Cover the basic Get request.

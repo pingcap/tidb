@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
@@ -55,7 +55,7 @@ func testNewContext(d *ddl) sessionctx.Context {
 	return ctx
 }
 
-func testNewDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
+func testNewDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 	infoHandle *infoschema.Handle, hook Callback, lease time.Duration) *ddl {
 	return newDDL(ctx, etcdCli, store, infoHandle, hook, lease, nil)
 }
