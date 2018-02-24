@@ -109,7 +109,7 @@ type baseExecutor struct {
 }
 
 // Open initializes children recursively and "childrenResults" according to children's schemas.
-func (e *baseExecutor) Open(goCtx goctx.Context) error {
+func (e *baseExecutor) Open(ctx context.Context) error {
 	for _, child := range e.children {
 		err := child.Open(ctx)
 		if err != nil {
@@ -166,7 +166,7 @@ func (e *baseExecutor) supportChunk() bool {
 }
 
 // NextChunk fills mutiple rows into a chunk.
-func (e *baseExecutor) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+func (e *baseExecutor) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
@@ -199,7 +199,7 @@ type Executor interface {
 	newChunk() *chunk.Chunk
 	// NextChunk fills a chunk with multiple rows
 	// NOTE: chunk has to call Reset() method before any use.
-	NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error
+	NextChunk(ctx context.Context, chk *chunk.Chunk) error
 }
 
 // CancelDDLJobsExec represents a cancel DDL jobs executor.
