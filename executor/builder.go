@@ -1025,7 +1025,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plan.AnalyzeColumnsTa
 		BucketSize:    maxBucketSize,
 		SampleSize:    maxRegionSampleSize,
 		SketchSize:    maxSketchSize,
-		ColumnsInfo:   distsql.ColumnsToProto(cols, task.TableInfo.PKIsHandle),
+		ColumnsInfo:   plan.ColumnsToProto(cols, task.TableInfo.PKIsHandle),
 		CmsketchDepth: &depth,
 		CmsketchWidth: &width,
 	}
