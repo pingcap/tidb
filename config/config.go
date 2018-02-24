@@ -321,6 +321,7 @@ func (t *OpenTracing) ToTracingConfig() *tracing.Configuration {
 	return ret
 }
 
+// The following constants represents the valid action configurations for OOMAction.
 const (
 	OOMActionCancel = "cancel"
 	OOMActionLog    = "log"
