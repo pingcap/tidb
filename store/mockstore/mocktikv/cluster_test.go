@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testClusterSuite{})
@@ -70,7 +70,7 @@ func (s *testClusterSuite) TestClusterSplit(c *C) {
 		txn.Set(idxKey, []byte{'0'})
 		handle++
 	}
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	// Split Table into 10 regions.
