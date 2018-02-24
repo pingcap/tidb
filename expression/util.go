@@ -327,6 +327,7 @@ func extractFiltersFromDNF(ctx sessionctx.Context, dnfFunc *ScalarFunction) ([]E
 		return nil, dnfFunc
 	}
 	newDNFItems := make([]Expression, 0, len(dnfItems))
+	onlyNeedExtracted := false
 	for _, dnfItem := range dnfItems {
 		cnfItems := SplitCNFItems(dnfItem)
 		newCNFItems := make([]Expression, 0, len(cnfItems))
@@ -337,14 +338,20 @@ func extractFiltersFromDNF(ctx sessionctx.Context, dnfFunc *ScalarFunction) ([]E
 				newCNFItems = append(newCNFItems, cnfItem)
 			}
 		}
-		// There may be the case that all the CNF is extracted.
-		if len(newCNFItems) >= 1 {
-			newDNFItems = append(newDNFItems, ComposeCNFCondition(ctx, newCNFItems...))
+		// If the extracted part is just one leaf of the DNF expression. Then the value of the total DNF expression is
+		// always the same with the value of the extracted part.
+		if len(newCNFItems) == 0 {
+			onlyNeedExtracted = true
+			break
 		}
+		newDNFItems = append(newDNFItems, ComposeCNFCondition(ctx, newCNFItems...))
 	}
 	extractedExpr := make([]Expression, 0, len(hashcode2Expr))
 	for _, expr := range hashcode2Expr {
 		extractedExpr = append(extractedExpr, expr)
+	}
+	if onlyNeedExtracted {
+		return extractedExpr, nil
 	}
 	return extractedExpr, ComposeDNFCondition(ctx, newDNFItems...)
 }

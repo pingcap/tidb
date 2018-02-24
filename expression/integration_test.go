@@ -3189,7 +3189,7 @@ func (s *testIntegrationSuite) TestFilterExtractFromDNF(c *C) {
 		},
 		{
 			exprStr: "a = 1 or a = 1 or (a = 1 and b = 1)",
-			result:  "[eq(test.t.a, 1) eq(test.t.b, 1)]",
+			result:  "[eq(test.t.a, 1)]",
 		},
 		{
 			exprStr: "(a = 1 and a = 1) or a = 1 or b = 1",
@@ -3200,8 +3200,8 @@ func (s *testIntegrationSuite) TestFilterExtractFromDNF(c *C) {
 			result:  "[eq(test.t.a, 1) or(eq(test.t.b, 2), or(eq(test.t.b, 3), eq(test.t.b, 4)))]",
 		},
 		{
-			exprStr: "(a = 1 and b = 1) or (a = 1 and b = 1 and c = 1) or (a = 1 and b = 1 and c > 2 and c < 3)",
-			result:  "[eq(test.t.a, 1) eq(test.t.b, 1) or(eq(test.t.c, 1), and(gt(test.t.c, 2), lt(test.t.c, 3)))]",
+			exprStr: "(a = 1 and b = 1 and c = 1) or (a = 1 and b = 1) or (a = 1 and b = 1 and c > 2 and c < 3)",
+			result:  "[eq(test.t.a, 1) eq(test.t.b, 1)]",
 		},
 	}
 
