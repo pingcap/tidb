@@ -1257,12 +1257,19 @@ func (e *UnionExec) initialize(goCtx goctx.Context, forChunk bool) {
 }
 
 func (e *UnionExec) resultPuller(goCtx goctx.Context, childID int) {
-	defer e.wg.Done()
 	result := &unionWorkerResult{
 		err: nil,
 		chk: nil,
 		src: e.resourcePools[childID],
 	}
+	defer func() {
+		if r := recover(); r != nil {
+			result.err = errors.Errorf("%v", r)
+			e.resultPool <- result
+			e.stopFetchData.Store(true)
+		}
+		e.wg.Done()
+	}()
 	for {
 		if e.stopFetchData.Load().(bool) {
 			return
