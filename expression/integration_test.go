@@ -3180,10 +3180,8 @@ func (s *testIntegrationSuite) TestFilterExtractFromDNF(c *C) {
 	tk.MustExec("create table t(a int, b int, c int)")
 
 	tests := []struct {
-		exprStr   string
-		result    string
-		remained  string
-		resultStr string
+		exprStr string
+		result  string
 	}{
 		{
 			exprStr: "a = 1 or a = 1 or a = 1",
