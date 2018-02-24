@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/sqlexec"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 const (
@@ -45,7 +45,7 @@ func (t DelRangeTask) Range() ([]byte, []byte) {
 // LoadDeleteRanges loads delete range tasks from gc_delete_range table.
 func LoadDeleteRanges(ctx sessionctx.Context, safePoint uint64) (ranges []DelRangeTask, _ error) {
 	sql := fmt.Sprintf(loadDeleteRangeSQL, safePoint)
-	rss, err := ctx.(sqlexec.SQLExecutor).Execute(goctx.TODO(), sql)
+	rss, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	if len(rss) > 0 {
 		defer terror.Call(rss[0].Close)
 	}
@@ -55,7 +55,7 @@ func LoadDeleteRanges(ctx sessionctx.Context, safePoint uint64) (ranges []DelRan
 
 	rs := rss[0]
 	for {
-		row, err := rs.Next(goctx.TODO())
+		row, err := rs.Next(context.TODO())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -84,7 +84,7 @@ func LoadDeleteRanges(ctx sessionctx.Context, safePoint uint64) (ranges []DelRan
 // NOTE: This function WILL NOT start and run in a new transaction internally.
 func CompleteDeleteRange(ctx sessionctx.Context, dr DelRangeTask) error {
 	sql := fmt.Sprintf(completeDeleteRangeSQL, dr.JobID, dr.ElementID)
-	_, err := ctx.(sqlexec.SQLExecutor).Execute(goctx.TODO(), sql)
+	_, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	return errors.Trace(err)
 }
 
@@ -93,6 +93,6 @@ func UpdateDeleteRange(ctx sessionctx.Context, dr DelRangeTask, newStartKey, old
 	newStartKeyHex := hex.EncodeToString(newStartKey)
 	oldStartKeyHex := hex.EncodeToString(oldStartKey)
 	sql := fmt.Sprintf(updateDeleteRangeSQL, newStartKeyHex, dr.JobID, dr.ElementID, oldStartKeyHex)
-	_, err := ctx.(sqlexec.SQLExecutor).Execute(goctx.TODO(), sql)
+	_, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	return errors.Trace(err)
 }

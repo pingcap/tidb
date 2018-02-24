@@ -16,14 +16,14 @@ package distsql
 import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tipb/go-tipb"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 type mockResponse struct {
 	count int
 }
 
-func (resp *mockResponse) Next(ctx goctx.Context) ([]byte, error) {
+func (resp *mockResponse) Next(ctx context.Context) ([]byte, error) {
 	resp.count++
 	if resp.count == 100 {
 		return nil, errors.New("error happened")

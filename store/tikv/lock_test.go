@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 type testLockSuite struct {
@@ -58,7 +58,7 @@ func (s *testLockSuite) lockKey(c *C, key, value, primaryKey, primaryValue []byt
 	c.Assert(err, IsNil)
 	tpc.keys = [][]byte{primaryKey, key}
 
-	ctx := goctx.Background()
+	ctx := context.Background()
 	err = tpc.prewriteKeys(NewBackoffer(prewriteMaxBackoff, ctx), tpc.keys)
 	c.Assert(err, IsNil)
 
@@ -82,7 +82,7 @@ func (s *testLockSuite) putKV(c *C, key, value []byte) (uint64, uint64) {
 	c.Assert(err, IsNil)
 	err = txn.Set(key, value)
 	c.Assert(err, IsNil)
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 	return txn.StartTS(), txn.(*tikvTxn).commitTS
 }
@@ -157,7 +157,7 @@ func (s *testLockSuite) TestCleanLock(c *C) {
 		err = txn.Set([]byte{ch}, []byte{ch + 1})
 		c.Assert(err, IsNil)
 	}
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 }
 
@@ -199,14 +199,14 @@ func (s *testLockSuite) TestRC(c *C) {
 func (s *testLockSuite) prewriteTxn(c *C, txn *tikvTxn) {
 	committer, err := newTwoPhaseCommitter(txn)
 	c.Assert(err, IsNil)
-	err = committer.prewriteKeys(NewBackoffer(prewriteMaxBackoff, goctx.Background()), committer.keys)
+	err = committer.prewriteKeys(NewBackoffer(prewriteMaxBackoff, context.Background()), committer.keys)
 	c.Assert(err, IsNil)
 }
 
 func (s *testLockSuite) mustGetLock(c *C, key []byte) *Lock {
 	ver, err := s.store.CurrentVersion()
 	c.Assert(err, IsNil)
-	bo := NewBackoffer(getMaxBackoff, goctx.Background())
+	bo := NewBackoffer(getMaxBackoff, context.Background())
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdGet,
 		Get: &kvrpcpb.GetRequest{

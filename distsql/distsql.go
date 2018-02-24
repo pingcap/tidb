@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/goroutine_pool"
 	"github.com/pingcap/tipb/go-tipb"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var (
@@ -42,16 +42,16 @@ var (
 // SelectResult is an iterator of coprocessor partial results.
 type SelectResult interface {
 	// Next gets the next partial result.
-	Next(goctx.Context) (PartialResult, error)
+	Next(context.Context) (PartialResult, error)
 	// NextRaw gets the next raw result.
-	NextRaw(goctx.Context) ([]byte, error)
+	NextRaw(context.Context) ([]byte, error)
 	// NextChunk reads the data into chunk.
-	NextChunk(goctx.Context, *chunk.Chunk) error
+	NextChunk(context.Context, *chunk.Chunk) error
 	// Close closes the iterator.
 	Close() error
 	// Fetch fetches partial results from client.
 	// The caller should call SetFields() before call Fetch().
-	Fetch(goctx.Context)
+	Fetch(context.Context)
 	// ScanKeys gets the total scan row count.
 	ScanKeys() int64
 }
@@ -60,7 +60,7 @@ type SelectResult interface {
 type PartialResult interface {
 	// Next returns the next rowData of the sub result.
 	// If no more row to return, rowData would be nil.
-	Next(goctx.Context) (rowData []types.Datum, err error)
+	Next(context.Context) (rowData []types.Datum, err error)
 	// Close closes the partial result.
 	Close() error
 }
@@ -88,13 +88,13 @@ type resultWithErr struct {
 	err    error
 }
 
-func (r *selectResult) Fetch(ctx goctx.Context) {
+func (r *selectResult) Fetch(ctx context.Context) {
 	selectResultGP.Go(func() {
 		r.fetch(ctx)
 	})
 }
 
-func (r *selectResult) fetch(goCtx goctx.Context) {
+func (r *selectResult) fetch(ctx context.Context) {
 	startTime := time.Now()
 	defer func() {
 		close(r.results)
@@ -102,7 +102,7 @@ func (r *selectResult) fetch(goCtx goctx.Context) {
 		metrics.DistSQLQueryHistgram.WithLabelValues(r.label).Observe(duration.Seconds())
 	}()
 	for {
-		resultSubset, err := r.resp.Next(goCtx)
+		resultSubset, err := r.resp.Next(ctx)
 		if err != nil {
 			r.results <- resultWithErr{err: errors.Trace(err)}
 			return
@@ -116,14 +116,14 @@ func (r *selectResult) fetch(goCtx goctx.Context) {
 		case <-r.closed:
 			// If selectResult called Close() already, make fetch goroutine exit.
 			return
-		case <-goCtx.Done():
+		case <-ctx.Done():
 			return
 		}
 	}
 }
 
 // Next returns the next row.
-func (r *selectResult) Next(goCtx goctx.Context) (PartialResult, error) {
+func (r *selectResult) Next(ctx context.Context) (PartialResult, error) {
 	re := <-r.results
 	if re.err != nil {
 		return nil, errors.Trace(re.err)
@@ -146,7 +146,7 @@ func (r *selectResult) Next(goCtx goctx.Context) (PartialResult, error) {
 }
 
 // NextRaw returns the next raw partial result.
-func (r *selectResult) NextRaw(goCtx goctx.Context) ([]byte, error) {
+func (r *selectResult) NextRaw(ctx context.Context) ([]byte, error) {
 	re := <-r.results
 	r.partialCount++
 	r.scanKeys = -1
@@ -154,7 +154,7 @@ func (r *selectResult) NextRaw(goCtx goctx.Context) ([]byte, error) {
 }
 
 // NextChunk reads data to the chunk.
-func (r *selectResult) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+func (r *selectResult) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	for chk.NumRows() < r.ctx.GetSessionVars().MaxChunkSize {
 		if r.selectResp == nil || r.respChkIdx == len(r.selectResp.Chunks) {
@@ -258,7 +258,7 @@ func (pr *partialResult) unmarshal(resultSubset []byte) error {
 
 // Next returns the next row of the sub result.
 // If no more row to return, data would be nil.
-func (pr *partialResult) Next(goCtx goctx.Context) (data []types.Datum, err error) {
+func (pr *partialResult) Next(ctx context.Context) (data []types.Datum, err error) {
 	nextChunk := pr.getChunk()
 	if nextChunk == nil {
 		return nil, nil
@@ -299,8 +299,8 @@ func (pr *partialResult) Close() error {
 
 // Select sends a DAG request, returns SelectResult.
 // In kvReq, KeyRanges is required, Concurrency/KeepOrder/Desc/IsolationLevel/Priority are optional.
-func Select(goCtx goctx.Context, ctx sessionctx.Context, kvReq *kv.Request, fieldTypes []*types.FieldType) (SelectResult, error) {
-	resp := ctx.GetClient().Send(goCtx, kvReq)
+func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fieldTypes []*types.FieldType) (SelectResult, error) {
+	resp := sctx.GetClient().Send(ctx, kvReq)
 	if resp == nil {
 		err := errors.New("client returns nil response")
 		return nil, errors.Trace(err)
@@ -311,7 +311,7 @@ func Select(goCtx goctx.Context, ctx sessionctx.Context, kvReq *kv.Request, fiel
 			resp:       resp,
 			rowLen:     len(fieldTypes),
 			fieldTypes: fieldTypes,
-			ctx:        ctx,
+			ctx:        sctx,
 		}, nil
 	}
 
@@ -322,12 +322,12 @@ func Select(goCtx goctx.Context, ctx sessionctx.Context, kvReq *kv.Request, fiel
 		closed:     make(chan struct{}),
 		rowLen:     len(fieldTypes),
 		fieldTypes: fieldTypes,
-		ctx:        ctx,
+		ctx:        sctx,
 	}, nil
 }
 
 // Analyze do a analyze request.
-func Analyze(ctx goctx.Context, client kv.Client, kvReq *kv.Request) (SelectResult, error) {
+func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request) (SelectResult, error) {
 	resp := client.Send(ctx, kvReq)
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
