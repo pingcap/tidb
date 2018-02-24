@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
@@ -212,11 +212,11 @@ func (s *testSuite) TestScan(c *C) {
 		se.Close()
 	}()
 
-	_, err = se.Execute(goctx.Background(), "create database test_admin")
+	_, err = se.Execute(context.Background(), "create database test_admin")
 	c.Assert(err, IsNil)
-	_, err = se.Execute(goctx.Background(), "use test_admin")
+	_, err = se.Execute(context.Background(), "use test_admin")
 	c.Assert(err, IsNil)
-	_, err = se.Execute(goctx.Background(), "create table t (pk int primary key, c int default 1, c1 int default 1, unique key c(c))")
+	_, err = se.Execute(context.Background(), "create table t (pk int primary key, c int default 1, c1 int default 1, unique key c(c))")
 	c.Assert(err, IsNil)
 	is := dom.InfoSchema()
 	db := model.NewCIStr("test_admin")
@@ -234,7 +234,7 @@ func (s *testSuite) TestScan(c *C) {
 	c.Assert(s.ctx.NewTxn(), IsNil)
 	_, err = tb.AddRecord(s.ctx, types.MakeDatums(1, 10, 11), false)
 	c.Assert(err, IsNil)
-	c.Assert(s.ctx.Txn().Commit(goctx.Background()), IsNil)
+	c.Assert(s.ctx.Txn().Commit(context.Background()), IsNil)
 
 	record1 := &RecordData{Handle: int64(1), Values: types.MakeDatums(int64(1), int64(10), int64(11))}
 	record2 := &RecordData{Handle: int64(2), Values: types.MakeDatums(int64(2), int64(20), int64(21))}
@@ -247,7 +247,7 @@ func (s *testSuite) TestScan(c *C) {
 	c.Assert(s.ctx.NewTxn(), IsNil)
 	_, err = tb.AddRecord(s.ctx, record2.Values, false)
 	c.Assert(err, IsNil)
-	c.Assert(s.ctx.Txn().Commit(goctx.Background()), IsNil)
+	c.Assert(s.ctx.Txn().Commit(context.Background()), IsNil)
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 
@@ -291,7 +291,7 @@ func (s *testSuite) TestScan(c *C) {
 	c.Assert(err, IsNil)
 	err = tb.RemoveRecord(s.ctx, 2, record2.Values)
 	c.Assert(err, IsNil)
-	c.Assert(s.ctx.Txn().Commit(goctx.Background()), IsNil)
+	c.Assert(s.ctx.Txn().Commit(context.Background()), IsNil)
 }
 
 func newDiffRetError(prefix string, ra, rb *RecordData) string {
@@ -363,7 +363,7 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 	c.Assert(err, IsNil)
 	key := tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 4))
 	setColValue(c, txn, key, types.NewDatum(int64(40)))
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	txn, err = s.store.Begin()
@@ -384,7 +384,7 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 	c.Assert(err, IsNil)
 	key = tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 3))
 	setColValue(c, txn, key, types.NewDatum(int64(31)))
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	txn, err = s.store.Begin()
@@ -402,7 +402,7 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 	txn.Delete(key)
 	key = tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 5))
 	setColValue(c, txn, key, types.NewDatum(int64(30)))
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	txn, err = s.store.Begin()
@@ -422,7 +422,7 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 	txn.Delete(key)
 	key = tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 3))
 	setColValue(c, txn, key, types.NewDatum(int64(30)))
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	txn, err = s.store.Begin()
@@ -443,7 +443,7 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 	c.Assert(err, IsNil)
 	key = tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 4))
 	setColValue(c, txn, key, types.NewDatum(int64(40)))
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	txn, err = s.store.Begin()

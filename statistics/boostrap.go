@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 func initStatsMeta4Chunk(is infoschema.InfoSchema, tables statsCache, iter *chunk.Iterator4Chunk) {
@@ -50,7 +50,7 @@ func initStatsMeta4Chunk(is infoschema.InfoSchema, tables statsCache, iter *chun
 
 func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
 	sql := "select version, table_id, modify_count, count from mysql.stats_meta"
-	rc, err := h.ctx.(sqlexec.SQLExecutor).Execute(goctx.TODO(), sql)
+	rc, err := h.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	if len(rc) > 0 {
 		defer terror.Call(rc[0].Close)
 	}
@@ -61,7 +61,7 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
 	chk := rc[0].NewChunk()
 	iter := chunk.NewIterator4Chunk(chk)
 	for {
-		err := rc[0].NextChunk(goctx.TODO(), chk)
+		err := rc[0].NextChunk(context.TODO(), chk)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -118,7 +118,7 @@ func initStatsHistograms4Chunk(is infoschema.InfoSchema, tables statsCache, iter
 
 func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables statsCache) error {
 	sql := "select table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch from mysql.stats_histograms"
-	rc, err := h.ctx.(sqlexec.SQLExecutor).Execute(goctx.TODO(), sql)
+	rc, err := h.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	if len(rc) > 0 {
 		defer terror.Call(rc[0].Close)
 	}
@@ -128,7 +128,7 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables statsCache
 	chk := rc[0].NewChunk()
 	iter := chunk.NewIterator4Chunk(chk)
 	for {
-		err := rc[0].NextChunk(goctx.TODO(), chk)
+		err := rc[0].NextChunk(context.TODO(), chk)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -188,7 +188,7 @@ func initStatsBuckets4Chunk(ctx sessionctx.Context, tables statsCache, iter *chu
 
 func (h *Handle) initStatsBuckets(tables statsCache) error {
 	sql := "select table_id, is_index, hist_id, count, repeats, lower_bound, upper_bound from mysql.stats_buckets order by table_id, is_index, hist_id, bucket_id"
-	rc, err := h.ctx.(sqlexec.SQLExecutor).Execute(goctx.TODO(), sql)
+	rc, err := h.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	if len(rc) > 0 {
 		defer terror.Call(rc[0].Close)
 	}
@@ -198,7 +198,7 @@ func (h *Handle) initStatsBuckets(tables statsCache) error {
 	chk := rc[0].NewChunk()
 	iter := chunk.NewIterator4Chunk(chk)
 	for {
-		err := rc[0].NextChunk(goctx.TODO(), chk)
+		err := rc[0].NextChunk(context.TODO(), chk)
 		if err != nil {
 			return errors.Trace(err)
 		}

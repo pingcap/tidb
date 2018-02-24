@@ -19,7 +19,7 @@ import (
 
 	gofail "github.com/coreos/gofail/runtime"
 	. "github.com/pingcap/check"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 func (s *testStoreSuite) TestFailBusyServerKV(c *C) {
@@ -27,7 +27,7 @@ func (s *testStoreSuite) TestFailBusyServerKV(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Set([]byte("key"), []byte("value"))
 	c.Assert(err, IsNil)
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	var wg sync.WaitGroup

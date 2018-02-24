@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 type testCommitterSuite struct {
@@ -72,7 +72,7 @@ func (s *testCommitterSuite) mustCommit(c *C, m map[string]string) {
 		err := txn.Set([]byte(k), []byte(v))
 		c.Assert(err, IsNil)
 	}
-	err := txn.Commit(goctx.Background())
+	err := txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	s.checkValues(c, m)
@@ -106,7 +106,7 @@ func (s *testCommitterSuite) TestCommitRollback(c *C) {
 		"c": "c2",
 	})
 
-	err := txn.Commit(goctx.Background())
+	err := txn.Commit(context.Background())
 	c.Assert(err, NotNil)
 
 	s.checkValues(c, map[string]string{
@@ -122,7 +122,7 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 		"b": "b0",
 	})
 
-	ctx := goctx.Background()
+	ctx := context.Background()
 	txn1 := s.begin(c)
 	err := txn1.Set([]byte("a"), []byte("a1"))
 	c.Assert(err, IsNil)
@@ -171,11 +171,11 @@ func (s *testCommitterSuite) TestContextCancel(c *C) {
 	committer, err := newTwoPhaseCommitter(txn1)
 	c.Assert(err, IsNil)
 
-	bo := NewBackoffer(prewriteMaxBackoff, goctx.Background())
+	bo := NewBackoffer(prewriteMaxBackoff, context.Background())
 	backoffer, cancel := bo.Fork()
 	cancel() // cancel the context
 	err = committer.prewriteKeys(backoffer, committer.keys)
-	c.Assert(errors.Cause(err), Equals, goctx.Canceled)
+	c.Assert(errors.Cause(err), Equals, context.Canceled)
 }
 
 func (s *testCommitterSuite) TestContextCancelRetryable(c *C) {
@@ -185,12 +185,12 @@ func (s *testCommitterSuite) TestContextCancelRetryable(c *C) {
 	c.Assert(err, IsNil)
 	committer, err := newTwoPhaseCommitter(txn1)
 	c.Assert(err, IsNil)
-	err = committer.prewriteKeys(NewBackoffer(prewriteMaxBackoff, goctx.Background()), committer.keys)
+	err = committer.prewriteKeys(NewBackoffer(prewriteMaxBackoff, context.Background()), committer.keys)
 	c.Assert(err, IsNil)
 	// txn3 writes "c"
 	err = txn3.Set([]byte("c"), []byte("c3"))
 	c.Assert(err, IsNil)
-	err = txn3.Commit(goctx.Background())
+	err = txn3.Commit(context.Background())
 	c.Assert(err, IsNil)
 	// txn2 writes "a"(PK), "b", "c" on different regions.
 	// "c" will return a retryable error.
@@ -201,13 +201,13 @@ func (s *testCommitterSuite) TestContextCancelRetryable(c *C) {
 	c.Assert(err, IsNil)
 	err = txn2.Set([]byte("c"), []byte("c2"))
 	c.Assert(err, IsNil)
-	err = txn2.Commit(goctx.Background())
+	err = txn2.Commit(context.Background())
 	c.Assert(err, NotNil)
 	c.Assert(strings.Contains(err.Error(), txnRetryableMark), IsTrue)
 }
 
 func (s *testCommitterSuite) mustGetRegionID(c *C, key []byte) uint64 {
-	loc, err := s.store.regionCache.LocateKey(NewBackoffer(getMaxBackoff, goctx.Background()), key)
+	loc, err := s.store.regionCache.LocateKey(NewBackoffer(getMaxBackoff, context.Background()), key)
 	c.Assert(err, IsNil)
 	return loc.Region.id
 }
@@ -215,7 +215,7 @@ func (s *testCommitterSuite) mustGetRegionID(c *C, key []byte) uint64 {
 func (s *testCommitterSuite) isKeyLocked(c *C, key []byte) bool {
 	ver, err := s.store.CurrentVersion()
 	c.Assert(err, IsNil)
-	bo := NewBackoffer(getMaxBackoff, goctx.Background())
+	bo := NewBackoffer(getMaxBackoff, context.Background())
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdGet,
 		Get: &kvrpcpb.GetRequest{
@@ -247,7 +247,7 @@ func (s *testCommitterSuite) TestPrewriteCancel(c *C) {
 	// txn2 writes "b"
 	err := txn2.Set([]byte("b"), []byte("b2"))
 	c.Assert(err, IsNil)
-	err = txn2.Commit(goctx.Background())
+	err = txn2.Commit(context.Background())
 	c.Assert(err, IsNil)
 	// txn1 writes "a"(PK), "b", "c" on different regions.
 	// "b" will return an error and cancel commit.
@@ -257,7 +257,7 @@ func (s *testCommitterSuite) TestPrewriteCancel(c *C) {
 	c.Assert(err, IsNil)
 	err = txn1.Set([]byte("c"), []byte("c1"))
 	c.Assert(err, IsNil)
-	err = txn1.Commit(goctx.Background())
+	err = txn1.Commit(context.Background())
 	c.Assert(err, NotNil)
 	// "c" should be cleaned up in reasonable time.
 	for i := 0; i < 50; i++ {
@@ -275,7 +275,7 @@ type slowClient struct {
 	regionDelays map[uint64]time.Duration
 }
 
-func (c *slowClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+func (c *slowClient) SendReq(ctx context.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 	for id, delay := range c.regionDelays {
 		reqCtx := &req.Context
 		if reqCtx.GetRegionId() == id {
@@ -297,7 +297,7 @@ func (s *testCommitterSuite) TestIllegalTso(c *C) {
 	}
 	// make start ts bigger.
 	txn.startTS = uint64(math.MaxUint64)
-	err := txn.Commit(goctx.Background())
+	err := txn.Commit(context.Background())
 	c.Assert(err, NotNil)
 }
 
@@ -311,7 +311,7 @@ func (s *testCommitterSuite) TestCommitBeforePrewrite(c *C) {
 	c.Assert(err, IsNil)
 	commiter, err := newTwoPhaseCommitter(txn)
 	c.Assert(err, IsNil)
-	ctx := goctx.Background()
+	ctx := context.Background()
 	err = commiter.cleanupKeys(NewBackoffer(cleanupMaxBackoff, ctx), commiter.keys)
 	c.Assert(err, IsNil)
 	err = commiter.prewriteKeys(NewBackoffer(prewriteMaxBackoff, ctx), commiter.keys)
@@ -324,7 +324,7 @@ func (s *testCommitterSuite) TestPrewritePrimaryKeyFailed(c *C) {
 	txn1 := s.begin(c)
 	err := txn1.Set([]byte("a"), []byte("a1"))
 	c.Assert(err, IsNil)
-	err = txn1.Commit(goctx.Background())
+	err = txn1.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	// check a
@@ -341,7 +341,7 @@ func (s *testCommitterSuite) TestPrewritePrimaryKeyFailed(c *C) {
 	err = txn2.Set([]byte("b"), []byte("b2"))
 	c.Assert(err, IsNil)
 	// prewrite:primary a failed, b success
-	err = txn2.Commit(goctx.Background())
+	err = txn2.Commit(context.Background())
 	c.Assert(err, NotNil)
 
 	// txn2 failed with a rollback for record a.
@@ -353,7 +353,7 @@ func (s *testCommitterSuite) TestPrewritePrimaryKeyFailed(c *C) {
 	errMsgMustContain(c, err, "key not exist")
 
 	// clean again, shouldn't be failed when a rollback already exist.
-	ctx := goctx.Background()
+	ctx := context.Background()
 	commiter, err := newTwoPhaseCommitter(txn2)
 	c.Assert(err, IsNil)
 	err = commiter.cleanupKeys(NewBackoffer(cleanupMaxBackoff, ctx), commiter.keys)
@@ -368,7 +368,7 @@ func (s *testCommitterSuite) TestPrewritePrimaryKeyFailed(c *C) {
 	// update data in a new txn, should be success.
 	err = txn.Set([]byte("a"), []byte("a3"))
 	c.Assert(err, IsNil)
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 	// check value
 	txn = s.begin(c)
