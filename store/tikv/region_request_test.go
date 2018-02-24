@@ -49,7 +49,7 @@ func (s *testRegionRequestSuite) SetUpTest(c *C) {
 	s.store, s.peer, s.region = mocktikv.BootstrapWithSingleStore(s.cluster)
 	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
 	s.cache = NewRegionCache(pdCli)
-	s.bo = NewBackoffer(1, context.Background())
+	s.bo = NewBackoffer(context.Background(), 1)
 	s.mvccStore = mocktikv.NewMvccStore()
 	client := mocktikv.NewRPCClient(s.cluster, s.mvccStore)
 	s.regionRequestSender = NewRegionRequestSender(s.cache, client)

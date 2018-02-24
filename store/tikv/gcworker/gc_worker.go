@@ -345,7 +345,7 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64) error {
 		return errors.Trace(err)
 	}
 
-	bo := tikv.NewBackoffer(tikv.GcDeleteRangeMaxBackoff, ctx)
+	bo := tikv.NewBackoffer(ctx, tikv.GcDeleteRangeMaxBackoff)
 	log.Infof("[gc worker] %s start delete %v ranges", w.uuid, len(ranges))
 	startTime := time.Now()
 	regions := 0
@@ -458,7 +458,7 @@ func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64) error {
 			Limit:      gcScanLockLimit,
 		},
 	}
-	bo := tikv.NewBackoffer(tikv.GcResolveLockMaxBackoff, ctx)
+	bo := tikv.NewBackoffer(ctx, tikv.GcResolveLockMaxBackoff)
 
 	log.Infof("[gc worker] %s start resolve locks, safePoint: %v.", w.uuid, safePoint)
 	startTime := time.Now()
@@ -584,7 +584,7 @@ func (w *gcTaskWorker) doGCForRange(startKey []byte, endKey []byte, safePoint ui
 	}()
 	key := startKey
 	for {
-		bo := tikv.NewBackoffer(tikv.GcOneRegionMaxBackoff, context.Background())
+		bo := tikv.NewBackoffer(context.Background(), tikv.GcOneRegionMaxBackoff)
 		loc, err := w.store.GetRegionCache().LocateKey(bo, key)
 		if err != nil {
 			return errors.Trace(err)
@@ -717,7 +717,7 @@ func (w *GCWorker) doGC(ctx context.Context, safePoint uint64) error {
 		default:
 		}
 
-		bo := tikv.NewBackoffer(tikv.GcOneRegionMaxBackoff, ctx)
+		bo := tikv.NewBackoffer(ctx, tikv.GcOneRegionMaxBackoff)
 		task, err := w.genNextGCTask(bo, safePoint, key)
 		if err != nil {
 			return errors.Trace(err)
