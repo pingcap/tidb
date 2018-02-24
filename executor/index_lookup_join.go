@@ -283,6 +283,11 @@ func (e *IndexLookUpJoin) lookUpMatchedInners(task *lookUpJoinTask, rowIdx int) 
 
 func (ow *outerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 	defer func() {
+		if r := recover(); r != nil {
+			task := &lookUpJoinTask{doneCh: make(chan error, 1)}
+			task.doneCh <- errors.Errorf("%v", r)
+			ow.pushToResultChan(ctx, task)
+		}
 		close(ow.resultCh)
 		close(ow.innerCh)
 		wg.Done()
@@ -291,22 +296,38 @@ func (ow *outerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 		task, err := ow.buildTask(ctx)
 		if err != nil {
 			task.doneCh <- errors.Trace(err)
+			ow.pushToResultChan(ctx, task)
 			return
 		}
 		if task == nil {
 			return
 		}
-		select {
-		case <-ctx.Done():
+
+		if finished := ow.pushToInnerChan(ctx, task); finished {
 			return
-		case ow.resultCh <- task:
 		}
-		select {
-		case <-ctx.Done():
+		if finished := ow.pushToResultChan(ctx, task); finished {
 			return
-		case ow.innerCh <- task:
 		}
 	}
+}
+
+func (ow *outerWorker) pushToResultChan(ctx context.Context, task *lookUpJoinTask) bool {
+	select {
+	case <-ctx.Done():
+		return true
+	case ow.resultCh <- task:
+	}
+	return false
+}
+
+func (ow *outerWorker) pushToInnerChan(ctx context.Context, task *lookUpJoinTask) bool {
+	select {
+	case <-ctx.Done():
+		return true
+	case ow.innerCh <- task:
+	}
+	return false
 }
 
 // buildTask builds a lookUpJoinTask and read outer rows.
@@ -355,19 +376,28 @@ func (ow *outerWorker) increaseBatchSize() {
 }
 
 func (iw *innerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
-	defer wg.Done()
-	for {
+	var task *lookUpJoinTask
+	defer func() {
+		if r := recover(); r != nil {
+			// "task != nil" is guaranteed when panic happened.
+			task.doneCh <- errors.Errorf("%v", r)
+		}
+		wg.Done()
+	}()
+
+	for ok := true; ok; {
 		select {
-		case task, ok := <-iw.taskCh:
+		case task, ok = <-iw.taskCh:
 			if !ok {
 				return
 			}
-			err := iw.handleTask(ctx, task)
-			task.doneCh <- errors.Trace(err)
-			if err != nil {
-				return
-			}
 		case <-ctx.Done():
+			return
+		}
+
+		err := iw.handleTask(ctx, task)
+		task.doneCh <- errors.Trace(err)
+		if err != nil {
 			return
 		}
 	}
