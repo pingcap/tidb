@@ -18,7 +18,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb/util/codec"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 type codecPDClient struct {
@@ -27,7 +27,7 @@ type codecPDClient struct {
 
 // GetRegion encodes the key before send requests to pd-server and decodes the
 // returned StartKey && EndKey from pd-server.
-func (c *codecPDClient) GetRegion(ctx goctx.Context, key []byte) (*metapb.Region, *metapb.Peer, error) {
+func (c *codecPDClient) GetRegion(ctx context.Context, key []byte) (*metapb.Region, *metapb.Peer, error) {
 	encodedKey := codec.EncodeBytes([]byte(nil), key)
 	region, peer, err := c.Client.GetRegion(ctx, encodedKey)
 	return processRegionResult(region, peer, err)
@@ -35,7 +35,7 @@ func (c *codecPDClient) GetRegion(ctx goctx.Context, key []byte) (*metapb.Region
 
 // GetRegion encodes the key before send requests to pd-server and decodes the
 // returned StartKey && EndKey from pd-server.
-func (c *codecPDClient) GetRegionByID(ctx goctx.Context, regionID uint64) (*metapb.Region, *metapb.Peer, error) {
+func (c *codecPDClient) GetRegionByID(ctx context.Context, regionID uint64) (*metapb.Region, *metapb.Peer, error) {
 	region, peer, err := c.Client.GetRegionByID(ctx, regionID)
 	return processRegionResult(region, peer, err)
 }

@@ -18,7 +18,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"golang.org/x/net/context"
-	goctx "golang.org/x/net/context"
 )
 
 type testSplitSuite struct {
@@ -87,7 +86,7 @@ func (s *testSplitSuite) TestStaleEpoch(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Set([]byte("c"), []byte("c"))
 	c.Assert(err, IsNil)
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	// Initiate a split and disable the PD client. If it still works, the

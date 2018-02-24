@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/goroutine_pool"
 	"github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 type twoPhaseCommitAction int
@@ -261,7 +261,7 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 
 	// For prewrite, stop sending other requests after receiving first error.
 	backoffer := bo
-	var cancel goctx.CancelFunc
+	var cancel context.CancelFunc
 	if action == actionPrewrite {
 		backoffer, cancel = bo.Fork()
 	}
@@ -562,7 +562,7 @@ func (c *twoPhaseCommitter) cleanupKeys(bo *Backoffer, keys [][]byte) error {
 const maxTxnTimeUse = 590000
 
 // execute executes the two-phase commit protocol.
-func (c *twoPhaseCommitter) execute(ctx goctx.Context) error {
+func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 	defer func() {
 		// Always clean up all written keys if the txn does not commit.
 		c.mu.RLock()
@@ -572,7 +572,7 @@ func (c *twoPhaseCommitter) execute(ctx goctx.Context) error {
 		c.mu.RUnlock()
 		if !committed && !undetermined {
 			twoPhaseCommitGP.Go(func() {
-				err := c.cleanupKeys(NewBackoffer(cleanupMaxBackoff, goctx.Background()), writtenKeys)
+				err := c.cleanupKeys(NewBackoffer(cleanupMaxBackoff, context.Background()), writtenKeys)
 				if err != nil {
 					metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("rollback").Inc()
 					log.Infof("2PC cleanup err: %v, tid: %d", err, c.startTS)
@@ -595,7 +595,7 @@ func (c *twoPhaseCommitter) execute(ctx goctx.Context) error {
 	// I'm not sure is it safe to cancel 2pc commit process at any time,
 	// So use a new Background() context instead of inherit the ctx, this is by design,
 	// to avoid the cancel signal from parent context.
-	ctx = opentracing.ContextWithSpan(goctx.Background(), span)
+	ctx = opentracing.ContextWithSpan(context.Background(), span)
 
 	binlogChan := c.prewriteBinlog()
 	err := c.prewriteKeys(NewBackoffer(prewriteMaxBackoff, ctx), c.keys)

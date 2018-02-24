@@ -16,7 +16,7 @@ package kv
 import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/store/tikv/oracle"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 // mockTxn is a txn that returns a retryAble error when called Commit.
@@ -26,7 +26,7 @@ type mockTxn struct {
 }
 
 // Commit always returns a retryable error.
-func (t *mockTxn) Commit(ctx goctx.Context) error {
+func (t *mockTxn) Commit(ctx context.Context) error {
 	return ErrRetryable
 }
 

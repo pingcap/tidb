@@ -20,12 +20,12 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 func (s *testColumnChangeSuite) TestFailBeforeDecodeArgs(c *C) {
 	defer testleak.AfterTest(c)()
-	d := testNewDDL(goctx.Background(), nil, s.store, nil, nil, testLease)
+	d := testNewDDL(context.Background(), nil, s.store, nil, nil, testLease)
 	defer d.Stop()
 	// create table t_fail (c1 int, c2 int);
 	tblInfo := testTableInfo(c, d, "t_fail", 2)
@@ -38,7 +38,7 @@ func (s *testColumnChangeSuite) TestFailBeforeDecodeArgs(c *C) {
 	row := types.MakeDatums(1, 2)
 	_, err = originTable.AddRecord(ctx, row, false)
 	c.Assert(err, IsNil)
-	err = ctx.Txn().Commit(goctx.Background())
+	err = ctx.Txn().Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	tc := &TestDDLCallback{}
