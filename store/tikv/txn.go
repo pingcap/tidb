@@ -44,7 +44,7 @@ type tikvTxn struct {
 }
 
 func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
-	bo := NewBackoffer(tsoMaxBackoff, context.Background())
+	bo := NewBackoffer(context.Background(), tsoMaxBackoff)
 	startTS, err := store.getTimestampWithRetry(bo)
 	if err != nil {
 		return nil, errors.Trace(err)

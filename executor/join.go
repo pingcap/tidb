@@ -293,6 +293,9 @@ func (e *HashJoinExec) fetchOuterChunks(ctx context.Context) {
 		for i := range e.outerResultChs {
 			close(e.outerResultChs[i])
 		}
+		if r := recover(); r != nil {
+			e.joinResultCh <- &hashjoinWorkerResult{err: errors.Errorf("%v", r)}
+		}
 		e.workerWaitGroup.Done()
 	}()
 	for {
@@ -560,7 +563,12 @@ func (e *HashJoinExec) runJoinWorker(workerID int) {
 }
 
 func (e *HashJoinExec) runJoinWorker4Chunk(workerID int) {
-	defer e.workerWaitGroup.Done()
+	defer func() {
+		if r := recover(); r != nil {
+			e.joinResultCh <- &hashjoinWorkerResult{err: errors.Errorf("%v", r)}
+		}
+		e.workerWaitGroup.Done()
+	}()
 	var (
 		outerResult *chunk.Chunk
 		selected    = make([]bool, 0, chunk.InitialCapacity)

@@ -47,7 +47,7 @@ func (s *testDDLTableSplitSuite) TestTableSplit(c *C) {
 		GetRegionCache() *tikv.RegionCache
 	}
 	cache := store.(kvStore).GetRegionCache()
-	loc, err := cache.LocateKey(tikv.NewBackoffer(5000, context.Background()), regionStartKey)
+	loc, err := cache.LocateKey(tikv.NewBackoffer(context.Background(), 5000), regionStartKey)
 	c.Assert(err, IsNil)
 	c.Assert(loc.StartKey, BytesEquals, []byte(regionStartKey))
 }

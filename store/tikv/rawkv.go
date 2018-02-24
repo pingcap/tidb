@@ -194,7 +194,7 @@ func (c *RawKVClient) Scan(startKey []byte, limit int) (keys [][]byte, values []
 }
 
 func (c *RawKVClient) sendReq(key []byte, req *tikvrpc.Request) (*tikvrpc.Response, *KeyLocation, error) {
-	bo := NewBackoffer(rawkvMaxBackoff, context.Background())
+	bo := NewBackoffer(context.Background(), rawkvMaxBackoff)
 	sender := NewRegionRequestSender(c.regionCache, c.rpcClient)
 	for {
 		loc, err := c.regionCache.LocateKey(bo, key)
