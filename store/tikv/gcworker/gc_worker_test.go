@@ -155,7 +155,7 @@ func (s *testGCWorkerSuite) TestDoGCForOneRegion(c *C) {
 	taskWorker := newGCTaskWorker(s.store, nil, nil, s.gcWorker.uuid, &successRegions, &failedRegions)
 
 	ctx := context.Background()
-	bo := tikv.NewBackoffer(tikv.GcOneRegionMaxBackoff, ctx)
+	bo := tikv.NewBackoffer(ctx, tikv.GcOneRegionMaxBackoff)
 	loc, err := s.store.GetRegionCache().LocateKey(bo, []byte(""))
 	c.Assert(err, IsNil)
 	var regionErr *errorpb.Error

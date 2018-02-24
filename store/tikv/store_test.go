@@ -60,9 +60,9 @@ func (s *testStoreSuite) TestOracle(c *C) {
 	s.store.oracle = o
 
 	ctx := context.Background()
-	t1, err := s.store.getTimestampWithRetry(NewBackoffer(100, ctx))
+	t1, err := s.store.getTimestampWithRetry(NewBackoffer(ctx, 100))
 	c.Assert(err, IsNil)
-	t2, err := s.store.getTimestampWithRetry(NewBackoffer(100, ctx))
+	t2, err := s.store.getTimestampWithRetry(NewBackoffer(ctx, 100))
 	c.Assert(err, IsNil)
 	c.Assert(t1, Less, t2)
 
@@ -79,7 +79,7 @@ func (s *testStoreSuite) TestOracle(c *C) {
 
 	go func() {
 		defer wg.Done()
-		t3, err := s.store.getTimestampWithRetry(NewBackoffer(tsoMaxBackoff, ctx))
+		t3, err := s.store.getTimestampWithRetry(NewBackoffer(ctx, tsoMaxBackoff))
 		c.Assert(err, IsNil)
 		c.Assert(t2, Less, t3)
 		expired := s.store.oracle.IsExpired(t2, 50)
