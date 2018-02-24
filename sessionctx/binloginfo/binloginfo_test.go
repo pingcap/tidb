@@ -23,17 +23,17 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tipb/go-binlog"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 )
 
@@ -53,7 +53,7 @@ type mockBinlogPump struct {
 	}
 }
 
-func (p *mockBinlogPump) WriteBinlog(ctx goctx.Context, req *binlog.WriteBinlogReq) (*binlog.WriteBinlogResp, error) {
+func (p *mockBinlogPump) WriteBinlog(ctx context.Context, req *binlog.WriteBinlogReq) (*binlog.WriteBinlogResp, error) {
 	p.mu.Lock()
 	p.mu.payloads = append(p.mu.payloads, req.Payload)
 	p.mu.Unlock()
@@ -77,7 +77,7 @@ type testBinlogSuite struct {
 }
 
 func (s *testBinlogSuite) SetUpSuite(c *C) {
-	store, err := tikv.NewMockTikvStore()
+	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	s.store = store
 	tidb.SetSchemaLease(0)
@@ -98,7 +98,7 @@ func (s *testBinlogSuite) SetUpSuite(c *C) {
 	_, err = tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	s.tk.MustExec("use test")
-	sessionDomain := domain.GetDomain(s.tk.Se.(context.Context))
+	sessionDomain := domain.GetDomain(s.tk.Se.(sessionctx.Context))
 	s.ddl = sessionDomain.DDL()
 
 	binlogClient := binlog.NewPumpClient(clientCon)
@@ -214,6 +214,19 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 		binlog.MutationType_DeleteRow,
 		binlog.MutationType_Insert,
 		binlog.MutationType_Update,
+	})
+
+	// Test statement rollback.
+	tk.MustExec("create table local_binlog5 (c1 int primary key")
+	tk.MustExec("begin")
+	tk.MustExec("insert into local_binlog5 value (1)")
+	// This statement execute fail and should not write binlog.
+	_, err := tk.Exec("insert into local_binlog5 value (4),(3),(1),(2)")
+	c.Assert(err, NotNil)
+	tk.MustExec("commit")
+	prewriteVal = getLatestBinlogPrewriteValue(c, pump)
+	c.Assert(prewriteVal.Mutations[0].Sequence, DeepEquals, []binlog.MutationType{
+		binlog.MutationType_Insert,
 	})
 
 	checkBinlogCount(c, pump)

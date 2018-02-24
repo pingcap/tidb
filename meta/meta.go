@@ -21,9 +21,11 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/structure"
@@ -78,7 +80,8 @@ var (
 
 // Meta is for handling meta information in a transaction.
 type Meta struct {
-	txn *structure.TxStructure
+	txn     *structure.TxStructure
+	StartTS uint64 // StartTS is the txn's start TS.
 }
 
 // NewMeta creates a Meta in transaction txn.
@@ -86,7 +89,7 @@ func NewMeta(txn kv.Transaction) *Meta {
 	txn.SetOption(kv.Priority, kv.PriorityHigh)
 	txn.SetOption(kv.SyncLog, true)
 	t := structure.NewStructure(txn, txn, mMetaPrefix)
-	return &Meta{txn: t}
+	return &Meta{txn: t, StartTS: txn.StartTS()}
 }
 
 // NewSnapshotMeta creates a Meta with snapshot.
@@ -487,7 +490,9 @@ func (m *Meta) getDDLJob(key []byte, index int64) (*model.Job, error) {
 
 // GetDDLJob returns the DDL job with index.
 func (m *Meta) GetDDLJob(index int64) (*model.Job, error) {
+	startTime := time.Now()
 	job, err := m.getDDLJob(mDDLJobListKey, index)
+	metrics.MetaHistogram.WithLabelValues(metrics.GetDDLJob, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	return job, errors.Trace(err)
 }
 
@@ -504,7 +509,10 @@ func (m *Meta) updateDDLJob(index int64, job *model.Job, key []byte, updateRawAr
 // UpdateDDLJob updates the DDL job with index.
 // updateRawArgs is used to determine whether to update the raw args when encode the job.
 func (m *Meta) UpdateDDLJob(index int64, job *model.Job, updateRawArgs bool) error {
-	return m.updateDDLJob(index, job, mDDLJobListKey, updateRawArgs)
+	startTime := time.Now()
+	err := m.updateDDLJob(index, job, mDDLJobListKey, updateRawArgs)
+	metrics.MetaHistogram.WithLabelValues(metrics.UpdateDDLJob, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+	return errors.Trace(err)
 }
 
 // DDLJobQueueLen returns the DDL job queue length.
@@ -545,7 +553,10 @@ func (m *Meta) getHistoryDDLJob(key []byte, id int64) (*model.Job, error) {
 
 // GetHistoryDDLJob gets a history DDL job.
 func (m *Meta) GetHistoryDDLJob(id int64) (*model.Job, error) {
-	return m.getHistoryDDLJob(mDDLJobHistoryKey, id)
+	startTime := time.Now()
+	job, err := m.getHistoryDDLJob(mDDLJobHistoryKey, id)
+	metrics.MetaHistogram.WithLabelValues(metrics.GetHistoryDDLJob, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+	return job, errors.Trace(err)
 }
 
 // GetAllHistoryDDLJobs gets all history DDL jobs.
@@ -627,7 +638,9 @@ func (m *Meta) schemaDiffKey(schemaVersion int64) []byte {
 // GetSchemaDiff gets the modification information on a given schema version.
 func (m *Meta) GetSchemaDiff(schemaVersion int64) (*model.SchemaDiff, error) {
 	diffKey := m.schemaDiffKey(schemaVersion)
+	startTime := time.Now()
 	data, err := m.txn.Get(diffKey)
+	metrics.MetaHistogram.WithLabelValues(metrics.GetSchemaDiff, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -646,7 +659,9 @@ func (m *Meta) SetSchemaDiff(diff *model.SchemaDiff) error {
 		return errors.Trace(err)
 	}
 	diffKey := m.schemaDiffKey(diff.Version)
+	startTime := time.Now()
 	err = m.txn.Set(diffKey, data)
+	metrics.MetaHistogram.WithLabelValues(metrics.SetSchemaDiff, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	return errors.Trace(err)
 }
 

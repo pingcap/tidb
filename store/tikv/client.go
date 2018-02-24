@@ -26,9 +26,10 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/terror"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 )
@@ -51,6 +52,7 @@ const (
 	readTimeoutShort  = 20 * time.Second  // For requests that read/write several key-values.
 	ReadTimeoutMedium = 60 * time.Second  // For requests that may need scan region.
 	ReadTimeoutLong   = 150 * time.Second // For requests that may need scan region multiple times.
+	GCTimeout         = 5 * time.Minute
 
 	grpcInitialWindowSize     = 1 << 30
 	grpcInitialConnWindowSize = 1 << 30
@@ -62,7 +64,7 @@ type Client interface {
 	// Close should release all data.
 	Close() error
 	// SendReq sends Request.
-	SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error)
+	SendReq(ctx context.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error)
 }
 
 type connArray struct {
@@ -100,10 +102,12 @@ func (a *connArray) Init(addr string, security config.Security) error {
 			grpc_prometheus.StreamClientInterceptor,
 			grpc_opentracing.StreamClientInterceptor(),
 		)
-		conn, err := grpc.Dial(
+
+		ctx, cancel := context.WithTimeout(context.Background(), dialTimeout)
+		conn, err := grpc.DialContext(
+			ctx,
 			addr,
 			opt,
-			grpc.WithTimeout(dialTimeout),
 			grpc.WithInitialWindowSize(grpcInitialWindowSize),
 			grpc.WithInitialConnWindowSize(grpcInitialConnWindowSize),
 			grpc.WithUnaryInterceptor(unaryInterceptor),
@@ -111,7 +115,7 @@ func (a *connArray) Init(addr string, security config.Security) error {
 			grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(MaxCallMsgSize)),
 			grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(MaxSendMsgSize)),
 		)
-
+		cancel()
 		if err != nil {
 			// Cleanup if the initialization fails.
 			a.Close()
@@ -203,11 +207,13 @@ func (c *rpcClient) closeConns() {
 }
 
 // SendReq sends a Request to server and receives Response.
-func (c *rpcClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+func (c *rpcClient) SendReq(ctx context.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 	start := time.Now()
 	reqType := req.Type.String()
 	storeID := strconv.FormatUint(req.Context.GetPeer().GetStoreId(), 10)
-	defer func() { sendReqHistogram.WithLabelValues(reqType, storeID).Observe(time.Since(start).Seconds()) }()
+	defer func() {
+		metrics.TiKVSendReqHistogram.WithLabelValues(reqType, storeID).Observe(time.Since(start).Seconds())
+	}()
 
 	conn, err := c.getConn(addr)
 	if err != nil {
@@ -221,7 +227,7 @@ func (c *rpcClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request
 	return resp, nil
 }
 
-func (c *rpcClient) callRPC(ctx goctx.Context, client tikvpb.TikvClient, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+func (c *rpcClient) callRPC(ctx context.Context, client tikvpb.TikvClient, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 	resp := &tikvrpc.Response{}
 	resp.Type = req.Type
 	var err error

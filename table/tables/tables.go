@@ -23,12 +23,11 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
@@ -219,7 +218,7 @@ func (t *Table) FirstKey() kv.Key {
 // UpdateRecord implements table.Table UpdateRecord interface.
 // `touched` means which columns are really modified, used for secondary indices.
 // Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
-func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
+func (t *Table) UpdateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
 	txn := ctx.Txn()
 	// TODO: reuse bs, like AddRecord does.
 	bs := kv.NewBufferStore(txn, kv.DefaultTxnMembufCap)
@@ -281,7 +280,7 @@ func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData, newData []ty
 	return nil
 }
 
-func (t *Table) rebuildIndices(ctx context.Context, rm kv.RetrieverMutator, h int64, touched []bool, oldData []types.Datum, newData []types.Datum) error {
+func (t *Table) rebuildIndices(ctx sessionctx.Context, rm kv.RetrieverMutator, h int64, touched []bool, oldData []types.Datum, newData []types.Datum) error {
 	for _, idx := range t.DeletableIndices() {
 		for _, ic := range idx.Meta().Columns {
 			if !touched[ic.Offset] {
@@ -328,7 +327,7 @@ func adjustRowValuesBuf(writeBufs *variable.WriteStmtBufs, rowLen int) {
 
 // getRollbackableMemStore get a rollbackable BufferStore, when we are importing data,
 // Just add the kv to transaction's membuf directly.
-func (t *Table) getRollbackableMemStore(ctx context.Context) kv.RetrieverMutator {
+func (t *Table) getRollbackableMemStore(ctx sessionctx.Context) kv.RetrieverMutator {
 	if ctx.GetSessionVars().ImportingData {
 		return ctx.Txn()
 	}
@@ -343,7 +342,7 @@ func (t *Table) getRollbackableMemStore(ctx context.Context) kv.RetrieverMutator
 }
 
 // AddRecord implements table.Table AddRecord interface.
-func (t *Table) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
+func (t *Table) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
 	var hasRecordID bool
 	for _, col := range t.Cols() {
 		if col.IsPKHandleColumn(t.meta) {
@@ -445,7 +444,7 @@ func (t *Table) genIndexKeyStr(colVals []types.Datum) (string, error) {
 }
 
 // addIndices adds data into indices. If any key is duplicated, returns the original handle.
-func (t *Table) addIndices(ctx context.Context, recordID int64, r []types.Datum, rm kv.RetrieverMutator, skipHandleCheck bool) (int64, error) {
+func (t *Table) addIndices(ctx sessionctx.Context, recordID int64, r []types.Datum, rm kv.RetrieverMutator, skipHandleCheck bool) (int64, error) {
 	txn := ctx.Txn()
 	// Clean up lazy check error environment
 	defer txn.DelOption(kv.PresumeKeyNotExistsError)
@@ -487,7 +486,7 @@ func (t *Table) addIndices(ctx context.Context, recordID int64, r []types.Datum,
 }
 
 // RowWithCols implements table.Table RowWithCols interface.
-func (t *Table) RowWithCols(ctx context.Context, h int64, cols []*table.Column) ([]types.Datum, error) {
+func (t *Table) RowWithCols(ctx sessionctx.Context, h int64, cols []*table.Column) ([]types.Datum, error) {
 	// Get raw row data from kv.
 	key := t.RecordKey(h)
 	value, err := ctx.Txn().Get(key)
@@ -537,7 +536,7 @@ func (t *Table) RowWithCols(ctx context.Context, h int64, cols []*table.Column) 
 }
 
 // Row implements table.Table Row interface.
-func (t *Table) Row(ctx context.Context, h int64) ([]types.Datum, error) {
+func (t *Table) Row(ctx sessionctx.Context, h int64) ([]types.Datum, error) {
 	r, err := t.RowWithCols(ctx, h, t.Cols())
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -546,7 +545,7 @@ func (t *Table) Row(ctx context.Context, h int64) ([]types.Datum, error) {
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.
-func (t *Table) RemoveRecord(ctx context.Context, h int64, r []types.Datum) error {
+func (t *Table) RemoveRecord(ctx sessionctx.Context, h int64, r []types.Datum) error {
 	err := t.removeRowData(ctx, h)
 	if err != nil {
 		return errors.Trace(err)
@@ -565,7 +564,7 @@ func (t *Table) RemoveRecord(ctx context.Context, h int64, r []types.Datum) erro
 	return errors.Trace(err)
 }
 
-func (t *Table) addInsertBinlog(ctx context.Context, h int64, row []types.Datum, colIDs []int64) error {
+func (t *Table) addInsertBinlog(ctx sessionctx.Context, h int64, row []types.Datum, colIDs []int64) error {
 	mutation := t.getMutation(ctx)
 	pk, err := codec.EncodeValue(ctx.GetSessionVars().StmtCtx, nil, types.NewIntDatum(h))
 	if err != nil {
@@ -581,7 +580,7 @@ func (t *Table) addInsertBinlog(ctx context.Context, h int64, row []types.Datum,
 	return nil
 }
 
-func (t *Table) addUpdateBinlog(ctx context.Context, oldRow, newRow []types.Datum, colIDs []int64) error {
+func (t *Table) addUpdateBinlog(ctx sessionctx.Context, oldRow, newRow []types.Datum, colIDs []int64) error {
 	old, err := tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, oldRow, colIDs, nil, nil)
 	if err != nil {
 		return errors.Trace(err)
@@ -597,7 +596,7 @@ func (t *Table) addUpdateBinlog(ctx context.Context, oldRow, newRow []types.Datu
 	return nil
 }
 
-func (t *Table) addDeleteBinlog(ctx context.Context, r []types.Datum, colIDs []int64) error {
+func (t *Table) addDeleteBinlog(ctx sessionctx.Context, r []types.Datum, colIDs []int64) error {
 	data, err := tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, r, colIDs, nil, nil)
 	if err != nil {
 		return errors.Trace(err)
@@ -608,7 +607,7 @@ func (t *Table) addDeleteBinlog(ctx context.Context, r []types.Datum, colIDs []i
 	return nil
 }
 
-func (t *Table) removeRowData(ctx context.Context, h int64) error {
+func (t *Table) removeRowData(ctx sessionctx.Context, h int64) error {
 	// Remove row data.
 	err := ctx.Txn().Delete([]byte(t.RecordKey(h)))
 	if err != nil {
@@ -618,7 +617,7 @@ func (t *Table) removeRowData(ctx context.Context, h int64) error {
 }
 
 // removeRowIndices removes all the indices of a row.
-func (t *Table) removeRowIndices(ctx context.Context, h int64, rec []types.Datum) error {
+func (t *Table) removeRowIndices(ctx sessionctx.Context, h int64, rec []types.Datum) error {
 	for _, v := range t.DeletableIndices() {
 		vals, err := v.FetchValues(rec, nil)
 		if err != nil {
@@ -647,7 +646,7 @@ func (t *Table) removeRowIndex(sc *stmtctx.StatementContext, rm kv.RetrieverMuta
 }
 
 // buildIndexForRow implements table.Table BuildIndexForRow interface.
-func (t *Table) buildIndexForRow(ctx context.Context, rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index) error {
+func (t *Table) buildIndexForRow(ctx sessionctx.Context, rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index) error {
 	if _, err := idx.Create(ctx, rm, vals, h); err != nil {
 		return errors.Trace(err)
 	}
@@ -655,7 +654,7 @@ func (t *Table) buildIndexForRow(ctx context.Context, rm kv.RetrieverMutator, h 
 }
 
 // IterRecords implements table.Table IterRecords interface.
-func (t *Table) IterRecords(ctx context.Context, startKey kv.Key, cols []*table.Column,
+func (t *Table) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols []*table.Column,
 	fn table.RecordIterFunc) error {
 	it, err := ctx.Txn().Seek(startKey)
 	if err != nil {
@@ -723,7 +722,7 @@ func (t *Table) IterRecords(ctx context.Context, startKey kv.Key, cols []*table.
 
 // GetColDefaultValue gets a column default value.
 // The defaultVals is used to avoid calculating the default value multiple times.
-func GetColDefaultValue(ctx context.Context, col *table.Column, defaultVals []types.Datum) (
+func GetColDefaultValue(ctx sessionctx.Context, col *table.Column, defaultVals []types.Datum) (
 	colVal types.Datum, err error) {
 	if col.OriginDefaultValue == nil && mysql.HasNotNullFlag(col.Flag) {
 		return colVal, errors.New("Miss column")
@@ -745,7 +744,7 @@ func GetColDefaultValue(ctx context.Context, col *table.Column, defaultVals []ty
 }
 
 // AllocAutoID implements table.Table AllocAutoID interface.
-func (t *Table) AllocAutoID(ctx context.Context) (int64, error) {
+func (t *Table) AllocAutoID(ctx sessionctx.Context) (int64, error) {
 	rowID, err := t.Allocator(ctx).Alloc(t.ID)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -769,7 +768,7 @@ func (t *Table) calcShard(startTS uint64) int64 {
 }
 
 // Allocator implements table.Table Allocator interface.
-func (t *Table) Allocator(ctx context.Context) autoid.Allocator {
+func (t *Table) Allocator(ctx sessionctx.Context) autoid.Allocator {
 	if ctx != nil {
 		sessAlloc := ctx.GetSessionVars().IDAllocator
 		if sessAlloc != nil {
@@ -780,12 +779,12 @@ func (t *Table) Allocator(ctx context.Context) autoid.Allocator {
 }
 
 // RebaseAutoID implements table.Table RebaseAutoID interface.
-func (t *Table) RebaseAutoID(ctx context.Context, newBase int64, isSetStep bool) error {
+func (t *Table) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool) error {
 	return t.Allocator(ctx).Rebase(t.ID, newBase, isSetStep)
 }
 
 // Seek implements table.Table Seek interface.
-func (t *Table) Seek(ctx context.Context, h int64) (int64, bool, error) {
+func (t *Table) Seek(ctx sessionctx.Context, h int64) (int64, bool, error) {
 	seekKey := tablecodec.EncodeRowKeyWithHandle(t.ID, h)
 	iter, err := ctx.Txn().Seek(seekKey)
 	if !iter.Valid() || !iter.Key().HasPrefix(t.RecordPrefix()) {
@@ -804,23 +803,15 @@ func (t *Table) Type() table.Type {
 	return table.NormalTable
 }
 
-func shouldWriteBinlog(ctx context.Context) bool {
+func shouldWriteBinlog(ctx sessionctx.Context) bool {
 	if ctx.GetSessionVars().BinlogClient == nil {
 		return false
 	}
 	return !ctx.GetSessionVars().InRestrictedSQL
 }
 
-func (t *Table) getMutation(ctx context.Context) *binlog.TableMutation {
-	bin := binloginfo.GetPrewriteValue(ctx, true)
-	for i := range bin.Mutations {
-		if bin.Mutations[i].TableId == t.ID {
-			return &bin.Mutations[i]
-		}
-	}
-	idx := len(bin.Mutations)
-	bin.Mutations = append(bin.Mutations, binlog.TableMutation{TableId: t.ID})
-	return &bin.Mutations[idx]
+func (t *Table) getMutation(ctx sessionctx.Context) *binlog.TableMutation {
+	return ctx.StmtGetMutation(t.ID)
 }
 
 // canSkip is for these cases, we can skip the columns in encoded row:
@@ -869,7 +860,7 @@ func FindIndexByColName(t table.Table, name string) table.Index {
 
 // CheckHandleExists check whether recordID key exists. if not exists, return nil,
 // otherwise return kv.ErrKeyExists error.
-func CheckHandleExists(ctx context.Context, t table.Table, recordID int64) error {
+func CheckHandleExists(ctx sessionctx.Context, t table.Table, recordID int64) error {
 	txn := ctx.Txn()
 	// Check key exists.
 	recordKey := t.RecordKey(recordID)

@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -269,6 +270,11 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a int)")
 
+	statistics.AutoAnalyzeMinCnt = 0
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = 1000
+	}()
+
 	do := s.do
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -363,6 +369,21 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 	testKit.MustQuery("select * from t where t.a <= 2 limit 1")
 	h.DumpStatsDeltaToKV()
 	feedback := h.GetQueryFeedback()
+	c.Assert(len(feedback), Equals, 0)
+}
+
+func (s *testStatsUpdateSuite) TestUpdateSystemTable(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (a int, b int)")
+	testKit.MustExec("insert into t values (1,2)")
+	testKit.MustExec("analyze table t")
+	testKit.MustExec("analyze table mysql.stats_histograms")
+	h := s.do.StatsHandle()
+	c.Assert(h.Update(s.do.InfoSchema()), IsNil)
+	feedback := h.GetQueryFeedback()
+	// We may have query feedback for system tables, but we do not need to store them.
 	c.Assert(len(feedback), Equals, 0)
 }
 

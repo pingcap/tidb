@@ -18,11 +18,11 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
 )
 
@@ -58,7 +58,7 @@ type logicalOptRule interface {
 
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
-func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error) {
+func Optimize(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error) {
 	ctx.GetSessionVars().PlanID = 0
 	builder := &planBuilder{
 		ctx:       ctx,
@@ -89,7 +89,7 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 }
 
 // BuildLogicalPlan used to build logical plan from ast.Node.
-func BuildLogicalPlan(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error) {
+func BuildLogicalPlan(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error) {
 	ctx.GetSessionVars().PlanID = 0
 	builder := &planBuilder{
 		ctx:       ctx,
@@ -162,7 +162,7 @@ func existsCartesianProduct(p LogicalPlan) bool {
 		return join.JoinType == InnerJoin || join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin
 	}
 	for _, child := range p.Children() {
-		if existsCartesianProduct(child.(LogicalPlan)) {
+		if existsCartesianProduct(child) {
 			return true
 		}
 	}
@@ -171,15 +171,15 @@ func existsCartesianProduct(p LogicalPlan) bool {
 
 // Optimizer error codes.
 const (
-	CodeOperandColumns      terror.ErrCode = 1
-	CodeInvalidWildCard                    = 3
-	CodeUnsupported                        = 4
-	CodeInvalidGroupFuncUse                = 5
-	CodeStmtNotFound                       = 7
-	CodeWrongParamCount                    = 8
-	CodeSchemaChanged                      = 9
+	CodeOperandColumns  terror.ErrCode = 1
+	CodeInvalidWildCard                = 3
+	CodeUnsupported                    = 4
+	CodeStmtNotFound                   = 7
+	CodeWrongParamCount                = 8
+	CodeSchemaChanged                  = 9
 
 	// MySQL error code.
+	CodeInvalidGroupFuncUse  = mysql.ErrInvalidGroupFuncUse
 	CodeIllegalReference     = mysql.ErrIllegalReference
 	CodeNoDB                 = mysql.ErrNoDB
 	CodeUnknownExplainFormat = mysql.ErrUnknownExplainFormat

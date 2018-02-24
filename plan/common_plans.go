@@ -21,11 +21,11 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/auth"
@@ -84,7 +84,7 @@ type Execute struct {
 	Plan      Plan
 }
 
-func (e *Execute) optimizePreparedPlan(ctx context.Context, is infoschema.InfoSchema) error {
+func (e *Execute) optimizePreparedPlan(ctx sessionctx.Context, is infoschema.InfoSchema) error {
 	vars := ctx.GetSessionVars()
 	if e.Name != "" {
 		e.ExecID = vars.PreparedStmtNameToID[e.Name]
@@ -128,7 +128,7 @@ func (e *Execute) optimizePreparedPlan(ctx context.Context, is infoschema.InfoSc
 	return nil
 }
 
-func (e *Execute) getPhysicalPlan(ctx context.Context, is infoschema.InfoSchema, prepared *Prepared) (Plan, error) {
+func (e *Execute) getPhysicalPlan(ctx sessionctx.Context, is infoschema.InfoSchema, prepared *Prepared) (Plan, error) {
 	var cacheKey kvcache.Key
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.StmtCtx.UseCache = prepared.UseCache
@@ -203,15 +203,15 @@ func (e *Execute) rebuildRange(p Plan) error {
 func (e *Execute) buildRangeForIndexScan(sc *stmtctx.StatementContext, is *PhysicalIndexScan) ([]*ranger.NewRange, error) {
 	cols := expression.ColumnInfos2ColumnsWithDBName(is.DBName, is.Table.Name, is.Columns)
 	idxCols, colLengths := expression.IndexInfo2Cols(cols, is.Index)
-	newRanges := ranger.FullNewRange()
+	ranges := ranger.FullNewRange()
 	if len(idxCols) > 0 {
-		ranges, err := ranger.BuildIndexRange(sc, idxCols, colLengths, is.AccessCondition)
+		var err error
+		ranges, _, _, _, err = ranger.DetachCondAndBuildRangeForIndex(sc, is.conditions, idxCols, colLengths)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		newRanges = ranges
 	}
-	return newRanges, nil
+	return ranges, nil
 }
 
 // Deallocate represents deallocate plan.
@@ -339,6 +339,13 @@ type LoadData struct {
 	GenCols InsertGeneratedColumns
 }
 
+// LoadStats represents a load stats plan.
+type LoadStats struct {
+	baseSchemaProducer
+
+	Path string
+}
+
 // DDL represents a DDL statement plan.
 type DDL struct {
 	baseSchemaProducer
@@ -364,7 +371,7 @@ func (e *Explain) prepareExplainInfo4DAGTask(p PhysicalPlan, taskType string, pa
 	}
 	childrenInfo := strings.Join(childrenIDs, ",")
 	operatorInfo := p.ExplainInfo()
-	count := string(strconv.AppendFloat([]byte{}, p.StatsInfo().count, 'f', -1, 64))
+	count := string(strconv.AppendFloat([]byte{}, p.StatsInfo().count, 'f', 2, 64))
 	row := []string{p.ExplainID(), parentID, childrenInfo, taskType, operatorInfo, count}
 	e.Rows = append(e.Rows, row)
 }

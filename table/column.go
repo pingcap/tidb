@@ -23,10 +23,10 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
@@ -119,7 +119,7 @@ func truncateTrailingSpaces(v *types.Datum) {
 }
 
 // CastValues casts values based on columns type.
-func CastValues(ctx context.Context, rec []types.Datum, cols []*Column, ignoreErr bool) (err error) {
+func CastValues(ctx sessionctx.Context, rec []types.Datum, cols []*Column, ignoreErr bool) (err error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	for _, c := range cols {
 		var converted types.Datum
@@ -138,7 +138,7 @@ func CastValues(ctx context.Context, rec []types.Datum, cols []*Column, ignoreEr
 }
 
 // CastValue casts a value based on column type.
-func CastValue(ctx context.Context, val types.Datum, col *model.ColumnInfo) (casted types.Datum, err error) {
+func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo) (casted types.Datum, err error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	casted, err = val.ConvertTo(sc, &col.FieldType)
 	// TODO: make sure all truncate errors are handled by ConvertTo.
@@ -297,16 +297,16 @@ func CheckNotNull(cols []*Column, row []types.Datum) error {
 }
 
 // GetColOriginDefaultValue gets default value of the column from original default value.
-func GetColOriginDefaultValue(ctx context.Context, col *model.ColumnInfo) (types.Datum, error) {
+func GetColOriginDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo) (types.Datum, error) {
 	return getColDefaultValue(ctx, col, col.OriginDefaultValue)
 }
 
 // GetColDefaultValue gets default value of the column.
-func GetColDefaultValue(ctx context.Context, col *model.ColumnInfo) (types.Datum, error) {
+func GetColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo) (types.Datum, error) {
 	return getColDefaultValue(ctx, col, col.DefaultValue)
 }
 
-func getColDefaultValue(ctx context.Context, col *model.ColumnInfo, defaultVal interface{}) (types.Datum, error) {
+func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVal interface{}) (types.Datum, error) {
 	if defaultVal == nil {
 		return getColDefaultValueFromNil(ctx, col)
 	}
@@ -327,7 +327,7 @@ func getColDefaultValue(ctx context.Context, col *model.ColumnInfo, defaultVal i
 	return value, nil
 }
 
-func getColDefaultValueFromNil(ctx context.Context, col *model.ColumnInfo) (types.Datum, error) {
+func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo) (types.Datum, error) {
 	if !mysql.HasNotNullFlag(col.Flag) {
 		return types.Datum{}, nil
 	}
@@ -370,7 +370,7 @@ func GetZeroValue(col *model.ColumnInfo) types.Datum {
 		d.SetBytes([]byte{})
 	case mysql.TypeDuration:
 		d.SetMysqlDuration(types.ZeroDuration)
-	case mysql.TypeDate, mysql.TypeNewDate:
+	case mysql.TypeDate:
 		d.SetMysqlTime(types.ZeroDate)
 	case mysql.TypeTimestamp:
 		d.SetMysqlTime(types.ZeroTimestamp)

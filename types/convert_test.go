@@ -174,13 +174,6 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(vv.(Time).String(), Equals, "2010-10-10 10:11:11.1")
 
-	// For mysql.TypeNewDate.
-	ft = NewFieldType(mysql.TypeNewDate)
-	ft.Decimal = 3
-	v, err = Convert("2010-10-10 10:11:11.12345", ft)
-	c.Assert(err, IsNil)
-	c.Assert(v.(Time).String(), Equals, "2010-10-10 10:11:11.123")
-
 	// For TypeLonglong
 	ft = NewFieldType(mysql.TypeLonglong)
 	v, err = Convert("100", ft)

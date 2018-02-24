@@ -19,8 +19,8 @@ package expression
 
 import (
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/printer"
 )
@@ -58,7 +58,7 @@ type databaseFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *databaseFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
+func (c *databaseFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := errors.Trace(c.verifyArgs(args)); err != nil {
 		return nil, err
 	}
@@ -83,7 +83,7 @@ type foundRowsFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *foundRowsFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
+func (c *foundRowsFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := errors.Trace(c.verifyArgs(args)); err != nil {
 		return nil, err
 	}
@@ -112,7 +112,7 @@ type currentUserFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *currentUserFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
+func (c *currentUserFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := errors.Trace(c.verifyArgs(args)); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -142,7 +142,7 @@ type userFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *userFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
+func (c *userFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := errors.Trace(c.verifyArgs(args)); err != nil {
 		return nil, err
 	}
@@ -171,7 +171,7 @@ type connectionIDFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *connectionIDFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
+func (c *connectionIDFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := errors.Trace(c.verifyArgs(args)); err != nil {
 		return nil, err
 	}
@@ -197,7 +197,7 @@ type lastInsertIDFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *lastInsertIDFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
+func (c *lastInsertIDFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -235,8 +235,7 @@ type builtinLastInsertIDWithIDSig struct {
 // evalInt evals LAST_INSERT_ID(expr).
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_last-insert-id.
 func (b *builtinLastInsertIDWithIDSig) evalInt(row types.Row) (res int64, isNull bool, err error) {
-	sc := b.getCtx().GetSessionVars().StmtCtx
-	res, isNull, err = b.args[0].EvalInt(row, sc)
+	res, isNull, err = b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
@@ -249,7 +248,7 @@ type versionFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *versionFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
+func (c *versionFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := errors.Trace(c.verifyArgs(args)); err != nil {
 		return nil, err
 	}
@@ -273,7 +272,7 @@ type tidbVersionFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *tidbVersionFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
+func (c *tidbVersionFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -297,7 +296,7 @@ type benchmarkFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *benchmarkFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
+func (c *benchmarkFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "BENCHMARK")
 }
 
@@ -305,7 +304,7 @@ type charsetFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *charsetFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
+func (c *charsetFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "CHARSET")
 }
 
@@ -313,7 +312,7 @@ type coercibilityFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *coercibilityFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
+func (c *coercibilityFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "COERCIBILITY")
 }
 
@@ -321,7 +320,7 @@ type collationFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *collationFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
+func (c *collationFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "COLLATION")
 }
 
@@ -329,7 +328,7 @@ type rowCountFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *rowCountFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
+func (c *rowCountFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}

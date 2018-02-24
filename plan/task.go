@@ -17,11 +17,11 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
 )
@@ -117,7 +117,7 @@ func (p *basePhysicalPlan) attach2Task(tasks ...task) task {
 	if tasks[0].invalid() {
 		return invalidTask
 	}
-	t := finishCopTask(tasks[0].copy(), p.ctx)
+	t := finishCopTask(p.ctx, tasks[0].copy())
 	return attachPlan2Task(p.self, t)
 }
 
@@ -125,8 +125,8 @@ func (p *PhysicalApply) attach2Task(tasks ...task) task {
 	if tasks[0].invalid() || tasks[1].invalid() {
 		return invalidTask
 	}
-	lTask := finishCopTask(tasks[0].copy(), p.ctx)
-	rTask := finishCopTask(tasks[1].copy(), p.ctx)
+	lTask := finishCopTask(p.ctx, tasks[0].copy())
+	rTask := finishCopTask(p.ctx, tasks[1].copy())
 	p.SetChildren(lTask.plan(), rTask.plan())
 	p.PhysicalJoin.SetChildren(lTask.plan(), rTask.plan())
 	p.schema = buildPhysicalJoinSchema(p.PhysicalJoin.JoinType, p)
@@ -140,7 +140,7 @@ func (p *PhysicalIndexJoin) attach2Task(tasks ...task) task {
 	if tasks[p.OuterIndex].invalid() {
 		return invalidTask
 	}
-	outerTask := finishCopTask(tasks[p.OuterIndex].copy(), p.ctx)
+	outerTask := finishCopTask(p.ctx, tasks[p.OuterIndex].copy())
 	if p.OuterIndex == 0 {
 		p.SetChildren(outerTask.plan(), p.innerPlan)
 	} else {
@@ -166,7 +166,7 @@ func (p *PhysicalIndexJoin) getCost(lCnt float64) float64 {
 
 func (p *PhysicalHashJoin) getCost(lCnt, rCnt float64) float64 {
 	smallTableCnt := lCnt
-	if p.SmallChildIdx == 1 {
+	if p.InnerChildIdx == 1 {
 		smallTableCnt = rCnt
 	}
 	if smallTableCnt <= 1 {
@@ -179,8 +179,8 @@ func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
 	if tasks[0].invalid() || tasks[1].invalid() {
 		return invalidTask
 	}
-	lTask := finishCopTask(tasks[0].copy(), p.ctx)
-	rTask := finishCopTask(tasks[1].copy(), p.ctx)
+	lTask := finishCopTask(p.ctx, tasks[0].copy())
+	rTask := finishCopTask(p.ctx, tasks[1].copy())
 	p.SetChildren(lTask.plan(), rTask.plan())
 	p.schema = buildPhysicalJoinSchema(p.JoinType, p)
 	return &rootTask{
@@ -197,8 +197,8 @@ func (p *PhysicalMergeJoin) attach2Task(tasks ...task) task {
 	if tasks[0].invalid() || tasks[1].invalid() {
 		return invalidTask
 	}
-	lTask := finishCopTask(tasks[0].copy(), p.ctx)
-	rTask := finishCopTask(tasks[1].copy(), p.ctx)
+	lTask := finishCopTask(p.ctx, tasks[0].copy())
+	rTask := finishCopTask(p.ctx, tasks[1].copy())
 	p.SetChildren(lTask.plan(), rTask.plan())
 	p.schema = buildPhysicalJoinSchema(p.JoinType, p)
 	return &rootTask{
@@ -208,7 +208,7 @@ func (p *PhysicalMergeJoin) attach2Task(tasks ...task) task {
 }
 
 // finishCopTask means we close the coprocessor task and create a root task.
-func finishCopTask(task task, ctx context.Context) task {
+func finishCopTask(ctx sessionctx.Context, task task) task {
 	t, ok := task.(*copTask)
 	if !ok {
 		return task
@@ -280,7 +280,7 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 			pushedDownLimit := PhysicalLimit{Count: p.Offset + p.Count}.init(p.ctx, p.stats)
 			cop = attachPlan2Task(pushedDownLimit, cop).(*copTask)
 		}
-		t = finishCopTask(cop, p.ctx)
+		t = finishCopTask(p.ctx, cop)
 	}
 	if !p.partial {
 		t = attachPlan2Task(p, t)
@@ -366,7 +366,7 @@ func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 		}
 		copTask.addCost(pushedDownTopN.getCost(t.count()))
 	}
-	t = finishCopTask(t, p.ctx)
+	t = finishCopTask(p.ctx, t)
 	if !p.partial {
 		t = attachPlan2Task(p, t)
 		t.addCost(p.getCost(t.count()))
@@ -382,7 +382,7 @@ func (p *PhysicalProjection) attach2Task(tasks ...task) task {
 	switch tp := t.(type) {
 	case *copTask:
 		// TODO: Support projection push down.
-		t = finishCopTask(t, p.ctx)
+		t = finishCopTask(p.ctx, t)
 		t = attachPlan2Task(p, t)
 		return t
 	case *rootTask:
@@ -398,7 +398,7 @@ func (p *PhysicalUnionAll) attach2Task(tasks ...task) task {
 		if task.invalid() {
 			return invalidTask
 		}
-		task = finishCopTask(task, p.ctx)
+		task = finishCopTask(p.ctx, task)
 		newTask.cst += task.cost()
 		newChildren = append(newChildren, task.plan())
 	}
@@ -410,7 +410,7 @@ func (sel *PhysicalSelection) attach2Task(tasks ...task) task {
 	if tasks[0].invalid() {
 		return invalidTask
 	}
-	t := finishCopTask(tasks[0].copy(), sel.ctx)
+	t := finishCopTask(sel.ctx, tasks[0].copy())
 	t.addCost(t.count() * cpuFactor)
 	t = attachPlan2Task(sel, t)
 	return t
@@ -518,7 +518,7 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 				cop.indexPlan = partialAgg
 			}
 		}
-		t = finishCopTask(cop, p.ctx)
+		t = finishCopTask(p.ctx, cop)
 		attachPlan2Task(finalAgg, t)
 		t.addCost(t.count() * cpuFactor)
 	} else {
@@ -547,7 +547,7 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 				cop.indexPlan = partialAgg
 			}
 		}
-		task = finishCopTask(cop, p.ctx)
+		task = finishCopTask(p.ctx, cop)
 		attachPlan2Task(finalAgg, task)
 		task.addCost(task.count()*cpuFactor + cardinality*hashAggMemFactor)
 	} else {

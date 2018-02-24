@@ -19,17 +19,17 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var (
@@ -83,21 +83,21 @@ type PrepareExec struct {
 }
 
 // NewPrepareExec creates a new PrepareExec.
-func NewPrepareExec(ctx context.Context, is infoschema.InfoSchema, sqlTxt string) *PrepareExec {
+func NewPrepareExec(ctx sessionctx.Context, is infoschema.InfoSchema, sqlTxt string) *PrepareExec {
 	return &PrepareExec{
-		baseExecutor: newBaseExecutor(nil, ctx),
+		baseExecutor: newBaseExecutor(ctx, nil, "PrepareStmt"),
 		is:           is,
 		sqlText:      sqlTxt,
 	}
 }
 
 // Next implements the Executor Next interface.
-func (e *PrepareExec) Next(goCtx goctx.Context) (Row, error) {
+func (e *PrepareExec) Next(ctx context.Context) (Row, error) {
 	return nil, errors.Trace(e.DoPrepare())
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (e *PrepareExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+func (e *PrepareExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	return errors.Trace(e.DoPrepare())
 }
 
@@ -194,12 +194,12 @@ type ExecuteExec struct {
 
 // Next implements the Executor Next interface.
 // It will never be called.
-func (e *ExecuteExec) Next(goCtx goctx.Context) (Row, error) {
+func (e *ExecuteExec) Next(ctx context.Context) (Row, error) {
 	return nil, nil
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (e *ExecuteExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+func (e *ExecuteExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
@@ -222,7 +222,8 @@ func (e *ExecuteExec) Build() error {
 	}
 	e.stmtExec = stmtExec
 	ResetStmtCtx(e.ctx, e.stmt)
-	stmtCount(e.stmt, e.plan, e.ctx.GetSessionVars().InRestrictedSQL)
+	CountStmtNode(e.stmt, e.ctx.GetSessionVars().InRestrictedSQL)
+	logExpensiveQuery(e.stmt, e.plan)
 	return nil
 }
 
@@ -234,16 +235,16 @@ type DeallocateExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *DeallocateExec) Next(goCtx goctx.Context) (Row, error) {
-	return nil, errors.Trace(e.run(goCtx))
+func (e *DeallocateExec) Next(ctx context.Context) (Row, error) {
+	return nil, errors.Trace(e.run(ctx))
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (e *DeallocateExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
-	return errors.Trace(e.run(goCtx))
+func (e *DeallocateExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+	return errors.Trace(e.run(ctx))
 }
 
-func (e *DeallocateExec) run(goCtx goctx.Context) error {
+func (e *DeallocateExec) run(ctx context.Context) error {
 	vars := e.ctx.GetSessionVars()
 	id, ok := vars.PreparedStmtNameToID[e.Name]
 	if !ok {
@@ -255,7 +256,7 @@ func (e *DeallocateExec) run(goCtx goctx.Context) error {
 }
 
 // CompileExecutePreparedStmt compiles a session Execute command to a stmt.Statement.
-func CompileExecutePreparedStmt(ctx context.Context, ID uint32, args ...interface{}) (ast.Statement, error) {
+func CompileExecutePreparedStmt(ctx sessionctx.Context, ID uint32, args ...interface{}) (ast.Statement, error) {
 	execStmt := &ast.ExecuteStmt{ExecID: ID}
 	execStmt.UsingVars = make([]ast.ExprNode, len(args))
 	for i, val := range args {
@@ -281,7 +282,7 @@ func CompileExecutePreparedStmt(ctx context.Context, ID uint32, args ...interfac
 
 // ResetStmtCtx resets the StmtContext.
 // Before every execution, we must clear statement context.
-func ResetStmtCtx(ctx context.Context, s ast.StmtNode) {
+func ResetStmtCtx(ctx sessionctx.Context, s ast.StmtNode) {
 	sessVars := ctx.GetSessionVars()
 	sc := new(stmtctx.StatementContext)
 	sc.TimeZone = sessVars.GetTimeZone()

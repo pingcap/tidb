@@ -17,7 +17,6 @@ import (
 	"math"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -154,7 +153,7 @@ func (ds *DataSource) tryToGetMemTask(prop *requiredProp) (task task, err error)
 func (ds *DataSource) tryToGetDualTask() (task, error) {
 	for _, cond := range ds.pushedDownConds {
 		if _, ok := cond.(*expression.Constant); ok {
-			result, err := expression.EvalBool([]expression.Expression{cond}, nil, ds.ctx)
+			result, err := expression.EvalBool(ds.ctx, []expression.Expression{cond}, nil)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -202,7 +201,6 @@ func (ds *DataSource) convert2PhysicalPlan(prop *requiredProp) (task, error) {
 		return t, nil
 	}
 
-	// TODO: We have not checked if this table has a predicate. If not, we can only consider table scan.
 	indices := ds.availableIndices.indices
 	includeTableScan := ds.availableIndices.includeTableScan
 	t = invalidTask
@@ -213,7 +211,11 @@ func (ds *DataSource) convert2PhysicalPlan(prop *requiredProp) (task, error) {
 		}
 	}
 	if !includeTableScan || len(ds.pushedDownConds) > 0 || len(prop.cols) > 0 {
-		for _, idx := range indices {
+		for i, idx := range indices {
+			// TODO: We can also check if the prop matches the index columns.
+			if !ds.relevantIndices[i] && len(prop.cols) == 0 {
+				continue
+			}
 			idxTask, err := ds.convertToIndexScan(prop, idx)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -274,7 +276,7 @@ func (ds *DataSource) forceToIndexScan(idx *model.IndexInfo, remainedConds []exp
 	}
 	is.initSchema(ds.id, idx, cop.tablePlan != nil)
 	is.addPushedDownSelection(cop, ds, math.MaxFloat64)
-	t := finishCopTask(cop, ds.ctx)
+	t := finishCopTask(ds.ctx, cop)
 	return t.plan()
 }
 
@@ -308,10 +310,11 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInf
 	sc := ds.ctx.GetSessionVars().StmtCtx
 	idxCols, colLengths := expression.IndexInfo2Cols(ds.Schema().Columns, idx)
 	is.Ranges = ranger.FullNewRange()
+	eqCount := 0
 	if len(ds.pushedDownConds) > 0 {
+		is.conditions = ds.pushedDownConds
 		if len(idxCols) > 0 {
-			is.AccessCondition, is.filterCondition = ranger.DetachIndexConditions(ds.pushedDownConds, idxCols, colLengths)
-			is.Ranges, err = ranger.BuildIndexRange(sc, idxCols, colLengths, is.AccessCondition)
+			is.Ranges, is.AccessCondition, is.filterCondition, eqCount, err = ranger.DetachCondAndBuildRangeForIndex(sc, ds.pushedDownConds, idxCols, colLengths)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -346,9 +349,7 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInf
 			if col.Name.L == prop.cols[0].ColName.L {
 				matchProperty = matchIndicesProp(idx.Columns[i:], prop.cols)
 				break
-			} else if i >= len(is.AccessCondition) {
-				break
-			} else if sf, ok := is.AccessCondition[i].(*expression.ScalarFunction); !ok || sf.FuncName.L != ast.EQ {
+			} else if i >= eqCount {
 				break
 			}
 		}
@@ -385,7 +386,7 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInf
 		is.addPushedDownSelection(cop, ds, expectedCnt)
 	}
 	if prop.taskTp == rootTaskType {
-		task = finishCopTask(task, ds.ctx)
+		task = finishCopTask(ds.ctx, task)
 	} else if _, ok := task.(*rootTask); ok {
 		return invalidTask, nil
 	}
@@ -431,7 +432,7 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 		}
 		if tableConds != nil {
 			copTask.finishIndexPlan()
-			tableSel := PhysicalSelection{Conditions: tableConds}.init(is.ctx, p.stats.scaleByExpectCnt(expectedCnt))
+			tableSel := PhysicalSelection{Conditions: tableConds}.init(is.ctx, p.statsAfterSelect.scaleByExpectCnt(expectedCnt))
 			tableSel.SetChildren(copTask.tablePlan)
 			copTask.tablePlan = tableSel
 			copTask.cst += copTask.count() * cpuFactor
@@ -514,7 +515,7 @@ func (ds *DataSource) forceToTableScan(pk *expression.Column) PhysicalPlan {
 		indexPlanFinished: true,
 	}
 	ts.addPushedDownSelection(copTask, ds.stats)
-	t := finishCopTask(copTask, ds.ctx)
+	t := finishCopTask(ds.ctx, copTask)
 	return t.plan()
 }
 
@@ -570,7 +571,7 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp) (task task, err err
 		indexPlanFinished: true,
 	}
 	task = copTask
-	matchProperty := len(prop.cols) == 1 && pkCol != nil && prop.cols[0].Equal(pkCol, nil)
+	matchProperty := len(prop.cols) == 1 && pkCol != nil && prop.cols[0].Equal(nil, pkCol)
 	if matchProperty && prop.expectedCnt < math.MaxFloat64 {
 		selectivity, err := statsTbl.Selectivity(ds.ctx, ts.filterCondition)
 		if err != nil {
@@ -588,7 +589,7 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp) (task task, err err
 		}
 		ts.KeepOrder = true
 		copTask.keepOrder = true
-		ts.addPushedDownSelection(copTask, ds.stats.scaleByExpectCnt(prop.expectedCnt))
+		ts.addPushedDownSelection(copTask, ds.statsAfterSelect.scaleByExpectCnt(prop.expectedCnt))
 	} else {
 		expectedCnt := math.MaxFloat64
 		if prop.isEmpty() {
@@ -596,10 +597,10 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp) (task task, err err
 		} else {
 			return invalidTask, nil
 		}
-		ts.addPushedDownSelection(copTask, ds.stats.scaleByExpectCnt(expectedCnt))
+		ts.addPushedDownSelection(copTask, ds.statsAfterSelect.scaleByExpectCnt(expectedCnt))
 	}
 	if prop.taskTp == rootTaskType {
-		task = finishCopTask(task, ds.ctx)
+		task = finishCopTask(ds.ctx, task)
 	} else if _, ok := task.(*rootTask); ok {
 		return invalidTask, nil
 	}

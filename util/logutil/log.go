@@ -19,6 +19,7 @@ import (
 	"os"
 	"path"
 	"runtime"
+	"sort"
 	"strings"
 
 	"github.com/juju/errors"
@@ -130,10 +131,11 @@ func logTypeToColor(level log.Level) string {
 	return "[0;37"
 }
 
-// textFormatter is for compatability with ngaut/log
+// textFormatter is for compatibility with ngaut/log
 type textFormatter struct {
 	DisableTimestamp bool
 	EnableColors     bool
+	EnableEntryOrder bool
 }
 
 // Format implements logrus.Formatter
@@ -157,11 +159,26 @@ func (f *textFormatter) Format(entry *log.Entry) ([]byte, error) {
 		fmt.Fprintf(b, "%s:%v:", file, entry.Data["line"])
 	}
 	fmt.Fprintf(b, " [%s] %s", entry.Level.String(), entry.Message)
-	for k, v := range entry.Data {
-		if k != "file" && k != "line" {
-			fmt.Fprintf(b, " %v=%v", k, v)
+
+	if f.EnableEntryOrder {
+		keys := make([]string, 0, len(entry.Data))
+		for k := range entry.Data {
+			if k != "file" && k != "line" {
+				keys = append(keys, k)
+			}
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			fmt.Fprintf(b, " %v=%v", k, entry.Data[k])
+		}
+	} else {
+		for k, v := range entry.Data {
+			if k != "file" && k != "line" {
+				fmt.Fprintf(b, " %v=%v", k, v)
+			}
 		}
 	}
+
 	b.WriteByte('\n')
 
 	if f.EnableColors {
@@ -228,7 +245,7 @@ func initFileLog(cfg *FileLogConfig, logger *log.Logger) error {
 // SlowQueryLogger is used to log slow query, InitLogger will modify it according to config file.
 var SlowQueryLogger = log.StandardLogger()
 
-// InitLogger initalizes PD's logger.
+// InitLogger initializes PD's logger.
 func InitLogger(cfg *LogConfig) error {
 	log.SetLevel(stringToLogLevel(cfg.Level))
 	log.AddHook(&contextHook{})
@@ -255,7 +272,12 @@ func InitLogger(cfg *LogConfig) error {
 		hooks := make(log.LevelHooks)
 		hooks.Add(&contextHook{})
 		SlowQueryLogger.Hooks = hooks
-		SlowQueryLogger.Formatter = formatter
+		slowQueryFormatter := stringToLogFormatter(cfg.Format, cfg.DisableTimestamp)
+		ft, ok := slowQueryFormatter.(*textFormatter)
+		if ok {
+			ft.EnableEntryOrder = true
+		}
+		SlowQueryLogger.Formatter = slowQueryFormatter
 	}
 
 	return nil

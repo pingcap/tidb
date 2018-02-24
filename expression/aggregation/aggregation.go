@@ -21,23 +21,23 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	tipb "github.com/pingcap/tipb/go-tipb"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // Aggregation stands for aggregate functions.
 type Aggregation interface {
 	// Update during executing.
-	Update(ctx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error
+	Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error
 
 	// GetPartialResult will called by coprocessor to get partial results. For avg function, partial results will return
 	// sum and count values at the same time.
-	GetPartialResult(ctx *AggEvaluateContext) []types.Datum
+	GetPartialResult(evalCtx *AggEvaluateContext) []types.Datum
 
 	// GetResult will be called when all data have been processed.
-	GetResult(ctx *AggEvaluateContext) types.Datum
+	GetResult(evalCtx *AggEvaluateContext) types.Datum
 
 	// Create a new AggEvaluateContext for the aggregation function.
-	CreateContext() *AggEvaluateContext
+	CreateContext(sc *stmtctx.StatementContext) *AggEvaluateContext
 }
 
 // NewDistAggFunc creates new Aggregate function for mock tikv.
@@ -107,15 +107,15 @@ func newAggFunc(funcName string, args []expression.Expression, hasDistinct bool)
 }
 
 // CreateContext implements Aggregation interface.
-func (af *aggFunction) CreateContext() *AggEvaluateContext {
-	ctx := &AggEvaluateContext{}
+func (af *aggFunction) CreateContext(sc *stmtctx.StatementContext) *AggEvaluateContext {
+	evalCtx := &AggEvaluateContext{}
 	if af.HasDistinct {
-		ctx.DistinctChecker = createDistinctChecker()
+		evalCtx.DistinctChecker = createDistinctChecker(sc)
 	}
-	return ctx
+	return evalCtx
 }
 
-func (af *aggFunction) updateSum(ctx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
+func (af *aggFunction) updateSum(sc *stmtctx.StatementContext, evalCtx *AggEvaluateContext, row types.Row) error {
 	a := af.Args[0]
 	value, err := a.Eval(row)
 	if err != nil {
@@ -125,7 +125,7 @@ func (af *aggFunction) updateSum(ctx *AggEvaluateContext, sc *stmtctx.StatementC
 		return nil
 	}
 	if af.HasDistinct {
-		d, err1 := ctx.DistinctChecker.Check(sc, []types.Datum{value})
+		d, err1 := evalCtx.DistinctChecker.Check([]types.Datum{value})
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
@@ -133,10 +133,10 @@ func (af *aggFunction) updateSum(ctx *AggEvaluateContext, sc *stmtctx.StatementC
 			return nil
 		}
 	}
-	ctx.Value, err = calculateSum(sc, ctx.Value, value)
+	evalCtx.Value, err = calculateSum(sc, evalCtx.Value, value)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	ctx.Count++
+	evalCtx.Count++
 	return nil
 }

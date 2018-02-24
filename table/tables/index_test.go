@@ -21,13 +21,13 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testIndexSuite{})
@@ -38,7 +38,7 @@ type testIndexSuite struct {
 
 func (s *testIndexSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
-	store, err := tikv.NewMockTikvStore()
+	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	s.s = store
 }
@@ -131,7 +131,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	c.Assert(terror.ErrorEqual(err, io.EOF), IsTrue)
 	it.Close()
 
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	tblInfo = &model.TableInfo{
@@ -181,7 +181,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	c.Assert(h, Equals, int64(1))
 	c.Assert(exist, IsTrue)
 
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	_, err = index.FetchValues(make([]types.Datum, 0), nil)

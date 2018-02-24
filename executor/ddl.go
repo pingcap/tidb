@@ -23,10 +23,9 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 // DDLExec represents a DDL executor.
@@ -40,26 +39,26 @@ type DDLExec struct {
 }
 
 // Next implements Execution Next interface.
-func (e *DDLExec) Next(goCtx goctx.Context) (Row, error) {
+func (e *DDLExec) Next(ctx context.Context) (Row, error) {
 	if e.done {
 		return nil, nil
 	}
-	err := e.run(goCtx)
+	err := e.run(ctx)
 	e.done = true
 	return nil, errors.Trace(err)
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (e *DDLExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+func (e *DDLExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	if e.done {
 		return nil
 	}
-	err := e.run(goCtx)
+	err := e.run(ctx)
 	e.done = true
 	return errors.Trace(err)
 }
 
-func (e *DDLExec) run(goCtx goctx.Context) (err error) {
+func (e *DDLExec) run(ctx context.Context) (err error) {
 	switch x := e.stmt.(type) {
 	case *ast.TruncateTableStmt:
 		err = e.executeTruncateTable(x)
@@ -171,11 +170,11 @@ func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 	sessionVars := e.ctx.GetSessionVars()
 	if err == nil && strings.ToLower(sessionVars.CurrentDB) == dbName.L {
 		sessionVars.CurrentDB = ""
-		err = varsutil.SetSessionSystemVar(sessionVars, variable.CharsetDatabase, types.NewStringDatum("utf8"))
+		err = variable.SetSessionSystemVar(sessionVars, variable.CharsetDatabase, types.NewStringDatum("utf8"))
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = varsutil.SetSessionSystemVar(sessionVars, variable.CollationDatabase, types.NewStringDatum("utf8_unicode_ci"))
+		err = variable.SetSessionSystemVar(sessionVars, variable.CollationDatabase, types.NewStringDatum("utf8_unicode_ci"))
 		if err != nil {
 			return errors.Trace(err)
 		}

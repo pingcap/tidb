@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testSampleSuite{})
@@ -56,7 +56,7 @@ func (r *recordSet) setFields(tps ...uint8) {
 	}
 }
 
-func (r *recordSet) Next(goctx.Context) (types.Row, error) {
+func (r *recordSet) Next(context.Context) (types.Row, error) {
 	if r.cursor == r.count {
 		return nil, nil
 	}
@@ -64,7 +64,7 @@ func (r *recordSet) Next(goctx.Context) (types.Row, error) {
 	return types.DatumRow{types.NewIntDatum(int64(r.cursor)), r.data[r.cursor-1]}, nil
 }
 
-func (r *recordSet) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+func (r *recordSet) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	return nil
 }
 

@@ -30,11 +30,11 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -44,7 +44,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	log "github.com/sirupsen/logrus"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 const (
@@ -127,7 +127,7 @@ func (s *Server) newRegionHandler() (hanler *regionHandler) {
 	regionCache := tikvStore.GetRegionCache()
 
 	// init backOffer && infoSchema.
-	backOffer := tikv.NewBackoffer(500, goctx.Background())
+	backOffer := tikv.NewBackoffer(500, context.Background())
 
 	tool := &regionHandlerTool{
 		regionCache: regionCache,
@@ -234,7 +234,7 @@ type RegionFrameRange struct {
 func (t *regionHandlerTool) getRegionsMeta(regionIDs []uint64) ([]RegionMeta, error) {
 	regions := make([]RegionMeta, len(regionIDs))
 	for i, regionID := range regionIDs {
-		meta, leader, err := t.regionCache.PDClient().GetRegionByID(goctx.TODO(), regionID)
+		meta, leader, err := t.regionCache.PDClient().GetRegionByID(context.TODO(), regionID)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -929,7 +929,7 @@ func (t *regionHandlerTool) schema() (infoschema.InfoSchema, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return domain.GetDomain(session.(context.Context)).InfoSchema(), nil
+	return domain.GetDomain(session.(sessionctx.Context)).InfoSchema(), nil
 }
 
 func (t *regionHandlerTool) handleMvccGetByHex(params map[string]string) (interface{}, error) {

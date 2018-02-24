@@ -24,13 +24,12 @@ import (
 func (s *testEvaluatorSuite) TestColumn(c *C) {
 	defer testleak.AfterTest(c)()
 
-	sc := s.ctx.GetSessionVars().StmtCtx
-
 	col := &Column{RetType: types.NewFieldType(mysql.TypeLonglong), FromID: 0, Position: 0}
-	c.Assert(col.Equal(col, nil), IsTrue)
-	c.Assert(col.Equal(&Column{FromID: 1}, nil), IsFalse)
+
+	c.Assert(col.Equal(nil, col), IsTrue)
+	c.Assert(col.Equal(nil, &Column{FromID: 1}), IsFalse)
 	c.Assert(col.IsCorrelated(), IsFalse)
-	c.Assert(col.Equal(col.Decorrelate(nil), nil), IsTrue)
+	c.Assert(col.Equal(nil, col.Decorrelate(nil)), IsTrue)
 
 	marshal, err := col.MarshalJSON()
 	c.Assert(err, IsNil)
@@ -40,15 +39,15 @@ func (s *testEvaluatorSuite) TestColumn(c *C) {
 	corCol := &CorrelatedColumn{Column: *col, Data: &intDatum}
 	invalidCorCol := &CorrelatedColumn{Column: Column{FromID: 1}}
 	schema := NewSchema(&Column{FromID: 0, Position: 0})
-	c.Assert(corCol.Equal(corCol, nil), IsTrue)
-	c.Assert(corCol.Equal(invalidCorCol, nil), IsFalse)
+	c.Assert(corCol.Equal(nil, corCol), IsTrue)
+	c.Assert(corCol.Equal(nil, invalidCorCol), IsFalse)
 	c.Assert(corCol.IsCorrelated(), IsTrue)
-	c.Assert(corCol.Decorrelate(schema).Equal(col, nil), IsTrue)
-	c.Assert(invalidCorCol.Decorrelate(schema).Equal(invalidCorCol, nil), IsTrue)
+	c.Assert(corCol.Decorrelate(schema).Equal(nil, col), IsTrue)
+	c.Assert(invalidCorCol.Decorrelate(schema).Equal(nil, invalidCorCol), IsTrue)
 
 	intCorCol := &CorrelatedColumn{Column: Column{RetType: types.NewFieldType(mysql.TypeLonglong)},
 		Data: &intDatum}
-	intVal, isNull, err := intCorCol.EvalInt(nil, sc)
+	intVal, isNull, err := intCorCol.EvalInt(s.ctx, nil)
 	c.Assert(intVal, Equals, int64(1))
 	c.Assert(isNull, IsFalse)
 	c.Assert(err, IsNil)
@@ -56,7 +55,7 @@ func (s *testEvaluatorSuite) TestColumn(c *C) {
 	realDatum := types.NewFloat64Datum(1.2)
 	realCorCol := &CorrelatedColumn{Column: Column{RetType: types.NewFieldType(mysql.TypeDouble)},
 		Data: &realDatum}
-	realVal, isNull, err := realCorCol.EvalReal(nil, sc)
+	realVal, isNull, err := realCorCol.EvalReal(s.ctx, nil)
 	c.Assert(realVal, Equals, float64(1.2))
 	c.Assert(isNull, IsFalse)
 	c.Assert(err, IsNil)
@@ -64,7 +63,7 @@ func (s *testEvaluatorSuite) TestColumn(c *C) {
 	decimalDatum := types.NewDecimalDatum(types.NewDecFromStringForTest("1.2"))
 	decimalCorCol := &CorrelatedColumn{Column: Column{RetType: types.NewFieldType(mysql.TypeNewDecimal)},
 		Data: &decimalDatum}
-	decVal, isNull, err := decimalCorCol.EvalDecimal(nil, sc)
+	decVal, isNull, err := decimalCorCol.EvalDecimal(s.ctx, nil)
 	c.Assert(decVal.Compare(types.NewDecFromStringForTest("1.2")), Equals, 0)
 	c.Assert(isNull, IsFalse)
 	c.Assert(err, IsNil)
@@ -72,14 +71,14 @@ func (s *testEvaluatorSuite) TestColumn(c *C) {
 	stringDatum := types.NewStringDatum("abc")
 	stringCorCol := &CorrelatedColumn{Column: Column{RetType: types.NewFieldType(mysql.TypeVarchar)},
 		Data: &stringDatum}
-	strVal, isNull, err := stringCorCol.EvalString(nil, sc)
+	strVal, isNull, err := stringCorCol.EvalString(s.ctx, nil)
 	c.Assert(strVal, Equals, "abc")
 	c.Assert(isNull, IsFalse)
 	c.Assert(err, IsNil)
 
 	durationCorCol := &CorrelatedColumn{Column: Column{RetType: types.NewFieldType(mysql.TypeDuration)},
 		Data: &durationDatum}
-	durationVal, isNull, err := durationCorCol.EvalDuration(nil, sc)
+	durationVal, isNull, err := durationCorCol.EvalDuration(s.ctx, nil)
 	c.Assert(durationVal.Compare(duration), Equals, 0)
 	c.Assert(isNull, IsFalse)
 	c.Assert(err, IsNil)
@@ -87,7 +86,7 @@ func (s *testEvaluatorSuite) TestColumn(c *C) {
 	timeDatum := types.NewTimeDatum(tm)
 	timeCorCol := &CorrelatedColumn{Column: Column{RetType: types.NewFieldType(mysql.TypeDatetime)},
 		Data: &timeDatum}
-	timeVal, isNull, err := timeCorCol.EvalTime(nil, sc)
+	timeVal, isNull, err := timeCorCol.EvalTime(s.ctx, nil)
 	c.Assert(timeVal.Compare(tm), Equals, 0)
 	c.Assert(isNull, IsFalse)
 	c.Assert(err, IsNil)
@@ -119,7 +118,7 @@ func (s *testEvaluatorSuite) TestColumn2Expr(c *C) {
 
 	exprs := Column2Exprs(cols)
 	for i := range exprs {
-		c.Assert(exprs[i].Equal(cols[i], nil), IsTrue)
+		c.Assert(exprs[i].Equal(nil, cols[i]), IsTrue)
 	}
 }
 
@@ -130,7 +129,7 @@ func (s *testEvaluatorSuite) TestColInfo2Col(c *C) {
 	cols := []*Column{col0, col1}
 	colInfo := &model.ColumnInfo{Name: model.NewCIStr("col1")}
 	res := ColInfo2Col(cols, colInfo)
-	c.Assert(res.Equal(col1, nil), IsTrue)
+	c.Assert(res.Equal(nil, col1), IsTrue)
 
 	colInfo.Name = model.NewCIStr("col2")
 	res = ColInfo2Col(cols, colInfo)
@@ -149,7 +148,7 @@ func (s *testEvaluatorSuite) TestIndexInfo2Cols(c *C) {
 	resCols, lengths := IndexInfo2Cols(cols, indexInfo)
 	c.Assert(len(resCols), Equals, 1)
 	c.Assert(len(lengths), Equals, 1)
-	c.Assert(resCols[0].Equal(col0, nil), IsTrue)
+	c.Assert(resCols[0].Equal(nil, col0), IsTrue)
 
 	cols = []*Column{col1}
 	resCols, lengths = IndexInfo2Cols(cols, indexInfo)
@@ -160,6 +159,6 @@ func (s *testEvaluatorSuite) TestIndexInfo2Cols(c *C) {
 	resCols, lengths = IndexInfo2Cols(cols, indexInfo)
 	c.Assert(len(resCols), Equals, 2)
 	c.Assert(len(lengths), Equals, 2)
-	c.Assert(resCols[0].Equal(col0, nil), IsTrue)
-	c.Assert(resCols[1].Equal(col1, nil), IsTrue)
+	c.Assert(resCols[0].Equal(nil, col0), IsTrue)
+	c.Assert(resCols[1].Equal(nil, col1), IsTrue)
 }

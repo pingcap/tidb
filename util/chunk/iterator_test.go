@@ -41,26 +41,68 @@ func (s *testChunkSuite) TestIterator(c *check.C) {
 		ptrs2 = append(ptrs2, ptr2)
 	}
 
-	it := NewSliceIterator(rows)
+	it := NewIterator4Slice(rows)
 	checkIterator(c, it, expected)
-	it = NewChunkIterator(chk)
-	checkIterator(c, it, expected)
-	it = NewListIterator(li)
-	checkIterator(c, it, expected)
-	it = NewRowPtrIterator(li, ptrs)
-	checkIterator(c, it, expected)
-	it = NewListIterator(li2)
-	checkIterator(c, it, expected)
-	it = NewRowPtrIterator(li2, ptrs2)
-	checkIterator(c, it, expected)
+	it.Begin()
+	for i := 0; i < 5; i++ {
+		c.Assert(it.Current(), check.Equals, rows[i])
+		it.Next()
+	}
+	it.ReachEnd()
+	c.Assert(it.Current(), check.Equals, it.End())
+	c.Assert(it.Begin(), check.Equals, rows[0])
 
-	it = NewSliceIterator(nil)
+	it = NewIterator4Chunk(chk)
+	checkIterator(c, it, expected)
+	it.Begin()
+	for i := 0; i < 5; i++ {
+		c.Assert(it.Current(), check.Equals, chk.GetRow(i))
+		it.Next()
+	}
+	it.ReachEnd()
+	c.Assert(it.Current(), check.Equals, it.End())
+	c.Assert(it.Begin(), check.Equals, chk.GetRow(0))
+
+	it = NewIterator4List(li)
+	checkIterator(c, it, expected)
+	it.Begin()
+	for i := 0; i < 5; i++ {
+		c.Assert(it.Current(), check.Equals, li.GetRow(ptrs[i]))
+		it.Next()
+	}
+	it.ReachEnd()
+	c.Assert(it.Current(), check.Equals, it.End())
+	c.Assert(it.Begin(), check.Equals, li.GetRow(ptrs[0]))
+
+	it = NewIterator4RowPtr(li, ptrs)
+	checkIterator(c, it, expected)
+	it.Begin()
+	for i := 0; i < 5; i++ {
+		c.Assert(it.Current(), check.Equals, li.GetRow(ptrs[i]))
+		it.Next()
+	}
+	it.ReachEnd()
+	c.Assert(it.Current(), check.Equals, it.End())
+	c.Assert(it.Begin(), check.Equals, li.GetRow(ptrs[0]))
+
+	it = NewIterator4RowPtr(li2, ptrs2)
+	checkIterator(c, it, expected)
+	it.Begin()
+	for i := 0; i < 5; i++ {
+		c.Assert(it.Current(), check.Equals, li2.GetRow(ptrs2[i]))
+		it.Next()
+	}
+	it.ReachEnd()
+	c.Assert(it.Current(), check.Equals, it.End())
+	c.Assert(it.Begin(), check.Equals, li2.GetRow(ptrs2[0]))
+
+	it = NewIterator4Slice(nil)
 	c.Assert(it.Begin(), check.Equals, it.End())
-	it = NewChunkIterator(new(Chunk))
+	it = NewIterator4Chunk(new(Chunk))
 	c.Assert(it.Begin(), check.Equals, it.End())
-	it = NewListIterator(new(List))
+	it = NewIterator4List(new(List))
 	c.Assert(it.Begin(), check.Equals, it.End())
-	it = NewRowPtrIterator(li, nil)
+	it = NewIterator4RowPtr(li, nil)
 	c.Assert(it.Begin(), check.Equals, it.End())
 }
 

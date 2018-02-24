@@ -37,9 +37,9 @@ func (s *testEvaluatorSuite) TestScalarFunction(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(res, DeepEquals, []byte{0x22, 0x6c, 0x74, 0x28, 0x66, 0x65, 0x69, 0x2e, 0x68, 0x61, 0x6e, 0x2c, 0x20, 0x31, 0x29, 0x22})
 	c.Assert(sf.IsCorrelated(), IsFalse)
-	c.Assert(sf.Decorrelate(nil).Equal(sf, s.ctx), IsTrue)
+	c.Assert(sf.Decorrelate(nil).Equal(s.ctx, sf), IsTrue)
 
-	sf = NewValuesFunc(0, types.NewFieldType(mysql.TypeLonglong), s.ctx)
+	sf = NewValuesFunc(s.ctx, 0, types.NewFieldType(mysql.TypeLonglong))
 	newSf, ok := sf.Clone().(*ScalarFunction)
 	c.Assert(ok, IsTrue)
 	c.Assert(newSf.FuncName.O, Equals, "values")
@@ -61,6 +61,6 @@ func (s *testEvaluatorSuite) TestScalarFuncs2Exprs(c *C) {
 	funcs := []*ScalarFunction{sf0, sf1}
 	exprs := ScalarFuncs2Exprs(funcs)
 	for i := range exprs {
-		c.Assert(exprs[i].Equal(funcs[i], s.ctx), IsTrue)
+		c.Assert(exprs[i].Equal(s.ctx, funcs[i]), IsTrue)
 	}
 }

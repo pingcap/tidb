@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 // orderByRow binds a row to its order values, so it can be sorted.
@@ -63,11 +63,11 @@ func (e *SortExec) Close() error {
 }
 
 // Open implements the Executor Open interface.
-func (e *SortExec) Open(goCtx goctx.Context) error {
+func (e *SortExec) Open(ctx context.Context) error {
 	e.fetched = false
 	e.Idx = 0
 	e.Rows = nil
-	return errors.Trace(e.children[0].Open(goCtx))
+	return errors.Trace(e.children[0].Open(ctx))
 }
 
 // Len returns the number of rows.
@@ -108,10 +108,10 @@ func (e *SortExec) Less(i, j int) bool {
 }
 
 // Next implements the Executor Next interface.
-func (e *SortExec) Next(goCtx goctx.Context) (Row, error) {
+func (e *SortExec) Next(ctx context.Context) (Row, error) {
 	if !e.fetched {
 		for {
-			srcRow, err := e.children[0].Next(goCtx)
+			srcRow, err := e.children[0].Next(ctx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -146,10 +146,10 @@ func (e *SortExec) Next(goCtx goctx.Context) (Row, error) {
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (e *SortExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+func (e *SortExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if !e.fetched {
-		err := e.fetchRowChunks(goCtx)
+		err := e.fetchRowChunks(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -179,12 +179,12 @@ func (e *SortExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
-func (e *SortExec) fetchRowChunks(goCtx goctx.Context) error {
+func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	fields := e.retTypes()
 	e.rowChunks = chunk.NewList(fields, e.maxChunkSize)
 	for {
 		chk := chunk.NewChunk(fields)
-		err := e.children[0].NextChunk(goCtx, chk)
+		err := e.children[0].NextChunk(ctx, chk)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -245,7 +245,8 @@ func (e *SortExec) buildKeyChunks() error {
 	e.keyChunks = chunk.NewList(e.keyTypes, e.maxChunkSize)
 	for chkIdx := 0; chkIdx < e.rowChunks.NumChunks(); chkIdx++ {
 		keyChk := chunk.NewChunk(e.keyTypes)
-		err := expression.VectorizedExecute(e.ctx, e.keyExprs, e.rowChunks.GetChunk(chkIdx), keyChk)
+		childIter := chunk.NewIterator4Chunk(e.rowChunks.GetChunk(chkIdx))
+		err := expression.VectorizedExecute(e.ctx, e.keyExprs, childIter, keyChk)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -340,7 +341,7 @@ func (e *TopNExec) Pop() interface{} {
 }
 
 // Next implements the Executor Next interface.
-func (e *TopNExec) Next(goCtx goctx.Context) (Row, error) {
+func (e *TopNExec) Next(ctx context.Context) (Row, error) {
 	if !e.fetched {
 		e.Idx = int(e.limit.Offset)
 		e.totalLimit = int(e.limit.Offset + e.limit.Count)
@@ -351,7 +352,7 @@ func (e *TopNExec) Next(goCtx goctx.Context) (Row, error) {
 		e.Rows = make([]*orderByRow, 0, cap)
 		e.heapSize = 0
 		for {
-			srcRow, err := e.children[0].Next(goCtx)
+			srcRow, err := e.children[0].Next(ctx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -461,16 +462,16 @@ func (h *topNChunkHeap) Swap(i, j int) {
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (e *TopNExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+func (e *TopNExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if !e.fetched {
 		e.totalLimit = int(e.limit.Offset + e.limit.Count)
 		e.Idx = int(e.limit.Offset)
-		err := e.loadChunksUntilTotalLimit(goCtx)
+		err := e.loadChunksUntilTotalLimit(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = e.executeTopN(goCtx)
+		err = e.executeTopN(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -487,12 +488,12 @@ func (e *TopNExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
-func (e *TopNExec) loadChunksUntilTotalLimit(goCtx goctx.Context) error {
+func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 	e.chkHeap = &topNChunkHeap{e}
 	e.rowChunks = chunk.NewList(e.retTypes(), e.maxChunkSize)
 	for e.rowChunks.Len() < e.totalLimit {
 		srcChk := e.children[0].newChunk()
-		err := e.children[0].NextChunk(goCtx, srcChk)
+		err := e.children[0].NextChunk(ctx, srcChk)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -516,7 +517,7 @@ func (e *TopNExec) loadChunksUntilTotalLimit(goCtx goctx.Context) error {
 
 const topNCompactionFactor = 4
 
-func (e *TopNExec) executeTopN(goCtx goctx.Context) error {
+func (e *TopNExec) executeTopN(ctx context.Context) error {
 	heap.Init(e.chkHeap)
 	for len(e.rowPtrs) > e.totalLimit {
 		// The number of rows we loaded may exceeds total limit, remove greatest rows by Pop.
@@ -528,7 +529,7 @@ func (e *TopNExec) executeTopN(goCtx goctx.Context) error {
 	}
 	childRowChk := e.children[0].newChunk()
 	for {
-		err := e.children[0].NextChunk(goCtx, childRowChk)
+		err := e.children[0].NextChunk(ctx, childRowChk)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -557,7 +558,7 @@ func (e *TopNExec) executeTopN(goCtx goctx.Context) error {
 func (e *TopNExec) processChildChk(childRowChk, childKeyChk *chunk.Chunk) error {
 	if childKeyChk != nil {
 		childKeyChk.Reset()
-		err := expression.VectorizedExecute(e.ctx, e.keyExprs, childRowChk, childKeyChk)
+		err := expression.VectorizedExecute(e.ctx, e.keyExprs, chunk.NewIterator4Chunk(childRowChk), childKeyChk)
 		if err != nil {
 			return errors.Trace(err)
 		}

@@ -62,9 +62,10 @@ type Log struct {
 	// File log config.
 	File logutil.FileLogConfig `toml:"file" json:"file"`
 
-	SlowQueryFile  string `toml:"slow-query-file" json:"slow-query-file"`
-	SlowThreshold  int    `toml:"slow-threshold" json:"slow-threshold"`
-	QueryLogMaxLen int    `toml:"query-log-max-len" json:"query-log-max-len"`
+	SlowQueryFile      string `toml:"slow-query-file" json:"slow-query-file"`
+	SlowThreshold      int    `toml:"slow-threshold" json:"slow-threshold"`
+	ExpensiveThreshold int    `toml:"expensive-threshold" json:"expensive-threshold"`
+	QueryLogMaxLen     int    `toml:"query-log-max-len" json:"query-log-max-len"`
 }
 
 // Security is the security section of the config.
@@ -130,6 +131,7 @@ type Performance struct {
 	CrossJoin       bool   `toml:"cross-join" json:"cross-join"`
 	StatsLease      string `toml:"stats-lease" json:"stats-lease"`
 	RunAutoAnalyze  bool   `toml:"run-auto-analyze" json:"run-auto-analyze"`
+	StmtCountLimit  int    `toml:"stmt-count-limit" json:"stmt-count-limit"`
 }
 
 // XProtocol is the XProtocol section of the config.
@@ -213,8 +215,9 @@ var defaultConf = Config{
 		File: logutil.FileLogConfig{
 			LogRotate: true,
 		},
-		SlowThreshold:  300,
-		QueryLogMaxLen: 2048,
+		SlowThreshold:      300,
+		ExpensiveThreshold: 10000,
+		QueryLogMaxLen:     2048,
 	},
 	Status: Status{
 		ReportStatus:    true,
@@ -228,6 +231,7 @@ var defaultConf = Config{
 		CrossJoin:       true,
 		StatsLease:      "3s",
 		RunAutoAnalyze:  true,
+		StmtCountLimit:  5000,
 	},
 	XProtocol: XProtocol{
 		XHost: "0.0.0.0",

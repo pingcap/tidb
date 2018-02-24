@@ -28,29 +28,29 @@ type concatFunction struct {
 	sepInited bool
 }
 
-func (cf *concatFunction) writeValue(ctx *AggEvaluateContext, val types.Datum) {
+func (cf *concatFunction) writeValue(evalCtx *AggEvaluateContext, val types.Datum) {
 	if val.Kind() == types.KindBytes {
-		ctx.Buffer.Write(val.GetBytes())
+		evalCtx.Buffer.Write(val.GetBytes())
 	} else {
-		ctx.Buffer.WriteString(fmt.Sprintf("%v", val.GetValue()))
+		evalCtx.Buffer.WriteString(fmt.Sprintf("%v", val.GetValue()))
 	}
 }
 
 func (cf *concatFunction) initSeparator(sc *stmtctx.StatementContext, row types.Row) error {
 	sepArg := cf.Args[len(cf.Args)-1]
-	sep, isNull, err := sepArg.EvalString(row, sc)
+	sepDatum, err := sepArg.Eval(row)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if isNull {
+	if sepDatum.IsNull() {
 		return errors.Errorf("Invalid separator argument.")
 	}
-	cf.separator = sep
-	return nil
+	cf.separator, err = sepDatum.ToString()
+	return errors.Trace(err)
 }
 
 // Update implements Aggregation interface.
-func (cf *concatFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
+func (cf *concatFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
 	datumBuf := make([]types.Datum, 0, len(cf.Args))
 	if !cf.sepInited {
 		err := cf.initSeparator(sc, row)
@@ -60,7 +60,7 @@ func (cf *concatFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementC
 		cf.sepInited = true
 	}
 
-	// The last parameter is the concat seperator, we only concat the first "len(cf.Args)-1" parameters.
+	// The last parameter is the concat separator, we only concat the first "len(cf.Args)-1" parameters.
 	for i, length := 0, len(cf.Args)-1; i < length; i++ {
 		value, err := cf.Args[i].Eval(row)
 		if err != nil {
@@ -72,7 +72,7 @@ func (cf *concatFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementC
 		datumBuf = append(datumBuf, value)
 	}
 	if cf.HasDistinct {
-		d, err := ctx.DistinctChecker.Check(sc, datumBuf)
+		d, err := evalCtx.DistinctChecker.Check(datumBuf)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -80,22 +80,22 @@ func (cf *concatFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementC
 			return nil
 		}
 	}
-	if ctx.Buffer == nil {
-		ctx.Buffer = &bytes.Buffer{}
+	if evalCtx.Buffer == nil {
+		evalCtx.Buffer = &bytes.Buffer{}
 	} else {
-		ctx.Buffer.WriteString(cf.separator)
+		evalCtx.Buffer.WriteString(cf.separator)
 	}
 	for _, val := range datumBuf {
-		cf.writeValue(ctx, val)
+		cf.writeValue(evalCtx, val)
 	}
 	// TODO: if total length is greater than global var group_concat_max_len, truncate it.
 	return nil
 }
 
 // GetResult implements Aggregation interface.
-func (cf *concatFunction) GetResult(ctx *AggEvaluateContext) (d types.Datum) {
-	if ctx.Buffer != nil {
-		d.SetString(ctx.Buffer.String())
+func (cf *concatFunction) GetResult(evalCtx *AggEvaluateContext) (d types.Datum) {
+	if evalCtx.Buffer != nil {
+		d.SetString(evalCtx.Buffer.String())
 	} else {
 		d.SetNull()
 	}
@@ -103,6 +103,6 @@ func (cf *concatFunction) GetResult(ctx *AggEvaluateContext) (d types.Datum) {
 }
 
 // GetPartialResult implements Aggregation interface.
-func (cf *concatFunction) GetPartialResult(ctx *AggEvaluateContext) []types.Datum {
-	return []types.Datum{cf.GetResult(ctx)}
+func (cf *concatFunction) GetPartialResult(evalCtx *AggEvaluateContext) []types.Datum {
+	return []types.Datum{cf.GetResult(evalCtx)}
 }

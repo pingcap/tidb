@@ -77,6 +77,7 @@ func init() {
 	for _, v := range defaultSysVars {
 		SysVars[v.Name] = v
 	}
+	initSynonymsSysVariables()
 
 	// Register terror to mysql error map.
 	mySQLErrCodes := map[terror.ErrCode]uint16{
@@ -623,6 +624,21 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBMemThreshold, strconv.Itoa(DefMemThreshold)},
 	/* The following variable is defined as session scope but is actually server scope. */
 	{ScopeSession, TiDBGeneralLog, strconv.Itoa(DefTiDBGeneralLog)},
+	{ScopeSession, TiDBConfig, ""},
+}
+
+// SynonymsSysVariables is synonyms of system variables.
+var SynonymsSysVariables = map[string][]string{}
+
+func addSynonymsSysVariables(synonyms ...string) {
+	for _, s := range synonyms {
+		SynonymsSysVariables[s] = synonyms
+	}
+}
+
+func initSynonymsSysVariables() {
+	addSynonymsSysVariables("tx_isolation", "transaction_isolation")
+	addSynonymsSysVariables("tx_read_only", "transaction_read_only")
 }
 
 // SetNamesVariables is the system variable names related to set names statements.
