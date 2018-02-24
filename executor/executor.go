@@ -108,7 +108,7 @@ type baseExecutor struct {
 	retFieldTypes   []*types.FieldType
 }
 
-// Open implements the Executor Open interface.
+// Open initializes children recursively and "childrenResults" according to children's schemas.
 func (e *baseExecutor) Open(ctx context.Context) error {
 	for _, child := range e.children {
 		err := child.Open(ctx)
@@ -123,7 +123,7 @@ func (e *baseExecutor) Open(ctx context.Context) error {
 	return nil
 }
 
-// Close implements the Executor Close interface.
+// Close closes all executors and release all resources.
 func (e *baseExecutor) Close() error {
 	for _, child := range e.children {
 		err := child.Close()
@@ -135,7 +135,7 @@ func (e *baseExecutor) Close() error {
 	return nil
 }
 
-// Schema implements the Executor Schema interface.
+// Schema returns the current baseExecutor's schema. If it is nil, then create and return a new one.
 func (e *baseExecutor) Schema() *expression.Schema {
 	if e.schema == nil {
 		return expression.NewSchema()
@@ -143,11 +143,12 @@ func (e *baseExecutor) Schema() *expression.Schema {
 	return e.schema
 }
 
+// newChunk creates a new chunk to buffer current executor's result.
 func (e *baseExecutor) newChunk() *chunk.Chunk {
 	return chunk.NewChunk(e.retTypes())
 }
 
-// retTypes implements the Executor retTypes interface.
+// retTypes returns all output column types.
 func (e *baseExecutor) retTypes() []*types.FieldType {
 	return e.retFieldTypes
 }
@@ -164,6 +165,7 @@ func (e *baseExecutor) supportChunk() bool {
 	return true
 }
 
+// NextChunk fills mutiple rows into a chunk.
 func (e *baseExecutor) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	return nil
 }
@@ -195,6 +197,8 @@ type Executor interface {
 	retTypes() []*types.FieldType
 	supportChunk() bool
 	newChunk() *chunk.Chunk
+	// NextChunk fills a chunk with multiple rows
+	// NOTE: chunk has to call Reset() method before any use.
 	NextChunk(ctx context.Context, chk *chunk.Chunk) error
 }
 
