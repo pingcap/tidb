@@ -130,7 +130,7 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 	c.Assert(err, IsNil)
 	committer, err := newTwoPhaseCommitter(txn1)
 	c.Assert(err, IsNil)
-	err = committer.prewriteKeys(NewBackoffer(prewriteMaxBackoff, ctx), committer.keys)
+	err = committer.prewriteKeys(NewBackoffer(ctx, prewriteMaxBackoff), committer.keys)
 	c.Assert(err, IsNil)
 
 	txn2 := s.begin(c)
@@ -138,7 +138,7 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, BytesEquals, []byte("a0"))
 
-	err = committer.prewriteKeys(NewBackoffer(prewriteMaxBackoff, ctx), committer.keys)
+	err = committer.prewriteKeys(NewBackoffer(ctx, prewriteMaxBackoff), committer.keys)
 	if err != nil {
 		// Retry.
 		txn1 = s.begin(c)
@@ -148,12 +148,12 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 		c.Assert(err, IsNil)
 		committer, err = newTwoPhaseCommitter(txn1)
 		c.Assert(err, IsNil)
-		err = committer.prewriteKeys(NewBackoffer(prewriteMaxBackoff, ctx), committer.keys)
+		err = committer.prewriteKeys(NewBackoffer(ctx, prewriteMaxBackoff), committer.keys)
 		c.Assert(err, IsNil)
 	}
 	committer.commitTS, err = s.store.oracle.GetTimestamp(ctx)
 	c.Assert(err, IsNil)
-	err = committer.commitKeys(NewBackoffer(commitMaxBackoff, ctx), [][]byte{[]byte("a")})
+	err = committer.commitKeys(NewBackoffer(ctx, commitMaxBackoff), [][]byte{[]byte("a")})
 	c.Assert(err, IsNil)
 
 	txn3 := s.begin(c)
@@ -171,7 +171,7 @@ func (s *testCommitterSuite) TestContextCancel(c *C) {
 	committer, err := newTwoPhaseCommitter(txn1)
 	c.Assert(err, IsNil)
 
-	bo := NewBackoffer(prewriteMaxBackoff, goctx.Background())
+	bo := NewBackoffer(goctx.Background(), prewriteMaxBackoff)
 	backoffer, cancel := bo.Fork()
 	cancel() // cancel the context
 	err = committer.prewriteKeys(backoffer, committer.keys)
@@ -185,7 +185,7 @@ func (s *testCommitterSuite) TestContextCancelRetryable(c *C) {
 	c.Assert(err, IsNil)
 	committer, err := newTwoPhaseCommitter(txn1)
 	c.Assert(err, IsNil)
-	err = committer.prewriteKeys(NewBackoffer(prewriteMaxBackoff, goctx.Background()), committer.keys)
+	err = committer.prewriteKeys(NewBackoffer(goctx.Background(), prewriteMaxBackoff), committer.keys)
 	c.Assert(err, IsNil)
 	// txn3 writes "c"
 	err = txn3.Set([]byte("c"), []byte("c3"))
@@ -207,7 +207,7 @@ func (s *testCommitterSuite) TestContextCancelRetryable(c *C) {
 }
 
 func (s *testCommitterSuite) mustGetRegionID(c *C, key []byte) uint64 {
-	loc, err := s.store.regionCache.LocateKey(NewBackoffer(getMaxBackoff, goctx.Background()), key)
+	loc, err := s.store.regionCache.LocateKey(NewBackoffer(goctx.Background(), getMaxBackoff), key)
 	c.Assert(err, IsNil)
 	return loc.Region.id
 }
@@ -215,7 +215,7 @@ func (s *testCommitterSuite) mustGetRegionID(c *C, key []byte) uint64 {
 func (s *testCommitterSuite) isKeyLocked(c *C, key []byte) bool {
 	ver, err := s.store.CurrentVersion()
 	c.Assert(err, IsNil)
-	bo := NewBackoffer(getMaxBackoff, goctx.Background())
+	bo := NewBackoffer(goctx.Background(), getMaxBackoff)
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdGet,
 		Get: &kvrpcpb.GetRequest{
@@ -312,9 +312,9 @@ func (s *testCommitterSuite) TestCommitBeforePrewrite(c *C) {
 	commiter, err := newTwoPhaseCommitter(txn)
 	c.Assert(err, IsNil)
 	ctx := goctx.Background()
-	err = commiter.cleanupKeys(NewBackoffer(cleanupMaxBackoff, ctx), commiter.keys)
+	err = commiter.cleanupKeys(NewBackoffer(ctx, cleanupMaxBackoff), commiter.keys)
 	c.Assert(err, IsNil)
-	err = commiter.prewriteKeys(NewBackoffer(prewriteMaxBackoff, ctx), commiter.keys)
+	err = commiter.prewriteKeys(NewBackoffer(ctx, prewriteMaxBackoff), commiter.keys)
 	c.Assert(err, NotNil)
 	errMsgMustContain(c, err, "write conflict")
 }
@@ -356,7 +356,7 @@ func (s *testCommitterSuite) TestPrewritePrimaryKeyFailed(c *C) {
 	ctx := goctx.Background()
 	commiter, err := newTwoPhaseCommitter(txn2)
 	c.Assert(err, IsNil)
-	err = commiter.cleanupKeys(NewBackoffer(cleanupMaxBackoff, ctx), commiter.keys)
+	err = commiter.cleanupKeys(NewBackoffer(ctx, cleanupMaxBackoff), commiter.keys)
 	c.Assert(err, IsNil)
 
 	// check the data after rollback twice.

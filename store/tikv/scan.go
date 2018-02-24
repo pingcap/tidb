@@ -74,7 +74,7 @@ func (s *Scanner) Value() []byte {
 
 // Next return next element.
 func (s *Scanner) Next() error {
-	bo := NewBackoffer(scannerNextMaxBackoff, goctx.Background())
+	bo := NewBackoffer(goctx.Background(), scannerNextMaxBackoff)
 	if !s.valid {
 		return errors.New("scanner iterator is invalid")
 	}

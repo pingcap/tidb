@@ -112,7 +112,7 @@ func (c *CopClient) supportExpr(exprType tipb.ExprType) bool {
 func (c *CopClient) Send(ctx goctx.Context, req *kv.Request) kv.Response {
 	metrics.TiKVCoprocessorCounter.WithLabelValues("send").Inc()
 
-	bo := NewBackoffer(copBuildTaskMaxBackoff, ctx)
+	bo := NewBackoffer(ctx, copBuildTaskMaxBackoff)
 	tasks, err := buildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req.Desc, req.Streaming)
 	if err != nil {
 		return copErrorResponse{err}
@@ -382,7 +382,7 @@ func (it *copIterator) work(goCtx goctx.Context, taskCh <-chan *copTask) {
 			ch = task.respChan
 		}
 
-		bo := NewBackoffer(copNextMaxBackoff, ctx1)
+		bo := NewBackoffer(ctx1, copNextMaxBackoff)
 		startTime := time.Now()
 		it.handleTask(bo, task, ch)
 		costTime := time.Since(startTime)
