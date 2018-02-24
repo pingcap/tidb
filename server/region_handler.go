@@ -127,7 +127,7 @@ func (s *Server) newRegionHandler() (hanler *regionHandler) {
 	regionCache := tikvStore.GetRegionCache()
 
 	// init backOffer && infoSchema.
-	backOffer := tikv.NewBackoffer(context.Background(), 500)
+	backOffer := tikv.NewBackoffer(500, context.Background())
 
 	tool := &regionHandlerTool{
 		regionCache: regionCache,
