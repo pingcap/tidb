@@ -97,7 +97,6 @@ const (
 // Otherwise the executor's returned rows don't need to store the handle information.
 type Row = types.DatumRow
 
-// baseExecutor contains an Executor's array and it implements visitor pattern.
 type baseExecutor struct {
 	ctx             sessionctx.Context
 	id              string
@@ -136,7 +135,7 @@ func (e *baseExecutor) Close() error {
 	return nil
 }
 
-// Schema returns the current baseExecutor's schema. If its value is nil, then create a new one.
+// Schema returns the current baseExecutor's schema. If it is nil, then create and return a new one.
 func (e *baseExecutor) Schema() *expression.Schema {
 	if e.schema == nil {
 		return expression.NewSchema()
@@ -144,7 +143,7 @@ func (e *baseExecutor) Schema() *expression.Schema {
 	return e.schema
 }
 
-// newChunk creates a new chunk for future use.
+// newChunk creates a new chunk to buffer current executor's result.
 func (e *baseExecutor) newChunk() *chunk.Chunk {
 	return chunk.NewChunk(e.retTypes())
 }
