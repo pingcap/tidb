@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 /***
@@ -51,24 +51,24 @@ type RevokeExec struct {
 }
 
 // Next implements Execution Next interface.
-func (e *RevokeExec) Next(goCtx goctx.Context) (Row, error) {
+func (e *RevokeExec) Next(ctx context.Context) (Row, error) {
 	if e.done {
 		return nil, nil
 	}
 	e.done = true
-	return nil, errors.Trace(e.run(goCtx))
+	return nil, errors.Trace(e.run(ctx))
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (e *RevokeExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+func (e *RevokeExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	if e.done {
 		return nil
 	}
 	e.done = true
-	return errors.Trace(e.run(goCtx))
+	return errors.Trace(e.run(ctx))
 }
 
-func (e *RevokeExec) run(goCtx goctx.Context) error {
+func (e *RevokeExec) run(ctx context.Context) error {
 	// Revoke for each user
 	for _, user := range e.Users {
 		// Check if user exists.
