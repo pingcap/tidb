@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tipb/go-tipb"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testPlanSuite{})
@@ -317,7 +317,7 @@ func supportExpr(exprType tipb.ExprType) bool {
 type mockClient struct {
 }
 
-func (c *mockClient) Send(ctx goctx.Context, _ *kv.Request) kv.Response {
+func (c *mockClient) Send(ctx context.Context, _ *kv.Request) kv.Response {
 	return nil
 }
 

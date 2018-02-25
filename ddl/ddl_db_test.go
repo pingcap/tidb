@@ -46,7 +46,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 const (
@@ -91,14 +91,14 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 	s.s, err = tidb.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 
-	_, err = s.s.Execute(goctx.Background(), "create database test_db")
+	_, err = s.s.Execute(context.Background(), "create database test_db")
 	c.Assert(err, IsNil)
 
 	s.tk = testkit.NewTestKit(c, s.store)
 }
 
 func (s *testDBSuite) TearDownSuite(c *C) {
-	s.s.Execute(goctx.Background(), "drop database if exists test_db")
+	s.s.Execute(context.Background(), "drop database if exists test_db")
 	s.s.Close()
 	s.dom.Close()
 	s.store.Close()
@@ -228,12 +228,12 @@ func backgroundExec(s kv.Storage, sql string, done chan error) {
 		return
 	}
 	defer se.Close()
-	_, err = se.Execute(goctx.Background(), "use test_db")
+	_, err = se.Execute(context.Background(), "use test_db")
 	if err != nil {
 		done <- errors.Trace(err)
 		return
 	}
-	_, err = se.Execute(goctx.Background(), sql)
+	_, err = se.Execute(context.Background(), sql)
 	done <- errors.Trace(err)
 }
 
@@ -347,7 +347,7 @@ func (s *testDBSuite) TestCancelAddIndex(c *C) {
 			checkErr = errors.Trace(errs[0])
 			return
 		}
-		err = hookCtx.Txn().Commit(goctx.Background())
+		err = hookCtx.Txn().Commit(context.Background())
 		if err != nil {
 			checkErr = errors.Trace(err)
 		}
@@ -804,9 +804,9 @@ func (s *testDBSuite) TestColumn(c *C) {
 func sessionExec(c *C, s kv.Storage, sql string) {
 	se, err := tidb.CreateSession4Test(s)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(goctx.Background(), "use test_db")
+	_, err = se.Execute(context.Background(), "use test_db")
 	c.Assert(err, IsNil)
-	rs, err := se.Execute(goctx.Background(), sql)
+	rs, err := se.Execute(context.Background(), sql)
 	c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
 	c.Assert(rs, IsNil)
 	se.Close()
@@ -824,13 +824,13 @@ func execMultiSQLInGoroutine(c *C, s kv.Storage, multiSQL []string, done chan er
 			return
 		}
 		defer se.Close()
-		_, err = se.Execute(goctx.Background(), "use test_db")
+		_, err = se.Execute(context.Background(), "use test_db")
 		if err != nil {
 			done <- errors.Trace(err)
 			return
 		}
 		for _, sql := range multiSQL {
-			rs, err := se.Execute(goctx.Background(), sql)
+			rs, err := se.Execute(context.Background(), sql)
 			if err != nil {
 				done <- errors.Trace(err)
 				return

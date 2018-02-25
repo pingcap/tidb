@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var (
@@ -92,12 +92,12 @@ func NewPrepareExec(ctx sessionctx.Context, is infoschema.InfoSchema, sqlTxt str
 }
 
 // Next implements the Executor Next interface.
-func (e *PrepareExec) Next(goCtx goctx.Context) (Row, error) {
+func (e *PrepareExec) Next(ctx context.Context) (Row, error) {
 	return nil, errors.Trace(e.DoPrepare())
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (e *PrepareExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+func (e *PrepareExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	return errors.Trace(e.DoPrepare())
 }
 
@@ -194,12 +194,12 @@ type ExecuteExec struct {
 
 // Next implements the Executor Next interface.
 // It will never be called.
-func (e *ExecuteExec) Next(goCtx goctx.Context) (Row, error) {
+func (e *ExecuteExec) Next(ctx context.Context) (Row, error) {
 	return nil, nil
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (e *ExecuteExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+func (e *ExecuteExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
@@ -235,16 +235,16 @@ type DeallocateExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *DeallocateExec) Next(goCtx goctx.Context) (Row, error) {
-	return nil, errors.Trace(e.run(goCtx))
+func (e *DeallocateExec) Next(ctx context.Context) (Row, error) {
+	return nil, errors.Trace(e.run(ctx))
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (e *DeallocateExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
-	return errors.Trace(e.run(goCtx))
+func (e *DeallocateExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+	return errors.Trace(e.run(ctx))
 }
 
-func (e *DeallocateExec) run(goCtx goctx.Context) error {
+func (e *DeallocateExec) run(ctx context.Context) error {
 	vars := e.ctx.GetSessionVars()
 	id, ok := vars.PreparedStmtNameToID[e.Name]
 	if !ok {

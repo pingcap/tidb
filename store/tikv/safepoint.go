@@ -22,7 +22,7 @@ import (
 	"github.com/coreos/etcd/clientv3"
 	"github.com/juju/errors"
 	log "github.com/sirupsen/logrus"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 // Safe point constants.
@@ -89,7 +89,7 @@ func NewEtcdSafePointKV(addrs []string, tlsConfig *tls.Config) (*EtcdSafePointKV
 
 // Put implements the Put method for SafePointKV
 func (w *EtcdSafePointKV) Put(k string, v string) error {
-	ctx, cancel := goctx.WithTimeout(goctx.Background(), time.Second*5)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
 	_, err := w.cli.Put(ctx, k, v)
 	cancel()
 	if err != nil {
@@ -100,7 +100,7 @@ func (w *EtcdSafePointKV) Put(k string, v string) error {
 
 // Get implements the Get method for SafePointKV
 func (w *EtcdSafePointKV) Get(k string) (string, error) {
-	ctx, cancel := goctx.WithTimeout(goctx.Background(), time.Second*5)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
 	resp, err := w.cli.Get(ctx, k)
 	cancel()
 	if err != nil {

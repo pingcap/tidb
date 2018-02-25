@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
@@ -247,7 +247,7 @@ func (s *testPrivilegeSuite) TestDropTablePriv(c *C) {
 	// ctx.GetSessionVars().User = "drop@localhost"
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "drop", Hostname: "localhost"}, nil, nil), IsTrue)
 	mustExec(c, se, `SELECT * FROM todrop;`)
-	_, err := se.Execute(goctx.Background(), "DROP TABLE todrop;")
+	_, err := se.Execute(context.Background(), "DROP TABLE todrop;")
 	c.Assert(err, NotNil)
 
 	se = newSession(c, s.store, s.dbName)
@@ -303,7 +303,7 @@ func (s *testPrivilegeSuite) TestInformationSchema(c *C) {
 }
 
 func mustExec(c *C, se tidb.Session, sql string) {
-	_, err := se.Execute(goctx.Background(), sql)
+	_, err := se.Execute(context.Background(), sql)
 	c.Assert(err, IsNil)
 }
 
