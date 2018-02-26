@@ -1342,7 +1342,7 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 
 func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Context, e *TableReaderExecutor, handles []int64) (Executor, error) {
 	sort.Sort(sortutil.Int64Slice(handles))
-	var b requestBuilder
+	var b distsql.RequestBuilder
 	kvReq, err := b.SetTableHandles(e.tableID, handles).
 		SetDAGRequest(e.dagPB).
 		SetDesc(e.desc).
@@ -1401,7 +1401,7 @@ func buildKvRangesForIndexJoin(sc *stmtctx.StatementContext, tableID, indexID in
 				ran.HighVal[idxOff] = val[keyOff]
 			}
 		}
-		tmpKvRanges, err := indexRangesToKVRanges(sc, tableID, indexID, indexRanges)
+		tmpKvRanges, err := distsql.IndexRangesToKVRanges(sc, tableID, indexID, indexRanges)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
