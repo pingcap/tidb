@@ -30,6 +30,7 @@ var (
 const (
 	LabelSession  = "session"
 	LabelDomain   = "domain"
+	LabelDDLOwner = "ddl-owner"
 	LabelDDL      = "ddl"
 	LabelGCWorker = "gcworker"
 
