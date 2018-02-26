@@ -275,7 +275,9 @@ func Contains(exprs []Expression, e Expression) bool {
 	return false
 }
 
-// ExtractFiltersFromDNFs checks whether the cond is DNF and extract the same expression in its leaf items and return them as a slice.
+// ExtractFiltersFromDNFs checks whether the cond is DNF. If so, it will get the extracted part and the remained part.
+// The original DNF will be replaced by the remained part or just be deleted if remained part is nil.
+// And the extracted part will be appended to the end of the orignal slice.
 func ExtractFiltersFromDNFs(ctx sessionctx.Context, conditions []Expression) []Expression {
 	var allExtracted []Expression
 	for i := len(conditions) - 1; i >= 0; i-- {
