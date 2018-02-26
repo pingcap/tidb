@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	log "github.com/sirupsen/logrus"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 )
@@ -127,7 +127,7 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 		return nil, false, errors.Trace(e)
 	}
 	if timeout > 0 {
-		context, cancel := goctx.WithTimeout(bo, timeout)
+		context, cancel := context.WithTimeout(bo, timeout)
 		defer cancel()
 		resp, err = s.client.SendReq(context, ctx.Addr, req)
 	} else {
@@ -145,7 +145,7 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 
 func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err error) error {
 	// If it failed because the context is cancelled by ourself, don't retry.
-	if errors.Cause(err) == goctx.Canceled {
+	if errors.Cause(err) == context.Canceled {
 		return errors.Trace(err)
 	}
 	if grpc.Code(errors.Cause(err)) == codes.Canceled {

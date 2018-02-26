@@ -18,7 +18,7 @@ import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/terror"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 // TestFailCommitPrimaryRpcErrors tests rpc errors are handled properly when
@@ -30,7 +30,7 @@ func (s *testCommitterSuite) TestFailCommitPrimaryRpcErrors(c *C) {
 	t1 := s.begin(c)
 	err := t1.Set([]byte("a"), []byte("a1"))
 	c.Assert(err, IsNil)
-	err = t1.Commit(goctx.Background())
+	err = t1.Commit(context.Background())
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, terror.ErrResultUndetermined), IsTrue, Commentf("%s", errors.ErrorStack(err)))
 }
@@ -45,7 +45,7 @@ func (s *testCommitterSuite) TestFailCommitPrimaryRegionError(c *C) {
 	t2 := s.begin(c)
 	err := t2.Set([]byte("b"), []byte("b1"))
 	c.Assert(err, IsNil)
-	err = t2.Commit(goctx.Background())
+	err = t2.Commit(context.Background())
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorNotEqual(err, terror.ErrResultUndetermined), IsTrue)
 }
@@ -59,7 +59,7 @@ func (s *testCommitterSuite) TestFailCommitPrimaryRPCErrorThenRegionError(c *C) 
 	t1 := s.begin(c)
 	err := t1.Set([]byte("a"), []byte("a1"))
 	c.Assert(err, IsNil)
-	err = t1.Commit(goctx.Background())
+	err = t1.Commit(context.Background())
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, terror.ErrResultUndetermined), IsTrue, Commentf("%s", errors.ErrorStack(err)))
 }
@@ -74,7 +74,7 @@ func (s *testCommitterSuite) TestFailCommitPrimaryKeyError(c *C) {
 	t3 := s.begin(c)
 	err := t3.Set([]byte("c"), []byte("c1"))
 	c.Assert(err, IsNil)
-	err = t3.Commit(goctx.Background())
+	err = t3.Commit(context.Background())
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorNotEqual(err, terror.ErrResultUndetermined), IsTrue)
 }
@@ -89,7 +89,7 @@ func (s *testCommitterSuite) TestFailCommitTimeout(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Set([]byte("c"), []byte("c1"))
 	c.Assert(err, IsNil)
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, NotNil)
 
 	txn2 := s.begin(c)

@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var (
@@ -52,7 +52,7 @@ func NewRawKVClient(pdAddrs []string, security config.Security) (*RawKVClient, e
 		return nil, errors.Trace(err)
 	}
 	return &RawKVClient{
-		clusterID:   pdCli.GetClusterID(goctx.TODO()),
+		clusterID:   pdCli.GetClusterID(context.TODO()),
 		regionCache: NewRegionCache(pdCli),
 		pdClient:    pdCli,
 		rpcClient:   newRPCClient(security),
@@ -194,7 +194,7 @@ func (c *RawKVClient) Scan(startKey []byte, limit int) (keys [][]byte, values []
 }
 
 func (c *RawKVClient) sendReq(key []byte, req *tikvrpc.Request) (*tikvrpc.Response, *KeyLocation, error) {
-	bo := NewBackoffer(rawkvMaxBackoff, goctx.Background())
+	bo := NewBackoffer(context.Background(), rawkvMaxBackoff)
 	sender := NewRegionRequestSender(c.regionCache, c.rpcClient)
 	for {
 		loc, err := c.regionCache.LocateKey(bo, key)

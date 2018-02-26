@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/structure"
 	"github.com/pingcap/tidb/util/testleak"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 func TestTxStructure(t *testing.T) {
@@ -83,7 +83,7 @@ func (s *testTxStructureSuite) TestString(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, IsNil)
 
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 }
 
@@ -165,7 +165,7 @@ func (s *testTxStructureSuite) TestList(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(l, Equals, int64(0))
 
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 }
 
@@ -324,7 +324,7 @@ func (s *testTxStructureSuite) TestHash(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(value, DeepEquals, []byte("2"))
 
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	err = kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {

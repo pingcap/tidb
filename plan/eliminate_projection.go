@@ -38,7 +38,7 @@ func canProjectionBeEliminatedStrict(p *PhysicalProjection) bool {
 	}
 	for i, expr := range p.Exprs {
 		col, ok := expr.(*expression.Column)
-		if !ok || !col.Equal(child.Schema().Columns[i], nil) {
+		if !ok || !col.Equal(nil, child.Schema().Columns[i]) {
 			return false
 		}
 	}

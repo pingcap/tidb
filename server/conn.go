@@ -61,7 +61,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/memory"
 	log "github.com/sirupsen/logrus"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 const (
@@ -104,7 +104,7 @@ type clientConn struct {
 	// mu is used for cancelling the execution of current transaction.
 	mu struct {
 		sync.RWMutex
-		cancelFunc goctx.CancelFunc
+		cancelFunc context.CancelFunc
 	}
 }
 
@@ -396,7 +396,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse() error {
 		}
 	}
 	if cc.dbname != "" {
-		err = cc.useDB(goctx.Background(), cc.dbname)
+		err = cc.useDB(context.Background(), cc.dbname)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -571,9 +571,9 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 // The most frequently used command is ComQuery.
 func (cc *clientConn) dispatch(data []byte) error {
 	span := opentracing.StartSpan("server.dispatch")
-	goCtx := opentracing.ContextWithSpan(goctx.Background(), span)
+	ctx := opentracing.ContextWithSpan(context.Background(), span)
 
-	goCtx1, cancelFunc := goctx.WithCancel(goCtx)
+	ctx1, cancelFunc := context.WithCancel(ctx)
 	cc.mu.Lock()
 	cc.mu.cancelFunc = cancelFunc
 	cc.mu.Unlock()
@@ -603,11 +603,11 @@ func (cc *clientConn) dispatch(data []byte) error {
 		if len(data) > 0 && data[len(data)-1] == 0 {
 			data = data[:len(data)-1]
 		}
-		return cc.handleQuery(goCtx1, hack.String(data))
+		return cc.handleQuery(ctx1, hack.String(data))
 	case mysql.ComPing:
 		return cc.writeOK()
 	case mysql.ComInitDB:
-		if err := cc.useDB(goCtx1, hack.String(data)); err != nil {
+		if err := cc.useDB(ctx1, hack.String(data)); err != nil {
 			return errors.Trace(err)
 		}
 		return cc.writeOK()
@@ -616,7 +616,7 @@ func (cc *clientConn) dispatch(data []byte) error {
 	case mysql.ComStmtPrepare:
 		return cc.handleStmtPrepare(hack.String(data))
 	case mysql.ComStmtExecute:
-		return cc.handleStmtExecute(goCtx1, data)
+		return cc.handleStmtExecute(ctx1, data)
 	case mysql.ComStmtClose:
 		return cc.handleStmtClose(data)
 	case mysql.ComStmtSendLongData:
@@ -630,10 +630,10 @@ func (cc *clientConn) dispatch(data []byte) error {
 	}
 }
 
-func (cc *clientConn) useDB(goCtx goctx.Context, db string) (err error) {
+func (cc *clientConn) useDB(ctx context.Context, db string) (err error) {
 	// if input is "use `SELECT`", mysql client just send "SELECT"
 	// so we add `` around db.
-	_, err = cc.ctx.Execute(goCtx, "use `"+db+"`")
+	_, err = cc.ctx.Execute(ctx, "use `"+db+"`")
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -730,7 +730,7 @@ func (cc *clientConn) writeReq(filePath string) error {
 
 var defaultLoadDataBatchCnt uint64 = 20000
 
-func insertDataWithCommit(goCtx goctx.Context, prevData, curData []byte, loadDataInfo *executor.LoadDataInfo) ([]byte, error) {
+func insertDataWithCommit(ctx context.Context, prevData, curData []byte, loadDataInfo *executor.LoadDataInfo) ([]byte, error) {
 	var err error
 	var reachLimit bool
 	for {
@@ -743,7 +743,7 @@ func insertDataWithCommit(goCtx goctx.Context, prevData, curData []byte, loadDat
 		}
 		loadDataInfo.Ctx.StmtCommit()
 		// Make sure that there are no retries when committing.
-		if err = loadDataInfo.Ctx.RefreshTxnCtx(goCtx); err != nil {
+		if err = loadDataInfo.Ctx.RefreshTxnCtx(ctx); err != nil {
 			return nil, errors.Trace(err)
 		}
 		curData = prevData
@@ -754,7 +754,7 @@ func insertDataWithCommit(goCtx goctx.Context, prevData, curData []byte, loadDat
 
 // handleLoadData does the additional work after processing the 'load data' query.
 // It sends client a file path, then reads the file content from client, inserts data into database.
-func (cc *clientConn) handleLoadData(goCtx goctx.Context, loadDataInfo *executor.LoadDataInfo) error {
+func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor.LoadDataInfo) error {
 	// If the server handles the load data request, the client has to set the ClientLocalFiles capability.
 	if cc.capability&mysql.ClientLocalFiles == 0 {
 		return errNotAllowedCommand
@@ -790,7 +790,7 @@ func (cc *clientConn) handleLoadData(goCtx goctx.Context, loadDataInfo *executor
 				break
 			}
 		}
-		prevData, err = insertDataWithCommit(goCtx, prevData, curData, loadDataInfo)
+		prevData, err = insertDataWithCommit(ctx, prevData, curData, loadDataInfo)
 		if err != nil {
 			break
 		}
@@ -809,12 +809,12 @@ func (cc *clientConn) handleLoadData(goCtx goctx.Context, loadDataInfo *executor
 		}
 		return errors.Trace(err)
 	}
-	return errors.Trace(txn.Commit(goCtx))
+	return errors.Trace(txn.Commit(ctx))
 }
 
 // handleLoadStats does the additional work after processing the 'load stats' query.
 // It sends client a file path, then reads the file content from client, loads it into the storage.
-func (cc *clientConn) handleLoadStats(goCtx goctx.Context, loadStatsInfo *executor.LoadStatsInfo) error {
+func (cc *clientConn) handleLoadStats(ctx context.Context, loadStatsInfo *executor.LoadStatsInfo) error {
 	// If the server handles the load data request, the client has to set the ClientLocalFiles capability.
 	if cc.capability&mysql.ClientLocalFiles == 0 {
 		return errNotAllowedCommand
@@ -847,23 +847,23 @@ func (cc *clientConn) handleLoadStats(goCtx goctx.Context, loadStatsInfo *execut
 // As the execution time of this function represents the performance of TiDB, we do time log and metrics here.
 // There is a special query `load data` that does not return result, which is handled differently.
 // Query `load stats` does not return result either.
-func (cc *clientConn) handleQuery(goCtx goctx.Context, sql string) (err error) {
-	rs, err := cc.ctx.Execute(goCtx, sql)
+func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
+	rs, err := cc.ctx.Execute(ctx, sql)
 	if err != nil {
 		metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
 		return errors.Trace(err)
 	}
 	if rs != nil {
 		if len(rs) == 1 {
-			err = cc.writeResultset(goCtx, rs[0], false, false)
+			err = cc.writeResultset(ctx, rs[0], false, false)
 		} else {
-			err = cc.writeMultiResultset(goCtx, rs, false)
+			err = cc.writeMultiResultset(ctx, rs, false)
 		}
 	} else {
 		loadDataInfo := cc.ctx.Value(executor.LoadDataVarKey)
 		if loadDataInfo != nil {
 			defer cc.ctx.SetValue(executor.LoadDataVarKey, nil)
-			if err = cc.handleLoadData(goCtx, loadDataInfo.(*executor.LoadDataInfo)); err != nil {
+			if err = cc.handleLoadData(ctx, loadDataInfo.(*executor.LoadDataInfo)); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -871,7 +871,7 @@ func (cc *clientConn) handleQuery(goCtx goctx.Context, sql string) (err error) {
 		loadStats := cc.ctx.Value(executor.LoadStatsVarKey)
 		if loadStats != nil {
 			defer cc.ctx.SetValue(executor.LoadStatsVarKey, nil)
-			if err = cc.handleLoadStats(goCtx, loadStats.(*executor.LoadStatsInfo)); err != nil {
+			if err = cc.handleLoadStats(ctx, loadStats.(*executor.LoadStatsInfo)); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -907,7 +907,7 @@ func (cc *clientConn) handleFieldList(sql string) (err error) {
 // If binary is true, the data would be encoded in BINARY format.
 // If more is true, a flag bit would be set to indicate there are more
 // resultsets, it's used to support the MULTI_RESULTS capability in mysql protocol.
-func (cc *clientConn) writeResultset(goCtx goctx.Context, rs ResultSet, binary bool, more bool) (runErr error) {
+func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary bool, more bool) (runErr error) {
 	defer func() {
 		terror.Call(rs.Close)
 		r := recover()
@@ -930,7 +930,7 @@ func (cc *clientConn) writeResultset(goCtx goctx.Context, rs ResultSet, binary b
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = cc.writeChunks(goCtx, rs, binary, more)
+		err = cc.writeChunks(ctx, rs, binary, more)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -938,7 +938,7 @@ func (cc *clientConn) writeResultset(goCtx goctx.Context, rs ResultSet, binary b
 	}
 	// We need to call Next before we get columns.
 	// Otherwise, we will get incorrect columns info.
-	row, err := rs.Next(goCtx)
+	row, err := rs.Next(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -971,7 +971,7 @@ func (cc *clientConn) writeResultset(goCtx goctx.Context, rs ResultSet, binary b
 		if err = cc.writePacket(data); err != nil {
 			return errors.Trace(err)
 		}
-		row, err = rs.Next(goCtx)
+		row, err = rs.Next(ctx)
 	}
 
 	err = cc.writeEOF(more)
@@ -1004,12 +1004,12 @@ func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo) error {
 // writeChunks writes data from a Chunk, which filled data by a ResultSet, into a connection.
 // binary specifies the way to dump data. It throws any error while dumping data.
 // more will be passed into writeEOF.
-func (cc *clientConn) writeChunks(goCtx goctx.Context, rs ResultSet, binary bool, more bool) error {
+func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool, more bool) error {
 	data := make([]byte, 4, 1024)
 	chk := rs.NewChunk()
 	for {
 		// Here server.tidbResultSet implements NextChunk method.
-		err := rs.NextChunk(goCtx, chk)
+		err := rs.NextChunk(ctx, chk)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1035,9 +1035,9 @@ func (cc *clientConn) writeChunks(goCtx goctx.Context, rs ResultSet, binary bool
 	return errors.Trace(cc.writeEOF(more))
 }
 
-func (cc *clientConn) writeMultiResultset(goCtx goctx.Context, rss []ResultSet, binary bool) error {
+func (cc *clientConn) writeMultiResultset(ctx context.Context, rss []ResultSet, binary bool) error {
 	for _, rs := range rss {
-		if err := cc.writeResultset(goCtx, rs, binary, true); err != nil {
+		if err := cc.writeResultset(ctx, rs, binary, true); err != nil {
 			return errors.Trace(err)
 		}
 	}

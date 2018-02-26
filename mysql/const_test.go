@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
@@ -156,24 +156,24 @@ func (s *testMySQLConstSuite) TestPipesAsConcatMode(c *C) {
 
 func (s *testMySQLConstSuite) TestNoUnsignedSubtractionMode(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	goCtx := goctx.Background()
+	ctx := context.Background()
 	tk.MustExec("set sql_mode='NO_UNSIGNED_SUBTRACTION'")
 	r := tk.MustQuery("SELECT CAST(0 as UNSIGNED) - 1;")
 	r.Check(testkit.Rows("-1"))
 	rs, _ := tk.Exec("SELECT CAST(18446744073709551615 as UNSIGNED) - 1;")
-	_, err := tidb.GetRows4Test(goCtx, tk.Se, rs)
+	_, err := tidb.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(err, NotNil)
 	c.Assert(rs.Close(), IsNil)
 	rs, _ = tk.Exec("SELECT 1 - CAST(18446744073709551615 as UNSIGNED);")
-	_, err = tidb.GetRows4Test(goCtx, tk.Se, rs)
+	_, err = tidb.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(err, NotNil)
 	c.Assert(rs.Close(), IsNil)
 	rs, _ = tk.Exec("SELECT CAST(-1 as UNSIGNED) - 1")
-	_, err = tidb.GetRows4Test(goCtx, tk.Se, rs)
+	_, err = tidb.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(err, NotNil)
 	c.Assert(rs.Close(), IsNil)
 	rs, _ = tk.Exec("SELECT CAST(9223372036854775808 as UNSIGNED) - 1")
-	_, err = tidb.GetRows4Test(goCtx, tk.Se, rs)
+	_, err = tidb.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(err, NotNil)
 	c.Assert(rs.Close(), IsNil)
 }
