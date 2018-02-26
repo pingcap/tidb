@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/codec"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var (
@@ -84,7 +84,7 @@ func (s *testTiclientSuite) TearDownSuite(c *C) {
 		c.Assert(err, IsNil)
 		scanner.Next()
 	}
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 	err = s.store.Close()
 	c.Assert(err, IsNil)
@@ -102,7 +102,7 @@ func (s *testTiclientSuite) TestSingleKey(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.LockKeys(encodeKey(s.prefix, "key"))
 	c.Assert(err, IsNil)
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	txn = s.beginTxn(c)
@@ -113,7 +113,7 @@ func (s *testTiclientSuite) TestSingleKey(c *C) {
 	txn = s.beginTxn(c)
 	err = txn.Delete(encodeKey(s.prefix, "key"))
 	c.Assert(err, IsNil)
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 }
 
@@ -125,7 +125,7 @@ func (s *testTiclientSuite) TestMultiKeys(c *C) {
 		err := txn.Set(encodeKey(s.prefix, s08d("key", i)), valueBytes(i))
 		c.Assert(err, IsNil)
 	}
-	err := txn.Commit(goctx.Background())
+	err := txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	txn = s.beginTxn(c)
@@ -140,7 +140,7 @@ func (s *testTiclientSuite) TestMultiKeys(c *C) {
 		err = txn.Delete(encodeKey(s.prefix, s08d("key", i)))
 		c.Assert(err, IsNil)
 	}
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 }
 
@@ -155,7 +155,7 @@ func (s *testTiclientSuite) TestLargeRequest(c *C) {
 	txn := s.beginTxn(c)
 	err := txn.Set([]byte("key"), largeValue)
 	c.Assert(err, NotNil)
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 	c.Assert(kv.IsRetryableError(err), IsFalse)
 }

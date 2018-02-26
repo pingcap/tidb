@@ -21,9 +21,9 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/chunk"
@@ -31,7 +31,7 @@ import (
 )
 
 type benchHelper struct {
-	ctx   context.Context
+	ctx   sessionctx.Context
 	exprs []Expression
 
 	inputTypes  []*types.FieldType
@@ -171,7 +171,7 @@ func BenchmarkVectorizedExecute(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		h.outputChunk.Reset()
 		if err := VectorizedExecute(h.ctx, h.exprs, inputIter, h.outputChunk); err != nil {
-			panic("errors happend during \"VectorizedExecute\"")
+			panic("errors happened during \"VectorizedExecute\"")
 		}
 	}
 }

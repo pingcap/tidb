@@ -20,7 +20,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var errStopped = errors.New("stopped")
@@ -63,7 +63,7 @@ func (o *MockOracle) AddOffset(d time.Duration) {
 }
 
 // GetTimestamp implements oracle.Oracle interface.
-func (o *MockOracle) GetTimestamp(goctx.Context) (uint64, error) {
+func (o *MockOracle) GetTimestamp(context.Context) (uint64, error) {
 	o.Lock()
 	defer o.Unlock()
 
@@ -81,7 +81,7 @@ func (o *MockOracle) GetTimestamp(goctx.Context) (uint64, error) {
 
 type mockOracleFuture struct {
 	o   *MockOracle
-	ctx goctx.Context
+	ctx context.Context
 }
 
 func (m *mockOracleFuture) Wait() (uint64, error) {
@@ -89,7 +89,7 @@ func (m *mockOracleFuture) Wait() (uint64, error) {
 }
 
 // GetTimestampAsync implements oracle.Oracle interface.
-func (o *MockOracle) GetTimestampAsync(ctx goctx.Context) oracle.Future {
+func (o *MockOracle) GetTimestampAsync(ctx context.Context) oracle.Future {
 	return &mockOracleFuture{o, ctx}
 }
 

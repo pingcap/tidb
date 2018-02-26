@@ -15,7 +15,7 @@ package statistics
 
 import (
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 )
@@ -94,7 +94,7 @@ func (b *SortedBuilder) Iterate(data types.Datum) error {
 }
 
 // BuildColumn builds histogram from samples for column.
-func BuildColumn(ctx context.Context, numBuckets, id int64, collector *SampleCollector, tp *types.FieldType) (*Histogram, error) {
+func BuildColumn(ctx sessionctx.Context, numBuckets, id int64, collector *SampleCollector, tp *types.FieldType) (*Histogram, error) {
 	count := collector.Count
 	if count == 0 {
 		return &Histogram{ID: id, NullCount: collector.NullCount}, nil
