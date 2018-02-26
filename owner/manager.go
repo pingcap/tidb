@@ -28,6 +28,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util"
 	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 	"google.golang.org/grpc"
@@ -151,7 +152,7 @@ func NewSession(ctx goctx.Context, logPrefix string, etcdCli *clientv3.Client, r
 			break
 		}
 		if failedCnt%logIntervalCnt == 0 {
-			log.Warnf("%s failed to new session, err %v", logPrefix, err)
+			log.Warnf("%s failed to new session to etcd, err %v", logPrefix, err)
 		}
 
 		time.Sleep(newSessionRetryInterval)
@@ -172,7 +173,23 @@ func (m *ownerManager) CampaignOwner(ctx goctx.Context) error {
 	return nil
 }
 
+func recoverInOwner(funcName string, quit bool) {
+	r := recover()
+	if r == nil {
+		return
+	}
+	buf := util.GetStack()
+	log.Errorf("%s, %v, %s", funcName, r, buf)
+	metrics.PanicCounter.WithLabelValues(metrics.LabelDomain).Inc()
+	if quit {
+		// Wait for metrics to be pushed.
+		time.Sleep(time.Second * 15)
+		os.Exit(1)
+	}
+}
+
 func (m *ownerManager) campaignLoop(ctx goctx.Context, etcdSession *concurrency.Session) {
+	defer recoverInOwner("campaignLoop", true)
 	logPrefix := fmt.Sprintf("[%s] %s ownerManager %s", m.prompt, m.key, m.id)
 	var err error
 	for {
