@@ -162,17 +162,17 @@ func (r *selectResult) NextRaw(ctx context.Context) ([]byte, error) {
 	return re.result, errors.Trace(re.err)
 }
 
-func (r *selectResult) prepare(goCtx goctx.Context) {
+func (r *selectResult) prepare(ctx context.Context) {
 	r.dstChan = make(chan *decodedChk, 1)
 	r.srcChan = make(chan *decodedChk, 1)
 
 	buffer := &decodedChk{chk: chunk.NewChunk(r.fieldTypes)}
 	r.srcChan <- buffer
 
-	go r.decode(goCtx)
+	go r.decode(ctx)
 }
 
-func (r *selectResult) decode(goCtx goctx.Context) {
+func (r *selectResult) decode(ctx context.Context) {
 	defer close(r.dstChan)
 	var resource *decodedChk = nil
 	var ok bool = false
@@ -184,7 +184,7 @@ func (r *selectResult) decode(goCtx goctx.Context) {
 			}
 		case <-r.closed:
 			return
-		case <-goCtx.Done():
+		case <-ctx.Done():
 			return
 		}
 
@@ -216,14 +216,14 @@ func (r *selectResult) decode(goCtx goctx.Context) {
 func (r *selectResult) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if !r.prepared {
-		r.prepare(goCtx)
+		r.prepare(ctx)
 		r.prepared = true
 	}
 
 	select {
 	case <-r.closed:
 		return nil
-	case <-goCtx.Done():
+	case <-ctx.Done():
 		return nil
 	case resource, ok := <-r.dstChan:
 		if !ok {
