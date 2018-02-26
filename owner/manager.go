@@ -28,6 +28,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
@@ -151,7 +152,7 @@ func NewSession(ctx context.Context, logPrefix string, etcdCli *clientv3.Client,
 			break
 		}
 		if failedCnt%logIntervalCnt == 0 {
-			log.Warnf("%s failed to new session, err %v", logPrefix, err)
+			log.Warnf("%s failed to new session to etcd, err %v", logPrefix, err)
 		}
 
 		time.Sleep(newSessionRetryInterval)
@@ -173,6 +174,14 @@ func (m *ownerManager) CampaignOwner(ctx context.Context) error {
 }
 
 func (m *ownerManager) campaignLoop(ctx context.Context, etcdSession *concurrency.Session) {
+	defer func() {
+		if r := recover(); r != nil {
+			buf := util.GetStack()
+			log.Errorf("[%s] recover panic:%v, %s", m.prompt, r, buf)
+			metrics.PanicCounter.WithLabelValues(metrics.LabelDDLOwner).Inc()
+		}
+	}()
+
 	logPrefix := fmt.Sprintf("[%s] %s ownerManager %s", m.prompt, m.key, m.id)
 	var err error
 	for {
