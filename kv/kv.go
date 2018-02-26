@@ -15,7 +15,7 @@ package kv
 
 import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 // Transaction options
@@ -121,7 +121,7 @@ type MemBuffer interface {
 type Transaction interface {
 	MemBuffer
 	// Commit commits the transaction operations to KV store.
-	Commit(goctx.Context) error
+	Commit(context.Context) error
 	// Rollback undoes the transaction operations to KV store.
 	Rollback() error
 	// String implements fmt.Stringer interface.
@@ -149,7 +149,7 @@ type Transaction interface {
 // Client is used to send request to KV layer.
 type Client interface {
 	// Send sends request to KV layer, returns a Response.
-	Send(ctx goctx.Context, req *Request) Response
+	Send(ctx context.Context, req *Request) Response
 
 	// IsRequestTypeSupported checks if reqType and subType is supported.
 	IsRequestTypeSupported(reqType, subType int64) bool
@@ -205,7 +205,7 @@ type Response interface {
 	// Next returns a resultSubset from a single storage unit.
 	// When full result set is returned, nil is returned.
 	// TODO: Find a better interface for resultSubset that can avoid allocation and reuse bytes.
-	Next(ctx goctx.Context) (resultSubset []byte, err error)
+	Next(ctx context.Context) (resultSubset []byte, startKey Key, err error)
 	// Close response.
 	Close() error
 }

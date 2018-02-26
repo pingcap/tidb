@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 // Histogram represents statistics for a column or index.
@@ -162,17 +162,17 @@ func HistogramEqual(a, b *Histogram, ignoreID bool) bool {
 }
 
 // SaveStatsToStorage saves the stats to storage.
-func SaveStatsToStorage(ctx sessionctx.Context, tableID int64, count int64, isIndex int, hg *Histogram, cms *CMSketch) error {
-	goCtx := goctx.TODO()
-	exec := ctx.(sqlexec.SQLExecutor)
-	_, err := exec.Execute(goCtx, "begin")
+func SaveStatsToStorage(sctx sessionctx.Context, tableID int64, count int64, isIndex int, hg *Histogram, cms *CMSketch) error {
+	ctx := context.TODO()
+	exec := sctx.(sqlexec.SQLExecutor)
+	_, err := exec.Execute(ctx, "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
-	txn := ctx.Txn()
+	txn := sctx.Txn()
 	version := txn.StartTS()
 	replaceSQL := fmt.Sprintf("replace into mysql.stats_meta (version, table_id, count) values (%d, %d, %d)", version, tableID, count)
-	_, err = exec.Execute(goCtx, replaceSQL)
+	_, err = exec.Execute(ctx, replaceSQL)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -182,16 +182,16 @@ func SaveStatsToStorage(ctx sessionctx.Context, tableID int64, count int64, isIn
 	}
 	replaceSQL = fmt.Sprintf("replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch) values (%d, %d, %d, %d, %d, %d, X'%X')",
 		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, data)
-	_, err = exec.Execute(goCtx, replaceSQL)
+	_, err = exec.Execute(ctx, replaceSQL)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	deleteSQL := fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d", tableID, isIndex, hg.ID)
-	_, err = exec.Execute(goCtx, deleteSQL)
+	_, err = exec.Execute(ctx, deleteSQL)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	sc := ctx.GetSessionVars().StmtCtx
+	sc := sctx.GetSessionVars().StmtCtx
 	for i := range hg.Buckets {
 		count := hg.Buckets[i].Count
 		if i > 0 {
@@ -208,12 +208,12 @@ func SaveStatsToStorage(ctx sessionctx.Context, tableID int64, count int64, isIn
 			return errors.Trace(err)
 		}
 		insertSQL := fmt.Sprintf("insert into mysql.stats_buckets(table_id, is_index, hist_id, bucket_id, count, repeats, lower_bound, upper_bound) values(%d, %d, %d, %d, %d, %d, X'%X', X'%X')", tableID, isIndex, hg.ID, i, count, hg.Buckets[i].Repeat, lowerBound.GetBytes(), upperBound.GetBytes())
-		_, err = exec.Execute(goCtx, insertSQL)
+		_, err = exec.Execute(ctx, insertSQL)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
-	_, err = exec.Execute(goCtx, "commit")
+	_, err = exec.Execute(ctx, "commit")
 	return errors.Trace(err)
 }
 
@@ -390,6 +390,62 @@ func (hg *Histogram) getIncreaseFactor(totalCount int64) float64 {
 		return 1.0
 	}
 	return float64(totalCount) / float64(columnCount)
+}
+
+// SplitRange splits the range according to the histogram upper bound. Note that we treat last bucket's upper bound
+// as inf, so all the split ranges will totally fall in one of the (-inf, u(0)], (u(0), u(1)],...(u(n-3), u(n-2)],
+// (u(n-2), +inf), where n is the number of buckets, u(i) is the i-th bucket's upper bound.
+func (hg *Histogram) SplitRange(ranges []*ranger.NewRange) []*ranger.NewRange {
+	split := make([]*ranger.NewRange, 0, len(ranges))
+	for len(ranges) > 0 {
+		// Find the first bound that greater or equal to the LowVal.
+		idx, match := hg.Bounds.UpperBound(0, &ranges[0].LowVal[0])
+		if match && !ranges[0].LowExclude {
+			idx--
+		}
+		// Treat last bucket's upper bound as inf, so we do not need split any more.
+		if idx >= hg.Bounds.NumRows()-2 {
+			split = append(split, ranges...)
+			break
+		}
+		// Get the corresponding upper bound.
+		if idx%2 == 0 {
+			idx++
+		}
+		upperBound := hg.Bounds.GetRow(idx)
+		var i int
+		// Find the first range that need to be split by the upper bound.
+		for ; i < len(ranges); i++ {
+			if chunk.Compare(upperBound, 0, &ranges[i].HighVal[0]) < 0 {
+				break
+			}
+		}
+		split = append(split, ranges[:i]...)
+		ranges = ranges[i:]
+		if len(ranges) == 0 {
+			break
+		}
+		// Split according to the upper bound.
+		cmp := chunk.Compare(upperBound, 0, &ranges[0].LowVal[0])
+		if cmp > 0 || (cmp == 0 && !ranges[0].LowExclude) {
+			upper := upperBound.GetDatum(0, hg.tp)
+			split = append(split, &ranger.NewRange{
+				LowExclude:  ranges[0].LowExclude,
+				LowVal:      []types.Datum{ranges[0].LowVal[0]},
+				HighVal:     []types.Datum{upper},
+				HighExclude: false})
+			ranges[0].LowVal[0] = upper
+			ranges[0].LowExclude = true
+		}
+	}
+	return split
+}
+
+func (hg *Histogram) bucketCount(idx int) int64 {
+	if idx == 0 {
+		return hg.Buckets[0].Count
+	}
+	return hg.Buckets[idx].Count - hg.Buckets[idx-1].Count
 }
 
 // HistogramToProto converts Histogram to its protobuf representation.

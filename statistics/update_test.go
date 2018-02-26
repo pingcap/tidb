@@ -15,14 +15,17 @@ package statistics_test
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -331,6 +334,59 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	c.Assert(hg.Len(), Equals, 1)
 }
 
+func appendBucket(h *statistics.Histogram, l, r int64) {
+	lower, upper := types.NewIntDatum(l), types.NewIntDatum(r)
+	h.AppendBucket(&lower, &upper, 0, 0)
+}
+
+func (s *testStatsUpdateSuite) TestSplitRange(c *C) {
+	h := statistics.NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeLong), 10)
+	appendBucket(h, 1, 1)
+	appendBucket(h, 2, 5)
+	appendBucket(h, 7, 7)
+	appendBucket(h, 8, 8)
+	appendBucket(h, 10, 13)
+
+	tests := []struct {
+		points  []int64
+		exclude []bool
+		result  string
+	}{
+		{
+			points:  []int64{1, 1},
+			exclude: []bool{false, false},
+			result:  "[1,1]",
+		},
+		{
+			points:  []int64{0, 1, 3, 8, 8, 20},
+			exclude: []bool{true, false, true, false, true, false},
+			result:  "(0,1],(3,5],(5,7],(7,8],(8,20]",
+		},
+		{
+			points:  []int64{8, 10, 20, 30},
+			exclude: []bool{false, false, true, true},
+			result:  "[8,8],(8,10],(20,30)",
+		},
+	}
+	for _, t := range tests {
+		ranges := make([]*ranger.NewRange, 0, len(t.points)/2)
+		for i := 0; i < len(t.points); i += 2 {
+			ranges = append(ranges, &ranger.NewRange{
+				LowVal:      []types.Datum{types.NewIntDatum(t.points[i])},
+				LowExclude:  t.exclude[i],
+				HighVal:     []types.Datum{types.NewIntDatum(t.points[i+1])},
+				HighExclude: t.exclude[i+1],
+			})
+		}
+		ranges = h.SplitRange(ranges)
+		var ranStrs []string
+		for _, ran := range ranges {
+			ranStrs = append(ranStrs, ran.String())
+		}
+		c.Assert(strings.Join(ranStrs, ","), Equals, t.result)
+	}
+}
+
 func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
@@ -338,23 +394,27 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 	testKit.MustExec("create table t (a int, b int, primary key(a), index idx(b))")
 	testKit.MustExec("insert into t values (1,2),(2,2),(4,5)")
 	testKit.MustExec("analyze table t")
+	testKit.MustExec("insert into t values (3,4)")
 
 	h := s.do.StatsHandle()
 	tests := []struct {
 		sql    string
-		actual int64
+		counts []int64
 	}{
 		{
-			sql:    "select * from t where t.a <= 1",
-			actual: 1,
+			sql: "select * from t where t.a <= 5",
+			// The split range is (-inf, 1], (1, 2], (2, 5].
+			counts: []int64{1, 1, 2},
 		},
 		{
-			sql:    "select * from t use index(idx) where t.b <= 2",
-			actual: 2,
+			sql: "select * from t use index(idx) where t.b <= 5",
+			// The split range is (-inf,2), [2, 5].
+			counts: []int64{2, 2},
 		},
 		{
-			sql:    "select b from t use index(idx) where t.b <= 5",
-			actual: 3,
+			sql: "select b from t use index(idx) where t.b <= 5",
+			// The split range is (-inf,2), [2, 5].
+			counts: []int64{2, 2},
 		},
 	}
 	for _, t := range tests {
@@ -362,7 +422,7 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 		h.DumpStatsDeltaToKV()
 		feedback := h.GetQueryFeedback()
 		c.Assert(len(feedback), Equals, 1)
-		c.Assert(feedback[0].Actual(), Equals, t.actual)
+		c.Assert(feedback[0].Counts(), DeepEquals, t.counts)
 	}
 
 	// Feedback from limit executor may not be accurate.

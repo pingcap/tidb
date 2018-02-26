@@ -20,7 +20,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -29,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 func (h *rpcHandler) handleCopAnalyzeRequest(req *coprocessor.Request) *coprocessor.Response {
@@ -69,15 +68,16 @@ func (h *rpcHandler) handleAnalyzeIndexReq(req *coprocessor.Request, analyzeReq 
 		isolationLevel: h.isolationLevel,
 		mvccStore:      h.mvccStore,
 		IndexScan:      &tipb.IndexScan{Desc: false},
+		counts:         make([]int64, len(req.Ranges)),
 	}
 	statsBuilder := statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob))
 	var cms *statistics.CMSketch
 	if analyzeReq.IdxReq.CmsketchDepth != nil && analyzeReq.IdxReq.CmsketchWidth != nil {
 		cms = statistics.NewCMSketch(*analyzeReq.IdxReq.CmsketchDepth, *analyzeReq.IdxReq.CmsketchWidth)
 	}
-	goCtx := goctx.TODO()
+	ctx := context.TODO()
 	for {
-		values, err := e.Next(goCtx)
+		values, err := e.Next(ctx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -127,13 +127,14 @@ func (h *rpcHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeRe
 			startTS:        analyzeReq.GetStartTs(),
 			isolationLevel: h.isolationLevel,
 			mvccStore:      h.mvccStore,
+			counts:         make([]int64, len(req.Ranges)),
 		},
 	}
 	e.fields = make([]*ast.ResultField, len(columns))
 	for i := range e.fields {
 		rf := new(ast.ResultField)
 		rf.Column = new(model.ColumnInfo)
-		rf.Column.FieldType = *distsql.FieldTypeFromPBColumn(columns[i])
+		rf.Column.FieldType = *fieldTypeFromPBColumn(columns[i])
 		e.fields[i] = rf
 	}
 
@@ -183,8 +184,8 @@ func (e *analyzeColumnsExec) Fields() []*ast.ResultField {
 }
 
 // Next implements the ast.RecordSet Next interface.
-func (e *analyzeColumnsExec) Next(goCtx goctx.Context) (row types.Row, err error) {
-	values, err := e.tblExec.Next(goCtx)
+func (e *analyzeColumnsExec) Next(ctx context.Context) (row types.Row, err error) {
+	values, err := e.tblExec.Next(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -202,7 +203,7 @@ func (e *analyzeColumnsExec) Next(goCtx goctx.Context) (row types.Row, err error
 	return datumRow, nil
 }
 
-func (e *analyzeColumnsExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+func (e *analyzeColumnsExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	return nil
 }
 

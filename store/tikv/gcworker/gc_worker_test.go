@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var (
@@ -154,8 +154,8 @@ func (s *testGCWorkerSuite) TestDoGCForOneRegion(c *C) {
 	var failedRegions int32
 	taskWorker := newGCTaskWorker(s.store, nil, nil, s.gcWorker.uuid, &successRegions, &failedRegions)
 
-	ctx := goctx.Background()
-	bo := tikv.NewBackoffer(tikv.GcOneRegionMaxBackoff, ctx)
+	ctx := context.Background()
+	bo := tikv.NewBackoffer(ctx, tikv.GcOneRegionMaxBackoff)
 	loc, err := s.store.GetRegionCache().LocateKey(bo, []byte(""))
 	c.Assert(err, IsNil)
 	var regionErr *errorpb.Error
@@ -184,7 +184,7 @@ func (s *testGCWorkerSuite) TestDoGCForOneRegion(c *C) {
 
 func (s *testGCWorkerSuite) TestDoGC(c *C) {
 	var err error
-	ctx := goctx.Background()
+	ctx := context.Background()
 
 	gcSafePointCacheInterval = 1
 
