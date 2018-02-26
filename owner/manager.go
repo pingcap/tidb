@@ -187,7 +187,7 @@ func recoverInOwner(funcName string, quit bool) {
 }
 
 func (m *ownerManager) campaignLoop(ctx context.Context, etcdSession *concurrency.Session) {
-	defer recoverInOwner("campaignLoop", true)
+	defer recoverInOwner("campaignLoop", false)
 	logPrefix := fmt.Sprintf("[%s] %s ownerManager %s", m.prompt, m.key, m.id)
 	var err error
 	for {
