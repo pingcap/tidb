@@ -96,6 +96,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		leftPushCond, rightPushCond, otherCond []expression.Expression
 	)
 	if p.JoinType != InnerJoin {
+		predicates = expression.ExtractFiltersFromDNFs(p.ctx, predicates)
 		equalCond, leftPushCond, rightPushCond, otherCond = extractOnCondition(predicates, leftPlan, rightPlan)
 	} else {
 		tempCond := make([]expression.Expression, 0, len(p.LeftConditions)+len(p.RightConditions)+len(p.EqualConditions)+len(p.OtherConditions)+len(predicates))
@@ -104,6 +105,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		tempCond = append(tempCond, expression.ScalarFuncs2Exprs(p.EqualConditions)...)
 		tempCond = append(tempCond, p.OtherConditions...)
 		tempCond = append(tempCond, predicates...)
+		tempCond = expression.ExtractFiltersFromDNFs(p.ctx, tempCond)
 		equalCond, leftPushCond, rightPushCond, otherCond = extractOnCondition(expression.PropagateConstant(p.ctx, tempCond), leftPlan, rightPlan)
 	}
 	switch p.JoinType {
