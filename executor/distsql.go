@@ -22,7 +22,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/opentracing/opentracing-go"
-	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -30,14 +29,12 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	log "github.com/sirupsen/logrus"
@@ -95,78 +92,6 @@ func (task *lookupTableTask) getRow(schema *expression.Schema) (Row, error) {
 	}
 
 	return nil, nil
-}
-
-func tableRangesToKVRanges(tid int64, ranges []*ranger.NewRange) []kv.KeyRange {
-	krs := make([]kv.KeyRange, 0, len(ranges))
-	for _, ran := range ranges {
-		var low, high []byte
-		low = codec.EncodeInt(nil, ran.LowVal[0].GetInt64())
-		high = codec.EncodeInt(nil, ran.HighVal[0].GetInt64())
-		if ran.LowExclude {
-			low = []byte(kv.Key(low).PrefixNext())
-		}
-		if !ran.HighExclude {
-			high = []byte(kv.Key(high).PrefixNext())
-		}
-		startKey := tablecodec.EncodeRowKey(tid, low)
-		endKey := tablecodec.EncodeRowKey(tid, high)
-		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
-	}
-	return krs
-}
-
-// tableHandlesToKVRanges converts sorted handle to kv ranges.
-// For continuous handles, we should merge them to a single key range.
-func tableHandlesToKVRanges(tid int64, handles []int64) []kv.KeyRange {
-	krs := make([]kv.KeyRange, 0, len(handles))
-	i := 0
-	for i < len(handles) {
-		h := handles[i]
-		if h == math.MaxInt64 {
-			// We can't convert MaxInt64 into an left closed, right open range.
-			i++
-			continue
-		}
-		j := i + 1
-		endHandle := h + 1
-		for ; j < len(handles); j++ {
-			if handles[j] == endHandle {
-				endHandle = handles[j] + 1
-				continue
-			}
-			break
-		}
-		startKey := tablecodec.EncodeRowKeyWithHandle(tid, h)
-		endKey := tablecodec.EncodeRowKeyWithHandle(tid, endHandle)
-		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
-		i = j
-	}
-	return krs
-}
-
-func indexRangesToKVRanges(sc *stmtctx.StatementContext, tid, idxID int64, ranges []*ranger.NewRange) ([]kv.KeyRange, error) {
-	krs := make([]kv.KeyRange, 0, len(ranges))
-	for _, ran := range ranges {
-		low, err := codec.EncodeKey(sc, nil, ran.LowVal...)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if ran.LowExclude {
-			low = []byte(kv.Key(low).PrefixNext())
-		}
-		high, err := codec.EncodeKey(sc, nil, ran.HighVal...)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if !ran.HighExclude {
-			high = []byte(kv.Key(high).PrefixNext())
-		}
-		startKey := tablecodec.EncodeIndexSeekKey(tid, idxID, low)
-		endKey := tablecodec.EncodeIndexSeekKey(tid, idxID, high)
-		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
-	}
-	return krs, nil
 }
 
 func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult) (handles []int64, err error) {
@@ -403,7 +328,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 // buildResp first build request and send it to tikv using distsql.Select. It uses SelectResut returned by the callee
 // to fetch all results.
 func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.NewRange) (distsql.SelectResult, error) {
-	var builder requestBuilder
+	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetTableRanges(e.tableID, ranges).
 		SetDAGRequest(e.dagPB).
 		SetDesc(e.desc).
@@ -556,7 +481,7 @@ func (e *IndexReaderExecutor) NextChunk(ctx context.Context, chk *chunk.Chunk) e
 
 // Open implements the Executor Open interface.
 func (e *IndexReaderExecutor) Open(ctx context.Context) error {
-	kvRanges, err := indexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, e.tableID, e.index.ID, e.ranges)
+	kvRanges, err := distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, e.tableID, e.index.ID, e.ranges)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -567,7 +492,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	span, ctx := startSpanFollowsContext(ctx, "executor.IndexReader.Open")
 	defer span.Finish()
 
-	var builder requestBuilder
+	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetKeyRanges(kvRanges).
 		SetDAGRequest(e.dagPB).
 		SetDesc(e.desc).
@@ -631,7 +556,7 @@ type indexWorker struct {
 
 // startIndexWorker launch a background goroutine to fetch handles, send the results to workCh.
 func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []kv.KeyRange, workCh chan<- *lookupTableTask) error {
-	var builder requestBuilder
+	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetKeyRanges(kvRanges).
 		SetDAGRequest(e.dagPB).
 		SetDesc(e.desc).
@@ -776,7 +701,7 @@ func (w *tableWorker) pickAndExecTask(ctx context.Context) {
 
 // Open implements the Executor Open interface.
 func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
-	kvRanges, err := indexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, e.tableID, e.index.ID, e.ranges)
+	kvRanges, err := distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, e.tableID, e.index.ID, e.ranges)
 	if err != nil {
 		e.feedback.Invalidate()
 		return errors.Trace(err)
@@ -933,94 +858,6 @@ func (e *IndexLookUpExecutor) getResultTask() (*lookupTableTask, error) {
 	}
 	e.resultCurr = task
 	return e.resultCurr, nil
-}
-
-type requestBuilder struct {
-	kv.Request
-	err error
-}
-
-func (builder *requestBuilder) Build() (*kv.Request, error) {
-	return &builder.Request, errors.Trace(builder.err)
-}
-
-func (builder *requestBuilder) SetTableRanges(tid int64, tableRanges []*ranger.NewRange) *requestBuilder {
-	if builder.err != nil {
-		return builder
-	}
-	builder.Request.KeyRanges = tableRangesToKVRanges(tid, tableRanges)
-	return builder
-}
-
-func (builder *requestBuilder) SetIndexRanges(sc *stmtctx.StatementContext, tid, idxID int64, ranges []*ranger.NewRange) *requestBuilder {
-	if builder.err != nil {
-		return builder
-	}
-	builder.Request.KeyRanges, builder.err = indexRangesToKVRanges(sc, tid, idxID, ranges)
-	return builder
-}
-
-func (builder *requestBuilder) SetTableHandles(tid int64, handles []int64) *requestBuilder {
-	builder.Request.KeyRanges = tableHandlesToKVRanges(tid, handles)
-	return builder
-}
-
-func (builder *requestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *requestBuilder {
-	if builder.err != nil {
-		return builder
-	}
-
-	builder.Request.Tp = kv.ReqTypeDAG
-	builder.Request.StartTs = dag.StartTs
-	builder.Request.Data, builder.err = dag.Marshal()
-	return builder
-}
-
-func (builder *requestBuilder) SetAnalyzeRequest(ana *tipb.AnalyzeReq) *requestBuilder {
-	if builder.err != nil {
-		return builder
-	}
-
-	builder.Request.Tp = kv.ReqTypeAnalyze
-	builder.Request.StartTs = ana.StartTs
-	builder.Request.Data, builder.err = ana.Marshal()
-	builder.Request.NotFillCache = true
-	return builder
-}
-
-func (builder *requestBuilder) SetKeyRanges(keyRanges []kv.KeyRange) *requestBuilder {
-	builder.Request.KeyRanges = keyRanges
-	return builder
-}
-
-func (builder *requestBuilder) SetDesc(desc bool) *requestBuilder {
-	builder.Request.Desc = desc
-	return builder
-}
-
-func (builder *requestBuilder) SetKeepOrder(order bool) *requestBuilder {
-	builder.Request.KeepOrder = order
-	return builder
-}
-
-func getIsolationLevel(sv *variable.SessionVars) kv.IsoLevel {
-	isoLevel, _ := sv.GetSystemVar(variable.TxnIsolation)
-	if isoLevel == ast.ReadCommitted {
-		return kv.RC
-	}
-	return kv.SI
-}
-
-func (builder *requestBuilder) SetFromSessionVars(sv *variable.SessionVars) *requestBuilder {
-	builder.Request.Concurrency = sv.DistSQLScanConcurrency
-	builder.Request.IsolationLevel = getIsolationLevel(sv)
-	builder.Request.NotFillCache = sv.StmtCtx.NotFillCache
-	return builder
-}
-
-func (builder *requestBuilder) SetPriority(priority int) *requestBuilder {
-	builder.Request.Priority = priority
-	return builder
 }
 
 type tableResultHandler struct {
