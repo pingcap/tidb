@@ -28,6 +28,12 @@ import (
 	"github.com/pingcap/tidb/types/json"
 )
 
+const (
+	constantFlag       byte = 0
+	columnFlag         byte = 1
+	scalarFunctionFlag byte = 3
+)
+
 // EvalAstExpr evaluates ast expression directly.
 var EvalAstExpr func(ctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error)
 
