@@ -186,7 +186,7 @@ type AnalyzeIndexExec struct {
 
 func (e *AnalyzeIndexExec) open() error {
 	idxRange := &ranger.NewRange{LowVal: []types.Datum{types.MinNotNullDatum()}, HighVal: []types.Datum{types.MaxValueDatum()}}
-	var builder requestBuilder
+	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetIndexRanges(e.ctx.GetSessionVars().StmtCtx, e.tblInfo.ID, e.idxInfo.ID, []*ranger.NewRange{idxRange}).
 		SetAnalyzeRequest(e.analyzePB).
 		SetKeepOrder(true).
@@ -303,7 +303,7 @@ func (e *AnalyzeColumnsExec) open() error {
 }
 
 func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.NewRange) (distsql.SelectResult, error) {
-	var builder requestBuilder
+	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetTableRanges(e.tblInfo.ID, ranges).
 		SetAnalyzeRequest(e.analyzePB).
 		SetKeepOrder(e.keepOrder).
