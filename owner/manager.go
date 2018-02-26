@@ -173,21 +173,15 @@ func (m *ownerManager) CampaignOwner(ctx context.Context) error {
 	return nil
 }
 
-func recoverInOwner(funcName string, quit bool) {
-	if r := recover(); r != nil {
-		buf := util.GetStack()
-		log.Errorf("%s, %v, %s", funcName, r, buf)
-		metrics.PanicCounter.WithLabelValues(metrics.LabelDDLOwner).Inc()
-		if quit {
-			// Wait for metrics to be pushed.
-			time.Sleep(time.Second * 15)
-			os.Exit(1)
-		}
-	}
-}
-
 func (m *ownerManager) campaignLoop(ctx context.Context, etcdSession *concurrency.Session) {
-	defer recoverInOwner("campaignLoop", false)
+	defer func() {
+		if r := recover(); r != nil {
+			buf := util.GetStack()
+			log.Errorf("[%s] recover panic:%v, %s", m.prompt, r, buf)
+			metrics.PanicCounter.WithLabelValues(metrics.LabelDDLOwner).Inc()
+		}
+	}()
+
 	logPrefix := fmt.Sprintf("[%s] %s ownerManager %s", m.prompt, m.key, m.id)
 	var err error
 	for {
