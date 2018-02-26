@@ -97,7 +97,9 @@ func (q *QueryFeedback) Counts() []int64 {
 
 // Update updates the query feedback.
 func (q *QueryFeedback) Update(startKey kv.Key, counts []int64) {
+	// Older version do not have the counts info.
 	if len(counts) == 0 {
+		q.Invalidate()
 		return
 	}
 	length := len(counts)

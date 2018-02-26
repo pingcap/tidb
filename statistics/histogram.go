@@ -398,7 +398,7 @@ func (hg *Histogram) getIncreaseFactor(totalCount int64) float64 {
 func (hg *Histogram) SplitRange(ranges []*ranger.NewRange) []*ranger.NewRange {
 	split := make([]*ranger.NewRange, 0, len(ranges))
 	for len(ranges) > 0 {
-		// Find the first bound that greater or equal to the LowVal.
+		// Find the last bound that greater or equal to the LowVal.
 		idx, match := hg.Bounds.UpperBound(0, &ranges[0].LowVal[0])
 		if match && !ranges[0].LowExclude {
 			idx--
