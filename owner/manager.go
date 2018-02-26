@@ -180,7 +180,7 @@ func recoverInOwner(funcName string, quit bool) {
 	}
 	buf := util.GetStack()
 	log.Errorf("%s, %v, %s", funcName, r, buf)
-	metrics.PanicCounter.WithLabelValues(metrics.LabelDomain).Inc()
+	metrics.PanicCounter.WithLabelValues(metrics.LabelDDLOwner).Inc()
 	if quit {
 		// Wait for metrics to be pushed.
 		time.Sleep(time.Second * 15)
