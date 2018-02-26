@@ -1,3 +1,16 @@
+// Copyright 2018 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package distsql
 
 import (
@@ -14,15 +27,20 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
+// RequestBuilder is used to build a "kv.Request".
+// It is called before we issue a kv request by "Select".
 type RequestBuilder struct {
 	kv.Request
 	err error
 }
 
+// Build builds a "kv.Request".
 func (builder *RequestBuilder) Build() (*kv.Request, error) {
 	return &builder.Request, errors.Trace(builder.err)
 }
 
+// SetTableRanges sets "KeyRanges" for "kv.Request" by converting "tableRanges"
+// to "KeyRanges" firstly.
 func (builder *RequestBuilder) SetTableRanges(tid int64, tableRanges []*ranger.NewRange) *RequestBuilder {
 	if builder.err != nil {
 		return builder
@@ -31,6 +49,8 @@ func (builder *RequestBuilder) SetTableRanges(tid int64, tableRanges []*ranger.N
 	return builder
 }
 
+// SetIndexRanges sets "KeyRanges" for "kv.Request" by converting index range
+// "ranges" to "KeyRanges" firstly.
 func (builder *RequestBuilder) SetIndexRanges(sc *stmtctx.StatementContext, tid, idxID int64, ranges []*ranger.NewRange) *RequestBuilder {
 	if builder.err != nil {
 		return builder
@@ -39,11 +59,14 @@ func (builder *RequestBuilder) SetIndexRanges(sc *stmtctx.StatementContext, tid,
 	return builder
 }
 
+// SetTableHandles sets "KeyRanges" for "kv.Request" by converting table handles
+// "handles" to "KeyRanges" firstly.
 func (builder *RequestBuilder) SetTableHandles(tid int64, handles []int64) *RequestBuilder {
 	builder.Request.KeyRanges = TableHandlesToKVRanges(tid, handles)
 	return builder
 }
 
+// SetDAGRequest sets the request type to "ReqTypeDAG" and cosntruct request data.
 func (builder *RequestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *RequestBuilder {
 	if builder.err != nil {
 		return builder
@@ -55,6 +78,7 @@ func (builder *RequestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *RequestBuild
 	return builder
 }
 
+// SetAnalyzeRequest sets the request type to "ReqTypeAnalyze" and cosntruct request data.
 func (builder *RequestBuilder) SetAnalyzeRequest(ana *tipb.AnalyzeReq) *RequestBuilder {
 	if builder.err != nil {
 		return builder
@@ -67,22 +91,25 @@ func (builder *RequestBuilder) SetAnalyzeRequest(ana *tipb.AnalyzeReq) *RequestB
 	return builder
 }
 
+// SetKeyRanges sets "KeyRanges" for "kv.Request".
 func (builder *RequestBuilder) SetKeyRanges(keyRanges []kv.KeyRange) *RequestBuilder {
 	builder.Request.KeyRanges = keyRanges
 	return builder
 }
 
+// SetDesc sets "Desc" for "kv.Request".
 func (builder *RequestBuilder) SetDesc(desc bool) *RequestBuilder {
 	builder.Request.Desc = desc
 	return builder
 }
 
+// SetKeepOrder sets "KeepOrder" for "kv.Request".
 func (builder *RequestBuilder) SetKeepOrder(order bool) *RequestBuilder {
 	builder.Request.KeepOrder = order
 	return builder
 }
 
-func getIsolationLevel(sv *variable.SessionVars) kv.IsoLevel {
+func (builder *RequestBuilder) getIsolationLevel(sv *variable.SessionVars) kv.IsoLevel {
 	isoLevel, _ := sv.GetSystemVar(variable.TxnIsolation)
 	if isoLevel == ast.ReadCommitted {
 		return kv.RC
@@ -90,18 +117,22 @@ func getIsolationLevel(sv *variable.SessionVars) kv.IsoLevel {
 	return kv.SI
 }
 
+// SetFromSessionVars sets the following fields for "kv.Request" from session variables:
+// "Concurrency", "IsolationLevel", "NotFillCache".
 func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *RequestBuilder {
 	builder.Request.Concurrency = sv.DistSQLScanConcurrency
-	builder.Request.IsolationLevel = getIsolationLevel(sv)
+	builder.Request.IsolationLevel = builder.getIsolationLevel(sv)
 	builder.Request.NotFillCache = sv.StmtCtx.NotFillCache
 	return builder
 }
 
+// SetPriority sets "Priority" for "kv.Request".
 func (builder *RequestBuilder) SetPriority(priority int) *RequestBuilder {
 	builder.Request.Priority = priority
 	return builder
 }
 
+// TableRangesToKVRanges converts table ranges to "KeyRange".
 func TableRangesToKVRanges(tid int64, ranges []*ranger.NewRange) []kv.KeyRange {
 	krs := make([]kv.KeyRange, 0, len(ranges))
 	for _, ran := range ranges {
@@ -150,6 +181,7 @@ func TableHandlesToKVRanges(tid int64, handles []int64) []kv.KeyRange {
 	return krs
 }
 
+// IndexRangesToKVRanges converts index ranges to "KeyRange".
 func IndexRangesToKVRanges(sc *stmtctx.StatementContext, tid, idxID int64, ranges []*ranger.NewRange) ([]kv.KeyRange, error) {
 	krs := make([]kv.KeyRange, 0, len(ranges))
 	for _, ran := range ranges {
