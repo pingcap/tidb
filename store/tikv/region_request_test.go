@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 )
 
@@ -49,7 +49,7 @@ func (s *testRegionRequestSuite) SetUpTest(c *C) {
 	s.store, s.peer, s.region = mocktikv.BootstrapWithSingleStore(s.cluster)
 	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
 	s.cache = NewRegionCache(pdCli)
-	s.bo = NewBackoffer(1, goctx.Background())
+	s.bo = NewBackoffer(context.Background(), 1)
 	s.mvccStore = mocktikv.NewMvccStore()
 	client := mocktikv.NewRPCClient(s.cluster, s.mvccStore)
 	s.regionRequestSender = NewRegionRequestSender(s.cache, client)
@@ -110,7 +110,7 @@ func (s *testRegionRequestSuite) TestOnSendFailedWithCancelled(c *C) {
 	// since last request on the region failed and region's info had been cleared.
 	_, err = s.regionRequestSender.SendReq(s.bo, req, region.Region, time.Second)
 	c.Assert(err, NotNil)
-	c.Assert(errors.Cause(err), Equals, goctx.Canceled)
+	c.Assert(errors.Cause(err), Equals, context.Canceled)
 
 	// set store to normal state.
 	s.cluster.UnCancelStore(s.store)
@@ -140,7 +140,7 @@ func (s *testRegionRequestSuite) TestNoReloadRegionWhenCtxCanceled(c *C) {
 	// Call SendKVReq with a canceled context.
 	_, err = sender.SendReq(bo, req, region.Region, time.Second)
 	// Check this kind of error won't cause region cache drop.
-	c.Assert(errors.Cause(err), Equals, goctx.Canceled)
+	c.Assert(errors.Cause(err), Equals, context.Canceled)
 	c.Assert(sender.regionCache.getRegionByIDFromCache(s.region), NotNil)
 }
 
@@ -150,8 +150,8 @@ type cancelContextClient struct {
 	redirectAddr string
 }
 
-func (c *cancelContextClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
-	childCtx, cancel := goctx.WithCancel(ctx)
+func (c *cancelContextClient) SendReq(ctx context.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+	childCtx, cancel := context.WithCancel(ctx)
 	cancel()
 	return c.Client.SendReq(childCtx, c.redirectAddr, req)
 }
@@ -160,56 +160,56 @@ func (c *cancelContextClient) SendReq(ctx goctx.Context, addr string, req *tikvr
 type mockTikvGrpcServer struct{}
 
 // KV commands with mvcc/txn supported.
-func (s *mockTikvGrpcServer) KvGet(goctx.Context, *kvrpcpb.GetRequest) (*kvrpcpb.GetResponse, error) {
+func (s *mockTikvGrpcServer) KvGet(context.Context, *kvrpcpb.GetRequest) (*kvrpcpb.GetResponse, error) {
 	return nil, errors.New("unreachable")
 }
-func (s *mockTikvGrpcServer) KvScan(goctx.Context, *kvrpcpb.ScanRequest) (*kvrpcpb.ScanResponse, error) {
+func (s *mockTikvGrpcServer) KvScan(context.Context, *kvrpcpb.ScanRequest) (*kvrpcpb.ScanResponse, error) {
 	return nil, errors.New("unreachable")
 }
-func (s *mockTikvGrpcServer) KvPrewrite(goctx.Context, *kvrpcpb.PrewriteRequest) (*kvrpcpb.PrewriteResponse, error) {
+func (s *mockTikvGrpcServer) KvPrewrite(context.Context, *kvrpcpb.PrewriteRequest) (*kvrpcpb.PrewriteResponse, error) {
 	return nil, errors.New("unreachable")
 }
-func (s *mockTikvGrpcServer) KvCommit(goctx.Context, *kvrpcpb.CommitRequest) (*kvrpcpb.CommitResponse, error) {
+func (s *mockTikvGrpcServer) KvCommit(context.Context, *kvrpcpb.CommitRequest) (*kvrpcpb.CommitResponse, error) {
 	return nil, errors.New("unreachable")
 }
-func (s *mockTikvGrpcServer) KvImport(goctx.Context, *kvrpcpb.ImportRequest) (*kvrpcpb.ImportResponse, error) {
+func (s *mockTikvGrpcServer) KvImport(context.Context, *kvrpcpb.ImportRequest) (*kvrpcpb.ImportResponse, error) {
 	return nil, errors.New("unreachable")
 }
-func (s *mockTikvGrpcServer) KvCleanup(goctx.Context, *kvrpcpb.CleanupRequest) (*kvrpcpb.CleanupResponse, error) {
+func (s *mockTikvGrpcServer) KvCleanup(context.Context, *kvrpcpb.CleanupRequest) (*kvrpcpb.CleanupResponse, error) {
 	return nil, errors.New("unreachable")
 }
-func (s *mockTikvGrpcServer) KvBatchGet(goctx.Context, *kvrpcpb.BatchGetRequest) (*kvrpcpb.BatchGetResponse, error) {
+func (s *mockTikvGrpcServer) KvBatchGet(context.Context, *kvrpcpb.BatchGetRequest) (*kvrpcpb.BatchGetResponse, error) {
 	return nil, errors.New("unreachable")
 }
-func (s *mockTikvGrpcServer) KvBatchRollback(goctx.Context, *kvrpcpb.BatchRollbackRequest) (*kvrpcpb.BatchRollbackResponse, error) {
+func (s *mockTikvGrpcServer) KvBatchRollback(context.Context, *kvrpcpb.BatchRollbackRequest) (*kvrpcpb.BatchRollbackResponse, error) {
 	return nil, errors.New("unreachable")
 }
-func (s *mockTikvGrpcServer) KvScanLock(goctx.Context, *kvrpcpb.ScanLockRequest) (*kvrpcpb.ScanLockResponse, error) {
+func (s *mockTikvGrpcServer) KvScanLock(context.Context, *kvrpcpb.ScanLockRequest) (*kvrpcpb.ScanLockResponse, error) {
 	return nil, errors.New("unreachable")
 }
-func (s *mockTikvGrpcServer) KvResolveLock(goctx.Context, *kvrpcpb.ResolveLockRequest) (*kvrpcpb.ResolveLockResponse, error) {
+func (s *mockTikvGrpcServer) KvResolveLock(context.Context, *kvrpcpb.ResolveLockRequest) (*kvrpcpb.ResolveLockResponse, error) {
 	return nil, errors.New("unreachable")
 }
-func (s *mockTikvGrpcServer) KvGC(goctx.Context, *kvrpcpb.GCRequest) (*kvrpcpb.GCResponse, error) {
+func (s *mockTikvGrpcServer) KvGC(context.Context, *kvrpcpb.GCRequest) (*kvrpcpb.GCResponse, error) {
 	return nil, errors.New("unreachable")
 }
-func (s *mockTikvGrpcServer) KvDeleteRange(goctx.Context, *kvrpcpb.DeleteRangeRequest) (*kvrpcpb.DeleteRangeResponse, error) {
+func (s *mockTikvGrpcServer) KvDeleteRange(context.Context, *kvrpcpb.DeleteRangeRequest) (*kvrpcpb.DeleteRangeResponse, error) {
 	return nil, errors.New("unreachable")
 }
 
-func (s *mockTikvGrpcServer) RawGet(goctx.Context, *kvrpcpb.RawGetRequest) (*kvrpcpb.RawGetResponse, error) {
+func (s *mockTikvGrpcServer) RawGet(context.Context, *kvrpcpb.RawGetRequest) (*kvrpcpb.RawGetResponse, error) {
 	return nil, errors.New("unreachable")
 }
-func (s *mockTikvGrpcServer) RawPut(goctx.Context, *kvrpcpb.RawPutRequest) (*kvrpcpb.RawPutResponse, error) {
+func (s *mockTikvGrpcServer) RawPut(context.Context, *kvrpcpb.RawPutRequest) (*kvrpcpb.RawPutResponse, error) {
 	return nil, errors.New("unreachable")
 }
-func (s *mockTikvGrpcServer) RawDelete(goctx.Context, *kvrpcpb.RawDeleteRequest) (*kvrpcpb.RawDeleteResponse, error) {
+func (s *mockTikvGrpcServer) RawDelete(context.Context, *kvrpcpb.RawDeleteRequest) (*kvrpcpb.RawDeleteResponse, error) {
 	return nil, errors.New("unreachable")
 }
-func (s *mockTikvGrpcServer) RawScan(goctx.Context, *kvrpcpb.RawScanRequest) (*kvrpcpb.RawScanResponse, error) {
+func (s *mockTikvGrpcServer) RawScan(context.Context, *kvrpcpb.RawScanRequest) (*kvrpcpb.RawScanResponse, error) {
 	return nil, errors.New("unreachable")
 }
-func (s *mockTikvGrpcServer) Coprocessor(goctx.Context, *coprocessor.Request) (*coprocessor.Response, error) {
+func (s *mockTikvGrpcServer) Coprocessor(context.Context, *coprocessor.Request) (*coprocessor.Response, error) {
 	return nil, errors.New("unreachable")
 }
 func (s *mockTikvGrpcServer) Raft(tikvpb.Tikv_RaftServer) error {
@@ -218,13 +218,13 @@ func (s *mockTikvGrpcServer) Raft(tikvpb.Tikv_RaftServer) error {
 func (s *mockTikvGrpcServer) Snapshot(tikvpb.Tikv_SnapshotServer) error {
 	return errors.New("unreachable")
 }
-func (s *mockTikvGrpcServer) MvccGetByKey(goctx.Context, *kvrpcpb.MvccGetByKeyRequest) (*kvrpcpb.MvccGetByKeyResponse, error) {
+func (s *mockTikvGrpcServer) MvccGetByKey(context.Context, *kvrpcpb.MvccGetByKeyRequest) (*kvrpcpb.MvccGetByKeyResponse, error) {
 	return nil, errors.New("unreachable")
 }
-func (s *mockTikvGrpcServer) MvccGetByStartTs(goctx.Context, *kvrpcpb.MvccGetByStartTsRequest) (*kvrpcpb.MvccGetByStartTsResponse, error) {
+func (s *mockTikvGrpcServer) MvccGetByStartTs(context.Context, *kvrpcpb.MvccGetByStartTsRequest) (*kvrpcpb.MvccGetByStartTsResponse, error) {
 	return nil, errors.New("unreachable")
 }
-func (s *mockTikvGrpcServer) SplitRegion(goctx.Context, *kvrpcpb.SplitRegionRequest) (*kvrpcpb.SplitRegionResponse, error) {
+func (s *mockTikvGrpcServer) SplitRegion(context.Context, *kvrpcpb.SplitRegionRequest) (*kvrpcpb.SplitRegionResponse, error) {
 	return nil, errors.New("unreachable")
 }
 
@@ -261,7 +261,7 @@ func (s *testRegionRequestSuite) TestNoReloadRegionForGrpcWhenCtxCanceled(c *C) 
 	bo, cancel := s.bo.Fork()
 	cancel()
 	_, err = sender.SendReq(bo, req, region.Region, 3*time.Second)
-	c.Assert(errors.Cause(err), Equals, goctx.Canceled)
+	c.Assert(errors.Cause(err), Equals, context.Canceled)
 	c.Assert(s.cache.getRegionByIDFromCache(s.region), NotNil)
 
 	// Just for covering error code = codes.Canceled.

@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/terror"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 // For gofail injection.
@@ -34,7 +34,7 @@ var undeterminedErr = terror.ErrResultUndetermined
 
 const requestMaxSize = 8 * 1024 * 1024
 
-func checkGoContext(ctx goctx.Context) error {
+func checkGoContext(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -442,7 +442,7 @@ func (c *RPCClient) getAndCheckStoreByAddr(addr string) (*metapb.Store, error) {
 	return store, nil
 }
 
-func (c *RPCClient) checkArgs(ctx goctx.Context, addr string) (*rpcHandler, error) {
+func (c *RPCClient) checkArgs(ctx context.Context, addr string) (*rpcHandler, error) {
 	if err := checkGoContext(ctx); err != nil {
 		return nil, err
 	}
@@ -461,7 +461,7 @@ func (c *RPCClient) checkArgs(ctx goctx.Context, addr string) (*rpcHandler, erro
 }
 
 // SendReq sends a request to mock cluster.
-func (c *RPCClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+func (c *RPCClient) SendReq(ctx context.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 	// gofail: var rpcServerBusy bool
 	// if rpcServerBusy {
 	//	return tikvrpc.GenRegionErrorResp(req, &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}})

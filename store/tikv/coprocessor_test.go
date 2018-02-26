@@ -18,7 +18,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 type testCoprocessorSuite struct{}
@@ -33,7 +33,7 @@ func (s *testCoprocessorSuite) TestBuildTasks(c *C) {
 	pdCli := &codecPDClient{mocktikv.NewPDClient(cluster)}
 	cache := NewRegionCache(pdCli)
 
-	bo := NewBackoffer(3000, goctx.Background())
+	bo := NewBackoffer(context.Background(), 3000)
 
 	tasks, err := buildCopTasks(bo, cache, buildKeyRanges("a", "c"), false, false)
 	c.Assert(err, IsNil)
@@ -94,7 +94,7 @@ func (s *testCoprocessorSuite) TestRebuild(c *C) {
 	storeID, regionIDs, peerIDs := mocktikv.BootstrapWithMultiRegions(cluster, []byte("m"))
 	pdCli := &codecPDClient{mocktikv.NewPDClient(cluster)}
 	cache := NewRegionCache(pdCli)
-	bo := NewBackoffer(3000, goctx.Background())
+	bo := NewBackoffer(context.Background(), 3000)
 
 	tasks, err := buildCopTasks(bo, cache, buildKeyRanges("a", "z"), false, false)
 	c.Assert(err, IsNil)
