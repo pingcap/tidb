@@ -15,10 +15,10 @@ package executor_test
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testkit"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 func (s *testSuite) TestSetVar(c *C) {
@@ -103,8 +103,8 @@ func (s *testSuite) TestSetVar(c *C) {
 	tk.MustQuery(`select @@session.tx_read_only;`).Check(testkit.Rows("0"))
 
 	// Test session variable states.
-	vars := tk.Se.(context.Context).GetSessionVars()
-	tk.Se.CommitTxn(goctx.TODO())
+	vars := tk.Se.(sessionctx.Context).GetSessionVars()
+	tk.Se.CommitTxn(context.TODO())
 	tk.MustExec("set @@autocommit = 1")
 	c.Assert(vars.InTxn(), IsFalse)
 	c.Assert(vars.IsAutocommit(), IsTrue)
@@ -217,7 +217,7 @@ func (s *testSuite) TestSetCharset(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`SET NAMES latin1`)
 
-	ctx := tk.Se.(context.Context)
+	ctx := tk.Se.(sessionctx.Context)
 	sessionVars := ctx.GetSessionVars()
 	for _, v := range variable.SetNamesVariables {
 		sVar, err := variable.GetSessionSystemVar(sessionVars, v)

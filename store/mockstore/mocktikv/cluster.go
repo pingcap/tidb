@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/tablecodec"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 // Cluster simulates a TiKV cluster. It focuses on management and the change of
@@ -158,7 +158,7 @@ func (c *Cluster) GetAndCheckStoreByAddr(addr string) (*metapb.Store, error) {
 
 	for _, s := range c.stores {
 		if s.cancel {
-			return nil, goctx.Canceled
+			return nil, context.Canceled
 		}
 		if s.meta.GetAddress() == addr {
 			return proto.Clone(s.meta).(*metapb.Store), nil

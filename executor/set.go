@@ -20,10 +20,10 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 // SetExecutor executes set statement.
@@ -43,7 +43,7 @@ type SetExecutor struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *SetExecutor) Next(goCtx goctx.Context) (Row, error) {
+func (e *SetExecutor) Next(ctx context.Context) (Row, error) {
 	if e.done {
 		return nil, nil
 	}
@@ -56,7 +56,7 @@ func (e *SetExecutor) Next(goCtx goctx.Context) (Row, error) {
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (e *SetExecutor) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+func (e *SetExecutor) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if !e.done {
 		e.done = true
@@ -207,7 +207,7 @@ func (e *SetExecutor) executeSet() error {
 }
 
 // validateSnapshot checks that the newly set snapshot time is after GC safe point time.
-func validateSnapshot(ctx context.Context, snapshotTS uint64) error {
+func validateSnapshot(ctx sessionctx.Context, snapshotTS uint64) error {
 	sql := "SELECT variable_value FROM mysql.tidb WHERE variable_name = 'tikv_gc_safe_point'"
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {

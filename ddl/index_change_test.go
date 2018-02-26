@@ -16,15 +16,15 @@ package ddl
 import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testIndexChangeSuite{})
@@ -49,7 +49,7 @@ func (s *testIndexChangeSuite) SetUpSuite(c *C) {
 
 func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 	defer testleak.AfterTest(c)()
-	d := testNewDDL(goctx.Background(), nil, s.store, nil, nil, testLease)
+	d := testNewDDL(context.Background(), nil, s.store, nil, nil, testLease)
 	defer d.Stop()
 	// create table t (c1 int primary key, c2 int);
 	tblInfo := testTableInfo(c, d, "t", 2)
@@ -69,7 +69,7 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 	_, err = originTable.AddRecord(ctx, types.MakeDatums(3, 3), false)
 	c.Assert(err, IsNil)
 
-	err = ctx.Txn().Commit(goctx.Background())
+	err = ctx.Txn().Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	tc := &TestDDLCallback{}
@@ -120,7 +120,7 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 	d.SetHook(tc)
 	testCreateIndex(c, ctx, d, s.dbInfo, originTable.Meta(), false, "c2", "c2")
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
-	c.Assert(ctx.Txn().Commit(goctx.Background()), IsNil)
+	c.Assert(ctx.Txn().Commit(context.Background()), IsNil)
 	d.Stop()
 	prevState = model.StateNone
 	var noneTable table.Table
@@ -160,12 +160,12 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 			}
 		}
 	}
-	d.start(goctx.Background())
+	d.start(context.Background())
 	testDropIndex(c, ctx, d, s.dbInfo, publicTable.Meta(), "c2")
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 }
 
-func checkIndexExists(ctx context.Context, tbl table.Table, indexValue interface{}, handle int64, exists bool) error {
+func checkIndexExists(ctx sessionctx.Context, tbl table.Table, indexValue interface{}, handle int64, exists bool) error {
 	idx := tbl.Indices()[0]
 	doesExist, _, err := idx.Exist(ctx.GetSessionVars().StmtCtx, ctx.Txn(), types.MakeDatums(indexValue), handle)
 	if err != nil {
@@ -180,7 +180,7 @@ func checkIndexExists(ctx context.Context, tbl table.Table, indexValue interface
 	return nil
 }
 
-func (s *testIndexChangeSuite) checkAddWriteOnly(d *ddl, ctx context.Context, delOnlyTbl, writeOnlyTbl table.Table) error {
+func (s *testIndexChangeSuite) checkAddWriteOnly(d *ddl, ctx sessionctx.Context, delOnlyTbl, writeOnlyTbl table.Table) error {
 	// DeleteOnlyTable: insert t values (4, 4);
 	err := ctx.NewTxn()
 	if err != nil {
@@ -253,7 +253,7 @@ func (s *testIndexChangeSuite) checkAddWriteOnly(d *ddl, ctx context.Context, de
 	return nil
 }
 
-func (s *testIndexChangeSuite) checkAddPublic(d *ddl, ctx context.Context, writeTbl, publicTbl table.Table) error {
+func (s *testIndexChangeSuite) checkAddPublic(d *ddl, ctx sessionctx.Context, writeTbl, publicTbl table.Table) error {
 	// WriteOnlyTable: insert t values (6, 6)
 	err := ctx.NewTxn()
 	if err != nil {
@@ -317,10 +317,10 @@ func (s *testIndexChangeSuite) checkAddPublic(d *ddl, ctx context.Context, write
 			return errors.Trace(err)
 		}
 	}
-	return ctx.Txn().Commit(goctx.Background())
+	return ctx.Txn().Commit(context.Background())
 }
 
-func (s *testIndexChangeSuite) checkDropWriteOnly(d *ddl, ctx context.Context, publicTbl, writeTbl table.Table) error {
+func (s *testIndexChangeSuite) checkDropWriteOnly(d *ddl, ctx sessionctx.Context, publicTbl, writeTbl table.Table) error {
 	// WriteOnlyTable insert t values (8, 8)
 	err := ctx.NewTxn()
 	if err != nil {
@@ -357,10 +357,10 @@ func (s *testIndexChangeSuite) checkDropWriteOnly(d *ddl, ctx context.Context, p
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return ctx.Txn().Commit(goctx.Background())
+	return ctx.Txn().Commit(context.Background())
 }
 
-func (s *testIndexChangeSuite) checkDropDeleteOnly(d *ddl, ctx context.Context, writeTbl, delTbl table.Table) error {
+func (s *testIndexChangeSuite) checkDropDeleteOnly(d *ddl, ctx sessionctx.Context, writeTbl, delTbl table.Table) error {
 	// WriteOnlyTable insert t values (9, 9)
 	err := ctx.NewTxn()
 	if err != nil {
@@ -402,5 +402,5 @@ func (s *testIndexChangeSuite) checkDropDeleteOnly(d *ddl, ctx context.Context, 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return ctx.Txn().Commit(goctx.Background())
+	return ctx.Txn().Commit(context.Background())
 }

@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	log "github.com/sirupsen/logrus"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 // ResolvedCacheSize is max number of cached txn status.
@@ -64,7 +64,7 @@ func NewLockResolver(etcdAddrs []string, security config.Security) (*LockResolve
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	uuid := fmt.Sprintf("tikv-%v", pdCli.GetClusterID(goctx.TODO()))
+	uuid := fmt.Sprintf("tikv-%v", pdCli.GetClusterID(context.TODO()))
 
 	tlsConfig, err := security.ToTLSConfig()
 	if err != nil {
@@ -288,7 +288,7 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, locks []*Lock) (ok bool, err
 // To avoid unnecessarily aborting too many txns, it is wiser to wait a few
 // seconds before calling it after Prewrite.
 func (lr *LockResolver) GetTxnStatus(txnID uint64, primary []byte) (TxnStatus, error) {
-	bo := NewBackoffer(cleanupMaxBackoff, goctx.Background())
+	bo := NewBackoffer(context.Background(), cleanupMaxBackoff)
 	status, err := lr.getTxnStatus(bo, txnID, primary)
 	return status, errors.Trace(err)
 }

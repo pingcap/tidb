@@ -20,12 +20,12 @@ import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
@@ -290,7 +290,7 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 
 	for _, tt := range tests {
 		sql := "select * from t where " + tt.exprStr
-		ctx := testKit.Se.(context.Context)
+		ctx := testKit.Se.(sessionctx.Context)
 		stmts, err := tidb.Parse(ctx, sql)
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
 		c.Assert(stmts, HasLen, 1)
@@ -302,7 +302,7 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 		selection := p.(plan.LogicalPlan).Children()[0].(*plan.LogicalSelection)
 		conds := make([]expression.Expression, 0, len(selection.Conditions))
 		for _, cond := range selection.Conditions {
-			conds = append(conds, expression.PushDownNot(cond, false, ctx))
+			conds = append(conds, expression.PushDownNot(ctx, cond, false))
 		}
 		tbl := selection.Children()[0].(*plan.DataSource).TableInfo()
 		col := expression.ColInfo2Col(selection.Schema().Columns, tbl.Columns[0])
@@ -507,7 +507,7 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 
 	for _, tt := range tests {
 		sql := "select * from t where " + tt.exprStr
-		ctx := testKit.Se.(context.Context)
+		ctx := testKit.Se.(sessionctx.Context)
 		stmts, err := tidb.Parse(ctx, sql)
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
 		c.Assert(stmts, HasLen, 1)
@@ -521,7 +521,7 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		c.Assert(selection, NotNil, Commentf("expr:%v", tt.exprStr))
 		conds := make([]expression.Expression, 0, len(selection.Conditions))
 		for _, cond := range selection.Conditions {
-			conds = append(conds, expression.PushDownNot(cond, false, ctx))
+			conds = append(conds, expression.PushDownNot(ctx, cond, false))
 		}
 		cols, lengths := expression.IndexInfo2Cols(selection.Schema().Columns, tbl.Indices[tt.indexPos])
 		c.Assert(cols, NotNil)
@@ -777,7 +777,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 
 	for _, tt := range tests {
 		sql := "select * from t where " + tt.exprStr
-		ctx := testKit.Se.(context.Context)
+		ctx := testKit.Se.(sessionctx.Context)
 		stmts, err := tidb.Parse(ctx, sql)
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
 		c.Assert(stmts, HasLen, 1)
@@ -791,7 +791,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 		c.Assert(ok, IsTrue, Commentf("expr:%v", tt.exprStr))
 		conds := make([]expression.Expression, 0, len(sel.Conditions))
 		for _, cond := range sel.Conditions {
-			conds = append(conds, expression.PushDownNot(cond, false, ctx))
+			conds = append(conds, expression.PushDownNot(ctx, cond, false))
 		}
 		col := expression.ColInfo2Col(sel.Schema().Columns, ds.TableInfo().Columns[tt.colPos])
 		c.Assert(col, NotNil)
