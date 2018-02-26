@@ -340,7 +340,7 @@ func appendBucket(h *statistics.Histogram, l, r int64) {
 }
 
 func (s *testStatsUpdateSuite) TestSplitRange(c *C) {
-	h := statistics.NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeLong), 10)
+	h := statistics.NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeLong), 5)
 	appendBucket(h, 1, 1)
 	appendBucket(h, 2, 5)
 	appendBucket(h, 7, 7)
@@ -403,17 +403,17 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 	}{
 		{
 			sql: "select * from t where t.a <= 5",
-			// The split range is (-inf, 1], (1, 2], (2, 5].
+			// The split ranges are (-inf, 1], (1, 2], (2, 5].
 			counts: []int64{1, 1, 2},
 		},
 		{
 			sql: "select * from t use index(idx) where t.b <= 5",
-			// The split range is (-inf,2), [2, 5].
+			// The split ranges are (-inf,2], (2, 5].
 			counts: []int64{2, 2},
 		},
 		{
 			sql: "select b from t use index(idx) where t.b <= 5",
-			// The split range is (-inf,2), [2, 5].
+			// The split ranges are (-inf,2], (2, 5].
 			counts: []int64{2, 2},
 		},
 	}

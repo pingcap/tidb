@@ -31,7 +31,8 @@ type feedback struct {
 	count int64
 }
 
-// QueryFeedback is used to represent the query feedback info.
+// QueryFeedback is used to represent the query feedback info. It contains the query's scan ranges and number of rows
+// in each range.
 type QueryFeedback struct {
 	tableID  int64
 	hist     *Histogram
