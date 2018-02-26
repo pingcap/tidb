@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 func (s *testSuite) TestJoinPanic(c *C) {
@@ -556,7 +556,7 @@ func (s *testSuite) TestSubquery(c *C) {
 	result.Sort().Check(testkit.Rows("1", "<nil>", "<nil>"))
 	rs, err := tk.Exec("select (select t.id from t where t.id = t.v and t.v != s.id) from t s")
 	c.Check(err, IsNil)
-	_, err = tidb.GetRows4Test(goctx.Background(), tk.Se, rs)
+	_, err = tidb.GetRows4Test(context.Background(), tk.Se, rs)
 	c.Check(err, NotNil)
 	c.Check(rs.Close(), IsNil)
 
@@ -715,7 +715,7 @@ func (s *testSuite) TestJoinLeak(c *C) {
 	tk.MustExec("commit")
 	result, err := tk.Exec("select * from t t1 left join (select 1) t2 on 1")
 	c.Assert(err, IsNil)
-	result.Next(goctx.Background())
+	result.Next(context.Background())
 	time.Sleep(100 * time.Millisecond)
 	result.Close()
 }

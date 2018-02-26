@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tipb/go-binlog"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 // Context is an interface for transaction and executive args environment.
@@ -54,7 +54,7 @@ type Context interface {
 	// RefreshTxnCtx commits old transaction without retry,
 	// and creates a new transaction.
 	// now just for load data and batch insert.
-	RefreshTxnCtx(goctx.Context) error
+	RefreshTxnCtx(context.Context) error
 
 	// ActivePendingTxn receives the pending transaction from the transaction channel.
 	// It should be called right before we builds an executor.

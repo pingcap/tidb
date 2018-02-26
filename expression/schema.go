@@ -143,7 +143,7 @@ func (s *Schema) RetrieveColumn(col *Column) *Column {
 // IsUniqueKey checks if this column is a unique key.
 func (s *Schema) IsUniqueKey(col *Column) bool {
 	for _, key := range s.Keys {
-		if len(key) == 1 && key[0].Equal(col, nil) {
+		if len(key) == 1 && key[0].Equal(nil, col) {
 			return true
 		}
 	}

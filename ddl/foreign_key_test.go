@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/testleak"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testForeighKeySuite{})
@@ -112,7 +112,7 @@ func getForeignKey(t table.Table, name string) *model.FKInfo {
 }
 
 func (s *testForeighKeySuite) TestForeignKey(c *C) {
-	d := testNewDDL(goctx.Background(), nil, s.store, nil, nil, testLease)
+	d := testNewDDL(context.Background(), nil, s.store, nil, nil, testLease)
 	defer d.Stop()
 	s.d = d
 	s.dbInfo = testSchemaInfo(c, d, "test_foreign")
@@ -126,7 +126,7 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
 
-	err = ctx.Txn().Commit(goctx.Background())
+	err = ctx.Txn().Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	// fix data race
@@ -156,11 +156,11 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	d.SetHook(tc)
 
 	d.Stop()
-	d.start(goctx.Background())
+	d.start(context.Background())
 
 	job := s.testCreateForeignKey(c, tblInfo, "c1_fk", []string{"c1"}, "t2", []string{"c1"}, ast.ReferOptionCascade, ast.ReferOptionSetNull)
 	testCheckJobDone(c, d, job, true)
-	err = ctx.Txn().Commit(goctx.Background())
+	err = ctx.Txn().Commit(context.Background())
 	c.Assert(err, IsNil)
 	mu.Lock()
 	hErr := hookErr
@@ -195,7 +195,7 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	}
 
 	d.Stop()
-	d.start(goctx.Background())
+	d.start(context.Background())
 
 	job = testDropForeignKey(c, ctx, d, s.dbInfo, tblInfo, "c1_fk")
 	testCheckJobDone(c, d, job, false)
@@ -213,11 +213,11 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	}
 
 	d.Stop()
-	d.start(goctx.Background())
+	d.start(context.Background())
 
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)
 
-	err = ctx.Txn().Commit(goctx.Background())
+	err = ctx.Txn().Commit(context.Background())
 	c.Assert(err, IsNil)
 }
