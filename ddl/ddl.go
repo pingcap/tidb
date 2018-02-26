@@ -40,7 +40,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	log "github.com/sirupsen/logrus"
 	"github.com/twinj/uuid"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 const (
@@ -163,7 +163,7 @@ type DDL interface {
 	RenameTable(ctx sessionctx.Context, oldTableIdent, newTableIdent ast.Ident) error
 	// SetLease will reset the lease time for online DDL change,
 	// it's a very dangerous function and you must guarantee that all servers have the same lease time.
-	SetLease(ctx goctx.Context, lease time.Duration)
+	SetLease(ctx context.Context, lease time.Duration)
 	// GetLease returns current schema lease time.
 	GetLease() time.Duration
 	// Stats returns the DDL statistics.
@@ -242,18 +242,18 @@ func (d *ddl) asyncNotifyEvent(e *util.Event) {
 }
 
 // NewDDL creates a new DDL.
-func NewDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
+func NewDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 	infoHandle *infoschema.Handle, hook Callback, lease time.Duration, ctxPool *pools.ResourcePool) DDL {
 	return newDDL(ctx, etcdCli, store, infoHandle, hook, lease, ctxPool)
 }
 
-func newDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
+func newDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 	infoHandle *infoschema.Handle, hook Callback, lease time.Duration, ctxPool *pools.ResourcePool) *ddl {
 	if hook == nil {
 		hook = &BaseCallback{}
 	}
 	id := uuid.NewV4().String()
-	ctx, cancelFunc := goctx.WithCancel(ctx)
+	ctx, cancelFunc := context.WithCancel(ctx)
 	var manager owner.Manager
 	var syncer SchemaSyncer
 	if etcdCli == nil {
@@ -306,7 +306,7 @@ func (d *ddl) Stop() error {
 	return nil
 }
 
-func (d *ddl) start(ctx goctx.Context) {
+func (d *ddl) start(ctx context.Context) {
 	d.quitCh = make(chan struct{})
 
 	// If RunWorker is true, we need campaign owner and do DDL job.
@@ -350,7 +350,7 @@ func (d *ddl) isClosed() bool {
 	}
 }
 
-func (d *ddl) SetLease(ctx goctx.Context, lease time.Duration) {
+func (d *ddl) SetLease(ctx context.Context, lease time.Duration) {
 	d.m.Lock()
 	defer d.m.Unlock()
 

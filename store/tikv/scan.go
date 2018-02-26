@@ -19,7 +19,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	log "github.com/sirupsen/logrus"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 // Scanner support tikv scan
@@ -74,7 +74,7 @@ func (s *Scanner) Value() []byte {
 
 // Next return next element.
 func (s *Scanner) Next() error {
-	bo := NewBackoffer(scannerNextMaxBackoff, goctx.Background())
+	bo := NewBackoffer(context.Background(), scannerNextMaxBackoff)
 	if !s.valid {
 		return errors.New("scanner iterator is invalid")
 	}
