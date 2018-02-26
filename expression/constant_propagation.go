@@ -176,7 +176,7 @@ func (s *propagateConstantSolver) pickNewEQConds(visited []bool) (retMapper map[
 		var ok bool
 		if col == nil {
 			if con, ok = cond.(*Constant); ok {
-				value, err := EvalBool([]Expression{con}, nil, s.ctx)
+				value, err := EvalBool(s.ctx, []Expression{con}, nil)
 				terror.Log(errors.Trace(err))
 				if !value {
 					s.setConds2ConstFalse()
@@ -207,7 +207,7 @@ func (s *propagateConstantSolver) tryToUpdateEQList(col *Column, con *Constant) 
 	id := s.getColID(col)
 	oldCon := s.eqList[id]
 	if oldCon != nil {
-		return false, !oldCon.Equal(con, s.ctx)
+		return false, !oldCon.Equal(s.ctx, con)
 	}
 	s.eqList[id] = con
 	return true, false
@@ -241,12 +241,12 @@ func (s *propagateConstantSolver) solve(conditions []Expression) []Expression {
 }
 
 func (s *propagateConstantSolver) getColID(col *Column) int {
-	code := col.HashCode()
+	code := col.HashCode(nil)
 	return s.colMapper[string(code)]
 }
 
 func (s *propagateConstantSolver) insertCol(col *Column) {
-	code := col.HashCode()
+	code := col.HashCode(nil)
 	_, ok := s.colMapper[string(code)]
 	if !ok {
 		s.colMapper[string(code)] = len(s.colMapper)

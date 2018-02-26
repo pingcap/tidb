@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
-	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
@@ -35,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 )
@@ -64,10 +63,10 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 		chunks []tipb.Chunk
 		rowCnt int
 	)
-	goCtx := goctx.TODO()
+	ctx := context.TODO()
 	for {
 		var row [][]byte
-		row, err = e.Next(goCtx)
+		row, err = e.Next(ctx)
 		if err != nil {
 			break
 		}
@@ -123,9 +122,9 @@ func (h *rpcHandler) handleCopStream(req *coprocessor.Request) (tikvpb.Tikv_Copr
 	}
 
 	return &mockCopStreamClient{
-		exec:  e,
-		req:   dagReq,
-		goCtx: goctx.TODO(),
+		exec: e,
+		req:  dagReq,
+		ctx:  context.TODO(),
 	}, nil
 }
 
@@ -353,7 +352,7 @@ func (e *evalContext) setColumnInfo(cols []*tipb.ColumnInfo) {
 	e.colIDs = make(map[int64]int)
 	e.fieldTps = make([]*types.FieldType, 0, len(e.columnInfos))
 	for i, col := range e.columnInfos {
-		ft := distsql.FieldTypeFromPBColumn(col)
+		ft := fieldTypeFromPBColumn(col)
 		e.fieldTps = append(e.fieldTps, ft)
 		e.colIDs[col.GetColumnId()] = i
 	}
@@ -405,7 +404,7 @@ type mockClientStream struct{}
 func (mockClientStream) Header() (metadata.MD, error) { return nil, nil }
 func (mockClientStream) Trailer() metadata.MD         { return nil }
 func (mockClientStream) CloseSend() error             { return nil }
-func (mockClientStream) Context() goctx.Context       { return nil }
+func (mockClientStream) Context() context.Context     { return nil }
 func (mockClientStream) SendMsg(m interface{}) error  { return nil }
 func (mockClientStream) RecvMsg(m interface{}) error  { return nil }
 
@@ -414,7 +413,7 @@ type mockCopStreamClient struct {
 
 	req      *tipb.DAGRequest
 	exec     executor
-	goCtx    goctx.Context
+	ctx      context.Context
 	finished bool
 }
 
@@ -475,7 +474,7 @@ func (mock *mockCopStreamClient) Recv() (*coprocessor.Response, error) {
 func (mock *mockCopStreamClient) readBlockFromExecutor() (tipb.Chunk, bool, error) {
 	var chunk tipb.Chunk
 	for count := 0; count < rowsPerChunk; count++ {
-		row, err := mock.exec.Next(mock.goCtx)
+		row, err := mock.exec.Next(mock.ctx)
 		if err != nil {
 			return chunk, false, errors.Trace(err)
 		}
@@ -613,4 +612,16 @@ func extractOffsetsInExpr(expr *tipb.Expr, columns []*tipb.ColumnInfo, collector
 		}
 	}
 	return collector, nil
+}
+
+// fieldTypeFromPBColumn creates a types.FieldType from tipb.ColumnInfo.
+func fieldTypeFromPBColumn(col *tipb.ColumnInfo) *types.FieldType {
+	return &types.FieldType{
+		Tp:      byte(col.GetTp()),
+		Flag:    uint(col.Flag),
+		Flen:    int(col.GetColumnLen()),
+		Decimal: int(col.GetDecimal()),
+		Elems:   col.Elems,
+		Collate: mysql.Collations[uint8(col.GetCollation())],
+	}
 }

@@ -45,7 +45,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	log "github.com/sirupsen/logrus"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 const (
@@ -113,7 +113,7 @@ func (s *Server) newHTTPHandlerTool() *httpHandlerTool {
 	regionCache := tikvStore.GetRegionCache()
 
 	// init backOffer && infoSchema.
-	backOffer := tikv.NewBackoffer(500, goctx.Background())
+	backOffer := tikv.NewBackoffer(context.Background(), 500)
 
 	return &httpHandlerTool{
 		regionCache: regionCache,
@@ -406,7 +406,7 @@ type RegionFrameRange struct {
 func (t *httpHandlerTool) getRegionsMeta(regionIDs []uint64) ([]RegionMeta, error) {
 	regions := make([]RegionMeta, len(regionIDs))
 	for i, regionID := range regionIDs {
-		meta, leader, err := t.regionCache.PDClient().GetRegionByID(goctx.TODO(), regionID)
+		meta, leader, err := t.regionCache.PDClient().GetRegionByID(context.TODO(), regionID)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

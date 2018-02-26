@@ -377,7 +377,7 @@ func getDefaultValue(ctx sessionctx.Context, c *ast.ColumnOption, tp byte, fsp i
 
 		return value, nil
 	}
-	v, err := expression.EvalAstExpr(c.Expr, ctx)
+	v, err := expression.EvalAstExpr(ctx, c.Expr)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -591,7 +591,7 @@ func checkConstraintNames(constraints []*ast.Constraint) error {
 	return nil
 }
 
-func buildTableInfo(d *ddl, tableName model.CIStr, cols []*table.Column, constraints []*ast.Constraint, ctx sessionctx.Context) (tbInfo *model.TableInfo, err error) {
+func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols []*table.Column, constraints []*ast.Constraint) (tbInfo *model.TableInfo, err error) {
 	tbInfo = &model.TableInfo{
 		Name: tableName,
 	}
@@ -772,7 +772,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, ident ast.Ident, colDefs []*as
 		return errors.Trace(err)
 	}
 
-	tbInfo, err := buildTableInfo(d, ident.Name, cols, newConstraints, ctx)
+	tbInfo, err := buildTableInfo(ctx, d, ident.Name, cols, newConstraints)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1191,7 +1191,7 @@ func setDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 }
 
 func setColumnComment(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) error {
-	value, err := expression.EvalAstExpr(option.Expr, ctx)
+	value, err := expression.EvalAstExpr(ctx, option.Expr)
 	if err != nil {
 		return errors.Trace(err)
 	}
