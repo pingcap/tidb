@@ -174,17 +174,15 @@ func (m *ownerManager) CampaignOwner(ctx context.Context) error {
 }
 
 func recoverInOwner(funcName string, quit bool) {
-	r := recover()
-	if r == nil {
-		return
-	}
-	buf := util.GetStack()
-	log.Errorf("%s, %v, %s", funcName, r, buf)
-	metrics.PanicCounter.WithLabelValues(metrics.LabelDDLOwner).Inc()
-	if quit {
-		// Wait for metrics to be pushed.
-		time.Sleep(time.Second * 15)
-		os.Exit(1)
+	if r := recover(); r != nil {
+		buf := util.GetStack()
+		log.Errorf("%s, %v, %s", funcName, r, buf)
+		metrics.PanicCounter.WithLabelValues(metrics.LabelDDLOwner).Inc()
+		if quit {
+			// Wait for metrics to be pushed.
+			time.Sleep(time.Second * 15)
+			os.Exit(1)
+		}
 	}
 }
 
