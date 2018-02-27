@@ -201,7 +201,7 @@ type Request struct {
 }
 
 // ResultSubset represents a result subset from a single storage unit.
-// TODO: Find a better interface for ResultSubset that can avoid allocation and reuse bytes.
+// TODO: Find a better interface for ResultSubset that can reuse bytes.
 type ResultSubset interface {
 	// GetData gets the data.
 	GetData() []byte

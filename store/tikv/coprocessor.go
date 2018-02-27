@@ -470,7 +470,7 @@ type copResultSubset struct {
 	data []byte
 }
 
-func (rs copResultSubset) GetData() []byte {
+func (rs *copResultSubset) GetData() []byte {
 	return rs.data
 }
 
@@ -523,9 +523,9 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	}
 
 	if resp.Data == nil {
-		return copResultSubset{}, nil
+		return &copResultSubset{}, nil
 	}
-	return copResultSubset{data: resp.Data}, nil
+	return &copResultSubset{data: resp.Data}, nil
 }
 
 // handleTask handles single copTask, sends the result to channel, retry automatically on error.
