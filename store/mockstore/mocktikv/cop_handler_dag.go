@@ -54,7 +54,7 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 		resp.RegionError = err
 		return resp
 	}
-	sctx, e, dagReq, err := h.buildDAGExecutor(req)
+	dagCtx, e, dagReq, err := h.buildDAGExecutor(req)
 	if err != nil {
 		resp.OtherError = err.Error()
 		return resp
@@ -86,7 +86,7 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 		// Because the last call to `executor.Next` always returns a `nil`, so the actual count should be `Count - 1`
 		counts[offset] = e.Count() - 1
 	}
-	warnings := sctx.evalCtx.sc.GetWarnings()
+	warnings := dagCtx.evalCtx.sc.GetWarnings()
 	return buildResp(chunks, counts, err, warnings)
 }
 
@@ -529,9 +529,6 @@ func toPBError(err error) *tipb.Error {
 		return nil
 	}
 	perr := new(tipb.Error)
-	perr.Code = int32(1)
-	errStr := err.Error()
-	perr.Msg = errStr
 	switch x := err.(type) {
 	case *terror.Error:
 		sqlErr := x.ToSQLError()
