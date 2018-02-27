@@ -21,10 +21,10 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 // Histogram represents statistics for a column or index.
@@ -162,17 +162,17 @@ func HistogramEqual(a, b *Histogram, ignoreID bool) bool {
 }
 
 // SaveStatsToStorage saves the stats to storage.
-func SaveStatsToStorage(ctx context.Context, tableID int64, count int64, isIndex int, hg *Histogram, cms *CMSketch) error {
-	goCtx := goctx.TODO()
-	exec := ctx.(sqlexec.SQLExecutor)
-	_, err := exec.Execute(goCtx, "begin")
+func SaveStatsToStorage(sctx sessionctx.Context, tableID int64, count int64, isIndex int, hg *Histogram, cms *CMSketch) error {
+	ctx := context.TODO()
+	exec := sctx.(sqlexec.SQLExecutor)
+	_, err := exec.Execute(ctx, "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
-	txn := ctx.Txn()
+	txn := sctx.Txn()
 	version := txn.StartTS()
 	replaceSQL := fmt.Sprintf("replace into mysql.stats_meta (version, table_id, count) values (%d, %d, %d)", version, tableID, count)
-	_, err = exec.Execute(goCtx, replaceSQL)
+	_, err = exec.Execute(ctx, replaceSQL)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -182,16 +182,16 @@ func SaveStatsToStorage(ctx context.Context, tableID int64, count int64, isIndex
 	}
 	replaceSQL = fmt.Sprintf("replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch) values (%d, %d, %d, %d, %d, %d, X'%X')",
 		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, data)
-	_, err = exec.Execute(goCtx, replaceSQL)
+	_, err = exec.Execute(ctx, replaceSQL)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	deleteSQL := fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d", tableID, isIndex, hg.ID)
-	_, err = exec.Execute(goCtx, deleteSQL)
+	_, err = exec.Execute(ctx, deleteSQL)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	sc := ctx.GetSessionVars().StmtCtx
+	sc := sctx.GetSessionVars().StmtCtx
 	for i := range hg.Buckets {
 		count := hg.Buckets[i].Count
 		if i > 0 {
@@ -208,16 +208,16 @@ func SaveStatsToStorage(ctx context.Context, tableID int64, count int64, isIndex
 			return errors.Trace(err)
 		}
 		insertSQL := fmt.Sprintf("insert into mysql.stats_buckets(table_id, is_index, hist_id, bucket_id, count, repeats, lower_bound, upper_bound) values(%d, %d, %d, %d, %d, %d, X'%X', X'%X')", tableID, isIndex, hg.ID, i, count, hg.Buckets[i].Repeat, lowerBound.GetBytes(), upperBound.GetBytes())
-		_, err = exec.Execute(goCtx, insertSQL)
+		_, err = exec.Execute(ctx, insertSQL)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
-	_, err = exec.Execute(goCtx, "commit")
+	_, err = exec.Execute(ctx, "commit")
 	return errors.Trace(err)
 }
 
-func histogramFromStorage(ctx context.Context, tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int, ver uint64, nullCount int64) (*Histogram, error) {
+func histogramFromStorage(ctx sessionctx.Context, tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int, ver uint64, nullCount int64) (*Histogram, error) {
 	selSQL := fmt.Sprintf("select count, repeats, lower_bound, upper_bound from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d order by bucket_id", tableID, isIndex, colID)
 	rows, fields, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, selSQL)
 	if err != nil {
@@ -252,7 +252,7 @@ func histogramFromStorage(ctx context.Context, tableID int64, colID int64, tp *t
 	return hg, nil
 }
 
-func columnCountFromStorage(ctx context.Context, tableID, colID int64) (int64, error) {
+func columnCountFromStorage(ctx sessionctx.Context, tableID, colID int64) (int64, error) {
 	selSQL := fmt.Sprintf("select sum(count) from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d", tableID, 0, colID)
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, selSQL)
 	if err != nil {

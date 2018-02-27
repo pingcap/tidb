@@ -27,13 +27,14 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testleak"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 )
 
@@ -176,14 +177,58 @@ func (s *testMainSuite) TestSysSessionPoolGoroutineLeak(c *C) {
 	c.Assert(after-before, Less, 3)
 }
 
+func (s *testMainSuite) TestSchemaCheckerSimple(c *C) {
+	defer testleak.AfterTest(c)()
+	lease := 5 * time.Millisecond
+	validator := domain.NewSchemaValidator(lease)
+	checker := &schemaLeaseChecker{SchemaValidator: validator}
+
+	// Add some schema versions and delta table IDs.
+	ts := uint64(time.Now().UnixNano())
+	validator.Update(ts, 0, 2, []int64{1})
+	validator.Update(ts, 2, 4, []int64{2})
+
+	// checker's schema version is the same as the current schema version.
+	checker.schemaVer = 4
+	err := checker.Check(ts)
+	c.Assert(err, IsNil)
+
+	// checker's schema version is less than the current schema version, and it doesn't exist in validator's items.
+	// checker's related table ID isn't in validator's changed table IDs.
+	checker.schemaVer = 2
+	checker.relatedTableIDs = []int64{3}
+	err = checker.Check(ts)
+	c.Assert(err, IsNil)
+	// The checker's schema version isn't in validator's items.
+	checker.schemaVer = 1
+	checker.relatedTableIDs = []int64{3}
+	err = checker.Check(ts)
+	c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaChanged), IsTrue)
+	// checker's related table ID is in validator's changed table IDs.
+	checker.relatedTableIDs = []int64{2}
+	err = checker.Check(ts)
+	c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaChanged), IsTrue)
+
+	// validator's latest schema version is expired.
+	time.Sleep(lease + time.Microsecond)
+	checker.schemaVer = 4
+	checker.relatedTableIDs = []int64{3}
+	err = checker.Check(ts)
+	c.Assert(err, IsNil)
+	nowTS := uint64(time.Now().UnixNano())
+	// Use checker.SchemaValidator.Check instead of checker.Check here because backoff make CI slow.
+	result := checker.SchemaValidator.Check(nowTS, checker.schemaVer, checker.relatedTableIDs)
+	c.Assert(result, Equals, domain.ResultUnknown)
+}
+
 func newStore(c *C, dbPath string) kv.Storage {
-	store, err := tikv.NewMockTikvStore()
+	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	return store
 }
 
 func newStoreWithBootstrap(c *C, dbPath string) (kv.Storage, *domain.Domain) {
-	store, err := tikv.NewMockTikvStore()
+	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	dom, err := BootstrapSession(store)
 	c.Assert(err, IsNil)
@@ -208,9 +253,9 @@ func removeStore(c *C, dbPath string) {
 }
 
 func exec(se Session, sql string, args ...interface{}) (ast.RecordSet, error) {
-	goCtx := goctx.Background()
+	ctx := context.Background()
 	if len(args) == 0 {
-		rs, err := se.Execute(goCtx, sql)
+		rs, err := se.Execute(ctx, sql)
 		if err == nil && len(rs) > 0 {
 			return rs[0], nil
 		}
@@ -220,7 +265,7 @@ func exec(se Session, sql string, args ...interface{}) (ast.RecordSet, error) {
 	if err != nil {
 		return nil, err
 	}
-	rs, err := se.ExecutePreparedStmt(goCtx, stmtID, args...)
+	rs, err := se.ExecutePreparedStmt(ctx, stmtID, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -240,13 +285,4 @@ func match(c *C, row []types.Datum, expected ...interface{}) {
 		need := fmt.Sprintf("%v", expected[i])
 		c.Assert(got, Equals, need)
 	}
-}
-
-func mustExecFailed(c *C, se Session, sql string, args ...interface{}) {
-	r, err := exec(se, sql, args...)
-	if err == nil && r != nil {
-		// sometimes we may meet error after executing first row.
-		_, err = r.Next(goctx.Background())
-	}
-	c.Assert(err, NotNil)
 }

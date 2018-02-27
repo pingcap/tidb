@@ -20,18 +20,18 @@ import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testColumnSuite{})
@@ -45,7 +45,7 @@ type testColumnSuite struct {
 
 func (s *testColumnSuite) SetUpSuite(c *C) {
 	s.store = testCreateStore(c, "test_column")
-	s.d = testNewDDL(goctx.Background(), nil, s.store, nil, nil, testLease)
+	s.d = testNewDDL(context.Background(), nil, s.store, nil, nil, testLease)
 
 	s.dbInfo = testSchemaInfo(c, s.d, "test_column")
 	testCreateSchema(c, testNewContext(s.d), s.d, s.dbInfo)
@@ -59,7 +59,7 @@ func (s *testColumnSuite) TearDownSuite(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func testCreateColumn(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
+func testCreateColumn(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
 	colName string, pos *ast.ColumnPosition, defaultValue interface{}) *model.Job {
 	col := &model.ColumnInfo{
 		Name:               model.NewCIStr(colName),
@@ -85,7 +85,7 @@ func testCreateColumn(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, t
 	return job
 }
 
-func testDropColumn(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName string, isError bool) *model.Job {
+func testDropColumn(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName string, isError bool) *model.Job {
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		TableID:    tblInfo.ID,
@@ -256,12 +256,12 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	testDropTable(c, ctx, s.d, s.dbInfo, tblInfo)
 }
 
-func (s *testColumnSuite) checkColumnKVExist(ctx context.Context, t table.Table, handle int64, col *table.Column, columnValue interface{}, isExist bool) error {
+func (s *testColumnSuite) checkColumnKVExist(ctx sessionctx.Context, t table.Table, handle int64, col *table.Column, columnValue interface{}, isExist bool) error {
 	err := ctx.NewTxn()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer ctx.Txn().Commit(goctx.Background())
+	defer ctx.Txn().Commit(context.Background())
 	key := t.RecordKey(handle)
 	data, err := ctx.Txn().Get(key)
 	if !isExist {
@@ -291,7 +291,7 @@ func (s *testColumnSuite) checkColumnKVExist(ctx context.Context, t table.Table,
 	return nil
 }
 
-func (s *testColumnSuite) checkNoneColumn(ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *table.Column, columnValue interface{}) error {
+func (s *testColumnSuite) checkNoneColumn(ctx sessionctx.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *table.Column, columnValue interface{}) error {
 	t, err := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
 	if err != nil {
 		return errors.Trace(err)
@@ -307,7 +307,7 @@ func (s *testColumnSuite) checkNoneColumn(ctx context.Context, d *ddl, tblInfo *
 	return nil
 }
 
-func (s *testColumnSuite) checkDeleteOnlyColumn(ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *table.Column, row []types.Datum, columnValue interface{}) error {
+func (s *testColumnSuite) checkDeleteOnlyColumn(ctx sessionctx.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *table.Column, row []types.Datum, columnValue interface{}) error {
 	t, err := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
 	if err != nil {
 		return errors.Trace(err)
@@ -408,7 +408,7 @@ func (s *testColumnSuite) checkDeleteOnlyColumn(ctx context.Context, d *ddl, tbl
 	return nil
 }
 
-func (s *testColumnSuite) checkWriteOnlyColumn(ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *table.Column, row []types.Datum, columnValue interface{}) error {
+func (s *testColumnSuite) checkWriteOnlyColumn(ctx sessionctx.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *table.Column, row []types.Datum, columnValue interface{}) error {
 	t, err := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
 	if err != nil {
 		return errors.Trace(err)
@@ -513,7 +513,7 @@ func (s *testColumnSuite) checkWriteOnlyColumn(ctx context.Context, d *ddl, tblI
 	return nil
 }
 
-func (s *testColumnSuite) checkReorganizationColumn(ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *table.Column, row []types.Datum, columnValue interface{}) error {
+func (s *testColumnSuite) checkReorganizationColumn(ctx sessionctx.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *table.Column, row []types.Datum, columnValue interface{}) error {
 	t, err := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
 	if err != nil {
 		return errors.Trace(err)
@@ -609,7 +609,7 @@ func (s *testColumnSuite) checkReorganizationColumn(ctx context.Context, d *ddl,
 	return nil
 }
 
-func (s *testColumnSuite) checkPublicColumn(ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, newCol *table.Column, oldRow []types.Datum, columnValue interface{}) error {
+func (s *testColumnSuite) checkPublicColumn(ctx sessionctx.Context, d *ddl, tblInfo *model.TableInfo, handle int64, newCol *table.Column, oldRow []types.Datum, columnValue interface{}) error {
 	t, err := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
 	if err != nil {
 		return errors.Trace(err)
@@ -737,7 +737,7 @@ func (s *testColumnSuite) testGetColumn(t table.Table, name string, isExist bool
 
 func (s *testColumnSuite) TestAddColumn(c *C) {
 	defer testleak.AfterTest(c)()
-	d := testNewDDL(goctx.Background(), nil, s.store, nil, nil, testLease)
+	d := testNewDDL(context.Background(), nil, s.store, nil, nil, testLease)
 	tblInfo := testTableInfo(c, d, "t", 3)
 	ctx := testNewContext(d)
 
@@ -751,7 +751,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 	handle, err := t.AddRecord(ctx, oldRow, false)
 	c.Assert(err, IsNil)
 
-	err = ctx.Txn().Commit(goctx.Background())
+	err = ctx.Txn().Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	newColName := "c4"
@@ -796,7 +796,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 	s.d.Stop()
 
 	d.Stop()
-	d.start(goctx.Background())
+	d.start(context.Background())
 
 	job := testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, newColName, &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, defaultColValue)
 
@@ -814,16 +814,16 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)
 
-	err = ctx.Txn().Commit(goctx.Background())
+	err = ctx.Txn().Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	d.Stop()
-	s.d.start(goctx.Background())
+	s.d.start(context.Background())
 }
 
 func (s *testColumnSuite) TestDropColumn(c *C) {
 	defer testleak.AfterTest(c)()
-	d := testNewDDL(goctx.Background(), nil, s.store, nil, nil, testLease)
+	d := testNewDDL(context.Background(), nil, s.store, nil, nil, testLease)
 	tblInfo := testTableInfo(c, d, "t", 4)
 	ctx := testNewContext(d)
 
@@ -839,7 +839,7 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 	_, err = t.AddRecord(ctx, append(row, types.NewDatum(defaultColValue)), false)
 	c.Assert(err, IsNil)
 
-	err = ctx.Txn().Commit(goctx.Background())
+	err = ctx.Txn().Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	checkOK := false
@@ -871,7 +871,7 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 	s.d.Stop()
 
 	d.Stop()
-	d.start(goctx.Background())
+	d.start(context.Background())
 
 	job := testDropColumn(c, ctx, s.d, s.dbInfo, tblInfo, colName, false)
 	testCheckJobDone(c, d, job, false)
@@ -888,15 +888,15 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)
 
-	err = ctx.Txn().Commit(goctx.Background())
+	err = ctx.Txn().Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	d.Stop()
-	s.d.start(goctx.Background())
+	s.d.start(context.Background())
 }
 
 func (s *testColumnSuite) TestModifyColumn(c *C) {
-	d := testNewDDL(goctx.Background(), nil, s.store, nil, nil, testLease)
+	d := testNewDDL(context.Background(), nil, s.store, nil, nil, testLease)
 	defer d.Stop()
 	tests := []struct {
 		origin string

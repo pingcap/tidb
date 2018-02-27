@@ -17,16 +17,16 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	log "github.com/sirupsen/logrus"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 // RunWorker indicates if this TiDB server starts DDL worker and can run DDL job.
@@ -85,14 +85,18 @@ func cleanNotify(ch chan struct{}) {
 func (d *ddl) isOwner() bool {
 	isOwner := d.ownerManager.IsOwner()
 	log.Debugf("[ddl] it's the job owner %v, self id %s", isOwner, d.uuid)
+	if isOwner {
+		metrics.DDLCounter.WithLabelValues(metrics.IsDDLOwner).Inc()
+	}
 	return isOwner
 }
 
 // addDDLJob gets a global job ID and puts the DDL job in the DDL queue.
-func (d *ddl) addDDLJob(ctx context.Context, job *model.Job) error {
+func (d *ddl) addDDLJob(ctx sessionctx.Context, job *model.Job) error {
+	startTime := time.Now()
 	job.Version = currentVersion
-	job.Query, _ = ctx.Value(context.QueryString).(string)
-	return kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
+	job.Query, _ = ctx.Value(sessionctx.QueryString).(string)
+	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err error
 		job.ID, err = t.GenGlobalID()
@@ -103,6 +107,8 @@ func (d *ddl) addDDLJob(ctx context.Context, job *model.Job) error {
 		err = t.EnQueueDDLJob(job)
 		return errors.Trace(err)
 	})
+	metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerAddDDLJob, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+	return errors.Trace(err)
 }
 
 // getFirstDDLJob gets the first DDL job form DDL queue.
@@ -144,6 +150,10 @@ func (d *ddl) updateDDLJob(t *meta.Meta, job *model.Job, meetErr bool) error {
 // finishDDLJob deletes the finished DDL job in the ddl queue and puts it to history queue.
 // If the DDL job need to handle in background, it will prepare a background job.
 func (d *ddl) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
+	startTime := time.Now()
+	defer func() {
+		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerFinishDDLJob, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+	}()
 	switch job.Type {
 	case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex:
 		if job.Version <= currentVersion {
@@ -352,12 +362,16 @@ func toTError(err error) *terror.Error {
 
 // waitSchemaChanged waits for the completion of updating all servers' schema. In order to make sure that happens,
 // we wait 2 * lease time.
-func (d *ddl) waitSchemaChanged(ctx goctx.Context, waitTime time.Duration, latestSchemaVersion int64) {
+func (d *ddl) waitSchemaChanged(ctx context.Context, waitTime time.Duration, latestSchemaVersion int64) {
 	if waitTime == 0 {
 		return
 	}
 
 	timeStart := time.Now()
+	var err error
+	defer func() {
+		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerWaitSchemaChanged, metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
+	}()
 	// TODO: Do we need to wait for a while?
 	if latestSchemaVersion == 0 {
 		log.Infof("[ddl] schema version doesn't change")
@@ -365,22 +379,25 @@ func (d *ddl) waitSchemaChanged(ctx goctx.Context, waitTime time.Duration, lates
 	}
 
 	if ctx == nil {
-		var cancelFunc goctx.CancelFunc
-		ctx, cancelFunc = goctx.WithTimeout(goctx.Background(), waitTime)
+		var cancelFunc context.CancelFunc
+		ctx, cancelFunc = context.WithTimeout(context.Background(), waitTime)
 		defer cancelFunc()
 	}
-	err := d.schemaSyncer.OwnerUpdateGlobalVersion(ctx, latestSchemaVersion)
+	err = d.schemaSyncer.OwnerUpdateGlobalVersion(ctx, latestSchemaVersion)
 	if err != nil {
 		log.Infof("[ddl] update latest schema version %d failed %v", latestSchemaVersion, err)
-		if terror.ErrorEqual(err, goctx.DeadlineExceeded) {
+		if terror.ErrorEqual(err, context.DeadlineExceeded) {
+			// If err is context.DeadlineExceeded, it means waitTime(2 * lease) is elapsed. So all the schemas are synced by ticker.
+			// There is no need to use etcd to sync. The function returns directly.
 			return
 		}
 	}
 
+	// OwnerCheckAllVersions returns only when context is timeout(2 * lease) or all TiDB schemas are synced.
 	err = d.schemaSyncer.OwnerCheckAllVersions(ctx, latestSchemaVersion)
 	if err != nil {
 		log.Infof("[ddl] wait latest schema version %d to deadline %v", latestSchemaVersion, err)
-		if terror.ErrorEqual(err, goctx.DeadlineExceeded) {
+		if terror.ErrorEqual(err, context.DeadlineExceeded) {
 			return
 		}
 		select {
@@ -403,7 +420,7 @@ func (d *ddl) waitSchemaSynced(job *model.Job, waitTime time.Duration) {
 		return
 	}
 	// TODO: Make ctx exits when the d is close.
-	ctx, cancelFunc := goctx.WithTimeout(goctx.Background(), waitTime)
+	ctx, cancelFunc := context.WithTimeout(context.Background(), waitTime)
 	defer cancelFunc()
 
 	startTime := time.Now()

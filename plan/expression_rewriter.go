@@ -19,22 +19,22 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 )
 
 // EvalSubquery evaluates incorrelated subqueries once.
-var EvalSubquery func(p PhysicalPlan, is infoschema.InfoSchema, ctx context.Context) ([][]types.Datum, error)
+var EvalSubquery func(p PhysicalPlan, is infoschema.InfoSchema, ctx sessionctx.Context) ([][]types.Datum, error)
 
 // evalAstExpr evaluates ast expression directly.
-func evalAstExpr(expr ast.ExprNode, ctx context.Context) (types.Datum, error) {
+func evalAstExpr(ctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error) {
 	if val, ok := expr.(*ast.ValueExpr); ok {
 		return val.Datum, nil
 	}
@@ -114,7 +114,7 @@ type expressionRewriter struct {
 	err      error
 	aggrMap  map[*ast.AggregateFuncExpr]int
 	b        *planBuilder
-	ctx      context.Context
+	ctx      sessionctx.Context
 	// asScalar means the return value must be a scalar value.
 	asScalar bool
 
@@ -138,7 +138,7 @@ func getRowArg(e expression.Expression, idx int) expression.Expression {
 
 // popRowArg pops the first element and return the rest of row.
 // e.g. After this function (1, 2, 3) becomes (2, 3).
-func popRowArg(ctx context.Context, e expression.Expression) (ret expression.Expression, err error) {
+func popRowArg(ctx sessionctx.Context, e expression.Expression) (ret expression.Expression, err error) {
 	if f, ok := e.(*expression.ScalarFunction); ok {
 		args := f.GetArgs()
 		if len(args) == 2 {
@@ -231,10 +231,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			index, ok = er.aggrMap[v]
 		}
 		if !ok {
-			er.err = errors.New("Can't appear aggrFunctions")
-			if er.b.curClause == groupByClause {
-				er.err = ErrInvalidGroupFuncUse
-			}
+			er.err = ErrInvalidGroupFuncUse
 			return inNode, true
 		}
 		er.ctxStack = append(er.ctxStack, er.schema.Columns[index])
@@ -278,7 +275,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			er.err = errors.Trace(err)
 			return inNode, false
 		}
-		er.ctxStack = append(er.ctxStack, expression.NewValuesFunc(col.Index, col.RetType, er.ctx))
+		er.ctxStack = append(er.ctxStack, expression.NewValuesFunc(er.ctx, col.Index, col.RetType))
 		return inNode, true
 	default:
 		er.asScalar = true

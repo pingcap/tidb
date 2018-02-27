@@ -23,12 +23,12 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/mocktikv"
+	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testClusterSuite{})
@@ -41,9 +41,9 @@ func (s *testClusterSuite) TestClusterSplit(c *C) {
 	cluster := mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(cluster)
 	mvccStore := mocktikv.NewMvccStore()
-	store, err := tikv.NewMockTikvStore(
-		tikv.WithCluster(cluster),
-		tikv.WithMVCCStore(mvccStore),
+	store, err := mockstore.NewMockTikvStore(
+		mockstore.WithCluster(cluster),
+		mockstore.WithMVCCStore(mvccStore),
 	)
 	c.Assert(err, IsNil)
 
@@ -70,7 +70,7 @@ func (s *testClusterSuite) TestClusterSplit(c *C) {
 		txn.Set(idxKey, []byte{'0'})
 		handle++
 	}
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	// Split Table into 10 regions.

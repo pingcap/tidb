@@ -23,7 +23,7 @@ var (
 			Subsystem: "ddl",
 			Name:      "waiting_jobs",
 			Help:      "Gauge of jobs.",
-		}, []string{"action"})
+		}, []string{LblType})
 
 	HandleJobHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -32,20 +32,20 @@ var (
 			Name:      "handle_job_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of handle jobs",
 			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 20),
-		}, []string{"action", "result_state"})
+		}, []string{LblType, LblResult})
 
 	BatchAddIdxHistogram = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
-			Name:      "batch_add_idx_succ",
+			Name:      "batch_add_idx_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of batch handle data",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20),
 		})
 
-	SyncerInit    = "syncer_init"
-	SyncerRestart = "syncer_restart"
-	SyncerClear   = "syncer_clear"
+	SyncerInit    = "init"
+	SyncerRestart = "restart"
+	SyncerClear   = "clear"
 
 	DeploySyncerHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -54,7 +54,7 @@ var (
 			Name:      "deploy_syncer_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of deploy syncer",
 			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 20),
-		}, []string{"state", "result_state"})
+		}, []string{LblType, LblResult})
 
 	UpdateSelfVersionHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -63,7 +63,7 @@ var (
 			Name:      "update_self_ver_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of update self version",
 			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 20),
-		}, []string{"result_state"})
+		}, []string{LblResult})
 
 	OwnerUpdateGlobalVersion   = "update_global_version"
 	OwnerGetGlobalVersion      = "get_global_version"
@@ -75,7 +75,31 @@ var (
 			Name:      "owner_handle_syncer_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of handle syncer",
 			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 20),
-		}, []string{"op", "result_state"})
+		}, []string{LblType, LblResult})
+
+	// Metrics for ddl_worker.go.
+	WorkerAddDDLJob         = "add_job"
+	WorkerFinishDDLJob      = "finish_job"
+	WorkerWaitSchemaChanged = "wait_schema_changed"
+	DDLWorkerHistogram      = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "ddl",
+			Name:      "worker_operation_duration_seconds",
+			Help:      "Bucketed histogram of processing time (s) of ddl worker operations",
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20),
+		}, []string{LblType, LblResult})
+
+	CreateDDL       = "create_ddl"
+	CreateDDLWorker = "create_ddl_worker"
+	IsDDLOwner      = "is_ddl_owner"
+	DDLCounter      = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "ddl",
+			Name:      "worker_operation_total",
+			Help:      "Counter of creating ddl/worker and isowner.",
+		}, []string{LblType})
 )
 
 func init() {
@@ -85,4 +109,6 @@ func init() {
 	prometheus.MustRegister(DeploySyncerHistogram)
 	prometheus.MustRegister(UpdateSelfVersionHistogram)
 	prometheus.MustRegister(OwnerHandleSyncerHistogram)
+	prometheus.MustRegister(DDLWorkerHistogram)
+	prometheus.MustRegister(DDLCounter)
 }

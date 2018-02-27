@@ -18,9 +18,9 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tipb/go-tipb"
@@ -104,7 +104,7 @@ type coalesceFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *coalesceFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
+func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -349,7 +349,7 @@ type greatestFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *greatestFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
+func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -513,7 +513,7 @@ type leastFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *leastFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
+func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -687,7 +687,7 @@ type intervalFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *intervalFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
+func (c *intervalFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -909,7 +909,7 @@ func isTemporalColumn(expr Expression) bool {
 }
 
 // tryToConvertConstantInt tries to convert a constant with other type to a int constant.
-func tryToConvertConstantInt(ctx context.Context, con *Constant) *Constant {
+func tryToConvertConstantInt(ctx sessionctx.Context, con *Constant) *Constant {
 	if con.GetType().EvalType() == types.ETInt {
 		return con
 	}
@@ -930,7 +930,7 @@ func tryToConvertConstantInt(ctx context.Context, con *Constant) *Constant {
 }
 
 // RefineConstantArg changes the constant argument to it's ceiling or flooring result by the given op.
-func RefineConstantArg(ctx context.Context, con *Constant, op opcode.Op) *Constant {
+func RefineConstantArg(ctx sessionctx.Context, con *Constant, op opcode.Op) *Constant {
 	dt, err := con.Eval(nil)
 	if err != nil {
 		return con
@@ -970,7 +970,7 @@ func RefineConstantArg(ctx context.Context, con *Constant, op opcode.Op) *Consta
 
 // refineArgs rewrite the arguments if one of them is int expression and another one is non-int constant.
 // Like a < 1.1 will be changed to a < 2.
-func (c *compareFunctionClass) refineArgs(ctx context.Context, args []Expression) []Expression {
+func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Expression) []Expression {
 	arg0IsInt := args[0].GetType().EvalType() == types.ETInt
 	arg1IsInt := args[1].GetType().EvalType() == types.ETInt
 	arg0, arg0IsCon := args[0].(*Constant)
@@ -989,7 +989,7 @@ func (c *compareFunctionClass) refineArgs(ctx context.Context, args []Expression
 }
 
 // getFunction sets compare built-in function signatures for various types.
-func (c *compareFunctionClass) getFunction(ctx context.Context, rawArgs []Expression) (sig builtinFunc, err error) {
+func (c *compareFunctionClass) getFunction(ctx sessionctx.Context, rawArgs []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(rawArgs); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1000,7 +1000,7 @@ func (c *compareFunctionClass) getFunction(ctx context.Context, rawArgs []Expres
 }
 
 // generateCmpSigs generates compare function signatures.
-func (c *compareFunctionClass) generateCmpSigs(ctx context.Context, args []Expression, tp types.EvalType) (sig builtinFunc, err error) {
+func (c *compareFunctionClass) generateCmpSigs(ctx sessionctx.Context, args []Expression, tp types.EvalType) (sig builtinFunc, err error) {
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, tp, tp)
 	if tp == types.ETJson {
 		// In compare, if we cast string to JSON, we shouldn't parse it.
@@ -1187,7 +1187,7 @@ type builtinLTIntSig struct {
 }
 
 func (s *builtinLTIntSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
-	return resOfLT(compareInt(s.args, row, s.ctx))
+	return resOfLT(compareInt(s.ctx, s.args, row))
 }
 
 type builtinLTRealSig struct {
@@ -1195,7 +1195,7 @@ type builtinLTRealSig struct {
 }
 
 func (s *builtinLTRealSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
-	return resOfLT(compareReal(s.args, row, s.ctx))
+	return resOfLT(compareReal(s.ctx, s.args, row))
 }
 
 type builtinLTDecimalSig struct {
@@ -1203,7 +1203,7 @@ type builtinLTDecimalSig struct {
 }
 
 func (s *builtinLTDecimalSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
-	return resOfLT(compareDecimal(s.args, row, s.ctx))
+	return resOfLT(compareDecimal(s.ctx, s.args, row))
 }
 
 type builtinLTStringSig struct {
@@ -1227,7 +1227,7 @@ type builtinLTTimeSig struct {
 }
 
 func (s *builtinLTTimeSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
-	return resOfLT(compareTime(s.args, row, s.ctx))
+	return resOfLT(compareTime(s.ctx, s.args, row))
 }
 
 type builtinLTJSONSig struct {
@@ -1235,7 +1235,7 @@ type builtinLTJSONSig struct {
 }
 
 func (s *builtinLTJSONSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
-	return resOfLT(compareJSON(s.args, row, s.ctx))
+	return resOfLT(compareJSON(s.ctx, s.args, row))
 }
 
 type builtinLEIntSig struct {
@@ -1243,7 +1243,7 @@ type builtinLEIntSig struct {
 }
 
 func (s *builtinLEIntSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
-	return resOfLE(compareInt(s.args, row, s.ctx))
+	return resOfLE(compareInt(s.ctx, s.args, row))
 }
 
 type builtinLERealSig struct {
@@ -1251,7 +1251,7 @@ type builtinLERealSig struct {
 }
 
 func (s *builtinLERealSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
-	return resOfLE(compareReal(s.args, row, s.ctx))
+	return resOfLE(compareReal(s.ctx, s.args, row))
 }
 
 type builtinLEDecimalSig struct {
@@ -1259,7 +1259,7 @@ type builtinLEDecimalSig struct {
 }
 
 func (s *builtinLEDecimalSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
-	return resOfLE(compareDecimal(s.args, row, s.ctx))
+	return resOfLE(compareDecimal(s.ctx, s.args, row))
 }
 
 type builtinLEStringSig struct {
@@ -1283,7 +1283,7 @@ type builtinLETimeSig struct {
 }
 
 func (s *builtinLETimeSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
-	return resOfLE(compareTime(s.args, row, s.ctx))
+	return resOfLE(compareTime(s.ctx, s.args, row))
 }
 
 type builtinLEJSONSig struct {
@@ -1291,7 +1291,7 @@ type builtinLEJSONSig struct {
 }
 
 func (s *builtinLEJSONSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
-	return resOfLE(compareJSON(s.args, row, s.ctx))
+	return resOfLE(compareJSON(s.ctx, s.args, row))
 }
 
 type builtinGTIntSig struct {
@@ -1299,7 +1299,7 @@ type builtinGTIntSig struct {
 }
 
 func (s *builtinGTIntSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
-	return resOfGT(compareInt(s.args, row, s.ctx))
+	return resOfGT(compareInt(s.ctx, s.args, row))
 }
 
 type builtinGTRealSig struct {
@@ -1307,7 +1307,7 @@ type builtinGTRealSig struct {
 }
 
 func (s *builtinGTRealSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
-	return resOfGT(compareReal(s.args, row, s.ctx))
+	return resOfGT(compareReal(s.ctx, s.args, row))
 }
 
 type builtinGTDecimalSig struct {
@@ -1315,7 +1315,7 @@ type builtinGTDecimalSig struct {
 }
 
 func (s *builtinGTDecimalSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
-	return resOfGT(compareDecimal(s.args, row, s.ctx))
+	return resOfGT(compareDecimal(s.ctx, s.args, row))
 }
 
 type builtinGTStringSig struct {
@@ -1339,7 +1339,7 @@ type builtinGTTimeSig struct {
 }
 
 func (s *builtinGTTimeSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
-	return resOfGT(compareTime(s.args, row, s.ctx))
+	return resOfGT(compareTime(s.ctx, s.args, row))
 }
 
 type builtinGTJSONSig struct {
@@ -1347,7 +1347,7 @@ type builtinGTJSONSig struct {
 }
 
 func (s *builtinGTJSONSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
-	return resOfGT(compareJSON(s.args, row, s.ctx))
+	return resOfGT(compareJSON(s.ctx, s.args, row))
 }
 
 type builtinGEIntSig struct {
@@ -1355,7 +1355,7 @@ type builtinGEIntSig struct {
 }
 
 func (s *builtinGEIntSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
-	return resOfGE(compareInt(s.args, row, s.ctx))
+	return resOfGE(compareInt(s.ctx, s.args, row))
 }
 
 type builtinGERealSig struct {
@@ -1363,7 +1363,7 @@ type builtinGERealSig struct {
 }
 
 func (s *builtinGERealSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
-	return resOfGE(compareReal(s.args, row, s.ctx))
+	return resOfGE(compareReal(s.ctx, s.args, row))
 }
 
 type builtinGEDecimalSig struct {
@@ -1371,7 +1371,7 @@ type builtinGEDecimalSig struct {
 }
 
 func (s *builtinGEDecimalSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
-	return resOfGE(compareDecimal(s.args, row, s.ctx))
+	return resOfGE(compareDecimal(s.ctx, s.args, row))
 }
 
 type builtinGEStringSig struct {
@@ -1395,7 +1395,7 @@ type builtinGETimeSig struct {
 }
 
 func (s *builtinGETimeSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
-	return resOfGE(compareTime(s.args, row, s.ctx))
+	return resOfGE(compareTime(s.ctx, s.args, row))
 }
 
 type builtinGEJSONSig struct {
@@ -1403,7 +1403,7 @@ type builtinGEJSONSig struct {
 }
 
 func (s *builtinGEJSONSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
-	return resOfGE(compareJSON(s.args, row, s.ctx))
+	return resOfGE(compareJSON(s.ctx, s.args, row))
 }
 
 type builtinEQIntSig struct {
@@ -1411,7 +1411,7 @@ type builtinEQIntSig struct {
 }
 
 func (s *builtinEQIntSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
-	return resOfEQ(compareInt(s.args, row, s.ctx))
+	return resOfEQ(compareInt(s.ctx, s.args, row))
 }
 
 type builtinEQRealSig struct {
@@ -1419,7 +1419,7 @@ type builtinEQRealSig struct {
 }
 
 func (s *builtinEQRealSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
-	return resOfEQ(compareReal(s.args, row, s.ctx))
+	return resOfEQ(compareReal(s.ctx, s.args, row))
 }
 
 type builtinEQDecimalSig struct {
@@ -1427,7 +1427,7 @@ type builtinEQDecimalSig struct {
 }
 
 func (s *builtinEQDecimalSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
-	return resOfEQ(compareDecimal(s.args, row, s.ctx))
+	return resOfEQ(compareDecimal(s.ctx, s.args, row))
 }
 
 type builtinEQStringSig struct {
@@ -1451,7 +1451,7 @@ type builtinEQTimeSig struct {
 }
 
 func (s *builtinEQTimeSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
-	return resOfEQ(compareTime(s.args, row, s.ctx))
+	return resOfEQ(compareTime(s.ctx, s.args, row))
 }
 
 type builtinEQJSONSig struct {
@@ -1459,7 +1459,7 @@ type builtinEQJSONSig struct {
 }
 
 func (s *builtinEQJSONSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
-	return resOfEQ(compareJSON(s.args, row, s.ctx))
+	return resOfEQ(compareJSON(s.ctx, s.args, row))
 }
 
 type builtinNEIntSig struct {
@@ -1467,7 +1467,7 @@ type builtinNEIntSig struct {
 }
 
 func (s *builtinNEIntSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
-	return resOfNE(compareInt(s.args, row, s.ctx))
+	return resOfNE(compareInt(s.ctx, s.args, row))
 }
 
 type builtinNERealSig struct {
@@ -1475,7 +1475,7 @@ type builtinNERealSig struct {
 }
 
 func (s *builtinNERealSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
-	return resOfNE(compareReal(s.args, row, s.ctx))
+	return resOfNE(compareReal(s.ctx, s.args, row))
 }
 
 type builtinNEDecimalSig struct {
@@ -1483,7 +1483,7 @@ type builtinNEDecimalSig struct {
 }
 
 func (s *builtinNEDecimalSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
-	return resOfNE(compareDecimal(s.args, row, s.ctx))
+	return resOfNE(compareDecimal(s.ctx, s.args, row))
 }
 
 type builtinNEStringSig struct {
@@ -1507,7 +1507,7 @@ type builtinNETimeSig struct {
 }
 
 func (s *builtinNETimeSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
-	return resOfNE(compareTime(s.args, row, s.ctx))
+	return resOfNE(compareTime(s.ctx, s.args, row))
 }
 
 type builtinNEJSONSig struct {
@@ -1515,7 +1515,7 @@ type builtinNEJSONSig struct {
 }
 
 func (s *builtinNEJSONSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
-	return resOfNE(compareJSON(s.args, row, s.ctx))
+	return resOfNE(compareJSON(s.ctx, s.args, row))
 }
 
 type builtinNullEQIntSig struct {
@@ -1785,7 +1785,7 @@ func resOfNE(val int64, isNull bool, err error) (int64, bool, error) {
 	return val, false, nil
 }
 
-func compareInt(args []Expression, row types.Row, ctx context.Context) (val int64, isNull bool, err error) {
+func compareInt(ctx sessionctx.Context, args []Expression, row types.Row) (val int64, isNull bool, err error) {
 	arg0, isNull0, err := args[0].EvalInt(ctx, row)
 	if isNull0 || err != nil {
 		return 0, isNull0, errors.Trace(err)
@@ -1817,7 +1817,7 @@ func compareInt(args []Expression, row types.Row, ctx context.Context) (val int6
 	return int64(res), false, nil
 }
 
-func compareString(args []Expression, row types.Row, ctx context.Context) (val int64, isNull bool, err error) {
+func compareString(args []Expression, row types.Row, ctx sessionctx.Context) (val int64, isNull bool, err error) {
 	arg0, isNull0, err := args[0].EvalString(ctx, row)
 	if isNull0 || err != nil {
 		return 0, isNull0, errors.Trace(err)
@@ -1829,7 +1829,7 @@ func compareString(args []Expression, row types.Row, ctx context.Context) (val i
 	return int64(types.CompareString(arg0, arg1)), false, nil
 }
 
-func compareReal(args []Expression, row types.Row, ctx context.Context) (val int64, isNull bool, err error) {
+func compareReal(ctx sessionctx.Context, args []Expression, row types.Row) (val int64, isNull bool, err error) {
 	arg0, isNull0, err := args[0].EvalReal(ctx, row)
 	if isNull0 || err != nil {
 		return 0, isNull0, errors.Trace(err)
@@ -1841,7 +1841,7 @@ func compareReal(args []Expression, row types.Row, ctx context.Context) (val int
 	return int64(types.CompareFloat64(arg0, arg1)), false, nil
 }
 
-func compareDecimal(args []Expression, row types.Row, ctx context.Context) (val int64, isNull bool, err error) {
+func compareDecimal(ctx sessionctx.Context, args []Expression, row types.Row) (val int64, isNull bool, err error) {
 	arg0, isNull0, err := args[0].EvalDecimal(ctx, row)
 	if isNull0 || err != nil {
 		return 0, isNull0, errors.Trace(err)
@@ -1856,7 +1856,7 @@ func compareDecimal(args []Expression, row types.Row, ctx context.Context) (val 
 	return int64(arg0.Compare(arg1)), false, nil
 }
 
-func compareTime(args []Expression, row types.Row, ctx context.Context) (int64, bool, error) {
+func compareTime(ctx sessionctx.Context, args []Expression, row types.Row) (int64, bool, error) {
 	arg0, isNull0, err := args[0].EvalTime(ctx, row)
 	if isNull0 || err != nil {
 		return 0, isNull0, errors.Trace(err)
@@ -1868,7 +1868,7 @@ func compareTime(args []Expression, row types.Row, ctx context.Context) (int64, 
 	return int64(arg0.Compare(arg1)), false, nil
 }
 
-func compareDuration(args []Expression, row types.Row, ctx context.Context) (int64, bool, error) {
+func compareDuration(args []Expression, row types.Row, ctx sessionctx.Context) (int64, bool, error) {
 	arg0, isNull0, err := args[0].EvalDuration(ctx, row)
 	if isNull0 || err != nil {
 		return 0, isNull0, errors.Trace(err)
@@ -1880,7 +1880,7 @@ func compareDuration(args []Expression, row types.Row, ctx context.Context) (int
 	return int64(arg0.Compare(arg1)), false, nil
 }
 
-func compareJSON(args []Expression, row types.Row, ctx context.Context) (int64, bool, error) {
+func compareJSON(ctx sessionctx.Context, args []Expression, row types.Row) (int64, bool, error) {
 	arg0, isNull0, err := args[0].EvalJSON(ctx, row)
 	if isNull0 || err != nil {
 		return 0, isNull0, errors.Trace(err)
