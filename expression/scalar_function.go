@@ -260,9 +260,7 @@ func (sf *ScalarFunction) HashCode(sc *stmtctx.StatementContext) []byte {
 		return sf.hashcode
 	}
 	sf.hashcode = append(sf.hashcode, scalarFunctionFlag)
-	v := make([]types.Datum, 0, len(sf.GetArgs())+1)
-	codec.EncodeCompactBytes(sf.hashcode, hack.Slice(sf.FuncName.L))
-	v = append(v, types.NewBytesDatum(sf.hashcode))
+	sf.hashcode = codec.EncodeCompactBytes(sf.hashcode, hack.Slice(sf.FuncName.L))
 	for _, arg := range sf.GetArgs() {
 		sf.hashcode = append(sf.hashcode, arg.HashCode(sc)...)
 	}
