@@ -21,6 +21,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
+	"golang.org/x/net/context"
+	"google.golang.org/grpc/metadata"
 )
 
 // CmdType represents the concrete request type in Request or response type in Response.
@@ -273,6 +275,10 @@ func GenRegionErrorResp(req *Request, e *errorpb.Error) (*Response, error) {
 		resp.Cop = &coprocessor.Response{
 			RegionError: e,
 		}
+	case CmdCopStream:
+		resp.CopStream = &mockCopStreamErrClient{
+			Error: e,
+		}
 	case CmdMvccGetByKey:
 		resp.MvccGetByKey = &kvrpcpb.MvccGetByKeyResponse{
 			RegionError: e,
@@ -289,6 +295,27 @@ func GenRegionErrorResp(req *Request, e *errorpb.Error) (*Response, error) {
 		return nil, fmt.Errorf("invalid request type %v", req.Type)
 	}
 	return resp, nil
+}
+
+// mockClientStream implements grpc ClientStream interface, its methods are never called.
+type mockClientStream struct{}
+
+func (mockClientStream) Header() (metadata.MD, error) { return nil, nil }
+func (mockClientStream) Trailer() metadata.MD         { return nil }
+func (mockClientStream) CloseSend() error             { return nil }
+func (mockClientStream) Context() context.Context     { return nil }
+func (mockClientStream) SendMsg(m interface{}) error  { return nil }
+func (mockClientStream) RecvMsg(m interface{}) error  { return nil }
+
+type mockCopStreamErrClient struct {
+	mockClientStream
+	*errorpb.Error
+}
+
+func (mock *mockCopStreamErrClient) Recv() (*coprocessor.Response, error) {
+	return &coprocessor.Response{
+		RegionError: mock.Error,
+	}, nil
 }
 
 // GetRegionError returns the RegionError of the underlying concrete response.
