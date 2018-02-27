@@ -184,6 +184,10 @@ func (s *testMockTiKVSuite) mustResolveLock(c *C, startTS, commitTS uint64) {
 	c.Assert(s.store.ResolveLock(nil, nil, startTS, commitTS), IsNil)
 }
 
+func (s *testMockTiKVSuite) mustBatchResolveLock(c *C, txnInfos map[uint64]uint64) {
+	c.Assert(s.store.BatchResolveLock(nil, nil, txnInfos), IsNil)
+}
+
 func (s *testMockTiKVSuite) TestGet(c *C) {
 	s.mustGetNone(c, "x", 10)
 	s.mustPutOK(c, "x", "x", 5, 10)
@@ -389,6 +393,34 @@ func (s *testMockTiKVSuite) TestResolveLock(c *C) {
 	s.mustGetNone(c, "s1", 30)
 	s.mustGetOK(c, "p2", 20, "v10")
 	s.mustGetOK(c, "s2", 30, "v10")
+	s.mustScanLock(c, 30, nil)
+}
+
+func (s *testMockTiKVSuite) TestBatchResolveLock(c *C) {
+	s.mustPrewriteOK(c, putMutations("p1", "v11", "s1", "v11"), "p1", 11)
+	s.mustPrewriteOK(c, putMutations("p2", "v12", "s2", "v12"), "p2", 12)
+	s.mustPrewriteOK(c, putMutations("p3", "v13"), "p3", 13)
+	s.mustPrewriteOK(c, putMutations("p4", "v14", "s3", "v14", "s4", "v14"), "p4", 14)
+	s.mustPrewriteOK(c, putMutations("p5", "v15", "s5", "v15"), "p5", 15)
+	txnInfos := map[uint64]uint64{
+		11: 0,
+		12: 22,
+		13: 0,
+		14: 24,
+	}
+	s.mustBatchResolveLock(c, txnInfos)
+	s.mustGetNone(c, "p1", 20)
+	s.mustGetNone(c, "p3", 30)
+	s.mustGetOK(c, "p2", 30, "v12")
+	s.mustGetOK(c, "s4", 30, "v14")
+	s.mustScanLock(c, 30, []*kvrpcpb.LockInfo{
+		lock("p5", "p5", 15),
+		lock("s5", "p5", 15),
+	})
+	txnInfos = map[uint64]uint64{
+		15: 0,
+	}
+	s.mustBatchResolveLock(c, txnInfos)
 	s.mustScanLock(c, 30, nil)
 }
 
