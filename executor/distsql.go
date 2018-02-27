@@ -213,6 +213,7 @@ type TableReaderExecutor struct {
 	// for unsigned int.
 	resultHandler *tableResultHandler
 	priority      int
+	streaming     bool
 	feedback      *statistics.QueryFeedback
 }
 
@@ -312,6 +313,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ne
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetPriority(e.priority).
+		SetStreaming(e.streaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		Build()
 	if err != nil {
@@ -391,9 +393,10 @@ type IndexReaderExecutor struct {
 	result        distsql.SelectResult
 	partialResult distsql.PartialResult
 	// columns are only required by union scan.
-	columns  []*model.ColumnInfo
-	priority int
-	feedback *statistics.QueryFeedback
+	columns   []*model.ColumnInfo
+	priority  int
+	streaming bool
+	feedback  *statistics.QueryFeedback
 }
 
 // Close clears all resources hold by current object.
@@ -476,6 +479,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetPriority(e.priority).
+		SetStreaming(e.streaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		Build()
 	if err != nil {
@@ -506,8 +510,10 @@ type IndexLookUpExecutor struct {
 	handleIdx    int
 	tableRequest *tipb.DAGRequest
 	// columns are only required by union scan.
-	columns  []*model.ColumnInfo
-	priority int
+	columns        []*model.ColumnInfo
+	priority       int
+	indexStreaming bool
+	tableStreaming bool
 	*dataReaderBuilder
 	// All fields above are immutable.
 
@@ -560,6 +566,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetPriority(e.priority).
+		SetStreaming(e.indexStreaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		Build()
 	if err != nil {

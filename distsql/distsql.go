@@ -300,6 +300,8 @@ func (pr *partialResult) Close() error {
 // Select sends a DAG request, returns SelectResult.
 // In kvReq, KeyRanges is required, Concurrency/KeepOrder/Desc/IsolationLevel/Priority are optional.
 func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fieldTypes []*types.FieldType) (SelectResult, error) {
+	// TODO: Add config to control this behavior.
+	kvReq.Streaming = false
 	resp := sctx.GetClient().Send(ctx, kvReq)
 	if resp == nil {
 		err := errors.New("client returns nil response")
