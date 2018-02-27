@@ -286,7 +286,7 @@ func (ow *outerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 		if r := recover(); r != nil {
 			task := &lookUpJoinTask{doneCh: make(chan error, 1)}
 			task.doneCh <- errors.Errorf("%v", r)
-			ow.pushToResultChan(ctx, task)
+			ow.pushToChan(ctx, task, ow.resultCh)
 		}
 		close(ow.resultCh)
 		close(ow.innerCh)
@@ -296,36 +296,28 @@ func (ow *outerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 		task, err := ow.buildTask(ctx)
 		if err != nil {
 			task.doneCh <- errors.Trace(err)
-			ow.pushToResultChan(ctx, task)
+			ow.pushToChan(ctx, task, ow.resultCh)
 			return
 		}
 		if task == nil {
 			return
 		}
 
-		if finished := ow.pushToInnerChan(ctx, task); finished {
+		if finished := ow.pushToChan(ctx, task, ow.innerCh); finished {
 			return
 		}
-		if finished := ow.pushToResultChan(ctx, task); finished {
+
+		if finished := ow.pushToChan(ctx, task, ow.resultCh); finished {
 			return
 		}
 	}
 }
 
-func (ow *outerWorker) pushToResultChan(ctx context.Context, task *lookUpJoinTask) bool {
+func (ow *outerWorker) pushToChan(ctx context.Context, task *lookUpJoinTask, dst chan<- *lookUpJoinTask) bool {
 	select {
 	case <-ctx.Done():
 		return true
-	case ow.resultCh <- task:
-	}
-	return false
-}
-
-func (ow *outerWorker) pushToInnerChan(ctx context.Context, task *lookUpJoinTask) bool {
-	select {
-	case <-ctx.Done():
-		return true
-	case ow.innerCh <- task:
+	case dst <- task:
 	}
 	return false
 }
