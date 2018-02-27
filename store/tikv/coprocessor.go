@@ -466,10 +466,12 @@ func (it *copIterator) sendToRespCh(resp copResponse, respCh chan copResponse) (
 	return
 }
 
+// copResultSubset implements the kv.ResultSubset interface.
 type copResultSubset struct {
 	data []byte
 }
 
+// GetData implements the kv.ResultSubset GetData interface.
 func (rs *copResultSubset) GetData() []byte {
 	return rs.data
 }
