@@ -818,12 +818,13 @@ type tableWorker struct {
 // pickAndExecTask picks tasks from workCh, and execute them.
 func (w *tableWorker) pickAndExecTask(ctx context.Context) {
 	var task *lookupTableTask
+	var ok bool
 	defer func() {
 		if r := recover(); r != nil {
 			task.doneCh <- errors.Errorf("%v", r)
 		}
 	}()
-	for ok := true; ok; {
+	for {
 		// Don't check ctx.Done() on purpose. If background worker get the signal and all
 		// exit immediately, session's goroutine doesn't know this and still calling Next(),
 		// it may block reading task.doneCh forever.
