@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -76,6 +77,32 @@ func (la *LogicalAggregation) canPullUp() bool {
 		}
 	}
 	return true
+}
+
+func (la *LogicalApply) deCorColFromEqExpr(expr expression.Expression) expression.Expression {
+	sf, ok := expr.(*expression.ScalarFunction)
+	if !ok || sf.FuncName.L != ast.EQ {
+		return nil
+	}
+	if col, lOk := sf.GetArgs()[0].(*expression.Column); lOk {
+		if corCol, rOk := sf.GetArgs()[1].(*expression.CorrelatedColumn); rOk {
+			ret := corCol.Decorrelate(la.Schema())
+			if _, ok := ret.(*expression.CorrelatedColumn); ok {
+				return nil
+			}
+			return expression.NewFunctionInternal(la.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), ret, col)
+		}
+	}
+	if corCol, lOk := sf.GetArgs()[0].(*expression.CorrelatedColumn); lOk {
+		if col, rOk := sf.GetArgs()[1].(*expression.Column); rOk {
+			ret := corCol.Decorrelate(la.Schema())
+			if _, ok := ret.(*expression.CorrelatedColumn); ok {
+				return nil
+			}
+			return expression.NewFunctionInternal(la.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), ret, col)
+		}
+	}
+	return nil
 }
 
 // decorrelateSolver tries to convert apply plan to join plan.
@@ -152,6 +179,38 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 				// agg.buildProjectionIfNecessary()
 				agg.collectGroupByColumns()
 				return agg, nil
+			}
+			if sel, ok := agg.children[0].(*LogicalSelection); ok && (apply.JoinType == InnerJoin || apply.JoinType == LeftOuterJoin) {
+				var eqCondWithCorCol []*expression.ScalarFunction
+				for i := len(sel.Conditions) - 1; i >= 0; i-- {
+					if expr := apply.deCorColFromEqExpr(sel.Conditions[i]); expr != nil {
+						eqCondWithCorCol = append(eqCondWithCorCol, expr.(*expression.ScalarFunction))
+						sel.Conditions = append(sel.Conditions[:i], sel.Conditions[i+1:]...)
+					}
+				}
+				if len(eqCondWithCorCol) > 0 {
+					apply.extractCorColumnsBySchema()
+					if len(apply.corCols) == 0 {
+						join := &apply.LogicalJoin
+						join.EqualConditions = append(join.EqualConditions, eqCondWithCorCol...)
+						for _, eqCond := range eqCondWithCorCol {
+							clonedCol := eqCond.GetArgs()[1].Clone()
+							if agg.schema.ColumnIndex(eqCond.GetArgs()[1].(*expression.Column)) == -1 {
+								newFunc := aggregation.NewAggFuncDesc(apply.ctx, ast.AggFuncFirstRow, []expression.Expression{clonedCol}, false)
+								agg.AggFuncs = append(agg.AggFuncs, newFunc)
+								agg.schema.Append(clonedCol.(*expression.Column))
+							}
+							if agg.getGbyColIndex(eqCond.GetArgs()[1].(*expression.Column)) == -1 {
+								agg.GroupByItems = append(agg.GroupByItems, clonedCol)
+							}
+						}
+						agg.collectGroupByColumns()
+					}
+					if len(sel.Conditions) == 0 {
+						agg.SetChildren(sel.children[0])
+					}
+					return s.optimize(p)
+				}
 			}
 		}
 	}
