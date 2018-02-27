@@ -50,7 +50,6 @@ func init() {
 		mysql.ErrRegionUnavailable:   mysql.ErrRegionUnavailable,
 		mysql.ErrTiKVServerBusy:      mysql.ErrTiKVServerBusy,
 		mysql.ErrGCTooEarly:          mysql.ErrGCTooEarly,
-		mysql.WarnDataTruncated:      mysql.WarnDataTruncated,
 		mysql.ErrTruncatedWrongValue: mysql.ErrTruncatedWrongValue,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassTiKV] = tikvMySQLErrCodes
