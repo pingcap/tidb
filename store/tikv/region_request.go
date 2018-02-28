@@ -65,6 +65,13 @@ func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regio
 	// switch tikvStoreSendReqResult {
 	// case "timeout":
 	// 	 return nil, errors.New("timeout")
+	// case "PrewriteNotLeader":
+	// 	 if req.Type == tikvrpc.CmdPrewrite {
+	//		 return &tikvrpc.Response{
+	//			 Type:   tikvrpc.CmdPrewrite,
+	//			 Prewrite: &kvrpcpb.PrewriteResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
+	//		 }, nil
+	//	 }
 	// case "GCNotLeader":
 	// 	 if req.Type == tikvrpc.CmdGC {
 	//		 return &tikvrpc.Response{

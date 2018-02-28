@@ -100,3 +100,118 @@ func (s *testCommitterSuite) TestFailCommitTimeout(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(len(value), Greater, 0)
 }
+
+func (s *testCommitterSuite) TestFailPrewritePartialTimeOut(c *C) {
+	s.mustCommit(c, map[string]string{
+		"a": "a0",
+		"b": "b0",
+	})
+
+	txn := s.begin(c)
+	err := txn.Set([]byte("a"), []byte("a1"))
+	c.Assert(err, IsNil)
+	err = txn.Set([]byte("b"), []byte("b1"))
+	c.Assert(err, IsNil)
+
+	gofail.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `1*return("timeout")`)
+	err = txn.Commit(context.Background())
+	c.Assert(err, NotNil)
+	gofail.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult")
+
+	txnCheck := s.begin(c)
+	var value []byte
+	value, err = txnCheck.Get([]byte("b"))
+	c.Assert(err, IsNil)
+	c.Assert(value, BytesEquals, []byte("b0"))
+}
+
+func (s *testCommitterSuite) TestFailCommitPrimaryKeyTimeOut(c *C) {
+	s.mustCommit(c, map[string]string{
+		"a": "a0",
+		"b": "b0",
+	})
+
+	txn := s.begin(c)
+	err := txn.Set([]byte("a"), []byte("a1"))
+	c.Assert(err, IsNil)
+	err = txn.Set([]byte("b"), []byte("b1"))
+	c.Assert(err, IsNil)
+
+	gofail.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `2*off->1*return("timeout")`)
+	err = txn.Commit(context.Background())
+	c.Assert(err, NotNil)
+	gofail.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult")
+
+	txnCheck := s.begin(c)
+	var value []byte
+	value, err = txnCheck.Get([]byte("b"))
+	c.Assert(err, IsNil)
+	c.Assert(value, BytesEquals, []byte("b0"))
+}
+
+func (s *testCommitterSuite) TestFailGetTimeOut(c *C) {
+	s.mustCommit(c, map[string]string{
+		"a": "a0",
+	})
+
+	txn := s.begin(c)
+	gofail.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("timeout")`)
+	value, err := txn.Get([]byte("a"))
+	c.Assert(err, NotNil)
+	c.Assert(value, IsNil)
+	gofail.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult")
+}
+
+func (s *testCommitterSuite) TestFailCommitSecondaryKeyTimeOut(c *C) {
+	s.mustCommit(c, map[string]string{
+		"a": "a0",
+		"b": "b0",
+	})
+
+	txn := s.begin(c)
+	err := txn.Set([]byte("a"), []byte("a1"))
+	c.Assert(err, IsNil)
+	err = txn.Set([]byte("b"), []byte("b1"))
+	c.Assert(err, IsNil)
+
+	gofail.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `3*off->1*return("timeout")`)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+	gofail.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult")
+
+	txnCheck := s.begin(c)
+	var value []byte
+	value, err = txnCheck.Get([]byte("a"))
+	c.Assert(err, IsNil)
+	c.Assert(value, BytesEquals, []byte("a1"))
+
+	value, err = txnCheck.Get([]byte("b"))
+	c.Assert(err, IsNil)
+	c.Assert(value, BytesEquals, []byte("b1"))
+}
+
+func (s *testCommitterSuite) TestFailLockKeysTimeOut(c *C) {
+	s.mustCommit(c, map[string]string{"a": "a0"})
+
+	txn1 := s.begin(c)
+	err := txn1.LockKeys([]byte("a"))
+	c.Assert(err, IsNil)
+
+	txn2 := s.begin(c)
+	err = txn2.Set([]byte("a"), []byte("a1"))
+	c.Assert(err, IsNil)
+
+	gofail.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("timeout")`)
+	err = txn1.Commit(context.Background())
+	c.Assert(err, NotNil)
+	gofail.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult")
+
+	err = txn2.Commit(context.Background())
+	c.Assert(err, IsNil)
+
+	txnCheck := s.begin(c)
+	var value []byte
+	value, err = txnCheck.Get([]byte("a"))
+	c.Assert(err, IsNil)
+	c.Assert(value, BytesEquals, []byte("a1"))
+}
