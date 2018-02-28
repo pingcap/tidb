@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	log "github.com/sirupsen/logrus"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 type processinfoSetter interface {
@@ -83,8 +83,8 @@ func schema2ResultFields(schema *expression.Schema, defaultDB string) (rfs []*as
 // Next uses recordSet's executor to get next available row.
 // If row is nil, then updates LastFoundRows in session variable.
 // If stmt and row are not nil, increase current FoundRows by 1.
-func (a *recordSet) Next(goCtx goctx.Context) (types.Row, error) {
-	row, err := a.executor.Next(goCtx)
+func (a *recordSet) Next(ctx context.Context) (types.Row, error) {
+	row, err := a.executor.Next(ctx)
 	if err != nil {
 		a.lastErr = err
 		return nil, errors.Trace(err)
@@ -107,8 +107,8 @@ func (a *recordSet) Next(goCtx goctx.Context) (types.Row, error) {
 // The reason we need update is that chunk with 0 rows indicating we already finished current query, we need prepare for
 // next query.
 // If stmt is not nil and chunk with some rows inside, we simply update last query found rows by the number of row in chunk.
-func (a *recordSet) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
-	err := a.executor.NextChunk(goCtx, chk)
+func (a *recordSet) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+	err := a.executor.NextChunk(ctx, chk)
 	if err != nil {
 		a.lastErr = err
 		return errors.Trace(err)
@@ -177,7 +177,7 @@ func (a *ExecStmt) IsPrepared() bool {
 // IsReadOnly returns true if a statement is read only.
 // It will update readOnlyCheckStmt if current ExecStmt can be conveted to
 // a plan.Execute. Last step is using ast.IsReadOnly function to determine
-// a statment is read only or not.
+// a statement is read only or not.
 func (a *ExecStmt) IsReadOnly() bool {
 	readOnlyCheckStmt := a.StmtNode
 	if checkPlan, ok := a.Plan.(*plan.Execute); ok {
@@ -204,38 +204,38 @@ func (a *ExecStmt) RebuildPlan() error {
 // Exec builds an Executor from a plan. If the Executor doesn't return result,
 // like the INSERT, UPDATE statements, it executes in this function, if the Executor returns
 // result, execution is done after this function returns, in the returned ast.RecordSet Next method.
-func (a *ExecStmt) Exec(goCtx goctx.Context) (ast.RecordSet, error) {
+func (a *ExecStmt) Exec(ctx context.Context) (ast.RecordSet, error) {
 	a.startTime = time.Now()
-	ctx := a.Ctx
-	if _, ok := a.Plan.(*plan.Analyze); ok && ctx.GetSessionVars().InRestrictedSQL {
-		oriStats, _ := ctx.GetSessionVars().GetSystemVar(variable.TiDBBuildStatsConcurrency)
-		oriScan := ctx.GetSessionVars().DistSQLScanConcurrency
-		oriIndex := ctx.GetSessionVars().IndexSerialScanConcurrency
-		oriIso, _ := ctx.GetSessionVars().GetSystemVar(variable.TxnIsolation)
-		terror.Log(errors.Trace(ctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, "1")))
-		ctx.GetSessionVars().DistSQLScanConcurrency = 1
-		ctx.GetSessionVars().IndexSerialScanConcurrency = 1
-		terror.Log(errors.Trace(ctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, ast.ReadCommitted)))
+	sctx := a.Ctx
+	if _, ok := a.Plan.(*plan.Analyze); ok && sctx.GetSessionVars().InRestrictedSQL {
+		oriStats, _ := sctx.GetSessionVars().GetSystemVar(variable.TiDBBuildStatsConcurrency)
+		oriScan := sctx.GetSessionVars().DistSQLScanConcurrency
+		oriIndex := sctx.GetSessionVars().IndexSerialScanConcurrency
+		oriIso, _ := sctx.GetSessionVars().GetSystemVar(variable.TxnIsolation)
+		terror.Log(errors.Trace(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, "1")))
+		sctx.GetSessionVars().DistSQLScanConcurrency = 1
+		sctx.GetSessionVars().IndexSerialScanConcurrency = 1
+		terror.Log(errors.Trace(sctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, ast.ReadCommitted)))
 		defer func() {
-			terror.Log(errors.Trace(ctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, oriStats)))
-			ctx.GetSessionVars().DistSQLScanConcurrency = oriScan
-			ctx.GetSessionVars().IndexSerialScanConcurrency = oriIndex
-			terror.Log(errors.Trace(ctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, oriIso)))
+			terror.Log(errors.Trace(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, oriStats)))
+			sctx.GetSessionVars().DistSQLScanConcurrency = oriScan
+			sctx.GetSessionVars().IndexSerialScanConcurrency = oriIndex
+			terror.Log(errors.Trace(sctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, oriIso)))
 		}()
 	}
 
-	e, err := a.buildExecutor(ctx)
+	e, err := a.buildExecutor(sctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	if err := e.Open(goCtx); err != nil {
+	if err := e.Open(ctx); err != nil {
 		terror.Call(e.Close)
 		return nil, errors.Trace(err)
 	}
 
 	var pi processinfoSetter
-	if raw, ok := ctx.(processinfoSetter); ok {
+	if raw, ok := sctx.(processinfoSetter); ok {
 		pi = raw
 		sql := a.OriginText()
 		if simple, ok := a.Plan.(*plan.Simple); ok && simple.Statement != nil {
@@ -249,28 +249,28 @@ func (a *ExecStmt) Exec(goCtx goctx.Context) (ast.RecordSet, error) {
 	}
 	// If the executor doesn't return any result to the client, we execute it without delay.
 	if e.Schema().Len() == 0 {
-		return a.handleNoDelayExecutor(goCtx, e, ctx, pi)
+		return a.handleNoDelayExecutor(ctx, sctx, e, pi)
 	} else if proj, ok := e.(*ProjectionExec); ok && proj.calculateNoDelay {
 		// Currently this is only for the "DO" statement. Take "DO 1, @a=2;" as an example:
 		// the Projection has two expressions and two columns in the schema, but we should
 		// not return the result of the two expressions.
-		return a.handleNoDelayExecutor(goCtx, e, ctx, pi)
+		return a.handleNoDelayExecutor(ctx, sctx, e, pi)
 	}
 
 	return &recordSet{
 		executor:    e,
 		stmt:        a,
 		processinfo: pi,
-		txnStartTS:  ctx.Txn().StartTS(),
+		txnStartTS:  sctx.Txn().StartTS(),
 	}, nil
 }
 
-func (a *ExecStmt) handleNoDelayExecutor(goCtx goctx.Context, e Executor, ctx sessionctx.Context, pi processinfoSetter) (ast.RecordSet, error) {
+func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Context, e Executor, pi processinfoSetter) (ast.RecordSet, error) {
 	// Check if "tidb_snapshot" is set for the write executors.
 	// In history read mode, we can not do write operations.
 	switch e.(type) {
 	case *DeleteExec, *InsertExec, *UpdateExec, *ReplaceExec, *LoadData, *DDLExec:
-		snapshotTS := ctx.GetSessionVars().SnapshotTS
+		snapshotTS := sctx.GetSessionVars().SnapshotTS
 		if snapshotTS != 0 {
 			return nil, errors.New("can not execute write statement when 'tidb_snapshot' is set")
 		}
@@ -283,21 +283,21 @@ func (a *ExecStmt) handleNoDelayExecutor(goCtx goctx.Context, e Executor, ctx se
 		}
 		terror.Log(errors.Trace(e.Close()))
 		txnTS := uint64(0)
-		if ctx.Txn() != nil {
-			txnTS = ctx.Txn().StartTS()
+		if sctx.Txn() != nil {
+			txnTS = sctx.Txn().StartTS()
 		}
 		a.logSlowQuery(txnTS, err == nil)
 	}()
 
-	if ctx.GetSessionVars().EnableChunk && e.supportChunk() {
-		err = e.NextChunk(goCtx, e.newChunk())
+	if sctx.GetSessionVars().EnableChunk && e.supportChunk() {
+		err = e.NextChunk(ctx, e.newChunk())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	} else {
 		for {
 			var row Row
-			row, err = e.Next(goCtx)
+			row, err = e.Next(ctx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

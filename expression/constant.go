@@ -20,8 +20,11 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/codec"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -50,6 +53,7 @@ type Constant struct {
 	Value        types.Datum
 	RetType      *types.FieldType
 	DeferredExpr Expression // parameter getter expression
+	hashcode     []byte
 }
 
 // String implements fmt.Stringer interface.
@@ -286,7 +290,7 @@ func (c *Constant) EvalJSON(ctx sessionctx.Context, _ types.Row) (json.BinaryJSO
 }
 
 // Equal implements Expression interface.
-func (c *Constant) Equal(b Expression, ctx sessionctx.Context) bool {
+func (c *Constant) Equal(ctx sessionctx.Context, b Expression) bool {
 	y, ok := b.(*Constant)
 	if !ok {
 		return false
@@ -311,6 +315,23 @@ func (c *Constant) IsCorrelated() bool {
 // Decorrelate implements Expression interface.
 func (c *Constant) Decorrelate(_ *Schema) Expression {
 	return c
+}
+
+// HashCode implements Expression interface.
+func (c *Constant) HashCode(sc *stmtctx.StatementContext) []byte {
+	if len(c.hashcode) > 0 {
+		return c.hashcode
+	}
+	_, err := c.Eval(nil)
+	if err != nil {
+		terror.Log(errors.Trace(err))
+	}
+	c.hashcode = append(c.hashcode, constantFlag)
+	c.hashcode, err = codec.EncodeValue(sc, c.hashcode, c.Value)
+	if err != nil {
+		terror.Log(errors.Trace(err))
+	}
+	return c.hashcode
 }
 
 // ResolveIndices implements Expression interface.

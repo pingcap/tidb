@@ -1070,10 +1070,10 @@ func (s *testEvaluatorSuite) TestCurrentTime(c *C) {
 	c.Assert(n.String(), HasLen, 15)
 	c.Assert(n.String(), GreaterEqual, last.Format(tfStr))
 
-	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(-1)))
+	_, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(-1)))
 	c.Assert(err, NotNil)
 
-	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(7)))
+	_, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(7)))
 	c.Assert(err, NotNil)
 }
 

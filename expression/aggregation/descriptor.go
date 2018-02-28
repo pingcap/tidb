@@ -58,7 +58,7 @@ func (a *AggFuncDesc) Equal(ctx sessionctx.Context, other *AggFuncDesc) bool {
 		return false
 	}
 	for i := range a.Args {
-		if !a.Args[i].Equal(other.Args[i], ctx) {
+		if !a.Args[i].Equal(ctx, other.Args[i]) {
 			return false
 		}
 	}

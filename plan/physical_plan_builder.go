@@ -153,7 +153,7 @@ func (ds *DataSource) tryToGetMemTask(prop *requiredProp) (task task, err error)
 func (ds *DataSource) tryToGetDualTask() (task, error) {
 	for _, cond := range ds.pushedDownConds {
 		if _, ok := cond.(*expression.Constant); ok {
-			result, err := expression.EvalBool([]expression.Expression{cond}, nil, ds.ctx)
+			result, err := expression.EvalBool(ds.ctx, []expression.Expression{cond}, nil)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -276,7 +276,7 @@ func (ds *DataSource) forceToIndexScan(idx *model.IndexInfo, remainedConds []exp
 	}
 	is.initSchema(ds.id, idx, cop.tablePlan != nil)
 	is.addPushedDownSelection(cop, ds, math.MaxFloat64)
-	t := finishCopTask(cop, ds.ctx)
+	t := finishCopTask(ds.ctx, cop)
 	return t.plan()
 }
 
@@ -386,7 +386,7 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInf
 		is.addPushedDownSelection(cop, ds, expectedCnt)
 	}
 	if prop.taskTp == rootTaskType {
-		task = finishCopTask(task, ds.ctx)
+		task = finishCopTask(ds.ctx, task)
 	} else if _, ok := task.(*rootTask); ok {
 		return invalidTask, nil
 	}
@@ -515,7 +515,7 @@ func (ds *DataSource) forceToTableScan(pk *expression.Column) PhysicalPlan {
 		indexPlanFinished: true,
 	}
 	ts.addPushedDownSelection(copTask, ds.stats)
-	t := finishCopTask(copTask, ds.ctx)
+	t := finishCopTask(ds.ctx, copTask)
 	return t.plan()
 }
 
@@ -571,7 +571,7 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp) (task task, err err
 		indexPlanFinished: true,
 	}
 	task = copTask
-	matchProperty := len(prop.cols) == 1 && pkCol != nil && prop.cols[0].Equal(pkCol, nil)
+	matchProperty := len(prop.cols) == 1 && pkCol != nil && prop.cols[0].Equal(nil, pkCol)
 	if matchProperty && prop.expectedCnt < math.MaxFloat64 {
 		selectivity, err := statsTbl.Selectivity(ds.ctx, ts.filterCondition)
 		if err != nil {
@@ -600,7 +600,7 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp) (task task, err err
 		ts.addPushedDownSelection(copTask, ds.statsAfterSelect.scaleByExpectCnt(expectedCnt))
 	}
 	if prop.taskTp == rootTaskType {
-		task = finishCopTask(task, ds.ctx)
+		task = finishCopTask(ds.ctx, task)
 	} else if _, ok := task.(*rootTask); ok {
 		return invalidTask, nil
 	}

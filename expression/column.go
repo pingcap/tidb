@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/codec"
@@ -111,9 +112,9 @@ func (col *CorrelatedColumn) EvalJSON(ctx sessionctx.Context, row types.Row) (js
 }
 
 // Equal implements Expression interface.
-func (col *CorrelatedColumn) Equal(expr Expression, ctx sessionctx.Context) bool {
+func (col *CorrelatedColumn) Equal(ctx sessionctx.Context, expr Expression) bool {
 	if cc, ok := expr.(*CorrelatedColumn); ok {
-		return col.Column.Equal(&cc.Column, ctx)
+		return col.Column.Equal(ctx, &cc.Column)
 	}
 	return false
 }
@@ -159,7 +160,7 @@ type Column struct {
 }
 
 // Equal implements Expression interface.
-func (col *Column) Equal(expr Expression, _ sessionctx.Context) bool {
+func (col *Column) Equal(_ sessionctx.Context, expr Expression) bool {
 	if newCol, ok := expr.(*Column); ok {
 		return newCol.FromID == col.FromID && newCol.Position == col.Position
 	}
@@ -297,11 +298,12 @@ func (col *Column) Decorrelate(_ *Schema) Expression {
 }
 
 // HashCode implements Expression interface.
-func (col *Column) HashCode() []byte {
+func (col *Column) HashCode(_ *stmtctx.StatementContext) []byte {
 	if len(col.hashcode) != 0 {
 		return col.hashcode
 	}
-	col.hashcode = make([]byte, 0, 16)
+	col.hashcode = make([]byte, 0, 17)
+	col.hashcode = append(col.hashcode, columnFlag)
 	col.hashcode = codec.EncodeInt(col.hashcode, int64(col.FromID))
 	col.hashcode = codec.EncodeInt(col.hashcode, int64(col.Position))
 	return col.hashcode

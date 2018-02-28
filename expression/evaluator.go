@@ -65,7 +65,7 @@ func (e *defaultEvaluator) run(ctx sessionctx.Context, input, output *chunk.Chun
 }
 
 // EvaluatorSuit is responsible for the evaluation of a list of expressions.
-// It seperates them to "column" and "other" expressions and evaluates "other"
+// It separates them to "column" and "other" expressions and evaluates "other"
 // expressions before "column" expressions.
 type EvaluatorSuit struct {
 	*columnEvaluator  // Evaluator for column expressions.

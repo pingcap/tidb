@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/util/goroutine_pool"
 	"github.com/pingcap/tipb/go-tipb"
 	log "github.com/sirupsen/logrus"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var copIteratorGP = gp.New(time.Minute)
@@ -109,10 +109,10 @@ func (c *CopClient) supportExpr(exprType tipb.ExprType) bool {
 }
 
 // Send builds the request and gets the coprocessor iterator response.
-func (c *CopClient) Send(ctx goctx.Context, req *kv.Request) kv.Response {
+func (c *CopClient) Send(ctx context.Context, req *kv.Request) kv.Response {
 	metrics.TiKVCoprocessorCounter.WithLabelValues("send").Inc()
 
-	bo := NewBackoffer(copBuildTaskMaxBackoff, ctx)
+	bo := NewBackoffer(ctx, copBuildTaskMaxBackoff)
 	tasks, err := buildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req.Desc, req.Streaming)
 	if err != nil {
 		return copErrorResponse{err}
@@ -369,8 +369,8 @@ const minLogCopTaskTime = 300 * time.Millisecond
 
 // work is a worker function that get a copTask from channel, handle it and
 // send the result back.
-func (it *copIterator) work(goCtx goctx.Context, taskCh <-chan *copTask) {
-	span, ctx1 := opentracing.StartSpanFromContext(goCtx, "copIterator.work")
+func (it *copIterator) work(ctx context.Context, taskCh <-chan *copTask) {
+	span, ctx1 := opentracing.StartSpanFromContext(ctx, "copIterator.work")
 	defer span.Finish()
 
 	defer it.wg.Done()
@@ -382,7 +382,7 @@ func (it *copIterator) work(goCtx goctx.Context, taskCh <-chan *copTask) {
 			ch = task.respChan
 		}
 
-		bo := NewBackoffer(copNextMaxBackoff, ctx1)
+		bo := NewBackoffer(ctx1, copNextMaxBackoff)
 		startTime := time.Now()
 		it.handleTask(bo, task, ch)
 		costTime := time.Since(startTime)
@@ -405,7 +405,7 @@ func (it *copIterator) work(goCtx goctx.Context, taskCh <-chan *copTask) {
 	}
 }
 
-func (it *copIterator) run(ctx goctx.Context) {
+func (it *copIterator) run(ctx context.Context) {
 	taskCh := make(chan *copTask, 1)
 	it.wg.Add(it.concurrency)
 	// Start it.concurrency number of workers to handle cop requests.
@@ -433,7 +433,7 @@ func (it *copIterator) run(ctx goctx.Context) {
 	})
 }
 
-func (it *copIterator) recvFromRespCh(ctx goctx.Context, respCh <-chan copResponse) (resp copResponse, ok bool, exit bool) {
+func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan copResponse) (resp copResponse, ok bool, exit bool) {
 	select {
 	case resp, ok = <-respCh:
 	case <-it.finished:
@@ -466,10 +466,19 @@ func (it *copIterator) sendToRespCh(resp copResponse, respCh chan copResponse) (
 	return
 }
 
+// copResultSubset implements the kv.ResultSubset interface.
+type copResultSubset struct {
+	data []byte
+}
+
+// GetData implements the kv.ResultSubset GetData interface.
+func (rs *copResultSubset) GetData() []byte {
+	return rs.data
+}
+
 // Next returns next coprocessor result.
-// NOTE: Use nil to indicate finish, so if the returned values is a slice with
-// size 0, reader should continue to call Next().
-func (it *copIterator) Next(ctx goctx.Context) ([]byte, error) {
+// NOTE: Use nil to indicate finish, so if the returned ResultSubset is not nil, reader should continue to call Next().
+func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	metrics.TiKVCoprocessorCounter.WithLabelValues("next").Inc()
 
 	var (
@@ -516,9 +525,9 @@ func (it *copIterator) Next(ctx goctx.Context) ([]byte, error) {
 	}
 
 	if resp.Data == nil {
-		return []byte{}, nil
+		return &copResultSubset{}, nil
 	}
-	return resp.Data, nil
+	return &copResultSubset{data: resp.Data}, nil
 }
 
 // handleTask handles single copTask, sends the result to channel, retry automatically on error.
@@ -560,7 +569,7 @@ func (it *copIterator) handleTaskOnce(bo *Backoffer, task *copTask, ch chan copR
 		// Don't set timeout for streaming, because we use context cancel to implement timeout,
 		// but call cancel() would kill the stream:
 		//
-		//     context, cancel := goctx.WithTimeout(bo, timeout)
+		//     context, cancel := context.WithTimeout(bo, timeout)
 		//     defer cancel()
 		//     resp := client.SendReq(context, ...)
 		//
@@ -667,7 +676,7 @@ func (it *copIterator) Close() error {
 // copErrorResponse returns error when calling Next()
 type copErrorResponse struct{ error }
 
-func (it copErrorResponse) Next(ctx goctx.Context) ([]byte, error) {
+func (it copErrorResponse) Next(ctx context.Context) (kv.ResultSubset, error) {
 	return nil, it.error
 }
 
