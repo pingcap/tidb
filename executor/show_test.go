@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 func (s *testSuite) TestShow(c *C) {
@@ -310,12 +310,6 @@ func (s *testSuite) TestShow(c *C) {
 	))
 
 	tk.MustExec(`drop table if exists t`)
-	tk.MustExec(`create table t (a int) default charset=abcdefg`)
-	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
-		"t CREATE TABLE `t` (\n"+
-			"  `a` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=abcdefg",
-	))
 }
 
 func (s *testSuite) TestShowVisibility(c *C) {
@@ -364,7 +358,7 @@ func (s *testSuite) TestShowVisibility(c *C) {
 }
 
 // mockSessionManager is a mocked session manager that wraps one session
-// it returns only this session's current proccess info as processlist for test.
+// it returns only this session's current process info as processlist for test.
 type mockSessionManager struct {
 	tidb.Session
 }
@@ -528,7 +522,7 @@ func (s *testSuite) TestShow2(c *C) {
 
 	r, err := tk.Exec("show table status from test like 't'")
 	c.Assert(err, IsNil)
-	row, err := r.Next(goctx.Background())
+	row, err := r.Next(context.Background())
 	c.Assert(err, IsNil)
 	c.Assert(row.Len(), Equals, 18)
 	c.Assert(row.GetString(0), Equals, "t")
@@ -569,7 +563,7 @@ func (s *testSuite) TestShowTableStatus(c *C) {
 	rs, err := tk.Exec("show table status;")
 	c.Assert(errors.ErrorStack(err), Equals, "")
 	c.Assert(rs, NotNil)
-	rows, err := tidb.GetRows4Test(goctx.Background(), tk.Se, rs)
+	rows, err := tidb.GetRows4Test(context.Background(), tk.Se, rs)
 	c.Assert(errors.ErrorStack(err), Equals, "")
 	err = rs.Close()
 	c.Assert(errors.ErrorStack(err), Equals, "")

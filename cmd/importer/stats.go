@@ -88,6 +88,52 @@ func (h *histogram) randInt() int64 {
 	return h.Bounds.GetRow(idx).GetInt64(0)
 }
 
+func (h *histogram) randFloat64() float64 {
+	idx := h.getRandomBoundIdx()
+	if idx%2 == 0 {
+		lower := h.Bounds.GetRow(idx).GetFloat64(0)
+		upper := h.Bounds.GetRow(idx + 1).GetFloat64(0)
+		rd := rand.Float64()
+		return lower + rd*(upper-lower)
+	}
+	return h.Bounds.GetRow(idx).GetFloat64(0)
+}
+
+func (h *histogram) randFloat32() float32 {
+	idx := h.getRandomBoundIdx()
+	if idx%2 == 0 {
+		lower := h.Bounds.GetRow(idx).GetFloat32(0)
+		upper := h.Bounds.GetRow(idx + 1).GetFloat32(0)
+		rd := rand.Float32()
+		return lower + rd*(upper-lower)
+	}
+	return h.Bounds.GetRow(idx).GetFloat32(0)
+}
+
+func (h *histogram) randDecimal() *types.MyDecimal {
+	idx := h.getRandomBoundIdx()
+	if idx%2 == 0 {
+		lower := h.Bounds.GetRow(idx).GetMyDecimal(0)
+		upper := h.Bounds.GetRow(idx + 1).GetMyDecimal(0)
+		rd := rand.Float64()
+		l, err := lower.ToFloat64()
+		if err != nil {
+			log.Fatal(err)
+		}
+		r, err := upper.ToFloat64()
+		if err != nil {
+			log.Fatal(err)
+		}
+		dec := &types.MyDecimal{}
+		err = dec.FromFloat64(l + rd*(r-l))
+		if err != nil {
+			log.Fatal(err)
+		}
+		return dec
+	}
+	return h.Bounds.GetRow(idx).GetMyDecimal(0)
+}
+
 func getValidPrefix(lower, upper string) string {
 	for i := range lower {
 		if i >= len(upper) {
@@ -136,14 +182,14 @@ func (h *histogram) randString() string {
 }
 
 // randDate randoms a bucket and random a date between upper and lower bound.
-func (h *histogram) randDate() string {
+func (h *histogram) randDate(unit string, mysqlFmt string, dateFmt string) string {
 	idx := h.getRandomBoundIdx()
 	if idx%2 == 0 {
 		lower := h.Bounds.GetRow(idx).GetTime(0)
 		upper := h.Bounds.GetRow(idx + 1).GetTime(0)
-		diff := types.TimestampDiff("DAY", lower, upper)
+		diff := types.TimestampDiff(unit, lower, upper)
 		if diff == 0 {
-			str, err := lower.DateFormat("%Y-%m-%d")
+			str, err := lower.DateFormat(mysqlFmt)
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -155,9 +201,9 @@ func (h *histogram) randDate() string {
 			log.Fatal(err)
 		}
 		l = l.AddDate(0, 0, delta)
-		return l.Format(dateFormat)
+		return l.Format(dateFmt)
 	}
-	str, err := h.Bounds.GetRow(idx).GetTime(0).DateFormat("%Y-%m-%d")
+	str, err := h.Bounds.GetRow(idx).GetTime(0).DateFormat(mysqlFmt)
 	if err != nil {
 		log.Fatal(err)
 	}

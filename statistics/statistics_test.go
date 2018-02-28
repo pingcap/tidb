@@ -21,9 +21,9 @@ import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
@@ -68,7 +68,7 @@ func (r *recordSet) setFields(tps ...uint8) {
 	}
 }
 
-func (r *recordSet) Next(goctx.Context) (types.Row, error) {
+func (r *recordSet) Next(context.Context) (types.Row, error) {
 	if r.cursor == r.count {
 		return nil, nil
 	}
@@ -76,7 +76,7 @@ func (r *recordSet) Next(goctx.Context) (types.Row, error) {
 	return types.DatumRow{r.data[r.cursor-1]}, nil
 }
 
-func (r *recordSet) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+func (r *recordSet) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
@@ -156,11 +156,11 @@ func encodeKey(key types.Datum) types.Datum {
 	return types.NewBytesDatum(buf)
 }
 
-func buildPK(ctx context.Context, numBuckets, id int64, records ast.RecordSet) (int64, *Histogram, error) {
-	b := NewSortedBuilder(ctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeLonglong))
-	goCtx := goctx.Background()
+func buildPK(sctx sessionctx.Context, numBuckets, id int64, records ast.RecordSet) (int64, *Histogram, error) {
+	b := NewSortedBuilder(sctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeLonglong))
+	ctx := context.Background()
 	for {
-		row, err := records.Next(goCtx)
+		row, err := records.Next(ctx)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
@@ -176,12 +176,12 @@ func buildPK(ctx context.Context, numBuckets, id int64, records ast.RecordSet) (
 	return b.Count, b.hist, nil
 }
 
-func buildIndex(ctx context.Context, numBuckets, id int64, records ast.RecordSet) (int64, *Histogram, *CMSketch, error) {
-	b := NewSortedBuilder(ctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeBlob))
+func buildIndex(sctx sessionctx.Context, numBuckets, id int64, records ast.RecordSet) (int64, *Histogram, *CMSketch, error) {
+	b := NewSortedBuilder(sctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeBlob))
 	cms := NewCMSketch(8, 2048)
-	goCtx := goctx.Background()
+	ctx := context.Background()
 	for {
-		row, err := records.Next(goCtx)
+		row, err := records.Next(ctx)
 		if err != nil {
 			return 0, nil, nil, errors.Trace(err)
 		}
@@ -189,7 +189,7 @@ func buildIndex(ctx context.Context, numBuckets, id int64, records ast.RecordSet
 			break
 		}
 		datums := ast.RowToDatums(row, records.Fields())
-		buf, err := codec.EncodeKey(ctx.GetSessionVars().StmtCtx, nil, datums...)
+		buf, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx, nil, datums...)
 		if err != nil {
 			return 0, nil, nil, errors.Trace(err)
 		}

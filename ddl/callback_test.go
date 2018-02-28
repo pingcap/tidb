@@ -17,7 +17,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/testleak"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 type TestDDLCallback struct {
@@ -26,7 +26,7 @@ type TestDDLCallback struct {
 	onJobRunBefore       func(*model.Job)
 	onJobUpdated         func(*model.Job)
 	OnJobUpdatedExported func(*model.Job)
-	onWatched            func(ctx goctx.Context)
+	onWatched            func(ctx context.Context)
 }
 
 func (tc *TestDDLCallback) OnJobRunBefore(job *model.Job) {
@@ -51,7 +51,7 @@ func (tc *TestDDLCallback) OnJobUpdated(job *model.Job) {
 	tc.BaseCallback.OnJobUpdated(job)
 }
 
-func (tc *TestDDLCallback) OnWatched(ctx goctx.Context) {
+func (tc *TestDDLCallback) OnWatched(ctx context.Context) {
 	if tc.onWatched != nil {
 		tc.onWatched(ctx)
 		return

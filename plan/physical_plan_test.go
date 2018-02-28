@@ -16,14 +16,14 @@ package plan_test
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/testleak"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testPlanSuite{})
@@ -49,7 +49,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 	}()
 	se, err := tidb.CreateSession4Test(store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(goctx.Background(), "use test")
+	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
 	tests := []struct {
 		sql  string
@@ -204,7 +204,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 	}()
 	se, err := tidb.CreateSession4Test(store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(goctx.Background(), "use test")
+	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	tests := []struct {
@@ -393,7 +393,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSubquery(c *C) {
 	}()
 	se, err := tidb.CreateSession4Test(store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(goctx.Background(), "use test")
+	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	tests := []struct {
@@ -463,7 +463,7 @@ func (s *testPlanSuite) TestDAGPlanTopN(c *C) {
 	}()
 	se, err := tidb.CreateSession4Test(store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(goctx.Background(), "use test")
+	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	tests := []struct {
@@ -521,7 +521,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 	se, err := tidb.CreateSession4Test(store)
 	c.Assert(err, IsNil)
 
-	_, err = se.Execute(goctx.Background(), "use test")
+	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	tests := []struct {
@@ -602,7 +602,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnion(c *C) {
 	}()
 	se, err := tidb.CreateSession4Test(store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(goctx.Background(), "use test")
+	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	tests := []struct {
@@ -651,7 +651,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnionScan(c *C) {
 	}()
 	se, err := tidb.CreateSession4Test(store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(goctx.Background(), "use test")
+	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	tests := []struct {
@@ -718,7 +718,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 	}()
 	se, err := tidb.CreateSession4Test(store)
 	c.Assert(err, IsNil)
-	se.Execute(goctx.Background(), "use test")
+	se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	tests := []struct {
@@ -866,7 +866,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 	}()
 	se, err := tidb.CreateSession4Test(store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(goctx.Background(), "use test")
+	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	tests := []struct {
@@ -1077,7 +1077,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		comment := Commentf("for %s", tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		sc := se.(context.Context).GetSessionVars().StmtCtx
+		sc := se.(sessionctx.Context).GetSessionVars().StmtCtx
 		sc.IgnoreTruncate = false
 		p, err := plan.Optimize(se, stmt, s.is)
 		c.Assert(err, IsNil)
@@ -1095,7 +1095,7 @@ func (s *testPlanSuite) TestAggEliminater(c *C) {
 	}()
 	se, err := tidb.CreateSession4Test(store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(goctx.Background(), "use test")
+	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	tests := []struct {
@@ -1148,7 +1148,7 @@ func (s *testPlanSuite) TestAggEliminater(c *C) {
 		comment := Commentf("for %s", tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		sc := se.(context.Context).GetSessionVars().StmtCtx
+		sc := se.(sessionctx.Context).GetSessionVars().StmtCtx
 		sc.IgnoreTruncate = false
 		p, err := plan.Optimize(se, stmt, s.is)
 		c.Assert(err, IsNil)

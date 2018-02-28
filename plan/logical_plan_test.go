@@ -19,20 +19,20 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tipb/go-tipb"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testPlanSuite{})
@@ -46,7 +46,7 @@ type testPlanSuite struct {
 	*parser.Parser
 
 	is  infoschema.InfoSchema
-	ctx context.Context
+	ctx sessionctx.Context
 }
 
 func (s *testPlanSuite) SetUpSuite(c *C) {
@@ -317,7 +317,7 @@ func supportExpr(exprType tipb.ExprType) bool {
 type mockClient struct {
 }
 
-func (c *mockClient) Send(ctx goctx.Context, _ *kv.Request) kv.Response {
+func (c *mockClient) Send(ctx context.Context, _ *kv.Request) kv.Response {
 	return nil
 }
 
@@ -375,7 +375,7 @@ func (m *mockStore) SupportDeleteRange() bool {
 	return false
 }
 
-func mockContext() context.Context {
+func mockContext() sessionctx.Context {
 	ctx := mock.NewContext()
 	ctx.Store = &mockStore{
 		client: &mockClient{},

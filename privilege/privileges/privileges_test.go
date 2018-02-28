@@ -19,16 +19,16 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
@@ -236,7 +236,7 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 func (s *testPrivilegeSuite) TestDropTablePriv(c *C) {
 	defer testleak.AfterTest(c)()
 	se := newSession(c, s.store, s.dbName)
-	ctx, _ := se.(context.Context)
+	ctx, _ := se.(sessionctx.Context)
 	mustExec(c, se, `CREATE TABLE todrop(c int);`)
 	// ctx.GetSessionVars().User = "root@localhost"
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil), IsTrue)
@@ -247,7 +247,7 @@ func (s *testPrivilegeSuite) TestDropTablePriv(c *C) {
 	// ctx.GetSessionVars().User = "drop@localhost"
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "drop", Hostname: "localhost"}, nil, nil), IsTrue)
 	mustExec(c, se, `SELECT * FROM todrop;`)
-	_, err := se.Execute(goctx.Background(), "DROP TABLE todrop;")
+	_, err := se.Execute(context.Background(), "DROP TABLE todrop;")
 	c.Assert(err, NotNil)
 
 	se = newSession(c, s.store, s.dbName)
@@ -303,7 +303,7 @@ func (s *testPrivilegeSuite) TestInformationSchema(c *C) {
 }
 
 func mustExec(c *C, se tidb.Session, sql string) {
-	_, err := se.Execute(goctx.Background(), sql)
+	_, err := se.Execute(context.Background(), sql)
 	c.Assert(err, IsNil)
 }
 

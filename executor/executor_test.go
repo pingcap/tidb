@@ -29,7 +29,6 @@ import (
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
@@ -38,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
@@ -51,7 +51,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
@@ -127,11 +127,11 @@ func (s *testSuite) TestAdmin(c *C) {
 	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, index (c1))")
 	tk.MustExec("insert admin_test (c1) values (1),(2),(NULL)")
 
-	goCtx := goctx.Background()
+	ctx := context.Background()
 	// cancel DDL jobs test
 	r, err := tk.Exec("admin cancel ddl jobs 1")
 	c.Assert(err, IsNil, Commentf("err %v", err))
-	row, err := r.Next(goCtx)
+	row, err := r.Next(ctx)
 	c.Assert(err, IsNil)
 	c.Assert(row.Len(), Equals, 2)
 	c.Assert(row.GetInt64(0), Equals, int64(1))
@@ -139,7 +139,7 @@ func (s *testSuite) TestAdmin(c *C) {
 
 	r, err = tk.Exec("admin show ddl")
 	c.Assert(err, IsNil)
-	row, err = r.Next(goCtx)
+	row, err = r.Next(ctx)
 	c.Assert(err, IsNil)
 	c.Assert(row.Len(), Equals, 4)
 	txn, err := s.store.Begin()
@@ -152,7 +152,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	// ownerInfos := strings.Split(ddlInfo.Owner.String(), ",")
 	// c.Assert(rowOwnerInfos[0], Equals, ownerInfos[0])
 	c.Assert(row.GetString(2), Equals, "")
-	row, err = r.Next(goCtx)
+	row, err = r.Next(ctx)
 	c.Assert(err, IsNil)
 	c.Assert(row, IsNil)
 	err = txn.Rollback()
@@ -161,7 +161,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	// show DDL jobs test
 	r, err = tk.Exec("admin show ddl jobs")
 	c.Assert(err, IsNil)
-	row, err = r.Next(goCtx)
+	row, err = r.Next(ctx)
 	c.Assert(err, IsNil)
 	c.Assert(row.Len(), Equals, 2)
 	txn, err = s.store.Begin()
@@ -183,8 +183,8 @@ func (s *testSuite) TestAdmin(c *C) {
 	r, err = tk.Exec("admin check table admin_test_error")
 	c.Assert(err, NotNil)
 	// different index values
-	ctx := tk.Se.(context.Context)
-	dom := domain.GetDomain(ctx)
+	sctx := tk.Se.(sessionctx.Context)
+	dom := domain.GetDomain(sctx)
 	is := dom.InfoSchema()
 	c.Assert(is, NotNil)
 	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("admin_test"))
@@ -192,7 +192,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(tb.Indices(), HasLen, 1)
 	_, err = tb.Indices()[0].Create(mock.NewContext(), txn, types.MakeDatums(int64(10)), 1)
 	c.Assert(err, IsNil)
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 	r, err = tk.Exec("admin check table admin_test")
 	c.Assert(err, NotNil)
@@ -217,7 +217,7 @@ type testCase struct {
 }
 
 func checkCases(tests []testCase, ld *executor.LoadDataInfo,
-	c *C, tk *testkit.TestKit, ctx context.Context, selectSQL, deleteSQL string) {
+	c *C, tk *testkit.TestKit, ctx sessionctx.Context, selectSQL, deleteSQL string) {
 	for _, tt := range tests {
 		c.Assert(ctx.NewTxn(), IsNil)
 		data, reachLimit, err1 := ld.InsertData(tt.data1, tt.data2)
@@ -231,7 +231,7 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 				Commentf("data1:%v, data2:%v, data:%v", string(tt.data1), string(tt.data2), string(data)))
 		}
 		ctx.StmtCommit()
-		err1 = ctx.Txn().Commit(goctx.Background())
+		err1 = ctx.Txn().Commit(context.Background())
 		c.Assert(err1, IsNil)
 		r := tk.MustQuery(selectSQL)
 		r.Check(testutil.RowsWithSep("|", tt.expected...))
@@ -243,11 +243,14 @@ func (s *testSuite) TestSelectWithoutFrom(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
-	r := tk.MustQuery("select 1 + 2*3")
+	r := tk.MustQuery("select 1 + 2*3;")
 	r.Check(testkit.Rows("7"))
 
 	r = tk.MustQuery(`select _utf8"string";`)
 	r.Check(testkit.Rows("string"))
+
+	r = tk.MustQuery("select 1 order by 1;")
+	r.Check(testkit.Rows("1"))
 }
 
 // TestSelectBackslashN Issue 3685.
@@ -715,7 +718,7 @@ func (s *testSuite) TestIssue2612(c *C) {
 	tk.MustExec(`insert into t values ('2016-02-13 15:32:24',  '2016-02-11 17:23:22');`)
 	rs, err := tk.Exec(`select timediff(finish_at, create_at) from t;`)
 	c.Assert(err, IsNil)
-	row, err := rs.Next(goctx.Background())
+	row, err := rs.Next(context.Background())
 	c.Assert(err, IsNil)
 	c.Assert(row.GetDuration(0).String(), Equals, "-46:09:02")
 }
@@ -1551,13 +1554,13 @@ func (s *testSuite) TestAdapterStatement(c *C) {
 	compiler := &executor.Compiler{Ctx: se}
 	stmtNode, err := s.ParseOneStmt("select 1", "", "")
 	c.Check(err, IsNil)
-	stmt, err := compiler.Compile(goctx.TODO(), stmtNode)
+	stmt, err := compiler.Compile(context.TODO(), stmtNode)
 	c.Check(err, IsNil)
 	c.Check(stmt.OriginText(), Equals, "select 1")
 
 	stmtNode, err = s.ParseOneStmt("create table test.t (a int)", "", "")
 	c.Check(err, IsNil)
-	stmt, err = compiler.Compile(goctx.TODO(), stmtNode)
+	stmt, err = compiler.Compile(context.TODO(), stmtNode)
 	c.Check(err, IsNil)
 	c.Check(stmt.OriginText(), Equals, "create table test.t (a int)")
 }
@@ -1565,7 +1568,7 @@ func (s *testSuite) TestAdapterStatement(c *C) {
 func (s *testSuite) TestPointGet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use mysql")
-	ctx := tk.Se.(context.Context)
+	ctx := tk.Se.(sessionctx.Context)
 	tests := map[string]bool{
 		"select * from help_topic where name='aaa'":         true,
 		"select * from help_topic where help_topic_id=1":    true,
@@ -1721,7 +1724,7 @@ func (s *testSuite) TestHistoryRead(c *C) {
 	tk.MustExec("insert history_read values (2)")
 	tk.MustQuery("select * from history_read").Check(testkit.Rows("1", "2"))
 	tk.MustExec("set @@tidb_snapshot = '" + snapshotTime.Format("2006-01-02 15:04:05.999999") + "'")
-	ctx := tk.Se.(context.Context)
+	ctx := tk.Se.(sessionctx.Context)
 	snapshotTS := ctx.GetSessionVars().SnapshotTS
 	c.Assert(snapshotTS, Greater, curVer1.Ver)
 	c.Assert(snapshotTS, Less, curVer2.Ver)
@@ -2005,7 +2008,7 @@ type checkRequestClient struct {
 	}
 }
 
-func (c *checkRequestClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+func (c *checkRequestClient) SendReq(ctx context.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 	resp, err := c.Client.SendReq(ctx, addr, req)
 	c.mu.RLock()
 	checkFlags := c.mu.checkFlags
@@ -2204,7 +2207,7 @@ func (s *testSuite) TestBit(c *C) {
 	c.Assert(err, NotNil)
 	r, err := tk.Exec("select * from t where c1 = 2")
 	c.Assert(err, IsNil)
-	row, err := r.Next(goctx.Background())
+	row, err := r.Next(context.Background())
 	c.Assert(err, IsNil)
 	c.Assert(types.BinaryLiteral(row.GetBytes(0)), DeepEquals, types.NewBinaryLiteralFromUint(2, -1))
 
@@ -2363,12 +2366,12 @@ func (s *testSuite) TestEarlyClose(c *C) {
 	// Split the table.
 	s.cluster.SplitTable(s.mvccStore, tblID, 500)
 
-	goCtx := goctx.Background()
+	ctx := context.Background()
 	for i := 0; i < 500; i++ {
-		rss, err := tk.Se.Execute(goCtx, "select * from earlyclose order by id")
+		rss, err := tk.Se.Execute(ctx, "select * from earlyclose order by id")
 		c.Assert(err, IsNil)
 		rs := rss[0]
-		_, err = rs.Next(goCtx)
+		_, err = rs.Next(ctx)
 		c.Assert(err, IsNil)
 		rs.Close()
 	}

@@ -15,9 +15,10 @@ package main
 
 import (
 	"fmt"
-	log "github.com/sirupsen/logrus"
 	"math/rand"
 	"time"
+
+	log "github.com/sirupsen/logrus"
 )
 
 const (
@@ -69,14 +70,9 @@ func randString(n int) string {
 	return string(b)
 }
 
-func randDuration(n time.Duration) time.Duration {
-	duration := randInt(0, int(n))
-	return time.Duration(duration)
-}
-
 func randDate(col *column) string {
 	if col.hist != nil {
-		return col.hist.randDate()
+		return col.hist.randDate("DAY", "%Y-%m-%d", dateFormat)
 	}
 
 	min, max := col.min, col.max
@@ -105,7 +101,11 @@ func randDate(col *column) string {
 	return fmt.Sprintf("%04d-%02d-%02d", t.Year(), t.Month(), t.Day())
 }
 
-func randTime(min string, max string) string {
+func randTime(col *column) string {
+	if col.hist != nil {
+		return col.hist.randDate("SECOND", "%H:%i:%s", timeFormat)
+	}
+	min, max := col.min, col.max
 	if len(min) == 0 || len(max) == 0 {
 		hour := randInt(0, 23)
 		min := randInt(0, 59)
@@ -126,7 +126,11 @@ func randTime(min string, max string) string {
 	return fmt.Sprintf("%02d:%02d:%02d", t.Hour(), t.Minute(), t.Second())
 }
 
-func randTimestamp(min string, max string) string {
+func randTimestamp(col *column) string {
+	if col.hist != nil {
+		return col.hist.randDate("SECOND", "%Y-%m-%d %H:%i:%s", dateTimeFormat)
+	}
+	min, max := col.min, col.max
 	if len(min) == 0 {
 		year := time.Now().Year()
 		month := randInt(1, 12)
@@ -155,7 +159,11 @@ func randTimestamp(min string, max string) string {
 	return fmt.Sprintf("%04d-%02d-%02d %02d:%02d:%02d", t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second())
 }
 
-func randYear(min string, max string) string {
+func randYear(col *column) string {
+	if col.hist != nil {
+		return col.hist.randDate("YEAR", "%Y", yearFormat)
+	}
+	min, max := col.min, col.max
 	if len(min) == 0 || len(max) == 0 {
 		return fmt.Sprintf("%04d", time.Now().Year()-randInt(0, 10))
 	}
