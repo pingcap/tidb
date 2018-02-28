@@ -426,6 +426,10 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 		p := &CancelDDLJobs{JobIDs: as.JobIDs}
 		p.SetSchema(buildCancelDDLJobsFields())
 		ret = p
+	case ast.AdminShowDDLJobId:
+		p := &ShowDDLJobId{JobIDs: as.JobIDs}
+		p.SetSchema(buildShowDDLJobIdFields())
+		ret = p
 	default:
 		b.err = ErrUnsupportedType.Gen("Unsupported type %T", as)
 	}
@@ -532,6 +536,13 @@ func buildShowDDLJobsFields() *expression.Schema {
 	schema := expression.NewSchema(make([]*expression.Column, 0, 2)...)
 	schema.Append(buildColumn("", "JOBS", mysql.TypeVarchar, 128))
 	schema.Append(buildColumn("", "STATE", mysql.TypeVarchar, 64))
+
+	return schema
+}
+
+func buildShowDDLJobIdFields() *expression.Schema {
+	schema := expression.NewSchema(make([]*expression.Column, 0, 1)...)
+	schema.Append(buildColumn("", "QUERY", mysql.TypeVarchar, 128))
 
 	return schema
 }

@@ -570,6 +570,7 @@ const (
 	AdminCheckTable
 	AdminShowDDLJobs
 	AdminCancelDDLJobs
+	AdminShowDDLJobId
 )
 
 // AdminStmt is the struct for Admin statement.
