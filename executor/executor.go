@@ -305,7 +305,7 @@ type ShowDDLJobsExec struct {
 	jobs   []*model.Job
 }
 
-// ShowDDLJobIdExec represent a show DDL jobs job_id executor.
+// ShowDDLJobIDExec represent a show DDL jobs job_id executor.
 type ShowDDLJobIDExec struct {
 	baseExecutor
 

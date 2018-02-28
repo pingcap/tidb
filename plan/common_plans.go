@@ -43,7 +43,7 @@ type ShowDDLJobs struct {
 	baseSchemaProducer
 }
 
-// ShowDDLJobId is for According to job id query job query.
+// ShowDDLJobID is for According to job id query job query.
 type ShowDDLJobID struct {
 	baseSchemaProducer
 
