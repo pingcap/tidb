@@ -435,7 +435,8 @@ func (mock *mockCopStreamClient) Recv() (*coprocessor.Response, error) {
 	}
 
 	var resp coprocessor.Response
-	chunk, finish, err := mock.readBlockFromExecutor()
+	chunk, finish, ran, err := mock.readBlockFromExecutor()
+	resp.Range = ran
 	if err != nil {
 		if locked, ok := errors.Cause(err).(*ErrLocked); ok {
 			resp.Locked = &kvrpcpb.LockInfo{
@@ -473,19 +474,22 @@ func (mock *mockCopStreamClient) Recv() (*coprocessor.Response, error) {
 
 func (mock *mockCopStreamClient) readBlockFromExecutor() (tipb.Chunk, bool, error) {
 	var chunk tipb.Chunk
+	ran.Start = mock.exec.Cursor()
 	for count := 0; count < rowsPerChunk; count++ {
 		row, err := mock.exec.Next(mock.ctx)
 		if err != nil {
-			return chunk, false, errors.Trace(err)
+			ran.End = mock.exec.Cursor()
+			return chunk, false, &ran, errors.Trace(err)
 		}
 		if row == nil {
-			return chunk, true, nil
+			ran.End = mock.exec.Cursor()
+			return chunk, true, &ran, nil
 		}
 		for _, offset := range mock.req.OutputOffsets {
 			chunk.RowsData = append(chunk.RowsData, row[offset]...)
 		}
 	}
-	return chunk, false, nil
+	return chunk, false, &ran, nil
 }
 
 func buildResp(chunks []tipb.Chunk, counts []int64, err error) *coprocessor.Response {

@@ -45,6 +45,8 @@ type executor interface {
 	GetSrcExec() executor
 	Count() int64
 	Next(ctx context.Context) ([][]byte, error)
+	// Cursor returns the key gonna to be scanned by the Next() function.
+	Cursor() []byte
 }
 
 type tableScanExec struct {
@@ -71,6 +73,29 @@ func (e *tableScanExec) GetSrcExec() executor {
 
 func (e *tableScanExec) Count() int64 {
 	return e.count
+}
+
+func (e *tableScanExec) Cursor() []byte {
+	if len(e.seekKey) > 0 {
+		return e.seekKey
+	}
+
+	if e.cursor < len(e.kvRanges) {
+		ran := e.kvRanges[e.cursor]
+		if ran.IsPoint() {
+			return ran.StartKey
+		}
+
+		if e.Desc {
+			return ran.EndKey
+		}
+		return ran.StartKey
+	}
+
+	if e.Desc {
+		return e.kvRanges[len(e.kvRanges)-1].StartKey
+	}
+	return e.kvRanges[len(e.kvRanges)-1].EndKey
 }
 
 func (e *tableScanExec) Next(ctx context.Context) (value [][]byte, err error) {
@@ -206,6 +231,27 @@ func (e *indexScanExec) Count() int64 {
 
 func (e *indexScanExec) isUnique() bool {
 	return e.Unique != nil && *e.Unique
+}
+
+func (e *indexScanExec) Cursor() []byte {
+	if len(e.seekKey) > 0 {
+		return e.seekKey
+	}
+	if e.cursor < len(e.kvRanges) {
+		ran := e.kvRanges[e.cursor]
+		if ran.IsPoint() && e.isUnique() {
+			return ran.StartKey
+		}
+		if e.Desc {
+			return ran.EndKey
+		} else {
+			return ran.StartKey
+		}
+	}
+	if e.Desc {
+		return e.kvRanges[len(e.kvRanges)-1].StartKey
+	}
+	return e.kvRanges[len(e.kvRanges)-1].EndKey
 }
 
 func (e *indexScanExec) Next(ctx context.Context) (value [][]byte, err error) {
@@ -363,6 +409,10 @@ func evalBool(exprs []expression.Expression, row types.DatumRow, ctx *stmtctx.St
 	return true, nil
 }
 
+func (e *selectionExec) Cursor() []byte {
+	return e.src.Cursor()
+}
+
 func (e *selectionExec) Next(ctx context.Context) (value [][]byte, err error) {
 	e.count++
 	for {
@@ -426,6 +476,10 @@ func (e *topNExec) innerNext(ctx context.Context) (bool, error) {
 		return false, errors.Trace(err)
 	}
 	return true, nil
+}
+
+func (e *topNExec) Cursor() []byte {
+	panic("don't not use coprocessor streaming API for topN!")
 }
 
 func (e *topNExec) Next(ctx context.Context) (value [][]byte, err error) {
@@ -495,6 +549,10 @@ func (e *limitExec) GetSrcExec() executor {
 
 func (e *limitExec) Count() int64 {
 	return e.count
+}
+
+func (e *limitExec) Cursor() []byte {
+	return e.src.Cursor()
 }
 
 func (e *limitExec) Next(ctx context.Context) (value [][]byte, err error) {

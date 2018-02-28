@@ -73,6 +73,10 @@ func (e *hashAggExec) innerNext(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
+func (e *hashAggExec) Cursor() []byte {
+	panic("don't not use coprocessor streaming API for hash aggregation!")
+}
+
 func (e *hashAggExec) Next(ctx context.Context) (value [][]byte, err error) {
 	e.count++
 	if e.aggCtxsMap == nil {
@@ -267,6 +271,10 @@ func (e *streamAggExec) meetNewGroup(row [][]byte) (bool, error) {
 	}
 	e.nextGroupByRow = e.tmpGroupByRow
 	return !firstGroup, nil
+}
+
+func (e *streamAggExec) Cursor() []byte {
+	panic("don't not use coprocessor streaming API for stream aggregation!")
 }
 
 func (e *streamAggExec) Next(ctx context.Context) (retRow [][]byte, err error) {
