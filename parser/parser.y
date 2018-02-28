@@ -420,7 +420,6 @@ import (
 	cancel		"CANCEL"
 	ddl		"DDL"
 	jobs		"JOBS"
-	job		"JOB"
 	stats		"STATS"
 	statsMeta       "STATS_META"
 	statsHistograms "STATS_HISTOGRAMS"
@@ -4748,14 +4747,6 @@ AdminStmt:
 	{
 		$$ = &ast.AdminStmt{Tp: ast.AdminShowDDLJobs}
 	}
-|	"ADMIN" "SHOW" "DDL" "JOBS" NumList
-    {
-    		$$ = &ast.AdminStmt{
-    		    Tp: ast.AdminShowDDLJobId,
-    		    JobIDs: $5.([]int64),
-    		}
-    }
-
 |	"ADMIN" "CHECK" "TABLE" TableNameList
 	{
 		$$ = &ast.AdminStmt{
@@ -4764,12 +4755,19 @@ AdminStmt:
 		}
 	}
 |	"ADMIN" "CANCEL" "DDL" "JOBS" NumList
-     	{
-     		$$ = &ast.AdminStmt{
-     			Tp: ast.AdminCancelDDLJobs,
-     			JobIDs: $5.([]int64),
-     		}
-     	}
+	{
+		$$ = &ast.AdminStmt{
+			Tp: ast.AdminCancelDDLJobs,
+			JobIDs: $5.([]int64),
+		}
+	}
+|	"ADMIN" "SHOW" "DDL" "JOBS" NumList
+    {
+    		$$ = &ast.AdminStmt{
+    		    Tp: ast.AdminShowDDLJobId,
+    		    JobIDs: $5.([]int64),
+    		}
+    }
 
 NumList:
        NUM
