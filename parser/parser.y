@@ -227,6 +227,7 @@ import (
 	utcTimestamp		"UTC_TIMESTAMP"
 	utcTime			"UTC_TIME"
 	values			"VALUES"
+  long        "LONG"
 	varcharType		"VARCHAR"
 	varbinaryType		"VARBINARY"
 	virtual			"VIRTUAL"
@@ -5712,6 +5713,11 @@ TextType:
 		x := types.NewFieldType(mysql.TypeLongBlob)
 		$$ = x
 	}
+| "LONG" "VARCHAR"
+  {
+    x := types.NewFieldType(mysql.TypeMediumBlob)
+		$$ = x
+  }
 
 
 DateAndTimeType:
