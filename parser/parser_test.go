@@ -1575,6 +1575,9 @@ func (s *testParserSuite) TestDDL(c *C) {
 
 		// for issue 4740
 		{"create table t (a int1, b int2, c int3, d int4, e int8)", true},
+
+		// for issue 5918
+		{"create table t (lv long varchar null)", true},
 	}
 	s.RunTest(c, table)
 }
