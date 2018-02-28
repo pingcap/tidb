@@ -49,7 +49,7 @@ var (
 	_ Executor = &SelectLockExec{}
 	_ Executor = &ShowDDLExec{}
 	_ Executor = &ShowDDLJobsExec{}
-	_ Executor = &ShowDDLJobIdExec{}
+	_ Executor = &ShowDDLJobIDExec{}
 	_ Executor = &SortExec{}
 	_ Executor = &StreamAggExec{}
 	_ Executor = &TableDualExec{}
@@ -305,8 +305,8 @@ type ShowDDLJobsExec struct {
 	jobs   []*model.Job
 }
 
-// ShowDDLJobsExec represent a show DDL jobs executor.
-type ShowDDLJobIdExec struct {
+// ShowDDLJobIdExec represent a show DDL jobs job_id executor.
+type ShowDDLJobIDExec struct {
 	baseExecutor
 
 	cursor int
@@ -316,7 +316,7 @@ type ShowDDLJobIdExec struct {
 }
 
 // Open implements the Executor Open interface.
-func (e *ShowDDLJobIdExec) Open(ctx context.Context) error {
+func (e *ShowDDLJobIDExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
@@ -335,8 +335,9 @@ func (e *ShowDDLJobIdExec) Open(ctx context.Context) error {
 	e.cursor = 0
 	return nil
 }
+
 // Next implements the Executor Next interface.
-func (e *ShowDDLJobIdExec) Next(ctx context.Context) (Row, error) {
+func (e *ShowDDLJobIDExec) Next(ctx context.Context) (Row, error) {
 	if e.cursor >= len(e.jobs) {
 		return nil, nil
 	}
@@ -349,14 +350,14 @@ func (e *ShowDDLJobIdExec) Next(ctx context.Context) (Row, error) {
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (e *ShowDDLJobIdExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+func (e *ShowDDLJobIDExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.cursor >= len(e.jobs) {
 		return nil
 	}
 	numCurBatch := mathutil.Min(e.maxChunkSize, len(e.jobs)-e.cursor)
 	for i := e.cursor; i < e.cursor+numCurBatch; i++ {
-		for j :=0; j < len(e.jobIDs); j++ {
+		for j := 0; j < len(e.jobIDs); j++ {
 			if e.jobIDs[j] == e.jobs[i].ID {
 				chk.AppendString(0, e.jobs[i].Query)
 			}
@@ -365,6 +366,7 @@ func (e *ShowDDLJobIdExec) NextChunk(ctx context.Context, chk *chunk.Chunk) erro
 	e.cursor += numCurBatch
 	return nil
 }
+
 // Open implements the Executor Open interface.
 func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {

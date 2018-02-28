@@ -44,7 +44,7 @@ type ShowDDLJobs struct {
 }
 
 // ShowDDLJobId is for According to job id query job query.
-type ShowDDLJobId struct {
+type ShowDDLJobID struct {
 	baseSchemaProducer
 
 	JobIDs []int64

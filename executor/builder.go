@@ -97,8 +97,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildShowDDL(v)
 	case *plan.ShowDDLJobs:
 		return b.buildShowDDLJobs(v)
-	case *plan.ShowDDLJobId:
-		return b.buildShowDDLJobId(v)
+	case *plan.ShowDDLJobID:
+		return b.buildShowDDLJobID(v)
 	case *plan.Show:
 		return b.buildShow(v)
 	case *plan.Simple:
@@ -204,8 +204,8 @@ func (b *executorBuilder) buildShowDDLJobs(v *plan.ShowDDLJobs) Executor {
 	return e
 }
 
-func (b *executorBuilder) buildShowDDLJobId(v *plan.ShowDDLJobId) Executor {
-	e := &ShowDDLJobIdExec{
+func (b *executorBuilder) buildShowDDLJobID(v *plan.ShowDDLJobID) Executor {
+	e := &ShowDDLJobIDExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		jobIDs:       v.JobIDs,
 	}
