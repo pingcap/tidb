@@ -76,16 +76,16 @@ func (r *streamResult) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 
 // readDataFromResponse read the data to result. Returns true means the resp is finished.
 func (r *streamResult) readDataFromResponse(ctx context.Context, resp kv.Response, result *tipb.Chunk) (bool, error) {
-	data, err := resp.Next(ctx)
+	resultSubset, err := resp.Next(ctx)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	if data == nil {
+	if resultSubset == nil {
 		return true, nil
 	}
 
 	var stream tipb.StreamResponse
-	err = stream.Unmarshal(data)
+	err = stream.Unmarshal(resultSubset.GetData())
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -150,7 +150,11 @@ func (r *streamResult) flushToChunk(chk *chunk.Chunk) (err error) {
 func (r *streamResult) NextRaw(ctx context.Context) ([]byte, error) {
 	r.partialCount++
 	r.scanKeys = -1
-	return r.resp.Next(ctx)
+	resultSubset, err := r.resp.Next(ctx)
+	if resultSubset == nil || err != nil {
+		return nil, errors.Trace(err)
+	}
+	return resultSubset.GetData(), errors.Trace(err)
 }
 
 func (r *streamResult) Close() error {
