@@ -260,8 +260,8 @@ func overrideConfig() {
 	if actualFlags[nmPort] {
 		var p int
 		p, err = strconv.Atoi(*port)
-		cfg.Port = uint(p)
 		terror.MustNil(err)
+		cfg.Port = uint(p)
 	}
 	if actualFlags[nmStore] {
 		cfg.Store = *store
@@ -303,8 +303,8 @@ func overrideConfig() {
 	if actualFlags[nmStatusPort] {
 		var p int
 		p, err = strconv.Atoi(*statusPort)
-		cfg.Status.StatusPort = uint(p)
 		terror.MustNil(err)
+		cfg.Status.StatusPort = uint(p)
 	}
 	if actualFlags[nmMetricsAddr] {
 		cfg.Status.MetricsAddr = *metricsAddr

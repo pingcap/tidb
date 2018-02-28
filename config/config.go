@@ -27,7 +27,7 @@ import (
 
 // Config number limitations
 const (
-	MaxLogFileSize = 4096
+	MaxLogFileSize = 4096 // MB
 )
 
 // Valid config maps
