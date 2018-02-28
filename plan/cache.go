@@ -28,16 +28,16 @@ var (
 	// PlanCacheEnabled stores the global config "plan-cache-enabled".
 	PlanCacheEnabled bool
 	// PlanCacheShards stores the global config "plan-cache-shards".
-	PlanCacheShards int64
+	PlanCacheShards uint
 	// PlanCacheCapacity stores the global config "plan-cache-capacity".
-	PlanCacheCapacity int64
+	PlanCacheCapacity uint
 	// GlobalPlanCache stores the global plan cache for every session in a tidb-server.
 	GlobalPlanCache *kvcache.ShardedLRUCache
 
 	// PreparedPlanCacheEnabled stores the global config "prepared-plan-cache-enabled".
 	PreparedPlanCacheEnabled bool
 	// PreparedPlanCacheCapacity stores the global config "prepared-plan-cache-capacity".
-	PreparedPlanCacheCapacity int64
+	PreparedPlanCacheCapacity uint
 )
 
 type sqlCacheKey struct {

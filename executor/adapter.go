@@ -380,7 +380,7 @@ func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
 		return
 	}
 	sql := a.Text
-	if len(sql) > cfg.Log.QueryLogMaxLen {
+	if len(sql) > int(cfg.Log.QueryLogMaxLen) {
 		sql = fmt.Sprintf("%.*q(len:%d)", cfg.Log.QueryLogMaxLen, sql, len(a.Text))
 	}
 	connID := a.Ctx.GetSessionVars().ConnectionID

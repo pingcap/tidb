@@ -27,42 +27,7 @@ import (
 
 // Config number limitations
 const (
-	MinPortNumber            = 1
-	MaxPortNumber            = 65535
-	MinTokenLimit            = 1
-	MaxTokenLimit            = 2000
-	MinLogSize               = 1024
-	MaxLogSize               = 1 << 32
-	MinLogDays               = 1
-	MaxLogDays               = 2 * 365
-	MinBackups               = 1
-	MaxBackups               = 1000
-	MinSlowLogThreshold      = 100
-	MaxSlowLogThreshold      = 300 * 1000
-	MinExpensiveLogThreshold = 10
-	MaxExpensiveLogThreshold = 1 << 20
-	MinQueryLogLength        = 100
-	MaxQueryLogLength        = 10000
-	MinMetricsInterval       = 1
-	MaxMetricsInterval       = 120
-	MinProcs                 = 0
-	MaxProcs                 = 1000
-	MinRetryLimit            = 0
-	MaxRetryLimit            = 100
-	MinJoinConcurrency       = 1
-	MaxJoinConcurrency       = 100
-	MinStmtCountLimit        = 1000
-	MaxStmtCountLimit        = 1 << 20
-	MinPlanCacheCap          = 1
-	MaxPlanCacheCap          = 10000
-	MinPlanCacheShards       = 1
-	MaxPlanCacheShards       = 1000
-	MinPrePlanCacheCap       = 1
-	MaxPrePlanCacheCap       = 1000
-	MinProxyHeaderTimeout    = 1
-	MaxProxyHeaderTimeout    = 120
-	MinGrpcConnCount         = 1
-	MaxGrpcConnCount         = 1000
+	MaxLogFileSize = 4096
 )
 
 // Valid config maps
@@ -71,16 +36,12 @@ var (
 		"mocktikv": true,
 		"tikv":     true,
 	}
-	// TODO: Remove it when X Server is available.
-	ValidXServer = map[bool]bool{
-		false: true,
-	}
 )
 
 // Config contains configuration options.
 type Config struct {
 	Host         string `toml:"host" json:"host"`
-	Port         int    `toml:"port" json:"port"`
+	Port         uint   `toml:"port" json:"port"`
 	Store        string `toml:"store" json:"store"`
 	Path         string `toml:"path" json:"path"`
 	Socket       string `toml:"socket" json:"socket"`
@@ -88,7 +49,7 @@ type Config struct {
 	Lease        string `toml:"lease" json:"lease"`
 	RunDDL       bool   `toml:"run-ddl" json:"run-ddl"`
 	SplitTable   bool   `toml:"split-table" json:"split-table"`
-	TokenLimit   int    `toml:"token-limit" json:"token-limit"`
+	TokenLimit   uint   `toml:"token-limit" json:"token-limit"`
 	EnableChunk  bool   `toml:"enable-chunk" json:"enable-chunk"`
 
 	Log               Log               `toml:"log" json:"log"`
@@ -115,9 +76,9 @@ type Log struct {
 	File logutil.FileLogConfig `toml:"file" json:"file"`
 
 	SlowQueryFile      string `toml:"slow-query-file" json:"slow-query-file"`
-	SlowThreshold      int    `toml:"slow-threshold" json:"slow-threshold"`
-	ExpensiveThreshold int    `toml:"expensive-threshold" json:"expensive-threshold"`
-	QueryLogMaxLen     int    `toml:"query-log-max-len" json:"query-log-max-len"`
+	SlowThreshold      uint   `toml:"slow-threshold" json:"slow-threshold"`
+	ExpensiveThreshold uint   `toml:"expensive-threshold" json:"expensive-threshold"`
+	QueryLogMaxLen     uint   `toml:"query-log-max-len" json:"query-log-max-len"`
 }
 
 // Security is the security section of the config.
@@ -169,42 +130,42 @@ func (s *Security) ToTLSConfig() (*tls.Config, error) {
 // Status is the status section of the config.
 type Status struct {
 	ReportStatus    bool   `toml:"report-status" json:"report-status"`
-	StatusPort      int    `toml:"status-port" json:"status-port"`
+	StatusPort      uint   `toml:"status-port" json:"status-port"`
 	MetricsAddr     string `toml:"metrics-addr" json:"metrics-addr"`
-	MetricsInterval int    `toml:"metrics-interval" json:"metrics-interval"`
+	MetricsInterval uint   `toml:"metrics-interval" json:"metrics-interval"`
 }
 
 // Performance is the performance section of the config.
 type Performance struct {
-	MaxProcs        int    `toml:"max-procs" json:"max-procs"`
+	MaxProcs        uint   `toml:"max-procs" json:"max-procs"`
 	TCPKeepAlive    bool   `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
-	RetryLimit      int    `toml:"retry-limit" json:"retry-limit"`
-	JoinConcurrency int    `toml:"join-concurrency" json:"join-concurrency"`
+	RetryLimit      uint   `toml:"retry-limit" json:"retry-limit"`
+	JoinConcurrency uint   `toml:"join-concurrency" json:"join-concurrency"`
 	CrossJoin       bool   `toml:"cross-join" json:"cross-join"`
 	StatsLease      string `toml:"stats-lease" json:"stats-lease"`
 	RunAutoAnalyze  bool   `toml:"run-auto-analyze" json:"run-auto-analyze"`
-	StmtCountLimit  int    `toml:"stmt-count-limit" json:"stmt-count-limit"`
+	StmtCountLimit  uint   `toml:"stmt-count-limit" json:"stmt-count-limit"`
 }
 
 // XProtocol is the XProtocol section of the config.
 type XProtocol struct {
 	XServer bool   `toml:"xserver" json:"xserver"`
 	XHost   string `toml:"xhost" json:"xhost"`
-	XPort   int    `toml:"xport" json:"xport"`
+	XPort   uint   `toml:"xport" json:"xport"`
 	XSocket string `toml:"xsocket" json:"xsocket"`
 }
 
 // PlanCache is the PlanCache section of the config.
 type PlanCache struct {
-	Enabled  bool  `toml:"enabled" json:"enabled"`
-	Capacity int64 `toml:"capacity" json:"capacity"`
-	Shards   int64 `toml:"shards" json:"shards"`
+	Enabled  bool `toml:"enabled" json:"enabled"`
+	Capacity uint `toml:"capacity" json:"capacity"`
+	Shards   uint `toml:"shards" json:"shards"`
 }
 
 // PreparedPlanCache is the PreparedPlanCache section of the config.
 type PreparedPlanCache struct {
-	Enabled  bool  `toml:"enabled" json:"enabled"`
-	Capacity int64 `toml:"capacity" json:"capacity"`
+	Enabled  bool `toml:"enabled" json:"enabled"`
+	Capacity uint `toml:"capacity" json:"capacity"`
 }
 
 // OpenTracing is the opentracing section of the config.
@@ -241,14 +202,14 @@ type ProxyProtocol struct {
 	// * means all networks.
 	Networks string `toml:"networks" json:"networks"`
 	// PROXY protocol header read timeout, Unit is second.
-	HeaderTimeout int `toml:"header-timeout" json:"header-timeout"`
+	HeaderTimeout uint `toml:"header-timeout" json:"header-timeout"`
 }
 
 // TiKVClient is the config for tikv client.
 type TiKVClient struct {
 	// GrpcConnectionCount is the max gRPC connections that will be established
 	// with each tikv-server.
-	GrpcConnectionCount int `toml:"grpc-connection-count" json:"grpc-connection-count"`
+	GrpcConnectionCount uint `toml:"grpc-connection-count" json:"grpc-connection-count"`
 }
 
 var defaultConf = Config{

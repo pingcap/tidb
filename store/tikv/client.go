@@ -36,7 +36,7 @@ import (
 
 // MaxConnectionCount is the max gRPC connections that will be established with
 // each tikv-server.
-var MaxConnectionCount = 16
+var MaxConnectionCount uint = 16
 
 // MaxSendMsgSize set max gRPC request message size sent to server. If any request message size is larger than
 // current value, an error will be reported from gRPC.
@@ -72,7 +72,7 @@ type connArray struct {
 	v     []*grpc.ClientConn
 }
 
-func newConnArray(maxSize int, addr string, security config.Security) (*connArray, error) {
+func newConnArray(maxSize uint, addr string, security config.Security) (*connArray, error) {
 	a := &connArray{
 		index: 0,
 		v:     make([]*grpc.ClientConn, maxSize),

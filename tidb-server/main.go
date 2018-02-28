@@ -102,11 +102,11 @@ var (
 	reportStatus    = flagBoolean(nmReportStatus, true, "If enable status report HTTP service.")
 	statusPort      = flag.String(nmStatusPort, "10080", "tidb server status port")
 	metricsAddr     = flag.String(nmMetricsAddr, "", "prometheus pushgateway address, leaves it empty will disable prometheus push.")
-	metricsInterval = flag.Int(nmMetricsInterval, 15, "prometheus client push interval in second, set \"0\" to disable prometheus push.")
+	metricsInterval = flag.Uint(nmMetricsInterval, 15, "prometheus client push interval in second, set \"0\" to disable prometheus push.")
 
 	// PROXY Protocol
 	proxyProtocolNetworks      = flag.String(nmProxyProtocolNetworks, "", "proxy protocol networks allowed IP or *, empty mean disable proxy protocol support")
-	proxyProtocolHeaderTimeout = flag.Int(nmProxyProtocolHeaderTimeout, 5, "proxy protocol header read timeout, unit is second.")
+	proxyProtocolHeaderTimeout = flag.Uint(nmProxyProtocolHeaderTimeout, 5, "proxy protocol header read timeout, unit is second.")
 )
 
 var (
@@ -258,7 +258,9 @@ func overrideConfig() {
 	}
 	var err error
 	if actualFlags[nmPort] {
-		cfg.Port, err = strconv.Atoi(*port)
+		var p int
+		p, err = strconv.Atoi(*port)
+		cfg.Port = uint(p)
 		terror.MustNil(err)
 	}
 	if actualFlags[nmStore] {
@@ -280,7 +282,7 @@ func overrideConfig() {
 		cfg.Lease = *ddlLease
 	}
 	if actualFlags[nmTokenLimit] {
-		cfg.TokenLimit = *tokenLimit
+		cfg.TokenLimit = uint(*tokenLimit)
 	}
 
 	// Log
@@ -299,7 +301,9 @@ func overrideConfig() {
 		cfg.Status.ReportStatus = *reportStatus
 	}
 	if actualFlags[nmStatusPort] {
-		cfg.Status.StatusPort, err = strconv.Atoi(*statusPort)
+		var p int
+		p, err = strconv.Atoi(*statusPort)
+		cfg.Status.StatusPort = uint(p)
 		terror.MustNil(err)
 	}
 	if actualFlags[nmMetricsAddr] {
@@ -323,91 +327,22 @@ func validateConfig() {
 		log.Error("TiDB run with skip-grant-table need root privilege.")
 		os.Exit(-1)
 	}
-	if cfg.Port < config.MinPortNumber || cfg.Port > config.MaxPortNumber {
-		log.Error("Invalid server port number.")
-		os.Exit(-1)
-	}
 	if _, ok := config.ValidStorage[cfg.Store]; !ok {
-		log.Error("Invalid storage name.")
+		nameList := ""
+		for k, v := range config.ValidStorage {
+			if v {
+				nameList += k + " "
+			}
+		}
+		log.Errorf("\"store\" should be in [%v] only", nameList[:len(nameList)-1])
 		os.Exit(-1)
 	}
-	if cfg.TokenLimit < config.MinTokenLimit || cfg.TokenLimit > config.MaxTokenLimit {
-		log.Error("Invalid token limit value.")
+	if cfg.Log.File.MaxSize > config.MaxLogFileSize {
+		log.Errorf("log max-size should not be larger than %d MB", config.MaxLogFileSize)
 		os.Exit(-1)
 	}
-	if cfg.Log.File.MaxSize < config.MinLogSize || cfg.Log.File.MaxSize > config.MaxLogSize {
-		log.Error("Invalid log max file size.")
-		os.Exit(-1)
-	}
-	if cfg.Log.File.MaxDays < config.MinLogDays || cfg.Log.File.MaxDays > config.MaxLogDays {
-		log.Error("Invalid log max days.")
-		os.Exit(-1)
-	}
-	if cfg.Log.File.MaxBackups < config.MinBackups || cfg.Log.File.MaxBackups > config.MaxBackups {
-		log.Error("Invalid log max backups.")
-		os.Exit(-1)
-	}
-	if cfg.Log.SlowThreshold < config.MinSlowLogThreshold || cfg.Log.SlowThreshold > config.MaxSlowLogThreshold {
-		log.Error("Invalid slow log threshold.")
-		os.Exit(-1)
-	}
-	if cfg.Log.ExpensiveThreshold < config.MinExpensiveLogThreshold ||
-		cfg.Log.ExpensiveThreshold > config.MaxExpensiveLogThreshold {
-		log.Error("Invalid expensive log threshold.")
-		os.Exit(-1)
-	}
-	if cfg.Log.QueryLogMaxLen < config.MinQueryLogLength || cfg.Log.QueryLogMaxLen > config.MaxQueryLogLength {
-		log.Error("Invalid query log length limit.")
-		os.Exit(-1)
-	}
-	if cfg.Status.MetricsInterval < config.MinMetricsInterval ||
-		cfg.Status.MetricsInterval > config.MaxMetricsInterval {
-		log.Error("Invalid metrics report interval.")
-		os.Exit(-1)
-	}
-	if cfg.Performance.MaxProcs < config.MinProcs || cfg.Performance.MaxProcs > config.MaxProcs {
-		log.Error("Invalid max procs limit.")
-		os.Exit(-1)
-	}
-	if cfg.Performance.RetryLimit < config.MinRetryLimit || cfg.Performance.RetryLimit > config.MaxRetryLimit {
-		log.Error("Invalid max retry limit.")
-		os.Exit(-1)
-	}
-	if cfg.Performance.JoinConcurrency < config.MinJoinConcurrency ||
-		cfg.Performance.JoinConcurrency > config.MaxJoinConcurrency {
-		log.Error("Invalid max join concurrency limit.")
-		os.Exit(-1)
-	}
-	if cfg.Performance.StmtCountLimit < config.MinStmtCountLimit ||
-		cfg.Performance.StmtCountLimit > config.MaxStmtCountLimit {
-		log.Error("Invalid max statements in one transaction.")
-		os.Exit(-1)
-	}
-	if cfg.PlanCache.Capacity < config.MinPlanCacheCap || cfg.PlanCache.Capacity > config.MaxPlanCacheCap {
-		log.Error("Invalid plan cache capacity.")
-		os.Exit(-1)
-	}
-	if cfg.PlanCache.Shards < config.MinPlanCacheShards || cfg.PlanCache.Shards > config.MaxPlanCacheShards {
-		log.Error("Invalid plan cache shards.")
-		os.Exit(-1)
-	}
-	if cfg.PreparedPlanCache.Capacity < config.MinPrePlanCacheCap ||
-		cfg.PreparedPlanCache.Capacity > config.MaxPrePlanCacheCap {
-		log.Error("Invalid prepared plan cache capacity.")
-		os.Exit(-1)
-	}
-	if cfg.ProxyProtocol.HeaderTimeout < config.MinProxyHeaderTimeout ||
-		cfg.ProxyProtocol.HeaderTimeout > config.MaxProxyHeaderTimeout {
-		log.Error("Invalid proxy read header timeout.")
-		os.Exit(-1)
-	}
-	if cfg.TiKVClient.GrpcConnectionCount < config.MinGrpcConnCount ||
-		cfg.TiKVClient.GrpcConnectionCount > config.MaxGrpcConnCount {
-		log.Error("Invalid max tikv client grpc connections.")
-		os.Exit(-1)
-	}
-	if _, ok := config.ValidXServer[cfg.XProtocol.XServer]; !ok {
-		log.Error("Can not start X Server.")
+	if cfg.XProtocol.XServer {
+		log.Error("X Server is not available")
 		os.Exit(-1)
 	}
 }
@@ -415,7 +350,7 @@ func validateConfig() {
 func setGlobalVars() {
 	ddlLeaseDuration := parseLease(cfg.Lease)
 	tidb.SetSchemaLease(ddlLeaseDuration)
-	runtime.GOMAXPROCS(cfg.Performance.MaxProcs)
+	runtime.GOMAXPROCS(int(cfg.Performance.MaxProcs))
 	statsLeaseDuration := parseLease(cfg.Performance.StatsLease)
 	tidb.SetStatsLease(statsLeaseDuration)
 	domain.RunAutoAnalyze = cfg.Performance.RunAutoAnalyze

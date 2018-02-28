@@ -41,11 +41,11 @@ type FileLogConfig struct {
 	// Is log rotate enabled. TODO.
 	LogRotate bool `toml:"log-rotate" json:"log-rotate"`
 	// Max size for a single file, in MB.
-	MaxSize int `toml:"max-size" json:"max-size"`
+	MaxSize uint `toml:"max-size" json:"max-size"`
 	// Max log keep days, default is never deleting.
-	MaxDays int `toml:"max-days" json:"max-days"`
+	MaxDays uint `toml:"max-days" json:"max-days"`
 	// Maximum number of old log files to retain.
-	MaxBackups int `toml:"max-backups" json:"max-backups"`
+	MaxBackups uint `toml:"max-backups" json:"max-backups"`
 }
 
 // LogConfig serializes log related config in toml/json.
@@ -228,9 +228,9 @@ func initFileLog(cfg *FileLogConfig, logger *log.Logger) error {
 	// use lumberjack to logrotate
 	output := &lumberjack.Logger{
 		Filename:   cfg.Filename,
-		MaxSize:    cfg.MaxSize,
-		MaxBackups: cfg.MaxBackups,
-		MaxAge:     cfg.MaxDays,
+		MaxSize:    int(cfg.MaxSize),
+		MaxBackups: int(cfg.MaxBackups),
+		MaxAge:     int(cfg.MaxDays),
 		LocalTime:  true,
 	}
 

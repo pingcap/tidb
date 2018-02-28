@@ -108,7 +108,7 @@ var (
 	statsLease = 3 * time.Second
 
 	// The maximum number of retries to recover from retryable errors.
-	commitRetryLimit = 10
+	commitRetryLimit uint = 10
 )
 
 // SetSchemaLease changes the default schema lease time for DDL.
@@ -128,7 +128,7 @@ func SetStatsLease(lease time.Duration) {
 // Retryable errors are generally refer to temporary errors that are expected to be
 // reinstated by retry, including network interruption, transaction conflicts, and
 // so on.
-func SetCommitRetryLimit(limit int) {
+func SetCommitRetryLimit(limit uint) {
 	commitRetryLimit = limit
 }
 
@@ -190,7 +190,7 @@ func runStmt(goCtx goctx.Context, ctx sessionctx.Context, s ast.Statement) (ast.
 		// If the user insert, insert, insert ... but never commit, TiDB would OOM.
 		// So we limit the statement count in a transaction here.
 		history := GetHistory(ctx)
-		if history.Count() > config.GetGlobalConfig().Performance.StmtCountLimit {
+		if history.Count() > int(config.GetGlobalConfig().Performance.StmtCountLimit) {
 			err1 := se.RollbackTxn(ctx1)
 			terror.Log(errors.Trace(err1))
 			return rs, errors.Errorf("statement count %d exceeds the transaction limitation, autocommit = %t",

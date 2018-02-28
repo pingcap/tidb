@@ -340,7 +340,7 @@ func (s *session) doCommitWithRetry(ctx goctx.Context) error {
 			// Transactions will retry 2 ~ commitRetryLimit times.
 			// We make larger transactions retry less times to prevent cluster resource outage.
 			txnSizeRate := float64(txnSize) / float64(kv.TxnTotalSizeLimit)
-			maxRetryCount := commitRetryLimit - int(float64(commitRetryLimit-1)*txnSizeRate)
+			maxRetryCount := commitRetryLimit - uint(float64(commitRetryLimit-1)*txnSizeRate)
 			err = s.retry(ctx, maxRetryCount)
 		}
 	}
@@ -438,7 +438,7 @@ func (s *session) isRetryableError(err error) bool {
 	return kv.IsRetryableError(err) || domain.ErrInfoSchemaChanged.Equal(err)
 }
 
-func (s *session) retry(goCtx goctx.Context, maxCnt int) error {
+func (s *session) retry(goCtx goctx.Context, maxCnt uint) error {
 	span, ctx := opentracing.StartSpanFromContext(goCtx, "retry")
 	defer span.Finish()
 
@@ -447,7 +447,7 @@ func (s *session) retry(goCtx goctx.Context, maxCnt int) error {
 		return errors.Errorf("[%d] can not retry select for update statement", connID)
 	}
 	s.sessionVars.RetryInfo.Retrying = true
-	retryCnt := 0
+	var retryCnt uint
 	defer func() {
 		s.sessionVars.RetryInfo.Retrying = false
 		s.txn.changeToInvalid()
