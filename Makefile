@@ -10,7 +10,7 @@ path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH)))
 export PATH := $(path_to_add):$(PATH)
 
 GO        := go
-GOBUILD   := CGO_ENABLED=0 $(GO) build $(BUILD_FLAG)
+GOBUILD   := CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build $(BUILD_FLAG)
 GOTEST    := CGO_ENABLED=1 $(GO) test -p 3
 OVERALLS  := CGO_ENABLED=1 overalls
 GOVERALLS := goveralls
@@ -131,7 +131,7 @@ leak: parserlib
 tikv_integration_test: parserlib
 	$(GOTEST) -check.exclude="TestFail" ./store/tikv/. -with-tikv=true
 
-RACE_FLAG = 
+RACE_FLAG =
 ifeq ("$(WITH_RACE)", "1")
 	RACE_FLAG = -race
 	GOBUILD   = GOPATH=$(GOPATH) CGO_ENABLED=1 $(GO) build
