@@ -93,7 +93,7 @@ type selectResult struct {
 }
 
 type resultWithErr struct {
-	result []byte
+	result kv.ResultSubset
 	err    error
 }
 
@@ -142,7 +142,7 @@ func (r *selectResult) Next(ctx context.Context) (PartialResult, error) {
 	}
 	pr := &partialResult{}
 	pr.rowLen = r.rowLen
-	err := pr.unmarshal(re.result)
+	err := pr.unmarshal(re.result.GetData())
 	if len(pr.resp.OutputCounts) > 0 {
 		scanKeysPartial := pr.resp.OutputCounts[0]
 		metrics.DistSQLScanKeysPartialHistogram.Observe(float64(scanKeysPartial))
@@ -159,7 +159,10 @@ func (r *selectResult) NextRaw(ctx context.Context) ([]byte, error) {
 	re := <-r.results
 	r.partialCount++
 	r.scanKeys = -1
-	return re.result, errors.Trace(re.err)
+	if re.result == nil || re.err != nil {
+		return nil, errors.Trace(re.err)
+	}
+	return re.result.GetData(), nil
 }
 
 func (r *selectResult) prepare(ctx context.Context) {
@@ -250,7 +253,7 @@ func (r *selectResult) getSelectResp() error {
 			return nil
 		}
 		r.selectResp = new(tipb.SelectResponse)
-		err := r.selectResp.Unmarshal(re.result)
+		err := r.selectResp.Unmarshal(re.result.GetData())
 		if err != nil {
 			return errors.Trace(err)
 		}
