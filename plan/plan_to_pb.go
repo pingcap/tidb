@@ -230,3 +230,15 @@ func collationToProto(c string) int32 {
 	// For the data created when we didn't enforce utf8_bin collation in create table.
 	return int32(mysql.DefaultCollationID)
 }
+
+// SupportStreaming returns true if a pushed down operation supports using coprocessor streaming API.
+// Note that this function handle pushed down physical plan only! It's called in constructDAGReq.
+func SupportStreaming(p PhysicalPlan) bool {
+	switch p.(type) {
+	case *PhysicalTableScan, *PhysicalIndexScan:
+		return true
+	case *PhysicalSelection, *PhysicalProjection, *PhysicalLimit:
+		return true
+	}
+	return false
+}

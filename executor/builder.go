@@ -1074,22 +1074,12 @@ func (b *executorBuilder) constructDAGReq(plans []plan.PhysicalPlan) (*tipb.DAGR
 		if err != nil {
 			return nil, false, errors.Trace(err)
 		}
-		if !supportStreaming(p) {
+		if !plan.SupportStreaming(p) {
 			streaming = false
 		}
 		dagReq.Executors = append(dagReq.Executors, execPB)
 	}
 	return dagReq, streaming, nil
-}
-
-func supportStreaming(p plan.PhysicalPlan) bool {
-	switch p.(type) {
-	case *plan.PhysicalTableScan, *plan.PhysicalIndexScan:
-		return true
-	case *plan.PhysicalSelection, *plan.PhysicalProjection, *plan.PhysicalLimit:
-		return true
-	}
-	return false
 }
 
 func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Executor {
