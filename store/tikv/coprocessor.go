@@ -383,14 +383,7 @@ func (it *copIterator) work(ctx context.Context, taskCh <-chan *copTask) {
 		}
 
 		bo := NewBackoffer(ctx1, copNextMaxBackoff)
-		startTime := time.Now()
 		it.handleTask(bo, task, ch)
-		costTime := time.Since(startTime)
-		if costTime > minLogCopTaskTime {
-			log.Infof("[TIME_COP_TASK] %s%s %s", costTime, bo, task)
-		}
-		metrics.TiKVCoprocessorCounter.WithLabelValues("handle_task").Inc()
-		metrics.TiKVCoprocessorHistogram.Observe(costTime.Seconds())
 		if bo.totalSleep > 0 {
 			metrics.TiKVBackoffHistogram.Observe(float64(bo.totalSleep) / 1000)
 		}
@@ -567,6 +560,7 @@ func (it *copIterator) handleTaskOnce(bo *Backoffer, task *copTask, ch chan copR
 		// The resp is a stream and killed by cancel operation immediately.
 		timeout = 0
 	}
+	startTime := time.Now()
 	resp, err := sender.SendReq(bo, req, task.region, timeout)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -575,14 +569,17 @@ func (it *copIterator) handleTaskOnce(bo *Backoffer, task *copTask, ch chan copR
 	task.storeAddr = sender.storeAddr
 
 	if task.cmdType == tikvrpc.CmdCopStream {
-		return it.handleCopStreamResult(bo, resp.CopStream, task, ch)
+		return it.handleCopStreamResult(bo, resp.CopStream, task, ch, startTime)
+	} else {
+		it.updateMetrics(startTime, bo, task)
 	}
 
 	// Handles the response for non-streaming copTask.
 	return it.handleCopResponse(bo, resp.Cop, task, ch)
 }
 
-func (it *copIterator) handleCopStreamResult(bo *Backoffer, stream tikvpb.Tikv_CoprocessorStreamClient, task *copTask, ch chan copResponse) ([]*copTask, error) {
+func (it *copIterator) handleCopStreamResult(bo *Backoffer, stream tikvpb.Tikv_CoprocessorStreamClient, task *copTask, ch chan copResponse, startTime time.Time) ([]*copTask, error) {
+	var firstRecv bool
 	for {
 		resp, err := stream.Recv()
 		if err != nil {
@@ -591,12 +588,24 @@ func (it *copIterator) handleCopStreamResult(bo *Backoffer, stream tikvpb.Tikv_C
 			}
 			return nil, errors.Trace(err)
 		}
-
+		if !firstRecv {
+			it.updateMetrics(startTime, bo, task)
+			firstRecv = true
+		}
 		remainedTasks, err := it.handleCopResponse(bo, resp, task, ch)
 		if err != nil || len(remainedTasks) != 0 {
 			return remainedTasks, errors.Trace(err)
 		}
 	}
+}
+
+func (it *copIterator) updateMetrics(startTime time.Time, bo *Backoffer, task *copTask) {
+	costTime := time.Since(startTime)
+	if costTime > minLogCopTaskTime {
+		log.Infof("[TIME_COP_TASK] %s%s %s", costTime, bo, task)
+	}
+	metrics.TiKVCoprocessorCounter.WithLabelValues("handle_task").Inc()
+	metrics.TiKVCoprocessorHistogram.Observe(costTime.Seconds())
 }
 
 // handleCopResponse checks coprocessor Response for region split and lock,
