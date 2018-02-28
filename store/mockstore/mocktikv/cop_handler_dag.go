@@ -435,7 +435,8 @@ func (mock *mockCopStreamClient) Recv() (*coprocessor.Response, error) {
 	}
 
 	var resp coprocessor.Response
-	chunk, finish, ran, err := mock.readBlockFromExecutor()
+	counts := make([]int64, len(mock.req.Executors))
+	chunk, finish, ran, err := mock.readBlockFromExecutor(counts)
 	resp.Range = ran
 	if err != nil {
 		if locked, ok := errors.Cause(err).(*ErrLocked); ok {
@@ -461,9 +462,10 @@ func (mock *mockCopStreamClient) Recv() (*coprocessor.Response, error) {
 		return &resp, nil
 	}
 	streamResponse := tipb.StreamResponse{
-		Error:      toPBError(err),
-		EncodeType: tipb.EncodeType_TypeDefault,
-		Data:       data,
+		Error:        toPBError(err),
+		EncodeType:   tipb.EncodeType_TypeDefault,
+		Data:         data,
+		OutputCounts: counts,
 	}
 	resp.Data, err = proto.Marshal(&streamResponse)
 	if err != nil {
@@ -472,24 +474,37 @@ func (mock *mockCopStreamClient) Recv() (*coprocessor.Response, error) {
 	return &resp, nil
 }
 
-func (mock *mockCopStreamClient) readBlockFromExecutor() (tipb.Chunk, bool, error) {
+func (mock *mockCopStreamClient) readBlockFromExecutor(counts []int64) (tipb.Chunk, bool, *coprocessor.KeyRange, error) {
 	var chunk tipb.Chunk
+	var ran coprocessor.KeyRange
+	var finish bool
+	mock.exec.ResetCount()
 	ran.Start = mock.exec.Cursor()
 	for count := 0; count < rowsPerChunk; count++ {
 		row, err := mock.exec.Next(mock.ctx)
 		if err != nil {
-			ran.End = mock.exec.Cursor()
 			return chunk, false, &ran, errors.Trace(err)
 		}
 		if row == nil {
-			ran.End = mock.exec.Cursor()
-			return chunk, true, &ran, nil
+			finish = true
+			break
 		}
 		for _, offset := range mock.req.OutputOffsets {
 			chunk.RowsData = append(chunk.RowsData, row[offset]...)
 		}
 	}
-	return chunk, false, &ran, nil
+
+	ran.End = mock.exec.Cursor()
+	e := mock.exec
+	for offset := len(mock.req.Executors) - 1; e != nil; e, offset = e.GetSrcExec(), offset-1 {
+		count := e.Count()
+		// Because the last call to `executor.Next` always returns a `nil`, so the actual count should be `Count - 1`
+		if finish {
+			count--
+		}
+		counts[offset] = count
+	}
+	return chunk, finish, &ran, nil
 }
 
 func buildResp(chunks []tipb.Chunk, counts []int64, err error) *coprocessor.Response {

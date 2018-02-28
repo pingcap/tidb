@@ -54,6 +54,11 @@ func (e *hashAggExec) GetSrcExec() executor {
 	return e.src
 }
 
+func (e *hashAggExec) ResetCount() {
+	e.count = 0
+	e.src.ResetCount()
+}
+
 func (e *hashAggExec) Count() int64 {
 	return e.count
 }
@@ -207,6 +212,11 @@ func (e *streamAggExec) SetSrcExec(exec executor) {
 
 func (e *streamAggExec) GetSrcExec() executor {
 	return e.src
+}
+
+func (e *streamAggExec) ResetCount() {
+	e.count = 0
+	e.src.ResetCount()
 }
 
 func (e *streamAggExec) Count() int64 {

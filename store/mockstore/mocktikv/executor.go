@@ -43,6 +43,7 @@ var (
 type executor interface {
 	SetSrcExec(executor)
 	GetSrcExec() executor
+	ResetCount()
 	Count() int64
 	Next(ctx context.Context) ([][]byte, error)
 	// Cursor returns the key gonna to be scanned by the Next() function.
@@ -69,6 +70,10 @@ func (e *tableScanExec) SetSrcExec(exec executor) {
 
 func (e *tableScanExec) GetSrcExec() executor {
 	return e.src
+}
+
+func (e *tableScanExec) ResetCount() {
+	e.count = 0
 }
 
 func (e *tableScanExec) Count() int64 {
@@ -223,6 +228,10 @@ func (e *indexScanExec) SetSrcExec(exec executor) {
 
 func (e *indexScanExec) GetSrcExec() executor {
 	return e.src
+}
+
+func (e *indexScanExec) ResetCount() {
+	e.count = 0
 }
 
 func (e *indexScanExec) Count() int64 {
@@ -383,6 +392,11 @@ func (e *selectionExec) GetSrcExec() executor {
 	return e.src
 }
 
+func (e *selectionExec) ResetCount() {
+	e.count = 0
+	e.src.ResetCount()
+}
+
 func (e *selectionExec) Count() int64 {
 	return e.count
 }
@@ -457,6 +471,11 @@ func (e *topNExec) SetSrcExec(src executor) {
 
 func (e *topNExec) GetSrcExec() executor {
 	return e.src
+}
+
+func (e *topNExec) ResetCount() {
+	e.count = 0
+	e.src.ResetCount()
 }
 
 func (e *topNExec) Count() int64 {
@@ -545,6 +564,11 @@ func (e *limitExec) SetSrcExec(src executor) {
 
 func (e *limitExec) GetSrcExec() executor {
 	return e.src
+}
+
+func (e *limitExec) ResetCount() {
+	e.count = 0
+	e.src.ResetCount()
 }
 
 func (e *limitExec) Count() int64 {
