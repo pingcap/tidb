@@ -81,6 +81,9 @@ func Optimize(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (
 	if logic, ok := p.(LogicalPlan); ok {
 		return doOptimize(builder.optFlag, logic)
 	}
+	if checkTable, ok := p.(*CheckTable); ok {
+		// TODO: make CheckTable has LogicalPlan
+	}
 	if execPlan, ok := p.(*Execute); ok {
 		err := execPlan.optimizePreparedPlan(ctx, is)
 		return p, errors.Trace(err)

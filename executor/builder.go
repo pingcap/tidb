@@ -69,6 +69,9 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return nil
 	case *plan.CheckTable:
 		return b.buildCheckTable(v)
+	// 	idxExec := buildNoRangeIndexLookUpReader(b, v)
+	// 	idxExec.isCheckOp = true
+	// 	return idxExec
 	case *plan.DDL:
 		return b.buildDDL(v)
 	case *plan.Deallocate:

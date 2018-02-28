@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/ranger"
 )
 
 // Error instances.
@@ -405,6 +406,50 @@ func (b *planBuilder) buildPrepare(x *ast.PrepareStmt) Plan {
 		p.SQLText = x.SQLText
 	}
 	return p
+}
+
+func (b *planBuilder) buildCheckTable(tblName *ast.TableName) (Plan, error) {
+	dbName := model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+	// tblName.Schema
+	tbl, err := b.is.TableByName(dbName, tblName.Name)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	tblInfo := tbl.Meta()
+
+	// TODO:
+	idx := tblInfo.Indices[0]
+	columns := make([]*model.ColumnInfo, 0, len(idx.Columns))
+	for _, idxCol := range idx.Columns {
+		for _, col := range tblInfo.Columns {
+			if idxCol.Name.L == col.Name.L {
+				columns = append(columns, col)
+			}
+		}
+	}
+	is := PhysicalIndexScan{
+		Table:            tblInfo,
+		TableAsName:      &tblName.Name,
+		DBName:           dbName,
+		Columns:          columns,
+		Index:            idx,
+		dataSourceSchema: ds.schema,
+		Ranges:           ranger.FullNewRange(),
+		KeepOrder:        false,
+	}.init(b.ctx)
+	cop := &copTask{
+		indexPlan: is,
+	}
+	// It's double read case.
+	ts := PhysicalTableScan{Columns: columns, Table: is.Table}.init(b.ctx)
+	ts.SetSchema(is.dataSourceSchema)
+	cop.tablePlan = ts
+	id := 1
+	is.initSchema(id, idx, true)
+	t := finishCopTask(b.ctx, cop)
+
+	p := PhysicalIndexLookUpReader{tablePlan: ts, indexPlan: is}.init(b.ctx)
+	return p, nil
 }
 
 func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {

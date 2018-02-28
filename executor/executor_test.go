@@ -71,6 +71,7 @@ type testSuite struct {
 	mvccStore *mocktikv.MvccStore
 	store     kv.Storage
 	*parser.Parser
+	ctx *mock.Context
 
 	autoIDStep int64
 }
