@@ -180,8 +180,11 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 				agg.collectGroupByColumns()
 				return agg, nil
 			}
+			// We can pull up the equal conditions below the aggregation as the join key of the apply, if only
+			// the equal conditions contain the correlated column of this apply.
 			if sel, ok := agg.children[0].(*LogicalSelection); ok && (apply.JoinType == InnerJoin || apply.JoinType == LeftOuterJoin) {
 				var eqCondWithCorCol []*expression.ScalarFunction
+				// Extract the equal condition.
 				for i := len(sel.Conditions) - 1; i >= 0; i-- {
 					if expr := apply.deCorColFromEqExpr(sel.Conditions[i]); expr != nil {
 						eqCondWithCorCol = append(eqCondWithCorCol, expr.(*expression.ScalarFunction))
@@ -190,22 +193,26 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 				}
 				if len(eqCondWithCorCol) > 0 {
 					apply.extractCorColumnsBySchema()
+					// There's no other correlated column.
 					if len(apply.corCols) == 0 {
 						join := &apply.LogicalJoin
 						join.EqualConditions = append(join.EqualConditions, eqCondWithCorCol...)
 						for _, eqCond := range eqCondWithCorCol {
 							clonedCol := eqCond.GetArgs()[1].Clone()
+							// If the join key is not in the aggregation's schema, add first row function.
 							if agg.schema.ColumnIndex(eqCond.GetArgs()[1].(*expression.Column)) == -1 {
 								newFunc := aggregation.NewAggFuncDesc(apply.ctx, ast.AggFuncFirstRow, []expression.Expression{clonedCol}, false)
 								agg.AggFuncs = append(agg.AggFuncs, newFunc)
 								agg.schema.Append(clonedCol.(*expression.Column))
 							}
+							// If group by cols don't contain the join key, add it into this.
 							if agg.getGbyColIndex(eqCond.GetArgs()[1].(*expression.Column)) == -1 {
 								agg.GroupByItems = append(agg.GroupByItems, clonedCol)
 							}
 						}
 						agg.collectGroupByColumns()
 					}
+					// The selection may be useless, check and remove it.
 					if len(sel.Conditions) == 0 {
 						agg.SetChildren(sel.children[0])
 					}
