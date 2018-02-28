@@ -83,9 +83,8 @@ type selectResult struct {
 }
 
 type resultWithErr struct {
-	result   []byte
-	startKey kv.Key
-	err      error
+	result kv.ResultSubset
+	err    error
 }
 
 func (r *selectResult) Fetch(ctx context.Context) {
@@ -102,7 +101,7 @@ func (r *selectResult) fetch(ctx context.Context) {
 		metrics.DistSQLQueryHistgram.WithLabelValues(r.label).Observe(duration.Seconds())
 	}()
 	for {
-		resultSubset, startKey, err := r.resp.Next(ctx)
+		resultSubset, err := r.resp.Next(ctx)
 		if err != nil {
 			r.results <- resultWithErr{err: errors.Trace(err)}
 			return
@@ -112,7 +111,7 @@ func (r *selectResult) fetch(ctx context.Context) {
 		}
 
 		select {
-		case r.results <- resultWithErr{result: resultSubset, startKey: startKey}:
+		case r.results <- resultWithErr{result: resultSubset}:
 		case <-r.closed:
 			// If selectResult called Close() already, make fetch goroutine exit.
 			return
@@ -133,8 +132,8 @@ func (r *selectResult) Next(ctx context.Context) (PartialResult, error) {
 	}
 	pr := &partialResult{}
 	pr.rowLen = r.rowLen
-	err := pr.unmarshal(re.result)
-	r.feedback.Update(re.startKey, pr.resp.OutputCounts)
+	err := pr.unmarshal(re.result.GetData())
+	r.feedback.Update(re.result.GetStartKey(), pr.resp.OutputCounts)
 	r.partialCount++
 	return pr, errors.Trace(err)
 }
@@ -144,7 +143,10 @@ func (r *selectResult) NextRaw(ctx context.Context) ([]byte, error) {
 	re := <-r.results
 	r.partialCount++
 	r.feedback.Invalidate()
-	return re.result, errors.Trace(re.err)
+	if re.result == nil || re.err != nil {
+		return nil, errors.Trace(re.err)
+	}
+	return re.result.GetData(), nil
 }
 
 // NextChunk reads data to the chunk.
@@ -180,11 +182,11 @@ func (r *selectResult) getSelectResp() error {
 			return nil
 		}
 		r.selectResp = new(tipb.SelectResponse)
-		err := r.selectResp.Unmarshal(re.result)
+		err := r.selectResp.Unmarshal(re.result.GetData())
 		if err != nil {
 			return errors.Trace(err)
 		}
-		r.feedback.Update(re.startKey, r.selectResp.OutputCounts)
+		r.feedback.Update(re.result.GetStartKey(), r.selectResp.OutputCounts)
 		r.partialCount++
 		if len(r.selectResp.Chunks) == 0 {
 			continue

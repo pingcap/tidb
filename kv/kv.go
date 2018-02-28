@@ -200,12 +200,20 @@ type Request struct {
 	Streaming bool
 }
 
+// ResultSubset represents a result subset from a single storage unit.
+// TODO: Find a better interface for ResultSubset that can reuse bytes.
+type ResultSubset interface {
+	// GetData gets the data.
+	GetData() []byte
+	// GetStartKey gets the start key.
+	GetStartKey() Key
+}
+
 // Response represents the response returned from KV layer.
 type Response interface {
 	// Next returns a resultSubset from a single storage unit.
 	// When full result set is returned, nil is returned.
-	// TODO: Find a better interface for resultSubset that can avoid allocation and reuse bytes.
-	Next(ctx context.Context) (resultSubset []byte, startKey Key, err error)
+	Next(ctx context.Context) (resultSubset ResultSubset, err error)
 	// Close response.
 	Close() error
 }

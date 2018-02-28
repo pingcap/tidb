@@ -467,10 +467,25 @@ func (it *copIterator) sendToRespCh(resp copResponse, respCh chan copResponse) (
 	return
 }
 
+// copResultSubset implements the kv.ResultSubset interface.
+type copResultSubset struct {
+	data     []byte
+	startKey kv.Key
+}
+
+// GetData implements the kv.ResultSubset GetData interface.
+func (rs *copResultSubset) GetData() []byte {
+	return rs.data
+}
+
+// GetStartKey implements the kv.ResultSubset GetStartKey interface.
+func (rs *copResultSubset) GetStartKey() kv.Key {
+	return rs.startKey
+}
+
 // Next returns next coprocessor result.
-// NOTE: Use nil to indicate finish, so if the returned values is a slice with
-// size 0, reader should continue to call Next().
-func (it *copIterator) Next(ctx context.Context) ([]byte, kv.Key, error) {
+// NOTE: Use nil to indicate finish, so if the returned ResultSubset is not nil, reader should continue to call Next().
+func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	metrics.TiKVCoprocessorCounter.WithLabelValues("next").Inc()
 
 	var (
@@ -483,20 +498,20 @@ func (it *copIterator) Next(ctx context.Context) ([]byte, kv.Key, error) {
 		// Get next fetched resp from chan
 		resp, ok = <-it.respChan
 		if !ok {
-			return nil, nil, nil
+			return nil, nil
 		}
 	} else {
 		var closed bool
 		for {
 			if it.curr >= len(it.tasks) {
 				// Resp will be nil if iterator is finished.
-				return nil, nil, nil
+				return nil, nil
 			}
 			task := it.tasks[it.curr]
 			resp, ok, closed = it.recvFromRespCh(ctx, task.respChan)
 			if closed {
 				// Close() is already called, so Next() is invalid.
-				return nil, nil, nil
+				return nil, nil
 			}
 			if ok {
 				break
@@ -508,18 +523,18 @@ func (it *copIterator) Next(ctx context.Context) ([]byte, kv.Key, error) {
 	}
 
 	if resp.err != nil {
-		return nil, nil, errors.Trace(resp.err)
+		return nil, errors.Trace(resp.err)
 	}
 
 	err := it.store.CheckVisibility(it.req.StartTs)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
 	if resp.Data == nil {
-		return []byte{}, nil, nil
+		return &copResultSubset{}, nil
 	}
-	return resp.Data, resp.startKey, nil
+	return &copResultSubset{data: resp.Data, startKey: resp.startKey}, nil
 }
 
 // handleTask handles single copTask, sends the result to channel, retry automatically on error.
@@ -674,8 +689,8 @@ func (it *copIterator) Close() error {
 // copErrorResponse returns error when calling Next()
 type copErrorResponse struct{ error }
 
-func (it copErrorResponse) Next(ctx context.Context) ([]byte, kv.Key, error) {
-	return nil, nil, it.error
+func (it copErrorResponse) Next(ctx context.Context) (kv.ResultSubset, error) {
+	return nil, it.error
 }
 
 func (it copErrorResponse) Close() error {
