@@ -734,7 +734,20 @@ type indexWorker struct {
 // fetchHandles fetches a batch of handles from index data and builds the index lookup tasks.
 // The tasks are sent to workCh to be further processed by tableWorker, and sent to e.resultCh
 // at the same time to keep data ordered.
-func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectResult) error {
+func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectResult) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err4Panic := errors.Errorf("%v", r)
+			doneCh := make(chan error, 1)
+			doneCh <- err4Panic
+			w.resultCh <- &lookupTableTask{
+				doneCh: doneCh,
+			}
+			if err != nil {
+				err = errors.Trace(err4Panic)
+			}
+		}
+	}()
 	chk := chunk.NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)})
 	for {
 		handles, err := w.extractTaskHandles(ctx, chk, result)
@@ -811,12 +824,19 @@ type tableWorker struct {
 
 // pickAndExecTask picks tasks from workCh, and execute them.
 func (w *tableWorker) pickAndExecTask(ctx context.Context) {
+	var task *lookupTableTask
+	var ok bool
+	defer func() {
+		if r := recover(); r != nil {
+			task.doneCh <- errors.Errorf("%v", r)
+		}
+	}()
 	for {
 		// Don't check ctx.Done() on purpose. If background worker get the signal and all
 		// exit immediately, session's goroutine doesn't know this and still calling Next(),
 		// it may block reading task.doneCh forever.
 		select {
-		case task, ok := <-w.workCh:
+		case task, ok = <-w.workCh:
 			if !ok {
 				return
 			}
