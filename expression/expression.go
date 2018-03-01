@@ -28,6 +28,13 @@ import (
 	"github.com/pingcap/tidb/types/json"
 )
 
+// These are byte flags used for `HashCode()`.
+const (
+	constantFlag       byte = 0
+	columnFlag         byte = 1
+	scalarFunctionFlag byte = 3
+)
+
 // EvalAstExpr evaluates ast expression directly.
 var EvalAstExpr func(ctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error)
 
@@ -82,6 +89,10 @@ type Expression interface {
 	ExplainInfo() string
 
 	// HashCode creates the hashcode for expression which can be used to identify itself from other expression.
+	// It generated as the following:
+	// Constant: ConstantFlag+encoded value
+	// Column: ColumnFlag+encoded value
+	// ScalarFunction: SFFlag+encoded function name + encoded arg_1 + encoded arg_2 + ...
 	HashCode(sc *stmtctx.StatementContext) []byte
 }
 
