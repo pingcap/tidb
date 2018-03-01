@@ -54,11 +54,6 @@ func (c *CopClient) IsRequestTypeSupported(reqType, subType int64) bool {
 			return c.supportExpr(tipb.ExprType(subType))
 		}
 	case kv.ReqTypeDAG:
-		// Now we only support pushing down stream aggregation on mocktikv.
-		// TODO: Remove it after TiKV supports stream aggregation.
-		if subType == kv.ReqSubTypeStreamAgg {
-			return c.store.mock
-		}
 		return c.supportExpr(tipb.ExprType(subType))
 	case kv.ReqTypeAnalyze:
 		return true
