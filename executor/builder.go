@@ -70,6 +70,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return nil
 	case *plan.CheckTable:
 		return b.buildCheckTable(v)
+	case *plan.CheckIndex:
+		return b.buildCheckIndex(v)
 	case *plan.DDL:
 		return b.buildDDL(v)
 	case *plan.Deallocate:

@@ -4740,7 +4740,7 @@ AdminStmt:
 	{
 		$$ = &ast.AdminStmt{
 			Tp: ast.AdminCheckIndex,
-			Tables: $4.(*ast.TAbleName),
+			Tables: []*ast.TableName{$4.(*ast.TableName)},
 			Index: $5.(string),
 		}
 	}
