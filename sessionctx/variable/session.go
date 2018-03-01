@@ -318,7 +318,7 @@ func NewSessionVars() *SessionVars {
 		MemThreshold:               DefMemThreshold,
 	}
 	var enableStreaming string
-	if config.GetGlobalConfig().EnableChunk {
+	if config.GetGlobalConfig().EnableStreaming {
 		enableStreaming = "1"
 	} else {
 		enableStreaming = "0"
