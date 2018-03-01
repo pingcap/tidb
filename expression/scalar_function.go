@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/hack"
 )
 
 // ScalarFunction is the function that returns a value.
@@ -258,17 +259,11 @@ func (sf *ScalarFunction) HashCode(sc *stmtctx.StatementContext) []byte {
 	if len(sf.hashcode) > 0 {
 		return sf.hashcode
 	}
-	v := make([]types.Datum, 0, len(sf.GetArgs())+1)
-	var err error
-	sf.hashcode, err = codec.EncodeValue(sc, nil, types.NewStringDatum(sf.FuncName.L))
-	terror.Log(errors.Trace(err))
-	v = append(v, types.NewBytesDatum(sf.hashcode))
+	sf.hashcode = append(sf.hashcode, scalarFunctionFlag)
+	sf.hashcode = codec.EncodeCompactBytes(sf.hashcode, hack.Slice(sf.FuncName.L))
 	for _, arg := range sf.GetArgs() {
-		v = append(v, types.NewBytesDatum(arg.HashCode(sc)))
+		sf.hashcode = append(sf.hashcode, arg.HashCode(sc)...)
 	}
-	sf.hashcode = sf.hashcode[:0]
-	sf.hashcode, err = codec.EncodeValue(sc, sf.hashcode, v...)
-	terror.Log(errors.Trace(err))
 	return sf.hashcode
 }
 
