@@ -1725,7 +1725,12 @@ PartitionDefinitionList:
 	{}
 
 PartitionDefinition:
-	"PARTITION" Identifier PartDefValuesOpt PartDefStorageOpt
+	"PARTITION" Identifier PartDefValuesOpt PartDefCommentOpt PartDefStorageOpt
+	{}
+
+PartDefCommentOpt:
+	{}
+|	"COMMENT" eq stringLit
 	{}
 
 PartDefValuesOpt:
