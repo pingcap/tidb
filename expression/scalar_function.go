@@ -22,9 +22,12 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/hack"
 )
 
 // ScalarFunction is the function that returns a value.
@@ -34,6 +37,7 @@ type ScalarFunction struct {
 	// TODO: Implement type inference here, now we use ast's return type temporarily.
 	RetType  *types.FieldType
 	Function builtinFunc
+	hashcode []byte
 }
 
 // GetArgs gets arguments of function.
@@ -248,6 +252,19 @@ func (sf *ScalarFunction) EvalDuration(ctx sessionctx.Context, row types.Row) (t
 // EvalJSON implements Expression interface.
 func (sf *ScalarFunction) EvalJSON(ctx sessionctx.Context, row types.Row) (json.BinaryJSON, bool, error) {
 	return sf.Function.evalJSON(row)
+}
+
+// HashCode implements Expression interface.
+func (sf *ScalarFunction) HashCode(sc *stmtctx.StatementContext) []byte {
+	if len(sf.hashcode) > 0 {
+		return sf.hashcode
+	}
+	sf.hashcode = append(sf.hashcode, scalarFunctionFlag)
+	sf.hashcode = codec.EncodeCompactBytes(sf.hashcode, hack.Slice(sf.FuncName.L))
+	for _, arg := range sf.GetArgs() {
+		sf.hashcode = append(sf.hashcode, arg.HashCode(sc)...)
+	}
+	return sf.hashcode
 }
 
 // ResolveIndices implements Expression interface.
