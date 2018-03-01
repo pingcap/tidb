@@ -323,7 +323,7 @@ func NewSessionVars() *SessionVars {
 	} else {
 		enableStreaming = "0"
 	}
-	vars.SetSystemVar(TiDBEnableStreaming, enableStreaming)
+	terror.Log(vars.SetSystemVar(TiDBEnableStreaming, enableStreaming))
 	return vars
 }
 
