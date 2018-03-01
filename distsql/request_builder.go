@@ -148,8 +148,8 @@ func TableRangesToKVRanges(tid int64, ranges []*ranger.NewRange, fb *statistics.
 		endKey := tablecodec.EncodeRowKey(tid, high)
 		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
 
-		// When update the query feedback, we need to use the encoded form to binary search the corresponding index,
-		// but when store the feedback we need to get the origin int value, so here we use one datum to store both the
+		// When updating the query feedback, we need to use the encoded form to binary search the corresponding index,
+		// but when storing the feedback we need to get the origin int value, so here we use one datum to store both the
 		// origin and encoded value.
 		r := &ranger.NewRange{LowVal: []types.Datum{ran.LowVal[0]}, HighVal: []types.Datum{ran.HighVal[0]}}
 		r.LowVal[0].SetBytes(low)
