@@ -301,6 +301,7 @@ var tokenMap = map[string]int{
 	"IS":                is,
 	"ISOLATION":         isolation,
 	"JOBS":              jobs,
+	"JOB":               job,
 	"JOIN":              join,
 	"JSON":              jsonType,
 	"KEY":               key,

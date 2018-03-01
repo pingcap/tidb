@@ -173,6 +173,13 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(row.GetString(1), Equals, historyJobs[0].State.String())
 	c.Assert(err, IsNil)
 
+	// show DDL jobs job_id test
+	r, err = tk.Exec("admin show ddl job 1")
+	c.Assert(err, IsNil)
+	row, err = r.Next(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(row.Len(), Equals, 1)
+
 	// check table test
 	tk.MustExec("create table admin_test1 (c1 int, c2 int default 1, index (c1))")
 	tk.MustExec("insert admin_test1 (c1) values (21),(22)")

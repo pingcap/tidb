@@ -420,6 +420,7 @@ import (
 	cancel		"CANCEL"
 	ddl		"DDL"
 	jobs		"JOBS"
+	job		    "JOB"
 	stats		"STATS"
 	statsMeta       "STATS_META"
 	statsHistograms "STATS_HISTOGRAMS"
@@ -4761,7 +4762,7 @@ AdminStmt:
 			JobIDs: $5.([]int64),
 		}
 	}
-|	"ADMIN" "SHOW" "DDL" "JOBS" NumList
+|	"ADMIN" "SHOW" "DDL" "JOB" NumList
     {
     		$$ = &ast.AdminStmt{
     		    Tp: ast.AdminShowDDLJobID,
