@@ -574,18 +574,18 @@ func (it *copIterator) handleTaskOnce(bo *Backoffer, task *copTask, ch chan copR
 	task.storeAddr = sender.storeAddr
 
 	if task.cmdType == tikvrpc.CmdCopStream {
-		return it.handleCopStreamResult(bo, resp.CopStream, sender, task, ch)
+		return it.handleCopStreamResult(bo, resp.CopStream, task, ch)
 	}
 
 	// Handles the response for non-streaming copTask.
-	return it.handleCopResponse(bo, resp.Cop, sender, task, ch)
+	return it.handleCopResponse(bo, resp.Cop, task, ch)
 }
 
-func (it *copIterator) handleCopStreamResult(bo *Backoffer, stream *tikvrpc.CopStreamResponse, sender *RegionRequestSender, task *copTask, ch chan copResponse) ([]*copTask, error) {
+func (it *copIterator) handleCopStreamResult(bo *Backoffer, stream *tikvrpc.CopStreamResponse, task *copTask, ch chan copResponse) ([]*copTask, error) {
 	var resp *coprocessor.Response
 	resp = stream.Response
 	for {
-		remainedTasks, err := it.handleCopResponse(bo, resp, sender, task, ch)
+		remainedTasks, err := it.handleCopResponse(bo, resp, task, ch)
 		if err != nil || len(remainedTasks) != 0 {
 			return remainedTasks, errors.Trace(err)
 		}
@@ -602,32 +602,14 @@ func (it *copIterator) handleCopStreamResult(bo *Backoffer, stream *tikvrpc.CopS
 
 // handleCopResponse checks coprocessor Response for region split and lock,
 // returns more tasks when that happens, or handles the response if no error.
-func (it *copIterator) handleCopResponse(bo *Backoffer, resp *coprocessor.Response, sender *RegionRequestSender, task *copTask, ch chan copResponse) ([]*copTask, error) {
+func (it *copIterator) handleCopResponse(bo *Backoffer, resp *coprocessor.Response, task *copTask, ch chan copResponse) ([]*copTask, error) {
 	if regionErr := resp.GetRegionError(); regionErr != nil {
 		if err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String())); err != nil {
 			return nil, errors.Trace(err)
 		}
+		// We may meet RegionError at the first packet, but not during visiting the stream.
 		metrics.TiKVCoprocessorCounter.WithLabelValues("rebuild_task").Inc()
 
-		if task.cmdType == tikvrpc.CmdCopStream {
-			// For CmdCopStream request, SendReq() will not send the request to TiKV really,
-			// thus it won't GetRegionError and clean region cache.
-			// So we have to clean region cache here by call onRegionError.
-			ctx, err1 := sender.regionCache.GetRPCContext(bo, task.region)
-			if err1 != nil {
-				return nil, errors.Trace(err1)
-			}
-			if ctx != nil {
-				// ctx == nil means others meet the same region error and handle it already.
-				_, err2 := sender.onRegionError(bo, ctx, regionErr)
-				if err2 != nil {
-					return nil, errors.Trace(err2)
-				}
-			}
-		}
-
-		// We may meet RegionError at the first packet, but not during visiting the stream.
-		// So this is buildCopTasks instead of buildCopTasksFromRemain.
 		return buildCopTasks(bo, it.store.regionCache, task.ranges, it.req.Desc, it.req.Streaming)
 	}
 	if lockErr := resp.GetLocked(); lockErr != nil {
