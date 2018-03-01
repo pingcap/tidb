@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/mysql"
@@ -285,12 +286,16 @@ type SessionVars struct {
 	// TODO: remove this after tidb-server configuration "enable-chunk' removed.
 	EnableChunk bool
 
+	// EnableStreaming indicates whether the coprocessor request can use streaming API.
+	// TODO: remove this after tidb-server configuration "enable-streaming' removed.
+	EnableStreaming bool
+
 	writeStmtBufs WriteStmtBufs
 }
 
 // NewSessionVars creates a session vars object.
 func NewSessionVars() *SessionVars {
-	return &SessionVars{
+	vars := &SessionVars{
 		Users:                      make(map[string]string),
 		systems:                    make(map[string]string),
 		PreparedStmts:              make(map[uint32]interface{}),
@@ -312,6 +317,14 @@ func NewSessionVars() *SessionVars {
 		DMLBatchSize:               DefDMLBatchSize,
 		MemThreshold:               DefMemThreshold,
 	}
+	var enableStreaming string
+	if config.GetGlobalConfig().EnableChunk {
+		enableStreaming = "1"
+	} else {
+		enableStreaming = "0"
+	}
+	vars.SetSystemVar(TiDBEnableStreaming, enableStreaming)
+	return vars
 }
 
 // GetWriteStmtBufs get pointer of SessionVars.writeStmtBufs.
@@ -477,6 +490,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.MemThreshold = int64(tidbOptPositiveInt(val, DefMemThreshold))
 	case TiDBGeneralLog:
 		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt(val, DefTiDBGeneralLog)))
+	case TiDBEnableStreaming:
+		s.EnableStreaming = tidbOptOn(val)
 	}
 	s.systems[name] = val
 	return nil

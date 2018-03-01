@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
@@ -301,7 +300,7 @@ func (pr *partialResult) Close() error {
 // Select sends a DAG request, returns SelectResult.
 // In kvReq, KeyRanges is required, Concurrency/KeepOrder/Desc/IsolationLevel/Priority are optional.
 func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fieldTypes []*types.FieldType) (SelectResult, error) {
-	if !config.GetGlobalConfig().EnableStreaming {
+	if !sctx.GetSessionVars().EnableChunk {
 		kvReq.Streaming = false
 	}
 	resp := sctx.GetClient().Send(ctx, kvReq)
