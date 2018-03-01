@@ -35,10 +35,9 @@ func EncodeDecimal(b []byte, dec *types.MyDecimal, precision, frac int) []byte {
 }
 
 // DecodeDecimal decodes bytes to decimal.
-func DecodeDecimal(b []byte) ([]byte, types.Datum, error) {
-	var d types.Datum
+func DecodeDecimal(b []byte) ([]byte, *types.MyDecimal, error) {
 	if len(b) < 3 {
-		return b, d, errors.New("insufficient bytes to decode value")
+		return b, nil, errors.New("insufficient bytes to decode value")
 	}
 	precision := int(b[0])
 	frac := int(b[1])
@@ -47,10 +46,7 @@ func DecodeDecimal(b []byte) ([]byte, types.Datum, error) {
 	binSize, err := dec.FromBin(b, precision, frac)
 	b = b[binSize:]
 	if err != nil {
-		return b, d, errors.Trace(err)
+		return b, nil, errors.Trace(err)
 	}
-	d.SetLength(precision)
-	d.SetFrac(frac)
-	d.SetMysqlDecimal(dec)
-	return b, d, nil
+	return b, dec, nil
 }
