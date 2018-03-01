@@ -15,9 +15,11 @@ package server
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/mysql"
 	"math"
 	"net/http"
 	"net/url"
@@ -48,13 +50,19 @@ import (
 )
 
 const (
-	pDBName    = "db"
-	pHexKey    = "hexKey"
-	pIndexName = "index"
-	pHandle    = "handle"
-	pRegionID  = "regionID"
-	pStartTS   = "startTS"
-	pTableName = "table"
+	pDBName     = "db"
+	pHexKey     = "hexKey"
+	pIndexName  = "index"
+	pHandle     = "handle"
+	pRegionID   = "regionID"
+	pStartTS    = "startTS"
+	pTableName  = "table"
+	pTableID    = "tableID"
+	pColumnID   = "colID"
+	pColumnTp   = "colTp"
+	pColumnFlag = "colFlag"
+	pColumnLen  = "colLen"
+	pColumnBin  = "colBin"
 )
 
 // For query string
@@ -91,6 +99,10 @@ type schemaHandler struct {
 type tableHandler struct {
 	*regionHandler
 	op string
+}
+
+// valueHandle is the handler for get value.
+type valueHandler struct {
 }
 
 const (
@@ -135,6 +147,67 @@ func (s *Server) newRegionHandler() (hanler *regionHandler) {
 		store:       tikvStore,
 	}
 	return &regionHandler{tool}
+}
+
+// ServeHTTP handles request of list a database or table's schemas.
+func (vh valueHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	// parse params
+	params := mux.Vars(req)
+
+	colID, err := strconv.ParseInt(params[pColumnID], 0, 64)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	colTp, err := strconv.ParseInt(params[pColumnTp], 0, 64)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	colFlag, err := strconv.ParseUint(params[pColumnFlag], 0, 64)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	colLen, err := strconv.ParseInt(params[pColumnLen], 0, 64)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	// Get binary.
+	bin := params[pColumnBin]
+	valData, err := base64.StdEncoding.DecodeString(bin)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	// Construct field type.
+	ft := &types.FieldType{
+		Tp:   byte(colTp),
+		Flag: uint(colFlag),
+		Flen: int(colLen),
+	}
+	// Decode a column.
+	m := make(map[int64]*types.FieldType, 1)
+	m[int64(colID)] = ft
+	loc := time.Now().Location()
+	vals, err := tablecodec.DecodeRow(valData, m, loc)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	var val string
+	v := vals[int64(colID)]
+	switch ft.Tp {
+	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+		val = fmt.Sprintf("%s", v.GetMysqlTime())
+	default:
+		val = fmt.Sprintf("%v", v)
+	}
+	writeData(w, val)
+	return
 }
 
 // TableRegions is the response data for list table's regions.
