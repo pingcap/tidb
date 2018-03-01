@@ -92,7 +92,6 @@ func writeData(w http.ResponseWriter, data interface{}) {
 }
 
 type httpHandlerTool struct {
-	bo          *tikv.Backoffer
 	regionCache *tikv.RegionCache
 	store       kvStore
 }
@@ -112,18 +111,14 @@ func (s *Server) newHTTPHandlerTool() *httpHandlerTool {
 
 	regionCache := tikvStore.GetRegionCache()
 
-	// init backOffer && infoSchema.
-	backOffer := tikv.NewBackoffer(context.Background(), 500)
-
 	return &httpHandlerTool{
 		regionCache: regionCache,
-		bo:          backOffer,
 		store:       tikvStore,
 	}
 }
 
 func (t *httpHandlerTool) getMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccGetByKeyResponse, error) {
-	keyLocation, err := t.regionCache.LocateKey(t.bo, encodedKey)
+	keyLocation, err := t.regionCache.LocateKey(tikv.NewBackoffer(context.Background(), 500), encodedKey)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -134,7 +129,7 @@ func (t *httpHandlerTool) getMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccG
 			Key: encodedKey,
 		},
 	}
-	kvResp, err := t.store.SendReq(t.bo, tikvReq, keyLocation.Region, time.Minute)
+	kvResp, err := t.store.SendReq(tikv.NewBackoffer(context.Background(), 500), tikvReq, keyLocation.Region, time.Minute)
 	log.Info(string(encodedKey), keyLocation.Region, string(keyLocation.StartKey), string(keyLocation.EndKey), kvResp, err)
 
 	if err != nil {
@@ -150,7 +145,7 @@ func (t *httpHandlerTool) getMvccByHandle(tableID, handle int64) (*kvrpcpb.MvccG
 
 func (t *httpHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []byte) (*kvrpcpb.MvccGetByStartTsResponse, error) {
 	for {
-		curRegion, err := t.regionCache.LocateKey(t.bo, startKey)
+		curRegion, err := t.regionCache.LocateKey(tikv.NewBackoffer(context.Background(), 500), startKey)
 		if err != nil {
 			log.Error(startTS, startKey, err)
 			return nil, errors.Trace(err)
@@ -163,7 +158,7 @@ func (t *httpHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []by
 			},
 		}
 		tikvReq.Context.Priority = kvrpcpb.CommandPri_Low
-		kvResp, err := t.store.SendReq(t.bo, tikvReq, curRegion.Region, time.Hour)
+		kvResp, err := t.store.SendReq(tikv.NewBackoffer(context.Background(), 500), tikvReq, curRegion.Region, time.Hour)
 		log.Info(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), kvResp)
 		if err != nil {
 			log.Error(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), err)
@@ -197,6 +192,8 @@ func (t *httpHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []by
 
 func (t *httpHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values, idxCols []*model.ColumnInfo, handleStr string) (*kvrpcpb.MvccGetByKeyResponse, error) {
 	sc := new(stmtctx.StatementContext)
+	// HTTP request is not a database session, set timezone to UTC directly here.
+	// See https://github.com/pingcap/tidb/blob/master/docs/tidb_http_api.md for more details.
 	sc.TimeZone = time.UTC
 	idxRow, err := t.formValue2DatumRow(sc, values, idxCols)
 	if err != nil {
@@ -521,7 +518,7 @@ func (h tableHandler) handleRegionRequest(schema infoschema.InfoSchema, tbl tabl
 	tableID := tbl.Meta().ID
 	// for record
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(tableID)
-	recordRegionIDs, err := h.regionCache.ListRegionIDsInKeyRange(h.bo, startKey, endKey)
+	recordRegionIDs, err := h.regionCache.ListRegionIDsInKeyRange(tikv.NewBackoffer(context.Background(), 500), startKey, endKey)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -539,7 +536,7 @@ func (h tableHandler) handleRegionRequest(schema infoschema.InfoSchema, tbl tabl
 		indices[i].Name = index.Meta().Name.String()
 		indices[i].ID = indexID
 		startKey, endKey := tablecodec.GetTableIndexKeyRange(tableID, indexID)
-		rIDs, err := h.regionCache.ListRegionIDsInKeyRange(h.bo, startKey, endKey)
+		rIDs, err := h.regionCache.ListRegionIDsInKeyRange(tikv.NewBackoffer(context.Background(), 500), startKey, endKey)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -623,7 +620,7 @@ func (h regionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		startKey := []byte{'m'}
 		endKey := []byte{'n'}
 
-		recordRegionIDs, err := h.regionCache.ListRegionIDsInKeyRange(h.bo, startKey, endKey)
+		recordRegionIDs, err := h.regionCache.ListRegionIDsInKeyRange(tikv.NewBackoffer(context.Background(), 500), startKey, endKey)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -646,7 +643,7 @@ func (h regionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	regionID := uint64(regionIDInt)
 
 	// locate region
-	region, err := h.regionCache.LocateRegionByID(h.bo, regionID)
+	region, err := h.regionCache.LocateRegionByID(tikv.NewBackoffer(context.Background(), 500), regionID)
 	if err != nil {
 		writeError(w, err)
 		return
