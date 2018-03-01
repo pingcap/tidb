@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
@@ -69,9 +70,6 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return nil
 	case *plan.CheckTable:
 		return b.buildCheckTable(v)
-	// 	idxExec := buildNoRangeIndexLookUpReader(b, v)
-	// 	idxExec.isCheckOp = true
-	// 	return idxExec
 	case *plan.DDL:
 		return b.buildDDL(v)
 	case *plan.Deallocate:
@@ -200,6 +198,26 @@ func (b *executorBuilder) buildShowDDL(v *plan.ShowDDL) Executor {
 func (b *executorBuilder) buildShowDDLJobs(v *plan.ShowDDLJobs) Executor {
 	e := &ShowDDLJobsExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+	}
+	e.supportChk = true
+	return e
+}
+
+func (b *executorBuilder) buildCheckIndex(v *plan.CheckIndex) Executor {
+	log.Warnf("executor ---------------------------------")
+	readerExec, err := buildNoRangeIndexLookUpReader(b, v.IndexLookUpReader)
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
+	readerExec.ranges = ranger.FullNewRange()
+	readerExec.isCheckOp = true
+
+	e := &CheckIndexExec{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+		tables:       v.Tables,
+		is:           b.is,
+		src:          readerExec,
 	}
 	e.supportChk = true
 	return e

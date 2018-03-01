@@ -4736,6 +4736,14 @@ AdminStmt:
 			Tables: $4.([]*ast.TableName),
 		}
 	}
+|	"ADMIN" "CHECK" "INDEX" TableName IndexName
+	{
+		$$ = &ast.AdminStmt{
+			Tp: ast.AdminCheckIndex,
+			Tables: $4.(*ast.TAbleName),
+			Index: $5.(string),
+		}
+	}
 |	"ADMIN" "CANCEL" "DDL" "JOBS" NumList
 	{
 		$$ = &ast.AdminStmt{

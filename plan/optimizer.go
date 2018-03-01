@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
+	// log "github.com/sirupsen/logrus"
 )
 
 // AllowCartesianProduct means whether tidb allows cartesian join without equal conditions.
@@ -81,9 +82,14 @@ func Optimize(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (
 	if logic, ok := p.(LogicalPlan); ok {
 		return doOptimize(builder.optFlag, logic)
 	}
-	if checkTable, ok := p.(*CheckTable); ok {
-		// TODO: make CheckTable has LogicalPlan
-	}
+	//	if checkTable, ok := p.(*CheckTable); ok {
+	//		// TODO: make CheckTable has LogicalPlan
+	//		err := builder.buildCheckTable(checkTable)
+	//		if err != nil {
+	//			return nil, errors.Trace(err)
+	//		}
+	//		p = checkTable
+	//	}
 	if execPlan, ok := p.(*Execute); ok {
 		err := execPlan.optimizePreparedPlan(ctx, is)
 		return p, errors.Trace(err)

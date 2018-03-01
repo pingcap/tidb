@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
@@ -405,6 +406,67 @@ func (e *CheckTableExec) run(ctx context.Context) error {
 				return errors.Errorf("%v err:%v", t.Name, err)
 			}
 		}
+	}
+	return nil
+}
+
+// CheckTableExec represents a check table executor.
+// It is built from the "admin check table" statement, and it checks if the
+// index matches the records in the table.
+type CheckIndexExec struct {
+	baseExecutor
+
+	src    Executor
+	tables []*ast.TableName
+	done   bool
+	is     infoschema.InfoSchema
+}
+
+// Open implements the Executor Open interface.
+func (e *CheckIndexExec) Open(ctx context.Context) error {
+	if err := e.baseExecutor.Open(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	if err := e.src.Open(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	e.done = false
+	return nil
+}
+
+// Next implements the Executor Next interface.
+func (e *CheckIndexExec) Next(ctx context.Context) (Row, error) {
+	if e.done {
+		return nil, nil
+	}
+	err := e.run(ctx)
+	e.done = true
+	return nil, errors.Trace(err)
+}
+
+// NextChunk implements the Executor NextChunk interface.
+func (e *CheckIndexExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+	if e.done {
+		return nil
+	}
+	err := e.run(ctx)
+	e.done = true
+	return errors.Trace(err)
+}
+
+func (e *CheckIndexExec) run(ctx context.Context) error {
+	log.Warnf("run ---------------------------------")
+	cnt := 0
+	for {
+		row, err := e.src.Next(ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		log.Warnf("run row %v, no.%d", row, cnt)
+		if row == nil {
+			break
+		}
+		cnt++
 	}
 	return nil
 }

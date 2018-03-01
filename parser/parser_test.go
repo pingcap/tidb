@@ -403,6 +403,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"admin show ddl;", true},
 		{"admin show ddl jobs;", true},
 		{"admin check table t1, t2;", true},
+		{"admin check index idx;", true},
 		{"admin cancel ddl jobs 1", true},
 		{"admin cancel ddl jobs 1, 2", true},
 
