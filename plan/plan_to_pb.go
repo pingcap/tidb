@@ -237,7 +237,7 @@ func SupportStreaming(p PhysicalPlan) bool {
 	switch p.(type) {
 	case *PhysicalTableScan, *PhysicalIndexScan:
 		return true
-	case *PhysicalSelection, *PhysicalProjection, *PhysicalLimit:
+	case *PhysicalSelection:
 		return true
 	}
 	return false
