@@ -253,9 +253,8 @@ func (e *indexScanExec) Cursor() []byte {
 		}
 		if e.Desc {
 			return ran.EndKey
-		} else {
-			return ran.StartKey
 		}
+		return ran.StartKey
 	}
 	if e.Desc {
 		return e.kvRanges[len(e.kvRanges)-1].StartKey
