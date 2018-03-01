@@ -21,8 +21,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
-	"golang.org/x/net/context"
-	"google.golang.org/grpc/metadata"
 )
 
 // CmdType represents the concrete request type in Request or response type in Response.
@@ -145,10 +143,18 @@ type Response struct {
 	RawDelete        *kvrpcpb.RawDeleteResponse
 	RawScan          *kvrpcpb.RawScanResponse
 	Cop              *coprocessor.Response
-	CopStream        tikvpb.Tikv_CoprocessorStreamClient
+	CopStream        *CopStreamResponse
 	MvccGetByKey     *kvrpcpb.MvccGetByKeyResponse
 	MvccGetByStartTS *kvrpcpb.MvccGetByStartTsResponse
 	SplitRegion      *kvrpcpb.SplitRegionResponse
+}
+
+// CopStreamResponse combinates tikvpb.Tikv_CoprocessorStreamClient and the first Recv() result together.
+// In streaming API, get grpc stream client may not involve any network packet, then region error have
+// to be handled in Recv() function. This struct facilitates the error handling.
+type CopStreamResponse struct {
+	tikvpb.Tikv_CoprocessorStreamClient
+	*coprocessor.Response // The first result of Recv()
 }
 
 // SetContext set the Context field for the given req to the specified ctx.
@@ -276,8 +282,10 @@ func GenRegionErrorResp(req *Request, e *errorpb.Error) (*Response, error) {
 			RegionError: e,
 		}
 	case CmdCopStream:
-		resp.CopStream = &mockCopStreamErrClient{
-			Error: e,
+		resp.CopStream = &CopStreamResponse{
+			Response: &coprocessor.Response{
+				RegionError: e,
+			},
 		}
 	case CmdMvccGetByKey:
 		resp.MvccGetByKey = &kvrpcpb.MvccGetByKeyResponse{
@@ -295,27 +303,6 @@ func GenRegionErrorResp(req *Request, e *errorpb.Error) (*Response, error) {
 		return nil, fmt.Errorf("invalid request type %v", req.Type)
 	}
 	return resp, nil
-}
-
-// mockClientStream implements grpc ClientStream interface, its methods are never called.
-type mockClientStream struct{}
-
-func (mockClientStream) Header() (metadata.MD, error) { return nil, nil }
-func (mockClientStream) Trailer() metadata.MD         { return nil }
-func (mockClientStream) CloseSend() error             { return nil }
-func (mockClientStream) Context() context.Context     { return nil }
-func (mockClientStream) SendMsg(m interface{}) error  { return nil }
-func (mockClientStream) RecvMsg(m interface{}) error  { return nil }
-
-type mockCopStreamErrClient struct {
-	mockClientStream
-	*errorpb.Error
-}
-
-func (mock *mockCopStreamErrClient) Recv() (*coprocessor.Response, error) {
-	return &coprocessor.Response{
-		RegionError: mock.Error,
-	}, nil
 }
 
 // GetRegionError returns the RegionError of the underlying concrete response.
@@ -355,8 +342,7 @@ func (resp *Response) GetRegionError() (*errorpb.Error, error) {
 	case CmdCop:
 		e = resp.Cop.GetRegionError()
 	case CmdCopStream:
-		// Region error will be returned when the first time StreamResponse.Recv() is called.
-		e = nil
+		e = resp.CopStream.Response.GetRegionError()
 	case CmdMvccGetByKey:
 		e = resp.MvccGetByKey.GetRegionError()
 	case CmdMvccGetByStartTs:
