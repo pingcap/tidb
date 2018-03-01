@@ -410,9 +410,7 @@ func (e *CheckTableExec) run(ctx context.Context) error {
 	return nil
 }
 
-// CheckTableExec represents a check table executor.
-// It is built from the "admin check table" statement, and it checks if the
-// index matches the records in the table.
+// CheckIndexExec TODO:
 type CheckIndexExec struct {
 	baseExecutor
 
@@ -455,6 +453,7 @@ func (e *CheckIndexExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error 
 }
 
 func (e *CheckIndexExec) run(ctx context.Context) error {
+	// TODO: CheckIndicesCount
 	log.Warnf("run ---------------------------------")
 	cnt := 0
 	for {
