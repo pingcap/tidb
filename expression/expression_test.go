@@ -60,7 +60,7 @@ func (s *testEvaluatorSuite) TestConstant(c *C) {
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	c.Assert(Zero.IsCorrelated(), IsFalse)
 	c.Assert(Zero.Decorrelate(nil).Equal(s.ctx, Zero), IsTrue)
-	c.Assert(Zero.HashCode(sc), DeepEquals, []byte{0x8, 0x0})
+	c.Assert(Zero.HashCode(sc), DeepEquals, []byte{0x0, 0x8, 0x0})
 	c.Assert(Zero.Equal(s.ctx, One), IsFalse)
 	res, err := Zero.MarshalJSON()
 	c.Assert(err, IsNil)

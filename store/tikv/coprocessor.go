@@ -54,11 +54,6 @@ func (c *CopClient) IsRequestTypeSupported(reqType, subType int64) bool {
 			return c.supportExpr(tipb.ExprType(subType))
 		}
 	case kv.ReqTypeDAG:
-		// Now we only support pushing down stream aggregation on mocktikv.
-		// TODO: Remove it after TiKV supports stream aggregation.
-		if subType == kv.ReqSubTypeStreamAgg {
-			return c.store.mock
-		}
 		return c.supportExpr(tipb.ExprType(subType))
 	case kv.ReqTypeAnalyze:
 		return true
@@ -466,10 +461,19 @@ func (it *copIterator) sendToRespCh(resp copResponse, respCh chan copResponse) (
 	return
 }
 
+// copResultSubset implements the kv.ResultSubset interface.
+type copResultSubset struct {
+	data []byte
+}
+
+// GetData implements the kv.ResultSubset GetData interface.
+func (rs *copResultSubset) GetData() []byte {
+	return rs.data
+}
+
 // Next returns next coprocessor result.
-// NOTE: Use nil to indicate finish, so if the returned values is a slice with
-// size 0, reader should continue to call Next().
-func (it *copIterator) Next(ctx context.Context) ([]byte, error) {
+// NOTE: Use nil to indicate finish, so if the returned ResultSubset is not nil, reader should continue to call Next().
+func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	metrics.TiKVCoprocessorCounter.WithLabelValues("next").Inc()
 
 	var (
@@ -516,9 +520,9 @@ func (it *copIterator) Next(ctx context.Context) ([]byte, error) {
 	}
 
 	if resp.Data == nil {
-		return []byte{}, nil
+		return &copResultSubset{}, nil
 	}
-	return resp.Data, nil
+	return &copResultSubset{data: resp.Data}, nil
 }
 
 // handleTask handles single copTask, sends the result to channel, retry automatically on error.
@@ -667,7 +671,7 @@ func (it *copIterator) Close() error {
 // copErrorResponse returns error when calling Next()
 type copErrorResponse struct{ error }
 
-func (it copErrorResponse) Next(ctx context.Context) ([]byte, error) {
+func (it copErrorResponse) Next(ctx context.Context) (kv.ResultSubset, error) {
 	return nil, it.error
 }
 
