@@ -55,7 +55,8 @@ type CheckIndex struct {
 	baseSchemaProducer
 
 	IndexLookUpReader *PhysicalIndexLookUpReader
-	Tables            []*ast.TableName
+	DBName            string
+	IdxName           string
 }
 
 // CancelDDLJobs represents a cancel DDL jobs plan.

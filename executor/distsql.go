@@ -616,6 +616,7 @@ type IndexLookUpExecutor struct {
 	resultCurr *lookupTableTask
 	feedback   *statistics.QueryFeedback
 
+	// isCheckOp is used to determine whether we need to check the consistency of the index data.
 	isCheckOp bool
 }
 
@@ -719,7 +720,9 @@ type tableWorker struct {
 	buildTblReader func(ctx context.Context, handles []int64) (Executor, error)
 	keepOrder      bool
 	handleIdx      int
-	isCheckOp      bool
+
+	// isCheckOp is used to determine whether we need to check the consistency of the index data.
+	isCheckOp bool
 }
 
 func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []int64) (Executor, error) {
@@ -735,7 +738,6 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []in
 		log.Error(err)
 		return nil, errors.Trace(err)
 	}
-	log.Warnf("====================================================== table %v", e.table.Meta().Name)
 	return tableReader, nil
 }
 
@@ -816,7 +818,6 @@ func (e *IndexLookUpExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) {
 	var err error
 	defer func() {
-		log.Warnf("**********************************************0 err %v", err)
 		task.doneCh <- errors.Trace(err)
 	}()
 	var tableReader Executor
@@ -852,10 +853,8 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) {
 		sort.Sort(task)
 	}
 
-	log.Warnf("handle count %d, value count %d", handleCnt, len(task.rows))
 	if w.isCheckOp && handleCnt != len(task.rows) {
 		err = errors.Errorf("handle count %d isn't equal to value count %d", handleCnt, len(task.rows))
-		log.Warnf("********************************************** err %v", err)
 	}
 }
 
@@ -896,7 +895,6 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context) (Row, error) {
 	for {
 		resultTask, err := e.getResultTask()
 		if err != nil {
-			log.Warnf("**********************************************2 err %v", err)
 			return nil, errors.Trace(err)
 		}
 		if resultTask == nil {
@@ -918,7 +916,6 @@ func (e *IndexLookUpExecutor) NextChunk(ctx context.Context, chk *chunk.Chunk) e
 	for {
 		resultTask, err := e.getResultTask()
 		if err != nil {
-			log.Warnf("**********************************************2 err %v", err)
 			return errors.Trace(err)
 		}
 		if resultTask == nil {
@@ -943,7 +940,6 @@ func (e *IndexLookUpExecutor) getResultTask() (*lookupTableTask, error) {
 		return nil, nil
 	}
 	err := <-task.doneCh
-	log.Warnf("**********************************************1 err %v", err)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

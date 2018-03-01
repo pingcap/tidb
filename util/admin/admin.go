@@ -246,18 +246,6 @@ func ScanIndexData(sc *stmtctx.StatementContext, txn kv.Transaction, kvIndex tab
 // It returns nil if the data from the index is equal to the data from the table columns,
 // otherwise it returns an error with a different set of records.
 func CompareIndexData(sc *stmtctx.StatementContext, txn kv.Transaction, t table.Table, idx table.Index) error {
-	// err := CheckIndicesCount(ctx, dbName, tblName, []string{idxName})
-	// if err != nil{
-	// 	return errors.Trace(err)
-	// }
-	// return errors.Trace(checkIndexAndRecordWithCop())
-	return nil
-}
-
-// CheckDiffIndexData compares index data one by one.
-// It returns nil if the data from the index is equal to the data from the table columns,
-// otherwise it returns an error with a different set of records.
-func CheckDiffIndexData(sc *stmtctx.StatementContext, txn kv.Transaction, t table.Table, idx table.Index) error {
 	err := checkIndexAndRecord(txn, t, idx)
 	if err != nil {
 		return errors.Trace(err)

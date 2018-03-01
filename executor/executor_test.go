@@ -38,14 +38,18 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
@@ -2376,4 +2380,104 @@ func (s *testSuite) TestEarlyClose(c *C) {
 		c.Assert(err, IsNil)
 		rs.Close()
 	}
+}
+
+func (s *testSuite) TestCheckIndex(c *C) {
+	s.ctx = mock.NewContext()
+	s.ctx.Store = s.store
+	dom, err := tidb.BootstrapSession(s.store)
+	c.Assert(err, IsNil)
+	se, err := tidb.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	defer se.Close()
+
+	_, err = se.Execute(context.Background(), "create database test_admin")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "use test_admin")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "create table t (pk int primary key, c int default 1, c1 int default 1, unique key c(c))")
+	c.Assert(err, IsNil)
+	is := dom.InfoSchema()
+	db := model.NewCIStr("test_admin")
+	dbInfo, ok := is.SchemaByName(db)
+	c.Assert(ok, IsTrue)
+	tblName := model.NewCIStr("t")
+	tbl, err := is.TableByName(db, tblName)
+	c.Assert(err, IsNil)
+	tbInfo := tbl.Meta()
+
+	alloc := autoid.NewAllocator(s.store, dbInfo.ID)
+	tb, err := tables.TableFromMeta(alloc, tbInfo)
+	c.Assert(err, IsNil)
+
+	// set data to:
+	// index     data (handle, data): (1, 10), (2, 20)
+	// table     data (handle, data): (1, 10), (2, 20)
+	recordVal1 := types.MakeDatums(int64(1), int64(10), int64(11))
+	recordVal2 := types.MakeDatums(int64(2), int64(20), int64(21))
+	c.Assert(s.ctx.NewTxn(), IsNil)
+	_, err = tb.AddRecord(s.ctx, recordVal1, false)
+	c.Assert(err, IsNil)
+	_, err = tb.AddRecord(s.ctx, recordVal2, false)
+	c.Assert(err, IsNil)
+	c.Assert(s.ctx.Txn().Commit(context.Background()), IsNil)
+
+	mockCtx := mock.NewContext()
+	idx := tb.Indices()[0]
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+
+	// set data to:
+	// index     data (handle, data): (1, 10), (2, 20), (3, 30)
+	// table     data (handle, data): (1, 10), (2, 20), (4, 40)
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	_, err = idx.Create(mockCtx, txn, types.MakeDatums(int64(30)), 3)
+	c.Assert(err, IsNil)
+	key := tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 4))
+	setColValue(c, txn, key, types.NewDatum(int64(40)))
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "admin check index t c")
+	c.Assert(strings.Contains(err.Error(), "isn't equal to value count"), IsTrue)
+
+	// set data to:
+	// index     data (handle, data): (1, 10), (2, 20), (3, 30), (4, 40)
+	// table     data (handle, data): (1, 10), (2, 20), (4, 40)
+	txn, err = s.store.Begin()
+	c.Assert(err, IsNil)
+	_, err = idx.Create(mockCtx, txn, types.MakeDatums(int64(40)), 4)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "admin check index t c")
+	c.Assert(strings.Contains(err.Error(), "table count 3 != index(c) count 4"), IsTrue)
+
+	// set data to:
+	// index     data (handle, data): (1, 10), (4, 40)
+	// table     data (handle, data): (1, 10), (2, 20), (4, 40)
+	txn, err = s.store.Begin()
+	c.Assert(err, IsNil)
+	err = idx.Delete(sc, txn, types.MakeDatums(int64(30)), 3)
+	c.Assert(err, IsNil)
+	err = idx.Delete(sc, txn, types.MakeDatums(int64(20)), 2)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "admin check index t c")
+	c.Assert(strings.Contains(err.Error(), "table count 3 != index(c) count 2"), IsTrue)
+
+	// TODO: pass the case below：
+	// set data to:
+	// index     data (handle, data): (1, 10), (4, 40), (2, 30)
+	// table     data (handle, data): (1, 10), (2, 20), (4, 40)
+}
+
+func setColValue(c *C, txn kv.Transaction, key kv.Key, v types.Datum) {
+	row := []types.Datum{v, {}}
+	colIDs := []int64{2, 3}
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	value, err := tablecodec.EncodeRow(sc, row, colIDs, nil, nil)
+	c.Assert(err, IsNil)
+	err = txn.Set(key, value)
+	c.Assert(err, IsNil)
 }

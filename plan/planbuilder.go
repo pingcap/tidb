@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
-	log "github.com/sirupsen/logrus"
 )
 
 // Error instances.
@@ -409,9 +408,7 @@ func (b *planBuilder) buildPrepare(x *ast.PrepareStmt) Plan {
 	return p
 }
 
-func (b *planBuilder) buildCheckIndex(as *ast.AdminStmt) Plan {
-	dbName := model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
-	// tblName.Schema
+func (b *planBuilder) buildCheckIndex(dbName model.CIStr, as *ast.AdminStmt) Plan {
 	tblName := as.Tables[0]
 	tbl, err := b.is.TableByName(dbName, tblName.Name)
 	if err != nil {
@@ -466,7 +463,6 @@ func (b *planBuilder) buildCheckIndex(as *ast.AdminStmt) Plan {
 	cop.tablePlan = ts
 	is.initSchema(id, idx, true)
 	t := finishCopTask(b.ctx, cop)
-	log.Warnf("plan ---------------------------------, columns %v", columns)
 
 	rootT := t.(*rootTask)
 	return rootT.p
@@ -480,8 +476,16 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 		p := &CheckTable{Tables: as.Tables}
 		ret = p
 	case ast.AdminCheckIndex:
-		readerPlan := b.buildCheckIndex(as)
-		ret = &CheckIndex{IndexLookUpReader: readerPlan.(*PhysicalIndexLookUpReader)}
+		dbName := model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+		if as.Tables[0].DBInfo != nil {
+			dbName = as.Tables[0].DBInfo.Name
+		}
+		readerPlan := b.buildCheckIndex(dbName, as)
+		ret = &CheckIndex{
+			DBName:            dbName.L,
+			IdxName:           as.Index,
+			IndexLookUpReader: readerPlan.(*PhysicalIndexLookUpReader),
+		}
 	case ast.AdminShowDDL:
 		p := &ShowDDL{}
 		p.SetSchema(buildShowDDLFields())

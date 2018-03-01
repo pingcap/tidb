@@ -22,21 +22,11 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"golang.org/x/net/context"
 )
@@ -139,101 +129,4 @@ func (s *testSuite) TestCopClientSend(c *C) {
 	rs.Close()
 	keyword := "(*copIterator).work"
 	c.Check(checkGoroutineExists(keyword), IsFalse)
-}
-
-func (s *testSuite) TestScanX(c *C) {
-	s.ctx = mock.NewContext()
-	s.ctx.Store = s.store
-	dom, err := tidb.BootstrapSession(s.store)
-	c.Assert(err, IsNil)
-	se, err := tidb.CreateSession4Test(s.store)
-	c.Assert(err, IsNil)
-	defer se.Close()
-
-	_, err = se.Execute(context.Background(), "create database test_admin")
-	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "use test_admin")
-	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "create table t (pk int primary key, c int default 1, c1 int default 1, unique key c(c))")
-	c.Assert(err, IsNil)
-	is := dom.InfoSchema()
-	db := model.NewCIStr("test_admin")
-	dbInfo, ok := is.SchemaByName(db)
-	c.Assert(ok, IsTrue)
-	tblName := model.NewCIStr("t")
-	tbl, err := is.TableByName(db, tblName)
-	c.Assert(err, IsNil)
-	tbInfo := tbl.Meta()
-
-	alloc := autoid.NewAllocator(s.store, dbInfo.ID)
-	tb, err := tables.TableFromMeta(alloc, tbInfo)
-	c.Assert(err, IsNil)
-	c.Assert(s.ctx.NewTxn(), IsNil)
-	_, err = tb.AddRecord(s.ctx, types.MakeDatums(1, 10, 11), false)
-	c.Assert(err, IsNil)
-	c.Assert(s.ctx.Txn().Commit(context.Background()), IsNil)
-
-	recordVal1 := types.MakeDatums(int64(1), int64(10), int64(11))
-	recordVal2 := types.MakeDatums(int64(2), int64(20), int64(21))
-
-	c.Assert(s.ctx.NewTxn(), IsNil)
-	_, err = tb.AddRecord(s.ctx, recordVal2, false)
-	c.Assert(err, IsNil)
-	c.Assert(s.ctx.Txn().Commit(context.Background()), IsNil)
-
-	ctx := se.(sessionctx.Context)
-	s.testIndex(c, ctx, db.L, tb, tb.Indices()[0])
-	_, err = se.Execute(context.Background(), "admin check index t c")
-	c.Assert(err, IsNil)
-	// r, err := se.Execute(context.Background(), "select c1 from t use index(c)")
-	// c.Assert(err, IsNil)
-	// c.Assert(r, HasLen, 1)
-	// goCtx := context.Background()
-	// row, err := r[0].Next(goCtx)
-	// c.Assert(err, IsNil)
-	// c.Assert(row, NotNil)
-	// row, err = r[0].Next(goCtx)
-	// c.Assert(err, IsNil)
-	// c.Assert(row, NotNil)
-	// row, err = r[0].Next(goCtx)
-	// c.Assert(err, IsNil)
-	// c.Assert(row, NotNil)
-	// row, err = r[0].Next(goCtx)
-	// c.Assert(err, IsNil)
-	// c.Assert(row, NotNil)
-
-	c.Assert(s.ctx.NewTxn(), IsNil)
-	err = tb.RemoveRecord(s.ctx, 1, recordVal1)
-	c.Assert(err, IsNil)
-	err = tb.RemoveRecord(s.ctx, 2, recordVal2)
-	c.Assert(err, IsNil)
-	c.Assert(s.ctx.Txn().Commit(context.Background()), IsNil)
-}
-
-func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb table.Table, idx table.Index) {
-	txn, err := s.store.Begin()
-	c.Assert(err, IsNil)
-	// sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	// idxNames := []string{idx.Meta().Name.L}
-	mockCtx := mock.NewContext()
-
-	// set data to:
-	// index     data (handle, data): (1, 10), (2, 20), (3, 30)
-	// table     data (handle, data): (1, 10), (2, 20), (4, 40)
-	_, err = idx.Create(mockCtx, txn, types.MakeDatums(int64(30)), 3)
-	c.Assert(err, IsNil)
-	key := tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 4))
-	setColValue(c, txn, key, types.NewDatum(int64(40)))
-	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
-}
-
-func setColValue(c *C, txn kv.Transaction, key kv.Key, v types.Datum) {
-	row := []types.Datum{v, {}}
-	colIDs := []int64{2, 3}
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	value, err := tablecodec.EncodeRow(sc, row, colIDs, nil, nil)
-	c.Assert(err, IsNil)
-	err = txn.Set(key, value)
-	c.Assert(err, IsNil)
 }

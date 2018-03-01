@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
-	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
@@ -410,14 +409,18 @@ func (e *CheckTableExec) run(ctx context.Context) error {
 	return nil
 }
 
-// CheckIndexExec TODO:
+// CheckIndexExec represents the executor of check an index.
+// It is built from the "admin check index" statement, and it checks if the
+// index matches the records in the table.
 type CheckIndexExec struct {
 	baseExecutor
 
-	src    Executor
-	tables []*ast.TableName
-	done   bool
-	is     infoschema.InfoSchema
+	dbName    string
+	tableName string
+	idxName   string
+	src       Executor
+	done      bool
+	is        infoschema.InfoSchema
 }
 
 // Open implements the Executor Open interface.
@@ -453,19 +456,19 @@ func (e *CheckIndexExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error 
 }
 
 func (e *CheckIndexExec) run(ctx context.Context) error {
-	// TODO: CheckIndicesCount
-	log.Warnf("run ---------------------------------")
-	cnt := 0
+	err := admin.CheckIndicesCount(e.ctx, e.dbName, e.tableName, []string{e.idxName})
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	for {
 		row, err := e.src.Next(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		log.Warnf("run row %v, no.%d", row, cnt)
 		if row == nil {
 			break
 		}
-		cnt++
 	}
 	return nil
 }
