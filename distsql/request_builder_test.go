@@ -19,11 +19,13 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -42,6 +44,16 @@ func TestT(t *testing.T) {
 var _ = Suite(&testSuite{})
 
 type testSuite struct {
+	sctx sessionctx.Context
+}
+
+func (s *testSuite) SetUpSuite(c *C) {
+	ctx := mock.NewContext()
+	ctx.Store = &mockStore{&mockClient{}}
+	s.sctx = ctx
+}
+
+func (s *testSuite) TearDownSuite(c *C) {
 }
 
 type handleRange struct {
