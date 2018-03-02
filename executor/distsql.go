@@ -888,8 +888,37 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) {
 	}
 
 	if w.isCheckOp && handleCnt != len(task.rows) {
-		err = errors.Errorf("handle count %d isn't equal to value count %d", handleCnt, len(task.rows))
+		obtainedHandlesMap := make(map[int64]struct{}, len(task.rows))
+		for _, row := range task.rows {
+			handle := row.GetInt64(w.handleIdx)
+			obtainedHandlesMap[handle] = struct{}{}
+		}
+		err = errors.Errorf("handle count %d isn't equal to value count %d, missing handles %v in a batch",
+			handleCnt, len(task.rows), GetLackHandles(task.handles, obtainedHandlesMap))
 	}
+}
+
+// GetLackHandles gets the handles in expectedHandles but not in obtainedHandlesMap.
+func GetLackHandles(expectedHandles []int64, obtainedHandlesMap map[int64]struct{}) []int64 {
+	diffCnt := len(expectedHandles) - len(obtainedHandlesMap)
+	diffHandles := make([]int64, 0, diffCnt)
+	var cnt int
+	for _, handle := range expectedHandles {
+		isExist := false
+		if _, ok := obtainedHandlesMap[handle]; ok {
+			delete(obtainedHandlesMap, handle)
+			isExist = true
+		}
+		if !isExist {
+			diffHandles = append(diffHandles, handle)
+			cnt++
+			if cnt == diffCnt {
+				break
+			}
+		}
+	}
+
+	return diffHandles
 }
 
 type tableResultHandler struct {

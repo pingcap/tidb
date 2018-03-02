@@ -429,6 +429,10 @@ func (b *planBuilder) buildCheckIndex(dbName model.CIStr, as *ast.AdminStmt) Pla
 		b.err = errors.Errorf("index %s do not exist", as.Index)
 		return nil
 	}
+	if idx.State != model.StatePublic {
+		b.err = errors.Errorf("index %s state %s isn't public", as.Index, idx.State)
+		return nil
+	}
 
 	id := 1
 	columns := make([]*model.ColumnInfo, 0, len(idx.Columns))

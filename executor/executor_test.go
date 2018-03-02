@@ -2438,6 +2438,7 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "admin check index t c")
+	c.Assert(err, NotNil)
 	c.Assert(strings.Contains(err.Error(), "isn't equal to value count"), IsTrue)
 
 	// set data to:

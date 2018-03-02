@@ -409,16 +409,16 @@ func (e *CheckTableExec) run(ctx context.Context) error {
 	return nil
 }
 
-// CheckIndexExec represents the executor of check an index.
-// It is built from the "admin check index" statement, and it checks if the
-// index matches the records in the table.
+// CheckIndexExec represents the executor of checking an index.
+// It is built from the "admin check index" statement, and it checks
+// the consistency of the index data with the records of the table.
 type CheckIndexExec struct {
 	baseExecutor
 
 	dbName    string
 	tableName string
 	idxName   string
-	src       Executor
+	src       *IndexLookUpExecutor
 	done      bool
 	is        infoschema.InfoSchema
 }
@@ -440,9 +440,22 @@ func (e *CheckIndexExec) Next(ctx context.Context) (Row, error) {
 	if e.done {
 		return nil, nil
 	}
-	err := e.run(ctx)
-	e.done = true
-	return nil, errors.Trace(err)
+	defer func() { e.done = true }()
+
+	err := admin.CheckIndicesCount(e.ctx, e.dbName, e.tableName, []string{e.idxName})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	for {
+		row, err := e.src.Next(ctx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if row == nil {
+			break
+		}
+	}
+	return nil, nil
 }
 
 // NextChunk implements the Executor NextChunk interface.
@@ -450,25 +463,23 @@ func (e *CheckIndexExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error 
 	if e.done {
 		return nil
 	}
-	err := e.run(ctx)
-	e.done = true
-	return errors.Trace(err)
-}
+	defer func() { e.done = true }()
 
-func (e *CheckIndexExec) run(ctx context.Context) error {
 	err := admin.CheckIndicesCount(e.ctx, e.dbName, e.tableName, []string{e.idxName})
 	if err != nil {
 		return errors.Trace(err)
 	}
-
+	cnt := 0
+	chk = e.src.newChunk()
 	for {
-		row, err := e.src.Next(ctx)
+		err := e.src.NextChunk(ctx, chk)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if row == nil {
+		if chk.NumRows() == 0 {
 			break
 		}
+		cnt++
 	}
 	return nil
 }
