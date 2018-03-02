@@ -334,7 +334,12 @@ func DecodeOne(b []byte) (remain []byte, d types.Datum, err error) {
 		b, v, err = DecodeCompactBytes(b)
 		d.SetBytes(v)
 	case decimalFlag:
-		b, d, err = DecodeDecimal(b)
+		var dec *types.MyDecimal
+		b, dec, err = DecodeDecimal(b)
+		precision, frac := dec.PrecisionAndFrac()
+		d.SetMysqlDecimal(dec)
+		d.SetLength(precision)
+		d.SetFrac(frac)
 	case durationFlag:
 		var r int64
 		b, r, err = DecodeInt(b)
@@ -534,12 +539,12 @@ func DecodeOneToChunk(b []byte, chk *chunk.Chunk, colIdx int, ft *types.FieldTyp
 		}
 		chk.AppendBytes(colIdx, v)
 	case decimalFlag:
-		var d types.Datum
-		b, d, err = DecodeDecimal(b)
+		var dec *types.MyDecimal
+		b, dec, err = DecodeDecimal(b)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		chk.AppendMyDecimal(colIdx, d.GetMysqlDecimal())
+		chk.AppendMyDecimal(colIdx, dec)
 	case durationFlag:
 		var r int64
 		b, r, err = DecodeInt(b)
