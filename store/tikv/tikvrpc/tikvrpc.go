@@ -143,10 +143,18 @@ type Response struct {
 	RawDelete        *kvrpcpb.RawDeleteResponse
 	RawScan          *kvrpcpb.RawScanResponse
 	Cop              *coprocessor.Response
-	CopStream        tikvpb.Tikv_CoprocessorStreamClient
+	CopStream        *CopStreamResponse
 	MvccGetByKey     *kvrpcpb.MvccGetByKeyResponse
 	MvccGetByStartTS *kvrpcpb.MvccGetByStartTsResponse
 	SplitRegion      *kvrpcpb.SplitRegionResponse
+}
+
+// CopStreamResponse combinates tikvpb.Tikv_CoprocessorStreamClient and the first Recv() result together.
+// In streaming API, get grpc stream client may not involve any network packet, then region error have
+// to be handled in Recv() function. This struct facilitates the error handling.
+type CopStreamResponse struct {
+	tikvpb.Tikv_CoprocessorStreamClient
+	*coprocessor.Response // The first result of Recv()
 }
 
 // SetContext set the Context field for the given req to the specified ctx.
@@ -273,6 +281,12 @@ func GenRegionErrorResp(req *Request, e *errorpb.Error) (*Response, error) {
 		resp.Cop = &coprocessor.Response{
 			RegionError: e,
 		}
+	case CmdCopStream:
+		resp.CopStream = &CopStreamResponse{
+			Response: &coprocessor.Response{
+				RegionError: e,
+			},
+		}
 	case CmdMvccGetByKey:
 		resp.MvccGetByKey = &kvrpcpb.MvccGetByKeyResponse{
 			RegionError: e,
@@ -328,8 +342,7 @@ func (resp *Response) GetRegionError() (*errorpb.Error, error) {
 	case CmdCop:
 		e = resp.Cop.GetRegionError()
 	case CmdCopStream:
-		// Region error will be returned when the first time StreamResponse.Recv() is called.
-		e = nil
+		e = resp.CopStream.Response.GetRegionError()
 	case CmdMvccGetByKey:
 		e = resp.MvccGetByKey.GetRegionError()
 	case CmdMvccGetByStartTs:
