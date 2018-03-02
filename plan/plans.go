@@ -46,6 +46,16 @@ type CheckTable struct {
 	Tables []*ast.TableName
 }
 
+// CheckIndex is used for checking index data, output the index values that handle within begin and end.
+type CheckIndex struct {
+	basePlan
+
+	Table     *ast.TableName
+	IndexName string
+	Begin     int64
+	End       int64
+}
+
 // CancelDDLJobs represents a cancel DDL jobs plan.
 type CancelDDLJobs struct {
 	basePlan

@@ -570,6 +570,7 @@ const (
 	AdminCheckTable
 	AdminShowDDLJobs
 	AdminCancelDDLJobs
+	AdminCheckIndex
 )
 
 // AdminStmt is the struct for Admin statement.
@@ -579,6 +580,10 @@ type AdminStmt struct {
 	Tp     AdminStmtType
 	Tables []*TableName
 	JobIDs []int64
+
+	IndexName string
+	Begin     int64
+	End       int64
 }
 
 // Accept implements Node Accpet interface.

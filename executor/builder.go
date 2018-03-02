@@ -15,6 +15,7 @@ package executor
 
 import (
 	"math"
+	"strings"
 	"time"
 
 	"github.com/juju/errors"
@@ -59,6 +60,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return nil
 	case *plan.CheckTable:
 		return b.buildCheckTable(v)
+	case *plan.CheckIndex:
+		return b.buildCheckIndex(v)
 	case *plan.DDL:
 		return b.buildDDL(v)
 	case *plan.Deallocate:
@@ -212,6 +215,34 @@ func (b *executorBuilder) buildCheckTable(v *plan.CheckTable) Executor {
 		ctx:    b.ctx,
 		is:     b.is,
 	}
+}
+
+func (b *executorBuilder) buildCheckIndex(v *plan.CheckIndex) Executor {
+	dbName := model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+	tb, err := b.is.TableByName(dbName, v.Table.Name)
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
+	e := &CheckIndexExec{
+		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
+		begin:        v.Begin,
+		end:          v.End,
+		table:        tb,
+		is:           b.is,
+	}
+	idxName := strings.ToLower(v.IndexName)
+	for _, idx := range tb.Indices() {
+		if idx.Meta().Name.L == idxName {
+			e.index = idx
+			e.startKey = make([]types.Datum, len(e.index.Meta().Columns))
+		}
+	}
+	if e.index == nil {
+		b.err = errors.New("index not found")
+		return nil
+	}
+	return e
 }
 
 func (b *executorBuilder) buildDeallocate(v *plan.Deallocate) Executor {

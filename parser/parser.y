@@ -4485,6 +4485,16 @@ AdminStmt:
 			JobIDs: $5.([]int64),
 		}
 	}
+|	"ADMIN" "CHECK" "INDEX" TableName IndexName '(' NUM ',' NUM ')'
+	{
+		$$ = &ast.AdminStmt{
+			Tp: ast.AdminCheckIndex,
+			Tables:	[]*ast.TableName{$4.(*ast.TableName)},
+			IndexName: $5.(string),
+			Begin: $7.(int64),
+			End: $9.(int64),
+		}
+	}
 
 NumList:
        NUM
