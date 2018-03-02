@@ -26,7 +26,6 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -614,19 +613,21 @@ func (it *copIterator) handleTaskOnce(bo *Backoffer, task *copTask, ch chan copR
 	return it.handleCopResponse(bo, resp.Cop, task, ch)
 }
 
-func (it *copIterator) handleCopStreamResult(bo *Backoffer, stream tikvpb.Tikv_CoprocessorStreamClient, task *copTask, ch chan copResponse) ([]*copTask, error) {
+func (it *copIterator) handleCopStreamResult(bo *Backoffer, stream *tikvrpc.CopStreamResponse, task *copTask, ch chan copResponse) ([]*copTask, error) {
+	var resp *coprocessor.Response
+	resp = stream.Response
 	for {
-		resp, err := stream.Recv()
+		remainedTasks, err := it.handleCopResponse(bo, resp, task, ch)
+		if err != nil || len(remainedTasks) != 0 {
+			return remainedTasks, errors.Trace(err)
+		}
+
+		resp, err = stream.Recv()
 		if err != nil {
 			if err == io.EOF {
 				return nil, nil
 			}
 			return nil, errors.Trace(err)
-		}
-
-		remainedTasks, err := it.handleCopResponse(bo, resp, task, ch)
-		if err != nil || len(remainedTasks) != 0 {
-			return remainedTasks, errors.Trace(err)
 		}
 	}
 }
@@ -640,6 +641,7 @@ func (it *copIterator) handleCopResponse(bo *Backoffer, resp *coprocessor.Respon
 		}
 		// We may meet RegionError at the first packet, but not during visiting the stream.
 		metrics.TiKVCoprocessorCounter.WithLabelValues("rebuild_task").Inc()
+
 		return buildCopTasks(bo, it.store.regionCache, task.ranges, it.req.Desc, it.req.Streaming)
 	}
 	if lockErr := resp.GetLocked(); lockErr != nil {
