@@ -958,6 +958,10 @@ func (s *testPlanSuite) TestRefine(c *C) {
 			best: "IndexReader(Index(t.c_d_e)[(1 3,1 +inf]])->Projection",
 		},
 		{
+			sql:  "select a from t where c in (1, 2, 3) and (d > 3 and d < 4 or d > 5 and d < 6)",
+			best: "IndexReader(Index(t.c_d_e)[])->Projection",
+		},
+		{
 			sql:  "select a from t where c in (1, 2, 3) and (d > 2 and d < 4 or d > 5 and d < 7)",
 			best: "IndexReader(Index(t.c_d_e)[(1 2,1 4) (1 5,1 7) (2 2,2 4) (2 5,2 7) (3 2,3 4) (3 5,3 7)])->Projection",
 		},
