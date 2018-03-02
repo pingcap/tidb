@@ -60,3 +60,14 @@ func BenchmarkEncodeIntWithOutSize(b *testing.B) {
 		EncodeInt(nil, 10)
 	}
 }
+
+func BenchmarkDecodeDecimal(b *testing.B) {
+	dec := &types.MyDecimal{}
+	dec.FromFloat64(1211.1211113)
+	precision, frac := dec.PrecisionAndFrac()
+	raw := EncodeDecimal([]byte{}, dec, precision, frac)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		DecodeDecimal(raw)
+	}
+}
