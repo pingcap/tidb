@@ -54,11 +54,6 @@ func (c *CopClient) IsRequestTypeSupported(reqType, subType int64) bool {
 			return c.supportExpr(tipb.ExprType(subType))
 		}
 	case kv.ReqTypeDAG:
-		// Now we only support pushing down stream aggregation on mocktikv.
-		// TODO: Remove it after TiKV supports stream aggregation.
-		if subType == kv.ReqSubTypeStreamAgg {
-			return c.store.mock
-		}
 		return c.supportExpr(tipb.ExprType(subType))
 	case kv.ReqTypeAnalyze:
 		return true
@@ -283,10 +278,26 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 		})
 	}
 
+	err := splitRanges(bo, cache, ranges, appendTask)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if desc {
+		reverseTasks(tasks)
+	}
+	if elapsed := time.Since(start); elapsed > time.Millisecond*500 {
+		log.Warnf("buildCopTasks takes too much time (%v), range len %v, task len %v", elapsed, rangesLen, len(tasks))
+	}
+	metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("coprocessor").Observe(float64(len(tasks)))
+	return tasks, nil
+}
+
+func splitRanges(bo *Backoffer, cache *RegionCache, ranges *copRanges, fn func(region RegionVerID, ranges *copRanges)) error {
 	for ranges.len() > 0 {
 		loc, err := cache.LocateKey(bo, ranges.at(0).StartKey)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 
 		// Iterate to the first range that is not complete in the region.
@@ -299,7 +310,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 		}
 		// All rest ranges belong to the same region.
 		if i == ranges.len() {
-			appendTask(loc.Region, ranges)
+			fn(loc.Region, ranges)
 			break
 		}
 
@@ -311,7 +322,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 				StartKey: r.StartKey,
 				EndKey:   loc.EndKey,
 			}
-			appendTask(loc.Region, taskRanges)
+			fn(loc.Region, taskRanges)
 
 			ranges = ranges.slice(i+1, ranges.len())
 			ranges.first = &kv.KeyRange{
@@ -320,19 +331,31 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 			}
 		} else {
 			// rs[i] is not in the region.
-			appendTask(loc.Region, ranges.slice(0, i))
+			taskRanges := ranges.slice(0, i)
+			fn(loc.Region, taskRanges)
 			ranges = ranges.slice(i, ranges.len())
 		}
 	}
 
-	if desc {
-		reverseTasks(tasks)
+	return nil
+}
+
+// SplitRegionRanges get the split ranges from pd region.
+func SplitRegionRanges(bo *Backoffer, cache *RegionCache, keyRanges []kv.KeyRange) ([]kv.KeyRange, error) {
+	ranges := copRanges{mid: keyRanges}
+
+	var ret []kv.KeyRange
+	appendRange := func(region RegionVerID, ranges *copRanges) {
+		for i := 0; i < ranges.len(); i++ {
+			ret = append(ret, ranges.at(i))
+		}
 	}
-	if elapsed := time.Since(start); elapsed > time.Millisecond*500 {
-		log.Warnf("buildCopTasks takes too much time (%v), range len %v, task len %v", elapsed, rangesLen, len(tasks))
+
+	err := splitRanges(bo, cache, &ranges, appendRange)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
-	metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("coprocessor").Observe(float64(len(tasks)))
-	return tasks, nil
+	return ret, nil
 }
 
 func reverseTasks(tasks []*copTask) {
@@ -466,10 +489,19 @@ func (it *copIterator) sendToRespCh(resp copResponse, respCh chan copResponse) (
 	return
 }
 
+// copResultSubset implements the kv.ResultSubset interface.
+type copResultSubset struct {
+	data []byte
+}
+
+// GetData implements the kv.ResultSubset GetData interface.
+func (rs *copResultSubset) GetData() []byte {
+	return rs.data
+}
+
 // Next returns next coprocessor result.
-// NOTE: Use nil to indicate finish, so if the returned values is a slice with
-// size 0, reader should continue to call Next().
-func (it *copIterator) Next(ctx context.Context) ([]byte, error) {
+// NOTE: Use nil to indicate finish, so if the returned ResultSubset is not nil, reader should continue to call Next().
+func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	metrics.TiKVCoprocessorCounter.WithLabelValues("next").Inc()
 
 	var (
@@ -516,9 +548,9 @@ func (it *copIterator) Next(ctx context.Context) ([]byte, error) {
 	}
 
 	if resp.Data == nil {
-		return []byte{}, nil
+		return &copResultSubset{}, nil
 	}
-	return resp.Data, nil
+	return &copResultSubset{data: resp.Data}, nil
 }
 
 // handleTask handles single copTask, sends the result to channel, retry automatically on error.
@@ -667,7 +699,7 @@ func (it *copIterator) Close() error {
 // copErrorResponse returns error when calling Next()
 type copErrorResponse struct{ error }
 
-func (it copErrorResponse) Next(ctx context.Context) ([]byte, error) {
+func (it copErrorResponse) Next(ctx context.Context) (kv.ResultSubset, error) {
 	return nil, it.error
 }
 

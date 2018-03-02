@@ -27,17 +27,18 @@ import (
 
 // Config contains configuration options.
 type Config struct {
-	Host         string `toml:"host" json:"host"`
-	Port         int    `toml:"port" json:"port"`
-	Store        string `toml:"store" json:"store"`
-	Path         string `toml:"path" json:"path"`
-	Socket       string `toml:"socket" json:"socket"`
-	BinlogSocket string `toml:"binlog-socket" json:"binlog-socket"`
-	Lease        string `toml:"lease" json:"lease"`
-	RunDDL       bool   `toml:"run-ddl" json:"run-ddl"`
-	SplitTable   bool   `toml:"split-table" json:"split-table"`
-	TokenLimit   int    `toml:"token-limit" json:"token-limit"`
-	EnableChunk  bool   `toml:"enable-chunk" json:"enable-chunk"`
+	Host            string `toml:"host" json:"host"`
+	Port            int    `toml:"port" json:"port"`
+	Store           string `toml:"store" json:"store"`
+	Path            string `toml:"path" json:"path"`
+	Socket          string `toml:"socket" json:"socket"`
+	BinlogSocket    string `toml:"binlog-socket" json:"binlog-socket"`
+	Lease           string `toml:"lease" json:"lease"`
+	RunDDL          bool   `toml:"run-ddl" json:"run-ddl"`
+	SplitTable      bool   `toml:"split-table" json:"split-table"`
+	TokenLimit      int    `toml:"token-limit" json:"token-limit"`
+	EnableChunk     bool   `toml:"enable-chunk" json:"enable-chunk"`
+	EnableStreaming bool   `toml:"enable-streaming" json:"enable-streaming"`
 
 	Log               Log               `toml:"log" json:"log"`
 	Security          Security          `toml:"security" json:"security"`
@@ -202,15 +203,16 @@ type TiKVClient struct {
 }
 
 var defaultConf = Config{
-	Host:        "0.0.0.0",
-	Port:        4000,
-	Store:       "mocktikv",
-	Path:        "/tmp/tidb",
-	RunDDL:      true,
-	SplitTable:  true,
-	Lease:       "10s",
-	TokenLimit:  1000,
-	EnableChunk: true,
+	Host:            "0.0.0.0",
+	Port:            4000,
+	Store:           "mocktikv",
+	Path:            "/tmp/tidb",
+	RunDDL:          true,
+	SplitTable:      true,
+	Lease:           "10s",
+	TokenLimit:      1000,
+	EnableChunk:     true,
+	EnableStreaming: false,
 	Log: Log{
 		Level:  "info",
 		Format: "text",
