@@ -625,6 +625,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TIDBMemQuotaHashJoin, strconv.FormatInt(DefTIDBMemQuotaHashJoin, 10)},
 	{ScopeSession, TIDBMemQuotaSort, strconv.FormatInt(DefTIDBMemQuotaSort, 10)},
 	{ScopeSession, TIDBMemQuotaTopn, strconv.FormatInt(DefTIDBMemQuotaTopn, 10)},
+	{ScopeSession, TiDBEnableStreaming, "0"},
 	/* The following variable is defined as session scope but is actually server scope. */
 	{ScopeSession, TiDBGeneralLog, strconv.Itoa(DefTiDBGeneralLog)},
 	{ScopeSession, TiDBConfig, ""},

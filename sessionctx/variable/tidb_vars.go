@@ -120,6 +120,9 @@ const (
 
 	// tidb_general_log is used to log every query in the server in info level.
 	TiDBGeneralLog = "tidb_general_log"
+
+	// tidb_enable_streaming enables TiDB to use streaming API for coprocessor requests.
+	TiDBEnableStreaming = "tidb_enable_streaming"
 )
 
 // Default TiDB system variable values.

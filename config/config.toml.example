@@ -38,6 +38,9 @@ enable-chunk = true
 # Valid options: ["log", "cancel"]
 oom-action = "log"
 
+# Enable coprocessor streaming.
+enable-streaming = false
+
 [log]
 # Log level: info, debug, warn, error, fatal.
 level = "info"
