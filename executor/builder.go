@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"math"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -71,6 +72,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildCheckTable(v)
 	case *plan.CheckIndex:
 		return b.buildCheckIndex(v)
+	case *plan.CheckIndexRange:
+		return b.buildCheckIndexRange(v)
 	case *plan.DDL:
 		return b.buildDDL(v)
 	case *plan.Deallocate:
@@ -226,6 +229,33 @@ func (b *executorBuilder) buildCheckTable(v *plan.CheckTable) Executor {
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		tables:       v.Tables,
 		is:           b.is,
+	}
+	return e
+}
+
+func (b *executorBuilder) buildCheckIndexRange(v *plan.CheckIndexRange) Executor {
+	dbName := model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+	tb, err := b.is.TableByName(dbName, v.Table.Name)
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
+	e := &CheckIndexRangeExec{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+		handleRanges: v.HandleRanges,
+		table:        tb,
+		is:           b.is,
+	}
+	idxName := strings.ToLower(v.IndexName)
+	for _, idx := range tb.Indices() {
+		if idx.Meta().Name.L == idxName {
+			e.index = idx
+			e.startKey = make([]types.Datum, len(e.index.Meta().Columns))
+		}
+	}
+	if e.index == nil {
+		b.err = errors.New("index not found")
+		return nil
 	}
 	return e
 }
