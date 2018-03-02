@@ -37,11 +37,11 @@ func validInterval(sc *stmtctx.StatementContext, low, high point) (bool, error) 
 		l = []byte(kv.Key(l).PrefixNext())
 	}
 	r, err := codec.EncodeKey(sc, nil, high.value)
-	if !high.excl {
-		r = []byte(kv.Key(r).PrefixNext())
-	}
 	if err != nil {
 		return false, errors.Trace(err)
+	}
+	if !high.excl {
+		r = []byte(kv.Key(r).PrefixNext())
 	}
 	return bytes.Compare(l, r) < 0, nil
 }
