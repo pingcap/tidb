@@ -1399,6 +1399,9 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"drop tables xxx, yyy", true},
 		{"drop table if exists xxx", true},
 		{"drop table if not exists xxx", false},
+		{"drop table xxx restrict", true},
+		{"drop table xxx, yyy cascade", true},
+		{"drop table if exists xxx restrict", true},
 		{"drop view if exists xxx", true},
 		{"drop stats t", true},
 		// for issue 974
