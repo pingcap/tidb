@@ -271,6 +271,9 @@ func (c *rpcClient) callRPC(ctx context.Context, client tikvpb.TikvClient, req *
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		// Read the first streaming response to get CopStreamResponse.
+		// This can make error handling much easier, because SendReq() retry on
+		// region error automatically.
 		var first *coprocessor.Response
 		first, err = resp.CopStream.Recv()
 		if err != nil {
