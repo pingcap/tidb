@@ -34,6 +34,9 @@ split-table = true
 # Enable chunk executors.
 enable-chunk = true
 
+# Enable coprocessor streaming.
+enable-streaming = false
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"
