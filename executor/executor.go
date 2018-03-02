@@ -49,7 +49,7 @@ var (
 	_ Executor = &SelectLockExec{}
 	_ Executor = &ShowDDLExec{}
 	_ Executor = &ShowDDLJobsExec{}
-	_ Executor = &ShowDDLJobIDExec{}
+	_ Executor = &ShowDDLJobQuerysExec{}
 	_ Executor = &SortExec{}
 	_ Executor = &StreamAggExec{}
 	_ Executor = &TableDualExec{}
@@ -305,8 +305,8 @@ type ShowDDLJobsExec struct {
 	jobs   []*model.Job
 }
 
-// ShowDDLJobIDExec represent a show DDL jobs job_id executor.
-type ShowDDLJobIDExec struct {
+// ShowDDLJobQuerysExec represent a show DDL jobs job_id executor.
+type ShowDDLJobQuerysExec struct {
 	baseExecutor
 
 	cursor int
@@ -316,7 +316,7 @@ type ShowDDLJobIDExec struct {
 }
 
 // Open implements the Executor Open interface.
-func (e *ShowDDLJobIDExec) Open(ctx context.Context) error {
+func (e *ShowDDLJobQuerysExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
@@ -337,7 +337,7 @@ func (e *ShowDDLJobIDExec) Open(ctx context.Context) error {
 }
 
 // Next implements the Executor Next interface.
-func (e *ShowDDLJobIDExec) Next(ctx context.Context) (Row, error) {
+func (e *ShowDDLJobQuerysExec) Next(ctx context.Context) (Row, error) {
 	if e.cursor >= len(e.jobs) {
 		return nil, nil
 	}
@@ -350,7 +350,7 @@ func (e *ShowDDLJobIDExec) Next(ctx context.Context) (Row, error) {
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (e *ShowDDLJobIDExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+func (e *ShowDDLJobQuerysExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.cursor >= len(e.jobs) {
 		return nil

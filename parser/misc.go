@@ -379,6 +379,7 @@ var tokenMap = map[string]int{
 	"PROFILES":                 profiles,
 	"QUARTER":                  quarter,
 	"QUERY":                    query,
+	"QUERYS":                   querys,
 	"QUICK":                    quick,
 	"SHARD_ROW_ID_BITS":        shardRowIDBits,
 	"RANGE":                    rangeKwd,

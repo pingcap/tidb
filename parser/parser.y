@@ -341,6 +341,7 @@ import (
 	profiles	"PROFILES"
 	quarter		"QUARTER"
 	query		"QUERY"
+	querys		"QUERYS"
 	quick		"QUICK"
 	redundant	"REDUNDANT"
 	reload		"RELOAD"
@@ -2525,7 +2526,7 @@ UnReservedKeyword:
 | "REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "INDEXES" | "PROCESSLIST"
 | "SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "MODIFY" | "EVENTS" | "PARTITIONS"
 | "NONE" | "SUPER" | "EXCLUSIVE" | "STATS_PERSISTENT" | "ROW_COUNT" | "COALESCE" | "MONTH" | "PROCESS" | "PROFILES"
-| "MICROSECOND" | "MINUTE" | "PLUGINS" | "QUERY" | "SECOND" | "SEPARATOR" | "SHARE" | "SHARED" | "MAX_CONNECTIONS_PER_HOUR" | "MAX_QUERIES_PER_HOUR" | "MAX_UPDATES_PER_HOUR"
+| "MICROSECOND" | "MINUTE" | "PLUGINS" | "QUERY" | "QUERYS" | "SECOND" | "SEPARATOR" | "SHARE" | "SHARED" | "MAX_CONNECTIONS_PER_HOUR" | "MAX_QUERIES_PER_HOUR" | "MAX_UPDATES_PER_HOUR"
 | "MAX_USER_CONNECTIONS" | "REPLICATION" | "CLIENT" | "SLAVE" | "RELOAD" | "TEMPORARY" | "ROUTINE" | "EVENT" | "ALGORITHM" | "DEFINER" | "INVOKER" | "MERGE" | "TEMPTABLE" | "UNDEFINED" | "SECURITY" | "CASCADED"
 
 TiDBKeyword:
@@ -4762,11 +4763,11 @@ AdminStmt:
 			JobIDs: $5.([]int64),
 		}
 	}
-|	"ADMIN" "SHOW" "DDL" "JOB" NumList
+|	"ADMIN" "SHOW" "DDL" "JOB" "QUERYS" NumList
     {
     		$$ = &ast.AdminStmt{
-    		    Tp: ast.AdminShowDDLJobID,
-    		    JobIDs: $5.([]int64),
+    		    Tp: ast.AdminShowDDLJobQuerys,
+    		    JobIDs: $6.([]int64),
     		}
     }
 
