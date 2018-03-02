@@ -14,56 +14,16 @@
 package memory
 
 import (
-	"fmt"
-	"sync"
 	"testing"
 )
 
-type mockQuery struct {
-	workerWaitGroup sync.WaitGroup
-	numExecutor     int
-	numUpdateCount  int
-	tracker         *Tracker
-}
-
-func (m *mockQuery) run() {
-	m.workerWaitGroup.Add(m.numExecutor)
-	for i := 0; i < m.numExecutor; i++ {
-		go m.runUpdate(i)
-	}
-	m.workerWaitGroup.Wait()
-}
-
-func (m *mockQuery) runUpdate(i int) {
-	defer m.workerWaitGroup.Done()
-	for cnt := 0; cnt < m.numUpdateCount; cnt++ {
-		m.tracker.children[i].Consume(256 << 20) // consume 256MB
-	}
-}
-
-func newMockQueryTracker(numExecutor, numUpdateCount int) *mockQuery {
-	m := &mockQuery{
-		numExecutor:    numExecutor,
-		numUpdateCount: numUpdateCount,
-		tracker:        NewTracker("query", -1),
-	}
-	for i := 0; i < numExecutor; i++ {
-		execTracker := NewTracker(fmt.Sprintf("exec%v", i), -1)
-		execTracker.AttachTo(m.tracker)
-	}
-	return m
-}
-
-func BenchmarkConcurrentUpdate(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		m := newMockQueryTracker(10, 1000)
-		m.run()
-	}
-}
-
 func BenchmarkConsume(b *testing.B) {
 	tracker := NewTracker("root", -1)
-	for i := 0; i < b.N; i++ {
-		tracker.Consume(256 << 20)
-	}
+	b.RunParallel(func(pb *testing.PB) {
+		childTracker := NewTracker("child", -1)
+		childTracker.AttachTo(tracker)
+		for pb.Next() {
+			childTracker.Consume(256 << 20)
+		}
+	})
 }
