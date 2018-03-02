@@ -478,12 +478,13 @@ func (mock *mockCopStreamClient) readBlockFromExecutor(counts []int64) (tipb.Chu
 	var chunk tipb.Chunk
 	var ran coprocessor.KeyRange
 	var finish bool
+	var desc bool
 	mock.exec.ResetCount()
-	ran.Start = mock.exec.Cursor()
+	ran.Start, desc = mock.exec.Cursor()
 	for count := 0; count < rowsPerChunk; count++ {
 		row, err := mock.exec.Next(mock.ctx)
 		if err != nil {
-			return chunk, false, &ran, errors.Trace(err)
+			return chunk, false, nil, errors.Trace(err)
 		}
 		if row == nil {
 			finish = true
@@ -494,7 +495,10 @@ func (mock *mockCopStreamClient) readBlockFromExecutor(counts []int64) (tipb.Chu
 		}
 	}
 
-	ran.End = mock.exec.Cursor()
+	ran.End, _ = mock.exec.Cursor()
+	if desc {
+		ran.Start, ran.End = ran.End, ran.Start
+	}
 	e := mock.exec
 	for offset := len(mock.req.Executors) - 1; e != nil; e, offset = e.GetSrcExec(), offset-1 {
 		count := e.Count()
