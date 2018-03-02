@@ -28,6 +28,24 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 )
 
+func validInterval(sc *stmtctx.StatementContext, low, high point) (bool, error) {
+	l, err := codec.EncodeKey(sc, nil, low.value)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	if low.excl {
+		l = []byte(kv.Key(l).PrefixNext())
+	}
+	r, err := codec.EncodeKey(sc, nil, high.value)
+	if !high.excl {
+		r = []byte(kv.Key(r).PrefixNext())
+	}
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return bytes.Compare(l, r) < 0, nil
+}
+
 // points2NewRanges build index ranges from range points.
 // Only one column is built there. If there're multiple columns, use appendPoints2NewRanges.
 func points2NewRanges(sc *stmtctx.StatementContext, rangePoints []point, tp *types.FieldType) ([]*NewRange, error) {
@@ -41,7 +59,7 @@ func points2NewRanges(sc *stmtctx.StatementContext, rangePoints []point, tp *typ
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		less, err := rangePointLess(sc, startPoint, endPoint)
+		less, err := validInterval(sc, startPoint, endPoint)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -142,7 +160,7 @@ func appendPoints2IndexRange(sc *stmtctx.StatementContext, origin *NewRange, ran
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		less, err := rangePointLess(sc, startPoint, endPoint)
+		less, err := validInterval(sc, startPoint, endPoint)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -202,7 +220,7 @@ func points2TableRanges(sc *stmtctx.StatementContext, rangePoints []point, tp *t
 		} else if endPoint.value.Kind() == types.KindNull {
 			continue
 		}
-		less, err := rangePointLess(sc, startPoint, endPoint)
+		less, err := validInterval(sc, startPoint, endPoint)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
