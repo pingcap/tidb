@@ -1313,6 +1313,13 @@ ColumnOption:
 			Stored: $6.(bool),
 		}
 	}
+|	ReferDef
+	{
+		$$ = &ast.ColumnOption{
+			Tp: ast.ColumnOptionReference,
+			Refer: $1.(*ast.ReferenceDef),
+		}
+	}
 
 GeneratedAlways: | "GENERATED" "ALWAYS"
 
