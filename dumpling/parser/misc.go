@@ -319,6 +319,7 @@ var tokenMap = map[string]int{
 	"LOCALTIME":         localTime,
 	"LOCALTIMESTAMP":    localTs,
 	"LOCK":              lock,
+	"LONG":              long,
 	"LONGBLOB":          longblobType,
 	"LONGTEXT":          longtextType,
 	"LOW_PRIORITY":      lowPriority,
