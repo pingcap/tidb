@@ -1511,6 +1511,8 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"CREATE TABLE t (c TEXT) shard_row_id_bits = 1;", true},
 		// Create table with ON UPDATE CURRENT_TIMESTAMP(6), specify fraction part.
 		{"CREATE TABLE IF NOT EXISTS `general_log` (`event_time` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),`user_host` mediumtext NOT NULL,`thread_id` bigint(20) unsigned NOT NULL,`server_id` int(10) unsigned NOT NULL,`command_type` varchar(64) NOT NULL,`argument` mediumblob NOT NULL) ENGINE=CSV DEFAULT CHARSET=utf8 COMMENT='General log'", true},
+		// For reference_definition in column_definition.
+		{"CREATE TABLE followers ( f1 int NOT NULL REFERENCES user_profiles (uid) );", true},
 
 		// for alter table
 		{"ALTER TABLE t ADD COLUMN (a SMALLINT UNSIGNED)", true},
@@ -1592,6 +1594,9 @@ func (s *testParserSuite) TestDDL(c *C) {
 
 		// for issue 4740
 		{"create table t (a int1, b int2, c int3, d int4, e int8)", true},
+
+		// for issue 5918
+		{"create table t (lv long varchar null)", true},
 	}
 	s.RunTest(c, table)
 }
