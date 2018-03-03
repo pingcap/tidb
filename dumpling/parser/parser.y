@@ -1960,11 +1960,11 @@ DropIndexStmt:
 	}
 
 DropTableStmt:
-	"DROP" TableOrTables TableNameList
+	"DROP" TableOrTables TableNameList RestrictOrCascadeOpt
 	{
 		$$ = &ast.DropTableStmt{Tables: $3.([]*ast.TableName)}
 	}
-|	"DROP" TableOrTables "IF" "EXISTS" TableNameList
+|	"DROP" TableOrTables "IF" "EXISTS" TableNameList RestrictOrCascadeOpt
 	{
 		$$ = &ast.DropTableStmt{IfExists: true, Tables: $5.([]*ast.TableName)}
 	}
@@ -1990,6 +1990,11 @@ DropStatsStmt:
 	{
 		$$ = &ast.DropStatsStmt{Table: $3.(*ast.TableName)}
 	}
+
+RestrictOrCascadeOpt:
+	{}
+|	"RESTRICT"
+|	"CASCADE"
 
 TableOrTables:
 	"TABLE"
