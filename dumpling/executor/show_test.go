@@ -463,6 +463,23 @@ func (s *testSuite) TestForeignKeyInShowCreateTable(c *C) {
 		c.Check(r, Equals, expectedRow[i])
 	}
 
+	testSQL = `CREATE TABLE followers (
+  f1 int NOT NULL REFERENCES user_profiles (uid),
+  f2 int NOT NULL REFERENCES user_profiles (uid),
+  PRIMARY KEY (f1,f2)
+);`
+	tk.MustExec(testSQL)
+	testSQL = "show create table followers;"
+	result = tk.MustQuery(testSQL)
+	c.Check(result.Rows(), HasLen, 1)
+	row = result.Rows()[0]
+	expectedRow = []interface{}{
+		"followers", "CREATE TABLE `followers` (\n  `f1` int(11) NOT NULL,\n  `f2` int(11) NOT NULL,\n" +
+			"  PRIMARY KEY (`f1`,`f2`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"}
+	for i, r := range row {
+		c.Check(r, Equals, expectedRow[i])
+	}
+
 	testSQL = "ALTER TABLE SHOW_TEST ADD CONSTRAINT `Fk` FOREIGN KEY (`id`) REFERENCES `t1` (`pk`) ON DELETE CASCADE ON UPDATE CASCADE\n "
 	tk.MustExec(testSQL)
 	testSQL = "show create table show_test;"
