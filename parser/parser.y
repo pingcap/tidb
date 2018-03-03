@@ -227,6 +227,7 @@ import (
 	utcTimestamp		"UTC_TIMESTAMP"
 	utcTime			"UTC_TIME"
 	values			"VALUES"
+	long			"LONG"
 	varcharType		"VARCHAR"
 	varbinaryType		"VARBINARY"
 	virtual			"VIRTUAL"
@@ -1312,6 +1313,13 @@ ColumnOption:
 			Stored: $6.(bool),
 		}
 	}
+|	ReferDef
+	{
+		$$ = &ast.ColumnOption{
+			Tp: ast.ColumnOptionReference,
+			Refer: $1.(*ast.ReferenceDef),
+		}
+	}
 
 GeneratedAlways: | "GENERATED" "ALWAYS"
 
@@ -1724,7 +1732,12 @@ PartitionDefinitionList:
 	{}
 
 PartitionDefinition:
-	"PARTITION" Identifier PartDefValuesOpt PartDefStorageOpt
+	"PARTITION" Identifier PartDefValuesOpt PartDefCommentOpt PartDefStorageOpt
+	{}
+
+PartDefCommentOpt:
+	{}
+|	"COMMENT" eq stringLit
 	{}
 
 PartDefValuesOpt:
@@ -5710,6 +5723,11 @@ TextType:
 |	"LONGTEXT"
 	{
 		x := types.NewFieldType(mysql.TypeLongBlob)
+		$$ = x
+	}
+|	"LONG" "VARCHAR"
+	{
+		x := types.NewFieldType(mysql.TypeMediumBlob)
 		$$ = x
 	}
 
