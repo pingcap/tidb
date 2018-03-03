@@ -141,10 +141,10 @@ const (
 	DefCurretTS                   = 0
 	DefMaxChunkSize               = 1024
 	DefDMLBatchSize               = 20000
-	DefTIDBMemQuotaQuery          = 32 * 1024 * 1024 * 1024 // 32GB.
-	DefTIDBMemQuotaHashJoin       = 32 * 1024 * 1024 * 1024 // 32GB.
-	DefTIDBMemQuotaSort           = 32 * 1024 * 1024 * 1024 // 32GB.
-	DefTIDBMemQuotaTopn           = 32 * 1024 * 1024 * 1024 // 32GB.
+	DefTiDBMemQuotaQuery          = 32 * 1024 * 1024 * 1024 // 32GB.
+	DefTiDBMemQuotaHashJoin       = 32 * 1024 * 1024 * 1024 // 32GB.
+	DefTiDBMemQuotaSort           = 32 * 1024 * 1024 * 1024 // 32GB.
+	DefTiDBMemQuotaTopn           = 32 * 1024 * 1024 * 1024 // 32GB.
 	DefTiDBGeneralLog             = 0
 )
 

@@ -26,10 +26,15 @@ import (
 //
 // https://github.com/cloudera/Impala/blob/cdh5-trunk/be/src/runtime/mem-tracker.h
 //
-// By default, memory consumption is tracked via calls to Consume(), either to
-// the tracker itself or to one of its descendents.
+// By default, memory consumption is tracked via calls to "Consume()", either to
+// the tracker itself or to one of its descendents. A typical sequence of calls
+// for a single Tracker is:
+// 1. tracker.SetLabel() / tracker.SetActionOnExceed() / tracker.AttachTo()
+// 2. tracker.Consume() / Tracker.ReplaceChild() / tracker.BytesConsumed()
 //
-// NOTE: This struct is thread-safe.
+// NOTE:
+// 1. Only "BytesConsumed()" and "Consume()" are thread-safe.
+// 2. Adjustment of Tracker tree is not thread-safe.
 type Tracker struct {
 	label          string      // Label of this "Tracker".
 	mutex          *sync.Mutex // For synchronization.
@@ -132,11 +137,11 @@ func (t *Tracker) String() string {
 }
 
 func (t *Tracker) toString(indent string, buffer *bytes.Buffer) {
-	buffer.WriteString(fmt.Sprintf("%s\"%s\"{\n", indent, t.label))
+	fmt.Fprintf(buffer, "%s\"%s\"{\n", indent, t.label)
 	if t.bytesLimit > 0 {
-		buffer.WriteString(fmt.Sprintf("%s  \"quota\": %s\n", indent, t.bytesToString(t.bytesLimit)))
+		fmt.Fprintf(buffer, "%s  \"quota\": %s\n", indent, t.bytesToString(t.bytesLimit))
 	}
-	buffer.WriteString(fmt.Sprintf("%s  \"consumed\": %s\n", indent, t.bytesToString(t.BytesConsumed())))
+	fmt.Fprintf(buffer, "%s  \"consumed\": %s\n", indent, t.bytesToString(t.BytesConsumed()))
 	for i := range t.children {
 		if t.children[i] != nil {
 			t.children[i].toString(indent+"  ", buffer)

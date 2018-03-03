@@ -321,10 +321,10 @@ func NewSessionVars() *SessionVars {
 		DistSQLScanConcurrency:     DefDistSQLScanConcurrency,
 		MaxChunkSize:               DefMaxChunkSize,
 		DMLBatchSize:               DefDMLBatchSize,
-		MemQuotaQuery:              DefTIDBMemQuotaQuery,
-		MemQuotaHashJoin:           DefTIDBMemQuotaHashJoin,
-		MemQuotaSort:               DefTIDBMemQuotaSort,
-		MemQuotaTopn:               DefTIDBMemQuotaTopn,
+		MemQuotaQuery:              DefTiDBMemQuotaQuery,
+		MemQuotaHashJoin:           DefTiDBMemQuotaHashJoin,
+		MemQuotaSort:               DefTiDBMemQuotaSort,
+		MemQuotaTopn:               DefTiDBMemQuotaTopn,
 	}
 	var enableStreaming string
 	if config.GetGlobalConfig().EnableStreaming {
@@ -496,13 +496,13 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBMaxChunkSize:
 		s.MaxChunkSize = tidbOptPositiveInt(val, DefMaxChunkSize)
 	case TIDBMemQuotaQuery:
-		s.MemQuotaQuery = tidbOptInt64(val, DefTIDBMemQuotaQuery)
+		s.MemQuotaQuery = tidbOptInt64(val, DefTiDBMemQuotaQuery)
 	case TIDBMemQuotaHashJoin:
-		s.MemQuotaHashJoin = tidbOptInt64(val, DefTIDBMemQuotaHashJoin)
+		s.MemQuotaHashJoin = tidbOptInt64(val, DefTiDBMemQuotaHashJoin)
 	case TIDBMemQuotaSort:
-		s.MemQuotaSort = tidbOptInt64(val, DefTIDBMemQuotaSort)
+		s.MemQuotaSort = tidbOptInt64(val, DefTiDBMemQuotaSort)
 	case TIDBMemQuotaTopn:
-		s.MemQuotaTopn = tidbOptInt64(val, DefTIDBMemQuotaTopn)
+		s.MemQuotaTopn = tidbOptInt64(val, DefTiDBMemQuotaTopn)
 	case TiDBGeneralLog:
 		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt(val, DefTiDBGeneralLog)))
 	case TiDBEnableStreaming:
