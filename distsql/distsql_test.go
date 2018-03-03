@@ -58,7 +58,7 @@ func (s *testSuite) TestSelect(c *C) {
 
 	/// 4 int64 types.
 	colTypes := []*types.FieldType{
-		&types.FieldType{
+		{
 			Tp:      mysql.TypeLonglong,
 			Flen:    mysql.MaxIntWidth,
 			Decimal: 0,
@@ -81,7 +81,8 @@ func (s *testSuite) TestSelect(c *C) {
 	response.Fetch(context.TODO())
 
 	chk := chunk.NewChunk(colTypes)
-	response.NextChunk(context.TODO(), chk)
+	err = response.NextChunk(context.TODO(), chk)
+	c.Assert(err, NotNil)
 	c.Assert(chk.NumRows(), Equals, 0)
 }
 
@@ -113,7 +114,10 @@ func (resp *mockResponse) Next(ctx context.Context) (kv.ResultSubset, error) {
 		return nil, errors.New("error happened")
 	}
 
-	respPB := new(tipb.SelectResponse)
+	respPB := &tipb.SelectResponse{
+		Chunks:       []tipb.Chunk{},
+		OutputCounts: []int64{1},
+	}
 	respBytes, err := respPB.Marshal()
 	if err != nil {
 		panic(err)
