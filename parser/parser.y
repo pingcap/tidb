@@ -4765,10 +4765,10 @@ AdminStmt:
 	}
 |	"ADMIN" "SHOW" "DDL" "JOB" "QUERYS" NumList
     {
-    		$$ = &ast.AdminStmt{
-    		    Tp: ast.AdminShowDDLJobQuerys,
-    		    JobIDs: $6.([]int64),
-    		}
+    	$$ = &ast.AdminStmt{
+    	    Tp: ast.AdminShowDDLJobQuerys,
+    	    JobIDs: $6.([]int64),
+    	}
     }
 
 NumList:
