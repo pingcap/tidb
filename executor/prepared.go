@@ -16,7 +16,6 @@ package executor
 import (
 	"math"
 	"sort"
-	"strings"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -290,7 +289,7 @@ func ResetStmtCtx(ctx sessionctx.Context, s ast.StmtNode) {
 	sc := new(stmtctx.StatementContext)
 	sc.TimeZone = sessVars.GetTimeZone()
 	sc.MemTracker = memory.NewTracker(s.Text(), sessVars.MemQuotaQuery)
-	switch strings.ToLower(config.GetGlobalConfig().OOMAction) {
+	switch config.GetGlobalConfig().OOMAction {
 	case config.OOMActionCancel:
 		sc.MemTracker.SetActionOnExceed(&memory.PanicOnExceed{})
 	case config.OOMActionLog:

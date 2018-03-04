@@ -21,6 +21,7 @@ import (
 	"os/signal"
 	"runtime"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -323,6 +324,7 @@ func validateConfig() {
 		log.Error("TiDB run with skip-grant-table need root privilege.")
 		os.Exit(-1)
 	}
+	cfg.OOMAction = strings.ToLower(cfg.OOMAction)
 }
 
 func setGlobalVars() {

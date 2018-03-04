@@ -324,6 +324,9 @@ func (t *OpenTracing) ToTracingConfig() *tracing.Configuration {
 }
 
 // The following constants represents the valid action configurations for OOMAction.
+// NOTE: Althrough the values is case insensitiv, we should use lower-case
+// strings because the configuration value will be transformed to lower-case
+// string and compared with these constants in the further usage.
 const (
 	OOMActionCancel = "cancel"
 	OOMActionLog    = "log"
