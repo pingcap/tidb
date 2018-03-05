@@ -469,7 +469,6 @@ func (e *CheckIndexExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	cnt := 0
 	chk = e.src.newChunk()
 	for {
 		err := e.src.NextChunk(ctx, chk)
@@ -479,7 +478,6 @@ func (e *CheckIndexExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error 
 		if chk.NumRows() == 0 {
 			break
 		}
-		cnt++
 	}
 	return nil
 }
