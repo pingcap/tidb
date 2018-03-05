@@ -23,15 +23,18 @@ type bitXorFunction struct {
 	aggFunction
 }
 
+func (bf *bitXorFunction) CreateContext(sc *stmtctx.StatementContext) *AggEvaluateContext {
+	evalCtx := bf.aggFunction.CreateContext(sc)
+	evalCtx.Value.SetUint64(0)
+	return evalCtx
+}
+
 // Update implements Aggregation interface.
 func (bf *bitXorFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
 	a := bf.Args[0]
 	value, err := a.Eval(row)
 	if err != nil {
 		return errors.Trace(err)
-	}
-	if evalCtx.Value.IsNull() {
-		evalCtx.Value.SetUint64(0)
 	}
 	if !value.IsNull() {
 		evalCtx.Value.SetUint64(evalCtx.Value.GetUint64() ^ value.GetUint64())
