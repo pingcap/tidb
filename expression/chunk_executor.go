@@ -18,8 +18,8 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -52,7 +52,7 @@ func hasUnVectorizableFunc(expr Expression) bool {
 }
 
 // VectorizedExecute evaluates a list of expressions column by column and append their results to "output" Chunk.
-func VectorizedExecute(ctx context.Context, exprs []Expression, iterator *chunk.Iterator4Chunk, output *chunk.Chunk) error {
+func VectorizedExecute(ctx sessionctx.Context, exprs []Expression, iterator *chunk.Iterator4Chunk, output *chunk.Chunk) error {
 	for colID, expr := range exprs {
 		err := evalOneColumn(ctx, expr, iterator, output, colID)
 		if err != nil {
@@ -62,7 +62,7 @@ func VectorizedExecute(ctx context.Context, exprs []Expression, iterator *chunk.
 	return nil
 }
 
-func evalOneColumn(ctx context.Context, expr Expression, iterator *chunk.Iterator4Chunk, output *chunk.Chunk, colID int) (err error) {
+func evalOneColumn(ctx sessionctx.Context, expr Expression, iterator *chunk.Iterator4Chunk, output *chunk.Chunk, colID int) (err error) {
 	switch fieldType, evalType := expr.GetType(), expr.GetType().EvalType(); evalType {
 	case types.ETInt:
 		for row := iterator.Begin(); err == nil && row != iterator.End(); row = iterator.Next() {
@@ -96,20 +96,7 @@ func evalOneColumn(ctx context.Context, expr Expression, iterator *chunk.Iterato
 	return errors.Trace(err)
 }
 
-// UnVectorizedExecute evaluates a list of expressions row by row and append their results to "output" Chunk.
-func UnVectorizedExecute(ctx context.Context, exprs []Expression, iterator *chunk.Iterator4Chunk, output *chunk.Chunk) error {
-	for row := iterator.Begin(); row != iterator.End(); row = iterator.Next() {
-		for colID, expr := range exprs {
-			err := evalOneCell(ctx, expr, row, output, colID)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
-	}
-	return nil
-}
-
-func evalOneCell(ctx context.Context, expr Expression, row chunk.Row, output *chunk.Chunk, colID int) (err error) {
+func evalOneCell(ctx sessionctx.Context, expr Expression, row chunk.Row, output *chunk.Chunk, colID int) (err error) {
 	switch fieldType, evalType := expr.GetType(), expr.GetType().EvalType(); evalType {
 	case types.ETInt:
 		err = executeToInt(ctx, expr, fieldType, row, output, colID)
@@ -129,7 +116,7 @@ func evalOneCell(ctx context.Context, expr Expression, row chunk.Row, output *ch
 	return errors.Trace(err)
 }
 
-func executeToInt(ctx context.Context, expr Expression, fieldType *types.FieldType, row chunk.Row, output *chunk.Chunk, colID int) error {
+func executeToInt(ctx sessionctx.Context, expr Expression, fieldType *types.FieldType, row chunk.Row, output *chunk.Chunk, colID int) error {
 	res, isNull, err := expr.EvalInt(ctx, row)
 	if err != nil {
 		return errors.Trace(err)
@@ -146,7 +133,7 @@ func executeToInt(ctx context.Context, expr Expression, fieldType *types.FieldTy
 	return nil
 }
 
-func executeToReal(ctx context.Context, expr Expression, fieldType *types.FieldType, row chunk.Row, output *chunk.Chunk, colID int) error {
+func executeToReal(ctx sessionctx.Context, expr Expression, fieldType *types.FieldType, row chunk.Row, output *chunk.Chunk, colID int) error {
 	res, isNull, err := expr.EvalReal(ctx, row)
 	if err != nil {
 		return errors.Trace(err)
@@ -161,7 +148,7 @@ func executeToReal(ctx context.Context, expr Expression, fieldType *types.FieldT
 	return nil
 }
 
-func executeToDecimal(ctx context.Context, expr Expression, fieldType *types.FieldType, row chunk.Row, output *chunk.Chunk, colID int) error {
+func executeToDecimal(ctx sessionctx.Context, expr Expression, fieldType *types.FieldType, row chunk.Row, output *chunk.Chunk, colID int) error {
 	res, isNull, err := expr.EvalDecimal(ctx, row)
 	if err != nil {
 		return errors.Trace(err)
@@ -174,7 +161,7 @@ func executeToDecimal(ctx context.Context, expr Expression, fieldType *types.Fie
 	return nil
 }
 
-func executeToDatetime(ctx context.Context, expr Expression, fieldType *types.FieldType, row chunk.Row, output *chunk.Chunk, colID int) error {
+func executeToDatetime(ctx sessionctx.Context, expr Expression, fieldType *types.FieldType, row chunk.Row, output *chunk.Chunk, colID int) error {
 	res, isNull, err := expr.EvalTime(ctx, row)
 	if err != nil {
 		return errors.Trace(err)
@@ -187,7 +174,7 @@ func executeToDatetime(ctx context.Context, expr Expression, fieldType *types.Fi
 	return nil
 }
 
-func executeToDuration(ctx context.Context, expr Expression, fieldType *types.FieldType, row chunk.Row, output *chunk.Chunk, colID int) error {
+func executeToDuration(ctx sessionctx.Context, expr Expression, fieldType *types.FieldType, row chunk.Row, output *chunk.Chunk, colID int) error {
 	res, isNull, err := expr.EvalDuration(ctx, row)
 	if err != nil {
 		return errors.Trace(err)
@@ -200,7 +187,7 @@ func executeToDuration(ctx context.Context, expr Expression, fieldType *types.Fi
 	return nil
 }
 
-func executeToJSON(ctx context.Context, expr Expression, fieldType *types.FieldType, row chunk.Row, output *chunk.Chunk, colID int) error {
+func executeToJSON(ctx sessionctx.Context, expr Expression, fieldType *types.FieldType, row chunk.Row, output *chunk.Chunk, colID int) error {
 	res, isNull, err := expr.EvalJSON(ctx, row)
 	if err != nil {
 		return errors.Trace(err)
@@ -213,7 +200,7 @@ func executeToJSON(ctx context.Context, expr Expression, fieldType *types.FieldT
 	return nil
 }
 
-func executeToString(ctx context.Context, expr Expression, fieldType *types.FieldType, row chunk.Row, output *chunk.Chunk, colID int) error {
+func executeToString(ctx sessionctx.Context, expr Expression, fieldType *types.FieldType, row chunk.Row, output *chunk.Chunk, colID int) error {
 	res, isNull, err := expr.EvalString(ctx, row)
 	if err != nil {
 		return errors.Trace(err)
@@ -235,7 +222,7 @@ func executeToString(ctx context.Context, expr Expression, fieldType *types.Fiel
 // VectorizedFilter applies a list of filters to a Chunk and
 // returns a bool slice, which indicates whether a row is passed the filters.
 // Filters is executed vectorized.
-func VectorizedFilter(ctx context.Context, filters []Expression, iterator *chunk.Iterator4Chunk, selected []bool) ([]bool, error) {
+func VectorizedFilter(ctx sessionctx.Context, filters []Expression, iterator *chunk.Iterator4Chunk, selected []bool) ([]bool, error) {
 	selected = selected[:0]
 	for i, numRows := 0, iterator.Len(); i < numRows; i++ {
 		selected = append(selected, true)
@@ -257,7 +244,7 @@ func VectorizedFilter(ctx context.Context, filters []Expression, iterator *chunk
 				selected[row.Idx()] = selected[row.Idx()] && !isNull && (filterResult != 0)
 			} else {
 				// TODO: should rewrite the filter to `cast(expr as SIGNED) != 0` and always use `EvalInt`.
-				bVal, err := EvalBool([]Expression{filter}, row, ctx)
+				bVal, err := EvalBool(ctx, []Expression{filter}, row)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}

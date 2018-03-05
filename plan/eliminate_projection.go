@@ -38,7 +38,7 @@ func canProjectionBeEliminatedStrict(p *PhysicalProjection) bool {
 	}
 	for i, expr := range p.Exprs {
 		col, ok := expr.(*expression.Column)
-		if !ok || !col.Equal(child.Schema().Columns[i], nil) {
+		if !ok || !col.Equal(nil, child.Schema().Columns[i]) {
 			return false
 		}
 	}
@@ -46,7 +46,7 @@ func canProjectionBeEliminatedStrict(p *PhysicalProjection) bool {
 }
 
 func resolveColumnAndReplace(origin *expression.Column, replace map[string]*expression.Column) {
-	dst := replace[string(origin.HashCode())]
+	dst := replace[string(origin.HashCode(nil))]
 	if dst != nil {
 		colName := origin.ColName
 		*origin = *dst
@@ -134,7 +134,7 @@ func (pe *projectionEliminater) eliminate(p LogicalPlan, replace map[string]*exp
 	}
 	exprs := proj.Exprs
 	for i, col := range proj.Schema().Columns {
-		replace[string(col.HashCode())] = exprs[i].(*expression.Column)
+		replace[string(col.HashCode(nil))] = exprs[i].(*expression.Column)
 	}
 	return p.Children()[0]
 }
@@ -181,7 +181,7 @@ func (p *LogicalSelection) replaceExprColumns(replace map[string]*expression.Col
 func (la *LogicalApply) replaceExprColumns(replace map[string]*expression.Column) {
 	la.LogicalJoin.replaceExprColumns(replace)
 	for _, coCol := range la.corCols {
-		dst := replace[string(coCol.Column.HashCode())]
+		dst := replace[string(coCol.Column.HashCode(nil))]
 		if dst != nil {
 			coCol.Column = *dst
 		}

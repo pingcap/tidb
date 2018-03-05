@@ -20,13 +20,14 @@ import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/terror"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 type testSafePointSuite struct {
 	store  *tikvStore
-	oracle *MockOracle
+	oracle *mockoracle.MockOracle
 	prefix string
 }
 
@@ -34,7 +35,7 @@ var _ = Suite(&testSafePointSuite{})
 
 func (s *testSafePointSuite) SetUpSuite(c *C) {
 	s.store = newTestStore(c)
-	s.oracle = &MockOracle{}
+	s.oracle = &mockoracle.MockOracle{}
 	s.store.oracle = s.oracle
 	s.prefix = fmt.Sprintf("seek_%d", time.Now().Unix())
 }
@@ -79,7 +80,7 @@ func (s *testSafePointSuite) TestSafePoint(c *C) {
 		err := txn.Set(encodeKey(s.prefix, s08d("key", i)), valueBytes(i))
 		c.Assert(err, IsNil)
 	}
-	err := txn.Commit(goctx.Background())
+	err := txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	// for txn get

@@ -18,10 +18,13 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/codec"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -50,6 +53,7 @@ type Constant struct {
 	Value        types.Datum
 	RetType      *types.FieldType
 	DeferredExpr Expression // parameter getter expression
+	hashcode     []byte
 }
 
 // String implements fmt.Stringer interface.
@@ -109,7 +113,7 @@ func (c *Constant) Eval(_ types.Row) (types.Datum, error) {
 }
 
 // EvalInt returns int representation of Constant.
-func (c *Constant) EvalInt(ctx context.Context, _ types.Row) (int64, bool, error) {
+func (c *Constant) EvalInt(ctx sessionctx.Context, _ types.Row) (int64, bool, error) {
 	if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(nil)
 		if err != nil {
@@ -136,7 +140,7 @@ func (c *Constant) EvalInt(ctx context.Context, _ types.Row) (int64, bool, error
 }
 
 // EvalReal returns real representation of Constant.
-func (c *Constant) EvalReal(ctx context.Context, _ types.Row) (float64, bool, error) {
+func (c *Constant) EvalReal(ctx sessionctx.Context, _ types.Row) (float64, bool, error) {
 	if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(nil)
 		if err != nil {
@@ -163,7 +167,7 @@ func (c *Constant) EvalReal(ctx context.Context, _ types.Row) (float64, bool, er
 }
 
 // EvalString returns string representation of Constant.
-func (c *Constant) EvalString(ctx context.Context, _ types.Row) (string, bool, error) {
+func (c *Constant) EvalString(ctx sessionctx.Context, _ types.Row) (string, bool, error) {
 	if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(nil)
 		if err != nil {
@@ -187,7 +191,7 @@ func (c *Constant) EvalString(ctx context.Context, _ types.Row) (string, bool, e
 }
 
 // EvalDecimal returns decimal representation of Constant.
-func (c *Constant) EvalDecimal(ctx context.Context, _ types.Row) (*types.MyDecimal, bool, error) {
+func (c *Constant) EvalDecimal(ctx sessionctx.Context, _ types.Row) (*types.MyDecimal, bool, error) {
 	if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(nil)
 		if err != nil {
@@ -207,7 +211,7 @@ func (c *Constant) EvalDecimal(ctx context.Context, _ types.Row) (*types.MyDecim
 }
 
 // EvalTime returns DATE/DATETIME/TIMESTAMP representation of Constant.
-func (c *Constant) EvalTime(ctx context.Context, _ types.Row) (val types.Time, isNull bool, err error) {
+func (c *Constant) EvalTime(ctx sessionctx.Context, _ types.Row) (val types.Time, isNull bool, err error) {
 	if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(nil)
 		if err != nil {
@@ -234,7 +238,7 @@ func (c *Constant) EvalTime(ctx context.Context, _ types.Row) (val types.Time, i
 }
 
 // EvalDuration returns Duration representation of Constant.
-func (c *Constant) EvalDuration(ctx context.Context, _ types.Row) (val types.Duration, isNull bool, err error) {
+func (c *Constant) EvalDuration(ctx sessionctx.Context, _ types.Row) (val types.Duration, isNull bool, err error) {
 	if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(nil)
 		if err != nil {
@@ -261,7 +265,7 @@ func (c *Constant) EvalDuration(ctx context.Context, _ types.Row) (val types.Dur
 }
 
 // EvalJSON returns JSON representation of Constant.
-func (c *Constant) EvalJSON(ctx context.Context, _ types.Row) (json.BinaryJSON, bool, error) {
+func (c *Constant) EvalJSON(ctx sessionctx.Context, _ types.Row) (json.BinaryJSON, bool, error) {
 	if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(nil)
 		if err != nil {
@@ -286,7 +290,7 @@ func (c *Constant) EvalJSON(ctx context.Context, _ types.Row) (json.BinaryJSON, 
 }
 
 // Equal implements Expression interface.
-func (c *Constant) Equal(b Expression, ctx context.Context) bool {
+func (c *Constant) Equal(ctx sessionctx.Context, b Expression) bool {
 	y, ok := b.(*Constant)
 	if !ok {
 		return false
@@ -311,6 +315,23 @@ func (c *Constant) IsCorrelated() bool {
 // Decorrelate implements Expression interface.
 func (c *Constant) Decorrelate(_ *Schema) Expression {
 	return c
+}
+
+// HashCode implements Expression interface.
+func (c *Constant) HashCode(sc *stmtctx.StatementContext) []byte {
+	if len(c.hashcode) > 0 {
+		return c.hashcode
+	}
+	_, err := c.Eval(nil)
+	if err != nil {
+		terror.Log(errors.Trace(err))
+	}
+	c.hashcode = append(c.hashcode, constantFlag)
+	c.hashcode, err = codec.EncodeValue(sc, c.hashcode, c.Value)
+	if err != nil {
+		terror.Log(errors.Trace(err))
+	}
+	return c.hashcode
 }
 
 // ResolveIndices implements Expression interface.

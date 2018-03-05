@@ -193,11 +193,18 @@ func genColumnData(table *table, column *column) (string, error) {
 
 		data = append(data, '\'')
 		return string(data), nil
-	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeDecimal:
+	case mysql.TypeFloat, mysql.TypeDouble:
 		var data float64
 		if isUnique {
 			data = float64(uniqInt64Value(column, 0, math.MaxInt64))
 		} else {
+			if column.hist != nil {
+				if tp.Tp == mysql.TypeDouble {
+					data = column.hist.randFloat64()
+				} else {
+					data = float64(column.hist.randFloat32())
+				}
+			}
 			if isUnsigned {
 				data = float64(randInt64Value(column, 0, math.MaxInt64-1))
 			} else {
@@ -210,7 +217,7 @@ func genColumnData(table *table, column *column) (string, error) {
 		if isUnique {
 			data = append(data, []byte(column.data.uniqDate())...)
 		} else {
-			data = append(data, []byte(randDate(column.min, column.max))...)
+			data = append(data, []byte(randDate(column))...)
 		}
 
 		data = append(data, '\'')
@@ -220,7 +227,7 @@ func genColumnData(table *table, column *column) (string, error) {
 		if isUnique {
 			data = append(data, []byte(column.data.uniqTimestamp())...)
 		} else {
-			data = append(data, []byte(randTimestamp(column.min, column.max))...)
+			data = append(data, []byte(randTimestamp(column))...)
 		}
 
 		data = append(data, '\'')
@@ -230,7 +237,7 @@ func genColumnData(table *table, column *column) (string, error) {
 		if isUnique {
 			data = append(data, []byte(column.data.uniqTime())...)
 		} else {
-			data = append(data, []byte(randTime(column.min, column.max))...)
+			data = append(data, []byte(randTime(column))...)
 		}
 
 		data = append(data, '\'')
@@ -240,12 +247,12 @@ func genColumnData(table *table, column *column) (string, error) {
 		if isUnique {
 			data = append(data, []byte(column.data.uniqYear())...)
 		} else {
-			data = append(data, []byte(randYear(column.min, column.max))...)
+			data = append(data, []byte(randYear(column))...)
 		}
 
 		data = append(data, '\'')
 		return string(data), nil
-	case mysql.TypeNewDecimal:
+	case mysql.TypeNewDecimal, mysql.TypeDecimal:
 		var limit = int64(math.Pow10(tp.Flen))
 		var intVal int64
 		if limit < 0 {

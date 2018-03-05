@@ -19,9 +19,9 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -100,7 +100,7 @@ func pbTypeToFieldType(tp *tipb.FieldType) *types.FieldType {
 	}
 }
 
-func getSignatureByPB(ctx context.Context, sigCode tipb.ScalarFuncSig, tp *tipb.FieldType, args []Expression) (f builtinFunc, e error) {
+func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *tipb.FieldType, args []Expression) (f builtinFunc, e error) {
 	fieldTp := pbTypeToFieldType(tp)
 	base := newBaseBuiltinFunc(ctx, args)
 	base.tp = fieldTp
@@ -684,10 +684,15 @@ func convertFloat(val []byte, f32 bool) (*Constant, error) {
 
 func convertDecimal(val []byte) (*Constant, error) {
 	_, dec, err := codec.DecodeDecimal(val)
+	var d types.Datum
+	precision, frac := dec.PrecisionAndFrac()
+	d.SetMysqlDecimal(dec)
+	d.SetLength(precision)
+	d.SetFrac(frac)
 	if err != nil {
 		return nil, errors.Errorf("invalid decimal % x", val)
 	}
-	return &Constant{Value: dec, RetType: types.NewFieldType(mysql.TypeNewDecimal)}, nil
+	return &Constant{Value: d, RetType: types.NewFieldType(mysql.TypeNewDecimal)}, nil
 }
 
 func convertDuration(val []byte) (*Constant, error) {

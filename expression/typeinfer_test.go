@@ -19,11 +19,11 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/printer"
@@ -132,7 +132,7 @@ func (s *testInferTypeSuite) TestInferType(c *C) {
 	tests = append(tests, s.createTestCase4AggregationFunc()...)
 
 	for _, tt := range tests {
-		ctx := testKit.Se.(context.Context)
+		ctx := testKit.Se.(sessionctx.Context)
 		sql := "select " + tt.sql + " from t"
 		comment := Commentf("for %s", sql)
 		stmt, err := s.ParseOneStmt(sql, "", "")

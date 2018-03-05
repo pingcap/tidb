@@ -34,6 +34,9 @@ split-table = true
 # Enable chunk executors.
 enable-chunk = true
 
+# Enable coprocessor streaming.
+enable-streaming = false
+
 [log]
 # Log level: info, debug, warn, error, fatal.
 level = "info"
@@ -49,6 +52,9 @@ disable-timestamp = false
 
 # Queries with execution time greater than this value will be logged. (Milliseconds)
 slow-threshold = 300
+
+# Queries with internal result greater than this value will be logged.
+expensive-threshold = 10000
 
 # Maximum query length recorded in log.
 query-log-max-len = 2048

@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/goroutine_pool"
 	"github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 type twoPhaseCommitAction int
@@ -144,7 +144,7 @@ func newTwoPhaseCommitter(txn *tikvTxn) (*twoPhaseCommitter, error) {
 	}
 
 	metrics.TiKVTxnWriteKVCountHistogram.Observe(float64(len(keys)))
-	metrics.TiKVTxnWriteSizeHistogram.Observe(float64(size / 1024))
+	metrics.TiKVTxnWriteSizeHistogram.Observe(float64(size))
 	return &twoPhaseCommitter{
 		store:     txn.store,
 		txn:       txn,
@@ -261,7 +261,7 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 
 	// For prewrite, stop sending other requests after receiving first error.
 	backoffer := bo
-	var cancel goctx.CancelFunc
+	var cancel context.CancelFunc
 	if action == actionPrewrite {
 		backoffer, cancel = bo.Fork()
 	}
@@ -562,7 +562,7 @@ func (c *twoPhaseCommitter) cleanupKeys(bo *Backoffer, keys [][]byte) error {
 const maxTxnTimeUse = 590000
 
 // execute executes the two-phase commit protocol.
-func (c *twoPhaseCommitter) execute(ctx goctx.Context) error {
+func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 	defer func() {
 		// Always clean up all written keys if the txn does not commit.
 		c.mu.RLock()
@@ -572,7 +572,7 @@ func (c *twoPhaseCommitter) execute(ctx goctx.Context) error {
 		c.mu.RUnlock()
 		if !committed && !undetermined {
 			twoPhaseCommitGP.Go(func() {
-				err := c.cleanupKeys(NewBackoffer(cleanupMaxBackoff, goctx.Background()), writtenKeys)
+				err := c.cleanupKeys(NewBackoffer(context.Background(), cleanupMaxBackoff), writtenKeys)
 				if err != nil {
 					metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("rollback").Inc()
 					log.Infof("2PC cleanup err: %v, tid: %d", err, c.startTS)
@@ -595,10 +595,10 @@ func (c *twoPhaseCommitter) execute(ctx goctx.Context) error {
 	// I'm not sure is it safe to cancel 2pc commit process at any time,
 	// So use a new Background() context instead of inherit the ctx, this is by design,
 	// to avoid the cancel signal from parent context.
-	ctx = opentracing.ContextWithSpan(goctx.Background(), span)
+	ctx = opentracing.ContextWithSpan(context.Background(), span)
 
 	binlogChan := c.prewriteBinlog()
-	err := c.prewriteKeys(NewBackoffer(prewriteMaxBackoff, ctx), c.keys)
+	err := c.prewriteKeys(NewBackoffer(ctx, prewriteMaxBackoff), c.keys)
 	if binlogChan != nil {
 		binlogErr := <-binlogChan
 		if binlogErr != nil {
@@ -610,7 +610,7 @@ func (c *twoPhaseCommitter) execute(ctx goctx.Context) error {
 		return errors.Trace(err)
 	}
 
-	commitTS, err := c.store.getTimestampWithRetry(NewBackoffer(tsoMaxBackoff, ctx))
+	commitTS, err := c.store.getTimestampWithRetry(NewBackoffer(ctx, tsoMaxBackoff))
 	if err != nil {
 		log.Warnf("2PC get commitTS failed: %v, tid: %d", err, c.startTS)
 		return errors.Trace(err)
@@ -634,7 +634,7 @@ func (c *twoPhaseCommitter) execute(ctx goctx.Context) error {
 		return errors.Annotate(err, txnRetryableMark)
 	}
 
-	err = c.commitKeys(NewBackoffer(commitMaxBackoff, ctx), c.keys)
+	err = c.commitKeys(NewBackoffer(ctx, commitMaxBackoff), c.keys)
 	if err != nil {
 		if undeterminedErr := c.getUndeterminedErr(); undeterminedErr != nil {
 			log.Warnf("2PC commit result undetermined, err: %v, rpcErr: %v, tid: %v", err, undeterminedErr, c.startTS)

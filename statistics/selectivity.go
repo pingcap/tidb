@@ -18,9 +18,9 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/ranger"
 )
 
@@ -80,17 +80,15 @@ func pseudoSelectivity(exprs []expression.Expression) float64 {
 // And exprs must be CNF now, in other words, `exprs[0] and exprs[1] and ... and exprs[len - 1]` should be held when you call this.
 // TODO: support expressions that the top layer is a DNF.
 // Currently the time complexity is o(n^2).
-func (t *Table) Selectivity(ctx context.Context, exprs []expression.Expression) (float64, error) {
-	if t.Count == 0 {
+func (t *Table) Selectivity(ctx sessionctx.Context, exprs []expression.Expression) (float64, error) {
+	// If table's count is zero or conditions are empty, we should return 100% selectivity.
+	if t.Count == 0 || len(exprs) == 0 {
 		return 1, nil
 	}
 	// TODO: If len(exprs) is bigger than 63, we could use bitset structure to replace the int64.
 	// This will simplify some code and speed up if we use this rather than a boolean slice.
 	if t.Pseudo || len(exprs) > 63 || (len(t.Columns) == 0 && len(t.Indices) == 0) {
 		return pseudoSelectivity(exprs), nil
-	}
-	if len(exprs) == 0 {
-		return 1.0, nil
 	}
 	var sets []*exprSet
 	sc := ctx.GetSessionVars().StmtCtx
@@ -150,7 +148,7 @@ func (t *Table) Selectivity(ctx context.Context, exprs []expression.Expression) 
 	return ret, nil
 }
 
-func getMaskAndRanges(ctx context.Context, exprs []expression.Expression, rangeType ranger.RangeType,
+func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, rangeType ranger.RangeType,
 	lengths []int, cols ...*expression.Column) (mask int64, ranges []*ranger.NewRange, err error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	var accessConds []expression.Expression
@@ -168,7 +166,7 @@ func getMaskAndRanges(ctx context.Context, exprs []expression.Expression, rangeT
 	}
 	for i := range exprs {
 		for j := range accessConds {
-			if exprs[i].Equal(accessConds[j], ctx) {
+			if exprs[i].Equal(ctx, accessConds[j]) {
 				mask |= 1 << uint64(i)
 				break
 			}

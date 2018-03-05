@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 func (s *testSuite) TestTruncateTable(c *C) {
@@ -63,9 +63,9 @@ func (s *testSuite) TestCreateTable(c *C) {
 	tk.MustExec(`create table issue312_2 (c float(25));`)
 	rs, err := tk.Exec(`desc issue312_1`)
 	c.Assert(err, IsNil)
-	goCtx := goctx.Background()
+	ctx := context.Background()
 	for {
-		row, err1 := rs.Next(goCtx)
+		row, err1 := rs.Next(ctx)
 		c.Assert(err1, IsNil)
 		if row == nil {
 			break
@@ -75,7 +75,7 @@ func (s *testSuite) TestCreateTable(c *C) {
 	rs, err = tk.Exec(`desc issue312_2`)
 	c.Assert(err, IsNil)
 	for {
-		row, err1 := rs.Next(goCtx)
+		row, err1 := rs.Next(ctx)
 		c.Assert(err1, IsNil)
 		if row == nil {
 			break
@@ -146,7 +146,7 @@ func (s *testSuite) TestAlterTableAddColumn(c *C) {
 	now := time.Now().Add(-time.Duration(1 * time.Second)).Format(types.TimeFormat)
 	r, err := tk.Exec("select c2 from alter_test")
 	c.Assert(err, IsNil)
-	row, err := r.Next(goctx.Background())
+	row, err := r.Next(context.Background())
 	c.Assert(err, IsNil)
 	c.Assert(row.Len(), Equals, 1)
 	c.Assert(now, GreaterEqual, row.GetTime(0).String())

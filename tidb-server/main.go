@@ -31,10 +31,12 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/gcworker"
 	"github.com/pingcap/tidb/terror"
@@ -105,14 +107,6 @@ var (
 	// PROXY Protocol
 	proxyProtocolNetworks      = flag.String(nmProxyProtocolNetworks, "", "proxy protocol networks allowed IP or *, empty mean disable proxy protocol support")
 	proxyProtocolHeaderTimeout = flag.Int(nmProxyProtocolHeaderTimeout, 5, "proxy protocol header read timeout, unit is second.")
-
-	timeJumpBackCounter = prometheus.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "monitor",
-			Name:      "time_jump_back_total",
-			Help:      "Counter of system time jumps backward.",
-		})
 )
 
 var (
@@ -153,7 +147,7 @@ func registerStores() {
 	err := tidb.RegisterStore("tikv", tikv.Driver{})
 	terror.MustNil(err)
 	tikv.NewGCHandlerFunc = gcworker.NewGCWorker
-	err = tidb.RegisterStore("mocktikv", tikv.MockDriver{})
+	err = tidb.RegisterStore("mocktikv", mockstore.MockDriver{})
 	terror.MustNil(err)
 }
 
@@ -415,10 +409,19 @@ func setupSignalHandler() {
 }
 
 func setupMetrics() {
-	prometheus.MustRegister(timeJumpBackCounter)
-	go systimemon.StartMonitor(time.Now, func() {
-		timeJumpBackCounter.Inc()
-	})
+	systimeErrHandler := func() {
+		metrics.TimeJumpBackCounter.Inc()
+	}
+	callBackCount := 0
+	sucessCallBack := func() {
+		callBackCount++
+		// It is callback by monitor per second, we increase metrics.KeepAliveCounter per 5s.
+		if callBackCount >= 5 {
+			callBackCount = 0
+			metrics.KeepAliveCounter.Inc()
+		}
+	}
+	go systimemon.StartMonitor(time.Now, systimeErrHandler, sucessCallBack)
 
 	pushMetric(cfg.Status.MetricsAddr, time.Duration(cfg.Status.MetricsInterval)*time.Second)
 }

@@ -37,7 +37,7 @@ import (
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/format"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 // ShowExec represents a show executor.
@@ -65,7 +65,7 @@ type ShowExec struct {
 }
 
 // Next implements Execution Next interface.
-func (e *ShowExec) Next(goCtx goctx.Context) (Row, error) {
+func (e *ShowExec) Next(ctx context.Context) (Row, error) {
 	if e.rows == nil {
 		e.forChunk = false
 		err := e.fetchAll()
@@ -94,7 +94,7 @@ func (e *ShowExec) Next(goCtx goctx.Context) (Row, error) {
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (e *ShowExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+func (e *ShowExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.result == nil {
 		e.result = e.newChunk()
@@ -348,7 +348,11 @@ func (e *ShowExec) fetchShowIndex() error {
 		})
 	}
 	for _, idx := range tb.Indices() {
-		for i, col := range idx.Meta().Columns {
+		idxInfo := idx.Meta()
+		if idxInfo.State != model.StatePublic {
+			continue
+		}
+		for i, col := range idxInfo.Columns {
 			nonUniq := 1
 			if idx.Meta().Unique {
 				nonUniq = 0

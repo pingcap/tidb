@@ -32,8 +32,8 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
 	tmysql "github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/store/tikv"
-	goctx "golang.org/x/net/context"
+	"github.com/pingcap/tidb/store/mockstore"
+	"golang.org/x/net/context"
 )
 
 type TidbTestSuite struct {
@@ -45,7 +45,7 @@ var suite = new(TidbTestSuite)
 var _ = Suite(suite)
 
 func (ts *TidbTestSuite) SetUpSuite(c *C) {
-	store, err := tikv.NewMockTikvStore()
+	store, err := mockstore.NewMockTikvStore()
 	tidb.SetStatsLease(0)
 	c.Assert(err, IsNil)
 	_, err = tidb.BootstrapSession(store)
@@ -361,12 +361,12 @@ func (ts *TidbTestSuite) TestClientWithCollation(c *C) {
 
 func (ts *TidbTestSuite) TestCreateTableFlen(c *C) {
 	// issue #4540
-	ctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
 	c.Assert(err, IsNil)
-	_, err = ctx.Execute(goctx.Background(), "use test;")
+	_, err = qctx.Execute(context.Background(), "use test;")
 	c.Assert(err, IsNil)
 
-	goCtx := goctx.Background()
+	ctx := context.Background()
 	testSQL := "CREATE TABLE `t1` (" +
 		"`a` char(36) NOT NULL," +
 		"`b` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP," +
@@ -396,10 +396,10 @@ func (ts *TidbTestSuite) TestCreateTableFlen(c *C) {
 		"`z` decimal(20, 4)," +
 		"PRIMARY KEY (`a`)" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"
-	_, err = ctx.Execute(goCtx, testSQL)
+	_, err = qctx.Execute(ctx, testSQL)
 	c.Assert(err, IsNil)
-	rs, err := ctx.Execute(goCtx, "show create table t1")
-	row, err := rs[0].Next(goCtx)
+	rs, err := qctx.Execute(ctx, "show create table t1")
+	row, err := rs[0].Next(ctx)
 	c.Assert(err, IsNil)
 	cols := rs[0].Columns()
 	c.Assert(err, IsNil)
@@ -408,7 +408,7 @@ func (ts *TidbTestSuite) TestCreateTableFlen(c *C) {
 	c.Assert(int(cols[1].ColumnLength), Equals, len(row.GetString(1))*tmysql.MaxBytesOfCharacter)
 
 	// for issue#5246
-	rs, err = ctx.Execute(goCtx, "select y, z from t1")
+	rs, err = qctx.Execute(ctx, "select y, z from t1")
 	c.Assert(err, IsNil)
 	cols = rs[0].Columns()
 	c.Assert(len(cols), Equals, 2)
@@ -424,12 +424,12 @@ func checkColNames(c *C, columns []*ColumnInfo, names ...string) {
 }
 
 func (ts *TidbTestSuite) TestFieldList(c *C) {
-	ctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
 	c.Assert(err, IsNil)
-	_, err = ctx.Execute(goctx.Background(), "use test;")
+	_, err = qctx.Execute(context.Background(), "use test;")
 	c.Assert(err, IsNil)
 
-	goCtx := goctx.Background()
+	ctx := context.Background()
 	testSQL := `create table t (
 		c_bit bit(10),
 		c_int_d int,
@@ -451,9 +451,9 @@ func (ts *TidbTestSuite) TestFieldList(c *C) {
 		c_json JSON,
 		c_year year
 	)`
-	_, err = ctx.Execute(goCtx, testSQL)
+	_, err = qctx.Execute(ctx, testSQL)
 	c.Assert(err, IsNil)
-	colInfos, err := ctx.FieldList("t")
+	colInfos, err := qctx.FieldList("t")
 	c.Assert(err, IsNil)
 	c.Assert(len(colInfos), Equals, 19)
 

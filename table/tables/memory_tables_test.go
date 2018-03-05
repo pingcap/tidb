@@ -16,12 +16,12 @@ package tables_test
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
@@ -36,7 +36,7 @@ type testMemoryTableSuite struct {
 }
 
 func (ts *testMemoryTableSuite) SetUpSuite(c *C) {
-	store, err := tikv.NewMockTikvStore()
+	store, err := mockstore.NewMockTikvStore()
 	c.Check(err, IsNil)
 	ts.store = store
 	ts.se, err = tidb.CreateSession4Test(ts.store)
@@ -71,7 +71,7 @@ func (ts *testMemoryTableSuite) SetUpSuite(c *C) {
 }
 
 func (ts *testMemoryTableSuite) TestMemoryBasic(c *C) {
-	ctx := ts.se.(context.Context)
+	ctx := ts.se.(sessionctx.Context)
 	tb := ts.tbl
 	c.Assert(tb.Meta(), NotNil)
 	c.Assert(tb.Meta().ID, Greater, int64(0))

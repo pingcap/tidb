@@ -21,11 +21,11 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -72,7 +72,9 @@ func (s *testAnalyzeSuite) TestEstimation(c *C) {
 	defer func() {
 		dom.Close()
 		store.Close()
+		plan.RatioOfPseudoEstimate = 0.7
 	}()
+	plan.RatioOfPseudoEstimate = 10.0
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a int)")
 	testKit.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10)")
@@ -208,7 +210,7 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		},
 	}
 	for _, tt := range tests {
-		ctx := testKit.Se.(context.Context)
+		ctx := testKit.Se.(sessionctx.Context)
 		stmts, err := tidb.Parse(ctx, tt.sql)
 		c.Assert(err, IsNil)
 		c.Assert(stmts, HasLen, 1)
@@ -258,7 +260,7 @@ func (s *testAnalyzeSuite) TestEmptyTable(c *C) {
 		},
 	}
 	for _, tt := range tests {
-		ctx := testKit.Se.(context.Context)
+		ctx := testKit.Se.(sessionctx.Context)
 		stmts, err := tidb.Parse(ctx, tt.sql)
 		c.Assert(err, IsNil)
 		c.Assert(stmts, HasLen, 1)
@@ -349,7 +351,7 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 		//},
 	}
 	for _, tt := range tests {
-		ctx := testKit.Se.(context.Context)
+		ctx := testKit.Se.(sessionctx.Context)
 		stmts, err := tidb.Parse(ctx, tt.sql)
 		c.Assert(err, IsNil)
 		c.Assert(stmts, HasLen, 1)
@@ -386,10 +388,18 @@ func (s *testAnalyzeSuite) TestOutdatedAnalyze(c *C) {
 	testKit.MustExec("insert into t select * from t")
 	h.DumpStatsDeltaToKV()
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
+	plan.RatioOfPseudoEstimate = 10.0
 	testKit.MustQuery("explain select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
 		"TableScan_5 Selection_6  cop table:t, range:[-inf,+inf], keep order:false 80.00",
 		"Selection_6  TableScan_5 cop le(test.t.a, 5), le(test.t.b, 5) 28.80",
 		"TableReader_7   root data:Selection_6 28.80",
+	))
+	plan.RatioOfPseudoEstimate = 0.7
+	testKit.MustQuery("explain select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
+		"IndexScan_8   cop table:t, index:a, range:[-inf,5], keep order:false 26.59",
+		"TableScan_9 Selection_10  cop table:t, keep order:false 26.59",
+		"Selection_10  TableScan_9 cop le(test.t.b, 5) 26.67",
+		"IndexLookUp_11   root index:IndexScan_8, table:Selection_10 26.67",
 	))
 }
 
@@ -418,7 +428,7 @@ func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {
 		sql := "select * from t where id = ?"
 		best := "IndexReader(Index(t.id)[])"
 
-		ctx := testKit.Se.(context.Context)
+		ctx := testKit.Se.(sessionctx.Context)
 		stmts, err := tidb.Parse(ctx, sql)
 		stmt := stmts[0]
 
@@ -435,7 +445,7 @@ func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
-	store, err := tikv.NewMockTikvStore()
+	store, err := mockstore.NewMockTikvStore()
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -548,7 +558,7 @@ func BenchmarkOptimize(b *testing.B) {
 		},
 	}
 	for _, tt := range tests {
-		ctx := testKit.Se.(context.Context)
+		ctx := testKit.Se.(sessionctx.Context)
 		stmts, err := tidb.Parse(ctx, tt.sql)
 		c.Assert(err, IsNil)
 		c.Assert(stmts, HasLen, 1)
