@@ -545,6 +545,8 @@ import (
 	GroupByClause			"GROUP BY clause"
 	HashString			"Hashed string"
 	HavingClause			"HAVING clause"
+	HandleRange			"handle range"
+	HandleRangeList			"handle range list"
 	IfExists			"If Exists"
 	IfNotExists			"If Not Exists"
 	IgnoreOptional			"IGNORE or empty"
@@ -562,8 +564,6 @@ import (
 	IndexType			"index type"
 	IndexTypeOpt			"Optional index type"
 	InsertValues			"Rest part of INSERT/REPLACE INTO statement"
-	IntRange			"integer range"
-	IntRangeList			"integer range list"
 	JoinTable 			"join table"
 	JoinType			"join type"
 	KillOrKillTiDB			"Kill or Kill TiDB"
@@ -4487,7 +4487,7 @@ AdminStmt:
 			JobIDs: $5.([]int64),
 		}
 	}
-|	"ADMIN" "CHECK" "INDEX" TableName IndexName IntRangeList
+|	"ADMIN" "CHECK" "INDEX" TableName IndexName HandleRangeList
 	{
 		$$ = &ast.AdminStmt{
 			Tp: ast.AdminCheckIndex,
@@ -4497,17 +4497,17 @@ AdminStmt:
 		}
 	}
 
-IntRangeList:
-	IntRange
+HandleRangeList:
+	HandleRange
 	{
 		$$ = []ast.HandleRange{$1.(ast.HandleRange)}
 	}
-|	IntRangeList ',' IntRange
+|	HandleRangeList ',' HandleRange
 	{
 		$$ = append($1.([]ast.HandleRange), $3.(ast.HandleRange))
 	}
 
-IntRange:
+HandleRange:
 	'(' NUM ',' NUM ')'
 	{
 		$$ = ast.HandleRange{Begin: $2.(int64), End: $4.(int64)}
