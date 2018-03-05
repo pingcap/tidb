@@ -255,14 +255,9 @@ func (e *SortExec) buildKeyExprsAndTypes() {
 }
 
 func (e *SortExec) buildKeyChunks() error {
-	keyChunks := chunk.NewList(e.keyTypes, e.maxChunkSize)
-	if memTracker4Key := keyChunks.GetMemTracker(); e.keyChunks != nil {
-		e.memTracker.ReplaceChild(e.keyChunks.GetMemTracker(), memTracker4Key)
-	} else {
-		memTracker4Key.AttachTo(e.memTracker)
-		memTracker4Key.SetLabel("keyChunks")
-	}
-	e.keyChunks = keyChunks
+	e.keyChunks = chunk.NewList(e.keyTypes, e.maxChunkSize)
+	e.keyChunks.GetMemTracker().SetLabel("keyChunks")
+	e.keyChunks.GetMemTracker().AttachTo(e.memTracker)
 
 	for chkIdx := 0; chkIdx < e.rowChunks.NumChunks(); chkIdx++ {
 		keyChk := chunk.NewChunk(e.keyTypes)
@@ -626,18 +621,22 @@ func (e *TopNExec) doCompaction() error {
 		newRowPtr := newRowChunks.AppendRow(e.rowChunks.GetRow(rowPtr))
 		newRowPtrs = append(newRowPtrs, newRowPtr)
 	}
+	newRowChunks.GetMemTracker().SetLabel("rowChunks")
 	e.memTracker.ReplaceChild(e.rowChunks.GetMemTracker(), newRowChunks.GetMemTracker())
 	e.rowChunks = newRowChunks
+
+	if e.keyChunks != nil {
+		newKeyChunks := chunk.NewList(e.keyTypes, e.maxChunkSize)
+		for _, rowPtr := range e.rowPtrs {
+			newKeyChunks.AppendRow(e.keyChunks.GetRow(rowPtr))
+		}
+		newKeyChunks.GetMemTracker().SetLabel("keyChunks")
+		e.memTracker.ReplaceChild(e.keyChunks.GetMemTracker(), newKeyChunks.GetMemTracker())
+		e.keyChunks = newKeyChunks
+	}
 
 	e.memTracker.Consume(int64(-8 * len(e.rowPtrs)))
 	e.memTracker.Consume(int64(8 * len(newRowPtrs)))
 	e.rowPtrs = newRowPtrs
-
-	if e.keyChunks != nil {
-		err := e.buildKeyChunks()
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
 	return nil
 }
