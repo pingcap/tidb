@@ -17,15 +17,15 @@ import (
 	"io"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/pingcap/tidb/model"
 )
 
 type idxResult struct {
@@ -91,7 +91,10 @@ func (e *CheckIndexExec) getNextInRangeIndex() ([]types.Datum, error) {
 			e.partial = nil
 			continue
 		}
-		decodeRawValues(rowData, e.schema, e.ctx.GetSessionVars().GetTimeZone())
+		err = decodeRawValues(rowData, e.schema, e.ctx.GetSessionVars().GetTimeZone())
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		handle := rowData[len(rowData)-1].GetInt64()
 		if handle >= e.begin && handle < e.end {
 			return rowData, nil
@@ -99,6 +102,7 @@ func (e *CheckIndexExec) getNextInRangeIndex() ([]types.Datum, error) {
 	}
 }
 
+// Open implements the Executor interface.
 func (e *CheckIndexExec) Open() error {
 	e.typesMap = make(map[int64]*types.FieldType)
 	tCols := e.table.Meta().Cols()
