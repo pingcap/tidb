@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/ngaut/log"
 )
 
 const (
@@ -848,6 +849,33 @@ func dataForTableConstraints(schemas []*model.DBInfo) [][]types.Datum {
 	return rows
 }
 
+// dataForPseudoProfiling returns pseudo data for table profiling when system variable `profiling` is set to `ON`.
+func dataForPseudoProfiling() [][]types.Datum {
+	var rows [][]types.Datum
+	row := types.MakeDatums(
+		0,  // QUERY_ID
+		0,  // SEQ
+		"", // STATE
+		types.NewDecimalDatum(types.NewDecFromInt(0)), // DURATION
+		types.NewDecimalDatum(types.NewDecFromInt(0)), // CPU_USER
+		types.NewDecimalDatum(types.NewDecFromInt(0)), // CPU_SYSTEM
+		0, // CONTEXT_VOLUNTARY
+		0, // CONTEXT_INVOLUNTARY
+		0, // BLOCK_OPS_IN
+		0, // BLOCK_OPS_OUT
+		0, // MESSAGES_SENT
+		0, // MESSAGES_RECEIVED
+		0, // PAGE_FAULTS_MAJOR
+		0, // PAGE_FAULTS_MINOR
+		0, // SWAPS
+		0, // SOURCE_FUNCTION
+		0, // SOURCE_FILE
+		0, // SOURCE_LINE
+	)
+	rows = append(rows, row)
+	return rows
+}
+
 func dataForKeyColumnUsage(schemas []*model.DBInfo) [][]types.Datum {
 	rows := make([][]types.Datum, 0, len(schemas)) // The capacity is not accurate, but it is not a big problem.
 	for _, schema := range schemas {
@@ -1033,6 +1061,10 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows = dataForTableConstraints(dbs)
 	case tableFiles:
 	case tableProfiling:
+		if v, ok := ctx.GetSessionVars().GetSystemVar("profiling"); ok && v == "ON" {
+			log.Warning("come here")
+			fullRows = dataForPseudoProfiling()
+		}
 	case tablePartitions:
 	case tableKeyColumm:
 		fullRows = dataForKeyColumnUsage(dbs)
