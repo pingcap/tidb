@@ -5421,10 +5421,10 @@ Type:
 NumericType:
 	IntegerType OptFieldLen FieldOpts
 	{
-    // For boolean and bool, mysql maps them to tinyint(1)
-    // In tidb, tinyint has 4 bits by default. This if branch is to
-    // handle this situation.
-    var x *types.FieldType
+		// For boolean and bool, mysql maps them to tinyint(1)
+		// In tidb, tinyint has 4 bits by default. This if branch is to
+		// handle this situation.
+		var x *types.FieldType
 		if b, ok :=  $1.(*types.FieldType); ok {
 			x = b
 			x.Flen = 1
