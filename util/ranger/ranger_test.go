@@ -260,7 +260,7 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 			exprStr:     "a not in (1, 2, 3)",
 			accessConds: "[not(in(test.t.a, 1, 2, 3))]",
 			filterConds: "[]",
-			resultStr:   "[[-inf,1) (1,2) (2,3) (3,+inf]]",
+			resultStr:   "[[-inf,1) (3,+inf]]",
 		},
 		{
 			exprStr:     "a > 9223372036854775807",
@@ -404,6 +404,13 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 			accessConds: "[eq(test.t.a, a) in(test.t.b, 1, 2, 3)]",
 			filterConds: "[]",
 			resultStr:   `[[a 1,a 1] [a 2,a 2] [a 3,a 3]]`,
+		},
+		{
+			indexPos:    0,
+			exprStr:     `a = 'a' and b not in (1, 2, 3)`,
+			accessConds: "[eq(test.t.a, a) not(in(test.t.b, 1, 2, 3))]",
+			filterConds: "[]",
+			resultStr:   `[(a <nil>,a 1) (a 3,a +inf]]`,
 		},
 		{
 			indexPos:    0,
