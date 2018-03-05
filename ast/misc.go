@@ -457,6 +457,26 @@ func (u *UserSpec) SecurityString() string {
 	return u.User.String()
 }
 
+func (u *UserSpec) EncodedPassword() (string, bool) {
+	if u.AuthOpt == nil {
+		return "", true
+	}
+
+	opt := u.AuthOpt
+	if opt.ByAuthString {
+		return auth.EncodePassword(opt.AuthString), true
+	}
+
+	if !maybePasswordString(opt.HashString) {
+		return "", false
+	}
+	return opt.HashString, true
+}
+
+func maybePasswordString(str string) bool {
+	return len(str) == 41 && strings.HasPrefix(str, "*")
+}
+
 // CreateUserStmt creates user account.
 // See https://dev.mysql.com/doc/refman/5.7/en/create-user.html
 type CreateUserStmt struct {
