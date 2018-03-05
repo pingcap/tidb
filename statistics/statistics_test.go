@@ -41,17 +41,18 @@ func TestT(t *testing.T) {
 var _ = Suite(&testStatisticsSuite{})
 
 type testStatisticsSuite struct {
-	count   int64
+	count   int
 	samples []types.Datum
 	rc      ast.RecordSet
 	pk      ast.RecordSet
 }
 
 type recordSet struct {
-	data   []types.Datum
-	count  int64
-	cursor int64
-	fields []*ast.ResultField
+	firstIsID bool
+	data      []types.Datum
+	count     int
+	cursor    int
+	fields    []*ast.ResultField
 }
 
 func (r *recordSet) Fields() []*ast.ResultField {
@@ -68,24 +69,49 @@ func (r *recordSet) setFields(tps ...uint8) {
 	}
 }
 
-func (r *recordSet) Next(context.Context) (types.Row, error) {
+func (r *recordSet) getNext() []types.Datum {
 	if r.cursor == r.count {
-		return nil, nil
+		return nil
 	}
 	r.cursor++
-	return types.DatumRow{r.data[r.cursor-1]}, nil
+	row := make([]types.Datum, 0, len(r.fields))
+	if r.firstIsID {
+		row = append(row, types.NewIntDatum(int64(r.cursor)))
+	}
+	row = append(row, r.data[r.cursor-1])
+	return row
+}
+
+func (r *recordSet) Next(context.Context) (types.Row, error) {
+	row := r.getNext()
+	if row == nil {
+		return nil, nil
+	}
+	return types.DatumRow(row), nil
 }
 
 func (r *recordSet) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	row := r.getNext()
+	if row != nil {
+		for i := 0; i < len(row); i++ {
+			chk.AppendDatum(i, &row[i])
+		}
+		return nil
+	}
 	return nil
 }
 
 func (r *recordSet) NewChunk() *chunk.Chunk {
-	return nil
+	fields := make([]*types.FieldType, 0, len(r.fields))
+	for _, field := range r.fields {
+		fields = append(fields, &field.Column.FieldType)
+	}
+	return chunk.NewChunk(fields)
 }
 
 func (r *recordSet) SupportChunk() bool {
-	return false
+	return true
 }
 
 func (r *recordSet) Close() error {
@@ -125,13 +151,13 @@ func (s *testStatisticsSuite) SetUpSuite(c *C) {
 	for i := 1; i < start; i++ {
 		rc.data[i].SetInt64(2)
 	}
-	for i := int64(start); i < rc.count; i++ {
+	for i := start; i < rc.count; i++ {
 		rc.data[i].SetInt64(int64(i))
 	}
-	for i := int64(start); i < rc.count; i += 3 {
+	for i := start; i < rc.count; i += 3 {
 		rc.data[i].SetInt64(rc.data[i].GetInt64() + 1)
 	}
-	for i := int64(start); i < rc.count; i += 5 {
+	for i := start; i < rc.count; i += 5 {
 		rc.data[i].SetInt64(rc.data[i].GetInt64() + 2)
 	}
 	err = types.SortDatums(sc, rc.data)
@@ -144,7 +170,7 @@ func (s *testStatisticsSuite) SetUpSuite(c *C) {
 		cursor: 0,
 	}
 	pk.setFields(mysql.TypeLonglong)
-	for i := int64(0); i < rc.count; i++ {
+	for i := 0; i < rc.count; i++ {
 		pk.data[i].SetInt64(int64(i))
 	}
 	s.pk = pk
@@ -216,7 +242,7 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	sketch, _, _ := buildFMSketch(sc, s.rc.(*recordSet).data, 1000)
 
 	collector := &SampleCollector{
-		Count:     s.count,
+		Count:     int64(s.count),
 		NullCount: 0,
 		Samples:   s.samples,
 		FMSketch:  sketch,
@@ -423,7 +449,7 @@ func (s *testStatisticsSuite) TestColumnRange(c *C) {
 	sketch, _, _ := buildFMSketch(sc, s.rc.(*recordSet).data, 1000)
 
 	collector := &SampleCollector{
-		Count:     s.count,
+		Count:     int64(s.count),
 		NullCount: 0,
 		Samples:   s.samples,
 		FMSketch:  sketch,
