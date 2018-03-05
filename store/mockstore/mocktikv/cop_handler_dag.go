@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
@@ -553,6 +554,10 @@ func toPBError(err error) *tipb.Error {
 // extractKVRanges extracts kv.KeyRanges slice from a SelectRequest.
 func (h *rpcHandler) extractKVRanges(keyRanges []*coprocessor.KeyRange, descScan bool) (kvRanges []kv.KeyRange) {
 	for _, kran := range keyRanges {
+		if bytes.Compare(kran.GetStart(), kran.GetEnd()) >= 0 {
+			log.Errorf("invalid range, start should be smaller than end: %v %v", kran.GetStart(), kran.GetEnd())
+		}
+
 		upperKey := kran.GetEnd()
 		if bytes.Compare(upperKey, h.rawStartKey) <= 0 {
 			continue
