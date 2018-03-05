@@ -144,8 +144,9 @@ func (t *httpHandlerTool) getMvccByHandle(tableID, handle int64) (*kvrpcpb.MvccG
 }
 
 func (t *httpHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []byte) (*kvrpcpb.MvccGetByStartTsResponse, error) {
+	bo := tikv.NewBackoffer(context.Background(), 5000)
 	for {
-		curRegion, err := t.regionCache.LocateKey(tikv.NewBackoffer(context.Background(), 500), startKey)
+		curRegion, err := t.regionCache.LocateKey(bo, startKey)
 		if err != nil {
 			log.Error(startTS, startKey, err)
 			return nil, errors.Trace(err)
@@ -158,7 +159,7 @@ func (t *httpHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []by
 			},
 		}
 		tikvReq.Context.Priority = kvrpcpb.CommandPri_Low
-		kvResp, err := t.store.SendReq(tikv.NewBackoffer(context.Background(), 500), tikvReq, curRegion.Region, time.Hour)
+		kvResp, err := t.store.SendReq(bo, tikvReq, curRegion.Region, time.Hour)
 		log.Info(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), kvResp)
 		if err != nil {
 			log.Error(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), err)

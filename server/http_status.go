@@ -53,7 +53,7 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/schema/{db}", schemaHandler{httpHandlerTool})
 	router.Handle("/schema/{db}/{table}", schemaHandler{httpHandlerTool})
 	if s.cfg.Store == "tikv" {
-		// HTTP path for regions
+		// HTTP path for tikv
 		router.Handle("/tables/{db}/{table}/regions", tableHandler{httpHandlerTool, opTableRegions})
 		router.Handle("/tables/{db}/{table}/disk-usage", tableHandler{httpHandlerTool, opTableDiskUsage})
 		router.Handle("/regions/meta", regionHandler{httpHandlerTool})
