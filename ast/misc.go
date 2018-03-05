@@ -470,7 +470,7 @@ func (u *UserSpec) EncodedPassword() (string, bool) {
 	}
 
 	// Not a legal password string.
-	if len(str) != 41 || !strings.HasPrefix(str, "*") {
+	if len(opt.HashString) != 41 || !strings.HasPrefix(opt.HashString, "*") {
 		return "", false
 	}
 	return opt.HashString, true
