@@ -749,6 +749,7 @@ import (
 
 	NumericType		"Numeric types"
 	IntegerType		"Integer Types types"
+	BooleanType 		"Boolean Types types"
 	FixedPointType		"Exact value types"
 	FloatingPointType	"Approximate value types"
 	BitValueType		"bit value types"
@@ -5421,19 +5422,25 @@ Type:
 NumericType:
 	IntegerType OptFieldLen FieldOpts
 	{
-		// For boolean and bool, mysql maps them to tinyint(1)
-		// In tidb, tinyint has 4 bits by default. This if branch is to
-		// handle this situation.
-		var x *types.FieldType
-		if b, ok :=  $1.(*types.FieldType); ok {
-			x = b
-			x.Flen = 1
-		} else {
-			x = types.NewFieldType($1.(byte))
-			x.Flen = $2.(int)
-		}
 		// TODO: check flen 0
+		x := types.NewFieldType($1.(byte))
+		x.Flen = $2.(int)
 		for _, o := range $3.([]*ast.TypeOpt) {
+			if o.IsUnsigned {
+				x.Flag |= mysql.UnsignedFlag
+			}
+			if o.IsZerofill {
+				x.Flag |= mysql.ZerofillFlag
+			}
+		}
+		$$ = x
+	}
+|	BooleanType FieldOpts
+	{
+		// TODO: check flen 0
+		x := types.NewFieldType($1.(byte))
+		x.Flen = 1
+		for _, o := range $2.([]*ast.TypeOpt) {
 			if o.IsUnsigned {
 				x.Flag |= mysql.UnsignedFlag
 			}
@@ -5537,13 +5544,16 @@ IntegerType:
 	{
 		$$ = mysql.TypeLonglong
 	}
-|	"BOOL"
+
+
+BooleanType:
+	"BOOL"
 	{
-		$$ = types.NewFieldType(mysql.TypeTiny)
+		$$ = mysql.TypeTiny
 	}
 |	"BOOLEAN"
 	{
-		$$ = types.NewFieldType(mysql.TypeTiny)
+		$$ = mysql.TypeTiny
 	}
 
 OptInteger:
