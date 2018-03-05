@@ -155,7 +155,8 @@ const (
 	splitRegionBackoff      = 20000
 )
 
-var commitMaxBackoff = 20000
+// CommitMaxBackoff is max sleep time of the 'commit' command
+var CommitMaxBackoff = 41000
 
 // Backoffer is a utility for retrying queries.
 type Backoffer struct {
