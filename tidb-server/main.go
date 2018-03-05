@@ -51,6 +51,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/push"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
+	"strings"
 )
 
 // Flag Names
@@ -328,13 +329,13 @@ func validateConfig() {
 		os.Exit(-1)
 	}
 	if _, ok := config.ValidStorage[cfg.Store]; !ok {
-		nameList := ""
+		var nameList []string
 		for k, v := range config.ValidStorage {
 			if v {
-				nameList += k + " "
+				nameList = append(nameList, k)
 			}
 		}
-		log.Errorf("\"store\" should be in [%v] only", nameList[:len(nameList)-1])
+		log.Errorf("\"store\" should be in [%s] only", strings.Join(nameList, ", "))
 		os.Exit(-1)
 	}
 	if cfg.Log.File.MaxSize > config.MaxLogFileSize {
