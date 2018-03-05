@@ -5440,7 +5440,7 @@ NumericType:
 			if o.IsZerofill {
 				x.Flag |= mysql.ZerofillFlag
 			}
-	}
+		}
 		$$ = x
 	}
 |	FixedPointType FloatOpt FieldOpts
