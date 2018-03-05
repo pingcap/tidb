@@ -198,6 +198,8 @@ type TiKVClient struct {
 	// GrpcConnectionCount is the max gRPC connections that will be established
 	// with each tikv-server.
 	GrpcConnectionCount int `toml:"grpc-connection-count" json:"grpc-connection-count"`
+	// CommitTimeout is the max time which command 'commit' will wait.
+	CommitTimeout string `toml:"commit-timeout" json:"commit-timeout"`
 }
 
 var defaultConf = Config{
@@ -262,6 +264,7 @@ var defaultConf = Config{
 	},
 	TiKVClient: TiKVClient{
 		GrpcConnectionCount: 16,
+		CommitTimeout:       "41s",
 	},
 }
 

@@ -227,6 +227,7 @@ import (
 	utcTimestamp		"UTC_TIMESTAMP"
 	utcTime			"UTC_TIME"
 	values			"VALUES"
+	long			"LONG"
 	varcharType		"VARCHAR"
 	varbinaryType		"VARBINARY"
 	virtual			"VIRTUAL"
@@ -1312,6 +1313,13 @@ ColumnOption:
 			Stored: $6.(bool),
 		}
 	}
+|	ReferDef
+	{
+		$$ = &ast.ColumnOption{
+			Tp: ast.ColumnOptionReference,
+			Refer: $1.(*ast.ReferenceDef),
+		}
+	}
 
 GeneratedAlways: | "GENERATED" "ALWAYS"
 
@@ -1952,11 +1960,11 @@ DropIndexStmt:
 	}
 
 DropTableStmt:
-	"DROP" TableOrTables TableNameList
+	"DROP" TableOrTables TableNameList RestrictOrCascadeOpt
 	{
 		$$ = &ast.DropTableStmt{Tables: $3.([]*ast.TableName)}
 	}
-|	"DROP" TableOrTables "IF" "EXISTS" TableNameList
+|	"DROP" TableOrTables "IF" "EXISTS" TableNameList RestrictOrCascadeOpt
 	{
 		$$ = &ast.DropTableStmt{IfExists: true, Tables: $5.([]*ast.TableName)}
 	}
@@ -1982,6 +1990,11 @@ DropStatsStmt:
 	{
 		$$ = &ast.DropStatsStmt{Table: $3.(*ast.TableName)}
 	}
+
+RestrictOrCascadeOpt:
+	{}
+|	"RESTRICT"
+|	"CASCADE"
 
 TableOrTables:
 	"TABLE"
@@ -4741,6 +4754,14 @@ AdminStmt:
 			Tables: $4.([]*ast.TableName),
 		}
 	}
+|	"ADMIN" "CHECK" "INDEX" TableName Identifier
+	{
+		$$ = &ast.AdminStmt{
+			Tp: ast.AdminCheckIndex,
+			Tables: []*ast.TableName{$4.(*ast.TableName)},
+			Index: string($5),
+		}
+	}
 |	"ADMIN" "CANCEL" "DDL" "JOBS" NumList
 	{
 		$$ = &ast.AdminStmt{
@@ -5715,6 +5736,11 @@ TextType:
 |	"LONGTEXT"
 	{
 		x := types.NewFieldType(mysql.TypeLongBlob)
+		$$ = x
+	}
+|	"LONG" "VARCHAR"
+	{
+		x := types.NewFieldType(mysql.TypeMediumBlob)
 		$$ = x
 	}
 

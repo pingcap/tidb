@@ -517,6 +517,9 @@ type IndexLookUpExecutor struct {
 	resultCh   chan *lookupTableTask
 	resultCurr *lookupTableTask
 	feedback   *statistics.QueryFeedback
+
+	// isCheckOp is used to determine whether we need to check the consistency of the index data.
+	isCheckOp bool
 }
 
 // Open implements the Executor Open interface.
@@ -611,6 +614,7 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 			buildTblReader: e.buildTableReader,
 			keepOrder:      e.keepOrder,
 			handleIdx:      e.handleIdx,
+			isCheckOp:      e.isCheckOp,
 		}
 		ctx1, cancel := context.WithCancel(ctx)
 		go func() {
@@ -810,6 +814,9 @@ type tableWorker struct {
 	buildTblReader func(ctx context.Context, handles []int64) (Executor, error)
 	keepOrder      bool
 	handleIdx      int
+
+	// isCheckOp is used to determine whether we need to check the consistency of the index data.
+	isCheckOp bool
 }
 
 // pickAndExecTask picks tasks from workCh, and execute them.
@@ -851,7 +858,8 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) {
 		return
 	}
 	defer terror.Call(tableReader.Close)
-	task.rows = make([]chunk.Row, 0, len(task.handles))
+	handleCnt := len(task.handles)
+	task.rows = make([]chunk.Row, 0, handleCnt)
 	for {
 		chk := tableReader.newChunk()
 		err = tableReader.NextChunk(ctx, chk)
@@ -875,6 +883,39 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) {
 		}
 		sort.Sort(task)
 	}
+
+	if w.isCheckOp && handleCnt != len(task.rows) {
+		obtainedHandlesMap := make(map[int64]struct{}, len(task.rows))
+		for _, row := range task.rows {
+			handle := row.GetInt64(w.handleIdx)
+			obtainedHandlesMap[handle] = struct{}{}
+		}
+		err = errors.Errorf("handle count %d isn't equal to value count %d, missing handles %v in a batch",
+			handleCnt, len(task.rows), GetLackHandles(task.handles, obtainedHandlesMap))
+	}
+}
+
+// GetLackHandles gets the handles in expectedHandles but not in obtainedHandlesMap.
+func GetLackHandles(expectedHandles []int64, obtainedHandlesMap map[int64]struct{}) []int64 {
+	diffCnt := len(expectedHandles) - len(obtainedHandlesMap)
+	diffHandles := make([]int64, 0, diffCnt)
+	var cnt int
+	for _, handle := range expectedHandles {
+		isExist := false
+		if _, ok := obtainedHandlesMap[handle]; ok {
+			delete(obtainedHandlesMap, handle)
+			isExist = true
+		}
+		if !isExist {
+			diffHandles = append(diffHandles, handle)
+			cnt++
+			if cnt == diffCnt {
+				break
+			}
+		}
+	}
+
+	return diffHandles
 }
 
 type tableResultHandler struct {

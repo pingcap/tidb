@@ -443,7 +443,9 @@ func (mock *mockCopStreamClient) Recv() (*coprocessor.Response, error) {
 	}
 
 	var resp coprocessor.Response
-	chunk, finish, err := mock.readBlockFromExecutor()
+	counts := make([]int64, len(mock.req.Executors))
+	chunk, finish, ran, counts, err := mock.readBlockFromExecutor()
+	resp.Range = ran
 	if err != nil {
 		if locked, ok := errors.Cause(err).(*ErrLocked); ok {
 			resp.Locked = &kvrpcpb.LockInfo{
@@ -472,6 +474,11 @@ func (mock *mockCopStreamClient) Recv() (*coprocessor.Response, error) {
 		EncodeType: tipb.EncodeType_TypeDefault,
 		Data:       data,
 	}
+	// The counts was the output count of each executor, but now it is the scan count of each range,
+	// so we need a flag to tell them apart.
+	streamResponse.OutputCounts = make([]int64, 1+len(counts))
+	copy(streamResponse.OutputCounts, counts)
+	streamResponse.OutputCounts[len(counts)] = -1
 	resp.Data, err = proto.Marshal(&streamResponse)
 	if err != nil {
 		resp.OtherError = err.Error()
@@ -479,21 +486,32 @@ func (mock *mockCopStreamClient) Recv() (*coprocessor.Response, error) {
 	return &resp, nil
 }
 
-func (mock *mockCopStreamClient) readBlockFromExecutor() (tipb.Chunk, bool, error) {
+func (mock *mockCopStreamClient) readBlockFromExecutor() (tipb.Chunk, bool, *coprocessor.KeyRange, []int64, error) {
 	var chunk tipb.Chunk
+	var ran coprocessor.KeyRange
+	var finish bool
+	var desc bool
+	mock.exec.ResetCounts()
+	ran.Start, desc = mock.exec.Cursor()
 	for count := 0; count < rowsPerChunk; count++ {
 		row, err := mock.exec.Next(mock.ctx)
 		if err != nil {
-			return chunk, false, errors.Trace(err)
+			return chunk, false, nil, nil, errors.Trace(err)
 		}
 		if row == nil {
-			return chunk, true, nil
+			finish = true
+			break
 		}
 		for _, offset := range mock.req.OutputOffsets {
 			chunk.RowsData = append(chunk.RowsData, row[offset]...)
 		}
 	}
-	return chunk, false, nil
+
+	ran.End, _ = mock.exec.Cursor()
+	if desc {
+		ran.Start, ran.End = ran.End, ran.Start
+	}
+	return chunk, finish, &ran, mock.exec.Counts(), nil
 }
 
 func buildResp(chunks []tipb.Chunk, counts []int64, err error) *coprocessor.Response {
