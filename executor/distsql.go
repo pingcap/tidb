@@ -638,6 +638,7 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []in
 		tableID:      e.tableID,
 		dagPB:        e.tableRequest,
 		priority:     e.priority,
+		streaming:    e.tableStreaming,
 		feedback:     statistics.NewQueryFeedback(0, 0, false, 0, 0),
 	}, handles)
 	if err != nil {
