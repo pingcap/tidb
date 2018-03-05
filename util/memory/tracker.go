@@ -30,7 +30,7 @@ import (
 // the tracker itself or to one of its descendents. A typical sequence of calls
 // for a single Tracker is:
 // 1. tracker.SetLabel() / tracker.SetActionOnExceed() / tracker.AttachTo()
-// 2. tracker.Consume() / Tracker.ReplaceChild() / tracker.BytesConsumed()
+// 2. tracker.Consume() / tracker.ReplaceChild() / tracker.BytesConsumed()
 //
 // NOTE:
 // 1. Only "BytesConsumed()" and "Consume()" are thread-safe.
