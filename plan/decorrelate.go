@@ -108,6 +108,19 @@ func (la *LogicalApply) deCorColFromEqExpr(expr expression.Expression) expressio
 // decorrelateSolver tries to convert apply plan to join plan.
 type decorrelateSolver struct{}
 
+func (s *decorrelateSolver) aggDefaultValueMap(agg *LogicalAggregation) map[int]*expression.Constant {
+	defaultValueMap := make(map[int]*expression.Constant)
+	for i, f := range agg.AggFuncs {
+		switch f.Name {
+		case ast.AggFuncBitOr, ast.AggFuncBitXor, ast.AggFuncCount:
+			defaultValueMap[i] = expression.Zero.Clone().(*expression.Constant)
+		case ast.AggFuncBitAnd:
+			defaultValueMap[i] = expression.One.Clone().(*expression.Constant)
+		}
+	}
+	return defaultValueMap
+}
+
 // optimize implements logicalOptRule interface.
 func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 	if apply, ok := p.(*LogicalApply); ok {
@@ -182,7 +195,7 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 			}
 			// We can pull up the equal conditions below the aggregation as the join key of the apply, if only
 			// the equal conditions contain the correlated column of this apply.
-			if sel, ok := agg.children[0].(*LogicalSelection); ok && (apply.JoinType == InnerJoin || apply.JoinType == LeftOuterJoin) {
+			if sel, ok := agg.children[0].(*LogicalSelection); ok && apply.JoinType == LeftOuterJoin {
 				var eqCondWithCorCol []*expression.ScalarFunction
 				// Extract the equal condition.
 				for i := len(sel.Conditions) - 1; i >= 0; i-- {
@@ -215,6 +228,20 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 					// The selection may be useless, check and remove it.
 					if len(sel.Conditions) == 0 {
 						agg.SetChildren(sel.children[0])
+					}
+					defaultValueMap := s.aggDefaultValueMap(agg)
+					// We should use it directly, rather than building a projection.
+					if len(defaultValueMap) > 0 {
+						proj := LogicalProjection{}.init(agg.ctx)
+						proj.SetSchema(apply.schema)
+						proj.Exprs = expression.Column2Exprs(apply.schema.Columns)
+						for i, val := range defaultValueMap {
+							pos := proj.schema.ColumnIndex(agg.schema.Columns[i])
+							ifNullFunc := expression.NewFunctionInternal(agg.ctx, ast.Ifnull, types.NewFieldType(mysql.TypeLonglong), agg.schema.Columns[i].Clone(), val)
+							proj.Exprs[pos] = ifNullFunc
+						}
+						proj.SetChildren(apply)
+						p = proj
 					}
 					return s.optimize(p)
 				}
