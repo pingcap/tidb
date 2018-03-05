@@ -49,7 +49,7 @@ type testSuite struct {
 
 func (s *testSuite) SetUpSuite(c *C) {
 	ctx := mock.NewContext()
-	ctx.Store = &mockStore{&mockClient{}}
+	ctx.Store = &mock.Store{&mock.Client{&mockResponse{}}}
 	s.sctx = ctx
 }
 

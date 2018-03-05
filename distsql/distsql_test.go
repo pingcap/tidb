@@ -19,7 +19,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/chunk"
@@ -86,25 +85,8 @@ func (s *testSuite) TestSelect(c *C) {
 	c.Assert(chk.NumRows(), Equals, 0)
 }
 
-type mockStore struct{ client *mockClient }
-type mockClient struct{}
 type mockResponse struct{ count int }
 type mockResultSubset struct{ data []byte }
-
-// functions for mockStore.
-func (m *mockStore) GetClient() kv.Client                                    { return m.client }
-func (m *mockStore) GetOracle() oracle.Oracle                                { return nil }
-func (m *mockStore) Begin() (kv.Transaction, error)                          { return nil, nil }
-func (m *mockStore) BeginWithStartTS(startTS uint64) (kv.Transaction, error) { return m.Begin() }
-func (m *mockStore) GetSnapshot(ver kv.Version) (kv.Snapshot, error)         { return nil, nil }
-func (m *mockStore) Close() error                                            { return nil }
-func (m *mockStore) UUID() string                                            { return "mock" }
-func (m *mockStore) CurrentVersion() (kv.Version, error)                     { return kv.Version{}, nil }
-func (m *mockStore) SupportDeleteRange() bool                                { return false }
-
-// functions for mockClient.
-func (c *mockClient) Send(ctx context.Context, req *kv.Request) kv.Response { return &mockResponse{} }
-func (c *mockClient) IsRequestTypeSupported(reqType, subType int64) bool    { return true }
 
 // functions for mockResponse.
 func (resp *mockResponse) Close() error { return nil }
