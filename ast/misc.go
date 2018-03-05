@@ -469,14 +469,11 @@ func (u *UserSpec) EncodedPassword() (string, bool) {
 		return auth.EncodePassword(opt.AuthString), true
 	}
 
-	if !maybePasswordString(opt.HashString) {
+	// Not a legal password string.
+	if len(str) != 41 || !strings.HasPrefix(str, "*") {
 		return "", false
 	}
 	return opt.HashString, true
-}
-
-func maybePasswordString(str string) bool {
-	return len(str) == 41 && strings.HasPrefix(str, "*")
 }
 
 // CreateUserStmt creates user account.
