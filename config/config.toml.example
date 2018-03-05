@@ -220,3 +220,6 @@ local-agent-host-port = ""
 [tikv-client]
 # Max gRPC connections that will be established with each tikv-server.
 grpc-connection-count = 16
+
+# max time for commit command, must be twice bigger than raft election timeout.
+commit-timeout = "41s"
