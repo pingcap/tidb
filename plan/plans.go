@@ -52,8 +52,8 @@ type CheckIndex struct {
 
 	Table     *ast.TableName
 	IndexName string
-	Begin     int64
-	End       int64
+
+	HandleRanges []ast.HandleRange
 }
 
 // CancelDDLJobs represents a cancel DDL jobs plan.

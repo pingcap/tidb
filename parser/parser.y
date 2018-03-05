@@ -562,6 +562,8 @@ import (
 	IndexType			"index type"
 	IndexTypeOpt			"Optional index type"
 	InsertValues			"Rest part of INSERT/REPLACE INTO statement"
+	IntRange			"integer range"
+	IntRangeList			"integer range list"
 	JoinTable 			"join table"
 	JoinType			"join type"
 	KillOrKillTiDB			"Kill or Kill TiDB"
@@ -4485,15 +4487,30 @@ AdminStmt:
 			JobIDs: $5.([]int64),
 		}
 	}
-|	"ADMIN" "CHECK" "INDEX" TableName IndexName '(' NUM ',' NUM ')'
+|	"ADMIN" "CHECK" "INDEX" TableName IndexName IntRangeList
 	{
 		$$ = &ast.AdminStmt{
 			Tp: ast.AdminCheckIndex,
 			Tables:	[]*ast.TableName{$4.(*ast.TableName)},
 			IndexName: $5.(string),
-			Begin: $7.(int64),
-			End: $9.(int64),
+			HandleRanges: $6.([]ast.HandleRange),
 		}
+	}
+
+IntRangeList:
+	IntRange
+	{
+		$$ = []ast.HandleRange{$1.(ast.HandleRange)}
+	}
+|	IntRangeList ',' IntRange
+	{
+		$$ = append($1.([]ast.HandleRange), $3.(ast.HandleRange))
+	}
+
+IntRange:
+	'(' NUM ',' NUM ')'
+	{
+		$$ = ast.HandleRange{Begin: $2.(int64), End: $4.(int64)}
 	}
 
 NumList:

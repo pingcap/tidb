@@ -29,4 +29,7 @@ func (s *testSuite) TestAdminCheckIndex(c *C) {
 
 	result = tk.MustQuery("admin check index check_index_test (3, 5);")
 	result.Check(testkit.Rows("-1 hi 4", "1 ef 3"))
+
+	result = tk.MustQuery("admin check index check_index_test (2, 3), (4, 5);")
+	result.Check(testkit.Rows("-1 hi 4", "2 cd 2"))
 }

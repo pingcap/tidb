@@ -226,8 +226,7 @@ func (b *executorBuilder) buildCheckIndex(v *plan.CheckIndex) Executor {
 	}
 	e := &CheckIndexExec{
 		baseExecutor: newBaseExecutor(v.Schema(), b.ctx),
-		begin:        v.Begin,
-		end:          v.End,
+		handleRanges: v.HandleRanges,
 		table:        tb,
 		is:           b.is,
 	}

@@ -14,15 +14,12 @@
 package executor
 
 import (
-	"io"
-
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
@@ -43,14 +40,8 @@ type CheckIndexExec struct {
 	index    table.Index
 	is       infoschema.InfoSchema
 	startKey []types.Datum
-	begin    int64
-	end      int64
 
-	batch   [][]types.Datum
-	handles []int64
-	idx     int
-	done    bool
-	init    bool
+	handleRanges []ast.HandleRange
 
 	result   distsql.NewSelectResult
 	partial  distsql.NewPartialResult
@@ -96,8 +87,10 @@ func (e *CheckIndexExec) getNextInRangeIndex() ([]types.Datum, error) {
 			return nil, errors.Trace(err)
 		}
 		handle := rowData[len(rowData)-1].GetInt64()
-		if handle >= e.begin && handle < e.end {
-			return rowData, nil
+		for _, hr := range e.handleRanges {
+			if handle >= hr.Begin && handle < hr.End {
+				return rowData, nil
+			}
 		}
 	}
 }
@@ -171,58 +164,6 @@ func (e *CheckIndexExec) constructIndexScanPB() *tipb.Executor {
 		Columns: distsql.ColumnsToProto(columns, e.table.Meta().PKIsHandle),
 	}
 	return &tipb.Executor{Tp: tipb.ExecType_TypeIndexScan, IdxScan: idxExec}
-}
-
-func datumsToStrings(vals []types.Datum) []string {
-	strs := make([]string, len(vals))
-	for i := range vals {
-		if vals[i].IsNull() {
-			strs[i] = "<nil>"
-		} else {
-			var err error
-			strs[i], err = vals[i].ToString()
-			terror.Log(err)
-		}
-	}
-	return strs
-}
-
-const maxIdxInTxn = 1024 * 1024
-const maxIdxResultInTxn = 1024 * 32
-
-func (e *CheckIndexExec) loadInTxn(startKey []types.Datum) (result *idxResult, err error) {
-	result = new(idxResult)
-	err = kv.RunInNewTxn(e.ctx.GetStore(), true, func(txn kv.Transaction) error {
-		it, _, err1 := e.index.Seek(txn, startKey)
-		if err1 != nil {
-			return errors.Trace(err1)
-		}
-		defer it.Close()
-		for i := 0; i < maxIdxInTxn; i++ {
-			vals1, h, err2 := it.Next()
-			if terror.ErrorEqual(err2, io.EOF) {
-				result.finished = true
-				break
-			} else if err2 != nil {
-				return errors.Trace(err2)
-			}
-			result.LastVal = vals1
-			if len(result.Handles) >= maxIdxResultInTxn {
-				// We break after setting the last val and before append the handle,
-				// So when we seek next time there would be no duplication.
-				break
-			}
-			if h >= e.begin && h < e.end {
-				result.IndexVals = append(result.IndexVals, vals1)
-				result.Handles = append(result.Handles, h)
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return result, errors.Trace(err)
 }
 
 // Close implements plan.Plan Close interface.

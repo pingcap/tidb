@@ -375,7 +375,7 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 		p = &CancelDDLJobs{JobIDs: as.JobIDs}
 		p.SetSchema(buildCancelDDLJobsFields())
 	case ast.AdminCheckIndex:
-		p = &CheckIndex{Table: as.Tables[0], IndexName: as.IndexName, Begin: as.Begin, End: as.End}
+		p = &CheckIndex{Table: as.Tables[0], IndexName: as.IndexName, HandleRanges: as.HandleRanges}
 		p.SetSchema(buildCheckIndexSchema(as.Tables[0], as.IndexName))
 	default:
 		b.err = ErrUnsupportedType.Gen("Unsupported type %T", as)
