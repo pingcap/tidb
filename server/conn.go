@@ -909,12 +909,7 @@ func (cc *clientConn) handleFieldList(sql string) (err error) {
 func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary bool, more bool) error {
 	defer terror.Call(rs.Close)
 	if cc.server.cfg.EnableChunk && rs.SupportChunk() {
-		columns := rs.Columns()
-		err := cc.writeColumnInfo(columns)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		err = cc.writeChunks(ctx, rs, binary, more)
+		err := cc.writeChunks(ctx, rs, binary, more)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -991,11 +986,20 @@ func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo) error {
 func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool, more bool) error {
 	data := make([]byte, 4, 1024)
 	chk := rs.NewChunk()
+	gotColumnInfo := false
 	for {
 		// Here server.tidbResultSet implements NextChunk method.
 		err := rs.NextChunk(ctx, chk)
 		if err != nil {
 			return errors.Trace(err)
+		}
+		if !gotColumnInfo {
+			columns := rs.Columns()
+			err = cc.writeColumnInfo(columns)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			gotColumnInfo = true
 		}
 		rowCount := chk.NumRows()
 		if rowCount == 0 {
