@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	log "github.com/sirupsen/logrus"
+	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 )
 
 const maxPrefixLength = 3072
@@ -492,6 +493,12 @@ type indexRecord struct {
 	vals   []types.Datum // It's the index values.
 }
 
+// indexCreateClient is set the low priority for adding the index
+type indexCreateClient struct {
+	kv.Client
+	priority pb.CommandPri
+}
+
 type worker struct {
 	id          int
 	ctx         sessionctx.Context
@@ -565,6 +572,11 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 	workers := make([]*worker, workerCnt)
 	for i := 0; i < workerCnt; i++ {
 		ctx := d.newContext()
+	    cli := ctx.GetClient()
+		client := &indexCreateClient{
+			Client: cli,
+		}
+		client.priority = pb.CommandPri_Low
 		workers[i] = newWorker(ctx, i, defaultTaskHandleCnt, len(cols), len(colMap))
 		// Make sure every worker has its own index buffer.
 		workers[i].index = tables.NewIndexWithBuffer(t.Meta(), indexInfo)
