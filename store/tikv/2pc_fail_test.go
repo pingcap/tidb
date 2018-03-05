@@ -19,6 +19,8 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/terror"
 	"golang.org/x/net/context"
+	//"github.com/pingcap/tidb/kv"
+	"time"
 )
 
 // TestFailCommitPrimaryRpcErrors tests rpc errors are handled properly when
@@ -120,6 +122,10 @@ func (s *testCommitterSuite) TestFailPrewritePartialTimeOut(c *C) {
 
 	txnCheck := s.begin(c)
 	var value []byte
+	value, err = txnCheck.Get([]byte("a"))
+	c.Assert(err, IsNil)
+	c.Assert(value, BytesEquals, []byte("a0"))
+
 	value, err = txnCheck.Get([]byte("b"))
 	c.Assert(err, IsNil)
 	c.Assert(value, BytesEquals, []byte("b0"))
@@ -144,6 +150,10 @@ func (s *testCommitterSuite) TestFailCommitPrimaryKeyTimeOut(c *C) {
 
 	txnCheck := s.begin(c)
 	var value []byte
+	value, err = txnCheck.Get([]byte("a"))
+	c.Assert(err, IsNil)
+	c.Assert(value, BytesEquals, []byte("a0"))
+
 	value, err = txnCheck.Get([]byte("b"))
 	c.Assert(err, IsNil)
 	c.Assert(value, BytesEquals, []byte("b0"))
@@ -214,4 +224,34 @@ func (s *testCommitterSuite) TestFailLockKeysTimeOut(c *C) {
 	value, err = txnCheck.Get([]byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(value, BytesEquals, []byte("a1"))
+}
+
+func (s *testCommitterSuite) TestTwoPhaseCommitActionString(c *C) {
+	action := twoPhaseCommitAction(0)
+	c.Assert(action.String(), Equals, "unknown")
+}
+
+/*func (s *testCommitterSuite) TestFailNewTwoPhaseCommitter(c *C) {
+	txn := s.begin(c)
+	c.Assert(txn.Set([]byte("a"), []byte("wqelkyuoqasfweweqwehladfewrj")), IsNil)
+	c.Assert(txn.Set([]byte("b"), []byte("b1")), IsNil)
+
+	temp := kv.TxnEntrySizeLimit
+	kv.TxnEntrySizeLimit = 10
+	tpc, err := newTwoPhaseCommitter(txn)
+	c.Assert(tpc, IsNil)
+	c.Assert(err, Equals, kv.ErrEntryTooLarge)
+	kv.TxnEntrySizeLimit = temp
+
+	temp = kv.TxnTotalSizeLimit
+	kv.TxnTotalSizeLimit = 1
+	tpc, err = newTwoPhaseCommitter(txn)
+	c.Assert(tpc, IsNil)
+	c.Assert(err, Equals, kv.ErrTxnTooLarge)
+	kv.TxnTotalSizeLimit = temp
+}*/
+
+func (s *testCommitterSuite) TestTxnLockTTL(c *C) {
+	expireTime := txnLockTTL(time.Now(), 16*1024*1024*1024)
+	c.Assert(expireTime >= maxLockTTL, IsTrue)
 }
