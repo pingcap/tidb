@@ -97,7 +97,6 @@ func (r *recordSet) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 		for i := 0; i < len(row); i++ {
 			chk.AppendDatum(i, &row[i])
 		}
-		return nil
 	}
 	return nil
 }
