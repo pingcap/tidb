@@ -101,7 +101,6 @@ type baseExecutor struct {
 	ctx             sessionctx.Context
 	id              string
 	schema          *expression.Schema
-	supportChk      bool
 	maxChunkSize    int
 	children        []Executor
 	childrenResults []*chunk.Chunk
@@ -153,18 +152,6 @@ func (e *baseExecutor) retTypes() []*types.FieldType {
 	return e.retFieldTypes
 }
 
-func (e *baseExecutor) supportChunk() bool {
-	if !e.supportChk {
-		return false
-	}
-	for _, child := range e.children {
-		if !child.supportChunk() {
-			return false
-		}
-	}
-	return true
-}
-
 // NextChunk fills mutiple rows into a chunk.
 func (e *baseExecutor) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	return nil
@@ -195,7 +182,6 @@ type Executor interface {
 	Open(context.Context) error
 	Schema() *expression.Schema
 	retTypes() []*types.FieldType
-	supportChunk() bool
 	newChunk() *chunk.Chunk
 	// NextChunk fills a chunk with multiple rows
 	// NOTE: chunk has to call Reset() method before any use.

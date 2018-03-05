@@ -24,6 +24,7 @@ import (
 	"github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing"
 	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/juju/errors"
+	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
@@ -265,7 +266,23 @@ func (c *rpcClient) callRPC(ctx context.Context, client tikvpb.TikvClient, req *
 	case tikvrpc.CmdCop:
 		resp.Cop, err = client.Coprocessor(ctx, req.Cop)
 	case tikvrpc.CmdCopStream:
-		resp.CopStream, err = client.CoprocessorStream(ctx, req.Cop)
+		var stream tikvpb.Tikv_CoprocessorStreamClient
+		stream, err = client.CoprocessorStream(ctx, req.Cop)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		// Read the first streaming response to get CopStreamResponse.
+		// This can make error handling much easier, because SendReq() retry on
+		// region error automatically.
+		var first *coprocessor.Response
+		first, err = resp.CopStream.Recv()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		resp.CopStream = &tikvrpc.CopStreamResponse{
+			Tikv_CoprocessorStreamClient: stream,
+			Response:                     first,
+		}
 	case tikvrpc.CmdMvccGetByKey:
 		resp.MvccGetByKey, err = client.MvccGetByKey(ctx, req.MvccGetByKey)
 	case tikvrpc.CmdMvccGetByStartTs:
