@@ -21,6 +21,7 @@ import (
 	"os/signal"
 	"runtime"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -51,7 +52,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus/push"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
-	"strings"
 )
 
 // Flag Names
@@ -329,7 +329,7 @@ func validateConfig() {
 		os.Exit(-1)
 	}
 	if _, ok := config.ValidStorage[cfg.Store]; !ok {
-		var nameList []string
+		nameList := make([]string, 0, len(config.ValidStorage))
 		for k, v := range config.ValidStorage {
 			if v {
 				nameList = append(nameList, k)
