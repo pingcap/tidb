@@ -570,6 +570,7 @@ const (
 	AdminCheckTable
 	AdminShowDDLJobs
 	AdminCancelDDLJobs
+	AdminCheckIndex
 )
 
 // AdminStmt is the struct for Admin statement.
@@ -577,6 +578,7 @@ type AdminStmt struct {
 	stmtNode
 
 	Tp     AdminStmtType
+	Index  string
 	Tables []*TableName
 	JobIDs []int64
 }
