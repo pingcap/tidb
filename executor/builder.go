@@ -218,7 +218,6 @@ func (b *executorBuilder) buildCheckIndex(v *plan.CheckIndex) Executor {
 		is:           b.is,
 		src:          readerExec,
 	}
-	e.supportChk = true
 	return e
 }
 
