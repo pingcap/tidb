@@ -994,6 +994,8 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 			return errors.Trace(err)
 		}
 		if !gotColumnInfo {
+			// We need to call NextChunk before we get columns.
+			// Otherwise, we will get incorrect columns info.
 			columns := rs.Columns()
 			err = cc.writeColumnInfo(columns)
 			if err != nil {
