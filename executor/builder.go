@@ -69,6 +69,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return nil
 	case *plan.CheckTable:
 		return b.buildCheckTable(v)
+	case *plan.CheckIndex:
+		return b.buildCheckIndex(v)
 	case *plan.DDL:
 		return b.buildDDL(v)
 	case *plan.Deallocate:
@@ -195,6 +197,26 @@ func (b *executorBuilder) buildShowDDL(v *plan.ShowDDL) Executor {
 func (b *executorBuilder) buildShowDDLJobs(v *plan.ShowDDLJobs) Executor {
 	e := &ShowDDLJobsExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+	}
+	return e
+}
+
+func (b *executorBuilder) buildCheckIndex(v *plan.CheckIndex) Executor {
+	readerExec, err := buildNoRangeIndexLookUpReader(b, v.IndexLookUpReader)
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
+	readerExec.ranges = ranger.FullNewRange()
+	readerExec.isCheckOp = true
+
+	e := &CheckIndexExec{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+		dbName:       v.DBName,
+		tableName:    readerExec.table.Meta().Name.L,
+		idxName:      v.IdxName,
+		is:           b.is,
+		src:          readerExec,
 	}
 	return e
 }

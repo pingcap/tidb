@@ -395,6 +395,79 @@ func (e *CheckTableExec) run(ctx context.Context) error {
 	return nil
 }
 
+// CheckIndexExec represents the executor of checking an index.
+// It is built from the "admin check index" statement, and it checks
+// the consistency of the index data with the records of the table.
+type CheckIndexExec struct {
+	baseExecutor
+
+	dbName    string
+	tableName string
+	idxName   string
+	src       *IndexLookUpExecutor
+	done      bool
+	is        infoschema.InfoSchema
+}
+
+// Open implements the Executor Open interface.
+func (e *CheckIndexExec) Open(ctx context.Context) error {
+	if err := e.baseExecutor.Open(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	if err := e.src.Open(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	e.done = false
+	return nil
+}
+
+// Next implements the Executor Next interface.
+func (e *CheckIndexExec) Next(ctx context.Context) (Row, error) {
+	if e.done {
+		return nil, nil
+	}
+	defer func() { e.done = true }()
+
+	err := admin.CheckIndicesCount(e.ctx, e.dbName, e.tableName, []string{e.idxName})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	for {
+		row, err := e.src.Next(ctx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if row == nil {
+			break
+		}
+	}
+	return nil, nil
+}
+
+// NextChunk implements the Executor NextChunk interface.
+func (e *CheckIndexExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+	if e.done {
+		return nil
+	}
+	defer func() { e.done = true }()
+
+	err := admin.CheckIndicesCount(e.ctx, e.dbName, e.tableName, []string{e.idxName})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	chk = e.src.newChunk()
+	for {
+		err := e.src.NextChunk(ctx, chk)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if chk.NumRows() == 0 {
+			break
+		}
+	}
+	return nil
+}
+
 // SelectLockExec represents a select lock executor.
 // It is built from the "SELECT .. FOR UPDATE" or the "SELECT .. LOCK IN SHARE MODE" statement.
 // For "SELECT .. FOR UPDATE" statement, it locks every row key from source Executor.
