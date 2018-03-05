@@ -80,18 +80,7 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 		chunks = appendRow(chunks, data, rowCnt)
 		rowCnt++
 	}
-	var counts []int64
-	for offset := len(dagReq.Executors) - 1; e != nil; e, offset = e.GetSrcExec(), offset-1 {
-		if offset == 0 {
-			switch exec := e.(type) {
-			case *tableScanExec:
-				counts = exec.counts
-			case *indexScanExec:
-				counts = exec.counts
-			}
-		}
-	}
-	return buildResp(chunks, counts, err)
+	return buildResp(chunks, e.Counts(), err)
 }
 
 func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (executor, *tipb.DAGRequest, error) {
