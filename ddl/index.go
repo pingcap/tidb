@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	log "github.com/sirupsen/logrus"
+	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 )
 
 const maxPrefixLength = 3072
@@ -265,7 +266,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 		if err != nil || reorgInfo.first {
 			if err == nil {
 				// Get the first handle of this table.
-				err = iterateSnapshotRows(d.store, tbl, reorgInfo.SnapshotVer, math.MinInt64,
+				err = iterateSnapshotRows(d.store, d.priority, tbl, reorgInfo.SnapshotVer, math.MinInt64,
 					func(h int64, rowKey kv.Key, rawRecord []byte) (bool, error) {
 						reorgInfo.Handle = h
 						return false, nil
@@ -406,7 +407,7 @@ func (w *worker) fetchRowColVals(txn kv.Transaction, t table.Table, colMap map[i
 	w.idxRecords = w.idxRecords[:0]
 	ret := &taskResult{outOfRangeHandle: w.taskRange.endHandle}
 	isEnd := true
-	err := iterateSnapshotRows(w.ctx.GetStore(), t, txn.StartTS(), w.taskRange.startHandle,
+	err := iterateSnapshotRows(w.ctx.GetStore(), w.priority, t, txn.StartTS(), w.taskRange.startHandle,
 		func(h int64, rowKey kv.Key, rawRecord []byte) (bool, error) {
 			if h >= w.taskRange.endHandle {
 				ret.outOfRangeHandle = h
@@ -501,6 +502,7 @@ type worker struct {
 	taskRange   handleInfo     // Every task's handle range.
 	taskRet     *taskResult
 	batchSize   int
+	priority    int
 	rowMap      map[int64]types.Datum // It's the index column values map. It is used to reduce the number of making map.
 }
 
@@ -512,6 +514,7 @@ func newWorker(ctx sessionctx.Context, id, batch, colsLen, indexColsLen int) *wo
 		idxRecords:  make([]*indexRecord, 0, batch),
 		defaultVals: make([]types.Datum, colsLen),
 		rowMap:      make(map[int64]types.Datum, indexColsLen),
+		priority:    1,
 	}
 }
 
@@ -715,9 +718,10 @@ func allocateIndexID(tblInfo *model.TableInfo) int64 {
 // recordIterFunc is used for low-level record iteration.
 type recordIterFunc func(h int64, rowKey kv.Key, rawRecord []byte) (more bool, err error)
 
-func iterateSnapshotRows(store kv.Storage, t table.Table, version uint64, seekHandle int64, fn recordIterFunc) error {
+func iterateSnapshotRows(store kv.Storage, pri int, t table.Table, version uint64, seekHandle int64, fn recordIterFunc) error {
 	ver := kv.Version{Ver: version}
-	snap, err := store.GetSnapshot(ver)
+	priority := priorityToCommandPri(pri)
+	snap, err := store.GetSnapshot(ver,priority)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -756,4 +760,14 @@ func iterateSnapshotRows(store kv.Storage, t table.Table, version uint64, seekHa
 	}
 
 	return nil
+}
+
+func priorityToCommandPri(pri int) pb.CommandPri {
+	switch pri {
+	case kv.PriorityLow:
+		return pb.CommandPri_Low
+	case kv.PriorityHigh:
+		return pb.CommandPri_High
+	}
+	return pb.CommandPri_Normal
 }

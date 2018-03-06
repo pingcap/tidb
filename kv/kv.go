@@ -16,6 +16,7 @@ package kv
 import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"golang.org/x/net/context"
+	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 )
 
 // Transaction options
@@ -238,7 +239,7 @@ type Storage interface {
 	BeginWithStartTS(startTS uint64) (Transaction, error)
 	// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
 	// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
-	GetSnapshot(ver Version) (Snapshot, error)
+	GetSnapshot(ver Version, priority pb.CommandPri) (Snapshot, error)
 	// GetClient gets a client instance.
 	GetClient() Client
 	// Close store

@@ -16,6 +16,7 @@ package kv
 import (
 	. "github.com/pingcap/check"
 	"golang.org/x/net/context"
+	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 )
 
 var _ = Suite(testMockSuite{})
@@ -29,7 +30,7 @@ func (s testMockSuite) TestInterface(c *C) {
 	storage.UUID()
 	version, err := storage.CurrentVersion()
 	c.Check(err, IsNil)
-	snapshot, err := storage.GetSnapshot(version)
+	snapshot, err := storage.GetSnapshot(version, pb.CommandPri_Normal)
 	snapshot.BatchGet([]Key{Key("abc"), Key("def")})
 	c.Check(err, IsNil)
 

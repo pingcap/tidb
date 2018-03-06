@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testleak"
 	"golang.org/x/net/context"
+	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 )
 
 const (
@@ -538,7 +539,7 @@ func (s *testKVSuite) TestDBClose(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(kv.MaxVersion.Cmp(ver), Equals, 1)
 
-	snap, err := store.GetSnapshot(kv.MaxVersion)
+	snap, err := store.GetSnapshot(kv.MaxVersion, pb.CommandPri_Normal)
 	c.Assert(err, IsNil)
 
 	_, err = snap.Get([]byte("a"))
@@ -553,7 +554,7 @@ func (s *testKVSuite) TestDBClose(c *C) {
 	_, err = store.Begin()
 	c.Assert(err, NotNil)
 
-	_, err = store.GetSnapshot(kv.MaxVersion)
+	_, err = store.GetSnapshot(kv.MaxVersion, pb.CommandPri_Normal)
 	c.Assert(err, NotNil)
 
 	err = txn.Set([]byte("a"), []byte("b"))
