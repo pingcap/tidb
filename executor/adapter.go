@@ -132,7 +132,7 @@ func (a *recordSet) NewChunk() *chunk.Chunk {
 }
 
 func (a *recordSet) SupportChunk() bool {
-	return a.executor.supportChunk()
+	return true
 }
 
 func (a *recordSet) Close() error {
@@ -289,7 +289,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 		a.logSlowQuery(txnTS, err == nil)
 	}()
 
-	if sctx.GetSessionVars().EnableChunk && e.supportChunk() {
+	if sctx.GetSessionVars().EnableChunk {
 		err = e.NextChunk(ctx, e.newChunk())
 		if err != nil {
 			return nil, errors.Trace(err)

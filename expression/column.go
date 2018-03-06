@@ -302,7 +302,8 @@ func (col *Column) HashCode(_ *stmtctx.StatementContext) []byte {
 	if len(col.hashcode) != 0 {
 		return col.hashcode
 	}
-	col.hashcode = make([]byte, 0, 16)
+	col.hashcode = make([]byte, 0, 17)
+	col.hashcode = append(col.hashcode, columnFlag)
 	col.hashcode = codec.EncodeInt(col.hashcode, int64(col.FromID))
 	col.hashcode = codec.EncodeInt(col.hashcode, int64(col.Position))
 	return col.hashcode

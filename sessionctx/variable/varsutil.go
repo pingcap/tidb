@@ -136,6 +136,14 @@ func tidbOptPositiveInt(opt string, defaultVal int) int {
 	return val
 }
 
+func tidbOptInt64(opt string, defaultVal int64) int64 {
+	val, err := strconv.ParseInt(opt, 10, 64)
+	if err != nil {
+		return defaultVal
+	}
+	return val
+}
+
 func parseTimeZone(s string) (*time.Location, error) {
 	if s == "SYSTEM" {
 		// TODO: Support global time_zone variable, it should be set to global time_zone value.

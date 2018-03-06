@@ -56,9 +56,9 @@ func (s *testChunkSuite) TestList(c *check.C) {
 	nChunk.AppendNull(0)
 	l.Add(nChunk)
 	ptr := l.AppendRow(srcRow)
-	c.Assert(l.NumChunks(), check.Equals, 1)
-	c.Assert(ptr.ChkIdx, check.Equals, uint32(0))
-	c.Assert(ptr.RowIdx, check.Equals, uint32(1))
+	c.Assert(l.NumChunks(), check.Equals, 2)
+	c.Assert(ptr.ChkIdx, check.Equals, uint32(1))
+	c.Assert(ptr.RowIdx, check.Equals, uint32(0))
 	row := l.GetRow(ptr)
 	c.Assert(row.GetInt64(0), check.Equals, int64(1))
 
@@ -89,7 +89,7 @@ func (s *testChunkSuite) TestListMemoryUsage(c *check.C) {
 
 	maxChunkSize := 2
 	list := NewList(fieldTypes, maxChunkSize)
-	c.Assert(list.MemoryUsage(), check.Equals, int64(0))
+	c.Assert(list.GetMemTracker().BytesConsumed(), check.Equals, int64(0))
 
 	initCap := 10
 	srcChk := NewChunkWithCapacity(fieldTypes, initCap)
@@ -109,13 +109,13 @@ func (s *testChunkSuite) TestListMemoryUsage(c *check.C) {
 	list.AppendRow(row)
 
 	memUsage := NewChunk(fieldTypes).MemoryUsage()
-	c.Assert(list.MemoryUsage(), check.Equals, memUsage)
+	c.Assert(list.GetMemTracker().BytesConsumed(), check.Equals, int64(0))
 
 	list.Reset()
-	c.Assert(list.MemoryUsage(), check.Equals, memUsage)
+	c.Assert(list.GetMemTracker().BytesConsumed(), check.Equals, memUsage)
 
 	list.Add(srcChk)
-	c.Assert(list.MemoryUsage(), check.Equals, memUsage+srcChk.MemoryUsage())
+	c.Assert(list.GetMemTracker().BytesConsumed(), check.Equals, memUsage+srcChk.MemoryUsage())
 }
 
 func BenchmarkListMemoryUsage(b *testing.B) {
@@ -141,6 +141,6 @@ func BenchmarkListMemoryUsage(b *testing.B) {
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		list.MemoryUsage()
+		list.GetMemTracker().BytesConsumed()
 	}
 }
