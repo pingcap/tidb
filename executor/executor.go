@@ -49,6 +49,7 @@ var (
 	_ Executor = &SelectLockExec{}
 	_ Executor = &ShowDDLExec{}
 	_ Executor = &ShowDDLJobsExec{}
+	_ Executor = &ShowDDLJobQueriesExec{}
 	_ Executor = &SortExec{}
 	_ Executor = &StreamAggExec{}
 	_ Executor = &TableDualExec{}
@@ -288,6 +289,66 @@ type ShowDDLJobsExec struct {
 	jobs   []*model.Job
 }
 
+// ShowDDLJobQueriesExec represent a show DDL jobs executor.
+type ShowDDLJobQueriesExec struct {
+	baseExecutor
+
+	cursor int
+	jobs   []*model.Job
+	jobIDs []int64
+	query  string
+}
+
+// Open implements the Executor Open interface.
+func (e *ShowDDLJobQueriesExec) Open(ctx context.Context) error {
+	if err := e.baseExecutor.Open(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	jobs, err := admin.GetDDLJobs(e.ctx.Txn())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	historyJobs, err := admin.GetHistoryDDLJobs(e.ctx.Txn())
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	e.jobs = append(e.jobs, jobs...)
+	e.jobs = append(e.jobs, historyJobs...)
+
+	e.cursor = 0
+	return nil
+}
+// Next implements the Executor Next interface.
+func (e *ShowDDLJobQueriesExec) Next(ctx context.Context) (Row, error) {
+	if e.cursor >= len(e.jobs) {
+		return nil, nil
+	}
+
+	job := e.jobs[e.cursor]
+	row := types.MakeDatums(job.Query)
+	e.cursor++
+
+	return row, nil
+}
+
+// NextChunk implements the Executor NextChunk interface.
+func (e *ShowDDLJobQueriesExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	if e.cursor >= len(e.jobs) {
+		return nil
+	}
+	numCurBatch := mathutil.Min(e.maxChunkSize, len(e.jobs)-e.cursor)
+	for i := e.cursor; i < e.cursor+numCurBatch; i++ {
+		for j :=0; j < len(e.jobIDs); j++ {
+			if e.jobIDs[j] == e.jobs[i].ID {
+				chk.AppendString(0, e.jobs[i].Query)
+			}
+		}
+	}
+	e.cursor += numCurBatch
+	return nil
+}
 // Open implements the Executor Open interface.
 func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
