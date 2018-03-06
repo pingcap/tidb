@@ -66,6 +66,7 @@ func (e *CheckIndexRangeExec) NextChunk(ctx context.Context, chk *chunk.Chunk) e
 			for _, hr := range e.handleRanges {
 				if handle >= hr.Begin && handle < hr.End {
 					chk.AppendRow(row)
+					break
 				}
 			}
 		}
