@@ -133,9 +133,8 @@ func (e *tableScanExec) Next(ctx context.Context) (value [][]byte, err error) {
 			e.seekKey = nil
 			e.cursor++
 			continue
-		} else {
-			e.counts[e.cursor]++
 		}
+		e.counts[e.cursor]++
 		return value, nil
 	}
 
@@ -298,9 +297,8 @@ func (e *indexScanExec) Next(ctx context.Context) (value [][]byte, err error) {
 				e.cursor++
 				e.seekKey = nil
 				continue
-			} else {
-				e.counts[e.cursor]++
 			}
+			e.counts[e.cursor]++
 		}
 		return value, nil
 	}
