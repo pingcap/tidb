@@ -39,7 +39,7 @@ func (s *testTxnSuite) TestBackOff(c *C) {
 	mustBackOff(c, 100000, 100)
 }
 
-func mustBackOff(c *C, cnt, sleep int) {
+func mustBackOff(c *C, cnt uint, sleep int) {
 	c.Assert(BackOff(cnt), LessEqual, sleep*int(time.Millisecond))
 }
 

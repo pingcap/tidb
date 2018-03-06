@@ -279,8 +279,14 @@ type SessionVars struct {
 	// MaxChunkSize defines max row count of a Chunk during query execution.
 	MaxChunkSize int
 
-	// MemThreshold defines the memory usage warning threshold in Byte of a executor during query execution.
-	MemThreshold int64
+	// MemQuotaQuery defines the memory quota for a query.
+	MemQuotaQuery int64
+	// MemQuotaHashJoin defines the memory quota for a hash join executor.
+	MemQuotaHashJoin int64
+	// MemQuotaSort defines the memory quota for a sort executor.
+	MemQuotaSort int64
+	// MemQuotaTopn defines the memory quota for a top n executor.
+	MemQuotaTopn int64
 
 	// EnableChunk indicates whether the chunk execution model is enabled.
 	// TODO: remove this after tidb-server configuration "enable-chunk' removed.
@@ -315,7 +321,10 @@ func NewSessionVars() *SessionVars {
 		DistSQLScanConcurrency:     DefDistSQLScanConcurrency,
 		MaxChunkSize:               DefMaxChunkSize,
 		DMLBatchSize:               DefDMLBatchSize,
-		MemThreshold:               DefMemThreshold,
+		MemQuotaQuery:              DefTiDBMemQuotaQuery,
+		MemQuotaHashJoin:           DefTiDBMemQuotaHashJoin,
+		MemQuotaSort:               DefTiDBMemQuotaSort,
+		MemQuotaTopn:               DefTiDBMemQuotaTopn,
 	}
 	var enableStreaming string
 	if config.GetGlobalConfig().EnableStreaming {
@@ -453,19 +462,19 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 			return errors.Trace(err)
 		}
 	case AutocommitVar:
-		isAutocommit := tidbOptOn(val)
+		isAutocommit := TiDBOptOn(val)
 		s.SetStatusFlag(mysql.ServerStatusAutocommit, isAutocommit)
 		if isAutocommit {
 			s.SetStatusFlag(mysql.ServerStatusInTrans, false)
 		}
 	case TiDBImportingData:
-		s.ImportingData = tidbOptOn(val)
+		s.ImportingData = TiDBOptOn(val)
 	case TiDBSkipUTF8Check:
-		s.SkipUTF8Check = tidbOptOn(val)
+		s.SkipUTF8Check = TiDBOptOn(val)
 	case TiDBOptAggPushDown:
-		s.AllowAggPushDown = tidbOptOn(val)
+		s.AllowAggPushDown = TiDBOptOn(val)
 	case TiDBOptInSubqUnFolding:
-		s.AllowInSubqueryUnFolding = tidbOptOn(val)
+		s.AllowInSubqueryUnFolding = TiDBOptOn(val)
 	case TiDBIndexLookupConcurrency:
 		s.IndexLookupConcurrency = tidbOptPositiveInt(val, DefIndexLookupConcurrency)
 	case TiDBIndexJoinBatchSize:
@@ -477,21 +486,27 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBIndexSerialScanConcurrency:
 		s.IndexSerialScanConcurrency = tidbOptPositiveInt(val, DefIndexSerialScanConcurrency)
 	case TiDBBatchInsert:
-		s.BatchInsert = tidbOptOn(val)
+		s.BatchInsert = TiDBOptOn(val)
 	case TiDBBatchDelete:
-		s.BatchDelete = tidbOptOn(val)
+		s.BatchDelete = TiDBOptOn(val)
 	case TiDBDMLBatchSize:
 		s.DMLBatchSize = tidbOptPositiveInt(val, DefDMLBatchSize)
 	case TiDBCurrentTS, TiDBConfig:
 		return ErrReadOnly
 	case TiDBMaxChunkSize:
 		s.MaxChunkSize = tidbOptPositiveInt(val, DefMaxChunkSize)
-	case TiDBMemThreshold:
-		s.MemThreshold = int64(tidbOptPositiveInt(val, DefMemThreshold))
+	case TIDBMemQuotaQuery:
+		s.MemQuotaQuery = tidbOptInt64(val, DefTiDBMemQuotaQuery)
+	case TIDBMemQuotaHashJoin:
+		s.MemQuotaHashJoin = tidbOptInt64(val, DefTiDBMemQuotaHashJoin)
+	case TIDBMemQuotaSort:
+		s.MemQuotaSort = tidbOptInt64(val, DefTiDBMemQuotaSort)
+	case TIDBMemQuotaTopn:
+		s.MemQuotaTopn = tidbOptInt64(val, DefTiDBMemQuotaTopn)
 	case TiDBGeneralLog:
 		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt(val, DefTiDBGeneralLog)))
 	case TiDBEnableStreaming:
-		s.EnableStreaming = tidbOptOn(val)
+		s.EnableStreaming = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil

@@ -59,6 +59,7 @@ import (
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/memory"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -906,8 +907,23 @@ func (cc *clientConn) handleFieldList(sql string) (err error) {
 // If binary is true, the data would be encoded in BINARY format.
 // If more is true, a flag bit would be set to indicate there are more
 // resultsets, it's used to support the MULTI_RESULTS capability in mysql protocol.
-func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary bool, more bool) error {
-	defer terror.Call(rs.Close)
+func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary bool, more bool) (runErr error) {
+	defer func() {
+		terror.Call(rs.Close)
+		r := recover()
+		if r == nil {
+			return
+		}
+		if str, ok := r.(string); !ok || !strings.HasPrefix(str, memory.PanicMemoryExceed) {
+			panic(r)
+		}
+		// TODO(jianzhang.zj: add metrics here)
+		runErr = errors.Errorf("%v", r)
+		buf := make([]byte, 4096)
+		stackSize := runtime.Stack(buf, false)
+		buf = buf[:stackSize]
+		log.Errorf("query: %s:\n%s", cc.lastCmd, buf)
+	}()
 	if cc.server.cfg.EnableChunk && rs.SupportChunk() {
 		err := cc.writeChunks(ctx, rs, binary, more)
 		if err != nil {
