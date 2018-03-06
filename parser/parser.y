@@ -4767,19 +4767,19 @@ AdminStmt:
 		}
 	}
 |	"ADMIN" "CANCEL" "DDL" "JOBS" NumList
-    {
-     	$$ = &ast.AdminStmt{
-     		Tp: ast.AdminCancelDDLJobs,
-     		JobIDs: $5.([]int64),
-     	}
-    }
+	{
+		$$ = &ast.AdminStmt{
+			Tp: ast.AdminCancelDDLJobs,
+			JobIDs: $5.([]int64),
+		}
+	}
 |	"ADMIN" "SHOW" "DDL" "JOB" "QUERIES" NumList
-    {
-    	$$ = &ast.AdminStmt{
-    		Tp: ast.AdminShowDDLJobQueries,
-    		JobIDs: $6.([]int64),
-    	}
-    }
+	{
+		$$ = &ast.AdminStmt{
+			Tp: ast.AdminShowDDLJobQueries,
+			JobIDs: $6.([]int64),
+		}
+	}
 
 NumList:
     NUM
