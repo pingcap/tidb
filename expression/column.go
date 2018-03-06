@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/codec"
@@ -297,11 +298,12 @@ func (col *Column) Decorrelate(_ *Schema) Expression {
 }
 
 // HashCode implements Expression interface.
-func (col *Column) HashCode() []byte {
+func (col *Column) HashCode(_ *stmtctx.StatementContext) []byte {
 	if len(col.hashcode) != 0 {
 		return col.hashcode
 	}
-	col.hashcode = make([]byte, 0, 16)
+	col.hashcode = make([]byte, 0, 17)
+	col.hashcode = append(col.hashcode, columnFlag)
 	col.hashcode = codec.EncodeInt(col.hashcode, int64(col.FromID))
 	col.hashcode = codec.EncodeInt(col.hashcode, int64(col.Position))
 	return col.hashcode

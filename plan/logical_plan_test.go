@@ -652,6 +652,35 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 			sql:  "explain select * from t union all select * from t limit 1, 1",
 			plan: "*plan.Explain",
 		},
+		// The correctness of explain result is checked at integration test. There is to improve coverage.
+		{
+			sql:  "explain select /*+ TIDB_INLJ(t1, t2) */ * from t t1 left join t t2 on t1.a=t2.a where t1.b=1 and t2.b=1 and (t1.c=1 or t2.c=1)",
+			plan: "*plan.Explain",
+		},
+		{
+			sql:  "explain select /*+ TIDB_HJ(t1, t2) */ * from t t1 left join t t2 on t1.a=t2.a where t1.b=1 and t2.b=1 and (t1.c=1 or t2.c=1)",
+			plan: "*plan.Explain",
+		},
+		{
+			sql:  "explain select /*+ TIDB_SMJ(t1, t2) */ * from t t1 right join t t2 on t1.a=t2.a where t1.b=1 and t2.b=1 and (t1.c=1 or t2.c=1)",
+			plan: "*plan.Explain",
+		},
+		{
+			sql:  `explain format="dot" select /*+ TIDB_SMJ(t1, t2) */ * from t t1, t t2 where t1.a=t2.a`,
+			plan: "*plan.Explain",
+		},
+		{
+			sql:  "explain select * from t order by b",
+			plan: "*plan.Explain",
+		},
+		{
+			sql:  "explain select * from t order by b limit 1",
+			plan: "*plan.Explain",
+		},
+		{
+			sql:  `explain format="dot" select * from t order by a`,
+			plan: "*plan.Explain",
+		},
 		{
 			sql:  "insert into t select * from t",
 			plan: "TableReader(Table(t))->Insert",
@@ -671,6 +700,14 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		{
 			sql:  "select * from t t1, t t2 where 1 = 0",
 			plan: "Dual->Projection",
+		},
+		{
+			sql:  "select * from t t1 join t t2 using(a)",
+			plan: "Join{DataScan(t1)->DataScan(t2)}->Projection",
+		},
+		{
+			sql:  "select * from t t1 natural join t t2",
+			plan: "Join{DataScan(t1)->DataScan(t2)}->Projection",
 		},
 	}
 	for _, ca := range tests {

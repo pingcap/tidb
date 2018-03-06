@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/mysql"
@@ -278,19 +279,29 @@ type SessionVars struct {
 	// MaxChunkSize defines max row count of a Chunk during query execution.
 	MaxChunkSize int
 
-	// MemThreshold defines the memory usage warning threshold in Byte of a executor during query execution.
-	MemThreshold int64
+	// MemQuotaQuery defines the memory quota for a query.
+	MemQuotaQuery int64
+	// MemQuotaHashJoin defines the memory quota for a hash join executor.
+	MemQuotaHashJoin int64
+	// MemQuotaSort defines the memory quota for a sort executor.
+	MemQuotaSort int64
+	// MemQuotaTopn defines the memory quota for a top n executor.
+	MemQuotaTopn int64
 
 	// EnableChunk indicates whether the chunk execution model is enabled.
 	// TODO: remove this after tidb-server configuration "enable-chunk' removed.
 	EnableChunk bool
+
+	// EnableStreaming indicates whether the coprocessor request can use streaming API.
+	// TODO: remove this after tidb-server configuration "enable-streaming' removed.
+	EnableStreaming bool
 
 	writeStmtBufs WriteStmtBufs
 }
 
 // NewSessionVars creates a session vars object.
 func NewSessionVars() *SessionVars {
-	return &SessionVars{
+	vars := &SessionVars{
 		Users:                      make(map[string]string),
 		systems:                    make(map[string]string),
 		PreparedStmts:              make(map[uint32]interface{}),
@@ -310,8 +321,19 @@ func NewSessionVars() *SessionVars {
 		DistSQLScanConcurrency:     DefDistSQLScanConcurrency,
 		MaxChunkSize:               DefMaxChunkSize,
 		DMLBatchSize:               DefDMLBatchSize,
-		MemThreshold:               DefMemThreshold,
+		MemQuotaQuery:              DefTiDBMemQuotaQuery,
+		MemQuotaHashJoin:           DefTiDBMemQuotaHashJoin,
+		MemQuotaSort:               DefTiDBMemQuotaSort,
+		MemQuotaTopn:               DefTiDBMemQuotaTopn,
 	}
+	var enableStreaming string
+	if config.GetGlobalConfig().EnableStreaming {
+		enableStreaming = "1"
+	} else {
+		enableStreaming = "0"
+	}
+	terror.Log(vars.SetSystemVar(TiDBEnableStreaming, enableStreaming))
+	return vars
 }
 
 // GetWriteStmtBufs get pointer of SessionVars.writeStmtBufs.
@@ -473,10 +495,18 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		return ErrReadOnly
 	case TiDBMaxChunkSize:
 		s.MaxChunkSize = tidbOptPositiveInt(val, DefMaxChunkSize)
-	case TiDBMemThreshold:
-		s.MemThreshold = int64(tidbOptPositiveInt(val, DefMemThreshold))
+	case TIDBMemQuotaQuery:
+		s.MemQuotaQuery = tidbOptInt64(val, DefTiDBMemQuotaQuery)
+	case TIDBMemQuotaHashJoin:
+		s.MemQuotaHashJoin = tidbOptInt64(val, DefTiDBMemQuotaHashJoin)
+	case TIDBMemQuotaSort:
+		s.MemQuotaSort = tidbOptInt64(val, DefTiDBMemQuotaSort)
+	case TIDBMemQuotaTopn:
+		s.MemQuotaTopn = tidbOptInt64(val, DefTiDBMemQuotaTopn)
 	case TiDBGeneralLog:
 		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt(val, DefTiDBGeneralLog)))
+	case TiDBEnableStreaming:
+		s.EnableStreaming = tidbOptOn(val)
 	}
 	s.systems[name] = val
 	return nil

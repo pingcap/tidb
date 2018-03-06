@@ -18,5 +18,5 @@ type Config struct {
 	Addr       string `json:"addr" toml:"addr"`
 	Socket     string `json:"socket" toml:"socket"`
 	SkipAuth   bool   `json:"skip-auth" toml:"skip-auth"`
-	TokenLimit int    `json:"token-limit" toml:"token-limit"`
+	TokenLimit uint   `json:"token-limit" toml:"token-limit"`
 }

@@ -19,11 +19,9 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/mock"
@@ -34,44 +32,6 @@ import (
 var _ = Suite(&testExecSuite{})
 
 type testExecSuite struct {
-}
-
-type handleRange struct {
-	start int64
-	end   int64
-}
-
-func getExpectedRanges(tid int64, hrs []*handleRange) []kv.KeyRange {
-	krs := make([]kv.KeyRange, 0, len(hrs))
-	for _, hr := range hrs {
-		startKey := tablecodec.EncodeRowKeyWithHandle(tid, hr.start)
-		endKey := tablecodec.EncodeRowKeyWithHandle(tid, hr.end)
-		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
-	}
-	return krs
-}
-
-func (s *testExecSuite) TestMergeHandles(c *C) {
-	handles := []int64{0, 2, 3, 4, 5, 10, 11, 100}
-
-	// Build expected key ranges.
-	hrs := make([]*handleRange, 0, len(handles))
-	hrs = append(hrs, &handleRange{start: 0, end: 1})
-	hrs = append(hrs, &handleRange{start: 2, end: 6})
-	hrs = append(hrs, &handleRange{start: 10, end: 12})
-	hrs = append(hrs, &handleRange{start: 100, end: 101})
-	expectedKrs := getExpectedRanges(1, hrs)
-
-	// Build key ranges.
-	krs := tableHandlesToKVRanges(1, handles)
-
-	// Compare key ranges and expected key ranges.
-	c.Assert(len(krs), Equals, len(expectedKrs))
-	for i, kr := range krs {
-		ekr := expectedKrs[i]
-		c.Assert(kr.StartKey, DeepEquals, ekr.StartKey)
-		c.Assert(kr.EndKey, DeepEquals, ekr.EndKey)
-	}
 }
 
 // mockSessionManager is a mocked session manager which is used for test.
