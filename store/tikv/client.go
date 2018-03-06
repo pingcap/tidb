@@ -24,7 +24,6 @@ import (
 	"github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing"
 	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/juju/errors"
-	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
@@ -150,15 +149,20 @@ func (a *connArray) Close() {
 // whether there is any connection is idle and then close and remove these idle connections.
 type rpcClient struct {
 	sync.RWMutex
-	isClosed bool
-	conns    map[string]*connArray
-	security config.Security
+	isClosed      bool
+	conns         map[string]*connArray
+	security      config.Security
+	streamTimeout chan *tikvrpc.TimeoutItem
 }
 
 func newRPCClient(security config.Security) *rpcClient {
+	timeoutCh := make(chan *tikvrpc.TimeoutItem)
+	go tikvrpc.CheckStreamTimeoutLoop(timeoutCh)
+
 	return &rpcClient{
-		conns:    make(map[string]*connArray),
-		security: security,
+		conns:         make(map[string]*connArray),
+		security:      security,
+		streamTimeout: timeoutCh,
 	}
 }
 
@@ -221,77 +225,7 @@ func (c *rpcClient) SendReq(ctx context.Context, addr string, req *tikvrpc.Reque
 		return nil, errors.Trace(err)
 	}
 	client := tikvpb.NewTikvClient(conn)
-	resp, err := c.callRPC(ctx, client, req)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return resp, nil
-}
-
-func (c *rpcClient) callRPC(ctx context.Context, client tikvpb.TikvClient, req *tikvrpc.Request) (*tikvrpc.Response, error) {
-	resp := &tikvrpc.Response{}
-	resp.Type = req.Type
-	var err error
-	switch req.Type {
-	case tikvrpc.CmdGet:
-		resp.Get, err = client.KvGet(ctx, req.Get)
-	case tikvrpc.CmdScan:
-		resp.Scan, err = client.KvScan(ctx, req.Scan)
-	case tikvrpc.CmdPrewrite:
-		resp.Prewrite, err = client.KvPrewrite(ctx, req.Prewrite)
-	case tikvrpc.CmdCommit:
-		resp.Commit, err = client.KvCommit(ctx, req.Commit)
-	case tikvrpc.CmdCleanup:
-		resp.Cleanup, err = client.KvCleanup(ctx, req.Cleanup)
-	case tikvrpc.CmdBatchGet:
-		resp.BatchGet, err = client.KvBatchGet(ctx, req.BatchGet)
-	case tikvrpc.CmdBatchRollback:
-		resp.BatchRollback, err = client.KvBatchRollback(ctx, req.BatchRollback)
-	case tikvrpc.CmdScanLock:
-		resp.ScanLock, err = client.KvScanLock(ctx, req.ScanLock)
-	case tikvrpc.CmdResolveLock:
-		resp.ResolveLock, err = client.KvResolveLock(ctx, req.ResolveLock)
-	case tikvrpc.CmdGC:
-		resp.GC, err = client.KvGC(ctx, req.GC)
-	case tikvrpc.CmdDeleteRange:
-		resp.DeleteRange, err = client.KvDeleteRange(ctx, req.DeleteRange)
-	case tikvrpc.CmdRawGet:
-		resp.RawGet, err = client.RawGet(ctx, req.RawGet)
-	case tikvrpc.CmdRawPut:
-		resp.RawPut, err = client.RawPut(ctx, req.RawPut)
-	case tikvrpc.CmdRawDelete:
-		resp.RawDelete, err = client.RawDelete(ctx, req.RawDelete)
-	case tikvrpc.CmdRawScan:
-		resp.RawScan, err = client.RawScan(ctx, req.RawScan)
-	case tikvrpc.CmdCop:
-		resp.Cop, err = client.Coprocessor(ctx, req.Cop)
-	case tikvrpc.CmdCopStream:
-		var stream tikvpb.Tikv_CoprocessorStreamClient
-		stream, err = client.CoprocessorStream(ctx, req.Cop)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		// Read the first streaming response to get CopStreamResponse.
-		// This can make error handling much easier, because SendReq() retry on
-		// region error automatically.
-		var first *coprocessor.Response
-		first, err = resp.CopStream.Recv()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		resp.CopStream = &tikvrpc.CopStreamResponse{
-			Tikv_CoprocessorStreamClient: stream,
-			Response:                     first,
-		}
-	case tikvrpc.CmdMvccGetByKey:
-		resp.MvccGetByKey, err = client.MvccGetByKey(ctx, req.MvccGetByKey)
-	case tikvrpc.CmdMvccGetByStartTs:
-		resp.MvccGetByStartTS, err = client.MvccGetByStartTs(ctx, req.MvccGetByStartTs)
-	case tikvrpc.CmdSplitRegion:
-		resp.SplitRegion, err = client.SplitRegion(ctx, req.SplitRegion)
-	default:
-		return nil, errors.Errorf("invalid request type: %v", req.Type)
-	}
+	resp, err := tikvrpc.CallRPC(ctx, client, req, c.streamTimeout)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -300,5 +234,6 @@ func (c *rpcClient) callRPC(ctx context.Context, client tikvpb.TikvClient, req *
 
 func (c *rpcClient) Close() error {
 	c.closeConns()
+	close(c.streamTimeout)
 	return nil
 }

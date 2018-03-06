@@ -614,7 +614,7 @@ func (it *copIterator) handleTaskOnce(bo *Backoffer, task *copTask, ch chan copR
 }
 
 func (it *copIterator) handleCopStreamResult(bo *Backoffer, stream *tikvrpc.CopStreamResponse, task *copTask, ch chan copResponse) ([]*copTask, error) {
-	var resp *coprocessor.Response
+	var resp, lastResp *coprocessor.Response
 	resp = stream.Response
 	for {
 		remainedTasks, err := it.handleCopResponse(bo, resp, task, ch)
@@ -622,13 +622,29 @@ func (it *copIterator) handleCopStreamResult(bo *Backoffer, stream *tikvrpc.CopS
 			return remainedTasks, errors.Trace(err)
 		}
 
+		stream.SetDeadline(time.Now().Add(readTimeoutShort))
 		resp, err = stream.Recv()
 		if err != nil {
 			if err == io.EOF {
 				return nil, nil
 			}
-			return nil, errors.Trace(err)
+
+			if err1 := bo.Backoff(boTiKVRPC, errors.Errorf("recv stream response error: %v, task: %s", err, task)); err1 != nil {
+				return nil, errors.Trace(err)
+			}
+
+			// No coprocessor.Response for network error, rebuild task based on the last success one.
+			ranges := task.ranges
+			if lastResp != nil {
+				if it.req.Desc {
+					ranges, _ = ranges.split(lastResp.GetRange().Start)
+				} else {
+					_, ranges = ranges.split(lastResp.GetRange().End)
+				}
+			}
+			return buildCopTasks(bo, it.store.regionCache, ranges, it.req.Desc, true)
 		}
+		lastResp = resp
 	}
 }
 

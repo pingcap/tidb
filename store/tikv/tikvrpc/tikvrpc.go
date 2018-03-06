@@ -15,12 +15,16 @@ package tikvrpc
 
 import (
 	"fmt"
+	"sync/atomic"
+	"time"
 
+	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
+	"golang.org/x/net/context"
 )
 
 // CmdType represents the concrete request type in Request or response type in Response.
@@ -155,6 +159,10 @@ type Response struct {
 type CopStreamResponse struct {
 	tikvpb.Tikv_CoprocessorStreamClient
 	*coprocessor.Response // The first result of Recv()
+
+	// The following field is used to support timeout.
+	item      TimeoutItem
+	timeoutCh chan<- *TimeoutItem
 }
 
 // SetContext set the Context field for the given req to the specified ctx.
@@ -353,4 +361,137 @@ func (resp *Response) GetRegionError() (*errorpb.Error, error) {
 		return nil, fmt.Errorf("invalid response type %v", resp.Type)
 	}
 	return e, nil
+}
+
+func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request, ch chan<- *TimeoutItem) (*Response, error) {
+	resp := &Response{}
+	resp.Type = req.Type
+	var err error
+	switch req.Type {
+	case CmdGet:
+		resp.Get, err = client.KvGet(ctx, req.Get)
+	case CmdScan:
+		resp.Scan, err = client.KvScan(ctx, req.Scan)
+	case CmdPrewrite:
+		resp.Prewrite, err = client.KvPrewrite(ctx, req.Prewrite)
+	case CmdCommit:
+		resp.Commit, err = client.KvCommit(ctx, req.Commit)
+	case CmdCleanup:
+		resp.Cleanup, err = client.KvCleanup(ctx, req.Cleanup)
+	case CmdBatchGet:
+		resp.BatchGet, err = client.KvBatchGet(ctx, req.BatchGet)
+	case CmdBatchRollback:
+		resp.BatchRollback, err = client.KvBatchRollback(ctx, req.BatchRollback)
+	case CmdScanLock:
+		resp.ScanLock, err = client.KvScanLock(ctx, req.ScanLock)
+	case CmdResolveLock:
+		resp.ResolveLock, err = client.KvResolveLock(ctx, req.ResolveLock)
+	case CmdGC:
+		resp.GC, err = client.KvGC(ctx, req.GC)
+	case CmdDeleteRange:
+		resp.DeleteRange, err = client.KvDeleteRange(ctx, req.DeleteRange)
+	case CmdRawGet:
+		resp.RawGet, err = client.RawGet(ctx, req.RawGet)
+	case CmdRawPut:
+		resp.RawPut, err = client.RawPut(ctx, req.RawPut)
+	case CmdRawDelete:
+		resp.RawDelete, err = client.RawDelete(ctx, req.RawDelete)
+	case CmdRawScan:
+		resp.RawScan, err = client.RawScan(ctx, req.RawScan)
+	case CmdCop:
+		resp.Cop, err = client.Coprocessor(ctx, req.Cop)
+	case CmdCopStream:
+		// Use context to support timeout for grpc streaming client.
+		ctx, cancel := context.WithCancel(ctx)
+		var stream tikvpb.Tikv_CoprocessorStreamClient
+		stream, err = client.CoprocessorStream(ctx, req.Cop)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		// Read the first streaming response to get CopStreamResponse.
+		// This can make error handling much easier, because SendReq() retry on
+		// region error automatically.
+		var first *coprocessor.Response
+		first, err = resp.CopStream.Recv()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		resp.CopStream = &CopStreamResponse{
+			Tikv_CoprocessorStreamClient: stream,
+			Response:                     first,
+			item:                         TimeoutItem{cancel: cancel},
+			timeoutCh:                    ch,
+		}
+	case CmdMvccGetByKey:
+		resp.MvccGetByKey, err = client.MvccGetByKey(ctx, req.MvccGetByKey)
+	case CmdMvccGetByStartTs:
+		resp.MvccGetByStartTS, err = client.MvccGetByStartTs(ctx, req.MvccGetByStartTs)
+	case CmdSplitRegion:
+		resp.SplitRegion, err = client.SplitRegion(ctx, req.SplitRegion)
+	default:
+		return nil, errors.Errorf("invalid request type: %v", req.Type)
+	}
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return resp, nil
+}
+
+type TimeoutItem struct {
+	cancel  context.CancelFunc
+	timeout time.Time
+	active  int32 // 0 means inactive
+}
+
+// SetDeadline set deadline for this CopStreamResponse object, it usually called before Recv().
+func (resp *CopStreamResponse) SetDeadline(deadline time.Time) {
+	atomic.StoreInt32(&resp.item.active, 1)
+	resp.item.timeout = deadline
+	resp.timeoutCh <- &resp.item
+}
+
+// Override the stream client Recv() function.
+func (resp *CopStreamResponse) Recv() (*coprocessor.Response, error) {
+	ret, err := resp.Tikv_CoprocessorStreamClient.Recv()
+	atomic.StoreInt32(&resp.item.active, 0)
+	return ret, errors.Trace(err)
+}
+
+func CheckStreamTimeoutLoop(ch <-chan *TimeoutItem) {
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	array := make([]*TimeoutItem, 0, 1024)
+
+	for {
+		select {
+		case item, ok := <-ch:
+			if !ok {
+				// This channel close means goroutine should return.
+				return
+			}
+			array = append(array, item)
+		case now := <-ticker.C:
+			array = keepOnlyActive(array, now)
+		}
+	}
+}
+
+// keepOnlyActive removes inactive items, call cancel function for timeout items.
+func keepOnlyActive(array []*TimeoutItem, now time.Time) []*TimeoutItem {
+	idx := 0
+	for i := 0; i < len(array); i++ {
+		item := array[i]
+		if atomic.LoadInt32(&item.active) == 0 {
+			continue
+		}
+
+		if item.timeout.After(now) {
+			item.cancel()
+			continue
+		}
+
+		array[idx] = array[i]
+		idx++
+	}
+	return array[:idx]
 }
