@@ -588,9 +588,9 @@ const (
 	AdminShowDDL = iota + 1
 	AdminCheckTable
 	AdminShowDDLJobs
+	AdminShowDDLJobQueries
 	AdminCancelDDLJobs
 	AdminCheckIndex
-	AdminShowDDLJobQueries
 )
 
 // AdminStmt is the struct for Admin statement.

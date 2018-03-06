@@ -4750,13 +4750,6 @@ AdminStmt:
 	{
 		$$ = &ast.AdminStmt{Tp: ast.AdminShowDDLJobs}
 	}
-|	"ADMIN" "SHOW" "DDL" "JOB" "QUERIES" NumList
-    {
-    	$$ = &ast.AdminStmt{
-    		Tp: ast.AdminShowDDLJobQueries,
-    		JobIDs: $6.([]int64),
-    	}
-    }
 
 |	"ADMIN" "CHECK" "TABLE" TableNameList
 	{
@@ -4779,6 +4772,13 @@ AdminStmt:
      		Tp: ast.AdminCancelDDLJobs,
      		JobIDs: $5.([]int64),
      	}
+    }
+|	"ADMIN" "SHOW" "DDL" "JOB" "QUERIES" NumList
+    {
+    	$$ = &ast.AdminStmt{
+    		Tp: ast.AdminShowDDLJobQueries,
+    		JobIDs: $6.([]int64),
+    	}
     }
 
 NumList:
