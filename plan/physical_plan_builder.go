@@ -354,7 +354,7 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInf
 			}
 		}
 	}
-	if matchProperty && prop.expectedCnt < math.MaxFloat64 && prop.expectedCnt > ds.statsAfterSelect.count {
+	if matchProperty && prop.expectedCnt < ds.statsAfterSelect.count {
 		selectivity, err := statsTbl.Selectivity(ds.ctx, is.filterCondition)
 		if err != nil {
 			log.Warnf("An error happened: %v, we have to use the default selectivity", err.Error())
