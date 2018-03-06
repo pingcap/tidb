@@ -133,9 +133,9 @@ func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, 
 	var err error
 	switch curr.GetTp() {
 	case tipb.ExecType_TypeTableScan:
-		currExec = h.buildTableScan(ctx, curr)
+		currExec, err = h.buildTableScan(ctx, curr)
 	case tipb.ExecType_TypeIndexScan:
-		currExec = h.buildIndexScan(ctx, curr)
+		currExec, err = h.buildIndexScan(ctx, curr)
 	case tipb.ExecType_TypeSelection:
 		currExec, err = h.buildSelection(ctx, curr)
 	case tipb.ExecType_TypeAggregation:
@@ -167,10 +167,13 @@ func (h *rpcHandler) buildDAG(ctx *dagContext, executors []*tipb.Executor) (exec
 	return src, nil
 }
 
-func (h *rpcHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) *tableScanExec {
+func (h *rpcHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) (*tableScanExec, error) {
 	columns := executor.TblScan.Columns
 	ctx.evalCtx.setColumnInfo(columns)
-	ranges := h.extractKVRanges(ctx.keyRanges, executor.TblScan.Desc)
+	ranges, err := h.extractKVRanges(ctx.keyRanges, executor.TblScan.Desc)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 
 	return &tableScanExec{
 		TableScan:      executor.TblScan,
@@ -179,10 +182,11 @@ func (h *rpcHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) *t
 		startTS:        ctx.dagReq.GetStartTs(),
 		isolationLevel: h.isolationLevel,
 		mvccStore:      h.mvccStore,
-	}
+	}, nil
 }
 
-func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) *indexScanExec {
+func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) (*indexScanExec, error) {
+	var err error
 	columns := executor.IdxScan.Columns
 	ctx.evalCtx.setColumnInfo(columns)
 	length := len(columns)
@@ -199,7 +203,10 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) *i
 		pkStatus = pkColIsSigned
 		columns = columns[:length-1]
 	}
-	ranges := h.extractKVRanges(ctx.keyRanges, executor.IdxScan.Desc)
+	ranges, err := h.extractKVRanges(ctx.keyRanges, executor.IdxScan.Desc)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 
 	return &indexScanExec{
 		IndexScan:      executor.IdxScan,
@@ -209,7 +216,7 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) *i
 		isolationLevel: h.isolationLevel,
 		mvccStore:      h.mvccStore,
 		pkStatus:       pkStatus,
-	}
+	}, nil
 }
 
 func (h *rpcHandler) buildSelection(ctx *dagContext, executor *tipb.Executor) (*selectionExec, error) {
@@ -551,8 +558,13 @@ func toPBError(err error) *tipb.Error {
 }
 
 // extractKVRanges extracts kv.KeyRanges slice from a SelectRequest.
-func (h *rpcHandler) extractKVRanges(keyRanges []*coprocessor.KeyRange, descScan bool) (kvRanges []kv.KeyRange) {
+func (h *rpcHandler) extractKVRanges(keyRanges []*coprocessor.KeyRange, descScan bool) (kvRanges []kv.KeyRange, err error) {
 	for _, kran := range keyRanges {
+		if bytes.Compare(kran.GetStart(), kran.GetEnd()) >= 0 {
+			err = errors.Errorf("invalid range, start should be smaller than end: %v %v", kran.GetStart(), kran.GetEnd())
+			return
+		}
+
 		upperKey := kran.GetEnd()
 		if bytes.Compare(upperKey, h.rawStartKey) <= 0 {
 			continue
