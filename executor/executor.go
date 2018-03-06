@@ -289,7 +289,7 @@ type ShowDDLJobsExec struct {
 	jobs   []*model.Job
 }
 
-// ShowDDLJobQueriesExec represent a show DDL jobs executor.
+// ShowDDLJobQueriesExec represent a show DDL job queries executor.
 type ShowDDLJobQueriesExec struct {
 	baseExecutor
 
@@ -324,11 +324,9 @@ func (e *ShowDDLJobQueriesExec) Next(ctx context.Context) (Row, error) {
 	if e.cursor >= len(e.jobs) {
 		return nil, nil
 	}
-
 	job := e.jobs[e.cursor]
 	row := types.MakeDatums(job.Query)
 	e.cursor++
-
 	return row, nil
 }
 

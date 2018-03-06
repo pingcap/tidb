@@ -178,7 +178,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(row.GetString(1), Equals, historyJobs[0].State.String())
 	c.Assert(err, IsNil)
 
-	// show DDL job queries job_id test
+	// show DDL job queries test
 	r, err = tk.Exec("admin show ddl job queries 1")
 	c.Assert(err, IsNil)
 	row, err = r.Next(ctx)
