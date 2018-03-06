@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/tikv"
@@ -182,28 +181,28 @@ func (vh valueHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	// Construct field type.
+	defaultDecimal := 6
 	ft := &types.FieldType{
-		Tp:   byte(colTp),
-		Flag: uint(colFlag),
-		Flen: int(colLen),
+		Tp:      byte(colTp),
+		Flag:    uint(colFlag),
+		Flen:    int(colLen),
+		Decimal: defaultDecimal,
 	}
 	// Decode a column.
 	m := make(map[int64]*types.FieldType, 1)
 	m[int64(colID)] = ft
-	loc := time.Now().Location()
+	loc := time.UTC
 	vals, err := tablecodec.DecodeRow(valData, m, loc)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
 
-	var val string
 	v := vals[int64(colID)]
-	switch ft.Tp {
-	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-		val = fmt.Sprintf("%s", v.GetMysqlTime())
-	default:
-		val = fmt.Sprintf("%v", v)
+	val, err := v.ToString()
+	if err != nil {
+		writeError(w, err)
+		return
 	}
 	writeData(w, val)
 	return
