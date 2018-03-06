@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tipb/go-tipb"
 	"golang.org/x/net/context"
+	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 )
 
 var _ = Suite(&testPlanSuite{})
@@ -355,7 +356,7 @@ func (m *mockStore) BeginWithStartTS(startTS uint64) (kv.Transaction, error) {
 	return m.Begin()
 }
 
-func (m *mockStore) GetSnapshot(ver kv.Version) (kv.Snapshot, error) {
+func (m *mockStore) GetSnapshot(ver kv.Version, priority pb.CommandPri) (kv.Snapshot, error) {
 	return nil, nil
 }
 
