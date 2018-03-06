@@ -103,13 +103,14 @@ func (e *ShowExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		for i := 0; e.result != nil && i < e.result.NumRows(); i++ {
-			for j, row := 0, e.result.GetRow(i); j < row.Len(); j++ {
-				retType := e.Schema().Columns[j].RetType
-				if !types.IsTypeVarchar(retType.Tp) {
-					continue
-				}
-				if valLen := len(row.GetString(j)); retType.Flen < valLen {
+		iter := chunk.NewIterator4Chunk(e.result)
+		for colIdx := 0; colIdx < e.Schema().Len(); colIdx++ {
+			retType := e.Schema().Columns[colIdx].RetType
+			if !types.IsTypeVarchar(retType.Tp) {
+				continue
+			}
+			for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+				if valLen := len(row.GetString(colIdx)); retType.Flen < valLen {
 					retType.Flen = valLen
 				}
 			}
