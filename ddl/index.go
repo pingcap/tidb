@@ -1059,7 +1059,7 @@ func (d *ddl) addTableIndexFromSplitRanges(t table.Table, indexInfo *model.Index
 			workerIdx = 0
 			err1 = d.finishBatchTasks(startTime, startHandle, reorgInfo, job, workers, workerIdx-1)
 			if err1 != nil {
-				errors.Trace(err1)
+				return errors.Trace(err1)
 			}
 		}
 	}
