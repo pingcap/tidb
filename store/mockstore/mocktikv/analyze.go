@@ -61,9 +61,13 @@ func (h *rpcHandler) handleCopAnalyzeRequest(req *coprocessor.Request) *coproces
 }
 
 func (h *rpcHandler) handleAnalyzeIndexReq(req *coprocessor.Request, analyzeReq *tipb.AnalyzeReq) (*coprocessor.Response, error) {
+	ranges, err := h.extractKVRanges(req.Ranges, false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	e := &indexScanExec{
 		colsLen:        int(analyzeReq.IdxReq.NumColumns),
-		kvRanges:       h.extractKVRanges(req.Ranges, false),
+		kvRanges:       ranges,
 		startTS:        analyzeReq.StartTs,
 		isolationLevel: h.isolationLevel,
 		mvccStore:      h.mvccStore,
@@ -75,8 +79,9 @@ func (h *rpcHandler) handleAnalyzeIndexReq(req *coprocessor.Request, analyzeReq 
 		cms = statistics.NewCMSketch(*analyzeReq.IdxReq.CmsketchDepth, *analyzeReq.IdxReq.CmsketchWidth)
 	}
 	ctx := context.TODO()
+	var values [][]byte
 	for {
-		values, err := e.Next(ctx)
+		values, err = e.Next(ctx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -118,10 +123,14 @@ func (h *rpcHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeRe
 	evalCtx := &evalContext{sc: sc}
 	columns := analyzeReq.ColReq.ColumnsInfo
 	evalCtx.setColumnInfo(columns)
+	ranges, err := h.extractKVRanges(req.Ranges, false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	e := &analyzeColumnsExec{
 		tblExec: &tableScanExec{
 			TableScan:      &tipb.TableScan{Columns: columns},
-			kvRanges:       h.extractKVRanges(req.Ranges, false),
+			kvRanges:       ranges,
 			colIDs:         evalCtx.colIDs,
 			startTS:        analyzeReq.GetStartTs(),
 			isolationLevel: h.isolationLevel,
@@ -181,8 +190,7 @@ func (e *analyzeColumnsExec) Fields() []*ast.ResultField {
 	return e.fields
 }
 
-// Next implements the ast.RecordSet Next interface.
-func (e *analyzeColumnsExec) Next(ctx context.Context) (row types.Row, err error) {
+func (e *analyzeColumnsExec) getNext(ctx context.Context) ([]types.Datum, error) {
 	values, err := e.tblExec.Next(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -190,7 +198,7 @@ func (e *analyzeColumnsExec) Next(ctx context.Context) (row types.Row, err error
 	if values == nil {
 		return nil, nil
 	}
-	datumRow := make(types.DatumRow, 0, len(values))
+	datumRow := make([]types.Datum, 0, len(values))
 	for _, val := range values {
 		d := types.NewBytesDatum(val)
 		if len(val) == 1 && val[0] == codec.NilFlag {
@@ -201,16 +209,37 @@ func (e *analyzeColumnsExec) Next(ctx context.Context) (row types.Row, err error
 	return datumRow, nil
 }
 
+// Next implements the ast.RecordSet Next interface.
+func (e *analyzeColumnsExec) Next(ctx context.Context) (types.Row, error) {
+	row, err := e.getNext(ctx)
+	if row == nil || err != nil {
+		return nil, errors.Trace(err)
+	}
+	return types.DatumRow(row), nil
+}
+
 func (e *analyzeColumnsExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	row, err := e.getNext(ctx)
+	if row == nil || err != nil {
+		return errors.Trace(err)
+	}
+	for i := 0; i < len(row); i++ {
+		chk.AppendDatum(i, &row[i])
+	}
 	return nil
 }
 
 func (e *analyzeColumnsExec) NewChunk() *chunk.Chunk {
-	return nil
+	fields := make([]*types.FieldType, 0, len(e.fields))
+	for _, field := range e.fields {
+		fields = append(fields, &field.Column.FieldType)
+	}
+	return chunk.NewChunk(fields)
 }
 
 func (e *analyzeColumnsExec) SupportChunk() bool {
-	return false
+	return true
 }
 
 // Close implements the ast.RecordSet Close interface.
