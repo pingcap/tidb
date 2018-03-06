@@ -81,6 +81,8 @@ func (la *LogicalAggregation) canPullUp() bool {
 	return true
 }
 
+// deCorColFromEqExpr checks whether it's an equal condition of form `col = correlated col`. If so we will change the decorrelated
+// column to normal column to make a new equal condition.
 func (la *LogicalApply) deCorColFromEqExpr(expr expression.Expression) expression.Expression {
 	sf, ok := expr.(*expression.ScalarFunction)
 	if !ok || sf.FuncName.L != ast.EQ {
@@ -92,6 +94,7 @@ func (la *LogicalApply) deCorColFromEqExpr(expr expression.Expression) expressio
 			if _, ok := ret.(*expression.CorrelatedColumn); ok {
 				return nil
 			}
+			// We should make sure that the equal condition's left side is the join's left join key, right is the right key.
 			return expression.NewFunctionInternal(la.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), ret, col)
 		}
 	}
@@ -101,6 +104,7 @@ func (la *LogicalApply) deCorColFromEqExpr(expr expression.Expression) expressio
 			if _, ok := ret.(*expression.CorrelatedColumn); ok {
 				return nil
 			}
+			// We should make sure that the equal condition's left side is the join's left join key, right is the right key.
 			return expression.NewFunctionInternal(la.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), ret, col)
 		}
 	}
