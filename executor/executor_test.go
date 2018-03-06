@@ -2382,6 +2382,12 @@ func (s *testSuite) TestEarlyClose(c *C) {
 	}
 }
 
+func (s *testSuite) TestIssue5666(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@profiling=1")
+	tk.MustQuery("SELECT QUERY_ID, SUM(DURATION) AS SUM_DURATION FROM INFORMATION_SCHEMA.PROFILING GROUP BY QUERY_ID;").Check(testkit.Rows("0 0"))
+}
+
 func (s *testSuite) TestCheckIndex(c *C) {
 	s.ctx = mock.NewContext()
 	s.ctx.Store = s.store
