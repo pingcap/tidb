@@ -1060,7 +1060,7 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows = dataForTableConstraints(dbs)
 	case tableFiles:
 	case tableProfiling:
-		if v, ok := ctx.GetSessionVars().GetSystemVar("profiling"); ok && v == "1" {
+		if v, ok := ctx.GetSessionVars().GetSystemVar("profiling"); ok && variable.TIDBOptOn(v) {
 			fullRows = dataForPseudoProfiling()
 		}
 	case tablePartitions:

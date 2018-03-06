@@ -462,19 +462,19 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 			return errors.Trace(err)
 		}
 	case AutocommitVar:
-		isAutocommit := tidbOptOn(val)
+		isAutocommit := TIDBOptOn(val)
 		s.SetStatusFlag(mysql.ServerStatusAutocommit, isAutocommit)
 		if isAutocommit {
 			s.SetStatusFlag(mysql.ServerStatusInTrans, false)
 		}
 	case TiDBImportingData:
-		s.ImportingData = tidbOptOn(val)
+		s.ImportingData = TIDBOptOn(val)
 	case TiDBSkipUTF8Check:
-		s.SkipUTF8Check = tidbOptOn(val)
+		s.SkipUTF8Check = TIDBOptOn(val)
 	case TiDBOptAggPushDown:
-		s.AllowAggPushDown = tidbOptOn(val)
+		s.AllowAggPushDown = TIDBOptOn(val)
 	case TiDBOptInSubqUnFolding:
-		s.AllowInSubqueryUnFolding = tidbOptOn(val)
+		s.AllowInSubqueryUnFolding = TIDBOptOn(val)
 	case TiDBIndexLookupConcurrency:
 		s.IndexLookupConcurrency = tidbOptPositiveInt(val, DefIndexLookupConcurrency)
 	case TiDBIndexJoinBatchSize:
@@ -486,9 +486,9 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBIndexSerialScanConcurrency:
 		s.IndexSerialScanConcurrency = tidbOptPositiveInt(val, DefIndexSerialScanConcurrency)
 	case TiDBBatchInsert:
-		s.BatchInsert = tidbOptOn(val)
+		s.BatchInsert = TIDBOptOn(val)
 	case TiDBBatchDelete:
-		s.BatchDelete = tidbOptOn(val)
+		s.BatchDelete = TIDBOptOn(val)
 	case TiDBDMLBatchSize:
 		s.DMLBatchSize = tidbOptPositiveInt(val, DefDMLBatchSize)
 	case TiDBCurrentTS, TiDBConfig:
@@ -506,7 +506,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBGeneralLog:
 		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt(val, DefTiDBGeneralLog)))
 	case TiDBEnableStreaming:
-		s.EnableStreaming = tidbOptOn(val)
+		s.EnableStreaming = TIDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil

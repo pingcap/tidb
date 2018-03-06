@@ -47,7 +47,7 @@ func (s *testVarsutilSuite) TestTiDBOptOn(c *C) {
 		{"", false},
 	}
 	for _, t := range tbl {
-		on := tidbOptOn(t.val)
+		on := TIDBOptOn(t.val)
 		c.Assert(on, Equals, t.on)
 	}
 }
