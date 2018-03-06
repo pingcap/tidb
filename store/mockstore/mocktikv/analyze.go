@@ -61,9 +61,13 @@ func (h *rpcHandler) handleCopAnalyzeRequest(req *coprocessor.Request) *coproces
 }
 
 func (h *rpcHandler) handleAnalyzeIndexReq(req *coprocessor.Request, analyzeReq *tipb.AnalyzeReq) (*coprocessor.Response, error) {
+	ranges, err := h.extractKVRanges(req.Ranges, false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	e := &indexScanExec{
 		colsLen:        int(analyzeReq.IdxReq.NumColumns),
-		kvRanges:       h.extractKVRanges(req.Ranges, false),
+		kvRanges:       ranges,
 		startTS:        analyzeReq.StartTs,
 		isolationLevel: h.isolationLevel,
 		mvccStore:      h.mvccStore,
@@ -75,8 +79,9 @@ func (h *rpcHandler) handleAnalyzeIndexReq(req *coprocessor.Request, analyzeReq 
 		cms = statistics.NewCMSketch(*analyzeReq.IdxReq.CmsketchDepth, *analyzeReq.IdxReq.CmsketchWidth)
 	}
 	ctx := context.TODO()
+	var values [][]byte
 	for {
-		values, err := e.Next(ctx)
+		values, err = e.Next(ctx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -118,10 +123,14 @@ func (h *rpcHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeRe
 	evalCtx := &evalContext{sc: sc}
 	columns := analyzeReq.ColReq.ColumnsInfo
 	evalCtx.setColumnInfo(columns)
+	ranges, err := h.extractKVRanges(req.Ranges, false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	e := &analyzeColumnsExec{
 		tblExec: &tableScanExec{
 			TableScan:      &tipb.TableScan{Columns: columns},
-			kvRanges:       h.extractKVRanges(req.Ranges, false),
+			kvRanges:       ranges,
 			colIDs:         evalCtx.colIDs,
 			startTS:        analyzeReq.GetStartTs(),
 			isolationLevel: h.isolationLevel,
