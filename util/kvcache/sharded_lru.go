@@ -26,12 +26,12 @@ type ShardedLRUCache struct {
 }
 
 // NewShardedLRUCache creates a ShardedLRUCache.
-func NewShardedLRUCache(capacity, shardCount int64) *ShardedLRUCache {
+func NewShardedLRUCache(capacity, shardCount uint) *ShardedLRUCache {
 	shardedLRUCache := &ShardedLRUCache{
 		shards: make([]*SimpleLRUCache, 0, shardCount),
 		locks:  make([]sync.RWMutex, shardCount),
 	}
-	for i := int64(0); i < shardCount; i++ {
+	for i := uint(0); i < shardCount; i++ {
 		shardedLRUCache.shards = append(shardedLRUCache.shards, NewSimpleLRUCache(capacity/shardCount))
 	}
 	return shardedLRUCache

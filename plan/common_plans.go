@@ -50,6 +50,15 @@ type CheckTable struct {
 	Tables []*ast.TableName
 }
 
+// CheckIndex is used for checking index data, built from the 'admin check index' statement.
+type CheckIndex struct {
+	baseSchemaProducer
+
+	IndexLookUpReader *PhysicalIndexLookUpReader
+	DBName            string
+	IdxName           string
+}
+
 // CancelDDLJobs represents a cancel DDL jobs plan.
 type CancelDDLJobs struct {
 	baseSchemaProducer

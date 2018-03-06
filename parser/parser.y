@@ -227,6 +227,7 @@ import (
 	utcTimestamp		"UTC_TIMESTAMP"
 	utcTime			"UTC_TIME"
 	values			"VALUES"
+	long			"LONG"
 	varcharType		"VARCHAR"
 	varbinaryType		"VARBINARY"
 	virtual			"VIRTUAL"
@@ -748,6 +749,7 @@ import (
 
 	NumericType		"Numeric types"
 	IntegerType		"Integer Types types"
+	BooleanType 		"Boolean Types types"
 	FixedPointType		"Exact value types"
 	FloatingPointType	"Approximate value types"
 	BitValueType		"bit value types"
@@ -1310,6 +1312,13 @@ ColumnOption:
 			Tp: ast.ColumnOptionGenerated,
 			Expr: expr,
 			Stored: $6.(bool),
+		}
+	}
+|	ReferDef
+	{
+		$$ = &ast.ColumnOption{
+			Tp: ast.ColumnOptionReference,
+			Refer: $1.(*ast.ReferenceDef),
 		}
 	}
 
@@ -1952,11 +1961,11 @@ DropIndexStmt:
 	}
 
 DropTableStmt:
-	"DROP" TableOrTables TableNameList
+	"DROP" TableOrTables TableNameList RestrictOrCascadeOpt
 	{
 		$$ = &ast.DropTableStmt{Tables: $3.([]*ast.TableName)}
 	}
-|	"DROP" TableOrTables "IF" "EXISTS" TableNameList
+|	"DROP" TableOrTables "IF" "EXISTS" TableNameList RestrictOrCascadeOpt
 	{
 		$$ = &ast.DropTableStmt{IfExists: true, Tables: $5.([]*ast.TableName)}
 	}
@@ -1982,6 +1991,11 @@ DropStatsStmt:
 	{
 		$$ = &ast.DropStatsStmt{Table: $3.(*ast.TableName)}
 	}
+
+RestrictOrCascadeOpt:
+	{}
+|	"RESTRICT"
+|	"CASCADE"
 
 TableOrTables:
 	"TABLE"
@@ -4741,6 +4755,14 @@ AdminStmt:
 			Tables: $4.([]*ast.TableName),
 		}
 	}
+|	"ADMIN" "CHECK" "INDEX" TableName Identifier
+	{
+		$$ = &ast.AdminStmt{
+			Tp: ast.AdminCheckIndex,
+			Tables: []*ast.TableName{$4.(*ast.TableName)},
+			Index: string($5),
+		}
+	}
 |	"ADMIN" "CANCEL" "DDL" "JOBS" NumList
 	{
 		$$ = &ast.AdminStmt{
@@ -5421,6 +5443,21 @@ NumericType:
 		}
 		$$ = x
 	}
+|	BooleanType FieldOpts
+	{
+		// TODO: check flen 0
+		x := types.NewFieldType($1.(byte))
+		x.Flen = 1
+		for _, o := range $2.([]*ast.TypeOpt) {
+			if o.IsUnsigned {
+				x.Flag |= mysql.UnsignedFlag
+			}
+			if o.IsZerofill {
+				x.Flag |= mysql.ZerofillFlag
+			}
+		}
+		$$ = x
+	}
 |	FixedPointType FloatOpt FieldOpts
 	{
 		fopt := $2.(*ast.FloatOpt)
@@ -5515,7 +5552,10 @@ IntegerType:
 	{
 		$$ = mysql.TypeLonglong
 	}
-|	"BOOL"
+
+
+BooleanType:
+	"BOOL"
 	{
 		$$ = mysql.TypeTiny
 	}
@@ -5715,6 +5755,11 @@ TextType:
 |	"LONGTEXT"
 	{
 		x := types.NewFieldType(mysql.TypeLongBlob)
+		$$ = x
+	}
+|	"LONG" "VARCHAR"
+	{
+		x := types.NewFieldType(mysql.TypeMediumBlob)
 		$$ = x
 	}
 

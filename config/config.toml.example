@@ -34,11 +34,15 @@ split-table = true
 # Enable chunk executors.
 enable-chunk = true
 
+# Only print a log when out of memory quota.
+# Valid options: ["log", "cancel"]
+oom-action = "log"
+
 # Enable coprocessor streaming.
 enable-streaming = false
 
 [log]
-# Log level: info, debug, warn, error, fatal.
+# Log level: debug, info, warn, error, fatal.
 level = "info"
 
 # Log format, one of json, text, console.
@@ -132,19 +136,6 @@ stats-lease = "3s"
 # Run auto analyze worker on this tidb-server.
 run-auto-analyze = true
 
-[xprotocol]
-# Start TiDB x server.
-xserver = false
-
-# TiDB x protocol server host.
-xhost = "0.0.0.0"
-
-# TiDB x protocol server port.
-xport = 14000
-
-# The socket file to use for x protocol connection.
-xsocket = ""
-
 [proxy-protocol]
 # PROXY protocol acceptable client networks.
 # Empty string means disable PROXY protocol, * means all networks.
@@ -216,3 +207,6 @@ local-agent-host-port = ""
 [tikv-client]
 # Max gRPC connections that will be established with each tikv-server.
 grpc-connection-count = 16
+
+# max time for commit command, must be twice bigger than raft election timeout.
+commit-timeout = "41s"
