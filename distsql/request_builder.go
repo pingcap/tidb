@@ -132,6 +132,12 @@ func (builder *RequestBuilder) SetPriority(priority int) *RequestBuilder {
 	return builder
 }
 
+// SetStreaming sets "Streaming" flag for "kv.Request".
+func (builder *RequestBuilder) SetStreaming(streaming bool) *RequestBuilder {
+	builder.Request.Streaming = streaming
+	return builder
+}
+
 // TableRangesToKVRanges converts table ranges to "KeyRange".
 func TableRangesToKVRanges(tid int64, ranges []*ranger.NewRange) []kv.KeyRange {
 	krs := make([]kv.KeyRange, 0, len(ranges))

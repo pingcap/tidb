@@ -34,6 +34,10 @@ split-table = true
 # Enable chunk executors.
 enable-chunk = true
 
+# Only print a log when out of memory quota.
+# Valid options: ["log", "cancel"]
+oom-action = "log"
+
 # Enable coprocessor streaming.
 enable-streaming = false
 
