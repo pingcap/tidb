@@ -123,8 +123,8 @@ func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) erro
 	return vars.SetSystemVar(name, sVal)
 }
 
-// TIDBOptOn could be used for all tidb session variable options, we use "ON"/1 to turn on those options.
-func TIDBOptOn(opt string) bool {
+// TiDBOptOn could be used for all tidb session variable options, we use "ON"/1 to turn on those options.
+func TiDBOptOn(opt string) bool {
 	return strings.EqualFold(opt, "ON") || opt == "1"
 }
 
