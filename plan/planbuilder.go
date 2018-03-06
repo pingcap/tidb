@@ -504,7 +504,12 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 		ret = p
 	case ast.AdminCheckIndexRange:
 		p := &CheckIndexRange{Table: as.Tables[0], IndexName: as.Index, HandleRanges: as.HandleRanges}
-		p.SetSchema(buildCheckIndexSchema(as.Tables[0], as.Index))
+		schema, err := buildCheckIndexSchema(as.Tables[0], as.Index)
+		if err != nil {
+			b.err = errors.Trace(err)
+			break
+		}
+		p.SetSchema(schema)
 		ret = p
 	default:
 		b.err = ErrUnsupportedType.Gen("Unsupported type %T", as)
@@ -512,7 +517,7 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 	return ret
 }
 
-func buildCheckIndexSchema(tn *ast.TableName, indexName string) *expression.Schema {
+func buildCheckIndexSchema(tn *ast.TableName, indexName string) (*expression.Schema, error) {
 	schema := expression.NewSchema()
 	indexName = strings.ToLower(indexName)
 	indicesInfo := tn.TableInfo.Indices
@@ -542,7 +547,10 @@ func buildCheckIndexSchema(tn *ast.TableName, indexName string) *expression.Sche
 			ID:       -1,
 		})
 	}
-	return schema
+	if schema.Len() == 0 {
+		return nil, errors.Errorf("index %s not found", indexName)
+	}
+	return schema, nil
 }
 
 // getColsInfo returns the info of index columns, normal columns and primary key.

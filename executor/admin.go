@@ -60,8 +60,8 @@ func (e *CheckIndexRangeExec) NextChunk(ctx context.Context, chk *chunk.Chunk) e
 		if e.srcChunk.NumRows() == 0 {
 			return nil
 		}
-		for i := 0; i < e.srcChunk.NumRows(); i++ {
-			row := e.srcChunk.GetRow(i)
+		iter := chunk.NewIterator4Chunk(e.srcChunk)
+		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			handle := row.GetInt64(handleIdx)
 			for _, hr := range e.handleRanges {
 				if handle >= hr.Begin && handle < hr.End {
@@ -69,7 +69,7 @@ func (e *CheckIndexRangeExec) NextChunk(ctx context.Context, chk *chunk.Chunk) e
 				}
 			}
 		}
-		if chk.NumRows() >= e.maxChunkSize {
+		if chk.NumRows() > 0 {
 			return nil
 		}
 	}
@@ -77,6 +77,7 @@ func (e *CheckIndexRangeExec) NextChunk(ctx context.Context, chk *chunk.Chunk) e
 
 // Next implements the Executor Next interface.
 func (e *CheckIndexRangeExec) Next(ctx context.Context) (Row, error) {
+	// No need to support to-be-removed method.
 	return nil, nil
 }
 
@@ -90,10 +91,6 @@ func (e *CheckIndexRangeExec) Open(ctx context.Context) error {
 		e.cols = append(e.cols, col)
 	}
 	e.srcChunk = e.newChunk()
-	e.retFieldTypes = make([]*types.FieldType, e.schema.Len())
-	for i, v := range e.schema.Columns {
-		e.retFieldTypes[i] = v.RetType
-	}
 	dagPB, err := e.buildDagPB()
 	if err != nil {
 		return errors.Trace(err)

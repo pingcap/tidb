@@ -253,10 +253,6 @@ func (b *executorBuilder) buildCheckIndexRange(v *plan.CheckIndexRange) Executor
 			e.startKey = make([]types.Datum, len(e.index.Meta().Columns))
 		}
 	}
-	if e.index == nil {
-		b.err = errors.New("index not found")
-		return nil
-	}
 	return e
 }
 
