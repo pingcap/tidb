@@ -165,6 +165,17 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	bVal, err := json.MarshalIndent(config.GetGlobalConfig(), "", "\t")
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, string(bVal))
+
+	SetSessionSystemVar(v, TiDBEnableStreaming, types.NewStringDatum("1"))
+	val, err = GetSessionSystemVar(v, TiDBEnableStreaming)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "1")
+	c.Assert(v.EnableStreaming, Equals, true)
+	SetSessionSystemVar(v, TiDBEnableStreaming, types.NewStringDatum("0"))
+	val, err = GetSessionSystemVar(v, TiDBEnableStreaming)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "0")
+	c.Assert(v.EnableStreaming, Equals, false)
 }
 
 type mockGlobalAccessor struct {

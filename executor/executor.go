@@ -101,7 +101,6 @@ type baseExecutor struct {
 	ctx             sessionctx.Context
 	id              string
 	schema          *expression.Schema
-	supportChk      bool
 	maxChunkSize    int
 	children        []Executor
 	childrenResults []*chunk.Chunk
@@ -153,18 +152,6 @@ func (e *baseExecutor) retTypes() []*types.FieldType {
 	return e.retFieldTypes
 }
 
-func (e *baseExecutor) supportChunk() bool {
-	if !e.supportChk {
-		return false
-	}
-	for _, child := range e.children {
-		if !child.supportChunk() {
-			return false
-		}
-	}
-	return true
-}
-
 // NextChunk fills mutiple rows into a chunk.
 func (e *baseExecutor) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	return nil
@@ -195,7 +182,6 @@ type Executor interface {
 	Open(context.Context) error
 	Schema() *expression.Schema
 	retTypes() []*types.FieldType
-	supportChunk() bool
 	newChunk() *chunk.Chunk
 	// NextChunk fills a chunk with multiple rows
 	// NOTE: chunk has to call Reset() method before any use.
@@ -404,6 +390,79 @@ func (e *CheckTableExec) run(ctx context.Context) error {
 			if err != nil {
 				return errors.Errorf("%v err:%v", t.Name, err)
 			}
+		}
+	}
+	return nil
+}
+
+// CheckIndexExec represents the executor of checking an index.
+// It is built from the "admin check index" statement, and it checks
+// the consistency of the index data with the records of the table.
+type CheckIndexExec struct {
+	baseExecutor
+
+	dbName    string
+	tableName string
+	idxName   string
+	src       *IndexLookUpExecutor
+	done      bool
+	is        infoschema.InfoSchema
+}
+
+// Open implements the Executor Open interface.
+func (e *CheckIndexExec) Open(ctx context.Context) error {
+	if err := e.baseExecutor.Open(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	if err := e.src.Open(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	e.done = false
+	return nil
+}
+
+// Next implements the Executor Next interface.
+func (e *CheckIndexExec) Next(ctx context.Context) (Row, error) {
+	if e.done {
+		return nil, nil
+	}
+	defer func() { e.done = true }()
+
+	err := admin.CheckIndicesCount(e.ctx, e.dbName, e.tableName, []string{e.idxName})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	for {
+		row, err := e.src.Next(ctx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if row == nil {
+			break
+		}
+	}
+	return nil, nil
+}
+
+// NextChunk implements the Executor NextChunk interface.
+func (e *CheckIndexExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+	if e.done {
+		return nil
+	}
+	defer func() { e.done = true }()
+
+	err := admin.CheckIndicesCount(e.ctx, e.dbName, e.tableName, []string{e.idxName})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	chk = e.src.newChunk()
+	for {
+		err := e.src.NextChunk(ctx, chk)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if chk.NumRows() == 0 {
+			break
 		}
 	}
 	return nil
@@ -1261,12 +1320,19 @@ func (e *UnionExec) initialize(ctx context.Context, forChunk bool) {
 }
 
 func (e *UnionExec) resultPuller(ctx context.Context, childID int) {
-	defer e.wg.Done()
 	result := &unionWorkerResult{
 		err: nil,
 		chk: nil,
 		src: e.resourcePools[childID],
 	}
+	defer func() {
+		if r := recover(); r != nil {
+			result.err = errors.Errorf("%v", r)
+			e.resultPool <- result
+			e.stopFetchData.Store(true)
+		}
+		e.wg.Done()
+	}()
 	for {
 		if e.stopFetchData.Load().(bool) {
 			return
