@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
@@ -53,7 +54,7 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 		resp.RegionError = err
 		return resp
 	}
-	e, dagReq, err := h.buildDAGExecutor(req)
+	dagCtx, e, dagReq, err := h.buildDAGExecutor(req)
 	if err != nil {
 		resp.OtherError = err.Error()
 		return resp
@@ -80,21 +81,22 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 		chunks = appendRow(chunks, data, rowCnt)
 		rowCnt++
 	}
-	return buildResp(chunks, e.Counts(), err)
+	warnings := dagCtx.evalCtx.sc.GetWarnings()
+	return buildResp(chunks, e.Counts(), err, warnings)
 }
 
-func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (executor, *tipb.DAGRequest, error) {
+func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, executor, *tipb.DAGRequest, error) {
 	if len(req.Ranges) == 0 {
-		return nil, nil, errors.New("request range is null")
+		return nil, nil, nil, errors.New("request range is null")
 	}
 	if req.GetTp() != kv.ReqTypeDAG {
-		return nil, nil, errors.Errorf("unsupported request type %d", req.GetTp())
+		return nil, nil, nil, errors.Errorf("unsupported request type %d", req.GetTp())
 	}
 
 	dagReq := new(tipb.DAGRequest)
 	err := proto.Unmarshal(req.Data, dagReq)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, nil, errors.Trace(err)
 	}
 	sc := flagsToStatementContext(dagReq.Flags)
 	sc.TimeZone = time.FixedZone("UTC", int(dagReq.TimeZoneOffset))
@@ -105,13 +107,13 @@ func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (executor, *tipb
 	}
 	e, err := h.buildDAG(ctx, dagReq.Executors)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, nil, errors.Trace(err)
 	}
-	return e, dagReq, err
+	return ctx, e, dagReq, err
 }
 
 func (h *rpcHandler) handleCopStream(req *coprocessor.Request) (tikvpb.Tikv_CoprocessorStreamClient, error) {
-	e, dagReq, err := h.buildDAGExecutor(req)
+	_, e, dagReq, err := h.buildDAGExecutor(req)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -128,9 +130,9 @@ func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, 
 	var err error
 	switch curr.GetTp() {
 	case tipb.ExecType_TypeTableScan:
-		currExec = h.buildTableScan(ctx, curr)
+		currExec, err = h.buildTableScan(ctx, curr)
 	case tipb.ExecType_TypeIndexScan:
-		currExec = h.buildIndexScan(ctx, curr)
+		currExec, err = h.buildIndexScan(ctx, curr)
 	case tipb.ExecType_TypeSelection:
 		currExec, err = h.buildSelection(ctx, curr)
 	case tipb.ExecType_TypeAggregation:
@@ -162,10 +164,13 @@ func (h *rpcHandler) buildDAG(ctx *dagContext, executors []*tipb.Executor) (exec
 	return src, nil
 }
 
-func (h *rpcHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) *tableScanExec {
+func (h *rpcHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) (*tableScanExec, error) {
 	columns := executor.TblScan.Columns
 	ctx.evalCtx.setColumnInfo(columns)
-	ranges := h.extractKVRanges(ctx.keyRanges, executor.TblScan.Desc)
+	ranges, err := h.extractKVRanges(ctx.keyRanges, executor.TblScan.Desc)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 
 	return &tableScanExec{
 		TableScan:      executor.TblScan,
@@ -175,10 +180,11 @@ func (h *rpcHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) *t
 		isolationLevel: h.isolationLevel,
 		mvccStore:      h.mvccStore,
 		counts:         make([]int64, len(ranges)),
-	}
+	}, nil
 }
 
-func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) *indexScanExec {
+func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) (*indexScanExec, error) {
+	var err error
 	columns := executor.IdxScan.Columns
 	ctx.evalCtx.setColumnInfo(columns)
 	length := len(columns)
@@ -195,7 +201,10 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) *i
 		pkStatus = pkColIsSigned
 		columns = columns[:length-1]
 	}
-	ranges := h.extractKVRanges(ctx.keyRanges, executor.IdxScan.Desc)
+	ranges, err := h.extractKVRanges(ctx.keyRanges, executor.IdxScan.Desc)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 
 	return &indexScanExec{
 		IndexScan:      executor.IdxScan,
@@ -206,7 +215,7 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) *i
 		mvccStore:      h.mvccStore,
 		pkStatus:       pkStatus,
 		counts:         make([]int64, len(ranges)),
-	}
+	}, nil
 }
 
 func (h *rpcHandler) buildSelection(ctx *dagContext, executor *tipb.Executor) (*selectionExec, error) {
@@ -503,7 +512,7 @@ func (mock *mockCopStreamClient) readBlockFromExecutor() (tipb.Chunk, bool, *cop
 	return chunk, finish, &ran, mock.exec.Counts(), nil
 }
 
-func buildResp(chunks []tipb.Chunk, counts []int64, err error) *coprocessor.Response {
+func buildResp(chunks []tipb.Chunk, counts []int64, err error, warnings []error) *coprocessor.Response {
 	resp := &coprocessor.Response{}
 	// The counts was the output count of each executor, but now it is the scan count of each range,
 	// so we need a flag to tell them apart.
@@ -512,6 +521,12 @@ func buildResp(chunks []tipb.Chunk, counts []int64, err error) *coprocessor.Resp
 		Error:        toPBError(err),
 		Chunks:       chunks,
 		OutputCounts: counts,
+	}
+	if len(warnings) > 0 {
+		selResp.Warnings = make([]*tipb.Error, 0, len(warnings))
+		for i := range warnings {
+			selResp.Warnings = append(selResp.Warnings, toPBError(warnings[i]))
+		}
 	}
 	if err != nil {
 		if locked, ok := errors.Cause(err).(*ErrLocked); ok {
@@ -539,15 +554,26 @@ func toPBError(err error) *tipb.Error {
 		return nil
 	}
 	perr := new(tipb.Error)
-	perr.Code = int32(1)
-	errStr := err.Error()
-	perr.Msg = errStr
+	switch x := err.(type) {
+	case *terror.Error:
+		sqlErr := x.ToSQLError()
+		perr.Code = int32(sqlErr.Code)
+		perr.Msg = sqlErr.Message
+	default:
+		perr.Code = int32(1)
+		perr.Msg = err.Error()
+	}
 	return perr
 }
 
 // extractKVRanges extracts kv.KeyRanges slice from a SelectRequest.
-func (h *rpcHandler) extractKVRanges(keyRanges []*coprocessor.KeyRange, descScan bool) (kvRanges []kv.KeyRange) {
+func (h *rpcHandler) extractKVRanges(keyRanges []*coprocessor.KeyRange, descScan bool) (kvRanges []kv.KeyRange, err error) {
 	for _, kran := range keyRanges {
+		if bytes.Compare(kran.GetStart(), kran.GetEnd()) >= 0 {
+			err = errors.Errorf("invalid range, start should be smaller than end: %v %v", kran.GetStart(), kran.GetEnd())
+			return
+		}
+
 		upperKey := kran.GetEnd()
 		if bytes.Compare(upperKey, h.rawStartKey) <= 0 {
 			continue

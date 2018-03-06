@@ -186,6 +186,12 @@ func (r *selectResult) getSelectResp() error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+		if err := r.selectResp.Error; err != nil {
+			return terror.ClassTiKV.New(terror.ErrCode(err.Code), err.Msg)
+		}
+		for _, warning := range r.selectResp.Warnings {
+			r.ctx.GetSessionVars().StmtCtx.AppendWarning(terror.ClassTiKV.New(terror.ErrCode(warning.Code), warning.Msg))
+		}
 		r.feedback.Update(re.result.GetStartKey(), r.selectResp.OutputCounts)
 		r.partialCount++
 		if len(r.selectResp.Chunks) == 0 {

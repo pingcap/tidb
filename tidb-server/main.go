@@ -21,6 +21,7 @@ import (
 	"os/signal"
 	"runtime"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -46,7 +47,7 @@ import (
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/systimemon"
 	"github.com/pingcap/tidb/x-server"
-	"github.com/pingcap/tipb/go-binlog"
+	binlog "github.com/pingcap/tipb/go-binlog"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 	log "github.com/sirupsen/logrus"
@@ -323,6 +324,7 @@ func validateConfig() {
 		log.Error("TiDB run with skip-grant-table need root privilege.")
 		os.Exit(-1)
 	}
+	cfg.OOMAction = strings.ToLower(cfg.OOMAction)
 }
 
 func setGlobalVars() {

@@ -1045,20 +1045,24 @@ func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 	return e
 }
 
-func (b *executorBuilder) constructDAGReq(plans []plan.PhysicalPlan) (*tipb.DAGRequest, error) {
+func (b *executorBuilder) constructDAGReq(plans []plan.PhysicalPlan) (*tipb.DAGRequest, bool, error) {
 	dagReq := &tipb.DAGRequest{}
 	dagReq.StartTs = b.getStartTS()
 	dagReq.TimeZoneOffset = timeZoneOffset(b.ctx)
 	sc := b.ctx.GetSessionVars().StmtCtx
 	dagReq.Flags = statementContextToFlags(sc)
+	streaming := true
 	for _, p := range plans {
 		execPB, err := p.ToPB(b.ctx)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, false, errors.Trace(err)
+		}
+		if !plan.SupportStreaming(p) {
+			streaming = false
 		}
 		dagReq.Executors = append(dagReq.Executors, execPB)
 	}
-	return dagReq, nil
+	return dagReq, streaming, nil
 }
 
 func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Executor {
@@ -1140,7 +1144,7 @@ func containsLimit(execs []*tipb.Executor) bool {
 }
 
 func buildNoRangeTableReader(b *executorBuilder, v *plan.PhysicalTableReader) (*TableReaderExecutor, error) {
-	dagReq, err := b.constructDAGReq(v.TablePlans)
+	dagReq, streaming, err := b.constructDAGReq(v.TablePlans)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1155,6 +1159,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plan.PhysicalTableReader) (*
 		desc:         ts.Desc,
 		columns:      ts.Columns,
 		priority:     b.priority,
+		streaming:    streaming,
 	}
 	if containsLimit(dagReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, ts.Desc)
@@ -1182,7 +1187,7 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) *TableRe
 }
 
 func buildNoRangeIndexReader(b *executorBuilder, v *plan.PhysicalIndexReader) (*IndexReaderExecutor, error) {
-	dagReq, err := b.constructDAGReq(v.IndexPlans)
+	dagReq, streaming, err := b.constructDAGReq(v.IndexPlans)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1198,6 +1203,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plan.PhysicalIndexReader) (*
 		desc:         is.Desc,
 		columns:      is.Columns,
 		priority:     b.priority,
+		streaming:    streaming,
 	}
 	if containsLimit(dagReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, is.Desc)
@@ -1225,11 +1231,11 @@ func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) *IndexRe
 }
 
 func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plan.PhysicalIndexLookUpReader) (*IndexLookUpExecutor, error) {
-	indexReq, err := b.constructDAGReq(v.IndexPlans)
+	indexReq, indexStreaming, err := b.constructDAGReq(v.IndexPlans)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	tableReq, err := b.constructDAGReq(v.TablePlans)
+	tableReq, tableStreaming, err := b.constructDAGReq(v.TablePlans)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1252,6 +1258,8 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plan.PhysicalIndexLook
 		tableRequest:      tableReq,
 		columns:           is.Columns,
 		priority:          b.priority,
+		indexStreaming:    indexStreaming,
+		tableStreaming:    tableStreaming,
 		dataReaderBuilder: &dataReaderBuilder{executorBuilder: b},
 	}
 	if containsLimit(indexReq.Executors) {
@@ -1321,6 +1329,7 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Contex
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetPriority(e.priority).
+		SetStreaming(e.streaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		Build()
 	if err != nil {
