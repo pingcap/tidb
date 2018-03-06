@@ -53,7 +53,7 @@ func newMockHashKey(key int64) *mockCacheKey {
 
 func (s *testLRUCacheSuite) TestPut(c *C) {
 	lru := NewSimpleLRUCache(3)
-	c.Assert(lru.capacity, Equals, int64(3))
+	c.Assert(lru.capacity, Equals, uint(3))
 
 	keys := make([]*mockCacheKey, 5)
 	vals := make([]int64, 5)
@@ -64,7 +64,7 @@ func (s *testLRUCacheSuite) TestPut(c *C) {
 		lru.Put(keys[i], vals[i])
 	}
 	c.Assert(lru.size, Equals, lru.capacity)
-	c.Assert(lru.size, Equals, int64(3))
+	c.Assert(lru.size, Equals, uint(3))
 
 	// test for non-existent elements
 	for i := 0; i < 2; i++ {
@@ -128,8 +128,8 @@ func (s *testLRUCacheSuite) TestGet(c *C) {
 		c.Assert(exists, IsTrue)
 		c.Assert(value, NotNil)
 		c.Assert(value, Equals, vals[i])
-		c.Assert(lru.size, Equals, int64(3))
-		c.Assert(lru.capacity, Equals, int64(3))
+		c.Assert(lru.size, Equals, uint(3))
+		c.Assert(lru.capacity, Equals, uint(3))
 
 		root := lru.cache.Front()
 		c.Assert(root, NotNil)
