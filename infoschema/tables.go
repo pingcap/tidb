@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
-	"github.com/ngaut/log"
 )
 
 const (
@@ -856,9 +855,9 @@ func dataForPseudoProfiling() [][]types.Datum {
 		0,  // QUERY_ID
 		0,  // SEQ
 		"", // STATE
-		types.NewDecimalDatum(types.NewDecFromInt(0)), // DURATION
-		types.NewDecimalDatum(types.NewDecFromInt(0)), // CPU_USER
-		types.NewDecimalDatum(types.NewDecFromInt(0)), // CPU_SYSTEM
+		types.NewDecFromInt(0), // DURATION
+		types.NewDecFromInt(0), // CPU_USER
+		types.NewDecFromInt(0), // CPU_SYSTEM
 		0, // CONTEXT_VOLUNTARY
 		0, // CONTEXT_INVOLUNTARY
 		0, // BLOCK_OPS_IN
@@ -1061,8 +1060,7 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows = dataForTableConstraints(dbs)
 	case tableFiles:
 	case tableProfiling:
-		if v, ok := ctx.GetSessionVars().GetSystemVar("profiling"); ok && v == "ON" {
-			log.Warning("come here")
+		if v, ok := ctx.GetSessionVars().GetSystemVar("profiling"); ok && v == "1" {
 			fullRows = dataForPseudoProfiling()
 		}
 	case tablePartitions:

@@ -2376,3 +2376,9 @@ func (s *testSuite) TestEarlyClose(c *C) {
 		rs.Close()
 	}
 }
+
+func (s *testSuite) TestIssue5666(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@profiling=1")
+	tk.MustQuery("SELECT QUERY_ID, SUM(DURATION) AS SUM_DURATION FROM INFORMATION_SCHEMA.PROFILING GROUP BY QUERY_ID;").Check(testkit.Rows("0 0"))
+}
