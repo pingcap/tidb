@@ -19,7 +19,7 @@ type Token struct {
 
 // TokenLimiter is used to limit the number of concurrent tasks.
 type TokenLimiter struct {
-	count int
+	count uint
 	ch    chan *Token
 }
 
@@ -34,9 +34,9 @@ func (tl *TokenLimiter) Get() *Token {
 }
 
 // NewTokenLimiter creates a TokenLimiter with count tokens.
-func NewTokenLimiter(count int) *TokenLimiter {
+func NewTokenLimiter(count uint) *TokenLimiter {
 	tl := &TokenLimiter{count: count, ch: make(chan *Token, count)}
-	for i := 0; i < count; i++ {
+	for i := uint(0); i < count; i++ {
 		tl.ch <- &Token{}
 	}
 
