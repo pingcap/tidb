@@ -156,7 +156,7 @@ type rpcClient struct {
 }
 
 func newRPCClient(security config.Security) *rpcClient {
-	timeoutCh := make(chan *tikvrpc.TimeoutItem)
+	timeoutCh := make(chan *tikvrpc.TimeoutItem, 50)
 	go tikvrpc.CheckStreamTimeoutLoop(timeoutCh)
 
 	return &rpcClient{

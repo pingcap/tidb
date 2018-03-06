@@ -165,6 +165,16 @@ type CopStreamResponse struct {
 	timeoutCh chan<- *TimeoutItem
 }
 
+// NewCopStreamResponse returns a CopStreamResponse.
+func NewCopStreamResponse(client tikvpb.Tikv_CoprocessorStreamClient, resp *coprocessor.Response, cancel context.CancelFunc, ch chan<- *TimeoutItem) *CopStreamResponse {
+	return &CopStreamResponse{
+		Tikv_CoprocessorStreamClient: client,
+		Response:                     resp,
+		item:                         TimeoutItem{cancel: cancel},
+		timeoutCh:                    ch,
+	}
+}
+
 // SetContext set the Context field for the given req to the specified ctx.
 func SetContext(req *Request, region *metapb.Region, peer *metapb.Peer) error {
 	ctx := &req.Context
@@ -363,6 +373,7 @@ func (resp *Response) GetRegionError() (*errorpb.Error, error) {
 	return e, nil
 }
 
+// CallRPC launchs a rpc call.
 func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request, ch chan<- *TimeoutItem) (*Response, error) {
 	resp := &Response{}
 	resp.Type = req.Type
@@ -402,9 +413,9 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request, ch cha
 		resp.Cop, err = client.Coprocessor(ctx, req.Cop)
 	case CmdCopStream:
 		// Use context to support timeout for grpc streaming client.
-		ctx, cancel := context.WithCancel(ctx)
+		ctx1, cancel := context.WithCancel(ctx)
 		var stream tikvpb.Tikv_CoprocessorStreamClient
-		stream, err = client.CoprocessorStream(ctx, req.Cop)
+		stream, err = client.CoprocessorStream(ctx1, req.Cop)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -416,12 +427,7 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request, ch cha
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		resp.CopStream = &CopStreamResponse{
-			Tikv_CoprocessorStreamClient: stream,
-			Response:                     first,
-			item:                         TimeoutItem{cancel: cancel},
-			timeoutCh:                    ch,
-		}
+		resp.CopStream = NewCopStreamResponse(stream, first, cancel, ch)
 	case CmdMvccGetByKey:
 		resp.MvccGetByKey, err = client.MvccGetByKey(ctx, req.MvccGetByKey)
 	case CmdMvccGetByStartTs:
@@ -437,6 +443,7 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request, ch cha
 	return resp, nil
 }
 
+// TimeoutItem is used to implement grpc stream timeout.
 type TimeoutItem struct {
 	cancel  context.CancelFunc
 	timeout time.Time
@@ -450,13 +457,15 @@ func (resp *CopStreamResponse) SetDeadline(deadline time.Time) {
 	resp.timeoutCh <- &resp.item
 }
 
-// Override the stream client Recv() function.
+// Recv overrides the stream client Recv() function.
 func (resp *CopStreamResponse) Recv() (*coprocessor.Response, error) {
 	ret, err := resp.Tikv_CoprocessorStreamClient.Recv()
 	atomic.StoreInt32(&resp.item.active, 0)
 	return ret, errors.Trace(err)
 }
 
+// CheckStreamTimeoutLoop run periodically to check is there any stream request timeouted.
+// TimeoutItem is a object to track stream requests, call this function with "go CheckStreamTimeoutLoop()"
 func CheckStreamTimeoutLoop(ch <-chan *TimeoutItem) {
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()

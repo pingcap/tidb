@@ -414,16 +414,20 @@ func (h *rpcHandler) handleSplitRegion(req *kvrpcpb.SplitRegionRequest) *kvrpcpb
 
 // RPCClient sends kv RPC calls to mock cluster.
 type RPCClient struct {
-	Cluster   *Cluster
-	MvccStore MVCCStore
+	Cluster       *Cluster
+	MvccStore     MVCCStore
+	streamTimeout chan *tikvrpc.TimeoutItem
 }
 
 // NewRPCClient creates an RPCClient.
 // Note that close the RPCClient may close the underlying MvccStore.
 func NewRPCClient(cluster *Cluster, mvccStore MVCCStore) *RPCClient {
+	ch := make(chan *tikvrpc.TimeoutItem)
+	go tikvrpc.CheckStreamTimeoutLoop(ch)
 	return &RPCClient{
-		Cluster:   cluster,
-		MvccStore: mvccStore,
+		Cluster:       cluster,
+		MvccStore:     mvccStore,
+		streamTimeout: ch,
 	}
 }
 
@@ -627,7 +631,8 @@ func (c *RPCClient) SendReq(ctx context.Context, addr string, req *tikvrpc.Reque
 		}
 		handler.rawStartKey = MvccKey(handler.startKey).Raw()
 		handler.rawEndKey = MvccKey(handler.endKey).Raw()
-		copStream, err := handler.handleCopStream(r)
+		ctx1, cancel := context.WithCancel(ctx)
+		copStream, err := handler.handleCopStream(ctx1, r)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -635,10 +640,7 @@ func (c *RPCClient) SendReq(ctx context.Context, addr string, req *tikvrpc.Reque
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		resp.CopStream = &tikvrpc.CopStreamResponse{
-			Tikv_CoprocessorStreamClient: copStream,
-			Response:                     first,
-		}
+		resp.CopStream = tikvrpc.NewCopStreamResponse(copStream, first, cancel, c.streamTimeout)
 	case tikvrpc.CmdMvccGetByKey:
 		r := req.MvccGetByKey
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
@@ -671,5 +673,6 @@ func (c *RPCClient) Close() error {
 	if raw, ok := c.MvccStore.(io.Closer); ok {
 		return raw.Close()
 	}
+	close(c.streamTimeout)
 	return nil
 }
