@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
@@ -53,7 +54,7 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 		resp.RegionError = err
 		return resp
 	}
-	e, dagReq, err := h.buildDAGExecutor(req)
+	dagCtx, e, dagReq, err := h.buildDAGExecutor(req)
 	if err != nil {
 		resp.OtherError = err.Error()
 		return resp
@@ -85,21 +86,22 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 		// Because the last call to `executor.Next` always returns a `nil`, so the actual count should be `Count - 1`
 		counts[offset] = e.Count() - 1
 	}
-	return buildResp(chunks, counts, err)
+	warnings := dagCtx.evalCtx.sc.GetWarnings()
+	return buildResp(chunks, counts, err, warnings)
 }
 
-func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (executor, *tipb.DAGRequest, error) {
+func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, executor, *tipb.DAGRequest, error) {
 	if len(req.Ranges) == 0 {
-		return nil, nil, errors.New("request range is null")
+		return nil, nil, nil, errors.New("request range is null")
 	}
 	if req.GetTp() != kv.ReqTypeDAG {
-		return nil, nil, errors.Errorf("unsupported request type %d", req.GetTp())
+		return nil, nil, nil, errors.Errorf("unsupported request type %d", req.GetTp())
 	}
 
 	dagReq := new(tipb.DAGRequest)
 	err := proto.Unmarshal(req.Data, dagReq)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, nil, errors.Trace(err)
 	}
 	sc := flagsToStatementContext(dagReq.Flags)
 	sc.TimeZone = time.FixedZone("UTC", int(dagReq.TimeZoneOffset))
@@ -110,13 +112,13 @@ func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (executor, *tipb
 	}
 	e, err := h.buildDAG(ctx, dagReq.Executors)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, nil, errors.Trace(err)
 	}
-	return e, dagReq, err
+	return ctx, e, dagReq, err
 }
 
 func (h *rpcHandler) handleCopStream(req *coprocessor.Request) (tikvpb.Tikv_CoprocessorStreamClient, error) {
-	e, dagReq, err := h.buildDAGExecutor(req)
+	_, e, dagReq, err := h.buildDAGExecutor(req)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -518,12 +520,18 @@ func (mock *mockCopStreamClient) readBlockFromExecutor(counts []int64) (tipb.Chu
 	return chunk, finish, &ran, nil
 }
 
-func buildResp(chunks []tipb.Chunk, counts []int64, err error) *coprocessor.Response {
+func buildResp(chunks []tipb.Chunk, counts []int64, err error, warnings []error) *coprocessor.Response {
 	resp := &coprocessor.Response{}
 	selResp := &tipb.SelectResponse{
 		Error:        toPBError(err),
 		Chunks:       chunks,
 		OutputCounts: counts,
+	}
+	if len(warnings) > 0 {
+		selResp.Warnings = make([]*tipb.Error, 0, len(warnings))
+		for i := range warnings {
+			selResp.Warnings = append(selResp.Warnings, toPBError(warnings[i]))
+		}
 	}
 	if err != nil {
 		if locked, ok := errors.Cause(err).(*ErrLocked); ok {
@@ -551,9 +559,15 @@ func toPBError(err error) *tipb.Error {
 		return nil
 	}
 	perr := new(tipb.Error)
-	perr.Code = int32(1)
-	errStr := err.Error()
-	perr.Msg = errStr
+	switch x := err.(type) {
+	case *terror.Error:
+		sqlErr := x.ToSQLError()
+		perr.Code = int32(sqlErr.Code)
+		perr.Msg = sqlErr.Message
+	default:
+		perr.Code = int32(1)
+		perr.Msg = err.Error()
+	}
 	return perr
 }
 
