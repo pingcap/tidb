@@ -87,3 +87,10 @@
     ```shell
     curl http://{TiDBIP}:10080/mvcc/index/{db}/{table}/{index}/{handle}?${c1}={v1}&${c2}=${v2}
     ```
+
+1. Get the column value by a encoded row and some column information
+
+    ```shell
+    curl http://{TiDBIP}:10080/tables/{colID}/{ColFlag}/{colLen}/{rowBin}
+    ```
+

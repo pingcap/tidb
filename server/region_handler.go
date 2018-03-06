@@ -60,7 +60,7 @@ const (
 	pColumnTp   = "colTp"
 	pColumnFlag = "colFlag"
 	pColumnLen  = "colLen"
-	pColumnBin  = "colBin"
+	pRowBin     = "rowBin"
 )
 
 // For query string
@@ -174,7 +174,7 @@ func (vh valueHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	// Get binary.
-	bin := params[pColumnBin]
+	bin := params[pRowBin]
 	valData, err := base64.StdEncoding.DecodeString(bin)
 	if err != nil {
 		writeError(w, err)

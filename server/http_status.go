@@ -63,7 +63,7 @@ func (s *Server) startHTTPServer() {
 		router.Handle("/schema/{db}", schemaHandler{tikvHandler})
 		router.Handle("/schema/{db}/{table}", schemaHandler{tikvHandler})
 	}
-	router.Handle("/tables/{colID}/{colTp}/{colFlag}/{colLen}/{colBin}", valueHandler{})
+	router.Handle("/tables/{colID}/{colTp}/{colFlag}/{colLen}/{rowBin}", valueHandler{})
 	addr := fmt.Sprintf(":%d", s.cfg.Status.StatusPort)
 	if s.cfg.Status.StatusPort == 0 {
 		addr = defaultStatusAddr
