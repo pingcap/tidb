@@ -572,7 +572,7 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp) (task task, err err
 	}
 	task = copTask
 	matchProperty := len(prop.cols) == 1 && pkCol != nil && prop.cols[0].Equal(nil, pkCol)
-	if matchProperty && prop.expectedCnt < math.MaxFloat64 {
+	if matchProperty && prop.expectedCnt < ds.statsAfterSelect.count {
 		selectivity, err := statsTbl.Selectivity(ds.ctx, ts.filterCondition)
 		if err != nil {
 			log.Warnf("An error happened: %v, we have to use the default selectivity", err.Error())
