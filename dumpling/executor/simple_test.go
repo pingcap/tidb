@@ -169,6 +169,15 @@ func (s *testSuite) TestUser(c *C) {
 	tk.MustExec(createUserSQL)
 	dropUserSQL = `DROP USER 'test1'@'localhost', 'test3'@'localhost';`
 	tk.MustExec(dropUserSQL)
+
+	// Test 'identified by password'
+	createUserSQL = `CREATE USER 'test1'@'localhost' identified by password 'xxx';`
+	_, err = tk.Exec(createUserSQL)
+	c.Assert(terror.ErrorEqual(executor.ErrPasswordFormat, err), IsTrue)
+	createUserSQL = `CREATE USER 'test1'@'localhost' identified by password '*3D56A309CD04FA2EEF181462E59011F075C89548';`
+	tk.MustExec(createUserSQL)
+	dropUserSQL = `DROP USER 'test1'@'localhost';`
+	tk.MustExec(dropUserSQL)
 }
 
 func (s *testSuite) TestSetPwd(c *C) {
