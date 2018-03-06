@@ -429,6 +429,7 @@ func (s *testSuite) TestRequestBuilder4(c *C) {
 		SetDesc(false).
 		SetKeepOrder(false).
 		SetPriority(kv.PriorityNormal).
+		SetStreaming(true).
 		SetFromSessionVars(variable.NewSessionVars()).
 		Build()
 	c.Assert(err, IsNil)
@@ -442,9 +443,9 @@ func (s *testSuite) TestRequestBuilder4(c *C) {
 		Concurrency:    15,
 		IsolationLevel: 0,
 		Priority:       0,
+		Streaming:      true,
 		NotFillCache:   false,
 		SyncLog:        false,
-		Streaming:      false,
 	}
 	c.Assert(actual, DeepEquals, expect)
 }

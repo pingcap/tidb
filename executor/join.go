@@ -27,8 +27,8 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mvmap"
-	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
@@ -48,7 +48,7 @@ type HashJoinExec struct {
 	innerKeys   []*expression.Column
 
 	prepared        bool
-	concurrency     int // concurrency is number of concurrent channels and join workers.
+	concurrency     uint // concurrency is number of concurrent channels and join workers.
 	hashTable       *mvmap.MVMap
 	hashJoinBuffers []*hashJoinBuffer
 	outerBufferChs  []chan *execResult
@@ -75,7 +75,8 @@ type HashJoinExec struct {
 	joinChkResourceCh  []chan *chunk.Chunk
 	joinResultCh       chan *hashjoinWorkerResult
 	hashTableValBufs   [][][]byte
-	totalMemoryUsage   int64
+
+	memTracker *memory.Tracker // track memory usage.
 }
 
 // outerChkResource stores the result of the join outer fetch worker,
@@ -145,10 +146,12 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 	}
 
 	e.prepared = false
+	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaHashJoin)
+	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
 	e.hashTableValBufs = make([][][]byte, e.concurrency)
 	e.hashJoinBuffers = make([]*hashJoinBuffer, 0, e.concurrency)
-	for i := 0; i < e.concurrency; i++ {
+	for i := uint(0); i < e.concurrency; i++ {
 		buffer := &hashJoinBuffer{
 			data:  make([]types.Datum, len(e.outerKeys)),
 			bytes: make([]byte, 0, 10000),
@@ -252,7 +255,7 @@ func (e *HashJoinExec) fetchOuterRows(ctx context.Context) {
 	}()
 
 	bufferCapacity, maxBufferCapacity := 1, 128
-	for i, noMoreData := 0, false; !noMoreData; i = (i + 1) % e.concurrency {
+	for i, noMoreData := uint(0), false; !noMoreData; i = (i + 1) % e.concurrency {
 		outerBuffer := &execResult{rows: make([]Row, 0, bufferCapacity)}
 
 		for !noMoreData && len(outerBuffer.rows) < bufferCapacity {
@@ -330,39 +333,30 @@ func (e *HashJoinExec) fetchOuterChunks(ctx context.Context) {
 // fetchInnerRows fetches all rows from inner executor,
 // and append them to e.innerResult.
 func (e *HashJoinExec) fetchInnerRows(ctx context.Context) (err error) {
-	innerResult := chunk.NewList(e.innerExec.retTypes(), e.maxChunkSize)
-	memExceedThreshold, execMemThreshold := false, e.ctx.GetSessionVars().MemThreshold
+	e.innerResult = chunk.NewList(e.innerExec.retTypes(), e.maxChunkSize)
+	e.innerResult.GetMemTracker().AttachTo(e.memTracker)
+	e.innerResult.GetMemTracker().SetLabel("innerResult")
 	for {
 		chk := e.children[e.innerIdx].newChunk()
 		err = e.innerExec.NextChunk(ctx, chk)
-		if err != nil {
+		if err != nil || chk.NumRows() == 0 {
 			return errors.Trace(err)
 		}
-		if chk.NumRows() == 0 {
-			break
-		}
-		innerResult.Add(chk)
-		innerMemUsage := innerResult.MemoryUsage()
-		if !memExceedThreshold && innerMemUsage > execMemThreshold {
-			memExceedThreshold = true
-			log.Warnf(ErrMemExceedThreshold.GenByArgs(e.id, innerMemUsage, execMemThreshold).Error())
-		}
+		e.innerResult.Add(chk)
 	}
-	e.innerResult = innerResult
-	return nil
 }
 
 func (e *HashJoinExec) initializeForProbe() {
 	// e.outerResultChs is for transmitting the chunks which store the data of outerExec,
 	// it'll be written by outer worker goroutine, and read by join workers.
 	e.outerResultChs = make([]chan *chunk.Chunk, e.concurrency)
-	for i := 0; i < e.concurrency; i++ {
+	for i := uint(0); i < e.concurrency; i++ {
 		e.outerResultChs[i] = make(chan *chunk.Chunk, 1)
 	}
 
 	// e.outerChkResourceCh is for transmitting the used outerExec chunks from join workers to outerExec worker.
 	e.outerChkResourceCh = make(chan *outerChkResource, e.concurrency)
-	for i := 0; i < e.concurrency; i++ {
+	for i := uint(0); i < e.concurrency; i++ {
 		e.outerChkResourceCh <- &outerChkResource{
 			chk:  e.outerExec.newChunk(),
 			dest: e.outerResultChs[i],
@@ -372,7 +366,7 @@ func (e *HashJoinExec) initializeForProbe() {
 	// e.joinChkResourceCh is for transmitting the reused join result chunks
 	// from the main thread to join worker goroutines.
 	e.joinChkResourceCh = make([]chan *chunk.Chunk, e.concurrency)
-	for i := 0; i < e.concurrency; i++ {
+	for i := uint(0); i < e.concurrency; i++ {
 		e.joinChkResourceCh[i] = make(chan *chunk.Chunk, 1)
 		e.joinChkResourceCh[i] <- e.newChunk()
 	}
@@ -395,7 +389,7 @@ func (e *HashJoinExec) fetchOuterAndProbeHashTable(ctx context.Context) {
 	go e.fetchOuterChunks(ctx)
 
 	// Start e.concurrency join workers to probe hash table and join inner and outer rows.
-	for i := 0; i < e.concurrency; i++ {
+	for i := uint(0); i < e.concurrency; i++ {
 		e.workerWaitGroup.Add(1)
 		go e.runJoinWorker4Chunk(i)
 	}
@@ -443,7 +437,7 @@ func (e *HashJoinExec) prepare4Row(ctx context.Context) error {
 	// and e.concurrency goroutines to concatenate the matched inner and outer rows and filter the result.
 	if !(e.hashTable.Len() == 0 && e.joinType == plan.InnerJoin) {
 		e.outerBufferChs = make([]chan *execResult, e.concurrency)
-		for i := 0; i < e.concurrency; i++ {
+		for i := uint(0); i < e.concurrency; i++ {
 			e.outerBufferChs[i] = make(chan *execResult, e.concurrency)
 		}
 
@@ -452,7 +446,7 @@ func (e *HashJoinExec) prepare4Row(ctx context.Context) error {
 		go e.fetchOuterRows(ctx)
 
 		// Start e.concurrency join workers to probe hash table and join inner and outer rows.
-		for i := 0; i < e.concurrency; i++ {
+		for i := uint(0); i < e.concurrency; i++ {
 			e.workerWaitGroup.Add(1)
 			go e.runJoinWorker(i)
 		}
@@ -505,7 +499,7 @@ func (e *HashJoinExec) filterOuters(outerBuffer *execResult, outerFilterResult [
 }
 
 // runJoinWorker does join job in one goroutine.
-func (e *HashJoinExec) runJoinWorker(workerID int) {
+func (e *HashJoinExec) runJoinWorker(workerID uint) {
 	bufferCapacity := 1024
 	resultBuffer := &execResult{rows: make([]Row, 0, bufferCapacity)}
 	outerFilterResult := make([]bool, 0, bufferCapacity)
@@ -562,7 +556,7 @@ func (e *HashJoinExec) runJoinWorker(workerID int) {
 	e.workerWaitGroup.Done()
 }
 
-func (e *HashJoinExec) runJoinWorker4Chunk(workerID int) {
+func (e *HashJoinExec) runJoinWorker4Chunk(workerID uint) {
 	defer func() {
 		if r := recover(); r != nil {
 			e.joinResultCh <- &hashjoinWorkerResult{err: errors.Errorf("%v", r)}
@@ -612,7 +606,7 @@ func (e *HashJoinExec) runJoinWorker4Chunk(workerID int) {
 // joinOuterRow creates result rows from a row in a big table and sends them to resultRows channel.
 // Every matching row generates a result row.
 // If there are no matching rows and it is outer join, a null filled result row is created.
-func (e *HashJoinExec) joinOuterRow(workerID int, outerRow Row, resultBuffer *execResult) bool {
+func (e *HashJoinExec) joinOuterRow(workerID uint, outerRow Row, resultBuffer *execResult) bool {
 	buffer := e.hashJoinBuffers[workerID]
 	hasNull, joinKey, err := getJoinKey(e.ctx.GetSessionVars().StmtCtx, e.outerKeys, outerRow, buffer.data, buffer.bytes[:0:cap(buffer.bytes)])
 	if err != nil {
@@ -653,7 +647,8 @@ func (e *HashJoinExec) joinOuterRow(workerID int, outerRow Row, resultBuffer *ex
 	return true
 }
 
-func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID int, outerRow chunk.Row, joinResult *hashjoinWorkerResult) (bool, *hashjoinWorkerResult) {
+func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID uint, outerRow chunk.Row,
+	joinResult *hashjoinWorkerResult) (bool, *hashjoinWorkerResult) {
 	buffer := e.hashJoinBuffers[workerID]
 	hasNull, joinKey, err := e.getJoinKeyFromChkRow(true, outerRow, buffer.bytes)
 	if err != nil {
@@ -701,7 +696,7 @@ func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID int, outerRow chunk.Ro
 	return true, joinResult
 }
 
-func (e *HashJoinExec) getNewJoinResult(workerID int) (bool, *hashjoinWorkerResult) {
+func (e *HashJoinExec) getNewJoinResult(workerID uint) (bool, *hashjoinWorkerResult) {
 	joinResult := &hashjoinWorkerResult{
 		src: e.joinChkResourceCh[workerID],
 	}
@@ -714,7 +709,8 @@ func (e *HashJoinExec) getNewJoinResult(workerID int) (bool, *hashjoinWorkerResu
 	return ok, joinResult
 }
 
-func (e *HashJoinExec) join2Chunk(workerID int, outerChk *chunk.Chunk, joinResult *hashjoinWorkerResult, selected []bool) (ok bool, _ *hashjoinWorkerResult) {
+func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, joinResult *hashjoinWorkerResult,
+	selected []bool) (ok bool, _ *hashjoinWorkerResult) {
 	var err error
 	selected, err = expression.VectorizedFilter(e.ctx, e.outerFilter, chunk.NewIterator4Chunk(outerChk), selected)
 	if err != nil {
