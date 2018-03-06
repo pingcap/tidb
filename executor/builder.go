@@ -251,6 +251,7 @@ func (b *executorBuilder) buildCheckIndexRange(v *plan.CheckIndexRange) Executor
 		if idx.Meta().Name.L == idxName {
 			e.index = idx
 			e.startKey = make([]types.Datum, len(e.index.Meta().Columns))
+			break
 		}
 	}
 	return e
