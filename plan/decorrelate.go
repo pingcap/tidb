@@ -14,6 +14,8 @@
 package plan
 
 import (
+	"math"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
@@ -115,7 +117,7 @@ func (s *decorrelateSolver) aggDefaultValueMap(agg *LogicalAggregation) map[int]
 		case ast.AggFuncBitOr, ast.AggFuncBitXor, ast.AggFuncCount:
 			defaultValueMap[i] = expression.Zero.Clone().(*expression.Constant)
 		case ast.AggFuncBitAnd:
-			defaultValueMap[i] = expression.One.Clone().(*expression.Constant)
+			defaultValueMap[i] = &expression.Constant{Value: types.NewUintDatum(math.MaxUint64), RetType: types.NewFieldType(mysql.TypeLonglong)}
 		}
 	}
 	return defaultValueMap
