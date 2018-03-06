@@ -22,7 +22,7 @@ func (s *testSuite) TestAdminCheckIndexRange(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists check_index_test;`)
-	tk.MustExec(`create table check_index_test (a int, b varchar(10), index a_b (a, b))`)
+	tk.MustExec(`create table check_index_test (a int, b varchar(10), index a_b (a, b), index b (b))`)
 	tk.MustExec(`insert check_index_test values (3, "ab"),(2, "cd"),(1, "ef"),(-1, "hi")`)
 	result := tk.MustQuery("admin check index check_index_test a_b (2, 4);")
 	result.Check(testkit.Rows("1 ef 3", "2 cd 2"))

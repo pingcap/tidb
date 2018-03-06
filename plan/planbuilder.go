@@ -518,7 +518,9 @@ func buildCheckIndexSchema(tn *ast.TableName, indexName string) *expression.Sche
 	indicesInfo := tn.TableInfo.Indices
 	cols := tn.TableInfo.Cols()
 	for _, idxInfo := range indicesInfo {
-		idxInfo.Name.L = indexName
+		if idxInfo.Name.L != indexName {
+			continue
+		}
 		for i, idxCol := range idxInfo.Columns {
 			col := cols[idxCol.Offset]
 			schema.Append(&expression.Column{
