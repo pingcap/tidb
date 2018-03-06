@@ -4782,15 +4782,15 @@ AdminStmt:
 	}
 
 NumList:
-    NUM
-    {
-	    $$ = []int64{$1.(int64)}
-    }
+       NUM
+       {
+	        $$ = []int64{$1.(int64)}
+       }
 |
-    NumList ',' NUM
-    {
-	    $$ = append($1.([]int64), $3.(int64))
-    }
+       NumList ',' NUM
+       {
+	        $$ = append($1.([]int64), $3.(int64))
+       }
 
 /****************************Show Statement*******************************/
 ShowStmt:
