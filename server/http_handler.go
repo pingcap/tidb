@@ -91,14 +91,14 @@ func writeData(w http.ResponseWriter, data interface{}) {
 	terror.Log(errors.Trace(err))
 }
 
-type httpHandlerTool struct {
+type tikvHandlerTool struct {
 	regionCache *tikv.RegionCache
 	store       kvStore
 }
 
-// newHTTPHandlerTool checks and prepares for http handler.
+// newTikvHandlerTool checks and prepares for tikv handler.
 // It would panic when any error happens.
-func (s *Server) newHTTPHandlerTool() *httpHandlerTool {
+func (s *Server) newTikvHandlerTool() *tikvHandlerTool {
 	var tikvStore kvStore
 	store, ok := s.driver.(*TiDBDriver)
 	if !ok {
@@ -111,13 +111,13 @@ func (s *Server) newHTTPHandlerTool() *httpHandlerTool {
 
 	regionCache := tikvStore.GetRegionCache()
 
-	return &httpHandlerTool{
+	return &tikvHandlerTool{
 		regionCache: regionCache,
 		store:       tikvStore,
 	}
 }
 
-func (t *httpHandlerTool) getMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccGetByKeyResponse, error) {
+func (t *tikvHandlerTool) getMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccGetByKeyResponse, error) {
 	keyLocation, err := t.regionCache.LocateKey(tikv.NewBackoffer(context.Background(), 500), encodedKey)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -138,12 +138,12 @@ func (t *httpHandlerTool) getMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccG
 	return kvResp.MvccGetByKey, nil
 }
 
-func (t *httpHandlerTool) getMvccByHandle(tableID, handle int64) (*kvrpcpb.MvccGetByKeyResponse, error) {
+func (t *tikvHandlerTool) getMvccByHandle(tableID, handle int64) (*kvrpcpb.MvccGetByKeyResponse, error) {
 	encodedKey := tablecodec.EncodeRowKeyWithHandle(tableID, handle)
 	return t.getMvccByEncodedKey(encodedKey)
 }
 
-func (t *httpHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []byte) (*kvrpcpb.MvccGetByStartTsResponse, error) {
+func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []byte) (*kvrpcpb.MvccGetByStartTsResponse, error) {
 	bo := tikv.NewBackoffer(context.Background(), 5000)
 	for {
 		curRegion, err := t.regionCache.LocateKey(bo, startKey)
@@ -191,7 +191,7 @@ func (t *httpHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []by
 	}
 }
 
-func (t *httpHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values, idxCols []*model.ColumnInfo, handleStr string) (*kvrpcpb.MvccGetByKeyResponse, error) {
+func (t *tikvHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values, idxCols []*model.ColumnInfo, handleStr string) (*kvrpcpb.MvccGetByKeyResponse, error) {
 	sc := new(stmtctx.StatementContext)
 	// HTTP request is not a database session, set timezone to UTC directly here.
 	// See https://github.com/pingcap/tidb/blob/master/docs/tidb_http_api.md for more details.
@@ -212,7 +212,7 @@ func (t *httpHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values, 
 }
 
 // formValue2DatumRow converts URL query string to a Datum Row.
-func (t *httpHandlerTool) formValue2DatumRow(sc *stmtctx.StatementContext, values url.Values, idxCols []*model.ColumnInfo) ([]types.Datum, error) {
+func (t *tikvHandlerTool) formValue2DatumRow(sc *stmtctx.StatementContext, values url.Values, idxCols []*model.ColumnInfo) ([]types.Datum, error) {
 	data := make([]types.Datum, len(idxCols))
 	for i, col := range idxCols {
 		colName := col.Name.String()
@@ -239,7 +239,7 @@ func (t *httpHandlerTool) formValue2DatumRow(sc *stmtctx.StatementContext, value
 	return data, nil
 }
 
-func (t *httpHandlerTool) getTableID(dbName, tableName string) (int64, error) {
+func (t *tikvHandlerTool) getTableID(dbName, tableName string) (int64, error) {
 	schema, err := t.schema()
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -251,7 +251,7 @@ func (t *httpHandlerTool) getTableID(dbName, tableName string) (int64, error) {
 	return tableVal.Meta().ID, nil
 }
 
-func (t *httpHandlerTool) schema() (infoschema.InfoSchema, error) {
+func (t *tikvHandlerTool) schema() (infoschema.InfoSchema, error) {
 	session, err := tidb.CreateSession(t.store.(kv.Storage))
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -259,7 +259,7 @@ func (t *httpHandlerTool) schema() (infoschema.InfoSchema, error) {
 	return domain.GetDomain(session.(sessionctx.Context)).InfoSchema(), nil
 }
 
-func (t *httpHandlerTool) handleMvccGetByHex(params map[string]string) (interface{}, error) {
+func (t *tikvHandlerTool) handleMvccGetByHex(params map[string]string) (interface{}, error) {
 	encodedKey, err := hex.DecodeString(params[pHexKey])
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -269,23 +269,22 @@ func (t *httpHandlerTool) handleMvccGetByHex(params map[string]string) (interfac
 
 // settingsHandler is the handler for list tidb server settings.
 type settingsHandler struct {
-	*httpHandlerTool
 }
 
 // schemaHandler is the handler for list database or table schemas.
 type schemaHandler struct {
-	*httpHandlerTool
+	*tikvHandlerTool
 }
 
 // regionHandler is the common field for http handler. It contains
 // some common functions for all handlers.
 type regionHandler struct {
-	*httpHandlerTool
+	*tikvHandlerTool
 }
 
 // tableHandler is the handler for list table's regions.
 type tableHandler struct {
-	*httpHandlerTool
+	*tikvHandlerTool
 	op string
 }
 
@@ -296,7 +295,7 @@ const (
 
 // mvccTxnHandler is the handler for txn debugger
 type mvccTxnHandler struct {
-	*httpHandlerTool
+	*tikvHandlerTool
 	op string
 }
 
@@ -401,7 +400,7 @@ type RegionFrameRange struct {
 	region *tikv.KeyLocation // the region
 }
 
-func (t *httpHandlerTool) getRegionsMeta(regionIDs []uint64) ([]RegionMeta, error) {
+func (t *tikvHandlerTool) getRegionsMeta(regionIDs []uint64) ([]RegionMeta, error) {
 	regions := make([]RegionMeta, len(regionIDs))
 	for i, regionID := range regionIDs {
 		meta, leader, err := t.regionCache.PDClient().GetRegionByID(context.TODO(), regionID)
