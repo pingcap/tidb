@@ -120,9 +120,8 @@ func (e *tableScanExec) Next(ctx context.Context) (value [][]byte, err error) {
 			e.cursor++
 			if value == nil {
 				continue
-			} else {
-				e.counts[e.cursor-1]++
 			}
+			e.counts[e.cursor-1]++
 			return value, nil
 		}
 
@@ -288,9 +287,8 @@ func (e *indexScanExec) Next(ctx context.Context) (value [][]byte, err error) {
 			e.cursor++
 			if value == nil {
 				continue
-			} else {
-				e.counts[e.cursor-1]++
 			}
+			e.counts[e.cursor-1]++
 		} else {
 			value, err = e.getRowFromRange(ran)
 			if err != nil {
