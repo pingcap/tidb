@@ -17,6 +17,7 @@ import (
 	"sync"
 
 	"golang.org/x/net/context"
+	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 )
 
 // InjectionConfig is used for fault injections for KV components.
@@ -74,8 +75,8 @@ func (s *InjectedStore) BeginWithStartTS(startTS uint64) (Transaction, error) {
 }
 
 // GetSnapshot creates an injected Snapshot.
-func (s *InjectedStore) GetSnapshot(ver Version) (Snapshot, error) {
-	snapshot, err := s.Storage.GetSnapshot(ver)
+func (s *InjectedStore) GetSnapshot(ver Version, priority pb.CommandPri) (Snapshot, error) {
+	snapshot, err := s.Storage.GetSnapshot(ver, pb.CommandPri_Normal)
 	return &InjectedSnapshot{
 		Snapshot: snapshot,
 		cfg:      s.cfg,

@@ -41,6 +41,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
+	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 )
 
 // Domain represents a storage space. Different domains can use the same database name.
@@ -67,7 +68,7 @@ type Domain struct {
 // It returns the latest schema version, the changed table IDs, whether it's a full load and an error.
 func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion int64, startTS uint64) (int64, []int64, bool, error) {
 	var fullLoad bool
-	snapshot, err := do.store.GetSnapshot(kv.NewVersion(startTS))
+	snapshot, err := do.store.GetSnapshot(kv.NewVersion(startTS), pb.CommandPri_Normal)
 	if err != nil {
 		return 0, nil, fullLoad, errors.Trace(err)
 	}

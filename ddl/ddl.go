@@ -207,6 +207,7 @@ type ddl struct {
 
 	quitCh chan struct{}
 	wait   sync.WaitGroup
+	priority    int
 
 	workerVars      *variable.SessionVars
 	delRangeManager delRangeManager
@@ -277,6 +278,7 @@ func newDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 		ownerManager: manager,
 		schemaSyncer: syncer,
 		workerVars:   variable.NewSessionVars(),
+		priority:	  1,
 	}
 	d.workerVars.BinlogClient = binloginfo.GetPumpClient()
 
