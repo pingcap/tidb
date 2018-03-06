@@ -40,7 +40,7 @@ const (
 )
 
 // JoinConcurrency means the number of goroutines that participate in joining.
-var JoinConcurrency = 5
+var JoinConcurrency uint = 5
 
 // wholeTaskTypes records all possible kinds of task that a plan can return. For Agg, TopN and Limit, we will try to get
 // these tasks one by one.

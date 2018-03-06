@@ -775,7 +775,7 @@ func getStmtCnt(content string) (stmtCnt map[string]int) {
 
 const retryTime = 100
 
-func waitUntilServerOnline(statusPort int) {
+func waitUntilServerOnline(statusPort uint) {
 	// connect server
 	retry := 0
 	for ; retry < retryTime; retry++ {
