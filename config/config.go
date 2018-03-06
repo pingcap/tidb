@@ -51,6 +51,7 @@ type Config struct {
 	SplitTable      bool   `toml:"split-table" json:"split-table"`
 	TokenLimit      uint   `toml:"token-limit" json:"token-limit"`
 	EnableChunk     bool   `toml:"enable-chunk" json:"enable-chunk"`
+	OOMAction       string `toml:"oom-action" json:"oom-action"`
 	EnableStreaming bool   `toml:"enable-streaming" json:"enable-streaming"`
 
 	Log               Log               `toml:"log" json:"log"`
@@ -225,6 +226,7 @@ var defaultConf = Config{
 	Lease:           "10s",
 	TokenLimit:      1000,
 	EnableChunk:     true,
+	OOMAction:       "log",
 	EnableStreaming: false,
 	Log: Log{
 		Level:  "info",
@@ -336,3 +338,12 @@ func (t *OpenTracing) ToTracingConfig() *tracing.Configuration {
 	ret.Sampler.SamplingRefreshInterval = t.Sampler.SamplingRefreshInterval
 	return ret
 }
+
+// The following constants represents the valid action configurations for OOMAction.
+// NOTE: Althrough the values is case insensitiv, we should use lower-case
+// strings because the configuration value will be transformed to lower-case
+// string and compared with these constants in the further usage.
+const (
+	OOMActionCancel = "cancel"
+	OOMActionLog    = "log"
+)

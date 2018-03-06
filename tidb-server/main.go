@@ -346,6 +346,7 @@ func validateConfig() {
 		log.Error("X Server is not available")
 		os.Exit(-1)
 	}
+	cfg.OOMAction = strings.ToLower(cfg.OOMAction)
 }
 
 func setGlobalVars() {
