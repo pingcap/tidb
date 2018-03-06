@@ -213,8 +213,8 @@ func instanceName() string {
 	return fmt.Sprintf("%s_%d", hostname, cfg.Port)
 }
 
-// parseLease parses lease argument string.
-func parseLease(lease string) time.Duration {
+// parseDuration parses lease argument string.
+func parseDuration(lease string) time.Duration {
 	dur, err := time.ParseDuration(lease)
 	if err != nil {
 		dur, err = time.ParseDuration(lease + "s")
@@ -326,10 +326,10 @@ func validateConfig() {
 }
 
 func setGlobalVars() {
-	ddlLeaseDuration := parseLease(cfg.Lease)
+	ddlLeaseDuration := parseDuration(cfg.Lease)
 	tidb.SetSchemaLease(ddlLeaseDuration)
 	runtime.GOMAXPROCS(cfg.Performance.MaxProcs)
-	statsLeaseDuration := parseLease(cfg.Performance.StatsLease)
+	statsLeaseDuration := parseDuration(cfg.Performance.StatsLease)
 	tidb.SetStatsLease(statsLeaseDuration)
 	domain.RunAutoAnalyze = cfg.Performance.RunAutoAnalyze
 	ddl.RunWorker = cfg.RunDDL
@@ -354,6 +354,8 @@ func setGlobalVars() {
 	if cfg.TiKVClient.GrpcConnectionCount > 0 {
 		tikv.MaxConnectionCount = cfg.TiKVClient.GrpcConnectionCount
 	}
+
+	tikv.CommitMaxBackoff = int(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds() * 1000)
 }
 
 func setupLog() {

@@ -403,6 +403,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"admin show ddl;", true},
 		{"admin show ddl jobs;", true},
 		{"admin check table t1, t2;", true},
+		{"admin check index tableName idxName;", true},
 		{"admin cancel ddl jobs 1", true},
 		{"admin cancel ddl jobs 1, 2", true},
 
@@ -1399,6 +1400,9 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"drop tables xxx, yyy", true},
 		{"drop table if exists xxx", true},
 		{"drop table if not exists xxx", false},
+		{"drop table xxx restrict", true},
+		{"drop table xxx, yyy cascade", true},
+		{"drop table if exists xxx restrict", true},
 		{"drop view if exists xxx", true},
 		{"drop stats t", true},
 		// for issue 974
