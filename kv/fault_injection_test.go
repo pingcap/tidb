@@ -17,6 +17,7 @@ import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
+	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 )
 
 type testFaultInjectionSuite struct{}
@@ -34,7 +35,7 @@ func (s testFaultInjectionSuite) TestFaultInjectionBasic(c *C) {
 	_, err = storage.BeginWithStartTS(0)
 	c.Assert(err, IsNil)
 	ver := kv.Version{Ver: 1}
-	snap, err := storage.GetSnapshot(ver)
+	snap, err := storage.GetSnapshot(ver, pb.CommandPri_Normal)
 	c.Assert(err, IsNil)
 	b, err := txn.Get([]byte{'a'})
 	c.Assert(err.Error(), Equals, errors.New("foo").Error())

@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/testleak"
 	"golang.org/x/net/context"
+	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 )
 
 func TestT(t *testing.T) {
@@ -245,7 +246,7 @@ func (s *testSuite) TestSnapshot(c *C) {
 	c.Assert(n, Equals, int64(2))
 	txn.Commit(context.Background())
 
-	snapshot, _ := store.GetSnapshot(ver1)
+	snapshot, _ := store.GetSnapshot(ver1, pb.CommandPri_Normal)
 	snapMeta := meta.NewSnapshotMeta(snapshot)
 	n, _ = snapMeta.GetGlobalID()
 	c.Assert(n, Equals, int64(1))

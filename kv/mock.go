@@ -17,6 +17,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"golang.org/x/net/context"
+	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 )
 
 // mockTxn is a txn that returns a retryAble error when called Commit.
@@ -138,7 +139,7 @@ func (s *mockStorage) BeginWithStartTS(startTS uint64) (Transaction, error) {
 	return s.Begin()
 }
 
-func (s *mockStorage) GetSnapshot(ver Version) (Snapshot, error) {
+func (s *mockStorage) GetSnapshot(ver Version, priority pb.CommandPri) (Snapshot, error) {
 	return &mockSnapshot{
 		store: NewMemDbBuffer(DefaultTxnMembufCap),
 	}, nil

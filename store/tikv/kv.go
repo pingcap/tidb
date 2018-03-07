@@ -35,6 +35,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
+	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 )
 
 type storeCache struct {
@@ -253,8 +254,9 @@ func (s *tikvStore) BeginWithStartTS(startTS uint64) (kv.Transaction, error) {
 	return txn, nil
 }
 
-func (s *tikvStore) GetSnapshot(ver kv.Version) (kv.Snapshot, error) {
+func (s *tikvStore) GetSnapshot(ver kv.Version, priority pb.CommandPri) (kv.Snapshot, error) {
 	snapshot := newTiKVSnapshot(s, ver)
+	snapshot.priority = priority
 	metrics.TiKVSnapshotCounter.Inc()
 	return snapshot, nil
 }
