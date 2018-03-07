@@ -42,7 +42,6 @@ type CheckIndexRangeExec struct {
 	srcChunk     *chunk.Chunk
 
 	result  distsql.SelectResult
-	partial distsql.PartialResult
 	cols    []*model.ColumnInfo
 }
 
