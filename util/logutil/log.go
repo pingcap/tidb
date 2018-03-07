@@ -29,9 +29,10 @@ import (
 
 const (
 	defaultLogTimeFormat = "2006/01/02 15:04:05.000"
-	defaultLogMaxSize    = 300 // MB
-	defaultLogFormat     = "text"
-	defaultLogLevel      = log.InfoLevel
+	// DefaultLogMaxSize is the default size of log files.
+	DefaultLogMaxSize = 300 // MB
+	defaultLogFormat  = "text"
+	defaultLogLevel   = log.InfoLevel
 )
 
 // FileLogConfig serializes file log related config in toml/json.
@@ -222,7 +223,7 @@ func initFileLog(cfg *FileLogConfig, logger *log.Logger) error {
 		}
 	}
 	if cfg.MaxSize == 0 {
-		cfg.MaxSize = defaultLogMaxSize
+		cfg.MaxSize = DefaultLogMaxSize
 	}
 
 	// use lumberjack to logrotate

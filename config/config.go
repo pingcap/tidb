@@ -233,6 +233,7 @@ var defaultConf = Config{
 		Format: "text",
 		File: logutil.FileLogConfig{
 			LogRotate: true,
+			MaxSize:   logutil.DefaultLogMaxSize,
 		},
 		SlowThreshold:      300,
 		ExpensiveThreshold: 10000,
