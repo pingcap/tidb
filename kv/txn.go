@@ -31,7 +31,7 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 		originalTxnTS uint64
 		txn           Transaction
 	)
-	for i := 0; i < maxRetryCnt; i++ {
+	for i := uint(0); i < maxRetryCnt; i++ {
 		txn, err = store.Begin()
 		if err != nil {
 			log.Errorf("[kv] RunInNewTxn error - %v", err)
@@ -73,7 +73,7 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 
 var (
 	// Max retry count in RunInNewTxn
-	maxRetryCnt = 100
+	maxRetryCnt uint = 100
 	// retryBackOffBase is the initial duration, in microsecond, a failed transaction stays dormancy before it retries
 	retryBackOffBase = 1
 	// retryBackOffCap is the max amount of duration, in microsecond, a failed transaction stays dormancy before it retries
@@ -83,7 +83,7 @@ var (
 // BackOff Implements exponential backoff with full jitter.
 // Returns real back off time in microsecond.
 // See http://www.awsarchitectureblog.com/2015/03/backoff.html.
-func BackOff(attempts int) int {
+func BackOff(attempts uint) int {
 	upper := int(math.Min(float64(retryBackOffCap), float64(retryBackOffBase)*math.Pow(2.0, float64(attempts))))
 	sleep := time.Duration(rand.Intn(upper)) * time.Millisecond
 	time.Sleep(sleep)

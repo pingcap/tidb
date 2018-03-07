@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2018 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -36,13 +36,13 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 )
 
-type TidbRegionHandlerTestSuite struct {
+type HTTPHandlerTestSuite struct {
 	server *Server
 }
 
-var _ = Suite(new(TidbRegionHandlerTestSuite))
+var _ = Suite(new(HTTPHandlerTestSuite))
 
-func (ts *TidbRegionHandlerTestSuite) TestRegionIndexRange(c *C) {
+func (ts *HTTPHandlerTestSuite) TestRegionIndexRange(c *C) {
 	sTableID := int64(3)
 	sIndex := int64(11)
 	eTableID := int64(9)
@@ -70,7 +70,7 @@ func (ts *TidbRegionHandlerTestSuite) TestRegionIndexRange(c *C) {
 	c.Assert(end, Equals, int64(math.MaxInt64))
 }
 
-func (ts *TidbRegionHandlerTestSuite) TestRegionIndexRangeWithEndNoLimit(c *C) {
+func (ts *HTTPHandlerTestSuite) TestRegionIndexRangeWithEndNoLimit(c *C) {
 	sTableID := int64(15)
 	eTableID := int64(math.MaxInt64)
 	startKey := tablecodec.GenTableRecordPrefix(sTableID)
@@ -94,7 +94,7 @@ func (ts *TidbRegionHandlerTestSuite) TestRegionIndexRangeWithEndNoLimit(c *C) {
 	c.Assert(end, Equals, int64(math.MaxInt64))
 }
 
-func (ts *TidbRegionHandlerTestSuite) TestRegionIndexRangeWithStartNoLimit(c *C) {
+func (ts *HTTPHandlerTestSuite) TestRegionIndexRangeWithStartNoLimit(c *C) {
 	sTableID := int64(math.MinInt64)
 	sIndexID := int64(math.MinInt64)
 	eTableID := int64(9)
@@ -120,7 +120,7 @@ func (ts *TidbRegionHandlerTestSuite) TestRegionIndexRangeWithStartNoLimit(c *C)
 	c.Assert(end, Equals, int64(math.MaxInt64))
 }
 
-func (ts *TidbRegionHandlerTestSuite) TestRegionsAPI(c *C) {
+func (ts *HTTPHandlerTestSuite) TestRegionsAPI(c *C) {
 	ts.startServer(c)
 	defer ts.stopServer(c)
 	resp, err := http.Get("http://127.0.0.1:10090/tables/information_schema/SCHEMATA/regions")
@@ -157,7 +157,7 @@ func regionContainsTable(c *C, regionID uint64, tableID int64) bool {
 	return false
 }
 
-func (ts *TidbRegionHandlerTestSuite) TestListTableRegionsWithError(c *C) {
+func (ts *HTTPHandlerTestSuite) TestListTableRegionsWithError(c *C) {
 	ts.startServer(c)
 	defer ts.stopServer(c)
 	resp, err := http.Get("http://127.0.0.1:10090/tables/fdsfds/aaa/regions")
@@ -166,7 +166,7 @@ func (ts *TidbRegionHandlerTestSuite) TestListTableRegionsWithError(c *C) {
 	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
 }
 
-func (ts *TidbRegionHandlerTestSuite) TestGetRegionByIDWithError(c *C) {
+func (ts *HTTPHandlerTestSuite) TestGetRegionByIDWithError(c *C) {
 	ts.startServer(c)
 	defer ts.stopServer(c)
 	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:10090/regions/xxx"))
@@ -175,7 +175,7 @@ func (ts *TidbRegionHandlerTestSuite) TestGetRegionByIDWithError(c *C) {
 	defer resp.Body.Close()
 }
 
-func (ts *TidbRegionHandlerTestSuite) TestRegionsFromMeta(c *C) {
+func (ts *HTTPHandlerTestSuite) TestRegionsFromMeta(c *C) {
 	ts.startServer(c)
 	defer ts.stopServer(c)
 	resp, err := http.Get("http://127.0.0.1:10090/regions/meta")
@@ -193,7 +193,7 @@ func (ts *TidbRegionHandlerTestSuite) TestRegionsFromMeta(c *C) {
 	}
 }
 
-func (ts *TidbRegionHandlerTestSuite) startServer(c *C) {
+func (ts *HTTPHandlerTestSuite) startServer(c *C) {
 	mvccStore := mocktikv.NewMvccStore()
 	store, err := mockstore.NewMockTikvStore(mockstore.WithMVCCStore(mvccStore))
 	c.Assert(err, IsNil)
@@ -214,13 +214,13 @@ func (ts *TidbRegionHandlerTestSuite) startServer(c *C) {
 	waitUntilServerOnline(cfg.Status.StatusPort)
 }
 
-func (ts *TidbRegionHandlerTestSuite) stopServer(c *C) {
+func (ts *HTTPHandlerTestSuite) stopServer(c *C) {
 	if ts.server != nil {
 		ts.server.Close()
 	}
 }
 
-func (ts *TidbRegionHandlerTestSuite) prepareData(c *C) {
+func (ts *HTTPHandlerTestSuite) prepareData(c *C) {
 	db, err := sql.Open("mysql", getDSN())
 	c.Assert(err, IsNil, Commentf("Error connecting"))
 	defer db.Close()
@@ -259,7 +259,7 @@ func decodeKeyMvcc(closer io.ReadCloser, c *C, valid bool) {
 	}
 }
 
-func (ts *TidbRegionHandlerTestSuite) TestGetTableMvcc(c *C) {
+func (ts *HTTPHandlerTestSuite) TestGetTableMVCC(c *C) {
 	ts.startServer(c)
 	ts.prepareData(c)
 	defer ts.stopServer(c)
@@ -306,7 +306,7 @@ func (ts *TidbRegionHandlerTestSuite) TestGetTableMvcc(c *C) {
 	c.Assert(data2, DeepEquals, data)
 }
 
-func (ts *TidbRegionHandlerTestSuite) TestGetMvccNotFound(c *C) {
+func (ts *HTTPHandlerTestSuite) TestGetMVCCNotFound(c *C) {
 	ts.startServer(c)
 	ts.prepareData(c)
 	defer ts.stopServer(c)
@@ -327,7 +327,7 @@ func (ts *TidbRegionHandlerTestSuite) TestGetMvccNotFound(c *C) {
 	c.Assert(p.Info, IsNil)
 }
 
-func (ts *TidbRegionHandlerTestSuite) TestGetIndexMvcc(c *C) {
+func (ts *HTTPHandlerTestSuite) TestGetIndexMVCC(c *C) {
 	ts.startServer(c)
 	ts.prepareData(c)
 	defer ts.stopServer(c)
@@ -384,7 +384,20 @@ func (ts *TidbRegionHandlerTestSuite) TestGetIndexMvcc(c *C) {
 	c.Assert(err, NotNil)
 }
 
-func (ts *TidbRegionHandlerTestSuite) TestGetSchema(c *C) {
+func (ts *HTTPHandlerTestSuite) TestGetSettings(c *C) {
+	ts.startServer(c)
+	ts.prepareData(c)
+	defer ts.stopServer(c)
+	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:10090/settings"))
+	c.Assert(err, IsNil)
+	decoder := json.NewDecoder(resp.Body)
+	var settings *config.Config
+	err = decoder.Decode(&settings)
+	c.Assert(err, IsNil)
+	c.Assert(settings, DeepEquals, config.GetGlobalConfig())
+}
+
+func (ts *HTTPHandlerTestSuite) TestGetSchema(c *C) {
 	ts.startServer(c)
 	ts.prepareData(c)
 	defer ts.stopServer(c)
