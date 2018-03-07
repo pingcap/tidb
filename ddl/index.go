@@ -717,7 +717,7 @@ type recordIterFunc func(h int64, rowKey kv.Key, rawRecord []byte) (more bool, e
 
 func iterateSnapshotRows(store kv.Storage, priority int, t table.Table, version uint64, seekHandle int64, fn recordIterFunc) error {
 	ver := kv.Version{Ver: version}
-	snap, err := store.GetSnapshot(ver, priority)
+	snap, err := store.GetSnapshotSetPriority(ver, priority)
 	if err != nil {
 		return errors.Trace(err)
 	}

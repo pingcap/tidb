@@ -355,7 +355,11 @@ func (m *mockStore) BeginWithStartTS(startTS uint64) (kv.Transaction, error) {
 	return m.Begin()
 }
 
-func (m *mockStore) GetSnapshot(ver kv.Version, priority int) (kv.Snapshot, error) {
+func (m *mockStore) GetSnapshot(ver kv.Version) (kv.Snapshot, error) {
+	return nil, nil
+}
+
+func (m *mockStore) GetSnapshotSetPriority(ver kv.Version, priority int) (kv.Snapshot, error) {
 	return nil, nil
 }
 

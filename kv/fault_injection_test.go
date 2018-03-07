@@ -34,7 +34,7 @@ func (s testFaultInjectionSuite) TestFaultInjectionBasic(c *C) {
 	_, err = storage.BeginWithStartTS(0)
 	c.Assert(err, IsNil)
 	ver := kv.Version{Ver: 1}
-	snap, err := storage.GetSnapshot(ver, kv.PriorityNormal)
+	snap, err := storage.GetSnapshot(ver)
 	c.Assert(err, IsNil)
 	b, err := txn.Get([]byte{'a'})
 	c.Assert(err.Error(), Equals, errors.New("foo").Error())

@@ -373,7 +373,7 @@ func ScanTableRecord(retriever kv.Retriever, t table.Table, startHandle, limit i
 // it returns the table data of the whole.
 func ScanSnapshotTableRecord(store kv.Storage, ver kv.Version, t table.Table, startHandle, limit int64) (
 	[]*RecordData, int64, error) {
-	snap, err := store.GetSnapshot(ver, kv.PriorityNormal)
+	snap, err := store.GetSnapshot(ver)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}

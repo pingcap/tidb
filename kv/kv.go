@@ -238,7 +238,7 @@ type Storage interface {
 	BeginWithStartTS(startTS uint64) (Transaction, error)
 	// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
 	// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
-	GetSnapshot(ver Version, priority int) (Snapshot, error)
+	GetSnapshot(ver Version) (Snapshot, error)
 	// GetClient gets a client instance.
 	GetClient() Client
 	// Close store
@@ -251,6 +251,8 @@ type Storage interface {
 	GetOracle() oracle.Oracle
 	// SupportDeleteRange gets the storage support delete range or not.
 	SupportDeleteRange() (supported bool)
+	// GetSnapshotSetPriority gets a snapshot set the priority
+	GetSnapshotSetPriority(ver Version, priority int) (Snapshot, error)
 }
 
 // FnKeyCmp is the function for iterator the keys
