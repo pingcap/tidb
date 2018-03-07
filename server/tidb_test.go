@@ -416,6 +416,26 @@ func (ts *TidbTestSuite) TestCreateTableFlen(c *C) {
 	c.Assert(int(cols[1].ColumnLength), Equals, 22)
 }
 
+func (ts *TidbTestSuite) TestShowTablesFlen(c *C) {
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	c.Assert(err, IsNil)
+	_, err = qctx.Execute(context.Background(), "use test;")
+	c.Assert(err, IsNil)
+
+	ctx := context.Background()
+	testSQL := "create table abcdefghijklmnopqrstuvwxyz (i int)"
+	_, err = qctx.Execute(ctx, testSQL)
+	c.Assert(err, IsNil)
+	rs, err := qctx.Execute(ctx, "show tables")
+	chk := rs[0].NewChunk()
+	err = rs[0].NextChunk(ctx, chk)
+	c.Assert(err, IsNil)
+	cols := rs[0].Columns()
+	c.Assert(err, IsNil)
+	c.Assert(len(cols), Equals, 1)
+	c.Assert(int(cols[0].ColumnLength), Equals, 26*tmysql.MaxBytesOfCharacter)
+}
+
 func checkColNames(c *C, columns []*ColumnInfo, names ...string) {
 	for i, name := range names {
 		c.Assert(columns[i].Name, Equals, name)

@@ -87,3 +87,12 @@
     ```shell
     curl http://{TiDBIP}:10080/mvcc/index/{db}/{table}/{index}/{handle}?${c1}={v1}&${c2}=${v2}
     ```
+
+*Hint: For the index column which column type is timezone dependent, e.g. `timestamp`, convert its value to UTC
+timezone.*
+
+1. Get TiDB server settings
+
+    ```shell
+    curl http://{TiDBIP}:10080/settings
+    ```
