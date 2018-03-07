@@ -538,7 +538,7 @@ func (s *testKVSuite) TestDBClose(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(kv.MaxVersion.Cmp(ver), Equals, 1)
 
-	snap, err := store.GetSnapshot(kv.MaxVersion)
+	snap, err := store.GetSnapshot(kv.MaxVersion, kv.PriorityNormal)
 	c.Assert(err, IsNil)
 
 	_, err = snap.Get([]byte("a"))
@@ -553,7 +553,7 @@ func (s *testKVSuite) TestDBClose(c *C) {
 	_, err = store.Begin()
 	c.Assert(err, NotNil)
 
-	_, err = store.GetSnapshot(kv.MaxVersion)
+	_, err = store.GetSnapshot(kv.MaxVersion, kv.PriorityNormal)
 	c.Assert(err, NotNil)
 
 	err = txn.Set([]byte("a"), []byte("b"))
