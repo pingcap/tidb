@@ -18,17 +18,34 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
+// Store implements kv.Storage interface.
 type Store struct {
 	Client kv.Client
 }
 
-// functions for Store.
-func (s *Store) GetClient() kv.Client                                    { return s.Client }
-func (s *Store) GetOracle() oracle.Oracle                                { return nil }
-func (s *Store) Begin() (kv.Transaction, error)                          { return nil, nil }
+// GetClient implements kv.Storage interface.
+func (s *Store) GetClient() kv.Client { return s.Client }
+
+// GetOracle implements kv.Storage interface.
+func (s *Store) GetOracle() oracle.Oracle { return nil }
+
+// Begin implements kv.Storage interface.
+func (s *Store) Begin() (kv.Transaction, error) { return nil, nil }
+
+// BeginWithStartTS implements kv.Storage interface.
 func (s *Store) BeginWithStartTS(startTS uint64) (kv.Transaction, error) { return s.Begin() }
-func (s *Store) GetSnapshot(ver kv.Version) (kv.Snapshot, error)         { return nil, nil }
-func (s *Store) Close() error                                            { return nil }
-func (s *Store) UUID() string                                            { return "mock" }
-func (s *Store) CurrentVersion() (kv.Version, error)                     { return kv.Version{}, nil }
-func (s *Store) SupportDeleteRange() bool                                { return false }
+
+// GetSnapshot implements kv.Storage interface.
+func (s *Store) GetSnapshot(ver kv.Version) (kv.Snapshot, error) { return nil, nil }
+
+// Close implements kv.Storage interface.
+func (s *Store) Close() error { return nil }
+
+// UUID implements kv.Storage interface.
+func (s *Store) UUID() string { return "mock" }
+
+// CurrentVersion implements kv.Storage interface.
+func (s *Store) CurrentVersion() (kv.Version, error) { return kv.Version{}, nil }
+
+// SupportDeleteRange implements kv.Storage interface.
+func (s *Store) SupportDeleteRange() bool { return false }
