@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 )
 
+// `feedback` represents the total scan count in range [lower, upper).
 type feedback struct {
 	lower *types.Datum
 	upper *types.Datum
@@ -37,10 +38,10 @@ type QueryFeedback struct {
 	tableID  int64
 	hist     *Histogram
 	feedback []feedback
-	expected int64
-	actual   int64
-	valid    bool
-	desc     bool
+	expected int64 // expected is the expected scan count of corresponding query.
+	actual   int64 // actual is the actual scan count of corresponding query.
+	valid    bool  // valid represents the whether this query feedback is still valid.
+	desc     bool  // desc represents the corresponding query is desc scan.
 }
 
 // NewQueryFeedback returns a new query feedback.
@@ -86,7 +87,7 @@ func (q *QueryFeedback) Hist() *Histogram {
 	return q.hist
 }
 
-// Counts returns the counts info for each range.
+// Counts returns the counts info for each range. It is only used in test.
 func (q *QueryFeedback) Counts() []int64 {
 	counts := make([]int64, 0, len(q.feedback))
 	for _, fb := range q.feedback {
@@ -95,7 +96,8 @@ func (q *QueryFeedback) Counts() []int64 {
 	return counts
 }
 
-// Update updates the query feedback.
+// Update updates the query feedback. `startKey` is the start scan key of the partial result, used to find
+// the range for update. `counts` is the scan counts of each range, used to update the feedback count info.
 func (q *QueryFeedback) Update(startKey kv.Key, counts []int64) {
 	// Older version do not have the counts info.
 	if len(counts) == 0 {
@@ -111,8 +113,8 @@ func (q *QueryFeedback) Update(startKey kv.Key, counts []int64) {
 	}
 	// The counts is the scan count of each range now.
 	sum := int64(0)
-	counts = counts[:length-1]
-	for _, count := range counts {
+	rangeCounts := counts[:length-1]
+	for _, count := range rangeCounts {
 		sum += count
 	}
 	metrics.DistSQLScanKeysPartialHistogram.Observe(float64(sum))
@@ -136,13 +138,13 @@ func (q *QueryFeedback) Update(startKey kv.Key, counts []int64) {
 	}
 	// If the desc is true, the counts is reversed, so here we need to reverse it back.
 	if q.desc {
-		for i := 0; i < len(counts)/2; i++ {
-			j := len(counts) - i - 1
-			counts[i], counts[j] = counts[j], counts[i]
+		for i := 0; i < len(rangeCounts)/2; i++ {
+			j := len(rangeCounts) - i - 1
+			rangeCounts[i], rangeCounts[j] = rangeCounts[j], rangeCounts[i]
 		}
 	}
 	// Update the feedback count info.
-	for i, count := range counts {
+	for i, count := range rangeCounts {
 		if i+idx >= len(q.feedback) {
 			q.Invalidate()
 			break
