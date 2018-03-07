@@ -356,7 +356,7 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInf
 	}
 	// Only use expectedCnt when it's smaller than the count we calculated.
 	// e.g. IndexScan(count1)->After Filter(count2). The `ds.statsAfterSelect.count` is count2. count1 is the one we need to calculate
-	// If expectedCnt and count2 are both zero and we go into the if block, the count1 will be set to zero though it's shouldn't be.
+	// If expectedCnt and count2 are both zero and we go into the below `if` block, the count1 will be set to zero though it's shouldn't be.
 	if matchProperty && prop.expectedCnt < ds.statsAfterSelect.count {
 		selectivity, err := statsTbl.Selectivity(ds.ctx, is.filterCondition)
 		if err != nil {
@@ -577,7 +577,7 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp) (task task, err err
 	matchProperty := len(prop.cols) == 1 && pkCol != nil && prop.cols[0].Equal(nil, pkCol)
 	// Only use expectedCnt when it's smaller than the count we calculated.
 	// e.g. IndexScan(count1)->After Filter(count2). The `ds.statsAfterSelect.count` is count2. count1 is the one we need to calculate
-	// If expectedCnt and count2 are both zero and we go into the if block, the count1 will be set to zero though it's shouldn't be.
+	// If expectedCnt and count2 are both zero and we go into the below `if` block, the count1 will be set to zero though it's shouldn't be.
 	if matchProperty && prop.expectedCnt < ds.statsAfterSelect.count {
 		selectivity, err := statsTbl.Selectivity(ds.ctx, ts.filterCondition)
 		if err != nil {
