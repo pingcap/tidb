@@ -14,7 +14,6 @@
 package distsql
 
 import (
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
@@ -22,11 +21,12 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
 	"golang.org/x/net/context"
 )
 
-func (s *testSuite) TestSelect(c *C) {
+func (s *testSuite) TestSelectNormal(c *C) {
 	keyRanges := []kv.KeyRange{
 		{
 			StartKey: kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xf, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
@@ -70,6 +70,7 @@ func (s *testSuite) TestSelect(c *C) {
 	colTypes = append(colTypes, colTypes[0])
 	colTypes = append(colTypes, colTypes[0])
 
+	// Test NextChunk.
 	response, err := Select(context.TODO(), s.sctx, request, colTypes)
 	c.Assert(err, IsNil)
 	result, ok := response.(*selectResult)
@@ -81,23 +82,153 @@ func (s *testSuite) TestSelect(c *C) {
 
 	chk := chunk.NewChunk(colTypes)
 	err = response.NextChunk(context.TODO(), chk)
-	c.Assert(err, NotNil)
+	c.Assert(err, IsNil)
+	c.Assert(chk.NumRows(), Equals, 2)
+
+	err = response.NextChunk(context.TODO(), chk)
+	c.Assert(err, IsNil)
 	c.Assert(chk.NumRows(), Equals, 0)
+
+	err = response.Close()
+	c.Assert(err, IsNil)
+
+	// Test Next.
+	response, err = Select(context.TODO(), s.sctx, request, colTypes)
+	c.Assert(err, IsNil)
+	result, ok = response.(*selectResult)
+	c.Assert(ok, IsTrue)
+	c.Assert(result.label, Equals, "dag")
+	c.Assert(result.rowLen, Equals, len(colTypes))
+
+	response.Fetch(context.TODO())
+
+	partialResult, err := response.Next(context.TODO())
+	c.Assert(err, IsNil)
+	c.Assert(partialResult, NotNil)
+
+	row, err := partialResult.Next(context.TODO())
+	c.Assert(err, IsNil)
+
+	row, err = partialResult.Next(context.TODO())
+	c.Assert(err, IsNil)
+
+	row, err = partialResult.Next(context.TODO())
+	c.Assert(err, IsNil)
+	c.Assert(row, IsNil)
+
+	err = partialResult.Close()
+	c.Assert(err, IsNil)
+
+	err = response.Close()
+	c.Assert(err, IsNil)
+}
+
+func (s *testSuite) TestSelectStreaming(c *C) {
+	keyRanges := []kv.KeyRange{
+		{
+			StartKey: kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xf, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
+			EndKey:   kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xf, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
+		},
+		{
+			StartKey: kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xf, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2},
+			EndKey:   kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xf, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x6},
+		},
+		{
+			StartKey: kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xf, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xa},
+			EndKey:   kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xf, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xc},
+		},
+		{
+			StartKey: kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xf, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x64},
+			EndKey:   kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xf, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x65},
+		},
+	}
+
+	request, err := (&RequestBuilder{}).SetKeyRanges(keyRanges).
+		SetDAGRequest(&tipb.DAGRequest{}).
+		SetDesc(false).
+		SetKeepOrder(false).
+		SetPriority(kv.PriorityNormal).
+		SetFromSessionVars(variable.NewSessionVars()).
+		SetStreaming(true).
+		Build()
+	c.Assert(err, IsNil)
+
+	/// 4 int64 types.
+	colTypes := []*types.FieldType{
+		{
+			Tp:      mysql.TypeLonglong,
+			Flen:    mysql.MaxIntWidth,
+			Decimal: 0,
+			Flag:    mysql.BinaryFlag,
+			Charset: charset.CharsetBin,
+			Collate: charset.CollationBin,
+		},
+	}
+	colTypes = append(colTypes, colTypes[0])
+	colTypes = append(colTypes, colTypes[0])
+	colTypes = append(colTypes, colTypes[0])
+
+	s.sctx.GetSessionVars().EnableStreaming = true
+
+	// Test NextChunk.
+	response, err := Select(context.TODO(), s.sctx, request, colTypes)
+	c.Assert(err, IsNil)
+	result, ok := response.(*streamResult)
+	c.Assert(ok, IsTrue)
+	c.Assert(result.rowLen, Equals, len(colTypes))
+
+	response.Fetch(context.TODO())
+
+	chk := chunk.NewChunk(colTypes)
+	err = response.NextChunk(context.TODO(), chk)
+	c.Assert(err, IsNil)
+	c.Assert(chk.NumRows(), Equals, 2)
+
+	err = response.NextChunk(context.TODO(), chk)
+	c.Assert(err, IsNil)
+	c.Assert(chk.NumRows(), Equals, 0)
+
+	err = response.Close()
+	c.Assert(err, IsNil)
+
+	// Test Next.
+	response, err = Select(context.TODO(), s.sctx, request, colTypes)
+	c.Assert(err, IsNil)
+	result, ok = response.(*streamResult)
+	c.Assert(ok, IsTrue)
+	c.Assert(result.rowLen, Equals, len(colTypes))
+
+	response.Fetch(context.TODO())
+
+	partialResult, err := response.Next(context.TODO())
+	c.Assert(err, IsNil)
+	c.Assert(partialResult, IsNil)
+
+	err = response.Close()
+	c.Assert(err, IsNil)
 }
 
 type mockResponse struct{ count int }
 type mockResultSubset struct{ data []byte }
 
 // functions for mockResponse.
-func (resp *mockResponse) Close() error { return nil }
+func (resp *mockResponse) Close() error {
+	resp.count = 0
+	return nil
+}
+
 func (resp *mockResponse) Next(ctx context.Context) (kv.ResultSubset, error) {
-	resp.count++
-	if resp.count == 100 {
-		return nil, errors.New("error happened")
+	if resp.count == 2 {
+		return nil, nil
 	}
+	defer func() { resp.count++ }()
+
+	datum := types.NewIntDatum(1)
+	bytes := make([]byte, 0, 100)
+	bytes, _ = codec.EncodeValue(nil, bytes, datum, datum, datum, datum)
 
 	respPB := &tipb.SelectResponse{
-		Chunks:       []tipb.Chunk{},
+		Chunks:       []tipb.Chunk{{RowsData: bytes}},
 		OutputCounts: []int64{1},
 	}
 	respBytes, err := respPB.Marshal()
