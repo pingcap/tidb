@@ -64,4 +64,26 @@ func (s *testCacheableSuite) TestCacheable(c *C) {
 		Where: &ast.ExistsSubqueryExpr{},
 	}
 	c.Assert(Cacheable(stmt), IsFalse)
+
+	limitStmt := &ast.Limit{
+		Count: &ast.ParamMarkerExpr{},
+	}
+	stmt = &ast.SelectStmt{
+		Limit: limitStmt,
+	}
+	c.Assert(Cacheable(stmt), IsFalse)
+
+	limitStmt = &ast.Limit{
+		Offset: &ast.ParamMarkerExpr{},
+	}
+	stmt = &ast.SelectStmt{
+		Limit: limitStmt,
+	}
+	c.Assert(Cacheable(stmt), IsFalse)
+
+	limitStmt = &ast.Limit{}
+	stmt = &ast.SelectStmt{
+		Limit: limitStmt,
+	}
+	c.Assert(Cacheable(stmt), IsTrue)
 }

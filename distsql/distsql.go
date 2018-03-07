@@ -193,6 +193,12 @@ func (r *selectResult) getSelectResp() error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+		if err := r.selectResp.Error; err != nil {
+			return terror.ClassTiKV.New(terror.ErrCode(err.Code), err.Msg)
+		}
+		for _, warning := range r.selectResp.Warnings {
+			r.ctx.GetSessionVars().StmtCtx.AppendWarning(terror.ClassTiKV.New(terror.ErrCode(warning.Code), warning.Msg))
+		}
 		if len(r.selectResp.OutputCounts) > 0 {
 			scanCountPartial := r.selectResp.OutputCounts[0]
 			metrics.DistSQLScanKeysPartialHistogram.Observe(float64(scanCountPartial))
@@ -303,6 +309,9 @@ func (pr *partialResult) Close() error {
 // Select sends a DAG request, returns SelectResult.
 // In kvReq, KeyRanges is required, Concurrency/KeepOrder/Desc/IsolationLevel/Priority are optional.
 func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fieldTypes []*types.FieldType) (SelectResult, error) {
+	if !sctx.GetSessionVars().EnableStreaming {
+		kvReq.Streaming = false
+	}
 	resp := sctx.GetClient().Send(ctx, kvReq)
 	if resp == nil {
 		err := errors.New("client returns nil response")

@@ -24,6 +24,7 @@ import (
 	"github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing"
 	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/juju/errors"
+	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
@@ -36,7 +37,7 @@ import (
 
 // MaxConnectionCount is the max gRPC connections that will be established with
 // each tikv-server.
-var MaxConnectionCount = 16
+var MaxConnectionCount uint = 16
 
 // MaxSendMsgSize set max gRPC request message size sent to server. If any request message size is larger than
 // current value, an error will be reported from gRPC.
@@ -72,7 +73,7 @@ type connArray struct {
 	v     []*grpc.ClientConn
 }
 
-func newConnArray(maxSize int, addr string, security config.Security) (*connArray, error) {
+func newConnArray(maxSize uint, addr string, security config.Security) (*connArray, error) {
 	a := &connArray{
 		index: 0,
 		v:     make([]*grpc.ClientConn, maxSize),
@@ -265,7 +266,23 @@ func (c *rpcClient) callRPC(ctx context.Context, client tikvpb.TikvClient, req *
 	case tikvrpc.CmdCop:
 		resp.Cop, err = client.Coprocessor(ctx, req.Cop)
 	case tikvrpc.CmdCopStream:
-		resp.CopStream, err = client.CoprocessorStream(ctx, req.Cop)
+		var stream tikvpb.Tikv_CoprocessorStreamClient
+		stream, err = client.CoprocessorStream(ctx, req.Cop)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		// Read the first streaming response to get CopStreamResponse.
+		// This can make error handling much easier, because SendReq() retry on
+		// region error automatically.
+		var first *coprocessor.Response
+		first, err = resp.CopStream.Recv()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		resp.CopStream = &tikvrpc.CopStreamResponse{
+			Tikv_CoprocessorStreamClient: stream,
+			Response:                     first,
+		}
 	case tikvrpc.CmdMvccGetByKey:
 		resp.MvccGetByKey, err = client.MvccGetByKey(ctx, req.MvccGetByKey)
 	case tikvrpc.CmdMvccGetByStartTs:

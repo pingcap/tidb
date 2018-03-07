@@ -87,10 +87,18 @@
     ```shell
     curl http://{TiDBIP}:10080/mvcc/index/{db}/{table}/{index}/{handle}?${c1}={v1}&${c2}=${v2}
     ```
+    *Hint: For the index column which column type is timezone dependent, e.g. `timestamp`, convert its value to UTC
+timezone.*
+
+1. Get TiDB server settings
+
+    ```shell
+    curl http://{TiDBIP}:10080/settings
+    ```
 
 1. Get the column value by an encoded row and some information that can be obtained from a column of the table schema information.
 
     ```shell
     curl http://{TiDBIP}:10080/tables/{colID}/{colFlag}/{colLen}/{rowBin}
     ```
-
+    *Hint: For the column which field type is timezone dependent, e.g. `timestamp`, convert its value to UTC timezone.*

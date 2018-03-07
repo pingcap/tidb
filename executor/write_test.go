@@ -117,6 +117,13 @@ func (s *testSuite) TestInsert(c *C) {
 	rowStr = fmt.Sprintf("%v %v %v %v", "1", "1", "10", "6")
 	r.Check(testkit.Rows(rowStr))
 
+	// for on duplicate key with ignore
+	insertSQL = `INSERT IGNORE INTO insert_test (id, c3) VALUES (1, 2) ON DUPLICATE KEY UPDATE c3=values(c3)+c3+3;`
+	tk.MustExec(insertSQL)
+	r = tk.MustQuery("select * from insert_test where id = 1;")
+	rowStr = fmt.Sprintf("%v %v %v %v", "1", "1", "10", "11")
+	r.Check(testkit.Rows(rowStr))
+
 	tk.MustExec("create table insert_err (id int, c1 varchar(8))")
 	_, err = tk.Exec("insert insert_err values (1, 'abcdabcdabcd')")
 	c.Assert(types.ErrDataTooLong.Equal(err), IsTrue)

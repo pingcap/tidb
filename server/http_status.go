@@ -47,23 +47,25 @@ func (s *Server) startHTTPServer() {
 	// HTTP path for dump statistics.
 	router.Handle("/stats/dump/{db}/{table}", s.newStatsHandler())
 
-	if s.cfg.Store == "tikv" {
-		tikvHandler := s.newRegionHandler()
-		// HTTP path for regions
-		router.Handle("/tables/{db}/{table}/regions", tableHandler{tikvHandler, opTableRegions})
-		router.Handle("/tables/{db}/{table}/disk-usage", tableHandler{tikvHandler, opTableDiskUsage})
-		router.Handle("/regions/meta", tikvHandler)
-		router.Handle("/regions/{regionID}", tikvHandler)
-		router.Handle("/mvcc/key/{db}/{table}/{handle}", mvccTxnHandler{tikvHandler, opMvccGetByKey})
-		router.Handle("/mvcc/txn/{startTS}/{db}/{table}", mvccTxnHandler{tikvHandler, opMvccGetByTxn})
-		router.Handle("/mvcc/txn/{startTS}", mvccTxnHandler{tikvHandler, opMvccGetByTxn})
-		router.Handle("/mvcc/hex/{hexKey}", mvccTxnHandler{tikvHandler, opMvccGetByHex})
-		router.Handle("/mvcc/index/{db}/{table}/{index}/{handle}", mvccTxnHandler{tikvHandler, opMvccGetByIdx})
-		router.Handle("/schema", schemaHandler{tikvHandler})
-		router.Handle("/schema/{db}", schemaHandler{tikvHandler})
-		router.Handle("/schema/{db}/{table}", schemaHandler{tikvHandler})
-	}
+	router.Handle("/settings", settingsHandler{})
+
+	tikvHandlerTool := s.newTikvHandlerTool()
+	router.Handle("/schema", schemaHandler{tikvHandlerTool})
+	router.Handle("/schema/{db}", schemaHandler{tikvHandlerTool})
+	router.Handle("/schema/{db}/{table}", schemaHandler{tikvHandlerTool})
 	router.Handle("/tables/{colID}/{colTp}/{colFlag}/{colLen}/{rowBin}", valueHandler{})
+	if s.cfg.Store == "tikv" {
+		// HTTP path for tikv
+		router.Handle("/tables/{db}/{table}/regions", tableHandler{tikvHandlerTool, opTableRegions})
+		router.Handle("/tables/{db}/{table}/disk-usage", tableHandler{tikvHandlerTool, opTableDiskUsage})
+		router.Handle("/regions/meta", regionHandler{tikvHandlerTool})
+		router.Handle("/regions/{regionID}", regionHandler{tikvHandlerTool})
+		router.Handle("/mvcc/key/{db}/{table}/{handle}", mvccTxnHandler{tikvHandlerTool, opMvccGetByKey})
+		router.Handle("/mvcc/txn/{startTS}/{db}/{table}", mvccTxnHandler{tikvHandlerTool, opMvccGetByTxn})
+		router.Handle("/mvcc/txn/{startTS}", mvccTxnHandler{tikvHandlerTool, opMvccGetByTxn})
+		router.Handle("/mvcc/hex/{hexKey}", mvccTxnHandler{tikvHandlerTool, opMvccGetByHex})
+		router.Handle("/mvcc/index/{db}/{table}/{index}/{handle}", mvccTxnHandler{tikvHandlerTool, opMvccGetByIdx})
+	}
 	addr := fmt.Sprintf(":%d", s.cfg.Status.StatusPort)
 	if s.cfg.Status.StatusPort == 0 {
 		addr = defaultStatusAddr
