@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
@@ -30,12 +29,12 @@ import (
 
 var _ Executor = new(CheckIndexRangeExec)
 
-// CheckIndexRangeExec output the index values which has handle between begin and end.
+// CheckIndexRangeExec outputs the index values which has handle between begin and end.
 type CheckIndexRangeExec struct {
 	baseExecutor
 
-	table    table.Table
-	index    table.Index
+	table    *model.TableInfo
+	index    *model.IndexInfo
 	is       infoschema.InfoSchema
 	startKey []types.Datum
 
@@ -44,7 +43,6 @@ type CheckIndexRangeExec struct {
 
 	result   distsql.SelectResult
 	partial  distsql.PartialResult
-	typesMap map[int64]*types.FieldType
 	cols     []*model.ColumnInfo
 }
 
@@ -84,21 +82,23 @@ func (e *CheckIndexRangeExec) Next(ctx context.Context) (Row, error) {
 
 // Open implements the Executor Open interface.
 func (e *CheckIndexRangeExec) Open(ctx context.Context) error {
-	e.typesMap = make(map[int64]*types.FieldType)
-	tCols := e.table.Meta().Cols()
-	for _, ic := range e.index.Meta().Columns {
+	tCols := e.table.Cols()
+	for _, ic := range e.index.Columns {
 		col := tCols[ic.Offset]
-		e.typesMap[col.ID] = &col.FieldType
 		e.cols = append(e.cols, col)
 	}
+	e.cols = append(e.cols, &model.ColumnInfo{
+		ID:   model.ExtraHandleID,
+		Name: model.NewCIStr("_rowid"),
+	})
 	e.srcChunk = e.newChunk()
-	dagPB, err := e.buildDagPB()
+	dagPB, err := e.buildDAGPB()
 	if err != nil {
 		return errors.Trace(err)
 	}
 	sc := e.ctx.GetSessionVars().StmtCtx
 	var builder distsql.RequestBuilder
-	kvReq, err := builder.SetIndexRanges(sc, e.table.Meta().ID, e.index.Meta().ID, ranger.FullNewRange()).
+	kvReq, err := builder.SetIndexRanges(sc, e.table.ID, e.index.ID, ranger.FullNewRange()).
 		SetDAGRequest(dagPB).
 		SetKeepOrder(true).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
@@ -112,7 +112,7 @@ func (e *CheckIndexRangeExec) Open(ctx context.Context) error {
 	return nil
 }
 
-func (e *CheckIndexRangeExec) buildDagPB() (*tipb.DAGRequest, error) {
+func (e *CheckIndexRangeExec) buildDAGPB() (*tipb.DAGRequest, error) {
 	dagReq := &tipb.DAGRequest{}
 	dagReq.StartTs = e.ctx.Txn().StartTS()
 	dagReq.TimeZoneOffset = timeZoneOffset(e.ctx)
@@ -132,19 +132,10 @@ func (e *CheckIndexRangeExec) buildDagPB() (*tipb.DAGRequest, error) {
 }
 
 func (e *CheckIndexRangeExec) constructIndexScanPB() *tipb.Executor {
-	tableColumns := e.table.Meta().Columns
-	var columns []*model.ColumnInfo
-	for _, col := range e.index.Meta().Columns {
-		columns = append(columns, tableColumns[col.Offset])
-	}
-	columns = append(columns, &model.ColumnInfo{
-		ID:   model.ExtraHandleID,
-		Name: model.NewCIStr("_rowid"),
-	})
 	idxExec := &tipb.IndexScan{
-		TableId: e.table.Meta().ID,
-		IndexId: e.index.Meta().ID,
-		Columns: plan.ColumnsToProto(columns, e.table.Meta().PKIsHandle),
+		TableId: e.table.ID,
+		IndexId: e.index.ID,
+		Columns: plan.ColumnsToProto(e.cols, e.table.PKIsHandle),
 	}
 	return &tipb.Executor{Tp: tipb.ExecType_TypeIndexScan, IdxScan: idxExec}
 }

@@ -243,14 +243,14 @@ func (b *executorBuilder) buildCheckIndexRange(v *plan.CheckIndexRange) Executor
 	e := &CheckIndexRangeExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		handleRanges: v.HandleRanges,
-		table:        tb,
+		table:        tb.Meta(),
 		is:           b.is,
 	}
 	idxName := strings.ToLower(v.IndexName)
 	for _, idx := range tb.Indices() {
 		if idx.Meta().Name.L == idxName {
-			e.index = idx
-			e.startKey = make([]types.Datum, len(e.index.Meta().Columns))
+			e.index = idx.Meta()
+			e.startKey = make([]types.Datum, len(e.index.Columns))
 			break
 		}
 	}
