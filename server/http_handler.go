@@ -15,6 +15,7 @@ package server
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -49,13 +50,18 @@ import (
 )
 
 const (
-	pDBName    = "db"
-	pHexKey    = "hexKey"
-	pIndexName = "index"
-	pHandle    = "handle"
-	pRegionID  = "regionID"
-	pStartTS   = "startTS"
-	pTableName = "table"
+	pDBName     = "db"
+	pHexKey     = "hexKey"
+	pIndexName  = "index"
+	pHandle     = "handle"
+	pRegionID   = "regionID"
+	pStartTS    = "startTS"
+	pTableName  = "table"
+	pColumnID   = "colID"
+	pColumnTp   = "colTp"
+	pColumnFlag = "colFlag"
+	pColumnLen  = "colLen"
+	pRowBin     = "rowBin"
 )
 
 // For query string
@@ -288,6 +294,10 @@ type tableHandler struct {
 	op string
 }
 
+// valueHandle is the handler for get value.
+type valueHandler struct {
+}
+
 const (
 	opTableRegions   = "regions"
 	opTableDiskUsage = "disk-usage"
@@ -305,6 +315,67 @@ const (
 	opMvccGetByIdx = "idx"
 	opMvccGetByTxn = "txn"
 )
+
+// ServeHTTP handles request of list a database or table's schemas.
+func (vh valueHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	// parse params
+	params := mux.Vars(req)
+
+	colID, err := strconv.ParseInt(params[pColumnID], 0, 64)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	colTp, err := strconv.ParseInt(params[pColumnTp], 0, 64)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	colFlag, err := strconv.ParseUint(params[pColumnFlag], 0, 64)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	colLen, err := strconv.ParseInt(params[pColumnLen], 0, 64)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	// Get binary.
+	bin := params[pRowBin]
+	valData, err := base64.StdEncoding.DecodeString(bin)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	// Construct field type.
+	defaultDecimal := 6
+	ft := &types.FieldType{
+		Tp:      byte(colTp),
+		Flag:    uint(colFlag),
+		Flen:    int(colLen),
+		Decimal: defaultDecimal,
+	}
+	// Decode a column.
+	m := make(map[int64]*types.FieldType, 1)
+	m[int64(colID)] = ft
+	loc := time.UTC
+	vals, err := tablecodec.DecodeRow(valData, m, loc)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	v := vals[int64(colID)]
+	val, err := v.ToString()
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeData(w, val)
+	return
+}
 
 // TableRegions is the response data for list table's regions.
 // It contains regions list for record and indices.
