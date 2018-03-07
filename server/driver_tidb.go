@@ -306,10 +306,6 @@ func (trs *tidbResultSet) NextChunk(ctx context.Context, chk *chunk.Chunk) error
 	return trs.recordSet.NextChunk(ctx, chk)
 }
 
-func (trs *tidbResultSet) SupportChunk() bool {
-	return trs.recordSet.SupportChunk()
-}
-
 func (trs *tidbResultSet) Close() error {
 	return trs.recordSet.Close()
 }

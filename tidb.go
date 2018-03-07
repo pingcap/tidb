@@ -217,7 +217,7 @@ func GetRows4Test(ctx context.Context, sctx sessionctx.Context, rs ast.RecordSet
 		return nil, nil
 	}
 	var rows []types.Row
-	if sctx.GetSessionVars().EnableChunk && rs.SupportChunk() {
+	if sctx.GetSessionVars().EnableChunk {
 		for {
 			// Since we collect all the rows, we can not reuse the chunk.
 			chk := rs.NewChunk()

@@ -131,10 +131,6 @@ func (a *recordSet) NewChunk() *chunk.Chunk {
 	return chunk.NewChunk(a.executor.retTypes())
 }
 
-func (a *recordSet) SupportChunk() bool {
-	return true
-}
-
 func (a *recordSet) Close() error {
 	err := a.executor.Close()
 	a.stmt.logSlowQuery(a.txnStartTS, a.lastErr == nil)
