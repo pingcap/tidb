@@ -319,14 +319,17 @@ func (e *ShowDDLJobQueriesExec) Open(ctx context.Context) error {
 	e.cursor = 0
 	return nil
 }
+
 // Next implements the Executor Next interface.
 func (e *ShowDDLJobQueriesExec) Next(ctx context.Context) (Row, error) {
 	if e.cursor >= len(e.jobs) {
 		return nil, nil
 	}
+
 	job := e.jobs[e.cursor]
 	row := types.MakeDatums(job.Query)
 	e.cursor++
+
 	return row, nil
 }
 
@@ -338,7 +341,7 @@ func (e *ShowDDLJobQueriesExec) NextChunk(ctx context.Context, chk *chunk.Chunk)
 	}
 	numCurBatch := mathutil.Min(e.maxChunkSize, len(e.jobs)-e.cursor)
 	for i := e.cursor; i < e.cursor+numCurBatch; i++ {
-		for j :=0; j < len(e.jobIDs); j++ {
+		for j := 0; j < len(e.jobIDs); j++ {
 			if e.jobIDs[j] == e.jobs[i].ID {
 				chk.AppendString(0, e.jobs[i].Query)
 			}
@@ -347,6 +350,7 @@ func (e *ShowDDLJobQueriesExec) NextChunk(ctx context.Context, chk *chunk.Chunk)
 	e.cursor += numCurBatch
 	return nil
 }
+
 // Open implements the Executor Open interface.
 func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
