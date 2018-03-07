@@ -41,9 +41,9 @@ type CheckIndexRangeExec struct {
 	handleRanges []ast.HandleRange
 	srcChunk     *chunk.Chunk
 
-	result   distsql.SelectResult
-	partial  distsql.PartialResult
-	cols     []*model.ColumnInfo
+	result  distsql.SelectResult
+	partial distsql.PartialResult
+	cols    []*model.ColumnInfo
 }
 
 // NextChunk implements the Executor Next interface.
