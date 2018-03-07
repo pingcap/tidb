@@ -26,7 +26,6 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -278,10 +277,26 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 		})
 	}
 
+	err := splitRanges(bo, cache, ranges, appendTask)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if desc {
+		reverseTasks(tasks)
+	}
+	if elapsed := time.Since(start); elapsed > time.Millisecond*500 {
+		log.Warnf("buildCopTasks takes too much time (%v), range len %v, task len %v", elapsed, rangesLen, len(tasks))
+	}
+	metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("coprocessor").Observe(float64(len(tasks)))
+	return tasks, nil
+}
+
+func splitRanges(bo *Backoffer, cache *RegionCache, ranges *copRanges, fn func(region RegionVerID, ranges *copRanges)) error {
 	for ranges.len() > 0 {
 		loc, err := cache.LocateKey(bo, ranges.at(0).StartKey)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 
 		// Iterate to the first range that is not complete in the region.
@@ -294,7 +309,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 		}
 		// All rest ranges belong to the same region.
 		if i == ranges.len() {
-			appendTask(loc.Region, ranges)
+			fn(loc.Region, ranges)
 			break
 		}
 
@@ -306,7 +321,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 				StartKey: r.StartKey,
 				EndKey:   loc.EndKey,
 			}
-			appendTask(loc.Region, taskRanges)
+			fn(loc.Region, taskRanges)
 
 			ranges = ranges.slice(i+1, ranges.len())
 			ranges.first = &kv.KeyRange{
@@ -315,19 +330,31 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 			}
 		} else {
 			// rs[i] is not in the region.
-			appendTask(loc.Region, ranges.slice(0, i))
+			taskRanges := ranges.slice(0, i)
+			fn(loc.Region, taskRanges)
 			ranges = ranges.slice(i, ranges.len())
 		}
 	}
 
-	if desc {
-		reverseTasks(tasks)
+	return nil
+}
+
+// SplitRegionRanges get the split ranges from pd region.
+func SplitRegionRanges(bo *Backoffer, cache *RegionCache, keyRanges []kv.KeyRange) ([]kv.KeyRange, error) {
+	ranges := copRanges{mid: keyRanges}
+
+	var ret []kv.KeyRange
+	appendRange := func(region RegionVerID, ranges *copRanges) {
+		for i := 0; i < ranges.len(); i++ {
+			ret = append(ret, ranges.at(i))
+		}
 	}
-	if elapsed := time.Since(start); elapsed > time.Millisecond*500 {
-		log.Warnf("buildCopTasks takes too much time (%v), range len %v, task len %v", elapsed, rangesLen, len(tasks))
+
+	err := splitRanges(bo, cache, &ranges, appendRange)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
-	metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("coprocessor").Observe(float64(len(tasks)))
-	return tasks, nil
+	return ret, nil
 }
 
 func reverseTasks(tasks []*copTask) {
@@ -378,14 +405,7 @@ func (it *copIterator) work(ctx context.Context, taskCh <-chan *copTask) {
 		}
 
 		bo := NewBackoffer(ctx1, copNextMaxBackoff)
-		startTime := time.Now()
 		it.handleTask(bo, task, ch)
-		costTime := time.Since(startTime)
-		if costTime > minLogCopTaskTime {
-			log.Infof("[TIME_COP_TASK] %s%s %s", costTime, bo, task)
-		}
-		metrics.TiKVCoprocessorCounter.WithLabelValues("handle_task").Inc()
-		metrics.TiKVCoprocessorHistogram.Observe(costTime.Seconds())
 		if bo.totalSleep > 0 {
 			metrics.TiKVBackoffHistogram.Observe(float64(bo.totalSleep) / 1000)
 		}
@@ -571,10 +591,17 @@ func (it *copIterator) handleTaskOnce(bo *Backoffer, task *copTask, ch chan copR
 		// The resp is a stream and killed by cancel operation immediately.
 		timeout = 0
 	}
+	startTime := time.Now()
 	resp, err := sender.SendReq(bo, req, task.region, timeout)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	costTime := time.Since(startTime)
+	if costTime > minLogCopTaskTime {
+		log.Infof("[TIME_COP_TASK] %s%s %s", costTime, bo, task)
+	}
+	metrics.TiKVCoprocessorCounter.WithLabelValues("handle_task").Inc()
+	metrics.TiKVCoprocessorHistogram.Observe(costTime.Seconds())
 	// Set task.storeAddr field so its task.String() method have the store address information.
 	task.storeAddr = sender.storeAddr
 
@@ -586,19 +613,20 @@ func (it *copIterator) handleTaskOnce(bo *Backoffer, task *copTask, ch chan copR
 	return it.handleCopResponse(bo, resp.Cop, task, ch)
 }
 
-func (it *copIterator) handleCopStreamResult(bo *Backoffer, stream tikvpb.Tikv_CoprocessorStreamClient, task *copTask, ch chan copResponse) ([]*copTask, error) {
+func (it *copIterator) handleCopStreamResult(bo *Backoffer, stream *tikvrpc.CopStreamResponse, task *copTask, ch chan copResponse) ([]*copTask, error) {
+	var resp *coprocessor.Response
+	resp = stream.Response
 	for {
-		resp, err := stream.Recv()
+		remainedTasks, err := it.handleCopResponse(bo, resp, task, ch)
+		if err != nil || len(remainedTasks) != 0 {
+			return remainedTasks, errors.Trace(err)
+		}
+		resp, err = stream.Recv()
 		if err != nil {
 			if err == io.EOF {
 				return nil, nil
 			}
 			return nil, errors.Trace(err)
-		}
-
-		remainedTasks, err := it.handleCopResponse(bo, resp, task, ch)
-		if err != nil || len(remainedTasks) != 0 {
-			return remainedTasks, errors.Trace(err)
 		}
 	}
 }

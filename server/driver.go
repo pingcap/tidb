@@ -124,7 +124,6 @@ type PreparedStatement interface {
 type ResultSet interface {
 	Columns() []*ColumnInfo
 	Next(context.Context) (types.Row, error)
-	SupportChunk() bool
 	NewChunk() *chunk.Chunk
 	NextChunk(context.Context, *chunk.Chunk) error
 	Close() error

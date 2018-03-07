@@ -457,6 +457,25 @@ func (u *UserSpec) SecurityString() string {
 	return u.User.String()
 }
 
+// EncodedPassword returns the encoded password (which is the real data mysql.user).
+// The boolean value indicates input's password format is legal or not.
+func (u *UserSpec) EncodedPassword() (string, bool) {
+	if u.AuthOpt == nil {
+		return "", true
+	}
+
+	opt := u.AuthOpt
+	if opt.ByAuthString {
+		return auth.EncodePassword(opt.AuthString), true
+	}
+
+	// Not a legal password string.
+	if len(opt.HashString) != 41 || !strings.HasPrefix(opt.HashString, "*") {
+		return "", false
+	}
+	return opt.HashString, true
+}
+
 // CreateUserStmt creates user account.
 // See https://dev.mysql.com/doc/refman/5.7/en/create-user.html
 type CreateUserStmt struct {
@@ -570,6 +589,7 @@ const (
 	AdminCheckTable
 	AdminShowDDLJobs
 	AdminCancelDDLJobs
+	AdminCheckIndex
 )
 
 // AdminStmt is the struct for Admin statement.
@@ -577,6 +597,7 @@ type AdminStmt struct {
 	stmtNode
 
 	Tp     AdminStmtType
+	Index  string
 	Tables []*TableName
 	JobIDs []int64
 }
