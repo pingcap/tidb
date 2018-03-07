@@ -537,6 +537,21 @@ func (c *RPCClient) SendReq(ctx context.Context, addr string, req *tikvrpc.Reque
 		}
 		resp.BatchGet = handler.handleKvBatchGet(r)
 	case tikvrpc.CmdBatchRollback:
+		// gofail: var rpcRollbackResult string
+		// switch rpcRollbackResult {
+		// case "timeout":
+		// 	return nil, errors.New("timeout")
+		// case "notLeader":
+		// 	return &tikvrpc.Response{
+		// 		Type:   tikvrpc.CmdBatchRollback,
+		// 		BatchRollback: &kvrpcpb.BatchRollbackResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
+		// 	}, nil
+		// case "keyError":
+		// 	return &tikvrpc.Response{
+		// 		Type:   tikvrpc.CmdBatchRollback,
+		//		BatchRollback: &kvrpcpb.BatchRollbackResponse{Error: &kvrpcpb.KeyError{}},
+		// 	}, nil
+		// }
 		r := req.BatchRollback
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
 			resp.BatchRollback = &kvrpcpb.BatchRollbackResponse{RegionError: err}

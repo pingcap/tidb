@@ -72,6 +72,25 @@ func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regio
 	//			 Prewrite: &kvrpcpb.PrewriteResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
 	//		 }, nil
 	//	 }
+	// case "PrewriteBodyMissing":
+	// 	 if req.Type == tikvrpc.CmdPrewrite {
+	//		 return &tikvrpc.Response{
+	//			 Type:   tikvrpc.CmdPrewrite,
+	//		 }, nil
+	//	 }
+	// case "CommitNotLeader":
+	// 	 if req.Type == tikvrpc.CmdCommit {
+	//		 return &tikvrpc.Response{
+	//			 Type:   tikvrpc.CmdCommit,
+	//			 Commit: &kvrpcpb.CommitResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
+	//		 }, nil
+	//	 }
+	// case "CommitBodyMissing":
+	// 	 if req.Type == tikvrpc.CmdCommit {
+	//		 return &tikvrpc.Response{
+	//			 Type:   tikvrpc.CmdCommit,
+	//		 }, nil
+	//	 }
 	// case "GCNotLeader":
 	// 	 if req.Type == tikvrpc.CmdGC {
 	//		 return &tikvrpc.Response{

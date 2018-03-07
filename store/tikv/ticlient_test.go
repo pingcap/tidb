@@ -137,6 +137,13 @@ func (s *testTiclientSuite) TestMultiKeys(c *C) {
 
 	txn = s.beginTxn(c)
 	for i := 0; i < keyNum; i++ {
+		err = txn.LockKeys(encodeKey(s.prefix, s08d("key", i)))
+		c.Assert(err, IsNil)
+	}
+	txn.Commit(context.Background())
+
+	txn = s.beginTxn(c)
+	for i := 0; i < keyNum; i++ {
 		err = txn.Delete(encodeKey(s.prefix, s08d("key", i)))
 		c.Assert(err, IsNil)
 	}
