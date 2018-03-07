@@ -74,8 +74,8 @@ func (s *InjectedStore) BeginWithStartTS(startTS uint64) (Transaction, error) {
 }
 
 // GetSnapshot creates an injected Snapshot.
-func (s *InjectedStore) GetSnapshot(ver Version) (Snapshot, error) {
-	snapshot, err := s.Storage.GetSnapshot(ver)
+func (s *InjectedStore) GetSnapshot(ver Version, priority int) (Snapshot, error) {
+	snapshot, err := s.Storage.GetSnapshot(ver, PriorityNormal)
 	return &InjectedSnapshot{
 		Snapshot: snapshot,
 		cfg:      s.cfg,
