@@ -924,7 +924,7 @@ func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary b
 		buf = buf[:stackSize]
 		log.Errorf("query: %s:\n%s", cc.lastCmd, buf)
 	}()
-	if cc.server.cfg.EnableChunk && rs.SupportChunk() {
+	if cc.server.cfg.EnableChunk {
 		err := cc.writeChunks(ctx, rs, binary, more)
 		if err != nil {
 			return errors.Trace(err)
