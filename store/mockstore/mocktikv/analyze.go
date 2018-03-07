@@ -238,10 +238,6 @@ func (e *analyzeColumnsExec) NewChunk() *chunk.Chunk {
 	return chunk.NewChunk(fields)
 }
 
-func (e *analyzeColumnsExec) SupportChunk() bool {
-	return true
-}
-
 // Close implements the ast.RecordSet Close interface.
 func (e *analyzeColumnsExec) Close() error {
 	return nil
