@@ -13,10 +13,10 @@ store = "mocktikv"
 path = "/tmp/tidb"
 
 # The socket file to use for connection.
-#socket = ""
+socket = ""
 
 # Socket file to write binlog.
-#binlog-socket = ""
+binlog-socket = ""
 
 # Run ddl worker on this tidb-server.
 run-ddl = true
@@ -29,7 +29,7 @@ lease = "10s"
 split-table = true
 
 # The limit of concurrent executed sessions.
-# token-limit = 1000
+token-limit = 1000
 
 # Enable chunk executors.
 enable-chunk = true
@@ -48,11 +48,11 @@ level = "info"
 # Log format, one of json, text, console.
 format = "text"
 
-# Disable automatic timestamps in output
+# Disable automatic timestamp in output
 disable-timestamp = false
 
-# Stores slow query log into seperate files.
-#slow-query-file = ""
+# Stores slow query log into separated files.
+slow-query-file = ""
 
 # Queries with execution time greater than this value will be logged. (Milliseconds)
 slow-threshold = 300
@@ -68,14 +68,14 @@ query-log-max-len = 2048
 # Log file name.
 filename = ""
 
-# Max log file size in MB.
-#max-size = 300
+# Max log file size in MB (upper limit to 4096MB).
+max-size = 300
 
-# Max log file keep days.
-#max-days = 28
+# Max log file keep days. No clean up by default.
+max-days = 0
 
-# Maximum number of old log files to retain.
-#max-backups = 7
+# Maximum number of old log files to retain. No clean up by default.
+max-backups = 0
 
 # Rotate log by day
 log-rotate = true
@@ -130,7 +130,7 @@ join-concurrency = 5
 # Whether support cartesian product.
 cross-join = true
 
-# Stats lease duration, which inflences the time of analyze and stats load.
+# Stats lease duration, which influences the time of analyze and stats load.
 stats-lease = "3s"
 
 # Run auto analyze worker on this tidb-server.
