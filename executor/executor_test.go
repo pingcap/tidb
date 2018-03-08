@@ -2494,7 +2494,7 @@ func (s *testSuite) TestCoprocessorStreamingFlag(c *C) {
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int, value int, index idx(id))")
-	// Put some data to make statistics work.
+	// Add some data to make statistics work.
 	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
 	}
