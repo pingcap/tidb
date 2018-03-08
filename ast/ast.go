@@ -146,9 +146,6 @@ type RecordSet interface {
 	// NewChunk creates a new chunk with initial capacity.
 	NewChunk() *chunk.Chunk
 
-	// SupportChunk check if the RecordSet supports Chunk structure.
-	SupportChunk() bool
-
 	// Close closes the underlying iterator, call Next after Close will
 	// restart the iteration.
 	Close() error
