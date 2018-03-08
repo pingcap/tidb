@@ -214,7 +214,7 @@ func (s *testCommitterSuite) TestFailCommitSecondaryKeyTimeOut(c *C) {
 	c.Assert(value, BytesEquals, []byte("b1"))
 }
 
-/*func (s *testCommitterSuite) TestFailLockKeysTimeOut(c *C) {
+func (s *testCommitterSuite) TestFailLockKeysTimeOut(c *C) {
 	s.mustCommit(c, map[string]string{"a": "a0"})
 
 	txn1 := s.begin(c)
@@ -228,7 +228,7 @@ func (s *testCommitterSuite) TestFailCommitSecondaryKeyTimeOut(c *C) {
 	gofail.Enable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcCommitResult", `return("timeout")`)
 	err = txn1.Commit(context.Background())
 	c.Assert(err, NotNil)
-	gofail.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult")
+	gofail.Disable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcCommitResult")
 
 	err = txn2.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -238,7 +238,7 @@ func (s *testCommitterSuite) TestFailCommitSecondaryKeyTimeOut(c *C) {
 	value, err = txnCheck.Get([]byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(value, BytesEquals, []byte("a1"))
-}*/
+}
 
 func (s *testCommitterSuite) TestTwoPhaseCommitActionString(c *C) {
 	action := twoPhaseCommitAction(0)
