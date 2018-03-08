@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"math"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -71,6 +72,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildCheckTable(v)
 	case *plan.CheckIndex:
 		return b.buildCheckIndex(v)
+	case *plan.RecoverIndex:
+		return b.buildRecoverIndex(v)
 	case *plan.DDL:
 		return b.buildDDL(v)
 	case *plan.Deallocate:
@@ -225,6 +228,29 @@ func (b *executorBuilder) buildCheckTable(v *plan.CheckTable) Executor {
 	e := &CheckTableExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		tables:       v.Tables,
+		is:           b.is,
+	}
+	return e
+}
+
+func (b *executorBuilder) buildRecoverIndex(v *plan.RecoverIndex) Executor {
+	tblInfo := v.Table.TableInfo
+	idxName := strings.ToLower(v.IndexName)
+	var indexInfo *model.IndexInfo
+	for _, idxInfo := range tblInfo.Indices {
+		if idxInfo.Name.L == idxName {
+			indexInfo = idxInfo
+			break
+		}
+	}
+	if indexInfo == nil {
+		b.err = errors.Errorf("index is not found.")
+		return nil
+	}
+	e := &RecoverIndexExec{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+		tableInfo:    tblInfo,
+		indexInfo:    indexInfo,
 		is:           b.is,
 	}
 	return e

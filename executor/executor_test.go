@@ -203,6 +203,17 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(err, NotNil)
 }
 
+func (s *testSuite) TestAdminRecoverIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists admin_test")
+	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, index (c1))")
+	tk.MustExec("insert admin_test (c1) values (1),(2),(NULL)")
+
+	r := tk.MustQuery("admin recover index admin_test c1")
+	r.Check(testkit.Rows("3"))
+}
+
 func (s *testSuite) fillData(tk *testkit.TestKit, table string) {
 	tk.MustExec("use test")
 	tk.MustExec(fmt.Sprintf("create table %s(id int not null default 1, name varchar(255), PRIMARY KEY(id));", table))

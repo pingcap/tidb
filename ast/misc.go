@@ -590,6 +590,7 @@ const (
 	AdminShowDDLJobs
 	AdminCancelDDLJobs
 	AdminCheckIndex
+	AdminRecoverIndex
 )
 
 // AdminStmt is the struct for Admin statement.

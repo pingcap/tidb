@@ -15,12 +15,14 @@ package executor
 
 import (
 	"fmt"
+	"math"
 	"sync"
 	"sync/atomic"
 
 	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -29,12 +31,14 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tipb/go-tipb"
 	"golang.org/x/net/context"
 )
 
@@ -332,6 +336,220 @@ func (e *ShowDDLJobsExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error
 		chk.AppendString(1, e.jobs[i].State.String())
 	}
 	e.cursor += numCurBatch
+	return nil
+}
+
+// RecoverIndexExec represents a recover index executor.
+// It is built from "admin recover index" statement, is used to backfill
+// corrupted index.
+type RecoverIndexExec struct {
+	baseExecutor
+
+	done bool
+
+	tableInfo *model.TableInfo
+	indexInfo *model.IndexInfo
+	index     table.Index
+	table     table.Table
+	is        infoschema.InfoSchema
+
+	columns  []*model.ColumnInfo
+	srcChunk *chunk.Chunk
+	idxVals  []types.Datum // used to reduce memory allocation.
+}
+
+// Open implements the Executor Open interface.
+func (e *RecoverIndexExec) Open(ctx context.Context) error {
+	if err := e.baseExecutor.Open(ctx); err != nil {
+		return errors.Trace(err)
+	}
+
+	e.srcChunk = e.newChunk()
+	e.initCols()
+	e.index = tables.NewIndexWithBuffer(e.tableInfo, e.indexInfo)
+
+	dbName := model.NewCIStr(e.ctx.GetSessionVars().CurrentDB)
+	t, err := e.is.TableByName(dbName, e.tableInfo.Name)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	e.table = t
+	return nil
+}
+
+// Next implements the Executor Next interface.
+func (e *RecoverIndexExec) Next(ctx context.Context) (Row, error) {
+	return nil, nil
+}
+
+func (e *RecoverIndexExec) initCols() {
+	if e.columns != nil {
+		return
+	}
+	tblInfo := e.tableInfo
+	e.columns = make([]*model.ColumnInfo, 0, len(e.indexInfo.Columns))
+	for _, idxCol := range e.indexInfo.Columns {
+		e.columns = append(e.columns, tblInfo.Columns[idxCol.Offset])
+	}
+
+	e.columns = append(e.columns, &model.ColumnInfo{
+		ID:   model.ExtraHandleID,
+		Name: model.ExtraHandleName,
+	})
+	return
+}
+
+func (e *RecoverIndexExec) constructTableScanPB(pbColumnInfos []*tipb.ColumnInfo) *tipb.Executor {
+	tblScan := &tipb.TableScan{
+		TableId: e.tableInfo.ID,
+		Columns: pbColumnInfos,
+	}
+
+	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tblScan}
+}
+
+func (e *RecoverIndexExec) constructLimitPB(count uint64) *tipb.Executor {
+	limitExec := &tipb.Limit{
+		Limit: count,
+	}
+	return &tipb.Executor{Tp: tipb.ExecType_TypeLimit, Limit: limitExec}
+}
+
+func (e *RecoverIndexExec) buildDAGPB(txn kv.Transaction, limitCnt uint64) (*tipb.DAGRequest, error) {
+	dagReq := &tipb.DAGRequest{}
+	dagReq.StartTs = txn.StartTS()
+	dagReq.TimeZoneOffset = timeZoneOffset(e.ctx)
+	sc := e.ctx.GetSessionVars().StmtCtx
+	dagReq.Flags = statementContextToFlags(sc)
+	for i := range e.columns {
+		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
+	}
+	pbColumnInfos := plan.ColumnsToProto(e.columns, e.tableInfo.PKIsHandle)
+	err := setPBColumnsDefaultValue(e.ctx, pbColumnInfos, e.columns)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	tblScanExec := e.constructTableScanPB(pbColumnInfos)
+	dagReq.Executors = append(dagReq.Executors, tblScanExec)
+
+	limitExec := e.constructLimitPB(limitCnt)
+	dagReq.Executors = append(dagReq.Executors, limitExec)
+	return dagReq, nil
+}
+
+func (e *RecoverIndexExec) buildTableScan(ctx context.Context, txn kv.Transaction, t table.Table, startHandle int64, limitCnt uint64) (distsql.SelectResult, error) {
+	dagPB, err := e.buildDAGPB(txn, limitCnt)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	ranges := []*ranger.NewRange{{LowVal: []types.Datum{types.NewIntDatum(startHandle)}, HighVal: []types.Datum{types.MaxValueDatum()}}}
+	var builder distsql.RequestBuilder
+	kvReq, err := builder.SetTableRanges(e.tableInfo.ID, ranges).
+		SetDAGRequest(dagPB).
+		SetKeepOrder(true).
+		SetFromSessionVars(e.ctx.GetSessionVars()).
+		Build()
+
+	result, err := distsql.Select(ctx, e.ctx, kvReq, e.retFieldTypes)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	result.Fetch(ctx)
+	return result, nil
+}
+
+func (e *RecoverIndexExec) backfillIndex(ctx context.Context) (int64, error) {
+	var (
+		nextHandle    = int64(math.MinInt64)
+		totalAddedCnt = int64(0)
+		addedCount    int64
+		more          bool
+	)
+	for {
+		errInTxn := kv.RunInNewTxn(e.ctx.GetStore(), true, func(txn kv.Transaction) error {
+			var err error
+			nextHandle, addedCount, more, err = e.backfillIndexInTxn(ctx, txn, nextHandle)
+			return errors.Trace(err)
+		})
+		if errInTxn != nil {
+			return 0, errors.Trace(errInTxn)
+		}
+		totalAddedCnt += addedCount
+
+		if !more {
+			break
+		}
+	}
+	return totalAddedCnt, nil
+}
+
+func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transaction, startHandle int64) (nextHandle int64, addedCount int64, more bool, err error) {
+	handleIdx := e.Schema().Len() - 1
+	batchCnt := uint64(1024)
+	lastHandle, rowCount := startHandle, 0
+	srcResult, err := e.buildTableScan(ctx, txn, e.table, startHandle, batchCnt)
+	if err != nil {
+		return lastHandle, addedCount, false, errors.Trace(err)
+	}
+	defer srcResult.Close()
+
+	for {
+		err := srcResult.NextChunk(ctx, e.srcChunk)
+		if err != nil {
+			return lastHandle, addedCount, false, errors.Trace(err)
+		}
+
+		if e.srcChunk.NumRows() == 0 {
+			break
+		}
+		iter := chunk.NewIterator4Chunk(e.srcChunk)
+		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+			handle := row.GetInt64(handleIdx)
+			recordKey := e.table.RecordKey(handle)
+			err := txn.LockKeys(recordKey)
+			if err != nil {
+				return lastHandle, addedCount, false, errors.Trace(err)
+			}
+
+			lastHandle = handle
+			rowCount++
+
+			e.idxVals = e.idxVals[:0]
+			for i := 0; i < row.Len()-1; i++ {
+				colVal := row.GetDatum(i, e.Schema().Columns[i].RetType)
+				e.idxVals = append(e.idxVals, colVal)
+			}
+
+			// backfill the index.
+			dupHandle, err := e.index.Create(e.ctx, txn, e.idxVals, handle)
+			if err != nil {
+				if kv.ErrKeyExists.Equal(err) && dupHandle == handle {
+					// Index already exists, skip it.
+					continue
+				}
+				return lastHandle, addedCount, false, errors.Trace(err)
+			}
+			addedCount++
+		}
+	}
+
+	return lastHandle + 1, addedCount, rowCount != 0, nil
+}
+
+// NextChunk implements the Executor NextChunk interface.
+func (e *RecoverIndexExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	if e.done {
+		return nil
+	}
+
+	totalAddedCnt, err := e.backfillIndex(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	chk.AppendInt64(0, totalAddedCnt)
+	e.done = true
 	return nil
 }
 
