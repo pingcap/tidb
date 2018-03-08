@@ -40,7 +40,7 @@ const (
 )
 
 // JoinConcurrency means the number of goroutines that participate in joining.
-var JoinConcurrency = 5
+var JoinConcurrency uint = 5
 
 // wholeTaskTypes records all possible kinds of task that a plan can return. For Agg, TopN and Limit, we will try to get
 // these tasks one by one.
@@ -354,7 +354,10 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInf
 			}
 		}
 	}
-	if matchProperty && prop.expectedCnt < math.MaxFloat64 {
+	// Only use expectedCnt when it's smaller than the count we calculated.
+	// e.g. IndexScan(count1)->After Filter(count2). The `ds.statsAfterSelect.count` is count2. count1 is the one we need to calculate
+	// If expectedCnt and count2 are both zero and we go into the below `if` block, the count1 will be set to zero though it's shouldn't be.
+	if matchProperty && prop.expectedCnt < ds.statsAfterSelect.count {
 		selectivity, err := statsTbl.Selectivity(ds.ctx, is.filterCondition)
 		if err != nil {
 			log.Warnf("An error happened: %v, we have to use the default selectivity", err.Error())
@@ -572,7 +575,10 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp) (task task, err err
 	}
 	task = copTask
 	matchProperty := len(prop.cols) == 1 && pkCol != nil && prop.cols[0].Equal(nil, pkCol)
-	if matchProperty && prop.expectedCnt < math.MaxFloat64 {
+	// Only use expectedCnt when it's smaller than the count we calculated.
+	// e.g. IndexScan(count1)->After Filter(count2). The `ds.statsAfterSelect.count` is count2. count1 is the one we need to calculate
+	// If expectedCnt and count2 are both zero and we go into the below `if` block, the count1 will be set to zero though it's shouldn't be.
+	if matchProperty && prop.expectedCnt < ds.statsAfterSelect.count {
 		selectivity, err := statsTbl.Selectivity(ds.ctx, ts.filterCondition)
 		if err != nil {
 			log.Warnf("An error happened: %v, we have to use the default selectivity", err.Error())

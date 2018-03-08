@@ -551,6 +551,9 @@ func (la *LogicalAggregation) getStreamAggs(prop *requiredProp) []PhysicalPlan {
 				desc:        prop.desc,
 				expectedCnt: prop.expectedCnt * la.inputCount / la.stats.count,
 			}
+			if childProp.expectedCnt < prop.expectedCnt {
+				childProp.expectedCnt = prop.expectedCnt
+			}
 			if !prop.isPrefix(childProp) {
 				continue
 			}

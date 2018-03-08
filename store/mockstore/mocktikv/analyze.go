@@ -190,8 +190,7 @@ func (e *analyzeColumnsExec) Fields() []*ast.ResultField {
 	return e.fields
 }
 
-// Next implements the ast.RecordSet Next interface.
-func (e *analyzeColumnsExec) Next(ctx context.Context) (row types.Row, err error) {
+func (e *analyzeColumnsExec) getNext(ctx context.Context) ([]types.Datum, error) {
 	values, err := e.tblExec.Next(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -199,7 +198,7 @@ func (e *analyzeColumnsExec) Next(ctx context.Context) (row types.Row, err error
 	if values == nil {
 		return nil, nil
 	}
-	datumRow := make(types.DatumRow, 0, len(values))
+	datumRow := make([]types.Datum, 0, len(values))
 	for _, val := range values {
 		d := types.NewBytesDatum(val)
 		if len(val) == 1 && val[0] == codec.NilFlag {
@@ -210,16 +209,33 @@ func (e *analyzeColumnsExec) Next(ctx context.Context) (row types.Row, err error
 	return datumRow, nil
 }
 
+// Next implements the ast.RecordSet Next interface.
+func (e *analyzeColumnsExec) Next(ctx context.Context) (types.Row, error) {
+	row, err := e.getNext(ctx)
+	if row == nil || err != nil {
+		return nil, errors.Trace(err)
+	}
+	return types.DatumRow(row), nil
+}
+
 func (e *analyzeColumnsExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	row, err := e.getNext(ctx)
+	if row == nil || err != nil {
+		return errors.Trace(err)
+	}
+	for i := 0; i < len(row); i++ {
+		chk.AppendDatum(i, &row[i])
+	}
 	return nil
 }
 
 func (e *analyzeColumnsExec) NewChunk() *chunk.Chunk {
-	return nil
-}
-
-func (e *analyzeColumnsExec) SupportChunk() bool {
-	return false
+	fields := make([]*types.FieldType, 0, len(e.fields))
+	for _, field := range e.fields {
+		fields = append(fields, &field.Column.FieldType)
+	}
+	return chunk.NewChunk(fields)
 }
 
 // Close implements the ast.RecordSet Close interface.
