@@ -107,14 +107,14 @@ func (s *testSuite) TestSelectNormal(c *C) {
 
 	numAllRows = 0
 	for {
-		partialResult, err := response.Next(context.TODO())
-		c.Assert(err, IsNil)
+		partialResult, err1 := response.Next(context.TODO())
+		c.Assert(err1, IsNil)
 		if partialResult == nil {
 			break
 		}
 		for {
-			row, err := partialResult.Next(context.TODO())
-			c.Assert(err, IsNil)
+			row, err2 := partialResult.Next(context.TODO())
+			c.Assert(err2, IsNil)
 			if row == nil {
 				break
 			}
@@ -210,14 +210,14 @@ func (s *testSuite) TestSelectStreaming(c *C) {
 
 	numAllRows = 0
 	for {
-		partialResult, err := response.Next(context.TODO())
-		c.Assert(err, IsNil)
+		partialResult, err1 := response.Next(context.TODO())
+		c.Assert(err1, IsNil)
 		if partialResult == nil {
 			break
 		}
 		for {
-			row, err := partialResult.Next(context.TODO())
-			c.Assert(err, IsNil)
+			row, err2 := partialResult.Next(context.TODO())
+			c.Assert(err2, IsNil)
 			if row == nil {
 				break
 			}
