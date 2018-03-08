@@ -359,7 +359,7 @@ func (m *mockStore) GetSnapshot(ver kv.Version) (kv.Snapshot, error) {
 	return nil, nil
 }
 
-func (m *mockStore) GetSnapshotSetPriority(ver kv.Version, priority int) (kv.Snapshot, error) {
+func (m *mockStore) GetSnapshotWithPriority(ver kv.Version, priority int) (kv.Snapshot, error) {
 	return nil, nil
 }
 
