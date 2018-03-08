@@ -344,11 +344,17 @@ func (t *Table) getRollbackableMemStore(ctx sessionctx.Context) kv.RetrieverMuta
 // AddRecord implements table.Table AddRecord interface.
 func (t *Table) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
 	var hasRecordID bool
-	for _, col := range t.Cols() {
-		if col.IsPKHandleColumn(t.meta) {
-			recordID = r[col.Offset].GetInt64()
-			hasRecordID = true
-			break
+	cols := t.Cols()
+	if len(r) > len(cols) {
+		recordID = r[len(r)-1].GetInt64()
+		hasRecordID = true
+	} else {
+		for _, col := range cols {
+			if col.IsPKHandleColumn(t.meta) {
+				recordID = r[col.Offset].GetInt64()
+				hasRecordID = true
+				break
+			}
 		}
 	}
 	if !hasRecordID {
