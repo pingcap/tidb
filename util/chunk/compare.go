@@ -215,10 +215,10 @@ func Compare(row Row, colIdx int, ad *types.Datum) int {
 }
 
 // LowerBound searches on the non-decreasing column colIdx,
-// returns the smallest index i such that the value at row i is not less than `ad`.
-func (c *Chunk) LowerBound(colIdx int, ad *types.Datum) (index int, match bool) {
+// returns the smallest index i such that the value at row i is not less than `d`.
+func (c *Chunk) LowerBound(colIdx int, d *types.Datum) (index int, match bool) {
 	index = sort.Search(c.NumRows(), func(i int) bool {
-		cmp := Compare(c.GetRow(i), colIdx, ad)
+		cmp := Compare(c.GetRow(i), colIdx, d)
 		if cmp == 0 {
 			match = true
 		}
@@ -228,14 +228,9 @@ func (c *Chunk) LowerBound(colIdx int, ad *types.Datum) (index int, match bool) 
 }
 
 // UpperBound searches on the non-decreasing column colIdx,
-// returns the smallest index i such that the value at row i is larger than `ad`.
-func (c *Chunk) UpperBound(colIdx int, ad *types.Datum) (index int, match bool) {
-	index = sort.Search(c.NumRows(), func(i int) bool {
-		cmp := Compare(c.GetRow(i), colIdx, ad)
-		if cmp == 0 {
-			match = true
-		}
-		return cmp > 0
+// returns the smallest index i such that the value at row i is larger than `d`.
+func (c *Chunk) UpperBound(colIdx int, d *types.Datum) int {
+	return sort.Search(c.NumRows(), func(i int) bool {
+		return Compare(c.GetRow(i), colIdx, d) > 0
 	})
-	return
 }

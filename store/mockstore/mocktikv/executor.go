@@ -74,16 +74,15 @@ func (e *tableScanExec) GetSrcExec() executor {
 }
 
 func (e *tableScanExec) ResetCounts() {
+	e.start = e.cursor
 	e.counts[e.start] = 0
 }
 
 func (e *tableScanExec) Counts() []int64 {
-	oldStart := e.start
-	e.start = e.cursor
 	if e.seekKey == nil {
-		return e.counts[oldStart:e.cursor]
+		return e.counts[e.start:e.cursor]
 	}
-	return e.counts[oldStart : e.cursor+1]
+	return e.counts[e.start : e.cursor+1]
 }
 
 func (e *tableScanExec) Cursor() ([]byte, bool) {
@@ -239,16 +238,15 @@ func (e *indexScanExec) GetSrcExec() executor {
 }
 
 func (e *indexScanExec) ResetCounts() {
+	e.start = e.cursor
 	e.counts[e.start] = 0
 }
 
 func (e *indexScanExec) Counts() []int64 {
-	oldStart := e.start
-	e.start = e.cursor
 	if e.seekKey == nil {
-		return e.counts[oldStart:e.cursor]
+		return e.counts[e.start:e.cursor]
 	}
-	return e.counts[oldStart : e.cursor+1]
+	return e.counts[e.start : e.cursor+1]
 }
 
 func (e *indexScanExec) isUnique() bool {

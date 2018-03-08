@@ -670,6 +670,7 @@ func (it *copIterator) handleCopResponse(bo *Backoffer, resp *coprocessor.Respon
 		return nil, errors.Trace(err)
 	}
 	var startKey kv.Key
+	// When the request is using streaming API, the `Range` is not nil.
 	if resp.Range != nil {
 		startKey = resp.Range.Start
 	} else {

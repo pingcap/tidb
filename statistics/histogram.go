@@ -399,9 +399,12 @@ func (hg *Histogram) SplitRange(ranges []*ranger.NewRange) []*ranger.NewRange {
 	split := make([]*ranger.NewRange, 0, len(ranges))
 	for len(ranges) > 0 {
 		// Find the last bound that greater or equal to the LowVal.
-		idx, match := hg.Bounds.UpperBound(0, &ranges[0].LowVal[0])
-		if match && !ranges[0].LowExclude {
-			idx--
+		idx := hg.Bounds.UpperBound(0, &ranges[0].LowVal[0])
+		if !ranges[0].LowExclude && idx > 0 {
+			cmp := chunk.Compare(hg.Bounds.GetRow(idx-1), 0, &ranges[0].LowVal[0])
+			if cmp == 0 {
+				idx--
+			}
 		}
 		// Treat last bucket's upper bound as inf, so we do not need split any more.
 		if idx >= hg.Bounds.NumRows()-2 {
