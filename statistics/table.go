@@ -336,11 +336,13 @@ func (t *Table) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idxID int
 
 // PseudoTable creates a pseudo table statistics when statistic can not be found in KV store.
 func PseudoTable(tableID int64) *Table {
-	t := &Table{TableID: tableID, Pseudo: true}
-	t.Count = pseudoRowCount
-	t.Columns = make(map[int64]*Column)
-	t.Indices = make(map[int64]*Index)
-	return t
+	return &Table{
+		TableID: tableID,
+		Pseudo:  true,
+		Count:   pseudoRowCount,
+		Columns: make(map[int64]*Column),
+		Indices: make(map[int64]*Index),
+	}
 }
 
 func getPseudoRowCountByIndexRanges(sc *stmtctx.StatementContext, indexRanges []*ranger.NewRange,
