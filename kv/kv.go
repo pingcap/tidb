@@ -251,7 +251,7 @@ type Storage interface {
 	GetOracle() oracle.Oracle
 	// SupportDeleteRange gets the storage support delete range or not.
 	SupportDeleteRange() (supported bool)
-	// GetSnapshotWithPriority gets a snapshot set the priority.
+	// GetSnapshotWithPriority gets a snapshot and support set the priority.
 	GetSnapshotWithPriority(ver Version, priority int) (Snapshot, error)
 }
 
