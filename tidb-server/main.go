@@ -21,6 +21,7 @@ import (
 	"os/signal"
 	"runtime"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -46,7 +47,7 @@ import (
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/systimemon"
 	"github.com/pingcap/tidb/x-server"
-	"github.com/pingcap/tipb/go-binlog"
+	binlog "github.com/pingcap/tipb/go-binlog"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 	log "github.com/sirupsen/logrus"
@@ -102,11 +103,11 @@ var (
 	reportStatus    = flagBoolean(nmReportStatus, true, "If enable status report HTTP service.")
 	statusPort      = flag.String(nmStatusPort, "10080", "tidb server status port")
 	metricsAddr     = flag.String(nmMetricsAddr, "", "prometheus pushgateway address, leaves it empty will disable prometheus push.")
-	metricsInterval = flag.Int(nmMetricsInterval, 15, "prometheus client push interval in second, set \"0\" to disable prometheus push.")
+	metricsInterval = flag.Uint(nmMetricsInterval, 15, "prometheus client push interval in second, set \"0\" to disable prometheus push.")
 
 	// PROXY Protocol
 	proxyProtocolNetworks      = flag.String(nmProxyProtocolNetworks, "", "proxy protocol networks allowed IP or *, empty mean disable proxy protocol support")
-	proxyProtocolHeaderTimeout = flag.Int(nmProxyProtocolHeaderTimeout, 5, "proxy protocol header read timeout, unit is second.")
+	proxyProtocolHeaderTimeout = flag.Uint(nmProxyProtocolHeaderTimeout, 5, "proxy protocol header read timeout, unit is second.")
 )
 
 var (
@@ -213,8 +214,8 @@ func instanceName() string {
 	return fmt.Sprintf("%s_%d", hostname, cfg.Port)
 }
 
-// parseLease parses lease argument string.
-func parseLease(lease string) time.Duration {
+// parseDuration parses lease argument string.
+func parseDuration(lease string) time.Duration {
 	dur, err := time.ParseDuration(lease)
 	if err != nil {
 		dur, err = time.ParseDuration(lease + "s")
@@ -258,8 +259,10 @@ func overrideConfig() {
 	}
 	var err error
 	if actualFlags[nmPort] {
-		cfg.Port, err = strconv.Atoi(*port)
+		var p int
+		p, err = strconv.Atoi(*port)
 		terror.MustNil(err)
+		cfg.Port = uint(p)
 	}
 	if actualFlags[nmStore] {
 		cfg.Store = *store
@@ -280,7 +283,7 @@ func overrideConfig() {
 		cfg.Lease = *ddlLease
 	}
 	if actualFlags[nmTokenLimit] {
-		cfg.TokenLimit = *tokenLimit
+		cfg.TokenLimit = uint(*tokenLimit)
 	}
 
 	// Log
@@ -299,8 +302,10 @@ func overrideConfig() {
 		cfg.Status.ReportStatus = *reportStatus
 	}
 	if actualFlags[nmStatusPort] {
-		cfg.Status.StatusPort, err = strconv.Atoi(*statusPort)
+		var p int
+		p, err = strconv.Atoi(*statusPort)
 		terror.MustNil(err)
+		cfg.Status.StatusPort = uint(p)
 	}
 	if actualFlags[nmMetricsAddr] {
 		cfg.Status.MetricsAddr = *metricsAddr
@@ -323,13 +328,32 @@ func validateConfig() {
 		log.Error("TiDB run with skip-grant-table need root privilege.")
 		os.Exit(-1)
 	}
+	if _, ok := config.ValidStorage[cfg.Store]; !ok {
+		nameList := make([]string, 0, len(config.ValidStorage))
+		for k, v := range config.ValidStorage {
+			if v {
+				nameList = append(nameList, k)
+			}
+		}
+		log.Errorf("\"store\" should be in [%s] only", strings.Join(nameList, ", "))
+		os.Exit(-1)
+	}
+	if cfg.Log.File.MaxSize > config.MaxLogFileSize {
+		log.Errorf("log max-size should not be larger than %d MB", config.MaxLogFileSize)
+		os.Exit(-1)
+	}
+	if cfg.XProtocol.XServer {
+		log.Error("X Server is not available")
+		os.Exit(-1)
+	}
+	cfg.OOMAction = strings.ToLower(cfg.OOMAction)
 }
 
 func setGlobalVars() {
-	ddlLeaseDuration := parseLease(cfg.Lease)
+	ddlLeaseDuration := parseDuration(cfg.Lease)
 	tidb.SetSchemaLease(ddlLeaseDuration)
-	runtime.GOMAXPROCS(cfg.Performance.MaxProcs)
-	statsLeaseDuration := parseLease(cfg.Performance.StatsLease)
+	runtime.GOMAXPROCS(int(cfg.Performance.MaxProcs))
+	statsLeaseDuration := parseDuration(cfg.Performance.StatsLease)
 	tidb.SetStatsLease(statsLeaseDuration)
 	domain.RunAutoAnalyze = cfg.Performance.RunAutoAnalyze
 	ddl.RunWorker = cfg.RunDDL
@@ -354,6 +378,8 @@ func setGlobalVars() {
 	if cfg.TiKVClient.GrpcConnectionCount > 0 {
 		tikv.MaxConnectionCount = cfg.TiKVClient.GrpcConnectionCount
 	}
+
+	tikv.CommitMaxBackoff = int(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds() * 1000)
 }
 
 func setupLog() {

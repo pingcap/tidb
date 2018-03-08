@@ -632,7 +632,12 @@ func (c *RPCClient) SendReq(ctx context.Context, addr string, req *tikvrpc.Reque
 	case tikvrpc.CmdCopStream:
 		r := req.Cop
 		if err := handler.checkRequestContext(reqCtx); err != nil {
-			resp.CopStream = &mockCopStreamErrClient{Error: err}
+			resp.CopStream = &tikvrpc.CopStreamResponse{
+				Tikv_CoprocessorStreamClient: &mockCopStreamErrClient{Error: err},
+				Response: &coprocessor.Response{
+					RegionError: err,
+				},
+			}
 			return resp, nil
 		}
 		handler.rawStartKey = MvccKey(handler.startKey).Raw()
@@ -641,7 +646,14 @@ func (c *RPCClient) SendReq(ctx context.Context, addr string, req *tikvrpc.Reque
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		resp.CopStream = copStream
+		first, err := copStream.Recv()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		resp.CopStream = &tikvrpc.CopStreamResponse{
+			Tikv_CoprocessorStreamClient: copStream,
+			Response:                     first,
+		}
 	case tikvrpc.CmdMvccGetByKey:
 		r := req.MvccGetByKey
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {

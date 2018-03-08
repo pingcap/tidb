@@ -84,7 +84,7 @@ type selectResult struct {
 }
 
 type resultWithErr struct {
-	result []byte
+	result kv.ResultSubset
 	err    error
 }
 
@@ -133,7 +133,7 @@ func (r *selectResult) Next(ctx context.Context) (PartialResult, error) {
 	}
 	pr := &partialResult{}
 	pr.rowLen = r.rowLen
-	err := pr.unmarshal(re.result)
+	err := pr.unmarshal(re.result.GetData())
 	if len(pr.resp.OutputCounts) > 0 {
 		scanKeysPartial := pr.resp.OutputCounts[0]
 		metrics.DistSQLScanKeysPartialHistogram.Observe(float64(scanKeysPartial))
@@ -150,7 +150,10 @@ func (r *selectResult) NextRaw(ctx context.Context) ([]byte, error) {
 	re := <-r.results
 	r.partialCount++
 	r.scanKeys = -1
-	return re.result, errors.Trace(re.err)
+	if re.result == nil || re.err != nil {
+		return nil, errors.Trace(re.err)
+	}
+	return re.result.GetData(), nil
 }
 
 // NextChunk reads data to the chunk.
@@ -186,9 +189,15 @@ func (r *selectResult) getSelectResp() error {
 			return nil
 		}
 		r.selectResp = new(tipb.SelectResponse)
-		err := r.selectResp.Unmarshal(re.result)
+		err := r.selectResp.Unmarshal(re.result.GetData())
 		if err != nil {
 			return errors.Trace(err)
+		}
+		if err := r.selectResp.Error; err != nil {
+			return terror.ClassTiKV.New(terror.ErrCode(err.Code), err.Msg)
+		}
+		for _, warning := range r.selectResp.Warnings {
+			r.ctx.GetSessionVars().StmtCtx.AppendWarning(terror.ClassTiKV.New(terror.ErrCode(warning.Code), warning.Msg))
 		}
 		if len(r.selectResp.OutputCounts) > 0 {
 			scanCountPartial := r.selectResp.OutputCounts[0]
@@ -300,6 +309,14 @@ func (pr *partialResult) Close() error {
 // Select sends a DAG request, returns SelectResult.
 // In kvReq, KeyRanges is required, Concurrency/KeepOrder/Desc/IsolationLevel/Priority are optional.
 func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fieldTypes []*types.FieldType) (SelectResult, error) {
+	// For testing purpose.
+	if hook := ctx.Value("CheckSelectRequestHook"); hook != nil {
+		hook.(func(*kv.Request))(kvReq)
+	}
+
+	if !sctx.GetSessionVars().EnableStreaming {
+		kvReq.Streaming = false
+	}
 	resp := sctx.GetClient().Send(ctx, kvReq)
 	if resp == nil {
 		err := errors.New("client returns nil response")

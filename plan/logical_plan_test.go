@@ -569,19 +569,16 @@ func (s *testPlanSuite) TestSubquery(c *C) {
 			best: "Apply{DataScan(t)->DataScan(s)->Sel([eq(s.a, test.t.a)])->Aggr(count(s.b))}->Projection",
 		},
 		{
-			// Theta-join with agg cannot decorrelate.
 			sql:  "select (select count(s.b) k from t s where s.a = t.a having k != 0) from t",
-			best: "Apply{DataScan(t)->DataScan(s)->Sel([eq(s.a, test.t.a)])->Aggr(count(s.b))}->Projection->Projection",
+			best: "Join{DataScan(t)->DataScan(s)->Aggr(count(s.b),firstrow(s.a))}(test.t.a,s.a)->Projection->Projection->Projection",
 		},
 		{
-			// Relation without keys cannot decorrelate.
 			sql:  "select (select count(s.b) k from t s where s.a = t1.a) from t t1, t t2",
-			best: "Apply{Join{DataScan(t1)->DataScan(t2)}->DataScan(s)->Sel([eq(s.a, t1.a)])->Aggr(count(s.b))}->Projection->Projection",
+			best: "Join{Join{DataScan(t1)->DataScan(t2)}->DataScan(s)->Aggr(count(s.b),firstrow(s.a))}(t1.a,s.a)->Projection->Projection->Projection",
 		},
 		{
-			// Aggregate function like count(1) cannot decorrelate.
 			sql:  "select (select count(1) k from t s where s.a = t.a having k != 0) from t",
-			best: "Apply{DataScan(t)->DataScan(s)->Sel([eq(s.a, test.t.a)])->Aggr(count(1))}->Projection->Projection",
+			best: "Join{DataScan(t)->DataScan(s)->Aggr(count(1),firstrow(s.a))}(test.t.a,s.a)->Projection->Projection->Projection",
 		},
 		{
 			sql:  "select a from t where a in (select a from t s group by t.b)",
@@ -610,6 +607,10 @@ func (s *testPlanSuite) TestSubquery(c *C) {
 			// Test Nested sub query.
 			sql:  "select * from t where exists (select s.a from t s where s.c in (select c from t as k where k.d = s.d) having sum(s.a) = t.a )",
 			best: "Join{DataScan(t)->Join{DataScan(s)->DataScan(k)}(s.d,k.d)(s.c,k.c)->Aggr(sum(s.a))->Projection}->Projection",
+		},
+		{
+			sql:  "select t1.b from t t1 where t1.b = (select max(t2.a) from t t2 where t1.b=t2.b)",
+			best: "Join{DataScan(t1)->DataScan(t2)->Aggr(max(t2.a),firstrow(t2.b))}(t1.b,t2.b)->Projection->Sel([eq(t1.b, max(t2.a))])->Projection",
 		},
 	}
 
@@ -651,6 +652,35 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 			sql:  "explain select * from t union all select * from t limit 1, 1",
 			plan: "*plan.Explain",
 		},
+		// The correctness of explain result is checked at integration test. There is to improve coverage.
+		{
+			sql:  "explain select /*+ TIDB_INLJ(t1, t2) */ * from t t1 left join t t2 on t1.a=t2.a where t1.b=1 and t2.b=1 and (t1.c=1 or t2.c=1)",
+			plan: "*plan.Explain",
+		},
+		{
+			sql:  "explain select /*+ TIDB_HJ(t1, t2) */ * from t t1 left join t t2 on t1.a=t2.a where t1.b=1 and t2.b=1 and (t1.c=1 or t2.c=1)",
+			plan: "*plan.Explain",
+		},
+		{
+			sql:  "explain select /*+ TIDB_SMJ(t1, t2) */ * from t t1 right join t t2 on t1.a=t2.a where t1.b=1 and t2.b=1 and (t1.c=1 or t2.c=1)",
+			plan: "*plan.Explain",
+		},
+		{
+			sql:  `explain format="dot" select /*+ TIDB_SMJ(t1, t2) */ * from t t1, t t2 where t1.a=t2.a`,
+			plan: "*plan.Explain",
+		},
+		{
+			sql:  "explain select * from t order by b",
+			plan: "*plan.Explain",
+		},
+		{
+			sql:  "explain select * from t order by b limit 1",
+			plan: "*plan.Explain",
+		},
+		{
+			sql:  `explain format="dot" select * from t order by a`,
+			plan: "*plan.Explain",
+		},
 		{
 			sql:  "insert into t select * from t",
 			plan: "TableReader(Table(t))->Insert",
@@ -670,6 +700,14 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		{
 			sql:  "select * from t t1, t t2 where 1 = 0",
 			plan: "Dual->Projection",
+		},
+		{
+			sql:  "select * from t t1 join t t2 using(a)",
+			plan: "Join{DataScan(t1)->DataScan(t2)}->Projection",
+		},
+		{
+			sql:  "select * from t t1 natural join t t2",
+			plan: "Join{DataScan(t1)->DataScan(t2)}->Projection",
 		},
 	}
 	for _, ca := range tests {

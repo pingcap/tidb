@@ -158,7 +158,8 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	}
 
 	if cfg.ProxyProtocol.Networks != "" {
-		pplistener, errProxy := proxyprotocol.NewListener(s.listener, cfg.ProxyProtocol.Networks, cfg.ProxyProtocol.HeaderTimeout)
+		pplistener, errProxy := proxyprotocol.NewListener(s.listener, cfg.ProxyProtocol.Networks,
+			int(cfg.ProxyProtocol.HeaderTimeout))
 		if errProxy != nil {
 			log.Error("ProxyProtocol Networks parameter invalid")
 			return nil, errors.Trace(errProxy)

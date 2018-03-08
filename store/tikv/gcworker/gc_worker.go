@@ -504,7 +504,8 @@ func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64) error {
 		for i := range locksInfo {
 			locks[i] = tikv.NewLock(locksInfo[i])
 		}
-		ok, err1 := w.store.GetLockResolver().ResolveLocks(bo, locks)
+
+		ok, err1 := w.store.GetLockResolver().BatchResolveLocks(bo, locks, loc.Region)
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
@@ -763,6 +764,9 @@ func (w *GCWorker) checkLeader() (bool, error) {
 		}
 		return true, nil
 	}
+
+	_, err = session.Execute(ctx, "ROLLBACK")
+	terror.Log(errors.Trace(err))
 
 	_, err = session.Execute(ctx, "BEGIN")
 	if err != nil {

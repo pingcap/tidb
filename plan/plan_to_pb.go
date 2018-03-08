@@ -96,7 +96,7 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error)
 		Columns: ColumnsToProto(columns, p.Table.PKIsHandle),
 		Desc:    p.Desc,
 	}
-	err := setPBColumnsDefaultValue(ctx, tsExec.Columns, p.Columns)
+	err := SetPBColumnsDefaultValue(ctx, tsExec.Columns, p.Columns)
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tsExec}, errors.Trace(err)
 }
 
@@ -140,7 +140,8 @@ func (p *PhysicalIndexScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error)
 	return &tipb.Executor{Tp: tipb.ExecType_TypeIndexScan, IdxScan: idxExec}, nil
 }
 
-func setPBColumnsDefaultValue(ctx sessionctx.Context, pbColumns []*tipb.ColumnInfo, columns []*model.ColumnInfo) error {
+// SetPBColumnsDefaultValue sets the default values of tipb.ColumnInfos.
+func SetPBColumnsDefaultValue(ctx sessionctx.Context, pbColumns []*tipb.ColumnInfo, columns []*model.ColumnInfo) error {
 	for i, c := range columns {
 		if c.OriginDefaultValue == nil {
 			continue
@@ -229,4 +230,16 @@ func collationToProto(c string) int32 {
 	// Setting other collations to utf8_bin for old data compatibility.
 	// For the data created when we didn't enforce utf8_bin collation in create table.
 	return int32(mysql.DefaultCollationID)
+}
+
+// SupportStreaming returns true if a pushed down operation supports using coprocessor streaming API.
+// Note that this function handle pushed down physical plan only! It's called in constructDAGReq.
+// Some plans are difficult (if possible) to implement streaming, and some are pointless to do so.
+// TODO: Support more kinds of physical plan.
+func SupportStreaming(p PhysicalPlan) bool {
+	switch p.(type) {
+	case *PhysicalTableScan, *PhysicalIndexScan, *PhysicalSelection:
+		return true
+	}
+	return false
 }

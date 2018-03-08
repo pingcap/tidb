@@ -38,14 +38,18 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
@@ -71,6 +75,7 @@ type testSuite struct {
 	mvccStore *mocktikv.MvccStore
 	store     kv.Storage
 	*parser.Parser
+	ctx *mock.Context
 
 	autoIDStep int64
 }
@@ -1759,7 +1764,7 @@ func (s *testSuite) TestScanControlSelection(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int, c int, index idx_b(b))")
 	tk.MustExec("insert into t values (1, 1, 1), (2, 1, 1), (3, 1, 2), (4, 2, 3)")
-	tk.MustQuery("select (select count(1) k from t s where s.b = t1.c) from t t1").Check(testkit.Rows("3", "3", "1", "0"))
+	tk.MustQuery("select (select count(1) k from t s where s.b = t1.c) from t t1").Sort().Check(testkit.Rows("0", "1", "3", "3"))
 }
 
 func (s *testSuite) TestSimpleDAG(c *C) {
@@ -2374,5 +2379,149 @@ func (s *testSuite) TestEarlyClose(c *C) {
 		_, err = rs.Next(ctx)
 		c.Assert(err, IsNil)
 		rs.Close()
+	}
+}
+
+func (s *testSuite) TestIssue5666(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@profiling=1")
+	tk.MustQuery("SELECT QUERY_ID, SUM(DURATION) AS SUM_DURATION FROM INFORMATION_SCHEMA.PROFILING GROUP BY QUERY_ID;").Check(testkit.Rows("0 0"))
+}
+
+func (s *testSuite) TestCheckIndex(c *C) {
+	s.ctx = mock.NewContext()
+	s.ctx.Store = s.store
+	dom, err := tidb.BootstrapSession(s.store)
+	c.Assert(err, IsNil)
+	se, err := tidb.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	defer se.Close()
+
+	_, err = se.Execute(context.Background(), "create database test_admin")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "use test_admin")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "create table t (pk int primary key, c int default 1, c1 int default 1, unique key c(c))")
+	c.Assert(err, IsNil)
+	is := dom.InfoSchema()
+	db := model.NewCIStr("test_admin")
+	dbInfo, ok := is.SchemaByName(db)
+	c.Assert(ok, IsTrue)
+	tblName := model.NewCIStr("t")
+	tbl, err := is.TableByName(db, tblName)
+	c.Assert(err, IsNil)
+	tbInfo := tbl.Meta()
+
+	alloc := autoid.NewAllocator(s.store, dbInfo.ID)
+	tb, err := tables.TableFromMeta(alloc, tbInfo)
+	c.Assert(err, IsNil)
+
+	// set data to:
+	// index     data (handle, data): (1, 10), (2, 20)
+	// table     data (handle, data): (1, 10), (2, 20)
+	recordVal1 := types.MakeDatums(int64(1), int64(10), int64(11))
+	recordVal2 := types.MakeDatums(int64(2), int64(20), int64(21))
+	c.Assert(s.ctx.NewTxn(), IsNil)
+	_, err = tb.AddRecord(s.ctx, recordVal1, false)
+	c.Assert(err, IsNil)
+	_, err = tb.AddRecord(s.ctx, recordVal2, false)
+	c.Assert(err, IsNil)
+	c.Assert(s.ctx.Txn().Commit(context.Background()), IsNil)
+
+	mockCtx := mock.NewContext()
+	idx := tb.Indices()[0]
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+
+	// set data to:
+	// index     data (handle, data): (1, 10), (2, 20), (3, 30)
+	// table     data (handle, data): (1, 10), (2, 20), (4, 40)
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	_, err = idx.Create(mockCtx, txn, types.MakeDatums(int64(30)), 3)
+	c.Assert(err, IsNil)
+	key := tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 4))
+	setColValue(c, txn, key, types.NewDatum(int64(40)))
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "admin check index t c")
+	c.Assert(err, NotNil)
+	c.Assert(strings.Contains(err.Error(), "isn't equal to value count"), IsTrue)
+
+	// set data to:
+	// index     data (handle, data): (1, 10), (2, 20), (3, 30), (4, 40)
+	// table     data (handle, data): (1, 10), (2, 20), (4, 40)
+	txn, err = s.store.Begin()
+	c.Assert(err, IsNil)
+	_, err = idx.Create(mockCtx, txn, types.MakeDatums(int64(40)), 4)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "admin check index t c")
+	c.Assert(strings.Contains(err.Error(), "table count 3 != index(c) count 4"), IsTrue)
+
+	// set data to:
+	// index     data (handle, data): (1, 10), (4, 40)
+	// table     data (handle, data): (1, 10), (2, 20), (4, 40)
+	txn, err = s.store.Begin()
+	c.Assert(err, IsNil)
+	err = idx.Delete(sc, txn, types.MakeDatums(int64(30)), 3)
+	c.Assert(err, IsNil)
+	err = idx.Delete(sc, txn, types.MakeDatums(int64(20)), 2)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "admin check index t c")
+	c.Assert(strings.Contains(err.Error(), "table count 3 != index(c) count 2"), IsTrue)
+
+	// TODO: pass the case below：
+	// set data to:
+	// index     data (handle, data): (1, 10), (4, 40), (2, 30)
+	// table     data (handle, data): (1, 10), (2, 20), (4, 40)
+}
+
+func setColValue(c *C, txn kv.Transaction, key kv.Key, v types.Datum) {
+	row := []types.Datum{v, {}}
+	colIDs := []int64{2, 3}
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	value, err := tablecodec.EncodeRow(sc, row, colIDs, nil, nil)
+	c.Assert(err, IsNil)
+	err = txn.Set(key, value)
+	c.Assert(err, IsNil)
+}
+
+func (s *testSuite) TestCoprocessorStreamingFlag(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int, value int, index idx(id))")
+	// Add some data to make statistics work.
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
+	}
+
+	tests := []struct {
+		sql    string
+		expect bool
+	}{
+		{"select * from t", true},                         // TableReader
+		{"select * from t where id = 5", true},            // IndexLookup
+		{"select * from t where id > 5", true},            // Filter
+		{"select * from t limit 3", false},                // Limit
+		{"select avg(id) from t", false},                  // Aggregate
+		{"select * from t order by value limit 3", false}, // TopN
+	}
+
+	ctx := context.Background()
+	for _, test := range tests {
+		ctx1 := context.WithValue(ctx, "CheckSelectRequestHook", func(req *kv.Request) {
+			if req.Streaming != test.expect {
+				c.Errorf("sql=%s, expect=%v, get=%v", test.sql, test.expect, req.Streaming)
+			}
+		})
+		rs, err := tk.Se.Execute(ctx1, test.sql)
+		c.Assert(err, IsNil)
+		_, err = rs[0].Next(ctx)
+		c.Assert(err, IsNil)
+		rs[0].Close()
 	}
 }
