@@ -80,15 +80,18 @@ func (s *testSuite) TestSelectNormal(c *C) {
 
 	response.Fetch(context.TODO())
 
+	// Test NextChunk.
 	chk := chunk.NewChunk(colTypes)
-	err = response.NextChunk(context.TODO(), chk)
-	c.Assert(err, IsNil)
-	c.Assert(chk.NumRows(), Equals, 2)
-
-	err = response.NextChunk(context.TODO(), chk)
-	c.Assert(err, IsNil)
-	c.Assert(chk.NumRows(), Equals, 0)
-
+	numAllRows := 0
+	for {
+		err = response.NextChunk(context.TODO(), chk)
+		c.Assert(err, IsNil)
+		numAllRows += chk.NumRows()
+		if chk.NumRows() == 0 {
+			break
+		}
+	}
+	c.Assert(numAllRows, Equals, 2)
 	err = response.Close()
 	c.Assert(err, IsNil)
 
@@ -102,23 +105,25 @@ func (s *testSuite) TestSelectNormal(c *C) {
 
 	response.Fetch(context.TODO())
 
-	partialResult, err := response.Next(context.TODO())
-	c.Assert(err, IsNil)
-	c.Assert(partialResult, NotNil)
-
-	row, err := partialResult.Next(context.TODO())
-	c.Assert(err, IsNil)
-
-	row, err = partialResult.Next(context.TODO())
-	c.Assert(err, IsNil)
-
-	row, err = partialResult.Next(context.TODO())
-	c.Assert(err, IsNil)
-	c.Assert(row, IsNil)
-
-	err = partialResult.Close()
-	c.Assert(err, IsNil)
-
+	numAllRows = 0
+	for {
+		partialResult, err := response.Next(context.TODO())
+		c.Assert(err, IsNil)
+		if partialResult == nil {
+			break
+		}
+		for {
+			row, err := partialResult.Next(context.TODO())
+			c.Assert(err, IsNil)
+			if row == nil {
+				break
+			}
+			numAllRows++
+		}
+		err = partialResult.Close()
+		c.Assert(err, IsNil)
+	}
+	c.Assert(numAllRows, Equals, 2)
 	err = response.Close()
 	c.Assert(err, IsNil)
 }
@@ -179,15 +184,18 @@ func (s *testSuite) TestSelectStreaming(c *C) {
 
 	response.Fetch(context.TODO())
 
+	// Test NextChunk.
 	chk := chunk.NewChunk(colTypes)
-	err = response.NextChunk(context.TODO(), chk)
-	c.Assert(err, IsNil)
-	c.Assert(chk.NumRows(), Equals, 2)
-
-	err = response.NextChunk(context.TODO(), chk)
-	c.Assert(err, IsNil)
-	c.Assert(chk.NumRows(), Equals, 0)
-
+	numAllRows := 0
+	for {
+		err = response.NextChunk(context.TODO(), chk)
+		c.Assert(err, IsNil)
+		numAllRows += chk.NumRows()
+		if chk.NumRows() == 0 {
+			break
+		}
+	}
+	c.Assert(numAllRows, Equals, 2)
 	err = response.Close()
 	c.Assert(err, IsNil)
 
@@ -200,10 +208,25 @@ func (s *testSuite) TestSelectStreaming(c *C) {
 
 	response.Fetch(context.TODO())
 
-	partialResult, err := response.Next(context.TODO())
-	c.Assert(err, IsNil)
-	c.Assert(partialResult, IsNil)
-
+	numAllRows = 0
+	for {
+		partialResult, err := response.Next(context.TODO())
+		c.Assert(err, IsNil)
+		if partialResult == nil {
+			break
+		}
+		for {
+			row, err := partialResult.Next(context.TODO())
+			c.Assert(err, IsNil)
+			if row == nil {
+				break
+			}
+			numAllRows++
+		}
+		err = partialResult.Close()
+		c.Assert(err, IsNil)
+	}
+	c.Assert(numAllRows, Equals, 0)
 	err = response.Close()
 	c.Assert(err, IsNil)
 }
