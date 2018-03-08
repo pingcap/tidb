@@ -1651,7 +1651,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	var handleCol *expression.Column
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(columns))...)
 	for i, col := range columns {
-		ds.Columns = append(ds.Columns, columns[i].ToInfo())
+		ds.Columns = append(ds.Columns, col.ToInfo())
 		schema.Append(&expression.Column{
 			FromID:   ds.id,
 			Position: i,
