@@ -144,6 +144,12 @@ func (s *mockStorage) GetSnapshot(ver Version) (Snapshot, error) {
 	}, nil
 }
 
+func (s *mockStorage) GetSnapshotWithPriority(ver Version, priority int) (Snapshot, error) {
+	return &mockSnapshot{
+		store: NewMemDbBuffer(DefaultTxnMembufCap),
+	}, nil
+}
+
 func (s *mockStorage) Close() error {
 	return nil
 }

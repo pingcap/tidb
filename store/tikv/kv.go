@@ -259,6 +259,13 @@ func (s *tikvStore) GetSnapshot(ver kv.Version) (kv.Snapshot, error) {
 	return snapshot, nil
 }
 
+func (s *tikvStore) GetSnapshotWithPriority(ver kv.Version, priority int) (kv.Snapshot, error) {
+	snapshot := newTiKVSnapshot(s, ver)
+	snapshot.priority = kvPriorityToCommandPri(priority)
+	metrics.TiKVSnapshotCounter.Inc()
+	return snapshot, nil
+}
+
 func (s *tikvStore) Close() error {
 	mc.Lock()
 	defer mc.Unlock()
