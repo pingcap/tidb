@@ -45,7 +45,7 @@ type CheckIndexRangeExec struct {
 	cols   []*model.ColumnInfo
 }
 
-// NextChunk implements the Executor Next interface.
+// NextChunk implements the Executor NextChunk interface.
 func (e *CheckIndexRangeExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	handleIdx := e.schema.Len() - 1
@@ -139,7 +139,7 @@ func (e *CheckIndexRangeExec) constructIndexScanPB() *tipb.Executor {
 	return &tipb.Executor{Tp: tipb.ExecType_TypeIndexScan, IdxScan: idxExec}
 }
 
-// Close implements plan.Plan Close interface.
+// Close implements the Executor Close interface.
 func (e *CheckIndexRangeExec) Close() error {
 	return nil
 }

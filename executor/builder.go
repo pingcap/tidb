@@ -234,8 +234,7 @@ func (b *executorBuilder) buildCheckTable(v *plan.CheckTable) Executor {
 }
 
 func (b *executorBuilder) buildCheckIndexRange(v *plan.CheckIndexRange) Executor {
-	dbName := model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
-	tb, err := b.is.TableByName(dbName, v.Table.Name)
+	tb, err := b.is.TableByName(v.Table.Schema, v.Table.Name)
 	if err != nil {
 		b.err = errors.Trace(err)
 		return nil

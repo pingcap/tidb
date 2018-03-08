@@ -30,6 +30,7 @@ func (s *testSuite) TestAdminCheckIndexRange(c *C) {
 	result = tk.MustQuery("admin check index check_index_test a_b (3, 5);")
 	result.Check(testkit.Rows("-1 hi 4", "1 ef 3"))
 
-	result = tk.MustQuery("admin check index check_index_test a_b (2, 3), (4, 5);")
+	tk.MustExec("use mysql")
+	result = tk.MustQuery("admin check index test.check_index_test a_b (2, 3), (4, 5);")
 	result.Check(testkit.Rows("-1 hi 4", "2 cd 2"))
 }
