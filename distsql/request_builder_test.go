@@ -64,6 +64,10 @@ func (s *testSuite) SetUpTest(c *C) {
 	store.Client = &mock.Client{&mockResponse{}}
 }
 
+func (s *testSuite) TearDownTest(c *C) {
+	testleak.AfterTest(c)()
+}
+
 type handleRange struct {
 	start int64
 	end   int64
