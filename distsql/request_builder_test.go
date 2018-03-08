@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -54,6 +55,13 @@ func (s *testSuite) SetUpSuite(c *C) {
 }
 
 func (s *testSuite) TearDownSuite(c *C) {
+}
+
+func (s *testSuite) SetUpTest(c *C) {
+	testleak.BeforeTest()
+	ctx := s.sctx.(*mock.Context)
+	store := ctx.Store.(*mock.Store)
+	store.Client = &mock.Client{&mockResponse{}}
 }
 
 type handleRange struct {
