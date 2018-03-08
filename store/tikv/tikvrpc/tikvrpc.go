@@ -160,9 +160,10 @@ type CopStreamResponse struct {
 	tikvpb.Tikv_CoprocessorStreamClient
 	*coprocessor.Response // The first result of Recv()
 
-	// The following field is used to support timeout.
-	item      TimeoutItem
+	// The following fields is used to support timeout.
+	cancel    context.CancelFunc
 	timeoutCh chan<- *TimeoutItem
+	pending   *TimeoutItem
 }
 
 // NewCopStreamResponse returns a CopStreamResponse.
@@ -170,7 +171,7 @@ func NewCopStreamResponse(client tikvpb.Tikv_CoprocessorStreamClient, resp *copr
 	return &CopStreamResponse{
 		Tikv_CoprocessorStreamClient: client,
 		Response:                     resp,
-		item:                         TimeoutItem{cancel: cancel},
+		cancel:                       cancel,
 		timeoutCh:                    ch,
 	}
 }
@@ -447,20 +448,27 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request, ch cha
 type TimeoutItem struct {
 	cancel  context.CancelFunc
 	timeout time.Time
-	active  int32 // 0 means inactive
+	active  int32 // atomic variable, 0 means inactive
 }
 
 // SetDeadline set deadline for this CopStreamResponse object, it usually called before Recv().
 func (resp *CopStreamResponse) SetDeadline(deadline time.Time) {
-	atomic.StoreInt32(&resp.item.active, 1)
-	resp.item.timeout = deadline
-	resp.timeoutCh <- &resp.item
+	item := &TimeoutItem{
+		cancel:  resp.cancel,
+		timeout: deadline,
+		active:  1,
+	}
+	resp.pending = item
+	resp.timeoutCh <- item
 }
 
 // Recv overrides the stream client Recv() function.
 func (resp *CopStreamResponse) Recv() (*coprocessor.Response, error) {
 	ret, err := resp.Tikv_CoprocessorStreamClient.Recv()
-	atomic.StoreInt32(&resp.item.active, 0)
+	if resp.pending != nil {
+		atomic.StoreInt32(&resp.pending.active, 0)
+		resp.pending = nil
+	}
 	return ret, errors.Trace(err)
 }
 
@@ -494,7 +502,7 @@ func keepOnlyActive(array []*TimeoutItem, now time.Time) []*TimeoutItem {
 			continue
 		}
 
-		if item.timeout.After(now) {
+		if now.After(item.timeout) {
 			item.cancel()
 			continue
 		}
