@@ -205,7 +205,7 @@ type PhysicalHashJoin struct {
 	// For inner join, the smaller one will be chosen.
 	// For outer join or semi join, it's exactly the inner one.
 	InnerChildIdx int
-	Concurrency   int
+	Concurrency   uint
 
 	DefaultValues []types.Datum
 }

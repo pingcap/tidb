@@ -480,10 +480,7 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 		p := &CheckTable{Tables: as.Tables}
 		ret = p
 	case ast.AdminCheckIndex:
-		dbName := model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
-		if as.Tables[0].DBInfo != nil {
-			dbName = as.Tables[0].DBInfo.Name
-		}
+		dbName := as.Tables[0].Schema
 		readerPlan := b.buildCheckIndex(dbName, as)
 		ret = &CheckIndex{
 			DBName:            dbName.L,
