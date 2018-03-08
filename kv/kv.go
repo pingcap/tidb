@@ -251,8 +251,8 @@ type Storage interface {
 	GetOracle() oracle.Oracle
 	// SupportDeleteRange gets the storage support delete range or not.
 	SupportDeleteRange() (supported bool)
-	// GetSnapshotSetPriority gets a snapshot set the priority
-	GetSnapshotSetPriority(ver Version, priority int) (Snapshot, error)
+	// GetSnapshotWithPriority gets a snapshot set the priority
+	GetSnapshotWithPriority(ver Version, priority int) (Snapshot, error)
 }
 
 // FnKeyCmp is the function for iterator the keys

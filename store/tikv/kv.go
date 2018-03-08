@@ -259,7 +259,7 @@ func (s *tikvStore) GetSnapshot(ver kv.Version) (kv.Snapshot, error) {
 	return snapshot, nil
 }
 
-func (s *tikvStore) GetSnapshotSetPriority(ver kv.Version, priority int) (kv.Snapshot, error) {
+func (s *tikvStore) GetSnapshotWithPriority(ver kv.Version, priority int) (kv.Snapshot, error) {
 	snapshot := newTiKVSnapshot(s, ver)
 	snapshot.priority = kvPriorityToCommandPri(priority)
 	metrics.TiKVSnapshotCounter.Inc()
