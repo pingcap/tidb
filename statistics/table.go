@@ -334,7 +334,7 @@ func (t *Table) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idxID int
 	return result, errors.Trace(err)
 }
 
-// PseudoTable creates a pseudo table statistics when statistic can not be found in KV store.
+// PseudoTable creates a pseudo table statistics.
 func PseudoTable(tableID int64) *Table {
 	return &Table{
 		TableID: tableID,
