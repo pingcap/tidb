@@ -88,7 +88,7 @@ func (e *CheckIndexRangeExec) Open(ctx context.Context) error {
 	}
 	e.cols = append(e.cols, &model.ColumnInfo{
 		ID:   model.ExtraHandleID,
-		Name: model.NewCIStr("_rowid"),
+		Name: model.ExtraHandleName,
 	})
 	e.srcChunk = e.newChunk()
 	dagPB, err := e.buildDAGPB()

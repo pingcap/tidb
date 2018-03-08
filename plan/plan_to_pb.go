@@ -123,7 +123,7 @@ func (p *PhysicalIndexScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error)
 		if col.ID == model.ExtraHandleID {
 			columns = append(columns, &model.ColumnInfo{
 				ID:   model.ExtraHandleID,
-				Name: model.NewCIStr("_rowid"),
+				Name: model.ExtraHandleName,
 			})
 		} else {
 			columns = append(columns, tableColumns[col.Position])
