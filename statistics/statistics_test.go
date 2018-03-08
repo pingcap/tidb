@@ -351,7 +351,7 @@ func (s *testStatisticsSuite) TestHistogramProtoConversion(c *C) {
 }
 
 func mockHistogram(lower, num int64) *Histogram {
-	h := NewHistogram(0, num, 0, 0, types.NewFieldType(mysql.TypeLonglong), int(num))
+	h := NewHistogram(0, num, 0, 0, types.NewFieldType(mysql.TypeLonglong), int(num), 8)
 	for i := int64(0); i < num; i++ {
 		lower, upper := types.NewIntDatum(lower+i), types.NewIntDatum(lower+i)
 		h.AppendBucket(&lower, &upper, i+1, 1)

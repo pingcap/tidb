@@ -36,12 +36,14 @@ type SampleCollector struct {
 	MaxSampleSize int64
 	FMSketch      *FMSketch
 	CMSketch      *CMSketch
+	TotalSize     float64 // TotalSize is the total size of column
 }
 
 // MergeSampleCollector merges two sample collectors.
 func (c *SampleCollector) MergeSampleCollector(sc *stmtctx.StatementContext, rc *SampleCollector) {
 	c.NullCount += rc.NullCount
 	c.Count += rc.Count
+	c.TotalSize += rc.TotalSize
 	c.FMSketch.mergeFMSketch(rc.FMSketch)
 	if rc.CMSketch != nil {
 		err := c.CMSketch.MergeCMSketch(rc.CMSketch)
@@ -98,6 +100,7 @@ func (c *SampleCollector) collect(sc *stmtctx.StatementContext, d types.Datum) e
 		}
 	}
 	c.seenValues++
+	c.TotalSize += float64(len(d.GetBytes()) - 1)
 	// The following code use types.CopyDatum(d) because d may have a deep reference
 	// to the underlying slice, GC can't free them which lead to memory leak eventually.
 	// TODO: Refactor the proto to avoid copying here.

@@ -44,23 +44,23 @@ type testSelectivitySuite struct {
 	dom   *domain.Domain
 }
 
-func (suite *testSelectivitySuite) SetUpSuite(c *C) {
+func (s *testSelectivitySuite) SetUpSuite(c *C) {
 	store, dom, err := newStoreWithBootstrap(0)
 	c.Assert(err, IsNil)
-	suite.dom = dom
-	suite.store = store
+	s.dom = dom
+	s.store = store
 }
 
-func (suite *testSelectivitySuite) TearDownSuite(c *C) {
-	suite.dom.Close()
-	suite.store.Close()
+func (s *testSelectivitySuite) TearDownSuite(c *C) {
+	s.dom.Close()
+	s.store.Close()
 }
 
 // generateIntDatum will generate a datum slice, every dimension is begin from 0, end with num - 1.
 // If dimension is x, num is y, the total number of datum is y^x. And This slice is sorted.
 func (s *testSelectivitySuite) generateIntDatum(dimension, num int) ([]types.Datum, error) {
-	len := int(math.Pow(float64(num), float64(dimension)))
-	ret := make([]types.Datum, len)
+	length := int(math.Pow(float64(num), float64(dimension)))
+	ret := make([]types.Datum, length)
 	if dimension == 1 {
 		for i := 0; i < num; i++ {
 			ret[i] = types.NewIntDatum(int64(i))
@@ -68,7 +68,7 @@ func (s *testSelectivitySuite) generateIntDatum(dimension, num int) ([]types.Dat
 	} else {
 		sc := &stmtctx.StatementContext{TimeZone: time.Local}
 		// In this way, we can guarantee the datum is in order.
-		for i := 0; i < len; i++ {
+		for i := 0; i < length; i++ {
 			data := make([]types.Datum, dimension)
 			j := i
 			for k := 0; k < dimension; k++ {
@@ -88,7 +88,7 @@ func (s *testSelectivitySuite) generateIntDatum(dimension, num int) ([]types.Dat
 // mockStatsHistogram will create a statistics.Histogram, of which the data is uniform distribution.
 func mockStatsHistogram(id int64, values []types.Datum, repeat int64, tp *types.FieldType) *statistics.Histogram {
 	ndv := len(values)
-	histogram := statistics.NewHistogram(id, int64(ndv), 0, 0, tp, ndv)
+	histogram := statistics.NewHistogram(id, int64(ndv), 0, 0, tp, ndv, 0)
 	for i := 0; i < ndv; i++ {
 		histogram.AppendBucket(&values[i], &values[i], repeat*int64(i+1), repeat)
 	}

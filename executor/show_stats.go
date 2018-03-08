@@ -75,6 +75,7 @@ func (e *ShowExec) histogramToRow(dbName string, tblName string, colName string,
 		e.versionToTime(hist.LastUpdateVersion),
 		hist.NDV,
 		hist.NullCount,
+		hist.AvgColSize,
 	})
 }
 

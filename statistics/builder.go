@@ -15,6 +15,7 @@ package statistics
 
 import (
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -37,7 +38,7 @@ func NewSortedBuilder(sc *stmtctx.StatementContext, numBuckets, id int64, tp *ty
 		sc:              sc,
 		numBuckets:      numBuckets,
 		valuesPerBucket: 1,
-		hist:            NewHistogram(id, 0, 0, 0, tp, int(numBuckets)),
+		hist:            NewHistogram(id, 0, 0, 0, tp, int(numBuckets), 0),
 	}
 }
 
@@ -109,11 +110,29 @@ func BuildColumn(ctx sessionctx.Context, numBuckets, id int64, collector *Sample
 	if ndv > count {
 		ndv = count
 	}
-	hg := NewHistogram(id, ndv, collector.NullCount, 0, tp, int(numBuckets))
+	var avgColSize float64
+	switch tp.Tp {
+	case mysql.TypeFloat:
+		avgColSize = 4
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong,
+		mysql.TypeDouble, mysql.TypeYear:
+		avgColSize = 8
+	case mysql.TypeDuration, mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+		avgColSize = 16
+	case mysql.TypeNewDecimal:
+		avgColSize = types.MyDecimalStructSize
+	case mysql.TypeNull:
+		avgColSize = 0
+	default:
+		avgColSize = collector.TotalSize / float64(collector.Count)
+		break
+	}
+	hg := NewHistogram(id, ndv, collector.NullCount, 0, tp, int(numBuckets), avgColSize)
 	valuesPerBucket := float64(count)/float64(numBuckets) + 1
 
 	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
-	sampleFactor := float64(count) / float64(len(samples))
+	sampleNum := int64(len(samples))
+	sampleFactor := float64(count) / float64(sampleNum)
 	ndvFactor := float64(count) / float64(hg.NDV)
 	if ndvFactor > sampleFactor {
 		ndvFactor = sampleFactor
@@ -121,7 +140,7 @@ func BuildColumn(ctx sessionctx.Context, numBuckets, id int64, collector *Sample
 	bucketIdx := 0
 	var lastCount int64
 	hg.AppendBucket(&samples[0], &samples[0], int64(sampleFactor), int64(ndvFactor))
-	for i := int64(1); i < int64(len(samples)); i++ {
+	for i := int64(1); i < sampleNum; i++ {
 		cmp, err := hg.GetUpper(bucketIdx).CompareDatum(sc, &samples[i])
 		if err != nil {
 			return nil, errors.Trace(err)
