@@ -217,33 +217,20 @@ func GetRows4Test(ctx context.Context, sctx sessionctx.Context, rs ast.RecordSet
 		return nil, nil
 	}
 	var rows []types.Row
-	if sctx.GetSessionVars().EnableChunk && rs.SupportChunk() {
-		for {
-			// Since we collect all the rows, we can not reuse the chunk.
-			chk := rs.NewChunk()
-			iter := chunk.NewIterator4Chunk(chk)
+	for {
+		// Since we collect all the rows, we can not reuse the chunk.
+		chk := rs.NewChunk()
+		iter := chunk.NewIterator4Chunk(chk)
 
-			err := rs.NextChunk(ctx, chk)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if chk.NumRows() == 0 {
-				break
-			}
-
-			for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-				rows = append(rows, row)
-			}
+		err := rs.NextChunk(ctx, chk)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
-	} else {
-		for {
-			row, err := rs.Next(ctx)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if row == nil {
-				break
-			}
+		if chk.NumRows() == 0 {
+			break
+		}
+
+		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			rows = append(rows, row)
 		}
 	}
