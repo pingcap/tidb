@@ -246,15 +246,15 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	c.Check(err, IsNil)
 	checkRepeats(c, col)
 	col.PreCalculateScalar()
-	c.Check(col.Len(), Equals, 232)
+	c.Check(col.Len(), Equals, 226)
 	count := col.equalRowCount(types.NewIntDatum(1000))
 	c.Check(int(count), Equals, 0)
 	count = col.lessRowCount(types.NewIntDatum(1000))
 	c.Check(int(count), Equals, 10000)
 	count = col.lessRowCount(types.NewIntDatum(2000))
-	c.Check(int(count), Equals, 19995)
+	c.Check(int(count), Equals, 19999)
 	count = col.greaterRowCount(types.NewIntDatum(2000))
-	c.Check(int(count), Equals, 80003)
+	c.Check(int(count), Equals, 80000)
 	count = col.lessRowCount(types.NewIntDatum(200000000))
 	c.Check(int(count), Equals, 100000)
 	count = col.greaterRowCount(types.NewIntDatum(200000000))
@@ -262,7 +262,7 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	count = col.equalRowCount(types.NewIntDatum(200000000))
 	c.Check(count, Equals, 0.0)
 	count = col.betweenRowCount(types.NewIntDatum(3000), types.NewIntDatum(3500))
-	c.Check(int(count), Equals, 5008)
+	c.Check(int(count), Equals, 4994)
 	count = col.lessRowCount(types.NewIntDatum(1))
 	c.Check(int(count), Equals, 9)
 
@@ -280,6 +280,7 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	col, err = BuildColumn(mock.NewContext(), 256, 2, collectors[0], types.NewFieldType(mysql.TypeLonglong))
 	c.Assert(err, IsNil)
 	checkRepeats(c, col)
+	c.Assert(col.Len(), Equals, 250)
 
 	tblCount, col, _, err := buildIndex(ctx, bucketCount, 1, ast.RecordSet(s.rc))
 	c.Check(err, IsNil)
@@ -497,12 +498,12 @@ func (s *testStatisticsSuite) TestColumnRange(c *C) {
 	ran[0].HighExclude = true
 	count, err = tbl.GetRowCountByColumnRanges(sc, 0, ran)
 	c.Assert(err, IsNil)
-	c.Assert(int(count), Equals, 9994)
+	c.Assert(int(count), Equals, 9998)
 	ran[0].LowExclude = false
 	ran[0].HighExclude = false
 	count, err = tbl.GetRowCountByColumnRanges(sc, 0, ran)
 	c.Assert(err, IsNil)
-	c.Assert(int(count), Equals, 9996)
+	c.Assert(int(count), Equals, 10000)
 	ran[0].LowVal[0] = ran[0].HighVal[0]
 	count, err = tbl.GetRowCountByColumnRanges(sc, 0, ran)
 	c.Assert(err, IsNil)
