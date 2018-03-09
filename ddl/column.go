@@ -304,7 +304,7 @@ func (d *ddl) addTableColumn(t table.Table, columnInfo *model.ColumnInfo, reorgI
 	for {
 		startTime := time.Now()
 		handles = handles[:0]
-		err = iterateSnapshotRows(d.store, kv.PriorityNormal, t, version, seekHandle,
+		err = iterateSnapshotRows(d.store, t, version, seekHandle,
 			func(h int64, rowKey kv.Key, rawRecord []byte) (bool, error) {
 				handles = append(handles, h)
 				if len(handles) == defaultBatchCnt {
