@@ -19,6 +19,7 @@ import (
 
 	"github.com/cznic/sortutil"
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
@@ -53,8 +54,8 @@ func (c *CMSketch) InsertBytes(bytes []byte) {
 	}
 }
 
-func (c *CMSketch) queryValue(val types.Datum) (uint32, error) {
-	bytes, err := codec.EncodeValue(nil, val)
+func (c *CMSketch) queryValue(sc *stmtctx.StatementContext, val types.Datum) (uint32, error) {
+	bytes, err := codec.EncodeValue(sc, nil, val)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -113,6 +114,9 @@ func CMSketchToProto(c *CMSketch) *tipb.CMSketch {
 
 // CMSketchFromProto converts CMSketch from its protobuf representation.
 func CMSketchFromProto(protoSketch *tipb.CMSketch) *CMSketch {
+	if protoSketch == nil {
+		return nil
+	}
 	c := NewCMSketch(int32(len(protoSketch.Rows)), int32(len(protoSketch.Rows[0].Counters)))
 	for i, row := range protoSketch.Rows {
 		c.count = 0
@@ -154,7 +158,10 @@ func (c *CMSketch) TotalCount() uint64 {
 
 // Equal tests if two CM Sketch equal, it is only used for test.
 func (c *CMSketch) Equal(rc *CMSketch) bool {
-	if c.width != rc.width || c.depth != rc.depth {
+	if c == nil || rc == nil {
+		return c == nil && rc == nil
+	}
+	if c.width != rc.width || c.depth != rc.depth || c.count != rc.count {
 		return false
 	}
 	for i := range c.table {

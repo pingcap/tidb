@@ -19,15 +19,16 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/ranger"
 )
 
 // Error instances.
@@ -152,7 +153,7 @@ var clauseMsg = map[clauseCode]string{
 // It just builds the ast node straightforwardly.
 type planBuilder struct {
 	err          error
-	ctx          context.Context
+	ctx          sessionctx.Context
 	is           infoschema.InfoSchema
 	outerSchemas []*expression.Schema
 	inUpdateStmt bool
@@ -164,6 +165,11 @@ type planBuilder struct {
 	optFlag       uint64
 
 	curClause clauseCode
+
+	// rewriterPool stores the expressionRewriter we have created to reuse it if it has been released.
+	// rewriterCounter counts how many rewriter is being used.
+	rewriterPool    []*expressionRewriter
+	rewriterCounter int
 }
 
 func (b *planBuilder) build(node ast.Node) Plan {
@@ -183,6 +189,8 @@ func (b *planBuilder) build(node ast.Node) Plan {
 		return b.buildInsert(x)
 	case *ast.LoadDataStmt:
 		return b.buildLoadData(x)
+	case *ast.LoadStatsStmt:
+		return b.buildLoadStats(x)
 	case *ast.PrepareStmt:
 		return b.buildPrepare(x)
 	case *ast.SelectStmt:
@@ -220,26 +228,31 @@ func (b *planBuilder) buildExecute(v *ast.ExecuteStmt) Plan {
 		vars = append(vars, newExpr)
 	}
 	exe := &Execute{Name: v.Name, UsingVars: vars, ExecID: v.ExecID}
-	exe.SetSchema(expression.NewSchema())
 	return exe
 }
 
 func (b *planBuilder) buildDo(v *ast.DoStmt) Plan {
-	exprs := make([]expression.Expression, 0, len(v.Exprs))
 	dual := LogicalTableDual{RowCount: 1}.init(b.ctx)
+
+	p := LogicalProjection{Exprs: make([]expression.Expression, 0, len(v.Exprs))}.init(b.ctx)
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(v.Exprs))...)
 	for _, astExpr := range v.Exprs {
 		expr, _, err := b.rewrite(astExpr, dual, nil, true)
 		if err != nil {
 			b.err = errors.Trace(err)
 			return nil
 		}
-		exprs = append(exprs, expr)
+		p.Exprs = append(p.Exprs, expr)
+		schema.Append(&expression.Column{
+			FromID:   p.id,
+			Position: schema.Len() + 1,
+			RetType:  expr.GetType(),
+		})
 	}
-	dual.SetSchema(expression.NewSchema())
-	p := LogicalProjection{Exprs: exprs}.init(b.ctx)
-	setParentAndChildren(p, dual)
+	p.SetChildren(dual)
 	p.self = p
-	p.SetSchema(expression.NewSchema())
+	p.SetSchema(schema)
+	p.calculateNoDelay = true
 	return p
 }
 
@@ -257,7 +270,6 @@ func (b *planBuilder) buildSet(v *ast.SetStmt) Plan {
 				vars.Value = ast.NewValueExpr(cn.Name.Name.O)
 			}
 			mockTablePlan := LogicalTableDual{}.init(b.ctx)
-			mockTablePlan.SetSchema(expression.NewSchema())
 			assign.Expr, _, b.err = b.rewrite(vars.Value, mockTablePlan, nil, true)
 			if b.err != nil {
 				return nil
@@ -273,7 +285,6 @@ func (b *planBuilder) buildSet(v *ast.SetStmt) Plan {
 		}
 		p.VarAssigns = append(p.VarAssigns, assign)
 	}
-	p.SetSchema(expression.NewSchema())
 	return p
 }
 
@@ -379,10 +390,9 @@ func findIndexByName(indices []*model.IndexInfo, name model.CIStr) *model.IndexI
 	return nil
 }
 
-func (b *planBuilder) buildSelectLock(src Plan, lock ast.SelectLockType) *LogicalLock {
+func (b *planBuilder) buildSelectLock(src LogicalPlan, lock ast.SelectLockType) *LogicalLock {
 	selectLock := LogicalLock{Lock: lock}.init(b.ctx)
-	setParentAndChildren(selectLock, src)
-	selectLock.SetSchema(src.Schema())
+	selectLock.SetChildren(src)
 	return selectLock
 }
 
@@ -395,30 +405,104 @@ func (b *planBuilder) buildPrepare(x *ast.PrepareStmt) Plan {
 	} else {
 		p.SQLText = x.SQLText
 	}
-	p.SetSchema(expression.NewSchema())
 	return p
 }
 
+func (b *planBuilder) buildCheckIndex(dbName model.CIStr, as *ast.AdminStmt) Plan {
+	tblName := as.Tables[0]
+	tbl, err := b.is.TableByName(dbName, tblName.Name)
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
+	tblInfo := tbl.Meta()
+
+	// get index information
+	var idx *model.IndexInfo
+	for _, index := range tblInfo.Indices {
+		if index.Name.L == as.Index {
+			idx = index
+			break
+		}
+	}
+	if idx == nil {
+		b.err = errors.Errorf("index %s do not exist", as.Index)
+		return nil
+	}
+	if idx.State != model.StatePublic {
+		b.err = errors.Errorf("index %s state %s isn't public", as.Index, idx.State)
+		return nil
+	}
+
+	id := 1
+	columns := make([]*model.ColumnInfo, 0, len(idx.Columns))
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(idx.Columns))...)
+	for _, idxCol := range idx.Columns {
+		for _, col := range tblInfo.Columns {
+			if idxCol.Name.L == col.Name.L {
+				columns = append(columns, col)
+				schema.Append(&expression.Column{
+					FromID:   id,
+					Position: schema.Len() + 1,
+					RetType:  &col.FieldType,
+				})
+			}
+		}
+	}
+	is := PhysicalIndexScan{
+		Table:            tblInfo,
+		TableAsName:      &tblName.Name,
+		DBName:           dbName,
+		Columns:          columns,
+		Index:            idx,
+		dataSourceSchema: schema,
+		Ranges:           ranger.FullNewRange(),
+		KeepOrder:        false,
+	}.init(b.ctx)
+	is.stats = &statsInfo{}
+	cop := &copTask{indexPlan: is}
+	// It's double read case.
+	ts := PhysicalTableScan{Columns: columns, Table: is.Table}.init(b.ctx)
+	ts.SetSchema(is.dataSourceSchema)
+	cop.tablePlan = ts
+	is.initSchema(id, idx, true)
+	t := finishCopTask(b.ctx, cop)
+
+	rootT := t.(*rootTask)
+	return rootT.p
+}
+
 func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
-	var p Plan
+	var ret Plan
 
 	switch as.Tp {
 	case ast.AdminCheckTable:
-		p = &CheckTable{Tables: as.Tables}
-		p.SetSchema(expression.NewSchema())
+		p := &CheckTable{Tables: as.Tables}
+		ret = p
+	case ast.AdminCheckIndex:
+		dbName := as.Tables[0].Schema
+		readerPlan := b.buildCheckIndex(dbName, as)
+		ret = &CheckIndex{
+			DBName:            dbName.L,
+			IdxName:           as.Index,
+			IndexLookUpReader: readerPlan.(*PhysicalIndexLookUpReader),
+		}
 	case ast.AdminShowDDL:
-		p = &ShowDDL{}
+		p := &ShowDDL{}
 		p.SetSchema(buildShowDDLFields())
+		ret = p
 	case ast.AdminShowDDLJobs:
-		p = &ShowDDLJobs{}
+		p := &ShowDDLJobs{}
 		p.SetSchema(buildShowDDLJobsFields())
+		ret = p
 	case ast.AdminCancelDDLJobs:
-		p = &CancelDDLJobs{JobIDs: as.JobIDs}
+		p := &CancelDDLJobs{JobIDs: as.JobIDs}
 		p.SetSchema(buildCancelDDLJobsFields())
+		ret = p
 	default:
 		b.err = ErrUnsupportedType.Gen("Unsupported type %T", as)
 	}
-	return p
+	return ret
 }
 
 // getColsInfo returns the info of index columns, normal columns and primary key.
@@ -469,7 +553,6 @@ func (b *planBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) Plan {
 			p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{TableInfo: tbl.TableInfo, PKInfo: pkInfo, ColsInfo: colInfo})
 		}
 	}
-	p.SetSchema(&expression.Schema{})
 	return p
 }
 
@@ -484,15 +567,28 @@ func (b *planBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt) Plan {
 		}
 		p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{TableInfo: tblInfo, IndexInfo: idx})
 	}
-	p.SetSchema(&expression.Schema{})
+	return p
+}
+
+func (b *planBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt) Plan {
+	p := &Analyze{}
+	tblInfo := as.TableNames[0].TableInfo
+	for _, idx := range tblInfo.Indices {
+		if idx.State == model.StatePublic {
+			p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{TableInfo: tblInfo, IndexInfo: idx})
+		}
+	}
 	return p
 }
 
 func (b *planBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) Plan {
-	if len(as.IndexNames) == 0 {
-		return b.buildAnalyzeTable(as)
+	if as.IndexFlag {
+		if len(as.IndexNames) == 0 {
+			return b.buildAnalyzeAllIndex(as)
+		}
+		return b.buildAnalyzeIndex(as)
 	}
-	return b.buildAnalyzeIndex(as)
+	return b.buildAnalyzeTable(as)
 }
 
 func buildShowDDLFields() *expression.Schema {
@@ -621,13 +717,13 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 			}
 			p.Conditions = append(p.Conditions, expr)
 		}
+		p.ResolveIndices()
 	}
 	return p
 }
 
 func (b *planBuilder) buildSimple(node ast.StmtNode) Plan {
 	p := &Simple{Statement: node}
-	p.SetSchema(expression.NewSchema())
 
 	switch raw := node.(type) {
 	case *ast.CreateUserStmt, *ast.DropUserStmt, *ast.AlterUserStmt:
@@ -914,7 +1010,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 				return nil
 			}
 		}
-		insertPlan.SelectPlan, b.err = doOptimize(b.optFlag, selectPlan.(LogicalPlan), b.ctx)
+		insertPlan.SelectPlan, b.err = doOptimize(b.optFlag, selectPlan.(LogicalPlan))
 		if b.err != nil {
 			return nil
 		}
@@ -925,7 +1021,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 	if b.err != nil {
 		return nil
 	}
-	insertPlan.SetSchema(expression.NewSchema())
+	insertPlan.ResolveIndices()
 	return insertPlan
 }
 
@@ -949,7 +1045,11 @@ func (b *planBuilder) buildLoadData(ld *ast.LoadDataStmt) Plan {
 	mockTablePlan := LogicalTableDual{}.init(b.ctx)
 	mockTablePlan.SetSchema(schema)
 	p.GenCols = b.resolveGeneratedColumns(tableInPlan.Cols(), nil, mockTablePlan)
-	p.SetSchema(expression.NewSchema())
+	return p
+}
+
+func (b *planBuilder) buildLoadStats(ld *ast.LoadStatsStmt) Plan {
+	p := &LoadStats{Path: ld.Path}
 	return p
 }
 
@@ -997,11 +1097,11 @@ func (b *planBuilder) buildDDL(node ast.DDLNode) Plan {
 			table:     v.Table.Name.L,
 		})
 	case *ast.DropTableStmt:
-		for _, table := range v.Tables {
+		for _, tableVal := range v.Tables {
 			b.visitInfo = append(b.visitInfo, visitInfo{
 				privilege: mysql.DropPriv,
-				db:        table.Schema.L,
-				table:     table.Name.L,
+				db:        tableVal.Schema.L,
+				table:     tableVal.Name.L,
 			})
 		}
 	case *ast.TruncateTableStmt:
@@ -1024,7 +1124,6 @@ func (b *planBuilder) buildDDL(node ast.DDLNode) Plan {
 	}
 
 	p := &DDL{Statement: node}
-	p.SetSchema(expression.NewSchema())
 	return p
 }
 
@@ -1054,19 +1153,17 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 			return nil
 		}
 	}
-	setParents4FinalPlan(pp)
 	p := &Explain{StmtPlan: pp}
 	switch strings.ToLower(explain.Format) {
 	case ast.ExplainFormatROW:
-		retFields := []string{"id", "parents", "children", "task", "operator info"}
+		retFields := []string{"id", "parents", "children", "task", "operator info", "count"}
 		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
 		for _, fieldName := range retFields {
 			schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
 		}
-		schema.Append(buildColumn("", "count", mysql.TypeDouble, mysql.MaxRealWidth))
 		p.SetSchema(schema)
 		p.explainedPlans = map[int]bool{}
-		p.prepareRootTaskInfo(p.StmtPlan.(PhysicalPlan))
+		p.prepareRootTaskInfo(p.StmtPlan.(PhysicalPlan), "")
 	case ast.ExplainFormatDOT:
 		retFields := []string{"dot contents"}
 		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
@@ -1216,6 +1313,9 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 			"Repeats", "Lower_Bound", "Upper_Bound"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeTiny, mysql.TypeLonglong,
 			mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar}
+	case ast.ShowStatsHealthy:
+		names = []string{"Db_name", "Table_name", "Healthy"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong}
 	case ast.ShowProfiles: // ShowProfiles is deprecated.
 		names = []string{"Query_ID", "Duration", "Query"}
 		ftypes = []byte{mysql.TypeLong, mysql.TypeDouble, mysql.TypeVarchar}

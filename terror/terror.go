@@ -19,9 +19,9 @@ import (
 	"runtime"
 	"strconv"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
+	log "github.com/sirupsen/logrus"
 )
 
 // Global error instances.
@@ -286,11 +286,11 @@ func (e *Error) getMySQLErrorCode() uint16 {
 
 var (
 	// ErrClassToMySQLCodes is the map of ErrClass to code-map.
-	ErrClassToMySQLCodes map[ErrClass](map[ErrCode]uint16)
+	ErrClassToMySQLCodes map[ErrClass]map[ErrCode]uint16
 )
 
 func init() {
-	ErrClassToMySQLCodes = make(map[ErrClass](map[ErrCode]uint16))
+	ErrClassToMySQLCodes = make(map[ErrClass]map[ErrCode]uint16)
 	defaultMySQLErrorCode = mysql.ErrUnknown
 }
 

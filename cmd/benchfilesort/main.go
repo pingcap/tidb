@@ -24,7 +24,6 @@ import (
 	"runtime/pprof"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/filesort"
 	"github.com/pingcap/tidb/util/logutil"
+	log "github.com/sirupsen/logrus"
 )
 
 type comparableRow struct {
@@ -77,16 +77,16 @@ func encodeRow(b []byte, row *comparableRow) ([]byte, error) {
 		head = make([]byte, 8)
 		body []byte
 	)
-
-	body, err = codec.EncodeKey(body, row.key...)
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	body, err = codec.EncodeKey(sc, body, row.key...)
 	if err != nil {
 		return b, errors.Trace(err)
 	}
-	body, err = codec.EncodeKey(body, row.val...)
+	body, err = codec.EncodeKey(sc, body, row.val...)
 	if err != nil {
 		return b, errors.Trace(err)
 	}
-	body, err = codec.EncodeKey(body, types.NewIntDatum(row.handle))
+	body, err = codec.EncodeKey(sc, body, types.NewIntDatum(row.handle))
 	if err != nil {
 		return b, errors.Trace(err)
 	}

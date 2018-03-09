@@ -15,10 +15,10 @@ package tables
 
 import (
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 )
@@ -26,7 +26,7 @@ import (
 // VirtualDataSource is used to extract data from the struct in memory.
 type VirtualDataSource interface {
 	// GetRows do the actual job
-	GetRows(ctx context.Context) (fullRows [][]types.Datum, err error)
+	GetRows(ctx sessionctx.Context) (fullRows [][]types.Datum, err error)
 	// Meta return the meta of table
 	Meta() *model.TableInfo
 	// Cols return the cols of table
@@ -47,7 +47,7 @@ func CreateVirtualTable(dataSource VirtualDataSource) *VirtualTable {
 }
 
 // IterRecords implements table.Table Type interface.
-func (vt *VirtualTable) IterRecords(ctx context.Context, startKey kv.Key, cols []*table.Column,
+func (vt *VirtualTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols []*table.Column,
 	fn table.RecordIterFunc) error {
 	if len(startKey) != 0 {
 		return table.ErrUnsupportedOp
@@ -69,12 +69,12 @@ func (vt *VirtualTable) IterRecords(ctx context.Context, startKey kv.Key, cols [
 }
 
 // RowWithCols implements table.Table Type interface.
-func (vt *VirtualTable) RowWithCols(ctx context.Context, h int64, cols []*table.Column) ([]types.Datum, error) {
+func (vt *VirtualTable) RowWithCols(ctx sessionctx.Context, h int64, cols []*table.Column) ([]types.Datum, error) {
 	return nil, table.ErrUnsupportedOp
 }
 
 // Row implements table.Table Type interface.
-func (vt *VirtualTable) Row(ctx context.Context, h int64) ([]types.Datum, error) {
+func (vt *VirtualTable) Row(ctx sessionctx.Context, h int64) ([]types.Datum, error) {
 	return nil, table.ErrUnsupportedOp
 }
 
@@ -124,32 +124,32 @@ func (vt *VirtualTable) RecordKey(h int64) kv.Key {
 }
 
 // AddRecord implements table.Table Type interface.
-func (vt *VirtualTable) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
+func (vt *VirtualTable) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
 	return 0, table.ErrUnsupportedOp
 }
 
 // RemoveRecord implements table.Table Type interface.
-func (vt *VirtualTable) RemoveRecord(ctx context.Context, h int64, r []types.Datum) error {
+func (vt *VirtualTable) RemoveRecord(ctx sessionctx.Context, h int64, r []types.Datum) error {
 	return table.ErrUnsupportedOp
 }
 
 // UpdateRecord implements table.Table Type interface.
-func (vt *VirtualTable) UpdateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
+func (vt *VirtualTable) UpdateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
 	return table.ErrUnsupportedOp
 }
 
 // AllocAutoID implements table.Table Type interface.
-func (vt *VirtualTable) AllocAutoID(ctx context.Context) (int64, error) {
+func (vt *VirtualTable) AllocAutoID(ctx sessionctx.Context) (int64, error) {
 	return 0, table.ErrUnsupportedOp
 }
 
 // Allocator implements table.Table Type interface.
-func (vt *VirtualTable) Allocator(ctx context.Context) autoid.Allocator {
+func (vt *VirtualTable) Allocator(ctx sessionctx.Context) autoid.Allocator {
 	return nil
 }
 
 // RebaseAutoID implements table.Table Type interface.
-func (vt *VirtualTable) RebaseAutoID(ctx context.Context, newBase int64, isSetStep bool) error {
+func (vt *VirtualTable) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool) error {
 	return table.ErrUnsupportedOp
 }
 
@@ -159,7 +159,7 @@ func (vt *VirtualTable) Meta() *model.TableInfo {
 }
 
 // Seek implements table.Table Type interface.
-func (vt *VirtualTable) Seek(ctx context.Context, h int64) (int64, bool, error) {
+func (vt *VirtualTable) Seek(ctx sessionctx.Context, h int64) (int64, bool, error) {
 	return 0, false, table.ErrUnsupportedOp
 }
 

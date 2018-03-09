@@ -16,7 +16,6 @@ package expression
 import (
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
+	log "github.com/sirupsen/logrus"
 )
 
 // ExpressionsToPB converts expression to tipb.Expr.
@@ -106,7 +106,7 @@ func (pc PbConverter) constantToPBExpr(con *Constant) *tipb.Expr {
 	case types.KindUint64:
 		tp = tipb.ExprType_Uint64
 		val = codec.EncodeUint(nil, d.GetUint64())
-	case types.KindString:
+	case types.KindString, types.KindBinaryLiteral:
 		tp = tipb.ExprType_String
 		val = d.GetBytes()
 	case types.KindBytes:
@@ -123,7 +123,7 @@ func (pc PbConverter) constantToPBExpr(con *Constant) *tipb.Expr {
 		val = codec.EncodeInt(nil, int64(d.GetMysqlDuration().Duration))
 	case types.KindMysqlDecimal:
 		tp = tipb.ExprType_MysqlDecimal
-		val = codec.EncodeDecimal(nil, d)
+		val = codec.EncodeDecimal(nil, d.GetMysqlDecimal(), d.Length(), d.Frac())
 	case types.KindMysqlTime:
 		if pc.client.IsRequestTypeSupported(kv.ReqTypeDAG, int64(tipb.ExprType_MysqlTime)) {
 			tp = tipb.ExprType_MysqlTime

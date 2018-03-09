@@ -53,6 +53,52 @@ const (
 	CmdSplitRegion
 )
 
+func (t CmdType) String() string {
+	switch t {
+	case CmdGet:
+		return "Get"
+	case CmdScan:
+		return "Scan"
+	case CmdPrewrite:
+		return "Prewrite"
+	case CmdCommit:
+		return "Commit"
+	case CmdCleanup:
+		return "Cleanup"
+	case CmdBatchGet:
+		return "BatchGet"
+	case CmdBatchRollback:
+		return "BatchRollback"
+	case CmdScanLock:
+		return "ScanLock"
+	case CmdResolveLock:
+		return "ResolveLock"
+	case CmdGC:
+		return "GC"
+	case CmdDeleteRange:
+		return "DeleteRange"
+	case CmdRawGet:
+		return "RawGet"
+	case CmdRawPut:
+		return "RawPut"
+	case CmdRawDelete:
+		return "RawDelete"
+	case CmdRawScan:
+		return "RawScan"
+	case CmdCop:
+		return "Cop"
+	case CmdCopStream:
+		return "CopStream"
+	case CmdMvccGetByKey:
+		return "MvccGetByKey"
+	case CmdMvccGetByStartTs:
+		return "MvccGetByStartTS"
+	case CmdSplitRegion:
+		return "SplitRegion"
+	}
+	return "Unknown"
+}
+
 // Request wraps all kv/coprocessor requests.
 type Request struct {
 	kvrpcpb.Context
@@ -97,10 +143,18 @@ type Response struct {
 	RawDelete        *kvrpcpb.RawDeleteResponse
 	RawScan          *kvrpcpb.RawScanResponse
 	Cop              *coprocessor.Response
-	CopStream        tikvpb.Tikv_CoprocessorStreamClient
+	CopStream        *CopStreamResponse
 	MvccGetByKey     *kvrpcpb.MvccGetByKeyResponse
 	MvccGetByStartTS *kvrpcpb.MvccGetByStartTsResponse
 	SplitRegion      *kvrpcpb.SplitRegionResponse
+}
+
+// CopStreamResponse combinates tikvpb.Tikv_CoprocessorStreamClient and the first Recv() result together.
+// In streaming API, get grpc stream client may not involve any network packet, then region error have
+// to be handled in Recv() function. This struct facilitates the error handling.
+type CopStreamResponse struct {
+	tikvpb.Tikv_CoprocessorStreamClient
+	*coprocessor.Response // The first result of Recv()
 }
 
 // SetContext set the Context field for the given req to the specified ctx.
@@ -142,6 +196,8 @@ func SetContext(req *Request, region *metapb.Region, peer *metapb.Peer) error {
 	case CmdRawScan:
 		req.RawScan.Context = ctx
 	case CmdCop:
+		req.Cop.Context = ctx
+	case CmdCopStream:
 		req.Cop.Context = ctx
 	case CmdMvccGetByKey:
 		req.MvccGetByKey.Context = ctx
@@ -225,6 +281,12 @@ func GenRegionErrorResp(req *Request, e *errorpb.Error) (*Response, error) {
 		resp.Cop = &coprocessor.Response{
 			RegionError: e,
 		}
+	case CmdCopStream:
+		resp.CopStream = &CopStreamResponse{
+			Response: &coprocessor.Response{
+				RegionError: e,
+			},
+		}
 	case CmdMvccGetByKey:
 		resp.MvccGetByKey = &kvrpcpb.MvccGetByKeyResponse{
 			RegionError: e,
@@ -279,6 +341,8 @@ func (resp *Response) GetRegionError() (*errorpb.Error, error) {
 		e = resp.RawScan.GetRegionError()
 	case CmdCop:
 		e = resp.Cop.GetRegionError()
+	case CmdCopStream:
+		e = resp.CopStream.Response.GetRegionError()
 	case CmdMvccGetByKey:
 		e = resp.MvccGetByKey.GetRegionError()
 	case CmdMvccGetByStartTs:

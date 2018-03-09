@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/memory"
 )
 
 // StatementContext contains variables for a statement.
@@ -37,6 +38,7 @@ type StatementContext struct {
 	InShowWarning          bool
 	UseCache               bool
 	PadCharToFullLength    bool
+	BatchCheck             bool
 
 	// mu struct holds variables that change during execution.
 	mu struct {
@@ -51,6 +53,7 @@ type StatementContext struct {
 	TimeZone     *time.Location
 	Priority     mysql.PriorityEnum
 	NotFillCache bool
+	MemTracker   *memory.Tracker
 }
 
 // AddAffectedRows adds affected rows.

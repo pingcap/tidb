@@ -17,16 +17,16 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testSchemaSuite{})
@@ -44,7 +44,7 @@ func testSchemaInfo(c *C, d *ddl, name string) *model.DBInfo {
 	return dbInfo
 }
 
-func testCreateSchema(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo) *model.Job {
+func testCreateSchema(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo) *model.Job {
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		Type:       model.ActionCreateSchema,
@@ -61,7 +61,7 @@ func testCreateSchema(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo) *
 	return job
 }
 
-func testDropSchema(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo) (*model.Job, int64) {
+func testDropSchema(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo) (*model.Job, int64) {
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		Type:       model.ActionDropSchema,
@@ -118,7 +118,7 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_schema")
 	defer store.Close()
-	d := testNewDDL(goctx.Background(), nil, store, nil, nil, testLease)
+	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
 	defer d.Stop()
 	ctx := testNewContext(d)
 	dbInfo := testSchemaInfo(c, d, "test")
@@ -180,12 +180,12 @@ func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
 	store := testCreateStore(c, "test_schema_wait")
 	defer store.Close()
 
-	d1 := testNewDDL(goctx.Background(), nil, store, nil, nil, testLease)
+	d1 := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
 	defer d1.Stop()
 
 	testCheckOwner(c, d1, true)
 
-	d2 := testNewDDL(goctx.Background(), nil, store, nil, nil, testLease*4)
+	d2 := testNewDDL(context.Background(), nil, store, nil, nil, testLease*4)
 	defer d2.Stop()
 	ctx := testNewContext(d2)
 
@@ -220,7 +220,7 @@ LOOP:
 		select {
 		case <-ticker.C:
 			d.Stop()
-			d.start(goctx.Background())
+			d.start(context.Background())
 		case err := <-done:
 			c.Assert(err, IsNil)
 			break LOOP
@@ -233,7 +233,7 @@ func (s *testSchemaSuite) TestSchemaResume(c *C) {
 	store := testCreateStore(c, "test_schema_resume")
 	defer store.Close()
 
-	d1 := testNewDDL(goctx.Background(), nil, store, nil, nil, testLease)
+	d1 := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
 	defer d1.Stop()
 
 	testCheckOwner(c, d1, true)

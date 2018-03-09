@@ -69,7 +69,7 @@ type pathLeg struct {
 
 // arrayIndexAsterisk is for parsing `*` into a number.
 // we need this number represent "all".
-const arrayIndexAsterisk int = -1
+const arrayIndexAsterisk = -1
 
 // pathExpressionFlag holds attributes of PathExpression
 type pathExpressionFlag byte
@@ -81,7 +81,7 @@ const (
 
 // containsAnyAsterisk returns true if pef contains any asterisk.
 func (pef pathExpressionFlag) containsAnyAsterisk() bool {
-	pef &= (pathExpressionContainsAsterisk | pathExpressionContainsDoubleAsterisk)
+	pef &= pathExpressionContainsAsterisk | pathExpressionContainsDoubleAsterisk
 	return byte(pef) != 0
 }
 
@@ -107,6 +107,14 @@ func (pe PathExpression) popOneLeg() (pathLeg, PathExpression) {
 		}
 	}
 	return pe.legs[0], newPe
+}
+
+// popOneLastLeg returns the a parent PathExpression and the last pathLeg
+func (pe PathExpression) popOneLastLeg() (PathExpression, pathLeg) {
+	lastLegIdx := len(pe.legs) - 1
+	lastLeg := pe.legs[lastLegIdx]
+	// It is used only in modification, it has been checked that there is no asterisks.
+	return PathExpression{legs: pe.legs[:lastLegIdx]}, lastLeg
 }
 
 // ParseJSONPathExpr parses a JSON path expression. Returns a PathExpression

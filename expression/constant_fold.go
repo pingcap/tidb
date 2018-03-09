@@ -14,7 +14,7 @@
 package expression
 
 import (
-	log "github.com/Sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
 )
 
 // FoldConstant does constant folding optimization on an expression excluding deferred ones.

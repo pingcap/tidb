@@ -18,19 +18,19 @@ import (
 	"sync/atomic"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/sqlexec"
+	log "github.com/sirupsen/logrus"
 )
 
 type statsCache map[int64]*Table
 
 // Handle can update stats info periodically.
 type Handle struct {
-	ctx context.Context
+	ctx sessionctx.Context
 	// LastVersion is the latest update version before last lease. Exported for test.
 	LastVersion uint64
 	// PrevLastVersion is the latest update version before two lease. Exported for test.
@@ -49,6 +49,8 @@ type Handle struct {
 	listHead *SessionStatsCollector
 	// globalMap contains all the delta map from collectors when we dump them to KV.
 	globalMap tableDeltaMap
+	// feedback is used to store query feedback info.
+	feedback []*QueryFeedback
 
 	Lease time.Duration
 }
@@ -69,8 +71,11 @@ func (h *Handle) Clear() {
 	h.globalMap = make(tableDeltaMap)
 }
 
+// For now, we do not use the query feedback, so just set it to 1.
+const maxQueryFeedBackCount = 1
+
 // NewHandle creates a Handle for update stats.
-func NewHandle(ctx context.Context, lease time.Duration) *Handle {
+func NewHandle(ctx sessionctx.Context, lease time.Duration) *Handle {
 	handle := &Handle{
 		ctx:             ctx,
 		ddlEventCh:      make(chan *util.Event, 100),
@@ -78,9 +83,18 @@ func NewHandle(ctx context.Context, lease time.Duration) *Handle {
 		listHead:        &SessionStatsCollector{mapper: make(tableDeltaMap)},
 		globalMap:       make(tableDeltaMap),
 		Lease:           lease,
+		feedback:        make([]*QueryFeedback, 0, maxQueryFeedBackCount),
 	}
 	handle.statsCache.Store(statsCache{})
 	return handle
+}
+
+// GetQueryFeedback gets the query feedback. It is only use in test.
+func (h *Handle) GetQueryFeedback() []*QueryFeedback {
+	defer func() {
+		h.feedback = h.feedback[:0]
+	}()
+	return h.feedback
 }
 
 // AnalyzeResultCh returns analyze result channel in handle.
@@ -111,7 +125,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 			continue
 		}
 		tableInfo := table.Meta()
-		tbl, err := h.tableStatsFromStorage(tableInfo)
+		tbl, err := h.tableStatsFromStorage(tableInfo, false)
 		// Error is not nil may mean that there are some ddl changes on this table, we will not update it.
 		if err != nil {
 			log.Errorf("Error occurred when read table stats for table id %d. The error message is %s.", tableID, errors.ErrorStack(err))
@@ -167,7 +181,7 @@ func (h *Handle) LoadNeededHistograms() error {
 	for _, col := range cols {
 		tbl := h.GetTableStats(col.tableID).copy()
 		c, ok := tbl.Columns[col.columnID]
-		if !ok || len(c.Buckets) > 0 {
+		if !ok || c.Len() > 0 {
 			histogramNeededColumns.delete(col)
 			continue
 		}

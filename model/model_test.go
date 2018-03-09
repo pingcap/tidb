@@ -14,7 +14,9 @@
 package model
 
 import (
+	"fmt"
 	"testing"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
@@ -102,6 +104,8 @@ func (*testModelSuite) TestModelBasic(c *C) {
 	c.Assert(tp.String(), Equals, "")
 	has := index.HasPrefixIndex()
 	c.Assert(has, Equals, true)
+	t := table.GetUpdateTime()
+	c.Assert(t, Equals, tsConvert2Time(table.UpdateTS))
 
 	// Corner cases
 	column.Flag ^= mysql.PriKeyFlag
@@ -119,6 +123,17 @@ func (*testModelSuite) TestModelBasic(c *C) {
 	}
 	no := anIndex.HasPrefixIndex()
 	c.Assert(no, Equals, false)
+}
+
+func (*testModelSuite) TestJobStartTime(c *C) {
+	job := &Job{
+		ID:         123,
+		BinlogInfo: &HistoryInfo{},
+	}
+	t := time.Unix(0, 0)
+	c.Assert(t, Equals, tsConvert2Time(job.StartTS))
+	ret := fmt.Sprintf("%s", job)
+	c.Assert(job.String(), Equals, ret)
 }
 
 func (*testModelSuite) TestJobCodec(c *C) {

@@ -19,10 +19,10 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testleak"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 const (
@@ -44,7 +44,7 @@ type testPrefixSuite struct {
 
 func (s *testPrefixSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
-	store, err := tikv.NewMockTikvStore()
+	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	s.s = store
 
@@ -111,7 +111,7 @@ func (c *MockContext) CommitTxn() error {
 	if c.txn == nil {
 		return nil
 	}
-	return c.txn.Commit(goctx.Background())
+	return c.txn.Commit(context.Background())
 }
 
 func (s *testPrefixSuite) TestPrefix(c *C) {
@@ -133,7 +133,7 @@ func (s *testPrefixSuite) TestPrefix(c *C) {
 		return true
 	})
 	c.Assert(err, IsNil)
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 }
 

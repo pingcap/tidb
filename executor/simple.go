@@ -17,20 +17,21 @@ import (
 	"fmt"
 	"strings"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/auth"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
-	goctx "golang.org/x/net/context"
+	log "github.com/sirupsen/logrus"
+	"golang.org/x/net/context"
 )
 
 // SimpleExec represents simple statement executor.
@@ -47,11 +48,19 @@ type SimpleExec struct {
 }
 
 // Next implements Execution Next interface.
-func (e *SimpleExec) Next(goCtx goctx.Context) (Row, error) {
+func (e *SimpleExec) Next(ctx context.Context) (Row, error) {
+	return nil, errors.Trace(e.run(ctx))
+}
+
+// NextChunk implements the Executor NextChunk interface.
+func (e *SimpleExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+	return errors.Trace(e.run(ctx))
+}
+
+func (e *SimpleExec) run(ctx context.Context) (err error) {
 	if e.done {
-		return nil, nil
+		return nil
 	}
-	var err error
 	switch x := e.Statement.(type) {
 	case *ast.UseStmt:
 		err = e.executeUse(x)
@@ -75,15 +84,12 @@ func (e *SimpleExec) Next(goCtx goctx.Context) (Row, error) {
 		err = e.executeKillStmt(x)
 	case *ast.BinlogStmt:
 		// We just ignore it.
-		return nil, nil
+		return nil
 	case *ast.DropStatsStmt:
 		err = e.executeDropStats(x)
 	}
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	e.done = true
-	return nil, nil
+	return errors.Trace(err)
 }
 
 func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
@@ -97,8 +103,8 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 	// The server sets this variable whenever the default database changes.
 	// See http://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_character_set_database
 	sessionVars := e.ctx.GetSessionVars()
-	sessionVars.Systems[variable.CharsetDatabase] = dbinfo.Charset
-	sessionVars.Systems[variable.CollationDatabase] = dbinfo.Collate
+	terror.Log(errors.Trace(sessionVars.SetSystemVar(variable.CharsetDatabase, dbinfo.Charset)))
+	terror.Log(errors.Trace(sessionVars.SetSystemVar(variable.CollationDatabase, dbinfo.Collate)))
 	return nil
 }
 
@@ -147,13 +153,9 @@ func (e *SimpleExec) executeCreateUser(s *ast.CreateUserStmt) error {
 			}
 			continue
 		}
-		pwd := ""
-		if spec.AuthOpt != nil {
-			if spec.AuthOpt.ByAuthString {
-				pwd = auth.EncodePassword(spec.AuthOpt.AuthString)
-			} else {
-				pwd = auth.EncodePassword(spec.AuthOpt.HashString)
-			}
+		pwd, ok := spec.EncodedPassword()
+		if !ok {
+			return errors.Trace(ErrPasswordFormat)
 		}
 		user := fmt.Sprintf(`("%s", "%s", "%s")`, spec.User.Hostname, spec.User.Username, pwd)
 		users = append(users, user)
@@ -162,7 +164,7 @@ func (e *SimpleExec) executeCreateUser(s *ast.CreateUserStmt) error {
 		return nil
 	}
 	sql := fmt.Sprintf(`INSERT INTO %s.%s (Host, User, Password) VALUES %s;`, mysql.SystemDB, mysql.UserTable, strings.Join(users, ", "))
-	_, err := e.ctx.(sqlexec.SQLExecutor).Execute(goctx.Background(), sql)
+	_, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -213,7 +215,7 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 	}
 	if len(failedUsers) > 0 {
 		// Commit the transaction even if we returns error
-		err := e.ctx.Txn().Commit(goctx.Background())
+		err := e.ctx.Txn().Commit(context.Background())
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -245,7 +247,7 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 	}
 	if len(failedUsers) > 0 {
 		// Commit the transaction even if we returns error
-		err := e.ctx.Txn().Commit(goctx.Background())
+		err := e.ctx.Txn().Commit(context.Background())
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -256,7 +258,7 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 	return nil
 }
 
-func userExists(ctx context.Context, name string, host string) (bool, error) {
+func userExists(ctx sessionctx.Context, name string, host string) (bool, error) {
 	sql := fmt.Sprintf(`SELECT * FROM %s.%s WHERE User="%s" AND Host="%s";`, mysql.SystemDB, mysql.UserTable, name, host)
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
@@ -314,7 +316,7 @@ func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
 			return errors.Trace(err)
 		}
 		defer sysSessionPool.Put(ctx)
-		err = dom.PrivilegeHandle().Update(ctx.(context.Context))
+		err = dom.PrivilegeHandle().Update(ctx.(sessionctx.Context))
 		return errors.Trace(err)
 	}
 	return nil

@@ -19,16 +19,16 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testEvaluatorSuite{})
@@ -57,7 +57,7 @@ func (c *mockKvClient) IsRequestTypeSupported(reqType, subType int64) bool {
 }
 
 // Send implements the kv.Client interface..
-func (c *mockKvClient) Send(ctx goctx.Context, req *kv.Request) kv.Response {
+func (c *mockKvClient) Send(ctx context.Context, req *kv.Request) kv.Response {
 	return nil
 }
 
@@ -102,7 +102,7 @@ func (dg *dataGen4Expr2PbTest) genColumn(tp byte, id int64) *expression.Column {
 
 type testEvaluatorSuite struct {
 	*parser.Parser
-	ctx context.Context
+	ctx sessionctx.Context
 }
 
 func (s *testEvaluatorSuite) SetUpSuite(c *C) {
@@ -120,11 +120,11 @@ func (s *testEvaluatorSuite) TestAggFunc2Pb(c *C) {
 
 	funcNames := []string{ast.AggFuncSum, ast.AggFuncCount, ast.AggFuncAvg, ast.AggFuncGroupConcat, ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncFirstRow}
 	for _, funcName := range funcNames {
-		aggFunc := NewAggFunction(
-			funcName,
-			[]expression.Expression{dg.genColumn(mysql.TypeDouble, 1)},
-			true,
-		)
+		aggFunc := &AggFuncDesc{
+			Name:        funcName,
+			Args:        []expression.Expression{dg.genColumn(mysql.TypeDouble, 1)},
+			HasDistinct: true,
+		}
 		pbExpr := AggFuncToPBExpr(sc, client, aggFunc)
 		js, err := json.Marshal(pbExpr)
 		c.Assert(err, IsNil)
@@ -141,11 +141,11 @@ func (s *testEvaluatorSuite) TestAggFunc2Pb(c *C) {
 		"{\"tp\":3006,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0}],\"sig\":0}",
 	}
 	for i, funcName := range funcNames {
-		aggFunc := NewAggFunction(
-			funcName,
-			[]expression.Expression{dg.genColumn(mysql.TypeDouble, 1)},
-			false,
-		)
+		aggFunc := &AggFuncDesc{
+			Name:        funcName,
+			Args:        []expression.Expression{dg.genColumn(mysql.TypeDouble, 1)},
+			HasDistinct: false,
+		}
 		pbExpr := AggFuncToPBExpr(sc, client, aggFunc)
 		js, err := json.Marshal(pbExpr)
 		c.Assert(err, IsNil)

@@ -15,10 +15,12 @@ package executor
 
 import (
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	goctx "golang.org/x/net/context"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
+	"golang.org/x/net/context"
 )
 
 // MergeJoinExec implements the merge join algorithm.
@@ -36,8 +38,8 @@ type MergeJoinExec struct {
 
 	outerKeys   []*expression.Column
 	innerKeys   []*expression.Column
-	outerIter   *rowBlockIterator
-	innerIter   *rowBlockIterator
+	outerIter   *readerIterator
+	innerIter   *readerIterator
 	outerRows   []Row
 	innerRows   []Row
 	outerFilter []expression.Expression
@@ -45,48 +47,73 @@ type MergeJoinExec struct {
 	resultGenerator joinResultGenerator
 	resultBuffer    []Row
 	resultCursor    int
+
+	// for chunk execution.
+	compareFuncs   []chunk.CompareFunc
+	outerIdx       int
+	outerChunkRows []chunk.Row
+	innerChunkRows []chunk.Row
+	outerIter4Row  chunk.Iterator
+	innerIter4Row  chunk.Iterator
 }
 
 const rowBufferSize = 4096
 
-// rowBlockIterator represents a row block with the same join keys
-type rowBlockIterator struct {
+// readerIterator represents a row block with the same join keys
+type readerIterator struct {
 	stmtCtx   *stmtctx.StatementContext
-	ctx       context.Context
+	sctx      sessionctx.Context
 	reader    Executor
 	filter    []expression.Expression
 	joinKeys  []*expression.Column
-	peekedRow Row
+	peekedRow types.Row
 	rowCache  []Row
+	ctx       context.Context
+
+	// for chunk executions
+	sameKeyRows    []chunk.Row
+	compareFuncs   []chunk.CompareFunc
+	firstRow4Key   chunk.Row
+	curRow         chunk.Row
+	curResult      *chunk.Chunk
+	curIter        *chunk.Iterator4Chunk
+	curResultInUse bool
+	curSelected    []bool
+	resultQueue    []*chunk.Chunk
+	resourceQueue  []*chunk.Chunk
+
+	// joinResultGenerator is "nil" means this iterator works on the inner table,
+	// otherwise it works on the outer table and is used to emits the un-matched
+	// outer rows to "joinResult".
+	joinResultGenerator joinResultGenerator
+	joinResult          *chunk.Chunk
 }
 
-func (rb *rowBlockIterator) init() error {
-	if rb.reader == nil || rb.joinKeys == nil || len(rb.joinKeys) == 0 || rb.ctx == nil {
+func (ri *readerIterator) init() error {
+	if ri.reader == nil || ri.joinKeys == nil || len(ri.joinKeys) == 0 || ri.ctx == nil {
 		return errors.Errorf("Invalid arguments: Empty arguments detected.")
 	}
-	rb.stmtCtx = rb.ctx.GetSessionVars().StmtCtx
+	ri.stmtCtx = ri.sctx.GetSessionVars().StmtCtx
 	var err error
-	rb.peekedRow, err = rb.nextRow()
+	ri.peekedRow, err = ri.nextRow()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	rb.rowCache = make([]Row, 0, rowBufferSize)
-
+	ri.rowCache = make([]Row, 0, rowBufferSize)
 	return nil
 }
 
-func (rb *rowBlockIterator) nextRow() (Row, error) {
-	goCtx := goctx.TODO()
+func (ri *readerIterator) nextRow() (types.Row, error) {
 	for {
-		row, err := rb.reader.Next(goCtx)
+		row, err := ri.reader.Next(ri.ctx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if row == nil {
 			return nil, nil
 		}
-		if rb.filter != nil {
-			matched, err := expression.EvalBool(rb.filter, row, rb.ctx)
+		if ri.filter != nil {
+			matched, err := expression.EvalBool(ri.sctx, ri.filter, row)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -98,32 +125,134 @@ func (rb *rowBlockIterator) nextRow() (Row, error) {
 	}
 }
 
-func (rb *rowBlockIterator) nextBlock() ([]Row, error) {
-	if rb.peekedRow == nil {
+func (ri *readerIterator) nextBlock() ([]Row, error) {
+	if ri.peekedRow == nil {
 		return nil, nil
 	}
-	rowCache := rb.rowCache[0:0:rowBufferSize]
-	rowCache = append(rowCache, rb.peekedRow)
+	rowCache := ri.rowCache[0:0:rowBufferSize]
+	rowCache = append(rowCache, ri.peekedRow.(types.DatumRow))
 	for {
-		curRow, err := rb.nextRow()
+		curRow, err := ri.nextRow()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if curRow == nil {
-			rb.peekedRow = nil
+			ri.peekedRow = nil
 			return rowCache, nil
 		}
-		compareResult, err := compareKeys(rb.stmtCtx, curRow, rb.joinKeys, rb.peekedRow, rb.joinKeys)
+		compareResult, err := compareKeys(ri.stmtCtx, curRow, ri.joinKeys, ri.peekedRow, ri.joinKeys)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if compareResult == 0 {
-			rowCache = append(rowCache, curRow)
+			rowCache = append(rowCache, curRow.(types.DatumRow))
 		} else {
-			rb.peekedRow = curRow
+			ri.peekedRow = curRow
 			return rowCache, nil
 		}
 	}
+}
+
+func (ri *readerIterator) initForChunk(chk4Reader *chunk.Chunk) (err error) {
+	if ri.reader == nil || ri.joinKeys == nil || len(ri.joinKeys) == 0 || ri.ctx == nil {
+		return errors.Errorf("Invalid arguments: Empty arguments detected.")
+	}
+	ri.stmtCtx = ri.sctx.GetSessionVars().StmtCtx
+	ri.curResult = chk4Reader
+	ri.curIter = chunk.NewIterator4Chunk(ri.curResult)
+	ri.curRow = ri.curIter.End()
+	ri.curSelected = make([]bool, 0, ri.sctx.GetSessionVars().MaxChunkSize)
+	ri.curResultInUse = false
+	ri.resultQueue = append(ri.resultQueue, chk4Reader)
+	ri.firstRow4Key, err = ri.nextSelectedRow()
+	ri.compareFuncs = make([]chunk.CompareFunc, 0, len(ri.joinKeys))
+	for i := range ri.joinKeys {
+		ri.compareFuncs = append(ri.compareFuncs, chunk.GetCompareFunc(ri.joinKeys[i].RetType))
+	}
+	return errors.Trace(err)
+}
+
+func (ri *readerIterator) rowsWithSameKey() ([]chunk.Row, error) {
+	lastResultIdx := len(ri.resultQueue) - 1
+	ri.resourceQueue = append(ri.resourceQueue, ri.resultQueue[0:lastResultIdx]...)
+	ri.resultQueue = ri.resultQueue[lastResultIdx:]
+	// no more data.
+	if ri.firstRow4Key == ri.curIter.End() {
+		return nil, nil
+	}
+	ri.sameKeyRows = ri.sameKeyRows[:0]
+	ri.sameKeyRows = append(ri.sameKeyRows, ri.firstRow4Key)
+	for {
+		selectedRow, err := ri.nextSelectedRow()
+		// error happens or no more data.
+		if err != nil || selectedRow == ri.curIter.End() {
+			ri.firstRow4Key = ri.curIter.End()
+			return ri.sameKeyRows, errors.Trace(err)
+		}
+		compareResult := compareChunkRow(ri.compareFuncs, selectedRow, ri.firstRow4Key, ri.joinKeys, ri.joinKeys)
+		if compareResult == 0 {
+			ri.sameKeyRows = append(ri.sameKeyRows, selectedRow)
+		} else {
+			ri.firstRow4Key = selectedRow
+			return ri.sameKeyRows, nil
+		}
+	}
+}
+
+func (ri *readerIterator) nextSelectedRow() (chunk.Row, error) {
+	for {
+		for ; ri.curRow != ri.curIter.End(); ri.curRow = ri.curIter.Next() {
+			if ri.curSelected[ri.curRow.Idx()] {
+				result := ri.curRow
+				ri.curResultInUse = true
+				ri.curRow = ri.curIter.Next()
+				return result, nil
+			} else if ri.joinResultGenerator != nil {
+				// If this iterator works on the outer table, we should emit the un-matched outer row to result Chunk.
+				err := ri.joinResultGenerator.emitToChunk(ri.curRow, nil, ri.joinResult)
+				if err != nil {
+					return ri.curIter.End(), errors.Trace(err)
+				}
+			}
+		}
+		ri.reallocReaderResult()
+		err := ri.reader.NextChunk(ri.ctx, ri.curResult)
+		// error happens or no more data.
+		if err != nil || ri.curResult.NumRows() == 0 {
+			ri.curRow = ri.curIter.End()
+			return ri.curRow, errors.Trace(err)
+		}
+		ri.curSelected, err = expression.VectorizedFilter(ri.sctx, ri.filter, ri.curIter, ri.curSelected)
+		if err != nil {
+			ri.curRow = ri.curIter.End()
+			return ri.curRow, errors.Trace(err)
+		}
+		ri.curRow = ri.curIter.Begin()
+	}
+}
+
+// reallocReaderResult resets "ri.curResult" to an empty Chunk to buffer the result of "ri.reader".
+// It pops a Chunk from "ri.resourceQueue" and push it into "ri.resultQueue" immediately.
+func (ri *readerIterator) reallocReaderResult() {
+	if !ri.curResultInUse {
+		// If "ri.curResult" is not in use, we can just reuse it.
+		ri.curResult.Reset()
+		return
+	}
+
+	// Create a new Chunk and append it to "resourceQueue" if there is no more
+	// available chunk in "resourceQueue".
+	if len(ri.resourceQueue) == 0 {
+		ri.resourceQueue = append(ri.resourceQueue, ri.reader.newChunk())
+	}
+
+	// NOTE: "ri.curResult" is always the last element of "resultQueue".
+	ri.curResult = ri.resourceQueue[0]
+	ri.curIter = chunk.NewIterator4Chunk(ri.curResult)
+	ri.resourceQueue = ri.resourceQueue[1:]
+	ri.resultQueue = append(ri.resultQueue, ri.curResult)
+	ri.curResult.Reset()
+	ri.curResultInUse = false
 }
 
 // Close implements the Executor Close interface.
@@ -136,8 +265,8 @@ func (e *MergeJoinExec) Close() error {
 }
 
 // Open implements the Executor Open interface.
-func (e *MergeJoinExec) Open(goCtx goctx.Context) error {
-	if err := e.baseExecutor.Open(goCtx); err != nil {
+func (e *MergeJoinExec) Open(ctx context.Context) error {
+	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
 	e.prepared = false
@@ -146,9 +275,19 @@ func (e *MergeJoinExec) Open(goCtx goctx.Context) error {
 	return nil
 }
 
+func compareChunkRow(cmpFuncs []chunk.CompareFunc, lhsRow, rhsRow chunk.Row, lhsKey, rhsKey []*expression.Column) int {
+	for i := range lhsKey {
+		cmp := cmpFuncs[i](lhsRow, lhsKey[i].Index, rhsRow, rhsKey[i].Index)
+		if cmp != 0 {
+			return cmp
+		}
+	}
+	return 0
+}
+
 func compareKeys(stmtCtx *stmtctx.StatementContext,
-	leftRow Row, leftKeys []*expression.Column,
-	rightRow Row, rightKeys []*expression.Column) (int, error) {
+	leftRow types.Row, leftKeys []*expression.Column,
+	rightRow types.Row, rightKeys []*expression.Column) (int, error) {
 	for i, leftKey := range leftKeys {
 		lVal, err := leftKey.Eval(leftRow)
 		if err != nil {
@@ -175,7 +314,7 @@ func compareKeys(stmtCtx *stmtctx.StatementContext,
 func (e *MergeJoinExec) doJoin() (err error) {
 	for _, outer := range e.outerRows {
 		if e.outerFilter != nil {
-			matched, err1 := expression.EvalBool(e.outerFilter, outer, e.ctx)
+			matched, err1 := expression.EvalBool(e.ctx, e.outerFilter, outer)
 			if err1 != nil {
 				return errors.Trace(err1)
 			}
@@ -250,7 +389,45 @@ func (e *MergeJoinExec) computeJoin() (bool, error) {
 	}
 }
 
-func (e *MergeJoinExec) prepare() error {
+func (e *MergeJoinExec) prepare(ctx context.Context, chk *chunk.Chunk) error {
+	e.outerIter.ctx = ctx
+	e.innerIter.ctx = ctx
+	// prepare for chunk-oriented execution.
+	if chk != nil {
+		e.outerIter.filter = e.outerFilter
+		e.outerIter.joinResultGenerator = e.resultGenerator
+		e.outerIter.joinResult = chk
+		err := e.outerIter.initForChunk(e.childrenResults[e.outerIdx])
+		if err != nil {
+			return errors.Trace(err)
+		}
+		err = e.innerIter.initForChunk(e.childrenResults[e.outerIdx^1])
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		e.outerChunkRows, err = e.outerIter.rowsWithSameKey()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if e.outerChunkRows != nil {
+			e.outerIter4Row = chunk.NewIterator4Slice(e.outerChunkRows)
+			e.outerIter4Row.Begin()
+		}
+		e.innerChunkRows, err = e.innerIter.rowsWithSameKey()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if e.innerChunkRows != nil {
+			e.innerIter4Row = chunk.NewIterator4Slice(e.innerChunkRows)
+			e.innerIter4Row.Begin()
+		}
+		e.compareFuncs = e.outerIter.compareFuncs
+		e.prepared = true
+		return nil
+	}
+
+	// prepare for row-oriented execution.
 	err := e.outerIter.init()
 	if err != nil {
 		return errors.Trace(err)
@@ -268,15 +445,14 @@ func (e *MergeJoinExec) prepare() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-
 	e.prepared = true
 	return nil
 }
 
 // Next implements the Executor Next interface.
-func (e *MergeJoinExec) Next(goCtx goctx.Context) (Row, error) {
+func (e *MergeJoinExec) Next(ctx context.Context) (Row, error) {
 	if !e.prepared {
-		if err := e.prepare(); err != nil {
+		if err := e.prepare(ctx, nil); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
@@ -295,4 +471,96 @@ func (e *MergeJoinExec) Next(goCtx goctx.Context) (Row, error) {
 	result := e.resultBuffer[e.resultCursor]
 	e.resultCursor++
 	return result, nil
+}
+
+// NextChunk implements the Executor NextChunk interface.
+func (e *MergeJoinExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	if !e.prepared {
+		if err := e.prepare(ctx, chk); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	for {
+		if chk.NumRows() == e.maxChunkSize {
+			return nil
+		}
+
+		// reach here means there is no more data in "e.resultChunk"
+		hasMore, err := e.joinToChunk(chk)
+		if err != nil || !hasMore {
+			return errors.Trace(err)
+		}
+	}
+}
+
+func (e *MergeJoinExec) joinToChunk(chk *chunk.Chunk) (hasMore bool, err error) {
+	for e.outerChunkRows != nil {
+		// Here we set default cmpResult to -1 to emit unmatched outer rows.
+		cmpResult := -1
+		if e.innerChunkRows != nil {
+			cmpResult = compareChunkRow(e.compareFuncs, e.outerChunkRows[0], e.innerChunkRows[0], e.outerKeys, e.innerKeys)
+		}
+		if cmpResult > 0 {
+			if err = e.fetchNextInnerRows(); err != nil {
+				return false, errors.Trace(err)
+			}
+			continue
+		}
+		if cmpResult < 0 {
+			for e.outerIter4Row.Current() != e.outerIter4Row.End() {
+				if err = e.resultGenerator.emitToChunk(e.outerIter4Row.Current(), nil, chk); err != nil {
+					return false, errors.Trace(err)
+				}
+				e.outerIter4Row.Next()
+				if chk.NumRows() == e.maxChunkSize {
+					return true, errors.Trace(err)
+				}
+			}
+			if err = e.fetchNextOuterRows(); err != nil {
+				return false, errors.Trace(err)
+			}
+			continue
+		}
+		for e.outerIter4Row.Current() != e.outerIter4Row.End() {
+			if err = e.resultGenerator.emitToChunk(e.outerIter4Row.Current(), e.innerIter4Row, chk); err != nil {
+				return false, errors.Trace(err)
+			}
+			if e.innerIter4Row.Current() == e.innerIter4Row.End() {
+				e.outerIter4Row.Next()
+				e.innerIter4Row.Begin()
+			}
+			if chk.NumRows() == e.maxChunkSize {
+				return true, errors.Trace(err)
+			}
+		}
+		if err = e.fetchNextInnerRows(); err != nil {
+			return false, errors.Trace(err)
+		}
+		if err = e.fetchNextOuterRows(); err != nil {
+			return false, errors.Trace(err)
+		}
+
+	}
+	return false, nil
+}
+
+func (e *MergeJoinExec) fetchNextInnerRows() (err error) {
+	e.innerChunkRows, err = e.innerIter.rowsWithSameKey()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	e.innerIter4Row = chunk.NewIterator4Slice(e.innerChunkRows)
+	e.innerIter4Row.Begin()
+	return nil
+}
+
+func (e *MergeJoinExec) fetchNextOuterRows() (err error) {
+	e.outerChunkRows, err = e.outerIter.rowsWithSameKey()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	e.outerIter4Row = chunk.NewIterator4Slice(e.outerChunkRows)
+	e.outerIter4Row.Begin()
+	return nil
 }

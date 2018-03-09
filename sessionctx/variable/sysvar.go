@@ -77,6 +77,7 @@ func init() {
 	for _, v := range defaultSysVars {
 		SysVars[v.Name] = v
 	}
+	initSynonymsSysVariables()
 
 	// Register terror to mysql error map.
 	mySQLErrCodes := map[terror.ErrCode]uint16{
@@ -162,7 +163,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "thread_stack", "262144"},
 	{ScopeGlobal, "relay_log_info_repository", "FILE"},
 	{ScopeGlobal | ScopeSession, "sql_log_bin", "ON"},
-	{ScopeGlobal, "super_read_only", ""},
+	{ScopeGlobal, "super_read_only", "OFF"},
 	{ScopeGlobal | ScopeSession, "max_delayed_threads", "20"},
 	{ScopeNone, "protocol_version", "10"},
 	{ScopeGlobal | ScopeSession, "new", "OFF"},
@@ -302,7 +303,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "performance_schema_max_socket_classes", "10"},
 	{ScopeNone, "performance_schema_max_stage_classes", "150"},
 	{ScopeGlobal, "innodb_purge_batch_size", "300"},
-	{ScopeNone, "have_profiling", "YES"},
+	{ScopeNone, "have_profiling", "NO"},
 	{ScopeGlobal, "slave_checkpoint_group", "512"},
 	{ScopeGlobal | ScopeSession, "character_set_client", "latin1"},
 	{ScopeNone, "slave_load_tmpdir", "/var/tmp/"},
@@ -391,6 +392,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "net_write_timeout", "60"},
 	{ScopeGlobal, "innodb_buffer_pool_load_abort", "OFF"},
 	{ScopeGlobal | ScopeSession, "tx_isolation", "REPEATABLE-READ"},
+	{ScopeGlobal | ScopeSession, "transaction_isolation", "REPEATABLE-READ"},
 	{ScopeGlobal | ScopeSession, "collation_connection", "latin1_swedish_ci"},
 	{ScopeGlobal, "rpl_semi_sync_master_timeout", ""},
 	{ScopeGlobal | ScopeSession, "transaction_prealloc_size", "4096"},
@@ -494,6 +496,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "performance_schema_events_waits_history_size", "10"},
 	{ScopeGlobal, "log_syslog_tag", ""},
 	{ScopeGlobal | ScopeSession, "tx_read_only", "0"},
+	{ScopeGlobal | ScopeSession, "transaction_read_only", "0"},
 	{ScopeGlobal, "rpl_semi_sync_master_wait_point", ""},
 	{ScopeGlobal, "innodb_undo_log_truncate", ""},
 	{ScopeNone, "simplified_binlog_gtid_recovery", "OFF"},
@@ -603,7 +606,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "innodb_online_alter_log_max_size", "134217728"},
 	/* TiDB specific variables */
 	{ScopeSession, TiDBSnapshot, ""},
-	{ScopeSession, TiDBSkipConstraintCheck, "0"},
+	{ScopeSession, TiDBImportingData, "0"},
 	{ScopeSession, TiDBOptAggPushDown, boolToIntStr(DefOptAggPushDown)},
 	{ScopeSession, TiDBOptInSubqUnFolding, boolToIntStr(DefOptInSubqUnfolding)},
 	{ScopeSession, TiDBBuildStatsConcurrency, strconv.Itoa(DefBuildStatsConcurrency)},
@@ -612,12 +615,34 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, TiDBIndexLookupSize, strconv.Itoa(DefIndexLookupSize)},
 	{ScopeGlobal | ScopeSession, TiDBIndexLookupConcurrency, strconv.Itoa(DefIndexLookupConcurrency)},
 	{ScopeGlobal | ScopeSession, TiDBIndexSerialScanConcurrency, strconv.Itoa(DefIndexSerialScanConcurrency)},
-	{ScopeGlobal | ScopeSession, TiDBMaxRowCountForINLJ, strconv.Itoa(DefMaxRowCountForINLJ)},
 	{ScopeGlobal | ScopeSession, TiDBSkipUTF8Check, boolToIntStr(DefSkipUTF8Check)},
 	{ScopeSession, TiDBBatchInsert, boolToIntStr(DefBatchInsert)},
 	{ScopeSession, TiDBBatchDelete, boolToIntStr(DefBatchDelete)},
+	{ScopeSession, TiDBDMLBatchSize, strconv.Itoa(DefDMLBatchSize)},
 	{ScopeSession, TiDBCurrentTS, strconv.Itoa(DefCurretTS)},
 	{ScopeSession, TiDBMaxChunkSize, strconv.Itoa(DefMaxChunkSize)},
+	{ScopeSession, TIDBMemQuotaQuery, strconv.FormatInt(DefTiDBMemQuotaQuery, 10)},
+	{ScopeSession, TIDBMemQuotaHashJoin, strconv.FormatInt(DefTiDBMemQuotaHashJoin, 10)},
+	{ScopeSession, TIDBMemQuotaSort, strconv.FormatInt(DefTiDBMemQuotaSort, 10)},
+	{ScopeSession, TIDBMemQuotaTopn, strconv.FormatInt(DefTiDBMemQuotaTopn, 10)},
+	{ScopeSession, TiDBEnableStreaming, "0"},
+	/* The following variable is defined as session scope but is actually server scope. */
+	{ScopeSession, TiDBGeneralLog, strconv.Itoa(DefTiDBGeneralLog)},
+	{ScopeSession, TiDBConfig, ""},
+}
+
+// SynonymsSysVariables is synonyms of system variables.
+var SynonymsSysVariables = map[string][]string{}
+
+func addSynonymsSysVariables(synonyms ...string) {
+	for _, s := range synonyms {
+		SynonymsSysVariables[s] = synonyms
+	}
+}
+
+func initSynonymsSysVariables() {
+	addSynonymsSysVariables("tx_isolation", "transaction_isolation")
+	addSynonymsSysVariables("tx_read_only", "transaction_read_only")
 }
 
 // SetNamesVariables is the system variable names related to set names statements.

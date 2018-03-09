@@ -19,20 +19,20 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tipb/go-tipb"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testPlanSuite{})
@@ -46,7 +46,7 @@ type testPlanSuite struct {
 	*parser.Parser
 
 	is  infoschema.InfoSchema
-	ctx context.Context
+	ctx sessionctx.Context
 }
 
 func (s *testPlanSuite) SetUpSuite(c *C) {
@@ -258,7 +258,7 @@ func MockTable() *model.TableInfo {
 		ID:        10,
 	}
 
-	pkColumn.Flag = mysql.PriKeyFlag
+	pkColumn.Flag = mysql.PriKeyFlag | mysql.NotNullFlag
 	// Column 'b', 'c', 'd', 'f', 'g' is not null.
 	col0.Flag = mysql.NotNullFlag
 	col1.Flag = mysql.NotNullFlag
@@ -317,7 +317,7 @@ func supportExpr(exprType tipb.ExprType) bool {
 type mockClient struct {
 }
 
-func (c *mockClient) Send(ctx goctx.Context, _ *kv.Request) kv.Response {
+func (c *mockClient) Send(ctx context.Context, _ *kv.Request) kv.Response {
 	return nil
 }
 
@@ -375,7 +375,7 @@ func (m *mockStore) SupportDeleteRange() bool {
 	return false
 }
 
-func mockContext() context.Context {
+func mockContext() sessionctx.Context {
 	ctx := mock.NewContext()
 	ctx.Store = &mockStore{
 		client: &mockClient{},
@@ -538,8 +538,94 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		c.Assert(err, IsNil, comment)
 		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
-		p, err = logicalOptimize(flagPredicatePushDown|flagDecorrelate|flagPrunColumns, p.(LogicalPlan), s.ctx)
+		p, err = logicalOptimize(flagPredicatePushDown|flagDecorrelate|flagPrunColumns, p.(LogicalPlan))
 		c.Assert(err, IsNil)
+		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
+	}
+}
+
+func (s *testPlanSuite) TestSubquery(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		sql  string
+		best string
+	}{
+		{
+			// This will be resolved as in sub query.
+			sql:  "select * from t where 10 in (select b from t s where s.a = t.a)",
+			best: "Join{DataScan(t)->DataScan(s)}(test.t.a,s.a)->Projection",
+		},
+		{
+			sql:  "select count(c) ,(select b from t s where s.a = t.a) from t",
+			best: "Join{DataScan(t)->Aggr(count(test.t.c),firstrow(test.t.a))->DataScan(s)}(test.t.a,s.a)->Projection->Projection",
+		},
+		{
+			sql:  "select count(c) ,(select count(s.b) from t s where s.a = t.a) from t",
+			best: "Join{DataScan(t)->Aggr(count(test.t.c),firstrow(test.t.a))->DataScan(s)}(test.t.a,s.a)->Aggr(firstrow(2_col_0),firstrow(test.t.a),count(s.b))->Projection->Projection",
+		},
+		{
+			// Semi-join with agg cannot decorrelate.
+			sql:  "select t.c in (select count(s.b) from t s where s.a = t.a) from t",
+			best: "Apply{DataScan(t)->DataScan(s)->Sel([eq(s.a, test.t.a)])->Aggr(count(s.b))}->Projection",
+		},
+		{
+			sql:  "select (select count(s.b) k from t s where s.a = t.a having k != 0) from t",
+			best: "Join{DataScan(t)->DataScan(s)->Aggr(count(s.b),firstrow(s.a))}(test.t.a,s.a)->Projection->Projection->Projection",
+		},
+		{
+			sql:  "select (select count(s.b) k from t s where s.a = t1.a) from t t1, t t2",
+			best: "Join{Join{DataScan(t1)->DataScan(t2)}->DataScan(s)->Aggr(count(s.b),firstrow(s.a))}(t1.a,s.a)->Projection->Projection->Projection",
+		},
+		{
+			sql:  "select (select count(1) k from t s where s.a = t.a having k != 0) from t",
+			best: "Join{DataScan(t)->DataScan(s)->Aggr(count(1),firstrow(s.a))}(test.t.a,s.a)->Projection->Projection->Projection",
+		},
+		{
+			sql:  "select a from t where a in (select a from t s group by t.b)",
+			best: "Join{DataScan(t)->DataScan(s)->Aggr(firstrow(s.a))->Projection}(test.t.a,s.a)->Projection",
+		},
+		{
+			// This will be resolved as in sub query.
+			sql:  "select * from t where 10 in (((select b from t s where s.a = t.a)))",
+			best: "Join{DataScan(t)->DataScan(s)}(test.t.a,s.a)->Projection",
+		},
+		{
+			// This will be resolved as in function.
+			sql:  "select * from t where 10 in (((select b from t s where s.a = t.a)), 10)",
+			best: "Join{DataScan(t)->DataScan(s)}(test.t.a,s.a)->Projection->Sel([in(10, s.b, 10)])->Projection",
+		},
+		{
+			sql:  "select * from t where exists (select s.a from t s having sum(s.a) = t.a )",
+			best: "Join{DataScan(t)->DataScan(s)->Aggr(sum(s.a))->Projection}->Projection",
+		},
+		{
+			// Test MaxOneRow for limit.
+			sql:  "select (select * from (select b from t limit 1) x where x.b = t1.b) from t t1",
+			best: "Join{DataScan(t1)->DataScan(t)->Projection->Limit}(t1.b,x.b)->Projection->Projection",
+		},
+		{
+			// Test Nested sub query.
+			sql:  "select * from t where exists (select s.a from t s where s.c in (select c from t as k where k.d = s.d) having sum(s.a) = t.a )",
+			best: "Join{DataScan(t)->Join{DataScan(s)->DataScan(k)}(s.d,k.d)(s.c,k.c)->Aggr(sum(s.a))->Projection}->Projection",
+		},
+		{
+			sql:  "select t1.b from t t1 where t1.b = (select max(t2.a) from t t2 where t1.b=t2.b)",
+			best: "Join{DataScan(t1)->DataScan(t2)->Aggr(max(t2.a),firstrow(t2.b))}(t1.b,t2.b)->Projection->Sel([eq(t1.b, max(t2.a))])->Projection",
+		},
+	}
+
+	for _, ca := range tests {
+		comment := Commentf("for %s", ca.sql)
+		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
+
+		Preprocess(s.ctx, stmt, s.is, false)
+		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
+		c.Assert(err, IsNil)
+		if lp, ok := p.(LogicalPlan); ok {
+			p, err = logicalOptimize(flagBuildKeyInfo|flagDecorrelate|flagPrunColumns, lp)
+			c.Assert(err, IsNil)
+		}
 		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
 	}
 }
@@ -550,62 +636,6 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		sql  string
 		plan string
 	}{
-		{
-			// This will be resolved as in sub query.
-			sql:  "select * from t where 10 in (select b from t s where s.a = t.a)",
-			plan: "Join{DataScan(t)->DataScan(s)}(test.t.a,s.a)->Projection",
-		},
-		{
-			sql:  "select count(c) ,(select b from t s where s.a = t.a) from t",
-			plan: "Join{DataScan(t)->Aggr(count(test.t.c),firstrow(test.t.a))->DataScan(s)}(test.t.a,s.a)->Projection->Projection",
-		},
-		{
-			sql:  "select count(c) ,(select count(s.b) from t s where s.a = t.a) from t",
-			plan: "Join{DataScan(t)->Aggr(count(test.t.c),firstrow(test.t.a))->DataScan(s)}(test.t.a,s.a)->Aggr(firstrow(2_col_0),firstrow(test.t.a),count(s.b))->Projection->Projection",
-		},
-		{
-			// Semi-join with agg cannot decorrelate.
-			sql:  "select t.c in (select count(s.b) from t s where s.a = t.a) from t",
-			plan: "Apply{DataScan(t)->DataScan(s)->Sel([eq(s.a, test.t.a)])->Aggr(count(s.b))}->Projection",
-		},
-		{
-			// Theta-join with agg cannot decorrelate.
-			sql:  "select (select count(s.b) k from t s where s.a = t.a having k != 0) from t",
-			plan: "Apply{DataScan(t)->DataScan(s)->Sel([eq(s.a, test.t.a)])->Aggr(count(s.b))}->Projection->Projection",
-		},
-		{
-			// Relation without keys cannot decorrelate.
-			sql:  "select (select count(s.b) k from t s where s.a = t1.a) from t t1, t t2",
-			plan: "Apply{Join{DataScan(t1)->DataScan(t2)}->DataScan(s)->Sel([eq(s.a, t1.a)])->Aggr(count(s.b))}->Projection->Projection",
-		},
-		{
-			// Aggregate function like count(1) cannot decorrelate.
-			sql:  "select (select count(1) k from t s where s.a = t.a having k != 0) from t",
-			plan: "Apply{DataScan(t)->DataScan(s)->Sel([eq(s.a, test.t.a)])->Aggr(count(1))}->Projection->Projection",
-		},
-		{
-			sql:  "select a from t where a in (select a from t s group by t.b)",
-			plan: "Join{DataScan(t)->DataScan(s)->Aggr(firstrow(s.a))->Projection}(test.t.a,s.a)->Projection",
-		},
-		{
-			// This will be resolved as in sub query.
-			sql:  "select * from t where 10 in (((select b from t s where s.a = t.a)))",
-			plan: "Join{DataScan(t)->DataScan(s)}(test.t.a,s.a)->Projection",
-		},
-		{
-			// This will be resolved as in function.
-			sql:  "select * from t where 10 in (((select b from t s where s.a = t.a)), 10)",
-			plan: "Join{DataScan(t)->DataScan(s)}(test.t.a,s.a)->Projection->Sel([in(10, s.b, 10)])->Projection",
-		},
-		{
-			sql:  "select * from t where exists (select s.a from t s having sum(s.a) = t.a )",
-			plan: "Join{DataScan(t)->DataScan(s)->Aggr(sum(s.a))->Projection}->Projection",
-		},
-		{
-			// Test Nested sub query.
-			sql:  "select * from t where exists (select s.a from t s where s.c in (select c from t as k where k.d = s.d) having sum(s.a) = t.a )",
-			plan: "Join{DataScan(t)->Join{DataScan(s)->DataScan(k)}(s.d,k.d)(s.c,k.c)->Aggr(sum(s.a))->Projection}->Projection",
-		},
 		{
 			sql:  "select * from t for update",
 			plan: "DataScan(t)->Lock->Projection",
@@ -620,6 +650,35 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		},
 		{
 			sql:  "explain select * from t union all select * from t limit 1, 1",
+			plan: "*plan.Explain",
+		},
+		// The correctness of explain result is checked at integration test. There is to improve coverage.
+		{
+			sql:  "explain select /*+ TIDB_INLJ(t1, t2) */ * from t t1 left join t t2 on t1.a=t2.a where t1.b=1 and t2.b=1 and (t1.c=1 or t2.c=1)",
+			plan: "*plan.Explain",
+		},
+		{
+			sql:  "explain select /*+ TIDB_HJ(t1, t2) */ * from t t1 left join t t2 on t1.a=t2.a where t1.b=1 and t2.b=1 and (t1.c=1 or t2.c=1)",
+			plan: "*plan.Explain",
+		},
+		{
+			sql:  "explain select /*+ TIDB_SMJ(t1, t2) */ * from t t1 right join t t2 on t1.a=t2.a where t1.b=1 and t2.b=1 and (t1.c=1 or t2.c=1)",
+			plan: "*plan.Explain",
+		},
+		{
+			sql:  `explain format="dot" select /*+ TIDB_SMJ(t1, t2) */ * from t t1, t t2 where t1.a=t2.a`,
+			plan: "*plan.Explain",
+		},
+		{
+			sql:  "explain select * from t order by b",
+			plan: "*plan.Explain",
+		},
+		{
+			sql:  "explain select * from t order by b limit 1",
+			plan: "*plan.Explain",
+		},
+		{
+			sql:  `explain format="dot" select * from t order by a`,
 			plan: "*plan.Explain",
 		},
 		{
@@ -642,6 +701,14 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 			sql:  "select * from t t1, t t2 where 1 = 0",
 			plan: "Dual->Projection",
 		},
+		{
+			sql:  "select * from t t1 join t t2 using(a)",
+			plan: "Join{DataScan(t1)->DataScan(t2)}->Projection",
+		},
+		{
+			sql:  "select * from t t1 natural join t t2",
+			plan: "Join{DataScan(t1)->DataScan(t2)}->Projection",
+		},
 	}
 	for _, ca := range tests {
 		comment := Commentf("for %s", ca.sql)
@@ -652,7 +719,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
 		if lp, ok := p.(LogicalPlan); ok {
-			p, err = logicalOptimize(flagBuildKeyInfo|flagDecorrelate|flagPrunColumns, lp, s.ctx)
+			p, err = logicalOptimize(flagPrunColumns, lp)
 			c.Assert(err, IsNil)
 		}
 		c.Assert(ToString(p), Equals, ca.plan, Commentf("for %s", ca.sql))
@@ -697,7 +764,7 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 
 		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
-		p, err = logicalOptimize(flagPredicatePushDown, p.(LogicalPlan), s.ctx)
+		p, err = logicalOptimize(flagPredicatePushDown, p.(LogicalPlan))
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -794,7 +861,7 @@ func (s *testPlanSuite) TestEagerAggregation(c *C) {
 
 		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
-		p, err = logicalOptimize(flagBuildKeyInfo|flagPredicatePushDown|flagPrunColumns|flagAggregationOptimize, p.(LogicalPlan), s.ctx)
+		p, err = logicalOptimize(flagBuildKeyInfo|flagPredicatePushDown|flagPrunColumns|flagAggregationOptimize, p.(LogicalPlan))
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -923,9 +990,9 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 
 		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
-		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns, p.(LogicalPlan), s.ctx)
+		lp, err := logicalOptimize(flagPredicatePushDown|flagPrunColumns, p.(LogicalPlan))
 		c.Assert(err, IsNil)
-		checkDataSourceCols(p, c, tt.ans, comment)
+		checkDataSourceCols(lp, c, tt.ans, comment)
 	}
 }
 
@@ -936,7 +1003,7 @@ func (s *testPlanSuite) TestAllocID(c *C) {
 	c.Assert(pA.id+1, Equals, pB.id)
 }
 
-func checkDataSourceCols(p Plan, c *C, ans map[int][]string, comment CommentInterface) {
+func checkDataSourceCols(p LogicalPlan, c *C, ans map[int][]string, comment CommentInterface) {
 	switch p.(type) {
 	case *DataSource:
 		colList, ok := ans[p.ID()]
@@ -1048,15 +1115,14 @@ func (s *testPlanSuite) TestValidate(c *C) {
 			sql: "insert into t set a = 1, b = values(a) + 1",
 			err: nil,
 		},
-		// TODO: Fix Error Code.
-		//{
-		//	sql: "select a, b, c from t order by 0",
-		//	err: ErrUnknownColumn,
-		//},
-		//{
-		//	sql: "select a, b, c from t order by 4",
-		//	err: ErrUnknownColumn,
-		//},
+		{
+			sql: "select a, b, c from t order by 0",
+			err: ErrUnknownColumn,
+		},
+		{
+			sql: "select a, b, c from t order by 4",
+			err: ErrUnknownColumn,
+		},
 		{
 			sql: "select a as c1, b as c1 from t order by c1",
 			err: ErrAmbiguous,
@@ -1065,13 +1131,33 @@ func (s *testPlanSuite) TestValidate(c *C) {
 			sql: "(select a as b, b from t) union (select a, b from t) order by b",
 			err: ErrAmbiguous,
 		},
-		//{
-		//	sql: "(select a as b, b from t) union (select a, b from t) order by a",
-		//	err: ErrUnknownColumn,
-		//},
+		{
+			sql: "(select a as b, b from t) union (select a, b from t) order by a",
+			err: ErrUnknownColumn,
+		},
 		{
 			sql: "select * from t t1 use index(e)",
 			err: ErrKeyDoesNotExist,
+		},
+		{
+			sql: "select a from t having c2",
+			err: ErrUnknownColumn,
+		},
+		{
+			sql: "select a from t group by c2 + 1 having c2",
+			err: ErrUnknownColumn,
+		},
+		{
+			sql: "select a as b, b from t having b",
+			err: ErrAmbiguous,
+		},
+		{
+			sql: "select a + 1 from t having a",
+			err: ErrUnknownColumn,
+		},
+		{
+			sql: "select a from t having sum(avg(a))",
+			err: ErrInvalidGroupFuncUse,
 		},
 	}
 	for _, tt := range tests {
@@ -1089,7 +1175,7 @@ func (s *testPlanSuite) TestValidate(c *C) {
 	}
 }
 
-func checkUniqueKeys(p Plan, c *C, ans map[int][][]string, sql string) {
+func checkUniqueKeys(p LogicalPlan, c *C, ans map[int][][]string, sql string) {
 	keyList, ok := ans[p.ID()]
 	c.Assert(ok, IsTrue, Commentf("for %s, %v not found", sql, p.ID()))
 	c.Assert(len(p.Schema().Keys), Equals, len(keyList), Commentf("for %s, %v, the number of key doesn't match, the schema is %s", sql, p.ID(), p.Schema()))
@@ -1178,9 +1264,9 @@ func (s *testPlanSuite) TestUniqueKeyInfo(c *C) {
 
 		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
-		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagBuildKeyInfo, p.(LogicalPlan), s.ctx)
+		lp, err := logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagBuildKeyInfo, p.(LogicalPlan))
 		c.Assert(err, IsNil)
-		checkUniqueKeys(p, c, tt.ans, tt.sql)
+		checkUniqueKeys(lp, c, tt.ans, tt.sql)
 	}
 }
 
@@ -1220,7 +1306,7 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
 
-		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagBuildKeyInfo|flagAggregationOptimize, p.(LogicalPlan), s.ctx)
+		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagBuildKeyInfo|flagAggregationOptimize, p.(LogicalPlan))
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, tt.best, comment)
 	}
@@ -1549,7 +1635,7 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		}
 		c.Assert(builder.err, IsNil)
 		p := builder.build(stmt).(LogicalPlan)
-		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan), builder.ctx)
+		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan))
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, tt.best, comment)
 	}

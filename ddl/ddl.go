@@ -22,24 +22,25 @@ import (
 	"sync"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/coreos/etcd/clientv3"
 	"github.com/juju/errors"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/owner"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
+	log "github.com/sirupsen/logrus"
 	"github.com/twinj/uuid"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 const (
@@ -48,6 +49,8 @@ const (
 	// DDLOwnerKey is the ddl owner path that is saved to etcd, and it's exported for testing.
 	DDLOwnerKey = "/tidb/ddl/fg/owner"
 	ddlPrompt   = "ddl"
+
+	shardRowIDBitsMax = 15
 )
 
 var (
@@ -145,22 +148,22 @@ var (
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
 type DDL interface {
-	CreateSchema(ctx context.Context, name model.CIStr, charsetInfo *ast.CharsetOpt) error
-	DropSchema(ctx context.Context, schema model.CIStr) error
-	CreateTable(ctx context.Context, ident ast.Ident, cols []*ast.ColumnDef,
+	CreateSchema(ctx sessionctx.Context, name model.CIStr, charsetInfo *ast.CharsetOpt) error
+	DropSchema(ctx sessionctx.Context, schema model.CIStr) error
+	CreateTable(ctx sessionctx.Context, ident ast.Ident, cols []*ast.ColumnDef,
 		constrs []*ast.Constraint, options []*ast.TableOption) error
-	CreateTableWithLike(ctx context.Context, ident, referIdent ast.Ident) error
-	DropTable(ctx context.Context, tableIdent ast.Ident) (err error)
-	CreateIndex(ctx context.Context, tableIdent ast.Ident, unique bool, indexName model.CIStr,
+	CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.Ident) error
+	DropTable(ctx sessionctx.Context, tableIdent ast.Ident) (err error)
+	CreateIndex(ctx sessionctx.Context, tableIdent ast.Ident, unique bool, indexName model.CIStr,
 		columnNames []*ast.IndexColName, indexOption *ast.IndexOption) error
-	DropIndex(ctx context.Context, tableIdent ast.Ident, indexName model.CIStr) error
+	DropIndex(ctx sessionctx.Context, tableIdent ast.Ident, indexName model.CIStr) error
 	GetInformationSchema() infoschema.InfoSchema
-	AlterTable(ctx context.Context, tableIdent ast.Ident, spec []*ast.AlterTableSpec) error
-	TruncateTable(ctx context.Context, tableIdent ast.Ident) error
-	RenameTable(ctx context.Context, oldTableIdent, newTableIdent ast.Ident) error
+	AlterTable(ctx sessionctx.Context, tableIdent ast.Ident, spec []*ast.AlterTableSpec) error
+	TruncateTable(ctx sessionctx.Context, tableIdent ast.Ident) error
+	RenameTable(ctx sessionctx.Context, oldTableIdent, newTableIdent ast.Ident) error
 	// SetLease will reset the lease time for online DDL change,
 	// it's a very dangerous function and you must guarantee that all servers have the same lease time.
-	SetLease(ctx goctx.Context, lease time.Duration)
+	SetLease(ctx context.Context, lease time.Duration)
 	// GetLease returns current schema lease time.
 	GetLease() time.Duration
 	// Stats returns the DDL statistics.
@@ -239,19 +242,18 @@ func (d *ddl) asyncNotifyEvent(e *util.Event) {
 }
 
 // NewDDL creates a new DDL.
-func NewDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
+func NewDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 	infoHandle *infoschema.Handle, hook Callback, lease time.Duration, ctxPool *pools.ResourcePool) DDL {
 	return newDDL(ctx, etcdCli, store, infoHandle, hook, lease, ctxPool)
 }
 
-func newDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
+func newDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 	infoHandle *infoschema.Handle, hook Callback, lease time.Duration, ctxPool *pools.ResourcePool) *ddl {
 	if hook == nil {
 		hook = &BaseCallback{}
 	}
-
 	id := uuid.NewV4().String()
-	ctx, cancelFunc := goctx.WithCancel(ctx)
+	ctx, cancelFunc := context.WithCancel(ctx)
 	var manager owner.Manager
 	var syncer SchemaSyncer
 	if etcdCli == nil {
@@ -288,7 +290,9 @@ func newDDL(ctx goctx.Context, etcdCli *clientv3.Client, store kv.Storage,
 
 	d.start(ctx)
 	variable.RegisterStatistics(d)
+
 	log.Infof("[ddl] start DDL:%s", d.uuid)
+	metrics.DDLCounter.WithLabelValues(metrics.CreateDDL).Inc()
 	return d
 }
 
@@ -302,12 +306,18 @@ func (d *ddl) Stop() error {
 	return nil
 }
 
-func (d *ddl) start(ctx goctx.Context) {
+func (d *ddl) start(ctx context.Context) {
 	d.quitCh = make(chan struct{})
-	err := d.ownerManager.CampaignOwner(ctx)
-	terror.Log(errors.Trace(err))
-	d.wait.Add(1)
-	go d.onDDLWorker()
+
+	// If RunWorker is true, we need campaign owner and do DDL job.
+	// Otherwise, we needn't do that.
+	if RunWorker {
+		err := d.ownerManager.CampaignOwner(ctx)
+		terror.Log(errors.Trace(err))
+		d.wait.Add(1)
+		go d.onDDLWorker()
+		metrics.DDLCounter.WithLabelValues(metrics.CreateDDLWorker).Inc()
+	}
 
 	// For every start, we will send a fake job to let worker
 	// check owner firstly and try to find whether a job exists and run.
@@ -340,7 +350,7 @@ func (d *ddl) isClosed() bool {
 	}
 }
 
-func (d *ddl) SetLease(ctx goctx.Context, lease time.Duration) {
+func (d *ddl) SetLease(ctx context.Context, lease time.Duration) {
 	d.m.Lock()
 	defer d.m.Unlock()
 
@@ -403,7 +413,7 @@ func checkJobMaxInterval(job *model.Job) time.Duration {
 	return 1 * time.Second
 }
 
-func (d *ddl) doDDLJob(ctx context.Context, job *model.Job) error {
+func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	// For every DDL, we must commit current transaction.
 	if err := ctx.NewTxn(); err != nil {
 		return errors.Trace(err)
@@ -417,7 +427,7 @@ func (d *ddl) doDDLJob(ctx context.Context, job *model.Job) error {
 
 	// Notice worker that we push a new job and wait the job done.
 	asyncNotify(d.ddlJobCh)
-	log.Infof("[ddl] start DDL job %s, Query:\n%s", job, job.Query)
+	log.Infof("[ddl] start DDL job %s, Query:%s", job, job.Query)
 
 	var historyJob *model.Job
 	jobID := job.ID
@@ -426,15 +436,11 @@ func (d *ddl) doDDLJob(ctx context.Context, job *model.Job) error {
 	// But we use etcd to speed up, normally it takes less than 1s now, so we use 1s or 3s as the max value.
 	ticker := time.NewTicker(chooseLeaseTime(10*d.lease, checkJobMaxInterval(job)))
 	startTime := time.Now()
-	jobsGauge.WithLabelValues(job.Type.String()).Inc()
+	metrics.JobsGauge.WithLabelValues(job.Type.String()).Inc()
 	defer func() {
 		ticker.Stop()
-		jobsGauge.WithLabelValues(job.Type.String()).Dec()
-		retLabel := handleJobSucc
-		if err != nil {
-			retLabel = handleJobFailed
-		}
-		handleJobHistogram.WithLabelValues(job.Type.String(), retLabel).Observe(time.Since(startTime).Seconds())
+		metrics.JobsGauge.WithLabelValues(job.Type.String()).Dec()
+		metrics.HandleJobHistogram.WithLabelValues(job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
 	for {
 		select {
@@ -457,7 +463,10 @@ func (d *ddl) doDDLJob(ctx context.Context, job *model.Job) error {
 			return nil
 		}
 
-		return errors.Trace(historyJob.Error)
+		if historyJob.Error != nil {
+			return errors.Trace(historyJob.Error)
+		}
+		panic("When the state is JobCancel, historyJob.Error should never be nil")
 	}
 }
 

@@ -440,8 +440,8 @@ var MySQLErrName = map[uint16]string{
 	ErrCommitNotAllowedInSfOrTrg:                "Explicit or implicit commit is not allowed in stored function or trigger.",
 	ErrNoDefaultForViewField:                    "Field of view '%-.192s.%-.192s' underlying table doesn't have a default value",
 	ErrSpNoRecursion:                            "Recursive stored functions and triggers are not allowed.",
-	ErrTooBigScale:                              "Too big scale %d specified for column '%-.192s'. Maximum is %lu.",
-	ErrTooBigPrecision:                          "Too big precision %d specified for column '%-.192s'. Maximum is %lu.",
+	ErrTooBigScale:                              "Too big scale %d specified for column '%-.192s'. Maximum is %d.",
+	ErrTooBigPrecision:                          "Too big precision %d specified for column '%-.192s'. Maximum is %d.",
 	ErrMBiggerThanD:                             "For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '%-.192s').",
 	ErrWrongLockOfSystemTable:                   "You can't combine write-locking of system tables with other tables or lock types",
 	ErrConnectToForeignDataSource:               "Unable to connect to foreign data source: %.64s",
@@ -887,6 +887,7 @@ var MySQLErrName = map[uint16]string{
 	ErrInvalidJSONPath:                                       "Invalid JSON path expression %s.",
 	ErrInvalidJSONData:                                       "Invalid data type for JSON data",
 	ErrJSONUsedAsKey:                                         "JSON column '%-.192s' cannot be used in key specification.",
+	ErrMemExceedThreshold:                                    "%s holds %dB memory, exceeds threshold %dB.%s",
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout:    "PD server timeout",
@@ -894,7 +895,7 @@ var MySQLErrName = map[uint16]string{
 	ErrTiKVServerBusy:     "TiKV server is busy",
 	ErrResolveLockTimeout: "Resolve lock timeout",
 	ErrRegionUnavailable:  "Region is unavailable",
-	ErrGCTooEarly:         "GC Interval shorter than transaction duration",
+	ErrGCTooEarly:         "GC life time is shorter than transaction duration",
 
 	ErrTxnTooLarge: "Transaction is too large",
 }

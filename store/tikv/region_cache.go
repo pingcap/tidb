@@ -19,13 +19,14 @@ import (
 	"sync/atomic"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/google/btree"
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/pd/pd-client"
-	goctx "golang.org/x/net/context"
+	"github.com/pingcap/tidb/metrics"
+	log "github.com/sirupsen/logrus"
+	"golang.org/x/net/context"
 )
 
 const (
@@ -319,6 +320,7 @@ func (c *RegionCache) dropRegionFromCache(verID RegionVerID) {
 	if !ok {
 		return
 	}
+	metrics.TiKVRegionCacheCounter.WithLabelValues("drop_region_from_cache", metrics.RetLabel(nil)).Inc()
 	c.mu.sorted.Delete(newBtreeItem(r.region))
 	delete(c.mu.regions, verID)
 }
@@ -333,8 +335,8 @@ func (c *RegionCache) loadRegion(bo *Backoffer, key []byte) (*Region, error) {
 				return nil, errors.Trace(err)
 			}
 		}
-
 		meta, leader, err := c.pdClient.GetRegion(bo, key)
+		metrics.TiKVRegionCacheCounter.WithLabelValues("get_region", metrics.RetLabel(err)).Inc()
 		if err != nil {
 			backoffErr = errors.Errorf("loadRegion from PD failed, key: %q, err: %v", key, err)
 			continue
@@ -367,8 +369,8 @@ func (c *RegionCache) loadRegionByID(bo *Backoffer, regionID uint64) (*Region, e
 				return nil, errors.Trace(err)
 			}
 		}
-
 		meta, leader, err := c.pdClient.GetRegionByID(bo, regionID)
+		metrics.TiKVRegionCacheCounter.WithLabelValues("get_region_by_id", metrics.RetLabel(err)).Inc()
 		if err != nil {
 			backoffErr = errors.Errorf("loadRegion from PD failed, regionID: %v, err: %v", regionID, err)
 			continue
@@ -429,8 +431,9 @@ func (c *RegionCache) ClearStoreByID(id uint64) {
 func (c *RegionCache) loadStoreAddr(bo *Backoffer, id uint64) (string, error) {
 	for {
 		store, err := c.pdClient.GetStore(bo, id)
+		metrics.TiKVRegionCacheCounter.WithLabelValues("get_store", metrics.RetLabel(err)).Inc()
 		if err != nil {
-			if errors.Cause(err) == goctx.Canceled {
+			if errors.Cause(err) == context.Canceled {
 				return "", errors.Trace(err)
 			}
 			err = errors.Errorf("loadStore from PD failed, id: %d, err: %v", id, err)
@@ -543,6 +546,11 @@ type RegionVerID struct {
 	id      uint64
 	confVer uint64
 	ver     uint64
+}
+
+// GetID returns the id of the region
+func (r *RegionVerID) GetID() uint64 {
+	return r.id
 }
 
 // VerID returns the Region's RegionVerID.

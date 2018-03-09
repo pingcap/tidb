@@ -16,19 +16,19 @@ package tikv
 import (
 	"bytes"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	goctx "golang.org/x/net/context"
+	log "github.com/sirupsen/logrus"
+	"golang.org/x/net/context"
 )
 
 // SplitRegion splits the region contains splitKey into 2 regions: [start,
 // splitKey) and [splitKey, end).
 func (s *tikvStore) SplitRegion(splitKey kv.Key) error {
 	log.Infof("start split_region at %q", splitKey)
-	bo := NewBackoffer(splitRegionBackoff, goctx.Background())
+	bo := NewBackoffer(context.Background(), splitRegionBackoff)
 	sender := NewRegionRequestSender(s.regionCache, s.client)
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdSplitRegion,

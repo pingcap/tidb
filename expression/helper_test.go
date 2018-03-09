@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/varsutil"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
@@ -37,7 +37,7 @@ func (s *testExpressionSuite) TestGetTimeValue(c *C) {
 	timeValue := v.GetMysqlTime()
 	c.Assert(timeValue.String(), Equals, "2012-12-12 00:00:00")
 	sessionVars := ctx.GetSessionVars()
-	varsutil.SetSessionSystemVar(sessionVars, "timestamp", types.NewStringDatum(""))
+	variable.SetSessionSystemVar(sessionVars, "timestamp", types.NewStringDatum(""))
 	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)
 	c.Assert(err, IsNil)
 
@@ -45,7 +45,7 @@ func (s *testExpressionSuite) TestGetTimeValue(c *C) {
 	timeValue = v.GetMysqlTime()
 	c.Assert(timeValue.String(), Equals, "2012-12-12 00:00:00")
 
-	varsutil.SetSessionSystemVar(sessionVars, "timestamp", types.NewStringDatum("0"))
+	variable.SetSessionSystemVar(sessionVars, "timestamp", types.NewStringDatum("0"))
 	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)
 	c.Assert(err, IsNil)
 
@@ -53,7 +53,7 @@ func (s *testExpressionSuite) TestGetTimeValue(c *C) {
 	timeValue = v.GetMysqlTime()
 	c.Assert(timeValue.String(), Equals, "2012-12-12 00:00:00")
 
-	varsutil.SetSessionSystemVar(sessionVars, "timestamp", types.Datum{})
+	variable.SetSessionSystemVar(sessionVars, "timestamp", types.Datum{})
 	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)
 	c.Assert(err, IsNil)
 
@@ -61,7 +61,7 @@ func (s *testExpressionSuite) TestGetTimeValue(c *C) {
 	timeValue = v.GetMysqlTime()
 	c.Assert(timeValue.String(), Equals, "2012-12-12 00:00:00")
 
-	varsutil.SetSessionSystemVar(sessionVars, "timestamp", types.NewStringDatum("1234"))
+	variable.SetSessionSystemVar(sessionVars, "timestamp", types.NewStringDatum("1234"))
 
 	tbl := []struct {
 		Expr interface{}
@@ -120,22 +120,20 @@ func (s *testExpressionSuite) TestCurrentTimestampTimeZone(c *C) {
 	ctx := mock.NewContext()
 	sessionVars := ctx.GetSessionVars()
 
-	varsutil.SetSessionSystemVar(sessionVars, "timestamp", types.NewStringDatum("1234"))
-	varsutil.SetSessionSystemVar(sessionVars, "time_zone", types.NewStringDatum("+00:00"))
+	variable.SetSessionSystemVar(sessionVars, "timestamp", types.NewStringDatum("1234"))
+	variable.SetSessionSystemVar(sessionVars, "time_zone", types.NewStringDatum("+00:00"))
 	v, err := GetTimeValue(ctx, ast.CurrentTimestamp, mysql.TypeTimestamp, types.MinFsp)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetMysqlTime(), DeepEquals, types.Time{
-		Time:     types.FromDate(1970, 1, 1, 0, 20, 34, 0),
-		Type:     mysql.TypeTimestamp,
-		TimeZone: sessionVars.GetTimeZone()})
+		Time: types.FromDate(1970, 1, 1, 0, 20, 34, 0),
+		Type: mysql.TypeTimestamp})
 
 	// CurrentTimestamp from "timestamp" session variable is based on UTC, so change timezone
 	// would get different value.
-	varsutil.SetSessionSystemVar(sessionVars, "time_zone", types.NewStringDatum("+08:00"))
+	variable.SetSessionSystemVar(sessionVars, "time_zone", types.NewStringDatum("+08:00"))
 	v, err = GetTimeValue(ctx, ast.CurrentTimestamp, mysql.TypeTimestamp, types.MinFsp)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetMysqlTime(), DeepEquals, types.Time{
-		Time:     types.FromDate(1970, 1, 1, 8, 20, 34, 0),
-		Type:     mysql.TypeTimestamp,
-		TimeZone: sessionVars.GetTimeZone()})
+		Time: types.FromDate(1970, 1, 1, 8, 20, 34, 0),
+		Type: mysql.TypeTimestamp})
 }

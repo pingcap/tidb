@@ -19,8 +19,10 @@ import (
 
 	"github.com/coreos/etcd/clientv3"
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
-	goctx "golang.org/x/net/context"
+	"github.com/pingcap/tidb/sessionctx"
+	"golang.org/x/net/context"
 )
 
 var _ SchemaSyncer = &mockSchemaSyncer{}
@@ -38,7 +40,7 @@ func NewMockSchemaSyncer() SchemaSyncer {
 }
 
 // Init implements SchemaSyncer.Init interface.
-func (s *mockSchemaSyncer) Init(ctx goctx.Context) error {
+func (s *mockSchemaSyncer) Init(ctx context.Context) error {
 	s.globalVerCh = make(chan clientv3.WatchResponse, 1)
 	return nil
 }
@@ -49,7 +51,7 @@ func (s *mockSchemaSyncer) GlobalVersionCh() clientv3.WatchChan {
 }
 
 // UpdateSelfVersion implements SchemaSyncer.UpdateSelfVersion interface.
-func (s *mockSchemaSyncer) UpdateSelfVersion(ctx goctx.Context, version int64) error {
+func (s *mockSchemaSyncer) UpdateSelfVersion(ctx context.Context, version int64) error {
 	atomic.StoreInt64(&s.selfSchemaVersion, version)
 	return nil
 }
@@ -60,13 +62,13 @@ func (s *mockSchemaSyncer) Done() <-chan struct{} {
 }
 
 // Restart implements SchemaSyncer.Restart interface.
-func (s *mockSchemaSyncer) Restart(_ goctx.Context) error { return nil }
+func (s *mockSchemaSyncer) Restart(_ context.Context) error { return nil }
 
 // RemoveSelfVersionPath implements SchemaSyncer.RemoveSelfVersionPath interface.
 func (s *mockSchemaSyncer) RemoveSelfVersionPath() error { return nil }
 
 // OwnerUpdateGlobalVersion implements SchemaSyncer.OwnerUpdateGlobalVersion interface.
-func (s *mockSchemaSyncer) OwnerUpdateGlobalVersion(ctx goctx.Context, version int64) error {
+func (s *mockSchemaSyncer) OwnerUpdateGlobalVersion(ctx context.Context, version int64) error {
 	select {
 	case s.globalVerCh <- clientv3.WatchResponse{}:
 	default:
@@ -75,12 +77,12 @@ func (s *mockSchemaSyncer) OwnerUpdateGlobalVersion(ctx goctx.Context, version i
 }
 
 // MustGetGlobalVersion implements SchemaSyncer.MustGetGlobalVersion interface.
-func (s *mockSchemaSyncer) MustGetGlobalVersion(ctx goctx.Context) (int64, error) {
+func (s *mockSchemaSyncer) MustGetGlobalVersion(ctx context.Context) (int64, error) {
 	return 0, nil
 }
 
 // OwnerCheckAllVersions implements SchemaSyncer.OwnerCheckAllVersions interface.
-func (s *mockSchemaSyncer) OwnerCheckAllVersions(ctx goctx.Context, latestVer int64) error {
+func (s *mockSchemaSyncer) OwnerCheckAllVersions(ctx context.Context, latestVer int64) error {
 	ticker := time.NewTicker(mockCheckVersInterval)
 	defer ticker.Stop()
 
@@ -118,4 +120,18 @@ func (dr *mockDelRange) start() {
 // clear implements delRangeManager interface.
 func (dr *mockDelRange) clear() {
 	return
+}
+
+// MockTableInfo mocks a table info by create table stmt ast and a specified table id.
+func MockTableInfo(ctx sessionctx.Context, stmt *ast.CreateTableStmt, tableID int64) (*model.TableInfo, error) {
+	cols, newConstraints, err := buildColumnsAndConstraints(ctx, stmt.Cols, stmt.Constraints)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	tbl, err := buildTableInfo(ctx, nil, stmt.Table.Name, cols, newConstraints)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	tbl.ID = tableID
+	return tbl, nil
 }

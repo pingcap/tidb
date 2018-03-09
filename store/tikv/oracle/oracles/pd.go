@@ -17,11 +17,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb/store/tikv/oracle"
-	goctx "golang.org/x/net/context"
+	log "github.com/sirupsen/logrus"
+	"golang.org/x/net/context"
 )
 
 var _ oracle.Oracle = &pdOracle{}
@@ -45,7 +45,7 @@ func NewPdOracle(pdClient pd.Client, updateInterval time.Duration) (oracle.Oracl
 		c:    pdClient,
 		quit: make(chan struct{}),
 	}
-	ctx := goctx.TODO()
+	ctx := context.TODO()
 	go o.updateTS(ctx, updateInterval)
 	// Initialize lastTS by Get.
 	_, err := o.GetTimestamp(ctx)
@@ -64,7 +64,7 @@ func (o *pdOracle) IsExpired(lockTS, TTL uint64) bool {
 }
 
 // GetTimestamp gets a new increasing time.
-func (o *pdOracle) GetTimestamp(ctx goctx.Context) (uint64, error) {
+func (o *pdOracle) GetTimestamp(ctx context.Context) (uint64, error) {
 	ts, err := o.getTimestamp(ctx)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -91,12 +91,12 @@ func (f *tsFuture) Wait() (uint64, error) {
 	return ts, nil
 }
 
-func (o *pdOracle) GetTimestampAsync(ctx goctx.Context) oracle.Future {
+func (o *pdOracle) GetTimestampAsync(ctx context.Context) oracle.Future {
 	ts := o.c.GetTSAsync(ctx)
 	return &tsFuture{ts, o}
 }
 
-func (o *pdOracle) getTimestamp(ctx goctx.Context) (uint64, error) {
+func (o *pdOracle) getTimestamp(ctx context.Context) (uint64, error) {
 	now := time.Now()
 	physical, logical, err := o.c.GetTS(ctx)
 	if err != nil {
@@ -116,7 +116,7 @@ func (o *pdOracle) setLastTS(ts uint64) {
 	}
 }
 
-func (o *pdOracle) updateTS(ctx goctx.Context, interval time.Duration) {
+func (o *pdOracle) updateTS(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	for {
 		select {

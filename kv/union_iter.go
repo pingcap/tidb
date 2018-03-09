@@ -14,8 +14,8 @@
 package kv
 
 import (
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
+	log "github.com/sirupsen/logrus"
 )
 
 // UnionIter is the iterator on an UnionStore.
@@ -31,7 +31,8 @@ type UnionIter struct {
 	reverse    bool
 }
 
-func newUnionIter(dirtyIt Iterator, snapshotIt Iterator, reverse bool) (*UnionIter, error) {
+// NewUnionIter returns a union iterator for BufferStore.
+func NewUnionIter(dirtyIt Iterator, snapshotIt Iterator, reverse bool) (*UnionIter, error) {
 	it := &UnionIter{
 		dirtyIt:       dirtyIt,
 		snapshotIt:    snapshotIt,

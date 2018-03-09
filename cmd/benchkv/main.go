@@ -24,13 +24,13 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/terror"
 	"github.com/prometheus/client_golang/prometheus"
-	goctx "golang.org/x/net/context"
+	log "github.com/sirupsen/logrus"
+	"golang.org/x/net/context"
 )
 
 var (
@@ -106,7 +106,7 @@ func batchRW(value []byte) {
 				key := fmt.Sprintf("key_%d", k)
 				err = txn.Set([]byte(key), value)
 				terror.Log(errors.Trace(err))
-				err = txn.Commit(goctx.Background())
+				err = txn.Commit(context.Background())
 				if err != nil {
 					txnRolledbackCounter.WithLabelValues("txn").Inc()
 					terror.Call(txn.Rollback)

@@ -25,13 +25,13 @@ import (
 	"testing"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/kv"
 	tmysql "github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
+	log "github.com/sirupsen/logrus"
 )
 
 func TestT(t *testing.T) {
@@ -204,7 +204,7 @@ func runTestRegression(c *C, overrider configOverrider, dbName string) {
 
 		dbt.mustQueryRows("SELECT 1")
 
-		b := []byte{}
+		var b = make([]byte, 0)
 		if err := dbt.db.QueryRow("SELECT ?", b).Scan(&b); err != nil {
 			dbt.Fatal(err)
 		}
@@ -321,6 +321,11 @@ func runTestLoadData(c *C, server *Server) {
 		"xxx row4_col1	- 		900\n" +
 		"xxx row5_col1	- 	row5_col3")
 	c.Assert(err, IsNil)
+
+	originalTxnTotalSizeLimit := kv.TxnTotalSizeLimit
+	// If the MemBuffer can't be committed once in each batch, it will return an error like "transaction is too large".
+	kv.TxnTotalSizeLimit = 10240
+	defer func() { kv.TxnTotalSizeLimit = originalTxnTotalSizeLimit }()
 
 	// support ClientLocalFiles capability
 	runTestsOnNewDB(c, func(config *mysql.Config) {
@@ -704,16 +709,17 @@ func runTestStmtCount(t *C) {
 		dbt.mustExec("execute stmt1")
 		dbt.mustExec("prepare stmt2 from 'select * from test'")
 		dbt.mustExec("execute stmt2")
+		dbt.mustExec("replace into test(a) values(6);")
 
 		currentStmtCnt := getStmtCnt(string(getMetrics(t)))
-		t.Assert(currentStmtCnt[executor.CreateTable], Equals, originStmtCnt[executor.CreateTable]+1)
-		t.Assert(currentStmtCnt[executor.Insert], Equals, originStmtCnt[executor.Insert]+5)
-		deleteLabel := "DeleteTableFull"
-		t.Assert(currentStmtCnt[deleteLabel], Equals, originStmtCnt[deleteLabel]+1)
-		updateLabel := "UpdateTableFull"
-		t.Assert(currentStmtCnt[updateLabel], Equals, originStmtCnt[updateLabel]+2)
-		selectLabel := "SelectTableFull"
-		t.Assert(currentStmtCnt[selectLabel], Equals, originStmtCnt[selectLabel]+2)
+		t.Assert(currentStmtCnt["CreateTable"], Equals, originStmtCnt["CreateTable"]+1)
+		t.Assert(currentStmtCnt["Insert"], Equals, originStmtCnt["Insert"]+5)
+		t.Assert(currentStmtCnt["Delete"], Equals, originStmtCnt["Delete"]+1)
+		t.Assert(currentStmtCnt["Update"], Equals, originStmtCnt["Update"]+2)
+		t.Assert(currentStmtCnt["Select"], Equals, originStmtCnt["Select"]+3)
+		t.Assert(currentStmtCnt["Prepare"], Equals, originStmtCnt["Prepare"]+2)
+		t.Assert(currentStmtCnt["Execute"], Equals, originStmtCnt["Execute"]+2)
+		t.Assert(currentStmtCnt["Replace"], Equals, originStmtCnt["Replace"]+1)
 	})
 }
 
@@ -758,7 +764,7 @@ func getMetrics(t *C) []byte {
 
 func getStmtCnt(content string) (stmtCnt map[string]int) {
 	stmtCnt = make(map[string]int)
-	r, _ := regexp.Compile("tidb_executor_statement_node_total{type=\"([A-Z|a-z|-]+)\"} (\\d+)")
+	r, _ := regexp.Compile("tidb_executor_statement_total{type=\"([A-Z|a-z|-]+)\"} (\\d+)")
 	matchResult := r.FindAllStringSubmatch(content, -1)
 	for _, v := range matchResult {
 		cnt, _ := strconv.Atoi(v[2])
@@ -769,7 +775,7 @@ func getStmtCnt(content string) (stmtCnt map[string]int) {
 
 const retryTime = 100
 
-func waitUntilServerOnline(statusPort int) {
+func waitUntilServerOnline(statusPort uint) {
 	// connect server
 	retry := 0
 	for ; retry < retryTime; retry++ {

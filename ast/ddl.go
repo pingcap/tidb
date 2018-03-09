@@ -241,6 +241,7 @@ const (
 	ColumnOptionFulltext
 	ColumnOptionComment
 	ColumnOptionGenerated
+	ColumnOptionReference
 )
 
 // ColumnOption is used for parsing column constraint info from SQL.
@@ -253,6 +254,8 @@ type ColumnOption struct {
 	Expr ExprNode
 	// Stored is only for ColumnOptionGenerated, default is false.
 	Stored bool
+	// Refer is used for foreign key.
+	Refer *ReferenceDef
 }
 
 // Accept implements Node Accept interface.
@@ -636,6 +639,8 @@ const (
 	TableOptionDelayKeyWrite
 	TableOptionRowFormat
 	TableOptionStatsPersistent
+	TableOptionShardRowID
+	TableOptionPackKeys
 )
 
 // RowFormat types
