@@ -257,14 +257,8 @@ func (s *tikvStore) BeginWithStartTS(startTS uint64) (kv.Transaction, error) {
 
 func (s *tikvStore) GetSnapshot(ver kv.Version) (kv.Snapshot, error) {
 	snapshot := newTiKVSnapshot(s, ver)
-
-	snapshot.priority = kvPriorityToCommandPri(s.priority)
 	metrics.TiKVSnapshotCounter.Inc()
 	return snapshot, nil
-}
-
-func (s *tikvStore) SetPriority(priority int) {
-	s.priority = priority
 }
 
 func (s *tikvStore) Close() error {

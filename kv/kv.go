@@ -220,6 +220,8 @@ type Snapshot interface {
 	Retriever
 	// BatchGet gets a batch of values from snapshot.
 	BatchGet(keys []Key) (map[string][]byte, error)
+	// SetPriority snapshot set the priority
+	SetPriority(priority int)
 }
 
 // Driver is the interface that must be implemented by a KV storage.
@@ -251,8 +253,6 @@ type Storage interface {
 	GetOracle() oracle.Oracle
 	// SupportDeleteRange gets the storage support delete range or not.
 	SupportDeleteRange() (supported bool)
-	// SetPriority snapshot set the priority.
-	SetPriority(priority int)
 }
 
 // FnKeyCmp is the function for iterator the keys

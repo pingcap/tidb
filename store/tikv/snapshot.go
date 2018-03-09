@@ -38,7 +38,8 @@ const (
 )
 
 // tikvSnapshot implements the kv.Snapshot interface.
-type tikvSnapshot struct {
+type
+tikvSnapshot struct {
 	store          *tikvStore
 	version        kv.Version
 	isolationLevel kv.IsoLevel
@@ -57,6 +58,10 @@ func newTiKVSnapshot(store *tikvStore, ver kv.Version) *tikvSnapshot {
 		isolationLevel: kv.SI,
 		priority:       pb.CommandPri_Normal,
 	}
+}
+
+func (s *tikvSnapshot) SetPriority(priority int) {
+	s.priority = pb.CommandPri(priority)
 }
 
 // BatchGet gets all the keys' value from kv-server and returns a map contains key/value pairs.

@@ -654,9 +654,8 @@ func (w *worker) doBackfillIndexTask(t table.Table, colMap map[int64]*types.Fiel
 
 	startTime := time.Now()
 	var ret *taskResult
-	store := w.ctx.GetStore()
-	store.SetPriority(kv.PriorityLow)
-	err := kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(w.ctx.GetStore(), true, func(txn kv.Transaction) error {
+		txn.SetOption(kv.Priority, kv.PriorityLow)
 		ret = w.doBackfillIndexTaskInTxn(t, txn, colMap)
 		return errors.Trace(ret.err)
 	})
@@ -719,13 +718,10 @@ type recordIterFunc func(h int64, rowKey kv.Key, rawRecord []byte) (more bool, e
 
 func iterateSnapshotRows(store kv.Storage, priority int, t table.Table, version uint64, seekHandle int64, fn recordIterFunc) error {
 	ver := kv.Version{Ver: version}
-	store.SetPriority(priority)
-
 	snap, err := store.GetSnapshot(ver)
 	if err != nil {
 		return errors.Trace(err)
 	}
-
 	firstKey := t.RecordKey(seekHandle)
 	it, err := snap.Seek(firstKey)
 	if err != nil {
