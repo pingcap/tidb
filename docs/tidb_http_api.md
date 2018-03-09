@@ -101,6 +101,6 @@ timezone.*
     Argument example: rowBin=base64_encoded_row_value
 
     ```shell
-    curl http://{TiDBIP}:10080/tables/{colID}/{colFlag}/{colLen}?${rowBin}={val}
+    curl http://{TiDBIP}:10080/tables/{colID}/{colFlag}/{colLen}?rowBin={val}
     ```
     *Hint: For the column which field type is timezone dependent, e.g. `timestamp`, convert its value to UTC timezone.*
