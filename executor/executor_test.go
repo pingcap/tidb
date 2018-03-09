@@ -2009,8 +2009,9 @@ type checkRequestClient struct {
 	notFillCache bool
 	mu           struct {
 		sync.RWMutex
-		checkFlags uint32
-		syncLog    bool
+		checkFlags     uint32
+		lowPriorityCnt uint32
+		syncLog        bool
 	}
 }
 
@@ -2044,6 +2045,10 @@ func (c *checkRequestClient) SendReq(ctx context.Context, addr string, req *tikv
 		if req.Type == tikvrpc.CmdScan {
 			if c.priority != req.Priority {
 				return nil, errors.New("fail to set priority")
+			}
+		} else if req.Type == tikvrpc.CmdPrewrite {
+			if c.priority == pb.CommandPri_Low {
+				c.mu.lowPriorityCnt++
 			}
 		}
 	}
@@ -2107,6 +2112,8 @@ func (s *testContextOptionSuite) TestAddIndexPriority(c *C) {
 
 	cli.priority = pb.CommandPri_Low
 	tk.MustExec("alter table t1 add index t1_index (id);")
+
+	c.Assert(cli.mu.lowPriorityCnt > 0, IsTrue)
 
 	cli.mu.Lock()
 	cli.mu.checkFlags = checkRequestOff
