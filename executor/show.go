@@ -58,7 +58,6 @@ type ShowExec struct {
 	is infoschema.InfoSchema
 
 	forChunk bool
-	fetched  bool
 	rows     []Row
 	result   *chunk.Chunk
 	cursor   int
