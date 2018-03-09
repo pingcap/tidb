@@ -373,7 +373,7 @@ func (resp *Response) GetRegionError() (*errorpb.Error, error) {
 	return e, nil
 }
 
-// CallRPC launchs a rpc call.
+// CallRPC launches a rpc call.
 func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request, ch chan<- *TimeoutItem) (*Response, error) {
 	resp := &Response{}
 	resp.Type = req.Type
@@ -445,9 +445,9 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request, ch cha
 
 // TimeoutItem is used to implement grpc stream timeout.
 type TimeoutItem struct {
-	cancel  context.CancelFunc
-	timeout time.Time
-	active  int32 // atomic variable, 0 means inactive
+	cancel   context.CancelFunc
+	timeout  time.Time
+	complete int32 // atomic variable, 0 means false
 }
 
 // Recv overrides the stream client Recv() function.
@@ -456,18 +456,17 @@ func (resp *CopStreamResponse) Recv() (*coprocessor.Response, error) {
 		cancel: resp.cancel,
 		// TODO: Make timeout a field in CopStreamResponse.
 		timeout: time.Now().Add(20 * time.Second),
-		active:  1,
 	}
 	resp.timeoutCh <- item
 
 	ret, err := resp.Tikv_CoprocessorStreamClient.Recv()
 
-	atomic.StoreInt32(&item.active, 0)
+	atomic.StoreInt32(&item.complete, 1)
 	return ret, errors.Trace(err)
 }
 
-// CheckStreamTimeoutLoop run periodically to check is there any stream request timeouted.
-// TimeoutItem is a object to track stream requests, call this function with "go CheckStreamTimeoutLoop()"
+// CheckStreamTimeoutLoop runs periodically to check is there any stream request timeouted.
+// TimeoutItem is an object to track stream requests, call this function with "go CheckStreamTimeoutLoop()"
 func CheckStreamTimeoutLoop(ch <-chan *TimeoutItem) {
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
@@ -487,12 +486,12 @@ func CheckStreamTimeoutLoop(ch <-chan *TimeoutItem) {
 	}
 }
 
-// keepOnlyActive removes inactive items, call cancel function for timeout items.
+// keepOnlyActive removes completed items, call cancel function for timeout items.
 func keepOnlyActive(array []*TimeoutItem, now time.Time) []*TimeoutItem {
 	idx := 0
 	for i := 0; i < len(array); i++ {
 		item := array[i]
-		if atomic.LoadInt32(&item.active) == 0 {
+		if atomic.LoadInt32(&item.complete) != 0 {
 			continue
 		}
 
