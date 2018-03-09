@@ -138,7 +138,6 @@ type tikvStore struct {
 	spTime    time.Time
 	spMutex   sync.RWMutex  // this is used to update safePoint and spTime
 	closed    chan struct{} // this is used to nofity when the store is closed
-	priority  int
 }
 
 func (s *tikvStore) UpdateSPCache(cachedSP uint64, cachedTime time.Time) {
@@ -182,7 +181,6 @@ func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Clie
 		safePoint:   0,
 		spTime:      time.Now(),
 		closed:      make(chan struct{}),
-		priority:    kv.PriorityNormal,
 	}
 	store.lockResolver = newLockResolver(store)
 	store.enableGC = enableGC
