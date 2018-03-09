@@ -122,7 +122,7 @@ func (e *baseExecutor) Open(ctx context.Context) error {
 
 // Next implements interface Executor.
 // To be removed in near future.
-func (e *baseExecutor) Next(context.Context) (Row, error){
+func (e *baseExecutor) Next(context.Context) (Row, error) {
 	return nil, nil
 }
 
