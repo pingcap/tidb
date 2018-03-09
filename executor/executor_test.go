@@ -2071,6 +2071,31 @@ func (s *testContextOptionSuite) TearDownSuite(c *C) {
 	s.store.Close()
 }
 
+func (s *testContextOptionSuite) TestAddIndexPriority(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int, v int)")
+	defer tk.MustExec("drop table t1")
+
+	// Insert some data to make sure plan build IndexLookup for t1.
+	for i := 0; i < 10; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t1 values (%d, %d)", i, i))
+	}
+
+	cli := s.cli
+	cli.mu.Lock()
+	cli.mu.checkFlags = checkRequestPriority
+	cli.mu.Unlock()
+
+	cli.priority = pb.CommandPri_Low
+	tk.MustQuery("alter table t1 add index t1_index (id);")
+	tk.MustQuery("select * from t1 where id = 1")
+
+	cli.mu.Lock()
+	cli.mu.checkFlags = checkRequestOff
+	cli.mu.Unlock()
+}
+
 func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
