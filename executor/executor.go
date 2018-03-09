@@ -443,9 +443,7 @@ func (e *RecoverIndexExec) buildTableScan(ctx context.Context, txn kv.Transactio
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	// ranges := []*ranger.NewRange{{LowVal: []types.Datum{types.NewIntDatum(startHandle)}, HighVal: []types.Datum{types.MaxValueDatum()}}}
-	ranges := ranger.FullNewRange()
-	log.Infof("tableName:%v, ID:%v, startHandle:%v", e.tableInfo.Name.O, e.tableInfo.ID, startHandle)
+	ranges := []*ranger.NewRange{{LowVal: []types.Datum{types.NewIntDatum(startHandle)}, HighVal: []types.Datum{types.NewIntDatum(math.MaxInt64)}}}
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetTableRanges(e.tableInfo.ID, ranges).
 		SetDAGRequest(dagPB).
@@ -485,16 +483,18 @@ func (e *RecoverIndexExec) backfillIndex(ctx context.Context) (int64, int64, err
 		}
 		totalAddedCnt += result.addedCount
 		totalScanCnt += result.scanRowCount
+		log.Infof("result:%#v", result)
 		// no more rows
 		if result.scanRowCount == 0 {
 			break
 		}
+		nextHandle = result.nextHandle
 	}
 	return totalAddedCnt, totalScanCnt, nil
 }
 
 func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transaction, startHandle int64) (result backfillResult, err error) {
-	handleIdx := e.Schema().Len() - 1
+	handleIdx := len(e.columns) - 1
 	batchCnt := uint64(1024)
 	result.nextHandle = startHandle
 	srcResult, err := e.buildTableScan(ctx, txn, e.table, startHandle, batchCnt)
@@ -524,12 +524,15 @@ func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transa
 			result.scanRowCount++
 			e.idxVals = e.idxVals[:0]
 			for i := 0; i < row.Len()-1; i++ {
-				colVal := row.GetDatum(i, e.Schema().Columns[i].RetType)
+				colVal := row.GetDatum(i, &e.columns[i].FieldType)
 				e.idxVals = append(e.idxVals, colVal)
 			}
 
+			log.Infof("idxVals:%#v, len(e.idxVals):%v, handle:%v, ctx.GetSessionVars().StmtCtx.BatchCheck:%v", e.idxVals, len(e.idxVals), handle, e.ctx.GetSessionVars().StmtCtx.BatchCheck)
+
 			// backfill the index.
 			dupHandle, err := e.index.Create(e.ctx, txn, e.idxVals, handle)
+			log.Infof("dupHandle:%v, err:%v", dupHandle, err)
 			if err != nil {
 				if kv.ErrKeyExists.Equal(err) && dupHandle == handle {
 					// Index already exists, skip it.
