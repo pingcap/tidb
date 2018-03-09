@@ -592,6 +592,7 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 		if err != nil {
 			// Update the reorg handle that has been processed.
 			err1 := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
+
 				return errors.Trace(reorgInfo.UpdateHandle(txn, nextHandle))
 			})
 			log.Warnf("[ddl] total added index for %d rows, this task [%d,%d) add index for %d failed %v, batch %d, take time %v, update handle err %v",
@@ -655,6 +656,7 @@ func (w *worker) doBackfillIndexTask(t table.Table, colMap map[int64]*types.Fiel
 	startTime := time.Now()
 	var ret *taskResult
 	err := kv.RunInNewTxn(w.ctx.GetStore(), true, func(txn kv.Transaction) error {
+		txn.SetOption(kv.Priority, kv.PriorityLow)
 		ret = w.doBackfillIndexTaskInTxn(t, txn, colMap)
 		return errors.Trace(ret.err)
 	})
@@ -717,11 +719,12 @@ type recordIterFunc func(h int64, rowKey kv.Key, rawRecord []byte) (more bool, e
 
 func iterateSnapshotRows(store kv.Storage, t table.Table, version uint64, seekHandle int64, fn recordIterFunc) error {
 	ver := kv.Version{Ver: version}
+
 	snap, err := store.GetSnapshot(ver)
+	snap.SetPriority(kv.PriorityLow)
 	if err != nil {
 		return errors.Trace(err)
 	}
-
 	firstKey := t.RecordKey(seekHandle)
 	it, err := snap.Seek(firstKey)
 	if err != nil {
