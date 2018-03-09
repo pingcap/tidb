@@ -38,8 +38,7 @@ const (
 )
 
 // tikvSnapshot implements the kv.Snapshot interface.
-type
-tikvSnapshot struct {
+type tikvSnapshot struct {
 	store          *tikvStore
 	version        kv.Version
 	isolationLevel kv.IsoLevel

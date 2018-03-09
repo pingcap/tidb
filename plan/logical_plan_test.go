@@ -359,10 +359,6 @@ func (m *mockStore) GetSnapshot(ver kv.Version) (kv.Snapshot, error) {
 	return nil, nil
 }
 
-func (m *mockStore) SetPriority(priority int) {
-
-}
-
 func (m *mockStore) Close() error {
 	return nil
 }

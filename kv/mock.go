@@ -148,10 +148,6 @@ func (s *mockStorage) Close() error {
 	return nil
 }
 
-func (s *mockStorage) SetPriority(priority int) {
-
-}
-
 func (s *mockStorage) UUID() string {
 	return ""
 }
