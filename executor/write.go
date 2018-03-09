@@ -181,21 +181,6 @@ type DeleteExec struct {
 	finished bool
 }
 
-// Next implements the Executor Next interface.
-func (e *DeleteExec) Next(ctx context.Context) (Row, error) {
-	if e.finished {
-		return nil, nil
-	}
-	defer func() {
-		e.finished = true
-	}()
-
-	if e.IsMultiTable {
-		return nil, e.deleteMultiTables(ctx)
-	}
-	return nil, e.deleteSingleTable(ctx)
-}
-
 // NextChunk implements the Executor NextChunk interface.
 func (e *DeleteExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
@@ -812,11 +797,6 @@ func (e *LoadData) exec(ctx context.Context) (Row, error) {
 	return nil, nil
 }
 
-// Next implements the Executor Next interface.
-func (e *LoadData) Next(ctx context.Context) (Row, error) {
-	return e.exec(ctx)
-}
-
 // NextChunk implements the Executor NextChunk interface.
 func (e *LoadData) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
@@ -1079,29 +1059,6 @@ func batchMarkDupRows(ctx sessionctx.Context, t table.Table, rows [][]types.Datu
 	// this statement was already been checked
 	ctx.GetSessionVars().StmtCtx.BatchCheck = true
 	return rows, nil
-}
-
-// Next implements the Executor Next interface.
-func (e *InsertExec) Next(ctx context.Context) (Row, error) {
-	if e.finished {
-		return nil, nil
-	}
-	cols, err := e.getColumns(e.Table.Cols())
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	var rows [][]types.Datum
-	if e.SelectExec != nil {
-		rows, err = e.getRowsSelect(ctx, cols, e.IgnoreErr)
-	} else {
-		rows, err = e.getRows(cols, e.IgnoreErr)
-	}
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	return e.exec(ctx, rows)
 }
 
 // NextChunk implements Exec NextChunk interface.
@@ -1683,29 +1640,6 @@ func (e *ReplaceExec) exec(ctx context.Context, rows [][]types.Datum) (Row, erro
 	return nil, nil
 }
 
-// Next implements the Executor Next interface.
-func (e *ReplaceExec) Next(ctx context.Context) (Row, error) {
-	if e.finished {
-		return nil, nil
-	}
-	cols, err := e.getColumns(e.Table.Cols())
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	var rows [][]types.Datum
-	if e.SelectExec != nil {
-		rows, err = e.getRowsSelect(ctx, cols, false)
-	} else {
-		rows, err = e.getRows(cols, false)
-	}
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	return e.exec(ctx, rows)
-}
-
 // NextChunk implements the Executor NextChunk interface.
 func (e *ReplaceExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
@@ -1797,19 +1731,6 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema) (Row, 
 	}
 	e.cursor++
 	return Row{}, nil
-}
-
-// Next implements the Executor Next interface.
-func (e *UpdateExec) Next(ctx context.Context) (Row, error) {
-	if !e.fetched {
-		err := e.fetchRows(ctx)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		e.fetched = true
-	}
-
-	return e.exec(ctx, e.SelectExec.Schema())
 }
 
 // NextChunk implements the Executor NextChunk interface.
