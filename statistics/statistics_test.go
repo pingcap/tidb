@@ -109,10 +109,6 @@ func (r *recordSet) NewChunk() *chunk.Chunk {
 	return chunk.NewChunk(fields)
 }
 
-func (r *recordSet) SupportChunk() bool {
-	return true
-}
-
 func (r *recordSet) Close() error {
 	r.cursor = 0
 	return nil
