@@ -67,7 +67,7 @@ type Domain struct {
 // It returns the latest schema version, the changed table IDs, whether it's a full load and an error.
 func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion int64, startTS uint64) (int64, []int64, bool, error) {
 	var fullLoad bool
-	snapshot, err := do.store.GetSnapshotWithPriority(kv.NewVersion(startTS), kv.PriorityHigh)
+	snapshot, err := do.store.GetSnapshot(kv.NewVersion(startTS))
 	if err != nil {
 		return 0, nil, fullLoad, errors.Trace(err)
 	}
