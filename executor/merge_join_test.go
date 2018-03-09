@@ -236,6 +236,7 @@ func checkPlanAndRun(tk *testkit.TestKit, c *C, plan string, sql string) *testki
 }
 
 func (s *testSuite) TestMergeJoin(c *C) {
+	// FIXME: the TIDB_SMJ hint does not really work when there is no index on join onCondition.
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
