@@ -321,37 +321,7 @@ func (e *TableReaderExecutor) Close() error {
 
 // Next implements the Executor Next interface.
 func (e *TableReaderExecutor) Next(goCtx goctx.Context) (Row, error) {
-	for {
-		// Get partial result.
-		if e.partialResult == nil {
-			var err error
-			e.partialResult, err = e.result.Next(goCtx)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if e.partialResult == nil {
-				// Finished.
-				return nil, nil
-			}
-		}
-		// Get a row from partial result.
-		rowData, err := e.partialResult.Next(goCtx)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if rowData == nil {
-			// Finish the current partial result and get the next one.
-			err = e.partialResult.Close()
-			terror.Log(errors.Trace(err))
-			e.partialResult = nil
-			continue
-		}
-		err = decodeRawValues(rowData, e.schema, e.ctx.GetSessionVars().GetTimeZone())
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		return rowData, nil
-	}
+	return nil, nil
 }
 
 // NextChunk implements the Executor NextChunk interface.
