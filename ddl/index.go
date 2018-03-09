@@ -592,6 +592,7 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 		if err != nil {
 			// Update the reorg handle that has been processed.
 			err1 := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
+
 				return errors.Trace(reorgInfo.UpdateHandle(txn, nextHandle))
 			})
 			log.Warnf("[ddl] total added index for %d rows, this task [%d,%d) add index for %d failed %v, batch %d, take time %v, update handle err %v",

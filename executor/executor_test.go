@@ -2041,8 +2041,10 @@ func (c *checkRequestClient) SendReq(ctx context.Context, addr string, req *tikv
 			}
 		}
 	} else if checkFlags == checkDDLAddIndexPriority {
-		if c.priority != req.Priority {
-			return nil, errors.New("fail to set priority")
+		if req.Type == tikvrpc.CmdScan {
+			if c.priority != req.Priority {
+				return nil, errors.New("fail to set priority")
+			}
 		}
 	}
 	return resp, err
@@ -2077,28 +2079,40 @@ func (s *testContextOptionSuite) TearDownSuite(c *C) {
 }
 
 func (s *testContextOptionSuite) TestAddIndexPriority(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+	cli := &checkRequestClient{}
+	hijackClient := func(c tikv.Client) tikv.Client {
+		cli.Client = c
+		return cli
+	}
+
+	store, err := mockstore.NewMockTikvStore(
+		mockstore.WithHijackClient(hijackClient),
+	)
+	c.Assert(err, IsNil)
+	dom, err := tidb.BootstrapSession(store)
+	c.Assert(err, IsNil)
+
+	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int, v int)")
-	defer tk.MustExec("drop table t1")
 
 	// Insert some data to make sure plan build IndexLookup for t1.
 	for i := 0; i < 10; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t1 values (%d, %d)", i, i))
 	}
 
-	cli := s.cli
 	cli.mu.Lock()
 	cli.mu.checkFlags = checkDDLAddIndexPriority
 	cli.mu.Unlock()
 
 	cli.priority = pb.CommandPri_Low
-	tk.MustQuery("alter table t1 add index t1_index (id);")
-	tk.MustQuery("select * from t1 where id = 1")
+	tk.MustExec("alter table t1 add index t1_index (id);")
 
 	cli.mu.Lock()
 	cli.mu.checkFlags = checkRequestOff
 	cli.mu.Unlock()
+	dom.Close()
+	store.Close()
 }
 
 func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
