@@ -622,7 +622,6 @@ func (it *copIterator) handleCopStreamResult(bo *Backoffer, stream *tikvrpc.CopS
 			return remainedTasks, errors.Trace(err)
 		}
 
-		stream.SetDeadline(time.Now().Add(readTimeoutShort))
 		resp, err = stream.Recv()
 		if err != nil {
 			if errors.Cause(err) == io.EOF {

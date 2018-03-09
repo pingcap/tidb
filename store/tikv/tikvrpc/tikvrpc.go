@@ -163,7 +163,6 @@ type CopStreamResponse struct {
 	// The following fields is used to support timeout.
 	cancel    context.CancelFunc
 	timeoutCh chan<- *TimeoutItem
-	pending   *TimeoutItem
 }
 
 // NewCopStreamResponse returns a CopStreamResponse.
@@ -451,24 +450,19 @@ type TimeoutItem struct {
 	active  int32 // atomic variable, 0 means inactive
 }
 
-// SetDeadline set deadline for this CopStreamResponse object, it usually called before Recv().
-func (resp *CopStreamResponse) SetDeadline(deadline time.Time) {
-	item := &TimeoutItem{
-		cancel:  resp.cancel,
-		timeout: deadline,
-		active:  1,
-	}
-	resp.pending = item
-	resp.timeoutCh <- item
-}
-
 // Recv overrides the stream client Recv() function.
 func (resp *CopStreamResponse) Recv() (*coprocessor.Response, error) {
-	ret, err := resp.Tikv_CoprocessorStreamClient.Recv()
-	if resp.pending != nil {
-		atomic.StoreInt32(&resp.pending.active, 0)
-		resp.pending = nil
+	item := &TimeoutItem{
+		cancel: resp.cancel,
+		// TODO: Make timeout a field in CopStreamResponse.
+		timeout: time.Now().Add(20 * time.Second),
+		active:  1,
 	}
+	resp.timeoutCh <- item
+
+	ret, err := resp.Tikv_CoprocessorStreamClient.Recv()
+
+	atomic.StoreInt32(&item.active, 0)
 	return ret, errors.Trace(err)
 }
 
