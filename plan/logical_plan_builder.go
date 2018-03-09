@@ -1626,7 +1626,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	tableInfo := tbl.Meta()
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "")
 
-	availableIdx, err := getAvailableIndices(tn.IndexHints, tableInfo)
+	availableIdxes, err := getAvailableIndices(tn.IndexHints, tableInfo)
 	if err != nil {
 		b.err = errors.Trace(err)
 		return nil
@@ -1644,7 +1644,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		tableInfo:        tableInfo,
 		statisticTable:   b.getStatsTable(tableInfo.ID),
 		indexHints:       tn.IndexHints,
-		availableIndices: availableIdx,
+		availableIndices: availableIdxes,
 		Columns:          make([]*model.ColumnInfo, 0, len(columns)),
 	}.init(b.ctx)
 

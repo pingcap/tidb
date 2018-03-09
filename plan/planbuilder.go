@@ -351,17 +351,17 @@ func getAvailableIndices(indexHints []*ast.IndexHint, tableInfo *model.TableInfo
 		return &availableIndices{publicIndices, true}, nil
 	}
 	if !hasUseOrForce {
-		available = removeIgnoredIndex(publicIndices, ignored)
+		available = removeIgnoredIndices(publicIndices, ignored)
 		return &availableIndices{available, true}, nil
 	}
 
-	available = removeIgnoredIndex(available, ignored)
+	available = removeIgnoredIndices(available, ignored)
 	// If we have got "FORCE" or "USE" index hint but got no available index,
 	// we have to use table scan.
 	return &availableIndices{available, len(available) == 0}, nil
 }
 
-func removeIgnoredIndex(indices, ignores []*model.IndexInfo) []*model.IndexInfo {
+func removeIgnoredIndices(indices, ignores []*model.IndexInfo) []*model.IndexInfo {
 	if len(ignores) == 0 {
 		return indices
 	}
