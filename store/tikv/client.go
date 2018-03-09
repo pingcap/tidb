@@ -70,12 +70,15 @@ type Client interface {
 type connArray struct {
 	index uint32
 	v     []*grpc.ClientConn
+	// Bind with a background goroutine to process coprocessor streaming timeout.
+	streamTimeout chan *tikvrpc.TimeoutItem
 }
 
 func newConnArray(maxSize uint, addr string, security config.Security) (*connArray, error) {
 	a := &connArray{
-		index: 0,
-		v:     make([]*grpc.ClientConn, maxSize),
+		index:         0,
+		v:             make([]*grpc.ClientConn, maxSize),
+		streamTimeout: make(chan *tikvrpc.TimeoutItem, 1024),
 	}
 	if err := a.Init(addr, security); err != nil {
 		return nil, err
@@ -123,6 +126,8 @@ func (a *connArray) Init(addr string, security config.Security) error {
 		}
 		a.v[i] = conn
 	}
+	go tikvrpc.CheckStreamTimeoutLoop(a.streamTimeout)
+
 	return nil
 }
 
@@ -139,6 +144,7 @@ func (a *connArray) Close() {
 			a.v[i] = nil
 		}
 	}
+	close(a.streamTimeout)
 }
 
 // rpcClient is RPC client struct.
@@ -149,24 +155,19 @@ func (a *connArray) Close() {
 // whether there is any connection is idle and then close and remove these idle connections.
 type rpcClient struct {
 	sync.RWMutex
-	isClosed      bool
-	conns         map[string]*connArray
-	security      config.Security
-	streamTimeout chan *tikvrpc.TimeoutItem
+	isClosed bool
+	conns    map[string]*connArray
+	security config.Security
 }
 
 func newRPCClient(security config.Security) *rpcClient {
-	timeoutCh := make(chan *tikvrpc.TimeoutItem, 1024)
-	go tikvrpc.CheckStreamTimeoutLoop(timeoutCh)
-
 	return &rpcClient{
-		conns:         make(map[string]*connArray),
-		security:      security,
-		streamTimeout: timeoutCh,
+		conns:    make(map[string]*connArray),
+		security: security,
 	}
 }
 
-func (c *rpcClient) getConn(addr string) (*grpc.ClientConn, error) {
+func (c *rpcClient) getConnArray(addr string) (*connArray, error) {
 	c.RLock()
 	if c.isClosed {
 		c.RUnlock()
@@ -181,7 +182,7 @@ func (c *rpcClient) getConn(addr string) (*grpc.ClientConn, error) {
 			return nil, err
 		}
 	}
-	return array.Get(), nil
+	return array, nil
 }
 
 func (c *rpcClient) createConnArray(addr string) (*connArray, error) {
@@ -220,12 +221,12 @@ func (c *rpcClient) SendReq(ctx context.Context, addr string, req *tikvrpc.Reque
 		metrics.TiKVSendReqHistogram.WithLabelValues(reqType, storeID).Observe(time.Since(start).Seconds())
 	}()
 
-	conn, err := c.getConn(addr)
+	connArray, err := c.getConnArray(addr)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	client := tikvpb.NewTikvClient(conn)
-	resp, err := tikvrpc.CallRPC(ctx, client, req, c.streamTimeout)
+	client := tikvpb.NewTikvClient(connArray.Get())
+	resp, err := tikvrpc.CallRPC(ctx, client, req, connArray.streamTimeout)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -234,6 +235,5 @@ func (c *rpcClient) SendReq(ctx context.Context, addr string, req *tikvrpc.Reque
 
 func (c *rpcClient) Close() error {
 	c.closeConns()
-	close(c.streamTimeout)
 	return nil
 }
