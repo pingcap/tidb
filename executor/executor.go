@@ -426,7 +426,7 @@ func (e *RecoverIndexExec) buildDAGPB(txn kv.Transaction, limitCnt uint64) (*tip
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
 	pbColumnInfos := plan.ColumnsToProto(e.columns, e.tableInfo.PKIsHandle)
-	err := setPBColumnsDefaultValue(e.ctx, pbColumnInfos, e.columns)
+	err := plan.SetPBColumnsDefaultValue(e.ctx, pbColumnInfos, e.columns)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
