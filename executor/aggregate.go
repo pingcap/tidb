@@ -166,34 +166,6 @@ func (e *HashAggExec) getGroupKey(row types.Row) ([]byte, error) {
 	return e.groupKey, nil
 }
 
-// innerNext fetches a single row from src and update each aggregate function.
-// If the first return value is false, it means there is no more data from src.
-func (e *HashAggExec) innerNext(ctx context.Context) (ret bool, err error) {
-	srcRow, err := e.children[0].Next(ctx)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	if srcRow == nil {
-		return false, nil
-	}
-	e.executed = true
-	groupKey, err := e.getGroupKey(srcRow)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	if len(e.groupMap.Get(groupKey, e.groupVals[:0])) == 0 {
-		e.groupMap.Put(groupKey, []byte{})
-	}
-	aggCtxs := e.getContexts(groupKey)
-	for i, af := range e.AggFuncs {
-		err = af.Update(aggCtxs[i], e.sc, srcRow)
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-	}
-	return true, nil
-}
-
 func (e *HashAggExec) getContexts(groupKey []byte) []*aggregation.AggEvaluateContext {
 	groupKeyString := string(groupKey)
 	aggCtxs, ok := e.aggCtxsMap[groupKeyString]
