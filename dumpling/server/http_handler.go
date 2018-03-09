@@ -342,8 +342,25 @@ func (vh valueHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// Get binary.
-	bin := params[pRowBin]
+	// Get the unchanged binary.
+	if req.URL == nil {
+		err = errors.BadRequestf("Invalid URL")
+		writeError(w, err)
+		return
+	}
+	values := make(url.Values)
+	shouldUnescape := false
+	err = parseQuery(req.URL.RawQuery, values, shouldUnescape)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if len(values[pRowBin]) != 1 {
+		err = errors.BadRequestf("Invalid Query:%v", values[pRowBin])
+		writeError(w, err)
+		return
+	}
+	bin := values[pRowBin][0]
 	valData, err := base64.StdEncoding.DecodeString(bin)
 	if err != nil {
 		writeError(w, err)
@@ -882,11 +899,13 @@ func (r RegionFrameRange) lastTableID() int64 {
 	return r.last.TableID
 }
 
-// parseQuery is used to parse query string in URL, due to golang http package can not distinguish
+// parseQuery is used to parse query string in URL with shouldUnescape, due to golang http package can not distinguish
 // query like "?a=" and "?a". We rewrite it to separate these two queries. e.g.
 // "?a=" which means that a is an empty string "";
 // "?a"  which means that a is null.
-func parseQuery(query string, m url.Values) error {
+// If shouldUnescape is true, we use QueryUnescape to handle keys and values that will be put in m.
+// If shouldUnescape is false, we don't use QueryUnescap to handle.
+func parseQuery(query string, m url.Values, shouldUnescape bool) error {
 	var err error
 	for query != "" {
 		key := query
@@ -901,19 +920,23 @@ func parseQuery(query string, m url.Values) error {
 		if i := strings.Index(key, "="); i >= 0 {
 			value := ""
 			key, value = key[:i], key[i+1:]
-			key, err = url.QueryUnescape(key)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			value, err = url.QueryUnescape(value)
-			if err != nil {
-				return errors.Trace(err)
+			if shouldUnescape {
+				key, err = url.QueryUnescape(key)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				value, err = url.QueryUnescape(value)
+				if err != nil {
+					return errors.Trace(err)
+				}
 			}
 			m[key] = append(m[key], value)
 		} else {
-			key, err = url.QueryUnescape(key)
-			if err != nil {
-				return errors.Trace(err)
+			if shouldUnescape {
+				key, err = url.QueryUnescape(key)
+				if err != nil {
+					return errors.Trace(err)
+				}
 			}
 			if _, ok := m[key]; !ok {
 				m[key] = nil
@@ -937,7 +960,7 @@ func (h mvccTxnHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			break
 		}
 		values := make(url.Values)
-		err = parseQuery(req.URL.RawQuery, values)
+		err = parseQuery(req.URL.RawQuery, values, true)
 		if err == nil {
 			data, err = h.handleMvccGetByIdx(params, values)
 		}
