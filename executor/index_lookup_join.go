@@ -52,10 +52,9 @@ type IndexLookUpJoin struct {
 	outerCtx outerCtx
 	innerCtx innerCtx
 
-	task             *lookUpJoinTask
-	joinResult       *chunk.Chunk
-	joinResultCursor int
-	innerIter        chunk.Iterator
+	task       *lookUpJoinTask
+	joinResult *chunk.Chunk
+	innerIter  chunk.Iterator
 
 	resultGenerator joinResultGenerator
 
@@ -177,40 +176,11 @@ func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWork
 // NextChunk implements the Executor interface.
 func (e *IndexLookUpJoin) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
-	err := e.prepareJoinResult(ctx, chk, true)
+	err := e.prepareJoinResult(ctx, chk)
 	return errors.Trace(err)
 }
 
-// Next implements the Executor interface.
-// Even though we only support read children in chunk mode, but we are not sure if our parents
-// support chunk, so we have to implement Next.
-func (e *IndexLookUpJoin) Next(ctx context.Context) (Row, error) {
-	for {
-		err := e.prepareJoinResult(ctx, e.joinResult, false)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if e.joinResult.NumRows() == 0 {
-			return nil, nil
-		}
-		row := e.joinResult.GetRow(e.joinResultCursor)
-		datumRow := make(types.DatumRow, row.Len())
-		for i := 0; i < row.Len(); i++ {
-			// Here if some datum is KindBytes/KindString and we don't copy it, the datums' data could be in the same space
-			// since row.GetDatum() and datum.SetBytes() don't alloc new space thus causing wrong result.
-			d := row.GetDatum(i, e.schema.Columns[i].RetType)
-			datumRow[i] = *d.Copy()
-		}
-		e.joinResultCursor++
-		return datumRow, nil
-	}
-}
-
-func (e *IndexLookUpJoin) prepareJoinResult(ctx context.Context, chk *chunk.Chunk, forChunk bool) error {
-	if !forChunk && e.joinResultCursor < chk.NumRows() {
-		return nil
-	}
-	e.joinResultCursor = 0
+func (e *IndexLookUpJoin) prepareJoinResult(ctx context.Context, chk *chunk.Chunk) error {
 	e.joinResult.Reset()
 	for {
 		task, err := e.getFinishedTask(ctx)
