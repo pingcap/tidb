@@ -288,10 +288,6 @@ type SessionVars struct {
 	// MemQuotaTopn defines the memory quota for a top n executor.
 	MemQuotaTopn int64
 
-	// EnableChunk indicates whether the chunk execution model is enabled.
-	// TODO: remove this after tidb-server configuration "enable-chunk' removed.
-	EnableChunk bool
-
 	// EnableStreaming indicates whether the coprocessor request can use streaming API.
 	// TODO: remove this after tidb-server configuration "enable-streaming' removed.
 	EnableStreaming bool

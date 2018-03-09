@@ -1680,7 +1680,6 @@ func (s *testSchemaSuite) TestInsertExecChunk(c *C) {
 	tk.MustExec("create table test2(a int)")
 
 	tk.Se.GetSessionVars().DistSQLScanConcurrency = 1
-	tk.Se.GetSessionVars().EnableChunk = true
 	tk.MustExec("insert into test2(a) select a from test1;")
 
 	rs, err := tk.Exec("select * from test2")
@@ -1713,7 +1712,6 @@ func (s *testSchemaSuite) TestUpdateExecChunk(c *C) {
 	}
 
 	tk.Se.GetSessionVars().DistSQLScanConcurrency = 1
-	tk.Se.GetSessionVars().EnableChunk = true
 	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("update chk set a = a + 100 where a = %d", i))
 	}
@@ -1749,7 +1747,6 @@ func (s *testSchemaSuite) TestDeleteExecChunk(c *C) {
 	}
 
 	tk.Se.GetSessionVars().DistSQLScanConcurrency = 1
-	tk.Se.GetSessionVars().EnableChunk = true
 
 	for i := 0; i < 99; i++ {
 		tk.MustExec(fmt.Sprintf("delete from chk where a = %d", i))
@@ -1782,7 +1779,6 @@ func (s *testSchemaSuite) TestDeleteMultiTableExecChunk(c *C) {
 	}
 
 	tk.Se.GetSessionVars().DistSQLScanConcurrency = 1
-	tk.Se.GetSessionVars().EnableChunk = true
 
 	tk.MustExec("delete chk1, chk2 from chk1 inner join chk2 where chk1.a = chk2.a")
 
