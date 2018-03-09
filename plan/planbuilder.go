@@ -611,6 +611,7 @@ func buildShowDDLFields() *expression.Schema {
 func buildRecoverIndexFields() *expression.Schema {
 	schema := expression.NewSchema(make([]*expression.Column, 0, 1)...)
 	schema.Append(buildColumn("", "ADDED_COUNT", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "SCAN_COUNT", mysql.TypeLonglong, 4))
 	return schema
 }
 

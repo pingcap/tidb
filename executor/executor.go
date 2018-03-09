@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
@@ -442,7 +443,9 @@ func (e *RecoverIndexExec) buildTableScan(ctx context.Context, txn kv.Transactio
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	ranges := []*ranger.NewRange{{LowVal: []types.Datum{types.NewIntDatum(startHandle)}, HighVal: []types.Datum{types.MaxValueDatum()}}}
+	// ranges := []*ranger.NewRange{{LowVal: []types.Datum{types.NewIntDatum(startHandle)}, HighVal: []types.Datum{types.MaxValueDatum()}}}
+	ranges := ranger.FullNewRange()
+	log.Infof("tableName:%v, ID:%v, startHandle:%v", e.tableInfo.Name.O, e.tableInfo.ID, startHandle)
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetTableRanges(e.tableInfo.ID, ranges).
 		SetDAGRequest(dagPB).
@@ -458,45 +461,52 @@ func (e *RecoverIndexExec) buildTableScan(ctx context.Context, txn kv.Transactio
 	return result, nil
 }
 
-func (e *RecoverIndexExec) backfillIndex(ctx context.Context) (int64, error) {
+type backfillResult struct {
+	nextHandle   int64
+	addedCount   int64
+	scanRowCount int64
+}
+
+func (e *RecoverIndexExec) backfillIndex(ctx context.Context) (int64, int64, error) {
 	var (
 		nextHandle    = int64(math.MinInt64)
 		totalAddedCnt = int64(0)
-		addedCount    int64
-		more          bool
+		totalScanCnt  = int64(0)
+		result        backfillResult
 	)
 	for {
 		errInTxn := kv.RunInNewTxn(e.ctx.GetStore(), true, func(txn kv.Transaction) error {
 			var err error
-			nextHandle, addedCount, more, err = e.backfillIndexInTxn(ctx, txn, nextHandle)
+			result, err = e.backfillIndexInTxn(ctx, txn, nextHandle)
 			return errors.Trace(err)
 		})
 		if errInTxn != nil {
-			return 0, errors.Trace(errInTxn)
+			return totalAddedCnt, totalScanCnt, errors.Trace(errInTxn)
 		}
-		totalAddedCnt += addedCount
-
-		if !more {
+		totalAddedCnt += result.addedCount
+		totalScanCnt += result.scanRowCount
+		// no more rows
+		if result.scanRowCount == 0 {
 			break
 		}
 	}
-	return totalAddedCnt, nil
+	return totalAddedCnt, totalScanCnt, nil
 }
 
-func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transaction, startHandle int64) (nextHandle int64, addedCount int64, more bool, err error) {
+func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transaction, startHandle int64) (result backfillResult, err error) {
 	handleIdx := e.Schema().Len() - 1
 	batchCnt := uint64(1024)
-	lastHandle, rowCount := startHandle, 0
+	result.nextHandle = startHandle
 	srcResult, err := e.buildTableScan(ctx, txn, e.table, startHandle, batchCnt)
 	if err != nil {
-		return lastHandle, addedCount, false, errors.Trace(err)
+		return result, errors.Trace(err)
 	}
 	defer srcResult.Close()
 
 	for {
 		err := srcResult.NextChunk(ctx, e.srcChunk)
 		if err != nil {
-			return lastHandle, addedCount, false, errors.Trace(err)
+			return result, errors.Trace(err)
 		}
 
 		if e.srcChunk.NumRows() == 0 {
@@ -508,12 +518,10 @@ func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transa
 			recordKey := e.table.RecordKey(handle)
 			err := txn.LockKeys(recordKey)
 			if err != nil {
-				return lastHandle, addedCount, false, errors.Trace(err)
+				return result, errors.Trace(err)
 			}
 
-			lastHandle = handle
-			rowCount++
-
+			result.scanRowCount++
 			e.idxVals = e.idxVals[:0]
 			for i := 0; i < row.Len()-1; i++ {
 				colVal := row.GetDatum(i, e.Schema().Columns[i].RetType)
@@ -527,13 +535,14 @@ func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transa
 					// Index already exists, skip it.
 					continue
 				}
-				return lastHandle, addedCount, false, errors.Trace(err)
+				return result, errors.Trace(err)
 			}
-			addedCount++
+			result.addedCount++
+			result.nextHandle = handle + 1
 		}
 	}
 
-	return lastHandle + 1, addedCount, rowCount != 0, nil
+	return result, nil
 }
 
 // NextChunk implements the Executor NextChunk interface.
@@ -543,12 +552,13 @@ func (e *RecoverIndexExec) NextChunk(ctx context.Context, chk *chunk.Chunk) erro
 		return nil
 	}
 
-	totalAddedCnt, err := e.backfillIndex(ctx)
+	totalAddedCnt, totalScanCnt, err := e.backfillIndex(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	chk.AppendInt64(0, totalAddedCnt)
+	chk.AppendInt64(1, totalScanCnt)
 	e.done = true
 	return nil
 }

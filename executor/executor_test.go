@@ -211,7 +211,7 @@ func (s *testSuite) TestAdminRecoverIndex(c *C) {
 	tk.MustExec("insert admin_test (c1) values (1),(2),(NULL)")
 
 	r := tk.MustQuery("admin recover index admin_test c1")
-	r.Check(testkit.Rows("3"))
+	r.Check(testkit.Rows("0 3"))
 }
 
 func (s *testSuite) fillData(tk *testkit.TestKit, table string) {

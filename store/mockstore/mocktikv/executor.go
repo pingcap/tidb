@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
@@ -105,9 +106,12 @@ func (e *tableScanExec) Cursor() ([]byte, bool) {
 
 func (e *tableScanExec) Next(ctx context.Context) (value [][]byte, err error) {
 	e.count++
+	log.Infof("e.cursor:%v, len(e.kvRanges):%v", e.cursor, len(e.kvRanges))
 	for e.cursor < len(e.kvRanges) {
 		ran := e.kvRanges[e.cursor]
+		log.Infof("ran:%v", ran)
 		if ran.IsPoint() {
+			log.Infof("ran.IsPoint()")
 			value, err = e.getRowFromPoint(ran)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -118,11 +122,12 @@ func (e *tableScanExec) Next(ctx context.Context) (value [][]byte, err error) {
 			}
 			return value, nil
 		}
-
+		log.Infof("e.getRowFromRange:%v", ran)
 		value, err = e.getRowFromRange(ran)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		log.Infof("value:%v", value)
 		if value == nil {
 			e.seekKey = nil
 			e.cursor++

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/terror"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
@@ -607,6 +608,7 @@ func (c *RPCClient) SendReq(ctx context.Context, addr string, req *tikvrpc.Reque
 		}
 		handler.rawStartKey = MvccKey(handler.startKey).Raw()
 		handler.rawEndKey = MvccKey(handler.endKey).Raw()
+		log.Infof("mocktikv: handler.rawStartKey:%v, handler.rawEndKey:%v, handler.startKey:%v, handler.endKey:%v", string(handler.rawStartKey), string(handler.rawEndKey), string(handler.startKey), string(handler.endKey))
 		var res *coprocessor.Response
 		if r.GetTp() == kv.ReqTypeDAG {
 			res = handler.handleCopDAGRequest(r)
