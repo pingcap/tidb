@@ -2000,6 +2000,7 @@ const (
 	checkRequestPriority     = 1
 	checkRequestNotFillCache = 2
 	checkRequestSyncLog      = 3
+	checkDDLAddIndexPriority = 4
 )
 
 type checkRequestClient struct {
@@ -2038,6 +2039,10 @@ func (c *checkRequestClient) SendReq(ctx context.Context, addr string, req *tikv
 			if syncLog != req.SyncLog {
 				return nil, errors.New("fail to set sync log")
 			}
+		}
+	} else if checkFlags == checkDDLAddIndexPriority {
+		if c.priority != req.Priority {
+			return nil, errors.New("fail to set priority")
 		}
 	}
 	return resp, err
@@ -2084,7 +2089,7 @@ func (s *testContextOptionSuite) TestAddIndexPriority(c *C) {
 
 	cli := s.cli
 	cli.mu.Lock()
-	cli.mu.checkFlags = checkRequestPriority
+	cli.mu.checkFlags = checkDDLAddIndexPriority
 	cli.mu.Unlock()
 
 	cli.priority = pb.CommandPri_Low
