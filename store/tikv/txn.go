@@ -56,6 +56,7 @@ func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
 func newTikvTxnWithStartTS(store *tikvStore, startTS uint64) (*tikvTxn, error) {
 	ver := kv.NewVersion(startTS)
 	snapshot := newTiKVSnapshot(store, ver)
+	snapshot.priority = kvPriorityToCommandPri(store.priority)
 	return &tikvTxn{
 		snapshot:  snapshot,
 		us:        kv.NewUnionStore(snapshot),
