@@ -146,11 +146,6 @@ func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint8,
 	return tc, nil
 }
 
-// EnableChunk enables TiDBContext to use chunk.
-func (tc *TiDBContext) EnableChunk() {
-	tc.session.GetSessionVars().EnableChunk = true
-}
-
 // Status implements QueryCtx Status method.
 func (tc *TiDBContext) Status() uint16 {
 	return tc.session.Status()
