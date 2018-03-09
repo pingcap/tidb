@@ -654,7 +654,9 @@ func (w *worker) doBackfillIndexTask(t table.Table, colMap map[int64]*types.Fiel
 
 	startTime := time.Now()
 	var ret *taskResult
-	err := kv.RunInNewTxn(w.ctx.GetStore(), true, func(txn kv.Transaction) error {
+	store := w.ctx.GetStore()
+	store.SetPriority(kv.PriorityLow)
+	err := kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
 		ret = w.doBackfillIndexTaskInTxn(t, txn, colMap)
 		return errors.Trace(ret.err)
 	})

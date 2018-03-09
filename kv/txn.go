@@ -32,7 +32,6 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 		txn           Transaction
 	)
 	for i := uint(0); i < maxRetryCnt; i++ {
-		store.SetPriority(PriorityLow)
 		txn, err = store.Begin()
 		if err != nil {
 			log.Errorf("[kv] RunInNewTxn error - %v", err)
