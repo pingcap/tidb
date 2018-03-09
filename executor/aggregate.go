@@ -143,37 +143,7 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 
 // Next implements the Executor Next interface.
 func (e *HashAggExec) Next(ctx context.Context) (Row, error) {
-	// In this stage we consider all data from src as a single group.
-	if !e.executed {
-		for {
-			hasMore, err := e.innerNext(ctx)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if !hasMore {
-				break
-			}
-		}
-		if (e.groupMap.Len() == 0) && len(e.GroupByItems) == 0 {
-			// If no groupby and no data, we should add an empty group.
-			// For example:
-			// "select count(c) from t;" should return one row [0]
-			// "select count(c) from t group by c1;" should return empty result set.
-			e.groupMap.Put([]byte{}, []byte{})
-		}
-		e.executed = true
-	}
-
-	groupKey, _ := e.groupIterator.Next()
-	if groupKey == nil {
-		return nil, nil
-	}
-	retRow := make([]types.Datum, 0, len(e.AggFuncs))
-	aggCtxs := e.getContexts(groupKey)
-	for i, af := range e.AggFuncs {
-		retRow = append(retRow, af.GetResult(aggCtxs[i]))
-	}
-	return retRow, nil
+	return nil,nil 
 }
 
 func (e *HashAggExec) getGroupKey(row types.Row) ([]byte, error) {
