@@ -15,7 +15,7 @@ package distsql
 
 import (
 	"github.com/juju/errors"
-	"github.com/pingcap/tipb/go-tipb"
+	tipb "github.com/pingcap/tipb/go-tipb"
 	"golang.org/x/net/context"
 )
 
