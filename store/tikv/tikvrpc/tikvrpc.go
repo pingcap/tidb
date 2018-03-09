@@ -419,15 +419,17 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request, ch cha
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		wrapStream := NewCopStreamResponse(stream, nil, cancel, ch)
 		// Read the first streaming response to get CopStreamResponse.
 		// This can make error handling much easier, because SendReq() retry on
 		// region error automatically.
 		var first *coprocessor.Response
-		first, err = resp.CopStream.Recv()
+		first, err = wrapStream.Recv()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		resp.CopStream = NewCopStreamResponse(stream, first, cancel, ch)
+		wrapStream.Response = first
+		resp.CopStream = wrapStream
 	case CmdMvccGetByKey:
 		resp.MvccGetByKey, err = client.MvccGetByKey(ctx, req.MvccGetByKey)
 	case CmdMvccGetByStartTs:
