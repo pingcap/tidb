@@ -501,7 +501,7 @@ func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transa
 	if err != nil {
 		return result, errors.Trace(err)
 	}
-	defer srcResult.Close()
+	defer terror.Call(srcResult.Close)
 
 	for {
 		err := srcResult.NextChunk(ctx, e.srcChunk)
