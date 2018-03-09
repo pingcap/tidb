@@ -36,6 +36,10 @@ Power TiDB with your most favorite engines. TiDB supports local storage engines 
 
 For more details, see [How we build TiDB](https://pingcap.github.io/blog/2016/10/17/how-we-build-tidb/).
 
+## Adopters
+
+You can view the list of TiDB adopters [here](https://github.com/pingcap/docs/blob/master/adopters.md).
+
 ## Roadmap
 
 Read the [Roadmap](https://github.com/pingcap/docs/blob/master/ROADMAP.md).
