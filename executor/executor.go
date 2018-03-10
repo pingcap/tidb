@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
@@ -59,6 +60,11 @@ var (
 	_ Executor = &TableScanExec{}
 	_ Executor = &TopNExec{}
 	_ Executor = &UnionExec{}
+	_ Executor = &RecoverIndexExec{}
+	_ Executor = &CheckIndexExec{}
+	_ Executor = &HashJoinExec{}
+	_ Executor = &IndexLookUpExecutor{}
+	_ Executor = &MergeJoinExec{}
 )
 
 // Error instances.
@@ -422,13 +428,17 @@ func (e *RecoverIndexExec) initCols() {
 	return
 }
 
-func (e *RecoverIndexExec) constructTableScanPB(pbColumnInfos []*tipb.ColumnInfo) *tipb.Executor {
+func (e *RecoverIndexExec) constructTableScanPB(pbColumnInfos []*tipb.ColumnInfo, limitCnt uint64) *tipb.Executor {
 	tblScan := &tipb.TableScan{
 		TableId: e.tableInfo.ID,
 		Columns: pbColumnInfos,
 	}
 
-	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tblScan}
+	limit := &tipb.Limit{
+		Limit: limitCnt,
+	}
+
+	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tblScan, Limit: limit}
 }
 
 func (e *RecoverIndexExec) constructLimitPB(count uint64) *tipb.Executor {
@@ -447,16 +457,18 @@ func (e *RecoverIndexExec) buildDAGPB(txn kv.Transaction, limitCnt uint64) (*tip
 	for i := range e.columns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
+
+	limitExec := e.constructLimitPB(limitCnt)
+	dagReq.Executors = append(dagReq.Executors, limitExec)
+
 	pbColumnInfos := plan.ColumnsToProto(e.columns, e.tableInfo.PKIsHandle)
 	err := plan.SetPBColumnsDefaultValue(e.ctx, pbColumnInfos, e.columns)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	tblScanExec := e.constructTableScanPB(pbColumnInfos)
+	tblScanExec := e.constructTableScanPB(pbColumnInfos, limitCnt)
 	dagReq.Executors = append(dagReq.Executors, tblScanExec)
 
-	limitExec := e.constructLimitPB(limitCnt)
-	dagReq.Executors = append(dagReq.Executors, limitExec)
 	return dagReq, nil
 }
 
@@ -505,6 +517,7 @@ func (e *RecoverIndexExec) backfillIndex(ctx context.Context) (int64, int64, err
 		}
 		totalAddedCnt += result.addedCount
 		totalScanCnt += result.scanRowCount
+		logrus.Infof("result:%#v", result)
 		// no more rows
 		if result.scanRowCount == 0 {
 			break
@@ -516,7 +529,7 @@ func (e *RecoverIndexExec) backfillIndex(ctx context.Context) (int64, int64, err
 
 func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transaction, startHandle int64) (result backfillResult, err error) {
 	handleIdx := len(e.columns) - 1
-	batchCnt := uint64(1024)
+	batchCnt := uint64(1)
 	result.nextHandle = startHandle
 	srcResult, err := e.buildTableScan(ctx, txn, e.table, startHandle, batchCnt)
 	if err != nil {
