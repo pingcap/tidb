@@ -360,9 +360,22 @@ type RecoverIndexExec struct {
 	table     table.Table
 	is        infoschema.InfoSchema
 
-	columns  []*model.ColumnInfo
-	srcChunk *chunk.Chunk
-	idxVals  []types.Datum // used to reduce memory allocation.
+	columns       []*model.ColumnInfo
+	colFieldTypes []*types.FieldType
+	srcChunk      *chunk.Chunk
+	idxVals       []types.Datum // used to reduce memory allocation.
+}
+
+func (e *RecoverIndexExec) columnsTypes() []*types.FieldType {
+	if e.colFieldTypes != nil {
+		return e.colFieldTypes
+	}
+
+	e.colFieldTypes = make([]*types.FieldType, 0, len(e.columns))
+	for _, col := range e.columns {
+		e.colFieldTypes = append(e.colFieldTypes, &col.FieldType)
+	}
+	return e.colFieldTypes
 }
 
 // Open implements the Executor Open interface.
@@ -371,8 +384,8 @@ func (e *RecoverIndexExec) Open(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	e.srcChunk = e.newChunk()
 	e.initCols()
+	e.srcChunk = chunk.NewChunk(e.columnsTypes())
 	e.index = tables.NewIndexWithBuffer(e.tableInfo, e.indexInfo)
 
 	dbName := model.NewCIStr(e.ctx.GetSessionVars().CurrentDB)
@@ -399,10 +412,14 @@ func (e *RecoverIndexExec) initCols() {
 		e.columns = append(e.columns, tblInfo.Columns[idxCol.Offset])
 	}
 
-	e.columns = append(e.columns, &model.ColumnInfo{
-		ID:   model.ExtraHandleID,
-		Name: model.ExtraHandleName,
-	})
+	handleOffset := len(e.columns)
+	handleColsInfo := &model.ColumnInfo{
+		ID:     model.ExtraHandleID,
+		Name:   model.ExtraHandleName,
+		Offset: handleOffset,
+	}
+	handleColsInfo.FieldType = *types.NewFieldType(mysql.TypeLonglong)
+	e.columns = append(e.columns, handleColsInfo)
 	return
 }
 
@@ -457,7 +474,7 @@ func (e *RecoverIndexExec) buildTableScan(ctx context.Context, txn kv.Transactio
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		Build()
 
-	result, err := distsql.Select(ctx, e.ctx, kvReq, e.retFieldTypes)
+	result, err := distsql.Select(ctx, e.ctx, kvReq, e.columnsTypes())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -489,7 +506,6 @@ func (e *RecoverIndexExec) backfillIndex(ctx context.Context) (int64, int64, err
 		}
 		totalAddedCnt += result.addedCount
 		totalScanCnt += result.scanRowCount
-		log.Infof("result:%#v", result)
 		// no more rows
 		if result.scanRowCount == 0 {
 			break
@@ -534,11 +550,8 @@ func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transa
 				e.idxVals = append(e.idxVals, colVal)
 			}
 
-			log.Infof("idxVals:%#v, len(e.idxVals):%v, handle:%v, ctx.GetSessionVars().StmtCtx.BatchCheck:%v", e.idxVals, len(e.idxVals), handle, e.ctx.GetSessionVars().StmtCtx.BatchCheck)
-
 			// backfill the index.
 			dupHandle, err := e.index.Create(e.ctx, txn, e.idxVals, handle)
-			log.Infof("dupHandle:%v, err:%v", dupHandle, err)
 			if err != nil {
 				if kv.ErrKeyExists.Equal(err) && dupHandle == handle {
 					// Index already exists, skip it.
