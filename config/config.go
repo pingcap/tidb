@@ -50,7 +50,6 @@ type Config struct {
 	RunDDL          bool   `toml:"run-ddl" json:"run-ddl"`
 	SplitTable      bool   `toml:"split-table" json:"split-table"`
 	TokenLimit      uint   `toml:"token-limit" json:"token-limit"`
-	EnableChunk     bool   `toml:"enable-chunk" json:"enable-chunk"`
 	OOMAction       string `toml:"oom-action" json:"oom-action"`
 	EnableStreaming bool   `toml:"enable-streaming" json:"enable-streaming"`
 
@@ -225,7 +224,6 @@ var defaultConf = Config{
 	SplitTable:      true,
 	Lease:           "10s",
 	TokenLimit:      1000,
-	EnableChunk:     true,
 	OOMAction:       "log",
 	EnableStreaming: false,
 	Log: Log{
