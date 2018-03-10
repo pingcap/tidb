@@ -234,6 +234,9 @@ func (b *builtinPasswordSig) evalString(row types.Row) (d string, isNull bool, e
 		return "", false, nil
 	}
 
+	// Generate warning as password is deprecated as of MySQL 5.7.6
+	b.ctx.GetSessionVars().StmtCtx.AppendWarning(errDeprecatedSyntaxNoReplacement.GenByArgs("PASSWORD"))
+
 	return auth.EncodePassword(pass), false, nil
 }
 
