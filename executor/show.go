@@ -58,39 +58,9 @@ type ShowExec struct {
 	is infoschema.InfoSchema
 
 	forChunk bool
-	fetched  bool
 	rows     []Row
 	result   *chunk.Chunk
 	cursor   int
-}
-
-// Next implements Execution Next interface.
-func (e *ShowExec) Next(ctx context.Context) (Row, error) {
-	if e.rows == nil {
-		e.forChunk = false
-		err := e.fetchAll()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		for i := 0; e.rows != nil && i < len(e.rows); i++ {
-			for j, row := 0, e.rows[i]; j < len(row); j++ {
-				if row[j].Kind() != types.KindString {
-					continue
-				}
-				val := row[j].GetString()
-				retType := e.Schema().Columns[j].RetType
-				if valLen := len(val); retType.Flen < valLen {
-					retType.Flen = valLen
-				}
-			}
-		}
-	}
-	if e.cursor >= len(e.rows) {
-		return nil, nil
-	}
-	row := e.rows[e.cursor]
-	e.cursor++
-	return row, nil
 }
 
 // NextChunk implements the Executor NextChunk interface.
