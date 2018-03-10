@@ -57,10 +57,9 @@ type ShowExec struct {
 
 	is infoschema.InfoSchema
 
-	forChunk bool
-	rows     []Row
-	result   *chunk.Chunk
-	cursor   int
+	rows   []Row
+	result *chunk.Chunk
+	cursor int
 }
 
 // NextChunk implements the Executor NextChunk interface.
@@ -68,7 +67,6 @@ func (e *ShowExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.result == nil {
 		e.result = e.newChunk()
-		e.forChunk = true
 		err := e.fetchAll()
 		if err != nil {
 			return errors.Trace(err)
@@ -730,10 +728,7 @@ func (e *ShowExec) getTable() (table.Table, error) {
 }
 
 func (e *ShowExec) appendRow(row []interface{}) {
-	if !e.forChunk {
-		e.rows = append(e.rows, types.MakeDatums(row...))
-		return
-	}
+	e.rows = append(e.rows, types.MakeDatums(row...))
 	for i, col := range row {
 		if col == nil {
 			e.result.AppendNull(i)
