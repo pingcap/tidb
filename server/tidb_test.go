@@ -398,12 +398,22 @@ func (ts *TidbTestSuite) TestCreateTableFlen(c *C) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"
 	_, err = qctx.Execute(ctx, testSQL)
 	c.Assert(err, IsNil)
-	_, err = qctx.Execute(ctx, "show create table t1")
+	rs, err := qctx.Execute(ctx, "show create table t1")
+	chk := rs[0].NewChunk()
+	err = rs[0].NextChunk(ctx, chk)
 	c.Assert(err, IsNil)
+	cols := rs[0].Columns()
+	c.Assert(err, IsNil)
+	c.Assert(len(cols), Equals, 2)
+	c.Assert(int(cols[0].ColumnLength), Equals, 5*tmysql.MaxBytesOfCharacter)
 
 	// for issue#5246
-	_, err = qctx.Execute(ctx, "select y, z from t1")
+	rs, err = qctx.Execute(ctx, "select y, z from t1")
 	c.Assert(err, IsNil)
+	cols = rs[0].Columns()
+	c.Assert(len(cols), Equals, 2)
+	c.Assert(int(cols[0].ColumnLength), Equals, 21)
+	c.Assert(int(cols[1].ColumnLength), Equals, 22)
 }
 
 func (ts *TidbTestSuite) TestShowTablesFlen(c *C) {

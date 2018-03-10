@@ -17,14 +17,107 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
+	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testExecSuite{})
 
 type testExecSuite struct {
+}
+
+// mockSessionManager is a mocked session manager which is used for test.
+type mockSessionManager struct {
+	PS []util.ProcessInfo
+}
+
+// ShowProcessList implements the SessionManager.ShowProcessList interface.
+func (msm *mockSessionManager) ShowProcessList() []util.ProcessInfo {
+	return msm.PS
+}
+
+// Kill implements the SessionManager.Kill interface.
+func (msm *mockSessionManager) Kill(cid uint64, query bool) {
+
+}
+
+func (s *testExecSuite) TestShowProcessList(c *C) {
+	// Compose schema.
+	names := []string{"Id", "User", "Host", "db", "Command", "Time", "State", "Info"}
+	ftypes := []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar,
+		mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar, mysql.TypeString}
+	schema := buildSchema(names, ftypes)
+
+	// Compose a mocked session manager.
+	ps := make([]util.ProcessInfo, 0, 1)
+	pi := util.ProcessInfo{
+		ID:      0,
+		User:    "test",
+		Host:    "127.0.0.1",
+		DB:      "test",
+		Command: "select * from t",
+		State:   1,
+		Info:    "",
+	}
+	ps = append(ps, pi)
+	sm := &mockSessionManager{
+		PS: ps,
+	}
+	sctx := mock.NewContext()
+	sctx.SetSessionManager(sm)
+
+	// Compose executor.
+	e := &ShowExec{
+		baseExecutor: newBaseExecutor(sctx, schema, ""),
+		Tp:           ast.ShowProcessList,
+	}
+
+	ctx := context.Background()
+	// Run test and check results.
+	for _, p := range ps {
+		chk := e.newChunk()
+		err := e.NextChunk(context.Background(), chk)
+		c.Assert(err, IsNil)
+		if chk.NumRows() != 0 {
+			var idx int
+			for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
+				row := chk.GetRow(rowIdx)
+				c.Assert(row.GetInt64(int(p.ID)), Equals, int64(idx))
+				idx++
+			}
+		}
+	}
+	r, err := e.Next(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(r, IsNil)
+}
+
+func buildSchema(names []string, ftypes []byte) *expression.Schema {
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(names))...)
+	for i := range names {
+		col := &expression.Column{
+			ColName: model.NewCIStr(names[i]),
+		}
+		// User varchar as the default return column type.
+		tp := mysql.TypeVarchar
+		if len(ftypes) != 0 && ftypes[0] != mysql.TypeUnspecified {
+			tp = ftypes[0]
+		}
+		fieldType := types.NewFieldType(tp)
+		fieldType.Flen, fieldType.Decimal = mysql.GetDefaultFieldLengthAndDecimal(tp)
+		fieldType.Charset, fieldType.Collate = types.DefaultCharsetForType(tp)
+		col.RetType = fieldType
+		schema.Append(col)
+	}
+	return schema
 }
 
 func (s *testExecSuite) TestBuildKvRangesForIndexJoin(c *C) {

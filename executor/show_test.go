@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 
+	"fmt"
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 	"golang.org/x/net/context"
+	"time"
 )
 
 func (s *testSuite) TestShow(c *C) {
@@ -537,9 +539,9 @@ func (s *testSuite) TestShow2(c *C) {
 	tk.MustQuery("show tables").Check(testkit.Rows("t"))
 	tk.MustQuery("show full tables").Check(testkit.Rows("t BASE TABLE"))
 
-	_, err := tk.Exec("show table status from test like 't'")
-	c.Assert(err, IsNil)
-	c.Assert(err, IsNil)
+	r := tk.MustQuery("show table status from test like 't'")
+	timeStr := time.Now().Format("2006-01-02 15:04:05")
+	r.Check(testkit.Rows(fmt.Sprintf("t InnoDB 10 Compact 100 100 100 100 100 100 100 %s %s %s utf8_general_ci   注释", timeStr, timeStr, timeStr)))
 
 	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, []byte("012345678901234567890"))
 
