@@ -14,10 +14,11 @@
 package executor_test
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
-	"fmt"
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
@@ -31,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 	"golang.org/x/net/context"
-	"time"
 )
 
 func (s *testSuite) TestShow(c *C) {
