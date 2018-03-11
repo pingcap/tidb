@@ -228,15 +228,16 @@ func (t *Table) UpdateRecord(ctx sessionctx.Context, h int64, oldData, newData [
 	if err != nil {
 		return errors.Trace(err)
 	}
+	numCols := len(newData) + 1
 
 	var colIDs, binlogColIDs []int64
 	var row, binlogOldRow, binlogNewRow []types.Datum
-	colIDs = make([]int64, 0, len(newData))
-	row = make([]types.Datum, 0, len(newData))
+	colIDs = make([]int64, 0, numCols)
+	row = make([]types.Datum, 0, numCols)
 	if shouldWriteBinlog(ctx) {
-		binlogColIDs = make([]int64, 0, len(newData))
-		binlogOldRow = make([]types.Datum, 0, len(newData))
-		binlogNewRow = make([]types.Datum, 0, len(newData))
+		binlogColIDs = make([]int64, 0, numCols)
+		binlogOldRow = make([]types.Datum, 0, numCols)
+		binlogNewRow = make([]types.Datum, 0, numCols)
 	}
 
 	for _, col := range t.WritableCols() {
@@ -272,6 +273,11 @@ func (t *Table) UpdateRecord(ctx sessionctx.Context, h int64, oldData, newData [
 		return errors.Trace(err)
 	}
 	if shouldWriteBinlog(ctx) {
+		if !t.meta.PKIsHandle {
+			binlogColIDs = append(binlogColIDs, model.ExtraHandleID)
+			binlogOldRow = append(binlogOldRow, types.NewIntDatum(h))
+			binlogNewRow = append(binlogNewRow, types.NewIntDatum(h))
+		}
 		err = t.addUpdateBinlog(ctx, binlogOldRow, binlogNewRow, binlogColIDs)
 		if err != nil {
 			return errors.Trace(err)
@@ -346,6 +352,7 @@ func (t *Table) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleChe
 	var hasRecordID bool
 	cols := t.Cols()
 	if len(r) > len(cols) {
+		// The last value is _tidb_rowid.
 		recordID = r[len(r)-1].GetInt64()
 		hasRecordID = true
 	} else {
@@ -561,11 +568,21 @@ func (t *Table) RemoveRecord(ctx sessionctx.Context, h int64, r []types.Datum) e
 		return errors.Trace(err)
 	}
 	if shouldWriteBinlog(ctx) {
-		colIDs := make([]int64, 0, len(t.Cols()))
-		for _, col := range t.Cols() {
+		cols := t.Cols()
+		colIDs := make([]int64, 0, len(cols)+1)
+		for _, col := range cols {
 			colIDs = append(colIDs, col.ID)
 		}
-		err = t.addDeleteBinlog(ctx, r, colIDs)
+		var binlogRow []types.Datum
+		if !t.meta.PKIsHandle {
+			colIDs = append(colIDs, model.ExtraHandleID)
+			binlogRow = make([]types.Datum, 0, len(r)+1)
+			binlogRow = append(binlogRow, r...)
+			binlogRow = append(binlogRow, types.NewIntDatum(h))
+		} else {
+			binlogRow = r
+		}
+		err = t.addDeleteBinlog(ctx, binlogRow, colIDs)
 	}
 	return errors.Trace(err)
 }
