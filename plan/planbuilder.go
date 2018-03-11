@@ -475,6 +475,9 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 	case ast.AdminCheckIndex:
 		dbName := as.Tables[0].Schema
 		readerPlan := b.buildCheckIndex(dbName, as)
+		if b.err != nil {
+			return ret
+		}
 		ret = &CheckIndex{
 			DBName:            dbName.L,
 			IdxName:           as.Index,
