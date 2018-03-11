@@ -60,4 +60,38 @@ func (ts tidbResultSetTestSuite) TestConvertColumnInfo(c *C) {
 	c.Assert(colInfo.Type, Equals, mysql.TypeBit)
 	c.Assert(colInfo.DefaultValueLength, Equals, uint64(0))
 	c.Assert(colInfo.DefaultValue, IsNil)
+
+	// Test "mysql.TypeTiny", for: https://github.com/pingcap/tidb/issues/5405.
+	resultField = ast.ResultField{
+		Column: &model.ColumnInfo{
+			Name:   model.NewCIStr("a"),
+			ID:     0,
+			Offset: 0,
+			FieldType: types.FieldType{
+				Tp:      mysql.TypeTiny,
+				Flag:    mysql.UnsignedFlag,
+				Flen:    1,
+				Decimal: 0,
+				Charset: charset.CharsetUTF8,
+				Collate: charset.CollationUTF8,
+			},
+			Comment: "column a is the first column in table dual",
+		},
+		ColumnAsName: model.NewCIStr("a"),
+		TableAsName:  model.NewCIStr("dual"),
+		DBName:       model.NewCIStr("test"),
+	}
+	colInfo = convertColumnInfo(&resultField)
+	c.Assert(colInfo.Schema, Equals, "test")
+	c.Assert(colInfo.Table, Equals, "dual")
+	c.Assert(colInfo.OrgTable, Equals, "")
+	c.Assert(colInfo.Name, Equals, "a")
+	c.Assert(colInfo.OrgName, Equals, "a")
+	c.Assert(colInfo.ColumnLength, Equals, uint32(1))
+	c.Assert(colInfo.Charset, Equals, uint16(mysql.CharsetIDs[charset.CharsetUTF8]))
+	c.Assert(colInfo.Flag, Equals, uint16(mysql.UnsignedFlag))
+	c.Assert(colInfo.Decimal, Equals, uint8(0))
+	c.Assert(colInfo.Type, Equals, mysql.TypeTiny)
+	c.Assert(colInfo.DefaultValueLength, Equals, uint64(0))
+	c.Assert(colInfo.DefaultValue, IsNil)
 }
