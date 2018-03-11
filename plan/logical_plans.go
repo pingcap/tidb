@@ -93,6 +93,7 @@ type LogicalJoin struct {
 	JoinType       JoinType
 	reordered      bool
 	cartesianJoin  bool
+	StraightJoin   bool
 	preferJoinType uint
 
 	EqualConditions []*expression.ScalarFunction

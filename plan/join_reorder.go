@@ -14,7 +14,6 @@
 package plan
 
 import (
-	"math/bits"
 	"sort"
 
 	"github.com/pingcap/tidb/ast"
@@ -23,22 +22,53 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// tryToGetJoinGroup tries to fetch a whole join group, which all joins is cartesian join.
-func tryToGetJoinGroup(j *LogicalJoin) ([]LogicalPlan, bool) {
-	// Ignore reorder if:
-	// 1. already reordered
-	// 2. not inner join
-	// 3. forced to choose join type
-	if j.reordered || !j.cartesianJoin || bits.OnesCount(j.preferJoinType) > 0 {
-		return nil, false
+// getInnerJoinGroup collects all the inner join tables of a left deep join tree.
+// The traversal of join tree is stopped and returns a nil group if:
+// 1. reach a reordered join node, or:
+// 2. reach a non-InnerJoin node, or:
+// 3. reach a join node which has a preferred join algorithm.
+//
+// An example of left deep join tree is:
+//
+//    "InnerJoin 1"
+//      	|	\
+//      	|	"right child 1"
+//      	|
+//    "InnerJoin 2"
+//      	|	\
+//      	|	"right child 2"
+//      	|
+//    "InnerJoin ..."
+//      	|	\
+//      	|	"right child ..."
+//      	|
+//    "InnerJoin n"
+//      	|	\
+//      	|	"right child n"
+//      	|
+//    "left deep child"
+//
+// The result of getInnerJoinGroup is:
+// {"left deep child", "right child n", ..., "right child 2", "right child 1"}
+func getInnerJoinGroup(p *LogicalJoin) []LogicalPlan {
+	if p.reordered || !p.cartesianJoin || p.preferJoinType > uint(0) || p.StraightJoin {
+		return nil
 	}
-	lChild := j.children[0]
-	rChild := j.children[1]
-	if nj, ok := lChild.(*LogicalJoin); ok {
-		plans, valid := tryToGetJoinGroup(nj)
-		return append(plans, rChild), valid
+
+	lChild := p.children[0]
+	rChild := p.children[1]
+
+	lhsJoinTree, ok := lChild.(*LogicalJoin)
+	if !ok {
+		return []LogicalPlan{lChild, rChild}
 	}
-	return []LogicalPlan{lChild, rChild}, true
+
+	lhsJoinGroup := getInnerJoinGroup(lhsJoinTree)
+	if lhsJoinGroup == nil {
+		return nil
+	}
+
+	return append(lhsJoinGroup, rChild)
 }
 
 func findColumnIndexByGroup(groups []LogicalPlan, col *expression.Column) int {

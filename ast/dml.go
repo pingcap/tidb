@@ -73,7 +73,8 @@ type Join struct {
 	// Using represents join using clause.
 	Using []*ColumnName
 	// NaturalJoin represents join is natural join
-	NaturalJoin bool
+	NaturalJoin  bool
+	StraightJoin bool
 }
 
 // Accept implements Node Accept interface.

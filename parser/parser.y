@@ -4217,6 +4217,15 @@ JoinTable:
 	{
 		$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: $6.(ast.ResultSetNode), Tp: $3.(ast.JoinType), NaturalJoin: true}
 	}
+|	TableRef "STRAIGHT_JOIN" TableRef
+	{
+		$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: $3.(ast.ResultSetNode), StraightJoin: true}
+	}
+|	TableRef "STRAIGHT_JOIN" TableRef "ON" Expression
+	{
+		on := &ast.OnCondition{Expr: $5}
+		$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: $3.(ast.ResultSetNode), StraightJoin: true, On: on}
+	}
 
 JoinType:
 	"LEFT"
@@ -4234,7 +4243,6 @@ OuterOpt:
 
 CrossOpt:
 	"JOIN"
-|	"STRAIGHT_JOIN"
 |	"CROSS" "JOIN"
 |	"INNER" "JOIN"
 
