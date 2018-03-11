@@ -1194,6 +1194,7 @@ func (e *InsertValues) getColumns(tableCols []*table.Column) ([]*table.Column, e
 	for _, col := range cols {
 		if col.Name.L == model.ExtraHandleName.L {
 			e.hasExtraHandle = true
+			break
 		}
 	}
 
