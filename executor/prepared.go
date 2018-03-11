@@ -93,11 +93,6 @@ func NewPrepareExec(ctx sessionctx.Context, is infoschema.InfoSchema, sqlTxt str
 	}
 }
 
-// Next implements the Executor Next interface.
-func (e *PrepareExec) Next(ctx context.Context) (Row, error) {
-	return nil, errors.Trace(e.DoPrepare())
-}
-
 // NextChunk implements the Executor NextChunk interface.
 func (e *PrepareExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	return errors.Trace(e.DoPrepare())
@@ -194,12 +189,6 @@ type ExecuteExec struct {
 	plan      plan.Plan
 }
 
-// Next implements the Executor Next interface.
-// It will never be called.
-func (e *ExecuteExec) Next(ctx context.Context) (Row, error) {
-	return nil, nil
-}
-
 // NextChunk implements the Executor NextChunk interface.
 func (e *ExecuteExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	return nil
@@ -234,11 +223,6 @@ type DeallocateExec struct {
 	baseExecutor
 
 	Name string
-}
-
-// Next implements the Executor Next interface.
-func (e *DeallocateExec) Next(ctx context.Context) (Row, error) {
-	return nil, errors.Trace(e.run(ctx))
 }
 
 // NextChunk implements the Executor NextChunk interface.
