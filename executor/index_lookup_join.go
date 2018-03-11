@@ -207,7 +207,6 @@ func (e *IndexLookUpJoin) NextChunk(ctx context.Context, chk *chunk.Chunk) error
 			return nil
 		}
 	}
-	return nil
 }
 
 func (e *IndexLookUpJoin) getFinishedTask(ctx context.Context) (*lookUpJoinTask, error) {
