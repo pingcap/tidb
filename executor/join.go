@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"unsafe"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mvmap"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 

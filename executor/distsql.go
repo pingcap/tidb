@@ -15,6 +15,7 @@ package executor
 
 import (
 	"math"
+	"runtime"
 	"sort"
 	"sync"
 	"sync/atomic"
