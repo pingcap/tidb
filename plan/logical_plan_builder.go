@@ -1579,43 +1579,58 @@ func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
 // and use pseudo estimation.
 var RatioOfPseudoEstimate = 0.7
 
+// getStatsTable gets statistics information for a table specified by "tableID".
+// A pseudo statistics table is returned in any of the following scenario:
+// 1. tidb-server started and statistics handle has not been initialized.
+// 2. table row count from statistics is zero.
+// 3. statistics is outdated.
+func (b *planBuilder) getStatsTable(tableID int64) *statistics.Table {
+	statsHandle := domain.GetDomain(b.ctx).StatsHandle()
+
+	// 1. tidb-server started and statistics handle has not been initialized.
+	if statsHandle == nil {
+		return statistics.PseudoTable(tableID)
+	}
+
+	statsTbl := statsHandle.GetTableStats(tableID)
+
+	// 2. table row count from statistics is zero.
+	if statsTbl.Count == 0 {
+		return statistics.PseudoTable(tableID)
+	}
+
+	// 3. statistics is outdated.
+	if float64(statsTbl.ModifyCount)/float64(statsTbl.Count) > RatioOfPseudoEstimate {
+		countFromStats := statsTbl.Count
+		statsTbl = statistics.PseudoTable(tableID)
+		// Table row count from statistics is more meaningful than the
+		// pseudo row count in most cases.
+		statsTbl.Count = countFromStats
+		metrics.PseudoEstimation.Inc()
+	}
+	return statsTbl
+}
+
 func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
-	schemaName := tn.Schema
-	if schemaName.L == "" {
-		schemaName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+	dbName := tn.Schema
+	if dbName.L == "" {
+		dbName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
 	}
-	tbl, err := b.is.TableByName(schemaName, tn.Name)
+
+	tbl, err := b.is.TableByName(dbName, tn.Name)
 	if err != nil {
 		b.err = errors.Trace(err)
 		return nil
 	}
+
 	tableInfo := tbl.Meta()
-	handle := domain.GetDomain(b.ctx).StatsHandle()
-	var statsTbl *statistics.Table
-	if handle == nil {
-		// When the first session is created, the handle hasn't been initialized.
-		statsTbl = statistics.PseudoTable(tableInfo.ID)
-	} else {
-		statsTbl = handle.GetTableStats(tableInfo.ID)
-		if statsTbl.Count == 0 || float64(statsTbl.ModifyCount)/float64(statsTbl.Count) > RatioOfPseudoEstimate {
-			originCnt := statsTbl.Count
-			statsTbl = statistics.PseudoTable(tableInfo.ID)
-			if originCnt > 0 {
-				// The count of stats table is always proper.
-				statsTbl.Count = originCnt
-			} else {
-				// Zero count always brings some strange problem.
-				statsTbl.Count = 100
-			}
-			metrics.PseudoEstimation.Inc()
-		}
-	}
-	indices, includeTableScan, err := availableIndices(tn.IndexHints, tableInfo)
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "")
+
+	availableIdxes, err := getAvailableIndices(tn.IndexHints, tableInfo)
 	if err != nil {
 		b.err = errors.Trace(err)
 		return nil
 	}
-	avalableIndices := avalableIndices{indices: indices, includeTableScan: includeTableScan}
 
 	var columns []*table.Column
 	if b.inUpdateStmt {
@@ -1623,15 +1638,15 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	} else {
 		columns = tbl.Cols()
 	}
+
 	ds := DataSource{
-		indexHints:       tn.IndexHints,
+		DBName:           dbName,
 		tableInfo:        tableInfo,
-		statisticTable:   statsTbl,
-		DBName:           schemaName,
+		statisticTable:   b.getStatsTable(tableInfo.ID),
+		indexHints:       tn.IndexHints,
+		availableIndices: availableIdxes,
 		Columns:          make([]*model.ColumnInfo, 0, len(columns)),
-		availableIndices: &avalableIndices,
 	}.init(b.ctx)
-	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, schemaName.L, tableInfo.Name.L, "")
 
 	var handleCol *expression.Column
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(columns))...)
@@ -1639,21 +1654,24 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		ds.Columns = append(ds.Columns, col.ToInfo())
 		schema.Append(&expression.Column{
 			FromID:   ds.id,
-			ColName:  col.Name,
-			TblName:  tableInfo.Name,
-			DBName:   schemaName,
-			RetType:  &col.FieldType,
 			Position: i,
-			ID:       col.ID})
+			DBName:   dbName,
+			TblName:  tableInfo.Name,
+			ColName:  col.Name,
+			ID:       col.ID,
+			RetType:  &col.FieldType,
+		})
+
 		if tableInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
-			handleCol = schema.Columns[schema.Len()-1]
+			handleCol = schema.Columns[i]
 		}
 	}
 	ds.SetSchema(schema)
-	isMemDB := infoschema.IsMemoryDB(ds.DBName.L)
+
 	// We append an extra handle column to the schema when "ds" is not a memory
 	// table e.g. table in the "INFORMATION_SCHEMA" database, and the handle
 	// column is not the primary key of "ds".
+	isMemDB := infoschema.IsMemoryDB(ds.DBName.L)
 	if !isMemDB && handleCol == nil {
 		ds.Columns = append(ds.Columns, model.NewExtraHandleColInfo())
 		handleCol = ds.newExtraHandleSchemaCol()
@@ -1662,13 +1680,20 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	if handleCol != nil {
 		schema.TblID2Handle[tableInfo.ID] = []*expression.Column{handleCol}
 	}
-	// make plan as DS -> US -> Proj
+
 	var result LogicalPlan = ds
+
+	// If this SQL is executed in a non-readonly transaction, we need a
+	// "UnionScan" operator to read the modifications of former SQLs, which is
+	// buffered in tidb-server memory.
 	if b.ctx.Txn() != nil && !b.ctx.Txn().IsReadOnly() {
 		us := LogicalUnionScan{}.init(b.ctx)
-		us.SetChildren(result)
+		us.SetChildren(ds)
 		result = us
 	}
+
+	// If this table contains any virtual generated columns, we need a
+	// "Projection" to calculate these columns.
 	proj := b.projectVirtualColumns(ds, columns)
 	if proj != nil {
 		proj.SetChildren(result)
