@@ -2000,6 +2000,7 @@ const (
 	checkRequestPriority     = 1
 	checkRequestNotFillCache = 2
 	checkRequestSyncLog      = 3
+	checkDDLAddIndexPriority = 4
 )
 
 type checkRequestClient struct {
@@ -2008,8 +2009,9 @@ type checkRequestClient struct {
 	notFillCache bool
 	mu           struct {
 		sync.RWMutex
-		checkFlags uint32
-		syncLog    bool
+		checkFlags     uint32
+		lowPriorityCnt uint32
+		syncLog        bool
 	}
 }
 
@@ -2037,6 +2039,16 @@ func (c *checkRequestClient) SendReq(ctx context.Context, addr string, req *tikv
 			c.mu.RUnlock()
 			if syncLog != req.SyncLog {
 				return nil, errors.New("fail to set sync log")
+			}
+		}
+	} else if checkFlags == checkDDLAddIndexPriority {
+		if req.Type == tikvrpc.CmdScan {
+			if c.priority != req.Priority {
+				return nil, errors.New("fail to set priority")
+			}
+		} else if req.Type == tikvrpc.CmdPrewrite {
+			if c.priority == pb.CommandPri_Low {
+				c.mu.lowPriorityCnt++
 			}
 		}
 	}
@@ -2069,6 +2081,45 @@ func (s *testContextOptionSuite) SetUpSuite(c *C) {
 func (s *testContextOptionSuite) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
+}
+
+func (s *testContextOptionSuite) TestAddIndexPriority(c *C) {
+	cli := &checkRequestClient{}
+	hijackClient := func(c tikv.Client) tikv.Client {
+		cli.Client = c
+		return cli
+	}
+
+	store, err := mockstore.NewMockTikvStore(
+		mockstore.WithHijackClient(hijackClient),
+	)
+	c.Assert(err, IsNil)
+	dom, err := tidb.BootstrapSession(store)
+	c.Assert(err, IsNil)
+
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int, v int)")
+
+	// Insert some data to make sure plan build IndexLookup for t1.
+	for i := 0; i < 10; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t1 values (%d, %d)", i, i))
+	}
+
+	cli.mu.Lock()
+	cli.mu.checkFlags = checkDDLAddIndexPriority
+	cli.mu.Unlock()
+
+	cli.priority = pb.CommandPri_Low
+	tk.MustExec("alter table t1 add index t1_index (id);")
+
+	c.Assert(cli.mu.lowPriorityCnt > 0, IsTrue)
+
+	cli.mu.Lock()
+	cli.mu.checkFlags = checkRequestOff
+	cli.mu.Unlock()
+	dom.Close()
+	store.Close()
 }
 
 func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
@@ -2487,4 +2538,41 @@ func setColValue(c *C, txn kv.Transaction, key kv.Key, v types.Datum) {
 	c.Assert(err, IsNil)
 	err = txn.Set(key, value)
 	c.Assert(err, IsNil)
+}
+
+func (s *testSuite) TestCoprocessorStreamingFlag(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int, value int, index idx(id))")
+	// Add some data to make statistics work.
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
+	}
+
+	tests := []struct {
+		sql    string
+		expect bool
+	}{
+		{"select * from t", true},                         // TableReader
+		{"select * from t where id = 5", true},            // IndexLookup
+		{"select * from t where id > 5", true},            // Filter
+		{"select * from t limit 3", false},                // Limit
+		{"select avg(id) from t", false},                  // Aggregate
+		{"select * from t order by value limit 3", false}, // TopN
+	}
+
+	ctx := context.Background()
+	for _, test := range tests {
+		ctx1 := context.WithValue(ctx, "CheckSelectRequestHook", func(req *kv.Request) {
+			if req.Streaming != test.expect {
+				c.Errorf("sql=%s, expect=%v, get=%v", test.sql, test.expect, req.Streaming)
+			}
+		})
+		rs, err := tk.Se.Execute(ctx1, test.sql)
+		c.Assert(err, IsNil)
+		_, err = rs[0].Next(ctx)
+		c.Assert(err, IsNil)
+		rs[0].Close()
+	}
 }

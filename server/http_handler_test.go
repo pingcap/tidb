@@ -16,6 +16,7 @@ package server
 import (
 	"bytes"
 	"database/sql"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -23,16 +24,20 @@ import (
 	"math"
 	"net/http"
 	"sort"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 )
 
@@ -325,6 +330,69 @@ func (ts *HTTPHandlerTestSuite) TestGetMVCCNotFound(c *C) {
 	err = decoder.Decode(&p)
 	c.Assert(err, IsNil)
 	c.Assert(p.Info, IsNil)
+}
+
+func (ts *HTTPHandlerTestSuite) TestDecodeColumnValue(c *C) {
+	ts.startServer(c)
+	ts.prepareData(c)
+	defer ts.stopServer(c)
+
+	// column is a structure used for test
+	type column struct {
+		id int64
+		tp *types.FieldType
+	}
+	// Backfill columns.
+	c1 := &column{id: 1, tp: types.NewFieldType(mysql.TypeLonglong)}
+	c2 := &column{id: 2, tp: types.NewFieldType(mysql.TypeVarchar)}
+	c3 := &column{id: 3, tp: types.NewFieldType(mysql.TypeNewDecimal)}
+	c4 := &column{id: 4, tp: types.NewFieldType(mysql.TypeTimestamp)}
+	cols := []*column{c1, c2, c3, c4}
+	row := make([]types.Datum, len(cols))
+	row[0] = types.NewIntDatum(100)
+	row[1] = types.NewBytesDatum([]byte("abc"))
+	row[2] = types.NewDecimalDatum(types.NewDecFromInt(1))
+	row[3] = types.NewTimeDatum(types.Time{Time: types.FromGoTime(time.Now()), Fsp: 6, Type: mysql.TypeTimestamp})
+
+	// Encode the row.
+	colIDs := make([]int64, 0, 3)
+	for _, col := range cols {
+		colIDs = append(colIDs, col.id)
+	}
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	bs, err := tablecodec.EncodeRow(sc, row, colIDs, nil, nil)
+	c.Assert(err, IsNil)
+	c.Assert(bs, NotNil)
+	bin := base64.StdEncoding.EncodeToString(bs)
+
+	unitTest := func(col *column) {
+		url := fmt.Sprintf("http://127.0.0.1:10090/tables/%d/%v/%d/%d?rowBin=%s", col.id, col.tp.Tp, col.tp.Flag, col.tp.Flen, bin)
+		resp, err := http.Get(url)
+		c.Assert(err, IsNil, Commentf("url:%s", url))
+		decoder := json.NewDecoder(resp.Body)
+		var data interface{}
+		err = decoder.Decode(&data)
+		c.Assert(err, IsNil, Commentf("url:%v\ndata%v", url, data))
+		colVal, err := types.DatumsToString([]types.Datum{row[col.id-1]})
+		c.Assert(err, IsNil)
+		c.Assert(data, Equals, colVal, Commentf("url:%v", url))
+	}
+
+	for _, col := range cols {
+		unitTest(col)
+	}
+
+	// Test bin has `+`.
+	// 2018-03-08 16:01:00.315313
+	bin = "CAIIyAEIBAIGYWJjCAYGAQCBCAgJsZ+TgISg1M8Z"
+	row[3] = types.NewTimeDatum(types.Time{Time: types.FromGoTime(time.Date(2018, 3, 8, 16, 1, 0, 315313000, time.UTC)), Fsp: 6, Type: mysql.TypeTimestamp})
+	unitTest(cols[3])
+
+	// Test bin has `/`.
+	// 2018-03-08 02:44:46.409199
+	bin = "CAIIyAEIBAIGYWJjCAYGAQCBCAgJ7/yY8LKF1M8Z"
+	row[3] = types.NewTimeDatum(types.Time{Time: types.FromGoTime(time.Date(2018, 3, 8, 2, 44, 46, 409199000, time.UTC)), Fsp: 6, Type: mysql.TypeTimestamp})
+	unitTest(cols[3])
 }
 
 func (ts *HTTPHandlerTestSuite) TestGetIndexMVCC(c *C) {

@@ -163,29 +163,6 @@ func statementContextToFlags(sc *stmtctx.StatementContext) uint64 {
 	return flags
 }
 
-func setPBColumnsDefaultValue(ctx sessionctx.Context, pbColumns []*tipb.ColumnInfo, columns []*model.ColumnInfo) error {
-	for i, c := range columns {
-		if c.OriginDefaultValue == nil {
-			continue
-		}
-
-		sessVars := ctx.GetSessionVars()
-		originStrict := sessVars.StrictSQLMode
-		sessVars.StrictSQLMode = false
-		d, err := table.GetColOriginDefaultValue(ctx, c)
-		sessVars.StrictSQLMode = originStrict
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		pbColumns[i].DefaultVal, err = tablecodec.EncodeValue(ctx.GetSessionVars().StmtCtx, d)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
-}
-
 // handleIsExtra checks whether this column is a extra handle column generated during plan building phase.
 func handleIsExtra(col *expression.Column) bool {
 	if col != nil && col.ID == model.ExtraHandleID {
