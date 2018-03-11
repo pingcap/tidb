@@ -341,6 +341,7 @@ import (
 	profiles	"PROFILES"
 	quarter		"QUARTER"
 	query		"QUERY"
+	queries		"QUERIES"
 	quick		"QUICK"
 	redundant	"REDUNDANT"
 	reload		"RELOAD"
@@ -420,6 +421,7 @@ import (
 	cancel		"CANCEL"
 	ddl		"DDL"
 	jobs		"JOBS"
+	job		"JOB"
 	stats		"STATS"
 	statsMeta       "STATS_META"
 	statsHistograms "STATS_HISTOGRAMS"
@@ -2525,11 +2527,11 @@ UnReservedKeyword:
 | "REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "INDEXES" | "PROCESSLIST"
 | "SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "MODIFY" | "EVENTS" | "PARTITIONS"
 | "NONE" | "SUPER" | "EXCLUSIVE" | "STATS_PERSISTENT" | "ROW_COUNT" | "COALESCE" | "MONTH" | "PROCESS" | "PROFILES"
-| "MICROSECOND" | "MINUTE" | "PLUGINS" | "QUERY" | "SECOND" | "SEPARATOR" | "SHARE" | "SHARED" | "MAX_CONNECTIONS_PER_HOUR" | "MAX_QUERIES_PER_HOUR" | "MAX_UPDATES_PER_HOUR"
+| "MICROSECOND" | "MINUTE" | "PLUGINS" | "QUERY" | "QUERIES" | "SECOND" | "SEPARATOR" | "SHARE" | "SHARED" | "MAX_CONNECTIONS_PER_HOUR" | "MAX_QUERIES_PER_HOUR" | "MAX_UPDATES_PER_HOUR"
 | "MAX_USER_CONNECTIONS" | "REPLICATION" | "CLIENT" | "SLAVE" | "RELOAD" | "TEMPORARY" | "ROUTINE" | "EVENT" | "ALGORITHM" | "DEFINER" | "INVOKER" | "MERGE" | "TEMPTABLE" | "UNDEFINED" | "SECURITY" | "CASCADED"
 
 TiDBKeyword:
-"ADMIN" | "CANCEL" | "DDL" | "JOBS" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "STATS_HEALTHY" | "TIDB" | "TIDB_HJ" | "TIDB_SMJ" | "TIDB_INLJ"
+"ADMIN" | "CANCEL" | "DDL" | "JOB" | "JOBS" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "STATS_HEALTHY" | "TIDB" | "TIDB_HJ" | "TIDB_SMJ" | "TIDB_INLJ"
 
 NotKeywordToken:
  "ADDDATE" | "BIT_AND" | "BIT_OR" | "BIT_XOR" | "CAST" | "COUNT" | "CURTIME" | "DATE_ADD" | "DATE_SUB" | "EXTRACT" | "GET_FORMAT" | "GROUP_CONCAT" | "MIN" | "MAX" | "NOW" | "POSITION"
@@ -4748,6 +4750,7 @@ AdminStmt:
 	{
 		$$ = &ast.AdminStmt{Tp: ast.AdminShowDDLJobs}
 	}
+
 |	"ADMIN" "CHECK" "TABLE" TableNameList
 	{
 		$$ = &ast.AdminStmt{
@@ -4768,6 +4771,13 @@ AdminStmt:
 		$$ = &ast.AdminStmt{
 			Tp: ast.AdminCancelDDLJobs,
 			JobIDs: $5.([]int64),
+		}
+	}
+|	"ADMIN" "SHOW" "DDL" "JOB" "QUERIES" NumList
+	{
+		$$ = &ast.AdminStmt{
+			Tp: ast.AdminShowDDLJobQueries,
+			JobIDs: $6.([]int64),
 		}
 	}
 

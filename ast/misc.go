@@ -588,6 +588,7 @@ const (
 	AdminShowDDL = iota + 1
 	AdminCheckTable
 	AdminShowDDLJobs
+	AdminShowDDLJobQueries
 	AdminCancelDDLJobs
 	AdminCheckIndex
 )
