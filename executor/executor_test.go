@@ -2000,6 +2000,7 @@ const (
 	checkRequestPriority     = 1
 	checkRequestNotFillCache = 2
 	checkRequestSyncLog      = 3
+	checkDDLAddIndexPriority = 4
 )
 
 type checkRequestClient struct {
@@ -2008,8 +2009,9 @@ type checkRequestClient struct {
 	notFillCache bool
 	mu           struct {
 		sync.RWMutex
-		checkFlags uint32
-		syncLog    bool
+		checkFlags     uint32
+		lowPriorityCnt uint32
+		syncLog        bool
 	}
 }
 
@@ -2037,6 +2039,16 @@ func (c *checkRequestClient) SendReq(ctx context.Context, addr string, req *tikv
 			c.mu.RUnlock()
 			if syncLog != req.SyncLog {
 				return nil, errors.New("fail to set sync log")
+			}
+		}
+	} else if checkFlags == checkDDLAddIndexPriority {
+		if req.Type == tikvrpc.CmdScan {
+			if c.priority != req.Priority {
+				return nil, errors.New("fail to set priority")
+			}
+		} else if req.Type == tikvrpc.CmdPrewrite {
+			if c.priority == pb.CommandPri_Low {
+				c.mu.lowPriorityCnt++
 			}
 		}
 	}
@@ -2069,6 +2081,45 @@ func (s *testContextOptionSuite) SetUpSuite(c *C) {
 func (s *testContextOptionSuite) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
+}
+
+func (s *testContextOptionSuite) TestAddIndexPriority(c *C) {
+	cli := &checkRequestClient{}
+	hijackClient := func(c tikv.Client) tikv.Client {
+		cli.Client = c
+		return cli
+	}
+
+	store, err := mockstore.NewMockTikvStore(
+		mockstore.WithHijackClient(hijackClient),
+	)
+	c.Assert(err, IsNil)
+	dom, err := tidb.BootstrapSession(store)
+	c.Assert(err, IsNil)
+
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int, v int)")
+
+	// Insert some data to make sure plan build IndexLookup for t1.
+	for i := 0; i < 10; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t1 values (%d, %d)", i, i))
+	}
+
+	cli.mu.Lock()
+	cli.mu.checkFlags = checkDDLAddIndexPriority
+	cli.mu.Unlock()
+
+	cli.priority = pb.CommandPri_Low
+	tk.MustExec("alter table t1 add index t1_index (id);")
+
+	c.Assert(cli.mu.lowPriorityCnt > 0, IsTrue)
+
+	cli.mu.Lock()
+	cli.mu.checkFlags = checkRequestOff
+	cli.mu.Unlock()
+	dom.Close()
+	store.Close()
 }
 
 func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
@@ -2431,6 +2482,9 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	mockCtx := mock.NewContext()
 	idx := tb.Indices()[0]
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+
+	_, err = se.Execute(context.Background(), "admin check index t idx_inexistent")
+	c.Assert(strings.Contains(err.Error(), "not exist"), IsTrue)
 
 	// set data to:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30)
