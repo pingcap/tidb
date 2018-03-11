@@ -176,11 +176,6 @@ func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWork
 // NextChunk implements the Executor interface.
 func (e *IndexLookUpJoin) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
-	err := e.prepareJoinResult(ctx, chk)
-	return errors.Trace(err)
-}
-
-func (e *IndexLookUpJoin) prepareJoinResult(ctx context.Context, chk *chunk.Chunk) error {
 	e.joinResult.Reset()
 	for {
 		task, err := e.getFinishedTask(ctx)
@@ -212,6 +207,7 @@ func (e *IndexLookUpJoin) prepareJoinResult(ctx context.Context, chk *chunk.Chun
 			return nil
 		}
 	}
+	return nil
 }
 
 func (e *IndexLookUpJoin) getFinishedTask(ctx context.Context) (*lookUpJoinTask, error) {
