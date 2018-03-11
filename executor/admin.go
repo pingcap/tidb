@@ -73,12 +73,6 @@ func (e *CheckIndexRangeExec) NextChunk(ctx context.Context, chk *chunk.Chunk) e
 	}
 }
 
-// Next implements the Executor Next interface.
-func (e *CheckIndexRangeExec) Next(ctx context.Context) (Row, error) {
-	// No need to support to-be-removed method.
-	return nil, nil
-}
-
 // Open implements the Executor Open interface.
 func (e *CheckIndexRangeExec) Open(ctx context.Context) error {
 	tCols := e.table.Cols()
@@ -123,7 +117,7 @@ func (e *CheckIndexRangeExec) buildDAGPB() (*tipb.DAGRequest, error) {
 	execPB := e.constructIndexScanPB()
 	dagReq.Executors = append(dagReq.Executors, execPB)
 
-	err := setPBColumnsDefaultValue(e.ctx, dagReq.Executors[0].IdxScan.Columns, e.cols)
+	err := plan.SetPBColumnsDefaultValue(e.ctx, dagReq.Executors[0].IdxScan.Columns, e.cols)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
