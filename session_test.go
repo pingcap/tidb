@@ -1934,17 +1934,12 @@ func (s *testSessionSuite) TestSetGlobalTZ(c *C) {
 
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("set time_zone = '+08:00'")
-	_, err := tk.Exec("show variables like 'time_zone'")
-	c.Assert(err, IsNil)
-	c.Assert(err, IsNil)
+	tk.MustQuery("show variables like 'time_zone'").Check(testkit.Rows("time_zone +08:00"))
 
 	tk.MustExec("set global time_zone = '+00:00'")
 
-	_, err = tk.Exec("show variables like 'time_zone'")
-	c.Assert(err, IsNil)
-	c.Assert(err, IsNil)
+	tk.MustQuery("show variables like 'time_zone'").Check(testkit.Rows("time_zone +08:00"))
 
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
-	_, err = tk1.Exec("show variables like 'time_zone'")
-	c.Assert(err, IsNil)
+	tk1.MustQuery("show variables like 'time_zone'").Check(testkit.Rows("time_zone +00:00"))
 }

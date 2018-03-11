@@ -406,6 +406,7 @@ func (ts *TidbTestSuite) TestCreateTableFlen(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(len(cols), Equals, 2)
 	c.Assert(int(cols[0].ColumnLength), Equals, 5*tmysql.MaxBytesOfCharacter)
+	c.Assert(int(cols[1].ColumnLength), Equals, len(chk.GetRow(0).GetString(1))*tmysql.MaxBytesOfCharacter)
 
 	// for issue#5246
 	rs, err = qctx.Execute(ctx, "select y, z from t1")
