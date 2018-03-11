@@ -360,10 +360,12 @@ func (s *testEvaluatorSuite) TestPassword(c *C) {
 		}
 
 		warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
-		lastWarn := warnings[len(warnings)-1]
 		if t.getWarn {
 			c.Assert(len(warnings), Equals, warnCount+1)
+
+			lastWarn := warnings[len(warnings)-1]
 			c.Assert(terror.ErrorEqual(errDeprecatedSyntaxNoReplacement, lastWarn), IsTrue)
+
 			warnCount = len(warnings)
 		} else {
 			c.Assert(len(warnings), Equals, warnCount)
