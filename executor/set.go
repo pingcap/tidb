@@ -42,19 +42,6 @@ type SetExecutor struct {
 	done bool
 }
 
-// Next implements the Executor Next interface.
-func (e *SetExecutor) Next(ctx context.Context) (Row, error) {
-	if e.done {
-		return nil, nil
-	}
-	err := e.executeSet()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	e.done = true
-	return nil, nil
-}
-
 // NextChunk implements the Executor NextChunk interface.
 func (e *SetExecutor) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
