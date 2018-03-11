@@ -184,6 +184,10 @@ func (e *HashJoinExec) fetchOuterChunks(ctx context.Context) {
 			close(e.outerResultChs[i])
 		}
 		if r := recover(); r != nil {
+			buf := make([]byte, 4096)
+			stackSize := runtime.Stack(buf, false)
+			buf = buf[:stackSize]
+			log.Errorf("hash join outer fetcher panic stack is:\n%s", buf)
 			e.joinResultCh <- &hashjoinWorkerResult{err: errors.Errorf("%v", r)}
 		}
 		e.workerWaitGroup.Done()
@@ -291,6 +295,10 @@ func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {
 func (e *HashJoinExec) runJoinWorker(workerID uint) {
 	defer func() {
 		if r := recover(); r != nil {
+			buf := make([]byte, 4096)
+			stackSize := runtime.Stack(buf, false)
+			buf = buf[:stackSize]
+			log.Errorf("hash join worker %v panic stack is:\n%s", workerID, buf)
 			e.joinResultCh <- &hashjoinWorkerResult{err: errors.Errorf("%v", r)}
 		}
 		e.workerWaitGroup.Done()

@@ -1319,6 +1319,10 @@ func (e *UnionExec) resultPuller(ctx context.Context, childID int) {
 	}
 	defer func() {
 		if r := recover(); r != nil {
+			buf := make([]byte, 4096)
+			stackSize := runtime.Stack(buf, false)
+			buf = buf[:stackSize]
+			log.Errorf("resultPuller panic stack is:\n%s", workerID, buf)
 			result.err = errors.Errorf("%v", r)
 			e.resultPool <- result
 			e.stopFetchData.Store(true)

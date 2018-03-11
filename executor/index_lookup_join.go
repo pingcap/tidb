@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"runtime"
 	"sort"
 	"sync"
 	"unsafe"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mvmap"
 	"github.com/pingcap/tidb/util/ranger"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
@@ -284,6 +286,10 @@ func (e *IndexLookUpJoin) lookUpMatchedInners(task *lookUpJoinTask, rowIdx int) 
 func (ow *outerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 	defer func() {
 		if r := recover(); r != nil {
+			buf := make([]byte, 4096)
+			stackSize := runtime.Stack(buf, false)
+			buf = buf[:stackSize]
+			log.Errorf("outerWorker panic stack is:\n%s", buf)
 			task := &lookUpJoinTask{doneCh: make(chan error, 1)}
 			task.doneCh <- errors.Errorf("%v", r)
 			ow.pushToChan(ctx, task, ow.resultCh)
@@ -371,6 +377,10 @@ func (iw *innerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 	var task *lookUpJoinTask
 	defer func() {
 		if r := recover(); r != nil {
+			buf := make([]byte, 4096)
+			stackSize := runtime.Stack(buf, false)
+			buf = buf[:stackSize]
+			log.Errorf("innerWorker panic stack is:\n%s", buf)
 			// "task != nil" is guaranteed when panic happened.
 			task.doneCh <- errors.Errorf("%v", r)
 		}
