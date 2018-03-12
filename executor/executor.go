@@ -750,15 +750,6 @@ func (e *TableDualExec) Open(ctx context.Context) error {
 	return nil
 }
 
-// Next implements the Executor Next interface.
-func (e *TableDualExec) Next(ctx context.Context) (Row, error) {
-	if e.numReturned >= e.numDualRows {
-		return nil, nil
-	}
-	e.numReturned = e.numDualRows
-	return Row{}, nil
-}
-
 // NextChunk implements the Executor NextChunk interface.
 func (e *TableDualExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
