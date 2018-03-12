@@ -481,6 +481,9 @@ func (e *RecoverIndexExec) buildTableScan(ctx context.Context, txn kv.Transactio
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		Build()
 
+	// Actually, with limitCnt, the match datas maybe only in one region, so let the concurrency to be 1,
+	// avoid unnecessary region scan.
+	kvReq.Concurrency = 1
 	result, err := distsql.Select(ctx, e.ctx, kvReq, e.columnsTypes())
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -557,6 +560,8 @@ func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transa
 			}
 
 			result.scanRowCount++
+			result.nextHandle = handle + 1
+
 			e.idxVals = e.idxVals[:0]
 			for i := 0; i < row.Len()-1; i++ {
 				colVal := row.GetDatum(i, &e.columns[i].FieldType)
@@ -573,7 +578,6 @@ func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transa
 				return result, errors.Trace(err)
 			}
 			result.addedCount++
-			result.nextHandle = handle + 1
 		}
 	}
 
