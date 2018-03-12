@@ -591,6 +591,7 @@ const (
 	AdminCancelDDLJobs
 	AdminCheckIndex
 	AdminCheckIndexRange
+	AdminShowDDLJobQueries
 )
 
 // HandleRange represents a range where handle value >= Begin and < End.

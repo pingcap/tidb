@@ -185,6 +185,17 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(row.GetString(1), Equals, historyJobs[0].State.String())
 	c.Assert(err, IsNil)
 
+	// show DDL job queries test
+	r, err = tk.Exec("admin show ddl job queries 1")
+	result := tk.MustQuery(`admin show ddl job queries 1`)
+	result.Check(testkit.Rows())
+	result = tk.MustQuery(`admin show ddl job queries 1, 1, 1`)
+	result.Check(testkit.Rows())
+	result = tk.MustQuery(`admin show ddl job queries 1, 2, 3, 4`)
+	result.Check(testkit.Rows())
+	c.Assert(err, IsNil)
+	c.Assert(row.GetInt64(0), Equals, int64(0))
+
 	// check table test
 	tk.MustExec("create table admin_test1 (c1 int, c2 int default 1, index (c1))")
 	tk.MustExec("insert admin_test1 (c1) values (21),(22)")
