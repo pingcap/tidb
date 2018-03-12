@@ -57,7 +57,6 @@ type ShowExec struct {
 
 	is infoschema.InfoSchema
 
-	rows   []Row
 	result *chunk.Chunk
 	cursor int
 }
