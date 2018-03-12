@@ -392,6 +392,22 @@ func (hg *Histogram) getIncreaseFactor(totalCount int64) float64 {
 	return float64(totalCount) / float64(columnCount)
 }
 
+func validRange(ran *ranger.NewRange) bool {
+	var low, high []byte
+	if ran.LowVal[0].Kind() == types.KindBytes {
+		low, high = ran.LowVal[0].GetBytes(), ran.HighVal[0].GetBytes()
+	} else {
+		low, high = codec.EncodeInt(nil, ran.LowVal[0].GetInt64()), codec.EncodeInt(nil, ran.HighVal[0].GetInt64())
+	}
+	if ran.LowExclude {
+		low = kv.Key(low).PrefixNext()
+	}
+	if !ran.HighExclude {
+		high = kv.Key(high).PrefixNext()
+	}
+	return bytes.Compare(low, high) < 0
+}
+
 // SplitRange splits the range according to the histogram upper bound. Note that we treat last bucket's upper bound
 // as inf, so all the split ranges will totally fall in one of the (-inf, u(0)], (u(0), u(1)],...(u(n-3), u(n-2)],
 // (u(n-2), +inf), where n is the number of buckets, u(i) is the i-th bucket's upper bound.
@@ -440,6 +456,10 @@ func (hg *Histogram) SplitRange(ranges []*ranger.NewRange) []*ranger.NewRange {
 			ranges[0].LowVal[0] = upper
 			ranges[0].LowExclude = true
 		}
+	}
+	valid := validRange(split[len(split)-1])
+	if !valid {
+		split = split[:len(split)-1]
 	}
 	return split
 }

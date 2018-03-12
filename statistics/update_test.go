@@ -367,6 +367,11 @@ func (s *testStatsUpdateSuite) TestSplitRange(c *C) {
 			exclude: []bool{false, false, true, true},
 			result:  "[8,8],(8,10],(20,30)",
 		},
+		{
+			points:  []int64{8, 9},
+			exclude: []bool{false, true},
+			result:  "[8,8]",
+		},
 	}
 	for _, t := range tests {
 		ranges := make([]*ranger.NewRange, 0, len(t.points)/2)
