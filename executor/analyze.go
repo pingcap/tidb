@@ -295,7 +295,7 @@ func (e *AnalyzeColumnsExec) open() error {
 
 func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.NewRange) (distsql.SelectResult, error) {
 	var builder distsql.RequestBuilder
-	kvReq, err := builder.SetTableRanges(e.tblInfo.ID, ranges).
+	kvReq, err := builder.SetTableRanges(e.tblInfo.ID, ranges, nil).
 		SetAnalyzeRequest(e.analyzePB).
 		SetKeepOrder(e.keepOrder).
 		SetPriority(e.priority).
