@@ -728,7 +728,6 @@ func (e *ShowExec) getTable() (table.Table, error) {
 }
 
 func (e *ShowExec) appendRow(row []interface{}) {
-	e.rows = append(e.rows, types.MakeDatums(row...))
 	for i, col := range row {
 		if col == nil {
 			e.result.AppendNull(i)

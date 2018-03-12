@@ -89,9 +89,7 @@ func (s *testExecSuite) TestShowProcessList(c *C) {
 		c.Assert(err, IsNil)
 		it := chunk.NewIterator4Chunk(chk)
 		for row := it.Begin(); row != it.End(); row = it.Next() {
-			var idx int
-			c.Assert(row.GetInt64(int(p.ID)), Equals, int64(idx))
-			idx++
+			c.Assert(row.GetUint64(0), Equals, p.ID)
 		}
 	}
 	r, err := e.Next(ctx)
