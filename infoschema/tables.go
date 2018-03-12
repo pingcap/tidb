@@ -508,6 +508,8 @@ var tableTableSpacesCols = []columnInfo{
 }
 
 var tableCollationCharacterSetApplicabilityCols = []columnInfo{
+	{"COLLATION_NAME", mysql.TypeVarchar, 32, mysql.NotNullFlag, nil, nil},
+	{"CHARACTER_SET_NAME", mysql.TypeVarchar, 32, mysql.NotNullFlag, nil, nil},
 	{"TABLESPACE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"ENGINE", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"TABLESPACE_TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
