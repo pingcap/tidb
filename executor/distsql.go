@@ -197,7 +197,6 @@ type TableReaderExecutor struct {
 
 // Close implements the Executor Close interface.
 func (e *TableReaderExecutor) Close() error {
-	e.feedback.SetIntRanges(e.ranges).SetActual(e.resultHandler.totalCount())
 	e.ctx.StoreQueryFeedback(e.feedback)
 	err := closeAll(e.resultHandler, e.partialResult)
 	e.partialResult = nil
@@ -286,7 +285,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 // to fetch all results.
 func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.NewRange) (distsql.SelectResult, error) {
 	var builder distsql.RequestBuilder
-	kvReq, err := builder.SetTableRanges(e.tableID, ranges).
+	kvReq, err := builder.SetTableRanges(e.tableID, ranges, e.feedback).
 		SetDAGRequest(e.dagPB).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
@@ -297,7 +296,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ne
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	result, err := distsql.Select(ctx, e.ctx, kvReq, e.retTypes())
+	result, err := distsql.Select(ctx, e.ctx, kvReq, e.retTypes(), e.feedback)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -379,7 +378,6 @@ type IndexReaderExecutor struct {
 
 // Close clears all resources hold by current object.
 func (e *IndexReaderExecutor) Close() error {
-	e.feedback.SetIndexRanges(e.ranges).SetActual(e.result.ScanKeys())
 	e.ctx.StoreQueryFeedback(e.feedback)
 	err := closeAll(e.result, e.partialResult)
 	e.result = nil
@@ -440,8 +438,9 @@ func (e *IndexReaderExecutor) NextChunk(ctx context.Context, chk *chunk.Chunk) e
 
 // Open implements the Executor Open interface.
 func (e *IndexReaderExecutor) Open(ctx context.Context) error {
-	kvRanges, err := distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, e.tableID, e.index.ID, e.ranges)
+	kvRanges, err := distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, e.tableID, e.index.ID, e.ranges, e.feedback)
 	if err != nil {
+		e.feedback.Invalidate()
 		return errors.Trace(err)
 	}
 	return e.open(ctx, kvRanges)
@@ -464,7 +463,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		e.feedback.Invalidate()
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.Select(ctx, e.ctx, kvReq, e.retTypes())
+	e.result, err = distsql.Select(ctx, e.ctx, kvReq, e.retTypes(), e.feedback)
 	if err != nil {
 		e.feedback.Invalidate()
 		return errors.Trace(err)
@@ -509,7 +508,7 @@ type IndexLookUpExecutor struct {
 
 // Open implements the Executor Open interface.
 func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
-	kvRanges, err := distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, e.tableID, e.index.ID, e.ranges)
+	kvRanges, err := distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, e.tableID, e.index.ID, e.ranges, e.feedback)
 	if err != nil {
 		e.feedback.Invalidate()
 		return errors.Trace(err)
@@ -554,7 +553,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		return errors.Trace(err)
 	}
 	// Since the first read only need handle information. So its returned col is only 1.
-	result, err := distsql.Select(ctx, e.ctx, kvReq, []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)})
+	result, err := distsql.Select(ctx, e.ctx, kvReq, []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, e.feedback)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -574,11 +573,9 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 	go func() {
 		ctx1, cancel := context.WithCancel(ctx)
 		err := worker.fetchHandles(ctx1, result)
-		scanCount := result.ScanKeys()
 		if err != nil {
-			scanCount = -1
+			e.feedback.Invalidate()
 		}
-		e.feedback.SetIndexRanges(e.ranges).SetActual(scanCount)
 		e.ctx.StoreQueryFeedback(e.feedback)
 		cancel()
 		if err := result.Close(); err != nil {
@@ -621,7 +618,7 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []in
 		dagPB:        e.tableRequest,
 		priority:     e.priority,
 		streaming:    e.tableStreaming,
-		feedback:     statistics.NewQueryFeedback(0, 0, false, 0, 0),
+		feedback:     statistics.NewQueryFeedback(0, nil, 0, false),
 	}, handles)
 	if err != nil {
 		log.Error(err)
@@ -991,12 +988,4 @@ func (tr *tableResultHandler) Close() error {
 	err := closeAll(tr.optionalResult, tr.result)
 	tr.optionalResult, tr.result = nil, nil
 	return errors.Trace(err)
-}
-
-func (tr *tableResultHandler) totalCount() (count int64) {
-	if tr.optionalResult != nil {
-		count += tr.optionalResult.ScanKeys()
-	}
-	count += tr.result.ScanKeys()
-	return count
 }
