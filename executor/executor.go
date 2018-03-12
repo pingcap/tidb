@@ -810,26 +810,6 @@ func (e *SelectionExec) Close() error {
 	return nil
 }
 
-// Next implements the Executor Next interface.
-func (e *SelectionExec) Next(ctx context.Context) (Row, error) {
-	for {
-		srcRow, err := e.children[0].Next(ctx)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if srcRow == nil {
-			return nil, nil
-		}
-		match, err := expression.EvalBool(e.ctx, e.filters, srcRow)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if match {
-			return srcRow, nil
-		}
-	}
-}
-
 // NextChunk implements the Executor NextChunk interface.
 func (e *SelectionExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
