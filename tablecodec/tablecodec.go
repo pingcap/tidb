@@ -16,6 +16,7 @@ package tablecodec
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"math"
 	"time"
 
@@ -31,6 +32,7 @@ import (
 var (
 	errInvalidKey         = terror.ClassXEval.New(codeInvalidKey, "invalid key")
 	errInvalidRecordKey   = terror.ClassXEval.New(codeInvalidRecordKey, "invalid record key")
+	errInvalidIndexKey    = terror.ClassXEval.New(codeInvalidIndexKey, "invalid index key")
 	errInvalidColumnCount = terror.ClassXEval.New(codeInvalidColumnCount, "invalid column count")
 )
 
@@ -100,6 +102,41 @@ func DecodeRecordKey(key kv.Key) (tableID int64, handle int64, err error) {
 	key, handle, err = codec.DecodeInt(key)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
+	}
+	return
+}
+
+// DecodeIndexKey decodes the key and gets the tableID, indexID, indexValues.
+func DecodeIndexKey(key kv.Key) (tableID int64, indexID int64, indexValues []string, err error) {
+	k := key
+
+	if !key.HasPrefix(tablePrefix) {
+		return 0, 0, nil, errInvalidIndexKey.Gen("invalid index key - %q", k)
+	}
+	key = key[len(tablePrefix):]
+
+	key, tableID, err = codec.DecodeInt(key)
+	if err != nil {
+		return 0, 0, nil, errors.Trace(err)
+	}
+
+	if !key.HasPrefix(indexPrefixSep) {
+		return 0, 0, nil, errInvalidIndexKey.Gen("invalid index key - %q", k)
+	}
+	key = key[len(indexPrefixSep):]
+
+	key, indexID, err = codec.DecodeInt(key)
+	if err != nil {
+		return 0, 0, nil, errors.Trace(err)
+	}
+
+	for len(key) > 0 {
+		remain, d, e := codec.DecodeOne(key)
+		if err != nil {
+			return 0, 0, nil, errInvalidIndexKey.Gen("invalid index key - %q %v", k, e)
+		}
+		indexValues = append(indexValues, fmt.Sprintf("%d-%v", d.Kind(), d.GetValue()))
+		key = remain
 	}
 	return
 }
@@ -556,4 +593,5 @@ const (
 	codeInvalidRecordKey   = 4
 	codeInvalidColumnCount = 5
 	codeInvalidKey         = 6
+	codeInvalidIndexKey    = 7
 )

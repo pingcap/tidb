@@ -51,9 +51,22 @@ func (ts *HTTPHandlerTestSuite) TestRegionIndexRange(c *C) {
 	sTableID := int64(3)
 	sIndex := int64(11)
 	eTableID := int64(9)
+	recordID := int64(133)
+	indexValues := []types.Datum{
+		types.NewIntDatum(100),
+		types.NewBytesDatum([]byte("foobar")),
+		types.NewFloat64Datum(-100.25),
+	}
+	var expectIndexValues []string
+	for _, v := range indexValues {
+		expectIndexValues = append(expectIndexValues, fmt.Sprintf("%d-%v", v.Kind(), v.GetValue()))
+	}
+	encodedValue, err := codec.EncodeKey(&stmtctx.StatementContext{TimeZone: time.Local}, nil, indexValues...)
+	c.Assert(err, IsNil)
 
-	startKey := tablecodec.EncodeTableIndexPrefix(sTableID, sIndex)
-	endKey := tablecodec.GenTableRecordPrefix(eTableID)
+	startKey := tablecodec.EncodeIndexSeekKey(sTableID, sIndex, encodedValue)
+	recordPrefix := tablecodec.GenTableRecordPrefix(eTableID)
+	endKey := tablecodec.EncodeRecordKey(recordPrefix, recordID)
 
 	region := &tikv.KeyLocation{
 		Region:   tikv.RegionVerID{},
@@ -66,7 +79,11 @@ func (ts *HTTPHandlerTestSuite) TestRegionIndexRange(c *C) {
 	c.Assert(indexRange.lastTableID(), Equals, eTableID)
 	c.Assert(indexRange.first.IndexID, Equals, sIndex)
 	c.Assert(indexRange.first.IsRecord, IsFalse)
+	c.Assert(indexRange.first.RecordID, Equals, int64(0))
+	c.Assert(indexRange.first.IndexValues, DeepEquals, expectIndexValues)
 	c.Assert(indexRange.last.IsRecord, IsTrue)
+	c.Assert(indexRange.last.RecordID, Equals, recordID)
+	c.Assert(indexRange.last.IndexValues, IsNil)
 	start, end := indexRange.getIndexRangeForTable(sTableID)
 	c.Assert(start, Equals, sIndex)
 	c.Assert(end, Equals, int64(math.MaxInt64))

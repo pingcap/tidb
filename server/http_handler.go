@@ -473,12 +473,14 @@ func (rt *RegionDetail) addTableInRange(dbName string, curTable *model.TableInfo
 
 // FrameItem includes a index's or record's meta data with table's info.
 type FrameItem struct {
-	DBName    string `json:"db_name"`
-	TableName string `json:"table_name"`
-	TableID   int64  `json:"table_id"`
-	IsRecord  bool   `json:"is_record"`
-	IndexName string `json:"index_name,omitempty"`
-	IndexID   int64  `json:"index_id,omitempty"`
+	DBName      string   `json:"db_name"`
+	TableName   string   `json:"table_name"`
+	TableID     int64    `json:"table_id"`
+	IsRecord    bool     `json:"is_record"`
+	RecordID    int64    `json:"record_id,omitempty"`
+	IndexName   string   `json:"index_name,omitempty"`
+	IndexID     int64    `json:"index_id,omitempty"`
+	IndexValues []string `json:"index_values,omitempty"`
 }
 
 // RegionFrameRange contains a frame range info which the region covered.
@@ -773,6 +775,13 @@ func NewFrameItemFromRegionKey(key []byte) (frame *FrameItem, err error) {
 	frame = &FrameItem{}
 	frame.TableID, frame.IndexID, frame.IsRecord, err = tablecodec.DecodeKeyHead(key)
 	if err == nil {
+		if frame.IsRecord {
+			_, frame.RecordID, err = tablecodec.DecodeRecordKey(key)
+		} else {
+			_, _, frame.IndexValues, err = tablecodec.DecodeIndexKey(key)
+		}
+		// Ignore decode errors.
+		err = nil
 		return
 	}
 	if bytes.HasPrefix(key, tablecodec.TablePrefix()) {
