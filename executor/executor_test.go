@@ -102,9 +102,9 @@ func (s *testSuite) SetUpSuite(c *C) {
 		tidb.SetSchemaLease(0)
 		tidb.SetStatsLease(0)
 	}
-	domain, err := tidb.BootstrapSession(s.store)
+	d, err := tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
-	s.domain = domain
+	s.domain = d
 }
 
 func (s *testSuite) TearDownSuite(c *C) {
