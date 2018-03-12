@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/chunk"
@@ -52,7 +53,7 @@ func (s *testSuite) TestSelectNormal(c *C) {
 	colTypes = append(colTypes, colTypes[0])
 
 	// Test NextChunk.
-	response, err := Select(context.TODO(), s.sctx, request, colTypes)
+	response, err := Select(context.TODO(), s.sctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false))
 	c.Assert(err, IsNil)
 	result, ok := response.(*selectResult)
 	c.Assert(ok, IsTrue)
@@ -106,7 +107,7 @@ func (s *testSuite) TestSelectStreaming(c *C) {
 	s.sctx.GetSessionVars().EnableStreaming = true
 
 	// Test NextChunk.
-	response, err := Select(context.TODO(), s.sctx, request, colTypes)
+	response, err := Select(context.TODO(), s.sctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false))
 	c.Assert(err, IsNil)
 	result, ok := response.(*streamResult)
 	c.Assert(ok, IsTrue)
@@ -193,3 +194,6 @@ type mockResultSubset struct{ data []byte }
 
 // GetData implements kv.Response interface.
 func (r *mockResultSubset) GetData() []byte { return r.data }
+
+// GetStartKey implements kv.Response interface.
+func (r *mockResultSubset) GetStartKey() kv.Key { return nil }
