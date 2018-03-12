@@ -234,7 +234,7 @@ func (b *builtinPasswordSig) evalString(row types.Row) (d string, isNull bool, e
 		return "", false, nil
 	}
 
-	// Generate warning as the password function is deprecated as of MySQL 5.7.6
+	// We should append a warning here because function "PASSWORD" is deprecated since MySQL 5.7.6.
 	// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_password
 	b.ctx.GetSessionVars().StmtCtx.AppendWarning(errDeprecatedSyntaxNoReplacement.GenByArgs("PASSWORD"))
 
