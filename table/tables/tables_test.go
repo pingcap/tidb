@@ -184,9 +184,11 @@ func (ts *testSuite) TestTypes(c *C) {
 	rs, err = ts.se.Execute(ctx, "select c1 + 1 from test.t where c1 = 1")
 	c.Assert(err, IsNil)
 	row, err = rs[0].Next(ctx)
+	chk := rs[0].NewChunk()
+	err = rs[0].NextChunk(ctx, chk)
 	c.Assert(err, IsNil)
-	c.Assert(row, NotNil)
-	c.Assert(row.GetFloat64(0), DeepEquals, float64(2))
+	c.Assert(chk.GetRow(0), NotNil)
+	c.Assert(chk.GetRow(0).GetFloat64(0), DeepEquals, float64(2))
 	_, err = ts.se.Execute(ctx, "drop table test.t")
 	c.Assert(err, IsNil)
 }
