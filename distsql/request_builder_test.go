@@ -134,7 +134,7 @@ func (s *testSuite) TestTableRangesToKVRanges(c *C) {
 		},
 	}
 
-	actual := TableRangesToKVRanges(13, ranges)
+	actual := TableRangesToKVRanges(13, ranges, nil)
 	expect := []kv.KeyRange{
 		{
 			StartKey: kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xd, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -214,7 +214,7 @@ func (s *testSuite) TestIndexRangesToKVRanges(c *C) {
 		},
 	}
 
-	actual, err := IndexRangesToKVRanges(new(stmtctx.StatementContext), 12, 15, ranges)
+	actual, err := IndexRangesToKVRanges(new(stmtctx.StatementContext), 12, 15, ranges, nil)
 	c.Assert(err, IsNil)
 	for i := range actual {
 		c.Assert(actual[i], DeepEquals, expect[i])
@@ -250,7 +250,7 @@ func (s *testSuite) TestRequestBuilder1(c *C) {
 		},
 	}
 
-	actual, err := (&RequestBuilder{}).SetTableRanges(12, ranges).
+	actual, err := (&RequestBuilder{}).SetTableRanges(12, ranges, nil).
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
 		SetKeepOrder(false).
