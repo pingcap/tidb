@@ -1173,7 +1173,6 @@ type UnionExec struct {
 
 	stopFetchData atomic.Value
 	resultCh      chan *execResult
-	rows          []Row
 	cursor        int
 	wg            sync.WaitGroup
 
@@ -1315,31 +1314,6 @@ func (e *UnionExec) resultPuller(ctx context.Context, childID int) {
 	}
 }
 
-// Next implements the Executor Next interface.
-func (e *UnionExec) Next(ctx context.Context) (Row, error) {
-	if !e.initialized {
-		e.initialize(ctx, false)
-		e.initialized = true
-	}
-	if e.cursor >= len(e.rows) {
-		result, ok := <-e.resultCh
-		if !ok {
-			return nil, nil
-		}
-		if result.err != nil {
-			return nil, errors.Trace(result.err)
-		}
-		if len(result.rows) == 0 {
-			return nil, nil
-		}
-		e.rows = result.rows
-		e.cursor = 0
-	}
-	row := e.rows[e.cursor]
-	e.cursor++
-	return row, nil
-}
-
 // NextChunk implements the Executor NextChunk interface.
 func (e *UnionExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
@@ -1362,7 +1336,6 @@ func (e *UnionExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 
 // Close implements the Executor Close interface.
 func (e *UnionExec) Close() error {
-	e.rows = nil
 	close(e.finished)
 	if e.resultPool != nil {
 		for range e.resultPool {
