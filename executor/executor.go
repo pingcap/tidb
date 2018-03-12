@@ -904,9 +904,7 @@ type TableScanExec struct {
 	cursor     int
 	columns    []*model.ColumnInfo
 
-	isVirtualTable     bool
-
-	// for chunk execution
+	isVirtualTable bool
 	virtualTableChunkList *chunk.List
 	virtualTableChunkIdx  int
 }
