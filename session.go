@@ -608,17 +608,19 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 
 func drainRecordSet(ctx context.Context, rs ast.RecordSet) ([]types.Row, error) {
 	var rows []types.Row
-	chk := rs.NewChunk()
-	err := rs.NextChunk(ctx, chk)
-	if err != nil {
-		return rows, errors.Trace(err)
-	}
-	if chk.NumRows() == 0 {
-		return rows, nil
-	}
-	iter := chunk.NewIterator4Chunk(chk)
-	for r := iter.Begin(); r != iter.End(); r = iter.Next() {
-		rows = append(rows, r)
+	for {
+		chk := rs.NewChunk()
+		err := rs.NextChunk(ctx, chk)
+		if err != nil {
+			return rows, errors.Trace(err)
+		}
+		if chk.NumRows() == 0 {
+			return rows, nil
+		}
+		iter := chunk.NewIterator4Chunk(chk)
+		for r := iter.Begin(); r != iter.End(); r = iter.Next() {
+			rows = append(rows, r)
+		}
 	}
 	return rows, nil
 }
