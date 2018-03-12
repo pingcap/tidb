@@ -155,15 +155,17 @@ func (s *testSuite) TestAnalyze(c *C) {
 	c.Assert(err, IsNil)
 }
 
+// mockResponse implements kv.Response interface.
+// Used only for test.
 type mockResponse struct{ count int }
-type mockResultSubset struct{ data []byte }
 
-// functions for mockResponse.
+// Close implements kv.Response interface.
 func (resp *mockResponse) Close() error {
 	resp.count = 0
 	return nil
 }
 
+// Next implements kv.Response interface.
 func (resp *mockResponse) Next(ctx context.Context) (kv.ResultSubset, error) {
 	if resp.count == 2 {
 		return nil, nil
@@ -185,5 +187,9 @@ func (resp *mockResponse) Next(ctx context.Context) (kv.ResultSubset, error) {
 	return &mockResultSubset{respBytes}, nil
 }
 
-// functions for mockResultSubset.
+// mockResultSubset implements kv.ResultSubset interface.
+// Used only for test.
+type mockResultSubset struct{ data []byte }
+
+// GetData implements kv.Response interface.
 func (r *mockResultSubset) GetData() []byte { return r.data }
