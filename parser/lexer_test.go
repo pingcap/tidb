@@ -56,9 +56,9 @@ type testCaseItem struct {
 func (s *testLexerSuite) TestSingleCharOther(c *C) {
 	defer testleak.AfterTest(c)()
 	table := []testCaseItem{
-		{"@", at},
+		{"@", int('@')},
 		{"AT", identifier},
-		{"?", placeholder},
+		{"?", paramMarker},
 		{"PLACEHOLDER", identifier},
 		{"=", eq},
 		{".", int('.')},
@@ -66,15 +66,15 @@ func (s *testLexerSuite) TestSingleCharOther(c *C) {
 	runTest(c, table)
 }
 
-func (s *testLexerSuite) TestSysOrUserVar(c *C) {
+func (s *testLexerSuite) TestAtLeadingIdentifier(c *C) {
 	defer testleak.AfterTest(c)()
 	table := []testCaseItem{
-		{"@a_3cbbc", userVar},
-		{"@-3cbbc", at},
-		{"@@global.test", sysVar},
-		{"@@session.test", sysVar},
-		{"@@local.test", sysVar},
-		{"@@test", sysVar},
+		{"@a_3cbbc", singleAtIdentifier},
+		{"@-3cbbc", int('@')},
+		{"@@global.test", doubleAtIdentifier},
+		{"@@session.test", doubleAtIdentifier},
+		{"@@local.test", doubleAtIdentifier},
+		{"@@test", doubleAtIdentifier},
 	}
 	runTest(c, table)
 }
@@ -115,12 +115,29 @@ func (s *testLexerSuite) TestLiteral(c *C) {
 		{"0x3c26", hexLit},
 		{"x'13181C76734725455A'", hexLit},
 		{"0b01", bitLit},
-		{fmt.Sprintf("%c", 0), invalid},
 		{fmt.Sprintf("t1%c", 0), identifier},
-		{".*", int('.')},
-		{".1_t_1_x", int('.')},
 		{"N'some text'", underscoreCS},
 		{"n'some text'", underscoreCS},
+		{"\\N", null},
+		{".*", int('.')},       // `.`, `*`
+		{".1_t_1_x", int('.')}, // `.`, `1_t_1_x`
+		// Issue #3954
+		{".1e23", floatLit}, // `.1e23`
+		{".123", decLit},    // `.123`
+		{".1*23", decLit},   // `.1`, `*`, `23`
+		{".1,23", decLit},   // `.1`, `,`, `23`
+		{".1 23", decLit},   // `.1`, `23`
+		// TODO: See #3963. The following test cases do not test the ambiguity.
+		{".1$23", int('.')},    // `.`, `1$23`
+		{".1a23", int('.')},    // `.`, `1a23`
+		{".1e23$23", int('.')}, // `.`, `1e23$23`
+		{".1e23a23", int('.')}, // `.`, `1e23a23`
+		{".1C23", int('.')},    // `.`, `1C23`
+		{".1\u0081", int('.')}, // `.`, `1\u0081`
+		{".1\uff34", int('.')}, // `.`, `1\uff34`
+		{`b''`, bitLit},
+		{`b'0101'`, bitLit},
+		{`0b0101`, bitLit},
 	}
 	runTest(c, table)
 }
@@ -130,7 +147,7 @@ func runTest(c *C, table []testCaseItem) {
 	for _, v := range table {
 		l := NewScanner(v.str)
 		tok := l.Lex(&val)
-		c.Check(tok, Equals, v.tok)
+		c.Check(tok, Equals, v.tok, Commentf(v.str))
 	}
 }
 
@@ -170,8 +187,6 @@ func (s *testLexerSuite) TestscanString(c *C) {
 		expect string
 	}{
 		{`' \n\tTest String'`, " \n\tTest String"},
-		{`'a' ' ' 'string'`, "a string"},
-		{`'a' " " "string"`, "a string"},
 		{`'\x\B'`, "xB"},
 		{`'\0\'\"\b\n\r\t\\'`, "\000'\"\b\n\r\t\\"},
 		{`'\Z'`, string(26)},
@@ -301,7 +316,6 @@ func (s *testLexerSuite) TestSQLModeANSIQuotes(c *C) {
 		{"`identifier`", identifier, "identifier"},
 		{`"identifier""and"`, identifier, `identifier"and`},
 		{`'string''string'`, stringLit, "string'string"},
-		{`'string' 'string'`, stringLit, "stringstring"},
 		{`"identifier"'and'`, identifier, "identifier"},
 		{`'string'"identifier"`, stringLit, "string"},
 	}
@@ -314,4 +328,24 @@ func (s *testLexerSuite) TestSQLModeANSIQuotes(c *C) {
 		c.Assert(tok, Equals, t.tok)
 		c.Assert(v.ident, Equals, t.ident)
 	}
+	scanner.reset(`'string' 'string'`)
+	var v yySymType
+	tok := scanner.Lex(&v)
+	c.Assert(tok, Equals, stringLit)
+	c.Assert(v.ident, Equals, "string")
+	tok = scanner.Lex(&v)
+	c.Assert(tok, Equals, stringLit)
+	c.Assert(v.ident, Equals, "string")
+}
+
+func (s *testLexerSuite) TestIllegal(c *C) {
+	defer testleak.AfterTest(c)()
+	table := []testCaseItem{
+		{"'", 0},
+		{"'fu", 0},
+		{"'\\n", 0},
+		{"'\\", 0},
+		{fmt.Sprintf("%c", 0), invalid},
+	}
+	runTest(c, table)
 }

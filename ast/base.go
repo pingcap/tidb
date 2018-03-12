@@ -13,7 +13,7 @@
 
 package ast
 
-import "github.com/pingcap/tidb/util/types"
+import "github.com/pingcap/tidb/types"
 
 // node is the struct implements node interface except for Accept method.
 // Node implementations should embed it in.
@@ -106,14 +106,4 @@ func (fn *funcNode) functionExpression() {}
 
 type resultSetNode struct {
 	resultFields []*ResultField
-}
-
-// GetResultFields implements ResultSetNode interface.
-func (rs *resultSetNode) GetResultFields() []*ResultField {
-	return rs.resultFields
-}
-
-// SetResultFields implements ResultSetNode interface.
-func (rs *resultSetNode) SetResultFields(rfs []*ResultField) {
-	rs.resultFields = rfs
 }

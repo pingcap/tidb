@@ -14,9 +14,17 @@
 package util
 
 import (
+	"runtime"
 	"time"
 
 	"github.com/juju/errors"
+)
+
+const (
+	// DefaultMaxRetries indicates the max retry count.
+	DefaultMaxRetries = 30
+	// RetryInterval indicates retry interval.
+	RetryInterval uint64 = 500
 )
 
 // RunWithRetry will run the f with backoff and retry.
@@ -35,4 +43,13 @@ func RunWithRetry(retryCnt int, backoff uint64, f func() (bool, error)) (err err
 		time.Sleep(sleepTime)
 	}
 	return errors.Trace(err)
+}
+
+// GetStack gets the stacktrace.
+func GetStack() []byte {
+	const size = 4096
+	buf := make([]byte, size)
+	stackSize := runtime.Stack(buf, false)
+	buf = buf[:stackSize]
+	return buf
 }

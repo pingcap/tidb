@@ -13,6 +13,8 @@
 
 package mysql
 
+import "unicode"
+
 // CharsetIDs maps charset name to its default collation ID.
 var CharsetIDs = map[string]uint8{
 	"big5":     1,
@@ -547,7 +549,7 @@ var CollationNames = map[string]uint8{
 	"utf8mb4_vietnamese_ci":    247,
 }
 
-// MySQL collation informations.
+// MySQL collation information.
 const (
 	UTF8Charset          = "utf8"
 	UTF8MB4Charset       = "utf8mb4"
@@ -556,9 +558,51 @@ const (
 	BinaryCollationID    = 63
 	UTF8DefaultCollation = "utf8_bin"
 	DefaultCollationName = UTF8DefaultCollation
+
+	// MaxBytesOfCharacter, is the max bytes length of a character,
+	// refer to RFC3629, in UTF-8, characters from the U+0000..U+10FFFF range
+	// (the UTF-16 accessible range) are encoded using sequences of 1 to 4 octets.
+	MaxBytesOfCharacter = 4
 )
 
 // IsUTF8Charset checks if charset is utf8 or utf8mb4
 func IsUTF8Charset(charset string) bool {
 	return charset == UTF8Charset || charset == UTF8MB4Charset
+}
+
+// RangeGraph defines valid unicode characters to use in column names. It strictly follows MySQL's definition.
+// See #3994.
+var RangeGraph = []*unicode.RangeTable{
+	// _MY_PNT
+	unicode.No,
+	unicode.Mn,
+	unicode.Me,
+	unicode.Pc,
+	unicode.Pd,
+	unicode.Pd,
+	unicode.Ps,
+	unicode.Pe,
+	unicode.Pi,
+	unicode.Pf,
+	unicode.Po,
+	unicode.Sm,
+	unicode.Sc,
+	unicode.Sk,
+	unicode.So,
+	// _MY_U
+	unicode.Lu,
+	unicode.Lt,
+	unicode.Nl,
+	// _MY_L
+	unicode.Ll,
+	unicode.Lm,
+	unicode.Lo,
+	unicode.Nl,
+	unicode.Mn,
+	unicode.Mc,
+	unicode.Me,
+	// _MY_NMR
+	unicode.Nd,
+	unicode.Nl,
+	unicode.No,
 }

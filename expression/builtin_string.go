@@ -28,15 +28,13 @@ import (
 	"unicode/utf8"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/stringutil"
-	"github.com/pingcap/tidb/util/types"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/text/transform"
 )
 
@@ -62,6 +60,7 @@ var (
 	_ functionClass = &trimFunctionClass{}
 	_ functionClass = &lTrimFunctionClass{}
 	_ functionClass = &rTrimFunctionClass{}
+	_ functionClass = &lpadFunctionClass{}
 	_ functionClass = &rpadFunctionClass{}
 	_ functionClass = &bitLengthFunctionClass{}
 	_ functionClass = &charFunctionClass{}
@@ -78,10 +77,9 @@ var (
 	_ functionClass = &formatFunctionClass{}
 	_ functionClass = &fromBase64FunctionClass{}
 	_ functionClass = &toBase64FunctionClass{}
-	_ functionClass = &insertFuncFunctionClass{}
+	_ functionClass = &insertFunctionClass{}
 	_ functionClass = &instrFunctionClass{}
 	_ functionClass = &loadFileFunctionClass{}
-	_ functionClass = &lpadFunctionClass{}
 )
 
 var (
@@ -89,68 +87,113 @@ var (
 	_ builtinFunc = &builtinASCIISig{}
 	_ builtinFunc = &builtinConcatSig{}
 	_ builtinFunc = &builtinConcatWSSig{}
+	_ builtinFunc = &builtinLeftBinarySig{}
 	_ builtinFunc = &builtinLeftSig{}
+	_ builtinFunc = &builtinRightBinarySig{}
+	_ builtinFunc = &builtinRightSig{}
 	_ builtinFunc = &builtinRepeatSig{}
 	_ builtinFunc = &builtinLowerSig{}
 	_ builtinFunc = &builtinReverseSig{}
+	_ builtinFunc = &builtinReverseBinarySig{}
 	_ builtinFunc = &builtinSpaceSig{}
 	_ builtinFunc = &builtinUpperSig{}
 	_ builtinFunc = &builtinStrcmpSig{}
 	_ builtinFunc = &builtinReplaceSig{}
 	_ builtinFunc = &builtinConvertSig{}
-	_ builtinFunc = &builtinSubstringSig{}
+	_ builtinFunc = &builtinSubstringBinary2ArgsSig{}
+	_ builtinFunc = &builtinSubstringBinary3ArgsSig{}
+	_ builtinFunc = &builtinSubstring2ArgsSig{}
+	_ builtinFunc = &builtinSubstring3ArgsSig{}
 	_ builtinFunc = &builtinSubstringIndexSig{}
-	_ builtinFunc = &builtinLocateSig{}
-	_ builtinFunc = &builtinHexSig{}
+	_ builtinFunc = &builtinLocate2ArgsSig{}
+	_ builtinFunc = &builtinLocate3ArgsSig{}
+	_ builtinFunc = &builtinLocateBinary2ArgsSig{}
+	_ builtinFunc = &builtinLocateBinary3ArgsSig{}
+	_ builtinFunc = &builtinHexStrArgSig{}
+	_ builtinFunc = &builtinHexIntArgSig{}
 	_ builtinFunc = &builtinUnHexSig{}
-	_ builtinFunc = &builtinTrimSig{}
+	_ builtinFunc = &builtinTrim1ArgSig{}
+	_ builtinFunc = &builtinTrim2ArgsSig{}
+	_ builtinFunc = &builtinTrim3ArgsSig{}
 	_ builtinFunc = &builtinLTrimSig{}
 	_ builtinFunc = &builtinRTrimSig{}
+	_ builtinFunc = &builtinLpadSig{}
+	_ builtinFunc = &builtinLpadBinarySig{}
 	_ builtinFunc = &builtinRpadSig{}
+	_ builtinFunc = &builtinRpadBinarySig{}
 	_ builtinFunc = &builtinBitLengthSig{}
 	_ builtinFunc = &builtinCharSig{}
 	_ builtinFunc = &builtinCharLengthSig{}
 	_ builtinFunc = &builtinFindInSetSig{}
 	_ builtinFunc = &builtinMakeSetSig{}
-	_ builtinFunc = &builtinOctSig{}
+	_ builtinFunc = &builtinOctIntSig{}
+	_ builtinFunc = &builtinOctStringSig{}
 	_ builtinFunc = &builtinOrdSig{}
 	_ builtinFunc = &builtinQuoteSig{}
 	_ builtinFunc = &builtinBinSig{}
 	_ builtinFunc = &builtinEltSig{}
-	_ builtinFunc = &builtinExportSetSig{}
+	_ builtinFunc = &builtinExportSet3ArgSig{}
+	_ builtinFunc = &builtinExportSet4ArgSig{}
+	_ builtinFunc = &builtinExportSet5ArgSig{}
+	_ builtinFunc = &builtinFormatWithLocaleSig{}
 	_ builtinFunc = &builtinFormatSig{}
 	_ builtinFunc = &builtinFromBase64Sig{}
 	_ builtinFunc = &builtinToBase64Sig{}
-	_ builtinFunc = &builtinInsertFuncSig{}
+	_ builtinFunc = &builtinInsertBinarySig{}
+	_ builtinFunc = &builtinInsertSig{}
 	_ builtinFunc = &builtinInstrSig{}
-	_ builtinFunc = &builtinLoadFileSig{}
-	_ builtinFunc = &builtinLpadSig{}
+	_ builtinFunc = &builtinInstrBinarySig{}
+	_ builtinFunc = &builtinFieldRealSig{}
+	_ builtinFunc = &builtinFieldIntSig{}
+	_ builtinFunc = &builtinFieldStringSig{}
 )
+
+func reverseBytes(origin []byte) []byte {
+	for i, length := 0, len(origin); i < length/2; i++ {
+		origin[i], origin[length-i-1] = origin[length-i-1], origin[i]
+	}
+	return origin
+}
+
+func reverseRunes(origin []rune) []rune {
+	for i, length := 0, len(origin); i < length/2; i++ {
+		origin[i], origin[length-i-1] = origin[length-i-1], origin[i]
+	}
+	return origin
+}
+
+// SetBinFlagOrBinStr sets resTp to binary string if argTp is a binary string,
+// if not, sets the binary flag of resTp to true if argTp has binary flag.
+func SetBinFlagOrBinStr(argTp *types.FieldType, resTp *types.FieldType) {
+	if types.IsBinaryStr(argTp) {
+		types.SetBinChsClnFlag(resTp)
+	} else if mysql.HasBinaryFlag(argTp.Flag) {
+		resTp.Flag |= mysql.BinaryFlag
+	}
+}
 
 type lengthFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *lengthFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	tp := types.NewFieldType(mysql.TypeLonglong)
-	tp.Flen = 10
-	types.SetBinChsClnFlag(tp)
-	bf, err := newBaseBuiltinFuncWithTp(args, tp, ctx, tpString)
-	if err != nil {
+func (c *lengthFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinLengthSig{baseIntBuiltinFunc{bf}}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
+	bf.tp.Flen = 10
+	sig := &builtinLengthSig{bf}
+	return sig, nil
 }
 
 type builtinLengthSig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 // evalInt evaluates a builtinLengthSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html
-func (b *builtinLengthSig) evalInt(row []types.Datum) (int64, bool, error) {
-	val, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+func (b *builtinLengthSig) evalInt(row types.Row) (int64, bool, error) {
+	val, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
 	}
@@ -161,28 +204,24 @@ type asciiFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *asciiFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	// ascii function will always return Type BIGINT, Charset Binary, Size 3
-	tp := types.NewFieldType(mysql.TypeLonglong)
-	tp.Flen = 3
-	types.SetBinChsClnFlag(tp)
-
-	bf, err := newBaseBuiltinFuncWithTp(args, tp, ctx, tpString)
-	if err != nil {
+func (c *asciiFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinASCIISig{baseIntBuiltinFunc{bf}}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
+	bf.tp.Flen = 3
+	sig := &builtinASCIISig{bf}
+	return sig, nil
 }
 
 type builtinASCIISig struct {
-	baseIntBuiltinFunc
+	baseBuiltinFunc
 }
 
 // eval evals a builtinASCIISig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_ascii
-func (b *builtinASCIISig) evalInt(row []types.Datum) (int64, bool, error) {
-	val, isNull, err := b.args[0].EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+func (b *builtinASCIISig) evalInt(row types.Row) (int64, bool, error) {
+	val, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
 	}
@@ -196,45 +235,41 @@ type concatFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *concatFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	retType, argTps := c.inferType(args)
-	bf, err := newBaseBuiltinFuncWithTp(args, retType, ctx, argTps...)
-	if err != nil {
+func (c *concatFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinConcatSig{baseStringBuiltinFunc{bf}}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
-}
-
-func (c *concatFunctionClass) inferType(args []Expression) (*types.FieldType, []argTp) {
-	tps := make([]argTp, len(args))
-	existsBinStr, tp := false, mysql.TypeVarString
+	argTps := make([]types.EvalType, 0, len(args))
 	for i := 0; i < len(args); i++ {
-		tps[i] = tpString
-		curArgTp := args[i].GetType()
-		tp = types.MergeFieldType(tp, curArgTp.Tp)
-		if types.IsBinaryStr(curArgTp) {
-			existsBinStr = true
+		argTps = append(argTps, types.ETString)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, argTps...)
+	for i := range args {
+		argType := args[i].GetType()
+		SetBinFlagOrBinStr(argType, bf.tp)
+
+		if argType.Flen < 0 {
+			bf.tp.Flen = mysql.MaxBlobWidth
+			log.Warningf("Not Expected: `Flen` of arg[%v] in CONCAT is -1.", i)
 		}
+		bf.tp.Flen += argType.Flen
 	}
-	retType := types.NewFieldType(tp)
-	retType.Charset, retType.Collate = charset.CharsetUTF8, charset.CollationUTF8
-	if existsBinStr {
-		retType.Charset, retType.Collate = charset.CharsetBin, charset.CollationBin
-		retType.Flag |= mysql.BinaryFlag
+	if bf.tp.Flen >= mysql.MaxBlobWidth {
+		bf.tp.Flen = mysql.MaxBlobWidth
 	}
-	return retType, tps
+	sig := &builtinConcatSig{bf}
+	return sig, nil
 }
 
 type builtinConcatSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_concat
-func (b *builtinConcatSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
+func (b *builtinConcatSig) evalString(row types.Row) (d string, isNull bool, err error) {
 	var s []byte
 	for _, a := range b.getArgs() {
-		d, isNull, err = a.EvalString(row, b.ctx.GetSessionVars().StmtCtx)
+		d, isNull, err = a.EvalString(b.ctx, row)
 		if isNull || err != nil {
 			return d, isNull, errors.Trace(err)
 		}
@@ -247,174 +282,245 @@ type concatWSFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *concatWSFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinConcatWSSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *concatWSFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	argTps := make([]types.EvalType, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		argTps = append(argTps, types.ETString)
+	}
+
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, argTps...)
+
+	for i := range args {
+		argType := args[i].GetType()
+		SetBinFlagOrBinStr(argType, bf.tp)
+
+		// skip separator param
+		if i != 0 {
+			if argType.Flen < 0 {
+				bf.tp.Flen = mysql.MaxBlobWidth
+				log.Warningf("Not Expected: `Flen` of arg[%v] in CONCAT_WS is -1.", i)
+			}
+			bf.tp.Flen += argType.Flen
+		}
+	}
+
+	// add separator
+	argsLen := len(args) - 1
+	bf.tp.Flen += argsLen - 1
+
+	if bf.tp.Flen >= mysql.MaxBlobWidth {
+		bf.tp.Flen = mysql.MaxBlobWidth
+	}
+
+	sig := &builtinConcatWSSig{bf}
+	return sig, nil
 }
 
 type builtinConcatWSSig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinConcatWSSig.
+// evalString evals a builtinConcatWSSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_concat-ws
-func (b *builtinConcatWSSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
+func (b *builtinConcatWSSig) evalString(row types.Row) (string, bool, error) {
+	args := b.getArgs()
+	strs := make([]string, 0, len(args))
 	var sep string
-	s := make([]string, 0, len(args))
-	for i, a := range args {
-		if a.IsNull() {
-			if i == 0 {
-				return d, nil
-			}
-			continue
-		}
-		ss, err := a.ToString()
+	for i, arg := range args {
+		val, isNull, err := arg.EvalString(b.ctx, row)
 		if err != nil {
-			return d, errors.Trace(err)
+			return val, isNull, errors.Trace(err)
+		}
+
+		if isNull {
+			// If the separator is NULL, the result is NULL.
+			if i == 0 {
+				return val, isNull, nil
+			}
+			// CONCAT_WS() does not skip empty strings. However,
+			// it does skip any NULL values after the separator argument.
+			continue
 		}
 
 		if i == 0 {
-			sep = ss
+			sep = val
 			continue
 		}
-		s = append(s, ss)
+		strs = append(strs, val)
 	}
 
-	d.SetString(strings.Join(s, sep))
-	return d, nil
+	// TODO: check whether the length of result is larger than Flen
+	return strings.Join(strs, sep), false, nil
 }
 
 type leftFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *leftFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinLeftSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *leftFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETInt)
+	argType := args[0].GetType()
+	bf.tp.Flen = argType.Flen
+	SetBinFlagOrBinStr(argType, bf.tp)
+	if types.IsBinaryStr(argType) {
+		sig := &builtinLeftBinarySig{bf}
+		return sig, nil
+	}
+	sig := &builtinLeftSig{bf}
+	return sig, nil
+}
+
+type builtinLeftBinarySig struct {
+	baseBuiltinFunc
+}
+
+// evalString evals LEFT(str,len).
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_left
+func (b *builtinLeftBinarySig) evalString(row types.Row) (string, bool, error) {
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+	left, isNull, err := b.args[1].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+	leftLength := int(left)
+	if strLength := len(str); leftLength > strLength {
+		leftLength = strLength
+	} else if leftLength < 0 {
+		leftLength = 0
+	}
+	return str[:leftLength], false, nil
 }
 
 type builtinLeftSig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinLeftSig.
+// evalString evals LEFT(str,len).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_left
-func (b *builtinLeftSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+func (b *builtinLeftSig) evalString(row types.Row) (string, bool, error) {
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
 	}
-	str, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
+	left, isNull, err := b.args[1].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
 	}
-	length, err := args[1].ToInt64(b.ctx.GetSessionVars().StmtCtx)
-	if err != nil {
-		return d, errors.Trace(err)
+	runes, leftLength := []rune(str), int(left)
+	if runeLength := len(runes); leftLength > runeLength {
+		leftLength = runeLength
+	} else if leftLength < 0 {
+		leftLength = 0
 	}
-	l := int(length)
-	if l < 0 {
-		l = 0
-	} else if l > len(str) {
-		l = len(str)
-	}
-	d.SetString(str[:l])
-	return d, nil
+	return string(runes[:leftLength]), false, nil
 }
 
 type rightFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *rightFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinRightSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *rightFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETInt)
+	argType := args[0].GetType()
+	bf.tp.Flen = argType.Flen
+	SetBinFlagOrBinStr(argType, bf.tp)
+	if types.IsBinaryStr(argType) {
+		sig := &builtinRightBinarySig{bf}
+		return sig, nil
+	}
+	sig := &builtinRightSig{bf}
+	return sig, nil
+}
+
+type builtinRightBinarySig struct {
+	baseBuiltinFunc
+}
+
+// evalString evals RIGHT(str,len).
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_right
+func (b *builtinRightBinarySig) evalString(row types.Row) (string, bool, error) {
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+	right, isNull, err := b.args[1].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+	strLength, rightLength := len(str), int(right)
+	if rightLength > strLength {
+		rightLength = strLength
+	} else if rightLength < 0 {
+		rightLength = 0
+	}
+	return str[strLength-rightLength:], false, nil
 }
 
 type builtinRightSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinRightSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+// evalString evals RIGHT(str,len).
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_right
+func (b *builtinRightSig) evalString(row types.Row) (string, bool, error) {
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
 	}
-	if len(args) != 2 {
-		return d, nil
+	right, isNull, err := b.args[1].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
 	}
-	arg0, arg1 := args[0], args[1]
-	if arg0.IsNull() || arg1.IsNull() {
-		return d, nil
+	runes := []rune(str)
+	strLength, rightLength := len(runes), int(right)
+	if rightLength > strLength {
+		rightLength = strLength
+	} else if rightLength < 0 {
+		rightLength = 0
 	}
-
-	str, err := arg0.ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	sc := new(variable.StatementContext)
-	sc.IgnoreTruncate = true
-	length, err := arg1.ToInt64(sc)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	if length <= 0 {
-		d.SetString("")
-		return d, nil
-	}
-	var result string
-	strLen := int64(len(str))
-	if strLen >= length {
-		result = str[strLen-length:]
-	} else {
-		result = str
-	}
-	d.SetString(result)
-
-	return d, nil
+	return string(runes[strLength-rightLength:]), false, nil
 }
 
 type repeatFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *repeatFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	tp := types.NewFieldType(mysql.TypeLongBlob)
-	tp.Flen = mysql.MaxBlobWidth
-
-	if isBinary := mysql.HasBinaryFlag(args[0].GetType().Flag); isBinary {
-		types.SetBinChsClnFlag(tp)
-	} else {
-		tp.Charset = charset.CharsetUTF8
-		tp.Collate = charset.CollationUTF8
-	}
-
-	bf, err := newBaseBuiltinFuncWithTp(args, tp, ctx, tpString, tpInt)
-	if err != nil {
+func (c *repeatFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sig := &builtinRepeatSig{baseStringBuiltinFunc{bf}}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETInt)
+	bf.tp.Flen = mysql.MaxBlobWidth
+	SetBinFlagOrBinStr(args[0].GetType(), bf.tp)
+	sig := &builtinRepeatSig{bf}
+	return sig, nil
 }
 
 type builtinRepeatSig struct {
-	baseStringBuiltinFunc
+	baseBuiltinFunc
 }
 
 // eval evals a builtinRepeatSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_repeat
-func (b *builtinRepeatSig) evalString(row []types.Datum) (d string, isNull bool, err error) {
-	sc := b.ctx.GetSessionVars().StmtCtx
-	str, isNull, err := b.args[0].EvalString(row, sc)
+func (b *builtinRepeatSig) evalString(row types.Row) (d string, isNull bool, err error) {
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", isNull, errors.Trace(err)
 	}
 
-	num, isNull, err := b.args[1].EvalInt(row, sc)
+	num, isNull, err := b.args[1].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return "", isNull, errors.Trace(err)
 	}
@@ -435,406 +541,508 @@ type lowerFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *lowerFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinLowerSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *lowerFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
+	argTp := args[0].GetType()
+	bf.tp.Flen = argTp.Flen
+	SetBinFlagOrBinStr(argTp, bf.tp)
+	sig := &builtinLowerSig{bf}
+	return sig, nil
 }
 
 type builtinLowerSig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinLowerSig.
+// evalString evals a builtinLowerSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_lower
-func (b *builtinLowerSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+func (b *builtinLowerSig) evalString(row types.Row) (d string, isNull bool, err error) {
+	d, isNull, err = b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
 	}
-	x := args[0]
-	switch x.Kind() {
-	case types.KindNull:
-		return d, nil
-	default:
-		s, err := x.ToString()
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		d.SetString(strings.ToLower(s))
-		return d, nil
+
+	if types.IsBinaryStr(b.args[0].GetType()) {
+		return d, false, nil
 	}
+
+	return strings.ToLower(d), false, nil
 }
 
 type reverseFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *reverseFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinReverseSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *reverseFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
+	retTp := *args[0].GetType()
+	retTp.Tp = mysql.TypeVarString
+	retTp.Decimal = types.UnspecifiedLength
+	bf.tp = &retTp
+	var sig builtinFunc
+	if types.IsBinaryStr(bf.tp) {
+		sig = &builtinReverseBinarySig{bf}
+	} else {
+		sig = &builtinReverseSig{bf}
+	}
+	return sig, nil
+}
+
+type builtinReverseBinarySig struct {
+	baseBuiltinFunc
+}
+
+// evalString evals a REVERSE(str).
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_reverse
+func (b *builtinReverseBinarySig) evalString(row types.Row) (string, bool, error) {
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+	reversed := reverseBytes([]byte(str))
+	return string(reversed), false, nil
 }
 
 type builtinReverseSig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinReverseSig.
+// evalString evals a REVERSE(str).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_reverse
-func (b *builtinReverseSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+func (b *builtinReverseSig) evalString(row types.Row) (string, bool, error) {
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
 	}
-	x := args[0]
-	switch x.Kind() {
-	case types.KindNull:
-		return d, nil
-	default:
-		s, err := x.ToString()
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		d.SetString(stringutil.Reverse(s))
-		return d, nil
-	}
+	reversed := reverseRunes([]rune(str))
+	return string(reversed), false, nil
 }
 
 type spaceFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *spaceFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinSpaceSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *spaceFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETInt)
+	bf.tp.Flen = mysql.MaxBlobWidth
+	sig := &builtinSpaceSig{bf}
+	return sig, nil
 }
 
 type builtinSpaceSig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinSpaceSig.
+// evalString evals a builtinSpaceSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_space
-func (b *builtinSpaceSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	x := args[0]
-	if x.IsNull() {
-		return d, nil
-	}
-	sc := b.ctx.GetSessionVars().StmtCtx
-	if x.Kind() == types.KindString || x.Kind() == types.KindBytes {
-		if _, e := types.StrToInt(sc, x.GetString()); e != nil {
-			return d, errors.Trace(e)
-		}
-	}
+func (b *builtinSpaceSig) evalString(row types.Row) (d string, isNull bool, err error) {
+	var x int64
 
-	v, err := x.ToInt64(b.ctx.GetSessionVars().StmtCtx)
-	if err != nil {
-		return d, errors.Trace(err)
+	x, isNull, err = b.args[0].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
 	}
-
-	if v < 0 {
-		v = 0
+	if x > mysql.MaxBlobWidth {
+		return d, true, nil
 	}
-
-	if v > math.MaxInt32 {
-		d.SetNull()
-	} else {
-		d.SetString(strings.Repeat(" ", int(v)))
+	if x < 0 {
+		x = 0
 	}
-	return d, nil
+	return strings.Repeat(" ", int(x)), false, nil
 }
 
 type upperFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *upperFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinUpperSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *upperFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
+	argTp := args[0].GetType()
+	bf.tp.Flen = argTp.Flen
+	SetBinFlagOrBinStr(argTp, bf.tp)
+	sig := &builtinUpperSig{bf}
+	return sig, nil
 }
 
 type builtinUpperSig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinUpperSig.
+// evalString evals a builtinUpperSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_upper
-func (b *builtinUpperSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+func (b *builtinUpperSig) evalString(row types.Row) (d string, isNull bool, err error) {
+	d, isNull, err = b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
 	}
-	x := args[0]
-	switch x.Kind() {
-	case types.KindNull:
-		return d, nil
-	default:
-		s, err := x.ToString()
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		d.SetString(strings.ToUpper(s))
-		return d, nil
+
+	if types.IsBinaryStr(b.args[0].GetType()) {
+		return d, false, nil
 	}
+
+	return strings.ToUpper(d), false, nil
 }
 
 type strcmpFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *strcmpFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinStrcmpSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *strcmpFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString, types.ETString)
+	bf.tp.Flen = 2
+	types.SetBinChsClnFlag(bf.tp)
+	sig := &builtinStrcmpSig{bf}
+	return sig, nil
 }
 
 type builtinStrcmpSig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinStrcmpSig.
+// evalInt evals a builtinStrcmpSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-comparison-functions.html
-func (b *builtinStrcmpSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+func (b *builtinStrcmpSig) evalInt(row types.Row) (int64, bool, error) {
+	var (
+		left, right string
+		isNull      bool
+		err         error
+	)
+
+	left, isNull, err = b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
-	if args[0].IsNull() || args[1].IsNull() {
-		return d, nil
-	}
-	left, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	right, err := args[1].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
+	right, isNull, err = b.args[1].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
 	res := types.CompareString(left, right)
-	d.SetInt64(int64(res))
-	return d, nil
+	return int64(res), false, nil
 }
 
 type replaceFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *replaceFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinReplaceSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *replaceFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETString, types.ETString)
+	bf.tp.Flen = c.fixLength(args)
+	for _, a := range args {
+		SetBinFlagOrBinStr(a.GetType(), bf.tp)
+	}
+	sig := &builtinReplaceSig{bf}
+	return sig, nil
+}
+
+// fixLength calculate the Flen of the return type.
+func (c *replaceFunctionClass) fixLength(args []Expression) int {
+	charLen := args[0].GetType().Flen
+	oldStrLen := args[1].GetType().Flen
+	diff := args[2].GetType().Flen - oldStrLen
+	if diff > 0 && oldStrLen > 0 {
+		charLen += (charLen / oldStrLen) * diff
+	}
+	return charLen
 }
 
 type builtinReplaceSig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinReplaceSig.
+// evalString evals a builtinReplaceSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_replace
-func (b *builtinReplaceSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	for _, arg := range args {
-		if arg.IsNull() {
-			return d, nil
-		}
-	}
+func (b *builtinReplaceSig) evalString(row types.Row) (d string, isNull bool, err error) {
+	var str, oldStr, newStr string
 
-	str, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
+	str, isNull, err = b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
 	}
-	oldStr, err := args[1].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
+	oldStr, isNull, err = b.args[1].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
 	}
-	newStr, err := args[2].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
+	newStr, isNull, err = b.args[2].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
 	}
 	if oldStr == "" {
-		d.SetString(str)
-		return d, nil
+		return str, false, nil
 	}
-	d.SetString(strings.Replace(str, oldStr, newStr, -1))
-
-	return d, nil
+	return strings.Replace(str, oldStr, newStr, -1), false, nil
 }
 
 type convertFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *convertFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinConvertSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *convertFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETString)
+	// TODO: issue #4436: The second parameter should be a constant.
+	// TODO: issue #4474: Charset supported by TiDB and MySQL is not the same.
+	// TODO: Fix #4436 && #4474, set the correct charset and flag of `bf.tp`.
+	bf.tp.Flen = mysql.MaxBlobWidth
+	sig := &builtinConvertSig{bf}
+	return sig, nil
 }
 
 type builtinConvertSig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinConvertSig.
+// evalString evals CONVERT(expr USING transcoding_name).
 // See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_convert
-func (b *builtinConvertSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	// Casting nil to any type returns nil
-	if args[0].Kind() != types.KindString {
-		return d, nil
+func (b *builtinConvertSig) evalString(row types.Row) (string, bool, error) {
+	expr, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
 	}
 
-	str := args[0].GetString()
-	Charset := args[1].GetString()
-
-	if strings.ToLower(Charset) == "ascii" {
-		d.SetString(str)
-		return d, nil
-	} else if strings.ToLower(Charset) == "utf8mb4" {
-		d.SetString(str)
-		return d, nil
+	charsetName, isNull, err := b.args[1].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
 	}
 
-	encoding, _ := charset.Lookup(Charset)
+	encoding, _ := charset.Lookup(charsetName)
 	if encoding == nil {
-		return d, errors.Errorf("unknown encoding: %s", Charset)
+		return "", true, errUnknownCharacterSet.GenByArgs(charsetName)
 	}
 
-	target, _, err := transform.String(encoding.NewDecoder(), str)
-	if err != nil {
-		log.Errorf("Convert %s to %s with error: %v", str, Charset, err)
-		return d, errors.Trace(err)
-	}
-	d.SetString(target)
-	return d, nil
+	target, _, err := transform.String(encoding.NewDecoder(), expr)
+	return target, err != nil, errors.Trace(err)
 }
 
 type substringFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *substringFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinSubstringSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *substringFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	argTps := []types.EvalType{types.ETString, types.ETInt}
+	if len(args) == 3 {
+		argTps = append(argTps, types.ETInt)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, argTps...)
+
+	argType := args[0].GetType()
+	bf.tp.Flen = argType.Flen
+	SetBinFlagOrBinStr(argType, bf.tp)
+
+	var sig builtinFunc
+	switch {
+	case len(args) == 3 && types.IsBinaryStr(argType):
+		sig = &builtinSubstringBinary3ArgsSig{bf}
+	case len(args) == 3:
+		sig = &builtinSubstring3ArgsSig{bf}
+	case len(args) == 2 && types.IsBinaryStr(argType):
+		sig = &builtinSubstringBinary2ArgsSig{bf}
+	case len(args) == 2:
+		sig = &builtinSubstring2ArgsSig{bf}
+	default:
+		// Should never happens.
+		return nil, errors.Errorf("SUBSTR invalid arg length, expect 2 or 3 but got: %v", len(args))
+	}
+	return sig, nil
 }
 
-type builtinSubstringSig struct {
+type builtinSubstringBinary2ArgsSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinSubstringSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+// evalString evals SUBSTR(str,pos), SUBSTR(str FROM pos), SUBSTR() is a synonym for SUBSTRING().
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_substr
+func (b *builtinSubstringBinary2ArgsSig) evalString(row types.Row) (string, bool, error) {
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
 	}
-	// The meaning of the elements of args.
-	// arg[0] -> StrExpr
-	// arg[1] -> Pos
-	// arg[2] -> Len (Optional)
-	if args[0].IsNull() || args[1].IsNull() {
-		return
+	pos, isNull, err := b.args[1].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
 	}
-
-	str, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Errorf("Substring invalid args, need string but get %T", args[0].GetValue())
-	}
-
-	if args[1].Kind() != types.KindInt64 {
-		return d, errors.Errorf("Substring invalid pos args, need int but get %T", args[1].GetValue())
-	}
-	pos := args[1].GetInt64()
-
-	length, hasLen := int64(-1), false
-	if len(args) == 3 {
-		if args[2].IsNull() {
-			return
-		}
-		if args[2].Kind() != types.KindInt64 {
-			return d, errors.Errorf("Substring invalid pos args, need int but get %T", args[2].GetValue())
-		}
-		length, hasLen = args[2].GetInt64(), true
-	}
-	// The forms without a len argument return a substring from string str starting at position pos.
-	// The forms with a len argument return a substring len characters long from string str, starting at position pos.
-	// The forms that use FROM are standard SQL syntax. It is also possible to use a negative value for pos.
-	// In this case, the beginning of the substring is pos characters from the end of the string, rather than the beginning.
-	// A negative value may be used for pos in any of the forms of this function.
+	length := int64(len(str))
 	if pos < 0 {
-		pos = int64(len(str)) + pos
+		pos += length
 	} else {
 		pos--
 	}
-	if pos > int64(len(str)) || pos < int64(0) {
-		pos = int64(len(str))
+	if pos > length || pos < 0 {
+		pos = length
 	}
-	if hasLen {
-		if end := pos + length; end < pos {
-			d.SetString("")
-		} else if end > int64(len(str)) {
-			d.SetString(str[pos:])
-		} else {
-			d.SetString(str[pos:end])
-		}
+	return str[pos:], false, nil
+}
+
+type builtinSubstring2ArgsSig struct {
+	baseBuiltinFunc
+}
+
+// evalString evals SUBSTR(str,pos), SUBSTR(str FROM pos), SUBSTR() is a synonym for SUBSTRING().
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_substr
+func (b *builtinSubstring2ArgsSig) evalString(row types.Row) (string, bool, error) {
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+	pos, isNull, err := b.args[1].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+	runes := []rune(str)
+	length := int64(len(runes))
+	if pos < 0 {
+		pos += length
 	} else {
-		d.SetString(str[pos:])
+		pos--
 	}
-	return d, nil
+	if pos > length || pos < 0 {
+		pos = length
+	}
+	return string(runes[pos:]), false, nil
+}
+
+type builtinSubstringBinary3ArgsSig struct {
+	baseBuiltinFunc
+}
+
+// evalString evals SUBSTR(str,pos,len), SUBSTR(str FROM pos FOR len), SUBSTR() is a synonym for SUBSTRING().
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_substr
+func (b *builtinSubstringBinary3ArgsSig) evalString(row types.Row) (string, bool, error) {
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+	pos, isNull, err := b.args[1].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+	length, isNull, err := b.args[2].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+	byteLen := int64(len(str))
+	if pos < 0 {
+		pos += byteLen
+	} else {
+		pos--
+	}
+	if pos > byteLen || pos < 0 {
+		pos = byteLen
+	}
+	end := pos + length
+	if end < pos {
+		return "", false, nil
+	} else if end < byteLen {
+		return str[pos:end], false, nil
+	}
+	return str[pos:], false, nil
+}
+
+type builtinSubstring3ArgsSig struct {
+	baseBuiltinFunc
+}
+
+// evalString evals SUBSTR(str,pos,len), SUBSTR(str FROM pos FOR len), SUBSTR() is a synonym for SUBSTRING().
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_substr
+func (b *builtinSubstring3ArgsSig) evalString(row types.Row) (string, bool, error) {
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+	pos, isNull, err := b.args[1].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+	length, isNull, err := b.args[2].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+	runes := []rune(str)
+	numRunes := int64(len(runes))
+	if pos < 0 {
+		pos += numRunes
+	} else {
+		pos--
+	}
+	if pos > numRunes || pos < 0 {
+		pos = numRunes
+	}
+	end := pos + length
+	if end < pos {
+		return "", false, nil
+	} else if end < numRunes {
+		return string(runes[pos:end]), false, nil
+	}
+	return string(runes[pos:]), false, nil
 }
 
 type substringIndexFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *substringIndexFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinSubstringIndexSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *substringIndexFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETString, types.ETInt)
+	argType := args[0].GetType()
+	bf.tp.Flen = argType.Flen
+	SetBinFlagOrBinStr(argType, bf.tp)
+	sig := &builtinSubstringIndexSig{bf}
+	return sig, nil
 }
 
 type builtinSubstringIndexSig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinSubstringIndexSig.
+// evalString evals a builtinSubstringIndexSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_substring-index
-func (b *builtinSubstringIndexSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+func (b *builtinSubstringIndexSig) evalString(row types.Row) (d string, isNull bool, err error) {
+	var (
+		str, delim string
+		count      int64
+	)
+	str, isNull, err = b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
 	}
-	// The meaning of the elements of args.
-	// args[0] -> StrExpr
-	// args[1] -> Delim
-	// args[2] -> Count
-	str, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Errorf("Substring_Index invalid args, need string but get %T", args[0].GetValue())
+	delim, isNull, err = b.args[1].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
 	}
-
-	delim, err := args[1].ToString()
-	if err != nil {
-		return d, errors.Errorf("Substring_Index invalid delim, need string but get %T", args[1].GetValue())
+	count, isNull, err = b.args[2].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
 	}
 	if len(delim) == 0 {
-		d.SetString("")
-		return d, nil
+		return "", false, nil
 	}
 
-	c, err := args[2].ToInt64(b.ctx.GetSessionVars().StmtCtx)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	count := int(c)
 	strs := strings.Split(str, delim)
-	var (
-		start = 0
-		end   = len(strs)
-	)
+	start, end := int64(0), int64(len(strs))
 	if count > 0 {
 		// If count is positive, everything to the left of the final delimiter (counting from the left) is returned.
 		if count < end {
@@ -848,314 +1056,457 @@ func (b *builtinSubstringIndexSig) eval(row []types.Datum) (d types.Datum, err e
 		}
 	}
 	substrs := strs[start:end]
-	d.SetString(strings.Join(substrs, delim))
-	return d, nil
+	return strings.Join(substrs, delim), false, nil
 }
 
 type locateFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *locateFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinLocateSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *locateFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	hasStartPos, argTps := len(args) == 3, []types.EvalType{types.ETString, types.ETString}
+	if hasStartPos {
+		argTps = append(argTps, types.ETInt)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, argTps...)
+	var sig builtinFunc
+	// Loacte is multibyte safe, and is case-sensitive only if at least one argument is a binary string.
+	hasBianryInput := types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[1].GetType())
+	switch {
+	case hasStartPos && hasBianryInput:
+		sig = &builtinLocateBinary3ArgsSig{bf}
+	case hasStartPos:
+		sig = &builtinLocate3ArgsSig{bf}
+	case hasBianryInput:
+		sig = &builtinLocateBinary2ArgsSig{bf}
+	default:
+		sig = &builtinLocate2ArgsSig{bf}
+	}
+	return sig, nil
 }
 
-type builtinLocateSig struct {
+type builtinLocateBinary2ArgsSig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinLocateSig.
+// evalInt evals LOCATE(substr,str), case-sensitive.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
-func (b *builtinLocateSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+func (b *builtinLocateBinary2ArgsSig) evalInt(row types.Row) (int64, bool, error) {
+	subStr, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
-	// The meaning of the elements of args.
-	// args[0] -> SubStr
-	// args[1] -> Str
-	// args[2] -> Pos
-
-	// eval str
-	if args[1].IsNull() {
-		return d, nil
+	str, isNull, err := b.args[1].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
-	str, err := args[1].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
+	subStrLen := len(subStr)
+	if subStrLen == 0 {
+		return 1, false, nil
 	}
-	// eval substr
-	if args[0].IsNull() {
-		return d, nil
+	ret, idx := 0, strings.Index(str, subStr)
+	if idx != -1 {
+		ret = idx + 1
 	}
-	subStr, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	// eval pos
-	pos := int64(0)
-	if len(args) == 3 {
-		p, err := args[2].ToInt64(b.ctx.GetSessionVars().StmtCtx)
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		pos = p - 1
-	}
-	var ret, subStrLen, sentinel int64
-	caseSensitive := false
-	if args[0].Kind() == types.KindBytes || args[1].Kind() == types.KindBytes {
-		caseSensitive = true
-		subStrLen = int64(len(subStr))
-		sentinel = int64(len(str)) - subStrLen
-	} else {
-		subStrLen = int64(len([]rune(subStr)))
-		sentinel = int64(len([]rune(strings.ToLower(str)))) - subStrLen
-	}
-
-	if pos < 0 || pos > sentinel {
-		d.SetInt64(0)
-		return d, nil
-	} else if subStrLen == 0 {
-		d.SetInt64(pos + 1)
-		return d, nil
-	} else if caseSensitive {
-		slice := str[pos:]
-		idx := strings.Index(slice, subStr)
-		if idx != -1 {
-			ret = pos + int64(idx) + 1
-		}
-	} else {
-		slice := string([]rune(strings.ToLower(str))[pos:])
-		idx := strings.Index(slice, strings.ToLower(subStr))
-		if idx != -1 {
-			ret = pos + int64(utf8.RuneCountInString(slice[:idx])) + 1
-		}
-	}
-	d.SetInt64(ret)
-	return d, nil
+	return int64(ret), false, nil
 }
 
-const spaceChars = "\n\t\r "
+type builtinLocate2ArgsSig struct {
+	baseBuiltinFunc
+}
+
+// evalInt evals LOCATE(substr,str), non case-sensitive.
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
+func (b *builtinLocate2ArgsSig) evalInt(row types.Row) (int64, bool, error) {
+	subStr, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	str, isNull, err := b.args[1].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	if int64(len([]rune(subStr))) == 0 {
+		return 1, false, nil
+	}
+	slice := string([]rune(strings.ToLower(str)))
+	ret, idx := 0, strings.Index(slice, strings.ToLower(subStr))
+	if idx != -1 {
+		ret = utf8.RuneCountInString(slice[:idx]) + 1
+	}
+	return int64(ret), false, nil
+}
+
+type builtinLocateBinary3ArgsSig struct {
+	baseBuiltinFunc
+}
+
+// evalInt evals LOCATE(substr,str,pos), case-sensitive.
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
+func (b *builtinLocateBinary3ArgsSig) evalInt(row types.Row) (int64, bool, error) {
+	subStr, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	str, isNull, err := b.args[1].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	pos, isNull, err := b.args[2].EvalInt(b.ctx, row)
+	// Transfer the argument which starts from 1 to real index which starts from 0.
+	pos--
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	subStrLen := len(subStr)
+	if pos < 0 || pos > int64(len(str)-subStrLen) {
+		return 0, false, nil
+	} else if subStrLen == 0 {
+		return pos + 1, false, nil
+	}
+	slice := str[pos:]
+	idx := strings.Index(slice, subStr)
+	if idx != -1 {
+		return pos + int64(idx) + 1, false, nil
+	}
+	return 0, false, nil
+}
+
+type builtinLocate3ArgsSig struct {
+	baseBuiltinFunc
+}
+
+// evalInt evals LOCATE(substr,str,pos), non case-sensitive.
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
+func (b *builtinLocate3ArgsSig) evalInt(row types.Row) (int64, bool, error) {
+	subStr, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	str, isNull, err := b.args[1].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	pos, isNull, err := b.args[2].EvalInt(b.ctx, row)
+	// Transfer the argument which starts from 1 to real index which starts from 0.
+	pos--
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	subStrLen := len([]rune(subStr))
+	if pos < 0 || pos > int64(len([]rune(strings.ToLower(str)))-subStrLen) {
+		return 0, false, nil
+	} else if subStrLen == 0 {
+		return pos + 1, false, nil
+	}
+	slice := string([]rune(strings.ToLower(str))[pos:])
+	idx := strings.Index(slice, strings.ToLower(subStr))
+	if idx != -1 {
+		return pos + int64(utf8.RuneCountInString(slice[:idx])) + 1, false, nil
+	}
+	return 0, false, nil
+}
 
 type hexFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *hexFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinHexSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *hexFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	argTp := args[0].GetType().EvalType()
+	switch argTp {
+	case types.ETString, types.ETDatetime, types.ETTimestamp, types.ETDuration, types.ETJson:
+		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
+		// Use UTF-8 as default
+		bf.tp.Flen = args[0].GetType().Flen * 3 * 2
+		sig := &builtinHexStrArgSig{bf}
+		return sig, nil
+	case types.ETInt, types.ETReal, types.ETDecimal:
+		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETInt)
+		bf.tp.Flen = args[0].GetType().Flen * 2
+		sig := &builtinHexIntArgSig{bf}
+		return sig, nil
+	default:
+		return nil, errors.Errorf("Hex invalid args, need int or string but get %T", args[0].GetType())
+	}
 }
 
-type builtinHexSig struct {
+type builtinHexStrArgSig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinHexSig.
+// evalString evals a builtinHexStrArgSig, corresponding to hex(str)
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_hex
-func (b *builtinHexSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+func (b *builtinHexStrArgSig) evalString(row types.Row) (string, bool, error) {
+	d, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
 	}
-	switch args[0].Kind() {
-	case types.KindNull:
-		return d, nil
-	case types.KindString, types.KindBytes:
-		x, err := args[0].ToString()
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		d.SetString(strings.ToUpper(hex.EncodeToString(hack.Slice(x))))
-		return d, nil
-	case types.KindInt64, types.KindUint64, types.KindMysqlHex, types.KindFloat32, types.KindFloat64, types.KindMysqlDecimal:
-		x, _ := args[0].Cast(b.ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeLonglong))
-		h := fmt.Sprintf("%x", uint64(x.GetInt64()))
-		d.SetString(strings.ToUpper(h))
-		return d, nil
-	default:
-		return d, errors.Errorf("Hex invalid args, need int or string but get %T", args[0].GetValue())
+	return strings.ToUpper(hex.EncodeToString(hack.Slice(d))), false, nil
+}
+
+type builtinHexIntArgSig struct {
+	baseBuiltinFunc
+}
+
+// evalString evals a builtinHexIntArgSig, corresponding to hex(N)
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_hex
+func (b *builtinHexIntArgSig) evalString(row types.Row) (string, bool, error) {
+	x, isNull, err := b.args[0].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return "", isNull, errors.Trace(err)
 	}
+	return strings.ToUpper(fmt.Sprintf("%x", uint64(x))), false, nil
 }
 
 type unhexFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *unhexFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinUnHexSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *unhexFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	var retFlen int
+
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	argType := args[0].GetType()
+	argEvalTp := argType.EvalType()
+	switch argEvalTp {
+	case types.ETString, types.ETDatetime, types.ETTimestamp, types.ETDuration, types.ETJson:
+		// Use UTF-8 as default charset, so there're (Flen * 3 + 1) / 2 byte-pairs
+		retFlen = (argType.Flen*3 + 1) / 2
+	case types.ETInt, types.ETReal, types.ETDecimal:
+		// For number value, there're (Flen + 1) / 2 byte-pairs
+		retFlen = (argType.Flen + 1) / 2
+	default:
+		return nil, errors.Errorf("Unhex invalid args, need int or string but get %s", argType)
+	}
+
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
+	bf.tp.Flen = retFlen
+	types.SetBinChsClnFlag(bf.tp)
+	sig := &builtinUnHexSig{bf}
+	return sig, nil
 }
 
 type builtinUnHexSig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinUnHexSig.
+// evalString evals a builtinUnHexSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_unhex
-func (b *builtinUnHexSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
+func (b *builtinUnHexSig) evalString(row types.Row) (string, bool, error) {
+	var bs []byte
+
+	d, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
+	}
+	// Add a '0' to the front, if the length is not the multiple of 2
+	if len(d)%2 != 0 {
+		d = "0" + d
+	}
+	bs, err = hex.DecodeString(d)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return "", true, nil
 	}
-	switch args[0].Kind() {
-	case types.KindNull:
-		return d, nil
-	case types.KindString, types.KindBytes:
-		x, err := args[0].ToString()
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		bytes, err := hex.DecodeString(x)
-		if err != nil {
-			return d, nil
-		}
-		d.SetString(string(bytes))
-		return d, nil
-	case types.KindInt64, types.KindUint64, types.KindMysqlHex, types.KindFloat32, types.KindFloat64, types.KindMysqlDecimal:
-		x, _ := args[0].Cast(b.ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeString))
-		if x.IsNull() {
-			return d, nil
-		}
-		bytes, err := hex.DecodeString(x.GetString())
-		if err != nil {
-			return d, nil
-		}
-		d.SetString(string(bytes))
-		return d, nil
-	default:
-		return d, errors.Errorf("Unhex invalid args, need int or string but get %T", args[0].GetValue())
-	}
+	return string(bs), false, nil
 }
+
+const spaceChars = "\n\t\r "
 
 type trimFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *trimFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinTrimSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+// The syntax of trim in mysql is 'TRIM([{BOTH | LEADING | TRAILING} [remstr] FROM] str), TRIM([remstr FROM] str)',
+// but we wil convert it into trim(str), trim(str, remstr) and trim(str, remstr, direction) in AST.
+func (c *trimFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	switch len(args) {
+	case 1:
+		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
+		argType := args[0].GetType()
+		bf.tp.Flen = argType.Flen
+		SetBinFlagOrBinStr(argType, bf.tp)
+		sig := &builtinTrim1ArgSig{bf}
+		return sig, nil
+
+	case 2:
+		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETString)
+		argType := args[0].GetType()
+		SetBinFlagOrBinStr(argType, bf.tp)
+		sig := &builtinTrim2ArgsSig{bf}
+		return sig, nil
+
+	case 3:
+		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETString, types.ETInt)
+		argType := args[0].GetType()
+		bf.tp.Flen = argType.Flen
+		SetBinFlagOrBinStr(argType, bf.tp)
+		sig := &builtinTrim3ArgsSig{bf}
+		return sig, nil
+
+	default:
+		return nil, errors.Trace(c.verifyArgs(args))
+	}
 }
 
-type builtinTrimSig struct {
+type builtinTrim1ArgSig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinTrimSig.
+// evalString evals a builtinTrim1ArgSig, corresponding to trim(str)
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_trim
-func (b *builtinTrimSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
+func (b *builtinTrim1ArgSig) evalString(row types.Row) (d string, isNull bool, err error) {
+	d, isNull, err = b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
+	}
+	return strings.Trim(d, spaceChars), false, nil
+}
+
+type builtinTrim2ArgsSig struct {
+	baseBuiltinFunc
+}
+
+// evalString evals a builtinTrim2ArgsSig, corresponding to trim(str, remstr)
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_trim
+func (b *builtinTrim2ArgsSig) evalString(row types.Row) (d string, isNull bool, err error) {
+	var str, remstr string
+
+	str, isNull, err = b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
+	}
+	remstr, isNull, err = b.args[1].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
+	}
+	d = trimLeft(str, remstr)
+	d = trimRight(d, remstr)
+	return d, false, nil
+}
+
+type builtinTrim3ArgsSig struct {
+	baseBuiltinFunc
+}
+
+// evalString evals a builtinTrim3ArgsSig, corresponding to trim(str, remstr, direction)
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_trim
+func (b *builtinTrim3ArgsSig) evalString(row types.Row) (d string, isNull bool, err error) {
+	var (
+		str, remstr  string
+		x            int64
+		direction    ast.TrimDirectionType
+		isRemStrNull bool
+	)
+	str, isNull, err = b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
+	}
+	remstr, isRemStrNull, err = b.args[1].EvalString(b.ctx, row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return d, isNull, errors.Trace(err)
 	}
-	// args[0] -> Str
-	// args[1] -> RemStr
-	// args[2] -> Direction
-	// eval str
-	if args[0].IsNull() {
-		return d, nil
+	x, isNull, err = b.args[2].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
 	}
-	str, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	remstr := ""
-	// eval remstr
-	if len(args) > 1 {
-		if args[1].Kind() != types.KindNull {
-			remstr, err = args[1].ToString()
-			if err != nil {
-				return d, errors.Trace(err)
-			}
-		}
-	}
-	// do trim
-	var result string
-	var direction ast.TrimDirectionType
-	if len(args) > 2 {
-		direction = args[2].GetValue().(ast.TrimDirectionType)
-	} else {
-		direction = ast.TrimBothDefault
-	}
+	direction = ast.TrimDirectionType(x)
 	if direction == ast.TrimLeading {
-		if len(remstr) > 0 {
-			result = trimLeft(str, remstr)
+		if isRemStrNull {
+			d = strings.TrimLeft(str, spaceChars)
 		} else {
-			result = strings.TrimLeft(str, spaceChars)
+			d = trimLeft(str, remstr)
 		}
 	} else if direction == ast.TrimTrailing {
-		if len(remstr) > 0 {
-			result = trimRight(str, remstr)
+		if isRemStrNull {
+			d = strings.TrimRight(str, spaceChars)
 		} else {
-			result = strings.TrimRight(str, spaceChars)
+			d = trimRight(str, remstr)
 		}
-	} else if len(remstr) > 0 {
-		x := trimLeft(str, remstr)
-		result = trimRight(x, remstr)
 	} else {
-		result = strings.Trim(str, spaceChars)
+		if isRemStrNull {
+			d = strings.Trim(str, spaceChars)
+		} else {
+			d = trimLeft(str, remstr)
+			d = trimRight(d, remstr)
+		}
 	}
-	d.SetString(result)
-	return d, nil
+	return d, false, nil
 }
 
 type lTrimFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *lTrimFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinLTrimSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *lTrimFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
+	argType := args[0].GetType()
+	bf.tp.Flen = argType.Flen
+	SetBinFlagOrBinStr(argType, bf.tp)
+	sig := &builtinLTrimSig{bf}
+	return sig, nil
 }
 
 type builtinLTrimSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinLTrimSig) eval(row []types.Datum) (types.Datum, error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+// evalString evals a builtinLTrimSig
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_ltrim
+func (b *builtinLTrimSig) evalString(row types.Row) (d string, isNull bool, err error) {
+	d, isNull, err = b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
 	}
-	return trimFn(strings.TrimLeft, spaceChars)(args, b.ctx)
+	return strings.TrimLeft(d, spaceChars), false, nil
 }
 
 type rTrimFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *rTrimFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinRTrimSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *rTrimFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
+	argType := args[0].GetType()
+	bf.tp.Flen = argType.Flen
+	SetBinFlagOrBinStr(argType, bf.tp)
+	sig := &builtinRTrimSig{bf}
+	return sig, nil
 }
 
 type builtinRTrimSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinRTrimSig) eval(row []types.Datum) (types.Datum, error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	return trimFn(strings.TrimRight, spaceChars)(args, b.ctx)
-}
-
-// trimFn returns a BuildFunc for ltrim and rtrim.
-// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_ltrim
+// evalString evals a builtinRTrimSig
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_rtrim
-func trimFn(fn func(string, string) string, cutset string) BuiltinFunc {
-	return func(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
-		if args[0].IsNull() {
-			return d, nil
-		}
-		str, err := args[0].ToString()
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		d.SetString(fn(str, cutset))
-		return d, nil
+func (b *builtinRTrimSig) evalString(row types.Row) (d string, isNull bool, err error) {
+	d, isNull, err = b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return d, isNull, errors.Trace(err)
 	}
+	return strings.TrimRight(d, spaceChars), false, nil
 }
 
 func trimLeft(str, remstr string) string {
@@ -1178,563 +1529,723 @@ func trimRight(str, remstr string) string {
 	}
 }
 
+func getFlen4LpadAndRpad(ctx sessionctx.Context, arg Expression) int {
+	if constant, ok := arg.(*Constant); ok {
+		length, isNull, err := constant.EvalInt(ctx, nil)
+		if err != nil {
+			log.Errorf("getFlen4LpadAndRpad with error: %v", err.Error())
+		}
+		if isNull || err != nil || length > mysql.MaxBlobWidth {
+			return mysql.MaxBlobWidth
+		}
+		return int(length)
+	}
+	return mysql.MaxBlobWidth
+}
+
+type lpadFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *lpadFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETInt, types.ETString)
+	bf.tp.Flen = getFlen4LpadAndRpad(bf.ctx, args[1])
+	SetBinFlagOrBinStr(args[0].GetType(), bf.tp)
+	SetBinFlagOrBinStr(args[2].GetType(), bf.tp)
+	if types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[2].GetType()) {
+		sig := &builtinLpadBinarySig{bf}
+		return sig, nil
+	}
+	if bf.tp.Flen *= 4; bf.tp.Flen > mysql.MaxBlobWidth {
+		bf.tp.Flen = mysql.MaxBlobWidth
+	}
+	sig := &builtinLpadSig{bf}
+	return sig, nil
+}
+
+type builtinLpadBinarySig struct {
+	baseBuiltinFunc
+}
+
+// evalString evals LPAD(str,len,padstr).
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_lpad
+func (b *builtinLpadBinarySig) evalString(row types.Row) (string, bool, error) {
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+	byteLength := len(str)
+
+	length, isNull, err := b.args[1].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+	targetLength := int(length)
+
+	padStr, isNull, err := b.args[2].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+	padLength := len(padStr)
+
+	if targetLength < 0 || targetLength > b.tp.Flen || (byteLength < targetLength && padLength == 0) {
+		return "", true, nil
+	}
+
+	if tailLen := targetLength - byteLength; tailLen > 0 {
+		repeatCount := tailLen/padLength + 1
+		str = strings.Repeat(padStr, repeatCount)[:tailLen] + str
+	}
+	return str[:targetLength], false, nil
+}
+
+type builtinLpadSig struct {
+	baseBuiltinFunc
+}
+
+// evalString evals LPAD(str,len,padstr).
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_lpad
+func (b *builtinLpadSig) evalString(row types.Row) (string, bool, error) {
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+	runeLength := len([]rune(str))
+
+	length, isNull, err := b.args[1].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+	targetLength := int(length)
+
+	padStr, isNull, err := b.args[2].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+	padLength := len([]rune(padStr))
+
+	if targetLength < 0 || targetLength*4 > b.tp.Flen || (runeLength < targetLength && padLength == 0) {
+		return "", true, nil
+	}
+
+	if tailLen := targetLength - runeLength; tailLen > 0 {
+		repeatCount := tailLen/padLength + 1
+		str = string([]rune(strings.Repeat(padStr, repeatCount))[:tailLen]) + str
+	}
+	return string([]rune(str)[:targetLength]), false, nil
+}
+
 type rpadFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *rpadFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinRpadSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *rpadFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETInt, types.ETString)
+	bf.tp.Flen = getFlen4LpadAndRpad(bf.ctx, args[1])
+	SetBinFlagOrBinStr(args[0].GetType(), bf.tp)
+	SetBinFlagOrBinStr(args[2].GetType(), bf.tp)
+	if types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[2].GetType()) {
+		sig := &builtinRpadBinarySig{bf}
+		return sig, nil
+	}
+	if bf.tp.Flen *= 4; bf.tp.Flen > mysql.MaxBlobWidth {
+		bf.tp.Flen = mysql.MaxBlobWidth
+	}
+	sig := &builtinRpadSig{bf}
+	return sig, nil
+}
+
+type builtinRpadBinarySig struct {
+	baseBuiltinFunc
+}
+
+// evalString evals RPAD(str,len,padstr).
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_rpad
+func (b *builtinRpadBinarySig) evalString(row types.Row) (string, bool, error) {
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+	byteLength := len(str)
+
+	length, isNull, err := b.args[1].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+	targetLength := int(length)
+
+	padStr, isNull, err := b.args[2].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+	padLength := len(padStr)
+
+	if targetLength < 0 || targetLength > b.tp.Flen || (byteLength < targetLength && padLength == 0) {
+		return "", true, nil
+	}
+
+	if tailLen := targetLength - byteLength; tailLen > 0 {
+		repeatCount := tailLen/padLength + 1
+		str = str + strings.Repeat(padStr, repeatCount)
+	}
+	return str[:targetLength], false, nil
 }
 
 type builtinRpadSig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinRpadSig.
+// evalString evals RPAD(str,len,padstr).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_rpad
-func (b *builtinRpadSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+func (b *builtinRpadSig) evalString(row types.Row) (string, bool, error) {
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
 	}
-	// RPAD(str,len,padstr)
-	// args[0] string, args[1] int, args[2] string
-	str, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	length, err := args[1].ToInt64(b.ctx.GetSessionVars().StmtCtx)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	l := int(length)
+	runeLength := len([]rune(str))
 
-	padStr, err := args[2].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
+	length, isNull, err := b.args[1].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
 	}
+	targetLength := int(length)
 
-	if l < 0 || (len(str) < l && padStr == "") {
-		d.SetNull()
-		return d, nil
+	padStr, isNull, err := b.args[2].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+	padLength := len([]rune(padStr))
+
+	if targetLength < 0 || targetLength*4 > b.tp.Flen || (runeLength < targetLength && padLength == 0) {
+		return "", true, nil
 	}
 
-	tailLen := l - len(str)
-	if tailLen > 0 {
-		repeatCount := tailLen/len(padStr) + 1
+	if tailLen := targetLength - runeLength; tailLen > 0 {
+		repeatCount := tailLen/padLength + 1
 		str = str + strings.Repeat(padStr, repeatCount)
 	}
-	d.SetString(str[:l])
-
-	return d, nil
+	return string([]rune(str)[:targetLength]), false, nil
 }
 
 type bitLengthFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *bitLengthFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinBitLengthSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *bitLengthFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
+	bf.tp.Flen = 10
+	sig := &builtinBitLengthSig{bf}
+	return sig, nil
 }
 
 type builtinBitLengthSig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinBitLengthSig.
+// evalInt evaluates a builtinBitLengthSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_bit-length
-func (b *builtinBitLengthSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	if args[0].IsNull() {
-		return d, nil
+func (b *builtinBitLengthSig) evalInt(row types.Row) (int64, bool, error) {
+	val, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
 
-	str, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	d.SetInt64(int64(len(str) * 8))
-	return d, nil
+	return int64(len(val) * 8), false, nil
 }
 
 type charFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *charFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinCharSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *charFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	argTps := make([]types.EvalType, 0, len(args))
+	for i := 0; i < len(args)-1; i++ {
+		argTps = append(argTps, types.ETInt)
+	}
+	argTps = append(argTps, types.ETString)
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, argTps...)
+	bf.tp.Flen = 4 * (len(args) - 1)
+	types.SetBinChsClnFlag(bf.tp)
+
+	sig := &builtinCharSig{bf}
+	return sig, nil
 }
 
 type builtinCharSig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinCharSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_char
-func (b *builtinCharSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	// The kinds of args are int or string, and the last one represents charset.
-	var resultStr string
-	var intSlice = make([]int64, 0, len(args)-1)
-
-	for _, datum := range args[:len(args)-1] {
-		switch datum.Kind() {
-		case types.KindNull:
-			continue
-		case types.KindString:
-			i, err := datum.ToInt64(b.ctx.GetSessionVars().StmtCtx)
-			if err != nil {
-				d.SetString(resultStr)
-				return d, nil
-			}
-			intSlice = append(intSlice, i)
-		case types.KindInt64, types.KindUint64, types.KindMysqlHex, types.KindFloat32, types.KindFloat64, types.KindMysqlDecimal:
-			x, err := datum.Cast(b.ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeLonglong))
-			if err != nil {
-				return d, errors.Trace(err)
-			}
-			intSlice = append(intSlice, x.GetInt64())
-		default:
-			return d, errors.Errorf("Char invalid args, need int or string but get %T", args[0].GetValue())
-		}
-	}
-
-	resultStr = string(convertInt64ToBytes(intSlice))
-
-	// The last argument represents the charset name after "using".
-	// If it is nil, the default charset utf8 is used.
-	argCharset := args[len(args)-1]
-	if !argCharset.IsNull() {
-		char, err := argCharset.ToString()
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-
-		if strings.ToLower(char) == "ascii" || strings.HasPrefix(strings.ToLower(char), "utf8") {
-			d.SetString(resultStr)
-			return d, nil
-		}
-
-		encoding, _ := charset.Lookup(char)
-		if encoding == nil {
-			return d, errors.Errorf("unknown encoding: %s", char)
-		}
-
-		resultStr, _, err = transform.String(encoding.NewDecoder(), resultStr)
-		if err != nil {
-			log.Errorf("Convert %s to %s with error: %v", resultStr, char, err)
-			return d, errors.Trace(err)
-		}
-	}
-	d.SetString(resultStr)
-	return d, nil
-}
-
-func convertInt64ToBytes(ints []int64) []byte {
-	var buf bytes.Buffer
+func (b *builtinCharSig) convertToBytes(ints []int64) []byte {
+	buffer := bytes.NewBuffer([]byte{})
 	for i := len(ints) - 1; i >= 0; i-- {
-		var count int
-		v := ints[i]
-		for count < 4 {
-			buf.WriteByte(byte(v & 0xff))
-			v = v >> 8
-			if v == 0 {
+		for count, val := 0, ints[i]; count < 4; count++ {
+			buffer.WriteByte(byte(val & 0xff))
+			if val >>= 8; val == 0 {
 				break
 			}
-			count++
 		}
 	}
-	s := buf.Bytes()
-	reverseByteSlice(s)
-	return s
+	return reverseBytes(buffer.Bytes())
 }
 
-func reverseByteSlice(slice []byte) {
-	var start int
-	var end = len(slice) - 1
-	for start < end {
-		slice[start], slice[end] = slice[end], slice[start]
-		start++
-		end--
+// evalString evals CHAR(N,... [USING charset_name]).
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_char.
+func (b *builtinCharSig) evalString(row types.Row) (string, bool, error) {
+	bigints := make([]int64, 0, len(b.args)-1)
+
+	for i := 0; i < len(b.args)-1; i++ {
+		val, IsNull, err := b.args[i].EvalInt(b.ctx, row)
+		if err != nil {
+			return "", true, errors.Trace(err)
+		}
+		if IsNull {
+			continue
+		}
+		bigints = append(bigints, val)
 	}
+	// The last argument represents the charset name after "using".
+	// Use default charset utf8 if it is nil.
+	argCharset, IsNull, err := b.args[len(b.args)-1].EvalString(b.ctx, row)
+	if err != nil {
+		return "", true, errors.Trace(err)
+	}
+
+	result := string(b.convertToBytes(bigints))
+	charsetLabel := strings.ToLower(argCharset)
+	if IsNull || charsetLabel == "ascii" || strings.HasPrefix(charsetLabel, "utf8") {
+		return result, false, nil
+	}
+
+	encoding, charsetName := charset.Lookup(charsetLabel)
+	if encoding == nil {
+		return "", true, errors.Errorf("unknown encoding: %s", argCharset)
+	}
+
+	oldStr := result
+	result, _, err = transform.String(encoding.NewDecoder(), result)
+	if err != nil {
+		log.Errorf("Convert %s to %s with error: %v", oldStr, charsetName, err.Error())
+		return "", true, errors.Trace(err)
+	}
+	return result, false, nil
 }
 
 type charLengthFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *charLengthFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinCharLengthSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *charLengthFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if argsErr := c.verifyArgs(args); argsErr != nil {
+		return nil, errors.Trace(argsErr)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
+	sig := &builtinCharLengthSig{bf}
+	return sig, nil
 }
 
 type builtinCharLengthSig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinCharLengthSig.
+// evalInt evals a builtinCharLengthSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_char-length
-func (b *builtinCharLengthSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+func (b *builtinCharLengthSig) evalInt(row types.Row) (int64, bool, error) {
+	val, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
-	switch args[0].Kind() {
-	case types.KindNull:
-		return d, nil
-	default:
-		s, err := args[0].ToString()
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		r := []rune(s)
-		d.SetInt64(int64(len(r)))
-		return d, nil
-	}
+	return int64(len([]rune(val))), false, nil
 }
 
 type findInSetFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *findInSetFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinFindInSetSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *findInSetFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString, types.ETString)
+	bf.tp.Flen = 3
+	sig := &builtinFindInSetSig{bf}
+	return sig, nil
 }
 
 type builtinFindInSetSig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinFindInSetSig.
+// evalInt evals FIND_IN_SET(str,strlist).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_find-in-set
 // TODO: This function can be optimized by using bit arithmetic when the first argument is
 // a constant string and the second is a column of type SET.
-func (b *builtinFindInSetSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	// args[0] -> Str
-	// args[1] -> StrList
-	if args[0].IsNull() || args[1].IsNull() {
-		return
+func (b *builtinFindInSetSig) evalInt(row types.Row) (int64, bool, error) {
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
 
-	str, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	strlst, err := args[1].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
+	strlist, isNull, err := b.args[1].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
 
-	d.SetInt64(0)
-	if len(strlst) == 0 {
-		return
+	if len(strlist) == 0 {
+		return 0, false, nil
 	}
-	for i, s := range strings.Split(strlst, ",") {
-		if s == str {
-			d.SetInt64(int64(i + 1))
-			return
+
+	for i, strInSet := range strings.Split(strlist, ",") {
+		if str == strInSet {
+			return int64(i + 1), false, nil
 		}
 	}
-	return
+	return 0, false, nil
 }
 
 type fieldFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *fieldFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinFieldSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *fieldFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	isAllString, isAllNumber := true, true
+	for i, length := 0, len(args); i < length; i++ {
+		argTp := args[i].GetType().EvalType()
+		isAllString = isAllString && (argTp == types.ETString)
+		isAllNumber = isAllNumber && (argTp == types.ETInt)
+	}
+
+	argTps := make([]types.EvalType, len(args))
+	argTp := types.ETReal
+	if isAllString {
+		argTp = types.ETString
+	} else if isAllNumber {
+		argTp = types.ETInt
+	}
+	for i, length := 0, len(args); i < length; i++ {
+		argTps[i] = argTp
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, argTps...)
+	var sig builtinFunc
+	switch argTp {
+	case types.ETReal:
+		sig = &builtinFieldRealSig{bf}
+	case types.ETInt:
+		sig = &builtinFieldIntSig{bf}
+	case types.ETString:
+		sig = &builtinFieldStringSig{bf}
+	}
+	return sig, nil
 }
 
-type builtinFieldSig struct {
+type builtinFieldIntSig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinFieldSig.
+// evalInt evals FIELD(str,str1,str2,str3,...).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_field
-// Returns the index (position) of arg0 in the arg1, arg2, arg3, ... list.
-// Returns 0 if arg0 is not found.
-// If arg0 is NULL, the return value is 0 because NULL fails equality comparison with any value.
-// If all arguments are strings, all arguments are compared as strings.
-// If all arguments are numbers, they are compared as numbers.
-// Otherwise, the arguments are compared as double.
-func (b *builtinFieldSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+func (b *builtinFieldIntSig) evalInt(row types.Row) (int64, bool, error) {
+	str, isNull, err := b.args[0].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return 0, err != nil, errors.Trace(err)
 	}
-	d.SetInt64(0)
-	if args[0].IsNull() {
-		return
-	}
-	var (
-		pos                  int64
-		allString, allNumber bool
-		newArgs              []types.Datum
-	)
-	allString, allNumber = true, true
-	for i := 0; i < len(args) && (allString || allNumber); i++ {
-		switch args[i].Kind() {
-		case types.KindInt64, types.KindUint64, types.KindFloat32, types.KindFloat64, types.KindMysqlDecimal:
-			allString = false
-		case types.KindString, types.KindBytes:
-			allNumber = false
-		default:
-			allString, allNumber = false, false
+	for i, length := 1, len(b.args); i < length; i++ {
+		stri, isNull, err := b.args[i].EvalInt(b.ctx, row)
+		if err != nil {
+			return 0, true, errors.Trace(err)
+		}
+		if !isNull && str == stri {
+			return int64(i), false, nil
 		}
 	}
-	newArgs, err = argsToSpecifiedType(args, allString, allNumber, b.ctx)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	arg0, sc := newArgs[0], b.ctx.GetSessionVars().StmtCtx
-	for i, curArg := range newArgs[1:] {
-		cmpResult, _ := arg0.CompareDatum(sc, curArg)
-		if cmpResult == 0 {
-			pos = int64(i + 1)
-			break
-		}
-	}
-	d.SetInt64(pos)
-	return d, errors.Trace(err)
+	return 0, false, nil
 }
 
-// argsToSpecifiedType converts the type of all arguments in args into string type or double type.
-func argsToSpecifiedType(args []types.Datum, allString bool, allNumber bool, ctx context.Context) (newArgs []types.Datum, err error) {
-	if allNumber { // If all arguments are numbers, they can be compared directly without type converting.
-		return args, nil
+type builtinFieldRealSig struct {
+	baseBuiltinFunc
+}
+
+// evalInt evals FIELD(str,str1,str2,str3,...).
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_field
+func (b *builtinFieldRealSig) evalInt(row types.Row) (int64, bool, error) {
+	str, isNull, err := b.args[0].EvalReal(b.ctx, row)
+	if isNull || err != nil {
+		return 0, err != nil, errors.Trace(err)
 	}
-	sc := ctx.GetSessionVars().StmtCtx
-	newArgs = make([]types.Datum, len(args))
-	for i, arg := range args {
-		if allString {
-			str, err := arg.ToString()
-			if err != nil {
-				return newArgs, errors.Trace(err)
-			}
-			newArgs[i] = types.NewStringDatum(str)
-		} else {
-			// If error occurred when convert arg to float64, ignore it and set f as 0.
-			f, _ := arg.ToFloat64(sc)
-			newArgs[i] = types.NewFloat64Datum(f)
+	for i, length := 1, len(b.args); i < length; i++ {
+		stri, isNull, err := b.args[i].EvalReal(b.ctx, row)
+		if err != nil {
+			return 0, true, errors.Trace(err)
+		}
+		if !isNull && str == stri {
+			return int64(i), false, nil
 		}
 	}
-	return
+	return 0, false, nil
+}
+
+type builtinFieldStringSig struct {
+	baseBuiltinFunc
+}
+
+// evalInt evals FIELD(str,str1,str2,str3,...).
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_field
+func (b *builtinFieldStringSig) evalInt(row types.Row) (int64, bool, error) {
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return 0, err != nil, errors.Trace(err)
+	}
+	for i, length := 1, len(b.args); i < length; i++ {
+		stri, isNull, err := b.args[i].EvalString(b.ctx, row)
+		if err != nil {
+			return 0, true, errors.Trace(err)
+		}
+		if !isNull && str == stri {
+			return int64(i), false, nil
+		}
+	}
+	return 0, false, nil
 }
 
 type makeSetFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *makeSetFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinMakeSetSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *makeSetFunctionClass) getFlen(ctx sessionctx.Context, args []Expression) int {
+	flen, count := 0, 0
+	if constant, ok := args[0].(*Constant); ok {
+		bits, isNull, err := constant.EvalInt(ctx, nil)
+		if err == nil && !isNull {
+			for i, length := 1, len(args); i < length; i++ {
+				if (bits & (1 << uint(i-1))) != 0 {
+					flen += args[i].GetType().Flen
+					count++
+				}
+			}
+			if count > 0 {
+				flen += count - 1
+			}
+			return flen
+		}
+	}
+	for i, length := 1, len(args); i < length; i++ {
+		flen += args[i].GetType().Flen
+	}
+	return flen + len(args) - 1 - 1
+}
+
+func (c *makeSetFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	argTps := make([]types.EvalType, len(args))
+	argTps[0] = types.ETInt
+	for i, length := 1, len(args); i < length; i++ {
+		argTps[i] = types.ETString
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, argTps...)
+	for i, length := 0, len(args); i < length; i++ {
+		SetBinFlagOrBinStr(args[i].GetType(), bf.tp)
+	}
+	bf.tp.Flen = c.getFlen(bf.ctx, args)
+	if bf.tp.Flen > mysql.MaxBlobWidth {
+		bf.tp.Flen = mysql.MaxBlobWidth
+	}
+	sig := &builtinMakeSetSig{bf}
+	return sig, nil
 }
 
 type builtinMakeSetSig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinMakeSetSig.
+// evalString evals MAKE_SET(bits,str1,str2,...).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_make-set
-func (b *builtinMakeSetSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	if args[0].IsNull() {
-		d.SetNull()
-		return
-	}
-	var (
-		arg0 int64
-		sets []string
-	)
-
-	sc := b.ctx.GetSessionVars().StmtCtx
-	arg0, err = args[0].ToInt64(sc)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinMakeSetSig) evalString(row types.Row) (string, bool, error) {
+	bits, isNull, err := b.args[0].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
 	}
 
-	for i := 1; i < len(args); i++ {
-		if args[i].IsNull() {
+	sets := make([]string, 0, len(b.args)-1)
+	for i, length := 1, len(b.args); i < length; i++ {
+		if (bits & (1 << uint(i-1))) == 0 {
 			continue
 		}
-		if arg0&(1<<uint(i-1)) > 0 {
-			str, err1 := args[i].ToString()
-			if err1 != nil {
-				return d, errors.Trace(err1)
-			}
+		str, isNull, err := b.args[i].EvalString(b.ctx, row)
+		if err != nil {
+			return "", true, errors.Trace(err)
+		}
+		if !isNull {
 			sets = append(sets, str)
 		}
 	}
 
-	d.SetString(strings.Join(sets, ","))
-	return d, errors.Trace(err)
+	return strings.Join(sets, ","), false, nil
 }
 
 type octFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *octFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinOctSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *octFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	var sig builtinFunc
+	if IsBinaryLiteral(args[0]) || args[0].GetType().EvalType() == types.ETInt {
+		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETInt)
+		bf.tp.Flen, bf.tp.Decimal = 64, types.UnspecifiedLength
+		sig = &builtinOctIntSig{bf}
+	} else {
+		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
+		bf.tp.Flen, bf.tp.Decimal = 64, types.UnspecifiedLength
+		sig = &builtinOctStringSig{bf}
+	}
+
+	return sig, nil
 }
 
-type builtinOctSig struct {
+type builtinOctIntSig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinOctSig.
+// evalString evals OCT(N).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_oct
-func (b *builtinOctSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	var (
-		negative bool
-		overflow bool
-	)
-	arg := args[0]
-	if arg.IsNull() {
-		return d, nil
-	}
-	n, err := arg.ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	n = getValidPrefix(strings.TrimSpace(n), 10)
-	if len(n) == 0 {
-		d.SetString("0")
-		return d, nil
-	}
-	if n[0] == '-' {
-		negative = true
-		n = n[1:]
-	}
-	val, err := strconv.ParseUint(n, 10, 64)
-	if err != nil {
-		if numError, ok := err.(*strconv.NumError); ok {
-			if numError.Err == strconv.ErrRange {
-				overflow = true
-			} else {
-				return d, errors.Trace(err)
-			}
-		} else {
-			return d, errors.Trace(err)
-		}
+func (b *builtinOctIntSig) evalString(row types.Row) (string, bool, error) {
+	val, isNull, err := b.args[0].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return "", isNull, errors.Trace(err)
 	}
 
-	if negative && !overflow {
-		val = -val
+	return strconv.FormatUint(uint64(val), 8), false, nil
+}
+
+type builtinOctStringSig struct {
+	baseBuiltinFunc
+}
+
+// // evalString evals OCT(N).
+// // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_oct
+func (b *builtinOctStringSig) evalString(row types.Row) (string, bool, error) {
+	val, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", isNull, errors.Trace(err)
 	}
-	str := strconv.FormatUint(val, 8)
-	d.SetString(str)
-	return d, nil
+
+	negative, overflow := false, false
+	val = getValidPrefix(strings.TrimSpace(val), 10)
+	if len(val) == 0 {
+		return "0", false, nil
+	}
+
+	if val[0] == '-' {
+		negative, val = true, val[1:]
+	}
+	numVal, err := strconv.ParseUint(val, 10, 64)
+	if err != nil {
+		numError, ok := err.(*strconv.NumError)
+		if !ok || numError.Err != strconv.ErrRange {
+			return "", true, errors.Trace(err)
+		}
+		overflow = true
+	}
+	if negative && !overflow {
+		numVal = -numVal
+	}
+	return strconv.FormatUint(numVal, 8), false, nil
 }
 
 type ordFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *ordFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinOrdSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *ordFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
+	bf.tp.Flen = 10
+	sig := &builtinOrdSig{bf}
+	return sig, nil
 }
 
 type builtinOrdSig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinOrdSig.
+// evalInt evals a builtinOrdSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_ord
-func (b *builtinOrdSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+func (b *builtinOrdSig) evalInt(row types.Row) (int64, bool, error) {
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
 	}
-
-	arg := args[0]
-	if arg.IsNull() {
-		return d, nil
-	}
-
-	str, err := arg.ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-
 	if len(str) == 0 {
-		d.SetInt64(0)
-		return d, nil
+		return 0, false, nil
 	}
 
 	_, size := utf8.DecodeRuneInString(str)
 	leftMost := str[:size]
-
 	var result int64
 	var factor int64 = 1
 	for i := len(leftMost) - 1; i >= 0; i-- {
 		result += int64(leftMost[i]) * factor
 		factor *= 256
 	}
-	d.SetInt64(result)
 
-	return d, nil
+	return result, false, nil
 }
 
 type quoteFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *quoteFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinQuoteSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *quoteFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
+	SetBinFlagOrBinStr(args[0].GetType(), bf.tp)
+	bf.tp.Flen = 2*args[0].GetType().Flen + 2
+	if bf.tp.Flen > mysql.MaxBlobWidth {
+		bf.tp.Flen = mysql.MaxBlobWidth
+	}
+	sig := &builtinQuoteSig{bf}
+	return sig, nil
 }
 
 type builtinQuoteSig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinQuoteSig.
+// evalString evals QUOTE(str).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_quote
-func (b *builtinQuoteSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+func (b *builtinQuoteSig) evalString(row types.Row) (string, bool, error) {
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
 	}
-	if args[0].IsNull() {
-		return
-	}
-	var (
-		str    string
-		buffer bytes.Buffer
-	)
-	str, err = args[0].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
+
 	runes := []rune(str)
+	buffer := bytes.NewBufferString("")
 	buffer.WriteRune('\'')
-	for i := 0; i < len(runes); i++ {
+	for i, runeLength := 0, len(runes); i < runeLength; i++ {
 		switch runes[i] {
 		case '\\', '\'':
 			buffer.WriteRune('\\')
@@ -1750,271 +2261,385 @@ func (b *builtinQuoteSig) eval(row []types.Datum) (d types.Datum, err error) {
 		}
 	}
 	buffer.WriteRune('\'')
-	d.SetString(buffer.String())
-	return d, errors.Trace(err)
+
+	return buffer.String(), false, nil
 }
 
 type binFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *binFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinBinSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *binFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETInt)
+	bf.tp.Flen = 64
+	sig := &builtinBinSig{bf}
+	return sig, nil
 }
 
 type builtinBinSig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinBinSig.
-// See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_bin
-func (b *builtinBinSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+// evalString evals BIN(N).
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_bin
+func (b *builtinBinSig) evalString(row types.Row) (string, bool, error) {
+	val, isNull, err := b.args[0].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
 	}
-	arg := args[0]
-	sc := b.ctx.GetSessionVars().StmtCtx
-	if arg.IsNull() || (arg.Kind() == types.KindString && arg.GetString() == "") {
-		return d, nil
-	}
-
-	num, err := arg.ToInt64(sc)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	bits := fmt.Sprintf("%b", uint64(num))
-	d.SetString(bits)
-	return d, nil
+	return fmt.Sprintf("%b", uint64(val)), false, nil
 }
 
 type eltFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *eltFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinEltSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *eltFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if argsErr := c.verifyArgs(args); argsErr != nil {
+		return nil, errors.Trace(argsErr)
+	}
+	argTps := make([]types.EvalType, 0, len(args))
+	argTps = append(argTps, types.ETInt)
+	for i := 1; i < len(args); i++ {
+		argTps = append(argTps, types.ETString)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, argTps...)
+	for _, arg := range args[1:] {
+		argType := arg.GetType()
+		if types.IsBinaryStr(argType) {
+			types.SetBinChsClnFlag(bf.tp)
+		}
+		if argType.Flen > bf.tp.Flen {
+			bf.tp.Flen = argType.Flen
+		}
+	}
+	sig := &builtinEltSig{bf}
+	return sig, nil
 }
 
 type builtinEltSig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinEltSig.
-// See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_elt
-func (b *builtinEltSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+// evalString evals a builtinEltSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_elt
+func (b *builtinEltSig) evalString(row types.Row) (string, bool, error) {
+	idx, isNull, err := b.args[0].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
 	}
-
-	index, err := args[0].ToInt64(b.ctx.GetSessionVars().StmtCtx)
-	if err != nil {
-		return d, errors.Trace(err)
+	if idx < 1 || idx >= int64(len(b.args)) {
+		return "", true, nil
 	}
-
-	argsLength := int64(len(args))
-	if index < 1 || index > (argsLength-1) {
-		return d, nil
+	arg, isNull, err := b.args[idx].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
 	}
-
-	result, err := args[index].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	d.SetString(result)
-
-	return d, nil
+	return arg, false, nil
 }
 
 type exportSetFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *exportSetFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinExportSetSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
-}
-
-type builtinExportSetSig struct {
-	baseBuiltinFunc
-}
-
-// eval evals a builtinExportSetSig.
-// See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_export-set
-func (b *builtinExportSetSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (c *exportSetFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
+	if err = c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
 	}
-	var (
-		bits         uint64
-		on           string
-		off          string
-		separator    = ","
-		numberOfBits = 64
-	)
+	argTps := make([]types.EvalType, 0, 5)
+	argTps = append(argTps, types.ETInt, types.ETString, types.ETString)
+	if len(args) > 3 {
+		argTps = append(argTps, types.ETString)
+	}
+	if len(args) > 4 {
+		argTps = append(argTps, types.ETInt)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, argTps...)
+	bf.tp.Flen = mysql.MaxBlobWidth
 	switch len(args) {
-	case 5:
-		arg, err := args[4].ToInt64(b.ctx.GetSessionVars().StmtCtx)
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		if arg >= 0 && arg < 64 {
-			numberOfBits = int(arg)
-		}
-		fallthrough
-	case 4:
-		separator, err = args[3].ToString()
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		fallthrough
 	case 3:
-		arg, err := args[0].ToInt64(b.ctx.GetSessionVars().StmtCtx)
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		bits = uint64(arg)
-		on, err = args[1].ToString()
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		off, err = args[2].ToString()
-		if err != nil {
-			return d, errors.Trace(err)
-		}
+		sig = &builtinExportSet3ArgSig{bf}
+	case 4:
+		sig = &builtinExportSet4ArgSig{bf}
+	case 5:
+		sig = &builtinExportSet5ArgSig{bf}
 	}
-	var result string
-	for i := 0; i < numberOfBits; i++ {
-		if bits&1 > 0 {
+	return sig, nil
+}
+
+// exportSet evals EXPORT_SET(bits,on,off,separator,number_of_bits).
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_export-set
+func exportSet(bits int64, on, off, separator string, numberOfBits int64) string {
+	result := ""
+	for i := uint64(0); i < uint64(numberOfBits); i++ {
+		if (bits & (1 << i)) > 0 {
 			result += on
 		} else {
 			result += off
 		}
-		bits >>= 1
-		if i < numberOfBits-1 {
+		if i < uint64(numberOfBits)-1 {
 			result += separator
 		}
 	}
-	d.SetString(result)
-	return d, nil
+	return result
+}
+
+type builtinExportSet3ArgSig struct {
+	baseBuiltinFunc
+}
+
+// evalString evals EXPORT_SET(bits,on,off).
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_export-set
+func (b *builtinExportSet3ArgSig) evalString(row types.Row) (string, bool, error) {
+	bits, isNull, err := b.args[0].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+
+	on, isNull, err := b.args[1].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+
+	off, isNull, err := b.args[2].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+
+	return exportSet(bits, on, off, ",", 64), false, nil
+}
+
+type builtinExportSet4ArgSig struct {
+	baseBuiltinFunc
+}
+
+// evalString evals EXPORT_SET(bits,on,off,separator).
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_export-set
+func (b *builtinExportSet4ArgSig) evalString(row types.Row) (string, bool, error) {
+	bits, isNull, err := b.args[0].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+
+	on, isNull, err := b.args[1].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+
+	off, isNull, err := b.args[2].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+
+	separator, isNull, err := b.args[3].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+
+	return exportSet(bits, on, off, separator, 64), false, nil
+}
+
+type builtinExportSet5ArgSig struct {
+	baseBuiltinFunc
+}
+
+// evalString evals EXPORT_SET(bits,on,off,separator,number_of_bits).
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_export-set
+func (b *builtinExportSet5ArgSig) evalString(row types.Row) (string, bool, error) {
+	bits, isNull, err := b.args[0].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+
+	on, isNull, err := b.args[1].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+
+	off, isNull, err := b.args[2].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+
+	separator, isNull, err := b.args[3].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+
+	numberOfBits, isNull, err := b.args[4].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+	if numberOfBits < 0 || numberOfBits > 64 {
+		numberOfBits = 64
+	}
+
+	return exportSet(bits, on, off, separator, numberOfBits), false, nil
 }
 
 type formatFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *formatFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinFormatSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *formatFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	argTps := make([]types.EvalType, 2, 3)
+	argTps[0], argTps[1] = types.ETString, types.ETString
+	if len(args) == 3 {
+		argTps = append(argTps, types.ETString)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, argTps...)
+	bf.tp.Flen = mysql.MaxBlobWidth
+	var sig builtinFunc
+	if len(args) == 3 {
+		sig = &builtinFormatWithLocaleSig{bf}
+	} else {
+		sig = &builtinFormatSig{bf}
+	}
+	return sig, nil
+}
+
+type builtinFormatWithLocaleSig struct {
+	baseBuiltinFunc
+}
+
+// evalString evals FORMAT(X,D,locale).
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_format
+func (b *builtinFormatWithLocaleSig) evalString(row types.Row) (string, bool, error) {
+	x, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+
+	d, isNull, err := b.args[1].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+
+	locale, isNull, err := b.args[2].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+
+	formatString, err := mysql.GetLocaleFormatFunction(locale)(x, d)
+	return formatString, err != nil, errors.Trace(err)
 }
 
 type builtinFormatSig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinFormatSig.
-// See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_format
-func (b *builtinFormatSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	if args[0].IsNull() {
-		d.SetNull()
-		return
-	}
-	arg0, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	arg1, err := args[1].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	var arg2 string
-
-	if len(args) == 2 {
-		arg2 = "en_US"
-	} else if len(args) == 3 {
-		arg2, err = args[2].ToString()
-		if err != nil {
-			return d, errors.Trace(err)
-		}
+// evalString evals FORMAT(X,D).
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_format
+func (b *builtinFormatSig) evalString(row types.Row) (string, bool, error) {
+	x, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
 	}
 
-	formatString, err := mysql.GetLocaleFormatFunction(arg2)(arg0, arg1)
-	if err != nil {
-		return d, errors.Trace(err)
+	d, isNull, err := b.args[1].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
 	}
 
-	d.SetString(formatString)
-	return d, nil
+	formatString, err := mysql.GetLocaleFormatFunction("en_US")(x, d)
+	return formatString, err != nil, errors.Trace(err)
 }
 
 type fromBase64FunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *fromBase64FunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinFromBase64Sig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *fromBase64FunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
+	bf.tp.Flen = mysql.MaxBlobWidth
+	types.SetBinChsClnFlag(bf.tp)
+	sig := &builtinFromBase64Sig{bf}
+	return sig, nil
 }
 
 type builtinFromBase64Sig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinFromBase64Sig.
-// See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_from-base64
-func (b *builtinFromBase64Sig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	str, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
+// evalString evals FROM_BASE64(str).
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_from-base64
+func (b *builtinFromBase64Sig) evalString(row types.Row) (string, bool, error) {
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
 	}
 	str = strings.Replace(str, "\t", "", -1)
 	str = strings.Replace(str, " ", "", -1)
 	result, err := base64.StdEncoding.DecodeString(str)
 	if err != nil {
-		return d, errors.Trace(err)
+		// When error happens, take `from_base64("asc")` as an example, we should return NULL.
+		return "", true, nil
 	}
-	// Set the result to be of type []byte
-	d.SetBytes(result)
-	return d, nil
-
+	return string(result), false, nil
 }
 
 type toBase64FunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *toBase64FunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinToBase64Sig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *toBase64FunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
+	bf.tp.Flen = base64NeededEncodedLength(bf.args[0].GetType().Flen)
+	sig := &builtinToBase64Sig{bf}
+	return sig, nil
 }
 
 type builtinToBase64Sig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinToBase64Sig.
+// base64NeededEncodedLength return the base64 encoded string length.
+func base64NeededEncodedLength(n int) int {
+	// Returns -1 indicate the result will overflow.
+	if strconv.IntSize == 64 {
+		// len(arg)            -> len(to_base64(arg))
+		// 6827690988321067803 -> 9223372036854775804
+		// 6827690988321067804 -> -9223372036854775808
+		if n > 6827690988321067803 {
+			return -1
+		}
+	} else {
+		// len(arg)   -> len(to_base64(arg))
+		// 1589695686 -> 2147483645
+		// 1589695687 -> -2147483646
+		if n > 1589695686 {
+			return -1
+		}
+	}
+
+	length := (n + 2) / 3 * 4
+	return length + (length-1)/76
+}
+
+// evalString evals a builtinToBase64Sig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_to-base64
-func (b *builtinToBase64Sig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinToBase64Sig) evalString(row types.Row) (d string, isNull bool, err error) {
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", isNull, errors.Trace(err)
 	}
-	str, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
+
+	if b.tp.Flen == -1 || b.tp.Flen > mysql.MaxBlobWidth {
+		return "", true, nil
 	}
+
 	//encode
 	strBytes := []byte(str)
 	result := base64.StdEncoding.EncodeToString(strBytes)
@@ -2024,9 +2649,8 @@ func (b *builtinToBase64Sig) eval(row []types.Datum) (d types.Datum, err error) 
 		resultArr := splitToSubN(result, 76)
 		result = strings.Join(resultArr, "\n")
 	}
-	// Set the result to be of type string
-	d.SetString(result)
-	return d, nil
+
+	return result, false, nil
 }
 
 // splitToSubN splits a string every n runes into a string[]
@@ -2040,194 +2664,168 @@ func splitToSubN(s string, n int) []string {
 	return subs
 }
 
-type insertFuncFunctionClass struct {
+type insertFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *insertFuncFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinInsertFuncSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *insertFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
+	if err = c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETInt, types.ETInt, types.ETString)
+	bf.tp.Flen = mysql.MaxBlobWidth
+	SetBinFlagOrBinStr(args[0].GetType(), bf.tp)
+	SetBinFlagOrBinStr(args[3].GetType(), bf.tp)
+	if types.IsBinaryStr(args[0].GetType()) {
+		sig = &builtinInsertBinarySig{bf}
+	} else {
+		sig = &builtinInsertSig{bf}
+	}
+	return sig, nil
 }
 
-type builtinInsertFuncSig struct {
+type builtinInsertBinarySig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinInsertFuncSig.
+// evalString evals INSERT(str,pos,len,newstr).
 // See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_insert
-func (b *builtinInsertFuncSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinInsertBinarySig) evalString(row types.Row) (string, bool, error) {
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+	strLength := int64(len(str))
+
+	pos, isNull, err := b.args[1].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+	if pos < 1 || pos > strLength {
+		return str, false, nil
 	}
 
-	// Returns NULL if any argument is NULL.
-	if args[0].IsNull() || args[1].IsNull() || args[2].IsNull() || args[3].IsNull() {
-		return
+	length, isNull, err := b.args[2].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
 	}
 
-	str0, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	str := []rune(str0)
-	strLen := len(str)
-
-	posInt64, err := args[1].ToInt64(b.ctx.GetSessionVars().StmtCtx)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	pos := int(posInt64)
-
-	lenInt64, err := args[2].ToInt64(b.ctx.GetSessionVars().StmtCtx)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	length := int(lenInt64)
-
-	newstr, err := args[3].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
+	newstr, isNull, err := b.args[3].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
 	}
 
-	var s string
-	if pos < 1 || pos > strLen {
-		s = str0
-	} else if length > strLen-pos+1 || length < 0 {
-		s = string(str[0:pos-1]) + newstr
-	} else {
-		s = string(str[0:pos-1]) + newstr + string(str[pos+length-1:])
+	if length > strLength-pos+1 || length < 0 {
+		return str[0:pos-1] + newstr, false, nil
+	}
+	return str[0:pos-1] + newstr + str[pos+length-1:], false, nil
+}
+
+type builtinInsertSig struct {
+	baseBuiltinFunc
+}
+
+// evalString evals INSERT(str,pos,len,newstr).
+// See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_insert
+func (b *builtinInsertSig) evalString(row types.Row) (string, bool, error) {
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+	runes := []rune(str)
+	runeLength := int64(len(runes))
+
+	pos, isNull, err := b.args[1].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+	if pos < 1 || pos > runeLength {
+		return str, false, nil
 	}
 
-	d.SetString(s)
-	return d, nil
+	length, isNull, err := b.args[2].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+
+	newstr, isNull, err := b.args[3].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+
+	if length > runeLength-pos+1 || length < 0 {
+		return string(runes[0:pos-1]) + newstr, false, nil
+	}
+	return string(runes[0:pos-1]) + newstr + string(runes[pos+length-1:]), false, nil
 }
 
 type instrFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *instrFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinInstrSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *instrFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString, types.ETString)
+	bf.tp.Flen = 11
+	if types.IsBinaryStr(bf.args[0].GetType()) || types.IsBinaryStr(bf.args[1].GetType()) {
+		sig := &builtinInstrBinarySig{bf}
+		return sig, nil
+	}
+	sig := &builtinInstrSig{bf}
+	return sig, nil
 }
 
-type builtinInstrSig struct {
-	baseBuiltinFunc
-}
+type builtinInstrSig struct{ baseBuiltinFunc }
+type builtinInstrBinarySig struct{ baseBuiltinFunc }
 
-// eval evals a builtinInstrSig.
-// See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_instr
-func (b *builtinInstrSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+// evalInt evals INSTR(str,substr), case insensitive
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_instr
+func (b *builtinInstrSig) evalInt(row types.Row) (int64, bool, error) {
+	str, IsNull, err := b.args[0].EvalString(b.ctx, row)
+	if IsNull || err != nil {
+		return 0, true, errors.Trace(err)
 	}
-	// INSTR(str, substr)
-	if args[0].IsNull() || args[1].IsNull() {
-		return d, nil
-	}
+	str = strings.ToLower(str)
 
-	var str, substr string
-	if str, err = args[0].ToString(); err != nil {
-		return d, errors.Trace(err)
+	substr, IsNull, err := b.args[1].EvalString(b.ctx, row)
+	if IsNull || err != nil {
+		return 0, true, errors.Trace(err)
 	}
-	if substr, err = args[1].ToString(); err != nil {
-		return d, errors.Trace(err)
-	}
+	substr = strings.ToLower(substr)
 
-	// INSTR performs case **insensitive** search by default, while at least one argument is binary string
-	// we do case sensitive search.
-	var caseSensitive bool
-	if args[0].Kind() == types.KindBytes || args[1].Kind() == types.KindBytes {
-		caseSensitive = true
-	}
-
-	var pos, idx int
-	if caseSensitive {
-		idx = strings.Index(str, substr)
-	} else {
-		idx = strings.Index(strings.ToLower(str), strings.ToLower(substr))
-	}
+	idx := strings.Index(str, substr)
 	if idx == -1 {
-		pos = 0
-	} else {
-		if caseSensitive {
-			pos = idx + 1
-		} else {
-			pos = utf8.RuneCountInString(str[:idx]) + 1
-		}
+		return 0, false, nil
 	}
-	d.SetInt64(int64(pos))
-	return d, nil
+	return int64(utf8.RuneCountInString(str[:idx]) + 1), false, nil
+}
+
+// evalInt evals INSTR(str,substr), case sensitive
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_instr
+func (b *builtinInstrBinarySig) evalInt(row types.Row) (int64, bool, error) {
+	str, IsNull, err := b.args[0].EvalString(b.ctx, row)
+	if IsNull || err != nil {
+		return 0, true, errors.Trace(err)
+	}
+
+	substr, IsNull, err := b.args[1].EvalString(b.ctx, row)
+	if IsNull || err != nil {
+		return 0, true, errors.Trace(err)
+	}
+
+	idx := strings.Index(str, substr)
+	if idx == -1 {
+		return 0, false, nil
+	}
+	return int64(idx + 1), false, nil
 }
 
 type loadFileFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *loadFileFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinLoadFileSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
-}
-
-type builtinLoadFileSig struct {
-	baseBuiltinFunc
-}
-
-// eval evals a builtinLoadFileSig.
-// See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_load-file
-func (b *builtinLoadFileSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("load_file")
-}
-
-type lpadFunctionClass struct {
-	baseFunctionClass
-}
-
-func (c *lpadFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinLpadSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
-}
-
-type builtinLpadSig struct {
-	baseBuiltinFunc
-}
-
-// eval evals a builtinLpadSig.
-// See https://dev.mysql.com/doc/refman/5.6/en/string-functions.html#function_lpad
-func (b *builtinLpadSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	// LPAD(str,len,padstr)
-	// args[0] string, args[1] int, args[2] string
-	str, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	length, err := args[1].ToInt64(b.ctx.GetSessionVars().StmtCtx)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	l := int(length)
-
-	padStr, err := args[2].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-
-	if l < 0 || (len(str) < l && padStr == "") {
-		return d, nil
-	}
-
-	tailLen := l - len(str)
-	if tailLen > 0 {
-		repeatCount := tailLen/len(padStr) + 1
-		str = strings.Repeat(padStr, repeatCount)[:tailLen] + str
-	}
-	d.SetString(str[:l])
-
-	return d, nil
+func (c *loadFileFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "load_file")
 }

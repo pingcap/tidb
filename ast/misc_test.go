@@ -17,6 +17,7 @@ import (
 	. "github.com/pingcap/check"
 	. "github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/util/auth"
 )
 
 var _ = Suite(&testMiscSuite{})
@@ -44,34 +45,36 @@ func (visitor1) Enter(in Node) (Node, bool) {
 
 func (ts *testMiscSuite) TestMiscVisitorCover(c *C) {
 	stmts := []Node{
-		(&AdminStmt{}),
-		(&AlterUserStmt{}),
-		(&BeginStmt{}),
-		(&BinlogStmt{}),
-		(&CommitStmt{}),
-		(&CreateUserStmt{}),
-		(&DeallocateStmt{}),
-		(&DoStmt{}),
-		(&ExecuteStmt{UsingVars: []ExprNode{&ValueExpr{}}}),
-		(&ExplainStmt{Stmt: &ShowStmt{}}),
-		(&GrantStmt{}),
-		(&PrepareStmt{SQLVar: &VariableExpr{Value: &ValueExpr{}}}),
-		(&RollbackStmt{}),
-		(&SetPwdStmt{}),
-		(&SetStmt{Variables: []*VariableAssignment{
+		&AdminStmt{},
+		&AlterUserStmt{},
+		&BeginStmt{},
+		&BinlogStmt{},
+		&CommitStmt{},
+		&CreateUserStmt{},
+		&DeallocateStmt{},
+		&DoStmt{},
+		&ExecuteStmt{UsingVars: []ExprNode{&ValueExpr{}}},
+		&ExplainStmt{Stmt: &ShowStmt{}},
+		&GrantStmt{},
+		&PrepareStmt{SQLVar: &VariableExpr{Value: &ValueExpr{}}},
+		&RollbackStmt{},
+		&SetPwdStmt{},
+		&SetStmt{Variables: []*VariableAssignment{
 			{
 				Value: &ValueExpr{},
 			},
-		}}),
-		(&UseStmt{}),
-		(&AnalyzeTableStmt{
+		}},
+		&UseStmt{},
+		&AnalyzeTableStmt{
 			TableNames: []*TableName{
 				{},
 			},
-		}),
-		(&FlushStmt{}),
-		(&PrivElem{}),
-		(&VariableAssignment{Value: &ValueExpr{}}),
+		},
+		&FlushStmt{},
+		&PrivElem{},
+		&VariableAssignment{Value: &ValueExpr{}},
+		&KillStmt{},
+		&DropStatsStmt{Table: &TableName{}},
 	}
 
 	for _, v := range stmts {
@@ -95,8 +98,8 @@ jobAbbr char(4) not null,
 constraint foreign key (jobabbr) references ffxi_jobtype (jobabbr) on delete cascade on update cascade
 );
 `
-	parser := parser.New()
-	stmts, err := parser.Parse(sql, "", "")
+	parse := parser.New()
+	stmts, err := parse.Parse(sql, "", "")
 	c.Assert(err, IsNil)
 	for _, stmt := range stmts {
 		stmt.Accept(visitor{})
@@ -114,11 +117,73 @@ update t1 set col1 = col1 + 1, col2 = col1;
 show create table t;
 load data infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by 'b';`
 
-	parser := parser.New()
-	stmts, err := parser.Parse(sql, "", "")
+	p := parser.New()
+	stmts, err := p.Parse(sql, "", "")
 	c.Assert(err, IsNil)
 	for _, stmt := range stmts {
 		stmt.Accept(visitor{})
 		stmt.Accept(visitor1{})
 	}
+}
+
+func (ts *testMiscSuite) TestSensitiveStatement(c *C) {
+	positive := []StmtNode{
+		&SetPwdStmt{},
+		&CreateUserStmt{},
+		&AlterUserStmt{},
+		&GrantStmt{},
+	}
+	for i, stmt := range positive {
+		_, ok := stmt.(SensitiveStmtNode)
+		c.Assert(ok, IsTrue, Commentf("%d, %#v fail", i, stmt))
+	}
+
+	negative := []StmtNode{
+		&DropUserStmt{},
+		&RevokeStmt{},
+		&AlterTableStmt{},
+		&CreateDatabaseStmt{},
+		&CreateIndexStmt{},
+		&CreateTableStmt{},
+		&DropDatabaseStmt{},
+		&DropIndexStmt{},
+		&DropTableStmt{},
+		&RenameTableStmt{},
+		&TruncateTableStmt{},
+	}
+	for _, stmt := range negative {
+		_, ok := stmt.(SensitiveStmtNode)
+		c.Assert(ok, IsFalse)
+	}
+}
+
+func (ts *testMiscSuite) TestUserSpec(c *C) {
+	hashString := "*3D56A309CD04FA2EEF181462E59011F075C89548"
+	u := UserSpec{
+		User: &auth.UserIdentity{
+			Username: "test",
+		},
+		AuthOpt: &AuthOption{
+			ByAuthString: false,
+			AuthString:   "xxx",
+			HashString:   hashString,
+		},
+	}
+	pwd, ok := u.EncodedPassword()
+	c.Assert(ok, IsTrue)
+	c.Assert(pwd, Equals, u.AuthOpt.HashString)
+
+	u.AuthOpt.HashString = "not-good-password-format"
+	pwd, ok = u.EncodedPassword()
+	c.Assert(ok, IsFalse)
+
+	u.AuthOpt.ByAuthString = true
+	pwd, ok = u.EncodedPassword()
+	c.Assert(ok, IsTrue)
+	c.Assert(pwd, Equals, hashString)
+
+	u.AuthOpt.AuthString = ""
+	pwd, ok = u.EncodedPassword()
+	c.Assert(ok, IsTrue)
+	c.Assert(pwd, Equals, "")
 }

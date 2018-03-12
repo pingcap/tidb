@@ -24,10 +24,13 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 
-	"github.com/ngaut/log"
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/terror"
 	"github.com/prometheus/client_golang/prometheus"
+	log "github.com/sirupsen/logrus"
+	"golang.org/x/net/context"
 )
 
 var (
@@ -36,6 +39,9 @@ var (
 	workerCnt = flag.Int("C", 400, "concurrent num")
 	pdAddr    = flag.String("pd", "localhost:2379", "pd address:localhost:2379")
 	valueSize = flag.Int("V", 5, "value size in byte")
+	sslCA     = flag.String("cacert", "", "path of file that contains list of trusted SSL CAs.")
+	sslCert   = flag.String("cert", "", "path of file that contains X509 certificate in PEM format.")
+	sslKey    = flag.String("key", "", "path of file that contains X509 key in PEM format.")
 
 	txnCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -63,21 +69,22 @@ var (
 		}, []string{"type"})
 )
 
-// Init initializes informations.
+// Init initializes information.
 func Init() {
 	driver := tikv.Driver{}
 	var err error
 	store, err = driver.Open(fmt.Sprintf("tikv://%s?cluster=1", *pdAddr))
-	if err != nil {
-		log.Fatal(err)
-	}
+	terror.MustNil(err)
 
 	prometheus.MustRegister(txnCounter)
 	prometheus.MustRegister(txnRolledbackCounter)
 	prometheus.MustRegister(txnDurations)
 	http.Handle("/metrics", prometheus.Handler())
 
-	go http.ListenAndServe(":9191", nil)
+	go func() {
+		err1 := http.ListenAndServe(":9191", nil)
+		terror.Log(errors.Trace(err1))
+	}()
 }
 
 // batchRW makes sure conflict free.
@@ -97,11 +104,12 @@ func batchRW(value []byte) {
 					log.Fatal(err)
 				}
 				key := fmt.Sprintf("key_%d", k)
-				txn.Set([]byte(key), value)
-				err = txn.Commit()
+				err = txn.Set([]byte(key), value)
+				terror.Log(errors.Trace(err))
+				err = txn.Commit(context.Background())
 				if err != nil {
 					txnRolledbackCounter.WithLabelValues("txn").Inc()
-					txn.Rollback()
+					terror.Call(txn.Rollback)
 				}
 
 				txnDurations.WithLabelValues("txn").Observe(time.Since(start).Seconds())
@@ -113,22 +121,18 @@ func batchRW(value []byte) {
 
 func main() {
 	flag.Parse()
-	log.SetLevelByString("error")
+	log.SetLevel(log.ErrorLevel)
 	Init()
 
 	value := make([]byte, *valueSize)
 	t := time.Now()
 	batchRW(value)
 	resp, err := http.Get("http://localhost:9191/metrics")
-	if err != nil {
-		log.Fatal(err)
-	}
+	terror.MustNil(err)
 
-	defer resp.Body.Close()
+	defer terror.Call(resp.Body.Close)
 	text, err1 := ioutil.ReadAll(resp.Body)
-	if err1 != nil {
-		log.Fatal(err)
-	}
+	terror.Log(errors.Trace(err1))
 
 	fmt.Println(string(text))
 

@@ -15,15 +15,13 @@ package tikv
 
 import (
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/terror"
 )
 
 var (
-	// errInnerRetryable if caller can retry this directly then return this error.
-	errInnerRetryable = errors.New("try again innerly")
-	// errInvalidResponse represents response message is invalid.
-	errInvalidResponse = errors.New("invalid response")
-	// errBodyMissing response body is missing error
-	errBodyMissing = errors.New("response body is missing")
+	// ErrBodyMissing response body is missing error
+	ErrBodyMissing = errors.New("response body is missing")
 )
 
 // TiDB decides whether to retry transaction by checking if error message contains
@@ -33,3 +31,26 @@ var (
 // Note that it should be only used if i) the error occurs inside a transaction
 // and ii) the error is not totally unexpected and hopefully will recover soon.
 const txnRetryableMark = "[try again later]"
+
+// MySQL error instances.
+var (
+	ErrTiKVServerTimeout  = terror.ClassTiKV.New(mysql.ErrTiKVServerTimeout, mysql.MySQLErrName[mysql.ErrTiKVServerTimeout]+txnRetryableMark)
+	ErrResolveLockTimeout = terror.ClassTiKV.New(mysql.ErrResolveLockTimeout, mysql.MySQLErrName[mysql.ErrResolveLockTimeout]+txnRetryableMark)
+	ErrPDServerTimeout    = terror.ClassTiKV.New(mysql.ErrPDServerTimeout, mysql.MySQLErrName[mysql.ErrPDServerTimeout]+"%v")
+	ErrRegionUnavailable  = terror.ClassTiKV.New(mysql.ErrRegionUnavailable, mysql.MySQLErrName[mysql.ErrRegionUnavailable]+txnRetryableMark)
+	ErrTiKVServerBusy     = terror.ClassTiKV.New(mysql.ErrTiKVServerBusy, mysql.MySQLErrName[mysql.ErrTiKVServerBusy]+txnRetryableMark)
+	ErrGCTooEarly         = terror.ClassTiKV.New(mysql.ErrGCTooEarly, mysql.MySQLErrName[mysql.ErrGCTooEarly])
+)
+
+func init() {
+	tikvMySQLErrCodes := map[terror.ErrCode]uint16{
+		mysql.ErrTiKVServerTimeout:   mysql.ErrTiKVServerTimeout,
+		mysql.ErrResolveLockTimeout:  mysql.ErrResolveLockTimeout,
+		mysql.ErrPDServerTimeout:     mysql.ErrPDServerTimeout,
+		mysql.ErrRegionUnavailable:   mysql.ErrRegionUnavailable,
+		mysql.ErrTiKVServerBusy:      mysql.ErrTiKVServerBusy,
+		mysql.ErrGCTooEarly:          mysql.ErrGCTooEarly,
+		mysql.ErrTruncatedWrongValue: mysql.ErrTruncatedWrongValue,
+	}
+	terror.ErrClassToMySQLCodes[terror.ClassTiKV] = tikvMySQLErrCodes
+}

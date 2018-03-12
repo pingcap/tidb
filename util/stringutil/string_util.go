@@ -14,7 +14,6 @@
 package stringutil
 
 import (
-	"bytes"
 	"strings"
 	"unicode/utf8"
 
@@ -23,15 +22,6 @@ import (
 
 // ErrSyntax indicates that a value does not have the right syntax for the target type.
 var ErrSyntax = errors.New("invalid syntax")
-
-// Reverse returns its argument string reversed rune-wise left to right.
-func Reverse(s string) string {
-	r := []rune(s)
-	for i, j := 0, len(r)-1; i < len(r)/2; i, j = i+1, j-1 {
-		r[i], r[j] = r[j], r[i]
-	}
-	return string(r)
-}
 
 // UnquoteChar decodes the first character or byte in the escaped string
 // or character literal represented by the string s.
@@ -170,7 +160,12 @@ func CompilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
 				}
 			}
 		case '_':
-			lastAny = false
+			if lastAny {
+				patChars[patLen-1], patTypes[patLen-1] = c, patOne
+				patChars[patLen], patTypes[patLen] = '%', patAny
+				patLen++
+				continue
+			}
 			tp = patOne
 		case '%':
 			if lastAny {
@@ -186,12 +181,6 @@ func CompilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
 		patTypes[patLen] = tp
 		patLen++
 	}
-	for i := 0; i < patLen-1; i++ {
-		if (patTypes[i] == patAny) && (patTypes[i+1] == patOne) {
-			patTypes[i] = patOne
-			patTypes[i+1] = patAny
-		}
-	}
 	patChars = patChars[:patLen]
 	patTypes = patTypes[:patLen]
 	return
@@ -199,14 +188,19 @@ func CompilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
 
 const caseDiff = 'a' - 'A'
 
+// NOTE: Currently tikv's like function is case sensitive, so we keep its behavior here.
 func matchByteCI(a, b byte) bool {
-	if a == b {
-		return true
-	}
-	if a >= 'a' && a <= 'z' && a-caseDiff == b {
-		return true
-	}
-	return a >= 'A' && a <= 'Z' && a+caseDiff == b
+	return a == b
+	// We may reuse below code block when like function go back to case insensitive.
+	/*
+		if a == b {
+			return true
+		}
+		if a >= 'a' && a <= 'z' && a-caseDiff == b {
+			return true
+		}
+		return a >= 'A' && a <= 'Z' && a+caseDiff == b
+	*/
 }
 
 // DoMatch matches the string with patChars and patTypes.
@@ -239,18 +233,4 @@ func DoMatch(str string, patChars, patTypes []byte) bool {
 		}
 	}
 	return sIdx == len(str)
-}
-
-// RemoveBlanks removes all blanks, returns a new string.
-func RemoveBlanks(s string) string {
-	var buf = new(bytes.Buffer)
-	var cbuf [6]byte
-	for _, c := range s {
-		if c == rune(' ') || c == rune('\t') || c == rune('\r') || c == rune('\n') {
-			continue
-		}
-		len := utf8.EncodeRune(cbuf[0:], c)
-		buf.Write(cbuf[0:len])
-	}
-	return buf.String()
 }

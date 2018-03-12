@@ -23,7 +23,7 @@ type testUtilsSuite struct {
 }
 
 func (s testUtilsSuite) TestIncInt64(c *C) {
-	mb := NewMemDbBuffer()
+	mb := NewMemDbBuffer(DefaultTxnMembufCap)
 	key := Key("key")
 	v, err := IncInt64(mb, key, 1)
 	c.Check(err, IsNil)
@@ -33,12 +33,12 @@ func (s testUtilsSuite) TestIncInt64(c *C) {
 	c.Check(v, Equals, int64(11))
 
 	mb.Set(key, []byte("not int"))
-	v, err = IncInt64(mb, key, 1)
+	_, err = IncInt64(mb, key, 1)
 	c.Check(err, NotNil)
 }
 
 func (s testUtilsSuite) TestGetInt64(c *C) {
-	mb := NewMemDbBuffer()
+	mb := NewMemDbBuffer(DefaultTxnMembufCap)
 	key := Key("key")
 	v, err := GetInt64(mb, key)
 	c.Check(v, Equals, int64(0))

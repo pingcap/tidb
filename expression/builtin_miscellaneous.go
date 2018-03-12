@@ -22,9 +22,11 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/twinj/uuid"
 )
 
@@ -55,223 +57,293 @@ var (
 	_ builtinFunc = &builtinSleepSig{}
 	_ builtinFunc = &builtinLockSig{}
 	_ builtinFunc = &builtinReleaseLockSig{}
-	_ builtinFunc = &builtinAnyValueSig{}
-	_ builtinFunc = &builtinDefaultSig{}
+	_ builtinFunc = &builtinDecimalAnyValueSig{}
+	_ builtinFunc = &builtinDurationAnyValueSig{}
+	_ builtinFunc = &builtinIntAnyValueSig{}
+	_ builtinFunc = &builtinJSONAnyValueSig{}
+	_ builtinFunc = &builtinRealAnyValueSig{}
+	_ builtinFunc = &builtinStringAnyValueSig{}
+	_ builtinFunc = &builtinTimeAnyValueSig{}
 	_ builtinFunc = &builtinInetAtonSig{}
 	_ builtinFunc = &builtinInetNtoaSig{}
 	_ builtinFunc = &builtinInet6AtonSig{}
 	_ builtinFunc = &builtinInet6NtoaSig{}
-	_ builtinFunc = &builtinIsFreeLockSig{}
 	_ builtinFunc = &builtinIsIPv4Sig{}
 	_ builtinFunc = &builtinIsIPv4CompatSig{}
 	_ builtinFunc = &builtinIsIPv4MappedSig{}
 	_ builtinFunc = &builtinIsIPv6Sig{}
-	_ builtinFunc = &builtinIsUsedLockSig{}
-	_ builtinFunc = &builtinMasterPosWaitSig{}
-	_ builtinFunc = &builtinNameConstSig{}
-	_ builtinFunc = &builtinReleaseAllLocksSig{}
 	_ builtinFunc = &builtinUUIDSig{}
-	_ builtinFunc = &builtinUUIDShortSig{}
 )
 
 type sleepFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *sleepFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	err := errors.Trace(c.verifyArgs(args))
-	bt := &builtinSleepSig{newBaseBuiltinFunc(args, ctx)}
-	bt.deterministic = false
-	return bt.setSelf(bt), errors.Trace(err)
+func (c *sleepFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETReal)
+	bf.tp.Flen = 21
+	sig := &builtinSleepSig{bf}
+	return sig, nil
 }
 
 type builtinSleepSig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinSleepSig.
+// evalInt evals a builtinSleepSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_sleep
-func (b *builtinSleepSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
+func (b *builtinSleepSig) evalInt(row types.Row) (int64, bool, error) {
+	val, isNull, err := b.args[0].EvalReal(b.ctx, row)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return 0, isNull, errors.Trace(err)
 	}
 	sessVars := b.ctx.GetSessionVars()
-	if args[0].IsNull() {
+	if isNull {
 		if sessVars.StrictSQLMode {
-			return d, errors.New("incorrect arguments to sleep")
+			return 0, true, errIncorrectArgs.GenByArgs("sleep")
 		}
-		d.SetInt64(0)
-		return
+		return 0, true, nil
 	}
 	// processing argument is negative
-	zero := types.NewIntDatum(0)
-	sc := sessVars.StmtCtx
-	ret, err := args[0].CompareDatum(sc, zero)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	if ret == -1 {
+	if val < 0 {
 		if sessVars.StrictSQLMode {
-			return d, errors.New("incorrect arguments to sleep")
+			return 0, false, errIncorrectArgs.GenByArgs("sleep")
 		}
-		d.SetInt64(0)
-		return
+		return 0, false, nil
 	}
 
-	// TODO: consider it's interrupted using KILL QUERY from other session, or
-	// interrupted by time out.
-	sleepTime, err := args[0].ConvertTo(sc, types.NewFieldType(mysql.TypeDouble))
-	if err != nil {
-		return d, errors.Trace(err)
+	if val > math.MaxFloat64/float64(time.Second.Nanoseconds()) {
+		return 0, false, errIncorrectArgs.GenByArgs("sleep")
 	}
-	duration := time.Duration(sleepTime.GetFloat64() * float64(time.Second.Nanoseconds()))
-	time.Sleep(duration)
-	d.SetInt64(0)
-	return
+	dur := time.Duration(val * float64(time.Second.Nanoseconds()))
+	select {
+	case <-time.After(dur):
+		// TODO: Handle Ctrl-C is pressed in `mysql` client.
+		// return 1 when SLEEP() is KILLed
+	}
+	return 0, false, nil
 }
 
 type lockFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *lockFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinLockSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *lockFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString, types.ETInt)
+	sig := &builtinLockSig{bf}
+	bf.tp.Flen = 1
+	return sig, nil
 }
 
 type builtinLockSig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinLockSig.
+// evalInt evals a builtinLockSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_get-lock
 // The lock function will do nothing.
 // Warning: get_lock() function is parsed but ignored.
-func (b *builtinLockSig) eval(_ []types.Datum) (d types.Datum, err error) {
-	d.SetInt64(1)
-	return d, nil
+func (b *builtinLockSig) evalInt(_ types.Row) (int64, bool, error) {
+	return 1, false, nil
 }
 
 type releaseLockFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *releaseLockFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinReleaseLockSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *releaseLockFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
+	sig := &builtinReleaseLockSig{bf}
+	bf.tp.Flen = 1
+	return sig, nil
 }
 
 type builtinReleaseLockSig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinReleaseLockSig.
+// evalInt evals a builtinReleaseLockSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_release-lock
 // The release lock function will do nothing.
 // Warning: release_lock() function is parsed but ignored.
-func (b *builtinReleaseLockSig) eval(_ []types.Datum) (d types.Datum, err error) {
-	d.SetInt64(1)
-	return
+func (b *builtinReleaseLockSig) evalInt(_ types.Row) (int64, bool, error) {
+	return 1, false, nil
 }
 
 type anyValueFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *anyValueFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinAnyValueSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *anyValueFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	argTp := args[0].GetType().EvalType()
+	bf := newBaseBuiltinFuncWithTp(ctx, args, argTp, argTp)
+	*bf.tp = *args[0].GetType()
+	var sig builtinFunc
+	switch argTp {
+	case types.ETDecimal:
+		sig = &builtinDecimalAnyValueSig{bf}
+	case types.ETDuration:
+		sig = &builtinDurationAnyValueSig{bf}
+	case types.ETInt:
+		bf.tp.Decimal = 0
+		sig = &builtinIntAnyValueSig{bf}
+	case types.ETJson:
+		sig = &builtinJSONAnyValueSig{bf}
+	case types.ETReal:
+		sig = &builtinRealAnyValueSig{bf}
+	case types.ETString:
+		bf.tp.Decimal = types.UnspecifiedLength
+		sig = &builtinStringAnyValueSig{bf}
+	case types.ETDatetime, types.ETTimestamp:
+		bf.tp.Charset, bf.tp.Collate, bf.tp.Flag = charset.CharsetUTF8, charset.CollationUTF8, 0
+		sig = &builtinTimeAnyValueSig{bf}
+	default:
+		panic("unexpected types.EvalType of builtin function ANY_VALUE")
+	}
+	return sig, nil
 }
 
-type builtinAnyValueSig struct {
+type builtinDecimalAnyValueSig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinAnyValueSig.
+// evalDecimal evals a builtinDecimalAnyValueSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
-func (b *builtinAnyValueSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	d = args[0]
-	return d, nil
+func (b *builtinDecimalAnyValueSig) evalDecimal(row types.Row) (*types.MyDecimal, bool, error) {
+	return b.args[0].EvalDecimal(b.ctx, row)
+}
+
+type builtinDurationAnyValueSig struct {
+	baseBuiltinFunc
+}
+
+// evalDuration evals a builtinDurationAnyValueSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
+func (b *builtinDurationAnyValueSig) evalDuration(row types.Row) (types.Duration, bool, error) {
+	return b.args[0].EvalDuration(b.ctx, row)
+}
+
+type builtinIntAnyValueSig struct {
+	baseBuiltinFunc
+}
+
+// evalInt evals a builtinIntAnyValueSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
+func (b *builtinIntAnyValueSig) evalInt(row types.Row) (int64, bool, error) {
+	return b.args[0].EvalInt(b.ctx, row)
+}
+
+type builtinJSONAnyValueSig struct {
+	baseBuiltinFunc
+}
+
+// evalJSON evals a builtinJSONAnyValueSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
+func (b *builtinJSONAnyValueSig) evalJSON(row types.Row) (json.BinaryJSON, bool, error) {
+	return b.args[0].EvalJSON(b.ctx, row)
+}
+
+type builtinRealAnyValueSig struct {
+	baseBuiltinFunc
+}
+
+// evalReal evals a builtinRealAnyValueSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
+func (b *builtinRealAnyValueSig) evalReal(row types.Row) (float64, bool, error) {
+	return b.args[0].EvalReal(b.ctx, row)
+}
+
+type builtinStringAnyValueSig struct {
+	baseBuiltinFunc
+}
+
+// evalString evals a builtinStringAnyValueSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
+func (b *builtinStringAnyValueSig) evalString(row types.Row) (string, bool, error) {
+	return b.args[0].EvalString(b.ctx, row)
+}
+
+type builtinTimeAnyValueSig struct {
+	baseBuiltinFunc
+}
+
+// evalTime evals a builtinTimeAnyValueSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
+func (b *builtinTimeAnyValueSig) evalTime(row types.Row) (types.Time, bool, error) {
+	return b.args[0].EvalTime(b.ctx, row)
 }
 
 type defaultFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *defaultFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinDefaultSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
-}
-
-type builtinDefaultSig struct {
-	baseBuiltinFunc
-}
-
-// eval evals a builtinDefaultSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_default
-func (b *builtinDefaultSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("DEFAULT")
+func (c *defaultFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "DEFAULT")
 }
 
 type inetAtonFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *inetAtonFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinInetAtonSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *inetAtonFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
+	bf.tp.Flen = 21
+	bf.tp.Flag |= mysql.UnsignedFlag
+	sig := &builtinInetAtonSig{bf}
+	return sig, nil
 }
 
 type builtinInetAtonSig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinInetAtonSig.
+// evalInt evals a builtinInetAtonSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet-aton
-func (b *builtinInetAtonSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinInetAtonSig) evalInt(row types.Row) (int64, bool, error) {
+	val, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if err != nil || isNull {
+		return 0, true, errors.Trace(err)
 	}
-	arg := args[0]
-	if arg.IsNull() {
-		return d, nil
-	}
-	s, err := arg.ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-
 	// ip address should not end with '.'.
-	if len(s) == 0 || s[len(s)-1] == '.' {
-		return d, nil
+	if len(val) == 0 || val[len(val)-1] == '.' {
+		return 0, true, nil
 	}
 
 	var (
 		byteResult, result uint64
 		dotCount           int
 	)
-	for _, c := range s {
+	for _, c := range val {
 		if c >= '0' && c <= '9' {
 			digit := uint64(c - '0')
 			byteResult = byteResult*10 + digit
 			if byteResult > 255 {
-				return d, nil
+				return 0, true, nil
 			}
 		} else if c == '.' {
 			dotCount++
 			if dotCount > 3 {
-				return d, nil
+				return 0, true, nil
 			}
 			result = (result << 8) + byteResult
 			byteResult = 0
 		} else {
-			return d, nil
+			return 0, true, nil
 		}
 	}
 	// 127 		-> 0.0.0.127
@@ -285,97 +357,90 @@ func (b *builtinInetAtonSig) eval(row []types.Datum) (d types.Datum, err error) 
 	case 2:
 		result <<= 8
 	}
-	d.SetUint64((result << 8) + byteResult)
-	return d, nil
+	return int64((result << 8) + byteResult), false, nil
 }
 
 type inetNtoaFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *inetNtoaFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinInetNtoaSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *inetNtoaFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETInt)
+	bf.tp.Flen = 93
+	bf.tp.Decimal = 0
+	sig := &builtinInetNtoaSig{bf}
+	return sig, nil
 }
 
 type builtinInetNtoaSig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinInetNtoaSig.
+// evalString evals a builtinInetNtoaSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet-ntoa
-func (b *builtinInetNtoaSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinInetNtoaSig) evalString(row types.Row) (string, bool, error) {
+	val, isNull, err := b.args[0].EvalInt(b.ctx, row)
+	if err != nil || isNull {
+		return "", true, errors.Trace(err)
 	}
 
-	if args[0].IsNull() {
-		return d, nil
-	}
-
-	ipArg, err := args[0].ToInt64(b.ctx.GetSessionVars().StmtCtx)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-
-	if ipArg < 0 || uint64(ipArg) > math.MaxUint32 {
+	if val < 0 || uint64(val) > math.MaxUint32 {
 		//not an IPv4 address.
-		return d, nil
+		return "", true, nil
 	}
 	ip := make(net.IP, net.IPv4len)
-	binary.BigEndian.PutUint32(ip, uint32(ipArg))
+	binary.BigEndian.PutUint32(ip, uint32(val))
 	ipv4 := ip.To4()
 	if ipv4 == nil {
 		//Not a vaild ipv4 address.
-		return d, nil
+		return "", true, nil
 	}
 
-	d.SetString(ipv4.String())
-	return d, nil
+	return ipv4.String(), false, nil
 }
 
 type inet6AtonFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *inet6AtonFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinInet6AtonSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *inet6AtonFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
+	bf.tp.Flen = 16
+	types.SetBinChsClnFlag(bf.tp)
+	bf.tp.Decimal = 0
+	sig := &builtinInet6AtonSig{bf}
+	return sig, nil
 }
 
 type builtinInet6AtonSig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinInet6AtonSig.
+// evalString evals a builtinInet6AtonSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet6-aton
-func (b *builtinInet6AtonSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinInet6AtonSig) evalString(row types.Row) (string, bool, error) {
+	val, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if err != nil || isNull {
+		return "", true, errors.Trace(err)
 	}
 
-	if args[0].IsNull() {
-		return d, nil
+	if len(val) == 0 {
+		return "", true, nil
 	}
 
-	ipAddress, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-
-	if len(ipAddress) == 0 {
-		return d, nil
-	}
-
-	ip := net.ParseIP(ipAddress)
+	ip := net.ParseIP(val)
 	if ip == nil {
-		return d, nil
+		return "", true, nil
 	}
 
 	var isMappedIpv6 bool
-	if ip.To4() != nil && strings.Contains(ipAddress, ":") {
+	if ip.To4() != nil && strings.Contains(val, ":") {
 		//mapped ipv6 address.
 		isMappedIpv6 = true
 	}
@@ -397,109 +462,84 @@ func (b *builtinInet6AtonSig) eval(row []types.Datum) (d types.Datum, err error)
 		copy(result, ip.To4())
 	}
 
-	d.SetBytes(result)
-	return d, nil
+	return string(result[:]), false, nil
 }
 
 type inet6NtoaFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *inet6NtoaFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinInet6NtoaSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *inet6NtoaFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
+	bf.tp.Flen = 117
+	bf.tp.Decimal = 0
+	sig := &builtinInet6NtoaSig{bf}
+	return sig, nil
 }
 
 type builtinInet6NtoaSig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinInet6NtoaSig.
+// evalString evals a builtinInet6NtoaSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet6-ntoa
-func (b *builtinInet6NtoaSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinInet6NtoaSig) evalString(row types.Row) (string, bool, error) {
+	val, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if err != nil || isNull {
+		return "", true, errors.Trace(err)
 	}
-
-	if args[0].IsNull() {
-		return d, nil
-	}
-
-	ipArg, err := args[0].ToBytes()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-
-	ip := net.IP(ipArg).String()
-	if len(ipArg) == net.IPv6len && !strings.Contains(ip, ":") {
+	ip := net.IP([]byte(val)).String()
+	if len(val) == net.IPv6len && !strings.Contains(ip, ":") {
 		ip = fmt.Sprintf("::ffff:%s", ip)
 	}
 
 	if net.ParseIP(ip) == nil {
-		return d, nil
+		return "", true, nil
 	}
 
-	d.SetString(ip)
-
-	return d, nil
+	return ip, false, nil
 }
 
 type isFreeLockFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *isFreeLockFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinIsFreeLockSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
-}
-
-type builtinIsFreeLockSig struct {
-	baseBuiltinFunc
-}
-
-// eval evals a builtinIsFreeLockSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-free-lock
-func (b *builtinIsFreeLockSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("IS_FREE_LOCK")
+func (c *isFreeLockFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "IS_FREE_LOCK")
 }
 
 type isIPv4FunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *isIPv4FunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinIsIPv4Sig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *isIPv4FunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
+	bf.tp.Flen = 1
+	sig := &builtinIsIPv4Sig{bf}
+	return sig, nil
 }
 
 type builtinIsIPv4Sig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinIsIPv4Sig.
+// evalInt evals a builtinIsIPv4Sig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4
-func (b *builtinIsIPv4Sig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinIsIPv4Sig) evalInt(row types.Row) (int64, bool, error) {
+	val, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if err != nil || isNull {
+		return 0, err != nil, errors.Trace(err)
 	}
-	if args[0].IsNull() {
-		d.SetInt64(0)
-		return d, nil
+	if isIPv4(val) {
+		return 1, false, nil
 	}
-	// isIPv4(str)
-	// args[0] string
-	s, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	if isIPv4(s) {
-		d.SetInt64(1)
-	} else {
-		d.SetInt64(0)
-	}
-	return d, nil
+	return 0, false, nil
 }
 
 // isIPv4 checks IPv4 address which satisfying the format A.B.C.D(0<=A/B/C/D<=255).
@@ -533,246 +573,172 @@ type isIPv4CompatFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *isIPv4CompatFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinIsIPv4CompatSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *isIPv4CompatFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
+	bf.tp.Flen = 1
+	sig := &builtinIsIPv4CompatSig{bf}
+	return sig, nil
 }
 
 type builtinIsIPv4CompatSig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinIsIPv4CompatSig.
+// evalInt evals Is_IPv4_Compat
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4-compat
-func (b *builtinIsIPv4CompatSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinIsIPv4CompatSig) evalInt(row types.Row) (int64, bool, error) {
+	val, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if err != nil || isNull {
+		return 0, err != nil, errors.Trace(err)
 	}
 
-	arg := args[0]
-	d.SetInt64(0)
-	if arg.IsNull() {
-		return d, nil
-	}
-
-	ipAddress, err := arg.ToBytes()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-
+	ipAddress := []byte(val)
 	if len(ipAddress) != net.IPv6len {
 		//Not an IPv6 address, return false
-		return
+		return 0, false, nil
 	}
 
-	var v4InV6Prefix = []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
-	if !bytes.HasPrefix(ipAddress, v4InV6Prefix) {
-		return
+	prefixCompat := []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+	if !bytes.HasPrefix(ipAddress, prefixCompat) {
+		return 0, false, nil
 	}
-
-	d.SetInt64(1)
-	return
+	return 1, false, nil
 }
 
 type isIPv4MappedFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *isIPv4MappedFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinIsIPv4MappedSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *isIPv4MappedFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
+	bf.tp.Flen = 1
+	sig := &builtinIsIPv4MappedSig{bf}
+	return sig, nil
 }
 
 type builtinIsIPv4MappedSig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinIsIPv4MappedSig.
+// evalInt evals Is_IPv4_Mapped
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4-mapped
-func (b *builtinIsIPv4MappedSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinIsIPv4MappedSig) evalInt(row types.Row) (int64, bool, error) {
+	val, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if err != nil || isNull {
+		return 0, err != nil, errors.Trace(err)
 	}
 
-	arg := args[0]
-	d.SetInt64(0)
-	if arg.IsNull() {
-		return d, nil
-	}
-
-	ipAddress, err := arg.ToBytes()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-
+	ipAddress := []byte(val)
 	if len(ipAddress) != net.IPv6len {
 		//Not an IPv6 address, return false
-		return
+		return 0, false, nil
 	}
 
-	var v4InV6Prefix = []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff}
-	if !bytes.HasPrefix(ipAddress, v4InV6Prefix) {
-		return
+	prefixMapped := []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff}
+	if !bytes.HasPrefix(ipAddress, prefixMapped) {
+		return 0, false, nil
 	}
-
-	d.SetInt64(1)
-	return
+	return 1, false, nil
 }
 
 type isIPv6FunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *isIPv6FunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinIsIPv6Sig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *isIPv6FunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
+	bf.tp.Flen = 1
+	sig := &builtinIsIPv6Sig{bf}
+	return sig, nil
 }
 
 type builtinIsIPv6Sig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinIsIPv6Sig.
+// evalInt evals a builtinIsIPv6Sig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv6
-func (b *builtinIsIPv6Sig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
+func (b *builtinIsIPv6Sig) evalInt(row types.Row) (int64, bool, error) {
+	val, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if err != nil || isNull {
+		return 0, err != nil, errors.Trace(err)
 	}
-	// isIPv6(str)
-	// args[0] string
-	if args[0].IsNull() {
-		d.SetInt64(0)
-		return d, nil
+	ip := net.ParseIP(val)
+	if ip != nil && !isIPv4(val) {
+		return 1, false, nil
 	}
-	s, err := args[0].ToString()
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	ip := net.ParseIP(s)
-	if ip != nil && !isIPv4(s) {
-		d.SetInt64(1)
-	} else {
-		d.SetInt64(0)
-	}
-	return d, nil
+	return 0, false, nil
 }
 
 type isUsedLockFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *isUsedLockFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinIsUsedLockSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
-}
-
-type builtinIsUsedLockSig struct {
-	baseBuiltinFunc
-}
-
-// eval evals a builtinIsUsedLockSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-used-lock
-func (b *builtinIsUsedLockSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("IS_USED_LOCK")
+func (c *isUsedLockFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "IS_USED_LOCK")
 }
 
 type masterPosWaitFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *masterPosWaitFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinMasterPosWaitSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
-}
-
-type builtinMasterPosWaitSig struct {
-	baseBuiltinFunc
-}
-
-// eval evals a builtinMasterPosWaitSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_master-pos-wait
-func (b *builtinMasterPosWaitSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("MASTER_POS_WAIT")
+func (c *masterPosWaitFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "MASTER_POS_WAIT")
 }
 
 type nameConstFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *nameConstFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinNameConstSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
-}
-
-type builtinNameConstSig struct {
-	baseBuiltinFunc
-}
-
-// eval evals a builtinNameConstSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_name-const
-func (b *builtinNameConstSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("NAME_CONST")
+func (c *nameConstFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "NAME_CONST")
 }
 
 type releaseAllLocksFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *releaseAllLocksFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinReleaseAllLocksSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
-}
-
-type builtinReleaseAllLocksSig struct {
-	baseBuiltinFunc
-}
-
-// eval evals a builtinReleaseAllLocksSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_release-all-locks
-func (b *builtinReleaseAllLocksSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("RELEASEA_ALL_LOCKS")
+func (c *releaseAllLocksFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "RELEASE_ALL_LOCKS")
 }
 
 type uuidFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *uuidFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	err := errors.Trace(c.verifyArgs(args))
-	bt := &builtinUUIDSig{newBaseBuiltinFunc(args, ctx)}
-	bt.deterministic = false
-	return bt.setSelf(bt), errors.Trace(err)
+func (c *uuidFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
+	bf.tp.Flen = 36
+	sig := &builtinUUIDSig{bf}
+	return sig, nil
 }
 
 type builtinUUIDSig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinUUIDSig.
+// evalString evals a builtinUUIDSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_uuid
-func (b *builtinUUIDSig) eval(_ []types.Datum) (d types.Datum, err error) {
-	d.SetString(uuid.NewV1().String())
-	return
+func (b *builtinUUIDSig) evalString(_ types.Row) (d string, isNull bool, err error) {
+	return uuid.NewV1().String(), false, nil
 }
 
 type uuidShortFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *uuidShortFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinUUIDShortSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
-}
-
-type builtinUUIDShortSig struct {
-	baseBuiltinFunc
-}
-
-// eval evals a builtinUUIDShortSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_uuid-short
-func (b *builtinUUIDShortSig) eval(row []types.Datum) (d types.Datum, err error) {
-	return d, errFunctionNotExists.GenByArgs("UUID_SHORT")
+func (c *uuidShortFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "UUID_SHORT")
 }

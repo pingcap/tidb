@@ -14,11 +14,13 @@
 package expression
 
 import (
-	"github.com/ngaut/log"
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/types"
+	log "github.com/sirupsen/logrus"
 )
 
 // MaxPropagateColsCnt means the max number of columns that can participate propagation.
@@ -66,7 +68,7 @@ type propagateConstantSolver struct {
 	eqList     []*Constant    // if eqList[i] != nil, it means col_i = eqList[i]
 	columns    []*Column      // columns stores all columns appearing in the conditions
 	conditions []Expression
-	ctx        context.Context
+	ctx        sessionctx.Context
 }
 
 // propagateInEQ propagates all in-equal conditions.
@@ -99,9 +101,9 @@ func (s *propagateConstantSolver) propagateInEQ() {
 				funName := cond.(*ScalarFunction).FuncName.L
 				var newExpr Expression
 				if _, ok := cond.(*ScalarFunction).GetArgs()[0].(*Column); ok {
-					newExpr, _ = NewFunction(s.ctx, funName, cond.GetType(), s.columns[j], con)
+					newExpr = NewFunctionInternal(s.ctx, funName, cond.GetType(), s.columns[j], con)
 				} else {
-					newExpr, _ = NewFunction(s.ctx, funName, cond.GetType(), con, s.columns[j])
+					newExpr = NewFunctionInternal(s.ctx, funName, cond.GetType(), con, s.columns[j])
 				}
 				s.conditions = append(s.conditions, newExpr)
 			}
@@ -118,7 +120,7 @@ func (s *propagateConstantSolver) propagateEQ() {
 	visited := make([]bool, len(s.conditions))
 	for i := 0; i < MaxPropagateColsCnt; i++ {
 		mapper := s.pickNewEQConds(visited)
-		if mapper == nil || len(mapper) == 0 {
+		if len(mapper) == 0 {
 			return
 		}
 		cols := make([]*Column, 0, len(mapper))
@@ -171,10 +173,11 @@ func (s *propagateConstantSolver) pickNewEQConds(visited []bool) (retMapper map[
 		}
 		col, con := s.validPropagateCond(cond, eqFuncNameMap)
 		// Then we check if this CNF item is a false constant. If so, we will set the whole condition to false.
-		ok := false
+		var ok bool
 		if col == nil {
 			if con, ok = cond.(*Constant); ok {
-				value, _ := EvalBool([]Expression{con}, nil, s.ctx)
+				value, err := EvalBool(s.ctx, []Expression{con}, nil)
+				terror.Log(errors.Trace(err))
 				if !value {
 					s.setConds2ConstFalse()
 					return nil
@@ -204,14 +207,14 @@ func (s *propagateConstantSolver) tryToUpdateEQList(col *Column, con *Constant) 
 	id := s.getColID(col)
 	oldCon := s.eqList[id]
 	if oldCon != nil {
-		return false, !oldCon.Equal(con, s.ctx)
+		return false, !oldCon.Equal(s.ctx, con)
 	}
 	s.eqList[id] = con
 	return true, false
 }
 
 func (s *propagateConstantSolver) solve(conditions []Expression) []Expression {
-	var cols []*Column
+	cols := make([]*Column, 0, len(conditions))
 	for _, cond := range conditions {
 		s.conditions = append(s.conditions, SplitCNFItems(cond)...)
 		cols = append(cols, ExtractColumns(cond)...)
@@ -226,7 +229,7 @@ func (s *propagateConstantSolver) solve(conditions []Expression) []Expression {
 	s.propagateEQ()
 	s.propagateInEQ()
 	for i, cond := range s.conditions {
-		if dnf, ok := cond.(*ScalarFunction); ok && dnf.FuncName.L == ast.OrOr {
+		if dnf, ok := cond.(*ScalarFunction); ok && dnf.FuncName.L == ast.LogicOr {
 			dnfItems := SplitDNFItems(cond)
 			for j, item := range dnfItems {
 				dnfItems[j] = ComposeCNFCondition(s.ctx, PropagateConstant(s.ctx, []Expression{item})...)
@@ -238,12 +241,12 @@ func (s *propagateConstantSolver) solve(conditions []Expression) []Expression {
 }
 
 func (s *propagateConstantSolver) getColID(col *Column) int {
-	code := col.HashCode()
+	code := col.HashCode(nil)
 	return s.colMapper[string(code)]
 }
 
 func (s *propagateConstantSolver) insertCol(col *Column) {
-	code := col.HashCode()
+	code := col.HashCode(nil)
 	_, ok := s.colMapper[string(code)]
 	if !ok {
 		s.colMapper[string(code)] = len(s.colMapper)
@@ -252,7 +255,7 @@ func (s *propagateConstantSolver) insertCol(col *Column) {
 }
 
 // PropagateConstant propagate constant values of equality predicates and inequality predicates in a condition.
-func PropagateConstant(ctx context.Context, conditions []Expression) []Expression {
+func PropagateConstant(ctx sessionctx.Context, conditions []Expression) []Expression {
 	solver := &propagateConstantSolver{
 		colMapper: make(map[string]int),
 		ctx:       ctx,

@@ -18,25 +18,37 @@
 package table
 
 import (
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/types"
+)
+
+// Type , the type of table, store data in different ways.
+type Type int16
+
+const (
+	// NormalTable , store data in tikv, mocktikv and so on.
+	NormalTable Type = iota
+	// VirtualTable , store no data, just extract data from the memory struct.
+	VirtualTable
+	// MemoryTable , store data only in local memory.
+	MemoryTable
 )
 
 var (
-	// errNoDefaultValue is used when insert a row, the column value is not given, and the column has not null flag
-	// and it doesn't have a default value.
-	errNoDefaultValue  = terror.ClassTable.New(codeNoDefaultValue, "field doesn't have a default value")
 	errColumnCantNull  = terror.ClassTable.New(codeColumnCantNull, "column can not be null")
 	errUnknownColumn   = terror.ClassTable.New(codeUnknownColumn, "unknown column")
 	errDuplicateColumn = terror.ClassTable.New(codeDuplicateColumn, "duplicate column")
 
 	errGetDefaultFailed = terror.ClassTable.New(codeGetDefaultFailed, "get default value fail")
 
+	// ErrNoDefaultValue is used when insert a row, the column value is not given, and the column has not null flag
+	// and it doesn't have a default value.
+	ErrNoDefaultValue = terror.ClassTable.New(codeNoDefaultValue, "field doesn't have a default value")
 	// ErrIndexOutBound returns for index column offset out of bound.
 	ErrIndexOutBound = terror.ClassTable.New(codeIndexOutBound, "index column offset out of bound")
 	// ErrUnsupportedOp returns for unsupported operation.
@@ -63,13 +75,13 @@ type RecordIterFunc func(h int64, rec []types.Datum, cols []*Column) (more bool,
 // Table is used to retrieve and modify rows in table.
 type Table interface {
 	// IterRecords iterates records in the table and calls fn.
-	IterRecords(ctx context.Context, startKey kv.Key, cols []*Column, fn RecordIterFunc) error
+	IterRecords(ctx sessionctx.Context, startKey kv.Key, cols []*Column, fn RecordIterFunc) error
 
 	// RowWithCols returns a row that contains the given cols.
-	RowWithCols(ctx context.Context, h int64, cols []*Column) ([]types.Datum, error)
+	RowWithCols(ctx sessionctx.Context, h int64, cols []*Column) ([]types.Datum, error)
 
 	// Row returns a row for all columns.
-	Row(ctx context.Context, h int64) ([]types.Datum, error)
+	Row(ctx sessionctx.Context, h int64) ([]types.Datum, error)
 
 	// Cols returns the columns of the table which is used in select.
 	Cols() []*Column
@@ -80,6 +92,12 @@ type Table interface {
 
 	// Indices returns the indices of the table.
 	Indices() []Index
+
+	// WritableIndices returns write-only and public indices of the table.
+	WritableIndices() []Index
+
+	// DeletableIndices returns delete-only, write-only and public indices of the table.
+	DeletableIndices() []Index
 
 	// RecordPrefix returns the record key prefix.
 	RecordPrefix() kv.Key
@@ -93,31 +111,35 @@ type Table interface {
 	// RecordKey returns the key in KV storage for the row.
 	RecordKey(h int64) kv.Key
 
-	// AddRecord inserts a row into the table.
-	AddRecord(ctx context.Context, r []types.Datum) (recordID int64, err error)
+	// AddRecord inserts a row which should contain only public columns
+	// skipHandleCheck indicates that recordID in r has been checked as not duplicate already.
+	AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error)
 
-	// UpdateRecord updates a row in the table.
-	UpdateRecord(ctx context.Context, h int64, currData []types.Datum, newData []types.Datum, touched map[int]bool) error
+	// UpdateRecord updates a row which should contain only writable columns.
+	UpdateRecord(ctx sessionctx.Context, h int64, currData, newData []types.Datum, touched []bool) error
 
 	// RemoveRecord removes a row in the table.
-	RemoveRecord(ctx context.Context, h int64, r []types.Datum) error
+	RemoveRecord(ctx sessionctx.Context, h int64, r []types.Datum) error
 
 	// AllocAutoID allocates an auto_increment ID for a new row.
-	AllocAutoID() (int64, error)
+	AllocAutoID(ctx sessionctx.Context) (int64, error)
 
 	// Allocator returns Allocator.
-	Allocator() autoid.Allocator
+	Allocator(ctx sessionctx.Context) autoid.Allocator
 
 	// RebaseAutoID rebases the auto_increment ID base.
 	// If allocIDs is true, it will allocate some IDs and save to the cache.
 	// If allocIDs is false, it will not allocate IDs.
-	RebaseAutoID(newBase int64, allocIDs bool) error
+	RebaseAutoID(ctx sessionctx.Context, newBase int64, allocIDs bool) error
 
 	// Meta returns TableInfo.
 	Meta() *model.TableInfo
 
 	// Seek returns the handle greater or equal to h.
-	Seek(ctx context.Context, h int64) (handle int64, found bool, err error)
+	Seek(ctx sessionctx.Context, h int64) (handle int64, found bool, err error)
+
+	// Type returns the type of table
+	Type() Type
 }
 
 // TableFromMeta builds a table.Table from *model.TableInfo.

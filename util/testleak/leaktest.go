@@ -40,8 +40,11 @@ func interestingGoroutines() (gs []string) {
 			strings.Contains(stack, "created by github.com/pingcap/tidb.init") ||
 			strings.Contains(stack, "testing.RunTests") ||
 			strings.Contains(stack, "check.(*resultTracker).start") ||
+			strings.Contains(stack, "check.(*suiteRunner).runFunc") ||
 			strings.Contains(stack, "localstore.(*dbStore).scheduler") ||
+			strings.Contains(stack, "tikv.(*noGCHandler).Start") ||
 			strings.Contains(stack, "ddl.(*ddl).start") ||
+			strings.Contains(stack, "ddl.(*delRange).startEmulator") ||
 			strings.Contains(stack, "domain.NewDomain") ||
 			strings.Contains(stack, "testing.(*T).Run") ||
 			strings.Contains(stack, "domain.(*Domain).LoadPrivilegeLoop") ||

@@ -14,11 +14,14 @@
 package ast
 
 import (
+	"bytes"
 	"fmt"
+	"strings"
 
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/auth"
 )
 
 var (
@@ -38,12 +41,31 @@ var (
 	_ StmtNode = &SetPwdStmt{}
 	_ StmtNode = &SetStmt{}
 	_ StmtNode = &UseStmt{}
-	_ StmtNode = &AnalyzeTableStmt{}
 	_ StmtNode = &FlushStmt{}
 	_ StmtNode = &KillStmt{}
 
 	_ Node = &PrivElem{}
 	_ Node = &VariableAssignment{}
+)
+
+// Isolation level constants.
+const (
+	ReadCommitted   = "READ-COMMITTED"
+	ReadUncommitted = "READ-UNCOMMITTED"
+	Serializable    = "SERIALIZABLE"
+	RepeatableRead  = "REPEATABLE-READ"
+
+	// Valid formats for explain statement.
+	ExplainFormatROW = "row"
+	ExplainFormatDOT = "dot"
+)
+
+var (
+	// ExplainFormats stores the valid formats for explain statement, used by validator.
+	ExplainFormats = []string{
+		ExplainFormatROW,
+		ExplainFormatDOT,
+	}
 )
 
 // TypeOpt is used for parsing data type option from SQL.
@@ -74,7 +96,8 @@ type AuthOption struct {
 type ExplainStmt struct {
 	stmtNode
 
-	Stmt StmtNode
+	Stmt   StmtNode
+	Format string
 }
 
 // Accept implements Node Accept interface.
@@ -145,6 +168,7 @@ type ExecuteStmt struct {
 
 	Name      string
 	UsingVars []ExprNode
+	ExecID    uint32
 }
 
 // Accept implements Node Accept interface.
@@ -394,8 +418,13 @@ func (n *SetCharsetStmt) Accept(v Visitor) (Node, bool) {
 type SetPwdStmt struct {
 	stmtNode
 
-	User     string
+	User     *auth.UserIdentity
 	Password string
+}
+
+// SecureText implements SensitiveStatement interface.
+func (n *SetPwdStmt) SecureText() string {
+	return fmt.Sprintf("set password for user %s", n.User)
 }
 
 // Accept implements Node Accept interface.
@@ -410,7 +439,7 @@ func (n *SetPwdStmt) Accept(v Visitor) (Node, bool) {
 
 // UserSpec is used for parsing create user statement.
 type UserSpec struct {
-	User    string
+	User    *auth.UserIdentity
 	AuthOpt *AuthOption
 }
 
@@ -425,7 +454,26 @@ func (u *UserSpec) SecurityString() string {
 	if withPassword {
 		return fmt.Sprintf("{%s password = ***}", u.User)
 	}
-	return u.User
+	return u.User.String()
+}
+
+// EncodedPassword returns the encoded password (which is the real data mysql.user).
+// The boolean value indicates input's password format is legal or not.
+func (u *UserSpec) EncodedPassword() (string, bool) {
+	if u.AuthOpt == nil {
+		return "", true
+	}
+
+	opt := u.AuthOpt
+	if opt.ByAuthString {
+		return auth.EncodePassword(opt.AuthString), true
+	}
+
+	// Not a legal password string.
+	if len(opt.HashString) != 41 || !strings.HasPrefix(opt.HashString, "*") {
+		return "", false
+	}
+	return opt.HashString, true
 }
 
 // CreateUserStmt creates user account.
@@ -447,6 +495,17 @@ func (n *CreateUserStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// SecureText implements SensitiveStatement interface.
+func (n *CreateUserStmt) SecureText() string {
+	var buf bytes.Buffer
+	buf.WriteString("create user")
+	for _, user := range n.Specs {
+		buf.WriteString(" ")
+		buf.WriteString(user.SecurityString())
+	}
+	return buf.String()
+}
+
 // AlterUserStmt modifies user account.
 // See https://dev.mysql.com/doc/refman/5.7/en/alter-user.html
 type AlterUserStmt struct {
@@ -455,6 +514,17 @@ type AlterUserStmt struct {
 	IfExists    bool
 	CurrentAuth *AuthOption
 	Specs       []*UserSpec
+}
+
+// SecureText implements SensitiveStatement interface.
+func (n *AlterUserStmt) SecureText() string {
+	var buf bytes.Buffer
+	buf.WriteString("alter user")
+	for _, user := range n.Specs {
+		buf.WriteString(" ")
+		buf.WriteString(user.SecurityString())
+	}
+	return buf.String()
 }
 
 // Accept implements Node Accept interface.
@@ -473,7 +543,7 @@ type DropUserStmt struct {
 	stmtNode
 
 	IfExists bool
-	UserList []string
+	UserList []*auth.UserIdentity
 }
 
 // Accept implements Node Accept interface.
@@ -517,17 +587,31 @@ type AdminStmtType int
 const (
 	AdminShowDDL = iota + 1
 	AdminCheckTable
+	AdminShowDDLJobs
+	AdminCancelDDLJobs
+	AdminCheckIndex
+	AdminCheckIndexRange
 )
+
+// HandleRange represents a range where handle value >= Begin and < End.
+type HandleRange struct {
+	Begin int64
+	End   int64
+}
 
 // AdminStmt is the struct for Admin statement.
 type AdminStmt struct {
 	stmtNode
 
 	Tp     AdminStmtType
+	Index  string
 	Tables []*TableName
+	JobIDs []int64
+
+	HandleRanges []HandleRange
 }
 
-// Accept implements Node Accpet interface.
+// Accept implements Node Accept interface.
 func (n *AdminStmt) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
@@ -640,6 +724,17 @@ type GrantStmt struct {
 	WithGrant  bool
 }
 
+// SecureText implements SensitiveStatement interface.
+func (n *GrantStmt) SecureText() string {
+	text := n.text
+	// Filter "identified by xxx" because it would expose password information.
+	idx := strings.Index(strings.ToLower(text), "identified")
+	if idx > 0 {
+		text = text[:idx]
+	}
+	return text
+}
+
 // Accept implements Node Accept interface.
 func (n *GrantStmt) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
@@ -664,7 +759,7 @@ type Ident struct {
 }
 
 // Full returns an Ident which set schema to the current schema if it is empty.
-func (i Ident) Full(ctx context.Context) (full Ident) {
+func (i Ident) Full(ctx sessionctx.Context) (full Ident) {
 	full.Name = i.Name
 	if i.Schema.O != "" {
 		full.Schema = i.Schema
@@ -674,37 +769,12 @@ func (i Ident) Full(ctx context.Context) (full Ident) {
 	return
 }
 
-// String implements fmt.Stringer interface
+// String implements fmt.Stringer interface.
 func (i Ident) String() string {
 	if i.Schema.O == "" {
 		return i.Name.O
 	}
 	return fmt.Sprintf("%s.%s", i.Schema, i.Name)
-}
-
-// AnalyzeTableStmt is used to create table statistics.
-type AnalyzeTableStmt struct {
-	stmtNode
-
-	TableNames []*TableName
-	IndexNames []model.CIStr
-}
-
-// Accept implements Node Accept interface.
-func (n *AnalyzeTableStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*AnalyzeTableStmt)
-	for i, val := range n.TableNames {
-		node, ok := val.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.TableNames[i] = node.(*TableName)
-	}
-	return v.Leave(n)
 }
 
 // SelectStmtOpts wrap around select hints and switches

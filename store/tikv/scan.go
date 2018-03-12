@@ -15,11 +15,11 @@ package tikv
 
 import (
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	goctx "golang.org/x/net/context"
+	log "github.com/sirupsen/logrus"
+	"golang.org/x/net/context"
 )
 
 // Scanner support tikv scan
@@ -74,7 +74,7 @@ func (s *Scanner) Value() []byte {
 
 // Next return next element.
 func (s *Scanner) Next() error {
-	bo := NewBackoffer(scannerNextMaxBackoff, goctx.Background())
+	bo := NewBackoffer(context.Background(), scannerNextMaxBackoff)
 	if !s.valid {
 		return errors.New("scanner iterator is invalid")
 	}
@@ -131,7 +131,7 @@ func (s *Scanner) resolveCurrentLock(bo *Backoffer) error {
 
 func (s *Scanner) getData(bo *Backoffer) error {
 	log.Debugf("txn getData nextStartKey[%q], txn %d", s.nextStartKey, s.startTS())
-	sender := NewRegionRequestSender(s.snapshot.store.regionCache, s.snapshot.store.client, pbIsolationLevel(s.snapshot.isolationLevel))
+	sender := NewRegionRequestSender(s.snapshot.store.regionCache, s.snapshot.store.client)
 
 	for {
 		loc, err := s.snapshot.store.regionCache.LocateKey(bo, s.nextStartKey)
@@ -139,15 +139,19 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			return errors.Trace(err)
 		}
 		req := &tikvrpc.Request{
-			Type:     tikvrpc.CmdScan,
-			Priority: s.snapshot.priority,
+			Type: tikvrpc.CmdScan,
 			Scan: &pb.ScanRequest{
-				StartKey: []byte(s.nextStartKey),
+				StartKey: s.nextStartKey,
 				Limit:    uint32(s.batchSize),
 				Version:  s.startTS(),
 			},
+			Context: pb.Context{
+				IsolationLevel: pbIsolationLevel(s.snapshot.isolationLevel),
+				Priority:       s.snapshot.priority,
+				NotFillCache:   s.snapshot.notFillCache,
+			},
 		}
-		resp, err := sender.SendReq(bo, req, loc.Region, readTimeoutMedium)
+		resp, err := sender.SendReq(bo, req, loc.Region, ReadTimeoutMedium)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -157,7 +161,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		}
 		if regionErr != nil {
 			log.Debugf("scanner getData failed: %s", regionErr)
-			err = bo.Backoff(boRegionMiss, errors.New(regionErr.String()))
+			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -165,7 +169,12 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		}
 		cmdScanResp := resp.Scan
 		if cmdScanResp == nil {
-			return errors.Trace(errBodyMissing)
+			return errors.Trace(ErrBodyMissing)
+		}
+
+		err = s.snapshot.store.CheckVisibility(s.startTS())
+		if err != nil {
+			return errors.Trace(err)
 		}
 
 		kvPairs := cmdScanResp.Pairs

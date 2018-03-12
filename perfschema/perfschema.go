@@ -14,75 +14,32 @@
 package perfschema
 
 import (
-	"reflect"
-
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/terror"
 )
 
-var (
-	errInvalidPerfSchemaTable = terror.ClassPerfSchema.New(codeInvalidPerfSchemaTable, "invalid perfschema table")
-	errInvalidTimerFlag       = terror.ClassPerfSchema.New(codeInvalidTimerFlag, "invalid timer flag")
-)
-
-// StatementInstrument defines the methods for statement instrumentation points
-type StatementInstrument interface {
-	RegisterStatement(category, name string, elem interface{})
-
-	StartStatement(sql string, connID uint64, callerName EnumCallerName, elem interface{}) *StatementState
-
-	EndStatement(state *StatementState)
+// PerfSchema exports for test.
+type PerfSchema struct {
+	dbInfo  *model.DBInfo
+	tables  map[string]*model.TableInfo
+	mTables map[string]table.Table // Memory tables for perfSchema
 }
 
-// PerfSchema defines the methods to be invoked by the executor
-type PerfSchema interface {
-
-	// StatementInstrument is for statement instrumentation only.
-	StatementInstrument
-
-	// GetDBMeta returns db info for PerformanceSchema.
-	GetDBMeta() *model.DBInfo
-	// GetTable returns table instance for name.
-	GetTable(name string) (table.Table, bool)
-}
-
-type perfSchema struct {
-	store       kv.Storage
-	dbInfo      *model.DBInfo
-	tables      map[string]*model.TableInfo
-	mTables     map[string]table.Table // Memory tables for perfSchema
-	stmtHandles []int64
-	stmtInfos   map[reflect.Type]*statementInfo
-}
-
-var (
-	_ PerfSchema = (*perfSchema)(nil)
-
-	// perfschema is disabled by default to avoid performance consuming.
-	enablePerfSchema = false
-)
-
-// EnablePerfSchema enables perfschema.
-func EnablePerfSchema() {
-	enablePerfSchema = true
-}
+var handle = NewPerfHandle()
 
 // NewPerfHandle creates a new perfSchema on store.
-func NewPerfHandle() (PerfSchema, error) {
-	schema := &perfSchema{}
-	err := schema.initialize()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	schema.registerStatements()
-	return schema, nil
+func NewPerfHandle() *PerfSchema {
+	schema := &PerfSchema{}
+	schema.initialize()
+	return schema
 }
 
-// perfschema error codes.
-const (
-	codeInvalidPerfSchemaTable terror.ErrCode = 1
-	codeInvalidTimerFlag                      = 2
-)
+// GetDBMeta returns db info for PerformanceSchema.
+func GetDBMeta() *model.DBInfo {
+	return handle.GetDBMeta()
+}
+
+// GetTable returns table instance for name.
+func GetTable(name string) (table.Table, bool) {
+	return handle.GetTable(name)
+}

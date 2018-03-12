@@ -16,16 +16,15 @@ package tables_test
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/store/localstore"
-	"github.com/pingcap/tidb/store/localstore/goleveldb"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/types"
 )
 
 var _ = Suite(&testMemoryTableSuite{})
@@ -37,11 +36,10 @@ type testMemoryTableSuite struct {
 }
 
 func (ts *testMemoryTableSuite) SetUpSuite(c *C) {
-	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
-	store, err := driver.Open("memory")
+	store, err := mockstore.NewMockTikvStore()
 	c.Check(err, IsNil)
 	ts.store = store
-	ts.se, err = tidb.CreateSession(ts.store)
+	ts.se, err = tidb.CreateSession4Test(ts.store)
 	c.Assert(err, IsNil)
 
 	// create table
@@ -62,16 +60,18 @@ func (ts *testMemoryTableSuite) SetUpSuite(c *C) {
 	}
 
 	tblInfo := &model.TableInfo{
-		ID:      100,
-		Name:    model.NewCIStr("t"),
-		Columns: []*model.ColumnInfo{col1, col2},
+		ID:         100,
+		Name:       model.NewCIStr("t"),
+		Columns:    []*model.ColumnInfo{col1, col2},
+		PKIsHandle: true,
 	}
+	tblInfo.Columns[0].Flag |= mysql.PriKeyFlag
 	alloc := autoid.NewMemoryAllocator(int64(10))
-	ts.tbl, _ = tables.MemoryTableFromMeta(alloc, tblInfo)
+	ts.tbl = tables.MemoryTableFromMeta(alloc, tblInfo)
 }
 
 func (ts *testMemoryTableSuite) TestMemoryBasic(c *C) {
-	ctx := ts.se.(context.Context)
+	ctx := ts.se.(sessionctx.Context)
 	tb := ts.tbl
 	c.Assert(tb.Meta(), NotNil)
 	c.Assert(tb.Meta().ID, Greater, int64(0))
@@ -80,20 +80,40 @@ func (ts *testMemoryTableSuite) TestMemoryBasic(c *C) {
 	c.Assert(string(tb.FirstKey()), Not(Equals), "")
 	c.Assert(string(tb.RecordPrefix()), Not(Equals), "")
 
-	autoid, err := tb.AllocAutoID()
+	// Basic test for MemoryTable
+	handle, found, err := tb.Seek(nil, 0)
+	c.Assert(handle, Equals, int64(0))
+	c.Assert(found, Equals, false)
 	c.Assert(err, IsNil)
-	c.Assert(autoid, Greater, int64(0))
+	cols := tb.WritableCols()
+	c.Assert(cols, NotNil)
 
-	rid, err := tb.AddRecord(ctx, types.MakeDatums(1, "abc"))
+	key := tb.IndexPrefix()
+	c.Assert(key, IsNil)
+	err = tb.UpdateRecord(nil, 0, nil, nil, nil)
+	c.Assert(err, NotNil)
+	alc := tb.Allocator(nil)
+	c.Assert(alc, NotNil)
+	err = tb.RebaseAutoID(nil, 0, false)
+	c.Assert(err, IsNil)
+
+	autoID, err := tb.AllocAutoID(nil)
+	c.Assert(err, IsNil)
+	c.Assert(autoID, Greater, int64(0))
+
+	rid, err := tb.AddRecord(ctx, types.MakeDatums(1, "abc"), false)
 	c.Assert(err, IsNil)
 	row, err := tb.Row(ctx, rid)
 	c.Assert(err, IsNil)
 	c.Assert(len(row), Equals, 2)
 	c.Assert(row[0].GetInt64(), Equals, int64(1))
 
-	_, err = tb.AddRecord(ctx, types.MakeDatums(1, "aba"))
+	_, err = tb.AddRecord(ctx, types.MakeDatums(1, "aba"), false)
+	c.Assert(err, NotNil)
+	_, err = tb.AddRecord(ctx, types.MakeDatums(2, "abc"), false)
 	c.Assert(err, IsNil)
-	_, err = tb.AddRecord(ctx, types.MakeDatums(2, "abc"))
+
+	err = tb.UpdateRecord(ctx, 1, types.MakeDatums(1, "abc"), types.MakeDatums(3, "abe"), nil)
 	c.Assert(err, IsNil)
 
 	tb.IterRecords(ctx, tb.FirstKey(), tb.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
@@ -104,15 +124,15 @@ func (ts *testMemoryTableSuite) TestMemoryBasic(c *C) {
 	vals, err := tb.RowWithCols(ctx, rid, tb.Cols())
 	c.Assert(err, IsNil)
 	c.Assert(vals, HasLen, 2)
-	c.Assert(vals[0].GetInt64(), Equals, int64(1))
-	cols := []*table.Column{tb.Cols()[1]}
+	c.Assert(vals[0].GetInt64(), Equals, int64(3))
+	cols = []*table.Column{tb.Cols()[1]}
 	vals, err = tb.RowWithCols(ctx, rid, cols)
 	c.Assert(err, IsNil)
 	c.Assert(vals, HasLen, 1)
-	c.Assert(vals[0].GetString(), Equals, "abc")
+	c.Assert(vals[0].GetString(), Equals, "abe")
 
 	c.Assert(tb.RemoveRecord(ctx, rid, types.MakeDatums(1, "cba")), IsNil)
-	_, err = tb.AddRecord(ctx, types.MakeDatums(1, "abc"))
+	_, err = tb.AddRecord(ctx, types.MakeDatums(1, "abc"), false)
 	c.Assert(err, IsNil)
 	tb.(*tables.MemoryTable).Truncate()
 	_, err = tb.Row(ctx, rid)

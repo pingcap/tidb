@@ -23,51 +23,82 @@ import (
 
 type leaseGrantItem struct {
 	leaseGrantTS uint64
+	oldVer       int64
 	schemaVer    int64
 }
 
 func (*testSuite) TestSchemaValidator(c *C) {
 	defer testleak.AfterTest(c)()
+
 	lease := 5 * time.Millisecond
 	leaseGrantCh := make(chan leaseGrantItem)
 	oracleCh := make(chan uint64)
 	exit := make(chan struct{})
 	go serverFunc(lease, leaseGrantCh, oracleCh, exit)
 
-	validator := newSchemaValidator(lease)
+	validator := NewSchemaValidator(lease).(*schemaValidator)
 
 	for i := 0; i < 10; i++ {
 		delay := time.Duration(100+rand.Intn(900)) * time.Microsecond
 		time.Sleep(delay)
 		// Reload can run arbitrarily, at any time.
-		reload(validator, leaseGrantCh)
+		reload(validator, leaseGrantCh, 0)
 	}
 
 	// Take a lease, check it's valid.
 	item := <-leaseGrantCh
-	validator.Update(item.leaseGrantTS, item.schemaVer)
-	valid := validator.Check(item.leaseGrantTS, item.schemaVer)
-	c.Assert(valid, IsTrue)
+	validator.Update(item.leaseGrantTS, item.oldVer, item.schemaVer, []int64{10})
+	valid := validator.Check(item.leaseGrantTS, item.schemaVer, []int64{10})
+	c.Assert(valid, Equals, ResultSucc)
+
+	// Stop the validator, validator's items value is nil.
+	validator.Stop()
+	isTablesChanged := validator.isRelatedTablesChanged(item.schemaVer, []int64{10})
+	c.Assert(isTablesChanged, IsTrue)
+	valid = validator.Check(item.leaseGrantTS, item.schemaVer, []int64{10})
+	c.Assert(valid, Equals, ResultFail)
+	validator.Restart()
 
 	// Sleep for a long time, check schema is invalid.
 	time.Sleep(lease)
 	ts := <-oracleCh
-	valid = validator.Check(ts, item.schemaVer)
-	c.Assert(valid, IsFalse)
+	valid = validator.Check(ts, item.schemaVer, []int64{10})
+	c.Assert(valid, Equals, ResultUnknown)
 
-	reload(validator, leaseGrantCh)
-	valid = validator.Check(ts, item.schemaVer)
-	c.Assert(valid, IsFalse)
-
+	currVer := reload(validator, leaseGrantCh, 0)
+	valid = validator.Check(ts, item.schemaVer, []int64{0})
+	c.Assert(valid, Equals, ResultFail)
 	// Check the latest schema version must changed.
-	c.Assert(item.schemaVer, Less, validator.Latest())
+	c.Assert(item.schemaVer, Less, validator.latestSchemaVer)
+
+	// Make sure newItem's version is bigger than currVer.
+	time.Sleep(lease * 2)
+	newItem := <-leaseGrantCh
+
+	// Update current schema version to newItem's version and the delta table IDs is 1, 2, 3.
+	validator.Update(ts, currVer, newItem.schemaVer, []int64{1, 2, 3})
+	// Make sure the updated table IDs don't be covered with the same schema version.
+	validator.Update(ts, newItem.schemaVer, newItem.schemaVer, nil)
+	isTablesChanged = validator.isRelatedTablesChanged(currVer, nil)
+	c.Assert(isTablesChanged, IsFalse)
+	isTablesChanged = validator.isRelatedTablesChanged(currVer, []int64{2})
+	c.Assert(isTablesChanged, IsTrue)
+	// The current schema version is older than the oldest schema version.
+	isTablesChanged = validator.isRelatedTablesChanged(-1, nil)
+	c.Assert(isTablesChanged, IsTrue)
+
+	// All schema versions is expired.
+	ts = uint64(time.Now().Add(lease).UnixNano())
+	valid = validator.Check(ts, newItem.schemaVer, nil)
+	c.Assert(valid, Equals, ResultUnknown)
 
 	exit <- struct{}{}
 }
 
-func reload(validator SchemaValidator, leaseGrantCh chan leaseGrantItem) {
+func reload(validator SchemaValidator, leaseGrantCh chan leaseGrantItem, ids ...int64) int64 {
 	item := <-leaseGrantCh
-	validator.Update(item.leaseGrantTS, item.schemaVer)
+	validator.Update(item.leaseGrantTS, item.oldVer, item.schemaVer, ids)
+	return item.schemaVer
 }
 
 // serverFunc plays the role as a remote server, runs in a separate goroutine.
@@ -84,6 +115,7 @@ func serverFunc(lease time.Duration, requireLease chan leaseGrantItem, oracleCh 
 			leaseTS = uint64(time.Now().UnixNano())
 		case requireLease <- leaseGrantItem{
 			leaseGrantTS: leaseTS,
+			oldVer:       version - 1,
 			schemaVer:    version,
 		}:
 		case oracleCh <- uint64(time.Now().UnixNano()):

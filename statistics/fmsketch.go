@@ -15,11 +15,13 @@ package statistics
 
 import (
 	"hash"
-	"hash/fnv"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tipb/go-tipb"
+	"github.com/spaolacci/murmur3"
 )
 
 // FMSketch is used to count the number of distinct elements in a set.
@@ -35,7 +37,7 @@ func NewFMSketch(maxSize int) *FMSketch {
 	return &FMSketch{
 		hashset:  make(map[uint64]bool),
 		maxSize:  maxSize,
-		hashFunc: fnv.New64a(),
+		hashFunc: murmur3.New64(),
 	}
 }
 
@@ -60,8 +62,8 @@ func (s *FMSketch) insertHashValue(hashVal uint64) {
 }
 
 // InsertValue inserts a value into the FM sketch.
-func (s *FMSketch) InsertValue(value types.Datum) error {
-	bytes, err := codec.EncodeValue(nil, value)
+func (s *FMSketch) InsertValue(sc *stmtctx.StatementContext, value types.Datum) error {
+	bytes, err := codec.EncodeValue(sc, nil, value)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -74,10 +76,10 @@ func (s *FMSketch) InsertValue(value types.Datum) error {
 	return nil
 }
 
-func buildFMSketch(values []types.Datum, maxSize int) (*FMSketch, int64, error) {
+func buildFMSketch(sc *stmtctx.StatementContext, values []types.Datum, maxSize int) (*FMSketch, int64, error) {
 	s := NewFMSketch(maxSize)
 	for _, value := range values {
-		err := s.InsertValue(value)
+		err := s.InsertValue(sc, value)
 		if err != nil {
 			return nil, 0, errors.Trace(err)
 		}
@@ -85,17 +87,38 @@ func buildFMSketch(values []types.Datum, maxSize int) (*FMSketch, int64, error) 
 	return s, s.NDV(), nil
 }
 
-func mergeFMSketches(sketches []*FMSketch, maxSize int) (*FMSketch, int64) {
-	s := NewFMSketch(maxSize)
-	for _, sketch := range sketches {
-		if s.mask < sketch.mask {
-			s.mask = sketch.mask
+func (s *FMSketch) mergeFMSketch(rs *FMSketch) {
+	if s.mask < rs.mask {
+		s.mask = rs.mask
+		for key := range s.hashset {
+			if (key & s.mask) != 0 {
+				delete(s.hashset, key)
+			}
 		}
 	}
-	for _, sketch := range sketches {
-		for key := range sketch.hashset {
-			s.insertHashValue(key)
-		}
+	for key := range rs.hashset {
+		s.insertHashValue(key)
 	}
-	return s, s.NDV()
+}
+
+// FMSketchToProto converts FMSketch to its protobuf representation.
+func FMSketchToProto(s *FMSketch) *tipb.FMSketch {
+	protoSketch := new(tipb.FMSketch)
+	protoSketch.Mask = s.mask
+	for val := range s.hashset {
+		protoSketch.Hashset = append(protoSketch.Hashset, val)
+	}
+	return protoSketch
+}
+
+// FMSketchFromProto converts FMSketch from its protobuf representation.
+func FMSketchFromProto(protoSketch *tipb.FMSketch) *FMSketch {
+	sketch := &FMSketch{
+		hashset: make(map[uint64]bool),
+		mask:    protoSketch.Mask,
+	}
+	for _, val := range protoSketch.Hashset {
+		sketch.hashset[val] = true
+	}
+	return sketch
 }

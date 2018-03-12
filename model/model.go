@@ -15,9 +15,10 @@ package model
 
 import (
 	"strings"
+	"time"
 
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/types"
 )
 
 // SchemaState is the state for schema elements.
@@ -78,6 +79,18 @@ func (c *ColumnInfo) Clone() *ColumnInfo {
 	return &nc
 }
 
+// IsGenerated returns true if the column is generated column.
+func (c *ColumnInfo) IsGenerated() bool {
+	return len(c.GeneratedExprString) != 0
+}
+
+// ExtraHandleID is the column ID of column which we need to append to schema to occupy the handle's position
+// for use of execution phase.
+const ExtraHandleID = -1
+
+// ExtraHandleName is the name of ExtraHandle Column.
+var ExtraHandleName = NewCIStr("_rowid")
+
 // TableInfo provides meta data describing a DB table.
 type TableInfo struct {
 	ID      int64  `json:"id"`
@@ -94,11 +107,33 @@ type TableInfo struct {
 	AutoIncID   int64         `json:"auto_inc_id"`
 	MaxColumnID int64         `json:"max_col_id"`
 	MaxIndexID  int64         `json:"max_idx_id"`
+	// UpdateTS is used to record the timestamp of updating the table's schema information.
+	// These changing schema operations don't include 'truncate table' and 'rename table'.
+	UpdateTS uint64 `json:"update_timestamp"`
 	// OldSchemaID :
 	// Because auto increment ID has schemaID as prefix,
 	// We need to save original schemaID to keep autoID unchanged
 	// while renaming a table from one database to another.
+	// TODO: Remove it.
+	// Now it only uses for compatibility with the old version that already uses this field.
 	OldSchemaID int64 `json:"old_schema_id,omitempty"`
+
+	// ShardRowIDBits specify if the implicit row ID is sharded.
+	ShardRowIDBits uint64
+}
+
+// GetUpdateTime gets the table's updating time.
+func (t *TableInfo) GetUpdateTime() time.Time {
+	return tsConvert2Time(t.UpdateTS)
+}
+
+// GetDBID returns the schema ID that is used to create an allocator.
+// TODO: Remove it after removing OldSchemaID.
+func (t *TableInfo) GetDBID(dbID int64) int64 {
+	if t.OldSchemaID != 0 {
+		return t.OldSchemaID
+	}
+	return dbID
 }
 
 // Clone clones TableInfo.
@@ -146,6 +181,32 @@ func (t *TableInfo) GetPkColInfo() *ColumnInfo {
 	return nil
 }
 
+// Cols returns the columns of the table in public state.
+func (t *TableInfo) Cols() []*ColumnInfo {
+	publicColumns := make([]*ColumnInfo, len(t.Columns))
+	maxOffset := -1
+	for _, col := range t.Columns {
+		if col.State != StatePublic {
+			continue
+		}
+		publicColumns[col.Offset] = col
+		if maxOffset < col.Offset {
+			maxOffset = col.Offset
+		}
+	}
+	return publicColumns[0 : maxOffset+1]
+}
+
+// NewExtraHandleColInfo mocks a column info for extra handle column.
+func NewExtraHandleColInfo() *ColumnInfo {
+	colInfo := &ColumnInfo{
+		ID:   ExtraHandleID,
+		Name: ExtraHandleName,
+	}
+	colInfo.Flag = mysql.PriKeyFlag
+	return colInfo
+}
+
 // ColumnIsInIndex checks whether c is included in any indices of t.
 func (t *TableInfo) ColumnIsInIndex(c *ColumnInfo) bool {
 	for _, index := range t.Indices {
@@ -184,13 +245,15 @@ func (t IndexType) String() string {
 		return "BTREE"
 	case IndexTypeHash:
 		return "HASH"
+	default:
+		return ""
 	}
-	return ""
 }
 
 // IndexTypes
 const (
-	IndexTypeBtree IndexType = iota + 1
+	IndexTypeInvalid IndexType = iota
+	IndexTypeBtree
 	IndexTypeHash
 )
 

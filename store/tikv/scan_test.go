@@ -18,6 +18,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"golang.org/x/net/context"
 )
 
 type testScanSuite struct {
@@ -45,7 +46,7 @@ func (s *testScanSuite) TearDownSuite(c *C) {
 		c.Assert(err, IsNil)
 		scanner.Next()
 	}
-	err = txn.Commit()
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 	err = s.store.Close()
 	c.Assert(err, IsNil)
@@ -64,11 +65,12 @@ func (s *testScanSuite) TestSeek(c *C) {
 			err := txn.Set(encodeKey(s.prefix, s08d("key", i)), valueBytes(i))
 			c.Assert(err, IsNil)
 		}
-		err := txn.Commit()
+		err := txn.Commit(context.Background())
 		c.Assert(err, IsNil)
 
 		txn2 := s.beginTxn(c)
 		val, err := txn2.Get(encodeKey(s.prefix, s08d("key", 0)))
+		c.Assert(err, IsNil)
 		c.Assert(val, BytesEquals, valueBytes(0))
 		scan, err := txn2.Seek(encodeKey(s.prefix, ""))
 		c.Assert(err, IsNil)

@@ -1,0 +1,212 @@
+# TiDB Configuration.
+
+# TiDB server host.
+host = "0.0.0.0"
+
+# TiDB server port.
+port = 4000
+
+# Registered store name, [tikv, mocktikv]
+store = "mocktikv"
+
+# TiDB storage path.
+path = "/tmp/tidb"
+
+# The socket file to use for connection.
+socket = ""
+
+# Socket file to write binlog.
+binlog-socket = ""
+
+# Run ddl worker on this tidb-server.
+run-ddl = true
+
+# Schema lease duration, very dangerous to change only if you know what you do.
+lease = "10s"
+
+# When create table, split a separated region for it. It is recommended to
+# turn off this option if there will be a large number of tables created.
+split-table = true
+
+# The limit of concurrent executed sessions.
+token-limit = 1000
+
+# Enable chunk executors.
+enable-chunk = true
+
+# Only print a log when out of memory quota.
+# Valid options: ["log", "cancel"]
+oom-action = "log"
+
+# Enable coprocessor streaming.
+enable-streaming = false
+
+[log]
+# Log level: debug, info, warn, error, fatal.
+level = "info"
+
+# Log format, one of json, text, console.
+format = "text"
+
+# Disable automatic timestamp in output
+disable-timestamp = false
+
+# Stores slow query log into separated files.
+slow-query-file = ""
+
+# Queries with execution time greater than this value will be logged. (Milliseconds)
+slow-threshold = 300
+
+# Queries with internal result greater than this value will be logged.
+expensive-threshold = 10000
+
+# Maximum query length recorded in log.
+query-log-max-len = 2048
+
+# File logging.
+[log.file]
+# Log file name.
+filename = ""
+
+# Max log file size in MB (upper limit to 4096MB).
+max-size = 300
+
+# Max log file keep days. No clean up by default.
+max-days = 0
+
+# Maximum number of old log files to retain. No clean up by default.
+max-backups = 0
+
+# Rotate log by day
+log-rotate = true
+
+[security]
+# Path of file that contains list of trusted SSL CAs for connection with mysql client.
+ssl-ca = ""
+
+# Path of file that contains X509 certificate in PEM format for connection with mysql client.
+ssl-cert = ""
+
+# Path of file that contains X509 key in PEM format for connection with mysql client.
+ssl-key = ""
+
+# Path of file that contains list of trusted SSL CAs for connection with cluster components.
+cluster-ssl-ca = ""
+
+# Path of file that contains X509 certificate in PEM format for connection with cluster components.
+cluster-ssl-cert = ""
+
+# Path of file that contains X509 key in PEM format for connection with cluster components.
+cluster-ssl-key = ""
+
+[status]
+# If enable status report HTTP service.
+report-status = true
+
+# TiDB status port.
+status-port = 10080
+
+# Prometheus pushgateway address, leaves it empty will disable prometheus push.
+metrics-addr = ""
+
+# Prometheus client push interval in second, set \"0\" to disable prometheus push.
+metrics-interval = 15
+
+[performance]
+# Max CPUs to use, 0 use number of CPUs in the machine.
+max-procs = 0
+# StmtCountLimit limits the max count of statement inside a transaction.
+stmt-count-limit = 5000
+
+# Set keep alive option for tcp connection.
+tcp-keep-alive = true
+
+# The maximum number of retries when commit a transaction.
+retry-limit = 10
+
+# The number of goroutines that participate joining.
+join-concurrency = 5
+
+# Whether support cartesian product.
+cross-join = true
+
+# Stats lease duration, which influences the time of analyze and stats load.
+stats-lease = "3s"
+
+# Run auto analyze worker on this tidb-server.
+run-auto-analyze = true
+
+[proxy-protocol]
+# PROXY protocol acceptable client networks.
+# Empty string means disable PROXY protocol, * means all networks.
+networks = ""
+
+# PROXY protocol header read timeout, unit is second
+header-timeout = 5
+
+[plan-cache]
+enabled = false
+capacity = 2560
+shards = 256
+
+[prepared-plan-cache]
+enabled = false
+capacity = 100
+
+[opentracing]
+# Enable opentracing.
+enable = false
+
+# Whether to enable the rpc metrics.
+rpc-metrics = false
+
+[opentracing.sampler]
+# Type specifies the type of the sampler: const, probabilistic, rateLimiting, or remote
+type = "const"
+
+# Param is a value passed to the sampler.
+# Valid values for Param field are:
+# - for "const" sampler, 0 or 1 for always false/true respectively
+# - for "probabilistic" sampler, a probability between 0 and 1
+# - for "rateLimiting" sampler, the number of spans per second
+# - for "remote" sampler, param is the same as for "probabilistic"
+# and indicates the initial sampling rate before the actual one
+# is received from the mothership
+param = 1.0
+
+# SamplingServerURL is the address of jaeger-agent's HTTP sampling server
+sampling-server-url = ""
+
+# MaxOperations is the maximum number of operations that the sampler
+# will keep track of. If an operation is not tracked, a default probabilistic
+# sampler will be used rather than the per operation specific sampler.
+max-operations = 0
+
+# SamplingRefreshInterval controls how often the remotely controlled sampler will poll
+# jaeger-agent for the appropriate sampling strategy.
+sampling-refresh-interval = 0
+
+[opentracing.reporter]
+# QueueSize controls how many spans the reporter can keep in memory before it starts dropping
+# new spans. The queue is continuously drained by a background go-routine, as fast as spans
+# can be sent out of process.
+queue-size = 0
+
+# BufferFlushInterval controls how often the buffer is force-flushed, even if it's not full.
+# It is generally not useful, as it only matters for very low traffic services.
+buffer-flush-interval = 0
+
+# LogSpans, when true, enables LoggingReporter that runs in parallel with the main reporter
+# and logs all submitted spans. Main Configuration.Logger must be initialized in the code
+# for this option to have any effect.
+log-spans = false
+
+#  LocalAgentHostPort instructs reporter to send spans to jaeger-agent at this address
+local-agent-host-port = ""
+
+[tikv-client]
+# Max gRPC connections that will be established with each tikv-server.
+grpc-connection-count = 16
+
+# max time for commit command, must be twice bigger than raft election timeout.
+commit-timeout = "41s"

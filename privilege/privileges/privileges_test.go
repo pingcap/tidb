@@ -15,19 +15,20 @@ package privileges_test
 
 import (
 	"fmt"
-	"os"
 	"testing"
 
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
+	"golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
@@ -53,9 +54,7 @@ type testPrivilegeSuite struct {
 	createColumnPrivTableSQL string
 }
 
-func (s *testPrivilegeSuite) SetUpSuit(c *C) {
-	logLevel := os.Getenv("log_level")
-	log.SetLevelByString(logLevel)
+func (s *testPrivilegeSuite) SetUpSuite(c *C) {
 }
 
 func (s *testPrivilegeSuite) SetUpTest(c *C) {
@@ -102,7 +101,7 @@ func (s *testPrivilegeSuite) TestCheckDBPrivilege(c *C) {
 	mustExec(c, rootSe, `FLUSH PRIVILEGES;`)
 
 	se := newSession(c, s.store, s.dbName)
-	c.Assert(se.Auth("testcheck@localhost", nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "testcheck", Hostname: "localhost"}, nil, nil), IsTrue)
 	pc := privilege.GetPrivilegeManager(se)
 	c.Assert(pc.RequestVerification("test", "", "", mysql.SelectPriv), IsFalse)
 
@@ -123,7 +122,7 @@ func (s *testPrivilegeSuite) TestCheckTablePrivilege(c *C) {
 	mustExec(c, rootSe, `FLUSH PRIVILEGES;`)
 
 	se := newSession(c, s.store, s.dbName)
-	c.Assert(se.Auth("test1@localhost", nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "test1", Hostname: "localhost"}, nil, nil), IsTrue)
 	pc := privilege.GetPrivilegeManager(se)
 	c.Assert(pc.RequestVerification("test", "test", "", mysql.SelectPriv), IsFalse)
 
@@ -150,14 +149,14 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	mustExec(c, se, `FLUSH PRIVILEGES;`)
 	pc := privilege.GetPrivilegeManager(se)
 
-	gs, err := pc.ShowGrants(se, `show@localhost`)
+	gs, err := pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"})
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 1)
 	c.Assert(gs[0], Equals, `GRANT Index ON *.* TO 'show'@'localhost'`)
 
 	mustExec(c, se, `GRANT Select ON *.* TO  'show'@'localhost';`)
 	mustExec(c, se, `FLUSH PRIVILEGES;`)
-	gs, err = pc.ShowGrants(se, `show@localhost`)
+	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"})
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 1)
 	c.Assert(gs[0], Equals, `GRANT Select,Index ON *.* TO 'show'@'localhost'`)
@@ -165,7 +164,7 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	// The order of privs is the same with AllGlobalPrivs
 	mustExec(c, se, `GRANT Update ON *.* TO  'show'@'localhost';`)
 	mustExec(c, se, `FLUSH PRIVILEGES;`)
-	gs, err = pc.ShowGrants(se, `show@localhost`)
+	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"})
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 1)
 	c.Assert(gs[0], Equals, `GRANT Select,Update,Index ON *.* TO 'show'@'localhost'`)
@@ -173,7 +172,7 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	// All privileges
 	mustExec(c, se, `GRANT ALL ON *.* TO  'show'@'localhost';`)
 	mustExec(c, se, `FLUSH PRIVILEGES;`)
-	gs, err = pc.ShowGrants(se, `show@localhost`)
+	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"})
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 1)
 	c.Assert(gs[0], Equals, `GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`)
@@ -181,7 +180,7 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	// Add db scope privileges
 	mustExec(c, se, `GRANT Select ON test.* TO  'show'@'localhost';`)
 	mustExec(c, se, `FLUSH PRIVILEGES;`)
-	gs, err = pc.ShowGrants(se, `show@localhost`)
+	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"})
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 2)
 	expected := []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
@@ -190,7 +189,7 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 
 	mustExec(c, se, `GRANT Index ON test1.* TO  'show'@'localhost';`)
 	mustExec(c, se, `FLUSH PRIVILEGES;`)
-	gs, err = pc.ShowGrants(se, `show@localhost`)
+	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"})
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 3)
 	expected = []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
@@ -200,7 +199,7 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 
 	mustExec(c, se, `GRANT ALL ON test1.* TO  'show'@'localhost';`)
 	mustExec(c, se, `FLUSH PRIVILEGES;`)
-	gs, err = pc.ShowGrants(se, `show@localhost`)
+	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"})
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 3)
 	expected = []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
@@ -211,7 +210,7 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	// Add table scope privileges
 	mustExec(c, se, `GRANT Update ON test.test TO  'show'@'localhost';`)
 	mustExec(c, se, `FLUSH PRIVILEGES;`)
-	gs, err = pc.ShowGrants(se, `show@localhost`)
+	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"})
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 4)
 	expected = []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
@@ -219,32 +218,45 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 		`GRANT ALL PRIVILEGES ON test1.* TO 'show'@'localhost'`,
 		`GRANT Update ON test.test TO 'show'@'localhost'`}
 	c.Assert(testutil.CompareUnorderedStringSlice(gs, expected), IsTrue)
+
+	// Fix a issue that empty privileges is displayed when revoke after grant.
+	mustExec(c, se, "TRUNCATE TABLE mysql.db")
+	mustExec(c, se, "TRUNCATE TABLE mysql.user")
+	mustExec(c, se, "TRUNCATE TABLE mysql.tables_priv")
+	mustExec(c, se, "GRANT ALL PRIVILEGES ON `te%`.* TO 'show'@'localhost'")
+	mustExec(c, se, "REVOKE ALL PRIVILEGES ON `te%`.* FROM 'show'@'localhost'")
+	mustExec(c, se, `FLUSH PRIVILEGES;`)
+	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"})
+	c.Assert(err, IsNil)
+	// It should not be "GRANT ON `te%`.* to 'show'@'localhost'"
+	c.Assert(gs, HasLen, 0)
+
 }
 
 func (s *testPrivilegeSuite) TestDropTablePriv(c *C) {
 	defer testleak.AfterTest(c)()
 	se := newSession(c, s.store, s.dbName)
-	ctx, _ := se.(context.Context)
+	ctx, _ := se.(sessionctx.Context)
 	mustExec(c, se, `CREATE TABLE todrop(c int);`)
 	// ctx.GetSessionVars().User = "root@localhost"
-	c.Assert(se.Auth("root@localhost", nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil), IsTrue)
 	mustExec(c, se, `CREATE USER 'drop'@'localhost';`)
 	mustExec(c, se, `GRANT Select ON test.todrop TO  'drop'@'localhost';`)
 	mustExec(c, se, `FLUSH PRIVILEGES;`)
 
 	// ctx.GetSessionVars().User = "drop@localhost"
-	c.Assert(se.Auth("drop@localhost", nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "drop", Hostname: "localhost"}, nil, nil), IsTrue)
 	mustExec(c, se, `SELECT * FROM todrop;`)
-	_, err := se.Execute("DROP TABLE todrop;")
+	_, err := se.Execute(context.Background(), "DROP TABLE todrop;")
 	c.Assert(err, NotNil)
 
 	se = newSession(c, s.store, s.dbName)
-	ctx.GetSessionVars().User = "root@localhost"
+	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
 	mustExec(c, se, `GRANT Drop ON test.todrop TO  'drop'@'localhost';`)
 	mustExec(c, se, `FLUSH PRIVILEGES;`)
 
 	se = newSession(c, s.store, s.dbName)
-	ctx.GetSessionVars().User = "drop@localhost"
+	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "drop", Hostname: "localhost"}
 	mustExec(c, se, `DROP TABLE todrop;`)
 }
 
@@ -254,21 +266,51 @@ func (s *testPrivilegeSuite) TestCheckAuthenticate(c *C) {
 	se := newSession(c, s.store, s.dbName)
 	mustExec(c, se, `CREATE USER 'u1'@'localhost';`)
 	mustExec(c, se, `CREATE USER 'u2'@'localhost' identified by 'abc';`)
+	mustExec(c, se, `CREATE USER 'u3@example.com'@'localhost';`)
+	mustExec(c, se, `CREATE USER u4@localhost;`)
 	mustExec(c, se, `FLUSH PRIVILEGES;`)
-	c.Assert(se.Auth("u1@localhost", nil, nil), IsTrue)
-	c.Assert(se.Auth("u2@localhost", nil, nil), IsFalse)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "u2", Hostname: "localhost"}, nil, nil), IsFalse)
 	salt := []byte{85, 92, 45, 22, 58, 79, 107, 6, 122, 125, 58, 80, 12, 90, 103, 32, 90, 10, 74, 82}
-	auth := []byte{24, 180, 183, 225, 166, 6, 81, 102, 70, 248, 199, 143, 91, 204, 169, 9, 161, 171, 203, 33}
-	c.Assert(se.Auth("u2@localhost", auth, salt), IsTrue)
+	authentication := []byte{24, 180, 183, 225, 166, 6, 81, 102, 70, 248, 199, 143, 91, 204, 169, 9, 161, 171, 203, 33}
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "u2", Hostname: "localhost"}, authentication, salt), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "u3@example.com", Hostname: "localhost"}, nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "u4", Hostname: "localhost"}, nil, nil), IsTrue)
+
+	se1 := newSession(c, s.store, s.dbName)
+	mustExec(c, se1, "drop user 'u1'@'localhost'")
+	mustExec(c, se1, "drop user 'u2'@'localhost'")
+	mustExec(c, se1, "drop user 'u3@example.com'@'localhost'")
+	mustExec(c, se1, "drop user u4@localhost")
+	mustExec(c, se1, `FLUSH PRIVILEGES;`)
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil), IsFalse)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "u2", Hostname: "localhost"}, nil, nil), IsFalse)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "u3@example.com", Hostname: "localhost"}, nil, nil), IsFalse)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "u4", Hostname: "localhost"}, nil, nil), IsFalse)
+}
+
+func (s *testPrivilegeSuite) TestInformationSchema(c *C) {
+	defer testleak.AfterTest(c)()
+
+	// This test tests no privilege check for INFORMATION_SCHEMA database.
+	se := newSession(c, s.store, s.dbName)
+	mustExec(c, se, `CREATE USER 'u1'@'localhost';`)
+	mustExec(c, se, `FLUSH PRIVILEGES;`)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil), IsTrue)
+	mustExec(c, se, `select * from information_schema.tables`)
+	mustExec(c, se, `select * from information_schema.key_column_usage`)
 }
 
 func mustExec(c *C, se tidb.Session, sql string) {
-	_, err := se.Execute(sql)
+	_, err := se.Execute(context.Background(), sql)
 	c.Assert(err, IsNil)
 }
 
 func newStore(c *C, dbPath string) kv.Storage {
-	store, err := tidb.NewStore("memory" + "://" + dbPath)
+	store, err := mockstore.NewMockTikvStore()
+	tidb.SetSchemaLease(0)
+	tidb.SetStatsLease(0)
 	c.Assert(err, IsNil)
 	_, err = tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
@@ -276,7 +318,7 @@ func newStore(c *C, dbPath string) kv.Storage {
 }
 
 func newSession(c *C, store kv.Storage, dbName string) tidb.Session {
-	se, err := tidb.CreateSession(store)
+	se, err := tidb.CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	mustExec(c, se, "create database if not exists "+dbName)
 	mustExec(c, se, "use "+dbName)

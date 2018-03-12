@@ -42,6 +42,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/hack"
+	"golang.org/x/net/context"
 )
 
 func (cc *clientConn) handleStmtPrepare(sql string) error {
@@ -54,11 +55,11 @@ func (cc *clientConn) handleStmtPrepare(sql string) error {
 	//status ok
 	data = append(data, 0)
 	//stmt id
-	data = append(data, dumpUint32(uint32(stmt.ID()))...)
+	data = dumpUint32(data, uint32(stmt.ID()))
 	//number columns
-	data = append(data, dumpUint16(uint16(len(columns)))...)
+	data = dumpUint16(data, uint16(len(columns)))
 	//number params
-	data = append(data, dumpUint16(uint16(len(params)))...)
+	data = dumpUint16(data, uint16(len(params)))
 	//filter [00]
 	data = append(data, 0)
 	//warning count
@@ -71,7 +72,7 @@ func (cc *clientConn) handleStmtPrepare(sql string) error {
 	if len(params) > 0 {
 		for i := 0; i < len(params); i++ {
 			data = data[0:4]
-			data = append(data, params[i].Dump(cc.alloc)...)
+			data = params[i].Dump(data)
 
 			if err := cc.writePacket(data); err != nil {
 				return errors.Trace(err)
@@ -86,7 +87,7 @@ func (cc *clientConn) handleStmtPrepare(sql string) error {
 	if len(columns) > 0 {
 		for i := 0; i < len(columns); i++ {
 			data = data[0:4]
-			data = append(data, columns[i].Dump(cc.alloc)...)
+			data = columns[i].Dump(data)
 
 			if err := cc.writePacket(data); err != nil {
 				return errors.Trace(err)
@@ -101,11 +102,10 @@ func (cc *clientConn) handleStmtPrepare(sql string) error {
 	return errors.Trace(cc.flush())
 }
 
-func (cc *clientConn) handleStmtExecute(data []byte) (err error) {
+func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err error) {
 	if len(data) < 9 {
 		return mysql.ErrMalformPacket
 	}
-
 	pos := 0
 	stmtID := binary.LittleEndian.Uint32(data[0:4])
 	pos += 4
@@ -149,7 +149,7 @@ func (cc *clientConn) handleStmtExecute(data []byte) (err error) {
 			}
 
 			paramTypes = data[pos : pos+(numParams<<1)]
-			pos += (numParams << 1)
+			pos += numParams << 1
 			paramValues = data[pos:]
 			// Just the first StmtExecute packet contain parameters type,
 			// we need save it for further use.
@@ -163,7 +163,7 @@ func (cc *clientConn) handleStmtExecute(data []byte) (err error) {
 			return errors.Trace(err)
 		}
 	}
-	rs, err := stmt.Execute(args...)
+	rs, err := stmt.Execute(ctx, args...)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -171,7 +171,7 @@ func (cc *clientConn) handleStmtExecute(data []byte) (err error) {
 		return errors.Trace(cc.writeOK())
 	}
 
-	return errors.Trace(cc.writeResultset(rs, true, false))
+	return errors.Trace(cc.writeResultset(ctx, rs, true, false))
 }
 
 func parseStmtArgs(args []interface{}, boundParams [][]byte, nullBitmap, paramTypes, paramValues []byte) (err error) {
@@ -283,7 +283,7 @@ func parseStmtArgs(args []interface{}, boundParams [][]byte, nullBitmap, paramTy
 			mysql.TypeBit, mysql.TypeEnum, mysql.TypeSet, mysql.TypeTinyBlob,
 			mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob,
 			mysql.TypeVarString, mysql.TypeString, mysql.TypeGeometry,
-			mysql.TypeDate, mysql.TypeNewDate,
+			mysql.TypeDate,
 			mysql.TypeTimestamp, mysql.TypeDatetime, mysql.TypeDuration:
 			if len(paramValues) < (pos + 1) {
 				err = mysql.ErrMalformPacket

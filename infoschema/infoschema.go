@@ -17,12 +17,10 @@ import (
 	"sort"
 	"sync/atomic"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 )
@@ -54,6 +52,8 @@ var (
 	ErrIndexExists = terror.ClassSchema.New(codeIndexExists, "Duplicate Index")
 	// ErrMultiplePriKey returns for multiple primary keys.
 	ErrMultiplePriKey = terror.ClassSchema.New(codeMultiplePriKey, "Multiple primary key defined")
+	// ErrTooManyKeyParts returns for too many key parts.
+	ErrTooManyKeyParts = terror.ClassSchema.New(codeTooManyKeyParts, "Too many key parts specified; max %d parts allowed")
 )
 
 // InfoSchema is the interface used to retrieve the schema information.
@@ -204,7 +204,7 @@ func (is *infoSchema) AllocByID(id int64) (autoid.Allocator, bool) {
 	if !ok {
 		return nil, false
 	}
-	return tbl.Allocator(), true
+	return tbl.Allocator(nil), true
 }
 
 func (is *infoSchema) AllSchemaNames() (names []string) {
@@ -241,23 +241,16 @@ func (is *infoSchema) Clone() (result []*model.DBInfo) {
 
 // Handle handles information schema, including getting and setting.
 type Handle struct {
-	value      atomic.Value
-	store      kv.Storage
-	perfHandle perfschema.PerfSchema
+	value atomic.Value
+	store kv.Storage
 }
 
 // NewHandle creates a new Handle.
-func NewHandle(store kv.Storage) (*Handle, error) {
+func NewHandle(store kv.Storage) *Handle {
 	h := &Handle{
 		store: store,
 	}
-	// init memory tables
-	var err error
-	h.perfHandle, err = perfschema.NewPerfHandle()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return h, nil
+	return h
 }
 
 // Get gets information schema from Handle.
@@ -267,16 +260,10 @@ func (h *Handle) Get() InfoSchema {
 	return schema
 }
 
-// GetPerfHandle gets performance schema from handle.
-func (h *Handle) GetPerfHandle() perfschema.PerfSchema {
-	return h.perfHandle
-}
-
 // EmptyClone creates a new Handle with the same store and memSchema, but the value is not set.
 func (h *Handle) EmptyClone() *Handle {
 	newHandle := &Handle{
-		store:      h.store,
-		perfHandle: h.perfHandle,
+		store: h.store,
 	}
 	return newHandle
 }
@@ -292,12 +279,13 @@ const (
 	codeForeignKeyNotExists = 1091
 	codeWrongFkDef          = 1239
 
-	codeDatabaseExists = 1007
-	codeTableExists    = 1050
-	codeBadTable       = 1051
-	codeColumnExists   = 1060
-	codeIndexExists    = 1831
-	codeMultiplePriKey = 1068
+	codeDatabaseExists  = 1007
+	codeTableExists     = 1050
+	codeBadTable        = 1051
+	codeColumnExists    = 1060
+	codeIndexExists     = 1831
+	codeMultiplePriKey  = 1068
+	codeTooManyKeyParts = 1070
 )
 
 func init() {
@@ -315,6 +303,7 @@ func init() {
 		codeColumnExists:        mysql.ErrDupFieldName,
 		codeIndexExists:         mysql.ErrDupIndex,
 		codeMultiplePriKey:      mysql.ErrMultiplePriKey,
+		codeTooManyKeyParts:     mysql.ErrTooManyKeyParts,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassSchema] = schemaMySQLErrCodes
 	initInfoSchemaDB()

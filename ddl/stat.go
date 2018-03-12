@@ -15,9 +15,9 @@ package ddl
 
 import (
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/admin"
 )
 
 var (
@@ -27,7 +27,7 @@ var (
 	ddlOwnerLastUpdateTS = "ddl_owner_last_update_ts"
 	ddlJobID             = "ddl_job_id"
 	ddlJobAction         = "ddl_job_action"
-	ddlJobLastUpdateTS   = "ddl_job_last_update_ts"
+	ddlJobStartTS        = "ddl_job_start_ts"
 	ddlJobState          = "ddl_job_state"
 	ddlJobError          = "ddl_job_error"
 	ddlJobRows           = "ddl_job_row_count"
@@ -37,43 +37,26 @@ var (
 	ddlJobSnapshotVer    = "ddl_job_snapshot_ver"
 	ddlJobReorgHandle    = "ddl_job_reorg_handle"
 	ddlJobArgs           = "ddl_job_args"
-	bgSchemaVersion      = "bg_schema_version"
-	bgOwnerID            = "bg_owner_id"
-	bgOwnerLastUpdateTS  = "bg_owner_last_update_ts"
-	bgJobID              = "bg_job_id"
-	bgJobAction          = "bg_job_action"
-	bgJobLastUpdateTS    = "bg_job_last_update_ts"
-	bgJobState           = "bg_job_state"
-	bgJobError           = "bg_job_error"
-	bgJobRows            = "bg_job_row_count"
-	bgJobSchemaState     = "bg_job_schema_state"
-	bgJobSchemaID        = "bg_job_schema_id"
-	bgJobTableID         = "bg_job_table_id"
-	bgJobSnapshotVer     = "bg_job_snapshot_ver"
-	bgJobReorgHandle     = "bg_job_reorg_handle"
-	bgJobArgs            = "bg_job_args"
 )
 
 // GetScope gets the status variables scope.
 func (d *ddl) GetScope(status string) variable.ScopeFlag {
 	// Now ddl status variables scope are all default scope.
-	return variable.DefaultScopeFlag
+	return variable.DefaultStatusVarScopeFlag
 }
 
 // Stats returns the DDL statistics.
-func (d *ddl) Stats() (map[string]interface{}, error) {
+func (d *ddl) Stats(vars *variable.SessionVars) (map[string]interface{}, error) {
 	m := make(map[string]interface{})
 	m[serverID] = d.uuid
-	var ddlInfo, bgInfo *inspectkv.DDLInfo
+	var ddlInfo *admin.DDLInfo
 
 	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		var err1 error
-		ddlInfo, err1 = inspectkv.GetDDLInfo(txn)
+		ddlInfo, err1 = admin.GetDDLInfo(txn)
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
-		bgInfo, err1 = inspectkv.GetBgDDLInfo(txn)
-
 		return errors.Trace(err1)
 	})
 	if err != nil {
@@ -85,7 +68,7 @@ func (d *ddl) Stats() (map[string]interface{}, error) {
 	if ddlInfo.Job != nil {
 		m[ddlJobID] = ddlInfo.Job.ID
 		m[ddlJobAction] = ddlInfo.Job.Type.String()
-		m[ddlJobLastUpdateTS] = ddlInfo.Job.LastUpdateTS / 1e9
+		m[ddlJobStartTS] = ddlInfo.Job.StartTS / 1e9 // unit: second
 		m[ddlJobState] = ddlInfo.Job.State.String()
 		m[ddlJobRows] = ddlInfo.Job.RowCount
 		if ddlInfo.Job.Error == nil {
@@ -100,28 +83,5 @@ func (d *ddl) Stats() (map[string]interface{}, error) {
 		m[ddlJobReorgHandle] = ddlInfo.ReorgHandle
 		m[ddlJobArgs] = ddlInfo.Job.Args
 	}
-
-	// background DDL info
-	m[bgSchemaVersion] = bgInfo.SchemaVer
-	// TODO: Get the owner information.
-	if bgInfo.Job != nil {
-		m[bgJobID] = bgInfo.Job.ID
-		m[bgJobAction] = bgInfo.Job.Type.String()
-		m[bgJobLastUpdateTS] = bgInfo.Job.LastUpdateTS / 1e9
-		m[bgJobState] = bgInfo.Job.State.String()
-		m[bgJobRows] = bgInfo.Job.RowCount
-		if bgInfo.Job.Error == nil {
-			m[bgJobError] = ""
-		} else {
-			m[bgJobError] = bgInfo.Job.Error.Error()
-		}
-		m[bgJobSchemaState] = bgInfo.Job.SchemaState.String()
-		m[bgJobSchemaID] = bgInfo.Job.SchemaID
-		m[bgJobTableID] = bgInfo.Job.TableID
-		m[bgJobSnapshotVer] = bgInfo.Job.SnapshotVer
-		m[bgJobReorgHandle] = bgInfo.ReorgHandle
-		m[bgJobArgs] = bgInfo.Job.Args
-	}
-
 	return m, nil
 }

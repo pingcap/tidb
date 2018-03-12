@@ -15,9 +15,10 @@ package tikv
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv/mock-tikv"
-	goctx "golang.org/x/net/context"
+	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"golang.org/x/net/context"
 )
 
 type testCoprocessorSuite struct{}
@@ -32,30 +33,30 @@ func (s *testCoprocessorSuite) TestBuildTasks(c *C) {
 	pdCli := &codecPDClient{mocktikv.NewPDClient(cluster)}
 	cache := NewRegionCache(pdCli)
 
-	bo := NewBackoffer(3000, goctx.Background())
+	bo := NewBackoffer(context.Background(), 3000)
 
-	tasks, err := buildCopTasks(bo, cache, buildKeyRanges("a", "c"), false)
+	tasks, err := buildCopTasks(bo, cache, buildCopRanges("a", "c"), false, false)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 1)
 	s.taskEqual(c, tasks[0], regionIDs[0], "a", "c")
 
-	tasks, err = buildCopTasks(bo, cache, buildKeyRanges("g", "n"), false)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("g", "n"), false, false)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 1)
 	s.taskEqual(c, tasks[0], regionIDs[1], "g", "n")
 
-	tasks, err = buildCopTasks(bo, cache, buildKeyRanges("m", "n"), false)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("m", "n"), false, false)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 1)
 	s.taskEqual(c, tasks[0], regionIDs[1], "m", "n")
 
-	tasks, err = buildCopTasks(bo, cache, buildKeyRanges("a", "k"), false)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "k"), false, false)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 2)
 	s.taskEqual(c, tasks[0], regionIDs[0], "a", "g")
 	s.taskEqual(c, tasks[1], regionIDs[1], "g", "k")
 
-	tasks, err = buildCopTasks(bo, cache, buildKeyRanges("a", "x"), false)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "x"), false, false)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 4)
 	s.taskEqual(c, tasks[0], regionIDs[0], "a", "g")
@@ -63,27 +64,79 @@ func (s *testCoprocessorSuite) TestBuildTasks(c *C) {
 	s.taskEqual(c, tasks[2], regionIDs[2], "n", "t")
 	s.taskEqual(c, tasks[3], regionIDs[3], "t", "x")
 
-	tasks, err = buildCopTasks(bo, cache, buildKeyRanges("a", "b", "b", "c"), false)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "b", "b", "c"), false, false)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 1)
 	s.taskEqual(c, tasks[0], regionIDs[0], "a", "b", "b", "c")
 
-	tasks, err = buildCopTasks(bo, cache, buildKeyRanges("a", "b", "e", "f"), false)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "b", "e", "f"), false, false)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 1)
 	s.taskEqual(c, tasks[0], regionIDs[0], "a", "b", "e", "f")
 
-	tasks, err = buildCopTasks(bo, cache, buildKeyRanges("g", "n", "o", "p"), false)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("g", "n", "o", "p"), false, false)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 2)
 	s.taskEqual(c, tasks[0], regionIDs[1], "g", "n")
 	s.taskEqual(c, tasks[1], regionIDs[2], "o", "p")
 
-	tasks, err = buildCopTasks(bo, cache, buildKeyRanges("h", "k", "m", "p"), false)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("h", "k", "m", "p"), false, false)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 2)
 	s.taskEqual(c, tasks[0], regionIDs[1], "h", "k", "m", "n")
 	s.taskEqual(c, tasks[1], regionIDs[2], "n", "p")
+}
+
+func (s *testCoprocessorSuite) TestSplitRegionRanges(c *C) {
+	// nil --- 'g' --- 'n' --- 't' --- nil
+	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
+	cluster := mocktikv.NewCluster()
+	mocktikv.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
+	pdCli := &codecPDClient{mocktikv.NewPDClient(cluster)}
+	cache := NewRegionCache(pdCli)
+
+	bo := NewBackoffer(context.Background(), 3000)
+
+	ranges, err := SplitRegionRanges(bo, cache, buildKeyRanges("a", "c"))
+	c.Assert(err, IsNil)
+	c.Assert(ranges, HasLen, 1)
+	s.rangeEqual(c, ranges, "a", "c")
+
+	ranges, err = SplitRegionRanges(bo, cache, buildKeyRanges("h", "y"))
+	c.Assert(err, IsNil)
+	c.Assert(len(ranges), Equals, 3)
+	s.rangeEqual(c, ranges, "h", "n", "n", "t", "t", "y")
+
+	ranges, err = SplitRegionRanges(bo, cache, buildKeyRanges("s", "z"))
+	c.Assert(err, IsNil)
+	c.Assert(len(ranges), Equals, 2)
+	s.rangeEqual(c, ranges, "s", "t", "t", "z")
+
+	ranges, err = SplitRegionRanges(bo, cache, buildKeyRanges("s", "s"))
+	c.Assert(err, IsNil)
+	c.Assert(len(ranges), Equals, 1)
+	s.rangeEqual(c, ranges, "s", "s")
+
+	ranges, err = SplitRegionRanges(bo, cache, buildKeyRanges("t", "t"))
+	c.Assert(err, IsNil)
+	c.Assert(len(ranges), Equals, 1)
+	s.rangeEqual(c, ranges, "t", "t")
+
+	ranges, err = SplitRegionRanges(bo, cache, buildKeyRanges("t", "u"))
+	c.Assert(err, IsNil)
+	c.Assert(len(ranges), Equals, 1)
+	s.rangeEqual(c, ranges, "t", "u")
+
+	ranges, err = SplitRegionRanges(bo, cache, buildKeyRanges("u", "z"))
+	c.Assert(err, IsNil)
+	c.Assert(len(ranges), Equals, 1)
+	s.rangeEqual(c, ranges, "u", "z")
+
+	// min --> max
+	ranges, err = SplitRegionRanges(bo, cache, buildKeyRanges("a", "z"))
+	c.Assert(err, IsNil)
+	c.Assert(ranges, HasLen, 4)
+	s.rangeEqual(c, ranges, "a", "g", "g", "n", "n", "t", "t", "z")
 }
 
 func (s *testCoprocessorSuite) TestRebuild(c *C) {
@@ -93,9 +146,9 @@ func (s *testCoprocessorSuite) TestRebuild(c *C) {
 	storeID, regionIDs, peerIDs := mocktikv.BootstrapWithMultiRegions(cluster, []byte("m"))
 	pdCli := &codecPDClient{mocktikv.NewPDClient(cluster)}
 	cache := NewRegionCache(pdCli)
-	bo := NewBackoffer(3000, goctx.Background())
+	bo := NewBackoffer(context.Background(), 3000)
 
-	tasks, err := buildCopTasks(bo, cache, buildKeyRanges("a", "z"), false)
+	tasks, err := buildCopTasks(bo, cache, buildCopRanges("a", "z"), false, false)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 2)
 	s.taskEqual(c, tasks[0], regionIDs[0], "a", "m")
@@ -108,7 +161,7 @@ func (s *testCoprocessorSuite) TestRebuild(c *C) {
 	cluster.Split(regionIDs[1], regionIDs[2], []byte("q"), []uint64{peerIDs[2]}, storeID)
 	cache.DropRegion(tasks[1].region)
 
-	tasks, err = buildCopTasks(bo, cache, buildKeyRanges("a", "z"), true)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "z"), true, false)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 3)
 	s.taskEqual(c, tasks[2], regionIDs[0], "a", "m")
@@ -116,7 +169,7 @@ func (s *testCoprocessorSuite) TestRebuild(c *C) {
 	s.taskEqual(c, tasks[0], regionIDs[2], "q", "z")
 }
 
-func buildKeyRanges(keys ...string) *copRanges {
+func buildKeyRanges(keys ...string) []kv.KeyRange {
 	var ranges []kv.KeyRange
 	for i := 0; i < len(keys); i += 2 {
 		ranges = append(ranges, kv.KeyRange{
@@ -124,6 +177,11 @@ func buildKeyRanges(keys ...string) *copRanges {
 			EndKey:   []byte(keys[i+1]),
 		})
 	}
+	return ranges
+}
+
+func buildCopRanges(keys ...string) *copRanges {
+	ranges := buildKeyRanges(keys...)
 	return &copRanges{mid: ranges}
 }
 
@@ -131,6 +189,14 @@ func (s *testCoprocessorSuite) taskEqual(c *C, task *copTask, regionID uint64, k
 	c.Assert(task.region.id, Equals, regionID)
 	for i := 0; i < task.ranges.len(); i++ {
 		r := task.ranges.at(i)
+		c.Assert(string(r.StartKey), Equals, keys[2*i])
+		c.Assert(string(r.EndKey), Equals, keys[2*i+1])
+	}
+}
+
+func (s *testCoprocessorSuite) rangeEqual(c *C, ranges []kv.KeyRange, keys ...string) {
+	for i := 0; i < len(ranges); i++ {
+		r := ranges[i]
 		c.Assert(string(r.StartKey), Equals, keys[2*i])
 		c.Assert(string(r.EndKey), Equals, keys[2*i+1])
 	}
@@ -159,6 +225,90 @@ func (s *testCoprocessorSuite) checkEqual(c *C, copRanges *copRanges, ranges []k
 			for j := i; j <= copRanges.len(); j++ {
 				s.checkEqual(c, copRanges.slice(i, j), ranges[i:j], false)
 			}
+		}
+	}
+}
+
+func (s *testCoprocessorSuite) TestCopRangeSplit(c *C) {
+	first := &kv.KeyRange{StartKey: []byte("a"), EndKey: []byte("b")}
+	mid := []kv.KeyRange{
+		{StartKey: []byte("c"), EndKey: []byte("d")},
+		{StartKey: []byte("e"), EndKey: []byte("g")},
+		{StartKey: []byte("l"), EndKey: []byte("o")},
+	}
+	last := &kv.KeyRange{StartKey: []byte("q"), EndKey: []byte("t")}
+	left := true
+	right := false
+
+	// input range:  [c-d) [e-g) [l-o)
+	ranges := &copRanges{mid: mid}
+	s.testSplit(c, ranges, right,
+		splitCase{"c", buildCopRanges("c", "d", "e", "g", "l", "o")},
+		splitCase{"d", buildCopRanges("e", "g", "l", "o")},
+		splitCase{"f", buildCopRanges("f", "g", "l", "o")},
+	)
+
+	// input range:  [a-b) [c-d) [e-g) [l-o)
+	ranges = &copRanges{first: first, mid: mid}
+	s.testSplit(c, ranges, right,
+		splitCase{"a", buildCopRanges("a", "b", "c", "d", "e", "g", "l", "o")},
+		splitCase{"c", buildCopRanges("c", "d", "e", "g", "l", "o")},
+		splitCase{"m", buildCopRanges("m", "o")},
+	)
+
+	// input range:  [a-b) [c-d) [e-g) [l-o) [q-t)
+	ranges = &copRanges{first: first, mid: mid, last: last}
+	s.testSplit(c, ranges, right,
+		splitCase{"f", buildCopRanges("f", "g", "l", "o", "q", "t")},
+		splitCase{"h", buildCopRanges("l", "o", "q", "t")},
+		splitCase{"r", buildCopRanges("r", "t")},
+	)
+
+	// input range:  [c-d) [e-g) [l-o)
+	ranges = &copRanges{mid: mid}
+	s.testSplit(c, ranges, left,
+		splitCase{"m", buildCopRanges("c", "d", "e", "g", "l", "m")},
+		splitCase{"g", buildCopRanges("c", "d", "e", "g")},
+		splitCase{"g", buildCopRanges("c", "d", "e", "g")},
+	)
+
+	// input range:  [a-b) [c-d) [e-g) [l-o)
+	ranges = &copRanges{first: first, mid: mid}
+	s.testSplit(c, ranges, left,
+		splitCase{"d", buildCopRanges("a", "b", "c", "d")},
+		splitCase{"d", buildCopRanges("a", "b", "c", "d")},
+		splitCase{"o", buildCopRanges("a", "b", "c", "d", "e", "g", "l", "o")},
+	)
+
+	// input range:  [a-b) [c-d) [e-g) [l-o) [q-t)
+	ranges = &copRanges{first: first, mid: mid, last: last}
+	s.testSplit(c, ranges, left,
+		splitCase{"o", buildCopRanges("a", "b", "c", "d", "e", "g", "l", "o")},
+		splitCase{"p", buildCopRanges("a", "b", "c", "d", "e", "g", "l", "o")},
+		splitCase{"t", buildCopRanges("a", "b", "c", "d", "e", "g", "l", "o", "q", "t")},
+	)
+}
+
+func coprocessorKeyRange(start, end string) *coprocessor.KeyRange {
+	return &coprocessor.KeyRange{
+		Start: []byte(start),
+		End:   []byte(end),
+	}
+}
+
+type splitCase struct {
+	key string
+	*copRanges
+}
+
+func (s *testCoprocessorSuite) testSplit(c *C, ranges *copRanges, checkLeft bool, cases ...splitCase) {
+	for _, t := range cases {
+		left, right := ranges.split([]byte(t.key))
+		expect := t.copRanges
+		if checkLeft {
+			s.checkEqual(c, left, expect.mid, false)
+		} else {
+			s.checkEqual(c, right, expect.mid, false)
 		}
 	}
 }

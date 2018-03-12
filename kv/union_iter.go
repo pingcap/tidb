@@ -15,7 +15,7 @@ package kv
 
 import (
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
+	log "github.com/sirupsen/logrus"
 )
 
 // UnionIter is the iterator on an UnionStore.
@@ -31,7 +31,8 @@ type UnionIter struct {
 	reverse    bool
 }
 
-func newUnionIter(dirtyIt Iterator, snapshotIt Iterator, reverse bool) *UnionIter {
+// NewUnionIter returns a union iterator for BufferStore.
+func NewUnionIter(dirtyIt Iterator, snapshotIt Iterator, reverse bool) (*UnionIter, error) {
 	it := &UnionIter{
 		dirtyIt:       dirtyIt,
 		snapshotIt:    snapshotIt,
@@ -39,8 +40,11 @@ func newUnionIter(dirtyIt Iterator, snapshotIt Iterator, reverse bool) *UnionIte
 		snapshotValid: snapshotIt.Valid(),
 		reverse:       reverse,
 	}
-	it.updateCur()
-	return it
+	err := it.updateCur()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return it, nil
 }
 
 // Go next and update valid status.

@@ -21,7 +21,7 @@ package variable
 	3. Add SysVar instance in 'defaultSysVars' slice with the default value.
 	4. Add a field in `SessionVars`.
 	5. Update the `NewSessionVars` function to set the field to its default value.
-	6. Update the `varsutil.SetSessionSystemVar` function to use the new value when SET statement is executed.
+	6. Update the `variable.SetSessionSystemVar` function to use the new value when SET statement is executed.
 	7. If it is a global variable, add it in `tidb.loadCommonGlobalVarsSQL`.
 	8. Use this variable to control the behavior in code.
 */
@@ -34,9 +34,9 @@ const (
 	// When the value is set to a datetime string like '2017-11-11 20:20:20', the session reads history data of that time.
 	TiDBSnapshot = "tidb_snapshot"
 
-	// tidb_skip_constraint_check is used for loading data from a dump file, to speed up the loading process.
+	// tidb_import_data is used for loading data from a dump file, to speed up the loading process.
 	// When the value is set to true, unique index constraint is not checked.
-	TiDBSkipConstraintCheck = "tidb_skip_constraint_check"
+	TiDBImportingData = "tidb_import_data"
 
 	// tidb_opt_agg_push_down is used to endable/disable the optimizer rule of aggregation push down.
 	TiDBOptAggPushDown = "tidb_opt_agg_push_down"
@@ -52,6 +52,9 @@ const (
 	// It is read-only.
 	TiDBCurrentTS = "tidb_current_ts"
 
+	// tidb_config is a read-only variable that shows the config of the current server.
+	TiDBConfig = "tidb_config"
+
 	/* Session and global */
 
 	// tidb_distsql_scan_concurrency is used to set the concurrency of a distsql scan task.
@@ -59,6 +62,12 @@ const (
 	// Higher concurrency may reduce latency, but with the cost of higher memory usage and system performance impact.
 	// If the query has a LIMIT clause, high concurrency makes the system do much more work than needed.
 	TiDBDistSQLScanConcurrency = "tidb_distsql_scan_concurrency"
+
+	// tidb_index_join_batch_size is used to set the batch size of a index lookup join.
+	// The index lookup join fetches batches of data from outer executor and constructs ranges for inner executor.
+	// This value controls how much of data in a batch to do the index join.
+	// Large value may reduce the latency but consumes more system resource.
+	TiDBIndexJoinBatchSize = "tidb_index_join_batch_size"
 
 	// tidb_index_lookup_size is used for index lookup executor.
 	// The index lookup executor first scan a batch of handles from a index, then use those handles to lookup the table
@@ -86,23 +95,60 @@ const (
 	// insert data into multiple batches and use a single txn for each batch. This will be helpful when inserting large data.
 	TiDBBatchInsert = "tidb_batch_insert"
 
-	// tidb_max_row_count_for_inlj is used when do index nested loop join.
-	// It controls the max row count of outer table when do index nested loop join without hint.
-	// After the row count of the inner table is accurate, this variable will be removed.
-	TiDBMaxRowCountForINLJ = "tidb_max_row_count_for_inlj"
+	// tidb_batch_delete is used to enable/disable auto-split delete data. If set this option on, delete executor will automatically
+	// split data into multiple batches and use a single txn for each batch. This will be helpful when deleting large data.
+	TiDBBatchDelete = "tidb_batch_delete"
+
+	// tidb_dml_batch_size is used to split the insert/delete data into small batches.
+	// It only takes effort when tidb_batch_insert/tidb_batch_delete is on.
+	// Its default value is 20000. When the row size is large, 20k rows could be larger than 100MB.
+	// User could change it to a smaller one to avoid breaking the transaction size limitation.
+	TiDBDMLBatchSize = "tidb_dml_batch_size"
+
+	// tidb_max_chunk_capacity is used to control the max chunk size during query execution.
+	TiDBMaxChunkSize = "tidb_max_chunk_size"
+
+	// The following session variables controls the memory quota during query execution.
+	// "tidb_mem_quota_query":    control the memory quota of a query.
+	// "tidb_mem_quota_hashjoin": control the memory quota of "HashJoinExec".
+	// "tidb_mem_quota_sort":     control the memory quota of "SortExec".
+	// "tidb_mem_quota_topn":     control the memory quota of "TopNExec".
+	TIDBMemQuotaQuery    = "tidb_mem_quota_query"    // Bytes.
+	TIDBMemQuotaHashJoin = "tidb_mem_quota_hashjoin" // Bytes.
+	TIDBMemQuotaSort     = "tidb_mem_quota_sort"     // Bytes.
+	TIDBMemQuotaTopn     = "tidb_mem_quota_topn"     // Bytes.
+
+	// tidb_general_log is used to log every query in the server in info level.
+	TiDBGeneralLog = "tidb_general_log"
+
+	// tidb_enable_streaming enables TiDB to use streaming API for coprocessor requests.
+	TiDBEnableStreaming = "tidb_enable_streaming"
 )
 
 // Default TiDB system variable values.
 const (
 	DefIndexLookupConcurrency     = 4
 	DefIndexSerialScanConcurrency = 1
+	DefIndexJoinBatchSize         = 25000
 	DefIndexLookupSize            = 20000
-	DefDistSQLScanConcurrency     = 10
+	DefDistSQLScanConcurrency     = 15
 	DefBuildStatsConcurrency      = 4
-	DefMaxRowCountForINLJ         = 128
 	DefSkipUTF8Check              = false
-	DefOptAggPushDown             = true
+	DefOptAggPushDown             = false
 	DefOptInSubqUnfolding         = false
 	DefBatchInsert                = false
+	DefBatchDelete                = false
 	DefCurretTS                   = 0
+	DefMaxChunkSize               = 1024
+	DefDMLBatchSize               = 20000
+	DefTiDBMemQuotaQuery          = 32 * 1024 * 1024 * 1024 // 32GB.
+	DefTiDBMemQuotaHashJoin       = 32 * 1024 * 1024 * 1024 // 32GB.
+	DefTiDBMemQuotaSort           = 32 * 1024 * 1024 * 1024 // 32GB.
+	DefTiDBMemQuotaTopn           = 32 * 1024 * 1024 * 1024 // 32GB.
+	DefTiDBGeneralLog             = 0
+)
+
+// Process global variables.
+var (
+	ProcessGeneralLog uint32
 )

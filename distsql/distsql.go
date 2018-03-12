@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2017 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,16 +18,20 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/goroutine_pool"
 	"github.com/pingcap/tipb/go-tipb"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var (
 	errInvalidResp = terror.ClassXEval.New(codeInvalidResp, "invalid response")
+	selectResultGP = gp.New(time.Minute * 2)
 )
 
 var (
@@ -38,51 +42,67 @@ var (
 // SelectResult is an iterator of coprocessor partial results.
 type SelectResult interface {
 	// Next gets the next partial result.
-	Next() (PartialResult, error)
+	Next(context.Context) (PartialResult, error)
+	// NextRaw gets the next raw result.
+	NextRaw(context.Context) ([]byte, error)
+	// NextChunk reads the data into chunk.
+	NextChunk(context.Context, *chunk.Chunk) error
 	// Close closes the iterator.
 	Close() error
 	// Fetch fetches partial results from client.
 	// The caller should call SetFields() before call Fetch().
-	Fetch(ctx goctx.Context)
+	Fetch(context.Context)
+	// ScanKeys gets the total scan row count.
+	ScanKeys() int64
 }
 
 // PartialResult is the result from a single region server.
 type PartialResult interface {
 	// Next returns the next rowData of the sub result.
 	// If no more row to return, rowData would be nil.
-	Next() (handle int64, rowData []byte, err error)
+	Next(context.Context) (rowData []types.Datum, err error)
 	// Close closes the partial result.
 	Close() error
 }
 
-// SelectResult is used to get response rows from SelectRequest.
 type selectResult struct {
-	label     string
-	aggregate bool
-	resp      kv.Response
+	label string
+	resp  kv.Response
 
 	results chan resultWithErr
 	closed  chan struct{}
+
+	rowLen     int
+	fieldTypes []*types.FieldType
+	ctx        sessionctx.Context
+
+	selectResp *tipb.SelectResponse
+	respChkIdx int
+
+	scanKeys     int64 // number of keys scanned by TiKV.
+	partialCount int64 // number of partial results.
 }
 
 type resultWithErr struct {
-	result PartialResult
+	result kv.ResultSubset
 	err    error
 }
 
-func (r *selectResult) Fetch(ctx goctx.Context) {
-	go r.fetch(ctx)
+func (r *selectResult) Fetch(ctx context.Context) {
+	selectResultGP.Go(func() {
+		r.fetch(ctx)
+	})
 }
 
-func (r *selectResult) fetch(ctx goctx.Context) {
+func (r *selectResult) fetch(ctx context.Context) {
 	startTime := time.Now()
 	defer func() {
 		close(r.results)
 		duration := time.Since(startTime)
-		queryHistgram.WithLabelValues(r.label).Observe(duration.Seconds())
+		metrics.DistSQLQueryHistgram.WithLabelValues(r.label).Observe(duration.Seconds())
 	}()
 	for {
-		resultSubset, err := r.resp.Next()
+		resultSubset, err := r.resp.Next(ctx)
 		if err != nil {
 			r.results <- resultWithErr{err: errors.Trace(err)}
 			return
@@ -90,13 +110,11 @@ func (r *selectResult) fetch(ctx goctx.Context) {
 		if resultSubset == nil {
 			return
 		}
-		pr := &partialResult{}
-		pr.unmarshal(resultSubset)
 
 		select {
-		case r.results <- resultWithErr{result: pr}:
+		case r.results <- resultWithErr{result: resultSubset}:
 		case <-r.closed:
-			// if selectResult called Close() already, make fetch goroutine exit
+			// If selectResult called Close() already, make fetch goroutine exit.
 			return
 		case <-ctx.Done():
 			return
@@ -105,24 +123,132 @@ func (r *selectResult) fetch(ctx goctx.Context) {
 }
 
 // Next returns the next row.
-func (r *selectResult) Next() (PartialResult, error) {
+func (r *selectResult) Next(ctx context.Context) (PartialResult, error) {
 	re := <-r.results
-	return re.result, errors.Trace(re.err)
+	if re.err != nil {
+		return nil, errors.Trace(re.err)
+	}
+	if re.result == nil {
+		return nil, nil
+	}
+	pr := &partialResult{}
+	pr.rowLen = r.rowLen
+	err := pr.unmarshal(re.result.GetData())
+	if len(pr.resp.OutputCounts) > 0 {
+		scanKeysPartial := pr.resp.OutputCounts[0]
+		metrics.DistSQLScanKeysPartialHistogram.Observe(float64(scanKeysPartial))
+		r.scanKeys += scanKeysPartial
+	} else {
+		r.scanKeys = -1
+	}
+	r.partialCount++
+	return pr, errors.Trace(err)
 }
 
-// Close closes SelectResult.
+// NextRaw returns the next raw partial result.
+func (r *selectResult) NextRaw(ctx context.Context) ([]byte, error) {
+	re := <-r.results
+	r.partialCount++
+	r.scanKeys = -1
+	if re.result == nil || re.err != nil {
+		return nil, errors.Trace(re.err)
+	}
+	return re.result.GetData(), nil
+}
+
+// NextChunk reads data to the chunk.
+func (r *selectResult) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	for chk.NumRows() < r.ctx.GetSessionVars().MaxChunkSize {
+		if r.selectResp == nil || r.respChkIdx == len(r.selectResp.Chunks) {
+			err := r.getSelectResp()
+			if err != nil || r.selectResp == nil {
+				return errors.Trace(err)
+			}
+		}
+		err := r.readRowsData(chk)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if len(r.selectResp.Chunks[r.respChkIdx].RowsData) == 0 {
+			r.respChkIdx++
+		}
+	}
+	return nil
+}
+
+func (r *selectResult) getSelectResp() error {
+	r.respChkIdx = 0
+	for {
+		re := <-r.results
+		if re.err != nil {
+			return errors.Trace(re.err)
+		}
+		if re.result == nil {
+			r.selectResp = nil
+			return nil
+		}
+		r.selectResp = new(tipb.SelectResponse)
+		err := r.selectResp.Unmarshal(re.result.GetData())
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if err := r.selectResp.Error; err != nil {
+			return terror.ClassTiKV.New(terror.ErrCode(err.Code), err.Msg)
+		}
+		for _, warning := range r.selectResp.Warnings {
+			r.ctx.GetSessionVars().StmtCtx.AppendWarning(terror.ClassTiKV.New(terror.ErrCode(warning.Code), warning.Msg))
+		}
+		if len(r.selectResp.OutputCounts) > 0 {
+			scanCountPartial := r.selectResp.OutputCounts[0]
+			metrics.DistSQLScanKeysPartialHistogram.Observe(float64(scanCountPartial))
+			r.scanKeys += scanCountPartial
+		} else {
+			r.scanKeys = -1
+		}
+		r.partialCount++
+		if len(r.selectResp.Chunks) == 0 {
+			continue
+		}
+		return nil
+	}
+}
+
+func (r *selectResult) ScanKeys() int64 {
+	return r.scanKeys
+}
+
+func (r *selectResult) readRowsData(chk *chunk.Chunk) (err error) {
+	rowsData := r.selectResp.Chunks[r.respChkIdx].RowsData
+	maxChunkSize := r.ctx.GetSessionVars().MaxChunkSize
+	timeZone := r.ctx.GetSessionVars().GetTimeZone()
+	for chk.NumRows() < maxChunkSize && len(rowsData) > 0 {
+		for i := 0; i < r.rowLen; i++ {
+			rowsData, err = codec.DecodeOneToChunk(rowsData, chk, i, r.fieldTypes[i], timeZone)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+	r.selectResp.Chunks[r.respChkIdx].RowsData = rowsData
+	return nil
+}
+
+// Close closes selectResult.
 func (r *selectResult) Close() error {
-	// close this channel tell fetch goroutine to exit
+	// Close this channel tell fetch goroutine to exit.
+	if r.scanKeys >= 0 {
+		metrics.DistSQLScanKeysHistogram.Observe(float64(r.scanKeys))
+	}
+	metrics.DistSQLPartialCountHistogram.Observe(float64(r.partialCount))
 	close(r.closed)
 	return r.resp.Close()
 }
 
-// partialResult represents a subset of select result.
 type partialResult struct {
-	resp       *tipb.SelectResponse
-	chunkIdx   int
-	cursor     int
-	dataOffset int64
+	resp     *tipb.SelectResponse
+	chunkIdx int
+	rowLen   int
 }
 
 func (pr *partialResult) unmarshal(resultSubset []byte) error {
@@ -139,24 +265,26 @@ func (pr *partialResult) unmarshal(resultSubset []byte) error {
 	return nil
 }
 
-var zeroLenData = make([]byte, 0)
-
 // Next returns the next row of the sub result.
 // If no more row to return, data would be nil.
-func (pr *partialResult) Next() (handle int64, data []byte, err error) {
-	chunk := pr.getChunk()
-	if chunk == nil {
-		return 0, nil, nil
+func (pr *partialResult) Next(ctx context.Context) (data []types.Datum, err error) {
+	nextChunk := pr.getChunk()
+	if nextChunk == nil {
+		return nil, nil
 	}
-	rowMeta := chunk.RowsMeta[pr.cursor]
-	data = chunk.RowsData[pr.dataOffset : pr.dataOffset+rowMeta.Length]
-	if data == nil {
-		// The caller checks if data is nil to determine finished.
-		data = zeroLenData
+	return readRowFromChunk(nextChunk, pr.rowLen)
+}
+
+func readRowFromChunk(chunk *tipb.Chunk, numCols int) (row []types.Datum, err error) {
+	row = make([]types.Datum, numCols)
+	for i := 0; i < numCols; i++ {
+		var raw []byte
+		raw, chunk.RowsData, err = codec.CutOne(chunk.RowsData)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		row[i].SetRaw(raw)
 	}
-	pr.dataOffset += rowMeta.Length
-	handle = rowMeta.Handle
-	pr.cursor++
 	return
 }
 
@@ -165,12 +293,10 @@ func (pr *partialResult) getChunk() *tipb.Chunk {
 		if pr.chunkIdx >= len(pr.resp.Chunks) {
 			return nil
 		}
-		chunk := &pr.resp.Chunks[pr.chunkIdx]
-		if pr.cursor < len(chunk.RowsMeta) {
-			return chunk
+		currentChunk := &pr.resp.Chunks[pr.chunkIdx]
+		if len(currentChunk.RowsData) > 0 {
+			return currentChunk
 		}
-		pr.cursor = 0
-		pr.dataOffset = 0
 		pr.chunkIdx++
 	}
 }
@@ -180,190 +306,59 @@ func (pr *partialResult) Close() error {
 	return nil
 }
 
-// Select do a select request, returns SelectResult.
-// concurrency: The max concurrency for underlying coprocessor request.
-// keepOrder: If the result should returned in key order. For example if we need keep data in order by
-//            scan index, we should set keepOrder to true.
-func Select(client kv.Client, ctx goctx.Context, req *tipb.SelectRequest, keyRanges []kv.KeyRange, concurrency int, keepOrder bool) (SelectResult, error) {
-	var err error
-	defer func() {
-		// Add metrics
-		if err != nil {
-			queryCounter.WithLabelValues(queryFailed).Inc()
-		} else {
-			queryCounter.WithLabelValues(querySucc).Inc()
-		}
-	}()
-
-	// Convert tipb.*Request to kv.Request.
-	kvReq, err1 := composeRequest(req, keyRanges, concurrency, keepOrder)
-	if err1 != nil {
-		err = errors.Trace(err1)
-		return nil, err
+// Select sends a DAG request, returns SelectResult.
+// In kvReq, KeyRanges is required, Concurrency/KeepOrder/Desc/IsolationLevel/Priority are optional.
+func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fieldTypes []*types.FieldType) (SelectResult, error) {
+	// For testing purpose.
+	if hook := ctx.Value("CheckSelectRequestHook"); hook != nil {
+		hook.(func(*kv.Request))(kvReq)
 	}
 
-	resp := client.Send(ctx, kvReq)
+	if !sctx.GetSessionVars().EnableStreaming {
+		kvReq.Streaming = false
+	}
+	resp := sctx.GetClient().Send(ctx, kvReq)
 	if resp == nil {
-		err = errors.New("client returns nil response")
-		return nil, err
+		err := errors.New("client returns nil response")
+		return nil, errors.Trace(err)
 	}
-	result := &selectResult{
-		resp:    resp,
-		results: make(chan resultWithErr, 5),
-		closed:  make(chan struct{}),
+
+	if kvReq.Streaming {
+		return &streamResult{
+			resp:       resp,
+			rowLen:     len(fieldTypes),
+			fieldTypes: fieldTypes,
+			ctx:        sctx,
+		}, nil
 	}
-	// If Aggregates is not nil, we should set result fields latter.
-	if len(req.Aggregates) == 0 && len(req.GroupBy) == 0 {
-		if req.TableInfo != nil {
-			result.label = "table"
-		} else {
-			result.label = "index"
-		}
-	} else {
-		result.label = "aggregate"
-	}
-	return result, nil
+
+	return &selectResult{
+		label:      "dag",
+		resp:       resp,
+		results:    make(chan resultWithErr, kvReq.Concurrency),
+		closed:     make(chan struct{}),
+		rowLen:     len(fieldTypes),
+		fieldTypes: fieldTypes,
+		ctx:        sctx,
+	}, nil
 }
 
-// SelectDAG sends a DAG request, returns SelectResult.
-// concurrency: The max concurrency for underlying coprocessor request.
-// keepOrder: If the result should returned in key order. For example if we need keep data in order by
-//            scan index, we should set keepOrder to true.
-func SelectDAG(client kv.Client, ctx goctx.Context, dag *tipb.DAGRequest, keyRanges []kv.KeyRange, concurrency int, keepOrder bool, desc bool) (SelectResult, error) {
-	var err error
-	defer func() {
-		// Add metrics.
-		if err != nil {
-			queryCounter.WithLabelValues(queryFailed).Inc()
-		} else {
-			queryCounter.WithLabelValues(querySucc).Inc()
-		}
-	}()
-
-	kvReq := &kv.Request{
-		Tp:          kv.ReqTypeDAG,
-		Concurrency: concurrency,
-		KeepOrder:   keepOrder,
-		KeyRanges:   keyRanges,
-		Desc:        desc,
-	}
-	kvReq.Data, err = dag.Marshal()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
+// Analyze do a analyze request.
+func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request) (SelectResult, error) {
 	resp := client.Send(ctx, kvReq)
 	if resp == nil {
-		err = errors.New("client returns nil response")
-		return nil, errors.Trace(err)
+		return nil, errors.New("client returns nil response")
 	}
 	result := &selectResult{
-		label:   "dag",
+		label:   "analyze",
 		resp:    resp,
-		results: make(chan resultWithErr, concurrency),
+		results: make(chan resultWithErr, kvReq.Concurrency),
 		closed:  make(chan struct{}),
 	}
 	return result, nil
-}
-
-// Convert tipb.Request to kv.Request.
-func composeRequest(req *tipb.SelectRequest, keyRanges []kv.KeyRange, concurrency int, keepOrder bool) (*kv.Request, error) {
-	kvReq := &kv.Request{
-		Concurrency: concurrency,
-		KeepOrder:   keepOrder,
-		KeyRanges:   keyRanges,
-	}
-	if req.IndexInfo != nil {
-		kvReq.Tp = kv.ReqTypeIndex
-	} else {
-		kvReq.Tp = kv.ReqTypeSelect
-	}
-	if req.OrderBy != nil {
-		kvReq.Desc = req.OrderBy[0].Desc
-	}
-	var err error
-	kvReq.Data, err = req.Marshal()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return kvReq, nil
 }
 
 // XAPI error codes.
 const (
 	codeInvalidResp = 1
-	codeNilResp     = 2
 )
-
-// FieldTypeFromPBColumn creates a types.FieldType from tipb.ColumnInfo.
-func FieldTypeFromPBColumn(col *tipb.ColumnInfo) *types.FieldType {
-	return &types.FieldType{
-		Tp:      byte(col.GetTp()),
-		Flen:    int(col.GetColumnLen()),
-		Decimal: int(col.GetDecimal()),
-		Elems:   col.Elems,
-		Collate: mysql.Collations[uint8(col.GetCollation())],
-	}
-}
-
-func columnToProto(c *model.ColumnInfo) *tipb.ColumnInfo {
-	pc := &tipb.ColumnInfo{
-		ColumnId:  c.ID,
-		Collation: collationToProto(c.FieldType.Collate),
-		ColumnLen: int32(c.FieldType.Flen),
-		Decimal:   int32(c.FieldType.Decimal),
-		Flag:      int32(c.Flag),
-		Elems:     c.Elems,
-	}
-	pc.Tp = int32(c.FieldType.Tp)
-	return pc
-}
-
-func collationToProto(c string) int32 {
-	v, ok := mysql.CollationNames[c]
-	if ok {
-		return int32(v)
-	}
-	return int32(mysql.DefaultCollationID)
-}
-
-// ColumnsToProto converts a slice of model.ColumnInfo to a slice of tipb.ColumnInfo.
-func ColumnsToProto(columns []*model.ColumnInfo, pkIsHandle bool) []*tipb.ColumnInfo {
-	cols := make([]*tipb.ColumnInfo, 0, len(columns))
-	for _, c := range columns {
-		col := columnToProto(c)
-		if pkIsHandle && mysql.HasPriKeyFlag(c.Flag) {
-			col.PkHandle = true
-		} else {
-			col.PkHandle = false
-		}
-		cols = append(cols, col)
-	}
-	return cols
-}
-
-// IndexToProto converts a model.IndexInfo to a tipb.IndexInfo.
-func IndexToProto(t *model.TableInfo, idx *model.IndexInfo) *tipb.IndexInfo {
-	pi := &tipb.IndexInfo{
-		TableId: t.ID,
-		IndexId: idx.ID,
-		Unique:  idx.Unique,
-	}
-	cols := make([]*tipb.ColumnInfo, 0, len(idx.Columns)+1)
-	for _, c := range idx.Columns {
-		cols = append(cols, columnToProto(t.Columns[c.Offset]))
-	}
-	if t.PKIsHandle {
-		// Coprocessor needs to know PKHandle column info, so we need to append it.
-		for _, col := range t.Columns {
-			if mysql.HasPriKeyFlag(col.Flag) {
-				colPB := columnToProto(col)
-				colPB.PkHandle = true
-				cols = append(cols, colPB)
-				break
-			}
-		}
-	}
-	pi.Columns = cols
-	return pi
-}

@@ -20,11 +20,9 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 func (s *testSuite) TestRevokeGlobal(c *C) {
-	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 
 	_, err := tk.Exec(`REVOKE ALL PRIVILEGES ON *.* FROM 'nonexistuser'@'host'`)
@@ -53,7 +51,6 @@ func (s *testSuite) TestRevokeGlobal(c *C) {
 }
 
 func (s *testSuite) TestRevokeDBScope(c *C) {
-	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	// Create a new user.
 	tk.MustExec(`CREATE USER 'testDBRevoke'@'localhost' IDENTIFIED BY '123';`)
@@ -74,7 +71,6 @@ func (s *testSuite) TestRevokeDBScope(c *C) {
 }
 
 func (s *testSuite) TestRevokeTableScope(c *C) {
-	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	// Create a new user.
 	tk.MustExec(`CREATE USER 'testTblRevoke'@'localhost' IDENTIFIED BY '123';`)
@@ -106,7 +102,6 @@ func (s *testSuite) TestRevokeTableScope(c *C) {
 }
 
 func (s *testSuite) TestRevokeColumnScope(c *C) {
-	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	// Create a new user.
 	tk.MustExec(`CREATE USER 'testColRevoke'@'localhost' IDENTIFIED BY '123';`)

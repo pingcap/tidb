@@ -23,8 +23,10 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/terror"
+	log "github.com/sirupsen/logrus"
 )
 
 var (
@@ -32,11 +34,18 @@ var (
 	workerCnt = flag.Int("C", 100, "concurrent num")
 	pdAddr    = flag.String("pd", "localhost:2379", "pd address:localhost:2379")
 	valueSize = flag.Int("V", 5, "value size in byte")
+	sslCA     = flag.String("cacert", "", "path of file that contains list of trusted SSL CAs.")
+	sslCert   = flag.String("cert", "", "path of file that contains X509 certificate in PEM format.")
+	sslKey    = flag.String("key", "", "path of file that contains X509 key in PEM format.")
 )
 
 // batchRawPut blinds put bench.
 func batchRawPut(value []byte) {
-	cli, err := tikv.NewRawKVClient(strings.Split(*pdAddr, ","))
+	cli, err := tikv.NewRawKVClient(strings.Split(*pdAddr, ","), config.Security{
+		ClusterSSLCA:   *sslCA,
+		ClusterSSLCert: *sslCert,
+		ClusterSSLKey:  *sslKey,
+	})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -63,8 +72,11 @@ func batchRawPut(value []byte) {
 
 func main() {
 	flag.Parse()
-	log.SetLevelByString("warn")
-	go http.ListenAndServe(":9191", nil)
+	log.SetLevel(log.WarnLevel)
+	go func() {
+		err := http.ListenAndServe(":9191", nil)
+		terror.Log(errors.Trace(err))
+	}()
 
 	value := make([]byte, *valueSize)
 	t := time.Now()

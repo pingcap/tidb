@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testStatSuite{})
@@ -29,7 +29,7 @@ type testStatSuite struct {
 }
 
 func (s *testStatSuite) getDDLSchemaVer(c *C, d *ddl) int64 {
-	m, err := d.Stats()
+	m, err := d.Stats(nil)
 	c.Assert(err, IsNil)
 	v := m[ddlSchemaVersion]
 	return v.(int64)
@@ -40,7 +40,7 @@ func (s *testStatSuite) TestStat(c *C) {
 	store := testCreateStore(c, "test_stat")
 	defer store.Close()
 
-	d := newDDL(goctx.Background(), nil, store, nil, nil, testLease)
+	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
 	defer d.Stop()
 
 	time.Sleep(testLease)
@@ -49,7 +49,7 @@ func (s *testStatSuite) TestStat(c *C) {
 	testCreateSchema(c, testNewContext(d), d, dbInfo)
 
 	// TODO: Get this information from etcd.
-	//	m, err := d.Stats()
+	//	m, err := d.Stats(nil)
 	//	c.Assert(err, IsNil)
 	//	c.Assert(m[ddlOwnerID], Equals, d.uuid)
 
@@ -77,13 +77,12 @@ LOOP:
 		case <-ticker.C:
 			d.close()
 			c.Assert(s.getDDLSchemaVer(c, d), GreaterEqual, ver)
-			d.start(goctx.Background())
+			d.start(context.Background())
 		case err := <-done:
 			c.Assert(err, IsNil)
 			// TODO: Get this information from etcd.
-			// m, err := d.Stats()
+			// m, err := d.Stats(nil)
 			// c.Assert(err, IsNil)
-			// c.Assert(m[bgOwnerID], Equals, d.uuid)
 			break LOOP
 		}
 	}

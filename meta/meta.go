@@ -21,9 +21,11 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/structure"
@@ -78,14 +80,16 @@ var (
 
 // Meta is for handling meta information in a transaction.
 type Meta struct {
-	txn *structure.TxStructure
+	txn     *structure.TxStructure
+	StartTS uint64 // StartTS is the txn's start TS.
 }
 
 // NewMeta creates a Meta in transaction txn.
 func NewMeta(txn kv.Transaction) *Meta {
 	txn.SetOption(kv.Priority, kv.PriorityHigh)
+	txn.SetOption(kv.SyncLog, true)
 	t := structure.NewStructure(txn, txn, mMetaPrefix)
-	return &Meta{txn: t}
+	return &Meta{txn: t, StartTS: txn.StartTS()}
 }
 
 // NewSnapshotMeta creates a Meta with snapshot.
@@ -121,7 +125,7 @@ func (m *Meta) parseDatabaseID(key string) (int64, error) {
 	return n, errors.Trace(err)
 }
 
-func (m *Meta) autoTalbeIDKey(tableID int64) []byte {
+func (m *Meta) autoTableIDKey(tableID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mTableIDPrefix, tableID))
 }
 
@@ -139,26 +143,32 @@ func (m *Meta) parseTableID(key string) (int64, error) {
 	return n, errors.Trace(err)
 }
 
-// GenAutoTableID adds step to the auto id of the table and returns the sum.
-func (m *Meta) GenAutoTableID(dbID int64, tableID int64, step int64) (int64, error) {
-	// Check if db exists.
+// GenAutoTableIDIDKeyValue generate meta key by dbID, tableID and coresponding value by autoID.
+func (m *Meta) GenAutoTableIDIDKeyValue(dbID, tableID, autoID int64) (key, value []byte) {
+	dbKey := m.dbKey(dbID)
+	autoTableIDKey := m.autoTableIDKey(tableID)
+	return m.txn.EncodeHashAutoIDKeyValue(dbKey, autoTableIDKey, autoID)
+}
+
+// GenAutoTableID adds step to the auto ID of the table and returns the sum.
+func (m *Meta) GenAutoTableID(dbID, tableID, step int64) (int64, error) {
+	// Check if DB exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
 		return 0, errors.Trace(err)
 	}
-
 	// Check if table exists.
 	tableKey := m.tableKey(tableID)
 	if err := m.checkTableExists(dbKey, tableKey); err != nil {
 		return 0, errors.Trace(err)
 	}
 
-	return m.txn.HInc(dbKey, m.autoTalbeIDKey(tableID), step)
+	return m.txn.HInc(dbKey, m.autoTableIDKey(tableID), step)
 }
 
 // GetAutoTableID gets current auto id with table id.
 func (m *Meta) GetAutoTableID(dbID int64, tableID int64) (int64, error) {
-	return m.txn.HGetInt64(m.dbKey(dbID), m.autoTalbeIDKey(tableID))
+	return m.txn.HGetInt64(m.dbKey(dbID), m.autoTableIDKey(tableID))
 }
 
 // GetSchemaVersion gets current global schema version.
@@ -293,7 +303,7 @@ func (m *Meta) DropDatabase(dbID int64) error {
 // DropTable drops table in database.
 // If delAutoID is true, it will delete the auto_increment id key-value of the table.
 // For rename table, we do not need to rename auto_increment id key-value.
-func (m *Meta) DropTable(dbID int64, tableID int64, delAutoID bool) error {
+func (m *Meta) DropTable(dbID int64, tblID int64, delAutoID bool) error {
 	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
@@ -301,7 +311,7 @@ func (m *Meta) DropTable(dbID int64, tableID int64, delAutoID bool) error {
 	}
 
 	// Check if table exists.
-	tableKey := m.tableKey(tableID)
+	tableKey := m.tableKey(tblID)
 	if err := m.checkTableExists(dbKey, tableKey); err != nil {
 		return errors.Trace(err)
 	}
@@ -309,9 +319,8 @@ func (m *Meta) DropTable(dbID int64, tableID int64, delAutoID bool) error {
 	if err := m.txn.HDel(dbKey, tableKey); err != nil {
 		return errors.Trace(err)
 	}
-
 	if delAutoID {
-		if err := m.txn.HDel(dbKey, m.autoTalbeIDKey(tableID)); err != nil {
+		if err := m.txn.HDel(dbKey, m.autoTableIDKey(tblID)); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -439,8 +448,8 @@ var (
 	mDDLJobReorgKey   = []byte("DDLJobReorg")
 )
 
-func (m *Meta) enQueueDDLJob(key []byte, job *model.Job, updateRawArgs bool) error {
-	b, err := job.Encode(updateRawArgs)
+func (m *Meta) enQueueDDLJob(key []byte, job *model.Job) error {
+	b, err := job.Encode(true)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -449,7 +458,7 @@ func (m *Meta) enQueueDDLJob(key []byte, job *model.Job, updateRawArgs bool) err
 
 // EnQueueDDLJob adds a DDL job to the list.
 func (m *Meta) EnQueueDDLJob(job *model.Job) error {
-	return m.enQueueDDLJob(mDDLJobListKey, job, true)
+	return m.enQueueDDLJob(mDDLJobListKey, job)
 }
 
 func (m *Meta) deQueueDDLJob(key []byte) (*model.Job, error) {
@@ -481,12 +490,16 @@ func (m *Meta) getDDLJob(key []byte, index int64) (*model.Job, error) {
 
 // GetDDLJob returns the DDL job with index.
 func (m *Meta) GetDDLJob(index int64) (*model.Job, error) {
+	startTime := time.Now()
 	job, err := m.getDDLJob(mDDLJobListKey, index)
+	metrics.MetaHistogram.WithLabelValues(metrics.GetDDLJob, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	return job, errors.Trace(err)
 }
 
-func (m *Meta) updateDDLJob(index int64, job *model.Job, key []byte) error {
-	b, err := job.Encode(true)
+// updateDDLJob updates the DDL job with index and key.
+// updateRawArgs is used to determine whether to update the raw args when encode the job.
+func (m *Meta) updateDDLJob(index int64, job *model.Job, key []byte, updateRawArgs bool) error {
+	b, err := job.Encode(updateRawArgs)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -494,8 +507,12 @@ func (m *Meta) updateDDLJob(index int64, job *model.Job, key []byte) error {
 }
 
 // UpdateDDLJob updates the DDL job with index.
-func (m *Meta) UpdateDDLJob(index int64, job *model.Job) error {
-	return m.updateDDLJob(index, job, mDDLJobListKey)
+// updateRawArgs is used to determine whether to update the raw args when encode the job.
+func (m *Meta) UpdateDDLJob(index int64, job *model.Job, updateRawArgs bool) error {
+	startTime := time.Now()
+	err := m.updateDDLJob(index, job, mDDLJobListKey, updateRawArgs)
+	metrics.MetaHistogram.WithLabelValues(metrics.UpdateDDLJob, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+	return errors.Trace(err)
 }
 
 // DDLJobQueueLen returns the DDL job queue length.
@@ -536,7 +553,10 @@ func (m *Meta) getHistoryDDLJob(key []byte, id int64) (*model.Job, error) {
 
 // GetHistoryDDLJob gets a history DDL job.
 func (m *Meta) GetHistoryDDLJob(id int64) (*model.Job, error) {
-	return m.getHistoryDDLJob(mDDLJobHistoryKey, id)
+	startTime := time.Now()
+	job, err := m.getHistoryDDLJob(mDDLJobHistoryKey, id)
+	metrics.MetaHistogram.WithLabelValues(metrics.GetHistoryDDLJob, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+	return job, errors.Trace(err)
 }
 
 // GetAllHistoryDDLJobs gets all history DDL jobs.
@@ -607,61 +627,6 @@ func (m *Meta) GetDDLReorgHandle(job *model.Job) (int64, error) {
 	return value, errors.Trace(err)
 }
 
-// DDL background job structure
-//	BgJobOnwer: []byte
-//	BgJobList: list jobs
-//	BgJobHistory: hash
-//	BgJobReorg: hash
-//
-// for multi background worker, only one can become the owner
-// to operate background job, and dispatch them to MR background job.
-
-var (
-	mBgJobListKey    = []byte("BgJobList")
-	mBgJobHistoryKey = []byte("BgJobHistory")
-)
-
-// UpdateBgJob updates the background job with index.
-func (m *Meta) UpdateBgJob(index int64, job *model.Job) error {
-	return m.updateDDLJob(index, job, mBgJobListKey)
-}
-
-// GetBgJob returns the background job with index.
-func (m *Meta) GetBgJob(index int64) (*model.Job, error) {
-	job, err := m.getDDLJob(mBgJobListKey, index)
-
-	return job, errors.Trace(err)
-}
-
-// EnQueueBgJob adds a background job to the list.
-func (m *Meta) EnQueueBgJob(job *model.Job) error {
-	var updateRawArgs bool
-	if job.RawArgs == nil {
-		updateRawArgs = true
-	}
-	return m.enQueueDDLJob(mBgJobListKey, job, updateRawArgs)
-}
-
-// BgJobQueueLen returns the background job queue length.
-func (m *Meta) BgJobQueueLen() (int64, error) {
-	return m.txn.LLen(mBgJobListKey)
-}
-
-// AddHistoryBgJob adds background job to history.
-func (m *Meta) AddHistoryBgJob(job *model.Job) error {
-	return m.addHistoryDDLJob(mBgJobHistoryKey, job)
-}
-
-// GetHistoryBgJob gets a history background job.
-func (m *Meta) GetHistoryBgJob(id int64) (*model.Job, error) {
-	return m.getHistoryDDLJob(mBgJobHistoryKey, id)
-}
-
-// DeQueueBgJob pops a background job from the list.
-func (m *Meta) DeQueueBgJob() (*model.Job, error) {
-	return m.deQueueDDLJob(mBgJobListKey)
-}
-
 func (m *Meta) tableStatsKey(tableID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mTableStatsPrefix, tableID))
 }
@@ -673,7 +638,9 @@ func (m *Meta) schemaDiffKey(schemaVersion int64) []byte {
 // GetSchemaDiff gets the modification information on a given schema version.
 func (m *Meta) GetSchemaDiff(schemaVersion int64) (*model.SchemaDiff, error) {
 	diffKey := m.schemaDiffKey(schemaVersion)
+	startTime := time.Now()
 	data, err := m.txn.Get(diffKey)
+	metrics.MetaHistogram.WithLabelValues(metrics.GetSchemaDiff, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -692,7 +659,9 @@ func (m *Meta) SetSchemaDiff(diff *model.SchemaDiff) error {
 		return errors.Trace(err)
 	}
 	diffKey := m.schemaDiffKey(diff.Version)
+	startTime := time.Now()
 	err = m.txn.Set(diffKey, data)
+	metrics.MetaHistogram.WithLabelValues(metrics.SetSchemaDiff, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	return errors.Trace(err)
 }
 

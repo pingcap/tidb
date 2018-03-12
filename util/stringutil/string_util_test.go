@@ -30,24 +30,6 @@ var _ = Suite(&testStringUtilSuite{})
 type testStringUtilSuite struct {
 }
 
-func (s *testStringUtilSuite) TestReverse(c *C) {
-	defer testleak.AfterTest(c)()
-	table := []struct {
-		str    string
-		expect string
-	}{
-		{"zxcf", "fcxz"},
-		{"abc", "cba"},
-		{"Hello, 世界", "界世 ,olleH"},
-		{"", ""},
-	}
-
-	for _, t := range table {
-		x := Reverse(t.str)
-		c.Assert(x, Equals, t.expect)
-	}
-}
-
 func (s *testStringUtilSuite) TestUnquote(c *C) {
 	defer testleak.AfterTest(c)()
 	table := []struct {
@@ -110,14 +92,10 @@ func (s *testStringUtilSuite) TestPatternMatch(c *C) {
 		{"_", "a", '\\', true},
 		{"_", "ab", '\\', false},
 		{"__", "b", '\\', false},
-		{"_ab", "AAB", '\\', true},
 		{"%", "abcd", '\\', true},
 		{"%", "", '\\', true},
-		{"%a", "AAA", '\\', true},
 		{"%b", "AAA", '\\', false},
-		{"b%", "BBB", '\\', true},
 		{"%a%", "BBB", '\\', false},
-		{"%a%", "BAB", '\\', true},
 		{"a%", "BBB", '\\', false},
 		{`\%a`, `%a`, '\\', true},
 		{`\%a`, `aa`, '\\', false},
@@ -126,29 +104,23 @@ func (s *testStringUtilSuite) TestPatternMatch(c *C) {
 		{`\\_a`, `\xa`, '\\', true},
 		{`\a\b`, `\a\b`, '\\', true},
 		{"%%_", `abc`, '\\', true},
+		{"%_%_aA", "aaaA", '\\', true},
 		{`+_a`, `_a`, '+', true},
 		{`+%a`, `%a`, '+', true},
 		{`\%a`, `%a`, '+', false},
 		{`++a`, `+a`, '+', true},
 		{`++_a`, `+xa`, '+', true},
+		// We may reopen these test when like function go back to case insensitive.
+		/*
+			{"_ab", "AAB", '\\', true},
+			{"%a%", "BAB", '\\', true},
+			{"%a", "AAA", '\\', true},
+			{"b%", "BBB", '\\', true},
+		*/
 	}
 	for _, v := range tbl {
 		patChars, patTypes := CompilePattern(v.pattern, v.escape)
 		match := DoMatch(v.input, patChars, patTypes)
 		c.Assert(match, Equals, v.match, Commentf("%v", v))
-	}
-}
-
-func (s *testStringUtilSuite) TestRemoveBlanks(c *C) {
-	defer testleak.AfterTest(c)()
-	tests := []struct {
-		input  string
-		output string
-	}{
-		{"a\nb\rc d\te", "abcde"},
-		{"hello, 世界\npeace", "hello,世界peace"},
-	}
-	for _, tt := range tests {
-		c.Assert(RemoveBlanks(tt.input), Equals, tt.output)
 	}
 }

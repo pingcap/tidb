@@ -77,6 +77,7 @@ func init() {
 	for _, v := range defaultSysVars {
 		SysVars[v.Name] = v
 	}
+	initSynonymsSysVariables()
 
 	// Register terror to mysql error map.
 	mySQLErrCodes := map[terror.ErrCode]uint16{
@@ -137,7 +138,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "skip_name_resolve", "OFF"},
 	{ScopeNone, "performance_schema_max_file_handles", "32768"},
 	{ScopeSession, "transaction_allow_batching", ""},
-	{ScopeGlobal | ScopeSession, SQLModeVar, "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION"},
+	{ScopeGlobal | ScopeSession, SQLModeVar, mysql.DefaultSQLMode},
 	{ScopeNone, "performance_schema_max_statement_classes", "168"},
 	{ScopeGlobal, "server_id", "0"},
 	{ScopeGlobal, "innodb_flushing_avg_loops", "30"},
@@ -162,7 +163,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "thread_stack", "262144"},
 	{ScopeGlobal, "relay_log_info_repository", "FILE"},
 	{ScopeGlobal | ScopeSession, "sql_log_bin", "ON"},
-	{ScopeGlobal, "super_read_only", ""},
+	{ScopeGlobal, "super_read_only", "OFF"},
 	{ScopeGlobal | ScopeSession, "max_delayed_threads", "20"},
 	{ScopeNone, "protocol_version", "10"},
 	{ScopeGlobal | ScopeSession, "new", "OFF"},
@@ -197,6 +198,12 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "skip_networking", "OFF"},
 	{ScopeGlobal, "innodb_monitor_reset", ""},
 	{ScopeNone, "have_ssl", "DISABLED"},
+	{ScopeNone, "have_openssl", "DISABLED"},
+	{ScopeNone, "ssl_ca", ""},
+	{ScopeNone, "ssl_cert", ""},
+	{ScopeNone, "ssl_key", ""},
+	{ScopeNone, "ssl_cipher", ""},
+	{ScopeNone, "tls_version", "TLSv1,TLSv1.1,TLSv1.2"},
 	{ScopeNone, "system_time_zone", "CST"},
 	{ScopeGlobal, "innodb_print_all_deadlocks", "OFF"},
 	{ScopeNone, "innodb_autoinc_lock_mode", "1"},
@@ -296,7 +303,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "performance_schema_max_socket_classes", "10"},
 	{ScopeNone, "performance_schema_max_stage_classes", "150"},
 	{ScopeGlobal, "innodb_purge_batch_size", "300"},
-	{ScopeNone, "have_profiling", "YES"},
+	{ScopeNone, "have_profiling", "NO"},
 	{ScopeGlobal, "slave_checkpoint_group", "512"},
 	{ScopeGlobal | ScopeSession, "character_set_client", "latin1"},
 	{ScopeNone, "slave_load_tmpdir", "/var/tmp/"},
@@ -385,6 +392,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "net_write_timeout", "60"},
 	{ScopeGlobal, "innodb_buffer_pool_load_abort", "OFF"},
 	{ScopeGlobal | ScopeSession, "tx_isolation", "REPEATABLE-READ"},
+	{ScopeGlobal | ScopeSession, "transaction_isolation", "REPEATABLE-READ"},
 	{ScopeGlobal | ScopeSession, "collation_connection", "latin1_swedish_ci"},
 	{ScopeGlobal, "rpl_semi_sync_master_timeout", ""},
 	{ScopeGlobal | ScopeSession, "transaction_prealloc_size", "4096"},
@@ -417,7 +425,6 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "version", mysql.ServerVersion},
 	{ScopeGlobal | ScopeSession, "transaction_alloc_block_size", "8192"},
 	{ScopeGlobal, "sql_slave_skip_counter", "0"},
-	{ScopeNone, "have_openssl", "DISABLED"},
 	{ScopeGlobal, "innodb_large_prefix", "OFF"},
 	{ScopeNone, "performance_schema_max_cond_classes", "80"},
 	{ScopeGlobal, "innodb_io_capacity", "200"},
@@ -489,6 +496,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "performance_schema_events_waits_history_size", "10"},
 	{ScopeGlobal, "log_syslog_tag", ""},
 	{ScopeGlobal | ScopeSession, "tx_read_only", "0"},
+	{ScopeGlobal | ScopeSession, "transaction_read_only", "0"},
 	{ScopeGlobal, "rpl_semi_sync_master_wait_point", ""},
 	{ScopeGlobal, "innodb_undo_log_truncate", ""},
 	{ScopeNone, "simplified_binlog_gtid_recovery", "OFF"},
@@ -598,18 +606,43 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "innodb_online_alter_log_max_size", "134217728"},
 	/* TiDB specific variables */
 	{ScopeSession, TiDBSnapshot, ""},
-	{ScopeSession, TiDBSkipConstraintCheck, "0"},
+	{ScopeSession, TiDBImportingData, "0"},
 	{ScopeSession, TiDBOptAggPushDown, boolToIntStr(DefOptAggPushDown)},
 	{ScopeSession, TiDBOptInSubqUnFolding, boolToIntStr(DefOptInSubqUnfolding)},
 	{ScopeSession, TiDBBuildStatsConcurrency, strconv.Itoa(DefBuildStatsConcurrency)},
 	{ScopeGlobal | ScopeSession, TiDBDistSQLScanConcurrency, strconv.Itoa(DefDistSQLScanConcurrency)},
+	{ScopeGlobal | ScopeSession, TiDBIndexJoinBatchSize, strconv.Itoa(DefIndexJoinBatchSize)},
 	{ScopeGlobal | ScopeSession, TiDBIndexLookupSize, strconv.Itoa(DefIndexLookupSize)},
 	{ScopeGlobal | ScopeSession, TiDBIndexLookupConcurrency, strconv.Itoa(DefIndexLookupConcurrency)},
 	{ScopeGlobal | ScopeSession, TiDBIndexSerialScanConcurrency, strconv.Itoa(DefIndexSerialScanConcurrency)},
-	{ScopeGlobal | ScopeSession, TiDBMaxRowCountForINLJ, strconv.Itoa(DefMaxRowCountForINLJ)},
 	{ScopeGlobal | ScopeSession, TiDBSkipUTF8Check, boolToIntStr(DefSkipUTF8Check)},
 	{ScopeSession, TiDBBatchInsert, boolToIntStr(DefBatchInsert)},
+	{ScopeSession, TiDBBatchDelete, boolToIntStr(DefBatchDelete)},
+	{ScopeSession, TiDBDMLBatchSize, strconv.Itoa(DefDMLBatchSize)},
 	{ScopeSession, TiDBCurrentTS, strconv.Itoa(DefCurretTS)},
+	{ScopeSession, TiDBMaxChunkSize, strconv.Itoa(DefMaxChunkSize)},
+	{ScopeSession, TIDBMemQuotaQuery, strconv.FormatInt(DefTiDBMemQuotaQuery, 10)},
+	{ScopeSession, TIDBMemQuotaHashJoin, strconv.FormatInt(DefTiDBMemQuotaHashJoin, 10)},
+	{ScopeSession, TIDBMemQuotaSort, strconv.FormatInt(DefTiDBMemQuotaSort, 10)},
+	{ScopeSession, TIDBMemQuotaTopn, strconv.FormatInt(DefTiDBMemQuotaTopn, 10)},
+	{ScopeSession, TiDBEnableStreaming, "0"},
+	/* The following variable is defined as session scope but is actually server scope. */
+	{ScopeSession, TiDBGeneralLog, strconv.Itoa(DefTiDBGeneralLog)},
+	{ScopeSession, TiDBConfig, ""},
+}
+
+// SynonymsSysVariables is synonyms of system variables.
+var SynonymsSysVariables = map[string][]string{}
+
+func addSynonymsSysVariables(synonyms ...string) {
+	for _, s := range synonyms {
+		SynonymsSysVariables[s] = synonyms
+	}
+}
+
+func initSynonymsSysVariables() {
+	addSynonymsSysVariables("tx_isolation", "transaction_isolation")
+	addSynonymsSysVariables("tx_read_only", "transaction_read_only")
 }
 
 // SetNamesVariables is the system variable names related to set names statements.
@@ -620,6 +653,8 @@ var SetNamesVariables = []string{
 }
 
 const (
+	// CharacterSetConnection is the name for character_set_connection system variable.
+	CharacterSetConnection = "character_set_connection"
 	// CollationConnection is the name for collation_connection system variable.
 	CollationConnection = "collation_connection"
 	// CharsetDatabase is the name for character_set_database system variable.
@@ -630,6 +665,8 @@ const (
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.
 type GlobalVarAccessor interface {
+	// GetAllSysVars gets all the global system variable values.
+	GetAllSysVars() (map[string]string, error)
 	// GetGlobalSysVar gets the global system variable value for name.
 	GetGlobalSysVar(name string) (string, error)
 	// SetGlobalSysVar sets the global system variable name to value.

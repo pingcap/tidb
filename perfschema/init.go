@@ -14,14 +14,13 @@
 package perfschema
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
-	"github.com/pingcap/tidb/util/types"
 )
 
 type columnInfo struct {
@@ -32,14 +31,15 @@ type columnInfo struct {
 	elems []string
 }
 
-const (
-	// currentElemMax is maximum concurrent number of elements in table events_xxx_current.
-	// TODO: make it configurable?
-	currentElemMax int64 = 1024
-	// historyElemMax is maximum allowed number of elements in table events_xxx_history.
-	// TODO: make it configurable?
-	historyElemMax int64 = 1024
-)
+var globalStatusCols = []columnInfo{
+	{mysql.TypeString, 64, mysql.NotNullFlag, `%`, nil},
+	{mysql.TypeString, 1024, 0, `%`, nil},
+}
+
+var sessionStatusCols = []columnInfo{
+	{mysql.TypeString, 64, mysql.NotNullFlag, `%`, nil},
+	{mysql.TypeString, 1024, 0, `%`, nil},
+}
 
 var setupActorsCols = []columnInfo{
 	{mysql.TypeString, 60, mysql.NotNullFlag, `%`, nil},
@@ -197,16 +197,7 @@ var stagesCurrentCols = []columnInfo{
 	{mysql.TypeEnum, -1, 0, nil, []string{"TRANSACTION", "STATEMENT", "STAGE"}},
 }
 
-func createMemoryTable(meta *model.TableInfo, alloc autoid.Allocator) (table.Table, error) {
-	tbl, _ := tables.MemoryTableFromMeta(alloc, meta)
-	return tbl, nil
-}
-
-func createBoundedTable(meta *model.TableInfo, alloc autoid.Allocator, capacity int64) table.Table {
-	return tables.BoundedTableFromMeta(alloc, meta, capacity)
-}
-
-func (ps *perfSchema) buildTables() error {
+func (ps *PerfSchema) buildTables() {
 	tbls := make([]*model.TableInfo, 0, len(ps.tables))
 	dbID := autoid.GenLocalSchemaID()
 
@@ -217,19 +208,13 @@ func (ps *perfSchema) buildTables() error {
 			c.ID = autoid.GenLocalSchemaID()
 		}
 		alloc := autoid.NewMemoryAllocator(dbID)
-
 		var tbl table.Table
 		switch name {
-		case TableStmtsCurrent, TablePreparedStmtsInstances, TableTransCurrent, TableStagesCurrent:
-			tbl = createBoundedTable(meta, alloc, currentElemMax)
-		case TableStmtsHistory, TableStmtsHistoryLong, TableTransHistory, TableTransHistoryLong, TableStagesHistory, TableStagesHistoryLong:
-			tbl = createBoundedTable(meta, alloc, historyElemMax)
+		//@TODO in the future, we need to add many VirtualTable, we may need to add new type for these tables.
+		case TableSessionStatus, TableGlobalStatus:
+			tbl = createVirtualTable(meta, name)
 		default:
-			var err error
-			tbl, err = createMemoryTable(meta, alloc)
-			if err != nil {
-				return errors.Trace(err)
-			}
+			tbl = tables.MemoryTableFromMeta(alloc, meta)
 		}
 		ps.mTables[name] = tbl
 	}
@@ -240,10 +225,9 @@ func (ps *perfSchema) buildTables() error {
 		Collate: mysql.DefaultCollationName,
 		Tables:  tbls,
 	}
-	return nil
 }
 
-func (ps *perfSchema) buildModel(tbName string, colNames []string, cols []columnInfo) {
+func (ps *PerfSchema) buildModel(tbName string, colNames []string, cols []columnInfo) {
 	rcols := make([]*model.ColumnInfo, len(cols))
 	for i, col := range cols {
 		var ci *model.ColumnInfo
@@ -279,7 +263,7 @@ func buildUsualColumnInfo(offset int, name string, tp byte, size int, flag uint,
 		Collate: mCollation,
 		Tp:      tp,
 		Flen:    size,
-		Flag:    uint(flag),
+		Flag:    flag,
 	}
 	colInfo := &model.ColumnInfo{
 		Name:         model.NewCIStr(name),
@@ -301,7 +285,7 @@ func buildEnumColumnInfo(offset int, name string, elems []string, flag uint, def
 		Charset: mCharset,
 		Collate: mCollation,
 		Tp:      mysql.TypeEnum,
-		Flag:    uint(flag),
+		Flag:    flag,
 		Elems:   elems,
 	}
 	colInfo := &model.ColumnInfo{
@@ -314,32 +298,13 @@ func buildEnumColumnInfo(offset int, name string, elems []string, flag uint, def
 	return colInfo
 }
 
-func (ps *perfSchema) initRecords(tbName string, records [][]types.Datum) error {
-	tbl, ok := ps.mTables[tbName]
-	if !ok {
-		return errInvalidPerfSchemaTable.Gen("Unknown PerformanceSchema table: %s", tbName)
-	}
-	for _, rec := range records {
-		_, err := tbl.AddRecord(nil, rec)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
-}
-
-var setupTimersRecords = [][]types.Datum{
-	types.MakeDatums("stage", types.Enum{Name: "NANOSECOND", Value: 1}),
-	types.MakeDatums("statement", types.Enum{Name: "NANOSECOND", Value: 1}),
-	types.MakeDatums("transaction", types.Enum{Name: "NANOSECOND", Value: 1}),
-}
-
-func (ps *perfSchema) initialize() (err error) {
+func (ps *PerfSchema) initialize() {
 	ps.tables = make(map[string]*model.TableInfo)
 	ps.mTables = make(map[string]table.Table, len(ps.tables))
-	ps.stmtHandles = make([]int64, currentElemMax)
 
 	allColDefs := [][]columnInfo{
+		globalStatusCols,
+		sessionStatusCols,
 		setupActorsCols,
 		setupObjectsCols,
 		setupInstrumentsCols,
@@ -358,6 +323,8 @@ func (ps *perfSchema) initialize() (err error) {
 	}
 
 	allColNames := [][]string{
+		ColumnGlobalStatus,
+		ColumnSessionStatus,
 		ColumnSetupActors,
 		ColumnSetupObjects,
 		ColumnSetupInstruments,
@@ -379,69 +346,22 @@ func (ps *perfSchema) initialize() (err error) {
 	for i, def := range allColDefs {
 		ps.buildModel(PerfSchemaTables[i], allColNames[i], def)
 	}
-	err = ps.buildTables()
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	setupActorsRecords := [][]types.Datum{
-		types.MakeDatums(`%`, `%`, `%`, types.Enum{Name: "YES", Value: 1}, types.Enum{Name: "YES", Value: 1}),
-	}
-	err = ps.initRecords(TableSetupActors, setupActorsRecords)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	setupObjectsRecords := [][]types.Datum{
-		types.MakeDatums(types.Enum{Name: "EVENT", Value: 1}, "mysql", `%`, types.Enum{Name: "NO", Value: 2}, types.Enum{Name: "NO", Value: 2}),
-		types.MakeDatums(types.Enum{Name: "EVENT", Value: 1}, "performance_schema", `%`, types.Enum{Name: "NO", Value: 2}, types.Enum{Name: "NO", Value: 2}),
-		types.MakeDatums(types.Enum{Name: "EVENT", Value: 1}, "information_schema", `%`, types.Enum{Name: "NO", Value: 2}, types.Enum{Name: "NO", Value: 2}),
-		types.MakeDatums(types.Enum{Name: "EVENT", Value: 1}, `%`, `%`, types.Enum{Name: "YES", Value: 1}, types.Enum{Name: "YES", Value: 1}),
-		types.MakeDatums(types.Enum{Name: "FUNCTION", Value: 2}, "mysql", `%`, types.Enum{Name: "NO", Value: 2}, types.Enum{Name: "NO", Value: 2}),
-		types.MakeDatums(types.Enum{Name: "FUNCTION", Value: 2}, "performance_schema", `%`, types.Enum{Name: "NO", Value: 2}, types.Enum{Name: "NO", Value: 2}),
-		types.MakeDatums(types.Enum{Name: "FUNCTION", Value: 2}, "information_schema", `%`, types.Enum{Name: "NO", Value: 2}, types.Enum{Name: "NO", Value: 2}),
-		types.MakeDatums(types.Enum{Name: "FUNCTION", Value: 2}, `%`, `%`, types.Enum{Name: "YES", Value: 1}, types.Enum{Name: "YES", Value: 1}),
-		types.MakeDatums(types.Enum{Name: "TABLE", Value: 3}, "mysql", `%`, types.Enum{Name: "NO", Value: 2}, types.Enum{Name: "NO", Value: 2}),
-		types.MakeDatums(types.Enum{Name: "TABLE", Value: 3}, "performance_schema", `%`, types.Enum{Name: "NO", Value: 2}, types.Enum{Name: "NO", Value: 2}),
-		types.MakeDatums(types.Enum{Name: "TABLE", Value: 3}, "information_schema", `%`, types.Enum{Name: "NO", Value: 2}, types.Enum{Name: "NO", Value: 2}),
-		types.MakeDatums(types.Enum{Name: "TABLE", Value: 3}, `%`, `%`, types.Enum{Name: "YES", Value: 1}, types.Enum{Name: "YES", Value: 1}),
-	}
-	err = ps.initRecords(TableSetupObjects, setupObjectsRecords)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	setupConsumersRecords := [][]types.Datum{
-		types.MakeDatums("events_stages_current", types.Enum{Name: "NO", Value: 2}),
-		types.MakeDatums("events_stages_history", types.Enum{Name: "NO", Value: 2}),
-		types.MakeDatums("events_stages_history_long", types.Enum{Name: "NO", Value: 2}),
-		types.MakeDatums("events_statements_current", types.Enum{Name: "YES", Value: 1}),
-		types.MakeDatums("events_statements_history", types.Enum{Name: "YES", Value: 1}),
-		types.MakeDatums("events_statements_history_long", types.Enum{Name: "NO", Value: 2}),
-		types.MakeDatums("events_transactions_current", types.Enum{Name: "YES", Value: 1}),
-		types.MakeDatums("events_transactions_history", types.Enum{Name: "YES", Value: 1}),
-		types.MakeDatums("events_transactions_history_long", types.Enum{Name: "YES", Value: 1}),
-		types.MakeDatums("global_instrumentation", types.Enum{Name: "YES", Value: 1}),
-		types.MakeDatums("thread_instrumentation", types.Enum{Name: "YES", Value: 1}),
-		types.MakeDatums("statements_digest", types.Enum{Name: "YES", Value: 1}),
-	}
-	err = ps.initRecords(TableSetupConsumers, setupConsumersRecords)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = ps.initRecords(TableSetupTimers, setupTimersRecords)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	return nil
+	ps.buildTables()
 }
 
-func (ps *perfSchema) GetDBMeta() *model.DBInfo {
+// GetDBMeta returns the DB info.
+func (ps *PerfSchema) GetDBMeta() *model.DBInfo {
 	return ps.dbInfo
 }
 
-func (ps *perfSchema) GetTable(name string) (table.Table, bool) {
+// GetTable returns the table.
+func (ps *PerfSchema) GetTable(name string) (table.Table, bool) {
 	tbl, ok := ps.mTables[name]
+	return tbl, ok
+}
+
+// GetTableMeta returns the table info.
+func (ps *PerfSchema) GetTableMeta(name string) (*model.TableInfo, bool) {
+	tbl, ok := ps.tables[name]
 	return tbl, ok
 }

@@ -34,9 +34,10 @@ func (ki KeyInfo) Clone() KeyInfo {
 
 // Schema stands for the row schema and unique key information get from input.
 type Schema struct {
-	Columns   []*Column
-	Keys      []KeyInfo
-	MaxOneRow bool
+	Columns []*Column
+	Keys    []KeyInfo
+	// TblID2Handle stores the tables' handle column information if we need handle in execution phase.
+	TblID2Handle map[int64][]*Column
 }
 
 // String implements fmt.Stringer interface.
@@ -68,7 +69,29 @@ func (s *Schema) Clone() *Schema {
 	}
 	schema := NewSchema(cols...)
 	schema.SetUniqueKeys(keys)
+	for id, cols := range s.TblID2Handle {
+		schema.TblID2Handle[id] = make([]*Column, 0, len(cols))
+		for _, col := range cols {
+			var inColumns = false
+			for i, colInColumns := range s.Columns {
+				if col == colInColumns {
+					schema.TblID2Handle[id] = append(schema.TblID2Handle[id], schema.Columns[i])
+					inColumns = true
+					break
+				}
+			}
+			if !inColumns {
+				schema.TblID2Handle[id] = append(schema.TblID2Handle[id], col.Clone().(*Column))
+			}
+		}
+	}
 	return schema
+}
+
+// ExprFromSchema checks if all columns of this expression are from the same schema.
+func ExprFromSchema(expr Expression, schema *Schema) bool {
+	cols := ExtractColumns(expr)
+	return len(schema.ColumnsIndices(cols)) > 0
 }
 
 // FindColumn finds an Column from schema for a ast.ColumnName. It compares the db/table/column names.
@@ -90,7 +113,15 @@ func (s *Schema) FindColumnAndIndex(astCol *ast.ColumnName) (*Column, int, error
 			if idx == -1 {
 				idx = i
 			} else {
-				return nil, -1, errors.Errorf("Column %s is ambiguous", col.String())
+				// For query like:
+				// create table t1(a int); create table t2(d int);
+				// select 1 from t1, t2 where 1 = (select d from t2 where a > 1) and d = 1;
+				// we will get an Apply operator whose schema is [test.t1.a, test.t2.d, test.t2.d],
+				// we check whether the column of the schema comes from a subquery to avoid
+				// causing the ambiguous error when resolve the column `d` in the Selection.
+				if !col.IsAggOrSubq {
+					return nil, -1, errors.Errorf("Column %s is ambiguous", col.String())
+				}
 			}
 		}
 	}
@@ -112,7 +143,7 @@ func (s *Schema) RetrieveColumn(col *Column) *Column {
 // IsUniqueKey checks if this column is a unique key.
 func (s *Schema) IsUniqueKey(col *Column) bool {
 	for _, key := range s.Keys {
-		if len(key) == 1 && key[0].Equal(col, nil) {
+		if len(key) == 1 && key[0].Equal(nil, col) {
 			return true
 		}
 	}
@@ -164,7 +195,20 @@ func (s *Schema) ColumnsIndices(cols []*Column) (ret []int) {
 	return
 }
 
-// MergeSchema will merge two schema into one schema.
+// ColumnsByIndices returns columns by multiple offsets.
+// Callers should guarantee that all the offsets provided should be valid, which means offset should:
+// 1. not smaller than 0, and
+// 2. not exceed len(s.Columns)
+func (s *Schema) ColumnsByIndices(offsets []int) []*Column {
+	cols := make([]*Column, 0, len(offsets))
+	for _, offset := range offsets {
+		cols = append(cols, s.Columns[offset])
+	}
+	return cols
+}
+
+// MergeSchema will merge two schema into one schema. We shouldn't need to consider unique keys.
+// That will be processed in build_key_info.go.
 func MergeSchema(lSchema, rSchema *Schema) *Schema {
 	if lSchema == nil && rSchema == nil {
 		return nil
@@ -178,11 +222,18 @@ func MergeSchema(lSchema, rSchema *Schema) *Schema {
 	tmpL := lSchema.Clone()
 	tmpR := rSchema.Clone()
 	ret := NewSchema(append(tmpL.Columns, tmpR.Columns...)...)
-	ret.SetUniqueKeys(append(tmpL.Keys, tmpR.Keys...))
+	ret.TblID2Handle = tmpL.TblID2Handle
+	for id, cols := range tmpR.TblID2Handle {
+		if _, ok := ret.TblID2Handle[id]; ok {
+			ret.TblID2Handle[id] = append(ret.TblID2Handle[id], cols...)
+		} else {
+			ret.TblID2Handle[id] = cols
+		}
+	}
 	return ret
 }
 
 // NewSchema returns a schema made by its parameter.
 func NewSchema(cols ...*Column) *Schema {
-	return &Schema{Columns: cols}
+	return &Schema{Columns: cols, TblID2Handle: make(map[int64][]*Column)}
 }

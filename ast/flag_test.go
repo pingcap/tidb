@@ -70,6 +70,10 @@ func (ts *testFlagSuite) TestFlag(c *C) {
 			ast.FlagConstant,
 		},
 		{
+			"case 1 when a > 1 then 1 else 0 end",
+			ast.FlagConstant | ast.FlagHasReference,
+		},
+		{
 			"1 = ANY (select 1) OR exists (select 1)",
 			ast.FlagHasSubquery,
 		},
@@ -112,6 +116,30 @@ func (ts *testFlagSuite) TestFlag(c *C) {
 		{
 			"default(a)",
 			ast.FlagHasDefault,
+		},
+		{
+			"a is null",
+			ast.FlagHasReference,
+		},
+		{
+			"1 is true",
+			ast.FlagConstant,
+		},
+		{
+			"a in (1, count(*), 3)",
+			ast.FlagConstant | ast.FlagHasReference | ast.FlagHasAggregateFunc,
+		},
+		{
+			"'Michael!' REGEXP '.*'",
+			ast.FlagConstant,
+		},
+		{
+			"a REGEXP '.*'",
+			ast.FlagHasReference,
+		},
+		{
+			"-a",
+			ast.FlagHasReference,
 		},
 	}
 	for _, tt := range flagTests {

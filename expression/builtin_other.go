@@ -17,244 +17,655 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 var (
 	_ functionClass = &inFunctionClass{}
 	_ functionClass = &rowFunctionClass{}
-	_ functionClass = &castFunctionClass{}
 	_ functionClass = &setVarFunctionClass{}
 	_ functionClass = &getVarFunctionClass{}
 	_ functionClass = &lockFunctionClass{}
 	_ functionClass = &releaseLockFunctionClass{}
 	_ functionClass = &valuesFunctionClass{}
 	_ functionClass = &bitCountFunctionClass{}
+	_ functionClass = &getParamFunctionClass{}
 )
 
 var (
 	_ builtinFunc = &builtinSleepSig{}
-	_ builtinFunc = &builtinInSig{}
+	_ builtinFunc = &builtinInIntSig{}
+	_ builtinFunc = &builtinInStringSig{}
+	_ builtinFunc = &builtinInDecimalSig{}
+	_ builtinFunc = &builtinInRealSig{}
+	_ builtinFunc = &builtinInTimeSig{}
+	_ builtinFunc = &builtinInDurationSig{}
+	_ builtinFunc = &builtinInJSONSig{}
 	_ builtinFunc = &builtinRowSig{}
-	_ builtinFunc = &builtinCastSig{}
 	_ builtinFunc = &builtinSetVarSig{}
 	_ builtinFunc = &builtinGetVarSig{}
 	_ builtinFunc = &builtinLockSig{}
 	_ builtinFunc = &builtinReleaseLockSig{}
-	_ builtinFunc = &builtinValuesSig{}
+	_ builtinFunc = &builtinValuesIntSig{}
+	_ builtinFunc = &builtinValuesRealSig{}
+	_ builtinFunc = &builtinValuesDecimalSig{}
+	_ builtinFunc = &builtinValuesStringSig{}
+	_ builtinFunc = &builtinValuesTimeSig{}
+	_ builtinFunc = &builtinValuesDurationSig{}
+	_ builtinFunc = &builtinValuesJSONSig{}
 	_ builtinFunc = &builtinBitCountSig{}
+	_ builtinFunc = &builtinGetParamStringSig{}
 )
 
 type inFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *inFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinInSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	argTps := make([]types.EvalType, len(args))
+	for i := range args {
+		argTps[i] = args[0].GetType().EvalType()
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, argTps...)
+	bf.tp.Flen = 1
+	switch args[0].GetType().EvalType() {
+	case types.ETInt:
+		sig = &builtinInIntSig{baseBuiltinFunc: bf}
+		sig.setPbCode(tipb.ScalarFuncSig_InInt)
+	case types.ETString:
+		sig = &builtinInStringSig{baseBuiltinFunc: bf}
+		sig.setPbCode(tipb.ScalarFuncSig_InString)
+	case types.ETReal:
+		sig = &builtinInRealSig{baseBuiltinFunc: bf}
+		sig.setPbCode(tipb.ScalarFuncSig_InReal)
+	case types.ETDecimal:
+		sig = &builtinInDecimalSig{baseBuiltinFunc: bf}
+		sig.setPbCode(tipb.ScalarFuncSig_InDecimal)
+	case types.ETDatetime, types.ETTimestamp:
+		sig = &builtinInTimeSig{baseBuiltinFunc: bf}
+		sig.setPbCode(tipb.ScalarFuncSig_InTime)
+	case types.ETDuration:
+		sig = &builtinInDurationSig{baseBuiltinFunc: bf}
+		sig.setPbCode(tipb.ScalarFuncSig_InDuration)
+	case types.ETJson:
+		sig = &builtinInJSONSig{baseBuiltinFunc: bf}
+		sig.setPbCode(tipb.ScalarFuncSig_InJson)
+	}
+	return sig, nil
 }
 
-type builtinInSig struct {
+// See https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
+type builtinInIntSig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinInSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/any-in-some-subqueries.html
-func (b *builtinInSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+func (b *builtinInIntSig) evalInt(row types.Row) (int64, bool, error) {
+	arg0, isNull0, err := b.args[0].EvalInt(b.ctx, row)
+	if isNull0 || err != nil {
+		return 0, isNull0, errors.Trace(err)
 	}
-	if args[0].IsNull() {
-		return
-	}
-	sc := b.ctx.GetSessionVars().StmtCtx
+	isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
 	var hasNull bool
-	for _, v := range args[1:] {
-		if v.IsNull() {
+	for _, arg := range b.args[1:] {
+		evaledArg, isNull, err := arg.EvalInt(b.ctx, row)
+		if err != nil {
+			return 0, true, errors.Trace(err)
+		}
+		if isNull {
 			hasNull = true
 			continue
 		}
-
-		a, b, err := types.CoerceDatum(sc, args[0], v)
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		ret, err := a.CompareDatum(sc, b)
-		if err != nil {
-			return d, errors.Trace(err)
-		}
-		if ret == 0 {
-			d.SetInt64(1)
-			return d, nil
+		isUnsigned := mysql.HasUnsignedFlag(arg.GetType().Flag)
+		if isUnsigned0 && isUnsigned {
+			if evaledArg == arg0 {
+				return 1, false, nil
+			}
+		} else if !isUnsigned0 && !isUnsigned {
+			if evaledArg == arg0 {
+				return 1, false, nil
+			}
+		} else if !isUnsigned0 && isUnsigned {
+			if arg0 >= 0 && evaledArg == arg0 {
+				return 1, false, nil
+			}
+		} else {
+			if evaledArg >= 0 && evaledArg == arg0 {
+				return 1, false, nil
+			}
 		}
 	}
+	return 0, hasNull, nil
+}
 
-	if hasNull {
-		// If it's no matched but we get null in In, returns null.
-		// e.g 1 in (null, 2, 3) returns null.
-		return
+// See https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
+type builtinInStringSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinInStringSig) evalInt(row types.Row) (int64, bool, error) {
+	arg0, isNull0, err := b.args[0].EvalString(b.ctx, row)
+	if isNull0 || err != nil {
+		return 0, isNull0, errors.Trace(err)
 	}
-	d.SetInt64(0)
-	return
+	var hasNull bool
+	for _, arg := range b.args[1:] {
+		evaledArg, isNull, err := arg.EvalString(b.ctx, row)
+		if err != nil {
+			return 0, true, errors.Trace(err)
+		}
+		if isNull {
+			hasNull = true
+			continue
+		}
+		if arg0 == evaledArg {
+			return 1, false, nil
+		}
+	}
+	return 0, hasNull, nil
+}
+
+// See https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
+type builtinInRealSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinInRealSig) evalInt(row types.Row) (int64, bool, error) {
+	arg0, isNull0, err := b.args[0].EvalReal(b.ctx, row)
+	if isNull0 || err != nil {
+		return 0, isNull0, errors.Trace(err)
+	}
+	var hasNull bool
+	for _, arg := range b.args[1:] {
+		evaledArg, isNull, err := arg.EvalReal(b.ctx, row)
+		if err != nil {
+			return 0, true, errors.Trace(err)
+		}
+		if isNull {
+			hasNull = true
+			continue
+		}
+		if arg0 == evaledArg {
+			return 1, false, nil
+		}
+	}
+	return 0, hasNull, nil
+}
+
+// See https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
+type builtinInDecimalSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinInDecimalSig) evalInt(row types.Row) (int64, bool, error) {
+	arg0, isNull0, err := b.args[0].EvalDecimal(b.ctx, row)
+	if isNull0 || err != nil {
+		return 0, isNull0, errors.Trace(err)
+	}
+	var hasNull bool
+	for _, arg := range b.args[1:] {
+		evaledArg, isNull, err := arg.EvalDecimal(b.ctx, row)
+		if err != nil {
+			return 0, true, errors.Trace(err)
+		}
+		if isNull {
+			hasNull = true
+			continue
+		}
+		if arg0.Compare(evaledArg) == 0 {
+			return 1, false, nil
+		}
+	}
+	return 0, hasNull, nil
+}
+
+// See https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
+type builtinInTimeSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinInTimeSig) evalInt(row types.Row) (int64, bool, error) {
+	arg0, isNull0, err := b.args[0].EvalTime(b.ctx, row)
+	if isNull0 || err != nil {
+		return 0, isNull0, errors.Trace(err)
+	}
+	var hasNull bool
+	for _, arg := range b.args[1:] {
+		evaledArg, isNull, err := arg.EvalTime(b.ctx, row)
+		if err != nil {
+			return 0, true, errors.Trace(err)
+		}
+		if isNull {
+			hasNull = true
+			continue
+		}
+		if arg0.Compare(evaledArg) == 0 {
+			return 1, false, nil
+		}
+	}
+	return 0, hasNull, nil
+}
+
+// See https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
+type builtinInDurationSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinInDurationSig) evalInt(row types.Row) (int64, bool, error) {
+	arg0, isNull0, err := b.args[0].EvalDuration(b.ctx, row)
+	if isNull0 || err != nil {
+		return 0, isNull0, errors.Trace(err)
+	}
+	var hasNull bool
+	for _, arg := range b.args[1:] {
+		evaledArg, isNull, err := arg.EvalDuration(b.ctx, row)
+		if err != nil {
+			return 0, true, errors.Trace(err)
+		}
+		if isNull {
+			hasNull = true
+			continue
+		}
+		if arg0.Compare(evaledArg) == 0 {
+			return 1, false, nil
+		}
+	}
+	return 0, hasNull, nil
+}
+
+// See https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
+type builtinInJSONSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinInJSONSig) evalInt(row types.Row) (int64, bool, error) {
+	arg0, isNull0, err := b.args[0].EvalJSON(b.ctx, row)
+	if isNull0 || err != nil {
+		return 0, isNull0, errors.Trace(err)
+	}
+	var hasNull bool
+	for _, arg := range b.args[1:] {
+		evaledArg, isNull, err := arg.EvalJSON(b.ctx, row)
+		if err != nil {
+			return 0, true, errors.Trace(err)
+		}
+		if isNull {
+			hasNull = true
+			continue
+		}
+		result := json.CompareBinary(evaledArg, arg0)
+		if result == 0 {
+			return 1, false, nil
+		}
+	}
+	return 0, hasNull, nil
 }
 
 type rowFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *rowFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinRowSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *rowFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
+	if err = c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	argTps := make([]types.EvalType, len(args))
+	for i := range argTps {
+		argTps[i] = args[i].GetType().EvalType()
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, argTps...)
+	sig = &builtinRowSig{bf}
+	return sig, nil
 }
 
 type builtinRowSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinRowSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
-	d.SetRow(args)
-	return
+// evalString rowFunc should always be flattened in expression rewrite phrase.
+func (b *builtinRowSig) evalString(row types.Row) (string, bool, error) {
+	panic("builtinRowSig.evalString() should never be called.")
 }
 
 type setVarFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *setVarFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	err := errors.Trace(c.verifyArgs(args))
-	bt := &builtinSetVarSig{newBaseBuiltinFunc(args, ctx)}
-	bt.deterministic = false
-	return bt.setSelf(bt), errors.Trace(err)
+func (c *setVarFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
+	if err = errors.Trace(c.verifyArgs(args)); err != nil {
+		return nil, err
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETString)
+	bf.tp.Flen = args[1].GetType().Flen
+	// TODO: we should consider the type of the argument, but not take it as string for all situations.
+	sig = &builtinSetVarSig{bf}
+	return sig, errors.Trace(err)
 }
 
 type builtinSetVarSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinSetVarSig) eval(row []types.Datum) (types.Datum, error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
+func (b *builtinSetVarSig) evalString(row types.Row) (res string, isNull bool, err error) {
+	var varName string
 	sessionVars := b.ctx.GetSessionVars()
-	varName, _ := args[0].ToString()
-	if !args[1].IsNull() {
-		strVal, err := args[1].ToString()
-		if err != nil {
-			return types.Datum{}, errors.Trace(err)
-		}
-		sessionVars.Users[varName] = strings.ToLower(strVal)
+	varName, isNull, err = b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", isNull, errors.Trace(err)
 	}
-	return args[1], nil
+	res, isNull, err = b.args[1].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", isNull, errors.Trace(err)
+	}
+	varName = strings.ToLower(varName)
+	sessionVars.UsersLock.Lock()
+	sessionVars.Users[varName] = res
+	sessionVars.UsersLock.Unlock()
+	return res, false, nil
 }
 
 type getVarFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *getVarFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	err := errors.Trace(c.verifyArgs(args))
-	bt := &builtinGetVarSig{newBaseBuiltinFunc(args, ctx)}
-	bt.deterministic = false
-	return bt.setSelf(bt), errors.Trace(err)
+func (c *getVarFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
+	if err = errors.Trace(c.verifyArgs(args)); err != nil {
+		return nil, err
+	}
+	// TODO: we should consider the type of the argument, but not take it as string for all situations.
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
+	bf.tp.Flen = mysql.MaxFieldVarCharLength
+	sig = &builtinGetVarSig{bf}
+	return sig, nil
 }
 
 type builtinGetVarSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinGetVarSig) eval(row []types.Datum) (types.Datum, error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return types.Datum{}, errors.Trace(err)
-	}
+func (b *builtinGetVarSig) evalString(row types.Row) (string, bool, error) {
 	sessionVars := b.ctx.GetSessionVars()
-	varName, _ := args[0].ToString()
-	if v, ok := sessionVars.Users[varName]; ok {
-		return types.NewDatum(v), nil
+	varName, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", isNull, errors.Trace(err)
 	}
-	return types.Datum{}, nil
+	varName = strings.ToLower(varName)
+	sessionVars.UsersLock.RLock()
+	defer sessionVars.UsersLock.RUnlock()
+	if v, ok := sessionVars.Users[varName]; ok {
+		return v, false, nil
+	}
+	return "", true, nil
 }
 
 type valuesFunctionClass struct {
 	baseFunctionClass
 
 	offset int
+	tp     *types.FieldType
 }
 
-func (c *valuesFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	err := errors.Trace(c.verifyArgs(args))
-	bt := &builtinValuesSig{newBaseBuiltinFunc(args, ctx), c.offset}
-	bt.deterministic = false
-	return bt.setSelf(bt), errors.Trace(err)
+func (c *valuesFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
+	if err = errors.Trace(c.verifyArgs(args)); err != nil {
+		return nil, err
+	}
+	bf := newBaseBuiltinFunc(ctx, args)
+	bf.tp = c.tp
+	switch c.tp.EvalType() {
+	case types.ETInt:
+		sig = &builtinValuesIntSig{bf, c.offset}
+	case types.ETReal:
+		sig = &builtinValuesRealSig{bf, c.offset}
+	case types.ETDecimal:
+		sig = &builtinValuesDecimalSig{bf, c.offset}
+	case types.ETString:
+		sig = &builtinValuesStringSig{bf, c.offset}
+	case types.ETDatetime, types.ETTimestamp:
+		sig = &builtinValuesTimeSig{bf, c.offset}
+	case types.ETDuration:
+		sig = &builtinValuesDurationSig{bf, c.offset}
+	case types.ETJson:
+		sig = &builtinValuesJSONSig{bf, c.offset}
+	}
+	return sig, nil
 }
 
-type builtinValuesSig struct {
+type builtinValuesIntSig struct {
 	baseBuiltinFunc
 
 	offset int
 }
 
-func (b *builtinValuesSig) eval(_ []types.Datum) (types.Datum, error) {
+// evalInt evals a builtinValuesIntSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
+func (b *builtinValuesIntSig) evalInt(_ types.Row) (int64, bool, error) {
 	values := b.ctx.GetSessionVars().CurrInsertValues
 	if values == nil {
-		return types.Datum{}, errors.New("Session current insert values is nil")
+		return 0, true, errors.New("Session current insert values is nil")
 	}
-	row := values.([]types.Datum)
-	if len(row) > b.offset {
-		return row[b.offset], nil
+	row := values.(types.Row)
+	if b.offset < row.Len() {
+		if row.IsNull(b.offset) {
+			return 0, true, nil
+		}
+		return row.GetInt64(b.offset), false, nil
 	}
-	return types.Datum{}, errors.Errorf("Session current insert values len %d and column's offset %v don't match", len(row), b.offset)
+	return 0, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
+}
+
+type builtinValuesRealSig struct {
+	baseBuiltinFunc
+
+	offset int
+}
+
+// evalReal evals a builtinValuesRealSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
+func (b *builtinValuesRealSig) evalReal(_ types.Row) (float64, bool, error) {
+	values := b.ctx.GetSessionVars().CurrInsertValues
+	if values == nil {
+		return 0, true, errors.New("Session current insert values is nil")
+	}
+	row := values.(types.Row)
+	if b.offset < row.Len() {
+		if row.IsNull(b.offset) {
+			return 0, true, nil
+		}
+		return row.GetFloat64(b.offset), false, nil
+	}
+	return 0, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
+}
+
+type builtinValuesDecimalSig struct {
+	baseBuiltinFunc
+
+	offset int
+}
+
+// evalDecimal evals a builtinValuesDecimalSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
+func (b *builtinValuesDecimalSig) evalDecimal(_ types.Row) (*types.MyDecimal, bool, error) {
+	values := b.ctx.GetSessionVars().CurrInsertValues
+	if values == nil {
+		return nil, true, errors.New("Session current insert values is nil")
+	}
+	row := values.(types.Row)
+	if b.offset < row.Len() {
+		if row.IsNull(b.offset) {
+			return nil, true, nil
+		}
+		return row.GetMyDecimal(b.offset), false, nil
+	}
+	return nil, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
+}
+
+type builtinValuesStringSig struct {
+	baseBuiltinFunc
+
+	offset int
+}
+
+// evalString evals a builtinValuesStringSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
+func (b *builtinValuesStringSig) evalString(_ types.Row) (string, bool, error) {
+	values := b.ctx.GetSessionVars().CurrInsertValues
+	if values == nil {
+		return "", true, errors.New("Session current insert values is nil")
+	}
+	row := values.(types.Row)
+	if b.offset < row.Len() {
+		if row.IsNull(b.offset) {
+			return "", true, nil
+		}
+		return row.GetString(b.offset), false, nil
+	}
+	return "", true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
+}
+
+type builtinValuesTimeSig struct {
+	baseBuiltinFunc
+
+	offset int
+}
+
+// evalTime evals a builtinValuesTimeSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
+func (b *builtinValuesTimeSig) evalTime(_ types.Row) (types.Time, bool, error) {
+	values := b.ctx.GetSessionVars().CurrInsertValues
+	if values == nil {
+		return types.Time{}, true, errors.New("Session current insert values is nil")
+	}
+	row := values.(types.Row)
+	if b.offset < row.Len() {
+		if row.IsNull(b.offset) {
+			return types.Time{}, true, nil
+		}
+		return row.GetTime(b.offset), false, nil
+	}
+	return types.Time{}, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
+}
+
+type builtinValuesDurationSig struct {
+	baseBuiltinFunc
+
+	offset int
+}
+
+// evalDuration evals a builtinValuesDurationSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
+func (b *builtinValuesDurationSig) evalDuration(_ types.Row) (types.Duration, bool, error) {
+	values := b.ctx.GetSessionVars().CurrInsertValues
+	if values == nil {
+		return types.Duration{}, true, errors.New("Session current insert values is nil")
+	}
+	row := values.(types.Row)
+	if b.offset < row.Len() {
+		if row.IsNull(b.offset) {
+			return types.Duration{}, true, nil
+		}
+		return row.GetDuration(b.offset), false, nil
+	}
+	return types.Duration{}, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
+}
+
+type builtinValuesJSONSig struct {
+	baseBuiltinFunc
+
+	offset int
+}
+
+// evalJSON evals a builtinValuesJSONSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
+func (b *builtinValuesJSONSig) evalJSON(_ types.Row) (json.BinaryJSON, bool, error) {
+	values := b.ctx.GetSessionVars().CurrInsertValues
+	if values == nil {
+		return json.BinaryJSON{}, true, errors.New("Session current insert values is nil")
+	}
+	row := values.(types.Row)
+	if b.offset < row.Len() {
+		if row.IsNull(b.offset) {
+			return json.BinaryJSON{}, true, nil
+		}
+		return row.GetJSON(b.offset), false, nil
+	}
+	return json.BinaryJSON{}, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
 }
 
 type bitCountFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *bitCountFunctionClass) getFunction(args []Expression, ctx context.Context) (builtinFunc, error) {
-	sig := &builtinBitCountSig{newBaseBuiltinFunc(args, ctx)}
-	return sig.setSelf(sig), errors.Trace(c.verifyArgs(args))
+func (c *bitCountFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETInt)
+	bf.tp.Flen = 2
+	sig := &builtinBitCountSig{bf}
+	return sig, nil
 }
 
 type builtinBitCountSig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinBitCountSig.
+// evalInt evals BIT_COUNT(N).
 // See https://dev.mysql.com/doc/refman/5.7/en/bit-functions.html#function_bit-count
-func (b *builtinBitCountSig) eval(row []types.Datum) (d types.Datum, err error) {
-	args, err := b.evalArgs(row)
-	if err != nil {
-		return d, errors.Trace(err)
-	}
-	arg := args[0]
-	if arg.IsNull() {
-		return d, nil
-	}
-	sc := new(variable.StatementContext)
-	sc.IgnoreTruncate = true
-	bin, err := arg.ToInt64(sc)
-	if err != nil {
-		if terror.ErrorEqual(err, types.ErrOverflow) {
-			d.SetInt64(64)
-			return d, nil
-
+func (b *builtinBitCountSig) evalInt(row types.Row) (int64, bool, error) {
+	n, isNull, err := b.args[0].EvalInt(b.ctx, row)
+	if err != nil || isNull {
+		if err != nil && types.ErrOverflow.Equal(err) {
+			return 64, false, nil
 		}
-		return d, errors.Trace(err)
+		return 0, true, errors.Trace(err)
 	}
+
 	var count int64
-	for bin != 0 {
+	for ; n != 0; n = (n - 1) & n {
 		count++
-		bin = (bin - 1) & bin
 	}
-	d.SetInt64(count)
-	return d, nil
+	return count, false, nil
+}
+
+// getParamFunctionClass for plan cache of prepared statements
+type getParamFunctionClass struct {
+	baseFunctionClass
+}
+
+// getFunction gets function
+// TODO: more typed functions will be added when typed parameters are supported.
+func (c *getParamFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETInt)
+	bf.tp.Flen = mysql.MaxFieldVarCharLength
+	sig := &builtinGetParamStringSig{bf}
+	return sig, nil
+}
+
+type builtinGetParamStringSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinGetParamStringSig) evalString(row types.Row) (string, bool, error) {
+	sessionVars := b.ctx.GetSessionVars()
+	idx, isNull, err := b.args[0].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return "", isNull, errors.Trace(err)
+	}
+	v := sessionVars.PreparedParams[idx]
+
+	dt := v.(types.Datum)
+	str, err := (&dt).ToString()
+	if err != nil {
+		return "", true, nil
+	}
+	return str, false, nil
 }

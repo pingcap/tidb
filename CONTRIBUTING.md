@@ -3,6 +3,30 @@
 TiDB is a community driven open source project and we welcome any contributor. The process of contributing to the TiDB project
 may be different than many other projects you have been involved in. This document outlines some conventions about development workflow, commit message formatting, contact points and other resources to make it easier to get your contribution accepted. This document is the canonical source of truth for things like supported toolchain versions for building and testing TiDB.
 
+## What is a Contributor?
+
+A Contributor refers to the person who contributes to the following projects:
+- TiDB: https://github.com/pingcap/tidb 
+- TiKV: https://github.com/pingcap/tikv 
+- TiSpark: https://github.com/pingcap/tispark 
+- PD: https://github.com/pingcap/pd 
+- Docs: https://github.com/pingcap/docs 
+- Docs-cn: https://github.com/pingcap/docs-cn 
+
+## How to become a TiDB Contributor?
+
+If a PR (Pull Request) submitted to the TiDB / TiKV / TiSpark / PD / Docs／Docs-cn projects by you is approved and merged, then you become a TiDB Contributor. 
+
+You are also encouraged to participate in the projects in the following ways:
+- Actively answer technical questions asked by community users.
+- Help to test the projects.
+- Help to review the pull requests (PRs) submitted by others.
+- Help to improve technical documents.
+- Submit valuable issues.
+- Report or fix known and unknown bugs.
+- Participate in the existing discussion about features in the roadmap, and have interest in implementing a certain feature independently.
+- Write articles about the source code analysis and usage cases for the projects.
+
 ## Pre submit pull request/issue flight checks
 
 Before you move on, please make sure what your issue and/or pull request is, a simple bug fix or an architecture change.
@@ -37,7 +61,7 @@ TiDB is written in [Go](http://golang.org).
 If you don't have a Go development environment,
 please [set one up](http://golang.org/doc/code.html).
 
-The version of GO should be **1.8.1** or above.
+The version of GO should be **1.9** or above.
 
 After installation, you'll need `GOPATH` defined,
 and `PATH` modified to access your Go binaries.
@@ -51,11 +75,10 @@ export PATH=$PATH:$GOPATH/bin
 
 #### Dependency management
 
-TiDB build/test scripts use [`glide`](https://github.com/Masterminds/glide) to
-manage dependencies.
+TiDB uses [`dep`](https://github.com/golang/dep) to manage dependencies.
 
 ```sh
-go get -u  github.com/Masterminds/glide
+go get -u  github.com/golang/dep/cmd/dep
 ```
 
 ## Workflow
@@ -74,7 +97,7 @@ Define a local working directory:
 
 ```sh
 # If your GOPATH has multiple paths, pick
-# just one and use it instead of $GOPATH here
+# just one and use it instead of $GOPATH here.
 working_dir=$GOPATH/src/github.com/pingcap
 ```
 
@@ -100,7 +123,7 @@ cd $working_dir/tidb
 git remote add upstream https://github.com/pingcap/tidb.git
 # or: git remote add upstream git@github.com:pingcap/tidb.git
 
-# Never push to upstream master since you do not have write access
+# Never push to upstream master since you do not have write access.
 git remote set-url --push upstream no_push
 
 # Confirm that your remotes make sense:
@@ -108,7 +131,7 @@ git remote set-url --push upstream no_push
 # origin    git@github.com:$(user)/tidb.git (fetch)
 # origin    git@github.com:$(user)/tidb.git (push)
 # upstream  https://github.com/pingcap/tidb (fetch)
-# upstream  https://github.com/pingcap/tidb (push)
+# upstream  no_push (push)
 git remote -v
 ```
 
@@ -145,31 +168,50 @@ Branch from master:
 git checkout -b myfeature
 ```
 
-Then edit code on the `myfeature` branch.
+### Step 4: Develop
 
-#### Build
+#### Edit the code
+
+You can now edit the code on the `myfeature` branch.
+
+#### Run stand-alone mode
+
+If you want to reproduce and investigate an issue, you may need
+to run TiDB in stand-alone mode.
 
 ```sh
-# Run unit test to make sure all test passed
+# Build the binary.
+make server
+
+# Run in stand-alone mode. The data is stored in `/tmp/tidb`.
+bin/tidb-server
+```
+
+Then you can connect to TiDB with mysql client.
+
+```sh
+mysql -h127.0.0.1 -P4000 -uroot test
+```
+
+#### Run Test
+
+```sh
+# Run unit test to make sure all test passed.
 make dev
 
-# Build tidb-server to make sure a binary can be built
-cd $working_dir/tidb
-make
-
-# Check checklist before you move on
+# Check checklist before you move on.
 make checklist
 ```
 
-### Step 4: Keep your branch in sync
+### Step 5: Keep your branch in sync
 
 ```sh
-# While on your myfeature branch
+# While on your myfeature branch.
 git fetch upstream
 git rebase upstream/master
 ```
 
-### Step 5: Commit
+### Step 6: Commit
 
 Commit your changes.
 
@@ -180,7 +222,7 @@ git commit
 Likely you'll go back and edit/build/test some more than `commit --amend`
 in a few cycles.
 
-### Step 6: Push
+### Step 7: Push
 
 When ready to review (or just to establish an offsite backup or your work),
 push your branch to your fork on `github.com`:
@@ -189,12 +231,12 @@ push your branch to your fork on `github.com`:
 git push -f origin myfeature
 ```
 
-### Step 7: Create a pull request
+### Step 8: Create a pull request
 
 1. Visit your fork at https://github.com/$user/tidb (replace `$user` obviously).
 2. Click the `Compare & pull request` button next to your `myfeature` branch.
 
-#### Step 8: get a code review
+### Step 9: Get a code review
 
 Once your pull request has been opened, it will be assigned to at least two
 reviewers. Those reviewers will do a thorough code review, looking for

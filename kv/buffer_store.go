@@ -17,6 +17,15 @@ import (
 	"github.com/juju/errors"
 )
 
+var (
+	// DefaultTxnMembufCap is the default transaction membuf capability.
+	DefaultTxnMembufCap = 4 * 1024
+	// ImportingTxnMembufCap is the capability of tidb importing data situation.
+	ImportingTxnMembufCap = 32 * 1024
+	// TempTxnMemBufCap is the capability of temporary membuf.
+	TempTxnMemBufCap = 64
+)
+
 // BufferStore wraps a Retriever for read and a MemBuffer for buffered write.
 // Common usage pattern:
 //	bs := NewBufferStore(r) // use BufferStore to wrap a Retriever
@@ -30,11 +39,24 @@ type BufferStore struct {
 }
 
 // NewBufferStore creates a BufferStore using r for read.
-func NewBufferStore(r Retriever) *BufferStore {
+func NewBufferStore(r Retriever, cap int) *BufferStore {
+	if cap <= 0 {
+		cap = DefaultTxnMembufCap
+	}
 	return &BufferStore{
 		r:         r,
-		MemBuffer: &lazyMemBuffer{},
+		MemBuffer: &lazyMemBuffer{cap: cap},
 	}
+}
+
+// Reset resets s.MemBuffer.
+func (s *BufferStore) Reset() {
+	s.MemBuffer.Reset()
+}
+
+// SetCap sets the MemBuffer capability.
+func (s *BufferStore) SetCap(cap int) {
+	s.MemBuffer.SetCap(cap)
 }
 
 // Get implements the Retriever interface.
@@ -47,7 +69,7 @@ func (s *BufferStore) Get(k Key) ([]byte, error) {
 		return nil, errors.Trace(err)
 	}
 	if len(val) == 0 {
-		return nil, errors.Trace(ErrNotExist)
+		return nil, ErrNotExist
 	}
 	return val, nil
 }
@@ -62,7 +84,7 @@ func (s *BufferStore) Seek(k Key) (Iterator, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return newUnionIter(bufferIt, retrieverIt, false), nil
+	return NewUnionIter(bufferIt, retrieverIt, false)
 }
 
 // SeekReverse implements the Retriever interface.
@@ -75,22 +97,12 @@ func (s *BufferStore) SeekReverse(k Key) (Iterator, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return newUnionIter(bufferIt, retrieverIt, true), nil
+	return NewUnionIter(bufferIt, retrieverIt, true)
 }
 
 // WalkBuffer iterates all buffered kv pairs.
 func (s *BufferStore) WalkBuffer(f func(k Key, v []byte) error) error {
-	iter, err := s.MemBuffer.Seek(nil)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer iter.Close()
-	for ; iter.Valid(); iter.Next() {
-		if err := f(iter.Key(), iter.Value()); err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
+	return errors.Trace(WalkMemBuffer(s.MemBuffer, f))
 }
 
 // SaveTo saves all buffered kv pairs into a Mutator.

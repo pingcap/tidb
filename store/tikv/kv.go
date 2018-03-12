@@ -14,6 +14,7 @@
 package tikv
 
 import (
+	"crypto/tls"
 	"fmt"
 	"math/rand"
 	"net/url"
@@ -21,16 +22,19 @@ import (
 	"sync"
 	"time"
 
+	"github.com/coreos/etcd/clientv3"
+	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/pd/pd-client"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv/mock-tikv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	goctx "golang.org/x/net/context"
+	log "github.com/sirupsen/logrus"
+	"golang.org/x/net/context"
+	"google.golang.org/grpc"
 )
 
 type storeCache struct {
@@ -44,18 +48,40 @@ var mc storeCache
 type Driver struct {
 }
 
+func createEtcdKV(addrs []string, tlsConfig *tls.Config) (*clientv3.Client, error) {
+	cli, err := clientv3.New(clientv3.Config{
+		Endpoints:   addrs,
+		DialTimeout: 5 * time.Second,
+		DialOptions: []grpc.DialOption{
+			grpc.WithUnaryInterceptor(grpc_prometheus.UnaryClientInterceptor),
+			grpc.WithStreamInterceptor(grpc_prometheus.StreamClientInterceptor),
+		},
+		TLS: tlsConfig,
+	})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return cli, nil
+}
+
 // Open opens or creates an TiKV storage with given path.
 // Path example: tikv://etcd-node1:port,etcd-node2:port?cluster=1&disableGC=false
 func (d Driver) Open(path string) (kv.Storage, error) {
 	mc.Lock()
 	defer mc.Unlock()
 
+	security := config.GetGlobalConfig().Security
 	etcdAddrs, disableGC, err := parsePath(path)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	pdCli, err := pd.NewClient(etcdAddrs)
+	pdCli, err := pd.NewClient(etcdAddrs, pd.SecurityOption{
+		CAPath:   security.ClusterSSLCA,
+		CertPath: security.ClusterSSLCert,
+		KeyPath:  security.ClusterSSLKey,
+	})
+
 	if err != nil {
 		if strings.Contains(err.Error(), "i/o timeout") {
 			return nil, errors.Annotate(err, txnRetryableMark)
@@ -64,34 +90,30 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 	}
 
 	// FIXME: uuid will be a very long and ugly string, simplify it.
-	uuid := fmt.Sprintf("tikv-%v", pdCli.GetClusterID(goctx.TODO()))
+	uuid := fmt.Sprintf("tikv-%v", pdCli.GetClusterID(context.TODO()))
 	if store, ok := mc.cache[uuid]; ok {
 		return store, nil
 	}
 
-	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, newRPCClient(), !disableGC)
+	tlsConfig, err := security.ToTLSConfig()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	spkv, err := NewEtcdSafePointKV(etcdAddrs, tlsConfig)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, spkv, newRPCClient(security), !disableGC)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	s.etcdAddrs = etcdAddrs
+	s.tlsConfig = tlsConfig
+
 	mc.cache[uuid] = s
 	return s, nil
-}
-
-// MockDriver is in memory mock TiKV driver.
-type MockDriver struct {
-}
-
-// Open creates a MockTiKV storage.
-func (d MockDriver) Open(path string) (kv.Storage, error) {
-	u, err := url.Parse(path)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if !strings.EqualFold(u.Scheme, "mocktikv") {
-		return nil, errors.Errorf("Uri scheme expected(mocktikv) but found (%s)", u.Scheme)
-	}
-	return NewMockTikvStore(u.Path)
 }
 
 // update oracle's lastTS every 2000ms.
@@ -102,34 +124,69 @@ type tikvStore struct {
 	uuid         string
 	oracle       oracle.Oracle
 	client       Client
+	pdClient     pd.Client
 	regionCache  *RegionCache
 	lockResolver *LockResolver
-	gcWorker     *GCWorker
+	gcWorker     GCHandler
 	etcdAddrs    []string
+	tlsConfig    *tls.Config
 	mock         bool
+	enableGC     bool
+
+	kv        SafePointKV
+	safePoint uint64
+	spTime    time.Time
+	spMutex   sync.RWMutex  // this is used to update safePoint and spTime
+	closed    chan struct{} // this is used to nofity when the store is closed
 }
 
-func newTikvStore(uuid string, pdClient pd.Client, client Client, enableGC bool) (*tikvStore, error) {
-	oracle, err := oracles.NewPdOracle(pdClient, time.Duration(oracleUpdateInterval)*time.Millisecond)
+func (s *tikvStore) UpdateSPCache(cachedSP uint64, cachedTime time.Time) {
+	s.spMutex.Lock()
+	s.safePoint = cachedSP
+	s.spTime = cachedTime
+	s.spMutex.Unlock()
+}
+
+func (s *tikvStore) CheckVisibility(startTime uint64) error {
+	s.spMutex.RLock()
+	cachedSafePoint := s.safePoint
+	cachedTime := s.spTime
+	s.spMutex.RUnlock()
+	diff := time.Since(cachedTime)
+
+	if diff > (GcSafePointCacheInterval - gcCPUTimeInaccuracyBound) {
+		return ErrPDServerTimeout.GenByArgs("start timestamp may fall behind safe point")
+	}
+
+	if startTime < cachedSafePoint {
+		return ErrGCTooEarly
+	}
+
+	return nil
+}
+
+func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client, enableGC bool) (*tikvStore, error) {
+	o, err := oracles.NewPdOracle(pdClient, time.Duration(oracleUpdateInterval)*time.Millisecond)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	_, mock := client.(*mocktikv.RPCClient)
 	store := &tikvStore{
-		clusterID:   pdClient.GetClusterID(goctx.TODO()),
+		clusterID:   pdClient.GetClusterID(context.TODO()),
 		uuid:        uuid,
-		oracle:      oracle,
+		oracle:      o,
 		client:      client,
+		pdClient:    pdClient,
 		regionCache: NewRegionCache(pdClient),
-		mock:        mock,
+		kv:          spkv,
+		safePoint:   0,
+		spTime:      time.Now(),
+		closed:      make(chan struct{}),
 	}
 	store.lockResolver = newLockResolver(store)
-	if enableGC {
-		store.gcWorker, err = NewGCWorker(store)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
+	store.enableGC = enableGC
+
+	go store.runSafePointChecker()
+
 	return store, nil
 }
 
@@ -137,33 +194,44 @@ func (s *tikvStore) EtcdAddrs() []string {
 	return s.etcdAddrs
 }
 
-// NewMockTikvStore creates a mocked tikv store, the path is the file path to store the data.
-// If path is an empty string, a memory storage will be created.
-func NewMockTikvStore(path string) (kv.Storage, error) {
-	if path != "" {
-		return nil, errors.New("persistent mockTiKV is not supported yet")
+func (s *tikvStore) TLSConfig() *tls.Config {
+	return s.tlsConfig
+}
+
+// StartGCWorker starts GC worker, it's called in BootstrapSession, don't call this function more than once.
+func (s *tikvStore) StartGCWorker() error {
+	if !s.enableGC || NewGCHandlerFunc == nil {
+		return nil
 	}
-	cluster := mocktikv.NewCluster()
-	return NewMockTikvStoreWithCluster(cluster)
+
+	gcWorker, err := NewGCHandlerFunc(s)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	gcWorker.Start()
+	s.gcWorker = gcWorker
+	return nil
 }
 
-// NewMockTikvStoreWithCluster creates a mocked tikv store with cluster.
-func NewMockTikvStoreWithCluster(cluster *mocktikv.Cluster) (kv.Storage, error) {
-	mocktikv.BootstrapWithSingleStore(cluster)
-	mvccStore := mocktikv.NewMvccStore()
-	client := mocktikv.NewRPCClient(cluster, mvccStore)
-	// Make sure the uuid is unique.
-	partID := fmt.Sprintf("%05d", rand.Intn(100000))
-	uuid := fmt.Sprintf("mock-tikv-store-%v-%v", time.Now().Unix(), partID)
-	pdCli := &codecPDClient{mocktikv.NewPDClient(cluster)}
-	return newTikvStore(uuid, pdCli, client, false)
-}
-
-// GetMockTiKVClient gets the *mocktikv.RPCClient from a mocktikv store.
-// Used for test.
-func GetMockTiKVClient(store kv.Storage) *mocktikv.RPCClient {
-	s := store.(*tikvStore)
-	return s.client.(*mocktikv.RPCClient)
+func (s *tikvStore) runSafePointChecker() {
+	d := gcSafePointUpdateInterval
+	for {
+		select {
+		case spCachedTime := <-time.After(d):
+			cachedSafePoint, err := loadSafePoint(s.GetSafePointKV(), GcSavedSafePoint)
+			if err == nil {
+				metrics.TiKVLoadSafepointCounter.WithLabelValues("ok").Inc()
+				s.UpdateSPCache(cachedSafePoint, spCachedTime)
+				d = gcSafePointUpdateInterval
+			} else {
+				metrics.TiKVLoadSafepointCounter.WithLabelValues("fail").Inc()
+				log.Errorf("fail to load safepoint from pd: %v", err)
+				d = gcSafePointQuickRepeatInterval
+			}
+		case <-s.Closed():
+			return
+		}
+	}
 }
 
 func (s *tikvStore) Begin() (kv.Transaction, error) {
@@ -171,7 +239,7 @@ func (s *tikvStore) Begin() (kv.Transaction, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	txnCounter.Inc()
+	metrics.TiKVTxnCounter.Inc()
 	return txn, nil
 }
 
@@ -181,13 +249,13 @@ func (s *tikvStore) BeginWithStartTS(startTS uint64) (kv.Transaction, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	txnCounter.Inc()
+	metrics.TiKVTxnCounter.Inc()
 	return txn, nil
 }
 
 func (s *tikvStore) GetSnapshot(ver kv.Version) (kv.Snapshot, error) {
 	snapshot := newTiKVSnapshot(s, ver)
-	snapshotCounter.Inc()
+	metrics.TiKVSnapshotCounter.Inc()
 	return snapshot, nil
 }
 
@@ -197,9 +265,12 @@ func (s *tikvStore) Close() error {
 
 	delete(mc.cache, s.uuid)
 	s.oracle.Close()
+	s.pdClient.Close()
 	if s.gcWorker != nil {
 		s.gcWorker.Close()
 	}
+
+	close(s.closed)
 
 	if err := s.client.Close(); err != nil {
 		return errors.Trace(err)
@@ -212,7 +283,7 @@ func (s *tikvStore) UUID() string {
 }
 
 func (s *tikvStore) CurrentVersion() (kv.Version, error) {
-	bo := NewBackoffer(tsoMaxBackoff, goctx.Background())
+	bo := NewBackoffer(context.Background(), tsoMaxBackoff)
 	startTS, err := s.getTimestampWithRetry(bo)
 	if err != nil {
 		return kv.NewVersion(0), errors.Trace(err)
@@ -222,7 +293,7 @@ func (s *tikvStore) CurrentVersion() (kv.Version, error) {
 
 func (s *tikvStore) getTimestampWithRetry(bo *Backoffer) (uint64, error) {
 	for {
-		startTS, err := s.oracle.GetTimestamp(bo.ctx)
+		startTS, err := s.oracle.GetTimestamp(bo)
 		if err == nil {
 			return startTS, nil
 		}
@@ -234,7 +305,6 @@ func (s *tikvStore) getTimestampWithRetry(bo *Backoffer) (uint64, error) {
 }
 
 func (s *tikvStore) GetClient() kv.Client {
-	txnCmdCounter.WithLabelValues("get_client").Inc()
 	return &CopClient{
 		store: s,
 	}
@@ -244,15 +314,48 @@ func (s *tikvStore) GetOracle() oracle.Oracle {
 	return s.oracle
 }
 
+func (s *tikvStore) SupportDeleteRange() (supported bool) {
+	if s.mock {
+		return false
+	}
+	return true
+}
+
 func (s *tikvStore) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
-	sender := NewRegionRequestSender(s.regionCache, s.client, kvrpcpb.IsolationLevel_SI)
+	sender := NewRegionRequestSender(s.regionCache, s.client)
 	return sender.SendReq(bo, req, regionID, timeout)
 }
 
-// ParseEtcdAddr parses path to etcd address list
-func ParseEtcdAddr(path string) (etcdAddrs []string, err error) {
-	etcdAddrs, _, err = parsePath(path)
-	return
+func (s *tikvStore) GetRegionCache() *RegionCache {
+	return s.regionCache
+}
+
+func (s *tikvStore) GetLockResolver() *LockResolver {
+	return s.lockResolver
+}
+
+func (s *tikvStore) GetGCHandler() GCHandler {
+	return s.gcWorker
+}
+
+func (s *tikvStore) Closed() <-chan struct{} {
+	return s.closed
+}
+
+func (s *tikvStore) GetSafePointKV() SafePointKV {
+	return s.kv
+}
+
+func (s *tikvStore) SetOracle(oracle oracle.Oracle) {
+	s.oracle = oracle
+}
+
+func (s *tikvStore) SetTiKVClient(client Client) {
+	s.client = client
+}
+
+func (s *tikvStore) GetTiKVClient() (client Client) {
+	return s.client
 }
 
 func parsePath(path string) (etcdAddrs []string, disableGC bool, err error) {

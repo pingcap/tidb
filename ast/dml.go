@@ -16,6 +16,7 @@ package ast
 import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/auth"
 )
 
 var (
@@ -71,6 +72,8 @@ type Join struct {
 	On *OnCondition
 	// Using represents join using clause.
 	Using []*ColumnName
+	// NaturalJoin represents join is natural join
+	NaturalJoin bool
 }
 
 // Accept implements Node Accept interface.
@@ -228,16 +231,6 @@ func (n *TableSource) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// SetResultFields implements ResultSetNode interface.
-func (n *TableSource) SetResultFields(rfs []*ResultField) {
-	n.Source.SetResultFields(rfs)
-}
-
-// GetResultFields implements ResultSetNode interface.
-func (n *TableSource) GetResultFields() []*ResultField {
-	return n.Source.GetResultFields()
-}
-
 // SelectLockType is the lock type for SelectStmt.
 type SelectLockType int
 
@@ -247,6 +240,19 @@ const (
 	SelectLockForUpdate
 	SelectLockInShareMode
 )
+
+// String implements fmt.Stringer.
+func (slt SelectLockType) String() string {
+	switch slt {
+	case SelectLockNone:
+		return "none"
+	case SelectLockForUpdate:
+		return "for update"
+	case SelectLockInShareMode:
+		return "in share mode"
+	}
+	return "unsupported select lock type"
+}
 
 // WildCardField is a special type of select field content.
 type WildCardField struct {
@@ -701,7 +707,7 @@ type InsertStmt struct {
 	dmlNode
 
 	IsReplace   bool
-	Ignore      bool
+	IgnoreErr   bool
 	Table       *TableRefsClause
 	Columns     []*ColumnName
 	Lists       [][]ExprNode
@@ -779,7 +785,7 @@ type DeleteStmt struct {
 	Order        *OrderByClause
 	Limit        *Limit
 	LowPriority  bool
-	Ignore       bool
+	IgnoreErr    bool
 	Quick        bool
 	IsMultiTable bool
 	BeforeFrom   bool
@@ -840,7 +846,7 @@ type UpdateStmt struct {
 	Order         *OrderByClause
 	Limit         *Limit
 	LowPriority   bool
-	Ignore        bool
+	IgnoreErr     bool
 	MultipleTable bool
 }
 
@@ -944,6 +950,12 @@ const (
 	ShowProcessList
 	ShowCreateDatabase
 	ShowEvents
+	ShowStatsMeta
+	ShowStatsHistograms
+	ShowStatsBuckets
+	ShowStatsHealthy
+	ShowPlugins
+	ShowProfiles
 )
 
 // ShowStmt is a statement to provide information about databases, tables, columns and so on.
@@ -958,7 +970,7 @@ type ShowStmt struct {
 	Column *ColumnName // Used for `desc table column`.
 	Flag   int         // Some flag parsed from sql, such as FULL.
 	Full   bool
-	User   string // Used for show grants.
+	User   *auth.UserIdentity // Used for show grants.
 
 	// GlobalScope is used by show variables
 	GlobalScope bool

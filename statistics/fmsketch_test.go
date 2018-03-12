@@ -14,29 +14,30 @@
 package statistics
 
 import (
+	"time"
+
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 )
 
 func (s *testStatisticsSuite) TestSketch(c *C) {
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	maxSize := 1000
-	sampleSketch, ndv, err := buildFMSketch(s.samples, maxSize)
+	sampleSketch, ndv, err := buildFMSketch(sc, s.samples, maxSize)
 	c.Check(err, IsNil)
-	c.Check(ndv, Equals, int64(6624))
+	c.Check(ndv, Equals, int64(6232))
 
-	rcSketch, ndv, err := buildFMSketch(s.rc.(*recordSet).data, maxSize)
+	rcSketch, ndv, err := buildFMSketch(sc, s.rc.(*recordSet).data, maxSize)
 	c.Check(err, IsNil)
-	c.Check(ndv, Equals, int64(74240))
+	c.Check(ndv, Equals, int64(73344))
 
-	pkSketch, ndv, err := buildFMSketch(s.pk.(*recordSet).data, maxSize)
+	pkSketch, ndv, err := buildFMSketch(sc, s.pk.(*recordSet).data, maxSize)
 	c.Check(err, IsNil)
-	c.Check(ndv, Equals, int64(99968))
+	c.Check(ndv, Equals, int64(100480))
 
-	var sketches []*FMSketch
-	sketches = append(sketches, sampleSketch)
-	sketches = append(sketches, pkSketch)
-	sketches = append(sketches, rcSketch)
-	_, ndv = mergeFMSketches(sketches, maxSize)
-	c.Check(ndv, Equals, int64(99968))
+	sampleSketch.mergeFMSketch(pkSketch)
+	sampleSketch.mergeFMSketch(rcSketch)
+	c.Check(sampleSketch.NDV(), Equals, int64(100480))
 
 	maxSize = 2
 	sketch := NewFMSketch(maxSize)
@@ -45,4 +46,20 @@ func (s *testStatisticsSuite) TestSketch(c *C) {
 	c.Check(len(sketch.hashset), Equals, maxSize)
 	sketch.insertHashValue(4)
 	c.Check(len(sketch.hashset), LessEqual, maxSize)
+}
+
+func (s *testStatisticsSuite) TestSketchProtoConversion(c *C) {
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	maxSize := 1000
+	sampleSketch, ndv, err := buildFMSketch(sc, s.samples, maxSize)
+	c.Check(err, IsNil)
+	c.Check(ndv, Equals, int64(6232))
+
+	p := FMSketchToProto(sampleSketch)
+	f := FMSketchFromProto(p)
+	c.Assert(sampleSketch.mask, Equals, f.mask)
+	c.Assert(len(sampleSketch.hashset), Equals, len(f.hashset))
+	for val := range sampleSketch.hashset {
+		c.Assert(f.hashset[val], IsTrue)
+	}
 }

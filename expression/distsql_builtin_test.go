@@ -18,9 +18,9 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -31,7 +31,7 @@ type testEvalSuite struct{}
 // TestEval test expr.Eval().
 // TODO: add more tests.
 func (s *testEvalSuite) TestEval(c *C) {
-	row := []types.Datum{types.NewDatum(100)}
+	row := types.DatumRow{types.NewDatum(100)}
 	fieldTps := make([]*types.FieldType, 1)
 	fieldTps[0] = types.NewFieldType(mysql.TypeDouble)
 	tests := []struct {
@@ -273,14 +273,14 @@ func (s *testEvalSuite) TestEval(c *C) {
 			types.NewFloat64Datum(1.1),
 		},
 	}
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	for _, tt := range tests {
 		expr, err := PBToExpr(tt.expr, fieldTps, sc)
 		c.Assert(err, IsNil)
 		result, err := expr.Eval(row)
 		c.Assert(err, IsNil)
 		c.Assert(result.Kind(), Equals, tt.result.Kind())
-		cmp, err := result.CompareDatum(sc, tt.result)
+		cmp, err := result.CompareDatum(sc, &tt.result)
 		c.Assert(err, IsNil)
 		c.Assert(cmp, Equals, 0)
 	}
@@ -327,7 +327,7 @@ func datumExpr(d types.Datum) *tipb.Expr {
 		expr.Val = codec.EncodeInt(nil, int64(d.GetMysqlDuration().Duration))
 	case types.KindMysqlDecimal:
 		expr.Tp = tipb.ExprType_MysqlDecimal
-		expr.Val = codec.EncodeDecimal(nil, d)
+		expr.Val = codec.EncodeDecimal(nil, d.GetMysqlDecimal(), d.Length(), d.Frac())
 	default:
 		expr.Tp = tipb.ExprType_Null
 	}
@@ -341,12 +341,6 @@ func columnExpr(columnID int64) *tipb.Expr {
 	return expr
 }
 
-func likeExpr(target, pattern string) *tipb.Expr {
-	targetExpr := datumExpr(types.NewStringDatum(target))
-	patternExpr := datumExpr(types.NewStringDatum(pattern))
-	return &tipb.Expr{Tp: tipb.ExprType_Like, Children: []*tipb.Expr{targetExpr, patternExpr}}
-}
-
 func notExpr(value interface{}) *tipb.Expr {
 	expr := new(tipb.Expr)
 	expr.Tp = tipb.ExprType_Not
@@ -357,123 +351,6 @@ func notExpr(value interface{}) *tipb.Expr {
 		expr.Children = []*tipb.Expr{x}
 	}
 	return expr
-}
-
-func (s *testEvalSuite) TestLike(c *C) {
-	tests := []struct {
-		expr   *tipb.Expr
-		result int64
-	}{
-		{
-			expr:   likeExpr("a", ""),
-			result: 0,
-		},
-		{
-			expr:   likeExpr("a", "a"),
-			result: 1,
-		},
-		{
-			expr:   likeExpr("a", "b"),
-			result: 0,
-		},
-		{
-			expr:   likeExpr("aAb", "AaB"),
-			result: 1,
-		},
-		{
-			expr:   likeExpr("a", "%"),
-			result: 1,
-		},
-		{
-			expr:   likeExpr("aAD", "%d"),
-			result: 1,
-		},
-		{
-			expr:   likeExpr("aAeD", "%e"),
-			result: 0,
-		},
-		{
-			expr:   likeExpr("aAb", "Aa%"),
-			result: 1,
-		},
-		{
-			expr:   likeExpr("abAb", "Aa%"),
-			result: 0,
-		},
-		{
-			expr:   likeExpr("aAcb", "%C%"),
-			result: 1,
-		},
-		{
-			expr:   likeExpr("aAb", "%C%"),
-			result: 0,
-		},
-	}
-	sc := new(variable.StatementContext)
-	for _, tt := range tests {
-		expr, err := PBToExpr(tt.expr, nil, sc)
-		c.Check(err, IsNil)
-		res, err := expr.Eval(nil)
-		c.Check(err, IsNil)
-		c.Check(res.GetInt64(), Equals, tt.result)
-	}
-}
-
-func (s *testEvalSuite) TestWhereIn(c *C) {
-	tests := []struct {
-		expr   *tipb.Expr
-		result interface{}
-	}{
-		{
-			expr:   inExpr(1, 1, 2),
-			result: true,
-		},
-		{
-			expr:   inExpr(1, 1, nil),
-			result: true,
-		},
-		{
-			expr:   inExpr(1, 2, nil),
-			result: nil,
-		},
-		{
-			expr:   inExpr(nil, 1, nil),
-			result: nil,
-		},
-		{
-			expr:   inExpr(2, 1, nil),
-			result: nil,
-		},
-		{
-			expr:   inExpr(2),
-			result: false,
-		},
-		{
-			expr:   inExpr("abc", "abc", "ab"),
-			result: true,
-		},
-		{
-			expr:   inExpr("abc", "aba", "bab"),
-			result: false,
-		},
-	}
-	sc := new(variable.StatementContext)
-	for _, tt := range tests {
-		expr, err := PBToExpr(tt.expr, nil, sc)
-		c.Check(err, IsNil)
-		res, err := expr.Eval(nil)
-		c.Check(err, IsNil)
-		if tt.result == nil {
-			c.Check(res.Kind(), Equals, types.KindNull)
-		} else {
-			c.Check(res.Kind(), Equals, types.KindInt64)
-			if tt.result == true {
-				c.Check(res.GetInt64(), Equals, int64(1))
-			} else {
-				c.Check(res.GetInt64(), Equals, int64(0))
-			}
-		}
-	}
 }
 
 func (s *testEvalSuite) TestEvalIsNull(c *C) {
@@ -495,29 +372,15 @@ func (s *testEvalSuite) TestEvalIsNull(c *C) {
 			result: falseAns,
 		},
 	}
-	sc := new(variable.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	for _, tt := range tests {
 		expr, err := PBToExpr(tt.expr, nil, sc)
-		c.Assert(err, IsNil)
+		c.Assert(err, IsNil, Commentf("%v", tt))
 		result, err := expr.Eval(nil)
-		c.Assert(err, IsNil)
-		c.Assert(result.Kind(), Equals, tt.result.Kind())
-		cmp, err := result.CompareDatum(sc, tt.result)
-		c.Assert(err, IsNil)
-		c.Assert(cmp, Equals, 0)
+		c.Assert(err, IsNil, Commentf("%v", tt))
+		c.Assert(result.Kind(), Equals, tt.result.Kind(), Commentf("%v", tt))
+		cmp, err := result.CompareDatum(sc, &tt.result)
+		c.Assert(err, IsNil, Commentf("%v", tt))
+		c.Assert(cmp, Equals, 0, Commentf("%v", tt))
 	}
-}
-
-func inExpr(target interface{}, list ...interface{}) *tipb.Expr {
-	targetDatum := types.NewDatum(target)
-	var listDatums []types.Datum
-	for _, v := range list {
-		listDatums = append(listDatums, types.NewDatum(v))
-	}
-	sc := new(variable.StatementContext)
-	types.SortDatums(sc, listDatums)
-	targetExpr := datumExpr(targetDatum)
-	val, _ := codec.EncodeValue(nil, listDatums...)
-	listExpr := &tipb.Expr{Tp: tipb.ExprType_ValueList, Val: val}
-	return &tipb.Expr{Tp: tipb.ExprType_In, Children: []*tipb.Expr{targetExpr, listExpr}}
 }

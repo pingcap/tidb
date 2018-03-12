@@ -15,43 +15,53 @@ package plan
 
 import (
 	"fmt"
+	"math"
 
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
-	"github.com/pingcap/tidb/util/types"
 )
 
 // task is a new version of `PhysicalPlanInfo`. It stores cost information for a task.
 // A task may be CopTask, RootTask, MPPTask or a ParallelTask.
 type task interface {
-	setCount(cnt float64)
 	count() float64
 	addCost(cost float64)
 	cost() float64
 	copy() task
 	plan() PhysicalPlan
+	invalid() bool
 }
 
-// TODO: In future, we should split copTask to indexTask and tableTask.
 // copTask is a task that runs in a distributed kv store.
+// TODO: In future, we should split copTask to indexTask and tableTask.
 type copTask struct {
 	indexPlan PhysicalPlan
 	tablePlan PhysicalPlan
 	cst       float64
-	cnt       float64
 	// indexPlanFinished means we have finished index plan.
 	indexPlanFinished bool
+	// keepOrder indicates if the plan scans data by order.
+	keepOrder bool
 }
 
-func (t *copTask) setCount(cnt float64) {
-	t.cnt = cnt
+func (t *copTask) invalid() bool {
+	return t.tablePlan == nil && t.indexPlan == nil
+}
+
+func (t *rootTask) invalid() bool {
+	return t.p == nil
 }
 
 func (t *copTask) count() float64 {
-	return t.cnt
+	if t.indexPlanFinished {
+		return t.tablePlan.StatsInfo().count
+	}
+	return t.indexPlan.StatsInfo().count
 }
 
 func (t *copTask) addCost(cst float64) {
@@ -94,75 +104,111 @@ func attachPlan2Task(p PhysicalPlan, t task) task {
 // finishIndexPlan means we no longer add plan to index plan, and compute the network cost for it.
 func (t *copTask) finishIndexPlan() {
 	if !t.indexPlanFinished {
-		t.cst += t.cnt * (netWorkFactor + scanFactor)
+		t.cst += t.count() * netWorkFactor
 		t.indexPlanFinished = true
+		if t.tablePlan != nil {
+			t.tablePlan.(*PhysicalTableScan).stats = t.indexPlan.StatsInfo()
+			t.cst += t.count() * scanFactor
+		}
 	}
 }
 
 func (p *basePhysicalPlan) attach2Task(tasks ...task) task {
-	task := finishCopTask(tasks[0].copy(), p.basePlan.ctx, p.basePlan.allocator)
-	return attachPlan2Task(p.basePlan.self.(PhysicalPlan).Copy(), task)
+	if tasks[0].invalid() {
+		return invalidTask
+	}
+	t := finishCopTask(p.ctx, tasks[0].copy())
+	return attachPlan2Task(p.self, t)
+}
+
+func (p *PhysicalApply) attach2Task(tasks ...task) task {
+	if tasks[0].invalid() || tasks[1].invalid() {
+		return invalidTask
+	}
+	lTask := finishCopTask(p.ctx, tasks[0].copy())
+	rTask := finishCopTask(p.ctx, tasks[1].copy())
+	p.SetChildren(lTask.plan(), rTask.plan())
+	p.PhysicalJoin.SetChildren(lTask.plan(), rTask.plan())
+	p.schema = buildPhysicalJoinSchema(p.PhysicalJoin.JoinType, p)
+	return &rootTask{
+		p:   p,
+		cst: lTask.cost() + lTask.count()*rTask.cost(),
+	}
 }
 
 func (p *PhysicalIndexJoin) attach2Task(tasks ...task) task {
-	lTask := finishCopTask(tasks[0].copy(), p.ctx, p.allocator)
-	rTask := finishCopTask(tasks[1].copy(), p.ctx, p.allocator)
-	np := p.Copy()
-	np.SetChildren(lTask.plan(), rTask.plan())
-	return &rootTask{
-		p: np,
-		// TODO: we will estimate the cost and count more precisely.
-		cst: lTask.cost(),
-		cnt: lTask.count() + rTask.count(),
+	if tasks[p.OuterIndex].invalid() {
+		return invalidTask
 	}
+	outerTask := finishCopTask(p.ctx, tasks[p.OuterIndex].copy())
+	if p.OuterIndex == 0 {
+		p.SetChildren(outerTask.plan(), p.innerPlan)
+	} else {
+		p.SetChildren(p.innerPlan, outerTask.plan())
+	}
+	p.schema = buildPhysicalJoinSchema(p.JoinType, p)
+	return &rootTask{
+		p:   p,
+		cst: outerTask.cost() + p.getCost(outerTask.count()),
+	}
+}
+
+func (p *PhysicalIndexJoin) getCost(lCnt float64) float64 {
+	if lCnt < 1 {
+		lCnt = 1
+	}
+	cst := lCnt * netWorkFactor
+	batchSize := p.ctx.GetSessionVars().IndexJoinBatchSize
+	cst += lCnt * math.Log2(math.Min(float64(batchSize), lCnt)) * 2
+	cst += lCnt / float64(batchSize) * netWorkStartFactor
+	return cst
+}
+
+func (p *PhysicalHashJoin) getCost(lCnt, rCnt float64) float64 {
+	smallTableCnt := lCnt
+	if p.InnerChildIdx == 1 {
+		smallTableCnt = rCnt
+	}
+	if smallTableCnt <= 1 {
+		smallTableCnt = 1
+	}
+	return (lCnt + rCnt) * (1 + math.Log2(smallTableCnt)/float64(p.Concurrency))
 }
 
 func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
-	lTask := finishCopTask(tasks[0].copy(), p.ctx, p.allocator)
-	rTask := finishCopTask(tasks[1].copy(), p.ctx, p.allocator)
-	np := p.Copy()
-	np.SetChildren(lTask.plan(), rTask.plan())
-	return &rootTask{
-		p: np,
-		// TODO: we will estimate the cost and count more precisely.
-		cst: lTask.cost() + rTask.cost(),
-		cnt: lTask.count() + rTask.count(),
+	if tasks[0].invalid() || tasks[1].invalid() {
+		return invalidTask
 	}
+	lTask := finishCopTask(p.ctx, tasks[0].copy())
+	rTask := finishCopTask(p.ctx, tasks[1].copy())
+	p.SetChildren(lTask.plan(), rTask.plan())
+	p.schema = buildPhysicalJoinSchema(p.JoinType, p)
+	return &rootTask{
+		p:   p,
+		cst: lTask.cost() + rTask.cost() + p.getCost(lTask.count(), rTask.count()),
+	}
+}
+
+func (p *PhysicalMergeJoin) getCost(lCnt, rCnt float64) float64 {
+	return lCnt + rCnt
 }
 
 func (p *PhysicalMergeJoin) attach2Task(tasks ...task) task {
-	lTask := finishCopTask(tasks[0].copy(), p.ctx, p.allocator)
-	rTask := finishCopTask(tasks[1].copy(), p.ctx, p.allocator)
-	np := p.Copy()
-	np.SetChildren(lTask.plan(), rTask.plan())
+	if tasks[0].invalid() || tasks[1].invalid() {
+		return invalidTask
+	}
+	lTask := finishCopTask(p.ctx, tasks[0].copy())
+	rTask := finishCopTask(p.ctx, tasks[1].copy())
+	p.SetChildren(lTask.plan(), rTask.plan())
+	p.schema = buildPhysicalJoinSchema(p.JoinType, p)
 	return &rootTask{
-		p: np,
-		// TODO: we will estimate the cost and count more precisely.
-		cst: lTask.cost() + rTask.cost(),
-		cnt: lTask.count() + rTask.count(),
+		p:   p,
+		cst: lTask.cost() + rTask.cost() + p.getCost(lTask.count(), rTask.count()),
 	}
-}
-
-func (p *PhysicalHashSemiJoin) attach2Task(tasks ...task) task {
-	lTask := finishCopTask(tasks[0].copy(), p.ctx, p.allocator)
-	rTask := finishCopTask(tasks[1].copy(), p.ctx, p.allocator)
-	np := p.Copy()
-	np.SetChildren(lTask.plan(), rTask.plan())
-	task := &rootTask{
-		p: np,
-		// TODO: we will estimate the cost and count more precisely.
-		cst: lTask.cost() + rTask.cost(),
-	}
-	if p.WithAux {
-		task.cnt = lTask.count()
-	} else {
-		task.cnt = lTask.count() * selectionFactor
-	}
-	return task
 }
 
 // finishCopTask means we close the coprocessor task and create a root task.
-func finishCopTask(task task, ctx context.Context, allocator *idAllocator) task {
+func finishCopTask(ctx sessionctx.Context, task task) task {
 	t, ok := task.(*copTask)
 	if !ok {
 		return task
@@ -171,18 +217,23 @@ func finishCopTask(task task, ctx context.Context, allocator *idAllocator) task 
 	// `NetWorkStartCost` * (totalCount / perCountIndexRead)
 	t.finishIndexPlan()
 	if t.tablePlan != nil {
-		t.cst += t.cnt * netWorkFactor
+		t.cst += t.count() * netWorkFactor
 	}
 	newTask := &rootTask{
 		cst: t.cst,
-		cnt: t.cnt,
 	}
 	if t.indexPlan != nil && t.tablePlan != nil {
-		newTask.p = PhysicalIndexLookUpReader{tablePlan: t.tablePlan, indexPlan: t.indexPlan}.init(allocator, ctx)
+		p := PhysicalIndexLookUpReader{tablePlan: t.tablePlan, indexPlan: t.indexPlan}.init(ctx)
+		p.stats = t.tablePlan.StatsInfo()
+		newTask.p = p
 	} else if t.indexPlan != nil {
-		newTask.p = PhysicalIndexReader{indexPlan: t.indexPlan}.init(allocator, ctx)
+		p := PhysicalIndexReader{indexPlan: t.indexPlan}.init(ctx)
+		p.stats = t.indexPlan.StatsInfo()
+		newTask.p = p
 	} else {
-		newTask.p = PhysicalTableReader{tablePlan: t.tablePlan}.init(allocator, ctx)
+		p := PhysicalTableReader{tablePlan: t.tablePlan}.init(ctx)
+		p.stats = t.tablePlan.StatsInfo()
+		newTask.p = p
 	}
 	return newTask
 }
@@ -191,23 +242,17 @@ func finishCopTask(task task, ctx context.Context, allocator *idAllocator) task 
 type rootTask struct {
 	p   PhysicalPlan
 	cst float64
-	cnt float64
 }
 
 func (t *rootTask) copy() task {
 	return &rootTask{
 		p:   t.p,
 		cst: t.cst,
-		cnt: t.cnt,
 	}
 }
 
-func (t *rootTask) setCount(cnt float64) {
-	t.cnt = cnt
-}
-
 func (t *rootTask) count() float64 {
-	return t.cnt
+	return t.p.StatsInfo().count
 }
 
 func (t *rootTask) addCost(cst float64) {
@@ -222,40 +267,40 @@ func (t *rootTask) plan() PhysicalPlan {
 	return t.p
 }
 
-func (p *Limit) attach2Task(tasks ...task) task {
+func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 	// If task is invalid, keep it remained.
-	if tasks[0].plan() == nil {
-		return tasks[0]
+	if tasks[0].invalid() {
+		return invalidTask
 	}
-	task := tasks[0].copy()
-	if cop, ok := task.(*copTask); ok {
-		// If the task is copTask, the Limit can always be pushed down.
-		// When limit be pushed down, it should remove its offset.
-		pushedDownLimit := Limit{Count: p.Offset + p.Count}.init(p.allocator, p.ctx)
-		if cop.tablePlan != nil {
-			pushedDownLimit.SetSchema(cop.tablePlan.Schema())
-		} else {
-			pushedDownLimit.SetSchema(cop.indexPlan.Schema())
+	t := tasks[0].copy()
+	if cop, ok := t.(*copTask); ok {
+		// If the table/index scans data by order and applies a double read, the limit cannot be pushed to the table side.
+		if !cop.keepOrder || !cop.indexPlanFinished || cop.indexPlan == nil {
+			// When limit be pushed down, it should remove its offset.
+			pushedDownLimit := PhysicalLimit{Count: p.Offset + p.Count}.init(p.ctx, p.stats)
+			cop = attachPlan2Task(pushedDownLimit, cop).(*copTask)
 		}
-		cop = attachPlan2Task(pushedDownLimit, cop).(*copTask)
-		cop.setCount(float64(pushedDownLimit.Count))
-		task = finishCopTask(cop, p.ctx, p.allocator)
+		t = finishCopTask(p.ctx, cop)
 	}
-	task = attachPlan2Task(p.Copy(), task)
-	task.setCount(float64(p.Count))
-	return task
+	if !p.partial {
+		t = attachPlan2Task(p, t)
+	}
+	return t
 }
 
-func (p *Sort) getCost(count float64) float64 {
+func (p *PhysicalSort) getCost(count float64) float64 {
+	if count < 2.0 {
+		count = 2.0
+	}
 	return count*cpuFactor + count*memoryFactor
 }
 
-func (p *TopN) getCost(count float64) float64 {
+func (p *PhysicalTopN) getCost(count float64) float64 {
 	return count*cpuFactor + float64(p.Count)*memoryFactor
 }
 
 // canPushDown checks if this topN can be pushed down. If each of the expression can be converted to pb, it can be pushed.
-func (p *TopN) canPushDown() bool {
+func (p *PhysicalTopN) canPushDown() bool {
 	exprs := make([]expression.Expression, 0, len(p.ByItems))
 	for _, item := range p.ByItems {
 		exprs = append(exprs, item.Expr)
@@ -264,166 +309,231 @@ func (p *TopN) canPushDown() bool {
 	return len(remained) == 0
 }
 
-func (p *TopN) allColsFromSchema(schema *expression.Schema) bool {
-	var cols []*expression.Column
+func (p *PhysicalTopN) allColsFromSchema(schema *expression.Schema) bool {
+	cols := make([]*expression.Column, 0, len(p.ByItems))
 	for _, item := range p.ByItems {
 		cols = append(cols, expression.ExtractColumns(item.Expr)...)
 	}
 	return len(schema.ColumnsIndices(cols)) > 0
 }
 
-func (p *Sort) attach2Task(tasks ...task) task {
-	task := tasks[0].copy()
-	task = finishCopTask(task, p.ctx, p.allocator)
-	task = attachPlan2Task(p.Copy(), task)
-	task.addCost(p.getCost(task.count()))
-	return task
+func (p *PhysicalSort) attach2Task(tasks ...task) task {
+	if tasks[0].invalid() {
+		return invalidTask
+	}
+	t := tasks[0].copy()
+	t = attachPlan2Task(p, t)
+	t.addCost(p.getCost(t.count()))
+	return t
 }
 
-func (p *TopN) attach2Task(tasks ...task) task {
-	// If task is invalid, keep it remained.
-	if tasks[0].plan() == nil {
-		return tasks[0]
+func (p *NominalSort) attach2Task(tasks ...task) task {
+	return tasks[0]
+}
+
+func (p *PhysicalTopN) getPushedDownTopN() *PhysicalTopN {
+	newByItems := make([]*ByItems, 0, len(p.ByItems))
+	for _, expr := range p.ByItems {
+		newByItems = append(newByItems, expr.Clone())
 	}
-	task := tasks[0].copy()
+	topN := PhysicalTopN{
+		ByItems: newByItems,
+		Count:   p.Offset + p.Count,
+	}.init(p.ctx, p.stats)
+	return topN
+}
+
+func (p *PhysicalTopN) attach2Task(tasks ...task) task {
+	// If task is invalid, keep it remained.
+	if tasks[0].invalid() {
+		return invalidTask
+	}
+	t := tasks[0].copy()
 	// This is a topN plan.
-	if copTask, ok := task.(*copTask); ok && p.canPushDown() {
-		pushedDownTopN := p.Copy().(*TopN)
-		// When topN is pushed down, it should remove its offset.
-		pushedDownTopN.Count, pushedDownTopN.Offset = p.Count+p.Offset, 0
+	if copTask, ok := t.(*copTask); ok && p.canPushDown() {
+		pushedDownTopN := p.getPushedDownTopN()
 		// If all columns in topN are from index plan, we can push it to index plan. Or we finish the index plan and
 		// push it to table plan.
 		if !copTask.indexPlanFinished && p.allColsFromSchema(copTask.indexPlan.Schema()) {
 			pushedDownTopN.SetChildren(copTask.indexPlan)
 			copTask.indexPlan = pushedDownTopN
-			pushedDownTopN.SetSchema(copTask.indexPlan.Schema())
 		} else {
 			// FIXME: When we pushed down a top-N plan to table plan branch in case of double reading. The cost should
 			// be more expensive in case of single reading, because we may execute table scan multi times.
 			copTask.finishIndexPlan()
 			pushedDownTopN.SetChildren(copTask.tablePlan)
 			copTask.tablePlan = pushedDownTopN
-			pushedDownTopN.SetSchema(copTask.tablePlan.Schema())
 		}
-		copTask.addCost(pushedDownTopN.getCost(task.count()))
-		copTask.setCount(float64(pushedDownTopN.Count))
+		copTask.addCost(pushedDownTopN.getCost(t.count()))
 	}
-	task = finishCopTask(task, p.ctx, p.allocator)
-	task = attachPlan2Task(p.Copy(), task)
-	task.addCost(p.getCost(task.count()))
-	task.setCount(float64(p.Count))
-	return task
+	t = finishCopTask(p.ctx, t)
+	if !p.partial {
+		t = attachPlan2Task(p, t)
+		t.addCost(p.getCost(t.count()))
+	}
+	return t
 }
 
-func (p *Projection) attach2Task(tasks ...task) task {
-	task := tasks[0].copy()
-	np := p.Copy()
-	switch t := task.(type) {
+func (p *PhysicalProjection) attach2Task(tasks ...task) task {
+	if tasks[0].invalid() {
+		return invalidTask
+	}
+	t := tasks[0].copy()
+	switch tp := t.(type) {
 	case *copTask:
 		// TODO: Support projection push down.
-		task := finishCopTask(task, p.ctx, p.allocator)
-		task = attachPlan2Task(np, task)
-		return task
+		t = finishCopTask(p.ctx, t)
+		t = attachPlan2Task(p, t)
+		return t
 	case *rootTask:
-		return attachPlan2Task(np, t)
+		return attachPlan2Task(p, tp)
 	}
 	return nil
 }
 
-func (p *Union) attach2Task(tasks ...task) task {
-	np := p.Copy()
-	newTask := &rootTask{p: np}
-	newChildren := make([]Plan, 0, len(p.children))
+func (p *PhysicalUnionAll) attach2Task(tasks ...task) task {
+	newTask := &rootTask{p: p}
+	newChildren := make([]PhysicalPlan, 0, len(p.children))
 	for _, task := range tasks {
-		task = finishCopTask(task, p.ctx, p.allocator)
+		if task.invalid() {
+			return invalidTask
+		}
+		task = finishCopTask(p.ctx, task)
 		newTask.cst += task.cost()
-		newTask.cnt += task.count()
 		newChildren = append(newChildren, task.plan())
 	}
-	np.SetChildren(newChildren...)
+	p.SetChildren(newChildren...)
 	return newTask
 }
 
-func (sel *Selection) attach2Task(tasks ...task) task {
-	task := finishCopTask(tasks[0].copy(), sel.ctx, sel.allocator)
-	task.addCost(task.count() * cpuFactor)
-	task.setCount(task.count() * selectionFactor)
-	task = attachPlan2Task(sel.Copy(), task)
-	return task
+func (sel *PhysicalSelection) attach2Task(tasks ...task) task {
+	if tasks[0].invalid() {
+		return invalidTask
+	}
+	t := finishCopTask(sel.ctx, tasks[0].copy())
+	t.addCost(t.count() * cpuFactor)
+	t = attachPlan2Task(sel, t)
+	return t
 }
 
-func (p *PhysicalAggregation) newPartialAggregate() (partialAgg, finalAgg *PhysicalAggregation) {
-	finalAgg = p.Copy().(*PhysicalAggregation)
+func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 	// Check if this aggregation can push down.
 	sc := p.ctx.GetSessionVars().StmtCtx
 	client := p.ctx.GetClient()
 	for _, aggFunc := range p.AggFuncs {
-		pb := expression.AggFuncToPBExpr(sc, client, aggFunc)
+		pb := aggregation.AggFuncToPBExpr(sc, client, aggFunc)
 		if pb == nil {
-			return
+			return nil, p.self
 		}
 	}
 	_, _, remained := expression.ExpressionsToPB(sc, p.GroupByItems, client)
 	if len(remained) > 0 {
-		return
+		return nil, p.self
 	}
-	partialAgg = p.Copy().(*PhysicalAggregation)
-	// TODO: It's toooooo ugly here. Refactor in the future !!
-	gkType := types.NewFieldType(mysql.TypeBlob)
-	gkType.Charset = charset.CharsetBin
-	gkType.Collate = charset.CollationBin
+
+	finalSchema := p.schema
 	partialSchema := expression.NewSchema()
-	partialAgg.SetSchema(partialSchema)
-	cursor := 0
-	finalAggFuncs := make([]expression.AggregationFunction, len(finalAgg.AggFuncs))
+	p.schema = partialSchema
+	partialAgg := p.self
+
+	// TODO: Refactor the way of constructing aggregation functions.
+	partialCursor := 0
+	finalAggFuncs := make([]*aggregation.AggFuncDesc, len(p.AggFuncs))
 	for i, aggFun := range p.AggFuncs {
-		fun := expression.NewAggFunction(aggFun.GetName(), nil, false)
-		var args []expression.Expression
-		colName := model.NewCIStr(fmt.Sprintf("col_%d", cursor))
-		if needCount(fun) {
+		finalAggFunc := &aggregation.AggFuncDesc{Name: aggFun.Name, HasDistinct: false}
+		args := make([]expression.Expression, 0, len(aggFun.Args))
+		if needCount(finalAggFunc) {
 			ft := types.NewFieldType(mysql.TypeLonglong)
-			ft.Flen = 21
-			ft.Charset = charset.CharsetBin
-			ft.Collate = charset.CollationBin
-			partialSchema.Append(&expression.Column{FromID: partialAgg.id, Position: cursor, ColName: colName, RetType: ft})
-			args = append(args, partialSchema.Columns[cursor].Clone())
-			cursor++
+			ft.Flen, ft.Charset, ft.Collate = 21, charset.CharsetBin, charset.CollationBin
+			partialSchema.Append(&expression.Column{
+				FromID:   p.ID(),
+				Position: partialCursor,
+				ColName:  model.NewCIStr(fmt.Sprintf("col_%d", partialCursor)),
+				RetType:  ft,
+			})
+			args = append(args, partialSchema.Columns[partialCursor].Clone())
+			partialCursor++
 		}
-		if needValue(fun) {
-			ft := p.schema.Columns[i].GetType()
-			partialSchema.Append(&expression.Column{FromID: partialAgg.id, Position: cursor, ColName: colName, RetType: ft})
-			args = append(args, partialSchema.Columns[cursor].Clone())
-			cursor++
+		if needValue(finalAggFunc) {
+			partialSchema.Append(&expression.Column{
+				FromID:   p.ID(),
+				Position: partialCursor,
+				ColName:  model.NewCIStr(fmt.Sprintf("col_%d", partialCursor)),
+				RetType:  finalSchema.Columns[i].GetType(),
+			})
+			args = append(args, partialSchema.Columns[partialCursor].Clone())
+			partialCursor++
 		}
-		fun.SetArgs(args)
-		fun.SetMode(expression.FinalMode)
-		finalAggFuncs[i] = fun
+		finalAggFunc.Args = args
+		finalAggFunc.Mode = aggregation.FinalMode
+		finalAggFunc.RetTp = aggFun.RetTp
+		finalAggFuncs[i] = finalAggFunc
 	}
-	finalAgg = PhysicalAggregation{
-		HasGby:   p.HasGby, // TODO: remove this field
-		AggType:  FinalAgg,
-		AggFuncs: finalAggFuncs,
-	}.init(p.allocator, p.ctx)
-	finalAgg.SetSchema(p.schema)
+
 	// add group by columns
+	groupByItems := make([]expression.Expression, 0, len(p.GroupByItems))
 	for i, gbyExpr := range p.GroupByItems {
 		gbyCol := &expression.Column{
-			FromID:   partialAgg.id,
-			Position: cursor + i,
+			FromID:   p.ID(),
+			Position: partialCursor + i,
+			ColName:  model.NewCIStr(fmt.Sprintf("col_%d", partialCursor+i)),
 			RetType:  gbyExpr.GetType(),
 		}
 		partialSchema.Append(gbyCol)
-		finalAgg.GroupByItems = append(finalAgg.GroupByItems, gbyCol.Clone())
+		groupByItems = append(groupByItems, gbyCol.Clone())
 	}
-	return
+
+	// Create physical "final" aggregation.
+	if p.tp == TypeStreamAgg {
+		finalAgg := basePhysicalAgg{
+			AggFuncs:     finalAggFuncs,
+			GroupByItems: groupByItems,
+		}.initForStream(p.ctx, p.stats)
+		finalAgg.schema = finalSchema
+		return partialAgg, finalAgg
+	}
+
+	finalAgg := basePhysicalAgg{
+		AggFuncs:     finalAggFuncs,
+		GroupByItems: groupByItems,
+	}.initForHash(p.ctx, p.stats)
+	finalAgg.schema = finalSchema
+	return partialAgg, finalAgg
 }
 
-func (p *PhysicalAggregation) attach2Task(tasks ...task) task {
+func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 	// If task is invalid, keep it remained.
-	if tasks[0].plan() == nil {
-		return tasks[0]
+	if tasks[0].invalid() {
+		return invalidTask
 	}
-	// TODO: We only consider hash aggregation here.
+	t := tasks[0].copy()
+	if cop, ok := t.(*copTask); ok {
+		partialAgg, finalAgg := p.newPartialAggregate()
+		if partialAgg != nil {
+			if cop.tablePlan != nil {
+				partialAgg.SetChildren(cop.tablePlan)
+				cop.tablePlan = partialAgg
+			} else {
+				partialAgg.SetChildren(cop.indexPlan)
+				cop.indexPlan = partialAgg
+			}
+		}
+		t = finishCopTask(p.ctx, cop)
+		attachPlan2Task(finalAgg, t)
+		t.addCost(t.count() * cpuFactor)
+	} else {
+		attachPlan2Task(p, t)
+		t.addCost(t.count() * cpuFactor)
+	}
+	return t
+}
+
+func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
+	// If task is invalid, keep it remained.
+	if tasks[0].invalid() {
+		return invalidTask
+	}
+	cardinality := p.StatsInfo().count
 	task := tasks[0].copy()
 	if cop, ok := task.(*copTask); ok {
 		partialAgg, finalAgg := p.newPartialAggregate()
@@ -432,22 +542,17 @@ func (p *PhysicalAggregation) attach2Task(tasks ...task) task {
 				cop.finishIndexPlan()
 				partialAgg.SetChildren(cop.tablePlan)
 				cop.tablePlan = partialAgg
-				cop.cst += cop.cnt * cpuFactor
-				cop.cnt = cop.cnt * aggFactor
 			} else {
 				partialAgg.SetChildren(cop.indexPlan)
 				cop.indexPlan = partialAgg
-				cop.cst += cop.cnt * cpuFactor
-				cop.cnt = cop.cnt * aggFactor
 			}
 		}
-		task = finishCopTask(cop, p.ctx, p.allocator)
+		task = finishCopTask(p.ctx, cop)
 		attachPlan2Task(finalAgg, task)
+		task.addCost(task.count()*cpuFactor + cardinality*hashAggMemFactor)
 	} else {
-		np := p.Copy()
-		attachPlan2Task(np, task)
-		task.addCost(task.count() * cpuFactor)
-		task.setCount(task.count() * aggFactor)
+		attachPlan2Task(p, task)
+		task.addCost(task.count()*cpuFactor + cardinality*hashAggMemFactor)
 	}
 	return task
 }

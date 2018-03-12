@@ -18,15 +18,17 @@ import (
 	"fmt"
 	"runtime/pprof"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/testkit"
+	"golang.org/x/net/context"
 )
 
 // TestIndexDoubleReadClose checks that when a index double read returns before reading all the rows, the goroutine doesn't
@@ -36,8 +38,8 @@ func (s *testSuite) TestIndexDoubleReadClose(c *C) {
 		// Make sure the store is tikv store.
 		return
 	}
-	originSize := executor.LookupTableTaskChannelSize
-	executor.LookupTableTaskChannelSize = 1
+	originSize := atomic.LoadInt32(&executor.LookupTableTaskChannelSize)
+	atomic.StoreInt32(&executor.LookupTableTaskChannelSize, 1)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@tidb_index_lookup_size = '10'")
 	tk.MustExec("use test")
@@ -50,17 +52,15 @@ func (s *testSuite) TestIndexDoubleReadClose(c *C) {
 	}
 	tk.MustExec("insert dist values " + strings.Join(values, ","))
 
-	rss, err := tk.Se.Execute("select * from dist where c_idx between 0 and 100")
+	rs, err := tk.Exec("select * from dist where c_idx between 0 and 100")
 	c.Assert(err, IsNil)
-	rs := rss[0]
-	_, err = rs.Next()
+	_, err = rs.Next(context.Background())
 	c.Assert(err, IsNil)
 	keyword := "pickAndExecTask"
-	c.Check(checkGoroutineExists(keyword), IsTrue)
 	rs.Close()
 	time.Sleep(time.Millisecond * 50)
 	c.Check(checkGoroutineExists(keyword), IsFalse)
-	executor.LookupTableTaskChannelSize = originSize
+	atomic.StoreInt32(&executor.LookupTableTaskChannelSize, originSize)
 }
 
 func checkGoroutineExists(keyword string) bool {
@@ -89,47 +89,68 @@ func (s *testSuite) TestCopClientSend(c *C) {
 	tk.MustExec("insert copclient values " + strings.Join(values, ","))
 
 	// Get table ID for split.
-	dom := sessionctx.GetDomain(tk.Se)
+	dom := domain.GetDomain(tk.Se)
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("copclient"))
 	c.Assert(err, IsNil)
 	tblID := tbl.Meta().ID
 
 	// Split the table.
-	cli := tikv.GetMockTiKVClient(s.store)
-	cli.Cluster.SplitTable(cli.MvccStore, tblID, 100)
+	s.cluster.SplitTable(s.mvccStore, tblID, 100)
 
+	ctx := context.Background()
 	// Send coprocessor request when the table split.
-	rss, err := tk.Se.Execute("select sum(id) from copclient")
+	rs, err := tk.Exec("select sum(id) from copclient")
 	c.Assert(err, IsNil)
-	rs := rss[0]
 	defer rs.Close()
-	row, err := rs.Next()
+	row, err := rs.Next(ctx)
 	c.Assert(err, IsNil)
-	c.Assert(row.Data[0].GetMysqlDecimal().String(), Equals, "499500")
+	c.Assert(row.GetMyDecimal(0).String(), Equals, "499500")
 
 	// Split one region.
 	key := tablecodec.EncodeRowKeyWithHandle(tblID, 500)
-	region, _ := cli.Cluster.GetRegionByKey([]byte(key))
-	peerID := cli.Cluster.AllocID()
-	cli.Cluster.Split(region.GetId(), cli.Cluster.AllocID(), key, []uint64{peerID}, peerID)
+	region, _ := s.cluster.GetRegionByKey([]byte(key))
+	peerID := s.cluster.AllocID()
+	s.cluster.Split(region.GetId(), s.cluster.AllocID(), key, []uint64{peerID}, peerID)
 
 	// Check again.
-	rss, err = tk.Se.Execute("select sum(id) from copclient")
+	rs, err = tk.Exec("select sum(id) from copclient")
 	c.Assert(err, IsNil)
-	rs = rss[0]
-	row, err = rs.Next()
+	row, err = rs.Next(ctx)
 	c.Assert(err, IsNil)
-	c.Assert(row.Data[0].GetMysqlDecimal().String(), Equals, "499500")
+	c.Assert(row.GetMyDecimal(0).String(), Equals, "499500")
 	rs.Close()
 
 	// Check there is no goroutine leak.
-	rss, err = tk.Se.Execute("select * from copclient order by id")
+	rs, err = tk.Exec("select * from copclient order by id")
 	c.Assert(err, IsNil)
-	rs = rss[0]
-	_, err = rs.Next()
+	_, err = rs.Next(ctx)
 	c.Assert(err, IsNil)
 	rs.Close()
 	keyword := "(*copIterator).work"
 	c.Check(checkGoroutineExists(keyword), IsFalse)
+}
+
+func (s *testSuite) TestGetLackHandles(c *C) {
+	expectedHandles := []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
+	handlesMap := make(map[int64]struct{})
+	for _, h := range expectedHandles {
+		handlesMap[h] = struct{}{}
+	}
+
+	// expected handles 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
+	// obtained handles 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
+	diffHandles := executor.GetLackHandles(expectedHandles, handlesMap)
+	c.Assert(diffHandles, HasLen, 0)
+	c.Assert(handlesMap, HasLen, 0)
+
+	// expected handles 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
+	// obtained handles 2, 3, 4, 6, 7, 8, 9
+	retHandles := []int64{2, 3, 4, 6, 7, 8, 9}
+	handlesMap = make(map[int64]struct{})
+	handlesMap[1] = struct{}{}
+	handlesMap[5] = struct{}{}
+	handlesMap[10] = struct{}{}
+	diffHandles = executor.GetLackHandles(expectedHandles, handlesMap)
+	c.Assert(retHandles, DeepEquals, diffHandles)
 }
