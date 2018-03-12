@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
@@ -97,7 +98,7 @@ func (e *CheckIndexRangeExec) Open(ctx context.Context) error {
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		Build()
 
-	e.result, err = distsql.Select(ctx, e.ctx, kvReq, e.retFieldTypes)
+	e.result, err = distsql.Select(ctx, e.ctx, kvReq, e.retFieldTypes, statistics.NewQueryFeedback(0, nil, 0, false))
 	if err != nil {
 		return errors.Trace(err)
 	}
