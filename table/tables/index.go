@@ -74,12 +74,11 @@ func (c *indexIter) Next() (val []types.Datum, h int64, err error) {
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
-	// if index is *not* unique, the handle is in keybuf
-	if !c.idx.idxInfo.Unique {
+	if len(vv) > len(c.idx.idxInfo.Columns) {
 		h = vv[len(vv)-1].GetInt64()
 		val = vv[0 : len(vv)-1]
 	} else {
-		// otherwise handle is value
+		// If the index is unique and the value isn't nil, the handle is in value.
 		h, err = decodeHandle(c.it.Value())
 		if err != nil {
 			return nil, 0, errors.Trace(err)
