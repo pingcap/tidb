@@ -118,7 +118,7 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		store.Close()
 	}()
 	testKit.MustExec("use test")
-	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("drop table if exists t, t1")
 	testKit.MustExec("create table t (a int primary key, b int, c varchar(200), d datetime DEFAULT CURRENT_TIMESTAMP, e int, ts timestamp DEFAULT CURRENT_TIMESTAMP)")
 	testKit.MustExec("create index b on t (b)")
 	testKit.MustExec("create index d on t (d)")
@@ -128,7 +128,12 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 	for i := 0; i < 100; i++ {
 		testKit.MustExec(constructInsertSQL(i, 100))
 	}
+	testKit.MustExec("create table t1 (a int, b int, index idx(a), index idxx(b))")
+	for i := 1; i < 16; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t1 values(%v, %v)", i, i))
+	}
 	testKit.MustExec("analyze table t")
+	testKit.MustExec("analyze table t1")
 	tests := []struct {
 		sql  string
 		best string
@@ -207,6 +212,10 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		{
 			sql:  "select * from t where ts < '1991-09-05'",
 			best: "IndexLookUp(Index(t.ts)[[-inf,1991-09-05 00:00:00)], Table(t))",
+		},
+		{
+			sql:  "select sum(a) from t1 use index(idx) where a = 3 and b = 100000 group by a limit 1",
+			best: "IndexLookUp(Index(t1.idx)[[3,3]], Table(t1)->Sel([eq(test.t1.b, 100000)]))->StreamAgg->Limit",
 		},
 	}
 	for _, tt := range tests {

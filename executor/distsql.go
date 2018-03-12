@@ -15,6 +15,7 @@ package executor
 
 import (
 	"math"
+	"runtime"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -716,6 +717,10 @@ type indexWorker struct {
 func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectResult) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
+			buf := make([]byte, 4096)
+			stackSize := runtime.Stack(buf, false)
+			buf = buf[:stackSize]
+			log.Errorf("indexWorker panic stack is:\n%s", buf)
 			err4Panic := errors.Errorf("%v", r)
 			doneCh := make(chan error, 1)
 			doneCh <- err4Panic
@@ -810,6 +815,10 @@ func (w *tableWorker) pickAndExecTask(ctx context.Context) {
 	var ok bool
 	defer func() {
 		if r := recover(); r != nil {
+			buf := make([]byte, 4096)
+			stackSize := runtime.Stack(buf, false)
+			buf = buf[:stackSize]
+			log.Errorf("tableWorker panic stack is:\n%s", buf)
 			task.doneCh <- errors.Errorf("%v", r)
 		}
 	}()
