@@ -640,33 +640,6 @@ func (e *NestedLoopApplyExec) doJoin(outerRow Row, match bool) ([]Row, error) {
 	return e.resultRows, nil
 }
 
-// Next implements the Executor interface.
-func (e *NestedLoopApplyExec) Next(ctx context.Context) (Row, error) {
-	for {
-		if e.cursor < len(e.resultRows) {
-			row := e.resultRows[e.cursor]
-			e.cursor++
-			return row, nil
-		}
-		outerRow, match, err := e.fetchOuterRow(ctx)
-		if outerRow == nil || err != nil {
-			return nil, errors.Trace(err)
-		}
-		for _, col := range e.outerSchema {
-			*col.Data = outerRow[col.Index]
-		}
-		err = e.prepare(ctx)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		e.resultRows, err = e.doJoin(outerRow, match)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		e.cursor = 0
-	}
-}
-
 // buildHashTableForList builds hash table from `list`.
 // key of hash table: hash value of key columns
 // value of hash table: RowPtr of the corresponded row
