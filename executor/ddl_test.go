@@ -23,9 +23,10 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 func (s *testSuite) TestTruncateTable(c *C) {
@@ -62,9 +63,9 @@ func (s *testSuite) TestCreateTable(c *C) {
 	tk.MustExec(`create table issue312_2 (c float(25));`)
 	rs, err := tk.Exec(`desc issue312_1`)
 	c.Assert(err, IsNil)
-	goCtx := goctx.Background()
+	ctx := context.Background()
 	for {
-		row, err1 := rs.Next(goCtx)
+		row, err1 := rs.Next(ctx)
 		c.Assert(err1, IsNil)
 		if row == nil {
 			break
@@ -74,7 +75,7 @@ func (s *testSuite) TestCreateTable(c *C) {
 	rs, err = tk.Exec(`desc issue312_2`)
 	c.Assert(err, IsNil)
 	for {
-		row, err1 := rs.Next(goCtx)
+		row, err1 := rs.Next(ctx)
 		c.Assert(err1, IsNil)
 		if row == nil {
 			break
@@ -145,7 +146,7 @@ func (s *testSuite) TestAlterTableAddColumn(c *C) {
 	now := time.Now().Add(-time.Duration(1 * time.Second)).Format(types.TimeFormat)
 	r, err := tk.Exec("select c2 from alter_test")
 	c.Assert(err, IsNil)
-	row, err := r.Next(goctx.Background())
+	row, err := r.Next(context.Background())
 	c.Assert(err, IsNil)
 	c.Assert(row.Len(), Equals, 1)
 	c.Assert(now, GreaterEqual, row.GetTime(0).String())
@@ -333,4 +334,31 @@ func (s *testSuite) TestTooLargeIdentifierLength(c *C) {
 	tk.MustExec(fmt.Sprintf("drop index %s on t", indexName1))
 	_, err = tk.Exec(fmt.Sprintf("create index %s on t(c)", indexName2))
 	c.Assert(err.Error(), Equals, fmt.Sprintf("[ddl:1059]Identifier name '%s' is too long", indexName2))
+}
+
+func (s *testSuite) TestShardRowIDBits(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int) shard_row_id_bits = 15")
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert t values (%d)", i))
+	}
+	tbl, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	var hasShardedID bool
+	var count int
+	c.Assert(tk.Se.NewTxn(), IsNil)
+	err = tbl.IterRecords(tk.Se, tbl.FirstKey(), nil, func(h int64, rec []types.Datum, cols []*table.Column) (more bool, err error) {
+		c.Assert(h, GreaterEqual, int64(0))
+		first8bits := h >> 56
+		if first8bits > 0 {
+			hasShardedID = true
+		}
+		count++
+		return true, nil
+	})
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, 100)
+	c.Assert(hasShardedID, IsTrue)
 }

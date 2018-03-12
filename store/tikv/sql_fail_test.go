@@ -20,8 +20,10 @@ import (
 	gofail "github.com/coreos/gofail/runtime"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
-	goctx "golang.org/x/net/context"
+	"github.com/pingcap/tidb/terror"
+	"golang.org/x/net/context"
 )
 
 var _ = Suite(new(testSQLSuite))
@@ -31,7 +33,7 @@ type testSQLSuite struct {
 }
 
 func (s *testSQLSuite) SetUpSuite(c *C) {
-	s.store, _ = tikv.NewTestTiKVStorage(false, "")
+	s.store, _ = mockstore.NewTestTiKVStorage(false, "")
 }
 
 func (s *testSQLSuite) TestFailBusyServerCop(c *C) {
@@ -44,18 +46,21 @@ func (s *testSQLSuite) TestFailBusyServerCop(c *C) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	gofail.Enable("github.com/pingcap/tidb/store/tikv/mocktikv/rpcServerBusy", `return(true)`)
+	gofail.Enable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcServerBusy", `return(true)`)
 	go func() {
 		defer wg.Done()
 		time.Sleep(time.Millisecond * 100)
-		gofail.Disable("github.com/pingcap/tidb/store/tikv/mocktikv/rpcServerBusy")
+		gofail.Disable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcServerBusy")
 	}()
 
 	go func() {
 		defer wg.Done()
-		rs, err := session.Execute(goctx.Background(), `SELECT variable_value FROM mysql.tidb WHERE variable_name="bootstrapped"`)
+		rs, err := session.Execute(context.Background(), `SELECT variable_value FROM mysql.tidb WHERE variable_name="bootstrapped"`)
+		if len(rs) > 0 {
+			defer terror.Call(rs[0].Close)
+		}
 		c.Assert(err, IsNil)
-		row, err := rs[0].Next(goctx.Background())
+		row, err := rs[0].Next(context.Background())
 		c.Assert(err, IsNil)
 		c.Assert(row, NotNil)
 		c.Assert(row.GetString(0), Equals, "True")

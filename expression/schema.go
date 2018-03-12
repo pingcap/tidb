@@ -18,7 +18,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/types"
 )
 
 // KeyInfo stores the columns of one unique key or primary key.
@@ -39,7 +38,6 @@ type Schema struct {
 	Keys    []KeyInfo
 	// TblID2Handle stores the tables' handle column information if we need handle in execution phase.
 	TblID2Handle map[int64][]*Column
-	MaxOneRow    bool
 }
 
 // String implements fmt.Stringer interface.
@@ -145,7 +143,7 @@ func (s *Schema) RetrieveColumn(col *Column) *Column {
 // IsUniqueKey checks if this column is a unique key.
 func (s *Schema) IsUniqueKey(col *Column) bool {
 	for _, key := range s.Keys {
-		if len(key) == 1 && key[0].Equal(col, nil) {
+		if len(key) == 1 && key[0].Equal(nil, col) {
 			return true
 		}
 	}
@@ -209,16 +207,8 @@ func (s *Schema) ColumnsByIndices(offsets []int) []*Column {
 	return cols
 }
 
-// GetTypes creates a field type slice.
-func (s *Schema) GetTypes() []*types.FieldType {
-	fields := make([]*types.FieldType, len(s.Columns))
-	for i := range fields {
-		fields[i] = s.Columns[i].RetType
-	}
-	return fields
-}
-
-// MergeSchema will merge two schema into one schema.
+// MergeSchema will merge two schema into one schema. We shouldn't need to consider unique keys.
+// That will be processed in build_key_info.go.
 func MergeSchema(lSchema, rSchema *Schema) *Schema {
 	if lSchema == nil && rSchema == nil {
 		return nil
@@ -232,7 +222,6 @@ func MergeSchema(lSchema, rSchema *Schema) *Schema {
 	tmpL := lSchema.Clone()
 	tmpR := rSchema.Clone()
 	ret := NewSchema(append(tmpL.Columns, tmpR.Columns...)...)
-	ret.SetUniqueKeys(append(tmpL.Keys, tmpR.Keys...))
 	ret.TblID2Handle = tmpL.TblID2Handle
 	for id, cols := range tmpR.TblID2Handle {
 		if _, ok := ret.TblID2Handle[id]; ok {

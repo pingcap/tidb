@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
+	log "github.com/sirupsen/logrus"
 )
 
 func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -50,21 +51,21 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	switch tbInfo.State {
 	case model.StateNone:
 		// none -> public
-		job.SchemaState = model.StatePublic
 		tbInfo.State = model.StatePublic
+		tbInfo.UpdateTS = t.StartTS
 		err = t.CreateTable(schemaID, tbInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 		if EnableSplitTableRegion {
 			err = d.splitTableRegion(tbInfo.ID)
+			// It will be automatically splitting by TiKV later.
 			if err != nil {
-				return ver, errors.Trace(err)
+				log.Warnf("[ddl] split table region failed %v", err)
 			}
 		}
 		// Finish this job.
-		job.State = model.JobStateDone
-		job.BinlogInfo.AddTableInfo(ver, tbInfo)
+		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
 		d.asyncNotifyEvent(&util.Event{Tp: model.ActionCreateTable, TableInfo: tbInfo})
 		return ver, nil
 	default:
@@ -103,16 +104,15 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// public -> write only
 		job.SchemaState = model.StateWriteOnly
 		tblInfo.State = model.StateWriteOnly
-		ver, err = updateTableInfo(t, job, tblInfo, originalState)
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != tblInfo.State)
 	case model.StateWriteOnly:
 		// write only -> delete only
 		job.SchemaState = model.StateDeleteOnly
 		tblInfo.State = model.StateDeleteOnly
-		ver, err = updateTableInfo(t, job, tblInfo, originalState)
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != tblInfo.State)
 	case model.StateDeleteOnly:
 		tblInfo.State = model.StateNone
-		job.SchemaState = model.StateNone
-		ver, err = updateTableInfo(t, job, tblInfo, originalState)
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != tblInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -120,11 +120,9 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			break
 		}
 		// Finish this job.
-		job.State = model.JobStateDone
-		job.BinlogInfo.AddTableInfo(ver, tblInfo)
+		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 		startKey := tablecodec.EncodeTablePrefix(tableID)
 		job.Args = append(job.Args, startKey)
-		d.asyncNotifyEvent(&util.Event{Tp: model.ActionDropTable, TableInfo: tblInfo})
 	default:
 		err = ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)
 	}
@@ -213,10 +211,67 @@ func (d *ddl) onTruncateTable(t *meta.Meta, job *model.Job) (ver int64, _ error)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	job.State = model.JobStateDone
-	job.BinlogInfo.AddTableInfo(ver, tblInfo)
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	startKey := tablecodec.EncodeTablePrefix(tableID)
 	job.Args = []interface{}{startKey}
+	return ver, nil
+}
+
+func (d *ddl) onRebaseAutoID(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	schemaID := job.SchemaID
+	var newBase int64
+	err := job.DecodeArgs(&newBase)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	tblInfo, err := getTableInfo(t, job, schemaID)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	tblInfo.AutoIncID = newBase
+	tbl, err := d.getTable(schemaID, tblInfo)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	// The operation of the minus 1 to make sure that the current value doesn't be used,
+	// the next Alloc operation will get this value.
+	// Its behavior is consistent with MySQL.
+	err = tbl.RebaseAutoID(nil, tblInfo.AutoIncID-1, false)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	return ver, nil
+}
+
+func (d *ddl) onShardRowID(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	var shardRowIDBits uint64
+	err := job.DecodeArgs(&shardRowIDBits)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	tblInfo, err := getTableInfo(t, job, job.SchemaID)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	tblInfo.ShardRowIDBits = shardRowIDBits
+	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
 }
 
@@ -276,9 +331,7 @@ func (d *ddl) onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	job.State = model.JobStateDone
-	job.SchemaState = model.StatePublic
-	job.BinlogInfo.AddTableInfo(ver, tblInfo)
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
 }
 
@@ -305,14 +358,18 @@ func checkTableNotExists(t *meta.Meta, job *model.Job, schemaID int64, tableName
 	return nil
 }
 
-func updateTableInfo(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, originalState model.SchemaState) (
+// updateVersionAndTableInfo updates the schema version and the table information.
+func updateVersionAndTableInfo(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, shouldUpdateVer bool) (
 	ver int64, err error) {
-	if originalState != job.SchemaState {
+	if shouldUpdateVer {
 		ver, err = updateSchemaVersion(t, job)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
 	}
 
+	if tblInfo.State == model.StatePublic {
+		tblInfo.UpdateTS = t.StartTS
+	}
 	return ver, t.UpdateTable(job.SchemaID, tblInfo)
 }

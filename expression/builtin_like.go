@@ -17,7 +17,7 @@ import (
 	"regexp"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -38,7 +38,7 @@ type likeFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *likeFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
+func (c *likeFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -58,18 +58,17 @@ type builtinLikeSig struct {
 // See https://dev.mysql.com/doc/refman/5.7/en/string-comparison-functions.html#operator_like
 // NOTE: Currently tikv's like function is case sensitive, so we keep its behavior here.
 func (b *builtinLikeSig) evalInt(row types.Row) (int64, bool, error) {
-	sc := b.ctx.GetSessionVars().StmtCtx
-	valStr, isNull, err := b.args[0].EvalString(row, sc)
+	valStr, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
 	}
 
 	// TODO: We don't need to compile pattern if it has been compiled or it is static.
-	patternStr, isNull, err := b.args[1].EvalString(row, sc)
+	patternStr, isNull, err := b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
 	}
-	val, isNull, err := b.args[2].EvalInt(row, sc)
+	val, isNull, err := b.args[2].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
 	}
@@ -83,7 +82,7 @@ type regexpFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *regexpFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
+func (c *regexpFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -103,14 +102,12 @@ type builtinRegexpBinarySig struct {
 }
 
 func (b *builtinRegexpBinarySig) evalInt(row types.Row) (int64, bool, error) {
-	sc := b.ctx.GetSessionVars().StmtCtx
-
-	expr, isNull, err := b.args[0].EvalString(row, sc)
+	expr, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return 0, true, errors.Trace(err)
 	}
 
-	pat, isNull, err := b.args[1].EvalString(row, sc)
+	pat, isNull, err := b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return 0, true, errors.Trace(err)
 	}
@@ -130,14 +127,12 @@ type builtinRegexpSig struct {
 // evalInt evals `expr REGEXP pat`, or `expr RLIKE pat`.
 // See https://dev.mysql.com/doc/refman/5.7/en/regexp.html#operator_regexp
 func (b *builtinRegexpSig) evalInt(row types.Row) (int64, bool, error) {
-	sc := b.ctx.GetSessionVars().StmtCtx
-
-	expr, isNull, err := b.args[0].EvalString(row, sc)
+	expr, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return 0, true, errors.Trace(err)
 	}
 
-	pat, isNull, err := b.args[1].EvalString(row, sc)
+	pat, isNull, err := b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return 0, true, errors.Trace(err)
 	}

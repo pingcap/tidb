@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/testkit"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 // TestIndexDoubleReadClose checks that when a index double read returns before reading all the rows, the goroutine doesn't
@@ -54,7 +54,7 @@ func (s *testSuite) TestIndexDoubleReadClose(c *C) {
 
 	rs, err := tk.Exec("select * from dist where c_idx between 0 and 100")
 	c.Assert(err, IsNil)
-	_, err = rs.Next(goctx.Background())
+	_, err = rs.Next(context.Background())
 	c.Assert(err, IsNil)
 	keyword := "pickAndExecTask"
 	rs.Close()
@@ -98,12 +98,12 @@ func (s *testSuite) TestCopClientSend(c *C) {
 	// Split the table.
 	s.cluster.SplitTable(s.mvccStore, tblID, 100)
 
-	goCtx := goctx.Background()
+	ctx := context.Background()
 	// Send coprocessor request when the table split.
 	rs, err := tk.Exec("select sum(id) from copclient")
 	c.Assert(err, IsNil)
 	defer rs.Close()
-	row, err := rs.Next(goCtx)
+	row, err := rs.Next(ctx)
 	c.Assert(err, IsNil)
 	c.Assert(row.GetMyDecimal(0).String(), Equals, "499500")
 
@@ -116,7 +116,7 @@ func (s *testSuite) TestCopClientSend(c *C) {
 	// Check again.
 	rs, err = tk.Exec("select sum(id) from copclient")
 	c.Assert(err, IsNil)
-	row, err = rs.Next(goCtx)
+	row, err = rs.Next(ctx)
 	c.Assert(err, IsNil)
 	c.Assert(row.GetMyDecimal(0).String(), Equals, "499500")
 	rs.Close()
@@ -124,9 +124,33 @@ func (s *testSuite) TestCopClientSend(c *C) {
 	// Check there is no goroutine leak.
 	rs, err = tk.Exec("select * from copclient order by id")
 	c.Assert(err, IsNil)
-	_, err = rs.Next(goCtx)
+	_, err = rs.Next(ctx)
 	c.Assert(err, IsNil)
 	rs.Close()
 	keyword := "(*copIterator).work"
 	c.Check(checkGoroutineExists(keyword), IsFalse)
+}
+
+func (s *testSuite) TestGetLackHandles(c *C) {
+	expectedHandles := []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
+	handlesMap := make(map[int64]struct{})
+	for _, h := range expectedHandles {
+		handlesMap[h] = struct{}{}
+	}
+
+	// expected handles 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
+	// obtained handles 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
+	diffHandles := executor.GetLackHandles(expectedHandles, handlesMap)
+	c.Assert(diffHandles, HasLen, 0)
+	c.Assert(handlesMap, HasLen, 0)
+
+	// expected handles 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
+	// obtained handles 2, 3, 4, 6, 7, 8, 9
+	retHandles := []int64{2, 3, 4, 6, 7, 8, 9}
+	handlesMap = make(map[int64]struct{})
+	handlesMap[1] = struct{}{}
+	handlesMap[5] = struct{}{}
+	handlesMap[10] = struct{}{}
+	diffHandles = executor.GetLackHandles(expectedHandles, handlesMap)
+	c.Assert(retHandles, DeepEquals, diffHandles)
 }

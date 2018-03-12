@@ -18,9 +18,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/auth"
 )
 
@@ -457,6 +457,25 @@ func (u *UserSpec) SecurityString() string {
 	return u.User.String()
 }
 
+// EncodedPassword returns the encoded password (which is the real data mysql.user).
+// The boolean value indicates input's password format is legal or not.
+func (u *UserSpec) EncodedPassword() (string, bool) {
+	if u.AuthOpt == nil {
+		return "", true
+	}
+
+	opt := u.AuthOpt
+	if opt.ByAuthString {
+		return auth.EncodePassword(opt.AuthString), true
+	}
+
+	// Not a legal password string.
+	if len(opt.HashString) != 41 || !strings.HasPrefix(opt.HashString, "*") {
+		return "", false
+	}
+	return opt.HashString, true
+}
+
 // CreateUserStmt creates user account.
 // See https://dev.mysql.com/doc/refman/5.7/en/create-user.html
 type CreateUserStmt struct {
@@ -570,18 +589,29 @@ const (
 	AdminCheckTable
 	AdminShowDDLJobs
 	AdminCancelDDLJobs
+	AdminCheckIndex
+	AdminCheckIndexRange
 )
+
+// HandleRange represents a range where handle value >= Begin and < End.
+type HandleRange struct {
+	Begin int64
+	End   int64
+}
 
 // AdminStmt is the struct for Admin statement.
 type AdminStmt struct {
 	stmtNode
 
 	Tp     AdminStmtType
+	Index  string
 	Tables []*TableName
 	JobIDs []int64
+
+	HandleRanges []HandleRange
 }
 
-// Accept implements Node Accpet interface.
+// Accept implements Node Accept interface.
 func (n *AdminStmt) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
@@ -729,7 +759,7 @@ type Ident struct {
 }
 
 // Full returns an Ident which set schema to the current schema if it is empty.
-func (i Ident) Full(ctx context.Context) (full Ident) {
+func (i Ident) Full(ctx sessionctx.Context) (full Ident) {
 	full.Name = i.Name
 	if i.Schema.O != "" {
 		full.Schema = i.Schema

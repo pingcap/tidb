@@ -15,7 +15,7 @@ package kv
 
 import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 // Transaction options
@@ -46,7 +46,7 @@ const (
 
 // Priority value for transaction priority.
 const (
-	PriorityNormal int = iota
+	PriorityNormal = iota
 	PriorityLow
 	PriorityHigh
 )
@@ -109,6 +109,11 @@ type MemBuffer interface {
 	Size() int
 	// Len returns the number of entries in the DB.
 	Len() int
+	// Reset cleanup the MemBuffer
+	Reset()
+	// SetCap sets the MemBuffer capability, to reduce memory allocations.
+	// Please call it before you use the MemBuffer, otherwise it will not works.
+	SetCap(cap int)
 }
 
 // Transaction defines the interface for operations inside a Transaction.
@@ -116,7 +121,7 @@ type MemBuffer interface {
 type Transaction interface {
 	MemBuffer
 	// Commit commits the transaction operations to KV store.
-	Commit(goctx.Context) error
+	Commit(context.Context) error
 	// Rollback undoes the transaction operations to KV store.
 	Rollback() error
 	// String implements fmt.Stringer interface.
@@ -137,12 +142,14 @@ type Transaction interface {
 	Valid() bool
 	// GetMemBuffer return the MemBuffer binding to this transaction.
 	GetMemBuffer() MemBuffer
+	// GetSnapshot returns the snapshot of this transaction.
+	GetSnapshot() Snapshot
 }
 
 // Client is used to send request to KV layer.
 type Client interface {
 	// Send sends request to KV layer, returns a Response.
-	Send(ctx goctx.Context, req *Request) Response
+	Send(ctx context.Context, req *Request) Response
 
 	// IsRequestTypeSupported checks if reqType and subType is supported.
 	IsRequestTypeSupported(reqType, subType int64) bool
@@ -192,12 +199,18 @@ type Request struct {
 	Streaming bool
 }
 
+// ResultSubset represents a result subset from a single storage unit.
+// TODO: Find a better interface for ResultSubset that can reuse bytes.
+type ResultSubset interface {
+	// GetData gets the data.
+	GetData() []byte
+}
+
 // Response represents the response returned from KV layer.
 type Response interface {
 	// Next returns a resultSubset from a single storage unit.
 	// When full result set is returned, nil is returned.
-	// TODO: Find a better interface for resultSubset that can avoid allocation and reuse bytes.
-	Next() (resultSubset []byte, err error)
+	Next(ctx context.Context) (resultSubset ResultSubset, err error)
 	// Close response.
 	Close() error
 }
@@ -207,6 +220,8 @@ type Snapshot interface {
 	Retriever
 	// BatchGet gets a batch of values from snapshot.
 	BatchGet(keys []Key) (map[string][]byte, error)
+	// SetPriority snapshot set the priority
+	SetPriority(priority int)
 }
 
 // Driver is the interface that must be implemented by a KV storage.

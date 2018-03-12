@@ -25,7 +25,7 @@ func isLetter(ch rune) bool {
 }
 
 func isDigit(ch rune) bool {
-	return (ch >= '0' && ch <= '9')
+	return ch >= '0' && ch <= '9'
 }
 
 func isIdentChar(ch rune) bool {
@@ -102,6 +102,8 @@ func init() {
 	initTokenByte('\\', int('\\'))
 	initTokenByte('?', paramMarker)
 	initTokenByte('=', eq)
+	initTokenByte('{', int('{'))
+	initTokenByte('}', int('}'))
 
 	initTokenString("||", pipes)
 	initTokenString("&&", andand)
@@ -317,6 +319,7 @@ var tokenMap = map[string]int{
 	"LOCALTIME":         localTime,
 	"LOCALTIMESTAMP":    localTs,
 	"LOCK":              lock,
+	"LONG":              long,
 	"LONGBLOB":          longblobType,
 	"LONGTEXT":          longtextType,
 	"LOW_PRIORITY":      lowPriority,
@@ -359,6 +362,7 @@ var tokenMap = map[string]int{
 	"OR":                       or,
 	"ORDER":                    order,
 	"OUTER":                    outer,
+	"PACK_KEYS":                packKeys,
 	"PARTITION":                partition,
 	"PARTITIONS":               partitions,
 	"PASSWORD":                 password,
@@ -375,6 +379,7 @@ var tokenMap = map[string]int{
 	"QUARTER":                  quarter,
 	"QUERY":                    query,
 	"QUICK":                    quick,
+	"SHARD_ROW_ID_BITS":        shardRowIDBits,
 	"RANGE":                    rangeKwd,
 	"READ":                     read,
 	"REAL":                     realType,
@@ -424,6 +429,7 @@ var tokenMap = map[string]int{
 	"STATS":                    stats,
 	"STATS_BUCKETS":            statsBuckets,
 	"STATS_HISTOGRAMS":         statsHistograms,
+	"STATS_HEALTHY":            statsHealthy,
 	"STATS_META":               statsMeta,
 	"STATS_PERSISTENT":         statsPersistent,
 	"STATUS":                   status,

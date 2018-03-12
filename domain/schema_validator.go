@@ -73,7 +73,7 @@ func NewSchemaValidator(lease time.Duration) SchemaValidator {
 }
 
 func (s *schemaValidator) Stop() {
-	log.Info("the schema validator stops")
+	log.Info("[domain-ddl] the schema validator stops")
 	s.mux.Lock()
 	defer s.mux.Unlock()
 	s.isStarted = false
@@ -82,7 +82,7 @@ func (s *schemaValidator) Stop() {
 }
 
 func (s *schemaValidator) Restart() {
-	log.Info("the schema validator restarts")
+	log.Info("[domain-ddl] the schema validator restarts")
 	s.mux.Lock()
 	defer s.mux.Unlock()
 	s.isStarted = true
@@ -101,7 +101,7 @@ func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, cha
 	defer s.mux.Unlock()
 
 	if !s.isStarted {
-		log.Infof("the schema validator stopped before updating")
+		log.Infof("[domain-ddl] the schema validator stopped before updating")
 		return
 	}
 
@@ -113,7 +113,7 @@ func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, cha
 
 	// Update the schema deltaItem information.
 	if currVer != oldVer {
-		log.Debugf("update schema validator, old ver %d, curr ver %d, changed IDs %v", oldVer, currVer, changedTableIDs)
+		log.Debugf("[domain-ddl] update schema validator, old ver %d, curr ver %d, changed IDs %v", oldVer, currVer, changedTableIDs)
 		s.enqueue(currVer, changedTableIDs)
 	}
 }
@@ -134,12 +134,12 @@ func hasRelatedTableID(relatedTableIDs, updateTableIDs []int64) bool {
 // NOTE, this function should be called under lock!
 func (s *schemaValidator) isRelatedTablesChanged(currVer int64, tableIDs []int64) bool {
 	if len(s.deltaSchemaInfos) == 0 {
-		log.Infof("schema change history is empty, checking %d", currVer)
+		log.Infof("[domain-ddl] schema change history is empty, checking %d", currVer)
 		return true
 	}
 	newerDeltas := s.findNewerDeltas(currVer)
 	if len(newerDeltas) == len(s.deltaSchemaInfos) {
-		log.Infof("the schema version %d is much older than the latest version %d", currVer, s.latestSchemaVer)
+		log.Infof("[domain-ddl] the schema version %d is much older than the latest version %d", currVer, s.latestSchemaVer)
 		return true
 	}
 	for _, item := range newerDeltas {
@@ -164,7 +164,7 @@ func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedTableIDs [
 	s.mux.RLock()
 	defer s.mux.RUnlock()
 	if !s.isStarted {
-		log.Infof("the schema validator stopped before checking")
+		log.Infof("[domain-ddl] the schema validator stopped before checking")
 		return ResultFail
 	}
 	if s.lease == 0 {
@@ -188,7 +188,7 @@ func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedTableIDs [
 }
 
 func extractPhysicalTime(ts uint64) time.Time {
-	t := int64(ts >> 18) // 18 for physicalShiftBits
+	t := int64(ts >> 18) // 18 is for the logical time.
 	return time.Unix(t/1e3, (t%1e3)*1e6)
 }
 

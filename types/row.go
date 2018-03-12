@@ -54,7 +54,7 @@ type Row interface {
 	GetMyDecimal(colIdx int) *MyDecimal
 
 	// GetJSON returns the JSON value with the colIdx.
-	GetJSON(colIdx int) json.JSON
+	GetJSON(colIdx int) json.BinaryJSON
 
 	// GetDatum returns a Datum with the colIdx and field type.
 	// This method is provided for convenience, direct type methods are preferred for better performance.
@@ -63,8 +63,6 @@ type Row interface {
 	// IsNull returns if the value is null with the colIdx.
 	IsNull(colIdx int) bool
 }
-
-var _ Row = DatumRow{}
 
 // DatumRow is a slice of Datum, implements Row interface.
 type DatumRow []Datum
@@ -139,7 +137,7 @@ func (dr DatumRow) GetMyDecimal(colIdx int) *MyDecimal {
 }
 
 // GetJSON implements Row interface.
-func (dr DatumRow) GetJSON(colIdx int) json.JSON {
+func (dr DatumRow) GetJSON(colIdx int) json.BinaryJSON {
 	return dr[colIdx].GetMysqlJSON()
 }
 

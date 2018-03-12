@@ -17,6 +17,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -36,6 +37,9 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustExec("insert t values (1, 1)")
 	tk.MustExec("insert t values (3, 2)")
 	tk.MustExec("insert t values (4, 3)")
+	tk.MustQuery("select bit_and(c) from t where NULL").Check(testkit.Rows("18446744073709551615"))
+	tk.MustQuery("select bit_or(c) from t where NULL").Check(testkit.Rows("0"))
+	tk.MustQuery("select bit_xor(c) from t where NULL").Check(testkit.Rows("0"))
 	result := tk.MustQuery("select count(*) from t")
 	result.Check(testkit.Rows("7"))
 	result = tk.MustQuery("select count(*) from t group by d")
@@ -271,6 +275,26 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustQuery("select 11 from idx_agg group by a").Check(testkit.Rows("11", "11"))
 }
 
+func (s *testSuite) TestStreamAggPushDown(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int)")
+	tk.MustExec("alter table t add index idx(a, b, c)")
+	// test for empty table
+	tk.MustQuery("select count(a) from t group by a;").Check(testkit.Rows())
+	tk.MustQuery("select count(a) from t;").Check(testkit.Rows("0"))
+	// test for one row
+	tk.MustExec("insert t values(0,0,0)")
+	tk.MustQuery("select distinct b from t group by a").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(b) from t group by a;").Check(testkit.Rows("1"))
+	// test for rows
+	tk.MustExec("insert t values(1,1,1),(3,3,6),(3,2,5),(2,1,4),(1,1,3),(1,1,2);")
+	tk.MustQuery("select count(a) from t where b>0 group by a, b;").Check(testkit.Rows("3", "1", "1", "1"))
+	tk.MustQuery("select count(a) from t where b>0 group by a, b order by a;").Check(testkit.Rows("3", "1", "1", "1"))
+	tk.MustQuery("select count(a) from t where b>0 group by a, b order by a limit 1;").Check(testkit.Rows("3"))
+}
+
 func (s *testSuite) TestAggPrune(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -278,6 +302,7 @@ func (s *testSuite) TestAggPrune(c *C) {
 	tk.MustExec("create table t(id int primary key, b varchar(50), c int)")
 	tk.MustExec("insert into t values(1, '1ff', NULL), (2, '234.02', 1)")
 	tk.MustQuery("select id, sum(b) from t group by id").Check(testkit.Rows("1 1", "2 234.02"))
+	tk.MustQuery("select sum(b) from t").Check(testkit.Rows("235.02"))
 	tk.MustQuery("select id, count(c) from t group by id").Check(testkit.Rows("1 0", "2 1"))
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(id int primary key, b float, c float)")
@@ -463,4 +488,34 @@ func (s *testSuite) TestHaving(c *C) {
 	tk.MustQuery("select sum(c1) from t group by c1 having sum(c1)").Check(testkit.Rows("1", "2", "3"))
 	tk.MustQuery("select sum(c1) - 1 from t group by c1 having sum(c1) - 1").Check(testkit.Rows("1", "2"))
 	tk.MustQuery("select 1 from t group by c1 having sum(abs(c2 + c3)) = c1").Check(testkit.Rows("1"))
+}
+
+func (s *testSuite) TestAggEliminator(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("create table t(a int primary key, b int)")
+	tk.MustQuery("select min(a) from t").Check(testkit.Rows("<nil>"))
+	tk.MustExec("insert into t values(1, -1), (2, -2), (3, 1), (4, NULL)")
+	tk.MustQuery("select max(a) from t").Check(testkit.Rows("4"))
+	tk.MustQuery("select min(b) from t").Check(testkit.Rows("-2"))
+	tk.MustQuery("select max(b*b) from t").Check(testkit.Rows("4"))
+	tk.MustQuery("select min(b*b) from t").Check(testkit.Rows("1"))
+}
+
+func (s *testSuite) TestIssue5663(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	plan.GlobalPlanCache = kvcache.NewShardedLRUCache(2, 1)
+	if plan.GlobalPlanCache != nil {
+		plan.PlanCacheEnabled = true
+		defer func() {
+			plan.PlanCacheEnabled = false
+		}()
+	}
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (i int unsigned, primary key(i));")
+	tk.MustExec("insert into t1 values (1),(2),(3);")
+	tk.MustQuery("select group_concat(i) from t1 where i > 1;").Check(testkit.Rows("2,3"))
+	tk.MustQuery("select group_concat(i) from t1 where i > 1;").Check(testkit.Rows("2,3"))
 }

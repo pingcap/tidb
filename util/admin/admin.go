@@ -14,6 +14,7 @@
 package admin
 
 import (
+	"fmt"
 	"io"
 	"reflect"
 	"time"
@@ -23,11 +24,14 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -101,7 +105,7 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 				errs[i] = errors.Trace(err)
 				continue
 			}
-			err = t.UpdateDDLJob(int64(j), job)
+			err = t.UpdateDDLJob(int64(j), job, true)
 			if err != nil {
 				errs[i] = errors.Trace(err)
 			}
@@ -131,10 +135,11 @@ func GetDDLJobs(txn kv.Transaction) ([]*model.Job, error) {
 	return jobs, nil
 }
 
-const maxHistoryJobs = 10
+// MaxHistoryJobs is exported for testing.
+const MaxHistoryJobs = 10
 
 // GetHistoryDDLJobs returns the DDL history jobs and an error.
-// The maximum count of history jobs is maxHistoryJobs.
+// The maximum count of history jobs is MaxHistoryJobs.
 func GetHistoryDDLJobs(txn kv.Transaction) ([]*model.Job, error) {
 	t := meta.NewMeta(txn)
 	jobs, err := t.GetAllHistoryDDLJobs()
@@ -143,8 +148,8 @@ func GetHistoryDDLJobs(txn kv.Transaction) ([]*model.Job, error) {
 	}
 
 	jobsLen := len(jobs)
-	if jobsLen > maxHistoryJobs {
-		start := jobsLen - maxHistoryJobs
+	if jobsLen > MaxHistoryJobs {
+		start := jobsLen - MaxHistoryJobs
 		jobs = jobs[start:]
 	}
 	jobsLen = len(jobs)
@@ -166,36 +171,48 @@ type RecordData struct {
 	Values []types.Datum
 }
 
-// GetIndexRecordsCount returns the total number of the index records from startVals.
-// If startVals = nil, returns the total number of the index records.
-func GetIndexRecordsCount(txn kv.Transaction, kvIndex table.Index, startVals []types.Datum) (int64, error) {
-	it, _, err := kvIndex.Seek(txn, startVals)
+func getCount(ctx sessionctx.Context, sql string) (int64, error) {
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	defer it.Close()
+	if len(rows) != 1 {
+		return 0, errors.Errorf("can not get count, sql %s result rows %d", sql, len(rows))
+	}
+	return rows[0].GetInt64(0), nil
+}
 
-	var cnt int64
-	for {
-		_, _, err := it.Next()
-		if terror.ErrorEqual(err, io.EOF) {
-			break
-		} else if err != nil {
-			return 0, errors.Trace(err)
+// CheckIndicesCount compares indices count with table count.
+// It returns nil if the count from the index is equal to the count from the table columns,
+// otherwise it returns an error with a different information.
+func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices []string) error {
+	// Add `` for some names like `table name`.
+	sql := fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s`", dbName, tableName)
+	tblCnt, err := getCount(ctx, sql)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, idx := range indices {
+		sql = fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s` USE INDEX(`%s`)", dbName, tableName, idx)
+		idxCnt, err := getCount(ctx, sql)
+		if err != nil {
+			return errors.Trace(err)
 		}
-		cnt++
+		if tblCnt != idxCnt {
+			return errors.Errorf("table count %d != index(%s) count %d", tblCnt, idx, idxCnt)
+		}
 	}
 
-	return cnt, nil
+	return nil
 }
 
 // ScanIndexData scans the index handles and values in a limited number, according to the index information.
 // It returns data and the next startVals until it doesn't have data, then returns data is nil and
 // the next startVals is the values which can't get data. If startVals = nil and limit = -1,
 // it returns the index data of the whole.
-func ScanIndexData(txn kv.Transaction, kvIndex table.Index, startVals []types.Datum, limit int64) (
+func ScanIndexData(sc *stmtctx.StatementContext, txn kv.Transaction, kvIndex table.Index, startVals []types.Datum, limit int64) (
 	[]*RecordData, []types.Datum, error) {
-	it, _, err := kvIndex.Seek(txn, startVals)
+	it, _, err := kvIndex.Seek(sc, txn, startVals)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -228,13 +245,13 @@ func ScanIndexData(txn kv.Transaction, kvIndex table.Index, startVals []types.Da
 // CompareIndexData compares index data one by one.
 // It returns nil if the data from the index is equal to the data from the table columns,
 // otherwise it returns an error with a different set of records.
-func CompareIndexData(txn kv.Transaction, t table.Table, idx table.Index) error {
+func CompareIndexData(sc *stmtctx.StatementContext, txn kv.Transaction, t table.Table, idx table.Index) error {
 	err := checkIndexAndRecord(txn, t, idx)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	return checkRecordAndIndex(txn, t, idx)
+	return CheckRecordAndIndex(sc, txn, t, idx)
 }
 
 func checkIndexAndRecord(txn kv.Transaction, t table.Table, idx table.Index) error {
@@ -275,7 +292,8 @@ func checkIndexAndRecord(txn kv.Transaction, t table.Table, idx table.Index) err
 	return nil
 }
 
-func checkRecordAndIndex(txn kv.Transaction, t table.Table, idx table.Index) error {
+// CheckRecordAndIndex is exported for testing.
+func CheckRecordAndIndex(sc *stmtctx.StatementContext, txn kv.Transaction, t table.Table, idx table.Index) error {
 	cols := make([]*table.Column, len(idx.Meta().Columns))
 	for i, col := range idx.Meta().Columns {
 		cols[i] = t.Cols()[col.Offset]
@@ -283,7 +301,7 @@ func checkRecordAndIndex(txn kv.Transaction, t table.Table, idx table.Index) err
 
 	startKey := t.RecordKey(0)
 	filterFunc := func(h1 int64, vals1 []types.Datum, cols []*table.Column) (bool, error) {
-		isExist, h2, err := idx.Exist(txn, vals1, h1)
+		isExist, h2, err := idx.Exist(sc, txn, vals1, h1)
 		if kv.ErrKeyExists.Equal(err) {
 			record1 := &RecordData{Handle: h1, Values: vals1}
 			record2 := &RecordData{Handle: h2, Values: vals1}
@@ -410,38 +428,6 @@ func CompareTableRecord(txn kv.Transaction, t table.Table, data []*RecordData, e
 	}
 
 	return nil
-}
-
-// GetTableRecordsCount returns the total number of table records from startHandle.
-// If startHandle = 0, returns the total number of table records.
-func GetTableRecordsCount(txn kv.Transaction, t table.Table, startHandle int64) (int64, error) {
-	startKey := t.RecordKey(startHandle)
-	it, err := txn.Seek(startKey)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-
-	var cnt int64
-	prefix := t.RecordPrefix()
-	for it.Valid() && it.Key().HasPrefix(prefix) {
-		handle, err := tablecodec.DecodeRowKey(it.Key())
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-
-		it.Close()
-		rk := t.RecordKey(handle + 1)
-		it, err = txn.Seek(rk)
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-
-		cnt++
-	}
-
-	it.Close()
-
-	return cnt, nil
 }
 
 func rowWithCols(txn kv.Retriever, t table.Table, h int64, cols []*table.Column) ([]types.Datum, error) {

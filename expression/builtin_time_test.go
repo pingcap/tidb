@@ -22,10 +22,10 @@ import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/sessionctx/varsutil"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/mock"
@@ -706,8 +706,8 @@ func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 	}
 
 	// Test that "timestamp" and "time_zone" variable may affect the result of Now() builtin function.
-	varsutil.SetSessionSystemVar(s.ctx.GetSessionVars(), "time_zone", types.NewDatum("+00:00"))
-	varsutil.SetSessionSystemVar(s.ctx.GetSessionVars(), "timestamp", types.NewDatum(1234))
+	variable.SetSessionSystemVar(s.ctx.GetSessionVars(), "time_zone", types.NewDatum("+00:00"))
+	variable.SetSessionSystemVar(s.ctx.GetSessionVars(), "timestamp", types.NewDatum(1234))
 	fc := funcs[ast.Now]
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants(nil))
 	c.Assert(err, IsNil)
@@ -716,8 +716,8 @@ func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 	result, err := v.ToString()
 	c.Assert(err, IsNil)
 	c.Assert(result, Equals, "1970-01-01 00:20:34")
-	varsutil.SetSessionSystemVar(s.ctx.GetSessionVars(), "timestamp", types.NewDatum(0))
-	varsutil.SetSessionSystemVar(s.ctx.GetSessionVars(), "time_zone", types.NewDatum("system"))
+	variable.SetSessionSystemVar(s.ctx.GetSessionVars(), "timestamp", types.NewDatum(0))
+	variable.SetSessionSystemVar(s.ctx.GetSessionVars(), "time_zone", types.NewDatum("system"))
 }
 
 func (s *testEvaluatorSuite) TestIsDuration(c *C) {
@@ -884,11 +884,13 @@ func (s *testEvaluatorSuite) TestSysDate(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.Sysdate]
 
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().StmtCtx.TimeZone = time.Local
 	timezones := []types.Datum{types.NewDatum(1234), types.NewDatum(0)}
 	for _, timezone := range timezones {
 		// sysdate() result is not affected by "timestamp" session variable.
-		varsutil.SetSessionSystemVar(s.ctx.GetSessionVars(), "timestamp", timezone)
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants(nil))
+		variable.SetSessionSystemVar(ctx.GetSessionVars(), "timestamp", timezone)
+		f, err := fc.getFunction(ctx, s.datumsToConstants(nil))
 		c.Assert(err, IsNil)
 		v, err := evalBuiltinFunc(f, nil)
 		last := time.Now()
@@ -898,14 +900,14 @@ func (s *testEvaluatorSuite) TestSysDate(c *C) {
 	}
 
 	last := time.Now()
-	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(6)))
+	f, err := fc.getFunction(ctx, s.datumsToConstants(types.MakeDatums(6)))
 	c.Assert(err, IsNil)
 	v, err := evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
 	n := v.GetMysqlTime()
 	c.Assert(n.String(), GreaterEqual, last.Format(types.TimeFormat))
 
-	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(-2)))
+	f, err = fc.getFunction(ctx, s.datumsToConstants(types.MakeDatums(-2)))
 	c.Assert(err, IsNil)
 	_, err = evalBuiltinFunc(f, nil)
 	c.Assert(err, NotNil)
@@ -940,7 +942,7 @@ func convertToTime(sc *stmtctx.StatementContext, arg types.Datum, tp byte) (d ty
 	return convertToTimeWithFsp(sc, arg, tp, types.MaxFsp)
 }
 
-func builtinDateFormat(ctx context.Context, args []types.Datum) (d types.Datum, err error) {
+func builtinDateFormat(ctx sessionctx.Context, args []types.Datum) (d types.Datum, err error) {
 	date, err := convertToTime(ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDatetime)
 	if err != nil {
 		return d, errors.Trace(err)
@@ -1068,10 +1070,10 @@ func (s *testEvaluatorSuite) TestCurrentTime(c *C) {
 	c.Assert(n.String(), HasLen, 15)
 	c.Assert(n.String(), GreaterEqual, last.Format(tfStr))
 
-	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(-1)))
+	_, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(-1)))
 	c.Assert(err, NotNil)
 
-	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(7)))
+	_, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(7)))
 	c.Assert(err, NotNil)
 }
 
@@ -2206,5 +2208,46 @@ func (s *testEvaluatorSuite) TestLastDay(c *C) {
 		d, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		c.Assert(d.IsNull(), IsTrue)
+	}
+}
+
+func (s *testEvaluatorSuite) TestWithTimeZone(c *C) {
+	sv := s.ctx.GetSessionVars()
+	originTZ := sv.GetTimeZone()
+	sv.TimeZone, _ = time.LoadLocation("Asia/Tokyo")
+	defer func() {
+		sv.TimeZone = originTZ
+	}()
+
+	timeToGoTime := func(d types.Datum, loc *time.Location) time.Time {
+		result, _ := d.GetMysqlTime().Time.GoTime(loc)
+		return result
+	}
+	durationToGoTime := func(d types.Datum, loc *time.Location) time.Time {
+		t, _ := d.GetMysqlDuration().ConvertToTime(sv.StmtCtx, mysql.TypeDatetime)
+		result, _ := t.Time.GoTime(sv.TimeZone)
+		return result
+	}
+
+	tests := []struct {
+		method        string
+		Input         []types.Datum
+		convertToTime func(types.Datum, *time.Location) time.Time
+	}{
+		{ast.Sysdate, makeDatums(2), timeToGoTime},
+		{ast.Sysdate, nil, timeToGoTime},
+		{ast.Curdate, nil, timeToGoTime},
+		{ast.CurrentTime, makeDatums(2), durationToGoTime},
+		{ast.CurrentTime, nil, durationToGoTime},
+		{ast.Curtime, nil, durationToGoTime},
+	}
+
+	for _, t := range tests {
+		now := time.Now().In(sv.TimeZone)
+		f, err := funcs[t.method].getFunction(s.ctx, s.datumsToConstants(t.Input))
+		d, err := evalBuiltinFunc(f, nil)
+		c.Assert(err, IsNil)
+		result := t.convertToTime(d, sv.TimeZone)
+		c.Assert(result.Sub(now), LessEqual, 2*time.Second)
 	}
 }

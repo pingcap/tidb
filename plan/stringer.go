@@ -25,12 +25,23 @@ func ToString(p Plan) string {
 }
 
 func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
-	if len(in.Children()) > 1 {
-		idxs = append(idxs, len(strs))
-	}
+	switch x := in.(type) {
+	case LogicalPlan:
+		if len(x.Children()) > 1 {
+			idxs = append(idxs, len(strs))
+		}
 
-	for _, c := range in.Children() {
-		strs, idxs = toString(c, strs, idxs)
+		for _, c := range x.Children() {
+			strs, idxs = toString(c, strs, idxs)
+		}
+	case PhysicalPlan:
+		if len(x.Children()) > 1 {
+			idxs = append(idxs, len(strs))
+		}
+
+		for _, c := range x.Children() {
+			strs, idxs = toString(c, strs, idxs)
+		}
 	}
 
 	var str string
@@ -47,26 +58,10 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		children := strs[idx:]
 		strs = strs[:idx]
 		idxs = idxs[:last]
-		if x.SmallChildIdx == 0 {
+		if x.InnerChildIdx == 0 {
 			str = "RightHashJoin{" + strings.Join(children, "->") + "}"
 		} else {
 			str = "LeftHashJoin{" + strings.Join(children, "->") + "}"
-		}
-		for _, eq := range x.EqualConditions {
-			l := eq.GetArgs()[0].String()
-			r := eq.GetArgs()[1].String()
-			str += fmt.Sprintf("(%s,%s)", l, r)
-		}
-	case *PhysicalHashSemiJoin:
-		last := len(idxs) - 1
-		idx := idxs[last]
-		children := strs[idx:]
-		strs = strs[:idx]
-		idxs = idxs[:last]
-		if x.WithAux {
-			str = "SemiJoinWithAux{" + strings.Join(children, "->") + "}"
-		} else {
-			str = "SemiJoin{" + strings.Join(children, "->") + "}"
 		}
 		for _, eq := range x.EqualConditions {
 			l := eq.GetArgs()[0].String()

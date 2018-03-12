@@ -36,9 +36,12 @@ const (
 	CodeUnsupportedType terror.ErrCode = 1
 )
 
-// Range type.
+// RangeType is alias for int.
+type RangeType int
+
+// RangeType constants.
 const (
-	IntRangeType = iota
+	IntRangeType RangeType = iota
 	ColumnRangeType
 	IndexRangeType
 )
@@ -125,9 +128,18 @@ func FullIntRange() []IntColumnRange {
 	return []IntColumnRange{{LowVal: math.MinInt64, HighVal: math.MaxInt64}}
 }
 
-// FullIndexRange is (-∞, +∞) for IndexRange.
-func FullIndexRange() []*IndexRange {
-	return []*IndexRange{{LowVal: []types.Datum{{}}, HighVal: []types.Datum{types.MaxValueDatum()}}}
+// FullIntNewRange is used for table range. Since table range cannot accept MaxValueDatum as the max value.
+// So we need to set it to MaxInt64.
+func FullIntNewRange(isUnsigned bool) []*NewRange {
+	if isUnsigned {
+		return []*NewRange{{LowVal: []types.Datum{types.NewUintDatum(0)}, HighVal: []types.Datum{types.NewUintDatum(math.MaxUint64)}}}
+	}
+	return []*NewRange{{LowVal: []types.Datum{types.NewIntDatum(math.MinInt64)}, HighVal: []types.Datum{types.NewIntDatum(math.MaxInt64)}}}
+}
+
+// FullNewRange is (-∞, +∞) for NewRange.
+func FullNewRange() []*NewRange {
+	return []*NewRange{{LowVal: []types.Datum{{}}, HighVal: []types.Datum{types.MaxValueDatum()}}}
 }
 
 // builder is the range builder struct.

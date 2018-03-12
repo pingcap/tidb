@@ -21,10 +21,11 @@ import (
 	"github.com/juju/errors"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/goroutine_pool"
 	log "github.com/sirupsen/logrus"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var (
@@ -36,7 +37,7 @@ const (
 	batchGetSize  = 5120
 )
 
-// tikvSnapshot implements MvccSnapshot interface.
+// tikvSnapshot implements the kv.Snapshot interface.
 type tikvSnapshot struct {
 	store          *tikvStore
 	version        kv.Version
@@ -58,16 +59,20 @@ func newTiKVSnapshot(store *tikvStore, ver kv.Version) *tikvSnapshot {
 	}
 }
 
+func (s *tikvSnapshot) SetPriority(priority int) {
+	s.priority = pb.CommandPri(priority)
+}
+
 // BatchGet gets all the keys' value from kv-server and returns a map contains key/value pairs.
 // The map will not contain nonexistent keys.
 func (s *tikvSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
-	txnCmdCounter.WithLabelValues("batch_get").Inc()
+	metrics.TiKVTxnCmdCounter.WithLabelValues("batch_get").Inc()
 	start := time.Now()
-	defer func() { txnCmdHistogram.WithLabelValues("batch_get").Observe(time.Since(start).Seconds()) }()
+	defer func() { metrics.TiKVTxnCmdHistogram.WithLabelValues("batch_get").Observe(time.Since(start).Seconds()) }()
 
 	// We want [][]byte instead of []kv.Key, use some magic to save memory.
 	bytesKeys := *(*[][]byte)(unsafe.Pointer(&keys))
-	bo := NewBackoffer(batchGetMaxBackoff, goctx.Background())
+	bo := NewBackoffer(context.Background(), batchGetMaxBackoff)
 
 	// Create a map to collect key-values from region servers.
 	var mu sync.Mutex
@@ -98,7 +103,7 @@ func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, colle
 		return errors.Trace(err)
 	}
 
-	txnRegionsNumHistogram.WithLabelValues("snapshot").Observe(float64(len(groups)))
+	metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("snapshot").Observe(float64(len(groups)))
 
 	var batches []batchKeys
 	for id, g := range groups {
@@ -203,7 +208,7 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 
 // Get gets the value for key k from snapshot.
 func (s *tikvSnapshot) Get(k kv.Key) ([]byte, error) {
-	val, err := s.get(NewBackoffer(getMaxBackoff, goctx.Background()), k)
+	val, err := s.get(NewBackoffer(context.Background(), getMaxBackoff), k)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

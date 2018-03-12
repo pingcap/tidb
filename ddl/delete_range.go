@@ -21,24 +21,24 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/pools"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 const (
 	insertDeleteRangeSQL = `INSERT IGNORE INTO mysql.gc_delete_range VALUES ("%d", "%d", "%s", "%s", "%d")`
 
-	delBatchSize int = 65536
-	delBackLog       = 128
+	delBatchSize = 65536
+	delBackLog   = 128
 )
 
 type delRangeManager interface {
@@ -77,7 +77,7 @@ func (dr *delRange) addDelRangeJob(job *model.Job) error {
 		return errors.Trace(err)
 	}
 	defer dr.ctxPool.Put(resource)
-	ctx := resource.(context.Context)
+	ctx := resource.(sessionctx.Context)
 	ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, true)
 	ctx.GetSessionVars().InRestrictedSQL = true
 
@@ -130,7 +130,7 @@ func (dr *delRange) doDelRangeWork() error {
 		return errors.Trace(err)
 	}
 	defer dr.ctxPool.Put(resource)
-	ctx := resource.(context.Context)
+	ctx := resource.(sessionctx.Context)
 	ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, true)
 	ctx.GetSessionVars().InRestrictedSQL = true
 
@@ -149,7 +149,7 @@ func (dr *delRange) doDelRangeWork() error {
 	return nil
 }
 
-func (dr *delRange) doTask(ctx context.Context, r util.DelRangeTask) error {
+func (dr *delRange) doTask(ctx sessionctx.Context, r util.DelRangeTask) error {
 	var oldStartKey, newStartKey kv.Key
 	oldStartKey = r.StartKey
 	for {
@@ -209,7 +209,7 @@ func (dr *delRange) doTask(ctx context.Context, r util.DelRangeTask) error {
 // insertJobIntoDeleteRangeTable parses the job into delete-range arguments,
 // and inserts a new record into gc_delete_range table. The primary key is
 // job ID, so we ignore key conflict error.
-func insertJobIntoDeleteRangeTable(ctx context.Context, job *model.Job) error {
+func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error {
 	now, err := getNowTS(ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -253,12 +253,12 @@ func doInsert(s sqlexec.SQLExecutor, jobID int64, elementID int64, startKey, end
 	startKeyEncoded := hex.EncodeToString(startKey)
 	endKeyEncoded := hex.EncodeToString(endKey)
 	sql := fmt.Sprintf(insertDeleteRangeSQL, jobID, elementID, startKeyEncoded, endKeyEncoded, ts)
-	_, err := s.Execute(goctx.Background(), sql)
+	_, err := s.Execute(context.Background(), sql)
 	return errors.Trace(err)
 }
 
 // getNowTS gets the current timestamp, in second.
-func getNowTS(ctx context.Context) (int64, error) {
+func getNowTS(ctx sessionctx.Context) (int64, error) {
 	currVer, err := ctx.GetStore().CurrentVersion()
 	if err != nil {
 		return 0, errors.Trace(err)

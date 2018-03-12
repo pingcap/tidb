@@ -20,9 +20,10 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	log "github.com/sirupsen/logrus"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 )
@@ -59,6 +60,27 @@ func NewRegionRequestSender(regionCache *RegionCache, client Client) *RegionRequ
 
 // SendReq sends a request to tikv server.
 func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
+
+	// gofail: var tikvStoreSendReqResult string
+	// switch tikvStoreSendReqResult {
+	// case "timeout":
+	// 	 return nil, errors.New("timeout")
+	// case "GCNotLeader":
+	// 	 if req.Type == tikvrpc.CmdGC {
+	//		 return &tikvrpc.Response{
+	//			 Type:   tikvrpc.CmdGC,
+	//			 GC: &kvrpcpb.GCResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
+	//		 }, nil
+	//	 }
+	// case "GCServerIsBusy":
+	//	 if req.Type == tikvrpc.CmdGC {
+	//		 return &tikvrpc.Response{
+	//			 Type: tikvrpc.CmdGC,
+	//			 GC:   &kvrpcpb.GCResponse{RegionError: &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}}},
+	//		 }, nil
+	//	 }
+	// }
+
 	for {
 		ctx, err := s.regionCache.GetRPCContext(bo, regionID)
 		if err != nil {
@@ -104,9 +126,13 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 	if e := tikvrpc.SetContext(req, ctx.Meta, ctx.Peer); e != nil {
 		return nil, false, errors.Trace(e)
 	}
-	context, cancel := goctx.WithTimeout(bo, timeout)
-	defer cancel()
-	resp, err = s.client.SendReq(context, ctx.Addr, req)
+	if timeout > 0 {
+		context, cancel := context.WithTimeout(bo, timeout)
+		defer cancel()
+		resp, err = s.client.SendReq(context, ctx.Addr, req)
+	} else {
+		resp, err = s.client.SendReq(bo, ctx.Addr, req)
+	}
 	if err != nil {
 		s.rpcError = err
 		if e := s.onSendFail(bo, ctx, err); e != nil {
@@ -119,7 +145,7 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 
 func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err error) error {
 	// If it failed because the context is cancelled by ourself, don't retry.
-	if errors.Cause(err) == goctx.Canceled {
+	if errors.Cause(err) == context.Canceled {
 		return errors.Trace(err)
 	}
 	if grpc.Code(errors.Cause(err)) == codes.Canceled {
@@ -144,8 +170,27 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 	return errors.Trace(err)
 }
 
+func regionErrorToLabel(e *errorpb.Error) string {
+	if e.GetNotLeader() != nil {
+		return "not_leader"
+	} else if e.GetRegionNotFound() != nil {
+		return "region_not_found"
+	} else if e.GetKeyNotInRegion() != nil {
+		return "key_not_in_region"
+	} else if e.GetStaleEpoch() != nil {
+		return "stale_epoch"
+	} else if e.GetServerIsBusy() != nil {
+		return "server_is_busy"
+	} else if e.GetStaleCommand() != nil {
+		return "stale_command"
+	} else if e.GetStoreNotMatch() != nil {
+		return "store_not_match"
+	}
+	return "unknown"
+}
+
 func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, regionErr *errorpb.Error) (retry bool, err error) {
-	reportRegionError(regionErr)
+	metrics.TiKVRegionErrorCounter.WithLabelValues(regionErrorToLabel(regionErr)).Inc()
 	if notLeader := regionErr.GetNotLeader(); notLeader != nil {
 		// Retry if error is `NotLeader`.
 		log.Debugf("tikv reports `NotLeader`: %s, ctx: %v, retry later", notLeader, ctx)

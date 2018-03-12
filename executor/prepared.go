@@ -19,17 +19,19 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var (
@@ -83,21 +85,21 @@ type PrepareExec struct {
 }
 
 // NewPrepareExec creates a new PrepareExec.
-func NewPrepareExec(ctx context.Context, is infoschema.InfoSchema, sqlTxt string) *PrepareExec {
+func NewPrepareExec(ctx sessionctx.Context, is infoschema.InfoSchema, sqlTxt string) *PrepareExec {
 	return &PrepareExec{
-		baseExecutor: newBaseExecutor(nil, ctx),
+		baseExecutor: newBaseExecutor(ctx, nil, "PrepareStmt"),
 		is:           is,
 		sqlText:      sqlTxt,
 	}
 }
 
 // Next implements the Executor Next interface.
-func (e *PrepareExec) Next(goCtx goctx.Context) (Row, error) {
+func (e *PrepareExec) Next(ctx context.Context) (Row, error) {
 	return nil, errors.Trace(e.DoPrepare())
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (e *PrepareExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+func (e *PrepareExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	return errors.Trace(e.DoPrepare())
 }
 
@@ -153,17 +155,20 @@ func (e *PrepareExec) DoPrepare() error {
 		Params:        sorter.markers,
 		SchemaVersion: e.is.SchemaMetaVersion(),
 	}
-	prepared.UseCache = plan.PreparedPlanCacheEnabled && plan.Cacheable(stmt)
+	prepared.UseCache = plan.PreparedPlanCacheEnabled && (vars.ImportingData || plan.Cacheable(stmt))
 
 	// We try to build the real statement of preparedStmt.
 	for i := range prepared.Params {
 		prepared.Params[i].SetDatum(types.NewIntDatum(0))
 	}
-	_, err = plan.BuildLogicalPlan(e.ctx, stmt, e.is)
+	var p plan.Plan
+	p, err = plan.BuildLogicalPlan(e.ctx, stmt, e.is)
 	if err != nil {
 		return errors.Trace(err)
 	}
-
+	if _, ok := stmt.(*ast.SelectStmt); ok {
+		e.Fields = schema2ResultFields(p.Schema(), vars.CurrentDB)
+	}
 	if e.ID == 0 {
 		e.ID = vars.GetNextPreparedStmtID()
 	}
@@ -180,29 +185,23 @@ func (e *PrepareExec) DoPrepare() error {
 type ExecuteExec struct {
 	baseExecutor
 
-	IS        infoschema.InfoSchema
-	Name      string
-	UsingVars []expression.Expression
-	ID        uint32
-	StmtExec  Executor
-	Stmt      ast.StmtNode
-	Plan      plan.Plan
+	is        infoschema.InfoSchema
+	name      string
+	usingVars []expression.Expression
+	id        uint32
+	stmtExec  Executor
+	stmt      ast.StmtNode
+	plan      plan.Plan
 }
 
 // Next implements the Executor Next interface.
-func (e *ExecuteExec) Next(goCtx goctx.Context) (Row, error) {
-	// Will never be called.
+// It will never be called.
+func (e *ExecuteExec) Next(ctx context.Context) (Row, error) {
 	return nil, nil
 }
 
-// Open implements the Executor Open interface.
-func (e *ExecuteExec) Open(goCtx goctx.Context) error {
-	return nil
-}
-
-// Close implements Executor Close interface.
-func (e *ExecuteExec) Close() error {
-	// Will never be called.
+// NextChunk implements the Executor NextChunk interface.
+func (e *ExecuteExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
@@ -210,7 +209,7 @@ func (e *ExecuteExec) Close() error {
 // After Build, e.StmtExec will be used to do the real execution.
 func (e *ExecuteExec) Build() error {
 	var err error
-	if IsPointGetWithPKOrUniqueKeyByAutoCommit(e.ctx, e.Plan) {
+	if IsPointGetWithPKOrUniqueKeyByAutoCommit(e.ctx, e.plan) {
 		err = e.ctx.InitTxnWithStartTS(math.MaxUint64)
 	} else {
 		err = e.ctx.ActivePendingTxn()
@@ -218,14 +217,15 @@ func (e *ExecuteExec) Build() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	b := newExecutorBuilder(e.ctx, e.IS, kv.PriorityNormal)
-	stmtExec := b.build(e.Plan)
+	b := newExecutorBuilder(e.ctx, e.is, kv.PriorityNormal)
+	stmtExec := b.build(e.plan)
 	if b.err != nil {
 		return errors.Trace(b.err)
 	}
-	e.StmtExec = stmtExec
-	ResetStmtCtx(e.ctx, e.Stmt)
-	stmtCount(e.Stmt, e.Plan, e.ctx.GetSessionVars().InRestrictedSQL)
+	e.stmtExec = stmtExec
+	ResetStmtCtx(e.ctx, e.stmt)
+	CountStmtNode(e.stmt, e.ctx.GetSessionVars().InRestrictedSQL)
+	logExpensiveQuery(e.stmt, e.plan)
 	return nil
 }
 
@@ -237,29 +237,28 @@ type DeallocateExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *DeallocateExec) Next(goCtx goctx.Context) (Row, error) {
+func (e *DeallocateExec) Next(ctx context.Context) (Row, error) {
+	return nil, errors.Trace(e.run(ctx))
+}
+
+// NextChunk implements the Executor NextChunk interface.
+func (e *DeallocateExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+	return errors.Trace(e.run(ctx))
+}
+
+func (e *DeallocateExec) run(ctx context.Context) error {
 	vars := e.ctx.GetSessionVars()
 	id, ok := vars.PreparedStmtNameToID[e.Name]
 	if !ok {
-		return nil, errors.Trace(plan.ErrStmtNotFound)
+		return errors.Trace(plan.ErrStmtNotFound)
 	}
 	delete(vars.PreparedStmtNameToID, e.Name)
 	delete(vars.PreparedStmts, id)
-	return nil, nil
-}
-
-// Close implements Executor Close interface.
-func (e *DeallocateExec) Close() error {
-	return nil
-}
-
-// Open implements Executor Open interface.
-func (e *DeallocateExec) Open(goCtx goctx.Context) error {
 	return nil
 }
 
 // CompileExecutePreparedStmt compiles a session Execute command to a stmt.Statement.
-func CompileExecutePreparedStmt(ctx context.Context, ID uint32, args ...interface{}) (ast.Statement, error) {
+func CompileExecutePreparedStmt(ctx sessionctx.Context, ID uint32, args ...interface{}) (ast.Statement, error) {
 	execStmt := &ast.ExecuteStmt{ExecID: ID}
 	execStmt.UsingVars = make([]ast.ExprNode, len(args))
 	for i, val := range args {
@@ -285,10 +284,19 @@ func CompileExecutePreparedStmt(ctx context.Context, ID uint32, args ...interfac
 
 // ResetStmtCtx resets the StmtContext.
 // Before every execution, we must clear statement context.
-func ResetStmtCtx(ctx context.Context, s ast.StmtNode) {
+func ResetStmtCtx(ctx sessionctx.Context, s ast.StmtNode) {
 	sessVars := ctx.GetSessionVars()
 	sc := new(stmtctx.StatementContext)
 	sc.TimeZone = sessVars.GetTimeZone()
+	sc.MemTracker = memory.NewTracker(s.Text(), sessVars.MemQuotaQuery)
+	switch config.GetGlobalConfig().OOMAction {
+	case config.OOMActionCancel:
+		sc.MemTracker.SetActionOnExceed(&memory.PanicOnExceed{})
+	case config.OOMActionLog:
+		sc.MemTracker.SetActionOnExceed(&memory.LogOnExceed{})
+	default:
+		sc.MemTracker.SetActionOnExceed(&memory.LogOnExceed{})
+	}
 
 	switch stmt := s.(type) {
 	case *ast.UpdateStmt:

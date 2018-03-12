@@ -14,10 +14,13 @@
 package executor_test
 
 import (
+	"strconv"
 	"strings"
 
+	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/privilege/privileges"
@@ -26,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 func (s *testSuite) TestShow(c *C) {
@@ -35,12 +38,12 @@ func (s *testSuite) TestShow(c *C) {
 
 	testSQL := `drop table if exists show_test`
 	tk.MustExec(testSQL)
-	testSQL = `create table SHOW_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int comment "c1_comment", c2 int, c3 int default 1, c4 text, key idx_wide_c4(c4(10))) ENGINE=InnoDB AUTO_INCREMENT=28934 DEFAULT CHARSET=utf8 COMMENT "table_comment";`
+	testSQL = `create table SHOW_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int comment "c1_comment", c2 int, c3 int default 1, c4 text, c5 boolean, key idx_wide_c4(c3, c4(10))) ENGINE=InnoDB AUTO_INCREMENT=28934 DEFAULT CHARSET=utf8 COMMENT "table_comment";`
 	tk.MustExec(testSQL)
 
 	testSQL = "show columns from show_test;"
 	result := tk.MustQuery(testSQL)
-	c.Check(result.Rows(), HasLen, 5)
+	c.Check(result.Rows(), HasLen, 6)
 
 	testSQL = "show create table show_test;"
 	result = tk.MustQuery(testSQL)
@@ -48,7 +51,7 @@ func (s *testSuite) TestShow(c *C) {
 	row := result.Rows()[0]
 	// For issue https://github.com/pingcap/tidb/issues/1061
 	expectedRow := []interface{}{
-		"SHOW_test", "CREATE TABLE `SHOW_test` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n  `c1` int(11) DEFAULT NULL COMMENT 'c1_comment',\n  `c2` int(11) DEFAULT NULL,\n  `c3` int(11) DEFAULT '1',\n  `c4` text DEFAULT NULL,\n  PRIMARY KEY (`id`),\n  KEY `idx_wide_c4` (`c4`(10))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=28934 COMMENT='table_comment'"}
+		"SHOW_test", "CREATE TABLE `SHOW_test` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n  `c1` int(11) DEFAULT NULL COMMENT 'c1_comment',\n  `c2` int(11) DEFAULT NULL,\n  `c3` int(11) DEFAULT '1',\n  `c4` text DEFAULT NULL,\n  `c5` tinyint(1) DEFAULT NULL,\n  PRIMARY KEY (`id`),\n  KEY `idx_wide_c4` (`c3`,`c4`(10))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=28934 COMMENT='table_comment'"}
 	for i, r := range row {
 		c.Check(r, Equals, expectedRow[i])
 	}
@@ -168,12 +171,42 @@ func (s *testSuite) TestShow(c *C) {
 	// Test show create table with AUTO_INCREMENT option
 	// for issue https://github.com/pingcap/tidb/issues/3747
 	tk.MustExec(`drop table if exists show_auto_increment`)
-	tk.MustExec(`create table show_auto_increment (id int) auto_increment=4`)
+	tk.MustExec(`create table show_auto_increment (id int key auto_increment) auto_increment=4`)
 	tk.MustQuery(`show create table show_auto_increment`).Check(testutil.RowsWithSep("|",
 		""+
 			"show_auto_increment CREATE TABLE `show_auto_increment` (\n"+
-			"  `id` int(11) DEFAULT NULL\n"+
+			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
+			"  PRIMARY KEY (`id`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=4",
+	))
+	// for issue https://github.com/pingcap/tidb/issues/4678
+	autoIDStep := autoid.GetStep()
+	tk.MustExec("insert into show_auto_increment values(20)")
+	autoID := autoIDStep + 21
+	tk.MustQuery(`show create table show_auto_increment`).Check(testutil.RowsWithSep("|",
+		""+
+			"show_auto_increment CREATE TABLE `show_auto_increment` (\n"+
+			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
+			"  PRIMARY KEY (`id`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT="+strconv.Itoa(int(autoID)),
+	))
+	tk.MustExec(`drop table show_auto_increment`)
+	tk.MustExec(`create table show_auto_increment (id int primary key auto_increment)`)
+	tk.MustQuery(`show create table show_auto_increment`).Check(testutil.RowsWithSep("|",
+		""+
+			"show_auto_increment CREATE TABLE `show_auto_increment` (\n"+
+			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
+			"  PRIMARY KEY (`id`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin",
+	))
+	tk.MustExec("insert into show_auto_increment values(10)")
+	autoID = autoIDStep + 11
+	tk.MustQuery(`show create table show_auto_increment`).Check(testutil.RowsWithSep("|",
+		""+
+			"show_auto_increment CREATE TABLE `show_auto_increment` (\n"+
+			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
+			"  PRIMARY KEY (`id`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT="+strconv.Itoa(int(autoID)),
 	))
 
 	// Test show table with column's comment contain escape character
@@ -263,6 +296,20 @@ func (s *testSuite) TestShow(c *C) {
 			"  `e` bigint(20) DEFAULT NULL\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin",
 	}
+	for i, r := range row {
+		c.Check(r, Equals, expectedRow[i])
+	}
+
+	// Test get default collate for a specified charset.
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t (a int) default charset=utf8mb4`)
+	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
+		"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+
+	tk.MustExec(`drop table if exists t`)
 }
 
 func (s *testSuite) TestShowVisibility(c *C) {
@@ -311,7 +358,7 @@ func (s *testSuite) TestShowVisibility(c *C) {
 }
 
 // mockSessionManager is a mocked session manager that wraps one session
-// it returns only this session's current proccess info as processlist for test.
+// it returns only this session's current process info as processlist for test.
 type mockSessionManager struct {
 	tidb.Session
 }
@@ -416,6 +463,23 @@ func (s *testSuite) TestForeignKeyInShowCreateTable(c *C) {
 		c.Check(r, Equals, expectedRow[i])
 	}
 
+	testSQL = `CREATE TABLE followers (
+  f1 int NOT NULL REFERENCES user_profiles (uid),
+  f2 int NOT NULL REFERENCES user_profiles (uid),
+  PRIMARY KEY (f1,f2)
+);`
+	tk.MustExec(testSQL)
+	testSQL = "show create table followers;"
+	result = tk.MustQuery(testSQL)
+	c.Check(result.Rows(), HasLen, 1)
+	row = result.Rows()[0]
+	expectedRow = []interface{}{
+		"followers", "CREATE TABLE `followers` (\n  `f1` int(11) NOT NULL,\n  `f2` int(11) NOT NULL,\n" +
+			"  PRIMARY KEY (`f1`,`f2`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"}
+	for i, r := range row {
+		c.Check(r, Equals, expectedRow[i])
+	}
+
 	testSQL = "ALTER TABLE SHOW_TEST ADD CONSTRAINT `Fk` FOREIGN KEY (`id`) REFERENCES `t1` (`pk`) ON DELETE CASCADE ON UPDATE CASCADE\n "
 	tk.MustExec(testSQL)
 	testSQL = "show create table show_test;"
@@ -475,7 +539,7 @@ func (s *testSuite) TestShow2(c *C) {
 
 	r, err := tk.Exec("show table status from test like 't'")
 	c.Assert(err, IsNil)
-	row, err := r.Next(goctx.Background())
+	row, err := r.Next(context.Background())
 	c.Assert(err, IsNil)
 	c.Assert(row.Len(), Equals, 18)
 	c.Assert(row.GetString(0), Equals, "t")
@@ -502,4 +566,30 @@ func (s *testSuite) TestCollation(c *C) {
 	c.Assert(fields[3].Column.Tp, Equals, mysql.TypeVarchar)
 	c.Assert(fields[4].Column.Tp, Equals, mysql.TypeVarchar)
 	c.Assert(fields[5].Column.Tp, Equals, mysql.TypeLonglong)
+}
+
+func (s *testSuite) TestShowTableStatus(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a bigint);`)
+
+	// It's not easy to test the result contents because every time the test runs, "Create_time" changed.
+	tk.MustExec("show table status;")
+	rs, err := tk.Exec("show table status;")
+	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(rs, NotNil)
+	rows, err := tidb.GetRows4Test(context.Background(), tk.Se, rs)
+	c.Assert(errors.ErrorStack(err), Equals, "")
+	err = rs.Close()
+	c.Assert(errors.ErrorStack(err), Equals, "")
+
+	for i := range rows {
+		row := rows[i]
+		c.Assert(row.GetString(0), Equals, "t")
+		c.Assert(row.GetString(1), Equals, "InnoDB")
+		c.Assert(row.GetInt64(2), Equals, int64(10))
+		c.Assert(row.GetString(3), Equals, "Compact")
+	}
 }

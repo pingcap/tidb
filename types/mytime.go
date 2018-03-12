@@ -19,7 +19,8 @@ import (
 	"github.com/juju/errors"
 )
 
-type mysqlTime struct {
+// MysqlTime is the internal struct type for Time.
+type MysqlTime struct {
 	year  uint16 // year <= 9999
 	month uint8  // month <= 12
 	day   uint8  // day <= 31
@@ -30,35 +31,43 @@ type mysqlTime struct {
 	microsecond uint32
 }
 
-func (t mysqlTime) Year() int {
+// Year returns the year value.
+func (t MysqlTime) Year() int {
 	return int(t.year)
 }
 
-func (t mysqlTime) Month() int {
+// Month returns the month value.
+func (t MysqlTime) Month() int {
 	return int(t.month)
 }
 
-func (t mysqlTime) Day() int {
+// Day returns the day value.
+func (t MysqlTime) Day() int {
 	return int(t.day)
 }
 
-func (t mysqlTime) Hour() int {
-	return t.hour
+// Hour returns the hour value.
+func (t MysqlTime) Hour() int {
+	return int(t.hour)
 }
 
-func (t mysqlTime) Minute() int {
+// Minute returns the minute value.
+func (t MysqlTime) Minute() int {
 	return int(t.minute)
 }
 
-func (t mysqlTime) Second() int {
+// Second returns the second value.
+func (t MysqlTime) Second() int {
 	return int(t.second)
 }
 
-func (t mysqlTime) Microsecond() int {
+// Microsecond returns the microsecond value.
+func (t MysqlTime) Microsecond() int {
 	return int(t.microsecond)
 }
 
-func (t mysqlTime) Weekday() gotime.Weekday {
+// Weekday returns the Weekday value.
+func (t MysqlTime) Weekday() gotime.Weekday {
 	// TODO: Consider time_zone variable.
 	t1, err := t.GoTime(gotime.Local)
 	if err != nil {
@@ -67,7 +76,8 @@ func (t mysqlTime) Weekday() gotime.Weekday {
 	return t1.Weekday()
 }
 
-func (t mysqlTime) YearDay() int {
+// YearDay returns day in year.
+func (t MysqlTime) YearDay() int {
 	if t.month == 0 || t.day == 0 {
 		return 0
 	}
@@ -75,12 +85,14 @@ func (t mysqlTime) YearDay() int {
 		calcDaynr(int(t.year), 1, 1) + 1
 }
 
-func (t mysqlTime) YearWeek(mode int) (int, int) {
+// YearWeek return year and week.
+func (t MysqlTime) YearWeek(mode int) (int, int) {
 	behavior := weekMode(mode) | weekBehaviourYear
 	return calcWeek(&t, behavior)
 }
 
-func (t mysqlTime) Week(mode int) int {
+// Week returns the week value.
+func (t MysqlTime) Week(mode int) int {
 	if t.month == 0 || t.day == 0 {
 		return 0
 	}
@@ -88,7 +100,8 @@ func (t mysqlTime) Week(mode int) int {
 	return week
 }
 
-func (t mysqlTime) GoTime(loc *gotime.Location) (gotime.Time, error) {
+// GoTime converts MysqlTime to GoTime.
+func (t MysqlTime) GoTime(loc *gotime.Location) (gotime.Time, error) {
 	// gotime.Time can't represent month 0 or day 0, date contains 0 would be converted to a nearest date,
 	// For example, 2006-12-00 00:00:00 would become 2015-11-30 23:59:59.
 	tm := gotime.Date(t.Year(), gotime.Month(t.Month()), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Microsecond()*1000, loc)
@@ -104,23 +117,12 @@ func (t mysqlTime) GoTime(loc *gotime.Location) (gotime.Time, error) {
 	return tm, nil
 }
 
-func (t mysqlTime) IsLeapYear() bool {
+// IsLeapYear returns if it's leap year.
+func (t MysqlTime) IsLeapYear() bool {
 	return (t.year%4 == 0 && t.year%100 != 0) || t.year%400 == 0
 }
 
-func newMysqlTime(year, month, day, hour, minute, second, microsecond int) mysqlTime {
-	return mysqlTime{
-		uint16(year),
-		uint8(month),
-		uint8(day),
-		hour,
-		uint8(minute),
-		uint8(second),
-		uint32(microsecond),
-	}
-}
-
-func calcTimeFromSec(to *mysqlTime, seconds, microseconds int) {
+func calcTimeFromSec(to *MysqlTime, seconds, microseconds int) {
 	to.hour = seconds / 3600
 	seconds = seconds % 3600
 	to.minute = uint8(seconds / 60)
@@ -133,7 +135,7 @@ const secondsIn24Hour = 86400
 // calcTimeDiff calculates difference between two datetime values as seconds + microseconds.
 // t1 and t2 should be TIME/DATE/DATETIME value.
 // sign can be +1 or -1, and t2 is preprocessed with sign first.
-func calcTimeDiff(t1, t2 TimeInternal, sign int) (seconds, microseconds int, neg bool) {
+func calcTimeDiff(t1, t2 MysqlTime, sign int) (seconds, microseconds int, neg bool) {
 	days := calcDaynr(t1.Year(), t1.Month(), t1.Day())
 	days2 := calcDaynr(t2.Year(), t2.Month(), t2.Day())
 	days -= sign * days2
@@ -156,19 +158,19 @@ func calcTimeDiff(t1, t2 TimeInternal, sign int) (seconds, microseconds int, neg
 }
 
 // datetimeToUint64 converts time value to integer in YYYYMMDDHHMMSS format.
-func datetimeToUint64(t TimeInternal) uint64 {
+func datetimeToUint64(t MysqlTime) uint64 {
 	return dateToUint64(t)*1e6 + timeToUint64(t)
 }
 
 // dateToUint64 converts time value to integer in YYYYMMDD format.
-func dateToUint64(t TimeInternal) uint64 {
+func dateToUint64(t MysqlTime) uint64 {
 	return uint64(t.Year())*10000 +
 		uint64(t.Month())*100 +
 		uint64(t.Day())
 }
 
 // timeToUint64 converts time value to integer in HHMMSS format.
-func timeToUint64(t TimeInternal) uint64 {
+func timeToUint64(t MysqlTime) uint64 {
 	return uint64(t.Hour())*10000 +
 		uint64(t.Minute())*100 +
 		uint64(t.Second())
@@ -191,7 +193,7 @@ func calcDaynr(year, month, day int) int {
 }
 
 // DateDiff calculates number of days between two days.
-func DateDiff(startTime, endTime TimeInternal) int {
+func DateDiff(startTime, endTime MysqlTime) int {
 	return calcDaynr(startTime.Year(), startTime.Month(), startTime.Day()) - calcDaynr(endTime.Year(), endTime.Month(), endTime.Day())
 }
 
@@ -239,7 +241,7 @@ func weekMode(mode int) weekBehaviour {
 }
 
 // calcWeek calculates week and year for the time.
-func calcWeek(t *mysqlTime, wb weekBehaviour) (year int, week int) {
+func calcWeek(t *MysqlTime, wb weekBehaviour) (year int, week int) {
 	var days int
 	daynr := calcDaynr(int(t.year), int(t.month), int(t.day))
 	firstDaynr := calcDaynr(int(t.year), 1, 1)
@@ -258,7 +260,7 @@ func calcWeek(t *mysqlTime, wb weekBehaviour) (year int, week int) {
 			return
 		}
 		weekYear = true
-		(year)--
+		year--
 		days = calcDaysInYear(year)
 		firstDaynr -= days
 		weekday = (weekday + 53*7 - days) % 7
@@ -285,7 +287,7 @@ func calcWeek(t *mysqlTime, wb weekBehaviour) (year int, week int) {
 }
 
 // mixDateAndTime mixes a date value and a time value.
-func mixDateAndTime(date, time *mysqlTime, neg bool) {
+func mixDateAndTime(date, time *MysqlTime, neg bool) {
 	if !neg && time.hour < 24 {
 		date.hour = time.hour
 		date.minute = time.minute
@@ -299,7 +301,7 @@ func mixDateAndTime(date, time *mysqlTime, neg bool) {
 	if neg {
 		sign = 1
 	}
-	seconds, microseconds, _ := calcTimeDiff(date, time, sign)
+	seconds, microseconds, _ := calcTimeDiff(*date, *time, sign)
 
 	// If we want to use this function with arbitrary dates, this code will need
 	// to cover cases when time is negative and "date < -time".
@@ -368,7 +370,7 @@ const (
 	intervalMICROSECOND = "MICROSECOND"
 )
 
-func timestampDiff(intervalType string, t1 TimeInternal, t2 TimeInternal) int64 {
+func timestampDiff(intervalType string, t1 MysqlTime, t2 MysqlTime) int64 {
 	seconds, microseconds, neg := calcTimeDiff(t2, t1, 1)
 	months := uint(0)
 	if intervalType == intervalYEAR || intervalType == intervalQUARTER ||
@@ -415,7 +417,7 @@ func timestampDiff(intervalType string, t1 TimeInternal, t2 TimeInternal) int64 
 			(monthEnd == monthBeg && dayEnd < dayBeg) {
 			months += 12 - (monthBeg - monthEnd)
 		} else {
-			months += (monthEnd - monthBeg)
+			months += monthEnd - monthBeg
 		}
 
 		if dayEnd < dayBeg {

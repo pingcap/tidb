@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 func (s *testSuite) TestJoinPanic(c *C) {
@@ -214,6 +214,20 @@ func (s *testSuite) TestJoin(c *C) {
 	  ON (table2.c = table1.c)
 	) `)
 	result.Check(testkit.Rows("<nil>"))
+
+	// This case is for testing:
+	// when the main thread calls Executor.Close() while the out data fetch worker and join workers are still working,
+	// we need to stop the goroutines as soon as possible to avoid unexpected error.
+	savedConcurrency := plan.JoinConcurrency
+	plan.JoinConcurrency = 5
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int)")
+	for i := 0; i < 100; i++ {
+		tk.MustExec("insert into t value(1)")
+	}
+	result = tk.MustQuery("select /*+ TIDB_HJ(s, r) */ * from t as s join t as r on s.a = r.a limit 1;")
+	result.Check(testkit.Rows("1 1"))
+	plan.JoinConcurrency = savedConcurrency
 }
 
 func (s *testSuite) TestJoinCast(c *C) {
@@ -276,6 +290,14 @@ func (s *testSuite) TestJoinCast(c *C) {
 	tk.MustExec("insert into t2 values('abc')")
 	result = tk.MustQuery("select * from (select * from t union all select * from t1) t1 join t2 on t1.c1 = t2.c1")
 	result.Sort().Check(testkit.Rows("abc abc"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a varchar(10), index idx(a))")
+	tk.MustExec("insert into t values('1'), ('2'), ('3')")
+	tk.MustExec("set @@tidb_max_chunk_size=1")
+	result = tk.MustQuery("select a from (select /*+ TIDB_INLJ(t1, t2) */ t1.a from t t1 join t t2 on t1.a=t2.a) t group by a")
+	result.Sort().Check(testkit.Rows("1", "2", "3"))
+	tk.MustExec("set @@tidb_max_chunk_size=1024")
 }
 
 func (s *testSuite) TestUsing(c *C) {
@@ -465,33 +487,33 @@ func (s *testSuite) TestSubquery(c *C) {
 	result = tk.MustQuery("select 1 = (select count(*) from t where t.c = k.d) from t k")
 	result.Check(testkit.Rows("1", "1", "0"))
 	result = tk.MustQuery("select 1 = (select count(*) from t where exists( select * from t m where t.c = k.d)) from t k")
-	result.Check(testkit.Rows("1", "1", "0"))
+	result.Sort().Check(testkit.Rows("0", "1", "1"))
 	result = tk.MustQuery("select t.c = any (select count(*) from t) from t")
-	result.Check(testkit.Rows("0", "0", "1"))
+	result.Sort().Check(testkit.Rows("0", "0", "1"))
 	result = tk.MustQuery("select * from t where (t.c, 6) = any (select count(*), sum(t.c) from t)")
 	result.Check(testkit.Rows("3 4"))
 	result = tk.MustQuery("select t.c from t where (t.c) < all (select count(*) from t)")
 	result.Check(testkit.Rows("1", "2"))
 	result = tk.MustQuery("select t.c from t where (t.c, t.d) = any (select * from t)")
-	result.Check(testkit.Rows("1", "2", "3"))
+	result.Sort().Check(testkit.Rows("1", "2", "3"))
 	result = tk.MustQuery("select t.c from t where (t.c, t.d) != all (select * from t)")
 	result.Check(testkit.Rows())
 	result = tk.MustQuery("select (select count(*) from t where t.c = k.d) from t k")
-	result.Check(testkit.Rows("1", "1", "0"))
+	result.Sort().Check(testkit.Rows("0", "1", "1"))
 	result = tk.MustQuery("select t.c from t where (t.c, t.d) in (select * from t)")
-	result.Check(testkit.Rows("1", "2", "3"))
+	result.Sort().Check(testkit.Rows("1", "2", "3"))
 	result = tk.MustQuery("select t.c from t where (t.c, t.d) not in (select * from t)")
 	result.Check(testkit.Rows())
 	result = tk.MustQuery("select * from t A inner join t B on A.c = B.c and A.c > 100")
 	result.Check(testkit.Rows())
 	// = all empty set is true
 	result = tk.MustQuery("select t.c from t where (t.c, t.d) != all (select * from t where d > 1000)")
-	result.Check(testkit.Rows("1", "2", "3"))
+	result.Sort().Check(testkit.Rows("1", "2", "3"))
 	result = tk.MustQuery("select t.c from t where (t.c) < any (select c from t where d > 1000)")
 	result.Check(testkit.Rows())
 	tk.MustExec("insert t values (NULL, NULL)")
 	result = tk.MustQuery("select (t.c) < any (select c from t) from t")
-	result.Check(testkit.Rows("1", "1", "<nil>", "<nil>"))
+	result.Sort().Check(testkit.Rows("1", "1", "<nil>", "<nil>"))
 	result = tk.MustQuery("select (10) > all (select c from t) from t")
 	result.Check(testkit.Rows("<nil>", "<nil>", "<nil>", "<nil>"))
 	result = tk.MustQuery("select (c) > all (select c from t) from t")
@@ -520,7 +542,7 @@ func (s *testSuite) TestSubquery(c *C) {
 	result.Check(testkit.Rows("1 1", "2 2", "3 3"))
 
 	result = tk.MustQuery("select exists (select t.id from t where s.id < 2 and t.id = s.id) from t s")
-	result.Check(testkit.Rows("1", "0", "0"))
+	result.Sort().Check(testkit.Rows("0", "0", "1"))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(c int)")
@@ -534,7 +556,7 @@ func (s *testSuite) TestSubquery(c *C) {
 	result.Sort().Check(testkit.Rows("1", "<nil>", "<nil>"))
 	rs, err := tk.Exec("select (select t.id from t where t.id = t.v and t.v != s.id) from t s")
 	c.Check(err, IsNil)
-	_, err = tidb.GetRows4Test(goctx.Background(), rs)
+	_, err = tidb.GetRows4Test(context.Background(), tk.Se, rs)
 	c.Check(err, NotNil)
 	c.Check(rs.Close(), IsNil)
 
@@ -693,7 +715,7 @@ func (s *testSuite) TestJoinLeak(c *C) {
 	tk.MustExec("commit")
 	result, err := tk.Exec("select * from t t1 left join (select 1) t2 on 1")
 	c.Assert(err, IsNil)
-	result.Next(goctx.Background())
+	result.Next(context.Background())
 	time.Sleep(100 * time.Millisecond)
 	result.Close()
 }
@@ -744,4 +766,27 @@ func (s *testSuite) TestIssue5278(c *C) {
 	tk.MustExec("create table tt(a varchar(10), b int)")
 	tk.MustExec("insert into t values(1, 1)")
 	tk.MustQuery("select * from t left join tt on t.a=tt.a left join t ttt on t.a=ttt.a").Check(testkit.Rows("1 1 <nil> <nil> 1 1"))
+}
+
+func (s *testSuite) TestIndexLookupJoin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_max_chunk_size=2")
+	tk.MustExec("DROP TABLE IF EXISTS t")
+	tk.MustExec("CREATE TABLE `t` (`a` int, pk integer auto_increment,`b` char (20),primary key (pk))")
+	tk.MustExec("CREATE INDEX idx_t_a ON t(`a`)")
+	tk.MustExec("CREATE INDEX idx_t_b ON t(`b`)")
+	tk.MustExec("INSERT INTO t VALUES (148307968, DEFAULT, 'nndsjofmpdxvhqv') ,  (-1327693824, DEFAULT, 'pnndsjofmpdxvhqvfny') ,  (-277544960, DEFAULT, 'fpnndsjo')")
+
+	tk.MustExec("DROP TABLE IF EXISTS s")
+	tk.MustExec("CREATE TABLE `s` (`a` int, `b` char (20))")
+	tk.MustExec("CREATE INDEX idx_s_a ON s(`a`)")
+	tk.MustExec("INSERT INTO s VALUES (-277544960, 'fpnndsjo') ,  (2, 'kfpnndsjof') ,  (2, 'vtdiockfpn'), (-277544960, 'fpnndsjo') ,  (2, 'kfpnndsjof') ,  (6, 'ckfp')")
+	tk.MustQuery("select /*+ TIDB_INLJ(t, s) */ t.a from t join s on t.a = s.a").Check(testkit.Rows("-277544960", "-277544960"))
+	tk.MustQuery("select /*+ TIDB_INLJ(t, s) */ t.a from t left join s on t.a = s.a").Check(testkit.Rows("148307968", "-1327693824", "-277544960", "-277544960"))
+	tk.MustQuery("select /*+ TIDB_INLJ(t, s) */ t.a from t right join s on t.a = s.a").Check(testkit.Rows("-277544960", "<nil>", "<nil>", "-277544960", "<nil>", "<nil>"))
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("CREATE TABLE t(a BIGINT PRIMARY KEY, b BIGINT);")
+	tk.MustExec("INSERT INTO t VALUES(1, 2);")
+	tk.MustQuery("SELECT /*+ TIDB_INLJ(t1, t2) */ * FROM t t1 JOIN t t2 ON t1.a=t2.a UNION ALL SELECT /*+ TIDB_INLJ(t1, t2) */ * FROM t t1 JOIN t t2 ON t1.a=t2.a;").Check(testkit.Rows("1 2 1 2", "1 2 1 2"))
 }

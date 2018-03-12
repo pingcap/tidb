@@ -19,7 +19,7 @@ import (
 
 	gofail "github.com/coreos/gofail/runtime"
 	. "github.com/pingcap/check"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 func (s *testStoreSuite) TestFailBusyServerKV(c *C) {
@@ -27,17 +27,17 @@ func (s *testStoreSuite) TestFailBusyServerKV(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Set([]byte("key"), []byte("value"))
 	c.Assert(err, IsNil)
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	gofail.Enable("github.com/pingcap/tidb/store/tikv/mocktikv/rpcServerBusy", `return(true)`)
+	gofail.Enable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcServerBusy", `return(true)`)
 	go func() {
 		defer wg.Done()
 		time.Sleep(time.Millisecond * 100)
-		gofail.Disable("github.com/pingcap/tidb/store/tikv/mocktikv/rpcServerBusy")
+		gofail.Disable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcServerBusy")
 	}()
 
 	go func() {

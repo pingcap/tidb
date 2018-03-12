@@ -17,8 +17,8 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -34,7 +34,7 @@ type statusDataSource struct {
 }
 
 // GetRows implements the interface of VirtualDataSource.
-func (ds *statusDataSource) GetRows(ctx context.Context) (fullRows [][]types.Datum,
+func (ds *statusDataSource) GetRows(ctx sessionctx.Context) (fullRows [][]types.Datum,
 	err error) {
 	sessionVars := ctx.GetSessionVars()
 	statusVars, err := variable.GetStatusVars(sessionVars)
@@ -42,7 +42,7 @@ func (ds *statusDataSource) GetRows(ctx context.Context) (fullRows [][]types.Dat
 		return nil, errors.Trace(err)
 	}
 
-	rows := [][]types.Datum{}
+	var rows = make([][]types.Datum, 0)
 	for status, v := range statusVars {
 		if ds.globalScope && v.Scope == variable.ScopeSession {
 			continue

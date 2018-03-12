@@ -19,18 +19,18 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
 )
 
 // Preprocess resolves table names of the node, and checks some statements validation.
-func Preprocess(ctx context.Context, node ast.Node, is infoschema.InfoSchema, inPrepare bool) error {
+func Preprocess(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema, inPrepare bool) error {
 	v := preprocessor{is: is, ctx: ctx, inPrepare: inPrepare}
 	node.Accept(&v)
 	return errors.Trace(v.err)
@@ -40,7 +40,7 @@ func Preprocess(ctx context.Context, node ast.Node, is infoschema.InfoSchema, in
 // ast Nodes parsed from parser.
 type preprocessor struct {
 	is        infoschema.InfoSchema
-	ctx       context.Context
+	ctx       sessionctx.Context
 	err       error
 	inPrepare bool
 	// When visiting create/drop table statement.
@@ -333,13 +333,6 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 			default:
 				// Nothing to do now.
 			}
-		case ast.AlterTableOption:
-			for _, opt := range spec.Options {
-				if opt.Tp == ast.TableOptionAutoIncrement {
-					p.err = ErrAlterAutoID
-					return
-				}
-			}
 		default:
 			// Nothing to do now.
 		}
@@ -428,6 +421,14 @@ func checkColumn(colDef *ast.ColumnDef) error {
 			if strings.Contains(str, ",") {
 				return types.ErrIllegalValueForType.GenByArgs(types.TypeStr(tp.Tp), str)
 			}
+		}
+	case mysql.TypeNewDecimal:
+		if tp.Decimal > mysql.MaxDecimalScale {
+			return types.ErrTooBigScale.GenByArgs(tp.Decimal, colDef.Name.Name.O, mysql.MaxDecimalScale)
+		}
+
+		if tp.Flen > mysql.MaxDecimalWidth {
+			return types.ErrTooBigPrecision.GenByArgs(tp.Flen, colDef.Name.Name.O, mysql.MaxDecimalWidth)
 		}
 	default:
 		// TODO: Add more types.

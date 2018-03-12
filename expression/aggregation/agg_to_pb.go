@@ -22,13 +22,13 @@ import (
 )
 
 // AggFuncToPBExpr converts aggregate function to pb.
-func AggFuncToPBExpr(sc *stmtctx.StatementContext, client kv.Client, aggFunc Aggregation) *tipb.Expr {
-	if aggFunc.IsDistinct() {
+func AggFuncToPBExpr(sc *stmtctx.StatementContext, client kv.Client, aggFunc *AggFuncDesc) *tipb.Expr {
+	if aggFunc.HasDistinct {
 		return nil
 	}
 	pc := expression.NewPBConverter(client, sc)
 	var tp tipb.ExprType
-	switch aggFunc.GetName() {
+	switch aggFunc.Name {
 	case ast.AggFuncCount:
 		tp = tipb.ExprType_Count
 	case ast.AggFuncFirstRow:
@@ -43,6 +43,8 @@ func AggFuncToPBExpr(sc *stmtctx.StatementContext, client kv.Client, aggFunc Agg
 		tp = tipb.ExprType_Sum
 	case ast.AggFuncAvg:
 		tp = tipb.ExprType_Avg
+	case ast.AggFuncBitOr:
+		tp = tipb.ExprType_Agg_BitOr
 	case ast.AggFuncBitXor:
 		tp = tipb.ExprType_Agg_BitXor
 	case ast.AggFuncBitAnd:
@@ -52,8 +54,8 @@ func AggFuncToPBExpr(sc *stmtctx.StatementContext, client kv.Client, aggFunc Agg
 		return nil
 	}
 
-	children := make([]*tipb.Expr, 0, len(aggFunc.GetArgs()))
-	for _, arg := range aggFunc.GetArgs() {
+	children := make([]*tipb.Expr, 0, len(aggFunc.Args))
+	for _, arg := range aggFunc.Args {
 		pbArg := pc.ExprToPB(arg)
 		if pbArg == nil {
 			return nil

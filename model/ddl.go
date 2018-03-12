@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/terror"
@@ -27,56 +28,50 @@ type ActionType byte
 
 // List DDL actions.
 const (
-	ActionNone ActionType = iota
-	ActionCreateSchema
-	ActionDropSchema
-	ActionCreateTable
-	ActionDropTable
-	ActionAddColumn
-	ActionDropColumn
-	ActionAddIndex
-	ActionDropIndex
-	ActionAddForeignKey
-	ActionDropForeignKey
-	ActionTruncateTable
-	ActionModifyColumn
-	ActionRenameTable
-	ActionSetDefaultValue
+	ActionNone            ActionType = 0
+	ActionCreateSchema    ActionType = 1
+	ActionDropSchema      ActionType = 2
+	ActionCreateTable     ActionType = 3
+	ActionDropTable       ActionType = 4
+	ActionAddColumn       ActionType = 5
+	ActionDropColumn      ActionType = 6
+	ActionAddIndex        ActionType = 7
+	ActionDropIndex       ActionType = 8
+	ActionAddForeignKey   ActionType = 9
+	ActionDropForeignKey  ActionType = 10
+	ActionTruncateTable   ActionType = 11
+	ActionModifyColumn    ActionType = 12
+	ActionRebaseAutoID    ActionType = 13
+	ActionRenameTable     ActionType = 14
+	ActionSetDefaultValue ActionType = 15
+	ActionShardRowID      ActionType = 16
 )
 
+var actionMap = map[ActionType]string{
+	ActionCreateSchema:    "create schema",
+	ActionDropSchema:      "drop schema",
+	ActionCreateTable:     "create table",
+	ActionDropTable:       "drop table",
+	ActionAddColumn:       "add column",
+	ActionDropColumn:      "drop column",
+	ActionAddIndex:        "add index",
+	ActionDropIndex:       "drop index",
+	ActionAddForeignKey:   "add foreign key",
+	ActionDropForeignKey:  "drop foreign key",
+	ActionTruncateTable:   "truncate table",
+	ActionModifyColumn:    "modify column",
+	ActionRebaseAutoID:    "rebase auto_increment ID",
+	ActionRenameTable:     "rename table",
+	ActionSetDefaultValue: "set default value",
+	ActionShardRowID:      "shard row ID",
+}
+
+// String return current ddl action in string
 func (action ActionType) String() string {
-	switch action {
-	case ActionCreateSchema:
-		return "create schema"
-	case ActionDropSchema:
-		return "drop schema"
-	case ActionCreateTable:
-		return "create table"
-	case ActionDropTable:
-		return "drop table"
-	case ActionAddColumn:
-		return "add column"
-	case ActionDropColumn:
-		return "drop column"
-	case ActionAddIndex:
-		return "add index"
-	case ActionDropIndex:
-		return "drop index"
-	case ActionAddForeignKey:
-		return "add foreign key"
-	case ActionDropForeignKey:
-		return "drop foreign key"
-	case ActionTruncateTable:
-		return "truncate table"
-	case ActionModifyColumn:
-		return "modify column"
-	case ActionRenameTable:
-		return "rename table"
-	case ActionSetDefaultValue:
-		return "set default value"
-	default:
-		return "none"
+	if v, ok := actionMap[action]; ok {
+		return v
 	}
+	return "none"
 }
 
 // HistoryInfo is used for binlog.
@@ -126,15 +121,37 @@ type Job struct {
 	SchemaState SchemaState     `json:"schema_state"`
 	// SnapshotVer means snapshot version for this job.
 	SnapshotVer uint64 `json:"snapshot_ver"`
-	// LastUpdateTS now uses unix nano seconds
-	// TODO: Use timestamp allocated by TSO.
-	LastUpdateTS int64 `json:"last_update_ts"`
+	// StartTS uses timestamp allocated by TSO.
+	// Now it's the TS when we put the job to TiKV queue.
+	StartTS uint64 `json:"start_ts"`
 	// Query string of the ddl job.
 	Query      string       `json:"query"`
 	BinlogInfo *HistoryInfo `json:"binlog"`
 
 	// Version indicates the DDL job version. For old jobs, it will be 0.
 	Version int64 `json:"version"`
+}
+
+// FinishTableJob is called when a job is finished.
+// It updates the job's state information and adds tblInfo to the binlog.
+func (job *Job) FinishTableJob(jobState JobState, schemaState SchemaState, ver int64, tblInfo *TableInfo) {
+	job.State = jobState
+	job.SchemaState = schemaState
+	job.BinlogInfo.AddTableInfo(ver, tblInfo)
+}
+
+// FinishDBJob is called when a job is finished.
+// It updates the job's state information and adds dbInfo the binlog.
+func (job *Job) FinishDBJob(jobState JobState, schemaState SchemaState, ver int64, dbInfo *DBInfo) {
+	job.State = jobState
+	job.SchemaState = schemaState
+	job.BinlogInfo.AddDBInfo(ver, dbInfo)
+}
+
+// tsConvert2Time converts timestamp to time.
+func tsConvert2Time(ts uint64) time.Time {
+	t := int64(ts >> 18) // 18 is for the logical time.
+	return time.Unix(t/1e3, (t%1e3)*1e6)
 }
 
 // SetRowCount sets the number of rows. Make sure it can pass `make race`.
@@ -189,8 +206,8 @@ func (job *Job) DecodeArgs(args ...interface{}) error {
 // String implements fmt.Stringer interface.
 func (job *Job) String() string {
 	rowCount := job.GetRowCount()
-	return fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d",
-		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args))
+	return fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v",
+		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args), tsConvert2Time(job.StartTS))
 }
 
 // IsFinished returns whether job is finished or not.
@@ -234,20 +251,20 @@ type JobState byte
 
 // List job states.
 const (
-	JobStateNone JobState = iota
-	JobStateRunning
+	JobStateNone    JobState = 0
+	JobStateRunning JobState = 1
 	// When DDL encountered an unrecoverable error at reorganization state,
 	// some keys has been added already, we need to remove them.
 	// JobStateRollingback is the state to do the rolling back job.
-	JobStateRollingback
-	JobStateRollbackDone
-	JobStateDone
-	JobStateCancelled
+	JobStateRollingback  JobState = 2
+	JobStateRollbackDone JobState = 3
+	JobStateDone         JobState = 4
+	JobStateCancelled    JobState = 5
 	// JobStateSynced is used to mark the information about the completion of this job
 	// has been synchronized to all servers.
-	JobStateSynced
+	JobStateSynced JobState = 6
 	// JobStateCancelling is used to mark the DDL job is cancelled by the client, but the DDL work hasn't handle it.
-	JobStateCancelling
+	JobStateCancelling JobState = 7
 )
 
 // String implements fmt.Stringer interface.

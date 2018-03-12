@@ -174,13 +174,6 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(vv.(Time).String(), Equals, "2010-10-10 10:11:11.1")
 
-	// For mysql.TypeNewDate.
-	ft = NewFieldType(mysql.TypeNewDate)
-	ft.Decimal = 3
-	v, err = Convert("2010-10-10 10:11:11.12345", ft)
-	c.Assert(err, IsNil)
-	c.Assert(v.(Time).String(), Equals, "2010-10-10 10:11:11.123")
-
 	// For TypeLonglong
 	ft = NewFieldType(mysql.TypeLonglong)
 	v, err = Convert("100", ft)
@@ -714,24 +707,24 @@ func testConvertTimeTimeZone(c *C, sc *stmtctx.StatementContext) {
 		expect Time
 	}{
 		{
-			input:  Time{Type: mysql.TypeDatetime, Time: raw, TimeZone: sc.TimeZone},
+			input:  Time{Type: mysql.TypeDatetime, Time: raw},
 			target: NewFieldType(mysql.TypeTimestamp),
-			expect: Time{Type: mysql.TypeTimestamp, Time: raw, TimeZone: sc.TimeZone},
+			expect: Time{Type: mysql.TypeTimestamp, Time: raw},
 		},
 		{
-			input:  Time{Type: mysql.TypeDatetime, Time: raw, TimeZone: nil},
+			input:  Time{Type: mysql.TypeDatetime, Time: raw},
 			target: NewFieldType(mysql.TypeTimestamp),
-			expect: Time{Type: mysql.TypeTimestamp, Time: raw, TimeZone: sc.TimeZone},
+			expect: Time{Type: mysql.TypeTimestamp, Time: raw},
 		},
 		{
-			input:  Time{Type: mysql.TypeDatetime, Time: raw, TimeZone: time.UTC},
+			input:  Time{Type: mysql.TypeDatetime, Time: raw},
 			target: NewFieldType(mysql.TypeTimestamp),
-			expect: Time{Type: mysql.TypeTimestamp, Time: raw, TimeZone: sc.TimeZone},
+			expect: Time{Type: mysql.TypeTimestamp, Time: raw},
 		},
 		{
-			input:  Time{Type: mysql.TypeTimestamp, Time: raw, TimeZone: sc.TimeZone},
+			input:  Time{Type: mysql.TypeTimestamp, Time: raw},
 			target: NewFieldType(mysql.TypeDatetime),
-			expect: Time{Type: mysql.TypeDatetime, Time: raw, TimeZone: nil},
+			expect: Time{Type: mysql.TypeDatetime, Time: raw},
 		},
 	}
 
@@ -743,9 +736,6 @@ func testConvertTimeTimeZone(c *C, sc *stmtctx.StatementContext) {
 		t := nd.GetMysqlTime()
 		c.Assert(t.Type, Equals, test.expect.Type)
 		c.Assert(t.Time, Equals, test.expect.Time)
-		if test.expect.Type == mysql.TypeTimestamp {
-			c.Assert(t.TimeZone, Equals, test.expect.TimeZone)
-		}
 	}
 }
 
@@ -767,7 +757,7 @@ func (s *testTypeConvertSuite) TestConvertJSONToInt(c *C) {
 		{`"1234"`, 1234},
 	}
 	for _, tt := range tests {
-		j, err := json.ParseFromString(tt.In)
+		j, err := json.ParseBinaryFromString(tt.In)
 		c.Assert(err, IsNil)
 
 		casted, _ := ConvertJSONToInt(new(stmtctx.StatementContext), j, false)
@@ -793,7 +783,7 @@ func (s *testTypeConvertSuite) TestConvertJSONToFloat(c *C) {
 		{`"1234"`, 1234},
 	}
 	for _, tt := range tests {
-		j, err := json.ParseFromString(tt.In)
+		j, err := json.ParseBinaryFromString(tt.In)
 		c.Assert(err, IsNil)
 		casted, _ := ConvertJSONToFloat(new(stmtctx.StatementContext), j)
 		c.Assert(casted, Equals, tt.Out)
@@ -825,35 +815,28 @@ func (s *testTypeConvertSuite) TestNumberToDuration(c *C) {
 	}
 
 	for _, tc := range testCases {
-		t, err := NumberToDuration(tc.number, tc.fsp)
+		dur, err := NumberToDuration(tc.number, tc.fsp)
 		if tc.hasErr {
 			c.Assert(err, NotNil)
 			continue
 		}
 		c.Assert(err, IsNil)
-		c.Assert(t.Time.Year(), Equals, tc.year)
-		c.Assert(t.Time.Month(), Equals, tc.month)
-		c.Assert(t.Time.Day(), Equals, tc.day)
-		c.Assert(t.Time.Hour(), Equals, tc.hour)
-		c.Assert(t.Time.Minute(), Equals, tc.minute)
-		c.Assert(t.Time.Second(), Equals, tc.second)
+		c.Assert(dur.Hour(), Equals, tc.hour)
+		c.Assert(dur.Minute(), Equals, tc.minute)
+		c.Assert(dur.Second(), Equals, tc.second)
 	}
 
 	var testCases1 = []struct {
 		number int64
-		neg    bool
 		dur    time.Duration
 	}{
-		{171222, false, 17*time.Hour + 12*time.Minute + 22*time.Second},
-		{-171222, true, -(17*time.Hour + 12*time.Minute + 22*time.Second)},
+		{171222, 17*time.Hour + 12*time.Minute + 22*time.Second},
+		{-171222, -(17*time.Hour + 12*time.Minute + 22*time.Second)},
 	}
 
 	for _, tc := range testCases1 {
-		t, err := NumberToDuration(tc.number, 0)
+		dur, err := NumberToDuration(tc.number, 0)
 		c.Assert(err, IsNil)
-		c.Assert(t.IsNegative(), Equals, tc.neg)
-		d, err1 := t.ConvertToDuration()
-		c.Assert(err1, IsNil)
-		c.Assert(d.Duration, Equals, tc.dur)
+		c.Assert(dur.Duration, Equals, tc.dur)
 	}
 }

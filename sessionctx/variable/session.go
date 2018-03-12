@@ -16,12 +16,17 @@ package variable
 import (
 	"crypto/tls"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/juju/errors"
+	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/auth"
 )
 
@@ -87,7 +92,12 @@ type TransactionContext struct {
 	Histroy       interface{}
 	SchemaVersion int64
 	StartTS       uint64
+	Shard         *int64
 	TableDeltaMap map[int64]TableDelta
+
+	// For metrics.
+	CreateTime     time.Time
+	StatementCount int
 }
 
 // UpdateDeltaForTable updates the delta info for some table.
@@ -106,14 +116,39 @@ func (tc *TransactionContext) ClearDelta() {
 	tc.TableDeltaMap = nil
 }
 
+// WriteStmtBufs can be used by insert/replace/delete/update statement.
+// TODO: use a common memory pool to replace this.
+type WriteStmtBufs struct {
+	// RowValBuf is used by tablecodec.EncodeRow, to reduce runtime.growslice.
+	RowValBuf []byte
+	// BufStore stores temp KVs for a row when executing insert statement.
+	// We could reuse a BufStore for multiple rows of a session to reduce memory allocations.
+	BufStore *kv.BufferStore
+	// AddRowValues use to store temp insert rows value, to reduce memory allocations when importing data.
+	AddRowValues []types.Datum
+
+	// IndexValsBuf is used by index.FetchValues
+	IndexValsBuf []types.Datum
+	// IndexKeyBuf is used by index.GenIndexKey
+	IndexKeyBuf []byte
+}
+
+func (ib *WriteStmtBufs) clean() {
+	ib.BufStore = nil
+	ib.RowValBuf = nil
+	ib.AddRowValues = nil
+	ib.IndexValsBuf = nil
+	ib.IndexKeyBuf = nil
+}
+
 // SessionVars is to handle user-defined or global variables in the current session.
 type SessionVars struct {
 	// UsersLock is a lock for user defined variables.
 	UsersLock sync.RWMutex
 	// Users are user defined variables.
 	Users map[string]string
-	// Systems are system variables.
-	Systems map[string]string
+	// systems variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
+	systems map[string]string
 	// PreparedStmts stores prepared statement.
 	PreparedStmts        map[uint32]interface{}
 	PreparedStmtNameToID map[string]uint32
@@ -200,8 +235,8 @@ type SessionVars struct {
 
 	/* TiDB system variables */
 
-	// SkipConstraintCheck is true when importing data.
-	SkipConstraintCheck bool
+	// ImportingData is true when importing data.
+	ImportingData bool
 
 	// SkipUTF8Check check on input value.
 	SkipUTF8Check bool
@@ -230,6 +265,10 @@ type SessionVars struct {
 	// BatchDelete indicates if we should split delete data into multiple batches.
 	BatchDelete bool
 
+	// DMLBatchSize indicates the size of batches for DML.
+	// It will be used when BatchInsert or BatchDelete is on.
+	DMLBatchSize int
+
 	// MaxRowCountForINLJ defines max row count that the outer table of index nested loop join could be without force hint.
 	MaxRowCountForINLJ int
 
@@ -240,16 +279,27 @@ type SessionVars struct {
 	// MaxChunkSize defines max row count of a Chunk during query execution.
 	MaxChunkSize int
 
-	// EnableChunk indicates whether the chunk execution model is enabled.
-	// TODO: remove this after tidb-server configuration "enable-chunk' removed.
-	EnableChunk bool
+	// MemQuotaQuery defines the memory quota for a query.
+	MemQuotaQuery int64
+	// MemQuotaHashJoin defines the memory quota for a hash join executor.
+	MemQuotaHashJoin int64
+	// MemQuotaSort defines the memory quota for a sort executor.
+	MemQuotaSort int64
+	// MemQuotaTopn defines the memory quota for a top n executor.
+	MemQuotaTopn int64
+
+	// EnableStreaming indicates whether the coprocessor request can use streaming API.
+	// TODO: remove this after tidb-server configuration "enable-streaming' removed.
+	EnableStreaming bool
+
+	writeStmtBufs WriteStmtBufs
 }
 
 // NewSessionVars creates a session vars object.
 func NewSessionVars() *SessionVars {
-	return &SessionVars{
+	vars := &SessionVars{
 		Users:                      make(map[string]string),
-		Systems:                    make(map[string]string),
+		systems:                    make(map[string]string),
 		PreparedStmts:              make(map[uint32]interface{}),
 		PreparedStmtNameToID:       make(map[string]uint32),
 		PreparedParams:             make([]interface{}, 10),
@@ -265,8 +315,32 @@ func NewSessionVars() *SessionVars {
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
 		IndexSerialScanConcurrency: DefIndexSerialScanConcurrency,
 		DistSQLScanConcurrency:     DefDistSQLScanConcurrency,
-		MaxRowCountForINLJ:         DefMaxRowCountForINLJ,
 		MaxChunkSize:               DefMaxChunkSize,
+		DMLBatchSize:               DefDMLBatchSize,
+		MemQuotaQuery:              DefTiDBMemQuotaQuery,
+		MemQuotaHashJoin:           DefTiDBMemQuotaHashJoin,
+		MemQuotaSort:               DefTiDBMemQuotaSort,
+		MemQuotaTopn:               DefTiDBMemQuotaTopn,
+	}
+	var enableStreaming string
+	if config.GetGlobalConfig().EnableStreaming {
+		enableStreaming = "1"
+	} else {
+		enableStreaming = "0"
+	}
+	terror.Log(vars.SetSystemVar(TiDBEnableStreaming, enableStreaming))
+	return vars
+}
+
+// GetWriteStmtBufs get pointer of SessionVars.writeStmtBufs.
+func (s *SessionVars) GetWriteStmtBufs() *WriteStmtBufs {
+	return &s.writeStmtBufs
+}
+
+// CleanBuffers cleans the temporary bufs
+func (s *SessionVars) CleanBuffers() {
+	if !s.ImportingData {
+		s.GetWriteStmtBufs().clean()
 	}
 }
 
@@ -280,8 +354,8 @@ func NewSessionVars() *SessionVars {
 // have their own collation, which has a higher collation precedence.
 // See https://dev.mysql.com/doc/refman/5.7/en/charset-connection.html
 func (s *SessionVars) GetCharsetInfo() (charset, collation string) {
-	charset = s.Systems[CharacterSetConnection]
-	collation = s.Systems[CollationConnection]
+	charset = s.systems[CharacterSetConnection]
+	collation = s.systems[CollationConnection]
 	return
 }
 
@@ -299,7 +373,7 @@ func (s *SessionVars) SetStatusFlag(flag uint16, on bool) {
 		s.Status |= flag
 		return
 	}
-	s.Status &= (^flag)
+	s.Status &= ^flag
 }
 
 // GetStatusFlag gets the session server status variable, returns true if it is on.
@@ -342,6 +416,96 @@ func (s *SessionVars) ResetPrevAffectedRows() {
 			s.PrevAffectedRows = -1
 		}
 	}
+}
+
+// GetSystemVar gets the string value of a system variable.
+func (s *SessionVars) GetSystemVar(name string) (string, bool) {
+	val, ok := s.systems[name]
+	return val, ok
+}
+
+// deleteSystemVar deletes a system variable.
+func (s *SessionVars) deleteSystemVar(name string) error {
+	if name != CharacterSetResults {
+		return ErrCantSetToNull
+	}
+	delete(s.systems, name)
+	return nil
+}
+
+// SetSystemVar sets the value of a system variable.
+func (s *SessionVars) SetSystemVar(name string, val string) error {
+	switch name {
+	case TimeZone:
+		tz, err := parseTimeZone(val)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		s.TimeZone = tz
+	case SQLModeVar:
+		val = mysql.FormatSQLModeStr(val)
+		// Modes is a list of different modes separated by commas.
+		sqlMode, err2 := mysql.GetSQLMode(val)
+		if err2 != nil {
+			return errors.Trace(err2)
+		}
+		s.StrictSQLMode = sqlMode.HasStrictMode()
+		s.SQLMode = sqlMode
+		s.SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, sqlMode.HasNoBackslashEscapesMode())
+	case TiDBSnapshot:
+		err := setSnapshotTS(s, val)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	case AutocommitVar:
+		isAutocommit := TiDBOptOn(val)
+		s.SetStatusFlag(mysql.ServerStatusAutocommit, isAutocommit)
+		if isAutocommit {
+			s.SetStatusFlag(mysql.ServerStatusInTrans, false)
+		}
+	case TiDBImportingData:
+		s.ImportingData = TiDBOptOn(val)
+	case TiDBSkipUTF8Check:
+		s.SkipUTF8Check = TiDBOptOn(val)
+	case TiDBOptAggPushDown:
+		s.AllowAggPushDown = TiDBOptOn(val)
+	case TiDBOptInSubqUnFolding:
+		s.AllowInSubqueryUnFolding = TiDBOptOn(val)
+	case TiDBIndexLookupConcurrency:
+		s.IndexLookupConcurrency = tidbOptPositiveInt(val, DefIndexLookupConcurrency)
+	case TiDBIndexJoinBatchSize:
+		s.IndexJoinBatchSize = tidbOptPositiveInt(val, DefIndexJoinBatchSize)
+	case TiDBIndexLookupSize:
+		s.IndexLookupSize = tidbOptPositiveInt(val, DefIndexLookupSize)
+	case TiDBDistSQLScanConcurrency:
+		s.DistSQLScanConcurrency = tidbOptPositiveInt(val, DefDistSQLScanConcurrency)
+	case TiDBIndexSerialScanConcurrency:
+		s.IndexSerialScanConcurrency = tidbOptPositiveInt(val, DefIndexSerialScanConcurrency)
+	case TiDBBatchInsert:
+		s.BatchInsert = TiDBOptOn(val)
+	case TiDBBatchDelete:
+		s.BatchDelete = TiDBOptOn(val)
+	case TiDBDMLBatchSize:
+		s.DMLBatchSize = tidbOptPositiveInt(val, DefDMLBatchSize)
+	case TiDBCurrentTS, TiDBConfig:
+		return ErrReadOnly
+	case TiDBMaxChunkSize:
+		s.MaxChunkSize = tidbOptPositiveInt(val, DefMaxChunkSize)
+	case TIDBMemQuotaQuery:
+		s.MemQuotaQuery = tidbOptInt64(val, DefTiDBMemQuotaQuery)
+	case TIDBMemQuotaHashJoin:
+		s.MemQuotaHashJoin = tidbOptInt64(val, DefTiDBMemQuotaHashJoin)
+	case TIDBMemQuotaSort:
+		s.MemQuotaSort = tidbOptInt64(val, DefTiDBMemQuotaSort)
+	case TIDBMemQuotaTopn:
+		s.MemQuotaTopn = tidbOptInt64(val, DefTiDBMemQuotaTopn)
+	case TiDBGeneralLog:
+		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt(val, DefTiDBGeneralLog)))
+	case TiDBEnableStreaming:
+		s.EnableStreaming = TiDBOptOn(val)
+	}
+	s.systems[name] = val
+	return nil
 }
 
 // special session variables.

@@ -88,7 +88,7 @@ const (
 
 // LogicalJoin is the logical join plan.
 type LogicalJoin struct {
-	baseLogicalPlan
+	logicalSchemaProducer
 
 	JoinType       JoinType
 	reordered      bool
@@ -158,13 +158,19 @@ func (p *LogicalJoin) extractCorrelatedCols() []*expression.CorrelatedColumn {
 
 // LogicalProjection represents a select fields plan.
 type LogicalProjection struct {
-	baseLogicalPlan
+	logicalSchemaProducer
 
 	Exprs []expression.Expression
 
 	// calculateGenCols indicates the projection is for calculating generated columns.
 	// In *UPDATE*, we should know this to tell different projections.
 	calculateGenCols bool
+
+	// calculateNoDelay indicates this Projection is the root Plan and should be
+	// calculated without delay and will not return any result to client.
+	// Currently it is "true" only when the current sql query is a "DO" statement.
+	// See "https://dev.mysql.com/doc/refman/5.7/en/do.html" for more detail.
+	calculateNoDelay bool
 }
 
 func (p *LogicalProjection) extractCorrelatedCols() []*expression.CorrelatedColumn {
@@ -177,9 +183,9 @@ func (p *LogicalProjection) extractCorrelatedCols() []*expression.CorrelatedColu
 
 // LogicalAggregation represents an aggregate plan.
 type LogicalAggregation struct {
-	baseLogicalPlan
+	logicalSchemaProducer
 
-	AggFuncs     []aggregation.Aggregation
+	AggFuncs     []*aggregation.AggFuncDesc
 	GroupByItems []expression.Expression
 	// groupByCols stores the columns that are group-by items.
 	groupByCols []*expression.Column
@@ -188,13 +194,13 @@ type LogicalAggregation struct {
 	inputCount         float64 // inputCount is the input count of this plan.
 }
 
-func (p *LogicalAggregation) extractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := p.baseLogicalPlan.extractCorrelatedCols()
-	for _, expr := range p.GroupByItems {
+func (la *LogicalAggregation) extractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := la.baseLogicalPlan.extractCorrelatedCols()
+	for _, expr := range la.GroupByItems {
 		corCols = append(corCols, extractCorColumns(expr)...)
 	}
-	for _, fun := range p.AggFuncs {
-		for _, arg := range fun.GetArgs() {
+	for _, fun := range la.AggFuncs {
+		for _, arg := range fun.Args {
 			corCols = append(corCols, extractCorColumns(arg)...)
 		}
 	}
@@ -226,10 +232,10 @@ type LogicalApply struct {
 	corCols []*expression.CorrelatedColumn
 }
 
-func (p *LogicalApply) extractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := p.LogicalJoin.extractCorrelatedCols()
+func (la *LogicalApply) extractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := la.LogicalJoin.extractCorrelatedCols()
 	for i := len(corCols) - 1; i >= 0; i-- {
-		if p.children[0].Schema().Contains(&corCols[i].Column) {
+		if la.children[0].Schema().Contains(&corCols[i].Column) {
 			corCols = append(corCols[:i], corCols[i+1:]...)
 		}
 	}
@@ -238,7 +244,7 @@ func (p *LogicalApply) extractCorrelatedCols() []*expression.CorrelatedColumn {
 
 // LogicalExists checks if a query returns result.
 type LogicalExists struct {
-	baseLogicalPlan
+	logicalSchemaProducer
 }
 
 // LogicalMaxOneRow checks if a query returns no more than one row.
@@ -248,7 +254,7 @@ type LogicalMaxOneRow struct {
 
 // LogicalTableDual represents a dual table plan.
 type LogicalTableDual struct {
-	baseLogicalPlan
+	logicalSchemaProducer
 
 	RowCount int
 }
@@ -262,7 +268,7 @@ type LogicalUnionScan struct {
 
 // DataSource represents a tablescan without condition push down.
 type DataSource struct {
-	baseLogicalPlan
+	logicalSchemaProducer
 
 	indexHints []*ast.IndexHint
 	tableInfo  *model.TableInfo
@@ -276,32 +282,38 @@ type DataSource struct {
 	// pushedDownConds are the conditions that will be pushed down to coprocessor.
 	pushedDownConds []expression.Expression
 
+	// relevantIndices means the indices match the push down conditions
+	relevantIndices []bool
+
+	// statsAfterSelect is the statsInfo for dataSource and selection.
+	statsAfterSelect *statsInfo
+
 	statisticTable *statistics.Table
 
-	// availableIndices is used for storing result of avalableIndices function.
-	availableIndices *avalableIndices
+	// availableIndices is used for storing result of availableIndices function.
+	availableIndices *availableIndices
 }
 
-type avalableIndices struct {
+type availableIndices struct {
 	indices          []*model.IndexInfo
 	includeTableScan bool
 }
 
-func (p *DataSource) getPKIsHandleCol() *expression.Column {
-	if !p.tableInfo.PKIsHandle {
+func (ds *DataSource) getPKIsHandleCol() *expression.Column {
+	if !ds.tableInfo.PKIsHandle {
 		return nil
 	}
-	for i, col := range p.Columns {
+	for i, col := range ds.Columns {
 		if mysql.HasPriKeyFlag(col.Flag) {
-			return p.schema.Columns[i]
+			return ds.schema.Columns[i]
 		}
 	}
 	return nil
 }
 
 // TableInfo returns the *TableInfo of data source.
-func (p *DataSource) TableInfo() *model.TableInfo {
-	return p.tableInfo
+func (ds *DataSource) TableInfo() *model.TableInfo {
+	return ds.tableInfo
 }
 
 // LogicalUnionAll represents LogicalUnionAll plan.
@@ -316,9 +328,9 @@ type LogicalSort struct {
 	ByItems []*ByItems
 }
 
-func (p *LogicalSort) extractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := p.baseLogicalPlan.extractCorrelatedCols()
-	for _, item := range p.ByItems {
+func (ls *LogicalSort) extractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := ls.baseLogicalPlan.extractCorrelatedCols()
+	for _, item := range ls.ByItems {
 		corCols = append(corCols, extractCorColumns(item.Expr)...)
 	}
 	return corCols
@@ -337,8 +349,8 @@ type LogicalTopN struct {
 }
 
 // isLimit checks if TopN is a limit plan.
-func (t *LogicalTopN) isLimit() bool {
-	return len(t.ByItems) == 0
+func (lt *LogicalTopN) isLimit() bool {
+	return len(lt.ByItems) == 0
 }
 
 // LogicalLimit represents offset and limit plan.

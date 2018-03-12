@@ -18,11 +18,11 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
 )
 
@@ -34,6 +34,7 @@ const (
 	flagEliminateProjection
 	flagBuildKeyInfo
 	flagDecorrelate
+	flagMaxMinEliminate
 	flagPredicatePushDown
 	flagAggregationOptimize
 	flagPushDownTopN
@@ -44,6 +45,7 @@ var optRuleList = []logicalOptRule{
 	&projectionEliminater{},
 	&buildKeySolver{},
 	&decorrelateSolver{},
+	&maxMinEliminator{},
 	&ppdSolver{},
 	&aggregationOptimizer{},
 	&pushDownTopNOptimizer{},
@@ -51,12 +53,12 @@ var optRuleList = []logicalOptRule{
 
 // logicalOptRule means a logical optimizing rule, which contains decorrelate, ppd, column pruning, etc.
 type logicalOptRule interface {
-	optimize(LogicalPlan, context.Context) (LogicalPlan, error)
+	optimize(LogicalPlan) (LogicalPlan, error)
 }
 
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
-func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error) {
+func Optimize(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error) {
 	ctx.GetSessionVars().PlanID = 0
 	builder := &planBuilder{
 		ctx:       ctx,
@@ -77,9 +79,8 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 	}
 
 	if logic, ok := p.(LogicalPlan); ok {
-		return doOptimize(builder.optFlag, logic, ctx)
+		return doOptimize(builder.optFlag, logic)
 	}
-	p.ResolveIndices()
 	if execPlan, ok := p.(*Execute); ok {
 		err := execPlan.optimizePreparedPlan(ctx, is)
 		return p, errors.Trace(err)
@@ -88,7 +89,7 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 }
 
 // BuildLogicalPlan used to build logical plan from ast.Node.
-func BuildLogicalPlan(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error) {
+func BuildLogicalPlan(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error) {
 	ctx.GetSessionVars().PlanID = 0
 	builder := &planBuilder{
 		ctx:       ctx,
@@ -111,8 +112,8 @@ func checkPrivilege(pm privilege.Manager, vs []visitInfo) bool {
 	return true
 }
 
-func doOptimize(flag uint64, logic LogicalPlan, ctx context.Context) (PhysicalPlan, error) {
-	logic, err := logicalOptimize(flag, logic, ctx)
+func doOptimize(flag uint64, logic LogicalPlan) (PhysicalPlan, error) {
+	logic, err := logicalOptimize(flag, logic)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -127,7 +128,7 @@ func doOptimize(flag uint64, logic LogicalPlan, ctx context.Context) (PhysicalPl
 	return finalPlan, nil
 }
 
-func logicalOptimize(flag uint64, logic LogicalPlan, ctx context.Context) (LogicalPlan, error) {
+func logicalOptimize(flag uint64, logic LogicalPlan) (LogicalPlan, error) {
 	var err error
 	for i, rule := range optRuleList {
 		// The order of flags is same as the order of optRule in the list.
@@ -136,7 +137,7 @@ func logicalOptimize(flag uint64, logic LogicalPlan, ctx context.Context) (Logic
 		if flag&(1<<uint(i)) == 0 {
 			continue
 		}
-		logic, err = rule.optimize(logic, ctx)
+		logic, err = rule.optimize(logic)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -146,13 +147,12 @@ func logicalOptimize(flag uint64, logic LogicalPlan, ctx context.Context) (Logic
 
 func dagPhysicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
 	logic.preparePossibleProperties()
-	logic.prepareStatsProfile()
-	t, err := logic.convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType, expectedCnt: math.MaxFloat64})
+	logic.deriveStats()
+	t, err := logic.convert2PhysicalPlan(&requiredProp{taskTp: rootTaskType, expectedCnt: math.MaxFloat64})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	p := t.plan()
-	rebuildSchema(p)
 	p.ResolveIndices()
 	return p, nil
 }
@@ -162,7 +162,7 @@ func existsCartesianProduct(p LogicalPlan) bool {
 		return join.JoinType == InnerJoin || join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin
 	}
 	for _, child := range p.Children() {
-		if existsCartesianProduct(child.(LogicalPlan)) {
+		if existsCartesianProduct(child) {
 			return true
 		}
 	}
@@ -171,15 +171,15 @@ func existsCartesianProduct(p LogicalPlan) bool {
 
 // Optimizer error codes.
 const (
-	CodeOperandColumns      terror.ErrCode = 1
-	CodeInvalidWildCard                    = 3
-	CodeUnsupported                        = 4
-	CodeInvalidGroupFuncUse                = 5
-	CodeStmtNotFound                       = 7
-	CodeWrongParamCount                    = 8
-	CodeSchemaChanged                      = 9
+	CodeOperandColumns  terror.ErrCode = 1
+	CodeInvalidWildCard                = 3
+	CodeUnsupported                    = 4
+	CodeStmtNotFound                   = 7
+	CodeWrongParamCount                = 8
+	CodeSchemaChanged                  = 9
 
 	// MySQL error code.
+	CodeInvalidGroupFuncUse  = mysql.ErrInvalidGroupFuncUse
 	CodeIllegalReference     = mysql.ErrIllegalReference
 	CodeNoDB                 = mysql.ErrNoDB
 	CodeUnknownExplainFormat = mysql.ErrUnknownExplainFormat

@@ -14,6 +14,7 @@
 package config
 
 import (
+	"os"
 	"path"
 	"runtime"
 	"testing"
@@ -34,20 +35,35 @@ func (s *testConfigSuite) TestConfig(c *C) {
 	conf := new(Config)
 	conf.BinlogSocket = "/tmp/socket"
 	conf.Performance.RetryLimit = 20
+	conf.TiKVClient.CommitTimeout = "10s"
 
-	_, filename, _, _ := runtime.Caller(0)
-	configFile := path.Join(path.Dir(filename), "config.toml.example")
-	err := conf.Load(configFile)
+	configFile := "config.toml"
+	_, localFile, _, _ := runtime.Caller(0)
+	configFile = path.Join(path.Dir(localFile), configFile)
+
+	f, err := os.Create(configFile)
 	c.Assert(err, IsNil)
+	_, err = f.WriteString(`[performance]
+retry-limit=10
+[tikv-client]
+commit-timeout="41s"`)
+	c.Assert(err, IsNil)
+	c.Assert(f.Sync(), IsNil)
+
+	c.Assert(conf.Load(configFile), IsNil)
 
 	// Test that the original value will not be clear by load the config file that does not contain the option.
 	c.Assert(conf.BinlogSocket, Equals, "/tmp/socket")
 
 	// Test that the value will be overwritten by the config file.
-	c.Assert(conf.Performance.RetryLimit, Equals, 10)
+	c.Assert(conf.Performance.RetryLimit, Equals, uint(10))
 
-	// Reset
-	conf.BinlogSocket = ""
+	c.Assert(conf.TiKVClient.CommitTimeout, Equals, "41s")
+	c.Assert(f.Close(), IsNil)
+	c.Assert(os.Remove(configFile), IsNil)
+
+	configFile = path.Join(path.Dir(localFile), "config.toml.example")
+	c.Assert(conf.Load(configFile), IsNil)
 
 	// Make sure the example config is the same as default config.
 	c.Assert(conf, DeepEquals, GetGlobalConfig())

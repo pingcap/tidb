@@ -42,7 +42,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/hack"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 func (cc *clientConn) handleStmtPrepare(sql string) error {
@@ -102,7 +102,7 @@ func (cc *clientConn) handleStmtPrepare(sql string) error {
 	return errors.Trace(cc.flush())
 }
 
-func (cc *clientConn) handleStmtExecute(goCtx goctx.Context, data []byte) (err error) {
+func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err error) {
 	if len(data) < 9 {
 		return mysql.ErrMalformPacket
 	}
@@ -149,7 +149,7 @@ func (cc *clientConn) handleStmtExecute(goCtx goctx.Context, data []byte) (err e
 			}
 
 			paramTypes = data[pos : pos+(numParams<<1)]
-			pos += (numParams << 1)
+			pos += numParams << 1
 			paramValues = data[pos:]
 			// Just the first StmtExecute packet contain parameters type,
 			// we need save it for further use.
@@ -163,7 +163,7 @@ func (cc *clientConn) handleStmtExecute(goCtx goctx.Context, data []byte) (err e
 			return errors.Trace(err)
 		}
 	}
-	rs, err := stmt.Execute(goCtx, args...)
+	rs, err := stmt.Execute(ctx, args...)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -171,7 +171,7 @@ func (cc *clientConn) handleStmtExecute(goCtx goctx.Context, data []byte) (err e
 		return errors.Trace(cc.writeOK())
 	}
 
-	return errors.Trace(cc.writeResultset(goCtx, rs, true, false))
+	return errors.Trace(cc.writeResultset(ctx, rs, true, false))
 }
 
 func parseStmtArgs(args []interface{}, boundParams [][]byte, nullBitmap, paramTypes, paramValues []byte) (err error) {
@@ -283,7 +283,7 @@ func parseStmtArgs(args []interface{}, boundParams [][]byte, nullBitmap, paramTy
 			mysql.TypeBit, mysql.TypeEnum, mysql.TypeSet, mysql.TypeTinyBlob,
 			mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob,
 			mysql.TypeVarString, mysql.TypeString, mysql.TypeGeometry,
-			mysql.TypeDate, mysql.TypeNewDate,
+			mysql.TypeDate,
 			mysql.TypeTimestamp, mysql.TypeDatetime, mysql.TypeDuration:
 			if len(paramValues) < (pos + 1) {
 				err = mysql.ErrMalformPacket

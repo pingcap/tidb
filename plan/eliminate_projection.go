@@ -14,7 +14,6 @@
 package plan
 
 import (
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 )
 
@@ -39,7 +38,7 @@ func canProjectionBeEliminatedStrict(p *PhysicalProjection) bool {
 	}
 	for i, expr := range p.Exprs {
 		col, ok := expr.(*expression.Column)
-		if !ok || !col.Equal(child.Schema().Columns[i], nil) {
+		if !ok || !col.Equal(nil, child.Schema().Columns[i]) {
 			return false
 		}
 	}
@@ -47,7 +46,7 @@ func canProjectionBeEliminatedStrict(p *PhysicalProjection) bool {
 }
 
 func resolveColumnAndReplace(origin *expression.Column, replace map[string]*expression.Column) {
-	dst := replace[string(origin.HashCode())]
+	dst := replace[string(origin.HashCode(nil))]
 	if dst != nil {
 		colName := origin.ColName
 		*origin = *dst
@@ -69,35 +68,29 @@ func resolveExprAndReplace(origin expression.Expression, replace map[string]*exp
 }
 
 func doPhysicalProjectionElimination(p PhysicalPlan) PhysicalPlan {
-	children := make([]Plan, 0, len(p.Children()))
-	for _, child := range p.Children() {
-		newChild := doPhysicalProjectionElimination(child.(PhysicalPlan))
-		children = append(children, newChild)
+	for i, child := range p.Children() {
+		p.Children()[i] = doPhysicalProjectionElimination(child)
 	}
-	setParentAndChildren(p, children...)
 
 	proj, isProj := p.(*PhysicalProjection)
 	if !isProj || !canProjectionBeEliminatedStrict(proj) {
 		return p
 	}
 	child := p.Children()[0]
-	removePlan(p)
-	return child.(PhysicalPlan)
+	return child
 }
 
 // eliminatePhysicalProjection should be called after physical optimization to eliminate the redundant projection
 // left after logical projection elimination.
 func eliminatePhysicalProjection(p PhysicalPlan) PhysicalPlan {
-	oldRoot := p
+	oldSchema := p.Schema()
 	newRoot := doPhysicalProjectionElimination(p)
-	if oldRoot.ID() != newRoot.ID() {
-		newCols := newRoot.Schema().Columns
-		for i, oldCol := range oldRoot.Schema().Columns {
-			newCols[i].DBName = oldCol.DBName
-			newCols[i].TblName = oldCol.TblName
-			newCols[i].ColName = oldCol.ColName
-			newCols[i].OrigTblName = oldCol.OrigTblName
-		}
+	newCols := newRoot.Schema().Columns
+	for i, oldCol := range oldSchema.Columns {
+		newCols[i].DBName = oldCol.DBName
+		newCols[i].TblName = oldCol.TblName
+		newCols[i].ColName = oldCol.ColName
+		newCols[i].OrigTblName = oldCol.OrigTblName
 	}
 	return newRoot
 }
@@ -106,47 +99,29 @@ type projectionEliminater struct {
 }
 
 // optimize implements the logicalOptRule interface.
-func (pe *projectionEliminater) optimize(lp LogicalPlan, _ context.Context) (LogicalPlan, error) {
+func (pe *projectionEliminater) optimize(lp LogicalPlan) (LogicalPlan, error) {
 	root := pe.eliminate(lp, make(map[string]*expression.Column), false)
-	return root.(LogicalPlan), nil
+	return root, nil
 }
 
 // eliminate eliminates the redundant projection in a logical plan.
 func (pe *projectionEliminater) eliminate(p LogicalPlan, replace map[string]*expression.Column, canEliminate bool) LogicalPlan {
 	proj, isProj := p.(*LogicalProjection)
-	children := make([]Plan, 0, len(p.Children()))
-
 	childFlag := canEliminate
 	if _, isUnion := p.(*LogicalUnionAll); isUnion {
 		childFlag = false
 	} else if _, isAgg := p.(*LogicalAggregation); isAgg || isProj {
 		childFlag = true
 	}
-	for _, child := range p.Children() {
-		children = append(children, pe.eliminate(child.(LogicalPlan), replace, childFlag))
+	for i, child := range p.Children() {
+		p.Children()[i] = pe.eliminate(child, replace, childFlag)
 	}
-	setParentAndChildren(p, children...)
 
-	switch p.(type) {
-	case *LogicalSort, *LogicalTopN, *LogicalLimit, *LogicalSelection, *LogicalMaxOneRow, *LogicalLock:
-		p.SetSchema(p.Children()[0].Schema())
-	case *LogicalJoin, *LogicalApply:
-		var joinTp JoinType
-		if _, isApply := p.(*LogicalApply); isApply {
-			joinTp = p.(*LogicalApply).JoinType
-		} else {
-			joinTp = p.(*LogicalJoin).JoinType
-		}
-		switch joinTp {
-		case InnerJoin, LeftOuterJoin, RightOuterJoin:
-			p.SetSchema(expression.MergeSchema(p.Children()[0].Schema(), p.Children()[1].Schema()))
-		case SemiJoin, AntiSemiJoin:
-			p.SetSchema(p.Children()[0].Schema().Clone())
-		case LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
-			newSchema := p.Children()[0].Schema().Clone()
-			newSchema.Append(p.Schema().Columns[len(p.Schema().Columns)-1])
-			p.SetSchema(newSchema)
-		}
+	switch x := p.(type) {
+	case *LogicalJoin:
+		x.schema = buildLogicalJoinSchema(x.JoinType, x)
+	case *LogicalApply:
+		x.schema = buildLogicalJoinSchema(x.JoinType, x)
 	default:
 		for _, dst := range p.Schema().Columns {
 			resolveColumnAndReplace(dst, replace)
@@ -159,10 +134,9 @@ func (pe *projectionEliminater) eliminate(p LogicalPlan, replace map[string]*exp
 	}
 	exprs := proj.Exprs
 	for i, col := range proj.Schema().Columns {
-		replace[string(col.HashCode())] = exprs[i].(*expression.Column)
+		replace[string(col.HashCode(nil))] = exprs[i].(*expression.Column)
 	}
-	removePlan(p)
-	return p.Children()[0].(LogicalPlan)
+	return p.Children()[0]
 }
 
 func (p *LogicalJoin) replaceExprColumns(replace map[string]*expression.Column) {
@@ -186,16 +160,16 @@ func (p *LogicalProjection) replaceExprColumns(replace map[string]*expression.Co
 	}
 }
 
-func (p *LogicalAggregation) replaceExprColumns(replace map[string]*expression.Column) {
-	for _, agg := range p.AggFuncs {
-		for _, aggExpr := range agg.GetArgs() {
+func (la *LogicalAggregation) replaceExprColumns(replace map[string]*expression.Column) {
+	for _, agg := range la.AggFuncs {
+		for _, aggExpr := range agg.Args {
 			resolveExprAndReplace(aggExpr, replace)
 		}
 	}
-	for _, gbyItem := range p.GroupByItems {
+	for _, gbyItem := range la.GroupByItems {
 		resolveExprAndReplace(gbyItem, replace)
 	}
-	p.collectGroupByColumns()
+	la.collectGroupByColumns()
 }
 
 func (p *LogicalSelection) replaceExprColumns(replace map[string]*expression.Column) {
@@ -204,24 +178,24 @@ func (p *LogicalSelection) replaceExprColumns(replace map[string]*expression.Col
 	}
 }
 
-func (p *LogicalApply) replaceExprColumns(replace map[string]*expression.Column) {
-	p.LogicalJoin.replaceExprColumns(replace)
-	for _, coCol := range p.corCols {
-		dst := replace[string(coCol.Column.HashCode())]
+func (la *LogicalApply) replaceExprColumns(replace map[string]*expression.Column) {
+	la.LogicalJoin.replaceExprColumns(replace)
+	for _, coCol := range la.corCols {
+		dst := replace[string(coCol.Column.HashCode(nil))]
 		if dst != nil {
 			coCol.Column = *dst
 		}
 	}
 }
 
-func (p *LogicalSort) replaceExprColumns(replace map[string]*expression.Column) {
-	for _, byItem := range p.ByItems {
+func (ls *LogicalSort) replaceExprColumns(replace map[string]*expression.Column) {
+	for _, byItem := range ls.ByItems {
 		resolveExprAndReplace(byItem.Expr, replace)
 	}
 }
 
-func (p *LogicalTopN) replaceExprColumns(replace map[string]*expression.Column) {
-	for _, byItem := range p.ByItems {
+func (lt *LogicalTopN) replaceExprColumns(replace map[string]*expression.Column) {
+	for _, byItem := range lt.ByItems {
 		resolveExprAndReplace(byItem.Expr, replace)
 	}
 }

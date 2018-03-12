@@ -70,7 +70,12 @@ func IsTypeFractionable(tp byte) bool {
 // IsTypeTime returns a boolean indicating
 // whether the tp is time type like datetime, date or timestamp.
 func IsTypeTime(tp byte) bool {
-	return tp == mysql.TypeDatetime || tp == mysql.TypeDate || tp == mysql.TypeNewDate || tp == mysql.TypeTimestamp
+	return tp == mysql.TypeDatetime || tp == mysql.TypeDate || tp == mysql.TypeTimestamp
+}
+
+// IsTypeFloat returns a boolean indicating whether the tp is floating-point type.
+func IsTypeFloat(tp byte) bool {
+	return tp == mysql.TypeFloat || tp == mysql.TypeDouble
 }
 
 // IsTemporalWithDate returns a boolean indicating

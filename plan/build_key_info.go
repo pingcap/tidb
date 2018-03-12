@@ -15,43 +15,43 @@ package plan
 
 import (
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
 )
 
 type buildKeySolver struct{}
 
-func (s *buildKeySolver) optimize(lp LogicalPlan, _ context.Context) (LogicalPlan, error) {
+func (s *buildKeySolver) optimize(lp LogicalPlan) (LogicalPlan, error) {
 	lp.buildKeyInfo()
 	return lp, nil
 }
 
-func (p *LogicalAggregation) buildKeyInfo() {
-	p.baseLogicalPlan.buildKeyInfo()
-	for _, key := range p.Children()[0].Schema().Keys {
-		indices := p.schema.ColumnsIndices(key)
+func (la *LogicalAggregation) buildKeyInfo() {
+	la.schema.Keys = nil
+	la.baseLogicalPlan.buildKeyInfo()
+	for _, key := range la.Children()[0].Schema().Keys {
+		indices := la.schema.ColumnsIndices(key)
 		if indices == nil {
 			continue
 		}
 		newKey := make([]*expression.Column, 0, len(key))
 		for _, i := range indices {
-			newKey = append(newKey, p.schema.Columns[i])
+			newKey = append(newKey, la.schema.Columns[i])
 		}
-		p.schema.Keys = append(p.schema.Keys, newKey)
+		la.schema.Keys = append(la.schema.Keys, newKey)
 	}
-	if len(p.groupByCols) == len(p.GroupByItems) && len(p.GroupByItems) > 0 {
-		indices := p.schema.ColumnsIndices(p.groupByCols)
+	if len(la.groupByCols) == len(la.GroupByItems) && len(la.GroupByItems) > 0 {
+		indices := la.schema.ColumnsIndices(la.groupByCols)
 		if indices != nil {
 			newKey := make([]*expression.Column, 0, len(indices))
 			for _, i := range indices {
-				newKey = append(newKey, p.schema.Columns[i])
+				newKey = append(newKey, la.schema.Columns[i])
 			}
-			p.schema.Keys = append(p.schema.Keys, newKey)
+			la.schema.Keys = append(la.schema.Keys, newKey)
 		}
 	}
-	if len(p.GroupByItems) == 0 {
-		p.schema.MaxOneRow = true
+	if len(la.GroupByItems) == 0 {
+		la.maxOneRow = true
 	}
 }
 
@@ -75,14 +75,20 @@ func (p *LogicalSelection) checkMaxOneRowCond(unique expression.Expression, cons
 
 func (p *LogicalSelection) buildKeyInfo() {
 	p.baseLogicalPlan.buildKeyInfo()
-	p.schema.MaxOneRow = p.children[0].Schema().MaxOneRow
 	for _, cond := range p.Conditions {
 		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.EQ {
 			if p.checkMaxOneRowCond(sf.GetArgs()[0], sf.GetArgs()[1]) || p.checkMaxOneRowCond(sf.GetArgs()[1], sf.GetArgs()[0]) {
-				p.schema.MaxOneRow = true
+				p.maxOneRow = true
 				break
 			}
 		}
+	}
+}
+
+func (p *LogicalLimit) buildKeyInfo() {
+	p.baseLogicalPlan.buildKeyInfo()
+	if p.Count == 1 {
+		p.maxOneRow = true
 	}
 }
 
@@ -103,8 +109,8 @@ func (p *LogicalProjection) buildSchemaByExprs() *expression.Schema {
 }
 
 func (p *LogicalProjection) buildKeyInfo() {
+	p.schema.Keys = nil
 	p.baseLogicalPlan.buildKeyInfo()
-	p.schema.MaxOneRow = p.children[0].Schema().MaxOneRow
 	schema := p.buildSchemaByExprs()
 	for _, key := range p.Children()[0].Schema().Keys {
 		indices := schema.ColumnsIndices(key)
@@ -120,8 +126,9 @@ func (p *LogicalProjection) buildKeyInfo() {
 }
 
 func (p *LogicalJoin) buildKeyInfo() {
+	p.schema.Keys = nil
 	p.baseLogicalPlan.buildKeyInfo()
-	p.schema.MaxOneRow = p.children[0].Schema().MaxOneRow && p.children[1].Schema().MaxOneRow
+	p.maxOneRow = p.children[0].MaxOneRow() && p.children[1].MaxOneRow()
 	switch p.JoinType {
 	case SemiJoin, LeftOuterSemiJoin, AntiSemiJoin, AntiLeftOuterSemiJoin:
 		p.schema.Keys = p.children[0].Schema().Clone().Keys
@@ -140,13 +147,13 @@ func (p *LogicalJoin) buildKeyInfo() {
 			ln := expr.GetArgs()[0].(*expression.Column)
 			rn := expr.GetArgs()[1].(*expression.Column)
 			for _, key := range p.children[0].Schema().Keys {
-				if len(key) == 1 && key[0].Equal(ln, p.ctx) {
+				if len(key) == 1 && key[0].Equal(p.ctx, ln) {
 					lOk = true
 					break
 				}
 			}
 			for _, key := range p.children[1].Schema().Keys {
-				if len(key) == 1 && key[0].Equal(rn, p.ctx) {
+				if len(key) == 1 && key[0].Equal(p.ctx, rn) {
 					rOk = true
 					break
 				}
@@ -164,9 +171,10 @@ func (p *LogicalJoin) buildKeyInfo() {
 	}
 }
 
-func (p *DataSource) buildKeyInfo() {
-	p.baseLogicalPlan.buildKeyInfo()
-	indices := p.availableIndices.indices
+func (ds *DataSource) buildKeyInfo() {
+	ds.schema.Keys = nil
+	ds.baseLogicalPlan.buildKeyInfo()
+	indices := ds.availableIndices.indices
 	for _, idx := range indices {
 		if !idx.Unique {
 			continue
@@ -177,12 +185,12 @@ func (p *DataSource) buildKeyInfo() {
 			// The columns of this index should all occur in column schema.
 			// Since null value could be duplicate in unique key. So we check NotNull flag of every column.
 			find := false
-			for i, col := range p.schema.Columns {
+			for i, col := range ds.schema.Columns {
 				if idxCol.Name.L == col.ColName.L {
-					if !mysql.HasNotNullFlag(p.Columns[i].Flag) {
+					if !mysql.HasNotNullFlag(ds.Columns[i].Flag) {
 						break
 					}
-					newKey = append(newKey, p.schema.Columns[i])
+					newKey = append(newKey, ds.schema.Columns[i])
 					find = true
 					break
 				}
@@ -193,13 +201,13 @@ func (p *DataSource) buildKeyInfo() {
 			}
 		}
 		if ok {
-			p.schema.Keys = append(p.schema.Keys, newKey)
+			ds.schema.Keys = append(ds.schema.Keys, newKey)
 		}
 	}
-	if p.tableInfo.PKIsHandle {
-		for i, col := range p.Columns {
+	if ds.tableInfo.PKIsHandle {
+		for i, col := range ds.Columns {
 			if mysql.HasPriKeyFlag(col.Flag) {
-				p.schema.Keys = append(p.schema.Keys, []*expression.Column{p.schema.Columns[i]})
+				ds.schema.Keys = append(ds.schema.Keys, []*expression.Column{ds.schema.Columns[i]})
 				break
 			}
 		}

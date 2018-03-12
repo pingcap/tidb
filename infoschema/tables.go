@@ -18,14 +18,13 @@ import (
 	"sort"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/sessionctx/varsutil"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
@@ -542,11 +541,11 @@ func dataForColltions() (records [][]types.Datum) {
 	return records
 }
 
-func dataForSessionVar(ctx context.Context) (records [][]types.Datum, err error) {
+func dataForSessionVar(ctx sessionctx.Context) (records [][]types.Datum, err error) {
 	sessionVars := ctx.GetSessionVars()
 	for _, v := range variable.SysVars {
 		var value string
-		value, err = varsutil.GetSessionSystemVar(sessionVars, v.Name)
+		value, err = variable.GetSessionSystemVar(sessionVars, v.Name)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -556,7 +555,7 @@ func dataForSessionVar(ctx context.Context) (records [][]types.Datum, err error)
 	return
 }
 
-func dataForUserPrivileges(ctx context.Context) [][]types.Datum {
+func dataForUserPrivileges(ctx sessionctx.Context) [][]types.Datum {
 	pm := privilege.GetPrivilegeManager(ctx)
 	return pm.UserPrivilegesTable()
 }
@@ -615,7 +614,7 @@ var filesCols = []columnInfo{
 }
 
 func dataForSchemata(schemas []*model.DBInfo) [][]types.Datum {
-	rows := [][]types.Datum{}
+	var rows [][]types.Datum
 	for _, schema := range schemas {
 		record := types.MakeDatums(
 			catalogVal,                 // CATALOG_NAME
@@ -629,10 +628,15 @@ func dataForSchemata(schemas []*model.DBInfo) [][]types.Datum {
 	return rows
 }
 
-func dataForTables(schemas []*model.DBInfo) [][]types.Datum {
-	rows := [][]types.Datum{}
+func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Datum {
+	var rows [][]types.Datum
+	createTimeTp := tablesCols[15].tp
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
+			createTime := types.Time{
+				Time: types.FromGoTime(table.GetUpdateTime()),
+				Type: createTimeTp,
+			}
 			record := types.MakeDatums(
 				catalogVal,      // TABLE_CATALOG
 				schema.Name.O,   // TABLE_SCHEMA
@@ -648,7 +652,7 @@ func dataForTables(schemas []*model.DBInfo) [][]types.Datum {
 				uint64(0),       // INDEX_LENGTH
 				uint64(0),       // DATA_FREE
 				table.AutoIncID, // AUTO_INCREMENT
-				nil,             // CREATE_TIME
+				createTime,      // CREATE_TIME
 				nil,             // UPDATE_TIME
 				nil,             // CHECK_TIME
 				table.Collate,   // TABLE_COLLATION
@@ -663,7 +667,7 @@ func dataForTables(schemas []*model.DBInfo) [][]types.Datum {
 }
 
 func dataForColumns(schemas []*model.DBInfo) [][]types.Datum {
-	rows := [][]types.Datum{}
+	var rows [][]types.Datum
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
 			rs := dataForColumnsInTable(schema, table)
@@ -674,7 +678,7 @@ func dataForColumns(schemas []*model.DBInfo) [][]types.Datum {
 }
 
 func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types.Datum {
-	rows := [][]types.Datum{}
+	var rows [][]types.Datum
 	for i, col := range tbl.Columns {
 		colLen, decimal := col.Flen, col.Decimal
 		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(col.Tp)
@@ -718,7 +722,7 @@ func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types
 }
 
 func dataForStatistics(schemas []*model.DBInfo) [][]types.Datum {
-	rows := [][]types.Datum{}
+	var rows [][]types.Datum
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
 			rs := dataForStatisticsInTable(schema, table)
@@ -729,7 +733,7 @@ func dataForStatistics(schemas []*model.DBInfo) [][]types.Datum {
 }
 
 func dataForStatisticsInTable(schema *model.DBInfo, table *model.TableInfo) [][]types.Datum {
-	rows := [][]types.Datum{}
+	var rows [][]types.Datum
 	if table.PKIsHandle {
 		for _, col := range table.Columns {
 			if mysql.HasPriKeyFlag(col.Flag) {
@@ -802,7 +806,7 @@ const (
 
 // dataForTableConstraints constructs data for table information_schema.constraints.See https://dev.mysql.com/doc/refman/5.7/en/table-constraints-table.html
 func dataForTableConstraints(schemas []*model.DBInfo) [][]types.Datum {
-	rows := [][]types.Datum{}
+	var rows [][]types.Datum
 	for _, schema := range schemas {
 		for _, tbl := range schema.Tables {
 			if tbl.PKIsHandle {
@@ -844,6 +848,33 @@ func dataForTableConstraints(schemas []*model.DBInfo) [][]types.Datum {
 	return rows
 }
 
+// dataForPseudoProfiling returns pseudo data for table profiling when system variable `profiling` is set to `ON`.
+func dataForPseudoProfiling() [][]types.Datum {
+	var rows [][]types.Datum
+	row := types.MakeDatums(
+		0,  // QUERY_ID
+		0,  // SEQ
+		"", // STATE
+		types.NewDecFromInt(0), // DURATION
+		types.NewDecFromInt(0), // CPU_USER
+		types.NewDecFromInt(0), // CPU_SYSTEM
+		0, // CONTEXT_VOLUNTARY
+		0, // CONTEXT_INVOLUNTARY
+		0, // BLOCK_OPS_IN
+		0, // BLOCK_OPS_OUT
+		0, // MESSAGES_SENT
+		0, // MESSAGES_RECEIVED
+		0, // PAGE_FAULTS_MAJOR
+		0, // PAGE_FAULTS_MINOR
+		0, // SWAPS
+		0, // SOURCE_FUNCTION
+		0, // SOURCE_FILE
+		0, // SOURCE_LINE
+	)
+	rows = append(rows, row)
+	return rows
+}
+
 func dataForKeyColumnUsage(schemas []*model.DBInfo) [][]types.Datum {
 	rows := make([][]types.Datum, 0, len(schemas)) // The capacity is not accurate, but it is not a big problem.
 	for _, schema := range schemas {
@@ -856,7 +887,7 @@ func dataForKeyColumnUsage(schemas []*model.DBInfo) [][]types.Datum {
 }
 
 func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]types.Datum {
-	rows := [][]types.Datum{}
+	var rows [][]types.Datum
 	if table.PKIsHandle {
 		for _, col := range table.Columns {
 			if mysql.HasPriKeyFlag(col.Flag) {
@@ -939,7 +970,7 @@ func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]typ
 	return rows
 }
 
-var tableNameToColumns = map[string]([]columnInfo){
+var tableNameToColumns = map[string][]columnInfo{
 	tableSchemata:                           schemataCols,
 	tableTables:                             tablesCols,
 	tableColumns:                            columnsCols,
@@ -1006,7 +1037,7 @@ func (s schemasSorter) Less(i, j int) bool {
 	return s[i].Name.L < s[j].Name.L
 }
 
-func (it *infoschemaTable) getRows(ctx context.Context, cols []*table.Column) (fullRows [][]types.Datum, err error) {
+func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column) (fullRows [][]types.Datum, err error) {
 	is := it.handle.Get()
 	dbs := is.AllSchemas()
 	sort.Sort(schemasSorter(dbs))
@@ -1014,7 +1045,7 @@ func (it *infoschemaTable) getRows(ctx context.Context, cols []*table.Column) (f
 	case tableSchemata:
 		fullRows = dataForSchemata(dbs)
 	case tableTables:
-		fullRows = dataForTables(dbs)
+		fullRows = dataForTables(ctx, dbs)
 	case tableColumns:
 		fullRows = dataForColumns(dbs)
 	case tableStatistics:
@@ -1029,6 +1060,9 @@ func (it *infoschemaTable) getRows(ctx context.Context, cols []*table.Column) (f
 		fullRows = dataForTableConstraints(dbs)
 	case tableFiles:
 	case tableProfiling:
+		if v, ok := ctx.GetSessionVars().GetSystemVar("profiling"); ok && variable.TiDBOptOn(v) {
+			fullRows = dataForPseudoProfiling()
+		}
 	case tablePartitions:
 	case tableKeyColumm:
 		fullRows = dataForKeyColumnUsage(dbs)
@@ -1070,7 +1104,7 @@ func (it *infoschemaTable) getRows(ctx context.Context, cols []*table.Column) (f
 	return rows, nil
 }
 
-func (it *infoschemaTable) IterRecords(ctx context.Context, startKey kv.Key, cols []*table.Column,
+func (it *infoschemaTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols []*table.Column,
 	fn table.RecordIterFunc) error {
 	if len(startKey) != 0 {
 		return table.ErrUnsupportedOp
@@ -1091,12 +1125,12 @@ func (it *infoschemaTable) IterRecords(ctx context.Context, startKey kv.Key, col
 	return nil
 }
 
-func (it *infoschemaTable) RowWithCols(ctx context.Context, h int64, cols []*table.Column) ([]types.Datum, error) {
+func (it *infoschemaTable) RowWithCols(ctx sessionctx.Context, h int64, cols []*table.Column) ([]types.Datum, error) {
 	return nil, table.ErrUnsupportedOp
 }
 
 // Row implements table.Table Row interface.
-func (it *infoschemaTable) Row(ctx context.Context, h int64) ([]types.Datum, error) {
+func (it *infoschemaTable) Row(ctx sessionctx.Context, h int64) ([]types.Datum, error) {
 	return nil, table.ErrUnsupportedOp
 }
 
@@ -1136,27 +1170,27 @@ func (it *infoschemaTable) RecordKey(h int64) kv.Key {
 	return nil
 }
 
-func (it *infoschemaTable) AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
+func (it *infoschemaTable) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
 	return 0, table.ErrUnsupportedOp
 }
 
-func (it *infoschemaTable) RemoveRecord(ctx context.Context, h int64, r []types.Datum) error {
+func (it *infoschemaTable) RemoveRecord(ctx sessionctx.Context, h int64, r []types.Datum) error {
 	return table.ErrUnsupportedOp
 }
 
-func (it *infoschemaTable) UpdateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
+func (it *infoschemaTable) UpdateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
 	return table.ErrUnsupportedOp
 }
 
-func (it *infoschemaTable) AllocAutoID(ctx context.Context) (int64, error) {
+func (it *infoschemaTable) AllocAutoID(ctx sessionctx.Context) (int64, error) {
 	return 0, table.ErrUnsupportedOp
 }
 
-func (it *infoschemaTable) Allocator(ctx context.Context) autoid.Allocator {
+func (it *infoschemaTable) Allocator(ctx sessionctx.Context) autoid.Allocator {
 	return nil
 }
 
-func (it *infoschemaTable) RebaseAutoID(ctx context.Context, newBase int64, isSetStep bool) error {
+func (it *infoschemaTable) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool) error {
 	return table.ErrUnsupportedOp
 }
 
@@ -1165,7 +1199,7 @@ func (it *infoschemaTable) Meta() *model.TableInfo {
 }
 
 // Seek is the first method called for table scan, we lazy initialize it here.
-func (it *infoschemaTable) Seek(ctx context.Context, h int64) (int64, bool, error) {
+func (it *infoschemaTable) Seek(ctx sessionctx.Context, h int64) (int64, bool, error) {
 	return 0, false, table.ErrUnsupportedOp
 }
 
