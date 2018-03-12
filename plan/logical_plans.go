@@ -291,10 +291,10 @@ type DataSource struct {
 	statisticTable *statistics.Table
 
 	// availableIndices is used for storing result of availableIndices function.
-	availableIndices *avalableIndices
+	availableIndices *availableIndices
 }
 
-type avalableIndices struct {
+type availableIndices struct {
 	indices          []*model.IndexInfo
 	includeTableScan bool
 }
