@@ -84,10 +84,6 @@ type QueryCtx interface {
 	ShowProcess() util.ProcessInfo
 
 	SetSessionManager(util.SessionManager)
-
-	// EnableChunk indicates whether the chunk execution model is enabled.
-	// TODO: remove this after tidb-server configuration "enable-chunk' removed.
-	EnableChunk()
 }
 
 // PreparedStatement is the interface to use a prepared statement.

@@ -15,6 +15,7 @@ package executor
 
 import (
 	"fmt"
+	"runtime"
 	"sync"
 	"sync/atomic"
 
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
@@ -118,6 +120,12 @@ func (e *baseExecutor) Open(ctx context.Context) error {
 		e.childrenResults = append(e.childrenResults, child.newChunk())
 	}
 	return nil
+}
+
+// Next implements interface Executor.
+// To be removed in near future.
+func (e *baseExecutor) Next(context.Context) (Row, error) {
+	return nil, nil
 }
 
 // Close closes all executors and release all resources.
@@ -656,32 +664,20 @@ func init() {
 		if err != nil {
 			return rows, errors.Trace(err)
 		}
-		if sctx.GetSessionVars().EnableChunk {
-			for {
-				chk := exec.newChunk()
-				err = exec.NextChunk(ctx, chk)
-				if err != nil {
-					return rows, errors.Trace(err)
-				}
-				if chk.NumRows() == 0 {
-					return rows, nil
-				}
-				iter := chunk.NewIterator4Chunk(chk)
-				for r := iter.Begin(); r != iter.End(); r = iter.Next() {
-					row := r.GetDatumRow(exec.retTypes())
-					rows = append(rows, row)
-				}
-			}
-		}
 		for {
-			row, err := exec.Next(ctx)
+			chk := exec.newChunk()
+			err = exec.NextChunk(ctx, chk)
 			if err != nil {
 				return rows, errors.Trace(err)
 			}
-			if row == nil {
+			if chk.NumRows() == 0 {
 				return rows, nil
 			}
-			rows = append(rows, row)
+			iter := chunk.NewIterator4Chunk(chk)
+			for r := iter.Begin(); r != iter.End(); r = iter.Next() {
+				row := r.GetDatumRow(exec.retTypes())
+				rows = append(rows, row)
+			}
 		}
 	}
 	tableMySQLErrCodes := map[terror.ErrCode]uint16{
@@ -1325,6 +1321,10 @@ func (e *UnionExec) resultPuller(ctx context.Context, childID int) {
 	}
 	defer func() {
 		if r := recover(); r != nil {
+			buf := make([]byte, 4096)
+			stackSize := runtime.Stack(buf, false)
+			buf = buf[:stackSize]
+			log.Errorf("resultPuller panic stack is:\n%s", buf)
 			result.err = errors.Errorf("%v", r)
 			e.resultPool <- result
 			e.stopFetchData.Store(true)
