@@ -2483,6 +2483,9 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	idx := tb.Indices()[0]
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 
+	_, err = se.Execute(context.Background(), "admin check index t idx_inexistent")
+	c.Assert(strings.Contains(err.Error(), "not exist"), IsTrue)
+
 	// set data to:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30)
 	// table     data (handle, data): (1, 10), (2, 20), (4, 40)
