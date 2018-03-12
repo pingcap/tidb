@@ -282,50 +282,7 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 
 // Next implements the Executor Next interface.
 func (e *StreamAggExec) Next(ctx context.Context) (Row, error) {
-	if e.executed {
-		return nil, nil
-	}
-	retRow := make([]types.Datum, 0, len(e.AggFuncs))
-	for {
-		row, err := e.children[0].Next(ctx)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		var newGroup bool
-		if row == nil {
-			newGroup = true
-			e.executed = true
-		} else {
-			e.hasData = true
-			newGroup, err = e.meetNewGroup(row)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-		}
-		if newGroup {
-			for i, af := range e.AggFuncs {
-				retRow = append(retRow, af.GetResult(e.aggCtxs[i]))
-				// Clear stream results after grabbing them.
-				e.aggCtxs[i] = af.CreateContext(e.ctx.GetSessionVars().StmtCtx)
-			}
-		}
-		if e.executed {
-			break
-		}
-		for i, af := range e.AggFuncs {
-			err = af.Update(e.aggCtxs[i], e.StmtCtx, row)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-		}
-		if newGroup {
-			break
-		}
-	}
-	if !e.hasData && len(e.GroupByItems) > 0 {
-		return nil, nil
-	}
-	return retRow, nil
+	return nil, nil
 }
 
 // NextChunk implements the Executor NextChunk interface.
