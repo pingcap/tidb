@@ -137,7 +137,7 @@ func DecodeIndexKey(key kv.Key) (tableID int64, indexID int64, indexValues []str
 
 	for len(key) > 0 {
 		remain, d, e := codec.DecodeOne(key)
-		if err != nil {
+		if e != nil {
 			return 0, 0, nil, errInvalidIndexKey.Gen("invalid index key - %q %v", k, e)
 		}
 		indexValues = append(indexValues, fmt.Sprintf("%d-%v", d.Kind(), d.GetValue()))
