@@ -22,35 +22,36 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// getInnerJoinGroup collects all the inner join tables of a left deep join tree.
-// The traversal of join tree is stopped and returns a nil group if:
+// getCartesianJoinGroup collects all the inner join tables of a left deep join
+// tree. The traversal of join tree is stopped and returns a nil group if:
 // 1. reach a reordered join node, or:
-// 2. reach a non-InnerJoin node, or:
+// 2. reach a non-cartesian join node, or:
 // 3. reach a join node which has a preferred join algorithm.
+// 4. reach a straight join node.
 //
 // An example of left deep join tree is:
 //
-//    "InnerJoin 1"
+//    "cartesian join 1"
 //      	|	\
 //      	|	"right child 1"
 //      	|
-//    "InnerJoin 2"
+//    "cartesian join 2"
 //      	|	\
 //      	|	"right child 2"
 //      	|
-//    "InnerJoin ..."
+//    "cartesian join ..."
 //      	|	\
 //      	|	"right child ..."
 //      	|
-//    "InnerJoin n"
+//    "cartesian join n"
 //      	|	\
 //      	|	"right child n"
 //      	|
 //    "left deep child"
 //
-// The result of getInnerJoinGroup is:
+// The result of getCartesianJoinGroup is:
 // {"left deep child", "right child n", ..., "right child 2", "right child 1"}
-func getInnerJoinGroup(p *LogicalJoin) []LogicalPlan {
+func getCartesianJoinGroup(p *LogicalJoin) []LogicalPlan {
 	if p.reordered || !p.cartesianJoin || p.preferJoinType > uint(0) || p.StraightJoin {
 		return nil
 	}
@@ -63,7 +64,7 @@ func getInnerJoinGroup(p *LogicalJoin) []LogicalPlan {
 		return []LogicalPlan{lChild, rChild}
 	}
 
-	lhsJoinGroup := getInnerJoinGroup(lhsJoinTree)
+	lhsJoinGroup := getCartesianJoinGroup(lhsJoinTree)
 	if lhsJoinGroup == nil {
 		return nil
 	}

@@ -289,6 +289,16 @@ func (b *planBuilder) buildJoin(joinNode *ast.Join) LogicalPlan {
 	joinPlan.SetChildren(leftPlan, rightPlan)
 	joinPlan.SetSchema(expression.MergeSchema(leftPlan.Schema(), rightPlan.Schema()))
 
+	// Set join type.
+	switch joinNode.Tp {
+	case ast.LeftJoin:
+		joinPlan.JoinType = LeftOuterJoin
+	case ast.RightJoin:
+		joinPlan.JoinType = RightOuterJoin
+	default:
+		joinPlan.JoinType = InnerJoin
+	}
+
 	// Merge sub join's redundantSchema into this join plan. When handle query like
 	// select t2.a from (t1 join t2 using (a)) join t3 using (a);
 	// we can simply search in the top level join plan to find redundant column.
@@ -339,17 +349,9 @@ func (b *planBuilder) buildJoin(joinNode *ast.Join) LogicalPlan {
 		onCondition := expression.SplitCNFItems(onExpr)
 		joinPlan.attachOnConds(onCondition)
 	} else if joinPlan.JoinType == InnerJoin {
+		// If a inner join without "ON" or "USING" clause, it's a cartesian
+		// product over the join tables.
 		joinPlan.cartesianJoin = true
-	}
-
-	// Set join type.
-	switch joinNode.Tp {
-	case ast.LeftJoin:
-		joinPlan.JoinType = LeftOuterJoin
-	case ast.RightJoin:
-		joinPlan.JoinType = RightOuterJoin
-	default:
-		joinPlan.JoinType = InnerJoin
 	}
 
 	return joinPlan
