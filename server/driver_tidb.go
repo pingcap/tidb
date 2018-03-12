@@ -338,10 +338,10 @@ func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 			// Consider the decimal point.
 			ci.ColumnLength++
 		}
-	} else if fld.Column.Tp != mysql.TypeBit {
+	} else if fld.Column.Tp != mysql.TypeBit && fld.Column.Tp != mysql.TypeTiny {
 		// Fix issue #4540.
 		// The flen is a hint, not a precise value, so most client will not use the value.
-		// But we found in race MySQL client, like Navicat for MySQL(version before 12) will truncate
+		// But we found in rare MySQL client, like Navicat for MySQL(version before 12) will truncate
 		// the `show create table` result. To fix this case, we must use a large enough flen to prevent
 		// the truncation, in MySQL, it will multiply bytes length by a multiple based on character set.
 		// For examples:
