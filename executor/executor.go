@@ -693,6 +693,7 @@ func init() {
 type ProjectionExec struct {
 	baseExecutor
 
+	exprs            []expression.Expression
 	evaluatorSuit    *expression.EvaluatorSuit
 	calculateNoDelay bool
 }
