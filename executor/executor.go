@@ -339,6 +339,9 @@ func (e *ShowDDLJobQueriesExec) NextChunk(ctx context.Context, chk *chunk.Chunk)
 	if e.cursor >= len(e.jobs) {
 		return nil
 	}
+	if len(e.jobIDs) >= len(e.jobs) {
+		return nil
+	}
 	numCurBatch := mathutil.Min(e.maxChunkSize, len(e.jobs)-e.cursor)
 	for _, id := range e.jobIDs {
 		for i := e.cursor; i < e.cursor+numCurBatch; i++ {
