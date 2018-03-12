@@ -412,6 +412,9 @@ func validRange(ran *ranger.NewRange) bool {
 // as inf, so all the split ranges will totally fall in one of the (-inf, u(0)], (u(0), u(1)],...(u(n-3), u(n-2)],
 // (u(n-2), +inf), where n is the number of buckets, u(i) is the i-th bucket's upper bound.
 func (hg *Histogram) SplitRange(ranges []*ranger.NewRange) []*ranger.NewRange {
+	if len(ranges) == 0 {
+		return ranges
+	}
 	split := make([]*ranger.NewRange, 0, len(ranges))
 	for len(ranges) > 0 {
 		// Find the last bound that greater or equal to the LowVal.
