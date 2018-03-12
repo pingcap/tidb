@@ -75,38 +75,6 @@ func (s *testSuite) TestSelectNormal(c *C) {
 	c.Assert(numAllRows, Equals, 2)
 	err = response.Close()
 	c.Assert(err, IsNil)
-
-	// Test Next.
-	response, err = Select(context.TODO(), s.sctx, request, colTypes)
-	c.Assert(err, IsNil)
-	result, ok = response.(*selectResult)
-	c.Assert(ok, IsTrue)
-	c.Assert(result.label, Equals, "dag")
-	c.Assert(result.rowLen, Equals, len(colTypes))
-
-	response.Fetch(context.TODO())
-
-	numAllRows = 0
-	for {
-		partialResult, err1 := response.Next(context.TODO())
-		c.Assert(err1, IsNil)
-		if partialResult == nil {
-			break
-		}
-		for {
-			row, err2 := partialResult.Next(context.TODO())
-			c.Assert(err2, IsNil)
-			if row == nil {
-				break
-			}
-			numAllRows++
-		}
-		err = partialResult.Close()
-		c.Assert(err, IsNil)
-	}
-	c.Assert(numAllRows, Equals, 2)
-	err = response.Close()
-	c.Assert(err, IsNil)
 }
 
 func (s *testSuite) TestSelectStreaming(c *C) {
@@ -158,37 +126,6 @@ func (s *testSuite) TestSelectStreaming(c *C) {
 		}
 	}
 	c.Assert(numAllRows, Equals, 2)
-	err = response.Close()
-	c.Assert(err, IsNil)
-
-	// Test Next.
-	response, err = Select(context.TODO(), s.sctx, request, colTypes)
-	c.Assert(err, IsNil)
-	result, ok = response.(*streamResult)
-	c.Assert(ok, IsTrue)
-	c.Assert(result.rowLen, Equals, len(colTypes))
-
-	response.Fetch(context.TODO())
-
-	numAllRows = 0
-	for {
-		partialResult, err1 := response.Next(context.TODO())
-		c.Assert(err1, IsNil)
-		if partialResult == nil {
-			break
-		}
-		for {
-			row, err2 := partialResult.Next(context.TODO())
-			c.Assert(err2, IsNil)
-			if row == nil {
-				break
-			}
-			numAllRows++
-		}
-		err = partialResult.Close()
-		c.Assert(err, IsNil)
-	}
-	c.Assert(numAllRows, Equals, 0)
 	err = response.Close()
 	c.Assert(err, IsNil)
 }
