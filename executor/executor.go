@@ -1091,20 +1091,6 @@ func (e *ExistsExec) Open(ctx context.Context) error {
 	return nil
 }
 
-// Next implements the Executor Next interface.
-// We always return one row with one column which has true or false value.
-func (e *ExistsExec) Next(ctx context.Context) (Row, error) {
-	if !e.evaluated {
-		e.evaluated = true
-		srcRow, err := e.children[0].Next(ctx)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		return Row{types.NewDatum(srcRow != nil)}, nil
-	}
-	return nil, nil
-}
-
 // NextChunk implements the Executor NextChunk interface.
 func (e *ExistsExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
@@ -1138,29 +1124,6 @@ func (e *MaxOneRowExec) Open(ctx context.Context) error {
 	}
 	e.evaluated = false
 	return nil
-}
-
-// Next implements the Executor Next interface.
-func (e *MaxOneRowExec) Next(ctx context.Context) (Row, error) {
-	if !e.evaluated {
-		e.evaluated = true
-		srcRow, err := e.children[0].Next(ctx)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if srcRow == nil {
-			return make([]types.Datum, e.schema.Len()), nil
-		}
-		srcRow1, err := e.children[0].Next(ctx)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if srcRow1 != nil {
-			return nil, errors.New("subquery returns more than 1 row")
-		}
-		return srcRow, nil
-	}
-	return nil, nil
 }
 
 // NextChunk implements the Executor NextChunk interface.
