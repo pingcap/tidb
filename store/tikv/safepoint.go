@@ -30,7 +30,8 @@ const (
 	// This is almost the same as 'tikv_gc_safe_point' in the table 'mysql.tidb',
 	// save this to pd instead of tikv, because we can't use interface of table
 	// if the safepoint on tidb is expired.
-	GcSavedSafePoint = "/tidb/store/gcworker/saved_safe_point"
+	GcSafePointCheckVisibility = "/tidb/store/gcworker/saved_safe_point"
+	GcSafePointDoGc            = "/tidb/store/gcworker/gc_safe_point"
 
 	GcSafePointCacheInterval       = time.Second * 100
 	gcCPUTimeInaccuracyBound       = time.Second
@@ -112,9 +113,9 @@ func (w *EtcdSafePointKV) Get(k string) (string, error) {
 	return "", nil
 }
 
-func saveSafePoint(kv SafePointKV, key string, t uint64) error {
+func SaveSafePoint(kv SafePointKV, key string, t uint64) error {
 	s := strconv.FormatUint(t, 10)
-	err := kv.Put(GcSavedSafePoint, s)
+	err := kv.Put(key, s)
 	if err != nil {
 		log.Error("save safepoint failed:", err)
 		return errors.Trace(err)
@@ -123,7 +124,7 @@ func saveSafePoint(kv SafePointKV, key string, t uint64) error {
 }
 
 func loadSafePoint(kv SafePointKV, key string) (uint64, error) {
-	str, err := kv.Get(GcSavedSafePoint)
+	str, err := kv.Get(key)
 
 	if err != nil {
 		return 0, errors.Trace(err)
