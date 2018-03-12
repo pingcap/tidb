@@ -117,44 +117,6 @@ func (e *SortExec) Less(i, j int) bool {
 	return false
 }
 
-// Next implements the Executor Next interface.
-func (e *SortExec) Next(ctx context.Context) (Row, error) {
-	if !e.fetched {
-		for {
-			srcRow, err := e.children[0].Next(ctx)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if srcRow == nil {
-				break
-			}
-			orderRow := &orderByRow{
-				row: srcRow,
-				key: make([]*types.Datum, len(e.ByItems)),
-			}
-			for i, byItem := range e.ByItems {
-				key, err := byItem.Expr.Eval(srcRow)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				orderRow.key[i] = &key
-			}
-			e.Rows = append(e.Rows, orderRow)
-		}
-		sort.Sort(e)
-		e.fetched = true
-	}
-	if e.err != nil {
-		return nil, errors.Trace(e.err)
-	}
-	if e.Idx >= len(e.Rows) {
-		return nil, nil
-	}
-	row := e.Rows[e.Idx].row
-	e.Idx++
-	return row, nil
-}
-
 // NextChunk implements the Executor NextChunk interface.
 func (e *SortExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
