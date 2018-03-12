@@ -280,11 +280,6 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 	return nil
 }
 
-// Next implements the Executor Next interface.
-func (e *StreamAggExec) Next(ctx context.Context) (Row, error) {
-	return nil, nil
-}
-
 // NextChunk implements the Executor NextChunk interface.
 func (e *StreamAggExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
