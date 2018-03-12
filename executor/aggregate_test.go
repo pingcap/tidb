@@ -242,7 +242,7 @@ func (s *testSuite) TestAggregation(c *C) {
 	result.Check(testkit.Rows("<nil>", "<nil>"))
 
 	result = tk.MustQuery("select count(*) from information_schema.columns")
-	// When adding new memory table in information_schema, please update this variable.
+	// When adding new memory columns in information_schema, please update this variable.
 	columnCountOfAllInformationSchemaTables := "745"
 	result.Check(testkit.Rows(columnCountOfAllInformationSchemaTables))
 
