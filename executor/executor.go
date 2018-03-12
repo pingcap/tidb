@@ -170,32 +170,7 @@ type ShowDDLExec struct {
 
 // Next implements the Executor Next interface.
 func (e *ShowDDLExec) Next() (*Row, error) {
-	if e.done {
-		return nil, nil
-	}
-
-	var ddlJob string
-	if e.ddlInfo.Job != nil {
-		ddlJob = e.ddlInfo.Job.String()
-	}
-	var bgJob string
-	if e.bgInfo.Job != nil {
-		bgJob = e.bgInfo.Job.String()
-	}
-
-	row := &Row{}
-	row.Data = types.MakeDatums(
-		e.ddlInfo.SchemaVer,
-		e.ddlOwnerID,
-		ddlJob,
-		e.bgInfo.SchemaVer,
-		e.bgOwnerID,
-		bgJob,
-		e.selfID,
-	)
-	e.done = true
-
-	return row, nil
+	return nil, nil
 }
 
 // CheckTableExec represents a check table executor.
