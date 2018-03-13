@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
@@ -361,11 +360,8 @@ type RecoverIndexExec struct {
 
 	done bool
 
-	tableInfo *model.TableInfo
-	indexInfo *model.IndexInfo
-	index     table.Index
-	table     table.Table
-	is        infoschema.InfoSchema
+	index table.Index
+	table table.Table
 
 	columns       []*model.ColumnInfo
 	colFieldTypes []*types.FieldType
@@ -391,16 +387,7 @@ func (e *RecoverIndexExec) Open(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	e.initCols()
 	e.srcChunk = chunk.NewChunk(e.columnsTypes())
-	e.index = tables.NewIndexWithBuffer(e.tableInfo, e.indexInfo)
-
-	dbName := model.NewCIStr(e.ctx.GetSessionVars().CurrentDB)
-	t, err := e.is.TableByName(dbName, e.tableInfo.Name)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	e.table = t
 	return nil
 }
 
@@ -409,30 +396,9 @@ func (e *RecoverIndexExec) Next(ctx context.Context) (Row, error) {
 	return nil, nil
 }
 
-func (e *RecoverIndexExec) initCols() {
-	if e.columns != nil {
-		return
-	}
-	tblInfo := e.tableInfo
-	e.columns = make([]*model.ColumnInfo, 0, len(e.indexInfo.Columns))
-	for _, idxCol := range e.indexInfo.Columns {
-		e.columns = append(e.columns, tblInfo.Columns[idxCol.Offset])
-	}
-
-	handleOffset := len(e.columns)
-	handleColsInfo := &model.ColumnInfo{
-		ID:     model.ExtraHandleID,
-		Name:   model.ExtraHandleName,
-		Offset: handleOffset,
-	}
-	handleColsInfo.FieldType = *types.NewFieldType(mysql.TypeLonglong)
-	e.columns = append(e.columns, handleColsInfo)
-	return
-}
-
 func (e *RecoverIndexExec) constructTableScanPB(pbColumnInfos []*tipb.ColumnInfo) *tipb.Executor {
 	tblScan := &tipb.TableScan{
-		TableId: e.tableInfo.ID,
+		TableId: e.table.Meta().ID,
 		Columns: pbColumnInfos,
 	}
 
@@ -456,7 +422,8 @@ func (e *RecoverIndexExec) buildDAGPB(txn kv.Transaction, limitCnt uint64) (*tip
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
 
-	pbColumnInfos := plan.ColumnsToProto(e.columns, e.tableInfo.PKIsHandle)
+	tblInfo := e.table.Meta()
+	pbColumnInfos := plan.ColumnsToProto(e.columns, tblInfo.PKIsHandle)
 	err := plan.SetPBColumnsDefaultValue(e.ctx, pbColumnInfos, e.columns)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -475,9 +442,10 @@ func (e *RecoverIndexExec) buildTableScan(ctx context.Context, txn kv.Transactio
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	tblInfo := e.table.Meta()
 	ranges := []*ranger.NewRange{{LowVal: []types.Datum{types.NewIntDatum(startHandle)}, HighVal: []types.Datum{types.NewIntDatum(math.MaxInt64)}}}
 	var builder distsql.RequestBuilder
-	kvReq, err := builder.SetTableRanges(e.tableInfo.ID, ranges, nil).
+	kvReq, err := builder.SetTableRanges(tblInfo.ID, ranges, nil).
 		SetDAGRequest(dagPB).
 		SetKeepOrder(true).
 		SetFromSessionVars(e.ctx.GetSessionVars()).

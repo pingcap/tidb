@@ -32,11 +32,13 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
@@ -235,6 +237,23 @@ func (b *executorBuilder) buildCheckTable(v *plan.CheckTable) Executor {
 	return e
 }
 
+func buildRecoverIndexCols(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) []*model.ColumnInfo {
+	columns := make([]*model.ColumnInfo, 0, len(indexInfo.Columns))
+	for _, idxCol := range indexInfo.Columns {
+		columns = append(columns, tblInfo.Columns[idxCol.Offset])
+	}
+
+	handleOffset := len(columns)
+	handleColsInfo := &model.ColumnInfo{
+		ID:     model.ExtraHandleID,
+		Name:   model.ExtraHandleName,
+		Offset: handleOffset,
+	}
+	handleColsInfo.FieldType = *types.NewFieldType(mysql.TypeLonglong)
+	columns = append(columns, handleColsInfo)
+	return columns
+}
+
 func (b *executorBuilder) buildRecoverIndex(v *plan.RecoverIndex) Executor {
 	tblInfo := v.Table.TableInfo
 	idxName := strings.ToLower(v.IndexName)
@@ -246,15 +265,23 @@ func (b *executorBuilder) buildRecoverIndex(v *plan.RecoverIndex) Executor {
 		}
 	}
 	if indexInfo == nil {
-		b.err = errors.Errorf("index is not found.")
+		b.err = errors.Errorf("index `%v` is not found in table `%v`.", v.IndexName, v.Table.Name.O)
+		return nil
+	}
+
+	index := tables.NewIndexWithBuffer(tblInfo, indexInfo)
+	t, err := b.is.TableByName(v.Table.Schema, tblInfo.Name)
+	if err != nil {
+		b.err = errors.Trace(err)
 		return nil
 	}
 	e := &RecoverIndexExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
-		tableInfo:    tblInfo,
-		indexInfo:    indexInfo,
-		is:           b.is,
+		columns:      buildRecoverIndexCols(tblInfo, indexInfo),
+		index:        index,
+		table:        t,
 	}
+
 	return e
 }
 
