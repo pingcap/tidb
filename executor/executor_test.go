@@ -2543,6 +2543,17 @@ func setColValue(c *C, txn kv.Transaction, key kv.Key, v types.Datum) {
 	c.Assert(err, IsNil)
 }
 
+func (s *testSuite) TestCheckTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	// Test 'admin check table' when the table has a unique index with null values.
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists admin_test;")
+	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, index (c1), unique key(c2));")
+	tk.MustExec("insert admin_test (c1, c2) values (1, 1), (2, 2), (NULL, NULL);")
+	tk.MustExec("admin check table admin_test;")
+}
+
 func (s *testSuite) TestCoprocessorStreamingFlag(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
