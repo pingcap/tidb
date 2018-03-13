@@ -181,10 +181,13 @@ func buildPK(sctx sessionctx.Context, numBuckets, id int64, records ast.RecordSe
 		if chk.NumRows() == 0 {
 			break
 		}
-		datums := ast.RowToDatums(chk.GetRow(0), records.Fields())
-		err = b.Iterate(datums[0])
-		if err != nil {
-			return 0, nil, errors.Trace(err)
+		it := chunk.NewIterator4Chunk(chk)
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			datums := ast.RowToDatums(row, records.Fields())
+			err = b.Iterate(datums[0])
+			if err != nil {
+				return 0, nil, errors.Trace(err)
+			}
 		}
 	}
 	return b.Count, b.hist, nil

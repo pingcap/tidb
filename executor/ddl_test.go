@@ -80,6 +80,7 @@ func (s *testSuite) TestCreateTable(c *C) {
 	rs, err = tk.Exec(`desc issue312_2`)
 	c.Assert(err, IsNil)
 	chk = rs.NewChunk()
+	it = chunk.NewIterator4Chunk(chk)
 	for {
 		err1 := rs.NextChunk(ctx, chk)
 		c.Assert(err1, IsNil)
