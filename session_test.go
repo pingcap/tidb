@@ -1931,34 +1931,15 @@ func (s *testSessionSuite) TestCastTimeToDate(c *C) {
 }
 
 func (s *testSessionSuite) TestSetGlobalTZ(c *C) {
-	ctx := context.Background()
 
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("set time_zone = '+08:00'")
-	rs, err := tk.Exec("show variables like 'time_zone'")
-	c.Assert(err, IsNil)
-	row0, err := rs.Next(ctx)
-	c.Assert(err, IsNil)
-	c.Assert(row0, NotNil)
-	c.Assert(row0.Len(), Equals, 2)
-	c.Assert(row0.GetBytes(1), BytesEquals, []byte("+08:00"))
+	tk.MustQuery("show variables like 'time_zone'").Check(testkit.Rows("time_zone +08:00"))
 
 	tk.MustExec("set global time_zone = '+00:00'")
 
-	rs, err = tk.Exec("show variables like 'time_zone'")
-	c.Assert(err, IsNil)
-	row0, err = rs.Next(ctx)
-	c.Assert(err, IsNil)
-	c.Assert(row0, NotNil)
-	c.Assert(row0.Len(), Equals, 2)
-	c.Assert(row0.GetBytes(1), BytesEquals, []byte("+08:00"))
+	tk.MustQuery("show variables like 'time_zone'").Check(testkit.Rows("time_zone +08:00"))
 
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
-	rs1, err := tk1.Exec("show variables like 'time_zone'")
-	c.Assert(err, IsNil)
-	row1, err := rs1.Next(ctx)
-	c.Assert(err, IsNil)
-	c.Assert(row1, NotNil)
-	c.Assert(row1.Len(), Equals, 2)
-	c.Assert(row1.GetBytes(1), BytesEquals, []byte("+00:00"))
+	tk1.MustQuery("show variables like 'time_zone'").Check(testkit.Rows("time_zone +00:00"))
 }
