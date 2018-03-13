@@ -82,14 +82,6 @@ func (r *recordSet) getNext() []types.Datum {
 	return row
 }
 
-func (r *recordSet) Next(context.Context) (types.Row, error) {
-	row := r.getNext()
-	if row == nil {
-		return nil, nil
-	}
-	return types.DatumRow(row), nil
-}
-
 func (r *recordSet) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	row := r.getNext()
@@ -181,14 +173,15 @@ func buildPK(sctx sessionctx.Context, numBuckets, id int64, records ast.RecordSe
 	b := NewSortedBuilder(sctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeLonglong))
 	ctx := context.Background()
 	for {
-		row, err := records.Next(ctx)
+		chk := records.NewChunk()
+		err := records.NextChunk(ctx, chk)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
-		if row == nil {
+		if chk.NumRows() == 0 {
 			break
 		}
-		datums := ast.RowToDatums(row, records.Fields())
+		datums := ast.RowToDatums(chk.GetRow(0), records.Fields())
 		err = b.Iterate(datums[0])
 		if err != nil {
 			return 0, nil, errors.Trace(err)
@@ -202,14 +195,15 @@ func buildIndex(sctx sessionctx.Context, numBuckets, id int64, records ast.Recor
 	cms := NewCMSketch(8, 2048)
 	ctx := context.Background()
 	for {
-		row, err := records.Next(ctx)
+		chk := records.NewChunk()
+		err := records.NextChunk(ctx, chk)
 		if err != nil {
 			return 0, nil, nil, errors.Trace(err)
 		}
-		if row == nil {
+		if chk.NumRows() == 0 {
 			break
 		}
-		datums := ast.RowToDatums(row, records.Fields())
+		datums := ast.RowToDatums(chk.GetRow(0), records.Fields())
 		buf, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx, nil, datums...)
 		if err != nil {
 			return 0, nil, nil, errors.Trace(err)

@@ -83,11 +83,12 @@ func prepareJoinBenchData(se Session, colType string, valueFormat string, valueC
 
 func readResult(ctx context.Context, rs ast.RecordSet, count int) {
 	for count > 0 {
-		x, err := rs.Next(ctx)
+		chk := rs.NewChunk()
+		err := rs.NextChunk(ctx, chk)
 		if err != nil {
 			log.Fatal(err)
 		}
-		if x == nil {
+		if chk.NumRows() == 0 {
 			log.Fatal(count)
 		}
 		count--

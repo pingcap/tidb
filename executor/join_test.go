@@ -715,7 +715,9 @@ func (s *testSuite) TestJoinLeak(c *C) {
 	tk.MustExec("commit")
 	result, err := tk.Exec("select * from t t1 left join (select 1) t2 on 1")
 	c.Assert(err, IsNil)
-	result.Next(context.Background())
+	chk := result.NewChunk()
+	err = result.NextChunk(context.Background(), chk)
+	c.Assert(err, IsNil)
 	time.Sleep(100 * time.Millisecond)
 	result.Close()
 }

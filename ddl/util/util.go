@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"golang.org/x/net/context"
 )
@@ -54,28 +55,35 @@ func LoadDeleteRanges(ctx sessionctx.Context, safePoint uint64) (ranges []DelRan
 	}
 
 	rs := rss[0]
+	chk := rs.NewChunk()
+	it := chunk.NewIterator4Chunk(chk)
 	for {
-		row, err := rs.Next(context.TODO())
+		chk.Reset()
+		err = rs.NextChunk(context.TODO(), chk)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if row == nil {
+		if chk.NumRows() == 0 {
 			break
 		}
-		startKey, err := hex.DecodeString(row.GetString(2))
-		if err != nil {
-			return nil, errors.Trace(err)
+
+		for it.Begin(); it.Current() != it.End(); it.Next() {
+			row := it.Current()
+			startKey, err := hex.DecodeString(row.GetString(2))
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			endKey, err := hex.DecodeString(row.GetString(3))
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			ranges = append(ranges, DelRangeTask{
+				JobID:     row.GetInt64(0),
+				ElementID: row.GetInt64(1),
+				StartKey:  startKey,
+				EndKey:    endKey,
+			})
 		}
-		endKey, err := hex.DecodeString(row.GetString(3))
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		ranges = append(ranges, DelRangeTask{
-			JobID:     row.GetInt64(0),
-			ElementID: row.GetInt64(1),
-			StartKey:  startKey,
-			EndKey:    endKey,
-		})
 	}
 	return ranges, nil
 }
