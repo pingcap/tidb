@@ -480,8 +480,7 @@ func upgradeToVer12(s Session) {
 	it := chunk.NewIterator4Chunk(chk)
 	err = r.NextChunk(ctx, chk)
 	for err == nil && chk.NumRows() != 0 {
-		for it.Begin(); it.Current() != it.End(); it.Next() {
-			row := it.Current()
+		for row := it.Begin(); row != it.End(); row = it.Next() {
 			user := row.GetString(0)
 			host := row.GetString(1)
 			pass := row.GetString(2)
