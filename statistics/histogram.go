@@ -392,6 +392,86 @@ func (hg *Histogram) getIncreaseFactor(totalCount int64) float64 {
 	return float64(totalCount) / float64(columnCount)
 }
 
+// validRange checks if the range is valid, it is used by `SplitRange` to remove the invalid range,
+// the possible types of range are index key range and handle key range.
+func validRange(ran *ranger.NewRange) bool {
+	var low, high []byte
+	if ran.LowVal[0].Kind() == types.KindBytes {
+		low, high = ran.LowVal[0].GetBytes(), ran.HighVal[0].GetBytes()
+	} else {
+		low, high = codec.EncodeInt(nil, ran.LowVal[0].GetInt64()), codec.EncodeInt(nil, ran.HighVal[0].GetInt64())
+	}
+	if ran.LowExclude {
+		low = kv.Key(low).PrefixNext()
+	}
+	if !ran.HighExclude {
+		high = kv.Key(high).PrefixNext()
+	}
+	return bytes.Compare(low, high) < 0
+}
+
+// SplitRange splits the range according to the histogram upper bound. Note that we treat last bucket's upper bound
+// as inf, so all the split ranges will totally fall in one of the (-inf, u(0)], (u(0), u(1)],...(u(n-3), u(n-2)],
+// (u(n-2), +inf), where n is the number of buckets, u(i) is the i-th bucket's upper bound.
+func (hg *Histogram) SplitRange(ranges []*ranger.NewRange) []*ranger.NewRange {
+	split := make([]*ranger.NewRange, 0, len(ranges))
+	for len(ranges) > 0 {
+		// Find the last bound that greater or equal to the LowVal.
+		idx := hg.Bounds.UpperBound(0, &ranges[0].LowVal[0])
+		if !ranges[0].LowExclude && idx > 0 {
+			cmp := chunk.Compare(hg.Bounds.GetRow(idx-1), 0, &ranges[0].LowVal[0])
+			if cmp == 0 {
+				idx--
+			}
+		}
+		// Treat last bucket's upper bound as inf, so we do not need split any more.
+		if idx >= hg.Bounds.NumRows()-2 {
+			split = append(split, ranges...)
+			break
+		}
+		// Get the corresponding upper bound.
+		if idx%2 == 0 {
+			idx++
+		}
+		upperBound := hg.Bounds.GetRow(idx)
+		var i int
+		// Find the first range that need to be split by the upper bound.
+		for ; i < len(ranges); i++ {
+			if chunk.Compare(upperBound, 0, &ranges[i].HighVal[0]) < 0 {
+				break
+			}
+		}
+		split = append(split, ranges[:i]...)
+		ranges = ranges[i:]
+		if len(ranges) == 0 {
+			break
+		}
+		// Split according to the upper bound.
+		cmp := chunk.Compare(upperBound, 0, &ranges[0].LowVal[0])
+		if cmp > 0 || (cmp == 0 && !ranges[0].LowExclude) {
+			upper := upperBound.GetDatum(0, hg.tp)
+			split = append(split, &ranger.NewRange{
+				LowExclude:  ranges[0].LowExclude,
+				LowVal:      []types.Datum{ranges[0].LowVal[0]},
+				HighVal:     []types.Datum{upper},
+				HighExclude: false})
+			ranges[0].LowVal[0] = upper
+			ranges[0].LowExclude = true
+			if !validRange(ranges[0]) {
+				ranges = ranges[1:]
+			}
+		}
+	}
+	return split
+}
+
+func (hg *Histogram) bucketCount(idx int) int64 {
+	if idx == 0 {
+		return hg.Buckets[0].Count
+	}
+	return hg.Buckets[idx].Count - hg.Buckets[idx-1].Count
+}
+
 // HistogramToProto converts Histogram to its protobuf representation.
 // Note that when this is used, the lower/upper bound in the bucket must be BytesDatum.
 func HistogramToProto(hg *Histogram) *tipb.Histogram {
