@@ -131,10 +131,6 @@ func (a *recordSet) NewChunk() *chunk.Chunk {
 	return chunk.NewChunk(a.executor.retTypes())
 }
 
-func (a *recordSet) SupportChunk() bool {
-	return true
-}
-
 func (a *recordSet) Close() error {
 	err := a.executor.Close()
 	a.stmt.logSlowQuery(a.txnStartTS, a.lastErr == nil)
@@ -289,26 +285,9 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 		a.logSlowQuery(txnTS, err == nil)
 	}()
 
-	if sctx.GetSessionVars().EnableChunk {
-		err = e.NextChunk(ctx, e.newChunk())
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	} else {
-		for {
-			var row Row
-			row, err = e.Next(ctx)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			// Even though there isn't any result set, the row is still used to indicate if there is
-			// more work to do.
-			// For example, the UPDATE statement updates a single row on a Next call, we keep calling Next until
-			// There is no more rows to update.
-			if row == nil {
-				return nil, nil
-			}
-		}
+	err = e.NextChunk(ctx, e.newChunk())
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	return nil, nil

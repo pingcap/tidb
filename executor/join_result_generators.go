@@ -645,3 +645,11 @@ func (outputer *innerJoinResultGenerator) emitToChunk(outer chunk.Row, inners ch
 
 	return nil
 }
+
+// makeJoinRow simply creates a new row that appends row b to row a.
+func makeJoinRow(a Row, b Row) Row {
+	ret := make([]types.Datum, 0, len(a)+len(b))
+	ret = append(ret, a...)
+	ret = append(ret, b...)
+	return ret
+}
