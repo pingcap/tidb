@@ -242,8 +242,8 @@ func (s *testSuite) TestAggregation(c *C) {
 	result.Check(testkit.Rows("<nil>", "<nil>"))
 
 	result = tk.MustQuery("select count(*) from information_schema.columns")
-	// When adding new memory table in information_schema, please update this variable.
-	columnCountOfAllInformationSchemaTables := "743"
+	// When adding new memory columns in information_schema, please update this variable.
+	columnCountOfAllInformationSchemaTables := "736"
 	result.Check(testkit.Rows(columnCountOfAllInformationSchemaTables))
 
 	tk.MustExec("drop table if exists t1")
