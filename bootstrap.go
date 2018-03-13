@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/auth"
+	"github.com/pingcap/tidb/util/chunk"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -476,18 +477,20 @@ func upgradeToVer12(s Session) {
 	sqls := make([]string, 0, 1)
 	defer terror.Call(r.Close)
 	chk := r.NewChunk()
+	it := chunk.NewIterator4Chunk(chk)
 	err = r.NextChunk(ctx, chk)
 	for err == nil && chk.NumRows() != 0 {
-		row := chk.GetRow(0)
-		user := row.GetString(0)
-		host := row.GetString(1)
-		pass := row.GetString(2)
-		var newPass string
-		newPass, err = oldPasswordUpgrade(pass)
-		terror.MustNil(err)
-		updateSQL := fmt.Sprintf(`UPDATE mysql.user set password = "%s" where user="%s" and host="%s"`, newPass, user, host)
-		sqls = append(sqls, updateSQL)
-		chk.Reset()
+		for it.Begin(); it.Current() != it.End(); it.Next() {
+			row := it.Current()
+			user := row.GetString(0)
+			host := row.GetString(1)
+			pass := row.GetString(2)
+			var newPass string
+			newPass, err = oldPasswordUpgrade(pass)
+			terror.MustNil(err)
+			updateSQL := fmt.Sprintf(`UPDATE mysql.user set password = "%s" where user="%s" and host="%s"`, newPass, user, host)
+			sqls = append(sqls, updateSQL)
+		}
 		err = r.NextChunk(ctx, chk)
 	}
 	terror.MustNil(err)
