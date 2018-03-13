@@ -384,7 +384,8 @@ type copIterator struct {
 
 type copResponse struct {
 	*coprocessor.Response
-	err error
+	startKey kv.Key
+	err      error
 }
 
 const minLogCopTaskTime = 300 * time.Millisecond
@@ -405,14 +406,7 @@ func (it *copIterator) work(ctx context.Context, taskCh <-chan *copTask) {
 		}
 
 		bo := NewBackoffer(ctx1, copNextMaxBackoff)
-		startTime := time.Now()
 		it.handleTask(bo, task, ch)
-		costTime := time.Since(startTime)
-		if costTime > minLogCopTaskTime {
-			log.Infof("[TIME_COP_TASK] %s%s %s", costTime, bo, task)
-		}
-		metrics.TiKVCoprocessorCounter.WithLabelValues("handle_task").Inc()
-		metrics.TiKVCoprocessorHistogram.Observe(costTime.Seconds())
 		if bo.totalSleep > 0 {
 			metrics.TiKVBackoffHistogram.Observe(float64(bo.totalSleep) / 1000)
 		}
@@ -490,12 +484,18 @@ func (it *copIterator) sendToRespCh(resp copResponse, respCh chan copResponse) (
 
 // copResultSubset implements the kv.ResultSubset interface.
 type copResultSubset struct {
-	data []byte
+	data     []byte
+	startKey kv.Key
 }
 
 // GetData implements the kv.ResultSubset GetData interface.
 func (rs *copResultSubset) GetData() []byte {
 	return rs.data
+}
+
+// GetStartKey implements the kv.ResultSubset GetStartKey interface.
+func (rs *copResultSubset) GetStartKey() kv.Key {
+	return rs.startKey
 }
 
 // Next returns next coprocessor result.
@@ -549,7 +549,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	if resp.Data == nil {
 		return &copResultSubset{}, nil
 	}
-	return &copResultSubset{data: resp.Data}, nil
+	return &copResultSubset{data: resp.Data, startKey: resp.startKey}, nil
 }
 
 // handleTask handles single copTask, sends the result to channel, retry automatically on error.
@@ -598,10 +598,17 @@ func (it *copIterator) handleTaskOnce(bo *Backoffer, task *copTask, ch chan copR
 		// The resp is a stream and killed by cancel operation immediately.
 		timeout = 0
 	}
+	startTime := time.Now()
 	resp, err := sender.SendReq(bo, req, task.region, timeout)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	costTime := time.Since(startTime)
+	if costTime > minLogCopTaskTime {
+		log.Infof("[TIME_COP_TASK] %s%s %s", costTime, bo, task)
+	}
+	metrics.TiKVCoprocessorCounter.WithLabelValues("handle_task").Inc()
+	metrics.TiKVCoprocessorHistogram.Observe(costTime.Seconds())
 	// Set task.storeAddr field so its task.String() method have the store address information.
 	task.storeAddr = sender.storeAddr
 
@@ -621,7 +628,6 @@ func (it *copIterator) handleCopStreamResult(bo *Backoffer, stream *tikvrpc.CopS
 		if err != nil || len(remainedTasks) != 0 {
 			return remainedTasks, errors.Trace(err)
 		}
-
 		resp, err = stream.Recv()
 		if err != nil {
 			if errors.Cause(err) == io.EOF {
@@ -656,7 +662,6 @@ func (it *copIterator) handleCopResponse(bo *Backoffer, resp *coprocessor.Respon
 		}
 		// We may meet RegionError at the first packet, but not during visiting the stream.
 		metrics.TiKVCoprocessorCounter.WithLabelValues("rebuild_task").Inc()
-
 		return buildCopTasks(bo, it.store.regionCache, task.ranges, it.req.Desc, it.req.Streaming)
 	}
 	if lockErr := resp.GetLocked(); lockErr != nil {
@@ -677,7 +682,14 @@ func (it *copIterator) handleCopResponse(bo *Backoffer, resp *coprocessor.Respon
 		log.Warnf("coprocessor err: %v", err)
 		return nil, errors.Trace(err)
 	}
-	it.sendToRespCh(copResponse{resp, nil}, ch)
+	var startKey kv.Key
+	// When the request is using streaming API, the `Range` is not nil.
+	if resp.Range != nil {
+		startKey = resp.Range.Start
+	} else {
+		startKey = task.ranges.at(0).StartKey
+	}
+	it.sendToRespCh(copResponse{resp, startKey, nil}, ch)
 	return nil, nil
 }
 

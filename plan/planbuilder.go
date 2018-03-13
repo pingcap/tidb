@@ -313,62 +313,55 @@ func (b *planBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
 	return false
 }
 
-func availableIndices(hints []*ast.IndexHint, tableInfo *model.TableInfo) (indices []*model.IndexInfo, includeTableScan bool, err error) {
-	var usableHints []*ast.IndexHint
-	for _, hint := range hints {
-		if hint.HintScope == ast.HintForScan {
-			usableHints = append(usableHints, hint)
-		}
-	}
+func getAvailableIndices(indexHints []*ast.IndexHint, tableInfo *model.TableInfo) (*availableIndices, error) {
 	publicIndices := make([]*model.IndexInfo, 0, len(tableInfo.Indices))
 	for _, index := range tableInfo.Indices {
 		if index.State == model.StatePublic {
 			publicIndices = append(publicIndices, index)
 		}
 	}
-	if len(usableHints) == 0 {
-		return publicIndices, true, nil
-	}
-	var hasUse bool
-	var ignores []*model.IndexInfo
-	for _, hint := range usableHints {
-		switch hint.HintType {
-		case ast.HintUse, ast.HintForce:
-			// Currently we don't distinguish between Force and Use because our cost estimation is not reliable.
-			hasUse = true
-			for _, idxName := range hint.IndexNames {
-				idx := findIndexByName(publicIndices, idxName)
-				if idx != nil {
-					indices = append(indices, idx)
-				} else {
-					return nil, true, ErrKeyDoesNotExist.GenByArgs(idxName, tableInfo.Name)
-				}
+
+	hasScanHint, hasUseOrForce := false, false
+	available := make([]*model.IndexInfo, 0, len(indexHints))
+	ignored := make([]*model.IndexInfo, 0, len(indexHints))
+	for _, hint := range indexHints {
+		if hint.HintScope != ast.HintForScan {
+			continue
+		}
+
+		hasScanHint = true
+		for _, idxName := range hint.IndexNames {
+			idx := findIndexByName(publicIndices, idxName)
+			if idx == nil {
+				return nil, ErrKeyDoesNotExist.GenByArgs(idxName, tableInfo.Name)
 			}
-		case ast.HintIgnore:
-			// Collect all the ignore index hints.
-			for _, idxName := range hint.IndexNames {
-				idx := findIndexByName(publicIndices, idxName)
-				if idx != nil {
-					ignores = append(ignores, idx)
-				} else {
-					return nil, true, ErrKeyDoesNotExist.GenByArgs(idxName, tableInfo.Name)
-				}
+			if hint.HintType == ast.HintIgnore {
+				// Collect all the ignored index hints.
+				ignored = append(ignored, idx)
+				continue
 			}
+			// Currently we don't distinguish between "FORCE" and "USE" because
+			// our cost estimation is not reliable.
+			hasUseOrForce = true
+			available = append(available, idx)
 		}
 	}
-	indices = removeIgnores(indices, ignores)
-	// If we have got FORCE or USE index hint, table scan is excluded.
-	if len(indices) != 0 {
-		return indices, false, nil
+
+	if !hasScanHint {
+		return &availableIndices{publicIndices, true}, nil
 	}
-	if hasUse {
-		// Empty use hint means don't use any index.
-		return nil, true, nil
+	if !hasUseOrForce {
+		available = removeIgnoredIndices(publicIndices, ignored)
+		return &availableIndices{available, true}, nil
 	}
-	return removeIgnores(publicIndices, ignores), true, nil
+
+	available = removeIgnoredIndices(available, ignored)
+	// If we have got "FORCE" or "USE" index hint but got no available index,
+	// we have to use table scan.
+	return &availableIndices{available, len(available) == 0}, nil
 }
 
-func removeIgnores(indices, ignores []*model.IndexInfo) []*model.IndexInfo {
+func removeIgnoredIndices(indices, ignores []*model.IndexInfo) []*model.IndexInfo {
 	if len(ignores) == 0 {
 		return indices
 	}
@@ -480,11 +473,11 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 		p := &CheckTable{Tables: as.Tables}
 		ret = p
 	case ast.AdminCheckIndex:
-		dbName := model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
-		if as.Tables[0].DBInfo != nil {
-			dbName = as.Tables[0].DBInfo.Name
-		}
+		dbName := as.Tables[0].Schema
 		readerPlan := b.buildCheckIndex(dbName, as)
+		if b.err != nil {
+			return ret
+		}
 		ret = &CheckIndex{
 			DBName:            dbName.L,
 			IdxName:           as.Index,
@@ -502,10 +495,55 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 		p := &CancelDDLJobs{JobIDs: as.JobIDs}
 		p.SetSchema(buildCancelDDLJobsFields())
 		ret = p
+	case ast.AdminCheckIndexRange:
+		p := &CheckIndexRange{Table: as.Tables[0], IndexName: as.Index, HandleRanges: as.HandleRanges}
+		schema, err := buildCheckIndexSchema(as.Tables[0], as.Index)
+		if err != nil {
+			b.err = errors.Trace(err)
+			break
+		}
+		p.SetSchema(schema)
+		ret = p
 	default:
 		b.err = ErrUnsupportedType.Gen("Unsupported type %T", as)
 	}
 	return ret
+}
+
+func buildCheckIndexSchema(tn *ast.TableName, indexName string) (*expression.Schema, error) {
+	schema := expression.NewSchema()
+	indexName = strings.ToLower(indexName)
+	indicesInfo := tn.TableInfo.Indices
+	cols := tn.TableInfo.Cols()
+	for _, idxInfo := range indicesInfo {
+		if idxInfo.Name.L != indexName {
+			continue
+		}
+		for i, idxCol := range idxInfo.Columns {
+			col := cols[idxCol.Offset]
+			schema.Append(&expression.Column{
+				FromID:   1,
+				ColName:  idxCol.Name,
+				TblName:  tn.Name,
+				DBName:   tn.Schema,
+				RetType:  &col.FieldType,
+				Position: i,
+				ID:       col.ID})
+		}
+		schema.Append(&expression.Column{
+			FromID:   1,
+			ColName:  model.NewCIStr("extra_handle"),
+			TblName:  tn.Name,
+			DBName:   tn.Schema,
+			RetType:  types.NewFieldType(mysql.TypeLonglong),
+			Position: len(idxInfo.Columns),
+			ID:       -1,
+		})
+	}
+	if schema.Len() == 0 {
+		return nil, errors.Errorf("index %s not found", indexName)
+	}
+	return schema, nil
 }
 
 // getColsInfo returns the info of index columns, normal columns and primary key.

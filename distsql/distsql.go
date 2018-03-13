@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -52,8 +53,6 @@ type SelectResult interface {
 	// Fetch fetches partial results from client.
 	// The caller should call SetFields() before call Fetch().
 	Fetch(context.Context)
-	// ScanKeys gets the total scan row count.
-	ScanKeys() int64
 }
 
 // PartialResult is the result from a single region server.
@@ -79,7 +78,7 @@ type selectResult struct {
 	selectResp *tipb.SelectResponse
 	respChkIdx int
 
-	scanKeys     int64 // number of keys scanned by TiKV.
+	feedback     *statistics.QueryFeedback
 	partialCount int64 // number of partial results.
 }
 
@@ -134,13 +133,7 @@ func (r *selectResult) Next(ctx context.Context) (PartialResult, error) {
 	pr := &partialResult{}
 	pr.rowLen = r.rowLen
 	err := pr.unmarshal(re.result.GetData())
-	if len(pr.resp.OutputCounts) > 0 {
-		scanKeysPartial := pr.resp.OutputCounts[0]
-		metrics.DistSQLScanKeysPartialHistogram.Observe(float64(scanKeysPartial))
-		r.scanKeys += scanKeysPartial
-	} else {
-		r.scanKeys = -1
-	}
+	r.feedback.Update(re.result.GetStartKey(), pr.resp.OutputCounts)
 	r.partialCount++
 	return pr, errors.Trace(err)
 }
@@ -149,7 +142,7 @@ func (r *selectResult) Next(ctx context.Context) (PartialResult, error) {
 func (r *selectResult) NextRaw(ctx context.Context) ([]byte, error) {
 	re := <-r.results
 	r.partialCount++
-	r.scanKeys = -1
+	r.feedback.Invalidate()
 	if re.result == nil || re.err != nil {
 		return nil, errors.Trace(re.err)
 	}
@@ -199,23 +192,13 @@ func (r *selectResult) getSelectResp() error {
 		for _, warning := range r.selectResp.Warnings {
 			r.ctx.GetSessionVars().StmtCtx.AppendWarning(terror.ClassTiKV.New(terror.ErrCode(warning.Code), warning.Msg))
 		}
-		if len(r.selectResp.OutputCounts) > 0 {
-			scanCountPartial := r.selectResp.OutputCounts[0]
-			metrics.DistSQLScanKeysPartialHistogram.Observe(float64(scanCountPartial))
-			r.scanKeys += scanCountPartial
-		} else {
-			r.scanKeys = -1
-		}
+		r.feedback.Update(re.result.GetStartKey(), r.selectResp.OutputCounts)
 		r.partialCount++
 		if len(r.selectResp.Chunks) == 0 {
 			continue
 		}
 		return nil
 	}
-}
-
-func (r *selectResult) ScanKeys() int64 {
-	return r.scanKeys
 }
 
 func (r *selectResult) readRowsData(chk *chunk.Chunk) (err error) {
@@ -237,8 +220,8 @@ func (r *selectResult) readRowsData(chk *chunk.Chunk) (err error) {
 // Close closes selectResult.
 func (r *selectResult) Close() error {
 	// Close this channel tell fetch goroutine to exit.
-	if r.scanKeys >= 0 {
-		metrics.DistSQLScanKeysHistogram.Observe(float64(r.scanKeys))
+	if r.feedback.Actual() >= 0 {
+		metrics.DistSQLScanKeysHistogram.Observe(float64(r.feedback.Actual()))
 	}
 	metrics.DistSQLPartialCountHistogram.Observe(float64(r.partialCount))
 	close(r.closed)
@@ -308,7 +291,12 @@ func (pr *partialResult) Close() error {
 
 // Select sends a DAG request, returns SelectResult.
 // In kvReq, KeyRanges is required, Concurrency/KeepOrder/Desc/IsolationLevel/Priority are optional.
-func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fieldTypes []*types.FieldType) (SelectResult, error) {
+func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fieldTypes []*types.FieldType, fb *statistics.QueryFeedback) (SelectResult, error) {
+	// For testing purpose.
+	if hook := ctx.Value("CheckSelectRequestHook"); hook != nil {
+		hook.(func(*kv.Request))(kvReq)
+	}
+
 	if !sctx.GetSessionVars().EnableStreaming {
 		kvReq.Streaming = false
 	}
@@ -324,6 +312,7 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 			rowLen:     len(fieldTypes),
 			fieldTypes: fieldTypes,
 			ctx:        sctx,
+			feedback:   fb,
 		}, nil
 	}
 
@@ -335,6 +324,7 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		rowLen:     len(fieldTypes),
 		fieldTypes: fieldTypes,
 		ctx:        sctx,
+		feedback:   fb,
 	}, nil
 }
 
@@ -345,10 +335,11 @@ func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request) (SelectRe
 		return nil, errors.New("client returns nil response")
 	}
 	result := &selectResult{
-		label:   "analyze",
-		resp:    resp,
-		results: make(chan resultWithErr, kvReq.Concurrency),
-		closed:  make(chan struct{}),
+		label:    "analyze",
+		resp:     resp,
+		results:  make(chan resultWithErr, kvReq.Concurrency),
+		closed:   make(chan struct{}),
+		feedback: statistics.NewQueryFeedback(0, nil, 0, false),
 	}
 	return result, nil
 }
