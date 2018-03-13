@@ -356,67 +356,6 @@ func (e *TopNExec) Pop() interface{} {
 	return nil
 }
 
-// Next implements the Executor Next interface.
-func (e *TopNExec) Next(ctx context.Context) (Row, error) {
-	if !e.fetched {
-		e.Idx = int(e.limit.Offset)
-		e.totalLimit = int(e.limit.Offset + e.limit.Count)
-		cap := e.totalLimit + 1
-		if cap > 1024 {
-			cap = 1024
-		}
-		e.Rows = make([]*orderByRow, 0, cap)
-		e.heapSize = 0
-		for {
-			srcRow, err := e.children[0].Next(ctx)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if srcRow == nil {
-				break
-			}
-			// build orderRow from srcRow.
-			orderRow := &orderByRow{
-				row: srcRow,
-				key: make([]*types.Datum, len(e.ByItems)),
-			}
-			for i, byItem := range e.ByItems {
-				key, err := byItem.Expr.Eval(srcRow)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				orderRow.key[i] = &key
-			}
-			if e.totalLimit == e.heapSize {
-				// An equivalent of Push and Pop. We don't use the standard Push and Pop
-				// to reduce the number of comparisons.
-				e.Rows = append(e.Rows, orderRow)
-				if e.Less(0, e.heapSize) {
-					e.Swap(0, e.heapSize)
-					heap.Fix(e, 0)
-				}
-				e.Rows = e.Rows[:e.heapSize]
-			} else {
-				heap.Push(e, orderRow)
-			}
-		}
-		if e.limit.Offset == 0 {
-			sort.Sort(&e.SortExec)
-		} else {
-			for i := 0; i < int(e.limit.Count) && e.Len() > 0; i++ {
-				heap.Pop(e)
-			}
-		}
-		e.fetched = true
-	}
-	if e.Idx >= len(e.Rows) {
-		return nil, nil
-	}
-	row := e.Rows[e.Idx].row
-	e.Idx++
-	return row, nil
-}
-
 // topNChunkHeap implements heap.Interface.
 type topNChunkHeap struct {
 	*TopNExec
