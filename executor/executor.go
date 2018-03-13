@@ -897,7 +897,6 @@ type TableScanExec struct {
 	baseExecutor
 
 	t          table.Table
-	asName     *model.CIStr
 	ranges     []ranger.IntColumnRange
 	seekHandle int64
 	iter       kv.Iterator
