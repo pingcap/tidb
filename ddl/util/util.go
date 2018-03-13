@@ -66,8 +66,7 @@ func LoadDeleteRanges(ctx sessionctx.Context, safePoint uint64) (ranges []DelRan
 			break
 		}
 
-		for it.Begin(); it.Current() != it.End(); it.Next() {
-			row := it.Current()
+		for row := it.Begin(); row != it.End(); row = it.Next() {
 			startKey, err := hex.DecodeString(row.GetString(2))
 			if err != nil {
 				return nil, errors.Trace(err)

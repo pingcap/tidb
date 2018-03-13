@@ -193,8 +193,8 @@ func (p *MySQLPrivilege) loadTable(sctx sessionctx.Context, sql string,
 		if chk.NumRows() == 0 {
 			return nil
 		}
-		for it.Begin(); it.Current() != it.End(); it.Next() {
-			err = decodeTableRow(it.Current(), fs)
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			err = decodeTableRow(row, fs)
 			if err != nil {
 				return errors.Trace(err)
 			}

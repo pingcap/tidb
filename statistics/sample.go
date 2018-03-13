@@ -160,8 +160,8 @@ func (s SampleBuilder) CollectColumnStats() ([]*SampleCollector, *SortedBuilder,
 		if len(s.RecordSet.Fields()) == 0 {
 			panic(fmt.Sprintf("%T", s.RecordSet))
 		}
-		for it.Begin(); it.Current() != it.End(); it.Next() {
-			datums := ast.RowToDatums(it.Current(), s.RecordSet.Fields())
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			datums := ast.RowToDatums(row, s.RecordSet.Fields())
 			if s.PkBuilder != nil {
 				err = s.PkBuilder.Iterate(datums[0])
 				if err != nil {
