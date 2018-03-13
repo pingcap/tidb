@@ -197,8 +197,9 @@ func buildIndex(sctx sessionctx.Context, numBuckets, id int64, records ast.Recor
 	b := NewSortedBuilder(sctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeBlob))
 	cms := NewCMSketch(8, 2048)
 	ctx := context.Background()
+	chk := records.NewChunk()
+	it := chunk.NewIterator4Chunk(chk)
 	for {
-		chk := records.NewChunk()
 		err := records.NextChunk(ctx, chk)
 		if err != nil {
 			return 0, nil, nil, errors.Trace(err)
@@ -206,17 +207,19 @@ func buildIndex(sctx sessionctx.Context, numBuckets, id int64, records ast.Recor
 		if chk.NumRows() == 0 {
 			break
 		}
-		datums := ast.RowToDatums(chk.GetRow(0), records.Fields())
-		buf, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx, nil, datums...)
-		if err != nil {
-			return 0, nil, nil, errors.Trace(err)
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			datums := ast.RowToDatums(row, records.Fields())
+			buf, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx, nil, datums...)
+			if err != nil {
+				return 0, nil, nil, errors.Trace(err)
+			}
+			data := types.NewBytesDatum(buf)
+			err = b.Iterate(data)
+			if err != nil {
+				return 0, nil, nil, errors.Trace(err)
+			}
+			cms.InsertBytes(buf)
 		}
-		data := types.NewBytesDatum(buf)
-		err = b.Iterate(data)
-		if err != nil {
-			return 0, nil, nil, errors.Trace(err)
-		}
-		cms.InsertBytes(buf)
 	}
 	return b.Count, b.Hist(), cms, nil
 }
