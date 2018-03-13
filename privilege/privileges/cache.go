@@ -201,7 +201,6 @@ func (p *MySQLPrivilege) loadTable(sctx sessionctx.Context, sql string,
 			}
 		}
 	}
-	return nil
 }
 
 func (p *MySQLPrivilege) decodeUserTableRow(row types.Row, fs []*ast.ResultField) error {
