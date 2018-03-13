@@ -115,25 +115,14 @@ func DecodeRecordKey(key kv.Key) (tableID int64, handle int64, err error) {
 func DecodeIndexKey(key kv.Key) (tableID int64, indexID int64, indexValues []string, err error) {
 	k := key
 
-	if !key.HasPrefix(tablePrefix) {
-		return 0, 0, nil, errInvalidIndexKey.Gen("invalid index key - %q", k)
-	}
-	key = key[len(tablePrefix):]
-
-	key, tableID, err = codec.DecodeInt(key)
+	tableID, indexID, isRecord, err := DecodeKeyHead(key)
 	if err != nil {
 		return 0, 0, nil, errors.Trace(err)
 	}
-
-	if !key.HasPrefix(indexPrefixSep) {
+	if isRecord {
 		return 0, 0, nil, errInvalidIndexKey.Gen("invalid index key - %q", k)
 	}
-	key = key[len(indexPrefixSep):]
-
-	key, indexID, err = codec.DecodeInt(key)
-	if err != nil {
-		return 0, 0, nil, errors.Trace(err)
-	}
+	key = key[prefixLen+idLen:]
 
 	for len(key) > 0 {
 		remain, d, e := codec.DecodeOne(key)
