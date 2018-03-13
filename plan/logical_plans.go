@@ -117,11 +117,9 @@ type LogicalJoin struct {
 }
 
 func (p *LogicalJoin) columnSubstitute(schema *expression.Schema, exprs []expression.Expression) {
-	for i, fun := range p.EqualConditions {
-		p.EqualConditions[i] = expression.ColumnSubstitute(fun, schema, exprs).(*expression.ScalarFunction)
-	}
 	for i := len(p.EqualConditions) - 1; i >= 0; i-- {
 		p.EqualConditions[i] = expression.ColumnSubstitute(p.EqualConditions[i], schema, exprs).(*expression.ScalarFunction)
+		// After the column substitute, the equal condition may become single side condition.
 		if p.children[0].Schema().Contains(p.EqualConditions[i].GetArgs()[1].(*expression.Column)) {
 			p.LeftConditions = append(p.LeftConditions, p.EqualConditions[i])
 			p.EqualConditions = append(p.EqualConditions[:i], p.EqualConditions[i+1:]...)
