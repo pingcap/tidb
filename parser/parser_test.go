@@ -273,6 +273,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{";", true},
 		{"INSERT INTO foo VALUES (1234)", true},
 		{"INSERT INTO foo VALUES (1234, 5678)", true},
+		{"INSERT INTO t1 (SELECT * FROM t2)", true},
 		// 15
 		{"INSERT INTO foo VALUES (1 || 2)", true},
 		{"INSERT INTO foo VALUES (1 | 2)", true},

@@ -2587,6 +2587,10 @@ InsertValues:
 	{
 		$$ = &ast.InsertStmt{Lists:  $2.([][]ast.ExprNode)}
 	}
+|	'(' SelectStmt ')'
+	{
+		$$ = &ast.InsertStmt{Select: $2.(*ast.SelectStmt)}
+	}
 |	SelectStmt
 	{
 		$$ = &ast.InsertStmt{Select: $1.(*ast.SelectStmt)}
