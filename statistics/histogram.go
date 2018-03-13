@@ -392,6 +392,7 @@ func (hg *Histogram) getIncreaseFactor(totalCount int64) float64 {
 	return float64(totalCount) / float64(columnCount)
 }
 
+// validRange checks if the range is valid, it is used by `SplitRange` to remove the invalid range.
 func validRange(ran *ranger.NewRange) bool {
 	var low, high []byte
 	if ran.LowVal[0].Kind() == types.KindBytes {

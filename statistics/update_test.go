@@ -368,6 +368,7 @@ func (s *testStatsUpdateSuite) TestSplitRange(c *C) {
 			result:  "[8,8],(8,10],(20,30)",
 		},
 		{
+			// test remove invalid range
 			points:  []int64{8, 9},
 			exclude: []bool{false, true},
 			result:  "[8,8]",
