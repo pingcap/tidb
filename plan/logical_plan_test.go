@@ -21,18 +21,14 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tipb/go-tipb"
-	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testPlanSuite{})
@@ -274,111 +270,10 @@ func MockTable() *model.TableInfo {
 	return table
 }
 
-func supportExpr(exprType tipb.ExprType) bool {
-	switch exprType {
-	// data type
-	case tipb.ExprType_Null, tipb.ExprType_Int64, tipb.ExprType_Uint64,
-		tipb.ExprType_Float32, tipb.ExprType_Float64, tipb.ExprType_String,
-		tipb.ExprType_Bytes, tipb.ExprType_MysqlDuration, tipb.ExprType_MysqlDecimal,
-		tipb.ExprType_MysqlTime, tipb.ExprType_ColumnRef:
-		return true
-	// logic operators
-	case tipb.ExprType_And, tipb.ExprType_Or, tipb.ExprType_Not, tipb.ExprType_Xor:
-		return true
-	// compare operators
-	case tipb.ExprType_LT, tipb.ExprType_LE, tipb.ExprType_EQ, tipb.ExprType_NE,
-		tipb.ExprType_GE, tipb.ExprType_GT, tipb.ExprType_NullEQ,
-		tipb.ExprType_In, tipb.ExprType_ValueList, tipb.ExprType_Like:
-		return true
-	// arithmetic operators
-	case tipb.ExprType_Plus, tipb.ExprType_Div, tipb.ExprType_Minus,
-		tipb.ExprType_Mul, tipb.ExprType_IntDiv, tipb.ExprType_Mod:
-		return true
-	// aggregate functions
-	case tipb.ExprType_Count, tipb.ExprType_First, tipb.ExprType_Sum,
-		tipb.ExprType_Avg, tipb.ExprType_Max, tipb.ExprType_Min:
-		return true
-	// bitwise operators
-	case tipb.ExprType_BitAnd, tipb.ExprType_BitOr, tipb.ExprType_BitXor, tipb.ExprType_BitNeg:
-		return true
-	// control functions
-	case tipb.ExprType_Case, tipb.ExprType_If, tipb.ExprType_IfNull, tipb.ExprType_NullIf:
-		return true
-	// other functions
-	case tipb.ExprType_Coalesce, tipb.ExprType_IsNull:
-		return true
-	case kv.ReqSubTypeDesc:
-		return true
-	default:
-		return false
-	}
-}
-
-type mockClient struct {
-}
-
-func (c *mockClient) Send(ctx context.Context, _ *kv.Request) kv.Response {
-	return nil
-}
-
-func (c *mockClient) IsRequestTypeSupported(reqType, subType int64) bool {
-	switch reqType {
-	case kv.ReqTypeSelect, kv.ReqTypeIndex:
-		switch subType {
-		case kv.ReqSubTypeGroupBy, kv.ReqSubTypeBasic, kv.ReqSubTypeTopN:
-			return true
-		default:
-			return supportExpr(tipb.ExprType(subType))
-		}
-	}
-	return false
-}
-
-type mockStore struct {
-	client *mockClient
-}
-
-func (m *mockStore) GetClient() kv.Client {
-	return m.client
-}
-
-func (m *mockStore) GetOracle() oracle.Oracle {
-	return nil
-}
-
-func (m *mockStore) Begin() (kv.Transaction, error) {
-	return nil, nil
-}
-
-// BeginWithStartTS begins with startTS.
-func (m *mockStore) BeginWithStartTS(startTS uint64) (kv.Transaction, error) {
-	return m.Begin()
-}
-
-func (m *mockStore) GetSnapshot(ver kv.Version) (kv.Snapshot, error) {
-	return nil, nil
-}
-
-func (m *mockStore) Close() error {
-	return nil
-}
-
-func (m *mockStore) UUID() string {
-	return "mock"
-}
-
-func (m *mockStore) CurrentVersion() (kv.Version, error) {
-	return kv.Version{}, nil
-}
-
-func (m *mockStore) SupportDeleteRange() bool {
-	return false
-}
-
 func mockContext() sessionctx.Context {
 	ctx := mock.NewContext()
-	ctx.Store = &mockStore{
-		client: &mockClient{},
+	ctx.Store = &mock.Store{
+		&mock.Client{},
 	}
 	ctx.GetSessionVars().CurrentDB = "test"
 	do := &domain.Domain{}
