@@ -204,6 +204,8 @@ type Request struct {
 type ResultSubset interface {
 	// GetData gets the data.
 	GetData() []byte
+	// GetStartKey gets the start key.
+	GetStartKey() Key
 }
 
 // Response represents the response returned from KV layer.
