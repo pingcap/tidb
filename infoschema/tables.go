@@ -538,6 +538,7 @@ func dataForCollationCharacterSetApplicability() (records [][]types.Datum) {
 		types.MakeDatums("binary", "binary"),
 		types.MakeDatums("latin1_swedish_ci", "latin1"),
 		types.MakeDatums("utf8_general_ci", "utf8"),
+		types.MakeDatums("utf8_bin", "utf8"),
 		types.MakeDatums("utf8mb4_general_ci", "utf8mb4"),
 	)
 	return records
