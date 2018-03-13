@@ -19,6 +19,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/testleak"
@@ -336,15 +337,17 @@ func (s *testEvaluatorSuite) TestPassword(c *C) {
 		expected string
 		isNil    bool
 		getErr   bool
+		getWarn  bool
 	}{
-		{nil, "", false, false},
-		{"", "", false, false},
-		{"abc", "*0D3CED9BEC10A777AEC23CCC353A8C08A633045E", false, false},
-		{123, "*23AE809DDACAF96AF0FD78ED04B6A265E05AA257", false, false},
-		{1.23, "*A589EEBA8D3F9E1A34A7EE518FAC4566BFAD5BB6", false, false},
-		{types.NewDecFromFloatForTest(123.123), "*B15B84262DB34BFB2C817A45A55C405DC7C52BB1", false, false},
+		{nil, "", false, false, false},
+		{"", "", false, false, false},
+		{"abc", "*0D3CED9BEC10A777AEC23CCC353A8C08A633045E", false, false, true},
+		{123, "*23AE809DDACAF96AF0FD78ED04B6A265E05AA257", false, false, true},
+		{1.23, "*A589EEBA8D3F9E1A34A7EE518FAC4566BFAD5BB6", false, false, true},
+		{types.NewDecFromFloatForTest(123.123), "*B15B84262DB34BFB2C817A45A55C405DC7C52BB1", false, false, true},
 	}
 
+	warnCount := len(s.ctx.GetSessionVars().StmtCtx.GetWarnings())
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.PasswordFunc, s.primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
@@ -354,6 +357,18 @@ func (s *testEvaluatorSuite) TestPassword(c *C) {
 			c.Assert(d.Kind(), Equals, types.KindNull)
 		} else {
 			c.Assert(d.GetString(), Equals, t.expected)
+		}
+
+		warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
+		if t.getWarn {
+			c.Assert(len(warnings), Equals, warnCount+1)
+
+			lastWarn := warnings[len(warnings)-1]
+			c.Assert(terror.ErrorEqual(errDeprecatedSyntaxNoReplacement, lastWarn), IsTrue)
+
+			warnCount = len(warnings)
+		} else {
+			c.Assert(len(warnings), Equals, warnCount)
 		}
 	}
 
