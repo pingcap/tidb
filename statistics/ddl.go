@@ -105,7 +105,7 @@ func (h *Handle) insertColStats2KV(tableID int64, colInfo *model.ColumnInfo) err
 		if err != nil {
 			return errors.Trace(err)
 		}
-		count := chk.NumRows()
+		count := chk.GetRow(0).GetInt64(0)
 		value := types.NewDatum(colInfo.OriginDefaultValue)
 		value, err = value.ConvertTo(h.ctx.GetSessionVars().StmtCtx, &colInfo.FieldType)
 		if err != nil {
