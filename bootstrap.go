@@ -157,7 +157,8 @@ const (
 		hist_id bigint(64) NOT NULL,
 		distinct_count bigint(64) NOT NULL,
 		null_count bigint(64) NOT NULL DEFAULT 0,
-		avg_col_size double NOT NULL DEFAULT 0,
+		tot_col_size bigint(64) NOT NULL DEFAULT 0,
+		count bigint(64) NOT NULL DEFAULT 0,
 		modify_count bigint(64) NOT NULL DEFAULT 0,
 		version bigint(64) unsigned NOT NULL DEFAULT 0,
 		cm_sketch blob,
@@ -568,7 +569,8 @@ func upgradeToVer17(s Session) {
 }
 
 func upgradeToVer18(s Session) {
-	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `avg_col_size` double", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `tot_col_size` bigint(64) default 0", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `count` bigint(64) default 0", infoschema.ErrColumnExists)
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.

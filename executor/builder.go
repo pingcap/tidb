@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"math"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -71,6 +72,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildCheckTable(v)
 	case *plan.CheckIndex:
 		return b.buildCheckIndex(v)
+	case *plan.CheckIndexRange:
+		return b.buildCheckIndexRange(v)
 	case *plan.DDL:
 		return b.buildDDL(v)
 	case *plan.Deallocate:
@@ -226,6 +229,29 @@ func (b *executorBuilder) buildCheckTable(v *plan.CheckTable) Executor {
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		tables:       v.Tables,
 		is:           b.is,
+	}
+	return e
+}
+
+func (b *executorBuilder) buildCheckIndexRange(v *plan.CheckIndexRange) Executor {
+	tb, err := b.is.TableByName(v.Table.Schema, v.Table.Name)
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
+	e := &CheckIndexRangeExec{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+		handleRanges: v.HandleRanges,
+		table:        tb.Meta(),
+		is:           b.is,
+	}
+	idxName := strings.ToLower(v.IndexName)
+	for _, idx := range tb.Indices() {
+		if idx.Meta().Name.L == idxName {
+			e.index = idx.Meta()
+			e.startKey = make([]types.Datum, len(e.index.Columns))
+			break
+		}
 	}
 	return e
 }
@@ -1013,7 +1039,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plan.AnalyzeColumnsTa
 		CmsketchDepth: &depth,
 		CmsketchWidth: &width,
 	}
-	b.err = errors.Trace(setPBColumnsDefaultValue(b.ctx, e.analyzePB.ColReq.ColumnsInfo, cols))
+	b.err = errors.Trace(plan.SetPBColumnsDefaultValue(b.ctx, e.analyzePB.ColReq.ColumnsInfo, cols))
 	return e
 }
 

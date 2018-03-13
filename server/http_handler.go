@@ -15,6 +15,7 @@ package server
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -49,13 +50,18 @@ import (
 )
 
 const (
-	pDBName    = "db"
-	pHexKey    = "hexKey"
-	pIndexName = "index"
-	pHandle    = "handle"
-	pRegionID  = "regionID"
-	pStartTS   = "startTS"
-	pTableName = "table"
+	pDBName     = "db"
+	pHexKey     = "hexKey"
+	pIndexName  = "index"
+	pHandle     = "handle"
+	pRegionID   = "regionID"
+	pStartTS    = "startTS"
+	pTableName  = "table"
+	pColumnID   = "colID"
+	pColumnTp   = "colTp"
+	pColumnFlag = "colFlag"
+	pColumnLen  = "colLen"
+	pRowBin     = "rowBin"
 )
 
 // For query string
@@ -288,6 +294,10 @@ type tableHandler struct {
 	op string
 }
 
+// valueHandle is the handler for get value.
+type valueHandler struct {
+}
+
 const (
 	opTableRegions   = "regions"
 	opTableDiskUsage = "disk-usage"
@@ -305,6 +315,84 @@ const (
 	opMvccGetByIdx = "idx"
 	opMvccGetByTxn = "txn"
 )
+
+// ServeHTTP handles request of list a database or table's schemas.
+func (vh valueHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	// parse params
+	params := mux.Vars(req)
+
+	colID, err := strconv.ParseInt(params[pColumnID], 0, 64)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	colTp, err := strconv.ParseInt(params[pColumnTp], 0, 64)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	colFlag, err := strconv.ParseUint(params[pColumnFlag], 0, 64)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	colLen, err := strconv.ParseInt(params[pColumnLen], 0, 64)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	// Get the unchanged binary.
+	if req.URL == nil {
+		err = errors.BadRequestf("Invalid URL")
+		writeError(w, err)
+		return
+	}
+	values := make(url.Values)
+	shouldUnescape := false
+	err = parseQuery(req.URL.RawQuery, values, shouldUnescape)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if len(values[pRowBin]) != 1 {
+		err = errors.BadRequestf("Invalid Query:%v", values[pRowBin])
+		writeError(w, err)
+		return
+	}
+	bin := values[pRowBin][0]
+	valData, err := base64.StdEncoding.DecodeString(bin)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	// Construct field type.
+	defaultDecimal := 6
+	ft := &types.FieldType{
+		Tp:      byte(colTp),
+		Flag:    uint(colFlag),
+		Flen:    int(colLen),
+		Decimal: defaultDecimal,
+	}
+	// Decode a column.
+	m := make(map[int64]*types.FieldType, 1)
+	m[int64(colID)] = ft
+	loc := time.UTC
+	vals, err := tablecodec.DecodeRow(valData, m, loc)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	v := vals[int64(colID)]
+	val, err := v.ToString()
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeData(w, val)
+	return
+}
 
 // TableRegions is the response data for list table's regions.
 // It contains regions list for record and indices.
@@ -811,11 +899,13 @@ func (r RegionFrameRange) lastTableID() int64 {
 	return r.last.TableID
 }
 
-// parseQuery is used to parse query string in URL, due to golang http package can not distinguish
+// parseQuery is used to parse query string in URL with shouldUnescape, due to golang http package can not distinguish
 // query like "?a=" and "?a". We rewrite it to separate these two queries. e.g.
 // "?a=" which means that a is an empty string "";
 // "?a"  which means that a is null.
-func parseQuery(query string, m url.Values) error {
+// If shouldUnescape is true, we use QueryUnescape to handle keys and values that will be put in m.
+// If shouldUnescape is false, we don't use QueryUnescap to handle.
+func parseQuery(query string, m url.Values, shouldUnescape bool) error {
 	var err error
 	for query != "" {
 		key := query
@@ -830,19 +920,23 @@ func parseQuery(query string, m url.Values) error {
 		if i := strings.Index(key, "="); i >= 0 {
 			value := ""
 			key, value = key[:i], key[i+1:]
-			key, err = url.QueryUnescape(key)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			value, err = url.QueryUnescape(value)
-			if err != nil {
-				return errors.Trace(err)
+			if shouldUnescape {
+				key, err = url.QueryUnescape(key)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				value, err = url.QueryUnescape(value)
+				if err != nil {
+					return errors.Trace(err)
+				}
 			}
 			m[key] = append(m[key], value)
 		} else {
-			key, err = url.QueryUnescape(key)
-			if err != nil {
-				return errors.Trace(err)
+			if shouldUnescape {
+				key, err = url.QueryUnescape(key)
+				if err != nil {
+					return errors.Trace(err)
+				}
 			}
 			if _, ok := m[key]; !ok {
 				m[key] = nil
@@ -866,7 +960,7 @@ func (h mvccTxnHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			break
 		}
 		values := make(url.Values)
-		err = parseQuery(req.URL.RawQuery, values)
+		err = parseQuery(req.URL.RawQuery, values, true)
 		if err == nil {
 			data, err = h.handleMvccGetByIdx(params, values)
 		}

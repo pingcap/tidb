@@ -15,6 +15,7 @@ package executor
 
 import (
 	"math"
+	"runtime"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -161,29 +162,6 @@ func statementContextToFlags(sc *stmtctx.StatementContext) uint64 {
 		flags |= FlagPadCharToFullLength
 	}
 	return flags
-}
-
-func setPBColumnsDefaultValue(ctx sessionctx.Context, pbColumns []*tipb.ColumnInfo, columns []*model.ColumnInfo) error {
-	for i, c := range columns {
-		if c.OriginDefaultValue == nil {
-			continue
-		}
-
-		sessVars := ctx.GetSessionVars()
-		originStrict := sessVars.StrictSQLMode
-		sessVars.StrictSQLMode = false
-		d, err := table.GetColOriginDefaultValue(ctx, c)
-		sessVars.StrictSQLMode = originStrict
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		pbColumns[i].DefaultVal, err = tablecodec.EncodeValue(ctx.GetSessionVars().StmtCtx, d)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
 }
 
 // handleIsExtra checks whether this column is a extra handle column generated during plan building phase.
@@ -742,6 +720,10 @@ type indexWorker struct {
 func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectResult) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
+			buf := make([]byte, 4096)
+			stackSize := runtime.Stack(buf, false)
+			buf = buf[:stackSize]
+			log.Errorf("indexWorker panic stack is:\n%s", buf)
 			err4Panic := errors.Errorf("%v", r)
 			doneCh := make(chan error, 1)
 			doneCh <- err4Panic
@@ -836,6 +818,10 @@ func (w *tableWorker) pickAndExecTask(ctx context.Context) {
 	var ok bool
 	defer func() {
 		if r := recover(); r != nil {
+			buf := make([]byte, 4096)
+			stackSize := runtime.Stack(buf, false)
+			buf = buf[:stackSize]
+			log.Errorf("tableWorker panic stack is:\n%s", buf)
 			task.doneCh <- errors.Errorf("%v", r)
 		}
 	}()

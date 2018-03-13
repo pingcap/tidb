@@ -36,7 +36,8 @@ type jsonColumn struct {
 	Histogram         *tipb.Histogram `json:"histogram"`
 	CMSketch          *tipb.CMSketch  `json:"cm_sketch"`
 	NullCount         int64           `json:"null_count"`
-	AvgColSize        float64         `json:"avg_col_size"`
+	TotColSize        int64         `json:"tot_col_size"`
+	Count             int64           `json:"count"`
 	LastUpdateVersion uint64          `json:"last_update_version"`
 }
 
@@ -44,7 +45,7 @@ func dumpJSONCol(hist *Histogram, CMSketch *CMSketch) *jsonColumn {
 	jsonCol := &jsonColumn{
 		Histogram:         HistogramToProto(hist),
 		NullCount:         hist.NullCount,
-		AvgColSize:        hist.AvgColSize,
+		TotColSize:        hist.TotColSize,
 		LastUpdateVersion: hist.LastUpdateVersion,
 	}
 	if CMSketch != nil {
@@ -99,7 +100,7 @@ func (h *Handle) LoadStatsFromJSON(tableInfo *model.TableInfo, jsonTbl *JSONTabl
 				continue
 			}
 			hist := HistogramFromProto(jsonIdx.Histogram)
-			hist.ID, hist.NullCount, hist.LastUpdateVersion, hist.AvgColSize = idxInfo.ID, jsonIdx.NullCount, jsonIdx.LastUpdateVersion, jsonIdx.AvgColSize
+			hist.ID, hist.NullCount, hist.LastUpdateVersion, hist.TotColSize, hist.Count = idxInfo.ID, jsonIdx.NullCount, jsonIdx.LastUpdateVersion, jsonIdx.TotColSize, jsonIdx.Count
 			idx := &Index{
 				Histogram: *hist,
 				CMSketch:  CMSketchFromProto(jsonIdx.CMSketch),
@@ -119,7 +120,7 @@ func (h *Handle) LoadStatsFromJSON(tableInfo *model.TableInfo, jsonTbl *JSONTabl
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			hist.ID, hist.NullCount, hist.LastUpdateVersion, hist.AvgColSize = colInfo.ID, jsonCol.NullCount, jsonCol.LastUpdateVersion, jsonCol.AvgColSize
+			hist.ID, hist.NullCount, hist.LastUpdateVersion, hist.TotColSize, hist.Count = colInfo.ID, jsonCol.NullCount, jsonCol.LastUpdateVersion, jsonCol.TotColSize, jsonCol.Count
 			col := &Column{
 				Histogram: *hist,
 				CMSketch:  CMSketchFromProto(jsonCol.CMSketch),

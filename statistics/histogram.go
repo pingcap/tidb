@@ -16,6 +16,7 @@ package statistics
 import (
 	"bytes"
 	"fmt"
+	"log"
 	"math"
 	"strings"
 	"time"
@@ -62,8 +63,10 @@ type Histogram struct {
 	// Used for estimating fraction of the interval [lower, upper] that lies within the [lower, value].
 	// For some types like `Int`, we do not build it because we can get them directly from `Bounds`.
 	scalars []scalar
-	// AvgColSize is the average column size for the histogram
-	AvgColSize float64
+	// TotColSize is the total column size for the histogram.
+	TotColSize int64
+	// Count is the number of non-null rows.
+	Count  int64
 }
 
 // Bucket store the bucket count and repeat.
@@ -79,7 +82,7 @@ type scalar struct {
 }
 
 // NewHistogram creates a new histogram.
-func NewHistogram(id, ndv, nullCount int64, version uint64, tp *types.FieldType, bucketSize int, avgColSize float64) *Histogram {
+func NewHistogram(id, ndv, nullCount int64, version uint64, tp *types.FieldType, bucketSize int, totColSize int64, count int64) *Histogram {
 	return &Histogram{
 		ID:                id,
 		NDV:               ndv,
@@ -88,7 +91,8 @@ func NewHistogram(id, ndv, nullCount int64, version uint64, tp *types.FieldType,
 		tp:                tp,
 		Bounds:            chunk.NewChunkWithCapacity([]*types.FieldType{tp}, 2*bucketSize),
 		Buckets:           make([]Bucket, 0, bucketSize),
-		AvgColSize:        avgColSize,
+		TotColSize:        totColSize,
+		Count:             count,
 	}
 }
 
@@ -102,6 +106,31 @@ func (hg *Histogram) GetLower(idx int) *types.Datum {
 func (hg *Histogram) GetUpper(idx int) *types.Datum {
 	d := hg.Bounds.GetRow(2*idx+1).GetDatum(0, hg.tp)
 	return &d
+}
+
+// AvgColSize is the average column size of the histogram
+func (hg *Histogram) AvgColSize() float64 {
+	log.Print("tp is ___ ", hg.tp.Tp)
+	switch hg.tp.Tp {
+	case mysql.TypeFloat:
+		return 4
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong,
+		mysql.TypeDouble, mysql.TypeYear:
+		return 8
+	case mysql.TypeDuration, mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+		return 16
+	case mysql.TypeNewDecimal:
+		return types.MyDecimalStructSize
+	case mysql.TypeNull:
+		return 0
+	default:
+		log.Print("tot= ", float64(hg.TotColSize),"count=", float64(hg.Count))
+		if hg.Count == 0 {
+			return 0
+		}
+
+		return float64(hg.TotColSize) / float64(hg.Count)
+	}
 }
 
 // AppendBucket appends a bucket into `hg`.
@@ -135,7 +164,7 @@ func (hg *Histogram) DecodeTo(tp *types.FieldType, timeZone *time.Location) erro
 
 // ConvertTo converts the histogram bucket values into `tp`.
 func (hg *Histogram) ConvertTo(sc *stmtctx.StatementContext, tp *types.FieldType) (*Histogram, error) {
-	hist := NewHistogram(hg.ID, hg.NDV, hg.NullCount, hg.LastUpdateVersion, tp, hg.Len(), hg.AvgColSize)
+	hist := NewHistogram(hg.ID, hg.NDV, hg.NullCount, hg.LastUpdateVersion, tp, hg.Len(), hg.TotColSize, hg.Count)
 	iter := chunk.NewIterator4Chunk(hg.Bounds)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		d := row.GetDatum(0, hg.tp)
@@ -183,8 +212,8 @@ func SaveStatsToStorage(sctx sessionctx.Context, tableID int64, count int64, isI
 	if err != nil {
 		return errors.Trace(err)
 	}
-	replaceSQL = fmt.Sprintf("replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, avg_col_size) values (%d, %d, %d, %d, %d, %d, X'%X', %f)",
-		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, data, hg.AvgColSize)
+	replaceSQL = fmt.Sprintf("replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, count) values (%d, %d, %d, %d, %d, %d, X'%X', %d, %d)",
+		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, data, hg.TotColSize, hg.Count)
 	_, err = exec.Execute(ctx, replaceSQL)
 	if err != nil {
 		return errors.Trace(err)
@@ -220,14 +249,14 @@ func SaveStatsToStorage(sctx sessionctx.Context, tableID int64, count int64, isI
 	return errors.Trace(err)
 }
 
-func histogramFromStorage(ctx sessionctx.Context, tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int, ver uint64, nullCount int64, avgColSize float64) (*Histogram, error) {
+func histogramFromStorage(ctx sessionctx.Context, tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int, ver uint64, nullCount int64, totColSize int64, count int64) (*Histogram, error) {
 	selSQL := fmt.Sprintf("select count, repeats, lower_bound, upper_bound from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d order by bucket_id", tableID, isIndex, colID)
 	rows, fields, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, selSQL)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	bucketSize := len(rows)
-	hg := NewHistogram(colID, distinct, nullCount, ver, tp, bucketSize, avgColSize)
+	hg := NewHistogram(colID, distinct, nullCount, ver, tp, bucketSize, totColSize, count)
 	totalCount := int64(0)
 	for i := 0; i < bucketSize; i++ {
 		count := rows[i].GetInt64(0)
@@ -270,9 +299,9 @@ func columnCountFromStorage(ctx sessionctx.Context, tableID, colID int64) (int64
 func (hg *Histogram) toString(isIndex bool) string {
 	strs := make([]string, 0, hg.Len()+1)
 	if isIndex {
-		strs = append(strs, fmt.Sprintf("index:%d ndv:%d avg_col_size:%f ", hg.ID, hg.NDV, hg.AvgColSize))
+		strs = append(strs, fmt.Sprintf("index:%d ndv:%d avg_col_size:%f ", hg.ID, hg.NDV, hg.AvgColSize()))
 	} else {
-		strs = append(strs, fmt.Sprintf("column:%d ndv:%d avg_col_size:%f ", hg.ID, hg.NDV, hg.AvgColSize))
+		strs = append(strs, fmt.Sprintf("column:%d ndv:%d avg_col_size:%f ", hg.ID, hg.NDV, hg.AvgColSize()))
 	}
 	for i := 0; i < hg.Len(); i++ {
 		upperVal, err := hg.GetUpper(i).ToString()
@@ -418,7 +447,7 @@ func HistogramToProto(hg *Histogram) *tipb.Histogram {
 // be after all histograms merged.
 func HistogramFromProto(protoHg *tipb.Histogram) *Histogram {
 	tp := types.NewFieldType(mysql.TypeBlob)
-	hg := NewHistogram(0, protoHg.Ndv, 0, 0, tp, len(protoHg.Buckets), 0)
+	hg := NewHistogram(0, protoHg.Ndv, 0, 0, tp, len(protoHg.Buckets), 0,0)
 	for _, bucket := range protoHg.Buckets {
 		lower, upper := types.NewBytesDatum(bucket.LowerBound), types.NewBytesDatum(bucket.UpperBound)
 		hg.AppendBucket(&lower, &upper, bucket.Count, bucket.Repeats)
@@ -442,6 +471,8 @@ func MergeHistograms(sc *stmtctx.StatementContext, lh *Histogram, rh *Histogram,
 		return lh, nil
 	}
 	lh.NDV += rh.NDV
+	lh.Count += rh.Count
+	lh.TotColSize += rh.TotColSize
 	lLen := lh.Len()
 	cmp, err := lh.GetUpper(lLen-1).CompareDatum(sc, rh.GetLower(0))
 	if err != nil {

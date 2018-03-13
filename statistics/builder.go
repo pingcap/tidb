@@ -15,7 +15,6 @@ package statistics
 
 import (
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -38,7 +37,7 @@ func NewSortedBuilder(sc *stmtctx.StatementContext, numBuckets, id int64, tp *ty
 		sc:              sc,
 		numBuckets:      numBuckets,
 		valuesPerBucket: 1,
-		hist:            NewHistogram(id, 0, 0, 0, tp, int(numBuckets), 0),
+		hist:            NewHistogram(id, 0, 0, 0, tp, int(numBuckets), 0,0),
 	}
 }
 
@@ -110,29 +109,15 @@ func BuildColumn(ctx sessionctx.Context, numBuckets, id int64, collector *Sample
 	if ndv > count {
 		ndv = count
 	}
-	var avgColSize float64
-	switch tp.Tp {
-	case mysql.TypeFloat:
-		avgColSize = 4
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong,
-		mysql.TypeDouble, mysql.TypeYear:
-		avgColSize = 8
-	case mysql.TypeDuration, mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-		avgColSize = 16
-	case mysql.TypeNewDecimal:
-		avgColSize = types.MyDecimalStructSize
-	case mysql.TypeNull:
-		avgColSize = 0
-	default:
-		avgColSize = collector.TotalSize / float64(collector.Count)
-		break
-	}
-	hg := NewHistogram(id, ndv, collector.NullCount, 0, tp, int(numBuckets), avgColSize)
-	valuesPerBucket := float64(count)/float64(numBuckets) + 1
+	hg := NewHistogram(id, ndv, collector.NullCount, 0, tp, int(numBuckets), collector.TotalSize, count)
 
-	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
 	sampleNum := int64(len(samples))
-	sampleFactor := float64(count) / float64(sampleNum)
+	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
+	sampleFactor := float64(count) / float64(len(samples))
+	// Since bucket count is increased by sampleFactor, so the actual max values per bucket is
+	// floor(valuesPerBucket/sampleFactor)*sampleFactor, which may less than valuesPerBucket,
+	// thus we need to add a sampleFactor to avoid building too many buckets.
+	valuesPerBucket := float64(count)/float64(numBuckets) + sampleFactor
 	ndvFactor := float64(count) / float64(hg.NDV)
 	if ndvFactor > sampleFactor {
 		ndvFactor = sampleFactor

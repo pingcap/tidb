@@ -79,7 +79,7 @@ func initStatsHistograms4Chunk(is infoschema.InfoSchema, tables statsCache, iter
 		if !ok {
 			continue
 		}
-		id, ndv, nullCount, version, avgColSize := row.GetInt64(2), row.GetInt64(3), row.GetInt64(5), row.GetUint64(4), row.GetFloat64(7)
+		id, ndv, nullCount, version, totColSize, count := row.GetInt64(2), row.GetInt64(3), row.GetInt64(5), row.GetUint64(4), row.GetInt64(7), row.GetInt64(8)
 		tbl, _ := is.TableByID(table.TableID)
 		if row.GetInt64(1) > 0 {
 			var idxInfo *model.IndexInfo
@@ -97,7 +97,7 @@ func initStatsHistograms4Chunk(is infoschema.InfoSchema, tables statsCache, iter
 				cms = nil
 				terror.Log(errors.Trace(err))
 			}
-			hist := NewHistogram(id, ndv, nullCount, version, types.NewFieldType(mysql.TypeBlob), chunk.InitialCapacity, avgColSize)
+			hist := NewHistogram(id, ndv, nullCount, version, types.NewFieldType(mysql.TypeBlob), chunk.InitialCapacity, totColSize, count)
 			table.Indices[hist.ID] = &Index{Histogram: *hist, CMSketch: cms, Info: idxInfo}
 		} else {
 			var colInfo *model.ColumnInfo
@@ -110,14 +110,14 @@ func initStatsHistograms4Chunk(is infoschema.InfoSchema, tables statsCache, iter
 			if colInfo == nil {
 				continue
 			}
-			hist := NewHistogram(id, ndv, nullCount, version, &colInfo.FieldType, 0, avgColSize)
+			hist := NewHistogram(id, ndv, nullCount, version, &colInfo.FieldType, 0, totColSize, count)
 			table.Columns[hist.ID] = &Column{Histogram: *hist, Info: colInfo}
 		}
 	}
 }
 
 func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables statsCache) error {
-	sql := "select table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, avg_col_size from mysql.stats_histograms"
+	sql := "select table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, count from mysql.stats_histograms"
 	rc, err := h.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	if len(rc) > 0 {
 		defer terror.Call(rc[0].Close)
@@ -240,6 +240,12 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) error {
 	err = h.initStatsBuckets(tables)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	for _,v := range tables {
+		for _, col :=  range v.Columns {
+			log.Print("mydebug: hh ",col.Histogram.Count, col.Histogram.tp, col.Histogram.TotColSize)
+		}
+
 	}
 	h.statsCache.Store(tables)
 	return nil

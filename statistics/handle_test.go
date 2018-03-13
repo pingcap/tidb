@@ -211,7 +211,7 @@ func (s *testStatsCacheSuite) TestAvgColLen(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
-	testKit.MustExec("create table t (c1 int, c2 varchar(257), c3 float, c4 datetime)")
+	testKit.MustExec("create table t (c1 int, c2 varchar(100), c3 float, c4 datetime)")
 	testKit.MustExec("insert into t values(1, '1234567', 12.3, '2018-03-07 19:00:57')")
 	testKit.MustExec("analyze table t")
 	do := s.do
@@ -220,19 +220,19 @@ func (s *testStatsCacheSuite) TestAvgColLen(c *C) {
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo.ID)
-	c.Assert(statsTbl.Columns[tableInfo.Columns[0].ID].AvgColSize, Equals, 8.0)
+	c.Assert(statsTbl.Columns[tableInfo.Columns[0].ID].AvgColSize(), Equals, 8.0)
 
 	// The size of varchar type is LEN + BYTE, here is 1 + 7 = 8
-	c.Assert(statsTbl.Columns[tableInfo.Columns[1].ID].AvgColSize, Equals, 8.0)
-	c.Assert(statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSize, Equals, 4.0)
-	c.Assert(statsTbl.Columns[tableInfo.Columns[3].ID].AvgColSize, Equals, 16.0)
+	c.Assert(statsTbl.Columns[tableInfo.Columns[1].ID].AvgColSize(), Equals, 8.0)
+	c.Assert(statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSize(), Equals, 4.0)
+	c.Assert(statsTbl.Columns[tableInfo.Columns[3].ID].AvgColSize(), Equals, 16.0)
 	testKit.MustExec("insert into t values(132, '123456789112', 1232.3, '2018-03-07 19:17:29')")
 	testKit.MustExec("analyze table t")
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo.ID)
-	c.Assert(statsTbl.Columns[tableInfo.Columns[0].ID].AvgColSize, Equals, 8.0)
-	c.Assert(statsTbl.Columns[tableInfo.Columns[1].ID].AvgColSize, Equals, 10.5)
-	c.Assert(statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSize, Equals, 4.0)
-	c.Assert(statsTbl.Columns[tableInfo.Columns[3].ID].AvgColSize, Equals, 16.0)
+	c.Assert(statsTbl.Columns[tableInfo.Columns[0].ID].AvgColSize(), Equals, 8.0)
+	c.Assert(statsTbl.Columns[tableInfo.Columns[1].ID].AvgColSize(), Equals, 10.5)
+	c.Assert(statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSize(), Equals, 4.0)
+	c.Assert(statsTbl.Columns[tableInfo.Columns[3].ID].AvgColSize(), Equals, 16.0)
 }
 
 func (s *testStatsCacheSuite) TestVersion(c *C) {
