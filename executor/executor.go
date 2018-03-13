@@ -297,7 +297,7 @@ type ShowDDLJobsExec struct {
 	jobs   []*model.Job
 }
 
-// ShowDDLJobQueriesExec represent a show DDL job queries executor.
+// ShowDDLJobQueriesExec represents a show DDL job queries executor.
 type ShowDDLJobQueriesExec struct {
 	baseExecutor
 
@@ -326,11 +326,6 @@ func (e *ShowDDLJobQueriesExec) Open(ctx context.Context) error {
 
 	e.cursor = 0
 	return nil
-}
-
-// Next implements the Executor Next interface.
-func (e *ShowDDLJobQueriesExec) Next(ctx context.Context) (Row, error) {
-	return nil, nil
 }
 
 // NextChunk implements the Executor NextChunk interface.
