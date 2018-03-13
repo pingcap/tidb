@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/pd/pd-client"
 	"golang.org/x/net/context"
@@ -31,6 +32,7 @@ var tsMu = struct {
 
 type pdClient struct {
 	cluster *Cluster
+	kv      map[string]string
 }
 
 // NewPDClient creates a mock pd.Client that uses local timestamp and meta data
@@ -38,6 +40,7 @@ type pdClient struct {
 func NewPDClient(cluster *Cluster) pd.Client {
 	return &pdClient{
 		cluster: cluster,
+		kv:      make(map[string]string),
 	}
 }
 
@@ -90,6 +93,25 @@ func (c *pdClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store,
 	}
 	store := c.cluster.GetStore(storeID)
 	return store, nil
+}
+
+func (c *pdClient) GetUserKV(ctx context.Context, key string) (string, error) {
+	value, ok := c.kv[key]
+	if !ok {
+		return "", errors.Errorf("value %v doesn't exist", key)
+	}
+
+	return value, nil
+}
+
+func (c *pdClient) PutUserKV(ctx context.Context, key string, value string) error {
+	c.kv[key] = value
+	return nil
+}
+
+func (c *pdClient) DeleteUserKV(ctx context.Context, key string) error {
+	delete(c.kv, key)
+	return nil
 }
 
 func (c *pdClient) Close() {

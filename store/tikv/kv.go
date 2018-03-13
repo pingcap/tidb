@@ -214,11 +214,12 @@ func (s *tikvStore) StartGCWorker() error {
 }
 
 func (s *tikvStore) runSafePointChecker() {
+	ctx := context.Background()
 	d := gcSafePointUpdateInterval
 	for {
 		select {
 		case spCachedTime := <-time.After(d):
-			cachedSafePoint, err := loadSafePoint(s.GetSafePointKV(), GcSafePointCheckVisibility)
+			cachedSafePoint, err := loadSafePoint(ctx, s.GetSafePointKV(), GcVisibilitySafepoint)
 			if err == nil {
 				metrics.TiKVLoadSafepointCounter.WithLabelValues("ok").Inc()
 				s.UpdateSPCache(cachedSafePoint, spCachedTime)
@@ -344,6 +345,10 @@ func (s *tikvStore) Closed() <-chan struct{} {
 
 func (s *tikvStore) GetSafePointKV() SafePointKV {
 	return s.kv
+}
+
+func (s *tikvStore) GetPdClient() pd.Client {
+	return s.pdClient
 }
 
 func (s *tikvStore) SetOracle(oracle oracle.Oracle) {

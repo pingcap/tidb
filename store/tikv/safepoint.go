@@ -30,8 +30,8 @@ const (
 	// This is almost the same as 'tikv_gc_safe_point' in the table 'mysql.tidb',
 	// save this to pd instead of tikv, because we can't use interface of table
 	// if the safepoint on tidb is expired.
-	GcSafePointCheckVisibility = "/tidb/store/gcworker/saved_safe_point"
-	GcSafePointDoGc            = "/tidb/store/gcworker/gc_safe_point"
+	GcVisibilitySafepoint = "/tidb/store/gcworker/saved_safe_point"
+	gcVisibilityOpTimeout = time.Second * 5
 
 	GcSafePointCacheInterval       = time.Second * 100
 	gcCPUTimeInaccuracyBound       = time.Second
@@ -41,8 +41,8 @@ const (
 
 // SafePointKV is used for a seamingless integration for mockTest and runtime.
 type SafePointKV interface {
-	Put(k string, v string) error
-	Get(k string) (string, error)
+	Put(ctx context.Context, k string, v string) error
+	Get(ctx context.Context, k string) (string, error)
 }
 
 // MockSafePointKV implements SafePointKV at mock test
@@ -59,7 +59,7 @@ func NewMockSafePointKV() *MockSafePointKV {
 }
 
 // Put implements the Put method for SafePointKV
-func (w *MockSafePointKV) Put(k string, v string) error {
+func (w *MockSafePointKV) Put(ctx context.Context, k string, v string) error {
 	w.mockLock.Lock()
 	defer w.mockLock.Unlock()
 	w.store[k] = v
@@ -67,7 +67,7 @@ func (w *MockSafePointKV) Put(k string, v string) error {
 }
 
 // Get implements the Get method for SafePointKV
-func (w *MockSafePointKV) Get(k string) (string, error) {
+func (w *MockSafePointKV) Get(ctx context.Context, k string) (string, error) {
 	w.mockLock.RLock()
 	defer w.mockLock.RUnlock()
 	elem, _ := w.store[k]
@@ -89,8 +89,8 @@ func NewEtcdSafePointKV(addrs []string, tlsConfig *tls.Config) (*EtcdSafePointKV
 }
 
 // Put implements the Put method for SafePointKV
-func (w *EtcdSafePointKV) Put(k string, v string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+func (w *EtcdSafePointKV) Put(ctx context.Context, k string, v string) error {
+	ctx, cancel := context.WithTimeout(ctx, gcVisibilityOpTimeout)
 	_, err := w.cli.Put(ctx, k, v)
 	cancel()
 	if err != nil {
@@ -100,8 +100,8 @@ func (w *EtcdSafePointKV) Put(k string, v string) error {
 }
 
 // Get implements the Get method for SafePointKV
-func (w *EtcdSafePointKV) Get(k string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+func (w *EtcdSafePointKV) Get(ctx context.Context, k string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, gcVisibilityOpTimeout)
 	resp, err := w.cli.Get(ctx, k)
 	cancel()
 	if err != nil {
@@ -113,9 +113,9 @@ func (w *EtcdSafePointKV) Get(k string) (string, error) {
 	return "", nil
 }
 
-func SaveSafePoint(kv SafePointKV, key string, t uint64) error {
+func SaveSafePoint(ctx context.Context, kv SafePointKV, key string, t uint64) error {
 	s := strconv.FormatUint(t, 10)
-	err := kv.Put(key, s)
+	err := kv.Put(ctx, key, s)
 	if err != nil {
 		log.Error("save safepoint failed:", err)
 		return errors.Trace(err)
@@ -123,8 +123,8 @@ func SaveSafePoint(kv SafePointKV, key string, t uint64) error {
 	return nil
 }
 
-func loadSafePoint(kv SafePointKV, key string) (uint64, error) {
-	str, err := kv.Get(key)
+func loadSafePoint(ctx context.Context, kv SafePointKV, key string) (uint64, error) {
+	str, err := kv.Get(ctx, key)
 
 	if err != nil {
 		return 0, errors.Trace(err)

@@ -71,3 +71,11 @@ ignored = ["github.com/coreos/etcd/etcdserver", "github.com/coreos/etcd/mvcc", "
 [[constraint]]
   name = "gopkg.in/natefinch/lumberjack.v2"
   version = "2.0.0"
+
+[[constraint]]
+  name = "github.com/wentaoxu/kvproto"
+  branch = "do_gc_distributedly"
+
+[[constraint]]
+  name = "github.com/wentaoxu/pd"
+  branch = "do_gc_distributedly"

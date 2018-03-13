@@ -61,10 +61,11 @@ func mymakeKeys(rowNum int, prefix string) []kv.Key {
 }
 
 func (s *testSafePointSuite) waitUntilErrorPlugIn(t uint64) {
+	ctx := context.Background()
 	for {
-		SaveSafePoint(s.store.GetSafePointKV(), GcSafePointCheckVisibility, t+10)
+		SaveSafePoint(ctx, s.store.GetSafePointKV(), GcVisibilitySafepoint, t+10)
 		cachedTime := time.Now()
-		newSafePoint, err := loadSafePoint(s.store.GetSafePointKV(), GcSafePointCheckVisibility)
+		newSafePoint, err := loadSafePoint(ctx, s.store.GetSafePointKV(), GcVisibilitySafepoint)
 		if err == nil {
 			s.store.UpdateSPCache(newSafePoint, cachedTime)
 			break

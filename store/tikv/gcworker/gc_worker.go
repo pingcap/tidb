@@ -38,6 +38,10 @@ import (
 	"golang.org/x/net/context"
 )
 
+const (
+	gcSafepoint     = "transaction/gc/safepoint"
+)
+
 // GCWorker periodically triggers GC process on tikv server.
 type GCWorker struct {
 	uuid        string
@@ -100,9 +104,9 @@ const (
 	gcDefaultRunInterval = time.Minute * 10
 	gcWaitTime           = time.Minute * 1
 
-	gcLifeTimeKey        = "tikv_gc_life_time"
-	gcDefaultLifeTime    = time.Minute * 10
-	gcSafePointKey       = "tikv_gc_safe_point"
+	gcLifeTimeKey     = "tikv_gc_life_time"
+	gcDefaultLifeTime = time.Minute * 10
+	gcSafePointKey    = "tikv_gc_safe_point"
 	// We don't want gc to sweep out the cached info belong to other processes, like coprocessor.
 	gcScanLockLimit = tikv.ResolvedCacheSize / 2
 )
@@ -502,7 +506,7 @@ func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64) error {
 func (w *GCWorker) doGC(ctx context.Context, safePoint uint64) error {
 	gcWorkerCounter.WithLabelValues("do_gc").Inc()
 
-	err := w.saveSafePointCheckVisibility(safePoint)
+	err := w.saveVisibilitySafePoint(ctx, safePoint)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -510,8 +514,7 @@ func (w *GCWorker) doGC(ctx context.Context, safePoint uint64) error {
 	// Sleep to wait for all other tidb instances update their safepoint cache.
 	time.Sleep(gcSafePointCacheInterval)
 
-	// Update gc safepoint on pd, leave other jobs to tikv.
-	return w.saveSafePointDoGC(safePoint)
+	return w.saveGcSafePoint(ctx, safePoint)
 }
 
 func (w *GCWorker) checkLeader() (bool, error) {
@@ -589,12 +592,13 @@ func (w *GCWorker) checkLeader() (bool, error) {
 	return false, nil
 }
 
-func (w *GCWorker) saveSafePointCheckVisibility(t uint64) error {
-	return tikv.SaveSafePoint(w.store.GetSafePointKV(), tikv.GcSafePointCheckVisibility, t)
+func (w *GCWorker) saveVisibilitySafePoint(ctx context.Context, t uint64) error {
+	return tikv.SaveSafePoint(ctx, w.store.GetSafePointKV(), tikv.GcVisibilitySafepoint, t)
 }
 
-func (w *GCWorker) saveSafePointDoGC(t uint64) error {
-	return tikv.SaveSafePoint(w.store.GetSafePointKV(), tikv.GcSafePointDoGc, t)
+func (w *GCWorker) saveGcSafePoint(ctx context.Context, t uint64) error {
+	value := fmt.Sprintf("%v", t)
+	return w.store.GetPdClient().PutUserKV(ctx, gcSafepoint, value)
 }
 
 func (w *GCWorker) saveTime(key string, t time.Time, s tidb.Session) error {

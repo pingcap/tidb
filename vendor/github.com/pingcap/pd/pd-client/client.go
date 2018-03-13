@@ -53,6 +53,12 @@ type Client interface {
 	// The store may expire later. Caller is responsible for caching and taking care
 	// of store change.
 	GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error)
+	// GetUserKV get the user kv from pd.
+	GetUserKV(ctx context.Context, key string) (string, error)
+	// PutUserKV put the user kv to pd.
+	PutUserKV(ctx context.Context, key string, value string) error
+	// DeleteUserKV delete the user kv from pd.
+	DeleteUserKV(ctx context.Context, key string) error
 	// Close closes the client.
 	Close()
 }
@@ -620,6 +626,79 @@ func (c *client) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, e
 		return nil, nil
 	}
 	return store, nil
+}
+
+func (c *client) GetUserKV(ctx context.Context, key string) (string, error) {
+	if span := opentracing.SpanFromContext(ctx); span != nil {
+		span = opentracing.StartSpan("pdclient.GetUserKV", opentracing.ChildOf(span.Context()))
+		defer span.Finish()
+	}
+	start := time.Now()
+	defer func() { cmdDuration.WithLabelValues("get_user_key").Observe(time.Since(start).Seconds()) }()
+
+	ctx, cancel := context.WithTimeout(ctx, pdTimeout)
+	resp, err := c.leaderClient().GetUserKV(ctx, &pdpb.GetUserKVRequest{
+		Header: c.requestHeader(),
+		Key:    key,
+	})
+	requestDuration.WithLabelValues("get_user_key").Observe(time.Since(start).Seconds())
+	cancel()
+
+	if err != nil {
+		cmdFailedDuration.WithLabelValues("get_user_key").Observe(time.Since(start).Seconds())
+		c.scheduleCheckLeader()
+		return "", errors.Trace(err)
+	}
+	return resp.GetValue(), nil
+}
+
+func (c *client) PutUserKV(ctx context.Context, key string, value string) error {
+	if span := opentracing.SpanFromContext(ctx); span != nil {
+		span = opentracing.StartSpan("pdclient.PutUserKV", opentracing.ChildOf(span.Context()))
+		defer span.Finish()
+	}
+	start := time.Now()
+	defer func() { cmdDuration.WithLabelValues("put_user_key").Observe(time.Since(start).Seconds()) }()
+
+	ctx, cancel := context.WithTimeout(ctx, pdTimeout)
+	_, err := c.leaderClient().PutUserKV(ctx, &pdpb.PutUserKVRequest{
+		Header: c.requestHeader(),
+		Key:    key,
+		Value:  value,
+	})
+	requestDuration.WithLabelValues("put_user_key").Observe(time.Since(start).Seconds())
+	cancel()
+
+	if err != nil {
+		cmdFailedDuration.WithLabelValues("put_user_key").Observe(time.Since(start).Seconds())
+		c.scheduleCheckLeader()
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func (c *client) DeleteUserKV(ctx context.Context, key string) error {
+	if span := opentracing.SpanFromContext(ctx); span != nil {
+		span = opentracing.StartSpan("pdclient.DeleteUserKV", opentracing.ChildOf(span.Context()))
+		defer span.Finish()
+	}
+	start := time.Now()
+	defer func() { cmdDuration.WithLabelValues("delete_user_kv").Observe(time.Since(start).Seconds()) }()
+
+	ctx, cancel := context.WithTimeout(ctx, pdTimeout)
+	_, err := c.leaderClient().DeleteUserKV(ctx, &pdpb.DeleteUserKVRequest{
+		Header: c.requestHeader(),
+		Key:    key,
+	})
+	requestDuration.WithLabelValues("delete_user_kv").Observe(time.Since(start).Seconds())
+	cancel()
+
+	if err != nil {
+		cmdFailedDuration.WithLabelValues("delete_user_kv").Observe(time.Since(start).Seconds())
+		c.scheduleCheckLeader()
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 func (c *client) requestHeader() *pdpb.RequestHeader {

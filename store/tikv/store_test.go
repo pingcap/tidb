@@ -93,6 +93,7 @@ type mockPDClient struct {
 	sync.RWMutex
 	client pd.Client
 	stop   bool
+	kv     map[string]string
 }
 
 func (c *mockPDClient) enable() {
@@ -153,6 +154,25 @@ func (c *mockPDClient) GetStore(ctx context.Context, storeID uint64) (*metapb.St
 		return nil, errors.Trace(errStopped)
 	}
 	return c.client.GetStore(ctx, storeID)
+}
+
+func (c *mockPDClient) GetUserKV(ctx context.Context, key string) (string, error) {
+	value, ok := c.kv[key]
+	if !ok {
+		return "", errors.Errorf("value %v doesn't exist", key)
+	}
+
+	return value, nil
+}
+
+func (c *mockPDClient) PutUserKV(ctx context.Context, key string, value string) error {
+	c.kv[key] = value
+	return nil
+}
+
+func (c *mockPDClient) DeleteUserKV(ctx context.Context, key string) error {
+	delete(c.kv, key)
+	return nil
 }
 
 func (c *mockPDClient) Close() {}

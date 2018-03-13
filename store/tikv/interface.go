@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/pd/pd-client"
 )
 
 // Storage represent the kv.Storage runs on TiKV.
@@ -36,6 +37,9 @@ type Storage interface {
 
 	// GetSafePointKV gets the SafePointKV.
 	GetSafePointKV() SafePointKV
+
+	// GetPdClient gets the pd client
+	GetPdClient() pd.Client
 
 	// UpdateSPCache updates the cache of safe point.
 	UpdateSPCache(cachedSP uint64, cachedTime time.Time)
