@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
@@ -360,13 +361,18 @@ type RecoverIndexExec struct {
 
 	done bool
 
-	index table.Index
-	table table.Table
+	index     table.Index
+	table     table.Table
+	batchSize int
 
 	columns       []*model.ColumnInfo
 	colFieldTypes []*types.FieldType
 	srcChunk      *chunk.Chunk
-	idxVals       []types.Datum // used to reduce memory allocation.
+
+	// below buf is used to reduce allocations.
+	recoverRows []recoverRows
+	idxValsBufs [][]types.Datum
+	idxKeyBufs  [][]byte
 }
 
 func (e *RecoverIndexExec) columnsTypes() []*types.FieldType {
@@ -388,6 +394,10 @@ func (e *RecoverIndexExec) Open(ctx context.Context) error {
 	}
 
 	e.srcChunk = chunk.NewChunk(e.columnsTypes())
+	e.batchSize = 2048
+	e.recoverRows = make([]recoverRows, 0, e.batchSize)
+	e.idxValsBufs = make([][]types.Datum, e.batchSize)
+	e.idxKeyBufs = make([][]byte, e.batchSize)
 	return nil
 }
 
@@ -489,7 +499,8 @@ func (e *RecoverIndexExec) backfillIndex(ctx context.Context) (int64, int64, err
 		totalScanCnt += result.scanRowCount
 		if totalScanCnt-lastLogCnt >= 50000 {
 			lastLogCnt = totalScanCnt
-			log.Infof("[recover-index] totalAddedCnt:%v, totalScanCnt:%v, nextHandle: %v", totalAddedCnt, totalScanCnt, result.nextHandle)
+			log.Infof("[recover-index] recover table:%v, index:%v, totalAddedCnt:%v, totalScanCnt:%v, nextHandle: %v",
+				e.table.Meta().Name.O, e.index.Meta().Name.O, totalAddedCnt, totalScanCnt, result.nextHandle)
 		}
 
 		// no more rows
@@ -501,56 +512,154 @@ func (e *RecoverIndexExec) backfillIndex(ctx context.Context) (int64, int64, err
 	return totalAddedCnt, totalScanCnt, nil
 }
 
-func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transaction, startHandle int64) (result backfillResult, err error) {
+func (e *RecoverIndexExec) fetchIdxVals(row chunk.Row, idxVals []types.Datum) []types.Datum {
+	if idxVals == nil {
+		idxVals = make([]types.Datum, 0, row.Len()-1)
+	} else {
+		idxVals = idxVals[:0]
+	}
+
+	for i := 0; i < row.Len()-1; i++ {
+		colVal := row.GetDatum(i, &e.columns[i].FieldType)
+		idxVals = append(idxVals, colVal)
+	}
+	return idxVals
+}
+
+type recoverRows struct {
+	handle  int64
+	idxVals []types.Datum
+	skip    bool
+}
+
+func (e *RecoverIndexExec) fetchRecoverRows(ctx context.Context, srcResult distsql.SelectResult, result *backfillResult) ([]recoverRows, error) {
+	e.recoverRows = e.recoverRows[:0]
 	handleIdx := len(e.columns) - 1
-	batchCnt := uint64(2048)
+	result.scanRowCount = 0
+Loop:
+	for {
+		err := srcResult.NextChunk(ctx, e.srcChunk)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		if e.srcChunk.NumRows() == 0 {
+			break
+		}
+		iter := chunk.NewIterator4Chunk(e.srcChunk)
+		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+			if result.scanRowCount >= int64(e.batchSize) {
+				break Loop
+			}
+			handle := row.GetInt64(handleIdx)
+			idxVals := e.fetchIdxVals(row, e.idxValsBufs[result.scanRowCount])
+			e.idxValsBufs[result.scanRowCount] = idxVals
+			e.recoverRows = append(e.recoverRows, recoverRows{handle: handle, idxVals: idxVals, skip: false})
+			result.scanRowCount++
+			result.nextHandle = handle + 1
+		}
+	}
+	return e.recoverRows, nil
+}
+
+func (e *RecoverIndexExec) batchMarkDup(txn kv.Transaction, rows []recoverRows) error {
+	if len(rows) == 0 {
+		return nil
+	}
+
+	sc := e.ctx.GetSessionVars().StmtCtx
+	batchDistinctKeys := make([]kv.Key, 0, len(rows))
+	batchNonDistinctKeys := make([]kv.Key, 0, len(rows))
+	distinctOffsets := make([]int, 0, len(rows))
+	nonDistinctOffsets := make([]int, 0, len(rows))
+
+	for i, row := range rows {
+		idxKey, distinct, err := e.index.GenIndexKey(sc, row.idxVals, row.handle, e.idxKeyBufs[i])
+		if err != nil {
+			return errors.Trace(err)
+		}
+		e.idxKeyBufs[i] = idxKey
+		if distinct {
+			batchDistinctKeys = append(batchDistinctKeys, idxKey)
+			distinctOffsets = append(distinctOffsets, i)
+		} else {
+			batchNonDistinctKeys = append(batchNonDistinctKeys, idxKey)
+			nonDistinctOffsets = append(nonDistinctOffsets, i)
+		}
+	}
+
+	values, err := txn.GetSnapshot().BatchGet(batchDistinctKeys)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// 1. unique-key is duplicate and the handle is equal, skip it.
+	// 2. unique-key is duplicate and the handle is not equal, data is not consistent, log it.
+	// 3. non-unique-key is duplicate, skip it.
+	for i, key := range batchDistinctKeys {
+		offset := distinctOffsets[i]
+		if val, found := values[string(key)]; found {
+			handle, err := tables.DecodeHandle(val)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if handle == rows[offset].handle {
+				rows[offset].skip = true
+			} else {
+				log.Warnf("[recover-index] The constraint of unique index:%v is broken, handle:%v is not equal handle:%v with idxKey:%v.",
+					e.index.Meta().Name.O, handle, rows[offset].handle, key)
+			}
+		}
+	}
+
+	values, err = txn.GetSnapshot().BatchGet(batchNonDistinctKeys)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	for i, key := range batchNonDistinctKeys {
+		offset := nonDistinctOffsets[i]
+		if _, found := values[string(key)]; found {
+			rows[offset].skip = true
+		}
+	}
+
+	return nil
+}
+
+func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transaction, startHandle int64) (result backfillResult, err error) {
 	result.nextHandle = startHandle
-	srcResult, err := e.buildTableScan(ctx, txn, e.table, startHandle, batchCnt)
+	srcResult, err := e.buildTableScan(ctx, txn, e.table, startHandle, uint64(e.batchSize))
 	if err != nil {
 		return result, errors.Trace(err)
 	}
 	defer terror.Call(srcResult.Close)
 
-	for {
-		err := srcResult.NextChunk(ctx, e.srcChunk)
+	rows, err := e.fetchRecoverRows(ctx, srcResult, &result)
+	if err != nil {
+		return result, errors.Trace(err)
+	}
+
+	err = e.batchMarkDup(txn, rows)
+	if err != nil {
+		return result, errors.Trace(err)
+	}
+
+	oldBatchCheck := e.ctx.GetSessionVars().StmtCtx.BatchCheck
+	// Constrains is already checked.
+	e.ctx.GetSessionVars().StmtCtx.BatchCheck = true
+	for _, row := range rows {
+		if row.skip {
+			continue
+		}
+
+		_, err := e.index.Create(e.ctx, txn, row.idxVals, row.handle)
 		if err != nil {
 			return result, errors.Trace(err)
 		}
-
-		if e.srcChunk.NumRows() == 0 || result.scanRowCount >= int64(batchCnt) {
-			break
-		}
-		iter := chunk.NewIterator4Chunk(e.srcChunk)
-		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			handle := row.GetInt64(handleIdx)
-			recordKey := e.table.RecordKey(handle)
-			err := txn.LockKeys(recordKey)
-			if err != nil {
-				return result, errors.Trace(err)
-			}
-
-			result.scanRowCount++
-			result.nextHandle = handle + 1
-
-			e.idxVals = e.idxVals[:0]
-			for i := 0; i < row.Len()-1; i++ {
-				colVal := row.GetDatum(i, &e.columns[i].FieldType)
-				e.idxVals = append(e.idxVals, colVal)
-			}
-
-			// backfill the index.
-			dupHandle, err := e.index.Create(e.ctx, txn, e.idxVals, handle)
-			if err != nil {
-				if kv.ErrKeyExists.Equal(err) && dupHandle == handle {
-					// Index already exists, skip it.
-					continue
-				}
-				return result, errors.Trace(err)
-			}
-			result.addedCount++
-		}
+		result.addedCount++
 	}
-
+	e.ctx.GetSessionVars().StmtCtx.BatchCheck = oldBatchCheck
 	return result, nil
 }
 

@@ -223,12 +223,10 @@ func (s *testSuite) TestAdminRecoverIndex(c *C) {
 	tk.MustExec("insert admin_test (c1, c2) values (1, 1), (2, 2), (NULL, NULL)")
 
 	r := tk.MustQuery("admin recover index admin_test c1")
-	// non-unique key set anyway.
-	r.Check(testkit.Rows("3 3"))
+	r.Check(testkit.Rows("0 3"))
 
 	r = tk.MustQuery("admin recover index admin_test c2")
-	// NULL set anyway.
-	r.Check(testkit.Rows("1 3"))
+	r.Check(testkit.Rows("0 3"))
 
 	tk.MustExec("admin check index admin_test c1")
 	tk.MustExec("admin check index admin_test c2")

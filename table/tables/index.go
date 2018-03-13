@@ -38,7 +38,8 @@ func encodeHandle(h int64) []byte {
 	return buf.Bytes()
 }
 
-func decodeHandle(data []byte) (int64, error) {
+// DecodeHandle decode handle in data.
+func DecodeHandle(data []byte) (int64, error) {
 	var h int64
 	buf := bytes.NewBuffer(data)
 	err := binary.Read(buf, binary.BigEndian, &h)
@@ -79,7 +80,7 @@ func (c *indexIter) Next() (val []types.Datum, h int64, err error) {
 		val = vv[0 : len(vv)-1]
 	} else {
 		// If the index is unique and the value isn't nil, the handle is in value.
-		h, err = decodeHandle(c.it.Value())
+		h, err = DecodeHandle(c.it.Value())
 		if err != nil {
 			return nil, 0, errors.Trace(err)
 		}
@@ -212,7 +213,7 @@ func (c *index) Create(ctx sessionctx.Context, rm kv.RetrieverMutator, indexedVa
 		return 0, errors.Trace(err)
 	}
 
-	handle, err := decodeHandle(value)
+	handle, err := DecodeHandle(value)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -297,7 +298,7 @@ func (c *index) Exist(sc *stmtctx.StatementContext, rm kv.RetrieverMutator, inde
 
 	// For distinct index, the value of key is handle.
 	if distinct {
-		handle, err := decodeHandle(value)
+		handle, err := DecodeHandle(value)
 		if err != nil {
 			return false, 0, errors.Trace(err)
 		}

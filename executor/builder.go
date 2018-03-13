@@ -269,7 +269,7 @@ func (b *executorBuilder) buildRecoverIndex(v *plan.RecoverIndex) Executor {
 		return nil
 	}
 
-	index := tables.NewIndexWithBuffer(tblInfo, indexInfo)
+	index := tables.NewIndex(tblInfo, indexInfo)
 	t, err := b.is.TableByName(v.Table.Schema, tblInfo.Name)
 	if err != nil {
 		b.err = errors.Trace(err)
