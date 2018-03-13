@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
@@ -358,6 +359,7 @@ func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	historyJobs, err := admin.GetHistoryDDLJobs(e.ctx.Txn())
 	if err != nil {
 		return errors.Trace(err)
