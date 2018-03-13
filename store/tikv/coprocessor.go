@@ -621,6 +621,7 @@ func (it *copIterator) handleTaskOnce(bo *Backoffer, task *copTask, ch chan copR
 }
 
 func (it *copIterator) handleCopStreamResult(bo *Backoffer, stream *tikvrpc.CopStreamResponse, task *copTask, ch chan copResponse) ([]*copTask, error) {
+	defer stream.Close()
 	var resp, lastResp *coprocessor.Response
 	resp = stream.Response
 	for {

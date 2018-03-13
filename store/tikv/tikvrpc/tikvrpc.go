@@ -159,20 +159,20 @@ type Response struct {
 type CopStreamResponse struct {
 	tikvpb.Tikv_CoprocessorStreamClient
 	*coprocessor.Response // The first result of Recv()
-
-	// The following fields is used to support timeout.
-	cancel    context.CancelFunc
-	timeoutCh chan<- *TimeoutItem
+	lease                 TimeoutItem
 }
 
 // NewCopStreamResponse returns a CopStreamResponse.
 func NewCopStreamResponse(client tikvpb.Tikv_CoprocessorStreamClient, resp *coprocessor.Response, cancel context.CancelFunc, ch chan<- *TimeoutItem) *CopStreamResponse {
-	return &CopStreamResponse{
+	ret := &CopStreamResponse{
 		Tikv_CoprocessorStreamClient: client,
 		Response:                     resp,
-		cancel:                       cancel,
-		timeoutCh:                    ch,
 	}
+	ret.lease.cancel = cancel
+	// If the return value is not used within 1 minute, it will expire.
+	ret.lease.deadline = time.Now().Add(time.Minute).Unix()
+	ch <- &ret.lease
+	return ret
 }
 
 // SetContext set the Context field for the given req to the specified ctx.
@@ -448,23 +448,23 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request, ch cha
 // TimeoutItem is used to implement grpc stream timeout.
 type TimeoutItem struct {
 	cancel   context.CancelFunc
-	timeout  time.Time
-	complete int32 // atomic variable, 0 means false
+	deadline int64 // A time.Unix value, if time.Now().Unix() > deadline, cancel() would be called.
 }
 
 // Recv overrides the stream client Recv() function.
 func (resp *CopStreamResponse) Recv() (*coprocessor.Response, error) {
-	item := &TimeoutItem{
-		cancel: resp.cancel,
-		// TODO: Make timeout a field in CopStreamResponse.
-		timeout: time.Now().Add(20 * time.Second),
-	}
-	resp.timeoutCh <- item
+	deadline := time.Now().Add(20 * time.Second).Unix()
+	atomic.StoreInt64(&resp.lease.deadline, deadline)
 
 	ret, err := resp.Tikv_CoprocessorStreamClient.Recv()
 
-	atomic.StoreInt32(&item.complete, 1)
+	atomic.StoreInt64(&resp.lease.deadline, 0) // Stop the lease check.
 	return ret, errors.Trace(err)
+}
+
+// Close closes the CopStreamResponse object.
+func (resp *CopStreamResponse) Close() {
+	atomic.StoreInt64(&resp.lease.deadline, 1)
 }
 
 // CheckStreamTimeoutLoop runs periodically to check is there any stream request timeouted.
@@ -483,27 +483,23 @@ func CheckStreamTimeoutLoop(ch <-chan *TimeoutItem) {
 			}
 			array = append(array, item)
 		case now := <-ticker.C:
-			array = keepOnlyActive(array, now)
+			array = keepOnlyActive(array, now.Unix())
 		}
 	}
 }
 
 // keepOnlyActive removes completed items, call cancel function for timeout items.
-func keepOnlyActive(array []*TimeoutItem, now time.Time) []*TimeoutItem {
+func keepOnlyActive(array []*TimeoutItem, now int64) []*TimeoutItem {
 	idx := 0
 	for i := 0; i < len(array); i++ {
 		item := array[i]
-		if atomic.LoadInt32(&item.complete) != 0 {
-			continue
-		}
-
-		if now.After(item.timeout) {
+		deadline := atomic.LoadInt64(&item.deadline)
+		if deadline == 0 || deadline > now {
+			array[idx] = array[i]
+			idx++
+		} else {
 			item.cancel()
-			continue
 		}
-
-		array[idx] = array[i]
-		idx++
 	}
 	return array[:idx]
 }
