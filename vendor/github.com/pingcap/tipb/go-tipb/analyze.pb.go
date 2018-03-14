@@ -6,6 +6,7 @@
 
 	It is generated from these files:
 		analyze.proto
+		checksum.proto
 		executor.proto
 		expression.proto
 		schema.proto
@@ -23,6 +24,8 @@
 		SampleCollector
 		CMSketchRow
 		CMSketch
+		ChecksumRequest
+		ChecksumResponse
 		Executor
 		TableScan
 		IndexScan
