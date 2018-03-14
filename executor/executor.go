@@ -236,7 +236,7 @@ func (e *CancelDDLJobsExec) NextChunk(ctx context.Context, chk *chunk.Chunk) err
 	}
 	numCurBatch := mathutil.Min(e.maxChunkSize, len(e.jobIDs)-e.cursor)
 	for i := e.cursor; i < e.cursor+numCurBatch; i++ {
-		chk.AppendInt64(0, e.jobIDs[i])
+		chk.AppendString(0, fmt.Sprintf("%d", e.jobIDs[i]))
 		if e.errs[i] != nil {
 			chk.AppendString(1, fmt.Sprintf("error: %v", e.errs[i]))
 		} else {
