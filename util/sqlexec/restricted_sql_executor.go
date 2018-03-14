@@ -40,7 +40,7 @@ type RestrictedSQLExecutor interface {
 // SQLExecutor is an interface provides executing normal sql statement.
 // Why we need this interface? To break circle dependence of packages.
 // For example, privilege/privileges package need execute SQL, if it use
-// tidb.Session.Execute, then privilege/privileges and tidb would become a circle.
+// session.Session.Execute, then privilege/privileges and tidb would become a circle.
 type SQLExecutor interface {
 	Execute(ctx context.Context, sql string) ([]ast.RecordSet, error)
 }

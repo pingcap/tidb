@@ -19,7 +19,7 @@ import (
 
 	gofail "github.com/coreos/gofail/runtime"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/terror"
@@ -37,10 +37,10 @@ func (s *testSQLSuite) SetUpSuite(c *C) {
 }
 
 func (s *testSQLSuite) TestFailBusyServerCop(c *C) {
-	_, err := tidb.BootstrapSession(s.store)
+	_, err := session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 
-	session, err := tidb.CreateSession4Test(s.store)
+	se, err := session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 
 	var wg sync.WaitGroup
@@ -55,7 +55,7 @@ func (s *testSQLSuite) TestFailBusyServerCop(c *C) {
 
 	go func() {
 		defer wg.Done()
-		rs, err := session.Execute(context.Background(), `SELECT variable_value FROM mysql.tidb WHERE variable_name="bootstrapped"`)
+		rs, err := se.Execute(context.Background(), `SELECT variable_value FROM mysql.tidb WHERE variable_name="bootstrapped"`)
 		if len(rs) > 0 {
 			defer terror.Call(rs[0].Close)
 		}

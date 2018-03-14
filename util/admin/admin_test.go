@@ -19,11 +19,11 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -203,9 +203,9 @@ func (s *testSuite) TestGetHistoryDDLJobs(c *C) {
 
 func (s *testSuite) TestScan(c *C) {
 	defer testleak.AfterTest(c)()
-	dom, err := tidb.BootstrapSession(s.store)
+	dom, err := session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
-	se, err := tidb.CreateSession4Test(s.store)
+	se, err := session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 	defer func() {
 		dom.Close()

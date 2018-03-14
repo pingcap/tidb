@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tidb_test
+package session_test
 
 import (
 	"fmt"
@@ -21,7 +21,6 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/privilege/privileges"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -68,9 +68,9 @@ func (s *testSessionSuite) SetUpSuite(c *C) {
 	)
 	c.Assert(err, IsNil)
 	s.store = store
-	tidb.SetSchemaLease(0)
-	tidb.SetStatsLease(0)
-	s.dom, err = tidb.BootstrapSession(s.store)
+	session.SetSchemaLease(0)
+	session.SetStatsLease(0)
+	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 }
 
@@ -162,8 +162,8 @@ func (s *testSessionSuite) TestErrorRollback(c *C) {
 	num := 100
 
 	// retry forever
-	tidb.SetCommitRetryLimit(math.MaxInt64)
-	defer tidb.SetCommitRetryLimit(10)
+	session.SetCommitRetryLimit(math.MaxInt64)
+	defer session.SetCommitRetryLimit(10)
 
 	for i := 0; i < cnt; i++ {
 		go func() {
@@ -403,10 +403,10 @@ func (s *testSessionSuite) TestRetryCleanTxn(c *C) {
 	tk1.MustExec("update retrytxn set b = b + 1 where a = 1")
 
 	// Hijack retry history, add a statement that returns error.
-	history := tidb.GetHistory(tk.Se)
+	history := session.GetHistory(tk.Se)
 	stmtNode, err := parser.New().ParseOneStmt("insert retrytxn values (2, 'a')", "", "")
 	c.Assert(err, IsNil)
-	stmt, _ := tidb.Compile(context.TODO(), tk.Se, stmtNode)
+	stmt, _ := session.Compile(context.TODO(), tk.Se, stmtNode)
 	executor.ResetStmtCtx(tk.Se, stmtNode)
 	history.Add(0, stmt, tk.Se.GetSessionVars().StmtCtx)
 	_, err = tk.Exec("commit")
@@ -421,7 +421,7 @@ func (s *testSessionSuite) TestReadOnlyNotInHistory(c *C) {
 	tk.MustExec("insert history values (1), (2), (3)")
 	tk.MustExec("set @@autocommit = 0")
 	tk.MustQuery("select * from history")
-	history := tidb.GetHistory(tk.Se)
+	history := session.GetHistory(tk.Se)
 	c.Assert(history.Count(), Equals, 0)
 
 	tk.MustExec("insert history values (4)")
@@ -429,7 +429,7 @@ func (s *testSessionSuite) TestReadOnlyNotInHistory(c *C) {
 	c.Assert(history.Count(), Equals, 2)
 	tk.MustExec("commit")
 	tk.MustQuery("select * from history")
-	history = tidb.GetHistory(tk.Se)
+	history = session.GetHistory(tk.Se)
 	c.Assert(history.Count(), Equals, 0)
 }
 
@@ -1095,8 +1095,8 @@ func (s *testSessionSuite) TestRetry(c *C) {
 	tk3.MustExec("SET SESSION autocommit=0;")
 
 	// retry forever
-	tidb.SetCommitRetryLimit(math.MaxInt64)
-	defer tidb.SetCommitRetryLimit(10)
+	session.SetCommitRetryLimit(math.MaxInt64)
+	defer session.SetCommitRetryLimit(10)
 
 	var wg sync.WaitGroup
 	wg.Add(3)
@@ -1447,19 +1447,19 @@ func (s *testSchemaSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	s.store = store
 	s.lease = 20 * time.Millisecond
-	tidb.SetSchemaLease(s.lease)
-	tidb.SetStatsLease(0)
-	dom, err := tidb.BootstrapSession(s.store)
+	session.SetSchemaLease(s.lease)
+	session.SetStatsLease(0)
+	dom, err := session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 	s.dom = dom
 }
 
 func (s *testSchemaSuite) TestLoadSchemaFailed(c *C) {
-	atomic.StoreInt32(&tidb.SchemaOutOfDateRetryTimes, int32(3))
-	atomic.StoreInt64(&tidb.SchemaOutOfDateRetryInterval, int64(20*time.Millisecond))
+	atomic.StoreInt32(&session.SchemaOutOfDateRetryTimes, int32(3))
+	atomic.StoreInt64(&session.SchemaOutOfDateRetryInterval, int64(20*time.Millisecond))
 	defer func() {
-		atomic.StoreInt32(&tidb.SchemaOutOfDateRetryTimes, 10)
-		atomic.StoreInt64(&tidb.SchemaOutOfDateRetryInterval, int64(500*time.Millisecond))
+		atomic.StoreInt32(&session.SchemaOutOfDateRetryTimes, 10)
+		atomic.StoreInt64(&session.SchemaOutOfDateRetryInterval, int64(500*time.Millisecond))
 	}()
 
 	tk := testkit.NewTestKitWithInit(c, s.store)
@@ -1528,9 +1528,9 @@ func (s *testSchemaSuite) TestSchemaCheckerSQL(c *C) {
 	tk.MustExec(`commit;`)
 
 	// The schema version is out of date in the first transaction, and the SQL can't be retried.
-	tidb.SchemaChangedWithoutRetry = true
+	session.SchemaChangedWithoutRetry = true
 	defer func() {
-		tidb.SchemaChangedWithoutRetry = false
+		session.SchemaChangedWithoutRetry = false
 	}()
 	tk.MustExec(`begin;`)
 	tk1.MustExec(`alter table t modify column c bigint;`)

@@ -76,7 +76,6 @@ check: errcheck
 
 	@echo "vet"
 	@ go tool vet -all -shadow $(TOPDIRS) 2>&1 | awk '{print} END{if(NR>0) {exit 1}}'
-	@ go tool vet -all -shadow *.go 2>&1 | awk '{print} END{if(NR>0) {exit 1}}'
 	@echo "golint"
 	@ golint -set_exit_status $(PACKAGES)
 	@echo "gofmt (simplify)"
