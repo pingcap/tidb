@@ -609,6 +609,8 @@ func (e *RecoverIndexExec) batchMarkDup(txn kv.Transaction, rows []recoverRows) 
 			} else {
 				log.Warnf("[recover-index] The constraint of unique index:%v is broken, handle:%v is not equal handle:%v with idxKey:%v.",
 					e.index.Meta().Name.O, handle, rows[offset].handle, key)
+				// no need to overwrite the broken index.
+				rows[offset].skip = true
 			}
 		}
 	}
