@@ -363,16 +363,6 @@ func (e *CheckTableExec) Open(ctx context.Context) error {
 	return nil
 }
 
-// Next implements the Executor Next interface.
-func (e *CheckTableExec) Next(ctx context.Context) (Row, error) {
-	if e.done {
-		return nil, nil
-	}
-	err := e.run(ctx)
-	e.done = true
-	return nil, errors.Trace(err)
-}
-
 // NextChunk implements the Executor NextChunk interface.
 func (e *CheckTableExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	if e.done {
