@@ -122,8 +122,8 @@ func (outputer *baseJoinResultGenerator) makeJoinRowToBuffer(buffer []types.Datu
 }
 
 func (outputer *baseJoinResultGenerator) makeJoinRowToChunk(chk *chunk.Chunk, lhs, rhs chunk.Row) {
-	// Call AppendRow() first to increment the virtual rows
-	// See: https://github.com/pingcap/tidb/issues/5771
+	// Call AppendRow() first to increment the virtual rows.
+	// Fix: https://github.com/pingcap/tidb/issues/5771
 	chk.AppendRow(lhs)
 	chk.AppendPartialRow(lhs.Len(), rhs)
 }
