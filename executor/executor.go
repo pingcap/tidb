@@ -327,7 +327,6 @@ func (e *ShowDDLJobQueriesExec) Open(ctx context.Context) error {
 	e.jobs = append(e.jobs, jobs...)
 	e.jobs = append(e.jobs, historyJobs...)
 
-	e.cursor = 0
 	return nil
 }
 
