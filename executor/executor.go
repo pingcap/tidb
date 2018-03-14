@@ -600,9 +600,9 @@ func (e *RecoverIndexExec) batchMarkDup(txn kv.Transaction, rows []recoverRows) 
 	for i, key := range batchDistinctKeys {
 		offset := distinctOffsets[i]
 		if val, found := values[string(key)]; found {
-			handle, err := tables.DecodeHandle(val)
-			if err != nil {
-				return errors.Trace(err)
+			handle, err1 := tables.DecodeHandle(val)
+			if err1 != nil {
+				return errors.Trace(err1)
 			}
 			if handle == rows[offset].handle {
 				rows[offset].skip = true
