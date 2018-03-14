@@ -933,9 +933,10 @@ func (s *testSessionSuite) TestResultType(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	rs, err := tk.Exec(`select cast(null as char(30))`)
 	c.Assert(err, IsNil)
-	row, err := rs.Next(context.Background())
+	chk := rs.NewChunk()
+	err = rs.NextChunk(context.Background(), chk)
 	c.Assert(err, IsNil)
-	c.Assert(row.IsNull(0), IsTrue)
+	c.Assert(chk.GetRow(0).IsNull(0), IsTrue)
 	c.Assert(rs.Fields()[0].Column.FieldType.Tp, Equals, mysql.TypeVarString)
 }
 

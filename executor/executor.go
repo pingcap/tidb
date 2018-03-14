@@ -226,7 +226,7 @@ func (e *CancelDDLJobsExec) NextChunk(ctx context.Context, chk *chunk.Chunk) err
 	}
 	numCurBatch := mathutil.Min(e.maxChunkSize, len(e.jobIDs)-e.cursor)
 	for i := e.cursor; i < e.cursor+numCurBatch; i++ {
-		chk.AppendInt64(0, e.jobIDs[i])
+		chk.AppendString(0, fmt.Sprintf("%d", e.jobIDs[i]))
 		if e.errs[i] != nil {
 			chk.AppendString(1, fmt.Sprintf("error: %v", e.errs[i]))
 		} else {
@@ -876,57 +876,17 @@ func (e *SelectionExec) unBatchedNextChunk(ctx context.Context, chk *chunk.Chunk
 type TableScanExec struct {
 	baseExecutor
 
-	t          table.Table
-	asName     *model.CIStr
-	ranges     []ranger.IntColumnRange
-	seekHandle int64
-	iter       kv.Iterator
-	cursor     int
-	columns    []*model.ColumnInfo
+	t              table.Table
+	asName         *model.CIStr
+	ranges         []ranger.IntColumnRange
+	seekHandle     int64
+	iter           kv.Iterator
+	cursor         int
+	columns        []*model.ColumnInfo
+	isVirtualTable bool
 
-	isVirtualTable     bool
-	virtualTableRows   [][]types.Datum
-	virtualTableCursor int
-
-	// for chunk execution
 	virtualTableChunkList *chunk.List
 	virtualTableChunkIdx  int
-}
-
-// Next implements the Executor interface.
-func (e *TableScanExec) Next(ctx context.Context) (Row, error) {
-	if e.isVirtualTable {
-		return e.nextForInfoSchema()
-	}
-	handle, found, err := e.nextHandle()
-	if err != nil || !found {
-		return nil, errors.Trace(err)
-	}
-	row, err := e.getRow(handle)
-	e.seekHandle = handle + 1
-	return row, errors.Trace(err)
-}
-
-func (e *TableScanExec) nextForInfoSchema() (Row, error) {
-	if e.virtualTableRows == nil {
-		columns := make([]*table.Column, e.schema.Len())
-		for i, v := range e.columns {
-			columns[i] = table.ToColumn(v)
-		}
-		err := e.t.IterRecords(e.ctx, nil, columns, func(h int64, rec []types.Datum, cols []*table.Column) (bool, error) {
-			e.virtualTableRows = append(e.virtualTableRows, rec)
-			return true, nil
-		})
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	if e.virtualTableCursor >= len(e.virtualTableRows) {
-		return nil, nil
-	}
-	row := e.virtualTableRows[e.virtualTableCursor]
-	e.virtualTableCursor++
-	return row, nil
 }
 
 // NextChunk implements the Executor NextChunk interface.
@@ -1049,7 +1009,6 @@ func (e *TableScanExec) getRow(handle int64) (Row, error) {
 // Open implements the Executor Open interface.
 func (e *TableScanExec) Open(ctx context.Context) error {
 	e.iter = nil
-	e.virtualTableRows = nil
 	e.virtualTableChunkList = nil
 	e.cursor = 0
 	return nil

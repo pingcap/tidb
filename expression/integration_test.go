@@ -2665,6 +2665,8 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 	result = tk.MustQuery(`select least(cast("2017-01-01" as datetime), "123", "234", cast("2018-01-01" as date)), least(cast("2017-01-01" as date), "123", null)`)
 	result.Check(testkit.Rows("123 <nil>"))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|invalid time format", "Warning|1105|invalid time format", "Warning|1105|invalid time format"))
+
+	tk.MustQuery(`select 1 < 17666000000000000000, 1 > 17666000000000000000, 1 = 17666000000000000000`).Check(testkit.Rows("1 0 0"))
 }
 
 func (s *testIntegrationSuite) TestAggregationBuiltin(c *C) {
