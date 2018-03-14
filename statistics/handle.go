@@ -185,7 +185,7 @@ func (h *Handle) LoadNeededHistograms() error {
 			histogramNeededColumns.delete(col)
 			continue
 		}
-		hg, err := histogramFromStorage(h.ctx, col.tableID, c.ID, &c.Info.FieldType, c.NDV, 0, c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Count)
+		hg, err := histogramFromStorage(h.ctx, col.tableID, c.ID, &c.Info.FieldType, c.NDV, 0, c.LastUpdateVersion, c.NullCount, c.TotColSize)
 		if err != nil {
 			return errors.Trace(err)
 		}

@@ -82,14 +82,6 @@ func (r *recordSet) getNext() []types.Datum {
 	return row
 }
 
-func (r *recordSet) Next(context.Context) (types.Row, error) {
-	row := r.getNext()
-	if row == nil {
-		return nil, nil
-	}
-	return types.DatumRow(row), nil
-}
-
 func (r *recordSet) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	row := r.getNext()
@@ -181,17 +173,21 @@ func buildPK(sctx sessionctx.Context, numBuckets, id int64, records ast.RecordSe
 	b := NewSortedBuilder(sctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeLonglong))
 	ctx := context.Background()
 	for {
-		row, err := records.Next(ctx)
+		chk := records.NewChunk()
+		err := records.NextChunk(ctx, chk)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
-		if row == nil {
+		if chk.NumRows() == 0 {
 			break
 		}
-		datums := ast.RowToDatums(row, records.Fields())
-		err = b.Iterate(datums[0])
-		if err != nil {
-			return 0, nil, errors.Trace(err)
+		it := chunk.NewIterator4Chunk(chk)
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			datums := ast.RowToDatums(row, records.Fields())
+			err = b.Iterate(datums[0])
+			if err != nil {
+				return 0, nil, errors.Trace(err)
+			}
 		}
 	}
 	return b.Count, b.hist, nil
@@ -201,25 +197,29 @@ func buildIndex(sctx sessionctx.Context, numBuckets, id int64, records ast.Recor
 	b := NewSortedBuilder(sctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeBlob))
 	cms := NewCMSketch(8, 2048)
 	ctx := context.Background()
+	chk := records.NewChunk()
+	it := chunk.NewIterator4Chunk(chk)
 	for {
-		row, err := records.Next(ctx)
+		err := records.NextChunk(ctx, chk)
 		if err != nil {
 			return 0, nil, nil, errors.Trace(err)
 		}
-		if row == nil {
+		if chk.NumRows() == 0 {
 			break
 		}
-		datums := ast.RowToDatums(row, records.Fields())
-		buf, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx, nil, datums...)
-		if err != nil {
-			return 0, nil, nil, errors.Trace(err)
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			datums := ast.RowToDatums(row, records.Fields())
+			buf, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx, nil, datums...)
+			if err != nil {
+				return 0, nil, nil, errors.Trace(err)
+			}
+			data := types.NewBytesDatum(buf)
+			err = b.Iterate(data)
+			if err != nil {
+				return 0, nil, nil, errors.Trace(err)
+			}
+			cms.InsertBytes(buf)
 		}
-		data := types.NewBytesDatum(buf)
-		err = b.Iterate(data)
-		if err != nil {
-			return 0, nil, nil, errors.Trace(err)
-		}
-		cms.InsertBytes(buf)
 	}
 	return b.Count, b.Hist(), cms, nil
 }
@@ -348,7 +348,7 @@ func (s *testStatisticsSuite) TestHistogramProtoConversion(c *C) {
 }
 
 func mockHistogram(lower, num int64) *Histogram {
-	h := NewHistogram(0, num, 0, 0, types.NewFieldType(mysql.TypeLonglong), int(num), 0, 0)
+	h := NewHistogram(0, num, 0, 0, types.NewFieldType(mysql.TypeLonglong), int(num), 0)
 	for i := int64(0); i < num; i++ {
 		lower, upper := types.NewIntDatum(lower+i), types.NewIntDatum(lower+i)
 		h.AppendBucket(&lower, &upper, i+1, 1)

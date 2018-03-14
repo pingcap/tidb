@@ -120,7 +120,7 @@ func (ds *testDumpStatsSuite) checkData(c *C, path string) {
 	dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
 	var dbName, tableName string
 	var other interface{}
-	err = rows.Scan(&dbName, &tableName, &other, &other, &other, &other, &other, &other, &other)
+	err = rows.Scan(&dbName, &tableName, &other, &other, &other, &other, &other, &other)
 	dbt.Check(err, IsNil)
 	dbt.Check(dbName, Equals, "tidb")
 	dbt.Check(tableName, Equals, "test")

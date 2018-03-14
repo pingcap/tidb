@@ -37,7 +37,7 @@ func NewSortedBuilder(sc *stmtctx.StatementContext, numBuckets, id int64, tp *ty
 		sc:              sc,
 		numBuckets:      numBuckets,
 		valuesPerBucket: 1,
-		hist:            NewHistogram(id, 0, 0, 0, tp, int(numBuckets), 0,0),
+		hist:            NewHistogram(id, 0, 0, 0, tp, int(numBuckets), 0),
 	}
 }
 
@@ -109,7 +109,7 @@ func BuildColumn(ctx sessionctx.Context, numBuckets, id int64, collector *Sample
 	if ndv > count {
 		ndv = count
 	}
-	hg := NewHistogram(id, ndv, collector.NullCount, 0, tp, int(numBuckets), collector.TotalSize, count)
+	hg := NewHistogram(id, ndv, collector.NullCount, 0, tp, int(numBuckets), collector.TotalSize)
 
 	sampleNum := int64(len(samples))
 	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.

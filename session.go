@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/kvcache"
 	binlog "github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
@@ -608,16 +609,16 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 func drainRecordSet(ctx context.Context, rs ast.RecordSet) ([]types.Row, error) {
 	var rows []types.Row
 	for {
-		row, err := rs.Next(ctx)
-		if err != nil {
-			return nil, errors.Trace(err)
+		chk := rs.NewChunk()
+		err := rs.NextChunk(ctx, chk)
+		if err != nil || chk.NumRows() == 0 {
+			return rows, errors.Trace(err)
 		}
-		if row == nil {
-			break
+		iter := chunk.NewIterator4Chunk(chk)
+		for r := iter.Begin(); r != iter.End(); r = iter.Next() {
+			rows = append(rows, r)
 		}
-		rows = append(rows, row)
 	}
-	return rows, nil
 }
 
 // getExecRet executes restricted sql and the result is one column.

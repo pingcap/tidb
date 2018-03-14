@@ -88,14 +88,13 @@ func (h *Handle) indexStatsFromStorage(row types.Row, table *Table, tableInfo *m
 	histVer := row.GetUint64(4)
 	nullCount := row.GetInt64(5)
 	totColSize := row.GetInt64(6)
-	count := row.GetInt64(7)
 	idx := table.Indices[histID]
 	for _, idxInfo := range tableInfo.Indices {
 		if histID != idxInfo.ID {
 			continue
 		}
 		if idx == nil || idx.LastUpdateVersion < histVer {
-			hg, err := histogramFromStorage(h.ctx, tableInfo.ID, histID, types.NewFieldType(mysql.TypeBlob), distinct, 1, histVer, nullCount, totColSize, count)
+			hg, err := histogramFromStorage(h.ctx, tableInfo.ID, histID, types.NewFieldType(mysql.TypeBlob), distinct, 1, histVer, nullCount, totColSize)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -121,7 +120,6 @@ func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *
 	histVer := row.GetUint64(4)
 	nullCount := row.GetInt64(5)
 	totColSize := row.GetInt64(6)
-	count := row.GetInt64(7)
 	col := table.Columns[histID]
 	for _, colInfo := range tableInfo.Columns {
 		if histID != colInfo.ID {
@@ -135,13 +133,13 @@ func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *
 				return errors.Trace(err)
 			}
 			col = &Column{
-				Histogram: Histogram{ID: histID, NDV: distinct, NullCount: nullCount, tp: &colInfo.FieldType, LastUpdateVersion: histVer, TotColSize: totColSize, Count: count},
+				Histogram: Histogram{ID: histID, NDV: distinct, NullCount: nullCount, tp: &colInfo.FieldType, LastUpdateVersion: histVer, TotColSize: totColSize},
 				Info:      colInfo,
 				Count:     count}
 			break
 		}
 		if col == nil || col.LastUpdateVersion < histVer || loadAll {
-			hg, err := histogramFromStorage(h.ctx, tableInfo.ID, histID, &colInfo.FieldType, distinct, 0, histVer, nullCount, totColSize, count)
+			hg, err := histogramFromStorage(h.ctx, tableInfo.ID, histID, &colInfo.FieldType, distinct, 0, histVer, nullCount, totColSize)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -177,7 +175,7 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, loadAll bool)
 		// We copy it before writing to avoid race.
 		table = table.copy()
 	}
-	selSQL := fmt.Sprintf("select table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, count from mysql.stats_histograms where table_id = %d", tableInfo.ID)
+	selSQL := fmt.Sprintf("select table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size from mysql.stats_histograms where table_id = %d", tableInfo.ID)
 	rows, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, selSQL)
 	if err != nil {
 		return nil, errors.Trace(err)

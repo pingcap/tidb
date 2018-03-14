@@ -55,10 +55,10 @@ func (e *ShowExec) fetchShowStatsHistogram() error {
 			statsTbl := h.GetTableStats(tbl.ID)
 			if !statsTbl.Pseudo {
 				for _, col := range statsTbl.Columns {
-					e.histogramToRow(db.Name.O, tbl.Name.O, col.Info.Name.O, 0, col.Histogram)
+					e.histogramToRow(db.Name.O, tbl.Name.O, col.Info.Name.O, 0, col.Histogram, col.AvgColSize())
 				}
 				for _, idx := range statsTbl.Indices {
-					e.histogramToRow(db.Name.O, tbl.Name.O, idx.Info.Name.O, 1, idx.Histogram)
+					e.histogramToRow(db.Name.O, tbl.Name.O, idx.Info.Name.O, 1, idx.Histogram, 0)
 				}
 			}
 		}
@@ -66,7 +66,7 @@ func (e *ShowExec) fetchShowStatsHistogram() error {
 	return nil
 }
 
-func (e *ShowExec) histogramToRow(dbName string, tblName string, colName string, isIndex int, hist statistics.Histogram) {
+func (e *ShowExec) histogramToRow(dbName string, tblName string, colName string, isIndex int, hist statistics.Histogram, avgColSize float64) {
 	e.appendRow([]interface{}{
 		dbName,
 		tblName,
@@ -75,7 +75,7 @@ func (e *ShowExec) histogramToRow(dbName string, tblName string, colName string,
 		e.versionToTime(hist.LastUpdateVersion),
 		hist.NDV,
 		hist.NullCount,
-		hist.AvgColSize(),
+		avgColSize,
 	})
 }
 
