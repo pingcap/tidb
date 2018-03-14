@@ -315,19 +315,6 @@ func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 	return nil
 }
 
-// Next implements the Executor Next interface.
-func (e *ShowDDLJobsExec) Next(ctx context.Context) (Row, error) {
-	if e.cursor >= len(e.jobs) {
-		return nil, nil
-	}
-
-	job := e.jobs[e.cursor]
-	row := types.MakeDatums(job.String(), job.State.String())
-	e.cursor++
-
-	return row, nil
-}
-
 // NextChunk implements the Executor NextChunk interface.
 func (e *ShowDDLJobsExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
