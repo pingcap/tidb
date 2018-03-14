@@ -15,6 +15,7 @@ package executor
 
 import (
 	"fmt"
+	"runtime"
 	"sync"
 	"sync/atomic"
 
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
@@ -118,6 +120,12 @@ func (e *baseExecutor) Open(ctx context.Context) error {
 		e.childrenResults = append(e.childrenResults, child.newChunk())
 	}
 	return nil
+}
+
+// Next implements interface Executor.
+// To be removed in near future.
+func (e *baseExecutor) Next(context.Context) (Row, error) {
+	return nil, nil
 }
 
 // Close closes all executors and release all resources.
@@ -218,7 +226,7 @@ func (e *CancelDDLJobsExec) NextChunk(ctx context.Context, chk *chunk.Chunk) err
 	}
 	numCurBatch := mathutil.Min(e.maxChunkSize, len(e.jobIDs)-e.cursor)
 	for i := e.cursor; i < e.cursor+numCurBatch; i++ {
-		chk.AppendInt64(0, e.jobIDs[i])
+		chk.AppendString(0, fmt.Sprintf("%d", e.jobIDs[i]))
 		if e.errs[i] != nil {
 			chk.AppendString(1, fmt.Sprintf("error: %v", e.errs[i]))
 		} else {
@@ -656,32 +664,20 @@ func init() {
 		if err != nil {
 			return rows, errors.Trace(err)
 		}
-		if sctx.GetSessionVars().EnableChunk {
-			for {
-				chk := exec.newChunk()
-				err = exec.NextChunk(ctx, chk)
-				if err != nil {
-					return rows, errors.Trace(err)
-				}
-				if chk.NumRows() == 0 {
-					return rows, nil
-				}
-				iter := chunk.NewIterator4Chunk(chk)
-				for r := iter.Begin(); r != iter.End(); r = iter.Next() {
-					row := r.GetDatumRow(exec.retTypes())
-					rows = append(rows, row)
-				}
-			}
-		}
 		for {
-			row, err := exec.Next(ctx)
+			chk := exec.newChunk()
+			err = exec.NextChunk(ctx, chk)
 			if err != nil {
 				return rows, errors.Trace(err)
 			}
-			if row == nil {
+			if chk.NumRows() == 0 {
 				return rows, nil
 			}
-			rows = append(rows, row)
+			iter := chunk.NewIterator4Chunk(chk)
+			for r := iter.Begin(); r != iter.End(); r = iter.Next() {
+				row := r.GetDatumRow(exec.retTypes())
+				rows = append(rows, row)
+			}
 		}
 	}
 	tableMySQLErrCodes := map[terror.ErrCode]uint16{
@@ -900,57 +896,17 @@ func (e *SelectionExec) unBatchedNextChunk(ctx context.Context, chk *chunk.Chunk
 type TableScanExec struct {
 	baseExecutor
 
-	t          table.Table
-	asName     *model.CIStr
-	ranges     []ranger.IntColumnRange
-	seekHandle int64
-	iter       kv.Iterator
-	cursor     int
-	columns    []*model.ColumnInfo
+	t              table.Table
+	asName         *model.CIStr
+	ranges         []ranger.IntColumnRange
+	seekHandle     int64
+	iter           kv.Iterator
+	cursor         int
+	columns        []*model.ColumnInfo
+	isVirtualTable bool
 
-	isVirtualTable     bool
-	virtualTableRows   [][]types.Datum
-	virtualTableCursor int
-
-	// for chunk execution
 	virtualTableChunkList *chunk.List
 	virtualTableChunkIdx  int
-}
-
-// Next implements the Executor interface.
-func (e *TableScanExec) Next(ctx context.Context) (Row, error) {
-	if e.isVirtualTable {
-		return e.nextForInfoSchema()
-	}
-	handle, found, err := e.nextHandle()
-	if err != nil || !found {
-		return nil, errors.Trace(err)
-	}
-	row, err := e.getRow(handle)
-	e.seekHandle = handle + 1
-	return row, errors.Trace(err)
-}
-
-func (e *TableScanExec) nextForInfoSchema() (Row, error) {
-	if e.virtualTableRows == nil {
-		columns := make([]*table.Column, e.schema.Len())
-		for i, v := range e.columns {
-			columns[i] = table.ToColumn(v)
-		}
-		err := e.t.IterRecords(e.ctx, nil, columns, func(h int64, rec []types.Datum, cols []*table.Column) (bool, error) {
-			e.virtualTableRows = append(e.virtualTableRows, rec)
-			return true, nil
-		})
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	if e.virtualTableCursor >= len(e.virtualTableRows) {
-		return nil, nil
-	}
-	row := e.virtualTableRows[e.virtualTableCursor]
-	e.virtualTableCursor++
-	return row, nil
 }
 
 // NextChunk implements the Executor NextChunk interface.
@@ -1073,7 +1029,6 @@ func (e *TableScanExec) getRow(handle int64) (Row, error) {
 // Open implements the Executor Open interface.
 func (e *TableScanExec) Open(ctx context.Context) error {
 	e.iter = nil
-	e.virtualTableRows = nil
 	e.virtualTableChunkList = nil
 	e.cursor = 0
 	return nil
@@ -1093,20 +1048,6 @@ func (e *ExistsExec) Open(ctx context.Context) error {
 	}
 	e.evaluated = false
 	return nil
-}
-
-// Next implements the Executor Next interface.
-// We always return one row with one column which has true or false value.
-func (e *ExistsExec) Next(ctx context.Context) (Row, error) {
-	if !e.evaluated {
-		e.evaluated = true
-		srcRow, err := e.children[0].Next(ctx)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		return Row{types.NewDatum(srcRow != nil)}, nil
-	}
-	return nil, nil
 }
 
 // NextChunk implements the Executor NextChunk interface.
@@ -1142,29 +1083,6 @@ func (e *MaxOneRowExec) Open(ctx context.Context) error {
 	}
 	e.evaluated = false
 	return nil
-}
-
-// Next implements the Executor Next interface.
-func (e *MaxOneRowExec) Next(ctx context.Context) (Row, error) {
-	if !e.evaluated {
-		e.evaluated = true
-		srcRow, err := e.children[0].Next(ctx)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if srcRow == nil {
-			return make([]types.Datum, e.schema.Len()), nil
-		}
-		srcRow1, err := e.children[0].Next(ctx)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if srcRow1 != nil {
-			return nil, errors.New("subquery returns more than 1 row")
-		}
-		return srcRow, nil
-	}
-	return nil, nil
 }
 
 // NextChunk implements the Executor NextChunk interface.
@@ -1214,7 +1132,6 @@ type UnionExec struct {
 
 	stopFetchData atomic.Value
 	resultCh      chan *execResult
-	rows          []Row
 	cursor        int
 	wg            sync.WaitGroup
 
@@ -1325,6 +1242,10 @@ func (e *UnionExec) resultPuller(ctx context.Context, childID int) {
 	}
 	defer func() {
 		if r := recover(); r != nil {
+			buf := make([]byte, 4096)
+			stackSize := runtime.Stack(buf, false)
+			buf = buf[:stackSize]
+			log.Errorf("resultPuller panic stack is:\n%s", buf)
 			result.err = errors.Errorf("%v", r)
 			e.resultPool <- result
 			e.stopFetchData.Store(true)
@@ -1352,31 +1273,6 @@ func (e *UnionExec) resultPuller(ctx context.Context, childID int) {
 	}
 }
 
-// Next implements the Executor Next interface.
-func (e *UnionExec) Next(ctx context.Context) (Row, error) {
-	if !e.initialized {
-		e.initialize(ctx, false)
-		e.initialized = true
-	}
-	if e.cursor >= len(e.rows) {
-		result, ok := <-e.resultCh
-		if !ok {
-			return nil, nil
-		}
-		if result.err != nil {
-			return nil, errors.Trace(result.err)
-		}
-		if len(result.rows) == 0 {
-			return nil, nil
-		}
-		e.rows = result.rows
-		e.cursor = 0
-	}
-	row := e.rows[e.cursor]
-	e.cursor++
-	return row, nil
-}
-
 // NextChunk implements the Executor NextChunk interface.
 func (e *UnionExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
@@ -1399,7 +1295,6 @@ func (e *UnionExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 
 // Close implements the Executor Close interface.
 func (e *UnionExec) Close() error {
-	e.rows = nil
 	close(e.finished)
 	if e.resultPool != nil {
 		for range e.resultPool {

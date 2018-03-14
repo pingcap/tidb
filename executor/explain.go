@@ -15,7 +15,6 @@ package executor
 
 import (
 	"github.com/cznic/mathutil"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"golang.org/x/net/context"
 )
@@ -26,19 +25,6 @@ type ExplainExec struct {
 
 	rows   [][]string
 	cursor int
-}
-
-// Next implements Execution Next interface.
-func (e *ExplainExec) Next(ctx context.Context) (Row, error) {
-	if e.cursor >= len(e.rows) {
-		return nil, nil
-	}
-	resultRow := make([]types.Datum, 0, len(e.rows[0]))
-	for i := range e.rows[e.cursor] {
-		resultRow = append(resultRow, types.NewStringDatum(e.rows[e.cursor][i]))
-	}
-	e.cursor++
-	return resultRow, nil
 }
 
 // Close implements the Executor Close interface.

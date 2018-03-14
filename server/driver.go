@@ -17,7 +17,6 @@ import (
 	"crypto/tls"
 	"fmt"
 
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/chunk"
@@ -84,10 +83,6 @@ type QueryCtx interface {
 	ShowProcess() util.ProcessInfo
 
 	SetSessionManager(util.SessionManager)
-
-	// EnableChunk indicates whether the chunk execution model is enabled.
-	// TODO: remove this after tidb-server configuration "enable-chunk' removed.
-	EnableChunk()
 }
 
 // PreparedStatement is the interface to use a prepared statement.
@@ -123,7 +118,6 @@ type PreparedStatement interface {
 // ResultSet is the result set of an query.
 type ResultSet interface {
 	Columns() []*ColumnInfo
-	Next(context.Context) (types.Row, error)
 	NewChunk() *chunk.Chunk
 	NextChunk(context.Context, *chunk.Chunk) error
 	Close() error

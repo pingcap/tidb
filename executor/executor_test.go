@@ -136,16 +136,20 @@ func (s *testSuite) TestAdmin(c *C) {
 	// cancel DDL jobs test
 	r, err := tk.Exec("admin cancel ddl jobs 1")
 	c.Assert(err, IsNil, Commentf("err %v", err))
-	row, err := r.Next(ctx)
+	chk := r.NewChunk()
+	err = r.NextChunk(ctx, chk)
 	c.Assert(err, IsNil)
+	row := chk.GetRow(0)
 	c.Assert(row.Len(), Equals, 2)
-	c.Assert(row.GetInt64(0), Equals, int64(1))
+	c.Assert(row.GetString(0), Equals, "1")
 	c.Assert(row.GetString(1), Equals, "error: Can't find this job")
 
 	r, err = tk.Exec("admin show ddl")
 	c.Assert(err, IsNil)
-	row, err = r.Next(ctx)
+	chk = r.NewChunk()
+	err = r.NextChunk(ctx, chk)
 	c.Assert(err, IsNil)
+	row = chk.GetRow(0)
 	c.Assert(row.Len(), Equals, 4)
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
@@ -157,17 +161,20 @@ func (s *testSuite) TestAdmin(c *C) {
 	// ownerInfos := strings.Split(ddlInfo.Owner.String(), ",")
 	// c.Assert(rowOwnerInfos[0], Equals, ownerInfos[0])
 	c.Assert(row.GetString(2), Equals, "")
-	row, err = r.Next(ctx)
+	chk = r.NewChunk()
+	err = r.NextChunk(ctx, chk)
 	c.Assert(err, IsNil)
-	c.Assert(row, IsNil)
+	c.Assert(chk.NumRows() == 0, IsTrue)
 	err = txn.Rollback()
 	c.Assert(err, IsNil)
 
 	// show DDL jobs test
 	r, err = tk.Exec("admin show ddl jobs")
 	c.Assert(err, IsNil)
-	row, err = r.Next(ctx)
+	chk = r.NewChunk()
+	err = r.NextChunk(ctx, chk)
 	c.Assert(err, IsNil)
+	row = chk.GetRow(0)
 	c.Assert(row.Len(), Equals, 2)
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
@@ -723,9 +730,10 @@ func (s *testSuite) TestIssue2612(c *C) {
 	tk.MustExec(`insert into t values ('2016-02-13 15:32:24',  '2016-02-11 17:23:22');`)
 	rs, err := tk.Exec(`select timediff(finish_at, create_at) from t;`)
 	c.Assert(err, IsNil)
-	row, err := rs.Next(context.Background())
+	chk := rs.NewChunk()
+	err = rs.NextChunk(context.Background(), chk)
 	c.Assert(err, IsNil)
-	c.Assert(row.GetDuration(0).String(), Equals, "-46:09:02")
+	c.Assert(chk.GetRow(0).GetDuration(0).String(), Equals, "-46:09:02")
 }
 
 // TestIssue345 is related with https://github.com/pingcap/tidb/issues/345
@@ -2000,6 +2008,7 @@ const (
 	checkRequestPriority     = 1
 	checkRequestNotFillCache = 2
 	checkRequestSyncLog      = 3
+	checkDDLAddIndexPriority = 4
 )
 
 type checkRequestClient struct {
@@ -2008,8 +2017,9 @@ type checkRequestClient struct {
 	notFillCache bool
 	mu           struct {
 		sync.RWMutex
-		checkFlags uint32
-		syncLog    bool
+		checkFlags     uint32
+		lowPriorityCnt uint32
+		syncLog        bool
 	}
 }
 
@@ -2037,6 +2047,16 @@ func (c *checkRequestClient) SendReq(ctx context.Context, addr string, req *tikv
 			c.mu.RUnlock()
 			if syncLog != req.SyncLog {
 				return nil, errors.New("fail to set sync log")
+			}
+		}
+	} else if checkFlags == checkDDLAddIndexPriority {
+		if req.Type == tikvrpc.CmdScan {
+			if c.priority != req.Priority {
+				return nil, errors.New("fail to set priority")
+			}
+		} else if req.Type == tikvrpc.CmdPrewrite {
+			if c.priority == pb.CommandPri_Low {
+				c.mu.lowPriorityCnt++
 			}
 		}
 	}
@@ -2069,6 +2089,45 @@ func (s *testContextOptionSuite) SetUpSuite(c *C) {
 func (s *testContextOptionSuite) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
+}
+
+func (s *testContextOptionSuite) TestAddIndexPriority(c *C) {
+	cli := &checkRequestClient{}
+	hijackClient := func(c tikv.Client) tikv.Client {
+		cli.Client = c
+		return cli
+	}
+
+	store, err := mockstore.NewMockTikvStore(
+		mockstore.WithHijackClient(hijackClient),
+	)
+	c.Assert(err, IsNil)
+	dom, err := tidb.BootstrapSession(store)
+	c.Assert(err, IsNil)
+
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int, v int)")
+
+	// Insert some data to make sure plan build IndexLookup for t1.
+	for i := 0; i < 10; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t1 values (%d, %d)", i, i))
+	}
+
+	cli.mu.Lock()
+	cli.mu.checkFlags = checkDDLAddIndexPriority
+	cli.mu.Unlock()
+
+	cli.priority = pb.CommandPri_Low
+	tk.MustExec("alter table t1 add index t1_index (id);")
+
+	c.Assert(cli.mu.lowPriorityCnt > 0, IsTrue)
+
+	cli.mu.Lock()
+	cli.mu.checkFlags = checkRequestOff
+	cli.mu.Unlock()
+	dom.Close()
+	store.Close()
 }
 
 func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
@@ -2212,9 +2271,10 @@ func (s *testSuite) TestBit(c *C) {
 	c.Assert(err, NotNil)
 	r, err := tk.Exec("select * from t where c1 = 2")
 	c.Assert(err, IsNil)
-	row, err := r.Next(context.Background())
+	chk := r.NewChunk()
+	err = r.NextChunk(context.Background(), chk)
 	c.Assert(err, IsNil)
-	c.Assert(types.BinaryLiteral(row.GetBytes(0)), DeepEquals, types.NewBinaryLiteralFromUint(2, -1))
+	c.Assert(types.BinaryLiteral(chk.GetRow(0).GetBytes(0)), DeepEquals, types.NewBinaryLiteralFromUint(2, -1))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c1 bit(31))")
@@ -2376,7 +2436,8 @@ func (s *testSuite) TestEarlyClose(c *C) {
 		rss, err := tk.Se.Execute(ctx, "select * from earlyclose order by id")
 		c.Assert(err, IsNil)
 		rs := rss[0]
-		_, err = rs.Next(ctx)
+		chk := rs.NewChunk()
+		err = rs.NextChunk(ctx, chk)
 		c.Assert(err, IsNil)
 		rs.Close()
 	}
@@ -2431,6 +2492,9 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	mockCtx := mock.NewContext()
 	idx := tb.Indices()[0]
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+
+	_, err = se.Execute(context.Background(), "admin check index t idx_inexistent")
+	c.Assert(strings.Contains(err.Error(), "not exist"), IsTrue)
 
 	// set data to:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30)
@@ -2489,6 +2553,17 @@ func setColValue(c *C, txn kv.Transaction, key kv.Key, v types.Datum) {
 	c.Assert(err, IsNil)
 }
 
+func (s *testSuite) TestCheckTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	// Test 'admin check table' when the table has a unique index with null values.
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists admin_test;")
+	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, index (c1), unique key(c2));")
+	tk.MustExec("insert admin_test (c1, c2) values (1, 1), (2, 2), (NULL, NULL);")
+	tk.MustExec("admin check table admin_test;")
+}
+
 func (s *testSuite) TestCoprocessorStreamingFlag(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -2520,7 +2595,8 @@ func (s *testSuite) TestCoprocessorStreamingFlag(c *C) {
 		})
 		rs, err := tk.Se.Execute(ctx1, test.sql)
 		c.Assert(err, IsNil)
-		_, err = rs[0].Next(ctx)
+		chk := rs[0].NewChunk()
+		err = rs[0].NextChunk(ctx, chk)
 		c.Assert(err, IsNil)
 		rs[0].Close()
 	}

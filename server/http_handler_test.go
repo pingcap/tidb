@@ -363,9 +363,10 @@ func (ts *HTTPHandlerTestSuite) TestDecodeColumnValue(c *C) {
 	bs, err := tablecodec.EncodeRow(sc, row, colIDs, nil, nil)
 	c.Assert(err, IsNil)
 	c.Assert(bs, NotNil)
+	bin := base64.StdEncoding.EncodeToString(bs)
 
 	unitTest := func(col *column) {
-		url := fmt.Sprintf("http://127.0.0.1:10090/tables/%d/%v/%d/%d/%s", col.id, col.tp.Tp, col.tp.Flag, col.tp.Flen, base64.StdEncoding.EncodeToString(bs))
+		url := fmt.Sprintf("http://127.0.0.1:10090/tables/%d/%v/%d/%d?rowBin=%s", col.id, col.tp.Tp, col.tp.Flag, col.tp.Flen, bin)
 		resp, err := http.Get(url)
 		c.Assert(err, IsNil, Commentf("url:%s", url))
 		decoder := json.NewDecoder(resp.Body)
@@ -380,6 +381,18 @@ func (ts *HTTPHandlerTestSuite) TestDecodeColumnValue(c *C) {
 	for _, col := range cols {
 		unitTest(col)
 	}
+
+	// Test bin has `+`.
+	// 2018-03-08 16:01:00.315313
+	bin = "CAIIyAEIBAIGYWJjCAYGAQCBCAgJsZ+TgISg1M8Z"
+	row[3] = types.NewTimeDatum(types.Time{Time: types.FromGoTime(time.Date(2018, 3, 8, 16, 1, 0, 315313000, time.UTC)), Fsp: 6, Type: mysql.TypeTimestamp})
+	unitTest(cols[3])
+
+	// Test bin has `/`.
+	// 2018-03-08 02:44:46.409199
+	bin = "CAIIyAEIBAIGYWJjCAYGAQCBCAgJ7/yY8LKF1M8Z"
+	row[3] = types.NewTimeDatum(types.Time{Time: types.FromGoTime(time.Date(2018, 3, 8, 2, 44, 46, 409199000, time.UTC)), Fsp: 6, Type: mysql.TypeTimestamp})
+	unitTest(cols[3])
 }
 
 func (ts *HTTPHandlerTestSuite) TestGetIndexMVCC(c *C) {
