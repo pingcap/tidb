@@ -203,21 +203,6 @@ type CancelDDLJobsExec struct {
 	errs   []error
 }
 
-// Next implements the Executor Next interface.
-func (e *CancelDDLJobsExec) Next(ctx context.Context) (Row, error) {
-	var row Row
-	if e.cursor < len(e.jobIDs) {
-		ret := "successful"
-		if e.errs[e.cursor] != nil {
-			ret = fmt.Sprintf("error: %v", e.errs[e.cursor])
-		}
-		row = types.MakeDatums(e.jobIDs[e.cursor], ret)
-		e.cursor++
-	}
-
-	return row, nil
-}
-
 // NextChunk implements the Executor NextChunk interface.
 func (e *CancelDDLJobsExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
