@@ -273,6 +273,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{";", true},
 		{"INSERT INTO foo VALUES (1234)", true},
 		{"INSERT INTO foo VALUES (1234, 5678)", true},
+		{"INSERT INTO t1 (SELECT * FROM t2)", true},
 		// 15
 		{"INSERT INTO foo VALUES (1 || 2)", true},
 		{"INSERT INTO foo VALUES (1 | 2)", true},
@@ -404,6 +405,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"admin show ddl jobs;", true},
 		{"admin check table t1, t2;", true},
 		{"admin check index tableName idxName;", true},
+		{"admin check index tableName idxName (1, 2), (4, 5);", true},
 		{"admin cancel ddl jobs 1", true},
 		{"admin cancel ddl jobs 1, 2", true},
 
