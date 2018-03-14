@@ -56,10 +56,7 @@ func (e *RevokeExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 		return nil
 	}
 	e.done = true
-	return errors.Trace(e.run(ctx))
-}
 
-func (e *RevokeExec) run(ctx context.Context) error {
 	// Revoke for each user
 	for _, user := range e.Users {
 		// Check if user exists.
