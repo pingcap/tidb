@@ -655,7 +655,7 @@ func buildShowDDLJobsFields() *expression.Schema {
 
 func buildShowDDLJobQueriesFields() *expression.Schema {
 	schema := expression.NewSchema(make([]*expression.Column, 0, 1)...)
-	schema.Append(buildColumn("", "QUERY", mysql.TypeVarchar, 128))
+	schema.Append(buildColumn("", "QUERY", mysql.TypeVarchar, 256))
 	return schema
 }
 
