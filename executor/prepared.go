@@ -95,11 +95,6 @@ func NewPrepareExec(ctx sessionctx.Context, is infoschema.InfoSchema, sqlTxt str
 
 // NextChunk implements the Executor NextChunk interface.
 func (e *PrepareExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
-	return errors.Trace(e.DoPrepare())
-}
-
-// DoPrepare prepares the statement, it can be called multiple times without side effect.
-func (e *PrepareExec) DoPrepare() error {
 	vars := e.ctx.GetSessionVars()
 	if e.ID != 0 {
 		// Must be the case when we retry a prepare.
@@ -227,10 +222,6 @@ type DeallocateExec struct {
 
 // NextChunk implements the Executor NextChunk interface.
 func (e *DeallocateExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
-	return errors.Trace(e.run(ctx))
-}
-
-func (e *DeallocateExec) run(ctx context.Context) error {
 	vars := e.ctx.GetSessionVars()
 	id, ok := vars.PreparedStmtNameToID[e.Name]
 	if !ok {
