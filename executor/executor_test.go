@@ -186,10 +186,16 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(err, IsNil)
 
 	// show DDL job queries test
-	tks := testkit.NewTestKit(c, s.store)
+	stores, doms, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tks := testkit.NewTestKit(c, stores)
+	defer func() {
+		doms.Close()
+		stores.Close()
+	}()
 	tks.MustExec("use test")
 	tks.MustExec("create table admin_test2 (c1 int, c2 int, c3 int default 1, index (c1))")
-	result := tks.MustQuery(`admin show ddl job queries 43`)
+	result := tks.MustQuery(`admin show ddl job queries 28`)
 	result.Check(testkit.Rows("create table admin_test2 (c1 int, c2 int, c3 int default 1, index (c1))"))
 	result = tks.MustQuery(`admin show ddl job queries 1, 1, 1`)
 	result.Check(testkit.Rows())
@@ -220,6 +226,17 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(err, IsNil)
 	r, err = tk.Exec("admin check table admin_test")
 	c.Assert(err, NotNil)
+}
+
+func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
+	store, err := mockstore.NewMockTikvStore()
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	tidb.SetSchemaLease(0)
+	tidb.SetStatsLease(0)
+	dom, err := tidb.BootstrapSession(store)
+	return store, dom, errors.Trace(err)
 }
 
 func (s *testSuite) fillData(tk *testkit.TestKit, table string) {
