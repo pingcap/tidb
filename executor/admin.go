@@ -14,17 +14,24 @@
 package executor
 
 import (
+	"math"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
@@ -136,5 +143,321 @@ func (e *CheckIndexRangeExec) constructIndexScanPB() *tipb.Executor {
 
 // Close implements the Executor Close interface.
 func (e *CheckIndexRangeExec) Close() error {
+	return nil
+}
+
+// RecoverIndexExec represents a recover index executor.
+// It is built from "admin recover index" statement, is used to backfill
+// corrupted index.
+type RecoverIndexExec struct {
+	baseExecutor
+
+	done bool
+
+	index     table.Index
+	table     table.Table
+	batchSize int
+
+	columns       []*model.ColumnInfo
+	colFieldTypes []*types.FieldType
+	srcChunk      *chunk.Chunk
+
+	// below buf is used to reduce allocations.
+	recoverRows []recoverRows
+	idxValsBufs [][]types.Datum
+	idxKeyBufs  [][]byte
+}
+
+func (e *RecoverIndexExec) columnsTypes() []*types.FieldType {
+	if e.colFieldTypes != nil {
+		return e.colFieldTypes
+	}
+
+	e.colFieldTypes = make([]*types.FieldType, 0, len(e.columns))
+	for _, col := range e.columns {
+		e.colFieldTypes = append(e.colFieldTypes, &col.FieldType)
+	}
+	return e.colFieldTypes
+}
+
+// Open implements the Executor Open interface.
+func (e *RecoverIndexExec) Open(ctx context.Context) error {
+	if err := e.baseExecutor.Open(ctx); err != nil {
+		return errors.Trace(err)
+	}
+
+	e.srcChunk = chunk.NewChunk(e.columnsTypes())
+	e.batchSize = 2048
+	e.recoverRows = make([]recoverRows, 0, e.batchSize)
+	e.idxValsBufs = make([][]types.Datum, e.batchSize)
+	e.idxKeyBufs = make([][]byte, e.batchSize)
+	return nil
+}
+
+// Next implements the Executor Next interface.
+func (e *RecoverIndexExec) Next(ctx context.Context) (Row, error) {
+	return nil, nil
+}
+
+func (e *RecoverIndexExec) constructTableScanPB(pbColumnInfos []*tipb.ColumnInfo) *tipb.Executor {
+	tblScan := &tipb.TableScan{
+		TableId: e.table.Meta().ID,
+		Columns: pbColumnInfos,
+	}
+
+	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tblScan}
+}
+
+func (e *RecoverIndexExec) constructLimitPB(count uint64) *tipb.Executor {
+	limitExec := &tipb.Limit{
+		Limit: count,
+	}
+	return &tipb.Executor{Tp: tipb.ExecType_TypeLimit, Limit: limitExec}
+}
+
+func (e *RecoverIndexExec) buildDAGPB(txn kv.Transaction, limitCnt uint64) (*tipb.DAGRequest, error) {
+	dagReq := &tipb.DAGRequest{}
+	dagReq.StartTs = txn.StartTS()
+	dagReq.TimeZoneOffset = timeZoneOffset(e.ctx)
+	sc := e.ctx.GetSessionVars().StmtCtx
+	dagReq.Flags = statementContextToFlags(sc)
+	for i := range e.columns {
+		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
+	}
+
+	tblInfo := e.table.Meta()
+	pbColumnInfos := plan.ColumnsToProto(e.columns, tblInfo.PKIsHandle)
+	err := plan.SetPBColumnsDefaultValue(e.ctx, pbColumnInfos, e.columns)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	tblScanExec := e.constructTableScanPB(pbColumnInfos)
+	dagReq.Executors = append(dagReq.Executors, tblScanExec)
+
+	limitExec := e.constructLimitPB(limitCnt)
+	dagReq.Executors = append(dagReq.Executors, limitExec)
+
+	return dagReq, nil
+}
+
+func (e *RecoverIndexExec) buildTableScan(ctx context.Context, txn kv.Transaction, t table.Table, startHandle int64, limitCnt uint64) (distsql.SelectResult, error) {
+	dagPB, err := e.buildDAGPB(txn, limitCnt)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	tblInfo := e.table.Meta()
+	ranges := []*ranger.NewRange{{LowVal: []types.Datum{types.NewIntDatum(startHandle)}, HighVal: []types.Datum{types.NewIntDatum(math.MaxInt64)}}}
+	var builder distsql.RequestBuilder
+	kvReq, err := builder.SetTableRanges(tblInfo.ID, ranges, nil).
+		SetDAGRequest(dagPB).
+		SetKeepOrder(true).
+		SetFromSessionVars(e.ctx.GetSessionVars()).
+		Build()
+
+	// Actually, with limitCnt, the match datas maybe only in one region, so let the concurrency to be 1,
+	// avoid unnecessary region scan.
+	kvReq.Concurrency = 1
+	result, err := distsql.Select(ctx, e.ctx, kvReq, e.columnsTypes(), statistics.NewQueryFeedback(0, nil, 0, false))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	result.Fetch(ctx)
+	return result, nil
+}
+
+type backfillResult struct {
+	nextHandle   int64
+	addedCount   int64
+	scanRowCount int64
+}
+
+func (e *RecoverIndexExec) backfillIndex(ctx context.Context) (int64, int64, error) {
+	var (
+		nextHandle    = int64(math.MinInt64)
+		totalAddedCnt = int64(0)
+		totalScanCnt  = int64(0)
+		lastLogCnt    = int64(0)
+		result        backfillResult
+	)
+	for {
+		errInTxn := kv.RunInNewTxn(e.ctx.GetStore(), true, func(txn kv.Transaction) error {
+			var err error
+			result, err = e.backfillIndexInTxn(ctx, txn, nextHandle)
+			return errors.Trace(err)
+		})
+		if errInTxn != nil {
+			return totalAddedCnt, totalScanCnt, errors.Trace(errInTxn)
+		}
+		totalAddedCnt += result.addedCount
+		totalScanCnt += result.scanRowCount
+		if totalScanCnt-lastLogCnt >= 50000 {
+			lastLogCnt = totalScanCnt
+			log.Infof("[recover-index] recover table:%v, index:%v, totalAddedCnt:%v, totalScanCnt:%v, nextHandle: %v",
+				e.table.Meta().Name.O, e.index.Meta().Name.O, totalAddedCnt, totalScanCnt, result.nextHandle)
+		}
+
+		// no more rows
+		if result.scanRowCount == 0 {
+			break
+		}
+		nextHandle = result.nextHandle
+	}
+	return totalAddedCnt, totalScanCnt, nil
+}
+
+func (e *RecoverIndexExec) extractIdxVals(row chunk.Row, idxVals []types.Datum) []types.Datum {
+	if idxVals == nil {
+		idxVals = make([]types.Datum, 0, row.Len()-1)
+	} else {
+		idxVals = idxVals[:0]
+	}
+
+	for i := 0; i < row.Len()-1; i++ {
+		colVal := row.GetDatum(i, &e.columns[i].FieldType)
+		idxVals = append(idxVals, *colVal.Copy())
+	}
+	return idxVals
+}
+
+type recoverRows struct {
+	handle  int64
+	idxVals []types.Datum
+	skip    bool
+}
+
+func (e *RecoverIndexExec) fetchRecoverRows(ctx context.Context, srcResult distsql.SelectResult, result *backfillResult) ([]recoverRows, error) {
+	e.recoverRows = e.recoverRows[:0]
+	handleIdx := len(e.columns) - 1
+	result.scanRowCount = 0
+Loop:
+	for {
+		err := srcResult.NextChunk(ctx, e.srcChunk)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		if e.srcChunk.NumRows() == 0 {
+			break
+		}
+		iter := chunk.NewIterator4Chunk(e.srcChunk)
+		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+			if result.scanRowCount >= int64(e.batchSize) {
+				break Loop
+			}
+			handle := row.GetInt64(handleIdx)
+			idxVals := e.extractIdxVals(row, e.idxValsBufs[result.scanRowCount])
+			e.idxValsBufs[result.scanRowCount] = idxVals
+			e.recoverRows = append(e.recoverRows, recoverRows{handle: handle, idxVals: idxVals, skip: false})
+			result.scanRowCount++
+			result.nextHandle = handle + 1
+		}
+	}
+
+	return e.recoverRows, nil
+}
+
+func (e *RecoverIndexExec) batchMarkDup(txn kv.Transaction, rows []recoverRows) error {
+	if len(rows) == 0 {
+		return nil
+	}
+
+	sc := e.ctx.GetSessionVars().StmtCtx
+	batchKeys := make([]kv.Key, 0, len(rows))
+	distinctFlags := make([]bool, len(rows))
+	for i, row := range rows {
+		idxKey, distinct, err := e.index.GenIndexKey(sc, row.idxVals, row.handle, e.idxKeyBufs[i])
+		if err != nil {
+			return errors.Trace(err)
+		}
+		e.idxKeyBufs[i] = idxKey
+
+		batchKeys = append(batchKeys, idxKey)
+		distinctFlags[i] = distinct
+	}
+
+	values, err := txn.GetSnapshot().BatchGet(batchKeys)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// 1. unique-key is duplicate and the handle is equal, skip it.
+	// 2. unique-key is duplicate and the handle is not equal, data is not consistent, log it and skip it.
+	// 3. non-unique-key is duplicate, skip it.
+	for i, key := range batchKeys {
+		if val, found := values[string(key)]; found {
+			if distinctFlags[i] {
+				handle, err1 := tables.DecodeHandle(val)
+				if err1 != nil {
+					return errors.Trace(err1)
+				}
+
+				if handle != rows[i].handle {
+					log.Warnf("[recover-index] The constraint of unique index:%v is broken, handle:%v is not equal handle:%v with idxKey:%v.",
+						e.index.Meta().Name.O, handle, rows[i].handle, key)
+				}
+			}
+			rows[i].skip = true
+		}
+	}
+	return nil
+}
+
+func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transaction, startHandle int64) (result backfillResult, err error) {
+	result.nextHandle = startHandle
+	srcResult, err := e.buildTableScan(ctx, txn, e.table, startHandle, uint64(e.batchSize))
+	if err != nil {
+		return result, errors.Trace(err)
+	}
+	defer terror.Call(srcResult.Close)
+
+	rows, err := e.fetchRecoverRows(ctx, srcResult, &result)
+	if err != nil {
+		return result, errors.Trace(err)
+	}
+
+	err = e.batchMarkDup(txn, rows)
+	if err != nil {
+		return result, errors.Trace(err)
+	}
+
+	oldBatchCheck := e.ctx.GetSessionVars().StmtCtx.BatchCheck
+	// Constrains is already checked.
+	e.ctx.GetSessionVars().StmtCtx.BatchCheck = true
+	for _, row := range rows {
+		if row.skip {
+			continue
+		}
+
+		recordKey := e.table.RecordKey(row.handle)
+		err := txn.LockKeys(recordKey)
+		if err != nil {
+			return result, errors.Trace(err)
+		}
+
+		_, err = e.index.Create(e.ctx, txn, row.idxVals, row.handle)
+		if err != nil {
+			return result, errors.Trace(err)
+		}
+		result.addedCount++
+	}
+	e.ctx.GetSessionVars().StmtCtx.BatchCheck = oldBatchCheck
+	return result, nil
+}
+
+// NextChunk implements the Executor NextChunk interface.
+func (e *RecoverIndexExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	if e.done {
+		return nil
+	}
+
+	totalAddedCnt, totalScanCnt, err := e.backfillIndex(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	chk.AppendInt64(0, totalAddedCnt)
+	chk.AppendInt64(1, totalScanCnt)
+	e.done = true
 	return nil
 }
