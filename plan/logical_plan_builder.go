@@ -285,7 +285,7 @@ func (b *planBuilder) buildJoin(joinNode *ast.Join) LogicalPlan {
 		return nil
 	}
 
-	joinPlan := LogicalJoin{StraightJoin: joinNode.StraightJoin}.init(b.ctx)
+	joinPlan := LogicalJoin{StraightJoin: joinNode.StraightJoin || b.inStraightJoin}.init(b.ctx)
 	joinPlan.SetChildren(leftPlan, rightPlan)
 	joinPlan.SetSchema(expression.MergeSchema(leftPlan.Schema(), rightPlan.Schema()))
 
@@ -1489,6 +1489,11 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 		if b.pushTableHints(sel.TableHints) {
 			defer b.popTableHints()
 		}
+	}
+	if sel.SelectStmtOpts != nil {
+		origin := b.inStraightJoin
+		b.inStraightJoin = sel.SelectStmtOpts.StraightJoin
+		defer func() { b.inStraightJoin = origin }()
 	}
 
 	var (

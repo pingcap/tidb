@@ -773,6 +773,7 @@ type SelectStmtOpts struct {
 	Distinct      bool
 	SQLCache      bool
 	CalcFoundRows bool
+	StraightJoin  bool
 	Priority      mysql.PriorityEnum
 	TableHints    []*TableOptimizerHint
 }
