@@ -1151,7 +1151,13 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestWrapWithCastAsTime(c *C) {
-	defer testleak.AfterTest(c)()
+	sc := s.ctx.GetSessionVars().StmtCtx
+	save := sc.TimeZone
+	sc.TimeZone = time.UTC
+	defer func() {
+		testleak.AfterTest(c)()
+		sc.TimeZone = save
+	}()
 	cases := []struct {
 		expr Expression
 		tp   *types.FieldType
@@ -1188,13 +1194,13 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTime(c *C) {
 			tm,
 		},
 	}
-	for _, t := range cases {
+	for d, t := range cases {
 		expr := WrapWithCastAsTime(s.ctx, t.expr, t.tp)
 		res, isNull, err := expr.EvalTime(s.ctx, nil)
 		c.Assert(err, IsNil)
 		c.Assert(isNull, Equals, false)
 		c.Assert(res.Type, Equals, t.tp.Tp)
-		c.Assert(res.Compare(t.res), Equals, 0)
+		c.Assert(res.Compare(t.res), Equals, 0, Commentf("case %d res = %s, expect = %s", d, res, t.res))
 	}
 }
 
