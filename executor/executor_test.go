@@ -186,13 +186,14 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(err, IsNil)
 
 	// show DDL job queries test
-	tk.MustExec("use test")
-	tk.MustExec("create table admin_test2 (c1 int, c2 int, c3 int default 1, index (c1))")
-	result := tk.MustQuery(`admin show ddl job queries 43`)
+	tks := testkit.NewTestKit(c, s.store)
+	tks.MustExec("use test")
+	tks.MustExec("create table admin_test2 (c1 int, c2 int, c3 int default 1, index (c1))")
+	result := tks.MustQuery(`admin show ddl job queries 43`)
 	result.Check(testkit.Rows("create table admin_test2 (c1 int, c2 int, c3 int default 1, index (c1))"))
-	result = tk.MustQuery(`admin show ddl job queries 1, 1, 1`)
+	result = tks.MustQuery(`admin show ddl job queries 1, 1, 1`)
 	result.Check(testkit.Rows())
-	result = tk.MustQuery(`admin show ddl job queries 1, 2, 3, 4`)
+	result = tks.MustQuery(`admin show ddl job queries 1, 2, 3, 4`)
 	result.Check(testkit.Rows())
 	c.Assert(err, IsNil)
 
