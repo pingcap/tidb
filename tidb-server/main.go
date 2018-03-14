@@ -380,10 +380,8 @@ func setGlobalVars() {
 		tikv.MaxConnectionCount = cfg.TiKVClient.GrpcConnectionCount
 	}
 
-	if cfg.EnableTableNameLowerCaseVar {
-		log.Infof("[tidb-server] allow to modify lower_case_table_names variable.")
-		variable.SysVars["lower_case_table_names"].Scope = variable.ScopeGlobal | variable.ScopeSession
-	}
+	// set lower_case_table_names
+	variable.SysVars["lower_case_table_names"].Value = strconv.Itoa(cfg.LowerCaseTableNames)
 
 	tikv.CommitMaxBackoff = int(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds() * 1000)
 }

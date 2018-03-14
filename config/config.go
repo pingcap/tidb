@@ -40,19 +40,20 @@ var (
 
 // Config contains configuration options.
 type Config struct {
-	Host                        string `toml:"host" json:"host"`
-	Port                        uint   `toml:"port" json:"port"`
-	Store                       string `toml:"store" json:"store"`
-	Path                        string `toml:"path" json:"path"`
-	Socket                      string `toml:"socket" json:"socket"`
-	BinlogSocket                string `toml:"binlog-socket" json:"binlog-socket"`
-	Lease                       string `toml:"lease" json:"lease"`
-	RunDDL                      bool   `toml:"run-ddl" json:"run-ddl"`
-	SplitTable                  bool   `toml:"split-table" json:"split-table"`
-	TokenLimit                  uint   `toml:"token-limit" json:"token-limit"`
-	OOMAction                   string `toml:"oom-action" json:"oom-action"`
-	EnableStreaming             bool   `toml:"enable-streaming" json:"enable-streaming"`
-	EnableTableNameLowerCaseVar bool   `toml:"enable-table-name-lower-case-var" json:"enable-table-name-lower-case-var"`
+	Host            string `toml:"host" json:"host"`
+	Port            uint   `toml:"port" json:"port"`
+	Store           string `toml:"store" json:"store"`
+	Path            string `toml:"path" json:"path"`
+	Socket          string `toml:"socket" json:"socket"`
+	BinlogSocket    string `toml:"binlog-socket" json:"binlog-socket"`
+	Lease           string `toml:"lease" json:"lease"`
+	RunDDL          bool   `toml:"run-ddl" json:"run-ddl"`
+	SplitTable      bool   `toml:"split-table" json:"split-table"`
+	TokenLimit      uint   `toml:"token-limit" json:"token-limit"`
+	OOMAction       string `toml:"oom-action" json:"oom-action"`
+	EnableStreaming bool   `toml:"enable-streaming" json:"enable-streaming"`
+	// Set sys variable lower-case-table-names, ref: https://dev.mysql.com/doc/refman/5.7/en/identifier-case-sensitivity.html.
+	LowerCaseTableNames int `toml:"lower-case-table-names" json:"lower-case-table-names"`
 
 	Log               Log               `toml:"log" json:"log"`
 	Security          Security          `toml:"security" json:"security"`
@@ -217,17 +218,17 @@ type TiKVClient struct {
 }
 
 var defaultConf = Config{
-	Host:                        "0.0.0.0",
-	Port:                        4000,
-	Store:                       "mocktikv",
-	Path:                        "/tmp/tidb",
-	RunDDL:                      true,
-	SplitTable:                  true,
-	Lease:                       "10s",
-	TokenLimit:                  1000,
-	OOMAction:                   "log",
-	EnableStreaming:             false,
-	EnableTableNameLowerCaseVar: false,
+	Host:                "0.0.0.0",
+	Port:                4000,
+	Store:               "mocktikv",
+	Path:                "/tmp/tidb",
+	RunDDL:              true,
+	SplitTable:          true,
+	Lease:               "10s",
+	TokenLimit:          1000,
+	OOMAction:           "log",
+	EnableStreaming:     false,
+	LowerCaseTableNames: 2,
 	Log: Log{
 		Level:  "info",
 		Format: "text",
