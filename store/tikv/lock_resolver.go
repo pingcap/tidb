@@ -15,11 +15,10 @@ package tikv
 
 import (
 	"container/list"
-	//"fmt"
+	"fmt"
 	"sync"
 	"time"
 
-	"fmt"
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/pd/pd-client"
