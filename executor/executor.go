@@ -232,28 +232,6 @@ type ShowDDLExec struct {
 	done       bool
 }
 
-// Next implements the Executor Next interface.
-func (e *ShowDDLExec) Next(ctx context.Context) (Row, error) {
-	if e.done {
-		return nil, nil
-	}
-
-	var ddlJob string
-	if e.ddlInfo.Job != nil {
-		ddlJob = e.ddlInfo.Job.String()
-	}
-
-	row := types.MakeDatums(
-		e.ddlInfo.SchemaVer,
-		e.ddlOwnerID,
-		ddlJob,
-		e.selfID,
-	)
-	e.done = true
-
-	return row, nil
-}
-
 // NextChunk implements the Executor NextChunk interface.
 func (e *ShowDDLExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
