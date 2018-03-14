@@ -548,32 +548,6 @@ type LimitExec struct {
 	meetFirstBatch bool
 }
 
-// Next implements the Executor Next interface.
-func (e *LimitExec) Next(ctx context.Context) (Row, error) {
-	for e.cursor < e.begin {
-		srcRow, err := e.children[0].Next(ctx)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if srcRow == nil {
-			return nil, nil
-		}
-		e.cursor++
-	}
-	if e.cursor >= e.end {
-		return nil, nil
-	}
-	srcRow, err := e.children[0].Next(ctx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if srcRow == nil {
-		return nil, nil
-	}
-	e.cursor++
-	return srcRow, nil
-}
-
 // NextChunk implements the Executor NextChunk interface.
 func (e *LimitExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
