@@ -82,14 +82,6 @@ func (r *recordSet) getNext() []types.Datum {
 	return row
 }
 
-func (r *recordSet) Next(context.Context) (types.Row, error) {
-	row := r.getNext()
-	if row == nil {
-		return nil, nil
-	}
-	return types.DatumRow(row), nil
-}
-
 func (r *recordSet) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	row := r.getNext()
@@ -181,17 +173,21 @@ func buildPK(sctx sessionctx.Context, numBuckets, id int64, records ast.RecordSe
 	b := NewSortedBuilder(sctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeLonglong))
 	ctx := context.Background()
 	for {
-		row, err := records.Next(ctx)
+		chk := records.NewChunk()
+		err := records.NextChunk(ctx, chk)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
-		if row == nil {
+		if chk.NumRows() == 0 {
 			break
 		}
-		datums := ast.RowToDatums(row, records.Fields())
-		err = b.Iterate(datums[0])
-		if err != nil {
-			return 0, nil, errors.Trace(err)
+		it := chunk.NewIterator4Chunk(chk)
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			datums := ast.RowToDatums(row, records.Fields())
+			err = b.Iterate(datums[0])
+			if err != nil {
+				return 0, nil, errors.Trace(err)
+			}
 		}
 	}
 	return b.Count, b.hist, nil
@@ -201,25 +197,29 @@ func buildIndex(sctx sessionctx.Context, numBuckets, id int64, records ast.Recor
 	b := NewSortedBuilder(sctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeBlob))
 	cms := NewCMSketch(8, 2048)
 	ctx := context.Background()
+	chk := records.NewChunk()
+	it := chunk.NewIterator4Chunk(chk)
 	for {
-		row, err := records.Next(ctx)
+		err := records.NextChunk(ctx, chk)
 		if err != nil {
 			return 0, nil, nil, errors.Trace(err)
 		}
-		if row == nil {
+		if chk.NumRows() == 0 {
 			break
 		}
-		datums := ast.RowToDatums(row, records.Fields())
-		buf, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx, nil, datums...)
-		if err != nil {
-			return 0, nil, nil, errors.Trace(err)
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			datums := ast.RowToDatums(row, records.Fields())
+			buf, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx, nil, datums...)
+			if err != nil {
+				return 0, nil, nil, errors.Trace(err)
+			}
+			data := types.NewBytesDatum(buf)
+			err = b.Iterate(data)
+			if err != nil {
+				return 0, nil, nil, errors.Trace(err)
+			}
+			cms.InsertBytes(buf)
 		}
-		data := types.NewBytesDatum(buf)
-		err = b.Iterate(data)
-		if err != nil {
-			return 0, nil, nil, errors.Trace(err)
-		}
-		cms.InsertBytes(buf)
 	}
 	return b.Count, b.Hist(), cms, nil
 }
@@ -246,15 +246,15 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	c.Check(err, IsNil)
 	checkRepeats(c, col)
 	col.PreCalculateScalar()
-	c.Check(col.Len(), Equals, 232)
+	c.Check(col.Len(), Equals, 226)
 	count := col.equalRowCount(types.NewIntDatum(1000))
 	c.Check(int(count), Equals, 0)
 	count = col.lessRowCount(types.NewIntDatum(1000))
 	c.Check(int(count), Equals, 10000)
 	count = col.lessRowCount(types.NewIntDatum(2000))
-	c.Check(int(count), Equals, 19995)
+	c.Check(int(count), Equals, 19999)
 	count = col.greaterRowCount(types.NewIntDatum(2000))
-	c.Check(int(count), Equals, 80003)
+	c.Check(int(count), Equals, 80000)
 	count = col.lessRowCount(types.NewIntDatum(200000000))
 	c.Check(int(count), Equals, 100000)
 	count = col.greaterRowCount(types.NewIntDatum(200000000))
@@ -262,7 +262,7 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	count = col.equalRowCount(types.NewIntDatum(200000000))
 	c.Check(count, Equals, 0.0)
 	count = col.betweenRowCount(types.NewIntDatum(3000), types.NewIntDatum(3500))
-	c.Check(int(count), Equals, 5008)
+	c.Check(int(count), Equals, 4994)
 	count = col.lessRowCount(types.NewIntDatum(1))
 	c.Check(int(count), Equals, 9)
 
@@ -280,6 +280,7 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	col, err = BuildColumn(mock.NewContext(), 256, 2, collectors[0], types.NewFieldType(mysql.TypeLonglong))
 	c.Assert(err, IsNil)
 	checkRepeats(c, col)
+	c.Assert(col.Len(), Equals, 250)
 
 	tblCount, col, _, err := buildIndex(ctx, bucketCount, 1, ast.RecordSet(s.rc))
 	c.Check(err, IsNil)
@@ -497,12 +498,12 @@ func (s *testStatisticsSuite) TestColumnRange(c *C) {
 	ran[0].HighExclude = true
 	count, err = tbl.GetRowCountByColumnRanges(sc, 0, ran)
 	c.Assert(err, IsNil)
-	c.Assert(int(count), Equals, 9994)
+	c.Assert(int(count), Equals, 9998)
 	ran[0].LowExclude = false
 	ran[0].HighExclude = false
 	count, err = tbl.GetRowCountByColumnRanges(sc, 0, ran)
 	c.Assert(err, IsNil)
-	c.Assert(int(count), Equals, 9996)
+	c.Assert(int(count), Equals, 10000)
 	ran[0].LowVal[0] = ran[0].HighVal[0]
 	count, err = tbl.GetRowCountByColumnRanges(sc, 0, ran)
 	c.Assert(err, IsNil)

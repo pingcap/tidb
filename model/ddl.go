@@ -79,6 +79,7 @@ type HistoryInfo struct {
 	SchemaVersion int64
 	DBInfo        *DBInfo
 	TableInfo     *TableInfo
+	FinishedTS    uint64
 }
 
 // AddDBInfo adds schema version and schema information that are used for binlog.

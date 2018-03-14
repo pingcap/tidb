@@ -59,6 +59,10 @@ func newTiKVSnapshot(store *tikvStore, ver kv.Version) *tikvSnapshot {
 	}
 }
 
+func (s *tikvSnapshot) SetPriority(priority int) {
+	s.priority = pb.CommandPri(priority)
+}
+
 // BatchGet gets all the keys' value from kv-server and returns a map contains key/value pairs.
 // The map will not contain nonexistent keys.
 func (s *tikvSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {

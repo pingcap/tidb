@@ -402,9 +402,6 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse() error {
 		}
 	}
 	cc.ctx.SetSessionManager(cc.server)
-	if cc.server.cfg.EnableChunk {
-		cc.ctx.EnableChunk()
-	}
 	return nil
 }
 
@@ -924,56 +921,10 @@ func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary b
 		buf = buf[:stackSize]
 		log.Errorf("query: %s:\n%s", cc.lastCmd, buf)
 	}()
-	if cc.server.cfg.EnableChunk {
-		err := cc.writeChunks(ctx, rs, binary, more)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		return errors.Trace(cc.flush())
-	}
-	// We need to call Next before we get columns.
-	// Otherwise, we will get incorrect columns info.
-	row, err := rs.Next(ctx)
+	err := cc.writeChunks(ctx, rs, binary, more)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	columns := rs.Columns()
-	err = cc.writeColumnInfo(columns)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	data := make([]byte, 4, 1024)
-	for {
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if row == nil {
-			break
-		}
-		data = data[0:4]
-		if binary {
-			data, err = dumpBinaryRow(data, columns, row)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		} else {
-			data, err = dumpTextRow(data, columns, row)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
-
-		if err = cc.writePacket(data); err != nil {
-			return errors.Trace(err)
-		}
-		row, err = rs.Next(ctx)
-	}
-
-	err = cc.writeEOF(more)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	return errors.Trace(cc.flush())
 }
 

@@ -304,7 +304,7 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInf
 	}.init(ds.ctx)
 	statsTbl := ds.statisticTable
 	if statsTbl.Indices[idx.ID] != nil {
-		is.HistVersion = statsTbl.Indices[idx.ID].LastUpdateVersion
+		is.Hist = &statsTbl.Indices[idx.ID].Histogram
 	}
 	rowCount := float64(statsTbl.Count)
 	sc := ds.ctx.GetSessionVars().StmtCtx
@@ -542,7 +542,7 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp) (task task, err err
 		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
 			pkCol = expression.ColInfo2Col(ts.schema.Columns, pkColInfo)
 			if ds.statisticTable.Columns[pkColInfo.ID] != nil {
-				ts.HistVersion = ds.statisticTable.Columns[pkColInfo.ID].LastUpdateVersion
+				ts.Hist = &ds.statisticTable.Columns[pkColInfo.ID].Histogram
 			}
 		}
 	}

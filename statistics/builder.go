@@ -110,10 +110,13 @@ func BuildColumn(ctx sessionctx.Context, numBuckets, id int64, collector *Sample
 		ndv = count
 	}
 	hg := NewHistogram(id, ndv, collector.NullCount, 0, tp, int(numBuckets))
-	valuesPerBucket := float64(count)/float64(numBuckets) + 1
 
 	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
 	sampleFactor := float64(count) / float64(len(samples))
+	// Since bucket count is increased by sampleFactor, so the actual max values per bucket is
+	// floor(valuesPerBucket/sampleFactor)*sampleFactor, which may less than valuesPerBucket,
+	// thus we need to add a sampleFactor to avoid building too many buckets.
+	valuesPerBucket := float64(count)/float64(numBuckets) + sampleFactor
 	ndvFactor := float64(count) / float64(hg.NDV)
 	if ndvFactor > sampleFactor {
 		ndvFactor = sampleFactor
