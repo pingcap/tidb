@@ -326,7 +326,6 @@ func (s *testSuite) TestAdminRecoverIndex(c *C) {
 
 	tk.MustExec("admin check index admin_test c2")
 	tk.MustExec("admin check table admin_test")
-
 }
 
 func (s *testSuite) TestAdminRecoverIndex1(c *C) {

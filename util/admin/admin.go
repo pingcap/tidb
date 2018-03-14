@@ -285,7 +285,7 @@ func checkIndexAndRecord(txn kv.Transaction, t table.Table, idx table.Index) err
 		if !reflect.DeepEqual(vals1, vals2) {
 			record1 := &RecordData{Handle: h, Values: vals1}
 			record2 := &RecordData{Handle: h, Values: vals2}
-			return errDateNotEqual.Gen("index:%#v != record:%#v", record1, record2)
+			return errDateNotEqual.Gen("index:%v != record:%v", record1, record2)
 		}
 	}
 
