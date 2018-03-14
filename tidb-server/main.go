@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/gcworker"
@@ -377,6 +378,11 @@ func setGlobalVars() {
 
 	if cfg.TiKVClient.GrpcConnectionCount > 0 {
 		tikv.MaxConnectionCount = cfg.TiKVClient.GrpcConnectionCount
+	}
+
+	if cfg.EnableTableNameLowerCaseVar {
+		log.Infof("[tidb-server] allow to modify lower_case_table_names variable.")
+		variable.SysVars["lower_case_table_names"].Scope = variable.ScopeGlobal | variable.ScopeSession
 	}
 
 	tikv.CommitMaxBackoff = int(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds() * 1000)
