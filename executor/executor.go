@@ -203,21 +203,6 @@ type CancelDDLJobsExec struct {
 	errs   []error
 }
 
-// Next implements the Executor Next interface.
-func (e *CancelDDLJobsExec) Next(ctx context.Context) (Row, error) {
-	var row Row
-	if e.cursor < len(e.jobIDs) {
-		ret := "successful"
-		if e.errs[e.cursor] != nil {
-			ret = fmt.Sprintf("error: %v", e.errs[e.cursor])
-		}
-		row = types.MakeDatums(e.jobIDs[e.cursor], ret)
-		e.cursor++
-	}
-
-	return row, nil
-}
-
 // NextChunk implements the Executor NextChunk interface.
 func (e *CancelDDLJobsExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
@@ -245,28 +230,6 @@ type ShowDDLExec struct {
 	selfID     string
 	ddlInfo    *admin.DDLInfo
 	done       bool
-}
-
-// Next implements the Executor Next interface.
-func (e *ShowDDLExec) Next(ctx context.Context) (Row, error) {
-	if e.done {
-		return nil, nil
-	}
-
-	var ddlJob string
-	if e.ddlInfo.Job != nil {
-		ddlJob = e.ddlInfo.Job.String()
-	}
-
-	row := types.MakeDatums(
-		e.ddlInfo.SchemaVer,
-		e.ddlOwnerID,
-		ddlJob,
-		e.selfID,
-	)
-	e.done = true
-
-	return row, nil
 }
 
 // NextChunk implements the Executor NextChunk interface.
@@ -313,19 +276,6 @@ func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 	e.jobs = append(e.jobs, historyJobs...)
 	e.cursor = 0
 	return nil
-}
-
-// Next implements the Executor Next interface.
-func (e *ShowDDLJobsExec) Next(ctx context.Context) (Row, error) {
-	if e.cursor >= len(e.jobs) {
-		return nil, nil
-	}
-
-	job := e.jobs[e.cursor]
-	row := types.MakeDatums(job.String(), job.State.String())
-	e.cursor++
-
-	return row, nil
 }
 
 // NextChunk implements the Executor NextChunk interface.
