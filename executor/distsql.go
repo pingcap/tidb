@@ -543,7 +543,7 @@ func (e *IndexLookUpExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	// instead of in function "Open", because this "IndexLookUpExecutor" may be
 	// constructed by a "IndexLookUpJoin" and "Open" will not be called in that
 	// situation.
-	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaSort)
+	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaIndexLookupReader)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
 	span, ctx := startSpanFollowsContext(ctx, "executor.IndexLookUp.Open")
@@ -720,9 +720,10 @@ func (e *IndexLookUpExecutor) getResultTask() (*lookupTableTask, error) {
 	if !ok {
 		return nil, nil
 	}
-	err := <-task.doneCh
-	if err != nil {
-		return nil, errors.Trace(err)
+	for err := range task.doneCh {
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 
 	// Release the memory usage of last task before we handle a new task.
@@ -859,6 +860,7 @@ func (w *tableWorker) pickAndExecTask(ctx context.Context) {
 			buf = buf[:stackSize]
 			log.Errorf("tableWorker panic stack is:\n%s", buf)
 			task.doneCh <- errors.Errorf("%v", r)
+			close(task.doneCh)
 		}
 	}()
 	for {
@@ -870,25 +872,26 @@ func (w *tableWorker) pickAndExecTask(ctx context.Context) {
 			if !ok {
 				return
 			}
-			w.executeTask(ctx, task)
 		case <-w.finished:
 			return
 		}
+		err := w.executeTask(ctx, task)
+		if err != nil {
+			task.doneCh <- errors.Trace(err)
+		}
+		close(task.doneCh)
 	}
 }
 
 // executeTask executes the table look up tasks. We will construct a table reader and send request by handles.
 // Then we hold the returning rows and finish this task.
-func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) {
+func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) error {
 	var err error
-	defer func() {
-		task.doneCh <- errors.Trace(err)
-	}()
 	var tableReader Executor
 	tableReader, err = w.buildTblReader(ctx, task.handles)
 	if err != nil {
 		log.Error(err)
-		return
+		return errors.Trace(err)
 	}
 	defer terror.Call(tableReader.Close)
 
@@ -903,7 +906,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) {
 		err = tableReader.NextChunk(ctx, chk)
 		if err != nil {
 			log.Error(err)
-			return
+			return errors.Trace(err)
 		}
 		if chk.NumRows() == 0 {
 			break
@@ -940,6 +943,8 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) {
 		err = errors.Errorf("handle count %d isn't equal to value count %d, missing handles %v in a batch",
 			handleCnt, len(task.rows), GetLackHandles(task.handles, obtainedHandlesMap))
 	}
+
+	return nil
 }
 
 // GetLackHandles gets the handles in expectedHandles but not in obtainedHandlesMap.
