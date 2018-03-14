@@ -298,8 +298,7 @@ type ShowDDLJobsExec struct {
 }
 
 // ShowDDLJobQueriesExec represents a show DDL job queries executor.
-// The `admin show ddl jos` command and `admin show ddl job queries job_id` use together.
-// The command query has completed job history sql max limit 10 .
+// The command query has completed job history sql limit 10.
 type ShowDDLJobQueriesExec struct {
 	baseExecutor
 
