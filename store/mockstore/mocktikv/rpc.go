@@ -672,9 +672,9 @@ func (c *RPCClient) SendReq(ctx context.Context, addr string, req *tikvrpc.Reque
 
 // Close closes the client.
 func (c *RPCClient) Close() error {
+	close(c.streamTimeout)
 	if raw, ok := c.MvccStore.(io.Closer); ok {
 		return raw.Close()
 	}
-	close(c.streamTimeout)
 	return nil
 }
