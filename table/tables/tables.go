@@ -228,16 +228,16 @@ func (t *Table) UpdateRecord(ctx sessionctx.Context, h int64, oldData, newData [
 	if err != nil {
 		return errors.Trace(err)
 	}
-	numCols := len(newData) + 1
+	numColsCap := len(newData) + 1 // +1 for the extra handle column that we may need to append.
 
 	var colIDs, binlogColIDs []int64
 	var row, binlogOldRow, binlogNewRow []types.Datum
-	colIDs = make([]int64, 0, numCols)
-	row = make([]types.Datum, 0, numCols)
+	colIDs = make([]int64, 0, numColsCap)
+	row = make([]types.Datum, 0, numColsCap)
 	if shouldWriteBinlog(ctx) {
-		binlogColIDs = make([]int64, 0, numCols)
-		binlogOldRow = make([]types.Datum, 0, numCols)
-		binlogNewRow = make([]types.Datum, 0, numCols)
+		binlogColIDs = make([]int64, 0, numColsCap)
+		binlogOldRow = make([]types.Datum, 0, numColsCap)
+		binlogNewRow = make([]types.Datum, 0, numColsCap)
 	}
 
 	for _, col := range t.WritableCols() {
