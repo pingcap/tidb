@@ -218,6 +218,7 @@ func (s *testSuite) TestJoin(c *C) {
 	// test virtual rows are included (issue#5771)
 	result = tk.MustQuery(`SELECT 1 FROM (SELECT 1) t1, (SELECT 1) t2`)
 	result.Check(testkit.Rows("1"))
+
 	result = tk.MustQuery(`
 		SELECT @NUM := @NUM + 1 as NUM FROM
 		( SELECT 1 UNION ALL
