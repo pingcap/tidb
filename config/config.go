@@ -53,7 +53,7 @@ type Config struct {
 	OOMAction       string `toml:"oom-action" json:"oom-action"`
 	EnableStreaming bool   `toml:"enable-streaming" json:"enable-streaming"`
 	// Set sys variable lower-case-table-names, ref: https://dev.mysql.com/doc/refman/5.7/en/identifier-case-sensitivity.html.
-	// TODO: we now just ignore the system variable lower_case_table_names, we treat the table name as case sensitive actually.
+	// TODO: We actually only support mode 2, which keeps the original case, but the comparison is case-insensitive.
 	LowerCaseTableNames int `toml:"lower-case-table-names" json:"lower-case-table-names"`
 
 	Log               Log               `toml:"log" json:"log"`
