@@ -70,10 +70,11 @@ func (s *testSQLSuite) TestFailBusyServerCop(c *C) {
 			defer terror.Call(rs[0].Close)
 		}
 		c.Assert(err, IsNil)
-		row, err := rs[0].Next(context.Background())
+		chk := rs[0].NewChunk()
+		err = rs[0].NextChunk(context.Background(), chk)
 		c.Assert(err, IsNil)
-		c.Assert(row, NotNil)
-		c.Assert(row.GetString(0), Equals, "True")
+		c.Assert(chk.NumRows() == 0, IsFalse)
+		c.Assert(chk.GetRow(0).GetString(0), Equals, "True")
 	}()
 
 	wg.Wait()
