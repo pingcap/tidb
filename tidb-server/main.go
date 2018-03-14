@@ -348,6 +348,12 @@ func validateConfig() {
 		os.Exit(-1)
 	}
 	cfg.OOMAction = strings.ToLower(cfg.OOMAction)
+
+	// lower_case_table_names is allowed to be 0, 1, 2
+	if cfg.LowerCaseTableNames < 0 || cfg.LowerCaseTableNames > 2 {
+		log.Errorf("lower-case-table-names should be 0 or 1 or 2.")
+		os.Exit(-1)
+	}
 }
 
 func setGlobalVars() {
