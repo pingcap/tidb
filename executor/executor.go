@@ -521,7 +521,7 @@ func (e *RecoverIndexExec) fetchIdxVals(row chunk.Row, idxVals []types.Datum) []
 
 	for i := 0; i < row.Len()-1; i++ {
 		colVal := row.GetDatum(i, &e.columns[i].FieldType)
-		idxVals = append(idxVals, colVal)
+		idxVals = append(idxVals, *colVal.Copy())
 	}
 	return idxVals
 }
@@ -559,6 +559,7 @@ Loop:
 			result.nextHandle = handle + 1
 		}
 	}
+
 	return e.recoverRows, nil
 }
 
@@ -653,7 +654,13 @@ func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transa
 			continue
 		}
 
-		_, err := e.index.Create(e.ctx, txn, row.idxVals, row.handle)
+		recordKey := e.table.RecordKey(row.handle)
+		err := txn.LockKeys(recordKey)
+		if err != nil {
+			return result, errors.Trace(err)
+		}
+
+		_, err = e.index.Create(e.ctx, txn, row.idxVals, row.handle)
 		if err != nil {
 			return result, errors.Trace(err)
 		}

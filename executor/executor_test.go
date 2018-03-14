@@ -283,6 +283,7 @@ func (s *testSuite) TestAdminRecoverIndex(c *C) {
 	err = indexOpr.Delete(sc, txn, types.MakeDatums(10), 10)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
 
 	_, err = tk.Exec("admin check index admin_test c2")
 	c.Assert(err, NotNil)
@@ -304,6 +305,7 @@ func (s *testSuite) TestAdminRecoverIndex(c *C) {
 	err = indexOpr.Delete(sc, txn, types.MakeDatums(20), 20)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
 
 	_, err = tk.Exec("admin check table admin_test")
 	c.Assert(err, NotNil)
@@ -324,6 +326,58 @@ func (s *testSuite) TestAdminRecoverIndex(c *C) {
 
 	tk.MustExec("admin check index admin_test c2")
 	tk.MustExec("admin check table admin_test")
+
+}
+
+func (s *testSuite) TestAdminRecoverIndex1(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.ctx = mock.NewContext()
+	s.ctx.Store = s.store
+	dbName := model.NewCIStr("test")
+	tblName := model.NewCIStr("admin_test")
+	sc := s.ctx.GetSessionVars().StmtCtx
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists admin_test")
+	tk.MustExec("create table admin_test (c1 varchar(255), c2 int, c3 int default 1, primary key(c1), unique key(c2))")
+	tk.MustExec("insert admin_test (c1, c2) values ('1', 1), ('2', 2), ('3', 3), ('10', 10), ('20', 20)")
+
+	r := tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(`primary`)")
+	r.Check(testkit.Rows("5"))
+
+	is := s.domain.InfoSchema()
+	tbl, err := is.TableByName(dbName, tblName)
+	c.Assert(err, IsNil)
+
+	tblInfo := tbl.Meta()
+	idxInfo := findIndexByName("primary", tblInfo.Indices)
+	c.Assert(idxInfo, NotNil)
+	indexOpr := tables.NewIndexWithBuffer(tblInfo, idxInfo)
+
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums("1"), 1)
+	c.Assert(err, IsNil)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums("2"), 2)
+	c.Assert(err, IsNil)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums("3"), 3)
+	c.Assert(err, IsNil)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums("10"), 4)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+
+	r = tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(`primary`)")
+	r.Check(testkit.Rows("1"))
+
+	r = tk.MustQuery("admin recover index admin_test `primary`")
+	r.Check(testkit.Rows("4 5"))
+
+	r = tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(`primary`)")
+	r.Check(testkit.Rows("5"))
+
+	tk.MustExec("admin check table admin_test")
+	tk.MustExec("admin check index admin_test c2")
+	tk.MustExec("admin check index admin_test `primary`")
 }
 
 func (s *testSuite) fillData(tk *testkit.TestKit, table string) {
