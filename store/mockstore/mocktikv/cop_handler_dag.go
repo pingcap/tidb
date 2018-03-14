@@ -436,8 +436,18 @@ func (mock *mockCopStreamErrClient) Recv() (*coprocessor.Response, error) {
 }
 
 func (mock *mockCopStreamClient) Recv() (*coprocessor.Response, error) {
+	select {
+	case <-mock.ctx.Done():
+		return nil, mock.ctx.Err()
+	default:
+	}
+
 	if mock.finished {
 		return nil, io.EOF
+	}
+
+	if hook := mock.ctx.Value("mockTiKVStreamRecvHook"); hook != nil {
+		hook.(func(context.Context))(mock.ctx)
 	}
 
 	var resp coprocessor.Response

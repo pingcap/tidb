@@ -636,11 +636,13 @@ func (c *RPCClient) SendReq(ctx context.Context, addr string, req *tikvrpc.Reque
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		first, err := copStream.Recv()
+		streamResp := tikvrpc.NewCopStreamResponse(copStream, nil, cancel, c.streamTimeout)
+		first, err := streamResp.Recv()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		resp.CopStream = tikvrpc.NewCopStreamResponse(copStream, first, cancel, c.streamTimeout)
+		streamResp.Response = first
+		resp.CopStream = streamResp
 	case tikvrpc.CmdMvccGetByKey:
 		r := req.MvccGetByKey
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {

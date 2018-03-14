@@ -648,6 +648,7 @@ func (it *copIterator) handleCopStreamResult(bo *Backoffer, stream *tikvrpc.CopS
 					_, ranges = ranges.split(lastResp.GetRange().End)
 				}
 			}
+			log.Info("stream recv timeout:", err)
 			return buildCopTasks(bo, it.store.regionCache, ranges, it.req.Desc, true)
 		}
 		lastResp = resp
