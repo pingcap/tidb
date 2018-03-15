@@ -613,6 +613,8 @@ import (
 	GroupByClause			"GROUP BY clause"
 	HashString			"Hashed string"
 	HavingClause			"HAVING clause"
+	HandleRange			"handle range"
+	HandleRangeList			"handle range list"
 	IfExists			"If Exists"
 	IfNotExists			"If Not Exists"
 	IgnoreOptional			"IGNORE or empty"
@@ -2583,6 +2585,10 @@ InsertValues:
 |	ValueSym ValuesList %prec insertValues
 	{
 		$$ = &ast.InsertStmt{Lists:  $2.([][]ast.ExprNode)}
+	}
+|	'(' SelectStmt ')'
+	{
+		$$ = &ast.InsertStmt{Select: $2.(*ast.SelectStmt)}
 	}
 |	SelectStmt
 	{
@@ -4763,6 +4769,15 @@ AdminStmt:
 			Index: string($5),
 		}
 	}
+|	"ADMIN" "CHECK" "INDEX" TableName Identifier HandleRangeList
+	{
+		$$ = &ast.AdminStmt{
+			Tp: ast.AdminCheckIndexRange,
+			Tables:	[]*ast.TableName{$4.(*ast.TableName)},
+			Index: string($5),
+			HandleRanges: $6.([]ast.HandleRange),
+		}
+	}
 |	"ADMIN" "CANCEL" "DDL" "JOBS" NumList
 	{
 		$$ = &ast.AdminStmt{
@@ -4770,6 +4785,23 @@ AdminStmt:
 			JobIDs: $5.([]int64),
 		}
 	}
+
+HandleRangeList:
+	HandleRange
+	{
+		$$ = []ast.HandleRange{$1.(ast.HandleRange)}
+	}
+|	HandleRangeList ',' HandleRange
+	{
+		$$ = append($1.([]ast.HandleRange), $3.(ast.HandleRange))
+	}
+
+HandleRange:
+	'(' NUM ',' NUM ')'
+	{
+		$$ = ast.HandleRange{Begin: $2.(int64), End: $4.(int64)}
+	}
+
 
 NumList:
        NUM

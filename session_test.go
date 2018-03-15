@@ -933,9 +933,10 @@ func (s *testSessionSuite) TestResultType(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	rs, err := tk.Exec(`select cast(null as char(30))`)
 	c.Assert(err, IsNil)
-	row, err := rs.Next(context.Background())
+	chk := rs.NewChunk()
+	err = rs.NextChunk(context.Background(), chk)
 	c.Assert(err, IsNil)
-	c.Assert(row.IsNull(0), IsTrue)
+	c.Assert(chk.GetRow(0).IsNull(0), IsTrue)
 	c.Assert(rs.Fields()[0].Column.FieldType.Tp, Equals, mysql.TypeVarString)
 }
 
@@ -1680,7 +1681,6 @@ func (s *testSchemaSuite) TestInsertExecChunk(c *C) {
 	tk.MustExec("create table test2(a int)")
 
 	tk.Se.GetSessionVars().DistSQLScanConcurrency = 1
-	tk.Se.GetSessionVars().EnableChunk = true
 	tk.MustExec("insert into test2(a) select a from test1;")
 
 	rs, err := tk.Exec("select * from test2")
@@ -1713,7 +1713,6 @@ func (s *testSchemaSuite) TestUpdateExecChunk(c *C) {
 	}
 
 	tk.Se.GetSessionVars().DistSQLScanConcurrency = 1
-	tk.Se.GetSessionVars().EnableChunk = true
 	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("update chk set a = a + 100 where a = %d", i))
 	}
@@ -1749,7 +1748,6 @@ func (s *testSchemaSuite) TestDeleteExecChunk(c *C) {
 	}
 
 	tk.Se.GetSessionVars().DistSQLScanConcurrency = 1
-	tk.Se.GetSessionVars().EnableChunk = true
 
 	for i := 0; i < 99; i++ {
 		tk.MustExec(fmt.Sprintf("delete from chk where a = %d", i))
@@ -1782,7 +1780,6 @@ func (s *testSchemaSuite) TestDeleteMultiTableExecChunk(c *C) {
 	}
 
 	tk.Se.GetSessionVars().DistSQLScanConcurrency = 1
-	tk.Se.GetSessionVars().EnableChunk = true
 
 	tk.MustExec("delete chk1, chk2 from chk1 inner join chk2 where chk1.a = chk2.a")
 
@@ -1935,34 +1932,15 @@ func (s *testSessionSuite) TestCastTimeToDate(c *C) {
 }
 
 func (s *testSessionSuite) TestSetGlobalTZ(c *C) {
-	ctx := context.Background()
 
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("set time_zone = '+08:00'")
-	rs, err := tk.Exec("show variables like 'time_zone'")
-	c.Assert(err, IsNil)
-	row0, err := rs.Next(ctx)
-	c.Assert(err, IsNil)
-	c.Assert(row0, NotNil)
-	c.Assert(row0.Len(), Equals, 2)
-	c.Assert(row0.GetBytes(1), BytesEquals, []byte("+08:00"))
+	tk.MustQuery("show variables like 'time_zone'").Check(testkit.Rows("time_zone +08:00"))
 
 	tk.MustExec("set global time_zone = '+00:00'")
 
-	rs, err = tk.Exec("show variables like 'time_zone'")
-	c.Assert(err, IsNil)
-	row0, err = rs.Next(ctx)
-	c.Assert(err, IsNil)
-	c.Assert(row0, NotNil)
-	c.Assert(row0.Len(), Equals, 2)
-	c.Assert(row0.GetBytes(1), BytesEquals, []byte("+08:00"))
+	tk.MustQuery("show variables like 'time_zone'").Check(testkit.Rows("time_zone +08:00"))
 
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
-	rs1, err := tk1.Exec("show variables like 'time_zone'")
-	c.Assert(err, IsNil)
-	row1, err := rs1.Next(ctx)
-	c.Assert(err, IsNil)
-	c.Assert(row1, NotNil)
-	c.Assert(row1.Len(), Equals, 2)
-	c.Assert(row1.GetBytes(1), BytesEquals, []byte("+00:00"))
+	tk1.MustQuery("show variables like 'time_zone'").Check(testkit.Rows("time_zone +00:00"))
 }

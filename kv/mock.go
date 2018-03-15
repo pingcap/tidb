@@ -188,6 +188,10 @@ func (s *mockSnapshot) Get(k Key) ([]byte, error) {
 	return s.store.Get(k)
 }
 
+func (s *mockSnapshot) SetPriority(priority int) {
+
+}
+
 func (s *mockSnapshot) BatchGet(keys []Key) (map[string][]byte, error) {
 	m := make(map[string][]byte)
 	for _, k := range keys {
