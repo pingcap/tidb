@@ -638,7 +638,7 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Da
 		for _, table := range schema.Tables {
 			collation := table.Collate
 			if collation == "" {
-				collation = charset.CollationUTF8
+				collation = charset.GetCollationByCharset(table.Charset)
 			}
 			createTime := types.Time{
 				Time: types.FromGoTime(table.GetUpdateTime()),
