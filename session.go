@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/kvcache"
 	binlog "github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
@@ -608,14 +609,18 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 func drainRecordSet(ctx context.Context, rs ast.RecordSet) ([]types.Row, error) {
 	var rows []types.Row
 	for {
-		row, err := rs.Next(ctx)
+		chk := rs.NewChunk()
+		err := rs.NextChunk(ctx, chk)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if row == nil {
+		if chk.NumRows() == 0 {
 			break
 		}
-		rows = append(rows, row)
+		iter := chunk.NewIterator4Chunk(chk)
+		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+			rows = append(rows, row)
+		}
 	}
 	return rows, nil
 }
@@ -849,7 +854,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	// So we have to call PrepareTxnCtx here.
 	s.PrepareTxnCtx(ctx)
 	prepareExec := executor.NewPrepareExec(s, executor.GetInfoSchema(s), sql)
-	err = prepareExec.DoPrepare()
+	err = prepareExec.NextChunk(ctx, nil)
 	if err != nil {
 		err = errors.Trace(err)
 		return
