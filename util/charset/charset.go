@@ -416,7 +416,7 @@ var collations = []*Collation{
 	{247, "utf8mb4", "utf8mb4_vietnamese_ci", false},
 }
 
-// init method alwasy put to the end of file.
+// init method always puts to the end of file.
 func init() {
 	for _, c := range charsetInfos {
 		charsets[c.Name] = c
