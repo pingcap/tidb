@@ -139,7 +139,7 @@ var tablesCols = []columnInfo{
 	{"CREATE_TIME", mysql.TypeDatetime, 19, 0, nil, nil},
 	{"UPDATE_TIME", mysql.TypeDatetime, 19, 0, nil, nil},
 	{"CHECK_TIME", mysql.TypeDatetime, 19, 0, nil, nil},
-	{"TABLE_COLLATION", mysql.TypeVarchar, 32, mysql.NotNullFlag, "utf8_general_ci", nil},
+	{"TABLE_COLLATION", mysql.TypeVarchar, 32, mysql.NotNullFlag, "utf8_bin", nil},
 	{"CHECK_SUM", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"CREATE_OPTIONS", mysql.TypeVarchar, 255, 0, nil, nil},
 	{"TABLE_COMMENT", mysql.TypeVarchar, 2048, 0, nil, nil},
