@@ -823,9 +823,7 @@ func (r *RegionFrameRange) getRecordFrame(tableID int64, dbName, tableName strin
 		return r.last
 	}
 
-	greaterThanFirst := tableID > r.first.TableID || (tableID == r.first.TableID && !r.first.IsRecord)
-	lessThanLast := tableID < r.last.TableID
-	if greaterThanFirst && lessThanLast {
+	if tableID >= r.first.TableID && tableID < r.last.TableID {
 		return &FrameItem{
 			DBName:    dbName,
 			TableName: tableName,
