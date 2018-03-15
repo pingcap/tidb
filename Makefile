@@ -120,12 +120,16 @@ endif
 	@$(GOFAIL_DISABLE)
 
 race: parserlib
+	@$(GOFAIL_ENABLE)
 	@export log_level=debug; \
-	$(GOTEST) -check.exclude="TestFail" -race $(PACKAGES)
+	$(GOTEST) -race $(PACKAGES)
+	@$(GOFAIL_DISABLE)
 
 leak: parserlib
+	@$(GOFAIL_ENABLE)
 	@export log_level=debug; \
-	$(GOTEST) -check.exclude="TestFail" -tags leak $(PACKAGES)
+	$(GOTEST) -tags leak $(PACKAGES)
+	@$(GOFAIL_DISABLE)
 
 tikv_integration_test: parserlib
 	$(GOTEST) -check.exclude="TestFail" ./store/tikv/. -with-tikv=true
