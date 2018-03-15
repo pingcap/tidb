@@ -1751,7 +1751,7 @@ func (s *testDBSuite) TestCharacterSetInColumns(c *C) {
 	s.tk.MustExec("create database varchar_test;")
 	s.tk.MustExec("use varchar_test")
 	s.tk.MustExec("drop table if exists t")
-	s.tk.MustExec("create table t (c1 int, s1 varchar(10))")
+	s.tk.MustExec("create table t (c1 int, s1 varchar(10), s2 text)")
 	s.tk.MustQuery("select count(*) from information_schema.columns where table_schema = 'varchar_test' and character_set_name != 'utf8'").Check(testkit.Rows("0"))
-	s.tk.MustQuery("select count(*) from information_schema.columns where table_schema = 'varchar_test' and character_set_name = 'utf8'").Check(testkit.Rows("1"))
+	s.tk.MustQuery("select count(*) from information_schema.columns where table_schema = 'varchar_test' and character_set_name = 'utf8'").Check(testkit.Rows("2"))
 }
