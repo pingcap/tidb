@@ -50,6 +50,14 @@ type CheckTable struct {
 	Tables []*ast.TableName
 }
 
+// RecoverIndex is used for backfilling corrupted index data.
+type RecoverIndex struct {
+	baseSchemaProducer
+
+	Table     *ast.TableName
+	IndexName string
+}
+
 // CheckIndex is used for checking index data, built from the 'admin check index' statement.
 type CheckIndex struct {
 	baseSchemaProducer
