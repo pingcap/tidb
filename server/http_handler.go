@@ -826,9 +826,11 @@ func NewRegionFrameRange(region *tikv.KeyLocation) (idxRange *RegionFrameRange, 
 // are not covered by this frame range, it returns nil.
 func (r *RegionFrameRange) getRecordFrame(tableID int64, dbName, tableName string) *FrameItem {
 	if tableID == r.first.TableID && r.first.IsRecord {
+		r.first.DBName, r.first.TableName = dbName, tableName
 		return r.first
 	}
 	if tableID == r.last.TableID && r.last.IsRecord {
+		r.last.DBName, r.last.TableName = dbName, tableName
 		return r.last
 	}
 
@@ -845,11 +847,13 @@ func (r *RegionFrameRange) getRecordFrame(tableID int64, dbName, tableName strin
 
 // getIndexFrame returns the indnex frame of a table. If the table's indices are
 // not covered by this frame range, it returns nil.
-func (r *RegionFrameRange) getIndexFrame(tableID, indexID int64, dbName, tableName, indexname string) *FrameItem {
+func (r *RegionFrameRange) getIndexFrame(tableID, indexID int64, dbName, tableName, indexName string) *FrameItem {
 	if tableID == r.first.TableID && !r.first.IsRecord && indexID == r.first.IndexID {
+		r.first.DBName, r.first.TableName, r.first.IndexName = dbName, tableName, indexName
 		return r.first
 	}
 	if tableID == r.last.TableID && indexID == r.last.IndexID {
+		r.last.DBName, r.last.TableName, r.last.IndexName = dbName, tableName, indexName
 		return r.last
 	}
 
@@ -861,7 +865,7 @@ func (r *RegionFrameRange) getIndexFrame(tableID, indexID int64, dbName, tableNa
 			TableName: tableName,
 			TableID:   tableID,
 			IsRecord:  false,
-			IndexName: indexname,
+			IndexName: indexName,
 			IndexID:   indexID,
 		}
 	}

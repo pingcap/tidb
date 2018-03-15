@@ -76,11 +76,11 @@ func (ts *HTTPHandlerTestSuite) TestRegionIndexRange(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(r.first.IndexID, Equals, sIndex)
 	c.Assert(r.first.IsRecord, IsFalse)
-	c.Assert(indexRange.first.RecordID, Equals, int64(0))
-	c.Assert(indexRange.first.IndexValues, DeepEquals, expectIndexValues)
+	c.Assert(r.first.RecordID, Equals, int64(0))
+	c.Assert(r.first.IndexValues, DeepEquals, expectIndexValues)
 	c.Assert(r.last.IsRecord, IsTrue)
-	c.Assert(indexRange.last.RecordID, Equals, recordID)
-	c.Assert(indexRange.last.IndexValues, IsNil)
+	c.Assert(r.last.RecordID, Equals, recordID)
+	c.Assert(r.last.IndexValues, IsNil)
 
 	testCases := []struct {
 		tableID int64
