@@ -72,7 +72,7 @@ type testBinlogSuite struct {
 	unixFile string
 	serv     *grpc.Server
 	pump     *mockBinlogPump
-	tk       *testkit.TestKit
+	client   binlog.PumpClient
 	ddl      ddl.DDL
 }
 
@@ -94,16 +94,15 @@ func (s *testBinlogSuite) SetUpSuite(c *C) {
 	clientCon, err := grpc.Dial(s.unixFile, opt, grpc.WithInsecure())
 	c.Assert(err, IsNil)
 	c.Assert(clientCon, NotNil)
-	s.tk = testkit.NewTestKit(c, s.store)
+	tk := testkit.NewTestKit(c, s.store)
 	_, err = session.BootstrapSession(store)
 	c.Assert(err, IsNil)
-	s.tk.MustExec("use test")
-	sessionDomain := domain.GetDomain(s.tk.Se.(sessionctx.Context))
+	tk.MustExec("use test")
+	sessionDomain := domain.GetDomain(tk.Se.(sessionctx.Context))
 	s.ddl = sessionDomain.DDL()
 
-	binlogClient := binlog.NewPumpClient(clientCon)
-	s.tk.Se.GetSessionVars().BinlogClient = binlogClient
-	s.ddl.WorkerVars().BinlogClient = binlogClient
+	s.client = binlog.NewPumpClient(clientCon)
+	s.ddl.WorkerVars().BinlogClient = s.client
 }
 
 func (s *testBinlogSuite) TearDownSuite(c *C) {
@@ -114,7 +113,9 @@ func (s *testBinlogSuite) TearDownSuite(c *C) {
 }
 
 func (s *testBinlogSuite) TestBinlog(c *C) {
-	tk := s.tk
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.Se.GetSessionVars().BinlogClient = s.client
 	pump := s.pump
 	tk.MustExec("drop table if exists local_binlog")
 	ddlQuery := "create table local_binlog (id int primary key, name varchar(10)) shard_row_id_bits=1"
@@ -176,9 +177,9 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 	c.Assert(prewriteVal.Mutations[0].Sequence[0], Equals, binlog.MutationType_DeleteRow)
 
 	expected = [][]types.Datum{
-		{types.NewStringDatum("def"), types.NewIntDatum(18)},
+		{types.NewStringDatum("def"), types.NewIntDatum(18), types.NewIntDatum(-1), types.NewIntDatum(2)},
 	}
-	gotRows = mutationRowsToRows(c, prewriteVal.Mutations[0].DeletedRows, 1, 3)
+	gotRows = mutationRowsToRows(c, prewriteVal.Mutations[0].DeletedRows, 1, 3, 4, 5)
 	c.Assert(gotRows, DeepEquals, expected)
 
 	// Test Table don't have primary key.
@@ -186,18 +187,26 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 	tk.MustExec("insert local_binlog3 values (1, 2), (1, 3), (2, 3)")
 	tk.MustExec("update local_binlog3 set c1 = 3 where c1 = 2")
 	prewriteVal = getLatestBinlogPrewriteValue(c, pump)
-	gotRows = mutationRowsToRows(c, prewriteVal.Mutations[0].UpdatedRows, 5, 7)
+
+	// The encoded update row is [oldColID1, oldColVal1, oldColID2, oldColVal2, -1, handle,
+	// 		newColID1, newColVal2, newColID2, newColVal2, -1, handle]
+	gotRows = mutationRowsToRows(c, prewriteVal.Mutations[0].UpdatedRows, 7, 9)
 	expected = [][]types.Datum{
 		{types.NewIntDatum(3), types.NewIntDatum(3)},
 	}
+	c.Assert(gotRows, DeepEquals, expected)
+	expected = [][]types.Datum{
+		{types.NewIntDatum(-1), types.NewIntDatum(3), types.NewIntDatum(-1), types.NewIntDatum(3)},
+	}
+	gotRows = mutationRowsToRows(c, prewriteVal.Mutations[0].UpdatedRows, 4, 5, 10, 11)
 	c.Assert(gotRows, DeepEquals, expected)
 
 	tk.MustExec("delete from local_binlog3 where c1 = 3 and c2 = 3")
 	prewriteVal = getLatestBinlogPrewriteValue(c, pump)
 	c.Assert(prewriteVal.Mutations[0].Sequence[0], Equals, binlog.MutationType_DeleteRow)
-	gotRows = mutationRowsToRows(c, prewriteVal.Mutations[0].DeletedRows, 1, 3)
+	gotRows = mutationRowsToRows(c, prewriteVal.Mutations[0].DeletedRows, 1, 3, 4, 5)
 	expected = [][]types.Datum{
-		{types.NewIntDatum(3), types.NewIntDatum(3)},
+		{types.NewIntDatum(3), types.NewIntDatum(3), types.NewIntDatum(-1), types.NewIntDatum(3)},
 	}
 	c.Assert(gotRows, DeepEquals, expected)
 
@@ -217,7 +226,7 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 	})
 
 	// Test statement rollback.
-	tk.MustExec("create table local_binlog5 (c1 int primary key")
+	tk.MustExec("create table local_binlog5 (c1 int primary key)")
 	tk.MustExec("begin")
 	tk.MustExec("insert into local_binlog5 value (1)")
 	// This statement execute fail and should not write binlog.
@@ -318,7 +327,7 @@ func checkBinlogCount(c *C, pump *mockBinlogPump) {
 	c.Assert(match, IsTrue)
 }
 
-func mutationRowsToRows(c *C, mutationRows [][]byte, firstColumn, secondColumn int) [][]types.Datum {
+func mutationRowsToRows(c *C, mutationRows [][]byte, columnValueOffsets ...int) [][]types.Datum {
 	var rows = make([][]types.Datum, 0)
 	for _, mutationRow := range mutationRows {
 		datums, err := codec.Decode(mutationRow, 5)
@@ -328,7 +337,10 @@ func mutationRowsToRows(c *C, mutationRows [][]byte, firstColumn, secondColumn i
 				datums[i].SetBytesAsString(datums[i].GetBytes())
 			}
 		}
-		row := []types.Datum{datums[firstColumn], datums[secondColumn]}
+		row := make([]types.Datum, 0, len(columnValueOffsets))
+		for _, colOff := range columnValueOffsets {
+			row = append(row, datums[colOff])
+		}
 		rows = append(rows, row)
 	}
 	return rows

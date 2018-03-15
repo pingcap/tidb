@@ -74,6 +74,7 @@ type testSuite struct {
 	cluster   *mocktikv.Cluster
 	mvccStore *mocktikv.MvccStore
 	store     kv.Storage
+	domain    *domain.Domain
 	*parser.Parser
 	ctx *mock.Context
 
@@ -101,11 +102,13 @@ func (s *testSuite) SetUpSuite(c *C) {
 		session.SetSchemaLease(0)
 		session.SetStatsLease(0)
 	}
-	_, err := session.BootstrapSession(s.store)
+	d, err := session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
+	s.domain = d
 }
 
 func (s *testSuite) TearDownSuite(c *C) {
+	s.domain.Close()
 	s.store.Close()
 	autoid.SetStep(s.autoIDStep)
 }

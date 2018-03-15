@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/gcworker"
@@ -347,6 +348,12 @@ func validateConfig() {
 		os.Exit(-1)
 	}
 	cfg.OOMAction = strings.ToLower(cfg.OOMAction)
+
+	// lower_case_table_names is allowed to be 0, 1, 2
+	if cfg.LowerCaseTableNames < 0 || cfg.LowerCaseTableNames > 2 {
+		log.Errorf("lower-case-table-names should be 0 or 1 or 2.")
+		os.Exit(-1)
+	}
 }
 
 func setGlobalVars() {
@@ -378,6 +385,9 @@ func setGlobalVars() {
 	if cfg.TiKVClient.GrpcConnectionCount > 0 {
 		tikv.MaxConnectionCount = cfg.TiKVClient.GrpcConnectionCount
 	}
+
+	// set lower_case_table_names
+	variable.SysVars["lower_case_table_names"].Value = strconv.Itoa(cfg.LowerCaseTableNames)
 
 	tikv.CommitMaxBackoff = int(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds() * 1000)
 }
