@@ -586,7 +586,6 @@ func init() {
 type ProjectionExec struct {
 	baseExecutor
 
-	exprs            []expression.Expression // Only used in Next().
 	evaluatorSuit    *expression.EvaluatorSuit
 	calculateNoDelay bool
 }
@@ -597,26 +596,6 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	return nil
-}
-
-// Next implements the Executor Next interface.
-func (e *ProjectionExec) Next(ctx context.Context) (retRow Row, err error) {
-	srcRow, err := e.children[0].Next(ctx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if srcRow == nil {
-		return nil, nil
-	}
-	row := make([]types.Datum, 0, len(e.exprs))
-	for _, expr := range e.exprs {
-		val, err := expr.Eval(srcRow)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		row = append(row, val)
-	}
-	return row, nil
 }
 
 // NextChunk implements the Executor NextChunk interface.
