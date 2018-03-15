@@ -104,6 +104,9 @@ func ValidCharsetAndCollation(cs string, co string) bool {
 
 // GetDefaultCollation returns the default collation for charset.
 func GetDefaultCollation(charset string) (string, error) {
+	if charset == "" {
+		return CollationUTF8, nil
+	}
 	charset = strings.ToLower(charset)
 	if charset == CharsetBin {
 		return CollationBin, nil
@@ -155,20 +158,6 @@ func GetCharsetInfoByID(coID int) (string, string, error) {
 // GetCollations returns a list for all collations.
 func GetCollations() []*Collation {
 	return collations
-}
-
-// GetCollationByCharset converts charset to collation.
-func GetCollationByCharset(charset string) string {
-	switch charset {
-	case CharsetBin:
-		return CollationBin
-	case CharsetUTF8:
-		return CollationUTF8
-	case CharsetUTF8MB4:
-		return CollationUTF8MB4
-	default:
-		return CollationUTF8
-	}
 }
 
 const (

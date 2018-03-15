@@ -108,6 +108,8 @@ func buildTableMeta(tableName string, cs []columnInfo) *model.TableInfo {
 		Name:    model.NewCIStr(tableName),
 		Columns: cols,
 		State:   model.StatePublic,
+		Charset: mysql.DefaultCharset,
+		Collate: mysql.DefaultCollationName,
 	}
 }
 
@@ -640,7 +642,7 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Da
 		for _, table := range schema.Tables {
 			collation := table.Collate
 			if collation == "" {
-				collation = charset.GetCollationByCharset(table.Charset)
+				collation, _ = charset.GetDefaultCollation(table.Charset)
 			}
 			createTime := types.Time{
 				Time: types.FromGoTime(table.GetUpdateTime()),
