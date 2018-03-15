@@ -45,55 +45,56 @@ type SetExecutor struct {
 // NextChunk implements the Executor NextChunk interface.
 func (e *SetExecutor) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
-	if !e.done {
-		e.done = true
-		sessionVars := e.ctx.GetSessionVars()
-		for _, v := range e.vars {
-			// Variable is case insensitive, we use lower case.
-			if v.Name == ast.SetNames {
-				// This is set charset stmt.
-				dt, err := v.Expr.(*expression.Constant).Eval(nil)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				cs := dt.GetString()
-				var co string
-				if v.ExtendValue != nil {
-					co = v.ExtendValue.Value.GetString()
-				}
-				err = e.setCharset(cs, co)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				continue
+	if e.done {
+		return nil
+	}
+	e.done = true
+	sessionVars := e.ctx.GetSessionVars()
+	for _, v := range e.vars {
+		// Variable is case insensitive, we use lower case.
+		if v.Name == ast.SetNames {
+			// This is set charset stmt.
+			dt, err := v.Expr.(*expression.Constant).Eval(nil)
+			if err != nil {
+				return errors.Trace(err)
 			}
-			name := strings.ToLower(v.Name)
-			if !v.IsSystem {
-				// Set user variable.
-				value, err := v.Expr.Eval(nil)
-				if err != nil {
-					return errors.Trace(err)
-				}
-
-				if value.IsNull() {
-					delete(sessionVars.Users, name)
-				} else {
-					svalue, err1 := value.ToString()
-					if err1 != nil {
-						return errors.Trace(err1)
-					}
-					sessionVars.Users[name] = fmt.Sprintf("%v", svalue)
-				}
-				continue
+			cs := dt.GetString()
+			var co string
+			if v.ExtendValue != nil {
+				co = v.ExtendValue.Value.GetString()
+			}
+			err = e.setCharset(cs, co)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			continue
+		}
+		name := strings.ToLower(v.Name)
+		if !v.IsSystem {
+			// Set user variable.
+			value, err := v.Expr.Eval(nil)
+			if err != nil {
+				return errors.Trace(err)
 			}
 
-			syns := e.getSynonyms(name)
-			// Set system variable
-			for _, n := range syns {
-				err := e.setSysVariable(n, v)
-				if err != nil {
-					return errors.Trace(err)
+			if value.IsNull() {
+				delete(sessionVars.Users, name)
+			} else {
+				svalue, err1 := value.ToString()
+				if err1 != nil {
+					return errors.Trace(err1)
 				}
+				sessionVars.Users[name] = fmt.Sprintf("%v", svalue)
+			}
+			continue
+		}
+
+		syns := e.getSynonyms(name)
+		// Set system variable
+		for _, n := range syns {
+			err := e.setSysVariable(n, v)
+			if err != nil {
+				return errors.Trace(err)
 			}
 		}
 	}
