@@ -21,7 +21,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"sort"
 	"time"
@@ -73,28 +72,49 @@ func (ts *HTTPHandlerTestSuite) TestRegionIndexRange(c *C) {
 		StartKey: startKey,
 		EndKey:   endKey,
 	}
-	indexRange, err := NewRegionFrameRange(region)
+	r, err := NewRegionFrameRange(region)
 	c.Assert(err, IsNil)
-	c.Assert(indexRange.firstTableID(), Equals, sTableID)
-	c.Assert(indexRange.lastTableID(), Equals, eTableID)
-	c.Assert(indexRange.first.IndexID, Equals, sIndex)
-	c.Assert(indexRange.first.IsRecord, IsFalse)
+	c.Assert(r.first.IndexID, Equals, sIndex)
+	c.Assert(r.first.IsRecord, IsFalse)
 	c.Assert(indexRange.first.RecordID, Equals, int64(0))
 	c.Assert(indexRange.first.IndexValues, DeepEquals, expectIndexValues)
-	c.Assert(indexRange.last.IsRecord, IsTrue)
+	c.Assert(r.last.IsRecord, IsTrue)
 	c.Assert(indexRange.last.RecordID, Equals, recordID)
 	c.Assert(indexRange.last.IndexValues, IsNil)
-	start, end := indexRange.getIndexRangeForTable(sTableID)
-	c.Assert(start, Equals, sIndex)
-	c.Assert(end, Equals, int64(math.MaxInt64))
-	start, end = indexRange.getIndexRangeForTable(eTableID)
-	c.Assert(start, Equals, int64(math.MinInt64))
-	c.Assert(end, Equals, int64(math.MaxInt64))
+
+	testCases := []struct {
+		tableID int64
+		indexID int64
+		isCover bool
+	}{
+		{2, 0, false},
+		{3, 0, true},
+		{9, 0, true},
+		{10, 0, false},
+		{2, 10, false},
+		{3, 10, false},
+		{3, 11, true},
+		{3, 20, true},
+		{9, 10, true},
+		{10, 1, false},
+	}
+	for _, t := range testCases {
+		var f *FrameItem
+		if t.indexID == 0 {
+			f = r.getRecordFrame(t.tableID, "", "")
+		} else {
+			f = r.getIndexFrame(t.tableID, t.indexID, "", "", "")
+		}
+		if t.isCover {
+			c.Assert(f, NotNil)
+		} else {
+			c.Assert(f, IsNil)
+		}
+	}
 }
 
 func (ts *HTTPHandlerTestSuite) TestRegionIndexRangeWithEndNoLimit(c *C) {
 	sTableID := int64(15)
-	eTableID := int64(math.MaxInt64)
 	startKey := tablecodec.GenTableRecordPrefix(sTableID)
 	endKey := []byte("z_aaaaafdfd")
 	region := &tikv.KeyLocation{
@@ -102,23 +122,15 @@ func (ts *HTTPHandlerTestSuite) TestRegionIndexRangeWithEndNoLimit(c *C) {
 		StartKey: startKey,
 		EndKey:   endKey,
 	}
-	indexRange, err := NewRegionFrameRange(region)
+	r, err := NewRegionFrameRange(region)
 	c.Assert(err, IsNil)
-	c.Assert(indexRange.firstTableID(), Equals, sTableID)
-	c.Assert(indexRange.lastTableID(), Equals, eTableID)
-	c.Assert(indexRange.first.IsRecord, IsTrue)
-	c.Assert(indexRange.last.IsRecord, IsTrue)
-	start, end := indexRange.getIndexRangeForTable(sTableID)
-	c.Assert(start, Equals, int64(math.MaxInt64))
-	c.Assert(end, Equals, int64(math.MaxInt64))
-	start, end = indexRange.getIndexRangeForTable(eTableID)
-	c.Assert(start, Equals, int64(math.MinInt64))
-	c.Assert(end, Equals, int64(math.MaxInt64))
+	c.Assert(r.first.IsRecord, IsTrue)
+	c.Assert(r.last.IsRecord, IsTrue)
+	c.Assert(r.getRecordFrame(300, "", ""), NotNil)
+	c.Assert(r.getIndexFrame(200, 100, "", "", ""), NotNil)
 }
 
 func (ts *HTTPHandlerTestSuite) TestRegionIndexRangeWithStartNoLimit(c *C) {
-	sTableID := int64(math.MinInt64)
-	sIndexID := int64(math.MinInt64)
 	eTableID := int64(9)
 	startKey := []byte("m_aaaaafdfd")
 	endKey := tablecodec.GenTableRecordPrefix(eTableID)
@@ -127,19 +139,12 @@ func (ts *HTTPHandlerTestSuite) TestRegionIndexRangeWithStartNoLimit(c *C) {
 		StartKey: startKey,
 		EndKey:   endKey,
 	}
-	indexRange, err := NewRegionFrameRange(region)
+	r, err := NewRegionFrameRange(region)
 	c.Assert(err, IsNil)
-	c.Assert(indexRange.firstTableID(), Equals, sTableID)
-	c.Assert(indexRange.lastTableID(), Equals, eTableID)
-	c.Assert(indexRange.first.IndexID, Equals, sIndexID)
-	c.Assert(indexRange.first.IsRecord, IsFalse)
-	c.Assert(indexRange.last.IsRecord, IsTrue)
-	start, end := indexRange.getIndexRangeForTable(sTableID)
-	c.Assert(start, Equals, sIndexID)
-	c.Assert(end, Equals, int64(math.MaxInt64))
-	start, end = indexRange.getIndexRangeForTable(eTableID)
-	c.Assert(start, Equals, int64(math.MinInt64))
-	c.Assert(end, Equals, int64(math.MaxInt64))
+	c.Assert(r.first.IsRecord, IsFalse)
+	c.Assert(r.last.IsRecord, IsTrue)
+	c.Assert(r.getRecordFrame(3, "", ""), NotNil)
+	c.Assert(r.getIndexFrame(8, 1, "", "", ""), NotNil)
 }
 
 func (ts *HTTPHandlerTestSuite) TestRegionsAPI(c *C) {

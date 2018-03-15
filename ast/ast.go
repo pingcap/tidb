@@ -137,9 +137,6 @@ type RecordSet interface {
 	// Fields gets result fields.
 	Fields() []*ResultField
 
-	// Next returns the next row, nil row means there is no more to return.
-	Next(ctx context.Context) (row types.Row, err error)
-
 	// NextChunk reads records into chunk.
 	NextChunk(ctx context.Context, chk *chunk.Chunk) error
 

@@ -590,6 +590,7 @@ const (
 	AdminShowDDLJobs
 	AdminCancelDDLJobs
 	AdminCheckIndex
+	AdminRecoverIndex
 	AdminCheckIndexRange
 )
 
