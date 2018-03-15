@@ -232,28 +232,6 @@ type ShowDDLExec struct {
 	done       bool
 }
 
-// Next implements the Executor Next interface.
-func (e *ShowDDLExec) Next(ctx context.Context) (Row, error) {
-	if e.done {
-		return nil, nil
-	}
-
-	var ddlJob string
-	if e.ddlInfo.Job != nil {
-		ddlJob = e.ddlInfo.Job.String()
-	}
-
-	row := types.MakeDatums(
-		e.ddlInfo.SchemaVer,
-		e.ddlOwnerID,
-		ddlJob,
-		e.selfID,
-	)
-	e.done = true
-
-	return row, nil
-}
-
 // NextChunk implements the Executor NextChunk interface.
 func (e *ShowDDLExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
@@ -298,19 +276,6 @@ func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 	e.jobs = append(e.jobs, historyJobs...)
 	e.cursor = 0
 	return nil
-}
-
-// Next implements the Executor Next interface.
-func (e *ShowDDLJobsExec) Next(ctx context.Context) (Row, error) {
-	if e.cursor >= len(e.jobs) {
-		return nil, nil
-	}
-
-	job := e.jobs[e.cursor]
-	row := types.MakeDatums(job.String(), job.State.String())
-	e.cursor++
-
-	return row, nil
 }
 
 // NextChunk implements the Executor NextChunk interface.
@@ -469,37 +434,6 @@ type SelectLockExec struct {
 	baseExecutor
 
 	Lock ast.SelectLockType
-}
-
-// Next implements the Executor Next interface.
-func (e *SelectLockExec) Next(ctx context.Context) (Row, error) {
-	row, err := e.children[0].Next(ctx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if row == nil {
-		return nil, nil
-	}
-	// If there's no handle or it isn't a `select for update`.
-	if len(e.Schema().TblID2Handle) == 0 || e.Lock != ast.SelectLockForUpdate {
-		return row, nil
-	}
-	txn := e.ctx.Txn()
-	txnCtx := e.ctx.GetSessionVars().TxnCtx
-	txnCtx.ForUpdate = true
-	for id, cols := range e.Schema().TblID2Handle {
-		for _, col := range cols {
-			handle := row[col.Index].GetInt64()
-			lockKey := tablecodec.EncodeRowKeyWithHandle(id, handle)
-			err = txn.LockKeys(lockKey)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			// This operation is only for schema validator check.
-			txnCtx.UpdateDeltaForTable(id, 0, 0)
-		}
-	}
-	return row, nil
 }
 
 // NextChunk implements the Executor NextChunk interface.
@@ -707,15 +641,6 @@ type TableDualExec struct {
 func (e *TableDualExec) Open(ctx context.Context) error {
 	e.numReturned = 0
 	return nil
-}
-
-// Next implements the Executor Next interface.
-func (e *TableDualExec) Next(ctx context.Context) (Row, error) {
-	if e.numReturned >= e.numDualRows {
-		return nil, nil
-	}
-	e.numReturned = e.numDualRows
-	return Row{}, nil
 }
 
 // NextChunk implements the Executor NextChunk interface.
