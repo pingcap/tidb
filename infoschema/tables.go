@@ -76,16 +76,18 @@ type columnInfo struct {
 func buildColumnInfo(tableName string, col columnInfo) *model.ColumnInfo {
 	mCharset := charset.CharsetBin
 	mCollation := charset.CharsetBin
+	mFlag := mysql.UnsignedFlag
 	if col.tp == mysql.TypeVarchar || col.tp == mysql.TypeBlob {
 		mCharset = mysql.DefaultCharset
 		mCollation = mysql.DefaultCollationName
+		mFlag = col.flag
 	}
 	fieldType := types.FieldType{
 		Charset: mCharset,
 		Collate: mCollation,
 		Tp:      col.tp,
 		Flen:    col.size,
-		Flag:    col.flag,
+		Flag:    mFlag,
 	}
 	return &model.ColumnInfo{
 		Name:      model.NewCIStr(col.name),
