@@ -186,6 +186,20 @@ func (s *testIndexSuite) TestIndex(c *C) {
 
 	_, err = index.FetchValues(make([]types.Datum, 0), nil)
 	c.Assert(err, NotNil)
+
+	// Test the function of Next when the value of unique key is nil.
+	values2 := types.MakeDatums(nil, nil)
+	_, err = index.Create(mockCtx, txn, values2, 2)
+	c.Assert(err, IsNil)
+	it, err = index.SeekFirst(txn)
+	c.Assert(err, IsNil)
+	getValues, h, err = it.Next()
+	c.Assert(err, IsNil)
+	c.Assert(getValues, HasLen, 2)
+	c.Assert(getValues[0].GetInterface(), Equals, nil)
+	c.Assert(getValues[1].GetInterface(), Equals, nil)
+	c.Assert(h, Equals, int64(2))
+	it.Close()
 }
 
 func (s *testIndexSuite) TestCombineIndexSeek(c *C) {
