@@ -842,7 +842,7 @@ func (r *RegionFrameRange) getIndexFrame(tableID, indexID int64, dbName, tableNa
 	if tableID == r.first.TableID && !r.first.IsRecord && indexID == r.first.IndexID {
 		return r.first
 	}
-	if tableID == r.last.TableID && !r.last.IsRecord && indexID == r.last.IndexID {
+	if tableID == r.last.TableID && indexID == r.last.IndexID {
 		return r.last
 	}
 
