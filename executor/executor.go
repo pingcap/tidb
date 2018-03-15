@@ -57,6 +57,10 @@ var (
 	_ Executor = &TableScanExec{}
 	_ Executor = &TopNExec{}
 	_ Executor = &UnionExec{}
+	_ Executor = &CheckIndexExec{}
+	_ Executor = &HashJoinExec{}
+	_ Executor = &IndexLookUpExecutor{}
+	_ Executor = &MergeJoinExec{}
 )
 
 // Error instances.
@@ -586,7 +590,6 @@ func init() {
 type ProjectionExec struct {
 	baseExecutor
 
-	exprs            []expression.Expression // Only used in Next().
 	evaluatorSuit    *expression.EvaluatorSuit
 	calculateNoDelay bool
 }
@@ -597,26 +600,6 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	return nil
-}
-
-// Next implements the Executor Next interface.
-func (e *ProjectionExec) Next(ctx context.Context) (retRow Row, err error) {
-	srcRow, err := e.children[0].Next(ctx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if srcRow == nil {
-		return nil, nil
-	}
-	row := make([]types.Datum, 0, len(e.exprs))
-	for _, expr := range e.exprs {
-		val, err := expr.Eval(srcRow)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		row = append(row, val)
-	}
-	return row, nil
 }
 
 // NextChunk implements the Executor NextChunk interface.
@@ -641,15 +624,6 @@ type TableDualExec struct {
 func (e *TableDualExec) Open(ctx context.Context) error {
 	e.numReturned = 0
 	return nil
-}
-
-// Next implements the Executor Next interface.
-func (e *TableDualExec) Next(ctx context.Context) (Row, error) {
-	if e.numReturned >= e.numDualRows {
-		return nil, nil
-	}
-	e.numReturned = e.numDualRows
-	return Row{}, nil
 }
 
 // NextChunk implements the Executor NextChunk interface.
