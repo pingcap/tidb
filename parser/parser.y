@@ -343,6 +343,7 @@ import (
 	query		"QUERY"
 	queries		"QUERIES"
 	quick		"QUICK"
+	recover 	"RECOVER"
 	redundant	"REDUNDANT"
 	reload		"RELOAD"
 	repeatable	"REPEATABLE"
@@ -421,7 +422,7 @@ import (
 	cancel		"CANCEL"
 	ddl		"DDL"
 	jobs		"JOBS"
-	job		"JOB"
+	job		    "JOB"
 	stats		"STATS"
 	statsMeta       "STATS_META"
 	statsHistograms "STATS_HISTOGRAMS"
@@ -2530,7 +2531,7 @@ UnReservedKeyword:
 | "SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "MODIFY" | "EVENTS" | "PARTITIONS"
 | "NONE" | "SUPER" | "EXCLUSIVE" | "STATS_PERSISTENT" | "ROW_COUNT" | "COALESCE" | "MONTH" | "PROCESS" | "PROFILES"
 | "MICROSECOND" | "MINUTE" | "PLUGINS" | "QUERY" | "QUERIES" | "SECOND" | "SEPARATOR" | "SHARE" | "SHARED" | "MAX_CONNECTIONS_PER_HOUR" | "MAX_QUERIES_PER_HOUR" | "MAX_UPDATES_PER_HOUR"
-| "MAX_USER_CONNECTIONS" | "REPLICATION" | "CLIENT" | "SLAVE" | "RELOAD" | "TEMPORARY" | "ROUTINE" | "EVENT" | "ALGORITHM" | "DEFINER" | "INVOKER" | "MERGE" | "TEMPTABLE" | "UNDEFINED" | "SECURITY" | "CASCADED"
+| "MAX_USER_CONNECTIONS" | "REPLICATION" | "CLIENT" | "SLAVE" | "RELOAD" | "TEMPORARY" | "ROUTINE" | "EVENT" | "ALGORITHM" | "DEFINER" | "INVOKER" | "MERGE" | "TEMPTABLE" | "UNDEFINED" | "SECURITY" | "CASCADED" | "RECOVER"
 
 TiDBKeyword:
 "ADMIN" | "CANCEL" | "DDL" | "JOBS" | "JOB" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "STATS_HEALTHY" | "TIDB" | "TIDB_HJ" | "TIDB_SMJ" | "TIDB_INLJ"
@@ -4767,6 +4768,14 @@ AdminStmt:
 	{
 		$$ = &ast.AdminStmt{
 			Tp: ast.AdminCheckIndex,
+			Tables: []*ast.TableName{$4.(*ast.TableName)},
+			Index: string($5),
+		}
+	}
+|	"ADMIN" "RECOVER" "INDEX" TableName Identifier
+	{
+		$$ = &ast.AdminStmt{
+			Tp: ast.AdminRecoverIndex,
 			Tables: []*ast.TableName{$4.(*ast.TableName)},
 			Index: string($5),
 		}
