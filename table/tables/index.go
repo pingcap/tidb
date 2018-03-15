@@ -38,7 +38,7 @@ func encodeHandle(h int64) []byte {
 	return buf.Bytes()
 }
 
-// DecodeHandle decode handle in data.
+// DecodeHandle decodes handle in data.
 func DecodeHandle(data []byte) (int64, error) {
 	var h int64
 	buf := bytes.NewBuffer(data)

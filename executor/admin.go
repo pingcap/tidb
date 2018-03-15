@@ -35,7 +35,10 @@ import (
 	"golang.org/x/net/context"
 )
 
-var _ Executor = new(CheckIndexRangeExec)
+var (
+	_ Executor = &CheckIndexRangeExec{}
+	_ Executor = &RecoverIndexExec{}
+)
 
 // CheckIndexRangeExec outputs the index values which has handle between begin and end.
 type CheckIndexRangeExec struct {
@@ -166,6 +169,7 @@ type RecoverIndexExec struct {
 	recoverRows []recoverRows
 	idxValsBufs [][]types.Datum
 	idxKeyBufs  [][]byte
+	batchKeys   []kv.Key
 }
 
 func (e *RecoverIndexExec) columnsTypes() []*types.FieldType {
@@ -192,11 +196,6 @@ func (e *RecoverIndexExec) Open(ctx context.Context) error {
 	e.idxValsBufs = make([][]types.Datum, e.batchSize)
 	e.idxKeyBufs = make([][]byte, e.batchSize)
 	return nil
-}
-
-// Next implements the Executor Next interface.
-func (e *RecoverIndexExec) Next(ctx context.Context) (Row, error) {
-	return nil, nil
 }
 
 func (e *RecoverIndexExec) constructTableScanPB(pbColumnInfos []*tipb.ColumnInfo) *tipb.Executor {
@@ -329,7 +328,7 @@ func (e *RecoverIndexExec) fetchRecoverRows(ctx context.Context, srcResult dists
 	e.recoverRows = e.recoverRows[:0]
 	handleIdx := len(e.columns) - 1
 	result.scanRowCount = 0
-Loop:
+
 	for {
 		err := srcResult.NextChunk(ctx, e.srcChunk)
 		if err != nil {
@@ -342,7 +341,7 @@ Loop:
 		iter := chunk.NewIterator4Chunk(e.srcChunk)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			if result.scanRowCount >= int64(e.batchSize) {
-				break Loop
+				return e.recoverRows, nil
 			}
 			handle := row.GetInt64(handleIdx)
 			idxVals := e.extractIdxVals(row, e.idxValsBufs[result.scanRowCount])
@@ -360,9 +359,8 @@ func (e *RecoverIndexExec) batchMarkDup(txn kv.Transaction, rows []recoverRows) 
 	if len(rows) == 0 {
 		return nil
 	}
-
+	e.batchKeys = e.batchKeys[:0]
 	sc := e.ctx.GetSessionVars().StmtCtx
-	batchKeys := make([]kv.Key, 0, len(rows))
 	distinctFlags := make([]bool, len(rows))
 	for i, row := range rows {
 		idxKey, distinct, err := e.index.GenIndexKey(sc, row.idxVals, row.handle, e.idxKeyBufs[i])
@@ -371,11 +369,11 @@ func (e *RecoverIndexExec) batchMarkDup(txn kv.Transaction, rows []recoverRows) 
 		}
 		e.idxKeyBufs[i] = idxKey
 
-		batchKeys = append(batchKeys, idxKey)
+		e.batchKeys = append(e.batchKeys, idxKey)
 		distinctFlags[i] = distinct
 	}
 
-	values, err := txn.GetSnapshot().BatchGet(batchKeys)
+	values, err := txn.GetSnapshot().BatchGet(e.batchKeys)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -383,7 +381,7 @@ func (e *RecoverIndexExec) batchMarkDup(txn kv.Transaction, rows []recoverRows) 
 	// 1. unique-key is duplicate and the handle is equal, skip it.
 	// 2. unique-key is duplicate and the handle is not equal, data is not consistent, log it and skip it.
 	// 3. non-unique-key is duplicate, skip it.
-	for i, key := range batchKeys {
+	for i, key := range e.batchKeys {
 		if val, found := values[string(key)]; found {
 			if distinctFlags[i] {
 				handle, err1 := tables.DecodeHandle(val)
@@ -420,7 +418,6 @@ func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transa
 		return result, errors.Trace(err)
 	}
 
-	oldBatchCheck := e.ctx.GetSessionVars().StmtCtx.BatchCheck
 	// Constrains is already checked.
 	e.ctx.GetSessionVars().StmtCtx.BatchCheck = true
 	for _, row := range rows {
@@ -440,7 +437,6 @@ func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transa
 		}
 		result.addedCount++
 	}
-	e.ctx.GetSessionVars().StmtCtx.BatchCheck = oldBatchCheck
 	return result, nil
 }
 

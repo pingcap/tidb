@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
@@ -256,32 +255,31 @@ func buildRecoverIndexCols(tblInfo *model.TableInfo, indexInfo *model.IndexInfo)
 
 func (b *executorBuilder) buildRecoverIndex(v *plan.RecoverIndex) Executor {
 	tblInfo := v.Table.TableInfo
-	idxName := strings.ToLower(v.IndexName)
-	var indexInfo *model.IndexInfo
-	for _, idxInfo := range tblInfo.Indices {
-		if idxInfo.Name.L == idxName {
-			indexInfo = idxInfo
-			break
-		}
-	}
-	if indexInfo == nil {
-		b.err = errors.Errorf("index `%v` is not found in table `%v`.", v.IndexName, v.Table.Name.O)
-		return nil
-	}
-
-	index := tables.NewIndex(tblInfo, indexInfo)
 	t, err := b.is.TableByName(v.Table.Schema, tblInfo.Name)
 	if err != nil {
 		b.err = errors.Trace(err)
 		return nil
 	}
+	idxName := strings.ToLower(v.IndexName)
+	indices := t.WritableIndices()
+	var index table.Index
+	for _, idx := range indices {
+		if idxName == idx.Meta().Name.L {
+			index = idx
+			break
+		}
+	}
+
+	if index == nil {
+		b.err = errors.Errorf("index `%v` is not found in table `%v`.", v.IndexName, v.Table.Name.O)
+		return nil
+	}
 	e := &RecoverIndexExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
-		columns:      buildRecoverIndexCols(tblInfo, indexInfo),
+		columns:      buildRecoverIndexCols(tblInfo, index.Meta()),
 		index:        index,
 		table:        t,
 	}
-
 	return e
 }
 
