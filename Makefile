@@ -134,7 +134,10 @@ leak: parserlib
 	@$(GOFAIL_DISABLE)
 
 tikv_integration_test: parserlib
-	$(GOTEST) -check.exclude="TestFail" ./store/tikv/. -with-tikv=true
+	go get github.com/coreos/gofail
+	@$(GOFAIL_ENABLE)
+	$(GOTEST) ./store/tikv/. -with-tikv=true
+	@$(GOFAIL_DISABLE)
 
 RACE_FLAG = 
 ifeq ("$(WITH_RACE)", "1")
