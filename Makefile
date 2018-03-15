@@ -120,12 +120,14 @@ endif
 	@$(GOFAIL_DISABLE)
 
 race: parserlib
+	go get github.com/coreos/gofail
 	@$(GOFAIL_ENABLE)
 	@export log_level=debug; \
 	$(GOTEST) -race $(PACKAGES)
 	@$(GOFAIL_DISABLE)
 
 leak: parserlib
+	go get github.com/coreos/gofail
 	@$(GOFAIL_ENABLE)
 	@export log_level=debug; \
 	$(GOTEST) -tags leak $(PACKAGES)
