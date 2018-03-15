@@ -368,12 +368,6 @@ func (e *CheckTableExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error 
 	if e.done {
 		return nil
 	}
-	err := e.run(ctx)
-	e.done = true
-	return errors.Trace(err)
-}
-
-func (e *CheckTableExec) run(ctx context.Context) error {
 	dbName := model.NewCIStr(e.ctx.GetSessionVars().CurrentDB)
 	for _, t := range e.tables {
 		tb, err := e.is.TableByName(dbName, t.Name)
@@ -388,6 +382,7 @@ func (e *CheckTableExec) run(ctx context.Context) error {
 			}
 		}
 	}
+	e.done = true
 	return nil
 }
 
