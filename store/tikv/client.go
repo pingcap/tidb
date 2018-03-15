@@ -71,14 +71,14 @@ type connArray struct {
 	index uint32
 	v     []*grpc.ClientConn
 	// Bind with a background goroutine to process coprocessor streaming timeout.
-	streamTimeout chan *tikvrpc.TimeoutItem
+	streamTimeout chan *tikvrpc.Lease
 }
 
 func newConnArray(maxSize uint, addr string, security config.Security) (*connArray, error) {
 	a := &connArray{
 		index:         0,
 		v:             make([]*grpc.ClientConn, maxSize),
-		streamTimeout: make(chan *tikvrpc.TimeoutItem, 1024),
+		streamTimeout: make(chan *tikvrpc.Lease, 1024),
 	}
 	if err := a.Init(addr, security); err != nil {
 		return nil, err

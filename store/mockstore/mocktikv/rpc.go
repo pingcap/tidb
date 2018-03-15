@@ -416,13 +416,13 @@ func (h *rpcHandler) handleSplitRegion(req *kvrpcpb.SplitRegionRequest) *kvrpcpb
 type RPCClient struct {
 	Cluster       *Cluster
 	MvccStore     MVCCStore
-	streamTimeout chan *tikvrpc.TimeoutItem
+	streamTimeout chan *tikvrpc.Lease
 }
 
 // NewRPCClient creates an RPCClient.
 // Note that close the RPCClient may close the underlying MvccStore.
 func NewRPCClient(cluster *Cluster, mvccStore MVCCStore) *RPCClient {
-	ch := make(chan *tikvrpc.TimeoutItem)
+	ch := make(chan *tikvrpc.Lease)
 	go tikvrpc.CheckStreamTimeoutLoop(ch)
 	return &RPCClient{
 		Cluster:       cluster,

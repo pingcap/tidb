@@ -159,18 +159,18 @@ type Response struct {
 type CopStreamResponse struct {
 	tikvpb.Tikv_CoprocessorStreamClient
 	*coprocessor.Response // The first result of Recv()
-	lease                 TimeoutItem
+	lease                 Lease
 }
 
 // NewCopStreamResponse returns a CopStreamResponse.
-func NewCopStreamResponse(client tikvpb.Tikv_CoprocessorStreamClient, resp *coprocessor.Response, cancel context.CancelFunc, ch chan<- *TimeoutItem) *CopStreamResponse {
+func NewCopStreamResponse(client tikvpb.Tikv_CoprocessorStreamClient, resp *coprocessor.Response, cancel context.CancelFunc, ch chan<- *Lease) *CopStreamResponse {
 	ret := &CopStreamResponse{
 		Tikv_CoprocessorStreamClient: client,
 		Response:                     resp,
 	}
 	ret.lease.cancel = cancel
 	// If the return value is not used within 1 minute, it will expire.
-	ret.lease.deadline = time.Now().Add(time.Minute).Unix()
+	ret.lease.deadline = time.Now().Add(time.Minute).UnixNano()
 	ch <- &ret.lease
 	return ret
 }
@@ -374,7 +374,9 @@ func (resp *Response) GetRegionError() (*errorpb.Error, error) {
 }
 
 // CallRPC launches a rpc call.
-func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request, ch chan<- *TimeoutItem) (*Response, error) {
+// ch is needed to implement timeout for coprocessor streaing, the stream object's
+// cancel function will be sent to the channel, together with a lease checked by a background goroutine.
+func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request, ch chan<- *Lease) (*Response, error) {
 	resp := &Response{}
 	resp.Type = req.Type
 	var err error
@@ -445,15 +447,15 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request, ch cha
 	return resp, nil
 }
 
-// TimeoutItem is used to implement grpc stream timeout.
-type TimeoutItem struct {
+// Lease is used to implement grpc stream timeout.
+type Lease struct {
 	cancel   context.CancelFunc
-	deadline int64 // A time.Unix value, if time.Now().Unix() > deadline, cancel() would be called.
+	deadline int64 // A time.UnixNano value, if time.Now().UnixNano() > deadline, cancel() would be called.
 }
 
 // Recv overrides the stream client Recv() function.
 func (resp *CopStreamResponse) Recv() (*coprocessor.Response, error) {
-	deadline := time.Now().Add(20 * time.Second).Unix()
+	deadline := time.Now().Add(20 * time.Second).UnixNano()
 	atomic.StoreInt64(&resp.lease.deadline, deadline)
 
 	ret, err := resp.Tikv_CoprocessorStreamClient.Recv()
@@ -468,11 +470,11 @@ func (resp *CopStreamResponse) Close() {
 }
 
 // CheckStreamTimeoutLoop runs periodically to check is there any stream request timeouted.
-// TimeoutItem is an object to track stream requests, call this function with "go CheckStreamTimeoutLoop()"
-func CheckStreamTimeoutLoop(ch <-chan *TimeoutItem) {
+// Lease is an object to track stream requests, call this function with "go CheckStreamTimeoutLoop()"
+func CheckStreamTimeoutLoop(ch <-chan *Lease) {
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
-	array := make([]*TimeoutItem, 0, 1024)
+	array := make([]*Lease, 0, 1024)
 
 	for {
 		select {
@@ -483,13 +485,13 @@ func CheckStreamTimeoutLoop(ch <-chan *TimeoutItem) {
 			}
 			array = append(array, item)
 		case now := <-ticker.C:
-			array = keepOnlyActive(array, now.Unix())
+			array = keepOnlyActive(array, now.UnixNano())
 		}
 	}
 }
 
 // keepOnlyActive removes completed items, call cancel function for timeout items.
-func keepOnlyActive(array []*TimeoutItem, now int64) []*TimeoutItem {
+func keepOnlyActive(array []*Lease, now int64) []*Lease {
 	idx := 0
 	for i := 0; i < len(array); i++ {
 		item := array[i]
