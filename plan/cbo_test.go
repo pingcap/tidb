@@ -64,6 +64,51 @@ func (s *testAnalyzeSuite) TestCBOWithoutAnalyze(c *C) {
 	))
 }
 
+func (s *testAnalyzeSuite) TestStraightJoin(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	testKit.MustExec("use test")
+	h := dom.StatsHandle()
+	for _, tblName := range []string{"t1", "t2", "t3", "t4"} {
+		testKit.MustExec(fmt.Sprintf("create table %s (a int)", tblName))
+		c.Assert(h.HandleDDLEvent(<-h.DDLEventCh()), IsNil)
+	}
+
+	testKit.MustQuery("explain select straight_join * from t1, t2, t3, t4").Check(testkit.Rows(
+		"TableScan_16   cop table:t1, range:[-inf,+inf], keep order:false 10000.00",
+		"TableReader_17 HashLeftJoin_14  root data:TableScan_16 10000.00",
+		"TableScan_18   cop table:t2, range:[-inf,+inf], keep order:false 10000.00",
+		"TableReader_19 HashLeftJoin_14  root data:TableScan_18 10000.00",
+		"HashLeftJoin_14 HashLeftJoin_12 TableReader_17,TableReader_19 root inner join, inner:TableReader_19 100000000.00",
+		"TableScan_20   cop table:t3, range:[-inf,+inf], keep order:false 10000.00",
+		"TableReader_21 HashLeftJoin_12  root data:TableScan_20 10000.00",
+		"HashLeftJoin_12 HashLeftJoin_10 HashLeftJoin_14,TableReader_21 root inner join, inner:TableReader_21 1000000000000.00",
+		"TableScan_22   cop table:t4, range:[-inf,+inf], keep order:false 10000.00",
+		"TableReader_23 HashLeftJoin_10  root data:TableScan_22 10000.00",
+		"HashLeftJoin_10  HashLeftJoin_12,TableReader_23 root inner join, inner:TableReader_23 10000000000000000.00",
+	))
+
+	testKit.MustQuery("explain select * from t1 straight_join t2 straight_join t3 straight_join t4").Check(testkit.Rows(
+		"TableScan_16   cop table:t1, range:[-inf,+inf], keep order:false 10000.00",
+		"TableReader_17 HashLeftJoin_14  root data:TableScan_16 10000.00",
+		"TableScan_18   cop table:t2, range:[-inf,+inf], keep order:false 10000.00",
+		"TableReader_19 HashLeftJoin_14  root data:TableScan_18 10000.00",
+		"HashLeftJoin_14 HashLeftJoin_12 TableReader_17,TableReader_19 root inner join, inner:TableReader_19 100000000.00",
+		"TableScan_20   cop table:t3, range:[-inf,+inf], keep order:false 10000.00",
+		"TableReader_21 HashLeftJoin_12  root data:TableScan_20 10000.00",
+		"HashLeftJoin_12 HashLeftJoin_10 HashLeftJoin_14,TableReader_21 root inner join, inner:TableReader_21 1000000000000.00",
+		"TableScan_22   cop table:t4, range:[-inf,+inf], keep order:false 10000.00",
+		"TableReader_23 HashLeftJoin_10  root data:TableScan_22 10000.00",
+		"HashLeftJoin_10  HashLeftJoin_12,TableReader_23 root inner join, inner:TableReader_23 10000000000000000.00",
+	))
+}
+
 func (s *testAnalyzeSuite) TestEstimation(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
