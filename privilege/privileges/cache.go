@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
 	log "github.com/sirupsen/logrus"
@@ -182,21 +183,23 @@ func (p *MySQLPrivilege) loadTable(sctx sessionctx.Context, sql string,
 	defer terror.Call(rs.Close)
 
 	fs := rs.Fields()
+	chk := rs.NewChunk()
+	it := chunk.NewIterator4Chunk(chk)
 	for {
-		row, err := rs.Next(context.TODO())
+		err = rs.NextChunk(context.TODO(), chk)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if row == nil {
-			break
+		if chk.NumRows() == 0 {
+			return nil
 		}
-
-		err = decodeTableRow(row, fs)
-		if err != nil {
-			return errors.Trace(err)
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			err = decodeTableRow(row, fs)
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
-	return nil
 }
 
 func (p *MySQLPrivilege) decodeUserTableRow(row types.Row, fs []*ast.ResultField) error {

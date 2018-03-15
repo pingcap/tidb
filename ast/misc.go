@@ -590,7 +590,14 @@ const (
 	AdminShowDDLJobs
 	AdminCancelDDLJobs
 	AdminCheckIndex
+	AdminCheckIndexRange
 )
+
+// HandleRange represents a range where handle value >= Begin and < End.
+type HandleRange struct {
+	Begin int64
+	End   int64
+}
 
 // AdminStmt is the struct for Admin statement.
 type AdminStmt struct {
@@ -600,9 +607,11 @@ type AdminStmt struct {
 	Index  string
 	Tables []*TableName
 	JobIDs []int64
+
+	HandleRanges []HandleRange
 }
 
-// Accept implements Node Accpet interface.
+// Accept implements Node Accept interface.
 func (n *AdminStmt) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
