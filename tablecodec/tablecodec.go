@@ -125,6 +125,8 @@ func DecodeIndexKey(key kv.Key) (tableID int64, indexID int64, indexValues []str
 	key = key[prefixLen+idLen:]
 
 	for len(key) > 0 {
+		// FIXME: Without the schema information, we can only decode the raw kind of
+		// the column. For instance, MysqlTime is internally saved as uint64.
 		remain, d, e := codec.DecodeOne(key)
 		if e != nil {
 			return 0, 0, nil, errInvalidIndexKey.Gen("invalid index key - %q %v", k, e)

@@ -332,9 +332,7 @@ func (s *testTableCodecSuite) TestDecodeIndexKey(c *C) {
 		types.NewIntDatum(1),
 		types.NewBytesDatum([]byte("abc")),
 		types.NewFloat64Datum(123.45),
-		// FIXME: MysqlTime is saved as uint64 internally. Without the schema
-		// information here, we can only parse the int value from the key.
-		//
+		// MysqlTime is not supported.
 		// types.NewTimeDatum(types.Time{
 		// 	Time: types.FromGoTime(time.Now()),
 		// 	Fsp:  6,
