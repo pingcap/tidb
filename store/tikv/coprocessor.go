@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/goroutine_pool"
-	"github.com/pingcap/tipb/go-tipb"
+	tipb "github.com/pingcap/tipb/go-tipb"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -384,7 +384,8 @@ type copIterator struct {
 
 type copResponse struct {
 	*coprocessor.Response
-	err error
+	startKey kv.Key
+	err      error
 }
 
 const minLogCopTaskTime = 300 * time.Millisecond
@@ -483,12 +484,18 @@ func (it *copIterator) sendToRespCh(resp copResponse, respCh chan copResponse) (
 
 // copResultSubset implements the kv.ResultSubset interface.
 type copResultSubset struct {
-	data []byte
+	data     []byte
+	startKey kv.Key
 }
 
 // GetData implements the kv.ResultSubset GetData interface.
 func (rs *copResultSubset) GetData() []byte {
 	return rs.data
+}
+
+// GetStartKey implements the kv.ResultSubset GetStartKey interface.
+func (rs *copResultSubset) GetStartKey() kv.Key {
+	return rs.startKey
 }
 
 // Next returns next coprocessor result.
@@ -542,7 +549,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	if resp.Data == nil {
 		return &copResultSubset{}, nil
 	}
-	return &copResultSubset{data: resp.Data}, nil
+	return &copResultSubset{data: resp.Data, startKey: resp.startKey}, nil
 }
 
 // handleTask handles single copTask, sends the result to channel, retry automatically on error.
@@ -660,7 +667,14 @@ func (it *copIterator) handleCopResponse(bo *Backoffer, resp *coprocessor.Respon
 		log.Warnf("coprocessor err: %v", err)
 		return nil, errors.Trace(err)
 	}
-	it.sendToRespCh(copResponse{resp, nil}, ch)
+	var startKey kv.Key
+	// When the request is using streaming API, the `Range` is not nil.
+	if resp.Range != nil {
+		startKey = resp.Range.Start
+	} else {
+		startKey = task.ranges.at(0).StartKey
+	}
+	it.sendToRespCh(copResponse{resp, startKey, nil}, ch)
 	return nil, nil
 }
 

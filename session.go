@@ -611,18 +611,14 @@ func drainRecordSet(ctx context.Context, rs ast.RecordSet) ([]types.Row, error) 
 	for {
 		chk := rs.NewChunk()
 		err := rs.NextChunk(ctx, chk)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if chk.NumRows() == 0 {
-			break
+		if err != nil || chk.NumRows() == 0 {
+			return rows, errors.Trace(err)
 		}
 		iter := chunk.NewIterator4Chunk(chk)
-		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			rows = append(rows, row)
+		for r := iter.Begin(); r != iter.End(); r = iter.Next() {
+			rows = append(rows, r)
 		}
 	}
-	return rows, nil
 }
 
 // getExecRet executes restricted sql and the result is one column.

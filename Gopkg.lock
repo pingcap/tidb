@@ -218,6 +218,7 @@
   revision = "eed819b6999186a4bf2d25255f8d61b371a450d6"
 
 [[projects]]
+  branch = "master"
   name = "github.com/pingcap/tipb"
   packages = [
     "go-binlog",
@@ -234,7 +235,7 @@
     "go-tipb",
     "sharedbytes"
   ]
-  revision = "07ff5b094233a557a3ac11b1e4d8714d8c6ff406"
+  revision = "2479f439c9cdd1bf7783dd1eaa4b7187b16d0638"
 
 [[projects]]
   name = "github.com/prometheus/client_golang"

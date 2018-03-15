@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
-	"github.com/pingcap/tipb/go-tipb"
+	tipb "github.com/pingcap/tipb/go-tipb"
 )
 
 var (
@@ -1800,13 +1800,13 @@ func compareInt(ctx sessionctx.Context, args []Expression, row types.Row) (val i
 	case isUnsigned0 && isUnsigned1:
 		res = types.CompareUint64(uint64(arg0), uint64(arg1))
 	case isUnsigned0 && !isUnsigned1:
-		if arg1 < 0 || arg0 > math.MaxInt64 {
+		if arg1 < 0 || uint64(arg0) > math.MaxInt64 {
 			res = 1
 		} else {
 			res = types.CompareInt64(arg0, arg1)
 		}
 	case !isUnsigned0 && isUnsigned1:
-		if arg0 < 0 || arg1 > math.MaxInt64 {
+		if arg0 < 0 || uint64(arg1) > math.MaxInt64 {
 			res = -1
 		} else {
 			res = types.CompareInt64(arg0, arg1)
