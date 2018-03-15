@@ -483,6 +483,10 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 			IdxName:           as.Index,
 			IndexLookUpReader: readerPlan.(*PhysicalIndexLookUpReader),
 		}
+	case ast.AdminRecoverIndex:
+		p := &RecoverIndex{Table: as.Tables[0], IndexName: as.Index}
+		p.SetSchema(buildRecoverIndexFields())
+		ret = p
 	case ast.AdminShowDDL:
 		p := &ShowDDL{}
 		p.SetSchema(buildShowDDLFields())
@@ -643,6 +647,13 @@ func buildShowDDLFields() *expression.Schema {
 	schema.Append(buildColumn("", "JOB", mysql.TypeVarchar, 128))
 	schema.Append(buildColumn("", "SELF_ID", mysql.TypeVarchar, 64))
 
+	return schema
+}
+
+func buildRecoverIndexFields() *expression.Schema {
+	schema := expression.NewSchema(make([]*expression.Column, 0, 2)...)
+	schema.Append(buildColumn("", "ADDED_COUNT", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "SCAN_COUNT", mysql.TypeLonglong, 4))
 	return schema
 }
 
