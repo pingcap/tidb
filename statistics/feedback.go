@@ -15,6 +15,7 @@ package statistics
 
 import (
 	"bytes"
+	"math/rand"
 	"sort"
 
 	"github.com/pingcap/tidb/kv"
@@ -56,6 +57,26 @@ func NewQueryFeedback(tableID int64, hist *Histogram, expected int64, desc bool)
 		expected: expected,
 		desc:     desc,
 	}
+}
+
+var (
+	// MaxNumberOfRanges is the max number of ranges before split to collect detailed range counts.
+	MaxNumberOfRanges = 20
+	// FeedbackProbability is the probability to collect detailed range counts.
+	FeedbackProbability = 0.0
+)
+
+// CollectDetailed decides whether to collect the detailed range counts.
+func (q *QueryFeedback) CollectDetailed(numOfRanges int) bool {
+	if q.hist == nil || q.hist.Len() == 0 {
+		q.Invalidate()
+		return false
+	}
+	if numOfRanges > MaxNumberOfRanges || rand.Float64() > FeedbackProbability {
+		q.Invalidate()
+		return false
+	}
+	return true
 }
 
 // StoreRanges stores the ranges for update.

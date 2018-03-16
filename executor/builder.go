@@ -1251,6 +1251,8 @@ func buildNoRangeTableReader(b *executorBuilder, v *plan.PhysicalTableReader) (*
 	} else {
 		e.feedback = statistics.NewQueryFeedback(ts.Table.ID, ts.Hist, ts.StatsInfo().Count(), ts.Desc)
 	}
+	collect := e.feedback.CollectDetailed(len(ts.Ranges))
+	e.dagPB.CollectRangeCounts = &collect
 
 	for i := range v.Schema().Columns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
@@ -1295,6 +1297,8 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plan.PhysicalIndexReader) (*
 	} else {
 		e.feedback = statistics.NewQueryFeedback(is.Table.ID, is.Hist, is.StatsInfo().Count(), is.Desc)
 	}
+	collect := e.feedback.CollectDetailed(len(is.Ranges))
+	e.dagPB.CollectRangeCounts = &collect
 
 	for _, col := range v.OutputColumns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(col.Index))
@@ -1352,6 +1356,10 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plan.PhysicalIndexLook
 	} else {
 		e.feedback = statistics.NewQueryFeedback(is.Table.ID, is.Hist, is.StatsInfo().Count(), is.Desc)
 	}
+	collectTable := false
+	e.tableRequest.CollectRangeCounts = &collectTable
+	collectIndex := e.feedback.CollectDetailed(len(is.Ranges))
+	e.dagPB.CollectRangeCounts = &collectIndex
 	if cols, ok := v.Schema().TblID2Handle[is.Table.ID]; ok {
 		e.handleIdx = cols[0].Index
 	}
