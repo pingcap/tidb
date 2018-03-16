@@ -2,10 +2,10 @@ package infoschema_test
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 func (s *testSuite) TestDataForTableRowsCountField(c *C) {
@@ -21,7 +21,6 @@ func (s *testSuite) TestDataForTableRowsCountField(c *C) {
 	h := do.StatsHandle()
 	is := do.InfoSchema()
 	tk := testkit.NewTestKit(c, store)
-
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
