@@ -196,9 +196,17 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, regi
 		log.Debugf("tikv reports `NotLeader`: %s, ctx: %v, retry later", notLeader, ctx)
 		s.regionCache.UpdateLeader(ctx.Region, notLeader.GetLeader().GetStoreId())
 
-		if err = bo.Backoff(BoRegionMiss, errors.Errorf("not leader: %v, ctx: %v", notLeader, ctx)); err != nil {
+		var boType backoffType
+		if notLeader.GetLeader() != nil {
+			boType = BoUpdateLeader
+		} else {
+			boType = BoRegionMiss
+		}
+
+		if err = bo.Backoff(boType, errors.Errorf("not leader: %v, ctx: %v", notLeader, ctx)); err != nil {
 			return false, errors.Trace(err)
 		}
+
 		return true, nil
 	}
 
