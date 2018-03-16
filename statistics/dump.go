@@ -17,6 +17,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	tipb "github.com/pingcap/tipb/go-tipb"
 )
@@ -67,7 +68,7 @@ func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo) (*JS
 		Version:      tbl.Version,
 	}
 	for _, col := range tbl.Columns {
-		hist, err := col.ConvertTo(h.ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeBlob))
+		hist, err := col.ConvertTo(new(stmtctx.StatementContext), types.NewFieldType(mysql.TypeBlob))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -113,7 +114,7 @@ func (h *Handle) LoadStatsFromJSON(tableInfo *model.TableInfo, jsonTbl *JSONTabl
 			}
 			hist := HistogramFromProto(jsonCol.Histogram)
 			count := int64(hist.totalRowCount())
-			hist, err := hist.ConvertTo(h.ctx.GetSessionVars().StmtCtx, &colInfo.FieldType)
+			hist, err := hist.ConvertTo(new(stmtctx.StatementContext), &colInfo.FieldType)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
