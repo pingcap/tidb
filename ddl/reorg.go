@@ -51,7 +51,10 @@ func (d *ddl) newContext() sessionctx.Context {
 	return c
 }
 
-const waitReorgTimeout = 10 * time.Second
+const defaultWaitReorgTimeout = 10 * time.Second
+
+// ReorgWaitTimeout is the timeout that wait ddl in write reorganization stage.
+var ReorgWaitTimeout = 1 * time.Second
 
 func (rc *reorgCtx) setRowCountAndHandle(count, doneHandle int64) {
 	atomic.StoreInt64(&rc.rowCount, count)
@@ -80,14 +83,14 @@ func (d *ddl) runReorgJob(t *meta.Meta, job *model.Job, f func() error) error {
 		}()
 	}
 
-	waitTimeout := waitReorgTimeout
+	waitTimeout := defaultWaitReorgTimeout
 	// if d.lease is 0, we are using a local storage,
 	// and we can wait the reorganization to be done here.
 	// if d.lease > 0, we don't need to wait here because
-	// we will wait 2 * lease outer and try checking again,
+	// we should update some job's progress context and try checking again,
 	// so we use a very little timeout here.
 	if d.lease > 0 {
-		waitTimeout = 10 * time.Second
+		waitTimeout = ReorgWaitTimeout
 	}
 
 	// wait reorganization job done or timeout
