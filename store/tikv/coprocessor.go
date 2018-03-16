@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/goroutine_pool"
-	"github.com/pingcap/tipb/go-tipb"
+	tipb "github.com/pingcap/tipb/go-tipb"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -621,7 +621,8 @@ func (it *copIterator) handleTaskOnce(bo *Backoffer, task *copTask, ch chan copR
 }
 
 func (it *copIterator) handleCopStreamResult(bo *Backoffer, stream *tikvrpc.CopStreamResponse, task *copTask, ch chan copResponse) ([]*copTask, error) {
-	var resp *coprocessor.Response
+	defer stream.Close()
+	var resp, lastResp *coprocessor.Response
 	resp = stream.Response
 	for {
 		remainedTasks, err := it.handleCopResponse(bo, resp, task, ch)
@@ -630,11 +631,27 @@ func (it *copIterator) handleCopStreamResult(bo *Backoffer, stream *tikvrpc.CopS
 		}
 		resp, err = stream.Recv()
 		if err != nil {
-			if err == io.EOF {
+			if errors.Cause(err) == io.EOF {
 				return nil, nil
 			}
-			return nil, errors.Trace(err)
+
+			if err1 := bo.Backoff(boTiKVRPC, errors.Errorf("recv stream response error: %v, task: %s", err, task)); err1 != nil {
+				return nil, errors.Trace(err)
+			}
+
+			// No coprocessor.Response for network error, rebuild task based on the last success one.
+			ranges := task.ranges
+			if lastResp != nil {
+				if it.req.Desc {
+					ranges, _ = ranges.split(lastResp.GetRange().Start)
+				} else {
+					_, ranges = ranges.split(lastResp.GetRange().End)
+				}
+			}
+			log.Info("stream recv timeout:", err)
+			return buildCopTasks(bo, it.store.regionCache, ranges, it.req.Desc, true)
 		}
+		lastResp = resp
 	}
 }
 
