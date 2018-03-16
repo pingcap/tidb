@@ -336,7 +336,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 		// Don't retry in BatchInsert mode. As a counter-example, insert into t1 select * from t2,
 		// BatchInsert already commit the first batch 1000 rows, then it commit 1000-2000 and retry the statement,
 		// Finally t1 will have more data than t2, with no errors return to user!
-		if s.isRetryableError(err) && !s.sessionVars.BatchInsert {
+		if s.isRetryableError(err) && !s.sessionVars.BatchInsert && commitRetryLimit != 0 {
 			log.Warnf("[%d] retryable error: %v, txn: %v", s.sessionVars.ConnectionID, err, s.txn)
 			// Transactions will retry 2 ~ commitRetryLimit times.
 			// We make larger transactions retry less times to prevent cluster resource outage.
@@ -793,6 +793,7 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []ast.Rec
 		startTS := time.Now()
 		stmtNodes, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
 		if err != nil {
+			s.rollbackOnError(ctx)
 			log.Warnf("[%d] parse error:\n%v\n%s", connID, err, sql)
 			return nil, errors.Trace(err)
 		}
@@ -808,6 +809,7 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []ast.Rec
 			executor.ResetStmtCtx(s, stmtNode)
 			stmt, err := compiler.Compile(ctx, stmtNode)
 			if err != nil {
+				s.rollbackOnError(ctx)
 				log.Warnf("[%d] compile error:\n%v\n%s", connID, err, sql)
 				return nil, errors.Trace(err)
 			}
@@ -830,6 +832,13 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []ast.Rec
 		recordSets = recordSets[:1]
 	}
 	return recordSets, nil
+}
+
+// rollbackOnError makes sure the next statement starts a new transaction with the latest InfoSchema.
+func (s *session) rollbackOnError(ctx context.Context) {
+	if !s.sessionVars.InTxn() {
+		terror.Log(s.RollbackTxn(ctx))
+	}
 }
 
 // PrepareStmt is used for executing prepare statement in binary protocol

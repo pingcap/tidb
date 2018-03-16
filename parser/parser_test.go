@@ -403,11 +403,14 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		// for admin
 		{"admin show ddl;", true},
 		{"admin show ddl jobs;", true},
+		{"admin show ddl job queries 1", true},
+		{"admin show ddl job queries 1, 2, 3, 4", true},
 		{"admin check table t1, t2;", true},
 		{"admin check index tableName idxName;", true},
 		{"admin check index tableName idxName (1, 2), (4, 5);", true},
 		{"admin cancel ddl jobs 1", true},
 		{"admin cancel ddl jobs 1, 2", true},
+		{"admin recover index t1 idx_a", true},
 
 		// for on duplicate key update
 		{"INSERT INTO t (a,b,c) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE c=VALUES(a)+VALUES(b);", true},
