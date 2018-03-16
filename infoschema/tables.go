@@ -637,9 +637,9 @@ func getRowCountAllTable(ctx sessionctx.Context) (map[int64]uint64, error)  {
 	}
 	rowCountMap := make(map[int64]uint64)
 	for _, row := range rows {
-		tableId := row.GetInt64(0)
+		tableID := row.GetInt64(0)
 		rowCnt := row.GetUint64(1)
-		rowCountMap[tableId] = rowCnt
+		rowCountMap[tableID] = rowCnt
 	}
 	return rowCountMap, nil
 }
