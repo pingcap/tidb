@@ -88,8 +88,8 @@ func (t *testTableSuite) TestFind(c *C) {
 		newCol("b"),
 		newCol("c"),
 	}
-	FindCols(cols, []string{"a"})
-	FindCols(cols, []string{"d"})
+	FindCols(cols, []string{"a"}, true)
+	FindCols(cols, []string{"d"}, true)
 	cols[0].Flag |= mysql.OnUpdateNowFlag
 	FindOnUpdateCols(cols)
 }

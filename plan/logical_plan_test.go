@@ -273,7 +273,7 @@ func MockTable() *model.TableInfo {
 func mockContext() sessionctx.Context {
 	ctx := mock.NewContext()
 	ctx.Store = &mock.Store{
-		&mock.Client{},
+		Client: &mock.Client{},
 	}
 	ctx.GetSessionVars().CurrentDB = "test"
 	do := &domain.Domain{}
