@@ -123,7 +123,6 @@ func (e *tableScanExec) Next(ctx context.Context) (value [][]byte, err error) {
 			e.counts[e.cursor-1]++
 			return value, nil
 		}
-
 		value, err = e.getRowFromRange(ran)
 		if err != nil {
 			return nil, errors.Trace(err)
