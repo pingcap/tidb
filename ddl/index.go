@@ -1074,11 +1074,11 @@ func (d *ddl) addTableIndexFromSplitRanges(t table.Table, indexInfo *model.Index
 
 		if workerIdx == workerCnt {
 			// Wait tasks finish.
-			workerIdx = 0
 			err1 = d.finishBatchTasks(startTime, startHandle, reorgInfo, job, workers, workerIdx-1)
 			if err1 != nil {
 				return errors.Trace(err1)
 			}
+			workerIdx = 0
 		}
 	}
 
