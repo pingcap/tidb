@@ -659,7 +659,7 @@ func convertUint(val []byte) (*Constant, error) {
 		return nil, errors.Errorf("invalid uint % x", val)
 	}
 	d.SetUint64(u)
-	return &Constant{Value: d, RetType: types.NewFieldType(mysql.TypeLonglong)}, nil
+	return &Constant{Value: d, RetType: &types.FieldType{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}}, nil
 }
 
 func convertString(val []byte) (*Constant, error) {
