@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
@@ -710,35 +711,30 @@ func (k loadDataVarKeyType) String() string {
 // LoadDataVarKey is a variable key for load data.
 const LoadDataVarKey loadDataVarKeyType = 0
 
-func (e *LoadData) exec(ctx context.Context) (Row, error) {
+// NextChunk implements the Executor NextChunk interface.
+func (e *LoadData) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+	chk.Reset()
 	// TODO: support load data without local field.
 	if !e.IsLocal {
-		return nil, errors.New("Load Data: don't support load data without local field")
+		return errors.New("Load Data: don't support load data without local field")
 	}
 	// TODO: support lines terminated is "".
 	if len(e.loadDataInfo.LinesInfo.Terminated) == 0 {
-		return nil, errors.New("Load Data: don't support load data terminated is nil")
+		return errors.New("Load Data: don't support load data terminated is nil")
 	}
 
 	sctx := e.loadDataInfo.insertVal.ctx
 	val := sctx.Value(LoadDataVarKey)
 	if val != nil {
 		sctx.SetValue(LoadDataVarKey, nil)
-		return nil, errors.New("Load Data: previous load data option isn't closed normal")
+		return errors.New("Load Data: previous load data option isn't closed normal")
 	}
 	if e.loadDataInfo.Path == "" {
-		return nil, errors.New("Load Data: infile path is empty")
+		return errors.New("Load Data: infile path is empty")
 	}
 	sctx.SetValue(LoadDataVarKey, e.loadDataInfo)
 
-	return nil, nil
-}
-
-// NextChunk implements the Executor NextChunk interface.
-func (e *LoadData) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
-	_, err := e.exec(ctx)
-	return errors.Trace(err)
+	return nil
 }
 
 // Close implements the Executor Close interface.
@@ -765,6 +761,7 @@ type InsertValues struct {
 	maxRowsInBatch        uint64
 	lastInsertID          uint64
 	needFillDefaultValues bool
+	hasExtraHandle        bool
 
 	SelectExec Executor
 
@@ -1059,7 +1056,7 @@ func (e *InsertValues) getColumns(tableCols []*table.Column) ([]*table.Column, e
 		for _, v := range e.GenColumns {
 			columns = append(columns, v.Name.O)
 		}
-		cols, err = table.FindCols(tableCols, columns)
+		cols, err = table.FindCols(tableCols, columns, e.Table.Meta().PKIsHandle)
 		if err != nil {
 			return nil, errors.Errorf("INSERT INTO %s: %s", e.Table.Meta().Name.O, err)
 		}
@@ -1075,13 +1072,19 @@ func (e *InsertValues) getColumns(tableCols []*table.Column) ([]*table.Column, e
 		for _, v := range e.GenColumns {
 			columns = append(columns, v.Name.O)
 		}
-		cols, err = table.FindCols(tableCols, columns)
+		cols, err = table.FindCols(tableCols, columns, e.Table.Meta().PKIsHandle)
 		if err != nil {
 			return nil, errors.Errorf("INSERT INTO %s: %s", e.Table.Meta().Name.O, err)
 		}
 	} else {
 		// If e.Columns are empty, use all columns instead.
 		cols = tableCols
+	}
+	for _, col := range cols {
+		if col.Name.L == model.ExtraHandleName.L {
+			e.hasExtraHandle = true
+			break
+		}
 	}
 
 	// Check column whether is specified only once.
@@ -1175,8 +1178,12 @@ func (e *InsertValues) getRows(cols []*table.Column, ignoreErr bool) (rows [][]t
 // getRow eval the insert statement. Because the value of column may calculated based on other column,
 // it use fillDefaultValues to init the empty row before eval expressions when needFillDefaultValues is true.
 func (e *InsertValues) getRow(cols []*table.Column, list []expression.Expression, ignoreErr bool) ([]types.Datum, error) {
-	row := make(types.DatumRow, len(e.Table.Cols()))
-	hasValue := make([]bool, len(e.Table.Cols()))
+	rowLen := len(e.Table.Cols())
+	if e.hasExtraHandle {
+		rowLen++
+	}
+	row := make(types.DatumRow, rowLen)
+	hasValue := make([]bool, rowLen)
 
 	if e.needFillDefaultValues {
 		if err := e.fillDefaultValues(row, hasValue, ignoreErr); err != nil {
