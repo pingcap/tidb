@@ -629,11 +629,11 @@ func dataForSchemata(schemas []*model.DBInfo) [][]types.Datum {
 	return rows
 }
 
-func getRowCountAllTable(ctx sessionctx.Context) (map[int64]uint64, error)  {
+func getRowCountAllTable(ctx sessionctx.Context) (map[int64]uint64, error) {
 	sql := fmt.Sprintf("select table_id, count from mysql.stats_meta")
-	rows, _,  err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
-		return  nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	rowCountMap := make(map[int64]uint64)
 	for _, row := range rows {
@@ -647,7 +647,7 @@ func getRowCountAllTable(ctx sessionctx.Context) (map[int64]uint64, error)  {
 func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
 	tableRowsMap, err := getRowCountAllTable(ctx)
 	if err != nil {
-		return  nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
 	var rows [][]types.Datum
@@ -659,27 +659,27 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 				Type: createTimeTp,
 			}
 			record := types.MakeDatums(
-				catalogVal,      // TABLE_CATALOG
-				schema.Name.O,   // TABLE_SCHEMA
-				table.Name.O,    // TABLE_NAME
-				"BASE TABLE",    // TABLE_TYPE
-				"InnoDB",        // ENGINE
-				uint64(10),      // VERSION
-				"Compact",       // ROW_FORMAT
-				tableRowsMap[table.ID],       // TABLE_ROWS
-				uint64(0),       // AVG_ROW_LENGTH
-				uint64(16384),   // DATA_LENGTH
-				uint64(0),       // MAX_DATA_LENGTH
-				uint64(0),       // INDEX_LENGTH
-				uint64(0),       // DATA_FREE
-				table.AutoIncID, // AUTO_INCREMENT
-				createTime,      // CREATE_TIME
-				nil,             // UPDATE_TIME
-				nil,             // CHECK_TIME
-				table.Collate,   // TABLE_COLLATION
-				nil,             // CHECKSUM
-				"",              // CREATE_OPTIONS
-				table.Comment,   // TABLE_COMMENT
+				catalogVal,             // TABLE_CATALOG
+				schema.Name.O,          // TABLE_SCHEMA
+				table.Name.O,           // TABLE_NAME
+				"BASE TABLE",           // TABLE_TYPE
+				"InnoDB",               // ENGINE
+				uint64(10),             // VERSION
+				"Compact",              // ROW_FORMAT
+				tableRowsMap[table.ID], // TABLE_ROWS
+				uint64(0),              // AVG_ROW_LENGTH
+				uint64(16384),          // DATA_LENGTH
+				uint64(0),              // MAX_DATA_LENGTH
+				uint64(0),              // INDEX_LENGTH
+				uint64(0),              // DATA_FREE
+				table.AutoIncID,        // AUTO_INCREMENT
+				createTime,             // CREATE_TIME
+				nil,                    // UPDATE_TIME
+				nil,                    // CHECK_TIME
+				table.Collate,          // TABLE_COLLATION
+				nil,                    // CHECKSUM
+				"",                     // CREATE_OPTIONS
+				table.Comment,          // TABLE_COMMENT
 			)
 			rows = append(rows, record)
 		}
