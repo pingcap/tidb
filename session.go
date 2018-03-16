@@ -793,6 +793,7 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []ast.Rec
 		startTS := time.Now()
 		stmtNodes, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
 		if err != nil {
+			s.rollbackOnError(ctx)
 			log.Warnf("[%d] parse error:\n%v\n%s", connID, err, sql)
 			return nil, errors.Trace(err)
 		}
@@ -808,6 +809,7 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []ast.Rec
 			executor.ResetStmtCtx(s, stmtNode)
 			stmt, err := compiler.Compile(ctx, stmtNode)
 			if err != nil {
+				s.rollbackOnError(ctx)
 				log.Warnf("[%d] compile error:\n%v\n%s", connID, err, sql)
 				return nil, errors.Trace(err)
 			}
@@ -830,6 +832,13 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []ast.Rec
 		recordSets = recordSets[:1]
 	}
 	return recordSets, nil
+}
+
+// rollbackOnError makes sure the next statement starts a new transaction with the latest InfoSchema.
+func (s *session) rollbackOnError(ctx context.Context) {
+	if !s.sessionVars.InTxn() {
+		terror.Log(s.RollbackTxn(ctx))
+	}
 }
 
 // PrepareStmt is used for executing prepare statement in binary protocol
