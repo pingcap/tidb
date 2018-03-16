@@ -2670,6 +2670,11 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|invalid time format", "Warning|1105|invalid time format", "Warning|1105|invalid time format"))
 
 	tk.MustQuery(`select 1 < 17666000000000000000, 1 > 17666000000000000000, 1 = 17666000000000000000`).Check(testkit.Rows("1 0 0"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a bigint unsigned)")
+	tk.MustExec("insert into t value(17666000000000000000)")
+	tk.MustQuery("select * from t where a = 17666000000000000000").Check(testkit.Rows("17666000000000000000"))
 }
 
 func (s *testIntegrationSuite) TestAggregationBuiltin(c *C) {
