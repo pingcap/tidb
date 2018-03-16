@@ -43,6 +43,13 @@ type ShowDDLJobs struct {
 	baseSchemaProducer
 }
 
+// ShowDDLJobQueries is for showing DDL job queries sql.
+type ShowDDLJobQueries struct {
+	baseSchemaProducer
+
+	JobIDs []int64
+}
+
 // CheckTable is used for checking table data, built from the 'admin check table' statement.
 type CheckTable struct {
 	baseSchemaProducer
