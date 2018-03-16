@@ -77,11 +77,17 @@ func ToColumn(col *model.ColumnInfo) *Column {
 }
 
 // FindCols finds columns in cols by names.
-func FindCols(cols []*Column, names []string) ([]*Column, error) {
+// If pkIsHandle is false and name is ExtraHandleName, the extra handle column will be added.
+func FindCols(cols []*Column, names []string, pkIsHandle bool) ([]*Column, error) {
 	var rcols []*Column
 	for _, name := range names {
 		col := FindCol(cols, name)
 		if col != nil {
+			rcols = append(rcols, col)
+		} else if name == model.ExtraHandleName.L && !pkIsHandle {
+			col := &Column{}
+			col.ColumnInfo = model.NewExtraHandleColInfo()
+			col.ColumnInfo.Offset = len(cols)
 			rcols = append(rcols, col)
 		} else {
 			return nil, errUnknownColumn.Gen("unknown column %s", name)
