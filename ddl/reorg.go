@@ -87,7 +87,7 @@ func (d *ddl) runReorgJob(t *meta.Meta, job *model.Job, f func() error) error {
 	// we will wait 2 * lease outer and try checking again,
 	// so we use a very little timeout here.
 	if d.lease > 0 {
-		waitTimeout = 50 * time.Millisecond
+		waitTimeout = 10 * time.Second
 	}
 
 	// wait reorganization job done or timeout

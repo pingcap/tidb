@@ -728,7 +728,8 @@ type backfillIndexTask struct {
 
 type addIndexResult struct {
 	originalTaskRange reorgIndexRange
-	count             int
+	addedCount        int
+	scanCount         int
 	nextHandle        int64
 	err               error
 }
@@ -819,8 +820,9 @@ func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, t table.Table, colM
 	return w.idxRecords, handleOutOfRange, errors.Trace(err)
 }
 
-func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexRange) (nextHandle int64, addedCount int, errInTxn error) {
+func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexRange) (nextHandle int64, addedCount, scanCount int, errInTxn error) {
 	addedCount = 0
+	scanCount = 0
 	errInTxn = kv.RunInNewTxn(w.sessCtx.GetStore(), true, func(txn kv.Transaction) error {
 		idxRecords, handleOutofRange, err := w.fetchRowColVals(txn, w.table, w.colFieldMap, handleRange)
 
@@ -829,13 +831,14 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexRange) (nextHa
 		}
 
 		for _, idxRecord := range idxRecords {
-			log.Debugf("[ddl] txn %v backfill index handle...%v", txn.StartTS(), idxRecord.handle)
 			err := txn.LockKeys(idxRecord.key)
 			if err != nil {
 				return errors.Trace(err)
 			}
+			scanCount++
 
 			// Create the index.
+			// TODO: backfill unique-key will check constraint every row, we can speed up this case by using batch check.
 			handle, err := w.index.Create(w.sessCtx, txn, idxRecord.vals, idxRecord.handle)
 			if err != nil {
 				if kv.ErrKeyExists.Equal(err) && idxRecord.handle == handle {
@@ -861,17 +864,18 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexRange) (nextHa
 
 func (w *addIndexWorker) handleBackfillTask(task *backfillIndexTask) *addIndexResult {
 	handleRange := task.handleRange
-	result := &addIndexResult{originalTaskRange: handleRange, count: 0, nextHandle: handleRange.startHandle, err: nil}
+	result := &addIndexResult{originalTaskRange: handleRange, addedCount: 0, nextHandle: handleRange.startHandle, err: nil}
+	lastLogCount := 0
 	for {
 		addedCount := 0
-		nextHandle, addedCount, err := w.backfillIndexInTxn(handleRange)
+		nextHandle, addedCount, scanCount, err := w.backfillIndexInTxn(handleRange)
 		if err == nil {
 			err = w.d.isReorgRunnable()
 			if err != nil {
 				// This task is finished, job canceled is not a real error,
 				// so we need to update the processed handle.
 				result.nextHandle = nextHandle
-				result.count += addedCount
+				result.addedCount += addedCount
 			}
 		}
 
@@ -881,7 +885,19 @@ func (w *addIndexWorker) handleBackfillTask(task *backfillIndexTask) *addIndexRe
 		}
 
 		result.nextHandle = nextHandle
-		result.count += addedCount
+		result.addedCount += addedCount
+		result.scanCount += scanCount
+		if result.scanCount-lastLogCount >= 30000 {
+			lastLogCount = result.scanCount
+			log.Infof("[ddl-reorg] worker(%v), finish batch addedCount:%v backfill, task addedCount:%v, task scanCount:%v, nextHandle:%v",
+				w.id, addedCount, result.addedCount, result.scanCount, nextHandle)
+		}
+
+		// If the worker is the first one, we can update the finished handle to reorgCtx.
+		// The doneHandle will be updated to tikv in ddl.runReorgJob.
+		if w.id == 0 {
+			w.d.reorgCtx.setRowCountAndHandle(int64(result.addedCount), nextHandle)
+		}
 		handleRange.startHandle = nextHandle
 		if handleRange.startHandle >= handleRange.endHandle {
 			break
@@ -898,6 +914,7 @@ func (w *addIndexWorker) run() {
 			break
 		}
 
+		log.Debug("[ddl-reorg] got backfill index task:#v", task)
 		result := w.handleBackfillTask(task)
 		w.resultCh <- result
 	}
@@ -979,8 +996,8 @@ func (d *ddl) handleTaskResults(workers []*addIndexWorker, workingIdx int) (int6
 			}
 		}
 
-		// count it any way.
-		addedCount += int64(result.count)
+		// addedCount it any way.
+		addedCount += int64(result.addedCount)
 		if firstErr == nil {
 			nextHandle = result.nextHandle
 		}
@@ -1017,6 +1034,7 @@ func (d *ddl) finishBatchTasks(startTime time.Time, startHandle int64, reorgInfo
 }
 
 func (d *ddl) addTableIndexFromSplitRanges(t table.Table, indexInfo *model.IndexInfo, reorgInfo *reorgInfo, job *model.Job) error {
+	log.Infof("[ddl-reorg] addTableIndexFromSplitRanges, job:%s, reorgInfo:%#v", job, reorgInfo)
 	colFieldMap := makeupIndexColFieldMap(t, indexInfo)
 
 	workerCnt := defaultWorkers
