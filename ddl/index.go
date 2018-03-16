@@ -1001,10 +1001,9 @@ func (d *ddl) handleTaskResults(workers []*addIndexWorker, workingIdx int) (int6
 	return nextHandle, addedCount, firstErr
 }
 
-func (d *ddl) finishBatchTasks(startTime time.Time, startHandle int64, reorgInfo *reorgInfo, job *model.Job, workers []*addIndexWorker, workingIdx int) error {
-	addedCount := job.GetRowCount()
+func (d *ddl) finishBatchTasks(startTime time.Time, startHandle int64, reorgInfo *reorgInfo, totalAddedCount *int64, workers []*addIndexWorker, workingIdx int) error {
 	nextHandle, taskAddedCount, err := d.handleTaskResults(workers, workingIdx)
-	addedCount += taskAddedCount
+	*totalAddedCount += taskAddedCount
 	elapsedTime := time.Since(startTime).Seconds()
 	if err == nil {
 		err = d.isReorgRunnable()
@@ -1016,15 +1015,15 @@ func (d *ddl) finishBatchTasks(startTime time.Time, startHandle int64, reorgInfo
 			return errors.Trace(reorgInfo.UpdateHandle(txn, nextHandle))
 		})
 		log.Warnf("[ddl-reorg] total added index for %d rows, this task [%d,%d) add index for %d failed %v, take time %v, update handle err %v",
-			addedCount, startHandle, nextHandle, taskAddedCount, err, elapsedTime, err1)
+			*totalAddedCount, startHandle, nextHandle, taskAddedCount, err, elapsedTime, err1)
 		return errors.Trace(err)
 	}
 
 	// nextHandle will be updated periodically in runReorgJob, so no need to update it here.
-	d.reorgCtx.setRowCountAndHandle(addedCount, nextHandle)
+	d.reorgCtx.setRowCountAndHandle(*totalAddedCount, nextHandle)
 	metrics.BatchAddIdxHistogram.Observe(elapsedTime)
 	log.Infof("[ddl-reorg] total added index for %d rows, this task [%d,%d) added index for %d rows, take time %v",
-		addedCount, startHandle, nextHandle, taskAddedCount, elapsedTime)
+		*totalAddedCount, startHandle, nextHandle, taskAddedCount, elapsedTime)
 	return nil
 }
 
@@ -1053,6 +1052,7 @@ func (d *ddl) addTableIndexFromSplitRanges(t table.Table, indexInfo *model.Index
 		startHandle int64
 		endHandle   int64
 	)
+	totalAddedCount := job.GetRowCount()
 	// TODO: refactor this loop to function
 	for _, keyRange := range kvRanges {
 		startTime = time.Now()
@@ -1069,7 +1069,7 @@ func (d *ddl) addTableIndexFromSplitRanges(t table.Table, indexInfo *model.Index
 
 		if workerIdx == workerCnt {
 			// Wait tasks finish.
-			err1 = d.finishBatchTasks(startTime, startHandle, reorgInfo, job, workers, workerIdx-1)
+			err1 = d.finishBatchTasks(startTime, startHandle, reorgInfo, &totalAddedCount, workers, workerIdx-1)
 			if err1 != nil {
 				return errors.Trace(err1)
 			}
@@ -1078,7 +1078,7 @@ func (d *ddl) addTableIndexFromSplitRanges(t table.Table, indexInfo *model.Index
 	}
 
 	if workerIdx > 0 {
-		err1 := d.finishBatchTasks(startTime, startHandle, reorgInfo, job, workers, workerIdx-1)
+		err1 := d.finishBatchTasks(startTime, startHandle, reorgInfo, &totalAddedCount, workers, workerIdx-1)
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
