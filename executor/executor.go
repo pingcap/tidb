@@ -510,7 +510,6 @@ func (e *LimitExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 		}
 		e.cursor += batchSize
 	}
-	log.Warning("here")
 	err := e.children[0].NextChunk(ctx, chk)
 	if err != nil {
 		return errors.Trace(err)
