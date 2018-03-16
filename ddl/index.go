@@ -893,11 +893,6 @@ func (w *addIndexWorker) handleBackfillTask(task *backfillIndexTask) *addIndexRe
 				w.id, addedCount, result.addedCount, result.scanCount, nextHandle)
 		}
 
-		// If the worker is the first one, we can update the finished handle to reorgCtx.
-		// The doneHandle will be updated to tikv in ddl.runReorgJob.
-		if w.id == 0 {
-			w.d.reorgCtx.setRowCountAndHandle(int64(result.addedCount), nextHandle)
-		}
 		handleRange.startHandle = nextHandle
 		if handleRange.startHandle >= handleRange.endHandle {
 			break
