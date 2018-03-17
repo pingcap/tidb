@@ -32,7 +32,7 @@ import (
 
 // Portable analogs of some common call errors.
 var (
-	ErrInvalidTimeFormat      = errors.New("invalid time format")
+	ErrInvalidTimeFormat      = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, "invalid time format: '%v'")
 	ErrInvalidYearFormat      = errors.New("invalid year format")
 	ErrInvalidYear            = errors.New("invalid year")
 	ErrZeroDate               = errors.New("datetime zero in date")
@@ -369,7 +369,7 @@ func (t Time) RoundFrac(sc *stmtctx.StatementContext, fsp int) (Time, error) {
 		// TODO: when hh:mm:ss overflow one day after rounding, it should be add to yy:mm:dd part,
 		// but mm:dd may contain 0, it makes the code complex, so we ignore it here.
 		if t2.Day()-1 > 0 {
-			return t, errors.Trace(ErrInvalidTimeFormat)
+			return t, errors.Trace(ErrInvalidTimeFormat.GenByArgs(t.String()))
 		}
 		nt = FromDate(t.Time.Year(), t.Time.Month(), t.Time.Day(), hour, minute, second, microsecond)
 	}
@@ -617,7 +617,7 @@ func parseDatetime(str string, fsp int, isFloat bool) (Time, error) {
 			_, err = fmt.Sscanf(sep, "%2d%2d%2d", &year, &month, &day)
 			year = adjustYear(year)
 		} else {
-			return ZeroDatetime, errors.Trace(ErrInvalidTimeFormat)
+			return ZeroDatetime, errors.Trace(ErrInvalidTimeFormat.GenByArgs(str))
 		}
 		if len(sep) == 6 || len(sep) == 8 {
 			// YYMMDD or YYYYMMDD
@@ -643,7 +643,7 @@ func parseDatetime(str string, fsp int, isFloat bool) (Time, error) {
 		err = scanTimeArgs(seps, &year, &month, &day, &hour, &minute, &second)
 		hhmmss = true
 	default:
-		return ZeroDatetime, errors.Trace(ErrInvalidTimeFormat)
+		return ZeroDatetime, errors.Trace(ErrInvalidTimeFormat.GenByArgs(str))
 	}
 	if err != nil {
 		return ZeroDatetime, errors.Trace(err)
@@ -690,7 +690,7 @@ func parseDatetime(str string, fsp int, isFloat bool) (Time, error) {
 
 func scanTimeArgs(seps []string, args ...*int) error {
 	if len(seps) != len(args) {
-		return errors.Trace(ErrInvalidTimeFormat)
+		return errors.Trace(ErrInvalidTimeFormat.GenByArgs(seps))
 	}
 
 	var err error
@@ -1121,7 +1121,7 @@ func parseDateTimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error)
 
 	// Check MMDD.
 	if num < 101 {
-		return t, errors.Trace(ErrInvalidTimeFormat)
+		return t, errors.Trace(ErrInvalidTimeFormat.GenByArgs(num))
 	}
 
 	// Adjust year
@@ -1133,7 +1133,7 @@ func parseDateTimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error)
 
 	// Check YYMMDD.
 	if num < 70*10000+101 {
-		return t, errors.Trace(ErrInvalidTimeFormat)
+		return t, errors.Trace(ErrInvalidTimeFormat.GenByArgs(num))
 	}
 
 	// Adjust year
@@ -1145,7 +1145,7 @@ func parseDateTimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error)
 
 	// Check YYYYMMDD.
 	if num < 10000101 {
-		return t, errors.Trace(ErrInvalidTimeFormat)
+		return t, errors.Trace(ErrInvalidTimeFormat.GenByArgs(num))
 	}
 
 	// Adjust hour/min/second.
@@ -1156,7 +1156,7 @@ func parseDateTimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error)
 
 	// Check MMDDHHMMSS.
 	if num < 101000000 {
-		return t, errors.Trace(ErrInvalidTimeFormat)
+		return t, errors.Trace(ErrInvalidTimeFormat.GenByArgs(num))
 	}
 
 	// Set TypeDatetime type.
@@ -1171,7 +1171,7 @@ func parseDateTimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error)
 
 	// Check YYYYMMDDHHMMSS.
 	if num < 70*10000000000+101000000 {
-		return t, errors.Trace(ErrInvalidTimeFormat)
+		return t, errors.Trace(ErrInvalidTimeFormat.GenByArgs(num))
 	}
 
 	// Adjust year
@@ -1318,17 +1318,17 @@ func checkDateRange(t MysqlTime) error {
 	// Oddly enough, MySQL document says date range should larger than '1000-01-01',
 	// but we can insert '0001-01-01' actually.
 	if t.Year() < 0 || t.Month() < 0 || t.Day() < 0 {
-		return errors.Trace(ErrInvalidTimeFormat)
+		return errors.Trace(ErrInvalidTimeFormat.GenByArgs(t))
 	}
 	if compareTime(t, MaxDatetime) > 0 {
-		return errors.Trace(ErrInvalidTimeFormat)
+		return errors.Trace(ErrInvalidTimeFormat.GenByArgs(t))
 	}
 	return nil
 }
 
 func checkMonthDay(year, month, day int) error {
 	if month < 0 || month > 12 {
-		return errors.Trace(ErrInvalidTimeFormat)
+		return errors.Trace(ErrInvalidTimeFormat.GenByArgs(month))
 	}
 
 	maxDay := 31
@@ -1340,7 +1340,7 @@ func checkMonthDay(year, month, day int) error {
 	}
 
 	if day < 0 || day > maxDay {
-		return errors.Trace(ErrInvalidTimeFormat)
+		return errors.Trace(ErrInvalidTimeFormat.GenByArgs(day))
 	}
 	return nil
 }
@@ -1351,7 +1351,7 @@ func checkTimestampType(t MysqlTime) error {
 	}
 
 	if compareTime(t, maxTimestamp) > 0 || compareTime(t, MinTimestamp) < 0 {
-		return errors.Trace(ErrInvalidTimeFormat)
+		return errors.Trace(ErrInvalidTimeFormat.GenByArgs(t))
 	}
 
 	if _, err := t.GoTime(gotime.Local); err != nil {
@@ -1368,13 +1368,13 @@ func checkDatetimeType(t MysqlTime, allowZeroInDate bool) error {
 
 	hour, minute, second := t.Hour(), t.Minute(), t.Second()
 	if hour < 0 || hour >= 24 {
-		return errors.Trace(ErrInvalidTimeFormat)
+		return errors.Trace(ErrInvalidTimeFormat.GenByArgs(hour))
 	}
 	if minute < 0 || minute >= 60 {
-		return errors.Trace(ErrInvalidTimeFormat)
+		return errors.Trace(ErrInvalidTimeFormat.GenByArgs(minute))
 	}
 	if second < 0 || second >= 60 {
-		return errors.Trace(ErrInvalidTimeFormat)
+		return errors.Trace(ErrInvalidTimeFormat.GenByArgs(second))
 	}
 
 	return nil
@@ -1818,13 +1818,13 @@ func (t Time) convertDateFormat(b rune, buf *bytes.Buffer) error {
 	case 'b':
 		m := t.Time.Month()
 		if m == 0 || m > 12 {
-			return errors.Trace(ErrInvalidTimeFormat)
+			return errors.Trace(ErrInvalidTimeFormat.GenByArgs(m))
 		}
 		buf.WriteString(MonthNames[m-1][:3])
 	case 'M':
 		m := t.Time.Month()
 		if m == 0 || m > 12 {
-			return errors.Trace(ErrInvalidTimeFormat)
+			return errors.Trace(ErrInvalidTimeFormat.GenByArgs(m))
 		}
 		buf.WriteString(MonthNames[m-1])
 	case 'm':
@@ -1976,7 +1976,7 @@ func mysqlTimeFix(t *MysqlTime, ctx map[string]int) error {
 	}
 	if valueAMorPm, ok := ctx["%p"]; ok {
 		if t.hour == 0 {
-			return ErrInvalidTimeFormat
+			return ErrInvalidTimeFormat.GenByArgs(t)
 		}
 		if t.hour == 12 {
 			// 12 is a special hour.
