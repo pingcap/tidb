@@ -215,6 +215,25 @@ func (s *testSuite) TestJoin(c *C) {
 	) `)
 	result.Check(testkit.Rows("<nil>"))
 
+	// test virtual rows are included (issue#5771)
+	result = tk.MustQuery(`SELECT 1 FROM (SELECT 1) t1, (SELECT 1) t2`)
+	result.Check(testkit.Rows("1"))
+
+	result = tk.MustQuery(`
+		SELECT @NUM := @NUM + 1 as NUM FROM
+		( SELECT 1 UNION ALL
+			SELECT 2 UNION ALL
+			SELECT 3
+		) a
+		INNER JOIN
+		( SELECT 1 UNION ALL
+			SELECT 2 UNION ALL
+			SELECT 3
+		) b,
+		(SELECT @NUM := 0) d;
+	`)
+	result.Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
+
 	// This case is for testing:
 	// when the main thread calls Executor.Close() while the out data fetch worker and join workers are still working,
 	// we need to stop the goroutines as soon as possible to avoid unexpected error.
