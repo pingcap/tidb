@@ -373,27 +373,12 @@ func (e *CheckTableExec) Open(ctx context.Context) error {
 	return nil
 }
 
-// Next implements the Executor Next interface.
-func (e *CheckTableExec) Next(ctx context.Context) (Row, error) {
-	if e.done {
-		return nil, nil
-	}
-	err := e.run(ctx)
-	e.done = true
-	return nil, errors.Trace(err)
-}
-
 // NextChunk implements the Executor NextChunk interface.
 func (e *CheckTableExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	if e.done {
 		return nil
 	}
-	err := e.run(ctx)
-	e.done = true
-	return errors.Trace(err)
-}
-
-func (e *CheckTableExec) run(ctx context.Context) error {
+	defer func() { e.done = true }()
 	dbName := model.NewCIStr(e.ctx.GetSessionVars().CurrentDB)
 	for _, t := range e.tables {
 		tb, err := e.is.TableByName(dbName, t.Name)
