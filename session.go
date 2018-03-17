@@ -859,7 +859,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	// So we have to call PrepareTxnCtx here.
 	s.PrepareTxnCtx(ctx)
 	prepareExec := executor.NewPrepareExec(s, executor.GetInfoSchema(s), sql)
-	err = prepareExec.DoPrepare()
+	err = prepareExec.NextChunk(ctx, nil)
 	if err != nil {
 		err = errors.Trace(err)
 		return
