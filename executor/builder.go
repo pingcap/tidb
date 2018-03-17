@@ -678,7 +678,6 @@ func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 	innerFilter := v.RightConditions
 
 	e.innerTable = &mergeJoinInnerTable{
-		sctx:     b.ctx,
 		reader:   rightExec,
 		joinKeys: rightKeys,
 	}

@@ -16,7 +16,6 @@ package executor
 import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"golang.org/x/net/context"
@@ -43,7 +42,6 @@ type MergeJoinExec struct {
 	outerTable *mergeJoinOuterTable
 
 	innerRows     []chunk.Row
-	outerIter4Row chunk.Iterator
 	innerIter4Row chunk.Iterator
 }
 
@@ -61,8 +59,6 @@ type mergeJoinOuterTable struct {
 
 // mergeJoinInnerTable represents a row block with the same join keys
 type mergeJoinInnerTable struct {
-	stmtCtx  *stmtctx.StatementContext
-	sctx     sessionctx.Context
 	reader   Executor
 	joinKeys []*expression.Column
 	ctx      context.Context
@@ -83,7 +79,6 @@ func (t *mergeJoinInnerTable) init(chk4Reader *chunk.Chunk) (err error) {
 	if t.reader == nil || t.joinKeys == nil || len(t.joinKeys) == 0 || t.ctx == nil {
 		return errors.Errorf("Invalid arguments: Empty arguments detected.")
 	}
-	t.stmtCtx = t.sctx.GetSessionVars().StmtCtx
 	t.curResult = chk4Reader
 	t.curIter = chunk.NewIterator4Chunk(t.curResult)
 	t.curRow = t.curIter.End()
@@ -239,7 +234,7 @@ func (e *MergeJoinExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasMore bool, err error) {
 	for {
 		if e.outerTable.row == e.outerTable.iter.End() {
-			err := e.fetchNextOuterRows(ctx)
+			err = e.fetchNextOuterRows(ctx)
 			if err != nil || e.outerTable.chk.NumRows() == 0 {
 				return false, errors.Trace(err)
 			}
@@ -285,7 +280,6 @@ func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasM
 			return true, errors.Trace(err)
 		}
 	}
-	return false, nil
 }
 
 func (e *MergeJoinExec) fetchNextInnerRows() (err error) {
