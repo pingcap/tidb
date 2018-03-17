@@ -192,18 +192,6 @@ func compareChunkRow(cmpFuncs []chunk.CompareFunc, lhsRow, rhsRow chunk.Row, lhs
 	return 0
 }
 
-// type mergeJoinOuterTable struct {
-// 	reader Executor
-// 	filter []expression.Expression
-// 	keys   []*expression.Column
-//
-// 	chk      *chunk.Chunk
-// 	selected []bool
-//
-// 	iter *chunk.Iterator4Chunk
-// 	row  chunk.Row
-// }
-
 func (e *MergeJoinExec) prepare(ctx context.Context, chk *chunk.Chunk) error {
 	e.innerTable.ctx = ctx
 	err := e.innerTable.init(e.childrenResults[e.outerIdx^1])
