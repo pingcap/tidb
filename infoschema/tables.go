@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/sqlexec"
 )
 
 const (
@@ -632,7 +633,27 @@ func dataForSchemata(schemas []*model.DBInfo) [][]types.Datum {
 	return rows
 }
 
-func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Datum {
+func getRowCountAllTable(ctx sessionctx.Context) (map[int64]uint64, error)  {
+	sql := fmt.Sprintf("select table_id, count from mysql.stats_meta")
+	rows, _,  err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
+	if err != nil {
+		return  nil, errors.Trace(err)
+	}
+	rowCountMap := make(map[int64]uint64)
+	for _, row := range rows {
+		tableId := row.GetInt64(0)
+		rowCnt := row.GetUint64(1)
+		rowCountMap[tableId] = rowCnt
+	}
+	return rowCountMap, nil
+}
+
+func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
+	tableRowsMap, err := getRowCountAllTable(ctx)
+	if err != nil {
+		return  nil, errors.Trace(err)
+	}
+
 	var rows [][]types.Datum
 	createTimeTp := tablesCols[15].tp
 	for _, schema := range schemas {
@@ -649,7 +670,7 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Da
 				"InnoDB",        // ENGINE
 				uint64(10),      // VERSION
 				"Compact",       // ROW_FORMAT
-				uint64(0),       // TABLE_ROWS
+				tableRowsMap[table.ID],       // TABLE_ROWS
 				uint64(0),       // AVG_ROW_LENGTH
 				uint64(16384),   // DATA_LENGTH
 				uint64(0),       // MAX_DATA_LENGTH
@@ -667,7 +688,7 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Da
 			rows = append(rows, record)
 		}
 	}
-	return rows
+	return rows, nil
 }
 
 func dataForColumns(schemas []*model.DBInfo) [][]types.Datum {
@@ -1049,7 +1070,7 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	case tableSchemata:
 		fullRows = dataForSchemata(dbs)
 	case tableTables:
-		fullRows = dataForTables(ctx, dbs)
+		fullRows, err = dataForTables(ctx, dbs)
 	case tableColumns:
 		fullRows = dataForColumns(dbs)
 	case tableStatistics:
