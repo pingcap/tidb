@@ -897,13 +897,13 @@ type TableScanExec struct {
 	baseExecutor
 
 	// for chunk execution
-	t              table.Table
-	ranges         []ranger.IntColumnRange
-	seekHandle     int64
-	iter           kv.Iterator
-	cursor         int
-	columns        []*model.ColumnInfo
-	isVirtualTable bool
+	t                     table.Table
+	ranges                []ranger.IntColumnRange
+	seekHandle            int64
+	iter                  kv.Iterator
+	cursor                int
+	columns               []*model.ColumnInfo
+	isVirtualTable        bool
 	virtualTableChunkList *chunk.List
 	virtualTableChunkIdx  int
 }

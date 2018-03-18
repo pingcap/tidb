@@ -41,6 +41,23 @@ func (m *MockExec) Next(ctx context.Context) (Row, error) {
 	return r, nil
 }
 
+func (m *MockExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	rt := m.retTypes()
+	for m.curRowIdx < len(m.Rows) {
+		curRow := m.Rows[m.curRowIdx]
+		for i := 0; i < len(curRow); i++ {
+			curDatum := curRow.GetDatum(i, rt[i])
+			chk.AppendDatum(i, &curDatum)
+		}
+		m.curRowIdx++
+		if chk.NumRows() >= m.maxChunkSize {
+			return nil
+		}
+	}
+	return nil
+}
+
 func (m *MockExec) Close() error {
 	m.curRowIdx = 0
 	return nil
@@ -54,8 +71,12 @@ func (m *MockExec) Open(ctx context.Context) error {
 func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 	ctx := context.Background()
 	sctx := mock.NewContext()
+	col0 := &expression.Column{Index: 0, RetType: types.NewFieldType(mysql.TypeLong)}
+	col1 := &expression.Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLong)}
+	con := &expression.Constant{Value: types.NewDatum(6), RetType: types.NewFieldType(mysql.TypeLong)}
+	outerSchema := expression.NewSchema(col0)
 	outerExec := &MockExec{
-		baseExecutor: newBaseExecutor(sctx, nil, ""),
+		baseExecutor: newBaseExecutor(sctx, outerSchema, ""),
 		Rows: []Row{
 			types.MakeDatums(1),
 			types.MakeDatums(2),
@@ -64,24 +85,25 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 			types.MakeDatums(5),
 			types.MakeDatums(6),
 		}}
-	innerExec := &MockExec{Rows: []Row{
-		types.MakeDatums(1),
-		types.MakeDatums(2),
-		types.MakeDatums(3),
-		types.MakeDatums(4),
-		types.MakeDatums(5),
-		types.MakeDatums(6),
-	}}
-	col0 := &expression.Column{Index: 0, RetType: types.NewFieldType(mysql.TypeLong)}
-	col1 := &expression.Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLong)}
-	con := &expression.Constant{Value: types.NewDatum(6), RetType: types.NewFieldType(mysql.TypeLong)}
+	innerSchema := expression.NewSchema(col1)
+	innerExec := &MockExec{
+		baseExecutor: newBaseExecutor(sctx, innerSchema, ""),
+		Rows: []Row{
+			types.MakeDatums(1),
+			types.MakeDatums(2),
+			types.MakeDatums(3),
+			types.MakeDatums(4),
+			types.MakeDatums(5),
+			types.MakeDatums(6),
+		}}
 	outerFilter := expression.NewFunctionInternal(sctx, ast.LT, types.NewFieldType(mysql.TypeTiny), col0, con)
 	innerFilter := outerFilter.Clone()
 	otherFilter := expression.NewFunctionInternal(sctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), col0, col1)
 	generator := newJoinResultGenerator(sctx, plan.InnerJoin, false,
-		make([]types.Datum, innerExec.Schema().Len()), []expression.Expression{otherFilter}, nil, nil)
+		make([]types.Datum, innerExec.Schema().Len()), []expression.Expression{otherFilter}, outerExec.retTypes(), innerExec.retTypes())
+	joinSchema := expression.NewSchema(col0, col1)
 	join := &NestedLoopApplyExec{
-		baseExecutor:    newBaseExecutor(sctx, nil, ""),
+		baseExecutor:    newBaseExecutor(sctx, joinSchema, ""),
 		outerExec:       outerExec,
 		innerExec:       innerExec,
 		outerFilter:     []expression.Expression{outerFilter},
@@ -90,27 +112,20 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 	}
 	join.innerList = chunk.NewList(innerExec.retTypes(), innerExec.maxChunkSize)
 	join.innerChunk = innerExec.newChunk()
-	row, err := join.Next(ctx)
-	c.Check(err, IsNil)
-	c.Check(row, NotNil)
-	c.Check(fmt.Sprintf("%v %v", row[0].GetValue(), row[1].GetValue()), Equals, "1 1")
-	row, err = join.Next(ctx)
-	c.Check(err, IsNil)
-	c.Check(row, NotNil)
-	c.Check(fmt.Sprintf("%v %v", row[0].GetValue(), row[1].GetValue()), Equals, "2 2")
-	row, err = join.Next(ctx)
-	c.Check(err, IsNil)
-	c.Check(row, NotNil)
-	c.Check(fmt.Sprintf("%v %v", row[0].GetValue(), row[1].GetValue()), Equals, "3 3")
-	row, err = join.Next(ctx)
-	c.Check(err, IsNil)
-	c.Check(row, NotNil)
-	c.Check(fmt.Sprintf("%v %v", row[0].GetValue(), row[1].GetValue()), Equals, "4 4")
-	row, err = join.Next(ctx)
-	c.Check(err, IsNil)
-	c.Check(row, NotNil)
-	c.Check(fmt.Sprintf("%v %v", row[0].GetValue(), row[1].GetValue()), Equals, "5 5")
-	row, err = join.Next(ctx)
-	c.Check(err, IsNil)
-	c.Check(row, IsNil)
+	join.outerChunk = outerExec.newChunk()
+	joinChk := join.newChunk()
+	it := chunk.NewIterator4Chunk(joinChk)
+	for i := 1; ; {
+		err := join.NextChunk(ctx, joinChk)
+		c.Check(err, IsNil)
+		if joinChk.NumRows() == 0 {
+			break
+		}
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			correctResult := fmt.Sprintf("%v %v", i, i)
+			obtainedResult := fmt.Sprintf("%v %v", row.GetInt64(0), row.GetInt64(1))
+			c.Check(obtainedResult, Equals, correctResult)
+			i++
+		}
+	}
 }
