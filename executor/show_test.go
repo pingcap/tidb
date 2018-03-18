@@ -363,11 +363,14 @@ func (s *testSuite) TestShowVisibility(c *C) {
 // it returns only this session's current process info as processlist for test.
 type mockSessionManager struct {
 	tidb.Session
+	ps []util.ProcessInfo
 }
 
 // ShowProcessList implements the SessionManager.ShowProcessList interface.
 func (msm *mockSessionManager) ShowProcessList() []util.ProcessInfo {
-	return []util.ProcessInfo{msm.ShowProcess()}
+	ps := []util.ProcessInfo{msm.ShowProcess()}
+	ps = append(ps, msm.ps...)
+	return ps
 }
 
 // Kill implements the SessionManager.Kill interface.
@@ -375,18 +378,30 @@ func (msm *mockSessionManager) Kill(cid uint64, query bool) {
 }
 
 func (s *testSuite) TestShowFullProcessList(c *C) {
+	// Compose a mocked session manager.
+	ps := make([]util.ProcessInfo, 0, 1)
+	pi := util.ProcessInfo{
+		ID:      0,
+		User:    "test",
+		Host:    "127.0.0.1",
+		DB:      "test",
+		Command: "Sleep",
+		Time:    time.Now().Add(-10 * time.Second),
+		State:   1,
+		Info:    "",
+	}
+	ps = append(ps, pi)
+
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("select 1") // for tk.Se init
-
 	se := tk.Se
-	se.SetSessionManager(&mockSessionManager{se})
-
+	se.SetSessionManager(&mockSessionManager{Session: se, ps: ps})
 	fullSQL := "show                                                                                        full processlist"
 	simpSQL := "show                                                                                        processlist"
 
 	cols := []int{4, 5, 6, 7} // columns to check: Command, Time, State, Info
-	tk.MustQuery(fullSQL).CheckAt(cols, testutil.RowsWithSep("|", "Query|0|2|"+fullSQL))
-	tk.MustQuery(simpSQL).CheckAt(cols, testutil.RowsWithSep("|", "Query|0|2|"+simpSQL[:100]))
+	tk.MustQuery(fullSQL).CheckAt(cols, testutil.RowsWithSep("|", "Query|0|2|"+fullSQL, "Sleep|10|1|"))
+	tk.MustQuery(simpSQL).CheckAt(cols, testutil.RowsWithSep("|", "Query|0|2|"+simpSQL[:100], "Sleep|10|1|"))
 
 	se.SetSessionManager(nil) // reset sm so other tests won't use this
 }
