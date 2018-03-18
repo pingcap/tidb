@@ -1444,6 +1444,9 @@ func (d *Datum) ToFloat64(sc *stmtctx.StatementContext) (float64, error) {
 	case KindBinaryLiteral, KindMysqlBit:
 		val, err := d.GetBinaryLiteral().ToInt()
 		return float64(val), err
+	case KindMysqlJSON:
+		f, err := ConvertJSONToFloat(sc, d.GetMysqlJSON())
+		return f, err
 	default:
 		return 0, errors.Errorf("cannot convert %v(type %T) to float64", d.GetValue(), d.GetValue())
 	}
