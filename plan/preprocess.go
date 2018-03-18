@@ -326,13 +326,13 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 
 // checkDuplicateColumnName checks if index exists duplicated columns.
 func checkDuplicateColumnName(indexColNames []*ast.IndexColName) error {
-	for i := 0; i < len(indexColNames)-1; i++ {
-		name1 := indexColNames[i].Column.Name
-		for j := i + 1; j < len(indexColNames); j++ {
-			name2 := indexColNames[j].Column.Name
-			if name1.L == name2.L {
-				return infoschema.ErrColumnExists.GenByArgs(name2)
-			}
+	colNames := make(map[string]string, len(indexColNames))
+	for _, indexColName := range indexColNames {
+		name := indexColName.Column.Name
+		if _, ok := colNames[name.L]; ok {
+			return infoschema.ErrColumnExists.GenByArgs(name)
+		} else {
+			colNames[name.L] = name.L
 		}
 	}
 	return nil
