@@ -107,6 +107,20 @@ func (s *testAnalyzeSuite) TestStraightJoin(c *C) {
 		"TableReader_23 HashLeftJoin_10  root data:TableScan_22 10000.00",
 		"HashLeftJoin_10  HashLeftJoin_12,TableReader_23 root inner join, inner:TableReader_23 10000000000000000.00",
 	))
+
+	testKit.MustQuery("explain select straight_join * from t1, t2, t3, t4 where t1.a=t4.a;").Check(testkit.Rows(
+		"TableScan_17   cop table:t1, range:[-inf,+inf], keep order:false 10000.00",
+		"TableReader_18 HashLeftJoin_15  root data:TableScan_17 10000.00",
+		"TableScan_19   cop table:t2, range:[-inf,+inf], keep order:false 10000.00",
+		"TableReader_20 HashLeftJoin_15  root data:TableScan_19 10000.00",
+		"HashLeftJoin_15 HashLeftJoin_13 TableReader_18,TableReader_20 root inner join, inner:TableReader_20 100000000.00",
+		"TableScan_21   cop table:t3, range:[-inf,+inf], keep order:false 10000.00",
+		"TableReader_22 HashLeftJoin_13  root data:TableScan_21 10000.00",
+		"HashLeftJoin_13 HashLeftJoin_11 HashLeftJoin_15,TableReader_22 root inner join, inner:TableReader_22 1000000000000.00",
+		"TableScan_23   cop table:t4, range:[-inf,+inf], keep order:false 10000.00",
+		"TableReader_24 HashLeftJoin_11  root data:TableScan_23 10000.00",
+		"HashLeftJoin_11  HashLeftJoin_13,TableReader_24 root inner join, inner:TableReader_24, equal:[eq(test.t1.a, test.t4.a)] 1250000000000.00",
+	))
 }
 
 func (s *testAnalyzeSuite) TestEstimation(c *C) {
