@@ -331,9 +331,8 @@ func checkDuplicateColumnName(indexColNames []*ast.IndexColName) error {
 		name := indexColName.Column.Name
 		if _, ok := colNames[name.L]; ok {
 			return infoschema.ErrColumnExists.GenByArgs(name)
-		} else {
-			colNames[name.L] = struct{}{}
 		}
+		colNames[name.L] = struct{}{}
 	}
 	return nil
 }
