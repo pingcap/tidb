@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/codec"
 )
 
 func (e *ShowExec) fetchShowStatsMeta() error {
@@ -117,11 +116,11 @@ func (e *ShowExec) bucketsToRows(dbName, tblName, colName string, numOfCols int,
 		isIndex = 1
 	}
 	for i := 0; i < hist.Len(); i++ {
-		lowerBoundStr, err := e.valueToString(hist.GetLower(i), numOfCols)
+		lowerBoundStr, err := statistics.ValueToString(hist.GetLower(i), numOfCols)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		upperBoundStr, err := e.valueToString(hist.GetUpper(i), numOfCols)
+		upperBoundStr, err := statistics.ValueToString(hist.GetUpper(i), numOfCols)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -138,23 +137,6 @@ func (e *ShowExec) bucketsToRows(dbName, tblName, colName string, numOfCols int,
 		})
 	}
 	return nil
-}
-
-// valueToString converts a possible encoded value to a formatted string. If the value is encoded, then
-// size equals to number of origin values, else size is 0.
-func (e *ShowExec) valueToString(value *types.Datum, size int) (string, error) {
-	if size == 0 {
-		return value.ToString()
-	}
-	decodedVals, err := codec.Decode(value.GetBytes(), size)
-	if err != nil {
-		return "", errors.Trace(err)
-	}
-	str, err := types.DatumsToString(decodedVals)
-	if err != nil {
-		return "", errors.Trace(err)
-	}
-	return str, nil
 }
 
 func (e *ShowExec) fetchShowStatsHealthy() {

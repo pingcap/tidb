@@ -158,7 +158,7 @@ func HistogramEqual(a, b *Histogram, ignoreID bool) bool {
 		b.ID = a.ID
 		defer func() { b.ID = old }()
 	}
-	return bytes.Equal([]byte(a.toString(false)), []byte(b.toString(false)))
+	return bytes.Equal([]byte(a.ToString(0)), []byte(b.ToString(0)))
 }
 
 // SaveStatsToStorage saves the stats to storage.
@@ -264,17 +264,35 @@ func columnCountFromStorage(ctx sessionctx.Context, tableID, colID int64) (int64
 	return rows[0].GetMyDecimal(0).ToInt()
 }
 
-func (hg *Histogram) toString(isIndex bool) string {
+// ValueToString converts a possible encoded value to a formatted string. If the value is encoded, then
+// size equals to number of origin values, else size is 0.
+func ValueToString(value *types.Datum, size int) (string, error) {
+	if size == 0 {
+		return value.ToString()
+	}
+	decodedVals, err := codec.Decode(value.GetBytes(), size)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	str, err := types.DatumsToString(decodedVals)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	return str, nil
+}
+
+// ToString gets the string representation for the histogram.
+func (hg *Histogram) ToString(size int) string {
 	strs := make([]string, 0, hg.Len()+1)
-	if isIndex {
+	if size > 0 {
 		strs = append(strs, fmt.Sprintf("index:%d ndv:%d", hg.ID, hg.NDV))
 	} else {
 		strs = append(strs, fmt.Sprintf("column:%d ndv:%d", hg.ID, hg.NDV))
 	}
 	for i := 0; i < hg.Len(); i++ {
-		upperVal, err := hg.GetUpper(i).ToString()
+		upperVal, err := ValueToString(hg.GetUpper(i), size)
 		terror.Log(errors.Trace(err))
-		lowerVal, err := hg.GetLower(i).ToString()
+		lowerVal, err := ValueToString(hg.GetLower(i), size)
 		terror.Log(errors.Trace(err))
 		strs = append(strs, fmt.Sprintf("num: %d\tlower_bound: %s\tupper_bound: %s\trepeats: %d", hg.Buckets[i].Count, lowerVal, upperVal, hg.Buckets[i].Repeat))
 	}
@@ -570,7 +588,7 @@ type Column struct {
 }
 
 func (c *Column) String() string {
-	return c.Histogram.toString(false)
+	return c.Histogram.ToString(0)
 }
 
 func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum) (float64, error) {
@@ -635,7 +653,7 @@ type Index struct {
 }
 
 func (idx *Index) String() string {
-	return idx.Histogram.toString(true)
+	return idx.Histogram.ToString(len(idx.Info.Columns))
 }
 
 func (idx *Index) equalRowCount(sc *stmtctx.StatementContext, b []byte) float64 {
