@@ -217,7 +217,7 @@ func NumberToDuration(number int64, fsp int) (Duration, error) {
 	}
 
 	if number/10000 > TimeMaxHour || number%100 >= 60 || (number/100)%100 >= 60 {
-		return ZeroDuration, ErrInvalidTimeFormat
+		return ZeroDuration, errors.Trace(ErrInvalidTimeFormat.GenByArgs(number))
 	}
 	t := Time{Time: FromDate(0, 0, 0, int(number/10000), int((number/100)%100), int(number%100), 0), Type: mysql.TypeDuration, Fsp: fsp}
 	dur, err := t.ConvertToDuration()

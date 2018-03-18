@@ -487,6 +487,10 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 			IdxName:           as.Index,
 			IndexLookUpReader: readerPlan.(*PhysicalIndexLookUpReader),
 		}
+	case ast.AdminRecoverIndex:
+		p := &RecoverIndex{Table: as.Tables[0], IndexName: as.Index}
+		p.SetSchema(buildRecoverIndexFields())
+		ret = p
 	case ast.AdminShowDDL:
 		p := &ShowDDL{}
 		p.SetSchema(buildShowDDLFields())
@@ -507,6 +511,10 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 			break
 		}
 		p.SetSchema(schema)
+		ret = p
+	case ast.AdminShowDDLJobQueries:
+		p := &ShowDDLJobQueries{JobIDs: as.JobIDs}
+		p.SetSchema(buildShowDDLJobQueriesFields())
 		ret = p
 	default:
 		b.err = ErrUnsupportedType.Gen("Unsupported type %T", as)
@@ -646,11 +654,23 @@ func buildShowDDLFields() *expression.Schema {
 	return schema
 }
 
+func buildRecoverIndexFields() *expression.Schema {
+	schema := expression.NewSchema(make([]*expression.Column, 0, 2)...)
+	schema.Append(buildColumn("", "ADDED_COUNT", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "SCAN_COUNT", mysql.TypeLonglong, 4))
+	return schema
+}
+
 func buildShowDDLJobsFields() *expression.Schema {
 	schema := expression.NewSchema(make([]*expression.Column, 0, 2)...)
 	schema.Append(buildColumn("", "JOBS", mysql.TypeVarchar, 128))
 	schema.Append(buildColumn("", "STATE", mysql.TypeVarchar, 64))
+	return schema
+}
 
+func buildShowDDLJobQueriesFields() *expression.Schema {
+	schema := expression.NewSchema(make([]*expression.Column, 0, 1)...)
+	schema.Append(buildColumn("", "QUERY", mysql.TypeVarchar, 256))
 	return schema
 }
 
