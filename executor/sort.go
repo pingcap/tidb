@@ -22,21 +22,15 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	goctx "golang.org/x/net/context"
+	"github.com/pingcap/tidb/util/memory"
+	"golang.org/x/net/context"
 )
-
-// orderByRow binds a row to its order values, so it can be sorted.
-type orderByRow struct {
-	key []*types.Datum
-	row Row
-}
 
 // SortExec represents sorting executor.
 type SortExec struct {
 	baseExecutor
 
 	ByItems []*plan.ByItems
-	Rows    []*orderByRow
 	Idx     int
 	fetched bool
 	err     error
@@ -54,102 +48,34 @@ type SortExec struct {
 	rowChunks *chunk.List
 	// rowPointer store the chunk index and row index for each row.
 	rowPtrs []chunk.RowPtr
+
+	memTracker *memory.Tracker
 }
 
 // Close implements the Executor Close interface.
 func (e *SortExec) Close() error {
-	e.Rows = nil
+	e.memTracker = nil
 	return errors.Trace(e.children[0].Close())
 }
 
 // Open implements the Executor Open interface.
-func (e *SortExec) Open(goCtx goctx.Context) error {
+func (e *SortExec) Open(ctx context.Context) error {
 	e.fetched = false
 	e.Idx = 0
-	e.Rows = nil
-	return errors.Trace(e.children[0].Open(goCtx))
-}
 
-// Len returns the number of rows.
-func (e *SortExec) Len() int {
-	return len(e.Rows)
-}
-
-// Swap implements sort.Interface Swap interface.
-func (e *SortExec) Swap(i, j int) {
-	e.Rows[i], e.Rows[j] = e.Rows[j], e.Rows[i]
-}
-
-// Less implements sort.Interface Less interface.
-func (e *SortExec) Less(i, j int) bool {
-	sc := e.ctx.GetSessionVars().StmtCtx
-	for index, by := range e.ByItems {
-		v1 := e.Rows[i].key[index]
-		v2 := e.Rows[j].key[index]
-
-		ret, err := v1.CompareDatum(sc, v2)
-		if err != nil {
-			e.err = errors.Trace(err)
-			return true
-		}
-
-		if by.Desc {
-			ret = -ret
-		}
-
-		if ret < 0 {
-			return true
-		} else if ret > 0 {
-			return false
-		}
+	// To avoid duplicated initialization for TopNExec.
+	if e.memTracker == nil {
+		e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaSort)
+		e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	}
-
-	return false
-}
-
-// Next implements the Executor Next interface.
-func (e *SortExec) Next(goCtx goctx.Context) (Row, error) {
-	if !e.fetched {
-		for {
-			srcRow, err := e.children[0].Next(goCtx)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if srcRow == nil {
-				break
-			}
-			orderRow := &orderByRow{
-				row: srcRow,
-				key: make([]*types.Datum, len(e.ByItems)),
-			}
-			for i, byItem := range e.ByItems {
-				key, err := byItem.Expr.Eval(srcRow)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				orderRow.key[i] = &key
-			}
-			e.Rows = append(e.Rows, orderRow)
-		}
-		sort.Sort(e)
-		e.fetched = true
-	}
-	if e.err != nil {
-		return nil, errors.Trace(e.err)
-	}
-	if e.Idx >= len(e.Rows) {
-		return nil, nil
-	}
-	row := e.Rows[e.Idx].row
-	e.Idx++
-	return row, nil
+	return errors.Trace(e.children[0].Open(ctx))
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (e *SortExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+func (e *SortExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if !e.fetched {
-		err := e.fetchRowChunks(goCtx)
+		err := e.fetchRowChunks(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -179,12 +105,14 @@ func (e *SortExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
-func (e *SortExec) fetchRowChunks(goCtx goctx.Context) error {
+func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	fields := e.retTypes()
 	e.rowChunks = chunk.NewList(fields, e.maxChunkSize)
+	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
+	e.rowChunks.GetMemTracker().SetLabel("rowChunks")
 	for {
 		chk := chunk.NewChunk(fields)
-		err := e.children[0].NextChunk(goCtx, chk)
+		err := e.children[0].NextChunk(ctx, chk)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -199,6 +127,7 @@ func (e *SortExec) fetchRowChunks(goCtx goctx.Context) error {
 
 func (e *SortExec) initPointers() {
 	e.rowPtrs = make([]chunk.RowPtr, 0, e.rowChunks.Len())
+	e.memTracker.Consume(int64(8 * e.rowChunks.Len()))
 	for chkIdx := 0; chkIdx < e.rowChunks.NumChunks(); chkIdx++ {
 		rowChk := e.rowChunks.GetChunk(chkIdx)
 		for rowIdx := 0; rowIdx < rowChk.NumRows(); rowIdx++ {
@@ -243,6 +172,9 @@ func (e *SortExec) buildKeyExprsAndTypes() {
 
 func (e *SortExec) buildKeyChunks() error {
 	e.keyChunks = chunk.NewList(e.keyTypes, e.maxChunkSize)
+	e.keyChunks.GetMemTracker().SetLabel("keyChunks")
+	e.keyChunks.GetMemTracker().AttachTo(e.memTracker)
+
 	for chkIdx := 0; chkIdx < e.rowChunks.NumChunks(); chkIdx++ {
 		keyChk := chunk.NewChunk(e.keyTypes)
 		childIter := chunk.NewIterator4Chunk(e.rowChunks.GetChunk(chkIdx))
@@ -294,111 +226,6 @@ type TopNExec struct {
 	heapSize   int
 
 	chkHeap *topNChunkHeap
-}
-
-// Less implements heap.Interface Less interface.
-func (e *TopNExec) Less(i, j int) bool {
-	sc := e.ctx.GetSessionVars().StmtCtx
-	for index, by := range e.ByItems {
-		v1 := e.Rows[i].key[index]
-		v2 := e.Rows[j].key[index]
-
-		ret, err := v1.CompareDatum(sc, v2)
-		if err != nil {
-			e.err = errors.Trace(err)
-			return true
-		}
-
-		if by.Desc {
-			ret = -ret
-		}
-
-		if ret > 0 {
-			return true
-		} else if ret < 0 {
-			return false
-		}
-	}
-
-	return false
-}
-
-// Len implements heap.Interface Len interface.
-func (e *TopNExec) Len() int {
-	return e.heapSize
-}
-
-// Push implements heap.Interface Push interface.
-func (e *TopNExec) Push(x interface{}) {
-	e.Rows = append(e.Rows, x.(*orderByRow))
-	e.heapSize++
-}
-
-// Pop implements heap.Interface Pop interface.
-func (e *TopNExec) Pop() interface{} {
-	e.heapSize--
-	return nil
-}
-
-// Next implements the Executor Next interface.
-func (e *TopNExec) Next(goCtx goctx.Context) (Row, error) {
-	if !e.fetched {
-		e.Idx = int(e.limit.Offset)
-		e.totalLimit = int(e.limit.Offset + e.limit.Count)
-		cap := e.totalLimit + 1
-		if cap > 1024 {
-			cap = 1024
-		}
-		e.Rows = make([]*orderByRow, 0, cap)
-		e.heapSize = 0
-		for {
-			srcRow, err := e.children[0].Next(goCtx)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if srcRow == nil {
-				break
-			}
-			// build orderRow from srcRow.
-			orderRow := &orderByRow{
-				row: srcRow,
-				key: make([]*types.Datum, len(e.ByItems)),
-			}
-			for i, byItem := range e.ByItems {
-				key, err := byItem.Expr.Eval(srcRow)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				orderRow.key[i] = &key
-			}
-			if e.totalLimit == e.heapSize {
-				// An equivalent of Push and Pop. We don't use the standard Push and Pop
-				// to reduce the number of comparisons.
-				e.Rows = append(e.Rows, orderRow)
-				if e.Less(0, e.heapSize) {
-					e.Swap(0, e.heapSize)
-					heap.Fix(e, 0)
-				}
-				e.Rows = e.Rows[:e.heapSize]
-			} else {
-				heap.Push(e, orderRow)
-			}
-		}
-		if e.limit.Offset == 0 {
-			sort.Sort(&e.SortExec)
-		} else {
-			for i := 0; i < int(e.limit.Count) && e.Len() > 0; i++ {
-				heap.Pop(e)
-			}
-		}
-		e.fetched = true
-	}
-	if e.Idx >= len(e.Rows) {
-		return nil, nil
-	}
-	row := e.Rows[e.Idx].row
-	e.Idx++
-	return row, nil
 }
 
 // topNChunkHeap implements heap.Interface.
@@ -461,17 +288,24 @@ func (h *topNChunkHeap) Swap(i, j int) {
 	h.rowPtrs[i], h.rowPtrs[j] = h.rowPtrs[j], h.rowPtrs[i]
 }
 
+// Open implements the Executor Open interface.
+func (e *TopNExec) Open(ctx context.Context) error {
+	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaTopn)
+	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	return errors.Trace(e.SortExec.Open(ctx))
+}
+
 // NextChunk implements the Executor NextChunk interface.
-func (e *TopNExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+func (e *TopNExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if !e.fetched {
 		e.totalLimit = int(e.limit.Offset + e.limit.Count)
 		e.Idx = int(e.limit.Offset)
-		err := e.loadChunksUntilTotalLimit(goCtx)
+		err := e.loadChunksUntilTotalLimit(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = e.executeTopN(goCtx)
+		err = e.executeTopN(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -488,12 +322,14 @@ func (e *TopNExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
-func (e *TopNExec) loadChunksUntilTotalLimit(goCtx goctx.Context) error {
+func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 	e.chkHeap = &topNChunkHeap{e}
 	e.rowChunks = chunk.NewList(e.retTypes(), e.maxChunkSize)
+	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
+	e.rowChunks.GetMemTracker().SetLabel("rowChunks")
 	for e.rowChunks.Len() < e.totalLimit {
 		srcChk := e.children[0].newChunk()
-		err := e.children[0].NextChunk(goCtx, srcChk)
+		err := e.children[0].NextChunk(ctx, srcChk)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -517,7 +353,7 @@ func (e *TopNExec) loadChunksUntilTotalLimit(goCtx goctx.Context) error {
 
 const topNCompactionFactor = 4
 
-func (e *TopNExec) executeTopN(goCtx goctx.Context) error {
+func (e *TopNExec) executeTopN(ctx context.Context) error {
 	heap.Init(e.chkHeap)
 	for len(e.rowPtrs) > e.totalLimit {
 		// The number of rows we loaded may exceeds total limit, remove greatest rows by Pop.
@@ -529,7 +365,7 @@ func (e *TopNExec) executeTopN(goCtx goctx.Context) error {
 	}
 	childRowChk := e.children[0].newChunk()
 	for {
-		err := e.children[0].NextChunk(goCtx, childRowChk)
+		err := e.children[0].NextChunk(ctx, childRowChk)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -596,13 +432,22 @@ func (e *TopNExec) doCompaction() error {
 		newRowPtr := newRowChunks.AppendRow(e.rowChunks.GetRow(rowPtr))
 		newRowPtrs = append(newRowPtrs, newRowPtr)
 	}
+	newRowChunks.GetMemTracker().SetLabel("rowChunks")
+	e.memTracker.ReplaceChild(e.rowChunks.GetMemTracker(), newRowChunks.GetMemTracker())
 	e.rowChunks = newRowChunks
-	e.rowPtrs = newRowPtrs
+
 	if e.keyChunks != nil {
-		err := e.buildKeyChunks()
-		if err != nil {
-			return errors.Trace(err)
+		newKeyChunks := chunk.NewList(e.keyTypes, e.maxChunkSize)
+		for _, rowPtr := range e.rowPtrs {
+			newKeyChunks.AppendRow(e.keyChunks.GetRow(rowPtr))
 		}
+		newKeyChunks.GetMemTracker().SetLabel("keyChunks")
+		e.memTracker.ReplaceChild(e.keyChunks.GetMemTracker(), newKeyChunks.GetMemTracker())
+		e.keyChunks = newKeyChunks
 	}
+
+	e.memTracker.Consume(int64(-8 * len(e.rowPtrs)))
+	e.memTracker.Consume(int64(8 * len(newRowPtrs)))
+	e.rowPtrs = newRowPtrs
 	return nil
 }

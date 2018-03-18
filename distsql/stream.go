@@ -18,11 +18,12 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tipb/go-tipb"
-	goctx "golang.org/x/net/context"
+	tipb "github.com/pingcap/tipb/go-tipb"
+	"golang.org/x/net/context"
 )
 
 // streamResult implements the SelectResult interface.
@@ -34,31 +35,27 @@ type streamResult struct {
 
 	// NOTE: curr == nil means stream finish, while len(curr.RowsData) == 0 doesn't.
 	curr         *tipb.Chunk
-	scanKeys     int64
 	partialCount int64
+	feedback     *statistics.QueryFeedback
 }
 
-func (r *streamResult) ScanKeys() int64 {
-	return r.scanKeys
-}
+func (r *streamResult) Fetch(context.Context) {}
 
-func (r *streamResult) Fetch(goctx.Context) {}
-
-func (r *streamResult) Next(goCtx goctx.Context) (PartialResult, error) {
+func (r *streamResult) Next(ctx context.Context) (PartialResult, error) {
 	var ret streamPartialResult
 	ret.rowLen = r.rowLen
-	finished, err := r.readDataFromResponse(goCtx, r.resp, &ret.Chunk)
+	finished, err := r.readDataFromResponse(ctx, r.resp, &ret.Chunk)
 	if err != nil || finished {
 		return nil, errors.Trace(err)
 	}
 	return &ret, nil
 }
 
-func (r *streamResult) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+func (r *streamResult) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	maxChunkSize := r.ctx.GetSessionVars().MaxChunkSize
 	for chk.NumRows() < maxChunkSize {
-		err := r.readDataIfNecessary(goCtx)
+		err := r.readDataIfNecessary(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -75,17 +72,17 @@ func (r *streamResult) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
 }
 
 // readDataFromResponse read the data to result. Returns true means the resp is finished.
-func (r *streamResult) readDataFromResponse(goCtx goctx.Context, resp kv.Response, result *tipb.Chunk) (bool, error) {
-	data, err := resp.Next(goCtx)
+func (r *streamResult) readDataFromResponse(ctx context.Context, resp kv.Response, result *tipb.Chunk) (bool, error) {
+	resultSubset, err := resp.Next(ctx)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	if data == nil {
+	if resultSubset == nil {
 		return true, nil
 	}
 
 	var stream tipb.StreamResponse
-	err = stream.Unmarshal(data)
+	err = stream.Unmarshal(resultSubset.GetData())
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -99,23 +96,19 @@ func (r *streamResult) readDataFromResponse(goCtx goctx.Context, resp kv.Respons
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	if len(stream.OutputCounts) > 0 {
-		partialScanKeys := stream.OutputCounts[0]
-		metrics.DistSQLScanKeysPartialHistogram.Observe(float64(partialScanKeys))
-		r.scanKeys += partialScanKeys
-	}
+	r.feedback.Update(resultSubset.GetStartKey(), stream.OutputCounts)
 	r.partialCount++
 	return false, nil
 }
 
 // readDataIfNecessary ensures there are some data in current chunk. If no more data, r.curr == nil.
-func (r *streamResult) readDataIfNecessary(goCtx goctx.Context) error {
+func (r *streamResult) readDataIfNecessary(ctx context.Context) error {
 	if r.curr != nil && len(r.curr.RowsData) > 0 {
 		return nil
 	}
 
 	tmp := new(tipb.Chunk)
-	finish, err := r.readDataFromResponse(goCtx, r.resp, tmp)
+	finish, err := r.readDataFromResponse(ctx, r.resp, tmp)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -147,15 +140,19 @@ func (r *streamResult) flushToChunk(chk *chunk.Chunk) (err error) {
 	return nil
 }
 
-func (r *streamResult) NextRaw(goCtx goctx.Context) ([]byte, error) {
+func (r *streamResult) NextRaw(ctx context.Context) ([]byte, error) {
 	r.partialCount++
-	r.scanKeys = -1
-	return r.resp.Next(goCtx)
+	r.feedback.Invalidate()
+	resultSubset, err := r.resp.Next(ctx)
+	if resultSubset == nil || err != nil {
+		return nil, errors.Trace(err)
+	}
+	return resultSubset.GetData(), errors.Trace(err)
 }
 
 func (r *streamResult) Close() error {
-	if r.scanKeys >= 0 {
-		metrics.DistSQLScanKeysHistogram.Observe(float64(r.scanKeys))
+	if r.feedback.Actual() > 0 {
+		metrics.DistSQLScanKeysHistogram.Observe(float64(r.feedback.Actual()))
 	}
 	metrics.DistSQLPartialCountHistogram.Observe(float64(r.partialCount))
 	return nil
@@ -167,7 +164,7 @@ type streamPartialResult struct {
 	rowLen int
 }
 
-func (pr *streamPartialResult) Next(goCtx goctx.Context) (data []types.Datum, err error) {
+func (pr *streamPartialResult) Next(ctx context.Context) (data []types.Datum, err error) {
 	if len(pr.Chunk.RowsData) == 0 {
 		return nil, nil // partial result finished.
 	}

@@ -108,12 +108,21 @@ const (
 	// tidb_max_chunk_capacity is used to control the max chunk size during query execution.
 	TiDBMaxChunkSize = "tidb_max_chunk_size"
 
-	// tidb_mem_threshold is used to control the memory usage warning threshold in Byte of an executor during query execution.
-	// When the memory usage hold by an executor exceeds the threshold, a warning log will be printed.
-	TiDBMemThreshold = "tidb_mem_threshold"
+	// The following session variables controls the memory quota during query execution.
+	// "tidb_mem_quota_query":    control the memory quota of a query.
+	// "tidb_mem_quota_hashjoin": control the memory quota of "HashJoinExec".
+	// "tidb_mem_quota_sort":     control the memory quota of "SortExec".
+	// "tidb_mem_quota_topn":     control the memory quota of "TopNExec".
+	TIDBMemQuotaQuery    = "tidb_mem_quota_query"    // Bytes.
+	TIDBMemQuotaHashJoin = "tidb_mem_quota_hashjoin" // Bytes.
+	TIDBMemQuotaSort     = "tidb_mem_quota_sort"     // Bytes.
+	TIDBMemQuotaTopn     = "tidb_mem_quota_topn"     // Bytes.
 
 	// tidb_general_log is used to log every query in the server in info level.
 	TiDBGeneralLog = "tidb_general_log"
+
+	// tidb_enable_streaming enables TiDB to use streaming API for coprocessor requests.
+	TiDBEnableStreaming = "tidb_enable_streaming"
 )
 
 // Default TiDB system variable values.
@@ -132,7 +141,10 @@ const (
 	DefCurretTS                   = 0
 	DefMaxChunkSize               = 1024
 	DefDMLBatchSize               = 20000
-	DefMemThreshold               = 32 * 1024 * 1024 * 1024 // 32 GiB
+	DefTiDBMemQuotaQuery          = 32 * 1024 * 1024 * 1024 // 32GB.
+	DefTiDBMemQuotaHashJoin       = 32 * 1024 * 1024 * 1024 // 32GB.
+	DefTiDBMemQuotaSort           = 32 * 1024 * 1024 * 1024 // 32GB.
+	DefTiDBMemQuotaTopn           = 32 * 1024 * 1024 * 1024 // 32GB.
 	DefTiDBGeneralLog             = 0
 )
 

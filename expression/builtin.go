@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/charset"
-	"github.com/pingcap/tipb/go-tipb"
+	tipb "github.com/pingcap/tipb/go-tipb"
 )
 
 // baseBuiltinFunc will be contained in every struct that implement builtinFunc interface.
@@ -204,7 +204,7 @@ func (b *baseBuiltinFunc) equal(fun builtinFunc) bool {
 		return false
 	}
 	for i := range b.args {
-		if !b.args[i].Equal(funArgs[i], b.ctx) {
+		if !b.args[i].Equal(b.ctx, funArgs[i]) {
 			return false
 		}
 	}

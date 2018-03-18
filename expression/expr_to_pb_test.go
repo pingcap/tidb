@@ -24,8 +24,8 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tipb/go-tipb"
-	goctx "golang.org/x/net/context"
+	tipb "github.com/pingcap/tipb/go-tipb"
+	"golang.org/x/net/context"
 )
 
 // mockKvClient is mocked from tikv.CopClient to avoid circular dependency.
@@ -47,7 +47,7 @@ func (c *mockKvClient) IsRequestTypeSupported(reqType, subType int64) bool {
 }
 
 // Send implements the kv.Client interface..
-func (c *mockKvClient) Send(ctx goctx.Context, req *kv.Request) kv.Response {
+func (c *mockKvClient) Send(ctx context.Context, req *kv.Request) kv.Response {
 	return nil
 }
 

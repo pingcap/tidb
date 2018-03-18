@@ -25,8 +25,8 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
-	"github.com/pingcap/tipb/go-binlog"
-	goctx "golang.org/x/net/context"
+	binlog "github.com/pingcap/tipb/go-binlog"
+	"golang.org/x/net/context"
 )
 
 var _ sessionctx.Context = (*Context)(nil)
@@ -38,8 +38,8 @@ type Context struct {
 	Store       kv.Storage     // mock global variable
 	sessionVars *variable.SessionVars
 	mux         sync.Mutex // fix data race in ddl test.
-	ctx         goctx.Context
-	cancel      goctx.CancelFunc
+	ctx         context.Context
+	cancel      context.CancelFunc
 	sm          util.SessionManager
 	pcache      *kvcache.SimpleLRUCache
 }
@@ -123,7 +123,7 @@ func (c *Context) NewTxn() error {
 }
 
 // RefreshTxnCtx implements the sessionctx.Context interface.
-func (c *Context) RefreshTxnCtx(goCtx goctx.Context) error {
+func (c *Context) RefreshTxnCtx(ctx context.Context) error {
 	return errors.Trace(c.NewTxn())
 }
 
@@ -183,7 +183,7 @@ func (c *Context) Cancel() {
 }
 
 // GoCtx returns standard sessionctx.Context that bind with current transaction.
-func (c *Context) GoCtx() goctx.Context {
+func (c *Context) GoCtx() context.Context {
 	return c.ctx
 }
 
@@ -209,13 +209,13 @@ func (c *Context) StmtAddDirtyTableOP(op int, tid int64, handle int64, row []typ
 
 // NewContext creates a new mocked sessionctx.Context.
 func NewContext() *Context {
-	goCtx, cancel := goctx.WithCancel(goctx.Background())
-	ctx := &Context{
+	ctx, cancel := context.WithCancel(context.Background())
+	sctx := &Context{
 		values:      make(map[fmt.Stringer]interface{}),
 		sessionVars: variable.NewSessionVars(),
-		ctx:         goCtx,
+		ctx:         ctx,
 		cancel:      cancel,
 	}
-	ctx.sessionVars.MaxChunkSize = 2
-	return ctx
+	sctx.sessionVars.MaxChunkSize = 2
+	return sctx
 }

@@ -227,6 +227,7 @@ import (
 	utcTimestamp		"UTC_TIMESTAMP"
 	utcTime			"UTC_TIME"
 	values			"VALUES"
+	long			"LONG"
 	varcharType		"VARCHAR"
 	varbinaryType		"VARBINARY"
 	virtual			"VIRTUAL"
@@ -340,7 +341,9 @@ import (
 	profiles	"PROFILES"
 	quarter		"QUARTER"
 	query		"QUERY"
+	queries		"QUERIES"
 	quick		"QUICK"
+	recover 	"RECOVER"
 	redundant	"REDUNDANT"
 	reload		"RELOAD"
 	repeatable	"REPEATABLE"
@@ -419,6 +422,7 @@ import (
 	cancel		"CANCEL"
 	ddl		"DDL"
 	jobs		"JOBS"
+	job		    "JOB"
 	stats		"STATS"
 	statsMeta       "STATS_META"
 	statsHistograms "STATS_HISTOGRAMS"
@@ -612,6 +616,8 @@ import (
 	GroupByClause			"GROUP BY clause"
 	HashString			"Hashed string"
 	HavingClause			"HAVING clause"
+	HandleRange			"handle range"
+	HandleRangeList			"handle range list"
 	IfExists			"If Exists"
 	IfNotExists			"If Not Exists"
 	IgnoreOptional			"IGNORE or empty"
@@ -748,6 +754,7 @@ import (
 
 	NumericType		"Numeric types"
 	IntegerType		"Integer Types types"
+	BooleanType 		"Boolean Types types"
 	FixedPointType		"Exact value types"
 	FloatingPointType	"Approximate value types"
 	BitValueType		"bit value types"
@@ -1312,6 +1319,13 @@ ColumnOption:
 			Stored: $6.(bool),
 		}
 	}
+|	ReferDef
+	{
+		$$ = &ast.ColumnOption{
+			Tp: ast.ColumnOptionReference,
+			Refer: $1.(*ast.ReferenceDef),
+		}
+	}
 
 GeneratedAlways: | "GENERATED" "ALWAYS"
 
@@ -1724,7 +1738,12 @@ PartitionDefinitionList:
 	{}
 
 PartitionDefinition:
-	"PARTITION" Identifier PartDefValuesOpt PartDefStorageOpt
+	"PARTITION" Identifier PartDefValuesOpt PartDefCommentOpt PartDefStorageOpt
+	{}
+
+PartDefCommentOpt:
+	{}
+|	"COMMENT" eq stringLit
 	{}
 
 PartDefValuesOpt:
@@ -1947,11 +1966,11 @@ DropIndexStmt:
 	}
 
 DropTableStmt:
-	"DROP" TableOrTables TableNameList
+	"DROP" TableOrTables TableNameList RestrictOrCascadeOpt
 	{
 		$$ = &ast.DropTableStmt{Tables: $3.([]*ast.TableName)}
 	}
-|	"DROP" TableOrTables "IF" "EXISTS" TableNameList
+|	"DROP" TableOrTables "IF" "EXISTS" TableNameList RestrictOrCascadeOpt
 	{
 		$$ = &ast.DropTableStmt{IfExists: true, Tables: $5.([]*ast.TableName)}
 	}
@@ -1977,6 +1996,11 @@ DropStatsStmt:
 	{
 		$$ = &ast.DropStatsStmt{Table: $3.(*ast.TableName)}
 	}
+
+RestrictOrCascadeOpt:
+	{}
+|	"RESTRICT"
+|	"CASCADE"
 
 TableOrTables:
 	"TABLE"
@@ -2506,11 +2530,13 @@ UnReservedKeyword:
 | "REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "INDEXES" | "PROCESSLIST"
 | "SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "MODIFY" | "EVENTS" | "PARTITIONS"
 | "NONE" | "SUPER" | "EXCLUSIVE" | "STATS_PERSISTENT" | "ROW_COUNT" | "COALESCE" | "MONTH" | "PROCESS" | "PROFILES"
-| "MICROSECOND" | "MINUTE" | "PLUGINS" | "QUERY" | "SECOND" | "SEPARATOR" | "SHARE" | "SHARED" | "MAX_CONNECTIONS_PER_HOUR" | "MAX_QUERIES_PER_HOUR" | "MAX_UPDATES_PER_HOUR"
-| "MAX_USER_CONNECTIONS" | "REPLICATION" | "CLIENT" | "SLAVE" | "RELOAD" | "TEMPORARY" | "ROUTINE" | "EVENT" | "ALGORITHM" | "DEFINER" | "INVOKER" | "MERGE" | "TEMPTABLE" | "UNDEFINED" | "SECURITY" | "CASCADED"
+| "MICROSECOND" | "MINUTE" | "PLUGINS" | "QUERY" | "QUERIES" | "SECOND" | "SEPARATOR" | "SHARE" | "SHARED" | "MAX_CONNECTIONS_PER_HOUR" | "MAX_QUERIES_PER_HOUR" | "MAX_UPDATES_PER_HOUR"
+| "MAX_USER_CONNECTIONS" | "REPLICATION" | "CLIENT" | "SLAVE" | "RELOAD" | "TEMPORARY" | "ROUTINE" | "EVENT" | "ALGORITHM" | "DEFINER" | "INVOKER" | "MERGE" | "TEMPTABLE" | "UNDEFINED" | "SECURITY" | "CASCADED" | "RECOVER"
+
+
 
 TiDBKeyword:
-"ADMIN" | "CANCEL" | "DDL" | "JOBS" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "STATS_HEALTHY" | "TIDB" | "TIDB_HJ" | "TIDB_SMJ" | "TIDB_INLJ"
+"ADMIN" | "CANCEL" | "DDL" | "JOBS" | "JOB" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "STATS_HEALTHY" | "TIDB" | "TIDB_HJ" | "TIDB_SMJ" | "TIDB_INLJ"
 
 NotKeywordToken:
  "ADDDATE" | "BIT_AND" | "BIT_OR" | "BIT_XOR" | "CAST" | "COUNT" | "CURTIME" | "DATE_ADD" | "DATE_SUB" | "EXTRACT" | "GET_FORMAT" | "GROUP_CONCAT" | "MIN" | "MAX" | "NOW" | "POSITION"
@@ -2564,6 +2590,10 @@ InsertValues:
 |	ValueSym ValuesList %prec insertValues
 	{
 		$$ = &ast.InsertStmt{Lists:  $2.([][]ast.ExprNode)}
+	}
+|	'(' SelectStmt ')'
+	{
+		$$ = &ast.InsertStmt{Select: $2.(*ast.SelectStmt)}
 	}
 |	SelectStmt
 	{
@@ -4736,6 +4766,31 @@ AdminStmt:
 			Tables: $4.([]*ast.TableName),
 		}
 	}
+|	"ADMIN" "CHECK" "INDEX" TableName Identifier
+	{
+		$$ = &ast.AdminStmt{
+			Tp: ast.AdminCheckIndex,
+			Tables: []*ast.TableName{$4.(*ast.TableName)},
+			Index: string($5),
+		}
+	}
+|	"ADMIN" "RECOVER" "INDEX" TableName Identifier
+	{
+		$$ = &ast.AdminStmt{
+			Tp: ast.AdminRecoverIndex,
+			Tables: []*ast.TableName{$4.(*ast.TableName)},
+			Index: string($5),
+		}
+	}
+|	"ADMIN" "CHECK" "INDEX" TableName Identifier HandleRangeList
+	{
+		$$ = &ast.AdminStmt{
+			Tp: ast.AdminCheckIndexRange,
+			Tables:	[]*ast.TableName{$4.(*ast.TableName)},
+			Index: string($5),
+			HandleRanges: $6.([]ast.HandleRange),
+		}
+	}
 |	"ADMIN" "CANCEL" "DDL" "JOBS" NumList
 	{
 		$$ = &ast.AdminStmt{
@@ -4743,6 +4798,30 @@ AdminStmt:
 			JobIDs: $5.([]int64),
 		}
 	}
+|	"ADMIN" "SHOW" "DDL" "JOB" "QUERIES" NumList
+	{
+		$$ = &ast.AdminStmt{
+			Tp: ast.AdminShowDDLJobQueries,
+			JobIDs: $6.([]int64),
+		}
+	}
+
+HandleRangeList:
+	HandleRange
+	{
+		$$ = []ast.HandleRange{$1.(ast.HandleRange)}
+	}
+|	HandleRangeList ',' HandleRange
+	{
+		$$ = append($1.([]ast.HandleRange), $3.(ast.HandleRange))
+	}
+
+HandleRange:
+	'(' NUM ',' NUM ')'
+	{
+		$$ = ast.HandleRange{Begin: $2.(int64), End: $4.(int64)}
+	}
+
 
 NumList:
        NUM
@@ -5416,6 +5495,21 @@ NumericType:
 		}
 		$$ = x
 	}
+|	BooleanType FieldOpts
+	{
+		// TODO: check flen 0
+		x := types.NewFieldType($1.(byte))
+		x.Flen = 1
+		for _, o := range $2.([]*ast.TypeOpt) {
+			if o.IsUnsigned {
+				x.Flag |= mysql.UnsignedFlag
+			}
+			if o.IsZerofill {
+				x.Flag |= mysql.ZerofillFlag
+			}
+		}
+		$$ = x
+	}
 |	FixedPointType FloatOpt FieldOpts
 	{
 		fopt := $2.(*ast.FloatOpt)
@@ -5510,7 +5604,10 @@ IntegerType:
 	{
 		$$ = mysql.TypeLonglong
 	}
-|	"BOOL"
+
+
+BooleanType:
+	"BOOL"
 	{
 		$$ = mysql.TypeTiny
 	}
@@ -5710,6 +5807,11 @@ TextType:
 |	"LONGTEXT"
 	{
 		x := types.NewFieldType(mysql.TypeLongBlob)
+		$$ = x
+	}
+|	"LONG" "VARCHAR"
+	{
+		x := types.NewFieldType(mysql.TypeMediumBlob)
 		$$ = x
 	}
 

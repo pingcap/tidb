@@ -508,15 +508,8 @@ var tableTableSpacesCols = []columnInfo{
 }
 
 var tableCollationCharacterSetApplicabilityCols = []columnInfo{
-	{"TABLESPACE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"ENGINE", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"TABLESPACE_TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"LOGFILE_GROUP_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"EXTENT_SIZE", mysql.TypeLong, 21, 0, nil, nil},
-	{"AUTOEXTEND_SIZE", mysql.TypeLong, 21, 0, nil, nil},
-	{"MAXIMUM_SIZE", mysql.TypeLong, 21, 0, nil, nil},
-	{"NODEGROUP_ID", mysql.TypeLong, 21, 0, nil, nil},
-	{"TABLESPACE_COMMENT", mysql.TypeVarchar, 2048, 0, nil, nil},
+	{"COLLATION_NAME", mysql.TypeVarchar, 32, mysql.NotNullFlag, nil, nil},
+	{"CHARACTER_SET_NAME", mysql.TypeVarchar, 32, mysql.NotNullFlag, nil, nil},
 }
 
 func dataForCharacterSets() (records [][]types.Datum) {
@@ -537,6 +530,17 @@ func dataForColltions() (records [][]types.Datum) {
 		types.MakeDatums("latin1_swedish_ci", "latin1", 3, "Yes", "Yes", 1),
 		types.MakeDatums("utf8_general_ci", "utf8", 4, "Yes", "Yes", 1),
 		types.MakeDatums("utf8mb4_general_ci", "utf8mb4", 5, "Yes", "Yes", 1),
+	)
+	return records
+}
+
+func dataForCollationCharacterSetApplicability() (records [][]types.Datum) {
+	records = append(records,
+		types.MakeDatums("ascii_general_ci", "ascii"),
+		types.MakeDatums("binary", "binary"),
+		types.MakeDatums("latin1_swedish_ci", "latin1"),
+		types.MakeDatums("utf8_general_ci", "utf8"),
+		types.MakeDatums("utf8mb4_general_ci", "utf8mb4"),
 	)
 	return records
 }
@@ -848,6 +852,33 @@ func dataForTableConstraints(schemas []*model.DBInfo) [][]types.Datum {
 	return rows
 }
 
+// dataForPseudoProfiling returns pseudo data for table profiling when system variable `profiling` is set to `ON`.
+func dataForPseudoProfiling() [][]types.Datum {
+	var rows [][]types.Datum
+	row := types.MakeDatums(
+		0,  // QUERY_ID
+		0,  // SEQ
+		"", // STATE
+		types.NewDecFromInt(0), // DURATION
+		types.NewDecFromInt(0), // CPU_USER
+		types.NewDecFromInt(0), // CPU_SYSTEM
+		0, // CONTEXT_VOLUNTARY
+		0, // CONTEXT_INVOLUNTARY
+		0, // BLOCK_OPS_IN
+		0, // BLOCK_OPS_OUT
+		0, // MESSAGES_SENT
+		0, // MESSAGES_RECEIVED
+		0, // PAGE_FAULTS_MAJOR
+		0, // PAGE_FAULTS_MINOR
+		0, // SWAPS
+		0, // SOURCE_FUNCTION
+		0, // SOURCE_FILE
+		0, // SOURCE_LINE
+	)
+	rows = append(rows, row)
+	return rows
+}
+
 func dataForKeyColumnUsage(schemas []*model.DBInfo) [][]types.Datum {
 	rows := make([][]types.Datum, 0, len(schemas)) // The capacity is not accurate, but it is not a big problem.
 	for _, schema := range schemas {
@@ -1033,6 +1064,9 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows = dataForTableConstraints(dbs)
 	case tableFiles:
 	case tableProfiling:
+		if v, ok := ctx.GetSessionVars().GetSystemVar("profiling"); ok && variable.TiDBOptOn(v) {
+			fullRows = dataForPseudoProfiling()
+		}
 	case tablePartitions:
 	case tableKeyColumm:
 		fullRows = dataForKeyColumnUsage(dbs)
@@ -1056,6 +1090,7 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	case tableOptimizerTrace:
 	case tableTableSpaces:
 	case tableCollationCharacterSetApplicability:
+		fullRows = dataForCollationCharacterSetApplicability()
 	}
 	if err != nil {
 		return nil, errors.Trace(err)

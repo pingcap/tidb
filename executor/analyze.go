@@ -30,9 +30,9 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pingcap/tipb/go-tipb"
+	tipb "github.com/pingcap/tipb/go-tipb"
 	log "github.com/sirupsen/logrus"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var _ Executor = &AnalyzeExec{}
@@ -52,17 +52,8 @@ const (
 	defaultCMSketchWidth = 2048
 )
 
-// Next implements the Executor Next interface.
-func (e *AnalyzeExec) Next(goCtx goctx.Context) (Row, error) {
-	return nil, errors.Trace(e.run(goCtx))
-}
-
 // NextChunk implements the Executor NextChunk interface.
-func (e *AnalyzeExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
-	return errors.Trace(e.run(goCtx))
-}
-
-func (e *AnalyzeExec) run(goCtx goctx.Context) error {
+func (e *AnalyzeExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	concurrency, err := getBuildStatsConcurrency(e.ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -186,7 +177,7 @@ type AnalyzeIndexExec struct {
 
 func (e *AnalyzeIndexExec) open() error {
 	idxRange := &ranger.NewRange{LowVal: []types.Datum{types.MinNotNullDatum()}, HighVal: []types.Datum{types.MaxValueDatum()}}
-	var builder requestBuilder
+	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetIndexRanges(e.ctx.GetSessionVars().StmtCtx, e.tblInfo.ID, e.idxInfo.ID, []*ranger.NewRange{idxRange}).
 		SetAnalyzeRequest(e.analyzePB).
 		SetKeepOrder(true).
@@ -194,12 +185,12 @@ func (e *AnalyzeIndexExec) open() error {
 		Build()
 	kvReq.Concurrency = e.concurrency
 	kvReq.IsolationLevel = kv.RC
-	goCtx := goctx.TODO()
-	e.result, err = distsql.Analyze(goCtx, e.ctx.GetClient(), kvReq)
+	ctx := context.TODO()
+	e.result, err = distsql.Analyze(ctx, e.ctx.GetClient(), kvReq)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result.Fetch(goCtx)
+	e.result.Fetch(ctx)
 	return nil
 }
 
@@ -217,7 +208,7 @@ func (e *AnalyzeIndexExec) buildStats() (hist *statistics.Histogram, cms *statis
 	hist = &statistics.Histogram{}
 	cms = statistics.NewCMSketch(defaultCMSketchDepth, defaultCMSketchWidth)
 	for {
-		data, err := e.result.NextRaw(goctx.TODO())
+		data, err := e.result.NextRaw(context.TODO())
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -303,8 +294,8 @@ func (e *AnalyzeColumnsExec) open() error {
 }
 
 func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.NewRange) (distsql.SelectResult, error) {
-	var builder requestBuilder
-	kvReq, err := builder.SetTableRanges(e.tblInfo.ID, ranges).
+	var builder distsql.RequestBuilder
+	kvReq, err := builder.SetTableRanges(e.tblInfo.ID, ranges, nil).
 		SetAnalyzeRequest(e.analyzePB).
 		SetKeepOrder(e.keepOrder).
 		SetPriority(e.priority).
@@ -314,12 +305,12 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.NewRange) (distsql.Selec
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	goCtx := goctx.TODO()
-	result, err := distsql.Analyze(goCtx, e.ctx.GetClient(), kvReq)
+	ctx := context.TODO()
+	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	result.Fetch(goCtx)
+	result.Fetch(ctx)
 	return result, nil
 }
 
@@ -345,7 +336,7 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 		}
 	}
 	for {
-		data, err1 := e.resultHandler.nextRaw(goctx.TODO())
+		data, err1 := e.resultHandler.nextRaw(context.TODO())
 		if err1 != nil {
 			return nil, nil, errors.Trace(err1)
 		}

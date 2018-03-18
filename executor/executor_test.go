@@ -38,20 +38,24 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
@@ -70,7 +74,9 @@ type testSuite struct {
 	cluster   *mocktikv.Cluster
 	mvccStore *mocktikv.MvccStore
 	store     kv.Storage
+	domain    *domain.Domain
 	*parser.Parser
+	ctx *mock.Context
 
 	autoIDStep int64
 }
@@ -96,11 +102,13 @@ func (s *testSuite) SetUpSuite(c *C) {
 		tidb.SetSchemaLease(0)
 		tidb.SetStatsLease(0)
 	}
-	_, err := tidb.BootstrapSession(s.store)
+	d, err := tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
+	s.domain = d
 }
 
 func (s *testSuite) TearDownSuite(c *C) {
+	s.domain.Close()
 	s.store.Close()
 	autoid.SetStep(s.autoIDStep)
 }
@@ -127,20 +135,24 @@ func (s *testSuite) TestAdmin(c *C) {
 	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, index (c1))")
 	tk.MustExec("insert admin_test (c1) values (1),(2),(NULL)")
 
-	goCtx := goctx.Background()
+	ctx := context.Background()
 	// cancel DDL jobs test
 	r, err := tk.Exec("admin cancel ddl jobs 1")
 	c.Assert(err, IsNil, Commentf("err %v", err))
-	row, err := r.Next(goCtx)
+	chk := r.NewChunk()
+	err = r.NextChunk(ctx, chk)
 	c.Assert(err, IsNil)
+	row := chk.GetRow(0)
 	c.Assert(row.Len(), Equals, 2)
-	c.Assert(row.GetInt64(0), Equals, int64(1))
+	c.Assert(row.GetString(0), Equals, "1")
 	c.Assert(row.GetString(1), Equals, "error: Can't find this job")
 
 	r, err = tk.Exec("admin show ddl")
 	c.Assert(err, IsNil)
-	row, err = r.Next(goCtx)
+	chk = r.NewChunk()
+	err = r.NextChunk(ctx, chk)
 	c.Assert(err, IsNil)
+	row = chk.GetRow(0)
 	c.Assert(row.Len(), Equals, 4)
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
@@ -152,17 +164,20 @@ func (s *testSuite) TestAdmin(c *C) {
 	// ownerInfos := strings.Split(ddlInfo.Owner.String(), ",")
 	// c.Assert(rowOwnerInfos[0], Equals, ownerInfos[0])
 	c.Assert(row.GetString(2), Equals, "")
-	row, err = r.Next(goCtx)
+	chk = r.NewChunk()
+	err = r.NextChunk(ctx, chk)
 	c.Assert(err, IsNil)
-	c.Assert(row, IsNil)
+	c.Assert(chk.NumRows() == 0, IsTrue)
 	err = txn.Rollback()
 	c.Assert(err, IsNil)
 
 	// show DDL jobs test
 	r, err = tk.Exec("admin show ddl jobs")
 	c.Assert(err, IsNil)
-	row, err = r.Next(goCtx)
+	chk = r.NewChunk()
+	err = r.NextChunk(ctx, chk)
 	c.Assert(err, IsNil)
+	row = chk.GetRow(0)
 	c.Assert(row.Len(), Equals, 2)
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
@@ -171,6 +186,19 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(len(row.GetString(0)), Greater, 0)
 	c.Assert(err, IsNil)
 	c.Assert(row.GetString(1), Equals, historyJobs[0].State.String())
+	c.Assert(err, IsNil)
+
+	// show DDL job queries test
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists admin_test2")
+	tk.MustExec("create table admin_test2 (c1 int, c2 int, c3 int default 1, index (c1))")
+	result := tk.MustQuery(`admin show ddl job queries 1, 1, 1`)
+	result.Check(testkit.Rows())
+	result = tk.MustQuery(`admin show ddl job queries 1, 2, 3, 4`)
+	result.Check(testkit.Rows())
+	historyJob, err := admin.GetHistoryDDLJobs(txn)
+	result = tk.MustQuery(fmt.Sprintf("admin show ddl job queries %d", historyJob[0].ID))
+	result.Check(testkit.Rows(historyJob[0].Query))
 	c.Assert(err, IsNil)
 
 	// check table test
@@ -183,8 +211,8 @@ func (s *testSuite) TestAdmin(c *C) {
 	r, err = tk.Exec("admin check table admin_test_error")
 	c.Assert(err, NotNil)
 	// different index values
-	ctx := tk.Se.(sessionctx.Context)
-	dom := domain.GetDomain(ctx)
+	sctx := tk.Se.(sessionctx.Context)
+	dom := domain.GetDomain(sctx)
 	is := dom.InfoSchema()
 	c.Assert(is, NotNil)
 	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("admin_test"))
@@ -192,7 +220,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(tb.Indices(), HasLen, 1)
 	_, err = tb.Indices()[0].Create(mock.NewContext(), txn, types.MakeDatums(int64(10)), 1)
 	c.Assert(err, IsNil)
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 	r, err = tk.Exec("admin check table admin_test")
 	c.Assert(err, NotNil)
@@ -231,7 +259,7 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 				Commentf("data1:%v, data2:%v, data:%v", string(tt.data1), string(tt.data2), string(data)))
 		}
 		ctx.StmtCommit()
-		err1 = ctx.Txn().Commit(goctx.Background())
+		err1 = ctx.Txn().Commit(context.Background())
 		c.Assert(err1, IsNil)
 		r := tk.MustQuery(selectSQL)
 		r.Check(testutil.RowsWithSep("|", tt.expected...))
@@ -718,9 +746,10 @@ func (s *testSuite) TestIssue2612(c *C) {
 	tk.MustExec(`insert into t values ('2016-02-13 15:32:24',  '2016-02-11 17:23:22');`)
 	rs, err := tk.Exec(`select timediff(finish_at, create_at) from t;`)
 	c.Assert(err, IsNil)
-	row, err := rs.Next(goctx.Background())
+	chk := rs.NewChunk()
+	err = rs.NextChunk(context.Background(), chk)
 	c.Assert(err, IsNil)
-	c.Assert(row.GetDuration(0).String(), Equals, "-46:09:02")
+	c.Assert(chk.GetRow(0).GetDuration(0).String(), Equals, "-46:09:02")
 }
 
 // TestIssue345 is related with https://github.com/pingcap/tidb/issues/345
@@ -1554,13 +1583,13 @@ func (s *testSuite) TestAdapterStatement(c *C) {
 	compiler := &executor.Compiler{Ctx: se}
 	stmtNode, err := s.ParseOneStmt("select 1", "", "")
 	c.Check(err, IsNil)
-	stmt, err := compiler.Compile(goctx.TODO(), stmtNode)
+	stmt, err := compiler.Compile(context.TODO(), stmtNode)
 	c.Check(err, IsNil)
 	c.Check(stmt.OriginText(), Equals, "select 1")
 
 	stmtNode, err = s.ParseOneStmt("create table test.t (a int)", "", "")
 	c.Check(err, IsNil)
-	stmt, err = compiler.Compile(goctx.TODO(), stmtNode)
+	stmt, err = compiler.Compile(context.TODO(), stmtNode)
 	c.Check(err, IsNil)
 	c.Check(stmt.OriginText(), Equals, "create table test.t (a int)")
 }
@@ -1759,7 +1788,7 @@ func (s *testSuite) TestScanControlSelection(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int, c int, index idx_b(b))")
 	tk.MustExec("insert into t values (1, 1, 1), (2, 1, 1), (3, 1, 2), (4, 2, 3)")
-	tk.MustQuery("select (select count(1) k from t s where s.b = t1.c) from t t1").Check(testkit.Rows("3", "3", "1", "0"))
+	tk.MustQuery("select (select count(1) k from t s where s.b = t1.c) from t t1").Sort().Check(testkit.Rows("0", "1", "3", "3"))
 }
 
 func (s *testSuite) TestSimpleDAG(c *C) {
@@ -1995,6 +2024,7 @@ const (
 	checkRequestPriority     = 1
 	checkRequestNotFillCache = 2
 	checkRequestSyncLog      = 3
+	checkDDLAddIndexPriority = 4
 )
 
 type checkRequestClient struct {
@@ -2003,12 +2033,13 @@ type checkRequestClient struct {
 	notFillCache bool
 	mu           struct {
 		sync.RWMutex
-		checkFlags uint32
-		syncLog    bool
+		checkFlags     uint32
+		lowPriorityCnt uint32
+		syncLog        bool
 	}
 }
 
-func (c *checkRequestClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+func (c *checkRequestClient) SendReq(ctx context.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 	resp, err := c.Client.SendReq(ctx, addr, req)
 	c.mu.RLock()
 	checkFlags := c.mu.checkFlags
@@ -2032,6 +2063,16 @@ func (c *checkRequestClient) SendReq(ctx goctx.Context, addr string, req *tikvrp
 			c.mu.RUnlock()
 			if syncLog != req.SyncLog {
 				return nil, errors.New("fail to set sync log")
+			}
+		}
+	} else if checkFlags == checkDDLAddIndexPriority {
+		if req.Type == tikvrpc.CmdScan {
+			if c.priority != req.Priority {
+				return nil, errors.New("fail to set priority")
+			}
+		} else if req.Type == tikvrpc.CmdPrewrite {
+			if c.priority == pb.CommandPri_Low {
+				c.mu.lowPriorityCnt++
 			}
 		}
 	}
@@ -2064,6 +2105,45 @@ func (s *testContextOptionSuite) SetUpSuite(c *C) {
 func (s *testContextOptionSuite) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
+}
+
+func (s *testContextOptionSuite) TestAddIndexPriority(c *C) {
+	cli := &checkRequestClient{}
+	hijackClient := func(c tikv.Client) tikv.Client {
+		cli.Client = c
+		return cli
+	}
+
+	store, err := mockstore.NewMockTikvStore(
+		mockstore.WithHijackClient(hijackClient),
+	)
+	c.Assert(err, IsNil)
+	dom, err := tidb.BootstrapSession(store)
+	c.Assert(err, IsNil)
+
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int, v int)")
+
+	// Insert some data to make sure plan build IndexLookup for t1.
+	for i := 0; i < 10; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t1 values (%d, %d)", i, i))
+	}
+
+	cli.mu.Lock()
+	cli.mu.checkFlags = checkDDLAddIndexPriority
+	cli.mu.Unlock()
+
+	cli.priority = pb.CommandPri_Low
+	tk.MustExec("alter table t1 add index t1_index (id);")
+
+	c.Assert(cli.mu.lowPriorityCnt > 0, IsTrue)
+
+	cli.mu.Lock()
+	cli.mu.checkFlags = checkRequestOff
+	cli.mu.Unlock()
+	dom.Close()
+	store.Close()
 }
 
 func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
@@ -2207,9 +2287,10 @@ func (s *testSuite) TestBit(c *C) {
 	c.Assert(err, NotNil)
 	r, err := tk.Exec("select * from t where c1 = 2")
 	c.Assert(err, IsNil)
-	row, err := r.Next(goctx.Background())
+	chk := r.NewChunk()
+	err = r.NextChunk(context.Background(), chk)
 	c.Assert(err, IsNil)
-	c.Assert(types.BinaryLiteral(row.GetBytes(0)), DeepEquals, types.NewBinaryLiteralFromUint(2, -1))
+	c.Assert(types.BinaryLiteral(chk.GetRow(0).GetBytes(0)), DeepEquals, types.NewBinaryLiteralFromUint(2, -1))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c1 bit(31))")
@@ -2366,13 +2447,173 @@ func (s *testSuite) TestEarlyClose(c *C) {
 	// Split the table.
 	s.cluster.SplitTable(s.mvccStore, tblID, 500)
 
-	goCtx := goctx.Background()
+	ctx := context.Background()
 	for i := 0; i < 500; i++ {
-		rss, err := tk.Se.Execute(goCtx, "select * from earlyclose order by id")
+		rss, err := tk.Se.Execute(ctx, "select * from earlyclose order by id")
 		c.Assert(err, IsNil)
 		rs := rss[0]
-		_, err = rs.Next(goCtx)
+		chk := rs.NewChunk()
+		err = rs.NextChunk(ctx, chk)
 		c.Assert(err, IsNil)
 		rs.Close()
+	}
+}
+
+func (s *testSuite) TestIssue5666(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@profiling=1")
+	tk.MustQuery("SELECT QUERY_ID, SUM(DURATION) AS SUM_DURATION FROM INFORMATION_SCHEMA.PROFILING GROUP BY QUERY_ID;").Check(testkit.Rows("0 0"))
+}
+
+func (s *testSuite) TestCheckIndex(c *C) {
+	s.ctx = mock.NewContext()
+	s.ctx.Store = s.store
+	dom, err := tidb.BootstrapSession(s.store)
+	c.Assert(err, IsNil)
+	se, err := tidb.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	defer se.Close()
+
+	_, err = se.Execute(context.Background(), "create database test_admin")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "use test_admin")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "create table t (pk int primary key, c int default 1, c1 int default 1, unique key c(c))")
+	c.Assert(err, IsNil)
+	is := dom.InfoSchema()
+	db := model.NewCIStr("test_admin")
+	dbInfo, ok := is.SchemaByName(db)
+	c.Assert(ok, IsTrue)
+	tblName := model.NewCIStr("t")
+	tbl, err := is.TableByName(db, tblName)
+	c.Assert(err, IsNil)
+	tbInfo := tbl.Meta()
+
+	alloc := autoid.NewAllocator(s.store, dbInfo.ID)
+	tb, err := tables.TableFromMeta(alloc, tbInfo)
+	c.Assert(err, IsNil)
+
+	// set data to:
+	// index     data (handle, data): (1, 10), (2, 20)
+	// table     data (handle, data): (1, 10), (2, 20)
+	recordVal1 := types.MakeDatums(int64(1), int64(10), int64(11))
+	recordVal2 := types.MakeDatums(int64(2), int64(20), int64(21))
+	c.Assert(s.ctx.NewTxn(), IsNil)
+	_, err = tb.AddRecord(s.ctx, recordVal1, false)
+	c.Assert(err, IsNil)
+	_, err = tb.AddRecord(s.ctx, recordVal2, false)
+	c.Assert(err, IsNil)
+	c.Assert(s.ctx.Txn().Commit(context.Background()), IsNil)
+
+	mockCtx := mock.NewContext()
+	idx := tb.Indices()[0]
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+
+	_, err = se.Execute(context.Background(), "admin check index t idx_inexistent")
+	c.Assert(strings.Contains(err.Error(), "not exist"), IsTrue)
+
+	// set data to:
+	// index     data (handle, data): (1, 10), (2, 20), (3, 30)
+	// table     data (handle, data): (1, 10), (2, 20), (4, 40)
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	_, err = idx.Create(mockCtx, txn, types.MakeDatums(int64(30)), 3)
+	c.Assert(err, IsNil)
+	key := tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 4))
+	setColValue(c, txn, key, types.NewDatum(int64(40)))
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "admin check index t c")
+	c.Assert(err, NotNil)
+	c.Assert(strings.Contains(err.Error(), "isn't equal to value count"), IsTrue)
+
+	// set data to:
+	// index     data (handle, data): (1, 10), (2, 20), (3, 30), (4, 40)
+	// table     data (handle, data): (1, 10), (2, 20), (4, 40)
+	txn, err = s.store.Begin()
+	c.Assert(err, IsNil)
+	_, err = idx.Create(mockCtx, txn, types.MakeDatums(int64(40)), 4)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "admin check index t c")
+	c.Assert(strings.Contains(err.Error(), "table count 3 != index(c) count 4"), IsTrue)
+
+	// set data to:
+	// index     data (handle, data): (1, 10), (4, 40)
+	// table     data (handle, data): (1, 10), (2, 20), (4, 40)
+	txn, err = s.store.Begin()
+	c.Assert(err, IsNil)
+	err = idx.Delete(sc, txn, types.MakeDatums(int64(30)), 3)
+	c.Assert(err, IsNil)
+	err = idx.Delete(sc, txn, types.MakeDatums(int64(20)), 2)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "admin check index t c")
+	c.Assert(strings.Contains(err.Error(), "table count 3 != index(c) count 2"), IsTrue)
+
+	// TODO: pass the case below：
+	// set data to:
+	// index     data (handle, data): (1, 10), (4, 40), (2, 30)
+	// table     data (handle, data): (1, 10), (2, 20), (4, 40)
+}
+
+func setColValue(c *C, txn kv.Transaction, key kv.Key, v types.Datum) {
+	row := []types.Datum{v, {}}
+	colIDs := []int64{2, 3}
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	value, err := tablecodec.EncodeRow(sc, row, colIDs, nil, nil)
+	c.Assert(err, IsNil)
+	err = txn.Set(key, value)
+	c.Assert(err, IsNil)
+}
+
+func (s *testSuite) TestCheckTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	// Test 'admin check table' when the table has a unique index with null values.
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists admin_test;")
+	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, index (c1), unique key(c2));")
+	tk.MustExec("insert admin_test (c1, c2) values (1, 1), (2, 2), (NULL, NULL);")
+	tk.MustExec("admin check table admin_test;")
+}
+
+func (s *testSuite) TestCoprocessorStreamingFlag(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int, value int, index idx(id))")
+	// Add some data to make statistics work.
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
+	}
+
+	tests := []struct {
+		sql    string
+		expect bool
+	}{
+		{"select * from t", true},                         // TableReader
+		{"select * from t where id = 5", true},            // IndexLookup
+		{"select * from t where id > 5", true},            // Filter
+		{"select * from t limit 3", false},                // Limit
+		{"select avg(id) from t", false},                  // Aggregate
+		{"select * from t order by value limit 3", false}, // TopN
+	}
+
+	ctx := context.Background()
+	for _, test := range tests {
+		ctx1 := context.WithValue(ctx, "CheckSelectRequestHook", func(req *kv.Request) {
+			if req.Streaming != test.expect {
+				c.Errorf("sql=%s, expect=%v, get=%v", test.sql, test.expect, req.Streaming)
+			}
+		})
+		rs, err := tk.Se.Execute(ctx1, test.sql)
+		c.Assert(err, IsNil)
+		chk := rs[0].NewChunk()
+		err = rs[0].NextChunk(ctx, chk)
+		c.Assert(err, IsNil)
+		rs[0].Close()
 	}
 }

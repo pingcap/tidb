@@ -25,10 +25,9 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 type tableDeltaMap map[int64]variable.TableDelta
@@ -91,7 +90,7 @@ func mergeQueryFeedback(lq []*QueryFeedback, rq []*QueryFeedback) []*QueryFeedba
 func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}) {
 	q := feedback.(*QueryFeedback)
 	// TODO: If the error rate is small or actual scan count is small, we do not need to store the feed back.
-	if q.histVersion == 0 || q.actual < 0 || !q.valid {
+	if !q.valid || q.hist == nil {
 		return
 	}
 
@@ -171,8 +170,8 @@ func (h *Handle) dumpTableStatDeltaToKV(id int64, delta variable.TableDelta) (bo
 	if delta.Count == 0 {
 		return true, nil
 	}
-	goCtx := goctx.TODO()
-	_, err := h.ctx.(sqlexec.SQLExecutor).Execute(goCtx, "begin")
+	ctx := context.TODO()
+	_, err := h.ctx.(sqlexec.SQLExecutor).Execute(ctx, "begin")
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -182,66 +181,13 @@ func (h *Handle) dumpTableStatDeltaToKV(id int64, delta variable.TableDelta) (bo
 	} else {
 		sql = fmt.Sprintf("update mysql.stats_meta set version = %d, count = count + %d, modify_count = modify_count + %d where table_id = %d", h.ctx.Txn().StartTS(), delta.Delta, delta.Count, id)
 	}
-	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(goCtx, sql)
+	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(ctx, sql)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
 	updated := h.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0
-	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(goCtx, "commit")
+	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(ctx, "commit")
 	return updated, errors.Trace(err)
-}
-
-// QueryFeedback is used to represent the query feedback info. It contains the expected scan row count and
-// the actual scan row count, so that we could use these info to adjust the statistics.
-type QueryFeedback struct {
-	tableID     int64
-	colID       int64
-	isIndex     bool
-	ranges      []*ranger.NewRange
-	histVersion uint64 // histVersion is the version of the histogram when we issue the query.
-	expected    int64
-	actual      int64
-	valid       bool
-}
-
-// NewQueryFeedback returns a new query feedback.
-func NewQueryFeedback(tableID int64, colID int64, isIndex bool, histVer uint64, expected int64) *QueryFeedback {
-	return &QueryFeedback{
-		tableID:     tableID,
-		colID:       colID,
-		isIndex:     isIndex,
-		histVersion: histVer,
-		expected:    expected,
-		valid:       true,
-	}
-}
-
-// SetIndexRanges sets the index ranges.
-func (q *QueryFeedback) SetIndexRanges(ranges []*ranger.NewRange) *QueryFeedback {
-	q.ranges = ranges
-	return q
-}
-
-// SetIntRanges sets the int column ranges.
-func (q *QueryFeedback) SetIntRanges(ranges []*ranger.NewRange) *QueryFeedback {
-	q.ranges = ranges
-	return q
-}
-
-// SetActual sets the actual count.
-func (q *QueryFeedback) SetActual(count int64) *QueryFeedback {
-	q.actual = count
-	return q
-}
-
-// Invalidate is used to invalidate the query feedback.
-func (q *QueryFeedback) Invalidate() {
-	q.valid = false
-}
-
-// Actual gets the actual row count.
-func (q *QueryFeedback) Actual() int64 {
-	return q.actual
 }
 
 const (

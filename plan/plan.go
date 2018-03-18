@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tipb/go-tipb"
+	tipb "github.com/pingcap/tipb/go-tipb"
 )
 
 // Plan is the description of an execution flow.
@@ -88,7 +88,7 @@ func (p *requiredProp) isPrefix(prop *requiredProp) bool {
 		return false
 	}
 	for i := range p.cols {
-		if !p.cols[i].Equal(prop.cols[i], nil) {
+		if !p.cols[i].Equal(nil, prop.cols[i]) {
 			return false
 		}
 	}
@@ -99,7 +99,7 @@ func (p *requiredProp) isPrefix(prop *requiredProp) bool {
 func (p *requiredProp) matchItems(items []*ByItems) bool {
 	for i, col := range p.cols {
 		sortItem := items[i]
-		if sortItem.Desc != p.desc || !sortItem.Expr.Equal(col, nil) {
+		if sortItem.Desc != p.desc || !sortItem.Expr.Equal(nil, col) {
 			return false
 		}
 	}
@@ -125,7 +125,7 @@ func (p *requiredProp) hashCode() []byte {
 	p.hashcode = codec.EncodeInt(p.hashcode, int64(p.taskTp))
 	p.hashcode = codec.EncodeFloat(p.hashcode, p.expectedCnt)
 	for i, length := 0, len(p.cols); i < length; i++ {
-		p.hashcode = append(p.hashcode, p.cols[i].HashCode()...)
+		p.hashcode = append(p.hashcode, p.cols[i].HashCode(nil)...)
 	}
 	return p.hashcode
 }
@@ -268,7 +268,7 @@ func (p *baseLogicalPlan) buildKeyInfo() {
 	}
 }
 
-func newBasePlan(tp string, ctx sessionctx.Context) basePlan {
+func newBasePlan(ctx sessionctx.Context, tp string) basePlan {
 	ctx.GetSessionVars().PlanID++
 	id := ctx.GetSessionVars().PlanID
 	return basePlan{
@@ -278,17 +278,17 @@ func newBasePlan(tp string, ctx sessionctx.Context) basePlan {
 	}
 }
 
-func newBaseLogicalPlan(tp string, ctx sessionctx.Context, self LogicalPlan) baseLogicalPlan {
+func newBaseLogicalPlan(ctx sessionctx.Context, tp string, self LogicalPlan) baseLogicalPlan {
 	return baseLogicalPlan{
 		taskMap:  make(map[string]task),
-		basePlan: newBasePlan(tp, ctx),
+		basePlan: newBasePlan(ctx, tp),
 		self:     self,
 	}
 }
 
-func newBasePhysicalPlan(tp string, ctx sessionctx.Context, self PhysicalPlan) basePhysicalPlan {
+func newBasePhysicalPlan(ctx sessionctx.Context, tp string, self PhysicalPlan) basePhysicalPlan {
 	return basePhysicalPlan{
-		basePlan: newBasePlan(tp, ctx),
+		basePlan: newBasePlan(ctx, tp),
 		self:     self,
 	}
 }

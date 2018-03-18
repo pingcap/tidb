@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testleak"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testBootstrapSuite{})
@@ -49,11 +49,12 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	mustExecSQL(c, se, "USE mysql;")
 	r := mustExecSQL(c, se, `select * from user;`)
 	c.Assert(r, NotNil)
-	goCtx := goctx.Background()
-	row, err := r.Next(goCtx)
+	ctx := context.Background()
+	chk := r.NewChunk()
+	err := r.NextChunk(ctx, chk)
 	c.Assert(err, IsNil)
-	c.Assert(row, NotNil)
-	datums := ast.RowToDatums(row, r.Fields())
+	c.Assert(chk.NumRows() == 0, IsFalse)
+	datums := ast.RowToDatums(chk.GetRow(0), r.Fields())
 	match(c, datums, []byte("%"), []byte("root"), []byte(""), "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
 
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "anyhost"}, []byte(""), []byte("")), IsTrue)
@@ -65,9 +66,10 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	// Check privilege tables.
 	r = mustExecSQL(c, se, "SELECT COUNT(*) from mysql.global_variables;")
 	c.Assert(r, NotNil)
-	v, err := r.Next(goCtx)
+	chk = r.NewChunk()
+	err = r.NextChunk(ctx, chk)
 	c.Assert(err, IsNil)
-	c.Assert(v.GetInt64(0), Equals, globalVarsCount())
+	c.Assert(chk.GetRow(0).GetInt64(0), Equals, globalVarsCount())
 
 	// Check a storage operations are default autocommit after the second start.
 	mustExecSQL(c, se, "USE test;")
@@ -84,9 +86,11 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	mustExecSQL(c, se, "USE test;")
 	r = mustExecSQL(c, se, "select * from t")
 	c.Assert(r, NotNil)
-	v, err = r.Next(goCtx)
+
+	chk = r.NewChunk()
+	err = r.NextChunk(ctx, chk)
 	c.Assert(err, IsNil)
-	datums = ast.RowToDatums(v, r.Fields())
+	datums = ast.RowToDatums(chk.GetRow(0), r.Fields())
 	match(c, datums, 3)
 	mustExecSQL(c, se, "drop table if exists t")
 	se.Close()
@@ -134,7 +138,7 @@ func (s *testBootstrapSuite) bootstrapWithOnlyDDLWork(store kv.Storage, c *C) {
 // When a session failed in bootstrap process (for example, the session is killed after doDDLWorks()).
 // We should make sure that the following session could finish the bootstrap process.
 func (s *testBootstrapSuite) testBootstrapWithError(c *C) {
-	goCtx := goctx.Background()
+	ctx := context.Background()
 	defer testleak.AfterTest(c)()
 	store := newStore(c, s.dbNameBootstrap)
 	s.bootstrapWithOnlyDDLWork(store, c)
@@ -143,9 +147,11 @@ func (s *testBootstrapSuite) testBootstrapWithError(c *C) {
 	se := newSession(c, store, s.dbNameBootstrap)
 	mustExecSQL(c, se, "USE mysql;")
 	r := mustExecSQL(c, se, `select * from user;`)
-	row, err := r.Next(goCtx)
+	chk := r.NewChunk()
+	err := r.NextChunk(ctx, chk)
 	c.Assert(err, IsNil)
-	c.Assert(row, NotNil)
+	c.Assert(chk.NumRows() == 0, IsFalse)
+	row := chk.GetRow(0)
 	datums := ast.RowToDatums(row, r.Fields())
 	match(c, datums, []byte("%"), []byte("root"), []byte(""), "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
 	mustExecSQL(c, se, "USE test;")
@@ -155,14 +161,18 @@ func (s *testBootstrapSuite) testBootstrapWithError(c *C) {
 	mustExecSQL(c, se, "SELECT * from mysql.columns_priv;")
 	// Check global variables.
 	r = mustExecSQL(c, se, "SELECT COUNT(*) from mysql.global_variables;")
-	v, err := r.Next(goCtx)
+	chk = r.NewChunk()
+	err = r.NextChunk(ctx, chk)
 	c.Assert(err, IsNil)
+	v := chk.GetRow(0)
 	c.Assert(v.GetInt64(0), Equals, globalVarsCount())
 
 	r = mustExecSQL(c, se, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="bootstrapped";`)
-	row, err = r.Next(goCtx)
+	chk = r.NewChunk()
+	err = r.NextChunk(ctx, chk)
 	c.Assert(err, IsNil)
-	c.Assert(row, NotNil)
+	c.Assert(chk.NumRows() == 0, IsFalse)
+	row = chk.GetRow(0)
 	c.Assert(row.Len(), Equals, 1)
 	c.Assert(row.GetBytes(0), BytesEquals, []byte("True"))
 
@@ -172,7 +182,7 @@ func (s *testBootstrapSuite) testBootstrapWithError(c *C) {
 
 // TestUpgrade tests upgrading
 func (s *testBootstrapSuite) TestUpgrade(c *C) {
-	goCtx := goctx.Background()
+	ctx := context.Background()
 	defer testleak.AfterTest(c)()
 	store, _ := newStoreWithBootstrap(c, s.dbName)
 	defer store.Close()
@@ -181,9 +191,11 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 
 	// bootstrap with currentBootstrapVersion
 	r := mustExecSQL(c, se, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_server_version";`)
-	row, err := r.Next(goCtx)
+	chk := r.NewChunk()
+	err := r.NextChunk(ctx, chk)
+	row := chk.GetRow(0)
 	c.Assert(err, IsNil)
-	c.Assert(row, NotNil)
+	c.Assert(chk.NumRows() == 0, IsFalse)
 	c.Assert(row.Len(), Equals, 1)
 	c.Assert(row.GetBytes(0), BytesEquals, []byte(fmt.Sprintf("%d", currentBootstrapVersion)))
 
@@ -199,7 +211,7 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	m := meta.NewMeta(txn)
 	err = m.FinishBootstrap(int64(1))
 	c.Assert(err, IsNil)
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 	mustExecSQL(c, se1, `delete from mysql.TiDB where VARIABLE_NAME="tidb_server_version";`)
 	mustExecSQL(c, se1, fmt.Sprintf(`delete from mysql.global_variables where VARIABLE_NAME="%s";`,
@@ -208,9 +220,10 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	delete(storeBootstrapped, store.UUID())
 	// Make sure the version is downgraded.
 	r = mustExecSQL(c, se1, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_server_version";`)
-	row, err = r.Next(goCtx)
+	chk = r.NewChunk()
+	err = r.NextChunk(ctx, chk)
 	c.Assert(err, IsNil)
-	c.Assert(row, IsNil)
+	c.Assert(chk.NumRows() == 0, IsTrue)
 
 	ver, err = getBootstrapVersion(se1)
 	c.Assert(err, IsNil)
@@ -222,9 +235,11 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	defer dom1.Close()
 	se2 := newSession(c, store, s.dbName)
 	r = mustExecSQL(c, se2, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_server_version";`)
-	row, err = r.Next(goCtx)
+	chk = r.NewChunk()
+	err = r.NextChunk(ctx, chk)
 	c.Assert(err, IsNil)
-	c.Assert(row, NotNil)
+	c.Assert(chk.NumRows() == 0, IsFalse)
+	row = chk.GetRow(0)
 	c.Assert(row.Len(), Equals, 1)
 	c.Assert(row.GetBytes(0), BytesEquals, []byte(fmt.Sprintf("%d", currentBootstrapVersion)))
 

@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 // DirtyDB stores uncommitted write operations for a transaction.
@@ -112,18 +112,12 @@ type UnionScanExec struct {
 	snapshotRow Row
 }
 
-// Next implements Execution Next interface.
-func (us *UnionScanExec) Next(goCtx goctx.Context) (Row, error) {
-	row, err := us.getOneRow(goCtx)
-	return row, errors.Trace(err)
-}
-
 // NextChunk implements the Executor NextChunk interface.
-func (us *UnionScanExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+func (us *UnionScanExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	mutableRow := chunk.MutRowFromTypes(us.retTypes())
 	for i, batchSize := 0, us.ctx.GetSessionVars().MaxChunkSize; i < batchSize; i++ {
-		row, err := us.getOneRow(goCtx)
+		row, err := us.getOneRow(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -138,9 +132,9 @@ func (us *UnionScanExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error 
 }
 
 // getOneRow gets one result row from dirty table or child.
-func (us *UnionScanExec) getOneRow(goCtx goctx.Context) (Row, error) {
+func (us *UnionScanExec) getOneRow(ctx context.Context) (Row, error) {
 	for {
-		snapshotRow, err := us.getSnapshotRow(goCtx)
+		snapshotRow, err := us.getSnapshotRow(ctx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -176,14 +170,14 @@ func (us *UnionScanExec) getOneRow(goCtx goctx.Context) (Row, error) {
 	}
 }
 
-func (us *UnionScanExec) getSnapshotRow(goCtx goctx.Context) (Row, error) {
+func (us *UnionScanExec) getSnapshotRow(ctx context.Context) (Row, error) {
 	if us.dirty.truncated {
 		return nil, nil
 	}
 	var err error
 	if us.snapshotRow == nil {
 		for {
-			us.snapshotRow, err = us.children[0].Next(goCtx)
+			us.snapshotRow, err = us.children[0].Next(ctx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -271,7 +265,7 @@ func (us *UnionScanExec) buildAndSortAddedRows() error {
 				newData = append(newData, data[col.Offset])
 			}
 		}
-		matched, err := expression.EvalBool(us.conditions, newData, us.ctx)
+		matched, err := expression.EvalBool(us.ctx, us.conditions, newData)
 		if err != nil {
 			return errors.Trace(err)
 		}

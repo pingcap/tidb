@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/ranger"
 )
 
 // Error instances.
@@ -312,62 +313,55 @@ func (b *planBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
 	return false
 }
 
-func availableIndices(hints []*ast.IndexHint, tableInfo *model.TableInfo) (indices []*model.IndexInfo, includeTableScan bool, err error) {
-	var usableHints []*ast.IndexHint
-	for _, hint := range hints {
-		if hint.HintScope == ast.HintForScan {
-			usableHints = append(usableHints, hint)
-		}
-	}
+func getAvailableIndices(indexHints []*ast.IndexHint, tableInfo *model.TableInfo) (*availableIndices, error) {
 	publicIndices := make([]*model.IndexInfo, 0, len(tableInfo.Indices))
 	for _, index := range tableInfo.Indices {
 		if index.State == model.StatePublic {
 			publicIndices = append(publicIndices, index)
 		}
 	}
-	if len(usableHints) == 0 {
-		return publicIndices, true, nil
-	}
-	var hasUse bool
-	var ignores []*model.IndexInfo
-	for _, hint := range usableHints {
-		switch hint.HintType {
-		case ast.HintUse, ast.HintForce:
-			// Currently we don't distinguish between Force and Use because our cost estimation is not reliable.
-			hasUse = true
-			for _, idxName := range hint.IndexNames {
-				idx := findIndexByName(publicIndices, idxName)
-				if idx != nil {
-					indices = append(indices, idx)
-				} else {
-					return nil, true, ErrKeyDoesNotExist.GenByArgs(idxName, tableInfo.Name)
-				}
+
+	hasScanHint, hasUseOrForce := false, false
+	available := make([]*model.IndexInfo, 0, len(indexHints))
+	ignored := make([]*model.IndexInfo, 0, len(indexHints))
+	for _, hint := range indexHints {
+		if hint.HintScope != ast.HintForScan {
+			continue
+		}
+
+		hasScanHint = true
+		for _, idxName := range hint.IndexNames {
+			idx := findIndexByName(publicIndices, idxName)
+			if idx == nil {
+				return nil, ErrKeyDoesNotExist.GenByArgs(idxName, tableInfo.Name)
 			}
-		case ast.HintIgnore:
-			// Collect all the ignore index hints.
-			for _, idxName := range hint.IndexNames {
-				idx := findIndexByName(publicIndices, idxName)
-				if idx != nil {
-					ignores = append(ignores, idx)
-				} else {
-					return nil, true, ErrKeyDoesNotExist.GenByArgs(idxName, tableInfo.Name)
-				}
+			if hint.HintType == ast.HintIgnore {
+				// Collect all the ignored index hints.
+				ignored = append(ignored, idx)
+				continue
 			}
+			// Currently we don't distinguish between "FORCE" and "USE" because
+			// our cost estimation is not reliable.
+			hasUseOrForce = true
+			available = append(available, idx)
 		}
 	}
-	indices = removeIgnores(indices, ignores)
-	// If we have got FORCE or USE index hint, table scan is excluded.
-	if len(indices) != 0 {
-		return indices, false, nil
+
+	if !hasScanHint {
+		return &availableIndices{publicIndices, true}, nil
 	}
-	if hasUse {
-		// Empty use hint means don't use any index.
-		return nil, true, nil
+	if !hasUseOrForce {
+		available = removeIgnoredIndices(publicIndices, ignored)
+		return &availableIndices{available, true}, nil
 	}
-	return removeIgnores(publicIndices, ignores), true, nil
+
+	available = removeIgnoredIndices(available, ignored)
+	// If we have got "FORCE" or "USE" index hint but got no available index,
+	// we have to use table scan.
+	return &availableIndices{available, len(available) == 0}, nil
 }
 
-func removeIgnores(indices, ignores []*model.IndexInfo) []*model.IndexInfo {
+func removeIgnoredIndices(indices, ignores []*model.IndexInfo) []*model.IndexInfo {
 	if len(ignores) == 0 {
 		return indices
 	}
@@ -407,12 +401,91 @@ func (b *planBuilder) buildPrepare(x *ast.PrepareStmt) Plan {
 	return p
 }
 
+func (b *planBuilder) buildCheckIndex(dbName model.CIStr, as *ast.AdminStmt) Plan {
+	tblName := as.Tables[0]
+	tbl, err := b.is.TableByName(dbName, tblName.Name)
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
+	tblInfo := tbl.Meta()
+
+	// get index information
+	var idx *model.IndexInfo
+	for _, index := range tblInfo.Indices {
+		if index.Name.L == as.Index {
+			idx = index
+			break
+		}
+	}
+	if idx == nil {
+		b.err = errors.Errorf("index %s do not exist", as.Index)
+		return nil
+	}
+	if idx.State != model.StatePublic {
+		b.err = errors.Errorf("index %s state %s isn't public", as.Index, idx.State)
+		return nil
+	}
+
+	id := 1
+	columns := make([]*model.ColumnInfo, 0, len(idx.Columns))
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(idx.Columns))...)
+	for _, idxCol := range idx.Columns {
+		for _, col := range tblInfo.Columns {
+			if idxCol.Name.L == col.Name.L {
+				columns = append(columns, col)
+				schema.Append(&expression.Column{
+					FromID:   id,
+					Position: schema.Len() + 1,
+					RetType:  &col.FieldType,
+				})
+			}
+		}
+	}
+	is := PhysicalIndexScan{
+		Table:            tblInfo,
+		TableAsName:      &tblName.Name,
+		DBName:           dbName,
+		Columns:          columns,
+		Index:            idx,
+		dataSourceSchema: schema,
+		Ranges:           ranger.FullNewRange(),
+		KeepOrder:        false,
+	}.init(b.ctx)
+	is.stats = &statsInfo{}
+	cop := &copTask{indexPlan: is}
+	// It's double read case.
+	ts := PhysicalTableScan{Columns: columns, Table: is.Table}.init(b.ctx)
+	ts.SetSchema(is.dataSourceSchema)
+	cop.tablePlan = ts
+	is.initSchema(id, idx, true)
+	t := finishCopTask(b.ctx, cop)
+
+	rootT := t.(*rootTask)
+	return rootT.p
+}
+
 func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 	var ret Plan
 
 	switch as.Tp {
 	case ast.AdminCheckTable:
 		p := &CheckTable{Tables: as.Tables}
+		ret = p
+	case ast.AdminCheckIndex:
+		dbName := as.Tables[0].Schema
+		readerPlan := b.buildCheckIndex(dbName, as)
+		if b.err != nil {
+			return ret
+		}
+		ret = &CheckIndex{
+			DBName:            dbName.L,
+			IdxName:           as.Index,
+			IndexLookUpReader: readerPlan.(*PhysicalIndexLookUpReader),
+		}
+	case ast.AdminRecoverIndex:
+		p := &RecoverIndex{Table: as.Tables[0], IndexName: as.Index}
+		p.SetSchema(buildRecoverIndexFields())
 		ret = p
 	case ast.AdminShowDDL:
 		p := &ShowDDL{}
@@ -426,10 +499,59 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 		p := &CancelDDLJobs{JobIDs: as.JobIDs}
 		p.SetSchema(buildCancelDDLJobsFields())
 		ret = p
+	case ast.AdminCheckIndexRange:
+		p := &CheckIndexRange{Table: as.Tables[0], IndexName: as.Index, HandleRanges: as.HandleRanges}
+		schema, err := buildCheckIndexSchema(as.Tables[0], as.Index)
+		if err != nil {
+			b.err = errors.Trace(err)
+			break
+		}
+		p.SetSchema(schema)
+		ret = p
+	case ast.AdminShowDDLJobQueries:
+		p := &ShowDDLJobQueries{JobIDs: as.JobIDs}
+		p.SetSchema(buildShowDDLJobQueriesFields())
+		ret = p
 	default:
 		b.err = ErrUnsupportedType.Gen("Unsupported type %T", as)
 	}
 	return ret
+}
+
+func buildCheckIndexSchema(tn *ast.TableName, indexName string) (*expression.Schema, error) {
+	schema := expression.NewSchema()
+	indexName = strings.ToLower(indexName)
+	indicesInfo := tn.TableInfo.Indices
+	cols := tn.TableInfo.Cols()
+	for _, idxInfo := range indicesInfo {
+		if idxInfo.Name.L != indexName {
+			continue
+		}
+		for i, idxCol := range idxInfo.Columns {
+			col := cols[idxCol.Offset]
+			schema.Append(&expression.Column{
+				FromID:   1,
+				ColName:  idxCol.Name,
+				TblName:  tn.Name,
+				DBName:   tn.Schema,
+				RetType:  &col.FieldType,
+				Position: i,
+				ID:       col.ID})
+		}
+		schema.Append(&expression.Column{
+			FromID:   1,
+			ColName:  model.NewCIStr("extra_handle"),
+			TblName:  tn.Name,
+			DBName:   tn.Schema,
+			RetType:  types.NewFieldType(mysql.TypeLonglong),
+			Position: len(idxInfo.Columns),
+			ID:       -1,
+		})
+	}
+	if schema.Len() == 0 {
+		return nil, errors.Errorf("index %s not found", indexName)
+	}
+	return schema, nil
 }
 
 // getColsInfo returns the info of index columns, normal columns and primary key.
@@ -528,11 +650,23 @@ func buildShowDDLFields() *expression.Schema {
 	return schema
 }
 
+func buildRecoverIndexFields() *expression.Schema {
+	schema := expression.NewSchema(make([]*expression.Column, 0, 2)...)
+	schema.Append(buildColumn("", "ADDED_COUNT", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "SCAN_COUNT", mysql.TypeLonglong, 4))
+	return schema
+}
+
 func buildShowDDLJobsFields() *expression.Schema {
 	schema := expression.NewSchema(make([]*expression.Column, 0, 2)...)
 	schema.Append(buildColumn("", "JOBS", mysql.TypeVarchar, 128))
 	schema.Append(buildColumn("", "STATE", mysql.TypeVarchar, 64))
+	return schema
+}
 
+func buildShowDDLJobQueriesFields() *expression.Schema {
+	schema := expression.NewSchema(make([]*expression.Column, 0, 1)...)
+	schema.Append(buildColumn("", "QUERY", mysql.TypeVarchar, 256))
 	return schema
 }
 

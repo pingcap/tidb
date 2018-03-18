@@ -40,7 +40,7 @@ const (
 )
 
 // JoinConcurrency means the number of goroutines that participate in joining.
-var JoinConcurrency = 5
+var JoinConcurrency uint = 5
 
 // wholeTaskTypes records all possible kinds of task that a plan can return. For Agg, TopN and Limit, we will try to get
 // these tasks one by one.
@@ -153,7 +153,7 @@ func (ds *DataSource) tryToGetMemTask(prop *requiredProp) (task task, err error)
 func (ds *DataSource) tryToGetDualTask() (task, error) {
 	for _, cond := range ds.pushedDownConds {
 		if _, ok := cond.(*expression.Constant); ok {
-			result, err := expression.EvalBool([]expression.Expression{cond}, nil, ds.ctx)
+			result, err := expression.EvalBool(ds.ctx, []expression.Expression{cond}, nil)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -276,7 +276,7 @@ func (ds *DataSource) forceToIndexScan(idx *model.IndexInfo, remainedConds []exp
 	}
 	is.initSchema(ds.id, idx, cop.tablePlan != nil)
 	is.addPushedDownSelection(cop, ds, math.MaxFloat64)
-	t := finishCopTask(cop, ds.ctx)
+	t := finishCopTask(ds.ctx, cop)
 	return t.plan()
 }
 
@@ -304,7 +304,7 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInf
 	}.init(ds.ctx)
 	statsTbl := ds.statisticTable
 	if statsTbl.Indices[idx.ID] != nil {
-		is.HistVersion = statsTbl.Indices[idx.ID].LastUpdateVersion
+		is.Hist = &statsTbl.Indices[idx.ID].Histogram
 	}
 	rowCount := float64(statsTbl.Count)
 	sc := ds.ctx.GetSessionVars().StmtCtx
@@ -354,7 +354,10 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInf
 			}
 		}
 	}
-	if matchProperty && prop.expectedCnt < math.MaxFloat64 {
+	// Only use expectedCnt when it's smaller than the count we calculated.
+	// e.g. IndexScan(count1)->After Filter(count2). The `ds.statsAfterSelect.count` is count2. count1 is the one we need to calculate
+	// If expectedCnt and count2 are both zero and we go into the below `if` block, the count1 will be set to zero though it's shouldn't be.
+	if matchProperty && prop.expectedCnt < ds.statsAfterSelect.count {
 		selectivity, err := statsTbl.Selectivity(ds.ctx, is.filterCondition)
 		if err != nil {
 			log.Warnf("An error happened: %v, we have to use the default selectivity", err.Error())
@@ -386,7 +389,7 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInf
 		is.addPushedDownSelection(cop, ds, expectedCnt)
 	}
 	if prop.taskTp == rootTaskType {
-		task = finishCopTask(task, ds.ctx)
+		task = finishCopTask(ds.ctx, task)
 	} else if _, ok := task.(*rootTask); ok {
 		return invalidTask, nil
 	}
@@ -515,7 +518,7 @@ func (ds *DataSource) forceToTableScan(pk *expression.Column) PhysicalPlan {
 		indexPlanFinished: true,
 	}
 	ts.addPushedDownSelection(copTask, ds.stats)
-	t := finishCopTask(copTask, ds.ctx)
+	t := finishCopTask(ds.ctx, copTask)
 	return t.plan()
 }
 
@@ -539,7 +542,7 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp) (task task, err err
 		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
 			pkCol = expression.ColInfo2Col(ts.schema.Columns, pkColInfo)
 			if ds.statisticTable.Columns[pkColInfo.ID] != nil {
-				ts.HistVersion = ds.statisticTable.Columns[pkColInfo.ID].LastUpdateVersion
+				ts.Hist = &ds.statisticTable.Columns[pkColInfo.ID].Histogram
 			}
 		}
 	}
@@ -571,8 +574,11 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp) (task task, err err
 		indexPlanFinished: true,
 	}
 	task = copTask
-	matchProperty := len(prop.cols) == 1 && pkCol != nil && prop.cols[0].Equal(pkCol, nil)
-	if matchProperty && prop.expectedCnt < math.MaxFloat64 {
+	matchProperty := len(prop.cols) == 1 && pkCol != nil && prop.cols[0].Equal(nil, pkCol)
+	// Only use expectedCnt when it's smaller than the count we calculated.
+	// e.g. IndexScan(count1)->After Filter(count2). The `ds.statsAfterSelect.count` is count2. count1 is the one we need to calculate
+	// If expectedCnt and count2 are both zero and we go into the below `if` block, the count1 will be set to zero though it's shouldn't be.
+	if matchProperty && prop.expectedCnt < ds.statsAfterSelect.count {
 		selectivity, err := statsTbl.Selectivity(ds.ctx, ts.filterCondition)
 		if err != nil {
 			log.Warnf("An error happened: %v, we have to use the default selectivity", err.Error())
@@ -600,7 +606,7 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp) (task task, err err
 		ts.addPushedDownSelection(copTask, ds.statsAfterSelect.scaleByExpectCnt(expectedCnt))
 	}
 	if prop.taskTp == rootTaskType {
-		task = finishCopTask(task, ds.ctx)
+		task = finishCopTask(ds.ctx, task)
 	} else if _, ok := task.(*rootTask); ok {
 		return invalidTask, nil
 	}

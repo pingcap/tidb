@@ -23,9 +23,9 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tipb/go-binlog"
+	binlog "github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 )
 
@@ -82,7 +82,7 @@ func (info *BinlogInfo) WriteBinlog(clusterID uint64) error {
 	// Retry many times because we may raise CRITICAL error here.
 	for i := 0; i < 20; i++ {
 		var resp *binlog.WriteBinlogResp
-		resp, err = info.Client.WriteBinlog(goctx.Background(), req)
+		resp, err = info.Client.WriteBinlog(context.Background(), req)
 		if err == nil && resp.Errmsg != "" {
 			err = errors.New(resp.Errmsg)
 		}

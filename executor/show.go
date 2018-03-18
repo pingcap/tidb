@@ -37,7 +37,7 @@ import (
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/format"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 // ShowExec represents a show executor.
@@ -57,51 +57,30 @@ type ShowExec struct {
 
 	is infoschema.InfoSchema
 
-	forChunk bool
-	fetched  bool
-	rows     []Row
-	result   *chunk.Chunk
-	cursor   int
-}
-
-// Next implements Execution Next interface.
-func (e *ShowExec) Next(goCtx goctx.Context) (Row, error) {
-	if e.rows == nil {
-		e.forChunk = false
-		err := e.fetchAll()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		for i := 0; e.rows != nil && i < len(e.rows); i++ {
-			for j, row := 0, e.rows[i]; j < len(row); j++ {
-				if row[j].Kind() != types.KindString {
-					continue
-				}
-				val := row[j].GetString()
-				retType := e.Schema().Columns[j].RetType
-				if valLen := len(val); retType.Flen < valLen {
-					retType.Flen = valLen
-				}
-			}
-		}
-	}
-	if e.cursor >= len(e.rows) {
-		return nil, nil
-	}
-	row := e.rows[e.cursor]
-	e.cursor++
-	return row, nil
+	result *chunk.Chunk
+	cursor int
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (e *ShowExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+func (e *ShowExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.result == nil {
 		e.result = e.newChunk()
-		e.forChunk = true
 		err := e.fetchAll()
 		if err != nil {
 			return errors.Trace(err)
+		}
+		iter := chunk.NewIterator4Chunk(e.result)
+		for colIdx := 0; colIdx < e.Schema().Len(); colIdx++ {
+			retType := e.Schema().Columns[colIdx].RetType
+			if !types.IsTypeVarchar(retType.Tp) {
+				continue
+			}
+			for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+				if valLen := len(row.GetString(colIdx)); retType.Flen < valLen {
+					retType.Flen = valLen
+				}
+			}
 		}
 	}
 	if e.cursor >= e.result.NumRows() {
@@ -743,10 +722,6 @@ func (e *ShowExec) getTable() (table.Table, error) {
 }
 
 func (e *ShowExec) appendRow(row []interface{}) {
-	if !e.forChunk {
-		e.rows = append(e.rows, types.MakeDatums(row...))
-		return
-	}
 	for i, col := range row {
 		if col == nil {
 			e.result.AppendNull(i)

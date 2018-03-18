@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2018 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@ package server
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -44,17 +46,22 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	log "github.com/sirupsen/logrus"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 const (
-	pDBName    = "db"
-	pHexKey    = "hexKey"
-	pIndexName = "index"
-	pHandle    = "handle"
-	pRegionID  = "regionID"
-	pStartTS   = "startTS"
-	pTableName = "table"
+	pDBName     = "db"
+	pHexKey     = "hexKey"
+	pIndexName  = "index"
+	pHandle     = "handle"
+	pRegionID   = "regionID"
+	pStartTS    = "startTS"
+	pTableName  = "table"
+	pColumnID   = "colID"
+	pColumnTp   = "colTp"
+	pColumnFlag = "colFlag"
+	pColumnLen  = "colLen"
+	pRowBin     = "rowBin"
 )
 
 // For query string
@@ -70,50 +77,34 @@ type kvStore interface {
 	SendReq(bo *tikv.Backoffer, req *tikvrpc.Request, regionID tikv.RegionVerID, timeout time.Duration) (*tikvrpc.Response, error)
 }
 
-type regionHandlerTool struct {
-	bo          *tikv.Backoffer
+func writeError(w http.ResponseWriter, err error) {
+	w.WriteHeader(http.StatusBadRequest)
+	_, err = w.Write([]byte(err.Error()))
+	terror.Log(errors.Trace(err))
+}
+
+func writeData(w http.ResponseWriter, data interface{}) {
+	js, err := json.Marshal(data)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	log.Info(string(js))
+	// write response
+	w.Header().Set(headerContentType, contentTypeJSON)
+	w.WriteHeader(http.StatusOK)
+	_, err = w.Write(js)
+	terror.Log(errors.Trace(err))
+}
+
+type tikvHandlerTool struct {
 	regionCache *tikv.RegionCache
 	store       kvStore
 }
 
-// RegionHandler is the common field for http region handler. It contains
-// some common functions for all handlers.
-type regionHandler struct {
-	*regionHandlerTool
-}
-
-// schemaHandler is the handler for list database or table schemas.
-type schemaHandler struct {
-	*regionHandler
-}
-
-// tableHandler is the handler for list table's regions.
-type tableHandler struct {
-	*regionHandler
-	op string
-}
-
-const (
-	opTableRegions   = "regions"
-	opTableDiskUsage = "disk-usage"
-)
-
-// MvccTxnHandler is the handler for txn debugger
-type mvccTxnHandler struct {
-	*regionHandler
-	op string
-}
-
-const (
-	opMvccGetByHex = "hex"
-	opMvccGetByKey = "key"
-	opMvccGetByIdx = "idx"
-	opMvccGetByTxn = "txn"
-)
-
-// newRegionHandler checks and prepares for region handler.
+// newTikvHandlerTool checks and prepares for tikv handler.
 // It would panic when any error happens.
-func (s *Server) newRegionHandler() (hanler *regionHandler) {
+func (s *Server) newTikvHandlerTool() *tikvHandlerTool {
 	var tikvStore kvStore
 	store, ok := s.driver.(*TiDBDriver)
 	if !ok {
@@ -126,15 +117,281 @@ func (s *Server) newRegionHandler() (hanler *regionHandler) {
 
 	regionCache := tikvStore.GetRegionCache()
 
-	// init backOffer && infoSchema.
-	backOffer := tikv.NewBackoffer(500, goctx.Background())
-
-	tool := &regionHandlerTool{
+	return &tikvHandlerTool{
 		regionCache: regionCache,
-		bo:          backOffer,
 		store:       tikvStore,
 	}
-	return &regionHandler{tool}
+}
+
+func (t *tikvHandlerTool) getMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccGetByKeyResponse, error) {
+	keyLocation, err := t.regionCache.LocateKey(tikv.NewBackoffer(context.Background(), 500), encodedKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	tikvReq := &tikvrpc.Request{
+		Type: tikvrpc.CmdMvccGetByKey,
+		MvccGetByKey: &kvrpcpb.MvccGetByKeyRequest{
+			Key: encodedKey,
+		},
+	}
+	kvResp, err := t.store.SendReq(tikv.NewBackoffer(context.Background(), 500), tikvReq, keyLocation.Region, time.Minute)
+	log.Info(string(encodedKey), keyLocation.Region, string(keyLocation.StartKey), string(keyLocation.EndKey), kvResp, err)
+
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return kvResp.MvccGetByKey, nil
+}
+
+func (t *tikvHandlerTool) getMvccByHandle(tableID, handle int64) (*kvrpcpb.MvccGetByKeyResponse, error) {
+	encodedKey := tablecodec.EncodeRowKeyWithHandle(tableID, handle)
+	return t.getMvccByEncodedKey(encodedKey)
+}
+
+func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []byte) (*kvrpcpb.MvccGetByStartTsResponse, error) {
+	bo := tikv.NewBackoffer(context.Background(), 5000)
+	for {
+		curRegion, err := t.regionCache.LocateKey(bo, startKey)
+		if err != nil {
+			log.Error(startTS, startKey, err)
+			return nil, errors.Trace(err)
+		}
+
+		tikvReq := &tikvrpc.Request{
+			Type: tikvrpc.CmdMvccGetByStartTs,
+			MvccGetByStartTs: &kvrpcpb.MvccGetByStartTsRequest{
+				StartTs: startTS,
+			},
+		}
+		tikvReq.Context.Priority = kvrpcpb.CommandPri_Low
+		kvResp, err := t.store.SendReq(bo, tikvReq, curRegion.Region, time.Hour)
+		log.Info(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), kvResp)
+		if err != nil {
+			log.Error(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), err)
+			return nil, errors.Trace(err)
+		}
+		data := kvResp.MvccGetByStartTS
+		if err := data.GetRegionError(); err != nil {
+			log.Warn(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), err)
+			continue
+		}
+
+		if len(data.GetError()) > 0 {
+			log.Error(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), data.GetError())
+			return nil, errors.New(data.GetError())
+		}
+
+		key := data.GetKey()
+		if len(key) > 0 {
+			return data, nil
+		}
+
+		if len(endKey) > 0 && curRegion.Contains(endKey) {
+			return nil, nil
+		}
+		if len(curRegion.EndKey) == 0 {
+			return nil, nil
+		}
+		startKey = curRegion.EndKey
+	}
+}
+
+func (t *tikvHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values, idxCols []*model.ColumnInfo, handleStr string) (*kvrpcpb.MvccGetByKeyResponse, error) {
+	sc := new(stmtctx.StatementContext)
+	// HTTP request is not a database session, set timezone to UTC directly here.
+	// See https://github.com/pingcap/tidb/blob/master/docs/tidb_http_api.md for more details.
+	sc.TimeZone = time.UTC
+	idxRow, err := t.formValue2DatumRow(sc, values, idxCols)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	handle, err := strconv.ParseInt(handleStr, 10, 64)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	encodedKey, _, err := idx.GenIndexKey(sc, idxRow, handle, nil)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return t.getMvccByEncodedKey(encodedKey)
+}
+
+// formValue2DatumRow converts URL query string to a Datum Row.
+func (t *tikvHandlerTool) formValue2DatumRow(sc *stmtctx.StatementContext, values url.Values, idxCols []*model.ColumnInfo) ([]types.Datum, error) {
+	data := make([]types.Datum, len(idxCols))
+	for i, col := range idxCols {
+		colName := col.Name.String()
+		vals, ok := values[colName]
+		if !ok {
+			return nil, errors.BadRequestf("Missing value for index column %s.", colName)
+		}
+
+		switch len(vals) {
+		case 0:
+			data[i].SetNull()
+		case 1:
+			bDatum := types.NewStringDatum(vals[0])
+			cDatum, err := bDatum.ConvertTo(sc, &col.FieldType)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			data[i] = cDatum
+		default:
+			return nil, errors.BadRequestf("Invalid query form for column '%s', it's values are %v."+
+				" Column value should be unique for one index record.", colName, vals)
+		}
+	}
+	return data, nil
+}
+
+func (t *tikvHandlerTool) getTableID(dbName, tableName string) (int64, error) {
+	schema, err := t.schema()
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	tableVal, err := schema.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	return tableVal.Meta().ID, nil
+}
+
+func (t *tikvHandlerTool) schema() (infoschema.InfoSchema, error) {
+	session, err := tidb.CreateSession(t.store.(kv.Storage))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return domain.GetDomain(session.(sessionctx.Context)).InfoSchema(), nil
+}
+
+func (t *tikvHandlerTool) handleMvccGetByHex(params map[string]string) (interface{}, error) {
+	encodedKey, err := hex.DecodeString(params[pHexKey])
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return t.getMvccByEncodedKey(encodedKey)
+}
+
+// settingsHandler is the handler for list tidb server settings.
+type settingsHandler struct {
+}
+
+// schemaHandler is the handler for list database or table schemas.
+type schemaHandler struct {
+	*tikvHandlerTool
+}
+
+// regionHandler is the common field for http handler. It contains
+// some common functions for all handlers.
+type regionHandler struct {
+	*tikvHandlerTool
+}
+
+// tableHandler is the handler for list table's regions.
+type tableHandler struct {
+	*tikvHandlerTool
+	op string
+}
+
+// valueHandle is the handler for get value.
+type valueHandler struct {
+}
+
+const (
+	opTableRegions   = "regions"
+	opTableDiskUsage = "disk-usage"
+)
+
+// mvccTxnHandler is the handler for txn debugger
+type mvccTxnHandler struct {
+	*tikvHandlerTool
+	op string
+}
+
+const (
+	opMvccGetByHex = "hex"
+	opMvccGetByKey = "key"
+	opMvccGetByIdx = "idx"
+	opMvccGetByTxn = "txn"
+)
+
+// ServeHTTP handles request of list a database or table's schemas.
+func (vh valueHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	// parse params
+	params := mux.Vars(req)
+
+	colID, err := strconv.ParseInt(params[pColumnID], 0, 64)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	colTp, err := strconv.ParseInt(params[pColumnTp], 0, 64)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	colFlag, err := strconv.ParseUint(params[pColumnFlag], 0, 64)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	colLen, err := strconv.ParseInt(params[pColumnLen], 0, 64)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	// Get the unchanged binary.
+	if req.URL == nil {
+		err = errors.BadRequestf("Invalid URL")
+		writeError(w, err)
+		return
+	}
+	values := make(url.Values)
+	shouldUnescape := false
+	err = parseQuery(req.URL.RawQuery, values, shouldUnescape)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if len(values[pRowBin]) != 1 {
+		err = errors.BadRequestf("Invalid Query:%v", values[pRowBin])
+		writeError(w, err)
+		return
+	}
+	bin := values[pRowBin][0]
+	valData, err := base64.StdEncoding.DecodeString(bin)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	// Construct field type.
+	defaultDecimal := 6
+	ft := &types.FieldType{
+		Tp:      byte(colTp),
+		Flag:    uint(colFlag),
+		Flen:    int(colLen),
+		Decimal: defaultDecimal,
+	}
+	// Decode a column.
+	m := make(map[int64]*types.FieldType, 1)
+	m[int64(colID)] = ft
+	loc := time.UTC
+	vals, err := tablecodec.DecodeRow(valData, m, loc)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	v := vals[int64(colID)]
+	val, err := v.ToString()
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeData(w, val)
+	return
 }
 
 // TableRegions is the response data for list table's regions.
@@ -164,53 +421,25 @@ type IndexRegions struct {
 // RegionDetail is the response data for get region by ID
 // it includes indices and records detail in current region.
 type RegionDetail struct {
-	RegionID uint64      `json:"region_id"`
-	StartKey []byte      `json:"start_key"`
-	EndKey   []byte      `json:"end_key"`
-	Frames   []FrameItem `json:"frames"`
-}
-
-// addIndex insert a index into RegionDetail.
-func (rt *RegionDetail) addIndex(dbName, tName string, tID int64, indexName string, indexID int64) {
-	rt.Frames = append(rt.Frames, FrameItem{
-		DBName:    dbName,
-		TableName: tName,
-		TableID:   tID,
-		IndexName: indexName,
-		IndexID:   indexID,
-		IsRecord:  false,
-	})
-}
-
-// addRecord insert a table's record into RegionDetail.
-func (rt *RegionDetail) addRecord(dbName, tName string, tID int64) {
-	rt.Frames = append(rt.Frames, FrameItem{
-		DBName:    dbName,
-		TableName: tName,
-		TableID:   tID,
-		IsRecord:  true,
-	})
+	RegionID uint64       `json:"region_id"`
+	StartKey []byte       `json:"start_key"`
+	EndKey   []byte       `json:"end_key"`
+	Frames   []*FrameItem `json:"frames"`
 }
 
 // addTableInRange insert a table into RegionDetail
-// with index's id in range [startID,endID]. Table's
-// record would be included when endID is MaxInt64.
-func (rt *RegionDetail) addTableInRange(dbName string, curTable *model.TableInfo, startID, endID int64) {
+// with index's id or record in the range if r.
+func (rt *RegionDetail) addTableInRange(dbName string, curTable *model.TableInfo, r *RegionFrameRange) {
 	tName := curTable.Name.String()
 	tID := curTable.ID
 
 	for _, index := range curTable.Indices {
-		if index.ID >= startID && index.ID <= endID {
-			rt.addIndex(
-				dbName,
-				tName,
-				tID,
-				index.Name.String(),
-				index.ID)
+		if f := r.getIndexFrame(tID, index.ID, dbName, tName, index.Name.String()); f != nil {
+			rt.Frames = append(rt.Frames, f)
 		}
 	}
-	if endID == math.MaxInt64 {
-		rt.addRecord(dbName, tName, tID)
+	if f := r.getRecordFrame(tID, dbName, tName); f != nil {
+		rt.Frames = append(rt.Frames, f)
 	}
 }
 
@@ -231,10 +460,10 @@ type RegionFrameRange struct {
 	region *tikv.KeyLocation // the region
 }
 
-func (t *regionHandlerTool) getRegionsMeta(regionIDs []uint64) ([]RegionMeta, error) {
+func (t *tikvHandlerTool) getRegionsMeta(regionIDs []uint64) ([]RegionMeta, error) {
 	regions := make([]RegionMeta, len(regionIDs))
 	for i, regionID := range regionIDs {
-		meta, leader, err := t.regionCache.PDClient().GetRegionByID(goctx.TODO(), regionID)
+		meta, leader, err := t.regionCache.PDClient().GetRegionByID(context.TODO(), regionID)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -249,9 +478,15 @@ func (t *regionHandlerTool) getRegionsMeta(regionIDs []uint64) ([]RegionMeta, er
 	return regions, nil
 }
 
+// ServeHTTP handles request of list tidb server settings.
+func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	writeData(w, config.GetGlobalConfig())
+	return
+}
+
 // ServeHTTP handles request of list a database or table's schemas.
-func (rh schemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	schema, err := rh.schema()
+func (h schemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	schema, err := h.schema()
 	if err != nil {
 		writeError(w, err)
 		return
@@ -312,12 +547,12 @@ func (rh schemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 }
 
 // ServeHTTP handles table related requests, such as table's region information, disk usage.
-func (rh tableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func (h tableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// parse params
 	params := mux.Vars(req)
 	dbName := params[pDBName]
 	tableName := params[pTableName]
-	schema, err := rh.schema()
+	schema, err := h.schema()
 	if err != nil {
 		writeError(w, err)
 		return
@@ -329,26 +564,26 @@ func (rh tableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	switch rh.op {
+	switch h.op {
 	case opTableRegions:
-		rh.handleRegionRequest(schema, tableVal, w, req)
+		h.handleRegionRequest(schema, tableVal, w, req)
 	case opTableDiskUsage:
-		rh.handleDiskUsageRequest(schema, tableVal, w, req)
+		h.handleDiskUsageRequest(schema, tableVal, w, req)
 	default:
 		writeError(w, errors.New("method not found"))
 	}
 }
 
-func (rh tableHandler) handleRegionRequest(schema infoschema.InfoSchema, tbl table.Table, w http.ResponseWriter, req *http.Request) {
+func (h tableHandler) handleRegionRequest(schema infoschema.InfoSchema, tbl table.Table, w http.ResponseWriter, req *http.Request) {
 	tableID := tbl.Meta().ID
 	// for record
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(tableID)
-	recordRegionIDs, err := rh.regionCache.ListRegionIDsInKeyRange(rh.bo, startKey, endKey)
+	recordRegionIDs, err := h.regionCache.ListRegionIDsInKeyRange(tikv.NewBackoffer(context.Background(), 500), startKey, endKey)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	recordRegions, err := rh.getRegionsMeta(recordRegionIDs)
+	recordRegions, err := h.getRegionsMeta(recordRegionIDs)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -361,12 +596,12 @@ func (rh tableHandler) handleRegionRequest(schema infoschema.InfoSchema, tbl tab
 		indices[i].Name = index.Meta().Name.String()
 		indices[i].ID = indexID
 		startKey, endKey := tablecodec.GetTableIndexKeyRange(tableID, indexID)
-		rIDs, err := rh.regionCache.ListRegionIDsInKeyRange(rh.bo, startKey, endKey)
+		rIDs, err := h.regionCache.ListRegionIDsInKeyRange(tikv.NewBackoffer(context.Background(), 500), startKey, endKey)
 		if err != nil {
 			writeError(w, err)
 			return
 		}
-		indices[i].Regions, err = rh.getRegionsMeta(rIDs)
+		indices[i].Regions, err = h.getRegionsMeta(rIDs)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -394,10 +629,10 @@ type pdRegionStats struct {
 	StorePeerSize    map[uint64]int64 `json:"store_peer_size"`
 }
 
-func (rh tableHandler) handleDiskUsageRequest(schema infoschema.InfoSchema, tbl table.Table, w http.ResponseWriter, req *http.Request) {
+func (h tableHandler) handleDiskUsageRequest(schema infoschema.InfoSchema, tbl table.Table, w http.ResponseWriter, req *http.Request) {
 	tableID := tbl.Meta().ID
 	var pdAddrs []string
-	etcd, ok := rh.store.(domain.EtcdBackend)
+	etcd, ok := h.store.(domain.EtcdBackend)
 	if !ok {
 		writeError(w, errors.New("not implemented"))
 	}
@@ -438,20 +673,20 @@ func (rh tableHandler) handleDiskUsageRequest(schema infoschema.InfoSchema, tbl 
 }
 
 // ServeHTTP handles request of get region by ID.
-func (rh regionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func (h regionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// parse and check params
 	params := mux.Vars(req)
 	if _, ok := params[pRegionID]; !ok {
 		startKey := []byte{'m'}
 		endKey := []byte{'n'}
 
-		recordRegionIDs, err := rh.regionCache.ListRegionIDsInKeyRange(rh.bo, startKey, endKey)
+		recordRegionIDs, err := h.regionCache.ListRegionIDsInKeyRange(tikv.NewBackoffer(context.Background(), 500), startKey, endKey)
 		if err != nil {
 			writeError(w, err)
 			return
 		}
 
-		recordRegions, err := rh.getRegionsMeta(recordRegionIDs)
+		recordRegions, err := h.getRegionsMeta(recordRegionIDs)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -468,7 +703,7 @@ func (rh regionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	regionID := uint64(regionIDInt)
 
 	// locate region
-	region, err := rh.regionCache.LocateRegionByID(rh.bo, regionID)
+	region, err := h.regionCache.LocateRegionByID(tikv.NewBackoffer(context.Background(), 500), regionID)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -486,7 +721,7 @@ func (rh regionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		StartKey: region.StartKey,
 		EndKey:   region.EndKey,
 	}
-	schema, err := rh.schema()
+	schema, err := h.schema()
 	if err != nil {
 		writeError(w, err)
 		return
@@ -497,31 +732,10 @@ func (rh regionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// on [frameRange.firstTableID,frameRange.endTableID] is small enough.
 	for _, db := range schema.AllSchemas() {
 		for _, tableVal := range db.Tables {
-			start, end := frameRange.getIndexRangeForTable(tableVal.ID)
-			regionDetail.addTableInRange(db.Name.String(), tableVal, start, end)
+			regionDetail.addTableInRange(db.Name.String(), tableVal, frameRange)
 		}
 	}
 	writeData(w, regionDetail)
-}
-
-func writeError(w http.ResponseWriter, err error) {
-	w.WriteHeader(http.StatusBadRequest)
-	_, err = w.Write([]byte(err.Error()))
-	terror.Log(errors.Trace(err))
-}
-
-func writeData(w http.ResponseWriter, data interface{}) {
-	js, err := json.Marshal(data)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	log.Info(string(js))
-	// write response
-	w.Header().Set(headerContentType, contentTypeJSON)
-	w.WriteHeader(http.StatusOK)
-	_, err = w.Write(js)
-	terror.Log(errors.Trace(err))
 }
 
 // NewFrameItemFromRegionKey creates a FrameItem with region's startKey or endKey,
@@ -599,68 +813,59 @@ func NewRegionFrameRange(region *tikv.KeyLocation) (idxRange *RegionFrameRange, 
 	return idxRange, nil
 }
 
-// getFirstIdxIdRange return the first table's index range.
-// 1. [start,end] means index id in [start,end] are needed,while record key is not in.
-// 2. [start,~) means index's id in [start,~) are needed including record key index.
-// 3. (~,~) means only record key index is needed
-func (ir *RegionFrameRange) getFirstIdxIDRange() (start, end int64) {
-	start = int64(math.MinInt64)
-	end = int64(math.MaxInt64)
-	if ir.first.IsRecord {
-		start = end // need record key only,
-		return
+// getRecordFrame returns the record frame of a table. If the table's records
+// are not covered by this frame range, it returns nil.
+func (r *RegionFrameRange) getRecordFrame(tableID int64, dbName, tableName string) *FrameItem {
+	if tableID == r.first.TableID && r.first.IsRecord {
+		return r.first
+	}
+	if tableID == r.last.TableID && r.last.IsRecord {
+		return r.last
 	}
 
-	start = ir.first.IndexID
-	if ir.first.TableID != ir.last.TableID || ir.last.IsRecord {
-		return // [start,~)
-	}
-	end = ir.last.IndexID // [start,end]
-	return
-}
-
-// getLastInxIdRange return the last table's index range.
-// (~,end] means index's id in (~,end] are legal, record key index not included.
-// (~,~) means all indexes are legal include record key index.
-func (ir *RegionFrameRange) getLastInxIDRange() (start, end int64) {
-	start = int64(math.MinInt64)
-	end = int64(math.MaxInt64)
-	if ir.last.IsRecord {
-		return
-	}
-	end = ir.last.IndexID
-	return
-}
-
-// getIndexRangeForTable return the legal index range for table with tableID.
-// end=math.MaxInt64 means record key index is included.
-func (ir *RegionFrameRange) getIndexRangeForTable(tableID int64) (start, end int64) {
-	switch tableID {
-	case ir.firstTableID():
-		return ir.getFirstIdxIDRange()
-	case ir.lastTableID():
-		return ir.getLastInxIDRange()
-	default:
-		if tableID < ir.lastTableID() && tableID > ir.firstTableID() {
-			return int64(math.MinInt64), int64(math.MaxInt64)
+	if tableID >= r.first.TableID && tableID < r.last.TableID {
+		return &FrameItem{
+			DBName:    dbName,
+			TableName: tableName,
+			TableID:   tableID,
+			IsRecord:  true,
 		}
 	}
-	return int64(math.MaxInt64), int64(math.MinInt64)
+	return nil
 }
 
-func (ir RegionFrameRange) firstTableID() int64 {
-	return ir.first.TableID
+// getIndexFrame returns the indnex frame of a table. If the table's indices are
+// not covered by this frame range, it returns nil.
+func (r *RegionFrameRange) getIndexFrame(tableID, indexID int64, dbName, tableName, indexname string) *FrameItem {
+	if tableID == r.first.TableID && !r.first.IsRecord && indexID == r.first.IndexID {
+		return r.first
+	}
+	if tableID == r.last.TableID && indexID == r.last.IndexID {
+		return r.last
+	}
+
+	greaterThanFirst := tableID > r.first.TableID || (tableID == r.first.TableID && !r.first.IsRecord && indexID > r.first.IndexID)
+	lessThanLast := tableID < r.last.TableID || (tableID == r.last.TableID && (r.last.IsRecord || indexID < r.last.IndexID))
+	if greaterThanFirst && lessThanLast {
+		return &FrameItem{
+			DBName:    dbName,
+			TableName: tableName,
+			TableID:   tableID,
+			IsRecord:  false,
+			IndexName: indexname,
+			IndexID:   indexID,
+		}
+	}
+	return nil
 }
 
-func (ir RegionFrameRange) lastTableID() int64 {
-	return ir.last.TableID
-}
-
-// parseQuery is used to parse query string in URL, due to golang http package can not distinguish
+// parseQuery is used to parse query string in URL with shouldUnescape, due to golang http package can not distinguish
 // query like "?a=" and "?a". We rewrite it to separate these two queries. e.g.
 // "?a=" which means that a is an empty string "";
 // "?a"  which means that a is null.
-func parseQuery(query string, m url.Values) error {
+// If shouldUnescape is true, we use QueryUnescape to handle keys and values that will be put in m.
+// If shouldUnescape is false, we don't use QueryUnescap to handle.
+func parseQuery(query string, m url.Values, shouldUnescape bool) error {
 	var err error
 	for query != "" {
 		key := query
@@ -675,19 +880,23 @@ func parseQuery(query string, m url.Values) error {
 		if i := strings.Index(key, "="); i >= 0 {
 			value := ""
 			key, value = key[:i], key[i+1:]
-			key, err = url.QueryUnescape(key)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			value, err = url.QueryUnescape(value)
-			if err != nil {
-				return errors.Trace(err)
+			if shouldUnescape {
+				key, err = url.QueryUnescape(key)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				value, err = url.QueryUnescape(value)
+				if err != nil {
+					return errors.Trace(err)
+				}
 			}
 			m[key] = append(m[key], value)
 		} else {
-			key, err = url.QueryUnescape(key)
-			if err != nil {
-				return errors.Trace(err)
+			if shouldUnescape {
+				key, err = url.QueryUnescape(key)
+				if err != nil {
+					return errors.Trace(err)
+				}
 			}
 			if _, ok := m[key]; !ok {
 				m[key] = nil
@@ -698,27 +907,27 @@ func parseQuery(query string, m url.Values) error {
 }
 
 // ServeHTTP handles request of list a table's regions.
-func (rh mvccTxnHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func (h mvccTxnHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	var data interface{}
 	params := mux.Vars(req)
 	var err error
-	switch rh.op {
+	switch h.op {
 	case opMvccGetByHex:
-		data, err = rh.handleMvccGetByHex(params)
+		data, err = h.handleMvccGetByHex(params)
 	case opMvccGetByIdx:
 		if req.URL == nil {
 			err = errors.BadRequestf("Invalid URL")
 			break
 		}
 		values := make(url.Values)
-		err = parseQuery(req.URL.RawQuery, values)
+		err = parseQuery(req.URL.RawQuery, values, true)
 		if err == nil {
-			data, err = rh.handleMvccGetByIdx(params, values)
+			data, err = h.handleMvccGetByIdx(params, values)
 		}
 	case opMvccGetByKey:
-		data, err = rh.handleMvccGetByKey(params)
+		data, err = h.handleMvccGetByKey(params)
 	case opMvccGetByTxn:
-		data, err = rh.handleMvccGetByTxn(params)
+		data, err = h.handleMvccGetByTxn(params)
 	default:
 		err = errors.NotSupportedf("Operation not supported.")
 	}
@@ -730,11 +939,11 @@ func (rh mvccTxnHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 }
 
 // handleMvccGetByIdx gets MVCC info by an index key.
-func (rh mvccTxnHandler) handleMvccGetByIdx(params map[string]string, values url.Values) (interface{}, error) {
+func (h mvccTxnHandler) handleMvccGetByIdx(params map[string]string, values url.Values) (interface{}, error) {
 	dbName := params[pDBName]
 	tableName := params[pTableName]
 	handleStr := params[pHandle]
-	schema, err := rh.schema()
+	schema, err := h.schema()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -757,23 +966,23 @@ func (rh mvccTxnHandler) handleMvccGetByIdx(params map[string]string, values url
 	if idx == nil {
 		return nil, errors.NotFoundf("Index %s not found!", params[pIndexName])
 	}
-	return rh.getMvccByIdxValue(idx, values, idxCols, handleStr)
+	return h.getMvccByIdxValue(idx, values, idxCols, handleStr)
 }
 
-func (rh mvccTxnHandler) handleMvccGetByKey(params map[string]string) (interface{}, error) {
+func (h mvccTxnHandler) handleMvccGetByKey(params map[string]string) (interface{}, error) {
 	handle, err := strconv.ParseInt(params[pHandle], 0, 64)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	tableID, err := rh.getTableID(params[pDBName], params[pTableName])
+	tableID, err := h.getTableID(params[pDBName], params[pTableName])
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return rh.getMvccByHandle(tableID, handle)
+	return h.getMvccByHandle(tableID, handle)
 }
 
-func (rh *mvccTxnHandler) handleMvccGetByTxn(params map[string]string) (interface{}, error) {
+func (h *mvccTxnHandler) handleMvccGetByTxn(params map[string]string) (interface{}, error) {
 	startTS, err := strconv.ParseInt(params[pStartTS], 0, 64)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -783,159 +992,12 @@ func (rh *mvccTxnHandler) handleMvccGetByTxn(params map[string]string) (interfac
 	endKey := []byte("")
 	dbName := params[pDBName]
 	if len(dbName) > 0 {
-		tableID, err := rh.getTableID(params[pDBName], params[pTableName])
+		tableID, err := h.getTableID(params[pDBName], params[pTableName])
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		startKey = tablecodec.EncodeTablePrefix(tableID)
 		endKey = tablecodec.EncodeRowKeyWithHandle(tableID, math.MaxInt64)
 	}
-	return rh.getMvccByStartTs(uint64(startTS), startKey, endKey)
-}
-
-func (t *regionHandlerTool) getMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccGetByKeyResponse, error) {
-	keyLocation, err := t.regionCache.LocateKey(t.bo, encodedKey)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	tikvReq := &tikvrpc.Request{
-		Type: tikvrpc.CmdMvccGetByKey,
-		MvccGetByKey: &kvrpcpb.MvccGetByKeyRequest{
-			Key: encodedKey,
-		},
-	}
-	kvResp, err := t.store.SendReq(t.bo, tikvReq, keyLocation.Region, time.Minute)
-	log.Info(string(encodedKey), keyLocation.Region, string(keyLocation.StartKey), string(keyLocation.EndKey), kvResp, err)
-
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return kvResp.MvccGetByKey, nil
-}
-
-func (t *regionHandlerTool) getMvccByHandle(tableID, handle int64) (*kvrpcpb.MvccGetByKeyResponse, error) {
-	encodedKey := tablecodec.EncodeRowKeyWithHandle(tableID, handle)
-	return t.getMvccByEncodedKey(encodedKey)
-}
-
-func (t *regionHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []byte) (*kvrpcpb.MvccGetByStartTsResponse, error) {
-	for {
-		curRegion, err := t.regionCache.LocateKey(t.bo, startKey)
-		if err != nil {
-			log.Error(startTS, startKey, err)
-			return nil, errors.Trace(err)
-		}
-
-		tikvReq := &tikvrpc.Request{
-			Type: tikvrpc.CmdMvccGetByStartTs,
-			MvccGetByStartTs: &kvrpcpb.MvccGetByStartTsRequest{
-				StartTs: startTS,
-			},
-		}
-		tikvReq.Context.Priority = kvrpcpb.CommandPri_Low
-		kvResp, err := t.store.SendReq(t.bo, tikvReq, curRegion.Region, time.Hour)
-		log.Info(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), kvResp)
-		if err != nil {
-			log.Error(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), err)
-			return nil, errors.Trace(err)
-		}
-		data := kvResp.MvccGetByStartTS
-		if err := data.GetRegionError(); err != nil {
-			log.Warn(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), err)
-			continue
-		}
-
-		if len(data.GetError()) > 0 {
-			log.Error(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), data.GetError())
-			return nil, errors.New(data.GetError())
-		}
-
-		key := data.GetKey()
-		if len(key) > 0 {
-			return data, nil
-		}
-
-		if len(endKey) > 0 && curRegion.Contains(endKey) {
-			return nil, nil
-		}
-		if len(curRegion.EndKey) == 0 {
-			return nil, nil
-		}
-		startKey = curRegion.EndKey
-	}
-}
-
-func (t *regionHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values, idxCols []*model.ColumnInfo, handleStr string) (*kvrpcpb.MvccGetByKeyResponse, error) {
-	sc := new(stmtctx.StatementContext)
-	sc.TimeZone = time.UTC
-	idxRow, err := t.formValue2DatumRow(sc, values, idxCols)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	handle, err := strconv.ParseInt(handleStr, 10, 64)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	encodedKey, _, err := idx.GenIndexKey(sc, idxRow, handle, nil)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return t.getMvccByEncodedKey(encodedKey)
-}
-
-// formValue2DatumRow converts URL query string to a Datum Row.
-func (t *regionHandlerTool) formValue2DatumRow(sc *stmtctx.StatementContext, values url.Values, idxCols []*model.ColumnInfo) ([]types.Datum, error) {
-	data := make([]types.Datum, len(idxCols))
-	for i, col := range idxCols {
-		colName := col.Name.String()
-		vals, ok := values[colName]
-		if !ok {
-			return nil, errors.BadRequestf("Missing value for index column %s.", colName)
-		}
-
-		switch len(vals) {
-		case 0:
-			data[i].SetNull()
-		case 1:
-			bDatum := types.NewStringDatum(vals[0])
-			cDatum, err := bDatum.ConvertTo(sc, &col.FieldType)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			data[i] = cDatum
-		default:
-			return nil, errors.BadRequestf("Invalid query form for column '%s', it's values are %v."+
-				" Column value should be unique for one index record.", colName, vals)
-		}
-	}
-	return data, nil
-}
-
-func (t *regionHandlerTool) getTableID(dbName, tableName string) (int64, error) {
-	schema, err := t.schema()
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	tableVal, err := schema.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	return tableVal.Meta().ID, nil
-}
-
-func (t *regionHandlerTool) schema() (infoschema.InfoSchema, error) {
-	session, err := tidb.CreateSession(t.store.(kv.Storage))
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return domain.GetDomain(session.(sessionctx.Context)).InfoSchema(), nil
-}
-
-func (t *regionHandlerTool) handleMvccGetByHex(params map[string]string) (interface{}, error) {
-	encodedKey, err := hex.DecodeString(params[pHexKey])
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return t.getMvccByEncodedKey(encodedKey)
+	return h.getMvccByStartTs(uint64(startTS), startKey, endKey)
 }

@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testkit"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 func (s *testSuite) TestCharsetDatabase(c *C) {
@@ -169,6 +169,15 @@ func (s *testSuite) TestUser(c *C) {
 	tk.MustExec(createUserSQL)
 	dropUserSQL = `DROP USER 'test1'@'localhost', 'test3'@'localhost';`
 	tk.MustExec(dropUserSQL)
+
+	// Test 'identified by password'
+	createUserSQL = `CREATE USER 'test1'@'localhost' identified by password 'xxx';`
+	_, err = tk.Exec(createUserSQL)
+	c.Assert(terror.ErrorEqual(executor.ErrPasswordFormat, err), IsTrue)
+	createUserSQL = `CREATE USER 'test1'@'localhost' identified by password '*3D56A309CD04FA2EEF181462E59011F075C89548';`
+	tk.MustExec(createUserSQL)
+	dropUserSQL = `DROP USER 'test1'@'localhost';`
+	tk.MustExec(dropUserSQL)
 }
 
 func (s *testSuite) TestSetPwd(c *C) {
@@ -228,15 +237,15 @@ func (s *testSuite) TestFlushPrivileges(c *C) {
 	defer se.Close()
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "testflush", Hostname: "localhost"}, nil, nil), IsTrue)
 
-	goCtx := goctx.Background()
+	ctx := context.Background()
 	// Before flush.
-	_, err = se.Execute(goCtx, `SELECT Password FROM mysql.User WHERE User="testflush" and Host="localhost"`)
+	_, err = se.Execute(ctx, `SELECT Password FROM mysql.User WHERE User="testflush" and Host="localhost"`)
 	c.Check(err, NotNil)
 
 	tk.MustExec("FLUSH PRIVILEGES")
 
 	// After flush.
-	_, err = se.Execute(goCtx, `SELECT Password FROM mysql.User WHERE User="testflush" and Host="localhost"`)
+	_, err = se.Execute(ctx, `SELECT Password FROM mysql.User WHERE User="testflush" and Host="localhost"`)
 	c.Check(err, IsNil)
 
 	privileges.Enable = save

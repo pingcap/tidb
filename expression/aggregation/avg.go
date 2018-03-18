@@ -34,15 +34,6 @@ func (af *avgFunction) updateAvg(sc *stmtctx.StatementContext, evalCtx *AggEvalu
 	if value.IsNull() {
 		return nil
 	}
-	if af.HasDistinct {
-		d, err1 := evalCtx.DistinctChecker.Check([]types.Datum{value})
-		if err1 != nil {
-			return errors.Trace(err1)
-		}
-		if !d {
-			return nil
-		}
-	}
 	evalCtx.Value, err = calculateSum(sc, evalCtx.Value, value)
 	if err != nil {
 		return errors.Trace(err)

@@ -25,10 +25,9 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 /***
@@ -53,25 +52,13 @@ type GrantExec struct {
 	done bool
 }
 
-// Next implements Execution Next interface.
-func (e *GrantExec) Next(goCtx goctx.Context) (Row, error) {
-	if e.done {
-		return nil, nil
-	}
-	e.done = true
-	return nil, errors.Trace(e.run(goCtx))
-}
-
 // NextChunk implements the Executor NextChunk interface.
-func (e *GrantExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+func (e *GrantExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	if e.done {
 		return nil
 	}
 	e.done = true
-	return errors.Trace(e.run(goCtx))
-}
 
-func (e *GrantExec) run(goCtx goctx.Context) error {
 	dbName := e.Level.DBName
 	if len(dbName) == 0 {
 		dbName = e.ctx.GetSessionVars().CurrentDB
@@ -84,22 +71,13 @@ func (e *GrantExec) run(goCtx goctx.Context) error {
 			return errors.Trace(err)
 		}
 		if !exists {
-			pwd := ""
-			if user.AuthOpt != nil {
-				if user.AuthOpt.ByAuthString {
-					pwd = auth.EncodePassword(user.AuthOpt.AuthString)
-				} else {
-					if len(user.AuthOpt.HashString) == 41 && strings.HasPrefix(user.AuthOpt.HashString, "*") {
-						pwd = user.AuthOpt.HashString
-					} else {
-						return errors.Trace(ErrPasswordFormat)
-					}
-				}
+			pwd, ok := user.EncodedPassword()
+			if !ok {
+				return errors.Trace(ErrPasswordFormat)
 			}
-
 			user := fmt.Sprintf(`("%s", "%s", "%s")`, user.User.Hostname, user.User.Username, pwd)
 			sql := fmt.Sprintf(`INSERT INTO %s.%s (Host, User, Password) VALUES %s;`, mysql.SystemDB, mysql.UserTable, user)
-			_, err := e.ctx.(sqlexec.SQLExecutor).Execute(goctx.TODO(), sql)
+			_, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 			if err != nil {
 				return errors.Trace(err)
 			}

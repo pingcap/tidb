@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/logutil"
 	log "github.com/sirupsen/logrus"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var (
@@ -100,7 +100,7 @@ func newBenchDB() *benchDB {
 	terror.MustNil(err)
 	session, err := tidb.CreateSession(store)
 	terror.MustNil(err)
-	_, err = session.Execute(goctx.Background(), "use test")
+	_, err = session.Execute(context.Background(), "use test")
 	terror.MustNil(err)
 
 	return &benchDB{
@@ -110,19 +110,20 @@ func newBenchDB() *benchDB {
 }
 
 func (ut *benchDB) mustExec(sql string) {
-	rss, err := ut.session.Execute(goctx.Background(), sql)
+	rss, err := ut.session.Execute(context.Background(), sql)
 	if err != nil {
 		log.Fatal(err)
 	}
 	if len(rss) > 0 {
-		goCtx := goctx.Background()
+		ctx := context.Background()
 		rs := rss[0]
+		chk := rs.NewChunk()
 		for {
-			row, err1 := rs.Next(goCtx)
-			if err1 != nil {
-				log.Fatal(err1)
+			err := rs.NextChunk(ctx, chk)
+			if err != nil {
+				log.Fatal(err)
 			}
-			if row == nil {
+			if chk.NumRows() == 0 {
 				break
 			}
 		}

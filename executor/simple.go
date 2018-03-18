@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 // SimpleExec represents simple statement executor.
@@ -47,17 +47,8 @@ type SimpleExec struct {
 	is        infoschema.InfoSchema
 }
 
-// Next implements Execution Next interface.
-func (e *SimpleExec) Next(goCtx goctx.Context) (Row, error) {
-	return nil, errors.Trace(e.run(goCtx))
-}
-
 // NextChunk implements the Executor NextChunk interface.
-func (e *SimpleExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
-	return errors.Trace(e.run(goCtx))
-}
-
-func (e *SimpleExec) run(goCtx goctx.Context) (err error) {
+func (e *SimpleExec) NextChunk(ctx context.Context, chk *chunk.Chunk) (err error) {
 	if e.done {
 		return nil
 	}
@@ -153,13 +144,9 @@ func (e *SimpleExec) executeCreateUser(s *ast.CreateUserStmt) error {
 			}
 			continue
 		}
-		pwd := ""
-		if spec.AuthOpt != nil {
-			if spec.AuthOpt.ByAuthString {
-				pwd = auth.EncodePassword(spec.AuthOpt.AuthString)
-			} else {
-				pwd = auth.EncodePassword(spec.AuthOpt.HashString)
-			}
+		pwd, ok := spec.EncodedPassword()
+		if !ok {
+			return errors.Trace(ErrPasswordFormat)
 		}
 		user := fmt.Sprintf(`("%s", "%s", "%s")`, spec.User.Hostname, spec.User.Username, pwd)
 		users = append(users, user)
@@ -168,7 +155,7 @@ func (e *SimpleExec) executeCreateUser(s *ast.CreateUserStmt) error {
 		return nil
 	}
 	sql := fmt.Sprintf(`INSERT INTO %s.%s (Host, User, Password) VALUES %s;`, mysql.SystemDB, mysql.UserTable, strings.Join(users, ", "))
-	_, err := e.ctx.(sqlexec.SQLExecutor).Execute(goctx.Background(), sql)
+	_, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -219,7 +206,7 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 	}
 	if len(failedUsers) > 0 {
 		// Commit the transaction even if we returns error
-		err := e.ctx.Txn().Commit(goctx.Background())
+		err := e.ctx.Txn().Commit(context.Background())
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -251,7 +238,7 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 	}
 	if len(failedUsers) > 0 {
 		// Commit the transaction even if we returns error
-		err := e.ctx.Txn().Commit(goctx.Background())
+		err := e.ctx.Txn().Commit(context.Background())
 		if err != nil {
 			return errors.Trace(err)
 		}

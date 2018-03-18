@@ -22,13 +22,21 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 )
 
+// These are byte flags used for `HashCode()`.
+const (
+	constantFlag       byte = 0
+	columnFlag         byte = 1
+	scalarFunctionFlag byte = 3
+)
+
 // EvalAstExpr evaluates ast expression directly.
-var EvalAstExpr func(expr ast.ExprNode, ctx sessionctx.Context) (types.Datum, error)
+var EvalAstExpr func(ctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error)
 
 // Expression represents all scalar expression in SQL.
 type Expression interface {
@@ -66,7 +74,7 @@ type Expression interface {
 	Clone() Expression
 
 	// Equal checks whether two expressions are equal.
-	Equal(e Expression, ctx sessionctx.Context) bool
+	Equal(ctx sessionctx.Context, e Expression) bool
 
 	// IsCorrelated checks if this expression has correlated key.
 	IsCorrelated() bool
@@ -79,6 +87,13 @@ type Expression interface {
 
 	// ExplainInfo returns operator information to be explained.
 	ExplainInfo() string
+
+	// HashCode creates the hashcode for expression which can be used to identify itself from other expression.
+	// It generated as the following:
+	// Constant: ConstantFlag+encoded value
+	// Column: ColumnFlag+encoded value
+	// ScalarFunction: SFFlag+encoded function name + encoded arg_1 + encoded arg_2 + ...
+	HashCode(sc *stmtctx.StatementContext) []byte
 }
 
 // CNFExprs stands for a CNF expression.
@@ -94,7 +109,7 @@ func (e CNFExprs) Clone() CNFExprs {
 }
 
 // EvalBool evaluates expression list to a boolean value.
-func EvalBool(exprList CNFExprs, row types.Row, ctx sessionctx.Context) (bool, error) {
+func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row types.Row) (bool, error) {
 	for _, expr := range exprList {
 		data, err := expr.Eval(row)
 		if err != nil {
@@ -302,7 +317,7 @@ func ColumnInfos2ColumnsWithDBName(dbName, tblName model.CIStr, colInfos []*mode
 }
 
 // NewValuesFunc creates a new values function.
-func NewValuesFunc(offset int, retTp *types.FieldType, ctx sessionctx.Context) *ScalarFunction {
+func NewValuesFunc(ctx sessionctx.Context, offset int, retTp *types.FieldType) *ScalarFunction {
 	fc := &valuesFunctionClass{baseFunctionClass{ast.Values, 0, 0}, offset, retTp}
 	bt, err := fc.getFunction(ctx, nil)
 	terror.Log(errors.Trace(err))

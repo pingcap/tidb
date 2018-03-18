@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 // HandleDDLEvent begins to process a ddl task.
@@ -50,27 +50,27 @@ func (h *Handle) DDLEventCh() chan *util.Event {
 // new columns and indices which belong to this table.
 func (h *Handle) insertTableStats2KV(info *model.TableInfo) error {
 	exec := h.ctx.(sqlexec.SQLExecutor)
-	_, err := exec.Execute(goctx.Background(), "begin")
+	_, err := exec.Execute(context.Background(), "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = exec.Execute(goctx.Background(), fmt.Sprintf("insert into mysql.stats_meta (version, table_id) values(%d, %d)", h.ctx.Txn().StartTS(), info.ID))
+	_, err = exec.Execute(context.Background(), fmt.Sprintf("insert into mysql.stats_meta (version, table_id) values(%d, %d)", h.ctx.Txn().StartTS(), info.ID))
 	if err != nil {
 		return errors.Trace(err)
 	}
 	for _, col := range info.Columns {
-		_, err = exec.Execute(goctx.Background(), fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version) values(%d, 0, %d, 0, %d)", info.ID, col.ID, h.ctx.Txn().StartTS()))
+		_, err = exec.Execute(context.Background(), fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version) values(%d, 0, %d, 0, %d)", info.ID, col.ID, h.ctx.Txn().StartTS()))
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 	for _, idx := range info.Indices {
-		_, err = exec.Execute(goctx.Background(), fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version) values(%d, 1, %d, 0, %d)", info.ID, idx.ID, h.ctx.Txn().StartTS()))
+		_, err = exec.Execute(context.Background(), fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version) values(%d, 1, %d, 0, %d)", info.ID, idx.ID, h.ctx.Txn().StartTS()))
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
-	_, err = exec.Execute(goctx.Background(), "commit")
+	_, err = exec.Execute(context.Background(), "commit")
 	return errors.Trace(err)
 }
 
@@ -78,34 +78,34 @@ func (h *Handle) insertTableStats2KV(info *model.TableInfo) error {
 // This operation also updates version.
 func (h *Handle) insertColStats2KV(tableID int64, colInfo *model.ColumnInfo) error {
 	exec := h.ctx.(sqlexec.SQLExecutor)
-	_, err := exec.Execute(goctx.Background(), "begin")
+	_, err := exec.Execute(context.Background(), "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// First of all, we update the version.
-	_, err = exec.Execute(goctx.Background(), fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d ", h.ctx.Txn().StartTS(), tableID))
+	_, err = exec.Execute(context.Background(), fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d ", h.ctx.Txn().StartTS(), tableID))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	goCtx := goctx.TODO()
+	ctx := context.TODO()
 	// If we didn't update anything by last SQL, it means the stats of this table does not exist.
 	if h.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0 {
 		exec := h.ctx.(sqlexec.SQLExecutor)
 		// By this step we can get the count of this table, then we can sure the count and repeats of bucket.
 		var rs []ast.RecordSet
-		rs, err = exec.Execute(goCtx, fmt.Sprintf("select count from mysql.stats_meta where table_id = %d", tableID))
+		rs, err = exec.Execute(ctx, fmt.Sprintf("select count from mysql.stats_meta where table_id = %d", tableID))
 		if len(rs) > 0 {
 			defer terror.Call(rs[0].Close)
 		}
 		if err != nil {
 			return errors.Trace(err)
 		}
-		var row types.Row
-		row, err = rs[0].Next(goCtx)
+		chk := rs[0].NewChunk()
+		err = rs[0].NextChunk(ctx, chk)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		count := row.GetInt64(0)
+		count := chk.GetRow(0).GetInt64(0)
 		value := types.NewDatum(colInfo.OriginDefaultValue)
 		value, err = value.ConvertTo(h.ctx.GetSessionVars().StmtCtx, &colInfo.FieldType)
 		if err != nil {
@@ -113,13 +113,13 @@ func (h *Handle) insertColStats2KV(tableID int64, colInfo *model.ColumnInfo) err
 		}
 		if value.IsNull() {
 			// If the adding column has default value null, all the existing rows have null value on the newly added column.
-			_, err = exec.Execute(goCtx, fmt.Sprintf("insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count, null_count) values (%d, %d, 0, %d, 0, %d)", h.ctx.Txn().StartTS(), tableID, colInfo.ID, count))
+			_, err = exec.Execute(ctx, fmt.Sprintf("insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count, null_count) values (%d, %d, 0, %d, 0, %d)", h.ctx.Txn().StartTS(), tableID, colInfo.ID, count))
 			if err != nil {
 				return errors.Trace(err)
 			}
 		} else {
 			// If this stats exists, we insert histogram meta first, the distinct_count will always be one.
-			_, err = exec.Execute(goCtx, fmt.Sprintf("insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count) values (%d, %d, 0, %d, 1)", h.ctx.Txn().StartTS(), tableID, colInfo.ID))
+			_, err = exec.Execute(ctx, fmt.Sprintf("insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count) values (%d, %d, 0, %d, 1)", h.ctx.Txn().StartTS(), tableID, colInfo.ID))
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -128,12 +128,12 @@ func (h *Handle) insertColStats2KV(tableID int64, colInfo *model.ColumnInfo) err
 				return errors.Trace(err)
 			}
 			// There must be only one bucket for this new column and the value is the default value.
-			_, err = exec.Execute(goCtx, fmt.Sprintf("insert into mysql.stats_buckets (table_id, is_index, hist_id, bucket_id, repeats, count, lower_bound, upper_bound) values (%d, 0, %d, 0, %d, %d, X'%X', X'%X')", tableID, colInfo.ID, count, count, value.GetBytes(), value.GetBytes()))
+			_, err = exec.Execute(ctx, fmt.Sprintf("insert into mysql.stats_buckets (table_id, is_index, hist_id, bucket_id, repeats, count, lower_bound, upper_bound) values (%d, 0, %d, 0, %d, %d, X'%X', X'%X')", tableID, colInfo.ID, count, count, value.GetBytes(), value.GetBytes()))
 			if err != nil {
 				return errors.Trace(err)
 			}
 		}
 	}
-	_, err = exec.Execute(goCtx, "commit")
+	_, err = exec.Execute(ctx, "commit")
 	return errors.Trace(err)
 }
