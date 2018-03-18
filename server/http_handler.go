@@ -421,53 +421,25 @@ type IndexRegions struct {
 // RegionDetail is the response data for get region by ID
 // it includes indices and records detail in current region.
 type RegionDetail struct {
-	RegionID uint64      `json:"region_id"`
-	StartKey []byte      `json:"start_key"`
-	EndKey   []byte      `json:"end_key"`
-	Frames   []FrameItem `json:"frames"`
-}
-
-// addIndex insert a index into RegionDetail.
-func (rt *RegionDetail) addIndex(dbName, tName string, tID int64, indexName string, indexID int64) {
-	rt.Frames = append(rt.Frames, FrameItem{
-		DBName:    dbName,
-		TableName: tName,
-		TableID:   tID,
-		IndexName: indexName,
-		IndexID:   indexID,
-		IsRecord:  false,
-	})
-}
-
-// addRecord insert a table's record into RegionDetail.
-func (rt *RegionDetail) addRecord(dbName, tName string, tID int64) {
-	rt.Frames = append(rt.Frames, FrameItem{
-		DBName:    dbName,
-		TableName: tName,
-		TableID:   tID,
-		IsRecord:  true,
-	})
+	RegionID uint64       `json:"region_id"`
+	StartKey []byte       `json:"start_key"`
+	EndKey   []byte       `json:"end_key"`
+	Frames   []*FrameItem `json:"frames"`
 }
 
 // addTableInRange insert a table into RegionDetail
-// with index's id in range [startID,endID]. Table's
-// record would be included when endID is MaxInt64.
-func (rt *RegionDetail) addTableInRange(dbName string, curTable *model.TableInfo, startID, endID int64) {
+// with index's id or record in the range if r.
+func (rt *RegionDetail) addTableInRange(dbName string, curTable *model.TableInfo, r *RegionFrameRange) {
 	tName := curTable.Name.String()
 	tID := curTable.ID
 
 	for _, index := range curTable.Indices {
-		if index.ID >= startID && index.ID <= endID {
-			rt.addIndex(
-				dbName,
-				tName,
-				tID,
-				index.Name.String(),
-				index.ID)
+		if f := r.getIndexFrame(tID, index.ID, dbName, tName, index.Name.String()); f != nil {
+			rt.Frames = append(rt.Frames, f)
 		}
 	}
-	if endID == math.MaxInt64 {
-		rt.addRecord(dbName, tName, tID)
+	if f := r.getRecordFrame(tID, dbName, tName); f != nil {
+		rt.Frames = append(rt.Frames, f)
 	}
 }
 
@@ -760,8 +732,7 @@ func (h regionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// on [frameRange.firstTableID,frameRange.endTableID] is small enough.
 	for _, db := range schema.AllSchemas() {
 		for _, tableVal := range db.Tables {
-			start, end := frameRange.getIndexRangeForTable(tableVal.ID)
-			regionDetail.addTableInRange(db.Name.String(), tableVal, start, end)
+			regionDetail.addTableInRange(db.Name.String(), tableVal, frameRange)
 		}
 	}
 	writeData(w, regionDetail)
@@ -842,61 +813,50 @@ func NewRegionFrameRange(region *tikv.KeyLocation) (idxRange *RegionFrameRange, 
 	return idxRange, nil
 }
 
-// getFirstIdxIdRange return the first table's index range.
-// 1. [start,end] means index id in [start,end] are needed,while record key is not in.
-// 2. [start,~) means index's id in [start,~) are needed including record key index.
-// 3. (~,~) means only record key index is needed
-func (r *RegionFrameRange) getFirstIdxIDRange() (start, end int64) {
-	start = int64(math.MinInt64)
-	end = int64(math.MaxInt64)
-	if r.first.IsRecord {
-		start = end // need record key only,
-		return
+// getRecordFrame returns the record frame of a table. If the table's records
+// are not covered by this frame range, it returns nil.
+func (r *RegionFrameRange) getRecordFrame(tableID int64, dbName, tableName string) *FrameItem {
+	if tableID == r.first.TableID && r.first.IsRecord {
+		return r.first
+	}
+	if tableID == r.last.TableID && r.last.IsRecord {
+		return r.last
 	}
 
-	start = r.first.IndexID
-	if r.first.TableID != r.last.TableID || r.last.IsRecord {
-		return // [start,~)
-	}
-	end = r.last.IndexID // [start,end]
-	return
-}
-
-// getLastInxIdRange return the last table's index range.
-// (~,end] means index's id in (~,end] are legal, record key index not included.
-// (~,~) means all indexes are legal include record key index.
-func (r *RegionFrameRange) getLastInxIDRange() (start, end int64) {
-	start = int64(math.MinInt64)
-	end = int64(math.MaxInt64)
-	if r.last.IsRecord {
-		return
-	}
-	end = r.last.IndexID
-	return
-}
-
-// getIndexRangeForTable return the legal index range for table with tableID.
-// end=math.MaxInt64 means record key index is included.
-func (r *RegionFrameRange) getIndexRangeForTable(tableID int64) (start, end int64) {
-	switch tableID {
-	case r.firstTableID():
-		return r.getFirstIdxIDRange()
-	case r.lastTableID():
-		return r.getLastInxIDRange()
-	default:
-		if tableID < r.lastTableID() && tableID > r.firstTableID() {
-			return int64(math.MinInt64), int64(math.MaxInt64)
+	if tableID >= r.first.TableID && tableID < r.last.TableID {
+		return &FrameItem{
+			DBName:    dbName,
+			TableName: tableName,
+			TableID:   tableID,
+			IsRecord:  true,
 		}
 	}
-	return int64(math.MaxInt64), int64(math.MinInt64)
+	return nil
 }
 
-func (r RegionFrameRange) firstTableID() int64 {
-	return r.first.TableID
-}
+// getIndexFrame returns the indnex frame of a table. If the table's indices are
+// not covered by this frame range, it returns nil.
+func (r *RegionFrameRange) getIndexFrame(tableID, indexID int64, dbName, tableName, indexname string) *FrameItem {
+	if tableID == r.first.TableID && !r.first.IsRecord && indexID == r.first.IndexID {
+		return r.first
+	}
+	if tableID == r.last.TableID && indexID == r.last.IndexID {
+		return r.last
+	}
 
-func (r RegionFrameRange) lastTableID() int64 {
-	return r.last.TableID
+	greaterThanFirst := tableID > r.first.TableID || (tableID == r.first.TableID && !r.first.IsRecord && indexID > r.first.IndexID)
+	lessThanLast := tableID < r.last.TableID || (tableID == r.last.TableID && (r.last.IsRecord || indexID < r.last.IndexID))
+	if greaterThanFirst && lessThanLast {
+		return &FrameItem{
+			DBName:    dbName,
+			TableName: tableName,
+			TableID:   tableID,
+			IsRecord:  false,
+			IndexName: indexname,
+			IndexID:   indexID,
+		}
+	}
+	return nil
 }
 
 // parseQuery is used to parse query string in URL with shouldUnescape, due to golang http package can not distinguish
