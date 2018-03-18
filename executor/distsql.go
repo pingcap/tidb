@@ -876,9 +876,7 @@ func (w *tableWorker) pickAndExecTask(ctx context.Context) {
 // executeTask executes the table look up tasks. We will construct a table reader and send request by handles.
 // Then we hold the returning rows and finish this task.
 func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) error {
-	var err error
-	var tableReader Executor
-	tableReader, err = w.buildTblReader(ctx, task.handles)
+	tableReader, err := w.buildTblReader(ctx, task.handles)
 	if err != nil {
 		log.Error(err)
 		return errors.Trace(err)
@@ -886,7 +884,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 	defer terror.Call(tableReader.Close)
 
 	task.memTracker = w.memTracker
-	memUsage := int64(cap(task.handles) + 8)
+	memUsage := int64(cap(task.handles) * 8)
 	task.memUsage = memUsage
 	task.memTracker.Consume(memUsage)
 	handleCnt := len(task.handles)
@@ -930,7 +928,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 			handle := row.GetInt64(w.handleIdx)
 			obtainedHandlesMap[handle] = struct{}{}
 		}
-		err = errors.Errorf("handle count %d isn't equal to value count %d, missing handles %v in a batch",
+		return errors.Errorf("handle count %d isn't equal to value count %d, missing handles %v in a batch",
 			handleCnt, len(task.rows), GetLackHandles(task.handles, obtainedHandlesMap))
 	}
 
