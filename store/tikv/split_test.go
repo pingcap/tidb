@@ -75,7 +75,10 @@ func (s *testSplitSuite) TestSplitBatchGet(c *C) {
 }
 
 func (s *testSplitSuite) TestStaleEpoch(c *C) {
-	mockPDClient := &mockPDClient{client: s.store.regionCache.pdClient}
+	mockPDClient := &mockPDClient{
+		client: s.store.regionCache.pdClient,
+		kv:     make(map[string]string),
+	}
 	s.store.regionCache.pdClient = mockPDClient
 
 	loc, err := s.store.regionCache.LocateKey(s.bo, []byte("a"))

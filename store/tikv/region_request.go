@@ -65,20 +65,6 @@ func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regio
 	// switch tikvStoreSendReqResult {
 	// case "timeout":
 	// 	 return nil, errors.New("timeout")
-	// case "GCNotLeader":
-	// 	 if req.Type == tikvrpc.CmdGC {
-	//		 return &tikvrpc.Response{
-	//			 Type:   tikvrpc.CmdGC,
-	//			 GC: &kvrpcpb.GCResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
-	//		 }, nil
-	//	 }
-	// case "GCServerIsBusy":
-	//	 if req.Type == tikvrpc.CmdGC {
-	//		 return &tikvrpc.Response{
-	//			 Type: tikvrpc.CmdGC,
-	//			 GC:   &kvrpcpb.GCResponse{RegionError: &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}}},
-	//		 }, nil
-	//	 }
 	// }
 
 	for {
