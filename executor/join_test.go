@@ -215,6 +215,25 @@ func (s *testSuite) TestJoin(c *C) {
 	) `)
 	result.Check(testkit.Rows("<nil>"))
 
+	// test virtual rows are included (issue#5771)
+	result = tk.MustQuery(`SELECT 1 FROM (SELECT 1) t1, (SELECT 1) t2`)
+	result.Check(testkit.Rows("1"))
+
+	result = tk.MustQuery(`
+		SELECT @NUM := @NUM + 1 as NUM FROM
+		( SELECT 1 UNION ALL
+			SELECT 2 UNION ALL
+			SELECT 3
+		) a
+		INNER JOIN
+		( SELECT 1 UNION ALL
+			SELECT 2 UNION ALL
+			SELECT 3
+		) b,
+		(SELECT @NUM := 0) d;
+	`)
+	result.Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
+
 	// This case is for testing:
 	// when the main thread calls Executor.Close() while the out data fetch worker and join workers are still working,
 	// we need to stop the goroutines as soon as possible to avoid unexpected error.
@@ -626,6 +645,13 @@ func (s *testSuite) TestSubquery(c *C) {
 	tk.MustExec("INSERT INTO t1 (a) values(1), (2), (3), (4), (5)")
 	result = tk.MustQuery("select (select /*+ TIDB_INLJ(x1) */ x2.a from t1 x1, t1 x2 where x1.a = t1.a and x1.a = x2.a) from t1")
 	result.Check(testkit.Rows("1", "2", "3", "4", "5"))
+
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("create table t2(b int)")
+	tk.MustExec("insert into t1 values(1)")
+	tk.MustExec("insert into t2 values(1)")
+	tk.MustQuery("select * from t1 where a in (select a from t2)").Check(testkit.Rows("1"))
 }
 
 func (s *testSuite) TestInSubquery(c *C) {
@@ -715,7 +741,9 @@ func (s *testSuite) TestJoinLeak(c *C) {
 	tk.MustExec("commit")
 	result, err := tk.Exec("select * from t t1 left join (select 1) t2 on 1")
 	c.Assert(err, IsNil)
-	result.Next(context.Background())
+	chk := result.NewChunk()
+	err = result.NextChunk(context.Background(), chk)
+	c.Assert(err, IsNil)
 	time.Sleep(100 * time.Millisecond)
 	result.Close()
 }
@@ -782,13 +810,9 @@ func (s *testSuite) TestIndexLookupJoin(c *C) {
 	tk.MustExec("CREATE TABLE `s` (`a` int, `b` char (20))")
 	tk.MustExec("CREATE INDEX idx_s_a ON s(`a`)")
 	tk.MustExec("INSERT INTO s VALUES (-277544960, 'fpnndsjo') ,  (2, 'kfpnndsjof') ,  (2, 'vtdiockfpn'), (-277544960, 'fpnndsjo') ,  (2, 'kfpnndsjof') ,  (6, 'ckfp')")
-	for _, enableChk := range []bool{false, true} {
-		tk.Se.GetSessionVars().EnableChunk = enableChk
-		tk.MustQuery("select /*+ TIDB_INLJ(t, s) */ t.a from t join s on t.a = s.a").Check(testkit.Rows("-277544960", "-277544960"))
-		tk.MustQuery("select /*+ TIDB_INLJ(t, s) */ t.a from t left join s on t.a = s.a").Check(testkit.Rows("148307968", "-1327693824", "-277544960", "-277544960"))
-		tk.MustQuery("select /*+ TIDB_INLJ(t, s) */ t.a from t right join s on t.a = s.a").Check(testkit.Rows("-277544960", "<nil>", "<nil>", "-277544960", "<nil>", "<nil>"))
-
-	}
+	tk.MustQuery("select /*+ TIDB_INLJ(t, s) */ t.a from t join s on t.a = s.a").Check(testkit.Rows("-277544960", "-277544960"))
+	tk.MustQuery("select /*+ TIDB_INLJ(t, s) */ t.a from t left join s on t.a = s.a").Check(testkit.Rows("148307968", "-1327693824", "-277544960", "-277544960"))
+	tk.MustQuery("select /*+ TIDB_INLJ(t, s) */ t.a from t right join s on t.a = s.a").Check(testkit.Rows("-277544960", "<nil>", "<nil>", "-277544960", "<nil>", "<nil>"))
 	tk.MustExec("DROP TABLE IF EXISTS t;")
 	tk.MustExec("CREATE TABLE t(a BIGINT PRIMARY KEY, b BIGINT);")
 	tk.MustExec("INSERT INTO t VALUES(1, 2);")

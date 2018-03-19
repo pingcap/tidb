@@ -14,15 +14,18 @@
 package tikv_test
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
 	gofail "github.com/coreos/gofail/runtime"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/testkit"
 	"golang.org/x/net/context"
 )
 
@@ -30,16 +33,23 @@ var _ = Suite(new(testSQLSuite))
 
 type testSQLSuite struct {
 	store tikv.Storage
+	dom   *domain.Domain
 }
 
 func (s *testSQLSuite) SetUpSuite(c *C) {
-	s.store, _ = mockstore.NewTestTiKVStorage(false, "")
+	var err error
+	s.store, err = mockstore.NewTestTiKVStorage(false, "")
+	c.Assert(err, IsNil)
+	s.dom, err = tidb.BootstrapSession(s.store)
+	c.Assert(err, IsNil)
+}
+
+func (s *testSQLSuite) TearDownSuite(c *C) {
+	s.dom.Close()
+	s.store.Close()
 }
 
 func (s *testSQLSuite) TestFailBusyServerCop(c *C) {
-	_, err := tidb.BootstrapSession(s.store)
-	c.Assert(err, IsNil)
-
 	session, err := tidb.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 
@@ -60,11 +70,48 @@ func (s *testSQLSuite) TestFailBusyServerCop(c *C) {
 			defer terror.Call(rs[0].Close)
 		}
 		c.Assert(err, IsNil)
-		row, err := rs[0].Next(context.Background())
+		chk := rs[0].NewChunk()
+		err = rs[0].NextChunk(context.Background(), chk)
 		c.Assert(err, IsNil)
-		c.Assert(row, NotNil)
-		c.Assert(row.GetString(0), Equals, "True")
+		c.Assert(chk.NumRows() == 0, IsFalse)
+		c.Assert(chk.GetRow(0).GetString(0), Equals, "True")
 	}()
 
 	wg.Wait()
+}
+
+func (s *testSQLSuite) TestCoprocessorStreamRecvTimeout(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int)")
+	for i := 0; i < 200; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+	}
+
+	// rowsPerChunk in MockTiKV is 64, so the result will be 4 chunks.
+	enable := true
+	ctx := context.WithValue(context.Background(), "mockTiKVStreamRecvHook", func(ctx context.Context) {
+		if !enable {
+			return
+		}
+
+		select {
+		case <-ctx.Done():
+		case <-time.After(time.Minute):
+		}
+		enable = false
+	})
+
+	res, err := tk.Se.Execute(ctx, "select * from t")
+	c.Assert(err, IsNil)
+
+	chk := res[0].NewChunk()
+	for {
+		err := res[0].NextChunk(ctx, chk)
+		c.Assert(err, IsNil)
+		if chk.NumRows() == 0 {
+			break
+		}
+		chk.Reset()
+	}
 }

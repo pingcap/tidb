@@ -50,9 +50,11 @@ type Config struct {
 	RunDDL          bool   `toml:"run-ddl" json:"run-ddl"`
 	SplitTable      bool   `toml:"split-table" json:"split-table"`
 	TokenLimit      uint   `toml:"token-limit" json:"token-limit"`
-	EnableChunk     bool   `toml:"enable-chunk" json:"enable-chunk"`
 	OOMAction       string `toml:"oom-action" json:"oom-action"`
 	EnableStreaming bool   `toml:"enable-streaming" json:"enable-streaming"`
+	// Set sys variable lower-case-table-names, ref: https://dev.mysql.com/doc/refman/5.7/en/identifier-case-sensitivity.html.
+	// TODO: We actually only support mode 2, which keeps the original case, but the comparison is case-insensitive.
+	LowerCaseTableNames int `toml:"lower-case-table-names" json:"lower-case-table-names"`
 
 	Log               Log               `toml:"log" json:"log"`
 	Security          Security          `toml:"security" json:"security"`
@@ -217,22 +219,23 @@ type TiKVClient struct {
 }
 
 var defaultConf = Config{
-	Host:            "0.0.0.0",
-	Port:            4000,
-	Store:           "mocktikv",
-	Path:            "/tmp/tidb",
-	RunDDL:          true,
-	SplitTable:      true,
-	Lease:           "10s",
-	TokenLimit:      1000,
-	EnableChunk:     true,
-	OOMAction:       "log",
-	EnableStreaming: false,
+	Host:                "0.0.0.0",
+	Port:                4000,
+	Store:               "mocktikv",
+	Path:                "/tmp/tidb",
+	RunDDL:              true,
+	SplitTable:          true,
+	Lease:               "10s",
+	TokenLimit:          1000,
+	OOMAction:           "log",
+	EnableStreaming:     false,
+	LowerCaseTableNames: 2,
 	Log: Log{
 		Level:  "info",
 		Format: "text",
 		File: logutil.FileLogConfig{
 			LogRotate: true,
+			MaxSize:   logutil.DefaultLogMaxSize,
 		},
 		SlowThreshold:      300,
 		ExpensiveThreshold: 10000,

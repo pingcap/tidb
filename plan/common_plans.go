@@ -43,11 +43,26 @@ type ShowDDLJobs struct {
 	baseSchemaProducer
 }
 
+// ShowDDLJobQueries is for showing DDL job queries sql.
+type ShowDDLJobQueries struct {
+	baseSchemaProducer
+
+	JobIDs []int64
+}
+
 // CheckTable is used for checking table data, built from the 'admin check table' statement.
 type CheckTable struct {
 	baseSchemaProducer
 
 	Tables []*ast.TableName
+}
+
+// RecoverIndex is used for backfilling corrupted index data.
+type RecoverIndex struct {
+	baseSchemaProducer
+
+	Table     *ast.TableName
+	IndexName string
 }
 
 // CheckIndex is used for checking index data, built from the 'admin check index' statement.
@@ -57,6 +72,16 @@ type CheckIndex struct {
 	IndexLookUpReader *PhysicalIndexLookUpReader
 	DBName            string
 	IdxName           string
+}
+
+// CheckIndexRange is used for checking index data, output the index values that handle within begin and end.
+type CheckIndexRange struct {
+	baseSchemaProducer
+
+	Table     *ast.TableName
+	IndexName string
+
+	HandleRanges []ast.HandleRange
 }
 
 // CancelDDLJobs represents a cancel DDL jobs plan.

@@ -242,8 +242,8 @@ func (s *testSuite) TestAggregation(c *C) {
 	result.Check(testkit.Rows("<nil>", "<nil>"))
 
 	result = tk.MustQuery("select count(*) from information_schema.columns")
-	// When adding new memory table in information_schema, please update this variable.
-	columnCountOfAllInformationSchemaTables := "743"
+	// When adding new memory columns in information_schema, please update this variable.
+	columnCountOfAllInformationSchemaTables := "736"
 	result.Check(testkit.Rows(columnCountOfAllInformationSchemaTables))
 
 	tk.MustExec("drop table if exists t1")
@@ -273,6 +273,11 @@ func (s *testSuite) TestAggregation(c *C) {
 	// test without any aggregate function
 	tk.MustQuery("select 10 from idx_agg group by b").Check(testkit.Rows("10", "10"))
 	tk.MustQuery("select 11 from idx_agg group by a").Check(testkit.Rows("11", "11"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int(11), b decimal(15,2))")
+	tk.MustExec("insert into t values(1,771.64),(2,378.49),(3,920.92),(4,113.97)")
+	tk.MustQuery("select a, max(b) from t group by a limit 2").Check(testkit.Rows("1 771.64", "2 378.49"))
 }
 
 func (s *testSuite) TestStreamAggPushDown(c *C) {

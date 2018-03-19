@@ -19,13 +19,16 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pingcap/tidb/util/testleak"
+	tipb "github.com/pingcap/tipb/go-tipb"
 )
 
 var _ = Suite(&testSuite{})
@@ -42,6 +45,27 @@ func TestT(t *testing.T) {
 var _ = Suite(&testSuite{})
 
 type testSuite struct {
+	sctx sessionctx.Context
+}
+
+func (s *testSuite) SetUpSuite(c *C) {
+	ctx := mock.NewContext()
+	ctx.Store = &mock.Store{Client: &mock.Client{MockResponse: &mockResponse{}}}
+	s.sctx = ctx
+}
+
+func (s *testSuite) TearDownSuite(c *C) {
+}
+
+func (s *testSuite) SetUpTest(c *C) {
+	testleak.BeforeTest()
+	ctx := s.sctx.(*mock.Context)
+	store := ctx.Store.(*mock.Store)
+	store.Client = &mock.Client{MockResponse: &mockResponse{}}
+}
+
+func (s *testSuite) TearDownTest(c *C) {
+	testleak.AfterTest(c)()
 }
 
 type handleRange struct {
@@ -110,7 +134,7 @@ func (s *testSuite) TestTableRangesToKVRanges(c *C) {
 		},
 	}
 
-	actual := TableRangesToKVRanges(13, ranges)
+	actual := TableRangesToKVRanges(13, ranges, nil)
 	expect := []kv.KeyRange{
 		{
 			StartKey: kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xd, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
@@ -190,7 +214,7 @@ func (s *testSuite) TestIndexRangesToKVRanges(c *C) {
 		},
 	}
 
-	actual, err := IndexRangesToKVRanges(new(stmtctx.StatementContext), 12, 15, ranges)
+	actual, err := IndexRangesToKVRanges(new(stmtctx.StatementContext), 12, 15, ranges, nil)
 	c.Assert(err, IsNil)
 	for i := range actual {
 		c.Assert(actual[i], DeepEquals, expect[i])
@@ -226,7 +250,7 @@ func (s *testSuite) TestRequestBuilder1(c *C) {
 		},
 	}
 
-	actual, err := (&RequestBuilder{}).SetTableRanges(12, ranges).
+	actual, err := (&RequestBuilder{}).SetTableRanges(12, ranges, nil).
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
 		SetKeepOrder(false).

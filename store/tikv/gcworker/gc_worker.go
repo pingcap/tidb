@@ -765,6 +765,9 @@ func (w *GCWorker) checkLeader() (bool, error) {
 		return true, nil
 	}
 
+	_, err = session.Execute(ctx, "ROLLBACK")
+	terror.Log(errors.Trace(err))
+
 	_, err = session.Execute(ctx, "BEGIN")
 	if err != nil {
 		return false, errors.Trace(err)
@@ -881,15 +884,16 @@ func (w *GCWorker) loadValueFromSysTable(key string, s tidb.Session) (string, er
 	if err != nil {
 		return "", errors.Trace(err)
 	}
-	row, err := rs[0].Next(ctx)
+	chk := rs[0].NewChunk()
+	err = rs[0].NextChunk(ctx, chk)
 	if err != nil {
 		return "", errors.Trace(err)
 	}
-	if row == nil {
+	if chk.NumRows() == 0 {
 		log.Debugf("[gc worker] load kv, %s:nil", key)
 		return "", nil
 	}
-	value := row.GetString(0)
+	value := chk.GetRow(0).GetString(0)
 	log.Debugf("[gc worker] load kv, %s:%s", key, value)
 	return value, nil
 }

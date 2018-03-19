@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/kvcache"
 	binlog "github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
@@ -335,7 +336,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 		// Don't retry in BatchInsert mode. As a counter-example, insert into t1 select * from t2,
 		// BatchInsert already commit the first batch 1000 rows, then it commit 1000-2000 and retry the statement,
 		// Finally t1 will have more data than t2, with no errors return to user!
-		if s.isRetryableError(err) && !s.sessionVars.BatchInsert {
+		if s.isRetryableError(err) && !s.sessionVars.BatchInsert && commitRetryLimit != 0 {
 			log.Warnf("[%d] retryable error: %v, txn: %v", s.sessionVars.ConnectionID, err, s.txn)
 			// Transactions will retry 2 ~ commitRetryLimit times.
 			// We make larger transactions retry less times to prevent cluster resource outage.
@@ -608,16 +609,16 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 func drainRecordSet(ctx context.Context, rs ast.RecordSet) ([]types.Row, error) {
 	var rows []types.Row
 	for {
-		row, err := rs.Next(ctx)
-		if err != nil {
-			return nil, errors.Trace(err)
+		chk := rs.NewChunk()
+		err := rs.NextChunk(ctx, chk)
+		if err != nil || chk.NumRows() == 0 {
+			return rows, errors.Trace(err)
 		}
-		if row == nil {
-			break
+		iter := chunk.NewIterator4Chunk(chk)
+		for r := iter.Begin(); r != iter.End(); r = iter.Next() {
+			rows = append(rows, r)
 		}
-		rows = append(rows, row)
 	}
-	return rows, nil
 }
 
 // getExecRet executes restricted sql and the result is one column.
@@ -792,6 +793,7 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []ast.Rec
 		startTS := time.Now()
 		stmtNodes, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
 		if err != nil {
+			s.rollbackOnError(ctx)
 			log.Warnf("[%d] parse error:\n%v\n%s", connID, err, sql)
 			return nil, errors.Trace(err)
 		}
@@ -807,6 +809,7 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []ast.Rec
 			executor.ResetStmtCtx(s, stmtNode)
 			stmt, err := compiler.Compile(ctx, stmtNode)
 			if err != nil {
+				s.rollbackOnError(ctx)
 				log.Warnf("[%d] compile error:\n%v\n%s", connID, err, sql)
 				return nil, errors.Trace(err)
 			}
@@ -831,6 +834,13 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []ast.Rec
 	return recordSets, nil
 }
 
+// rollbackOnError makes sure the next statement starts a new transaction with the latest InfoSchema.
+func (s *session) rollbackOnError(ctx context.Context) {
+	if !s.sessionVars.InTxn() {
+		terror.Log(s.RollbackTxn(ctx))
+	}
+}
+
 // PrepareStmt is used for executing prepare statement in binary protocol
 func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error) {
 	if s.sessionVars.TxnCtx.InfoSchema == nil {
@@ -849,7 +859,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	// So we have to call PrepareTxnCtx here.
 	s.PrepareTxnCtx(ctx)
 	prepareExec := executor.NewPrepareExec(s, executor.GetInfoSchema(s), sql)
-	err = prepareExec.DoPrepare()
+	err = prepareExec.NextChunk(ctx, nil)
 	if err != nil {
 		err = errors.Trace(err)
 		return
@@ -1044,8 +1054,6 @@ func CreateSession4Test(store kv.Storage) (Session, error) {
 	if err == nil {
 		// initialize session variables for test.
 		s.GetSessionVars().MaxChunkSize = 2
-		// enable chunk when test
-		s.GetSessionVars().EnableChunk = true
 	}
 	return s, errors.Trace(err)
 }

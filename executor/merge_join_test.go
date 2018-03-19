@@ -236,6 +236,7 @@ func checkPlanAndRun(tk *testkit.TestKit, c *C, plan string, sql string) *testki
 }
 
 func (s *testSuite) TestMergeJoin(c *C) {
+	// FIXME: the TIDB_SMJ hint does not really work when there is no index on join onCondition.
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -275,11 +276,8 @@ func (s *testSuite) TestMergeJoin(c *C) {
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (c1 int)")
 	tk.MustExec("insert into t1 values (1), (1), (1)")
-	for _, enableChk := range []bool{false, true} {
-		tk.Se.GetSessionVars().EnableChunk = enableChk
-		result = tk.MustQuery("select/*+ TIDB_SMJ(t) */  * from t1 a join t1 b on a.c1 = b.c1;")
-		result.Check(testkit.Rows("1 1", "1 1", "1 1", "1 1", "1 1", "1 1", "1 1", "1 1", "1 1"))
-	}
+	result = tk.MustQuery("select/*+ TIDB_SMJ(t) */  * from t1 a join t1 b on a.c1 = b.c1;")
+	result.Check(testkit.Rows("1 1", "1 1", "1 1", "1 1", "1 1", "1 1", "1 1", "1 1", "1 1"))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists t1")
@@ -306,11 +304,8 @@ func (s *testSuite) TestMergeJoin(c *C) {
 	tk.MustExec("create table t1(c1 int unsigned)")
 	tk.MustExec("insert into t values (1)")
 	tk.MustExec("insert into t1 values (1)")
-	for _, enableChk := range []bool{false, true} {
-		tk.Se.GetSessionVars().EnableChunk = enableChk
-		result = tk.MustQuery("select /*+ TIDB_SMJ(t,t1) */ t.c1 from t , t1 where t.c1 = t1.c1")
-		result.Check(testkit.Rows("1"))
-	}
+	result = tk.MustQuery("select /*+ TIDB_SMJ(t,t1) */ t.c1 from t , t1 where t.c1 = t1.c1")
+	result.Check(testkit.Rows("1"))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index a(a), index b(b))")
@@ -323,11 +318,7 @@ func (s *testSuite) TestMergeJoin(c *C) {
 	tk.MustExec("insert into t value(1,1),(1,2),(1,3),(1,4)")
 	tk.MustExec("create table s(a int, primary key(a))")
 	tk.MustExec("insert into s value(1)")
-	for _, enableChk := range []bool{false, true} {
-		tk.Se.GetSessionVars().EnableChunk = enableChk
-		tk.MustQuery("select /*+ TIDB_SMJ(t, s) */ count(*) from t join s on t.a = s.a").Check(testkit.Rows("4"))
-	}
-
+	tk.MustQuery("select /*+ TIDB_SMJ(t, s) */ count(*) from t join s on t.a = s.a").Check(testkit.Rows("4"))
 }
 
 func (s *testSuite) Test3WaysMergeJoin(c *C) {

@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
@@ -848,6 +849,7 @@ type InsertValues struct {
 	maxRowsInBatch        uint64
 	lastInsertID          uint64
 	needFillDefaultValues bool
+	hasExtraHandle        bool
 
 	SelectExec Executor
 
@@ -893,8 +895,9 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) (Row, error
 	// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
 	// For example, without IGNORE, a row that duplicates an existing UNIQUE index or PRIMARY KEY value in
 	// the table causes a duplicate-key error and the statement is aborted. With IGNORE, the row is discarded and no error occurs.
+	// However, if the `on duplicate update` is also specified, the duplicated row will be updated.
 	// Using BatchGet in insert ignore to mark rows as duplicated before we add records to the table.
-	if e.IgnoreErr {
+	if e.IgnoreErr && len(e.OnDuplicate) == 0 {
 		var err error
 		rows, err = batchMarkDupRows(e.ctx, e.Table, rows)
 		if err != nil {
@@ -1164,7 +1167,7 @@ func (e *InsertValues) getColumns(tableCols []*table.Column) ([]*table.Column, e
 		for _, v := range e.GenColumns {
 			columns = append(columns, v.Name.O)
 		}
-		cols, err = table.FindCols(tableCols, columns)
+		cols, err = table.FindCols(tableCols, columns, e.Table.Meta().PKIsHandle)
 		if err != nil {
 			return nil, errors.Errorf("INSERT INTO %s: %s", e.Table.Meta().Name.O, err)
 		}
@@ -1180,13 +1183,19 @@ func (e *InsertValues) getColumns(tableCols []*table.Column) ([]*table.Column, e
 		for _, v := range e.GenColumns {
 			columns = append(columns, v.Name.O)
 		}
-		cols, err = table.FindCols(tableCols, columns)
+		cols, err = table.FindCols(tableCols, columns, e.Table.Meta().PKIsHandle)
 		if err != nil {
 			return nil, errors.Errorf("INSERT INTO %s: %s", e.Table.Meta().Name.O, err)
 		}
 	} else {
 		// If e.Columns are empty, use all columns instead.
 		cols = tableCols
+	}
+	for _, col := range cols {
+		if col.Name.L == model.ExtraHandleName.L {
+			e.hasExtraHandle = true
+			break
+		}
 	}
 
 	// Check column whether is specified only once.
@@ -1280,8 +1289,12 @@ func (e *InsertValues) getRows(cols []*table.Column, ignoreErr bool) (rows [][]t
 // getRow eval the insert statement. Because the value of column may calculated based on other column,
 // it use fillDefaultValues to init the empty row before eval expressions when needFillDefaultValues is true.
 func (e *InsertValues) getRow(cols []*table.Column, list []expression.Expression, ignoreErr bool) ([]types.Datum, error) {
-	row := make(types.DatumRow, len(e.Table.Cols()))
-	hasValue := make([]bool, len(e.Table.Cols()))
+	rowLen := len(e.Table.Cols())
+	if e.hasExtraHandle {
+		rowLen++
+	}
+	row := make(types.DatumRow, rowLen)
+	hasValue := make([]bool, rowLen)
 
 	if e.needFillDefaultValues {
 		if err := e.fillDefaultValues(row, hasValue, ignoreErr); err != nil {
