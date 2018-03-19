@@ -1117,17 +1117,17 @@ func (s *testPlanSuite) TestAggEliminater(c *C) {
 		// Max to Limit + Sort-Desc.
 		{
 			sql:  "select max(a) from t;",
-			best: "TableReader(Table(t)->Limit)->Limit->HashAgg",
+			best: "TableReader(Table(t)->Limit)->Limit->StreamAgg",
 		},
 		// Min to Limit + Sort.
 		{
 			sql:  "select min(a) from t;",
-			best: "TableReader(Table(t)->Limit)->Limit->HashAgg",
+			best: "TableReader(Table(t)->Limit)->Limit->StreamAgg",
 		},
 		// Min to Limit + Sort, and isnull() should be added.
 		{
 			sql:  "select min(c_str) from t;",
-			best: "IndexReader(Index(t.c_d_e_str)[[-inf,+inf]]->Limit)->Limit->HashAgg",
+			best: "IndexReader(Index(t.c_d_e_str)[[-inf,+inf]]->Limit)->Limit->StreamAgg",
 		},
 		// Do nothing to max + firstrow.
 		{
@@ -1137,7 +1137,7 @@ func (s *testPlanSuite) TestAggEliminater(c *C) {
 		// If max/min contains scalar function, we can still do transformation.
 		{
 			sql:  "select max(a+1) from t;",
-			best: "TableReader(Table(t)->Sel([not(isnull(plus(test.t.a, 1)))])->TopN([plus(test.t.a, 1) true],0,1))->TopN([plus(test.t.a, 1) true],0,1)->HashAgg",
+			best: "TableReader(Table(t)->Sel([not(isnull(plus(test.t.a, 1)))])->TopN([plus(test.t.a, 1) true],0,1))->TopN([plus(test.t.a, 1) true],0,1)->StreamAgg",
 		},
 		// Do nothing to max+min.
 		{
@@ -1152,7 +1152,7 @@ func (s *testPlanSuite) TestAggEliminater(c *C) {
 		// If inner is not a data source, we can still do transformation.
 		{
 			sql:  "select max(a) from (select t1.a from t t1 join t t2 on t1.a=t2.a) t",
-			best: "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->Limit->HashAgg",
+			best: "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->Limit->StreamAgg",
 		},
 	}
 
