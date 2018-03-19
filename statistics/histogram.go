@@ -104,7 +104,7 @@ func (hg *Histogram) GetUpper(idx int) *types.Datum {
 	return &d
 }
 
-// AvgColSize is the average column size of the histogram
+// AvgColSize is the average column size of the histogram.
 func (c *Column) AvgColSize() float64 {
 	switch c.Histogram.tp.Tp {
 	case mysql.TypeFloat:

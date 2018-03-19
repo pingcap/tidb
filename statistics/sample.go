@@ -37,7 +37,7 @@ type SampleCollector struct {
 	MaxSampleSize int64
 	FMSketch      *FMSketch
 	CMSketch      *CMSketch
-	TotalSize     int64 // TotalSize is the total size of column
+	TotalSize     int64 // TotalSize is the total size of column.
 }
 
 // MergeSampleCollector merges two sample collectors.
@@ -103,6 +103,7 @@ func (c *SampleCollector) collect(sc *stmtctx.StatementContext, d types.Datum) e
 		if c.CMSketch != nil {
 			c.CMSketch.InsertBytes(d.GetBytes())
 		}
+		// Minus one is to remove the flag byte.
 		c.TotalSize += int64(len(d.GetBytes()) - 1)
 	}
 	c.seenValues++
