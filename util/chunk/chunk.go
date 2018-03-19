@@ -562,8 +562,7 @@ func (r Row) GetSet(colIdx int) types.Set {
 // GetMyDecimal returns the MyDecimal value with the colIdx.
 func (r Row) GetMyDecimal(colIdx int) *types.MyDecimal {
 	col := r.c.columns[colIdx]
-	dec := *(*types.MyDecimal)(unsafe.Pointer(&col.data[r.idx*types.MyDecimalStructSize]))
-	return &dec
+	return (*types.MyDecimal)(unsafe.Pointer(&col.data[r.idx*types.MyDecimalStructSize]))
 }
 
 // GetJSON returns the JSON value with the colIdx.
@@ -620,7 +619,8 @@ func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 		}
 	case mysql.TypeNewDecimal:
 		if !r.IsNull(colIdx) {
-			d.SetMysqlDecimal(r.GetMyDecimal(colIdx))
+			dec := *r.GetMyDecimal(colIdx)
+			d.SetMysqlDecimal(&dec)
 			d.SetLength(tp.Flen)
 			d.SetFrac(tp.Decimal)
 		}
