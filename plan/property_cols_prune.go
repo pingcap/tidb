@@ -78,7 +78,6 @@ func (p *LogicalJoin) preparePossibleProperties() [][]*expression.Column {
 }
 
 func (la *LogicalAggregation) preparePossibleProperties() [][]*expression.Column {
-	// `preparePossibleProperties` is a recursive method. So children's `preparePossibleProperties` must be called.
 	childProps := la.children[0].preparePossibleProperties()
 	// If there's no group-by item, the stream aggregation could have no order property. So we can add an empty property
 	// when its group-by item is empty.
