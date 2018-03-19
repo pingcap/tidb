@@ -83,7 +83,7 @@ type mergeJoinInnerTable struct {
 }
 
 func (t *mergeJoinInnerTable) init(ctx context.Context, chk4Reader *chunk.Chunk) (err error) {
-	if t.reader == nil || t.joinKeys == nil || len(t.joinKeys) == 0 || t.ctx == nil {
+	if t.reader == nil || t.joinKeys == nil || len(t.joinKeys) == 0 || ctx == nil {
 		return errors.Errorf("Invalid arguments: Empty arguments detected.")
 	}
 	t.ctx = ctx
