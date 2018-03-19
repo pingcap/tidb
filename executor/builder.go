@@ -699,8 +699,11 @@ func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 		e.innerTable.joinKeys = leftKeys
 	}
 
+	// optimizer should guarantee that filters on inner table are pushed down
+	// to tikv or extracted to a Selection.
 	if len(innerFilter) != 0 {
-		panic("merge join's inner filter should be empty.")
+		b.err = errors.Annotate(ErrBuildExecutor, "merge join's inner filter should be empty.")
+		return nil
 	}
 
 	metrics.ExecutorCounter.WithLabelValues("MergeJoinExec").Inc()

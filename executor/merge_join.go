@@ -57,7 +57,14 @@ type mergeJoinOuterTable struct {
 	row  chunk.Row
 }
 
-// mergeJoinInnerTable represents a row block with the same join keys
+func (t *mergeJoinOuterTable) init(chk *chunk.Chunk, maxChunkSize int) {
+	t.chk = chk
+	t.iter = chunk.NewIterator4Chunk(chk)
+	t.selected = make([]bool, 0, maxChunkSize)
+}
+
+// mergeJoinInnerTable represents inner table for merge join, which returns a
+// whole join group belongs to the same join key.
 type mergeJoinInnerTable struct {
 	reader   Executor
 	joinKeys []*expression.Column
@@ -75,16 +82,17 @@ type mergeJoinInnerTable struct {
 	resourceQueue  []*chunk.Chunk
 }
 
-func (t *mergeJoinInnerTable) init(chk4Reader *chunk.Chunk) (err error) {
+func (t *mergeJoinInnerTable) init(ctx context.Context, chk4Reader *chunk.Chunk) (err error) {
 	if t.reader == nil || t.joinKeys == nil || len(t.joinKeys) == 0 || t.ctx == nil {
 		return errors.Errorf("Invalid arguments: Empty arguments detected.")
 	}
+	t.ctx = ctx
 	t.curResult = chk4Reader
 	t.curIter = chunk.NewIterator4Chunk(t.curResult)
 	t.curRow = t.curIter.End()
 	t.curResultInUse = false
 	t.resultQueue = append(t.resultQueue, chk4Reader)
-	t.firstRow4Key, err = t.nextSelectedRow()
+	t.firstRow4Key, err = t.nextRow()
 	t.compareFuncs = make([]chunk.CompareFunc, 0, len(t.joinKeys))
 	for i := range t.joinKeys {
 		t.compareFuncs = append(t.compareFuncs, chunk.GetCompareFunc(t.joinKeys[i].RetType))
@@ -103,7 +111,7 @@ func (t *mergeJoinInnerTable) rowsWithSameKey() ([]chunk.Row, error) {
 	t.sameKeyRows = t.sameKeyRows[:0]
 	t.sameKeyRows = append(t.sameKeyRows, t.firstRow4Key)
 	for {
-		selectedRow, err := t.nextSelectedRow()
+		selectedRow, err := t.nextRow()
 		// error happens or no more data.
 		if err != nil || selectedRow == t.curIter.End() {
 			t.firstRow4Key = t.curIter.End()
@@ -119,7 +127,7 @@ func (t *mergeJoinInnerTable) rowsWithSameKey() ([]chunk.Row, error) {
 	}
 }
 
-func (t *mergeJoinInnerTable) nextSelectedRow() (chunk.Row, error) {
+func (t *mergeJoinInnerTable) nextRow() (chunk.Row, error) {
 	if t.curRow == t.curIter.End() {
 		t.reallocReaderResult()
 		err := t.reader.NextChunk(t.ctx, t.curResult)
@@ -188,8 +196,7 @@ func compareChunkRow(cmpFuncs []chunk.CompareFunc, lhsRow, rhsRow chunk.Row, lhs
 }
 
 func (e *MergeJoinExec) prepare(ctx context.Context, chk *chunk.Chunk) error {
-	e.innerTable.ctx = ctx
-	err := e.innerTable.init(e.childrenResults[e.outerIdx^1])
+	err := e.innerTable.init(ctx, e.childrenResults[e.outerIdx^1])
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -199,9 +206,10 @@ func (e *MergeJoinExec) prepare(ctx context.Context, chk *chunk.Chunk) error {
 		return errors.Trace(err)
 	}
 
+	// init outer table.
 	e.outerTable.chk = e.childrenResults[e.outerIdx]
-	e.outerTable.selected = make([]bool, 0, e.maxChunkSize)
 	e.outerTable.iter = chunk.NewIterator4Chunk(e.outerTable.chk)
+	e.outerTable.selected = make([]bool, 0, e.maxChunkSize)
 
 	err = e.fetchNextOuterRows(ctx)
 	if err != nil {
@@ -260,7 +268,7 @@ func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasM
 
 			e.outerTable.row = e.outerTable.iter.Next()
 
-			if chk.NumRows() >= e.maxChunkSize {
+			if chk.NumRows() == e.maxChunkSize {
 				return true, nil
 			}
 			continue
@@ -282,6 +290,8 @@ func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasM
 	}
 }
 
+// fetchNextInnerRows fetches the next join group belongs to the same join key
+// on inner table.
 func (e *MergeJoinExec) fetchNextInnerRows() (err error) {
 	e.innerRows, err = e.innerTable.rowsWithSameKey()
 	if err != nil {
@@ -292,6 +302,9 @@ func (e *MergeJoinExec) fetchNextInnerRows() (err error) {
 	return nil
 }
 
+// fetchNextOuterRows fetches the next Chunk of outer table. Rows in a Chunk
+// may not all belong to the same join key, but all the rows are guaranteed to
+// be sorted according to the join key.
 func (e *MergeJoinExec) fetchNextOuterRows(ctx context.Context) (err error) {
 	err = e.outerTable.reader.NextChunk(ctx, e.outerTable.chk)
 	if err != nil {
