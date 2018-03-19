@@ -59,6 +59,9 @@ func (s *testScanSuite) beginTxn(c *C) *tikvTxn {
 }
 
 func (s *testScanSuite) TestSeek(c *C) {
+	if *withTiKV {
+		c.Skip("tikv use only one instance, this test will fail when it run parallelly with others")
+	}
 	for _, rowNum := range s.rowNums {
 		txn := s.beginTxn(c)
 		for i := 0; i < rowNum; i++ {

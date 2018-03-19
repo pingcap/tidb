@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
@@ -35,7 +36,33 @@ func newTestTiKVStore() (kv.Storage, error) {
 	if err != nil {
 		return nil, err
 	}
-	return NewTestTiKVStore(client, pdClient, nil, nil)
+	store, err := NewTestTiKVStore(client, pdClient, nil, nil)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if err := clearStorage(store); err != nil {
+		store.Close()
+		return nil, errors.Trace(err)
+	}
+	return store, err
+}
+
+func clearStorage(store kv.Storage) error {
+	txn, err := store.Begin()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	iter, err := txn.Seek(nil)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for iter.Valid() {
+		txn.Delete(iter.Key())
+		if err := iter.Next(); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return txn.Commit(context.Background())
 }
 
 func newTestStore(c *C) *tikvStore {
