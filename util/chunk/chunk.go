@@ -562,7 +562,8 @@ func (r Row) GetSet(colIdx int) types.Set {
 // GetMyDecimal returns the MyDecimal value with the colIdx.
 func (r Row) GetMyDecimal(colIdx int) *types.MyDecimal {
 	col := r.c.columns[colIdx]
-	return (*types.MyDecimal)(unsafe.Pointer(&col.data[r.idx*types.MyDecimalStructSize]))
+	dec := *(*types.MyDecimal)(unsafe.Pointer(&col.data[r.idx*types.MyDecimalStructSize]))
+	return &dec
 }
 
 // GetJSON returns the JSON value with the colIdx.
