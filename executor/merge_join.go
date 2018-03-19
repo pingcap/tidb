@@ -57,12 +57,6 @@ type mergeJoinOuterTable struct {
 	row  chunk.Row
 }
 
-func (t *mergeJoinOuterTable) init(chk *chunk.Chunk, maxChunkSize int) {
-	t.chk = chk
-	t.iter = chunk.NewIterator4Chunk(chk)
-	t.selected = make([]bool, 0, maxChunkSize)
-}
-
 // mergeJoinInnerTable represents inner table for merge join, which returns a
 // whole join group belongs to the same join key.
 type mergeJoinInnerTable struct {
