@@ -97,7 +97,7 @@ func initStatsHistograms4Chunk(is infoschema.InfoSchema, tables statsCache, iter
 				cms = nil
 				terror.Log(errors.Trace(err))
 			}
-			hist := NewHistogram(id, ndv, nullCount, version, types.NewFieldType(mysql.TypeBlob), chunk.InitialCapacity, totColSize)
+			hist := NewHistogram(id, ndv, nullCount, version, types.NewFieldType(mysql.TypeBlob), chunk.InitialCapacity, 0)
 			table.Indices[hist.ID] = &Index{Histogram: *hist, CMSketch: cms, Info: idxInfo}
 		} else {
 			var colInfo *model.ColumnInfo

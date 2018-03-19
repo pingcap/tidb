@@ -575,7 +575,7 @@ func upgradeToVer17(s Session) {
 }
 
 func upgradeToVer18(s Session) {
-	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `tot_col_size` bigint(64) default 0", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `tot_col_size` bigint(64) NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.

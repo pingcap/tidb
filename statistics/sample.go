@@ -79,7 +79,9 @@ func SampleCollectorFromProto(collector *tipb.SampleCollector) *SampleCollector 
 		NullCount: collector.NullCount,
 		Count:     collector.Count,
 		FMSketch:  FMSketchFromProto(collector.FmSketch),
-		TotalSize: *collector.TotalSize,
+	}
+	if collector.TotalSize != nil {
+		s.TotalSize = *collector.TotalSize
 	}
 	s.CMSketch = CMSketchFromProto(collector.CmSketch)
 	for _, val := range collector.Samples {

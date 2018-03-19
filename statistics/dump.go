@@ -99,7 +99,7 @@ func (h *Handle) LoadStatsFromJSON(tableInfo *model.TableInfo, jsonTbl *JSONTabl
 				continue
 			}
 			hist := HistogramFromProto(jsonIdx.Histogram)
-			hist.ID, hist.NullCount, hist.LastUpdateVersion, hist.TotColSize = idxInfo.ID, jsonIdx.NullCount, jsonIdx.LastUpdateVersion, jsonIdx.TotColSize
+			hist.ID, hist.NullCount, hist.LastUpdateVersion = idxInfo.ID, jsonIdx.NullCount, jsonIdx.LastUpdateVersion
 			idx := &Index{
 				Histogram: *hist,
 				CMSketch:  CMSketchFromProto(jsonIdx.CMSketch),

@@ -116,8 +116,6 @@ func (c *Column) AvgColSize() float64 {
 		return 16
 	case mysql.TypeNewDecimal:
 		return types.MyDecimalStructSize
-	case mysql.TypeNull:
-		return 0
 	default:
 		if c.Count == 0 {
 			return 0
@@ -544,7 +542,6 @@ func MergeHistograms(sc *stmtctx.StatementContext, lh *Histogram, rh *Histogram,
 		return lh, nil
 	}
 	lh.NDV += rh.NDV
-	lh.TotColSize += rh.TotColSize
 	lLen := lh.Len()
 	cmp, err := lh.GetUpper(lLen-1).CompareDatum(sc, rh.GetLower(0))
 	if err != nil {

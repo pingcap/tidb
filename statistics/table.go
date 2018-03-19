@@ -87,14 +87,13 @@ func (h *Handle) indexStatsFromStorage(row types.Row, table *Table, tableInfo *m
 	distinct := row.GetInt64(3)
 	histVer := row.GetUint64(4)
 	nullCount := row.GetInt64(5)
-	totColSize := row.GetInt64(6)
 	idx := table.Indices[histID]
 	for _, idxInfo := range tableInfo.Indices {
 		if histID != idxInfo.ID {
 			continue
 		}
 		if idx == nil || idx.LastUpdateVersion < histVer {
-			hg, err := histogramFromStorage(h.ctx, tableInfo.ID, histID, types.NewFieldType(mysql.TypeBlob), distinct, 1, histVer, nullCount, totColSize)
+			hg, err := histogramFromStorage(h.ctx, tableInfo.ID, histID, types.NewFieldType(mysql.TypeBlob), distinct, 1, histVer, nullCount, 0)
 			if err != nil {
 				return errors.Trace(err)
 			}
