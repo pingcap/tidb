@@ -60,14 +60,17 @@ func NewQueryFeedback(tableID int64, hist *Histogram, expected int64, desc bool)
 }
 
 var (
-	// MaxNumberOfRanges is the max number of ranges before split to collect detailed range counts.
+	// MaxNumberOfRanges is the max number of ranges before split to collect feedback.
 	MaxNumberOfRanges = 20
-	// FeedbackProbability is the probability to collect detailed range counts.
+	// FeedbackProbability is the probability to collect the feedback.
 	FeedbackProbability = 0.0
 )
 
-// CollectDetailed decides whether to collect the detailed range counts.
-func (q *QueryFeedback) CollectDetailed(numOfRanges int) bool {
+// CollectFeedback decides whether to collect the feedback. It returns false when:
+// 1: the histogram is nil or has no buckets;
+// 2: the number of scan ranges exceeds the limit;
+// 3: it does not pass the probabilistic sampler.
+func (q *QueryFeedback) CollectFeedback(numOfRanges int) bool {
 	if q.hist == nil || q.hist.Len() == 0 {
 		q.Invalidate()
 		return false
