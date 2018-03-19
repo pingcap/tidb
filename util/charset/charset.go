@@ -50,19 +50,6 @@ var charsetInfos = []*Charset{
 	{CharsetBin, CollationBin, make(map[string]*Collation), "binary", 1},
 }
 
-func init() {
-	for _, c := range charsetInfos {
-		charsets[c.Name] = c
-	}
-	for _, c := range collations {
-		charset, ok := charsets[c.CharsetName]
-		if !ok {
-			continue
-		}
-		charset.Collations[c.Name] = c
-	}
-}
-
 // Desc is a charset description.
 type Desc struct {
 	Name             string
@@ -413,4 +400,18 @@ var collations = []*Collation{
 	{245, "utf8mb4", "utf8mb4_croatian_ci", false},
 	{246, "utf8mb4", "utf8mb4_unicode_520_ci", false},
 	{247, "utf8mb4", "utf8mb4_vietnamese_ci", false},
+}
+
+// init method always puts to the end of file.
+func init() {
+	for _, c := range charsetInfos {
+		charsets[c.Name] = c
+	}
+	for _, c := range collations {
+		charset, ok := charsets[c.CharsetName]
+		if !ok {
+			continue
+		}
+		charset.Collations[c.Name] = c
+	}
 }
