@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"golang.org/x/net/context"
 )
@@ -90,7 +91,7 @@ func (s *testSQLSuite) TestCoprocessorStreamRecvTimeout(c *C) {
 
 	// rowsPerChunk in MockTiKV is 64, so the result will be 4 chunks.
 	enable := true
-	ctx := context.WithValue(context.Background(), "mockTiKVStreamRecvHook", func(ctx context.Context) {
+	ctx := context.WithValue(context.Background(), mock.HookKeyForTest("mockTiKVStreamRecvHook"), func(ctx context.Context) {
 		if !enable {
 			return
 		}
