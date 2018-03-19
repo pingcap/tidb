@@ -22,6 +22,7 @@ import (
 )
 
 type testScanSuite struct {
+	oneByOneSuite
 	store   *tikvStore
 	prefix  string
 	rowNums []int
@@ -30,6 +31,7 @@ type testScanSuite struct {
 var _ = Suite(&testScanSuite{})
 
 func (s *testScanSuite) SetUpSuite(c *C) {
+	s.oneByOneSuite.SetUpSuite(c)
 	s.store = newTestStore(c)
 	s.prefix = fmt.Sprintf("seek_%d", time.Now().Unix())
 	s.rowNums = append(s.rowNums, 1, scanBatchSize, scanBatchSize+1)
@@ -50,6 +52,7 @@ func (s *testScanSuite) TearDownSuite(c *C) {
 	c.Assert(err, IsNil)
 	err = s.store.Close()
 	c.Assert(err, IsNil)
+	s.oneByOneSuite.TearDownSuite(c)
 }
 
 func (s *testScanSuite) beginTxn(c *C) *tikvTxn {
@@ -59,9 +62,6 @@ func (s *testScanSuite) beginTxn(c *C) *tikvTxn {
 }
 
 func (s *testScanSuite) TestSeek(c *C) {
-	if *withTiKV {
-		c.Skip("tikv use only one instance, this test will fail when it run parallelly with others")
-	}
 	for _, rowNum := range s.rowNums {
 		txn := s.beginTxn(c)
 		for i := 0; i < rowNum; i++ {
