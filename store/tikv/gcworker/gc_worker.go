@@ -350,14 +350,19 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64) error {
 	startTime := time.Now()
 	regions := 0
 	for _, r := range ranges {
-		result, err := tikv.DeleteRange(ctx, bo, w.store, r)
+		startKey, rangeEndKey := r.Range()
+
+		deleteRangeTask := tikv.NewDeleteRangeTask(w.store, ctx, bo, startKey, rangeEndKey)
+		err := deleteRangeTask.Execute()
+
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if result.Canceled {
+		if deleteRangeTask.IsCanceled() {
 			return errors.New("[gc worker] gc job canceled")
 		}
 
+		regions += deleteRangeTask.Regions()
 		session := createSession(w.store)
 		err = util.CompleteDeleteRange(session, r)
 		session.Close()

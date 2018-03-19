@@ -1,37 +1,62 @@
+// Copyright 2018 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package tikv
 
 import (
-	"github.com/pingcap/tidb/ddl/util"
-	"context"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"bytes"
+	"context"
+
 	"github.com/juju/errors"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
 
-type DeleteRangeResult struct {
-	Regions int
-	Canceled bool
+type DeleteRangeTask struct {
+	regions  int
+	canceled bool
+	store    Storage
+	ctx      context.Context
+	bo       *Backoffer
+	startKey []byte
+	endKey   []byte
 }
 
-func DeleteRange(ctx context.Context, bo *Backoffer, store Storage, r util.DelRangeTask) (DeleteRangeResult, error) {
-	result := DeleteRangeResult{
-		Regions: 0,
-		Canceled: false,
+func NewDeleteRangeTask(store Storage, ctx context.Context, bo *Backoffer, startKey []byte, endKey []byte) DeleteRangeTask {
+	return DeleteRangeTask{
+		regions:  0,
+		canceled: false,
+		store:    store,
+		ctx:      ctx,
+		bo:       bo,
+		startKey: startKey,
+		endKey:   endKey,
 	}
+}
 
-	startKey, rangeEndKey := r.Range()
+func (t DeleteRangeTask) Execute() error {
+	startKey, rangeEndKey := t.startKey, t.endKey
 	for {
 		select {
-		case <-ctx.Done():
-			result.Canceled = true
-			return result, nil
+		case <-t.ctx.Done():
+			t.canceled = true
+			return nil
 		default:
 		}
 
-		loc, err := store.GetRegionCache().LocateKey(bo, startKey)
+		loc, err := t.store.GetRegionCache().LocateKey(t.bo, startKey)
 		if err != nil {
-			return result, errors.Trace(err)
+			return errors.Trace(err)
 		}
 
 		endKey := loc.EndKey
@@ -47,34 +72,42 @@ func DeleteRange(ctx context.Context, bo *Backoffer, store Storage, r util.DelRa
 			},
 		}
 
-		resp, err := store.SendReq(bo, req, loc.Region, ReadTimeoutMedium)
+		resp, err := t.store.SendReq(t.bo, req, loc.Region, ReadTimeoutMedium)
 		if err != nil {
-			return result, errors.Trace(err)
+			return errors.Trace(err)
 		}
 		regionErr, err := resp.GetRegionError()
 		if err != nil {
-			return result, errors.Trace(err)
+			return errors.Trace(err)
 		}
 		if regionErr != nil {
-			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+			err = t.bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
-				return result, errors.Trace(err)
+				return errors.Trace(err)
 			}
 			continue
 		}
 		deleteRangeResp := resp.DeleteRange
 		if deleteRangeResp == nil {
-			return result, errors.Trace(ErrBodyMissing)
+			return errors.Trace(ErrBodyMissing)
 		}
 		if err := deleteRangeResp.GetError(); err != "" {
-			return result, errors.Errorf("unexpected delete range err: %v", err)
+			return errors.Errorf("unexpected delete range err: %v", err)
 		}
-		result.Regions++
+		t.regions++
 		if bytes.Equal(endKey, rangeEndKey) {
 			break
 		}
 		startKey = endKey
 	}
 
-	return result, nil
+	return nil
+}
+
+func (t DeleteRangeTask) Regions() int {
+	return t.regions
+}
+
+func (t DeleteRangeTask) IsCanceled() bool {
+	return t.canceled
 }
