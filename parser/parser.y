@@ -341,7 +341,9 @@ import (
 	profiles	"PROFILES"
 	quarter		"QUARTER"
 	query		"QUERY"
+	queries		"QUERIES"
 	quick		"QUICK"
+	recover 	"RECOVER"
 	redundant	"REDUNDANT"
 	reload		"RELOAD"
 	repeatable	"REPEATABLE"
@@ -420,6 +422,7 @@ import (
 	cancel		"CANCEL"
 	ddl		"DDL"
 	jobs		"JOBS"
+	job		    "JOB"
 	stats		"STATS"
 	statsMeta       "STATS_META"
 	statsHistograms "STATS_HISTOGRAMS"
@@ -2527,11 +2530,13 @@ UnReservedKeyword:
 | "REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "INDEXES" | "PROCESSLIST"
 | "SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "MODIFY" | "EVENTS" | "PARTITIONS"
 | "NONE" | "SUPER" | "EXCLUSIVE" | "STATS_PERSISTENT" | "ROW_COUNT" | "COALESCE" | "MONTH" | "PROCESS" | "PROFILES"
-| "MICROSECOND" | "MINUTE" | "PLUGINS" | "QUERY" | "SECOND" | "SEPARATOR" | "SHARE" | "SHARED" | "MAX_CONNECTIONS_PER_HOUR" | "MAX_QUERIES_PER_HOUR" | "MAX_UPDATES_PER_HOUR"
-| "MAX_USER_CONNECTIONS" | "REPLICATION" | "CLIENT" | "SLAVE" | "RELOAD" | "TEMPORARY" | "ROUTINE" | "EVENT" | "ALGORITHM" | "DEFINER" | "INVOKER" | "MERGE" | "TEMPTABLE" | "UNDEFINED" | "SECURITY" | "CASCADED"
+| "MICROSECOND" | "MINUTE" | "PLUGINS" | "QUERY" | "QUERIES" | "SECOND" | "SEPARATOR" | "SHARE" | "SHARED" | "MAX_CONNECTIONS_PER_HOUR" | "MAX_QUERIES_PER_HOUR" | "MAX_UPDATES_PER_HOUR"
+| "MAX_USER_CONNECTIONS" | "REPLICATION" | "CLIENT" | "SLAVE" | "RELOAD" | "TEMPORARY" | "ROUTINE" | "EVENT" | "ALGORITHM" | "DEFINER" | "INVOKER" | "MERGE" | "TEMPTABLE" | "UNDEFINED" | "SECURITY" | "CASCADED" | "RECOVER"
+
+
 
 TiDBKeyword:
-"ADMIN" | "CANCEL" | "DDL" | "JOBS" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "STATS_HEALTHY" | "TIDB" | "TIDB_HJ" | "TIDB_SMJ" | "TIDB_INLJ"
+"ADMIN" | "CANCEL" | "DDL" | "JOBS" | "JOB" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "STATS_HEALTHY" | "TIDB" | "TIDB_HJ" | "TIDB_SMJ" | "TIDB_INLJ"
 
 NotKeywordToken:
  "ADDDATE" | "BIT_AND" | "BIT_OR" | "BIT_XOR" | "CAST" | "COUNT" | "CURTIME" | "DATE_ADD" | "DATE_SUB" | "EXTRACT" | "GET_FORMAT" | "GROUP_CONCAT" | "MIN" | "MAX" | "NOW" | "POSITION"
@@ -2585,6 +2590,10 @@ InsertValues:
 |	ValueSym ValuesList %prec insertValues
 	{
 		$$ = &ast.InsertStmt{Lists:  $2.([][]ast.ExprNode)}
+	}
+|	'(' SelectStmt ')'
+	{
+		$$ = &ast.InsertStmt{Select: $2.(*ast.SelectStmt)}
 	}
 |	SelectStmt
 	{
@@ -4765,6 +4774,14 @@ AdminStmt:
 			Index: string($5),
 		}
 	}
+|	"ADMIN" "RECOVER" "INDEX" TableName Identifier
+	{
+		$$ = &ast.AdminStmt{
+			Tp: ast.AdminRecoverIndex,
+			Tables: []*ast.TableName{$4.(*ast.TableName)},
+			Index: string($5),
+		}
+	}
 |	"ADMIN" "CHECK" "INDEX" TableName Identifier HandleRangeList
 	{
 		$$ = &ast.AdminStmt{
@@ -4779,6 +4796,13 @@ AdminStmt:
 		$$ = &ast.AdminStmt{
 			Tp: ast.AdminCancelDDLJobs,
 			JobIDs: $5.([]int64),
+		}
+	}
+|	"ADMIN" "SHOW" "DDL" "JOB" "QUERIES" NumList
+	{
+		$$ = &ast.AdminStmt{
+			Tp: ast.AdminShowDDLJobQueries,
+			JobIDs: $6.([]int64),
 		}
 	}
 

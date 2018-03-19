@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tipb/go-tipb"
+	tipb "github.com/pingcap/tipb/go-tipb"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -2874,7 +2874,7 @@ type builtinUnixTimestampIntSig struct {
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_unix-timestamp
 func (b *builtinUnixTimestampIntSig) evalInt(row types.Row) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalTime(b.ctx, row)
-	if err != nil && terror.ErrorEqual(types.ErrInvalidTimeFormat, err) {
+	if err != nil && terror.ErrorEqual(types.ErrInvalidTimeFormat.GenByArgs(val), err) {
 		// Return 0 for invalid date time.
 		return 0, false, nil
 	}
@@ -4425,7 +4425,7 @@ func (b *builtinTimestampAddSig) evalString(row types.Row) (string, bool, error)
 	case "YEAR":
 		tb = tm1.AddDate(int(v), 0, 0)
 	default:
-		return "", true, errors.Trace(types.ErrInvalidTimeFormat)
+		return "", true, errors.Trace(types.ErrInvalidTimeFormat.GenByArgs(unit))
 	}
 	r := types.Time{Time: types.FromGoTime(tb), Type: mysql.TypeDatetime, Fsp: fsp}
 	if err = r.Check(); err != nil {

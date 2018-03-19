@@ -933,9 +933,10 @@ func (s *testSessionSuite) TestResultType(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	rs, err := tk.Exec(`select cast(null as char(30))`)
 	c.Assert(err, IsNil)
-	row, err := rs.Next(context.Background())
+	chk := rs.NewChunk()
+	err = rs.NextChunk(context.Background(), chk)
 	c.Assert(err, IsNil)
-	c.Assert(row.IsNull(0), IsTrue)
+	c.Assert(chk.GetRow(0).IsNull(0), IsTrue)
 	c.Assert(rs.Fields()[0].Column.FieldType.Tp, Equals, mysql.TypeVarString)
 }
 
@@ -1942,4 +1943,35 @@ func (s *testSessionSuite) TestSetGlobalTZ(c *C) {
 
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	tk1.MustQuery("show variables like 'time_zone'").Check(testkit.Rows("time_zone +00:00"))
+}
+
+func (s *testSessionSuite) TestRollbackOnCompileError(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("insert t values (1)")
+
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk2.MustQuery("select * from t").Check(testkit.Rows("1"))
+
+	tk.MustExec("rename table t to t2")
+
+	var meetErr bool
+	for i := 0; i < 100; i++ {
+		_, err := tk2.Exec("insert t values (1)")
+		if err != nil {
+			meetErr = true
+			break
+		}
+	}
+	c.Assert(meetErr, IsTrue)
+	tk.MustExec("rename table t2 to t")
+	var recoverErr bool
+	for i := 0; i < 100; i++ {
+		_, err := tk2.Exec("insert t values (1)")
+		if err == nil {
+			recoverErr = true
+			break
+		}
+	}
+	c.Assert(recoverErr, IsTrue)
 }

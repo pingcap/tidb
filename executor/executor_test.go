@@ -74,6 +74,7 @@ type testSuite struct {
 	cluster   *mocktikv.Cluster
 	mvccStore *mocktikv.MvccStore
 	store     kv.Storage
+	domain    *domain.Domain
 	*parser.Parser
 	ctx *mock.Context
 
@@ -101,11 +102,13 @@ func (s *testSuite) SetUpSuite(c *C) {
 		tidb.SetSchemaLease(0)
 		tidb.SetStatsLease(0)
 	}
-	_, err := tidb.BootstrapSession(s.store)
+	d, err := tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
+	s.domain = d
 }
 
 func (s *testSuite) TearDownSuite(c *C) {
+	s.domain.Close()
 	s.store.Close()
 	autoid.SetStep(s.autoIDStep)
 }
@@ -136,16 +139,20 @@ func (s *testSuite) TestAdmin(c *C) {
 	// cancel DDL jobs test
 	r, err := tk.Exec("admin cancel ddl jobs 1")
 	c.Assert(err, IsNil, Commentf("err %v", err))
-	row, err := r.Next(ctx)
+	chk := r.NewChunk()
+	err = r.NextChunk(ctx, chk)
 	c.Assert(err, IsNil)
+	row := chk.GetRow(0)
 	c.Assert(row.Len(), Equals, 2)
-	c.Assert(row.GetInt64(0), Equals, int64(1))
+	c.Assert(row.GetString(0), Equals, "1")
 	c.Assert(row.GetString(1), Equals, "error: Can't find this job")
 
 	r, err = tk.Exec("admin show ddl")
 	c.Assert(err, IsNil)
-	row, err = r.Next(ctx)
+	chk = r.NewChunk()
+	err = r.NextChunk(ctx, chk)
 	c.Assert(err, IsNil)
+	row = chk.GetRow(0)
 	c.Assert(row.Len(), Equals, 4)
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
@@ -157,17 +164,20 @@ func (s *testSuite) TestAdmin(c *C) {
 	// ownerInfos := strings.Split(ddlInfo.Owner.String(), ",")
 	// c.Assert(rowOwnerInfos[0], Equals, ownerInfos[0])
 	c.Assert(row.GetString(2), Equals, "")
-	row, err = r.Next(ctx)
+	chk = r.NewChunk()
+	err = r.NextChunk(ctx, chk)
 	c.Assert(err, IsNil)
-	c.Assert(row, IsNil)
+	c.Assert(chk.NumRows() == 0, IsTrue)
 	err = txn.Rollback()
 	c.Assert(err, IsNil)
 
 	// show DDL jobs test
 	r, err = tk.Exec("admin show ddl jobs")
 	c.Assert(err, IsNil)
-	row, err = r.Next(ctx)
+	chk = r.NewChunk()
+	err = r.NextChunk(ctx, chk)
 	c.Assert(err, IsNil)
+	row = chk.GetRow(0)
 	c.Assert(row.Len(), Equals, 2)
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
@@ -176,6 +186,19 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(len(row.GetString(0)), Greater, 0)
 	c.Assert(err, IsNil)
 	c.Assert(row.GetString(1), Equals, historyJobs[0].State.String())
+	c.Assert(err, IsNil)
+
+	// show DDL job queries test
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists admin_test2")
+	tk.MustExec("create table admin_test2 (c1 int, c2 int, c3 int default 1, index (c1))")
+	result := tk.MustQuery(`admin show ddl job queries 1, 1, 1`)
+	result.Check(testkit.Rows())
+	result = tk.MustQuery(`admin show ddl job queries 1, 2, 3, 4`)
+	result.Check(testkit.Rows())
+	historyJob, err := admin.GetHistoryDDLJobs(txn)
+	result = tk.MustQuery(fmt.Sprintf("admin show ddl job queries %d", historyJob[0].ID))
+	result.Check(testkit.Rows(historyJob[0].Query))
 	c.Assert(err, IsNil)
 
 	// check table test
@@ -723,9 +746,10 @@ func (s *testSuite) TestIssue2612(c *C) {
 	tk.MustExec(`insert into t values ('2016-02-13 15:32:24',  '2016-02-11 17:23:22');`)
 	rs, err := tk.Exec(`select timediff(finish_at, create_at) from t;`)
 	c.Assert(err, IsNil)
-	row, err := rs.Next(context.Background())
+	chk := rs.NewChunk()
+	err = rs.NextChunk(context.Background(), chk)
 	c.Assert(err, IsNil)
-	c.Assert(row.GetDuration(0).String(), Equals, "-46:09:02")
+	c.Assert(chk.GetRow(0).GetDuration(0).String(), Equals, "-46:09:02")
 }
 
 // TestIssue345 is related with https://github.com/pingcap/tidb/issues/345
@@ -2263,9 +2287,10 @@ func (s *testSuite) TestBit(c *C) {
 	c.Assert(err, NotNil)
 	r, err := tk.Exec("select * from t where c1 = 2")
 	c.Assert(err, IsNil)
-	row, err := r.Next(context.Background())
+	chk := r.NewChunk()
+	err = r.NextChunk(context.Background(), chk)
 	c.Assert(err, IsNil)
-	c.Assert(types.BinaryLiteral(row.GetBytes(0)), DeepEquals, types.NewBinaryLiteralFromUint(2, -1))
+	c.Assert(types.BinaryLiteral(chk.GetRow(0).GetBytes(0)), DeepEquals, types.NewBinaryLiteralFromUint(2, -1))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c1 bit(31))")
@@ -2427,7 +2452,8 @@ func (s *testSuite) TestEarlyClose(c *C) {
 		rss, err := tk.Se.Execute(ctx, "select * from earlyclose order by id")
 		c.Assert(err, IsNil)
 		rs := rss[0]
-		_, err = rs.Next(ctx)
+		chk := rs.NewChunk()
+		err = rs.NextChunk(ctx, chk)
 		c.Assert(err, IsNil)
 		rs.Close()
 	}
@@ -2585,7 +2611,8 @@ func (s *testSuite) TestCoprocessorStreamingFlag(c *C) {
 		})
 		rs, err := tk.Se.Execute(ctx1, test.sql)
 		c.Assert(err, IsNil)
-		_, err = rs[0].Next(ctx)
+		chk := rs[0].NewChunk()
+		err = rs[0].NextChunk(ctx, chk)
 		c.Assert(err, IsNil)
 		rs[0].Close()
 	}

@@ -228,15 +228,16 @@ func (t *Table) UpdateRecord(ctx sessionctx.Context, h int64, oldData, newData [
 	if err != nil {
 		return errors.Trace(err)
 	}
+	numColsCap := len(newData) + 1 // +1 for the extra handle column that we may need to append.
 
 	var colIDs, binlogColIDs []int64
 	var row, binlogOldRow, binlogNewRow []types.Datum
-	colIDs = make([]int64, 0, len(newData))
-	row = make([]types.Datum, 0, len(newData))
+	colIDs = make([]int64, 0, numColsCap)
+	row = make([]types.Datum, 0, numColsCap)
 	if shouldWriteBinlog(ctx) {
-		binlogColIDs = make([]int64, 0, len(newData))
-		binlogOldRow = make([]types.Datum, 0, len(newData))
-		binlogNewRow = make([]types.Datum, 0, len(newData))
+		binlogColIDs = make([]int64, 0, numColsCap)
+		binlogOldRow = make([]types.Datum, 0, numColsCap)
+		binlogNewRow = make([]types.Datum, 0, numColsCap)
 	}
 
 	for _, col := range t.WritableCols() {
@@ -272,6 +273,11 @@ func (t *Table) UpdateRecord(ctx sessionctx.Context, h int64, oldData, newData [
 		return errors.Trace(err)
 	}
 	if shouldWriteBinlog(ctx) {
+		if !t.meta.PKIsHandle {
+			binlogColIDs = append(binlogColIDs, model.ExtraHandleID)
+			binlogOldRow = append(binlogOldRow, types.NewIntDatum(h))
+			binlogNewRow = append(binlogNewRow, types.NewIntDatum(h))
+		}
 		err = t.addUpdateBinlog(ctx, binlogOldRow, binlogNewRow, binlogColIDs)
 		if err != nil {
 			return errors.Trace(err)
@@ -344,11 +350,18 @@ func (t *Table) getRollbackableMemStore(ctx sessionctx.Context) kv.RetrieverMuta
 // AddRecord implements table.Table AddRecord interface.
 func (t *Table) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
 	var hasRecordID bool
-	for _, col := range t.Cols() {
-		if col.IsPKHandleColumn(t.meta) {
-			recordID = r[col.Offset].GetInt64()
-			hasRecordID = true
-			break
+	cols := t.Cols()
+	if len(r) > len(cols) {
+		// The last value is _tidb_rowid.
+		recordID = r[len(r)-1].GetInt64()
+		hasRecordID = true
+	} else {
+		for _, col := range cols {
+			if col.IsPKHandleColumn(t.meta) {
+				recordID = r[col.Offset].GetInt64()
+				hasRecordID = true
+				break
+			}
 		}
 	}
 	if !hasRecordID {
@@ -555,11 +568,21 @@ func (t *Table) RemoveRecord(ctx sessionctx.Context, h int64, r []types.Datum) e
 		return errors.Trace(err)
 	}
 	if shouldWriteBinlog(ctx) {
-		colIDs := make([]int64, 0, len(t.Cols()))
-		for _, col := range t.Cols() {
+		cols := t.Cols()
+		colIDs := make([]int64, 0, len(cols)+1)
+		for _, col := range cols {
 			colIDs = append(colIDs, col.ID)
 		}
-		err = t.addDeleteBinlog(ctx, r, colIDs)
+		var binlogRow []types.Datum
+		if !t.meta.PKIsHandle {
+			colIDs = append(colIDs, model.ExtraHandleID)
+			binlogRow = make([]types.Datum, 0, len(r)+1)
+			binlogRow = append(binlogRow, r...)
+			binlogRow = append(binlogRow, types.NewIntDatum(h))
+		} else {
+			binlogRow = r
+		}
+		err = t.addDeleteBinlog(ctx, binlogRow, colIDs)
 	}
 	return errors.Trace(err)
 }
