@@ -783,7 +783,7 @@ func (e *SelectionExec) unBatchedNextChunk(ctx context.Context, chk *chunk.Chunk
 // TableScanExec is a table scan executor without result fields.
 type TableScanExec struct {
 	baseExecutor
-  
+
 	t                     table.Table
 	ranges                []ranger.IntColumnRange
 	seekHandle            int64
