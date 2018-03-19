@@ -350,62 +350,16 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64) error {
 	startTime := time.Now()
 	regions := 0
 	for _, r := range ranges {
-		startKey, rangeEndKey := r.Range()
-		for {
-			select {
-			case <-ctx.Done():
-				return errors.New("[gc worker] gc job canceled")
-			default:
-			}
-
-			loc, err := w.store.GetRegionCache().LocateKey(bo, startKey)
-			if err != nil {
-				return errors.Trace(err)
-			}
-
-			endKey := loc.EndKey
-			if loc.Contains(rangeEndKey) {
-				endKey = rangeEndKey
-			}
-
-			req := &tikvrpc.Request{
-				Type: tikvrpc.CmdDeleteRange,
-				DeleteRange: &kvrpcpb.DeleteRangeRequest{
-					StartKey: startKey,
-					EndKey:   endKey,
-				},
-			}
-
-			resp, err := w.store.SendReq(bo, req, loc.Region, tikv.ReadTimeoutMedium)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			regionErr, err := resp.GetRegionError()
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if regionErr != nil {
-				err = bo.Backoff(tikv.BoRegionMiss, errors.New(regionErr.String()))
-				if err != nil {
-					return errors.Trace(err)
-				}
-				continue
-			}
-			deleteRangeResp := resp.DeleteRange
-			if deleteRangeResp == nil {
-				return errors.Trace(tikv.ErrBodyMissing)
-			}
-			if err := deleteRangeResp.GetError(); err != "" {
-				return errors.Errorf("unexpected delete range err: %v", err)
-			}
-			regions++
-			if bytes.Equal(endKey, rangeEndKey) {
-				break
-			}
-			startKey = endKey
+		result, err := tikv.DeleteRange(ctx, bo, w.store, r)
+		if err != nil {
+			return errors.Trace(err)
 		}
+		if result.Canceled {
+			return errors.New("[gc worker] gc job canceled")
+		}
+
 		session := createSession(w.store)
-		err := util.CompleteDeleteRange(session, r)
+		err = util.CompleteDeleteRange(session, r)
 		session.Close()
 		if err != nil {
 			return errors.Trace(err)
