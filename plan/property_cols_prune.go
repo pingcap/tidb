@@ -79,5 +79,8 @@ func (p *LogicalJoin) preparePossibleProperties() [][]*expression.Column {
 
 func (la *LogicalAggregation) preparePossibleProperties() [][]*expression.Column {
 	la.possibleProperties = la.children[0].preparePossibleProperties()
+	if len(la.GroupByItems) == 0 {
+		la.possibleProperties = append(la.possibleProperties, nil)
+	}
 	return nil
 }
