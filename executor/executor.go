@@ -896,7 +896,6 @@ func (e *SelectionExec) unBatchedNextChunk(ctx context.Context, chk *chunk.Chunk
 type TableScanExec struct {
 	baseExecutor
 
-	// for chunk execution
 	t                     table.Table
 	ranges                []ranger.IntColumnRange
 	seekHandle            int64
