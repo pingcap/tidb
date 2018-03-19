@@ -352,7 +352,7 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64) error {
 	for _, r := range ranges {
 		startKey, rangeEndKey := r.Range()
 
-		deleteRangeTask := tikv.NewDeleteRangeTask(w.store, ctx, bo, startKey, rangeEndKey)
+		deleteRangeTask := tikv.NewDeleteRangeTask(ctx, w.store, bo, startKey, rangeEndKey)
 		err := deleteRangeTask.Execute()
 
 		if err != nil {

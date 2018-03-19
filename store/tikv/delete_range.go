@@ -22,6 +22,9 @@ import (
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
 
+// DeleteRangeTask is used to delete all keys in a range. After
+// performing DeleteRange, it keeps how many ranges it affects and
+// if the task was canceled or not.
 type DeleteRangeTask struct {
 	regions  int
 	canceled bool
@@ -32,7 +35,8 @@ type DeleteRangeTask struct {
 	endKey   []byte
 }
 
-func NewDeleteRangeTask(store Storage, ctx context.Context, bo *Backoffer, startKey []byte, endKey []byte) DeleteRangeTask {
+// NewDeleteRangeTask creates a DeleteRangeTask. Deleting will not be performed right away.
+func NewDeleteRangeTask(ctx context.Context, store Storage, bo *Backoffer, startKey []byte, endKey []byte) DeleteRangeTask {
 	return DeleteRangeTask{
 		regions:  0,
 		canceled: false,
@@ -44,6 +48,7 @@ func NewDeleteRangeTask(store Storage, ctx context.Context, bo *Backoffer, start
 	}
 }
 
+// Execute performs the delete range operation.
 func (t DeleteRangeTask) Execute() error {
 	startKey, rangeEndKey := t.startKey, t.endKey
 	for {
@@ -104,10 +109,12 @@ func (t DeleteRangeTask) Execute() error {
 	return nil
 }
 
+// Regions returns the number of regions that are affected by this delete range task
 func (t DeleteRangeTask) Regions() int {
 	return t.regions
 }
 
+// IsCanceled returns true if the delete range operation was canceled on the half way
 func (t DeleteRangeTask) IsCanceled() bool {
 	return t.canceled
 }
