@@ -848,6 +848,10 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 			sql:  "select sum(a.g), sum(b.g) from t a join t b on a.g = b.g and a.a>5 group by a.g order by a.g limit 1",
 			best: "IndexJoin{IndexReader(Index(t.g)[[<nil>,+inf]]->Sel([gt(a.a, 5)]))->IndexReader(Index(t.g)[[<nil>,+inf]])}(a.g,b.g)->StreamAgg->Limit->Projection",
 		},
+		{
+			sql:  "select sum(d) from t",
+			best: "TableReader(Table(t)->StreamAgg)->StreamAgg",
+		},
 	}
 	for _, tt := range tests {
 		comment := Commentf("for %s", tt.sql)
