@@ -57,8 +57,9 @@ type mergeJoinOuterTable struct {
 	row  chunk.Row
 }
 
-// mergeJoinInnerTable represents inner table for merge join, which returns a
-// whole join group belongs to the same join key.
+// mergeJoinInnerTable represents the inner table of merge join.
+// All the inner rows which have the same join key are returned when function
+// "rowsWithSameKey()" being called.
 type mergeJoinInnerTable struct {
 	reader   Executor
 	joinKeys []*expression.Column
@@ -284,8 +285,8 @@ func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasM
 	}
 }
 
-// fetchNextInnerRows fetches the next join group belongs to the same join key
-// on inner table.
+// fetchNextInnerRows fetches the next join group, within which all the rows
+// have the same join key, from the inner table.
 func (e *MergeJoinExec) fetchNextInnerRows() (err error) {
 	e.innerRows, err = e.innerTable.rowsWithSameKey()
 	if err != nil {
@@ -297,8 +298,8 @@ func (e *MergeJoinExec) fetchNextInnerRows() (err error) {
 }
 
 // fetchNextOuterRows fetches the next Chunk of outer table. Rows in a Chunk
-// may not all belong to the same join key, but all the rows are guaranteed to
-// be sorted according to the join key.
+// may not all belong to the same join key, but are guaranteed to be sorted
+// according to the join key.
 func (e *MergeJoinExec) fetchNextOuterRows(ctx context.Context) (err error) {
 	err = e.outerTable.reader.NextChunk(ctx, e.outerTable.chk)
 	if err != nil {
