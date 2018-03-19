@@ -27,32 +27,14 @@ type MockExec struct {
 	curRowIdx int
 }
 
-func (m *MockExec) Next(ctx context.Context) (Row, error) {
-	if m.curRowIdx >= len(m.Rows) {
-		return nil, nil
-	}
-	r := m.Rows[m.curRowIdx]
-	m.curRowIdx++
-	if len(m.fields) > 0 {
-		for i, d := range r {
-			m.fields[i].Expr.SetValue(d.GetValue())
-		}
-	}
-	return r, nil
-}
-
 func (m *MockExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
-	rt := m.retTypes()
-	for m.curRowIdx < len(m.Rows) {
+	colTypes := m.retTypes()
+	for ; m.curRowIdx < len(m.Rows) && chk.NumRows() < m.maxChunkSize; m.curRowIdx++ {
 		curRow := m.Rows[m.curRowIdx]
 		for i := 0; i < len(curRow); i++ {
-			curDatum := curRow.GetDatum(i, rt[i])
+			curDatum := curRow.GetDatum(i, colTypes[i])
 			chk.AppendDatum(i, &curDatum)
-		}
-		m.curRowIdx++
-		if chk.NumRows() >= m.maxChunkSize {
-			return nil
 		}
 	}
 	return nil
@@ -115,17 +97,17 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 	join.outerChunk = outerExec.newChunk()
 	joinChk := join.newChunk()
 	it := chunk.NewIterator4Chunk(joinChk)
-	for i := 1; ; {
+	for rowIdx := 1; ; {
 		err := join.NextChunk(ctx, joinChk)
 		c.Check(err, IsNil)
 		if joinChk.NumRows() == 0 {
 			break
 		}
 		for row := it.Begin(); row != it.End(); row = it.Next() {
-			correctResult := fmt.Sprintf("%v %v", i, i)
+			correctResult := fmt.Sprintf("%v %v", rowIdx, rowIdx)
 			obtainedResult := fmt.Sprintf("%v %v", row.GetInt64(0), row.GetInt64(1))
 			c.Check(obtainedResult, Equals, correctResult)
-			i++
+			rowIdx++
 		}
 	}
 }
