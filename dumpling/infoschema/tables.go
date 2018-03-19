@@ -80,7 +80,7 @@ func buildColumnInfo(tableName string, col columnInfo) *model.ColumnInfo {
 	if col.tp == mysql.TypeVarchar || col.tp == mysql.TypeBlob {
 		mCharset = mysql.DefaultCharset
 		mCollation = mysql.DefaultCollationName
-		mFlag = 0
+		mFlag = col.flag
 	}
 	fieldType := types.FieldType{
 		Charset: mCharset,
@@ -108,6 +108,8 @@ func buildTableMeta(tableName string, cs []columnInfo) *model.TableInfo {
 		Name:    model.NewCIStr(tableName),
 		Columns: cols,
 		State:   model.StatePublic,
+		Charset: mysql.DefaultCharset,
+		Collate: mysql.DefaultCollationName,
 	}
 }
 
@@ -137,7 +139,7 @@ var tablesCols = []columnInfo{
 	{"CREATE_TIME", mysql.TypeDatetime, 19, 0, nil, nil},
 	{"UPDATE_TIME", mysql.TypeDatetime, 19, 0, nil, nil},
 	{"CHECK_TIME", mysql.TypeDatetime, 19, 0, nil, nil},
-	{"TABLE_COLLATION", mysql.TypeVarchar, 32, 0, nil, nil},
+	{"TABLE_COLLATION", mysql.TypeVarchar, 32, mysql.NotNullFlag, "utf8_bin", nil},
 	{"CHECK_SUM", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"CREATE_OPTIONS", mysql.TypeVarchar, 255, 0, nil, nil},
 	{"TABLE_COMMENT", mysql.TypeVarchar, 2048, 0, nil, nil},
@@ -540,6 +542,7 @@ func dataForCollationCharacterSetApplicability() (records [][]types.Datum) {
 		types.MakeDatums("binary", "binary"),
 		types.MakeDatums("latin1_swedish_ci", "latin1"),
 		types.MakeDatums("utf8_general_ci", "utf8"),
+		types.MakeDatums("utf8_bin", "utf8"),
 		types.MakeDatums("utf8mb4_general_ci", "utf8mb4"),
 	)
 	return records
@@ -637,6 +640,10 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Da
 	createTimeTp := tablesCols[15].tp
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
+			collation := table.Collate
+			if collation == "" {
+				collation = charset.CollationUTF8
+			}
 			createTime := types.Time{
 				Time: types.FromGoTime(table.GetUpdateTime()),
 				Type: createTimeTp,
@@ -659,7 +666,7 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Da
 				createTime,      // CREATE_TIME
 				nil,             // UPDATE_TIME
 				nil,             // CHECK_TIME
-				table.Collate,   // TABLE_COLLATION
+				collation,       // TABLE_COLLATION
 				nil,             // CHECKSUM
 				"",              // CREATE_OPTIONS
 				table.Comment,   // TABLE_COMMENT
