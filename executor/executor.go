@@ -783,14 +783,13 @@ func (e *SelectionExec) unBatchedNextChunk(ctx context.Context, chk *chunk.Chunk
 type TableScanExec struct {
 	baseExecutor
 
-	t              table.Table
-	ranges         []ranger.IntColumnRange
-	seekHandle     int64
-	iter           kv.Iterator
-	cursor         int
-	columns        []*model.ColumnInfo
-	isVirtualTable bool
-
+	t                     table.Table
+	ranges                []ranger.IntColumnRange
+	seekHandle            int64
+	iter                  kv.Iterator
+	cursor                int
+	columns               []*model.ColumnInfo
+	isVirtualTable        bool
 	virtualTableChunkList *chunk.List
 	virtualTableChunkIdx  int
 }
