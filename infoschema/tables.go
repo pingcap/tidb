@@ -693,7 +693,6 @@ func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types
 	for i, col := range tbl.Columns {
 		colLen, decimal := col.Flen, col.Decimal
 		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(col.Tp)
-
 		if colLen == types.UnspecifiedLength {
 			colLen = defaultFlen
 		}
@@ -728,7 +727,7 @@ func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types
 			"select,insert,update,references", // PRIVILEGES
 			columnDesc.Comment,                // COLUMN_COMMENT
 		)
-		// in mysql, character set is setted to null when column type is non-varchar
+		// In mysql, 'character set' is setted to null when column type is non-varchar.
 		if col.Tp != mysql.TypeVarchar {
 			record[13].SetNull()
 			record[14].SetNull()
