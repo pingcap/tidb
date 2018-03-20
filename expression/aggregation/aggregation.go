@@ -38,6 +38,8 @@ type Aggregation interface {
 
 	// Create a new AggEvaluateContext for the aggregation function.
 	CreateContext(sc *stmtctx.StatementContext) *AggEvaluateContext
+
+	ResetContext(sc *stmtctx.StatementContext, evalCtx *AggEvaluateContext)
 }
 
 // NewDistAggFunc creates new Aggregate function for mock tikv.
@@ -113,6 +115,13 @@ func (af *aggFunction) CreateContext(sc *stmtctx.StatementContext) *AggEvaluateC
 		evalCtx.DistinctChecker = createDistinctChecker(sc)
 	}
 	return evalCtx
+}
+
+func (af *aggFunction) ResetContext(sc *stmtctx.StatementContext, evalCtx *AggEvaluateContext) {
+	if af.HasDistinct {
+		evalCtx.DistinctChecker = createDistinctChecker(sc)
+	}
+	evalCtx.Value.SetNull()
 }
 
 func (af *aggFunction) updateSum(sc *stmtctx.StatementContext, evalCtx *AggEvaluateContext, row types.Row) error {
