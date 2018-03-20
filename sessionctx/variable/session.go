@@ -93,7 +93,10 @@ type TransactionContext struct {
 	SchemaVersion int64
 	StartTS       uint64
 	Shard         *int64
-	TableDeltaMap map[int64]TableDelta
+	Mu            struct {
+		sync.Mutex
+		TableDeltaMap map[int64]TableDelta
+	}
 
 	// For metrics.
 	CreateTime     time.Time
@@ -102,18 +105,23 @@ type TransactionContext struct {
 
 // UpdateDeltaForTable updates the delta info for some table.
 func (tc *TransactionContext) UpdateDeltaForTable(tableID int64, delta int64, count int64) {
-	if tc.TableDeltaMap == nil {
-		tc.TableDeltaMap = make(map[int64]TableDelta)
+	tc.Mu.Lock()
+	defer tc.Mu.Unlock()
+
+	if tc.Mu.TableDeltaMap == nil {
+		tc.Mu.TableDeltaMap = make(map[int64]TableDelta)
 	}
-	item := tc.TableDeltaMap[tableID]
+	item := tc.Mu.TableDeltaMap[tableID]
 	item.Delta += delta
 	item.Count += count
-	tc.TableDeltaMap[tableID] = item
+	tc.Mu.TableDeltaMap[tableID] = item
 }
 
 // ClearDelta clears the delta map.
 func (tc *TransactionContext) ClearDelta() {
-	tc.TableDeltaMap = nil
+	tc.Mu.Lock()
+	tc.Mu.TableDeltaMap = nil
+	tc.Mu.Unlock()
 }
 
 // WriteStmtBufs can be used by insert/replace/delete/update statement.

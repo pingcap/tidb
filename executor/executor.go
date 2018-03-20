@@ -480,6 +480,17 @@ type SelectLockExec struct {
 	Lock ast.SelectLockType
 }
 
+// Open implements the Executor Open interface.
+func (e *SelectLockExec) Open(ctx context.Context) error {
+	if err := e.baseExecutor.Open(ctx); err != nil {
+		return errors.Trace(err)
+	}
+
+	txnCtx := e.ctx.GetSessionVars().TxnCtx
+	txnCtx.ForUpdate = true
+	return nil
+}
+
 // NextChunk implements the Executor NextChunk interface.
 func (e *SelectLockExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
@@ -493,7 +504,6 @@ func (e *SelectLockExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error 
 	}
 	txn := e.ctx.Txn()
 	txnCtx := e.ctx.GetSessionVars().TxnCtx
-	txnCtx.ForUpdate = true
 	keys := make([]kv.Key, 0, chk.NumRows())
 	iter := chunk.NewIterator4Chunk(chk)
 	for id, cols := range e.Schema().TblID2Handle {
