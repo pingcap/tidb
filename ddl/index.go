@@ -709,11 +709,10 @@ type reorgIndexTask struct {
 }
 
 type addIndexResult struct {
-	addedCount      int
-	scanCount       int
-	nextHandle      int64
-	err             error
-	reorgNotRunable bool
+	addedCount int
+	scanCount  int
+	nextHandle int64
+	err        error
 }
 
 func newAddIndexWoker(sessCtx sessionctx.Context, d *ddl, id int, index table.Index, t table.Table, colFieldMap map[int64]*types.FieldType) *addIndexWorker {
@@ -876,10 +875,6 @@ func (w *addIndexWorker) handleBackfillTask(task *reorgIndexTask) *addIndexResul
 				// Because reorgIndexTask may run a long time,
 				// we should check whether this ddl job is still runnable.
 				err = w.d.isReorgRunnable()
-				if err != nil {
-					// Used to notify other workers to exit.
-					result.reorgNotRunable = true
-				}
 			}
 		}
 		if err != nil {
@@ -982,13 +977,14 @@ func (d *ddl) waitTaskResults(workers []*addIndexWorker, taskCnt int, totalAdded
 		result := <-worker.resultCh
 		if firstErr == nil && result.err != nil {
 			firstErr = result.err
-			if result.reorgNotRunable {
-				log.Infof("[ddl-reorg] job is cancelled, notify remaining workers to return.")
-				for j := i + 1; j < taskCnt; j++ {
-					workers[j].notifyNotRunnable()
-				}
+			log.Infof("[ddl-reorg] error occured, notify remaining workers to return.")
+
+			// Notify remaining workers exit immediately.
+			// If we don't do this, we will need to wait the long run workers exit.
+			for j := i + 1; j < taskCnt; j++ {
+				workers[j].notifyNotRunnable()
 			}
-			// needs to wait all worker exits, any way.
+			// We should wait all working workers exits, any way.
 			continue
 		}
 
@@ -1008,6 +1004,7 @@ func (d *ddl) waitTaskResults(workers []*addIndexWorker, taskCnt int, totalAdded
 	return nextHandle, addedCount, errors.Trace(firstErr)
 }
 
+// finishBatchTasks wait all the running worker return back result, there are taskCnt workers.
 func (d *ddl) finishBatchTasks(startTime time.Time, startHandle int64, reorgInfo *reorgInfo, totalAddedCount *int64, workers []*addIndexWorker, taskCnt int) error {
 	nextHandle, taskAddedCount, err := d.waitTaskResults(workers, taskCnt, totalAddedCount, startHandle)
 	elapsedTime := time.Since(startTime).Seconds()
