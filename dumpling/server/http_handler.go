@@ -445,12 +445,14 @@ func (rt *RegionDetail) addTableInRange(dbName string, curTable *model.TableInfo
 
 // FrameItem includes a index's or record's meta data with table's info.
 type FrameItem struct {
-	DBName    string `json:"db_name"`
-	TableName string `json:"table_name"`
-	TableID   int64  `json:"table_id"`
-	IsRecord  bool   `json:"is_record"`
-	IndexName string `json:"index_name,omitempty"`
-	IndexID   int64  `json:"index_id,omitempty"`
+	DBName      string   `json:"db_name"`
+	TableName   string   `json:"table_name"`
+	TableID     int64    `json:"table_id"`
+	IsRecord    bool     `json:"is_record"`
+	RecordID    int64    `json:"record_id,omitempty"`
+	IndexName   string   `json:"index_name,omitempty"`
+	IndexID     int64    `json:"index_id,omitempty"`
+	IndexValues []string `json:"index_values,omitempty"`
 }
 
 // RegionFrameRange contains a frame range info which the region covered.
@@ -744,6 +746,14 @@ func NewFrameItemFromRegionKey(key []byte) (frame *FrameItem, err error) {
 	frame = &FrameItem{}
 	frame.TableID, frame.IndexID, frame.IsRecord, err = tablecodec.DecodeKeyHead(key)
 	if err == nil {
+		if frame.IsRecord {
+			_, frame.RecordID, err = tablecodec.DecodeRecordKey(key)
+		} else {
+			_, _, frame.IndexValues, err = tablecodec.DecodeIndexKey(key)
+		}
+		log.Warnf("decode region key %q fail: %v", key, err)
+		// Ignore decode errors.
+		err = nil
 		return
 	}
 	if bytes.HasPrefix(key, tablecodec.TablePrefix()) {
@@ -817,9 +827,11 @@ func NewRegionFrameRange(region *tikv.KeyLocation) (idxRange *RegionFrameRange, 
 // are not covered by this frame range, it returns nil.
 func (r *RegionFrameRange) getRecordFrame(tableID int64, dbName, tableName string) *FrameItem {
 	if tableID == r.first.TableID && r.first.IsRecord {
+		r.first.DBName, r.first.TableName = dbName, tableName
 		return r.first
 	}
 	if tableID == r.last.TableID && r.last.IsRecord {
+		r.last.DBName, r.last.TableName = dbName, tableName
 		return r.last
 	}
 
@@ -836,11 +848,13 @@ func (r *RegionFrameRange) getRecordFrame(tableID int64, dbName, tableName strin
 
 // getIndexFrame returns the indnex frame of a table. If the table's indices are
 // not covered by this frame range, it returns nil.
-func (r *RegionFrameRange) getIndexFrame(tableID, indexID int64, dbName, tableName, indexname string) *FrameItem {
+func (r *RegionFrameRange) getIndexFrame(tableID, indexID int64, dbName, tableName, indexName string) *FrameItem {
 	if tableID == r.first.TableID && !r.first.IsRecord && indexID == r.first.IndexID {
+		r.first.DBName, r.first.TableName, r.first.IndexName = dbName, tableName, indexName
 		return r.first
 	}
 	if tableID == r.last.TableID && indexID == r.last.IndexID {
+		r.last.DBName, r.last.TableName, r.last.IndexName = dbName, tableName, indexName
 		return r.last
 	}
 
@@ -852,7 +866,7 @@ func (r *RegionFrameRange) getIndexFrame(tableID, indexID int64, dbName, tableNa
 			TableName: tableName,
 			TableID:   tableID,
 			IsRecord:  false,
-			IndexName: indexname,
+			IndexName: indexName,
 			IndexID:   indexID,
 		}
 	}
