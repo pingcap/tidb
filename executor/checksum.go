@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
@@ -188,16 +187,19 @@ func newChecksumContext(db *model.DBInfo, table *model.TableInfo, startTs uint64
 }
 
 func (c *checksumContext) BuildRequests(ctx sessionctx.Context) ([]*kv.Request, error) {
-	reqs, err := c.buildTableRequest(ctx)
+	var reqs []*kv.Request
+
+	req, err := c.buildTableRequest(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	reqs = append(reqs, req)
 
 	for _, indexInfo := range c.TableInfo.Indices {
 		if indexInfo.State != model.StatePublic {
 			continue
 		}
-		req, err := c.buildIndexRequest(ctx, indexInfo)
+		req, err = c.buildIndexRequest(ctx, indexInfo)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -207,48 +209,20 @@ func (c *checksumContext) BuildRequests(ctx sessionctx.Context) ([]*kv.Request, 
 	return reqs, nil
 }
 
-func (c *checksumContext) buildTableRequest(ctx sessionctx.Context) ([]*kv.Request, error) {
+func (c *checksumContext) buildTableRequest(ctx sessionctx.Context) (*kv.Request, error) {
 	checksum := &tipb.ChecksumRequest{
 		StartTs:   c.StartTs,
 		ScanOn:    tipb.ChecksumScanOn_Table,
 		Algorithm: tipb.ChecksumAlgorithm_Crc64_Xor,
 	}
 
-	var ranges []*ranger.NewRange
-	if c.TableInfo.PKIsHandle {
-		pkInfo := c.TableInfo.GetPkColInfo()
-		ranges = ranger.FullIntNewRange(mysql.HasUnsignedFlag(pkInfo.Flag))
-	} else {
-		ranges = ranger.FullIntNewRange(false)
-	}
+	ranges := ranger.FullIntNewRange(false)
 
-	var reqs []*kv.Request
-
-	ranges1, ranges2 := splitRanges(ranges, false)
-	if len(ranges1) > 0 {
-		var builder distsql.RequestBuilder
-		req, err := builder.SetTableRanges(c.TableInfo.ID, ranges1, nil).
-			SetChecksumRequest(checksum).
-			SetConcurrency(ctx.GetSessionVars().DistSQLScanConcurrency).
-			Build()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		reqs = append(reqs, req)
-	}
-	if len(ranges2) > 0 {
-		var builder distsql.RequestBuilder
-		req, err := builder.SetTableRanges(c.TableInfo.ID, ranges2, nil).
-			SetChecksumRequest(checksum).
-			SetConcurrency(ctx.GetSessionVars().DistSQLScanConcurrency).
-			Build()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		reqs = append(reqs, req)
-	}
-
-	return reqs, nil
+	var builder distsql.RequestBuilder
+	return builder.SetTableRanges(c.TableInfo.ID, ranges, nil).
+		SetChecksumRequest(checksum).
+		SetConcurrency(ctx.GetSessionVars().DistSQLScanConcurrency).
+		Build()
 }
 
 func (c *checksumContext) buildIndexRequest(ctx sessionctx.Context, indexInfo *model.IndexInfo) (*kv.Request, error) {
