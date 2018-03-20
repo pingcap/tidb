@@ -273,7 +273,6 @@ type ShowDDLJobQueriesExec struct {
 	cursor int
 	jobs   []*model.Job
 	jobIDs []int64
-	query  string
 }
 
 // Open implements the Executor Open interface.
