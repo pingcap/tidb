@@ -50,7 +50,11 @@ type testSuite struct {
 
 func (s *testSuite) SetUpSuite(c *C) {
 	ctx := mock.NewContext()
-	ctx.Store = &mock.Store{Client: &mock.Client{MockResponse: &mockResponse{}}}
+	ctx.Store = &mock.Store{
+		Client: &mock.Client{
+			MockResponse: &mockResponse{},
+		},
+	}
 	s.sctx = ctx
 }
 
@@ -61,7 +65,9 @@ func (s *testSuite) SetUpTest(c *C) {
 	testleak.BeforeTest()
 	ctx := s.sctx.(*mock.Context)
 	store := ctx.Store.(*mock.Store)
-	store.Client = &mock.Client{MockResponse: &mockResponse{}}
+	store.Client = &mock.Client{
+		MockResponse: &mockResponse{},
+	}
 }
 
 func (s *testSuite) TearDownTest(c *C) {
