@@ -109,14 +109,16 @@ const (
 	TiDBMaxChunkSize = "tidb_max_chunk_size"
 
 	// The following session variables controls the memory quota during query execution.
-	// "tidb_mem_quota_query":    control the memory quota of a query.
-	// "tidb_mem_quota_hashjoin": control the memory quota of "HashJoinExec".
-	// "tidb_mem_quota_sort":     control the memory quota of "SortExec".
-	// "tidb_mem_quota_topn":     control the memory quota of "TopNExec".
-	TIDBMemQuotaQuery    = "tidb_mem_quota_query"    // Bytes.
-	TIDBMemQuotaHashJoin = "tidb_mem_quota_hashjoin" // Bytes.
-	TIDBMemQuotaSort     = "tidb_mem_quota_sort"     // Bytes.
-	TIDBMemQuotaTopn     = "tidb_mem_quota_topn"     // Bytes.
+	// "tidb_mem_quota_query":				control the memory quota of a query.
+	// "tidb_mem_quota_hashjoin": 			control the memory quota of "HashJoinExec".
+	// "tidb_mem_quota_sort":     			control the memory quota of "SortExec".
+	// "tidb_mem_quota_topn":     			control the memory quota of "TopNExec".
+	// "tidb_mem_quota_indexlookupreader":	control the memory quota of "IndexLookUpExecutor".
+	TIDBMemQuotaQuery             = "tidb_mem_quota_query"             // Bytes.
+	TIDBMemQuotaHashJoin          = "tidb_mem_quota_hashjoin"          // Bytes.
+	TIDBMemQuotaSort              = "tidb_mem_quota_sort"              // Bytes.
+	TIDBMemQuotaTopn              = "tidb_mem_quota_topn"              // Bytes.
+	TIDBMemQuotaIndexLookupReader = "tidb_mem_quota_indexlookupreader" // Bytes.
 
 	// tidb_general_log is used to log every query in the server in info level.
 	TiDBGeneralLog = "tidb_general_log"
@@ -127,25 +129,26 @@ const (
 
 // Default TiDB system variable values.
 const (
-	DefIndexLookupConcurrency     = 4
-	DefIndexSerialScanConcurrency = 1
-	DefIndexJoinBatchSize         = 25000
-	DefIndexLookupSize            = 20000
-	DefDistSQLScanConcurrency     = 15
-	DefBuildStatsConcurrency      = 4
-	DefSkipUTF8Check              = false
-	DefOptAggPushDown             = false
-	DefOptInSubqUnfolding         = false
-	DefBatchInsert                = false
-	DefBatchDelete                = false
-	DefCurretTS                   = 0
-	DefMaxChunkSize               = 1024
-	DefDMLBatchSize               = 20000
-	DefTiDBMemQuotaQuery          = 32 * 1024 * 1024 * 1024 // 32GB.
-	DefTiDBMemQuotaHashJoin       = 32 * 1024 * 1024 * 1024 // 32GB.
-	DefTiDBMemQuotaSort           = 32 * 1024 * 1024 * 1024 // 32GB.
-	DefTiDBMemQuotaTopn           = 32 * 1024 * 1024 * 1024 // 32GB.
-	DefTiDBGeneralLog             = 0
+	DefIndexLookupConcurrency        = 4
+	DefIndexSerialScanConcurrency    = 1
+	DefIndexJoinBatchSize            = 25000
+	DefIndexLookupSize               = 20000
+	DefDistSQLScanConcurrency        = 15
+	DefBuildStatsConcurrency         = 4
+	DefSkipUTF8Check                 = false
+	DefOptAggPushDown                = false
+	DefOptInSubqUnfolding            = false
+	DefBatchInsert                   = false
+	DefBatchDelete                   = false
+	DefCurretTS                      = 0
+	DefMaxChunkSize                  = 1024
+	DefDMLBatchSize                  = 20000
+	DefTiDBMemQuotaQuery             = 32 << 30 // 32GB.
+	DefTiDBMemQuotaHashJoin          = 32 << 30 // 32GB.
+	DefTiDBMemQuotaSort              = 32 << 30 // 32GB.
+	DefTiDBMemQuotaTopn              = 32 << 30 // 32GB.
+	DefTiDBMemQuotaIndexLookupReader = 32 << 30 // 32GB.
+	DefTiDBGeneralLog                = 0
 )
 
 // Process global variables.
