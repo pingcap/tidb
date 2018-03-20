@@ -273,7 +273,6 @@ type ShowDDLJobQueriesExec struct {
 	cursor int
 	jobs   []*model.Job
 	jobIDs []int64
-	query  string
 }
 
 // Open implements the Executor Open interface.
@@ -784,14 +783,13 @@ func (e *SelectionExec) unBatchedNextChunk(ctx context.Context, chk *chunk.Chunk
 type TableScanExec struct {
 	baseExecutor
 
-	t              table.Table
-	ranges         []ranger.IntColumnRange
-	seekHandle     int64
-	iter           kv.Iterator
-	cursor         int
-	columns        []*model.ColumnInfo
-	isVirtualTable bool
-
+	t                     table.Table
+	ranges                []ranger.IntColumnRange
+	seekHandle            int64
+	iter                  kv.Iterator
+	cursor                int
+	columns               []*model.ColumnInfo
+	isVirtualTable        bool
 	virtualTableChunkList *chunk.List
 	virtualTableChunkIdx  int
 }
