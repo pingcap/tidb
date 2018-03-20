@@ -68,7 +68,7 @@ var (
 
 // CollectFeedback decides whether to collect the feedback. It returns false when:
 // 1: the histogram is nil or has no buckets;
-// 2: the number of scan ranges exceeds the limit;
+// 2: the number of scan ranges exceeds the limit because it may affect the performance;
 // 3: it does not pass the probabilistic sampler.
 func (q *QueryFeedback) CollectFeedback(numOfRanges int) bool {
 	if q.hist == nil || q.hist.Len() == 0 {
