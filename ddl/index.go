@@ -708,7 +708,7 @@ type addIndexWorker struct {
 	batchCnt    int
 	sessCtx     sessionctx.Context
 	taskCh      chan *backfillIndexTask
-	taskResult  *addIndexResult
+	resultCh    chan *addIndexResult
 	index       table.Index
 	table       table.Table
 	colFieldMap map[int64]*types.FieldType
@@ -729,31 +729,21 @@ type backfillIndexTask struct {
 }
 
 type addIndexResult struct {
-	addedCount int
-	nextHandle int64
-	finished   bool
-	err        error
-	lock       *sync.Mutex
-	cond       *sync.Cond
-}
-
-func newAddIndexResult() *addIndexResult {
-	lock := &sync.Mutex{}
-	return &addIndexResult{
-		finished: false,
-		lock:     lock,
-		cond:     sync.NewCond(lock),
-	}
+	originalTaskRange reorgIndexRange
+	addedCount        int
+	scanCount         int
+	nextHandle        int64
+	err               error
 }
 
 func newAddIndexWoker(sessCtx sessionctx.Context, d *ddl, id int, index table.Index, t table.Table, colFieldMap map[int64]*types.FieldType) *addIndexWorker {
-	worker := &addIndexWorker{
+	return &addIndexWorker{
 		id:          id,
 		d:           d,
 		batchCnt:    defaultTaskHandleCnt,
 		sessCtx:     sessCtx,
 		taskCh:      make(chan *backfillIndexTask),
-		taskResult:  newAddIndexResult(),
+		resultCh:    make(chan *addIndexResult),
 		index:       index,
 		table:       t,
 		colFieldMap: colFieldMap,
@@ -761,7 +751,6 @@ func newAddIndexWoker(sessCtx sessionctx.Context, d *ddl, id int, index table.In
 		defaultVals: make([]types.Datum, len(t.Cols())),
 		rowMap:      make(map[int64]types.Datum, len(colFieldMap)),
 	}
-	return worker
 }
 
 func (w *addIndexWorker) close() {
@@ -875,53 +864,10 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexRange) (nextHa
 	return
 }
 
-func (w *addIndexWorker) initTaskResult(taskRange reorgIndexRange) {
-	taskResult := w.taskResult
-	taskResult.lock.Lock()
-	defer taskResult.lock.Unlock()
-
-	taskResult.nextHandle = taskRange.startHandle
-	taskResult.addedCount = 0
-	taskResult.finished = false
-	taskResult.err = nil
-}
-
-func (w *addIndexWorker) updateTaskResult(nextHandle int64, addedCount int) {
-	taskResult := w.taskResult
-	taskResult.lock.Lock()
-	defer taskResult.lock.Unlock()
-
-	taskResult.nextHandle = nextHandle
-	taskResult.addedCount += addedCount
-
-	// Notify to handle the partial result.
-	taskResult.cond.Signal()
-}
-
-func (w *addIndexWorker) setTaskResultErr(err error) {
-	taskResult := w.taskResult
-	taskResult.lock.Lock()
-	defer taskResult.lock.Unlock()
-
-	taskResult.err = err
-	// Notify to handle the result.
-	w.taskResult.cond.Signal()
-}
-
-func (w *addIndexWorker) finishTask() {
-	w.taskResult.lock.Lock()
-	defer w.taskResult.lock.Unlock()
-
-	w.taskResult.finished = true
-
-	// Notify to handle the result.
-	w.taskResult.cond.Signal()
-}
-
-func (w *addIndexWorker) handleBackfillTask(task *backfillIndexTask) error {
+func (w *addIndexWorker) handleBackfillTask(task *backfillIndexTask) *addIndexResult {
 	handleRange := task.handleRange
-	w.initTaskResult(handleRange)
-	lastLogCount, taskScanCount, taskAddedCnt := 0, 0, 0
+	result := &addIndexResult{originalTaskRange: handleRange, addedCount: 0, nextHandle: handleRange.startHandle, err: nil}
+	lastLogCount := 0
 	for {
 		addedCount := 0
 		nextHandle, addedCount, scanCount, err := w.backfillIndexInTxn(handleRange)
@@ -930,22 +876,23 @@ func (w *addIndexWorker) handleBackfillTask(task *backfillIndexTask) error {
 			if err != nil {
 				// This task is finished, job canceled is not a real error,
 				// so we need to update the processed handle.
-				w.updateTaskResult(nextHandle, addedCount)
+				result.nextHandle = nextHandle
+				result.addedCount += addedCount
 			}
 		}
 
 		if err != nil {
-			return errors.Trace(err)
+			result.err = err
+			return result
 		}
 
-		w.updateTaskResult(nextHandle, addedCount)
-
-		taskScanCount += scanCount
-		taskAddedCnt += addedCount
-		if taskScanCount-lastLogCount >= 30000 {
-			lastLogCount = taskScanCount
+		result.nextHandle = nextHandle
+		result.addedCount += addedCount
+		result.scanCount += scanCount
+		if result.scanCount-lastLogCount >= 30000 {
+			lastLogCount = result.scanCount
 			log.Infof("[ddl-reorg] worker(%v), finish batch addedCount:%v backfill, task addedCount:%v, task scanCount:%v, nextHandle:%v",
-				w.id, addedCount, taskAddedCnt, taskScanCount, nextHandle)
+				w.id, addedCount, result.addedCount, result.scanCount, nextHandle)
 		}
 
 		handleRange.startHandle = nextHandle
@@ -954,8 +901,7 @@ func (w *addIndexWorker) handleBackfillTask(task *backfillIndexTask) error {
 		}
 	}
 
-	w.finishTask()
-	return nil
+	return result
 }
 
 func (w *addIndexWorker) run() {
@@ -966,11 +912,8 @@ func (w *addIndexWorker) run() {
 		}
 
 		log.Debug("[ddl-reorg] got backfill index task:#v", task)
-		err := w.handleBackfillTask(task)
-		if err != nil {
-			log.Warnf("[ddl-reorg] handleBackfillTask failed:%v", errors.ErrorStack(err))
-			w.setTaskResultErr(err)
-		}
+		result := w.handleBackfillTask(task)
+		w.resultCh <- result
 	}
 }
 
@@ -1025,55 +968,44 @@ func closeAddIndexWorkers(workers []*addIndexWorker) {
 	}
 }
 
-func (d *ddl) handleTaskResult(taskResult *addIndexResult, totalAddedCount *int64, nextHanle int64) (int64, int64, error) {
-	var (
-		taskAddedCount = int64(0)
-	)
-	taskResult.lock.Lock()
-	defer taskResult.lock.Unlock()
-	for {
-		if taskResult.err != nil {
-			return nextHanle, taskAddedCount, errors.Trace(taskResult.err)
-		}
-
-		*totalAddedCount += int64(taskResult.addedCount)
-		taskAddedCount += int64(taskResult.addedCount)
-		nextHanle = taskResult.nextHandle
-		// nextHandle will be updated periodically in runReorgJob, so no need to update it here.
-		d.reorgCtx.setRowCountAndHandle(*totalAddedCount, nextHanle)
-
-		// The partial addedCount is added to totalAddedCount, so reset it to 0.
-		taskResult.addedCount = 0
-		if taskResult.finished {
-			// No more result, don't wait.
+func (d *ddl) handleTaskResults(workers []*addIndexWorker, workingIdx int) (int64, int64, error) {
+	results := make([]*addIndexResult, 0, len(workers))
+	for i, worker := range workers {
+		if i > workingIdx {
 			break
 		}
-
-		taskResult.cond.Wait()
+		result := <-worker.resultCh
+		results = append(results, result)
 	}
 
-	return nextHanle, taskAddedCount, nil
-}
-
-func (d *ddl) waitTasksFinish(workers []*addIndexWorker, tasks []*backfillIndexTask, totalAddedCount *int64, startHandle int64) (int64, int64, error) {
-	var (
-		nextHanle      = startHandle
-		taskAddedCount = int64(0)
-		err            error
-	)
-	for i := range tasks {
-		var addedCount int64
-		nextHanle, addedCount, err = d.handleTaskResult(workers[i].taskResult, totalAddedCount, nextHanle)
-		if err != nil {
-			return nextHanle, taskAddedCount, errors.Trace(err)
+	var firstErr error
+	var addedCount int64
+	var nextHandle int64
+	for i, result := range results {
+		if i == 0 {
+			// init nextHandle
+			nextHandle = result.originalTaskRange.startHandle
 		}
-		taskAddedCount += addedCount
+		if firstErr == nil && result.err != nil {
+			firstErr = result.err
+			if errCancelledDDLJob.Equal(firstErr) {
+				nextHandle = result.nextHandle
+			}
+		}
+
+		// addedCount it any way.
+		addedCount += int64(result.addedCount)
+		if firstErr == nil {
+			nextHandle = result.nextHandle
+		}
 	}
-	return nextHanle, taskAddedCount, nil
+
+	return nextHandle, addedCount, firstErr
 }
 
-func (d *ddl) finishBatchTasks(startTime time.Time, startHandle int64, reorgInfo *reorgInfo, totalAddedCount *int64, workers []*addIndexWorker, tasks []*backfillIndexTask) error {
-	nextHandle, taskAddedCount, err := d.waitTasksFinish(workers, tasks, totalAddedCount, startHandle)
+func (d *ddl) finishBatchTasks(startTime time.Time, startHandle int64, reorgInfo *reorgInfo, totalAddedCount *int64, workers []*addIndexWorker, workingIdx int) error {
+	nextHandle, taskAddedCount, err := d.handleTaskResults(workers, workingIdx)
+	*totalAddedCount += taskAddedCount
 	elapsedTime := time.Since(startTime).Seconds()
 	if err == nil {
 		err = d.isReorgRunnable()
@@ -1084,63 +1016,16 @@ func (d *ddl) finishBatchTasks(startTime time.Time, startHandle int64, reorgInfo
 		err1 := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 			return errors.Trace(reorgInfo.UpdateHandle(txn, nextHandle))
 		})
-		log.Warnf("[ddl-reorg] total added index for %d rows, this task [%d,%d) added index for %d rows, failed %v, take time %v, update handle err %v",
+		log.Warnf("[ddl-reorg] total added index for %d rows, this task [%d,%d) add index for %d failed %v, take time %v, update handle err %v",
 			*totalAddedCount, startHandle, nextHandle, taskAddedCount, err, elapsedTime, err1)
 		return errors.Trace(err)
 	}
 
+	// nextHandle will be updated periodically in runReorgJob, so no need to update it here.
 	d.reorgCtx.setRowCountAndHandle(*totalAddedCount, nextHandle)
 	metrics.BatchAddIdxHistogram.Observe(elapsedTime)
 	log.Infof("[ddl-reorg] total added index for %d rows, this task [%d,%d) added index for %d rows, take time %v",
 		*totalAddedCount, startHandle, nextHandle, taskAddedCount, elapsedTime)
-	return nil
-}
-
-func sendTasksToWorkers(workers []*addIndexWorker, tasks []*backfillIndexTask) {
-	for i, task := range tasks {
-		workers[i].taskCh <- task
-	}
-}
-
-func (d *ddl) backfillKvRangesIndex(workers []*addIndexWorker, kvRanges []kv.KeyRange, job *model.Job, reorgInfo *reorgInfo) error {
-	var (
-		startTime   time.Time
-		startHandle int64
-		endHandle   int64
-	)
-	totalAddedCount := job.GetRowCount()
-	workerCnt := len(workers)
-	batchTasks := make([]*backfillIndexTask, 0, workerCnt)
-	for _, keyRange := range kvRanges {
-		startTime = time.Now()
-		var err error
-		startHandle, endHandle, err = decodeHandleRange(keyRange)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		task := &backfillIndexTask{
-			handleRange: reorgIndexRange{startHandle, endHandle},
-		}
-		batchTasks = append(batchTasks, task)
-		if len(batchTasks) >= len(workers) {
-			sendTasksToWorkers(workers, batchTasks)
-			err := d.finishBatchTasks(startTime, startHandle, reorgInfo, &totalAddedCount, workers, batchTasks)
-			if err != nil {
-				return errors.Trace(err)
-			}
-
-			batchTasks = batchTasks[:0]
-		}
-	}
-
-	if len(batchTasks) > 0 {
-		sendTasksToWorkers(workers, batchTasks)
-		err := d.finishBatchTasks(startTime, startHandle, reorgInfo, &totalAddedCount, workers, batchTasks)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-
 	return nil
 }
 
@@ -1163,7 +1048,45 @@ func (d *ddl) addTableIndexFromSplitRanges(t table.Table, indexInfo *model.Index
 		return errors.Trace(err)
 	}
 
-	return d.backfillKvRangesIndex(workers, kvRanges, job, reorgInfo)
+	workerIdx := 0
+	var (
+		startTime   time.Time
+		startHandle int64
+		endHandle   int64
+	)
+	totalAddedCount := job.GetRowCount()
+	// TODO: refactor this loop to function
+	for _, keyRange := range kvRanges {
+		startTime = time.Now()
+		var err1 error
+		startHandle, endHandle, err1 = decodeHandleRange(keyRange)
+		if err1 != nil {
+			return errors.Trace(err1)
+		}
+		task := &backfillIndexTask{
+			handleRange: reorgIndexRange{startHandle, endHandle},
+		}
+		workers[workerIdx].taskCh <- task
+		workerIdx++
+
+		if workerIdx == workerCnt {
+			// Wait tasks finish.
+			err1 = d.finishBatchTasks(startTime, startHandle, reorgInfo, &totalAddedCount, workers, workerIdx-1)
+			if err1 != nil {
+				return errors.Trace(err1)
+			}
+			workerIdx = 0
+		}
+	}
+
+	if workerIdx > 0 {
+		err1 := d.finishBatchTasks(startTime, startHandle, reorgInfo, &totalAddedCount, workers, workerIdx-1)
+		if err1 != nil {
+			return errors.Trace(err1)
+		}
+	}
+
+	return nil
 }
 
 func findIndexByName(idxName string, indices []*model.IndexInfo) *model.IndexInfo {
