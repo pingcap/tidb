@@ -51,6 +51,7 @@ type testSuite struct {
 }
 
 func (s *testSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
 	var err error
 	s.store, err = mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
@@ -61,10 +62,10 @@ func (s *testSuite) SetUpSuite(c *C) {
 func (s *testSuite) TearDownSuite(c *C) {
 	err := s.store.Close()
 	c.Assert(err, IsNil)
+	testleak.AfterTest(c)()
 }
 
 func (s *testSuite) TestGetDDLInfo(c *C) {
-	defer testleak.AfterTest(c)()
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	t := meta.NewMeta(txn)
@@ -90,8 +91,6 @@ func (s *testSuite) TestGetDDLInfo(c *C) {
 }
 
 func (s *testSuite) TestGetDDLJobs(c *C) {
-	defer testleak.AfterTest(c)()
-
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	t := meta.NewMeta(txn)
@@ -123,8 +122,6 @@ func (s *testSuite) TestGetDDLJobs(c *C) {
 }
 
 func (s *testSuite) TestCancelJobs(c *C) {
-	defer testleak.AfterTest(c)()
-
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	t := meta.NewMeta(txn)
@@ -162,8 +159,6 @@ func (s *testSuite) TestCancelJobs(c *C) {
 }
 
 func (s *testSuite) TestGetHistoryDDLJobs(c *C) {
-	defer testleak.AfterTest(c)()
-
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	t := meta.NewMeta(txn)
@@ -202,7 +197,6 @@ func (s *testSuite) TestGetHistoryDDLJobs(c *C) {
 }
 
 func (s *testSuite) TestScan(c *C) {
-	defer testleak.AfterTest(c)()
 	dom, err := session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 	se, err := session.CreateSession4Test(s.store)
