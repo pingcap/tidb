@@ -819,6 +819,10 @@ func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, t table.Table, colM
 	return w.idxRecords, handleOutOfRange, errors.Trace(err)
 }
 
+// backfillIndexInTxn will backfill table index in a transaction, lock corresponding rowKey, if the value of rowKey is changed,
+// indicate that index columns values may changed, index is not allowed to be added, so the txn will rollback and retry.
+// backfillIndexInTxn will add w.batchCnt indices once, default value of w.batchCnt is 128.
+// TODO: make w.batchCnt can be modified by system variable.
 func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (nextHandle int64, addedCount, scanCount int, errInTxn error) {
 	addedCount = 0
 	scanCount = 0
@@ -861,6 +865,7 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (nextHan
 	return
 }
 
+// handleBackfillTask backfill range [task.startHandle, task.endHandle) handle's index to table.
 func (w *addIndexWorker) handleBackfillTask(task *reorgIndexTask) *addIndexResult {
 	handleRange := *task
 	result := &addIndexResult{addedCount: 0, nextHandle: handleRange.startHandle, err: nil}
@@ -1093,6 +1098,7 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 	log.Infof("[ddl-reorg] addTableIndexFromSplitRanges, job:%s, reorgInfo:%#v", job, reorgInfo)
 	colFieldMap := makeupIndexColFieldMap(t, indexInfo)
 
+	// TODO: make workerCnt can be modified by system variable.
 	workerCnt := defaultWorkers
 	workers := make([]*addIndexWorker, workerCnt)
 	for i := 0; i < workerCnt; i++ {
