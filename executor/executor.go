@@ -488,6 +488,10 @@ func (e *SelectLockExec) Open(ctx context.Context) error {
 
 	txnCtx := e.ctx.GetSessionVars().TxnCtx
 	txnCtx.ForUpdate = true
+	for id := range e.Schema().TblID2Handle {
+		// This operation is only for schema validator check.
+		txnCtx.UpdateDeltaForTable(id, 0, 0)
+	}
 	return nil
 }
 
@@ -503,7 +507,6 @@ func (e *SelectLockExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error 
 		return nil
 	}
 	txn := e.ctx.Txn()
-	txnCtx := e.ctx.GetSessionVars().TxnCtx
 	keys := make([]kv.Key, 0, chk.NumRows())
 	iter := chunk.NewIterator4Chunk(chk)
 	for id, cols := range e.Schema().TblID2Handle {
@@ -516,8 +519,6 @@ func (e *SelectLockExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error 
 			if err != nil {
 				return errors.Trace(err)
 			}
-			// This operation is only for schema validator check.
-			txnCtx.UpdateDeltaForTable(id, 0, 0)
 		}
 	}
 	return nil

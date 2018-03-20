@@ -309,7 +309,7 @@ func (s *session) doCommit(ctx context.Context) error {
 	}
 
 	// Get the related table IDs.
-	relatedTables := s.GetSessionVars().TxnCtx.Mu.TableDeltaMap
+	relatedTables := s.GetSessionVars().TxnCtx.TableDeltaMap
 	tableIDs := make([]int64, 0, len(relatedTables))
 	for id := range relatedTables {
 		tableIDs = append(tableIDs, id)
@@ -354,7 +354,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 		log.Warnf("[%d] finished txn:%v, %v", s.sessionVars.ConnectionID, s.txn, err)
 		return errors.Trace(err)
 	}
-	mapper := s.GetSessionVars().TxnCtx.Mu.TableDeltaMap
+	mapper := s.GetSessionVars().TxnCtx.TableDeltaMap
 	if s.statsCollector != nil && mapper != nil {
 		for id, item := range mapper {
 			s.statsCollector.Update(id, item.Delta, item.Count)
