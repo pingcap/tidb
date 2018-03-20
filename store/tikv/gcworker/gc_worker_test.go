@@ -24,6 +24,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
@@ -43,6 +44,7 @@ type testGCWorkerSuite struct {
 	store    tikv.Storage
 	oracle   *mockoracle.MockOracle
 	gcWorker *GCWorker
+	dom      *domain.Domain
 }
 
 var _ = Suite(&testGCWorkerSuite{})
@@ -54,7 +56,7 @@ func (s *testGCWorkerSuite) SetUpTest(c *C) {
 	c.Assert(err, IsNil)
 	s.oracle = &mockoracle.MockOracle{}
 	s.store.SetOracle(s.oracle)
-	_, err = tidb.BootstrapSession(s.store)
+	s.dom, err = tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 	gcWorker, err := NewGCWorker(s.store)
 	c.Assert(err, IsNil)
@@ -64,6 +66,7 @@ func (s *testGCWorkerSuite) SetUpTest(c *C) {
 }
 
 func (s *testGCWorkerSuite) TearDownTest(c *C) {
+	s.dom.Close()
 	err := s.store.Close()
 	c.Assert(err, IsNil)
 }

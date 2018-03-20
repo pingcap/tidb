@@ -275,14 +275,14 @@ type slowClient struct {
 	regionDelays map[uint64]time.Duration
 }
 
-func (c *slowClient) SendReq(ctx context.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+func (c *slowClient) SendReq(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	for id, delay := range c.regionDelays {
 		reqCtx := &req.Context
 		if reqCtx.GetRegionId() == id {
 			time.Sleep(delay)
 		}
 	}
-	return c.Client.SendReq(ctx, addr, req)
+	return c.Client.SendRequest(ctx, addr, req, timeout)
 }
 
 func (s *testCommitterSuite) TestIllegalTso(c *C) {
