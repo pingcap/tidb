@@ -715,7 +715,8 @@ type addIndexResult struct {
 	err        error
 }
 
-func newAddIndexWoker(sessCtx sessionctx.Context, d *ddl, id int, index table.Index, t table.Table, colFieldMap map[int64]*types.FieldType) *addIndexWorker {
+func newAddIndexWorker(sessCtx sessionctx.Context, d *ddl, id int, t table.Table, indexInfo *model.IndexInfo, colFieldMap map[int64]*types.FieldType) *addIndexWorker {
+	index := tables.NewIndexWithBuffer(t.Meta(), indexInfo)
 	return &addIndexWorker{
 		id:            id,
 		d:             d,
@@ -1085,17 +1086,17 @@ func (d *ddl) backfillKvRangesIndex(workers []*addIndexWorker, kvRanges []kv.Key
 // addTableIndex adds index into table.
 // How to add index in reorganization state?
 // Concurrently process the defaultTaskHandleCnt tasks. Each task deals with a handle range of the index record.
-// The handle range is split from pd regions now. Each worker deal with a region table key range one time.
+// The handle range is split from PD regions now. Each worker deal with a region table key range one time.
 // Each handle range by estimation, concurrent processing needs to perform after the handle range has been acquired.
 // The operation flow is as follows:
-//  1. Open numbers of defaultWorkers goroutines.
-// 	2. Split table key range from pd regions.
+//	1. Open numbers of defaultWorkers goroutines.
+//	2. Split table key range from pd regions.
 //	3. Send tasks to running workers by workers's task channel. Each task deals with a region key ranges.
-//  4. Wait all these running tasks finished, then continue to step 3, until all tasks is done.
+//	4. Wait all these running tasks finished, then continue to step 3, until all tasks is done.
 // The above operations are completed in a transaction.
 // Finally, update the concurrent processing of the total number of rows, and store the completed handle value.
 func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo *reorgInfo, job *model.Job) error {
-	log.Infof("[ddl-reorg] addTableIndexFromSplitRanges, job:%s, reorgInfo:%#v", job, reorgInfo)
+	log.Infof("[ddl-reorg] addTableIndex, job:%s, reorgInfo:%#v", job, reorgInfo)
 	colFieldMap := makeupIndexColFieldMap(t, indexInfo)
 
 	// TODO: make workerCnt can be modified by system variable.
@@ -1103,8 +1104,7 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 	workers := make([]*addIndexWorker, workerCnt)
 	for i := 0; i < workerCnt; i++ {
 		sessCtx := d.newContext()
-		index := tables.NewIndexWithBuffer(t.Meta(), indexInfo)
-		workers[i] = newAddIndexWoker(sessCtx, d, i, index, t, colFieldMap)
+		workers[i] = newAddIndexWorker(sessCtx, d, i, t, indexInfo, colFieldMap)
 		go workers[i].run()
 	}
 	defer closeAddIndexWorkers(workers)
