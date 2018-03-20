@@ -97,10 +97,6 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 			errors.New("[types:1439]Display width out of range for column 'c' (max = 4294967295)")},
 		{"alter table t add column c float(4294967296)", true,
 			errors.New("[types:1439]Display width out of range for column 'c' (max = 4294967295)")},
-		{"create table t (c float(54))", true,
-			errors.New("[types:1063]Incorrect column specifier for column 'c'")},
-		{"alter table t add column c float(54)", true,
-			errors.New("[types:1063]Incorrect column specifier for column 'c'")},
 		{"create table t (set65 set ('1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18','19','20','21','22','23','24','25','26','27','28','29','30','31','32','33','34','35','36','37','38','39','40','41','42','43','44','45','46','47','48','49','50','51','52','53','54','55','56','57','58','59','60','61','62','63','64','65'))", true,
 			errors.New("[types:1097]Too many strings for column set65 and SET")},
 		{"alter table t add column set65 set ('1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18','19','20','21','22','23','24','25','26','27','28','29','30','31','32','33','34','35','36','37','38','39','40','41','42','43','44','45','46','47','48','49','50','51','52','53','54','55','56','57','58','59','60','61','62','63','64','65')", true,
@@ -172,6 +168,13 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"alter table t modify column a DECIMAL(66,30);", false, types.ErrTooBigPrecision},
 		{"alter table t modify column a DECIMAL(65,31);", false, types.ErrTooBigScale},
 		{"alter table t modify column a DECIMAL(65,30);", true, nil},
+
+		{"CREATE TABLE t (a float(255, 30))", true, nil},
+		{"CREATE TABLE t (a double(255, 30))", true, nil},
+		{"CREATE TABLE t (a float(256, 30))", false, types.ErrTooBigPrecision},
+		{"CREATE TABLE t (a float(255, 31))", false, types.ErrTooBigScale},
+		{"CREATE TABLE t (a double(256, 30))", false, types.ErrTooBigPrecision},
+		{"CREATE TABLE t (a double(255, 31))", false, types.ErrTooBigScale},
 	}
 
 	store, dom, err := newStoreWithBootstrap()
