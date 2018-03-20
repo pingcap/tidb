@@ -143,7 +143,7 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 
 // Next implements the Executor Next interface.
 func (e *HashAggExec) Next(ctx context.Context) (Row, error) {
-	return nil,nil 
+	return nil, nil
 }
 
 func (e *HashAggExec) getGroupKey(row types.Row) ([]byte, error) {
