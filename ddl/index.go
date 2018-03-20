@@ -280,7 +280,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 		}
 
 		err = d.runReorgJob(t, job, func() error {
-			return d.addTableIndexFromSplitRanges(tbl, indexInfo, reorgInfo, job)
+			return d.addTableIndex(tbl, indexInfo, reorgInfo, job)
 		})
 		if err != nil {
 			if errWaitReorgTimeout.Equal(err) {
@@ -535,25 +535,8 @@ func getEndHandle(baseHandle, batch int64) int64 {
 	return baseHandle + batch
 }
 
-// addTableIndex adds index into table.
-// TODO: Move this to doc or wiki.
-// How to add index in reorganization state?
-// Concurrently process the defaultTaskHandleCnt tasks. Each task deals with a handle range of the index record.
-// The handle range size is defaultTaskHandleCnt.
-// Each handle range by estimation, concurrent processing needs to perform after the handle range has been acquired.
-// The operation flow of the each task of data is as follows:
-//  1. Open a goroutine. Traverse the snapshot to obtain the handle range, while accessing the corresponding row key and
-// raw index value. Then notify to start the next task.
-//  2. Decode this task of raw index value to get the corresponding index value.
-//  3. Deal with these index records one by one. If the index record exists, skip to the next row.
-// If the index doesn't exist, create the index and then continue to handle the next row.
-//  4. When the handle of a range is completed, return the corresponding task result.
-// The above operations are completed in a transaction.
-// When concurrent tasks are processed, the task result returned by each task is sorted by the worker number. Then traverse the
-// task results, get the total number of rows in the concurrent task and update the processed handle value. If
-// an error message is displayed, exit the traversal.
-// Finally, update the concurrent processing of the total number of rows, and store the completed handle value.
-func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo *reorgInfo, job *model.Job) error {
+// this func will be removed later.
+func (d *ddl) addTableIndex1(t table.Table, indexInfo *model.IndexInfo, reorgInfo *reorgInfo, job *model.Job) error {
 	cols := t.Cols()
 	colMap := make(map[int64]*types.FieldType)
 	for _, v := range indexInfo.Columns {
@@ -729,11 +712,10 @@ type backfillIndexTask struct {
 }
 
 type addIndexResult struct {
-	originalTaskRange reorgIndexRange
-	addedCount        int
-	scanCount         int
-	nextHandle        int64
-	err               error
+	addedCount int
+	scanCount  int
+	nextHandle int64
+	err        error
 }
 
 func newAddIndexWoker(sessCtx sessionctx.Context, d *ddl, id int, index table.Index, t table.Table, colFieldMap map[int64]*types.FieldType) *addIndexWorker {
@@ -866,21 +848,11 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexRange) (nextHa
 
 func (w *addIndexWorker) handleBackfillTask(task *backfillIndexTask) *addIndexResult {
 	handleRange := task.handleRange
-	result := &addIndexResult{originalTaskRange: handleRange, addedCount: 0, nextHandle: handleRange.startHandle, err: nil}
+	result := &addIndexResult{addedCount: 0, nextHandle: handleRange.startHandle, err: nil}
 	lastLogCount := 0
 	for {
 		addedCount := 0
 		nextHandle, addedCount, scanCount, err := w.backfillIndexInTxn(handleRange)
-		if err == nil {
-			err = w.d.isReorgRunnable()
-			if err != nil {
-				// This task is finished, job canceled is not a real error,
-				// so we need to update the processed handle.
-				result.nextHandle = nextHandle
-				result.addedCount += addedCount
-			}
-		}
-
 		if err != nil {
 			result.err = err
 			return result
@@ -968,44 +940,31 @@ func closeAddIndexWorkers(workers []*addIndexWorker) {
 	}
 }
 
-func (d *ddl) handleTaskResults(workers []*addIndexWorker, workingIdx int) (int64, int64, error) {
-	results := make([]*addIndexResult, 0, len(workers))
-	for i, worker := range workers {
-		if i > workingIdx {
-			break
-		}
+func (d *ddl) waitTaskResults(workers []*addIndexWorker, taskCnt int, totalAddedCount *int64, startHandle int64) (int64, int64, error) {
+	var (
+		addedCount int64
+		nextHandle = startHandle
+	)
+
+	for i := 0; i < taskCnt; i++ {
+		worker := workers[i]
 		result := <-worker.resultCh
-		results = append(results, result)
-	}
-
-	var firstErr error
-	var addedCount int64
-	var nextHandle int64
-	for i, result := range results {
-		if i == 0 {
-			// init nextHandle
-			nextHandle = result.originalTaskRange.startHandle
-		}
-		if firstErr == nil && result.err != nil {
-			firstErr = result.err
-			if errCancelledDDLJob.Equal(firstErr) {
-				nextHandle = result.nextHandle
-			}
+		if result.err != nil {
+			return nextHandle, addedCount, errors.Trace(result.err)
 		}
 
-		// addedCount it any way.
+		*totalAddedCount += int64(result.addedCount)
 		addedCount += int64(result.addedCount)
-		if firstErr == nil {
-			nextHandle = result.nextHandle
-		}
+		nextHandle = result.nextHandle
+
+		d.reorgCtx.setRowCountAndHandle(*totalAddedCount, nextHandle)
 	}
 
-	return nextHandle, addedCount, firstErr
+	return nextHandle, addedCount, nil
 }
 
-func (d *ddl) finishBatchTasks(startTime time.Time, startHandle int64, reorgInfo *reorgInfo, totalAddedCount *int64, workers []*addIndexWorker, workingIdx int) error {
-	nextHandle, taskAddedCount, err := d.handleTaskResults(workers, workingIdx)
-	*totalAddedCount += taskAddedCount
+func (d *ddl) finishBatchTasks(startTime time.Time, startHandle int64, reorgInfo *reorgInfo, totalAddedCount *int64, workers []*addIndexWorker, taskCnt int) error {
+	nextHandle, taskAddedCount, err := d.waitTaskResults(workers, taskCnt, totalAddedCount, startHandle)
 	elapsedTime := time.Since(startTime).Seconds()
 	if err == nil {
 		err = d.isReorgRunnable()
@@ -1029,7 +988,68 @@ func (d *ddl) finishBatchTasks(startTime time.Time, startHandle int64, reorgInfo
 	return nil
 }
 
-func (d *ddl) addTableIndexFromSplitRanges(t table.Table, indexInfo *model.IndexInfo, reorgInfo *reorgInfo, job *model.Job) error {
+func sendTaskToBackfillWorkers(workers []*addIndexWorker, batchTasks []*backfillIndexTask) {
+	for i, task := range batchTasks {
+		workers[i].taskCh <- task
+	}
+}
+
+func (d *ddl) backfillKvRangesIndex(workers []*addIndexWorker, kvRanges []kv.KeyRange, job *model.Job, reorgInfo *reorgInfo) error {
+	var (
+		startTime   time.Time
+		startHandle int64
+		endHandle   int64
+		err         error
+	)
+	totalAddedCount := job.GetRowCount()
+	batchTasks := make([]*backfillIndexTask, 0, len(workers))
+	for _, keyRange := range kvRanges {
+		startTime = time.Now()
+
+		startHandle, endHandle, err = decodeHandleRange(keyRange)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		task := &backfillIndexTask{
+			handleRange: reorgIndexRange{startHandle, endHandle},
+		}
+
+		batchTasks = append(batchTasks, task)
+		if len(batchTasks) >= len(workers) {
+			sendTaskToBackfillWorkers(workers, batchTasks)
+			// Wait tasks finish.
+			err = d.finishBatchTasks(startTime, startHandle, reorgInfo, &totalAddedCount, workers, len(batchTasks))
+			if err != nil {
+				return errors.Trace(err)
+			}
+			batchTasks = batchTasks[:0]
+		}
+	}
+
+	if len(batchTasks) > 0 {
+		sendTaskToBackfillWorkers(workers, batchTasks)
+		err = d.finishBatchTasks(startTime, startHandle, reorgInfo, &totalAddedCount, workers, len(batchTasks))
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	return nil
+}
+
+// addTableIndex adds index into table.
+// How to add index in reorganization state?
+// Concurrently process the defaultTaskHandleCnt tasks. Each task deals with a handle range of the index record.
+// The handle range is split from pd regions now. Each worker deal with a region table key range one time.
+// Each handle range by estimation, concurrent processing needs to perform after the handle range has been acquired.
+// The operation flow is as follows:
+//  1. Open numbers of defaultWorkers goroutines.
+// 	2. Split table key range from pd regions.
+//	3. Send tasks to running workers by workers's task channel. Each task deals with a region key ranges.
+//  4. Wait all these running tasks finished, then continue to step 3, until all tasks is done.
+// The above operations are completed in a transaction.
+// Finally, update the concurrent processing of the total number of rows, and store the completed handle value.
+func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo *reorgInfo, job *model.Job) error {
 	log.Infof("[ddl-reorg] addTableIndexFromSplitRanges, job:%s, reorgInfo:%#v", job, reorgInfo)
 	colFieldMap := makeupIndexColFieldMap(t, indexInfo)
 
@@ -1048,45 +1068,7 @@ func (d *ddl) addTableIndexFromSplitRanges(t table.Table, indexInfo *model.Index
 		return errors.Trace(err)
 	}
 
-	workerIdx := 0
-	var (
-		startTime   time.Time
-		startHandle int64
-		endHandle   int64
-	)
-	totalAddedCount := job.GetRowCount()
-	// TODO: refactor this loop to function
-	for _, keyRange := range kvRanges {
-		startTime = time.Now()
-		var err1 error
-		startHandle, endHandle, err1 = decodeHandleRange(keyRange)
-		if err1 != nil {
-			return errors.Trace(err1)
-		}
-		task := &backfillIndexTask{
-			handleRange: reorgIndexRange{startHandle, endHandle},
-		}
-		workers[workerIdx].taskCh <- task
-		workerIdx++
-
-		if workerIdx == workerCnt {
-			// Wait tasks finish.
-			err1 = d.finishBatchTasks(startTime, startHandle, reorgInfo, &totalAddedCount, workers, workerIdx-1)
-			if err1 != nil {
-				return errors.Trace(err1)
-			}
-			workerIdx = 0
-		}
-	}
-
-	if workerIdx > 0 {
-		err1 := d.finishBatchTasks(startTime, startHandle, reorgInfo, &totalAddedCount, workers, workerIdx-1)
-		if err1 != nil {
-			return errors.Trace(err1)
-		}
-	}
-
-	return nil
+	return d.backfillKvRangesIndex(workers, kvRanges, job, reorgInfo)
 }
 
 func findIndexByName(idxName string, indices []*model.IndexInfo) *model.IndexInfo {
