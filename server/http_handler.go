@@ -751,6 +751,7 @@ func NewFrameItemFromRegionKey(key []byte) (frame *FrameItem, err error) {
 		} else {
 			_, _, frame.IndexValues, err = tablecodec.DecodeIndexKey(key)
 		}
+		log.Warnf("decode region key %q fail: %v", key, err)
 		// Ignore decode errors.
 		err = nil
 		return
