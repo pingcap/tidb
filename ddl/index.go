@@ -828,6 +828,7 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (nextHan
 	addedCount = 0
 	scanCount = 0
 	errInTxn = kv.RunInNewTxn(w.sessCtx.GetStore(), true, func(txn kv.Transaction) error {
+		txn.SetOption(kv.Priority, kv.PriorityLow)
 		idxRecords, handleOutofRange, err := w.fetchRowColVals(txn, w.table, w.colFieldMap, handleRange)
 
 		if err != nil {
