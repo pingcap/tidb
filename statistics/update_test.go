@@ -393,6 +393,52 @@ func (s *testStatsUpdateSuite) TestSplitRange(c *C) {
 	}
 }
 
+type feedback struct {
+	lower int64
+	upper int64
+	count int64
+}
+
+func genFeedbacks(lower, upper int64) []feedback {
+	var feedbacks []feedback
+	for i := lower; i < upper; i++ {
+		feedbacks = append(feedbacks, feedback{i, upper, upper - i + 1})
+	}
+	return feedbacks
+}
+
+func (s *testStatsUpdateSuite) TestUpdateHistogram(c *C) {
+	h := statistics.NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeLong), 5)
+	appendBucket(h, 1, 1)
+	appendBucket(h, 2, 3)
+	appendBucket(h, 5, 7)
+	appendBucket(h, 10, 20)
+	appendBucket(h, 30, 50)
+
+	feedbacks := []feedback{
+		{0, 1, 1},
+		{1, 2, 1},
+		{2, 3, 3},
+		{4, 5, 2},
+		{5, 7, 4},
+	}
+	feedbacks = append(feedbacks, genFeedbacks(8, 20)...)
+	feedbacks = append(feedbacks, genFeedbacks(21, 60)...)
+
+	q := statistics.NewQueryFeedback(0, h, 0, false)
+	for _, fb := range feedbacks {
+		q.AppendFeedback(types.NewIntDatum(fb.lower), types.NewIntDatum(fb.upper), fb.count)
+	}
+	statistics.DefaultBucketCount = 5
+	c.Assert(statistics.UpdateHistogram(q.Hist(), []*statistics.QueryFeedback{q}).ToString(0), Equals,
+		"column:0 ndv:0\n"+
+			"num: 4\tlower_bound: 0\tupper_bound: 3\trepeats: 0\n"+
+			"num: 9\tlower_bound: 4\tupper_bound: 7\trepeats: 0\n"+
+			"num: 22\tlower_bound: 8\tupper_bound: 20\trepeats: 0\n"+
+			"num: 47\tlower_bound: 21\tupper_bound: 46\trepeats: 0\n"+
+			"num: 61\tlower_bound: 46\tupper_bound: 60\trepeats: 0")
+}
+
 func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
@@ -406,7 +452,7 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 	tests := []struct {
 		sql     string
 		hist    string
-		colSize int
+		idxCols int
 	}{
 		{
 			sql: "select * from t where t.a <= 5",
@@ -414,21 +460,21 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 				"num: 1\tlower_bound: 1\tupper_bound: 1\trepeats: 1\n" +
 				"num: 2\tlower_bound: 2\tupper_bound: 2\trepeats: 1\n" +
 				"num: 4\tlower_bound: 3\tupper_bound: 6\trepeats: 0",
-			colSize: 0,
+			idxCols: 0,
 		},
 		{
 			sql: "select * from t use index(idx) where t.b <= 5",
 			hist: "index:1 ndv:2\n" +
 				"num: 2\tlower_bound: 2\tupper_bound: 2\trepeats: 2\n" +
 				"num: 4\tlower_bound: 3\tupper_bound: 6\trepeats: 0",
-			colSize: 1,
+			idxCols: 1,
 		},
 		{
 			sql: "select b from t use index(idx) where t.b <= 5",
 			hist: "index:1 ndv:2\n" +
 				"num: 2\tlower_bound: 2\tupper_bound: 2\trepeats: 2\n" +
 				"num: 4\tlower_bound: 3\tupper_bound: 6\trepeats: 0",
-			colSize: 1,
+			idxCols: 1,
 		},
 	}
 	for _, t := range tests {
@@ -436,10 +482,10 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 		h.DumpStatsDeltaToKV()
 		feedback := h.GetQueryFeedback()
 		c.Assert(len(feedback), Equals, 1)
-		if t.colSize == 0 {
+		if t.idxCols == 0 {
 			c.Assert(feedback[0].DecodeInt(), IsNil)
 		}
-		c.Assert(statistics.UpdateHistogram(feedback[0].Hist(), feedback).ToString(t.colSize), Equals, t.hist)
+		c.Assert(statistics.UpdateHistogram(feedback[0].Hist(), feedback).ToString(t.idxCols), Equals, t.hist)
 	}
 
 	// Feedback from limit executor may not be accurate.

@@ -265,12 +265,12 @@ func columnCountFromStorage(ctx sessionctx.Context, tableID, colID int64) (int64
 }
 
 // ValueToString converts a possible encoded value to a formatted string. If the value is encoded, then
-// size equals to number of origin values, else size is 0.
-func ValueToString(value *types.Datum, size int) (string, error) {
-	if size == 0 {
+// idxCols equals to number of origin values, else idxCols is 0.
+func ValueToString(value *types.Datum, idxCols int) (string, error) {
+	if idxCols == 0 {
 		return value.ToString()
 	}
-	decodedVals, err := codec.Decode(value.GetBytes(), size)
+	decodedVals, err := codec.Decode(value.GetBytes(), idxCols)
 	if err != nil {
 		return "", errors.Trace(err)
 	}
@@ -282,17 +282,17 @@ func ValueToString(value *types.Datum, size int) (string, error) {
 }
 
 // ToString gets the string representation for the histogram.
-func (hg *Histogram) ToString(size int) string {
+func (hg *Histogram) ToString(idxCols int) string {
 	strs := make([]string, 0, hg.Len()+1)
-	if size > 0 {
+	if idxCols > 0 {
 		strs = append(strs, fmt.Sprintf("index:%d ndv:%d", hg.ID, hg.NDV))
 	} else {
 		strs = append(strs, fmt.Sprintf("column:%d ndv:%d", hg.ID, hg.NDV))
 	}
 	for i := 0; i < hg.Len(); i++ {
-		upperVal, err := ValueToString(hg.GetUpper(i), size)
+		upperVal, err := ValueToString(hg.GetUpper(i), idxCols)
 		terror.Log(errors.Trace(err))
-		lowerVal, err := ValueToString(hg.GetLower(i), size)
+		lowerVal, err := ValueToString(hg.GetLower(i), idxCols)
 		terror.Log(errors.Trace(err))
 		strs = append(strs, fmt.Sprintf("num: %d\tlower_bound: %s\tupper_bound: %s\trepeats: %d", hg.Buckets[i].Count, lowerVal, upperVal, hg.Buckets[i].Repeat))
 	}

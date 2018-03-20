@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/sirupsen/logrus"
 )
 
 // `feedback` represents the total scan count in range [lower, upper).
@@ -90,15 +91,6 @@ func (q *QueryFeedback) Actual() int64 {
 // Hist gets the histogram.
 func (q *QueryFeedback) Hist() *Histogram {
 	return q.hist
-}
-
-// Counts returns the counts info for each range. It is only used in test.
-func (q *QueryFeedback) Counts() []int64 {
-	counts := make([]int64, 0, len(q.feedback))
-	for _, fb := range q.feedback {
-		counts = append(counts, fb.count)
-	}
-	return counts
 }
 
 // Update updates the query feedback. `startKey` is the start scan key of the partial result, used to find
@@ -198,7 +190,7 @@ func buildBucketFeedback(h *Histogram, feedbacks []*QueryFeedback) (map[int]*Buc
 			} else {
 				bktIdx = idx / 2
 				// Make sure that this feedback lies within the bucket.
-				if chunk.Compare(h.Bounds.GetRow(2*bktIdx+1), 0, ran.upper) <= 0 {
+				if chunk.Compare(h.Bounds.GetRow(2*bktIdx+1), 0, ran.upper) < 0 {
 					continue
 				}
 			}
@@ -212,6 +204,7 @@ func buildBucketFeedback(h *Histogram, feedbacks []*QueryFeedback) (map[int]*Buc
 			// Update the bound if necessary.
 			res, err := bkt.lower.CompareDatum(nil, ran.lower)
 			if err != nil {
+				logrus.Debugf("compare datum %v with %v failed, err: %v", bkt.lower, ran.lower, errors.ErrorStack(err))
 				continue
 			}
 			if res > 0 {
@@ -219,6 +212,7 @@ func buildBucketFeedback(h *Histogram, feedbacks []*QueryFeedback) (map[int]*Buc
 			}
 			res, err = bkt.upper.CompareDatum(nil, ran.upper)
 			if err != nil {
+				logrus.Debugf("compare datum %v with %v failed, err: %v", bkt.upper, ran.upper, errors.ErrorStack(err))
 				continue
 			}
 			if res < 0 {
@@ -239,11 +233,12 @@ func (b *BucketFeedback) getBoundaries(num int) []types.Datum {
 	vals = append(vals, *b.lower)
 	err := types.SortDatums(nil, vals)
 	if err != nil {
+		logrus.Debugf("sort datums failed, err: %v", errors.ErrorStack(err))
 		vals = vals[:0]
 		vals = append(vals, *b.lower, *b.upper)
 		return vals
 	}
-	total, interval := len(vals)/num, 0
+	total, interval := 0, len(vals)/num
 	// Pick values per `interval`.
 	for i := 0; i < len(vals); i, total = i+interval, total+1 {
 		vals[total] = vals[i]
@@ -256,6 +251,7 @@ func (b *BucketFeedback) getBoundaries(num int) []types.Datum {
 	for i := 1; i < len(vals); i++ {
 		cmp, err := vals[total-1].CompareDatum(nil, &vals[i])
 		if err != nil {
+			logrus.Debugf("compare datum %v with %v failed, err: %v", vals[total-1], vals[i], errors.ErrorStack(err))
 			continue
 		}
 		if cmp == 0 {
@@ -311,7 +307,7 @@ func (b *BucketFeedback) updateBucket(newBktCount int) []bucket {
 	}
 	// Split the bucket.
 	bounds := b.getBoundaries(newBktCount)
-	bkts := make([]bucket, len(bounds)-1)
+	bkts := make([]bucket, 0, len(bounds)-1)
 	for i := 1; i < len(bounds); i++ {
 		bkt := bucket{lower: &bounds[i-1], upper: &bounds[i]}
 		bkt.count = int64(count * b.getFraction(bkt.lower, bkt.upper))
@@ -362,13 +358,16 @@ func getBucketScore(h *Histogram, id int) bucketScore {
 	return bucketScore{id, math.Abs(err / (preCount + count))}
 }
 
+// DefaultBucketCount is the number of buckets a column histogram has.
+var DefaultBucketCount = 256
+
 func mergeBuckets(h *Histogram, bs bucketScores) *Histogram {
-	mergeCount := h.Len() - defaultBucketCount
+	mergeCount := h.Len() - DefaultBucketCount
 	if mergeCount <= 0 {
 		return h
 	}
 	sort.Sort(bs)
-	ids := make([]int, mergeCount)
+	ids := make([]int, 0, mergeCount)
 	for i := 0; i < mergeCount; i++ {
 		ids = append(ids, bs[i].id)
 	}
@@ -418,4 +417,9 @@ func splitBuckets(h *Histogram, feedbacks []*QueryFeedback) (*Histogram, bucketS
 func UpdateHistogram(h *Histogram, feedbacks []*QueryFeedback) *Histogram {
 	newHist, bucketScores := splitBuckets(h, feedbacks)
 	return mergeBuckets(newHist, bucketScores)
+}
+
+// AppendFeedback appends feedback into the QueryFeedback, only used for test.
+func (q *QueryFeedback) AppendFeedback(lower, higher types.Datum, count int64) {
+	q.feedback = append(q.feedback, feedback{&lower, &higher, count})
 }

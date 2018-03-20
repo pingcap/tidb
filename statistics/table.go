@@ -30,9 +30,6 @@ import (
 )
 
 const (
-	// Default number of buckets a column histogram has.
-	defaultBucketCount = 256
-
 	// When we haven't analyzed a table, we use pseudo statistics to estimate costs.
 	// It has row count 10000, equal condition selects 1/1000 of total rows, less condition selects 1/3 of total rows,
 	// between condition selects 1/40 of total rows.
