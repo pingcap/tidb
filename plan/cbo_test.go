@@ -19,11 +19,11 @@ import (
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/testkit"
@@ -220,7 +220,7 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 	}
 	for _, tt := range tests {
 		ctx := testKit.Se.(sessionctx.Context)
-		stmts, err := tidb.Parse(ctx, tt.sql)
+		stmts, err := session.Parse(ctx, tt.sql)
 		c.Assert(err, IsNil)
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
@@ -270,7 +270,7 @@ func (s *testAnalyzeSuite) TestEmptyTable(c *C) {
 	}
 	for _, tt := range tests {
 		ctx := testKit.Se.(sessionctx.Context)
-		stmts, err := tidb.Parse(ctx, tt.sql)
+		stmts, err := session.Parse(ctx, tt.sql)
 		c.Assert(err, IsNil)
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
@@ -361,7 +361,7 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 	}
 	for _, tt := range tests {
 		ctx := testKit.Se.(sessionctx.Context)
-		stmts, err := tidb.Parse(ctx, tt.sql)
+		stmts, err := session.Parse(ctx, tt.sql)
 		c.Assert(err, IsNil)
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
@@ -438,7 +438,7 @@ func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {
 		best := "IndexReader(Index(t.id)[])"
 
 		ctx := testKit.Se.(sessionctx.Context)
-		stmts, err := tidb.Parse(ctx, sql)
+		stmts, err := session.Parse(ctx, sql)
 		stmt := stmts[0]
 
 		is := domain.GetDomain(ctx).InfoSchema()
@@ -458,9 +458,9 @@ func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	tidb.SetSchemaLease(0)
-	tidb.SetStatsLease(0)
-	dom, err := tidb.BootstrapSession(store)
+	session.SetSchemaLease(0)
+	session.SetStatsLease(0)
+	dom, err := session.BootstrapSession(store)
 	return store, dom, errors.Trace(err)
 }
 
@@ -568,7 +568,7 @@ func BenchmarkOptimize(b *testing.B) {
 	}
 	for _, tt := range tests {
 		ctx := testKit.Se.(sessionctx.Context)
-		stmts, err := tidb.Parse(ctx, tt.sql)
+		stmts, err := session.Parse(ctx, tt.sql)
 		c.Assert(err, IsNil)
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
