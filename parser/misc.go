@@ -178,6 +178,7 @@ var tokenMap = map[string]int{
 	"CHARSET":           charsetKwd,
 	"CHECK":             check,
 	"CHECKSUM":          checksum,
+	"CLEANUP":           cleanup,
 	"CLIENT":            client,
 	"COALESCE":          coalesce,
 	"COLLATE":           collate,

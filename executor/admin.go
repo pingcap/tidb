@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -38,6 +39,7 @@ import (
 var (
 	_ Executor = &CheckIndexRangeExec{}
 	_ Executor = &RecoverIndexExec{}
+	_ Executor = &CleanupIndexExec{}
 )
 
 // CheckIndexRangeExec outputs the index values which has handle between begin and end.
@@ -455,5 +457,167 @@ func (e *RecoverIndexExec) NextChunk(ctx context.Context, chk *chunk.Chunk) erro
 	chk.AppendInt64(0, totalAddedCnt)
 	chk.AppendInt64(1, totalScanCnt)
 	e.done = true
+	return nil
+}
+
+// CleanupIndexExec represents a cleanup index executor.
+// It is built from "admin cleanup index" statement, is used to delete
+// dangling index data.
+type CleanupIndexExec struct {
+	baseExecutor
+
+	done bool
+
+	index     table.Index
+	table     table.Table
+	batchSize uint64
+
+	idxCols          []*model.ColumnInfo
+	idxColFieldTypes []*types.FieldType
+	idxChunk         *chunk.Chunk
+	idxResult        distsql.SelectResult
+
+	//tblChunk         *chunk.Chunk
+	//tblResult        distsql.SelectResult
+
+	matchedIndex     map[int64]idxData
+}
+
+type idxData struct {
+	matched bool
+	idxVals []types.Datum
+}
+
+func (e *CleanupIndexExec) getIdxColTypes() []*types.FieldType {
+	if e.idxColFieldTypes != nil {
+		return e.idxColFieldTypes
+	}
+	e.idxColFieldTypes = make([]*types.FieldType, 0, len(e.idxCols))
+	for _, col := range e.idxCols {
+		e.idxColFieldTypes = append(e.idxColFieldTypes, &col.FieldType)
+	}
+	return e.idxColFieldTypes
+}
+
+// NextChunk implements the Executor NextChunk interface.
+func (e *CleanupIndexExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	if e.done {
+		return nil
+	}
+	handleIdx := len(e.idxCols) - 1
+	errInTxn := kv.RunInNewTxn(e.ctx.GetStore(), true, func(txn kv.Transaction) error {
+		if err := e.fetchIndexResult(ctx, txn); err != nil {
+			return errors.Trace(err)
+		}
+		for {
+			err := e.idxResult.NextChunk(ctx, e.idxChunk)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if e.idxChunk.NumRows() == 0 {
+				break
+			}
+			iter := chunk.NewIterator4Chunk(e.idxChunk)
+			for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+				handle := row.GetInt64(handleIdx)
+				idxVals := row.GetDatumRow(e.getIdxColTypes())
+				e.matchedIndex[handle] = idxData{false, []types.Datum(idxVals)[:len(idxVals)-1]}
+			}
+		}
+		var cnt uint64
+		batchKeys := make([]kv.Key, 0, e.batchSize)
+		for handle := range e.matchedIndex {
+			batchKeys = append(batchKeys, e.table.RecordKey(handle))
+		}
+		values, err := txn.GetSnapshot().BatchGet(batchKeys)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for _, k := range batchKeys {
+			if _, found := values[string(k)]; !found {
+				_, handle, err := tablecodec.DecodeRecordKey(k)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if err := e.index.Delete(e.ctx.GetSessionVars().StmtCtx, txn, e.matchedIndex[handle].idxVals,
+					handle); err != nil {
+					return errors.Trace(err)
+				}
+				cnt++
+				if cnt % 50000 == 0 {
+					log.Infof("[cleaning up dangling index] table: %v, index: %v, count: %v.",
+						e.table.Meta().Name.String(), e.index.Meta().Name.String(), cnt)
+				}
+			}
+		}
+		chk.AppendUint64(0, cnt)
+		return nil
+	})
+	if errInTxn != nil {
+		return errors.Trace(errInTxn)
+	}
+	e.done = true
+	return nil
+}
+
+func (e *CleanupIndexExec) fetchIndexResult(ctx context.Context, txn kv.Transaction) error {
+	e.idxChunk = chunk.NewChunk(e.getIdxColTypes())
+	dagPB, err := e.buildIdxDAGPB(txn)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	sc := e.ctx.GetSessionVars().StmtCtx
+	var builder distsql.RequestBuilder
+	kvReq, err := builder.SetIndexRanges(sc, e.table.Meta().ID, e.index.Meta().ID, ranger.FullNewRange()).
+		SetDAGRequest(dagPB).
+		SetKeepOrder(true).
+		SetFromSessionVars(e.ctx.GetSessionVars()).
+		Build()
+
+	e.idxResult, err = distsql.Select(ctx, e.ctx, kvReq, e.getIdxColTypes(), statistics.NewQueryFeedback(0, nil, 0, false))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	e.idxResult.Fetch(ctx)
+	return nil
+}
+
+// Open implements the Executor Open interface.
+func (e *CleanupIndexExec) Open(ctx context.Context) error {
+	e.matchedIndex = make(map[int64]idxData, e.batchSize)
+	return nil
+}
+
+func (e *CleanupIndexExec) buildIdxDAGPB(txn kv.Transaction) (*tipb.DAGRequest, error) {
+	dagReq := &tipb.DAGRequest{}
+	dagReq.StartTs = txn.StartTS()
+	dagReq.TimeZoneOffset = timeZoneOffset(e.ctx)
+	sc := e.ctx.GetSessionVars().StmtCtx
+	dagReq.Flags = statementContextToFlags(sc)
+	for i := range e.idxCols {
+		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
+	}
+	execPB := e.constructIndexScanPB()
+	dagReq.Executors = append(dagReq.Executors, execPB)
+
+	err := plan.SetPBColumnsDefaultValue(e.ctx, dagReq.Executors[0].IdxScan.Columns, e.idxCols)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return dagReq, nil
+}
+
+func (e *CleanupIndexExec) constructIndexScanPB() *tipb.Executor {
+	idxExec := &tipb.IndexScan{
+		TableId: e.table.Meta().ID,
+		IndexId: e.index.Meta().ID,
+		Columns: plan.ColumnsToProto(e.idxCols, e.table.Meta().PKIsHandle),
+	}
+	return &tipb.Executor{Tp: tipb.ExecType_TypeIndexScan, IdxScan: idxExec}
+}
+
+// Close implements the Executor Close interface.
+func (e *CleanupIndexExec) Close() error {
 	return nil
 }
