@@ -175,6 +175,8 @@ func buildColumnsAndConstraints(ctx sessionctx.Context, colDefs []*ast.ColumnDef
 			return nil, nil, errors.Trace(err)
 		}
 		col.State = model.StatePublic
+		col.Collate = mysql.DefaultCollationName
+		col.Charset = mysql.DefaultCharset
 		constraints = append(constraints, cts...)
 		cols = append(cols, col)
 		colMap[colDef.Name.Name.L] = col
