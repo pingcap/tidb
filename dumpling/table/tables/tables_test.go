@@ -17,10 +17,10 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -42,16 +42,16 @@ var _ = Suite(&testSuite{})
 
 type testSuite struct {
 	store kv.Storage
-	se    tidb.Session
+	se    session.Session
 }
 
 func (ts *testSuite) SetUpSuite(c *C) {
 	store, err := mockstore.NewMockTikvStore()
 	c.Check(err, IsNil)
 	ts.store = store
-	_, err = tidb.BootstrapSession(store)
+	_, err = session.BootstrapSession(store)
 	c.Assert(err, IsNil)
-	ts.se, err = tidb.CreateSession4Test(ts.store)
+	ts.se, err = session.CreateSession4Test(ts.store)
 	c.Assert(err, IsNil)
 }
 

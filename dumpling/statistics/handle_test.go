@@ -19,10 +19,10 @@ import (
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -404,9 +404,9 @@ func newStoreWithBootstrap(statsLease time.Duration) (kv.Storage, *domain.Domain
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	tidb.SetSchemaLease(0)
-	tidb.SetStatsLease(statsLease)
+	session.SetSchemaLease(0)
+	session.SetStatsLease(statsLease)
 	domain.RunAutoAnalyze = false
-	do, err := tidb.BootstrapSession(store)
+	do, err := session.BootstrapSession(store)
 	return store, do, errors.Trace(err)
 }
