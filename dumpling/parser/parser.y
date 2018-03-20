@@ -4791,6 +4791,13 @@ AdminStmt:
 			HandleRanges: $6.([]ast.HandleRange),
 		}
 	}
+|	"ADMIN" "CHECKSUM" "TABLE" TableNameList
+	{
+		$$ = &ast.AdminStmt{
+			Tp: ast.AdminChecksumTable,
+			Tables: $4.([]*ast.TableName),
+		}
+	}
 |	"ADMIN" "CANCEL" "DDL" "JOBS" NumList
 	{
 		$$ = &ast.AdminStmt{
