@@ -686,16 +686,17 @@ func (w *worker) doBackfillIndexTaskInTxn(t table.Table, txn kv.Transaction, col
 }
 
 type addIndexWorker struct {
-	id          int
-	d           *ddl
-	batchCnt    int
-	sessCtx     sessionctx.Context
-	taskCh      chan *reorgIndexTask
-	resultCh    chan *addIndexResult
-	index       table.Index
-	table       table.Table
-	colFieldMap map[int64]*types.FieldType
-	closed      bool
+	id            int
+	d             *ddl
+	batchCnt      int
+	sessCtx       sessionctx.Context
+	taskCh        chan *reorgIndexTask
+	resultCh      chan *addIndexResult
+	notRunnableCh chan struct{}
+	index         table.Index
+	table         table.Table
+	colFieldMap   map[int64]*types.FieldType
+	closed        bool
 
 	defaultVals []types.Datum         // It's used to reduce the number of new slice.
 	idxRecords  []*indexRecord        // It's used to reduce the number of new slice.
@@ -708,26 +709,44 @@ type reorgIndexTask struct {
 }
 
 type addIndexResult struct {
-	addedCount int
-	scanCount  int
-	nextHandle int64
-	err        error
+	addedCount      int
+	scanCount       int
+	nextHandle      int64
+	err             error
+	reorgNotRunable bool
 }
 
 func newAddIndexWoker(sessCtx sessionctx.Context, d *ddl, id int, index table.Index, t table.Table, colFieldMap map[int64]*types.FieldType) *addIndexWorker {
 	return &addIndexWorker{
-		id:          id,
-		d:           d,
-		batchCnt:    defaultTaskHandleCnt,
-		sessCtx:     sessCtx,
-		taskCh:      make(chan *reorgIndexTask),
-		resultCh:    make(chan *addIndexResult),
-		index:       index,
-		table:       t,
-		colFieldMap: colFieldMap,
+		id:            id,
+		d:             d,
+		batchCnt:      defaultTaskHandleCnt,
+		sessCtx:       sessCtx,
+		taskCh:        make(chan *reorgIndexTask),
+		resultCh:      make(chan *addIndexResult),
+		notRunnableCh: make(chan struct{}, 1),
+		index:         index,
+		table:         t,
+		colFieldMap:   colFieldMap,
 
 		defaultVals: make([]types.Datum, len(t.Cols())),
 		rowMap:      make(map[int64]types.Datum, len(colFieldMap)),
+	}
+}
+
+func (w *addIndexWorker) isWorkerRunnable() bool {
+	select {
+	case <-w.notRunnableCh:
+		return false
+	default:
+	}
+	return true
+}
+
+func (w *addIndexWorker) notifyNotRunnable() {
+	select {
+	case w.notRunnableCh <- struct{}{}:
+	default:
 	}
 }
 
@@ -850,6 +869,19 @@ func (w *addIndexWorker) handleBackfillTask(task *reorgIndexTask) *addIndexResul
 	for {
 		addedCount := 0
 		nextHandle, addedCount, scanCount, err := w.backfillIndexInTxn(handleRange)
+		if err == nil {
+			if w.isWorkerRunnable() == false {
+				err = errReorgWorkerNotRunnable
+			} else {
+				// Because reorgIndexTask may run a long time,
+				// we should check whether this ddl job is still runnable.
+				err = w.d.isReorgRunnable()
+				if err != nil {
+					// Used to notify other workers to exit.
+					result.reorgNotRunable = true
+				}
+			}
+		}
 		if err != nil {
 			result.err = err
 			return result
@@ -943,23 +975,37 @@ func (d *ddl) waitTaskResults(workers []*addIndexWorker, taskCnt int, totalAdded
 	var (
 		addedCount int64
 		nextHandle = startHandle
+		firstErr   error
 	)
-
 	for i := 0; i < taskCnt; i++ {
 		worker := workers[i]
 		result := <-worker.resultCh
-		if result.err != nil {
-			return nextHandle, addedCount, errors.Trace(result.err)
+		if firstErr == nil && result.err != nil {
+			firstErr = result.err
+			if result.reorgNotRunable {
+				log.Infof("[ddl-reorg] job is cancelled, notify remaining workers to return.")
+				for j := i + 1; j < taskCnt; j++ {
+					workers[j].notifyNotRunnable()
+				}
+			}
+			// needs to wait all worker exits, any way.
+			continue
 		}
 
-		*totalAddedCount += int64(result.addedCount)
-		addedCount += int64(result.addedCount)
-		nextHandle = result.nextHandle
+		if result.err != nil {
+			log.Warnf("[ddl-reorg] worker[%v] return err:%v", i, result.err)
+		}
 
-		d.reorgCtx.setRowCountAndHandle(*totalAddedCount, nextHandle)
+		if firstErr == nil {
+			*totalAddedCount += int64(result.addedCount)
+			addedCount += int64(result.addedCount)
+			nextHandle = result.nextHandle
+
+			d.reorgCtx.setRowCountAndHandle(*totalAddedCount, nextHandle)
+		}
 	}
 
-	return nextHandle, addedCount, nil
+	return nextHandle, addedCount, errors.Trace(firstErr)
 }
 
 func (d *ddl) finishBatchTasks(startTime time.Time, startHandle int64, reorgInfo *reorgInfo, totalAddedCount *int64, workers []*addIndexWorker, taskCnt int) error {
