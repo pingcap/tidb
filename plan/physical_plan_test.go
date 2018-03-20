@@ -848,6 +848,10 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 			sql:  "select sum(a.g), sum(b.g) from t a join t b on a.g = b.g and a.a>5 group by a.g order by a.g limit 1",
 			best: "IndexJoin{IndexReader(Index(t.g)[[<nil>,+inf]]->Sel([gt(a.a, 5)]))->IndexReader(Index(t.g)[[<nil>,+inf]])}(a.g,b.g)->StreamAgg->Limit->Projection",
 		},
+		{
+			sql:  "select sum(d) from t",
+			best: "TableReader(Table(t)->StreamAgg)->StreamAgg",
+		},
 	}
 	for _, tt := range tests {
 		comment := Commentf("for %s", tt.sql)
@@ -1113,17 +1117,17 @@ func (s *testPlanSuite) TestAggEliminater(c *C) {
 		// Max to Limit + Sort-Desc.
 		{
 			sql:  "select max(a) from t;",
-			best: "TableReader(Table(t)->Limit)->Limit->HashAgg",
+			best: "TableReader(Table(t)->Limit)->Limit->StreamAgg",
 		},
 		// Min to Limit + Sort.
 		{
 			sql:  "select min(a) from t;",
-			best: "TableReader(Table(t)->Limit)->Limit->HashAgg",
+			best: "TableReader(Table(t)->Limit)->Limit->StreamAgg",
 		},
 		// Min to Limit + Sort, and isnull() should be added.
 		{
 			sql:  "select min(c_str) from t;",
-			best: "IndexReader(Index(t.c_d_e_str)[[-inf,+inf]]->Limit)->Limit->HashAgg",
+			best: "IndexReader(Index(t.c_d_e_str)[[-inf,+inf]]->Limit)->Limit->StreamAgg",
 		},
 		// Do nothing to max + firstrow.
 		{
@@ -1133,7 +1137,7 @@ func (s *testPlanSuite) TestAggEliminater(c *C) {
 		// If max/min contains scalar function, we can still do transformation.
 		{
 			sql:  "select max(a+1) from t;",
-			best: "TableReader(Table(t)->Sel([not(isnull(plus(test.t.a, 1)))])->TopN([plus(test.t.a, 1) true],0,1))->TopN([plus(test.t.a, 1) true],0,1)->HashAgg",
+			best: "TableReader(Table(t)->Sel([not(isnull(plus(test.t.a, 1)))])->TopN([plus(test.t.a, 1) true],0,1))->TopN([plus(test.t.a, 1) true],0,1)->StreamAgg",
 		},
 		// Do nothing to max+min.
 		{
@@ -1148,7 +1152,7 @@ func (s *testPlanSuite) TestAggEliminater(c *C) {
 		// If inner is not a data source, we can still do transformation.
 		{
 			sql:  "select max(a) from (select t1.a from t t1 join t t2 on t1.a=t2.a) t",
-			best: "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->Limit->HashAgg",
+			best: "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->Limit->StreamAgg",
 		},
 	}
 
