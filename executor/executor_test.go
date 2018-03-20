@@ -224,6 +224,17 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(err, IsNil)
 	r, err = tk.Exec("admin check table admin_test")
 	c.Assert(err, NotNil)
+
+	// checksum table test
+	tk.MustExec("create table checksum_with_index (id int, count int, PRIMARY KEY(id), KEY(count))")
+	tk.MustExec("create table checksum_without_index (id int, count int, PRIMARY KEY(id))")
+	r, err = tk.Exec("admin checksum table checksum_with_index, checksum_without_index")
+	c.Assert(err, IsNil)
+	res := tk.ResultSetToResult(r, Commentf("admin checksum table"))
+	// Mocktikv returns 1 for every table/index scan, then we will xor the checksums of a table.
+	// For "checksum_with_index", we have two checksums, so the result will be 1^1 = 0.
+	// For "checksum_without_index", we only have one checksum, so the result will be 1.
+	res.Sort().Check(testkit.Rows("test checksum_with_index 0 2 2", "test checksum_without_index 1 1 1"))
 }
 
 func (s *testSuite) fillData(tk *testkit.TestKit, table string) {

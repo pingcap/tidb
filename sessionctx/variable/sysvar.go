@@ -610,6 +610,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBOptAggPushDown, boolToIntStr(DefOptAggPushDown)},
 	{ScopeSession, TiDBOptInSubqUnFolding, boolToIntStr(DefOptInSubqUnfolding)},
 	{ScopeSession, TiDBBuildStatsConcurrency, strconv.Itoa(DefBuildStatsConcurrency)},
+	{ScopeSession, TiDBChecksumTableConcurrency, strconv.Itoa(DefChecksumTableConcurrency)},
 	{ScopeGlobal | ScopeSession, TiDBDistSQLScanConcurrency, strconv.Itoa(DefDistSQLScanConcurrency)},
 	{ScopeGlobal | ScopeSession, TiDBIndexJoinBatchSize, strconv.Itoa(DefIndexJoinBatchSize)},
 	{ScopeGlobal | ScopeSession, TiDBIndexLookupSize, strconv.Itoa(DefIndexLookupSize)},

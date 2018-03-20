@@ -510,3 +510,37 @@ func (s *testSuite) TestRequestBuilder5(c *C) {
 	}
 	c.Assert(actual, DeepEquals, expect)
 }
+
+func (s *testSuite) TestRequestBuilder6(c *C) {
+	keyRanges := []kv.KeyRange{
+		{
+			StartKey: kv.Key{0x00, 0x01},
+			EndKey:   kv.Key{0x02, 0x03},
+		},
+	}
+
+	concurrency := 10
+
+	actual, err := (&RequestBuilder{}).SetKeyRanges(keyRanges).
+		SetChecksumRequest(&tipb.ChecksumRequest{}).
+		SetConcurrency(concurrency).
+		Build()
+	c.Assert(err, IsNil)
+
+	expect := &kv.Request{
+		Tp:             105,
+		StartTs:        0x0,
+		Data:           []uint8{0x8, 0x0, 0x10, 0x0, 0x18, 0x0},
+		KeyRanges:      keyRanges,
+		KeepOrder:      false,
+		Desc:           false,
+		Concurrency:    concurrency,
+		IsolationLevel: 0,
+		Priority:       0,
+		NotFillCache:   true,
+		SyncLog:        false,
+		Streaming:      false,
+	}
+
+	c.Assert(actual, DeepEquals, expect)
+}
