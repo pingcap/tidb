@@ -273,7 +273,6 @@ type ShowDDLJobQueriesExec struct {
 	cursor int
 	jobs   []*model.Job
 	jobIDs []int64
-	query  string
 }
 
 // Open implements the Executor Open interface.
@@ -481,6 +480,21 @@ type SelectLockExec struct {
 	Lock ast.SelectLockType
 }
 
+// Open implements the Executor Open interface.
+func (e *SelectLockExec) Open(ctx context.Context) error {
+	if err := e.baseExecutor.Open(ctx); err != nil {
+		return errors.Trace(err)
+	}
+
+	txnCtx := e.ctx.GetSessionVars().TxnCtx
+	txnCtx.ForUpdate = true
+	for id := range e.Schema().TblID2Handle {
+		// This operation is only for schema validator check.
+		txnCtx.UpdateDeltaForTable(id, 0, 0)
+	}
+	return nil
+}
+
 // NextChunk implements the Executor NextChunk interface.
 func (e *SelectLockExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
@@ -493,8 +507,6 @@ func (e *SelectLockExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error 
 		return nil
 	}
 	txn := e.ctx.Txn()
-	txnCtx := e.ctx.GetSessionVars().TxnCtx
-	txnCtx.ForUpdate = true
 	keys := make([]kv.Key, 0, chk.NumRows())
 	iter := chunk.NewIterator4Chunk(chk)
 	for id, cols := range e.Schema().TblID2Handle {
@@ -507,8 +519,6 @@ func (e *SelectLockExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error 
 			if err != nil {
 				return errors.Trace(err)
 			}
-			// This operation is only for schema validator check.
-			txnCtx.UpdateDeltaForTable(id, 0, 0)
 		}
 	}
 	return nil

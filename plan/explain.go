@@ -168,8 +168,8 @@ func (p *PhysicalApply) ExplainInfo() string {
 
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalIndexJoin) ExplainInfo() string {
-	buffer := bytes.NewBufferString(fmt.Sprintf("outer:%s",
-		p.Children()[p.OuterIndex].ExplainID()))
+	var buffer bytes.Buffer
+	fmt.Fprintf(&buffer, "outer:%s", p.Children()[p.OuterIndex].ExplainID())
 	buffer.WriteString(fmt.Sprintf(", %s", p.JoinType))
 	if len(p.OuterJoinKeys) > 0 {
 		buffer.WriteString(fmt.Sprintf(", outer key:%s",
