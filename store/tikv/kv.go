@@ -271,7 +271,6 @@ func (s *tikvStore) Close() error {
 	}
 
 	close(s.closed)
-
 	if err := s.client.Close(); err != nil {
 		return errors.Trace(err)
 	}

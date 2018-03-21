@@ -33,7 +33,6 @@ type SortExec struct {
 	ByItems []*plan.ByItems
 	Idx     int
 	fetched bool
-	err     error
 	schema  *expression.Schema
 
 	keyExprs []expression.Expression
@@ -223,7 +222,6 @@ type TopNExec struct {
 	SortExec
 	limit      *plan.PhysicalLimit
 	totalLimit int
-	heapSize   int
 
 	chkHeap *topNChunkHeap
 }
