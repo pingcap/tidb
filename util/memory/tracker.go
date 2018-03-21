@@ -35,7 +35,7 @@ import (
 // NOTE: We only protect concurrent access to "bytesConsumed" and "children",
 // that is to say:
 // 1. Only "BytesConsumed()", "Consume()" and "AttachTo()" are thread-safe.
-// 2. Ohter operations of a Tracker tree is not thread-safe.
+// 2. Other operations of a Tracker tree is not thread-safe.
 type Tracker struct {
 	sync.Mutex // For synchronization.
 
