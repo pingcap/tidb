@@ -2,10 +2,10 @@ package infoschema_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/session"
 )
 
 func (s *testSuite) TestDataForTableRowsCountField(c *C) {
