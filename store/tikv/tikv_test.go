@@ -24,7 +24,24 @@ import (
 	"github.com/pingcap/tidb/parser"
 )
 
+// When with-tikv flag is true, there is only one storage, so the test suite have to run one by one.
+type oneByOneSuite struct {
+}
+
+func (s oneByOneSuite) SetUpSuite(c *C) {
+	if *withTiKV {
+		withTiKVGlobalLock.Lock()
+	}
+}
+
+func (s oneByOneSuite) TearDownSuite(c *C) {
+	if *withTiKV {
+		withTiKVGlobalLock.Unlock()
+	}
+}
+
 type testTiKVSuite struct {
+	oneByOneSuite
 }
 
 var _ = Suite(&testTiKVSuite{})

@@ -20,6 +20,7 @@ import (
 )
 
 type testScanMockSuite struct {
+	oneByOneSuite
 }
 
 var _ = Suite(&testScanMockSuite{})
