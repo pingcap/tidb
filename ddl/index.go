@@ -686,16 +686,17 @@ func (w *worker) doBackfillIndexTaskInTxn(t table.Table, txn kv.Transaction, col
 }
 
 type addIndexWorker struct {
-	id          int
-	d           *ddl
-	batchCnt    int
-	sessCtx     sessionctx.Context
-	taskCh      chan *reorgIndexTask
-	resultCh    chan *addIndexResult
-	index       table.Index
-	table       table.Table
-	colFieldMap map[int64]*types.FieldType
-	closed      bool
+	id            int
+	d             *ddl
+	batchCnt      int
+	sessCtx       sessionctx.Context
+	taskCh        chan *reorgIndexTask
+	resultCh      chan *addIndexResult
+	notRunnableCh chan struct{}
+	index         table.Index
+	table         table.Table
+	colFieldMap   map[int64]*types.FieldType
+	closed        bool
 
 	defaultVals []types.Datum         // It's used to reduce the number of new slice.
 	idxRecords  []*indexRecord        // It's used to reduce the number of new slice.
@@ -717,18 +718,35 @@ type addIndexResult struct {
 func newAddIndexWorker(sessCtx sessionctx.Context, d *ddl, id int, t table.Table, indexInfo *model.IndexInfo, colFieldMap map[int64]*types.FieldType) *addIndexWorker {
 	index := tables.NewIndexWithBuffer(t.Meta(), indexInfo)
 	return &addIndexWorker{
-		id:          id,
-		d:           d,
-		batchCnt:    defaultTaskHandleCnt,
-		sessCtx:     sessCtx,
-		taskCh:      make(chan *reorgIndexTask, 1),
-		resultCh:    make(chan *addIndexResult, 1),
-		index:       index,
-		table:       t,
-		colFieldMap: colFieldMap,
+		id:            id,
+		d:             d,
+		batchCnt:      defaultTaskHandleCnt,
+		sessCtx:       sessCtx,
+		taskCh:        make(chan *reorgIndexTask, 1),
+		resultCh:      make(chan *addIndexResult, 1),
+		notRunnableCh: make(chan struct{}, 1),
+		index:         index,
+		table:         t,
+		colFieldMap:   colFieldMap,
 
 		defaultVals: make([]types.Datum, len(t.Cols())),
 		rowMap:      make(map[int64]types.Datum, len(colFieldMap)),
+	}
+}
+
+func (w *addIndexWorker) isWorkerRunnable() bool {
+	select {
+	case <-w.notRunnableCh:
+		return false
+	default:
+	}
+	return true
+}
+
+func (w *addIndexWorker) notifyNotRunnable() {
+	select {
+	case w.notRunnableCh <- struct{}{}:
+	default:
 	}
 }
 
@@ -858,9 +876,13 @@ func (w *addIndexWorker) handleBackfillTask(task *reorgIndexTask) *addIndexResul
 		addedCount := 0
 		nextHandle, addedCount, scanCount, err := w.backfillIndexInTxn(handleRange)
 		if err == nil {
-			// Because reorgIndexTask may run a long time,
-			// we should check whether this ddl job is still runnable.
-			err = w.d.isReorgRunnable()
+			if !w.isWorkerRunnable() {
+				err = errReorgWorkerNotRunnable
+			} else {
+				// Because reorgIndexTask may run a long time,
+				// we should check whether this ddl job is still runnable.
+				err = w.d.isReorgRunnable()
+			}
 		}
 		if err != nil {
 			result.err = err
@@ -962,6 +984,13 @@ func (d *ddl) waitTaskResults(workers []*addIndexWorker, taskCnt int, totalAdded
 		result := <-worker.resultCh
 		if firstErr == nil && result.err != nil {
 			firstErr = result.err
+			log.Infof("[ddl-reorg] error occured, notify remaining workers to return.")
+
+			// Notify remaining workers exit immediately.
+			// If we don't do this, we will need to wait the long run workers exit.
+			for j := i + 1; j < taskCnt; j++ {
+				workers[j].notifyNotRunnable()
+			}
 			// We should wait all working workers exits, any way.
 			continue
 		}
