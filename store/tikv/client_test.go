@@ -26,6 +26,7 @@ func TestT(t *testing.T) {
 }
 
 type testClientSuite struct {
+	oneByOneSuite
 }
 
 var _ = Suite(&testClientSuite{})

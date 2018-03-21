@@ -21,7 +21,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/logutil"
@@ -58,7 +58,7 @@ func main() {
 		Level: *logLevel,
 	})
 	terror.MustNil(err)
-	err = tidb.RegisterStore("tikv", tikv.Driver{})
+	err = session.RegisterStore("tikv", tikv.Driver{})
 	terror.MustNil(err)
 	ut := newBenchDB()
 	works := strings.Split(*runJobs, "|")
@@ -89,23 +89,23 @@ func main() {
 
 type benchDB struct {
 	store   tikv.Storage
-	session tidb.Session
+	session session.Session
 }
 
 func newBenchDB() *benchDB {
 	// Create TiKV store and disable GC as we will trigger GC manually.
-	store, err := tidb.NewStore("tikv://" + *addr + "?disableGC=true")
+	store, err := session.NewStore("tikv://" + *addr + "?disableGC=true")
 	terror.MustNil(err)
-	_, err = tidb.BootstrapSession(store)
+	_, err = session.BootstrapSession(store)
 	terror.MustNil(err)
-	session, err := tidb.CreateSession(store)
+	se, err := session.CreateSession(store)
 	terror.MustNil(err)
-	_, err = session.Execute(context.Background(), "use test")
+	_, err = se.Execute(context.Background(), "use test")
 	terror.MustNil(err)
 
 	return &benchDB{
 		store:   store.(tikv.Storage),
-		session: session,
+		session: se,
 	}
 }
 

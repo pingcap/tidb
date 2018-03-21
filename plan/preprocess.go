@@ -392,9 +392,12 @@ func checkColumn(colDef *ast.ColumnDef) error {
 		if tp.Flen != types.UnspecifiedLength && tp.Flen > maxFlen {
 			return types.ErrTooBigFieldLength.Gen("Column length too big for column '%s' (max = %d); use BLOB or TEXT instead", colDef.Name.Name.O, maxFlen)
 		}
-	case mysql.TypeDouble:
-		if tp.Flen != types.UnspecifiedLength && tp.Flen > mysql.PrecisionForDouble {
-			return types.ErrWrongFieldSpec.Gen("Incorrect column specifier for column '%s'", colDef.Name.Name.O)
+	case mysql.TypeFloat, mysql.TypeDouble:
+		if tp.Decimal > mysql.MaxFloatingTypeScale {
+			return types.ErrTooBigScale.GenByArgs(tp.Decimal, colDef.Name.Name.O, mysql.MaxFloatingTypeScale)
+		}
+		if tp.Flen > mysql.MaxFloatingTypeWidth {
+			return types.ErrTooBigPrecision.GenByArgs(tp.Flen, colDef.Name.Name.O, mysql.MaxFloatingTypeWidth)
 		}
 	case mysql.TypeSet:
 		if len(tp.Elems) > mysql.MaxTypeSetMembers {
@@ -420,7 +423,7 @@ func checkColumn(colDef *ast.ColumnDef) error {
 	return nil
 }
 
-// isNowSymFunc checks whether defaul value is a NOW() builtin function.
+// isNowSymFunc checks whether default value is a NOW() builtin function.
 func isDefaultValNowSymFunc(expr ast.ExprNode) bool {
 	if funcCall, ok := expr.(*ast.FuncCallExpr); ok {
 		// Default value NOW() is transformed to CURRENT_TIMESTAMP() in parser.
