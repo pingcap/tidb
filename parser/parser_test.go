@@ -399,6 +399,10 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 
 		// for straight_join
 		{"select * from t1 straight_join t2 on t1.id = t2.id", true},
+		{"select straight_join * from t1 join t2 on t1.id = t2.id", true},
+		{"select straight_join * from t1 left join t2 on t1.id = t2.id", true},
+		{"select straight_join * from t1 right join t2 on t1.id = t2.id", true},
+		{"select straight_join * from t1 straight_join t2 on t1.id = t2.id", true},
 
 		// for admin
 		{"admin show ddl;", true},
