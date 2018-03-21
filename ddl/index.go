@@ -876,7 +876,7 @@ func (w *addIndexWorker) handleBackfillTask(task *reorgIndexTask) *addIndexResul
 		addedCount := 0
 		nextHandle, addedCount, scanCount, err := w.backfillIndexInTxn(handleRange)
 		if err == nil {
-			if w.isWorkerRunnable() == false {
+			if !w.isWorkerRunnable() {
 				err = errReorgWorkerNotRunnable
 			} else {
 				// Because reorgIndexTask may run a long time,
@@ -1052,7 +1052,7 @@ func (d *ddl) backfillKvRangesIndex(workers []*addIndexWorker, kvRanges []kv.Key
 	)
 	totalAddedCount := job.GetRowCount()
 	batchTasks := make([]*reorgIndexTask, 0, len(workers))
-	for _, keyRange := range kvRanges {
+	for i, keyRange := range kvRanges {
 		startTime = time.Now()
 
 		startHandle, endHandle, err = decodeHandleRange(keyRange)
@@ -1062,7 +1062,7 @@ func (d *ddl) backfillKvRangesIndex(workers []*addIndexWorker, kvRanges []kv.Key
 		task := &reorgIndexTask{startHandle, endHandle}
 
 		batchTasks = append(batchTasks, task)
-		if len(batchTasks) >= len(workers) {
+		if len(batchTasks) >= len(workers) || i == (len(kvRanges)-1) {
 			sendTaskToBackfillWorkers(workers, batchTasks)
 			// Wait tasks finish.
 			err = d.finishBatchTasks(startTime, startHandle, reorgInfo, &totalAddedCount, workers, len(batchTasks))
@@ -1070,14 +1070,6 @@ func (d *ddl) backfillKvRangesIndex(workers []*addIndexWorker, kvRanges []kv.Key
 				return errors.Trace(err)
 			}
 			batchTasks = batchTasks[:0]
-		}
-	}
-
-	if len(batchTasks) > 0 {
-		sendTaskToBackfillWorkers(workers, batchTasks)
-		err = d.finishBatchTasks(startTime, startHandle, reorgInfo, &totalAddedCount, workers, len(batchTasks))
-		if err != nil {
-			return errors.Trace(err)
 		}
 	}
 
