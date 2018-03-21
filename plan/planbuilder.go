@@ -170,6 +170,10 @@ type planBuilder struct {
 	// rewriterCounter counts how many rewriter is being used.
 	rewriterPool    []*expressionRewriter
 	rewriterCounter int
+
+	// inStraightJoin represents whether the current "SELECT" statement has
+	// "STRAIGHT_JOIN" option.
+	inStraightJoin bool
 }
 
 func (b *planBuilder) build(node ast.Node) Plan {
