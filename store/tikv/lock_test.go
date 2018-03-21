@@ -35,7 +35,7 @@ var _ = Suite(&testLockSuite{})
 
 func (s *testLockSuite) SetUpTest(c *C) {
 	fmt.Println("SetUpTest .... test Lock suite")
-	s.store = NewTestStore(c)
+	s.store = NewTestStore(c).(*tikvStore)
 }
 
 func (s *testLockSuite) TearDownTest(c *C) {

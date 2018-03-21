@@ -37,7 +37,7 @@ var _ = Suite(&testIsolationSuite{})
 
 func (s *testIsolationSuite) SetUpSuite(c *C) {
 	s.OneByOneSuite.SetUpSuite(c)
-	s.store = NewTestStore(c)
+	s.store = NewTestStore(c).(*tikvStore)
 }
 
 func (s *testIsolationSuite) TearDownSuite(c *C) {

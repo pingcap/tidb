@@ -46,7 +46,7 @@ func newTestTiKVStore() (kv.Storage, error) {
 }
 
 // NewTestStore new a mockStore.
-func NewTestStore(c *C) *tikvStore {
+func NewTestStore(c *C) kv.Storage {
 	// duplicated code with mockstore NewTestTiKVStorage,
 	// but I have no idea to fix the cycle depenedence
 	// TODO: try to simplify the code later
@@ -60,12 +60,12 @@ func NewTestStore(c *C) *tikvStore {
 		c.Assert(err, IsNil)
 		err = clearStorage(store)
 		c.Assert(err, IsNil)
-		return store.(*tikvStore)
+		return store
 	}
 
 	store, err := newTestTiKVStore()
 	c.Assert(err, IsNil)
-	return store.(*tikvStore)
+	return store
 }
 
 func clearStorage(store kv.Storage) error {
@@ -98,7 +98,7 @@ var _ = Suite(&testTiclientSuite{})
 
 func (s *testTiclientSuite) SetUpSuite(c *C) {
 	s.OneByOneSuite.SetUpSuite(c)
-	s.store = NewTestStore(c)
+	s.store = NewTestStore(c).(*tikvStore)
 	s.prefix = fmt.Sprintf("ticlient_%d", time.Now().Unix())
 }
 

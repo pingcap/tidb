@@ -34,7 +34,7 @@ var _ = Suite(&testSnapshotSuite{})
 
 func (s *testSnapshotSuite) SetUpSuite(c *C) {
 	s.OneByOneSuite.SetUpSuite(c)
-	s.store = NewTestStore(c)
+	s.store = NewTestStore(c).(*tikvStore)
 	s.prefix = fmt.Sprintf("snapshot_%d", time.Now().Unix())
 	s.rowNums = append(s.rowNums, 1, 100, 191)
 }

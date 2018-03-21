@@ -40,7 +40,7 @@ type testSQLSuite struct {
 func (s *testSQLSuite) SetUpSuite(c *C) {
 	s.OneByOneSuite.SetUpSuite(c)
 	var err error
-	s.store = NewTestStore(c)
+	s.store = NewTestStore(c).(Storage)
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 }

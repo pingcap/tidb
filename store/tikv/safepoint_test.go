@@ -36,7 +36,7 @@ var _ = Suite(&testSafePointSuite{})
 
 func (s *testSafePointSuite) SetUpSuite(c *C) {
 	s.OneByOneSuite.SetUpSuite(c)
-	s.store = NewTestStore(c)
+	s.store = NewTestStore(c).(*tikvStore)
 	s.oracle = &mockoracle.MockOracle{}
 	s.store.oracle = s.oracle
 	s.prefix = fmt.Sprintf("seek_%d", time.Now().Unix())
