@@ -18,11 +18,11 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
@@ -66,7 +66,7 @@ func (s *testInferTypeSuite) TestInferType(c *C) {
 		dom.Close()
 		store.Close()
 	}()
-	se, err := tidb.CreateSession4Test(store)
+	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")

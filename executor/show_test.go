@@ -21,11 +21,11 @@ import (
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/privilege/privileges"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
@@ -326,7 +326,7 @@ func (s *testSuite) TestShowVisibility(c *C) {
 	tk.MustExec(`flush privileges`)
 
 	tk1 := testkit.NewTestKit(c, s.store)
-	se, err := tidb.CreateSession4Test(s.store)
+	se, err := session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "show", Hostname: "%"}, nil, nil), IsTrue)
 	tk1.Se = se
@@ -362,7 +362,7 @@ func (s *testSuite) TestShowVisibility(c *C) {
 // mockSessionManager is a mocked session manager that wraps one session
 // it returns only this session's current process info as processlist for test.
 type mockSessionManager struct {
-	tidb.Session
+	session.Session
 }
 
 // ShowProcessList implements the SessionManager.ShowProcessList interface.
@@ -578,7 +578,7 @@ func (s *testSuite) TestShowTableStatus(c *C) {
 	rs, err := tk.Exec("show table status;")
 	c.Assert(errors.ErrorStack(err), Equals, "")
 	c.Assert(rs, NotNil)
-	rows, err := tidb.GetRows4Test(context.Background(), tk.Se, rs)
+	rows, err := session.GetRows4Test(context.Background(), tk.Se, rs)
 	c.Assert(errors.ErrorStack(err), Equals, "")
 	err = rs.Close()
 	c.Assert(errors.ErrorStack(err), Equals, "")
