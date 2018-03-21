@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"golang.org/x/net/context"
+	"bytes"
 )
 
 var (
@@ -193,6 +194,30 @@ func (c *RawKVClient) Scan(startKey []byte, limit int) (keys [][]byte, values []
 	return
 }
 
+// DeleteRange deletes all key-value pairs in a range from TiKV
+func (c *RawKVClient) DeleteRange(startKey []byte, endKey []byte) error {
+	start := time.Now()
+	defer func() { metrics.TiKVRawkvCmdHistogram.WithLabelValues("delete_range").Observe(time.Since(start).Seconds()) }()
+
+	// Process each affected region respectively
+	for !bytes.Equal(startKey, endKey) {
+		resp, actualEndKey, err := c.sendDeleteRangeReq(startKey, endKey)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		cmdResp := resp.RawDeleteRange
+		if cmdResp == nil {
+			return errors.Trace(ErrBodyMissing)
+		}
+		if cmdResp.GetError() != "" {
+			return errors.New(cmdResp.GetError())
+		}
+		startKey = actualEndKey
+	}
+
+	return nil
+}
+
 func (c *RawKVClient) sendReq(key []byte, req *tikvrpc.Request) (*tikvrpc.Response, *KeyLocation, error) {
 	bo := NewBackoffer(context.Background(), rawkvMaxBackoff)
 	sender := NewRegionRequestSender(c.regionCache, c.rpcClient)
@@ -217,5 +242,50 @@ func (c *RawKVClient) sendReq(key []byte, req *tikvrpc.Request) (*tikvrpc.Respon
 			continue
 		}
 		return resp, loc, nil
+	}
+}
+
+// sendDeleteRangeReq sends a raw delete range request and returns the response and the actual endKey.
+// If the given range spans over more than one regions, the actual endKey is the end of the first region.
+// We can't use sendReq directly, because we need to know the end of the region before we send the request
+// TODO: Is there any better way to avoid duplicating code with func `sendReq` ?
+func (c *RawKVClient) sendDeleteRangeReq(startKey []byte, endKey []byte) (*tikvrpc.Response, []byte, error) {
+	bo := NewBackoffer(context.Background(), rawkvMaxBackoff)
+	sender := NewRegionRequestSender(c.regionCache, c.rpcClient)
+	for {
+		loc, err := c.regionCache.LocateKey(bo, startKey)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+
+		actualEndKey :=  endKey
+		if len(loc.EndKey) > 0 && bytes.Compare(loc.EndKey, endKey) < 0 {
+			actualEndKey = loc.EndKey
+		}
+
+		req := &tikvrpc.Request{
+			Type:tikvrpc.CmdRawDeleteRange,
+			RawDeleteRange:&kvrpcpb.RawDeleteRangeRequest{
+				StartKey: startKey,
+				EndKey: actualEndKey,
+			},
+		}
+
+		resp, err := sender.SendReq(bo, req, loc.Region, readTimeoutShort)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		regionErr, err := resp.GetRegionError()
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		if regionErr != nil {
+			err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+			if err != nil {
+				return nil, nil, errors.Trace(err)
+			}
+			continue
+		}
+		return resp, actualEndKey, nil
 	}
 }

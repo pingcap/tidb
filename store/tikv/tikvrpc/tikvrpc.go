@@ -48,6 +48,7 @@ const (
 	CmdRawPut
 	CmdRawDelete
 	CmdRawScan
+	CmdRawDeleteRange
 
 	CmdCop CmdType = 512 + iota
 	CmdCopStream
@@ -89,6 +90,8 @@ func (t CmdType) String() string {
 		return "RawDelete"
 	case CmdRawScan:
 		return "RawScan"
+	case CmdRawDeleteRange:
+		return "RawDeleteRange"
 	case CmdCop:
 		return "Cop"
 	case CmdCopStream:
@@ -122,6 +125,7 @@ type Request struct {
 	RawPut           *kvrpcpb.RawPutRequest
 	RawDelete        *kvrpcpb.RawDeleteRequest
 	RawScan          *kvrpcpb.RawScanRequest
+	RawDeleteRange   *kvrpcpb.RawDeleteRangeRequest
 	Cop              *coprocessor.Request
 	MvccGetByKey     *kvrpcpb.MvccGetByKeyRequest
 	MvccGetByStartTs *kvrpcpb.MvccGetByStartTsRequest
@@ -146,6 +150,7 @@ type Response struct {
 	RawPut           *kvrpcpb.RawPutResponse
 	RawDelete        *kvrpcpb.RawDeleteResponse
 	RawScan          *kvrpcpb.RawScanResponse
+	RawDeleteRange   *kvrpcpb.RawDeleteRangeResponse
 	Cop              *coprocessor.Response
 	CopStream        *CopStreamResponse
 	MvccGetByKey     *kvrpcpb.MvccGetByKeyResponse
@@ -213,6 +218,8 @@ func SetContext(req *Request, region *metapb.Region, peer *metapb.Peer) error {
 		req.RawDelete.Context = ctx
 	case CmdRawScan:
 		req.RawScan.Context = ctx
+	case CmdRawDeleteRange:
+		req.RawDeleteRange.Context = ctx
 	case CmdCop:
 		req.Cop.Context = ctx
 	case CmdCopStream:
@@ -295,6 +302,10 @@ func GenRegionErrorResp(req *Request, e *errorpb.Error) (*Response, error) {
 		resp.RawScan = &kvrpcpb.RawScanResponse{
 			RegionError: e,
 		}
+	case CmdRawDeleteRange:
+		resp.RawDeleteRange = &kvrpcpb.RawDeleteRangeResponse{
+			RegionError: e,
+		}
 	case CmdCop:
 		resp.Cop = &coprocessor.Response{
 			RegionError: e,
@@ -357,6 +368,8 @@ func (resp *Response) GetRegionError() (*errorpb.Error, error) {
 		e = resp.RawDelete.GetRegionError()
 	case CmdRawScan:
 		e = resp.RawScan.GetRegionError()
+	case CmdRawDeleteRange:
+		e = resp.RawDeleteRange.GetRegionError()
 	case CmdCop:
 		e = resp.Cop.GetRegionError()
 	case CmdCopStream:
@@ -411,6 +424,8 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request, ch cha
 		resp.RawDelete, err = client.RawDelete(ctx, req.RawDelete)
 	case CmdRawScan:
 		resp.RawScan, err = client.RawScan(ctx, req.RawScan)
+	case CmdRawDeleteRange:
+		resp.RawDeleteRange, err = client.RawDeleteRange(ctx, req.RawDeleteRange)
 	case CmdCop:
 		resp.Cop, err = client.Coprocessor(ctx, req.Cop)
 	case CmdCopStream:
