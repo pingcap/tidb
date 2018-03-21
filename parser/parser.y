@@ -4812,6 +4812,13 @@ AdminStmt:
 			HandleRanges: $6.([]ast.HandleRange),
 		}
 	}
+|	"ADMIN" "CHECKSUM" "TABLE" TableNameList
+	{
+		$$ = &ast.AdminStmt{
+			Tp: ast.AdminChecksumTable,
+			Tables: $4.([]*ast.TableName),
+		}
+	}
 |	"ADMIN" "CANCEL" "DDL" "JOBS" NumList
 	{
 		$$ = &ast.AdminStmt{
@@ -5553,7 +5560,7 @@ NumericType:
 		x := types.NewFieldType($1.(byte))
 		x.Flen = fopt.Flen
 		if x.Tp == mysql.TypeFloat {
-			if x.Flen > mysql.PrecisionForFloat {
+			if x.Flen > 24 {
 				x.Tp = mysql.TypeDouble
 			}
 		}

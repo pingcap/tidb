@@ -77,6 +77,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildRecoverIndex(v)
 	case *plan.CheckIndexRange:
 		return b.buildCheckIndexRange(v)
+	case *plan.ChecksumTable:
+		return b.buildChecksumTable(v)
 	case *plan.DDL:
 		return b.buildDDL(v)
 	case *plan.Deallocate:
@@ -312,6 +314,19 @@ func (b *executorBuilder) buildCheckIndexRange(v *plan.CheckIndexRange) Executor
 			e.startKey = make([]types.Datum, len(e.index.Columns))
 			break
 		}
+	}
+	return e
+}
+
+func (b *executorBuilder) buildChecksumTable(v *plan.ChecksumTable) Executor {
+	e := &ChecksumTableExec{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+		tables:       make(map[int64]*checksumContext),
+		done:         false,
+	}
+	startTs := b.getStartTS()
+	for _, t := range v.Tables {
+		e.tables[t.TableInfo.ID] = newChecksumContext(t.DBInfo, t.TableInfo, startTs)
 	}
 	return e
 }

@@ -93,6 +93,19 @@ func (builder *RequestBuilder) SetAnalyzeRequest(ana *tipb.AnalyzeReq) *RequestB
 	return builder
 }
 
+// SetChecksumRequest sets the request type to "ReqTypeChecksum" and construct request data.
+func (builder *RequestBuilder) SetChecksumRequest(checksum *tipb.ChecksumRequest) *RequestBuilder {
+	if builder.err != nil {
+		return builder
+	}
+
+	builder.Request.Tp = kv.ReqTypeChecksum
+	builder.Request.StartTs = checksum.StartTs
+	builder.Request.Data, builder.err = checksum.Marshal()
+	builder.Request.NotFillCache = true
+	return builder
+}
+
 // SetKeyRanges sets "KeyRanges" for "kv.Request".
 func (builder *RequestBuilder) SetKeyRanges(keyRanges []kv.KeyRange) *RequestBuilder {
 	builder.Request.KeyRanges = keyRanges
@@ -137,6 +150,12 @@ func (builder *RequestBuilder) SetPriority(priority int) *RequestBuilder {
 // SetStreaming sets "Streaming" flag for "kv.Request".
 func (builder *RequestBuilder) SetStreaming(streaming bool) *RequestBuilder {
 	builder.Request.Streaming = streaming
+	return builder
+}
+
+// SetConcurrency sets "Concurrency" for "kv.Request".
+func (builder *RequestBuilder) SetConcurrency(concurrency int) *RequestBuilder {
+	builder.Request.Concurrency = concurrency
 	return builder
 }
 

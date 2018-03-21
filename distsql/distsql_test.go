@@ -14,6 +14,8 @@
 package distsql
 
 import (
+	"sync"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
@@ -158,16 +160,25 @@ func (s *testSuite) TestAnalyze(c *C) {
 
 // mockResponse implements kv.Response interface.
 // Used only for test.
-type mockResponse struct{ count int }
+type mockResponse struct {
+	count int
+	sync.Mutex
+}
 
 // Close implements kv.Response interface.
 func (resp *mockResponse) Close() error {
+	resp.Lock()
+	defer resp.Unlock()
+
 	resp.count = 0
 	return nil
 }
 
 // Next implements kv.Response interface.
 func (resp *mockResponse) Next(ctx context.Context) (kv.ResultSubset, error) {
+	resp.Lock()
+	defer resp.Unlock()
+
 	if resp.count == 2 {
 		return nil, nil
 	}
