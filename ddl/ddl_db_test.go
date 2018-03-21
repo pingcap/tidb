@@ -24,7 +24,6 @@ import (
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	tmysql "github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
@@ -65,7 +65,7 @@ type testDBSuite struct {
 	dom        *domain.Domain
 	schemaName string
 	tk         *testkit.TestKit
-	s          tidb.Session
+	s          session.Session
 	lease      time.Duration
 	autoIDStep int64
 }
@@ -76,8 +76,8 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 
 	s.lease = 200 * time.Millisecond
-	tidb.SetSchemaLease(s.lease)
-	tidb.SetStatsLease(0)
+	session.SetSchemaLease(s.lease)
+	session.SetStatsLease(0)
 	s.schemaName = "test_db"
 	s.autoIDStep = autoid.GetStep()
 	autoid.SetStep(5000)
@@ -85,10 +85,10 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 	s.store, err = mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 
-	s.dom, err = tidb.BootstrapSession(s.store)
+	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 
-	s.s, err = tidb.CreateSession4Test(s.store)
+	s.s, err = session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 
 	_, err = s.s.Execute(context.Background(), "create database test_db")
@@ -222,7 +222,7 @@ func (s *testDBSuite) testGetTable(c *C, name string) table.Table {
 }
 
 func backgroundExec(s kv.Storage, sql string, done chan error) {
-	se, err := tidb.CreateSession4Test(s)
+	se, err := session.CreateSession4Test(s)
 	if err != nil {
 		done <- errors.Trace(err)
 		return
@@ -802,7 +802,7 @@ func (s *testDBSuite) TestColumn(c *C) {
 }
 
 func sessionExec(c *C, s kv.Storage, sql string) {
-	se, err := tidb.CreateSession4Test(s)
+	se, err := session.CreateSession4Test(s)
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "use test_db")
 	c.Assert(err, IsNil)
@@ -818,7 +818,7 @@ func sessionExecInGoroutine(c *C, s kv.Storage, sql string, done chan error) {
 
 func execMultiSQLInGoroutine(c *C, s kv.Storage, multiSQL []string, done chan error) {
 	go func() {
-		se, err := tidb.CreateSession4Test(s)
+		se, err := session.CreateSession4Test(s)
 		if err != nil {
 			done <- errors.Trace(err)
 			return
