@@ -22,7 +22,7 @@ package variable
 	4. Add a field in `SessionVars`.
 	5. Update the `NewSessionVars` function to set the field to its default value.
 	6. Update the `variable.SetSessionSystemVar` function to use the new value when SET statement is executed.
-	7. If it is a global variable, add it in `tidb.loadCommonGlobalVarsSQL`.
+	7. If it is a global variable, add it in `session.loadCommonGlobalVarsSQL`.
 	8. Use this variable to control the behavior in code.
 */
 
@@ -47,6 +47,11 @@ const (
 	// tidb_build_stats_concurrency is used to speed up the ANALYZE statement, when a table has multiple indices,
 	// those indices can be scanned concurrently, with the cost of higher system performance impact.
 	TiDBBuildStatsConcurrency = "tidb_build_stats_concurrency"
+
+	// tidb_checksum_table_concurrency is used to speed up the ADMIN CHECKSUM TABLE
+	// statement, when a table has multiple indices, those indices can be
+	// scanned concurrently, with the cost of higher system performance impact.
+	TiDBChecksumTableConcurrency = "tidb_checksum_table_concurrency"
 
 	// TiDBCurrentTS is used to get the current transaction timestamp.
 	// It is read-only.
@@ -135,6 +140,7 @@ const (
 	DefIndexLookupSize               = 20000
 	DefDistSQLScanConcurrency        = 15
 	DefBuildStatsConcurrency         = 4
+	DefChecksumTableConcurrency      = 4
 	DefSkipUTF8Check                 = false
 	DefOptAggPushDown                = false
 	DefOptInSubqUnfolding            = false

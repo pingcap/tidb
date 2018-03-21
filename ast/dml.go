@@ -72,8 +72,10 @@ type Join struct {
 	On *OnCondition
 	// Using represents join using clause.
 	Using []*ColumnName
-	// NaturalJoin represents join is natural join
+	// NaturalJoin represents join is natural join.
 	NaturalJoin bool
+	// StraightJoin represents a straight join.
+	StraightJoin bool
 }
 
 // Accept implements Node Accept interface.
@@ -182,7 +184,7 @@ func (n *DeleteTableList) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// OnCondition represetns JOIN on condition.
+// OnCondition represents JOIN on condition.
 type OnCondition struct {
 	node
 

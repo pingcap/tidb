@@ -26,6 +26,7 @@ import (
 )
 
 type testSafePointSuite struct {
+	oneByOneSuite
 	store  *tikvStore
 	oracle *mockoracle.MockOracle
 	prefix string
@@ -34,6 +35,7 @@ type testSafePointSuite struct {
 var _ = Suite(&testSafePointSuite{})
 
 func (s *testSafePointSuite) SetUpSuite(c *C) {
+	s.oneByOneSuite.SetUpSuite(c)
 	s.store = newTestStore(c)
 	s.oracle = &mockoracle.MockOracle{}
 	s.store.oracle = s.oracle
@@ -43,6 +45,7 @@ func (s *testSafePointSuite) SetUpSuite(c *C) {
 func (s *testSafePointSuite) TearDownSuite(c *C) {
 	err := s.store.Close()
 	c.Assert(err, IsNil)
+	s.oneByOneSuite.TearDownSuite(c)
 }
 
 func (s *testSafePointSuite) beginTxn(c *C) *tikvTxn {

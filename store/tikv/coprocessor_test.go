@@ -21,7 +21,9 @@ import (
 	"golang.org/x/net/context"
 )
 
-type testCoprocessorSuite struct{}
+type testCoprocessorSuite struct {
+	oneByOneSuite
+}
 
 var _ = Suite(&testCoprocessorSuite{})
 

@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2018 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,26 +11,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package aggregation
+package mocktikv
 
 import (
-	"bytes"
 	"fmt"
+
+	"github.com/pingcap/kvproto/pkg/coprocessor"
+	tipb "github.com/pingcap/tipb/go-tipb"
 )
 
-// ExplainAggFunc generates explain information for a aggregation function.
-func ExplainAggFunc(agg *AggFuncDesc) string {
-	var buffer bytes.Buffer
-	fmt.Fprintf(&buffer, "%s(", agg.Name)
-	if agg.HasDistinct {
-		buffer.WriteString("distinct ")
+func (h *rpcHandler) handleCopChecksumRequest(req *coprocessor.Request) *coprocessor.Response {
+	resp := &tipb.ChecksumResponse{
+		Checksum:   1,
+		TotalKvs:   1,
+		TotalBytes: 1,
 	}
-	for i, arg := range agg.Args {
-		buffer.WriteString(arg.ExplainInfo())
-		if i+1 < len(agg.Args) {
-			buffer.WriteString(", ")
-		}
+	data, err := resp.Marshal()
+	if err != nil {
+		panic(fmt.Sprintf("marshal checksum response error: %v", err))
 	}
-	buffer.WriteString(")")
-	return buffer.String()
+	return &coprocessor.Response{Data: data}
 }
