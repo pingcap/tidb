@@ -165,9 +165,10 @@ func reverseRunes(origin []rune) []rune {
 // SetBinFlagOrBinStr sets resTp to binary string if argTp is a binary string,
 // if not, sets the binary flag of resTp to true if argTp has binary flag.
 func SetBinFlagOrBinStr(argTp *types.FieldType, resTp *types.FieldType) {
+	log.Warning(argTp.Tp, types.IsBinaryStr(argTp), types.IsNonBinaryStr(argTp))
 	if types.IsBinaryStr(argTp) {
 		types.SetBinChsClnFlag(resTp)
-	} else if mysql.HasBinaryFlag(argTp.Flag) {
+	} else if mysql.HasBinaryFlag(argTp.Flag) || !types.IsNonBinaryStr(argTp) {
 		resTp.Flag |= mysql.BinaryFlag
 	}
 }
@@ -246,6 +247,7 @@ func (c *concatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, argTps...)
 	for i := range args {
 		argType := args[i].GetType()
+		log.Warning()
 		SetBinFlagOrBinStr(argType, bf.tp)
 
 		if argType.Flen < 0 {

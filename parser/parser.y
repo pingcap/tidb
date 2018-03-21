@@ -3484,10 +3484,10 @@ SumExpr:
 		args := []ast.ExprNode{ast.NewValueExpr(1)}
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: args}
 	}
-|	builtinGroupConcat '(' BuggyDefaultFalseDistinctOpt ExpressionList OptGConcatSeparator ')'
+|	builtinGroupConcat '(' BuggyDefaultFalseDistinctOpt ExpressionList OrderByOptional OptGConcatSeparator ')'
 	{
 		args := $4.([]ast.ExprNode)
-		args = append(args, $5.(ast.ExprNode))
+		args = append(args, $6.(ast.ExprNode))
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: args, Distinct: $3.(bool)}
 	}
 |	builtinMax '(' BuggyDefaultFalseDistinctOpt Expression ')'
