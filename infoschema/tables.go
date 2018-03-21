@@ -81,7 +81,7 @@ func buildColumnInfo(tableName string, col columnInfo) *model.ColumnInfo {
 	if col.tp == mysql.TypeVarchar || col.tp == mysql.TypeBlob {
 		mCharset = mysql.DefaultCharset
 		mCollation = mysql.DefaultCollationName
-		mFlag = 0
+		mFlag = col.flag
 	}
 	fieldType := types.FieldType{
 		Charset: mCharset,
@@ -109,6 +109,8 @@ func buildTableMeta(tableName string, cs []columnInfo) *model.TableInfo {
 		Name:    model.NewCIStr(tableName),
 		Columns: cols,
 		State:   model.StatePublic,
+		Charset: mysql.DefaultCharset,
+		Collate: mysql.DefaultCollationName,
 	}
 }
 
@@ -138,7 +140,7 @@ var tablesCols = []columnInfo{
 	{"CREATE_TIME", mysql.TypeDatetime, 19, 0, nil, nil},
 	{"UPDATE_TIME", mysql.TypeDatetime, 19, 0, nil, nil},
 	{"CHECK_TIME", mysql.TypeDatetime, 19, 0, nil, nil},
-	{"TABLE_COLLATION", mysql.TypeVarchar, 32, 0, nil, nil},
+	{"TABLE_COLLATION", mysql.TypeVarchar, 32, mysql.NotNullFlag, "utf8_bin", nil},
 	{"CHECK_SUM", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"CREATE_OPTIONS", mysql.TypeVarchar, 255, 0, nil, nil},
 	{"TABLE_COMMENT", mysql.TypeVarchar, 2048, 0, nil, nil},
@@ -509,15 +511,8 @@ var tableTableSpacesCols = []columnInfo{
 }
 
 var tableCollationCharacterSetApplicabilityCols = []columnInfo{
-	{"TABLESPACE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"ENGINE", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"TABLESPACE_TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"LOGFILE_GROUP_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
-	{"EXTENT_SIZE", mysql.TypeLong, 21, 0, nil, nil},
-	{"AUTOEXTEND_SIZE", mysql.TypeLong, 21, 0, nil, nil},
-	{"MAXIMUM_SIZE", mysql.TypeLong, 21, 0, nil, nil},
-	{"NODEGROUP_ID", mysql.TypeLong, 21, 0, nil, nil},
-	{"TABLESPACE_COMMENT", mysql.TypeVarchar, 2048, 0, nil, nil},
+	{"COLLATION_NAME", mysql.TypeVarchar, 32, mysql.NotNullFlag, nil, nil},
+	{"CHARACTER_SET_NAME", mysql.TypeVarchar, 32, mysql.NotNullFlag, nil, nil},
 }
 
 func dataForCharacterSets() (records [][]types.Datum) {
@@ -538,6 +533,18 @@ func dataForColltions() (records [][]types.Datum) {
 		types.MakeDatums("latin1_swedish_ci", "latin1", 3, "Yes", "Yes", 1),
 		types.MakeDatums("utf8_general_ci", "utf8", 4, "Yes", "Yes", 1),
 		types.MakeDatums("utf8mb4_general_ci", "utf8mb4", 5, "Yes", "Yes", 1),
+	)
+	return records
+}
+
+func dataForCollationCharacterSetApplicability() (records [][]types.Datum) {
+	records = append(records,
+		types.MakeDatums("ascii_general_ci", "ascii"),
+		types.MakeDatums("binary", "binary"),
+		types.MakeDatums("latin1_swedish_ci", "latin1"),
+		types.MakeDatums("utf8_general_ci", "utf8"),
+		types.MakeDatums("utf8_bin", "utf8"),
+		types.MakeDatums("utf8mb4_general_ci", "utf8mb4"),
 	)
 	return records
 }
@@ -654,6 +661,10 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 	createTimeTp := tablesCols[15].tp
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
+			collation := table.Collate
+			if collation == "" {
+				collation = charset.CollationUTF8
+			}
 			createTime := types.Time{
 				Time: types.FromGoTime(table.GetUpdateTime()),
 				Type: createTimeTp,
@@ -1107,6 +1118,7 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	case tableOptimizerTrace:
 	case tableTableSpaces:
 	case tableCollationCharacterSetApplicability:
+		fullRows = dataForCollationCharacterSetApplicability()
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
