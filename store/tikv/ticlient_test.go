@@ -45,7 +45,8 @@ func newTestTiKVStore() (kv.Storage, error) {
 	return store, err
 }
 
-func newTestStore(c *C) *tikvStore {
+// NewTestStore new a mockStore.
+func NewTestStore(c *C) *tikvStore {
 	// duplicated code with mockstore NewTestTiKVStorage,
 	// but I have no idea to fix the cycle depenedence
 	// TODO: try to simplify the code later
@@ -86,7 +87,7 @@ func clearStorage(store kv.Storage) error {
 }
 
 type testTiclientSuite struct {
-	oneByOneSuite
+	OneByOneSuite
 	store *tikvStore
 	// prefix is prefix of each key in this test. It is used for table isolation,
 	// or it may pollute other data.
@@ -96,8 +97,8 @@ type testTiclientSuite struct {
 var _ = Suite(&testTiclientSuite{})
 
 func (s *testTiclientSuite) SetUpSuite(c *C) {
-	s.oneByOneSuite.SetUpSuite(c)
-	s.store = newTestStore(c)
+	s.OneByOneSuite.SetUpSuite(c)
+	s.store = NewTestStore(c)
 	s.prefix = fmt.Sprintf("ticlient_%d", time.Now().Unix())
 }
 
@@ -117,7 +118,7 @@ func (s *testTiclientSuite) TearDownSuite(c *C) {
 	c.Assert(err, IsNil)
 	err = s.store.Close()
 	c.Assert(err, IsNil)
-	s.oneByOneSuite.TearDownSuite(c)
+	s.OneByOneSuite.TearDownSuite(c)
 }
 
 func (s *testTiclientSuite) beginTxn(c *C) *tikvTxn {

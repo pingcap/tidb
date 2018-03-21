@@ -26,7 +26,7 @@ import (
 )
 
 type testSafePointSuite struct {
-	oneByOneSuite
+	OneByOneSuite
 	store  *tikvStore
 	oracle *mockoracle.MockOracle
 	prefix string
@@ -35,8 +35,8 @@ type testSafePointSuite struct {
 var _ = Suite(&testSafePointSuite{})
 
 func (s *testSafePointSuite) SetUpSuite(c *C) {
-	s.oneByOneSuite.SetUpSuite(c)
-	s.store = newTestStore(c)
+	s.OneByOneSuite.SetUpSuite(c)
+	s.store = NewTestStore(c)
 	s.oracle = &mockoracle.MockOracle{}
 	s.store.oracle = s.oracle
 	s.prefix = fmt.Sprintf("seek_%d", time.Now().Unix())
@@ -45,7 +45,7 @@ func (s *testSafePointSuite) SetUpSuite(c *C) {
 func (s *testSafePointSuite) TearDownSuite(c *C) {
 	err := s.store.Close()
 	c.Assert(err, IsNil)
-	s.oneByOneSuite.TearDownSuite(c)
+	s.OneByOneSuite.TearDownSuite(c)
 }
 
 func (s *testSafePointSuite) beginTxn(c *C) *tikvTxn {
