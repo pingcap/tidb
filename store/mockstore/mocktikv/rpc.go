@@ -15,6 +15,7 @@ package mocktikv
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"time"
 
@@ -613,10 +614,15 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		handler.rawStartKey = MvccKey(handler.startKey).Raw()
 		handler.rawEndKey = MvccKey(handler.endKey).Raw()
 		var res *coprocessor.Response
-		if r.GetTp() == kv.ReqTypeDAG {
+		switch r.GetTp() {
+		case kv.ReqTypeDAG:
 			res = handler.handleCopDAGRequest(r)
-		} else {
+		case kv.ReqTypeAnalyze:
 			res = handler.handleCopAnalyzeRequest(r)
+		case kv.ReqTypeChecksum:
+			res = handler.handleCopChecksumRequest(r)
+		default:
+			panic(fmt.Sprintf("unknown coprocessor request type: %v", r.GetTp()))
 		}
 		resp.Cop = res
 	case tikvrpc.CmdCopStream:

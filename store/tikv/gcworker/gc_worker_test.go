@@ -23,8 +23,8 @@ import (
 	gofail "github.com/coreos/gofail/runtime"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/errorpb"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
@@ -56,7 +56,7 @@ func (s *testGCWorkerSuite) SetUpTest(c *C) {
 	c.Assert(err, IsNil)
 	s.oracle = &mockoracle.MockOracle{}
 	s.store.SetOracle(s.oracle)
-	s.dom, err = tidb.BootstrapSession(s.store)
+	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 	gcWorker, err := NewGCWorker(s.store)
 	c.Assert(err, IsNil)

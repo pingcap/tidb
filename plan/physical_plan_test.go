@@ -15,12 +15,12 @@ package plan_test
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/testleak"
 	"golang.org/x/net/context"
@@ -47,7 +47,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 		dom.Close()
 		store.Close()
 	}()
-	se, err := tidb.CreateSession4Test(store)
+	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
@@ -206,7 +206,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 		dom.Close()
 		store.Close()
 	}()
-	se, err := tidb.CreateSession4Test(store)
+	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
@@ -395,7 +395,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSubquery(c *C) {
 		dom.Close()
 		store.Close()
 	}()
-	se, err := tidb.CreateSession4Test(store)
+	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
@@ -465,7 +465,7 @@ func (s *testPlanSuite) TestDAGPlanTopN(c *C) {
 		dom.Close()
 		store.Close()
 	}()
-	se, err := tidb.CreateSession4Test(store)
+	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
@@ -522,7 +522,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 		dom.Close()
 		store.Close()
 	}()
-	se, err := tidb.CreateSession4Test(store)
+	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
 
 	_, err = se.Execute(context.Background(), "use test")
@@ -604,7 +604,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnion(c *C) {
 		dom.Close()
 		store.Close()
 	}()
-	se, err := tidb.CreateSession4Test(store)
+	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
@@ -653,7 +653,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnionScan(c *C) {
 		dom.Close()
 		store.Close()
 	}()
-	se, err := tidb.CreateSession4Test(store)
+	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
@@ -720,7 +720,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 		dom.Close()
 		store.Close()
 	}()
-	se, err := tidb.CreateSession4Test(store)
+	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
@@ -872,7 +872,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		dom.Close()
 		store.Close()
 	}()
-	se, err := tidb.CreateSession4Test(store)
+	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
@@ -1105,7 +1105,7 @@ func (s *testPlanSuite) TestAggEliminater(c *C) {
 		dom.Close()
 		store.Close()
 	}()
-	se, err := tidb.CreateSession4Test(store)
+	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
