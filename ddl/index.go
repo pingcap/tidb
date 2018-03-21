@@ -1011,8 +1011,14 @@ func (d *ddl) waitTaskResults(workers []*addIndexWorker, taskCnt int, totalAdded
 	return nextHandle, addedCount, errors.Trace(firstErr)
 }
 
-// finishBatchTasks waits all the running worker return back result, there are taskCnt workers.
-func (d *ddl) finishBatchTasks(startTime time.Time, startHandle int64, reorgInfo *reorgInfo, totalAddedCount *int64, workers []*addIndexWorker, taskCnt int) error {
+// backfillBatchTasks send tasks to workers, and waits all the running worker return back result,
+// there are taskCnt running workers.
+func (d *ddl) backfillBatchTasks(startTime time.Time, startHandle int64, reorgInfo *reorgInfo, totalAddedCount *int64, workers []*addIndexWorker, batchTasks []*reorgIndexTask) error {
+	for i, task := range batchTasks {
+		workers[i].taskCh <- task
+	}
+
+	taskCnt := len(batchTasks)
 	nextHandle, taskAddedCount, err := d.waitTaskResults(workers, taskCnt, totalAddedCount, startHandle)
 	elapsedTime := time.Since(startTime).Seconds()
 	if err == nil {
@@ -1037,12 +1043,6 @@ func (d *ddl) finishBatchTasks(startTime time.Time, startHandle int64, reorgInfo
 	return nil
 }
 
-func sendTaskToBackfillWorkers(workers []*addIndexWorker, batchTasks []*reorgIndexTask) {
-	for i, task := range batchTasks {
-		workers[i].taskCh <- task
-	}
-}
-
 func (d *ddl) backfillKvRangesIndex(workers []*addIndexWorker, kvRanges []kv.KeyRange, job *model.Job, reorgInfo *reorgInfo) error {
 	var (
 		startTime   time.Time
@@ -1063,9 +1063,8 @@ func (d *ddl) backfillKvRangesIndex(workers []*addIndexWorker, kvRanges []kv.Key
 
 		batchTasks = append(batchTasks, task)
 		if len(batchTasks) >= len(workers) || i == (len(kvRanges)-1) {
-			sendTaskToBackfillWorkers(workers, batchTasks)
 			// Wait tasks finish.
-			err = d.finishBatchTasks(startTime, startHandle, reorgInfo, &totalAddedCount, workers, len(batchTasks))
+			err = d.backfillBatchTasks(startTime, startHandle, reorgInfo, &totalAddedCount, workers, batchTasks)
 			if err != nil {
 				return errors.Trace(err)
 			}
