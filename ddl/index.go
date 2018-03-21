@@ -930,7 +930,7 @@ func makeupIndexColFieldMap(t table.Table, indexInfo *model.IndexInfo) map[int64
 	return colFieldMap
 }
 
-// splitTableRanges use pd region's key ranges to split the backfilling table key range space,
+// splitTableRanges uses PD region's key ranges to split the backfilling table key range space,
 // to speed up adding index in table with disperse handle.
 func (d *ddl) splitTableRanges(t table.Table, startHandle int64) ([]kv.KeyRange, error) {
 	startRecordKey := t.RecordKey(startHandle)
@@ -1011,7 +1011,7 @@ func (d *ddl) waitTaskResults(workers []*addIndexWorker, taskCnt int, totalAdded
 	return nextHandle, addedCount, errors.Trace(firstErr)
 }
 
-// finishBatchTasks wait all the running worker return back result, there are taskCnt workers.
+// finishBatchTasks waits all the running worker return back result, there are taskCnt workers.
 func (d *ddl) finishBatchTasks(startTime time.Time, startHandle int64, reorgInfo *reorgInfo, totalAddedCount *int64, workers []*addIndexWorker, taskCnt int) error {
 	nextHandle, taskAddedCount, err := d.waitTaskResults(workers, taskCnt, totalAddedCount, startHandle)
 	elapsedTime := time.Since(startTime).Seconds()
