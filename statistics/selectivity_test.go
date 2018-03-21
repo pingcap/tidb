@@ -21,12 +21,12 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
@@ -179,7 +179,7 @@ func (s *testSelectivitySuite) TestSelectivity(c *C) {
 		sql := "select * from t where " + tt.exprs
 		comment := Commentf("for %s", tt.exprs)
 		ctx := testKit.Se.(sessionctx.Context)
-		stmts, err := tidb.Parse(ctx, sql)
+		stmts, err := session.Parse(ctx, sql)
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprs))
 		c.Assert(stmts, HasLen, 1)
 		err = plan.Preprocess(ctx, stmts[0], is, false)
@@ -211,7 +211,7 @@ func BenchmarkSelectivity(b *testing.B) {
 	sql := "select * from t where " + exprs
 	comment := Commentf("for %s", exprs)
 	ctx := testKit.Se.(sessionctx.Context)
-	stmts, err := tidb.Parse(ctx, sql)
+	stmts, err := session.Parse(ctx, sql)
 	c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, exprs))
 	c.Assert(stmts, HasLen, 1)
 	err = plan.Preprocess(ctx, stmts[0], is, false)

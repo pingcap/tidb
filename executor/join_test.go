@@ -17,8 +17,8 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"golang.org/x/net/context"
@@ -575,7 +575,7 @@ func (s *testSuite) TestSubquery(c *C) {
 	result.Sort().Check(testkit.Rows("1", "<nil>", "<nil>"))
 	rs, err := tk.Exec("select (select t.id from t where t.id = t.v and t.v != s.id) from t s")
 	c.Check(err, IsNil)
-	_, err = tidb.GetRows4Test(context.Background(), tk.Se, rs)
+	_, err = session.GetRows4Test(context.Background(), tk.Se, rs)
 	c.Check(err, NotNil)
 	c.Check(rs.Close(), IsNil)
 
@@ -817,4 +817,31 @@ func (s *testSuite) TestIndexLookupJoin(c *C) {
 	tk.MustExec("CREATE TABLE t(a BIGINT PRIMARY KEY, b BIGINT);")
 	tk.MustExec("INSERT INTO t VALUES(1, 2);")
 	tk.MustQuery("SELECT /*+ TIDB_INLJ(t1, t2) */ * FROM t t1 JOIN t t2 ON t1.a=t2.a UNION ALL SELECT /*+ TIDB_INLJ(t1, t2) */ * FROM t t1 JOIN t t2 ON t1.a=t2.a;").Check(testkit.Rows("1 2 1 2", "1 2 1 2"))
+}
+
+func (s *testSuite) TestMergejoinOrder(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1(a bigint primary key, b bigint);")
+	tk.MustExec("create table t2(a bigint primary key, b bigint);")
+	tk.MustExec("insert into t1 values(1, 100), (2, 100), (3, 100), (4, 100), (5, 100);")
+	tk.MustExec("insert into t2 select a*100, b*100 from t1;")
+
+	tk.MustQuery("explain select /*+ TIDB_SMJ(t2) */ * from t1 left outer join t2 on t1.a=t2.a and t1.a!=3 order by t1.a;").Check(testkit.Rows(
+		"TableScan_10   cop table:t1, range:[-inf,+inf], keep order:true 10000.00",
+		"TableReader_11 MergeJoin_15  root data:TableScan_10 10000.00",
+		"TableScan_12   cop table:t2, range:[-inf,+inf], keep order:true 10000.00",
+		"TableReader_13 MergeJoin_15  root data:TableScan_12 10000.00",
+		"MergeJoin_15  TableReader_11,TableReader_13 root left outer join, equal:[eq(test.t1.a, test.t2.a)], left cond:[ne(test.t1.a, 3)], left key:test.t1.a, right key:test.t2.a 12500.00",
+	))
+
+	tk.MustExec("set @@tidb_max_chunk_size=1")
+	tk.MustQuery("select /*+ TIDB_SMJ(t2) */ * from t1 left outer join t2 on t1.a=t2.a and t1.a!=3 order by t1.a;").Check(testkit.Rows(
+		"1 100 <nil> <nil>",
+		"2 100 <nil> <nil>",
+		"3 100 <nil> <nil>",
+		"4 100 <nil> <nil>",
+		"5 100 <nil> <nil>",
+	))
 }

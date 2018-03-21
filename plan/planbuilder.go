@@ -487,6 +487,10 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 		p := &RecoverIndex{Table: as.Tables[0], IndexName: as.Index}
 		p.SetSchema(buildRecoverIndexFields())
 		ret = p
+	case ast.AdminChecksumTable:
+		p := &ChecksumTable{Tables: as.Tables}
+		p.SetSchema(buildChecksumTableSchema())
+		ret = p
 	case ast.AdminShowDDL:
 		p := &ShowDDL{}
 		p.SetSchema(buildShowDDLFields())
@@ -1398,5 +1402,15 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 		col.RetType = fieldType
 		schema.Append(col)
 	}
+	return schema
+}
+
+func buildChecksumTableSchema() *expression.Schema {
+	schema := expression.NewSchema(make([]*expression.Column, 0, 5)...)
+	schema.Append(buildColumn("", "Db_name", mysql.TypeVarchar, 128))
+	schema.Append(buildColumn("", "Table_name", mysql.TypeVarchar, 128))
+	schema.Append(buildColumn("", "Checksum_crc64_xor", mysql.TypeLonglong, 22))
+	schema.Append(buildColumn("", "Total_kvs", mysql.TypeLonglong, 22))
+	schema.Append(buildColumn("", "Total_bytes", mysql.TypeLonglong, 22))
 	return schema
 }
