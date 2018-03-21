@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikv_test
+package tikv
 
 import (
 	"fmt"
@@ -20,11 +20,10 @@ import (
 
 	gofail "github.com/coreos/gofail/runtime"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"golang.org/x/net/context"
 )
@@ -32,25 +31,27 @@ import (
 var _ = Suite(new(testSQLSuite))
 
 type testSQLSuite struct {
-	store tikv.Storage
+	oneByOneSuite
+	store Storage
 	dom   *domain.Domain
 }
 
 func (s *testSQLSuite) SetUpSuite(c *C) {
+	s.oneByOneSuite.SetUpSuite(c)
 	var err error
-	s.store, err = mockstore.NewTestTiKVStorage(false, "")
-	c.Assert(err, IsNil)
-	s.dom, err = tidb.BootstrapSession(s.store)
+	s.store = newTestStore(c)
+	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 }
 
 func (s *testSQLSuite) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
+	s.oneByOneSuite.TearDownSuite(c)
 }
 
 func (s *testSQLSuite) TestFailBusyServerCop(c *C) {
-	session, err := tidb.CreateSession4Test(s.store)
+	se, err := session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 
 	var wg sync.WaitGroup
@@ -65,7 +66,7 @@ func (s *testSQLSuite) TestFailBusyServerCop(c *C) {
 
 	go func() {
 		defer wg.Done()
-		rs, err := session.Execute(context.Background(), `SELECT variable_value FROM mysql.tidb WHERE variable_name="bootstrapped"`)
+		rs, err := se.Execute(context.Background(), `SELECT variable_value FROM mysql.tidb WHERE variable_name="bootstrapped"`)
 		if len(rs) > 0 {
 			defer terror.Call(rs[0].Close)
 		}
@@ -90,7 +91,7 @@ func (s *testSQLSuite) TestCoprocessorStreamRecvTimeout(c *C) {
 
 	// rowsPerChunk in MockTiKV is 64, so the result will be 4 chunks.
 	enable := true
-	ctx := context.WithValue(context.Background(), "mockTiKVStreamRecvHook", func(ctx context.Context) {
+	ctx := context.WithValue(context.Background(), mock.HookKeyForTest("mockTiKVStreamRecvHook"), func(ctx context.Context) {
 		if !enable {
 			return
 		}

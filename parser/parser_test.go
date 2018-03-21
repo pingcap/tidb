@@ -399,6 +399,10 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 
 		// for straight_join
 		{"select * from t1 straight_join t2 on t1.id = t2.id", true},
+		{"select straight_join * from t1 join t2 on t1.id = t2.id", true},
+		{"select straight_join * from t1 left join t2 on t1.id = t2.id", true},
+		{"select straight_join * from t1 right join t2 on t1.id = t2.id", true},
+		{"select straight_join * from t1 straight_join t2 on t1.id = t2.id", true},
 
 		// for admin
 		{"admin show ddl;", true},
@@ -408,6 +412,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"admin check table t1, t2;", true},
 		{"admin check index tableName idxName;", true},
 		{"admin check index tableName idxName (1, 2), (4, 5);", true},
+		{"admin checksum table t1, t2;", true},
 		{"admin cancel ddl jobs 1", true},
 		{"admin cancel ddl jobs 1, 2", true},
 		{"admin recover index t1 idx_a", true},
@@ -1329,6 +1334,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"CREATE TABLE foo (name CHAR(50) BINARY CHARACTER SET utf8 COLLATE utf8_bin)", true},
 		{"CREATE TABLE foo (a.b, b);", false},
 		{"CREATE TABLE foo (a, b.c);", false},
+		{"CREATE TABLE (name CHAR(50) BINARY)", false},
 		// for table option
 		{"create table t (c int) avg_row_length = 3", true},
 		{"create table t (c int) avg_row_length 3", true},
@@ -1399,6 +1405,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"drop schema xxx", true},
 		{"drop schema if exists xxx", true},
 		{"drop schema if not exists xxx", false},
+		{"drop table", false},
 		{"drop table xxx", true},
 		{"drop table xxx, yyy", true},
 		{"drop tables xxx", true},
@@ -1522,6 +1529,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 
 		// for alter table
 		{"ALTER TABLE t ADD COLUMN (a SMALLINT UNSIGNED)", true},
+		{"ALTER TABLE ADD COLUMN (a SMALLINT UNSIGNED)", false},
 		{"ALTER TABLE t ADD COLUMN (a SMALLINT UNSIGNED, b varchar(255))", true},
 		{"ALTER TABLE t ADD COLUMN (a SMALLINT UNSIGNED FIRST)", false},
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED", true},
