@@ -55,7 +55,7 @@ func NewFieldType(tp byte) *FieldType {
 // Equal checks whether two FieldType objects are equal.
 func (ft *FieldType) Equal(other *FieldType) bool {
 	partialEqual := ft.Tp == other.Tp &&
-		ft.Flag == other.Flag &&
+		//ft.Flag == other.Flag && // We do not need to compare this when wrap cast upon an Expression.
 		ft.Flen == other.Flen &&
 		ft.Decimal == other.Decimal &&
 		ft.Charset == other.Charset &&
