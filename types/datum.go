@@ -1516,10 +1516,6 @@ func (d *Datum) ToMysqlJSON() (j json.BinaryJSON, err error) {
 		in = d.GetFloat64()
 	case KindMysqlDecimal:
 		in, err = d.GetMysqlDecimal().ToFloat64()
-		if err != nil {
-			err = errors.Trace(err)
-			return
-		}
 	case KindString, KindBytes:
 		in = d.GetString()
 	case KindBinaryLiteral, KindMysqlBit:
@@ -1528,10 +1524,10 @@ func (d *Datum) ToMysqlJSON() (j json.BinaryJSON, err error) {
 		in = nil
 	default:
 		in, err = d.ToString()
-		if err != nil {
-			err = errors.Trace(err)
-			return
-		}
+	}
+	if err != nil {
+		err = errors.Trace(err)
+		return
 	}
 	j = json.CreateBinary(in)
 	return
