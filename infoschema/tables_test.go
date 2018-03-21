@@ -2,10 +2,10 @@ package infoschema_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/session"
 )
 
 func (s *testSuite) TestDataForTableRowsCountField(c *C) {
@@ -14,7 +14,7 @@ func (s *testSuite) TestDataForTableRowsCountField(c *C) {
 	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
-	do, err := session.BootstrapSession(store)
+	do, err := tidb.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	defer do.Close()
 

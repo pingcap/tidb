@@ -81,7 +81,7 @@ func buildColumnInfo(tableName string, col columnInfo) *model.ColumnInfo {
 	if col.tp == mysql.TypeVarchar || col.tp == mysql.TypeBlob {
 		mCharset = mysql.DefaultCharset
 		mCollation = mysql.DefaultCollationName
-		mFlag = col.flag
+		mFlag = 0
 	}
 	fieldType := types.FieldType{
 		Charset: mCharset,
@@ -109,8 +109,6 @@ func buildTableMeta(tableName string, cs []columnInfo) *model.TableInfo {
 		Name:    model.NewCIStr(tableName),
 		Columns: cols,
 		State:   model.StatePublic,
-		Charset: mysql.DefaultCharset,
-		Collate: mysql.DefaultCollationName,
 	}
 }
 
@@ -140,7 +138,7 @@ var tablesCols = []columnInfo{
 	{"CREATE_TIME", mysql.TypeDatetime, 19, 0, nil, nil},
 	{"UPDATE_TIME", mysql.TypeDatetime, 19, 0, nil, nil},
 	{"CHECK_TIME", mysql.TypeDatetime, 19, 0, nil, nil},
-	{"TABLE_COLLATION", mysql.TypeVarchar, 32, mysql.NotNullFlag, "utf8_bin", nil},
+	{"TABLE_COLLATION", mysql.TypeVarchar, 32, 0, nil, nil},
 	{"CHECK_SUM", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"CREATE_OPTIONS", mysql.TypeVarchar, 255, 0, nil, nil},
 	{"TABLE_COMMENT", mysql.TypeVarchar, 2048, 0, nil, nil},
@@ -511,8 +509,15 @@ var tableTableSpacesCols = []columnInfo{
 }
 
 var tableCollationCharacterSetApplicabilityCols = []columnInfo{
-	{"COLLATION_NAME", mysql.TypeVarchar, 32, mysql.NotNullFlag, nil, nil},
-	{"CHARACTER_SET_NAME", mysql.TypeVarchar, 32, mysql.NotNullFlag, nil, nil},
+	{"TABLESPACE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"ENGINE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TABLESPACE_TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"LOGFILE_GROUP_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"EXTENT_SIZE", mysql.TypeLong, 21, 0, nil, nil},
+	{"AUTOEXTEND_SIZE", mysql.TypeLong, 21, 0, nil, nil},
+	{"MAXIMUM_SIZE", mysql.TypeLong, 21, 0, nil, nil},
+	{"NODEGROUP_ID", mysql.TypeLong, 21, 0, nil, nil},
+	{"TABLESPACE_COMMENT", mysql.TypeVarchar, 2048, 0, nil, nil},
 }
 
 func dataForCharacterSets() (records [][]types.Datum) {
@@ -533,18 +538,6 @@ func dataForColltions() (records [][]types.Datum) {
 		types.MakeDatums("latin1_swedish_ci", "latin1", 3, "Yes", "Yes", 1),
 		types.MakeDatums("utf8_general_ci", "utf8", 4, "Yes", "Yes", 1),
 		types.MakeDatums("utf8mb4_general_ci", "utf8mb4", 5, "Yes", "Yes", 1),
-	)
-	return records
-}
-
-func dataForCollationCharacterSetApplicability() (records [][]types.Datum) {
-	records = append(records,
-		types.MakeDatums("ascii_general_ci", "ascii"),
-		types.MakeDatums("binary", "binary"),
-		types.MakeDatums("latin1_swedish_ci", "latin1"),
-		types.MakeDatums("utf8_general_ci", "utf8"),
-		types.MakeDatums("utf8_bin", "utf8"),
-		types.MakeDatums("utf8mb4_general_ci", "utf8mb4"),
 	)
 	return records
 }
@@ -636,11 +629,11 @@ func dataForSchemata(schemas []*model.DBInfo) [][]types.Datum {
 	return rows
 }
 
-func getRowCountAllTable(ctx sessionctx.Context) (map[int64]uint64, error)  {
+func getRowCountAllTable(ctx sessionctx.Context) (map[int64]uint64, error) {
 	sql := fmt.Sprintf("select table_id, count from mysql.stats_meta")
-	rows, _,  err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
-		return  nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	rowCountMap := make(map[int64]uint64)
 	for _, row := range rows {
@@ -654,43 +647,39 @@ func getRowCountAllTable(ctx sessionctx.Context) (map[int64]uint64, error)  {
 func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
 	tableRowsMap, err := getRowCountAllTable(ctx)
 	if err != nil {
-		return  nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
 	var rows [][]types.Datum
 	createTimeTp := tablesCols[15].tp
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
-			collation := table.Collate
-			if collation == "" {
-				collation = charset.CollationUTF8
-			}
 			createTime := types.Time{
 				Time: types.FromGoTime(table.GetUpdateTime()),
 				Type: createTimeTp,
 			}
 			record := types.MakeDatums(
-				catalogVal,      // TABLE_CATALOG
-				schema.Name.O,   // TABLE_SCHEMA
-				table.Name.O,    // TABLE_NAME
-				"BASE TABLE",    // TABLE_TYPE
-				"InnoDB",        // ENGINE
-				uint64(10),      // VERSION
-				"Compact",       // ROW_FORMAT
-				tableRowsMap[table.ID],       // TABLE_ROWS
-				uint64(0),       // AVG_ROW_LENGTH
-				uint64(16384),   // DATA_LENGTH
-				uint64(0),       // MAX_DATA_LENGTH
-				uint64(0),       // INDEX_LENGTH
-				uint64(0),       // DATA_FREE
-				table.AutoIncID, // AUTO_INCREMENT
-				createTime,      // CREATE_TIME
-				nil,             // UPDATE_TIME
-				nil,             // CHECK_TIME
-				collation,       // TABLE_COLLATION
-				nil,             // CHECKSUM
-				"",              // CREATE_OPTIONS
-				table.Comment,   // TABLE_COMMENT
+				catalogVal,             // TABLE_CATALOG
+				schema.Name.O,          // TABLE_SCHEMA
+				table.Name.O,           // TABLE_NAME
+				"BASE TABLE",           // TABLE_TYPE
+				"InnoDB",               // ENGINE
+				uint64(10),             // VERSION
+				"Compact",              // ROW_FORMAT
+				tableRowsMap[table.ID], // TABLE_ROWS
+				uint64(0),              // AVG_ROW_LENGTH
+				uint64(16384),          // DATA_LENGTH
+				uint64(0),              // MAX_DATA_LENGTH
+				uint64(0),              // INDEX_LENGTH
+				uint64(0),              // DATA_FREE
+				table.AutoIncID,        // AUTO_INCREMENT
+				createTime,             // CREATE_TIME
+				nil,                    // UPDATE_TIME
+				nil,                    // CHECK_TIME
+				table.Collate,          // TABLE_COLLATION
+				nil,                    // CHECKSUM
+				"",                     // CREATE_OPTIONS
+				table.Comment,          // TABLE_COMMENT
 			)
 			rows = append(rows, record)
 		}
@@ -1118,7 +1107,6 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	case tableOptimizerTrace:
 	case tableTableSpaces:
 	case tableCollationCharacterSetApplicability:
-		fullRows = dataForCollationCharacterSetApplicability()
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
