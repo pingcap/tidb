@@ -72,7 +72,7 @@ func (*testModelSuite) TestModelBasic(c *C) {
 		ID:          1,
 		Name:        NewCIStr("t"),
 		Charset:     "utf8",
-		Collate:     "utf8",
+		Collate:     "utf8_bin",
 		Columns:     []*ColumnInfo{column},
 		Indices:     []*IndexInfo{index},
 		ForeignKeys: []*FKInfo{fk},
@@ -83,7 +83,7 @@ func (*testModelSuite) TestModelBasic(c *C) {
 		ID:      1,
 		Name:    NewCIStr("test"),
 		Charset: "utf8",
-		Collate: "utf8",
+		Collate: "utf8_bin",
 		Tables:  []*TableInfo{table},
 	}
 

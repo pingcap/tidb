@@ -84,6 +84,13 @@ type CheckIndexRange struct {
 	HandleRanges []ast.HandleRange
 }
 
+// ChecksumTable is used for calculating table checksum, built from the `admin checksum table` statement.
+type ChecksumTable struct {
+	baseSchemaProducer
+
+	Tables []*ast.TableName
+}
+
 // CancelDDLJobs represents a cancel DDL jobs plan.
 type CancelDDLJobs struct {
 	baseSchemaProducer

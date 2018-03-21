@@ -287,6 +287,8 @@ type SessionVars struct {
 	MemQuotaSort int64
 	// MemQuotaTopn defines the memory quota for a top n executor.
 	MemQuotaTopn int64
+	// MemQuotaIndexLookupReader defines the memory quota for a index lookup reader executor.
+	MemQuotaIndexLookupReader int64
 
 	// EnableStreaming indicates whether the coprocessor request can use streaming API.
 	// TODO: remove this after tidb-server configuration "enable-streaming' removed.
@@ -321,6 +323,7 @@ func NewSessionVars() *SessionVars {
 		MemQuotaHashJoin:           DefTiDBMemQuotaHashJoin,
 		MemQuotaSort:               DefTiDBMemQuotaSort,
 		MemQuotaTopn:               DefTiDBMemQuotaTopn,
+		MemQuotaIndexLookupReader:  DefTiDBMemQuotaIndexLookupReader,
 	}
 	var enableStreaming string
 	if config.GetGlobalConfig().EnableStreaming {
@@ -499,6 +502,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.MemQuotaSort = tidbOptInt64(val, DefTiDBMemQuotaSort)
 	case TIDBMemQuotaTopn:
 		s.MemQuotaTopn = tidbOptInt64(val, DefTiDBMemQuotaTopn)
+	case TIDBMemQuotaIndexLookupReader:
+		s.MemQuotaIndexLookupReader = tidbOptInt64(val, DefTiDBMemQuotaIndexLookupReader)
 	case TiDBGeneralLog:
 		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt(val, DefTiDBGeneralLog)))
 	case TiDBEnableStreaming:
