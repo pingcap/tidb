@@ -18,10 +18,10 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
@@ -44,7 +44,7 @@ func NewTiDBDriver(store kv.Storage) *TiDBDriver {
 
 // TiDBContext implements QueryCtx.
 type TiDBContext struct {
-	session   tidb.Session
+	session   session.Session
 	currentDB string
 	stmts     map[int]*TiDBStatement
 }
@@ -127,19 +127,19 @@ func (ts *TiDBStatement) Close() error {
 
 // OpenCtx implements IDriver.
 func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint8, dbname string, tlsState *tls.ConnectionState) (QueryCtx, error) {
-	session, err := tidb.CreateSession(qd.store)
+	se, err := session.CreateSession(qd.store)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	session.SetTLSState(tlsState)
-	err = session.SetCollation(int(collation))
+	se.SetTLSState(tlsState)
+	err = se.SetCollation(int(collation))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	session.SetClientCapability(capability)
-	session.SetConnectionID(connID)
+	se.SetClientCapability(capability)
+	se.SetConnectionID(connID)
 	tc := &TiDBContext{
-		session:   session,
+		session:   se,
 		currentDB: dbname,
 		stmts:     make(map[int]*TiDBStatement),
 	}
