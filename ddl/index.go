@@ -758,21 +758,22 @@ func (w *addIndexWorker) close() {
 }
 
 // getIndexRecord gets index columns values from raw binary value row.
-func (w *addIndexWorker) getIndexRecord(t table.Table, colMap map[int64]*types.FieldType, rawRecord []byte, idxRecord *indexRecord) error {
+func (w *addIndexWorker) getIndexRecord(handle int64, recordKey []byte, rawRecord []byte) (*indexRecord, error) {
+	t := w.table
 	cols := t.Cols()
 	idxInfo := w.index.Meta()
-	_, err := tablecodec.DecodeRowWithMap(rawRecord, colMap, time.UTC, w.rowMap)
+	_, err := tablecodec.DecodeRowWithMap(rawRecord, w.colFieldMap, time.UTC, w.rowMap)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	idxVal := make([]types.Datum, len(idxInfo.Columns))
 	for j, v := range idxInfo.Columns {
 		col := cols[v.Offset]
 		if col.IsPKHandleColumn(t.Meta()) {
 			if mysql.HasUnsignedFlag(col.Flag) {
-				idxVal[j].SetUint64(uint64(idxRecord.handle))
+				idxVal[j].SetUint64(uint64(handle))
 			} else {
-				idxVal[j].SetInt64(idxRecord.handle)
+				idxVal[j].SetInt64(handle)
 			}
 			continue
 		}
@@ -785,20 +786,20 @@ func (w *addIndexWorker) getIndexRecord(t table.Table, colMap map[int64]*types.F
 		}
 		idxColumnVal, err = tables.GetColDefaultValue(w.sessCtx, col, w.defaultVals)
 		if err != nil {
-			return errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		idxVal[j] = idxColumnVal
 	}
-	idxRecord.vals = idxVal
-	return nil
+	idxRecord := &indexRecord{handle: handle, key: recordKey, vals: idxVal}
+	return idxRecord, nil
 }
 
-func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, t table.Table, colMap map[int64]*types.FieldType, taskRange reorgIndexTask) ([]*indexRecord, bool, error) {
+func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgIndexTask) ([]*indexRecord, bool, error) {
 	// TODO: use tableScan to prune columns.
 	w.idxRecords = w.idxRecords[:0]
 	startTime := time.Now()
 	handleOutOfRange := false
-	err := iterateSnapshotRows(w.sessCtx.GetStore(), t, txn.StartTS(), taskRange.startHandle,
+	err := iterateSnapshotRows(w.sessCtx.GetStore(), w.table, txn.StartTS(), taskRange.startHandle,
 		func(handle int64, recordKey kv.Key, rawRow []byte) (bool, error) {
 			// Don't create endHandle index.
 			handleOutOfRange = handle >= taskRange.endHandle
@@ -806,8 +807,7 @@ func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, t table.Table, colM
 				return false, nil
 			}
 
-			idxRecord := &indexRecord{handle: handle, key: recordKey}
-			err1 := w.getIndexRecord(t, colMap, rawRow, idxRecord)
+			idxRecord, err1 := w.getIndexRecord(handle, recordKey, rawRow)
 			if err1 != nil {
 				return false, errors.Trace(err1)
 			}
@@ -829,7 +829,7 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (nextHan
 	scanCount = 0
 	errInTxn = kv.RunInNewTxn(w.sessCtx.GetStore(), true, func(txn kv.Transaction) error {
 		txn.SetOption(kv.Priority, kv.PriorityLow)
-		idxRecords, handleOutofRange, err := w.fetchRowColVals(txn, w.table, w.colFieldMap, handleRange)
+		idxRecords, handleOutOfRange, err := w.fetchRowColVals(txn, handleRange)
 
 		if err != nil {
 			return errors.Trace(err)
@@ -856,7 +856,7 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (nextHan
 			addedCount++
 		}
 
-		if handleOutofRange || len(idxRecords) == 0 {
+		if handleOutOfRange || len(idxRecords) == 0 {
 			nextHandle = handleRange.endHandle
 		} else {
 			nextHandle = idxRecords[len(idxRecords)-1].handle + 1
