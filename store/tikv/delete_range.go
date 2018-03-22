@@ -111,7 +111,7 @@ func (t *DeleteRangeTask) Execute() error {
 	return nil
 }
 
-// Regions returns the number of regions that are affected by this delete range task
+// CompletedRegions returns the number of regions that are affected by this delete range task
 func (t *DeleteRangeTask) CompletedRegions() int {
 	return t.completedRegions
 }
