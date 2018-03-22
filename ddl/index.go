@@ -1084,6 +1084,7 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 	// TODO: make workerCnt can be modified by system variable.
 	workerCnt := defaultWorkers
 	workers := make([]*addIndexWorker, workerCnt)
+	d.reorgCtx.setWorkersRunnable(true)
 	for i := 0; i < workerCnt; i++ {
 		sessCtx := d.newContext()
 		workers[i] = newAddIndexWorker(sessCtx, d, i, t, indexInfo, colFieldMap, &d.reorgCtx.workersRunnable)
