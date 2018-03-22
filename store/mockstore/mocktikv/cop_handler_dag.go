@@ -161,7 +161,7 @@ func (h *rpcHandler) buildDAG(ctx *dagContext, executors []*tipb.Executor) (exec
 	var src executor
 	fmt.Println("enter buildDAG")
 	for i := 0; i < len(executors); i++ {
-		fmt.Printf("exec is %v", executors[i])
+		fmt.Printf("exec is %v\n", executors[i])
 		curr, err := h.buildExec(ctx, executors[i])
 		if err != nil {
 			return nil, errors.Trace(err)
