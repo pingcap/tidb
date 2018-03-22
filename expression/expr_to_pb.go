@@ -14,7 +14,6 @@
 package expression
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/juju/errors"
