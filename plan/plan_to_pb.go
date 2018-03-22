@@ -63,7 +63,7 @@ func (p *PhysicalStreamAgg) ToPB(ctx sessionctx.Context) (*tipb.Executor, error)
 func (p *PhysicalSelection) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	client := ctx.GetClient()
-	fmt.Printf("selection children's length is %d and its schema length is $d", len(p.Children()), len(p.Schema().Columns))
+	fmt.Printf("selection children's length is %d and its schema length is %d", len(p.Children()), len(p.Schema().Columns))
 	selExec := &tipb.Selection{
 		Conditions: expression.ExpressionsToPBList(sc, p.Conditions, client),
 	}
