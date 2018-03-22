@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/model"
@@ -138,6 +139,7 @@ func (col *CorrelatedColumn) ResolveIndices(_ *Schema) {
 
 // Column represents a column.
 type Column struct {
+	sync.Mutex
 	FromID      int
 	ColName     model.CIStr
 	DBName      model.CIStr
@@ -311,6 +313,8 @@ func (col *Column) HashCode(_ *stmtctx.StatementContext) []byte {
 
 // ResolveIndices implements Expression interface.
 func (col *Column) ResolveIndices(schema *Schema) {
+	col.Lock()
+	defer col.Unlock()
 	col.Index = schema.ColumnIndex(col)
 	fmt.Printf("ResolveIndices in column: index %d and schema's length is %d\n", col.Index, schema.Len())
 	// If col's index equals to -1, it means a internal logic error happens.
