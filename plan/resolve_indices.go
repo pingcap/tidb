@@ -139,6 +139,7 @@ func (p *PhysicalSelection) ResolveIndices() {
 	for _, expr := range p.Conditions {
 		// p.Conditions[i] = expr.Clone()
 		fmt.Printf("ResolveIndices in Selection %d in goroutine %d: schema's length is %d\n", p.ID(), getGID(), len(p.children[0].Schema().Columns))
+		fmt.Printf("expr: %p\n", expr)
 		// p.Conditions[i].ResolveIndices(p.children[0].Schema())
 		expr.ResolveIndices(p.children[0].Schema())
 	}
