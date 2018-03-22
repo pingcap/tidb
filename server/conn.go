@@ -600,6 +600,7 @@ func (cc *clientConn) dispatch(data []byte) error {
 		if len(data) > 0 && data[len(data)-1] == 0 {
 			data = data[:len(data)-1]
 		}
+		_ = cc.handleQuery(ctx1, "explain "+hack.String(data))
 		return cc.handleQuery(ctx1, hack.String(data))
 	case mysql.ComPing:
 		return cc.writeOK()
