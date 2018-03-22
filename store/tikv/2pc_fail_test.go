@@ -14,14 +14,14 @@
 package tikv
 
 import (
+	"time"
+
 	gofail "github.com/coreos/gofail/runtime"
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/terror"
 	"golang.org/x/net/context"
-	//"github.com/pingcap/tidb/kv"
-	//"time"
-	"time"
+	"github.com/pingcap/tidb/kv"
 )
 
 // TestFailCommitPrimaryRpcErrors tests rpc errors are handled properly when
@@ -245,7 +245,9 @@ func (s *testCommitterSuite) TestTwoPhaseCommitActionString(c *C) {
 	c.Assert(action.String(), Equals, "unknown")
 }
 
-/*func (s *testCommitterSuite) TestFailNewTwoPhaseCommitter(c *C) {
+// @TODO: add it back in the future.
+func (s *testCommitterSuite) TestFailNewTwoPhaseCommitter(c *C) {
+	c.Skip("change global variables will make other cases fail because of parallel")
 	txn := s.begin(c)
 	c.Assert(txn.Set([]byte("a"), []byte("wqelkyuoqasfweweqwehladfewrj")), IsNil)
 	c.Assert(txn.Set([]byte("b"), []byte("b1")), IsNil)
@@ -263,7 +265,7 @@ func (s *testCommitterSuite) TestTwoPhaseCommitActionString(c *C) {
 	c.Assert(tpc, IsNil)
 	c.Assert(err, Equals, kv.ErrTxnTooLarge)
 	kv.TxnTotalSizeLimit = temp
-}*/
+}
 
 func (s *testCommitterSuite) TestTxnLockTTL(c *C) {
 	expireTime := txnLockTTL(time.Now(), 16*1024*1024*1024)
