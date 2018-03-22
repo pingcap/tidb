@@ -312,7 +312,7 @@ func (col *Column) HashCode(_ *stmtctx.StatementContext) []byte {
 // ResolveIndices implements Expression interface.
 func (col *Column) ResolveIndices(schema *Schema) {
 	col.Index = schema.ColumnIndex(col)
-	fmt.Printf("ResolveIndices in column: index %d", col.Index)
+	fmt.Printf("ResolveIndices in column: index %d\n", col.Index)
 	// If col's index equals to -1, it means a internal logic error happens.
 	if col.Index == -1 {
 		log.Errorf("Can't find column %s in schema %s", col, schema)
