@@ -1,3 +1,16 @@
+// Copyright 2018 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package tikv
 
 import (
@@ -7,17 +20,20 @@ import (
 )
 
 type testTxnSuite struct {
+	oneByOneSuite
 	store *tikvStore
 }
 
 var _ = Suite(&testTxnSuite{})
 
 func (s *testTxnSuite) SetUpTest(c *C) {
+	c.oneByOneSuite.SetUpSuite(c)
 	s.store = newTestStore(c)
 }
 
 func (s *testTxnSuite) TearDownTest(c *C) {
 	s.store.Close()
+	s.OneByOneSuite.TearDownSuite(c)
 }
 
 func (s *testTxnSuite) TestSetCapAndReset(c *C) {
@@ -57,7 +73,7 @@ func checkIterator(c *C, iter kv.Iterator, keys [][]byte, values [][]byte) {
 	c.Assert(iter.Valid(), IsFalse)
 }
 
-func (s *testTxnSuite) TestSetAbdDelOption(c *C) {
+func (s *testTxnSuite) TestSetAndDelOption(c *C) {
 	txn, err := newTiKVTxn(s.store)
 	c.Assert(err, IsNil)
 
