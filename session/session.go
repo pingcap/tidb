@@ -956,11 +956,13 @@ func (s *session) Txn() kv.Transaction {
 
 func (s *session) NewTxn() error {
 	if s.txn.Valid() {
+		txnID := s.txn.StartTS()
 		ctx := context.TODO()
 		err := s.CommitTxn(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		log.Infof("NewTxn() inside a transaction auto commit: %d", txnID)
 	}
 
 	txn, err := s.store.Begin()
