@@ -31,14 +31,14 @@ import (
 var errStopped = errors.New("stopped")
 
 type testStoreSuite struct {
-	oneByOneSuite
+	OneByOneSuite
 	store *tikvStore
 }
 
 var _ = Suite(&testStoreSuite{})
 
 func (s *testStoreSuite) SetUpTest(c *C) {
-	s.store = newTestStore(c)
+	s.store = NewTestStore(c).(*tikvStore)
 }
 
 func (s *testStoreSuite) TearDownTest(c *C) {

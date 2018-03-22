@@ -87,16 +87,18 @@ var (
 	errIncorrectPrefixKey   = terror.ClassDDL.New(codeIncorrectPrefixKey, "Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys")
 	errTooLongKey           = terror.ClassDDL.New(codeTooLongKey,
 		fmt.Sprintf("Specified key was too long; max key length is %d bytes", maxPrefixLength))
-	errKeyColumnDoesNotExits = terror.ClassDDL.New(codeKeyColumnDoesNotExits, "this key column doesn't exist in table")
-	errDupKeyName            = terror.ClassDDL.New(codeDupKeyName, "duplicate key name")
-	errUnknownTypeLength     = terror.ClassDDL.New(codeUnknownTypeLength, "Unknown length for type tp %d")
-	errUnknownFractionLength = terror.ClassDDL.New(codeUnknownFractionLength, "Unknown Length for type tp %d and fraction %d")
-	errInvalidJobVersion     = terror.ClassDDL.New(codeInvalidJobVersion, "DDL job with version %d greater than current %d")
-	errFileNotFound          = terror.ClassDDL.New(codeFileNotFound, "Can't find file: './%s/%s.frm'")
-	errErrorOnRename         = terror.ClassDDL.New(codeErrorOnRename, "Error on rename of './%s/%s' to './%s/%s'")
-	errBadField              = terror.ClassDDL.New(codeBadField, "Unknown column '%s' in '%s'")
-	errInvalidUseOfNull      = terror.ClassDDL.New(codeInvalidUseOfNull, "Invalid use of NULL value")
-	errTooManyFields         = terror.ClassDDL.New(codeTooManyFields, "Too many columns")
+	errKeyColumnDoesNotExits    = terror.ClassDDL.New(codeKeyColumnDoesNotExits, "this key column doesn't exist in table")
+	errDupKeyName               = terror.ClassDDL.New(codeDupKeyName, "duplicate key name")
+	errUnknownTypeLength        = terror.ClassDDL.New(codeUnknownTypeLength, "Unknown length for type tp %d")
+	errUnknownFractionLength    = terror.ClassDDL.New(codeUnknownFractionLength, "Unknown Length for type tp %d and fraction %d")
+	errInvalidJobVersion        = terror.ClassDDL.New(codeInvalidJobVersion, "DDL job with version %d greater than current %d")
+	errFileNotFound             = terror.ClassDDL.New(codeFileNotFound, "Can't find file: './%s/%s.frm'")
+	errErrorOnRename            = terror.ClassDDL.New(codeErrorOnRename, "Error on rename of './%s/%s' to './%s/%s'")
+	errBadField                 = terror.ClassDDL.New(codeBadField, "Unknown column '%s' in '%s'")
+	errInvalidUseOfNull         = terror.ClassDDL.New(codeInvalidUseOfNull, "Invalid use of NULL value")
+	errTooManyFields            = terror.ClassDDL.New(codeTooManyFields, "Too many columns")
+	errInvalidSplitRegionRanges = terror.ClassDDL.New(codeInvalidRanges, "Failed to split region ranges")
+	errReorgWorkerNotRunnable   = terror.ClassDDL.New(codeReorgWorkerNotRunnable, "reorg worker is not runnable.")
 
 	// errWrongKeyColumn is for table column cannot be indexed.
 	errWrongKeyColumn = terror.ClassDDL.New(codeWrongKeyColumn, mysql.MySQLErrName[mysql.ErrWrongKeyColumn])
@@ -273,7 +275,7 @@ func newDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 		lease:        lease,
 		ddlJobCh:     make(chan struct{}, 1),
 		ddlJobDoneCh: make(chan struct{}, 1),
-		reorgCtx:     &reorgCtx{notifyCancelReorgJob: make(chan struct{}, 1)},
+		reorgCtx:     &reorgCtx{notifyCancelReorgJob: 0},
 		ownerManager: manager,
 		schemaSyncer: syncer,
 		workerVars:   variable.NewSessionVars(),
@@ -500,17 +502,19 @@ func (d *ddl) WorkerVars() *variable.SessionVars {
 
 // DDL error codes.
 const (
-	codeInvalidWorker         terror.ErrCode = 1
-	codeNotOwner                             = 2
-	codeInvalidDDLJob                        = 3
-	codeInvalidJobFlag                       = 5
-	codeRunMultiSchemaChanges                = 6
-	codeWaitReorgTimeout                     = 7
-	codeInvalidStoreVer                      = 8
-	codeUnknownTypeLength                    = 9
-	codeUnknownFractionLength                = 10
-	codeInvalidJobVersion                    = 11
-	codeCancelledDDLJob                      = 12
+	codeInvalidWorker          terror.ErrCode = 1
+	codeNotOwner                              = 2
+	codeInvalidDDLJob                         = 3
+	codeInvalidJobFlag                        = 5
+	codeRunMultiSchemaChanges                 = 6
+	codeWaitReorgTimeout                      = 7
+	codeInvalidStoreVer                       = 8
+	codeUnknownTypeLength                     = 9
+	codeUnknownFractionLength                 = 10
+	codeInvalidJobVersion                     = 11
+	codeCancelledDDLJob                       = 12
+	codeInvalidRanges                         = 13
+	codeReorgWorkerNotRunnable                = 14
 
 	codeInvalidDBState         = 100
 	codeInvalidTableState      = 101

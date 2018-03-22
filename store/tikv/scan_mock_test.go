@@ -20,13 +20,13 @@ import (
 )
 
 type testScanMockSuite struct {
-	oneByOneSuite
+	OneByOneSuite
 }
 
 var _ = Suite(&testScanMockSuite{})
 
 func (s *testScanMockSuite) TestScanMultipleRegions(c *C) {
-	store := newTestStore(c)
+	store := NewTestStore(c).(*tikvStore)
 	defer store.Close()
 
 	txn, err := store.Begin()
