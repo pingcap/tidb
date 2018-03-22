@@ -281,7 +281,7 @@ func (b *BucketFeedback) getFraction(lowerVal, upperVal *types.Datum) float64 {
 }
 
 // updateBucket updates and split the bucket according to feedback.
-func (b *BucketFeedback) updateBucket(newBktCount int) []bucket {
+func (b *BucketFeedback) updateBucket(newBktCount int, totalRowCount float64) []bucket {
 	// Get the scalar info for boundary.
 	prefixLen := commonPrefixLength(b.lower.GetBytes(), b.upper.GetBytes())
 	if b.lower.Kind() == types.KindBytes {
@@ -301,7 +301,8 @@ func (b *BucketFeedback) updateBucket(newBktCount int) []bucket {
 			count = float64(fb.count) / fraction
 		}
 	}
-	if newBktCount == 1 {
+	// do not split if the count is already too small.
+	if newBktCount == 1 || count < minBucketFraction*totalRowCount {
 		bkt := bucket{lower: b.lower, upper: b.upper, count: int64(count)}
 		return []bucket{bkt}
 	}
@@ -311,7 +312,8 @@ func (b *BucketFeedback) updateBucket(newBktCount int) []bucket {
 	for i := 1; i < len(bounds); i++ {
 		bkt := bucket{lower: &bounds[i-1], upper: &bounds[i]}
 		bkt.count = int64(count * b.getFraction(bkt.lower, bkt.upper))
-		if bkt.count == 0 {
+		// do not split if the count of result bucket is too small.
+		if float64(bkt.count) < minBucketFraction*totalRowCount {
 			bounds[i] = bounds[i-1]
 			continue
 		}
@@ -336,11 +338,24 @@ func (bs bucketScores) Len() int           { return len(bs) }
 func (bs bucketScores) Swap(i, j int)      { bs[i], bs[j] = bs[j], bs[i] }
 func (bs bucketScores) Less(i, j int) bool { return bs[i].score < bs[j].score }
 
+const (
+	// To avoid the histogram been too imbalanced, we constrain the count of a bucket in range
+	// [minBucketFraction * totalCount, maxBucketFraction * totalCount].
+	minBucketFraction = 1 / 10000
+	maxBucketFraction = 1 / 10
+)
+
 // getBucketScore gets the score for merge this bucket with previous one.
 // TODO: We also need to consider the bucket hit count.
 func getBucketScore(h *Histogram, id int) bucketScore {
-	if id == 0 {
-		return bucketScore{id, math.MaxFloat64} // do not merge the first one
+	preCount, count := float64(h.bucketCount(id-1)), float64(h.bucketCount(id))
+	// do not merge if the result bucket is too large
+	if (preCount + count) > maxBucketFraction*h.totalRowCount() {
+		return bucketScore{id, math.MaxFloat64}
+	}
+	// merge them if the result bucket is already too small.
+	if (preCount + count) < minBucketFraction*h.totalRowCount() {
+		return bucketScore{id, 0}
 	}
 	low, mid, high := h.GetLower(id-1), h.GetUpper(id-1), h.GetUpper(id)
 	var lowVal, midVal, highVal float64
@@ -352,7 +367,6 @@ func getBucketScore(h *Histogram, id int) bucketScore {
 	} else {
 		lowVal, midVal, highVal = float64(low.GetInt64()), float64(mid.GetInt64()), float64(high.GetInt64())
 	}
-	preCount, count := float64(h.bucketCount(id-1)), float64(h.bucketCount(id))
 	// If we choose to merge, err is the absolute estimate error for the previous bucket.
 	err := calcFraction(lowVal, highVal, midVal)*(preCount+count) - preCount
 	return bucketScore{id, math.Abs(err / (preCount + count))}
@@ -395,18 +409,20 @@ func splitBuckets(h *Histogram, feedbacks []*QueryFeedback) (*Histogram, bucketS
 		// No feedback, just use the origin bucket.
 		if !ok {
 			newHist.AppendBucket(h.GetLower(i), h.GetUpper(i), preCount+h.bucketCount(i), h.Buckets[i].Repeat)
-			bucketScores = append(bucketScores, getBucketScore(newHist, newHist.Len()-1))
+			if i > 0 {
+				bucketScores = append(bucketScores, getBucketScore(newHist, newHist.Len()-1))
+			}
 			preCount += h.bucketCount(i)
 			continue
 		}
 		// Split this bucket.
-		newBuckets := bkt.updateBucket(mathutil.Max(1, splitCount*len(bkt.feedback)/count))
+		newBuckets := bkt.updateBucket(mathutil.Max(1, splitCount*len(bkt.feedback)/count), h.totalRowCount())
 		for _, newBucket := range newBuckets {
 			newHist.AppendBucket(newBucket.lower, newBucket.upper, preCount+newBucket.count, 0)
 			preCount += newBucket.count
 		}
-		// Do not merge the newly created buckets.
-		if len(newBuckets) == 1 {
+		// Do not merge the newly created buckets and the first one.
+		if i > 0 && len(newBuckets) == 1 {
 			bucketScores = append(bucketScores, getBucketScore(newHist, newHist.Len()-1))
 		}
 	}
