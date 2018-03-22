@@ -124,9 +124,10 @@ func (p *PhysicalIndexLookUpReader) ResolveIndices() {
 // ResolveIndices implements Plan interface.
 func (p *PhysicalSelection) ResolveIndices() {
 	p.basePhysicalPlan.ResolveIndices()
-	for _, expr := range p.Conditions {
+	for i, expr := range p.Conditions {
+		p.Conditions[i] = expr.Clone()
 		fmt.Printf("ResolveIndices in Selection: schema's length is %d\n", len(p.children[0].Schema().Columns))
-		expr.ResolveIndices(p.children[0].Schema())
+		p.Conditions[i].ResolveIndices(p.children[0].Schema())
 	}
 }
 
