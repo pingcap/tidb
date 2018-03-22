@@ -26,7 +26,7 @@ import (
 // performing DeleteRange, it keeps how many ranges it affects and
 // if the task was canceled or not.
 type DeleteRangeTask struct {
-	regions  int
+	completedRegions  int
 	canceled bool
 	store    Storage
 	ctx      context.Context
@@ -36,9 +36,9 @@ type DeleteRangeTask struct {
 }
 
 // NewDeleteRangeTask creates a DeleteRangeTask. Deleting will not be performed right away.
-func NewDeleteRangeTask(ctx context.Context, store Storage, bo *Backoffer, startKey []byte, endKey []byte) DeleteRangeTask {
-	return DeleteRangeTask{
-		regions:  0,
+func NewDeleteRangeTask(ctx context.Context, store Storage, bo *Backoffer, startKey []byte, endKey []byte) *DeleteRangeTask {
+	return &DeleteRangeTask{
+		completedRegions:  0,
 		canceled: false,
 		store:    store,
 		ctx:      ctx,
@@ -49,7 +49,7 @@ func NewDeleteRangeTask(ctx context.Context, store Storage, bo *Backoffer, start
 }
 
 // Execute performs the delete range operation.
-func (t DeleteRangeTask) Execute() error {
+func (t *DeleteRangeTask) Execute() error {
 	startKey, rangeEndKey := t.startKey, t.endKey
 	for {
 		select {
@@ -64,7 +64,9 @@ func (t DeleteRangeTask) Execute() error {
 			return errors.Trace(err)
 		}
 
+		// Delete to the end of the region, except if it's the last region overlapping the range
 		endKey := loc.EndKey
+		// If it is the last region
 		if loc.Contains(rangeEndKey) {
 			endKey = rangeEndKey
 		}
@@ -99,7 +101,7 @@ func (t DeleteRangeTask) Execute() error {
 		if err := deleteRangeResp.GetError(); err != "" {
 			return errors.Errorf("unexpected delete range err: %v", err)
 		}
-		t.regions++
+		t.completedRegions++
 		if bytes.Equal(endKey, rangeEndKey) {
 			break
 		}
@@ -110,11 +112,11 @@ func (t DeleteRangeTask) Execute() error {
 }
 
 // Regions returns the number of regions that are affected by this delete range task
-func (t DeleteRangeTask) Regions() int {
-	return t.regions
+func (t *DeleteRangeTask) CompletedRegions() int {
+	return t.completedRegions
 }
 
 // IsCanceled returns true if the delete range operation was canceled on the half way
-func (t DeleteRangeTask) IsCanceled() bool {
+func (t *DeleteRangeTask) IsCanceled() bool {
 	return t.canceled
 }
