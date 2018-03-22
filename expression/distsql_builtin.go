@@ -549,6 +549,7 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *stmtctx.StatementCont
 		}
 		if int(offset) > len(tps) {
 			fmt.Printf("offset's length is %d and tps's length is %d\n", offset, len(tps))
+			fmt.Printf("offset's field type is %v", expr.FieldType)
 		}
 		return &Column{Index: int(offset), RetType: tps[offset]}, nil
 	case tipb.ExprType_Null:
