@@ -192,8 +192,10 @@ func (h *rpcHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) (*
 }
 
 func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) (*indexScanExec, error) {
+	fmt.Println("enter buildIndexScan")
 	var err error
 	columns := executor.IdxScan.Columns
+	fmt.Println("columns length is %d\n", len(columns))
 	ctx.evalCtx.setColumnInfo(columns)
 	length := len(columns)
 	pkStatus := pkColNotExists
@@ -214,6 +216,7 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) (*
 		return nil, errors.Trace(err)
 	}
 
+	fmt.Println("leave buildIndexScan")
 	return &indexScanExec{
 		IndexScan:      executor.IdxScan,
 		kvRanges:       ranges,
