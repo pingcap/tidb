@@ -14,6 +14,7 @@
 package plan
 
 import (
+	"fmt"
 	"math"
 
 	"github.com/juju/errors"
@@ -125,6 +126,9 @@ func doOptimize(flag uint64, logic LogicalPlan) (PhysicalPlan, error) {
 		return nil, errors.Trace(err)
 	}
 	finalPlan := eliminatePhysicalProjection(physical)
+	explain := &Explain{}
+	explain.prepareRootTaskInfo(finalPlan, "")
+	fmt.Printf("%v\n", explain.Rows)
 	return finalPlan, nil
 }
 
