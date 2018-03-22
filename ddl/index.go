@@ -812,7 +812,6 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (nextHan
 	errInTxn = kv.RunInNewTxn(w.sessCtx.GetStore(), true, func(txn kv.Transaction) error {
 		txn.SetOption(kv.Priority, kv.PriorityLow)
 		idxRecords, handleOutOfRange, err := w.fetchRowColVals(txn, handleRange)
-
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -849,7 +848,7 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (nextHan
 	return
 }
 
-// handleBackfillTask backfill range [task.startHandle, task.endHandle) handle's index to table.
+// handleBackfillTask backfills range [task.startHandle, task.endHandle) handle's index to table.
 func (w *addIndexWorker) handleBackfillTask(task *reorgIndexTask) *addIndexResult {
 	handleRange := *task
 	result := &addIndexResult{addedCount: 0, nextHandle: handleRange.startHandle, err: nil}
@@ -962,7 +961,6 @@ func (d *ddl) waitTaskResults(workers []*addIndexWorker, taskCnt int, totalAdded
 		result := <-worker.resultCh
 		if firstErr == nil && result.err != nil {
 			firstErr = result.err
-
 			// We should wait all working workers exits, any way.
 			continue
 		}
@@ -1015,7 +1013,7 @@ func (d *ddl) backfillBatchTasks(startTime time.Time, startHandle int64, reorgIn
 	return nil
 }
 
-func (d *ddl) backfillKvRangesIndex(workers []*addIndexWorker, kvRanges []kv.KeyRange, job *model.Job, reorgInfo *reorgInfo) error {
+func (d *ddl) backfillKVRangesIndex(workers []*addIndexWorker, kvRanges []kv.KeyRange, job *model.Job, reorgInfo *reorgInfo) error {
 	var (
 		startTime   time.Time
 		startHandle int64
@@ -1054,7 +1052,7 @@ func (d *ddl) backfillKvRangesIndex(workers []*addIndexWorker, kvRanges []kv.Key
 // Each handle range by estimation, concurrent processing needs to perform after the handle range has been acquired.
 // The operation flow is as follows:
 //	1. Open numbers of defaultWorkers goroutines.
-//	2. Split table key range from pd regions.
+//	2. Split table key range from PD regions.
 //	3. Send tasks to running workers by workers's task channel. Each task deals with a region key ranges.
 //	4. Wait all these running tasks finished, then continue to step 3, until all tasks is done.
 // The above operations are completed in a transaction.
@@ -1078,7 +1076,7 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 		return errors.Trace(err)
 	}
 
-	return d.backfillKvRangesIndex(workers, kvRanges, job, reorgInfo)
+	return d.backfillKVRangesIndex(workers, kvRanges, job, reorgInfo)
 }
 
 func findIndexByName(idxName string, indices []*model.IndexInfo) *model.IndexInfo {
