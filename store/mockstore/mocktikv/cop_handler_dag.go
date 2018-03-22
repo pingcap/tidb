@@ -195,7 +195,7 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) (*
 	fmt.Println("enter buildIndexScan")
 	var err error
 	columns := executor.IdxScan.Columns
-	fmt.Println("columns length is %d\n", len(columns))
+	fmt.Printf("columns length is %d\n", len(columns))
 	ctx.evalCtx.setColumnInfo(columns)
 	length := len(columns)
 	pkStatus := pkColNotExists

@@ -14,6 +14,8 @@
 package plan
 
 import (
+	"fmt"
+
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 )
@@ -123,6 +125,7 @@ func (p *PhysicalIndexLookUpReader) ResolveIndices() {
 func (p *PhysicalSelection) ResolveIndices() {
 	p.basePhysicalPlan.ResolveIndices()
 	for _, expr := range p.Conditions {
+		fmt.Printf("ResolveIndices in Selection: schema's length is %d\n", len(p.children[0].Schema().Columns))
 		expr.ResolveIndices(p.children[0].Schema())
 	}
 }
