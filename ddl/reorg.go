@@ -125,10 +125,6 @@ func (d *ddl) runReorgJob(t *meta.Meta, job *model.Job, f func() error) error {
 		// Update a reorgInfo's handle.
 		err := t.UpdateDDLReorgHandle(job, doneHandle)
 		log.Infof("[ddl] run reorg job wait timeout %v, handled %d rows, current done handle %d, err %v", waitTimeout, rowCount, doneHandle, err)
-
-		if err1 := d.isReorgRunnable(); err1 != nil {
-			d.reorgCtx.setWorkersRunnable(false)
-		}
 		// If timeout, we will return, check the owner and retry to wait job done again.
 		return errWaitReorgTimeout
 	}

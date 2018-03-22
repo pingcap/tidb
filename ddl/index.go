@@ -293,11 +293,11 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 				ver, err = d.convert2RollbackJob(t, job, tblInfo, indexInfo, err)
 			}
 			// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
-			cleanReorgNotify(d.reorgCtx)
+			cleanNotify(d.reorgCtx.notifyCancelReorgJob)
 			return ver, errors.Trace(err)
 		}
 		// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
-		cleanReorgNotify(d.reorgCtx)
+		cleanNotify(d.reorgCtx.notifyCancelReorgJob)
 
 		indexInfo.State = model.StatePublic
 		// Set column index flag.
@@ -869,6 +869,10 @@ func (w *addIndexWorker) handleBackfillTask(task *reorgIndexTask) *addIndexResul
 		if err == nil {
 			if !w.isRunnable() {
 				err = errReorgWorkerNotRunnable
+			} else {
+				// Because reorgIndexTask may run a long time,
+				// we should check whether this ddl job is still runnable.
+				err = w.d.isReorgRunnable()
 			}
 		}
 		if err != nil {
