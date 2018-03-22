@@ -33,23 +33,8 @@ var (
 	pdAddrs            = flag.String("pd-addrs", "127.0.0.1:2379", "pd addrs")
 )
 
-func newTestTiKVStore() (kv.Storage, error) {
-	client, pdClient, err := mocktikv.NewTestClient(nil, nil, "")
-	if err != nil {
-		return nil, err
-	}
-	store, err := NewTestTiKVStore(client, pdClient, nil, nil)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return store, err
-}
-
-// NewTestStore new a mockStore.
+// NewTestStore creates a kv.Storage for testing purpose.
 func NewTestStore(c *C) kv.Storage {
-	// duplicated code with mockstore NewTestTiKVStorage,
-	// but I have no idea to fix the cycle depenedence
-	// TODO: try to simplify the code later
 	if !flag.Parsed() {
 		flag.Parse()
 	}
@@ -63,7 +48,10 @@ func NewTestStore(c *C) kv.Storage {
 		return store
 	}
 
-	store, err := newTestTiKVStore()
+	client, pdClient, err := mocktikv.NewTestClient(nil, nil, "")
+	c.Assert(err, IsNil)
+
+	store, err := NewTestTiKVStore(client, pdClient, nil, nil)
 	c.Assert(err, IsNil)
 	return store
 }
