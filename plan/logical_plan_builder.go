@@ -424,6 +424,7 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 	conditions := splitWhere(where)
 	expressions := make([]expression.Expression, 0, len(conditions))
 	selection := LogicalSelection{}.init(b.ctx)
+	fmt.Println("enter buildSelection")
 	fmt.Printf("buildSelection: %d condition in where\n", len(conditions))
 	fmt.Printf("buildSelection: schema length is %v and plan id is %d \n", len(p.Schema().Columns), p.ID())
 	for _, cond := range conditions {
@@ -457,6 +458,7 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 	}
 	selection.Conditions = expressions
 	selection.SetChildren(p)
+	fmt.Println("leave buildSelection\n")
 	return selection
 }
 
