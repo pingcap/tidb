@@ -336,8 +336,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef) (
 	// Set `NoDefaultValueFlag` if this field doesn't have a default value and
 	// it is `not null` and not an `AUTO_INCREMENT` field or `TIMESTAMP` field.
 	setNoDefaultValueFlag(col, hasDefaultValue)
-
-	if col.Charset == charset.CharsetBin {
+	if col.FieldType.EvalType().IsStringKind() && col.Charset == charset.CharsetBin {
 		col.Flag |= mysql.BinaryFlag
 	}
 	if col.Tp == mysql.TypeBit {
