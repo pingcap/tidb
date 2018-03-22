@@ -27,7 +27,6 @@ import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
@@ -37,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -74,6 +74,7 @@ type testSuite struct {
 	cluster   *mocktikv.Cluster
 	mvccStore *mocktikv.MvccStore
 	store     kv.Storage
+	domain    *domain.Domain
 	*parser.Parser
 	ctx *mock.Context
 
@@ -98,14 +99,16 @@ func (s *testSuite) SetUpSuite(c *C) {
 		)
 		c.Assert(err, IsNil)
 		s.store = store
-		tidb.SetSchemaLease(0)
-		tidb.SetStatsLease(0)
+		session.SetSchemaLease(0)
+		session.SetStatsLease(0)
 	}
-	_, err := tidb.BootstrapSession(s.store)
+	d, err := session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
+	s.domain = d
 }
 
 func (s *testSuite) TearDownSuite(c *C) {
+	s.domain.Close()
 	s.store.Close()
 	autoid.SetStep(s.autoIDStep)
 }
@@ -185,6 +188,19 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(row.GetString(1), Equals, historyJobs[0].State.String())
 	c.Assert(err, IsNil)
 
+	// show DDL job queries test
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists admin_test2")
+	tk.MustExec("create table admin_test2 (c1 int, c2 int, c3 int default 1, index (c1))")
+	result := tk.MustQuery(`admin show ddl job queries 1, 1, 1`)
+	result.Check(testkit.Rows())
+	result = tk.MustQuery(`admin show ddl job queries 1, 2, 3, 4`)
+	result.Check(testkit.Rows())
+	historyJob, err := admin.GetHistoryDDLJobs(txn)
+	result = tk.MustQuery(fmt.Sprintf("admin show ddl job queries %d", historyJob[0].ID))
+	result.Check(testkit.Rows(historyJob[0].Query))
+	c.Assert(err, IsNil)
+
 	// check table test
 	tk.MustExec("create table admin_test1 (c1 int, c2 int default 1, index (c1))")
 	tk.MustExec("insert admin_test1 (c1) values (21),(22)")
@@ -208,6 +224,17 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(err, IsNil)
 	r, err = tk.Exec("admin check table admin_test")
 	c.Assert(err, NotNil)
+
+	// checksum table test
+	tk.MustExec("create table checksum_with_index (id int, count int, PRIMARY KEY(id), KEY(count))")
+	tk.MustExec("create table checksum_without_index (id int, count int, PRIMARY KEY(id))")
+	r, err = tk.Exec("admin checksum table checksum_with_index, checksum_without_index")
+	c.Assert(err, IsNil)
+	res := tk.ResultSetToResult(r, Commentf("admin checksum table"))
+	// Mocktikv returns 1 for every table/index scan, then we will xor the checksums of a table.
+	// For "checksum_with_index", we have two checksums, so the result will be 1^1 = 0.
+	// For "checksum_without_index", we only have one checksum, so the result will be 1.
+	res.Sort().Check(testkit.Rows("test checksum_with_index 0 2 2", "test checksum_without_index 1 1 1"))
 }
 
 func (s *testSuite) fillData(tk *testkit.TestKit, table string) {
@@ -1561,7 +1588,7 @@ func (s *testSuite) TestTableScan(c *C) {
 }
 
 func (s *testSuite) TestAdapterStatement(c *C) {
-	se, err := tidb.CreateSession4Test(s.store)
+	se, err := session.CreateSession4Test(s.store)
 	c.Check(err, IsNil)
 	se.GetSessionVars().TxnCtx.InfoSchema = domain.GetDomain(se).InfoSchema()
 	compiler := &executor.Compiler{Ctx: se}
@@ -2082,7 +2109,7 @@ func (s *testContextOptionSuite) SetUpSuite(c *C) {
 		mockstore.WithHijackClient(hijackClient),
 	)
 	c.Assert(err, IsNil)
-	s.dom, err = tidb.BootstrapSession(s.store)
+	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 }
 
@@ -2102,7 +2129,7 @@ func (s *testContextOptionSuite) TestAddIndexPriority(c *C) {
 		mockstore.WithHijackClient(hijackClient),
 	)
 	c.Assert(err, IsNil)
-	dom, err := tidb.BootstrapSession(store)
+	dom, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)
 
 	tk := testkit.NewTestKit(c, store)
@@ -2452,9 +2479,9 @@ func (s *testSuite) TestIssue5666(c *C) {
 func (s *testSuite) TestCheckIndex(c *C) {
 	s.ctx = mock.NewContext()
 	s.ctx.Store = s.store
-	dom, err := tidb.BootstrapSession(s.store)
+	dom, err := session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
-	se, err := tidb.CreateSession4Test(s.store)
+	se, err := session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 	defer se.Close()
 

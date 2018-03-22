@@ -14,6 +14,7 @@
 package tikv
 
 import (
+	"fmt"
 	"math"
 	"runtime"
 	"time"
@@ -26,13 +27,15 @@ import (
 )
 
 type testLockSuite struct {
+	OneByOneSuite
 	store *tikvStore
 }
 
 var _ = Suite(&testLockSuite{})
 
 func (s *testLockSuite) SetUpTest(c *C) {
-	s.store = newTestStore(c)
+	fmt.Println("SetUpTest .... test Lock suite")
+	s.store = NewTestStore(c).(*tikvStore)
 }
 
 func (s *testLockSuite) TearDownTest(c *C) {

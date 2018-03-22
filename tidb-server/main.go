@@ -27,7 +27,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/opentracing/opentracing-go"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
@@ -36,7 +35,9 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/server"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/gcworker"
@@ -145,20 +146,20 @@ func main() {
 }
 
 func registerStores() {
-	err := tidb.RegisterStore("tikv", tikv.Driver{})
+	err := session.RegisterStore("tikv", tikv.Driver{})
 	terror.MustNil(err)
 	tikv.NewGCHandlerFunc = gcworker.NewGCWorker
-	err = tidb.RegisterStore("mocktikv", mockstore.MockDriver{})
+	err = session.RegisterStore("mocktikv", mockstore.MockDriver{})
 	terror.MustNil(err)
 }
 
 func createStoreAndDomain() {
 	fullPath := fmt.Sprintf("%s://%s", cfg.Store, cfg.Path)
 	var err error
-	storage, err = tidb.NewStore(fullPath)
+	storage, err = session.NewStore(fullPath)
 	terror.MustNil(err)
 	// Bootstrap a session to load information schema.
-	dom, err = tidb.BootstrapSession(storage)
+	dom, err = session.BootstrapSession(storage)
 	terror.MustNil(err)
 }
 
@@ -169,7 +170,7 @@ func setupBinlogClient() {
 	dialerOpt := grpc.WithDialer(func(addr string, timeout time.Duration) (net.Conn, error) {
 		return net.DialTimeout("unix", addr, timeout)
 	})
-	clientConn, err := tidb.DialPumpClientWithRetry(cfg.BinlogSocket, util.DefaultMaxRetries, dialerOpt)
+	clientConn, err := session.DialPumpClientWithRetry(cfg.BinlogSocket, util.DefaultMaxRetries, dialerOpt)
 	terror.MustNil(err)
 	binloginfo.SetPumpClient(binlog.NewPumpClient(clientConn))
 	log.Infof("created binlog client at %s", cfg.BinlogSocket)
@@ -347,18 +348,24 @@ func validateConfig() {
 		os.Exit(-1)
 	}
 	cfg.OOMAction = strings.ToLower(cfg.OOMAction)
+
+	// lower_case_table_names is allowed to be 0, 1, 2
+	if cfg.LowerCaseTableNames < 0 || cfg.LowerCaseTableNames > 2 {
+		log.Errorf("lower-case-table-names should be 0 or 1 or 2.")
+		os.Exit(-1)
+	}
 }
 
 func setGlobalVars() {
 	ddlLeaseDuration := parseDuration(cfg.Lease)
-	tidb.SetSchemaLease(ddlLeaseDuration)
+	session.SetSchemaLease(ddlLeaseDuration)
 	runtime.GOMAXPROCS(int(cfg.Performance.MaxProcs))
 	statsLeaseDuration := parseDuration(cfg.Performance.StatsLease)
-	tidb.SetStatsLease(statsLeaseDuration)
+	session.SetStatsLease(statsLeaseDuration)
 	domain.RunAutoAnalyze = cfg.Performance.RunAutoAnalyze
 	ddl.RunWorker = cfg.RunDDL
 	ddl.EnableSplitTableRegion = cfg.SplitTable
-	tidb.SetCommitRetryLimit(cfg.Performance.RetryLimit)
+	session.SetCommitRetryLimit(cfg.Performance.RetryLimit)
 	plan.JoinConcurrency = cfg.Performance.JoinConcurrency
 	plan.AllowCartesianProduct = cfg.Performance.CrossJoin
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
@@ -378,6 +385,9 @@ func setGlobalVars() {
 	if cfg.TiKVClient.GrpcConnectionCount > 0 {
 		tikv.MaxConnectionCount = cfg.TiKVClient.GrpcConnectionCount
 	}
+
+	// set lower_case_table_names
+	variable.SysVars["lower_case_table_names"].Value = strconv.Itoa(cfg.LowerCaseTableNames)
 
 	tikv.CommitMaxBackoff = int(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds() * 1000)
 }

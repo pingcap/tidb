@@ -29,9 +29,9 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
 	tmysql "github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"golang.org/x/net/context"
 )
@@ -46,9 +46,9 @@ var _ = Suite(suite)
 
 func (ts *TidbTestSuite) SetUpSuite(c *C) {
 	store, err := mockstore.NewMockTikvStore()
-	tidb.SetStatsLease(0)
+	session.SetStatsLease(0)
 	c.Assert(err, IsNil)
-	_, err = tidb.BootstrapSession(store)
+	_, err = session.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	ts.tidbdrv = NewTiDBDriver(store)
 	cfg := config.NewConfig()

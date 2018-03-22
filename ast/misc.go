@@ -590,7 +590,10 @@ const (
 	AdminShowDDLJobs
 	AdminCancelDDLJobs
 	AdminCheckIndex
+	AdminRecoverIndex
 	AdminCheckIndexRange
+	AdminShowDDLJobQueries
+	AdminChecksumTable
 )
 
 // HandleRange represents a range where handle value >= Begin and < End.
@@ -782,6 +785,7 @@ type SelectStmtOpts struct {
 	Distinct      bool
 	SQLCache      bool
 	CalcFoundRows bool
+	StraightJoin  bool
 	Priority      mysql.PriorityEnum
 	TableHints    []*TableOptimizerHint
 }

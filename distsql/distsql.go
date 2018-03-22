@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/goroutine_pool"
-	"github.com/pingcap/tipb/go-tipb"
+	tipb "github.com/pingcap/tipb/go-tipb"
 	"golang.org/x/net/context"
 )
 
@@ -336,6 +336,22 @@ func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request) (SelectRe
 	}
 	result := &selectResult{
 		label:    "analyze",
+		resp:     resp,
+		results:  make(chan resultWithErr, kvReq.Concurrency),
+		closed:   make(chan struct{}),
+		feedback: statistics.NewQueryFeedback(0, nil, 0, false),
+	}
+	return result, nil
+}
+
+// Checksum sends a checksum request.
+func Checksum(ctx context.Context, client kv.Client, kvReq *kv.Request) (SelectResult, error) {
+	resp := client.Send(ctx, kvReq)
+	if resp == nil {
+		return nil, errors.New("client returns nil response")
+	}
+	result := &selectResult{
+		label:    "checksum",
 		resp:     resp,
 		results:  make(chan resultWithErr, kvReq.Concurrency),
 		closed:   make(chan struct{}),

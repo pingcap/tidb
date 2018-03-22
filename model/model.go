@@ -89,7 +89,7 @@ func (c *ColumnInfo) IsGenerated() bool {
 const ExtraHandleID = -1
 
 // ExtraHandleName is the name of ExtraHandle Column.
-var ExtraHandleName = NewCIStr("_rowid")
+var ExtraHandleName = NewCIStr("_tidb_rowid")
 
 // TableInfo provides meta data describing a DB table.
 type TableInfo struct {
@@ -204,6 +204,8 @@ func NewExtraHandleColInfo() *ColumnInfo {
 		Name: ExtraHandleName,
 	}
 	colInfo.Flag = mysql.PriKeyFlag
+	colInfo.Tp = mysql.TypeLonglong
+	colInfo.Flen, colInfo.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
 	return colInfo
 }
 

@@ -14,33 +14,45 @@
 package tikv_test
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
 	gofail "github.com/coreos/gofail/runtime"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/session"
+	. "github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/testkit"
 	"golang.org/x/net/context"
 )
 
 var _ = Suite(new(testSQLSuite))
 
 type testSQLSuite struct {
-	store tikv.Storage
+	OneByOneSuite
+	store Storage
+	dom   *domain.Domain
 }
 
 func (s *testSQLSuite) SetUpSuite(c *C) {
-	s.store, _ = mockstore.NewTestTiKVStorage(false, "")
+	s.OneByOneSuite.SetUpSuite(c)
+	var err error
+	s.store = NewTestStore(c).(Storage)
+	s.dom, err = session.BootstrapSession(s.store)
+	c.Assert(err, IsNil)
+}
+
+func (s *testSQLSuite) TearDownSuite(c *C) {
+	s.dom.Close()
+	s.store.Close()
+	s.OneByOneSuite.TearDownSuite(c)
 }
 
 func (s *testSQLSuite) TestFailBusyServerCop(c *C) {
-	_, err := tidb.BootstrapSession(s.store)
-	c.Assert(err, IsNil)
-
-	session, err := tidb.CreateSession4Test(s.store)
+	se, err := session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 
 	var wg sync.WaitGroup
@@ -55,7 +67,7 @@ func (s *testSQLSuite) TestFailBusyServerCop(c *C) {
 
 	go func() {
 		defer wg.Done()
-		rs, err := session.Execute(context.Background(), `SELECT variable_value FROM mysql.tidb WHERE variable_name="bootstrapped"`)
+		rs, err := se.Execute(context.Background(), `SELECT variable_value FROM mysql.tidb WHERE variable_name="bootstrapped"`)
 		if len(rs) > 0 {
 			defer terror.Call(rs[0].Close)
 		}
@@ -68,4 +80,40 @@ func (s *testSQLSuite) TestFailBusyServerCop(c *C) {
 	}()
 
 	wg.Wait()
+}
+
+func (s *testSQLSuite) TestCoprocessorStreamRecvTimeout(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int)")
+	for i := 0; i < 200; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+	}
+
+	// rowsPerChunk in MockTiKV is 64, so the result will be 4 chunks.
+	enable := true
+	ctx := context.WithValue(context.Background(), mock.HookKeyForTest("mockTiKVStreamRecvHook"), func(ctx context.Context) {
+		if !enable {
+			return
+		}
+
+		select {
+		case <-ctx.Done():
+		case <-time.After(time.Minute):
+		}
+		enable = false
+	})
+
+	res, err := tk.Se.Execute(ctx, "select * from t")
+	c.Assert(err, IsNil)
+
+	chk := res[0].NewChunk()
+	for {
+		err := res[0].NextChunk(ctx, chk)
+		c.Assert(err, IsNil)
+		if chk.NumRows() == 0 {
+			break
+		}
+		chk.Reset()
+	}
 }

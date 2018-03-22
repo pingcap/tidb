@@ -76,7 +76,6 @@ check: errcheck
 
 	@echo "vet"
 	@ go tool vet -all -shadow $(TOPDIRS) 2>&1 | awk '{print} END{if(NR>0) {exit 1}}'
-	@ go tool vet -all -shadow *.go 2>&1 | awk '{print} END{if(NR>0) {exit 1}}'
 	@echo "golint"
 	@ golint -set_exit_status $(PACKAGES)
 	@echo "gofmt (simplify)"
@@ -121,15 +120,24 @@ endif
 	@$(GOFAIL_DISABLE)
 
 race: parserlib
+	go get github.com/coreos/gofail
+	@$(GOFAIL_ENABLE)
 	@export log_level=debug; \
-	$(GOTEST) -check.exclude="TestFail" -race $(PACKAGES)
+	$(GOTEST) -race $(PACKAGES)
+	@$(GOFAIL_DISABLE)
 
 leak: parserlib
+	go get github.com/coreos/gofail
+	@$(GOFAIL_ENABLE)
 	@export log_level=debug; \
-	$(GOTEST) -check.exclude="TestFail" -tags leak $(PACKAGES)
+	$(GOTEST) -tags leak $(PACKAGES)
+	@$(GOFAIL_DISABLE)
 
 tikv_integration_test: parserlib
-	$(GOTEST) -check.exclude="TestFail" ./store/tikv/. -with-tikv=true
+	go get github.com/coreos/gofail
+	@$(GOFAIL_ENABLE)
+	$(GOTEST) ./store/tikv/. -with-tikv=true
+	@$(GOFAIL_DISABLE)
 
 RACE_FLAG = 
 ifeq ("$(WITH_RACE)", "1")

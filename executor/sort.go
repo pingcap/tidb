@@ -26,21 +26,13 @@ import (
 	"golang.org/x/net/context"
 )
 
-// orderByRow binds a row to its order values, so it can be sorted.
-type orderByRow struct {
-	key []*types.Datum
-	row Row
-}
-
 // SortExec represents sorting executor.
 type SortExec struct {
 	baseExecutor
 
 	ByItems []*plan.ByItems
-	Rows    []*orderByRow
 	Idx     int
 	fetched bool
-	err     error
 	schema  *expression.Schema
 
 	keyExprs []expression.Expression
@@ -61,7 +53,6 @@ type SortExec struct {
 
 // Close implements the Executor Close interface.
 func (e *SortExec) Close() error {
-	e.Rows = nil
 	e.memTracker = nil
 	return errors.Trace(e.children[0].Close())
 }
@@ -70,7 +61,6 @@ func (e *SortExec) Close() error {
 func (e *SortExec) Open(ctx context.Context) error {
 	e.fetched = false
 	e.Idx = 0
-	e.Rows = nil
 
 	// To avoid duplicated initialization for TopNExec.
 	if e.memTracker == nil {
@@ -78,81 +68,6 @@ func (e *SortExec) Open(ctx context.Context) error {
 		e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	}
 	return errors.Trace(e.children[0].Open(ctx))
-}
-
-// Len returns the number of rows.
-func (e *SortExec) Len() int {
-	return len(e.Rows)
-}
-
-// Swap implements sort.Interface Swap interface.
-func (e *SortExec) Swap(i, j int) {
-	e.Rows[i], e.Rows[j] = e.Rows[j], e.Rows[i]
-}
-
-// Less implements sort.Interface Less interface.
-func (e *SortExec) Less(i, j int) bool {
-	sc := e.ctx.GetSessionVars().StmtCtx
-	for index, by := range e.ByItems {
-		v1 := e.Rows[i].key[index]
-		v2 := e.Rows[j].key[index]
-
-		ret, err := v1.CompareDatum(sc, v2)
-		if err != nil {
-			e.err = errors.Trace(err)
-			return true
-		}
-
-		if by.Desc {
-			ret = -ret
-		}
-
-		if ret < 0 {
-			return true
-		} else if ret > 0 {
-			return false
-		}
-	}
-
-	return false
-}
-
-// Next implements the Executor Next interface.
-func (e *SortExec) Next(ctx context.Context) (Row, error) {
-	if !e.fetched {
-		for {
-			srcRow, err := e.children[0].Next(ctx)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if srcRow == nil {
-				break
-			}
-			orderRow := &orderByRow{
-				row: srcRow,
-				key: make([]*types.Datum, len(e.ByItems)),
-			}
-			for i, byItem := range e.ByItems {
-				key, err := byItem.Expr.Eval(srcRow)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				orderRow.key[i] = &key
-			}
-			e.Rows = append(e.Rows, orderRow)
-		}
-		sort.Sort(e)
-		e.fetched = true
-	}
-	if e.err != nil {
-		return nil, errors.Trace(e.err)
-	}
-	if e.Idx >= len(e.Rows) {
-		return nil, nil
-	}
-	row := e.Rows[e.Idx].row
-	e.Idx++
-	return row, nil
 }
 
 // NextChunk implements the Executor NextChunk interface.
@@ -307,53 +222,8 @@ type TopNExec struct {
 	SortExec
 	limit      *plan.PhysicalLimit
 	totalLimit int
-	heapSize   int
 
 	chkHeap *topNChunkHeap
-}
-
-// Less implements heap.Interface Less interface.
-func (e *TopNExec) Less(i, j int) bool {
-	sc := e.ctx.GetSessionVars().StmtCtx
-	for index, by := range e.ByItems {
-		v1 := e.Rows[i].key[index]
-		v2 := e.Rows[j].key[index]
-
-		ret, err := v1.CompareDatum(sc, v2)
-		if err != nil {
-			e.err = errors.Trace(err)
-			return true
-		}
-
-		if by.Desc {
-			ret = -ret
-		}
-
-		if ret > 0 {
-			return true
-		} else if ret < 0 {
-			return false
-		}
-	}
-
-	return false
-}
-
-// Len implements heap.Interface Len interface.
-func (e *TopNExec) Len() int {
-	return e.heapSize
-}
-
-// Push implements heap.Interface Push interface.
-func (e *TopNExec) Push(x interface{}) {
-	e.Rows = append(e.Rows, x.(*orderByRow))
-	e.heapSize++
-}
-
-// Pop implements heap.Interface Pop interface.
-func (e *TopNExec) Pop() interface{} {
-	e.heapSize--
-	return nil
 }
 
 // topNChunkHeap implements heap.Interface.

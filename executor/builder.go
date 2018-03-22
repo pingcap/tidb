@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -41,7 +42,7 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pingcap/tipb/go-tipb"
+	tipb "github.com/pingcap/tipb/go-tipb"
 	"golang.org/x/net/context"
 )
 
@@ -72,8 +73,12 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildCheckTable(v)
 	case *plan.CheckIndex:
 		return b.buildCheckIndex(v)
+	case *plan.RecoverIndex:
+		return b.buildRecoverIndex(v)
 	case *plan.CheckIndexRange:
 		return b.buildCheckIndexRange(v)
+	case *plan.ChecksumTable:
+		return b.buildChecksumTable(v)
 	case *plan.DDL:
 		return b.buildDDL(v)
 	case *plan.Deallocate:
@@ -102,6 +107,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildShowDDL(v)
 	case *plan.ShowDDLJobs:
 		return b.buildShowDDLJobs(v)
+	case *plan.ShowDDLJobQueries:
+		return b.buildShowDDLJobQueries(v)
 	case *plan.Show:
 		return b.buildShow(v)
 	case *plan.Simple:
@@ -204,6 +211,14 @@ func (b *executorBuilder) buildShowDDLJobs(v *plan.ShowDDLJobs) Executor {
 	return e
 }
 
+func (b *executorBuilder) buildShowDDLJobQueries(v *plan.ShowDDLJobQueries) Executor {
+	e := &ShowDDLJobQueriesExec{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+		jobIDs:       v.JobIDs,
+	}
+	return e
+}
+
 func (b *executorBuilder) buildCheckIndex(v *plan.CheckIndex) Executor {
 	readerExec, err := buildNoRangeIndexLookUpReader(b, v.IndexLookUpReader)
 	if err != nil {
@@ -233,6 +248,53 @@ func (b *executorBuilder) buildCheckTable(v *plan.CheckTable) Executor {
 	return e
 }
 
+func buildRecoverIndexCols(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) []*model.ColumnInfo {
+	columns := make([]*model.ColumnInfo, 0, len(indexInfo.Columns))
+	for _, idxCol := range indexInfo.Columns {
+		columns = append(columns, tblInfo.Columns[idxCol.Offset])
+	}
+
+	handleOffset := len(columns)
+	handleColsInfo := &model.ColumnInfo{
+		ID:     model.ExtraHandleID,
+		Name:   model.ExtraHandleName,
+		Offset: handleOffset,
+	}
+	handleColsInfo.FieldType = *types.NewFieldType(mysql.TypeLonglong)
+	columns = append(columns, handleColsInfo)
+	return columns
+}
+
+func (b *executorBuilder) buildRecoverIndex(v *plan.RecoverIndex) Executor {
+	tblInfo := v.Table.TableInfo
+	t, err := b.is.TableByName(v.Table.Schema, tblInfo.Name)
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
+	idxName := strings.ToLower(v.IndexName)
+	indices := t.WritableIndices()
+	var index table.Index
+	for _, idx := range indices {
+		if idxName == idx.Meta().Name.L {
+			index = idx
+			break
+		}
+	}
+
+	if index == nil {
+		b.err = errors.Errorf("index `%v` is not found in table `%v`.", v.IndexName, v.Table.Name.O)
+		return nil
+	}
+	e := &RecoverIndexExec{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+		columns:      buildRecoverIndexCols(tblInfo, index.Meta()),
+		index:        index,
+		table:        t,
+	}
+	return e
+}
+
 func (b *executorBuilder) buildCheckIndexRange(v *plan.CheckIndexRange) Executor {
 	tb, err := b.is.TableByName(v.Table.Schema, v.Table.Name)
 	if err != nil {
@@ -252,6 +314,19 @@ func (b *executorBuilder) buildCheckIndexRange(v *plan.CheckIndexRange) Executor
 			e.startKey = make([]types.Datum, len(e.index.Columns))
 			break
 		}
+	}
+	return e
+}
+
+func (b *executorBuilder) buildChecksumTable(v *plan.ChecksumTable) Executor {
+	e := &ChecksumTableExec{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+		tables:       make(map[int64]*checksumContext),
+		done:         false,
+	}
+	startTs := b.getStartTS()
+	for _, t := range v.Tables {
+		e.tables[t.TableInfo.ID] = newChecksumContext(t.DBInfo, t.TableInfo, startTs)
 	}
 	return e
 }
@@ -576,6 +651,23 @@ func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 		return nil
 	}
 
+	defaultValues := v.DefaultValues
+	if defaultValues == nil {
+		if v.JoinType == plan.RightOuterJoin {
+			defaultValues = make([]types.Datum, leftExec.Schema().Len())
+		} else {
+			defaultValues = make([]types.Datum, rightExec.Schema().Len())
+		}
+	}
+
+	e := &MergeJoinExec{
+		stmtCtx:      b.ctx.GetSessionVars().StmtCtx,
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), leftExec, rightExec),
+		resultGenerator: newJoinResultGenerator(b.ctx, v.JoinType, v.JoinType == plan.RightOuterJoin,
+			defaultValues, v.OtherConditions,
+			leftExec.retTypes(), rightExec.retTypes()),
+	}
+
 	leftKeys := make([]*expression.Column, 0, len(v.EqualConditions))
 	rightKeys := make([]*expression.Column, 0, len(v.EqualConditions))
 	for _, eqCond := range v.EqualConditions {
@@ -597,52 +689,38 @@ func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 		rightKeys = append(rightKeys, rightKey)
 	}
 
-	lhsIter := &readerIterator{
-		sctx:     b.ctx,
-		reader:   leftExec,
-		filter:   v.LeftConditions,
-		joinKeys: leftKeys,
-	}
+	e.outerIdx = 0
+	innerFilter := v.RightConditions
 
-	rhsIter := &readerIterator{
-		sctx:     b.ctx,
+	e.innerTable = &mergeJoinInnerTable{
 		reader:   rightExec,
-		filter:   v.RightConditions,
 		joinKeys: rightKeys,
 	}
 
-	defaultValues := v.DefaultValues
-	if defaultValues == nil {
-		if v.JoinType == plan.RightOuterJoin {
-			defaultValues = make([]types.Datum, leftExec.Schema().Len())
-		} else {
-			defaultValues = make([]types.Datum, rightExec.Schema().Len())
-		}
-	}
-	lhsColTypes := leftExec.retTypes()
-	rhsColTypes := rightExec.retTypes()
-	e := &MergeJoinExec{
-		baseExecutor:    newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), leftExec, rightExec),
-		resultGenerator: newJoinResultGenerator(b.ctx, v.JoinType, v.JoinType == plan.RightOuterJoin, defaultValues, v.OtherConditions, lhsColTypes, rhsColTypes),
-		stmtCtx:         b.ctx.GetSessionVars().StmtCtx,
-		// left is the outer side by default.
-		outerIdx:  0,
-		outerKeys: leftKeys,
-		innerKeys: rightKeys,
-		outerIter: lhsIter,
-		innerIter: rhsIter,
+	e.outerTable = &mergeJoinOuterTable{
+		reader: leftExec,
+		filter: v.LeftConditions,
+		keys:   leftKeys,
 	}
 
 	if v.JoinType == plan.RightOuterJoin {
-		e.outerKeys, e.innerKeys = e.innerKeys, e.outerKeys
-		e.outerIter, e.innerIter = e.innerIter, e.outerIter
 		e.outerIdx = 1
+		e.outerTable.reader = rightExec
+		e.outerTable.filter = v.RightConditions
+		e.outerTable.keys = rightKeys
+
+		innerFilter = v.LeftConditions
+		e.innerTable.reader = leftExec
+		e.innerTable.joinKeys = leftKeys
 	}
 
-	if v.JoinType != plan.InnerJoin {
-		e.outerFilter = e.outerIter.filter
-		e.outerIter.filter = nil
+	// optimizer should guarantee that filters on inner table are pushed down
+	// to tikv or extracted to a Selection.
+	if len(innerFilter) != 0 {
+		b.err = errors.Annotate(ErrBuildExecutor, "merge join's inner filter should be empty.")
+		return nil
 	}
+
 	metrics.ExecutorCounter.WithLabelValues("MergeJoinExec").Inc()
 	return e
 }
@@ -773,7 +851,6 @@ func (b *executorBuilder) buildProjection(v *plan.PhysicalProjection) Executor {
 	}
 	e := &ProjectionExec{
 		baseExecutor:     newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), childExec),
-		exprs:            v.Exprs,
 		evaluatorSuit:    expression.NewEvaluatorSuit(v.Exprs),
 		calculateNoDelay: v.CalculateNoDelay,
 	}

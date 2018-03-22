@@ -19,11 +19,11 @@ import (
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/testkit"
@@ -61,6 +61,65 @@ func (s *testAnalyzeSuite) TestCBOWithoutAnalyze(c *C) {
 		"TableScan_12   cop table:t2, range:[-inf,+inf], keep order:false 6.00",
 		"TableReader_13 HashLeftJoin_8  root data:TableScan_12 6.00",
 		"HashLeftJoin_8  TableReader_11,TableReader_13 root inner join, inner:TableReader_13, equal:[eq(test.t1.a, test.t2.a)] 7.50",
+	))
+}
+
+func (s *testAnalyzeSuite) TestStraightJoin(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	testKit.MustExec("use test")
+	h := dom.StatsHandle()
+	for _, tblName := range []string{"t1", "t2", "t3", "t4"} {
+		testKit.MustExec(fmt.Sprintf("create table %s (a int)", tblName))
+		c.Assert(h.HandleDDLEvent(<-h.DDLEventCh()), IsNil)
+	}
+
+	testKit.MustQuery("explain select straight_join * from t1, t2, t3, t4").Check(testkit.Rows(
+		"TableScan_16   cop table:t1, range:[-inf,+inf], keep order:false 10000.00",
+		"TableReader_17 HashLeftJoin_14  root data:TableScan_16 10000.00",
+		"TableScan_18   cop table:t2, range:[-inf,+inf], keep order:false 10000.00",
+		"TableReader_19 HashLeftJoin_14  root data:TableScan_18 10000.00",
+		"HashLeftJoin_14 HashLeftJoin_12 TableReader_17,TableReader_19 root inner join, inner:TableReader_19 100000000.00",
+		"TableScan_20   cop table:t3, range:[-inf,+inf], keep order:false 10000.00",
+		"TableReader_21 HashLeftJoin_12  root data:TableScan_20 10000.00",
+		"HashLeftJoin_12 HashLeftJoin_10 HashLeftJoin_14,TableReader_21 root inner join, inner:TableReader_21 1000000000000.00",
+		"TableScan_22   cop table:t4, range:[-inf,+inf], keep order:false 10000.00",
+		"TableReader_23 HashLeftJoin_10  root data:TableScan_22 10000.00",
+		"HashLeftJoin_10  HashLeftJoin_12,TableReader_23 root inner join, inner:TableReader_23 10000000000000000.00",
+	))
+
+	testKit.MustQuery("explain select * from t1 straight_join t2 straight_join t3 straight_join t4").Check(testkit.Rows(
+		"TableScan_16   cop table:t1, range:[-inf,+inf], keep order:false 10000.00",
+		"TableReader_17 HashLeftJoin_14  root data:TableScan_16 10000.00",
+		"TableScan_18   cop table:t2, range:[-inf,+inf], keep order:false 10000.00",
+		"TableReader_19 HashLeftJoin_14  root data:TableScan_18 10000.00",
+		"HashLeftJoin_14 HashLeftJoin_12 TableReader_17,TableReader_19 root inner join, inner:TableReader_19 100000000.00",
+		"TableScan_20   cop table:t3, range:[-inf,+inf], keep order:false 10000.00",
+		"TableReader_21 HashLeftJoin_12  root data:TableScan_20 10000.00",
+		"HashLeftJoin_12 HashLeftJoin_10 HashLeftJoin_14,TableReader_21 root inner join, inner:TableReader_21 1000000000000.00",
+		"TableScan_22   cop table:t4, range:[-inf,+inf], keep order:false 10000.00",
+		"TableReader_23 HashLeftJoin_10  root data:TableScan_22 10000.00",
+		"HashLeftJoin_10  HashLeftJoin_12,TableReader_23 root inner join, inner:TableReader_23 10000000000000000.00",
+	))
+
+	testKit.MustQuery("explain select straight_join * from t1, t2, t3, t4 where t1.a=t4.a;").Check(testkit.Rows(
+		"TableScan_17   cop table:t1, range:[-inf,+inf], keep order:false 10000.00",
+		"TableReader_18 HashLeftJoin_15  root data:TableScan_17 10000.00",
+		"TableScan_19   cop table:t2, range:[-inf,+inf], keep order:false 10000.00",
+		"TableReader_20 HashLeftJoin_15  root data:TableScan_19 10000.00",
+		"HashLeftJoin_15 HashLeftJoin_13 TableReader_18,TableReader_20 root inner join, inner:TableReader_20 100000000.00",
+		"TableScan_21   cop table:t3, range:[-inf,+inf], keep order:false 10000.00",
+		"TableReader_22 HashLeftJoin_13  root data:TableScan_21 10000.00",
+		"HashLeftJoin_13 HashLeftJoin_11 HashLeftJoin_15,TableReader_22 root inner join, inner:TableReader_22 1000000000000.00",
+		"TableScan_23   cop table:t4, range:[-inf,+inf], keep order:false 10000.00",
+		"TableReader_24 HashLeftJoin_11  root data:TableScan_23 10000.00",
+		"HashLeftJoin_11  HashLeftJoin_13,TableReader_24 root inner join, inner:TableReader_24, equal:[eq(test.t1.a, test.t4.a)] 1250000000000.00",
 	))
 }
 
@@ -220,7 +279,7 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 	}
 	for _, tt := range tests {
 		ctx := testKit.Se.(sessionctx.Context)
-		stmts, err := tidb.Parse(ctx, tt.sql)
+		stmts, err := session.Parse(ctx, tt.sql)
 		c.Assert(err, IsNil)
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
@@ -270,7 +329,7 @@ func (s *testAnalyzeSuite) TestEmptyTable(c *C) {
 	}
 	for _, tt := range tests {
 		ctx := testKit.Se.(sessionctx.Context)
-		stmts, err := tidb.Parse(ctx, tt.sql)
+		stmts, err := session.Parse(ctx, tt.sql)
 		c.Assert(err, IsNil)
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
@@ -361,7 +420,7 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 	}
 	for _, tt := range tests {
 		ctx := testKit.Se.(sessionctx.Context)
-		stmts, err := tidb.Parse(ctx, tt.sql)
+		stmts, err := session.Parse(ctx, tt.sql)
 		c.Assert(err, IsNil)
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
@@ -438,7 +497,7 @@ func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {
 		best := "IndexReader(Index(t.id)[])"
 
 		ctx := testKit.Se.(sessionctx.Context)
-		stmts, err := tidb.Parse(ctx, sql)
+		stmts, err := session.Parse(ctx, sql)
 		stmt := stmts[0]
 
 		is := domain.GetDomain(ctx).InfoSchema()
@@ -458,9 +517,9 @@ func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	tidb.SetSchemaLease(0)
-	tidb.SetStatsLease(0)
-	dom, err := tidb.BootstrapSession(store)
+	session.SetSchemaLease(0)
+	session.SetStatsLease(0)
+	dom, err := session.BootstrapSession(store)
 	return store, dom, errors.Trace(err)
 }
 
@@ -568,7 +627,7 @@ func BenchmarkOptimize(b *testing.B) {
 	}
 	for _, tt := range tests {
 		ctx := testKit.Se.(sessionctx.Context)
-		stmts, err := tidb.Parse(ctx, tt.sql)
+		stmts, err := session.Parse(ctx, tt.sql)
 		c.Assert(err, IsNil)
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]

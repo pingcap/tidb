@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tipb/go-tipb"
+	tipb "github.com/pingcap/tipb/go-tipb"
 	"golang.org/x/net/context"
 )
 
@@ -123,7 +123,6 @@ func (e *tableScanExec) Next(ctx context.Context) (value [][]byte, err error) {
 			e.counts[e.cursor-1]++
 			return value, nil
 		}
-
 		value, err = e.getRowFromRange(ran)
 		if err != nil {
 			return nil, errors.Trace(err)

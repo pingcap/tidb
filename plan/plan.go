@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tipb/go-tipb"
+	tipb "github.com/pingcap/tipb/go-tipb"
 )
 
 // Plan is the description of an execution flow.
@@ -165,6 +165,8 @@ type LogicalPlan interface {
 
 	// preparePossibleProperties is only used for join and aggregation. Like group by a,b,c, all permutation of (a,b,c) is
 	// valid, but the ordered indices in leaf plan is limited. So we can get all possible order properties by a pre-walking.
+	// Please make sure that children's method is called though we may not need its return value,
+	// so we can prepare possible properties for every LogicalPlan node.
 	preparePossibleProperties() [][]*expression.Column
 
 	// genPhysPlansByReqProp generates all possible plans that can match the required property.

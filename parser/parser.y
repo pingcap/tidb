@@ -341,7 +341,9 @@ import (
 	profiles	"PROFILES"
 	quarter		"QUARTER"
 	query		"QUERY"
+	queries		"QUERIES"
 	quick		"QUICK"
+	recover 	"RECOVER"
 	redundant	"REDUNDANT"
 	reload		"RELOAD"
 	repeatable	"REPEATABLE"
@@ -420,6 +422,7 @@ import (
 	cancel		"CANCEL"
 	ddl		"DDL"
 	jobs		"JOBS"
+	job		    "JOB"
 	stats		"STATS"
 	statsMeta       "STATS_META"
 	statsHistograms "STATS_HISTOGRAMS"
@@ -681,6 +684,7 @@ import (
 	SelectLockOpt			"FOR UPDATE or LOCK IN SHARE MODE,"
 	SelectStmtCalcFoundRows		"SELECT statement optional SQL_CALC_FOUND_ROWS"
 	SelectStmtSQLCache		"SELECT statement optional SQL_CAHCE/SQL_NO_CACHE"
+	SelectStmtStraightJoin		"SELECT statement optional STRAIGHT_JOIN"
 	SelectStmtFieldList		"SELECT statement field list"
 	SelectStmtLimit			"SELECT statement optional LIMIT clause"
 	SelectStmtOpts			"Select statement options"
@@ -2527,11 +2531,13 @@ UnReservedKeyword:
 | "REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "INDEXES" | "PROCESSLIST"
 | "SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "MODIFY" | "EVENTS" | "PARTITIONS"
 | "NONE" | "SUPER" | "EXCLUSIVE" | "STATS_PERSISTENT" | "ROW_COUNT" | "COALESCE" | "MONTH" | "PROCESS" | "PROFILES"
-| "MICROSECOND" | "MINUTE" | "PLUGINS" | "QUERY" | "SECOND" | "SEPARATOR" | "SHARE" | "SHARED" | "MAX_CONNECTIONS_PER_HOUR" | "MAX_QUERIES_PER_HOUR" | "MAX_UPDATES_PER_HOUR"
-| "MAX_USER_CONNECTIONS" | "REPLICATION" | "CLIENT" | "SLAVE" | "RELOAD" | "TEMPORARY" | "ROUTINE" | "EVENT" | "ALGORITHM" | "DEFINER" | "INVOKER" | "MERGE" | "TEMPTABLE" | "UNDEFINED" | "SECURITY" | "CASCADED"
+| "MICROSECOND" | "MINUTE" | "PLUGINS" | "QUERY" | "QUERIES" | "SECOND" | "SEPARATOR" | "SHARE" | "SHARED" | "MAX_CONNECTIONS_PER_HOUR" | "MAX_QUERIES_PER_HOUR" | "MAX_UPDATES_PER_HOUR"
+| "MAX_USER_CONNECTIONS" | "REPLICATION" | "CLIENT" | "SLAVE" | "RELOAD" | "TEMPORARY" | "ROUTINE" | "EVENT" | "ALGORITHM" | "DEFINER" | "INVOKER" | "MERGE" | "TEMPTABLE" | "UNDEFINED" | "SECURITY" | "CASCADED" | "RECOVER"
+
+
 
 TiDBKeyword:
-"ADMIN" | "CANCEL" | "DDL" | "JOBS" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "STATS_HEALTHY" | "TIDB" | "TIDB_HJ" | "TIDB_SMJ" | "TIDB_INLJ"
+"ADMIN" | "CANCEL" | "DDL" | "JOBS" | "JOB" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "STATS_HEALTHY" | "TIDB" | "TIDB_HJ" | "TIDB_SMJ" | "TIDB_INLJ"
 
 NotKeywordToken:
  "ADDDATE" | "BIT_AND" | "BIT_OR" | "BIT_XOR" | "CAST" | "COUNT" | "CURTIME" | "DATE_ADD" | "DATE_SUB" | "EXTRACT" | "GET_FORMAT" | "GROUP_CONCAT" | "MIN" | "MAX" | "NOW" | "POSITION"
@@ -3479,10 +3485,10 @@ SumExpr:
 		args := []ast.ExprNode{ast.NewValueExpr(1)}
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: args}
 	}
-|	builtinGroupConcat '(' BuggyDefaultFalseDistinctOpt ExpressionList OptGConcatSeparator ')'
+|	builtinGroupConcat '(' BuggyDefaultFalseDistinctOpt ExpressionList OrderByOptional OptGConcatSeparator ')'
 	{
 		args := $4.([]ast.ExprNode)
-		args = append(args, $5.(ast.ExprNode))
+		args = append(args, $6.(ast.ExprNode))
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: args, Distinct: $3.(bool)}
 	}
 |	builtinMax '(' BuggyDefaultFalseDistinctOpt Expression ')'
@@ -4223,6 +4229,15 @@ JoinTable:
 	{
 		$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: $6.(ast.ResultSetNode), Tp: $3.(ast.JoinType), NaturalJoin: true}
 	}
+|	TableRef "STRAIGHT_JOIN" TableRef
+	{
+		$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: $3.(ast.ResultSetNode), StraightJoin: true}
+	}
+|	TableRef "STRAIGHT_JOIN" TableRef "ON" Expression
+	{
+		on := &ast.OnCondition{Expr: $5}
+		$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: $3.(ast.ResultSetNode), StraightJoin: true, On: on}
+	}
 
 JoinType:
 	"LEFT"
@@ -4240,7 +4255,6 @@ OuterOpt:
 
 CrossOpt:
 	"JOIN"
-|	"STRAIGHT_JOIN"
 |	"CROSS" "JOIN"
 |	"INNER" "JOIN"
 
@@ -4285,7 +4299,7 @@ SelectStmtLimit:
 
 
 SelectStmtOpts:
-	TableOptimizerHints DefaultFalseDistinctOpt Priority SelectStmtSQLCache SelectStmtCalcFoundRows
+	TableOptimizerHints DefaultFalseDistinctOpt Priority SelectStmtSQLCache SelectStmtCalcFoundRows SelectStmtStraightJoin
 	{
 		opt := &ast.SelectStmtOpts{}
 		if $1 != nil {
@@ -4302,6 +4316,9 @@ SelectStmtOpts:
 		}
 		if $5 != nil {
 			opt.CalcFoundRows = $5.(bool)
+		}
+		if $6 != nil {
+			opt.StraightJoin = $6.(bool)
 		}
 
 		$$ = opt
@@ -4371,6 +4388,15 @@ SelectStmtSQLCache:
 |	"SQL_NO_CACHE"
 	{
 		$$ = false
+	}
+SelectStmtStraightJoin:
+	%prec empty
+	{
+		$$ = false
+	}
+|	"STRAIGHT_JOIN"
+	{
+		$$ = true
 	}
 
 SelectStmtFieldList:
@@ -4769,6 +4795,14 @@ AdminStmt:
 			Index: string($5),
 		}
 	}
+|	"ADMIN" "RECOVER" "INDEX" TableName Identifier
+	{
+		$$ = &ast.AdminStmt{
+			Tp: ast.AdminRecoverIndex,
+			Tables: []*ast.TableName{$4.(*ast.TableName)},
+			Index: string($5),
+		}
+	}
 |	"ADMIN" "CHECK" "INDEX" TableName Identifier HandleRangeList
 	{
 		$$ = &ast.AdminStmt{
@@ -4778,11 +4812,25 @@ AdminStmt:
 			HandleRanges: $6.([]ast.HandleRange),
 		}
 	}
+|	"ADMIN" "CHECKSUM" "TABLE" TableNameList
+	{
+		$$ = &ast.AdminStmt{
+			Tp: ast.AdminChecksumTable,
+			Tables: $4.([]*ast.TableName),
+		}
+	}
 |	"ADMIN" "CANCEL" "DDL" "JOBS" NumList
 	{
 		$$ = &ast.AdminStmt{
 			Tp: ast.AdminCancelDDLJobs,
 			JobIDs: $5.([]int64),
+		}
+	}
+|	"ADMIN" "SHOW" "DDL" "JOB" "QUERIES" NumList
+	{
+		$$ = &ast.AdminStmt{
+			Tp: ast.AdminShowDDLJobQueries,
+			JobIDs: $6.([]int64),
 		}
 	}
 
@@ -5512,7 +5560,7 @@ NumericType:
 		x := types.NewFieldType($1.(byte))
 		x.Flen = fopt.Flen
 		if x.Tp == mysql.TypeFloat {
-			if x.Flen > mysql.PrecisionForFloat {
+			if x.Flen > 24 {
 				x.Tp = mysql.TypeDouble
 			}
 		}

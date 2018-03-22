@@ -112,12 +112,6 @@ type UnionScanExec struct {
 	snapshotRow Row
 }
 
-// Next implements Execution Next interface.
-func (us *UnionScanExec) Next(ctx context.Context) (Row, error) {
-	row, err := us.getOneRow(ctx)
-	return row, errors.Trace(err)
-}
-
 // NextChunk implements the Executor NextChunk interface.
 func (us *UnionScanExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()

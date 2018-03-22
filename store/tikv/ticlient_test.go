@@ -16,8 +16,10 @@ package tikv
 import (
 	"flag"
 	"fmt"
+	"sync"
 	"time"
 
+	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
@@ -26,8 +28,9 @@ import (
 )
 
 var (
-	withTiKV = flag.Bool("with-tikv", false, "run tests with TiKV cluster started. (not use the mock server)")
-	pdAddrs  = flag.String("pd-addrs", "127.0.0.1:2379", "pd addrs")
+	withTiKVGlobalLock sync.Mutex
+	withTiKV           = flag.Bool("with-tikv", false, "run tests with TiKV cluster started. (not use the mock server)")
+	pdAddrs            = flag.String("pd-addrs", "127.0.0.1:2379", "pd addrs")
 )
 
 func newTestTiKVStore() (kv.Storage, error) {
@@ -35,10 +38,15 @@ func newTestTiKVStore() (kv.Storage, error) {
 	if err != nil {
 		return nil, err
 	}
-	return NewTestTiKVStore(client, pdClient, nil, nil)
+	store, err := NewTestTiKVStore(client, pdClient, nil, nil)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return store, err
 }
 
-func newTestStore(c *C) *tikvStore {
+// NewTestStore new a mockStore.
+func NewTestStore(c *C) kv.Storage {
 	// duplicated code with mockstore NewTestTiKVStorage,
 	// but I have no idea to fix the cycle depenedence
 	// TODO: try to simplify the code later
@@ -50,15 +58,36 @@ func newTestStore(c *C) *tikvStore {
 		var d Driver
 		store, err := d.Open(fmt.Sprintf("tikv://%s", *pdAddrs))
 		c.Assert(err, IsNil)
-		return store.(*tikvStore)
+		err = clearStorage(store)
+		c.Assert(err, IsNil)
+		return store
 	}
 
 	store, err := newTestTiKVStore()
 	c.Assert(err, IsNil)
-	return store.(*tikvStore)
+	return store
+}
+
+func clearStorage(store kv.Storage) error {
+	txn, err := store.Begin()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	iter, err := txn.Seek(nil)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for iter.Valid() {
+		txn.Delete(iter.Key())
+		if err := iter.Next(); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return txn.Commit(context.Background())
 }
 
 type testTiclientSuite struct {
+	OneByOneSuite
 	store *tikvStore
 	// prefix is prefix of each key in this test. It is used for table isolation,
 	// or it may pollute other data.
@@ -68,7 +97,8 @@ type testTiclientSuite struct {
 var _ = Suite(&testTiclientSuite{})
 
 func (s *testTiclientSuite) SetUpSuite(c *C) {
-	s.store = newTestStore(c)
+	s.OneByOneSuite.SetUpSuite(c)
+	s.store = NewTestStore(c).(*tikvStore)
 	s.prefix = fmt.Sprintf("ticlient_%d", time.Now().Unix())
 }
 
@@ -88,6 +118,7 @@ func (s *testTiclientSuite) TearDownSuite(c *C) {
 	c.Assert(err, IsNil)
 	err = s.store.Close()
 	c.Assert(err, IsNil)
+	s.OneByOneSuite.TearDownSuite(c)
 }
 
 func (s *testTiclientSuite) beginTxn(c *C) *tikvTxn {

@@ -1083,7 +1083,7 @@ func makeLoadDataInfo(column int, specifiedColumns []string, ctx sessionctx.Cont
 	columns := tbl.Cols()
 	// filter specified columns
 	if len(specifiedColumns) > 0 {
-		columns, err = table.FindCols(columns, specifiedColumns)
+		columns, err = table.FindCols(columns, specifiedColumns, true)
 		c.Assert(err, IsNil)
 	}
 	fields := &ast.FieldsClause{Terminated: "\t"}
