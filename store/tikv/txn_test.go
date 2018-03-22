@@ -20,15 +20,15 @@ import (
 )
 
 type testTxnSuite struct {
-	oneByOneSuite
+	OneByOneSuite
 	store *tikvStore
 }
 
 var _ = Suite(&testTxnSuite{})
 
 func (s *testTxnSuite) SetUpTest(c *C) {
-	c.oneByOneSuite.SetUpSuite(c)
-	s.store = newTestStore(c)
+	s.OneByOneSuite.SetUpSuite(c)
+	s.store = NewTestStore(c).(*tikvStore)
 }
 
 func (s *testTxnSuite) TearDownTest(c *C) {
