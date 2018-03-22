@@ -458,6 +458,7 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 	}
 	selection.Conditions = expressions
 	selection.SetChildren(p)
+	fmt.Printf("buildSelection: schema length is %v and plan id is %d after rewrite \n", len(p.Schema().Columns), p.ID())
 	fmt.Println("leave buildSelection\n")
 	return selection
 }
