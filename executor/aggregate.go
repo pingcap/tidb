@@ -347,12 +347,12 @@ func (e *StreamAggExec) fetchChildIfNecessary(ctx context.Context, chk *chunk.Ch
 }
 
 // appendResult2Chunk appends result of all the aggregation functions to the
-// result chunk, and realloc the evaluation context for each aggregation.
+// result chunk, and reset the evaluation context for each aggregation.
 func (e *StreamAggExec) appendResult2Chunk(chk *chunk.Chunk) {
 	e.rowBuffer = e.rowBuffer[:0]
 	for i, af := range e.AggFuncs {
 		e.rowBuffer = append(e.rowBuffer, af.GetResult(e.aggCtxs[i]))
-		e.aggCtxs[i] = af.CreateContext(e.ctx.GetSessionVars().StmtCtx)
+		af.ResetContext(e.ctx.GetSessionVars().StmtCtx, e.aggCtxs[i])
 	}
 	e.mutableRow.SetDatums(e.rowBuffer...)
 	chk.AppendRow(e.mutableRow.ToRow())
