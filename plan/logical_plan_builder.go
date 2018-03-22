@@ -425,7 +425,6 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 	expressions := make([]expression.Expression, 0, len(conditions))
 	selection := LogicalSelection{}.init(b.ctx)
 	for _, cond := range conditions {
-		fmt.Println("buildSelection: " + cond.ExplainInfo())
 		expr, np, err := b.rewrite(cond, p, AggMapper, false)
 		if err != nil {
 			b.err = err
@@ -448,6 +447,7 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 					return dual
 				}
 			}
+			fmt.Println("buildSelection: " + item.ExplainInfo())
 			expressions = append(expressions, item)
 		}
 	}
