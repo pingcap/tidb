@@ -215,6 +215,7 @@ func (p *physicalSchemaProducer) ResolveIndices() {
 
 // ResolveIndices implements Plan interface.
 func (p *basePhysicalPlan) ResolveIndices() {
+	fmt.Printf("dump child info %v\n", p.children)
 	for _, child := range p.children {
 		child.ResolveIndices()
 	}
