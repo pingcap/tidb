@@ -106,10 +106,11 @@ type UnionScanExec struct {
 	// belowHandleIndex is the handle's position of the below scan plan.
 	belowHandleIndex int
 
-	addedRows   []Row
-	cursor      int
-	sortErr     error
-	snapshotRow Row
+	addedRows           []Row
+	cursor4AddRows      int
+	sortErr             error
+	snapshotRows        []Row
+	cursor4SnapshotRows int
 }
 
 // NextChunk implements the Executor NextChunk interface.
@@ -162,9 +163,9 @@ func (us *UnionScanExec) getOneRow(ctx context.Context) (Row, error) {
 		}
 
 		if isSnapshotRow {
-			us.snapshotRow = nil
+			us.cursor4SnapshotRows++
 		} else {
-			us.cursor++
+			us.cursor4AddRows++
 		}
 		return row, nil
 	}
@@ -174,17 +175,21 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) (Row, error) {
 	if us.dirty.truncated {
 		return nil, nil
 	}
+	if us.cursor4SnapshotRows < len(us.snapshotRows) {
+		return us.snapshotRows[us.cursor4SnapshotRows], nil
+	}
 	var err error
-	if us.snapshotRow == nil {
-		for {
-			us.snapshotRow, err = us.children[0].Next(ctx)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if us.snapshotRow == nil {
-				break
-			}
-			snapshotHandle := us.snapshotRow[us.belowHandleIndex].GetInt64()
+	us.cursor4SnapshotRows = 0
+	us.snapshotRows = us.snapshotRows[:0]
+	for len(us.snapshotRows) == 0 {
+		chk := chunk.NewChunk(us.retTypes())
+		err = us.children[0].NextChunk(ctx, chk)
+		if err != nil || chk.NumRows() == 0 {
+			return nil, errors.Trace(err)
+		}
+		it := chunk.NewIterator4Chunk(chk)
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			snapshotHandle := row.GetInt64(us.belowHandleIndex)
 			if _, ok := us.dirty.deletedRows[snapshotHandle]; ok {
 				continue
 			}
@@ -193,16 +198,16 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) (Row, error) {
 				// commit, but for simplicity, we don't handle it here.
 				continue
 			}
-			break
+			us.snapshotRows = append(us.snapshotRows, row.GetDatumRow(us.children[0].retTypes()))
 		}
 	}
-	return us.snapshotRow, nil
+	return us.snapshotRows[0], nil
 }
 
 func (us *UnionScanExec) getAddedRow() Row {
 	var addedRow Row
-	if us.cursor < len(us.addedRows) {
-		addedRow = us.addedRows[us.cursor]
+	if us.cursor4AddRows < len(us.addedRows) {
+		addedRow = us.addedRows[us.cursor4AddRows]
 	}
 	return addedRow
 }

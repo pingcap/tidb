@@ -64,11 +64,6 @@ func (e *LoadStatsExec) exec(ctx context.Context) error {
 	return nil
 }
 
-// Next implements the Executor Next interface.
-func (e *LoadStatsExec) Next(ctx context.Context) (Row, error) {
-	return nil, e.exec(ctx)
-}
-
 // NextChunk implements the Executor NextChunk interface.
 func (e *LoadStatsExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
