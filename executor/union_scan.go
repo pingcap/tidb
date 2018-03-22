@@ -182,7 +182,7 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) (Row, error) {
 	us.cursor4SnapshotRows = 0
 	us.snapshotRows = us.snapshotRows[:0]
 	for len(us.snapshotRows) == 0 {
-		chk := chunk.NewChunk(us.retTypes())
+		chk := chunk.NewChunkWithCapacity(us.retTypes(), us.maxChunkSize)
 		err = us.children[0].NextChunk(ctx, chk)
 		if err != nil || chk.NumRows() == 0 {
 			return nil, errors.Trace(err)

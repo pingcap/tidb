@@ -50,7 +50,9 @@ func (k loadStatsVarKeyType) String() string {
 // LoadStatsVarKey is a variable key for load statistic.
 const LoadStatsVarKey loadStatsVarKeyType = 0
 
-func (e *LoadStatsExec) exec(ctx context.Context) error {
+// NextChunk implements the Executor NextChunk interface.
+func (e *LoadStatsExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+	chk.Reset()
 	if len(e.info.Path) == 0 {
 		return errors.New("Load Stats: file path is empty")
 	}
@@ -60,14 +62,7 @@ func (e *LoadStatsExec) exec(ctx context.Context) error {
 		return errors.New("Load Stats: previous load stats option isn't closed normally")
 	}
 	e.ctx.SetValue(LoadStatsVarKey, e.info)
-
 	return nil
-}
-
-// NextChunk implements the Executor NextChunk interface.
-func (e *LoadStatsExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
-	return errors.Trace(e.exec(ctx))
 }
 
 // Close implements the Executor Close interface.
