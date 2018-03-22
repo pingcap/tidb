@@ -24,7 +24,7 @@ import (
 )
 
 type testSnapshotSuite struct {
-	oneByOneSuite
+	OneByOneSuite
 	store   *tikvStore
 	prefix  string
 	rowNums []int
@@ -33,8 +33,8 @@ type testSnapshotSuite struct {
 var _ = Suite(&testSnapshotSuite{})
 
 func (s *testSnapshotSuite) SetUpSuite(c *C) {
-	s.oneByOneSuite.SetUpSuite(c)
-	s.store = newTestStore(c)
+	s.OneByOneSuite.SetUpSuite(c)
+	s.store = NewTestStore(c).(*tikvStore)
 	s.prefix = fmt.Sprintf("snapshot_%d", time.Now().Unix())
 	s.rowNums = append(s.rowNums, 1, 100, 191)
 }
@@ -54,7 +54,7 @@ func (s *testSnapshotSuite) TearDownSuite(c *C) {
 	c.Assert(err, IsNil)
 	err = s.store.Close()
 	c.Assert(err, IsNil)
-	s.oneByOneSuite.TearDownSuite(c)
+	s.OneByOneSuite.TearDownSuite(c)
 }
 
 func (s *testSnapshotSuite) beginTxn(c *C) *tikvTxn {

@@ -313,6 +313,11 @@ func (s *testDBSuite) TestCancelAddIndex(c *C) {
 	var checkErr error
 	hook := &ddl.TestDDLCallback{}
 	first := true
+	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
+	// let hook.OnJobUpdatedExported has chance to cancel the job.
+	// the hook.OnJobUpdatedExported is called when the job is updated, runReorgJob will wait ddl.ReorgWaitTimeout, then return the ddl.runDDLJob.
+	// After that ddl call d.hook.OnJobUpdated(job), so that we can canceled the job in this test case.
+	ddl.ReorgWaitTimeout = 50 * time.Millisecond
 	hook.OnJobUpdatedExported = func(job *model.Job) {
 		addIndexNotFirstReorg := job.Type == model.ActionAddIndex && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0
 		// If the action is adding index and the state is writing reorganization, it want to test the case of cancelling the job when backfilling indexes.
@@ -391,6 +396,7 @@ LOOP:
 	}
 
 	s.mustExec(c, "drop table t1")
+	ddl.ReorgWaitTimeout = oldReorgWaitTimeout
 }
 
 func (s *testDBSuite) TestAddAnonymousIndex(c *C) {
@@ -1743,4 +1749,15 @@ func (s *testDBSuite) TestRebaseAutoID(c *C) {
 
 	s.tk.MustExec("create table tidb.test2 (a int);")
 	s.testErrorCode(c, "alter table tidb.test2 add column b int auto_increment key, auto_increment=10;", tmysql.ErrUnknown)
+}
+
+func (s *testDBSuite) TestCharacterSetInColumns(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("drop database if exists varchar_test;")
+	s.tk.MustExec("create database varchar_test;")
+	s.tk.MustExec("use varchar_test")
+	s.tk.MustExec("drop table if exists t")
+	s.tk.MustExec("create table t (c1 int, s1 varchar(10), s2 text)")
+	s.tk.MustQuery("select count(*) from information_schema.columns where table_schema = 'varchar_test' and character_set_name != 'utf8'").Check(testkit.Rows("0"))
+	s.tk.MustQuery("select count(*) from information_schema.columns where table_schema = 'varchar_test' and character_set_name = 'utf8'").Check(testkit.Rows("2"))
 }

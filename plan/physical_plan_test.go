@@ -172,8 +172,8 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 		},
 		// Test PK in index double read.
 		{
-			sql:  "select * from t where t.c = 1 and t.a = 1 order by t.d limit 1",
-			best: "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.a, 1)])->Limit, Table(t))->Limit",
+			sql:  "select * from t where t.c = 1 and t.a > 1 order by t.d limit 1",
+			best: "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([gt(test.t.a, 1)])->Limit, Table(t))->Limit",
 		},
 		// Test index filter condition push down.
 		{
