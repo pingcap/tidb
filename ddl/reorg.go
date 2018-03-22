@@ -37,11 +37,11 @@ type reorgCtx struct {
 	// rowCount is used to simulate a job's row count.
 	rowCount int64
 	// notifyCancelReorgJob is used to notify the backfilling goroutine if the DDL job is cancelled.
-	notifyCancelReorgJob chan struct{}
+	// 0: job is not canceled.
+	// 1: job is canceled.
+	notifyCancelReorgJob int32
 	// doneHandle is used to simulate the handle that has been processed.
 	doneHandle int64
-	// workersRunnable is used to notify all the backfilling workers to exit.
-	workersRunnable int32
 }
 
 // newContext gets a context. It is only used for adding column in reorganization state.
@@ -58,6 +58,18 @@ const defaultWaitReorgTimeout = 10 * time.Second
 // ReorgWaitTimeout is the timeout that wait ddl in write reorganization stage.
 var ReorgWaitTimeout = 1 * time.Second
 
+func (rc *reorgCtx) notifyReorgCancel() {
+	atomic.StoreInt32(&rc.notifyCancelReorgJob, 1)
+}
+
+func (rc *reorgCtx) cleanNotifyReorgCancel() {
+	atomic.StoreInt32(&rc.notifyCancelReorgJob, 0)
+}
+
+func (rc *reorgCtx) isReorgCanceled() bool {
+	return atomic.LoadInt32(&rc.notifyCancelReorgJob) == 1
+}
+
 func (rc *reorgCtx) setRowCountAndHandle(count, doneHandle int64) {
 	atomic.StoreInt64(&rc.rowCount, count)
 	atomic.StoreInt64(&rc.doneHandle, doneHandle)
@@ -69,18 +81,9 @@ func (rc *reorgCtx) getRowCountAndHandle() (int64, int64) {
 	return row, handle
 }
 
-func (rc *reorgCtx) setWorkersRunnable(runnable bool) {
-	if runnable {
-		atomic.StoreInt32(&rc.workersRunnable, 1)
-	} else {
-		atomic.StoreInt32(&rc.workersRunnable, 0)
-	}
-}
-
 func (rc *reorgCtx) clean() {
 	rc.setRowCountAndHandle(0, 0)
 	rc.doneCh = nil
-	rc.setWorkersRunnable(true)
 }
 
 func (d *ddl) runReorgJob(t *meta.Meta, job *model.Job, f func() error) error {
@@ -136,11 +139,9 @@ func (d *ddl) isReorgRunnable() error {
 		return errInvalidWorker.Gen("worker is closed")
 	}
 
-	select {
-	case <-d.reorgCtx.notifyCancelReorgJob:
+	if d.reorgCtx.isReorgCanceled() {
 		// Job is cancelled. So it can't be done.
 		return errCancelledDDLJob
-	default:
 	}
 
 	if !d.isOwner() {

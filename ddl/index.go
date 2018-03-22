@@ -17,7 +17,6 @@ import (
 	"context"
 	"math"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/juju/errors"
@@ -293,11 +292,11 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 				ver, err = d.convert2RollbackJob(t, job, tblInfo, indexInfo, err)
 			}
 			// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
-			cleanNotify(d.reorgCtx.notifyCancelReorgJob)
+			d.reorgCtx.cleanNotifyReorgCancel()
 			return ver, errors.Trace(err)
 		}
 		// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
-		cleanNotify(d.reorgCtx.notifyCancelReorgJob)
+		d.reorgCtx.cleanNotifyReorgCancel()
 
 		indexInfo.State = model.StatePublic
 		// Set column index flag.
@@ -687,15 +686,12 @@ func (w *worker) doBackfillIndexTaskInTxn(t table.Table, txn kv.Transaction, col
 }
 
 type addIndexWorker struct {
-	id       int
-	d        *ddl
-	batchCnt int
-	sessCtx  sessionctx.Context
-	taskCh   chan *reorgIndexTask
-	resultCh chan *addIndexResult
-	// runnable is a shared variable, used to notify workers to stop backfilling index,
-	// if the value is 0, worker should exit.
-	runnable    *int32
+	id          int
+	d           *ddl
+	batchCnt    int
+	sessCtx     sessionctx.Context
+	taskCh      chan *reorgIndexTask
+	resultCh    chan *addIndexResult
 	index       table.Index
 	table       table.Table
 	colFieldMap map[int64]*types.FieldType
@@ -718,7 +714,7 @@ type addIndexResult struct {
 	err        error
 }
 
-func newAddIndexWorker(sessCtx sessionctx.Context, d *ddl, id int, t table.Table, indexInfo *model.IndexInfo, colFieldMap map[int64]*types.FieldType, runnable *int32) *addIndexWorker {
+func newAddIndexWorker(sessCtx sessionctx.Context, d *ddl, id int, t table.Table, indexInfo *model.IndexInfo, colFieldMap map[int64]*types.FieldType) *addIndexWorker {
 	index := tables.NewIndexWithBuffer(t.Meta(), indexInfo)
 	return &addIndexWorker{
 		id:          id,
@@ -727,7 +723,6 @@ func newAddIndexWorker(sessCtx sessionctx.Context, d *ddl, id int, t table.Table
 		sessCtx:     sessCtx,
 		taskCh:      make(chan *reorgIndexTask, 1),
 		resultCh:    make(chan *addIndexResult, 1),
-		runnable:    runnable,
 		index:       index,
 		table:       t,
 		colFieldMap: colFieldMap,
@@ -735,10 +730,6 @@ func newAddIndexWorker(sessCtx sessionctx.Context, d *ddl, id int, t table.Table
 		defaultVals: make([]types.Datum, len(t.Cols())),
 		rowMap:      make(map[int64]types.Datum, len(colFieldMap)),
 	}
-}
-
-func (w *addIndexWorker) isRunnable() bool {
-	return atomic.LoadInt32(w.runnable) == 1
 }
 
 func (w *addIndexWorker) close() {
@@ -867,13 +858,9 @@ func (w *addIndexWorker) handleBackfillTask(task *reorgIndexTask) *addIndexResul
 		addedCount := 0
 		nextHandle, addedCount, scanCount, err := w.backfillIndexInTxn(handleRange)
 		if err == nil {
-			if !w.isRunnable() {
-				err = errReorgWorkerNotRunnable
-			} else {
-				// Because reorgIndexTask may run a long time,
-				// we should check whether this ddl job is still runnable.
-				err = w.d.isReorgRunnable()
-			}
+			// Because reorgIndexTask may run a long time,
+			// we should check whether this ddl job is still runnable.
+			err = w.d.isReorgRunnable()
 		}
 		if err != nil {
 			result.err = err
@@ -975,11 +962,6 @@ func (d *ddl) waitTaskResults(workers []*addIndexWorker, taskCnt int, totalAdded
 		result := <-worker.resultCh
 		if firstErr == nil && result.err != nil {
 			firstErr = result.err
-			log.Infof("[ddl-reorg] error occured, notify remaining workers to return.")
-
-			// Notify remaining workers exit immediately.
-			// If we don't do this, we will need to wait the long run workers exit.
-			d.reorgCtx.setWorkersRunnable(false)
 
 			// We should wait all working workers exits, any way.
 			continue
@@ -1084,10 +1066,9 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 	// TODO: make workerCnt can be modified by system variable.
 	workerCnt := defaultWorkers
 	workers := make([]*addIndexWorker, workerCnt)
-	d.reorgCtx.setWorkersRunnable(true)
 	for i := 0; i < workerCnt; i++ {
 		sessCtx := d.newContext()
-		workers[i] = newAddIndexWorker(sessCtx, d, i, t, indexInfo, colFieldMap, &d.reorgCtx.workersRunnable)
+		workers[i] = newAddIndexWorker(sessCtx, d, i, t, indexInfo, colFieldMap)
 		go workers[i].run()
 	}
 	defer closeAddIndexWorkers(workers)
