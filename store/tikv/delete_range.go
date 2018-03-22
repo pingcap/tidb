@@ -26,25 +26,25 @@ import (
 // performing DeleteRange, it keeps how many ranges it affects and
 // if the task was canceled or not.
 type DeleteRangeTask struct {
-	completedRegions  int
-	canceled bool
-	store    Storage
-	ctx      context.Context
-	bo       *Backoffer
-	startKey []byte
-	endKey   []byte
+	completedRegions int
+	canceled         bool
+	store            Storage
+	ctx              context.Context
+	bo               *Backoffer
+	startKey         []byte
+	endKey           []byte
 }
 
 // NewDeleteRangeTask creates a DeleteRangeTask. Deleting will not be performed right away.
 func NewDeleteRangeTask(ctx context.Context, store Storage, bo *Backoffer, startKey []byte, endKey []byte) *DeleteRangeTask {
 	return &DeleteRangeTask{
-		completedRegions:  0,
-		canceled: false,
-		store:    store,
-		ctx:      ctx,
-		bo:       bo,
-		startKey: startKey,
-		endKey:   endKey,
+		completedRegions: 0,
+		canceled:         false,
+		store:            store,
+		ctx:              ctx,
+		bo:               bo,
+		startKey:         startKey,
+		endKey:           endKey,
 	}
 }
 
