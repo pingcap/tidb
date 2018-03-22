@@ -447,7 +447,7 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 					return dual
 				}
 			}
-			fmt.Printf("buildSelection: filed type is %v\n", item.GetType())
+			fmt.Printf("buildSelection: schema length is %v\n", len(p.Schema().Columns))
 			expressions = append(expressions, item)
 		}
 	}
