@@ -426,7 +426,7 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 	selection := LogicalSelection{}.init(b.ctx)
 	fmt.Println("enter buildSelection")
 	fmt.Printf("buildSelection: %d condition in where\n", len(conditions))
-	fmt.Printf("buildSelection: schema length is %v and plan id is %d \n", len(p.Schema().Columns), p.ID())
+	fmt.Printf("buildSelection: schema in logical plan length is %v and plan id is %d \n", len(p.Schema().Columns), p.ID())
 	for _, cond := range conditions {
 		expr, np, err := b.rewrite(cond, p, AggMapper, false)
 		if err != nil {
@@ -458,7 +458,9 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 	}
 	selection.Conditions = expressions
 	selection.SetChildren(p)
-	fmt.Printf("buildSelection: schema length is %v and plan id is %d after rewrite \n", len(p.Schema().Columns), p.ID())
+	fmt.Printf("buildSelection: schema length in logical plan is %v and plan id is %d after rewrite \n", len(p.Schema().Columns), p.ID())
+
+	fmt.Printf("buildSelection: schema length in selection is %v and selection id is %d after rewrite \n", len(selection.Schema().Columns), selection.ID())
 	fmt.Println("leave buildSelection\n")
 	return selection
 }
