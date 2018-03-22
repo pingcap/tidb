@@ -422,7 +422,7 @@ func (e *CheckIndexExec) Open(ctx context.Context) error {
 }
 
 // Close implements the Executor Close interface.
-func (e *CheckIndexExec) Close(ctx context.Context) error {
+func (e *CheckIndexExec) Close() error {
 	return errors.Trace(e.src.Close())
 }
 
