@@ -127,6 +127,7 @@ func doOptimize(flag uint64, logic LogicalPlan) (PhysicalPlan, error) {
 	}
 	finalPlan := eliminatePhysicalProjection(physical)
 	explain := &Explain{}
+	explain.explainedPlans = map[int]bool{}
 	explain.prepareRootTaskInfo(finalPlan, "")
 	fmt.Printf("%v\n", explain.Rows)
 	return finalPlan, nil
