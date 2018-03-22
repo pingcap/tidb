@@ -14,7 +14,10 @@
 package plan
 
 import (
+	"bytes"
 	"fmt"
+	"runtime"
+	"strconv"
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
@@ -121,13 +124,23 @@ func (p *PhysicalIndexLookUpReader) ResolveIndices() {
 	p.indexPlan.ResolveIndices()
 }
 
+func getGID() uint64 {
+	b := make([]byte, 64)
+	b = b[:runtime.Stack(b, false)]
+	b = bytes.TrimPrefix(b, []byte("goroutine "))
+	b = b[:bytes.IndexByte(b, ' ')]
+	n, _ := strconv.ParseUint(string(b), 10, 64)
+	return n
+}
+
 // ResolveIndices implements Plan interface.
 func (p *PhysicalSelection) ResolveIndices() {
 	p.basePhysicalPlan.ResolveIndices()
 	for i, expr := range p.Conditions {
-		p.Conditions[i] = expr.Clone()
-		fmt.Printf("ResolveIndices in Selection: schema's length is %d\n", len(p.children[0].Schema().Columns))
-		p.Conditions[i].ResolveIndices(p.children[0].Schema())
+		// p.Conditions[i] = expr.Clone()
+		fmt.Printf("ResolveIndices in Selection in goroutine %d: schema's length is %d\n", getGID(), len(p.children[0].Schema().Columns))
+		// p.Conditions[i].ResolveIndices(p.children[0].Schema())
+		expr.ResolveIndices(p.children[0].Schema())
 	}
 }
 
