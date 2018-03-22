@@ -15,6 +15,7 @@ package mocktikv
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"time"
 
@@ -158,7 +159,9 @@ func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, 
 
 func (h *rpcHandler) buildDAG(ctx *dagContext, executors []*tipb.Executor) (executor, error) {
 	var src executor
+	fmt.Println("enter buildDAG")
 	for i := 0; i < len(executors); i++ {
+		fmt.Printf("exec is %v", executors[i])
 		curr, err := h.buildExec(ctx, executors[i])
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -166,6 +169,7 @@ func (h *rpcHandler) buildDAG(ctx *dagContext, executors []*tipb.Executor) (exec
 		curr.SetSrcExec(src)
 		src = curr
 	}
+	fmt.Println("leave buildDAG")
 	return src, nil
 }
 
