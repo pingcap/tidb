@@ -65,7 +65,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	handle := int64(100)
 	f := func() error {
 		d.reorgCtx.setRowCountAndHandle(rowCount, handle)
-		time.Sleep(20 * testLease)
+		time.Sleep(1*ReorgWaitTimeout + 100*time.Millisecond)
 		return nil
 	}
 	job := &model.Job{

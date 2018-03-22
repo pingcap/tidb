@@ -313,6 +313,11 @@ func (s *testDBSuite) TestCancelAddIndex(c *C) {
 	var checkErr error
 	hook := &ddl.TestDDLCallback{}
 	first := true
+	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
+	// let hook.OnJobUpdatedExported has chance to cancel the job.
+	// the hook.OnJobUpdatedExported is called when the job is updated, runReorgJob will wait ddl.ReorgWaitTimeout, then return the ddl.runDDLJob.
+	// After that ddl call d.hook.OnJobUpdated(job), so that we can canceled the job in this test case.
+	ddl.ReorgWaitTimeout = 50 * time.Millisecond
 	hook.OnJobUpdatedExported = func(job *model.Job) {
 		addIndexNotFirstReorg := job.Type == model.ActionAddIndex && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0
 		// If the action is adding index and the state is writing reorganization, it want to test the case of cancelling the job when backfilling indexes.
@@ -391,6 +396,7 @@ LOOP:
 	}
 
 	s.mustExec(c, "drop table t1")
+	ddl.ReorgWaitTimeout = oldReorgWaitTimeout
 }
 
 func (s *testDBSuite) TestAddAnonymousIndex(c *C) {
