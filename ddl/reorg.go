@@ -40,6 +40,8 @@ type reorgCtx struct {
 	notifyCancelReorgJob chan struct{}
 	// doneHandle is used to simulate the handle that has been processed.
 	doneHandle int64
+	// workersRunnable is used to notify all the backfilling workers to exit.
+	workersRunnable int32
 }
 
 // newContext gets a context. It is only used for adding column in reorganization state.
@@ -67,9 +69,18 @@ func (rc *reorgCtx) getRowCountAndHandle() (int64, int64) {
 	return row, handle
 }
 
+func (rc *reorgCtx) setWorkersRunnable(runnable bool) {
+	if runnable {
+		atomic.StoreInt32(&rc.workersRunnable, 1)
+	} else {
+		atomic.StoreInt32(&rc.workersRunnable, 0)
+	}
+}
+
 func (rc *reorgCtx) clean() {
 	rc.setRowCountAndHandle(0, 0)
 	rc.doneCh = nil
+	rc.setWorkersRunnable(true)
 }
 
 func (d *ddl) runReorgJob(t *meta.Meta, job *model.Job, f func() error) error {
