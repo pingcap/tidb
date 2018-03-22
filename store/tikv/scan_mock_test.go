@@ -26,11 +26,9 @@ type testScanMockSuite struct {
 var _ = Suite(&testScanMockSuite{})
 
 func (s *testScanMockSuite) TestScanMultipleRegions(c *C) {
-	kvStore, err := newTestTiKVStore()
-	c.Assert(err, IsNil)
-	defer kvStore.Close()
+	store := NewTestStore(c).(*tikvStore)
+	defer store.Close()
 
-	store := kvStore.(*tikvStore)
 	txn, err := store.Begin()
 	c.Assert(err, IsNil)
 	for ch := byte('a'); ch <= byte('z'); ch++ {
