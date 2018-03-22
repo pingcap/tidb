@@ -546,7 +546,30 @@ func (s *testStatisticsSuite) TestIntColumnRanges(c *C) {
 	ran[0].HighVal[0].SetInt64(1000)
 	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
 	c.Assert(err, IsNil)
-	c.Assert(int(count), Equals, 100)
+	c.Assert(int(count), Equals, 1)
+
+	ran = []*ranger.NewRange{{
+		LowVal:  []types.Datum{types.NewUintDatum(0)},
+		HighVal: []types.Datum{types.NewUintDatum(math.MaxUint64)},
+	}}
+	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
+	c.Assert(err, IsNil)
+	c.Assert(int(count), Equals, 100000)
+	ran[0].LowVal[0].SetUint64(1000)
+	ran[0].HighVal[0].SetUint64(2000)
+	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
+	c.Assert(err, IsNil)
+	c.Assert(int(count), Equals, 1000)
+	ran[0].LowVal[0].SetUint64(1001)
+	ran[0].HighVal[0].SetUint64(1999)
+	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
+	c.Assert(err, IsNil)
+	c.Assert(int(count), Equals, 998)
+	ran[0].LowVal[0].SetUint64(1000)
+	ran[0].HighVal[0].SetUint64(1000)
+	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
+	c.Assert(err, IsNil)
+	c.Assert(int(count), Equals, 1)
 
 	tbl.Columns[0] = col
 	ran[0].LowVal[0].SetInt64(math.MinInt64)

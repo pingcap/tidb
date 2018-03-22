@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikv
+package tikv_test
 
 import (
 	"fmt"
@@ -22,6 +22,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/session"
+	. "github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
@@ -31,15 +32,15 @@ import (
 var _ = Suite(new(testSQLSuite))
 
 type testSQLSuite struct {
-	oneByOneSuite
+	OneByOneSuite
 	store Storage
 	dom   *domain.Domain
 }
 
 func (s *testSQLSuite) SetUpSuite(c *C) {
-	s.oneByOneSuite.SetUpSuite(c)
+	s.OneByOneSuite.SetUpSuite(c)
 	var err error
-	s.store = newTestStore(c)
+	s.store = NewTestStore(c).(Storage)
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 }
@@ -47,7 +48,7 @@ func (s *testSQLSuite) SetUpSuite(c *C) {
 func (s *testSQLSuite) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
-	s.oneByOneSuite.TearDownSuite(c)
+	s.OneByOneSuite.TearDownSuite(c)
 }
 
 func (s *testSQLSuite) TestFailBusyServerCop(c *C) {

@@ -431,7 +431,7 @@ func getPseudoRowCountBySignedIntRanges(intRanges []*ranger.NewRange, tableRowCo
 			cnt = tableRowCount / pseudoLessRate
 		} else {
 			if low == high {
-				cnt = tableRowCount / pseudoEqualRate
+				cnt = 1 // When primary key is handle, the equal row count is at most one.
 			} else {
 				cnt = tableRowCount / pseudoBetweenRate
 			}
@@ -461,7 +461,7 @@ func getPseudoRowCountByUnsignedIntRanges(intRanges []*ranger.NewRange, tableRow
 			cnt = tableRowCount / pseudoLessRate
 		} else {
 			if low == high {
-				cnt = tableRowCount / pseudoEqualRate
+				cnt = 1 // When primary key is handle, the equal row count is at most one.
 			} else {
 				cnt = tableRowCount / pseudoBetweenRate
 			}

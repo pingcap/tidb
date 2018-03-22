@@ -32,18 +32,19 @@ import (
 // 1. tracker.SetLabel() / tracker.SetActionOnExceed() / tracker.AttachTo()
 // 2. tracker.Consume() / tracker.ReplaceChild() / tracker.BytesConsumed()
 //
-// NOTE:
-// 1. Only "BytesConsumed()" and "Consume()" are thread-safe.
-// 2. Adjustment of Tracker tree is not thread-safe.
+// NOTE: We only protect concurrent access to "bytesConsumed" and "children",
+// that is to say:
+// 1. Only "BytesConsumed()", "Consume()" and "AttachTo()" are thread-safe.
+// 2. Other operations of a Tracker tree is not thread-safe.
 type Tracker struct {
-	label          string      // Label of this "Tracker".
-	mutex          *sync.Mutex // For synchronization.
-	bytesConsumed  int64       // Consumed bytes.
-	bytesLimit     int64       // Negative value means no limit.
-	actionOnExceed ActionOnExceed
+	sync.Mutex // For synchronization.
 
-	parent   *Tracker   // The parent memory tracker.
-	children []*Tracker // The children memory trackers.
+	label          string // Label of this "Tracker".
+	bytesConsumed  int64  // Consumed bytes.
+	bytesLimit     int64  // Negative value means no limit.
+	actionOnExceed ActionOnExceed
+	parent         *Tracker   // The parent memory tracker.
+	children       []*Tracker // The children memory trackers.
 }
 
 // NewTracker creates a memory tracker.
@@ -52,8 +53,6 @@ type Tracker struct {
 func NewTracker(label string, bytesLimit int64) *Tracker {
 	return &Tracker{
 		label:          label,
-		mutex:          &sync.Mutex{},
-		bytesConsumed:  0,
 		bytesLimit:     bytesLimit,
 		actionOnExceed: &LogOnExceed{},
 		parent:         nil,
@@ -77,7 +76,10 @@ func (t *Tracker) AttachTo(parent *Tracker) {
 	if t.parent != nil {
 		t.parent.ReplaceChild(t, nil)
 	}
+	parent.Lock()
 	parent.children = append(parent.children, t)
+	parent.Unlock()
+
 	t.parent = parent
 	t.parent.Consume(t.BytesConsumed())
 }
@@ -86,23 +88,26 @@ func (t *Tracker) AttachTo(parent *Tracker) {
 // child specified in "newChild". old child's memory consumption will be
 // removed and new child's memory consumption will be added.
 func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
+	newConsumed := int64(0)
+	if newChild != nil {
+		newConsumed = newChild.BytesConsumed()
+		newChild.parent = t
+	}
+
+	t.Lock()
 	for i, child := range t.children {
 		if child != oldChild {
 			continue
 		}
 
-		newConsumed := int64(0)
-		if newChild != nil {
-			newConsumed = newChild.BytesConsumed()
-			newChild.parent = t
-		}
 		newConsumed -= oldChild.BytesConsumed()
-		t.Consume(newConsumed)
-
 		oldChild.parent = nil
 		t.children[i] = newChild
-		return
+		break
 	}
+	t.Unlock()
+
+	t.Consume(newConsumed)
 }
 
 // Consume is used to consume a memory usage. "bytes" can be a negative value,
@@ -110,12 +115,12 @@ func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
 func (t *Tracker) Consume(bytes int64) {
 	var rootExceed *Tracker
 	for tracker := t; tracker != nil; tracker = tracker.parent {
-		tracker.mutex.Lock()
+		tracker.Lock()
 		tracker.bytesConsumed += bytes
 		if tracker.bytesLimit > 0 && tracker.bytesConsumed >= tracker.bytesLimit {
 			rootExceed = tracker
 		}
-		tracker.mutex.Unlock()
+		tracker.Unlock()
 	}
 	if rootExceed != nil {
 		rootExceed.actionOnExceed.Action(rootExceed)
@@ -124,8 +129,8 @@ func (t *Tracker) Consume(bytes int64) {
 
 // BytesConsumed returns the consumed memory usage value in bytes.
 func (t *Tracker) BytesConsumed() int64 {
-	t.mutex.Lock()
-	defer t.mutex.Unlock()
+	t.Lock()
+	defer t.Unlock()
 	return t.bytesConsumed
 }
 
@@ -142,11 +147,14 @@ func (t *Tracker) toString(indent string, buffer *bytes.Buffer) {
 		fmt.Fprintf(buffer, "%s  \"quota\": %s\n", indent, t.bytesToString(t.bytesLimit))
 	}
 	fmt.Fprintf(buffer, "%s  \"consumed\": %s\n", indent, t.bytesToString(t.BytesConsumed()))
+
+	t.Lock()
 	for i := range t.children {
 		if t.children[i] != nil {
 			t.children[i].toString(indent+"  ", buffer)
 		}
 	}
+	t.Unlock()
 	buffer.WriteString(indent + "}\n")
 }
 
