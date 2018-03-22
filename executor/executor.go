@@ -421,6 +421,11 @@ func (e *CheckIndexExec) Open(ctx context.Context) error {
 	return nil
 }
 
+// Close implements the Executor Close interface.
+func (e *CheckIndexExec) Close(ctx context.Context) error {
+	return errors.Trace(e.src.Close())
+}
+
 // NextChunk implements the Executor NextChunk interface.
 func (e *CheckIndexExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	if e.done {
