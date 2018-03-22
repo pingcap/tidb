@@ -37,6 +37,11 @@ type testDDLSuite struct{}
 
 const testLease = 5 * time.Millisecond
 
+func (s *testDDLSuite) SetUpSuite(c *C) {
+	// set ReorgWaitTimeout to small value, make test to be faster.
+	ReorgWaitTimeout = 50 * time.Millisecond
+}
+
 func (s *testDDLSuite) TestCheckOwner(c *C) {
 	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_owner")
