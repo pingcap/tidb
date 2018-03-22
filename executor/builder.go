@@ -235,6 +235,7 @@ func (b *executorBuilder) buildCheckIndex(v *plan.CheckIndex) Executor {
 		if idx.Meta().Name.L == idxName {
 			e.index = idx
 			e.startKey = make([]types.Datum, len(e.index.Meta().Columns))
+			break
 		}
 	}
 	if e.index == nil {

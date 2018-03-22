@@ -32,7 +32,7 @@ type idxResult struct {
 	finished  bool
 }
 
-// CheckIndexExec output the index values which has handle between begin and end.
+// CheckIndexExec outputs the index values which has handle between begin and end.
 type CheckIndexExec struct {
 	baseExecutor
 
@@ -68,7 +68,7 @@ func (e *CheckIndexExec) getNextInRangeIndex() ([]types.Datum, error) {
 			var err error
 			e.partial, err = e.result.Next()
 			if err != nil {
-				return nil, nil
+				return nil, errors.Trace(err)
 			}
 			if e.partial == nil {
 				return nil, nil
@@ -109,7 +109,7 @@ func (e *CheckIndexExec) Open() error {
 	for i, v := range e.index.Meta().Columns {
 		fieldTypes[i] = &(e.table.Cols()[v.Offset].FieldType)
 	}
-	dagPB, err := e.buildDagPB()
+	dagPB, err := e.buildDAGPB()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -129,7 +129,7 @@ func (e *CheckIndexExec) Open() error {
 	return nil
 }
 
-func (e *CheckIndexExec) buildDagPB() (*tipb.DAGRequest, error) {
+func (e *CheckIndexExec) buildDAGPB() (*tipb.DAGRequest, error) {
 	dagReq := &tipb.DAGRequest{}
 	dagReq.StartTs = e.ctx.Txn().StartTS()
 	dagReq.TimeZoneOffset = timeZoneOffset(e.ctx)

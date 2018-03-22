@@ -410,8 +410,9 @@ func buildCheckIndexSchema(tn *ast.TableName, indexName string) *expression.Sche
 			DBName:   tn.Schema,
 			RetType:  types.NewFieldType(mysql.TypeLonglong),
 			Position: len(idxInfo.Columns),
-			ID:       -1,
+			ID:       model.ExtraHandleID,
 		})
+		break
 	}
 	return schema
 }
