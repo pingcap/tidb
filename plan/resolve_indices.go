@@ -136,7 +136,7 @@ func getGID() uint64 {
 // ResolveIndices implements Plan interface.
 func (p *PhysicalSelection) ResolveIndices() {
 	p.basePhysicalPlan.ResolveIndices()
-	for i, expr := range p.Conditions {
+	for _, expr := range p.Conditions {
 		// p.Conditions[i] = expr.Clone()
 		fmt.Printf("ResolveIndices in Selection in goroutine %d: schema's length is %d\n", getGID(), len(p.children[0].Schema().Columns))
 		// p.Conditions[i].ResolveIndices(p.children[0].Schema())
