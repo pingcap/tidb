@@ -395,11 +395,11 @@ func (it *copIterator) work(ctx context.Context, taskCh <-chan *copTask) {
 	span, ctx1 := opentracing.StartSpanFromContext(ctx, "copIterator.work")
 	defer span.Finish()
 
-	defer func() {
-		if r := recover(); r != nil {
-			fmt.Println("Recoved on work")
-		}
-	}()
+	// defer func() {
+	// 	if r := recover(); r != nil {
+	// 		fmt.Println("Recoved on work")
+	// 	}
+	// }()
 	defer it.wg.Done()
 	for task := range taskCh {
 		var ch chan copResponse
