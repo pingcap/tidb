@@ -447,7 +447,7 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 					return dual
 				}
 			}
-			fmt.Println("buildSelection: " + item.ExplainInfo())
+			fmt.Println("buildSelection: filed type is" + item.GetType())
 			expressions = append(expressions, item)
 		}
 	}
