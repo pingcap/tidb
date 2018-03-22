@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/juju/errors"
@@ -180,6 +181,7 @@ func (pc PbConverter) columnToPBExpr(column *Column) *tipb.Expr {
 	}
 
 	if pc.client.IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeBasic) {
+		fmt.Printf("column index is %d in columnToPBExpr.", column.Index)
 		return &tipb.Expr{
 			Tp:        tipb.ExprType_ColumnRef,
 			Val:       codec.EncodeInt(nil, int64(column.Index)),
