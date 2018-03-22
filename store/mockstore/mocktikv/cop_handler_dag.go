@@ -15,6 +15,7 @@ package mocktikv
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"time"
 
@@ -225,6 +226,7 @@ func (h *rpcHandler) buildSelection(ctx *dagContext, executor *tipb.Executor) (*
 	var err error
 	var relatedColOffsets []int
 	pbConds := executor.Selection.Conditions
+	fmt.Printf("coditions's length is %d\n", len(pbConds))
 	for _, cond := range pbConds {
 		relatedColOffsets, err = extractOffsetsInExpr(cond, ctx.evalCtx.columnInfos, relatedColOffsets)
 		if err != nil {
