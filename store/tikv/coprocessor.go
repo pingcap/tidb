@@ -395,6 +395,11 @@ func (it *copIterator) work(ctx context.Context, taskCh <-chan *copTask) {
 	span, ctx1 := opentracing.StartSpanFromContext(ctx, "copIterator.work")
 	defer span.Finish()
 
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Println("Recoved on work")
+		}
+	}()
 	defer it.wg.Done()
 	for task := range taskCh {
 		var ch chan copResponse
@@ -425,12 +430,14 @@ func (it *copIterator) run(ctx context.Context) {
 	it.wg.Add(it.concurrency)
 	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency; i++ {
-		copIteratorGP.Go(func() {
-			it.work(ctx, taskCh)
-		})
+		// copIteratorGP.Go(func() {
+		// 	it.work(ctx, taskCh)
+		// })
+		go it.work(ctx, taskCh)
 	}
 
-	copIteratorGP.Go(func() {
+	// copIteratorGP.Go(func() {
+	go func() {
 		// Send tasks to feed the worker goroutines.
 		for _, t := range it.tasks {
 			exit := it.sendToTaskCh(t, taskCh)
@@ -445,7 +452,8 @@ func (it *copIterator) run(ctx context.Context) {
 		if !it.req.KeepOrder {
 			close(it.respChan)
 		}
-	})
+	}()
+	// })
 }
 
 func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan copResponse) (resp copResponse, ok bool, exit bool) {
