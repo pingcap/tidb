@@ -189,6 +189,7 @@ func (c *anyValueFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 	argTp := args[0].GetType().EvalType()
 	bf := newBaseBuiltinFuncWithTp(ctx, args, argTp, argTp)
+	args[0].GetType().Flag |= bf.tp.Flag
 	*bf.tp = *args[0].GetType()
 	var sig builtinFunc
 	switch argTp {
