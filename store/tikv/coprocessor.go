@@ -453,7 +453,6 @@ func (it *copIterator) run(ctx context.Context) {
 			close(it.respChan)
 		}
 	}()
-	fmt.Println("finished\n\n")
 	// })
 }
 

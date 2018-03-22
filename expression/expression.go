@@ -199,8 +199,8 @@ type VarAssignment struct {
 
 // splitNormalFormItems split CNF(conjunctive normal form) like "a and b and c", or DNF(disjunctive normal form) like "a or b or c"
 func splitNormalFormItems(onExpr Expression, funcName string) []Expression {
-	fmt.Println("splitNormalFormItems: " + onExpr.String())
-	onExpr.String()
+	fmt.Println("splitNormalFormItems: " + onExpr.String() + "and funcName is " + funcName)
+	fmt.Printf("field type info is %v\n", onExpr.GetType())
 	switch v := onExpr.(type) {
 	case *ScalarFunction:
 		if v.FuncName.L == funcName {

@@ -424,7 +424,7 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 	conditions := splitWhere(where)
 	expressions := make([]expression.Expression, 0, len(conditions))
 	selection := LogicalSelection{}.init(b.ctx)
-	fmt.Printf("buildSelection: schema length is %v\n", len(p.Schema().Columns))
+	fmt.Printf("buildSelection: schema length is %v and plan id is %d \n", len(p.Schema().Columns), p.ID())
 	for _, cond := range conditions {
 		expr, np, err := b.rewrite(cond, p, AggMapper, false)
 		if err != nil {
