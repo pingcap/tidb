@@ -19,9 +19,9 @@ import (
 	gofail "github.com/coreos/gofail/runtime"
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/terror"
 	"golang.org/x/net/context"
-	"github.com/pingcap/tidb/kv"
 )
 
 // TestFailCommitPrimaryRpcErrors tests rpc errors are handled properly when
