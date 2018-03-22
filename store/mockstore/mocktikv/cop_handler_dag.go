@@ -15,7 +15,6 @@ package mocktikv
 
 import (
 	"bytes"
-	"fmt"
 	"io"
 	"time"
 
