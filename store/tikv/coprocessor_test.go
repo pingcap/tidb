@@ -22,7 +22,7 @@ import (
 )
 
 type testCoprocessorSuite struct {
-	oneByOneSuite
+	OneByOneSuite
 }
 
 var _ = Suite(&testCoprocessorSuite{})

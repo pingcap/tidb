@@ -31,7 +31,7 @@ import (
 var errStopped = errors.New("stopped")
 
 type testStoreSuite struct {
-	oneByOneSuite
+	OneByOneSuite
 	store *tikvStore
 }
 

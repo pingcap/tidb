@@ -616,22 +616,22 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnion(c *C) {
 		// Test simple union.
 		{
 			sql:  "select * from t union all select * from t",
-			best: "UnionAll{TableReader(Table(t))->Projection->TableReader(Table(t))->Projection}",
+			best: "UnionAll{TableReader(Table(t))->TableReader(Table(t))}",
 		},
 		// Test Order by + Union.
 		{
 			sql:  "select * from t union all (select * from t) order by a ",
-			best: "UnionAll{TableReader(Table(t))->Projection->TableReader(Table(t))->Projection}->Sort",
+			best: "UnionAll{TableReader(Table(t))->TableReader(Table(t))}->Sort",
 		},
 		// Test Limit + Union.
 		{
 			sql:  "select * from t union all (select * from t) limit 1",
-			best: "UnionAll{TableReader(Table(t)->Limit)->Projection->TableReader(Table(t)->Limit)->Projection}->Limit",
+			best: "UnionAll{TableReader(Table(t)->Limit)->TableReader(Table(t)->Limit)}->Limit",
 		},
 		// Test TopN + Union.
 		{
 			sql:  "select a from t union all (select c from t) order by a limit 1",
-			best: "UnionAll{TableReader(Table(t))->Projection->TableReader(Table(t))->Projection}->TopN([t.a],0,1)",
+			best: "UnionAll{TableReader(Table(t)->Limit)->IndexReader(Index(t.c_d_e)[[<nil>,+inf]]->Limit)}->TopN([t.a],0,1)",
 		},
 	}
 	for _, tt := range tests {
