@@ -928,6 +928,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 					return errors.Trace(err)
 				}
 			}
+		case ast.AlterTableComment:
+			err = d.TableComment(ctx, ident, spec)
 		default:
 			// Nothing to do now.
 		}
@@ -1430,6 +1432,31 @@ func (d *ddl) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 		Type:       model.ActionSetDefaultValue,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{col},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+func (d *ddl) TableComment(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	is := d.infoHandle.Get()
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenByArgs(ident.Schema)
+	}
+
+	tb, err := is.TableByName(ident.Schema, ident.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ident.Schema, ident.Name))
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tb.Meta().ID,
+		Type:       model.ActionSetTableComment,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{schema.ID, spec.Name, spec.Comment},
 	}
 
 	err = d.doDDLJob(ctx, job)

@@ -713,6 +713,7 @@ const (
 	AlterTableRenameTable
 	AlterTableAlterColumn
 	AlterTableLock
+	AlterTableComment
 
 // TODO: Add more actions
 )
@@ -742,6 +743,7 @@ type AlterTableSpec struct {
 	OldColumnName *ColumnName
 	Position      *ColumnPosition
 	LockType      LockType
+	Comment       string
 }
 
 // Accept implements Node Accept interface.

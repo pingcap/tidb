@@ -2157,6 +2157,19 @@ func (s *testContextOptionSuite) TestAddIndexPriority(c *C) {
 	store.Close()
 }
 
+func (s *testContextOptionSuite) TestAlterTableComment(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c1 int, c2 int, c3 int default 1, index (c1)) comment = 'test table';")
+	tk.MustExec("alter table `t` comment 'this is table comment';")
+	result := tk.MustQuery("select table_comment from information_schema.tables where table_comment = 't';")
+	result.Check(testkit.Rows("this is table comment"))
+	tk.MustExec("alter table `t` comment 'table t comment';")
+	result = tk.MustQuery("select table_comment from information_schema.tables where table_comment = 't';")
+	result.Check(testkit.Rows("table t comment"))
+}
+
 func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

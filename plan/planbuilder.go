@@ -82,6 +82,7 @@ type visitInfo struct {
 	db        string
 	table     string
 	column    string
+	Comment   string
 }
 
 type tableHintInfo struct {
@@ -1187,7 +1188,6 @@ func (b *planBuilder) buildDDL(node ast.DDLNode) Plan {
 			table:     v.NewTable.Name.L,
 		})
 	}
-
 	p := &DDL{Statement: node}
 	return p
 }

@@ -329,6 +329,8 @@ func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) (ver int64, err error) {
 		ver, err = d.onSetDefaultValue(t, job)
 	case model.ActionShardRowID:
 		ver, err = d.onShardRowID(t, job)
+	case model.ActionSetTableComment:
+		ver, err = d.onSetTableComment(t, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled
