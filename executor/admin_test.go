@@ -212,3 +212,187 @@ func (s *testSuite) TestAdminRecoverIndex1(c *C) {
 	tk.MustExec("admin check index admin_test c2")
 	tk.MustExec("admin check index admin_test `primary`")
 }
+
+func (s *testSuite) TestAdminCleanupIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists admin_test")
+	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, primary key (c1), unique key(c2), key (c3))")
+	tk.MustExec("insert admin_test (c1, c2) values (1, 2), (3, 4), (-5, NULL)")
+	tk.MustExec("insert admin_test (c1, c3) values (7, 100), (9, 100), (11, NULL)")
+
+	// pk is handle, no need to cleanup
+	_, err := tk.Exec("admin cleanup index admin_test `primary`")
+	c.Assert(err, NotNil)
+	r := tk.MustQuery("admin cleanup index admin_test c2")
+	r.Check(testkit.Rows("0"))
+	r = tk.MustQuery("admin cleanup index admin_test c3")
+	r.Check(testkit.Rows("0"))
+
+	// Make some dangling index.
+	s.ctx = mock.NewContext()
+	s.ctx.Store = s.store
+	is := s.domain.InfoSchema()
+	dbName := model.NewCIStr("test")
+	tblName := model.NewCIStr("admin_test")
+	tbl, err := is.TableByName(dbName, tblName)
+	c.Assert(err, IsNil)
+
+	tblInfo := tbl.Meta()
+	idxInfo2 := findIndexByName("c2", tblInfo.Indices)
+	indexOpr2 := tables.NewIndexWithBuffer(tblInfo, idxInfo2)
+	idxInfo3 := findIndexByName("c3", tblInfo.Indices)
+	indexOpr3 := tables.NewIndexWithBuffer(tblInfo, idxInfo3)
+
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	_, err = indexOpr2.Create(s.ctx, txn, types.MakeDatums(1), -100)
+	c.Assert(err, IsNil)
+	_, err = indexOpr2.Create(s.ctx, txn, types.MakeDatums(6), 100)
+	c.Assert(err, IsNil)
+	_, err = indexOpr2.Create(s.ctx, txn, types.MakeDatums(nil), 101)
+	c.Assert(err, IsNil)
+	_, err = indexOpr3.Create(s.ctx, txn, types.MakeDatums(6), 200)
+	c.Assert(err, IsNil)
+	_, err = indexOpr3.Create(s.ctx, txn, types.MakeDatums(6), -200)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+
+	_, err = tk.Exec("admin check table admin_test")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("admin check index admin_test c2")
+	c.Assert(err, NotNil)
+	r = tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(c2)")
+	r.Check(testkit.Rows("9"))
+	r = tk.MustQuery("admin cleanup index admin_test c2")
+	r.Check(testkit.Rows("3"))
+	r = tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(c2)")
+	r.Check(testkit.Rows("6"))
+	tk.MustExec("admin check index admin_test c2")
+
+	_, err = tk.Exec("admin check table admin_test")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("admin check index admin_test c3")
+	c.Assert(err, NotNil)
+	r = tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(c3)")
+	r.Check(testkit.Rows("8"))
+	r = tk.MustQuery("admin cleanup index admin_test c3")
+	r.Check(testkit.Rows("2"))
+	r = tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(c3)")
+	r.Check(testkit.Rows("6"))
+	tk.MustExec("admin check index admin_test c3")
+
+	tk.MustExec("admin check table admin_test")
+}
+
+func (s *testSuite) TestAdminCleanupIndexPKNotHandle(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists admin_test")
+	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int, primary key (c1, c2))")
+	tk.MustExec("insert admin_test (c1, c2) values (1, 2), (3, 4), (-5, 5)")
+
+	r := tk.MustQuery("admin cleanup index admin_test `primary`")
+	r.Check(testkit.Rows("0"))
+
+	// Make some dangling index.
+	s.ctx = mock.NewContext()
+	s.ctx.Store = s.store
+	is := s.domain.InfoSchema()
+	dbName := model.NewCIStr("test")
+	tblName := model.NewCIStr("admin_test")
+	tbl, err := is.TableByName(dbName, tblName)
+	c.Assert(err, IsNil)
+
+	tblInfo := tbl.Meta()
+	idxInfo := findIndexByName("primary", tblInfo.Indices)
+	indexOpr := tables.NewIndexWithBuffer(tblInfo, idxInfo)
+
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(7, 10), -100)
+	c.Assert(err, IsNil)
+	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(4, 6), 100)
+	c.Assert(err, IsNil)
+	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(-7, 4), 101)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+
+	_, err = tk.Exec("admin check table admin_test")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("admin check index admin_test `primary`")
+	c.Assert(err, NotNil)
+	r = tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(`primary`)")
+	r.Check(testkit.Rows("6"))
+	r = tk.MustQuery("admin cleanup index admin_test `primary`")
+	r.Check(testkit.Rows("3"))
+	r = tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(`primary`)")
+	r.Check(testkit.Rows("3"))
+	tk.MustExec("admin check index admin_test `primary`")
+	tk.MustExec("admin check table admin_test")
+}
+
+func (s *testSuite) TestAdminCleanupIndexMore(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists admin_test")
+	tk.MustExec("create table admin_test (c1 int, c2 int, unique key (c1, c2), key (c2))")
+	tk.MustExec("insert admin_test values (1, 2), (3, 4), (5, 6)")
+
+	tk.MustExec("admin cleanup index admin_test c1")
+	tk.MustExec("admin cleanup index admin_test c2")
+
+	// Make some dangling index.
+	s.ctx = mock.NewContext()
+	s.ctx.Store = s.store
+	is := s.domain.InfoSchema()
+	dbName := model.NewCIStr("test")
+	tblName := model.NewCIStr("admin_test")
+	tbl, err := is.TableByName(dbName, tblName)
+	c.Assert(err, IsNil)
+
+	tblInfo := tbl.Meta()
+	idxInfo1 := findIndexByName("c1", tblInfo.Indices)
+	indexOpr1 := tables.NewIndexWithBuffer(tblInfo, idxInfo1)
+	idxInfo2 := findIndexByName("c2", tblInfo.Indices)
+	indexOpr2 := tables.NewIndexWithBuffer(tblInfo, idxInfo2)
+
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	for i := 0; i < 2000; i++ {
+		c1 := int64(2*i + 7)
+		c2 := int64(2*i + 8)
+		_, err = indexOpr1.Create(s.ctx, txn, types.MakeDatums(c1, c2), c1)
+		c.Assert(err, IsNil)
+		_, err = indexOpr2.Create(s.ctx, txn, types.MakeDatums(c2), c1)
+		c.Assert(err, IsNil)
+	}
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+
+	_, err = tk.Exec("admin check table admin_test")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("admin check index admin_test c1")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("admin check index admin_test c2")
+	c.Assert(err, NotNil)
+	r := tk.MustQuery("SELECT COUNT(*) FROM admin_test")
+	r.Check(testkit.Rows("3"))
+	r = tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(c1)")
+	r.Check(testkit.Rows("2003"))
+	r = tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(c2)")
+	r.Check(testkit.Rows("2003"))
+	r = tk.MustQuery("admin cleanup index admin_test c1")
+	r.Check(testkit.Rows("2000"))
+	r = tk.MustQuery("admin cleanup index admin_test c2")
+	r.Check(testkit.Rows("2000"))
+	r = tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(c1)")
+	r.Check(testkit.Rows("3"))
+	r = tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(c2)")
+	r.Check(testkit.Rows("3"))
+	tk.MustExec("admin check index admin_test c1")
+	tk.MustExec("admin check index admin_test c2")
+	tk.MustExec("admin check table admin_test")
+}
