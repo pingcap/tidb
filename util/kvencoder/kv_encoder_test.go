@@ -25,9 +25,9 @@ import (
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/structure"
 	"github.com/pingcap/tidb/tablecodec"
@@ -48,8 +48,8 @@ func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	tidb.SetSchemaLease(0)
-	dom, err := tidb.BootstrapSession(store)
+	session.SetSchemaLease(0)
+	dom, err := session.BootstrapSession(store)
 	return store, dom, errors.Trace(err)
 }
 

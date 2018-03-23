@@ -11,33 +11,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mockstore
+package mocktikv
 
 import (
-	"flag"
 	"fmt"
 
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/kvproto/pkg/coprocessor"
+	tipb "github.com/pingcap/tipb/go-tipb"
 )
 
-// NewTestTiKVStorage creates a Storage for test.
-func NewTestTiKVStorage(withTiKV bool, pdAddrs string) (tikv.Storage, error) {
-	if !flag.Parsed() {
-		flag.Parse()
+func (h *rpcHandler) handleCopChecksumRequest(req *coprocessor.Request) *coprocessor.Response {
+	resp := &tipb.ChecksumResponse{
+		Checksum:   1,
+		TotalKvs:   1,
+		TotalBytes: 1,
 	}
-
-	if withTiKV {
-		var d tikv.Driver
-		store, err := d.Open(fmt.Sprintf("tikv://%s", pdAddrs))
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		return store.(tikv.Storage), nil
-	}
-	store, err := NewMockTikvStore()
+	data, err := resp.Marshal()
 	if err != nil {
-		return nil, errors.Trace(err)
+		panic(fmt.Sprintf("marshal checksum response error: %v", err))
 	}
-	return store.(tikv.Storage), nil
+	return &coprocessor.Response{Data: data}
 }

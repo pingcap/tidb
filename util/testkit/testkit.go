@@ -20,9 +20,9 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/testutil"
 	"golang.org/x/net/context"
 )
@@ -31,7 +31,7 @@ import (
 type TestKit struct {
 	c     *check.C
 	store kv.Storage
-	Se    tidb.Session
+	Se    session.Session
 }
 
 // Result is the result returned by MustQuery.
@@ -119,7 +119,7 @@ var connectionID uint64
 func (tk *TestKit) Exec(sql string, args ...interface{}) (ast.RecordSet, error) {
 	var err error
 	if tk.Se == nil {
-		tk.Se, err = tidb.CreateSession4Test(tk.store)
+		tk.Se, err = session.CreateSession4Test(tk.store)
 		tk.c.Assert(err, check.IsNil)
 		id := atomic.AddUint64(&connectionID, 1)
 		tk.Se.SetConnectionID(id)
@@ -176,7 +176,7 @@ func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 // ResultSetToResult converts ast.RecordSet to testkit.Result.
 // It is used to check results of execute statement in binary mode.
 func (tk *TestKit) ResultSetToResult(rs ast.RecordSet, comment check.CommentInterface) *Result {
-	rows, err := tidb.GetRows4Test(context.Background(), tk.Se, rs)
+	rows, err := session.GetRows4Test(context.Background(), tk.Se, rs)
 	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
 	err = rs.Close()
 	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)

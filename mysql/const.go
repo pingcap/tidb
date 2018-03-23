@@ -227,6 +227,8 @@ const (
 
 	MaxIntWidth             = 20
 	MaxRealWidth            = 23
+	MaxFloatingTypeScale    = 30
+	MaxFloatingTypeWidth    = 255
 	MaxDecimalScale         = 30
 	MaxDecimalWidth         = 65
 	MaxDateWidth            = 10 // YYYY-MM-DD.
@@ -242,12 +244,6 @@ const (
 const (
 	MaxFieldCharLength    = 255
 	MaxFieldVarCharLength = 65535
-)
-
-// MySQL precision.
-const (
-	PrecisionForDouble = 53
-	PrecisionForFloat  = 24
 )
 
 // MaxTypeSetMembers is the number of set members.
