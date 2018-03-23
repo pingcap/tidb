@@ -229,7 +229,7 @@ func (b *executorBuilder) buildCheckIndex(v *plan.CheckIndex) Executor {
 	readerExec.isCheckOp = true
 
 	e := &CheckIndexExec{
-		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), readerExec),
 		dbName:       v.DBName,
 		tableName:    readerExec.table.Meta().Name.L,
 		idxName:      v.IdxName,
