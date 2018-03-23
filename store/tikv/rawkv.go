@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"time"
+	"bytes"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -23,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"golang.org/x/net/context"
-	"bytes"
 )
 
 var (
@@ -197,7 +197,9 @@ func (c *RawKVClient) Scan(startKey []byte, limit int) (keys [][]byte, values []
 // DeleteRange deletes all key-value pairs in a range from TiKV
 func (c *RawKVClient) DeleteRange(startKey []byte, endKey []byte) error {
 	start := time.Now()
-	defer func() { metrics.TiKVRawkvCmdHistogram.WithLabelValues("delete_range").Observe(time.Since(start).Seconds()) }()
+	defer func() {
+		metrics.TiKVRawkvCmdHistogram.WithLabelValues("delete_range").Observe(time.Since(start).Seconds())
+	}()
 
 	// Process each affected region respectively
 	for !bytes.Equal(startKey, endKey) {
@@ -258,16 +260,16 @@ func (c *RawKVClient) sendDeleteRangeReq(startKey []byte, endKey []byte) (*tikvr
 			return nil, nil, errors.Trace(err)
 		}
 
-		actualEndKey :=  endKey
+		actualEndKey := endKey
 		if len(loc.EndKey) > 0 && bytes.Compare(loc.EndKey, endKey) < 0 {
 			actualEndKey = loc.EndKey
 		}
 
 		req := &tikvrpc.Request{
-			Type:tikvrpc.CmdRawDeleteRange,
-			RawDeleteRange:&kvrpcpb.RawDeleteRangeRequest{
+			Type: tikvrpc.CmdRawDeleteRange,
+			RawDeleteRange: &kvrpcpb.RawDeleteRangeRequest{
 				StartKey: startKey,
-				EndKey: actualEndKey,
+				EndKey:   actualEndKey,
 			},
 		}
 
