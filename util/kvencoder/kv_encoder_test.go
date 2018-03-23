@@ -596,3 +596,28 @@ func (s *testKvEncoderSuite) TestEncodeMetaAutoID(c *C) {
 	c.Assert(bytes.Compare(kvPair.Key, expectKey), Equals, 0)
 	c.Assert(bytes.Compare(kvPair.Val, expectVal), Equals, 0)
 }
+
+func (s *testKvEncoderSuite) TestGetSetSystemVariable(c *C) {
+	encoder, err := New("test", nil)
+	c.Assert(err, IsNil)
+	defer encoder.Close()
+
+	err = encoder.SetSystemVariable("sql_mode", "")
+	c.Assert(err, IsNil)
+
+	val, ok := encoder.GetSystemVariable("sql_mode")
+	c.Assert(ok, IsTrue)
+	c.Assert(val, Equals, "")
+
+	sqlMode := "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION"
+	err = encoder.SetSystemVariable("sql_mode", sqlMode)
+	c.Assert(err, IsNil)
+
+	val, ok = encoder.GetSystemVariable("sql_mode")
+	c.Assert(ok, IsTrue)
+	c.Assert(val, Equals, sqlMode)
+
+	val, ok = encoder.GetSystemVariable("SQL_MODE")
+	c.Assert(ok, IsTrue)
+	c.Assert(val, Equals, sqlMode)
+}
