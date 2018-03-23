@@ -727,6 +727,12 @@ func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types
 			"select,insert,update,references", // PRIVILEGES
 			columnDesc.Comment,                // COLUMN_COMMENT
 		)
+		// In mysql, 'character_set_name' and 'collation_name' are setted to null when column type is non-varchar or non-blob in information_schema.
+		if col.Tp != mysql.TypeVarchar && col.Tp != mysql.TypeBlob {
+			record[13].SetNull()
+			record[14].SetNull()
+		}
+
 		rows = append(rows, record)
 	}
 	return rows

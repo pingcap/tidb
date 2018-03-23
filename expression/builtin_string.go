@@ -167,7 +167,7 @@ func reverseRunes(origin []rune) []rune {
 func SetBinFlagOrBinStr(argTp *types.FieldType, resTp *types.FieldType) {
 	if types.IsBinaryStr(argTp) {
 		types.SetBinChsClnFlag(resTp)
-	} else if mysql.HasBinaryFlag(argTp.Flag) {
+	} else if mysql.HasBinaryFlag(argTp.Flag) || !types.IsNonBinaryStr(argTp) {
 		resTp.Flag |= mysql.BinaryFlag
 	}
 }

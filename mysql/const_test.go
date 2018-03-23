@@ -18,10 +18,10 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/testkit"
@@ -59,10 +59,10 @@ func (s *testMySQLConstSuite) SetUpSuite(c *C) {
 		)
 		c.Assert(err, IsNil)
 		s.store = store
-		tidb.SetSchemaLease(0)
-		tidb.SetStatsLease(0)
+		session.SetSchemaLease(0)
+		session.SetStatsLease(0)
 	}
-	_, err := tidb.BootstrapSession(s.store)
+	_, err := session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 }
 
@@ -161,19 +161,19 @@ func (s *testMySQLConstSuite) TestNoUnsignedSubtractionMode(c *C) {
 	r := tk.MustQuery("SELECT CAST(0 as UNSIGNED) - 1;")
 	r.Check(testkit.Rows("-1"))
 	rs, _ := tk.Exec("SELECT CAST(18446744073709551615 as UNSIGNED) - 1;")
-	_, err := tidb.GetRows4Test(ctx, tk.Se, rs)
+	_, err := session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(err, NotNil)
 	c.Assert(rs.Close(), IsNil)
 	rs, _ = tk.Exec("SELECT 1 - CAST(18446744073709551615 as UNSIGNED);")
-	_, err = tidb.GetRows4Test(ctx, tk.Se, rs)
+	_, err = session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(err, NotNil)
 	c.Assert(rs.Close(), IsNil)
 	rs, _ = tk.Exec("SELECT CAST(-1 as UNSIGNED) - 1")
-	_, err = tidb.GetRows4Test(ctx, tk.Se, rs)
+	_, err = session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(err, NotNil)
 	c.Assert(rs.Close(), IsNil)
 	rs, _ = tk.Exec("SELECT CAST(9223372036854775808 as UNSIGNED) - 1")
-	_, err = tidb.GetRows4Test(ctx, tk.Se, rs)
+	_, err = session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(err, NotNil)
 	c.Assert(rs.Close(), IsNil)
 }

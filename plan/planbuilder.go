@@ -170,6 +170,10 @@ type planBuilder struct {
 	// rewriterCounter counts how many rewriter is being used.
 	rewriterPool    []*expressionRewriter
 	rewriterCounter int
+
+	// inStraightJoin represents whether the current "SELECT" statement has
+	// "STRAIGHT_JOIN" option.
+	inStraightJoin bool
 }
 
 func (b *planBuilder) build(node ast.Node) Plan {
@@ -490,6 +494,10 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 	case ast.AdminCleanupIndex:
 		p := &CleanupIndex{Table: as.Tables[0], IndexName: as.Index}
 		p.SetSchema(buildCleanupIndexFields())
+		ret = p
+	case ast.AdminChecksumTable:
+		p := &ChecksumTable{Tables: as.Tables}
+		p.SetSchema(buildChecksumTableSchema())
 		ret = p
 	case ast.AdminShowDDL:
 		p := &ShowDDL{}
@@ -1376,9 +1384,9 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 		names = []string{"Db_name", "Table_name", "Update_time", "Modify_count", "Row_count"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDatetime, mysql.TypeLonglong, mysql.TypeLonglong}
 	case ast.ShowStatsHistograms:
-		names = []string{"Db_name", "Table_name", "Column_name", "Is_index", "Update_time", "Distinct_count", "Null_count"}
+		names = []string{"Db_name", "Table_name", "Column_name", "Is_index", "Update_time", "Distinct_count", "Null_count", "Avg_col_size"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeTiny, mysql.TypeDatetime,
-			mysql.TypeLonglong, mysql.TypeLonglong}
+			mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeDouble}
 	case ast.ShowStatsBuckets:
 		names = []string{"Db_name", "Table_name", "Column_name", "Is_index", "Bucket_id", "Count",
 			"Repeats", "Lower_Bound", "Upper_Bound"}
@@ -1408,5 +1416,15 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 		col.RetType = fieldType
 		schema.Append(col)
 	}
+	return schema
+}
+
+func buildChecksumTableSchema() *expression.Schema {
+	schema := expression.NewSchema(make([]*expression.Column, 0, 5)...)
+	schema.Append(buildColumn("", "Db_name", mysql.TypeVarchar, 128))
+	schema.Append(buildColumn("", "Table_name", mysql.TypeVarchar, 128))
+	schema.Append(buildColumn("", "Checksum_crc64_xor", mysql.TypeLonglong, 22))
+	schema.Append(buildColumn("", "Total_kvs", mysql.TypeLonglong, 22))
+	schema.Append(buildColumn("", "Total_bytes", mysql.TypeLonglong, 22))
 	return schema
 }

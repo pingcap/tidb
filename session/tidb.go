@@ -15,7 +15,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tidb
+package session
 
 import (
 	"net/url"
@@ -252,7 +252,7 @@ func RegisterStore(name string, driver kv.Driver) error {
 // NewStore creates a kv Storage with path.
 //
 // The path must be a URL format 'engine://path?params' like the one for
-// tidb.Open() but with the dbname cut off.
+// session.Open() but with the dbname cut off.
 // Examples:
 //    goleveldb://relative/path
 //    boltdb:///absolute/path
