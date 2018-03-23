@@ -20,7 +20,6 @@ import (
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/terror"
@@ -42,7 +42,7 @@ type testStateChangeSuite struct {
 	lease time.Duration
 	store kv.Storage
 	dom   *domain.Domain
-	se    tidb.Session
+	se    session.Session
 	p     *parser.Parser
 }
 
@@ -51,10 +51,10 @@ func (s *testStateChangeSuite) SetUpSuite(c *C) {
 	var err error
 	s.store, err = mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
-	tidb.SetSchemaLease(s.lease)
-	s.dom, err = tidb.BootstrapSession(s.store)
+	session.SetSchemaLease(s.lease)
+	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
-	s.se, err = tidb.CreateSession4Test(s.store)
+	s.se, err = session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 	_, err = s.se.Execute(context.Background(), "create database test_db_state")
 	c.Assert(err, IsNil)
@@ -186,7 +186,7 @@ func (s *testStateChangeSuite) test(c *C, tableName, alterTableSQL string, testI
 }
 
 type stateCase struct {
-	session     tidb.Session
+	session     session.Session
 	rawStmt     ast.StmtNode
 	stmt        ast.Statement
 	expectedErr error
@@ -213,7 +213,7 @@ func (t *testExecInfo) createSessions(store kv.Storage, useDB string) error {
 	var err error
 	for i, info := range t.sqlInfos {
 		for j, c := range info.cases {
-			c.session, err = tidb.CreateSession4Test(store)
+			c.session, err = session.CreateSession4Test(store)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -331,7 +331,7 @@ func (s *testStateChangeSuite) runTestInSchemaState(c *C, state model.SchemaStat
 	prevState := model.StateNone
 	var checkErr error
 	times := 0
-	se, err := tidb.CreateSession(s.store)
+	se, err := session.CreateSession(s.store)
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)

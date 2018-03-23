@@ -15,12 +15,12 @@ package executor_test
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege/privileges"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/auth"
@@ -137,7 +137,7 @@ func (s *testSuite) TestUser(c *C) {
 	alterUserSQL = `ALTER USER USER() IDENTIFIED BY '1';`
 	_, err = tk.Exec(alterUserSQL)
 	c.Check(err, NotNil)
-	tk.Se, err = tidb.CreateSession4Test(s.store)
+	tk.Se, err = session.CreateSession4Test(s.store)
 	c.Check(err, IsNil)
 	ctx := tk.Se.(sessionctx.Context)
 	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "test1", Hostname: "localhost"}
@@ -198,7 +198,7 @@ func (s *testSuite) TestSetPwd(c *C) {
 	// Session user is empty.
 	_, err := tk.Exec(setPwdSQL)
 	c.Check(err, NotNil)
-	tk.Se, err = tidb.CreateSession4Test(s.store)
+	tk.Se, err = session.CreateSession4Test(s.store)
 	c.Check(err, IsNil)
 	ctx := tk.Se.(sessionctx.Context)
 	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "testpwd1", Hostname: "localhost"}
@@ -232,7 +232,7 @@ func (s *testSuite) TestFlushPrivileges(c *C) {
 	tk.MustExec(`UPDATE mysql.User SET Select_priv='Y' WHERE User="testflush" and Host="localhost"`)
 
 	// Create a new session.
-	se, err := tidb.CreateSession4Test(s.store)
+	se, err := session.CreateSession4Test(s.store)
 	c.Check(err, IsNil)
 	defer se.Close()
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "testflush", Hostname: "localhost"}, nil, nil), IsTrue)

@@ -513,28 +513,6 @@ func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
 	return errors.Trace(e.outerExec.Open(ctx))
 }
 
-func (e *NestedLoopApplyExec) fetchOuterRow(ctx context.Context) (Row, bool, error) {
-	for {
-		outerRow, err := e.outerExec.Next(ctx)
-		if err != nil {
-			return nil, false, errors.Trace(err)
-		}
-		if outerRow == nil {
-			return nil, false, nil
-		}
-
-		matched, err := expression.EvalBool(e.ctx, e.outerFilter, outerRow)
-		if err != nil {
-			return nil, false, errors.Trace(err)
-		}
-		if matched {
-			return outerRow, true, nil
-		} else if e.outer {
-			return outerRow, false, nil
-		}
-	}
-}
-
 func (e *NestedLoopApplyExec) fetchSelectedOuterRow(ctx context.Context, chk *chunk.Chunk) (*chunk.Row, error) {
 	outerIter := chunk.NewIterator4Chunk(e.outerChunk)
 	for {
@@ -566,33 +544,6 @@ func (e *NestedLoopApplyExec) fetchSelectedOuterRow(ctx context.Context, chk *ch
 	}
 }
 
-// prepare reads all data from the inner table and stores them in a slice.
-func (e *NestedLoopApplyExec) prepare(ctx context.Context) error {
-	err := e.innerExec.Open(context.TODO())
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer terror.Call(e.innerExec.Close)
-	e.innerRows = e.innerRows[:0]
-	for {
-		row, err := e.innerExec.Next(ctx)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if row == nil {
-			return nil
-		}
-
-		matched, err := expression.EvalBool(e.ctx, e.innerFilter, row)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if matched {
-			e.innerRows = append(e.innerRows, row)
-		}
-	}
-}
-
 // fetchAllInners reads all data from the inner table and stores them in a List.
 func (e *NestedLoopApplyExec) fetchAllInners(ctx context.Context) error {
 	err := e.innerExec.Open(ctx)
@@ -620,50 +571,6 @@ func (e *NestedLoopApplyExec) fetchAllInners(ctx context.Context) error {
 				e.innerList.AppendRow(row)
 			}
 		}
-	}
-}
-
-func (e *NestedLoopApplyExec) doJoin(outerRow Row, match bool) ([]Row, error) {
-	e.resultRows = e.resultRows[0:0]
-	var err error
-	if !match && e.outer {
-		e.resultRows, err = e.resultGenerator.emit(outerRow, nil, e.resultRows)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		return e.resultRows, nil
-	}
-	e.resultRows, err = e.resultGenerator.emit(outerRow, e.innerRows, e.resultRows)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return e.resultRows, nil
-}
-
-// Next implements the Executor interface.
-func (e *NestedLoopApplyExec) Next(ctx context.Context) (Row, error) {
-	for {
-		if e.cursor < len(e.resultRows) {
-			row := e.resultRows[e.cursor]
-			e.cursor++
-			return row, nil
-		}
-		outerRow, match, err := e.fetchOuterRow(ctx)
-		if outerRow == nil || err != nil {
-			return nil, errors.Trace(err)
-		}
-		for _, col := range e.outerSchema {
-			*col.Data = outerRow[col.Index]
-		}
-		err = e.prepare(ctx)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		e.resultRows, err = e.doJoin(outerRow, match)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		e.cursor = 0
 	}
 }
 
