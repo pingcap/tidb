@@ -1188,6 +1188,7 @@ func (b *planBuilder) buildDDL(node ast.DDLNode) Plan {
 			table:     v.NewTable.Name.L,
 		})
 	}
+
 	p := &DDL{Statement: node}
 	return p
 }
