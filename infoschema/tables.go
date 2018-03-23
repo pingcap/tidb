@@ -636,13 +636,12 @@ func dataForSchemata(schemas []*model.DBInfo) [][]types.Datum {
 	return rows
 }
 
-func getRowCountAllTable(ctx sessionctx.Context) (map[int64]uint64, error) {
-	sql := fmt.Sprintf("select table_id, count from mysql.stats_meta")
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
+func getRowCountAllTable(ctx sessionctx.Context, hint int) (map[int64]uint64, error) {
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, "select table_id, count from mysql.stats_meta")
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	rowCountMap := make(map[int64]uint64)
+	rowCountMap := make(map[int64]uint64, hint)
 	for _, row := range rows {
 		tableID := row.GetInt64(0)
 		rowCnt := row.GetUint64(1)
@@ -652,7 +651,7 @@ func getRowCountAllTable(ctx sessionctx.Context) (map[int64]uint64, error) {
 }
 
 func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
-	tableRowsMap, err := getRowCountAllTable(ctx)
+	tableRowsMap, err := getRowCountAllTable(ctx, len(schemas))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
