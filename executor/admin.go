@@ -466,21 +466,22 @@ func (e *RecoverIndexExec) NextChunk(ctx context.Context, chk *chunk.Chunk) erro
 type CleanupIndexExec struct {
 	baseExecutor
 
-	done bool
+	done      bool
+	removeCnt uint64
 
-	index     table.Index
-	table     table.Table
-	batchSize uint64
+	index table.Index
+	table table.Table
 
 	idxCols          []*model.ColumnInfo
 	idxColFieldTypes []*types.FieldType
 	idxChunk         *chunk.Chunk
-	idxResult        distsql.SelectResult
 
-	//tblChunk         *chunk.Chunk
-	//tblResult        distsql.SelectResult
-
-	matchedIndex     map[int64]idxData
+	matchedIndex map[int64]idxData
+	batchSize    uint64
+	batchKeys    []kv.Key
+	idxValsBufs  [][]types.Datum
+	lastIdxKey   []byte
+	scanRowCnt   uint64
 }
 
 type idxData struct {
@@ -499,93 +500,163 @@ func (e *CleanupIndexExec) getIdxColTypes() []*types.FieldType {
 	return e.idxColFieldTypes
 }
 
+func (e *CleanupIndexExec) batchGetRecord(txn kv.Transaction) (map[string][]byte, error) {
+	for handle := range e.matchedIndex {
+		e.batchKeys = append(e.batchKeys, e.table.RecordKey(handle))
+	}
+	values, err := txn.GetSnapshot().BatchGet(e.batchKeys)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return values, nil
+}
+
+func (e *CleanupIndexExec) deleteDanglingIdx(txn kv.Transaction, values map[string][]byte) error {
+	for _, k := range e.batchKeys {
+		if _, found := values[string(k)]; !found {
+			_, handle, err := tablecodec.DecodeRecordKey(k)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if err := e.index.Delete(e.ctx.GetSessionVars().StmtCtx, txn, e.matchedIndex[handle].idxVals,
+				handle); err != nil {
+				return errors.Trace(err)
+			}
+			e.removeCnt++
+			if e.removeCnt%e.batchSize == 0 {
+				log.Infof("[cleaning up dangling index] table: %v, index: %v, count: %v.",
+					e.table.Meta().Name.String(), e.index.Meta().Name.String(), e.removeCnt)
+			}
+		}
+	}
+	return nil
+}
+
+func (e *CleanupIndexExec) extractIdxVals(row chunk.Row, idxVals []types.Datum) []types.Datum {
+	if idxVals == nil {
+		idxVals = make([]types.Datum, 0, row.Len()-1)
+	} else {
+		idxVals = idxVals[:0]
+	}
+
+	for i := 0; i < row.Len()-1; i++ {
+		colVal := row.GetDatum(i, e.idxColFieldTypes[i])
+		idxVals = append(idxVals, *colVal.Copy())
+	}
+	return idxVals
+}
+
+func (e *CleanupIndexExec) fetchIndex(ctx context.Context, txn kv.Transaction) error {
+	result, err := e.buildIndexScan(ctx, txn)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer terror.Call(result.Close)
+
+	sc := e.ctx.GetSessionVars().StmtCtx
+	for {
+		err := result.NextChunk(ctx, e.idxChunk)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if e.idxChunk.NumRows() == 0 {
+			return nil
+		}
+		iter := chunk.NewIterator4Chunk(e.idxChunk)
+		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+			handle := row.GetInt64(len(e.idxCols) - 1)
+			idxVals := e.extractIdxVals(row, e.idxValsBufs[e.scanRowCnt])
+			e.idxValsBufs[e.scanRowCnt] = idxVals
+			e.matchedIndex[handle] = idxData{false, idxVals}
+			idxKey, _, err := e.index.GenIndexKey(sc, idxVals, handle, nil)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			e.scanRowCnt++
+			e.lastIdxKey = idxKey
+		}
+	}
+}
+
 // NextChunk implements the Executor NextChunk interface.
 func (e *CleanupIndexExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.done {
 		return nil
 	}
-	handleIdx := len(e.idxCols) - 1
-	errInTxn := kv.RunInNewTxn(e.ctx.GetStore(), true, func(txn kv.Transaction) error {
-		if err := e.fetchIndexResult(ctx, txn); err != nil {
-			return errors.Trace(err)
-		}
-		for {
-			err := e.idxResult.NextChunk(ctx, e.idxChunk)
+	count := 0
+	for {
+		count++
+		errInTxn := kv.RunInNewTxn(e.ctx.GetStore(), true, func(txn kv.Transaction) error {
+			err := e.fetchIndex(ctx, txn)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if e.idxChunk.NumRows() == 0 {
-				break
+			values, err := e.batchGetRecord(txn)
+			if err != nil {
+				return errors.Trace(err)
 			}
-			iter := chunk.NewIterator4Chunk(e.idxChunk)
-			for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-				handle := row.GetInt64(handleIdx)
-				idxVals := row.GetDatumRow(e.getIdxColTypes())
-				e.matchedIndex[handle] = idxData{false, []types.Datum(idxVals)[:len(idxVals)-1]}
+			err = e.deleteDanglingIdx(txn, values)
+			if err != nil {
+				return errors.Trace(err)
 			}
+			return nil
+		})
+		if errInTxn != nil {
+			return errors.Trace(errInTxn)
 		}
-		var cnt uint64
-		batchKeys := make([]kv.Key, 0, e.batchSize)
-		for handle := range e.matchedIndex {
-			batchKeys = append(batchKeys, e.table.RecordKey(handle))
+		if e.scanRowCnt == 0 {
+			break
 		}
-		values, err := txn.GetSnapshot().BatchGet(batchKeys)
-		if err != nil {
-			return errors.Trace(err)
+		e.scanRowCnt = 0
+		e.batchKeys = e.batchKeys[:0]
+		for k := range e.matchedIndex {
+			delete(e.matchedIndex, k)
 		}
-		for _, k := range batchKeys {
-			if _, found := values[string(k)]; !found {
-				_, handle, err := tablecodec.DecodeRecordKey(k)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				if err := e.index.Delete(e.ctx.GetSessionVars().StmtCtx, txn, e.matchedIndex[handle].idxVals,
-					handle); err != nil {
-					return errors.Trace(err)
-				}
-				cnt++
-				if cnt % 50000 == 0 {
-					log.Infof("[cleaning up dangling index] table: %v, index: %v, count: %v.",
-						e.table.Meta().Name.String(), e.index.Meta().Name.String(), cnt)
-				}
-			}
-		}
-		chk.AppendUint64(0, cnt)
-		return nil
-	})
-	if errInTxn != nil {
-		return errors.Trace(errInTxn)
 	}
 	e.done = true
+	chk.AppendUint64(0, e.removeCnt)
 	return nil
 }
 
-func (e *CleanupIndexExec) fetchIndexResult(ctx context.Context, txn kv.Transaction) error {
-	e.idxChunk = chunk.NewChunk(e.getIdxColTypes())
+func (e *CleanupIndexExec) buildIndexScan(ctx context.Context, txn kv.Transaction) (distsql.SelectResult, error) {
 	dagPB, err := e.buildIdxDAGPB(txn)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	sc := e.ctx.GetSessionVars().StmtCtx
 	var builder distsql.RequestBuilder
-	kvReq, err := builder.SetIndexRanges(sc, e.table.Meta().ID, e.index.Meta().ID, ranger.FullNewRange()).
+	ranges := ranger.FullNewRange()
+	kvReq, err := builder.SetIndexRanges(sc, e.table.Meta().ID, e.index.Meta().ID, ranges).
 		SetDAGRequest(dagPB).
 		SetKeepOrder(true).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		Build()
-
-	e.idxResult, err = distsql.Select(ctx, e.ctx, kvReq, e.getIdxColTypes(), statistics.NewQueryFeedback(0, nil, 0, false))
+	kvReq.KeyRanges[0].StartKey = kv.Key(e.lastIdxKey).PrefixNext()
+	kvReq.Concurrency = 1
+	result, err := distsql.Select(ctx, e.ctx, kvReq, e.getIdxColTypes(), statistics.NewQueryFeedback(0, nil, 0, false))
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-	e.idxResult.Fetch(ctx)
-	return nil
+	result.Fetch(ctx)
+	return result, nil
 }
 
 // Open implements the Executor Open interface.
 func (e *CleanupIndexExec) Open(ctx context.Context) error {
+	if err := e.baseExecutor.Open(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	e.idxChunk = chunk.NewChunk(e.getIdxColTypes())
 	e.matchedIndex = make(map[int64]idxData, e.batchSize)
+	e.batchKeys = make([]kv.Key, 0, e.batchSize)
+	e.idxValsBufs = make([][]types.Datum, e.batchSize)
+	sc := e.ctx.GetSessionVars().StmtCtx
+	idxKey, _, err := e.index.GenIndexKey(sc, []types.Datum{{}}, math.MinInt64, nil)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	e.lastIdxKey = idxKey
 	return nil
 }
 
@@ -598,13 +669,17 @@ func (e *CleanupIndexExec) buildIdxDAGPB(txn kv.Transaction) (*tipb.DAGRequest, 
 	for i := range e.idxCols {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
+
 	execPB := e.constructIndexScanPB()
 	dagReq.Executors = append(dagReq.Executors, execPB)
-
 	err := plan.SetPBColumnsDefaultValue(e.ctx, dagReq.Executors[0].IdxScan.Columns, e.idxCols)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	limitExec := e.constructLimitPB()
+	dagReq.Executors = append(dagReq.Executors, limitExec)
+
 	return dagReq, nil
 }
 
@@ -615,6 +690,13 @@ func (e *CleanupIndexExec) constructIndexScanPB() *tipb.Executor {
 		Columns: plan.ColumnsToProto(e.idxCols, e.table.Meta().PKIsHandle),
 	}
 	return &tipb.Executor{Tp: tipb.ExecType_TypeIndexScan, IdxScan: idxExec}
+}
+
+func (e *CleanupIndexExec) constructLimitPB() *tipb.Executor {
+	limitExec := &tipb.Limit{
+		Limit: e.batchSize,
+	}
+	return &tipb.Executor{Tp: tipb.ExecType_TypeLimit, Limit: limitExec}
 }
 
 // Close implements the Executor Close interface.

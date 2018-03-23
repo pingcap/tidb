@@ -296,16 +296,14 @@ func (b *executorBuilder) buildRecoverIndex(v *plan.RecoverIndex) Executor {
 }
 
 func buildCleanupIndexCols(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) []*model.ColumnInfo {
-	columns := make([]*model.ColumnInfo, 0, len(indexInfo.Columns))
+	columns := make([]*model.ColumnInfo, 0, len(indexInfo.Columns)+1)
 	for _, idxCol := range indexInfo.Columns {
 		columns = append(columns, tblInfo.Columns[idxCol.Offset])
 	}
-
-	handleOffset := len(columns)
 	handleColsInfo := &model.ColumnInfo{
 		ID:     model.ExtraHandleID,
 		Name:   model.ExtraHandleName,
-		Offset: handleOffset,
+		Offset: len(tblInfo.Columns),
 	}
 	handleColsInfo.FieldType = *types.NewFieldType(mysql.TypeLonglong)
 	columns = append(columns, handleColsInfo)
@@ -338,6 +336,7 @@ func (b *executorBuilder) buildCleanupIndex(v *plan.CleanupIndex) Executor {
 		idxCols:      buildCleanupIndexCols(tblInfo, index.Meta()),
 		index:        index,
 		table:        t,
+		batchSize:    20000,
 	}
 	return e
 }
