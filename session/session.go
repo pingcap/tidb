@@ -962,7 +962,7 @@ func (s *session) NewTxn() error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		log.Infof("NewTxn() inside a transaction auto commit: %d", txnID)
+		log.Infof("[con:%d] NewTxn() inside a transaction auto commit: %d", s.GetSessionVars().ConnectionID, txnID)
 	}
 
 	txn, err := s.store.Begin()
