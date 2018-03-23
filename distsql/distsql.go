@@ -205,9 +205,10 @@ func (r *selectResult) readRowsData(chk *chunk.Chunk) (err error) {
 	rowsData := r.selectResp.Chunks[r.respChkIdx].RowsData
 	maxChunkSize := r.ctx.GetSessionVars().MaxChunkSize
 	timeZone := r.ctx.GetSessionVars().GetTimeZone()
+	var bufferedBytes []byte
 	for chk.NumRows() < maxChunkSize && len(rowsData) > 0 {
 		for i := 0; i < r.rowLen; i++ {
-			rowsData, err = codec.DecodeOneToChunk(rowsData, chk, i, r.fieldTypes[i], timeZone)
+			rowsData, bufferedBytes, err = codec.DecodeOneToChunk(rowsData, bufferedBytes, chk, i, r.fieldTypes[i], timeZone)
 			if err != nil {
 				return errors.Trace(err)
 			}

@@ -124,9 +124,10 @@ func (r *streamResult) flushToChunk(chk *chunk.Chunk) (err error) {
 	remainRowsData := r.curr.RowsData
 	maxChunkSize := r.ctx.GetSessionVars().MaxChunkSize
 	timeZone := r.ctx.GetSessionVars().GetTimeZone()
+	var bufferedBytes []byte
 	for chk.NumRows() < maxChunkSize && len(remainRowsData) > 0 {
 		for i := 0; i < r.rowLen; i++ {
-			remainRowsData, err = codec.DecodeOneToChunk(remainRowsData, chk, i, r.fieldTypes[i], timeZone)
+			remainRowsData, bufferedBytes, err = codec.DecodeOneToChunk(remainRowsData, bufferedBytes, chk, i, r.fieldTypes[i], timeZone)
 			if err != nil {
 				return errors.Trace(err)
 			}

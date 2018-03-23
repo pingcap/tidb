@@ -68,8 +68,11 @@ func EncodeBytes(b []byte, data []byte) []byte {
 	return result
 }
 
-func decodeBytes(b []byte, reverse bool) ([]byte, []byte, error) {
-	data := make([]byte, 0, len(b))
+func decodeBytes(b []byte, data []byte, reverse bool) ([]byte, []byte, error) {
+	if data == nil {
+		data = make([]byte, 0, len(b))
+	}
+	data = data[:0]
 	for {
 		if len(b) < encGroupSize+1 {
 			return nil, nil, errors.New("insufficient bytes to decode value")
@@ -116,8 +119,8 @@ func decodeBytes(b []byte, reverse bool) ([]byte, []byte, error) {
 
 // DecodeBytes decodes bytes which is encoded by EncodeBytes before,
 // returns the leftover bytes and decoded value if no error.
-func DecodeBytes(b []byte) ([]byte, []byte, error) {
-	return decodeBytes(b, false)
+func DecodeBytes(b []byte, data []byte) ([]byte, []byte, error) {
+	return decodeBytes(b, data, false)
 }
 
 // EncodeBytesDesc first encodes bytes using EncodeBytes, then bitwise reverses
@@ -131,8 +134,8 @@ func EncodeBytesDesc(b []byte, data []byte) []byte {
 
 // DecodeBytesDesc decodes bytes which is encoded by EncodeBytesDesc before,
 // returns the leftover bytes and decoded value if no error.
-func DecodeBytesDesc(b []byte) ([]byte, []byte, error) {
-	return decodeBytes(b, true)
+func DecodeBytesDesc(b []byte, data []byte) ([]byte, []byte, error) {
+	return decodeBytes(b, data, true)
 }
 
 // EncodeCompactBytes joins bytes with its length into a byte slice. It is more

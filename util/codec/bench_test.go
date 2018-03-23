@@ -16,7 +16,9 @@ package codec
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 var valueCnt = 100
@@ -69,5 +71,20 @@ func BenchmarkDecodeDecimal(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		DecodeDecimal(raw)
+	}
+}
+
+func BenchmarkDecodeOneToChunk(b *testing.B) {
+	str := new(types.Datum)
+	*str = types.NewStringDatum("a")
+	var raw []byte
+	raw = append(raw, bytesFlag)
+	raw = EncodeBytes(raw, str.GetBytes())
+	intType := types.NewFieldType(mysql.TypeLonglong)
+	chk := chunk.NewChunk([]*types.FieldType{intType})
+	var bufferedBytes []byte
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, bufferedBytes, _ = DecodeOneToChunk(raw, bufferedBytes, chk, 0, intType, nil)
 	}
 }

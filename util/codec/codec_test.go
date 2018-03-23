@@ -452,12 +452,12 @@ func (s *testCodecSuite) TestBytes(c *C) {
 
 	for _, t := range tblBytes {
 		b := EncodeBytes(nil, t)
-		_, v, err := DecodeBytes(b)
+		_, v, err := DecodeBytes(b, nil)
 		c.Assert(err, IsNil)
 		c.Assert(t, DeepEquals, v, Commentf("%v - %v - %v", t, b, v))
 
 		b = EncodeBytesDesc(nil, t)
-		_, v, err = DecodeBytesDesc(b)
+		_, v, err = DecodeBytesDesc(b, nil)
 		c.Assert(err, IsNil)
 		c.Assert(t, DeepEquals, v, Commentf("%v - %v - %v", t, b, v))
 
@@ -917,8 +917,9 @@ func (s *testCodecSuite) TestDecodeOneToChunk(c *C) {
 	for rowIdx := 0; rowIdx < rowCount; rowIdx++ {
 		encoded, err := EncodeValue(sc, nil, datums...)
 		c.Assert(err, IsNil)
+		bufferedBytes := make([]byte, 0, len(encoded))
 		for colIdx, t := range table {
-			encoded, err = DecodeOneToChunk(encoded, chk, colIdx, t.tp, time.Local)
+			encoded, bufferedBytes, err = DecodeOneToChunk(encoded, bufferedBytes, chk, colIdx, t.tp, time.Local)
 			c.Assert(err, IsNil)
 		}
 	}
