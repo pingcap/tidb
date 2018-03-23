@@ -1018,13 +1018,13 @@ AlterTableSpec:
 			LockType:   $1.(ast.LockType),
 		}
 	}
-|   "COMMENT" stringLit
-    {
-        $$ = &ast.AlterTableSpec{
-            Tp:    		ast.AlterTableComment,
-            Comment:    $2,
-        }
-    }
+|	"COMMENT" stringLit
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:    		ast.AlterTableComment,
+			Comment:    $2,
+		}
+	}
 
 LockClauseOpt:
 	{}
