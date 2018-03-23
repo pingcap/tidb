@@ -15,7 +15,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tidb
+package session
 
 import (
 	"encoding/hex"
@@ -158,6 +158,7 @@ const (
 		hist_id bigint(64) NOT NULL,
 		distinct_count bigint(64) NOT NULL,
 		null_count bigint(64) NOT NULL DEFAULT 0,
+		tot_col_size bigint(64) NOT NULL DEFAULT 0,
 		modify_count bigint(64) NOT NULL DEFAULT 0,
 		version bigint(64) unsigned NOT NULL DEFAULT 0,
 		cm_sketch blob,
@@ -230,6 +231,7 @@ const (
 	version15 = 15
 	version16 = 16
 	version17 = 17
+	version18 = 18
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -354,6 +356,10 @@ func upgrade(s Session) {
 
 	if ver < version17 {
 		upgradeToVer17(s)
+	}
+
+	if ver < version18 {
+		upgradeToVer18(s)
 	}
 
 	updateBootstrapVer(s)
@@ -566,6 +572,10 @@ func upgradeToVer16(s Session) {
 
 func upgradeToVer17(s Session) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user MODIFY User CHAR(32)")
+}
+
+func upgradeToVer18(s Session) {
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `tot_col_size` bigint(64) NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.

@@ -53,10 +53,6 @@ var (
 	_ builtinFunc = &builtinIfJSONSig{}
 )
 
-type caseWhenFunctionClass struct {
-	baseFunctionClass
-}
-
 // Infer result type for builtin IF, IFNULL && NULLIF.
 func inferType4ControlFuncs(lhs, rhs *types.FieldType) *types.FieldType {
 	resultFieldType := &types.FieldType{}
@@ -85,12 +81,12 @@ func inferType4ControlFuncs(lhs, rhs *types.FieldType) *types.FieldType {
 		}
 		if types.IsNonBinaryStr(lhs) && !types.IsBinaryStr(rhs) {
 			resultFieldType.Charset, resultFieldType.Collate, resultFieldType.Flag = charset.CharsetUTF8, charset.CollationUTF8, 0
-			if mysql.HasBinaryFlag(lhs.Flag) {
+			if mysql.HasBinaryFlag(lhs.Flag) || !types.IsNonBinaryStr(rhs) {
 				resultFieldType.Flag |= mysql.BinaryFlag
 			}
 		} else if types.IsNonBinaryStr(rhs) && !types.IsBinaryStr(lhs) {
 			resultFieldType.Charset, resultFieldType.Collate, resultFieldType.Flag = charset.CharsetUTF8, charset.CollationUTF8, 0
-			if mysql.HasBinaryFlag(rhs.Flag) {
+			if mysql.HasBinaryFlag(rhs.Flag) || !types.IsNonBinaryStr(lhs) {
 				resultFieldType.Flag |= mysql.BinaryFlag
 			}
 		} else if types.IsBinaryStr(lhs) || types.IsBinaryStr(rhs) || !evalType.IsStringKind() {
@@ -132,6 +128,10 @@ func inferType4ControlFuncs(lhs, rhs *types.FieldType) *types.FieldType {
 	return resultFieldType
 }
 
+type caseWhenFunctionClass struct {
+	baseFunctionClass
+}
+
 func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
@@ -139,18 +139,20 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	l := len(args)
 	// Fill in each 'THEN' clause parameter type.
 	fieldTps := make([]*types.FieldType, 0, (l+1)/2)
-	decimal, flen, isBinaryStr := args[1].GetType().Decimal, 0, false
+	decimal, flen, isBinaryStr, isBinaryFlag := args[1].GetType().Decimal, 0, false, false
 	for i := 1; i < l; i += 2 {
 		fieldTps = append(fieldTps, args[i].GetType())
 		decimal = mathutil.Max(decimal, args[i].GetType().Decimal)
 		flen = mathutil.Max(flen, args[i].GetType().Flen)
 		isBinaryStr = isBinaryStr || types.IsBinaryStr(args[i].GetType())
+		isBinaryFlag = isBinaryFlag || !types.IsNonBinaryStr(args[i].GetType())
 	}
 	if l%2 == 1 {
 		fieldTps = append(fieldTps, args[l-1].GetType())
 		decimal = mathutil.Max(decimal, args[l-1].GetType().Decimal)
 		flen = mathutil.Max(flen, args[l-1].GetType().Flen)
 		isBinaryStr = isBinaryStr || types.IsBinaryStr(args[l-1].GetType())
+		isBinaryFlag = isBinaryFlag || !types.IsNonBinaryStr(args[l-1].GetType())
 	}
 
 	fieldTp := types.AggFieldType(fieldTps)
@@ -162,6 +164,9 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	fieldTp.Decimal, fieldTp.Flen = decimal, flen
 	if fieldTp.EvalType().IsStringKind() && !isBinaryStr {
 		fieldTp.Charset, fieldTp.Collate = mysql.DefaultCharset, mysql.DefaultCollationName
+	}
+	if isBinaryFlag {
+		fieldTp.Flag |= mysql.BinaryFlag
 	}
 	// Set retType to BINARY(0) if all arguments are of type NULL.
 	if fieldTp.Tp == mysql.TypeNull {
@@ -395,6 +400,7 @@ func (c *ifFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	retTp := inferType4ControlFuncs(args[1].GetType(), args[2].GetType())
 	evalTps := retTp.EvalType()
 	bf := newBaseBuiltinFuncWithTp(ctx, args, evalTps, types.ETInt, evalTps, evalTps)
+	retTp.Flag |= bf.tp.Flag
 	bf.tp = retTp
 	switch evalTps {
 	case types.ETInt:

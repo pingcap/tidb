@@ -450,7 +450,7 @@ func splitBuckets(h *Histogram, feedbacks []*QueryFeedback) ([]bucket, bucketSco
 func UpdateHistogram(h *Histogram, feedbacks []*QueryFeedback) *Histogram {
 	buckets, bucketScores := splitBuckets(h, feedbacks)
 	buckets = mergeBuckets(buckets, bucketScores)
-	hist := NewHistogram(h.ID, h.NDV, h.NullCount, h.LastUpdateVersion, h.tp, len(buckets))
+	hist := NewHistogram(h.ID, h.NDV, h.NullCount, h.LastUpdateVersion, h.tp, len(buckets), h.TotColSize)
 	preCount := int64(0)
 	for _, bkt := range buckets {
 		hist.AppendBucket(bkt.lower, bkt.upper, bkt.count+preCount, bkt.repeat)

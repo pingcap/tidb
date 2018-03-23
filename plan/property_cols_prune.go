@@ -78,6 +78,13 @@ func (p *LogicalJoin) preparePossibleProperties() [][]*expression.Column {
 }
 
 func (la *LogicalAggregation) preparePossibleProperties() [][]*expression.Column {
-	la.possibleProperties = la.children[0].preparePossibleProperties()
+	childProps := la.children[0].preparePossibleProperties()
+	// If there's no group-by item, the stream aggregation could have no order property. So we can add an empty property
+	// when its group-by item is empty.
+	if len(la.GroupByItems) == 0 {
+		la.possibleProperties = [][]*expression.Column{nil}
+	} else {
+		la.possibleProperties = childProps
+	}
 	return nil
 }

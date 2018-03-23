@@ -19,13 +19,13 @@ import (
 	"sync/atomic"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
 	log "github.com/sirupsen/logrus"
@@ -74,7 +74,7 @@ type KvEncoder interface {
 type kvEncoder struct {
 	store kv.Storage
 	dom   *domain.Domain
-	se    tidb.Session
+	se    session.Session
 }
 
 // New new a KvEncoder
@@ -173,8 +173,8 @@ func newMockTikvWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	tidb.SetSchemaLease(0)
-	dom, err := tidb.BootstrapSession(store)
+	session.SetSchemaLease(0)
+	dom, err := session.BootstrapSession(store)
 	return store, dom, errors.Trace(err)
 }
 
@@ -182,7 +182,7 @@ func (e *kvEncoder) initial(dbName string, idAlloc autoid.Allocator) (err error)
 	var (
 		store kv.Storage
 		dom   *domain.Domain
-		se    tidb.Session
+		se    session.Session
 	)
 	defer func() {
 		if err == nil {
@@ -204,14 +204,14 @@ func (e *kvEncoder) initial(dbName string, idAlloc autoid.Allocator) (err error)
 	plan.PreparedPlanCacheEnabled = true
 	plan.PreparedPlanCacheCapacity = 10
 	// disable stats update.
-	tidb.SetStatsLease(0)
+	session.SetStatsLease(0)
 	store, dom, err = newMockTikvWithBootstrap()
 	if err != nil {
 		err = errors.Trace(err)
 		return
 	}
 
-	se, err = tidb.CreateSession(store)
+	se, err = session.CreateSession(store)
 	if err != nil {
 		err = errors.Trace(err)
 		return
