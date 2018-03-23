@@ -82,7 +82,6 @@ type visitInfo struct {
 	db        string
 	table     string
 	column    string
-	Comment   string
 }
 
 type tableHintInfo struct {

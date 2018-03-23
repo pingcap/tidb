@@ -1022,7 +1022,7 @@ AlterTableSpec:
 	{
 		$$ = &ast.AlterTableSpec{
 			Tp:    		ast.AlterTableComment,
-			Comment:    $2,
+			Comment:       $2,
 		}
 	}
 
