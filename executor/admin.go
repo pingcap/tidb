@@ -564,6 +564,9 @@ func (e *CleanupIndexExec) fetchIndex(ctx context.Context, txn kv.Transaction) e
 		}
 		iter := chunk.NewIterator4Chunk(e.idxChunk)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+			if e.scanRowCnt >= e.batchSize {
+				return nil
+			}
 			handle := row.GetInt64(len(e.idxCols) - 1)
 			idxVals := e.extractIdxVals(row, e.idxValsBufs[e.scanRowCnt])
 			e.idxValsBufs[e.scanRowCnt] = idxVals
