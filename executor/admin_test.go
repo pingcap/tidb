@@ -88,7 +88,7 @@ func (s *testSuite) TestAdminRecoverIndex(c *C) {
 
 	tblInfo := tbl.Meta()
 	idxInfo := findIndexByName("c2", tblInfo.Indices)
-	indexOpr := tables.NewIndexWithBuffer(tblInfo, idxInfo)
+	indexOpr := tables.NewIndex(tblInfo, idxInfo)
 	sc := s.ctx.GetSessionVars().StmtCtx
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
@@ -184,7 +184,7 @@ func (s *testSuite) TestAdminRecoverIndex1(c *C) {
 	tblInfo := tbl.Meta()
 	idxInfo := findIndexByName("primary", tblInfo.Indices)
 	c.Assert(idxInfo, NotNil)
-	indexOpr := tables.NewIndexWithBuffer(tblInfo, idxInfo)
+	indexOpr := tables.NewIndex(tblInfo, idxInfo)
 
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)

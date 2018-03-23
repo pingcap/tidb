@@ -21,7 +21,7 @@ import (
 )
 
 type testSplitSuite struct {
-	oneByOneSuite
+	OneByOneSuite
 	cluster *mocktikv.Cluster
 	store   *tikvStore
 	bo      *Backoffer
