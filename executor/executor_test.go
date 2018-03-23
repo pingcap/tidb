@@ -2160,7 +2160,7 @@ func (s *testContextOptionSuite) TestAddIndexPriority(c *C) {
 func (s *testContextOptionSuite) TestAlterTableComment(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t_1")
 	tk.MustExec("create table t_1 (c1 int, c2 int, c3 int default 1, index (c1)) comment = 'test table';")
 	tk.MustExec("alter table `t_1` comment 'this is table comment';")
 	result := tk.MustQuery("select table_comment from information_schema.tables where table_name = 't_1';")

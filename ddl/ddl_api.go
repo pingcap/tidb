@@ -922,13 +922,14 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 					err = d.ShardRowID(ctx, ident, opt.UintValue)
 				case ast.TableOptionAutoIncrement:
 					err = d.RebaseAutoID(ctx, ident, int64(opt.UintValue))
+				case ast.TableOptionComment:
+					spec.Comment = opt.StrValue
+					err = d.TableComment(ctx, ident, spec)
 				}
 				if err != nil {
 					return errors.Trace(err)
 				}
 			}
-		case ast.AlterTableComment:
-			err = d.TableComment(ctx, ident, spec)
 		default:
 			// Nothing to do now.
 		}

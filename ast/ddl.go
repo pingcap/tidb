@@ -713,7 +713,6 @@ const (
 	AlterTableRenameTable
 	AlterTableAlterColumn
 	AlterTableLock
-	AlterTableComment
 
 // TODO: Add more actions
 )
