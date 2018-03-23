@@ -1011,7 +1011,7 @@ LOOP:
 	c.Assert(count, Greater, int64(0))
 }
 
-// testDropColumn2 This test is for insert value with a to-be-dropped column when do drop column.
+// testDropColumn2 is for inserting value with a to-be-dropped column when do drop column.
 // Column info from schema in build-insert-plan should be public only,
 // otherwise they will not be consist with Table.Col(), then the server will panic.
 func (s *testDBSuite) testDropColumn2(c *C) {
