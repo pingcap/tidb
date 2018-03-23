@@ -416,7 +416,7 @@ func (s *testStatsUpdateSuite) TestUpdateHistogram(c *C) {
 	appendBucket(h, 30, 50)
 
 	feedbacks := []feedback{
-		{0, 1, 1},
+		{0, 1, 10000},
 		{1, 2, 1},
 		{2, 3, 3},
 		{4, 5, 2},
@@ -432,11 +432,11 @@ func (s *testStatsUpdateSuite) TestUpdateHistogram(c *C) {
 	statistics.DefaultBucketCount = 5
 	c.Assert(statistics.UpdateHistogram(q.Hist(), []*statistics.QueryFeedback{q}).ToString(0), Equals,
 		"column:0 ndv:0\n"+
-			"num: 4\tlower_bound: 0\tupper_bound: 3\trepeats: 0\n"+
-			"num: 9\tlower_bound: 4\tupper_bound: 7\trepeats: 0\n"+
-			"num: 22\tlower_bound: 8\tupper_bound: 20\trepeats: 0\n"+
-			"num: 47\tlower_bound: 21\tupper_bound: 46\trepeats: 0\n"+
-			"num: 61\tlower_bound: 46\tupper_bound: 60\trepeats: 0")
+			"num: 10000\tlower_bound: 0\tupper_bound: 1\trepeats: 0\n"+
+			"num: 10003\tlower_bound: 2\tupper_bound: 3\trepeats: 0\n"+
+			"num: 10021\tlower_bound: 4\tupper_bound: 20\trepeats: 0\n"+
+			"num: 10046\tlower_bound: 21\tupper_bound: 46\trepeats: 0\n"+
+			"num: 10060\tlower_bound: 46\tupper_bound: 60\trepeats: 0")
 }
 
 func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {

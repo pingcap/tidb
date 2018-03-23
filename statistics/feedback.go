@@ -33,9 +33,10 @@ import (
 
 // `feedback` represents the total scan count in range [lower, upper).
 type feedback struct {
-	lower *types.Datum
-	upper *types.Datum
-	count int64
+	lower  *types.Datum
+	upper  *types.Datum
+	count  int64
+	repeat int64
 }
 
 // QueryFeedback is used to represent the query feedback info. It contains the query's scan ranges and number of rows
@@ -68,7 +69,7 @@ func NewQueryFeedback(tableID int64, hist *Histogram, expected int64, desc bool)
 func (q *QueryFeedback) StoreRanges(ranges []*ranger.NewRange) {
 	q.feedback = make([]feedback, 0, len(ranges))
 	for _, ran := range ranges {
-		q.feedback = append(q.feedback, feedback{&ran.LowVal[0], &ran.HighVal[0], 0})
+		q.feedback = append(q.feedback, feedback{&ran.LowVal[0], &ran.HighVal[0], 0, 0})
 	}
 }
 
@@ -280,8 +281,7 @@ func (b *BucketFeedback) getFraction(lowerVal, upperVal *types.Datum) float64 {
 	return calcFraction(b.scalar.lower, b.scalar.upper, upper) - calcFraction(b.scalar.lower, b.scalar.upper, lower)
 }
 
-// updateBucket updates and split the bucket according to feedback.
-func (b *BucketFeedback) updateBucket(newBktCount int, totalRowCount float64) []bucket {
+func (b *BucketFeedback) getBucketCount() int64 {
 	// Get the scalar info for boundary.
 	prefixLen := commonPrefixLength(b.lower.GetBytes(), b.upper.GetBytes())
 	if b.lower.Kind() == types.KindBytes {
@@ -301,23 +301,27 @@ func (b *BucketFeedback) updateBucket(newBktCount int, totalRowCount float64) []
 			count = float64(fb.count) / fraction
 		}
 	}
+	return int64(count)
+}
+
+// updateBucket split the bucket according to feedback.
+func (b *BucketFeedback) splitBucket(newBktNum int, totalCount float64, count float64) []bucket {
 	// do not split if the count is already too small.
-	if newBktCount == 1 || count < minBucketFraction*totalRowCount {
+	if newBktNum <= 1 || count < minBucketFraction*totalCount {
 		bkt := bucket{lower: b.lower, upper: b.upper, count: int64(count)}
 		return []bucket{bkt}
 	}
 	// Split the bucket.
-	bounds := b.getBoundaries(newBktCount)
+	bounds := b.getBoundaries(newBktNum)
 	bkts := make([]bucket, 0, len(bounds)-1)
 	for i := 1; i < len(bounds); i++ {
-		bkt := bucket{lower: &bounds[i-1], upper: &bounds[i]}
-		bkt.count = int64(count * b.getFraction(bkt.lower, bkt.upper))
+		newCount := int64(count * b.getFraction(&bounds[i-1], &bounds[i]))
 		// do not split if the count of result bucket is too small.
-		if float64(bkt.count) < minBucketFraction*totalRowCount {
+		if float64(newCount) < minBucketFraction*totalCount {
 			bounds[i] = bounds[i-1]
 			continue
 		}
-		bkts = append(bkts, bkt)
+		bkts = append(bkts, bucket{lower: &bounds[i-1], upper: &bounds[i], count: newCount, repeat: 0})
 	}
 	return bkts
 }
@@ -341,23 +345,23 @@ func (bs bucketScores) Less(i, j int) bool { return bs[i].score < bs[j].score }
 const (
 	// To avoid the histogram been too imbalanced, we constrain the count of a bucket in range
 	// [minBucketFraction * totalCount, maxBucketFraction * totalCount].
-	minBucketFraction = 1 / 10000
-	maxBucketFraction = 1 / 10
+	minBucketFraction = 1 / 10000.0
+	maxBucketFraction = 1 / 10.0
 )
 
 // getBucketScore gets the score for merge this bucket with previous one.
 // TODO: We also need to consider the bucket hit count.
-func getBucketScore(h *Histogram, id int) bucketScore {
-	preCount, count := float64(h.bucketCount(id-1)), float64(h.bucketCount(id))
+func getBucketScore(bkts []bucket, totalCount float64, id int) bucketScore {
+	preCount, count := float64(bkts[id-1].count), float64(bkts[id].count)
 	// do not merge if the result bucket is too large
-	if (preCount + count) > maxBucketFraction*h.totalRowCount() {
+	if (preCount + count) > maxBucketFraction*totalCount {
 		return bucketScore{id, math.MaxFloat64}
 	}
 	// merge them if the result bucket is already too small.
-	if (preCount + count) < minBucketFraction*h.totalRowCount() {
+	if (preCount + count) < minBucketFraction*totalCount {
 		return bucketScore{id, 0}
 	}
-	low, mid, high := h.GetLower(id-1), h.GetUpper(id-1), h.GetUpper(id)
+	low, mid, high := bkts[id-1].lower, bkts[id-1].upper, bkts[id].upper
 	var lowVal, midVal, highVal float64
 	if low.Kind() == types.KindBytes {
 		common := commonPrefixLength(low.GetBytes(), high.GetBytes())
@@ -375,10 +379,10 @@ func getBucketScore(h *Histogram, id int) bucketScore {
 // DefaultBucketCount is the number of buckets a column histogram has.
 var DefaultBucketCount = 256
 
-func mergeBuckets(h *Histogram, bs bucketScores) *Histogram {
-	mergeCount := h.Len() - DefaultBucketCount
+func mergeBuckets(bkts []bucket, bs bucketScores) []bucket {
+	mergeCount := len(bkts) - DefaultBucketCount
 	if mergeCount <= 0 {
-		return h
+		return bkts
 	}
 	sort.Sort(bs)
 	ids := make([]int, 0, mergeCount)
@@ -386,56 +390,76 @@ func mergeBuckets(h *Histogram, bs bucketScores) *Histogram {
 		ids = append(ids, bs[i].id)
 	}
 	sort.Ints(ids)
-	newHist := NewHistogram(h.ID, h.NDV, h.NullCount, h.LastUpdateVersion, h.tp, h.Len())
-	for i, cur := 0, 0; i < h.Len(); i++ {
+	idCursor, bktCursor := 0, 0
+	for i := range bkts {
 		// Merge this bucket with last one.
-		if cur < mergeCount && ids[cur] == i {
-			newHist.updateLastBucket(h.GetUpper(i), h.Buckets[i].Count, h.Buckets[i].Repeat)
-			cur++
-			continue
+		if idCursor < mergeCount && ids[idCursor] == i {
+			bkts[bktCursor-1].upper = bkts[i].upper
+			bkts[bktCursor-1].count += bkts[i].count
+			bkts[bktCursor-1].repeat = bkts[i].repeat
+			idCursor++
+		} else {
+			bkts[bktCursor] = bkts[i]
+			bktCursor++
 		}
-		newHist.AppendBucket(h.GetLower(i), h.GetUpper(i), h.Buckets[i].Count, h.Buckets[i].Repeat)
 	}
-	return newHist
+	bkts = bkts[:bktCursor]
+	return bkts
 }
 
-func splitBuckets(h *Histogram, feedbacks []*QueryFeedback) (*Histogram, bucketScores) {
-	bktFB, count := buildBucketFeedback(h, feedbacks)
-	newHist := NewHistogram(h.ID, h.NDV, h.NullCount, h.LastUpdateVersion, h.tp, h.Len())
-	preCount, splitCount := int64(0), getSplitCount(count)
-	bucketScores := make([]bucketScore, 0, h.Len())
+func splitBuckets(h *Histogram, feedbacks []*QueryFeedback) ([]bucket, bucketScores) {
+	bktFB, fbNum := buildBucketFeedback(h, feedbacks)
+	counts := make([]int64, 0, h.Len())
 	for i := 0; i < h.Len(); i++ {
 		bkt, ok := bktFB[i]
-		// No feedback, just use the origin bucket.
 		if !ok {
-			newHist.AppendBucket(h.GetLower(i), h.GetUpper(i), preCount+h.bucketCount(i), h.Buckets[i].Repeat)
-			if i > 0 {
-				bucketScores = append(bucketScores, getBucketScore(newHist, newHist.Len()-1))
-			}
-			preCount += h.bucketCount(i)
-			continue
-		}
-		// Split this bucket.
-		newBuckets := bkt.updateBucket(mathutil.Max(1, splitCount*len(bkt.feedback)/count), h.totalRowCount())
-		for _, newBucket := range newBuckets {
-			newHist.AppendBucket(newBucket.lower, newBucket.upper, preCount+newBucket.count, 0)
-			preCount += newBucket.count
-		}
-		// Do not merge the newly created buckets and the first one.
-		if i > 0 && len(newBuckets) == 1 {
-			bucketScores = append(bucketScores, getBucketScore(newHist, newHist.Len()-1))
+			counts = append(counts, h.bucketCount(i))
+		} else {
+			counts = append(counts, bkt.getBucketCount())
 		}
 	}
-	return newHist, bucketScores
+	totCount := int64(0)
+	for _, count := range counts {
+		totCount += count
+	}
+	buckets := make([]bucket, 0, h.Len())
+	bucketScores := make([]bucketScore, 0, h.Len())
+	splitCount := getSplitCount(fbNum)
+	for i := 0; i < h.Len(); i++ {
+		bkt, ok := bktFB[i]
+		// No feedback, just use the original one.
+		if !ok {
+			buckets = append(buckets, bucket{h.GetLower(i), h.GetUpper(i), counts[i], h.Buckets[i].Repeat})
+			if i > 0 {
+				bucketScores = append(bucketScores, getBucketScore(buckets, float64(totCount), len(buckets)-1))
+			}
+			continue
+		}
+		bkts := bkt.splitBucket(splitCount*len(bkt.feedback)/fbNum, float64(totCount), float64(counts[i]))
+		buckets = append(buckets, bkts...)
+		// Do not merge the newly created buckets.
+		if i > 0 && len(bkts) == 1 {
+			bucketScores = append(bucketScores,
+				getBucketScore(buckets, float64(totCount), len(buckets)-1))
+		}
+	}
+	return buckets, bucketScores
 }
 
 // UpdateHistogram updates the histogram according buckets.
 func UpdateHistogram(h *Histogram, feedbacks []*QueryFeedback) *Histogram {
-	newHist, bucketScores := splitBuckets(h, feedbacks)
-	return mergeBuckets(newHist, bucketScores)
+	buckets, bucketScores := splitBuckets(h, feedbacks)
+	buckets = mergeBuckets(buckets, bucketScores)
+	hist := NewHistogram(h.ID, h.NDV, h.NullCount, h.LastUpdateVersion, h.tp, len(buckets))
+	preCount := int64(0)
+	for _, bkt := range buckets {
+		hist.AppendBucket(bkt.lower, bkt.upper, bkt.count+preCount, bkt.repeat)
+		preCount += bkt.count
+	}
+	return hist
 }
 
 // AppendFeedback appends feedback into the QueryFeedback, only used for test.
 func (q *QueryFeedback) AppendFeedback(lower, higher types.Datum, count int64) {
-	q.feedback = append(q.feedback, feedback{&lower, &higher, count})
+	q.feedback = append(q.feedback, feedback{&lower, &higher, count, 0})
 }
