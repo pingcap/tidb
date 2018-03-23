@@ -770,6 +770,12 @@ func (s *testDBSuite) TestIssue2293(c *C) {
 func (s *testDBSuite) TestIssue6101(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
+	s.tk.MustExec("create table t1 (quantity decimal(2) unsigned);")
+	_, err := s.tk.Exec("insert into t1 values (500), (-500), (~0), (-1);")
+	terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(tmysql.ErrDataOutOfRange))
+	s.tk.MustExec("drop table t1")
+
 	s.tk.MustExec("set sql_mode=''")
 	s.tk.MustExec("create table t1 (quantity decimal(2) unsigned);")
 	s.tk.MustExec("insert into t1 values (500), (-500), (~0), (-1);")
