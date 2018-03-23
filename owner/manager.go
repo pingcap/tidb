@@ -134,6 +134,7 @@ func NewSession(ctx context.Context, logPrefix string, etcdCli *clientv3.Client,
 		if err = contextDone(ctx, err); err != nil {
 			return etcdSession, errors.Trace(err)
 		}
+
 		// gofail: var closeClient bool
 		//	if closeClient {
 		//		etcdCli.Close()
