@@ -130,10 +130,10 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	// gofail: var errorBeforeDecodeArgs bool
-	// if errorBeforeDecodeArgs {
-	// 	return ver, errors.New("occur an error before decode args")
-	// }
+	if verrorBeforeDecodeArgs, __fpErr := __fp_errorBeforeDecodeArgs.Acquire(); __fpErr == nil { defer __fp_errorBeforeDecodeArgs.Release(); errorBeforeDecodeArgs, __fpTypeOK := verrorBeforeDecodeArgs.(bool); if !__fpTypeOK { goto __badTypeerrorBeforeDecodeArgs} 
+		 if errorBeforeDecodeArgs {
+		 	return ver, errors.New("occur an error before decode args")
+		 }; __badTypeerrorBeforeDecodeArgs: __fp_errorBeforeDecodeArgs.BadType(verrorBeforeDecodeArgs, "bool"); };
 
 	col := &model.ColumnInfo{}
 	pos := &ast.ColumnPosition{}

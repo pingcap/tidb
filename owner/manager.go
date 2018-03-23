@@ -135,15 +135,15 @@ func NewSession(ctx context.Context, logPrefix string, etcdCli *clientv3.Client,
 			return etcdSession, errors.Trace(err)
 		}
 
-		// gofail: var closeClient bool
-		//	if closeClient {
-		//		etcdCli.Close()
-		//	}
+		if vcloseClient, __fpErr := __fp_closeClient.Acquire(); __fpErr == nil { defer __fp_closeClient.Release(); closeClient, __fpTypeOK := vcloseClient.(bool); if !__fpTypeOK { goto __badTypecloseClient} 
+				if closeClient {
+					etcdCli.Close()
+				}; __badTypecloseClient: __fp_closeClient.BadType(vcloseClient, "bool"); };
 
-		// gofail: var closeGrpc bool
-		//	if closeGrpc {
-		//		etcdCli.ActiveConnection().Close()
-		//	}
+		if vcloseGrpc, __fpErr := __fp_closeGrpc.Acquire(); __fpErr == nil { defer __fp_closeGrpc.Release(); closeGrpc, __fpTypeOK := vcloseGrpc.(bool); if !__fpTypeOK { goto __badTypecloseGrpc} 
+				if closeGrpc {
+					etcdCli.ActiveConnection().Close()
+				}; __badTypecloseGrpc: __fp_closeGrpc.BadType(vcloseGrpc, "bool"); };
 		startTime := time.Now()
 		etcdSession, err = concurrency.NewSession(etcdCli,
 			concurrency.WithTTL(ttl), concurrency.WithContext(ctx))

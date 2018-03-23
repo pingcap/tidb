@@ -261,10 +261,10 @@ func (s *session) StmtCommit() {
 	defer s.txn.cleanup()
 	st := &s.txn
 	err := kv.WalkMemBuffer(st.buf, func(k kv.Key, v []byte) error {
-		// gofail: var mockStmtCommitError bool
-		// if mockStmtCommitError {
-		// 	return errors.New("mock stmt commit error")
-		// }
+		if vmockStmtCommitError, __fpErr := __fp_mockStmtCommitError.Acquire(); __fpErr == nil { defer __fp_mockStmtCommitError.Release(); mockStmtCommitError, __fpTypeOK := vmockStmtCommitError.(bool); if !__fpTypeOK { goto __badTypemockStmtCommitError} 
+			 if mockStmtCommitError {
+			 	return errors.New("mock stmt commit error")
+			 }; __badTypemockStmtCommitError: __fp_mockStmtCommitError.BadType(vmockStmtCommitError, "bool"); };
 		if len(v) == 0 {
 			return errors.Trace(st.Transaction.Delete(k))
 		}
