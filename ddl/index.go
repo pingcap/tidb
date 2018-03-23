@@ -618,7 +618,7 @@ func (w *addIndexWorker) run() {
 		r := recover()
 		if r != nil {
 			buf := util.GetStack()
-			log.Errorf("addIndexWorker %v %s", r, buf)
+			log.Errorf("[ddl-reorg] addIndexWorker %v %s", r, buf)
 			metrics.PanicCounter.WithLabelValues(metrics.LabelDDL).Inc()
 		}
 		w.resultCh <- &addIndexResult{err: errReorgPanic}
