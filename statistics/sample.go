@@ -37,12 +37,14 @@ type SampleCollector struct {
 	MaxSampleSize int64
 	FMSketch      *FMSketch
 	CMSketch      *CMSketch
+	TotalSize     int64 // TotalSize is the total size of column.
 }
 
 // MergeSampleCollector merges two sample collectors.
 func (c *SampleCollector) MergeSampleCollector(sc *stmtctx.StatementContext, rc *SampleCollector) {
 	c.NullCount += rc.NullCount
 	c.Count += rc.Count
+	c.TotalSize += rc.TotalSize
 	c.FMSketch.mergeFMSketch(rc.FMSketch)
 	if rc.CMSketch != nil {
 		err := c.CMSketch.MergeCMSketch(rc.CMSketch)
@@ -60,6 +62,7 @@ func SampleCollectorToProto(c *SampleCollector) *tipb.SampleCollector {
 		NullCount: c.NullCount,
 		Count:     c.Count,
 		FmSketch:  FMSketchToProto(c.FMSketch),
+		TotalSize: &c.TotalSize,
 	}
 	if c.CMSketch != nil {
 		collector.CmSketch = CMSketchToProto(c.CMSketch)
@@ -76,6 +79,9 @@ func SampleCollectorFromProto(collector *tipb.SampleCollector) *SampleCollector 
 		NullCount: collector.NullCount,
 		Count:     collector.Count,
 		FMSketch:  FMSketchFromProto(collector.FmSketch),
+	}
+	if collector.TotalSize != nil {
+		s.TotalSize = *collector.TotalSize
 	}
 	s.CMSketch = CMSketchFromProto(collector.CmSketch)
 	for _, val := range collector.Samples {
@@ -97,6 +103,8 @@ func (c *SampleCollector) collect(sc *stmtctx.StatementContext, d types.Datum) e
 		if c.CMSketch != nil {
 			c.CMSketch.InsertBytes(d.GetBytes())
 		}
+		// Minus one is to remove the flag byte.
+		c.TotalSize += int64(len(d.GetBytes()) - 1)
 	}
 	c.seenValues++
 	// The following code use types.CopyDatum(d) because d may have a deep reference

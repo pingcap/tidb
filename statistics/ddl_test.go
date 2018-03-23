@@ -87,15 +87,16 @@ func (s *testStatsCacheSuite) TestDDLTable(c *C) {
 func (s *testStatsCacheSuite) TestDDLHistogram(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
-	testKit.MustExec("use test")
-	testKit.MustExec("create table t (c1 int, c2 int)")
-	testKit.MustExec("insert into t values(1,2),(3,4)")
-	testKit.MustExec("analyze table t")
 	do := s.do
 	h := do.StatsHandle()
 
-	testKit.MustExec("alter table t add column c_null int")
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (c1 int, c2 int)")
 	<-h.DDLEventCh()
+	testKit.MustExec("insert into t values(1,2),(3,4)")
+	testKit.MustExec("analyze table t")
+
+	testKit.MustExec("alter table t add column c_null int")
 	err := h.HandleDDLEvent(<-h.DDLEventCh())
 	c.Assert(err, IsNil)
 	is := do.InfoSchema()
@@ -138,6 +139,19 @@ func (s *testStatsCacheSuite) TestDDLHistogram(c *C) {
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo.ID)
 	// If we don't use original default value, we will get a pseudo table.
 	c.Assert(statsTbl.Pseudo, IsFalse)
+
+	testKit.MustExec("alter table t add column c5 varchar(15) DEFAULT '123'")
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
+	is = do.InfoSchema()
+	h.Update(is)
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo = tbl.Meta()
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo.ID)
+	c.Assert(statsTbl.Pseudo, IsFalse)
+	sc = new(stmtctx.StatementContext)
+	c.Check(statsTbl.Columns[tableInfo.Columns[5].ID].AvgColSize(), Equals, 3.0)
 
 	testKit.MustExec("create index i on t(c2, c1)")
 	testKit.MustExec("analyze table t")
