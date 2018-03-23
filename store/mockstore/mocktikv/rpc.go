@@ -467,10 +467,10 @@ func (c *RPCClient) checkArgs(ctx context.Context, addr string) (*rpcHandler, er
 
 // SendReq sends a request to mock cluster.
 func (c *RPCClient) SendReq(ctx context.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
-	if vrpcServerBusy, __fpErr := __fp_rpcServerBusy.Acquire(); __fpErr == nil { defer __fp_rpcServerBusy.Release(); rpcServerBusy, __fpTypeOK := vrpcServerBusy.(bool); if !__fpTypeOK { goto __badTyperpcServerBusy} 
-		 if rpcServerBusy {
-			return tikvrpc.GenRegionErrorResp(req, &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}})
-		 }; __badTyperpcServerBusy: __fp_rpcServerBusy.BadType(vrpcServerBusy, "bool"); };
+	// gofail: var rpcServerBusy bool
+	// if rpcServerBusy {
+	//	return tikvrpc.GenRegionErrorResp(req, &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}})
+	// }
 	handler, err := c.checkArgs(ctx, addr)
 	if err != nil {
 		return nil, err
@@ -502,31 +502,31 @@ func (c *RPCClient) SendReq(ctx context.Context, addr string, req *tikvrpc.Reque
 		}
 		resp.Prewrite = handler.handleKvPrewrite(r)
 	case tikvrpc.CmdCommit:
-		if vrpcCommitResult, __fpErr := __fp_rpcCommitResult.Acquire(); __fpErr == nil { defer __fp_rpcCommitResult.Release(); rpcCommitResult, __fpTypeOK := vrpcCommitResult.(string); if !__fpTypeOK { goto __badTyperpcCommitResult} 
-			 switch rpcCommitResult {
-			 case "timeout":
-			 	return nil, errors.New("timeout")
-			 case "notLeader":
-			 	return &tikvrpc.Response{
-			 		Type:   tikvrpc.CmdCommit,
-			 		Commit: &kvrpcpb.CommitResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
-			 	}, nil
-			 case "keyError":
-			 	return &tikvrpc.Response{
-			 		Type:   tikvrpc.CmdCommit,
-			 		Commit: &kvrpcpb.CommitResponse{Error: &kvrpcpb.KeyError{}},
-			 	}, nil
-			 }; __badTyperpcCommitResult: __fp_rpcCommitResult.BadType(vrpcCommitResult, "string"); };
+		// gofail: var rpcCommitResult string
+		// switch rpcCommitResult {
+		// case "timeout":
+		// 	return nil, errors.New("timeout")
+		// case "notLeader":
+		// 	return &tikvrpc.Response{
+		// 		Type:   tikvrpc.CmdCommit,
+		// 		Commit: &kvrpcpb.CommitResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
+		// 	}, nil
+		// case "keyError":
+		// 	return &tikvrpc.Response{
+		// 		Type:   tikvrpc.CmdCommit,
+		// 		Commit: &kvrpcpb.CommitResponse{Error: &kvrpcpb.KeyError{}},
+		// 	}, nil
+		// }
 		r := req.Commit
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
 			resp.Commit = &kvrpcpb.CommitResponse{RegionError: err}
 			return resp, nil
 		}
 		resp.Commit = handler.handleKvCommit(r)
-		if vrpcCommitTimeout, __fpErr := __fp_rpcCommitTimeout.Acquire(); __fpErr == nil { defer __fp_rpcCommitTimeout.Release(); rpcCommitTimeout, __fpTypeOK := vrpcCommitTimeout.(bool); if !__fpTypeOK { goto __badTyperpcCommitTimeout} 
-			 if rpcCommitTimeout {
-				return nil, undeterminedErr
-			 }; __badTyperpcCommitTimeout: __fp_rpcCommitTimeout.BadType(vrpcCommitTimeout, "bool"); };
+		// gofail: var rpcCommitTimeout bool
+		// if rpcCommitTimeout {
+		//	return nil, undeterminedErr
+		// }
 	case tikvrpc.CmdCleanup:
 		r := req.Cleanup
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
