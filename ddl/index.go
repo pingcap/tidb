@@ -613,6 +613,16 @@ func (w *addIndexWorker) handleBackfillTask(task *reorgIndexTask) *addIndexResul
 }
 
 func (w *addIndexWorker) run() {
+	log.Infof("[ddl-reorg] worker[%v] start", w.id)
+	defer func() {
+		r := recover()
+		if r != nil {
+			buf := util.GetStack()
+			log.Errorf("addIndexWorker %v %s", r, buf)
+			metrics.PanicCounter.WithLabelValues(metrics.LabelDDL).Inc()
+		}
+		w.resultCh <- &addIndexResult{err: errReorgPanic}
+	}()
 	for {
 		task, more := <-w.taskCh
 		if !more {
@@ -623,6 +633,7 @@ func (w *addIndexWorker) run() {
 		result := w.handleBackfillTask(task)
 		w.resultCh <- result
 	}
+	log.Infof("[ddl-reorg] worker[%v] exit", w.id)
 }
 
 func makeupIndexColFieldMap(t table.Table, indexInfo *model.IndexInfo) map[int64]*types.FieldType {
