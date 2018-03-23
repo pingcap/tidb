@@ -24,7 +24,7 @@ import (
 )
 
 type testRegionCacheSuite struct {
-	oneByOneSuite
+	OneByOneSuite
 	cluster *mocktikv.Cluster
 	store1  uint64
 	store2  uint64

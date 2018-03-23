@@ -37,7 +37,9 @@ type reorgCtx struct {
 	// rowCount is used to simulate a job's row count.
 	rowCount int64
 	// notifyCancelReorgJob is used to notify the backfilling goroutine if the DDL job is cancelled.
-	notifyCancelReorgJob chan struct{}
+	// 0: job is not canceled.
+	// 1: job is canceled.
+	notifyCancelReorgJob int32
 	// doneHandle is used to simulate the handle that has been processed.
 	doneHandle int64
 }
@@ -51,7 +53,22 @@ func (d *ddl) newContext() sessionctx.Context {
 	return c
 }
 
-const waitReorgTimeout = 10 * time.Second
+const defaultWaitReorgTimeout = 10 * time.Second
+
+// ReorgWaitTimeout is the timeout that wait ddl in write reorganization stage.
+var ReorgWaitTimeout = 1 * time.Second
+
+func (rc *reorgCtx) notifyReorgCancel() {
+	atomic.StoreInt32(&rc.notifyCancelReorgJob, 1)
+}
+
+func (rc *reorgCtx) cleanNotifyReorgCancel() {
+	atomic.StoreInt32(&rc.notifyCancelReorgJob, 0)
+}
+
+func (rc *reorgCtx) isReorgCanceled() bool {
+	return atomic.LoadInt32(&rc.notifyCancelReorgJob) == 1
+}
 
 func (rc *reorgCtx) setRowCountAndHandle(count, doneHandle int64) {
 	atomic.StoreInt64(&rc.rowCount, count)
@@ -80,14 +97,14 @@ func (d *ddl) runReorgJob(t *meta.Meta, job *model.Job, f func() error) error {
 		}()
 	}
 
-	waitTimeout := waitReorgTimeout
+	waitTimeout := defaultWaitReorgTimeout
 	// if d.lease is 0, we are using a local storage,
 	// and we can wait the reorganization to be done here.
 	// if d.lease > 0, we don't need to wait here because
-	// we will wait 2 * lease outer and try checking again,
+	// we should update some job's progress context and try checking again,
 	// so we use a very little timeout here.
 	if d.lease > 0 {
-		waitTimeout = 50 * time.Millisecond
+		waitTimeout = ReorgWaitTimeout
 	}
 
 	// wait reorganization job done or timeout
@@ -122,11 +139,9 @@ func (d *ddl) isReorgRunnable() error {
 		return errInvalidWorker.Gen("worker is closed")
 	}
 
-	select {
-	case <-d.reorgCtx.notifyCancelReorgJob:
+	if d.reorgCtx.isReorgCanceled() {
 		// Job is cancelled. So it can't be done.
 		return errCancelledDDLJob
-	default:
 	}
 
 	if !d.isOwner() {
