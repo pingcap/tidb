@@ -176,9 +176,9 @@ func (s *testSuite) TestColumnScope(c *C) {
 
 func (s *testSuite) TestIssue2456(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec(`CREATE USER 'dduser'@'%' IDENTIFIED by '123456';`)
-	tk.MustExec(`GRANT ALL PRIVILEGES ON 'dddb_%'.* TO 'dduser'@'%';`)
-	tk.MustExec(`GRANT ALL PRIVILEGES ON 'dddb_%'.'te%' to 'dduser'@'%';`)
+	tk.MustExec("CREATE USER 'dduser'@`%` IDENTIFIED by '123456';")
+	tk.MustExec("GRANT ALL PRIVILEGES ON `dddb_\%`.* TO 'dduser'@`%`;")
+	tk.MustExec("GRANT ALL PRIVILEGES ON `dddb_\%`.`te\%` to 'dduser'@`%`;")
 }
 
 func (s *testSuite) TestCreateUserWhenGrant(c *C) {
