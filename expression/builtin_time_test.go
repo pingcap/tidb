@@ -456,22 +456,22 @@ func (s *testEvaluatorSuite) TestDateFormat(c *C) {
 		Expect interface{}
 	}{
 		{[]string{"2010-01-07 23:12:34.12345",
-			"%b %M %m %c %D %d %e %j %k %h %i %p %r %T %s %f %U %u %V %v %a %W %w %X %x %Y %y %%"},
-			"Jan January 01 1 7th 07 7 007 23 11 12 PM 11:12:34 PM 23:12:34 34 123450 01 01 01 01 Thu Thursday 4 2010 2010 2010 10 %"},
+			`%b %M %m %c %D %d %e %j %k %h %i %p %r %T %s %f %U %u %V %v %a %W %w %X %x %Y %y %%`},
+			`Jan January 01 1 7th 07 7 007 23 11 12 PM 11:12:34 PM 23:12:34 34 123450 01 01 01 01 Thu Thursday 4 2010 2010 2010 10 %`},
 		{[]string{"2012-12-21 23:12:34.123456",
-			"%b %M %m %c %D %d %e %j %k %h %i %p %r %T %s %f %U %u %V %v %a %W %w %X %x %Y %y %%"},
+			`%b %M %m %c %D %d %e %j %k %h %i %p %r %T %s %f %U %u %V %v %a %W %w %X %x %Y %y %%`},
 			"Dec December 12 12 21st 21 21 356 23 11 12 PM 11:12:34 PM 23:12:34 34 123456 51 51 51 51 Fri Friday 5 2012 2012 2012 12 %"},
 		{[]string{"0000-01-01 00:00:00.123456",
 			// Functions week() and yearweek() don't support multi mode,
 			// so the result of "%U %u %V %Y" is different from MySQL.
-			"%b %M %m %c %D %d %e %j %k %h %i %p %r %T %s %f %v %x %Y %y %%"},
-			"Jan January 01 1 1st 01 1 001 0 12 00 AM 12:00:00 AM 00:00:00 00 123456 52 4294967295 0000 00 %"},
+			`%b %M %m %c %D %d %e %j %k %h %i %p %r %T %s %f %v %x %Y %y %%`},
+			`Jan January 01 1 1st 01 1 001 0 12 00 AM 12:00:00 AM 00:00:00 00 123456 52 4294967295 0000 00 %`},
 		{[]string{"2016-09-3 00:59:59.123456",
-			"abc%b %M %m %c %D %d %e %j %k %h %i %p %r %T %s %f %U %u %V %v %a %W %w %X %x %Y %y!123 %%xyz %z"},
-			"abcSep September 09 9 3rd 03 3 247 0 12 59 AM 12:59:59 AM 00:59:59 59 123456 35 35 35 35 Sat Saturday 6 2016 2016 2016 16!123 %xyz z"},
-		{[]string{"2012-10-01 00:00:00",
-			"%b %M %m %c %D %d %e %j %k %H %i %p %r %T %s %f %v %x %Y %y %%"},
-			"Oct October 10 10 1st 01 1 275 0 00 00 AM 12:00:00 AM 00:00:00 00 000000 40 2012 2012 12 %"},
+			`abc%b %M %m %c %D %d %e %j %k %h %i %p %r %T %s %f %U %u %V %v %a %W %w %X %x %Y %y!123 %%xyz %z`},
+			`abcSep September 09 9 3rd 03 3 247 0 12 59 AM 12:59:59 AM 00:59:59 59 123456 35 35 35 35 Sat Saturday 6 2016 2016 2016 16!123 %xyz z"},
+		{[]string{"2012-10-01 00:00:00`,
+			`%b %M %m %c %D %d %e %j %k %H %i %p %r %T %s %f %v %x %Y %y %%`},
+			`Oct October 10 10 1st 01 1 275 0 00 00 AM 12:00:00 AM 00:00:00 00 000000 40 2012 2012 12 %`},
 	}
 	dtblDate := tblToDtbl(tblDate)
 	for i, t := range dtblDate {
@@ -480,7 +480,7 @@ func (s *testEvaluatorSuite) TestDateFormat(c *C) {
 		c.Assert(err, IsNil)
 		v, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
-		c.Assert(v, testutil.DatumEquals, t["Expect"][0], Commentf("no.%d \nobtain:%v \nexpect:%v\n", i,
+		c.Assert(v, testutil.DatumEquals, t["Expect"][0], Commentf(`no.%d \nobtain:%v \nexpect:%v\n`, i,
 			v.GetValue(), t["Expect"][0].GetValue()))
 	}
 }
@@ -975,10 +975,10 @@ func (s *testEvaluatorSuite) TestFromUnixTime(c *C) {
 		{true, 1451606400, 123456000, 1451606400.123456, "", 26},
 		{true, 1451606400, 999999000, 1451606400.999999, "", 26},
 		{true, 1451606400, 999999900, 1451606400.9999999, "", 19},
-		{false, 1451606400, 0, 0, "%Y %D %M %h:%i:%s %x", 19},
-		{true, 1451606400, 123456000, 1451606400.123456, "%Y %D %M %h:%i:%s %x", 26},
-		{true, 1451606400, 999999000, 1451606400.999999, "%Y %D %M %h:%i:%s %x", 26},
-		{true, 1451606400, 999999900, 1451606400.9999999, "%Y %D %M %h:%i:%s %x", 19},
+		{false, 1451606400, 0, 0, `%Y %D %M %h:%i:%s %x`, 19},
+		{true, 1451606400, 123456000, 1451606400.123456, `%Y %D %M %h:%i:%s %x`, 26},
+		{true, 1451606400, 999999000, 1451606400.999999, `%Y %D %M %h:%i:%s %x`, 26},
+		{true, 1451606400, 999999900, 1451606400.9999999, `%Y %D %M %h:%i:%s %x`, 19},
 	}
 	sc := s.ctx.GetSessionVars().StmtCtx
 	originTZ := sc.TimeZone
@@ -1131,10 +1131,10 @@ func (s *testEvaluatorSuite) TestStrToDate(c *C) {
 		Success bool
 		Expect  time.Time
 	}{
-		{"20161122165022", "%Y%m%d%H%i%s", true, time.Date(2016, 11, 22, 16, 50, 22, 0, time.Local)},
-		{"2016 11 22 16 50 22", "%Y%m%d%H%i%s", true, time.Date(2016, 11, 22, 16, 50, 22, 0, time.Local)},
-		{"16-50-22 2016 11 22", "%H-%i-%s%Y%m%d", true, time.Date(2016, 11, 22, 16, 50, 22, 0, time.Local)},
-		{"16-50 2016 11 22", "%H-%i-%s%Y%m%d", false, time.Time{}},
+		{"20161122165022", `%Y%m%d%H%i%s`, true, time.Date(2016, 11, 22, 16, 50, 22, 0, time.Local)},
+		{"2016 11 22 16 50 22", `%Y%m%d%H%i%s`, true, time.Date(2016, 11, 22, 16, 50, 22, 0, time.Local)},
+		{"16-50-22 2016 11 22", `%H-%i-%s%Y%m%d`, true, time.Date(2016, 11, 22, 16, 50, 22, 0, time.Local)},
+		{"16-50 2016 11 22", `%H-%i-%s%Y%m%d`, false, time.Time{}},
 	}
 
 	fc := funcs[ast.StrToDate]
@@ -1774,23 +1774,23 @@ func (s *testEvaluatorSuite) TestGetFormat(c *C) {
 		location string
 		expect   string
 	}{
-		{"DATE", "USA", "%m.%d.%Y"},
-		{"DATE", "JIS", "%Y-%m-%d"},
-		{"DATE", "ISO", "%Y-%m-%d"},
-		{"DATE", "EUR", "%d.%m.%Y"},
-		{"DATE", "INTERNAL", "%Y%m%d"},
+		{"DATE", "USA", `%m.%d.%Y`},
+		{"DATE", "JIS", `%Y-%m-%d`},
+		{"DATE", "ISO", `%Y-%m-%d`},
+		{"DATE", "EUR", `%d.%m.%Y`},
+		{"DATE", "INTERNAL", `%Y%m%d`},
 
-		{"DATETIME", "USA", "%Y-%m-%d %H.%i.%s"},
-		{"DATETIME", "JIS", "%Y-%m-%d %H:%i:%s"},
-		{"DATETIME", "ISO", "%Y-%m-%d %H:%i:%s"},
-		{"DATETIME", "EUR", "%Y-%m-%d %H.%i.%s"},
-		{"DATETIME", "INTERNAL", "%Y%m%d%H%i%s"},
+		{"DATETIME", "USA", `%Y-%m-%d %H.%i.%s`},
+		{"DATETIME", "JIS", `%Y-%m-%d %H:%i:%s`},
+		{"DATETIME", "ISO", `%Y-%m-%d %H:%i:%s`},
+		{"DATETIME", "EUR", `%Y-%m-%d %H.%i.%s`},
+		{"DATETIME", "INTERNAL", `%Y%m%d%H%i%s`},
 
-		{"TIME", "USA", "%h:%i:%s %p"},
-		{"TIME", "JIS", "%H:%i:%s"},
-		{"TIME", "ISO", "%H:%i:%s"},
-		{"TIME", "EUR", "%H.%i.%s"},
-		{"TIME", "INTERNAL", "%H%i%s"},
+		{"TIME", "USA", `%h:%i:%s %p`},
+		{"TIME", "JIS", `%H:%i:%s`},
+		{"TIME", "ISO", `%H:%i:%s`},
+		{"TIME", "EUR", `%H.%i.%s`},
+		{"TIME", "INTERNAL", `%H%i%s`},
 	}
 
 	fc := funcs[ast.GetFormat]
@@ -1949,7 +1949,7 @@ func (s *testEvaluatorSuite) TestTimeFormat(c *C) {
 	defer testleak.AfterTest(c)()
 
 	// SELECT TIME_FORMAT(null,'%H %k %h %I %l')
-	args := []types.Datum{types.NewDatum(nil), types.NewStringDatum("%H %k %h %I %l")}
+	args := []types.Datum{types.NewDatum(nil), types.NewStringDatum(`%H %k %h %I %l`)}
 	fc := funcs[ast.TimeFormat]
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
 	c.Assert(err, IsNil)
@@ -1961,17 +1961,17 @@ func (s *testEvaluatorSuite) TestTimeFormat(c *C) {
 		Input  []string
 		Expect interface{}
 	}{
-		{[]string{"100:00:00", "%H %k %h %I %l"},
+		{[]string{"100:00:00", `%H %k %h %I %l`},
 			"100 100 04 04 4"},
-		{[]string{"23:00:00", "%H %k %h %I %l"},
+		{[]string{"23:00:00", `%H %k %h %I %l`},
 			"23 23 11 11 11"},
-		{[]string{"11:00:00", "%H %k %h %I %l"},
+		{[]string{"11:00:00", `%H %k %h %I %l`},
 			"11 11 11 11 11"},
-		{[]string{"17:42:03.000001", "%r %T %h:%i%p %h:%i:%s %p %H %i %s"},
+		{[]string{"17:42:03.000001", `%r %T %h:%i%p %h:%i:%s %p %H %i %s`},
 			"05:42:03 PM 17:42:03 05:42PM 05:42:03 PM 17 42 03"},
-		{[]string{"07:42:03.000001", "%f"},
+		{[]string{"07:42:03.000001", `%f`},
 			"000001"},
-		{[]string{"1990-05-07 19:30:10", "%H %i %s"},
+		{[]string{"1990-05-07 19:30:10", `%H %i %s`},
 			"19 30 10"},
 	}
 	dtblDate := tblToDtbl(tblDate)
@@ -1981,7 +1981,7 @@ func (s *testEvaluatorSuite) TestTimeFormat(c *C) {
 		c.Assert(err, IsNil)
 		v, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
-		c.Assert(v, testutil.DatumEquals, t["Expect"][0], Commentf("no.%d \nobtain:%v \nexpect:%v\n", i,
+		c.Assert(v, testutil.DatumEquals, t["Expect"][0], Commentf(`no.%d \nobtain:%v \nexpect:%v\n`, i,
 			v.GetValue(), t["Expect"][0].GetValue()))
 	}
 }
