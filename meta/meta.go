@@ -80,8 +80,9 @@ var (
 
 // Meta is for handling meta information in a transaction.
 type Meta struct {
-	txn     *structure.TxStructure
-	StartTS uint64 // StartTS is the txn's start TS.
+	txn        *structure.TxStructure
+	StartTS    uint64 // StartTS is the txn's start TS.
+	jobListKey JobListKeyType
 }
 
 // NewMeta creates a Meta in transaction txn.
@@ -89,7 +90,7 @@ func NewMeta(txn kv.Transaction) *Meta {
 	txn.SetOption(kv.Priority, kv.PriorityHigh)
 	txn.SetOption(kv.SyncLog, true)
 	t := structure.NewStructure(txn, txn, mMetaPrefix)
-	return &Meta{txn: t, StartTS: txn.StartTS()}
+	return &Meta{txn: t, StartTS: txn.StartTS(), jobListKey: DefaultJobListKey}
 }
 
 // NewSnapshotMeta creates a Meta with snapshot.
@@ -434,7 +435,6 @@ func (m *Meta) GetTable(dbID int64, tableID int64) (*model.TableInfo, error) {
 }
 
 // DDL job structure
-//	DDLOnwer: []byte
 //	DDLJobList: list jobs
 //	DDLJobHistory: hash
 //	DDLJobReorg: hash
@@ -443,10 +443,26 @@ func (m *Meta) GetTable(dbID int64, tableID int64) (*model.TableInfo, error) {
 // to operate DDL jobs, and dispatch them to MR Jobs.
 
 var (
-	mDDLJobListKey    = []byte("DDLJobList")
-	mDDLJobHistoryKey = []byte("DDLJobHistory")
-	mDDLJobReorgKey   = []byte("DDLJobReorg")
+	mDDLJobListKey       = []byte("DDLJobList")
+	mAddIdxDDLJobListKey = []byte("AddIdxDDLJobList")
+	mDDLJobHistoryKey    = []byte("DDLJobHistory")
+	mDDLJobReorgKey      = []byte("DDLJobReorg")
 )
+
+// JobListKeyType is a key type of the DDL job queue.
+type JobListKeyType []byte
+
+var (
+	// DefaultJobListKey keeps all actions of DDL jobs.
+	DefaultJobListKey JobListKeyType = mDDLJobListKey
+	// AddIndexJobListKey only keeps the action of adding index.
+	AddIndexJobListKey JobListKeyType = mAddIdxDDLJobListKey
+)
+
+// SetJobListKey sets the job list key.
+func (m *Meta) SetJobListKey(key []byte) {
+	m.jobListKey = key
+}
 
 func (m *Meta) enQueueDDLJob(key []byte, job *model.Job) error {
 	b, err := job.Encode(true)
@@ -458,7 +474,7 @@ func (m *Meta) enQueueDDLJob(key []byte, job *model.Job) error {
 
 // EnQueueDDLJob adds a DDL job to the list.
 func (m *Meta) EnQueueDDLJob(job *model.Job) error {
-	return m.enQueueDDLJob(mDDLJobListKey, job)
+	return m.enQueueDDLJob(m.jobListKey, job)
 }
 
 func (m *Meta) deQueueDDLJob(key []byte) (*model.Job, error) {
@@ -474,7 +490,7 @@ func (m *Meta) deQueueDDLJob(key []byte) (*model.Job, error) {
 
 // DeQueueDDLJob pops a DDL job from the list.
 func (m *Meta) DeQueueDDLJob() (*model.Job, error) {
-	return m.deQueueDDLJob(mDDLJobListKey)
+	return m.deQueueDDLJob(m.jobListKey)
 }
 
 func (m *Meta) getDDLJob(key []byte, index int64) (*model.Job, error) {
@@ -491,7 +507,7 @@ func (m *Meta) getDDLJob(key []byte, index int64) (*model.Job, error) {
 // GetDDLJob returns the DDL job with index.
 func (m *Meta) GetDDLJob(index int64) (*model.Job, error) {
 	startTime := time.Now()
-	job, err := m.getDDLJob(mDDLJobListKey, index)
+	job, err := m.getDDLJob(m.jobListKey, index)
 	metrics.MetaHistogram.WithLabelValues(metrics.GetDDLJob, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	return job, errors.Trace(err)
 }
@@ -510,14 +526,14 @@ func (m *Meta) updateDDLJob(index int64, job *model.Job, key []byte, updateRawAr
 // updateRawArgs is used to determine whether to update the raw args when encode the job.
 func (m *Meta) UpdateDDLJob(index int64, job *model.Job, updateRawArgs bool) error {
 	startTime := time.Now()
-	err := m.updateDDLJob(index, job, mDDLJobListKey, updateRawArgs)
+	err := m.updateDDLJob(index, job, m.jobListKey, updateRawArgs)
 	metrics.MetaHistogram.WithLabelValues(metrics.UpdateDDLJob, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	return errors.Trace(err)
 }
 
 // DDLJobQueueLen returns the DDL job queue length.
 func (m *Meta) DDLJobQueueLen() (int64, error) {
-	return m.txn.LLen(mDDLJobListKey)
+	return m.txn.LLen(m.jobListKey)
 }
 
 func (m *Meta) jobIDKey(id int64) []byte {
