@@ -22,10 +22,10 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
@@ -80,7 +80,7 @@ func (s *testBinlogSuite) SetUpSuite(c *C) {
 	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	s.store = store
-	tidb.SetSchemaLease(0)
+	session.SetSchemaLease(0)
 	s.unixFile = "/tmp/mock-binlog-pump" + strconv.FormatInt(time.Now().UnixNano(), 10)
 	l, err := net.Listen("unix", s.unixFile)
 	c.Assert(err, IsNil)
@@ -95,7 +95,7 @@ func (s *testBinlogSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(clientCon, NotNil)
 	tk := testkit.NewTestKit(c, s.store)
-	_, err = tidb.BootstrapSession(store)
+	_, err = session.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	tk.MustExec("use test")
 	sessionDomain := domain.GetDomain(tk.Se.(sessionctx.Context))

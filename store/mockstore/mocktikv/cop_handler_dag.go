@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	mockpkg "github.com/pingcap/tidb/util/mock"
 	tipb "github.com/pingcap/tipb/go-tipb"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
@@ -452,7 +453,7 @@ func (mock *mockCopStreamClient) Recv() (*coprocessor.Response, error) {
 		return nil, io.EOF
 	}
 
-	if hook := mock.ctx.Value("mockTiKVStreamRecvHook"); hook != nil {
+	if hook := mock.ctx.Value(mockpkg.HookKeyForTest("mockTiKVStreamRecvHook")); hook != nil {
 		hook.(func(context.Context))(mock.ctx)
 	}
 

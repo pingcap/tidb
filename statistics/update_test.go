@@ -340,7 +340,7 @@ func appendBucket(h *statistics.Histogram, l, r int64) {
 }
 
 func (s *testStatsUpdateSuite) TestSplitRange(c *C) {
-	h := statistics.NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeLong), 5)
+	h := statistics.NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeLong), 5, 0)
 	appendBucket(h, 1, 1)
 	appendBucket(h, 2, 5)
 	appendBucket(h, 7, 7)

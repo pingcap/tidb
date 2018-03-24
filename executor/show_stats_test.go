@@ -15,7 +15,7 @@ package executor_test
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -73,7 +73,7 @@ func (s *testSuite) TestShowStatsHealthy(c *C) {
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t 100"))
 	tk.MustExec("insert into t values (1), (2)")
-	do, _ := tidb.GetDomain(s.store)
+	do, _ := session.GetDomain(s.store)
 	do.StatsHandle().DumpStatsDeltaToKV()
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t 100"))

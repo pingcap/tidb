@@ -22,8 +22,8 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 )
@@ -65,7 +65,7 @@ func (ds *testDumpStatsSuite) startServer(c *C) {
 	store, err := mockstore.NewMockTikvStore(mockstore.WithMVCCStore(mvccStore))
 	c.Assert(err, IsNil)
 
-	_, err = tidb.BootstrapSession(store)
+	_, err = session.BootstrapSession(store)
 	c.Assert(err, IsNil)
 
 	tidbdrv := NewTiDBDriver(store)
@@ -120,7 +120,7 @@ func (ds *testDumpStatsSuite) checkData(c *C, path string) {
 	dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
 	var dbName, tableName string
 	var other interface{}
-	err = rows.Scan(&dbName, &tableName, &other, &other, &other, &other, &other)
+	err = rows.Scan(&dbName, &tableName, &other, &other, &other, &other, &other, &other)
 	dbt.Check(err, IsNil)
 	dbt.Check(dbName, Equals, "tidb")
 	dbt.Check(tableName, Equals, "test")

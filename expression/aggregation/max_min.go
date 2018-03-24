@@ -42,7 +42,7 @@ func (mmf *maxMinFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.State
 		return errors.Trace(err)
 	}
 	if evalCtx.Value.IsNull() {
-		evalCtx.Value = value
+		evalCtx.Value = *(&value).Copy()
 	}
 	if value.IsNull() {
 		return nil
@@ -53,7 +53,7 @@ func (mmf *maxMinFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.State
 		return errors.Trace(err)
 	}
 	if (mmf.isMax && c == -1) || (!mmf.isMax && c == 1) {
-		evalCtx.Value = value
+		evalCtx.Value = *(&value).Copy()
 	}
 	return nil
 }

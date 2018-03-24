@@ -31,15 +31,18 @@ import (
 var errStopped = errors.New("stopped")
 
 type testStoreSuite struct {
+	OneByOneSuite
 	store *tikvStore
 }
 
 var _ = Suite(&testStoreSuite{})
 
 func (s *testStoreSuite) SetUpTest(c *C) {
-	store, err := newTestTiKVStore()
-	c.Check(err, IsNil)
-	s.store = store.(*tikvStore)
+	s.store = NewTestStore(c).(*tikvStore)
+}
+
+func (s *testStoreSuite) TearDownTest(c *C) {
+	c.Assert(s.store.Close(), IsNil)
 }
 
 func (s *testStoreSuite) TestParsePath(c *C) {

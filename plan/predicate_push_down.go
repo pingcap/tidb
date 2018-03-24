@@ -63,7 +63,10 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression)
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
 	p.children[0].PredicatePushDown(predicates)
-	p.conditions = predicates
+	p.conditions = make([]expression.Expression, 0, len(predicates))
+	for _, cond := range predicates {
+		p.conditions = append(p.conditions, cond.Clone())
+	}
 	return nil, p
 }
 
@@ -80,11 +83,11 @@ func (p *LogicalTableDual) PredicatePushDown(predicates []expression.Expression)
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan) {
-	outerJoinSimplify(p, predicates)
-	groups, valid := tryToGetJoinGroup(p)
-	if valid {
+	simplifyOuterJoin(p, predicates)
+	joinGroup := getCartesianJoinGroup(p)
+	if joinGroup != nil {
 		e := joinReOrderSolver{ctx: p.ctx}
-		e.reorderJoin(groups, predicates)
+		e.reorderJoin(joinGroup, predicates)
 		newJoin := e.resultJoin
 		return newJoin.PredicatePushDown(predicates)
 	}
@@ -215,34 +218,34 @@ func (p *LogicalJoin) getProj(idx int) *LogicalProjection {
 	return proj
 }
 
-// outerJoinSimplify simplifies outer join.
-func outerJoinSimplify(p *LogicalJoin, predicates []expression.Expression) {
-	var innerTable, outerTable LogicalPlan
-	child1 := p.children[0]
-	child2 := p.children[1]
-	var fullConditions []expression.Expression
-	if p.JoinType == LeftOuterJoin {
-		innerTable = child2
-		outerTable = child1
-	} else if p.JoinType == RightOuterJoin || p.JoinType == InnerJoin {
-		innerTable = child1
-		outerTable = child2
-	} else {
+// simplifyOuterJoin transforms "LeftOuterJoin/RightOuterJoin" to "InnerJoin" if possible.
+func simplifyOuterJoin(p *LogicalJoin, predicates []expression.Expression) {
+	if p.JoinType != LeftOuterJoin && p.JoinType != RightOuterJoin && p.JoinType != InnerJoin {
 		return
 	}
+
+	innerTable := p.children[0]
+	outerTable := p.children[1]
+	if p.JoinType == LeftOuterJoin {
+		innerTable, outerTable = outerTable, innerTable
+	}
+
+	var fullConditions []expression.Expression
+
 	// first simplify embedded outer join.
 	// When trying to simplify an embedded outer join operation in a query,
 	// we must take into account the join condition for the embedding outer join together with the WHERE condition.
 	if innerPlan, ok := innerTable.(*LogicalJoin); ok {
 		fullConditions = concatOnAndWhereConds(p, predicates)
-		outerJoinSimplify(innerPlan, fullConditions)
+		simplifyOuterJoin(innerPlan, fullConditions)
 	}
 	if outerPlan, ok := outerTable.(*LogicalJoin); ok {
 		if fullConditions != nil {
 			fullConditions = concatOnAndWhereConds(p, predicates)
 		}
-		outerJoinSimplify(outerPlan, fullConditions)
+		simplifyOuterJoin(outerPlan, fullConditions)
 	}
+
 	if p.JoinType == InnerJoin {
 		return
 	}
@@ -282,16 +285,16 @@ func isNullRejected(ctx sessionctx.Context, schema *expression.Schema, expr expr
 
 // concatOnAndWhereConds concatenate ON conditions with WHERE conditions.
 func concatOnAndWhereConds(join *LogicalJoin, predicates []expression.Expression) []expression.Expression {
-	equalConds, leftConds, rightConds, otherConds := join.EqualConditions, join.LeftConditions, join.RightConditions, join.OtherConditions
-	ans := make([]expression.Expression, 0, len(equalConds)+len(leftConds)+len(rightConds)+len(predicates))
-	for _, v := range equalConds {
-		ans = append(ans, v)
+	numAllFilters := len(join.EqualConditions) + len(join.LeftConditions) + len(join.RightConditions) + len(join.OtherConditions) + len(predicates)
+	allFilters := make([]expression.Expression, 0, numAllFilters)
+	for _, equalCond := range join.EqualConditions {
+		allFilters = append(allFilters, equalCond)
 	}
-	ans = append(ans, leftConds...)
-	ans = append(ans, rightConds...)
-	ans = append(ans, otherConds...)
-	ans = append(ans, predicates...)
-	return ans
+	allFilters = append(allFilters, join.LeftConditions...)
+	allFilters = append(allFilters, join.RightConditions...)
+	allFilters = append(allFilters, join.OtherConditions...)
+	allFilters = append(allFilters, predicates...)
+	return allFilters
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.

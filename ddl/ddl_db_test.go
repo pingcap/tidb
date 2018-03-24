@@ -24,7 +24,6 @@ import (
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	tmysql "github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
@@ -65,7 +65,7 @@ type testDBSuite struct {
 	dom        *domain.Domain
 	schemaName string
 	tk         *testkit.TestKit
-	s          tidb.Session
+	s          session.Session
 	lease      time.Duration
 	autoIDStep int64
 }
@@ -76,8 +76,8 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 
 	s.lease = 200 * time.Millisecond
-	tidb.SetSchemaLease(s.lease)
-	tidb.SetStatsLease(0)
+	session.SetSchemaLease(s.lease)
+	session.SetStatsLease(0)
 	s.schemaName = "test_db"
 	s.autoIDStep = autoid.GetStep()
 	autoid.SetStep(5000)
@@ -85,10 +85,10 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 	s.store, err = mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 
-	s.dom, err = tidb.BootstrapSession(s.store)
+	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 
-	s.s, err = tidb.CreateSession4Test(s.store)
+	s.s, err = session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 
 	_, err = s.s.Execute(context.Background(), "create database test_db")
@@ -222,7 +222,7 @@ func (s *testDBSuite) testGetTable(c *C, name string) table.Table {
 }
 
 func backgroundExec(s kv.Storage, sql string, done chan error) {
-	se, err := tidb.CreateSession4Test(s)
+	se, err := session.CreateSession4Test(s)
 	if err != nil {
 		done <- errors.Trace(err)
 		return
@@ -313,6 +313,11 @@ func (s *testDBSuite) TestCancelAddIndex(c *C) {
 	var checkErr error
 	hook := &ddl.TestDDLCallback{}
 	first := true
+	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
+	// let hook.OnJobUpdatedExported has chance to cancel the job.
+	// the hook.OnJobUpdatedExported is called when the job is updated, runReorgJob will wait ddl.ReorgWaitTimeout, then return the ddl.runDDLJob.
+	// After that ddl call d.hook.OnJobUpdated(job), so that we can canceled the job in this test case.
+	ddl.ReorgWaitTimeout = 50 * time.Millisecond
 	hook.OnJobUpdatedExported = func(job *model.Job) {
 		addIndexNotFirstReorg := job.Type == model.ActionAddIndex && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0
 		// If the action is adding index and the state is writing reorganization, it want to test the case of cancelling the job when backfilling indexes.
@@ -391,6 +396,7 @@ LOOP:
 	}
 
 	s.mustExec(c, "drop table t1")
+	ddl.ReorgWaitTimeout = oldReorgWaitTimeout
 }
 
 func (s *testDBSuite) TestAddAnonymousIndex(c *C) {
@@ -802,7 +808,7 @@ func (s *testDBSuite) TestColumn(c *C) {
 }
 
 func sessionExec(c *C, s kv.Storage, sql string) {
-	se, err := tidb.CreateSession4Test(s)
+	se, err := session.CreateSession4Test(s)
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "use test_db")
 	c.Assert(err, IsNil)
@@ -818,7 +824,7 @@ func sessionExecInGoroutine(c *C, s kv.Storage, sql string, done chan error) {
 
 func execMultiSQLInGoroutine(c *C, s kv.Storage, multiSQL []string, done chan error) {
 	go func() {
-		se, err := tidb.CreateSession4Test(s)
+		se, err := session.CreateSession4Test(s)
 		if err != nil {
 			done <- errors.Trace(err)
 			return
@@ -1743,4 +1749,15 @@ func (s *testDBSuite) TestRebaseAutoID(c *C) {
 
 	s.tk.MustExec("create table tidb.test2 (a int);")
 	s.testErrorCode(c, "alter table tidb.test2 add column b int auto_increment key, auto_increment=10;", tmysql.ErrUnknown)
+}
+
+func (s *testDBSuite) TestCharacterSetInColumns(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("drop database if exists varchar_test;")
+	s.tk.MustExec("create database varchar_test;")
+	s.tk.MustExec("use varchar_test")
+	s.tk.MustExec("drop table if exists t")
+	s.tk.MustExec("create table t (c1 int, s1 varchar(10), s2 text)")
+	s.tk.MustQuery("select count(*) from information_schema.columns where table_schema = 'varchar_test' and character_set_name != 'utf8'").Check(testkit.Rows("0"))
+	s.tk.MustQuery("select count(*) from information_schema.columns where table_schema = 'varchar_test' and character_set_name = 'utf8'").Check(testkit.Rows("2"))
 }
