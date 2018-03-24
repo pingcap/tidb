@@ -15,7 +15,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tidb
+package session
 
 import (
 	"net/url"
@@ -108,7 +108,7 @@ var (
 	statsLease = 3 * time.Second
 
 	// The maximum number of retries to recover from retryable errors.
-	commitRetryLimit = 10
+	commitRetryLimit uint = 10
 )
 
 // SetSchemaLease changes the default schema lease time for DDL.
@@ -128,7 +128,7 @@ func SetStatsLease(lease time.Duration) {
 // Retryable errors are generally refer to temporary errors that are expected to be
 // reinstated by retry, including network interruption, transaction conflicts, and
 // so on.
-func SetCommitRetryLimit(limit int) {
+func SetCommitRetryLimit(limit uint) {
 	commitRetryLimit = limit
 }
 
@@ -190,7 +190,7 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s ast.Statement) (ast
 		// If the user insert, insert, insert ... but never commit, TiDB would OOM.
 		// So we limit the statement count in a transaction here.
 		history := GetHistory(sctx)
-		if history.Count() > config.GetGlobalConfig().Performance.StmtCountLimit {
+		if history.Count() > int(config.GetGlobalConfig().Performance.StmtCountLimit) {
 			err1 := se.RollbackTxn(ctx1)
 			terror.Log(errors.Trace(err1))
 			return rs, errors.Errorf("statement count %d exceeds the transaction limitation, autocommit = %t",
@@ -217,33 +217,20 @@ func GetRows4Test(ctx context.Context, sctx sessionctx.Context, rs ast.RecordSet
 		return nil, nil
 	}
 	var rows []types.Row
-	if sctx.GetSessionVars().EnableChunk && rs.SupportChunk() {
-		for {
-			// Since we collect all the rows, we can not reuse the chunk.
-			chk := rs.NewChunk()
-			iter := chunk.NewIterator4Chunk(chk)
+	for {
+		// Since we collect all the rows, we can not reuse the chunk.
+		chk := rs.NewChunk()
+		iter := chunk.NewIterator4Chunk(chk)
 
-			err := rs.NextChunk(ctx, chk)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if chk.NumRows() == 0 {
-				break
-			}
-
-			for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-				rows = append(rows, row)
-			}
+		err := rs.NextChunk(ctx, chk)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
-	} else {
-		for {
-			row, err := rs.Next(ctx)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if row == nil {
-				break
-			}
+		if chk.NumRows() == 0 {
+			break
+		}
+
+		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			rows = append(rows, row)
 		}
 	}
@@ -265,7 +252,7 @@ func RegisterStore(name string, driver kv.Driver) error {
 // NewStore creates a kv Storage with path.
 //
 // The path must be a URL format 'engine://path?params' like the one for
-// tidb.Open() but with the dbname cut off.
+// session.Open() but with the dbname cut off.
 // Examples:
 //    goleveldb://relative/path
 //    boltdb:///absolute/path

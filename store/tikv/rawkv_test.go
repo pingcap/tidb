@@ -20,6 +20,7 @@ import (
 )
 
 type testRawKVSuite struct {
+	OneByOneSuite
 	cluster *mocktikv.Cluster
 	client  *RawKVClient
 	bo      *Backoffer

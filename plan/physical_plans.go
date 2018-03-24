@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
 )
@@ -109,9 +110,9 @@ type PhysicalIndexScan struct {
 	// will be different. The schema of index scan will decode all columns of index but the TiDB only need some of them.
 	dataSourceSchema *expression.Schema
 
-	// HistVersion is the version of the histogram when the query was issued.
+	// Hist is the histogram when the query was issued.
 	// It is used for query feedback.
-	HistVersion uint64
+	Hist *statistics.Histogram
 }
 
 // PhysicalMemTable reads memory table.
@@ -155,9 +156,9 @@ type PhysicalTableScan struct {
 	// KeepOrder is true, if sort data by scanning pkcol,
 	KeepOrder bool
 
-	// HistVersion is the version of the histogram when the query was issued.
+	// Hist is the histogram when the query was issued.
 	// It is used for query feedback.
-	HistVersion uint64
+	Hist *statistics.Histogram
 }
 
 // PhysicalProjection is the physical operator of projection.
@@ -204,7 +205,7 @@ type PhysicalHashJoin struct {
 	// For inner join, the smaller one will be chosen.
 	// For outer join or semi join, it's exactly the inner one.
 	InnerChildIdx int
-	Concurrency   int
+	Concurrency   uint
 
 	DefaultValues []types.Datum
 }

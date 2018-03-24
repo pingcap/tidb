@@ -31,10 +31,10 @@ var AllowCartesianProduct = true
 
 const (
 	flagPrunColumns uint64 = 1 << iota
-	flagMaxMinEliminate
 	flagEliminateProjection
 	flagBuildKeyInfo
 	flagDecorrelate
+	flagMaxMinEliminate
 	flagPredicatePushDown
 	flagAggregationOptimize
 	flagPushDownTopN
@@ -42,10 +42,10 @@ const (
 
 var optRuleList = []logicalOptRule{
 	&columnPruner{},
-	&maxMinEliminator{},
 	&projectionEliminater{},
 	&buildKeySolver{},
 	&decorrelateSolver{},
+	&maxMinEliminator{},
 	&ppdSolver{},
 	&aggregationOptimizer{},
 	&pushDownTopNOptimizer{},
@@ -120,7 +120,7 @@ func doOptimize(flag uint64, logic LogicalPlan) (PhysicalPlan, error) {
 	if !AllowCartesianProduct && existsCartesianProduct(logic) {
 		return nil, errors.Trace(ErrCartesianProductUnsupported)
 	}
-	physical, err := dagPhysicalOptimize(logic)
+	physical, err := physicalOptimize(logic)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -145,7 +145,7 @@ func logicalOptimize(flag uint64, logic LogicalPlan) (LogicalPlan, error) {
 	return logic, errors.Trace(err)
 }
 
-func dagPhysicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
+func physicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
 	logic.preparePossibleProperties()
 	logic.deriveStats()
 	t, err := logic.convert2PhysicalPlan(&requiredProp{taskTp: rootTaskType, expectedCnt: math.MaxFloat64})

@@ -28,6 +28,7 @@ import (
 )
 
 type testCommitterSuite struct {
+	OneByOneSuite
 	cluster *mocktikv.Cluster
 	store   *tikvStore
 }
@@ -44,11 +45,12 @@ func (s *testCommitterSuite) SetUpTest(c *C) {
 	store, err := newTikvStore("mocktikv-store", pdCli, spkv, client, false)
 	c.Assert(err, IsNil)
 	s.store = store
-	commitMaxBackoff = 2000
+	CommitMaxBackoff = 2000
 }
 
 func (s *testCommitterSuite) TearDownSuite(c *C) {
-	commitMaxBackoff = 20000
+	CommitMaxBackoff = 20000
+	s.OneByOneSuite.TearDownSuite(c)
 }
 
 func (s *testCommitterSuite) begin(c *C) *tikvTxn {
@@ -153,7 +155,7 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 	}
 	committer.commitTS, err = s.store.oracle.GetTimestamp(ctx)
 	c.Assert(err, IsNil)
-	err = committer.commitKeys(NewBackoffer(ctx, commitMaxBackoff), [][]byte{[]byte("a")})
+	err = committer.commitKeys(NewBackoffer(ctx, CommitMaxBackoff), [][]byte{[]byte("a")})
 	c.Assert(err, IsNil)
 
 	txn3 := s.begin(c)

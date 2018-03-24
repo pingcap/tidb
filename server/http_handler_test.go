@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2018 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,63 +16,105 @@ package server
 import (
 	"bytes"
 	"database/sql"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"sort"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 )
 
-type TidbRegionHandlerTestSuite struct {
+type HTTPHandlerTestSuite struct {
 	server *Server
 }
 
-var _ = Suite(new(TidbRegionHandlerTestSuite))
+var _ = Suite(new(HTTPHandlerTestSuite))
 
-func (ts *TidbRegionHandlerTestSuite) TestRegionIndexRange(c *C) {
+func (ts *HTTPHandlerTestSuite) TestRegionIndexRange(c *C) {
 	sTableID := int64(3)
 	sIndex := int64(11)
 	eTableID := int64(9)
+	recordID := int64(133)
+	indexValues := []types.Datum{
+		types.NewIntDatum(100),
+		types.NewBytesDatum([]byte("foobar")),
+		types.NewFloat64Datum(-100.25),
+	}
+	var expectIndexValues []string
+	for _, v := range indexValues {
+		expectIndexValues = append(expectIndexValues, fmt.Sprintf("%d-%v", v.Kind(), v.GetValue()))
+	}
+	encodedValue, err := codec.EncodeKey(&stmtctx.StatementContext{TimeZone: time.Local}, nil, indexValues...)
+	c.Assert(err, IsNil)
 
-	startKey := tablecodec.EncodeTableIndexPrefix(sTableID, sIndex)
-	endKey := tablecodec.GenTableRecordPrefix(eTableID)
+	startKey := tablecodec.EncodeIndexSeekKey(sTableID, sIndex, encodedValue)
+	recordPrefix := tablecodec.GenTableRecordPrefix(eTableID)
+	endKey := tablecodec.EncodeRecordKey(recordPrefix, recordID)
 
 	region := &tikv.KeyLocation{
 		Region:   tikv.RegionVerID{},
 		StartKey: startKey,
 		EndKey:   endKey,
 	}
-	indexRange, err := NewRegionFrameRange(region)
+	r, err := NewRegionFrameRange(region)
 	c.Assert(err, IsNil)
-	c.Assert(indexRange.firstTableID(), Equals, sTableID)
-	c.Assert(indexRange.lastTableID(), Equals, eTableID)
-	c.Assert(indexRange.first.IndexID, Equals, sIndex)
-	c.Assert(indexRange.first.IsRecord, IsFalse)
-	c.Assert(indexRange.last.IsRecord, IsTrue)
-	start, end := indexRange.getIndexRangeForTable(sTableID)
-	c.Assert(start, Equals, sIndex)
-	c.Assert(end, Equals, int64(math.MaxInt64))
-	start, end = indexRange.getIndexRangeForTable(eTableID)
-	c.Assert(start, Equals, int64(math.MinInt64))
-	c.Assert(end, Equals, int64(math.MaxInt64))
+	c.Assert(r.first.IndexID, Equals, sIndex)
+	c.Assert(r.first.IsRecord, IsFalse)
+	c.Assert(r.first.RecordID, Equals, int64(0))
+	c.Assert(r.first.IndexValues, DeepEquals, expectIndexValues)
+	c.Assert(r.last.IsRecord, IsTrue)
+	c.Assert(r.last.RecordID, Equals, recordID)
+	c.Assert(r.last.IndexValues, IsNil)
+
+	testCases := []struct {
+		tableID int64
+		indexID int64
+		isCover bool
+	}{
+		{2, 0, false},
+		{3, 0, true},
+		{9, 0, true},
+		{10, 0, false},
+		{2, 10, false},
+		{3, 10, false},
+		{3, 11, true},
+		{3, 20, true},
+		{9, 10, true},
+		{10, 1, false},
+	}
+	for _, t := range testCases {
+		var f *FrameItem
+		if t.indexID == 0 {
+			f = r.getRecordFrame(t.tableID, "", "")
+		} else {
+			f = r.getIndexFrame(t.tableID, t.indexID, "", "", "")
+		}
+		if t.isCover {
+			c.Assert(f, NotNil)
+		} else {
+			c.Assert(f, IsNil)
+		}
+	}
 }
 
-func (ts *TidbRegionHandlerTestSuite) TestRegionIndexRangeWithEndNoLimit(c *C) {
+func (ts *HTTPHandlerTestSuite) TestRegionIndexRangeWithEndNoLimit(c *C) {
 	sTableID := int64(15)
-	eTableID := int64(math.MaxInt64)
 	startKey := tablecodec.GenTableRecordPrefix(sTableID)
 	endKey := []byte("z_aaaaafdfd")
 	region := &tikv.KeyLocation{
@@ -80,23 +122,15 @@ func (ts *TidbRegionHandlerTestSuite) TestRegionIndexRangeWithEndNoLimit(c *C) {
 		StartKey: startKey,
 		EndKey:   endKey,
 	}
-	indexRange, err := NewRegionFrameRange(region)
+	r, err := NewRegionFrameRange(region)
 	c.Assert(err, IsNil)
-	c.Assert(indexRange.firstTableID(), Equals, sTableID)
-	c.Assert(indexRange.lastTableID(), Equals, eTableID)
-	c.Assert(indexRange.first.IsRecord, IsTrue)
-	c.Assert(indexRange.last.IsRecord, IsTrue)
-	start, end := indexRange.getIndexRangeForTable(sTableID)
-	c.Assert(start, Equals, int64(math.MaxInt64))
-	c.Assert(end, Equals, int64(math.MaxInt64))
-	start, end = indexRange.getIndexRangeForTable(eTableID)
-	c.Assert(start, Equals, int64(math.MinInt64))
-	c.Assert(end, Equals, int64(math.MaxInt64))
+	c.Assert(r.first.IsRecord, IsTrue)
+	c.Assert(r.last.IsRecord, IsTrue)
+	c.Assert(r.getRecordFrame(300, "", ""), NotNil)
+	c.Assert(r.getIndexFrame(200, 100, "", "", ""), NotNil)
 }
 
-func (ts *TidbRegionHandlerTestSuite) TestRegionIndexRangeWithStartNoLimit(c *C) {
-	sTableID := int64(math.MinInt64)
-	sIndexID := int64(math.MinInt64)
+func (ts *HTTPHandlerTestSuite) TestRegionIndexRangeWithStartNoLimit(c *C) {
 	eTableID := int64(9)
 	startKey := []byte("m_aaaaafdfd")
 	endKey := tablecodec.GenTableRecordPrefix(eTableID)
@@ -105,22 +139,15 @@ func (ts *TidbRegionHandlerTestSuite) TestRegionIndexRangeWithStartNoLimit(c *C)
 		StartKey: startKey,
 		EndKey:   endKey,
 	}
-	indexRange, err := NewRegionFrameRange(region)
+	r, err := NewRegionFrameRange(region)
 	c.Assert(err, IsNil)
-	c.Assert(indexRange.firstTableID(), Equals, sTableID)
-	c.Assert(indexRange.lastTableID(), Equals, eTableID)
-	c.Assert(indexRange.first.IndexID, Equals, sIndexID)
-	c.Assert(indexRange.first.IsRecord, IsFalse)
-	c.Assert(indexRange.last.IsRecord, IsTrue)
-	start, end := indexRange.getIndexRangeForTable(sTableID)
-	c.Assert(start, Equals, sIndexID)
-	c.Assert(end, Equals, int64(math.MaxInt64))
-	start, end = indexRange.getIndexRangeForTable(eTableID)
-	c.Assert(start, Equals, int64(math.MinInt64))
-	c.Assert(end, Equals, int64(math.MaxInt64))
+	c.Assert(r.first.IsRecord, IsFalse)
+	c.Assert(r.last.IsRecord, IsTrue)
+	c.Assert(r.getRecordFrame(3, "", ""), NotNil)
+	c.Assert(r.getIndexFrame(8, 1, "", "", ""), NotNil)
 }
 
-func (ts *TidbRegionHandlerTestSuite) TestRegionsAPI(c *C) {
+func (ts *HTTPHandlerTestSuite) TestRegionsAPI(c *C) {
 	ts.startServer(c)
 	defer ts.stopServer(c)
 	resp, err := http.Get("http://127.0.0.1:10090/tables/information_schema/SCHEMATA/regions")
@@ -157,7 +184,7 @@ func regionContainsTable(c *C, regionID uint64, tableID int64) bool {
 	return false
 }
 
-func (ts *TidbRegionHandlerTestSuite) TestListTableRegionsWithError(c *C) {
+func (ts *HTTPHandlerTestSuite) TestListTableRegionsWithError(c *C) {
 	ts.startServer(c)
 	defer ts.stopServer(c)
 	resp, err := http.Get("http://127.0.0.1:10090/tables/fdsfds/aaa/regions")
@@ -166,7 +193,7 @@ func (ts *TidbRegionHandlerTestSuite) TestListTableRegionsWithError(c *C) {
 	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
 }
 
-func (ts *TidbRegionHandlerTestSuite) TestGetRegionByIDWithError(c *C) {
+func (ts *HTTPHandlerTestSuite) TestGetRegionByIDWithError(c *C) {
 	ts.startServer(c)
 	defer ts.stopServer(c)
 	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:10090/regions/xxx"))
@@ -175,7 +202,7 @@ func (ts *TidbRegionHandlerTestSuite) TestGetRegionByIDWithError(c *C) {
 	defer resp.Body.Close()
 }
 
-func (ts *TidbRegionHandlerTestSuite) TestRegionsFromMeta(c *C) {
+func (ts *HTTPHandlerTestSuite) TestRegionsFromMeta(c *C) {
 	ts.startServer(c)
 	defer ts.stopServer(c)
 	resp, err := http.Get("http://127.0.0.1:10090/regions/meta")
@@ -193,11 +220,11 @@ func (ts *TidbRegionHandlerTestSuite) TestRegionsFromMeta(c *C) {
 	}
 }
 
-func (ts *TidbRegionHandlerTestSuite) startServer(c *C) {
+func (ts *HTTPHandlerTestSuite) startServer(c *C) {
 	mvccStore := mocktikv.NewMvccStore()
 	store, err := mockstore.NewMockTikvStore(mockstore.WithMVCCStore(mvccStore))
 	c.Assert(err, IsNil)
-	_, err = tidb.BootstrapSession(store)
+	_, err = session.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	tidbdrv := NewTiDBDriver(store)
 
@@ -214,13 +241,13 @@ func (ts *TidbRegionHandlerTestSuite) startServer(c *C) {
 	waitUntilServerOnline(cfg.Status.StatusPort)
 }
 
-func (ts *TidbRegionHandlerTestSuite) stopServer(c *C) {
+func (ts *HTTPHandlerTestSuite) stopServer(c *C) {
 	if ts.server != nil {
 		ts.server.Close()
 	}
 }
 
-func (ts *TidbRegionHandlerTestSuite) prepareData(c *C) {
+func (ts *HTTPHandlerTestSuite) prepareData(c *C) {
 	db, err := sql.Open("mysql", getDSN())
 	c.Assert(err, IsNil, Commentf("Error connecting"))
 	defer db.Close()
@@ -259,7 +286,7 @@ func decodeKeyMvcc(closer io.ReadCloser, c *C, valid bool) {
 	}
 }
 
-func (ts *TidbRegionHandlerTestSuite) TestGetTableMvcc(c *C) {
+func (ts *HTTPHandlerTestSuite) TestGetTableMVCC(c *C) {
 	ts.startServer(c)
 	ts.prepareData(c)
 	defer ts.stopServer(c)
@@ -306,7 +333,7 @@ func (ts *TidbRegionHandlerTestSuite) TestGetTableMvcc(c *C) {
 	c.Assert(data2, DeepEquals, data)
 }
 
-func (ts *TidbRegionHandlerTestSuite) TestGetMvccNotFound(c *C) {
+func (ts *HTTPHandlerTestSuite) TestGetMVCCNotFound(c *C) {
 	ts.startServer(c)
 	ts.prepareData(c)
 	defer ts.stopServer(c)
@@ -327,7 +354,70 @@ func (ts *TidbRegionHandlerTestSuite) TestGetMvccNotFound(c *C) {
 	c.Assert(p.Info, IsNil)
 }
 
-func (ts *TidbRegionHandlerTestSuite) TestGetIndexMvcc(c *C) {
+func (ts *HTTPHandlerTestSuite) TestDecodeColumnValue(c *C) {
+	ts.startServer(c)
+	ts.prepareData(c)
+	defer ts.stopServer(c)
+
+	// column is a structure used for test
+	type column struct {
+		id int64
+		tp *types.FieldType
+	}
+	// Backfill columns.
+	c1 := &column{id: 1, tp: types.NewFieldType(mysql.TypeLonglong)}
+	c2 := &column{id: 2, tp: types.NewFieldType(mysql.TypeVarchar)}
+	c3 := &column{id: 3, tp: types.NewFieldType(mysql.TypeNewDecimal)}
+	c4 := &column{id: 4, tp: types.NewFieldType(mysql.TypeTimestamp)}
+	cols := []*column{c1, c2, c3, c4}
+	row := make([]types.Datum, len(cols))
+	row[0] = types.NewIntDatum(100)
+	row[1] = types.NewBytesDatum([]byte("abc"))
+	row[2] = types.NewDecimalDatum(types.NewDecFromInt(1))
+	row[3] = types.NewTimeDatum(types.Time{Time: types.FromGoTime(time.Now()), Fsp: 6, Type: mysql.TypeTimestamp})
+
+	// Encode the row.
+	colIDs := make([]int64, 0, 3)
+	for _, col := range cols {
+		colIDs = append(colIDs, col.id)
+	}
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	bs, err := tablecodec.EncodeRow(sc, row, colIDs, nil, nil)
+	c.Assert(err, IsNil)
+	c.Assert(bs, NotNil)
+	bin := base64.StdEncoding.EncodeToString(bs)
+
+	unitTest := func(col *column) {
+		url := fmt.Sprintf("http://127.0.0.1:10090/tables/%d/%v/%d/%d?rowBin=%s", col.id, col.tp.Tp, col.tp.Flag, col.tp.Flen, bin)
+		resp, err := http.Get(url)
+		c.Assert(err, IsNil, Commentf("url:%s", url))
+		decoder := json.NewDecoder(resp.Body)
+		var data interface{}
+		err = decoder.Decode(&data)
+		c.Assert(err, IsNil, Commentf("url:%v\ndata%v", url, data))
+		colVal, err := types.DatumsToString([]types.Datum{row[col.id-1]})
+		c.Assert(err, IsNil)
+		c.Assert(data, Equals, colVal, Commentf("url:%v", url))
+	}
+
+	for _, col := range cols {
+		unitTest(col)
+	}
+
+	// Test bin has `+`.
+	// 2018-03-08 16:01:00.315313
+	bin = "CAIIyAEIBAIGYWJjCAYGAQCBCAgJsZ+TgISg1M8Z"
+	row[3] = types.NewTimeDatum(types.Time{Time: types.FromGoTime(time.Date(2018, 3, 8, 16, 1, 0, 315313000, time.UTC)), Fsp: 6, Type: mysql.TypeTimestamp})
+	unitTest(cols[3])
+
+	// Test bin has `/`.
+	// 2018-03-08 02:44:46.409199
+	bin = "CAIIyAEIBAIGYWJjCAYGAQCBCAgJ7/yY8LKF1M8Z"
+	row[3] = types.NewTimeDatum(types.Time{Time: types.FromGoTime(time.Date(2018, 3, 8, 2, 44, 46, 409199000, time.UTC)), Fsp: 6, Type: mysql.TypeTimestamp})
+	unitTest(cols[3])
+}
+
+func (ts *HTTPHandlerTestSuite) TestGetIndexMVCC(c *C) {
 	ts.startServer(c)
 	ts.prepareData(c)
 	defer ts.stopServer(c)
@@ -384,7 +474,20 @@ func (ts *TidbRegionHandlerTestSuite) TestGetIndexMvcc(c *C) {
 	c.Assert(err, NotNil)
 }
 
-func (ts *TidbRegionHandlerTestSuite) TestGetSchema(c *C) {
+func (ts *HTTPHandlerTestSuite) TestGetSettings(c *C) {
+	ts.startServer(c)
+	ts.prepareData(c)
+	defer ts.stopServer(c)
+	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:10090/settings"))
+	c.Assert(err, IsNil)
+	decoder := json.NewDecoder(resp.Body)
+	var settings *config.Config
+	err = decoder.Decode(&settings)
+	c.Assert(err, IsNil)
+	c.Assert(settings, DeepEquals, config.GetGlobalConfig())
+}
+
+func (ts *HTTPHandlerTestSuite) TestGetSchema(c *C) {
 	ts.startServer(c)
 	ts.prepareData(c)
 	defer ts.stopServer(c)

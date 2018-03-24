@@ -54,7 +54,9 @@ func (s *testSuite) TestIndexDoubleReadClose(c *C) {
 
 	rs, err := tk.Exec("select * from dist where c_idx between 0 and 100")
 	c.Assert(err, IsNil)
-	_, err = rs.Next(context.Background())
+	chk := rs.NewChunk()
+	err = rs.NextChunk(context.Background(), chk)
+	c.Assert(err, IsNil)
 	c.Assert(err, IsNil)
 	keyword := "pickAndExecTask"
 	rs.Close()
@@ -103,9 +105,10 @@ func (s *testSuite) TestCopClientSend(c *C) {
 	rs, err := tk.Exec("select sum(id) from copclient")
 	c.Assert(err, IsNil)
 	defer rs.Close()
-	row, err := rs.Next(ctx)
+	chk := rs.NewChunk()
+	err = rs.NextChunk(ctx, chk)
 	c.Assert(err, IsNil)
-	c.Assert(row.GetMyDecimal(0).String(), Equals, "499500")
+	c.Assert(chk.GetRow(0).GetMyDecimal(0).String(), Equals, "499500")
 
 	// Split one region.
 	key := tablecodec.EncodeRowKeyWithHandle(tblID, 500)
@@ -116,17 +119,43 @@ func (s *testSuite) TestCopClientSend(c *C) {
 	// Check again.
 	rs, err = tk.Exec("select sum(id) from copclient")
 	c.Assert(err, IsNil)
-	row, err = rs.Next(ctx)
+	chk = rs.NewChunk()
+	err = rs.NextChunk(ctx, chk)
 	c.Assert(err, IsNil)
-	c.Assert(row.GetMyDecimal(0).String(), Equals, "499500")
+	c.Assert(chk.GetRow(0).GetMyDecimal(0).String(), Equals, "499500")
 	rs.Close()
 
 	// Check there is no goroutine leak.
 	rs, err = tk.Exec("select * from copclient order by id")
 	c.Assert(err, IsNil)
-	_, err = rs.Next(ctx)
+	chk = rs.NewChunk()
+	err = rs.NextChunk(ctx, chk)
 	c.Assert(err, IsNil)
 	rs.Close()
 	keyword := "(*copIterator).work"
 	c.Check(checkGoroutineExists(keyword), IsFalse)
+}
+
+func (s *testSuite) TestGetLackHandles(c *C) {
+	expectedHandles := []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
+	handlesMap := make(map[int64]struct{})
+	for _, h := range expectedHandles {
+		handlesMap[h] = struct{}{}
+	}
+
+	// expected handles 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
+	// obtained handles 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
+	diffHandles := executor.GetLackHandles(expectedHandles, handlesMap)
+	c.Assert(diffHandles, HasLen, 0)
+	c.Assert(handlesMap, HasLen, 0)
+
+	// expected handles 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
+	// obtained handles 2, 3, 4, 6, 7, 8, 9
+	retHandles := []int64{2, 3, 4, 6, 7, 8, 9}
+	handlesMap = make(map[int64]struct{})
+	handlesMap[1] = struct{}{}
+	handlesMap[5] = struct{}{}
+	handlesMap[10] = struct{}{}
+	diffHandles = executor.GetLackHandles(expectedHandles, handlesMap)
+	c.Assert(retHandles, DeepEquals, diffHandles)
 }

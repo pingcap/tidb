@@ -29,9 +29,9 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
 	tmysql "github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"golang.org/x/net/context"
 )
@@ -46,9 +46,9 @@ var _ = Suite(suite)
 
 func (ts *TidbTestSuite) SetUpSuite(c *C) {
 	store, err := mockstore.NewMockTikvStore()
-	tidb.SetStatsLease(0)
+	session.SetStatsLease(0)
 	c.Assert(err, IsNil)
-	_, err = tidb.BootstrapSession(store)
+	_, err = session.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	ts.tidbdrv = NewTiDBDriver(store)
 	cfg := config.NewConfig()
@@ -399,13 +399,14 @@ func (ts *TidbTestSuite) TestCreateTableFlen(c *C) {
 	_, err = qctx.Execute(ctx, testSQL)
 	c.Assert(err, IsNil)
 	rs, err := qctx.Execute(ctx, "show create table t1")
-	row, err := rs[0].Next(ctx)
+	chk := rs[0].NewChunk()
+	err = rs[0].NextChunk(ctx, chk)
 	c.Assert(err, IsNil)
 	cols := rs[0].Columns()
 	c.Assert(err, IsNil)
 	c.Assert(len(cols), Equals, 2)
 	c.Assert(int(cols[0].ColumnLength), Equals, 5*tmysql.MaxBytesOfCharacter)
-	c.Assert(int(cols[1].ColumnLength), Equals, len(row.GetString(1))*tmysql.MaxBytesOfCharacter)
+	c.Assert(int(cols[1].ColumnLength), Equals, len(chk.GetRow(0).GetString(1))*tmysql.MaxBytesOfCharacter)
 
 	// for issue#5246
 	rs, err = qctx.Execute(ctx, "select y, z from t1")
@@ -414,6 +415,26 @@ func (ts *TidbTestSuite) TestCreateTableFlen(c *C) {
 	c.Assert(len(cols), Equals, 2)
 	c.Assert(int(cols[0].ColumnLength), Equals, 21)
 	c.Assert(int(cols[1].ColumnLength), Equals, 22)
+}
+
+func (ts *TidbTestSuite) TestShowTablesFlen(c *C) {
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	c.Assert(err, IsNil)
+	_, err = qctx.Execute(context.Background(), "use test;")
+	c.Assert(err, IsNil)
+
+	ctx := context.Background()
+	testSQL := "create table abcdefghijklmnopqrstuvwxyz (i int)"
+	_, err = qctx.Execute(ctx, testSQL)
+	c.Assert(err, IsNil)
+	rs, err := qctx.Execute(ctx, "show tables")
+	chk := rs[0].NewChunk()
+	err = rs[0].NextChunk(ctx, chk)
+	c.Assert(err, IsNil)
+	cols := rs[0].Columns()
+	c.Assert(err, IsNil)
+	c.Assert(len(cols), Equals, 1)
+	c.Assert(int(cols[0].ColumnLength), Equals, 26*tmysql.MaxBytesOfCharacter)
 }
 
 func checkColNames(c *C, columns []*ColumnInfo, names ...string) {

@@ -26,13 +26,14 @@ import (
 )
 
 type testLockSuite struct {
+	OneByOneSuite
 	store *tikvStore
 }
 
 var _ = Suite(&testLockSuite{})
 
 func (s *testLockSuite) SetUpTest(c *C) {
-	s.store = newTestStore(c)
+	s.store = NewTestStore(c).(*tikvStore)
 }
 
 func (s *testLockSuite) TearDownTest(c *C) {
@@ -65,7 +66,7 @@ func (s *testLockSuite) lockKey(c *C, key, value, primaryKey, primaryValue []byt
 	if commitPrimary {
 		tpc.commitTS, err = s.store.oracle.GetTimestamp(ctx)
 		c.Assert(err, IsNil)
-		err = tpc.commitKeys(NewBackoffer(ctx, commitMaxBackoff), [][]byte{primaryKey})
+		err = tpc.commitKeys(NewBackoffer(ctx, CommitMaxBackoff), [][]byte{primaryKey})
 		c.Assert(err, IsNil)
 	}
 	return txn.startTS, tpc.commitTS

@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	log "github.com/sirupsen/logrus"
@@ -80,28 +79,6 @@ func schema2ResultFields(schema *expression.Schema, defaultDB string) (rfs []*as
 	return rfs
 }
 
-// Next uses recordSet's executor to get next available row.
-// If row is nil, then updates LastFoundRows in session variable.
-// If stmt and row are not nil, increase current FoundRows by 1.
-func (a *recordSet) Next(ctx context.Context) (types.Row, error) {
-	row, err := a.executor.Next(ctx)
-	if err != nil {
-		a.lastErr = err
-		return nil, errors.Trace(err)
-	}
-	if row == nil {
-		if a.stmt != nil {
-			a.stmt.Ctx.GetSessionVars().LastFoundRows = a.stmt.Ctx.GetSessionVars().StmtCtx.FoundRows()
-		}
-		return nil, nil
-	}
-
-	if a.stmt != nil {
-		a.stmt.Ctx.GetSessionVars().StmtCtx.AddFoundRows(1)
-	}
-	return row, nil
-}
-
 // NextChunk use uses recordSet's executor to get next available chunk for later usage.
 // If chunk does not contain any rows, then we update last query found rows in session variable as current found rows.
 // The reason we need update is that chunk with 0 rows indicating we already finished current query, we need prepare for
@@ -129,10 +106,6 @@ func (a *recordSet) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 // NewChunk create a new chunk using NewChunk function in chunk package.
 func (a *recordSet) NewChunk() *chunk.Chunk {
 	return chunk.NewChunk(a.executor.retTypes())
-}
-
-func (a *recordSet) SupportChunk() bool {
-	return a.executor.supportChunk()
 }
 
 func (a *recordSet) Close() error {
@@ -289,26 +262,9 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 		a.logSlowQuery(txnTS, err == nil)
 	}()
 
-	if sctx.GetSessionVars().EnableChunk && e.supportChunk() {
-		err = e.NextChunk(ctx, e.newChunk())
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	} else {
-		for {
-			var row Row
-			row, err = e.Next(ctx)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			// Even though there isn't any result set, the row is still used to indicate if there is
-			// more work to do.
-			// For example, the UPDATE statement updates a single row on a Next call, we keep calling Next until
-			// There is no more rows to update.
-			if row == nil {
-				return nil, nil
-			}
-		}
+	err = e.NextChunk(ctx, e.newChunk())
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	return nil, nil
@@ -380,7 +336,7 @@ func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
 		return
 	}
 	sql := a.Text
-	if len(sql) > cfg.Log.QueryLogMaxLen {
+	if len(sql) > int(cfg.Log.QueryLogMaxLen) {
 		sql = fmt.Sprintf("%.*q(len:%d)", cfg.Log.QueryLogMaxLen, sql, len(a.Text))
 	}
 	connID := a.Ctx.GetSessionVars().ConnectionID

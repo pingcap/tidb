@@ -19,6 +19,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"golang.org/x/net/context"
 )
@@ -91,18 +93,8 @@ func NewPrepareExec(ctx sessionctx.Context, is infoschema.InfoSchema, sqlTxt str
 	}
 }
 
-// Next implements the Executor Next interface.
-func (e *PrepareExec) Next(ctx context.Context) (Row, error) {
-	return nil, errors.Trace(e.DoPrepare())
-}
-
 // NextChunk implements the Executor NextChunk interface.
 func (e *PrepareExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
-	return errors.Trace(e.DoPrepare())
-}
-
-// DoPrepare prepares the statement, it can be called multiple times without side effect.
-func (e *PrepareExec) DoPrepare() error {
 	vars := e.ctx.GetSessionVars()
 	if e.ID != 0 {
 		// Must be the case when we retry a prepare.
@@ -192,12 +184,6 @@ type ExecuteExec struct {
 	plan      plan.Plan
 }
 
-// Next implements the Executor Next interface.
-// It will never be called.
-func (e *ExecuteExec) Next(ctx context.Context) (Row, error) {
-	return nil, nil
-}
-
 // NextChunk implements the Executor NextChunk interface.
 func (e *ExecuteExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	return nil
@@ -234,17 +220,8 @@ type DeallocateExec struct {
 	Name string
 }
 
-// Next implements the Executor Next interface.
-func (e *DeallocateExec) Next(ctx context.Context) (Row, error) {
-	return nil, errors.Trace(e.run(ctx))
-}
-
 // NextChunk implements the Executor NextChunk interface.
 func (e *DeallocateExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
-	return errors.Trace(e.run(ctx))
-}
-
-func (e *DeallocateExec) run(ctx context.Context) error {
 	vars := e.ctx.GetSessionVars()
 	id, ok := vars.PreparedStmtNameToID[e.Name]
 	if !ok {
@@ -286,6 +263,15 @@ func ResetStmtCtx(ctx sessionctx.Context, s ast.StmtNode) {
 	sessVars := ctx.GetSessionVars()
 	sc := new(stmtctx.StatementContext)
 	sc.TimeZone = sessVars.GetTimeZone()
+	sc.MemTracker = memory.NewTracker(s.Text(), sessVars.MemQuotaQuery)
+	switch config.GetGlobalConfig().OOMAction {
+	case config.OOMActionCancel:
+		sc.MemTracker.SetActionOnExceed(&memory.PanicOnExceed{})
+	case config.OOMActionLog:
+		sc.MemTracker.SetActionOnExceed(&memory.LogOnExceed{})
+	default:
+		sc.MemTracker.SetActionOnExceed(&memory.LogOnExceed{})
+	}
 
 	switch stmt := s.(type) {
 	case *ast.UpdateStmt:

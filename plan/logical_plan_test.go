@@ -21,18 +21,14 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tipb/go-tipb"
-	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testPlanSuite{})
@@ -274,111 +270,10 @@ func MockTable() *model.TableInfo {
 	return table
 }
 
-func supportExpr(exprType tipb.ExprType) bool {
-	switch exprType {
-	// data type
-	case tipb.ExprType_Null, tipb.ExprType_Int64, tipb.ExprType_Uint64,
-		tipb.ExprType_Float32, tipb.ExprType_Float64, tipb.ExprType_String,
-		tipb.ExprType_Bytes, tipb.ExprType_MysqlDuration, tipb.ExprType_MysqlDecimal,
-		tipb.ExprType_MysqlTime, tipb.ExprType_ColumnRef:
-		return true
-	// logic operators
-	case tipb.ExprType_And, tipb.ExprType_Or, tipb.ExprType_Not, tipb.ExprType_Xor:
-		return true
-	// compare operators
-	case tipb.ExprType_LT, tipb.ExprType_LE, tipb.ExprType_EQ, tipb.ExprType_NE,
-		tipb.ExprType_GE, tipb.ExprType_GT, tipb.ExprType_NullEQ,
-		tipb.ExprType_In, tipb.ExprType_ValueList, tipb.ExprType_Like:
-		return true
-	// arithmetic operators
-	case tipb.ExprType_Plus, tipb.ExprType_Div, tipb.ExprType_Minus,
-		tipb.ExprType_Mul, tipb.ExprType_IntDiv, tipb.ExprType_Mod:
-		return true
-	// aggregate functions
-	case tipb.ExprType_Count, tipb.ExprType_First, tipb.ExprType_Sum,
-		tipb.ExprType_Avg, tipb.ExprType_Max, tipb.ExprType_Min:
-		return true
-	// bitwise operators
-	case tipb.ExprType_BitAnd, tipb.ExprType_BitOr, tipb.ExprType_BitXor, tipb.ExprType_BitNeg:
-		return true
-	// control functions
-	case tipb.ExprType_Case, tipb.ExprType_If, tipb.ExprType_IfNull, tipb.ExprType_NullIf:
-		return true
-	// other functions
-	case tipb.ExprType_Coalesce, tipb.ExprType_IsNull:
-		return true
-	case kv.ReqSubTypeDesc:
-		return true
-	default:
-		return false
-	}
-}
-
-type mockClient struct {
-}
-
-func (c *mockClient) Send(ctx context.Context, _ *kv.Request) kv.Response {
-	return nil
-}
-
-func (c *mockClient) IsRequestTypeSupported(reqType, subType int64) bool {
-	switch reqType {
-	case kv.ReqTypeSelect, kv.ReqTypeIndex:
-		switch subType {
-		case kv.ReqSubTypeGroupBy, kv.ReqSubTypeBasic, kv.ReqSubTypeTopN:
-			return true
-		default:
-			return supportExpr(tipb.ExprType(subType))
-		}
-	}
-	return false
-}
-
-type mockStore struct {
-	client *mockClient
-}
-
-func (m *mockStore) GetClient() kv.Client {
-	return m.client
-}
-
-func (m *mockStore) GetOracle() oracle.Oracle {
-	return nil
-}
-
-func (m *mockStore) Begin() (kv.Transaction, error) {
-	return nil, nil
-}
-
-// BeginWithStartTS begins with startTS.
-func (m *mockStore) BeginWithStartTS(startTS uint64) (kv.Transaction, error) {
-	return m.Begin()
-}
-
-func (m *mockStore) GetSnapshot(ver kv.Version) (kv.Snapshot, error) {
-	return nil, nil
-}
-
-func (m *mockStore) Close() error {
-	return nil
-}
-
-func (m *mockStore) UUID() string {
-	return "mock"
-}
-
-func (m *mockStore) CurrentVersion() (kv.Version, error) {
-	return kv.Version{}, nil
-}
-
-func (m *mockStore) SupportDeleteRange() bool {
-	return false
-}
-
 func mockContext() sessionctx.Context {
 	ctx := mock.NewContext()
-	ctx.Store = &mockStore{
-		client: &mockClient{},
+	ctx.Store = &mock.Store{
+		Client: &mock.Client{},
 	}
 	ctx.GetSessionVars().CurrentDB = "test"
 	do := &domain.Domain{}
@@ -476,7 +371,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		},
 		{
 			sql:  "select a, d from (select * from t union all select * from t union all select * from t) z where a < 10",
-			best: "UnionAll{DataScan(t)->Sel([lt(cast(test.t.a), 10)])->Projection->Projection->DataScan(t)->Sel([lt(cast(test.t.a), 10)])->Projection->Projection->DataScan(t)->Sel([lt(cast(test.t.a), 10)])->Projection->Projection}->Projection",
+			best: "UnionAll{DataScan(t)->Projection->DataScan(t)->Projection->DataScan(t)->Projection}->Projection",
 		},
 		{
 			sql:  "select (select count(*) from t where t.a = k.a) from t k",
@@ -569,19 +464,16 @@ func (s *testPlanSuite) TestSubquery(c *C) {
 			best: "Apply{DataScan(t)->DataScan(s)->Sel([eq(s.a, test.t.a)])->Aggr(count(s.b))}->Projection",
 		},
 		{
-			// Theta-join with agg cannot decorrelate.
 			sql:  "select (select count(s.b) k from t s where s.a = t.a having k != 0) from t",
-			best: "Apply{DataScan(t)->DataScan(s)->Sel([eq(s.a, test.t.a)])->Aggr(count(s.b))}->Projection->Projection",
+			best: "Join{DataScan(t)->DataScan(s)->Aggr(count(s.b),firstrow(s.a))}(test.t.a,s.a)->Projection->Projection->Projection",
 		},
 		{
-			// Relation without keys cannot decorrelate.
 			sql:  "select (select count(s.b) k from t s where s.a = t1.a) from t t1, t t2",
-			best: "Apply{Join{DataScan(t1)->DataScan(t2)}->DataScan(s)->Sel([eq(s.a, t1.a)])->Aggr(count(s.b))}->Projection->Projection",
+			best: "Join{Join{DataScan(t1)->DataScan(t2)}->DataScan(s)->Aggr(count(s.b),firstrow(s.a))}(t1.a,s.a)->Projection->Projection->Projection",
 		},
 		{
-			// Aggregate function like count(1) cannot decorrelate.
 			sql:  "select (select count(1) k from t s where s.a = t.a having k != 0) from t",
-			best: "Apply{DataScan(t)->DataScan(s)->Sel([eq(s.a, test.t.a)])->Aggr(count(1))}->Projection->Projection",
+			best: "Join{DataScan(t)->DataScan(s)->Aggr(count(1),firstrow(s.a))}(test.t.a,s.a)->Projection->Projection->Projection",
 		},
 		{
 			sql:  "select a from t where a in (select a from t s group by t.b)",
@@ -610,6 +502,10 @@ func (s *testPlanSuite) TestSubquery(c *C) {
 			// Test Nested sub query.
 			sql:  "select * from t where exists (select s.a from t s where s.c in (select c from t as k where k.d = s.d) having sum(s.a) = t.a )",
 			best: "Join{DataScan(t)->Join{DataScan(s)->DataScan(k)}(s.d,k.d)(s.c,k.c)->Aggr(sum(s.a))->Projection}->Projection",
+		},
+		{
+			sql:  "select t1.b from t t1 where t1.b = (select max(t2.a) from t t2 where t1.b=t2.b)",
+			best: "Join{DataScan(t1)->DataScan(t2)->Aggr(max(t2.a),firstrow(t2.b))}(t1.b,t2.b)->Projection->Sel([eq(t1.b, max(t2.a))])->Projection",
 		},
 	}
 
@@ -833,7 +729,7 @@ func (s *testPlanSuite) TestEagerAggregation(c *C) {
 		},
 		{
 			sql:  "select sum(c1) from (select c c1, d c2 from t a union all select a c1, b c2 from t b union all select b c1, e c2 from t c) x group by c2",
-			best: "UnionAll{DataScan(a)->Projection->Aggr(sum(cast(a.c1)),firstrow(cast(a.c2)))->DataScan(b)->Projection->Aggr(sum(cast(b.c1)),firstrow(cast(b.c2)))->DataScan(c)->Projection->Aggr(sum(cast(c.c1)),firstrow(c.c2))}->Aggr(sum(join_agg_0))->Projection",
+			best: "UnionAll{DataScan(a)->Aggr(sum(a.c),firstrow(a.d))->DataScan(b)->Aggr(sum(b.a),firstrow(b.b))->DataScan(c)->Aggr(sum(c.b),firstrow(c.e))}->Aggr(sum(join_agg_0))->Projection",
 		},
 		{
 			sql:  "select max(a.b), max(b.b) from t a join t b on a.c = b.c group by a.a",
@@ -845,7 +741,7 @@ func (s *testPlanSuite) TestEagerAggregation(c *C) {
 		},
 		{
 			sql:  "select max(c.b) from (select * from t a union all select * from t b) c group by c.a",
-			best: "UnionAll{DataScan(a)->Projection->Aggr(max(cast(a.b)),firstrow(cast(a.a)))->DataScan(b)->Projection->Aggr(max(cast(b.b)),firstrow(cast(b.a)))}->Aggr(max(join_agg_0))->Projection",
+			best: "UnionAll{DataScan(a)->Projection->DataScan(b)->Projection}->Projection->Projection",
 		},
 		{
 			sql:  "select max(a.c) from t a join t b on a.a=b.a and a.b=b.b group by a.b",
@@ -1609,12 +1505,12 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		// Test TopN + UA + Proj.
 		{
 			sql:  "select * from t union all (select * from t s) order by a,b limit 5",
-			best: "UnionAll{DataScan(t)->TopN([cast(test.t.a) cast(test.t.b)],0,5)->Projection->DataScan(s)->TopN([cast(s.a) cast(s.b)],0,5)->Projection}->TopN([t.a t.b],0,5)",
+			best: "UnionAll{DataScan(t)->TopN([test.t.a test.t.b],0,5)->Projection->DataScan(s)->TopN([s.a s.b],0,5)->Projection}->TopN([t.a t.b],0,5)",
 		},
 		// Test TopN + UA + Proj.
 		{
 			sql:  "select * from t union all (select * from t s) order by a,b limit 5, 5",
-			best: "UnionAll{DataScan(t)->TopN([cast(test.t.a) cast(test.t.b)],0,10)->Projection->DataScan(s)->TopN([cast(s.a) cast(s.b)],0,10)->Projection}->TopN([t.a t.b],5,5)",
+			best: "UnionAll{DataScan(t)->TopN([test.t.a test.t.b],0,10)->Projection->DataScan(s)->TopN([s.a s.b],0,10)->Projection}->TopN([t.a t.b],5,5)",
 		},
 		// Test Limit + UA + Proj + Sort.
 		{

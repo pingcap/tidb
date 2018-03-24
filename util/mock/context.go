@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
-	"github.com/pingcap/tipb/go-binlog"
+	binlog "github.com/pingcap/tipb/go-binlog"
 	"golang.org/x/net/context"
 )
 
@@ -219,3 +219,7 @@ func NewContext() *Context {
 	sctx.sessionVars.MaxChunkSize = 2
 	return sctx
 }
+
+// HookKeyForTest is as alias, used by context.WithValue.
+// golint forbits using string type as key in context.WithValue.
+type HookKeyForTest string

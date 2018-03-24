@@ -83,6 +83,7 @@ const (
 	boTxnLockFast
 	boPDRPC
 	BoRegionMiss
+	BoUpdateLeader
 	boServerBusy
 )
 
@@ -98,6 +99,8 @@ func (t backoffType) createFn() func(context.Context) int {
 		return NewBackoffFn(500, 3000, EqualJitter)
 	case BoRegionMiss:
 		return NewBackoffFn(100, 500, NoJitter)
+	case BoUpdateLeader:
+		return NewBackoffFn(1, 10, NoJitter)
 	case boServerBusy:
 		return NewBackoffFn(2000, 10000, EqualJitter)
 	}
@@ -116,6 +119,8 @@ func (t backoffType) String() string {
 		return "pdRPC"
 	case BoRegionMiss:
 		return "regionMiss"
+	case BoUpdateLeader:
+		return "updateLeader"
 	case boServerBusy:
 		return "serverBusy"
 	}
@@ -130,7 +135,7 @@ func (t backoffType) TError() *terror.Error {
 		return ErrResolveLockTimeout
 	case boPDRPC:
 		return ErrPDServerTimeout.GenByArgs(txnRetryableMark)
-	case BoRegionMiss:
+	case BoRegionMiss, BoUpdateLeader:
 		return ErrRegionUnavailable
 	case boServerBusy:
 		return ErrTiKVServerBusy
@@ -155,7 +160,8 @@ const (
 	splitRegionBackoff      = 20000
 )
 
-var commitMaxBackoff = 20000
+// CommitMaxBackoff is max sleep time of the 'commit' command
+var CommitMaxBackoff = 41000
 
 // Backoffer is a utility for retrying queries.
 type Backoffer struct {

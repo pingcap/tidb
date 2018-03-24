@@ -22,7 +22,7 @@ package variable
 	4. Add a field in `SessionVars`.
 	5. Update the `NewSessionVars` function to set the field to its default value.
 	6. Update the `variable.SetSessionSystemVar` function to use the new value when SET statement is executed.
-	7. If it is a global variable, add it in `tidb.loadCommonGlobalVarsSQL`.
+	7. If it is a global variable, add it in `session.loadCommonGlobalVarsSQL`.
 	8. Use this variable to control the behavior in code.
 */
 
@@ -47,6 +47,11 @@ const (
 	// tidb_build_stats_concurrency is used to speed up the ANALYZE statement, when a table has multiple indices,
 	// those indices can be scanned concurrently, with the cost of higher system performance impact.
 	TiDBBuildStatsConcurrency = "tidb_build_stats_concurrency"
+
+	// tidb_checksum_table_concurrency is used to speed up the ADMIN CHECKSUM TABLE
+	// statement, when a table has multiple indices, those indices can be
+	// scanned concurrently, with the cost of higher system performance impact.
+	TiDBChecksumTableConcurrency = "tidb_checksum_table_concurrency"
 
 	// TiDBCurrentTS is used to get the current transaction timestamp.
 	// It is read-only.
@@ -108,9 +113,17 @@ const (
 	// tidb_max_chunk_capacity is used to control the max chunk size during query execution.
 	TiDBMaxChunkSize = "tidb_max_chunk_size"
 
-	// tidb_mem_threshold is used to control the memory usage warning threshold in Byte of an executor during query execution.
-	// When the memory usage hold by an executor exceeds the threshold, a warning log will be printed.
-	TiDBMemThreshold = "tidb_mem_threshold"
+	// The following session variables controls the memory quota during query execution.
+	// "tidb_mem_quota_query":				control the memory quota of a query.
+	// "tidb_mem_quota_hashjoin": 			control the memory quota of "HashJoinExec".
+	// "tidb_mem_quota_sort":     			control the memory quota of "SortExec".
+	// "tidb_mem_quota_topn":     			control the memory quota of "TopNExec".
+	// "tidb_mem_quota_indexlookupreader":	control the memory quota of "IndexLookUpExecutor".
+	TIDBMemQuotaQuery             = "tidb_mem_quota_query"             // Bytes.
+	TIDBMemQuotaHashJoin          = "tidb_mem_quota_hashjoin"          // Bytes.
+	TIDBMemQuotaSort              = "tidb_mem_quota_sort"              // Bytes.
+	TIDBMemQuotaTopn              = "tidb_mem_quota_topn"              // Bytes.
+	TIDBMemQuotaIndexLookupReader = "tidb_mem_quota_indexlookupreader" // Bytes.
 
 	// tidb_general_log is used to log every query in the server in info level.
 	TiDBGeneralLog = "tidb_general_log"
@@ -121,22 +134,27 @@ const (
 
 // Default TiDB system variable values.
 const (
-	DefIndexLookupConcurrency     = 4
-	DefIndexSerialScanConcurrency = 1
-	DefIndexJoinBatchSize         = 25000
-	DefIndexLookupSize            = 20000
-	DefDistSQLScanConcurrency     = 15
-	DefBuildStatsConcurrency      = 4
-	DefSkipUTF8Check              = false
-	DefOptAggPushDown             = false
-	DefOptInSubqUnfolding         = false
-	DefBatchInsert                = false
-	DefBatchDelete                = false
-	DefCurretTS                   = 0
-	DefMaxChunkSize               = 1024
-	DefDMLBatchSize               = 20000
-	DefMemThreshold               = 32 * 1024 * 1024 * 1024 // 32 GiB
-	DefTiDBGeneralLog             = 0
+	DefIndexLookupConcurrency        = 4
+	DefIndexSerialScanConcurrency    = 1
+	DefIndexJoinBatchSize            = 25000
+	DefIndexLookupSize               = 20000
+	DefDistSQLScanConcurrency        = 15
+	DefBuildStatsConcurrency         = 4
+	DefChecksumTableConcurrency      = 4
+	DefSkipUTF8Check                 = false
+	DefOptAggPushDown                = false
+	DefOptInSubqUnfolding            = false
+	DefBatchInsert                   = false
+	DefBatchDelete                   = false
+	DefCurretTS                      = 0
+	DefMaxChunkSize                  = 1024
+	DefDMLBatchSize                  = 20000
+	DefTiDBMemQuotaQuery             = 32 << 30 // 32GB.
+	DefTiDBMemQuotaHashJoin          = 32 << 30 // 32GB.
+	DefTiDBMemQuotaSort              = 32 << 30 // 32GB.
+	DefTiDBMemQuotaTopn              = 32 << 30 // 32GB.
+	DefTiDBMemQuotaIndexLookupReader = 32 << 30 // 32GB.
+	DefTiDBGeneralLog                = 0
 )
 
 // Process global variables.

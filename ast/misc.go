@@ -457,6 +457,25 @@ func (u *UserSpec) SecurityString() string {
 	return u.User.String()
 }
 
+// EncodedPassword returns the encoded password (which is the real data mysql.user).
+// The boolean value indicates input's password format is legal or not.
+func (u *UserSpec) EncodedPassword() (string, bool) {
+	if u.AuthOpt == nil {
+		return "", true
+	}
+
+	opt := u.AuthOpt
+	if opt.ByAuthString {
+		return auth.EncodePassword(opt.AuthString), true
+	}
+
+	// Not a legal password string.
+	if len(opt.HashString) != 41 || !strings.HasPrefix(opt.HashString, "*") {
+		return "", false
+	}
+	return opt.HashString, true
+}
+
 // CreateUserStmt creates user account.
 // See https://dev.mysql.com/doc/refman/5.7/en/create-user.html
 type CreateUserStmt struct {
@@ -570,18 +589,32 @@ const (
 	AdminCheckTable
 	AdminShowDDLJobs
 	AdminCancelDDLJobs
+	AdminCheckIndex
+	AdminRecoverIndex
+	AdminCheckIndexRange
+	AdminShowDDLJobQueries
+	AdminChecksumTable
 )
+
+// HandleRange represents a range where handle value >= Begin and < End.
+type HandleRange struct {
+	Begin int64
+	End   int64
+}
 
 // AdminStmt is the struct for Admin statement.
 type AdminStmt struct {
 	stmtNode
 
 	Tp     AdminStmtType
+	Index  string
 	Tables []*TableName
 	JobIDs []int64
+
+	HandleRanges []HandleRange
 }
 
-// Accept implements Node Accpet interface.
+// Accept implements Node Accept interface.
 func (n *AdminStmt) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
@@ -752,6 +785,7 @@ type SelectStmtOpts struct {
 	Distinct      bool
 	SQLCache      bool
 	CalcFoundRows bool
+	StraightJoin  bool
 	Priority      mysql.PriorityEnum
 	TableHints    []*TableOptimizerHint
 }

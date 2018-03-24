@@ -14,16 +14,18 @@
 package executor_test
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/privilege/privileges"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
@@ -38,12 +40,12 @@ func (s *testSuite) TestShow(c *C) {
 
 	testSQL := `drop table if exists show_test`
 	tk.MustExec(testSQL)
-	testSQL = `create table SHOW_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int comment "c1_comment", c2 int, c3 int default 1, c4 text, key idx_wide_c4(c3, c4(10))) ENGINE=InnoDB AUTO_INCREMENT=28934 DEFAULT CHARSET=utf8 COMMENT "table_comment";`
+	testSQL = `create table SHOW_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int comment "c1_comment", c2 int, c3 int default 1, c4 text, c5 boolean, key idx_wide_c4(c3, c4(10))) ENGINE=InnoDB AUTO_INCREMENT=28934 DEFAULT CHARSET=utf8 COMMENT "table_comment";`
 	tk.MustExec(testSQL)
 
 	testSQL = "show columns from show_test;"
 	result := tk.MustQuery(testSQL)
-	c.Check(result.Rows(), HasLen, 5)
+	c.Check(result.Rows(), HasLen, 6)
 
 	testSQL = "show create table show_test;"
 	result = tk.MustQuery(testSQL)
@@ -51,7 +53,7 @@ func (s *testSuite) TestShow(c *C) {
 	row := result.Rows()[0]
 	// For issue https://github.com/pingcap/tidb/issues/1061
 	expectedRow := []interface{}{
-		"SHOW_test", "CREATE TABLE `SHOW_test` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n  `c1` int(11) DEFAULT NULL COMMENT 'c1_comment',\n  `c2` int(11) DEFAULT NULL,\n  `c3` int(11) DEFAULT '1',\n  `c4` text DEFAULT NULL,\n  PRIMARY KEY (`id`),\n  KEY `idx_wide_c4` (`c3`,`c4`(10))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=28934 COMMENT='table_comment'"}
+		"SHOW_test", "CREATE TABLE `SHOW_test` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n  `c1` int(11) DEFAULT NULL COMMENT 'c1_comment',\n  `c2` int(11) DEFAULT NULL,\n  `c3` int(11) DEFAULT '1',\n  `c4` text DEFAULT NULL,\n  `c5` tinyint(1) DEFAULT NULL,\n  PRIMARY KEY (`id`),\n  KEY `idx_wide_c4` (`c3`,`c4`(10))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=28934 COMMENT='table_comment'"}
 	for i, r := range row {
 		c.Check(r, Equals, expectedRow[i])
 	}
@@ -324,7 +326,7 @@ func (s *testSuite) TestShowVisibility(c *C) {
 	tk.MustExec(`flush privileges`)
 
 	tk1 := testkit.NewTestKit(c, s.store)
-	se, err := tidb.CreateSession4Test(s.store)
+	se, err := session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "show", Hostname: "%"}, nil, nil), IsTrue)
 	tk1.Se = se
@@ -360,7 +362,7 @@ func (s *testSuite) TestShowVisibility(c *C) {
 // mockSessionManager is a mocked session manager that wraps one session
 // it returns only this session's current process info as processlist for test.
 type mockSessionManager struct {
-	tidb.Session
+	session.Session
 }
 
 // ShowProcessList implements the SessionManager.ShowProcessList interface.
@@ -537,13 +539,9 @@ func (s *testSuite) TestShow2(c *C) {
 	tk.MustQuery("show tables").Check(testkit.Rows("t"))
 	tk.MustQuery("show full tables").Check(testkit.Rows("t BASE TABLE"))
 
-	r, err := tk.Exec("show table status from test like 't'")
-	c.Assert(err, IsNil)
-	row, err := r.Next(context.Background())
-	c.Assert(err, IsNil)
-	c.Assert(row.Len(), Equals, 18)
-	c.Assert(row.GetString(0), Equals, "t")
-	c.Assert(row.GetString(17), Equals, "注释")
+	r := tk.MustQuery("show table status from test like 't'")
+	timeStr := time.Now().Format("2006-01-02 15:04:05")
+	r.Check(testkit.Rows(fmt.Sprintf("t InnoDB 10 Compact 100 100 100 100 100 100 100 %s %s %s utf8_general_ci   注释", timeStr, timeStr, timeStr)))
 
 	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, []byte("012345678901234567890"))
 
@@ -580,7 +578,7 @@ func (s *testSuite) TestShowTableStatus(c *C) {
 	rs, err := tk.Exec("show table status;")
 	c.Assert(errors.ErrorStack(err), Equals, "")
 	c.Assert(rs, NotNil)
-	rows, err := tidb.GetRows4Test(context.Background(), tk.Se, rs)
+	rows, err := session.GetRows4Test(context.Background(), tk.Se, rs)
 	c.Assert(errors.ErrorStack(err), Equals, "")
 	err = rs.Close()
 	c.Assert(errors.ErrorStack(err), Equals, "")

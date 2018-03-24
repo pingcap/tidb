@@ -38,7 +38,8 @@ func encodeHandle(h int64) []byte {
 	return buf.Bytes()
 }
 
-func decodeHandle(data []byte) (int64, error) {
+// DecodeHandle decodes handle in data.
+func DecodeHandle(data []byte) (int64, error) {
 	var h int64
 	buf := bytes.NewBuffer(data)
 	err := binary.Read(buf, binary.BigEndian, &h)
@@ -74,13 +75,12 @@ func (c *indexIter) Next() (val []types.Datum, h int64, err error) {
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
-	// if index is *not* unique, the handle is in keybuf
-	if !c.idx.idxInfo.Unique {
+	if len(vv) > len(c.idx.idxInfo.Columns) {
 		h = vv[len(vv)-1].GetInt64()
 		val = vv[0 : len(vv)-1]
 	} else {
-		// otherwise handle is value
-		h, err = decodeHandle(c.it.Value())
+		// If the index is unique and the value isn't nil, the handle is in value.
+		h, err = DecodeHandle(c.it.Value())
 		if err != nil {
 			return nil, 0, errors.Trace(err)
 		}
@@ -99,22 +99,6 @@ type index struct {
 	tblInfo *model.TableInfo
 	idxInfo *model.IndexInfo
 	prefix  kv.Key
-
-	// ddlReorgBuffer is used reduce the number of new slice when multiple index keys are created.
-	// It is not thread-safe, is only used in ddl index reorganization stage, please don't use it in other case.
-	ddlReorgBuffer []byte
-}
-
-// NewIndexWithBuffer builds a new Index object whit the buffer.
-func NewIndexWithBuffer(tableInfo *model.TableInfo, indexInfo *model.IndexInfo) table.Index {
-	idxPrefix := tablecodec.EncodeTableIndexPrefix(tableInfo.ID, indexInfo.ID)
-	index := &index{
-		tblInfo:        tableInfo,
-		idxInfo:        indexInfo,
-		prefix:         idxPrefix,
-		ddlReorgBuffer: make([]byte, 0, len(idxPrefix)+len(indexInfo.Columns)*9+9),
-	}
-	return index
 }
 
 // NewIndex builds a new Index object.
@@ -135,10 +119,6 @@ func (c *index) Meta() *model.IndexInfo {
 func (c *index) getIndexKeyBuf(buf []byte, defaultCap int) []byte {
 	if buf != nil {
 		return buf[:0]
-	}
-
-	if c.ddlReorgBuffer != nil {
-		return c.ddlReorgBuffer[:0]
 	}
 
 	return make([]byte, 0, defaultCap)
@@ -213,7 +193,7 @@ func (c *index) Create(ctx sessionctx.Context, rm kv.RetrieverMutator, indexedVa
 		return 0, errors.Trace(err)
 	}
 
-	handle, err := decodeHandle(value)
+	handle, err := DecodeHandle(value)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -298,7 +278,7 @@ func (c *index) Exist(sc *stmtctx.StatementContext, rm kv.RetrieverMutator, inde
 
 	// For distinct index, the value of key is handle.
 	if distinct {
-		handle, err := decodeHandle(value)
+		handle, err := DecodeHandle(value)
 		if err != nil {
 			return false, 0, errors.Trace(err)
 		}

@@ -21,10 +21,12 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pingcap/tipb/go-tipb"
+	tipb "github.com/pingcap/tipb/go-tipb"
 )
 
 // RequestBuilder is used to build a "kv.Request".
@@ -41,11 +43,11 @@ func (builder *RequestBuilder) Build() (*kv.Request, error) {
 
 // SetTableRanges sets "KeyRanges" for "kv.Request" by converting "tableRanges"
 // to "KeyRanges" firstly.
-func (builder *RequestBuilder) SetTableRanges(tid int64, tableRanges []*ranger.NewRange) *RequestBuilder {
+func (builder *RequestBuilder) SetTableRanges(tid int64, tableRanges []*ranger.NewRange, fb *statistics.QueryFeedback) *RequestBuilder {
 	if builder.err != nil {
 		return builder
 	}
-	builder.Request.KeyRanges = TableRangesToKVRanges(tid, tableRanges)
+	builder.Request.KeyRanges = TableRangesToKVRanges(tid, tableRanges, fb)
 	return builder
 }
 
@@ -55,7 +57,7 @@ func (builder *RequestBuilder) SetIndexRanges(sc *stmtctx.StatementContext, tid,
 	if builder.err != nil {
 		return builder
 	}
-	builder.Request.KeyRanges, builder.err = IndexRangesToKVRanges(sc, tid, idxID, ranges)
+	builder.Request.KeyRanges, builder.err = IndexRangesToKVRanges(sc, tid, idxID, ranges, nil)
 	return builder
 }
 
@@ -87,6 +89,19 @@ func (builder *RequestBuilder) SetAnalyzeRequest(ana *tipb.AnalyzeReq) *RequestB
 	builder.Request.Tp = kv.ReqTypeAnalyze
 	builder.Request.StartTs = ana.StartTs
 	builder.Request.Data, builder.err = ana.Marshal()
+	builder.Request.NotFillCache = true
+	return builder
+}
+
+// SetChecksumRequest sets the request type to "ReqTypeChecksum" and construct request data.
+func (builder *RequestBuilder) SetChecksumRequest(checksum *tipb.ChecksumRequest) *RequestBuilder {
+	if builder.err != nil {
+		return builder
+	}
+
+	builder.Request.Tp = kv.ReqTypeChecksum
+	builder.Request.StartTs = checksum.StartTs
+	builder.Request.Data, builder.err = checksum.Marshal()
 	builder.Request.NotFillCache = true
 	return builder
 }
@@ -132,24 +147,61 @@ func (builder *RequestBuilder) SetPriority(priority int) *RequestBuilder {
 	return builder
 }
 
+// SetStreaming sets "Streaming" flag for "kv.Request".
+func (builder *RequestBuilder) SetStreaming(streaming bool) *RequestBuilder {
+	builder.Request.Streaming = streaming
+	return builder
+}
+
+// SetConcurrency sets "Concurrency" for "kv.Request".
+func (builder *RequestBuilder) SetConcurrency(concurrency int) *RequestBuilder {
+	builder.Request.Concurrency = concurrency
+	return builder
+}
+
 // TableRangesToKVRanges converts table ranges to "KeyRange".
-func TableRangesToKVRanges(tid int64, ranges []*ranger.NewRange) []kv.KeyRange {
+func TableRangesToKVRanges(tid int64, ranges []*ranger.NewRange, fb *statistics.QueryFeedback) []kv.KeyRange {
+	if fb == nil || fb.Hist() == nil {
+		return tableRangesToKVRangesWithoutSplit(tid, ranges)
+	}
+	ranges = fb.Hist().SplitRange(ranges)
+	krs := make([]kv.KeyRange, 0, len(ranges))
+	newRanges := make([]*ranger.NewRange, 0, len(ranges))
+	for _, ran := range ranges {
+		low, high := encodeHandleKey(ran)
+		startKey := tablecodec.EncodeRowKey(tid, low)
+		endKey := tablecodec.EncodeRowKey(tid, high)
+		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
+
+		r := &ranger.NewRange{LowVal: []types.Datum{types.NewBytesDatum(low)},
+			HighVal: []types.Datum{types.NewBytesDatum(high)}}
+		newRanges = append(newRanges, r)
+	}
+	fb.StoreRanges(newRanges)
+	return krs
+}
+
+func tableRangesToKVRangesWithoutSplit(tid int64, ranges []*ranger.NewRange) []kv.KeyRange {
 	krs := make([]kv.KeyRange, 0, len(ranges))
 	for _, ran := range ranges {
-		var low, high []byte
-		low = codec.EncodeInt(nil, ran.LowVal[0].GetInt64())
-		high = codec.EncodeInt(nil, ran.HighVal[0].GetInt64())
-		if ran.LowExclude {
-			low = []byte(kv.Key(low).PrefixNext())
-		}
-		if !ran.HighExclude {
-			high = []byte(kv.Key(high).PrefixNext())
-		}
+		low, high := encodeHandleKey(ran)
 		startKey := tablecodec.EncodeRowKey(tid, low)
 		endKey := tablecodec.EncodeRowKey(tid, high)
 		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
 	}
 	return krs
+}
+
+func encodeHandleKey(ran *ranger.NewRange) ([]byte, []byte) {
+	low := codec.EncodeInt(nil, ran.LowVal[0].GetInt64())
+	high := codec.EncodeInt(nil, ran.HighVal[0].GetInt64())
+	if ran.LowExclude {
+		low = []byte(kv.Key(low).PrefixNext())
+	}
+	if !ran.HighExclude {
+		high = []byte(kv.Key(high).PrefixNext())
+	}
+	return low, high
 }
 
 // TableHandlesToKVRanges converts sorted handle to kv ranges.
@@ -182,26 +234,64 @@ func TableHandlesToKVRanges(tid int64, handles []int64) []kv.KeyRange {
 }
 
 // IndexRangesToKVRanges converts index ranges to "KeyRange".
-func IndexRangesToKVRanges(sc *stmtctx.StatementContext, tid, idxID int64, ranges []*ranger.NewRange) ([]kv.KeyRange, error) {
+func IndexRangesToKVRanges(sc *stmtctx.StatementContext, tid, idxID int64, ranges []*ranger.NewRange, fb *statistics.QueryFeedback) ([]kv.KeyRange, error) {
+	if fb == nil || fb.Hist() == nil {
+		return indexRangesToKVWithoutSplit(sc, tid, idxID, ranges)
+	}
+	newRanges := make([]*ranger.NewRange, 0, len(ranges))
+	for _, ran := range ranges {
+		low, high, err := encodeIndexKey(sc, ran)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		newRanges = append(newRanges, &ranger.NewRange{LowVal: []types.Datum{types.NewBytesDatum(low)},
+			HighVal: []types.Datum{types.NewBytesDatum(high)}, LowExclude: false, HighExclude: true})
+	}
+	ranges = fb.Hist().SplitRange(newRanges)
 	krs := make([]kv.KeyRange, 0, len(ranges))
 	for _, ran := range ranges {
-		low, err := codec.EncodeKey(sc, nil, ran.LowVal...)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
 		if ran.LowExclude {
-			low = []byte(kv.Key(low).PrefixNext())
-		}
-		high, err := codec.EncodeKey(sc, nil, ran.HighVal...)
-		if err != nil {
-			return nil, errors.Trace(err)
+			ran.LowVal[0].SetBytes(kv.Key(ran.LowVal[0].GetBytes()).PrefixNext())
 		}
 		if !ran.HighExclude {
-			high = []byte(kv.Key(high).PrefixNext())
+			ran.HighVal[0].SetBytes(kv.Key(ran.HighVal[0].GetBytes()).PrefixNext())
+		}
+		startKey := tablecodec.EncodeIndexSeekKey(tid, idxID, ran.LowVal[0].GetBytes())
+		endKey := tablecodec.EncodeIndexSeekKey(tid, idxID, ran.HighVal[0].GetBytes())
+		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
+	}
+	fb.StoreRanges(ranges)
+	return krs, nil
+}
+
+func indexRangesToKVWithoutSplit(sc *stmtctx.StatementContext, tid, idxID int64, ranges []*ranger.NewRange) ([]kv.KeyRange, error) {
+	krs := make([]kv.KeyRange, 0, len(ranges))
+	for _, ran := range ranges {
+		low, high, err := encodeIndexKey(sc, ran)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 		startKey := tablecodec.EncodeIndexSeekKey(tid, idxID, low)
 		endKey := tablecodec.EncodeIndexSeekKey(tid, idxID, high)
 		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
 	}
 	return krs, nil
+}
+
+func encodeIndexKey(sc *stmtctx.StatementContext, ran *ranger.NewRange) ([]byte, []byte, error) {
+	low, err := codec.EncodeKey(sc, nil, ran.LowVal...)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	if ran.LowExclude {
+		low = []byte(kv.Key(low).PrefixNext())
+	}
+	high, err := codec.EncodeKey(sc, nil, ran.HighVal...)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	if !ran.HighExclude {
+		high = []byte(kv.Key(high).PrefixNext())
+	}
+	return low, high, nil
 }

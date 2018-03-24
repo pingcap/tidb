@@ -47,17 +47,8 @@ type SimpleExec struct {
 	is        infoschema.InfoSchema
 }
 
-// Next implements Execution Next interface.
-func (e *SimpleExec) Next(ctx context.Context) (Row, error) {
-	return nil, errors.Trace(e.run(ctx))
-}
-
 // NextChunk implements the Executor NextChunk interface.
-func (e *SimpleExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
-	return errors.Trace(e.run(ctx))
-}
-
-func (e *SimpleExec) run(ctx context.Context) (err error) {
+func (e *SimpleExec) NextChunk(ctx context.Context, chk *chunk.Chunk) (err error) {
 	if e.done {
 		return nil
 	}
@@ -153,13 +144,9 @@ func (e *SimpleExec) executeCreateUser(s *ast.CreateUserStmt) error {
 			}
 			continue
 		}
-		pwd := ""
-		if spec.AuthOpt != nil {
-			if spec.AuthOpt.ByAuthString {
-				pwd = auth.EncodePassword(spec.AuthOpt.AuthString)
-			} else {
-				pwd = auth.EncodePassword(spec.AuthOpt.HashString)
-			}
+		pwd, ok := spec.EncodedPassword()
+		if !ok {
+			return errors.Trace(ErrPasswordFormat)
 		}
 		user := fmt.Sprintf(`("%s", "%s", "%s")`, spec.User.Hostname, spec.User.Username, pwd)
 		users = append(users, user)

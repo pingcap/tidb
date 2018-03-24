@@ -171,6 +171,7 @@ func (d *ddl) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 		return errors.Trace(err)
 	}
 
+	job.BinlogInfo.FinishedTS = t.StartTS
 	log.Infof("[ddl] finish DDL job %v", job)
 	err = t.AddHistoryDDLJob(job)
 	return errors.Trace(err)
@@ -282,7 +283,7 @@ func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) (ver int64, err error) {
 		// If the value of SnapshotVer isn't zero, it means the work is backfilling the indexes.
 		if job.Type == model.ActionAddIndex && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
 			log.Infof("[ddl] run the cancelling DDL job %s", job)
-			asyncNotify(d.reorgCtx.notifyCancelReorgJob)
+			d.reorgCtx.notifyReorgCancel()
 		} else {
 			job.State = model.JobStateCancelled
 			job.Error = errCancelledDDLJob

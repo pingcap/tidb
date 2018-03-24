@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tidb
+package session
 
 import (
 	"fmt"
@@ -82,15 +82,16 @@ func prepareJoinBenchData(se Session, colType string, valueFormat string, valueC
 }
 
 func readResult(ctx context.Context, rs ast.RecordSet, count int) {
+	chk := rs.NewChunk()
 	for count > 0 {
-		x, err := rs.Next(ctx)
+		err := rs.NextChunk(ctx, chk)
 		if err != nil {
 			log.Fatal(err)
 		}
-		if x == nil {
+		if chk.NumRows() == 0 {
 			log.Fatal(count)
 		}
-		count--
+		count -= chk.NumRows()
 	}
 	rs.Close()
 }

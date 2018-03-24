@@ -122,7 +122,9 @@ func (outputer *baseJoinResultGenerator) makeJoinRowToBuffer(buffer []types.Datu
 }
 
 func (outputer *baseJoinResultGenerator) makeJoinRowToChunk(chk *chunk.Chunk, lhs, rhs chunk.Row) {
-	chk.AppendPartialRow(0, lhs)
+	// Call AppendRow() first to increment the virtual rows.
+	// Fix: https://github.com/pingcap/tidb/issues/5771
+	chk.AppendRow(lhs)
 	chk.AppendPartialRow(lhs.Len(), rhs)
 }
 
@@ -644,4 +646,12 @@ func (outputer *innerJoinResultGenerator) emitToChunk(outer chunk.Row, inners ch
 	chkForJoin.Reset()
 
 	return nil
+}
+
+// makeJoinRow simply creates a new row that appends row b to row a.
+func makeJoinRow(a Row, b Row) Row {
+	ret := make([]types.Datum, 0, len(a)+len(b))
+	ret = append(ret, a...)
+	ret = append(ret, b...)
+	return ret
 }

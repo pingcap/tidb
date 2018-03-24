@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tipb/go-tipb"
+	tipb "github.com/pingcap/tipb/go-tipb"
 	"golang.org/x/net/context"
 )
 
@@ -62,6 +62,8 @@ type Histogram struct {
 	// Used for estimating fraction of the interval [lower, upper] that lies within the [lower, value].
 	// For some types like `Int`, we do not build it because we can get them directly from `Bounds`.
 	scalars []scalar
+	// TotColSize is the total column size for the histogram.
+	TotColSize int64
 }
 
 // Bucket store the bucket count and repeat.
@@ -77,7 +79,7 @@ type scalar struct {
 }
 
 // NewHistogram creates a new histogram.
-func NewHistogram(id, ndv, nullCount int64, version uint64, tp *types.FieldType, bucketSize int) *Histogram {
+func NewHistogram(id, ndv, nullCount int64, version uint64, tp *types.FieldType, bucketSize int, totColSize int64) *Histogram {
 	return &Histogram{
 		ID:                id,
 		NDV:               ndv,
@@ -86,6 +88,7 @@ func NewHistogram(id, ndv, nullCount int64, version uint64, tp *types.FieldType,
 		tp:                tp,
 		Bounds:            chunk.NewChunkWithCapacity([]*types.FieldType{tp}, 2*bucketSize),
 		Buckets:           make([]Bucket, 0, bucketSize),
+		TotColSize:        totColSize,
 	}
 }
 
@@ -99,6 +102,26 @@ func (hg *Histogram) GetLower(idx int) *types.Datum {
 func (hg *Histogram) GetUpper(idx int) *types.Datum {
 	d := hg.Bounds.GetRow(2*idx+1).GetDatum(0, hg.tp)
 	return &d
+}
+
+// AvgColSize is the average column size of the histogram.
+func (c *Column) AvgColSize() float64 {
+	switch c.Histogram.tp.Tp {
+	case mysql.TypeFloat:
+		return 4
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong,
+		mysql.TypeDouble, mysql.TypeYear:
+		return 8
+	case mysql.TypeDuration, mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+		return 16
+	case mysql.TypeNewDecimal:
+		return types.MyDecimalStructSize
+	default:
+		if c.Count == 0 {
+			return 0
+		}
+		return float64(c.TotColSize) / float64(c.Count)
+	}
 }
 
 // AppendBucket appends a bucket into `hg`.
@@ -132,7 +155,7 @@ func (hg *Histogram) DecodeTo(tp *types.FieldType, timeZone *time.Location) erro
 
 // ConvertTo converts the histogram bucket values into `tp`.
 func (hg *Histogram) ConvertTo(sc *stmtctx.StatementContext, tp *types.FieldType) (*Histogram, error) {
-	hist := NewHistogram(hg.ID, hg.NDV, hg.NullCount, hg.LastUpdateVersion, tp, hg.Len())
+	hist := NewHistogram(hg.ID, hg.NDV, hg.NullCount, hg.LastUpdateVersion, tp, hg.Len(), hg.TotColSize)
 	iter := chunk.NewIterator4Chunk(hg.Bounds)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		d := row.GetDatum(0, hg.tp)
@@ -180,8 +203,8 @@ func SaveStatsToStorage(sctx sessionctx.Context, tableID int64, count int64, isI
 	if err != nil {
 		return errors.Trace(err)
 	}
-	replaceSQL = fmt.Sprintf("replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch) values (%d, %d, %d, %d, %d, %d, X'%X')",
-		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, data)
+	replaceSQL = fmt.Sprintf("replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size) values (%d, %d, %d, %d, %d, %d, X'%X', %d)",
+		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, data, hg.TotColSize)
 	_, err = exec.Execute(ctx, replaceSQL)
 	if err != nil {
 		return errors.Trace(err)
@@ -217,14 +240,14 @@ func SaveStatsToStorage(sctx sessionctx.Context, tableID int64, count int64, isI
 	return errors.Trace(err)
 }
 
-func histogramFromStorage(ctx sessionctx.Context, tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int, ver uint64, nullCount int64) (*Histogram, error) {
+func histogramFromStorage(ctx sessionctx.Context, tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int, ver uint64, nullCount int64, totColSize int64) (*Histogram, error) {
 	selSQL := fmt.Sprintf("select count, repeats, lower_bound, upper_bound from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d order by bucket_id", tableID, isIndex, colID)
 	rows, fields, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, selSQL)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	bucketSize := len(rows)
-	hg := NewHistogram(colID, distinct, nullCount, ver, tp, bucketSize)
+	hg := NewHistogram(colID, distinct, nullCount, ver, tp, bucketSize, totColSize)
 	totalCount := int64(0)
 	for i := 0; i < bucketSize; i++ {
 		count := rows[i].GetInt64(0)
@@ -392,6 +415,86 @@ func (hg *Histogram) getIncreaseFactor(totalCount int64) float64 {
 	return float64(totalCount) / float64(columnCount)
 }
 
+// validRange checks if the range is valid, it is used by `SplitRange` to remove the invalid range,
+// the possible types of range are index key range and handle key range.
+func validRange(ran *ranger.NewRange) bool {
+	var low, high []byte
+	if ran.LowVal[0].Kind() == types.KindBytes {
+		low, high = ran.LowVal[0].GetBytes(), ran.HighVal[0].GetBytes()
+	} else {
+		low, high = codec.EncodeInt(nil, ran.LowVal[0].GetInt64()), codec.EncodeInt(nil, ran.HighVal[0].GetInt64())
+	}
+	if ran.LowExclude {
+		low = kv.Key(low).PrefixNext()
+	}
+	if !ran.HighExclude {
+		high = kv.Key(high).PrefixNext()
+	}
+	return bytes.Compare(low, high) < 0
+}
+
+// SplitRange splits the range according to the histogram upper bound. Note that we treat last bucket's upper bound
+// as inf, so all the split ranges will totally fall in one of the (-inf, u(0)], (u(0), u(1)],...(u(n-3), u(n-2)],
+// (u(n-2), +inf), where n is the number of buckets, u(i) is the i-th bucket's upper bound.
+func (hg *Histogram) SplitRange(ranges []*ranger.NewRange) []*ranger.NewRange {
+	split := make([]*ranger.NewRange, 0, len(ranges))
+	for len(ranges) > 0 {
+		// Find the last bound that greater or equal to the LowVal.
+		idx := hg.Bounds.UpperBound(0, &ranges[0].LowVal[0])
+		if !ranges[0].LowExclude && idx > 0 {
+			cmp := chunk.Compare(hg.Bounds.GetRow(idx-1), 0, &ranges[0].LowVal[0])
+			if cmp == 0 {
+				idx--
+			}
+		}
+		// Treat last bucket's upper bound as inf, so we do not need split any more.
+		if idx >= hg.Bounds.NumRows()-2 {
+			split = append(split, ranges...)
+			break
+		}
+		// Get the corresponding upper bound.
+		if idx%2 == 0 {
+			idx++
+		}
+		upperBound := hg.Bounds.GetRow(idx)
+		var i int
+		// Find the first range that need to be split by the upper bound.
+		for ; i < len(ranges); i++ {
+			if chunk.Compare(upperBound, 0, &ranges[i].HighVal[0]) < 0 {
+				break
+			}
+		}
+		split = append(split, ranges[:i]...)
+		ranges = ranges[i:]
+		if len(ranges) == 0 {
+			break
+		}
+		// Split according to the upper bound.
+		cmp := chunk.Compare(upperBound, 0, &ranges[0].LowVal[0])
+		if cmp > 0 || (cmp == 0 && !ranges[0].LowExclude) {
+			upper := upperBound.GetDatum(0, hg.tp)
+			split = append(split, &ranger.NewRange{
+				LowExclude:  ranges[0].LowExclude,
+				LowVal:      []types.Datum{ranges[0].LowVal[0]},
+				HighVal:     []types.Datum{upper},
+				HighExclude: false})
+			ranges[0].LowVal[0] = upper
+			ranges[0].LowExclude = true
+			if !validRange(ranges[0]) {
+				ranges = ranges[1:]
+			}
+		}
+	}
+	return split
+}
+
+func (hg *Histogram) bucketCount(idx int) int64 {
+	if idx == 0 {
+		return hg.Buckets[0].Count
+	}
+	return hg.Buckets[idx].Count - hg.Buckets[idx-1].Count
+}
+
 // HistogramToProto converts Histogram to its protobuf representation.
 // Note that when this is used, the lower/upper bound in the bucket must be BytesDatum.
 func HistogramToProto(hg *Histogram) *tipb.Histogram {
@@ -415,7 +518,7 @@ func HistogramToProto(hg *Histogram) *tipb.Histogram {
 // be after all histograms merged.
 func HistogramFromProto(protoHg *tipb.Histogram) *Histogram {
 	tp := types.NewFieldType(mysql.TypeBlob)
-	hg := NewHistogram(0, protoHg.Ndv, 0, 0, tp, len(protoHg.Buckets))
+	hg := NewHistogram(0, protoHg.Ndv, 0, 0, tp, len(protoHg.Buckets), 0)
 	for _, bucket := range protoHg.Buckets {
 		lower, upper := types.NewBytesDatum(bucket.LowerBound), types.NewBytesDatum(bucket.UpperBound)
 		hg.AppendBucket(&lower, &upper, bucket.Count, bucket.Repeats)

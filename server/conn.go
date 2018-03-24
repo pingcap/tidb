@@ -59,6 +59,7 @@ import (
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/memory"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -401,9 +402,6 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse() error {
 		}
 	}
 	cc.ctx.SetSessionManager(cc.server)
-	if cc.server.cfg.EnableChunk {
-		cc.ctx.EnableChunk()
-	}
 	return nil
 }
 
@@ -906,63 +904,27 @@ func (cc *clientConn) handleFieldList(sql string) (err error) {
 // If binary is true, the data would be encoded in BINARY format.
 // If more is true, a flag bit would be set to indicate there are more
 // resultsets, it's used to support the MULTI_RESULTS capability in mysql protocol.
-func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary bool, more bool) error {
-	defer terror.Call(rs.Close)
-	if cc.server.cfg.EnableChunk && rs.SupportChunk() {
-		columns := rs.Columns()
-		err := cc.writeColumnInfo(columns)
-		if err != nil {
-			return errors.Trace(err)
+func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary bool, more bool) (runErr error) {
+	defer func() {
+		terror.Call(rs.Close)
+		r := recover()
+		if r == nil {
+			return
 		}
-		err = cc.writeChunks(ctx, rs, binary, more)
-		if err != nil {
-			return errors.Trace(err)
+		if str, ok := r.(string); !ok || !strings.HasPrefix(str, memory.PanicMemoryExceed) {
+			panic(r)
 		}
-		return errors.Trace(cc.flush())
-	}
-	// We need to call Next before we get columns.
-	// Otherwise, we will get incorrect columns info.
-	row, err := rs.Next(ctx)
+		// TODO(jianzhang.zj: add metrics here)
+		runErr = errors.Errorf("%v", r)
+		buf := make([]byte, 4096)
+		stackSize := runtime.Stack(buf, false)
+		buf = buf[:stackSize]
+		log.Errorf("query: %s:\n%s", cc.lastCmd, buf)
+	}()
+	err := cc.writeChunks(ctx, rs, binary, more)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	columns := rs.Columns()
-	err = cc.writeColumnInfo(columns)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	data := make([]byte, 4, 1024)
-	for {
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if row == nil {
-			break
-		}
-		data = data[0:4]
-		if binary {
-			data, err = dumpBinaryRow(data, columns, row)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		} else {
-			data, err = dumpTextRow(data, columns, row)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
-
-		if err = cc.writePacket(data); err != nil {
-			return errors.Trace(err)
-		}
-		row, err = rs.Next(ctx)
-	}
-
-	err = cc.writeEOF(more)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	return errors.Trace(cc.flush())
 }
 
@@ -991,11 +953,22 @@ func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo) error {
 func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool, more bool) error {
 	data := make([]byte, 4, 1024)
 	chk := rs.NewChunk()
+	gotColumnInfo := false
 	for {
 		// Here server.tidbResultSet implements NextChunk method.
 		err := rs.NextChunk(ctx, chk)
 		if err != nil {
 			return errors.Trace(err)
+		}
+		if !gotColumnInfo {
+			// We need to call NextChunk before we get columns.
+			// Otherwise, we will get incorrect columns info.
+			columns := rs.Columns()
+			err = cc.writeColumnInfo(columns)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			gotColumnInfo = true
 		}
 		rowCount := chk.NumRows()
 		if rowCount == 0 {

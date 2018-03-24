@@ -15,7 +15,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tidb
+package session
 
 import (
 	"encoding/hex"
@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/auth"
+	"github.com/pingcap/tidb/util/chunk"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -157,6 +158,7 @@ const (
 		hist_id bigint(64) NOT NULL,
 		distinct_count bigint(64) NOT NULL,
 		null_count bigint(64) NOT NULL DEFAULT 0,
+		tot_col_size bigint(64) NOT NULL DEFAULT 0,
 		modify_count bigint(64) NOT NULL DEFAULT 0,
 		version bigint(64) unsigned NOT NULL DEFAULT 0,
 		cm_sketch blob,
@@ -229,6 +231,7 @@ const (
 	version15 = 15
 	version16 = 16
 	version17 = 17
+	version18 = 18
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -270,10 +273,12 @@ func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 	}
 	r := rs[0]
 	defer terror.Call(r.Close)
-	row, err := r.Next(ctx)
-	if err != nil || row == nil {
+	chk := r.NewChunk()
+	err = r.NextChunk(ctx, chk)
+	if err != nil || chk.NumRows() == 0 {
 		return "", true, errors.Trace(err)
 	}
+	row := chk.GetRow(0)
 	if row.IsNull(0) {
 		return "", true, nil
 	}
@@ -351,6 +356,10 @@ func upgrade(s Session) {
 
 	if ver < version17 {
 		upgradeToVer17(s)
+	}
+
+	if ver < version18 {
+		upgradeToVer18(s)
 	}
 
 	updateBootstrapVer(s)
@@ -473,17 +482,21 @@ func upgradeToVer12(s Session) {
 	r := rs[0]
 	sqls := make([]string, 0, 1)
 	defer terror.Call(r.Close)
-	row, err := r.Next(ctx)
-	for err == nil && row != nil {
-		user := row.GetString(0)
-		host := row.GetString(1)
-		pass := row.GetString(2)
-		var newPass string
-		newPass, err = oldPasswordUpgrade(pass)
-		terror.MustNil(err)
-		updateSQL := fmt.Sprintf(`UPDATE mysql.user set password = "%s" where user="%s" and host="%s"`, newPass, user, host)
-		sqls = append(sqls, updateSQL)
-		row, err = r.Next(ctx)
+	chk := r.NewChunk()
+	it := chunk.NewIterator4Chunk(chk)
+	err = r.NextChunk(ctx, chk)
+	for err == nil && chk.NumRows() != 0 {
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			user := row.GetString(0)
+			host := row.GetString(1)
+			pass := row.GetString(2)
+			var newPass string
+			newPass, err = oldPasswordUpgrade(pass)
+			terror.MustNil(err)
+			updateSQL := fmt.Sprintf(`UPDATE mysql.user set password = "%s" where user="%s" and host="%s"`, newPass, user, host)
+			sqls = append(sqls, updateSQL)
+		}
+		err = r.NextChunk(ctx, chk)
 	}
 	terror.MustNil(err)
 
@@ -559,6 +572,10 @@ func upgradeToVer16(s Session) {
 
 func upgradeToVer17(s Session) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user MODIFY User CHAR(32)")
+}
+
+func upgradeToVer18(s Session) {
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `tot_col_size` bigint(64) NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.

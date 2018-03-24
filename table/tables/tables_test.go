@@ -17,10 +17,10 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -42,16 +42,16 @@ var _ = Suite(&testSuite{})
 
 type testSuite struct {
 	store kv.Storage
-	se    tidb.Session
+	se    session.Session
 }
 
 func (ts *testSuite) SetUpSuite(c *C) {
 	store, err := mockstore.NewMockTikvStore()
 	c.Check(err, IsNil)
 	ts.store = store
-	_, err = tidb.BootstrapSession(store)
+	_, err = session.BootstrapSession(store)
 	c.Assert(err, IsNil)
-	ts.se, err = tidb.CreateSession4Test(ts.store)
+	ts.se, err = session.CreateSession4Test(ts.store)
 	c.Assert(err, IsNil)
 }
 
@@ -158,9 +158,10 @@ func (ts *testSuite) TestTypes(c *C) {
 	c.Assert(err, IsNil)
 	rs, err := ts.se.Execute(ctx, "select * from test.t where c1 = 1")
 	c.Assert(err, IsNil)
-	row, err := rs[0].Next(ctx)
+	chk := rs[0].NewChunk()
+	err = rs[0].NextChunk(ctx, chk)
 	c.Assert(err, IsNil)
-	c.Assert(row, NotNil)
+	c.Assert(chk.NumRows() == 0, IsFalse)
 	_, err = ts.se.Execute(ctx, "drop table test.t")
 	c.Assert(err, IsNil)
 
@@ -170,9 +171,11 @@ func (ts *testSuite) TestTypes(c *C) {
 	c.Assert(err, IsNil)
 	rs, err = ts.se.Execute(ctx, "select * from test.t where c1 = 1")
 	c.Assert(err, IsNil)
-	row, err = rs[0].Next(ctx)
+	chk = rs[0].NewChunk()
+	err = rs[0].NextChunk(ctx, chk)
 	c.Assert(err, IsNil)
-	c.Assert(row, NotNil)
+	c.Assert(chk.NumRows() == 0, IsFalse)
+	row := chk.GetRow(0)
 	c.Assert(types.BinaryLiteral(row.GetBytes(5)), DeepEquals, types.NewBinaryLiteralFromUint(6, -1))
 	_, err = ts.se.Execute(ctx, "drop table test.t")
 	c.Assert(err, IsNil)
@@ -183,16 +186,20 @@ func (ts *testSuite) TestTypes(c *C) {
 	c.Assert(err, IsNil)
 	rs, err = ts.se.Execute(ctx, "select c1 + 1 from test.t where c1 = 1")
 	c.Assert(err, IsNil)
-	row, err = rs[0].Next(ctx)
+	chk = rs[0].NewChunk()
+	err = rs[0].NextChunk(ctx, chk)
 	c.Assert(err, IsNil)
-	c.Assert(row, NotNil)
-	c.Assert(row.GetFloat64(0), DeepEquals, float64(2))
+	c.Assert(chk.NumRows() == 0, IsFalse)
+	c.Assert(chk.GetRow(0).GetFloat64(0), DeepEquals, float64(2))
 	_, err = ts.se.Execute(ctx, "drop table test.t")
 	c.Assert(err, IsNil)
 }
 
 func (ts *testSuite) TestUniqueIndexMultipleNullEntries(c *C) {
-	_, err := ts.se.Execute(context.Background(), "CREATE TABLE test.t (a int primary key auto_increment, b varchar(255) unique)")
+	ctx := context.Background()
+	_, err := ts.se.Execute(ctx, "drop table if exists test.t")
+	c.Assert(err, IsNil)
+	_, err = ts.se.Execute(ctx, "CREATE TABLE test.t (a int primary key auto_increment, b varchar(255) unique)")
 	c.Assert(err, IsNil)
 	sctx := ts.se.(sessionctx.Context)
 	dom := domain.GetDomain(sctx)
