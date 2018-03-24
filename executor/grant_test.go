@@ -176,26 +176,26 @@ func (s *testSuite) TestColumnScope(c *C) {
 
 func (s *testSuite) TestIssue2456(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("CREATE USER 'dduser'@'%' IDENTIFIED by '123456';")
-	tk.MustExec("GRANT ALL PRIVILEGES ON `dddb_%`.* TO 'dduser'@'%';")
-	tk.MustExec("GRANT ALL PRIVILEGES ON `dddb_%`.`te%` to 'dduser'@'%';")
+	tk.MustExec(`CREATE USER 'dduser'@'%' IDENTIFIED by '123456';`)
+	tk.MustExec(`GRANT ALL PRIVILEGES ON `dddb_%`.* TO 'dduser'@'%';`)
+	tk.MustExec(`GRANT ALL PRIVILEGES ON `dddb_%`.`te%` to 'dduser'@'%';`)
 }
 
 func (s *testSuite) TestCreateUserWhenGrant(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("DROP USER IF EXISTS 'test'@'%'")
-	tk.MustExec("GRANT ALL PRIVILEGES ON *.* to 'test'@'%' IDENTIFIED BY 'xxx'")
+	tk.MustExec(`DROP USER IF EXISTS 'test'@'%'`)
+	tk.MustExec(`GRANT ALL PRIVILEGES ON *.* to 'test'@'%' IDENTIFIED BY 'xxx'`)
 	// Make sure user is created automatically when grant to a non-exists one.
-	tk.MustQuery("SELECT user FROM mysql.user WHERE user='test' and host='%'").Check(
+	tk.MustQuery(`SELECT user FROM mysql.user WHERE user='test' and host='%'`).Check(
 		testkit.Rows("test"),
 	)
 }
 
 func (s *testSuite) TestIssue2654(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("DROP USER IF EXISTS 'test'@'%'")
-	tk.MustExec("CREATE USER 'test'@'%' IDENTIFIED BY 'test'")
+	tk.MustExec(`DROP USER IF EXISTS 'test'@'%'`)
+	tk.MustExec(`CREATE USER 'test'@'%' IDENTIFIED BY 'test'`)
 	tk.MustExec("GRANT SELECT ON test.* to 'test'")
-	rows := tk.MustQuery("SELECT user,host FROM mysql.user WHERE user='test' and host='%'")
-	rows.Check(testkit.Rows("test %"))
+	rows := tk.MustQuery(`SELECT user,host FROM mysql.user WHERE user='test' and host='%'`)
+	rows.Check(testkit.Rows(`test %`))
 }
