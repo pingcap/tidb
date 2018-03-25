@@ -670,26 +670,6 @@ func (e *IndexLookUpExecutor) Close() error {
 	return nil
 }
 
-// Next implements Exec Next interface.
-func (e *IndexLookUpExecutor) Next(ctx context.Context) (Row, error) {
-	for {
-		resultTask, err := e.getResultTask()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if resultTask == nil {
-			return nil, nil
-		}
-		row, err := resultTask.getRow(e.schema)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if row != nil {
-			return row, nil
-		}
-	}
-}
-
 // NextChunk implements Exec NextChunk interface.
 func (e *IndexLookUpExecutor) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
