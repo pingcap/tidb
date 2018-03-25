@@ -387,7 +387,7 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		{
 			indexPos:    0,
 			exprStr:     `a LIKE "\\\\a%"`,
-			accessConds: `[like(test.t.a, \\\\a%, 92)]`,
+			accessConds: `[like(test.t.a, \\a%, 92)]`,
 			filterConds: "[]",
 			resultStr:   `[[\a <nil>,\b <nil>)]`,
 		},
