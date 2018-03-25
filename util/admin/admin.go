@@ -245,16 +245,16 @@ func ScanIndexData(sc *stmtctx.StatementContext, txn kv.Transaction, kvIndex tab
 // CompareIndexData compares index data one by one.
 // It returns nil if the data from the index is equal to the data from the table columns,
 // otherwise it returns an error with a different set of records.
-func CompareIndexData(sc *stmtctx.StatementContext, txn kv.Transaction, t table.Table, idx table.Index) error {
-	err := checkIndexAndRecord(txn, t, idx)
+func CompareIndexData(sessCtx sessionctx.Context, txn kv.Transaction, t table.Table, idx table.Index) error {
+	err := checkIndexAndRecord(sessCtx, txn, t, idx)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	return CheckRecordAndIndex(sc, txn, t, idx)
+	return CheckRecordAndIndex(sessCtx, txn, t, idx)
 }
 
-func checkIndexAndRecord(txn kv.Transaction, t table.Table, idx table.Index) error {
+func checkIndexAndRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table.Table, idx table.Index) error {
 	it, err := idx.SeekFirst(txn)
 	if err != nil {
 		return errors.Trace(err)
@@ -274,7 +274,7 @@ func checkIndexAndRecord(txn kv.Transaction, t table.Table, idx table.Index) err
 			return errors.Trace(err)
 		}
 
-		vals2, err := rowWithCols(txn, t, h, cols)
+		vals2, err := rowWithCols(sessCtx, txn, t, h, cols)
 		if kv.ErrNotExist.Equal(err) {
 			record := &RecordData{Handle: h, Values: vals1}
 			err = errDateNotEqual.Gen("index:%v != record:%v", record, nil)
@@ -293,7 +293,8 @@ func checkIndexAndRecord(txn kv.Transaction, t table.Table, idx table.Index) err
 }
 
 // CheckRecordAndIndex is exported for testing.
-func CheckRecordAndIndex(sc *stmtctx.StatementContext, txn kv.Transaction, t table.Table, idx table.Index) error {
+func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table.Table, idx table.Index) error {
+	sc := sessCtx.GetSessionVars().StmtCtx
 	cols := make([]*table.Column, len(idx.Meta().Columns))
 	for i, col := range idx.Meta().Columns {
 		cols[i] = t.Cols()[col.Offset]
@@ -301,6 +302,20 @@ func CheckRecordAndIndex(sc *stmtctx.StatementContext, txn kv.Transaction, t tab
 
 	startKey := t.RecordKey(0)
 	filterFunc := func(h1 int64, vals1 []types.Datum, cols []*table.Column) (bool, error) {
+		for i, val := range vals1 {
+			col := cols[i]
+			if val.IsNull() {
+				if mysql.HasNotNullFlag(col.Flag) {
+					return false, errors.New("Miss")
+				}
+				// NULL value is regard as its default value.
+				colDefVal, err := table.GetColOriginDefaultValue(sessCtx, col.ToInfo())
+				if err != nil {
+					return false, errors.Trace(err)
+				}
+				vals1[i] = colDefVal
+			}
+		}
 		isExist, h2, err := idx.Exist(sc, txn, vals1, h1)
 		if kv.ErrKeyExists.Equal(err) {
 			record1 := &RecordData{Handle: h1, Values: vals1}
@@ -430,7 +445,7 @@ func CompareTableRecord(txn kv.Transaction, t table.Table, data []*RecordData, e
 	return nil
 }
 
-func rowWithCols(txn kv.Retriever, t table.Table, h int64, cols []*table.Column) ([]types.Datum, error) {
+func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h int64, cols []*table.Column) ([]types.Datum, error) {
 	key := t.RecordKey(h)
 	value, err := txn.Get(key)
 	if err != nil {
@@ -471,8 +486,17 @@ func rowWithCols(txn kv.Retriever, t table.Table, h int64, cols []*table.Column)
 			continue
 		}
 		ri, ok := row[col.ID]
-		if !ok && mysql.HasNotNullFlag(col.Flag) {
-			return nil, errors.New("Miss")
+		if !ok {
+			if mysql.HasNotNullFlag(col.Flag) {
+				return nil, errors.New("Miss")
+			}
+			// NULL value is regard as its default value.
+			colDefVal, err := table.GetColOriginDefaultValue(sessCtx, col.ToInfo())
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			v[i] = colDefVal
+			continue
 		}
 		v[i] = ri
 	}
