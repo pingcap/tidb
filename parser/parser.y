@@ -4543,6 +4543,10 @@ SetStmt:
 	{
 		$$ = &ast.SetStmt{Variables: $4.([]*ast.VariableAssignment)}
 	}
+|	"SET" "TRANSACTION" TransactionChars
+	{
+		$$ = &ast.SetStmt{Variables: $3.([]*ast.VariableAssignment)}
+	}
 
 TransactionChars:
 	TransactionChar
