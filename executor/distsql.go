@@ -219,48 +219,6 @@ func (e *TableReaderExecutor) Close() error {
 	return errors.Trace(err)
 }
 
-// Next returns next available Row. In its process, any error will be returned.
-// It first try to fetch a partial result if current partial result is nil.
-// If any error appears during this stage, it simply return a error to its caller.
-// If it successfully initialize its partial result, it will use this to get next
-// available row.
-func (e *TableReaderExecutor) Next(ctx context.Context) (Row, error) {
-	for {
-		// Get partial result.
-		if e.partialResult == nil {
-			var err error
-			e.partialResult, err = e.resultHandler.next(ctx)
-			if err != nil {
-				e.feedback.Invalidate()
-				return nil, errors.Trace(err)
-			}
-			if e.partialResult == nil {
-				// Finished.
-				return nil, nil
-			}
-		}
-		// Get a row from partial result.
-		rowData, err := e.partialResult.Next(ctx)
-		if err != nil {
-			e.feedback.Invalidate()
-			return nil, errors.Trace(err)
-		}
-		if rowData == nil {
-			// Finish the current partial result and get the next one.
-			err = e.partialResult.Close()
-			terror.Log(errors.Trace(err))
-			e.partialResult = nil
-			continue
-		}
-		err = decodeRawValues(rowData, e.schema, e.ctx.GetSessionVars().GetTimeZone())
-		if err != nil {
-			e.feedback.Invalidate()
-			return nil, errors.Trace(err)
-		}
-		return rowData, nil
-	}
-}
-
 // NextChunk fills data into the chunk passed by its caller.
 // The task was actually done by tableReaderHandler.
 func (e *TableReaderExecutor) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
