@@ -148,6 +148,22 @@ func (s *testEvaluatorSuite) TestArithmeticPlus(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(isNull, IsTrue)
 	c.Assert(realResult, Equals, float64(0))
+
+	// case 5
+	hexStr, err := types.ParseHexStr("0x20000000000000")
+	c.Assert(err, IsNil)
+	args = []interface{}{hexStr, int64(1)}
+
+	bf, err = funcs[ast.Plus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
+	c.Assert(err, IsNil)
+	c.Assert(bf, NotNil)
+	intSig, ok = bf.(*builtinArithmeticPlusIntSig)
+	c.Assert(ok, IsTrue)
+	c.Assert(intSig, NotNil)
+
+	intResult, _, err = intSig.evalInt(nil)
+	c.Assert(err, IsNil)
+	c.Assert(intResult, Equals, int64(9007199254740993))
 }
 
 func (s *testEvaluatorSuite) TestArithmeticMinus(c *C) {
