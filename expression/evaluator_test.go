@@ -541,7 +541,7 @@ func (s *testEvaluatorSuite) TestLike(c *C) {
 		{"a", "a", 1},
 		{"a", "b", 0},
 		{"aA", "Aa", 0},
-		{"aAb", "Aa%", 0},
+		{"aAb", `Aa%`, 0},
 		{"aAb", "aA_", 1},
 	}
 	for _, tt := range tests {
