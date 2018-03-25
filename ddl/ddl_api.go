@@ -859,10 +859,10 @@ func hasAutoIncrementColumn(tbInfo *model.TableInfo) bool {
 }
 
 func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.AlterTableSpec) (err error) {
-	// Only handle valid specs, AlterTableLock is ignored.
+	// Only handle valid specs, AlterTableLock/AlterTableAlgorithm are ignored.
 	validSpecs := make([]*ast.AlterTableSpec, 0, len(specs))
 	for _, spec := range specs {
-		if spec.Tp == ast.AlterTableLock {
+		if spec.Tp == ast.AlterTableLock || spec.Tp == ast.AlterTableAlgorithm {
 			continue
 		}
 		validSpecs = append(validSpecs, spec)

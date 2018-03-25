@@ -399,6 +399,7 @@ import (
 	bitOr		"BIT_OR"
 	bitXor		"BIT_XOR"
 	cast		"CAST"
+	copyKwd		"COPY"
 	count		"COUNT"
 	curTime		"CURTIME"
 	dateAdd		"DATE_ADD"
@@ -406,6 +407,7 @@ import (
 	extract		"EXTRACT"
 	getFormat	"GET_FORMAT"
 	groupConcat	"GROUP_CONCAT"
+	inplace 	"INPLACE"
 	min		"MIN"
 	max		"MAX"
 	now		"NOW"
@@ -1019,6 +1021,16 @@ AlterTableSpec:
 			LockType:   $1.(ast.LockType),
 		}
 	}
+| "ALGORITHM" EqOpt AlterAlgorithm
+	{
+		// Parse it and ignore it. Just for compatibility.
+		$$ = &ast.AlterTableSpec{
+			Tp:    		ast.AlterTableAlgorithm,
+		}
+	}
+
+AlterAlgorithm:
+	"DEFAULT" | "INPLACE" | "COPY"
 
 LockClauseOpt:
 	{}
@@ -2541,7 +2553,7 @@ TiDBKeyword:
 
 NotKeywordToken:
  "ADDDATE" | "BIT_AND" | "BIT_OR" | "BIT_XOR" | "CAST" | "COUNT" | "CURTIME" | "DATE_ADD" | "DATE_SUB" | "EXTRACT" | "GET_FORMAT" | "GROUP_CONCAT" | "MIN" | "MAX" | "NOW" | "POSITION"
-| "SUBDATE" | "SUBSTRING" | "SUM" | "TIMESTAMPADD" | "TIMESTAMPDIFF" | "TRIM"
+| "SUBDATE" | "SUBSTRING" | "SUM" | "TIMESTAMPADD" | "TIMESTAMPDIFF" | "TRIM" | "INPLACE" | "COPY"
 
 /************************************************************************************
  *
