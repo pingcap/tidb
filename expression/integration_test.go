@@ -1378,11 +1378,11 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("00:01:23 AM"))
 
 	// for date_format
-	result = tk.MustQuery("SELECT DATE_FORMAT('2017-06-15', '%W %M %e %Y %r %y');")
+	result = tk.MustQuery(`SELECT DATE_FORMAT('2017-06-15', '%W %M %e %Y %r %y');`)
 	result.Check(testkit.Rows("Thursday June 15 2017 12:00:00 AM 17"))
-	result = tk.MustQuery("SELECT DATE_FORMAT(151113102019.12, '%W %M %e %Y %r %y');")
+	result = tk.MustQuery(`SELECT DATE_FORMAT(151113102019.12, '%W %M %e %Y %r %y');`)
 	result.Check(testkit.Rows("Friday November 13 2015 10:20:19 AM 15"))
-	result = tk.MustQuery("SELECT DATE_FORMAT('0000-00-00', '%W %M %e %Y %r %y');")
+	result = tk.MustQuery(`SELECT DATE_FORMAT('0000-00-00', '%W %M %e %Y %r %y');`)
 	result.Check(testkit.Rows("<nil>"))
 
 	// for yearweek
@@ -2124,7 +2124,7 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 		{"a", "a", 1},
 		{"a", "b", 0},
 		{"aA", "Aa", 0},
-		{"aA%", "aAab", 1},
+		{`aA%`, "aAab", 1},
 		{"aA_", "Aaab", 0},
 		{"Aa_", "Aab", 1},
 		{"", "", 1},
