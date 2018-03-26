@@ -201,8 +201,6 @@ type TableReaderExecutor struct {
 	// columns are only required by union scan.
 	columns []*model.ColumnInfo
 
-	// partialResult store the result from one region.
-	partialResult distsql.PartialResult
 	// resultHandler handles the order of the result. Since (MAXInt64, MAXUint64] stores before [0, MaxInt64] physically
 	// for unsigned int.
 	resultHandler *tableResultHandler
