@@ -924,7 +924,7 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 					err = d.RebaseAutoID(ctx, ident, int64(opt.UintValue))
 				case ast.TableOptionComment:
 					spec.Comment = opt.StrValue
-					err = d.TableComment(ctx, ident, spec)
+					err = d.AlterTableComment(ctx, ident, spec)
 				}
 				if err != nil {
 					return errors.Trace(err)
@@ -1439,7 +1439,8 @@ func (d *ddl) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 	return errors.Trace(err)
 }
 
-func (d *ddl) TableComment(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+// AlterTableComment updates the table comment information.
+func (d *ddl) AlterTableComment(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
@@ -1456,7 +1457,7 @@ func (d *ddl) TableComment(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 		TableID:    tb.Meta().ID,
 		Type:       model.ActionModifyTableComment,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{schema.ID, spec.Name, spec.Comment},
+		Args:       []interface{}{spec.Name, spec.Comment},
 	}
 
 	err = d.doDDLJob(ctx, job)

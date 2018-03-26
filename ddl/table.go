@@ -335,16 +335,15 @@ func (d *ddl) onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return ver, nil
 }
 
-func (d *ddl) onSetTableComment(t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	var schemaID int64
+func (d *ddl) onModifyTableComment(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var tableName string
 	var comment string
-	if err := job.DecodeArgs(&schemaID, &tableName, &comment); err != nil {
+	if err := job.DecodeArgs(&tableName, &comment); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
-	tblInfo, err := getTableInfo(t, job, schemaID)
+	tblInfo, err := getTableInfo(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
