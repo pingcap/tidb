@@ -16,6 +16,7 @@ package kvenc
 import (
 	"bytes"
 	"fmt"
+	"strings"
 	"sync/atomic"
 
 	"github.com/juju/errors"
@@ -66,6 +67,12 @@ type KvEncoder interface {
 
 	// EncodeMetaAutoID encode the table meta info, autoID to coresponding key-value pair.
 	EncodeMetaAutoID(dbID, tableID, autoID int64) (KvPair, error)
+
+	// SetSystemVariable set system variable name = value.
+	SetSystemVariable(name string, value string) error
+
+	// GetSystemVariable get the system variable value of name.
+	GetSystemVariable(name string) (string, bool)
 
 	// Close cleanup the kvEncoder.
 	Close() error
@@ -166,6 +173,23 @@ func (e *kvEncoder) ExecDDLSQL(sql string) error {
 	}
 
 	return nil
+}
+
+func (e *kvEncoder) SetSystemVariable(name string, value string) error {
+	name = strings.ToLower(name)
+	if e.se != nil {
+		return e.se.GetSessionVars().SetSystemVar(name, value)
+	}
+	return errors.Errorf("e.se is nil, please new KvEncoder by kvencoder.New().")
+}
+
+func (e *kvEncoder) GetSystemVariable(name string) (string, bool) {
+	name = strings.ToLower(name)
+	if e.se == nil {
+		return "", false
+	}
+
+	return e.se.GetSessionVars().GetSystemVar(name)
 }
 
 func newMockTikvWithBootstrap() (kv.Storage, *domain.Domain, error) {

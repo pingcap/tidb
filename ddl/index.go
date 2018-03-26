@@ -443,7 +443,7 @@ type addIndexResult struct {
 }
 
 func newAddIndexWorker(sessCtx sessionctx.Context, d *ddl, id int, t table.Table, indexInfo *model.IndexInfo, colFieldMap map[int64]*types.FieldType) *addIndexWorker {
-	index := tables.NewIndexWithBuffer(t.Meta(), indexInfo)
+	index := tables.NewIndex(t.Meta(), indexInfo)
 	return &addIndexWorker{
 		id:          id,
 		d:           d,
