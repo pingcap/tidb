@@ -90,7 +90,7 @@ func (h *benchHelper) init() {
 		h.inputChunk.AppendFloat64(1, 2.019)
 		h.inputChunk.AppendMyDecimal(2, types.NewDecFromFloatForTest(5.9101))
 		for i := 0; i < 20; i++ {
-			h.inputChunk.AppendString(3+i, "abcdefughasfjsaljal1321798273528791!&(*#&@&^%&%^&!)sadfashqwer")
+			h.inputChunk.AppendString(3+i, `abcdefughasfjsaljal1321798273528791!&(*#&@&^%&%^&!)sadfashqwer`)
 		}
 	}
 
