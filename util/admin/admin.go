@@ -308,7 +308,7 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 				if mysql.HasNotNullFlag(col.Flag) {
 					return false, errors.New("Miss")
 				}
-				// NULL value is regard as its default value.
+				// NULL value is regarded as its default value.
 				colDefVal, err := table.GetColOriginDefaultValue(sessCtx, col.ToInfo())
 				if err != nil {
 					return false, errors.Trace(err)
@@ -490,7 +490,7 @@ func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h 
 			if mysql.HasNotNullFlag(col.Flag) {
 				return nil, errors.New("Miss")
 			}
-			// NULL value is regard as its default value.
+			// NULL value is regarded as its default value.
 			colDefVal, err := table.GetColOriginDefaultValue(sessCtx, col.ToInfo())
 			if err != nil {
 				return nil, errors.Trace(err)
