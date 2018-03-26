@@ -14,8 +14,8 @@
 package tikv
 
 import (
-	"time"
 	"bytes"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
