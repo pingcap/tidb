@@ -29,20 +29,20 @@ import (
 
 // The test suite takes too long under the race detector.
 type testIsolationSuite struct {
-	oneByOneSuite
+	OneByOneSuite
 	store *tikvStore
 }
 
 var _ = Suite(&testIsolationSuite{})
 
 func (s *testIsolationSuite) SetUpSuite(c *C) {
-	s.oneByOneSuite.SetUpSuite(c)
-	s.store = newTestStore(c)
+	s.OneByOneSuite.SetUpSuite(c)
+	s.store = NewTestStore(c).(*tikvStore)
 }
 
 func (s *testIsolationSuite) TearDownSuite(c *C) {
 	s.store.Close()
-	s.oneByOneSuite.TearDownSuite(c)
+	s.OneByOneSuite.TearDownSuite(c)
 }
 
 type writeRecord struct {

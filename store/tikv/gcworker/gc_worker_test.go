@@ -14,7 +14,6 @@
 package gcworker
 
 import (
-	"flag"
 	"math"
 	"strconv"
 	"testing"
@@ -29,11 +28,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
 	"golang.org/x/net/context"
-)
-
-var (
-	withTiKV = flag.Bool("with-tikv", false, "run tests with TiKV cluster started. (not use the mock server)")
-	pdAddrs  = flag.String("pd-addrs", "127.0.0.1:2379", "pd addrs")
 )
 
 func TestT(t *testing.T) {
@@ -51,8 +45,8 @@ var _ = Suite(&testGCWorkerSuite{})
 
 func (s *testGCWorkerSuite) SetUpTest(c *C) {
 	tikv.NewGCHandlerFunc = NewGCWorker
-	var err error
-	s.store, err = mockstore.NewTestTiKVStorage(*withTiKV, *pdAddrs)
+	store, err := mockstore.NewMockTikvStore()
+	s.store = store.(tikv.Storage)
 	c.Assert(err, IsNil)
 	s.oracle = &mockoracle.MockOracle{}
 	s.store.SetOracle(s.oracle)

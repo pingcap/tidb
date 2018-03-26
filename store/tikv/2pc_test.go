@@ -28,7 +28,7 @@ import (
 )
 
 type testCommitterSuite struct {
-	oneByOneSuite
+	OneByOneSuite
 	cluster *mocktikv.Cluster
 	store   *tikvStore
 }
@@ -50,7 +50,7 @@ func (s *testCommitterSuite) SetUpTest(c *C) {
 
 func (s *testCommitterSuite) TearDownSuite(c *C) {
 	CommitMaxBackoff = 20000
-	s.oneByOneSuite.TearDownSuite(c)
+	s.OneByOneSuite.TearDownSuite(c)
 }
 
 func (s *testCommitterSuite) begin(c *C) *tikvTxn {
