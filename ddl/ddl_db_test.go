@@ -124,6 +124,8 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrTooLongIdent)
 	sql = "create database test"
 	s.testErrorCode(c, sql, tmysql.ErrDBCreateExists)
+	sql = "create database test1 character set uft8;"
+	s.testErrorCode(c, sql, tmysql.ErrUnknownCharacterSet)
 	// drop database
 	sql = "drop database db_not_exist"
 	s.testErrorCode(c, sql, tmysql.ErrDBDropExists)

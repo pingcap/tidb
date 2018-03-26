@@ -56,7 +56,12 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetIn
 	dbInfo := &model.DBInfo{
 		Name: schema,
 	}
+
 	if charsetInfo != nil {
+		err = checkCharsetAndCollate(charsetInfo.Chs, charsetInfo.Col)
+		if err != nil {
+			return err
+		}
 		dbInfo.Charset = charsetInfo.Chs
 		dbInfo.Collate = charsetInfo.Col
 	} else {
@@ -119,6 +124,15 @@ func getDefaultCharsetAndCollate() (string, string) {
 	// TODO: Change TableOption parser to parse collate.
 	// This is a tmp solution.
 	return "utf8", "utf8_bin"
+}
+
+func checkCharsetAndCollate(Chs, Col string) error {
+	_, ok := mysql.CharsetIDs[Chs]
+	if ok {
+		return nil
+	}
+
+	return infoschema.ErrUnknownCharacterSet.GenByArgs(Chs)
 }
 
 func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constraint) {
