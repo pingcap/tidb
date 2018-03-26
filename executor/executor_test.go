@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	gofail "github.com/coreos/gofail/runtime"
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -2460,14 +2461,25 @@ func (s *testSuite) TestEarlyClose(c *C) {
 
 	ctx := context.Background()
 	for i := 0; i < 500; i++ {
-		rss, err := tk.Se.Execute(ctx, "select * from earlyclose order by id")
-		c.Assert(err, IsNil)
+		rss, err1 := tk.Se.Execute(ctx, "select * from earlyclose order by id")
+		c.Assert(err1, IsNil)
 		rs := rss[0]
 		chk := rs.NewChunk()
 		err = rs.NextChunk(ctx, chk)
 		c.Assert(err, IsNil)
 		rs.Close()
 	}
+
+	// Goroutine should not leak when error happen.
+	gofail.Enable("github.com/pingcap/tidb/store/tikv/handleTaskOnceError", `return(true)`)
+	defer gofail.Disable("github.com/pingcap/tidb/store/tikv/handleTaskOnceError")
+	rss, err := tk.Se.Execute(ctx, "select * from earlyclose")
+	c.Assert(err, IsNil)
+	rs := rss[0]
+	chk := rs.NewChunk()
+	err = rs.NextChunk(ctx, chk)
+	c.Assert(err, NotNil)
+	rs.Close()
 }
 
 func (s *testSuite) TestIssue5666(c *C) {
