@@ -154,25 +154,56 @@ func timeZoneOffset(ctx sessionctx.Context) int64 {
 
 // Flags are used by tipb.SelectRequest.Flags to handle execution mode, like how to handle truncate error.
 const (
+	// FlagInInsertStmt indicates if this is a INSERT statement.
+	FlagInInsertStmt uint64 = 1 << iota
+	// FlagInUpdateOrDeleteStmt indicates if this is a UPDATE statement or a DELETE statement.
+	FlagInUpdateOrDeleteStmt
+	// FlagInSelectStmt indicates if this is a SELECT statement.
+	FlagInSelectStmt
 	// FlagIgnoreTruncate indicates if truncate error should be ignored.
 	// Read-only statements should ignore truncate error, write statements should not ignore truncate error.
-	FlagIgnoreTruncate uint64 = 1
+	FlagIgnoreTruncate
 	// FlagTruncateAsWarning indicates if truncate error should be returned as warning.
 	// This flag only matters if FlagIgnoreTruncate is not set, in strict sql mode, truncate error should
 	// be returned as error, in non-strict sql mode, truncate error should be saved as warning.
-	FlagTruncateAsWarning uint64 = 1 << 1
-
+	FlagTruncateAsWarning
+	// FlagOverflowAsWarning indicates if overflow error should be returned as warning.
+	// In strict sql mode, overflow error should be returned as error,
+	// in non-strict sql mode, overflow error should be saved as warning.
+	FlagOverflowAsWarning
+	// FlagIgnoreZeroInDate indicates if ZeroInDate error should be ignored.
+	// Read-only statements should ignore ZeroInDate error.
+	// Write statements should not ignore ZeroInDate error in strict sql mode.
+	FlagIgnoreZeroInDate
+	// FlagDividedByZeroAsWarning indicates if DividedByZero should be returned as warning.
+	FlagDividedByZeroAsWarning
 	// FlagPadCharToFullLength indicates if sql_mode 'PAD_CHAR_TO_FULL_LENGTH' is set.
-	FlagPadCharToFullLength uint64 = 1 << 2
+	FlagPadCharToFullLength
 )
 
 // statementContextToFlags converts StatementContext to tipb.SelectRequest.Flags.
 func statementContextToFlags(sc *stmtctx.StatementContext) uint64 {
 	var flags uint64
+	if sc.InInsertStmt {
+		flags |= FlagInInsertStmt
+	} else if sc.InUpdateOrDeleteStmt {
+		flags |= FlagInUpdateOrDeleteStmt
+	} else if sc.InSelectStmt {
+		flags |= FlagInSelectStmt
+	}
 	if sc.IgnoreTruncate {
 		flags |= FlagIgnoreTruncate
 	} else if sc.TruncateAsWarning {
 		flags |= FlagTruncateAsWarning
+	}
+	if sc.OverflowAsWarning {
+		flags |= FlagOverflowAsWarning
+	}
+	if sc.IgnoreZeroInDate {
+		flags |= FlagIgnoreZeroInDate
+	}
+	if sc.DividedByZeroAsWarning {
+		flags |= FlagDividedByZeroAsWarning
 	}
 	if sc.PadCharToFullLength {
 		flags |= FlagPadCharToFullLength
