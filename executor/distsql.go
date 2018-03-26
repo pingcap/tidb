@@ -160,19 +160,50 @@ const (
 	// FlagTruncateAsWarning indicates if truncate error should be returned as warning.
 	// This flag only matters if FlagIgnoreTruncate is not set, in strict sql mode, truncate error should
 	// be returned as error, in non-strict sql mode, truncate error should be saved as warning.
-	FlagTruncateAsWarning uint64 = 1 << 1
-
+	FlagTruncateAsWarning = 1 << 1
 	// FlagPadCharToFullLength indicates if sql_mode 'PAD_CHAR_TO_FULL_LENGTH' is set.
-	FlagPadCharToFullLength uint64 = 1 << 2
+	FlagPadCharToFullLength = 1 << 2
+	// FlagInInsertStmt indicates if this is a INSERT statement.
+	FlagInInsertStmt = 1 << 3
+	// FlagInUpdateOrDeleteStmt indicates if this is a UPDATE statement or a DELETE statement.
+	FlagInUpdateOrDeleteStmt = 1 << 4
+	// FlagInSelectStmt indicates if this is a SELECT statement.
+	FlagInSelectStmt = 1 << 5
+	// FlagOverflowAsWarning indicates if overflow error should be returned as warning.
+	// In strict sql mode, overflow error should be returned as error,
+	// in non-strict sql mode, overflow error should be saved as warning.
+	FlagOverflowAsWarning = 1 << 6
+	// FlagIgnoreZeroInDate indicates if ZeroInDate error should be ignored.
+	// Read-only statements should ignore ZeroInDate error.
+	// Write statements should not ignore ZeroInDate error in strict sql mode.
+	FlagIgnoreZeroInDate = 1 << 7
+	// FlagDividedByZeroAsWarning indicates if DividedByZero should be returned as warning.
+	FlagDividedByZeroAsWarning = 1 << 8
 )
 
 // statementContextToFlags converts StatementContext to tipb.SelectRequest.Flags.
 func statementContextToFlags(sc *stmtctx.StatementContext) uint64 {
 	var flags uint64
+	if sc.InInsertStmt {
+		flags |= FlagInInsertStmt
+	} else if sc.InUpdateOrDeleteStmt {
+		flags |= FlagInUpdateOrDeleteStmt
+	} else if sc.InSelectStmt {
+		flags |= FlagInSelectStmt
+	}
 	if sc.IgnoreTruncate {
 		flags |= FlagIgnoreTruncate
 	} else if sc.TruncateAsWarning {
 		flags |= FlagTruncateAsWarning
+	}
+	if sc.OverflowAsWarning {
+		flags |= FlagOverflowAsWarning
+	}
+	if sc.IgnoreZeroInDate {
+		flags |= FlagIgnoreZeroInDate
+	}
+	if sc.DividedByZeroAsWarning {
+		flags |= FlagDividedByZeroAsWarning
 	}
 	if sc.PadCharToFullLength {
 		flags |= FlagPadCharToFullLength
