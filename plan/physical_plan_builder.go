@@ -67,7 +67,7 @@ func getPropByOrderByItems(items []*ByItems) (*requiredProp, bool) {
 	return &requiredProp{cols: cols, desc: desc}, true
 }
 
-func (p *LogicalTableDual) convert2PhysicalPlan(prop *requiredProp) (task, error) {
+func (p *LogicalTableDual) findBestTask(prop *requiredProp) (task, error) {
 	if !prop.isEmpty() {
 		return invalidTask, nil
 	}
@@ -76,43 +76,44 @@ func (p *LogicalTableDual) convert2PhysicalPlan(prop *requiredProp) (task, error
 	return &rootTask{p: dual}, nil
 }
 
-// convert2PhysicalPlan implements LogicalPlan interface.
-func (p *baseLogicalPlan) convert2PhysicalPlan(prop *requiredProp) (t task, err error) {
+// findBestTask implements LogicalPlan interface.
+func (p *baseLogicalPlan) findBestTask(prop *requiredProp) (bestTask task, err error) {
 	// Look up the task with this prop in the task map.
 	// It's used to reduce double counting.
-	t = p.getTask(prop)
-	if t != nil {
-		return t, nil
+	bestTask = p.getTask(prop)
+	if bestTask != nil {
+		return bestTask, nil
 	}
-	t = invalidTask
+
 	if prop.taskTp != rootTaskType {
 		// Currently all plan cannot totally push down.
-		p.storeTask(prop, t)
-		return t, nil
+		p.storeTask(prop, invalidTask)
+		return invalidTask, nil
 	}
-	for _, pp := range p.self.genPhysPlansByReqProp(prop) {
-		t, err = p.getBestTask(t, pp)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	p.storeTask(prop, t)
-	return t, nil
-}
 
-func (p *baseLogicalPlan) getBestTask(bestTask task, pp PhysicalPlan) (task, error) {
-	tasks := make([]task, 0, len(p.children))
-	for i, child := range p.children {
-		childTask, err := child.convert2PhysicalPlan(pp.getChildReqProps(i))
-		if err != nil {
-			return nil, errors.Trace(err)
+	bestTask = invalidTask
+	childTasks := make([]task, 0, len(p.children))
+	for _, pp := range p.self.exhaustPhysicalPlans(prop) {
+		// find best child tasks firstly.
+		childTasks = childTasks[:0]
+		for i, child := range p.children {
+			childTask, err := child.findBestTask(pp.getChildReqProps(i))
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			childTasks = append(childTasks, childTask)
 		}
-		tasks = append(tasks, childTask)
+
+		// combine best child tasks with parent physical plan.
+		curTask := pp.attach2Task(childTasks...)
+
+		// get the most efficient one.
+		if curTask.cost() < bestTask.cost() {
+			bestTask = curTask
+		}
 	}
-	resultTask := pp.attach2Task(tasks...)
-	if resultTask.cost() < bestTask.cost() {
-		bestTask = resultTask
-	}
+
+	p.storeTask(prop, bestTask)
 	return bestTask, nil
 }
 
@@ -169,9 +170,9 @@ func (ds *DataSource) tryToGetDualTask() (task, error) {
 	return nil, nil
 }
 
-// convert2PhysicalPlan implements the PhysicalPlan interface.
+// findBestTask implements the PhysicalPlan interface.
 // It will enumerate all the available indices and choose a plan with least cost.
-func (ds *DataSource) convert2PhysicalPlan(prop *requiredProp) (task, error) {
+func (ds *DataSource) findBestTask(prop *requiredProp) (task, error) {
 	// If ds is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself.
 	// So here we do nothing.
 	// TODO: Add a special prop to handle IndexJoin's inner plan.

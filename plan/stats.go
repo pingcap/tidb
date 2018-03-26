@@ -63,19 +63,24 @@ func (p *basePhysicalPlan) StatsInfo() *statsInfo {
 }
 
 func (p *baseLogicalPlan) deriveStats() *statsInfo {
-	if len(p.children) == 0 {
-		profile := &statsInfo{
-			count:       float64(1),
-			cardinality: make([]float64, p.self.Schema().Len()),
-		}
-		for i := range profile.cardinality {
-			profile.cardinality[i] = float64(1)
-		}
-		p.stats = profile
-		return profile
+	if len(p.children) > 1 {
+		panic("LogicalPlans with more than one child should implement their own deriveStats().")
 	}
-	p.stats = p.children[0].deriveStats()
-	return p.stats
+
+	if len(p.children) == 1 {
+		p.stats = p.children[0].deriveStats()
+		return p.stats
+	}
+
+	profile := &statsInfo{
+		count:       float64(1),
+		cardinality: make([]float64, p.self.Schema().Len()),
+	}
+	for i := range profile.cardinality {
+		profile.cardinality[i] = float64(1)
+	}
+	p.stats = profile
+	return profile
 }
 
 func (ds *DataSource) getStatsByFilter(conds expression.CNFExprs) *statsInfo {
@@ -133,17 +138,11 @@ func (p *LogicalUnionAll) deriveStats() *statsInfo {
 func (p *LogicalLimit) deriveStats() *statsInfo {
 	childProfile := p.children[0].deriveStats()
 	p.stats = &statsInfo{
-		count:       float64(p.Count),
+		count:       math.Min(float64(p.Count), childProfile.count),
 		cardinality: make([]float64, len(childProfile.cardinality)),
 	}
-	if p.stats.count > childProfile.count {
-		p.stats.count = childProfile.count
-	}
 	for i := range p.stats.cardinality {
-		p.stats.cardinality[i] = childProfile.cardinality[i]
-		if p.stats.cardinality[i] > p.stats.count {
-			p.stats.cardinality[i] = p.stats.count
-		}
+		p.stats.cardinality[i] = math.Min(childProfile.cardinality[i], p.stats.count)
 	}
 	return p.stats
 }
@@ -151,17 +150,11 @@ func (p *LogicalLimit) deriveStats() *statsInfo {
 func (lt *LogicalTopN) deriveStats() *statsInfo {
 	childProfile := lt.children[0].deriveStats()
 	lt.stats = &statsInfo{
-		count:       float64(lt.Count),
+		count:       math.Min(float64(lt.Count), childProfile.count),
 		cardinality: make([]float64, len(childProfile.cardinality)),
 	}
-	if lt.stats.count > childProfile.count {
-		lt.stats.count = childProfile.count
-	}
 	for i := range lt.stats.cardinality {
-		lt.stats.cardinality[i] = childProfile.cardinality[i]
-		if lt.stats.cardinality[i] > lt.stats.count {
-			lt.stats.cardinality[i] = lt.stats.count
-		}
+		lt.stats.cardinality[i] = math.Min(childProfile.cardinality[i], lt.stats.count)
 	}
 	return lt.stats
 }
@@ -176,10 +169,8 @@ func getCardinality(cols []*expression.Column, schema *expression.Schema, profil
 	}
 	var cardinality = 1.0
 	for _, idx := range indices {
-		if cardinality < profile.cardinality[idx] {
-			// It is a very elementary estimation.
-			cardinality = profile.cardinality[idx]
-		}
+		// It is a very elementary estimation.
+		cardinality = math.Max(cardinality, profile.cardinality[idx])
 	}
 	return cardinality
 }
