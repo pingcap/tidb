@@ -212,7 +212,6 @@ type TableReaderExecutor struct {
 // Close implements the Executor Close interface.
 func (e *TableReaderExecutor) Close() error {
 	e.ctx.StoreQueryFeedback(e.feedback)
-	e.partialResult = nil
 	err := e.resultHandler.Close()
 	return errors.Trace(err)
 }
