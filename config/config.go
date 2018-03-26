@@ -141,14 +141,15 @@ type Status struct {
 
 // Performance is the performance section of the config.
 type Performance struct {
-	MaxProcs        uint   `toml:"max-procs" json:"max-procs"`
-	TCPKeepAlive    bool   `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
-	RetryLimit      uint   `toml:"retry-limit" json:"retry-limit"`
-	JoinConcurrency uint   `toml:"join-concurrency" json:"join-concurrency"`
-	CrossJoin       bool   `toml:"cross-join" json:"cross-join"`
-	StatsLease      string `toml:"stats-lease" json:"stats-lease"`
-	RunAutoAnalyze  bool   `toml:"run-auto-analyze" json:"run-auto-analyze"`
-	StmtCountLimit  uint   `toml:"stmt-count-limit" json:"stmt-count-limit"`
+	MaxProcs            uint    `toml:"max-procs" json:"max-procs"`
+	TCPKeepAlive        bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
+	RetryLimit          uint    `toml:"retry-limit" json:"retry-limit"`
+	JoinConcurrency     uint    `toml:"join-concurrency" json:"join-concurrency"`
+	CrossJoin           bool    `toml:"cross-join" json:"cross-join"`
+	StatsLease          string  `toml:"stats-lease" json:"stats-lease"`
+	RunAutoAnalyze      bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
+	StmtCountLimit      uint    `toml:"stmt-count-limit" json:"stmt-count-limit"`
+	FeedbackProbability float64 `toml:"feedback-probability" json:"feedback-probability"`
 }
 
 // XProtocol is the XProtocol section of the config.
@@ -247,13 +248,14 @@ var defaultConf = Config{
 		MetricsInterval: 15,
 	},
 	Performance: Performance{
-		TCPKeepAlive:    true,
-		RetryLimit:      10,
-		JoinConcurrency: 5,
-		CrossJoin:       true,
-		StatsLease:      "3s",
-		RunAutoAnalyze:  true,
-		StmtCountLimit:  5000,
+		TCPKeepAlive:        true,
+		RetryLimit:          10,
+		JoinConcurrency:     5,
+		CrossJoin:           true,
+		StatsLease:          "3s",
+		RunAutoAnalyze:      true,
+		StmtCountLimit:      5000,
+		FeedbackProbability: 0,
 	},
 	XProtocol: XProtocol{
 		XHost: "",
