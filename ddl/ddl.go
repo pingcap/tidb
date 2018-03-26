@@ -98,7 +98,7 @@ var (
 	errInvalidUseOfNull         = terror.ClassDDL.New(codeInvalidUseOfNull, "Invalid use of NULL value")
 	errTooManyFields            = terror.ClassDDL.New(codeTooManyFields, "Too many columns")
 	errInvalidSplitRegionRanges = terror.ClassDDL.New(codeInvalidRanges, "Failed to split region ranges")
-	errReorgWorkerNotRunnable   = terror.ClassDDL.New(codeReorgWorkerNotRunnable, "reorg worker is not runnable.")
+	errReorgPanic               = terror.ClassDDL.New(codeReorgWorkerPanic, "reorg worker panic.")
 
 	// errWrongKeyColumn is for table column cannot be indexed.
 	errWrongKeyColumn = terror.ClassDDL.New(codeWrongKeyColumn, mysql.MySQLErrName[mysql.ErrWrongKeyColumn])
@@ -502,19 +502,19 @@ func (d *ddl) WorkerVars() *variable.SessionVars {
 
 // DDL error codes.
 const (
-	codeInvalidWorker          terror.ErrCode = 1
-	codeNotOwner                              = 2
-	codeInvalidDDLJob                         = 3
-	codeInvalidJobFlag                        = 5
-	codeRunMultiSchemaChanges                 = 6
-	codeWaitReorgTimeout                      = 7
-	codeInvalidStoreVer                       = 8
-	codeUnknownTypeLength                     = 9
-	codeUnknownFractionLength                 = 10
-	codeInvalidJobVersion                     = 11
-	codeCancelledDDLJob                       = 12
-	codeInvalidRanges                         = 13
-	codeReorgWorkerNotRunnable                = 14
+	codeInvalidWorker         terror.ErrCode = 1
+	codeNotOwner                             = 2
+	codeInvalidDDLJob                        = 3
+	codeInvalidJobFlag                       = 5
+	codeRunMultiSchemaChanges                = 6
+	codeWaitReorgTimeout                     = 7
+	codeInvalidStoreVer                      = 8
+	codeUnknownTypeLength                    = 9
+	codeUnknownFractionLength                = 10
+	codeInvalidJobVersion                    = 11
+	codeCancelledDDLJob                      = 12
+	codeInvalidRanges                        = 13
+	codeReorgWorkerPanic                     = 14
 
 	codeInvalidDBState         = 100
 	codeInvalidTableState      = 101
