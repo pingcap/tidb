@@ -37,6 +37,8 @@ type streamResult struct {
 	curr         *tipb.Chunk
 	partialCount int64
 	feedback     *statistics.QueryFeedback
+
+	buffer []byte
 }
 
 func (r *streamResult) Fetch(context.Context) {}
@@ -124,7 +126,6 @@ func (r *streamResult) flushToChunk(chk *chunk.Chunk) (err error) {
 	remainRowsData := r.curr.RowsData
 	maxChunkSize := r.ctx.GetSessionVars().MaxChunkSize
 	timeZone := r.ctx.GetSessionVars().GetTimeZone()
-	var bufferedBytes []byte
 	for chk.NumRows() < maxChunkSize && len(remainRowsData) > 0 {
 		for i := 0; i < r.rowLen; i++ {
 			remainRowsData, bufferedBytes, err = codec.DecodeOneToChunk(remainRowsData, bufferedBytes, chk, i, r.fieldTypes[i], timeZone)
