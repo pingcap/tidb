@@ -449,3 +449,31 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	tblInfo = testTableInfo(c, d, "t1", 3)
 	testCreateTable(c, ctx, d, dbInfo, tblInfo)
 }
+
+func (s *testDDLSuite) TestIgnorableSpec(c *C) {
+
+	specs := []ast.AlterTableType{
+		ast.AlterTableOption,
+		ast.AlterTableAddColumns,
+		ast.AlterTableAddConstraint,
+		ast.AlterTableDropColumn,
+		ast.AlterTableDropPrimaryKey,
+		ast.AlterTableDropIndex,
+		ast.AlterTableDropForeignKey,
+		ast.AlterTableModifyColumn,
+		ast.AlterTableChangeColumn,
+		ast.AlterTableRenameTable,
+		ast.AlterTableAlterColumn,
+	}
+	for _, spec := range specs {
+		c.Assert(isIgnorableSpec(spec), IsFalse)
+	}
+
+	ignorableSpecs := []ast.AlterTableType{
+		ast.AlterTableLock,
+		ast.AlterTableAlgorithm,
+	}
+	for _, spec := range ignorableSpecs {
+		c.Assert(isIgnorableSpec(spec), IsTrue)
+	}
+}

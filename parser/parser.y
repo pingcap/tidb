@@ -2552,8 +2552,8 @@ TiDBKeyword:
 "ADMIN" | "CANCEL" | "DDL" | "JOBS" | "JOB" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "STATS_HEALTHY" | "TIDB" | "TIDB_HJ" | "TIDB_SMJ" | "TIDB_INLJ"
 
 NotKeywordToken:
- "ADDDATE" | "BIT_AND" | "BIT_OR" | "BIT_XOR" | "CAST" | "COUNT" | "CURTIME" | "DATE_ADD" | "DATE_SUB" | "EXTRACT" | "GET_FORMAT" | "GROUP_CONCAT" | "MIN" | "MAX" | "NOW" | "POSITION"
-| "SUBDATE" | "SUBSTRING" | "SUM" | "TIMESTAMPADD" | "TIMESTAMPDIFF" | "TRIM" | "INPLACE" | "COPY"
+ "ADDDATE" | "BIT_AND" | "BIT_OR" | "BIT_XOR" | "CAST" | "COPY" | "COUNT" | "CURTIME" | "DATE_ADD" | "DATE_SUB" | "EXTRACT" | "GET_FORMAT" | "GROUP_CONCAT" 
+| "INPLACE" |"MIN" | "MAX" | "NOW" | "POSITION" | "SUBDATE" | "SUBSTRING" | "SUM" | "TIMESTAMPADD" | "TIMESTAMPDIFF" | "TRIM"
 
 /************************************************************************************
  *
