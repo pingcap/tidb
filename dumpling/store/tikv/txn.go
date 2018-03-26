@@ -20,6 +20,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/sessionctx"
 	binlog "github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
@@ -168,7 +169,13 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	committer, err := newTwoPhaseCommitter(txn)
+	// connID is used for log.
+	var connID uint64
+	val := ctx.Value(sessionctx.ConnID)
+	if val != nil {
+		connID = val.(uint64)
+	}
+	committer, err := newTwoPhaseCommitter(txn, connID)
 	if err != nil {
 		return errors.Trace(err)
 	}
