@@ -24,7 +24,7 @@ import (
 )
 
 type testDeleteRangeSuite struct {
-	oneByOneSuite
+	OneByOneSuite
 	cluster *mocktikv.Cluster
 	store   *tikvStore
 }
@@ -32,7 +32,7 @@ type testDeleteRangeSuite struct {
 var _ = Suite(&testDeleteRangeSuite{})
 
 func (s *testDeleteRangeSuite) SetUpTest(c *C) {
-	s.oneByOneSuite.SetUpSuite(c)
+	s.OneByOneSuite.SetUpSuite(c)
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithMultiRegions(s.cluster, []byte("a"), []byte("b"), []byte("c"))
 	mvccStore := mocktikv.NewMvccStore()
@@ -47,7 +47,7 @@ func (s *testDeleteRangeSuite) SetUpTest(c *C) {
 func (s *testDeleteRangeSuite) TearDownSuite(c *C) {
 	err := s.store.Close()
 	c.Assert(err, IsNil)
-	s.oneByOneSuite.TearDownSuite(c)
+	s.OneByOneSuite.TearDownSuite(c)
 }
 
 func (s *testDeleteRangeSuite) checkData(c *C, expectedData map[string]string) {
