@@ -156,7 +156,7 @@ func timeZoneOffset(ctx sessionctx.Context) int64 {
 const (
 	// FlagIgnoreTruncate indicates if truncate error should be ignored.
 	// Read-only statements should ignore truncate error, write statements should not ignore truncate error.
-	FlagIgnoreTruncate = 1
+	FlagIgnoreTruncate uint64 = 1
 	// FlagTruncateAsWarning indicates if truncate error should be returned as warning.
 	// This flag only matters if FlagIgnoreTruncate is not set, in strict sql mode, truncate error should
 	// be returned as error, in non-strict sql mode, truncate error should be saved as warning.
@@ -164,7 +164,7 @@ const (
 	// FlagPadCharToFullLength indicates if sql_mode 'PAD_CHAR_TO_FULL_LENGTH' is set.
 	FlagPadCharToFullLength = 1 << 2
 	// FlagInInsertStmt indicates if this is a INSERT statement.
-	FlagInInsertStmt uint64 = 1 << 3
+	FlagInInsertStmt = 1 << 3
 	// FlagInUpdateOrDeleteStmt indicates if this is a UPDATE statement or a DELETE statement.
 	FlagInUpdateOrDeleteStmt = 1 << 4
 	// FlagInSelectStmt indicates if this is a SELECT statement.
