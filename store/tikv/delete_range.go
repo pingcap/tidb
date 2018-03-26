@@ -20,6 +20,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"fmt"
 )
 
 // DeleteRangeTask is used to delete all keys in a range. After
@@ -79,6 +80,9 @@ func (t *DeleteRangeTask) Execute() error {
 			},
 		}
 
+		//debug
+		fmt.Println("**DeleteRange [", startKey, ", ", endKey, ")")
+
 		resp, err := t.store.SendReq(t.bo, req, loc.Region, ReadTimeoutMedium)
 		if err != nil {
 			return errors.Trace(err)
@@ -99,6 +103,7 @@ func (t *DeleteRangeTask) Execute() error {
 			return errors.Trace(ErrBodyMissing)
 		}
 		if err := deleteRangeResp.GetError(); err != "" {
+			fmt.Println("**Error: ", err)
 			return errors.Errorf("unexpected delete range err: %v", err)
 		}
 		t.completedRegions++
