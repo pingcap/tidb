@@ -1454,7 +1454,7 @@ func (d *ddl) TableComment(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tb.Meta().ID,
-		Type:       model.ActionSetTableComment,
+		Type:       model.ActionModifyTableComment,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{schema.ID, spec.Name, spec.Comment},
 	}

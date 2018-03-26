@@ -28,44 +28,44 @@ type ActionType byte
 
 // List DDL actions.
 const (
-	ActionNone            ActionType = 0
-	ActionCreateSchema    ActionType = 1
-	ActionDropSchema      ActionType = 2
-	ActionCreateTable     ActionType = 3
-	ActionDropTable       ActionType = 4
-	ActionAddColumn       ActionType = 5
-	ActionDropColumn      ActionType = 6
-	ActionAddIndex        ActionType = 7
-	ActionDropIndex       ActionType = 8
-	ActionAddForeignKey   ActionType = 9
-	ActionDropForeignKey  ActionType = 10
-	ActionTruncateTable   ActionType = 11
-	ActionModifyColumn    ActionType = 12
-	ActionRebaseAutoID    ActionType = 13
-	ActionRenameTable     ActionType = 14
-	ActionSetDefaultValue ActionType = 15
-	ActionShardRowID      ActionType = 16
-	ActionSetTableComment ActionType = 17
+	ActionNone               ActionType = 0
+	ActionCreateSchema       ActionType = 1
+	ActionDropSchema         ActionType = 2
+	ActionCreateTable        ActionType = 3
+	ActionDropTable          ActionType = 4
+	ActionAddColumn          ActionType = 5
+	ActionDropColumn         ActionType = 6
+	ActionAddIndex           ActionType = 7
+	ActionDropIndex          ActionType = 8
+	ActionAddForeignKey      ActionType = 9
+	ActionDropForeignKey     ActionType = 10
+	ActionTruncateTable      ActionType = 11
+	ActionModifyColumn       ActionType = 12
+	ActionRebaseAutoID       ActionType = 13
+	ActionRenameTable        ActionType = 14
+	ActionSetDefaultValue    ActionType = 15
+	ActionShardRowID         ActionType = 16
+	ActionModifyTableComment ActionType = 17
 )
 
 var actionMap = map[ActionType]string{
-	ActionCreateSchema:    "create schema",
-	ActionDropSchema:      "drop schema",
-	ActionCreateTable:     "create table",
-	ActionDropTable:       "drop table",
-	ActionAddColumn:       "add column",
-	ActionDropColumn:      "drop column",
-	ActionAddIndex:        "add index",
-	ActionDropIndex:       "drop index",
-	ActionAddForeignKey:   "add foreign key",
-	ActionDropForeignKey:  "drop foreign key",
-	ActionTruncateTable:   "truncate table",
-	ActionModifyColumn:    "modify column",
-	ActionRebaseAutoID:    "rebase auto_increment ID",
-	ActionRenameTable:     "rename table",
-	ActionSetDefaultValue: "set default value",
-	ActionShardRowID:      "shard row ID",
-	ActionSetTableComment: "set table comment",
+	ActionCreateSchema:       "create schema",
+	ActionDropSchema:         "drop schema",
+	ActionCreateTable:        "create table",
+	ActionDropTable:          "drop table",
+	ActionAddColumn:          "add column",
+	ActionDropColumn:         "drop column",
+	ActionAddIndex:           "add index",
+	ActionDropIndex:          "drop index",
+	ActionAddForeignKey:      "add foreign key",
+	ActionDropForeignKey:     "drop foreign key",
+	ActionTruncateTable:      "truncate table",
+	ActionModifyColumn:       "modify column",
+	ActionRebaseAutoID:       "rebase auto_increment ID",
+	ActionRenameTable:        "rename table",
+	ActionSetDefaultValue:    "set default value",
+	ActionShardRowID:         "shard row ID",
+	ActionModifyTableComment: "modify table comment",
 }
 
 // String return current ddl action in string
