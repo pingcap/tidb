@@ -74,11 +74,16 @@ func (e *tableScanExec) GetSrcExec() executor {
 }
 
 func (e *tableScanExec) ResetCounts() {
-	e.start = e.cursor
-	e.counts[e.start] = 0
+	if e.counts != nil {
+		e.start = e.cursor
+		e.counts[e.start] = 0
+	}
 }
 
 func (e *tableScanExec) Counts() []int64 {
+	if e.counts == nil {
+		return nil
+	}
 	if e.seekKey == nil {
 		return e.counts[e.start:e.cursor]
 	}
@@ -120,7 +125,9 @@ func (e *tableScanExec) Next(ctx context.Context) (value [][]byte, err error) {
 			if value == nil {
 				continue
 			}
-			e.counts[e.cursor-1]++
+			if e.counts != nil {
+				e.counts[e.cursor-1]++
+			}
 			return value, nil
 		}
 		value, err = e.getRowFromRange(ran)
@@ -132,7 +139,9 @@ func (e *tableScanExec) Next(ctx context.Context) (value [][]byte, err error) {
 			e.cursor++
 			continue
 		}
-		e.counts[e.cursor]++
+		if e.counts != nil {
+			e.counts[e.cursor]++
+		}
 		return value, nil
 	}
 
@@ -237,11 +246,16 @@ func (e *indexScanExec) GetSrcExec() executor {
 }
 
 func (e *indexScanExec) ResetCounts() {
-	e.start = e.cursor
-	e.counts[e.start] = 0
+	if e.counts != nil {
+		e.start = e.cursor
+		e.counts[e.start] = 0
+	}
 }
 
 func (e *indexScanExec) Counts() []int64 {
+	if e.counts == nil {
+		return nil
+	}
 	if e.seekKey == nil {
 		return e.counts[e.start:e.cursor]
 	}
@@ -284,7 +298,9 @@ func (e *indexScanExec) Next(ctx context.Context) (value [][]byte, err error) {
 			if value == nil {
 				continue
 			}
-			e.counts[e.cursor-1]++
+			if e.counts != nil {
+				e.counts[e.cursor-1]++
+			}
 		} else {
 			value, err = e.getRowFromRange(ran)
 			if err != nil {
@@ -295,7 +311,9 @@ func (e *indexScanExec) Next(ctx context.Context) (value [][]byte, err error) {
 				e.seekKey = nil
 				continue
 			}
-			e.counts[e.cursor]++
+			if e.counts != nil {
+				e.counts[e.cursor]++
+			}
 		}
 		return value, nil
 	}
