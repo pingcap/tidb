@@ -2477,7 +2477,8 @@ func (s *testSuite) TestEarlyClose(c *C) {
 	c.Assert(err, IsNil)
 	rs := rss[0]
 	chk := rs.NewChunk()
-	rs.NextChunk(ctx, chk)
+	err = rs.NextChunk(ctx, chk)
+	c.Assert(err, NotNil)
 	rs.Close()
 }
 
