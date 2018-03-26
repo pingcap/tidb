@@ -399,6 +399,10 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 
 		// for straight_join
 		{"select * from t1 straight_join t2 on t1.id = t2.id", true},
+		{"select straight_join * from t1 join t2 on t1.id = t2.id", true},
+		{"select straight_join * from t1 left join t2 on t1.id = t2.id", true},
+		{"select straight_join * from t1 right join t2 on t1.id = t2.id", true},
+		{"select straight_join * from t1 straight_join t2 on t1.id = t2.id", true},
 
 		// for admin
 		{"admin show ddl;", true},
@@ -556,6 +560,12 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{"SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED", true},
 		{"SET SESSION TRANSACTION ISOLATION LEVEL READ UNCOMMITTED", true},
 		{"SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE", true},
+		{"SET TRANSACTION ISOLATION LEVEL REPEATABLE READ", true},
+		{"SET TRANSACTION READ WRITE", true},
+		{"SET TRANSACTION READ ONLY", true},
+		{"SET TRANSACTION ISOLATION LEVEL READ COMMITTED", true},
+		{"SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED", true},
+		{"SET TRANSACTION ISOLATION LEVEL SERIALIZABLE", true},
 		// for set names
 		{"set names utf8", true},
 		{"set names utf8 collate utf8_unicode_ci", true},
@@ -1210,6 +1220,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select group_concat(c2,c1 SEPARATOR ';') from t group by c1;`, true},
 		{`select group_concat(distinct c2,c1) from t group by c1;`, true},
 		{`select group_concat(distinctrow c2,c1) from t group by c1;`, true},
+		{`SELECT student_name, GROUP_CONCAT(DISTINCT test_score ORDER BY test_score DESC SEPARATOR ' ') FROM student GROUP BY student_name;`, true},
 
 		// for encryption and compression functions
 		{`select AES_ENCRYPT('text',UNHEX('F3229A0B371ED2D9441B830D21A390C3'))`, true},
@@ -1330,6 +1341,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"CREATE TABLE foo (name CHAR(50) BINARY CHARACTER SET utf8 COLLATE utf8_bin)", true},
 		{"CREATE TABLE foo (a.b, b);", false},
 		{"CREATE TABLE foo (a, b.c);", false},
+		{"CREATE TABLE (name CHAR(50) BINARY)", false},
 		// for table option
 		{"create table t (c int) avg_row_length = 3", true},
 		{"create table t (c int) avg_row_length 3", true},
@@ -1400,6 +1412,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"drop schema xxx", true},
 		{"drop schema if exists xxx", true},
 		{"drop schema if not exists xxx", false},
+		{"drop table", false},
 		{"drop table xxx", true},
 		{"drop table xxx, yyy", true},
 		{"drop tables xxx", true},
@@ -1523,6 +1536,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 
 		// for alter table
 		{"ALTER TABLE t ADD COLUMN (a SMALLINT UNSIGNED)", true},
+		{"ALTER TABLE ADD COLUMN (a SMALLINT UNSIGNED)", false},
 		{"ALTER TABLE t ADD COLUMN (a SMALLINT UNSIGNED, b varchar(255))", true},
 		{"ALTER TABLE t ADD COLUMN (a SMALLINT UNSIGNED FIRST)", false},
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED", true},

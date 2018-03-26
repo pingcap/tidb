@@ -347,9 +347,15 @@ func (h *rpcHandler) handleKvResolveLock(req *kvrpcpb.ResolveLockRequest) *kvrpc
 }
 
 func (h *rpcHandler) handleKvDeleteRange(req *kvrpcpb.DeleteRangeRequest) *kvrpcpb.DeleteRangeResponse {
-	return &kvrpcpb.DeleteRangeResponse{
-		Error: "not implemented",
+	if !h.checkKeyInRegion(req.StartKey) {
+		panic("KvDeleteRange: key not in region")
 	}
+	var resp kvrpcpb.DeleteRangeResponse
+	err := h.mvccStore.DeleteRange(req.StartKey, req.EndKey)
+	if err != nil {
+		resp.Error = err.Error()
+	}
+	return &resp
 }
 
 func (h *rpcHandler) handleKvRawGet(req *kvrpcpb.RawGetRequest) *kvrpcpb.RawGetResponse {
@@ -575,7 +581,7 @@ func (c *RPCClient) SendReq(ctx context.Context, addr string, req *tikvrpc.Reque
 			resp.DeleteRange = &kvrpcpb.DeleteRangeResponse{RegionError: err}
 			return resp, nil
 		}
-		resp.DeleteRange = &kvrpcpb.DeleteRangeResponse{}
+		resp.DeleteRange = handler.handleKvDeleteRange(r)
 	case tikvrpc.CmdRawGet:
 		r := req.RawGet
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {

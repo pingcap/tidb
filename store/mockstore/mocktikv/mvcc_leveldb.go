@@ -864,6 +864,11 @@ func (mvcc *MVCCLevelDB) BatchResolveLock(startKey, endKey []byte, txnInfos map[
 	return mvcc.db.Write(batch, nil)
 }
 
+// DeleteRange implements the MVCCStore interface.
+func (mvcc *MVCCLevelDB) DeleteRange(startKey, endKey []byte) error {
+	return errors.New("not implemented")
+}
+
 // Close calls leveldb's Close to free resources.
 func (mvcc *MVCCLevelDB) Close() error {
 	return mvcc.db.Close()
