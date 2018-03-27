@@ -16,6 +16,7 @@ package statistics
 import (
 	"bytes"
 	"math"
+	"math/rand"
 	"sort"
 
 	"github.com/cznic/mathutil"
@@ -63,6 +64,29 @@ func NewQueryFeedback(tableID int64, hist *Histogram, expected int64, desc bool)
 		expected: expected,
 		desc:     desc,
 	}
+}
+
+var (
+	// MaxNumberOfRanges is the max number of ranges before split to collect feedback.
+	MaxNumberOfRanges = 20
+	// FeedbackProbability is the probability to collect the feedback.
+	FeedbackProbability = 0.0
+)
+
+// CollectFeedback decides whether to collect the feedback. It returns false when:
+// 1: the histogram is nil or has no buckets;
+// 2: the number of scan ranges exceeds the limit because it may affect the performance;
+// 3: it does not pass the probabilistic sampler.
+func (q *QueryFeedback) CollectFeedback(numOfRanges int) bool {
+	if q.hist == nil || q.hist.Len() == 0 {
+		q.Invalidate()
+		return false
+	}
+	if numOfRanges > MaxNumberOfRanges || rand.Float64() > FeedbackProbability {
+		q.Invalidate()
+		return false
+	}
+	return true
 }
 
 // StoreRanges stores the ranges for update.

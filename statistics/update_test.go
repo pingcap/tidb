@@ -403,6 +403,13 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 	testKit.MustExec("insert into t values (3,4)")
 
 	h := s.do.StatsHandle()
+	oriProbability := statistics.FeedbackProbability
+	oriNumber := statistics.MaxNumberOfRanges
+	defer func() {
+		statistics.FeedbackProbability = oriProbability
+		statistics.MaxNumberOfRanges = oriNumber
+	}()
+	statistics.FeedbackProbability = 1
 	tests := []struct {
 		sql     string
 		hist    string
@@ -447,6 +454,25 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 	h.DumpStatsDeltaToKV()
 	feedback := h.GetQueryFeedback()
 	c.Assert(len(feedback), Equals, 0)
+
+	// Test only collect for max number of ranges.
+	statistics.MaxNumberOfRanges = 0
+	for _, t := range tests {
+		testKit.MustQuery(t.sql)
+		h.DumpStatsDeltaToKV()
+		feedback := h.GetQueryFeedback()
+		c.Assert(len(feedback), Equals, 0)
+	}
+
+	// Test collect feedback by probability.
+	statistics.FeedbackProbability = 0
+	statistics.MaxNumberOfRanges = oriNumber
+	for _, t := range tests {
+		testKit.MustQuery(t.sql)
+		h.DumpStatsDeltaToKV()
+		feedback := h.GetQueryFeedback()
+		c.Assert(len(feedback), Equals, 0)
+	}
 }
 
 func (s *testStatsUpdateSuite) TestUpdateSystemTable(c *C) {
