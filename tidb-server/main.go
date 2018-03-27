@@ -45,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
-	"github.com/pingcap/tidb/util/kvencoder"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/systimemon"
