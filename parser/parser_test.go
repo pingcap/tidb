@@ -2208,3 +2208,14 @@ func (s *testParserSuite) TestSetTransaction(c *C) {
 		c.Assert(vars.Value.GetValue(), Equals, t.value)
 	}
 }
+
+func (s *testParserSuite) TestSideEffect(c *C) {
+	// This test cover a bug that parse an error SQL doesn't leave the parser in a
+	// clean state, cause the following SQL parse fail.
+	parser := New()
+	_, err := parser.ParseOneStmt("create table t /*!50100 'abc', 'abc' */;", "", "")
+	c.Assert(err, NotNil)
+
+	_, err = parser.ParseOneStmt("show tables;", "", "")
+	c.Assert(err, IsNil)
+}
