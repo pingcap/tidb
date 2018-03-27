@@ -155,6 +155,12 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrInvalidDefault)
 	sql = "CREATE TABLE `t` (`a` double DEFAULT now());"
 	s.testErrorCode(c, sql, tmysql.ErrInvalidDefault)
+	sql = "create table t1(a int) character set uft8;"
+	s.testErrorCode(c, sql, tmysql.ErrUnknownCharacterSet)
+	sql = "create table t1(a int) character set gkb;"
+	s.testErrorCode(c, sql, tmysql.ErrUnknownCharacterSet)
+	sql = "create table t1(a int) character set laitn1;"
+	s.testErrorCode(c, sql, tmysql.ErrUnknownCharacterSet)
 
 	// add column
 	sql = "alter table test_error_code_succ add column c1 int"
