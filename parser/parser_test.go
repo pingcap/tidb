@@ -2023,8 +2023,7 @@ func (s *testParserSuite) TestView(c *C) {
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t", true},
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t with local check option", true},
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t with cascaded check option", true},
-		// fixme: should be true
-		{"create or replace algorithm = merge definer = current_user view v as select * from t", false},
+		{"create or replace algorithm = merge definer = current_user view v as select * from t", true},
 	}
 	s.RunTest(c, table)
 
