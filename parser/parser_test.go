@@ -2025,6 +2025,14 @@ func (s *testParserSuite) TestView(c *C) {
 		{"create or replace algorithm = merge definer = current_user view v as select * from t", false},
 	}
 	s.RunTest(c, table)
+
+	// Test case for the text of the select statement in create view statement.
+	p := New()
+	sms, err := p.Parse("create view v as select * from t", "", "")
+	c.Assert(err, IsNil)
+	v, ok := sms[0].(*ast.CreateViewStmt)
+	c.Assert(ok, IsTrue)
+	c.Assert(v.Select.Text(), Equals, "select * from t")
 }
 
 func (s *testParserSuite) TestTimestampDiffUnit(c *C) {
@@ -2203,4 +2211,15 @@ func (s *testParserSuite) TestSetTransaction(c *C) {
 		c.Assert(vars.IsSystem, Equals, true)
 		c.Assert(vars.Value.GetValue(), Equals, t.value)
 	}
+}
+
+func (s *testParserSuite) TestSideEffect(c *C) {
+	// This test cover a bug that parse an error SQL doesn't leave the parser in a
+	// clean state, cause the following SQL parse fail.
+	parser := New()
+	_, err := parser.ParseOneStmt("create table t /*!50100 'abc', 'abc' */;", "", "")
+	c.Assert(err, NotNil)
+
+	_, err = parser.ParseOneStmt("show tables;", "", "")
+	c.Assert(err, IsNil)
 }
