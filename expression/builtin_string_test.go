@@ -185,9 +185,9 @@ func (s *testEvaluatorSuite) TestConcatWS(c *C) {
 			true, false, "",
 		},
 		{
-			[]interface{}{",", "a", "b", "hello", "$^%"},
+			[]interface{}{",", "a", "b", "hello", `$^%`},
 			false, false,
-			"a,b,hello,$^%",
+			`a,b,hello,$^%`,
 		},
 		{
 			[]interface{}{"|", "a", nil, "b", "c"},
