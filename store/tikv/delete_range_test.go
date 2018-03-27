@@ -103,10 +103,10 @@ func deleteRangeFromMap(m map[string]string, startKey []byte, endKey []byte) {
 }
 
 // testDeleteRangeOnce does delete range on both the map and the storage, and assert they are equal after deleting
-func (s *testDeleteRangeSuite) testDeleteRangeOnce(c *C, startKey []byte, endKey []byte, compareData map[string]string) {
+func (s *testDeleteRangeSuite) mustDeleteRange(c *C, startKey []byte, endKey []byte, expected map[string]string) {
 	s.deleteRange(c, startKey, endKey)
-	deleteRangeFromMap(compareData, startKey, endKey)
-	s.checkData(c, compareData)
+	deleteRangeFromMap(expected, startKey, endKey)
+	s.checkData(c, expected)
 }
 
 func (s *testDeleteRangeSuite) TestDeleteRange(c *C) {
@@ -131,11 +131,9 @@ func (s *testDeleteRangeSuite) TestDeleteRange(c *C) {
 
 	s.checkData(c, testData)
 
-	s.testDeleteRangeOnce(c, []byte("b"), []byte("c0"), testData)
-
-	s.testDeleteRangeOnce(c, []byte("c11"), []byte("c12"), testData)
-
-	s.testDeleteRangeOnce(c, []byte("d0"), []byte("d0"), testData)
-
-	s.testDeleteRangeOnce(c, []byte("a"), []byte("z"), testData)
+	s.mustDeleteRange(c, []byte("b"), []byte("c0"), testData)
+	s.mustDeleteRange(c, []byte("c11"), []byte("c12"), testData)
+	s.mustDeleteRange(c, []byte("d0"), []byte("d0"), testData)
+	s.mustDeleteRange(c, []byte("c5"), []byte("d5"), testData)
+	s.mustDeleteRange(c, []byte("a"), []byte("z"), testData)
 }
