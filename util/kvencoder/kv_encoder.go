@@ -259,8 +259,3 @@ func (e *kvEncoder) initial(dbName string, idAlloc autoid.Allocator) (err error)
 	e.dom = dom
 	return nil
 }
-
-func init() {
-	plan.PreparedPlanCacheEnabled = true
-	plan.PreparedPlanCacheCapacity = 10
-}
