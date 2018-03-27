@@ -24,6 +24,7 @@ import (
 	"github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing"
 	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/juju/errors"
+	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
@@ -63,8 +64,8 @@ const (
 type Client interface {
 	// Close should release all data.
 	Close() error
-	// SendReq sends Request.
-	SendReq(ctx context.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error)
+	// SendRequest sends Request.
+	SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error)
 }
 
 type connArray struct {
@@ -212,8 +213,8 @@ func (c *rpcClient) closeConns() {
 	c.Unlock()
 }
 
-// SendReq sends a Request to server and receives Response.
-func (c *rpcClient) SendReq(ctx context.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+// SendRequest sends a Request to server and receives Response.
+func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	start := time.Now()
 	reqType := req.Type.String()
 	storeID := strconv.FormatUint(req.Context.GetPeer().GetStoreId(), 10)
@@ -226,10 +227,36 @@ func (c *rpcClient) SendReq(ctx context.Context, addr string, req *tikvrpc.Reque
 		return nil, errors.Trace(err)
 	}
 	client := tikvpb.NewTikvClient(connArray.Get())
-	resp, err := tikvrpc.CallRPC(ctx, client, req, connArray.streamTimeout)
+
+	if req.Type != tikvrpc.CmdCopStream {
+		ctx1, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		return tikvrpc.CallRPC(ctx1, client, req)
+	}
+
+	// Coprocessor streaming request.
+	// Use context to support timeout for grpc streaming client.
+	ctx1, cancel := context.WithCancel(ctx)
+	resp, err := tikvrpc.CallRPC(ctx1, client, req)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	// Put the lease object to the timeout channel, so it would be checked periodically.
+	copStream := resp.CopStream
+	copStream.Timeout = timeout
+	copStream.Lease.Cancel = cancel
+	connArray.streamTimeout <- &copStream.Lease
+
+	// Read the first streaming response to get CopStreamResponse.
+	// This can make error handling much easier, because SendReq() retry on
+	// region error automatically.
+	var first *coprocessor.Response
+	first, err = copStream.Recv()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	copStream.Response = first
 	return resp, nil
 }
 
