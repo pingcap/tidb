@@ -54,8 +54,6 @@ var (
 	ErrMultiplePriKey = terror.ClassSchema.New(codeMultiplePriKey, "Multiple primary key defined")
 	// ErrTooManyKeyParts returns for too many key parts.
 	ErrTooManyKeyParts = terror.ClassSchema.New(codeTooManyKeyParts, "Too many key parts specified; max %d parts allowed")
-	// ErrUnknownCharacterSet returns unknown character set.
-	ErrUnknownCharacterSet = terror.ClassSchema.New(codeUnknownCharacterSet, "Unknown character set: '%s'")
 )
 
 // InfoSchema is the interface used to retrieve the schema information.
@@ -281,14 +279,13 @@ const (
 	codeForeignKeyNotExists = 1091
 	codeWrongFkDef          = 1239
 
-	codeDatabaseExists      = 1007
-	codeTableExists         = 1050
-	codeBadTable            = 1051
-	codeColumnExists        = 1060
-	codeIndexExists         = 1831
-	codeMultiplePriKey      = 1068
-	codeTooManyKeyParts     = 1070
-	codeUnknownCharacterSet = 1115
+	codeDatabaseExists  = 1007
+	codeTableExists     = 1050
+	codeBadTable        = 1051
+	codeColumnExists    = 1060
+	codeIndexExists     = 1831
+	codeMultiplePriKey  = 1068
+	codeTooManyKeyParts = 1070
 )
 
 func init() {
@@ -307,7 +304,6 @@ func init() {
 		codeIndexExists:         mysql.ErrDupIndex,
 		codeMultiplePriKey:      mysql.ErrMultiplePriKey,
 		codeTooManyKeyParts:     mysql.ErrTooManyKeyParts,
-		codeUnknownCharacterSet: mysql.ErrUnknownCharacterSet,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassSchema] = schemaMySQLErrCodes
 	initInfoSchemaDB()

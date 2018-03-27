@@ -132,7 +132,7 @@ func checkCharsetAndCollate(Chs, Col string) error {
 		return nil
 	}
 
-	return infoschema.ErrUnknownCharacterSet.GenByArgs(Chs)
+	return ErrUnknownCharacterSet.GenByArgs(Chs)
 }
 
 func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constraint) {
