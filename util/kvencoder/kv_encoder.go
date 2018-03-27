@@ -225,8 +225,6 @@ func (e *kvEncoder) initial(dbName string, idAlloc autoid.Allocator) (err error)
 		}
 	}()
 
-	plan.PreparedPlanCacheEnabled = true
-	plan.PreparedPlanCacheCapacity = 10
 	// disable stats update.
 	session.SetStatsLease(0)
 	store, dom, err = newMockTikvWithBootstrap()
@@ -260,4 +258,9 @@ func (e *kvEncoder) initial(dbName string, idAlloc autoid.Allocator) (err error)
 	e.store = store
 	e.dom = dom
 	return nil
+}
+
+func init() {
+	plan.PreparedPlanCacheEnabled = true
+	plan.PreparedPlanCacheCapacity = 10
 }
