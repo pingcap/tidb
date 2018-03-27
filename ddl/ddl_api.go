@@ -858,11 +858,18 @@ func hasAutoIncrementColumn(tbInfo *model.TableInfo) bool {
 	return false
 }
 
+// isIgnorableSpec checks if the spec type is ignorable.
+// Some specs are parsed by ignored. This is for compatibility.
+func isIgnorableSpec(tp ast.AlterTableType) bool {
+	// AlterTableLock/AlterTableAlgorithm are ignored.
+	return tp == ast.AlterTableLock || tp == ast.AlterTableAlgorithm
+}
+
 func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.AlterTableSpec) (err error) {
-	// Only handle valid specs, AlterTableLock is ignored.
+	// Only handle valid specs.
 	validSpecs := make([]*ast.AlterTableSpec, 0, len(specs))
 	for _, spec := range specs {
-		if spec.Tp == ast.AlterTableLock {
+		if isIgnorableSpec(spec.Tp) {
 			continue
 		}
 		validSpecs = append(validSpecs, spec)
