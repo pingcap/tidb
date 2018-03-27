@@ -1772,7 +1772,7 @@ PartDefStorageOpt:
 CreateViewStmt:
     "CREATE" OrReplace ViewAlgorithm ViewDefiner ViewSQLSecurity "VIEW" ViewName ViewFieldList "AS" SelectStmt ViewCheckOption
     {
-		startOffset := parser.startOffset(&yyS[yypt])
+		startOffset := parser.startOffset(&yyS[yypt-1])
 		selStmt := $10.(*ast.SelectStmt)
 		selStmt.SetText(string(parser.src[startOffset:]))
 		x := &ast.CreateViewStmt {

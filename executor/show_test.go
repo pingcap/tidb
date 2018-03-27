@@ -274,9 +274,9 @@ func (s *testSuite) TestShow(c *C) {
 	}
 
 	// for issue #4255
-	result = tk.MustQuery("show function status like '%'")
+	result = tk.MustQuery(`show function status like '%'`)
 	result.Check(result.Rows())
-	result = tk.MustQuery("show plugins like '%'")
+	result = tk.MustQuery(`show plugins like '%'`)
 	result.Check(result.Rows())
 
 	// for issue #4740
@@ -547,8 +547,8 @@ func (s *testSuite) TestShow2(c *C) {
 
 	tk.MustQuery("show databases like 'test'").Check(testkit.Rows("test"))
 
-	tk.MustExec("grant all on *.* to 'root'@'%'")
-	tk.MustQuery("show grants").Check(testkit.Rows("GRANT ALL PRIVILEGES ON *.* TO 'root'@'%'"))
+	tk.MustExec(`grant all on *.* to 'root'@'%'`)
+	tk.MustQuery("show grants").Check(testkit.Rows(`GRANT ALL PRIVILEGES ON *.* TO 'root'@'%'`))
 }
 
 func (s *testSuite) TestCollation(c *C) {
