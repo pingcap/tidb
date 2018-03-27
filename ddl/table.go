@@ -336,9 +336,8 @@ func (d *ddl) onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 }
 
 func (d *ddl) onModifyTableComment(t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	var tableName string
 	var comment string
-	if err := job.DecodeArgs(&tableName, &comment); err != nil {
+	if err := job.DecodeArgs(&comment); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}

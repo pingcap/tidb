@@ -1457,7 +1457,7 @@ func (d *ddl) AlterTableComment(ctx sessionctx.Context, ident ast.Ident, spec *a
 		TableID:    tb.Meta().ID,
 		Type:       model.ActionModifyTableComment,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{spec.Name, spec.Comment},
+		Args:       []interface{}{spec.Comment},
 	}
 
 	err = d.doDDLJob(ctx, job)
