@@ -2025,6 +2025,14 @@ func (s *testParserSuite) TestView(c *C) {
 		{"create or replace algorithm = merge definer = current_user view v as select * from t", false},
 	}
 	s.RunTest(c, table)
+
+	// Test case for the text of the select statement in create view statement.
+	p := New()
+	sms, err := p.Parse("create view v as select * from t", "", "")
+	c.Assert(err, IsNil)
+	v, ok := sms[0].(*ast.CreateViewStmt)
+	c.Assert(ok, IsTrue)
+	c.Assert(v.Select.Text(), Equals, "select * from t")
 }
 
 func (s *testParserSuite) TestTimestampDiffUnit(c *C) {
