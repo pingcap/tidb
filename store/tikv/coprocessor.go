@@ -473,7 +473,7 @@ func (it *copIterator) sendToTaskCh(t *copTask, taskCh chan<- *copTask) (exit bo
 	return
 }
 
-func (it *copIterator) sendToRespCh(resp copResponse, respCh chan copResponse) (exit bool) {
+func (it *copIterator) sendToRespCh(resp copResponse, respCh chan<- copResponse) (exit bool) {
 	select {
 	case respCh <- resp:
 	case <-it.finished:
@@ -504,19 +504,19 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	metrics.TiKVCoprocessorCounter.WithLabelValues("next").Inc()
 
 	var (
-		resp copResponse
-		ok   bool
+		resp   copResponse
+		ok     bool
+		closed bool
 	)
 	// If data order matters, response should be returned in the same order as copTask slice.
 	// Otherwise all responses are returned from a single channel.
 	if !it.req.KeepOrder {
 		// Get next fetched resp from chan
-		resp, ok = <-it.respChan
-		if !ok {
+		resp, ok, closed = it.recvFromRespCh(ctx, it.respChan)
+		if !ok || closed {
 			return nil, nil
 		}
 	} else {
-		var closed bool
 		for {
 			if it.curr >= len(it.tasks) {
 				// Resp will be nil if iterator is finished.
@@ -558,7 +558,8 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask, ch chan copRespo
 	for len(remainTasks) > 0 {
 		tasks, err := it.handleTaskOnce(bo, remainTasks[0], ch)
 		if err != nil {
-			ch <- copResponse{err: errors.Trace(err)}
+			resp := copResponse{err: errors.Trace(err)}
+			it.sendToRespCh(resp, ch)
 			return
 		}
 		if len(tasks) > 0 {
@@ -572,6 +573,12 @@ func (it *copIterator) handleTask(bo *Backoffer, task *copTask, ch chan copRespo
 // handleTaskOnce handles single copTask, successful results are send to channel.
 // If error happened, returns error. If region split or meet lock, returns the remain tasks.
 func (it *copIterator) handleTaskOnce(bo *Backoffer, task *copTask, ch chan copResponse) ([]*copTask, error) {
+
+	// gofail: var handleTaskOnceError bool
+	// if handleTaskOnceError {
+	// 	return nil, errors.New("mock handleTaskOnce error")
+	// }
+
 	sender := NewRegionRequestSender(it.store.regionCache, it.store.client)
 	req := &tikvrpc.Request{
 		Type: task.cmdType,
@@ -586,20 +593,8 @@ func (it *copIterator) handleTaskOnce(bo *Backoffer, task *copTask, ch chan copR
 			NotFillCache:   it.req.NotFillCache,
 		},
 	}
-	timeout := ReadTimeoutMedium
-	if task.cmdType == tikvrpc.CmdCopStream {
-		// Don't set timeout for streaming, because we use context cancel to implement timeout,
-		// but call cancel() would kill the stream:
-		//
-		//     context, cancel := context.WithTimeout(bo, timeout)
-		//     defer cancel()
-		//     resp := client.SendReq(context, ...)
-		//
-		// The resp is a stream and killed by cancel operation immediately.
-		timeout = 0
-	}
 	startTime := time.Now()
-	resp, err := sender.SendReq(bo, req, task.region, timeout)
+	resp, err := sender.SendReq(bo, req, task.region, ReadTimeoutMedium)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

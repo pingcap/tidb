@@ -146,19 +146,50 @@ const (
 	// FlagTruncateAsWarning indicates if truncate error should be returned as warning.
 	// This flag only matters if FlagIgnoreTruncate is not set, in strict sql mode, truncate error should
 	// be returned as error, in non-strict sql mode, truncate error should be saved as warning.
-	FlagTruncateAsWarning uint64 = 1 << 1
-
+	FlagTruncateAsWarning = 1 << 1
 	// FlagPadCharToFullLength indicates if sql_mode 'PAD_CHAR_TO_FULL_LENGTH' is set.
-	FlagPadCharToFullLength uint64 = 1 << 2
+	FlagPadCharToFullLength = 1 << 2
+	// FlagInInsertStmt indicates if this is a INSERT statement.
+	FlagInInsertStmt = 1 << 3
+	// FlagInUpdateOrDeleteStmt indicates if this is a UPDATE statement or a DELETE statement.
+	FlagInUpdateOrDeleteStmt = 1 << 4
+	// FlagInSelectStmt indicates if this is a SELECT statement.
+	FlagInSelectStmt = 1 << 5
+	// FlagOverflowAsWarning indicates if overflow error should be returned as warning.
+	// In strict sql mode, overflow error should be returned as error,
+	// in non-strict sql mode, overflow error should be saved as warning.
+	FlagOverflowAsWarning = 1 << 6
+	// FlagIgnoreZeroInDate indicates if ZeroInDate error should be ignored.
+	// Read-only statements should ignore ZeroInDate error.
+	// Write statements should not ignore ZeroInDate error in strict sql mode.
+	FlagIgnoreZeroInDate = 1 << 7
+	// FlagDividedByZeroAsWarning indicates if DividedByZero should be returned as warning.
+	FlagDividedByZeroAsWarning = 1 << 8
 )
 
 // statementContextToFlags converts StatementContext to tipb.SelectRequest.Flags.
 func statementContextToFlags(sc *stmtctx.StatementContext) uint64 {
 	var flags uint64
+	if sc.InInsertStmt {
+		flags |= FlagInInsertStmt
+	} else if sc.InUpdateOrDeleteStmt {
+		flags |= FlagInUpdateOrDeleteStmt
+	} else if sc.InSelectStmt {
+		flags |= FlagInSelectStmt
+	}
 	if sc.IgnoreTruncate {
 		flags |= FlagIgnoreTruncate
 	} else if sc.TruncateAsWarning {
 		flags |= FlagTruncateAsWarning
+	}
+	if sc.OverflowAsWarning {
+		flags |= FlagOverflowAsWarning
+	}
+	if sc.IgnoreZeroInDate {
+		flags |= FlagIgnoreZeroInDate
+	}
+	if sc.DividedByZeroAsWarning {
+		flags |= FlagDividedByZeroAsWarning
 	}
 	if sc.PadCharToFullLength {
 		flags |= FlagPadCharToFullLength
@@ -187,8 +218,6 @@ type TableReaderExecutor struct {
 	// columns are only required by union scan.
 	columns []*model.ColumnInfo
 
-	// partialResult store the result from one region.
-	partialResult distsql.PartialResult
 	// resultHandler handles the order of the result. Since (MAXInt64, MAXUint64] stores before [0, MaxInt64] physically
 	// for unsigned int.
 	resultHandler *tableResultHandler
@@ -200,51 +229,8 @@ type TableReaderExecutor struct {
 // Close implements the Executor Close interface.
 func (e *TableReaderExecutor) Close() error {
 	e.ctx.StoreQueryFeedback(e.feedback)
-	err := closeAll(e.resultHandler, e.partialResult)
-	e.partialResult = nil
+	err := e.resultHandler.Close()
 	return errors.Trace(err)
-}
-
-// Next returns next available Row. In its process, any error will be returned.
-// It first try to fetch a partial result if current partial result is nil.
-// If any error appears during this stage, it simply return a error to its caller.
-// If it successfully initialize its partial result, it will use this to get next
-// available row.
-func (e *TableReaderExecutor) Next(ctx context.Context) (Row, error) {
-	for {
-		// Get partial result.
-		if e.partialResult == nil {
-			var err error
-			e.partialResult, err = e.resultHandler.next(ctx)
-			if err != nil {
-				e.feedback.Invalidate()
-				return nil, errors.Trace(err)
-			}
-			if e.partialResult == nil {
-				// Finished.
-				return nil, nil
-			}
-		}
-		// Get a row from partial result.
-		rowData, err := e.partialResult.Next(ctx)
-		if err != nil {
-			e.feedback.Invalidate()
-			return nil, errors.Trace(err)
-		}
-		if rowData == nil {
-			// Finish the current partial result and get the next one.
-			err = e.partialResult.Close()
-			terror.Log(errors.Trace(err))
-			e.partialResult = nil
-			continue
-		}
-		err = decodeRawValues(rowData, e.schema, e.ctx.GetSessionVars().GetTimeZone())
-		if err != nil {
-			e.feedback.Invalidate()
-			return nil, errors.Trace(err)
-		}
-		return rowData, nil
-	}
 }
 
 // NextChunk fills data into the chunk passed by its caller.
