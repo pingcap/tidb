@@ -435,6 +435,7 @@ type RawKV interface {
 	RawScan(startKey, endKey []byte, limit int) []Pair
 	RawPut(key, value []byte)
 	RawDelete(key []byte)
+	RawDeleteRange(startKey, endKey []byte)
 }
 
 // MVCCDebugger is for debugging.

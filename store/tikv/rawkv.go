@@ -156,6 +156,32 @@ func (c *RawKVClient) Delete(key []byte) error {
 	return nil
 }
 
+// DeleteRange deletes all key-value pairs in a range from TiKV
+func (c *RawKVClient) DeleteRange(startKey []byte, endKey []byte) error {
+	start := time.Now()
+	defer func() {
+		metrics.TiKVRawkvCmdHistogram.WithLabelValues("delete_range").Observe(time.Since(start).Seconds())
+	}()
+
+	// Process each affected region respectively
+	for !bytes.Equal(startKey, endKey) {
+		resp, actualEndKey, err := c.sendDeleteRangeReq(startKey, endKey)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		cmdResp := resp.RawDeleteRange
+		if cmdResp == nil {
+			return errors.Trace(ErrBodyMissing)
+		}
+		if cmdResp.GetError() != "" {
+			return errors.New(cmdResp.GetError())
+		}
+		startKey = actualEndKey
+	}
+
+	return nil
+}
+
 // Scan queries continuous kv pairs, starts from startKey, up to limit pairs.
 // If you want to exclude the startKey, append a '\0' to the key: `Scan(append(startKey, '\0'), limit)`.
 func (c *RawKVClient) Scan(startKey []byte, limit int) (keys [][]byte, values [][]byte, err error) {
@@ -192,32 +218,6 @@ func (c *RawKVClient) Scan(startKey []byte, limit int) (keys [][]byte, values []
 		}
 	}
 	return
-}
-
-// DeleteRange deletes all key-value pairs in a range from TiKV
-func (c *RawKVClient) DeleteRange(startKey []byte, endKey []byte) error {
-	start := time.Now()
-	defer func() {
-		metrics.TiKVRawkvCmdHistogram.WithLabelValues("delete_range").Observe(time.Since(start).Seconds())
-	}()
-
-	// Process each affected region respectively
-	for !bytes.Equal(startKey, endKey) {
-		resp, actualEndKey, err := c.sendDeleteRangeReq(startKey, endKey)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		cmdResp := resp.RawDeleteRange
-		if cmdResp == nil {
-			return errors.Trace(ErrBodyMissing)
-		}
-		if cmdResp.GetError() != "" {
-			return errors.New(cmdResp.GetError())
-		}
-		startKey = actualEndKey
-	}
-
-	return nil
 }
 
 func (c *RawKVClient) sendReq(key []byte, req *tikvrpc.Request) (*tikvrpc.Response, *KeyLocation, error) {

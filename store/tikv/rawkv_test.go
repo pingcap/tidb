@@ -128,3 +128,7 @@ func (s *testRawKVSuite) TestScan(c *C) {
 	split("k2", "k5")
 	check()
 }
+
+func (s *testRawKVSuite) TestDeleteRange(c *C) {
+
+}
