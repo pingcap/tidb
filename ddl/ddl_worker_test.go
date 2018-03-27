@@ -451,7 +451,6 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 }
 
 func (s *testDDLSuite) TestIgnorableSpec(c *C) {
-
 	specs := []ast.AlterTableType{
 		ast.AlterTableOption,
 		ast.AlterTableAddColumns,
