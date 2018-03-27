@@ -482,6 +482,8 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{`SHOW FULL TABLES WHERE Table_Type != 'VIEW'`, true},
 		{`SHOW GRANTS`, true},
 		{`SHOW GRANTS FOR 'test'@'localhost'`, true},
+		{`SHOW GRANTS FOR current_user()`, true},
+		{`SHOW GRANTS FOR current_user`, true},
 		{`SHOW COLUMNS FROM City;`, true},
 		{`SHOW COLUMNS FROM tv189.1_t_1_x;`, true},
 		{`SHOW FIELDS FROM City;`, true},
@@ -2028,8 +2030,7 @@ func (s *testParserSuite) TestView(c *C) {
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t", true},
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t with local check option", true},
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t with cascaded check option", true},
-		// fixme: should be true
-		{"create or replace algorithm = merge definer = current_user view v as select * from t", false},
+		{"create or replace algorithm = merge definer = current_user view v as select * from t", true},
 	}
 	s.RunTest(c, table)
 
