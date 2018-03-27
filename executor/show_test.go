@@ -550,8 +550,8 @@ func (s *testSuite) TestShow2(c *C) {
 	tk.MustExec(`grant all on *.* to 'root'@'%'`)
 	tk.MustQuery("show grants").Check(testkit.Rows(`GRANT ALL PRIVILEGES ON *.* TO 'root'@'%'`))
 
-	tk.MustQuery("show grants for current_user()").Check(testkit.Rows("GRANT ALL PRIVILEGES ON *.* TO 'root'@'%'"))
-	tk.MustQuery("show grants for current_user").Check(testkit.Rows("GRANT ALL PRIVILEGES ON *.* TO 'root'@'%'"))
+	tk.MustQuery("show grants for current_user()").Check(testkit.Rows(`GRANT ALL PRIVILEGES ON *.* TO 'root'@'%'`))
+	tk.MustQuery("show grants for current_user").Check(testkit.Rows(`GRANT ALL PRIVILEGES ON *.* TO 'root'@'%'`))
 }
 
 func (s *testSuite) TestCollation(c *C) {
