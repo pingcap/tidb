@@ -131,11 +131,11 @@ func mustDecodeStr(c *C, b []byte) string {
 }
 
 func (s *testUtilSuite) TestAppendFormatFloat(c *C) {
-	tests := []struct{
-		fVal float64
-		out  string
-		prec int
-		bitSize  int
+	tests := []struct {
+		fVal    float64
+		out     string
+		prec    int
+		bitSize int
 	}{
 		{
 			99999999999999999999,

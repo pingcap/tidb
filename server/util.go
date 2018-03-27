@@ -326,7 +326,7 @@ func dumpTextRow(buffer []byte, columns []*ColumnInfo, row types.Row) ([]byte, e
 }
 
 const (
-	expFormatBig = 1e16
+	expFormatBig   = 1e16
 	expFormatSmall = 1e-15
 )
 
