@@ -164,20 +164,8 @@ type Response struct {
 type CopStreamResponse struct {
 	tikvpb.Tikv_CoprocessorStreamClient
 	*coprocessor.Response // The first result of Recv()
-	lease                 Lease
-}
-
-// NewCopStreamResponse returns a CopStreamResponse.
-func NewCopStreamResponse(client tikvpb.Tikv_CoprocessorStreamClient, resp *coprocessor.Response, cancel context.CancelFunc, ch chan<- *Lease) *CopStreamResponse {
-	ret := &CopStreamResponse{
-		Tikv_CoprocessorStreamClient: client,
-		Response:                     resp,
-	}
-	ret.lease.cancel = cancel
-	// If the return value is not used within 1 minute, it will expire.
-	ret.lease.deadline = time.Now().Add(time.Minute).UnixNano()
-	ch <- &ret.lease
-	return ret
+	Timeout               time.Duration
+	Lease                 // Shared by this object and a background goroutine.
 }
 
 // SetContext set the Context field for the given req to the specified ctx.
@@ -389,7 +377,7 @@ func (resp *Response) GetRegionError() (*errorpb.Error, error) {
 // CallRPC launches a rpc call.
 // ch is needed to implement timeout for coprocessor streaing, the stream object's
 // cancel function will be sent to the channel, together with a lease checked by a background goroutine.
-func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request, ch chan<- *Lease) (*Response, error) {
+func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Response, error) {
 	resp := &Response{}
 	resp.Type = req.Type
 	var err error
@@ -429,24 +417,11 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request, ch cha
 	case CmdCop:
 		resp.Cop, err = client.Coprocessor(ctx, req.Cop)
 	case CmdCopStream:
-		// Use context to support timeout for grpc streaming client.
-		ctx1, cancel := context.WithCancel(ctx)
-		var stream tikvpb.Tikv_CoprocessorStreamClient
-		stream, err = client.CoprocessorStream(ctx1, req.Cop)
-		if err != nil {
-			return nil, errors.Trace(err)
+		var streamClient tikvpb.Tikv_CoprocessorStreamClient
+		streamClient, err = client.CoprocessorStream(ctx, req.Cop)
+		resp.CopStream = &CopStreamResponse{
+			Tikv_CoprocessorStreamClient: streamClient,
 		}
-		wrapStream := NewCopStreamResponse(stream, nil, cancel, ch)
-		// Read the first streaming response to get CopStreamResponse.
-		// This can make error handling much easier, because SendReq() retry on
-		// region error automatically.
-		var first *coprocessor.Response
-		first, err = wrapStream.Recv()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		wrapStream.Response = first
-		resp.CopStream = wrapStream
 	case CmdMvccGetByKey:
 		resp.MvccGetByKey, err = client.MvccGetByKey(ctx, req.MvccGetByKey)
 	case CmdMvccGetByStartTs:
@@ -464,24 +439,24 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request, ch cha
 
 // Lease is used to implement grpc stream timeout.
 type Lease struct {
-	cancel   context.CancelFunc
+	Cancel   context.CancelFunc
 	deadline int64 // A time.UnixNano value, if time.Now().UnixNano() > deadline, cancel() would be called.
 }
 
 // Recv overrides the stream client Recv() function.
 func (resp *CopStreamResponse) Recv() (*coprocessor.Response, error) {
-	deadline := time.Now().Add(20 * time.Second).UnixNano()
-	atomic.StoreInt64(&resp.lease.deadline, deadline)
+	deadline := time.Now().Add(resp.Timeout).UnixNano()
+	atomic.StoreInt64(&resp.Lease.deadline, deadline)
 
 	ret, err := resp.Tikv_CoprocessorStreamClient.Recv()
 
-	atomic.StoreInt64(&resp.lease.deadline, 0) // Stop the lease check.
+	atomic.StoreInt64(&resp.Lease.deadline, 0) // Stop the lease check.
 	return ret, errors.Trace(err)
 }
 
 // Close closes the CopStreamResponse object.
 func (resp *CopStreamResponse) Close() {
-	atomic.StoreInt64(&resp.lease.deadline, 1)
+	atomic.StoreInt64(&resp.Lease.deadline, 1)
 }
 
 // CheckStreamTimeoutLoop runs periodically to check is there any stream request timeouted.
@@ -515,7 +490,7 @@ func keepOnlyActive(array []*Lease, now int64) []*Lease {
 			array[idx] = array[i]
 			idx++
 		} else {
-			item.cancel()
+			item.Cancel()
 		}
 	}
 	return array[:idx]

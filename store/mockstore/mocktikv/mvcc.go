@@ -781,6 +781,23 @@ func (s *MvccStore) RawDelete(key []byte) {
 	s.rawkv.Delete(newRawEntry(key))
 }
 
+// RawDeleteRange deletes all key-value pairs in a given range
+func (s *MvccStore) RawDeleteRange(startKey, endKey []byte) {
+	s.Lock()
+	defer s.Unlock()
+
+	var entriesToDelete []*rawEntry
+	iterator := func(item btree.Item) bool {
+		entriesToDelete = append(entriesToDelete, item.(*rawEntry))
+		return true
+	}
+	s.rawkv.AscendRange(newRawEntry(startKey), newRawEntry(endKey), iterator)
+
+	for _, entry := range entriesToDelete {
+		s.rawkv.Delete(entry)
+	}
+}
+
 // RawScan reads up to a limited number of rawkv Pairs.
 func (s *MvccStore) RawScan(startKey, endKey []byte, limit int) []Pair {
 	s.RLock()
