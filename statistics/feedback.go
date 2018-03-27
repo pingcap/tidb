@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
 )
 
 // `feedback` represents the total scan count in range [lower, upper).
@@ -205,7 +205,7 @@ func buildBucketFeedback(h *Histogram, feedbacks []*QueryFeedback) (map[int]*Buc
 			// Update the bound if necessary.
 			res, err := bkt.lower.CompareDatum(nil, ran.lower)
 			if err != nil {
-				logrus.Debugf("compare datum %v with %v failed, err: %v", bkt.lower, ran.lower, errors.ErrorStack(err))
+				log.Debugf("compare datum %v with %v failed, err: %v", bkt.lower, ran.lower, errors.ErrorStack(err))
 				continue
 			}
 			if res > 0 {
@@ -213,7 +213,7 @@ func buildBucketFeedback(h *Histogram, feedbacks []*QueryFeedback) (map[int]*Buc
 			}
 			res, err = bkt.upper.CompareDatum(nil, ran.upper)
 			if err != nil {
-				logrus.Debugf("compare datum %v with %v failed, err: %v", bkt.upper, ran.upper, errors.ErrorStack(err))
+				log.Debugf("compare datum %v with %v failed, err: %v", bkt.upper, ran.upper, errors.ErrorStack(err))
 				continue
 			}
 			if res < 0 {
@@ -234,7 +234,7 @@ func (b *BucketFeedback) getBoundaries(num int) []types.Datum {
 	vals = append(vals, *b.lower)
 	err := types.SortDatums(nil, vals)
 	if err != nil {
-		logrus.Debugf("sort datums failed, err: %v", errors.ErrorStack(err))
+		log.Debugf("sort datums failed, err: %v", errors.ErrorStack(err))
 		vals = vals[:0]
 		vals = append(vals, *b.lower, *b.upper)
 		return vals
@@ -252,7 +252,7 @@ func (b *BucketFeedback) getBoundaries(num int) []types.Datum {
 	for i := 1; i < len(vals); i++ {
 		cmp, err := vals[total-1].CompareDatum(nil, &vals[i])
 		if err != nil {
-			logrus.Debugf("compare datum %v with %v failed, err: %v", vals[total-1], vals[i], errors.ErrorStack(err))
+			log.Debugf("compare datum %v with %v failed, err: %v", vals[total-1], vals[i], errors.ErrorStack(err))
 			continue
 		}
 		if cmp == 0 {
