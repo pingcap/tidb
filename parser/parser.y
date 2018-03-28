@@ -400,6 +400,7 @@ import (
 	bitOr		"BIT_OR"
 	bitXor		"BIT_XOR"
 	cast		"CAST"
+	copyKwd		"COPY"
 	count		"COUNT"
 	curTime		"CURTIME"
 	dateAdd		"DATE_ADD"
@@ -407,6 +408,7 @@ import (
 	extract		"EXTRACT"
 	getFormat	"GET_FORMAT"
 	groupConcat	"GROUP_CONCAT"
+	inplace 	"INPLACE"
 	min		"MIN"
 	max		"MAX"
 	now		"NOW"
@@ -1020,6 +1022,16 @@ AlterTableSpec:
 			LockType:   $1.(ast.LockType),
 		}
 	}
+| "ALGORITHM" EqOpt AlterAlgorithm
+	{
+		// Parse it and ignore it. Just for compatibility.
+		$$ = &ast.AlterTableSpec{
+			Tp:    		ast.AlterTableAlgorithm,
+		}
+	}
+
+AlterAlgorithm:
+	"DEFAULT" | "INPLACE" | "COPY"
 
 LockClauseOpt:
 	{}
@@ -1773,7 +1785,7 @@ PartDefStorageOpt:
 CreateViewStmt:
     "CREATE" OrReplace ViewAlgorithm ViewDefiner ViewSQLSecurity "VIEW" ViewName ViewFieldList "AS" SelectStmt ViewCheckOption
     {
-		startOffset := parser.startOffset(&yyS[yypt])
+		startOffset := parser.startOffset(&yyS[yypt-1])
 		selStmt := $10.(*ast.SelectStmt)
 		selStmt.SetText(string(parser.src[startOffset:]))
 		x := &ast.CreateViewStmt {
@@ -2541,8 +2553,8 @@ TiDBKeyword:
 "ADMIN" | "CANCEL" | "DDL" | "JOBS" | "JOB" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "STATS_HEALTHY" | "TIDB" | "TIDB_HJ" | "TIDB_SMJ" | "TIDB_INLJ"
 
 NotKeywordToken:
- "ADDDATE" | "BIT_AND" | "BIT_OR" | "BIT_XOR" | "CAST" | "COUNT" | "CURTIME" | "DATE_ADD" | "DATE_SUB" | "EXTRACT" | "GET_FORMAT" | "GROUP_CONCAT" | "MIN" | "MAX" | "NOW" | "POSITION"
-| "SUBDATE" | "SUBSTRING" | "SUM" | "TIMESTAMPADD" | "TIMESTAMPDIFF" | "TRIM"
+ "ADDDATE" | "BIT_AND" | "BIT_OR" | "BIT_XOR" | "CAST" | "COPY" | "COUNT" | "CURTIME" | "DATE_ADD" | "DATE_SUB" | "EXTRACT" | "GET_FORMAT" | "GROUP_CONCAT" 
+| "INPLACE" |"MIN" | "MAX" | "NOW" | "POSITION" | "SUBDATE" | "SUBSTRING" | "SUM" | "TIMESTAMPADD" | "TIMESTAMPDIFF" | "TRIM"
 
 /************************************************************************************
  *
@@ -4747,6 +4759,10 @@ Username:
 |	StringName singleAtIdentifier
 	{
 		$$ = &auth.UserIdentity{Username: $1.(string), Hostname: strings.TrimPrefix($2, "@")}
+	}
+|	"CURRENT_USER" OptionalBraces
+	{
+		$$ = &auth.UserIdentity{CurrentUser: true}
 	}
 
 UsernameList:

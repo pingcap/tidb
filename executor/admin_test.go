@@ -396,3 +396,20 @@ func (s *testSuite) TestAdminCleanupIndexMore(c *C) {
 	tk.MustExec("admin check index admin_test c2")
 	tk.MustExec("admin check table admin_test")
 }
+
+func (s *testSuite) TestAdminCheckTable(c *C) {
+	// test NULL value.
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE test_null (
+		a int(11) NOT NULL,
+		c int(11) NOT NULL,
+		PRIMARY KEY (a, c),
+		KEY idx_a (a)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin`)
+
+	tk.MustExec(`insert into test_null(a, c) values(2, 2);`)
+	tk.MustExec(`ALTER TABLE test_null ADD COLUMN b int NULL DEFAULT '1795454803' AFTER a;`)
+	tk.MustExec(`ALTER TABLE test_null add index b(b);`)
+	tk.MustExec("ADMIN CHECK TABLE test_null")
+}
