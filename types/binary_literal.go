@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 )
 
 // BinaryLiteral is the internal type for storing bit / hex literal type.
@@ -100,14 +101,18 @@ func (b BinaryLiteral) ToBitLiteralString(trimLeadingZero bool) string {
 }
 
 // ToInt returns the int value for the literal.
-func (b BinaryLiteral) ToInt() (uint64, error) {
+func (b BinaryLiteral) ToInt(sc *stmtctx.StatementContext) (uint64, error) {
 	buf := trimLeadingZeroBytes(b)
 	length := len(buf)
 	if length == 0 {
 		return 0, nil
 	}
 	if length > 8 {
-		return math.MaxUint64, ErrTruncated
+		var err error = ErrTruncatedWrongVal.GenByArgs("BINARY", b)
+		if sc != nil {
+			err = sc.HandleTruncate(err)
+		}
+		return math.MaxUint64, err
 	}
 	// Note: the byte-order is BigEndian.
 	val := uint64(buf[0])
@@ -115,6 +120,19 @@ func (b BinaryLiteral) ToInt() (uint64, error) {
 		val = (val << 8) | uint64(buf[i])
 	}
 	return val, nil
+}
+
+// Compare compares BinaryLiteral to another one
+func (b BinaryLiteral) Compare(b2 BinaryLiteral) int {
+	bufB := trimLeadingZeroBytes(b)
+	bufB2 := trimLeadingZeroBytes(b2)
+	if len(bufB) > len(bufB2) {
+		return 1
+	}
+	if len(bufB) < len(bufB2) {
+		return -1
+	}
+	return bytes.Compare(bufB, bufB2)
 }
 
 // ParseBitStr parses bit string.
