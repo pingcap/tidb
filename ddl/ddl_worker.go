@@ -517,7 +517,7 @@ func (d *ddl) cleanAddIndexQueueJobs(txn kv.Transaction) error {
 		job.State = model.JobStateRollingback
 		job.Args = []interface{}{indexInfo.Name}
 		// If add index job rollbacks, its work is the same as drop index job do.
-		// When it's not in None state, the next state can be delete only state.
+		// When it's not in "none" state, the next state can be "delete only" state.
 		indexInfo.State = model.StateDeleteOnly
 		job.SchemaState = model.StateDeleteOnly
 		_, err = updateVersionAndTableInfo(m, job, tblInfo, true)
