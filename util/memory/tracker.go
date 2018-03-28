@@ -99,10 +99,7 @@ func (t *Tracker) remove(oldChild *Tracker) {
 
 		t.bytesConsumed -= oldChild.BytesConsumed()
 		oldChild.parent = nil
-
-		numChildren := len(t.children)
 		t.children = append(t.children[:i], t.children[i+1:]...)
-		t.children = t.children[:numChildren-1]
 		break
 	}
 }
