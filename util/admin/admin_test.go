@@ -342,7 +342,7 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	err = CompareIndexData(sc, txn, tb, idx)
+	err = CompareIndexData(ctx, txn, tb, idx)
 	c.Assert(err, IsNil)
 
 	idxNames := []string{idx.Meta().Name.L}
@@ -362,7 +362,7 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = CompareIndexData(sc, txn, tb, idx)
+	err = CompareIndexData(ctx, txn, tb, idx)
 	c.Assert(err, NotNil)
 	record1 := &RecordData{Handle: int64(3), Values: types.MakeDatums(int64(30))}
 	diffMsg := newDiffRetError("index", record1, nil)
@@ -383,7 +383,7 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = CompareIndexData(sc, txn, tb, idx)
+	err = CompareIndexData(ctx, txn, tb, idx)
 	c.Assert(err, NotNil)
 	record2 := &RecordData{Handle: int64(3), Values: types.MakeDatums(int64(31))}
 	diffMsg = newDiffRetError("index", record1, record2)
@@ -401,7 +401,7 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = CheckRecordAndIndex(sc, txn, tb, idx)
+	err = CheckRecordAndIndex(ctx, txn, tb, idx)
 	c.Assert(err, NotNil)
 	record2 = &RecordData{Handle: int64(5), Values: types.MakeDatums(int64(30))}
 	diffMsg = newDiffRetError("index", record1, record2)
@@ -421,7 +421,7 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = CompareIndexData(sc, txn, tb, idx)
+	err = CompareIndexData(ctx, txn, tb, idx)
 	c.Assert(err, NotNil)
 	record1 = &RecordData{Handle: int64(4), Values: types.MakeDatums(int64(40))}
 	diffMsg = newDiffRetError("index", record1, nil)
@@ -442,7 +442,7 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = CompareIndexData(sc, txn, tb, idx)
+	err = CompareIndexData(ctx, txn, tb, idx)
 	c.Assert(err, NotNil)
 	diffMsg = newDiffRetError("index", nil, record1)
 	c.Assert(err.Error(), DeepEquals, diffMsg)
