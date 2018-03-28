@@ -52,7 +52,7 @@ func (s *testStringUtilSuite) TestUnquote(c *C) {
 		{`"\U00010111"`, `U00010111`, true},
 		{`"\U0001011111"`, `U0001011111`, true},
 		{`"\a\b\f\n\r\t\v\\\""`, "a\bf\n\r\tv\\\"", true},
-		{`"\Z\%\_"`, "\032\\%\\_", true},
+		{`"\Z\%\_"`, "\032" + `\%\_`, true},
 		{`"abc\0"`, "abc\000", true},
 		{`"abc\"abc"`, `abc"abc`, true},
 
