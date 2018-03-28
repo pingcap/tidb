@@ -56,7 +56,12 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetIn
 	dbInfo := &model.DBInfo{
 		Name: schema,
 	}
+
 	if charsetInfo != nil {
+		err = checkCharsetAndCollation(charsetInfo.Chs, charsetInfo.Col)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		dbInfo.Charset = charsetInfo.Chs
 		dbInfo.Collate = charsetInfo.Col
 	} else {
@@ -803,7 +808,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, ident ast.Ident, colDefs []*as
 
 func checkCharsetAndCollation(cs string, co string) error {
 	if !charset.ValidCharsetAndCollation(cs, co) {
-		return errUnsupportedCharset.GenByArgs(cs, co)
+		return ErrUnknownCharacterSet.GenByArgs(cs)
 	}
 	return nil
 }
