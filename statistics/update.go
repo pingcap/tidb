@@ -162,23 +162,20 @@ func (h *Handle) DumpStatsDeltaToKV() error {
 	}
 	h.listHead.Unlock()
 	for id, item := range h.globalMap {
-		updatedCount, err := h.dumpTableStatCountToKV(id, item)
+		updated, err := h.dumpTableStatCountToKV(id, item)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if updatedCount {
+		if updated {
 			h.globalMap.update(id, -item.Delta, -item.Count, nil)
 		}
-		updatedColSize, err := h.dumpTableStatColSizeToKV(id, item)
-		if err != nil {
+		if err = h.dumpTableStatColSizeToKV(id, item); err != nil {
 			return errors.Trace(err)
 		}
-		if updatedColSize {
-			m := h.globalMap[id]
-			m.ColSize = nil
-			h.globalMap[id] = m
-		}
-		if updatedCount && updatedColSize {
+		m := h.globalMap[id]
+		m.ColSize = nil
+		h.globalMap[id] = m
+		if updated {
 			delete(h.globalMap, id)
 		}
 	}
@@ -210,27 +207,26 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (bo
 	return updated, errors.Trace(err)
 }
 
-func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) (bool, error) {
+func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) error {
 	if delta.ColSize == nil {
-		return true, nil
+		return nil
 	}
 	ctx := context.TODO()
 	_, err := h.ctx.(sqlexec.SQLExecutor).Execute(ctx, "begin")
 	if err != nil {
-		return false, errors.Trace(err)
+		return errors.Trace(err)
 	}
 	version := h.ctx.Txn().StartTS()
 
 	for key, val := range delta.ColSize {
-		sql := fmt.Sprintf("update mysql.stats_histograms set version = %d, tot_col_size = tot_col_size + %d where hist_id = %d and table_id = %d", version, val, key, id)
+		sql := fmt.Sprintf("update mysql.stats_histograms set version = %d, tot_col_size = tot_col_size + %d where hist_id = %d and table_id = %d and is_index = 0", version, val, key, id)
 		_, err = h.ctx.(sqlexec.SQLExecutor).Execute(ctx, sql)
 		if err != nil {
-			return false, errors.Trace(err)
+			return errors.Trace(err)
 		}
 	}
-	updated := h.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0
 	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(ctx, "commit")
-	return updated, errors.Trace(err)
+	return errors.Trace(err)
 }
 
 const (

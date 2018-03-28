@@ -437,7 +437,7 @@ func (t *Table) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleChe
 	colSize := make(map[int64]int64)
 	for id, col := range t.WritableCols() {
 		if col.State == model.StatePublic {
-			colSize[col.ID] = int64(len(r[id].GetBytes()))
+			colSize[col.ID] = int64(r[id].Size())
 		}
 	}
 	sessVars.TxnCtx.UpdateDeltaForTable(t.ID, 1, 1, &colSize)

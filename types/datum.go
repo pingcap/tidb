@@ -112,7 +112,7 @@ func (d *Datum) Length() int {
 	return int(d.length)
 }
 
-// SetLength sets the length of the datum
+// SetLength sets the length of the datum.
 func (d *Datum) SetLength(l int) {
 	d.length = uint32(l)
 }
@@ -120,6 +120,11 @@ func (d *Datum) SetLength(l int) {
 // IsNull checks if datum is null.
 func (d *Datum) IsNull() bool {
 	return d.k == KindNull
+}
+
+// Size gets the length of byte of the datum.
+func (d *Datum) Size() int {
+	return len(d.b)
 }
 
 // GetInt64 gets int64 value.

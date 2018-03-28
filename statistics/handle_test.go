@@ -351,10 +351,7 @@ func (s *testStatsCacheSuite) TestLoadHist(c *C) {
 		c.Assert(statistics.HistogramEqual(&hist.Histogram, &newStatsTbl.Columns[id].Histogram, false), IsTrue)
 		hist.TotColSize = temp
 
-		c.Assert(hist.CMSketch, NotNil)
-		c.Assert(newStatsTbl.Columns[id].CMSketch, NotNil)
 		c.Assert(hist.CMSketch.Equal(newStatsTbl.Columns[id].CMSketch), IsTrue)
-
 		c.Assert(hist.Count, Equals, newStatsTbl.Columns[id].Count)
 		c.Assert(hist.Info, Equals, newStatsTbl.Columns[id].Info)
 	}

@@ -125,11 +125,16 @@ func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *
 			continue
 		}
 		isHandle := tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag)
-		// If the stats will be analyzed automatically and this column is no handle and we don't specify to load all,
-		// and the column doesn't has buckets before and the version is newer than last update version,
-		// or it is the first time to load this column, then we load the column without buckets.
-		DontLoadBuckets := h.Lease > 0 && !isHandle && (col == nil || col.Len() == 0 && col.LastUpdateVersion < histVer)
-		if DontLoadBuckets && !loadAll {
+		// We will not load buckets if:
+		// 1. Lease > 0, and:
+		// 2. this column is not handle, and:
+		// 3. the column doesn't has buckets before, and:
+		// 4. loadAll is false.
+		notNeedLoad := h.Lease > 0 &&
+			!isHandle &&
+			(col == nil || col.Len() == 0 && col.LastUpdateVersion < histVer) &&
+			!loadAll
+		if notNeedLoad {
 			count, err := columnCountFromStorage(h.ctx, table.TableID, histID)
 			if err != nil {
 				return errors.Trace(err)
@@ -148,7 +153,6 @@ func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *
 			}
 			break
 		}
-		// Otherwise, if the version is newer than last update version or it is the first time to load this column or we want to load all, then we load the column with the buckets of histogram.
 		if col == nil || col.LastUpdateVersion < histVer || loadAll {
 			hg, err := histogramFromStorage(h.ctx, tableInfo.ID, histID, &colInfo.FieldType, distinct, 0, histVer, nullCount, totColSize)
 			if err != nil {
