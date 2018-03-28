@@ -52,21 +52,21 @@ func (sf *ScalarFunction) GetCtx() sessionctx.Context {
 
 // String implements fmt.Stringer interface.
 func (sf *ScalarFunction) String() string {
-	result := sf.FuncName.L + "("
+	var buffer bytes.Buffer
+	fmt.Fprintf(&buffer, "%s(", sf.FuncName.L)
 	for i, arg := range sf.GetArgs() {
-		result += arg.String()
+		buffer.WriteString(arg.String())
 		if i+1 != len(sf.GetArgs()) {
-			result += ", "
+			buffer.WriteString(", ")
 		}
 	}
-	result += ")"
-	return result
+	buffer.WriteString(")")
+	return buffer.String()
 }
 
 // MarshalJSON implements json.Marshaler interface.
 func (sf *ScalarFunction) MarshalJSON() ([]byte, error) {
-	buffer := bytes.NewBufferString(fmt.Sprintf("\"%s\"", sf))
-	return buffer.Bytes(), nil
+	return []byte(fmt.Sprintf("\"%s\"", sf)), nil
 }
 
 // NewFunction creates a new scalar function or constant.
