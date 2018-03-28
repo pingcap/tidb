@@ -629,16 +629,20 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []in
 
 // Close implements Exec Close interface.
 func (e *IndexLookUpExecutor) Close() error {
-	if e.finished != nil {
-		close(e.finished)
-		// Drain the resultCh and discard the result, in case that Next() doesn't fully
-		// consume the data, background worker still writing to resultCh and block forever.
-		for range e.resultCh {
-		}
-		e.idxWorkerWg.Wait()
-		e.tblWorkerWg.Wait()
-		e.finished = nil
+	if e.finished == nil {
+		return nil
 	}
+
+	close(e.finished)
+	// Drain the resultCh and discard the result, in case that Next() doesn't fully
+	// consume the data, background worker still writing to resultCh and block forever.
+	for range e.resultCh {
+	}
+	e.idxWorkerWg.Wait()
+	e.tblWorkerWg.Wait()
+	e.finished = nil
+	e.memTracker.Detach()
+	e.memTracker = nil
 	return nil
 }
 
