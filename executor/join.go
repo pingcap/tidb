@@ -540,7 +540,7 @@ func (e *NestedLoopApplyExec) Close() error {
 	e.resultRows = nil
 	e.innerRows = nil
 
-	// e.memTracker.Detach()
+	e.memTracker.Detach()
 	e.memTracker = nil
 	return errors.Trace(e.outerExec.Close())
 }
