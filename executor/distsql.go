@@ -97,20 +97,6 @@ func (task *lookupTableTask) Swap(i, j int) {
 	task.rows[i], task.rows[j] = task.rows[j], task.rows[i]
 }
 
-func (task *lookupTableTask) getRow(schema *expression.Schema) (Row, error) {
-	if task.cursor < len(task.rows) {
-		row := task.rows[task.cursor]
-		task.cursor++
-		datumRow := make(types.DatumRow, row.Len())
-		for i := 0; i < len(datumRow); i++ {
-			datumRow[i] = row.GetDatum(i, schema.Columns[i].RetType)
-		}
-		return datumRow, nil
-	}
-
-	return nil, nil
-}
-
 // Closeable is a interface for closeable structures.
 type Closeable interface {
 	// Close closes the object.
@@ -658,26 +644,6 @@ func (e *IndexLookUpExecutor) Close() error {
 	e.memTracker.Detach()
 	e.memTracker = nil
 	return nil
-}
-
-// Next implements Exec Next interface.
-func (e *IndexLookUpExecutor) Next(ctx context.Context) (Row, error) {
-	for {
-		resultTask, err := e.getResultTask()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if resultTask == nil {
-			return nil, nil
-		}
-		row, err := resultTask.getRow(e.schema)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if row != nil {
-			return row, nil
-		}
-	}
 }
 
 // NextChunk implements Exec NextChunk interface.
