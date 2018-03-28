@@ -150,10 +150,10 @@ type cancelContextClient struct {
 	redirectAddr string
 }
 
-func (c *cancelContextClient) SendReq(ctx context.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+func (c *cancelContextClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	childCtx, cancel := context.WithCancel(ctx)
 	cancel()
-	return c.Client.SendReq(childCtx, c.redirectAddr, req)
+	return c.Client.SendRequest(childCtx, c.redirectAddr, req, timeout)
 }
 
 // mockTikvGrpcServer mock a tikv gprc server for testing.
