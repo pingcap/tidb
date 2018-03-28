@@ -1398,8 +1398,10 @@ func (s *testSuite) TestDataTooLongErrMsg(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a varchar(2));")
 	_, err := tk.Exec("insert into t values('123');")
+	c.Assert(types.ErrDataTooLong.Equal(err), IsTrue)
 	c.Assert(err.Error(), Equals, "[types:1406]Data too long for column 'a' at row 1")
 	tk.MustExec("insert into t values('12')")
 	_, err = tk.Exec("update t set a = '123' where a = '12';")
+	c.Assert(types.ErrDataTooLong.Equal(err), IsTrue)
 	c.Assert(err.Error(), Equals, "[types:1406]Data too long for column 'a' at row 1")
 }
