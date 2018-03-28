@@ -220,19 +220,19 @@ func (s *testStatsCacheSuite) TestAvgColLen(c *C) {
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo.ID)
-	c.Assert(statsTbl.Columns[tableInfo.Columns[0].ID].AvgColSize(), Equals, 8.0)
+	c.Assert(statsTbl.Columns[tableInfo.Columns[0].ID].AvgColSize(statsTbl.Count), Equals, 8.0)
 
 	// The size of varchar type is LEN + BYTE, here is 1 + 7 = 8
-	c.Assert(statsTbl.Columns[tableInfo.Columns[1].ID].AvgColSize(), Equals, 8.0)
-	c.Assert(statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSize(), Equals, 4.0)
-	c.Assert(statsTbl.Columns[tableInfo.Columns[3].ID].AvgColSize(), Equals, 16.0)
+	c.Assert(statsTbl.Columns[tableInfo.Columns[1].ID].AvgColSize(statsTbl.Count), Equals, 8.0)
+	c.Assert(statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSize(statsTbl.Count), Equals, 4.0)
+	c.Assert(statsTbl.Columns[tableInfo.Columns[3].ID].AvgColSize(statsTbl.Count), Equals, 16.0)
 	testKit.MustExec("insert into t values(132, '123456789112', 1232.3, '2018-03-07 19:17:29')")
 	testKit.MustExec("analyze table t")
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo.ID)
-	c.Assert(statsTbl.Columns[tableInfo.Columns[0].ID].AvgColSize(), Equals, 8.0)
-	c.Assert(statsTbl.Columns[tableInfo.Columns[1].ID].AvgColSize(), Equals, 10.5)
-	c.Assert(statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSize(), Equals, 4.0)
-	c.Assert(statsTbl.Columns[tableInfo.Columns[3].ID].AvgColSize(), Equals, 16.0)
+	c.Assert(statsTbl.Columns[tableInfo.Columns[0].ID].AvgColSize(statsTbl.Count), Equals, 8.0)
+	c.Assert(statsTbl.Columns[tableInfo.Columns[1].ID].AvgColSize(statsTbl.Count), Equals, 10.5)
+	c.Assert(statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSize(statsTbl.Count), Equals, 4.0)
+	c.Assert(statsTbl.Columns[tableInfo.Columns[3].ID].AvgColSize(statsTbl.Count), Equals, 16.0)
 }
 
 func (s *testStatsCacheSuite) TestVersion(c *C) {
@@ -319,14 +319,14 @@ func (s *testStatsCacheSuite) TestLoadHist(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
-	testKit.MustExec("create table t (c1 int, c2 int)")
+	testKit.MustExec("create table t (c1 varchar(12), c2 char(12))")
 	do := s.do
 	h := do.StatsHandle()
 	err := h.HandleDDLEvent(<-h.DDLEventCh())
 	c.Assert(err, IsNil)
 	rowCount := 10
 	for i := 0; i < rowCount; i++ {
-		testKit.MustExec("insert into t values(1,2)")
+		testKit.MustExec("insert into t values('a','ddd')")
 	}
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
@@ -335,16 +335,28 @@ func (s *testStatsCacheSuite) TestLoadHist(c *C) {
 	tableInfo := tbl.Meta()
 	oldStatsTbl := h.GetTableStats(tableInfo.ID)
 	for i := 0; i < rowCount; i++ {
-		testKit.MustExec("insert into t values(1,2)")
+		testKit.MustExec("insert into t values('bb','sdfga')")
 	}
 	h.DumpStatsDeltaToKV()
 	h.Update(do.InfoSchema())
 	newStatsTbl := h.GetTableStats(tableInfo.ID)
 	// The stats table is updated.
 	c.Assert(oldStatsTbl == newStatsTbl, IsFalse)
-	// The histograms is not updated.
+	// Only the TotColSize of histograms is updated.
 	for id, hist := range oldStatsTbl.Columns {
-		c.Assert(hist, Equals, newStatsTbl.Columns[id])
+		c.Assert(hist.TotColSize, Less, newStatsTbl.Columns[id].TotColSize)
+
+		temp := hist.TotColSize
+		hist.TotColSize = newStatsTbl.Columns[id].TotColSize
+		c.Assert(statistics.HistogramEqual(&hist.Histogram, &newStatsTbl.Columns[id].Histogram, false), IsTrue)
+		hist.TotColSize = temp
+
+		c.Assert(hist.CMSketch, NotNil)
+		c.Assert(newStatsTbl.Columns[id].CMSketch, NotNil)
+		c.Assert(hist.CMSketch.Equal(newStatsTbl.Columns[id].CMSketch), IsTrue)
+
+		c.Assert(hist.Count, Equals, newStatsTbl.Columns[id].Count)
+		c.Assert(hist.Info, Equals, newStatsTbl.Columns[id].Info)
 	}
 	// Add column c3, we only update c3.
 	testKit.MustExec("alter table t add column c3 int")

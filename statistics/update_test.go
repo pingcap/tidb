@@ -139,6 +139,9 @@ func (s *testStatsUpdateSuite) TestSingleSessionInsert(c *C) {
 
 	rs := testKit.MustQuery("select modify_count from mysql.stats_meta")
 	rs.Check(testkit.Rows("40", "70"))
+
+	rs = testKit.MustQuery("select tot_col_size from mysql.stats_histograms")
+	rs.Check(testkit.Rows("0", "0", "10", "10"))
 }
 
 func (s *testStatsUpdateSuite) TestRollback(c *C) {
@@ -271,7 +274,7 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
-	testKit.MustExec("create table t (a int)")
+	testKit.MustExec("create table t (a varchar(20))")
 
 	statistics.AutoAnalyzeMinCnt = 0
 	defer func() {
@@ -290,7 +293,7 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	stats := h.GetTableStats(tableInfo.ID)
 	c.Assert(stats.Count, Equals, int64(0))
 
-	_, err = testKit.Exec("insert into t values (1)")
+	_, err = testKit.Exec("insert into t values ('ss')")
 	c.Assert(err, IsNil)
 	h.DumpStatsDeltaToKV()
 	h.Update(is)
@@ -300,8 +303,13 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	stats = h.GetTableStats(tableInfo.ID)
 	c.Assert(stats.Count, Equals, int64(1))
 	c.Assert(stats.ModifyCount, Equals, int64(0))
+	for _, item := range stats.Columns {
+		// TotColSize = 2(length of 'ss') + 1(size of len byte).
+		c.Assert(item.TotColSize, Equals, int64(3))
+		break
+	}
 
-	_, err = testKit.Exec("insert into t values (1)")
+	_, err = testKit.Exec("insert into t values ('eee')")
 	c.Assert(err, IsNil)
 	h.DumpStatsDeltaToKV()
 	h.Clear()
@@ -316,6 +324,11 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	c.Assert(stats.Count, Equals, int64(2))
 	// Modify count is non-zero means that we do not analyze the table.
 	c.Assert(stats.ModifyCount, Equals, int64(1))
+	for _, item := range stats.Columns {
+		// TotColSize = 6, because the table has not been analyzed, and insert statement will add 3(length of 'eee') to TotColSize.
+		c.Assert(item.TotColSize, Equals, int64(6))
+		break
+	}
 
 	_, err = testKit.Exec("create index idx on t(a)")
 	c.Assert(err, IsNil)
@@ -330,8 +343,8 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	c.Assert(stats.ModifyCount, Equals, int64(0))
 	hg, ok := stats.Indices[tableInfo.Indices[0].ID]
 	c.Assert(ok, IsTrue)
-	c.Assert(hg.NDV, Equals, int64(1))
-	c.Assert(hg.Len(), Equals, 1)
+	c.Assert(hg.NDV, Equals, int64(2))
+	c.Assert(hg.Len(), Equals, 2)
 }
 
 func appendBucket(h *statistics.Histogram, l, r int64) {

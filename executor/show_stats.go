@@ -55,7 +55,7 @@ func (e *ShowExec) fetchShowStatsHistogram() error {
 			statsTbl := h.GetTableStats(tbl.ID)
 			if !statsTbl.Pseudo {
 				for _, col := range statsTbl.Columns {
-					e.histogramToRow(db.Name.O, tbl.Name.O, col.Info.Name.O, 0, col.Histogram, col.AvgColSize())
+					e.histogramToRow(db.Name.O, tbl.Name.O, col.Info.Name.O, 0, col.Histogram, col.AvgColSize(statsTbl.Count))
 				}
 				for _, idx := range statsTbl.Indices {
 					e.histogramToRow(db.Name.O, tbl.Name.O, idx.Info.Name.O, 1, idx.Histogram, 0)

@@ -125,18 +125,30 @@ func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *
 			continue
 		}
 		isHandle := tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag)
-		needNotLoad := col == nil || (col.Len() == 0 && col.LastUpdateVersion < histVer)
-		if h.Lease > 0 && !isHandle && needNotLoad && !loadAll {
+		// If the stats will be analyzed automatically and this column is no handle and we don't specify to load all,
+		// and the column doesn't has buckets before and the version is newer than last update version,
+		// or it is the first time to load this column, then we load the column without buckets.
+		DontLoadBuckets := h.Lease > 0 && !isHandle && (col == nil || col.Len() == 0 && col.LastUpdateVersion < histVer)
+		if DontLoadBuckets && !loadAll {
 			count, err := columnCountFromStorage(h.ctx, table.TableID, histID)
 			if err != nil {
 				return errors.Trace(err)
 			}
 			col = &Column{
-				Histogram: Histogram{ID: histID, NDV: distinct, NullCount: nullCount, tp: &colInfo.FieldType, LastUpdateVersion: histVer, TotColSize: totColSize},
-				Info:      colInfo,
-				Count:     count}
+				Histogram: Histogram{
+					ID:                histID,
+					NDV:               distinct,
+					NullCount:         nullCount,
+					tp:                &colInfo.FieldType,
+					LastUpdateVersion: histVer,
+					TotColSize:        totColSize,
+				},
+				Info:  colInfo,
+				Count: count,
+			}
 			break
 		}
+		// Otherwise, if the version is newer than last update version or it is the first time to load this column or we want to load all, then we load the column with the buckets of histogram.
 		if col == nil || col.LastUpdateVersion < histVer || loadAll {
 			hg, err := histogramFromStorage(h.ctx, tableInfo.ID, histID, &colInfo.FieldType, distinct, 0, histVer, nullCount, totColSize)
 			if err != nil {
@@ -146,7 +158,12 @@ func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *
 			if err != nil {
 				return errors.Trace(err)
 			}
-			col = &Column{Histogram: *hg, Info: colInfo, CMSketch: cms, Count: int64(hg.totalRowCount())}
+			col = &Column{
+				Histogram: *hg,
+				Info:      colInfo,
+				CMSketch:  cms,
+				Count:     int64(hg.totalRowCount()),
+			}
 		}
 		break
 	}

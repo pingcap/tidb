@@ -32,10 +32,18 @@ import (
 
 type tableDeltaMap map[int64]variable.TableDelta
 
-func (m tableDeltaMap) update(id int64, delta int64, count int64) {
+func (m tableDeltaMap) update(id int64, delta int64, count int64, colSize *map[int64]int64) {
 	item := m[id]
 	item.Delta += delta
 	item.Count += count
+	if item.ColSize == nil {
+		item.ColSize = make(map[int64]int64)
+	}
+	if colSize != nil {
+		for key, val := range *colSize {
+			item.ColSize[key] += val
+		}
+	}
 	m[id] = item
 }
 
@@ -43,7 +51,7 @@ func (h *Handle) merge(s *SessionStatsCollector) {
 	s.Lock()
 	defer s.Unlock()
 	for id, item := range s.mapper {
-		h.globalMap.update(id, item.Delta, item.Count)
+		h.globalMap.update(id, item.Delta, item.Count, &item.ColSize)
 	}
 	h.feedback = mergeQueryFeedback(h.feedback, s.feedback)
 	s.mapper = make(tableDeltaMap)
@@ -70,10 +78,10 @@ func (s *SessionStatsCollector) Delete() {
 }
 
 // Update will updates the delta and count for one table id.
-func (s *SessionStatsCollector) Update(id int64, delta int64, count int64) {
+func (s *SessionStatsCollector) Update(id int64, delta int64, count int64, colSize *map[int64]int64) {
 	s.Lock()
 	defer s.Unlock()
-	s.mapper.update(id, delta, count)
+	s.mapper.update(id, delta, count, colSize)
 }
 
 func mergeQueryFeedback(lq []*QueryFeedback, rq []*QueryFeedback) []*QueryFeedback {
@@ -154,11 +162,23 @@ func (h *Handle) DumpStatsDeltaToKV() error {
 	}
 	h.listHead.Unlock()
 	for id, item := range h.globalMap {
-		updated, err := h.dumpTableStatDeltaToKV(id, item)
+		updatedCount, err := h.dumpTableStatCountToKV(id, item)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if updated {
+		if updatedCount {
+			h.globalMap.update(id, -item.Delta, -item.Count, nil)
+		}
+		updatedColSize, err := h.dumpTableStatColSizeToKV(id, item)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if updatedColSize {
+			m := h.globalMap[id]
+			m.ColSize = nil
+			h.globalMap[id] = m
+		}
+		if updatedCount && updatedColSize {
 			delete(h.globalMap, id)
 		}
 	}
@@ -166,7 +186,7 @@ func (h *Handle) DumpStatsDeltaToKV() error {
 }
 
 // dumpTableStatDeltaToKV dumps a single delta with some table to KV and updates the version.
-func (h *Handle) dumpTableStatDeltaToKV(id int64, delta variable.TableDelta) (bool, error) {
+func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (bool, error) {
 	if delta.Count == 0 {
 		return true, nil
 	}
@@ -184,6 +204,29 @@ func (h *Handle) dumpTableStatDeltaToKV(id int64, delta variable.TableDelta) (bo
 	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(ctx, sql)
 	if err != nil {
 		return false, errors.Trace(err)
+	}
+	updated := h.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0
+	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(ctx, "commit")
+	return updated, errors.Trace(err)
+}
+
+func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) (bool, error) {
+	if delta.ColSize == nil {
+		return true, nil
+	}
+	ctx := context.TODO()
+	_, err := h.ctx.(sqlexec.SQLExecutor).Execute(ctx, "begin")
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	version := h.ctx.Txn().StartTS()
+
+	for key, val := range delta.ColSize {
+		sql := fmt.Sprintf("update mysql.stats_histograms set version = %d, tot_col_size = tot_col_size + %d where hist_id = %d and table_id = %d", version, val, key, id)
+		_, err = h.ctx.(sqlexec.SQLExecutor).Execute(ctx, sql)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
 	}
 	updated := h.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0
 	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(ctx, "commit")

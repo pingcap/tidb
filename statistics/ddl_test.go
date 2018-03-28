@@ -151,7 +151,7 @@ func (s *testStatsCacheSuite) TestDDLHistogram(c *C) {
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo.ID)
 	c.Assert(statsTbl.Pseudo, IsFalse)
 	sc = new(stmtctx.StatementContext)
-	c.Check(statsTbl.Columns[tableInfo.Columns[5].ID].AvgColSize(), Equals, 3.0)
+	c.Check(statsTbl.Columns[tableInfo.Columns[5].ID].AvgColSize(statsTbl.Count), Equals, 3.0)
 
 	testKit.MustExec("create index i on t(c2, c1)")
 	testKit.MustExec("analyze table t")

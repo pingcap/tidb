@@ -105,7 +105,10 @@ func (hg *Histogram) GetUpper(idx int) *types.Datum {
 }
 
 // AvgColSize is the average column size of the histogram.
-func (c *Column) AvgColSize() float64 {
+func (c *Column) AvgColSize(count int64) float64 {
+	if count == 0 {
+		return 0
+	}
 	switch c.Histogram.tp.Tp {
 	case mysql.TypeFloat:
 		return 4
@@ -117,10 +120,8 @@ func (c *Column) AvgColSize() float64 {
 	case mysql.TypeNewDecimal:
 		return types.MyDecimalStructSize
 	default:
-		if c.Count == 0 {
-			return 0
-		}
-		return float64(c.TotColSize) / float64(c.Count)
+		// Keep two decimal place.
+		return math.Round(float64(c.TotColSize)/float64(count)*100) / 100
 	}
 }
 
@@ -292,7 +293,7 @@ func (hg *Histogram) toString(isIndex bool) string {
 	if isIndex {
 		strs = append(strs, fmt.Sprintf("index:%d ndv:%d", hg.ID, hg.NDV))
 	} else {
-		strs = append(strs, fmt.Sprintf("column:%d ndv:%d", hg.ID, hg.NDV))
+		strs = append(strs, fmt.Sprintf("column:%d ndv:%d totColSize:%d", hg.ID, hg.NDV, hg.TotColSize))
 	}
 	for i := 0; i < hg.Len(); i++ {
 		upperVal, err := hg.GetUpper(i).ToString()

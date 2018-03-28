@@ -357,7 +357,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	mapper := s.GetSessionVars().TxnCtx.TableDeltaMap
 	if s.statsCollector != nil && mapper != nil {
 		for id, item := range mapper {
-			s.statsCollector.Update(id, item.Delta, item.Count)
+			s.statsCollector.Update(id, item.Delta, item.Count, &item.ColSize)
 		}
 	}
 	return nil
