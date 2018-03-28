@@ -160,8 +160,11 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 	}
 	colSize := make(map[int64]int64)
 	for id, col := range t.WritableCols() {
-		if col.State == model.StatePublic && newData[id].Size() != 0 {
-			colSize[col.ID] = int64(newData[id].Size() - oldData[id].Size())
+		if col.State == model.StatePublic {
+			val := int64(newData[id].Size() - oldData[id].Size())
+			if val != 0 {
+				colSize[col.ID] = val
+			}
 		}
 	}
 	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.Meta().ID, 0, 1, &colSize)
@@ -393,7 +396,10 @@ func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h int64, d
 	colSize := make(map[int64]int64)
 	for id, col := range t.WritableCols() {
 		if col.State == model.StatePublic {
-			colSize[col.ID] = -int64(data[id].Size())
+			val := -int64(data[id].Size())
+			if val != 0 {
+				colSize[col.ID] = val
+			}
 		}
 	}
 	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.Meta().ID, -1, 1, &colSize)

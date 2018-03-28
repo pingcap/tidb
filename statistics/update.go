@@ -208,7 +208,7 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (bo
 }
 
 func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) error {
-	if delta.ColSize == nil {
+	if len(delta.ColSize) == 0 {
 		return nil
 	}
 	ctx := context.TODO()
@@ -219,6 +219,9 @@ func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) e
 	version := h.ctx.Txn().StartTS()
 
 	for key, val := range delta.ColSize {
+		if val == 0 {
+			continue
+		}
 		sql := fmt.Sprintf("update mysql.stats_histograms set version = %d, tot_col_size = tot_col_size + %d where hist_id = %d and table_id = %d and is_index = 0", version, val, key, id)
 		_, err = h.ctx.(sqlexec.SQLExecutor).Execute(ctx, sql)
 		if err != nil {
