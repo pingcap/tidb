@@ -306,20 +306,6 @@ func (e *RecoverIndexExec) backfillIndex(ctx context.Context) (int64, int64, err
 	return totalAddedCnt, totalScanCnt, nil
 }
 
-func (e *RecoverIndexExec) extractIdxVals(row chunk.Row, idxVals []types.Datum) []types.Datum {
-	if idxVals == nil {
-		idxVals = make([]types.Datum, 0, row.Len()-1)
-	} else {
-		idxVals = idxVals[:0]
-	}
-
-	for i := 0; i < row.Len()-1; i++ {
-		colVal := row.GetDatum(i, &e.columns[i].FieldType)
-		idxVals = append(idxVals, *colVal.Copy())
-	}
-	return idxVals
-}
-
 type recoverRows struct {
 	handle  int64
 	idxVals []types.Datum
@@ -346,7 +332,7 @@ func (e *RecoverIndexExec) fetchRecoverRows(ctx context.Context, srcResult dists
 				return e.recoverRows, nil
 			}
 			handle := row.GetInt64(handleIdx)
-			idxVals := e.extractIdxVals(row, e.idxValsBufs[result.scanRowCount])
+			idxVals := extractIdxVals(row, e.idxValsBufs[result.scanRowCount], e.colFieldTypes)
 			e.idxValsBufs[result.scanRowCount] = idxVals
 			e.recoverRows = append(e.recoverRows, recoverRows{handle: handle, idxVals: idxVals, skip: false})
 			result.scanRowCount++
@@ -476,17 +462,12 @@ type CleanupIndexExec struct {
 	idxColFieldTypes []*types.FieldType
 	idxChunk         *chunk.Chunk
 
-	matchedIndex map[int64]idxData
-	batchSize    uint64
-	batchKeys    []kv.Key
-	idxValsBufs  [][]types.Datum
-	lastIdxKey   []byte
-	scanRowCnt   uint64
-}
-
-type idxData struct {
-	matched bool
-	idxVals []types.Datum
+	idxValues   map[int64][]types.Datum
+	batchSize   uint64
+	batchKeys   []kv.Key
+	idxValsBufs [][]types.Datum
+	lastIdxKey  []byte
+	scanRowCnt  uint64
 }
 
 func (e *CleanupIndexExec) getIdxColTypes() []*types.FieldType {
@@ -501,7 +482,7 @@ func (e *CleanupIndexExec) getIdxColTypes() []*types.FieldType {
 }
 
 func (e *CleanupIndexExec) batchGetRecord(txn kv.Transaction) (map[string][]byte, error) {
-	for handle := range e.matchedIndex {
+	for handle := range e.idxValues {
 		e.batchKeys = append(e.batchKeys, e.table.RecordKey(handle))
 	}
 	values, err := txn.GetSnapshot().BatchGet(e.batchKeys)
@@ -518,7 +499,7 @@ func (e *CleanupIndexExec) deleteDanglingIdx(txn kv.Transaction, values map[stri
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if err := e.index.Delete(e.ctx.GetSessionVars().StmtCtx, txn, e.matchedIndex[handle].idxVals,
+			if err := e.index.Delete(e.ctx.GetSessionVars().StmtCtx, txn, e.idxValues[handle],
 				handle); err != nil {
 				return errors.Trace(err)
 			}
@@ -532,7 +513,8 @@ func (e *CleanupIndexExec) deleteDanglingIdx(txn kv.Transaction, values map[stri
 	return nil
 }
 
-func (e *CleanupIndexExec) extractIdxVals(row chunk.Row, idxVals []types.Datum) []types.Datum {
+func extractIdxVals(row chunk.Row, idxVals []types.Datum,
+	fieldTypes []*types.FieldType) []types.Datum {
 	if idxVals == nil {
 		idxVals = make([]types.Datum, 0, row.Len()-1)
 	} else {
@@ -540,7 +522,7 @@ func (e *CleanupIndexExec) extractIdxVals(row chunk.Row, idxVals []types.Datum) 
 	}
 
 	for i := 0; i < row.Len()-1; i++ {
-		colVal := row.GetDatum(i, e.idxColFieldTypes[i])
+		colVal := row.GetDatum(i, fieldTypes[i])
 		idxVals = append(idxVals, *colVal.Copy())
 	}
 	return idxVals
@@ -565,9 +547,9 @@ func (e *CleanupIndexExec) fetchIndex(ctx context.Context, txn kv.Transaction) e
 		iter := chunk.NewIterator4Chunk(e.idxChunk)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			handle := row.GetInt64(len(e.idxCols) - 1)
-			idxVals := e.extractIdxVals(row, e.idxValsBufs[e.scanRowCnt])
+			idxVals := extractIdxVals(row, e.idxValsBufs[e.scanRowCnt], e.idxColFieldTypes)
 			e.idxValsBufs[e.scanRowCnt] = idxVals
-			e.matchedIndex[handle] = idxData{false, idxVals}
+			e.idxValues[handle] = idxVals
 			idxKey, _, err := e.index.GenIndexKey(sc, idxVals, handle, nil)
 			if err != nil {
 				return errors.Trace(err)
@@ -611,8 +593,8 @@ func (e *CleanupIndexExec) NextChunk(ctx context.Context, chk *chunk.Chunk) erro
 		}
 		e.scanRowCnt = 0
 		e.batchKeys = e.batchKeys[:0]
-		for k := range e.matchedIndex {
-			delete(e.matchedIndex, k)
+		for k := range e.idxValues {
+			delete(e.idxValues, k)
 		}
 	}
 	e.done = true
@@ -649,7 +631,7 @@ func (e *CleanupIndexExec) Open(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	e.idxChunk = chunk.NewChunk(e.getIdxColTypes())
-	e.matchedIndex = make(map[int64]idxData, e.batchSize)
+	e.idxValues = make(map[int64][]types.Datum, e.batchSize)
 	e.batchKeys = make([]kv.Key, 0, e.batchSize)
 	e.idxValsBufs = make([][]types.Datum, e.batchSize)
 	sc := e.ctx.GetSessionVars().StmtCtx
