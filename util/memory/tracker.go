@@ -101,9 +101,7 @@ func (t *Tracker) remove(oldChild *Tracker) {
 		oldChild.parent = nil
 
 		numChildren := len(t.children)
-		if i < numChildren-1 {
-			copy(t.children[i:numChildren-2], t.children[i+1:numChildren-1])
-		}
+		t.children = append(t.children[:i], t.children[i+1:]...)
 		t.children = t.children[:numChildren-1]
 		break
 	}
