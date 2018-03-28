@@ -203,7 +203,7 @@ type BucketFeedback struct {
 
 // buildBucketFeedback build the feedback for each bucket from the histogram feedback.
 func buildBucketFeedback(h *Histogram, feedbacks []*QueryFeedback) (map[int]*BucketFeedback, int) {
-	bkts := make(map[int]*BucketFeedback)
+	bktID2FB := make(map[int]*BucketFeedback)
 	total := 0
 	for _, feedback := range feedbacks {
 		for _, ran := range feedback.feedback {
@@ -220,10 +220,10 @@ func buildBucketFeedback(h *Histogram, feedbacks []*QueryFeedback) (map[int]*Buc
 				}
 			}
 			total++
-			bkt := bkts[bktIdx]
+			bkt := bktID2FB[bktIdx]
 			if bkt == nil {
 				bkt = &BucketFeedback{lower: h.GetLower(bktIdx), upper: h.GetUpper(bktIdx)}
-				bkts[bktIdx] = bkt
+				bktID2FB[bktIdx] = bkt
 			}
 			bkt.feedback = append(bkt.feedback, ran)
 			// Update the bound if necessary.
@@ -245,7 +245,7 @@ func buildBucketFeedback(h *Histogram, feedbacks []*QueryFeedback) (map[int]*Buc
 			}
 		}
 	}
-	return bkts, total
+	return bktID2FB, total
 }
 
 // getBoundaries gets the new boundaries after split.
@@ -439,10 +439,10 @@ func mergeBuckets(bkts []bucket, isNewBuckets []bool, totalCount float64) []buck
 }
 
 func splitBuckets(h *Histogram, feedbacks []*QueryFeedback) ([]bucket, []bool, int64) {
-	bktFB, fbNum := buildBucketFeedback(h, feedbacks)
+	bktID2FB, fbNum := buildBucketFeedback(h, feedbacks)
 	counts := make([]int64, 0, h.Len())
 	for i := 0; i < h.Len(); i++ {
-		bkt, ok := bktFB[i]
+		bkt, ok := bktID2FB[i]
 		if !ok {
 			counts = append(counts, h.bucketCount(i))
 		} else {
@@ -457,7 +457,7 @@ func splitBuckets(h *Histogram, feedbacks []*QueryFeedback) ([]bucket, []bool, i
 	isNewBuckets := make([]bool, 0, h.Len())
 	splitCount := getSplitCount(fbNum)
 	for i := 0; i < h.Len(); i++ {
-		bkt, ok := bktFB[i]
+		bkt, ok := bktID2FB[i]
 		// No feedback, just use the original one.
 		if !ok {
 			buckets = append(buckets, bucket{h.GetLower(i), h.GetUpper(i), counts[i], h.Buckets[i].Repeat})
