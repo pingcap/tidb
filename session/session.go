@@ -1330,7 +1330,17 @@ func (s *session) ActivePendingTxn() error {
 		return errors.Trace(err)
 	}
 	s.sessionVars.TxnCtx.StartTS = s.txn.StartTS()
-	isoLevel, _ := s.sessionVars.GetSystemVar(variable.TxnIsolation)
+
+	// Move tx_isolation_one_shot to RetryInfo, so it works even transaction retries.
+	if isoLevelOneShot, ok := s.sessionVars.GetSystemVar("tx_isolation_one_shot"); ok {
+		terror.Log(s.sessionVars.SetSystemVar("tx_isolation_one_shot", ""))
+		s.sessionVars.RetryInfo.IsolationOneShot = isoLevelOneShot
+	}
+	// Check tx_isolation_one_shot first, then check tx_isolation session variable.
+	isoLevel := s.sessionVars.RetryInfo.IsolationOneShot
+	if isoLevel == "" {
+		isoLevel, _ = s.sessionVars.GetSystemVar(variable.TxnIsolation)
+	}
 	if isoLevel == ast.ReadCommitted {
 		s.txn.SetOption(kv.IsolationLevel, kv.RC)
 	}

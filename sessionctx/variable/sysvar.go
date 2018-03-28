@@ -628,6 +628,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TIDBMemQuotaTopn, strconv.FormatInt(DefTiDBMemQuotaTopn, 10)},
 	{ScopeSession, TIDBMemQuotaIndexLookupReader, strconv.FormatInt(DefTiDBMemQuotaIndexLookupReader, 10)},
 	{ScopeSession, TiDBEnableStreaming, "0"},
+	{ScopeSession, "tx_isolation_one_shot", ""},
 	/* The following variable is defined as session scope but is actually server scope. */
 	{ScopeSession, TiDBGeneralLog, strconv.Itoa(DefTiDBGeneralLog)},
 	{ScopeSession, TiDBConfig, ""},

@@ -49,10 +49,12 @@ type RetryInfo struct {
 	DroppedPreparedStmtIDs []uint32
 	currRetryOff           int
 	autoIncrementIDs       []int64
+	IsolationOneShot       string
 }
 
 // Clean does some clean work.
 func (r *RetryInfo) Clean() {
+	r.IsolationOneShot = ""
 	r.currRetryOff = 0
 	if len(r.autoIncrementIDs) > 0 {
 		r.autoIncrementIDs = r.autoIncrementIDs[:0]
