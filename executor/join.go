@@ -471,6 +471,39 @@ func (e *HashJoinExec) NextChunk(ctx context.Context, chk *chunk.Chunk) (err err
 	return nil
 }
 
+// buildHashTableForList builds hash table from `list`.
+// key of hash table: hash value of key columns
+// value of hash table: RowPtr of the corresponded row
+func (e *HashJoinExec) buildHashTableForList() error {
+	e.hashTable = mvmap.NewMVMap()
+	e.innerKeyColIdx = make([]int, len(e.innerKeys))
+	for i := range e.innerKeys {
+		e.innerKeyColIdx[i] = e.innerKeys[i].Index
+	}
+	var (
+		hasNull bool
+		err     error
+		keyBuf  = make([]byte, 0, 64)
+		valBuf  = make([]byte, 8)
+	)
+	for i := 0; i < e.innerResult.NumChunks(); i++ {
+		chk := e.innerResult.GetChunk(i)
+		for j := 0; j < chk.NumRows(); j++ {
+			hasNull, keyBuf, err = e.getJoinKeyFromChkRow(false, chk.GetRow(j), keyBuf)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if hasNull {
+				continue
+			}
+			rowPtr := chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(j)}
+			*(*chunk.RowPtr)(unsafe.Pointer(&valBuf[0])) = rowPtr
+			e.hashTable.Put(keyBuf, valBuf)
+		}
+	}
+	return nil
+}
+
 // NestedLoopApplyExec is the executor for apply.
 type NestedLoopApplyExec struct {
 	baseExecutor
@@ -496,21 +529,40 @@ type NestedLoopApplyExec struct {
 	innerSelected    []bool
 	innerIter        chunk.Iterator
 	outerRow         *chunk.Row
+
+	memTracker *memory.Tracker // track memory usage.
 }
 
 // Close implements the Executor interface.
 func (e *NestedLoopApplyExec) Close() error {
 	e.resultRows = nil
 	e.innerRows = nil
+
+	// e.memTracker.Detach()
+	e.memTracker = nil
 	return errors.Trace(e.outerExec.Close())
 }
 
 // Open implements the Executor interface.
 func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
+	err := e.outerExec.Open(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	e.cursor = 0
 	e.resultRows = e.resultRows[:0]
 	e.innerRows = e.innerRows[:0]
-	return errors.Trace(e.outerExec.Open(ctx))
+	e.outerChunk = e.outerExec.newChunk()
+	e.innerChunk = e.innerExec.newChunk()
+	e.innerList = chunk.NewList(e.innerExec.retTypes(), e.maxChunkSize)
+
+	e.memTracker = memory.NewTracker(e.id, -1)
+	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+
+	e.innerList.GetMemTracker().SetLabel("innerList")
+	e.innerList.GetMemTracker().AttachTo(e.memTracker)
+
+	return nil
 }
 
 func (e *NestedLoopApplyExec) fetchSelectedOuterRow(ctx context.Context, chk *chunk.Chunk) (*chunk.Row, error) {
@@ -572,39 +624,6 @@ func (e *NestedLoopApplyExec) fetchAllInners(ctx context.Context) error {
 			}
 		}
 	}
-}
-
-// buildHashTableForList builds hash table from `list`.
-// key of hash table: hash value of key columns
-// value of hash table: RowPtr of the corresponded row
-func (e *HashJoinExec) buildHashTableForList() error {
-	e.hashTable = mvmap.NewMVMap()
-	e.innerKeyColIdx = make([]int, len(e.innerKeys))
-	for i := range e.innerKeys {
-		e.innerKeyColIdx[i] = e.innerKeys[i].Index
-	}
-	var (
-		hasNull bool
-		err     error
-		keyBuf  = make([]byte, 0, 64)
-		valBuf  = make([]byte, 8)
-	)
-	for i := 0; i < e.innerResult.NumChunks(); i++ {
-		chk := e.innerResult.GetChunk(i)
-		for j := 0; j < chk.NumRows(); j++ {
-			hasNull, keyBuf, err = e.getJoinKeyFromChkRow(false, chk.GetRow(j), keyBuf)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if hasNull {
-				continue
-			}
-			rowPtr := chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(j)}
-			*(*chunk.RowPtr)(unsafe.Pointer(&valBuf[0])) = rowPtr
-			e.hashTable.Put(keyBuf, valBuf)
-		}
-	}
-	return nil
 }
 
 // NextChunk implements the Executor interface.
