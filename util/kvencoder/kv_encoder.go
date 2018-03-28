@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
@@ -225,8 +224,6 @@ func (e *kvEncoder) initial(dbName string, idAlloc autoid.Allocator) (err error)
 		}
 	}()
 
-	plan.PreparedPlanCacheEnabled = true
-	plan.PreparedPlanCacheCapacity = 10
 	// disable stats update.
 	session.SetStatsLease(0)
 	store, dom, err = newMockTikvWithBootstrap()
