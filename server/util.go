@@ -297,7 +297,7 @@ func dumpTextRow(buffer []byte, columns []*ColumnInfo, row types.Row) ([]byte, e
 			tmp = appendFormatFloat(tmp[:0], float64(row.GetFloat32(i)), prec, 32)
 			buffer = dumpLengthEncodedString(buffer, tmp)
 		case mysql.TypeDouble:
-			prec := -1
+			prec := types.UnspecifiedLength
 			if col.Decimal > 0 && int(col.Decimal) != mysql.NotFixedDec {
 				prec = int(col.Decimal)
 			}
@@ -333,7 +333,7 @@ const (
 func appendFormatFloat(in []byte, fVal float64, prec, bitSize int) []byte {
 	absVal := math.Abs(fVal)
 	var out []byte
-	if prec == -1 && absVal >= expFormatBig || (absVal != 0 && absVal < expFormatSmall) {
+	if prec == types.UnspecifiedLength && (absVal >= expFormatBig || (absVal != 0 && absVal < expFormatSmall)) {
 		out = strconv.AppendFloat(in, fVal, 'e', prec, bitSize)
 		valStr := out[len(in):]
 		// remove the '+' from the string for compatibility.
