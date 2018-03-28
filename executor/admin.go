@@ -587,9 +587,7 @@ func (e *CleanupIndexExec) NextChunk(ctx context.Context, chk *chunk.Chunk) erro
 	if e.done {
 		return nil
 	}
-	count := 0
 	for {
-		count++
 		errInTxn := kv.RunInNewTxn(e.ctx.GetStore(), true, func(txn kv.Transaction) error {
 			err := e.fetchIndex(ctx, txn)
 			if err != nil {
