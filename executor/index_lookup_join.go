@@ -327,6 +327,7 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 
 	ow.increaseBatchSize()
 
+	task.memTracker.Consume(task.outerResult.MemoryUsage())
 	for task.outerResult.NumRows() < ow.batchSize {
 		err := ow.executor.NextChunk(ctx, ow.executorChk)
 		if err != nil {
@@ -354,6 +355,7 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 		}
 		task.memTracker.Consume(int64(cap(task.outerMatch)))
 	}
+	task.memTracker.Consume(int64(cap(task.matchedInners)) * int64(unsafe.Sizeof(chunk.Row{})))
 	return task, nil
 }
 
