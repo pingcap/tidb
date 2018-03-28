@@ -110,7 +110,7 @@ type outerWorker struct {
 	resultCh chan<- *lookUpJoinTask
 	innerCh  chan<- *lookUpJoinTask
 
-	parentMemTracker *memory.Tracker // only pass it.
+	parentMemTracker *memory.Tracker
 }
 
 type innerWorker struct {
@@ -131,7 +131,7 @@ func (e *IndexLookUpJoin) Open(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaHashJoin)
+	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaIndexLookupJoin)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	e.innerPtrBytes = make([][]byte, 0, 8)
 	e.startWorkers(ctx)
@@ -228,10 +228,7 @@ func (e *IndexLookUpJoin) getFinishedTask(ctx context.Context) (*lookUpJoinTask,
 		return task, nil
 	}
 	if task != nil {
-		// TODO: jianzhang.zj detach this memory tracker after PR:
-		// https://github.com/pingcap/tidb/pull/6148 merged.
-		//
-		// task.memTracker.Detach()
+		task.memTracker.Detach()
 	}
 	select {
 	case task = <-e.resultCh:
@@ -561,5 +558,7 @@ func (e *IndexLookUpJoin) Close() error {
 		e.cancelFunc()
 	}
 	e.workerWg.Wait()
-	return e.children[0].Close()
+	e.memTracker.Detach()
+	e.memTracker = nil
+	return errors.Trace(e.children[0].Close())
 }
