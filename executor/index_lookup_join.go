@@ -227,9 +227,7 @@ func (e *IndexLookUpJoin) getFinishedTask(ctx context.Context) (*lookUpJoinTask,
 	if task != nil && task.cursor < task.outerResult.NumRows() {
 		return task, nil
 	}
-	if task != nil {
-		task.memTracker.Detach()
-	}
+
 	select {
 	case task = <-e.resultCh:
 	case <-ctx.Done():
@@ -246,6 +244,10 @@ func (e *IndexLookUpJoin) getFinishedTask(ctx context.Context) (*lookUpJoinTask,
 		}
 	case <-ctx.Done():
 		return nil, nil
+	}
+
+	if e.task != nil {
+		e.task.memTracker.Detach()
 	}
 	e.task = task
 	return task, nil
