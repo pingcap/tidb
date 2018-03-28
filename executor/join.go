@@ -122,6 +122,8 @@ func (e *HashJoinExec) Close() error {
 		e.outerChkResourceCh = nil
 		e.joinChkResourceCh = nil
 	}
+	e.memTracker.Detach()
+	e.memTracker = nil
 
 	err := e.baseExecutor.Close()
 	return errors.Trace(err)
