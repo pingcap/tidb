@@ -20,7 +20,8 @@ import (
 
 // ExplainAggFunc generates explain information for a aggregation function.
 func ExplainAggFunc(agg *AggFuncDesc) string {
-	buffer := bytes.NewBufferString(fmt.Sprintf("%s(", agg.Name))
+	var buffer bytes.Buffer
+	fmt.Fprintf(&buffer, "%s(", agg.Name)
 	if agg.HasDistinct {
 		buffer.WriteString("distinct ")
 	}

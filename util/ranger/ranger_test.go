@@ -19,12 +19,12 @@ import (
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -57,12 +57,12 @@ func newStoreWithBootstrap(c *C) (kv.Storage, error) {
 		mockstore.WithMVCCStore(mvccStore),
 	)
 	c.Assert(err, IsNil)
-	tidb.SetSchemaLease(0)
-	tidb.SetStatsLease(0)
+	session.SetSchemaLease(0)
+	session.SetStatsLease(0)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	_, err = tidb.BootstrapSession(store)
+	_, err = session.BootstrapSession(store)
 	return store, errors.Trace(err)
 }
 
@@ -291,7 +291,7 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 	for _, tt := range tests {
 		sql := "select * from t where " + tt.exprStr
 		ctx := testKit.Se.(sessionctx.Context)
-		stmts, err := tidb.Parse(ctx, sql)
+		stmts, err := session.Parse(ctx, sql)
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
 		c.Assert(stmts, HasLen, 1)
 		is := domain.GetDomain(ctx).InfoSchema()
@@ -337,8 +337,8 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 	}{
 		{
 			indexPos:    0,
-			exprStr:     "a LIKE 'abc%'",
-			accessConds: "[like(test.t.a, abc%, 92)]",
+			exprStr:     `a LIKE 'abc%'`,
+			accessConds: `[like(test.t.a, abc%, 92)]`,
 			filterConds: "[]",
 			resultStr:   "[[abc <nil>,abd <nil>)]",
 		},
@@ -365,9 +365,9 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		},
 		{
 			indexPos:    0,
-			exprStr:     "a LIKE '%'",
+			exprStr:     `a LIKE '%'`,
 			accessConds: "[]",
-			filterConds: "[like(test.t.a, %, 92)]",
+			filterConds: `[like(test.t.a, %, 92)]`,
 			resultStr:   "[[<nil>,+inf]]",
 		},
 		{
@@ -387,7 +387,7 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		{
 			indexPos:    0,
 			exprStr:     `a LIKE "\\\\a%"`,
-			accessConds: "[like(test.t.a, \\\\a%, 92)]",
+			accessConds: `[like(test.t.a, \\a%, 92)]`,
 			filterConds: "[]",
 			resultStr:   `[[\a <nil>,\b <nil>)]`,
 		},
@@ -515,7 +515,7 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 	for _, tt := range tests {
 		sql := "select * from t where " + tt.exprStr
 		ctx := testKit.Se.(sessionctx.Context)
-		stmts, err := tidb.Parse(ctx, sql)
+		stmts, err := session.Parse(ctx, sql)
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
 		c.Assert(stmts, HasLen, 1)
 		is := domain.GetDomain(ctx).InfoSchema()
@@ -785,7 +785,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 	for _, tt := range tests {
 		sql := "select * from t where " + tt.exprStr
 		ctx := testKit.Se.(sessionctx.Context)
-		stmts, err := tidb.Parse(ctx, sql)
+		stmts, err := session.Parse(ctx, sql)
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
 		c.Assert(stmts, HasLen, 1)
 		is := domain.GetDomain(ctx).InfoSchema()

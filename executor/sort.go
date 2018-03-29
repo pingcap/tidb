@@ -33,7 +33,6 @@ type SortExec struct {
 	ByItems []*plan.ByItems
 	Idx     int
 	fetched bool
-	err     error
 	schema  *expression.Schema
 
 	keyExprs []expression.Expression
@@ -54,6 +53,7 @@ type SortExec struct {
 
 // Close implements the Executor Close interface.
 func (e *SortExec) Close() error {
+	e.memTracker.Detach()
 	e.memTracker = nil
 	return errors.Trace(e.children[0].Close())
 }
@@ -223,7 +223,6 @@ type TopNExec struct {
 	SortExec
 	limit      *plan.PhysicalLimit
 	totalLimit int
-	heapSize   int
 
 	chkHeap *topNChunkHeap
 }

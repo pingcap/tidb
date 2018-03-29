@@ -11,13 +11,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tidb_test
+package session_test
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/testkit"
@@ -44,15 +44,15 @@ func (s *testIsolationSuite) SetUpSuite(c *C) {
 	)
 	c.Assert(err, IsNil)
 	s.store = store
-	tidb.SetSchemaLease(0)
-	tidb.SetStatsLease(0)
-	s.dom, err = tidb.BootstrapSession(s.store)
+	session.SetSchemaLease(0)
+	session.SetStatsLease(0)
+	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
-	tidb.SetCommitRetryLimit(0)
+	session.SetCommitRetryLimit(0)
 }
 
 func (s *testIsolationSuite) TearDownSuite(c *C) {
-	tidb.SetCommitRetryLimit(10)
+	session.SetCommitRetryLimit(10)
 	s.dom.Close()
 	s.store.Close()
 	testleak.AfterTest(c)()
