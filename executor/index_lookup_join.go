@@ -258,14 +258,11 @@ func (e *IndexLookUpJoin) lookUpMatchedInners(task *lookUpJoinTask, rowIdx int) 
 	e.innerPtrBytes = task.lookupMap.Get(outerKey, e.innerPtrBytes[:0])
 	task.matchedInners = task.matchedInners[:0]
 
-	oldMemUsage := int64(cap(task.matchedInners)) * int64(unsafe.Sizeof(chunk.Row{}))
 	for _, b := range e.innerPtrBytes {
 		ptr := *(*chunk.RowPtr)(unsafe.Pointer(&b[0]))
 		matchedInner := task.innerResult.GetRow(ptr)
 		task.matchedInners = append(task.matchedInners, matchedInner)
 	}
-	newMemUsage := int64(cap(task.matchedInners)) * int64(unsafe.Sizeof(chunk.Row{}))
-	task.memTracker.Consume(newMemUsage - oldMemUsage)
 }
 
 func (ow *outerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
@@ -357,7 +354,6 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 		}
 		task.memTracker.Consume(int64(cap(task.outerMatch)))
 	}
-	task.memTracker.Consume(int64(cap(task.matchedInners)) * int64(unsafe.Sizeof(chunk.Row{})))
 	return task, nil
 }
 
