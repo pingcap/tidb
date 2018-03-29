@@ -320,9 +320,8 @@ func (b *executorBuilder) buildCleanupIndex(v *plan.CleanupIndex) Executor {
 		return nil
 	}
 	idxName := strings.ToLower(v.IndexName)
-	indices := t.WritableIndices()
 	var index table.Index
-	for _, idx := range indices {
+	for _, idx := range t.Indices() {
 		if idxName == idx.Meta().Name.L {
 			index = idx
 			break
