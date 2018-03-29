@@ -119,7 +119,7 @@ func decodeBytes(b []byte, buf []byte, reverse bool) ([]byte, []byte, error) {
 
 // DecodeBytes decodes bytes which is encoded by EncodeBytes before,
 // returns the leftover bytes and decoded value if no error.
-// `buf` is used to buffer data to avoid the cost of makeslice in decodeBytes when DecodeBytes is called by DecodeOneToChunk.
+// `buf` is used to buffer data to avoid the cost of makeslice in decodeBytes when DecodeBytes is called by Decoder.DecodeOne.
 func DecodeBytes(b []byte, buf []byte) ([]byte, []byte, error) {
 	return decodeBytes(b, buf, false)
 }
@@ -135,8 +135,8 @@ func EncodeBytesDesc(b []byte, data []byte) []byte {
 
 // DecodeBytesDesc decodes bytes which is encoded by EncodeBytesDesc before,
 // returns the leftover bytes and decoded value if no error.
-func DecodeBytesDesc(b []byte, data []byte) ([]byte, []byte, error) {
-	return decodeBytes(b, data, true)
+func DecodeBytesDesc(b []byte, buf []byte) ([]byte, []byte, error) {
+	return decodeBytes(b, buf, true)
 }
 
 // EncodeCompactBytes joins bytes with its length into a byte slice. It is more

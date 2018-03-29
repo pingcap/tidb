@@ -913,23 +913,20 @@ func (s *testCodecSuite) TestDecodeOneToChunk(c *C) {
 		datums = append(datums, types.NewDatum(t.value))
 	}
 	rowCount := 3
-	decoder := &Decoder{
-		Chk:      chunk.NewChunk(tps),
-		Timezone: time.Local,
-	}
+	decoder := NewDecoder(chunk.NewChunk(tps), time.Local)
 	for rowIdx := 0; rowIdx < rowCount; rowIdx++ {
 		encoded, err := EncodeValue(sc, nil, datums...)
 		c.Assert(err, IsNil)
-		decoder.Buf = make([]byte, 0, len(encoded))
+		decoder.buf = make([]byte, 0, len(encoded))
 		for colIdx, t := range table {
-			encoded, err = DecodeOneToChunk(encoded, colIdx, t.tp, decoder)
+			encoded, err = decoder.DecodeOne(encoded, colIdx, t.tp)
 			c.Assert(err, IsNil)
 		}
 	}
 
 	for colIdx, t := range table {
 		for rowIdx := 0; rowIdx < rowCount; rowIdx++ {
-			got := decoder.Chk.GetRow(rowIdx).GetDatum(colIdx, t.tp)
+			got := decoder.chk.GetRow(rowIdx).GetDatum(colIdx, t.tp)
 			expect := datums[colIdx]
 			if got.IsNull() {
 				c.Assert(expect.IsNull(), IsTrue)

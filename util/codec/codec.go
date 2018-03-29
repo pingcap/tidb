@@ -481,20 +481,29 @@ func peekUvarint(b []byte) (int, error) {
 	return n, nil
 }
 
-// Decoder is mainly used to store the result of DecodeOneToChunk.
+// Decoder is used to decode value to chunk.
 type Decoder struct {
-	Chk *chunk.Chunk
+	chk      *chunk.Chunk
+	timezone *time.Location
+
 	// buf is only used for DecodeBytes to avoid the cost of makeslice.
-	Buf      []byte
-	Timezone *time.Location
+	buf []byte
 }
 
-// DecodeOneToChunk decodes one value to chunk and returns the remained bytes.
-func DecodeOneToChunk(b []byte, colIdx int, ft *types.FieldType, decoder *Decoder) (remain []byte, err error) {
+// NewDecoder creates a Decoder.
+func NewDecoder(chk *chunk.Chunk, timezone *time.Location) *Decoder {
+	return &Decoder{
+		chk:      chk,
+		timezone: timezone,
+	}
+}
+
+// DecodeOne decodes one value to chunk and returns the remained bytes.
+func (decoder *Decoder) DecodeOne(b []byte, colIdx int, ft *types.FieldType) (remain []byte, err error) {
 	if len(b) < 1 {
 		return nil, errors.New("invalid encoded key")
 	}
-	chk := decoder.Chk
+	chk := decoder.chk
 	flag := b[0]
 	b = b[1:]
 	switch flag {
@@ -511,7 +520,7 @@ func DecodeOneToChunk(b []byte, colIdx int, ft *types.FieldType, decoder *Decode
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = appendUintToChunk(v, chk, colIdx, ft, decoder.Timezone)
+		err = appendUintToChunk(v, chk, colIdx, ft, decoder.timezone)
 	case varintFlag:
 		var v int64
 		b, v, err = DecodeVarint(b)
@@ -525,7 +534,7 @@ func DecodeOneToChunk(b []byte, colIdx int, ft *types.FieldType, decoder *Decode
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = appendUintToChunk(v, chk, colIdx, ft, decoder.Timezone)
+		err = appendUintToChunk(v, chk, colIdx, ft, decoder.timezone)
 	case floatFlag:
 		var v float64
 		b, v, err = DecodeFloat(b)
@@ -534,11 +543,11 @@ func DecodeOneToChunk(b []byte, colIdx int, ft *types.FieldType, decoder *Decode
 		}
 		appendFloatToChunk(v, chk, colIdx, ft)
 	case bytesFlag:
-		b, decoder.Buf, err = DecodeBytes(b, decoder.Buf)
+		b, decoder.buf, err = DecodeBytes(b, decoder.buf)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		chk.AppendBytes(colIdx, decoder.Buf)
+		chk.AppendBytes(colIdx, decoder.buf)
 	case compactBytesFlag:
 		var v []byte
 		b, v, err = DecodeCompactBytes(b)

@@ -123,13 +123,10 @@ func (r *streamResult) readDataIfNecessary(ctx context.Context) error {
 func (r *streamResult) flushToChunk(chk *chunk.Chunk) (err error) {
 	remainRowsData := r.curr.RowsData
 	maxChunkSize := r.ctx.GetSessionVars().MaxChunkSize
-	decoder := &codec.Decoder{
-		Chk:      chk,
-		Timezone: r.ctx.GetSessionVars().GetTimeZone(),
-	}
+	decoder := codec.NewDecoder(chk, r.ctx.GetSessionVars().GetTimeZone())
 	for chk.NumRows() < maxChunkSize && len(remainRowsData) > 0 {
 		for i := 0; i < r.rowLen; i++ {
-			remainRowsData, err = codec.DecodeOneToChunk(remainRowsData, i, r.fieldTypes[i], decoder)
+			remainRowsData, err = decoder.DecodeOne(remainRowsData, i, r.fieldTypes[i])
 			if err != nil {
 				return errors.Trace(err)
 			}

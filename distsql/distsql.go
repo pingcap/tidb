@@ -204,13 +204,10 @@ func (r *selectResult) getSelectResp() error {
 func (r *selectResult) readRowsData(chk *chunk.Chunk) (err error) {
 	rowsData := r.selectResp.Chunks[r.respChkIdx].RowsData
 	maxChunkSize := r.ctx.GetSessionVars().MaxChunkSize
-	decoder := &codec.Decoder{
-		Chk:      chk,
-		Timezone: r.ctx.GetSessionVars().GetTimeZone(),
-	}
+	decoder := codec.NewDecoder(chk, r.ctx.GetSessionVars().GetTimeZone())
 	for chk.NumRows() < maxChunkSize && len(rowsData) > 0 {
 		for i := 0; i < r.rowLen; i++ {
-			rowsData, err = codec.DecodeOneToChunk(rowsData, i, r.fieldTypes[i], decoder)
+			rowsData, err = decoder.DecodeOne(rowsData, i, r.fieldTypes[i])
 			if err != nil {
 				return errors.Trace(err)
 			}
