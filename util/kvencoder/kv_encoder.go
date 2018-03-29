@@ -16,16 +16,16 @@ package kvenc
 import (
 	"bytes"
 	"fmt"
+	"strings"
 	"sync/atomic"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
 	log "github.com/sirupsen/logrus"
@@ -67,6 +67,12 @@ type KvEncoder interface {
 	// EncodeMetaAutoID encode the table meta info, autoID to coresponding key-value pair.
 	EncodeMetaAutoID(dbID, tableID, autoID int64) (KvPair, error)
 
+	// SetSystemVariable set system variable name = value.
+	SetSystemVariable(name string, value string) error
+
+	// GetSystemVariable get the system variable value of name.
+	GetSystemVariable(name string) (string, bool)
+
 	// Close cleanup the kvEncoder.
 	Close() error
 }
@@ -74,7 +80,7 @@ type KvEncoder interface {
 type kvEncoder struct {
 	store kv.Storage
 	dom   *domain.Domain
-	se    tidb.Session
+	se    session.Session
 }
 
 // New new a KvEncoder
@@ -168,13 +174,30 @@ func (e *kvEncoder) ExecDDLSQL(sql string) error {
 	return nil
 }
 
+func (e *kvEncoder) SetSystemVariable(name string, value string) error {
+	name = strings.ToLower(name)
+	if e.se != nil {
+		return e.se.GetSessionVars().SetSystemVar(name, value)
+	}
+	return errors.Errorf("e.se is nil, please new KvEncoder by kvencoder.New().")
+}
+
+func (e *kvEncoder) GetSystemVariable(name string) (string, bool) {
+	name = strings.ToLower(name)
+	if e.se == nil {
+		return "", false
+	}
+
+	return e.se.GetSessionVars().GetSystemVar(name)
+}
+
 func newMockTikvWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	store, err := mockstore.NewMockTikvStore()
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	tidb.SetSchemaLease(0)
-	dom, err := tidb.BootstrapSession(store)
+	session.SetSchemaLease(0)
+	dom, err := session.BootstrapSession(store)
 	return store, dom, errors.Trace(err)
 }
 
@@ -182,7 +205,7 @@ func (e *kvEncoder) initial(dbName string, idAlloc autoid.Allocator) (err error)
 	var (
 		store kv.Storage
 		dom   *domain.Domain
-		se    tidb.Session
+		se    session.Session
 	)
 	defer func() {
 		if err == nil {
@@ -201,17 +224,15 @@ func (e *kvEncoder) initial(dbName string, idAlloc autoid.Allocator) (err error)
 		}
 	}()
 
-	plan.PreparedPlanCacheEnabled = true
-	plan.PreparedPlanCacheCapacity = 10
 	// disable stats update.
-	tidb.SetStatsLease(0)
+	session.SetStatsLease(0)
 	store, dom, err = newMockTikvWithBootstrap()
 	if err != nil {
 		err = errors.Trace(err)
 		return
 	}
 
-	se, err = tidb.CreateSession(store)
+	se, err = session.CreateSession(store)
 	if err != nil {
 		err = errors.Trace(err)
 		return

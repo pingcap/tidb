@@ -19,11 +19,11 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -51,6 +51,7 @@ type testSuite struct {
 }
 
 func (s *testSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
 	var err error
 	s.store, err = mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
@@ -61,10 +62,10 @@ func (s *testSuite) SetUpSuite(c *C) {
 func (s *testSuite) TearDownSuite(c *C) {
 	err := s.store.Close()
 	c.Assert(err, IsNil)
+	testleak.AfterTest(c)()
 }
 
 func (s *testSuite) TestGetDDLInfo(c *C) {
-	defer testleak.AfterTest(c)()
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	t := meta.NewMeta(txn)
@@ -90,8 +91,6 @@ func (s *testSuite) TestGetDDLInfo(c *C) {
 }
 
 func (s *testSuite) TestGetDDLJobs(c *C) {
-	defer testleak.AfterTest(c)()
-
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	t := meta.NewMeta(txn)
@@ -123,8 +122,6 @@ func (s *testSuite) TestGetDDLJobs(c *C) {
 }
 
 func (s *testSuite) TestCancelJobs(c *C) {
-	defer testleak.AfterTest(c)()
-
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	t := meta.NewMeta(txn)
@@ -162,8 +159,6 @@ func (s *testSuite) TestCancelJobs(c *C) {
 }
 
 func (s *testSuite) TestGetHistoryDDLJobs(c *C) {
-	defer testleak.AfterTest(c)()
-
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	t := meta.NewMeta(txn)
@@ -202,10 +197,9 @@ func (s *testSuite) TestGetHistoryDDLJobs(c *C) {
 }
 
 func (s *testSuite) TestScan(c *C) {
-	defer testleak.AfterTest(c)()
-	dom, err := tidb.BootstrapSession(s.store)
+	dom, err := session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
-	se, err := tidb.CreateSession4Test(s.store)
+	se, err := session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 	defer func() {
 		dom.Close()
@@ -348,7 +342,7 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	err = CompareIndexData(sc, txn, tb, idx)
+	err = CompareIndexData(ctx, txn, tb, idx)
 	c.Assert(err, IsNil)
 
 	idxNames := []string{idx.Meta().Name.L}
@@ -368,7 +362,7 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = CompareIndexData(sc, txn, tb, idx)
+	err = CompareIndexData(ctx, txn, tb, idx)
 	c.Assert(err, NotNil)
 	record1 := &RecordData{Handle: int64(3), Values: types.MakeDatums(int64(30))}
 	diffMsg := newDiffRetError("index", record1, nil)
@@ -389,7 +383,7 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = CompareIndexData(sc, txn, tb, idx)
+	err = CompareIndexData(ctx, txn, tb, idx)
 	c.Assert(err, NotNil)
 	record2 := &RecordData{Handle: int64(3), Values: types.MakeDatums(int64(31))}
 	diffMsg = newDiffRetError("index", record1, record2)
@@ -407,7 +401,7 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = CheckRecordAndIndex(sc, txn, tb, idx)
+	err = CheckRecordAndIndex(ctx, txn, tb, idx)
 	c.Assert(err, NotNil)
 	record2 = &RecordData{Handle: int64(5), Values: types.MakeDatums(int64(30))}
 	diffMsg = newDiffRetError("index", record1, record2)
@@ -427,7 +421,7 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = CompareIndexData(sc, txn, tb, idx)
+	err = CompareIndexData(ctx, txn, tb, idx)
 	c.Assert(err, NotNil)
 	record1 = &RecordData{Handle: int64(4), Values: types.MakeDatums(int64(40))}
 	diffMsg = newDiffRetError("index", record1, nil)
@@ -448,7 +442,7 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = CompareIndexData(sc, txn, tb, idx)
+	err = CompareIndexData(ctx, txn, tb, idx)
 	c.Assert(err, NotNil)
 	diffMsg = newDiffRetError("index", nil, record1)
 	c.Assert(err.Error(), DeepEquals, diffMsg)

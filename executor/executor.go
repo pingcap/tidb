@@ -273,7 +273,6 @@ type ShowDDLJobQueriesExec struct {
 	cursor int
 	jobs   []*model.Job
 	jobIDs []int64
-	query  string
 }
 
 // Open implements the Executor Open interface.
@@ -387,7 +386,7 @@ func (e *CheckTableExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error 
 		}
 		for _, idx := range tb.Indices() {
 			txn := e.ctx.Txn()
-			err = admin.CompareIndexData(e.ctx.GetSessionVars().StmtCtx, txn, tb, idx)
+			err = admin.CompareIndexData(e.ctx, txn, tb, idx)
 			if err != nil {
 				return errors.Errorf("%v err:%v", t.Name, err)
 			}
@@ -422,27 +421,9 @@ func (e *CheckIndexExec) Open(ctx context.Context) error {
 	return nil
 }
 
-// Next implements the Executor Next interface.
-func (e *CheckIndexExec) Next(ctx context.Context) (Row, error) {
-	if e.done {
-		return nil, nil
-	}
-	defer func() { e.done = true }()
-
-	err := admin.CheckIndicesCount(e.ctx, e.dbName, e.tableName, []string{e.idxName})
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	for {
-		row, err := e.src.Next(ctx)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if row == nil {
-			break
-		}
-	}
-	return nil, nil
+// Close implements the Executor Close interface.
+func (e *CheckIndexExec) Close() error {
+	return errors.Trace(e.src.Close())
 }
 
 // NextChunk implements the Executor NextChunk interface.
@@ -481,6 +462,21 @@ type SelectLockExec struct {
 	Lock ast.SelectLockType
 }
 
+// Open implements the Executor Open interface.
+func (e *SelectLockExec) Open(ctx context.Context) error {
+	if err := e.baseExecutor.Open(ctx); err != nil {
+		return errors.Trace(err)
+	}
+
+	txnCtx := e.ctx.GetSessionVars().TxnCtx
+	txnCtx.ForUpdate = true
+	for id := range e.Schema().TblID2Handle {
+		// This operation is only for schema validator check.
+		txnCtx.UpdateDeltaForTable(id, 0, 0)
+	}
+	return nil
+}
+
 // NextChunk implements the Executor NextChunk interface.
 func (e *SelectLockExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
@@ -493,8 +489,6 @@ func (e *SelectLockExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error 
 		return nil
 	}
 	txn := e.ctx.Txn()
-	txnCtx := e.ctx.GetSessionVars().TxnCtx
-	txnCtx.ForUpdate = true
 	keys := make([]kv.Key, 0, chk.NumRows())
 	iter := chunk.NewIterator4Chunk(chk)
 	for id, cols := range e.Schema().TblID2Handle {
@@ -507,8 +501,6 @@ func (e *SelectLockExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error 
 			if err != nil {
 				return errors.Trace(err)
 			}
-			// This operation is only for schema validator check.
-			txnCtx.UpdateDeltaForTable(id, 0, 0)
 		}
 	}
 	return nil
@@ -784,14 +776,13 @@ func (e *SelectionExec) unBatchedNextChunk(ctx context.Context, chk *chunk.Chunk
 type TableScanExec struct {
 	baseExecutor
 
-	t              table.Table
-	ranges         []ranger.IntColumnRange
-	seekHandle     int64
-	iter           kv.Iterator
-	cursor         int
-	columns        []*model.ColumnInfo
-	isVirtualTable bool
-
+	t                     table.Table
+	ranges                []ranger.IntColumnRange
+	seekHandle            int64
+	iter                  kv.Iterator
+	cursor                int
+	columns               []*model.ColumnInfo
+	isVirtualTable        bool
 	virtualTableChunkList *chunk.List
 	virtualTableChunkIdx  int
 }
@@ -1018,20 +1009,13 @@ type UnionExec struct {
 	baseExecutor
 
 	stopFetchData atomic.Value
-	resultCh      chan *execResult
 	cursor        int
 	wg            sync.WaitGroup
 
-	// finished and all the following variables are used for chunk execution.
 	finished      chan struct{}
 	resourcePools []chan *chunk.Chunk
 	resultPool    chan *unionWorkerResult
 	initialized   bool
-}
-
-type execResult struct {
-	rows []Row
-	err  error
 }
 
 // unionWorkerResult stores the result for a union worker.
@@ -1044,49 +1028,9 @@ type unionWorkerResult struct {
 	src chan<- *chunk.Chunk
 }
 
-func (e *UnionExec) waitAllFinished(forChunk bool) {
+func (e *UnionExec) waitAllFinished() {
 	e.wg.Wait()
-	if forChunk {
-		close(e.resultPool)
-	} else {
-		close(e.resultCh)
-	}
-}
-
-func (e *UnionExec) fetchData(ctx context.Context, idx int) {
-	batchSize := 128
-	defer e.wg.Done()
-	for {
-		result := &execResult{
-			rows: make([]Row, 0, batchSize),
-			err:  nil,
-		}
-		for i := 0; i < batchSize; i++ {
-			if e.stopFetchData.Load().(bool) {
-				return
-			}
-			row, err := e.children[idx].Next(ctx)
-			if err != nil {
-				result.err = errors.Trace(err)
-				break
-			}
-			if row == nil {
-				break
-			}
-			result.rows = append(result.rows, row)
-		}
-		if len(result.rows) == 0 && result.err == nil {
-			return
-		}
-		if result.err != nil {
-			e.stopFetchData.Store(true)
-		}
-		select {
-		case e.resultCh <- result:
-		case <-e.finished:
-			return
-		}
-	}
+	close(e.resultPool)
 }
 
 // Open implements the Executor Open interface.
@@ -1100,25 +1044,16 @@ func (e *UnionExec) Open(ctx context.Context) error {
 	return nil
 }
 
-func (e *UnionExec) initialize(ctx context.Context, forChunk bool) {
-	if forChunk {
-		e.resultPool = make(chan *unionWorkerResult, len(e.children))
-		e.resourcePools = make([]chan *chunk.Chunk, len(e.children))
-		for i := range e.children {
-			e.resourcePools[i] = make(chan *chunk.Chunk, 1)
-			e.resourcePools[i] <- e.childrenResults[i]
-			e.wg.Add(1)
-			go e.resultPuller(ctx, i)
-		}
-	} else {
-		e.resultCh = make(chan *execResult, len(e.children))
-		e.cursor = 0
-		for i := range e.children {
-			e.wg.Add(1)
-			go e.fetchData(ctx, i)
-		}
+func (e *UnionExec) initialize(ctx context.Context) {
+	e.resultPool = make(chan *unionWorkerResult, len(e.children))
+	e.resourcePools = make([]chan *chunk.Chunk, len(e.children))
+	for i := range e.children {
+		e.resourcePools[i] = make(chan *chunk.Chunk, 1)
+		e.resourcePools[i] <- e.childrenResults[i]
+		e.wg.Add(1)
+		go e.resultPuller(ctx, i)
 	}
-	go e.waitAllFinished(forChunk)
+	go e.waitAllFinished()
 }
 
 func (e *UnionExec) resultPuller(ctx context.Context, childID int) {
@@ -1164,7 +1099,7 @@ func (e *UnionExec) resultPuller(ctx context.Context, childID int) {
 func (e *UnionExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if !e.initialized {
-		e.initialize(ctx, true)
+		e.initialize(ctx)
 		e.initialized = true
 	}
 	result, ok := <-e.resultPool

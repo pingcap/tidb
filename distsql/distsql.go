@@ -344,6 +344,22 @@ func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request) (SelectRe
 	return result, nil
 }
 
+// Checksum sends a checksum request.
+func Checksum(ctx context.Context, client kv.Client, kvReq *kv.Request) (SelectResult, error) {
+	resp := client.Send(ctx, kvReq)
+	if resp == nil {
+		return nil, errors.New("client returns nil response")
+	}
+	result := &selectResult{
+		label:    "checksum",
+		resp:     resp,
+		results:  make(chan resultWithErr, kvReq.Concurrency),
+		closed:   make(chan struct{}),
+		feedback: statistics.NewQueryFeedback(0, nil, 0, false),
+	}
+	return result, nil
+}
+
 // XAPI error codes.
 const (
 	codeInvalidResp = 1

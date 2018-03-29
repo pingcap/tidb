@@ -15,7 +15,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tidb
+package session
 
 import (
 	"crypto/tls"
@@ -320,7 +320,7 @@ func (s *session) doCommit(ctx context.Context) error {
 		schemaVer:       s.sessionVars.TxnCtx.SchemaVersion,
 		relatedTableIDs: tableIDs,
 	})
-	if err := s.txn.Commit(ctx); err != nil {
+	if err := s.txn.Commit(sessionctx.SetConnID2Ctx(ctx, s)); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -956,11 +956,13 @@ func (s *session) Txn() kv.Transaction {
 
 func (s *session) NewTxn() error {
 	if s.txn.Valid() {
+		txnID := s.txn.StartTS()
 		ctx := context.TODO()
 		err := s.CommitTxn(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		log.Infof("[con:%d] NewTxn() inside a transaction auto commit: %d", s.GetSessionVars().ConnectionID, txnID)
 	}
 
 	txn, err := s.store.Begin()
@@ -1194,7 +1196,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 17
+	currentBootstrapVersion = 18
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -1378,9 +1380,9 @@ func logStmt(node ast.StmtNode, vars *variable.SessionVars) {
 		*ast.DropDatabaseStmt, *ast.DropIndexStmt, *ast.DropTableStmt, *ast.RenameTableStmt, *ast.TruncateTableStmt:
 		user := vars.User
 		if ss, ok := node.(ast.SensitiveStmtNode); ok {
-			log.Infof("[CRUCIAL OPERATION] %s (by %s).", ss.SecureText(), user)
+			log.Infof("[CRUCIAL OPERATION] [con:%v] %s (by %s).", vars.ConnectionID, ss.SecureText(), user)
 		} else {
-			log.Infof("[CRUCIAL OPERATION] %s (by %s).", stmt.Text(), user)
+			log.Infof("[CRUCIAL OPERATION] [con:%v] %s (by %s).", vars.ConnectionID, stmt.Text(), user)
 		}
 	default:
 		logQuery(node.Text(), vars)

@@ -20,6 +20,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/juju/errors"
 	"github.com/opentracing/opentracing-go"
@@ -36,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	tipb "github.com/pingcap/tipb/go-tipb"
 	log "github.com/sirupsen/logrus"
@@ -66,6 +68,20 @@ type lookupTableTask struct {
 	// The handles fetched from index is originally ordered by index, but we need handles to be ordered by itself
 	// to do table request.
 	indexOrder map[int64]int
+
+	// memUsage records the memory usage of this task calculated by table worker.
+	// memTracker is used to release memUsage after task is done and unused.
+	//
+	// The sequence of function calls are:
+	//   1. calculate task.memUsage.
+	//   2. task.memTracker = tableWorker.memTracker
+	//   3. task.memTracker.Consume(task.memUsage)
+	//   4. task.memTracker.Consume(-task.memUsage)
+	//
+	// Step 1~3 are completed in "tableWorker.executeTask".
+	// Step 4   is  completed in "IndexLookUpExecutor.NextChunk".
+	memUsage   int64
+	memTracker *memory.Tracker
 }
 
 func (task *lookupTableTask) Len() int {
@@ -79,20 +95,6 @@ func (task *lookupTableTask) Less(i, j int) bool {
 func (task *lookupTableTask) Swap(i, j int) {
 	task.rowIdx[i], task.rowIdx[j] = task.rowIdx[j], task.rowIdx[i]
 	task.rows[i], task.rows[j] = task.rows[j], task.rows[i]
-}
-
-func (task *lookupTableTask) getRow(schema *expression.Schema) (Row, error) {
-	if task.cursor < len(task.rows) {
-		row := task.rows[task.cursor]
-		task.cursor++
-		datumRow := make(types.DatumRow, row.Len())
-		for i := 0; i < len(datumRow); i++ {
-			datumRow[i] = row.GetDatum(i, schema.Columns[i].RetType)
-		}
-		return datumRow, nil
-	}
-
-	return nil, nil
 }
 
 // Closeable is a interface for closeable structures.
@@ -144,19 +146,50 @@ const (
 	// FlagTruncateAsWarning indicates if truncate error should be returned as warning.
 	// This flag only matters if FlagIgnoreTruncate is not set, in strict sql mode, truncate error should
 	// be returned as error, in non-strict sql mode, truncate error should be saved as warning.
-	FlagTruncateAsWarning uint64 = 1 << 1
-
+	FlagTruncateAsWarning = 1 << 1
 	// FlagPadCharToFullLength indicates if sql_mode 'PAD_CHAR_TO_FULL_LENGTH' is set.
-	FlagPadCharToFullLength uint64 = 1 << 2
+	FlagPadCharToFullLength = 1 << 2
+	// FlagInInsertStmt indicates if this is a INSERT statement.
+	FlagInInsertStmt = 1 << 3
+	// FlagInUpdateOrDeleteStmt indicates if this is a UPDATE statement or a DELETE statement.
+	FlagInUpdateOrDeleteStmt = 1 << 4
+	// FlagInSelectStmt indicates if this is a SELECT statement.
+	FlagInSelectStmt = 1 << 5
+	// FlagOverflowAsWarning indicates if overflow error should be returned as warning.
+	// In strict sql mode, overflow error should be returned as error,
+	// in non-strict sql mode, overflow error should be saved as warning.
+	FlagOverflowAsWarning = 1 << 6
+	// FlagIgnoreZeroInDate indicates if ZeroInDate error should be ignored.
+	// Read-only statements should ignore ZeroInDate error.
+	// Write statements should not ignore ZeroInDate error in strict sql mode.
+	FlagIgnoreZeroInDate = 1 << 7
+	// FlagDividedByZeroAsWarning indicates if DividedByZero should be returned as warning.
+	FlagDividedByZeroAsWarning = 1 << 8
 )
 
 // statementContextToFlags converts StatementContext to tipb.SelectRequest.Flags.
 func statementContextToFlags(sc *stmtctx.StatementContext) uint64 {
 	var flags uint64
+	if sc.InInsertStmt {
+		flags |= FlagInInsertStmt
+	} else if sc.InUpdateOrDeleteStmt {
+		flags |= FlagInUpdateOrDeleteStmt
+	} else if sc.InSelectStmt {
+		flags |= FlagInSelectStmt
+	}
 	if sc.IgnoreTruncate {
 		flags |= FlagIgnoreTruncate
 	} else if sc.TruncateAsWarning {
 		flags |= FlagTruncateAsWarning
+	}
+	if sc.OverflowAsWarning {
+		flags |= FlagOverflowAsWarning
+	}
+	if sc.IgnoreZeroInDate {
+		flags |= FlagIgnoreZeroInDate
+	}
+	if sc.DividedByZeroAsWarning {
+		flags |= FlagDividedByZeroAsWarning
 	}
 	if sc.PadCharToFullLength {
 		flags |= FlagPadCharToFullLength
@@ -185,8 +218,6 @@ type TableReaderExecutor struct {
 	// columns are only required by union scan.
 	columns []*model.ColumnInfo
 
-	// partialResult store the result from one region.
-	partialResult distsql.PartialResult
 	// resultHandler handles the order of the result. Since (MAXInt64, MAXUint64] stores before [0, MaxInt64] physically
 	// for unsigned int.
 	resultHandler *tableResultHandler
@@ -198,51 +229,8 @@ type TableReaderExecutor struct {
 // Close implements the Executor Close interface.
 func (e *TableReaderExecutor) Close() error {
 	e.ctx.StoreQueryFeedback(e.feedback)
-	err := closeAll(e.resultHandler, e.partialResult)
-	e.partialResult = nil
+	err := e.resultHandler.Close()
 	return errors.Trace(err)
-}
-
-// Next returns next available Row. In its process, any error will be returned.
-// It first try to fetch a partial result if current partial result is nil.
-// If any error appears during this stage, it simply return a error to its caller.
-// If it successfully initialize its partial result, it will use this to get next
-// available row.
-func (e *TableReaderExecutor) Next(ctx context.Context) (Row, error) {
-	for {
-		// Get partial result.
-		if e.partialResult == nil {
-			var err error
-			e.partialResult, err = e.resultHandler.next(ctx)
-			if err != nil {
-				e.feedback.Invalidate()
-				return nil, errors.Trace(err)
-			}
-			if e.partialResult == nil {
-				// Finished.
-				return nil, nil
-			}
-		}
-		// Get a row from partial result.
-		rowData, err := e.partialResult.Next(ctx)
-		if err != nil {
-			e.feedback.Invalidate()
-			return nil, errors.Trace(err)
-		}
-		if rowData == nil {
-			// Finish the current partial result and get the next one.
-			err = e.partialResult.Close()
-			terror.Log(errors.Trace(err))
-			e.partialResult = nil
-			continue
-		}
-		err = decodeRawValues(rowData, e.schema, e.ctx.GetSessionVars().GetTimeZone())
-		if err != nil {
-			e.feedback.Invalidate()
-			return nil, errors.Trace(err)
-		}
-		return rowData, nil
-	}
 }
 
 // NextChunk fills data into the chunk passed by its caller.
@@ -502,6 +490,9 @@ type IndexLookUpExecutor struct {
 	resultCurr *lookupTableTask
 	feedback   *statistics.QueryFeedback
 
+	// memTracker is used to track the memory usage of this executor.
+	memTracker *memory.Tracker
+
 	// isCheckOp is used to determine whether we need to check the consistency of the index data.
 	isCheckOp bool
 }
@@ -521,6 +512,13 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 }
 
 func (e *IndexLookUpExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) error {
+	// We have to initialize "memTracker" and other execution resources in here
+	// instead of in function "Open", because this "IndexLookUpExecutor" may be
+	// constructed by a "IndexLookUpJoin" and "Open" will not be called in that
+	// situation.
+	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaIndexLookupReader)
+	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+
 	span, ctx := startSpanFollowsContext(ctx, "executor.IndexLookUp.Open")
 	defer span.Finish()
 
@@ -600,7 +598,9 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 			keepOrder:      e.keepOrder,
 			handleIdx:      e.handleIdx,
 			isCheckOp:      e.isCheckOp,
+			memTracker:     memory.NewTracker("tableWorker", -1),
 		}
+		worker.memTracker.AttachTo(e.memTracker)
 		ctx1, cancel := context.WithCancel(ctx)
 		go func() {
 			worker.pickAndExecTask(ctx1)
@@ -629,37 +629,21 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []in
 
 // Close implements Exec Close interface.
 func (e *IndexLookUpExecutor) Close() error {
-	if e.finished != nil {
-		close(e.finished)
-		// Drain the resultCh and discard the result, in case that Next() doesn't fully
-		// consume the data, background worker still writing to resultCh and block forever.
-		for range e.resultCh {
-		}
-		e.idxWorkerWg.Wait()
-		e.tblWorkerWg.Wait()
-		e.finished = nil
+	if e.finished == nil {
+		return nil
 	}
-	return nil
-}
 
-// Next implements Exec Next interface.
-func (e *IndexLookUpExecutor) Next(ctx context.Context) (Row, error) {
-	for {
-		resultTask, err := e.getResultTask()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if resultTask == nil {
-			return nil, nil
-		}
-		row, err := resultTask.getRow(e.schema)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if row != nil {
-			return row, nil
-		}
+	close(e.finished)
+	// Drain the resultCh and discard the result, in case that Next() doesn't fully
+	// consume the data, background worker still writing to resultCh and block forever.
+	for range e.resultCh {
 	}
+	e.idxWorkerWg.Wait()
+	e.tblWorkerWg.Wait()
+	e.finished = nil
+	e.memTracker.Detach()
+	e.memTracker = nil
+	return nil
 }
 
 // NextChunk implements Exec NextChunk interface.
@@ -691,9 +675,13 @@ func (e *IndexLookUpExecutor) getResultTask() (*lookupTableTask, error) {
 	if !ok {
 		return nil, nil
 	}
-	err := <-task.doneCh
-	if err != nil {
+	if err := <-task.doneCh; err != nil {
 		return nil, errors.Trace(err)
+	}
+
+	// Release the memory usage of last task before we handle a new task.
+	if e.resultCurr != nil {
+		e.resultCurr.memTracker.Consume(-e.resultCurr.memUsage)
 	}
 	e.resultCurr = task
 	return e.resultCurr, nil
@@ -761,13 +749,12 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult) (handles []int64, err error) {
 	handles = make([]int64, 0, w.batchSize)
 	for len(handles) < w.batchSize {
-		e0 := idxResult.NextChunk(ctx, chk)
-		if e0 != nil {
-			err = errors.Trace(e0)
-			return
+		err = errors.Trace(idxResult.NextChunk(ctx, chk))
+		if err != nil {
+			return handles, err
 		}
 		if chk.NumRows() == 0 {
-			return
+			return handles, nil
 		}
 		for i := 0; i < chk.NumRows(); i++ {
 			handles = append(handles, chk.GetRow(i).GetInt64(0))
@@ -777,7 +764,7 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 	if w.batchSize > w.maxBatchSize {
 		w.batchSize = w.maxBatchSize
 	}
-	return
+	return handles, nil
 }
 
 func (w *indexWorker) buildTableTask(handles []int64) *lookupTableTask {
@@ -805,6 +792,9 @@ type tableWorker struct {
 	keepOrder      bool
 	handleIdx      int
 
+	// memTracker is used to track the memory usage of this executor.
+	memTracker *memory.Tracker
+
 	// isCheckOp is used to determine whether we need to check the consistency of the index data.
 	isCheckOp bool
 }
@@ -831,27 +821,28 @@ func (w *tableWorker) pickAndExecTask(ctx context.Context) {
 			if !ok {
 				return
 			}
-			w.executeTask(ctx, task)
 		case <-w.finished:
 			return
 		}
+		err := w.executeTask(ctx, task)
+		task.doneCh <- errors.Trace(err)
 	}
 }
 
 // executeTask executes the table look up tasks. We will construct a table reader and send request by handles.
 // Then we hold the returning rows and finish this task.
-func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) {
-	var err error
-	defer func() {
-		task.doneCh <- errors.Trace(err)
-	}()
-	var tableReader Executor
-	tableReader, err = w.buildTblReader(ctx, task.handles)
+func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) error {
+	tableReader, err := w.buildTblReader(ctx, task.handles)
 	if err != nil {
 		log.Error(err)
-		return
+		return errors.Trace(err)
 	}
 	defer terror.Call(tableReader.Close)
+
+	task.memTracker = w.memTracker
+	memUsage := int64(cap(task.handles) * 8)
+	task.memUsage = memUsage
+	task.memTracker.Consume(memUsage)
 	handleCnt := len(task.handles)
 	task.rows = make([]chunk.Row, 0, handleCnt)
 	for {
@@ -859,22 +850,31 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) {
 		err = tableReader.NextChunk(ctx, chk)
 		if err != nil {
 			log.Error(err)
-			return
+			return errors.Trace(err)
 		}
 		if chk.NumRows() == 0 {
 			break
 		}
+		memUsage = chk.MemoryUsage()
+		task.memUsage += memUsage
+		task.memTracker.Consume(memUsage)
 		iter := chunk.NewIterator4Chunk(chk)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			task.rows = append(task.rows, row)
 		}
 	}
+	memUsage = int64(cap(task.rows)) * int64(unsafe.Sizeof(chunk.Row{}))
+	task.memUsage += memUsage
+	task.memTracker.Consume(memUsage)
 	if w.keepOrder {
 		task.rowIdx = make([]int, 0, len(task.rows))
 		for i := range task.rows {
 			handle := task.rows[i].GetInt64(w.handleIdx)
 			task.rowIdx = append(task.rowIdx, task.indexOrder[handle])
 		}
+		memUsage = int64(cap(task.rowIdx) * 4)
+		task.memUsage += memUsage
+		task.memTracker.Consume(memUsage)
 		sort.Sort(task)
 	}
 
@@ -884,9 +884,11 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) {
 			handle := row.GetInt64(w.handleIdx)
 			obtainedHandlesMap[handle] = struct{}{}
 		}
-		err = errors.Errorf("handle count %d isn't equal to value count %d, missing handles %v in a batch",
+		return errors.Errorf("handle count %d isn't equal to value count %d, missing handles %v in a batch",
 			handleCnt, len(task.rows), GetLackHandles(task.handles, obtainedHandlesMap))
 	}
+
+	return nil
 }
 
 // GetLackHandles gets the handles in expectedHandles but not in obtainedHandlesMap.

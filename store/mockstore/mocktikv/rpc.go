@@ -15,7 +15,9 @@ package mocktikv
 
 import (
 	"bytes"
+	"fmt"
 	"io"
+	"time"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
@@ -464,8 +466,8 @@ func (c *RPCClient) checkArgs(ctx context.Context, addr string) (*rpcHandler, er
 	return handler, nil
 }
 
-// SendReq sends a request to mock cluster.
-func (c *RPCClient) SendReq(ctx context.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+// SendRequest sends a request to mock cluster.
+func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	// gofail: var rpcServerBusy bool
 	// if rpcServerBusy {
 	//	return tikvrpc.GenRegionErrorResp(req, &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}})
@@ -612,10 +614,15 @@ func (c *RPCClient) SendReq(ctx context.Context, addr string, req *tikvrpc.Reque
 		handler.rawStartKey = MvccKey(handler.startKey).Raw()
 		handler.rawEndKey = MvccKey(handler.endKey).Raw()
 		var res *coprocessor.Response
-		if r.GetTp() == kv.ReqTypeDAG {
+		switch r.GetTp() {
+		case kv.ReqTypeDAG:
 			res = handler.handleCopDAGRequest(r)
-		} else {
+		case kv.ReqTypeAnalyze:
 			res = handler.handleCopAnalyzeRequest(r)
+		case kv.ReqTypeChecksum:
+			res = handler.handleCopChecksumRequest(r)
+		default:
+			panic(fmt.Sprintf("unknown coprocessor request type: %v", r.GetTp()))
 		}
 		resp.Cop = res
 	case tikvrpc.CmdCopStream:
@@ -636,7 +643,14 @@ func (c *RPCClient) SendReq(ctx context.Context, addr string, req *tikvrpc.Reque
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		streamResp := tikvrpc.NewCopStreamResponse(copStream, nil, cancel, c.streamTimeout)
+
+		streamResp := &tikvrpc.CopStreamResponse{
+			Tikv_CoprocessorStreamClient: copStream,
+		}
+		streamResp.Lease.Cancel = cancel
+		streamResp.Timeout = timeout
+		c.streamTimeout <- &streamResp.Lease
+
 		first, err := streamResp.Recv()
 		if err != nil {
 			return nil, errors.Trace(err)

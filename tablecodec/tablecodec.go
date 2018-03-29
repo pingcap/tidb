@@ -16,6 +16,7 @@ package tablecodec
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"math"
 	"time"
 
@@ -31,6 +32,7 @@ import (
 var (
 	errInvalidKey         = terror.ClassXEval.New(codeInvalidKey, "invalid key")
 	errInvalidRecordKey   = terror.ClassXEval.New(codeInvalidRecordKey, "invalid record key")
+	errInvalidIndexKey    = terror.ClassXEval.New(codeInvalidIndexKey, "invalid index key")
 	errInvalidColumnCount = terror.ClassXEval.New(codeInvalidColumnCount, "invalid column count")
 )
 
@@ -109,6 +111,32 @@ func DecodeRecordKey(key kv.Key) (tableID int64, handle int64, err error) {
 	return
 }
 
+// DecodeIndexKey decodes the key and gets the tableID, indexID, indexValues.
+func DecodeIndexKey(key kv.Key) (tableID int64, indexID int64, indexValues []string, err error) {
+	k := key
+
+	tableID, indexID, isRecord, err := DecodeKeyHead(key)
+	if err != nil {
+		return 0, 0, nil, errors.Trace(err)
+	}
+	if isRecord {
+		return 0, 0, nil, errInvalidIndexKey.Gen("invalid index key - %q", k)
+	}
+	key = key[prefixLen+idLen:]
+
+	for len(key) > 0 {
+		// FIXME: Without the schema information, we can only decode the raw kind of
+		// the column. For instance, MysqlTime is internally saved as uint64.
+		remain, d, e := codec.DecodeOne(key)
+		if e != nil {
+			return 0, 0, nil, errInvalidIndexKey.Gen("invalid index key - %q %v", k, e)
+		}
+		indexValues = append(indexValues, fmt.Sprintf("%d-%v", d.Kind(), d.GetValue()))
+		key = remain
+	}
+	return
+}
+
 // DecodeKeyHead decodes the key's head and gets the tableID, indexID. isRecordKey is true when is a record key.
 func DecodeKeyHead(key kv.Key) (tableID int64, indexID int64, isRecordKey bool, err error) {
 	isRecordKey = false
@@ -165,7 +193,7 @@ func DecodeRowKey(key kv.Key) (int64, error) {
 // EncodeValue encodes a go value to bytes.
 func EncodeValue(sc *stmtctx.StatementContext, raw types.Datum) ([]byte, error) {
 	var v types.Datum
-	err := flatten(raw, sc.TimeZone, &v)
+	err := flatten(sc, raw, &v)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -188,7 +216,7 @@ func EncodeRow(sc *stmtctx.StatementContext, row []types.Datum, colIDs []int64, 
 	for i, c := range row {
 		id := colIDs[i]
 		values[2*i].SetInt64(id)
-		err := flatten(c, sc.TimeZone, &values[2*i+1])
+		err := flatten(sc, c, &values[2*i+1])
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -200,13 +228,13 @@ func EncodeRow(sc *stmtctx.StatementContext, row []types.Datum, colIDs []int64, 
 	return codec.EncodeValue(sc, valBuf, values...)
 }
 
-func flatten(data types.Datum, loc *time.Location, ret *types.Datum) error {
+func flatten(sc *stmtctx.StatementContext, data types.Datum, ret *types.Datum) error {
 	switch data.Kind() {
 	case types.KindMysqlTime:
 		// for mysql datetime, timestamp and date type
 		t := data.GetMysqlTime()
-		if t.Type == mysql.TypeTimestamp && loc != time.UTC {
-			err := t.ConvertTimeZone(loc, time.UTC)
+		if t.Type == mysql.TypeTimestamp && sc.TimeZone != time.UTC {
+			err := t.ConvertTimeZone(sc.TimeZone, time.UTC)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -226,7 +254,7 @@ func flatten(data types.Datum, loc *time.Location, ret *types.Datum) error {
 		return nil
 	case types.KindBinaryLiteral, types.KindMysqlBit:
 		// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
-		val, err := data.GetBinaryLiteral().ToInt()
+		val, err := data.GetBinaryLiteral().ToInt(sc)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -566,4 +594,5 @@ const (
 	codeInvalidRecordKey   = 4
 	codeInvalidColumnCount = 5
 	codeInvalidKey         = 6
+	codeInvalidIndexKey    = 7
 )

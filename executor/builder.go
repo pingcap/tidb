@@ -77,6 +77,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildRecoverIndex(v)
 	case *plan.CheckIndexRange:
 		return b.buildCheckIndexRange(v)
+	case *plan.ChecksumTable:
+		return b.buildChecksumTable(v)
 	case *plan.DDL:
 		return b.buildDDL(v)
 	case *plan.Deallocate:
@@ -312,6 +314,19 @@ func (b *executorBuilder) buildCheckIndexRange(v *plan.CheckIndexRange) Executor
 			e.startKey = make([]types.Datum, len(e.index.Columns))
 			break
 		}
+	}
+	return e
+}
+
+func (b *executorBuilder) buildChecksumTable(v *plan.ChecksumTable) Executor {
+	e := &ChecksumTableExec{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+		tables:       make(map[int64]*checksumContext),
+		done:         false,
+	}
+	startTs := b.getStartTS()
+	for _, t := range v.Tables {
+		e.tables[t.TableInfo.ID] = newChecksumContext(t.DBInfo, t.TableInfo, startTs)
 	}
 	return e
 }
@@ -636,6 +651,23 @@ func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 		return nil
 	}
 
+	defaultValues := v.DefaultValues
+	if defaultValues == nil {
+		if v.JoinType == plan.RightOuterJoin {
+			defaultValues = make([]types.Datum, leftExec.Schema().Len())
+		} else {
+			defaultValues = make([]types.Datum, rightExec.Schema().Len())
+		}
+	}
+
+	e := &MergeJoinExec{
+		stmtCtx:      b.ctx.GetSessionVars().StmtCtx,
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), leftExec, rightExec),
+		resultGenerator: newJoinResultGenerator(b.ctx, v.JoinType, v.JoinType == plan.RightOuterJoin,
+			defaultValues, v.OtherConditions,
+			leftExec.retTypes(), rightExec.retTypes()),
+	}
+
 	leftKeys := make([]*expression.Column, 0, len(v.EqualConditions))
 	rightKeys := make([]*expression.Column, 0, len(v.EqualConditions))
 	for _, eqCond := range v.EqualConditions {
@@ -657,52 +689,38 @@ func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 		rightKeys = append(rightKeys, rightKey)
 	}
 
-	lhsIter := &readerIterator{
-		sctx:     b.ctx,
-		reader:   leftExec,
-		filter:   v.LeftConditions,
-		joinKeys: leftKeys,
-	}
+	e.outerIdx = 0
+	innerFilter := v.RightConditions
 
-	rhsIter := &readerIterator{
-		sctx:     b.ctx,
+	e.innerTable = &mergeJoinInnerTable{
 		reader:   rightExec,
-		filter:   v.RightConditions,
 		joinKeys: rightKeys,
 	}
 
-	defaultValues := v.DefaultValues
-	if defaultValues == nil {
-		if v.JoinType == plan.RightOuterJoin {
-			defaultValues = make([]types.Datum, leftExec.Schema().Len())
-		} else {
-			defaultValues = make([]types.Datum, rightExec.Schema().Len())
-		}
-	}
-	lhsColTypes := leftExec.retTypes()
-	rhsColTypes := rightExec.retTypes()
-	e := &MergeJoinExec{
-		baseExecutor:    newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), leftExec, rightExec),
-		resultGenerator: newJoinResultGenerator(b.ctx, v.JoinType, v.JoinType == plan.RightOuterJoin, defaultValues, v.OtherConditions, lhsColTypes, rhsColTypes),
-		stmtCtx:         b.ctx.GetSessionVars().StmtCtx,
-		// left is the outer side by default.
-		outerIdx:  0,
-		outerKeys: leftKeys,
-		innerKeys: rightKeys,
-		outerIter: lhsIter,
-		innerIter: rhsIter,
+	e.outerTable = &mergeJoinOuterTable{
+		reader: leftExec,
+		filter: v.LeftConditions,
+		keys:   leftKeys,
 	}
 
 	if v.JoinType == plan.RightOuterJoin {
-		e.outerKeys, e.innerKeys = e.innerKeys, e.outerKeys
-		e.outerIter, e.innerIter = e.innerIter, e.outerIter
 		e.outerIdx = 1
+		e.outerTable.reader = rightExec
+		e.outerTable.filter = v.RightConditions
+		e.outerTable.keys = rightKeys
+
+		innerFilter = v.LeftConditions
+		e.innerTable.reader = leftExec
+		e.innerTable.joinKeys = leftKeys
 	}
 
-	if v.JoinType != plan.InnerJoin {
-		e.outerFilter = e.outerIter.filter
-		e.outerIter.filter = nil
+	// optimizer should guarantee that filters on inner table are pushed down
+	// to tikv or extracted to a Selection.
+	if len(innerFilter) != 0 {
+		b.err = errors.Annotate(ErrBuildExecutor, "merge join's inner filter should be empty.")
+		return nil
 	}
+
 	metrics.ExecutorCounter.WithLabelValues("MergeJoinExec").Inc()
 	return e
 }
@@ -1251,6 +1269,8 @@ func buildNoRangeTableReader(b *executorBuilder, v *plan.PhysicalTableReader) (*
 	} else {
 		e.feedback = statistics.NewQueryFeedback(ts.Table.ID, ts.Hist, ts.StatsInfo().Count(), ts.Desc)
 	}
+	collect := e.feedback.CollectFeedback(len(ts.Ranges))
+	e.dagPB.CollectRangeCounts = &collect
 
 	for i := range v.Schema().Columns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
@@ -1295,6 +1315,8 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plan.PhysicalIndexReader) (*
 	} else {
 		e.feedback = statistics.NewQueryFeedback(is.Table.ID, is.Hist, is.StatsInfo().Count(), is.Desc)
 	}
+	collect := e.feedback.CollectFeedback(len(is.Ranges))
+	e.dagPB.CollectRangeCounts = &collect
 
 	for _, col := range v.OutputColumns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(col.Index))
@@ -1352,6 +1374,11 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plan.PhysicalIndexLook
 	} else {
 		e.feedback = statistics.NewQueryFeedback(is.Table.ID, is.Hist, is.StatsInfo().Count(), is.Desc)
 	}
+	// do not collect the feedback for table request.
+	collectTable := false
+	e.tableRequest.CollectRangeCounts = &collectTable
+	collectIndex := e.feedback.CollectFeedback(len(is.Ranges))
+	e.dagPB.CollectRangeCounts = &collectIndex
 	if cols, ok := v.Schema().TblID2Handle[is.Table.ID]; ok {
 		e.handleIdx = cols[0].Index
 	}

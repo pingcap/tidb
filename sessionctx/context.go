@@ -106,3 +106,13 @@ const (
 	// LastExecuteDDL is the key for whether the session execute a ddl command last time.
 	LastExecuteDDL basicCtxType = 3
 )
+
+type contextKey string
+
+// ConnID is the key in context.
+const ConnID contextKey = "conn ID"
+
+// SetConnID2Ctx sets the connection ID to context.
+func SetConnID2Ctx(ctx context.Context, sessCtx Context) context.Context {
+	return context.WithValue(ctx, ConnID, sessCtx.GetSessionVars().ConnectionID)
+}

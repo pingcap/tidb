@@ -27,10 +27,10 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
@@ -50,9 +50,22 @@ func (ts *HTTPHandlerTestSuite) TestRegionIndexRange(c *C) {
 	sTableID := int64(3)
 	sIndex := int64(11)
 	eTableID := int64(9)
+	recordID := int64(133)
+	indexValues := []types.Datum{
+		types.NewIntDatum(100),
+		types.NewBytesDatum([]byte("foobar")),
+		types.NewFloat64Datum(-100.25),
+	}
+	var expectIndexValues []string
+	for _, v := range indexValues {
+		expectIndexValues = append(expectIndexValues, fmt.Sprintf("%d-%v", v.Kind(), v.GetValue()))
+	}
+	encodedValue, err := codec.EncodeKey(&stmtctx.StatementContext{TimeZone: time.Local}, nil, indexValues...)
+	c.Assert(err, IsNil)
 
-	startKey := tablecodec.EncodeTableIndexPrefix(sTableID, sIndex)
-	endKey := tablecodec.GenTableRecordPrefix(eTableID)
+	startKey := tablecodec.EncodeIndexSeekKey(sTableID, sIndex, encodedValue)
+	recordPrefix := tablecodec.GenTableRecordPrefix(eTableID)
+	endKey := tablecodec.EncodeRecordKey(recordPrefix, recordID)
 
 	region := &tikv.KeyLocation{
 		Region:   tikv.RegionVerID{},
@@ -63,7 +76,11 @@ func (ts *HTTPHandlerTestSuite) TestRegionIndexRange(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(r.first.IndexID, Equals, sIndex)
 	c.Assert(r.first.IsRecord, IsFalse)
+	c.Assert(r.first.RecordID, Equals, int64(0))
+	c.Assert(r.first.IndexValues, DeepEquals, expectIndexValues)
 	c.Assert(r.last.IsRecord, IsTrue)
+	c.Assert(r.last.RecordID, Equals, recordID)
+	c.Assert(r.last.IndexValues, IsNil)
 
 	testCases := []struct {
 		tableID int64
@@ -207,7 +224,7 @@ func (ts *HTTPHandlerTestSuite) startServer(c *C) {
 	mvccStore := mocktikv.NewMvccStore()
 	store, err := mockstore.NewMockTikvStore(mockstore.WithMVCCStore(mvccStore))
 	c.Assert(err, IsNil)
-	_, err = tidb.BootstrapSession(store)
+	_, err = session.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	tidbdrv := NewTiDBDriver(store)
 
