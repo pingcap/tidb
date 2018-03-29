@@ -482,6 +482,8 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{`SHOW FULL TABLES WHERE Table_Type != 'VIEW'`, true},
 		{`SHOW GRANTS`, true},
 		{`SHOW GRANTS FOR 'test'@'localhost'`, true},
+		{`SHOW GRANTS FOR current_user()`, true},
+		{`SHOW GRANTS FOR current_user`, true},
 		{`SHOW COLUMNS FROM City;`, true},
 		{`SHOW COLUMNS FROM tv189.1_t_1_x;`, true},
 		{`SHOW FIELDS FROM City;`, true},
@@ -1074,6 +1076,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select date_add("2011-11-11 10:10:10.123456", interval "10:10:10.10" hour_microsecond)`, true},
 		{`select date_add("2011-11-11 10:10:10.123456", interval "10:10:10" hour_second)`, true},
 		{`select date_add("2011-11-11 10:10:10.123456", interval "10:10" hour_minute)`, true},
+		{`select date_add("2011-11-11 10:10:10.123456", interval 10.10 hour_minute)`, true},
 		{`select date_add("2011-11-11 10:10:10.123456", interval "11 10:10:10.10" day_microsecond)`, true},
 		{`select date_add("2011-11-11 10:10:10.123456", interval "11 10:10:10" day_second)`, true},
 		{`select date_add("2011-11-11 10:10:10.123456", interval "11 10:10" day_minute)`, true},
@@ -1102,6 +1105,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select adddate("2011-11-11 10:10:10.123456", interval "10:10:10.10" hour_microsecond)`, true},
 		{`select adddate("2011-11-11 10:10:10.123456", interval "10:10:10" hour_second)`, true},
 		{`select adddate("2011-11-11 10:10:10.123456", interval "10:10" hour_minute)`, true},
+		{`select adddate("2011-11-11 10:10:10.123456", interval 10.10 hour_minute)`, true},
 		{`select adddate("2011-11-11 10:10:10.123456", interval "11 10:10:10.10" day_microsecond)`, true},
 		{`select adddate("2011-11-11 10:10:10.123456", interval "11 10:10:10" day_second)`, true},
 		{`select adddate("2011-11-11 10:10:10.123456", interval "11 10:10" day_minute)`, true},
@@ -1127,6 +1131,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select date_sub("2011-11-11 10:10:10.123456", interval "10:10:10.10" hour_microsecond)`, true},
 		{`select date_sub("2011-11-11 10:10:10.123456", interval "10:10:10" hour_second)`, true},
 		{`select date_sub("2011-11-11 10:10:10.123456", interval "10:10" hour_minute)`, true},
+		{`select date_sub("2011-11-11 10:10:10.123456", interval 10.10 hour_minute)`, true},
 		{`select date_sub("2011-11-11 10:10:10.123456", interval "11 10:10:10.10" day_microsecond)`, true},
 		{`select date_sub("2011-11-11 10:10:10.123456", interval "11 10:10:10" day_second)`, true},
 		{`select date_sub("2011-11-11 10:10:10.123456", interval "11 10:10" day_minute)`, true},
@@ -1152,6 +1157,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select subdate("2011-11-11 10:10:10.123456", interval "10:10:10.10" hour_microsecond)`, true},
 		{`select subdate("2011-11-11 10:10:10.123456", interval "10:10:10" hour_second)`, true},
 		{`select subdate("2011-11-11 10:10:10.123456", interval "10:10" hour_minute)`, true},
+		{`select subdate("2011-11-11 10:10:10.123456", interval 10.10 hour_minute)`, true},
 		{`select subdate("2011-11-11 10:10:10.123456", interval "11 10:10:10.10" day_microsecond)`, true},
 		{`select subdate("2011-11-11 10:10:10.123456", interval "11 10:10:10" day_second)`, true},
 		{`select subdate("2011-11-11 10:10:10.123456", interval "11 10:10" day_minute)`, true},
@@ -1584,6 +1590,9 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t ENGINE = '', ADD COLUMN a SMALLINT", true},
 		{"ALTER TABLE t default COLLATE = utf8_general_ci, ENGINE = '', ADD COLUMN a SMALLINT", true},
 		{"ALTER TABLE t shard_row_id_bits = 1", true},
+		{"ALTER TABLE `hello-world@dev`.`User` ADD COLUMN `name` mediumtext CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL , ALGORITHM = DEFAULT;", true},
+		{"ALTER TABLE `hello-world@dev`.`User` ADD COLUMN `name` mediumtext CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL , ALGORITHM = INPLACE;", true},
+		{"ALTER TABLE `hello-world@dev`.`User` ADD COLUMN `name` mediumtext CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL , ALGORITHM = COPY;", true},
 
 		// For create index statement
 		{"CREATE INDEX idx ON t (a)", true},
@@ -2021,8 +2030,7 @@ func (s *testParserSuite) TestView(c *C) {
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t", true},
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t with local check option", true},
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t with cascaded check option", true},
-		// fixme: should be true
-		{"create or replace algorithm = merge definer = current_user view v as select * from t", false},
+		{"create or replace algorithm = merge definer = current_user view v as select * from t", true},
 	}
 	s.RunTest(c, table)
 

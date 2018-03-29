@@ -1392,3 +1392,16 @@ func (s *testSuite) TestInsertCalculatedValue(c *C) {
 	tk.MustExec("insert t set b = a, a = 4")
 	tk.MustQuery("select * from t").Check(testkit.Rows("4 0 2"))
 }
+
+func (s *testSuite) TestDataTooLongErrMsg(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a varchar(2));")
+	_, err := tk.Exec("insert into t values('123');")
+	c.Assert(types.ErrDataTooLong.Equal(err), IsTrue)
+	c.Assert(err.Error(), Equals, "[types:1406]Data too long for column 'a' at row 1")
+	tk.MustExec("insert into t values('12')")
+	_, err = tk.Exec("update t set a = '123' where a = '12';")
+	c.Assert(types.ErrDataTooLong.Equal(err), IsTrue)
+	c.Assert(err.Error(), Equals, "[types:1406]Data too long for column 'a' at row 1")
+}
