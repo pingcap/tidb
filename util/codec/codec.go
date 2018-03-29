@@ -105,7 +105,7 @@ func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparab
 			b = encodeUnsignedInt(b, uint64(vals[i].GetMysqlSet().ToNumber()), comparable)
 		case types.KindMysqlBit, types.KindBinaryLiteral:
 			// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
-			val, err := vals[i].GetBinaryLiteral().ToInt()
+			val, err := vals[i].GetBinaryLiteral().ToInt(sc)
 			terror.Log(errors.Trace(err))
 			b = encodeUnsignedInt(b, val, comparable)
 		case types.KindMysqlJSON:
@@ -244,7 +244,7 @@ func encodeChunkRow(sc *stmtctx.StatementContext, b []byte, row chunk.Row, allTy
 			b = encodeUnsignedInt(b, uint64(row.GetSet(i).ToNumber()), comparable)
 		case mysql.TypeBit:
 			// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
-			val, err := types.BinaryLiteral(row.GetBytes(i)).ToInt()
+			val, err := types.BinaryLiteral(row.GetBytes(i)).ToInt(sc)
 			terror.Log(errors.Trace(err))
 			b = encodeUnsignedInt(b, val, comparable)
 		case mysql.TypeJSON:
@@ -327,7 +327,7 @@ func DecodeOne(b []byte) (remain []byte, d types.Datum, err error) {
 		d.SetFloat64(v)
 	case bytesFlag:
 		var v []byte
-		b, v, err = DecodeBytes(b)
+		b, v, err = DecodeBytes(b, nil)
 		d.SetBytes(v)
 	case compactBytesFlag:
 		var v []byte
@@ -481,11 +481,29 @@ func peekUvarint(b []byte) (int, error) {
 	return n, nil
 }
 
-// DecodeOneToChunk decodes one value to chunk and returns the remained bytes.
-func DecodeOneToChunk(b []byte, chk *chunk.Chunk, colIdx int, ft *types.FieldType, loc *time.Location) (remain []byte, err error) {
+// Decoder is used to decode value to chunk.
+type Decoder struct {
+	chk      *chunk.Chunk
+	timezone *time.Location
+
+	// buf is only used for DecodeBytes to avoid the cost of makeslice.
+	buf []byte
+}
+
+// NewDecoder creates a Decoder.
+func NewDecoder(chk *chunk.Chunk, timezone *time.Location) *Decoder {
+	return &Decoder{
+		chk:      chk,
+		timezone: timezone,
+	}
+}
+
+// DecodeOne decodes one value to chunk and returns the remained bytes.
+func (decoder *Decoder) DecodeOne(b []byte, colIdx int, ft *types.FieldType) (remain []byte, err error) {
 	if len(b) < 1 {
 		return nil, errors.New("invalid encoded key")
 	}
+	chk := decoder.chk
 	flag := b[0]
 	b = b[1:]
 	switch flag {
@@ -502,7 +520,7 @@ func DecodeOneToChunk(b []byte, chk *chunk.Chunk, colIdx int, ft *types.FieldTyp
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = appendUintToChunk(v, chk, colIdx, ft, loc)
+		err = appendUintToChunk(v, chk, colIdx, ft, decoder.timezone)
 	case varintFlag:
 		var v int64
 		b, v, err = DecodeVarint(b)
@@ -516,7 +534,7 @@ func DecodeOneToChunk(b []byte, chk *chunk.Chunk, colIdx int, ft *types.FieldTyp
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = appendUintToChunk(v, chk, colIdx, ft, loc)
+		err = appendUintToChunk(v, chk, colIdx, ft, decoder.timezone)
 	case floatFlag:
 		var v float64
 		b, v, err = DecodeFloat(b)
@@ -525,12 +543,11 @@ func DecodeOneToChunk(b []byte, chk *chunk.Chunk, colIdx int, ft *types.FieldTyp
 		}
 		appendFloatToChunk(v, chk, colIdx, ft)
 	case bytesFlag:
-		var v []byte
-		b, v, err = DecodeBytes(b)
+		b, decoder.buf, err = DecodeBytes(b, decoder.buf)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		chk.AppendBytes(colIdx, v)
+		chk.AppendBytes(colIdx, decoder.buf)
 	case compactBytesFlag:
 		var v []byte
 		b, v, err = DecodeCompactBytes(b)
@@ -569,7 +586,7 @@ func DecodeOneToChunk(b []byte, chk *chunk.Chunk, colIdx int, ft *types.FieldTyp
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return b, nil
+	return b, errors.Trace(err)
 }
 
 func appendIntToChunk(val int64, chk *chunk.Chunk, colIdx int, ft *types.FieldType) {

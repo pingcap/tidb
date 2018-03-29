@@ -63,7 +63,10 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression)
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
 	p.children[0].PredicatePushDown(predicates)
-	p.conditions = predicates
+	p.conditions = make([]expression.Expression, 0, len(predicates))
+	for _, cond := range predicates {
+		p.conditions = append(p.conditions, cond.Clone())
+	}
 	return nil, p
 }
 

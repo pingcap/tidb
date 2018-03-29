@@ -480,7 +480,7 @@ func (r Row) GetUint64(colIdx int) uint64 {
 	return *(*uint64)(unsafe.Pointer(&col.data[r.idx*8]))
 }
 
-// GetFloat32 returns the float64 value with the colIdx.
+// GetFloat32 returns the float32 value with the colIdx.
 func (r Row) GetFloat32(colIdx int) float32 {
 	col := r.c.columns[colIdx]
 	return *(*float32)(unsafe.Pointer(&col.data[r.idx*4]))
