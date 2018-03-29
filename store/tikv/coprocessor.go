@@ -619,6 +619,10 @@ func (it *copIterator) handleCopStreamResult(bo *Backoffer, stream *tikvrpc.CopS
 	defer stream.Close()
 	var resp, lastResp *coprocessor.Response
 	resp = stream.Response
+	if resp == nil {
+		// streaming request returns io.EOF, so the first Response is nil.
+		return nil, nil
+	}
 	for {
 		remainedTasks, err := it.handleCopResponse(bo, resp, task, ch)
 		if err != nil || len(remainedTasks) != 0 {
