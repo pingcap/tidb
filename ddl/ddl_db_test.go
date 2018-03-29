@@ -323,6 +323,7 @@ func (s *testDBSuite) TestCancelAddIndex(c *C) {
 	}
 
 	var checkErr error
+	var idxInfo *model.IndexInfo
 	hook := &ddl.TestDDLCallback{}
 	first := true
 	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
@@ -335,6 +336,16 @@ func (s *testDBSuite) TestCancelAddIndex(c *C) {
 		// If the action is adding index and the state is writing reorganization, it want to test the case of cancelling the job when backfilling indexes.
 		// When the job satisfies this case of addIndexNotFirstReorg, the worker will start to backfill indexes.
 		if !addIndexNotFirstReorg {
+			// Get the index's meta.
+			if idxInfo != nil {
+				return
+			}
+			t := s.testGetTable(c, "t1")
+			for _, index := range t.WritableIndices() {
+				if index.Meta().Name.L == "c3_index" {
+					idxInfo = index.Meta()
+				}
+			}
 			return
 		}
 		// The job satisfies the case of addIndexNotFirst for the first time, the worker hasn't finished a batch of backfill indexes.
@@ -406,6 +417,10 @@ LOOP:
 	for _, tidx := range t.Indices() {
 		c.Assert(strings.EqualFold(tidx.Meta().Name.L, "c3_index"), IsFalse)
 	}
+
+	ctx := s.s.(sessionctx.Context)
+	idx := tables.NewIndex(t.Meta(), idxInfo)
+	checkDelRangeDone(c, ctx, idx)
 
 	s.mustExec(c, "drop table t1")
 	ddl.ReorgWaitTimeout = oldReorgWaitTimeout
@@ -713,6 +728,11 @@ LOOP:
 	c.Assert(nidx, IsNil)
 
 	idx := tables.NewIndex(t.Meta(), c3idx.Meta())
+	checkDelRangeDone(c, ctx, idx)
+	s.tk.MustExec("drop table test_drop_index")
+}
+
+func checkDelRangeDone(c *C, ctx sessionctx.Context, idx table.Index) {
 	f := func() map[int64]struct{} {
 		handles := make(map[int64]struct{})
 
@@ -745,8 +765,6 @@ LOOP:
 		}
 	}
 	c.Assert(handles, HasLen, 0)
-
-	s.tk.MustExec("drop table test_drop_index")
 }
 
 func (s *testDBSuite) TestAddIndexWithDupCols(c *C) {

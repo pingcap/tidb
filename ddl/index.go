@@ -395,6 +395,7 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 		}
 		job.Args = append(job.Args, indexInfo.ID)
+		log.Warnf("args %v, ts %v", job.Args, t.StartTS)
 	default:
 		err = ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)
 	}
