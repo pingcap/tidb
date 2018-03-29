@@ -604,11 +604,6 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 			sql:  "select * from t t1 natural join t t2",
 			plan: "Join{DataScan(t1)->DataScan(t2)}->Projection",
 		},
-		// issue #5341
-		{
-			sql:  "select * from t limit 0",
-			plan: "Dual",
-		},
 	}
 	for _, ca := range tests {
 		comment := Commentf("for %s", ca.sql)
