@@ -788,6 +788,11 @@ func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan 
 	if count > math.MaxUint64-offset {
 		count = math.MaxUint64 - offset
 	}
+	if offset+count == 0 {
+		tableDual := LogicalTableDual{RowCount: 0}.init(b.ctx)
+		tableDual.schema = src.Schema()
+		return tableDual
+	}
 	li := LogicalLimit{
 		Offset: offset,
 		Count:  count,
