@@ -238,7 +238,7 @@ func detachDNFCondAndBuildRangeForIndex(sctx sessionctx.Context, condition *expr
 				hasResidual = true
 			}
 			totalRanges = append(totalRanges, ranges...)
-			newAccessItems = append(newAccessItems, expression.ComposeCNFCondition(nil, accesses...))
+			newAccessItems = append(newAccessItems, expression.ComposeCNFCondition(sctx, accesses...))
 		} else if firstColumnChecker.check(item) {
 			if firstColumnChecker.shouldReserve {
 				hasResidual = true
