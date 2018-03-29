@@ -97,20 +97,6 @@ func (task *lookupTableTask) Swap(i, j int) {
 	task.rows[i], task.rows[j] = task.rows[j], task.rows[i]
 }
 
-func (task *lookupTableTask) getRow(schema *expression.Schema) (Row, error) {
-	if task.cursor < len(task.rows) {
-		row := task.rows[task.cursor]
-		task.cursor++
-		datumRow := make(types.DatumRow, row.Len())
-		for i := 0; i < len(datumRow); i++ {
-			datumRow[i] = row.GetDatum(i, schema.Columns[i].RetType)
-		}
-		return datumRow, nil
-	}
-
-	return nil, nil
-}
-
 // Closeable is a interface for closeable structures.
 type Closeable interface {
 	// Close closes the object.
@@ -643,16 +629,20 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []in
 
 // Close implements Exec Close interface.
 func (e *IndexLookUpExecutor) Close() error {
-	if e.finished != nil {
-		close(e.finished)
-		// Drain the resultCh and discard the result, in case that Next() doesn't fully
-		// consume the data, background worker still writing to resultCh and block forever.
-		for range e.resultCh {
-		}
-		e.idxWorkerWg.Wait()
-		e.tblWorkerWg.Wait()
-		e.finished = nil
+	if e.finished == nil {
+		return nil
 	}
+
+	close(e.finished)
+	// Drain the resultCh and discard the result, in case that Next() doesn't fully
+	// consume the data, background worker still writing to resultCh and block forever.
+	for range e.resultCh {
+	}
+	e.idxWorkerWg.Wait()
+	e.tblWorkerWg.Wait()
+	e.finished = nil
+	e.memTracker.Detach()
+	e.memTracker = nil
 	return nil
 }
 

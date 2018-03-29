@@ -411,23 +411,31 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 	}()
 	statistics.FeedbackProbability = 1
 	tests := []struct {
-		sql    string
-		counts []int64
+		sql     string
+		hist    string
+		idxCols int
 	}{
 		{
 			sql: "select * from t where t.a <= 5",
-			// The split ranges are (-inf, 1], (1, 2], (2, 5].
-			counts: []int64{1, 1, 2},
+			hist: "column:1 ndv:3\n" +
+				"num: 1\tlower_bound: 1\tupper_bound: 1\trepeats: 1\n" +
+				"num: 2\tlower_bound: 2\tupper_bound: 2\trepeats: 1\n" +
+				"num: 4\tlower_bound: 3\tupper_bound: 6\trepeats: 0",
+			idxCols: 0,
 		},
 		{
 			sql: "select * from t use index(idx) where t.b <= 5",
-			// The split ranges are (-inf,2], (2, 5].
-			counts: []int64{2, 2},
+			hist: "index:1 ndv:2\n" +
+				"num: 2\tlower_bound: 2\tupper_bound: 2\trepeats: 2\n" +
+				"num: 4\tlower_bound: 3\tupper_bound: 6\trepeats: 0",
+			idxCols: 1,
 		},
 		{
 			sql: "select b from t use index(idx) where t.b <= 5",
-			// The split ranges are (-inf,2], (2, 5].
-			counts: []int64{2, 2},
+			hist: "index:1 ndv:2\n" +
+				"num: 2\tlower_bound: 2\tupper_bound: 2\trepeats: 2\n" +
+				"num: 4\tlower_bound: 3\tupper_bound: 6\trepeats: 0",
+			idxCols: 1,
 		},
 	}
 	for _, t := range tests {
@@ -435,7 +443,10 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 		h.DumpStatsDeltaToKV()
 		feedback := h.GetQueryFeedback()
 		c.Assert(len(feedback), Equals, 1)
-		c.Assert(feedback[0].Counts(), DeepEquals, t.counts)
+		if t.idxCols == 0 {
+			c.Assert(feedback[0].DecodeInt(), IsNil)
+		}
+		c.Assert(statistics.UpdateHistogram(feedback[0].Hist(), feedback).ToString(t.idxCols), Equals, t.hist)
 	}
 
 	// Feedback from limit executor may not be accurate.

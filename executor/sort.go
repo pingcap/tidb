@@ -53,6 +53,7 @@ type SortExec struct {
 
 // Close implements the Executor Close interface.
 func (e *SortExec) Close() error {
+	e.memTracker.Detach()
 	e.memTracker = nil
 	return errors.Trace(e.children[0].Close())
 }
