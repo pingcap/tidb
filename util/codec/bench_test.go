@@ -82,9 +82,11 @@ func BenchmarkDecodeOneToChunk(b *testing.B) {
 	raw = EncodeBytes(raw, str.GetBytes())
 	intType := types.NewFieldType(mysql.TypeLonglong)
 	chk := chunk.NewChunk([]*types.FieldType{intType})
-	var bufferedBytes []byte
 	b.ResetTimer()
+	decoder := &Decoder{
+		Chk: chk,
+	}
 	for i := 0; i < b.N; i++ {
-		_, bufferedBytes, _ = DecodeOneToChunk(raw, bufferedBytes, chk, 0, intType, nil)
+		DecodeOneToChunk(raw, 0, intType, decoder)
 	}
 }

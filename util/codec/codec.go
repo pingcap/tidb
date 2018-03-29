@@ -481,12 +481,20 @@ func peekUvarint(b []byte) (int, error) {
 	return n, nil
 }
 
+// Decoder is mainly used to store the result of DecodeOneToChunk.
+type Decoder struct {
+	Chk *chunk.Chunk
+	// buf is only used for DecodeBytes to avoid the cost of makeslice.
+	Buf      []byte
+	Timezone *time.Location
+}
+
 // DecodeOneToChunk decodes one value to chunk and returns the remained bytes.
-// bufferedBytes is only used for DecodeBytes to avoid the cost of makeslice.
-func DecodeOneToChunk(b []byte, bufferedBytes []byte, chk *chunk.Chunk, colIdx int, ft *types.FieldType, loc *time.Location) (remain []byte, _ []byte, err error) {
+func DecodeOneToChunk(b []byte, colIdx int, ft *types.FieldType, decoder *Decoder) (remain []byte, err error) {
 	if len(b) < 1 {
-		return nil, nil, errors.New("invalid encoded key")
+		return nil, errors.New("invalid encoded key")
 	}
+	chk := decoder.Chk
 	flag := b[0]
 	b = b[1:]
 	switch flag {
@@ -494,62 +502,62 @@ func DecodeOneToChunk(b []byte, bufferedBytes []byte, chk *chunk.Chunk, colIdx i
 		var v int64
 		b, v, err = DecodeInt(b)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		appendIntToChunk(v, chk, colIdx, ft)
 	case uintFlag:
 		var v uint64
 		b, v, err = DecodeUint(b)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
-		err = appendUintToChunk(v, chk, colIdx, ft, loc)
+		err = appendUintToChunk(v, chk, colIdx, ft, decoder.Timezone)
 	case varintFlag:
 		var v int64
 		b, v, err = DecodeVarint(b)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		appendIntToChunk(v, chk, colIdx, ft)
 	case uvarintFlag:
 		var v uint64
 		b, v, err = DecodeUvarint(b)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
-		err = appendUintToChunk(v, chk, colIdx, ft, loc)
+		err = appendUintToChunk(v, chk, colIdx, ft, decoder.Timezone)
 	case floatFlag:
 		var v float64
 		b, v, err = DecodeFloat(b)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		appendFloatToChunk(v, chk, colIdx, ft)
 	case bytesFlag:
-		b, bufferedBytes, err = DecodeBytes(b, bufferedBytes)
+		b, decoder.Buf, err = DecodeBytes(b, decoder.Buf)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
-		chk.AppendBytes(colIdx, bufferedBytes)
+		chk.AppendBytes(colIdx, decoder.Buf)
 	case compactBytesFlag:
 		var v []byte
 		b, v, err = DecodeCompactBytes(b)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		chk.AppendBytes(colIdx, v)
 	case decimalFlag:
 		var dec *types.MyDecimal
 		b, dec, err = DecodeDecimal(b)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		chk.AppendMyDecimal(colIdx, dec)
 	case durationFlag:
 		var r int64
 		b, r, err = DecodeInt(b)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		v := types.Duration{Duration: time.Duration(r), Fsp: ft.Decimal}
 		chk.AppendDuration(colIdx, v)
@@ -557,19 +565,19 @@ func DecodeOneToChunk(b []byte, bufferedBytes []byte, chk *chunk.Chunk, colIdx i
 		var size int
 		size, err = json.PeekBytesAsJSON(b)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		chk.AppendJSON(colIdx, json.BinaryJSON{TypeCode: b[0], Value: b[1:size]})
 		b = b[size:]
 	case NilFlag:
 		chk.AppendNull(colIdx)
 	default:
-		return nil, nil, errors.Errorf("invalid encoded key flag %v", flag)
+		return nil, errors.Errorf("invalid encoded key flag %v", flag)
 	}
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-	return nil, bufferedBytes, errors.Trace(err)
+	return b, errors.Trace(err)
 }
 
 func appendIntToChunk(val int64, chk *chunk.Chunk, colIdx int, ft *types.FieldType) {

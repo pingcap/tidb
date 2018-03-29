@@ -80,8 +80,6 @@ type selectResult struct {
 
 	feedback     *statistics.QueryFeedback
 	partialCount int64 // number of partial results.
-
-	buffer []byte // used to buffer row data
 }
 
 type resultWithErr struct {
@@ -206,10 +204,13 @@ func (r *selectResult) getSelectResp() error {
 func (r *selectResult) readRowsData(chk *chunk.Chunk) (err error) {
 	rowsData := r.selectResp.Chunks[r.respChkIdx].RowsData
 	maxChunkSize := r.ctx.GetSessionVars().MaxChunkSize
-	timeZone := r.ctx.GetSessionVars().GetTimeZone()
+	decoder := &codec.Decoder{
+		Chk:      chk,
+		Timezone: r.ctx.GetSessionVars().GetTimeZone(),
+	}
 	for chk.NumRows() < maxChunkSize && len(rowsData) > 0 {
 		for i := 0; i < r.rowLen; i++ {
-			rowsData, r.buffer, err = codec.DecodeOneToChunk(rowsData, r.buffer, chk, i, r.fieldTypes[i], timeZone)
+			rowsData, err = codec.DecodeOneToChunk(rowsData, i, r.fieldTypes[i], decoder)
 			if err != nil {
 				return errors.Trace(err)
 			}
