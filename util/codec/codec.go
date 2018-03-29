@@ -105,7 +105,7 @@ func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparab
 			b = encodeUnsignedInt(b, uint64(vals[i].GetMysqlSet().ToNumber()), comparable)
 		case types.KindMysqlBit, types.KindBinaryLiteral:
 			// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
-			val, err := vals[i].GetBinaryLiteral().ToInt()
+			val, err := vals[i].GetBinaryLiteral().ToInt(sc)
 			terror.Log(errors.Trace(err))
 			b = encodeUnsignedInt(b, val, comparable)
 		case types.KindMysqlJSON:
@@ -244,7 +244,7 @@ func encodeChunkRow(sc *stmtctx.StatementContext, b []byte, row chunk.Row, allTy
 			b = encodeUnsignedInt(b, uint64(row.GetSet(i).ToNumber()), comparable)
 		case mysql.TypeBit:
 			// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
-			val, err := types.BinaryLiteral(row.GetBytes(i)).ToInt()
+			val, err := types.BinaryLiteral(row.GetBytes(i)).ToInt(sc)
 			terror.Log(errors.Trace(err))
 			b = encodeUnsignedInt(b, val, comparable)
 		case mysql.TypeJSON:

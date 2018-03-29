@@ -88,7 +88,7 @@ func (s *testSuite) TestAdminRecoverIndex(c *C) {
 
 	tblInfo := tbl.Meta()
 	idxInfo := findIndexByName("c2", tblInfo.Indices)
-	indexOpr := tables.NewIndexWithBuffer(tblInfo, idxInfo)
+	indexOpr := tables.NewIndex(tblInfo, idxInfo)
 	sc := s.ctx.GetSessionVars().StmtCtx
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
@@ -184,7 +184,7 @@ func (s *testSuite) TestAdminRecoverIndex1(c *C) {
 	tblInfo := tbl.Meta()
 	idxInfo := findIndexByName("primary", tblInfo.Indices)
 	c.Assert(idxInfo, NotNil)
-	indexOpr := tables.NewIndexWithBuffer(tblInfo, idxInfo)
+	indexOpr := tables.NewIndex(tblInfo, idxInfo)
 
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
@@ -211,4 +211,21 @@ func (s *testSuite) TestAdminRecoverIndex1(c *C) {
 	tk.MustExec("admin check table admin_test")
 	tk.MustExec("admin check index admin_test c2")
 	tk.MustExec("admin check index admin_test `primary`")
+}
+
+func (s *testSuite) TestAdminCheckTable(c *C) {
+	// test NULL value.
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE test_null (
+		a int(11) NOT NULL,
+		c int(11) NOT NULL,
+		PRIMARY KEY (a, c),
+		KEY idx_a (a)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin`)
+
+	tk.MustExec(`insert into test_null(a, c) values(2, 2);`)
+	tk.MustExec(`ALTER TABLE test_null ADD COLUMN b int NULL DEFAULT '1795454803' AFTER a;`)
+	tk.MustExec(`ALTER TABLE test_null add index b(b);`)
+	tk.MustExec("ADMIN CHECK TABLE test_null")
 }
