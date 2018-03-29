@@ -43,6 +43,7 @@ const (
 	CmdResolveLock
 	CmdGC
 	CmdDeleteRange
+	CmdUnsafeCleanupRange
 
 	CmdRawGet CmdType = 256 + iota
 	CmdRawPut
@@ -118,6 +119,7 @@ type Request struct {
 	ResolveLock      *kvrpcpb.ResolveLockRequest
 	GC               *kvrpcpb.GCRequest
 	DeleteRange      *kvrpcpb.DeleteRangeRequest
+	UnsafeCleanupRange *kvrpcpb.UnsafeCleanupRangeRequest
 	RawGet           *kvrpcpb.RawGetRequest
 	RawPut           *kvrpcpb.RawPutRequest
 	RawDelete        *kvrpcpb.RawDeleteRequest
@@ -142,6 +144,7 @@ type Response struct {
 	ResolveLock      *kvrpcpb.ResolveLockResponse
 	GC               *kvrpcpb.GCResponse
 	DeleteRange      *kvrpcpb.DeleteRangeResponse
+	UnsafeCleanupRange *kvrpcpb.UnsafeCleanupRangeResponse
 	RawGet           *kvrpcpb.RawGetResponse
 	RawPut           *kvrpcpb.RawPutResponse
 	RawDelete        *kvrpcpb.RawDeleteResponse
