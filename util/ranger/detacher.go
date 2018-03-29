@@ -261,7 +261,7 @@ func detachDNFCondAndBuildRangeForIndex(sctx sessionctx.Context, condition *expr
 		return nil, nil, false, errors.Trace(err)
 	}
 
-	return totalRanges, []expression.Expression{expression.ComposeDNFCondition(nil, newAccessItems...)}, hasResidual, nil
+	return totalRanges, []expression.Expression{expression.ComposeDNFCondition(sctx, newAccessItems...)}, hasResidual, nil
 }
 
 // DetachCondAndBuildRangeForIndex will detach the index filters from table filters.
