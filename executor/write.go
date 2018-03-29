@@ -1175,13 +1175,21 @@ func (e *InsertValues) getRows(cols []*table.Column, ignoreErr bool) (rows [][]t
 	return
 }
 
+// resetErrDataTooLong reset ErrDataTooLong error msg.
+// types.ErrDataTooLong is produced in types.ProduceStrWithSpecifiedTp, there is no column info in there,
+// so we reset the error msg here, and wrap old err with errors.Wrap.
+func resetErrDataTooLong(colName string, rowIdx int, err error) error {
+	newErr := types.ErrDataTooLong.Gen("Data too long for column '%v' at row %v", colName, rowIdx)
+	return errors.Wrap(err, newErr)
+}
+
 func (e *InsertValues) handleErr(col *table.Column, rowIdx int, err error, ignoreErr bool) error {
 	if err == nil {
 		return nil
 	}
+
 	if types.ErrDataTooLong.Equal(err) {
-		newErr := types.ErrDataTooLong.Gen("Data too long for column '%v' at row %v", col.Name.O, rowIdx+1)
-		err = errors.Wrap(err, newErr)
+		return resetErrDataTooLong(col.Name.O, rowIdx+1, err)
 	}
 
 	return e.filterErr(err, ignoreErr)
@@ -1734,9 +1742,9 @@ func (e *UpdateExec) handleErr(colName model.CIStr, rowIdx int, err error) error
 	if err == nil {
 		return nil
 	}
+
 	if types.ErrDataTooLong.Equal(err) {
-		newErr := types.ErrDataTooLong.Gen("Data too long for column '%v' at row %v", colName, rowIdx+1)
-		return errors.Wrap(err, newErr)
+		return resetErrDataTooLong(colName.O, rowIdx+1, err)
 	}
 
 	return errors.Trace(err)
