@@ -46,7 +46,6 @@ func (s *testUtilSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 
 	var err error
-	testleak.BeforeTest()
 	s.store, s.dom, err = newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 }
