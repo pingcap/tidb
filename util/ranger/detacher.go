@@ -19,18 +19,17 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 )
 
 // detachColumnCNFConditions detaches the condition for calculating range from the other conditions.
 // Please make sure that the top level is CNF form.
-func detachColumnCNFConditions(conditions []expression.Expression, checker *conditionChecker) ([]expression.Expression, []expression.Expression) {
+func detachColumnCNFConditions(sctx sessionctx.Context, conditions []expression.Expression, checker *conditionChecker) ([]expression.Expression, []expression.Expression) {
 	var accessConditions, filterConditions []expression.Expression
 	for _, cond := range conditions {
 		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
 			dnfItems := expression.FlattenDNFConditions(sf)
-			colulmnDNFItems, hasResidual := detachColumnDNFConditions(dnfItems, checker)
+			colulmnDNFItems, hasResidual := detachColumnDNFConditions(sctx, dnfItems, checker)
 			// If this CNF has expression that cannot be resolved as access condition, then the total DNF expression
 			// should be also appended into filter condition.
 			if hasResidual {
@@ -39,7 +38,7 @@ func detachColumnCNFConditions(conditions []expression.Expression, checker *cond
 			if len(colulmnDNFItems) == 0 {
 				continue
 			}
-			rebuildDNF := expression.ComposeDNFCondition(nil, colulmnDNFItems...)
+			rebuildDNF := expression.ComposeDNFCondition(sctx, colulmnDNFItems...)
 			accessConditions = append(accessConditions, rebuildDNF)
 			continue
 		}
@@ -58,7 +57,7 @@ func detachColumnCNFConditions(conditions []expression.Expression, checker *cond
 
 // detachColumnDNFConditions detaches the condition for calculating range from the other conditions.
 // Please make sure that the top level is DNF form.
-func detachColumnDNFConditions(conditions []expression.Expression, checker *conditionChecker) ([]expression.Expression, bool) {
+func detachColumnDNFConditions(sctx sessionctx.Context, conditions []expression.Expression, checker *conditionChecker) ([]expression.Expression, bool) {
 	var (
 		hasResidualConditions bool
 		accessConditions      []expression.Expression
@@ -66,7 +65,7 @@ func detachColumnDNFConditions(conditions []expression.Expression, checker *cond
 	for _, cond := range conditions {
 		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicAnd {
 			cnfItems := expression.FlattenCNFConditions(sf)
-			columnCNFItems, others := detachColumnCNFConditions(cnfItems, checker)
+			columnCNFItems, others := detachColumnCNFConditions(sctx, cnfItems, checker)
 			if len(others) > 0 {
 				hasResidualConditions = true
 			}
@@ -74,7 +73,7 @@ func detachColumnDNFConditions(conditions []expression.Expression, checker *cond
 			if len(columnCNFItems) == 0 {
 				return nil, true
 			}
-			rebuildCNF := expression.ComposeCNFCondition(nil, columnCNFItems...)
+			rebuildCNF := expression.ComposeCNFCondition(sctx, columnCNFItems...)
 			accessConditions = append(accessConditions, rebuildCNF)
 		} else if checker.check(cond) {
 			accessConditions = append(accessConditions, cond)
@@ -139,7 +138,7 @@ func getEqOrInColOffset(expr expression.Expression, cols []*expression.Column) i
 // detachCNFCondAndBuildRangeForIndex will detach the index filters from table filters. These conditions are connected with `and`
 // It will first find the point query column and then extract the range query column.
 // considerDNF is true means it will try to extract access conditions from the DNF expressions.
-func detachCNFCondAndBuildRangeForIndex(sc *stmtctx.StatementContext, conditions []expression.Expression, cols []*expression.Column,
+func detachCNFCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []expression.Expression, cols []*expression.Column,
 	tpSlice []*types.FieldType, lengths []int, considerDNF bool) ([]*NewRange, []expression.Expression, []expression.Expression, int, error) {
 	var (
 		eqCount int
@@ -160,7 +159,7 @@ func detachCNFCondAndBuildRangeForIndex(sc *stmtctx.StatementContext, conditions
 	if eqOrInCount == len(cols) {
 		// If curIndex equals to len of index columns, it means the rest conditions haven't been appended to filter conditions.
 		filterConds = append(filterConds, conditions...)
-		ranges, err = buildCNFIndexRange(sc, cols, tpSlice, lengths, eqOrInCount, accessConds)
+		ranges, err = buildCNFIndexRange(sctx.GetSessionVars().StmtCtx, cols, tpSlice, lengths, eqOrInCount, accessConds)
 		if err != nil {
 			return nil, nil, nil, 0, errors.Trace(err)
 		}
@@ -172,7 +171,7 @@ func detachCNFCondAndBuildRangeForIndex(sc *stmtctx.StatementContext, conditions
 		shouldReserve: lengths[eqOrInCount] != types.UnspecifiedLength,
 	}
 	if considerDNF {
-		accesses, filters := detachColumnCNFConditions(conditions, checker)
+		accesses, filters := detachColumnCNFConditions(sctx, conditions, checker)
 		accessConds = append(accessConds, accesses...)
 		filterConds = append(filterConds, filters...)
 	} else {
@@ -184,7 +183,7 @@ func detachCNFCondAndBuildRangeForIndex(sc *stmtctx.StatementContext, conditions
 			accessConds = append(accessConds, cond)
 		}
 	}
-	ranges, err = buildCNFIndexRange(sc, cols, tpSlice, lengths, eqOrInCount, accessConds)
+	ranges, err = buildCNFIndexRange(sctx.GetSessionVars().StmtCtx, cols, tpSlice, lengths, eqOrInCount, accessConds)
 	return ranges, accessConds, filterConds, eqCount, errors.Trace(err)
 }
 
@@ -211,8 +210,9 @@ func extractEqAndInCondition(conditions []expression.Expression, cols []*express
 
 // detachDNFCondAndBuildRangeForIndex will detach the index filters from table filters when it's a DNF.
 // We will detach the conditions of every DNF items, then compose them to a DNF.
-func detachDNFCondAndBuildRangeForIndex(sc *stmtctx.StatementContext, condition *expression.ScalarFunction,
+func detachDNFCondAndBuildRangeForIndex(sctx sessionctx.Context, condition *expression.ScalarFunction,
 	cols []*expression.Column, newTpSlice []*types.FieldType, lengths []int) ([]*NewRange, []expression.Expression, bool, error) {
+	sc := sctx.GetSessionVars().StmtCtx
 	firstColumnChecker := &conditionChecker{
 		colName:       cols[0].ColName,
 		shouldReserve: lengths[0] != types.UnspecifiedLength,
@@ -227,7 +227,7 @@ func detachDNFCondAndBuildRangeForIndex(sc *stmtctx.StatementContext, condition 
 		if sf, ok := item.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicAnd {
 			cnfItems := expression.FlattenCNFConditions(sf)
 			var accesses, filters []expression.Expression
-			ranges, accesses, filters, _, err := detachCNFCondAndBuildRangeForIndex(sc, cnfItems, cols, newTpSlice, lengths, true)
+			ranges, accesses, filters, _, err := detachCNFCondAndBuildRangeForIndex(sctx, cnfItems, cols, newTpSlice, lengths, true)
 			if err != nil {
 				return nil, nil, false, nil
 			}
@@ -267,7 +267,7 @@ func detachDNFCondAndBuildRangeForIndex(sc *stmtctx.StatementContext, condition 
 // DetachCondAndBuildRangeForIndex will detach the index filters from table filters.
 // If the top layer is DNF, we return a int slice which is eqAndInCount of every DNF item.
 // Otherwise just one number is returned.
-func DetachCondAndBuildRangeForIndex(sc *stmtctx.StatementContext, conditions []expression.Expression, cols []*expression.Column,
+func DetachCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []expression.Expression, cols []*expression.Column,
 	lengths []int) ([]*NewRange, []expression.Expression, []expression.Expression, int, error) {
 	newTpSlice := make([]*types.FieldType, 0, len(cols))
 	for _, col := range cols {
@@ -275,7 +275,7 @@ func DetachCondAndBuildRangeForIndex(sc *stmtctx.StatementContext, conditions []
 	}
 	if len(conditions) == 1 {
 		if sf, ok := conditions[0].(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
-			ranges, accesses, hasResidual, err := detachDNFCondAndBuildRangeForIndex(sc, sf, cols, newTpSlice, lengths)
+			ranges, accesses, hasResidual, err := detachDNFCondAndBuildRangeForIndex(sctx, sf, cols, newTpSlice, lengths)
 			if err != nil {
 				return nil, nil, nil, 0, errors.Trace(err)
 			}
@@ -286,18 +286,18 @@ func DetachCondAndBuildRangeForIndex(sc *stmtctx.StatementContext, conditions []
 			return ranges, accesses, nil, 0, nil
 		}
 	}
-	return detachCNFCondAndBuildRangeForIndex(sc, conditions, cols, newTpSlice, lengths, true)
+	return detachCNFCondAndBuildRangeForIndex(sctx, conditions, cols, newTpSlice, lengths, true)
 }
 
 // DetachSimpleCondAndBuildRangeForIndex will detach the index filters from table filters.
 // It will find the point query column firstly and then extract the range query column.
-func DetachSimpleCondAndBuildRangeForIndex(sc *stmtctx.StatementContext, conditions []expression.Expression,
+func DetachSimpleCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []expression.Expression,
 	cols []*expression.Column, lengths []int) (ranges []*NewRange, accessConds []expression.Expression, err error) {
 	newTpSlice := make([]*types.FieldType, 0, len(cols))
 	for _, col := range cols {
 		newTpSlice = append(newTpSlice, newFieldType(col.RetType))
 	}
-	ranges, accessConds, _, _, err = detachCNFCondAndBuildRangeForIndex(sc, conditions, cols, newTpSlice, lengths, false)
+	ranges, accessConds, _, _, err = detachCNFCondAndBuildRangeForIndex(sctx, conditions, cols, newTpSlice, lengths, false)
 	return ranges, accessConds, nil
 }
 
@@ -326,10 +326,10 @@ func ExtractAccessConditionsForColumn(conds []expression.Expression, colName mod
 
 // DetachCondsForTableRange detaches the conditions used for range calculation form other useless conditions for
 // calculating the table range.
-func DetachCondsForTableRange(ctx sessionctx.Context, conds []expression.Expression, col *expression.Column) (accessContditions, otherConditions []expression.Expression) {
+func DetachCondsForTableRange(sctx sessionctx.Context, conds []expression.Expression, col *expression.Column) (accessContditions, otherConditions []expression.Expression) {
 	checker := &conditionChecker{
 		colName: col.ColName,
 		length:  types.UnspecifiedLength,
 	}
-	return detachColumnCNFConditions(conds, checker)
+	return detachColumnCNFConditions(sctx, conds, checker)
 }
