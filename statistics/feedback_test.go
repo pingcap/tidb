@@ -86,7 +86,7 @@ func (s *testFeedbackSuite) TestSplitBuckets(c *C) {
 	q := NewQueryFeedback(0, genHistogram(), 0, false)
 	q.feedback = feedbacks
 	buckets, isNewBuckets, totalCount := splitBuckets(q.Hist(), []*QueryFeedback{q})
-	c.Assert(buildNewHisogram(q.Hist(), buckets).ToString(0), Equals,
+	c.Assert(buildNewHistogram(q.Hist(), buckets).ToString(0), Equals,
 		"column:0 ndv:0\n"+
 			"num: 1\tlower_bound: 0\tupper_bound: 1\trepeats: 0\n"+
 			"num: 1\tlower_bound: 2\tupper_bound: 3\trepeats: 0\n"+
@@ -105,7 +105,7 @@ func (s *testFeedbackSuite) TestSplitBuckets(c *C) {
 	q = NewQueryFeedback(0, genHistogram(), 0, false)
 	q.feedback = feedbacks
 	buckets, isNewBuckets, totalCount = splitBuckets(q.Hist(), []*QueryFeedback{q})
-	c.Assert(buildNewHisogram(q.Hist(), buckets).ToString(0), Equals,
+	c.Assert(buildNewHistogram(q.Hist(), buckets).ToString(0), Equals,
 		"column:0 ndv:0\n"+
 			"num: 100000\tlower_bound: 0\tupper_bound: 1\trepeats: 0\n"+
 			"num: 100000\tlower_bound: 2\tupper_bound: 3\trepeats: 0\n"+
@@ -125,7 +125,7 @@ func (s *testFeedbackSuite) TestSplitBuckets(c *C) {
 	q = NewQueryFeedback(0, h, 0, false)
 	q.feedback = feedbacks
 	buckets, isNewBuckets, totalCount = splitBuckets(q.Hist(), []*QueryFeedback{q})
-	c.Assert(buildNewHisogram(q.Hist(), buckets).ToString(0), Equals,
+	c.Assert(buildNewHistogram(q.Hist(), buckets).ToString(0), Equals,
 		"column:0 ndv:0\n"+
 			"num: 1000000\tlower_bound: 0\tupper_bound: 1000000\trepeats: 0")
 	c.Assert(isNewBuckets, DeepEquals, []bool{false})
@@ -180,7 +180,7 @@ func (s *testFeedbackSuite) TestMergeBuckets(c *C) {
 		}
 		defaultBucketCount = t.bucketCount
 		bkts = mergeBuckets(bkts, t.isNewBuckets, float64(totalCount))
-		result := buildNewHisogram(&Histogram{tp: types.NewFieldType(mysql.TypeLong)}, bkts).ToString(0)
+		result := buildNewHistogram(&Histogram{tp: types.NewFieldType(mysql.TypeLong)}, bkts).ToString(0)
 		c.Assert(result, Equals, t.result)
 	}
 }

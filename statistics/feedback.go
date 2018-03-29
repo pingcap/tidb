@@ -294,10 +294,10 @@ type bucket = feedback
 func (b *BucketFeedback) getFraction(lowerVal, upperVal *types.Datum) float64 {
 	var lower, upper float64
 	if b.lower.Kind() == types.KindBytes {
-		bytes := lowerVal.GetBytes()
-		lower = convertBytesToScalar(bytes[b.scalar.commonPfxLen:])
-		bytes = upperVal.GetBytes()
-		upper = convertBytesToScalar(bytes[b.scalar.commonPfxLen:])
+		value := lowerVal.GetBytes()
+		lower = convertBytesToScalar(value[b.scalar.commonPfxLen:])
+		value = upperVal.GetBytes()
+		upper = convertBytesToScalar(value[b.scalar.commonPfxLen:])
 	} else {
 		lower = float64(lowerVal.GetInt64())
 		upper = float64(upperVal.GetInt64())
@@ -481,10 +481,10 @@ func splitBuckets(h *Histogram, feedbacks []*QueryFeedback) ([]bucket, []bool, i
 func UpdateHistogram(h *Histogram, feedbacks []*QueryFeedback) *Histogram {
 	buckets, isNewBuckets, totalCount := splitBuckets(h, feedbacks)
 	buckets = mergeBuckets(buckets, isNewBuckets, float64(totalCount))
-	return buildNewHisogram(h, buckets)
+	return buildNewHistogram(h, buckets)
 }
 
-func buildNewHisogram(h *Histogram, buckets []bucket) *Histogram {
+func buildNewHistogram(h *Histogram, buckets []bucket) *Histogram {
 	hist := NewHistogram(h.ID, h.NDV, h.NullCount, h.LastUpdateVersion, h.tp, len(buckets), h.TotColSize)
 	preCount := int64(0)
 	for _, bkt := range buckets {
