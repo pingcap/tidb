@@ -656,7 +656,6 @@ func (e *IndexLookUpExecutor) Close() error {
 	return nil
 }
 
-
 // NextChunk implements Exec NextChunk interface.
 func (e *IndexLookUpExecutor) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
