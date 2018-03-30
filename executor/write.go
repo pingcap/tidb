@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	log "github.com/sirupsen/logrus"
@@ -795,14 +796,10 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) (Row, error
 	// If tidb_batch_insert is ON and not in a transaction, we could use BatchInsert mode.
 	sessVars := e.ctx.GetSessionVars()
 	defer sessVars.CleanBuffers()
-	batchInsert := sessVars.BatchInsert && !sessVars.InTxn()
-	batchSize := sessVars.DMLBatchSize
 
-	txn := e.ctx.Txn()
 	rowCount := 0
-	writeBufs := sessVars.GetWriteStmtBufs()
 	if !sessVars.ImportingData {
-		writeBufs.BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
+		sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(e.ctx.Txn(), kv.TempTxnMemBufCap)
 	}
 	// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
 	// For example, without IGNORE, a row that duplicates an existing UNIQUE index or PRIMARY KEY value in
@@ -816,29 +813,29 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) (Row, error
 			return nil, errors.Trace(err)
 		}
 	}
+	if !e.IgnoreErr && len(e.OnDuplicate) > 0 {
+		var err error
+		rows, rowCount, err = batchUpdateDupRows(e.ctx, e.Table, rows, e.OnDuplicate)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
 	for _, row := range rows {
 		// duplicate row will be marked as nil in batchMarkDupRows if
 		// IgnoreErr is true. For IgnoreErr is false, it is a protection.
 		if row == nil {
 			continue
 		}
-		if batchInsert && rowCount >= batchSize {
-			e.ctx.StmtCommit()
-			if err := e.ctx.NewTxn(); err != nil {
-				// We should return a special error for batch insert.
-				return nil, ErrBatchInsertFail.Gen("BatchInsert failed with error: %v", err)
-			}
-			txn = e.ctx.Txn()
-			rowCount = 0
-			if !sessVars.ImportingData {
-				writeBufs.BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
-			}
+		var err error
+		rowCount, err = checkBatchLimit(e.ctx, rowCount)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 		if len(e.OnDuplicate) == 0 && !e.IgnoreErr {
-			txn.SetOption(kv.PresumeKeyNotExists, nil)
+			e.ctx.Txn().SetOption(kv.PresumeKeyNotExists, nil)
 		}
 		h, err := e.Table.AddRecord(e.ctx, row, false)
-		txn.DelOption(kv.PresumeKeyNotExists)
+		e.ctx.Txn().DelOption(kv.PresumeKeyNotExists)
 		if err == nil {
 			if !sessVars.ImportingData {
 				e.ctx.StmtAddDirtyTableOP(DirtyTableAddRow, e.Table.Meta().ID, h, row)
@@ -848,8 +845,8 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) (Row, error
 		}
 
 		if kv.ErrKeyExists.Equal(err) {
-			if len(e.OnDuplicate) > 0 {
-				if err = e.onDuplicateUpdate(row, h, e.OnDuplicate); err != nil {
+			if e.IgnoreErr && len(e.OnDuplicate) > 0 {
+				if err = onDuplicateUpdate(e.ctx, e.Table, row, h, e.OnDuplicate); err != nil {
 					return nil, errors.Trace(err)
 				}
 				rowCount++
@@ -867,8 +864,9 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) (Row, error
 }
 
 type keyWithDupError struct {
-	key    kv.Key
-	dupErr error
+	isRecordKey bool
+	key         kv.Key
+	dupErr      error
 }
 
 func getRecordIDs(ctx sessionctx.Context, t table.Table, rows [][]types.Datum) ([]int64, error) {
@@ -917,7 +915,11 @@ func getKeysNeedCheck(ctx sessionctx.Context, t table.Table, rows [][]types.Datu
 		keysWithErr := make([]keyWithDupError, 0, nUnique+1)
 		// append record keys and errors
 		if t.Meta().PKIsHandle {
-			keysWithErr = append(keysWithErr, keyWithDupError{t.RecordKey(recordIDs[i]), kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key 'PRIMARY'", recordIDs[i])})
+			keysWithErr = append(keysWithErr, keyWithDupError{
+				true,
+				t.RecordKey(recordIDs[i]),
+				kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key 'PRIMARY'", recordIDs[i]),
+			})
 		}
 
 		// append unique keys and errors
@@ -940,19 +942,23 @@ func getKeysNeedCheck(ctx sessionctx.Context, t table.Table, rows [][]types.Datu
 			if !distinct {
 				continue
 			}
-			keysWithErr = append(keysWithErr, keyWithDupError{key, kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key '%s'", recordIDs[i], v.Meta().Name)})
+			keysWithErr = append(keysWithErr, keyWithDupError{
+				false,
+				key,
+				kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key '%s'", recordIDs[i], v.Meta().Name),
+			})
 		}
 		rowWithKeys = append(rowWithKeys, keysWithErr)
 	}
 	return rowWithKeys, nil
 }
 
-// batchMarkDupRows marks rows with duplicate errors as nil.
-// All duplicate rows were marked and appended as duplicate warnings
-// to the statement context in batch.
-func batchMarkDupRows(ctx sessionctx.Context, t table.Table, rows [][]types.Datum) ([][]types.Datum, error) {
+func batchGetInsertRows(ctx sessionctx.Context, t table.Table, rows [][]types.Datum) ([][]keyWithDupError, map[string][]byte, error) {
 	// get keys need to be checked
 	rowWithKeys, err := getKeysNeedCheck(ctx, t, rows)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
 
 	// batch get values
 	nKeys := 0
@@ -967,9 +973,80 @@ func batchMarkDupRows(ctx sessionctx.Context, t table.Table, rows [][]types.Datu
 	}
 	values, err := ctx.Txn().GetSnapshot().BatchGet(batchKeys)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, nil, errors.Trace(err)
+	}
+	return rowWithKeys, values, nil
+}
+
+func checkBatchLimit(ctx sessionctx.Context, rowCount int) (int, error) {
+	sessVars := ctx.GetSessionVars()
+	batchInsert := sessVars.BatchInsert && !sessVars.InTxn()
+	batchSize := sessVars.DMLBatchSize
+	if batchInsert && rowCount >= batchSize {
+		ctx.StmtCommit()
+		if err := ctx.NewTxn(); err != nil {
+			// We should return a special error for batch insert.
+			return rowCount, ErrBatchInsertFail.Gen("BatchInsert failed with error: %v", err)
+		}
+		rowCount = 0
+		if !sessVars.ImportingData {
+			sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(ctx.Txn(), kv.TempTxnMemBufCap)
+		}
+	}
+	return rowCount, nil
+}
+
+func batchUpdateDupRows(ctx sessionctx.Context, t table.Table, rows [][]types.Datum, onDuplicate []*expression.Assignment) ([][]types.Datum, int, error) {
+	rowWithKeys, values, err := batchGetInsertRows(ctx, t, rows)
+	if err != nil {
+		return nil, 0, errors.Trace(err)
 	}
 
+	rowCount := 0
+
+	for i, v := range rowWithKeys {
+		for _, k := range v {
+			if val, found := values[string(k.key)]; found {
+				var handle int64
+				if k.isRecordKey {
+					handle, err = tablecodec.DecodeRowKey(k.key)
+					if err != nil {
+						return nil, 0, errors.Trace(err)
+					}
+				} else {
+					handle, err = tables.DecodeHandle(val)
+					if err != nil {
+						return nil, 0, errors.Trace(err)
+					}
+				}
+				if err != nil {
+					return nil, 0, errors.Trace(err)
+				}
+				if err = onDuplicateUpdate(ctx, t, rows[i], handle, onDuplicate); err != nil {
+					return nil, 0, errors.Trace(err)
+				}
+				rowCount++
+				rowCount, err = checkBatchLimit(ctx, rowCount)
+				if err != nil {
+					return nil, 0, errors.Trace(err)
+				}
+				rows[i] = nil
+				delete(values, string(k.key))
+				break
+			}
+		}
+	}
+	return rows, rowCount, nil
+}
+
+// batchMarkDupRows marks rows with duplicate errors as nil.
+// All duplicate rows were marked and appended as duplicate warnings
+// to the statement context in batch.
+func batchMarkDupRows(ctx sessionctx.Context, t table.Table, rows [][]types.Datum) ([][]types.Datum, error) {
+	rowWithKeys, values, err := batchGetInsertRows(ctx, t, rows)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	// append warnings and get no duplicated error rows
 	for i, v := range rowWithKeys {
 		for _, k := range v {
@@ -989,7 +1066,6 @@ func batchMarkDupRows(ctx sessionctx.Context, t table.Table, rows [][]types.Datu
 			}
 		}
 	}
-
 	// this statement was already been checked
 	ctx.GetSessionVars().StmtCtx.BatchCheck = true
 	return rows, nil
@@ -1470,17 +1546,19 @@ func (e *InsertValues) adjustAutoIncrementDatum(row []types.Datum, i int, c *tab
 
 // onDuplicateUpdate updates the duplicate row.
 // TODO: Report rows affected and last insert id.
-func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols []*expression.Assignment) error {
-	data, err := e.Table.RowWithCols(e.ctx, h, e.Table.WritableCols())
+func onDuplicateUpdate(ctx sessionctx.Context, t table.Table, row []types.Datum, h int64,
+	cols []*expression.Assignment) error {
+	data, err := t.RowWithCols(ctx, h, t.WritableCols())
+	log.Infof("YUSP handle %d", h)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
-	e.ctx.GetSessionVars().CurrInsertValues = types.DatumRow(row)
+	ctx.GetSessionVars().CurrInsertValues = types.DatumRow(row)
 
 	// evaluate assignment
-	assignFlag := make([]bool, len(e.Table.WritableCols()))
+	assignFlag := make([]bool, len(t.WritableCols()))
 	newData := make(types.DatumRow, len(data))
 	copy(newData, data)
 	for _, col := range cols {
@@ -1491,7 +1569,7 @@ func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols []*expre
 		newData[col.Col.Index] = val
 		assignFlag[col.Col.Index] = true
 	}
-	if _, err = updateRecord(e.ctx, h, data, newData, assignFlag, e.Table, true, false); err != nil {
+	if _, err = updateRecord(ctx, h, data, newData, assignFlag, t, true, false); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
