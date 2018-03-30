@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -116,19 +115,6 @@ func closeAll(objs ...Closeable) error {
 		}
 	}
 	return errors.Trace(err)
-}
-
-func decodeRawValues(values []types.Datum, schema *expression.Schema, loc *time.Location) error {
-	var err error
-	for i := 0; i < schema.Len(); i++ {
-		if values[i].Kind() == types.KindRaw {
-			values[i], err = tablecodec.DecodeColumnValue(values[i].GetRaw(), schema.Columns[i].RetType, loc)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
-	}
-	return nil
 }
 
 // timeZoneOffset returns the local time zone offset in seconds.
@@ -890,24 +876,6 @@ func (tr *tableResultHandler) open(optionalResult, result distsql.SelectResult) 
 	tr.optionalResult = optionalResult
 	tr.result = result
 	tr.optionalFinished = false
-}
-
-func (tr *tableResultHandler) next(ctx context.Context) (partialResult distsql.PartialResult, err error) {
-	if !tr.optionalFinished {
-		partialResult, err = tr.optionalResult.Next(ctx)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if partialResult != nil {
-			return partialResult, nil
-		}
-		tr.optionalFinished = true
-	}
-	partialResult, err = tr.result.Next(ctx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return partialResult, nil
 }
 
 func (tr *tableResultHandler) nextChunk(ctx context.Context, chk *chunk.Chunk) error {
