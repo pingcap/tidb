@@ -2485,6 +2485,14 @@ func (s *testSuite) TestIssue5666(c *C) {
 	tk.MustQuery("SELECT QUERY_ID, SUM(DURATION) AS SUM_DURATION FROM INFORMATION_SCHEMA.PROFILING GROUP BY QUERY_ID;").Check(testkit.Rows("0 0"))
 }
 
+func (s *testSuite) TestIssue5341(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop table if exists test.t")
+	tk.MustExec("create table test.t(a char)")
+	tk.MustExec("insert into test.t value('a')")
+	tk.MustQuery("select * from test.t where a < 1 order by a limit 0;").Check(testkit.Rows())
+}
+
 func (s *testSuite) TestCheckIndex(c *C) {
 	s.ctx = mock.NewContext()
 	s.ctx.Store = s.store

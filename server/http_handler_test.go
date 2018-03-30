@@ -321,7 +321,7 @@ func (ts *HTTPHandlerTestSuite) TestGetTableMVCC(c *C) {
 		c.Assert(bytes.Equal(v2, expect.Value), IsTrue)
 	}
 
-	_, key, err := codec.DecodeBytes(p1.Key)
+	_, key, err := codec.DecodeBytes(p1.Key, nil)
 	c.Assert(err, IsNil)
 	hexKey := hex.EncodeToString(key)
 	resp, err = http.Get("http://127.0.0.1:10090/mvcc/hex/" + hexKey)
