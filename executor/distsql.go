@@ -355,7 +355,7 @@ type IndexReaderExecutor struct {
 	dagPB     *tipb.DAGRequest
 
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
-	result        distsql.SelectResult
+	result distsql.SelectResult
 	// columns are only required by union scan.
 	columns   []*model.ColumnInfo
 	priority  int
