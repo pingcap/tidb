@@ -844,14 +844,14 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) (Row, error
 		}
 
 		if kv.ErrKeyExists.Equal(err) {
+			// TODO: This piece of code is used for `insert ignore into on duplicate key update`.
+			// It needs to be speed up by some batch method.
 			if e.IgnoreErr && len(e.OnDuplicate) > 0 {
 				data, err1 := e.Table.RowWithCols(e.ctx, h, e.Table.WritableCols())
 				if err1 != nil {
 					return nil, errors.Trace(err1)
 				}
-				// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
-				e.ctx.GetSessionVars().CurrInsertValues = types.DatumRow(row)
-				if err = e.onDuplicateUpdateRows([]int64{h}, [][]types.Datum{data}, e.OnDuplicate); err != nil {
+				if err = e.onDuplicateUpdateRows([]int64{h}, [][]types.Datum{data}, [][]types.Datum{row}, e.OnDuplicate); err != nil {
 					return nil, errors.Trace(err)
 				}
 				e.rowCount++
@@ -1008,17 +1008,21 @@ func (e *InsertExec) batchUpdateDupRows(rows [][]types.Datum, onDuplicate []*exp
 	}
 
 	handles := make([]int64, 0, len(rowWithKeys))
-	rowValues := make([][]byte, 0, len(rowWithKeys))
+	oldRowValues := make([][]byte, 0, len(rowWithKeys))
+	newRows := make([][]types.Datum, 0, len(rowWithKeys))
 	for i, v := range rowWithKeys {
 		for _, k := range v {
 			if val, found := values[string(k.key)]; found {
 				var handle int64
+				newRow := make([]types.Datum, len(rows[i]))
+				copy(newRow, rows[i])
+				newRows = append(newRows, newRow)
 				if k.isRecordKey {
 					handle, err = tablecodec.DecodeRowKey(k.key)
 					if err != nil {
 						return nil, errors.Trace(err)
 					}
-					rowValues = append(rowValues, val)
+					oldRowValues = append(oldRowValues, val)
 				} else {
 					handle, err = tables.DecodeHandle(val)
 					if err != nil {
@@ -1026,11 +1030,6 @@ func (e *InsertExec) batchUpdateDupRows(rows [][]types.Datum, onDuplicate []*exp
 					}
 				}
 				handles = append(handles, handle)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
-				e.ctx.GetSessionVars().CurrInsertValues = types.DatumRow(rows[i])
 				rows[i] = nil
 				delete(values, string(k.key))
 				break
@@ -1038,7 +1037,7 @@ func (e *InsertExec) batchUpdateDupRows(rows [][]types.Datum, onDuplicate []*exp
 		}
 	}
 
-	if err = e.batchUpdateRows(handles, rowValues, onDuplicate); err != nil {
+	if err = e.batchUpdateRows(handles, oldRowValues, newRows, onDuplicate); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -1550,28 +1549,28 @@ func (e *InsertValues) adjustAutoIncrementDatum(row []types.Datum, i int, c *tab
 	return nil
 }
 
-func (e *InsertExec) batchUpdateRows(handles []int64, rowValues [][]byte, onDuplicate []*expression.Assignment) error {
-	batchKeys := make([]kv.Key, 0, len(handles)-len(rowValues))
-	for _, handle := range handles[len(rowValues):] {
+func (e *InsertExec) batchUpdateRows(handles []int64, oldRowValues [][]byte, newRows [][]types.Datum, onDuplicate []*expression.Assignment) error {
+	batchKeys := make([]kv.Key, 0, len(handles)-len(oldRowValues))
+	for _, handle := range handles[len(oldRowValues):] {
 		batchKeys = append(batchKeys, e.Table.RecordKey(handle))
 	}
 	values, err := e.ctx.Txn().GetSnapshot().BatchGet(batchKeys)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	for _, handle := range handles[len(rowValues):] {
+	for _, handle := range handles[len(oldRowValues):] {
 		// The value should be found in the values map, otherwise it should panic here!
-		rowValues = append(rowValues, values[string(e.Table.RecordKey(handle))])
+		oldRowValues = append(oldRowValues, values[string(e.Table.RecordKey(handle))])
 	}
-	rows := make([][]types.Datum, 0, len(handles))
+	oldRows := make([][]types.Datum, 0, len(handles))
 	for i, handle := range handles {
-		row, err1 := tables.DecodeRawRowData(e.ctx, e.Table.Meta(), handle, e.Table.WritableCols(), rowValues[i])
+		row, err1 := tables.DecodeRawRowData(e.ctx, e.Table.Meta(), handle, e.Table.WritableCols(), oldRowValues[i])
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
-		rows = append(rows, row)
+		oldRows = append(oldRows, row)
 	}
-	err = e.onDuplicateUpdateRows(handles, rows, onDuplicate)
+	err = e.onDuplicateUpdateRows(handles, oldRows, newRows, onDuplicate)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1580,12 +1579,14 @@ func (e *InsertExec) batchUpdateRows(handles []int64, rowValues [][]byte, onDupl
 
 // onDuplicateUpdateRows updates the duplicate row.
 // TODO: Report rows affected and last insert id.
-func (e *InsertExec) onDuplicateUpdateRows(handles []int64, rows [][]types.Datum, cols []*expression.Assignment) error {
+func (e *InsertExec) onDuplicateUpdateRows(handles []int64, oldRows [][]types.Datum, newRows [][]types.Datum, cols []*expression.Assignment) error {
 	assignFlag := make([]bool, len(e.Table.WritableCols()))
 
 	for i, handle := range handles {
-		newData := make(types.DatumRow, len(rows[i]))
-		copy(newData, rows[i])
+		// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
+		e.ctx.GetSessionVars().CurrInsertValues = types.DatumRow(newRows[i])
+		newData := make(types.DatumRow, len(oldRows[i]))
+		copy(newData, oldRows[i])
 		for _, col := range cols {
 			val, err1 := col.Expr.Eval(newData)
 			if err1 != nil {
@@ -1594,7 +1595,7 @@ func (e *InsertExec) onDuplicateUpdateRows(handles []int64, rows [][]types.Datum
 			newData[col.Col.Index] = val
 			assignFlag[col.Col.Index] = true
 		}
-		if _, err := updateRecord(e.ctx, handle, rows[i], newData, assignFlag, e.Table, true, false); err != nil {
+		if _, err := updateRecord(e.ctx, handle, oldRows[i], newData, assignFlag, e.Table, true, false); err != nil {
 			return errors.Trace(err)
 		}
 		e.rowCount++

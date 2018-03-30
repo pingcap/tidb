@@ -411,6 +411,27 @@ func (s *testSuite) TestInsertIgnore(c *C) {
 	r.Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 'PRIMARY'"))
 }
 
+func (s *testSuite) TestInsertOnDup(c *C) {
+	var cfg kv.InjectionConfig
+	tk := testkit.NewTestKit(c, kv.NewInjectedStore(s.store, &cfg))
+	tk.MustExec("use test")
+	testSQL := `drop table if exists t;
+    create table t (i int unique key);`
+	tk.MustExec(testSQL)
+	testSQL = `insert into t values (1),(2);`
+	tk.MustExec(testSQL)
+
+	r := tk.MustQuery("select * from t;")
+	rowStr1 := fmt.Sprintf("%v", "1")
+	rowStr2 := fmt.Sprintf("%v", "2")
+	r.Check(testkit.Rows(rowStr1, rowStr2))
+
+	tk.MustExec("insert into t values (1), (2) on duplicate key update i = values(i)")
+	r = tk.MustQuery("select * from t;")
+	r.Check(testkit.Rows(rowStr1, rowStr2))
+
+}
+
 func (s *testSuite) TestReplace(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
