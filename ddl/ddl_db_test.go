@@ -155,6 +155,9 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrDupFieldName)
 	sql = "alter table test_error_code_succ add column aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa int"
 	s.testErrorCode(c, sql, tmysql.ErrTooLongIdent)
+	sql = "alter table test_comment comment 'test comment'"
+	s.testErrorCode(c, sql, tmysql.ErrNoSuchTable)
+
 	// drop column
 	sql = "alter table test_error_code_succ drop c_not_exist"
 	s.testErrorCode(c, sql, tmysql.ErrCantDropFieldOrKey)

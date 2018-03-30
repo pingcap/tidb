@@ -350,7 +350,6 @@ func (d *ddl) onModifyTableComment(t *meta.Meta, job *model.Job) (ver int64, _ e
 	tblInfo.Comment = comment
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
-
 		return ver, errors.Trace(err)
 	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
