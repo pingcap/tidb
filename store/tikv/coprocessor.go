@@ -696,7 +696,7 @@ func (it *copIterator) handleCopResponse(bo *Backoffer, resp *coprocessor.Respon
 
 func buildCopTasksFromRemain(bo *Backoffer, cache *RegionCache, resp *coprocessor.Response, task *copTask, desc bool, streaming bool) ([]*copTask, error) {
 	remainedRanges := task.ranges
-	if streaming {
+	if streaming && resp != nil {
 		remainedRanges = calculateRemain(task.ranges, resp.Range, desc)
 	}
 	return buildCopTasks(bo, cache, remainedRanges, desc, streaming)
