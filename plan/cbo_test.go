@@ -139,14 +139,16 @@ func (s *testAnalyzeSuite) TestTableDual(c *C) {
 	testKit.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10)")
 	c.Assert(h.HandleDDLEvent(<-h.DDLEventCh()), IsNil)
 
+	h.DumpStatsDeltaToKV()
+	c.Assert(h.Update(dom.InfoSchema()), IsNil)
+
 	testKit.MustQuery(`explain select * from t where 1 = 0`).Check(testkit.Rows(
 		`TableDual_6 Projection_5  root rows:0 0.00`,
 		`Projection_5  TableDual_6 root test.t.a 0.00`,
 	))
 
-	testKit.MustQuery(`explain select * from t where 1 = 1`).Check(testkit.Rows(
-		`TableScan_5   cop table:t, range:[-inf,+inf], keep order:false 10000.00`,
-		`TableReader_6   root data:TableScan_5 10000.00`,
+	testKit.MustQuery(`explain select * from t where 1 = 1 limit 0`).Check(testkit.Rows(
+		`TableDual_5   root rows:0 0.00`,
 	))
 }
 
