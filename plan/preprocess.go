@@ -43,7 +43,7 @@ type preprocessor struct {
 	ctx       sessionctx.Context
 	err       error
 	inPrepare bool
-	// When visiting create/drop table statement.
+	// inCreateOrDropTable is true when visiting create/drop table statement.
 	inCreateOrDropTable bool
 }
 
@@ -423,7 +423,7 @@ func checkColumn(colDef *ast.ColumnDef) error {
 	return nil
 }
 
-// isNowSymFunc checks whether default value is a NOW() builtin function.
+// isDefaultValNowSymFunc checks whether defaul value is a NOW() builtin function.
 func isDefaultValNowSymFunc(expr ast.ExprNode) bool {
 	if funcCall, ok := expr.(*ast.FuncCallExpr); ok {
 		// Default value NOW() is transformed to CURRENT_TIMESTAMP() in parser.
@@ -450,6 +450,7 @@ func isInvalidDefaultValue(colDef *ast.ColumnDef) bool {
 	return false
 }
 
+// isIncorrectName checks if the identifier is incorrect.
 // See https://dev.mysql.com/doc/refman/5.7/en/identifiers.html
 func isIncorrectName(name string) bool {
 	if len(name) == 0 {
@@ -494,6 +495,14 @@ func (p *preprocessor) resolveShowStmt(node *ast.ShowStmt) {
 		}
 	} else if node.Table != nil && node.Table.Schema.L == "" {
 		node.Table.Schema = model.NewCIStr(node.DBName)
+	}
+	if node.User != nil && node.User.CurrentUser {
+		// Fill the Username and Hostname with the current user.
+		currentUser := p.ctx.GetSessionVars().User
+		if currentUser != nil {
+			node.User.Username = currentUser.Username
+			node.User.Hostname = currentUser.Hostname
+		}
 	}
 }
 

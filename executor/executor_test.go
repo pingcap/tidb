@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	gofail "github.com/coreos/gofail/runtime"
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -2050,8 +2051,8 @@ type checkRequestClient struct {
 	}
 }
 
-func (c *checkRequestClient) SendReq(ctx context.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
-	resp, err := c.Client.SendReq(ctx, addr, req)
+func (c *checkRequestClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	resp, err := c.Client.SendRequest(ctx, addr, req, timeout)
 	c.mu.RLock()
 	checkFlags := c.mu.checkFlags
 	c.mu.RUnlock()
@@ -2473,20 +2474,39 @@ func (s *testSuite) TestEarlyClose(c *C) {
 
 	ctx := context.Background()
 	for i := 0; i < 500; i++ {
-		rss, err := tk.Se.Execute(ctx, "select * from earlyclose order by id")
-		c.Assert(err, IsNil)
+		rss, err1 := tk.Se.Execute(ctx, "select * from earlyclose order by id")
+		c.Assert(err1, IsNil)
 		rs := rss[0]
 		chk := rs.NewChunk()
 		err = rs.NextChunk(ctx, chk)
 		c.Assert(err, IsNil)
 		rs.Close()
 	}
+
+	// Goroutine should not leak when error happen.
+	gofail.Enable("github.com/pingcap/tidb/store/tikv/handleTaskOnceError", `return(true)`)
+	defer gofail.Disable("github.com/pingcap/tidb/store/tikv/handleTaskOnceError")
+	rss, err := tk.Se.Execute(ctx, "select * from earlyclose")
+	c.Assert(err, IsNil)
+	rs := rss[0]
+	chk := rs.NewChunk()
+	err = rs.NextChunk(ctx, chk)
+	c.Assert(err, NotNil)
+	rs.Close()
 }
 
 func (s *testSuite) TestIssue5666(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@profiling=1")
 	tk.MustQuery("SELECT QUERY_ID, SUM(DURATION) AS SUM_DURATION FROM INFORMATION_SCHEMA.PROFILING GROUP BY QUERY_ID;").Check(testkit.Rows("0 0"))
+}
+
+func (s *testSuite) TestIssue5341(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop table if exists test.t")
+	tk.MustExec("create table test.t(a char)")
+	tk.MustExec("insert into test.t value('a')")
+	tk.MustQuery("select * from test.t where a < 1 order by a limit 0;").Check(testkit.Rows())
 }
 
 func (s *testSuite) TestCheckIndex(c *C) {

@@ -124,6 +124,12 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrTooLongIdent)
 	sql = "create database test"
 	s.testErrorCode(c, sql, tmysql.ErrDBCreateExists)
+	sql = "create database test1 character set uft8;"
+	s.testErrorCode(c, sql, tmysql.ErrUnknownCharacterSet)
+	sql = "create database test2 character set gkb;"
+	s.testErrorCode(c, sql, tmysql.ErrUnknownCharacterSet)
+	sql = "create database test3 character set laitn1;"
+	s.testErrorCode(c, sql, tmysql.ErrUnknownCharacterSet)
 	// drop database
 	sql = "drop database db_not_exist"
 	s.testErrorCode(c, sql, tmysql.ErrDBDropExists)
@@ -149,6 +155,12 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrInvalidDefault)
 	sql = "CREATE TABLE `t` (`a` double DEFAULT now());"
 	s.testErrorCode(c, sql, tmysql.ErrInvalidDefault)
+	sql = "create table t1(a int) character set uft8;"
+	s.testErrorCode(c, sql, tmysql.ErrUnknownCharacterSet)
+	sql = "create table t1(a int) character set gkb;"
+	s.testErrorCode(c, sql, tmysql.ErrUnknownCharacterSet)
+	sql = "create table t1(a int) character set laitn1;"
+	s.testErrorCode(c, sql, tmysql.ErrUnknownCharacterSet)
 
 	// add column
 	sql = "alter table test_error_code_succ add column c1 int"

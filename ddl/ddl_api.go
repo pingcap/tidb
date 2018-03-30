@@ -56,7 +56,12 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetIn
 	dbInfo := &model.DBInfo{
 		Name: schema,
 	}
+
 	if charsetInfo != nil {
+		err = checkCharsetAndCollation(charsetInfo.Chs, charsetInfo.Col)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		dbInfo.Charset = charsetInfo.Chs
 		dbInfo.Collate = charsetInfo.Col
 	} else {
@@ -395,7 +400,7 @@ func getDefaultValue(ctx sessionctx.Context, c *ast.ColumnOption, tp byte, fsp i
 			return v.GetBinaryLiteral().ToString(), nil
 		}
 		// For other kind of fields (e.g. INT), we supply its integer value so that it acts as integers.
-		return v.GetBinaryLiteral().ToInt()
+		return v.GetBinaryLiteral().ToInt(ctx.GetSessionVars().StmtCtx)
 	}
 
 	if tp == mysql.TypeBit {
@@ -803,7 +808,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, ident ast.Ident, colDefs []*as
 
 func checkCharsetAndCollation(cs string, co string) error {
 	if !charset.ValidCharsetAndCollation(cs, co) {
-		return errUnsupportedCharset.GenByArgs(cs, co)
+		return ErrUnknownCharacterSet.GenByArgs(cs)
 	}
 	return nil
 }
@@ -858,11 +863,18 @@ func hasAutoIncrementColumn(tbInfo *model.TableInfo) bool {
 	return false
 }
 
+// isIgnorableSpec checks if the spec type is ignorable.
+// Some specs are parsed by ignored. This is for compatibility.
+func isIgnorableSpec(tp ast.AlterTableType) bool {
+	// AlterTableLock/AlterTableAlgorithm are ignored.
+	return tp == ast.AlterTableLock || tp == ast.AlterTableAlgorithm
+}
+
 func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.AlterTableSpec) (err error) {
-	// Only handle valid specs, AlterTableLock is ignored.
+	// Only handle valid specs.
 	validSpecs := make([]*ast.AlterTableSpec, 0, len(specs))
 	for _, spec := range specs {
-		if spec.Tp == ast.AlterTableLock {
+		if isIgnorableSpec(spec.Tp) {
 			continue
 		}
 		validSpecs = append(validSpecs, spec)
