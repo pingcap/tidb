@@ -184,6 +184,10 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 			sql:  "select * from t use index(e_d_c_str_prefix) where t.e_str = b'1110000'",
 			best: "IndexLookUp(Index(t.e_d_c_str_prefix)[[p,p]], Table(t))",
 		},
+		{
+			sql:  "select * from (select * from t use index() order by b) t left join t t1 on t.a=t1.a limit 10",
+			best: "IndexJoin{TableReader(Table(t)->TopN([test.t.b],0,10))->TopN([test.t.b],0,10)->TableReader(Table(t))}(test.t.a,t1.a)->Limit",
+		},
 	}
 	for _, tt := range tests {
 		comment := Commentf("for %s", tt.sql)

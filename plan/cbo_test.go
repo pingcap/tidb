@@ -324,7 +324,7 @@ func (s *testAnalyzeSuite) TestEmptyTable(c *C) {
 		},
 		{
 			sql:  "select * from t limit 0",
-			best: "TableReader(Table(t)->Limit)->Limit",
+			best: "Dual",
 		},
 	}
 	for _, tt := range tests {
