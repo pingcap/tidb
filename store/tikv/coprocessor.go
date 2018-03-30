@@ -612,7 +612,7 @@ func (it *copIterator) handleTaskOnce(bo *Backoffer, task *copTask, ch chan copR
 	}
 
 	// Handles the response for non-streaming copTask.
-	return it.handleCopResponse(bo, resp.Cop, task, ch)
+	return it.handleCopResponse(bo, resp.Cop, task, ch, resp.Cop)
 }
 
 func (it *copIterator) handleCopStreamResult(bo *Backoffer, stream *tikvrpc.CopStreamResponse, task *copTask, ch chan copResponse) ([]*copTask, error) {
@@ -624,7 +624,7 @@ func (it *copIterator) handleCopStreamResult(bo *Backoffer, stream *tikvrpc.CopS
 		return nil, nil
 	}
 	for {
-		remainedTasks, err := it.handleCopResponse(bo, resp, task, ch)
+		remainedTasks, err := it.handleCopResponse(bo, resp, task, ch, lastResp)
 		if err != nil || len(remainedTasks) != 0 {
 			return remainedTasks, errors.Trace(err)
 		}
@@ -656,7 +656,7 @@ func (it *copIterator) handleCopStreamResult(bo *Backoffer, stream *tikvrpc.CopS
 
 // handleCopResponse checks coprocessor Response for region split and lock,
 // returns more tasks when that happens, or handles the response if no error.
-func (it *copIterator) handleCopResponse(bo *Backoffer, resp *coprocessor.Response, task *copTask, ch chan copResponse) ([]*copTask, error) {
+func (it *copIterator) handleCopResponse(bo *Backoffer, resp *coprocessor.Response, task *copTask, ch chan copResponse, lastResp *coprocessor.Response) ([]*copTask, error) {
 	if regionErr := resp.GetRegionError(); regionErr != nil {
 		if err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String())); err != nil {
 			return nil, errors.Trace(err)
@@ -676,7 +676,7 @@ func (it *copIterator) handleCopResponse(bo *Backoffer, resp *coprocessor.Respon
 				return nil, errors.Trace(err)
 			}
 		}
-		return buildCopTasksFromRemain(bo, it.store.regionCache, resp, task, it.req.Desc, it.req.Streaming)
+		return buildCopTasksFromRemain(bo, it.store.regionCache, lastResp, task, it.req.Desc, it.req.Streaming)
 	}
 	if otherErr := resp.GetOtherError(); otherErr != "" {
 		err := errors.Errorf("other error: %s", otherErr)
