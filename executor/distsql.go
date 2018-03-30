@@ -355,8 +355,7 @@ type IndexReaderExecutor struct {
 	dagPB     *tipb.DAGRequest
 
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
-	result        distsql.SelectResult
-	partialResult distsql.PartialResult
+	result distsql.SelectResult
 	// columns are only required by union scan.
 	columns   []*model.ColumnInfo
 	priority  int
@@ -367,52 +366,9 @@ type IndexReaderExecutor struct {
 // Close clears all resources hold by current object.
 func (e *IndexReaderExecutor) Close() error {
 	e.ctx.StoreQueryFeedback(e.feedback)
-	err := closeAll(e.result, e.partialResult)
+	err := e.result.Close()
 	e.result = nil
-	e.partialResult = nil
 	return errors.Trace(err)
-}
-
-// Next returns next available Row. In its process, any error will be returned.
-// It first try to fetch a partial result if current partial result is nil.
-// If any error appears during this stage, it simply return a error to its caller.
-// If it successfully initialize its partial result, it will use this to get next
-// available row.
-func (e *IndexReaderExecutor) Next(ctx context.Context) (Row, error) {
-	for {
-		// Get partial result.
-		if e.partialResult == nil {
-			var err error
-			e.partialResult, err = e.result.Next(ctx)
-			if err != nil {
-				e.feedback.Invalidate()
-				return nil, errors.Trace(err)
-			}
-			if e.partialResult == nil {
-				// Finished.
-				return nil, nil
-			}
-		}
-		// Get a row from partial result.
-		rowData, err := e.partialResult.Next(ctx)
-		if err != nil {
-			e.feedback.Invalidate()
-			return nil, errors.Trace(err)
-		}
-		if rowData == nil {
-			// Finish the current partial result and get the next one.
-			err = e.partialResult.Close()
-			terror.Log(errors.Trace(err))
-			e.partialResult = nil
-			continue
-		}
-		err = decodeRawValues(rowData, e.schema, e.ctx.GetSessionVars().GetTimeZone())
-		if err != nil {
-			e.feedback.Invalidate()
-			return nil, errors.Trace(err)
-		}
-		return rowData, nil
-	}
 }
 
 // NextChunk implements the Executor NextChunk interface.
