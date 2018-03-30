@@ -1565,9 +1565,9 @@ func (e *InsertExec) batchUpdateRows(handles []int64, rowValues [][]byte, onDupl
 	}
 	rows := make([][]types.Datum, 0, len(handles))
 	for i, handle := range handles {
-		row, err := tables.DecodeRawRowData(e.ctx, e.Table.Meta(), handle, e.Table.WritableCols(), rowValues[i])
-		if err != nil {
-			return errors.Trace(err)
+		row, err1 := tables.DecodeRawRowData(e.ctx, e.Table.Meta(), handle, e.Table.WritableCols(), rowValues[i])
+		if err1 != nil {
+			return errors.Trace(err1)
 		}
 		rows = append(rows, row)
 	}
