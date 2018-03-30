@@ -310,7 +310,7 @@ func (p *LogicalJoin) buildRangeForIndexJoin(indexInfo *model.IndexInfo, innerPl
 	// After constant propagation, there won'be cases that t1.a=t2.a and t2.a=1 occur in the same time.
 	// And if there're cases like t1.a=t2.a and t1.a > 1, we can also guarantee that t1.a > 1 won't be chosen as access condition.
 	// So DetachCondAndBuildRangeForIndex won't miss the equal conditions we generate.
-	ranges, accesses, remained, _, err := ranger.DetachCondAndBuildRangeForIndex(p.ctx.GetSessionVars().StmtCtx, conds, idxCols, colLengths)
+	ranges, accesses, remained, _, err := ranger.DetachCondAndBuildRangeForIndex(p.ctx, conds, idxCols, colLengths)
 	if err != nil {
 		terror.Log(errors.Trace(err))
 		return nil, nil, nil

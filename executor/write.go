@@ -1167,7 +1167,7 @@ func (e *InsertValues) getRows(cols []*table.Column, ignoreErr bool) (rows [][]t
 			return nil, errors.Trace(err)
 		}
 		e.rowCount = uint64(i)
-		rows[i], err = e.getRow(cols, list, ignoreErr)
+		rows[i], err = e.getRow(cols, list, i, ignoreErr)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1175,9 +1175,29 @@ func (e *InsertValues) getRows(cols []*table.Column, ignoreErr bool) (rows [][]t
 	return
 }
 
+// resetErrDataTooLong reset ErrDataTooLong error msg.
+// types.ErrDataTooLong is produced in types.ProduceStrWithSpecifiedTp, there is no column info in there,
+// so we reset the error msg here, and wrap old err with errors.Wrap.
+func resetErrDataTooLong(colName string, rowIdx int, err error) error {
+	newErr := types.ErrDataTooLong.Gen("Data too long for column '%v' at row %v", colName, rowIdx)
+	return errors.Wrap(err, newErr)
+}
+
+func (e *InsertValues) handleErr(col *table.Column, rowIdx int, err error, ignoreErr bool) error {
+	if err == nil {
+		return nil
+	}
+
+	if types.ErrDataTooLong.Equal(err) {
+		return resetErrDataTooLong(col.Name.O, rowIdx+1, err)
+	}
+
+	return e.filterErr(err, ignoreErr)
+}
+
 // getRow eval the insert statement. Because the value of column may calculated based on other column,
 // it use fillDefaultValues to init the empty row before eval expressions when needFillDefaultValues is true.
-func (e *InsertValues) getRow(cols []*table.Column, list []expression.Expression, ignoreErr bool) ([]types.Datum, error) {
+func (e *InsertValues) getRow(cols []*table.Column, list []expression.Expression, rowIdx int, ignoreErr bool) ([]types.Datum, error) {
 	rowLen := len(e.Table.Cols())
 	if e.hasExtraHandle {
 		rowLen++
@@ -1193,11 +1213,11 @@ func (e *InsertValues) getRow(cols []*table.Column, list []expression.Expression
 
 	for i, expr := range list {
 		val, err := expr.Eval(row)
-		if err = e.filterErr(err, ignoreErr); err != nil {
+		if err = e.handleErr(cols[i], rowIdx, err, ignoreErr); err != nil {
 			return nil, errors.Trace(err)
 		}
 		val, err = table.CastValue(e.ctx, val, cols[i].ToInfo())
-		if err = e.filterErr(err, ignoreErr); err != nil {
+		if err = e.handleErr(cols[i], rowIdx, err, ignoreErr); err != nil {
 			return nil, errors.Trace(err)
 		}
 
@@ -1691,6 +1711,7 @@ func getUpdateColumns(assignList []*expression.Assignment, schemaLen int) ([]boo
 
 func (e *UpdateExec) fetchChunkRows(ctx context.Context) error {
 	fields := e.children[0].retTypes()
+	globalRowIdx := 0
 	for {
 		chk := chunk.NewChunk(fields)
 		err := e.children[0].NextChunk(ctx, chk)
@@ -1705,23 +1726,37 @@ func (e *UpdateExec) fetchChunkRows(ctx context.Context) error {
 		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
 			chunkRow := chk.GetRow(rowIdx)
 			datumRow := chunkRow.GetDatumRow(fields)
-			newRow, err1 := e.composeNewRow(datumRow)
+			newRow, err1 := e.composeNewRow(globalRowIdx, datumRow)
 			if err1 != nil {
 				return errors.Trace(err1)
 			}
 			e.rows = append(e.rows, datumRow)
 			e.newRowsData = append(e.newRowsData, newRow)
+			globalRowIdx++
 		}
 	}
 	return nil
 }
 
-func (e *UpdateExec) composeNewRow(oldRow Row) (Row, error) {
+func (e *UpdateExec) handleErr(colName model.CIStr, rowIdx int, err error) error {
+	if err == nil {
+		return nil
+	}
+
+	if types.ErrDataTooLong.Equal(err) {
+		return resetErrDataTooLong(colName.O, rowIdx+1, err)
+	}
+
+	return errors.Trace(err)
+}
+
+func (e *UpdateExec) composeNewRow(rowIdx int, oldRow Row) (Row, error) {
 	newRowData := oldRow.Copy()
 	for _, assign := range e.OrderedList {
 		val, err := assign.Expr.Eval(newRowData)
-		if err != nil {
-			return nil, errors.Trace(err)
+
+		if err1 := e.handleErr(assign.Col.ColName, rowIdx, err); err1 != nil {
+			return nil, errors.Trace(err1)
 		}
 		newRowData[assign.Col.Index] = val
 	}
