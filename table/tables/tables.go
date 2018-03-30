@@ -498,22 +498,17 @@ func (t *Table) addIndices(ctx sessionctx.Context, recordID int64, r []types.Dat
 	return 0, nil
 }
 
-// RowWithCols implements table.Table RowWithCols interface.
-func (t *Table) RowWithCols(ctx sessionctx.Context, h int64, cols []*table.Column) ([]types.Datum, error) {
-	// Get raw row data from kv.
-	key := t.RecordKey(h)
-	value, err := ctx.Txn().Get(key)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	// Decode raw row data.
+// DecodeRawRowData decodes raw row data to a datum row.
+func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h int64, cols []*table.Column,
+	value []byte) ([]types.Datum,
+	error) {
 	v := make([]types.Datum, len(cols))
 	colTps := make(map[int64]*types.FieldType, len(cols))
 	for i, col := range cols {
 		if col == nil {
 			continue
 		}
-		if col.IsPKHandleColumn(t.meta) {
+		if col.IsPKHandleColumn(meta) {
 			if mysql.HasUnsignedFlag(col.Flag) {
 				v[i].SetUint64(uint64(h))
 			} else {
@@ -532,7 +527,7 @@ func (t *Table) RowWithCols(ctx sessionctx.Context, h int64, cols []*table.Colum
 		if col == nil {
 			continue
 		}
-		if col.IsPKHandleColumn(t.meta) {
+		if col.IsPKHandleColumn(meta) {
 			continue
 		}
 		ri, ok := rowMap[col.ID]
@@ -545,6 +540,18 @@ func (t *Table) RowWithCols(ctx sessionctx.Context, h int64, cols []*table.Colum
 			return nil, errors.Trace(err)
 		}
 	}
+	return v, nil
+}
+
+// RowWithCols implements table.Table RowWithCols interface.
+func (t *Table) RowWithCols(ctx sessionctx.Context, h int64, cols []*table.Column) ([]types.Datum, error) {
+	// Get raw row data from kv.
+	key := t.RecordKey(h)
+	value, err := ctx.Txn().Get(key)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	v, err := DecodeRawRowData(ctx, t.Meta(), h, cols, value)
 	return v, nil
 }
 

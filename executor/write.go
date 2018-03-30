@@ -790,6 +790,7 @@ type InsertExec struct {
 	IgnoreErr bool
 
 	finished bool
+	rowCount int
 }
 
 func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) (Row, error) {
@@ -797,7 +798,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) (Row, error
 	sessVars := e.ctx.GetSessionVars()
 	defer sessVars.CleanBuffers()
 
-	rowCount := 0
+	e.rowCount = 0
 	if !sessVars.ImportingData {
 		sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(e.ctx.Txn(), kv.TempTxnMemBufCap)
 	}
@@ -815,7 +816,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) (Row, error
 	}
 	if !e.IgnoreErr && len(e.OnDuplicate) > 0 {
 		var err error
-		rows, rowCount, err = batchUpdateDupRows(e.ctx, e.Table, rows, e.OnDuplicate)
+		rows, err = e.batchUpdateDupRows(rows, e.OnDuplicate)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -826,9 +827,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) (Row, error
 		if row == nil {
 			continue
 		}
-		var err error
-		rowCount, err = checkBatchLimit(e.ctx, rowCount)
-		if err != nil {
+		if err := e.checkBatchLimit(); err != nil {
 			return nil, errors.Trace(err)
 		}
 		if len(e.OnDuplicate) == 0 && !e.IgnoreErr {
@@ -840,16 +839,22 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) (Row, error
 			if !sessVars.ImportingData {
 				e.ctx.StmtAddDirtyTableOP(DirtyTableAddRow, e.Table.Meta().ID, h, row)
 			}
-			rowCount++
+			e.rowCount++
 			continue
 		}
 
 		if kv.ErrKeyExists.Equal(err) {
 			if e.IgnoreErr && len(e.OnDuplicate) > 0 {
-				if err = onDuplicateUpdate(e.ctx, e.Table, row, h, e.OnDuplicate); err != nil {
+				data, err1 := e.Table.RowWithCols(e.ctx, h, e.Table.WritableCols())
+				if err1 != nil {
+					return nil, errors.Trace(err1)
+				}
+				// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
+				e.ctx.GetSessionVars().CurrInsertValues = types.DatumRow(row)
+				if err = e.onDuplicateUpdateRows([]int64{h}, [][]types.Datum{data}, e.OnDuplicate); err != nil {
 					return nil, errors.Trace(err)
 				}
-				rowCount++
+				e.rowCount++
 				continue
 			}
 		}
@@ -978,32 +983,32 @@ func batchGetInsertRows(ctx sessionctx.Context, t table.Table, rows [][]types.Da
 	return rowWithKeys, values, nil
 }
 
-func checkBatchLimit(ctx sessionctx.Context, rowCount int) (int, error) {
-	sessVars := ctx.GetSessionVars()
+func (e *InsertExec) checkBatchLimit() error {
+	sessVars := e.ctx.GetSessionVars()
 	batchInsert := sessVars.BatchInsert && !sessVars.InTxn()
 	batchSize := sessVars.DMLBatchSize
-	if batchInsert && rowCount >= batchSize {
-		ctx.StmtCommit()
-		if err := ctx.NewTxn(); err != nil {
+	if batchInsert && e.rowCount >= batchSize {
+		e.ctx.StmtCommit()
+		if err := e.ctx.NewTxn(); err != nil {
 			// We should return a special error for batch insert.
-			return rowCount, ErrBatchInsertFail.Gen("BatchInsert failed with error: %v", err)
+			return ErrBatchInsertFail.Gen("BatchInsert failed with error: %v", err)
 		}
-		rowCount = 0
+		e.rowCount = 0
 		if !sessVars.ImportingData {
-			sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(ctx.Txn(), kv.TempTxnMemBufCap)
+			sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(e.ctx.Txn(), kv.TempTxnMemBufCap)
 		}
 	}
-	return rowCount, nil
+	return nil
 }
 
-func batchUpdateDupRows(ctx sessionctx.Context, t table.Table, rows [][]types.Datum, onDuplicate []*expression.Assignment) ([][]types.Datum, int, error) {
-	rowWithKeys, values, err := batchGetInsertRows(ctx, t, rows)
+func (e *InsertExec) batchUpdateDupRows(rows [][]types.Datum, onDuplicate []*expression.Assignment) ([][]types.Datum, error) {
+	rowWithKeys, values, err := batchGetInsertRows(e.ctx, e.Table, rows)
 	if err != nil {
-		return nil, 0, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
-	rowCount := 0
-
+	handles := make([]int64, 0, len(rowWithKeys))
+	rowValues := make([][]byte, 0, len(rowWithKeys))
 	for i, v := range rowWithKeys {
 		for _, k := range v {
 			if val, found := values[string(k.key)]; found {
@@ -1011,32 +1016,33 @@ func batchUpdateDupRows(ctx sessionctx.Context, t table.Table, rows [][]types.Da
 				if k.isRecordKey {
 					handle, err = tablecodec.DecodeRowKey(k.key)
 					if err != nil {
-						return nil, 0, errors.Trace(err)
+						return nil, errors.Trace(err)
 					}
+					rowValues = append(rowValues, val)
 				} else {
 					handle, err = tables.DecodeHandle(val)
 					if err != nil {
-						return nil, 0, errors.Trace(err)
+						return nil, errors.Trace(err)
 					}
 				}
+				handles = append(handles, handle)
 				if err != nil {
-					return nil, 0, errors.Trace(err)
+					return nil, errors.Trace(err)
 				}
-				if err = onDuplicateUpdate(ctx, t, rows[i], handle, onDuplicate); err != nil {
-					return nil, 0, errors.Trace(err)
-				}
-				rowCount++
-				rowCount, err = checkBatchLimit(ctx, rowCount)
-				if err != nil {
-					return nil, 0, errors.Trace(err)
-				}
+				// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
+				e.ctx.GetSessionVars().CurrInsertValues = types.DatumRow(rows[i])
 				rows[i] = nil
 				delete(values, string(k.key))
 				break
 			}
 		}
 	}
-	return rows, rowCount, nil
+
+	if err = e.batchUpdateRows(handles, rowValues, onDuplicate); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return rows, nil
 }
 
 // batchMarkDupRows marks rows with duplicate errors as nil.
@@ -1544,33 +1550,57 @@ func (e *InsertValues) adjustAutoIncrementDatum(row []types.Datum, i int, c *tab
 	return nil
 }
 
-// onDuplicateUpdate updates the duplicate row.
-// TODO: Report rows affected and last insert id.
-func onDuplicateUpdate(ctx sessionctx.Context, t table.Table, row []types.Datum, h int64,
-	cols []*expression.Assignment) error {
-	data, err := t.RowWithCols(ctx, h, t.WritableCols())
-	log.Infof("YUSP handle %d", h)
+func (e *InsertExec) batchUpdateRows(handles []int64, rowValues [][]byte, onDuplicate []*expression.Assignment) error {
+	batchKeys := make([]kv.Key, 0, len(handles)-len(rowValues))
+	for _, handle := range handles[len(rowValues):] {
+		batchKeys = append(batchKeys, e.Table.RecordKey(handle))
+	}
+	values, err := e.ctx.Txn().GetSnapshot().BatchGet(batchKeys)
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
-	ctx.GetSessionVars().CurrInsertValues = types.DatumRow(row)
-
-	// evaluate assignment
-	assignFlag := make([]bool, len(t.WritableCols()))
-	newData := make(types.DatumRow, len(data))
-	copy(newData, data)
-	for _, col := range cols {
-		val, err1 := col.Expr.Eval(newData)
-		if err1 != nil {
-			return errors.Trace(err1)
-		}
-		newData[col.Col.Index] = val
-		assignFlag[col.Col.Index] = true
+	for _, handle := range handles[len(rowValues):] {
+		// The value should be found in the values map, otherwise it should panic here!
+		rowValues = append(rowValues, values[string(e.Table.RecordKey(handle))])
 	}
-	if _, err = updateRecord(ctx, h, data, newData, assignFlag, t, true, false); err != nil {
+	rows := make([][]types.Datum, 0, len(handles))
+	for i, handle := range handles {
+		row, err := tables.DecodeRawRowData(e.ctx, e.Table.Meta(), handle, e.Table.WritableCols(), rowValues[i])
+		if err != nil {
+			return errors.Trace(err)
+		}
+		rows = append(rows, row)
+	}
+	err = e.onDuplicateUpdateRows(handles, rows, onDuplicate)
+	if err != nil {
 		return errors.Trace(err)
+	}
+	return nil
+}
+
+// onDuplicateUpdateRows updates the duplicate row.
+// TODO: Report rows affected and last insert id.
+func (e *InsertExec) onDuplicateUpdateRows(handles []int64, rows [][]types.Datum, cols []*expression.Assignment) error {
+	assignFlag := make([]bool, len(e.Table.WritableCols()))
+
+	for i, handle := range handles {
+		newData := make(types.DatumRow, len(rows[i]))
+		copy(newData, rows[i])
+		for _, col := range cols {
+			val, err1 := col.Expr.Eval(newData)
+			if err1 != nil {
+				return errors.Trace(err1)
+			}
+			newData[col.Col.Index] = val
+			assignFlag[col.Col.Index] = true
+		}
+		if _, err := updateRecord(e.ctx, handle, rows[i], newData, assignFlag, e.Table, true, false); err != nil {
+			return errors.Trace(err)
+		}
+		e.rowCount++
+		if err := e.checkBatchLimit(); err != nil {
+			return errors.Trace(err)
+		}
 	}
 	return nil
 }
