@@ -356,7 +356,6 @@ type IndexReaderExecutor struct {
 
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
 	result        distsql.SelectResult
-	partialResult distsql.PartialResult
 	// columns are only required by union scan.
 	columns   []*model.ColumnInfo
 	priority  int
