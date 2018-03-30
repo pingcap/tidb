@@ -14,19 +14,50 @@
 package server
 
 import (
+	"github.com/juju/errors"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = Suite(&testUtilSuite{})
 
+func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
+	store, err := mockstore.NewMockTikvStore()
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	session.SetSchemaLease(0)
+	dom, err := session.BootstrapSession(store)
+	return store, dom, errors.Trace(err)
+}
+
 type testUtilSuite struct {
+	store kv.Storage
+	dom   *domain.Domain
+}
+
+func (s *testUtilSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
+
+	var err error
+	s.store, s.dom, err = newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+}
+
+func (s *testUtilSuite) TearDownSuite(c *C) {
+	s.dom.Close()
+	s.store.Close()
+
+	testleak.AfterTest(c)()
 }
 
 func (s *testUtilSuite) TestDumpBinaryTime(c *C) {
-	defer testleak.AfterTest(c)()
 	t, err := types.ParseTimestamp(nil, "0000-00-00 00:00:00.0000000")
 	c.Assert(err, IsNil)
 	d, err := dumpBinaryDateTime(nil, t, nil)
@@ -51,8 +82,6 @@ func (s *testUtilSuite) TestDumpBinaryTime(c *C) {
 }
 
 func (s *testUtilSuite) TestDumpTextValue(c *C) {
-	defer testleak.AfterTest(c)()
-
 	columns := []*ColumnInfo{{
 		Type:    mysql.TypeLonglong,
 		Decimal: mysql.NotFixedDec,
