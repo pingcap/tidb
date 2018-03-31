@@ -283,6 +283,8 @@ type SessionVars struct {
 	MemQuotaQuery int64
 	// MemQuotaHashJoin defines the memory quota for a hash join executor.
 	MemQuotaHashJoin int64
+	// MemQuotaMergeJoin defines the memory quota for a merge join executor.
+	MemQuotaMergeJoin int64
 	// MemQuotaSort defines the memory quota for a sort executor.
 	MemQuotaSort int64
 	// MemQuotaTopn defines the memory quota for a top n executor.
@@ -323,6 +325,7 @@ func NewSessionVars() *SessionVars {
 		DMLBatchSize:               DefDMLBatchSize,
 		MemQuotaQuery:              DefTiDBMemQuotaQuery,
 		MemQuotaHashJoin:           DefTiDBMemQuotaHashJoin,
+		MemQuotaMergeJoin:          DefTiDBMemQuotaMergeJoin,
 		MemQuotaSort:               DefTiDBMemQuotaSort,
 		MemQuotaTopn:               DefTiDBMemQuotaTopn,
 		MemQuotaIndexLookupReader:  DefTiDBMemQuotaIndexLookupReader,
@@ -501,6 +504,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.MemQuotaQuery = tidbOptInt64(val, DefTiDBMemQuotaQuery)
 	case TIDBMemQuotaHashJoin:
 		s.MemQuotaHashJoin = tidbOptInt64(val, DefTiDBMemQuotaHashJoin)
+	case TIDBMemQuotaMergeJoin:
+		s.MemQuotaMergeJoin = tidbOptInt64(val, DefTiDBMemQuotaMergeJoin)
 	case TIDBMemQuotaSort:
 		s.MemQuotaSort = tidbOptInt64(val, DefTiDBMemQuotaSort)
 	case TIDBMemQuotaTopn:
