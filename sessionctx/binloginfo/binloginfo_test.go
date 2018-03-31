@@ -27,7 +27,9 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
@@ -76,6 +78,8 @@ type testBinlogSuite struct {
 	ddl      ddl.DDL
 }
 
+const maxRecvMsgSize = 64 * 1024
+
 func (s *testBinlogSuite) SetUpSuite(c *C) {
 	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
@@ -84,7 +88,7 @@ func (s *testBinlogSuite) SetUpSuite(c *C) {
 	s.unixFile = "/tmp/mock-binlog-pump" + strconv.FormatInt(time.Now().UnixNano(), 10)
 	l, err := net.Listen("unix", s.unixFile)
 	c.Assert(err, IsNil)
-	s.serv = grpc.NewServer()
+	s.serv = grpc.NewServer(grpc.MaxRecvMsgSize(maxRecvMsgSize))
 	s.pump = new(mockBinlogPump)
 	binlog.RegisterPumpServer(s.serv, s.pump)
 	go s.serv.Serve(l)
@@ -249,6 +253,19 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 	newBinlogLen := len(pump.mu.payloads)
 	pump.mu.Unlock()
 	c.Assert(newBinlogLen, Equals, originBinlogLen)
+}
+
+func (s *testBinlogSuite) TestMaxRecvSize(c *C) {
+	info := &binloginfo.BinlogInfo{
+		Data: &binlog.Binlog{
+			Tp:            binlog.BinlogType_Prewrite,
+			PrewriteValue: make([]byte, maxRecvMsgSize+1),
+		},
+		Client: s.client,
+	}
+	err := info.WriteBinlog(1)
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrCritical.Equal(err), IsFalse, Commentf("%v", err))
 }
 
 func getLatestBinlogPrewriteValue(c *C, pump *mockBinlogPump) *binlog.PrewriteValue {
