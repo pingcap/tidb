@@ -400,7 +400,7 @@ func getDefaultValue(ctx sessionctx.Context, c *ast.ColumnOption, tp byte, fsp i
 			return v.GetBinaryLiteral().ToString(), nil
 		}
 		// For other kind of fields (e.g. INT), we supply its integer value so that it acts as integers.
-		return v.GetBinaryLiteral().ToInt()
+		return v.GetBinaryLiteral().ToInt(ctx.GetSessionVars().StmtCtx)
 	}
 
 	if tp == mysql.TypeBit {
