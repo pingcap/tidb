@@ -321,7 +321,10 @@ func (b *executorBuilder) buildCleanupIndex(v *plan.CleanupIndex) Executor {
 	}
 	idxName := strings.ToLower(v.IndexName)
 	var index table.Index
-	for _, idx := range t.WritableIndices() {
+	for _, idx := range t.Indices() {
+		if idx.Meta().State != model.StatePublic {
+			continue
+		}
 		if idxName == idx.Meta().Name.L {
 			index = idx
 			break
