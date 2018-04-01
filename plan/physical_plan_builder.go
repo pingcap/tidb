@@ -314,7 +314,7 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInf
 	if len(ds.pushedDownConds) > 0 {
 		is.conditions = ds.pushedDownConds
 		if len(idxCols) > 0 {
-			is.Ranges, is.AccessCondition, is.filterCondition, eqCount, err = ranger.DetachCondAndBuildRangeForIndex(sc, ds.pushedDownConds, idxCols, colLengths)
+			is.Ranges, is.AccessCondition, is.filterCondition, eqCount, err = ranger.DetachCondAndBuildRangeForIndex(ds.ctx, ds.pushedDownConds, idxCols, colLengths)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
