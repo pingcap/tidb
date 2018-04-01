@@ -430,6 +430,10 @@ func (s *testSuite) TestInsertOnDup(c *C) {
 	r = tk.MustQuery("select * from t;")
 	r.Check(testkit.Rows(rowStr1, rowStr2))
 
+	tk.MustExec("insert into t values (2), (3) on duplicate key update i = 3")
+	r = tk.MustQuery("select * from t;")
+	rowStr3 := fmt.Sprintf("%v", "3")
+	r.Check(testkit.Rows(rowStr1, rowStr3))
 }
 
 func (s *testSuite) TestReplace(c *C) {

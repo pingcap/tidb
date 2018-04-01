@@ -844,12 +844,16 @@ func (t *Table) getMutation(ctx sessionctx.Context) *binlog.TableMutation {
 	return ctx.StmtGetMutation(t.ID)
 }
 
-// canSkip is for these cases, we can skip the columns in encoded row:
+func (t *Table) canSkip(col *table.Column, value types.Datum) bool {
+	return CanSkip(t.Meta(), col, value)
+}
+
+// CanSkip is for these cases, we can skip the columns in encoded row:
 // 1. the column is included in primary key;
 // 2. the column's default value is null, and the value equals to that;
 // 3. the column is virtual generated.
-func (t *Table) canSkip(col *table.Column, value types.Datum) bool {
-	if col.IsPKHandleColumn(t.meta) {
+func CanSkip(info *model.TableInfo, col *table.Column, value types.Datum) bool {
+	if col.IsPKHandleColumn(info) {
 		return true
 	}
 	if col.DefaultValue == nil && value.IsNull() {
