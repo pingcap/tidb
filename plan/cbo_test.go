@@ -123,6 +123,35 @@ func (s *testAnalyzeSuite) TestStraightJoin(c *C) {
 	))
 }
 
+func (s *testAnalyzeSuite) TestTableDual(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	testKit := testkit.NewTestKit(c, store)
+	testKit.MustExec(`use test`)
+	h := dom.StatsHandle()
+	testKit.MustExec(`create table t(a int)`)
+	testKit.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10)")
+	c.Assert(h.HandleDDLEvent(<-h.DDLEventCh()), IsNil)
+
+	h.DumpStatsDeltaToKV()
+	c.Assert(h.Update(dom.InfoSchema()), IsNil)
+
+	testKit.MustQuery(`explain select * from t where 1 = 0`).Check(testkit.Rows(
+		`TableDual_6 Projection_5  root rows:0 0.00`,
+		`Projection_5  TableDual_6 root test.t.a 0.00`,
+	))
+
+	testKit.MustQuery(`explain select * from t where 1 = 1 limit 0`).Check(testkit.Rows(
+		`TableDual_5   root rows:0 0.00`,
+	))
+}
+
 func (s *testAnalyzeSuite) TestEstimation(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
