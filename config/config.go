@@ -229,7 +229,7 @@ var defaultConf = Config{
 	Lease:               "10s",
 	TokenLimit:          1000,
 	OOMAction:           "log",
-	EnableStreaming:     true,
+	EnableStreaming:     false,
 	LowerCaseTableNames: 2,
 	Log: Log{
 		Level:  "info",
