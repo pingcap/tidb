@@ -22,7 +22,6 @@ type pkgTestSuite struct {
 type MockExec struct {
 	baseExecutor
 
-	fields    []*ast.ResultField
 	Rows      []Row
 	curRowIdx int
 }

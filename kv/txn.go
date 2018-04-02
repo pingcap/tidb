@@ -38,24 +38,26 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 			return errors.Trace(err)
 		}
 
+		// originalTxnTS is used to trace the original transaction when the function is retryable.
 		if i == 0 {
 			originalTxnTS = txn.StartTS()
 		}
 
 		err = f(txn)
-		if retryable && IsRetryableError(err) {
-			log.Warnf("[kv] Retry txn %v original txn %v err %v", txn, originalTxnTS, err)
-			err1 := txn.Rollback()
-			terror.Log(errors.Trace(err1))
-			continue
-		}
 		if err != nil {
 			err1 := txn.Rollback()
 			terror.Log(errors.Trace(err1))
+			if retryable && IsRetryableError(err) {
+				log.Warnf("[kv] Retry txn %v original txn %v err %v", txn, originalTxnTS, err)
+				continue
+			}
 			return errors.Trace(err)
 		}
 
 		err = txn.Commit(context.Background())
+		if err == nil {
+			break
+		}
 		if retryable && IsRetryableError(err) {
 			log.Warnf("[kv] Retry txn %v original txn %v err %v", txn, originalTxnTS, err)
 			err1 := txn.Rollback()
@@ -63,10 +65,7 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 			BackOff(i)
 			continue
 		}
-		if err != nil {
-			return errors.Trace(err)
-		}
-		break
+		return errors.Trace(err)
 	}
 	return errors.Trace(err)
 }
