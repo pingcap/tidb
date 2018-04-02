@@ -147,6 +147,16 @@ func (d *ddl) updateDDLJob(t *meta.Meta, job *model.Job, meetErr bool) error {
 	return errors.Trace(t.UpdateDDLJob(0, job, updateRawArgs))
 }
 
+func (d *ddl) deleteRange(job *model.Job) error {
+	var err error
+	if job.Version <= currentVersion {
+		err = d.delRangeManager.addDelRangeJob(job)
+	} else {
+		err = errInvalidJobVersion.GenByArgs(job.Version, currentVersion)
+	}
+	return errors.Trace(err)
+}
+
 // finishDDLJob deletes the finished DDL job in the ddl queue and puts it to history queue.
 // If the DDL job need to handle in background, it will prepare a background job.
 func (d *ddl) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
@@ -154,22 +164,19 @@ func (d *ddl) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	defer func() {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerFinishDDLJob, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
+
 	switch job.Type {
 	case model.ActionAddIndex:
 		if job.State != model.JobStateRollbackDone {
 			break
 		}
 		// ActionAddIndex needs to delete ranges when it needs to be rolled back.
-		fallthrough
+		err = d.deleteRange(job)
 	case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex:
-		if job.Version <= currentVersion {
-			err = d.delRangeManager.addDelRangeJob(job)
-		} else {
-			err = errInvalidJobVersion.GenByArgs(job.Version, currentVersion)
-		}
-		if err != nil {
-			return errors.Trace(err)
-		}
+		err = d.deleteRange(job)
+	}
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	_, err = t.DeQueueDDLJob()

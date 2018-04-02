@@ -323,7 +323,7 @@ func (s *testDBSuite) TestCancelAddIndex(c *C) {
 	}
 
 	var checkErr error
-	var idxInfo *model.IndexInfo
+	var c3IdxInfo *model.IndexInfo
 	hook := &ddl.TestDDLCallback{}
 	first := true
 	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
@@ -337,13 +337,13 @@ func (s *testDBSuite) TestCancelAddIndex(c *C) {
 		// When the job satisfies this case of addIndexNotFirstReorg, the worker will start to backfill indexes.
 		if !addIndexNotFirstReorg {
 			// Get the index's meta.
-			if idxInfo != nil {
+			if c3IdxInfo != nil {
 				return
 			}
 			t := s.testGetTable(c, "t1")
 			for _, index := range t.WritableIndices() {
 				if index.Meta().Name.L == "c3_index" {
-					idxInfo = index.Meta()
+					c3IdxInfo = index.Meta()
 				}
 			}
 			return
@@ -419,7 +419,7 @@ LOOP:
 	}
 
 	ctx := s.s.(sessionctx.Context)
-	idx := tables.NewIndex(t.Meta(), idxInfo)
+	idx := tables.NewIndex(t.Meta(), c3IdxInfo)
 	checkDelRangeDone(c, ctx, idx)
 
 	s.mustExec(c, "drop table t1")
