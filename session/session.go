@@ -350,15 +350,17 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	metrics.StatementPerTransaction.WithLabelValues(metrics.RetLabel(err)).Observe(float64(counter))
 	metrics.TransactionDuration.WithLabelValues(metrics.RetLabel(err)).Observe(float64(duration))
 	s.cleanRetryInfo()
-	fmt.Println("这里重置了...")
-	switch s.sessionVars.TxnIsolationLevelOneShot {
-	case 0:
-	case 1:
-		s.sessionVars.TxnIsolationLevelOneShot = 2
-	case 2:
-		s.sessionVars.TxnIsolationLevelOneShot = 0
-		terror.Log(s.sessionVars.SetSystemVar("tx_isolation_one_shot", ""))
+
+	if isoLevelOneShot := &s.sessionVars.TxnIsolationLevelOneShot; isoLevelOneShot.State != 0 {
+		switch isoLevelOneShot.State {
+		case 1:
+			isoLevelOneShot.State = 2
+		case 2:
+			isoLevelOneShot.State = 0
+			isoLevelOneShot.Value = ""
+		}
 	}
+
 	if err != nil {
 		log.Warnf("[%d] finished txn:%v, %v", s.sessionVars.ConnectionID, s.txn, err)
 		return errors.Trace(err)
@@ -1340,7 +1342,6 @@ func (s *session) ActivePendingTxn() error {
 		return errors.Trace(err)
 	}
 	s.sessionVars.TxnCtx.StartTS = s.txn.StartTS()
-
 	isoLevel, _ := s.sessionVars.GetSystemVar(variable.TxnIsolation)
 	if isoLevel == ast.ReadCommitted {
 		s.txn.SetOption(kv.IsolationLevel, kv.RC)

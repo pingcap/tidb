@@ -163,8 +163,13 @@ type SessionVars struct {
 	TxnCtx *TransactionContext
 
 	// TxnIsolationLevelOneShot is used to implements "set transaction isolation level ..."
-	// Value 0 means default, 1 means set but not used, 2 means used.
-	TxnIsolationLevelOneShot int
+	TxnIsolationLevelOneShot struct {
+		// state 0 means default
+		// state 1 means it's set in current transaction.
+		// state 2 means it should be used in current transaction.
+		State int
+		Value string
+	}
 
 	// Following variables are special for current session.
 
@@ -453,7 +458,8 @@ func (s *SessionVars) deleteSystemVar(name string) error {
 func (s *SessionVars) SetSystemVar(name string, val string) error {
 	switch name {
 	case "tx_isolation_one_shot":
-		s.TxnIsolationLevelOneShot = 1
+		s.TxnIsolationLevelOneShot.State = 1
+		s.TxnIsolationLevelOneShot.Value = val
 	case TimeZone:
 		tz, err := parseTimeZone(val)
 		if err != nil {

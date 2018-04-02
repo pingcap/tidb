@@ -1986,9 +1986,7 @@ func (s *testSessionSuite) TestSetTransactionIsolationOneShot(c *C) {
 	ctx := context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
 		c.Assert(req.IsolationLevel, Equals, kv.RC)
 	})
-	fmt.Println("雪融之前")
 	tk.Se.Execute(ctx, "select * from t where k = 1")
-	fmt.Println("雪融之前sdjfasdljfasdklf")
 
 	// Check it just take effect for one time.
 	ctx = context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
