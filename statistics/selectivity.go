@@ -44,11 +44,13 @@ const (
 	colType
 )
 
+const unknownColumnID = math.MinInt64
+
 // getConstantColumnID receives two expressions and if one of them is column and another is constant, it returns the
 // ID of the column.
 func getConstantColumnID(e []expression.Expression) int64 {
 	if len(e) != 2 {
-		return -1
+		return unknownColumnID
 	}
 	col, ok1 := e[0].(*expression.Column)
 	_, ok2 := e[1].(*expression.Constant)
@@ -60,7 +62,7 @@ func getConstantColumnID(e []expression.Expression) int64 {
 	if ok1 && ok2 {
 		return col.ID
 	}
-	return -1
+	return unknownColumnID
 }
 
 func pseudoSelectivity(t *Table, exprs []expression.Expression) float64 {
@@ -72,7 +74,7 @@ func pseudoSelectivity(t *Table, exprs []expression.Expression) float64 {
 			continue
 		}
 		colID := getConstantColumnID(fun.GetArgs())
-		if colID == -1 {
+		if colID == unknownColumnID {
 			continue
 		}
 		switch fun.FuncName.L {

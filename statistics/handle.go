@@ -149,7 +149,9 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *Table {
 	tbl, ok := h.statsCache.Load().(statsCache)[tblInfo.ID]
 	if !ok {
-		return PseudoTable(tblInfo)
+		tbl = PseudoTable(tblInfo)
+		h.UpdateTableStats([]*Table{tbl}, nil)
+		return tbl
 	}
 	return tbl
 }
