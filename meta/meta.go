@@ -520,6 +520,26 @@ func (m *Meta) DDLJobQueueLen() (int64, error) {
 	return m.txn.LLen(mDDLJobListKey)
 }
 
+// GetAllDDLJobs gets all DDL Jobs.
+func (m *Meta) GetAllDDLJobs() ([]*model.Job, error) {
+	values, err := m.txn.LGetAll(mDDLJobListKey)
+	if err != nil || values == nil {
+		return nil, errors.Trace(err)
+	}
+
+	jobs := make([]*model.Job, 0, len(values))
+	for _, val := range values {
+		job := &model.Job{}
+		err = job.Decode(val)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		jobs = append(jobs, job)
+	}
+
+	return jobs, nil
+}
+
 func (m *Meta) jobIDKey(id int64) []byte {
 	b := make([]byte, 8)
 	binary.BigEndian.PutUint64(b, uint64(id))

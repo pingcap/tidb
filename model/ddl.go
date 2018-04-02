@@ -127,6 +127,8 @@ type Job struct {
 	// StartTS uses timestamp allocated by TSO.
 	// Now it's the TS when we put the job to TiKV queue.
 	StartTS uint64 `json:"start_ts"`
+	//RelatedID is a job's ID that relates with the current job.
+	RelatedID int64 `json:"related_id"`
 	// Query string of the ddl job.
 	Query      string       `json:"query"`
 	BinlogInfo *HistoryInfo `json:"binlog"`
@@ -211,6 +213,41 @@ func (job *Job) String() string {
 	rowCount := job.GetRowCount()
 	return fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v, Err:%v, ErrCount:%d, SnapshotVersion:%v",
 		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args), tsConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer)
+}
+
+func (job *Job) isRelatedSchema(job1 *Job) (bool, error) {
+	if job1.Type == ActionDropSchema || job1.Type == ActionCreateSchema {
+		if job1.SchemaID == job.SchemaID {
+			return true, nil
+		}
+		if job.Type == ActionRenameTable {
+			var schemaID int64
+			if err := job.DecodeArgs(&schemaID); err != nil {
+				return false, errors.Trace(err)
+			}
+			if job1.SchemaID == schemaID {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+// IsRelatedJob returns whether job and job1 are related or not.
+func (job *Job) IsRelatedJob(job1 *Job) (bool, error) {
+	isRelated, err := job.isRelatedSchema(job1)
+	if err != nil || isRelated {
+		return isRelated, errors.Trace(err)
+	}
+	isRelated, err = job1.isRelatedSchema(job)
+	if err != nil || isRelated {
+		return isRelated, errors.Trace(err)
+	}
+
+	if job1.TableID == job.TableID {
+		return true, nil
+	}
+	return false, nil
 }
 
 // IsFinished returns whether job is finished or not.

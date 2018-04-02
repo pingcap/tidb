@@ -476,3 +476,53 @@ func (s *testDDLSuite) TestIgnorableSpec(c *C) {
 		c.Assert(isIgnorableSpec(spec), IsTrue)
 	}
 }
+
+func (s *testDDLSuite) TestSetJobRelation(c *C) {
+	defer testleak.AfterTest(c)()
+	store := testCreateStore(c, "test_set_job_relation")
+	defer store.Close()
+
+	job1 := &model.Job{ID: 1, TableID: 1}
+	job2 := &model.Job{ID: 2, TableID: 1}
+	job3 := &model.Job{ID: 3, TableID: 2}
+	job6 := &model.Job{ID: 6, TableID: 1}
+	job7 := &model.Job{ID: 7, TableID: 2}
+	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		err := t.EnQueueDDLJob(job1)
+		c.Assert(err, IsNil)
+		err = t.EnQueueDDLJob(job2)
+		c.Assert(err, IsNil)
+		err = t.EnQueueDDLJob(job3)
+		c.Assert(err, IsNil)
+		err = t.EnQueueDDLJob(job6)
+		c.Assert(err, IsNil)
+		err = t.EnQueueDDLJob(job7)
+		c.Assert(err, IsNil)
+		return nil
+	})
+	job4 := &model.Job{ID: 4, TableID: 1}
+	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		err := setJobRelation(t, job4)
+		c.Assert(err, IsNil)
+		c.Assert(job4.RelatedID, Equals, int64(2))
+		return nil
+	})
+	job5 := &model.Job{ID: 5, TableID: 2}
+	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		err := setJobRelation(t, job5)
+		c.Assert(err, IsNil)
+		c.Assert(job5.RelatedID, Equals, int64(3))
+		return nil
+	})
+	job8 := &model.Job{ID: 8, TableID: 3}
+	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		err := setJobRelation(t, job8)
+		c.Assert(err, IsNil)
+		c.Assert(job8.RelatedID, Equals, int64(0))
+		return nil
+	})
+}

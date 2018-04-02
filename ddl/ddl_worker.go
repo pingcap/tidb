@@ -91,6 +91,29 @@ func (d *ddl) isOwner() bool {
 	return isOwner
 }
 
+// setJobRelation sets the current job's relation-ID to the ID of a job that is related to current job.
+// The related job's ID must less than the current job's ID, and we need the largest one in the list.
+func setJobRelation(t *meta.Meta, curJob *model.Job) error {
+	jobs, err := t.GetAllDDLJobs()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, job := range jobs {
+		if curJob.ID < job.ID {
+			continue
+		}
+		isRelated, err := curJob.IsRelatedJob(job)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if isRelated {
+			curJob.RelatedID = job.ID
+			break
+		}
+	}
+	return nil
+}
+
 // addDDLJob gets a global job ID and puts the DDL job in the DDL queue.
 func (d *ddl) addDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	startTime := time.Now()
