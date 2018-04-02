@@ -150,6 +150,9 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 			return errors.Trace(err)
 		}
 		oldSnapshotTS := sessionVars.SnapshotTS
+		if name == "tx_isolation_one_shot" && sessionVars.InTxn() {
+			return errors.Trace(ErrCantChangeTxCharacteristics)
+		}
 		err = variable.SetSessionSystemVar(sessionVars, name, value)
 		if err != nil {
 			return errors.Trace(err)
