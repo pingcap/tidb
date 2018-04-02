@@ -94,6 +94,14 @@ var (
 			Name:      "keep_alive_total",
 			Help:      "Counter of TiDB keep alive.",
 		})
+
+	PlanCacheCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "plan_cache_total",
+			Help:      "Counter of query using plan cache.",
+		}, []string{LblType})
 )
 
 func init() {
@@ -105,6 +113,7 @@ func init() {
 	prometheus.MustRegister(ServerEventCounter)
 	prometheus.MustRegister(TimeJumpBackCounter)
 	prometheus.MustRegister(KeepAliveCounter)
+	prometheus.MustRegister(PlanCacheCounter)
 }
 
 // ExecuteErrorToLabel converts an execute error to label.

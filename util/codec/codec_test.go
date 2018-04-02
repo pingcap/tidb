@@ -452,12 +452,12 @@ func (s *testCodecSuite) TestBytes(c *C) {
 
 	for _, t := range tblBytes {
 		b := EncodeBytes(nil, t)
-		_, v, err := DecodeBytes(b)
+		_, v, err := DecodeBytes(b, nil)
 		c.Assert(err, IsNil)
 		c.Assert(t, DeepEquals, v, Commentf("%v - %v - %v", t, b, v))
 
 		b = EncodeBytesDesc(nil, t)
-		_, v, err = DecodeBytesDesc(b)
+		_, v, err = DecodeBytesDesc(b, nil)
 		c.Assert(err, IsNil)
 		c.Assert(t, DeepEquals, v, Commentf("%v - %v - %v", t, b, v))
 
@@ -912,20 +912,21 @@ func (s *testCodecSuite) TestDecodeOneToChunk(c *C) {
 		tps = append(tps, t.tp)
 		datums = append(datums, types.NewDatum(t.value))
 	}
-	chk := chunk.NewChunk(tps)
 	rowCount := 3
+	decoder := NewDecoder(chunk.NewChunk(tps), time.Local)
 	for rowIdx := 0; rowIdx < rowCount; rowIdx++ {
 		encoded, err := EncodeValue(sc, nil, datums...)
 		c.Assert(err, IsNil)
+		decoder.buf = make([]byte, 0, len(encoded))
 		for colIdx, t := range table {
-			encoded, err = DecodeOneToChunk(encoded, chk, colIdx, t.tp, time.Local)
+			encoded, err = decoder.DecodeOne(encoded, colIdx, t.tp)
 			c.Assert(err, IsNil)
 		}
 	}
 
 	for colIdx, t := range table {
 		for rowIdx := 0; rowIdx < rowCount; rowIdx++ {
-			got := chk.GetRow(rowIdx).GetDatum(colIdx, t.tp)
+			got := decoder.chk.GetRow(rowIdx).GetDatum(colIdx, t.tp)
 			expect := datums[colIdx]
 			if got.IsNull() {
 				c.Assert(expect.IsNull(), IsTrue)
