@@ -591,6 +591,7 @@ const (
 	AdminCancelDDLJobs
 	AdminCheckIndex
 	AdminRecoverIndex
+	AdminCleanupIndex
 	AdminCheckIndexRange
 	AdminShowDDLJobQueries
 	AdminChecksumTable
