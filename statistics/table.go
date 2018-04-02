@@ -161,7 +161,7 @@ func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *
 // tableStatsFromStorage loads table stats info from storage.
 func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, loadAll bool) (*Table, error) {
 	table, ok := h.statsCache.Load().(statsCache)[tableInfo.ID]
-	if !ok {
+	if !ok || table.Pseudo {
 		table = &Table{
 			TableID: tableInfo.ID,
 			Columns: make(map[int64]*Column, len(tableInfo.Columns)),
