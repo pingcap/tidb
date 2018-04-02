@@ -477,8 +477,8 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{"SHOW STATUS", true},
 		{"SHOW GLOBAL STATUS", true},
 		{"SHOW SESSION STATUS", true},
-		{"SHOW STATUS LIKE 'Up%'", true},
-		{"SHOW STATUS WHERE Variable_name LIKE 'Up%'", true},
+		{`SHOW STATUS LIKE 'Up%'`, true},
+		{`SHOW STATUS WHERE Variable_name LIKE 'Up%'`, true},
 		{`SHOW FULL TABLES FROM icar_qa LIKE play_evolutions`, true},
 		{`SHOW FULL TABLES WHERE Table_Type != 'VIEW'`, true},
 		{`SHOW GRANTS`, true},
@@ -506,7 +506,7 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{"show charset", true},
 		// for show collation
 		{"show collation", true},
-		{"show collation like 'utf8%'", true},
+		{`show collation like 'utf8%'`, true},
 		{"show collation where Charset = 'utf8' and Collation = 'utf8_bin'", true},
 		// for show full columns
 		{"show columns in t;", true},
@@ -869,7 +869,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT DATE('2003-12-31 01:02:03');", true},
 		{"SELECT DATE();", true},
 		{"SELECT DATE('2003-12-31 01:02:03', '');", true},
-		{"SELECT DATE_FORMAT('2003-12-31 01:02:03', '%W %M %Y');", true},
+		{`SELECT DATE_FORMAT('2003-12-31 01:02:03', '%W %M %Y');`, true},
 		{"SELECT DAY('2007-02-03');", true},
 		{"SELECT DAYOFMONTH('2007-02-03');", true},
 		{"SELECT DAYOFWEEK('2007-02-03');", true},
@@ -931,7 +931,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT SEC_TO_TIME(2378)", true},
 
 		// for TIME_FORMAT
-		{"SELECT TIME_FORMAT('100:00:00', '%H %k %h %I %l')", true},
+		{`SELECT TIME_FORMAT('100:00:00', '%H %k %h %I %l')`, true},
 
 		// for TIME_TO_SEC
 		{"SELECT TIME_TO_SEC('22:23:00')", true},

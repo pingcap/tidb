@@ -283,6 +283,8 @@ type SessionVars struct {
 	MemQuotaQuery int64
 	// MemQuotaHashJoin defines the memory quota for a hash join executor.
 	MemQuotaHashJoin int64
+	// MemQuotaMergeJoin defines the memory quota for a merge join executor.
+	MemQuotaMergeJoin int64
 	// MemQuotaSort defines the memory quota for a sort executor.
 	MemQuotaSort int64
 	// MemQuotaTopn defines the memory quota for a top n executor.
@@ -291,6 +293,8 @@ type SessionVars struct {
 	MemQuotaIndexLookupReader int64
 	// MemQuotaIndexLookupJoin defines the memory quota for a index lookup join executor.
 	MemQuotaIndexLookupJoin int64
+	// MemQuotaNestedLoopApply defines the memory quota for a nested loop apply executor.
+	MemQuotaNestedLoopApply int64
 
 	// EnableStreaming indicates whether the coprocessor request can use streaming API.
 	// TODO: remove this after tidb-server configuration "enable-streaming' removed.
@@ -323,10 +327,12 @@ func NewSessionVars() *SessionVars {
 		DMLBatchSize:               DefDMLBatchSize,
 		MemQuotaQuery:              DefTiDBMemQuotaQuery,
 		MemQuotaHashJoin:           DefTiDBMemQuotaHashJoin,
+		MemQuotaMergeJoin:          DefTiDBMemQuotaMergeJoin,
 		MemQuotaSort:               DefTiDBMemQuotaSort,
 		MemQuotaTopn:               DefTiDBMemQuotaTopn,
 		MemQuotaIndexLookupReader:  DefTiDBMemQuotaIndexLookupReader,
 		MemQuotaIndexLookupJoin:    DefTiDBMemQuotaIndexLookupJoin,
+		MemQuotaNestedLoopApply:    DefTiDBMemQuotaNestedLoopApply,
 	}
 	var enableStreaming string
 	if config.GetGlobalConfig().EnableStreaming {
@@ -501,6 +507,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.MemQuotaQuery = tidbOptInt64(val, DefTiDBMemQuotaQuery)
 	case TIDBMemQuotaHashJoin:
 		s.MemQuotaHashJoin = tidbOptInt64(val, DefTiDBMemQuotaHashJoin)
+	case TIDBMemQuotaMergeJoin:
+		s.MemQuotaMergeJoin = tidbOptInt64(val, DefTiDBMemQuotaMergeJoin)
 	case TIDBMemQuotaSort:
 		s.MemQuotaSort = tidbOptInt64(val, DefTiDBMemQuotaSort)
 	case TIDBMemQuotaTopn:
@@ -509,6 +517,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.MemQuotaIndexLookupReader = tidbOptInt64(val, DefTiDBMemQuotaIndexLookupReader)
 	case TIDBMemQuotaIndexLookupJoin:
 		s.MemQuotaIndexLookupJoin = tidbOptInt64(val, DefTiDBMemQuotaIndexLookupJoin)
+	case TIDBMemQuotaNestedLoopApply:
+		s.MemQuotaNestedLoopApply = tidbOptInt64(val, DefTiDBMemQuotaNestedLoopApply)
 	case TiDBGeneralLog:
 		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt(val, DefTiDBGeneralLog)))
 	case TiDBEnableStreaming:

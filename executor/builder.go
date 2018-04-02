@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
-	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
 	tipb "github.com/pingcap/tipb/go-tipb"
 	"golang.org/x/net/context"
@@ -1020,10 +1019,7 @@ func (b *executorBuilder) buildApply(apply *plan.PhysicalApply) *NestedLoopApply
 		outer:           v.JoinType != plan.InnerJoin,
 		resultGenerator: generator,
 		outerSchema:     apply.OuterSchema,
-		outerChunk:      outerExec.newChunk(),
-		innerChunk:      innerExec.newChunk(),
 	}
-	e.innerList = chunk.NewList(innerExec.retTypes(), e.maxChunkSize)
 	metrics.ExecutorCounter.WithLabelValues("NestedLoopApplyExec").Inc()
 	return e
 }
