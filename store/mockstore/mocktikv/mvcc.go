@@ -878,7 +878,7 @@ func (key MvccKey) Raw() []byte {
 	if len(key) == 0 {
 		return nil
 	}
-	_, k, err := codec.DecodeBytes(key)
+	_, k, err := codec.DecodeBytes(key, nil)
 	if err != nil {
 		panic(err)
 	}
