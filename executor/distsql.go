@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -97,20 +96,6 @@ func (task *lookupTableTask) Swap(i, j int) {
 	task.rows[i], task.rows[j] = task.rows[j], task.rows[i]
 }
 
-func (task *lookupTableTask) getRow(schema *expression.Schema) (Row, error) {
-	if task.cursor < len(task.rows) {
-		row := task.rows[task.cursor]
-		task.cursor++
-		datumRow := make(types.DatumRow, row.Len())
-		for i := 0; i < len(datumRow); i++ {
-			datumRow[i] = row.GetDatum(i, schema.Columns[i].RetType)
-		}
-		return datumRow, nil
-	}
-
-	return nil, nil
-}
-
 // Closeable is a interface for closeable structures.
 type Closeable interface {
 	// Close closes the object.
@@ -130,19 +115,6 @@ func closeAll(objs ...Closeable) error {
 		}
 	}
 	return errors.Trace(err)
-}
-
-func decodeRawValues(values []types.Datum, schema *expression.Schema, loc *time.Location) error {
-	var err error
-	for i := 0; i < schema.Len(); i++ {
-		if values[i].Kind() == types.KindRaw {
-			values[i], err = tablecodec.DecodeColumnValue(values[i].GetRaw(), schema.Columns[i].RetType, loc)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
-	}
-	return nil
 }
 
 // timeZoneOffset returns the local time zone offset in seconds.
@@ -369,8 +341,7 @@ type IndexReaderExecutor struct {
 	dagPB     *tipb.DAGRequest
 
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
-	result        distsql.SelectResult
-	partialResult distsql.PartialResult
+	result distsql.SelectResult
 	// columns are only required by union scan.
 	columns   []*model.ColumnInfo
 	priority  int
@@ -381,52 +352,9 @@ type IndexReaderExecutor struct {
 // Close clears all resources hold by current object.
 func (e *IndexReaderExecutor) Close() error {
 	e.ctx.StoreQueryFeedback(e.feedback)
-	err := closeAll(e.result, e.partialResult)
+	err := e.result.Close()
 	e.result = nil
-	e.partialResult = nil
 	return errors.Trace(err)
-}
-
-// Next returns next available Row. In its process, any error will be returned.
-// It first try to fetch a partial result if current partial result is nil.
-// If any error appears during this stage, it simply return a error to its caller.
-// If it successfully initialize its partial result, it will use this to get next
-// available row.
-func (e *IndexReaderExecutor) Next(ctx context.Context) (Row, error) {
-	for {
-		// Get partial result.
-		if e.partialResult == nil {
-			var err error
-			e.partialResult, err = e.result.Next(ctx)
-			if err != nil {
-				e.feedback.Invalidate()
-				return nil, errors.Trace(err)
-			}
-			if e.partialResult == nil {
-				// Finished.
-				return nil, nil
-			}
-		}
-		// Get a row from partial result.
-		rowData, err := e.partialResult.Next(ctx)
-		if err != nil {
-			e.feedback.Invalidate()
-			return nil, errors.Trace(err)
-		}
-		if rowData == nil {
-			// Finish the current partial result and get the next one.
-			err = e.partialResult.Close()
-			terror.Log(errors.Trace(err))
-			e.partialResult = nil
-			continue
-		}
-		err = decodeRawValues(rowData, e.schema, e.ctx.GetSessionVars().GetTimeZone())
-		if err != nil {
-			e.feedback.Invalidate()
-			return nil, errors.Trace(err)
-		}
-		return rowData, nil
-	}
 }
 
 // NextChunk implements the Executor NextChunk interface.
@@ -658,26 +586,6 @@ func (e *IndexLookUpExecutor) Close() error {
 	e.memTracker.Detach()
 	e.memTracker = nil
 	return nil
-}
-
-// Next implements Exec Next interface.
-func (e *IndexLookUpExecutor) Next(ctx context.Context) (Row, error) {
-	for {
-		resultTask, err := e.getResultTask()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if resultTask == nil {
-			return nil, nil
-		}
-		row, err := resultTask.getRow(e.schema)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if row != nil {
-			return row, nil
-		}
-	}
 }
 
 // NextChunk implements Exec NextChunk interface.
@@ -968,24 +876,6 @@ func (tr *tableResultHandler) open(optionalResult, result distsql.SelectResult) 
 	tr.optionalResult = optionalResult
 	tr.result = result
 	tr.optionalFinished = false
-}
-
-func (tr *tableResultHandler) next(ctx context.Context) (partialResult distsql.PartialResult, err error) {
-	if !tr.optionalFinished {
-		partialResult, err = tr.optionalResult.Next(ctx)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if partialResult != nil {
-			return partialResult, nil
-		}
-		tr.optionalFinished = true
-	}
-	partialResult, err = tr.result.Next(ctx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return partialResult, nil
 }
 
 func (tr *tableResultHandler) nextChunk(ctx context.Context, chk *chunk.Chunk) error {

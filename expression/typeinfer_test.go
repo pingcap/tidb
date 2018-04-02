@@ -273,7 +273,7 @@ func (s *testInferTypeSuite) createTestCase4StrFuncs() []typeInferTestCase {
 		{"trim(c_binary)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 20, types.UnspecifiedLength},
 		{"ascii(c_char)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 3, 0},
 		{"ord(c_char)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
-		{"c_int_d like 'abc%'", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
+		{`c_int_d like 'abc%'`, mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
 		{"tidb_version()", mysql.TypeVarString, charset.CharsetUTF8, 0, len(printer.GetTiDBInfo()), types.UnspecifiedLength},
 		{"password(c_char)", mysql.TypeVarString, charset.CharsetUTF8, 0, mysql.PWDHashLen + 1, types.UnspecifiedLength},
 		{"elt(c_int_d, c_char, c_char, c_char)", mysql.TypeVarString, charset.CharsetUTF8, 0, 20, types.UnspecifiedLength},
@@ -1191,14 +1191,14 @@ func (s *testInferTypeSuite) createTestCase4OtherFuncs() []typeInferTestCase {
 
 func (s *testInferTypeSuite) createTestCase4TimeFuncs() []typeInferTestCase {
 	return []typeInferTestCase{
-		{"time_format('150:02:28', '%r%r%r%r')", mysql.TypeVarString, charset.CharsetUTF8, 0, 44, types.UnspecifiedLength},
-		{"time_format(123456, '%r%r%r%r')", mysql.TypeVarString, charset.CharsetUTF8, 0, 44, types.UnspecifiedLength},
-		{"time_format('bad string', '%r%r%r%r')", mysql.TypeVarString, charset.CharsetUTF8, 0, 44, types.UnspecifiedLength},
-		{"time_format(null, '%r%r%r%r')", mysql.TypeVarString, charset.CharsetUTF8, 0, 44, types.UnspecifiedLength},
+		{`time_format('150:02:28', '%r%r%r%r')`, mysql.TypeVarString, charset.CharsetUTF8, 0, 44, types.UnspecifiedLength},
+		{`time_format(123456, '%r%r%r%r')`, mysql.TypeVarString, charset.CharsetUTF8, 0, 44, types.UnspecifiedLength},
+		{`time_format('bad string', '%r%r%r%r')`, mysql.TypeVarString, charset.CharsetUTF8, 0, 44, types.UnspecifiedLength},
+		{`time_format(null, '%r%r%r%r')`, mysql.TypeVarString, charset.CharsetUTF8, 0, 44, types.UnspecifiedLength},
 
-		{"date_format(null, '%r%r%r%r')", mysql.TypeVarString, charset.CharsetUTF8, 0, 44, types.UnspecifiedLength},
-		{"date_format('2017-06-15', '%r%r%r%r')", mysql.TypeVarString, charset.CharsetUTF8, 0, 44, types.UnspecifiedLength},
-		{"date_format(151113102019.12, '%r%r%r%r')", mysql.TypeVarString, charset.CharsetUTF8, 0, 44, types.UnspecifiedLength},
+		{`date_format(null, '%r%r%r%r')`, mysql.TypeVarString, charset.CharsetUTF8, 0, 44, types.UnspecifiedLength},
+		{`date_format('2017-06-15', '%r%r%r%r')`, mysql.TypeVarString, charset.CharsetUTF8, 0, 44, types.UnspecifiedLength},
+		{`date_format(151113102019.12, '%r%r%r%r')`, mysql.TypeVarString, charset.CharsetUTF8, 0, 44, types.UnspecifiedLength},
 
 		{"timestampadd(HOUR, c_int_d, c_timestamp_d)", mysql.TypeString, charset.CharsetUTF8, 0, 19, types.UnspecifiedLength},
 		{"timestampadd(minute, c_double_d, c_timestamp_d)", mysql.TypeString, charset.CharsetUTF8, 0, 19, types.UnspecifiedLength},

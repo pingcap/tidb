@@ -357,8 +357,8 @@ func (s *testSuite) TestGroupConcatAggr(c *C) {
 	result = tk.MustQuery("select id, group_concat(name SEPARATOR ',') from test group by id")
 	result.Check(testkit.Rows("1 10,20,30", "2 20", "3 200,500"))
 
-	result = tk.MustQuery("select id, group_concat(name SEPARATOR '%') from test group by id")
-	result.Check(testkit.Rows("1 10%20%30", "2 20", "3 200%500"))
+	result = tk.MustQuery(`select id, group_concat(name SEPARATOR '%') from test group by id`)
+	result.Check(testkit.Rows("1 10%20%30", "2 20", `3 200%500`))
 
 	result = tk.MustQuery("select id, group_concat(name SEPARATOR '') from test group by id")
 	result.Check(testkit.Rows("1 102030", "2 20", "3 200500"))
