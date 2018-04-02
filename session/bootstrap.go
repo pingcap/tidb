@@ -15,7 +15,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tidb
+package session
 
 import (
 	"encoding/hex"
@@ -32,8 +32,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/auth"
+	"github.com/pingcap/tidb/util/chunk"
 	log "github.com/sirupsen/logrus"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 const (
@@ -157,6 +158,7 @@ const (
 		hist_id bigint(64) NOT NULL,
 		distinct_count bigint(64) NOT NULL,
 		null_count bigint(64) NOT NULL DEFAULT 0,
+		tot_col_size bigint(64) NOT NULL DEFAULT 0,
 		modify_count bigint(64) NOT NULL DEFAULT 0,
 		version bigint(64) unsigned NOT NULL DEFAULT 0,
 		cm_sketch blob,
@@ -229,11 +231,12 @@ const (
 	version15 = 15
 	version16 = 16
 	version17 = 17
+	version18 = 18
 )
 
 func checkBootstrapped(s Session) (bool, error) {
 	//  Check if system db exists.
-	_, err := s.Execute(goctx.Background(), fmt.Sprintf("USE %s;", mysql.SystemDB))
+	_, err := s.Execute(context.Background(), fmt.Sprintf("USE %s;", mysql.SystemDB))
 	if err != nil && infoschema.ErrDatabaseNotExists.NotEqual(err) {
 		log.Fatal(err)
 	}
@@ -248,7 +251,7 @@ func checkBootstrapped(s Session) (bool, error) {
 	isBootstrapped := sVal == bootstrappedVarTrue
 	if isBootstrapped {
 		// Make sure that doesn't affect the following operations.
-		if err = s.CommitTxn(goctx.Background()); err != nil {
+		if err = s.CommitTxn(context.Background()); err != nil {
 			return false, errors.Trace(err)
 		}
 	}
@@ -260,8 +263,8 @@ func checkBootstrapped(s Session) (bool, error) {
 func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s"`,
 		mysql.SystemDB, mysql.TiDBTable, name)
-	goCtx := goctx.Background()
-	rs, err := s.Execute(goCtx, sql)
+	ctx := context.Background()
+	rs, err := s.Execute(ctx, sql)
 	if err != nil {
 		return "", true, errors.Trace(err)
 	}
@@ -270,10 +273,12 @@ func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 	}
 	r := rs[0]
 	defer terror.Call(r.Close)
-	row, err := r.Next(goCtx)
-	if err != nil || row == nil {
+	chk := r.NewChunk()
+	err = r.NextChunk(ctx, chk)
+	if err != nil || chk.NumRows() == 0 {
 		return "", true, errors.Trace(err)
 	}
+	row := chk.GetRow(0)
 	if row.IsNull(0) {
 		return "", true, nil
 	}
@@ -353,8 +358,12 @@ func upgrade(s Session) {
 		upgradeToVer17(s)
 	}
 
+	if ver < version18 {
+		upgradeToVer18(s)
+	}
+
 	updateBootstrapVer(s)
-	_, err = s.Execute(goctx.Background(), "COMMIT")
+	_, err = s.Execute(context.Background(), "COMMIT")
 
 	if err != nil {
 		time.Sleep(1 * time.Second)
@@ -420,7 +429,7 @@ func upgradeToVer7(s Session) {
 
 func upgradeToVer8(s Session) {
 	// This is a dummy upgrade, it checks whether upgradeToVer7 success, if not, do it again.
-	if _, err := s.Execute(goctx.Background(), "SELECT `Process_priv` from mysql.user limit 0"); err == nil {
+	if _, err := s.Execute(context.Background(), "SELECT `Process_priv` from mysql.user limit 0"); err == nil {
 		return
 	}
 	upgradeToVer7(s)
@@ -433,7 +442,7 @@ func upgradeToVer9(s Session) {
 }
 
 func doReentrantDDL(s Session, sql string, ignorableErrs ...error) {
-	_, err := s.Execute(goctx.Background(), sql)
+	_, err := s.Execute(context.Background(), sql)
 	for _, ignorableErr := range ignorableErrs {
 		if terror.ErrorEqual(err, ignorableErr) {
 			return
@@ -453,7 +462,7 @@ func upgradeToVer10(s Session) {
 }
 
 func upgradeToVer11(s Session) {
-	_, err := s.Execute(goctx.Background(), "ALTER TABLE mysql.user ADD COLUMN `References_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Grant_priv`")
+	_, err := s.Execute(context.Background(), "ALTER TABLE mysql.user ADD COLUMN `References_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Grant_priv`")
 	if err != nil {
 		if terror.ErrorEqual(err, infoschema.ErrColumnExists) {
 			return
@@ -464,26 +473,30 @@ func upgradeToVer11(s Session) {
 }
 
 func upgradeToVer12(s Session) {
-	goCtx := goctx.Background()
-	_, err := s.Execute(goCtx, "BEGIN")
+	ctx := context.Background()
+	_, err := s.Execute(ctx, "BEGIN")
 	terror.MustNil(err)
 	sql := "SELECT user, host, password FROM mysql.user WHERE password != ''"
-	rs, err := s.Execute(goCtx, sql)
+	rs, err := s.Execute(ctx, sql)
 	terror.MustNil(err)
 	r := rs[0]
 	sqls := make([]string, 0, 1)
 	defer terror.Call(r.Close)
-	row, err := r.Next(goCtx)
-	for err == nil && row != nil {
-		user := row.GetString(0)
-		host := row.GetString(1)
-		pass := row.GetString(2)
-		var newPass string
-		newPass, err = oldPasswordUpgrade(pass)
-		terror.MustNil(err)
-		updateSQL := fmt.Sprintf(`UPDATE mysql.user set password = "%s" where user="%s" and host="%s"`, newPass, user, host)
-		sqls = append(sqls, updateSQL)
-		row, err = r.Next(goCtx)
+	chk := r.NewChunk()
+	it := chunk.NewIterator4Chunk(chk)
+	err = r.NextChunk(ctx, chk)
+	for err == nil && chk.NumRows() != 0 {
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			user := row.GetString(0)
+			host := row.GetString(1)
+			pass := row.GetString(2)
+			var newPass string
+			newPass, err = oldPasswordUpgrade(pass)
+			terror.MustNil(err)
+			updateSQL := fmt.Sprintf(`UPDATE mysql.user set password = "%s" where user="%s" and host="%s"`, newPass, user, host)
+			sqls = append(sqls, updateSQL)
+		}
+		err = r.NextChunk(ctx, chk)
 	}
 	terror.MustNil(err)
 
@@ -508,9 +521,9 @@ func upgradeToVer13(s Session) {
 		"ALTER TABLE mysql.user ADD COLUMN `Alter_routine_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Create_routine_priv`",
 		"ALTER TABLE mysql.user ADD COLUMN `Event_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Create_user_priv`",
 	}
-	goCtx := goctx.Background()
+	ctx := context.Background()
 	for _, sql := range sqls {
-		_, err := s.Execute(goCtx, sql)
+		_, err := s.Execute(ctx, sql)
 		if err != nil {
 			if terror.ErrorEqual(err, infoschema.ErrColumnExists) {
 				continue
@@ -533,9 +546,9 @@ func upgradeToVer14(s Session) {
 		"ALTER TABLE mysql.db ADD COLUMN `Event_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Execute_priv`",
 		"ALTER TABLE mysql.db ADD COLUMN `Trigger_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Event_priv`",
 	}
-	goCtx := goctx.Background()
+	ctx := context.Background()
 	for _, sql := range sqls {
-		_, err := s.Execute(goCtx, sql)
+		_, err := s.Execute(ctx, sql)
 		if err != nil {
 			if terror.ErrorEqual(err, infoschema.ErrColumnExists) {
 				continue
@@ -547,7 +560,7 @@ func upgradeToVer14(s Session) {
 
 func upgradeToVer15(s Session) {
 	var err error
-	_, err = s.Execute(goctx.Background(), CreateGCDeleteRangeTable)
+	_, err = s.Execute(context.Background(), CreateGCDeleteRangeTable)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -559,6 +572,10 @@ func upgradeToVer16(s Session) {
 
 func upgradeToVer17(s Session) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user MODIFY User CHAR(32)")
+}
+
+func upgradeToVer18(s Session) {
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `tot_col_size` bigint(64) NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
@@ -640,7 +657,7 @@ func doDMLWorks(s Session) {
 		mysql.SystemDB, mysql.TiDBTable, tidbServerVersionVar, currentBootstrapVersion)
 	mustExecute(s, sql)
 
-	_, err := s.Execute(goctx.Background(), "COMMIT")
+	_, err := s.Execute(context.Background(), "COMMIT")
 	if err != nil {
 		time.Sleep(1 * time.Second)
 		// Check if TiDB is already bootstrapped.
@@ -656,7 +673,7 @@ func doDMLWorks(s Session) {
 }
 
 func mustExecute(s Session, sql string) {
-	_, err := s.Execute(goctx.Background(), sql)
+	_, err := s.Execute(context.Background(), sql)
 	if err != nil {
 		debug.PrintStack()
 		log.Fatal(err)

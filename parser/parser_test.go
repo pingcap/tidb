@@ -225,7 +225,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 
 	// for issue #4006
 	src = `insert into tb(v) (select v from tb);`
-	st, err = parser.ParseOneStmt(src, "", "")
+	_, err = parser.ParseOneStmt(src, "", "")
 	c.Assert(err, IsNil)
 }
 
@@ -273,6 +273,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{";", true},
 		{"INSERT INTO foo VALUES (1234)", true},
 		{"INSERT INTO foo VALUES (1234, 5678)", true},
+		{"INSERT INTO t1 (SELECT * FROM t2)", true},
 		// 15
 		{"INSERT INTO foo VALUES (1 || 2)", true},
 		{"INSERT INTO foo VALUES (1 | 2)", true},
@@ -398,13 +399,23 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 
 		// for straight_join
 		{"select * from t1 straight_join t2 on t1.id = t2.id", true},
+		{"select straight_join * from t1 join t2 on t1.id = t2.id", true},
+		{"select straight_join * from t1 left join t2 on t1.id = t2.id", true},
+		{"select straight_join * from t1 right join t2 on t1.id = t2.id", true},
+		{"select straight_join * from t1 straight_join t2 on t1.id = t2.id", true},
 
 		// for admin
 		{"admin show ddl;", true},
 		{"admin show ddl jobs;", true},
+		{"admin show ddl job queries 1", true},
+		{"admin show ddl job queries 1, 2, 3, 4", true},
 		{"admin check table t1, t2;", true},
+		{"admin check index tableName idxName;", true},
+		{"admin check index tableName idxName (1, 2), (4, 5);", true},
+		{"admin checksum table t1, t2;", true},
 		{"admin cancel ddl jobs 1", true},
 		{"admin cancel ddl jobs 1, 2", true},
+		{"admin recover index t1 idx_a", true},
 
 		// for on duplicate key update
 		{"INSERT INTO t (a,b,c) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE c=VALUES(a)+VALUES(b);", true},
@@ -429,6 +440,8 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"select 1 from dual limit 1", true},
 		{"select 1 where exists (select 2)", false},
 		{"select 1 from dual where not exists (select 2)", true},
+
+		{"select 1 order by 1", true},
 
 		// for https://github.com/pingcap/tidb/issues/320
 		{`(select 1);`, true},
@@ -463,12 +476,14 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{"SHOW STATUS", true},
 		{"SHOW GLOBAL STATUS", true},
 		{"SHOW SESSION STATUS", true},
-		{"SHOW STATUS LIKE 'Up%'", true},
-		{"SHOW STATUS WHERE Variable_name LIKE 'Up%'", true},
+		{`SHOW STATUS LIKE 'Up%'`, true},
+		{`SHOW STATUS WHERE Variable_name LIKE 'Up%'`, true},
 		{`SHOW FULL TABLES FROM icar_qa LIKE play_evolutions`, true},
 		{`SHOW FULL TABLES WHERE Table_Type != 'VIEW'`, true},
 		{`SHOW GRANTS`, true},
 		{`SHOW GRANTS FOR 'test'@'localhost'`, true},
+		{`SHOW GRANTS FOR current_user()`, true},
+		{`SHOW GRANTS FOR current_user`, true},
 		{`SHOW COLUMNS FROM City;`, true},
 		{`SHOW COLUMNS FROM tv189.1_t_1_x;`, true},
 		{`SHOW FIELDS FROM City;`, true},
@@ -490,7 +505,7 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{"show charset", true},
 		// for show collation
 		{"show collation", true},
-		{"show collation like 'utf8%'", true},
+		{`show collation like 'utf8%'`, true},
 		{"show collation where Charset = 'utf8' and Collation = 'utf8_bin'", true},
 		// for show full columns
 		{"show columns in t;", true},
@@ -547,6 +562,12 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{"SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED", true},
 		{"SET SESSION TRANSACTION ISOLATION LEVEL READ UNCOMMITTED", true},
 		{"SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE", true},
+		{"SET TRANSACTION ISOLATION LEVEL REPEATABLE READ", true},
+		{"SET TRANSACTION READ WRITE", true},
+		{"SET TRANSACTION READ ONLY", true},
+		{"SET TRANSACTION ISOLATION LEVEL READ COMMITTED", true},
+		{"SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED", true},
+		{"SET TRANSACTION ISOLATION LEVEL SERIALIZABLE", true},
 		// for set names
 		{"set names utf8", true},
 		{"set names utf8 collate utf8_unicode_ci", true},
@@ -847,7 +868,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT DATE('2003-12-31 01:02:03');", true},
 		{"SELECT DATE();", true},
 		{"SELECT DATE('2003-12-31 01:02:03', '');", true},
-		{"SELECT DATE_FORMAT('2003-12-31 01:02:03', '%W %M %Y');", true},
+		{`SELECT DATE_FORMAT('2003-12-31 01:02:03', '%W %M %Y');`, true},
 		{"SELECT DAY('2007-02-03');", true},
 		{"SELECT DAYOFMONTH('2007-02-03');", true},
 		{"SELECT DAYOFWEEK('2007-02-03');", true},
@@ -909,7 +930,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT SEC_TO_TIME(2378)", true},
 
 		// for TIME_FORMAT
-		{"SELECT TIME_FORMAT('100:00:00', '%H %k %h %I %l')", true},
+		{`SELECT TIME_FORMAT('100:00:00', '%H %k %h %I %l')`, true},
 
 		// for TIME_TO_SEC
 		{"SELECT TIME_TO_SEC('22:23:00')", true},
@@ -1055,6 +1076,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select date_add("2011-11-11 10:10:10.123456", interval "10:10:10.10" hour_microsecond)`, true},
 		{`select date_add("2011-11-11 10:10:10.123456", interval "10:10:10" hour_second)`, true},
 		{`select date_add("2011-11-11 10:10:10.123456", interval "10:10" hour_minute)`, true},
+		{`select date_add("2011-11-11 10:10:10.123456", interval 10.10 hour_minute)`, true},
 		{`select date_add("2011-11-11 10:10:10.123456", interval "11 10:10:10.10" day_microsecond)`, true},
 		{`select date_add("2011-11-11 10:10:10.123456", interval "11 10:10:10" day_second)`, true},
 		{`select date_add("2011-11-11 10:10:10.123456", interval "11 10:10" day_minute)`, true},
@@ -1083,6 +1105,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select adddate("2011-11-11 10:10:10.123456", interval "10:10:10.10" hour_microsecond)`, true},
 		{`select adddate("2011-11-11 10:10:10.123456", interval "10:10:10" hour_second)`, true},
 		{`select adddate("2011-11-11 10:10:10.123456", interval "10:10" hour_minute)`, true},
+		{`select adddate("2011-11-11 10:10:10.123456", interval 10.10 hour_minute)`, true},
 		{`select adddate("2011-11-11 10:10:10.123456", interval "11 10:10:10.10" day_microsecond)`, true},
 		{`select adddate("2011-11-11 10:10:10.123456", interval "11 10:10:10" day_second)`, true},
 		{`select adddate("2011-11-11 10:10:10.123456", interval "11 10:10" day_minute)`, true},
@@ -1108,6 +1131,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select date_sub("2011-11-11 10:10:10.123456", interval "10:10:10.10" hour_microsecond)`, true},
 		{`select date_sub("2011-11-11 10:10:10.123456", interval "10:10:10" hour_second)`, true},
 		{`select date_sub("2011-11-11 10:10:10.123456", interval "10:10" hour_minute)`, true},
+		{`select date_sub("2011-11-11 10:10:10.123456", interval 10.10 hour_minute)`, true},
 		{`select date_sub("2011-11-11 10:10:10.123456", interval "11 10:10:10.10" day_microsecond)`, true},
 		{`select date_sub("2011-11-11 10:10:10.123456", interval "11 10:10:10" day_second)`, true},
 		{`select date_sub("2011-11-11 10:10:10.123456", interval "11 10:10" day_minute)`, true},
@@ -1133,6 +1157,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select subdate("2011-11-11 10:10:10.123456", interval "10:10:10.10" hour_microsecond)`, true},
 		{`select subdate("2011-11-11 10:10:10.123456", interval "10:10:10" hour_second)`, true},
 		{`select subdate("2011-11-11 10:10:10.123456", interval "10:10" hour_minute)`, true},
+		{`select subdate("2011-11-11 10:10:10.123456", interval 10.10 hour_minute)`, true},
 		{`select subdate("2011-11-11 10:10:10.123456", interval "11 10:10:10.10" day_microsecond)`, true},
 		{`select subdate("2011-11-11 10:10:10.123456", interval "11 10:10:10" day_second)`, true},
 		{`select subdate("2011-11-11 10:10:10.123456", interval "11 10:10" day_minute)`, true},
@@ -1201,6 +1226,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select group_concat(c2,c1 SEPARATOR ';') from t group by c1;`, true},
 		{`select group_concat(distinct c2,c1) from t group by c1;`, true},
 		{`select group_concat(distinctrow c2,c1) from t group by c1;`, true},
+		{`SELECT student_name, GROUP_CONCAT(DISTINCT test_score ORDER BY test_score DESC SEPARATOR ' ') FROM student GROUP BY student_name;`, true},
 
 		// for encryption and compression functions
 		{`select AES_ENCRYPT('text',UNHEX('F3229A0B371ED2D9441B830D21A390C3'))`, true},
@@ -1321,6 +1347,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"CREATE TABLE foo (name CHAR(50) BINARY CHARACTER SET utf8 COLLATE utf8_bin)", true},
 		{"CREATE TABLE foo (a.b, b);", false},
 		{"CREATE TABLE foo (a, b.c);", false},
+		{"CREATE TABLE (name CHAR(50) BINARY)", false},
 		// for table option
 		{"create table t (c int) avg_row_length = 3", true},
 		{"create table t (c int) avg_row_length 3", true},
@@ -1359,6 +1386,20 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"create table t (c int, `create_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '') PARTITION BY RANGE (UNIX_TIMESTAMP(create_time)) (PARTITION p201610 VALUES LESS THAN(1477929600), PARTITION p201611 VALUES LESS THAN(1480521600),PARTITION p201612 VALUES LESS THAN(1483200000),PARTITION p201701 VALUES LESS THAN(1485878400),PARTITION p201702 VALUES LESS THAN(1488297600),PARTITION p201703 VALUES LESS THAN(1490976000))", true},
 		{"CREATE TABLE `md_product_shop` (`shopCode` varchar(4) DEFAULT NULL COMMENT '地点') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 /*!50100 PARTITION BY KEY (shopCode) PARTITIONS 19 */;", true},
 		{"CREATE TABLE `payinfo1` (`id` bigint(20) NOT NULL AUTO_INCREMENT, `oderTime` datetime NOT NULL) ENGINE=InnoDB AUTO_INCREMENT=641533032 DEFAULT CHARSET=utf8 ROW_FORMAT=COMPRESSED KEY_BLOCK_SIZE=8 /*!50500 PARTITION BY RANGE COLUMNS(oderTime) (PARTITION P2011 VALUES LESS THAN ('2012-01-01 00:00:00') ENGINE = InnoDB, PARTITION P1201 VALUES LESS THAN ('2012-02-01 00:00:00') ENGINE = InnoDB, PARTITION PMAX VALUES LESS THAN (MAXVALUE) ENGINE = InnoDB)*/;", true},
+		{`CREATE TABLE app_channel_daily_report (id bigint(20) NOT NULL AUTO_INCREMENT, app_version varchar(32) COLLATE utf8_unicode_ci NOT NULL DEFAULT 'default', gmt_create datetime NOT NULL COMMENT '创建时间', PRIMARY KEY (id)) ENGINE=InnoDB AUTO_INCREMENT=33703438 DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci
+/*!50100 PARTITION BY RANGE (month(gmt_create)-1)
+(PARTITION part0 VALUES LESS THAN (1) COMMENT = '1月份' ENGINE = InnoDB,
+ PARTITION part1 VALUES LESS THAN (2) COMMENT = '2月份' ENGINE = InnoDB,
+ PARTITION part2 VALUES LESS THAN (3) COMMENT = '3月份' ENGINE = InnoDB,
+ PARTITION part3 VALUES LESS THAN (4) COMMENT = '4月份' ENGINE = InnoDB,
+ PARTITION part4 VALUES LESS THAN (5) COMMENT = '5月份' ENGINE = InnoDB,
+ PARTITION part5 VALUES LESS THAN (6) COMMENT = '6月份' ENGINE = InnoDB,
+ PARTITION part6 VALUES LESS THAN (7) COMMENT = '7月份' ENGINE = InnoDB,
+ PARTITION part7 VALUES LESS THAN (8) COMMENT = '8月份' ENGINE = InnoDB,
+ PARTITION part8 VALUES LESS THAN (9) COMMENT = '9月份' ENGINE = InnoDB,
+ PARTITION part9 VALUES LESS THAN (10) COMMENT = '10月份' ENGINE = InnoDB,
+ PARTITION part10 VALUES LESS THAN (11) COMMENT = '11月份' ENGINE = InnoDB,
+ PARTITION part11 VALUES LESS THAN (12) COMMENT = '12月份' ENGINE = InnoDB) */ ;`, true},
 
 		// for check clause
 		{"create table t (c1 bool, c2 bool, check (c1 in (0, 1)), check (c2 in (0, 1)))", true},
@@ -1377,12 +1418,16 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"drop schema xxx", true},
 		{"drop schema if exists xxx", true},
 		{"drop schema if not exists xxx", false},
+		{"drop table", false},
 		{"drop table xxx", true},
 		{"drop table xxx, yyy", true},
 		{"drop tables xxx", true},
 		{"drop tables xxx, yyy", true},
 		{"drop table if exists xxx", true},
 		{"drop table if not exists xxx", false},
+		{"drop table xxx restrict", true},
+		{"drop table xxx, yyy cascade", true},
+		{"drop table if exists xxx restrict", true},
 		{"drop view if exists xxx", true},
 		{"drop stats t", true},
 		// for issue 974
@@ -1492,9 +1537,12 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"CREATE TABLE t (c TEXT) shard_row_id_bits = 1;", true},
 		// Create table with ON UPDATE CURRENT_TIMESTAMP(6), specify fraction part.
 		{"CREATE TABLE IF NOT EXISTS `general_log` (`event_time` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),`user_host` mediumtext NOT NULL,`thread_id` bigint(20) unsigned NOT NULL,`server_id` int(10) unsigned NOT NULL,`command_type` varchar(64) NOT NULL,`argument` mediumblob NOT NULL) ENGINE=CSV DEFAULT CHARSET=utf8 COMMENT='General log'", true},
+		// For reference_definition in column_definition.
+		{"CREATE TABLE followers ( f1 int NOT NULL REFERENCES user_profiles (uid) );", true},
 
 		// for alter table
 		{"ALTER TABLE t ADD COLUMN (a SMALLINT UNSIGNED)", true},
+		{"ALTER TABLE ADD COLUMN (a SMALLINT UNSIGNED)", false},
 		{"ALTER TABLE t ADD COLUMN (a SMALLINT UNSIGNED, b varchar(255))", true},
 		{"ALTER TABLE t ADD COLUMN (a SMALLINT UNSIGNED FIRST)", false},
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED", true},
@@ -1542,6 +1590,9 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t ENGINE = '', ADD COLUMN a SMALLINT", true},
 		{"ALTER TABLE t default COLLATE = utf8_general_ci, ENGINE = '', ADD COLUMN a SMALLINT", true},
 		{"ALTER TABLE t shard_row_id_bits = 1", true},
+		{"ALTER TABLE `hello-world@dev`.`User` ADD COLUMN `name` mediumtext CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL , ALGORITHM = DEFAULT;", true},
+		{"ALTER TABLE `hello-world@dev`.`User` ADD COLUMN `name` mediumtext CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL , ALGORITHM = INPLACE;", true},
+		{"ALTER TABLE `hello-world@dev`.`User` ADD COLUMN `name` mediumtext CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL , ALGORITHM = COPY;", true},
 
 		// For create index statement
 		{"CREATE INDEX idx ON t (a)", true},
@@ -1573,6 +1624,9 @@ func (s *testParserSuite) TestDDL(c *C) {
 
 		// for issue 4740
 		{"create table t (a int1, b int2, c int3, d int4, e int8)", true},
+
+		// for issue 5918
+		{"create table t (lv long varchar null)", true},
 	}
 	s.RunTest(c, table)
 }
@@ -1976,10 +2030,17 @@ func (s *testParserSuite) TestView(c *C) {
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t", true},
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t with local check option", true},
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t with cascaded check option", true},
-		// fixme: should be true
-		{"create or replace algorithm = merge definer = current_user view v as select * from t", false},
+		{"create or replace algorithm = merge definer = current_user view v as select * from t", true},
 	}
 	s.RunTest(c, table)
+
+	// Test case for the text of the select statement in create view statement.
+	p := New()
+	sms, err := p.Parse("create view v as select * from t", "", "")
+	c.Assert(err, IsNil)
+	v, ok := sms[0].(*ast.CreateViewStmt)
+	c.Assert(ok, IsTrue)
+	c.Assert(v.Select.Text(), Equals, "select * from t")
 }
 
 func (s *testParserSuite) TestTimestampDiffUnit(c *C) {
@@ -2158,4 +2219,15 @@ func (s *testParserSuite) TestSetTransaction(c *C) {
 		c.Assert(vars.IsSystem, Equals, true)
 		c.Assert(vars.Value.GetValue(), Equals, t.value)
 	}
+}
+
+func (s *testParserSuite) TestSideEffect(c *C) {
+	// This test cover a bug that parse an error SQL doesn't leave the parser in a
+	// clean state, cause the following SQL parse fail.
+	parser := New()
+	_, err := parser.ParseOneStmt("create table t /*!50100 'abc', 'abc' */;", "", "")
+	c.Assert(err, NotNil)
+
+	_, err = parser.ParseOneStmt("show tables;", "", "")
+	c.Assert(err, IsNil)
 }

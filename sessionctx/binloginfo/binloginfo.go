@@ -20,12 +20,12 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tipb/go-binlog"
+	binlog "github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 )
 
@@ -60,7 +60,7 @@ func SetPumpClient(client binlog.PumpClient) {
 }
 
 // GetPrewriteValue gets binlog prewrite value in the context.
-func GetPrewriteValue(ctx context.Context, createIfNotExists bool) *binlog.PrewriteValue {
+func GetPrewriteValue(ctx sessionctx.Context, createIfNotExists bool) *binlog.PrewriteValue {
 	vars := ctx.GetSessionVars()
 	v, ok := vars.TxnCtx.Binlog.(*binlog.PrewriteValue)
 	if !ok && createIfNotExists {
@@ -82,12 +82,16 @@ func (info *BinlogInfo) WriteBinlog(clusterID uint64) error {
 	// Retry many times because we may raise CRITICAL error here.
 	for i := 0; i < 20; i++ {
 		var resp *binlog.WriteBinlogResp
-		resp, err = info.Client.WriteBinlog(goctx.Background(), req)
+		resp, err = info.Client.WriteBinlog(context.Background(), req)
 		if err == nil && resp.Errmsg != "" {
 			err = errors.New(resp.Errmsg)
 		}
 		if err == nil {
 			return nil
+		}
+		if strings.Contains(err.Error(), "received message larger than max") {
+			// This kind of error is not critical and not retryable, return directly.
+			return errors.Errorf("binlog data is too large (%s)", err.Error())
 		}
 		log.Errorf("write binlog error %v", err)
 		time.Sleep(time.Second)

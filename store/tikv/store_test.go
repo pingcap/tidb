@@ -25,21 +25,24 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var errStopped = errors.New("stopped")
 
 type testStoreSuite struct {
+	OneByOneSuite
 	store *tikvStore
 }
 
 var _ = Suite(&testStoreSuite{})
 
 func (s *testStoreSuite) SetUpTest(c *C) {
-	store, err := newTestTiKVStore()
-	c.Check(err, IsNil)
-	s.store = store.(*tikvStore)
+	s.store = NewTestStore(c).(*tikvStore)
+}
+
+func (s *testStoreSuite) TearDownTest(c *C) {
+	c.Assert(s.store.Close(), IsNil)
 }
 
 func (s *testStoreSuite) TestParsePath(c *C) {
@@ -59,10 +62,10 @@ func (s *testStoreSuite) TestOracle(c *C) {
 	o := &mockoracle.MockOracle{}
 	s.store.oracle = o
 
-	ctx := goctx.Background()
-	t1, err := s.store.getTimestampWithRetry(NewBackoffer(100, ctx))
+	ctx := context.Background()
+	t1, err := s.store.getTimestampWithRetry(NewBackoffer(ctx, 100))
 	c.Assert(err, IsNil)
-	t2, err := s.store.getTimestampWithRetry(NewBackoffer(100, ctx))
+	t2, err := s.store.getTimestampWithRetry(NewBackoffer(ctx, 100))
 	c.Assert(err, IsNil)
 	c.Assert(t1, Less, t2)
 
@@ -79,7 +82,7 @@ func (s *testStoreSuite) TestOracle(c *C) {
 
 	go func() {
 		defer wg.Done()
-		t3, err := s.store.getTimestampWithRetry(NewBackoffer(tsoMaxBackoff, ctx))
+		t3, err := s.store.getTimestampWithRetry(NewBackoffer(ctx, tsoMaxBackoff))
 		c.Assert(err, IsNil)
 		c.Assert(t2, Less, t3)
 		expired := s.store.oracle.IsExpired(t2, 50)
@@ -107,11 +110,11 @@ func (c *mockPDClient) disable() {
 	c.stop = true
 }
 
-func (c *mockPDClient) GetClusterID(goctx.Context) uint64 {
+func (c *mockPDClient) GetClusterID(context.Context) uint64 {
 	return 1
 }
 
-func (c *mockPDClient) GetTS(ctx goctx.Context) (int64, int64, error) {
+func (c *mockPDClient) GetTS(ctx context.Context) (int64, int64, error) {
 	c.RLock()
 	defer c.RUnlock()
 
@@ -121,11 +124,11 @@ func (c *mockPDClient) GetTS(ctx goctx.Context) (int64, int64, error) {
 	return c.client.GetTS(ctx)
 }
 
-func (c *mockPDClient) GetTSAsync(ctx goctx.Context) pd.TSFuture {
+func (c *mockPDClient) GetTSAsync(ctx context.Context) pd.TSFuture {
 	return nil
 }
 
-func (c *mockPDClient) GetRegion(ctx goctx.Context, key []byte) (*metapb.Region, *metapb.Peer, error) {
+func (c *mockPDClient) GetRegion(ctx context.Context, key []byte) (*metapb.Region, *metapb.Peer, error) {
 	c.RLock()
 	defer c.RUnlock()
 
@@ -135,7 +138,7 @@ func (c *mockPDClient) GetRegion(ctx goctx.Context, key []byte) (*metapb.Region,
 	return c.client.GetRegion(ctx, key)
 }
 
-func (c *mockPDClient) GetRegionByID(ctx goctx.Context, regionID uint64) (*metapb.Region, *metapb.Peer, error) {
+func (c *mockPDClient) GetRegionByID(ctx context.Context, regionID uint64) (*metapb.Region, *metapb.Peer, error) {
 	c.RLock()
 	defer c.RUnlock()
 
@@ -145,7 +148,7 @@ func (c *mockPDClient) GetRegionByID(ctx goctx.Context, regionID uint64) (*metap
 	return c.client.GetRegionByID(ctx, regionID)
 }
 
-func (c *mockPDClient) GetStore(ctx goctx.Context, storeID uint64) (*metapb.Store, error) {
+func (c *mockPDClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {
 	c.RLock()
 	defer c.RUnlock()
 
@@ -162,8 +165,8 @@ type checkRequestClient struct {
 	priority pb.CommandPri
 }
 
-func (c *checkRequestClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
-	resp, err := c.Client.SendReq(ctx, addr, req)
+func (c *checkRequestClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	resp, err := c.Client.SendRequest(ctx, addr, req, timeout)
 	if c.priority != req.Priority {
 		if resp.Get != nil {
 			resp.Get.Error = &pb.KeyError{
@@ -187,7 +190,7 @@ func (s *testStoreSuite) TestRequestPriority(c *C) {
 	txn.SetOption(kv.Priority, kv.PriorityHigh)
 	err = txn.Set([]byte("key"), []byte("value"))
 	c.Assert(err, IsNil)
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	// Cover the basic Get request.

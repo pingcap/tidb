@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package admin
+package admin_test
 
 import (
 	"fmt"
@@ -23,17 +23,19 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	. "github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
@@ -44,99 +46,26 @@ func TestT(t *testing.T) {
 var _ = Suite(&testSuite{})
 
 type testSuite struct {
-	store  kv.Storage
-	ctx    *mock.Context
-	dbInfo *model.DBInfo
-	tbInfo *model.TableInfo
+	store kv.Storage
+	ctx   *mock.Context
 }
 
 func (s *testSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
 	var err error
 	s.store, err = mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
-
 	s.ctx = mock.NewContext()
 	s.ctx.Store = s.store
-
-	txn, err := s.store.Begin()
-	c.Assert(err, IsNil)
-	t := meta.NewMeta(txn)
-
-	s.dbInfo = &model.DBInfo{
-		ID:   1,
-		Name: model.NewCIStr("a"),
-	}
-	err = t.CreateDatabase(s.dbInfo)
-	c.Assert(err, IsNil)
-	pkFieldType := types.NewFieldType(mysql.TypeLong)
-	pkFieldType.Flag = mysql.PriKeyFlag | mysql.NotNullFlag
-	pkCol := &model.ColumnInfo{
-		Name:      model.NewCIStr("pk"),
-		ID:        1,
-		Offset:    0,
-		State:     model.StatePublic,
-		FieldType: *pkFieldType,
-	}
-	col := &model.ColumnInfo{
-		Name:         model.NewCIStr("c"),
-		ID:           2,
-		Offset:       1,
-		DefaultValue: 1,
-		State:        model.StatePublic,
-		FieldType:    *types.NewFieldType(mysql.TypeLong),
-	}
-	col1 := &model.ColumnInfo{
-		Name:         model.NewCIStr("c1"),
-		ID:           3,
-		Offset:       2,
-		DefaultValue: 1,
-		State:        model.StatePublic,
-		FieldType:    *types.NewFieldType(mysql.TypeLong),
-	}
-	idx := &model.IndexInfo{
-		Name:   model.NewCIStr("c"),
-		ID:     4,
-		Unique: true,
-		Columns: []*model.IndexColumn{{
-			Name:   model.NewCIStr("c"),
-			Offset: 1,
-			Length: 255,
-		}},
-		State: model.StatePublic,
-	}
-	s.tbInfo = &model.TableInfo{
-		ID:         5,
-		Name:       model.NewCIStr("t"),
-		State:      model.StatePublic,
-		Columns:    []*model.ColumnInfo{pkCol, col, col1},
-		Indices:    []*model.IndexInfo{idx},
-		PKIsHandle: true,
-	}
-	err = t.CreateTable(s.dbInfo.ID, s.tbInfo)
-	c.Assert(err, IsNil)
-
-	err = txn.Commit(goctx.Background())
-	c.Assert(err, IsNil)
 }
 
 func (s *testSuite) TearDownSuite(c *C) {
-	txn, err := s.store.Begin()
+	err := s.store.Close()
 	c.Assert(err, IsNil)
-	t := meta.NewMeta(txn)
-
-	err = t.DropTable(s.dbInfo.ID, s.tbInfo.ID, true)
-	c.Assert(err, IsNil)
-	err = t.DropDatabase(s.dbInfo.ID)
-	c.Assert(err, IsNil)
-	err = txn.Commit(goctx.Background())
-	c.Assert(err, IsNil)
-
-	err = s.store.Close()
-	c.Assert(err, IsNil)
+	testleak.AfterTest(c)()
 }
 
 func (s *testSuite) TestGetDDLInfo(c *C) {
-	defer testleak.AfterTest(c)()
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	t := meta.NewMeta(txn)
@@ -162,8 +91,6 @@ func (s *testSuite) TestGetDDLInfo(c *C) {
 }
 
 func (s *testSuite) TestGetDDLJobs(c *C) {
-	defer testleak.AfterTest(c)()
-
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	t := meta.NewMeta(txn)
@@ -195,8 +122,6 @@ func (s *testSuite) TestGetDDLJobs(c *C) {
 }
 
 func (s *testSuite) TestCancelJobs(c *C) {
-	defer testleak.AfterTest(c)()
-
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	t := meta.NewMeta(txn)
@@ -234,8 +159,6 @@ func (s *testSuite) TestCancelJobs(c *C) {
 }
 
 func (s *testSuite) TestGetHistoryDDLJobs(c *C) {
-	defer testleak.AfterTest(c)()
-
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	t := meta.NewMeta(txn)
@@ -251,17 +174,17 @@ func (s *testSuite) TestGetHistoryDDLJobs(c *C) {
 		c.Assert(err, IsNil)
 		historyJobs, err1 := GetHistoryDDLJobs(txn)
 		c.Assert(err1, IsNil)
-		if i+1 > maxHistoryJobs {
-			c.Assert(historyJobs, HasLen, maxHistoryJobs)
+		if i+1 > MaxHistoryJobs {
+			c.Assert(historyJobs, HasLen, MaxHistoryJobs)
 		} else {
 			c.Assert(historyJobs, HasLen, i+1)
 		}
 	}
 
-	delta := cnt - maxHistoryJobs
+	delta := cnt - MaxHistoryJobs
 	historyJobs, err := GetHistoryDDLJobs(txn)
 	c.Assert(err, IsNil)
-	c.Assert(historyJobs, HasLen, maxHistoryJobs)
+	c.Assert(historyJobs, HasLen, MaxHistoryJobs)
 	l := len(historyJobs) - 1
 	for i, job := range historyJobs {
 		c.Assert(job.ID, Equals, jobs[delta+l-i].ID)
@@ -274,15 +197,38 @@ func (s *testSuite) TestGetHistoryDDLJobs(c *C) {
 }
 
 func (s *testSuite) TestScan(c *C) {
-	defer testleak.AfterTest(c)()
-	alloc := autoid.NewAllocator(s.store, s.dbInfo.ID)
-	tb, err := tables.TableFromMeta(alloc, s.tbInfo)
+	dom, err := session.BootstrapSession(s.store)
+	c.Assert(err, IsNil)
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		se.Close()
+	}()
+
+	_, err = se.Execute(context.Background(), "create database test_admin")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "use test_admin")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "create table t (pk int primary key, c int default 1, c1 int default 1, unique key c(c))")
+	c.Assert(err, IsNil)
+	is := dom.InfoSchema()
+	db := model.NewCIStr("test_admin")
+	dbInfo, ok := is.SchemaByName(db)
+	c.Assert(ok, IsTrue)
+	tblName := model.NewCIStr("t")
+	tbl, err := is.TableByName(db, tblName)
+	c.Assert(err, IsNil)
+	tbInfo := tbl.Meta()
+
+	alloc := autoid.NewAllocator(s.store, dbInfo.ID)
+	tb, err := tables.TableFromMeta(alloc, tbInfo)
 	c.Assert(err, IsNil)
 	indices := tb.Indices()
 	c.Assert(s.ctx.NewTxn(), IsNil)
 	_, err = tb.AddRecord(s.ctx, types.MakeDatums(1, 10, 11), false)
 	c.Assert(err, IsNil)
-	c.Assert(s.ctx.Txn().Commit(goctx.Background()), IsNil)
+	c.Assert(s.ctx.Txn().Commit(context.Background()), IsNil)
 
 	record1 := &RecordData{Handle: int64(1), Values: types.MakeDatums(int64(1), int64(10), int64(11))}
 	record2 := &RecordData{Handle: int64(2), Values: types.MakeDatums(int64(2), int64(20), int64(21))}
@@ -295,7 +241,7 @@ func (s *testSuite) TestScan(c *C) {
 	c.Assert(s.ctx.NewTxn(), IsNil)
 	_, err = tb.AddRecord(s.ctx, record2.Values, false)
 	c.Assert(err, IsNil)
-	c.Assert(s.ctx.Txn().Commit(goctx.Background()), IsNil)
+	c.Assert(s.ctx.Txn().Commit(context.Background()), IsNil)
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 
@@ -331,14 +277,15 @@ func (s *testSuite) TestScan(c *C) {
 
 	s.testTableData(c, tb, []*RecordData{record1, record2})
 
-	s.testIndex(c, tb, tb.Indices()[0])
+	ctx := se.(sessionctx.Context)
+	s.testIndex(c, ctx, db.L, tb, tb.Indices()[0])
 
 	c.Assert(s.ctx.NewTxn(), IsNil)
 	err = tb.RemoveRecord(s.ctx, 1, record1.Values)
 	c.Assert(err, IsNil)
 	err = tb.RemoveRecord(s.ctx, 2, record2.Values)
 	c.Assert(err, IsNil)
-	c.Assert(s.ctx.Txn().Commit(goctx.Background()), IsNil)
+	c.Assert(s.ctx.Txn().Commit(context.Background()), IsNil)
 }
 
 func newDiffRetError(prefix string, ra, rb *RecordData) string {
@@ -351,10 +298,6 @@ func (s *testSuite) testTableData(c *C, tb table.Table, rs []*RecordData) {
 
 	err = CompareTableRecord(txn, tb, rs, true)
 	c.Assert(err, IsNil)
-
-	cnt, err := GetTableRecordsCount(txn, tb, 0)
-	c.Assert(err, IsNil)
-	c.Assert(cnt, Equals, int64(len(rs)))
 
 	records := []*RecordData{
 		{Handle: rs[0].Handle},
@@ -395,16 +338,16 @@ func (s *testSuite) testTableData(c *C, tb table.Table, rs []*RecordData) {
 	c.Assert(err.Error(), DeepEquals, "[admin:2]handle:1 is repeated in data")
 }
 
-func (s *testSuite) testIndex(c *C, tb table.Table, idx table.Index) {
+func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb table.Table, idx table.Index) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	err = CompareIndexData(sc, txn, tb, idx)
+	err = CompareIndexData(ctx, txn, tb, idx)
 	c.Assert(err, IsNil)
 
-	cnt, err := GetIndexRecordsCount(sc, txn, idx, nil)
+	idxNames := []string{idx.Meta().Name.L}
+	err = CheckIndicesCount(ctx, dbName, tb.Meta().Name.L, idxNames)
 	c.Assert(err, IsNil)
-	c.Assert(cnt, Equals, int64(2))
 
 	mockCtx := mock.NewContext()
 	// set data to:
@@ -414,16 +357,19 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx table.Index) {
 	c.Assert(err, IsNil)
 	key := tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 4))
 	setColValue(c, txn, key, types.NewDatum(int64(40)))
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = CompareIndexData(sc, txn, tb, idx)
+	err = CompareIndexData(ctx, txn, tb, idx)
 	c.Assert(err, NotNil)
 	record1 := &RecordData{Handle: int64(3), Values: types.MakeDatums(int64(30))}
 	diffMsg := newDiffRetError("index", record1, nil)
 	c.Assert(err.Error(), DeepEquals, diffMsg)
+
+	err = CheckIndicesCount(ctx, dbName, tb.Meta().Name.L, idxNames)
+	c.Assert(err, IsNil)
 
 	// set data to:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30), (4, 40)
@@ -432,12 +378,12 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx table.Index) {
 	c.Assert(err, IsNil)
 	key = tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 3))
 	setColValue(c, txn, key, types.NewDatum(int64(31)))
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = CompareIndexData(sc, txn, tb, idx)
+	err = CompareIndexData(ctx, txn, tb, idx)
 	c.Assert(err, NotNil)
 	record2 := &RecordData{Handle: int64(3), Values: types.MakeDatums(int64(31))}
 	diffMsg = newDiffRetError("index", record1, record2)
@@ -450,12 +396,12 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx table.Index) {
 	txn.Delete(key)
 	key = tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 5))
 	setColValue(c, txn, key, types.NewDatum(int64(30)))
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = checkRecordAndIndex(sc, txn, tb, idx)
+	err = CheckRecordAndIndex(ctx, txn, tb, idx)
 	c.Assert(err, NotNil)
 	record2 = &RecordData{Handle: int64(5), Values: types.MakeDatums(int64(30))}
 	diffMsg = newDiffRetError("index", record1, record2)
@@ -466,18 +412,23 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx table.Index) {
 	// table     data (handle, data): (1, 10), (2, 20), (3, 30)
 	key = tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 4))
 	txn.Delete(key)
+	key = tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 5))
+	txn.Delete(key)
 	key = tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 3))
 	setColValue(c, txn, key, types.NewDatum(int64(30)))
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = CompareIndexData(sc, txn, tb, idx)
+	err = CompareIndexData(ctx, txn, tb, idx)
 	c.Assert(err, NotNil)
 	record1 = &RecordData{Handle: int64(4), Values: types.MakeDatums(int64(40))}
 	diffMsg = newDiffRetError("index", record1, nil)
 	c.Assert(err.Error(), DeepEquals, diffMsg)
+
+	err = CheckIndicesCount(ctx, dbName, tb.Meta().Name.L, idxNames)
+	c.Assert(err.Error(), Equals, "table count 3 != index(c) count 4")
 
 	// set data to:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30)
@@ -486,15 +437,18 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx table.Index) {
 	c.Assert(err, IsNil)
 	key = tablecodec.EncodeRowKey(tb.Meta().ID, codec.EncodeInt(nil, 4))
 	setColValue(c, txn, key, types.NewDatum(int64(40)))
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = CompareIndexData(sc, txn, tb, idx)
+	err = CompareIndexData(ctx, txn, tb, idx)
 	c.Assert(err, NotNil)
 	diffMsg = newDiffRetError("index", nil, record1)
 	c.Assert(err.Error(), DeepEquals, diffMsg)
+
+	err = CheckIndicesCount(ctx, dbName, tb.Meta().Name.L, idxNames)
+	c.Assert(err.Error(), Equals, "table count 4 != index(c) count 3")
 }
 
 func setColValue(c *C, txn kv.Transaction, key kv.Key, v types.Datum) {

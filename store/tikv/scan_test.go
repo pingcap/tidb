@@ -18,10 +18,11 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 type testScanSuite struct {
+	OneByOneSuite
 	store   *tikvStore
 	prefix  string
 	rowNums []int
@@ -30,7 +31,8 @@ type testScanSuite struct {
 var _ = Suite(&testScanSuite{})
 
 func (s *testScanSuite) SetUpSuite(c *C) {
-	s.store = newTestStore(c)
+	s.OneByOneSuite.SetUpSuite(c)
+	s.store = NewTestStore(c).(*tikvStore)
 	s.prefix = fmt.Sprintf("seek_%d", time.Now().Unix())
 	s.rowNums = append(s.rowNums, 1, scanBatchSize, scanBatchSize+1)
 }
@@ -46,10 +48,11 @@ func (s *testScanSuite) TearDownSuite(c *C) {
 		c.Assert(err, IsNil)
 		scanner.Next()
 	}
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 	err = s.store.Close()
 	c.Assert(err, IsNil)
+	s.OneByOneSuite.TearDownSuite(c)
 }
 
 func (s *testScanSuite) beginTxn(c *C) *tikvTxn {
@@ -65,11 +68,12 @@ func (s *testScanSuite) TestSeek(c *C) {
 			err := txn.Set(encodeKey(s.prefix, s08d("key", i)), valueBytes(i))
 			c.Assert(err, IsNil)
 		}
-		err := txn.Commit(goctx.Background())
+		err := txn.Commit(context.Background())
 		c.Assert(err, IsNil)
 
 		txn2 := s.beginTxn(c)
 		val, err := txn2.Get(encodeKey(s.prefix, s08d("key", 0)))
+		c.Assert(err, IsNil)
 		c.Assert(val, BytesEquals, valueBytes(0))
 		scan, err := txn2.Seek(encodeKey(s.prefix, ""))
 		c.Assert(err, IsNil)

@@ -72,7 +72,7 @@ func mvccEncode(key []byte, ver uint64) []byte {
 // just returns the origin key.
 func mvccDecode(encodedKey []byte) ([]byte, uint64, error) {
 	// Skip DataPrefix
-	remainBytes, key, err := codec.DecodeBytes(encodedKey)
+	remainBytes, key, err := codec.DecodeBytes(encodedKey, nil)
 	if err != nil {
 		// should never happen
 		return nil, 0, errors.Trace(err)
@@ -810,6 +810,47 @@ func (mvcc *MVCCLevelDB) ResolveLock(startKey, endKey []byte, startTS, commitTS 
 			}
 			if err != nil {
 				return errors.Trace(err)
+			}
+		}
+
+		skip := skipDecoder{currKey: currKey}
+		_, err = skip.Decode(iter)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		currKey = skip.currKey
+	}
+	return mvcc.db.Write(batch, nil)
+}
+
+// BatchResolveLock implements the MVCCStore interface.
+func (mvcc *MVCCLevelDB) BatchResolveLock(startKey, endKey []byte, txnInfos map[uint64]uint64) error {
+	mvcc.mu.Lock()
+	defer mvcc.mu.Unlock()
+
+	iter, currKey, err := newScanIterator(mvcc.db, startKey, endKey)
+	defer iter.Release()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	batch := &leveldb.Batch{}
+	for iter.Valid() {
+		dec := lockDecoder{expectKey: currKey}
+		ok, err := dec.Decode(iter)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if ok {
+			if commitTS, ok := txnInfos[dec.lock.startTS]; ok {
+				if commitTS > 0 {
+					err = commitLock(batch, dec.lock, currKey, dec.lock.startTS, commitTS)
+				} else {
+					err = rollbackLock(batch, dec.lock, currKey, dec.lock.startTS)
+				}
+				if err != nil {
+					return errors.Trace(err)
+				}
 			}
 		}
 

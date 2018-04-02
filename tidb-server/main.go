@@ -21,20 +21,24 @@ import (
 	"os/signal"
 	"runtime"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/juju/errors"
 	"github.com/opentracing/opentracing-go"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/server"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/gcworker"
@@ -100,19 +104,11 @@ var (
 	reportStatus    = flagBoolean(nmReportStatus, true, "If enable status report HTTP service.")
 	statusPort      = flag.String(nmStatusPort, "10080", "tidb server status port")
 	metricsAddr     = flag.String(nmMetricsAddr, "", "prometheus pushgateway address, leaves it empty will disable prometheus push.")
-	metricsInterval = flag.Int(nmMetricsInterval, 15, "prometheus client push interval in second, set \"0\" to disable prometheus push.")
+	metricsInterval = flag.Uint(nmMetricsInterval, 15, "prometheus client push interval in second, set \"0\" to disable prometheus push.")
 
 	// PROXY Protocol
 	proxyProtocolNetworks      = flag.String(nmProxyProtocolNetworks, "", "proxy protocol networks allowed IP or *, empty mean disable proxy protocol support")
-	proxyProtocolHeaderTimeout = flag.Int(nmProxyProtocolHeaderTimeout, 5, "proxy protocol header read timeout, unit is second.")
-
-	timeJumpBackCounter = prometheus.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "monitor",
-			Name:      "time_jump_back_total",
-			Help:      "Counter of system time jumps backward.",
-		})
+	proxyProtocolHeaderTimeout = flag.Uint(nmProxyProtocolHeaderTimeout, 5, "proxy protocol header read timeout, unit is second.")
 )
 
 var (
@@ -150,20 +146,20 @@ func main() {
 }
 
 func registerStores() {
-	err := tidb.RegisterStore("tikv", tikv.Driver{})
+	err := session.RegisterStore("tikv", tikv.Driver{})
 	terror.MustNil(err)
 	tikv.NewGCHandlerFunc = gcworker.NewGCWorker
-	err = tidb.RegisterStore("mocktikv", mockstore.MockDriver{})
+	err = session.RegisterStore("mocktikv", mockstore.MockDriver{})
 	terror.MustNil(err)
 }
 
 func createStoreAndDomain() {
 	fullPath := fmt.Sprintf("%s://%s", cfg.Store, cfg.Path)
 	var err error
-	storage, err = tidb.NewStore(fullPath)
+	storage, err = session.NewStore(fullPath)
 	terror.MustNil(err)
 	// Bootstrap a session to load information schema.
-	dom, err = tidb.BootstrapSession(storage)
+	dom, err = session.BootstrapSession(storage)
 	terror.MustNil(err)
 }
 
@@ -174,7 +170,7 @@ func setupBinlogClient() {
 	dialerOpt := grpc.WithDialer(func(addr string, timeout time.Duration) (net.Conn, error) {
 		return net.DialTimeout("unix", addr, timeout)
 	})
-	clientConn, err := tidb.DialPumpClientWithRetry(cfg.BinlogSocket, util.DefaultMaxRetries, dialerOpt)
+	clientConn, err := session.DialPumpClientWithRetry(cfg.BinlogSocket, util.DefaultMaxRetries, dialerOpt)
 	terror.MustNil(err)
 	binloginfo.SetPumpClient(binlog.NewPumpClient(clientConn))
 	log.Infof("created binlog client at %s", cfg.BinlogSocket)
@@ -219,8 +215,8 @@ func instanceName() string {
 	return fmt.Sprintf("%s_%d", hostname, cfg.Port)
 }
 
-// parseLease parses lease argument string.
-func parseLease(lease string) time.Duration {
+// parseDuration parses lease argument string.
+func parseDuration(lease string) time.Duration {
 	dur, err := time.ParseDuration(lease)
 	if err != nil {
 		dur, err = time.ParseDuration(lease + "s")
@@ -264,8 +260,10 @@ func overrideConfig() {
 	}
 	var err error
 	if actualFlags[nmPort] {
-		cfg.Port, err = strconv.Atoi(*port)
+		var p int
+		p, err = strconv.Atoi(*port)
 		terror.MustNil(err)
+		cfg.Port = uint(p)
 	}
 	if actualFlags[nmStore] {
 		cfg.Store = *store
@@ -286,7 +284,7 @@ func overrideConfig() {
 		cfg.Lease = *ddlLease
 	}
 	if actualFlags[nmTokenLimit] {
-		cfg.TokenLimit = *tokenLimit
+		cfg.TokenLimit = uint(*tokenLimit)
 	}
 
 	// Log
@@ -305,8 +303,10 @@ func overrideConfig() {
 		cfg.Status.ReportStatus = *reportStatus
 	}
 	if actualFlags[nmStatusPort] {
-		cfg.Status.StatusPort, err = strconv.Atoi(*statusPort)
+		var p int
+		p, err = strconv.Atoi(*statusPort)
 		terror.MustNil(err)
+		cfg.Status.StatusPort = uint(p)
 	}
 	if actualFlags[nmMetricsAddr] {
 		cfg.Status.MetricsAddr = *metricsAddr
@@ -329,18 +329,44 @@ func validateConfig() {
 		log.Error("TiDB run with skip-grant-table need root privilege.")
 		os.Exit(-1)
 	}
+	if _, ok := config.ValidStorage[cfg.Store]; !ok {
+		nameList := make([]string, 0, len(config.ValidStorage))
+		for k, v := range config.ValidStorage {
+			if v {
+				nameList = append(nameList, k)
+			}
+		}
+		log.Errorf("\"store\" should be in [%s] only", strings.Join(nameList, ", "))
+		os.Exit(-1)
+	}
+	if cfg.Log.File.MaxSize > config.MaxLogFileSize {
+		log.Errorf("log max-size should not be larger than %d MB", config.MaxLogFileSize)
+		os.Exit(-1)
+	}
+	if cfg.XProtocol.XServer {
+		log.Error("X Server is not available")
+		os.Exit(-1)
+	}
+	cfg.OOMAction = strings.ToLower(cfg.OOMAction)
+
+	// lower_case_table_names is allowed to be 0, 1, 2
+	if cfg.LowerCaseTableNames < 0 || cfg.LowerCaseTableNames > 2 {
+		log.Errorf("lower-case-table-names should be 0 or 1 or 2.")
+		os.Exit(-1)
+	}
 }
 
 func setGlobalVars() {
-	ddlLeaseDuration := parseLease(cfg.Lease)
-	tidb.SetSchemaLease(ddlLeaseDuration)
-	runtime.GOMAXPROCS(cfg.Performance.MaxProcs)
-	statsLeaseDuration := parseLease(cfg.Performance.StatsLease)
-	tidb.SetStatsLease(statsLeaseDuration)
+	ddlLeaseDuration := parseDuration(cfg.Lease)
+	session.SetSchemaLease(ddlLeaseDuration)
+	runtime.GOMAXPROCS(int(cfg.Performance.MaxProcs))
+	statsLeaseDuration := parseDuration(cfg.Performance.StatsLease)
+	session.SetStatsLease(statsLeaseDuration)
 	domain.RunAutoAnalyze = cfg.Performance.RunAutoAnalyze
+	statistics.FeedbackProbability = cfg.Performance.FeedbackProbability
 	ddl.RunWorker = cfg.RunDDL
 	ddl.EnableSplitTableRegion = cfg.SplitTable
-	tidb.SetCommitRetryLimit(cfg.Performance.RetryLimit)
+	session.SetCommitRetryLimit(cfg.Performance.RetryLimit)
 	plan.JoinConcurrency = cfg.Performance.JoinConcurrency
 	plan.AllowCartesianProduct = cfg.Performance.CrossJoin
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
@@ -360,6 +386,11 @@ func setGlobalVars() {
 	if cfg.TiKVClient.GrpcConnectionCount > 0 {
 		tikv.MaxConnectionCount = cfg.TiKVClient.GrpcConnectionCount
 	}
+
+	// set lower_case_table_names
+	variable.SysVars["lower_case_table_names"].Value = strconv.Itoa(cfg.LowerCaseTableNames)
+
+	tikv.CommitMaxBackoff = int(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds() * 1000)
 }
 
 func setupLog() {
@@ -410,10 +441,19 @@ func setupSignalHandler() {
 }
 
 func setupMetrics() {
-	prometheus.MustRegister(timeJumpBackCounter)
-	go systimemon.StartMonitor(time.Now, func() {
-		timeJumpBackCounter.Inc()
-	})
+	systimeErrHandler := func() {
+		metrics.TimeJumpBackCounter.Inc()
+	}
+	callBackCount := 0
+	sucessCallBack := func() {
+		callBackCount++
+		// It is callback by monitor per second, we increase metrics.KeepAliveCounter per 5s.
+		if callBackCount >= 5 {
+			callBackCount = 0
+			metrics.KeepAliveCounter.Inc()
+		}
+	}
+	go systimemon.StartMonitor(time.Now, systimeErrHandler, sucessCallBack)
 
 	pushMetric(cfg.Status.MetricsAddr, time.Duration(cfg.Status.MetricsInterval)*time.Second)
 }

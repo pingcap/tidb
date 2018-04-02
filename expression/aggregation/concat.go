@@ -60,7 +60,7 @@ func (cf *concatFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Statem
 		cf.sepInited = true
 	}
 
-	// The last parameter is the concat seperator, we only concat the first "len(cf.Args)-1" parameters.
+	// The last parameter is the concat separator, we only concat the first "len(cf.Args)-1" parameters.
 	for i, length := 0, len(cf.Args)-1; i < length; i++ {
 		value, err := cf.Args[i].Eval(row)
 		if err != nil {
@@ -100,6 +100,13 @@ func (cf *concatFunction) GetResult(evalCtx *AggEvaluateContext) (d types.Datum)
 		d.SetNull()
 	}
 	return d
+}
+
+func (cf *concatFunction) ResetContext(sc *stmtctx.StatementContext, evalCtx *AggEvaluateContext) {
+	if cf.HasDistinct {
+		evalCtx.DistinctChecker = createDistinctChecker(sc)
+	}
+	evalCtx.Buffer = nil
 }
 
 // GetPartialResult implements Aggregation interface.

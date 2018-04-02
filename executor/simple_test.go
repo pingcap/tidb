@@ -15,17 +15,17 @@ package executor_test
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege/privileges"
+	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testkit"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 func (s *testSuite) TestCharsetDatabase(c *C) {
@@ -56,7 +56,7 @@ func (s *testSuite) TestDo(c *C) {
 func (s *testSuite) TestTransaction(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("begin")
-	ctx := tk.Se.(context.Context)
+	ctx := tk.Se.(sessionctx.Context)
 	c.Assert(inTxn(ctx), IsTrue)
 	tk.MustExec("commit")
 	c.Assert(inTxn(ctx), IsFalse)
@@ -82,7 +82,7 @@ func (s *testSuite) TestTransaction(c *C) {
 	tk.MustQuery("select * from txn").Check(testkit.Rows("1", "2"))
 }
 
-func inTxn(ctx context.Context) bool {
+func inTxn(ctx sessionctx.Context) bool {
 	return (ctx.GetSessionVars().Status & mysql.ServerStatusInTrans) > 0
 }
 
@@ -137,9 +137,9 @@ func (s *testSuite) TestUser(c *C) {
 	alterUserSQL = `ALTER USER USER() IDENTIFIED BY '1';`
 	_, err = tk.Exec(alterUserSQL)
 	c.Check(err, NotNil)
-	tk.Se, err = tidb.CreateSession4Test(s.store)
+	tk.Se, err = session.CreateSession4Test(s.store)
 	c.Check(err, IsNil)
-	ctx := tk.Se.(context.Context)
+	ctx := tk.Se.(sessionctx.Context)
 	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "test1", Hostname: "localhost"}
 	tk.MustExec(alterUserSQL)
 	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test1" and Host="localhost"`)
@@ -169,6 +169,15 @@ func (s *testSuite) TestUser(c *C) {
 	tk.MustExec(createUserSQL)
 	dropUserSQL = `DROP USER 'test1'@'localhost', 'test3'@'localhost';`
 	tk.MustExec(dropUserSQL)
+
+	// Test 'identified by password'
+	createUserSQL = `CREATE USER 'test1'@'localhost' identified by password 'xxx';`
+	_, err = tk.Exec(createUserSQL)
+	c.Assert(terror.ErrorEqual(executor.ErrPasswordFormat, err), IsTrue)
+	createUserSQL = `CREATE USER 'test1'@'localhost' identified by password '*3D56A309CD04FA2EEF181462E59011F075C89548';`
+	tk.MustExec(createUserSQL)
+	dropUserSQL = `DROP USER 'test1'@'localhost';`
+	tk.MustExec(dropUserSQL)
 }
 
 func (s *testSuite) TestSetPwd(c *C) {
@@ -189,9 +198,9 @@ func (s *testSuite) TestSetPwd(c *C) {
 	// Session user is empty.
 	_, err := tk.Exec(setPwdSQL)
 	c.Check(err, NotNil)
-	tk.Se, err = tidb.CreateSession4Test(s.store)
+	tk.Se, err = session.CreateSession4Test(s.store)
 	c.Check(err, IsNil)
-	ctx := tk.Se.(context.Context)
+	ctx := tk.Se.(sessionctx.Context)
 	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "testpwd1", Hostname: "localhost"}
 	// Session user doesn't exist.
 	_, err = tk.Exec(setPwdSQL)
@@ -223,20 +232,20 @@ func (s *testSuite) TestFlushPrivileges(c *C) {
 	tk.MustExec(`UPDATE mysql.User SET Select_priv='Y' WHERE User="testflush" and Host="localhost"`)
 
 	// Create a new session.
-	se, err := tidb.CreateSession4Test(s.store)
+	se, err := session.CreateSession4Test(s.store)
 	c.Check(err, IsNil)
 	defer se.Close()
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "testflush", Hostname: "localhost"}, nil, nil), IsTrue)
 
-	goCtx := goctx.Background()
+	ctx := context.Background()
 	// Before flush.
-	_, err = se.Execute(goCtx, `SELECT Password FROM mysql.User WHERE User="testflush" and Host="localhost"`)
+	_, err = se.Execute(ctx, `SELECT Password FROM mysql.User WHERE User="testflush" and Host="localhost"`)
 	c.Check(err, NotNil)
 
 	tk.MustExec("FLUSH PRIVILEGES")
 
 	// After flush.
-	_, err = se.Execute(goCtx, `SELECT Password FROM mysql.User WHERE User="testflush" and Host="localhost"`)
+	_, err = se.Execute(ctx, `SELECT Password FROM mysql.User WHERE User="testflush" and Host="localhost"`)
 	c.Check(err, IsNil)
 
 	privileges.Enable = save

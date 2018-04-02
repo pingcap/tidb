@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testleak"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 const (
@@ -111,7 +111,7 @@ func (c *MockContext) CommitTxn() error {
 	if c.txn == nil {
 		return nil
 	}
-	return c.txn.Commit(goctx.Background())
+	return c.txn.Commit(context.Background())
 }
 
 func (s *testPrefixSuite) TestPrefix(c *C) {
@@ -127,18 +127,18 @@ func (s *testPrefixSuite) TestPrefix(c *C) {
 	txn, err = s.s.Begin()
 	c.Assert(err, IsNil)
 	k := []byte("key100jfowi878230")
-	err = txn.Set(k, []byte("val32dfaskli384757^*&%^"))
+	err = txn.Set(k, []byte(`val32dfaskli384757^*&%^`))
 	c.Assert(err, IsNil)
 	err = util.ScanMetaWithPrefix(txn, k, func(kv.Key, []byte) bool {
 		return true
 	})
 	c.Assert(err, IsNil)
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 }
 
 func (s *testPrefixSuite) TestPrefixFilter(c *C) {
-	rowKey := []byte("test@#$%l(le[0]..prefix) 2uio")
+	rowKey := []byte(`test@#$%l(le[0]..prefix) 2uio`)
 	rowKey[8] = 0x00
 	rowKey[9] = 0x00
 	f := util.RowKeyPrefixFilter(rowKey)

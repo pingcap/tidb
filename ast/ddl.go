@@ -241,6 +241,7 @@ const (
 	ColumnOptionFulltext
 	ColumnOptionComment
 	ColumnOptionGenerated
+	ColumnOptionReference
 )
 
 // ColumnOption is used for parsing column constraint info from SQL.
@@ -248,11 +249,14 @@ type ColumnOption struct {
 	node
 
 	Tp ColumnOptionType
+	// Expr is used for ColumnOptionDefaultValue/ColumnOptionOnUpdateColumnOptionGenerated.
 	// For ColumnOptionDefaultValue or ColumnOptionOnUpdate, it's the target value.
 	// For ColumnOptionGenerated, it's the target expression.
 	Expr ExprNode
 	// Stored is only for ColumnOptionGenerated, default is false.
 	Stored bool
+	// Refer is used for foreign key.
+	Refer *ReferenceDef
 }
 
 // Accept implements Node Accept interface.
@@ -470,8 +474,9 @@ type RenameTableStmt struct {
 
 	OldTable *TableName
 	NewTable *TableName
+
+	// TableToTables is only useful for syncer which depends heavily on tidb parser to do some dirty work for now.
 	// TODO: Refactor this when you are going to add full support for multiple schema changes.
-	// Currently it is only useful for syncer which depends heavily on tidb parser to do some dirty work.
 	TableToTables []*TableToTable
 }
 
@@ -710,6 +715,7 @@ const (
 	AlterTableRenameTable
 	AlterTableAlterColumn
 	AlterTableLock
+	AlterTableAlgorithm
 
 // TODO: Add more actions
 )
@@ -739,6 +745,7 @@ type AlterTableSpec struct {
 	OldColumnName *ColumnName
 	Position      *ColumnPosition
 	LockType      LockType
+	Comment       string
 }
 
 // Accept implements Node Accept interface.

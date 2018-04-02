@@ -18,7 +18,7 @@ import (
 	"net"
 
 	"github.com/pingcap/tidb/util"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 // baseClientConn is used to communicate with user's client, it is usually dependence goroutine.
@@ -36,7 +36,7 @@ type baseClientConn interface {
 	showProcess() util.ProcessInfo
 	lockConn()
 	unlockConn()
-	getCancelFunc() goctx.CancelFunc
+	getCancelFunc() context.CancelFunc
 }
 
 // create client connection according to the server type, mysql or x-protocol

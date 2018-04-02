@@ -29,9 +29,10 @@ import (
 
 const (
 	defaultLogTimeFormat = "2006/01/02 15:04:05.000"
-	defaultLogMaxSize    = 300 // MB
-	defaultLogFormat     = "text"
-	defaultLogLevel      = log.InfoLevel
+	// DefaultLogMaxSize is the default size of log files.
+	DefaultLogMaxSize = 300 // MB
+	defaultLogFormat  = "text"
+	defaultLogLevel   = log.InfoLevel
 )
 
 // FileLogConfig serializes file log related config in toml/json.
@@ -41,11 +42,11 @@ type FileLogConfig struct {
 	// Is log rotate enabled. TODO.
 	LogRotate bool `toml:"log-rotate" json:"log-rotate"`
 	// Max size for a single file, in MB.
-	MaxSize int `toml:"max-size" json:"max-size"`
+	MaxSize uint `toml:"max-size" json:"max-size"`
 	// Max log keep days, default is never deleting.
-	MaxDays int `toml:"max-days" json:"max-days"`
+	MaxDays uint `toml:"max-days" json:"max-days"`
 	// Maximum number of old log files to retain.
-	MaxBackups int `toml:"max-backups" json:"max-backups"`
+	MaxBackups uint `toml:"max-backups" json:"max-backups"`
 }
 
 // LogConfig serializes log related config in toml/json.
@@ -131,7 +132,7 @@ func logTypeToColor(level log.Level) string {
 	return "[0;37"
 }
 
-// textFormatter is for compatability with ngaut/log
+// textFormatter is for compatibility with ngaut/log
 type textFormatter struct {
 	DisableTimestamp bool
 	EnableColors     bool
@@ -222,15 +223,15 @@ func initFileLog(cfg *FileLogConfig, logger *log.Logger) error {
 		}
 	}
 	if cfg.MaxSize == 0 {
-		cfg.MaxSize = defaultLogMaxSize
+		cfg.MaxSize = DefaultLogMaxSize
 	}
 
 	// use lumberjack to logrotate
 	output := &lumberjack.Logger{
 		Filename:   cfg.Filename,
-		MaxSize:    cfg.MaxSize,
-		MaxBackups: cfg.MaxBackups,
-		MaxAge:     cfg.MaxDays,
+		MaxSize:    int(cfg.MaxSize),
+		MaxBackups: int(cfg.MaxBackups),
+		MaxAge:     int(cfg.MaxDays),
 		LocalTime:  true,
 	}
 
@@ -245,7 +246,7 @@ func initFileLog(cfg *FileLogConfig, logger *log.Logger) error {
 // SlowQueryLogger is used to log slow query, InitLogger will modify it according to config file.
 var SlowQueryLogger = log.StandardLogger()
 
-// InitLogger initalizes PD's logger.
+// InitLogger initializes PD's logger.
 func InitLogger(cfg *LogConfig) error {
 	log.SetLevel(stringToLogLevel(cfg.Level))
 	log.AddHook(&contextHook{})

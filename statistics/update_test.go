@@ -15,14 +15,17 @@ package statistics_test
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -331,6 +334,65 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	c.Assert(hg.Len(), Equals, 1)
 }
 
+func appendBucket(h *statistics.Histogram, l, r int64) {
+	lower, upper := types.NewIntDatum(l), types.NewIntDatum(r)
+	h.AppendBucket(&lower, &upper, 0, 0)
+}
+
+func (s *testStatsUpdateSuite) TestSplitRange(c *C) {
+	h := statistics.NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeLong), 5, 0)
+	appendBucket(h, 1, 1)
+	appendBucket(h, 2, 5)
+	appendBucket(h, 7, 7)
+	appendBucket(h, 8, 8)
+	appendBucket(h, 10, 13)
+
+	tests := []struct {
+		points  []int64
+		exclude []bool
+		result  string
+	}{
+		{
+			points:  []int64{1, 1},
+			exclude: []bool{false, false},
+			result:  "[1,1]",
+		},
+		{
+			points:  []int64{0, 1, 3, 8, 8, 20},
+			exclude: []bool{true, false, true, false, true, false},
+			result:  "(0,1],(3,5],(5,7],(7,8],(8,20]",
+		},
+		{
+			points:  []int64{8, 10, 20, 30},
+			exclude: []bool{false, false, true, true},
+			result:  "[8,8],(8,10],(20,30)",
+		},
+		{
+			// test remove invalid range
+			points:  []int64{8, 9},
+			exclude: []bool{false, true},
+			result:  "[8,8]",
+		},
+	}
+	for _, t := range tests {
+		ranges := make([]*ranger.NewRange, 0, len(t.points)/2)
+		for i := 0; i < len(t.points); i += 2 {
+			ranges = append(ranges, &ranger.NewRange{
+				LowVal:      []types.Datum{types.NewIntDatum(t.points[i])},
+				LowExclude:  t.exclude[i],
+				HighVal:     []types.Datum{types.NewIntDatum(t.points[i+1])},
+				HighExclude: t.exclude[i+1],
+			})
+		}
+		ranges = h.SplitRange(ranges)
+		var ranStrs []string
+		for _, ran := range ranges {
+			ranStrs = append(ranStrs, ran.String())
+		}
+		c.Assert(strings.Join(ranStrs, ","), Equals, t.result)
+	}
+}
+
 func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
@@ -338,23 +400,42 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 	testKit.MustExec("create table t (a int, b int, primary key(a), index idx(b))")
 	testKit.MustExec("insert into t values (1,2),(2,2),(4,5)")
 	testKit.MustExec("analyze table t")
+	testKit.MustExec("insert into t values (3,4)")
 
 	h := s.do.StatsHandle()
+	oriProbability := statistics.FeedbackProbability
+	oriNumber := statistics.MaxNumberOfRanges
+	defer func() {
+		statistics.FeedbackProbability = oriProbability
+		statistics.MaxNumberOfRanges = oriNumber
+	}()
+	statistics.FeedbackProbability = 1
 	tests := []struct {
-		sql    string
-		actual int64
+		sql     string
+		hist    string
+		idxCols int
 	}{
 		{
-			sql:    "select * from t where t.a <= 1",
-			actual: 1,
+			sql: "select * from t where t.a <= 5",
+			hist: "column:1 ndv:3\n" +
+				"num: 1\tlower_bound: 1\tupper_bound: 1\trepeats: 1\n" +
+				"num: 2\tlower_bound: 2\tupper_bound: 2\trepeats: 1\n" +
+				"num: 4\tlower_bound: 3\tupper_bound: 6\trepeats: 0",
+			idxCols: 0,
 		},
 		{
-			sql:    "select * from t use index(idx) where t.b <= 2",
-			actual: 2,
+			sql: "select * from t use index(idx) where t.b <= 5",
+			hist: "index:1 ndv:2\n" +
+				"num: 2\tlower_bound: 2\tupper_bound: 2\trepeats: 2\n" +
+				"num: 4\tlower_bound: 3\tupper_bound: 6\trepeats: 0",
+			idxCols: 1,
 		},
 		{
-			sql:    "select b from t use index(idx) where t.b <= 5",
-			actual: 3,
+			sql: "select b from t use index(idx) where t.b <= 5",
+			hist: "index:1 ndv:2\n" +
+				"num: 2\tlower_bound: 2\tupper_bound: 2\trepeats: 2\n" +
+				"num: 4\tlower_bound: 3\tupper_bound: 6\trepeats: 0",
+			idxCols: 1,
 		},
 	}
 	for _, t := range tests {
@@ -362,13 +443,50 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 		h.DumpStatsDeltaToKV()
 		feedback := h.GetQueryFeedback()
 		c.Assert(len(feedback), Equals, 1)
-		c.Assert(feedback[0].Actual(), Equals, t.actual)
+		if t.idxCols == 0 {
+			c.Assert(feedback[0].DecodeInt(), IsNil)
+		}
+		c.Assert(statistics.UpdateHistogram(feedback[0].Hist(), feedback).ToString(t.idxCols), Equals, t.hist)
 	}
 
 	// Feedback from limit executor may not be accurate.
 	testKit.MustQuery("select * from t where t.a <= 2 limit 1")
 	h.DumpStatsDeltaToKV()
 	feedback := h.GetQueryFeedback()
+	c.Assert(len(feedback), Equals, 0)
+
+	// Test only collect for max number of ranges.
+	statistics.MaxNumberOfRanges = 0
+	for _, t := range tests {
+		testKit.MustQuery(t.sql)
+		h.DumpStatsDeltaToKV()
+		feedback := h.GetQueryFeedback()
+		c.Assert(len(feedback), Equals, 0)
+	}
+
+	// Test collect feedback by probability.
+	statistics.FeedbackProbability = 0
+	statistics.MaxNumberOfRanges = oriNumber
+	for _, t := range tests {
+		testKit.MustQuery(t.sql)
+		h.DumpStatsDeltaToKV()
+		feedback := h.GetQueryFeedback()
+		c.Assert(len(feedback), Equals, 0)
+	}
+}
+
+func (s *testStatsUpdateSuite) TestUpdateSystemTable(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (a int, b int)")
+	testKit.MustExec("insert into t values (1,2)")
+	testKit.MustExec("analyze table t")
+	testKit.MustExec("analyze table mysql.stats_histograms")
+	h := s.do.StatsHandle()
+	c.Assert(h.Update(s.do.InfoSchema()), IsNil)
+	feedback := h.GetQueryFeedback()
+	// We may have query feedback for system tables, but we do not need to store them.
 	c.Assert(len(feedback), Equals, 0)
 }
 

@@ -94,6 +94,7 @@ func (s *Scanner) reset(sql string) {
 	s.buf.Reset()
 	s.errs = s.errs[:0]
 	s.stmtStartPos = 0
+	s.specialComment = nil
 }
 
 func (s *Scanner) stmtText() string {

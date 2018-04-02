@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
@@ -51,7 +50,7 @@ func findMaxPrefixLen(candidates [][]*expression.Column, keys []*expression.Colu
 	for _, candidateKeys := range candidates {
 		matchedLen := 0
 		for i := range keys {
-			if i < len(candidateKeys) && keys[i].Equal(candidateKeys[i], nil) {
+			if i < len(candidateKeys) && keys[i].Equal(nil, candidateKeys[i]) {
 				matchedLen++
 			} else {
 				break
@@ -261,7 +260,7 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 	includeTableScan := x.availableIndices.includeTableScan
 	if includeTableScan && len(innerJoinKeys) == 1 {
 		pkCol := x.getPKIsHandleCol()
-		if pkCol != nil && innerJoinKeys[0].Equal(pkCol, nil) {
+		if pkCol != nil && innerJoinKeys[0].Equal(nil, pkCol) {
 			innerPlan := x.forceToTableScan(pkCol)
 			return p.constructIndexJoin(prop, innerJoinKeys, outerJoinKeys, outerIdx, innerPlan, nil, nil)
 		}
@@ -311,7 +310,7 @@ func (p *LogicalJoin) buildRangeForIndexJoin(indexInfo *model.IndexInfo, innerPl
 	// After constant propagation, there won'be cases that t1.a=t2.a and t2.a=1 occur in the same time.
 	// And if there're cases like t1.a=t2.a and t1.a > 1, we can also guarantee that t1.a > 1 won't be chosen as access condition.
 	// So DetachCondAndBuildRangeForIndex won't miss the equal conditions we generate.
-	ranges, accesses, remained, _, err := ranger.DetachCondAndBuildRangeForIndex(p.ctx.GetSessionVars().StmtCtx, conds, idxCols, colLengths)
+	ranges, accesses, remained, _, err := ranger.DetachCondAndBuildRangeForIndex(p.ctx, conds, idxCols, colLengths)
 	if err != nil {
 		terror.Log(errors.Trace(err))
 		return nil, nil, nil
@@ -546,19 +545,14 @@ func (la *LogicalAggregation) getStreamAggs(prop *requiredProp) []PhysicalPlan {
 			if tp == copDoubleReadTaskType {
 				continue
 			}
-			// Now we only support pushing down stream aggregation on mocktikv.
-			// TODO: Remove it after TiKV supports stream aggregation.
-			if tp == copSingleReadTaskType {
-				client := la.ctx.GetClient()
-				if !client.IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeStreamAgg) {
-					continue
-				}
-			}
 			childProp := &requiredProp{
 				taskTp:      tp,
 				cols:        keys,
 				desc:        prop.desc,
 				expectedCnt: prop.expectedCnt * la.inputCount / la.stats.count,
+			}
+			if childProp.expectedCnt < prop.expectedCnt {
+				childProp.expectedCnt = prop.expectedCnt
 			}
 			if !prop.isPrefix(childProp) {
 				continue

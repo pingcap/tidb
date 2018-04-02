@@ -11,20 +11,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tidb
+package session
 
 import (
 	"github.com/juju/errors"
-	opentracing "github.com/opentracing/opentracing-go"
-	"github.com/pingcap/tidb/context"
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	binlog "github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 // TxnState wraps kv.Transaction to provide a new kv.Transaction.
@@ -115,14 +115,14 @@ type dirtyTableOperation struct {
 }
 
 // Commit overrides the Transaction interface.
-func (st *TxnState) Commit(goCtx goctx.Context) error {
+func (st *TxnState) Commit(ctx context.Context) error {
 	if st.fail != nil {
 		// If any error happen during StmtCommit, don't commit this transaction.
 		err := st.fail
 		st.fail = nil
 		return errors.Trace(err)
 	}
-	return errors.Trace(st.Transaction.Commit(goCtx))
+	return errors.Trace(st.Transaction.Commit(ctx))
 }
 
 // Rollback overrides the Transaction interface.
@@ -195,7 +195,7 @@ func (st *TxnState) cleanup() {
 	}
 }
 
-func getBinlogMutation(ctx context.Context, tableID int64) *binlog.TableMutation {
+func getBinlogMutation(ctx sessionctx.Context, tableID int64) *binlog.TableMutation {
 	bin := binloginfo.GetPrewriteValue(ctx, true)
 	for i := range bin.Mutations {
 		if bin.Mutations[i].TableId == tableID {
@@ -245,14 +245,14 @@ func (tf *txnFuture) wait() (kv.Transaction, error) {
 	return tf.store.Begin()
 }
 
-func (s *session) getTxnFuture(ctx goctx.Context) *txnFuture {
+func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
 	span, ctx := opentracing.StartSpanFromContext(ctx, "session.getTxnFuture")
 	oracleStore := s.store.GetOracle()
 	tsFuture := oracleStore.GetTimestampAsync(ctx)
 	return &txnFuture{tsFuture, s.store, span}
 }
 
-// StmtCommit implements the context.Context interface.
+// StmtCommit implements the sessionctx.Context interface.
 func (s *session) StmtCommit() {
 	if s.txn.fail != nil {
 		return
@@ -289,13 +289,13 @@ func (s *session) StmtCommit() {
 	}
 }
 
-// StmtRollback implements the context.Context interface.
+// StmtRollback implements the sessionctx.Context interface.
 func (s *session) StmtRollback() {
 	s.txn.cleanup()
 	return
 }
 
-// StmtGetMutation implements the context.Context interface.
+// StmtGetMutation implements the sessionctx.Context interface.
 func (s *session) StmtGetMutation(tableID int64) *binlog.TableMutation {
 	st := &s.txn
 	if _, ok := st.mutations[tableID]; !ok {

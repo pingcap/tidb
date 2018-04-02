@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testleak"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 const (
@@ -51,6 +51,7 @@ type testKVSuite struct {
 }
 
 func (s *testKVSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
 	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	s.s = store
@@ -59,6 +60,7 @@ func (s *testKVSuite) SetUpSuite(c *C) {
 func (s *testKVSuite) TearDownSuite(c *C) {
 	err := s.s.Close()
 	c.Assert(err, IsNil)
+	testleak.AfterTest(c)()
 }
 
 func insertData(c *C, txn kv.Transaction) {
@@ -155,7 +157,6 @@ func mustGet(c *C, txn kv.Transaction) {
 }
 
 func (s *testKVSuite) TestGetSet(c *C) {
-	defer testleak.AfterTest(c)()
 	txn, err := s.s.Begin()
 	c.Assert(err, IsNil)
 
@@ -164,19 +165,18 @@ func (s *testKVSuite) TestGetSet(c *C) {
 	mustGet(c, txn)
 
 	// Check transaction results
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	txn, err = s.s.Begin()
 	c.Assert(err, IsNil)
-	defer txn.Commit(goctx.Background())
+	defer txn.Commit(context.Background())
 
 	mustGet(c, txn)
 	mustDel(c, txn)
 }
 
 func (s *testKVSuite) TestSeek(c *C) {
-	defer testleak.AfterTest(c)()
 	txn, err := s.s.Begin()
 	c.Assert(err, IsNil)
 
@@ -184,19 +184,18 @@ func (s *testKVSuite) TestSeek(c *C) {
 	checkSeek(c, txn)
 
 	// Check transaction results
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	txn, err = s.s.Begin()
 	c.Assert(err, IsNil)
-	defer txn.Commit(goctx.Background())
+	defer txn.Commit(context.Background())
 
 	checkSeek(c, txn)
 	mustDel(c, txn)
 }
 
 func (s *testKVSuite) TestInc(c *C) {
-	defer testleak.AfterTest(c)()
 	txn, err := s.s.Begin()
 	c.Assert(err, IsNil)
 
@@ -206,7 +205,7 @@ func (s *testKVSuite) TestInc(c *C) {
 	c.Assert(n, Equals, int64(100))
 
 	// Check transaction results
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	txn, err = s.s.Begin()
@@ -226,12 +225,11 @@ func (s *testKVSuite) TestInc(c *C) {
 	err = txn.Delete(key)
 	c.Assert(err, IsNil)
 
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 }
 
 func (s *testKVSuite) TestDelete(c *C) {
-	defer testleak.AfterTest(c)()
 	txn, err := s.s.Begin()
 	c.Assert(err, IsNil)
 
@@ -240,7 +238,7 @@ func (s *testKVSuite) TestDelete(c *C) {
 	mustDel(c, txn)
 
 	mustNotGet(c, txn)
-	txn.Commit(goctx.Background())
+	txn.Commit(context.Background())
 
 	// Try get
 	txn, err = s.s.Begin()
@@ -250,24 +248,23 @@ func (s *testKVSuite) TestDelete(c *C) {
 
 	// Insert again
 	insertData(c, txn)
-	txn.Commit(goctx.Background())
+	txn.Commit(context.Background())
 
 	// Delete all
 	txn, err = s.s.Begin()
 	c.Assert(err, IsNil)
 
 	mustDel(c, txn)
-	txn.Commit(goctx.Background())
+	txn.Commit(context.Background())
 
 	txn, err = s.s.Begin()
 	c.Assert(err, IsNil)
 
 	mustNotGet(c, txn)
-	txn.Commit(goctx.Background())
+	txn.Commit(context.Background())
 }
 
 func (s *testKVSuite) TestDelete2(c *C) {
-	defer testleak.AfterTest(c)()
 	txn, err := s.s.Begin()
 	c.Assert(err, IsNil)
 	val := []byte("test")
@@ -275,7 +272,7 @@ func (s *testKVSuite) TestDelete2(c *C) {
 	txn.Set([]byte("DATA_test_tbl_department_record__0000000001_0004"), val)
 	txn.Set([]byte("DATA_test_tbl_department_record__0000000002_0003"), val)
 	txn.Set([]byte("DATA_test_tbl_department_record__0000000002_0004"), val)
-	txn.Commit(goctx.Background())
+	txn.Commit(context.Background())
 
 	// Delete all
 	txn, err = s.s.Begin()
@@ -289,33 +286,31 @@ func (s *testKVSuite) TestDelete2(c *C) {
 		err = it.Next()
 		c.Assert(err, IsNil)
 	}
-	txn.Commit(goctx.Background())
+	txn.Commit(context.Background())
 
 	txn, err = s.s.Begin()
 	c.Assert(err, IsNil)
 	it, _ = txn.Seek([]byte("DATA_test_tbl_department_record__000000000"))
 	c.Assert(it.Valid(), IsFalse)
-	txn.Commit(goctx.Background())
+	txn.Commit(context.Background())
 }
 
 func (s *testKVSuite) TestSetNil(c *C) {
-	defer testleak.AfterTest(c)()
 	txn, err := s.s.Begin()
-	defer txn.Commit(goctx.Background())
+	defer txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 	err = txn.Set([]byte("1"), nil)
 	c.Assert(err, NotNil)
 }
 
 func (s *testKVSuite) TestBasicSeek(c *C) {
-	defer testleak.AfterTest(c)()
 	txn, err := s.s.Begin()
 	c.Assert(err, IsNil)
 	txn.Set([]byte("1"), []byte("1"))
-	txn.Commit(goctx.Background())
+	txn.Commit(context.Background())
 	txn, err = s.s.Begin()
 	c.Assert(err, IsNil)
-	defer txn.Commit(goctx.Background())
+	defer txn.Commit(context.Background())
 
 	it, err := txn.Seek([]byte("2"))
 	c.Assert(err, IsNil)
@@ -324,17 +319,16 @@ func (s *testKVSuite) TestBasicSeek(c *C) {
 }
 
 func (s *testKVSuite) TestBasicTable(c *C) {
-	defer testleak.AfterTest(c)()
 	txn, err := s.s.Begin()
 	c.Assert(err, IsNil)
 	for i := 1; i < 5; i++ {
 		b := []byte(strconv.Itoa(i))
 		txn.Set(b, b)
 	}
-	txn.Commit(goctx.Background())
+	txn.Commit(context.Background())
 	txn, err = s.s.Begin()
 	c.Assert(err, IsNil)
-	defer txn.Commit(goctx.Background())
+	defer txn.Commit(context.Background())
 
 	err = txn.Set([]byte("1"), []byte("1"))
 	c.Assert(err, IsNil)
@@ -372,7 +366,6 @@ func (s *testKVSuite) TestBasicTable(c *C) {
 }
 
 func (s *testKVSuite) TestRollback(c *C) {
-	defer testleak.AfterTest(c)()
 	txn, err := s.s.Begin()
 	c.Assert(err, IsNil)
 
@@ -391,7 +384,7 @@ func (s *testKVSuite) TestRollback(c *C) {
 
 	txn, err = s.s.Begin()
 	c.Assert(err, IsNil)
-	defer txn.Commit(goctx.Background())
+	defer txn.Commit(context.Background())
 
 	for i := startIndex; i < testCount; i++ {
 		_, err := txn.Get([]byte(strconv.Itoa(i)))
@@ -400,7 +393,6 @@ func (s *testKVSuite) TestRollback(c *C) {
 }
 
 func (s *testKVSuite) TestSeekMin(c *C) {
-	defer testleak.AfterTest(c)()
 	rows := []struct {
 		key   string
 		value string
@@ -435,7 +427,6 @@ func (s *testKVSuite) TestSeekMin(c *C) {
 }
 
 func (s *testKVSuite) TestConditionIfNotExist(c *C) {
-	defer testleak.AfterTest(c)()
 	var success int64
 	cnt := 100
 	b := []byte("1")
@@ -450,7 +441,7 @@ func (s *testKVSuite) TestConditionIfNotExist(c *C) {
 			if err != nil {
 				return
 			}
-			err = txn.Commit(goctx.Background())
+			err = txn.Commit(context.Background())
 			if err == nil {
 				atomic.AddInt64(&success, 1)
 			}
@@ -465,12 +456,11 @@ func (s *testKVSuite) TestConditionIfNotExist(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Delete(b)
 	c.Assert(err, IsNil)
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 }
 
 func (s *testKVSuite) TestConditionIfEqual(c *C) {
-	defer testleak.AfterTest(c)()
 	var success int64
 	cnt := 100
 	b := []byte("1")
@@ -480,7 +470,7 @@ func (s *testKVSuite) TestConditionIfEqual(c *C) {
 	txn, err := s.s.Begin()
 	c.Assert(err, IsNil)
 	txn.Set(b, b)
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	for i := 0; i < cnt; i++ {
@@ -491,7 +481,7 @@ func (s *testKVSuite) TestConditionIfEqual(c *C) {
 			txn1, err1 := s.s.Begin()
 			c.Assert(err1, IsNil)
 			txn1.Set(b, []byte("newValue"))
-			err1 = txn1.Commit(goctx.Background())
+			err1 = txn1.Commit(context.Background())
 			if err1 == nil {
 				atomic.AddInt64(&success, 1)
 			}
@@ -505,23 +495,21 @@ func (s *testKVSuite) TestConditionIfEqual(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Delete(b)
 	c.Assert(err, IsNil)
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 }
 
 func (s *testKVSuite) TestConditionUpdate(c *C) {
-	defer testleak.AfterTest(c)()
 	txn, err := s.s.Begin()
 	c.Assert(err, IsNil)
 	txn.Delete([]byte("b"))
 	kv.IncInt64(txn, []byte("a"), 1)
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 }
 
 func (s *testKVSuite) TestDBClose(c *C) {
 	c.Skip("don't know why it fails.")
-	defer testleak.AfterTest(c)()
 	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 
@@ -531,7 +519,7 @@ func (s *testKVSuite) TestDBClose(c *C) {
 	err = txn.Set([]byte("a"), []byte("b"))
 	c.Assert(err, IsNil)
 
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	ver, err := store.CurrentVersion()
@@ -559,12 +547,11 @@ func (s *testKVSuite) TestDBClose(c *C) {
 	err = txn.Set([]byte("a"), []byte("b"))
 	c.Assert(err, IsNil)
 
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, NotNil)
 }
 
 func (s *testKVSuite) TestIsolationInc(c *C) {
-	defer testleak.AfterTest(c)()
 	threadCnt := 4
 
 	ids := make(map[int64]struct{}, threadCnt*100)
@@ -598,12 +585,11 @@ func (s *testKVSuite) TestIsolationInc(c *C) {
 	// delete
 	txn, err := s.s.Begin()
 	c.Assert(err, IsNil)
-	defer txn.Commit(goctx.Background())
+	defer txn.Commit(context.Background())
 	txn.Delete([]byte("key"))
 }
 
 func (s *testKVSuite) TestIsolationMultiInc(c *C) {
-	defer testleak.AfterTest(c)()
 	threadCnt := 4
 	incCnt := 100
 	keyCnt := 4

@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tipb/go-mysqlx"
 	"github.com/pingcap/tipb/go-mysqlx/Connection"
 	log "github.com/sirupsen/logrus"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 // xClientConn represents a connection between server and client,
@@ -58,7 +58,7 @@ type xClientConn struct {
 	// mu is used for cancelling the execution of current transaction.
 	mu struct {
 		sync.RWMutex
-		cancelFunc goctx.CancelFunc
+		cancelFunc context.CancelFunc
 	}
 }
 
@@ -104,8 +104,8 @@ func (xcc *xClientConn) Run() {
 		log.Debugf("[%d] receive msg type[%d]", xcc.connectionID, tp)
 
 		span := opentracing.StartSpan("server.dispatch")
-		goCtx := opentracing.ContextWithSpan(goctx.Background(), span)
-		_, cancelFunc := goctx.WithCancel(goCtx)
+		goCtx := opentracing.ContextWithSpan(context.Background(), span)
+		_, cancelFunc := context.WithCancel(goCtx)
 		xcc.mu.Lock()
 		xcc.mu.cancelFunc = cancelFunc
 		xcc.mu.Unlock()
@@ -272,7 +272,7 @@ func (xcc *xClientConn) showProcess() util.ProcessInfo {
 func (xcc *xClientConn) useDB(db string) (err error) {
 	// if input is "use `SELECT`", mysql client just send "SELECT"
 	// so we add `` around db.
-	_, err = xcc.ctx.Execute(goctx.Background(), "use `"+db+"`")
+	_, err = xcc.ctx.Execute(context.Background(), "use `"+db+"`")
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -298,6 +298,6 @@ func (xcc *xClientConn) unlockConn() {
 	xcc.mu.RUnlock()
 }
 
-func (xcc *xClientConn) getCancelFunc() goctx.CancelFunc {
+func (xcc *xClientConn) getCancelFunc() context.CancelFunc {
 	return xcc.mu.cancelFunc
 }

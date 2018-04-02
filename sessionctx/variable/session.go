@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/mysql"
@@ -93,6 +94,10 @@ type TransactionContext struct {
 	StartTS       uint64
 	Shard         *int64
 	TableDeltaMap map[int64]TableDelta
+
+	// For metrics.
+	CreateTime     time.Time
+	StatementCount int
 }
 
 // UpdateDeltaForTable updates the delta info for some table.
@@ -274,19 +279,31 @@ type SessionVars struct {
 	// MaxChunkSize defines max row count of a Chunk during query execution.
 	MaxChunkSize int
 
-	// MemThreshold defines the memory usage warning threshold in Byte of a executor during query execution.
-	MemThreshold int64
+	// MemQuotaQuery defines the memory quota for a query.
+	MemQuotaQuery int64
+	// MemQuotaHashJoin defines the memory quota for a hash join executor.
+	MemQuotaHashJoin int64
+	// MemQuotaMergeJoin defines the memory quota for a merge join executor.
+	MemQuotaMergeJoin int64
+	// MemQuotaSort defines the memory quota for a sort executor.
+	MemQuotaSort int64
+	// MemQuotaTopn defines the memory quota for a top n executor.
+	MemQuotaTopn int64
+	// MemQuotaIndexLookupReader defines the memory quota for a index lookup reader executor.
+	MemQuotaIndexLookupReader int64
+	// MemQuotaIndexLookupJoin defines the memory quota for a index lookup join executor.
+	MemQuotaIndexLookupJoin int64
 
-	// EnableChunk indicates whether the chunk execution model is enabled.
-	// TODO: remove this after tidb-server configuration "enable-chunk' removed.
-	EnableChunk bool
+	// EnableStreaming indicates whether the coprocessor request can use streaming API.
+	// TODO: remove this after tidb-server configuration "enable-streaming' removed.
+	EnableStreaming bool
 
 	writeStmtBufs WriteStmtBufs
 }
 
 // NewSessionVars creates a session vars object.
 func NewSessionVars() *SessionVars {
-	return &SessionVars{
+	vars := &SessionVars{
 		Users:                      make(map[string]string),
 		systems:                    make(map[string]string),
 		PreparedStmts:              make(map[uint32]interface{}),
@@ -306,8 +323,22 @@ func NewSessionVars() *SessionVars {
 		DistSQLScanConcurrency:     DefDistSQLScanConcurrency,
 		MaxChunkSize:               DefMaxChunkSize,
 		DMLBatchSize:               DefDMLBatchSize,
-		MemThreshold:               DefMemThreshold,
+		MemQuotaQuery:              DefTiDBMemQuotaQuery,
+		MemQuotaHashJoin:           DefTiDBMemQuotaHashJoin,
+		MemQuotaMergeJoin:          DefTiDBMemQuotaMergeJoin,
+		MemQuotaSort:               DefTiDBMemQuotaSort,
+		MemQuotaTopn:               DefTiDBMemQuotaTopn,
+		MemQuotaIndexLookupReader:  DefTiDBMemQuotaIndexLookupReader,
+		MemQuotaIndexLookupJoin:    DefTiDBMemQuotaIndexLookupJoin,
 	}
+	var enableStreaming string
+	if config.GetGlobalConfig().EnableStreaming {
+		enableStreaming = "1"
+	} else {
+		enableStreaming = "0"
+	}
+	terror.Log(vars.SetSystemVar(TiDBEnableStreaming, enableStreaming))
+	return vars
 }
 
 // GetWriteStmtBufs get pointer of SessionVars.writeStmtBufs.
@@ -436,19 +467,19 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 			return errors.Trace(err)
 		}
 	case AutocommitVar:
-		isAutocommit := tidbOptOn(val)
+		isAutocommit := TiDBOptOn(val)
 		s.SetStatusFlag(mysql.ServerStatusAutocommit, isAutocommit)
 		if isAutocommit {
 			s.SetStatusFlag(mysql.ServerStatusInTrans, false)
 		}
 	case TiDBImportingData:
-		s.ImportingData = tidbOptOn(val)
+		s.ImportingData = TiDBOptOn(val)
 	case TiDBSkipUTF8Check:
-		s.SkipUTF8Check = tidbOptOn(val)
+		s.SkipUTF8Check = TiDBOptOn(val)
 	case TiDBOptAggPushDown:
-		s.AllowAggPushDown = tidbOptOn(val)
+		s.AllowAggPushDown = TiDBOptOn(val)
 	case TiDBOptInSubqUnFolding:
-		s.AllowInSubqueryUnFolding = tidbOptOn(val)
+		s.AllowInSubqueryUnFolding = TiDBOptOn(val)
 	case TiDBIndexLookupConcurrency:
 		s.IndexLookupConcurrency = tidbOptPositiveInt(val, DefIndexLookupConcurrency)
 	case TiDBIndexJoinBatchSize:
@@ -460,19 +491,33 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBIndexSerialScanConcurrency:
 		s.IndexSerialScanConcurrency = tidbOptPositiveInt(val, DefIndexSerialScanConcurrency)
 	case TiDBBatchInsert:
-		s.BatchInsert = tidbOptOn(val)
+		s.BatchInsert = TiDBOptOn(val)
 	case TiDBBatchDelete:
-		s.BatchDelete = tidbOptOn(val)
+		s.BatchDelete = TiDBOptOn(val)
 	case TiDBDMLBatchSize:
 		s.DMLBatchSize = tidbOptPositiveInt(val, DefDMLBatchSize)
 	case TiDBCurrentTS, TiDBConfig:
 		return ErrReadOnly
 	case TiDBMaxChunkSize:
 		s.MaxChunkSize = tidbOptPositiveInt(val, DefMaxChunkSize)
-	case TiDBMemThreshold:
-		s.MemThreshold = int64(tidbOptPositiveInt(val, DefMemThreshold))
+	case TIDBMemQuotaQuery:
+		s.MemQuotaQuery = tidbOptInt64(val, DefTiDBMemQuotaQuery)
+	case TIDBMemQuotaHashJoin:
+		s.MemQuotaHashJoin = tidbOptInt64(val, DefTiDBMemQuotaHashJoin)
+	case TIDBMemQuotaMergeJoin:
+		s.MemQuotaMergeJoin = tidbOptInt64(val, DefTiDBMemQuotaMergeJoin)
+	case TIDBMemQuotaSort:
+		s.MemQuotaSort = tidbOptInt64(val, DefTiDBMemQuotaSort)
+	case TIDBMemQuotaTopn:
+		s.MemQuotaTopn = tidbOptInt64(val, DefTiDBMemQuotaTopn)
+	case TIDBMemQuotaIndexLookupReader:
+		s.MemQuotaIndexLookupReader = tidbOptInt64(val, DefTiDBMemQuotaIndexLookupReader)
+	case TIDBMemQuotaIndexLookupJoin:
+		s.MemQuotaIndexLookupJoin = tidbOptInt64(val, DefTiDBMemQuotaIndexLookupJoin)
 	case TiDBGeneralLog:
 		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt(val, DefTiDBGeneralLog)))
+	case TiDBEnableStreaming:
+		s.EnableStreaming = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil

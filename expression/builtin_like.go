@@ -17,10 +17,10 @@ import (
 	"regexp"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/stringutil"
-	"github.com/pingcap/tipb/go-tipb"
+	tipb "github.com/pingcap/tipb/go-tipb"
 )
 
 var (
@@ -38,7 +38,7 @@ type likeFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *likeFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
+func (c *likeFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -82,7 +82,7 @@ type regexpFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *regexpFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
+func (c *regexpFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}

@@ -14,7 +14,6 @@
 package gcworker
 
 import (
-	"flag"
 	"math"
 	"strconv"
 	"testing"
@@ -23,16 +22,12 @@ import (
 	gofail "github.com/coreos/gofail/runtime"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/errorpb"
-	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
-	goctx "golang.org/x/net/context"
-)
-
-var (
-	withTiKV = flag.Bool("with-tikv", false, "run tests with TiKV cluster started. (not use the mock server)")
-	pdAddrs  = flag.String("pd-addrs", "127.0.0.1:2379", "pd addrs")
+	"golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
@@ -43,18 +38,19 @@ type testGCWorkerSuite struct {
 	store    tikv.Storage
 	oracle   *mockoracle.MockOracle
 	gcWorker *GCWorker
+	dom      *domain.Domain
 }
 
 var _ = Suite(&testGCWorkerSuite{})
 
 func (s *testGCWorkerSuite) SetUpTest(c *C) {
 	tikv.NewGCHandlerFunc = NewGCWorker
-	var err error
-	s.store, err = mockstore.NewTestTiKVStorage(*withTiKV, *pdAddrs)
+	store, err := mockstore.NewMockTikvStore()
+	s.store = store.(tikv.Storage)
 	c.Assert(err, IsNil)
 	s.oracle = &mockoracle.MockOracle{}
 	s.store.SetOracle(s.oracle)
-	_, err = tidb.BootstrapSession(s.store)
+	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 	gcWorker, err := NewGCWorker(s.store)
 	c.Assert(err, IsNil)
@@ -64,6 +60,7 @@ func (s *testGCWorkerSuite) SetUpTest(c *C) {
 }
 
 func (s *testGCWorkerSuite) TearDownTest(c *C) {
+	s.dom.Close()
 	err := s.store.Close()
 	c.Assert(err, IsNil)
 }
@@ -154,8 +151,8 @@ func (s *testGCWorkerSuite) TestDoGCForOneRegion(c *C) {
 	var failedRegions int32
 	taskWorker := newGCTaskWorker(s.store, nil, nil, s.gcWorker.uuid, &successRegions, &failedRegions)
 
-	ctx := goctx.Background()
-	bo := tikv.NewBackoffer(tikv.GcOneRegionMaxBackoff, ctx)
+	ctx := context.Background()
+	bo := tikv.NewBackoffer(ctx, tikv.GcOneRegionMaxBackoff)
 	loc, err := s.store.GetRegionCache().LocateKey(bo, []byte(""))
 	c.Assert(err, IsNil)
 	var regionErr *errorpb.Error
@@ -184,7 +181,7 @@ func (s *testGCWorkerSuite) TestDoGCForOneRegion(c *C) {
 
 func (s *testGCWorkerSuite) TestDoGC(c *C) {
 	var err error
-	ctx := goctx.Background()
+	ctx := context.Background()
 
 	gcSafePointCacheInterval = 1
 

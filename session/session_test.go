@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tidb_test
+package session_test
 
 import (
 	"fmt"
@@ -21,16 +21,17 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/privilege/privileges"
+	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
@@ -38,10 +39,13 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/auth"
+	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	goctx "golang.org/x/net/context"
+	binlog "github.com/pingcap/tipb/go-binlog"
+	"golang.org/x/net/context"
+	"google.golang.org/grpc"
 )
 
 var _ = Suite(&testSessionSuite{})
@@ -64,9 +68,9 @@ func (s *testSessionSuite) SetUpSuite(c *C) {
 	)
 	c.Assert(err, IsNil)
 	s.store = store
-	tidb.SetSchemaLease(0)
-	tidb.SetStatsLease(0)
-	s.dom, err = tidb.BootstrapSession(s.store)
+	session.SetSchemaLease(0)
+	session.SetStatsLease(0)
+	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 }
 
@@ -85,6 +89,67 @@ func (s *testSessionSuite) TearDownTest(c *C) {
 	}
 }
 
+type mockBinlogPump struct {
+}
+
+var _ binlog.PumpClient = &mockBinlogPump{}
+
+func (p *mockBinlogPump) WriteBinlog(ctx context.Context, in *binlog.WriteBinlogReq, opts ...grpc.CallOption) (*binlog.WriteBinlogResp, error) {
+	return &binlog.WriteBinlogResp{}, nil
+}
+
+type mockPump_PullBinlogsClient struct {
+	grpc.ClientStream
+}
+
+func (m mockPump_PullBinlogsClient) Recv() (*binlog.PullBinlogResp, error) {
+	return nil, nil
+}
+
+func (p *mockBinlogPump) PullBinlogs(ctx context.Context, in *binlog.PullBinlogReq, opts ...grpc.CallOption) (binlog.Pump_PullBinlogsClient, error) {
+	return mockPump_PullBinlogsClient{mocktikv.MockGRPCClientStream()}, nil
+}
+
+func (s *testSessionSuite) TestForCoverage(c *C) {
+	planCache := plan.PlanCacheEnabled
+	plan.GlobalPlanCache = kvcache.NewShardedLRUCache(2, 1)
+	defer func() {
+		plan.PlanCacheEnabled = planCache
+	}()
+
+	// Just for test coverage.
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int auto_increment, v int, index (id))")
+	tk.MustExec("insert t values ()")
+	plan.PlanCacheEnabled = true
+	tk.MustExec("insert t values ()")
+	tk.MustExec("insert t values ()")
+
+	// Normal request will not cover txn.Seek.
+	tk.MustExec("admin check table t")
+
+	// Cover dirty table operations in StateTxn.
+	tk.Se.GetSessionVars().BinlogClient = &mockBinlogPump{}
+	tk.MustExec("begin")
+	tk.MustExec("truncate table t")
+	tk.MustExec("insert t values ()")
+	tk.MustExec("delete from t where id = 2")
+	tk.MustExec("update t set v = 5 where id = 2")
+	tk.MustExec("insert t values ()")
+	tk.MustExec("rollback")
+
+	c.Check(tk.Se.SetCollation(mysql.DefaultCollationID), IsNil)
+
+	tk.MustExec("show processlist")
+	_, err := tk.Se.FieldList("t")
+	c.Check(err, IsNil)
+
+	// Cover the error branch, althrough this never happen.
+	err = tk.Se.ActivePendingTxn()
+	c.Assert(err, NotNil)
+}
+
 func (s *testSessionSuite) TestErrorRollback(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t_rollback")
@@ -97,8 +162,8 @@ func (s *testSessionSuite) TestErrorRollback(c *C) {
 	num := 100
 
 	// retry forever
-	tidb.SetCommitRetryLimit(math.MaxInt64)
-	defer tidb.SetCommitRetryLimit(10)
+	session.SetCommitRetryLimit(math.MaxInt64)
+	defer session.SetCommitRetryLimit(10)
 
 	for i := 0; i < cnt; i++ {
 		go func() {
@@ -119,7 +184,7 @@ func (s *testSessionSuite) TestQueryString(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	tk.MustExec("create table mutil1 (a int);create table multi2 (a int)")
-	queryStr := tk.Se.Value(context.QueryString)
+	queryStr := tk.Se.Value(sessionctx.QueryString)
 	c.Assert(queryStr, Equals, "create table multi2 (a int)")
 }
 
@@ -269,7 +334,7 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	v, err = se.GetGlobalSysVar(varName)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, varValue1)
-	c.Assert(tk.Se.CommitTxn(goctx.TODO()), IsNil)
+	c.Assert(tk.Se.CommitTxn(context.TODO()), IsNil)
 
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	se1 := tk1.Se.(variable.GlobalVarAccessor)
@@ -281,7 +346,7 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	v, err = se1.GetGlobalSysVar(varName)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, varValue2)
-	c.Assert(tk1.Se.CommitTxn(goctx.TODO()), IsNil)
+	c.Assert(tk1.Se.CommitTxn(context.TODO()), IsNil)
 
 	// Make sure the change is visible to any client that accesses that global variable.
 	v, err = se.GetGlobalSysVar(varName)
@@ -321,7 +386,7 @@ func (s *testSessionSuite) TestRetryResetStmtCtx(c *C) {
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	tk1.MustExec("update retrytxn set b = b + 1 where a = 1")
 
-	err := tk.Se.CommitTxn(goctx.TODO())
+	err := tk.Se.CommitTxn(context.TODO())
 	c.Assert(err, IsNil)
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(1))
 }
@@ -338,10 +403,10 @@ func (s *testSessionSuite) TestRetryCleanTxn(c *C) {
 	tk1.MustExec("update retrytxn set b = b + 1 where a = 1")
 
 	// Hijack retry history, add a statement that returns error.
-	history := tidb.GetHistory(tk.Se)
+	history := session.GetHistory(tk.Se)
 	stmtNode, err := parser.New().ParseOneStmt("insert retrytxn values (2, 'a')", "", "")
 	c.Assert(err, IsNil)
-	stmt, _ := tidb.Compile(goctx.TODO(), tk.Se, stmtNode)
+	stmt, _ := session.Compile(context.TODO(), tk.Se, stmtNode)
 	executor.ResetStmtCtx(tk.Se, stmtNode)
 	history.Add(0, stmt, tk.Se.GetSessionVars().StmtCtx)
 	_, err = tk.Exec("commit")
@@ -356,7 +421,7 @@ func (s *testSessionSuite) TestReadOnlyNotInHistory(c *C) {
 	tk.MustExec("insert history values (1), (2), (3)")
 	tk.MustExec("set @@autocommit = 0")
 	tk.MustQuery("select * from history")
-	history := tidb.GetHistory(tk.Se)
+	history := session.GetHistory(tk.Se)
 	c.Assert(history.Count(), Equals, 0)
 
 	tk.MustExec("insert history values (4)")
@@ -364,7 +429,7 @@ func (s *testSessionSuite) TestReadOnlyNotInHistory(c *C) {
 	c.Assert(history.Count(), Equals, 2)
 	tk.MustExec("commit")
 	tk.MustQuery("select * from history")
-	history = tidb.GetHistory(tk.Se)
+	history = session.GetHistory(tk.Se)
 	c.Assert(history.Count(), Equals, 0)
 }
 
@@ -499,8 +564,8 @@ func (s *testSessionSuite) TestSkipWithGrant(c *C) {
 	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "user_not_exist"}, []byte("yyy"), []byte("zzz")), IsFalse)
 
 	privileges.SkipWithGrant = true
-	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "xxx", Hostname: "%"}, []byte("yyy"), []byte("zzz")), IsTrue)
-	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, []byte(""), []byte("")), IsTrue)
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "xxx", Hostname: `%`}, []byte("yyy"), []byte("zzz")), IsTrue)
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: `%`}, []byte(""), []byte("")), IsTrue)
 	tk.MustExec("create table t (id int)")
 
 	privileges.Enable = save1
@@ -712,12 +777,12 @@ func (s *testSessionSuite) TestPrepare(c *C) {
 	tk.MustExec("create table t(id TEXT)")
 	tk.MustExec(`INSERT INTO t VALUES ("id");`)
 	id, ps, _, err := tk.Se.PrepareStmt("select id+? from t")
-	goCtx := goctx.Background()
+	ctx := context.Background()
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, uint32(1))
 	c.Assert(ps, Equals, 1)
 	tk.MustExec(`set @a=1`)
-	_, err = tk.Se.ExecutePreparedStmt(goCtx, id, "1")
+	_, err = tk.Se.ExecutePreparedStmt(ctx, id, "1")
 	c.Assert(err, IsNil)
 	err = tk.Se.DropPreparedStmt(id)
 	c.Assert(err, IsNil)
@@ -738,10 +803,10 @@ func (s *testSessionSuite) TestPrepare(c *C) {
 	tk.MustExec("insert multiexec values (1, 1), (2, 2)")
 	id, _, _, err = tk.Se.PrepareStmt("select a from multiexec where b = ? order by b")
 	c.Assert(err, IsNil)
-	rs, err := tk.Se.ExecutePreparedStmt(goCtx, id, 1)
+	rs, err := tk.Se.ExecutePreparedStmt(ctx, id, 1)
 	c.Assert(err, IsNil)
 	rs.Close()
-	rs, err = tk.Se.ExecutePreparedStmt(goCtx, id, 2)
+	rs, err = tk.Se.ExecutePreparedStmt(ctx, id, 2)
 	rs.Close()
 	c.Assert(err, IsNil)
 }
@@ -868,9 +933,10 @@ func (s *testSessionSuite) TestResultType(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	rs, err := tk.Exec(`select cast(null as char(30))`)
 	c.Assert(err, IsNil)
-	row, err := rs.Next(goctx.Background())
+	chk := rs.NewChunk()
+	err = rs.NextChunk(context.Background(), chk)
 	c.Assert(err, IsNil)
-	c.Assert(row.IsNull(0), IsTrue)
+	c.Assert(chk.GetRow(0).IsNull(0), IsTrue)
 	c.Assert(rs.Fields()[0].Column.FieldType.Tp, Equals, mysql.TypeVarString)
 }
 
@@ -1029,8 +1095,8 @@ func (s *testSessionSuite) TestRetry(c *C) {
 	tk3.MustExec("SET SESSION autocommit=0;")
 
 	// retry forever
-	tidb.SetCommitRetryLimit(math.MaxInt64)
-	defer tidb.SetCommitRetryLimit(10)
+	session.SetCommitRetryLimit(math.MaxInt64)
+	defer session.SetCommitRetryLimit(10)
 
 	var wg sync.WaitGroup
 	wg.Add(3)
@@ -1070,9 +1136,9 @@ func (s *testSessionSuite) TestLastExecuteDDLFlag(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(id int)")
-	c.Assert(tk.Se.Value(context.LastExecuteDDL), NotNil)
+	c.Assert(tk.Se.Value(sessionctx.LastExecuteDDL), NotNil)
 	tk.MustExec("insert into t1 values (1)")
-	c.Assert(tk.Se.Value(context.LastExecuteDDL), IsNil)
+	c.Assert(tk.Se.Value(sessionctx.LastExecuteDDL), IsNil)
 }
 
 func (s *testSessionSuite) TestDecimal(c *C) {
@@ -1381,19 +1447,19 @@ func (s *testSchemaSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	s.store = store
 	s.lease = 20 * time.Millisecond
-	tidb.SetSchemaLease(s.lease)
-	tidb.SetStatsLease(0)
-	dom, err := tidb.BootstrapSession(s.store)
+	session.SetSchemaLease(s.lease)
+	session.SetStatsLease(0)
+	dom, err := session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 	s.dom = dom
 }
 
 func (s *testSchemaSuite) TestLoadSchemaFailed(c *C) {
-	atomic.StoreInt32(&tidb.SchemaOutOfDateRetryTimes, int32(3))
-	atomic.StoreInt64(&tidb.SchemaOutOfDateRetryInterval, int64(20*time.Millisecond))
+	atomic.StoreInt32(&session.SchemaOutOfDateRetryTimes, int32(3))
+	atomic.StoreInt64(&session.SchemaOutOfDateRetryInterval, int64(20*time.Millisecond))
 	defer func() {
-		atomic.StoreInt32(&tidb.SchemaOutOfDateRetryTimes, 10)
-		atomic.StoreInt64(&tidb.SchemaOutOfDateRetryInterval, int64(500*time.Millisecond))
+		atomic.StoreInt32(&session.SchemaOutOfDateRetryTimes, 10)
+		atomic.StoreInt64(&session.SchemaOutOfDateRetryInterval, int64(500*time.Millisecond))
 	}()
 
 	tk := testkit.NewTestKitWithInit(c, s.store)
@@ -1462,9 +1528,9 @@ func (s *testSchemaSuite) TestSchemaCheckerSQL(c *C) {
 	tk.MustExec(`commit;`)
 
 	// The schema version is out of date in the first transaction, and the SQL can't be retried.
-	tidb.SchemaChangedWithoutRetry = true
+	session.SchemaChangedWithoutRetry = true
 	defer func() {
-		tidb.SchemaChangedWithoutRetry = false
+		session.SchemaChangedWithoutRetry = false
 	}()
 	tk.MustExec(`begin;`)
 	tk1.MustExec(`alter table t modify column c bigint;`)
@@ -1548,7 +1614,7 @@ func (s *testSchemaSuite) TestRetrySchemaChange(c *C) {
 	// Step2: during retry, hook() is called, tk update primary key.
 	// Step3: tk1 continue commit in retry() meet a retryable error(write conflict), retry again.
 	// Step4: tk1 retry() success, if it use the stale statement, data and index will inconsistent.
-	err := tk1.Se.CommitTxn(goctx.WithValue(goctx.Background(), "preCommitHook", hook))
+	err := tk1.Se.CommitTxn(context.WithValue(context.Background(), "preCommitHook", hook))
 	c.Assert(err, IsNil)
 	tk.MustQuery("select * from t where t.b = 5").Check(testkit.Rows("1 5"))
 }
@@ -1589,7 +1655,7 @@ func (s *testSchemaSuite) TestTableReaderChunk(c *C) {
 	var count int
 	var numChunks int
 	for {
-		err = rs.NextChunk(goctx.TODO(), chk)
+		err = rs.NextChunk(context.TODO(), chk)
 		c.Assert(err, IsNil)
 		numRows := chk.NumRows()
 		if numRows == 0 {
@@ -1615,7 +1681,6 @@ func (s *testSchemaSuite) TestInsertExecChunk(c *C) {
 	tk.MustExec("create table test2(a int)")
 
 	tk.Se.GetSessionVars().DistSQLScanConcurrency = 1
-	tk.Se.GetSessionVars().EnableChunk = true
 	tk.MustExec("insert into test2(a) select a from test1;")
 
 	rs, err := tk.Exec("select * from test2")
@@ -1623,7 +1688,7 @@ func (s *testSchemaSuite) TestInsertExecChunk(c *C) {
 	var idx int
 	for {
 		chk := rs.NewChunk()
-		err = rs.NextChunk(goctx.TODO(), chk)
+		err = rs.NextChunk(context.TODO(), chk)
 		c.Assert(err, IsNil)
 		if chk.NumRows() == 0 {
 			break
@@ -1648,7 +1713,6 @@ func (s *testSchemaSuite) TestUpdateExecChunk(c *C) {
 	}
 
 	tk.Se.GetSessionVars().DistSQLScanConcurrency = 1
-	tk.Se.GetSessionVars().EnableChunk = true
 	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("update chk set a = a + 100 where a = %d", i))
 	}
@@ -1658,7 +1722,7 @@ func (s *testSchemaSuite) TestUpdateExecChunk(c *C) {
 	var idx int
 	for {
 		chk := rs.NewChunk()
-		err = rs.NextChunk(goctx.TODO(), chk)
+		err = rs.NextChunk(context.TODO(), chk)
 		c.Assert(err, IsNil)
 		if chk.NumRows() == 0 {
 			break
@@ -1684,7 +1748,6 @@ func (s *testSchemaSuite) TestDeleteExecChunk(c *C) {
 	}
 
 	tk.Se.GetSessionVars().DistSQLScanConcurrency = 1
-	tk.Se.GetSessionVars().EnableChunk = true
 
 	for i := 0; i < 99; i++ {
 		tk.MustExec(fmt.Sprintf("delete from chk where a = %d", i))
@@ -1694,7 +1757,7 @@ func (s *testSchemaSuite) TestDeleteExecChunk(c *C) {
 	c.Assert(err, IsNil)
 
 	chk := rs.NewChunk()
-	err = rs.NextChunk(goctx.TODO(), chk)
+	err = rs.NextChunk(context.TODO(), chk)
 	c.Assert(err, IsNil)
 	c.Assert(chk.NumRows(), Equals, 1)
 
@@ -1717,7 +1780,6 @@ func (s *testSchemaSuite) TestDeleteMultiTableExecChunk(c *C) {
 	}
 
 	tk.Se.GetSessionVars().DistSQLScanConcurrency = 1
-	tk.Se.GetSessionVars().EnableChunk = true
 
 	tk.MustExec("delete chk1, chk2 from chk1 inner join chk2 where chk1.a = chk2.a")
 
@@ -1727,7 +1789,7 @@ func (s *testSchemaSuite) TestDeleteMultiTableExecChunk(c *C) {
 	var idx int
 	for {
 		chk := rs.NewChunk()
-		err = rs.NextChunk(goctx.TODO(), chk)
+		err = rs.NextChunk(context.TODO(), chk)
 		c.Assert(err, IsNil)
 
 		if chk.NumRows() == 0 {
@@ -1747,7 +1809,7 @@ func (s *testSchemaSuite) TestDeleteMultiTableExecChunk(c *C) {
 	c.Assert(err, IsNil)
 
 	chk := rs.NewChunk()
-	err = rs.NextChunk(goctx.TODO(), chk)
+	err = rs.NextChunk(context.TODO(), chk)
 	c.Assert(err, IsNil)
 	c.Assert(chk.NumRows(), Equals, 0)
 	rs.Close()
@@ -1772,7 +1834,7 @@ func (s *testSchemaSuite) TestIndexLookUpReaderChunk(c *C) {
 	chk := rs.NewChunk()
 	var count int
 	for {
-		err = rs.NextChunk(goctx.TODO(), chk)
+		err = rs.NextChunk(context.TODO(), chk)
 		c.Assert(err, IsNil)
 		numRows := chk.NumRows()
 		if numRows == 0 {
@@ -1792,7 +1854,7 @@ func (s *testSchemaSuite) TestIndexLookUpReaderChunk(c *C) {
 	chk = rs.NewChunk()
 	count = 0
 	for {
-		err = rs.NextChunk(goctx.TODO(), chk)
+		err = rs.NextChunk(context.TODO(), chk)
 		c.Assert(err, IsNil)
 		numRows := chk.NumRows()
 		if numRows == 0 {
@@ -1867,4 +1929,49 @@ func (s *testSessionSuite) TestCastTimeToDate(c *C) {
 	tk.MustExec("set time_zone = '+08:00'")
 	date = time.Now().In(time.FixedZone("UTC", 8*int(time.Hour/time.Second)))
 	tk.MustQuery("select cast(time('12:23:34') as date)").Check(testkit.Rows(date.Format("2006-01-02")))
+}
+
+func (s *testSessionSuite) TestSetGlobalTZ(c *C) {
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set time_zone = '+08:00'")
+	tk.MustQuery("show variables like 'time_zone'").Check(testkit.Rows("time_zone +08:00"))
+
+	tk.MustExec("set global time_zone = '+00:00'")
+
+	tk.MustQuery("show variables like 'time_zone'").Check(testkit.Rows("time_zone +08:00"))
+
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustQuery("show variables like 'time_zone'").Check(testkit.Rows("time_zone +00:00"))
+}
+
+func (s *testSessionSuite) TestRollbackOnCompileError(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("insert t values (1)")
+
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk2.MustQuery("select * from t").Check(testkit.Rows("1"))
+
+	tk.MustExec("rename table t to t2")
+
+	var meetErr bool
+	for i := 0; i < 100; i++ {
+		_, err := tk2.Exec("insert t values (1)")
+		if err != nil {
+			meetErr = true
+			break
+		}
+	}
+	c.Assert(meetErr, IsTrue)
+	tk.MustExec("rename table t2 to t")
+	var recoverErr bool
+	for i := 0; i < 100; i++ {
+		_, err := tk2.Exec("insert t values (1)")
+		if err == nil {
+			recoverErr = true
+			break
+		}
+	}
+	c.Assert(recoverErr, IsTrue)
 }

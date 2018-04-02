@@ -22,17 +22,18 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 type testLockSuite struct {
+	OneByOneSuite
 	store *tikvStore
 }
 
 var _ = Suite(&testLockSuite{})
 
 func (s *testLockSuite) SetUpTest(c *C) {
-	s.store = newTestStore(c)
+	s.store = NewTestStore(c).(*tikvStore)
 }
 
 func (s *testLockSuite) TearDownTest(c *C) {
@@ -54,18 +55,18 @@ func (s *testLockSuite) lockKey(c *C, key, value, primaryKey, primaryValue []byt
 		err = txn.Delete(primaryKey)
 	}
 	c.Assert(err, IsNil)
-	tpc, err := newTwoPhaseCommitter(txn)
+	tpc, err := newTwoPhaseCommitter(txn, 0)
 	c.Assert(err, IsNil)
 	tpc.keys = [][]byte{primaryKey, key}
 
-	ctx := goctx.Background()
-	err = tpc.prewriteKeys(NewBackoffer(prewriteMaxBackoff, ctx), tpc.keys)
+	ctx := context.Background()
+	err = tpc.prewriteKeys(NewBackoffer(ctx, prewriteMaxBackoff), tpc.keys)
 	c.Assert(err, IsNil)
 
 	if commitPrimary {
 		tpc.commitTS, err = s.store.oracle.GetTimestamp(ctx)
 		c.Assert(err, IsNil)
-		err = tpc.commitKeys(NewBackoffer(commitMaxBackoff, ctx), [][]byte{primaryKey})
+		err = tpc.commitKeys(NewBackoffer(ctx, CommitMaxBackoff), [][]byte{primaryKey})
 		c.Assert(err, IsNil)
 	}
 	return txn.startTS, tpc.commitTS
@@ -82,7 +83,7 @@ func (s *testLockSuite) putKV(c *C, key, value []byte) (uint64, uint64) {
 	c.Assert(err, IsNil)
 	err = txn.Set(key, value)
 	c.Assert(err, IsNil)
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 	return txn.StartTS(), txn.(*tikvTxn).commitTS
 }
@@ -157,7 +158,7 @@ func (s *testLockSuite) TestCleanLock(c *C) {
 		err = txn.Set([]byte{ch}, []byte{ch + 1})
 		c.Assert(err, IsNil)
 	}
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 }
 
@@ -197,16 +198,16 @@ func (s *testLockSuite) TestRC(c *C) {
 }
 
 func (s *testLockSuite) prewriteTxn(c *C, txn *tikvTxn) {
-	committer, err := newTwoPhaseCommitter(txn)
+	committer, err := newTwoPhaseCommitter(txn, 0)
 	c.Assert(err, IsNil)
-	err = committer.prewriteKeys(NewBackoffer(prewriteMaxBackoff, goctx.Background()), committer.keys)
+	err = committer.prewriteKeys(NewBackoffer(context.Background(), prewriteMaxBackoff), committer.keys)
 	c.Assert(err, IsNil)
 }
 
 func (s *testLockSuite) mustGetLock(c *C, key []byte) *Lock {
 	ver, err := s.store.CurrentVersion()
 	c.Assert(err, IsNil)
-	bo := NewBackoffer(getMaxBackoff, goctx.Background())
+	bo := NewBackoffer(context.Background(), getMaxBackoff)
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdGet,
 		Get: &kvrpcpb.GetRequest{

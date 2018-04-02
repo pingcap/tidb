@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/arena"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/xprotocol/notice"
 	"github.com/pingcap/tidb/xprotocol/protocol"
 	"github.com/pingcap/tidb/xprotocol/util"
@@ -237,7 +238,8 @@ func writeColumnsInfo(columns []*ColumnInfo, pkt *xpacketio.XPacketIO) error {
 // @TODO this is important to performance, need to consider carefully and tuning in next pr
 func WriteResultSet(goCtx goctx.Context, r ResultSet, pkt *xpacketio.XPacketIO, alloc arena.Allocator) error {
 	defer terror.Call(r.Close)
-	row, err := r.Next(goCtx)
+	chk := r.NewChunk()
+	err := r.NextChunk(goCtx, chk)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -248,30 +250,33 @@ func WriteResultSet(goCtx goctx.Context, r ResultSet, pkt *xpacketio.XPacketIO, 
 	}
 
 	// Write rows.
+	it := chunk.NewIterator4Chunk(chk)
 	for {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if row == nil {
+		if chk.NumCols() == 0 {
 			break
 		}
-		if err != nil {
-			return errors.Trace(err)
-		}
 
-		rowData, err := rowToRow(alloc, cols, row)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		data, err := rowData.Marshal()
-		if err != nil {
-			return errors.Trace(err)
-		}
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			var rowData *Mysqlx_Resultset.Row
+			rowData, err = rowToRow(alloc, cols, row)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			var data []byte
+			data, err = rowData.Marshal()
+			if err != nil {
+				return errors.Trace(err)
+			}
 
-		if err = pkt.WritePacket(Mysqlx.ServerMessages_RESULTSET_ROW, data); err != nil {
-			return errors.Trace(err)
+			if err = pkt.WritePacket(Mysqlx.ServerMessages_RESULTSET_ROW, data); err != nil {
+				return errors.Trace(err)
+			}
+
 		}
-		row, err = r.Next(goCtx)
+		err = r.NextChunk(goCtx, chk)
 	}
 
 	if err := pkt.WritePacket(Mysqlx.ServerMessages_RESULTSET_FETCH_DONE, []byte{}); err != nil {
@@ -307,7 +312,7 @@ func rowToRow(alloc arena.Allocator, columns []*ColumnInfo, row types.Row) (*Mys
 	}
 	var fields [][]byte
 	for i := 0; i < row.Len(); i++ {
-		datum, err := protocol.DumpDatumToBinary(alloc, row.GetDatum(i, nil))
+		datum, err := protocol.DumpDatumToBinary(alloc, row.GetDatum(i, columnInfoToFieldType(columns[i])))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -316,4 +321,16 @@ func rowToRow(alloc arena.Allocator, columns []*ColumnInfo, row types.Row) (*Mys
 	return &Mysqlx_Resultset.Row{
 		Field: fields,
 	}, nil
+}
+
+func columnInfoToFieldType(colInfo *ColumnInfo) *types.FieldType {
+	return &types.FieldType{
+		Tp:      colInfo.Type,
+		Flag:    uint(colInfo.Flag),
+		Flen:    int(colInfo.ColumnLength),
+		Decimal: int(colInfo.Decimal),
+		Charset: string(colInfo.Charset),
+		Collate: "",
+		Elems:   nil,
+	}
 }

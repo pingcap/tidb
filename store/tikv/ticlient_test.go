@@ -16,32 +16,25 @@ package tikv
 import (
 	"flag"
 	"fmt"
+	"sync"
 	"time"
 
+	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/codec"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var (
-	withTiKV = flag.Bool("with-tikv", false, "run tests with TiKV cluster started. (not use the mock server)")
-	pdAddrs  = flag.String("pd-addrs", "127.0.0.1:2379", "pd addrs")
+	withTiKVGlobalLock sync.Mutex
+	withTiKV           = flag.Bool("with-tikv", false, "run tests with TiKV cluster started. (not use the mock server)")
+	pdAddrs            = flag.String("pd-addrs", "127.0.0.1:2379", "pd addrs")
 )
 
-func newTestTiKVStore() (kv.Storage, error) {
-	client, pdClient, err := mocktikv.NewTestClient(nil, nil, "")
-	if err != nil {
-		return nil, err
-	}
-	return NewTestTiKVStore(client, pdClient, nil, nil)
-}
-
-func newTestStore(c *C) *tikvStore {
-	// duplicated code with mockstore NewTestTiKVStorage,
-	// but I have no idea to fix the cycle depenedence
-	// TODO: try to simplify the code later
+// NewTestStore creates a kv.Storage for testing purpose.
+func NewTestStore(c *C) kv.Storage {
 	if !flag.Parsed() {
 		flag.Parse()
 	}
@@ -50,15 +43,39 @@ func newTestStore(c *C) *tikvStore {
 		var d Driver
 		store, err := d.Open(fmt.Sprintf("tikv://%s", *pdAddrs))
 		c.Assert(err, IsNil)
-		return store.(*tikvStore)
+		err = clearStorage(store)
+		c.Assert(err, IsNil)
+		return store
 	}
 
-	store, err := newTestTiKVStore()
+	client, pdClient, err := mocktikv.NewTestClient(nil, nil, "")
 	c.Assert(err, IsNil)
-	return store.(*tikvStore)
+
+	store, err := NewTestTiKVStore(client, pdClient, nil, nil)
+	c.Assert(err, IsNil)
+	return store
+}
+
+func clearStorage(store kv.Storage) error {
+	txn, err := store.Begin()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	iter, err := txn.Seek(nil)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for iter.Valid() {
+		txn.Delete(iter.Key())
+		if err := iter.Next(); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return txn.Commit(context.Background())
 }
 
 type testTiclientSuite struct {
+	OneByOneSuite
 	store *tikvStore
 	// prefix is prefix of each key in this test. It is used for table isolation,
 	// or it may pollute other data.
@@ -68,7 +85,8 @@ type testTiclientSuite struct {
 var _ = Suite(&testTiclientSuite{})
 
 func (s *testTiclientSuite) SetUpSuite(c *C) {
-	s.store = newTestStore(c)
+	s.OneByOneSuite.SetUpSuite(c)
+	s.store = NewTestStore(c).(*tikvStore)
 	s.prefix = fmt.Sprintf("ticlient_%d", time.Now().Unix())
 }
 
@@ -84,10 +102,11 @@ func (s *testTiclientSuite) TearDownSuite(c *C) {
 		c.Assert(err, IsNil)
 		scanner.Next()
 	}
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 	err = s.store.Close()
 	c.Assert(err, IsNil)
+	s.OneByOneSuite.TearDownSuite(c)
 }
 
 func (s *testTiclientSuite) beginTxn(c *C) *tikvTxn {
@@ -102,7 +121,7 @@ func (s *testTiclientSuite) TestSingleKey(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.LockKeys(encodeKey(s.prefix, "key"))
 	c.Assert(err, IsNil)
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	txn = s.beginTxn(c)
@@ -113,7 +132,7 @@ func (s *testTiclientSuite) TestSingleKey(c *C) {
 	txn = s.beginTxn(c)
 	err = txn.Delete(encodeKey(s.prefix, "key"))
 	c.Assert(err, IsNil)
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 }
 
@@ -125,7 +144,7 @@ func (s *testTiclientSuite) TestMultiKeys(c *C) {
 		err := txn.Set(encodeKey(s.prefix, s08d("key", i)), valueBytes(i))
 		c.Assert(err, IsNil)
 	}
-	err := txn.Commit(goctx.Background())
+	err := txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	txn = s.beginTxn(c)
@@ -140,7 +159,7 @@ func (s *testTiclientSuite) TestMultiKeys(c *C) {
 		err = txn.Delete(encodeKey(s.prefix, s08d("key", i)))
 		c.Assert(err, IsNil)
 	}
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 }
 
@@ -155,7 +174,7 @@ func (s *testTiclientSuite) TestLargeRequest(c *C) {
 	txn := s.beginTxn(c)
 	err := txn.Set([]byte("key"), largeValue)
 	c.Assert(err, NotNil)
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 	c.Assert(kv.IsRetryableError(err), IsFalse)
 }

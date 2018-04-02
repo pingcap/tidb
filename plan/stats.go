@@ -62,6 +62,18 @@ func (p *basePhysicalPlan) StatsInfo() *statsInfo {
 	return p.stats
 }
 
+func (p *LogicalTableDual) deriveStats() *statsInfo {
+	profile := &statsInfo{
+		count:       float64(p.RowCount),
+		cardinality: make([]float64, p.Schema().Len()),
+	}
+	for i := range profile.cardinality {
+		profile.cardinality[i] = float64(p.RowCount)
+	}
+	p.stats = profile
+	return p.stats
+}
+
 func (p *baseLogicalPlan) deriveStats() *statsInfo {
 	if len(p.children) == 0 {
 		profile := &statsInfo{
@@ -104,7 +116,7 @@ func (ds *DataSource) getStatsByFilter(conds expression.CNFExprs) *statsInfo {
 func (ds *DataSource) deriveStats() *statsInfo {
 	// PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
 	for i, expr := range ds.pushedDownConds {
-		ds.pushedDownConds[i] = expression.PushDownNot(expr, false, nil)
+		ds.pushedDownConds[i] = expression.PushDownNot(nil, expr, false)
 	}
 	ds.statsAfterSelect = ds.getStatsByFilter(ds.pushedDownConds)
 	return ds.statsAfterSelect

@@ -765,7 +765,7 @@ func getMetrics(t *C) []byte {
 
 func getStmtCnt(content string) (stmtCnt map[string]int) {
 	stmtCnt = make(map[string]int)
-	r, _ := regexp.Compile("tidb_executor_statement_node_total{type=\"([A-Z|a-z|-]+)\"} (\\d+)")
+	r, _ := regexp.Compile("tidb_executor_statement_total{type=\"([A-Z|a-z|-]+)\"} (\\d+)")
 	matchResult := r.FindAllStringSubmatch(content, -1)
 	for _, v := range matchResult {
 		cnt, _ := strconv.Atoi(v[2])
@@ -776,7 +776,7 @@ func getStmtCnt(content string) (stmtCnt map[string]int) {
 
 const retryTime = 100
 
-func waitUntilServerOnline(statusPort int) {
+func waitUntilServerOnline(statusPort uint) {
 	// connect server
 	retry := 0
 	for ; retry < retryTime; retry++ {

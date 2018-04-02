@@ -25,15 +25,22 @@ type bitAndFunction struct {
 	aggFunction
 }
 
+func (bf *bitAndFunction) CreateContext(sc *stmtctx.StatementContext) *AggEvaluateContext {
+	evalCtx := bf.aggFunction.CreateContext(sc)
+	evalCtx.Value.SetUint64(math.MaxUint64)
+	return evalCtx
+}
+
+func (bf bitAndFunction) ResetContext(sc *stmtctx.StatementContext, evalCtx *AggEvaluateContext) {
+	evalCtx.Value.SetUint64(math.MaxUint64)
+}
+
 // Update implements Aggregation interface.
 func (bf *bitAndFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
 	a := bf.Args[0]
 	value, err := a.Eval(row)
 	if err != nil {
 		return errors.Trace(err)
-	}
-	if evalCtx.Value.IsNull() {
-		evalCtx.Value.SetUint64(math.MaxUint64)
 	}
 	if !value.IsNull() {
 		evalCtx.Value.SetUint64(evalCtx.Value.GetUint64() & value.GetUint64())

@@ -17,12 +17,12 @@ import (
 	"encoding/json"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/chunk"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var _ Executor = &LoadStatsExec{}
@@ -36,7 +36,7 @@ type LoadStatsExec struct {
 // LoadStatsInfo saves the information of loading statistic operation.
 type LoadStatsInfo struct {
 	Path string
-	Ctx  context.Context
+	Ctx  sessionctx.Context
 }
 
 // loadStatsVarKeyType is a dummy type to avoid naming collision in context.
@@ -50,7 +50,9 @@ func (k loadStatsVarKeyType) String() string {
 // LoadStatsVarKey is a variable key for load statistic.
 const LoadStatsVarKey loadStatsVarKeyType = 0
 
-func (e *LoadStatsExec) exec(goCtx goctx.Context) error {
+// NextChunk implements the Executor NextChunk interface.
+func (e *LoadStatsExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+	chk.Reset()
 	if len(e.info.Path) == 0 {
 		return errors.New("Load Stats: file path is empty")
 	}
@@ -60,19 +62,7 @@ func (e *LoadStatsExec) exec(goCtx goctx.Context) error {
 		return errors.New("Load Stats: previous load stats option isn't closed normally")
 	}
 	e.ctx.SetValue(LoadStatsVarKey, e.info)
-
 	return nil
-}
-
-// Next implements the Executor Next interface.
-func (e *LoadStatsExec) Next(goCtx goctx.Context) (Row, error) {
-	return nil, e.exec(goCtx)
-}
-
-// NextChunk implements the Executor NextChunk interface.
-func (e *LoadStatsExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
-	chk.Reset()
-	return errors.Trace(e.exec(goCtx))
 }
 
 // Close implements the Executor Close interface.
@@ -81,7 +71,7 @@ func (e *LoadStatsExec) Close() error {
 }
 
 // Open implements the Executor Open interface.
-func (e *LoadStatsExec) Open(goCtx goctx.Context) error {
+func (e *LoadStatsExec) Open(ctx context.Context) error {
 	return nil
 }
 

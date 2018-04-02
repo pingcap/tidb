@@ -20,8 +20,8 @@ import (
 	. "github.com/pingcap/check"
 )
 
-var defaultXPort = 14002
-var defaultXDSN = "root@tcp(localhost:" + strconv.Itoa(defaultXPort) + ")/test?xprotocol=1"
+var defaultXPort uint = 14002
+var defaultXDSN = "root@tcp(localhost:" + strconv.Itoa(int(defaultXPort)) + ")/test?xprotocol=1"
 
 // runXTests runs tests using the default database `test`.
 func runXTests(c *C, tests ...func(dbt *DBTest)) {

@@ -19,10 +19,11 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -37,7 +38,7 @@ func TestT(t *testing.T) {
 
 type testEvaluatorSuite struct {
 	*parser.Parser
-	ctx context.Context
+	ctx sessionctx.Context
 }
 
 func (s *testEvaluatorSuite) SetUpSuite(c *C) {
@@ -85,6 +86,8 @@ func (s *testEvaluatorSuite) kindToFieldType(kind byte) types.FieldType {
 		ft.Tp = mysql.TypeDatetime
 	case types.KindBinaryLiteral:
 		ft.Tp = mysql.TypeVarString
+		ft.Charset = charset.CharsetBin
+		ft.Collate = charset.CollationBin
 	case types.KindMysqlBit:
 		ft.Tp = mysql.TypeBit
 	}
@@ -541,7 +544,7 @@ func (s *testEvaluatorSuite) TestLike(c *C) {
 		{"a", "a", 1},
 		{"a", "b", 0},
 		{"aA", "Aa", 0},
-		{"aAb", "Aa%", 0},
+		{"aAb", `Aa%`, 0},
 		{"aAb", "aA_", 1},
 	}
 	for _, tt := range tests {

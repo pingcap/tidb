@@ -15,7 +15,9 @@ package mocktikv
 
 import (
 	"bytes"
+	"fmt"
 	"io"
+	"time"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
@@ -26,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/terror"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 // For gofail injection.
@@ -34,7 +36,7 @@ var undeterminedErr = terror.ErrResultUndetermined
 
 const requestMaxSize = 8 * 1024 * 1024
 
-func checkGoContext(ctx goctx.Context) error {
+func checkGoContext(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -414,16 +416,20 @@ func (h *rpcHandler) handleSplitRegion(req *kvrpcpb.SplitRegionRequest) *kvrpcpb
 
 // RPCClient sends kv RPC calls to mock cluster.
 type RPCClient struct {
-	Cluster   *Cluster
-	MvccStore MVCCStore
+	Cluster       *Cluster
+	MvccStore     MVCCStore
+	streamTimeout chan *tikvrpc.Lease
 }
 
 // NewRPCClient creates an RPCClient.
 // Note that close the RPCClient may close the underlying MvccStore.
 func NewRPCClient(cluster *Cluster, mvccStore MVCCStore) *RPCClient {
+	ch := make(chan *tikvrpc.Lease)
+	go tikvrpc.CheckStreamTimeoutLoop(ch)
 	return &RPCClient{
-		Cluster:   cluster,
-		MvccStore: mvccStore,
+		Cluster:       cluster,
+		MvccStore:     mvccStore,
+		streamTimeout: ch,
 	}
 }
 
@@ -442,7 +448,7 @@ func (c *RPCClient) getAndCheckStoreByAddr(addr string) (*metapb.Store, error) {
 	return store, nil
 }
 
-func (c *RPCClient) checkArgs(ctx goctx.Context, addr string) (*rpcHandler, error) {
+func (c *RPCClient) checkArgs(ctx context.Context, addr string) (*rpcHandler, error) {
 	if err := checkGoContext(ctx); err != nil {
 		return nil, err
 	}
@@ -460,8 +466,8 @@ func (c *RPCClient) checkArgs(ctx goctx.Context, addr string) (*rpcHandler, erro
 	return handler, nil
 }
 
-// SendReq sends a request to mock cluster.
-func (c *RPCClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+// SendRequest sends a request to mock cluster.
+func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	// gofail: var rpcServerBusy bool
 	// if rpcServerBusy {
 	//	return tikvrpc.GenRegionErrorResp(req, &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}})
@@ -608,25 +614,49 @@ func (c *RPCClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request
 		handler.rawStartKey = MvccKey(handler.startKey).Raw()
 		handler.rawEndKey = MvccKey(handler.endKey).Raw()
 		var res *coprocessor.Response
-		if r.GetTp() == kv.ReqTypeDAG {
+		switch r.GetTp() {
+		case kv.ReqTypeDAG:
 			res = handler.handleCopDAGRequest(r)
-		} else {
+		case kv.ReqTypeAnalyze:
 			res = handler.handleCopAnalyzeRequest(r)
+		case kv.ReqTypeChecksum:
+			res = handler.handleCopChecksumRequest(r)
+		default:
+			panic(fmt.Sprintf("unknown coprocessor request type: %v", r.GetTp()))
 		}
 		resp.Cop = res
 	case tikvrpc.CmdCopStream:
 		r := req.Cop
 		if err := handler.checkRequestContext(reqCtx); err != nil {
-			resp.CopStream = &mockCopStreamErrClient{Error: err}
+			resp.CopStream = &tikvrpc.CopStreamResponse{
+				Tikv_CoprocessorStreamClient: &mockCopStreamErrClient{Error: err},
+				Response: &coprocessor.Response{
+					RegionError: err,
+				},
+			}
 			return resp, nil
 		}
 		handler.rawStartKey = MvccKey(handler.startKey).Raw()
 		handler.rawEndKey = MvccKey(handler.endKey).Raw()
-		copStream, err := handler.handleCopStream(r)
+		ctx1, cancel := context.WithCancel(ctx)
+		copStream, err := handler.handleCopStream(ctx1, r)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		resp.CopStream = copStream
+
+		streamResp := &tikvrpc.CopStreamResponse{
+			Tikv_CoprocessorStreamClient: copStream,
+		}
+		streamResp.Lease.Cancel = cancel
+		streamResp.Timeout = timeout
+		c.streamTimeout <- &streamResp.Lease
+
+		first, err := streamResp.Recv()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		streamResp.Response = first
+		resp.CopStream = streamResp
 	case tikvrpc.CmdMvccGetByKey:
 		r := req.MvccGetByKey
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
@@ -656,6 +686,7 @@ func (c *RPCClient) SendReq(ctx goctx.Context, addr string, req *tikvrpc.Request
 
 // Close closes the client.
 func (c *RPCClient) Close() error {
+	close(c.streamTimeout)
 	if raw, ok := c.MvccStore.(io.Closer); ok {
 		return raw.Close()
 	}

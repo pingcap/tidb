@@ -19,19 +19,19 @@ package expression
 
 import (
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/charset"
-	"github.com/pingcap/tipb/go-tipb"
+	tipb "github.com/pingcap/tipb/go-tipb"
 )
 
 // baseBuiltinFunc will be contained in every struct that implement builtinFunc interface.
 type baseBuiltinFunc struct {
 	args   []Expression
-	ctx    context.Context
+	ctx    sessionctx.Context
 	tp     *types.FieldType
 	pbCode tipb.ScalarFuncSig
 }
@@ -44,7 +44,10 @@ func (b *baseBuiltinFunc) setPbCode(c tipb.ScalarFuncSig) {
 	b.pbCode = c
 }
 
-func newBaseBuiltinFunc(ctx context.Context, args []Expression) baseBuiltinFunc {
+func newBaseBuiltinFunc(ctx sessionctx.Context, args []Expression) baseBuiltinFunc {
+	if ctx == nil {
+		panic("ctx should not be nil")
+	}
 	return baseBuiltinFunc{
 		args: args,
 		ctx:  ctx,
@@ -55,9 +58,12 @@ func newBaseBuiltinFunc(ctx context.Context, args []Expression) baseBuiltinFunc 
 // newBaseBuiltinFuncWithTp creates a built-in function signature with specified types of arguments and the return type of the function.
 // argTps indicates the types of the args, retType indicates the return type of the built-in function.
 // Every built-in function needs determined argTps and retType when we create it.
-func newBaseBuiltinFuncWithTp(ctx context.Context, args []Expression, retType types.EvalType, argTps ...types.EvalType) (bf baseBuiltinFunc) {
+func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType types.EvalType, argTps ...types.EvalType) (bf baseBuiltinFunc) {
 	if len(args) != len(argTps) {
 		panic("unexpected length of args and argTps")
+	}
+	if ctx == nil {
+		panic("ctx should not be nil")
 	}
 	for i := range args {
 		switch argTps[i] {
@@ -204,14 +210,14 @@ func (b *baseBuiltinFunc) equal(fun builtinFunc) bool {
 		return false
 	}
 	for i := range b.args {
-		if !b.args[i].Equal(funArgs[i], b.ctx) {
+		if !b.args[i].Equal(b.ctx, funArgs[i]) {
 			return false
 		}
 	}
 	return true
 }
 
-func (b *baseBuiltinFunc) getCtx() context.Context {
+func (b *baseBuiltinFunc) getCtx() sessionctx.Context {
 	return b.ctx
 }
 
@@ -236,7 +242,7 @@ type builtinFunc interface {
 	// equal check if this function equals to another function.
 	equal(builtinFunc) bool
 	// getCtx returns this function's context.
-	getCtx() context.Context
+	getCtx() sessionctx.Context
 	// getRetTp returns the return type of the built-in function.
 	getRetTp() *types.FieldType
 	// setPbCode sets pbCode for signature.
@@ -263,7 +269,7 @@ func (b *baseFunctionClass) verifyArgs(args []Expression) error {
 // functionClass is the interface for a function which may contains multiple functions.
 type functionClass interface {
 	// getFunction gets a function signature by the types and the counts of given arguments.
-	getFunction(ctx context.Context, args []Expression) (builtinFunc, error)
+	getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error)
 }
 
 // funcs holds all registered builtin functions.

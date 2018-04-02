@@ -28,14 +28,14 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/charset"
-	"github.com/pingcap/tipb/go-tipb"
+	tipb "github.com/pingcap/tipb/go-tipb"
 )
 
 var (
@@ -112,7 +112,7 @@ type castAsIntFunctionClass struct {
 	tp *types.FieldType
 }
 
-func (c *castAsIntFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
+func (c *castAsIntFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -158,7 +158,7 @@ type castAsRealFunctionClass struct {
 	tp *types.FieldType
 }
 
-func (c *castAsRealFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
+func (c *castAsRealFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -209,7 +209,7 @@ type castAsDecimalFunctionClass struct {
 	tp *types.FieldType
 }
 
-func (c *castAsDecimalFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
+func (c *castAsDecimalFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -260,7 +260,7 @@ type castAsStringFunctionClass struct {
 	tp *types.FieldType
 }
 
-func (c *castAsStringFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
+func (c *castAsStringFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -306,7 +306,7 @@ type castAsTimeFunctionClass struct {
 	tp *types.FieldType
 }
 
-func (c *castAsTimeFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
+func (c *castAsTimeFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -347,7 +347,7 @@ type castAsDurationFunctionClass struct {
 	tp *types.FieldType
 }
 
-func (c *castAsDurationFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
+func (c *castAsDurationFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -388,7 +388,7 @@ type castAsJSONFunctionClass struct {
 	tp *types.FieldType
 }
 
-func (c *castAsJSONFunctionClass) getFunction(ctx context.Context, args []Expression) (sig builtinFunc, err error) {
+func (c *castAsJSONFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1298,7 +1298,7 @@ func (b *builtinCastJSONAsDurationSig) evalDuration(row types.Row) (res types.Du
 }
 
 // BuildCastFunction builds a CAST ScalarFunction from the Expression.
-func BuildCastFunction(ctx context.Context, expr Expression, tp *types.FieldType) (res Expression) {
+func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression) {
 	var fc functionClass
 	switch tp.EvalType() {
 	case types.ETInt:
@@ -1335,7 +1335,7 @@ func BuildCastFunction(ctx context.Context, expr Expression, tp *types.FieldType
 // WrapWithCastAsInt wraps `expr` with `cast` if the return type
 // of expr is not type int,
 // otherwise, returns `expr` directly.
-func WrapWithCastAsInt(ctx context.Context, expr Expression) Expression {
+func WrapWithCastAsInt(ctx sessionctx.Context, expr Expression) Expression {
 	if expr.GetType().EvalType() == types.ETInt {
 		return expr
 	}
@@ -1348,7 +1348,7 @@ func WrapWithCastAsInt(ctx context.Context, expr Expression) Expression {
 // WrapWithCastAsReal wraps `expr` with `cast` if the return type
 // of expr is not type real,
 // otherwise, returns `expr` directly.
-func WrapWithCastAsReal(ctx context.Context, expr Expression) Expression {
+func WrapWithCastAsReal(ctx sessionctx.Context, expr Expression) Expression {
 	if expr.GetType().EvalType() == types.ETReal {
 		return expr
 	}
@@ -1361,7 +1361,7 @@ func WrapWithCastAsReal(ctx context.Context, expr Expression) Expression {
 // WrapWithCastAsDecimal wraps `expr` with `cast` if the return type
 // of expr is not type decimal,
 // otherwise, returns `expr` directly.
-func WrapWithCastAsDecimal(ctx context.Context, expr Expression) Expression {
+func WrapWithCastAsDecimal(ctx sessionctx.Context, expr Expression) Expression {
 	if expr.GetType().EvalType() == types.ETDecimal {
 		return expr
 	}
@@ -1374,7 +1374,7 @@ func WrapWithCastAsDecimal(ctx context.Context, expr Expression) Expression {
 // WrapWithCastAsString wraps `expr` with `cast` if the return type
 // of expr is not type string,
 // otherwise, returns `expr` directly.
-func WrapWithCastAsString(ctx context.Context, expr Expression) Expression {
+func WrapWithCastAsString(ctx sessionctx.Context, expr Expression) Expression {
 	if expr.GetType().EvalType() == types.ETString {
 		return expr
 	}
@@ -1387,7 +1387,7 @@ func WrapWithCastAsString(ctx context.Context, expr Expression) Expression {
 // WrapWithCastAsTime wraps `expr` with `cast` if the return type
 // of expr is not same as type of the specified `tp` ,
 // otherwise, returns `expr` directly.
-func WrapWithCastAsTime(ctx context.Context, expr Expression, tp *types.FieldType) Expression {
+func WrapWithCastAsTime(ctx sessionctx.Context, expr Expression, tp *types.FieldType) Expression {
 	exprTp := expr.GetType().Tp
 	if tp.Tp == exprTp {
 		return expr
@@ -1416,7 +1416,7 @@ func WrapWithCastAsTime(ctx context.Context, expr Expression, tp *types.FieldTyp
 // WrapWithCastAsDuration wraps `expr` with `cast` if the return type
 // of expr is not type duration,
 // otherwise, returns `expr` directly.
-func WrapWithCastAsDuration(ctx context.Context, expr Expression) Expression {
+func WrapWithCastAsDuration(ctx sessionctx.Context, expr Expression) Expression {
 	if expr.GetType().Tp == mysql.TypeDuration {
 		return expr
 	}
@@ -1437,7 +1437,7 @@ func WrapWithCastAsDuration(ctx context.Context, expr Expression) Expression {
 // WrapWithCastAsJSON wraps `expr` with `cast` if the return type
 // of expr is not type json,
 // otherwise, returns `expr` directly.
-func WrapWithCastAsJSON(ctx context.Context, expr Expression) Expression {
+func WrapWithCastAsJSON(ctx sessionctx.Context, expr Expression) Expression {
 	tp := &types.FieldType{
 		Tp:      mysql.TypeJSON,
 		Flen:    12582912, // FIXME: Here the Flen is not trusted.

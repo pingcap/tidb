@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	log "github.com/sirupsen/logrus"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 )
 
@@ -90,7 +90,7 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 	}
 
 	// FIXME: uuid will be a very long and ugly string, simplify it.
-	uuid := fmt.Sprintf("tikv-%v", pdCli.GetClusterID(goctx.TODO()))
+	uuid := fmt.Sprintf("tikv-%v", pdCli.GetClusterID(context.TODO()))
 	if store, ok := mc.cache[uuid]; ok {
 		return store, nil
 	}
@@ -171,7 +171,7 @@ func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Clie
 		return nil, errors.Trace(err)
 	}
 	store := &tikvStore{
-		clusterID:   pdClient.GetClusterID(goctx.TODO()),
+		clusterID:   pdClient.GetClusterID(context.TODO()),
 		uuid:        uuid,
 		oracle:      o,
 		client:      client,
@@ -271,7 +271,6 @@ func (s *tikvStore) Close() error {
 	}
 
 	close(s.closed)
-
 	if err := s.client.Close(); err != nil {
 		return errors.Trace(err)
 	}
@@ -283,7 +282,7 @@ func (s *tikvStore) UUID() string {
 }
 
 func (s *tikvStore) CurrentVersion() (kv.Version, error) {
-	bo := NewBackoffer(tsoMaxBackoff, goctx.Background())
+	bo := NewBackoffer(context.Background(), tsoMaxBackoff)
 	startTS, err := s.getTimestampWithRetry(bo)
 	if err != nil {
 		return kv.NewVersion(0), errors.Trace(err)

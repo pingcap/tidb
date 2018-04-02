@@ -16,10 +16,11 @@ package tikv
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 type testRawKVSuite struct {
+	OneByOneSuite
 	cluster *mocktikv.Cluster
 	client  *RawKVClient
 	bo      *Backoffer
@@ -37,7 +38,7 @@ func (s *testRawKVSuite) SetUpTest(c *C) {
 		pdClient:    pdClient,
 		rpcClient:   mocktikv.NewRPCClient(s.cluster, mocktikv.NewMvccStore()),
 	}
-	s.bo = NewBackoffer(5000, goctx.Background())
+	s.bo = NewBackoffer(context.Background(), 5000)
 }
 
 func (s *testRawKVSuite) TearDownTest(c *C) {

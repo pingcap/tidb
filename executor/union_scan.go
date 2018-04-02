@@ -17,12 +17,12 @@ import (
 	"sort"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 // DirtyDB stores uncommitted write operations for a transaction.
@@ -80,7 +80,7 @@ type DirtyTable struct {
 }
 
 // GetDirtyDB returns the DirtyDB bind to the context.
-func GetDirtyDB(ctx context.Context) *DirtyDB {
+func GetDirtyDB(ctx sessionctx.Context) *DirtyDB {
 	var udb *DirtyDB
 	x := ctx.GetSessionVars().TxnCtx.DirtyDB
 	if x == nil {
@@ -106,24 +106,19 @@ type UnionScanExec struct {
 	// belowHandleIndex is the handle's position of the below scan plan.
 	belowHandleIndex int
 
-	addedRows   []Row
-	cursor      int
-	sortErr     error
-	snapshotRow Row
-}
-
-// Next implements Execution Next interface.
-func (us *UnionScanExec) Next(goCtx goctx.Context) (Row, error) {
-	row, err := us.getOneRow(goCtx)
-	return row, errors.Trace(err)
+	addedRows           []Row
+	cursor4AddRows      int
+	sortErr             error
+	snapshotRows        []Row
+	cursor4SnapshotRows int
 }
 
 // NextChunk implements the Executor NextChunk interface.
-func (us *UnionScanExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+func (us *UnionScanExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	mutableRow := chunk.MutRowFromTypes(us.retTypes())
 	for i, batchSize := 0, us.ctx.GetSessionVars().MaxChunkSize; i < batchSize; i++ {
-		row, err := us.getOneRow(goCtx)
+		row, err := us.getOneRow(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -138,9 +133,9 @@ func (us *UnionScanExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error 
 }
 
 // getOneRow gets one result row from dirty table or child.
-func (us *UnionScanExec) getOneRow(goCtx goctx.Context) (Row, error) {
+func (us *UnionScanExec) getOneRow(ctx context.Context) (Row, error) {
 	for {
-		snapshotRow, err := us.getSnapshotRow(goCtx)
+		snapshotRow, err := us.getSnapshotRow(ctx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -168,29 +163,33 @@ func (us *UnionScanExec) getOneRow(goCtx goctx.Context) (Row, error) {
 		}
 
 		if isSnapshotRow {
-			us.snapshotRow = nil
+			us.cursor4SnapshotRows++
 		} else {
-			us.cursor++
+			us.cursor4AddRows++
 		}
 		return row, nil
 	}
 }
 
-func (us *UnionScanExec) getSnapshotRow(goCtx goctx.Context) (Row, error) {
+func (us *UnionScanExec) getSnapshotRow(ctx context.Context) (Row, error) {
 	if us.dirty.truncated {
 		return nil, nil
 	}
+	if us.cursor4SnapshotRows < len(us.snapshotRows) {
+		return us.snapshotRows[us.cursor4SnapshotRows], nil
+	}
 	var err error
-	if us.snapshotRow == nil {
-		for {
-			us.snapshotRow, err = us.children[0].Next(goCtx)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if us.snapshotRow == nil {
-				break
-			}
-			snapshotHandle := us.snapshotRow[us.belowHandleIndex].GetInt64()
+	us.cursor4SnapshotRows = 0
+	us.snapshotRows = us.snapshotRows[:0]
+	for len(us.snapshotRows) == 0 {
+		chk := chunk.NewChunkWithCapacity(us.retTypes(), us.maxChunkSize)
+		err = us.children[0].NextChunk(ctx, chk)
+		if err != nil || chk.NumRows() == 0 {
+			return nil, errors.Trace(err)
+		}
+		it := chunk.NewIterator4Chunk(chk)
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			snapshotHandle := row.GetInt64(us.belowHandleIndex)
 			if _, ok := us.dirty.deletedRows[snapshotHandle]; ok {
 				continue
 			}
@@ -199,16 +198,16 @@ func (us *UnionScanExec) getSnapshotRow(goCtx goctx.Context) (Row, error) {
 				// commit, but for simplicity, we don't handle it here.
 				continue
 			}
-			break
+			us.snapshotRows = append(us.snapshotRows, row.GetDatumRow(us.children[0].retTypes()))
 		}
 	}
-	return us.snapshotRow, nil
+	return us.snapshotRows[0], nil
 }
 
 func (us *UnionScanExec) getAddedRow() Row {
 	var addedRow Row
-	if us.cursor < len(us.addedRows) {
-		addedRow = us.addedRows[us.cursor]
+	if us.cursor4AddRows < len(us.addedRows) {
+		addedRow = us.addedRows[us.cursor4AddRows]
 	}
 	return addedRow
 }
@@ -271,7 +270,7 @@ func (us *UnionScanExec) buildAndSortAddedRows() error {
 				newData = append(newData, data[col.Offset])
 			}
 		}
-		matched, err := expression.EvalBool(us.conditions, newData, us.ctx)
+		matched, err := expression.EvalBool(us.ctx, us.conditions, newData)
 		if err != nil {
 			return errors.Trace(err)
 		}

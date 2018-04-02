@@ -19,7 +19,7 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 type aggCtxsMapper map[string][]*aggregation.AggEvaluateContext
@@ -54,12 +54,16 @@ func (e *hashAggExec) GetSrcExec() executor {
 	return e.src
 }
 
-func (e *hashAggExec) Count() int64 {
-	return e.count
+func (e *hashAggExec) ResetCounts() {
+	e.src.ResetCounts()
 }
 
-func (e *hashAggExec) innerNext(goCtx goctx.Context) (bool, error) {
-	values, err := e.src.Next(goCtx)
+func (e *hashAggExec) Counts() []int64 {
+	return e.src.Counts()
+}
+
+func (e *hashAggExec) innerNext(ctx context.Context) (bool, error) {
+	values, err := e.src.Next(ctx)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -73,14 +77,18 @@ func (e *hashAggExec) innerNext(goCtx goctx.Context) (bool, error) {
 	return true, nil
 }
 
-func (e *hashAggExec) Next(goCtx goctx.Context) (value [][]byte, err error) {
+func (e *hashAggExec) Cursor() ([]byte, bool) {
+	panic("don't not use coprocessor streaming API for hash aggregation!")
+}
+
+func (e *hashAggExec) Next(ctx context.Context) (value [][]byte, err error) {
 	e.count++
 	if e.aggCtxsMap == nil {
 		e.aggCtxsMap = make(aggCtxsMapper, 0)
 	}
 	if !e.executed {
 		for {
-			hasMore, err := e.innerNext(goCtx)
+			hasMore, err := e.innerNext(ctx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -205,8 +213,12 @@ func (e *streamAggExec) GetSrcExec() executor {
 	return e.src
 }
 
-func (e *streamAggExec) Count() int64 {
-	return e.count
+func (e *streamAggExec) ResetCounts() {
+	e.src.ResetCounts()
+}
+
+func (e *streamAggExec) Counts() []int64 {
+	return e.src.Counts()
 }
 
 func (e *streamAggExec) getPartialResult() ([][]byte, error) {
@@ -269,14 +281,18 @@ func (e *streamAggExec) meetNewGroup(row [][]byte) (bool, error) {
 	return !firstGroup, nil
 }
 
-func (e *streamAggExec) Next(goCtx goctx.Context) (retRow [][]byte, err error) {
+func (e *streamAggExec) Cursor() ([]byte, bool) {
+	panic("don't not use coprocessor streaming API for stream aggregation!")
+}
+
+func (e *streamAggExec) Next(ctx context.Context) (retRow [][]byte, err error) {
 	e.count++
 	if e.executed {
 		return nil, nil
 	}
 
 	for {
-		values, err := e.src.Next(goCtx)
+		values, err := e.src.Next(ctx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

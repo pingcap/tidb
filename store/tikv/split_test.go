@@ -18,10 +18,10 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"golang.org/x/net/context"
-	goctx "golang.org/x/net/context"
 )
 
 type testSplitSuite struct {
+	OneByOneSuite
 	cluster *mocktikv.Cluster
 	store   *tikvStore
 	bo      *Backoffer
@@ -38,7 +38,7 @@ func (s *testSplitSuite) SetUpTest(c *C) {
 	store, err := NewTestTiKVStore(client, pdClient, nil, nil)
 	c.Check(err, IsNil)
 	s.store = store.(*tikvStore)
-	s.bo = NewBackoffer(5000, context.Background())
+	s.bo = NewBackoffer(context.Background(), 5000)
 }
 
 func (s *testSplitSuite) begin(c *C) *tikvTxn {
@@ -87,7 +87,7 @@ func (s *testSplitSuite) TestStaleEpoch(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Set([]byte("c"), []byte("c"))
 	c.Assert(err, IsNil)
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	// Initiate a split and disable the PD client. If it still works, the

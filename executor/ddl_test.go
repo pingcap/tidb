@@ -25,8 +25,9 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testkit"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 func (s *testSuite) TestTruncateTable(c *C) {
@@ -63,24 +64,32 @@ func (s *testSuite) TestCreateTable(c *C) {
 	tk.MustExec(`create table issue312_2 (c float(25));`)
 	rs, err := tk.Exec(`desc issue312_1`)
 	c.Assert(err, IsNil)
-	goCtx := goctx.Background()
+	ctx := context.Background()
+	chk := rs.NewChunk()
+	it := chunk.NewIterator4Chunk(chk)
 	for {
-		row, err1 := rs.Next(goCtx)
+		err1 := rs.NextChunk(ctx, chk)
 		c.Assert(err1, IsNil)
-		if row == nil {
+		if chk.NumRows() == 0 {
 			break
 		}
-		c.Assert(row.GetString(1), Equals, "float")
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			c.Assert(row.GetString(1), Equals, "float")
+		}
 	}
 	rs, err = tk.Exec(`desc issue312_2`)
 	c.Assert(err, IsNil)
+	chk = rs.NewChunk()
+	it = chunk.NewIterator4Chunk(chk)
 	for {
-		row, err1 := rs.Next(goCtx)
+		err1 := rs.NextChunk(ctx, chk)
 		c.Assert(err1, IsNil)
-		if row == nil {
+		if chk.NumRows() == 0 {
 			break
 		}
-		c.Assert(row.GetString(1), Equals, "double")
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			c.Assert(chk.GetRow(0).GetString(1), Equals, "double")
+		}
 	}
 
 	// table option is auto-increment
@@ -146,8 +155,10 @@ func (s *testSuite) TestAlterTableAddColumn(c *C) {
 	now := time.Now().Add(-time.Duration(1 * time.Second)).Format(types.TimeFormat)
 	r, err := tk.Exec("select c2 from alter_test")
 	c.Assert(err, IsNil)
-	row, err := r.Next(goctx.Background())
+	chk := r.NewChunk()
+	err = r.NextChunk(context.Background(), chk)
 	c.Assert(err, IsNil)
+	row := chk.GetRow(0)
 	c.Assert(row.Len(), Equals, 1)
 	c.Assert(now, GreaterEqual, row.GetTime(0).String())
 	tk.MustExec("alter table alter_test add column c3 varchar(50) default 'CURRENT_TIMESTAMP'")

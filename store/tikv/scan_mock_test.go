@@ -16,27 +16,26 @@ package tikv
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 type testScanMockSuite struct {
+	OneByOneSuite
 }
 
 var _ = Suite(&testScanMockSuite{})
 
 func (s *testScanMockSuite) TestScanMultipleRegions(c *C) {
-	kvStore, err := newTestTiKVStore()
-	c.Assert(err, IsNil)
-	defer kvStore.Close()
+	store := NewTestStore(c).(*tikvStore)
+	defer store.Close()
 
-	store := kvStore.(*tikvStore)
 	txn, err := store.Begin()
 	c.Assert(err, IsNil)
 	for ch := byte('a'); ch <= byte('z'); ch++ {
 		err = txn.Set([]byte{ch}, []byte{ch})
 		c.Assert(err, IsNil)
 	}
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	txn, err = store.Begin()

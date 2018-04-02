@@ -19,9 +19,9 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
 )
@@ -30,7 +30,7 @@ type statsCache map[int64]*Table
 
 // Handle can update stats info periodically.
 type Handle struct {
-	ctx context.Context
+	ctx sessionctx.Context
 	// LastVersion is the latest update version before last lease. Exported for test.
 	LastVersion uint64
 	// PrevLastVersion is the latest update version before two lease. Exported for test.
@@ -75,7 +75,7 @@ func (h *Handle) Clear() {
 const maxQueryFeedBackCount = 1
 
 // NewHandle creates a Handle for update stats.
-func NewHandle(ctx context.Context, lease time.Duration) *Handle {
+func NewHandle(ctx sessionctx.Context, lease time.Duration) *Handle {
 	handle := &Handle{
 		ctx:             ctx,
 		ddlEventCh:      make(chan *util.Event, 100),
@@ -185,7 +185,7 @@ func (h *Handle) LoadNeededHistograms() error {
 			histogramNeededColumns.delete(col)
 			continue
 		}
-		hg, err := histogramFromStorage(h.ctx, col.tableID, c.ID, &c.Info.FieldType, c.NDV, 0, c.LastUpdateVersion, c.NullCount)
+		hg, err := histogramFromStorage(h.ctx, col.tableID, c.ID, &c.Info.FieldType, c.NDV, 0, c.LastUpdateVersion, c.NullCount, c.TotColSize)
 		if err != nil {
 			return errors.Trace(err)
 		}

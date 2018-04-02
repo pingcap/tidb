@@ -20,16 +20,16 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tipb/go-tipb"
-	goctx "golang.org/x/net/context"
+	tipb "github.com/pingcap/tipb/go-tipb"
+	"golang.org/x/net/context"
 )
 
 func (h *rpcHandler) handleCopAnalyzeRequest(req *coprocessor.Request) *coprocessor.Response {
@@ -62,9 +62,13 @@ func (h *rpcHandler) handleCopAnalyzeRequest(req *coprocessor.Request) *coproces
 }
 
 func (h *rpcHandler) handleAnalyzeIndexReq(req *coprocessor.Request, analyzeReq *tipb.AnalyzeReq) (*coprocessor.Response, error) {
+	ranges, err := h.extractKVRanges(req.Ranges, false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	e := &indexScanExec{
 		colsLen:        int(analyzeReq.IdxReq.NumColumns),
-		kvRanges:       h.extractKVRanges(req.Ranges, false),
+		kvRanges:       ranges,
 		startTS:        analyzeReq.StartTs,
 		isolationLevel: h.isolationLevel,
 		mvccStore:      h.mvccStore,
@@ -75,9 +79,10 @@ func (h *rpcHandler) handleAnalyzeIndexReq(req *coprocessor.Request, analyzeReq 
 	if analyzeReq.IdxReq.CmsketchDepth != nil && analyzeReq.IdxReq.CmsketchWidth != nil {
 		cms = statistics.NewCMSketch(*analyzeReq.IdxReq.CmsketchDepth, *analyzeReq.IdxReq.CmsketchWidth)
 	}
-	goCtx := goctx.TODO()
+	ctx := context.TODO()
+	var values [][]byte
 	for {
-		values, err := e.Next(goCtx)
+		values, err = e.Next(ctx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -119,10 +124,14 @@ func (h *rpcHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeRe
 	evalCtx := &evalContext{sc: sc}
 	columns := analyzeReq.ColReq.ColumnsInfo
 	evalCtx.setColumnInfo(columns)
+	ranges, err := h.extractKVRanges(req.Ranges, false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	e := &analyzeColumnsExec{
 		tblExec: &tableScanExec{
 			TableScan:      &tipb.TableScan{Columns: columns},
-			kvRanges:       h.extractKVRanges(req.Ranges, false),
+			kvRanges:       ranges,
 			colIDs:         evalCtx.colIDs,
 			startTS:        analyzeReq.GetStartTs(),
 			isolationLevel: h.isolationLevel,
@@ -133,7 +142,7 @@ func (h *rpcHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeRe
 	for i := range e.fields {
 		rf := new(ast.ResultField)
 		rf.Column = new(model.ColumnInfo)
-		rf.Column.FieldType = *distsql.FieldTypeFromPBColumn(columns[i])
+		rf.Column.FieldType = types.FieldType{Tp: mysql.TypeBlob, Flen: mysql.MaxBlobWidth, Charset: charset.CharsetUTF8, Collate: charset.CollationUTF8}
 		e.fields[i] = rf
 	}
 
@@ -182,16 +191,15 @@ func (e *analyzeColumnsExec) Fields() []*ast.ResultField {
 	return e.fields
 }
 
-// Next implements the ast.RecordSet Next interface.
-func (e *analyzeColumnsExec) Next(goCtx goctx.Context) (row types.Row, err error) {
-	values, err := e.tblExec.Next(goCtx)
+func (e *analyzeColumnsExec) getNext(ctx context.Context) ([]types.Datum, error) {
+	values, err := e.tblExec.Next(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	if values == nil {
 		return nil, nil
 	}
-	datumRow := make(types.DatumRow, 0, len(values))
+	datumRow := make([]types.Datum, 0, len(values))
 	for _, val := range values {
 		d := types.NewBytesDatum(val)
 		if len(val) == 1 && val[0] == codec.NilFlag {
@@ -202,16 +210,33 @@ func (e *analyzeColumnsExec) Next(goCtx goctx.Context) (row types.Row, err error
 	return datumRow, nil
 }
 
-func (e *analyzeColumnsExec) NextChunk(goCtx goctx.Context, chk *chunk.Chunk) error {
+// Next implements the ast.RecordSet Next interface.
+func (e *analyzeColumnsExec) Next(ctx context.Context) (types.Row, error) {
+	row, err := e.getNext(ctx)
+	if row == nil || err != nil {
+		return nil, errors.Trace(err)
+	}
+	return types.DatumRow(row), nil
+}
+
+func (e *analyzeColumnsExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	row, err := e.getNext(ctx)
+	if row == nil || err != nil {
+		return errors.Trace(err)
+	}
+	for i := 0; i < len(row); i++ {
+		chk.AppendDatum(i, &row[i])
+	}
 	return nil
 }
 
 func (e *analyzeColumnsExec) NewChunk() *chunk.Chunk {
-	return nil
-}
-
-func (e *analyzeColumnsExec) SupportChunk() bool {
-	return false
+	fields := make([]*types.FieldType, 0, len(e.fields))
+	for _, field := range e.fields {
+		fields = append(fields, &field.Column.FieldType)
+	}
+	return chunk.NewChunk(fields)
 }
 
 // Close implements the ast.RecordSet Close interface.

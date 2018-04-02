@@ -19,13 +19,13 @@ import (
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
@@ -57,12 +57,12 @@ func newStoreWithBootstrap(c *C) (kv.Storage, error) {
 		mockstore.WithMVCCStore(mvccStore),
 	)
 	c.Assert(err, IsNil)
-	tidb.SetSchemaLease(0)
-	tidb.SetStatsLease(0)
+	session.SetSchemaLease(0)
+	session.SetStatsLease(0)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	_, err = tidb.BootstrapSession(store)
+	_, err = session.BootstrapSession(store)
 	return store, errors.Trace(err)
 }
 
@@ -260,7 +260,7 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 			exprStr:     "a not in (1, 2, 3)",
 			accessConds: "[not(in(test.t.a, 1, 2, 3))]",
 			filterConds: "[]",
-			resultStr:   "[[-inf,1) (1,2) (2,3) (3,+inf]]",
+			resultStr:   "[[-inf,1) (3,+inf]]",
 		},
 		{
 			exprStr:     "a > 9223372036854775807",
@@ -290,8 +290,8 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 
 	for _, tt := range tests {
 		sql := "select * from t where " + tt.exprStr
-		ctx := testKit.Se.(context.Context)
-		stmts, err := tidb.Parse(ctx, sql)
+		ctx := testKit.Se.(sessionctx.Context)
+		stmts, err := session.Parse(ctx, sql)
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
 		c.Assert(stmts, HasLen, 1)
 		is := domain.GetDomain(ctx).InfoSchema()
@@ -302,7 +302,7 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 		selection := p.(plan.LogicalPlan).Children()[0].(*plan.LogicalSelection)
 		conds := make([]expression.Expression, 0, len(selection.Conditions))
 		for _, cond := range selection.Conditions {
-			conds = append(conds, expression.PushDownNot(cond, false, ctx))
+			conds = append(conds, expression.PushDownNot(ctx, cond, false))
 		}
 		tbl := selection.Children()[0].(*plan.DataSource).TableInfo()
 		col := expression.ColInfo2Col(selection.Schema().Columns, tbl.Columns[0])
@@ -337,8 +337,8 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 	}{
 		{
 			indexPos:    0,
-			exprStr:     "a LIKE 'abc%'",
-			accessConds: "[like(test.t.a, abc%, 92)]",
+			exprStr:     `a LIKE 'abc%'`,
+			accessConds: `[like(test.t.a, abc%, 92)]`,
 			filterConds: "[]",
 			resultStr:   "[[abc <nil>,abd <nil>)]",
 		},
@@ -365,9 +365,9 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		},
 		{
 			indexPos:    0,
-			exprStr:     "a LIKE '%'",
+			exprStr:     `a LIKE '%'`,
 			accessConds: "[]",
-			filterConds: "[like(test.t.a, %, 92)]",
+			filterConds: `[like(test.t.a, %, 92)]`,
 			resultStr:   "[[<nil>,+inf]]",
 		},
 		{
@@ -387,7 +387,7 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		{
 			indexPos:    0,
 			exprStr:     `a LIKE "\\\\a%"`,
-			accessConds: "[like(test.t.a, \\\\a%, 92)]",
+			accessConds: `[like(test.t.a, \\a%, 92)]`,
 			filterConds: "[]",
 			resultStr:   `[[\a <nil>,\b <nil>)]`,
 		},
@@ -404,6 +404,13 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 			accessConds: "[eq(test.t.a, a) in(test.t.b, 1, 2, 3)]",
 			filterConds: "[]",
 			resultStr:   `[[a 1,a 1] [a 2,a 2] [a 3,a 3]]`,
+		},
+		{
+			indexPos:    0,
+			exprStr:     `a = 'a' and b not in (1, 2, 3)`,
+			accessConds: "[eq(test.t.a, a) not(in(test.t.b, 1, 2, 3))]",
+			filterConds: "[]",
+			resultStr:   `[(a <nil>,a 1) (a 3,a +inf]]`,
 		},
 		{
 			indexPos:    0,
@@ -507,8 +514,8 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 
 	for _, tt := range tests {
 		sql := "select * from t where " + tt.exprStr
-		ctx := testKit.Se.(context.Context)
-		stmts, err := tidb.Parse(ctx, sql)
+		ctx := testKit.Se.(sessionctx.Context)
+		stmts, err := session.Parse(ctx, sql)
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
 		c.Assert(stmts, HasLen, 1)
 		is := domain.GetDomain(ctx).InfoSchema()
@@ -521,11 +528,11 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		c.Assert(selection, NotNil, Commentf("expr:%v", tt.exprStr))
 		conds := make([]expression.Expression, 0, len(selection.Conditions))
 		for _, cond := range selection.Conditions {
-			conds = append(conds, expression.PushDownNot(cond, false, ctx))
+			conds = append(conds, expression.PushDownNot(ctx, cond, false))
 		}
 		cols, lengths := expression.IndexInfo2Cols(selection.Schema().Columns, tbl.Indices[tt.indexPos])
 		c.Assert(cols, NotNil)
-		ranges, conds, filter, _, err := ranger.DetachCondAndBuildRangeForIndex(ctx.GetSessionVars().StmtCtx, conds, cols, lengths)
+		ranges, conds, filter, _, err := ranger.DetachCondAndBuildRangeForIndex(ctx, conds, cols, lengths)
 		c.Assert(err, IsNil)
 		c.Assert(fmt.Sprintf("%s", conds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
 		c.Assert(fmt.Sprintf("%s", filter), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))
@@ -777,8 +784,8 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 
 	for _, tt := range tests {
 		sql := "select * from t where " + tt.exprStr
-		ctx := testKit.Se.(context.Context)
-		stmts, err := tidb.Parse(ctx, sql)
+		ctx := testKit.Se.(sessionctx.Context)
+		stmts, err := session.Parse(ctx, sql)
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
 		c.Assert(stmts, HasLen, 1)
 		is := domain.GetDomain(ctx).InfoSchema()
@@ -791,7 +798,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 		c.Assert(ok, IsTrue, Commentf("expr:%v", tt.exprStr))
 		conds := make([]expression.Expression, 0, len(sel.Conditions))
 		for _, cond := range sel.Conditions {
-			conds = append(conds, expression.PushDownNot(cond, false, ctx))
+			conds = append(conds, expression.PushDownNot(ctx, cond, false))
 		}
 		col := expression.ColInfo2Col(sel.Schema().Columns, ds.TableInfo().Columns[tt.colPos])
 		c.Assert(col, NotNil)

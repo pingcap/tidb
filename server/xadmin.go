@@ -392,17 +392,18 @@ func (xsql *xSQL) isCollection(goCtx goctx.Context, schema string, collection st
 	}
 
 	defer terror.Call(rs[0].Close)
-	row, err := rs[0].Next(goCtx)
+	chk := rs[0].NewChunk()
+	err = rs[0].NextChunk(goCtx, chk)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	if row.Len() != 4 {
+	if chk.NumCols() != 4 {
 		return false, nil
 	}
-	cnt := row.GetInt64(0)
-	doc := row.GetInt64(1)
-	id := row.GetInt64(2)
-	gen := row.GetInt64(3)
+	cnt := chk.GetRow(0).GetInt64(0)
+	doc := chk.GetRow(0).GetInt64(1)
+	id := chk.GetRow(0).GetInt64(2)
+	gen := chk.GetRow(0).GetInt64(3)
 
 	return doc == 1 && id == 1 && (cnt == gen+doc+id), nil
 }

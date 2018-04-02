@@ -20,9 +20,10 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tipb/go-binlog"
+	"github.com/pingcap/tidb/sessionctx"
+	binlog "github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var (
@@ -44,7 +45,7 @@ type tikvTxn struct {
 }
 
 func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
-	bo := NewBackoffer(tsoMaxBackoff, goctx.Background())
+	bo := NewBackoffer(context.Background(), tsoMaxBackoff)
 	startTS, err := store.getTimestampWithRetry(bo)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -153,7 +154,7 @@ func (txn *tikvTxn) DelOption(opt kv.Option) {
 	}
 }
 
-func (txn *tikvTxn) Commit(ctx goctx.Context) error {
+func (txn *tikvTxn) Commit(ctx context.Context) error {
 	if !txn.valid {
 		return kv.ErrInvalidTxn
 	}
@@ -168,7 +169,13 @@ func (txn *tikvTxn) Commit(ctx goctx.Context) error {
 		return errors.Trace(err)
 	}
 
-	committer, err := newTwoPhaseCommitter(txn)
+	// connID is used for log.
+	var connID uint64
+	val := ctx.Value(sessionctx.ConnID)
+	if val != nil {
+		connID = val.(uint64)
+	}
+	committer, err := newTwoPhaseCommitter(txn, connID)
 	if err != nil {
 		return errors.Trace(err)
 	}

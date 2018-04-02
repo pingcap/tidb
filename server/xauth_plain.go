@@ -22,3 +22,11 @@ func (spa *saslPlainAuth) handleStart(mechanism *string, data []byte, initialRes
 func (spa *saslPlainAuth) handleContinue(data []byte) *response {
 	return nil
 }
+
+// Config contains configuration options.
+type Config struct {
+	Addr       string `json:"addr" toml:"addr"`
+	Socket     string `json:"socket" toml:"socket"`
+	SkipAuth   bool   `json:"skip-auth" toml:"skip-auth"`
+	TokenLimit uint   `json:"token-limit" toml:"token-limit"`
+}

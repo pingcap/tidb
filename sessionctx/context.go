@@ -1,4 +1,4 @@
-// Copyright 2015 PingCAP, Inc.
+// Copyright 2018 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package context
+package sessionctx
 
 import (
 	"fmt"
@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
 	binlog "github.com/pingcap/tipb/go-binlog"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 // Context is an interface for transaction and executive args environment.
@@ -54,7 +54,7 @@ type Context interface {
 	// RefreshTxnCtx commits old transaction without retry,
 	// and creates a new transaction.
 	// now just for load data and batch insert.
-	RefreshTxnCtx(goctx.Context) error
+	RefreshTxnCtx(context.Context) error
 
 	// ActivePendingTxn receives the pending transaction from the transaction channel.
 	// It should be called right before we builds an executor.
@@ -106,3 +106,13 @@ const (
 	// LastExecuteDDL is the key for whether the session execute a ddl command last time.
 	LastExecuteDDL basicCtxType = 3
 )
+
+type contextKey string
+
+// ConnID is the key in context.
+const ConnID contextKey = "conn ID"
+
+// SetConnID2Ctx sets the connection ID to context.
+func SetConnID2Ctx(ctx context.Context, sessCtx Context) context.Context {
+	return context.WithValue(ctx, ConnID, sessCtx.GetSessionVars().ConnectionID)
+}

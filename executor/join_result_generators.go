@@ -15,9 +15,9 @@ package executor
 
 import (
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -52,7 +52,7 @@ type joinResultGenerator interface {
 	emitToChunk(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) error
 }
 
-func newJoinResultGenerator(ctx context.Context, joinType plan.JoinType,
+func newJoinResultGenerator(ctx sessionctx.Context, joinType plan.JoinType,
 	outerIsRight bool, defaultInner Row, filter []expression.Expression,
 	lhsColTypes, rhsColTypes []*types.FieldType) joinResultGenerator {
 	base := baseJoinResultGenerator{
@@ -96,7 +96,7 @@ func newJoinResultGenerator(ctx context.Context, joinType plan.JoinType,
 // baseJoinResultGenerator is not thread-safe,
 // so we should build individual generator for every join goroutine.
 type baseJoinResultGenerator struct {
-	ctx               context.Context
+	ctx               sessionctx.Context
 	filter            []expression.Expression
 	defaultChunkInner chunk.Row
 	outerIsRight      bool
@@ -122,7 +122,9 @@ func (outputer *baseJoinResultGenerator) makeJoinRowToBuffer(buffer []types.Datu
 }
 
 func (outputer *baseJoinResultGenerator) makeJoinRowToChunk(chk *chunk.Chunk, lhs, rhs chunk.Row) {
-	chk.AppendPartialRow(0, lhs)
+	// Call AppendRow() first to increment the virtual rows.
+	// Fix: https://github.com/pingcap/tidb/issues/5771
+	chk.AppendRow(lhs)
 	chk.AppendPartialRow(lhs.Len(), rhs)
 }
 
@@ -145,7 +147,7 @@ func (outputer *baseJoinResultGenerator) filterResult(resultBuffer []Row, origin
 
 	curLen := originLen
 	for _, joinedRow := range resultBuffer[originLen:] {
-		matched, err := expression.EvalBool(outputer.filter, joinedRow, outputer.ctx)
+		matched, err := expression.EvalBool(outputer.ctx, outputer.filter, joinedRow)
 		if err != nil {
 			return nil, false, errors.Trace(err)
 		}
@@ -195,7 +197,7 @@ func (outputer *semiJoinResultGenerator) emit(outer Row, inners []Row, resultBuf
 			buffer = outputer.makeJoinRowToBuffer(buffer[:0], outer, inner)
 		}
 
-		matched, err := expression.EvalBool(outputer.filter, buffer, outputer.ctx)
+		matched, err := expression.EvalBool(outputer.ctx, outputer.filter, buffer)
 		if err != nil {
 			return resultBuffer, errors.Trace(err)
 		}
@@ -226,7 +228,7 @@ func (outputer *semiJoinResultGenerator) emitToChunk(outer chunk.Row, inners chu
 		} else {
 			outputer.makeJoinRowToChunk(outputer.chk, outer, inner)
 		}
-		selected, err := expression.EvalBool(outputer.filter, outputer.chk.GetRow(0), outputer.ctx)
+		selected, err := expression.EvalBool(outputer.ctx, outputer.filter, outputer.chk.GetRow(0))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -261,7 +263,7 @@ func (outputer *antiSemiJoinResultGenerator) emit(outer Row, inners []Row, resul
 			buffer = outputer.makeJoinRowToBuffer(buffer[:0], outer, inner)
 		}
 
-		matched, err1 := expression.EvalBool(outputer.filter, buffer, outputer.ctx)
+		matched, err1 := expression.EvalBool(outputer.ctx, outputer.filter, buffer)
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
@@ -293,7 +295,7 @@ func (outputer *antiSemiJoinResultGenerator) emitToChunk(outer chunk.Row, inners
 			outputer.makeJoinRowToChunk(outputer.chk, outer, inner)
 		}
 
-		matched, err := expression.EvalBool(outputer.filter, outputer.chk.GetRow(0), outputer.ctx)
+		matched, err := expression.EvalBool(outputer.ctx, outputer.filter, outputer.chk.GetRow(0))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -324,7 +326,7 @@ func (outputer *leftOuterSemiJoinResultGenerator) emit(outer Row, inners []Row, 
 
 	for _, inner := range inners {
 		buffer = outputer.makeJoinRowToBuffer(buffer[:0], outer, inner)
-		matched, err := expression.EvalBool(outputer.filter, buffer, outputer.ctx)
+		matched, err := expression.EvalBool(outputer.ctx, outputer.filter, buffer)
 		if err != nil {
 			return resultBuffer, errors.Trace(err)
 		}
@@ -356,7 +358,7 @@ func (outputer *leftOuterSemiJoinResultGenerator) emitToChunk(outer chunk.Row, i
 	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
 		outputer.chk.Reset()
 		outputer.makeJoinRowToChunk(outputer.chk, outer, inner)
-		matched, err := expression.EvalBool(outputer.filter, outputer.chk.GetRow(0), outputer.ctx)
+		matched, err := expression.EvalBool(outputer.ctx, outputer.filter, outputer.chk.GetRow(0))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -397,7 +399,7 @@ func (outputer *antiLeftOuterSemiJoinResultGenerator) emit(outer Row, inners []R
 
 	for _, inner := range inners {
 		buffer = outputer.makeJoinRowToBuffer(buffer[:0], outer, inner)
-		matched, err := expression.EvalBool(outputer.filter, buffer, outputer.ctx)
+		matched, err := expression.EvalBool(outputer.ctx, outputer.filter, buffer)
 		if err != nil {
 			return resultBuffer, errors.Trace(err)
 		}
@@ -431,7 +433,7 @@ func (outputer *antiLeftOuterSemiJoinResultGenerator) emitToChunk(outer chunk.Ro
 	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
 		outputer.chk.Reset()
 		outputer.makeJoinRowToChunk(outputer.chk, outer, inner)
-		matched, err := expression.EvalBool(outputer.filter, outputer.chk.GetRow(0), outputer.ctx)
+		matched, err := expression.EvalBool(outputer.ctx, outputer.filter, outputer.chk.GetRow(0))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -644,4 +646,12 @@ func (outputer *innerJoinResultGenerator) emitToChunk(outer chunk.Row, inners ch
 	chkForJoin.Reset()
 
 	return nil
+}
+
+// makeJoinRow simply creates a new row that appends row b to row a.
+func makeJoinRow(a Row, b Row) Row {
+	ret := make([]types.Datum, 0, len(a)+len(b))
+	ret = append(ret, a...)
+	ret = append(ret, b...)
+	return ret
 }

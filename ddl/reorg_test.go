@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 type testCtxKeyType int
@@ -38,7 +38,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	store := testCreateStore(c, "test_reorg")
 	defer store.Close()
 
-	d := testNewDDL(goctx.Background(), nil, store, nil, nil, testLease)
+	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
 	defer d.Stop()
 
 	time.Sleep(testLease)
@@ -58,14 +58,14 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	err = ctx.NewTxn()
 	c.Assert(err, IsNil)
 	ctx.Txn().Set([]byte("a"), []byte("b"))
-	err = ctx.Txn().Commit(goctx.Background())
+	err = ctx.Txn().Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	rowCount := int64(10)
 	handle := int64(100)
 	f := func() error {
 		d.reorgCtx.setRowCountAndHandle(rowCount, handle)
-		time.Sleep(20 * testLease)
+		time.Sleep(1*ReorgWaitTimeout + 100*time.Millisecond)
 		return nil
 	}
 	job := &model.Job{
@@ -87,7 +87,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 			c.Assert(d.reorgCtx.rowCount, Equals, int64(0))
 
 			// Test whether reorgInfo's Handle is update.
-			err = ctx.Txn().Commit(goctx.Background())
+			err = ctx.Txn().Commit(context.Background())
 			c.Assert(err, IsNil)
 			err = ctx.NewTxn()
 			c.Assert(err, IsNil)
@@ -107,10 +107,10 @@ func (s *testDDLSuite) TestReorg(c *C) {
 		return nil
 	})
 	c.Assert(err, NotNil)
-	err = ctx.Txn().Commit(goctx.Background())
+	err = ctx.Txn().Commit(context.Background())
 	c.Assert(err, IsNil)
 
-	d.start(goctx.Background())
+	d.start(context.Background())
 	job = &model.Job{
 		ID:       2,
 		SchemaID: 1,
@@ -146,14 +146,14 @@ func (s *testDDLSuite) TestReorgOwner(c *C) {
 	store := testCreateStore(c, "test_reorg_owner")
 	defer store.Close()
 
-	d1 := testNewDDL(goctx.Background(), nil, store, nil, nil, testLease)
+	d1 := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
 	defer d1.Stop()
 
 	ctx := testNewContext(d1)
 
 	testCheckOwner(c, d1, true)
 
-	d2 := testNewDDL(goctx.Background(), nil, store, nil, nil, testLease)
+	d2 := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
 	defer d2.Stop()
 
 	dbInfo := testSchemaInfo(c, d1, "test")
@@ -169,7 +169,7 @@ func (s *testDDLSuite) TestReorgOwner(c *C) {
 		c.Assert(err, IsNil)
 	}
 
-	err := ctx.Txn().Commit(goctx.Background())
+	err := ctx.Txn().Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	tc := &TestDDLCallback{}

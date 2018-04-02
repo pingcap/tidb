@@ -20,11 +20,11 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
@@ -115,6 +115,13 @@ func (s *testSuite) TestInsert(c *C) {
 	tk.MustExec(insertSQL)
 	r = tk.MustQuery("select * from insert_test where id = 1;")
 	rowStr = fmt.Sprintf("%v %v %v %v", "1", "1", "10", "6")
+	r.Check(testkit.Rows(rowStr))
+
+	// for on duplicate key with ignore
+	insertSQL = `INSERT IGNORE INTO insert_test (id, c3) VALUES (1, 2) ON DUPLICATE KEY UPDATE c3=values(c3)+c3+3;`
+	tk.MustExec(insertSQL)
+	r = tk.MustQuery("select * from insert_test where id = 1;")
+	rowStr = fmt.Sprintf("%v %v %v %v", "1", "1", "10", "11")
 	r.Check(testkit.Rows(rowStr))
 
 	tk.MustExec("create table insert_err (id int, c1 varchar(8))")
@@ -873,7 +880,7 @@ func (s *testSuite) TestLoadData(c *C) {
 	_, err = tk.Exec("load data infile '/tmp/nonexistence.csv' into table load_data_test")
 	c.Assert(err, NotNil)
 	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test")
-	ctx := tk.Se.(context.Context)
+	ctx := tk.Se.(sessionctx.Context)
 	ld := makeLoadDataInfo(4, nil, ctx, c)
 
 	deleteSQL := "delete from load_data_test"
@@ -1027,7 +1034,7 @@ func (s *testSuite) TestLoadDataEscape(c *C) {
 	tk.MustExec("use test; drop table if exists load_data_test;")
 	tk.MustExec("CREATE TABLE load_data_test (id INT NOT NULL PRIMARY KEY, value TEXT NOT NULL) CHARACTER SET utf8")
 	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test")
-	ctx := tk.Se.(context.Context)
+	ctx := tk.Se.(sessionctx.Context)
 	ld := makeLoadDataInfo(2, nil, ctx, c)
 	// test escape
 	tests := []testCase{
@@ -1050,7 +1057,7 @@ func (s *testSuite) TestLoadDataSpecifiedCoumns(c *C) {
 	tk.MustExec("use test; drop table if exists load_data_test;")
 	tk.MustExec(`create table load_data_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 varchar(255) default "def", c3 int default 0);`)
 	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test (c1, c2)")
-	ctx := tk.Se.(context.Context)
+	ctx := tk.Se.(sessionctx.Context)
 	ld := makeLoadDataInfo(2, []string{"c1", "c2"}, ctx, c)
 	// test
 	tests := []testCase{
@@ -1067,7 +1074,7 @@ func (s *testSuite) TestLoadDataSpecifiedCoumns(c *C) {
 	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
 }
 
-func makeLoadDataInfo(column int, specifiedColumns []string, ctx context.Context, c *C) (ld *executor.LoadDataInfo) {
+func makeLoadDataInfo(column int, specifiedColumns []string, ctx sessionctx.Context, c *C) (ld *executor.LoadDataInfo) {
 	dom := domain.GetDomain(ctx)
 	is := dom.InfoSchema()
 	c.Assert(is, NotNil)
@@ -1076,12 +1083,12 @@ func makeLoadDataInfo(column int, specifiedColumns []string, ctx context.Context
 	columns := tbl.Cols()
 	// filter specified columns
 	if len(specifiedColumns) > 0 {
-		columns, err = table.FindCols(columns, specifiedColumns)
+		columns, err = table.FindCols(columns, specifiedColumns, true)
 		c.Assert(err, IsNil)
 	}
 	fields := &ast.FieldsClause{Terminated: "\t"}
 	lines := &ast.LinesClause{Starting: "", Terminated: "\n"}
-	ld = executor.NewLoadDataInfo(make([]types.Datum, column), ctx, tbl, columns)
+	ld = executor.NewLoadDataInfo(ctx, make([]types.Datum, column), tbl, columns)
 	ld.SetMaxRowsInBatch(0)
 	ld.FieldsInfo = fields
 	ld.LinesInfo = lines
@@ -1384,4 +1391,17 @@ func (s *testSuite) TestInsertCalculatedValue(c *C) {
 	tk.MustExec("create table t(a int not null, b int, c int as (sqrt(a)))")
 	tk.MustExec("insert t set b = a, a = 4")
 	tk.MustQuery("select * from t").Check(testkit.Rows("4 0 2"))
+}
+
+func (s *testSuite) TestDataTooLongErrMsg(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a varchar(2));")
+	_, err := tk.Exec("insert into t values('123');")
+	c.Assert(types.ErrDataTooLong.Equal(err), IsTrue)
+	c.Assert(err.Error(), Equals, "[types:1406]Data too long for column 'a' at row 1")
+	tk.MustExec("insert into t values('12')")
+	_, err = tk.Exec("update t set a = '123' where a = '12';")
+	c.Assert(types.ErrDataTooLong.Equal(err), IsTrue)
+	c.Assert(err.Error(), Equals, "[types:1406]Data too long for column 'a' at row 1")
 }

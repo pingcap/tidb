@@ -14,31 +14,62 @@
 package plan
 
 import (
-	"math/bits"
 	"sort"
 
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/sessionctx"
 	log "github.com/sirupsen/logrus"
 )
 
-// tryToGetJoinGroup tries to fetch a whole join group, which all joins is cartesian join.
-func tryToGetJoinGroup(j *LogicalJoin) ([]LogicalPlan, bool) {
-	// Ignore reorder if:
-	// 1. already reordered
-	// 2. not inner join
-	// 3. forced to choose join type
-	if j.reordered || !j.cartesianJoin || bits.OnesCount(j.preferJoinType) > 0 {
-		return nil, false
+// getCartesianJoinGroup collects all the inner join tables of a left deep join
+// tree. The traversal of join tree is stopped and returns a nil group if:
+// 1. reach a reordered join node, or:
+// 2. reach a non-cartesian join node, or:
+// 3. reach a join node which has a preferred join algorithm.
+// 4. reach a straight join node.
+//
+// An example of left deep join tree is:
+//
+//    "cartesian join 1"
+//      	|	\
+//      	|	"right child 1"
+//      	|
+//    "cartesian join 2"
+//      	|	\
+//      	|	"right child 2"
+//      	|
+//    "cartesian join ..."
+//      	|	\
+//      	|	"right child ..."
+//      	|
+//    "cartesian join n"
+//      	|	\
+//      	|	"right child n"
+//      	|
+//    "left deep child"
+//
+// The result of getCartesianJoinGroup is:
+// {"left deep child", "right child n", ..., "right child 2", "right child 1"}
+func getCartesianJoinGroup(p *LogicalJoin) []LogicalPlan {
+	if p.reordered || !p.cartesianJoin || p.preferJoinType > uint(0) || p.StraightJoin {
+		return nil
 	}
-	lChild := j.children[0]
-	rChild := j.children[1]
-	if nj, ok := lChild.(*LogicalJoin); ok {
-		plans, valid := tryToGetJoinGroup(nj)
-		return append(plans, rChild), valid
+
+	lChild := p.children[0]
+	rChild := p.children[1]
+
+	lhsJoinTree, ok := lChild.(*LogicalJoin)
+	if !ok {
+		return []LogicalPlan{lChild, rChild}
 	}
-	return []LogicalPlan{lChild, rChild}, true
+
+	lhsJoinGroup := getCartesianJoinGroup(lhsJoinTree)
+	if lhsJoinGroup == nil {
+		return nil
+	}
+
+	return append(lhsJoinGroup, rChild)
 }
 
 func findColumnIndexByGroup(groups []LogicalPlan, col *expression.Column) int {
@@ -57,7 +88,7 @@ type joinReOrderSolver struct {
 	visited    []bool
 	resultJoin LogicalPlan
 	groupRank  []*rankInfo
-	ctx        context.Context
+	ctx        sessionctx.Context
 }
 
 type edgeList []*rankInfo

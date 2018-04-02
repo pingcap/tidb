@@ -2,7 +2,7 @@
 
 [![Build Status](https://travis-ci.org/pingcap/tidb.svg?branch=master)](https://travis-ci.org/pingcap/tidb)
 [![Go Report Card](https://goreportcard.com/badge/github.com/pingcap/tidb)](https://goreportcard.com/report/github.com/pingcap/tidb)
-![Project Status](https://img.shields.io/badge/version-1.0-green.svg)
+![Project Status](https://img.shields.io/badge/version-2.0-green.svg)
 [![CircleCI Status](https://circleci.com/gh/pingcap/tidb.svg?style=shield)](https://circleci.com/gh/pingcap/tidb)
 [![Coverage Status](https://coveralls.io/repos/github/pingcap/tidb/badge.svg?branch=master)](https://coveralls.io/github/pingcap/tidb?branch=master)
 
@@ -35,6 +35,10 @@ Evolve TiDB schemas as your requirement changes. You can add new columns and ind
 Power TiDB with your most favorite engines. TiDB supports local storage engines such as GolevelDB, as well as [TiKV](https://github.com/pingcap/tikv), a distributed storage engine.
 
 For more details, see [How we build TiDB](https://pingcap.github.io/blog/2016/10/17/how-we-build-tidb/).
+
+## Adopters
+
+You can view the list of TiDB adopters [here](https://github.com/pingcap/docs/blob/master/adopters.md).
 
 ## Roadmap
 

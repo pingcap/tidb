@@ -21,12 +21,12 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -43,8 +43,49 @@ type ShowDDLJobs struct {
 	baseSchemaProducer
 }
 
+// ShowDDLJobQueries is for showing DDL job queries sql.
+type ShowDDLJobQueries struct {
+	baseSchemaProducer
+
+	JobIDs []int64
+}
+
 // CheckTable is used for checking table data, built from the 'admin check table' statement.
 type CheckTable struct {
+	baseSchemaProducer
+
+	Tables []*ast.TableName
+}
+
+// RecoverIndex is used for backfilling corrupted index data.
+type RecoverIndex struct {
+	baseSchemaProducer
+
+	Table     *ast.TableName
+	IndexName string
+}
+
+// CheckIndex is used for checking index data, built from the 'admin check index' statement.
+type CheckIndex struct {
+	baseSchemaProducer
+
+	IndexLookUpReader *PhysicalIndexLookUpReader
+	DBName            string
+	IdxName           string
+}
+
+// CheckIndexRange is used for checking index data, output the index values that handle within begin and end.
+type CheckIndexRange struct {
+	baseSchemaProducer
+
+	Table     *ast.TableName
+	IndexName string
+
+	HandleRanges []ast.HandleRange
+}
+
+// ChecksumTable is used for calculating table checksum, built from the `admin checksum table` statement.
+type ChecksumTable struct {
 	baseSchemaProducer
 
 	Tables []*ast.TableName
@@ -84,7 +125,7 @@ type Execute struct {
 	Plan      Plan
 }
 
-func (e *Execute) optimizePreparedPlan(ctx context.Context, is infoschema.InfoSchema) error {
+func (e *Execute) optimizePreparedPlan(ctx sessionctx.Context, is infoschema.InfoSchema) error {
 	vars := ctx.GetSessionVars()
 	if e.Name != "" {
 		e.ExecID = vars.PreparedStmtNameToID[e.Name]
@@ -128,13 +169,14 @@ func (e *Execute) optimizePreparedPlan(ctx context.Context, is infoschema.InfoSc
 	return nil
 }
 
-func (e *Execute) getPhysicalPlan(ctx context.Context, is infoschema.InfoSchema, prepared *Prepared) (Plan, error) {
+func (e *Execute) getPhysicalPlan(ctx sessionctx.Context, is infoschema.InfoSchema, prepared *Prepared) (Plan, error) {
 	var cacheKey kvcache.Key
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.StmtCtx.UseCache = prepared.UseCache
 	if prepared.UseCache {
 		cacheKey = NewPSTMTPlanCacheKey(sessionVars, e.ExecID, prepared.SchemaVersion)
 		if cacheValue, exists := ctx.PreparedPlanCache().Get(cacheKey); exists {
+			metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
 			plan := cacheValue.(*PSTMTPlanCacheValue).Plan
 			err := e.rebuildRange(plan)
 			if err != nil {
@@ -154,6 +196,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, is infoschema.InfoSchema,
 }
 
 func (e *Execute) rebuildRange(p Plan) error {
+	sctx := p.context()
 	sc := p.context().GetSessionVars().StmtCtx
 	switch x := p.(type) {
 	case *PhysicalTableReader:
@@ -177,14 +220,14 @@ func (e *Execute) rebuildRange(p Plan) error {
 	case *PhysicalIndexReader:
 		is := x.IndexPlans[0].(*PhysicalIndexScan)
 		var err error
-		is.Ranges, err = e.buildRangeForIndexScan(sc, is)
+		is.Ranges, err = e.buildRangeForIndexScan(sctx, is)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	case *PhysicalIndexLookUpReader:
 		is := x.IndexPlans[0].(*PhysicalIndexScan)
 		var err error
-		is.Ranges, err = e.buildRangeForIndexScan(sc, is)
+		is.Ranges, err = e.buildRangeForIndexScan(sctx, is)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -200,13 +243,13 @@ func (e *Execute) rebuildRange(p Plan) error {
 	return nil
 }
 
-func (e *Execute) buildRangeForIndexScan(sc *stmtctx.StatementContext, is *PhysicalIndexScan) ([]*ranger.NewRange, error) {
+func (e *Execute) buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) ([]*ranger.NewRange, error) {
 	cols := expression.ColumnInfos2ColumnsWithDBName(is.DBName, is.Table.Name, is.Columns)
 	idxCols, colLengths := expression.IndexInfo2Cols(cols, is.Index)
 	ranges := ranger.FullNewRange()
 	if len(idxCols) > 0 {
 		var err error
-		ranges, _, _, _, err = ranger.DetachCondAndBuildRangeForIndex(sc, is.conditions, idxCols, colLengths)
+		ranges, _, _, _, err = ranger.DetachCondAndBuildRangeForIndex(sctx, is.conditions, idxCols, colLengths)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

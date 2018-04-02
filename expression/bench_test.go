@@ -21,9 +21,9 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/chunk"
@@ -31,7 +31,7 @@ import (
 )
 
 type benchHelper struct {
-	ctx   context.Context
+	ctx   sessionctx.Context
 	exprs []Expression
 
 	inputTypes  []*types.FieldType
@@ -90,7 +90,7 @@ func (h *benchHelper) init() {
 		h.inputChunk.AppendFloat64(1, 2.019)
 		h.inputChunk.AppendMyDecimal(2, types.NewDecFromFloatForTest(5.9101))
 		for i := 0; i < 20; i++ {
-			h.inputChunk.AppendString(3+i, "abcdefughasfjsaljal1321798273528791!&(*#&@&^%&%^&!)sadfashqwer")
+			h.inputChunk.AppendString(3+i, `abcdefughasfjsaljal1321798273528791!&(*#&@&^%&%^&!)sadfashqwer`)
 		}
 	}
 
@@ -171,7 +171,7 @@ func BenchmarkVectorizedExecute(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		h.outputChunk.Reset()
 		if err := VectorizedExecute(h.ctx, h.exprs, inputIter, h.outputChunk); err != nil {
-			panic("errors happend during \"VectorizedExecute\"")
+			panic("errors happened during \"VectorizedExecute\"")
 		}
 	}
 }

@@ -20,29 +20,28 @@ import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/terror"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 type testSafePointSuite struct {
+	OneByOneSuite
 	store  *tikvStore
-	oracle *mockoracle.MockOracle
 	prefix string
 }
 
 var _ = Suite(&testSafePointSuite{})
 
 func (s *testSafePointSuite) SetUpSuite(c *C) {
-	s.store = newTestStore(c)
-	s.oracle = &mockoracle.MockOracle{}
-	s.store.oracle = s.oracle
+	s.OneByOneSuite.SetUpSuite(c)
+	s.store = NewTestStore(c).(*tikvStore)
 	s.prefix = fmt.Sprintf("seek_%d", time.Now().Unix())
 }
 
 func (s *testSafePointSuite) TearDownSuite(c *C) {
 	err := s.store.Close()
 	c.Assert(err, IsNil)
+	s.OneByOneSuite.TearDownSuite(c)
 }
 
 func (s *testSafePointSuite) beginTxn(c *C) *tikvTxn {
@@ -80,7 +79,7 @@ func (s *testSafePointSuite) TestSafePoint(c *C) {
 		err := txn.Set(encodeKey(s.prefix, s08d("key", i)), valueBytes(i))
 		c.Assert(err, IsNil)
 	}
-	err := txn.Commit(goctx.Background())
+	err := txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	// for txn get
