@@ -150,7 +150,7 @@
   branch = "master"
   name = "github.com/ngaut/pools"
   packages = ["."]
-  revision = "6352e005618615ffaf1cb1c6622b8e91435751fe"
+  revision = "b7bc8c42aac787667ba45adea78233f53f548443"
 
 [[projects]]
   branch = "master"
@@ -235,7 +235,7 @@
     "go-tipb",
     "sharedbytes"
   ]
-  revision = "2479f439c9cdd1bf7783dd1eaa4b7187b16d0638"
+  revision = "2d5073e5521a10f8db2adc0eaab2c46ca0a151d9"
 
 [[projects]]
   name = "github.com/prometheus/client_golang"

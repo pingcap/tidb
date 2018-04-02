@@ -242,7 +242,7 @@ func newSession(c *C, store kv.Storage, dbName string) Session {
 	id := atomic.AddUint64(&testConnID, 1)
 	se.SetConnectionID(id)
 	c.Assert(err, IsNil)
-	se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, []byte("012345678901234567890"))
+	se.Auth(&auth.UserIdentity{Username: "root", Hostname: `%`}, nil, []byte("012345678901234567890"))
 	mustExecSQL(c, se, "create database if not exists "+dbName)
 	mustExecSQL(c, se, "use "+dbName)
 	return se

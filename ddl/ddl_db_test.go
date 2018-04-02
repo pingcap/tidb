@@ -124,6 +124,12 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrTooLongIdent)
 	sql = "create database test"
 	s.testErrorCode(c, sql, tmysql.ErrDBCreateExists)
+	sql = "create database test1 character set uft8;"
+	s.testErrorCode(c, sql, tmysql.ErrUnknownCharacterSet)
+	sql = "create database test2 character set gkb;"
+	s.testErrorCode(c, sql, tmysql.ErrUnknownCharacterSet)
+	sql = "create database test3 character set laitn1;"
+	s.testErrorCode(c, sql, tmysql.ErrUnknownCharacterSet)
 	// drop database
 	sql = "drop database db_not_exist"
 	s.testErrorCode(c, sql, tmysql.ErrDBDropExists)
@@ -149,6 +155,12 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrInvalidDefault)
 	sql = "CREATE TABLE `t` (`a` double DEFAULT now());"
 	s.testErrorCode(c, sql, tmysql.ErrInvalidDefault)
+	sql = "create table t1(a int) character set uft8;"
+	s.testErrorCode(c, sql, tmysql.ErrUnknownCharacterSet)
+	sql = "create table t1(a int) character set gkb;"
+	s.testErrorCode(c, sql, tmysql.ErrUnknownCharacterSet)
+	sql = "create table t1(a int) character set laitn1;"
+	s.testErrorCode(c, sql, tmysql.ErrUnknownCharacterSet)
 
 	// add column
 	sql = "alter table test_error_code_succ add column c1 int"
@@ -449,7 +461,7 @@ func (s *testDBSuite) TestAddAnonymousIndex(c *C) {
 	c.Assert(t.Indices()[1].Meta().Name.String(), Equals, "primary_3")
 }
 
-// Issue 5134
+// TestModifyColumnAfterAddIndex Issue 5134
 func (s *testDBSuite) TestModifyColumnAfterAddIndex(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
@@ -773,6 +785,22 @@ func (s *testDBSuite) TestIssue2293(c *C) {
 	s.tk.MustQuery("select * from t_issue_2293").Check(testkit.Rows("1"))
 }
 
+func (s *testDBSuite) TestIssue6101(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+	s.tk.MustExec("create table t1 (quantity decimal(2) unsigned);")
+	_, err := s.tk.Exec("insert into t1 values (500), (-500), (~0), (-1);")
+	terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(tmysql.ErrDataOutOfRange))
+	s.tk.MustExec("drop table t1")
+
+	s.tk.MustExec("set sql_mode=''")
+	s.tk.MustExec("create table t1 (quantity decimal(2) unsigned);")
+	s.tk.MustExec("insert into t1 values (500), (-500), (~0), (-1);")
+	s.tk.MustQuery("select * from t1").Check(testkit.Rows("99", "0", "99", "0"))
+	s.tk.MustExec("drop table t1")
+}
+
 func (s *testDBSuite) TestCreateIndexType(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
@@ -1001,7 +1029,7 @@ LOOP:
 	c.Assert(count, Greater, int64(0))
 }
 
-// This test is for insert value with a to-be-dropped column when do drop column.
+// testDropColumn2 is for inserting value with a to-be-dropped column when do drop column.
 // Column info from schema in build-insert-plan should be public only,
 // otherwise they will not be consist with Table.Col(), then the server will panic.
 func (s *testDBSuite) testDropColumn2(c *C) {
