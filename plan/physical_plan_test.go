@@ -1015,7 +1015,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 			best: "TableReader(Table(t)->Sel([like(test.t.c_str, _abc, 92)]))->Projection",
 		},
 		{
-			sql:  "select a from t where c_str like 'abc%'",
+			sql:  `select a from t where c_str like 'abc%'`,
 			best: "IndexReader(Index(t.c_d_e_str)[[abc,abd)])->Projection",
 		},
 		{
