@@ -864,6 +864,25 @@ func (mvcc *MVCCLevelDB) BatchResolveLock(startKey, endKey []byte, txnInfos map[
 	return mvcc.db.Write(batch, nil)
 }
 
+func (mvcc *MVCCLevelDB) UnsafeCleanupRange(startKey, endKey []byte) error {
+	mvcc.mu.Lock()
+	defer mvcc.mu.Unlock()
+
+	iter := newIterator(mvcc.db, &util.Range{
+		Start: startKey,
+		Limit: endKey,
+	})
+	defer iter.Release()
+
+	batch := &leveldb.Batch{}
+	for iter.Valid() {
+		batch.Delete(iter.Key())
+		iter.Next()
+	}
+
+	return mvcc.db.Write(batch, nil)
+}
+
 // Close calls leveldb's Close to free resources.
 func (mvcc *MVCCLevelDB) Close() error {
 	return mvcc.db.Close()
