@@ -21,6 +21,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
@@ -145,10 +146,10 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 }
 
 // GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
-func (h *Handle) GetTableStats(tblID int64) *Table {
-	tbl, ok := h.statsCache.Load().(statsCache)[tblID]
+func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *Table {
+	tbl, ok := h.statsCache.Load().(statsCache)[tblInfo.ID]
 	if !ok {
-		return PseudoTable(tblID)
+		return PseudoTable(tblInfo)
 	}
 	return tbl
 }
@@ -179,7 +180,10 @@ func (h *Handle) UpdateTableStats(tables []*Table, deletedIDs []int64) {
 func (h *Handle) LoadNeededHistograms() error {
 	cols := histogramNeededColumns.allCols()
 	for _, col := range cols {
-		tbl := h.GetTableStats(col.tableID).copy()
+		tbl, ok := h.statsCache.Load().(statsCache)[col.tableID]
+		if !ok {
+			continue
+		}
 		c, ok := tbl.Columns[col.columnID]
 		if !ok || c.Len() > 0 {
 			histogramNeededColumns.delete(col)
