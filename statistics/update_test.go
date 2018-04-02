@@ -446,8 +446,23 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 		if t.idxCols == 0 {
 			c.Assert(feedback[0].DecodeInt(), IsNil)
 		}
-		c.Assert(statistics.UpdateHistogram(feedback[0].Hist(), feedback).ToString(t.idxCols), Equals, t.hist)
+		c.Assert(statistics.UpdateHistogram(feedback[0].Hist(), feedback[0]).ToString(t.idxCols), Equals, t.hist)
 	}
+
+	for _, t := range tests {
+		testKit.MustQuery(t.sql)
+	}
+	c.Assert(h.DumpStatsDeltaToKV(), IsNil)
+	c.Assert(h.DumpStatsFeedbackToKV(), IsNil)
+	c.Assert(h.HandleUpdateStats(), IsNil)
+	is := s.do.InfoSchema()
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	h.Update(s.do.InfoSchema())
+	tblInfo := table.Meta()
+	tbl := h.GetTableStats(tblInfo.ID)
+	c.Assert(tbl.Columns[tblInfo.Columns[0].ID].ToString(0), Equals, tests[0].hist)
+	c.Assert(tbl.Indices[tblInfo.Indices[0].ID].ToString(1), Equals, tests[1].hist)
 
 	// Feedback from limit executor may not be accurate.
 	testKit.MustQuery("select * from t where t.a <= 2 limit 1")

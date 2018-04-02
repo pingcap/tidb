@@ -632,6 +632,10 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	defer loadHistogramTicker.Stop()
 	gcStatsTicker := time.NewTicker(100 * lease)
 	defer gcStatsTicker.Stop()
+	dumpFeedbackTicker := time.NewTicker(200 * lease)
+	defer dumpFeedbackTicker.Stop()
+	loadFeedbackTicker := time.NewTicker(5 * lease)
+	defer loadFeedbackTicker.Stop()
 	statsHandle := do.StatsHandle()
 	t := time.Now()
 	err := statsHandle.InitStats(do.InfoSchema())
@@ -644,7 +648,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	for {
 		select {
 		case <-loadTicker.C:
-			err := statsHandle.Update(do.InfoSchema())
+			err = statsHandle.Update(do.InfoSchema())
 			if err != nil {
 				log.Error("[stats] update stats info fail: ", errors.ErrorStack(err))
 			}
@@ -653,32 +657,45 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			return
 			// This channel is sent only by ddl owner or the drop stats executor.
 		case t := <-statsHandle.DDLEventCh():
-			err := statsHandle.HandleDDLEvent(t)
+			err = statsHandle.HandleDDLEvent(t)
 			if err != nil {
 				log.Error("[stats] handle ddl event fail: ", errors.ErrorStack(err))
 			}
 		case t := <-statsHandle.AnalyzeResultCh():
 			for i, hg := range t.Hist {
-				err := statistics.SaveStatsToStorage(ctx, t.TableID, t.Count, t.IsIndex, hg, t.Cms[i])
+				err = statistics.SaveStatsToStorage(ctx, t.TableID, t.Count, t.IsIndex, hg, t.Cms[i])
 				if err != nil {
 					log.Error("[stats] save histogram to storage fail: ", errors.ErrorStack(err))
 				}
 			}
 		case <-deltaUpdateTicker.C:
-			err := statsHandle.DumpStatsDeltaToKV()
+			err = statsHandle.DumpStatsDeltaToKV()
 			if err != nil {
 				log.Error("[stats] dump stats delta fail: ", errors.ErrorStack(err))
 			}
 		case <-loadHistogramTicker.C:
-			err := statsHandle.LoadNeededHistograms()
+			err = statsHandle.LoadNeededHistograms()
 			if err != nil {
 				log.Error("[stats] load histograms fail: ", errors.ErrorStack(err))
+			}
+		case <-loadFeedbackTicker.C:
+			if !owner.IsOwner() {
+				continue
+			}
+			err = statsHandle.HandleUpdateStats()
+			if err != nil {
+				log.Errorf("[stats] update stats using feedback fail: ", errors.ErrorStack(err))
+			}
+		case <-dumpFeedbackTicker.C:
+			err = statsHandle.DumpStatsFeedbackToKV()
+			if err != nil {
+				log.Error("[stats] dump stats feedback fail: ", errors.ErrorStack(err))
 			}
 		case <-gcStatsTicker.C:
 			if !owner.IsOwner() {
 				continue
 			}
-			err := statsHandle.GCStats(do.InfoSchema(), do.DDL().GetLease())
+			err = statsHandle.GCStats(do.InfoSchema(), do.DDL().GetLease())
 			if err != nil {
 				log.Error("[stats] gc stats fail: ", errors.ErrorStack(err))
 			}

@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
-	tipb "github.com/pingcap/tipb/go-tipb"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/spaolacci/murmur3"
 )
 
@@ -54,6 +54,17 @@ func (c *CMSketch) InsertBytes(bytes []byte) {
 	}
 }
 
+func (c *CMSketch) setValue(h1, h2 uint64, count uint32) {
+	oriCount := c.queryHashValue(h1, h2)
+	c.count += uint64(count) - uint64(oriCount)
+	// let it overflow naturally
+	deltaCount := count - oriCount
+	for i := range c.table {
+		j := (h1 + h2*uint64(i)) % uint64(c.width)
+		c.table[i][j] = c.table[i][j] + deltaCount
+	}
+}
+
 func (c *CMSketch) queryValue(sc *stmtctx.StatementContext, val types.Datum) (uint32, error) {
 	bytes, err := codec.EncodeValue(sc, nil, val)
 	if err != nil {
@@ -64,6 +75,10 @@ func (c *CMSketch) queryValue(sc *stmtctx.StatementContext, val types.Datum) (ui
 
 func (c *CMSketch) queryBytes(bytes []byte) uint32 {
 	h1, h2 := murmur3.Sum128(bytes)
+	return c.queryHashValue(h1, h2)
+}
+
+func (c *CMSketch) queryHashValue(h1, h2 uint64) uint32 {
 	vals := make([]uint32, c.depth)
 	min := uint32(math.MaxUint32)
 	for i := range c.table {
@@ -172,4 +187,16 @@ func (c *CMSketch) Equal(rc *CMSketch) bool {
 		}
 	}
 	return true
+}
+
+func (c *CMSketch) copy() *CMSketch {
+	if c == nil {
+		return nil
+	}
+	tbl := make([][]uint32, c.depth)
+	for i := range tbl {
+		tbl[i] = make([]uint32, c.width)
+		copy(tbl[i], c.table[i])
+	}
+	return &CMSketch{count: c.count, width: c.width, depth: c.depth, table: tbl}
 }

@@ -150,6 +150,7 @@ type Performance struct {
 	RunAutoAnalyze      bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
 	StmtCountLimit      uint    `toml:"stmt-count-limit" json:"stmt-count-limit"`
 	FeedbackProbability float64 `toml:"feedback-probability" json:"feedback-probability"`
+	QueryFeedbackLimit  uint    `toml:"query-feedback-limit" json:"query-feedback-limit"`
 }
 
 // XProtocol is the XProtocol section of the config.
@@ -256,6 +257,7 @@ var defaultConf = Config{
 		RunAutoAnalyze:      true,
 		StmtCountLimit:      5000,
 		FeedbackProbability: 0,
+		QueryFeedbackLimit:  1000,
 	},
 	XProtocol: XProtocol{
 		XHost: "",

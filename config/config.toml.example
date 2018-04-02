@@ -142,6 +142,9 @@ run-auto-analyze = true
 # Probability to use the query feedback to update stats, 0 or 1 for always false/true.
 feedback-probability = 0.0
 
+# The max number of query feedback that cache in memory.
+query-feedback-limit = 1000
+
 [proxy-protocol]
 # PROXY protocol acceptable client networks.
 # Empty string means disable PROXY protocol, * means all networks.

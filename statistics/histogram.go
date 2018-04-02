@@ -194,8 +194,14 @@ func SaveStatsToStorage(sctx sessionctx.Context, tableID int64, count int64, isI
 	}
 	txn := sctx.Txn()
 	version := txn.StartTS()
-	replaceSQL := fmt.Sprintf("replace into mysql.stats_meta (version, table_id, count) values (%d, %d, %d)", version, tableID, count)
-	_, err = exec.Execute(ctx, replaceSQL)
+	var sql string
+	// If the count is less than 0, then we do not want to update the modify count and count.
+	if count >= 0 {
+		sql = fmt.Sprintf("replace into mysql.stats_meta (version, table_id, count) values (%d, %d, %d)", version, tableID, count)
+	} else {
+		sql = fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d", version, tableID)
+	}
+	_, err = exec.Execute(ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -203,7 +209,7 @@ func SaveStatsToStorage(sctx sessionctx.Context, tableID int64, count int64, isI
 	if err != nil {
 		return errors.Trace(err)
 	}
-	replaceSQL = fmt.Sprintf("replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size) values (%d, %d, %d, %d, %d, %d, X'%X', %d)",
+	replaceSQL := fmt.Sprintf("replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size) values (%d, %d, %d, %d, %d, %d, X'%X', %d)",
 		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, data, hg.TotColSize)
 	_, err = exec.Execute(ctx, replaceSQL)
 	if err != nil {

@@ -188,6 +188,15 @@ const (
 		UNIQUE KEY (element_id),
 		KEY (job_id, element_id)
 	);`
+
+	// CreateStatsFeedbackTable stores the feedback info which is used to update stats.
+	CreateStatsFeedbackTable = `CREATE TABLE IF NOT EXISTS mysql.stats_feedback (
+		table_id bigint(64) NOT NULL,
+		is_index tinyint(2) NOT NULL,
+		hist_id bigint(64) NOT NULL,
+		feedback blob NOT NULL,
+		index hist(table_id, is_index, hist_id)
+	);`
 )
 
 // bootstrap initiates system DB for a store.
@@ -232,6 +241,7 @@ const (
 	version16 = 16
 	version17 = 17
 	version18 = 18
+	version19 = 19
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -360,6 +370,10 @@ func upgrade(s Session) {
 
 	if ver < version18 {
 		upgradeToVer18(s)
+	}
+
+	if ver < version19 {
+		upgradeToVer19(s)
 	}
 
 	updateBootstrapVer(s)
@@ -578,6 +592,10 @@ func upgradeToVer18(s Session) {
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `tot_col_size` bigint(64) NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
 }
 
+func upgradeToVer19(s Session) {
+	doReentrantDDL(s, CreateStatsFeedbackTable)
+}
+
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
 func updateBootstrapVer(s Session) {
 	// Update bootstrap version.
@@ -624,6 +642,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateStatsBucketsTable)
 	// Create gc_delete_range table.
 	mustExecute(s, CreateGCDeleteRangeTable)
+	// Create stats_feedback table.
+	mustExecute(s, CreateStatsFeedbackTable)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.

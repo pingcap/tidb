@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -78,7 +79,7 @@ func (s *SessionStatsCollector) Update(id int64, delta int64, count int64) {
 
 func mergeQueryFeedback(lq []*QueryFeedback, rq []*QueryFeedback) []*QueryFeedback {
 	for _, q := range rq {
-		if len(lq) >= maxQueryFeedBackCount {
+		if len(lq) >= MaxQueryFeedbackCount {
 			break
 		}
 		lq = append(lq, q)
@@ -108,7 +109,7 @@ func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}) {
 
 	s.Lock()
 	defer s.Unlock()
-	if len(s.feedback) >= maxQueryFeedBackCount {
+	if len(s.feedback) >= MaxQueryFeedbackCount {
 		return
 	}
 	s.feedback = append(s.feedback, q)
@@ -188,6 +189,96 @@ func (h *Handle) dumpTableStatDeltaToKV(id int64, delta variable.TableDelta) (bo
 	updated := h.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0
 	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(ctx, "commit")
 	return updated, errors.Trace(err)
+}
+
+// DumpStatsFeedbackToKV dumps the stats feedback to KV.
+func (h *Handle) DumpStatsFeedbackToKV() error {
+	var err error
+	var successCount int
+	for _, fb := range h.feedback {
+		err = h.dumpFeedbackToKV(fb)
+		if err != nil {
+			break
+		}
+		successCount++
+	}
+	h.feedback = h.feedback[successCount:]
+	return errors.Trace(err)
+}
+
+func (h *Handle) dumpFeedbackToKV(fb *QueryFeedback) error {
+	vals, err := encodeFeedback(fb)
+	if err != nil {
+		log.Debugf("error occurred when encoding feedback, err: ", errors.ErrorStack(err))
+		return nil
+	}
+	var isIndex int64
+	if fb.hist.tp.Tp == mysql.TypeLong {
+		isIndex = 0
+	} else {
+		isIndex = 1
+	}
+	sql := fmt.Sprintf("insert into mysql.stats_feedback (table_id, hist_id, is_index, feedback) values "+
+		"(%d, %d, %d, X'%X')", fb.tableID, fb.hist.ID, isIndex, vals)
+	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+	return errors.Trace(err)
+}
+
+// HandleUpdateStats update the stats using feedback.
+func (h *Handle) HandleUpdateStats() error {
+	sql := fmt.Sprintf("select table_id, hist_id, is_index, feedback from mysql.stats_feedback order by table_id, hist_id, is_index")
+	rows, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, sql)
+	if len(rows) == 0 || err != nil {
+		return errors.Trace(err)
+	}
+	tableID, histID, isIndex := int64(-1), int64(-1), int64(-1)
+	q := &QueryFeedback{}
+	var (
+		cms  *CMSketch
+		hist *Histogram
+	)
+	for _, row := range rows {
+		if row.GetInt64(0) == tableID && row.GetInt64(1) == histID && row.GetInt64(2) == isIndex {
+			err = decodeFeedback(row.GetBytes(3), q, cms)
+			if err != nil {
+				log.Debugf("decode feedback failed, err: %v", errors.ErrorStack(err))
+			}
+			continue
+		}
+		if hist != nil {
+			err = h.dumpStatsUpdateToKV(tableID, int(isIndex), q, hist, cms)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+		tableID, histID, isIndex = row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
+		tbl := h.GetTableStats(tableID)
+		if isIndex == 1 {
+			hist = &tbl.Indices[histID].Histogram
+			cms = tbl.Indices[histID].CMSketch.copy()
+		} else {
+			hist = &tbl.Columns[histID].Histogram
+			cms = nil
+		}
+		err = decodeFeedback(row.GetBytes(3), q, cms)
+		if err != nil {
+			log.Debugf("decode feedback failed, err: %v", errors.ErrorStack(err))
+		}
+	}
+	err = h.dumpStatsUpdateToKV(tableID, int(isIndex), q, hist, cms)
+	return errors.Trace(err)
+}
+
+func (h *Handle) dumpStatsUpdateToKV(tableID int64, isIndex int, q *QueryFeedback, hist *Histogram, cms *CMSketch) error {
+	hist = UpdateHistogram(hist, q)
+	err := SaveStatsToStorage(h.ctx, tableID, -1, isIndex, hist, cms)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	sql := fmt.Sprintf("delete from mysql.stats_feedback where table_id = %d and hist_id = %d and is_index = %d", tableID, hist.ID, isIndex)
+	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+	q.feedback = q.feedback[:0]
+	return errors.Trace(err)
 }
 
 const (

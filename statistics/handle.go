@@ -71,8 +71,8 @@ func (h *Handle) Clear() {
 	h.globalMap = make(tableDeltaMap)
 }
 
-// For now, we do not use the query feedback, so just set it to 1.
-const maxQueryFeedBackCount = 1
+// MaxQueryFeedbackCount is the max number of feedback that cache in memory.
+var MaxQueryFeedbackCount = 1000
 
 // NewHandle creates a Handle for update stats.
 func NewHandle(ctx sessionctx.Context, lease time.Duration) *Handle {
@@ -83,7 +83,7 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration) *Handle {
 		listHead:        &SessionStatsCollector{mapper: make(tableDeltaMap)},
 		globalMap:       make(tableDeltaMap),
 		Lease:           lease,
-		feedback:        make([]*QueryFeedback, 0, maxQueryFeedBackCount),
+		feedback:        make([]*QueryFeedback, 0, MaxQueryFeedbackCount),
 	}
 	handle.statsCache.Store(statsCache{})
 	return handle

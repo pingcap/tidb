@@ -15,6 +15,7 @@ package statistics
 
 import (
 	"bytes"
+	"encoding/gob"
 	"math"
 	"math/rand"
 	"sort"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
 	log "github.com/sirupsen/logrus"
+	"github.com/spaolacci/murmur3"
 )
 
 // `feedback` represents the total scan count in range [lower, upper).
@@ -176,7 +178,7 @@ func (q *QueryFeedback) Update(startKey kv.Key, counts []int64) {
 	return
 }
 
-// DecodeInt decodes the int value stored in the feedback, only used for test.
+// DecodeInt decodes the int value stored in the feedback.
 func (q *QueryFeedback) DecodeInt() error {
 	for _, fb := range q.feedback {
 		_, v, err := codec.DecodeInt(fb.lower.GetBytes())
@@ -202,47 +204,45 @@ type BucketFeedback struct {
 }
 
 // buildBucketFeedback build the feedback for each bucket from the histogram feedback.
-func buildBucketFeedback(h *Histogram, feedbacks []*QueryFeedback) (map[int]*BucketFeedback, int) {
+func buildBucketFeedback(h *Histogram, feedback *QueryFeedback) (map[int]*BucketFeedback, int) {
 	bktID2FB := make(map[int]*BucketFeedback)
 	total := 0
-	for _, feedback := range feedbacks {
-		for _, ran := range feedback.feedback {
-			idx, _ := h.Bounds.LowerBound(0, ran.lower)
-			bktIdx := 0
-			// The last bucket also stores the feedback that falls outside the upper bound.
-			if idx >= h.Bounds.NumRows()-2 {
-				bktIdx = h.Len() - 1
-			} else {
-				bktIdx = idx / 2
-				// Make sure that this feedback lies within the bucket.
-				if chunk.Compare(h.Bounds.GetRow(2*bktIdx+1), 0, ran.upper) < 0 {
-					continue
-				}
-			}
-			total++
-			bkt := bktID2FB[bktIdx]
-			if bkt == nil {
-				bkt = &BucketFeedback{lower: h.GetLower(bktIdx), upper: h.GetUpper(bktIdx)}
-				bktID2FB[bktIdx] = bkt
-			}
-			bkt.feedback = append(bkt.feedback, ran)
-			// Update the bound if necessary.
-			res, err := bkt.lower.CompareDatum(nil, ran.lower)
-			if err != nil {
-				log.Debugf("compare datum %v with %v failed, err: %v", bkt.lower, ran.lower, errors.ErrorStack(err))
+	for _, ran := range feedback.feedback {
+		idx, _ := h.Bounds.LowerBound(0, ran.lower)
+		bktIdx := 0
+		// The last bucket also stores the feedback that falls outside the upper bound.
+		if idx >= h.Bounds.NumRows()-2 {
+			bktIdx = h.Len() - 1
+		} else {
+			bktIdx = idx / 2
+			// Make sure that this feedback lies within the bucket.
+			if chunk.Compare(h.Bounds.GetRow(2*bktIdx+1), 0, ran.upper) < 0 {
 				continue
 			}
-			if res > 0 {
-				bkt.lower = ran.lower
-			}
-			res, err = bkt.upper.CompareDatum(nil, ran.upper)
-			if err != nil {
-				log.Debugf("compare datum %v with %v failed, err: %v", bkt.upper, ran.upper, errors.ErrorStack(err))
-				continue
-			}
-			if res < 0 {
-				bkt.upper = ran.upper
-			}
+		}
+		total++
+		bkt := bktID2FB[bktIdx]
+		if bkt == nil {
+			bkt = &BucketFeedback{lower: h.GetLower(bktIdx), upper: h.GetUpper(bktIdx)}
+			bktID2FB[bktIdx] = bkt
+		}
+		bkt.feedback = append(bkt.feedback, ran)
+		// Update the bound if necessary.
+		res, err := bkt.lower.CompareDatum(nil, ran.lower)
+		if err != nil {
+			log.Debugf("compare datum %v with %v failed, err: %v", bkt.lower, ran.lower, errors.ErrorStack(err))
+			continue
+		}
+		if res > 0 {
+			bkt.lower = ran.lower
+		}
+		res, err = bkt.upper.CompareDatum(nil, ran.upper)
+		if err != nil {
+			log.Debugf("compare datum %v with %v failed, err: %v", bkt.upper, ran.upper, errors.ErrorStack(err))
+			continue
+		}
+		if res < 0 {
+			bkt.upper = ran.upper
 		}
 	}
 	return bktID2FB, total
@@ -438,8 +438,8 @@ func mergeBuckets(bkts []bucket, isNewBuckets []bool, totalCount float64) []buck
 	return bkts
 }
 
-func splitBuckets(h *Histogram, feedbacks []*QueryFeedback) ([]bucket, []bool, int64) {
-	bktID2FB, fbNum := buildBucketFeedback(h, feedbacks)
+func splitBuckets(h *Histogram, feedback *QueryFeedback) ([]bucket, []bool, int64) {
+	bktID2FB, fbNum := buildBucketFeedback(h, feedback)
 	counts := make([]int64, 0, h.Len())
 	for i := 0; i < h.Len(); i++ {
 		bkt, ok := bktID2FB[i]
@@ -478,8 +478,8 @@ func splitBuckets(h *Histogram, feedbacks []*QueryFeedback) ([]bucket, []bool, i
 }
 
 // UpdateHistogram updates the histogram according buckets.
-func UpdateHistogram(h *Histogram, feedbacks []*QueryFeedback) *Histogram {
-	buckets, isNewBuckets, totalCount := splitBuckets(h, feedbacks)
+func UpdateHistogram(h *Histogram, feedback *QueryFeedback) *Histogram {
+	buckets, isNewBuckets, totalCount := splitBuckets(h, feedback)
 	buckets = mergeBuckets(buckets, isNewBuckets, float64(totalCount))
 	return buildNewHistogram(h, buckets)
 }
@@ -492,4 +492,124 @@ func buildNewHistogram(h *Histogram, buckets []bucket) *Histogram {
 		preCount += bkt.count
 	}
 	return hist
+}
+
+// QueryFeedbackPB is used to serialize the QueryFeedback.
+type QueryFeedbackPB struct {
+	IntRanges   []int64
+	HashValues  []uint64 // HashValues is the murmur hash values for each index point.
+	IndexRanges [][]byte
+	Counts      []int64 // Counts is the number of scan keys in each range.
+}
+
+func encodePKFeedback(q *QueryFeedback) (*QueryFeedbackPB, error) {
+	pb := &QueryFeedbackPB{}
+	for _, fb := range q.feedback {
+		err := q.DecodeInt()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		// There is no need to update the point queries.
+		if fb.upper.GetInt64()-fb.lower.GetInt64() <= 1 {
+			continue
+		}
+		pb.IntRanges = append(pb.IntRanges, fb.lower.GetInt64(), fb.upper.GetInt64())
+		pb.Counts = append(pb.Counts, fb.count)
+	}
+	return pb, nil
+}
+
+func encodeIndexFeedback(q *QueryFeedback) *QueryFeedbackPB {
+	pb := &QueryFeedbackPB{}
+	var pointCounts []int64
+	for _, fb := range q.feedback {
+		if bytes.Equal(kv.Key(fb.lower.GetBytes()).PrefixNext(), fb.upper.GetBytes()) {
+			h1, h2 := murmur3.Sum128(fb.lower.GetBytes())
+			pb.HashValues = append(pb.HashValues, h1, h2)
+			pointCounts = append(pointCounts, fb.count)
+		} else {
+			pb.IndexRanges = append(pb.IndexRanges, fb.lower.GetBytes(), fb.upper.GetBytes())
+			pb.Counts = append(pb.Counts, fb.count)
+		}
+	}
+	pb.Counts = append(pb.Counts, pointCounts...)
+	return pb
+}
+
+func encodeFeedback(q *QueryFeedback) ([]byte, error) {
+	var pb *QueryFeedbackPB
+	var err error
+	if q.hist.tp.Tp == mysql.TypeLong {
+		pb, err = encodePKFeedback(q)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	} else {
+		pb = encodeIndexFeedback(q)
+	}
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+	err = enc.Encode(pb)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return buf.Bytes(), nil
+}
+
+func decodeFeedback(val []byte, q *QueryFeedback, c *CMSketch) error {
+	buf := bytes.NewBuffer(val)
+	dec := gob.NewDecoder(buf)
+	pb := &QueryFeedbackPB{}
+	err := dec.Decode(pb)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(pb.IndexRanges) > 0 {
+		for i := 0; i < len(pb.IndexRanges); i += 2 {
+			lower, upper := types.NewBytesDatum(pb.IndexRanges[i]), types.NewBytesDatum(pb.IndexRanges[i+1])
+			q.feedback = append(q.feedback, feedback{&lower, &upper, pb.Counts[i/2], 0})
+		}
+		if c == nil {
+			return nil
+		}
+		start := len(pb.IndexRanges) / 2
+		for i := 0; i < len(pb.HashValues); i += 2 {
+			c.setValue(pb.HashValues[i], pb.HashValues[i+1], uint32(pb.Counts[start+i/2]))
+		}
+		return nil
+	}
+	for i := 0; i < len(pb.IntRanges); i += 2 {
+		lower, upper := types.NewIntDatum(pb.IntRanges[i]), types.NewIntDatum(pb.IntRanges[i+1])
+		q.feedback = append(q.feedback, feedback{&lower, &upper, pb.Counts[i/2], 0})
+	}
+	return nil
+}
+
+// Equal tests if two query feedback equal, it is only used in test.
+func (q *QueryFeedback) Equal(rq *QueryFeedback) bool {
+	if len(q.feedback) != len(rq.feedback) {
+		return false
+	}
+	for i, fb := range q.feedback {
+		rfb := rq.feedback[i]
+		if fb.count != rfb.count {
+			return false
+		}
+		if fb.lower.Kind() == types.KindInt64 {
+			if fb.lower.GetInt64() != rfb.lower.GetInt64() {
+				return false
+			}
+			if fb.upper.GetInt64() != rfb.upper.GetInt64() {
+				return false
+			}
+		} else {
+			if bytes.Compare(fb.lower.GetBytes(), rfb.lower.GetBytes()) != 0 {
+				return false
+			}
+			if bytes.Compare(fb.upper.GetBytes(), rfb.upper.GetBytes()) != 0 {
+				return false
+			}
+		}
+	}
+	return true
 }
