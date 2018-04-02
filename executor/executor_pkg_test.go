@@ -82,19 +82,24 @@ func (s *testExecSuite) TestShowProcessList(c *C) {
 	}
 
 	ctx := context.Background()
+	err := e.Open(ctx)
+	c.Assert(err, IsNil)
+
+	chk := e.newChunk()
+	it := chunk.NewIterator4Chunk(chk)
 	// Run test and check results.
 	for _, p := range ps {
-		chk := e.newChunk()
-		err := e.NextChunk(context.Background(), chk)
+		err = e.NextChunk(context.Background(), chk)
 		c.Assert(err, IsNil)
-		it := chunk.NewIterator4Chunk(chk)
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			c.Assert(row.GetUint64(0), Equals, p.ID)
 		}
 	}
-	r, err := e.Next(ctx)
+	err = e.NextChunk(context.Background(), chk)
 	c.Assert(err, IsNil)
-	c.Assert(r, IsNil)
+	c.Assert(chk.NumRows(), Equals, 0)
+	err = e.Close()
+	c.Assert(err, IsNil)
 }
 
 func buildSchema(names []string, ftypes []byte) *expression.Schema {

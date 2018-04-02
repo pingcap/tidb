@@ -56,14 +56,14 @@ func processRegionResult(region *metapb.Region, peer *metapb.Peer, err error) (*
 
 func decodeRegionMetaKey(r *metapb.Region) error {
 	if len(r.StartKey) != 0 {
-		_, decoded, err := codec.DecodeBytes(r.StartKey)
+		_, decoded, err := codec.DecodeBytes(r.StartKey, nil)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		r.StartKey = decoded
 	}
 	if len(r.EndKey) != 0 {
-		_, decoded, err := codec.DecodeBytes(r.EndKey)
+		_, decoded, err := codec.DecodeBytes(r.EndKey, nil)
 		if err != nil {
 			return errors.Trace(err)
 		}
