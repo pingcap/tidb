@@ -186,6 +186,7 @@ func (h *Handle) LoadNeededHistograms() error {
 		if !ok {
 			continue
 		}
+		tbl = tbl.copy()
 		c, ok := tbl.Columns[col.columnID]
 		if !ok || c.Len() > 0 {
 			histogramNeededColumns.delete(col)
