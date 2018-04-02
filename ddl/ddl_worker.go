@@ -170,7 +170,7 @@ func (d *ddl) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 		if job.State != model.JobStateRollbackDone {
 			break
 		}
-		// ActionAddIndex needs to delete ranges when it needs to be rolled back.
+		// After rolling back an AddIndex operation, we need to use delete-range to delete the half-done index data.
 		err = d.deleteRange(job)
 	case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex:
 		err = d.deleteRange(job)
