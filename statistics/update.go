@@ -238,6 +238,7 @@ func (h *Handle) HandleUpdateStats() error {
 		hist *Histogram
 	)
 	for _, row := range rows {
+		// merge into previous feedback
 		if row.GetInt64(0) == tableID && row.GetInt64(1) == histID && row.GetInt64(2) == isIndex {
 			err = decodeFeedback(row.GetBytes(3), q, cms)
 			if err != nil {
@@ -245,12 +246,14 @@ func (h *Handle) HandleUpdateStats() error {
 			}
 			continue
 		}
+		// dump the stats into kv
 		if hist != nil {
 			err = h.dumpStatsUpdateToKV(tableID, int(isIndex), q, hist, cms)
 			if err != nil {
 				return errors.Trace(err)
 			}
 		}
+		// initialize new feedback
 		tableID, histID, isIndex = row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
 		tbl := h.GetTableStats(tableID)
 		if isIndex == 1 {
@@ -265,6 +268,7 @@ func (h *Handle) HandleUpdateStats() error {
 			log.Debugf("decode feedback failed, err: %v", errors.ErrorStack(err))
 		}
 	}
+	// dump the last feedback into kv
 	err = h.dumpStatsUpdateToKV(tableID, int(isIndex), q, hist, cms)
 	return errors.Trace(err)
 }
