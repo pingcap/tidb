@@ -350,6 +350,15 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	metrics.StatementPerTransaction.WithLabelValues(metrics.RetLabel(err)).Observe(float64(counter))
 	metrics.TransactionDuration.WithLabelValues(metrics.RetLabel(err)).Observe(float64(duration))
 	s.cleanRetryInfo()
+	fmt.Println("这里重置了...")
+	switch s.sessionVars.TxnIsolationLevelOneShot {
+	case 0:
+	case 1:
+		s.sessionVars.TxnIsolationLevelOneShot = 2
+	case 2:
+		s.sessionVars.TxnIsolationLevelOneShot = 0
+		terror.Log(s.sessionVars.SetSystemVar("tx_isolation_one_shot", ""))
+	}
 	if err != nil {
 		log.Warnf("[%d] finished txn:%v, %v", s.sessionVars.ConnectionID, s.txn, err)
 		return errors.Trace(err)
@@ -1331,16 +1340,7 @@ func (s *session) ActivePendingTxn() error {
 	}
 	s.sessionVars.TxnCtx.StartTS = s.txn.StartTS()
 
-	// Move tx_isolation_one_shot to RetryInfo, so it works even transaction retries.
-	if isoLevelOneShot, ok := s.sessionVars.GetSystemVar("tx_isolation_one_shot"); ok {
-		terror.Log(s.sessionVars.SetSystemVar("tx_isolation_one_shot", ""))
-		s.sessionVars.RetryInfo.IsolationOneShot = isoLevelOneShot
-	}
-	// Check tx_isolation_one_shot first, then check tx_isolation session variable.
-	isoLevel := s.sessionVars.RetryInfo.IsolationOneShot
-	if isoLevel == "" {
-		isoLevel, _ = s.sessionVars.GetSystemVar(variable.TxnIsolation)
-	}
+	isoLevel, _ := s.sessionVars.GetSystemVar(variable.TxnIsolation)
 	if isoLevel == ast.ReadCommitted {
 		s.txn.SetOption(kv.IsolationLevel, kv.RC)
 	}

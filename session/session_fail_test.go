@@ -32,22 +32,3 @@ func (s *testSessionSuite) TestFailStatementCommit(c *C) {
 	c.Assert(err, NotNil)
 	tk.MustQuery(`select * from t`).Check(testkit.Rows())
 }
-
-func (s *testSessionSuite) TestSetTransactionIsolationOneShot(c *C) {
-	tk1 := testkit.NewTestKitWithInit(c, s.store)
-	tk1.MustExec("create table t (k int, v int)")
-	tk1.MustExec("insert t values (1, 42)")
-	tk1.MustExec("set transaction isolation level read committed")
-
-	tk2 := testkit.NewTestKitWithInit(c, s.store)
-	gofail.Enable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcCommitResult", `return("keyError")`)
-	tk2.Exec("update t set v = 43 where k = 1")
-	gofail.Disable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcCommitResult")
-
-	// In RC isolation level, the request meet lock and skip it, get 42.
-	tk1.MustQuery("select v from t where k = 1").Check(testkit.Rows("42"))
-
-	// set transaction isolation level read committed take effect just one time.
-	tk2.MustExec("update t set v = 43 where k = 1")
-	tk1.MustQuery("select v from t where k = 1").Check(testkit.Rows("43"))
-}

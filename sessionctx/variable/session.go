@@ -49,12 +49,10 @@ type RetryInfo struct {
 	DroppedPreparedStmtIDs []uint32
 	currRetryOff           int
 	autoIncrementIDs       []int64
-	IsolationOneShot       string
 }
 
 // Clean does some clean work.
 func (r *RetryInfo) Clean() {
-	r.IsolationOneShot = ""
 	r.currRetryOff = 0
 	if len(r.autoIncrementIDs) > 0 {
 		r.autoIncrementIDs = r.autoIncrementIDs[:0]
@@ -163,6 +161,10 @@ type SessionVars struct {
 	RetryInfo *RetryInfo
 	// Should be reset on transaction finished.
 	TxnCtx *TransactionContext
+
+	// TxnIsolationLevelOneShot is used to implements "set transaction isolation level ..."
+	// Value 0 means default, 1 means set but not used, 2 means used.
+	TxnIsolationLevelOneShot int
 
 	// Following variables are special for current session.
 
@@ -441,6 +443,8 @@ func (s *SessionVars) deleteSystemVar(name string) error {
 // SetSystemVar sets the value of a system variable.
 func (s *SessionVars) SetSystemVar(name string, val string) error {
 	switch name {
+	case "tx_isolation_one_shot":
+		s.TxnIsolationLevelOneShot = 1
 	case TimeZone:
 		tz, err := parseTimeZone(val)
 		if err != nil {
