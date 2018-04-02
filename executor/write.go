@@ -877,7 +877,7 @@ type keyWithDupError struct {
 }
 
 func genNewHandles(ctx sessionctx.Context, t table.Table, rows [][]types.Datum) ([]int64, error) {
-	recordIDs := make([]int64, 0, len(rows))
+	handles := make([]int64, 0, len(rows))
 	if t.Meta().PKIsHandle {
 		var handleCol *table.Column
 		for _, col := range t.Cols() {
@@ -887,18 +887,18 @@ func genNewHandles(ctx sessionctx.Context, t table.Table, rows [][]types.Datum) 
 			}
 		}
 		for _, row := range rows {
-			recordIDs = append(recordIDs, row[handleCol.Offset].GetInt64())
+			handles = append(handles, row[handleCol.Offset].GetInt64())
 		}
 	} else {
 		for range rows {
-			recordID, err := t.AllocAutoID(ctx)
+			handle, err := t.AllocAutoID(ctx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			recordIDs = append(recordIDs, recordID)
+			handles = append(handles, handle)
 		}
 	}
-	return recordIDs, nil
+	return handles, nil
 }
 
 func getOldValues(ctx sessionctx.Context, t table.Table, handles []int64) (map[string][]byte, error) {
@@ -1042,32 +1042,41 @@ func (e *InsertExec) checkBatchLimit() error {
 }
 
 func (e *InsertExec) initDirtyRowValue(newRows [][]types.Datum, keysInRows [][]keyWithDupError,
-	values map[string][]byte) (err error) {
+	values map[string][]byte) error {
 	e.dirtyRowValue = make(map[string][]byte, len(newRows))
 	handles := make([]int64, 0, len(newRows))
+	alreadyGot := e.Table.Meta().PKIsHandle
 	for _, keysInRow := range keysInRows {
 		for _, k := range keysInRow {
 			if val, found := values[string(k.key)]; found {
-				var handle int64
-				if k.isRecordKey {
-					handle, err = tablecodec.DecodeRowKey(k.key)
-					if err != nil {
-						return errors.Trace(err)
+				if alreadyGot {
+					if k.isRecordKey {
+						e.dirtyRowValue[string(k.key)] = val
+					} else {
+						handle, err := tables.DecodeHandle(val)
+						if err != nil {
+							return errors.Trace(err)
+						}
+						recordKey := e.Table.RecordKey(handle)
+						e.dirtyRowValue[string(recordKey)] = values[string(recordKey)]
 					}
 				} else {
-					handle, err = tables.DecodeHandle(val)
+					handle, err := tables.DecodeHandle(val)
 					if err != nil {
 						return errors.Trace(err)
 					}
+					handles = append(handles, handle)
 				}
-				handles = append(handles, handle)
 				break
 			}
 		}
 	}
-	e.dirtyRowValue, err = getOldValues(e.ctx, e.Table, handles)
-	if err != nil {
-		return errors.Trace(err)
+	if !alreadyGot {
+		var err error
+		e.dirtyRowValue, err = getOldValues(e.ctx, e.Table, handles)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 	return nil
 }
