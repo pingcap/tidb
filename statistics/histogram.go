@@ -397,9 +397,9 @@ func (hg *Histogram) betweenRowCount(a, b types.Datum) float64 {
 
 func (hg *Histogram) totalRowCount() float64 {
 	if hg.Len() == 0 {
-		return 0
+		return float64(hg.NullCount)
 	}
-	return float64(hg.Buckets[hg.Len()-1].Count)
+	return float64(hg.Buckets[hg.Len()-1].Count + hg.NullCount)
 }
 
 // mergeBuckets is used to merge every two neighbor buckets.
@@ -425,7 +425,7 @@ func (hg *Histogram) mergeBuckets(bucketIdx int) {
 
 // getIncreaseFactor will return a factor of data increasing after the last analysis.
 func (hg *Histogram) getIncreaseFactor(totalCount int64) float64 {
-	columnCount := int64(hg.totalRowCount()) + hg.NullCount
+	columnCount := int64(hg.totalRowCount())
 	if columnCount == 0 {
 		// avoid dividing by 0
 		return 1.0
@@ -615,6 +615,9 @@ func (c *Column) String() string {
 }
 
 func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum) (float64, error) {
+	if val.IsNull() {
+		return float64(c.NullCount), nil
+	}
 	if c.CMSketch != nil {
 		count, err := c.CMSketch.queryValue(sc, val)
 		return float64(count), errors.Trace(err)

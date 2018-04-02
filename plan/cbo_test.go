@@ -541,6 +541,32 @@ func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {
 	cfg.PreparedPlanCache.Capacity = orgCapacity
 }
 
+func (s *testAnalyzeSuite) TestNullCount(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t (a int, b int, index idx(a))")
+	testKit.MustExec("insert into t values (null, 1), (null, 1)")
+	testKit.MustExec("analyze table t")
+	testKit.MustQuery("explain select * from t where a is null").Check(testkit.Rows(
+		"TableScan_5 Selection_6  cop table:t, range:[-inf,+inf], keep order:false 2.00",
+		"Selection_6  TableScan_5 cop isnull(test.t.a) 2.00",
+		"TableReader_7   root data:Selection_6 2.00",
+	))
+	testKit.MustQuery("explain select * from t use index(idx) where a is null").Check(testkit.Rows(
+		"IndexScan_5   cop table:t, index:a, range:[<nil>,<nil>], keep order:false 2.00",
+		"TableScan_6   cop table:t, keep order:false 2.00",
+		"IndexLookUp_7   root index:IndexScan_5, table:TableScan_6 2.00",
+	))
+}
+
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	store, err := mockstore.NewMockTikvStore()
 	if err != nil {
