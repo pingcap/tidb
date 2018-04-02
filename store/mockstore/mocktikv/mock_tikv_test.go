@@ -188,6 +188,10 @@ func (s *testMockTiKVSuite) mustBatchResolveLock(c *C, txnInfos map[uint64]uint6
 	c.Assert(s.store.BatchResolveLock(nil, nil, txnInfos), IsNil)
 }
 
+func (s *testMockTiKVSuite) mustUnsafeCleanupRange(c *C, startKey, endKey []byte) {
+	c.Assert(s.store.UnsafeCleanupRange(startKey, endKey), IsNil)
+}
+
 func (s *testMockTiKVSuite) TestGet(c *C) {
 	s.mustGetNone(c, "x", 10)
 	s.mustPutOK(c, "x", "x", 5, 10)
@@ -422,6 +426,20 @@ func (s *testMockTiKVSuite) TestBatchResolveLock(c *C) {
 	}
 	s.mustBatchResolveLock(c, txnInfos)
 	s.mustScanLock(c, 30, nil)
+}
+
+func (s *testMockTiKVSuite) TestUnsafeCleanupRange(c *C) {
+	s.mustPutOK(c, "a", "value", 1, 2)
+	s.mustPutOK(c, "b", "value", 1, 2)
+	s.mustPutOK(c, "c", "value", 1, 2)
+	s.mustPutOK(c, "d", "value", 1, 2)
+	s.mustUnsafeCleanupRange(c, []byte("a"), []byte("d"))
+	s.mustGetNone(c, "a", 3)
+	s.mustGetNone(c, "b", 3)
+	s.mustGetNone(c, "c", 3)
+	s.mustGetOK(c, "d", 3, "value")
+	s.mustUnsafeCleanupRange(c, []byte("a"), []byte("e"))
+	s.mustGetNone(c, "d", 3)
 }
 
 func (s *testMockTiKVSuite) TestRollbackAndWriteConflict(c *C) {

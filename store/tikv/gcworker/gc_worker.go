@@ -369,8 +369,8 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64) error {
 			}
 
 			req := &tikvrpc.Request{
-				Type: tikvrpc.CmdDeleteRange,
-				DeleteRange: &kvrpcpb.DeleteRangeRequest{
+				Type: tikvrpc.CmdUnsafeCleanupRange,
+				UnsafeCleanupRange: &kvrpcpb.UnsafeCleanupRangeRequest{
 					StartKey: startKey,
 					EndKey:   endKey,
 				},
@@ -391,12 +391,12 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64) error {
 				}
 				continue
 			}
-			deleteRangeResp := resp.DeleteRange
-			if deleteRangeResp == nil {
+			unsafeCleanupRangeResp := resp.UnsafeCleanupRange
+			if unsafeCleanupRangeResp == nil {
 				return errors.Trace(tikv.ErrBodyMissing)
 			}
-			if err := deleteRangeResp.GetError(); err != "" {
-				return errors.Errorf("unexpected delete range err: %v", err)
+			if err := unsafeCleanupRangeResp.GetError(); err != "" {
+				return errors.Errorf("unexpected unsafe cleanup range err: %v", err)
 			}
 			regions++
 			if bytes.Equal(endKey, rangeEndKey) {

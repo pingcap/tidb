@@ -199,7 +199,7 @@
   revision = "8d44bfdf1030639ae7130922c95df12d6d4da3b6"
 
 [[projects]]
-  name = "github.com/pingcap/kvproto"
+  name = "github.com/zhangjinpeng1987/kvproto"
   packages = [
     "pkg/coprocessor",
     "pkg/eraftpb",
@@ -210,7 +210,7 @@
     "pkg/raft_serverpb",
     "pkg/tikvpb"
   ]
-  revision = "7b013aefd7210f4f4dbfca3330b462ddce5dd496"
+  revision = "21827c58d062c260754c8b991d271a1162aabbe0"
 
 [[projects]]
   name = "github.com/pingcap/pd"
