@@ -434,6 +434,20 @@ func (s *testSuite) TestInsertOnDup(c *C) {
 	r = tk.MustQuery("select * from t;")
 	rowStr3 := fmt.Sprintf("%v", "3")
 	r.Check(testkit.Rows(rowStr1, rowStr3))
+
+	testSQL = `drop table if exists t;
+    create table t (i int primary key, j int unique key);`
+	tk.MustExec(testSQL)
+	testSQL = `insert into t values (-1, 1);`
+	tk.MustExec(testSQL)
+
+	r = tk.MustQuery("select * from t;")
+	rowStr1 = fmt.Sprintf("%v %v", "-1", "1")
+	r.Check(testkit.Rows(rowStr1))
+
+	tk.MustExec("insert into t values (1, 1) on duplicate key update j = values(j)")
+	r = tk.MustQuery("select * from t;")
+	r.Check(testkit.Rows(rowStr1))
 }
 
 func (s *testSuite) TestReplace(c *C) {

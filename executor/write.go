@@ -1042,41 +1042,32 @@ func (e *InsertExec) checkBatchLimit() error {
 }
 
 func (e *InsertExec) initDirtyRowValue(newRows [][]types.Datum, keysInRows [][]keyWithDupError,
-	values map[string][]byte) error {
+	values map[string][]byte) (err error) {
 	e.dirtyRowValue = make(map[string][]byte, len(newRows))
 	handles := make([]int64, 0, len(newRows))
-	alreadyGot := e.Table.Meta().PKIsHandle
 	for _, keysInRow := range keysInRows {
 		for _, k := range keysInRow {
 			if val, found := values[string(k.key)]; found {
-				if alreadyGot {
-					if k.isRecordKey {
-						e.dirtyRowValue[string(k.key)] = val
-					} else {
-						handle, err := tables.DecodeHandle(val)
-						if err != nil {
-							return errors.Trace(err)
-						}
-						recordKey := e.Table.RecordKey(handle)
-						e.dirtyRowValue[string(recordKey)] = values[string(recordKey)]
-					}
-				} else {
-					handle, err := tables.DecodeHandle(val)
+				var handle int64
+				if k.isRecordKey {
+					handle, err = tablecodec.DecodeRowKey(k.key)
 					if err != nil {
 						return errors.Trace(err)
 					}
-					handles = append(handles, handle)
+				} else {
+					handle, err = tables.DecodeHandle(val)
+					if err != nil {
+						return errors.Trace(err)
+					}
 				}
+				handles = append(handles, handle)
 				break
 			}
 		}
 	}
-	if !alreadyGot {
-		var err error
-		e.dirtyRowValue, err = getOldValues(e.ctx, e.Table, handles)
-		if err != nil {
-			return errors.Trace(err)
-		}
+	e.dirtyRowValue, err = getOldValues(e.ctx, e.Table, handles)
+	if err != nil {
+		return errors.Trace(err)
 	}
 	return nil
 }
