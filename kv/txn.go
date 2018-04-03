@@ -88,3 +88,31 @@ func BackOff(attempts uint) int {
 	time.Sleep(sleep)
 	return int(sleep)
 }
+
+// BatchGetValues gets values in batch.
+// The values from buffer in transaction and the values from the storage node are merged together.
+func BatchGetValues(txn Transaction, keys []Key) (map[string][]byte, error) {
+	bufferValues := make(map[string][]byte, len(keys))
+	for _, key := range keys {
+		val, err := txn.GetMemBuffer().Get(key)
+		if IsErrNotFound(err) {
+			continue
+		}
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		bufferValues[string(key)] = val
+	}
+	storageValues, err := txn.GetSnapshot().BatchGet(keys)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	for key, val := range bufferValues {
+		if _, ok := storageValues[string(key)]; ok && len(val) == 0 {
+			delete(storageValues, string(key))
+		} else {
+			storageValues[string(key)] = val
+		}
+	}
+	return storageValues, nil
+}
