@@ -71,7 +71,7 @@ const (
 	CreateDBPrivTable = `CREATE TABLE if not exists mysql.db (
 		Host			CHAR(60),
 		DB			CHAR(64),
-		User			CHAR(16),
+		User			CHAR(32),
 		Select_priv		ENUM('N','Y') Not Null DEFAULT 'N',
 		Insert_priv		ENUM('N','Y') Not Null DEFAULT 'N',
 		Update_priv		ENUM('N','Y') Not Null DEFAULT 'N',
@@ -232,6 +232,7 @@ const (
 	version16 = 16
 	version17 = 17
 	version18 = 18
+	version19 = 19
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -360,6 +361,10 @@ func upgrade(s Session) {
 
 	if ver < version18 {
 		upgradeToVer18(s)
+	}
+
+	if ver < version19 {
+		upgradeToVer19(s)
 	}
 
 	updateBootstrapVer(s)
@@ -576,6 +581,10 @@ func upgradeToVer17(s Session) {
 
 func upgradeToVer18(s Session) {
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `tot_col_size` bigint(64) NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer19(s Session) {
+	doReentrantDDL(s, "ALTER TABLE mysql.db MODIFY User CHAR(32)")
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
