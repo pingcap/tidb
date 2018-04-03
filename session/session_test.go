@@ -1979,7 +1979,7 @@ func (s *testSessionSuite) TestRollbackOnCompileError(c *C) {
 func (s *testSessionSuite) TestDBUserNameLength(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table if not exists t (a int)")
-	// Test user name lengh can be longer than 16.
+	// Test user name length can be longer than 16.
 	tk.MustExec(`grant all privileges on test.* to 'abcddfjakldfjaldddds'@'%' identified by ''`)
 	tk.MustExec(`grant all privileges on test.t to 'abcddfjakldfjaldddds'@'%' identified by ''`)
 }
