@@ -1981,3 +1981,11 @@ func (s *testSessionSuite) TestCastAsBinary(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustQuery("select hex(cast(0x10 as binary(2)))").Check(testkit.Rows("1000"))
 }
+
+func (s *testSessionSuite) TestDBUserNameLength(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table if not exists t (a int)")
+	// Test user name length can be longer than 16.
+	tk.MustExec(`grant all privileges on test.* to 'abcddfjakldfjaldddds'@'%' identified by ''`)
+	tk.MustExec(`grant all privileges on test.t to 'abcddfjakldfjaldddds'@'%' identified by ''`)
+}
