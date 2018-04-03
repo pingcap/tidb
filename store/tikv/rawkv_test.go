@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"bytes"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"golang.org/x/net/context"
@@ -103,12 +104,15 @@ func (s *testRawKVSuite) checkData(c *C, expected map[string]string) {
 	}
 }
 
-func (s *testRawKVSuite) split(c *C, regionKey, splitKey string) {
+func (s *testRawKVSuite) split(c *C, regionKey, splitKey string) error {
 	loc, err := s.client.regionCache.LocateKey(s.bo, []byte(regionKey))
-	c.Assert(err, IsNil)
+	if err != nil {
+		return err
+	}
 
 	newRegionID, peerID := s.cluster.AllocID(), s.cluster.AllocID()
 	s.cluster.SplitRaw(loc.Region.id, newRegionID, []byte(splitKey), []uint64{peerID}, peerID)
+	return nil
 }
 
 func (s *testRawKVSuite) TestSimple(c *C) {
@@ -125,7 +129,8 @@ func (s *testRawKVSuite) TestSplit(c *C) {
 	s.mustPut(c, []byte("k1"), []byte("v1"))
 	s.mustPut(c, []byte("k3"), []byte("v3"))
 
-	s.split(c, "k", "k2")
+	err := s.split(c, "k", "k2")
+	c.Assert(err, IsNil)
 
 	s.mustGet(c, []byte("k1"), []byte("v1"))
 	s.mustGet(c, []byte("k3"), []byte("v3"))
@@ -146,9 +151,13 @@ func (s *testRawKVSuite) TestScan(c *C) {
 	}
 
 	check()
-	s.split(c, "k", "k2")
+
+	err := s.split(c, "k", "k2")
+	c.Assert(err, IsNil)
 	check()
-	s.split(c, "k2", "k5")
+
+	err = s.split(c, "k2", "k5")
+	c.Assert(err, IsNil)
 	check()
 }
 
@@ -165,9 +174,12 @@ func (s *testRawKVSuite) TestDeleteRange(c *C) {
 		}
 	}
 
-	s.split(c, "b", "b")
-	s.split(c, "c", "c")
-	s.split(c, "d", "d")
+	err := s.split(c, "b", "b")
+	c.Assert(err, IsNil)
+	err = s.split(c, "c", "c")
+	c.Assert(err, IsNil)
+	err = s.split(c, "d", "d")
+	c.Assert(err, IsNil)
 
 	s.checkData(c, testData)
 	s.mustDeleteRange(c, []byte("b"), []byte("c0"), testData)
