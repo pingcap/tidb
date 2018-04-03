@@ -36,6 +36,8 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/sqlexec"
+	log "github.com/sirupsen/logrus"
 )
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) (err error) {
@@ -1337,7 +1339,10 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 
 	// We don't support modifying the type definitions from 'null' to 'not null' now.
 	if !mysql.HasNotNullFlag(col.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
-		return nil, errUnsupportedModifyColumn.GenByArgs("null to not null")
+		err = checkModifyingDefinition(ctx, ident, originalColName)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 	// As same with MySQL, we don't support modifying the stored status for generated columns.
 	if err = checkModifyGeneratedColumn(t.Cols(), col, newCol); err != nil {
@@ -1744,4 +1749,25 @@ func validateCommentLength(vars *variable.SessionVars, comment string, maxLen in
 		return comment[:maxLen], nil
 	}
 	return comment, nil
+}
+
+func checkModifyingDefinition(ctx sessionctx.Context, ident ast.Ident, originalColName model.CIStr) error {
+	sql := fmt.Sprintf(`select * from %s.%s where %s is null; `, ident.Schema.L, ident.Name.L, originalColName.L)
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	recordCount := fmt.Sprintf(`select * from %s.%s where %s is not null; `, ident.Schema.L, ident.Name.L, originalColName.L)
+	recordRows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, recordCount)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if len(rows) != 0 {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errInvalidUseOfNull)
+		return errInvalidUseOfNull
+	}
+	log.Infof("Records: %d  Duplicates: %d  Warnings: %d", len(recordRows), len(rows), ctx.GetSessionVars().StmtCtx.WarningCount())
+	return nil
 }
