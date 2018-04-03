@@ -38,8 +38,8 @@ type DDLExec struct {
 	done bool
 }
 
-// NextChunk implements the Executor NextChunk interface.
-func (e *DDLExec) NextChunk(ctx context.Context, chk *chunk.Chunk) (err error) {
+// Next implements the Executor Next interface.
+func (e *DDLExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 	if e.done {
 		return nil
 	}

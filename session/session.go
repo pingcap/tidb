@@ -610,7 +610,7 @@ func drainRecordSet(ctx context.Context, rs ast.RecordSet) ([]types.Row, error) 
 	var rows []types.Row
 	for {
 		chk := rs.NewChunk()
-		err := rs.NextChunk(ctx, chk)
+		err := rs.Next(ctx, chk)
 		if err != nil || chk.NumRows() == 0 {
 			return rows, errors.Trace(err)
 		}
@@ -766,6 +766,7 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []ast.Rec
 	}
 
 	if hitCache {
+		metrics.PlanCacheCounter.WithLabelValues("select").Inc()
 		stmtNode := cacheValue.(*plan.SQLCacheValue).StmtNode
 		stmt := &executor.ExecStmt{
 			InfoSchema: executor.GetInfoSchema(s),
@@ -859,7 +860,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	// So we have to call PrepareTxnCtx here.
 	s.PrepareTxnCtx(ctx)
 	prepareExec := executor.NewPrepareExec(s, executor.GetInfoSchema(s), sql)
-	err = prepareExec.NextChunk(ctx, nil)
+	err = prepareExec.Next(ctx, nil)
 	if err != nil {
 		err = errors.Trace(err)
 		return
@@ -1196,7 +1197,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 18
+	currentBootstrapVersion = 19
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
