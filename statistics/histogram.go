@@ -358,6 +358,10 @@ func (hg *Histogram) greaterAndEqRowCount(value types.Datum) float64 {
 
 // lessRowCount estimates the row count where the column less than value.
 func (hg *Histogram) lessRowCount(value types.Datum) float64 {
+	// all the values is null
+	if hg.Bounds == nil {
+		return 0
+	}
 	index, match := hg.Bounds.LowerBound(0, &value)
 	if index == hg.Bounds.NumRows() {
 		return hg.totalRowCount()
@@ -389,7 +393,7 @@ func (hg *Histogram) betweenRowCount(a, b types.Datum) float64 {
 	lessCountB := hg.lessRowCount(b)
 	// If lessCountA is not less than lessCountB, it may be that they fall to the same bucket and we cannot estimate
 	// the fraction, so we use `totalCount / NDV` to estimate the row count, but the result should not greater than lessCountB.
-	if lessCountA >= lessCountB {
+	if lessCountA >= lessCountB && hg.NDV > 0 {
 		return math.Min(lessCountB, hg.totalRowCount()/float64(hg.NDV))
 	}
 	return lessCountB - lessCountA
@@ -621,6 +625,10 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum) (f
 	if c.CMSketch != nil {
 		count, err := c.CMSketch.queryValue(sc, val)
 		return float64(count), errors.Trace(err)
+	}
+	// all the values is null
+	if c.Histogram.Bounds == nil {
+		return 0.0, nil
 	}
 	return c.Histogram.equalRowCount(val), nil
 }
