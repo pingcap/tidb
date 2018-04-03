@@ -121,6 +121,7 @@ const (
 	// "tidb_mem_quota_topn":     			control the memory quota of "TopNExec".
 	// "tidb_mem_quota_indexlookupreader":	control the memory quota of "IndexLookUpExecutor".
 	// "tidb_mem_quota_indexlookupjoin":	control the memory quota of "IndexLookUpJoin".
+	// "tidb_mem_quota_nestedloopapply": 	control the memory quota of "NestedLoopApplyExec".
 	TIDBMemQuotaQuery             = "tidb_mem_quota_query"             // Bytes.
 	TIDBMemQuotaHashJoin          = "tidb_mem_quota_hashjoin"          // Bytes.
 	TIDBMemQuotaMergeJoin         = "tidb_mem_quota_mergejoin"         // Bytes.
@@ -128,6 +129,7 @@ const (
 	TIDBMemQuotaTopn              = "tidb_mem_quota_topn"              // Bytes.
 	TIDBMemQuotaIndexLookupReader = "tidb_mem_quota_indexlookupreader" // Bytes.
 	TIDBMemQuotaIndexLookupJoin   = "tidb_mem_quota_indexlookupjoin"   // Bytes.
+	TIDBMemQuotaNestedLoopApply   = "tidb_mem_quota_nestedloopapply"   // Bytes.
 
 	// tidb_general_log is used to log every query in the server in info level.
 	TiDBGeneralLog = "tidb_general_log"
@@ -160,6 +162,7 @@ const (
 	DefTiDBMemQuotaTopn              = 32 << 30 // 32GB.
 	DefTiDBMemQuotaIndexLookupReader = 32 << 30 // 32GB.
 	DefTiDBMemQuotaIndexLookupJoin   = 32 << 30 // 32GB.
+	DefTiDBMemQuotaNestedLoopApply   = 32 << 30 // 32GB.
 	DefTiDBGeneralLog                = 0
 )
 

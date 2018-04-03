@@ -54,6 +54,7 @@ func (c *CMSketch) InsertBytes(bytes []byte) {
 	}
 }
 
+// setValue sets the count for value that hashed into (h1, h2).
 func (c *CMSketch) setValue(h1, h2 uint64, count uint32) {
 	oriCount := c.queryHashValue(h1, h2)
 	c.count += uint64(count) - uint64(oriCount)

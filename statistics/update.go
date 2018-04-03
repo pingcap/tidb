@@ -225,7 +225,7 @@ func (h *Handle) dumpFeedbackToKV(fb *QueryFeedback) error {
 }
 
 // HandleUpdateStats update the stats using feedback.
-func (h *Handle) HandleUpdateStats() error {
+func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 	sql := fmt.Sprintf("select table_id, hist_id, is_index, feedback from mysql.stats_feedback order by table_id, hist_id, is_index")
 	rows, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, sql)
 	if len(rows) == 0 || err != nil {
@@ -255,12 +255,27 @@ func (h *Handle) HandleUpdateStats() error {
 		}
 		// initialize new feedback
 		tableID, histID, isIndex = row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
-		tbl := h.GetTableStats(tableID)
+		table, ok := is.TableByID(tableID)
+		if !ok {
+			hist, cms = nil, nil
+			continue
+		}
+		tbl := h.GetTableStats(table.Meta())
 		if isIndex == 1 {
-			hist = &tbl.Indices[histID].Histogram
-			cms = tbl.Indices[histID].CMSketch.copy()
+			idx, ok := tbl.Indices[histID]
+			if !ok {
+				hist, cms = nil, nil
+				continue
+			}
+			hist = &idx.Histogram
+			cms = idx.CMSketch.copy()
 		} else {
-			hist = &tbl.Columns[histID].Histogram
+			col, ok := tbl.Columns[histID]
+			if !ok {
+				hist, cms = nil, nil
+				continue
+			}
+			hist = &col.Histogram
 			cms = nil
 		}
 		err = decodeFeedback(row.GetBytes(3), q, cms)
@@ -323,7 +338,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) error {
 		tbls := is.SchemaTables(model.NewCIStr(db))
 		for _, tbl := range tbls {
 			tblInfo := tbl.Meta()
-			statsTbl := h.GetTableStats(tblInfo.ID)
+			statsTbl := h.GetTableStats(tblInfo)
 			if statsTbl.Pseudo || statsTbl.Count == 0 {
 				continue
 			}

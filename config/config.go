@@ -257,7 +257,7 @@ var defaultConf = Config{
 		RunAutoAnalyze:      true,
 		StmtCountLimit:      5000,
 		FeedbackProbability: 0,
-		QueryFeedbackLimit:  1000,
+		QueryFeedbackLimit:  1024,
 	},
 	XProtocol: XProtocol{
 		XHost: "",

@@ -418,7 +418,7 @@ func (s *testStatisticsSuite) TestPseudoTable(c *C) {
 		FieldType: *types.NewFieldType(mysql.TypeLonglong),
 	}
 	ti.Columns = append(ti.Columns, colInfo)
-	tbl := PseudoTable(ti.ID)
+	tbl := PseudoTable(ti)
 	c.Assert(tbl.Count, Greater, int64(0))
 	sc := new(stmtctx.StatementContext)
 	count := tbl.ColumnLessRowCount(sc, types.NewIntDatum(100), colInfo.ID)
@@ -453,7 +453,7 @@ func (s *testStatisticsSuite) TestColumnRange(c *C) {
 	hg, err := BuildColumn(ctx, bucketCount, 2, collector, types.NewFieldType(mysql.TypeLonglong))
 	hg.PreCalculateScalar()
 	c.Check(err, IsNil)
-	col := &Column{Histogram: *hg, CMSketch: buildCMSketch(s.rc.(*recordSet).data)}
+	col := &Column{Histogram: *hg, CMSketch: buildCMSketch(s.rc.(*recordSet).data), Info: &model.ColumnInfo{}}
 	tbl := &Table{
 		Count:   int64(col.totalRowCount()),
 		Columns: make(map[int64]*Column),
@@ -520,7 +520,7 @@ func (s *testStatisticsSuite) TestIntColumnRanges(c *C) {
 	hg.PreCalculateScalar()
 	c.Check(err, IsNil)
 	c.Check(rowCount, Equals, int64(100000))
-	col := &Column{Histogram: *hg}
+	col := &Column{Histogram: *hg, Info: &model.ColumnInfo{}}
 	tbl := &Table{
 		Count:   int64(col.totalRowCount()),
 		Columns: make(map[int64]*Column),
@@ -637,6 +637,13 @@ func (s *testStatisticsSuite) TestIndexRanges(c *C) {
 	count, err = tbl.GetRowCountByIndexRanges(sc, 0, ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 100)
+
+	tbl.Indices[0] = &Index{Info: &model.IndexInfo{Columns: []*model.IndexColumn{{Offset: 0}}, Unique: true}}
+	ran[0].LowVal[0] = types.NewIntDatum(1000)
+	ran[0].HighVal[0] = types.NewIntDatum(1000)
+	count, err = tbl.GetRowCountByIndexRanges(sc, 0, ran)
+	c.Assert(err, IsNil)
+	c.Assert(int(count), Equals, 1)
 
 	tbl.Indices[0] = idx
 	ran[0].LowVal[0] = types.MinNotNullDatum()

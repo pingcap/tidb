@@ -564,7 +564,9 @@ func decodeFeedback(val []byte, q *QueryFeedback, c *CMSketch) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// decode feedback for index
 	if len(pb.IndexRanges) > 0 {
+		// decode the index range feedback
 		for i := 0; i < len(pb.IndexRanges); i += 2 {
 			lower, upper := types.NewBytesDatum(pb.IndexRanges[i]), types.NewBytesDatum(pb.IndexRanges[i+1])
 			q.feedback = append(q.feedback, feedback{&lower, &upper, pb.Counts[i/2], 0})
@@ -572,12 +574,14 @@ func decodeFeedback(val []byte, q *QueryFeedback, c *CMSketch) error {
 		if c == nil {
 			return nil
 		}
+		// decode the index point feedback, just set value count in CM Sketch
 		start := len(pb.IndexRanges) / 2
 		for i := 0; i < len(pb.HashValues); i += 2 {
 			c.setValue(pb.HashValues[i], pb.HashValues[i+1], uint32(pb.Counts[start+i/2]))
 		}
 		return nil
 	}
+	// decode feedback for primary key
 	for i := 0; i < len(pb.IntRanges); i += 2 {
 		lower, upper := types.NewIntDatum(pb.IntRanges[i]), types.NewIntDatum(pb.IntRanges[i+1])
 		q.feedback = append(q.feedback, feedback{&lower, &upper, pb.Counts[i/2], 0})

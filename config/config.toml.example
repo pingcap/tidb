@@ -31,9 +31,6 @@ split-table = true
 # The limit of concurrent executed sessions.
 token-limit = 1000
 
-# Enable chunk executors.
-enable-chunk = true
-
 # Only print a log when out of memory quota.
 # Valid options: ["log", "cancel"]
 oom-action = "log"
@@ -143,7 +140,7 @@ run-auto-analyze = true
 feedback-probability = 0.0
 
 # The max number of query feedback that cache in memory.
-query-feedback-limit = 1000
+query-feedback-limit = 1024
 
 [proxy-protocol]
 # PROXY protocol acceptable client networks.
