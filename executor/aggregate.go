@@ -110,7 +110,7 @@ func (e *HashAggExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 }
 
-// innerNext fetches Chunks from src and update each aggregate function for each row in Chunk.
+// execute fetches Chunks from src and update each aggregate function for each row in Chunk.
 func (e *HashAggExec) execute(ctx context.Context) (err error) {
 	inputIter := chunk.NewIterator4Chunk(e.childrenResults[0])
 	for {
