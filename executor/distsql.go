@@ -78,7 +78,7 @@ type lookupTableTask struct {
 	//   4. task.memTracker.Consume(-task.memUsage)
 	//
 	// Step 1~3 are completed in "tableWorker.executeTask".
-	// Step 4   is  completed in "IndexLookUpExecutor.NextChunk".
+	// Step 4   is  completed in "IndexLookUpExecutor.Next".
 	memUsage   int64
 	memTracker *memory.Tracker
 }
@@ -219,9 +219,9 @@ func (e *TableReaderExecutor) Close() error {
 	return errors.Trace(err)
 }
 
-// NextChunk fills data into the chunk passed by its caller.
+// Next fills data into the chunk passed by its caller.
 // The task was actually done by tableReaderHandler.
-func (e *TableReaderExecutor) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+func (e *TableReaderExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 	err := e.resultHandler.nextChunk(ctx, chk)
 	if err != nil {
 		e.feedback.Invalidate()
@@ -357,9 +357,9 @@ func (e *IndexReaderExecutor) Close() error {
 	return errors.Trace(err)
 }
 
-// NextChunk implements the Executor NextChunk interface.
-func (e *IndexReaderExecutor) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
-	err := e.result.NextChunk(ctx, chk)
+// Next implements the Executor Next interface.
+func (e *IndexReaderExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
+	err := e.result.Next(ctx, chk)
 	if err != nil {
 		e.feedback.Invalidate()
 	}
@@ -588,8 +588,8 @@ func (e *IndexLookUpExecutor) Close() error {
 	return nil
 }
 
-// NextChunk implements Exec NextChunk interface.
-func (e *IndexLookUpExecutor) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+// Next implements Exec Next interface.
+func (e *IndexLookUpExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	for {
 		resultTask, err := e.getResultTask()
@@ -691,7 +691,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult) (handles []int64, err error) {
 	handles = make([]int64, 0, w.batchSize)
 	for len(handles) < w.batchSize {
-		err = errors.Trace(idxResult.NextChunk(ctx, chk))
+		err = errors.Trace(idxResult.Next(ctx, chk))
 		if err != nil {
 			return handles, err
 		}
@@ -789,7 +789,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 	task.rows = make([]chunk.Row, 0, handleCnt)
 	for {
 		chk := tableReader.newChunk()
-		err = tableReader.NextChunk(ctx, chk)
+		err = tableReader.Next(ctx, chk)
 		if err != nil {
 			log.Error(err)
 			return errors.Trace(err)
@@ -880,7 +880,7 @@ func (tr *tableResultHandler) open(optionalResult, result distsql.SelectResult) 
 
 func (tr *tableResultHandler) nextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	if !tr.optionalFinished {
-		err := tr.optionalResult.NextChunk(ctx, chk)
+		err := tr.optionalResult.Next(ctx, chk)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -889,7 +889,7 @@ func (tr *tableResultHandler) nextChunk(ctx context.Context, chk *chunk.Chunk) e
 		}
 		tr.optionalFinished = true
 	}
-	return tr.result.NextChunk(ctx, chk)
+	return tr.result.Next(ctx, chk)
 }
 
 func (tr *tableResultHandler) nextRaw(ctx context.Context) (data []byte, err error) {
