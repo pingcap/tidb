@@ -259,7 +259,7 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		if errors.Cause(err) != io.EOF {
 			return nil, errors.Trace(err)
 		}
-		log.Info("copstream returns nothing for the request.")
+		log.Debug("copstream returns nothing for the request.")
 	}
 	copStream.Response = first
 	return resp, nil
