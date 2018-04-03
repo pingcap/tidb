@@ -1332,10 +1332,11 @@ func (s *testSessionSuite) TestIssue986(c *C) {
 	tk.MustExec(`insert into address values ('10')`)
 }
 
-func (s *testSessionSuite) TestIssue1089(c *C) {
+func (s *testSessionSuite) TestCast(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustQuery("select cast(0.5 as unsigned)")
 	tk.MustQuery("select cast(-0.5 as signed)")
+	tk.MustQuery("select hex(cast(0x10 as binary(2)))").Check(testkit.Rows("1000"))
 }
 
 func (s *testSessionSuite) TestTableInfoMeta(c *C) {
@@ -1974,4 +1975,9 @@ func (s *testSessionSuite) TestRollbackOnCompileError(c *C) {
 		}
 	}
 	c.Assert(recoverErr, IsTrue)
+}
+
+func (s *testSessionSuite) TestCastAsBinary(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustQuery("select hex(cast(0x10 as binary(2)))").Check(testkit.Rows("1000"))
 }
