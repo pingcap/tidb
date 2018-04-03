@@ -745,6 +745,7 @@ type AlterTableSpec struct {
 	OldColumnName *ColumnName
 	Position      *ColumnPosition
 	LockType      LockType
+	Comment       string
 }
 
 // Accept implements Node Accept interface.

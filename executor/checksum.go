@@ -82,8 +82,8 @@ func (e *ChecksumTableExec) Open(ctx context.Context) error {
 	return nil
 }
 
-// NextChunk implements the Executor NextChunk interface.
-func (e *ChecksumTableExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+// Next implements the Executor Next interface.
+func (e *ChecksumTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.done {
 		return nil

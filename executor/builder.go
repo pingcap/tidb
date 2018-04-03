@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
-	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
 	tipb "github.com/pingcap/tipb/go-tipb"
 	"golang.org/x/net/context"
@@ -75,6 +74,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildCheckIndex(v)
 	case *plan.RecoverIndex:
 		return b.buildRecoverIndex(v)
+	case *plan.CleanupIndex:
+		return b.buildCleanupIndex(v)
 	case *plan.CheckIndexRange:
 		return b.buildCheckIndexRange(v)
 	case *plan.ChecksumTable:
@@ -291,6 +292,54 @@ func (b *executorBuilder) buildRecoverIndex(v *plan.RecoverIndex) Executor {
 		columns:      buildRecoverIndexCols(tblInfo, index.Meta()),
 		index:        index,
 		table:        t,
+	}
+	return e
+}
+
+func buildCleanupIndexCols(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) []*model.ColumnInfo {
+	columns := make([]*model.ColumnInfo, 0, len(indexInfo.Columns)+1)
+	for _, idxCol := range indexInfo.Columns {
+		columns = append(columns, tblInfo.Columns[idxCol.Offset])
+	}
+	handleColsInfo := &model.ColumnInfo{
+		ID:     model.ExtraHandleID,
+		Name:   model.ExtraHandleName,
+		Offset: len(tblInfo.Columns),
+	}
+	handleColsInfo.FieldType = *types.NewFieldType(mysql.TypeLonglong)
+	columns = append(columns, handleColsInfo)
+	return columns
+}
+
+func (b *executorBuilder) buildCleanupIndex(v *plan.CleanupIndex) Executor {
+	tblInfo := v.Table.TableInfo
+	t, err := b.is.TableByName(v.Table.Schema, tblInfo.Name)
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
+	idxName := strings.ToLower(v.IndexName)
+	var index table.Index
+	for _, idx := range t.Indices() {
+		if idx.Meta().State != model.StatePublic {
+			continue
+		}
+		if idxName == idx.Meta().Name.L {
+			index = idx
+			break
+		}
+	}
+
+	if index == nil {
+		b.err = errors.Errorf("index `%v` is not found in table `%v`.", v.IndexName, v.Table.Name.O)
+		return nil
+	}
+	e := &CleanupIndexExec{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+		idxCols:      buildCleanupIndexCols(tblInfo, index.Meta()),
+		index:        index,
+		table:        t,
+		batchSize:    20000,
 	}
 	return e
 }
@@ -970,10 +1019,7 @@ func (b *executorBuilder) buildApply(apply *plan.PhysicalApply) *NestedLoopApply
 		outer:           v.JoinType != plan.InnerJoin,
 		resultGenerator: generator,
 		outerSchema:     apply.OuterSchema,
-		outerChunk:      outerExec.newChunk(),
-		innerChunk:      innerExec.newChunk(),
 	}
-	e.innerList = chunk.NewList(innerExec.retTypes(), e.maxChunkSize)
 	metrics.ExecutorCounter.WithLabelValues("NestedLoopApplyExec").Inc()
 	return e
 }
