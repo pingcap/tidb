@@ -95,8 +95,8 @@ const (
 	// CreateTablePrivTable is the SQL statement creates table scope privilege table in system db.
 	CreateTablePrivTable = `CREATE TABLE if not exists mysql.tables_priv (
 		Host		CHAR(60),
-		DB			CHAR(64),
-		User		CHAR(16),
+		DB		CHAR(64),
+		User		CHAR(32),
 		Table_name	CHAR(64),
 		Grantor		CHAR(77),
 		Timestamp	Timestamp DEFAULT CURRENT_TIMESTAMP,
@@ -106,8 +106,8 @@ const (
 	// CreateColumnPrivTable is the SQL statement creates column scope privilege table in system db.
 	CreateColumnPrivTable = `CREATE TABLE if not exists mysql.columns_priv(
 		Host		CHAR(60),
-		DB			CHAR(64),
-		User		CHAR(16),
+		DB		CHAR(64),
+		User		CHAR(32),
 		Table_name	CHAR(64),
 		Column_name	CHAR(64),
 		Timestamp	Timestamp DEFAULT CURRENT_TIMESTAMP,
@@ -585,6 +585,8 @@ func upgradeToVer18(s Session) {
 
 func upgradeToVer19(s Session) {
 	doReentrantDDL(s, "ALTER TABLE mysql.db MODIFY User CHAR(32)")
+	doReentrantDDL(s, "ALTER TABLE mysql.tables_priv MODIFY User CHAR(32)")
+	doReentrantDDL(s, "ALTER TABLE mysql.columns_priv MODIFY User CHAR(32)")
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
