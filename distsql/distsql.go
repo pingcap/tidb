@@ -42,12 +42,10 @@ var (
 
 // SelectResult is an iterator of coprocessor partial results.
 type SelectResult interface {
-	// Next gets the next partial result.
-	Next(context.Context) (PartialResult, error)
 	// NextRaw gets the next raw result.
 	NextRaw(context.Context) ([]byte, error)
-	// NextChunk reads the data into chunk.
-	NextChunk(context.Context, *chunk.Chunk) error
+	// Next reads the data into chunk.
+	Next(context.Context, *chunk.Chunk) error
 	// Close closes the iterator.
 	Close() error
 	// Fetch fetches partial results from client.
@@ -121,23 +119,6 @@ func (r *selectResult) fetch(ctx context.Context) {
 	}
 }
 
-// Next returns the next row.
-func (r *selectResult) Next(ctx context.Context) (PartialResult, error) {
-	re := <-r.results
-	if re.err != nil {
-		return nil, errors.Trace(re.err)
-	}
-	if re.result == nil {
-		return nil, nil
-	}
-	pr := &partialResult{}
-	pr.rowLen = r.rowLen
-	err := pr.unmarshal(re.result.GetData())
-	r.feedback.Update(re.result.GetStartKey(), pr.resp.OutputCounts)
-	r.partialCount++
-	return pr, errors.Trace(err)
-}
-
 // NextRaw returns the next raw partial result.
 func (r *selectResult) NextRaw(ctx context.Context) ([]byte, error) {
 	re := <-r.results
@@ -149,8 +130,8 @@ func (r *selectResult) NextRaw(ctx context.Context) ([]byte, error) {
 	return re.result.GetData(), nil
 }
 
-// NextChunk reads data to the chunk.
-func (r *selectResult) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+// Next reads data to the chunk.
+func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	for chk.NumRows() < r.ctx.GetSessionVars().MaxChunkSize {
 		if r.selectResp == nil || r.respChkIdx == len(r.selectResp.Chunks) {
