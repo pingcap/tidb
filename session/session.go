@@ -766,6 +766,7 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []ast.Rec
 	}
 
 	if hitCache {
+		metrics.PlanCacheCounter.WithLabelValues("select").Inc()
 		stmtNode := cacheValue.(*plan.SQLCacheValue).StmtNode
 		stmt := &executor.ExecStmt{
 			InfoSchema: executor.GetInfoSchema(s),

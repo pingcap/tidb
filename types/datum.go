@@ -1108,6 +1108,10 @@ func ProduceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *stmtctx.Statem
 		// TODO: warnErr need to be ErrWarnDataOutOfRange
 		err = sc.HandleOverflow(err, err)
 	}
+	unsigned := mysql.HasUnsignedFlag(tp.Flag)
+	if unsigned && dec.IsNegative() {
+		dec = dec.FromUint(0)
+	}
 	return dec, errors.Trace(err)
 }
 
