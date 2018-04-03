@@ -63,9 +63,11 @@ func (d *ddl) onDDLWorker() {
 			return
 		}
 
-		err := d.handleDDLJobQueue(&shouldCleanJobs)
+		isCleaned, err := d.handleDDLJobQueue(shouldCleanJobs)
 		if err != nil {
 			log.Errorf("[ddl] handle ddl job err %v", errors.ErrorStack(err))
+		} else {
+			shouldCleanJobs = !isCleaned
 		}
 	}
 }
@@ -193,11 +195,14 @@ func (d *ddl) getHistoryDDLJob(id int64) (*model.Job, error) {
 	return job, errors.Trace(err)
 }
 
-func (d *ddl) handleDDLJobQueue(shouldCleanJobs *bool) error {
+// handleDDLJobQueue handle DDL jobs in DDL Job queue.
+// shouldCleanJobs is used to determine whether to clean up the job in adding index queue.
+// It returns the result of whether the clean-jobs was completed, and an error.
+func (d *ddl) handleDDLJobQueue(shouldCleanJobs bool) (bool, error) {
 	once := true
 	for {
 		if d.isClosed() {
-			return nil
+			return false, nil
 		}
 
 		waitTime := 2 * d.lease
@@ -211,7 +216,7 @@ func (d *ddl) handleDDLJobQueue(shouldCleanJobs *bool) error {
 
 			// It's used for clean up the job in adding index queue before we support adding index queue.
 			// TODO: Remove this logic after we support the adding index queue.
-			if *shouldCleanJobs {
+			if shouldCleanJobs {
 				return errors.Trace(d.cleanAddIndexQueueJobs(txn))
 			}
 
@@ -251,14 +256,13 @@ func (d *ddl) handleDDLJobQueue(shouldCleanJobs *bool) error {
 			return errors.Trace(d.handleUpdateJobError(t, job, err))
 		})
 		if err != nil {
-			return errors.Trace(err)
+			return false, errors.Trace(err)
 		} else if job == nil {
-			if *shouldCleanJobs {
-				*shouldCleanJobs = false
+			if shouldCleanJobs {
 				log.Info("[ddl] cleaning jobs in the adding index queue finished.")
 			}
 			// No job now, return and retry getting later.
-			return nil
+			return true, nil
 		}
 
 		d.hookMu.Lock()
@@ -502,6 +506,7 @@ func (d *ddl) cleanAddIndexQueueJobs(txn kv.Transaction) error {
 			continue
 		}
 
+		// When the job not in "none" state, we need to rollback it.
 		schemaID := job.SchemaID
 		tblInfo, err := getTableInfo(m, job, schemaID)
 		if err != nil {
@@ -514,17 +519,10 @@ func (d *ddl) cleanAddIndexQueueJobs(txn kv.Transaction) error {
 			return errors.Trace(err)
 		}
 		indexInfo := findIndexByName(indexName.L, tblInfo.Indices)
-		job.State = model.JobStateRollingback
-		job.Args = []interface{}{indexInfo.Name}
-		// If add index job rollbacks, its work is the same as drop index job do.
-		// When it's not in "none" state, the next state can be "delete only" state.
-		indexInfo.State = model.StateDeleteOnly
-		job.SchemaState = model.StateDeleteOnly
-		_, err = updateVersionAndTableInfo(m, job, tblInfo, true)
-		if err != nil {
-			return errors.Trace(err)
+		_, err = d.convert2RollbackJob(m, job, tblInfo, indexInfo, nil)
+		if err == nil {
+			_, err = m.DeQueueDDLJob()
 		}
-		_, err = m.DeQueueDDLJob()
 		if err != nil {
 			return errors.Trace(err)
 		}
