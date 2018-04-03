@@ -206,9 +206,9 @@ func (e *IndexLookUpJoin) NextChunk(ctx context.Context, chk *chunk.Chunk) error
 
 		outerRow := task.outerResult.GetRow(task.cursor)
 		if e.innerIter.Len() == 0 {
-			err = e.resultGenerator.emitToChunk(outerRow, nil, chk)
+			err = e.resultGenerator.emit(outerRow, nil, chk)
 		} else if e.innerIter.Current() != e.innerIter.End() {
-			err = e.resultGenerator.emitToChunk(outerRow, e.innerIter, chk)
+			err = e.resultGenerator.emit(outerRow, e.innerIter, chk)
 		}
 		if err != nil {
 			return errors.Trace(err)
