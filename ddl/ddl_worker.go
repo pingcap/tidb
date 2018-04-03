@@ -63,11 +63,12 @@ func (d *ddl) onDDLWorker() {
 			return
 		}
 
-		isCleaned, err := d.handleDDLJobQueue(shouldCleanJobs)
+		err := d.handleDDLJobQueue(shouldCleanJobs)
 		if err != nil {
 			log.Errorf("[ddl] handle ddl job err %v", errors.ErrorStack(err))
-		} else {
-			shouldCleanJobs = !isCleaned
+		} else if shouldCleanJobs {
+			log.Info("[ddl] cleaning jobs in the adding index queue finished.")
+			shouldCleanJobs = false
 		}
 	}
 }
@@ -197,12 +198,11 @@ func (d *ddl) getHistoryDDLJob(id int64) (*model.Job, error) {
 
 // handleDDLJobQueue handle DDL jobs in DDL Job queue.
 // shouldCleanJobs is used to determine whether to clean up the job in adding index queue.
-// It returns the result of whether the clean-jobs was completed, and an error.
-func (d *ddl) handleDDLJobQueue(shouldCleanJobs bool) (bool, error) {
+func (d *ddl) handleDDLJobQueue(shouldCleanJobs bool) error {
 	once := true
 	for {
 		if d.isClosed() {
-			return false, nil
+			return nil
 		}
 
 		waitTime := 2 * d.lease
@@ -256,13 +256,10 @@ func (d *ddl) handleDDLJobQueue(shouldCleanJobs bool) (bool, error) {
 			return errors.Trace(d.handleUpdateJobError(t, job, err))
 		})
 		if err != nil {
-			return false, errors.Trace(err)
+			return errors.Trace(err)
 		} else if job == nil {
-			if shouldCleanJobs {
-				log.Info("[ddl] cleaning jobs in the adding index queue finished.")
-			}
 			// No job now, return and retry getting later.
-			return true, nil
+			return nil
 		}
 
 		d.hookMu.Lock()
