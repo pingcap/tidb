@@ -403,24 +403,39 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 	testKit.MustExec("insert into t values (3,4)")
 
 	h := s.do.StatsHandle()
+	oriProbability := statistics.FeedbackProbability
+	oriNumber := statistics.MaxNumberOfRanges
+	defer func() {
+		statistics.FeedbackProbability = oriProbability
+		statistics.MaxNumberOfRanges = oriNumber
+	}()
+	statistics.FeedbackProbability = 1
 	tests := []struct {
-		sql    string
-		counts []int64
+		sql     string
+		hist    string
+		idxCols int
 	}{
 		{
 			sql: "select * from t where t.a <= 5",
-			// The split ranges are (-inf, 1], (1, 2], (2, 5].
-			counts: []int64{1, 1, 2},
+			hist: "column:1 ndv:3\n" +
+				"num: 1\tlower_bound: 1\tupper_bound: 1\trepeats: 1\n" +
+				"num: 2\tlower_bound: 2\tupper_bound: 2\trepeats: 1\n" +
+				"num: 4\tlower_bound: 3\tupper_bound: 6\trepeats: 0",
+			idxCols: 0,
 		},
 		{
 			sql: "select * from t use index(idx) where t.b <= 5",
-			// The split ranges are (-inf,2], (2, 5].
-			counts: []int64{2, 2},
+			hist: "index:1 ndv:2\n" +
+				"num: 2\tlower_bound: 2\tupper_bound: 2\trepeats: 2\n" +
+				"num: 4\tlower_bound: 3\tupper_bound: 6\trepeats: 0",
+			idxCols: 1,
 		},
 		{
 			sql: "select b from t use index(idx) where t.b <= 5",
-			// The split ranges are (-inf,2], (2, 5].
-			counts: []int64{2, 2},
+			hist: "index:1 ndv:2\n" +
+				"num: 2\tlower_bound: 2\tupper_bound: 2\trepeats: 2\n" +
+				"num: 4\tlower_bound: 3\tupper_bound: 6\trepeats: 0",
+			idxCols: 1,
 		},
 	}
 	for _, t := range tests {
@@ -428,7 +443,10 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 		h.DumpStatsDeltaToKV()
 		feedback := h.GetQueryFeedback()
 		c.Assert(len(feedback), Equals, 1)
-		c.Assert(feedback[0].Counts(), DeepEquals, t.counts)
+		if t.idxCols == 0 {
+			c.Assert(feedback[0].DecodeInt(), IsNil)
+		}
+		c.Assert(statistics.UpdateHistogram(feedback[0].Hist(), feedback).ToString(t.idxCols), Equals, t.hist)
 	}
 
 	// Feedback from limit executor may not be accurate.
@@ -436,6 +454,25 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 	h.DumpStatsDeltaToKV()
 	feedback := h.GetQueryFeedback()
 	c.Assert(len(feedback), Equals, 0)
+
+	// Test only collect for max number of ranges.
+	statistics.MaxNumberOfRanges = 0
+	for _, t := range tests {
+		testKit.MustQuery(t.sql)
+		h.DumpStatsDeltaToKV()
+		feedback := h.GetQueryFeedback()
+		c.Assert(len(feedback), Equals, 0)
+	}
+
+	// Test collect feedback by probability.
+	statistics.FeedbackProbability = 0
+	statistics.MaxNumberOfRanges = oriNumber
+	for _, t := range tests {
+		testKit.MustQuery(t.sql)
+		h.DumpStatsDeltaToKV()
+		feedback := h.GetQueryFeedback()
+		c.Assert(len(feedback), Equals, 0)
+	}
 }
 
 func (s *testStatsUpdateSuite) TestUpdateSystemTable(c *C) {

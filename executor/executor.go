@@ -127,12 +127,6 @@ func (e *baseExecutor) Open(ctx context.Context) error {
 	return nil
 }
 
-// Next implements interface Executor.
-// To be removed in near future.
-func (e *baseExecutor) Next(context.Context) (Row, error) {
-	return nil, nil
-}
-
 // Close closes all executors and release all resources.
 func (e *baseExecutor) Close() error {
 	for _, child := range e.children {
@@ -188,7 +182,6 @@ func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id strin
 
 // Executor executes a query.
 type Executor interface {
-	Next(context.Context) (Row, error)
 	Close() error
 	Open(context.Context) error
 	Schema() *expression.Schema
@@ -386,7 +379,7 @@ func (e *CheckTableExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error 
 		}
 		for _, idx := range tb.Indices() {
 			txn := e.ctx.Txn()
-			err = admin.CompareIndexData(e.ctx.GetSessionVars().StmtCtx, txn, tb, idx)
+			err = admin.CompareIndexData(e.ctx, txn, tb, idx)
 			if err != nil {
 				return errors.Errorf("%v err:%v", t.Name, err)
 			}
@@ -1009,7 +1002,6 @@ type UnionExec struct {
 	baseExecutor
 
 	stopFetchData atomic.Value
-	cursor        int
 	wg            sync.WaitGroup
 
 	finished      chan struct{}

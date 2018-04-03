@@ -62,7 +62,7 @@ func CoerceArithmetic(sc *stmtctx.StatementContext, a Datum) (d Datum, err error
 		d.SetMysqlDecimal(de)
 		return d, nil
 	case KindBinaryLiteral, KindMysqlBit:
-		val, err1 := a.GetBinaryLiteral().ToInt()
+		val, err1 := a.GetBinaryLiteral().ToInt(sc)
 		d.SetUint64(val)
 		return d, err1
 	case KindMysqlEnum:

@@ -337,8 +337,8 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 	}{
 		{
 			indexPos:    0,
-			exprStr:     "a LIKE 'abc%'",
-			accessConds: "[like(test.t.a, abc%, 92)]",
+			exprStr:     `a LIKE 'abc%'`,
+			accessConds: `[like(test.t.a, abc%, 92)]`,
 			filterConds: "[]",
 			resultStr:   "[[abc <nil>,abd <nil>)]",
 		},
@@ -365,9 +365,9 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		},
 		{
 			indexPos:    0,
-			exprStr:     "a LIKE '%'",
+			exprStr:     `a LIKE '%'`,
 			accessConds: "[]",
-			filterConds: "[like(test.t.a, %, 92)]",
+			filterConds: `[like(test.t.a, %, 92)]`,
 			resultStr:   "[[<nil>,+inf]]",
 		},
 		{
@@ -387,7 +387,7 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		{
 			indexPos:    0,
 			exprStr:     `a LIKE "\\\\a%"`,
-			accessConds: "[like(test.t.a, \\\\a%, 92)]",
+			accessConds: `[like(test.t.a, \\a%, 92)]`,
 			filterConds: "[]",
 			resultStr:   `[[\a <nil>,\b <nil>)]`,
 		},
@@ -532,7 +532,7 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		}
 		cols, lengths := expression.IndexInfo2Cols(selection.Schema().Columns, tbl.Indices[tt.indexPos])
 		c.Assert(cols, NotNil)
-		ranges, conds, filter, _, err := ranger.DetachCondAndBuildRangeForIndex(ctx.GetSessionVars().StmtCtx, conds, cols, lengths)
+		ranges, conds, filter, _, err := ranger.DetachCondAndBuildRangeForIndex(ctx, conds, cols, lengths)
 		c.Assert(err, IsNil)
 		c.Assert(fmt.Sprintf("%s", conds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
 		c.Assert(fmt.Sprintf("%s", filter), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))

@@ -443,7 +443,7 @@ type addIndexResult struct {
 }
 
 func newAddIndexWorker(sessCtx sessionctx.Context, d *ddl, id int, t table.Table, indexInfo *model.IndexInfo, colFieldMap map[int64]*types.FieldType) *addIndexWorker {
-	index := tables.NewIndexWithBuffer(t.Meta(), indexInfo)
+	index := tables.NewIndex(t.Meta(), indexInfo)
 	return &addIndexWorker{
 		id:          id,
 		d:           d,
@@ -613,6 +613,16 @@ func (w *addIndexWorker) handleBackfillTask(task *reorgIndexTask) *addIndexResul
 }
 
 func (w *addIndexWorker) run() {
+	log.Infof("[ddl-reorg] worker[%v] start", w.id)
+	defer func() {
+		r := recover()
+		if r != nil {
+			buf := util.GetStack()
+			log.Errorf("[ddl-reorg] addIndexWorker %v %s", r, buf)
+			metrics.PanicCounter.WithLabelValues(metrics.LabelDDL).Inc()
+		}
+		w.resultCh <- &addIndexResult{err: errReorgPanic}
+	}()
 	for {
 		task, more := <-w.taskCh
 		if !more {
@@ -623,6 +633,7 @@ func (w *addIndexWorker) run() {
 		result := w.handleBackfillTask(task)
 		w.resultCh <- result
 	}
+	log.Infof("[ddl-reorg] worker[%v] exit", w.id)
 }
 
 func makeupIndexColFieldMap(t table.Table, indexInfo *model.IndexInfo) map[int64]*types.FieldType {

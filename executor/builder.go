@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
-	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
 	tipb "github.com/pingcap/tipb/go-tipb"
 	"golang.org/x/net/context"
@@ -970,10 +969,7 @@ func (b *executorBuilder) buildApply(apply *plan.PhysicalApply) *NestedLoopApply
 		outer:           v.JoinType != plan.InnerJoin,
 		resultGenerator: generator,
 		outerSchema:     apply.OuterSchema,
-		outerChunk:      outerExec.newChunk(),
-		innerChunk:      innerExec.newChunk(),
 	}
-	e.innerList = chunk.NewList(innerExec.retTypes(), e.maxChunkSize)
 	metrics.ExecutorCounter.WithLabelValues("NestedLoopApplyExec").Inc()
 	return e
 }
@@ -1269,6 +1265,8 @@ func buildNoRangeTableReader(b *executorBuilder, v *plan.PhysicalTableReader) (*
 	} else {
 		e.feedback = statistics.NewQueryFeedback(ts.Table.ID, ts.Hist, ts.StatsInfo().Count(), ts.Desc)
 	}
+	collect := e.feedback.CollectFeedback(len(ts.Ranges))
+	e.dagPB.CollectRangeCounts = &collect
 
 	for i := range v.Schema().Columns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
@@ -1313,6 +1311,8 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plan.PhysicalIndexReader) (*
 	} else {
 		e.feedback = statistics.NewQueryFeedback(is.Table.ID, is.Hist, is.StatsInfo().Count(), is.Desc)
 	}
+	collect := e.feedback.CollectFeedback(len(is.Ranges))
+	e.dagPB.CollectRangeCounts = &collect
 
 	for _, col := range v.OutputColumns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(col.Index))
@@ -1370,6 +1370,11 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plan.PhysicalIndexLook
 	} else {
 		e.feedback = statistics.NewQueryFeedback(is.Table.ID, is.Hist, is.StatsInfo().Count(), is.Desc)
 	}
+	// do not collect the feedback for table request.
+	collectTable := false
+	e.tableRequest.CollectRangeCounts = &collectTable
+	collectIndex := e.feedback.CollectFeedback(len(is.Ranges))
+	e.dagPB.CollectRangeCounts = &collectIndex
 	if cols, ok := v.Schema().TblID2Handle[is.Table.ID]; ok {
 		e.handleIdx = cols[0].Index
 	}

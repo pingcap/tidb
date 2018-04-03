@@ -320,7 +320,7 @@ func (s *session) doCommit(ctx context.Context) error {
 		schemaVer:       s.sessionVars.TxnCtx.SchemaVersion,
 		relatedTableIDs: tableIDs,
 	})
-	if err := s.txn.Commit(ctx); err != nil {
+	if err := s.txn.Commit(sessionctx.SetConnID2Ctx(ctx, s)); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -766,6 +766,7 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []ast.Rec
 	}
 
 	if hitCache {
+		metrics.PlanCacheCounter.WithLabelValues("select").Inc()
 		stmtNode := cacheValue.(*plan.SQLCacheValue).StmtNode
 		stmt := &executor.ExecStmt{
 			InfoSchema: executor.GetInfoSchema(s),
@@ -1380,9 +1381,9 @@ func logStmt(node ast.StmtNode, vars *variable.SessionVars) {
 		*ast.DropDatabaseStmt, *ast.DropIndexStmt, *ast.DropTableStmt, *ast.RenameTableStmt, *ast.TruncateTableStmt:
 		user := vars.User
 		if ss, ok := node.(ast.SensitiveStmtNode); ok {
-			log.Infof("[CRUCIAL OPERATION] %s (by %s).", ss.SecureText(), user)
+			log.Infof("[CRUCIAL OPERATION] [con:%v] %s (by %s).", vars.ConnectionID, ss.SecureText(), user)
 		} else {
-			log.Infof("[CRUCIAL OPERATION] %s (by %s).", stmt.Text(), user)
+			log.Infof("[CRUCIAL OPERATION] [con:%v] %s (by %s).", vars.ConnectionID, stmt.Text(), user)
 		}
 	default:
 		logQuery(node.Text(), vars)

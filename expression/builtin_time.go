@@ -212,12 +212,14 @@ var (
 	_ builtinFunc = &builtinExtractDurationSig{}
 	_ builtinFunc = &builtinAddDateStringStringSig{}
 	_ builtinFunc = &builtinAddDateStringIntSig{}
+	_ builtinFunc = &builtinAddDateStringDecimalSig{}
 	_ builtinFunc = &builtinAddDateIntStringSig{}
 	_ builtinFunc = &builtinAddDateIntIntSig{}
 	_ builtinFunc = &builtinAddDateDatetimeStringSig{}
 	_ builtinFunc = &builtinAddDateDatetimeIntSig{}
 	_ builtinFunc = &builtinSubDateStringStringSig{}
 	_ builtinFunc = &builtinSubDateStringIntSig{}
+	_ builtinFunc = &builtinSubDateStringDecimalSig{}
 	_ builtinFunc = &builtinSubDateIntStringSig{}
 	_ builtinFunc = &builtinSubDateIntIntSig{}
 	_ builtinFunc = &builtinSubDateDatetimeStringSig{}
@@ -2236,6 +2238,45 @@ func (du *baseDateArithmitical) getIntervalFromString(ctx sessionctx.Context, ar
 	return interval, false, nil
 }
 
+func (du *baseDateArithmitical) getIntervalFromDecimal(ctx sessionctx.Context, args []Expression, row types.Row, unit string) (string, bool, error) {
+	interval, isNull, err := args[1].EvalString(ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+
+	switch strings.ToUpper(unit) {
+	case "HOUR_MINUTE", "MINUTE_SECOND":
+		interval = strings.Replace(interval, ".", ":", -1)
+	case "YEAR_MONTH":
+		interval = strings.Replace(interval, ".", "-", -1)
+	case "DAY_HOUR":
+		interval = strings.Replace(interval, ".", " ", -1)
+	case "DAY_MINUTE":
+		interval = "0 " + strings.Replace(interval, ".", ":", -1)
+	case "DAY_SECOND":
+		interval = "0 00:" + strings.Replace(interval, ".", ":", -1)
+	case "DAY_MICROSECOND":
+		interval = "0 00:00:" + interval
+	case "HOUR_MICROSECOND":
+		interval = "00:00:" + interval
+	case "HOUR_SECOND":
+		interval = "00:" + strings.Replace(interval, ".", ":", -1)
+	case "MINUTE_MICROSECOND":
+		interval = "00:" + interval
+	case "SECOND_MICROSECOND":
+		/* keep interval as original decimal */
+	default:
+		// YEAR, QUARTER, MONTH, WEEK, DAY, HOUR, MINUTE, SECOND, MICROSECOND
+		args[1] = WrapWithCastAsInt(ctx, args[1])
+		interval, isNull, err = args[1].EvalString(ctx, row)
+		if isNull || err != nil {
+			return "", true, errors.Trace(err)
+		}
+	}
+
+	return interval, false, nil
+}
+
 func (du *baseDateArithmitical) getIntervalFromInt(ctx sessionctx.Context, args []Expression, row types.Row, unit string) (string, bool, error) {
 	interval, isNull, err := args[1].EvalInt(ctx, row)
 	if isNull || err != nil {
@@ -2304,7 +2345,7 @@ func (c *addDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	}
 
 	intervalEvalTp := args[1].GetType().EvalType()
-	if intervalEvalTp != types.ETString {
+	if intervalEvalTp != types.ETString && intervalEvalTp != types.ETDecimal {
 		intervalEvalTp = types.ETInt
 	}
 
@@ -2320,6 +2361,11 @@ func (c *addDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 		}
 	case dateEvalTp == types.ETString && intervalEvalTp == types.ETInt:
 		sig = &builtinAddDateStringIntSig{
+			baseBuiltinFunc:      bf,
+			baseDateArithmitical: newDateArighmeticalUtil(),
+		}
+	case dateEvalTp == types.ETString && intervalEvalTp == types.ETDecimal:
+		sig = &builtinAddDateStringDecimalSig{
 			baseBuiltinFunc:      bf,
 			baseDateArithmitical: newDateArighmeticalUtil(),
 		}
@@ -2393,6 +2439,33 @@ func (b *builtinAddDateStringIntSig) evalTime(row types.Row) (types.Time, bool, 
 	}
 
 	interval, isNull, err := b.getIntervalFromInt(b.ctx, b.args, row, unit)
+	if isNull || err != nil {
+		return types.Time{}, true, errors.Trace(err)
+	}
+
+	result, isNull, err := b.add(b.ctx, date, interval, unit)
+	return result, isNull || err != nil, errors.Trace(err)
+}
+
+type builtinAddDateStringDecimalSig struct {
+	baseBuiltinFunc
+	baseDateArithmitical
+}
+
+// evalTime evals ADDDATE(date,INTERVAL expr unit).
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_adddate
+func (b *builtinAddDateStringDecimalSig) evalTime(row types.Row) (types.Time, bool, error) {
+	unit, isNull, err := b.args[2].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return types.Time{}, true, errors.Trace(err)
+	}
+
+	date, isNull, err := b.getDateFromString(b.ctx, b.args, row, unit)
+	if isNull || err != nil {
+		return types.Time{}, true, errors.Trace(err)
+	}
+
+	interval, isNull, err := b.getIntervalFromDecimal(b.ctx, b.args, row, unit)
 	if isNull || err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
@@ -2524,7 +2597,7 @@ func (c *subDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	}
 
 	intervalEvalTp := args[1].GetType().EvalType()
-	if intervalEvalTp != types.ETString {
+	if intervalEvalTp != types.ETString && intervalEvalTp != types.ETDecimal {
 		intervalEvalTp = types.ETInt
 	}
 
@@ -2540,6 +2613,11 @@ func (c *subDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 		}
 	case dateEvalTp == types.ETString && intervalEvalTp == types.ETInt:
 		sig = &builtinSubDateStringIntSig{
+			baseBuiltinFunc:      bf,
+			baseDateArithmitical: newDateArighmeticalUtil(),
+		}
+	case dateEvalTp == types.ETString && intervalEvalTp == types.ETDecimal:
+		sig = &builtinSubDateStringDecimalSig{
 			baseBuiltinFunc:      bf,
 			baseDateArithmitical: newDateArighmeticalUtil(),
 		}
@@ -2613,6 +2691,31 @@ func (b *builtinSubDateStringIntSig) evalTime(row types.Row) (types.Time, bool, 
 	}
 
 	interval, isNull, err := b.getIntervalFromInt(b.ctx, b.args, row, unit)
+	if isNull || err != nil {
+		return types.Time{}, true, errors.Trace(err)
+	}
+
+	result, isNull, err := b.sub(b.ctx, date, interval, unit)
+	return result, isNull || err != nil, errors.Trace(err)
+}
+
+type builtinSubDateStringDecimalSig struct {
+	baseBuiltinFunc
+	baseDateArithmitical
+}
+
+func (b *builtinSubDateStringDecimalSig) evalTime(row types.Row) (types.Time, bool, error) {
+	unit, isNull, err := b.args[2].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return types.Time{}, true, errors.Trace(err)
+	}
+
+	date, isNull, err := b.getDateFromString(b.ctx, b.args, row, unit)
+	if isNull || err != nil {
+		return types.Time{}, true, errors.Trace(err)
+	}
+
+	interval, isNull, err := b.getIntervalFromDecimal(b.ctx, b.args, row, unit)
 	if isNull || err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}

@@ -328,7 +328,7 @@ func (s *testEvaluatorSuite) TestLikeFunc2Pb(c *C) {
 	args := []Expression{
 		&Constant{RetType: retTp, Value: types.NewDatum("string")},
 		&Constant{RetType: retTp, Value: types.NewDatum("pattern")},
-		&Constant{RetType: retTp, Value: types.NewDatum("%abc%")},
+		&Constant{RetType: retTp, Value: types.NewDatum(`%abc%`)},
 		&Constant{RetType: retTp, Value: types.NewDatum("\\")},
 	}
 	ctx := mock.NewContext()
