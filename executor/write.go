@@ -47,6 +47,11 @@ var (
 // Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
 // ignoreErr indicate that update statement has the `IGNORE` modifier, in this situation, update statement will not update
 // the keys which cause duplicate conflicts and ignore the error.
+// The return values:
+//     1. changed (bool) : does the update really change the row values. e.g. update set i = 1 where i = 1;
+//     2. handleChanged (bool) : is the handle changed after the update.
+//     3. newHandle (int64) : if handleChanged == true, the newHandle means the new handle after update.
+//     4. err (error) : error in the update.
 func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datum, modified []bool, t table.Table,
 	onDup, ignoreErr bool) (bool, bool, int64, error) {
 	var sc = ctx.GetSessionVars().StmtCtx
@@ -1131,6 +1136,14 @@ func (e *InsertExec) batchUpdateDupRows(newRows [][]types.Datum, onDuplicate []*
 				// Clean up row for latest add record operation.
 				newRows[i] = nil
 				break
+			}
+		}
+		// If row was checked with no duplicate keys,
+		// it should be add to values map for the further row check.
+		// There may be duplicate keys inside the insert statement.
+		if newRows[i] == nil {
+			for _, k := range keysInRow {
+				values[string(k.key)] = k.newRowValue
 			}
 		}
 	}
