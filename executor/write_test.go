@@ -421,8 +421,7 @@ commit;`
 	r = tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("1 1"))
 
-	testSQL = `drop table if exists test;
-create table test (i int primary key, j int unique);
+	testSQL = `delete from test;
 insert into test values (1, 1);
 begin;
 delete from test where i = 1;
@@ -432,6 +431,18 @@ commit;`
 	testSQL = `select * from test;`
 	r = tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("2 1"))
+
+	testSQL = `delete from test;
+insert into test values (1, 1);
+begin;
+update test set i = 2, j = 2 where i = 1;
+insert ignore into test values (1, 3);
+insert ignore into test values (2, 4);
+commit;`
+	tk.MustExec(testSQL)
+	testSQL = `select * from test order by i;`
+	r = tk.MustQuery(testSQL)
+	r.Check(testkit.Rows("1 3", "2 2"))
 }
 
 func (s *testSuite) TestReplace(c *C) {
