@@ -188,6 +188,11 @@ func (s *testMockTiKVSuite) mustBatchResolveLock(c *C, txnInfos map[uint64]uint6
 	c.Assert(s.store.BatchResolveLock(nil, nil, txnInfos), IsNil)
 }
 
+func (s *testMockTiKVSuite) mustDeleteRange(c *C, startKey, endKey string) {
+	err := s.store.DeleteRange([]byte(startKey), []byte(endKey))
+	c.Assert(err, IsNil)
+}
+
 func (s *testMockTiKVSuite) TestGet(c *C) {
 	s.mustGetNone(c, "x", 10)
 	s.mustPutOK(c, "x", "x", 5, 10)
@@ -438,6 +443,28 @@ func (s *testMockTiKVSuite) TestRollbackAndWriteConflict(c *C) {
 
 	errs = s.store.Prewrite(putMutations("test", "test3"), []byte("test"), 6, 1)
 	s.mustWriteWriteConflict(c, errs, 0)
+}
+
+func (s *testMockTiKVSuite) TestDeleteRange(c *C) {
+	for i := 1; i <= 5; i++ {
+		key := string(byte(i) + byte('0'))
+		value := "v" + key
+		s.mustPutOK(c, key, value, uint64(1+2*i), uint64(2+2*i))
+	}
+
+	s.mustScanOK(c, "0", 10, 20, "1", "v1", "2", "v2", "3", "v3", "4", "v4", "5", "v5")
+
+	s.mustDeleteRange(c, "2", "4")
+	s.mustScanOK(c, "0", 10, 30, "1", "v1", "4", "v4", "5", "v5")
+
+	s.mustDeleteRange(c, "5", "5")
+	s.mustScanOK(c, "0", 10, 40, "1", "v1", "4", "v4", "5", "v5")
+
+	s.mustDeleteRange(c, "41", "42")
+	s.mustScanOK(c, "0", 10, 40, "1", "v1", "4", "v4", "5", "v5")
+
+	s.mustDeleteRange(c, "0", "9")
+	s.mustScanOK(c, "0", 10, 40)
 }
 
 func (s *testMockTiKVSuite) mustWriteWriteConflict(c *C, errs []error, i int) {
