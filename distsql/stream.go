@@ -41,17 +41,7 @@ type streamResult struct {
 
 func (r *streamResult) Fetch(context.Context) {}
 
-func (r *streamResult) Next(ctx context.Context) (PartialResult, error) {
-	var ret streamPartialResult
-	ret.rowLen = r.rowLen
-	finished, err := r.readDataFromResponse(ctx, r.resp, &ret.Chunk)
-	if err != nil || finished {
-		return nil, errors.Trace(err)
-	}
-	return &ret, nil
-}
-
-func (r *streamResult) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+func (r *streamResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	maxChunkSize := r.ctx.GetSessionVars().MaxChunkSize
 	for chk.NumRows() < maxChunkSize {

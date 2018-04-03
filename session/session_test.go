@@ -934,7 +934,7 @@ func (s *testSessionSuite) TestResultType(c *C) {
 	rs, err := tk.Exec(`select cast(null as char(30))`)
 	c.Assert(err, IsNil)
 	chk := rs.NewChunk()
-	err = rs.NextChunk(context.Background(), chk)
+	err = rs.Next(context.Background(), chk)
 	c.Assert(err, IsNil)
 	c.Assert(chk.GetRow(0).IsNull(0), IsTrue)
 	c.Assert(rs.Fields()[0].Column.FieldType.Tp, Equals, mysql.TypeVarString)
@@ -1656,7 +1656,7 @@ func (s *testSchemaSuite) TestTableReaderChunk(c *C) {
 	var count int
 	var numChunks int
 	for {
-		err = rs.NextChunk(context.TODO(), chk)
+		err = rs.Next(context.TODO(), chk)
 		c.Assert(err, IsNil)
 		numRows := chk.NumRows()
 		if numRows == 0 {
@@ -1689,7 +1689,7 @@ func (s *testSchemaSuite) TestInsertExecChunk(c *C) {
 	var idx int
 	for {
 		chk := rs.NewChunk()
-		err = rs.NextChunk(context.TODO(), chk)
+		err = rs.Next(context.TODO(), chk)
 		c.Assert(err, IsNil)
 		if chk.NumRows() == 0 {
 			break
@@ -1723,7 +1723,7 @@ func (s *testSchemaSuite) TestUpdateExecChunk(c *C) {
 	var idx int
 	for {
 		chk := rs.NewChunk()
-		err = rs.NextChunk(context.TODO(), chk)
+		err = rs.Next(context.TODO(), chk)
 		c.Assert(err, IsNil)
 		if chk.NumRows() == 0 {
 			break
@@ -1758,7 +1758,7 @@ func (s *testSchemaSuite) TestDeleteExecChunk(c *C) {
 	c.Assert(err, IsNil)
 
 	chk := rs.NewChunk()
-	err = rs.NextChunk(context.TODO(), chk)
+	err = rs.Next(context.TODO(), chk)
 	c.Assert(err, IsNil)
 	c.Assert(chk.NumRows(), Equals, 1)
 
@@ -1790,7 +1790,7 @@ func (s *testSchemaSuite) TestDeleteMultiTableExecChunk(c *C) {
 	var idx int
 	for {
 		chk := rs.NewChunk()
-		err = rs.NextChunk(context.TODO(), chk)
+		err = rs.Next(context.TODO(), chk)
 		c.Assert(err, IsNil)
 
 		if chk.NumRows() == 0 {
@@ -1810,7 +1810,7 @@ func (s *testSchemaSuite) TestDeleteMultiTableExecChunk(c *C) {
 	c.Assert(err, IsNil)
 
 	chk := rs.NewChunk()
-	err = rs.NextChunk(context.TODO(), chk)
+	err = rs.Next(context.TODO(), chk)
 	c.Assert(err, IsNil)
 	c.Assert(chk.NumRows(), Equals, 0)
 	rs.Close()
@@ -1835,7 +1835,7 @@ func (s *testSchemaSuite) TestIndexLookUpReaderChunk(c *C) {
 	chk := rs.NewChunk()
 	var count int
 	for {
-		err = rs.NextChunk(context.TODO(), chk)
+		err = rs.Next(context.TODO(), chk)
 		c.Assert(err, IsNil)
 		numRows := chk.NumRows()
 		if numRows == 0 {
@@ -1855,7 +1855,7 @@ func (s *testSchemaSuite) TestIndexLookUpReaderChunk(c *C) {
 	chk = rs.NewChunk()
 	count = 0
 	for {
-		err = rs.NextChunk(context.TODO(), chk)
+		err = rs.Next(context.TODO(), chk)
 		c.Assert(err, IsNil)
 		numRows := chk.NumRows()
 		if numRows == 0 {
