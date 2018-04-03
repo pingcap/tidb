@@ -362,7 +362,7 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64) error {
 			return errors.New("[gc worker] gc job canceled")
 		}
 
-		regions += deleteRangeTask.Regions()
+		regions += deleteRangeTask.CompletedRegions()
 		se := createSession(w.store)
 		err = util.CompleteDeleteRange(se, r)
 		se.Close()
