@@ -101,7 +101,7 @@ func (h *Handle) insertColStats2KV(tableID int64, colInfo *model.ColumnInfo) err
 			return errors.Trace(err)
 		}
 		chk := rs[0].NewChunk()
-		err = rs[0].NextChunk(ctx, chk)
+		err = rs[0].Next(ctx, chk)
 		if err != nil {
 			return errors.Trace(err)
 		}

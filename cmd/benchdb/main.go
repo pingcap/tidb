@@ -119,7 +119,7 @@ func (ut *benchDB) mustExec(sql string) {
 		rs := rss[0]
 		chk := rs.NewChunk()
 		for {
-			err := rs.NextChunk(ctx, chk)
+			err := rs.Next(ctx, chk)
 			if err != nil {
 				log.Fatal(err)
 			}
