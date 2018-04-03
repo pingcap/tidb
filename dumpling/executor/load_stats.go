@@ -50,8 +50,8 @@ func (k loadStatsVarKeyType) String() string {
 // LoadStatsVarKey is a variable key for load statistic.
 const LoadStatsVarKey loadStatsVarKeyType = 0
 
-// NextChunk implements the Executor NextChunk interface.
-func (e *LoadStatsExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+// Next implements the Executor Next interface.
+func (e *LoadStatsExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if len(e.info.Path) == 0 {
 		return errors.New("Load Stats: file path is empty")

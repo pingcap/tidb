@@ -82,7 +82,7 @@ func (r *recordSet) getNext() []types.Datum {
 	return row
 }
 
-func (r *recordSet) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+func (r *recordSet) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	row := r.getNext()
 	if row != nil {
@@ -174,7 +174,7 @@ func buildPK(sctx sessionctx.Context, numBuckets, id int64, records ast.RecordSe
 	ctx := context.Background()
 	for {
 		chk := records.NewChunk()
-		err := records.NextChunk(ctx, chk)
+		err := records.Next(ctx, chk)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
@@ -200,7 +200,7 @@ func buildIndex(sctx sessionctx.Context, numBuckets, id int64, records ast.Recor
 	chk := records.NewChunk()
 	it := chunk.NewIterator4Chunk(chk)
 	for {
-		err := records.NextChunk(ctx, chk)
+		err := records.Next(ctx, chk)
 		if err != nil {
 			return 0, nil, nil, errors.Trace(err)
 		}
