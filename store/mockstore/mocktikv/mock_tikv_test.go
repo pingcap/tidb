@@ -14,9 +14,9 @@
 package mocktikv
 
 import (
+	"bytes"
 	"strings"
 	"testing"
-	"bytes"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
