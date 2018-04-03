@@ -364,16 +364,16 @@ func (e *mvccEntry) containsStartTS(startTS uint64) bool {
 func (e *mvccEntry) dumpMvccInfo() *kvrpcpb.MvccInfo {
 	info := &kvrpcpb.MvccInfo{}
 	if e.lock != nil {
-		info.Lock = &kvrpcpb.LockInfo{
-			Key:         e.key,
-			PrimaryLock: e.lock.primary,
-			LockVersion: e.lock.startTS,
-			LockTtl:     e.lock.ttl,
+		info.Lock = &kvrpcpb.MvccLock{
+			Type:       e.lock.op,
+			StartTs:    e.lock.startTS,
+			Primary:    e.lock.primary,
+			ShortValue: e.lock.value,
 		}
 	}
 
-	info.Writes = make([]*kvrpcpb.WriteInfo, len(e.values))
-	info.Values = make([]*kvrpcpb.ValueInfo, len(e.values))
+	info.Writes = make([]*kvrpcpb.MvccWrite, len(e.values))
+	info.Values = make([]*kvrpcpb.MvccValue, len(e.values))
 
 	for id, item := range e.values {
 		var tp kvrpcpb.Op
@@ -385,15 +385,15 @@ func (e *mvccEntry) dumpMvccInfo() *kvrpcpb.MvccInfo {
 		case typeRollback:
 			tp = kvrpcpb.Op_Rollback
 		}
-		info.Writes[id] = &kvrpcpb.WriteInfo{
-			StartTs:  item.startTS,
+		info.Writes[id] = &kvrpcpb.MvccWrite{
 			Type:     tp,
+			StartTs:  item.startTS,
 			CommitTs: item.commitTS,
 		}
 
-		info.Values[id] = &kvrpcpb.ValueInfo{
-			Value: item.value,
-			Ts:    item.startTS,
+		info.Values[id] = &kvrpcpb.MvccValue{
+			Value:   item.value,
+			StartTs: item.startTS,
 		}
 	}
 	return info
