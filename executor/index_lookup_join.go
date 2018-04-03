@@ -186,8 +186,8 @@ func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWork
 	return iw
 }
 
-// NextChunk implements the Executor interface.
-func (e *IndexLookUpJoin) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+// Next implements the Executor interface.
+func (e *IndexLookUpJoin) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	e.joinResult.Reset()
 	for {
@@ -328,7 +328,7 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 
 	task.memTracker.Consume(task.outerResult.MemoryUsage())
 	for task.outerResult.NumRows() < ow.batchSize {
-		err := ow.executor.NextChunk(ctx, ow.executorChk)
+		err := ow.executor.Next(ctx, ow.executorChk)
 		if err != nil {
 			return task, errors.Trace(err)
 		}
@@ -514,7 +514,7 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 	innerResult.GetMemTracker().SetLabel("inner result")
 	innerResult.GetMemTracker().AttachTo(task.memTracker)
 	for {
-		err := innerExec.NextChunk(ctx, iw.executorChk)
+		err := innerExec.Next(ctx, iw.executorChk)
 		if err != nil {
 			return errors.Trace(err)
 		}

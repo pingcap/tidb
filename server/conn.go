@@ -955,13 +955,13 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 	chk := rs.NewChunk()
 	gotColumnInfo := false
 	for {
-		// Here server.tidbResultSet implements NextChunk method.
-		err := rs.NextChunk(ctx, chk)
+		// Here server.tidbResultSet implements Next method.
+		err := rs.Next(ctx, chk)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if !gotColumnInfo {
-			// We need to call NextChunk before we get columns.
+			// We need to call Next before we get columns.
 			// Otherwise, we will get incorrect columns info.
 			columns := rs.Columns()
 			err = cc.writeColumnInfo(columns)

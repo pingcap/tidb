@@ -293,8 +293,8 @@ func (trs *tidbResultSet) NewChunk() *chunk.Chunk {
 	return trs.recordSet.NewChunk()
 }
 
-func (trs *tidbResultSet) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
-	return trs.recordSet.NextChunk(ctx, chk)
+func (trs *tidbResultSet) Next(ctx context.Context, chk *chunk.Chunk) error {
+	return trs.recordSet.Next(ctx, chk)
 }
 
 func (trs *tidbResultSet) Close() error {
