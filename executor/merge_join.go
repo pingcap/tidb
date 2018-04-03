@@ -274,7 +274,7 @@ func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasM
 		}
 
 		if cmpResult < 0 {
-			err = e.resultGenerator.emitToChunk(e.outerTable.row, nil, chk)
+			err = e.resultGenerator.emit(e.outerTable.row, nil, chk)
 			if err != nil {
 				return false, errors.Trace(err)
 			}
@@ -287,7 +287,7 @@ func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasM
 			continue
 		}
 
-		err = e.resultGenerator.emitToChunk(e.outerTable.row, e.innerIter4Row, chk)
+		err = e.resultGenerator.emit(e.outerTable.row, e.innerIter4Row, chk)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
