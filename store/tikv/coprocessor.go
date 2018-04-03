@@ -656,6 +656,8 @@ func (it *copIterator) handleCopStreamResult(bo *Backoffer, stream *tikvrpc.CopS
 
 // handleCopResponse checks coprocessor Response for region split and lock,
 // returns more tasks when that happens, or handles the response if no error.
+// if we're handling streaming coprocessor response, lastResp is the last successful response,
+// if we're handling normal request, lastResp and resp is the same.
 func (it *copIterator) handleCopResponse(bo *Backoffer, resp *coprocessor.Response, task *copTask, ch chan copResponse, lastResp *coprocessor.Response) ([]*copTask, error) {
 	if regionErr := resp.GetRegionError(); regionErr != nil {
 		if err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String())); err != nil {
