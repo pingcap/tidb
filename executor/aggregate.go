@@ -141,7 +141,7 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 	}
 }
 
-func (e *HashAggExec) getGroupKey(row types.Row) ([]byte, error) {
+func (e *HashAggExec) getGroupKey(row chunk.Row) ([]byte, error) {
 	vals := make([]types.Datum, 0, len(e.GroupByItems))
 	for _, item := range e.GroupByItems {
 		v, err := item.Eval(row)
@@ -296,7 +296,7 @@ func (e *StreamAggExec) appendResult2Chunk(chk *chunk.Chunk) {
 }
 
 // meetNewGroup returns a value that represents if the new group is different from last group.
-func (e *StreamAggExec) meetNewGroup(row types.Row) (bool, error) {
+func (e *StreamAggExec) meetNewGroup(row chunk.Row) (bool, error) {
 	if len(e.GroupByItems) == 0 {
 		return false, nil
 	}
