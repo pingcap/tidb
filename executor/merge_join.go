@@ -132,7 +132,7 @@ func (t *mergeJoinInnerTable) nextRow() (chunk.Row, error) {
 	if t.curRow == t.curIter.End() {
 		t.reallocReaderResult()
 		oldMemUsage := t.curResult.MemoryUsage()
-		err := t.reader.NextChunk(t.ctx, t.curResult)
+		err := t.reader.Next(t.ctx, t.curResult)
 		// error happens or no more data.
 		if err != nil || t.curResult.NumRows() == 0 {
 			t.curRow = t.curIter.End()
@@ -234,8 +234,8 @@ func (e *MergeJoinExec) prepare(ctx context.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
-// NextChunk implements the Executor NextChunk interface.
-func (e *MergeJoinExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+// Next implements the Executor Next interface.
+func (e *MergeJoinExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if !e.prepared {
 		if err := e.prepare(ctx, chk); err != nil {
@@ -274,7 +274,7 @@ func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasM
 		}
 
 		if cmpResult < 0 {
-			err = e.resultGenerator.emitToChunk(e.outerTable.row, nil, chk)
+			err = e.resultGenerator.emit(e.outerTable.row, nil, chk)
 			if err != nil {
 				return false, errors.Trace(err)
 			}
@@ -287,7 +287,7 @@ func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasM
 			continue
 		}
 
-		err = e.resultGenerator.emitToChunk(e.outerTable.row, e.innerIter4Row, chk)
+		err = e.resultGenerator.emit(e.outerTable.row, e.innerIter4Row, chk)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -319,7 +319,7 @@ func (e *MergeJoinExec) fetchNextInnerRows() (err error) {
 // may not all belong to the same join key, but are guaranteed to be sorted
 // according to the join key.
 func (e *MergeJoinExec) fetchNextOuterRows(ctx context.Context) (err error) {
-	err = e.outerTable.reader.NextChunk(ctx, e.outerTable.chk)
+	err = e.outerTable.reader.Next(ctx, e.outerTable.chk)
 	if err != nil {
 		return errors.Trace(err)
 	}
