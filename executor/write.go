@@ -965,7 +965,7 @@ func batchMarkDupRows(ctx sessionctx.Context, t table.Table, rows [][]types.Datu
 			batchKeys = append(batchKeys, k.key)
 		}
 	}
-	values, err := ctx.Txn().GetSnapshot().BatchGet(batchKeys)
+	values, err := kv.BatchGetValues(ctx.Txn(), batchKeys)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

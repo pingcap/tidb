@@ -409,6 +409,29 @@ func (s *testSuite) TestInsertIgnore(c *C) {
 	c.Assert(err, IsNil)
 	r = tk.MustQuery("SHOW WARNINGS")
 	r.Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 'PRIMARY'"))
+
+	testSQL = `drop table if exists test;
+create table test (i int primary key, j int unique);
+begin;
+insert into test values (1,1);
+insert ignore into test values (2,1);
+commit;`
+	tk.MustExec(testSQL)
+	testSQL = `select * from test;`
+	r = tk.MustQuery(testSQL)
+	r.Check(testkit.Rows("1 1"))
+
+	testSQL = `drop table if exists test;
+create table test (i int primary key, j int unique);
+insert into test values (1, 1);
+begin;
+delete from test where i = 1;
+insert ignore into test values (2, 1);
+commit;`
+	tk.MustExec(testSQL)
+	testSQL = `select * from test;`
+	r = tk.MustQuery(testSQL)
+	r.Check(testkit.Rows("2 1"))
 }
 
 func (s *testSuite) TestReplace(c *C) {
