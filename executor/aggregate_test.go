@@ -243,7 +243,7 @@ func (s *testSuite) TestAggregation(c *C) {
 
 	result = tk.MustQuery("select count(*) from information_schema.columns")
 	// When adding new memory columns in information_schema, please update this variable.
-	columnCountOfAllInformationSchemaTables := "736"
+	columnCountOfAllInformationSchemaTables := "737"
 	result.Check(testkit.Rows(columnCountOfAllInformationSchemaTables))
 
 	tk.MustExec("drop table if exists t1")
@@ -283,6 +283,19 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustExec("create table t(a int(11), b char(15))")
 	tk.MustExec("insert into t values(1,771.64),(2,378.49),(3,920.92),(4,113.97)")
 	tk.MustQuery("select a, max(b) from t group by a limit 2").Check(testkit.Rows("1 771.64", "2 378.49"))
+
+	// for issue #6014
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int(11) NOT NULL, tags json DEFAULT NULL)")
+	tk.MustExec(`insert into t values (1, '{"i": 1, "n": "n1"}')`)
+	tk.MustExec(`insert into t values (2, '{"i": 2, "n": "n2"}')`)
+	tk.MustExec(`insert into t values (3, '{"i": 3, "n": "n3"}')`)
+	tk.MustExec(`insert into t values (4, '{"i": 4, "n": "n4"}')`)
+	tk.MustExec(`insert into t values (5, '{"i": 5, "n": "n5"}')`)
+	tk.MustExec(`insert into t values (6, '{"i": 0, "n": "n6"}')`)
+	tk.MustExec(`insert into t values (7, '{"i": -1, "n": "n7"}')`)
+	tk.MustQuery("select sum(tags->'$.i') from t").Check(testkit.Rows("14"))
 }
 
 func (s *testSuite) TestStreamAggPushDown(c *C) {
@@ -344,8 +357,8 @@ func (s *testSuite) TestGroupConcatAggr(c *C) {
 	result = tk.MustQuery("select id, group_concat(name SEPARATOR ',') from test group by id")
 	result.Check(testkit.Rows("1 10,20,30", "2 20", "3 200,500"))
 
-	result = tk.MustQuery("select id, group_concat(name SEPARATOR '%') from test group by id")
-	result.Check(testkit.Rows("1 10%20%30", "2 20", "3 200%500"))
+	result = tk.MustQuery(`select id, group_concat(name SEPARATOR '%') from test group by id`)
+	result.Check(testkit.Rows("1 10%20%30", "2 20", `3 200%500`))
 
 	result = tk.MustQuery("select id, group_concat(name SEPARATOR '') from test group by id")
 	result.Check(testkit.Rows("1 102030", "2 20", "3 200500"))

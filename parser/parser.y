@@ -260,6 +260,7 @@ import (
 	cascaded	"CASCADED"
 	charsetKwd	"CHARSET"
 	checksum	"CHECKSUM"
+	cleanup		"CLEANUP"
 	client		"CLIENT"
 	coalesce	"COALESCE"
 	collation	"COLLATION"
@@ -399,6 +400,7 @@ import (
 	bitOr		"BIT_OR"
 	bitXor		"BIT_XOR"
 	cast		"CAST"
+	copyKwd		"COPY"
 	count		"COUNT"
 	curTime		"CURTIME"
 	dateAdd		"DATE_ADD"
@@ -406,6 +408,7 @@ import (
 	extract		"EXTRACT"
 	getFormat	"GET_FORMAT"
 	groupConcat	"GROUP_CONCAT"
+	inplace 	"INPLACE"
 	min		"MIN"
 	max		"MAX"
 	now		"NOW"
@@ -684,6 +687,7 @@ import (
 	SelectLockOpt			"FOR UPDATE or LOCK IN SHARE MODE,"
 	SelectStmtCalcFoundRows		"SELECT statement optional SQL_CALC_FOUND_ROWS"
 	SelectStmtSQLCache		"SELECT statement optional SQL_CAHCE/SQL_NO_CACHE"
+	SelectStmtStraightJoin		"SELECT statement optional STRAIGHT_JOIN"
 	SelectStmtFieldList		"SELECT statement field list"
 	SelectStmtLimit			"SELECT statement optional LIMIT clause"
 	SelectStmtOpts			"Select statement options"
@@ -1018,6 +1022,16 @@ AlterTableSpec:
 			LockType:   $1.(ast.LockType),
 		}
 	}
+| "ALGORITHM" EqOpt AlterAlgorithm
+	{
+		// Parse it and ignore it. Just for compatibility.
+		$$ = &ast.AlterTableSpec{
+			Tp:    		ast.AlterTableAlgorithm,
+		}
+	}
+
+AlterAlgorithm:
+	"DEFAULT" | "INPLACE" | "COPY"
 
 LockClauseOpt:
 	{}
@@ -1771,7 +1785,7 @@ PartDefStorageOpt:
 CreateViewStmt:
     "CREATE" OrReplace ViewAlgorithm ViewDefiner ViewSQLSecurity "VIEW" ViewName ViewFieldList "AS" SelectStmt ViewCheckOption
     {
-		startOffset := parser.startOffset(&yyS[yypt])
+		startOffset := parser.startOffset(&yyS[yypt-1])
 		selStmt := $10.(*ast.SelectStmt)
 		selStmt.SetText(string(parser.src[startOffset:]))
 		x := &ast.CreateViewStmt {
@@ -2519,7 +2533,7 @@ Identifier:
 identifier | UnReservedKeyword | NotKeywordToken | TiDBKeyword
 
 UnReservedKeyword:
- "ACTION" | "ASCII" | "AUTO_INCREMENT" | "AFTER" | "ALWAYS" | "AVG" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "BTREE" | "BYTE" | "CHARSET"
+ "ACTION" | "ASCII" | "AUTO_INCREMENT" | "AFTER" | "ALWAYS" | "AVG" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "BTREE" | "BYTE" | "CLEANUP" | "CHARSET"
 | "COLUMNS" | "COMMIT" | "COMPACT" | "COMPRESSED" | "CONSISTENT" | "DATA" | "DATE" %prec lowerThanStringLitToken| "DATETIME" | "DAY" | "DEALLOCATE" | "DO" | "DUPLICATE"
 | "DYNAMIC"| "END" | "ENGINE" | "ENGINES" | "ENUM" | "ESCAPE" | "EXECUTE" | "FIELDS" | "FIRST" | "FIXED" | "FLUSH" | "FORMAT" | "FULL" |"GLOBAL"
 | "HASH" | "HOUR" | "LESS" | "LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "REDUNDANT"
@@ -2539,8 +2553,8 @@ TiDBKeyword:
 "ADMIN" | "CANCEL" | "DDL" | "JOBS" | "JOB" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "STATS_HEALTHY" | "TIDB" | "TIDB_HJ" | "TIDB_SMJ" | "TIDB_INLJ"
 
 NotKeywordToken:
- "ADDDATE" | "BIT_AND" | "BIT_OR" | "BIT_XOR" | "CAST" | "COUNT" | "CURTIME" | "DATE_ADD" | "DATE_SUB" | "EXTRACT" | "GET_FORMAT" | "GROUP_CONCAT" | "MIN" | "MAX" | "NOW" | "POSITION"
-| "SUBDATE" | "SUBSTRING" | "SUM" | "TIMESTAMPADD" | "TIMESTAMPDIFF" | "TRIM"
+ "ADDDATE" | "BIT_AND" | "BIT_OR" | "BIT_XOR" | "CAST" | "COPY" | "COUNT" | "CURTIME" | "DATE_ADD" | "DATE_SUB" | "EXTRACT" | "GET_FORMAT" | "GROUP_CONCAT" 
+| "INPLACE" |"MIN" | "MAX" | "NOW" | "POSITION" | "SUBDATE" | "SUBSTRING" | "SUM" | "TIMESTAMPADD" | "TIMESTAMPDIFF" | "TRIM"
 
 /************************************************************************************
  *
@@ -3484,10 +3498,10 @@ SumExpr:
 		args := []ast.ExprNode{ast.NewValueExpr(1)}
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: args}
 	}
-|	builtinGroupConcat '(' BuggyDefaultFalseDistinctOpt ExpressionList OptGConcatSeparator ')'
+|	builtinGroupConcat '(' BuggyDefaultFalseDistinctOpt ExpressionList OrderByOptional OptGConcatSeparator ')'
 	{
 		args := $4.([]ast.ExprNode)
-		args = append(args, $5.(ast.ExprNode))
+		args = append(args, $6.(ast.ExprNode))
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: args, Distinct: $3.(bool)}
 	}
 |	builtinMax '(' BuggyDefaultFalseDistinctOpt Expression ')'
@@ -4228,6 +4242,15 @@ JoinTable:
 	{
 		$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: $6.(ast.ResultSetNode), Tp: $3.(ast.JoinType), NaturalJoin: true}
 	}
+|	TableRef "STRAIGHT_JOIN" TableRef
+	{
+		$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: $3.(ast.ResultSetNode), StraightJoin: true}
+	}
+|	TableRef "STRAIGHT_JOIN" TableRef "ON" Expression
+	{
+		on := &ast.OnCondition{Expr: $5}
+		$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: $3.(ast.ResultSetNode), StraightJoin: true, On: on}
+	}
 
 JoinType:
 	"LEFT"
@@ -4245,7 +4268,6 @@ OuterOpt:
 
 CrossOpt:
 	"JOIN"
-|	"STRAIGHT_JOIN"
 |	"CROSS" "JOIN"
 |	"INNER" "JOIN"
 
@@ -4290,7 +4312,7 @@ SelectStmtLimit:
 
 
 SelectStmtOpts:
-	TableOptimizerHints DefaultFalseDistinctOpt Priority SelectStmtSQLCache SelectStmtCalcFoundRows
+	TableOptimizerHints DefaultFalseDistinctOpt Priority SelectStmtSQLCache SelectStmtCalcFoundRows SelectStmtStraightJoin
 	{
 		opt := &ast.SelectStmtOpts{}
 		if $1 != nil {
@@ -4307,6 +4329,9 @@ SelectStmtOpts:
 		}
 		if $5 != nil {
 			opt.CalcFoundRows = $5.(bool)
+		}
+		if $6 != nil {
+			opt.StraightJoin = $6.(bool)
 		}
 
 		$$ = opt
@@ -4376,6 +4401,15 @@ SelectStmtSQLCache:
 |	"SQL_NO_CACHE"
 	{
 		$$ = false
+	}
+SelectStmtStraightJoin:
+	%prec empty
+	{
+		$$ = false
+	}
+|	"STRAIGHT_JOIN"
+	{
+		$$ = true
 	}
 
 SelectStmtFieldList:
@@ -4520,6 +4554,10 @@ SetStmt:
 |	"SET" "SESSION" "TRANSACTION" TransactionChars
 	{
 		$$ = &ast.SetStmt{Variables: $4.([]*ast.VariableAssignment)}
+	}
+|	"SET" "TRANSACTION" TransactionChars
+	{
+		$$ = &ast.SetStmt{Variables: $3.([]*ast.VariableAssignment)}
 	}
 
 TransactionChars:
@@ -4722,6 +4760,10 @@ Username:
 	{
 		$$ = &auth.UserIdentity{Username: $1.(string), Hostname: strings.TrimPrefix($2, "@")}
 	}
+|	"CURRENT_USER" OptionalBraces
+	{
+		$$ = &auth.UserIdentity{CurrentUser: true}
+	}
 
 UsernameList:
 	Username
@@ -4778,6 +4820,14 @@ AdminStmt:
 	{
 		$$ = &ast.AdminStmt{
 			Tp: ast.AdminRecoverIndex,
+			Tables: []*ast.TableName{$4.(*ast.TableName)},
+			Index: string($5),
+		}
+	}
+|	"ADMIN" "CLEANUP" "INDEX" TableName Identifier
+	{
+		$$ = &ast.AdminStmt{
+			Tp: ast.AdminCleanupIndex,
 			Tables: []*ast.TableName{$4.(*ast.TableName)},
 			Index: string($5),
 		}

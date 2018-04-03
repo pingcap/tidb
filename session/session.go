@@ -320,7 +320,7 @@ func (s *session) doCommit(ctx context.Context) error {
 		schemaVer:       s.sessionVars.TxnCtx.SchemaVersion,
 		relatedTableIDs: tableIDs,
 	})
-	if err := s.txn.Commit(ctx); err != nil {
+	if err := s.txn.Commit(sessionctx.SetConnID2Ctx(ctx, s)); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -610,7 +610,7 @@ func drainRecordSet(ctx context.Context, rs ast.RecordSet) ([]types.Row, error) 
 	var rows []types.Row
 	for {
 		chk := rs.NewChunk()
-		err := rs.NextChunk(ctx, chk)
+		err := rs.Next(ctx, chk)
 		if err != nil || chk.NumRows() == 0 {
 			return rows, errors.Trace(err)
 		}
@@ -766,6 +766,7 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []ast.Rec
 	}
 
 	if hitCache {
+		metrics.PlanCacheCounter.WithLabelValues("select").Inc()
 		stmtNode := cacheValue.(*plan.SQLCacheValue).StmtNode
 		stmt := &executor.ExecStmt{
 			InfoSchema: executor.GetInfoSchema(s),
@@ -859,7 +860,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	// So we have to call PrepareTxnCtx here.
 	s.PrepareTxnCtx(ctx)
 	prepareExec := executor.NewPrepareExec(s, executor.GetInfoSchema(s), sql)
-	err = prepareExec.NextChunk(ctx, nil)
+	err = prepareExec.Next(ctx, nil)
 	if err != nil {
 		err = errors.Trace(err)
 		return
@@ -956,11 +957,13 @@ func (s *session) Txn() kv.Transaction {
 
 func (s *session) NewTxn() error {
 	if s.txn.Valid() {
+		txnID := s.txn.StartTS()
 		ctx := context.TODO()
 		err := s.CommitTxn(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		log.Infof("[con:%d] NewTxn() inside a transaction auto commit: %d", s.GetSessionVars().ConnectionID, txnID)
 	}
 
 	txn, err := s.store.Begin()
@@ -1194,7 +1197,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 17
+	currentBootstrapVersion = 19
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -1378,9 +1381,9 @@ func logStmt(node ast.StmtNode, vars *variable.SessionVars) {
 		*ast.DropDatabaseStmt, *ast.DropIndexStmt, *ast.DropTableStmt, *ast.RenameTableStmt, *ast.TruncateTableStmt:
 		user := vars.User
 		if ss, ok := node.(ast.SensitiveStmtNode); ok {
-			log.Infof("[CRUCIAL OPERATION] %s (by %s).", ss.SecureText(), user)
+			log.Infof("[CRUCIAL OPERATION] [con:%v] %s (by %s).", vars.ConnectionID, ss.SecureText(), user)
 		} else {
-			log.Infof("[CRUCIAL OPERATION] %s (by %s).", stmt.Text(), user)
+			log.Infof("[CRUCIAL OPERATION] [con:%v] %s (by %s).", vars.ConnectionID, stmt.Text(), user)
 		}
 	default:
 		logQuery(node.Text(), vars)

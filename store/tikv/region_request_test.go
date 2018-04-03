@@ -150,10 +150,10 @@ type cancelContextClient struct {
 	redirectAddr string
 }
 
-func (c *cancelContextClient) SendReq(ctx context.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+func (c *cancelContextClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	childCtx, cancel := context.WithCancel(ctx)
 	cancel()
-	return c.Client.SendReq(childCtx, c.redirectAddr, req)
+	return c.Client.SendRequest(childCtx, c.redirectAddr, req, timeout)
 }
 
 // mockTikvGrpcServer mock a tikv gprc server for testing.
@@ -204,6 +204,9 @@ func (s *mockTikvGrpcServer) RawPut(context.Context, *kvrpcpb.RawPutRequest) (*k
 	return nil, errors.New("unreachable")
 }
 func (s *mockTikvGrpcServer) RawDelete(context.Context, *kvrpcpb.RawDeleteRequest) (*kvrpcpb.RawDeleteResponse, error) {
+	return nil, errors.New("unreachable")
+}
+func (s *mockTikvGrpcServer) RawDeleteRange(context.Context, *kvrpcpb.RawDeleteRangeRequest) (*kvrpcpb.RawDeleteRangeResponse, error) {
 	return nil, errors.New("unreachable")
 }
 func (s *mockTikvGrpcServer) RawScan(context.Context, *kvrpcpb.RawScanRequest) (*kvrpcpb.RawScanResponse, error) {

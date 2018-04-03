@@ -122,6 +122,8 @@ func (e *HashJoinExec) Close() error {
 		e.outerChkResourceCh = nil
 		e.joinChkResourceCh = nil
 	}
+	e.memTracker.Detach()
+	e.memTracker = nil
 
 	err := e.baseExecutor.Close()
 	return errors.Trace(err)
@@ -209,7 +211,7 @@ func (e *HashJoinExec) fetchOuterChunks(ctx context.Context) {
 			}
 		}
 		outerResult := outerResource.chk
-		err := e.outerExec.NextChunk(ctx, outerResult)
+		err := e.outerExec.Next(ctx, outerResult)
 		if err != nil {
 			e.joinResultCh <- &hashjoinWorkerResult{
 				err: errors.Trace(err),
@@ -231,7 +233,7 @@ func (e *HashJoinExec) fetchInnerRows(ctx context.Context) (err error) {
 	e.innerResult.GetMemTracker().SetLabel("innerResult")
 	for {
 		chk := e.children[e.innerIdx].newChunk()
-		err = e.innerExec.NextChunk(ctx, chk)
+		err = e.innerExec.Next(ctx, chk)
 		if err != nil || chk.NumRows() == 0 {
 			return errors.Trace(err)
 		}
@@ -354,7 +356,7 @@ func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID uint, outerRow chunk.R
 		return false, joinResult
 	}
 	if hasNull {
-		err = e.resultGenerators[workerID].emitToChunk(outerRow, nil, joinResult.chk)
+		err = e.resultGenerators[workerID].emit(outerRow, nil, joinResult.chk)
 		if err != nil {
 			joinResult.err = errors.Trace(err)
 		}
@@ -363,7 +365,7 @@ func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID uint, outerRow chunk.R
 	e.hashTableValBufs[workerID] = e.hashTable.Get(joinKey, e.hashTableValBufs[workerID][:0])
 	innerPtrs := e.hashTableValBufs[workerID]
 	if len(innerPtrs) == 0 {
-		err = e.resultGenerators[workerID].emitToChunk(outerRow, nil, joinResult.chk)
+		err = e.resultGenerators[workerID].emit(outerRow, nil, joinResult.chk)
 		if err != nil {
 			joinResult.err = errors.Trace(err)
 		}
@@ -377,7 +379,7 @@ func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID uint, outerRow chunk.R
 	}
 	iter := chunk.NewIterator4Slice(innerRows)
 	for iter.Begin(); iter.Current() != iter.End(); {
-		err = e.resultGenerators[workerID].emitToChunk(outerRow, iter, joinResult.chk)
+		err = e.resultGenerators[workerID].emit(outerRow, iter, joinResult.chk)
 		if err != nil {
 			joinResult.err = errors.Trace(err)
 			return false, joinResult
@@ -417,7 +419,7 @@ func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, joinResu
 	}
 	for i := range selected {
 		if !selected[i] { // process unmatched outer rows
-			err = e.resultGenerators[workerID].emitToChunk(outerChk.GetRow(i), nil, joinResult.chk)
+			err = e.resultGenerators[workerID].emit(outerChk.GetRow(i), nil, joinResult.chk)
 			if err != nil {
 				joinResult.err = errors.Trace(err)
 				return false, joinResult
@@ -439,11 +441,11 @@ func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, joinResu
 	return true, joinResult
 }
 
-// NextChunk implements the Executor NextChunk interface.
+// Next implements the Executor Next interface.
 // hash join constructs the result following these steps:
 // step 1. fetch data from inner child and build a hash table;
 // step 2. fetch data from outer child in a background goroutine and probe the hash table in multiple join workers.
-func (e *HashJoinExec) NextChunk(ctx context.Context, chk *chunk.Chunk) (err error) {
+func (e *HashJoinExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 	if !e.prepared {
 		if err = e.fetchInnerRows(ctx); err != nil {
 			return errors.Trace(err)
@@ -469,109 +471,6 @@ func (e *HashJoinExec) NextChunk(ctx context.Context, chk *chunk.Chunk) (err err
 	chk.SwapColumns(result.chk)
 	result.src <- result.chk
 	return nil
-}
-
-// NestedLoopApplyExec is the executor for apply.
-type NestedLoopApplyExec struct {
-	baseExecutor
-
-	innerRows   []Row
-	cursor      int
-	resultRows  []Row
-	innerExec   Executor
-	outerExec   Executor
-	innerFilter expression.CNFExprs
-	outerFilter expression.CNFExprs
-	outer       bool
-
-	resultGenerator joinResultGenerator
-
-	outerSchema []*expression.CorrelatedColumn
-
-	outerChunk       *chunk.Chunk
-	outerChunkCursor int
-	outerSelected    []bool
-	innerList        *chunk.List
-	innerChunk       *chunk.Chunk
-	innerSelected    []bool
-	innerIter        chunk.Iterator
-	outerRow         *chunk.Row
-}
-
-// Close implements the Executor interface.
-func (e *NestedLoopApplyExec) Close() error {
-	e.resultRows = nil
-	e.innerRows = nil
-	return errors.Trace(e.outerExec.Close())
-}
-
-// Open implements the Executor interface.
-func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
-	e.cursor = 0
-	e.resultRows = e.resultRows[:0]
-	e.innerRows = e.innerRows[:0]
-	return errors.Trace(e.outerExec.Open(ctx))
-}
-
-func (e *NestedLoopApplyExec) fetchSelectedOuterRow(ctx context.Context, chk *chunk.Chunk) (*chunk.Row, error) {
-	outerIter := chunk.NewIterator4Chunk(e.outerChunk)
-	for {
-		if e.outerChunkCursor >= e.outerChunk.NumRows() {
-			err := e.outerExec.NextChunk(ctx, e.outerChunk)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if e.outerChunk.NumRows() == 0 {
-				return nil, nil
-			}
-			e.outerSelected, err = expression.VectorizedFilter(e.ctx, e.outerFilter, outerIter, e.outerSelected)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			e.outerChunkCursor = 0
-		}
-		outerRow := e.outerChunk.GetRow(e.outerChunkCursor)
-		selected := e.outerSelected[e.outerChunkCursor]
-		e.outerChunkCursor++
-		if selected {
-			return &outerRow, nil
-		} else if e.outer {
-			err := e.resultGenerator.emitToChunk(outerRow, nil, chk)
-			if err != nil || chk.NumRows() == e.maxChunkSize {
-				return nil, errors.Trace(err)
-			}
-		}
-	}
-}
-
-// fetchAllInners reads all data from the inner table and stores them in a List.
-func (e *NestedLoopApplyExec) fetchAllInners(ctx context.Context) error {
-	err := e.innerExec.Open(ctx)
-	defer terror.Call(e.innerExec.Close)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	e.innerList.Reset()
-	innerIter := chunk.NewIterator4Chunk(e.innerChunk)
-	for {
-		err := e.innerExec.NextChunk(ctx, e.innerChunk)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if e.innerChunk.NumRows() == 0 {
-			return nil
-		}
-
-		e.innerSelected, err = expression.VectorizedFilter(e.ctx, e.innerFilter, innerIter, e.innerSelected)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		for row := innerIter.Begin(); row != innerIter.End(); row = innerIter.Next() {
-			if e.innerSelected[row.Idx()] {
-				e.innerList.AppendRow(row)
-			}
-		}
-	}
 }
 
 // buildHashTableForList builds hash table from `list`.
@@ -607,8 +506,130 @@ func (e *HashJoinExec) buildHashTableForList() error {
 	return nil
 }
 
-// NextChunk implements the Executor interface.
-func (e *NestedLoopApplyExec) NextChunk(ctx context.Context, chk *chunk.Chunk) (err error) {
+// NestedLoopApplyExec is the executor for apply.
+type NestedLoopApplyExec struct {
+	baseExecutor
+
+	innerRows   []Row
+	cursor      int
+	resultRows  []Row
+	innerExec   Executor
+	outerExec   Executor
+	innerFilter expression.CNFExprs
+	outerFilter expression.CNFExprs
+	outer       bool
+
+	resultGenerator joinResultGenerator
+
+	outerSchema []*expression.CorrelatedColumn
+
+	outerChunk       *chunk.Chunk
+	outerChunkCursor int
+	outerSelected    []bool
+	innerList        *chunk.List
+	innerChunk       *chunk.Chunk
+	innerSelected    []bool
+	innerIter        chunk.Iterator
+	outerRow         *chunk.Row
+
+	memTracker *memory.Tracker // track memory usage.
+}
+
+// Close implements the Executor interface.
+func (e *NestedLoopApplyExec) Close() error {
+	e.resultRows = nil
+	e.innerRows = nil
+
+	e.memTracker.Detach()
+	e.memTracker = nil
+	return errors.Trace(e.outerExec.Close())
+}
+
+// Open implements the Executor interface.
+func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
+	err := e.outerExec.Open(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	e.cursor = 0
+	e.resultRows = e.resultRows[:0]
+	e.innerRows = e.innerRows[:0]
+	e.outerChunk = e.outerExec.newChunk()
+	e.innerChunk = e.innerExec.newChunk()
+	e.innerList = chunk.NewList(e.innerExec.retTypes(), e.maxChunkSize)
+
+	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaNestedLoopApply)
+	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+
+	e.innerList.GetMemTracker().SetLabel("innerList")
+	e.innerList.GetMemTracker().AttachTo(e.memTracker)
+
+	return nil
+}
+
+func (e *NestedLoopApplyExec) fetchSelectedOuterRow(ctx context.Context, chk *chunk.Chunk) (*chunk.Row, error) {
+	outerIter := chunk.NewIterator4Chunk(e.outerChunk)
+	for {
+		if e.outerChunkCursor >= e.outerChunk.NumRows() {
+			err := e.outerExec.Next(ctx, e.outerChunk)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if e.outerChunk.NumRows() == 0 {
+				return nil, nil
+			}
+			e.outerSelected, err = expression.VectorizedFilter(e.ctx, e.outerFilter, outerIter, e.outerSelected)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			e.outerChunkCursor = 0
+		}
+		outerRow := e.outerChunk.GetRow(e.outerChunkCursor)
+		selected := e.outerSelected[e.outerChunkCursor]
+		e.outerChunkCursor++
+		if selected {
+			return &outerRow, nil
+		} else if e.outer {
+			err := e.resultGenerator.emit(outerRow, nil, chk)
+			if err != nil || chk.NumRows() == e.maxChunkSize {
+				return nil, errors.Trace(err)
+			}
+		}
+	}
+}
+
+// fetchAllInners reads all data from the inner table and stores them in a List.
+func (e *NestedLoopApplyExec) fetchAllInners(ctx context.Context) error {
+	err := e.innerExec.Open(ctx)
+	defer terror.Call(e.innerExec.Close)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	e.innerList.Reset()
+	innerIter := chunk.NewIterator4Chunk(e.innerChunk)
+	for {
+		err := e.innerExec.Next(ctx, e.innerChunk)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if e.innerChunk.NumRows() == 0 {
+			return nil
+		}
+
+		e.innerSelected, err = expression.VectorizedFilter(e.ctx, e.innerFilter, innerIter, e.innerSelected)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for row := innerIter.Begin(); row != innerIter.End(); row = innerIter.Next() {
+			if e.innerSelected[row.Idx()] {
+				e.innerList.AppendRow(row)
+			}
+		}
+	}
+}
+
+// Next implements the Executor interface.
+func (e *NestedLoopApplyExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 	chk.Reset()
 	for {
 		if e.innerIter == nil || e.innerIter.Current() == e.innerIter.End() {
@@ -627,7 +648,7 @@ func (e *NestedLoopApplyExec) NextChunk(ctx context.Context, chk *chunk.Chunk) (
 			e.innerIter.Begin()
 		}
 
-		err = e.resultGenerator.emitToChunk(*e.outerRow, e.innerIter, chk)
+		err = e.resultGenerator.emit(*e.outerRow, e.innerIter, chk)
 		if err != nil || chk.NumRows() == e.maxChunkSize {
 			return errors.Trace(err)
 		}

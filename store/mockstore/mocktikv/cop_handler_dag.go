@@ -173,15 +173,18 @@ func (h *rpcHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) (*
 		return nil, errors.Trace(err)
 	}
 
-	return &tableScanExec{
+	e := &tableScanExec{
 		TableScan:      executor.TblScan,
 		kvRanges:       ranges,
 		colIDs:         ctx.evalCtx.colIDs,
 		startTS:        ctx.dagReq.GetStartTs(),
 		isolationLevel: h.isolationLevel,
 		mvccStore:      h.mvccStore,
-		counts:         make([]int64, len(ranges)),
-	}, nil
+	}
+	if ctx.dagReq.CollectRangeCounts != nil && *ctx.dagReq.CollectRangeCounts {
+		e.counts = make([]int64, len(ranges))
+	}
+	return e, nil
 }
 
 func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) (*indexScanExec, error) {
@@ -207,7 +210,7 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) (*
 		return nil, errors.Trace(err)
 	}
 
-	return &indexScanExec{
+	e := &indexScanExec{
 		IndexScan:      executor.IdxScan,
 		kvRanges:       ranges,
 		colsLen:        len(columns),
@@ -215,8 +218,11 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) (*
 		isolationLevel: h.isolationLevel,
 		mvccStore:      h.mvccStore,
 		pkStatus:       pkStatus,
-		counts:         make([]int64, len(ranges)),
-	}, nil
+	}
+	if ctx.dagReq.CollectRangeCounts != nil && *ctx.dagReq.CollectRangeCounts {
+		e.counts = make([]int64, len(ranges))
+	}
+	return e, nil
 }
 
 func (h *rpcHandler) buildSelection(ctx *dagContext, executor *tipb.Executor) (*selectionExec, error) {
@@ -485,9 +491,11 @@ func (mock *mockCopStreamClient) Recv() (*coprocessor.Response, error) {
 	}
 	// The counts was the output count of each executor, but now it is the scan count of each range,
 	// so we need a flag to tell them apart.
-	streamResponse.OutputCounts = make([]int64, 1+len(counts))
-	copy(streamResponse.OutputCounts, counts)
-	streamResponse.OutputCounts[len(counts)] = -1
+	if counts != nil {
+		streamResponse.OutputCounts = make([]int64, 1+len(counts))
+		copy(streamResponse.OutputCounts, counts)
+		streamResponse.OutputCounts[len(counts)] = -1
+	}
 	resp.Data, err = proto.Marshal(&streamResponse)
 	if err != nil {
 		resp.OtherError = err.Error()
@@ -528,7 +536,9 @@ func buildResp(chunks []tipb.Chunk, counts []int64, err error, warnings []error)
 	resp := &coprocessor.Response{}
 	// The counts was the output count of each executor, but now it is the scan count of each range,
 	// so we need a flag to tell them apart.
-	counts = append(counts, -1)
+	if counts != nil {
+		counts = append(counts, -1)
+	}
 	selResp := &tipb.SelectResponse{
 		Error:        toPBError(err),
 		Chunks:       chunks,

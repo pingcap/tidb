@@ -62,6 +62,8 @@ type Histogram struct {
 	// Used for estimating fraction of the interval [lower, upper] that lies within the [lower, value].
 	// For some types like `Int`, we do not build it because we can get them directly from `Bounds`.
 	scalars []scalar
+	// TotColSize is the total column size for the histogram.
+	TotColSize int64
 }
 
 // Bucket store the bucket count and repeat.
@@ -77,7 +79,7 @@ type scalar struct {
 }
 
 // NewHistogram creates a new histogram.
-func NewHistogram(id, ndv, nullCount int64, version uint64, tp *types.FieldType, bucketSize int) *Histogram {
+func NewHistogram(id, ndv, nullCount int64, version uint64, tp *types.FieldType, bucketSize int, totColSize int64) *Histogram {
 	return &Histogram{
 		ID:                id,
 		NDV:               ndv,
@@ -86,6 +88,7 @@ func NewHistogram(id, ndv, nullCount int64, version uint64, tp *types.FieldType,
 		tp:                tp,
 		Bounds:            chunk.NewChunkWithCapacity([]*types.FieldType{tp}, 2*bucketSize),
 		Buckets:           make([]Bucket, 0, bucketSize),
+		TotColSize:        totColSize,
 	}
 }
 
@@ -99,6 +102,26 @@ func (hg *Histogram) GetLower(idx int) *types.Datum {
 func (hg *Histogram) GetUpper(idx int) *types.Datum {
 	d := hg.Bounds.GetRow(2*idx+1).GetDatum(0, hg.tp)
 	return &d
+}
+
+// AvgColSize is the average column size of the histogram.
+func (c *Column) AvgColSize() float64 {
+	switch c.Histogram.tp.Tp {
+	case mysql.TypeFloat:
+		return 4
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong,
+		mysql.TypeDouble, mysql.TypeYear:
+		return 8
+	case mysql.TypeDuration, mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+		return 16
+	case mysql.TypeNewDecimal:
+		return types.MyDecimalStructSize
+	default:
+		if c.Count == 0 {
+			return 0
+		}
+		return float64(c.TotColSize) / float64(c.Count)
+	}
 }
 
 // AppendBucket appends a bucket into `hg`.
@@ -132,7 +155,7 @@ func (hg *Histogram) DecodeTo(tp *types.FieldType, timeZone *time.Location) erro
 
 // ConvertTo converts the histogram bucket values into `tp`.
 func (hg *Histogram) ConvertTo(sc *stmtctx.StatementContext, tp *types.FieldType) (*Histogram, error) {
-	hist := NewHistogram(hg.ID, hg.NDV, hg.NullCount, hg.LastUpdateVersion, tp, hg.Len())
+	hist := NewHistogram(hg.ID, hg.NDV, hg.NullCount, hg.LastUpdateVersion, tp, hg.Len(), hg.TotColSize)
 	iter := chunk.NewIterator4Chunk(hg.Bounds)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		d := row.GetDatum(0, hg.tp)
@@ -158,7 +181,7 @@ func HistogramEqual(a, b *Histogram, ignoreID bool) bool {
 		b.ID = a.ID
 		defer func() { b.ID = old }()
 	}
-	return bytes.Equal([]byte(a.toString(false)), []byte(b.toString(false)))
+	return bytes.Equal([]byte(a.ToString(0)), []byte(b.ToString(0)))
 }
 
 // SaveStatsToStorage saves the stats to storage.
@@ -180,8 +203,8 @@ func SaveStatsToStorage(sctx sessionctx.Context, tableID int64, count int64, isI
 	if err != nil {
 		return errors.Trace(err)
 	}
-	replaceSQL = fmt.Sprintf("replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch) values (%d, %d, %d, %d, %d, %d, X'%X')",
-		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, data)
+	replaceSQL = fmt.Sprintf("replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size) values (%d, %d, %d, %d, %d, %d, X'%X', %d)",
+		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, data, hg.TotColSize)
 	_, err = exec.Execute(ctx, replaceSQL)
 	if err != nil {
 		return errors.Trace(err)
@@ -217,14 +240,14 @@ func SaveStatsToStorage(sctx sessionctx.Context, tableID int64, count int64, isI
 	return errors.Trace(err)
 }
 
-func histogramFromStorage(ctx sessionctx.Context, tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int, ver uint64, nullCount int64) (*Histogram, error) {
+func histogramFromStorage(ctx sessionctx.Context, tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int, ver uint64, nullCount int64, totColSize int64) (*Histogram, error) {
 	selSQL := fmt.Sprintf("select count, repeats, lower_bound, upper_bound from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d order by bucket_id", tableID, isIndex, colID)
 	rows, fields, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, selSQL)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	bucketSize := len(rows)
-	hg := NewHistogram(colID, distinct, nullCount, ver, tp, bucketSize)
+	hg := NewHistogram(colID, distinct, nullCount, ver, tp, bucketSize, totColSize)
 	totalCount := int64(0)
 	for i := 0; i < bucketSize; i++ {
 		count := rows[i].GetInt64(0)
@@ -264,17 +287,35 @@ func columnCountFromStorage(ctx sessionctx.Context, tableID, colID int64) (int64
 	return rows[0].GetMyDecimal(0).ToInt()
 }
 
-func (hg *Histogram) toString(isIndex bool) string {
+// ValueToString converts a possible encoded value to a formatted string. If the value is encoded, then
+// idxCols equals to number of origin values, else idxCols is 0.
+func ValueToString(value *types.Datum, idxCols int) (string, error) {
+	if idxCols == 0 {
+		return value.ToString()
+	}
+	decodedVals, err := codec.Decode(value.GetBytes(), idxCols)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	str, err := types.DatumsToString(decodedVals)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	return str, nil
+}
+
+// ToString gets the string representation for the histogram.
+func (hg *Histogram) ToString(idxCols int) string {
 	strs := make([]string, 0, hg.Len()+1)
-	if isIndex {
+	if idxCols > 0 {
 		strs = append(strs, fmt.Sprintf("index:%d ndv:%d", hg.ID, hg.NDV))
 	} else {
 		strs = append(strs, fmt.Sprintf("column:%d ndv:%d", hg.ID, hg.NDV))
 	}
 	for i := 0; i < hg.Len(); i++ {
-		upperVal, err := hg.GetUpper(i).ToString()
+		upperVal, err := ValueToString(hg.GetUpper(i), idxCols)
 		terror.Log(errors.Trace(err))
-		lowerVal, err := hg.GetLower(i).ToString()
+		lowerVal, err := ValueToString(hg.GetLower(i), idxCols)
 		terror.Log(errors.Trace(err))
 		strs = append(strs, fmt.Sprintf("num: %d\tlower_bound: %s\tupper_bound: %s\trepeats: %d", hg.Buckets[i].Count, lowerVal, upperVal, hg.Buckets[i].Repeat))
 	}
@@ -495,7 +536,7 @@ func HistogramToProto(hg *Histogram) *tipb.Histogram {
 // be after all histograms merged.
 func HistogramFromProto(protoHg *tipb.Histogram) *Histogram {
 	tp := types.NewFieldType(mysql.TypeBlob)
-	hg := NewHistogram(0, protoHg.Ndv, 0, 0, tp, len(protoHg.Buckets))
+	hg := NewHistogram(0, protoHg.Ndv, 0, 0, tp, len(protoHg.Buckets), 0)
 	for _, bucket := range protoHg.Buckets {
 		lower, upper := types.NewBytesDatum(bucket.LowerBound), types.NewBytesDatum(bucket.UpperBound)
 		hg.AppendBucket(&lower, &upper, bucket.Count, bucket.Repeats)
@@ -570,7 +611,7 @@ type Column struct {
 }
 
 func (c *Column) String() string {
-	return c.Histogram.toString(false)
+	return c.Histogram.ToString(0)
 }
 
 func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum) (float64, error) {
@@ -635,7 +676,7 @@ type Index struct {
 }
 
 func (idx *Index) String() string {
-	return idx.Histogram.toString(true)
+	return idx.Histogram.ToString(len(idx.Info.Columns))
 }
 
 func (idx *Index) equalRowCount(sc *stmtctx.StatementContext, b []byte) float64 {

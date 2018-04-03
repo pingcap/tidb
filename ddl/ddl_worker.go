@@ -147,6 +147,16 @@ func (d *ddl) updateDDLJob(t *meta.Meta, job *model.Job, meetErr bool) error {
 	return errors.Trace(t.UpdateDDLJob(0, job, updateRawArgs))
 }
 
+func (d *ddl) deleteRange(job *model.Job) error {
+	var err error
+	if job.Version <= currentVersion {
+		err = d.delRangeManager.addDelRangeJob(job)
+	} else {
+		err = errInvalidJobVersion.GenByArgs(job.Version, currentVersion)
+	}
+	return errors.Trace(err)
+}
+
 // finishDDLJob deletes the finished DDL job in the ddl queue and puts it to history queue.
 // If the DDL job need to handle in background, it will prepare a background job.
 func (d *ddl) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
@@ -154,16 +164,19 @@ func (d *ddl) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	defer func() {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerFinishDDLJob, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
+
 	switch job.Type {
+	case model.ActionAddIndex:
+		if job.State != model.JobStateRollbackDone {
+			break
+		}
+		// After rolling back an AddIndex operation, we need to use delete-range to delete the half-done index data.
+		err = d.deleteRange(job)
 	case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex:
-		if job.Version <= currentVersion {
-			err = d.delRangeManager.addDelRangeJob(job)
-		} else {
-			err = errInvalidJobVersion.GenByArgs(job.Version, currentVersion)
-		}
-		if err != nil {
-			return errors.Trace(err)
-		}
+		err = d.deleteRange(job)
+	}
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	_, err = t.DeQueueDDLJob()
@@ -254,9 +267,9 @@ func (d *ddl) handleDDLJobQueue() error {
 		d.hookMu.Unlock()
 
 		// Here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
-		// If the job is done or still running, we will wait 2 * lease time to guarantee other servers to update
+		// If the job is done or still running or rolling back, we will wait 2 * lease time to guarantee other servers to update
 		// the newest schema.
-		if job.State == model.JobStateRunning || job.State == model.JobStateDone {
+		if job.IsRunning() || job.IsRollingback() || job.IsDone() {
 			d.waitSchemaChanged(nil, waitTime, schemaVer)
 		}
 		if job.IsSynced() {
@@ -283,7 +296,7 @@ func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) (ver int64, err error) {
 		// If the value of SnapshotVer isn't zero, it means the work is backfilling the indexes.
 		if job.Type == model.ActionAddIndex && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
 			log.Infof("[ddl] run the cancelling DDL job %s", job)
-			asyncNotify(d.reorgCtx.notifyCancelReorgJob)
+			d.reorgCtx.notifyReorgCancel()
 		} else {
 			job.State = model.JobStateCancelled
 			job.Error = errCancelledDDLJob
@@ -329,6 +342,8 @@ func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) (ver int64, err error) {
 		ver, err = d.onSetDefaultValue(t, job)
 	case model.ActionShardRowID:
 		ver, err = d.onShardRowID(t, job)
+	case model.ActionModifyTableComment:
+		ver, err = d.onModifyTableComment(t, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled
@@ -417,7 +432,7 @@ func (d *ddl) waitSchemaChanged(ctx context.Context, waitTime time.Duration, lat
 // So here we get the latest schema version to make sure all servers' schema version update to the latest schema version
 // in a cluster, or to wait for 2 * lease time.
 func (d *ddl) waitSchemaSynced(job *model.Job, waitTime time.Duration) {
-	if !job.IsRunning() && !job.IsDone() {
+	if !job.IsRunning() && !job.IsRollingback() && !job.IsDone() {
 		return
 	}
 	// TODO: Make ctx exits when the d is close.

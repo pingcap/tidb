@@ -30,9 +30,6 @@ import (
 )
 
 const (
-	// Default number of buckets a column histogram has.
-	defaultBucketCount = 256
-
 	// When we haven't analyzed a table, we use pseudo statistics to estimate costs.
 	// It has row count 10000, equal condition selects 1/1000 of total rows, less condition selects 1/3 of total rows,
 	// between condition selects 1/40 of total rows.
@@ -93,7 +90,7 @@ func (h *Handle) indexStatsFromStorage(row types.Row, table *Table, tableInfo *m
 			continue
 		}
 		if idx == nil || idx.LastUpdateVersion < histVer {
-			hg, err := histogramFromStorage(h.ctx, tableInfo.ID, histID, types.NewFieldType(mysql.TypeBlob), distinct, 1, histVer, nullCount)
+			hg, err := histogramFromStorage(h.ctx, tableInfo.ID, histID, types.NewFieldType(mysql.TypeBlob), distinct, 1, histVer, nullCount, 0)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -118,6 +115,7 @@ func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *
 	distinct := row.GetInt64(3)
 	histVer := row.GetUint64(4)
 	nullCount := row.GetInt64(5)
+	totColSize := row.GetInt64(6)
 	col := table.Columns[histID]
 	for _, colInfo := range tableInfo.Columns {
 		if histID != colInfo.ID {
@@ -131,13 +129,13 @@ func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *
 				return errors.Trace(err)
 			}
 			col = &Column{
-				Histogram: Histogram{ID: histID, NDV: distinct, NullCount: nullCount, LastUpdateVersion: histVer},
+				Histogram: Histogram{ID: histID, NDV: distinct, NullCount: nullCount, tp: &colInfo.FieldType, LastUpdateVersion: histVer, TotColSize: totColSize},
 				Info:      colInfo,
 				Count:     count}
 			break
 		}
 		if col == nil || col.LastUpdateVersion < histVer || loadAll {
-			hg, err := histogramFromStorage(h.ctx, tableInfo.ID, histID, &colInfo.FieldType, distinct, 0, histVer, nullCount)
+			hg, err := histogramFromStorage(h.ctx, tableInfo.ID, histID, &colInfo.FieldType, distinct, 0, histVer, nullCount, totColSize)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -163,7 +161,7 @@ func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *
 // tableStatsFromStorage loads table stats info from storage.
 func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, loadAll bool) (*Table, error) {
 	table, ok := h.statsCache.Load().(statsCache)[tableInfo.ID]
-	if !ok {
+	if !ok || table.Pseudo {
 		table = &Table{
 			TableID: tableInfo.ID,
 			Columns: make(map[int64]*Column, len(tableInfo.Columns)),
@@ -173,7 +171,7 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, loadAll bool)
 		// We copy it before writing to avoid race.
 		table = table.copy()
 	}
-	selSQL := fmt.Sprintf("select table_id, is_index, hist_id, distinct_count, version, null_count from mysql.stats_histograms where table_id = %d", tableInfo.ID)
+	selSQL := fmt.Sprintf("select table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size from mysql.stats_histograms where table_id = %d", tableInfo.ID)
 	rows, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, selSQL)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -327,7 +325,11 @@ func (t *Table) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, colID in
 func (t *Table) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idxID int64, indexRanges []*ranger.NewRange) (float64, error) {
 	idx := t.Indices[idxID]
 	if t.Pseudo || idx == nil || idx.Len() == 0 {
-		return getPseudoRowCountByIndexRanges(sc, indexRanges, float64(t.Count))
+		colsLen := -1
+		if idx != nil && idx.Info.Unique {
+			colsLen = len(idx.Info.Columns)
+		}
+		return getPseudoRowCountByIndexRanges(sc, indexRanges, float64(t.Count), colsLen)
 	}
 	result, err := idx.getRowCount(sc, indexRanges)
 	result *= idx.getIncreaseFactor(t.Count)
@@ -335,18 +337,29 @@ func (t *Table) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idxID int
 }
 
 // PseudoTable creates a pseudo table statistics.
-func PseudoTable(tableID int64) *Table {
-	return &Table{
-		TableID: tableID,
+func PseudoTable(tblInfo *model.TableInfo) *Table {
+	t := &Table{
+		TableID: tblInfo.ID,
 		Pseudo:  true,
 		Count:   pseudoRowCount,
-		Columns: make(map[int64]*Column),
-		Indices: make(map[int64]*Index),
+		Columns: make(map[int64]*Column, len(tblInfo.Columns)),
+		Indices: make(map[int64]*Index, len(tblInfo.Indices)),
 	}
+	for _, col := range tblInfo.Columns {
+		if col.State == model.StatePublic {
+			t.Columns[col.ID] = &Column{Info: col}
+		}
+	}
+	for _, idx := range tblInfo.Indices {
+		if idx.State == model.StatePublic {
+			t.Indices[idx.ID] = &Index{Info: idx}
+		}
+	}
+	return t
 }
 
 func getPseudoRowCountByIndexRanges(sc *stmtctx.StatementContext, indexRanges []*ranger.NewRange,
-	tableRowCount float64) (float64, error) {
+	tableRowCount float64, colsLen int) (float64, error) {
 	if tableRowCount == 0 {
 		return 0, nil
 	}
@@ -356,6 +369,10 @@ func getPseudoRowCountByIndexRanges(sc *stmtctx.StatementContext, indexRanges []
 		i, err := indexRange.PrefixEqualLen(sc)
 		if err != nil {
 			return 0, errors.Trace(err)
+		}
+		if i == colsLen && !indexRange.LowExclude && !indexRange.HighExclude {
+			totalCount += 1.0
+			continue
 		}
 		if i >= len(indexRange.LowVal) {
 			i = len(indexRange.LowVal) - 1
@@ -430,7 +447,7 @@ func getPseudoRowCountBySignedIntRanges(intRanges []*ranger.NewRange, tableRowCo
 			cnt = tableRowCount / pseudoLessRate
 		} else {
 			if low == high {
-				cnt = tableRowCount / pseudoEqualRate
+				cnt = 1 // When primary key is handle, the equal row count is at most one.
 			} else {
 				cnt = tableRowCount / pseudoBetweenRate
 			}
@@ -460,7 +477,7 @@ func getPseudoRowCountByUnsignedIntRanges(intRanges []*ranger.NewRange, tableRow
 			cnt = tableRowCount / pseudoLessRate
 		} else {
 			if low == high {
-				cnt = tableRowCount / pseudoEqualRate
+				cnt = 1 // When primary key is handle, the equal row count is at most one.
 			} else {
 				cnt = tableRowCount / pseudoBetweenRate
 			}

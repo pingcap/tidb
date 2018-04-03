@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	log "github.com/sirupsen/logrus"
@@ -80,35 +79,13 @@ func schema2ResultFields(schema *expression.Schema, defaultDB string) (rfs []*as
 	return rfs
 }
 
-// Next uses recordSet's executor to get next available row.
-// If row is nil, then updates LastFoundRows in session variable.
-// If stmt and row are not nil, increase current FoundRows by 1.
-func (a *recordSet) Next(ctx context.Context) (types.Row, error) {
-	row, err := a.executor.Next(ctx)
-	if err != nil {
-		a.lastErr = err
-		return nil, errors.Trace(err)
-	}
-	if row == nil {
-		if a.stmt != nil {
-			a.stmt.Ctx.GetSessionVars().LastFoundRows = a.stmt.Ctx.GetSessionVars().StmtCtx.FoundRows()
-		}
-		return nil, nil
-	}
-
-	if a.stmt != nil {
-		a.stmt.Ctx.GetSessionVars().StmtCtx.AddFoundRows(1)
-	}
-	return row, nil
-}
-
-// NextChunk use uses recordSet's executor to get next available chunk for later usage.
+// Next use uses recordSet's executor to get next available chunk for later usage.
 // If chunk does not contain any rows, then we update last query found rows in session variable as current found rows.
 // The reason we need update is that chunk with 0 rows indicating we already finished current query, we need prepare for
 // next query.
 // If stmt is not nil and chunk with some rows inside, we simply update last query found rows by the number of row in chunk.
-func (a *recordSet) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
-	err := a.executor.NextChunk(ctx, chk)
+func (a *recordSet) Next(ctx context.Context, chk *chunk.Chunk) error {
+	err := a.executor.Next(ctx, chk)
 	if err != nil {
 		a.lastErr = err
 		return errors.Trace(err)
@@ -285,7 +262,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 		a.logSlowQuery(txnTS, err == nil)
 	}()
 
-	err = e.NextChunk(ctx, e.newChunk())
+	err = e.Next(ctx, e.newChunk())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

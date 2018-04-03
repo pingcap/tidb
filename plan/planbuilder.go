@@ -170,6 +170,10 @@ type planBuilder struct {
 	// rewriterCounter counts how many rewriter is being used.
 	rewriterPool    []*expressionRewriter
 	rewriterCounter int
+
+	// inStraightJoin represents whether the current "SELECT" statement has
+	// "STRAIGHT_JOIN" option.
+	inStraightJoin bool
 }
 
 func (b *planBuilder) build(node ast.Node) Plan {
@@ -487,6 +491,10 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 		p := &RecoverIndex{Table: as.Tables[0], IndexName: as.Index}
 		p.SetSchema(buildRecoverIndexFields())
 		ret = p
+	case ast.AdminCleanupIndex:
+		p := &CleanupIndex{Table: as.Tables[0], IndexName: as.Index}
+		p.SetSchema(buildCleanupIndexFields())
+		ret = p
 	case ast.AdminChecksumTable:
 		p := &ChecksumTable{Tables: as.Tables}
 		p.SetSchema(buildChecksumTableSchema())
@@ -658,6 +666,12 @@ func buildRecoverIndexFields() *expression.Schema {
 	schema := expression.NewSchema(make([]*expression.Column, 0, 2)...)
 	schema.Append(buildColumn("", "ADDED_COUNT", mysql.TypeLonglong, 4))
 	schema.Append(buildColumn("", "SCAN_COUNT", mysql.TypeLonglong, 4))
+	return schema
+}
+
+func buildCleanupIndexFields() *expression.Schema {
+	schema := expression.NewSchema(make([]*expression.Column, 0, 1)...)
+	schema.Append(buildColumn("", "REMOVED_COUNT", mysql.TypeLonglong, 4))
 	return schema
 }
 
@@ -1370,9 +1384,9 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 		names = []string{"Db_name", "Table_name", "Update_time", "Modify_count", "Row_count"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDatetime, mysql.TypeLonglong, mysql.TypeLonglong}
 	case ast.ShowStatsHistograms:
-		names = []string{"Db_name", "Table_name", "Column_name", "Is_index", "Update_time", "Distinct_count", "Null_count"}
+		names = []string{"Db_name", "Table_name", "Column_name", "Is_index", "Update_time", "Distinct_count", "Null_count", "Avg_col_size"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeTiny, mysql.TypeDatetime,
-			mysql.TypeLonglong, mysql.TypeLonglong}
+			mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeDouble}
 	case ast.ShowStatsBuckets:
 		names = []string{"Db_name", "Table_name", "Column_name", "Is_index", "Bucket_id", "Count",
 			"Repeats", "Lower_Bound", "Upper_Bound"}

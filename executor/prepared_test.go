@@ -105,7 +105,7 @@ func (s *testSuite) TestPrepared(c *C) {
 		rs, err = stmt.Exec(ctx)
 		c.Assert(err, IsNil)
 		chk := rs.NewChunk()
-		err = rs.NextChunk(ctx, chk)
+		err = rs.Next(ctx, chk)
 		c.Assert(err, IsNil)
 		c.Assert(rs.Close(), IsNil)
 
@@ -176,7 +176,7 @@ func (s *testSuite) TestPrepared(c *C) {
 
 		// Coverage.
 		exec := &executor.ExecuteExec{}
-		exec.NextChunk(ctx, nil)
+		exec.Next(ctx, nil)
 		exec.Close()
 	}
 	cfg.PreparedPlanCache.Enabled = orgEnable

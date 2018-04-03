@@ -427,6 +427,7 @@ type MVCCStore interface {
 	ScanLock(startKey, endKey []byte, maxTS uint64) ([]*kvrpcpb.LockInfo, error)
 	ResolveLock(startKey, endKey []byte, startTS, commitTS uint64) error
 	BatchResolveLock(startKey, endKey []byte, txnInfos map[uint64]uint64) error
+	DeleteRange(startKey, endKey []byte) error
 }
 
 // RawKV is a key-value storage. MVCCStore can be implemented upon it with timestamp encoded into key.
@@ -743,6 +744,27 @@ func (s *MvccStore) BatchResolveLock(startKey, endKey []byte, txnInfos map[uint6
 	return nil
 }
 
+// DeleteRange deletes all keys in the given range.
+func (s *MvccStore) DeleteRange(startKey, endKey []byte) error {
+	s.Lock()
+	defer s.Unlock()
+
+	var entriesToDelete []*mvccEntry
+
+	iterator := func(item btree.Item) bool {
+		entry := item.(*mvccEntry)
+		entriesToDelete = append(entriesToDelete, entry)
+		return true
+	}
+	s.tree.AscendRange(newEntry(startKey), newEntry(endKey), iterator)
+
+	for _, key := range entriesToDelete {
+		s.tree.Delete(key)
+	}
+
+	return nil
+}
+
 // RawGet queries value with the key.
 func (s *MvccStore) RawGet(key []byte) []byte {
 	s.RLock()
@@ -857,7 +879,7 @@ func (key MvccKey) Raw() []byte {
 	if len(key) == 0 {
 		return nil
 	}
-	_, k, err := codec.DecodeBytes(key)
+	_, k, err := codec.DecodeBytes(key, nil)
 	if err != nil {
 		panic(err)
 	}

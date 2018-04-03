@@ -591,6 +591,7 @@ const (
 	AdminCancelDDLJobs
 	AdminCheckIndex
 	AdminRecoverIndex
+	AdminCleanupIndex
 	AdminCheckIndexRange
 	AdminShowDDLJobQueries
 	AdminChecksumTable
@@ -785,6 +786,7 @@ type SelectStmtOpts struct {
 	Distinct      bool
 	SQLCache      bool
 	CalcFoundRows bool
+	StraightJoin  bool
 	Priority      mysql.PriorityEnum
 	TableHints    []*TableOptimizerHint
 }

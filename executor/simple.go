@@ -47,8 +47,8 @@ type SimpleExec struct {
 	is        infoschema.InfoSchema
 }
 
-// NextChunk implements the Executor NextChunk interface.
-func (e *SimpleExec) NextChunk(ctx context.Context, chk *chunk.Chunk) (err error) {
+// Next implements the Executor Next interface.
+func (e *SimpleExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 	if e.done {
 		return nil
 	}
@@ -206,7 +206,7 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 	}
 	if len(failedUsers) > 0 {
 		// Commit the transaction even if we returns error
-		err := e.ctx.Txn().Commit(context.Background())
+		err := e.ctx.Txn().Commit(sessionctx.SetConnID2Ctx(context.Background(), e.ctx))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -238,7 +238,7 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 	}
 	if len(failedUsers) > 0 {
 		// Commit the transaction even if we returns error
-		err := e.ctx.Txn().Commit(context.Background())
+		err := e.ctx.Txn().Commit(sessionctx.SetConnID2Ctx(context.Background(), e.ctx))
 		if err != nil {
 			return errors.Trace(err)
 		}

@@ -237,24 +237,68 @@ func extractTableAlias(p LogicalPlan) *model.CIStr {
 	return nil
 }
 
-func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
-	if join.Right == nil {
-		return b.buildResultSetNode(join.Left)
-	}
-	b.optFlag = b.optFlag | flagPredicatePushDown
-	leftPlan := b.buildResultSetNode(join.Left)
-	if b.err != nil {
+func (p *LogicalJoin) setPreferredJoinType(hintInfo *tableHintInfo) error {
+	if hintInfo == nil {
 		return nil
 	}
-	rightPlan := b.buildResultSetNode(join.Right)
+
+	lhsAlias := extractTableAlias(p.children[0])
+	rhsAlias := extractTableAlias(p.children[1])
+
+	if hintInfo.ifPreferMergeJoin(lhsAlias, rhsAlias) {
+		p.preferJoinType |= preferMergeJoin
+	}
+	if hintInfo.ifPreferHashJoin(lhsAlias, rhsAlias) {
+		p.preferJoinType |= preferHashJoin
+	}
+	if hintInfo.ifPreferINLJ(lhsAlias) {
+		p.preferJoinType |= preferLeftAsIndexOuter
+	}
+	if hintInfo.ifPreferINLJ(rhsAlias) {
+		p.preferJoinType |= preferRightAsIndexOuter
+	}
+
+	// If there're multiple join types and one of them is not index join hint,
+	// then there is a conflict of join types.
+	if bits.OnesCount(p.preferJoinType) > 1 && (p.preferJoinType^preferRightAsIndexOuter^preferLeftAsIndexOuter) > 0 {
+		return errors.New("Join hints are conflict, you can only specify one type of join")
+	}
+	return nil
+}
+
+func (b *planBuilder) buildJoin(joinNode *ast.Join) LogicalPlan {
+	// We will construct a "Join" node for some statements like "INSERT",
+	// "DELETE", "UPDATE", "REPLACE". For this scenario "joinNode.Right" is nil
+	// and we only build the left "ResultSetNode".
+	if joinNode.Right == nil {
+		return b.buildResultSetNode(joinNode.Left)
+	}
+
+	b.optFlag = b.optFlag | flagPredicatePushDown
+
+	leftPlan := b.buildResultSetNode(joinNode.Left)
 	if b.err != nil {
 		return nil
 	}
 
-	newSchema := expression.MergeSchema(leftPlan.Schema(), rightPlan.Schema())
-	joinPlan := LogicalJoin{}.init(b.ctx)
+	rightPlan := b.buildResultSetNode(joinNode.Right)
+	if b.err != nil {
+		return nil
+	}
+
+	joinPlan := LogicalJoin{StraightJoin: joinNode.StraightJoin || b.inStraightJoin}.init(b.ctx)
 	joinPlan.SetChildren(leftPlan, rightPlan)
-	joinPlan.SetSchema(newSchema)
+	joinPlan.SetSchema(expression.MergeSchema(leftPlan.Schema(), rightPlan.Schema()))
+
+	// Set join type.
+	switch joinNode.Tp {
+	case ast.LeftJoin:
+		joinPlan.JoinType = LeftOuterJoin
+	case ast.RightJoin:
+		joinPlan.JoinType = RightOuterJoin
+	default:
+		joinPlan.JoinType = InnerJoin
+	}
 
 	// Merge sub join's redundantSchema into this join plan. When handle query like
 	// select t2.a from (t1 join t2 using (a)) join t3 using (a);
@@ -268,43 +312,35 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 	}
 	joinPlan.redundantSchema = expression.MergeSchema(lRedundant, rRedundant)
 
-	if b.TableHints() != nil {
-		leftAlias := extractTableAlias(leftPlan)
-		rightAlias := extractTableAlias(rightPlan)
-		if b.TableHints().ifPreferMergeJoin(leftAlias, rightAlias) {
-			joinPlan.preferJoinType |= preferMergeJoin
-		}
-		if b.TableHints().ifPreferHashJoin(leftAlias, rightAlias) {
-			joinPlan.preferJoinType |= preferHashJoin
-		}
-		if b.TableHints().ifPreferINLJ(leftAlias) {
-			joinPlan.preferJoinType |= preferLeftAsIndexOuter
-		}
-		if b.TableHints().ifPreferINLJ(rightAlias) {
-			joinPlan.preferJoinType |= preferRightAsIndexOuter
-		}
-		// If there're multiple join type and one of them is not the index join hints, then is conflict.
-		if bits.OnesCount(joinPlan.preferJoinType) > 1 && (joinPlan.preferJoinType^preferRightAsIndexOuter^preferLeftAsIndexOuter) > 0 {
-			b.err = errors.New("Join hints are conflict, you can only specify one type of join")
-			return nil
-		}
+	// Set preferred join algorithm if some join hints is specified by user.
+	err := joinPlan.setPreferredJoinType(b.TableHints())
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
 	}
 
-	if join.NaturalJoin {
-		if err := b.buildNaturalJoin(joinPlan, leftPlan, rightPlan, join); err != nil {
-			b.err = err
+	// "NATURAL JOIN" doesn't have "ON" or "USING" conditions.
+	//
+	// The "NATURAL [LEFT] JOIN" of two tables is defined to be semantically
+	// equivalent to an "INNER JOIN" or a "LEFT JOIN" with a "USING" clause
+	// that names all columns that exist in both tables.
+	//
+	// See https://dev.mysql.com/doc/refman/5.7/en/join.html for more detail.
+	if joinNode.NaturalJoin {
+		if err = b.buildNaturalJoin(joinPlan, leftPlan, rightPlan, joinNode); err != nil {
+			b.err = errors.Trace(err)
 			return nil
 		}
-	} else if join.Using != nil {
-		if err := b.buildUsingClause(joinPlan, leftPlan, rightPlan, join); err != nil {
-			b.err = err
+	} else if joinNode.Using != nil {
+		if err = b.buildUsingClause(joinPlan, leftPlan, rightPlan, joinNode); err != nil {
+			b.err = errors.Trace(err)
 			return nil
 		}
-	} else if join.On != nil {
+	} else if joinNode.On != nil {
 		b.curClause = onClause
-		onExpr, newPlan, err := b.rewrite(join.On.Expr, joinPlan, nil, false)
+		onExpr, newPlan, err := b.rewrite(joinNode.On.Expr, joinPlan, nil, false)
 		if err != nil {
-			b.err = err
+			b.err = errors.Trace(err)
 			return nil
 		}
 		if newPlan != joinPlan {
@@ -314,23 +350,22 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 		onCondition := expression.SplitCNFItems(onExpr)
 		joinPlan.attachOnConds(onCondition)
 	} else if joinPlan.JoinType == InnerJoin {
+		// If a inner join without "ON" or "USING" clause, it's a cartesian
+		// product over the join tables.
 		joinPlan.cartesianJoin = true
 	}
-	if join.Tp == ast.LeftJoin {
-		joinPlan.JoinType = LeftOuterJoin
-	} else if join.Tp == ast.RightJoin {
-		joinPlan.JoinType = RightOuterJoin
-	} else {
-		joinPlan.JoinType = InnerJoin
-	}
+
 	return joinPlan
 }
 
-// buildUsingClause do redundant column elimination and column ordering based on using clause.
-// According to standard SQL, producing this display order:
-// First, coalesced common columns of the two joined tables, in the order in which they occur in the first table.
-// Second, columns unique to the first table, in order in which they occur in that table.
-// Third, columns unique to the second table, in order in which they occur in that table.
+// buildUsingClause eliminate the redundant columns and ordering columns based
+// on the "USING" clause.
+//
+// According to the standard SQL, columns are ordered in the following way:
+// 1. coalesced common columns of "leftPlan" and "rightPlan", in the order they
+//    appears in "leftPlan".
+// 2. the rest columns in "leftPlan", in the order they appears in "leftPlan".
+// 3. the rest columns in "rightPlan", in the order they appears in "rightPlan".
 func (b *planBuilder) buildUsingClause(p *LogicalJoin, leftPlan, rightPlan LogicalPlan, join *ast.Join) error {
 	filter := make(map[string]bool, len(join.Using))
 	for _, col := range join.Using {
@@ -339,7 +374,7 @@ func (b *planBuilder) buildUsingClause(p *LogicalJoin, leftPlan, rightPlan Logic
 	return b.coalesceCommonColumns(p, leftPlan, rightPlan, join.Tp == ast.RightJoin, filter)
 }
 
-// buildNaturalJoin build natural join output schema. It find out all the common columns
+// buildNaturalJoin builds natural join output schema. It finds out all the common columns
 // then using the same mechanism as buildUsingClause to eliminate redundant columns and build join conditions.
 // According to standard SQL, producing this display order:
 // 	All the common columns
@@ -752,6 +787,11 @@ func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan 
 	}
 	if count > math.MaxUint64-offset {
 		count = math.MaxUint64 - offset
+	}
+	if offset+count == 0 {
+		tableDual := LogicalTableDual{RowCount: 0}.init(b.ctx)
+		tableDual.schema = src.Schema()
+		return tableDual
 	}
 	li := LogicalLimit{
 		Offset: offset,
@@ -1443,7 +1483,7 @@ func (b *planBuilder) popTableHints() {
 
 // TableHints returns the *tableHintInfo of PlanBuilder.
 func (b *planBuilder) TableHints() *tableHintInfo {
-	if b.tableHintInfo == nil || len(b.tableHintInfo) == 0 {
+	if len(b.tableHintInfo) == 0 {
 		return nil
 	}
 	return &(b.tableHintInfo[len(b.tableHintInfo)-1])
@@ -1455,6 +1495,11 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 		if b.pushTableHints(sel.TableHints) {
 			defer b.popTableHints()
 		}
+	}
+	if sel.SelectStmtOpts != nil {
+		origin := b.inStraightJoin
+		b.inStraightJoin = sel.SelectStmtOpts.StraightJoin
+		defer func() { b.inStraightJoin = origin }()
 	}
 
 	var (
@@ -1584,25 +1629,25 @@ var RatioOfPseudoEstimate = 0.7
 // 1. tidb-server started and statistics handle has not been initialized.
 // 2. table row count from statistics is zero.
 // 3. statistics is outdated.
-func (b *planBuilder) getStatsTable(tableID int64) *statistics.Table {
+func (b *planBuilder) getStatsTable(tblInfo *model.TableInfo) *statistics.Table {
 	statsHandle := domain.GetDomain(b.ctx).StatsHandle()
 
 	// 1. tidb-server started and statistics handle has not been initialized.
 	if statsHandle == nil {
-		return statistics.PseudoTable(tableID)
+		return statistics.PseudoTable(tblInfo)
 	}
 
-	statsTbl := statsHandle.GetTableStats(tableID)
+	statsTbl := statsHandle.GetTableStats(tblInfo)
 
 	// 2. table row count from statistics is zero.
 	if statsTbl.Count == 0 {
-		return statistics.PseudoTable(tableID)
+		return statistics.PseudoTable(tblInfo)
 	}
 
 	// 3. statistics is outdated.
 	if float64(statsTbl.ModifyCount)/float64(statsTbl.Count) > RatioOfPseudoEstimate {
 		countFromStats := statsTbl.Count
-		statsTbl = statistics.PseudoTable(tableID)
+		statsTbl = statistics.PseudoTable(tblInfo)
 		// Table row count from statistics is more meaningful than the
 		// pseudo row count in most cases.
 		statsTbl.Count = countFromStats
@@ -1642,7 +1687,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	ds := DataSource{
 		DBName:           dbName,
 		tableInfo:        tableInfo,
-		statisticTable:   b.getStatsTable(tableInfo.ID),
+		statisticTable:   b.getStatsTable(tableInfo),
 		indexHints:       tn.IndexHints,
 		availableIndices: availableIdxes,
 		Columns:          make([]*model.ColumnInfo, 0, len(columns)),

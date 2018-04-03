@@ -72,7 +72,7 @@ func mvccEncode(key []byte, ver uint64) []byte {
 // just returns the origin key.
 func mvccDecode(encodedKey []byte) ([]byte, uint64, error) {
 	// Skip DataPrefix
-	remainBytes, key, err := codec.DecodeBytes(encodedKey)
+	remainBytes, key, err := codec.DecodeBytes(encodedKey, nil)
 	if err != nil {
 		// should never happen
 		return nil, 0, errors.Trace(err)
@@ -861,6 +861,24 @@ func (mvcc *MVCCLevelDB) BatchResolveLock(startKey, endKey []byte, txnInfos map[
 		}
 		currKey = skip.currKey
 	}
+	return mvcc.db.Write(batch, nil)
+}
+
+// DeleteRange implements the MVCCStore interface.
+func (mvcc *MVCCLevelDB) DeleteRange(startKey, endKey []byte) error {
+	mvcc.mu.Lock()
+	defer mvcc.mu.Unlock()
+
+	batch := &leveldb.Batch{}
+
+	iter := mvcc.db.NewIterator(&util.Range{
+		Start: startKey,
+		Limit: endKey,
+	}, nil)
+	for iter.Next() {
+		batch.Delete(iter.Key())
+	}
+
 	return mvcc.db.Write(batch, nil)
 }
 

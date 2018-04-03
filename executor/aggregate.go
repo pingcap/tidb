@@ -74,8 +74,8 @@ func (e *HashAggExec) Open(ctx context.Context) error {
 	return nil
 }
 
-// NextChunk implements the Executor NextChunk interface.
-func (e *HashAggExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+// Next implements the Executor Next interface.
+func (e *HashAggExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	// In this stage we consider all data from src as a single group.
 	if !e.executed {
 		err := e.execute(ctx)
@@ -110,11 +110,11 @@ func (e *HashAggExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	}
 }
 
-// innerNextChunk fetches Chunks from src and update each aggregate function for each row in Chunk.
+// execute fetches Chunks from src and update each aggregate function for each row in Chunk.
 func (e *HashAggExec) execute(ctx context.Context) (err error) {
 	inputIter := chunk.NewIterator4Chunk(e.childrenResults[0])
 	for {
-		err := e.children[0].NextChunk(ctx, e.childrenResults[0])
+		err := e.children[0].Next(ctx, e.childrenResults[0])
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -141,42 +141,7 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 	}
 }
 
-// Next implements the Executor Next interface.
-func (e *HashAggExec) Next(ctx context.Context) (Row, error) {
-	// In this stage we consider all data from src as a single group.
-	if !e.executed {
-		for {
-			hasMore, err := e.innerNext(ctx)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if !hasMore {
-				break
-			}
-		}
-		if (e.groupMap.Len() == 0) && len(e.GroupByItems) == 0 {
-			// If no groupby and no data, we should add an empty group.
-			// For example:
-			// "select count(c) from t;" should return one row [0]
-			// "select count(c) from t group by c1;" should return empty result set.
-			e.groupMap.Put([]byte{}, []byte{})
-		}
-		e.executed = true
-	}
-
-	groupKey, _ := e.groupIterator.Next()
-	if groupKey == nil {
-		return nil, nil
-	}
-	retRow := make([]types.Datum, 0, len(e.AggFuncs))
-	aggCtxs := e.getContexts(groupKey)
-	for i, af := range e.AggFuncs {
-		retRow = append(retRow, af.GetResult(aggCtxs[i]))
-	}
-	return retRow, nil
-}
-
-func (e *HashAggExec) getGroupKey(row types.Row) ([]byte, error) {
+func (e *HashAggExec) getGroupKey(row chunk.Row) ([]byte, error) {
 	vals := make([]types.Datum, 0, len(e.GroupByItems))
 	for _, item := range e.GroupByItems {
 		v, err := item.Eval(row)
@@ -194,34 +159,6 @@ func (e *HashAggExec) getGroupKey(row types.Row) ([]byte, error) {
 		return nil, errors.Trace(err)
 	}
 	return e.groupKey, nil
-}
-
-// innerNext fetches a single row from src and update each aggregate function.
-// If the first return value is false, it means there is no more data from src.
-func (e *HashAggExec) innerNext(ctx context.Context) (ret bool, err error) {
-	srcRow, err := e.children[0].Next(ctx)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	if srcRow == nil {
-		return false, nil
-	}
-	e.executed = true
-	groupKey, err := e.getGroupKey(srcRow)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	if len(e.groupMap.Get(groupKey, e.groupVals[:0])) == 0 {
-		e.groupMap.Put(groupKey, []byte{})
-	}
-	aggCtxs := e.getContexts(groupKey)
-	for i, af := range e.AggFuncs {
-		err = af.Update(aggCtxs[i], e.sc, srcRow)
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-	}
-	return true, nil
 }
 
 func (e *HashAggExec) getContexts(groupKey []byte) []*aggregation.AggEvaluateContext {
@@ -280,8 +217,8 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 	return nil
 }
 
-// NextChunk implements the Executor NextChunk interface.
-func (e *StreamAggExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+// Next implements the Executor Next interface.
+func (e *StreamAggExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 
 	for !e.executed && chk.NumRows() < e.maxChunkSize {
@@ -327,7 +264,7 @@ func (e *StreamAggExec) fetchChildIfNecessary(ctx context.Context, chk *chunk.Ch
 		return nil
 	}
 
-	err := e.children[0].NextChunk(ctx, e.childrenResults[0])
+	err := e.children[0].Next(ctx, e.childrenResults[0])
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -347,19 +284,19 @@ func (e *StreamAggExec) fetchChildIfNecessary(ctx context.Context, chk *chunk.Ch
 }
 
 // appendResult2Chunk appends result of all the aggregation functions to the
-// result chunk, and realloc the evaluation context for each aggregation.
+// result chunk, and reset the evaluation context for each aggregation.
 func (e *StreamAggExec) appendResult2Chunk(chk *chunk.Chunk) {
 	e.rowBuffer = e.rowBuffer[:0]
 	for i, af := range e.AggFuncs {
 		e.rowBuffer = append(e.rowBuffer, af.GetResult(e.aggCtxs[i]))
-		e.aggCtxs[i] = af.CreateContext(e.ctx.GetSessionVars().StmtCtx)
+		af.ResetContext(e.ctx.GetSessionVars().StmtCtx, e.aggCtxs[i])
 	}
 	e.mutableRow.SetDatums(e.rowBuffer...)
 	chk.AppendRow(e.mutableRow.ToRow())
 }
 
 // meetNewGroup returns a value that represents if the new group is different from last group.
-func (e *StreamAggExec) meetNewGroup(row types.Row) (bool, error) {
+func (e *StreamAggExec) meetNewGroup(row chunk.Row) (bool, error) {
 	if len(e.GroupByItems) == 0 {
 		return false, nil
 	}

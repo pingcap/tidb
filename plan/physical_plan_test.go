@@ -172,8 +172,8 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 		},
 		// Test PK in index double read.
 		{
-			sql:  "select * from t where t.c = 1 and t.a = 1 order by t.d limit 1",
-			best: "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.a, 1)])->Limit, Table(t))->Limit",
+			sql:  "select * from t where t.c = 1 and t.a > 1 order by t.d limit 1",
+			best: "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([gt(test.t.a, 1)])->Limit, Table(t))->Limit",
 		},
 		// Test index filter condition push down.
 		{
@@ -183,6 +183,10 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 		{
 			sql:  "select * from t use index(e_d_c_str_prefix) where t.e_str = b'1110000'",
 			best: "IndexLookUp(Index(t.e_d_c_str_prefix)[[p,p]], Table(t))",
+		},
+		{
+			sql:  "select * from (select * from t use index() order by b) t left join t t1 on t.a=t1.a limit 10",
+			best: "IndexJoin{TableReader(Table(t)->TopN([test.t.b],0,10))->TopN([test.t.b],0,10)->TableReader(Table(t))}(test.t.a,t1.a)->Limit",
 		},
 	}
 	for _, tt := range tests {
@@ -616,22 +620,22 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnion(c *C) {
 		// Test simple union.
 		{
 			sql:  "select * from t union all select * from t",
-			best: "UnionAll{TableReader(Table(t))->Projection->TableReader(Table(t))->Projection}",
+			best: "UnionAll{TableReader(Table(t))->TableReader(Table(t))}",
 		},
 		// Test Order by + Union.
 		{
 			sql:  "select * from t union all (select * from t) order by a ",
-			best: "UnionAll{TableReader(Table(t))->Projection->TableReader(Table(t))->Projection}->Sort",
+			best: "UnionAll{TableReader(Table(t))->TableReader(Table(t))}->Sort",
 		},
 		// Test Limit + Union.
 		{
 			sql:  "select * from t union all (select * from t) limit 1",
-			best: "UnionAll{TableReader(Table(t)->Limit)->Projection->TableReader(Table(t)->Limit)->Projection}->Limit",
+			best: "UnionAll{TableReader(Table(t)->Limit)->TableReader(Table(t)->Limit)}->Limit",
 		},
 		// Test TopN + Union.
 		{
 			sql:  "select a from t union all (select c from t) order by a limit 1",
-			best: "UnionAll{TableReader(Table(t))->Projection->TableReader(Table(t))->Projection}->TopN([t.a],0,1)",
+			best: "UnionAll{TableReader(Table(t)->Limit)->IndexReader(Index(t.c_d_e)[[<nil>,+inf]]->Limit)}->TopN([t.a],0,1)",
 		},
 	}
 	for _, tt := range tests {
@@ -765,8 +769,8 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 		},
 		// Test stream agg + index double.
 		{
-			sql:  "select sum(e), avg(b + c) from t where c = 1 and e = 1 group by c",
-			best: "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t))->StreamAgg",
+			sql:  "select sum(e), avg(b + c) from t where c = 1 and b = 1 group by c",
+			best: "IndexLookUp(Index(t.c_d_e)[[1,1]], Table(t)->Sel([eq(test.t.b, 1)]))->StreamAgg",
 		},
 		// Test hash agg + order.
 		{
@@ -1011,7 +1015,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 			best: "TableReader(Table(t)->Sel([like(test.t.c_str, _abc, 92)]))->Projection",
 		},
 		{
-			sql:  "select a from t where c_str like 'abc%'",
+			sql:  `select a from t where c_str like 'abc%'`,
 			best: "IndexReader(Index(t.c_d_e_str)[[abc,abd)])->Projection",
 		},
 		{

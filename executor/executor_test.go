@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	gofail "github.com/coreos/gofail/runtime"
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -84,6 +85,7 @@ type testSuite struct {
 var mockTikv = flag.Bool("mockTikv", true, "use mock tikv store in executor test")
 
 func (s *testSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
 	s.autoIDStep = autoid.GetStep()
 	autoid.SetStep(5000)
 	s.Parser = parser.New()
@@ -111,10 +113,7 @@ func (s *testSuite) TearDownSuite(c *C) {
 	s.domain.Close()
 	s.store.Close()
 	autoid.SetStep(s.autoIDStep)
-}
-
-func (s *testSuite) SetUpTest(c *C) {
-	testleak.BeforeTest()
+	testleak.AfterTest(c)()
 }
 
 func (s *testSuite) TearDownTest(c *C) {
@@ -125,7 +124,6 @@ func (s *testSuite) TearDownTest(c *C) {
 		tableName := tb[0]
 		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
 	}
-	testleak.AfterTest(c)()
 }
 
 func (s *testSuite) TestAdmin(c *C) {
@@ -140,7 +138,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	r, err := tk.Exec("admin cancel ddl jobs 1")
 	c.Assert(err, IsNil, Commentf("err %v", err))
 	chk := r.NewChunk()
-	err = r.NextChunk(ctx, chk)
+	err = r.Next(ctx, chk)
 	c.Assert(err, IsNil)
 	row := chk.GetRow(0)
 	c.Assert(row.Len(), Equals, 2)
@@ -150,7 +148,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	r, err = tk.Exec("admin show ddl")
 	c.Assert(err, IsNil)
 	chk = r.NewChunk()
-	err = r.NextChunk(ctx, chk)
+	err = r.Next(ctx, chk)
 	c.Assert(err, IsNil)
 	row = chk.GetRow(0)
 	c.Assert(row.Len(), Equals, 4)
@@ -165,7 +163,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	// c.Assert(rowOwnerInfos[0], Equals, ownerInfos[0])
 	c.Assert(row.GetString(2), Equals, "")
 	chk = r.NewChunk()
-	err = r.NextChunk(ctx, chk)
+	err = r.Next(ctx, chk)
 	c.Assert(err, IsNil)
 	c.Assert(chk.NumRows() == 0, IsTrue)
 	err = txn.Rollback()
@@ -175,7 +173,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	r, err = tk.Exec("admin show ddl jobs")
 	c.Assert(err, IsNil)
 	chk = r.NewChunk()
-	err = r.NextChunk(ctx, chk)
+	err = r.Next(ctx, chk)
 	c.Assert(err, IsNil)
 	row = chk.GetRow(0)
 	c.Assert(row.Len(), Equals, 2)
@@ -758,7 +756,7 @@ func (s *testSuite) TestIssue2612(c *C) {
 	rs, err := tk.Exec(`select timediff(finish_at, create_at) from t;`)
 	c.Assert(err, IsNil)
 	chk := rs.NewChunk()
-	err = rs.NextChunk(context.Background(), chk)
+	err = rs.Next(context.Background(), chk)
 	c.Assert(err, IsNil)
 	c.Assert(chk.GetRow(0).GetDuration(0).String(), Equals, "-46:09:02")
 }
@@ -2050,8 +2048,8 @@ type checkRequestClient struct {
 	}
 }
 
-func (c *checkRequestClient) SendReq(ctx context.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
-	resp, err := c.Client.SendReq(ctx, addr, req)
+func (c *checkRequestClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	resp, err := c.Client.SendRequest(ctx, addr, req, timeout)
 	c.mu.RLock()
 	checkFlags := c.mu.checkFlags
 	c.mu.RUnlock()
@@ -2155,6 +2153,19 @@ func (s *testContextOptionSuite) TestAddIndexPriority(c *C) {
 	cli.mu.Unlock()
 	dom.Close()
 	store.Close()
+}
+
+func (s *testContextOptionSuite) TestAlterTableComment(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_1")
+	tk.MustExec("create table t_1 (c1 int, c2 int, c3 int default 1, index (c1)) comment = 'test table';")
+	tk.MustExec("alter table `t_1` comment 'this is table comment';")
+	result := tk.MustQuery("select table_comment from information_schema.tables where table_name = 't_1';")
+	result.Check(testkit.Rows("this is table comment"))
+	tk.MustExec("alter table `t_1` comment 'table t comment';")
+	result = tk.MustQuery("select table_comment from information_schema.tables where table_name = 't_1';")
+	result.Check(testkit.Rows("table t comment"))
 }
 
 func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
@@ -2299,7 +2310,7 @@ func (s *testSuite) TestBit(c *C) {
 	r, err := tk.Exec("select * from t where c1 = 2")
 	c.Assert(err, IsNil)
 	chk := r.NewChunk()
-	err = r.NextChunk(context.Background(), chk)
+	err = r.Next(context.Background(), chk)
 	c.Assert(err, IsNil)
 	c.Assert(types.BinaryLiteral(chk.GetRow(0).GetBytes(0)), DeepEquals, types.NewBinaryLiteralFromUint(2, -1))
 
@@ -2460,20 +2471,39 @@ func (s *testSuite) TestEarlyClose(c *C) {
 
 	ctx := context.Background()
 	for i := 0; i < 500; i++ {
-		rss, err := tk.Se.Execute(ctx, "select * from earlyclose order by id")
-		c.Assert(err, IsNil)
+		rss, err1 := tk.Se.Execute(ctx, "select * from earlyclose order by id")
+		c.Assert(err1, IsNil)
 		rs := rss[0]
 		chk := rs.NewChunk()
-		err = rs.NextChunk(ctx, chk)
+		err = rs.Next(ctx, chk)
 		c.Assert(err, IsNil)
 		rs.Close()
 	}
+
+	// Goroutine should not leak when error happen.
+	gofail.Enable("github.com/pingcap/tidb/store/tikv/handleTaskOnceError", `return(true)`)
+	defer gofail.Disable("github.com/pingcap/tidb/store/tikv/handleTaskOnceError")
+	rss, err := tk.Se.Execute(ctx, "select * from earlyclose")
+	c.Assert(err, IsNil)
+	rs := rss[0]
+	chk := rs.NewChunk()
+	err = rs.Next(ctx, chk)
+	c.Assert(err, NotNil)
+	rs.Close()
 }
 
 func (s *testSuite) TestIssue5666(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@profiling=1")
 	tk.MustQuery("SELECT QUERY_ID, SUM(DURATION) AS SUM_DURATION FROM INFORMATION_SCHEMA.PROFILING GROUP BY QUERY_ID;").Check(testkit.Rows("0 0"))
+}
+
+func (s *testSuite) TestIssue5341(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop table if exists test.t")
+	tk.MustExec("create table test.t(a char)")
+	tk.MustExec("insert into test.t value('a')")
+	tk.MustQuery("select * from test.t where a < 1 order by a limit 0;").Check(testkit.Rows())
 }
 
 func (s *testSuite) TestCheckIndex(c *C) {
@@ -2623,7 +2653,7 @@ func (s *testSuite) TestCoprocessorStreamingFlag(c *C) {
 		rs, err := tk.Se.Execute(ctx1, test.sql)
 		c.Assert(err, IsNil)
 		chk := rs[0].NewChunk()
-		err = rs[0].NextChunk(ctx, chk)
+		err = rs[0].Next(ctx, chk)
 		c.Assert(err, IsNil)
 		rs[0].Close()
 	}

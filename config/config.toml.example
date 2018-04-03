@@ -31,9 +31,6 @@ split-table = true
 # The limit of concurrent executed sessions.
 token-limit = 1000
 
-# Enable chunk executors.
-enable-chunk = true
-
 # Only print a log when out of memory quota.
 # Valid options: ["log", "cancel"]
 oom-action = "log"
@@ -138,6 +135,9 @@ stats-lease = "3s"
 
 # Run auto analyze worker on this tidb-server.
 run-auto-analyze = true
+
+# Probability to use the query feedback to update stats, 0 or 1 for always false/true.
+feedback-probability = 0.0
 
 [proxy-protocol]
 # PROXY protocol acceptable client networks.
