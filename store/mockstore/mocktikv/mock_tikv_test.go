@@ -16,10 +16,10 @@ package mocktikv
 import (
 	"strings"
 	"testing"
+	"bytes"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"bytes"
 )
 
 func TestT(t *testing.T) {
@@ -67,7 +67,7 @@ func (s *testMvccStore) rawPut(c *C, key []byte, value []byte) {
 
 func (s *testMvccStore) checkRawData(c *C, expected map[string]string) {
 	rawkv := s.store.(RawKV)
-	pairs := rawkv.RawScan([]byte(""), []byte("zzzzzzzz"), len(expected) + 1)
+	pairs := rawkv.RawScan([]byte(""), []byte("zzzzzzzz"), len(expected)+1)
 	c.Assert(len(pairs), Equals, len(expected))
 
 	actual := map[string]string{}
@@ -110,7 +110,6 @@ func (s *testMvccStore) TestRawDeleteRange(c *C) {
 	s.mustRawDeleteRange(c, []byte("c11"), []byte("c99"), testData)
 	s.mustRawDeleteRange(c, []byte("a"), []byte("z"), testData)
 }
-
 
 func (s *testMockTiKVSuite) SetUpTest(c *C) {
 	var err error
