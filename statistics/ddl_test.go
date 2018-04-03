@@ -32,14 +32,14 @@ func (s *testStatsCacheSuite) TestDDLAfterLoad(c *C) {
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
-	statsTbl := do.StatsHandle().GetTableStats(tableInfo.ID)
+	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
 	recordCount := 1000
 	for i := 0; i < recordCount; i++ {
 		testKit.MustExec("insert into t values (?, ?)", i, i+1)
 	}
 	testKit.MustExec("analyze table t")
-	statsTbl = do.StatsHandle().GetTableStats(tableInfo.ID)
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
 	// add column
 	testKit.MustExec("alter table t add column c10 int")
@@ -69,7 +69,7 @@ func (s *testStatsCacheSuite) TestDDLTable(c *C) {
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
 	c.Assert(err, IsNil)
 	h.Update(is)
-	statsTbl := h.GetTableStats(tableInfo.ID)
+	statsTbl := h.GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
 
 	testKit.MustExec("create table t1 (c1 int, c2 int, index idx(c1))")
@@ -80,7 +80,7 @@ func (s *testStatsCacheSuite) TestDDLTable(c *C) {
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
 	c.Assert(err, IsNil)
 	h.Update(is)
-	statsTbl = h.GetTableStats(tableInfo.ID)
+	statsTbl = h.GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
 }
 
@@ -104,7 +104,7 @@ func (s *testStatsCacheSuite) TestDDLHistogram(c *C) {
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
-	statsTbl := do.StatsHandle().GetTableStats(tableInfo.ID)
+	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
 	sc := new(stmtctx.StatementContext)
 	c.Check(statsTbl.Columns[tableInfo.Columns[2].ID].NullCount, Equals, int64(2))
@@ -118,7 +118,7 @@ func (s *testStatsCacheSuite) TestDDLHistogram(c *C) {
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo = tbl.Meta()
-	statsTbl = do.StatsHandle().GetTableStats(tableInfo.ID)
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
 	sc = new(stmtctx.StatementContext)
 	count, err := statsTbl.ColumnEqualRowCount(sc, types.NewIntDatum(0), tableInfo.Columns[3].ID)
@@ -136,7 +136,7 @@ func (s *testStatsCacheSuite) TestDDLHistogram(c *C) {
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo = tbl.Meta()
-	statsTbl = do.StatsHandle().GetTableStats(tableInfo.ID)
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	// If we don't use original default value, we will get a pseudo table.
 	c.Assert(statsTbl.Pseudo, IsFalse)
 
@@ -148,7 +148,7 @@ func (s *testStatsCacheSuite) TestDDLHistogram(c *C) {
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo = tbl.Meta()
-	statsTbl = do.StatsHandle().GetTableStats(tableInfo.ID)
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
 	sc = new(stmtctx.StatementContext)
 	c.Check(statsTbl.Columns[tableInfo.Columns[5].ID].AvgColSize(), Equals, 3.0)

@@ -161,7 +161,7 @@ func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *
 // tableStatsFromStorage loads table stats info from storage.
 func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, loadAll bool) (*Table, error) {
 	table, ok := h.statsCache.Load().(statsCache)[tableInfo.ID]
-	if !ok {
+	if !ok || table.Pseudo {
 		table = &Table{
 			TableID: tableInfo.ID,
 			Columns: make(map[int64]*Column, len(tableInfo.Columns)),
@@ -325,7 +325,11 @@ func (t *Table) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, colID in
 func (t *Table) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idxID int64, indexRanges []*ranger.NewRange) (float64, error) {
 	idx := t.Indices[idxID]
 	if t.Pseudo || idx == nil || idx.Len() == 0 {
-		return getPseudoRowCountByIndexRanges(sc, indexRanges, float64(t.Count))
+		colsLen := -1
+		if idx != nil && idx.Info.Unique {
+			colsLen = len(idx.Info.Columns)
+		}
+		return getPseudoRowCountByIndexRanges(sc, indexRanges, float64(t.Count), colsLen)
 	}
 	result, err := idx.getRowCount(sc, indexRanges)
 	result *= idx.getIncreaseFactor(t.Count)
@@ -333,18 +337,29 @@ func (t *Table) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idxID int
 }
 
 // PseudoTable creates a pseudo table statistics.
-func PseudoTable(tableID int64) *Table {
-	return &Table{
-		TableID: tableID,
+func PseudoTable(tblInfo *model.TableInfo) *Table {
+	t := &Table{
+		TableID: tblInfo.ID,
 		Pseudo:  true,
 		Count:   pseudoRowCount,
-		Columns: make(map[int64]*Column),
-		Indices: make(map[int64]*Index),
+		Columns: make(map[int64]*Column, len(tblInfo.Columns)),
+		Indices: make(map[int64]*Index, len(tblInfo.Indices)),
 	}
+	for _, col := range tblInfo.Columns {
+		if col.State == model.StatePublic {
+			t.Columns[col.ID] = &Column{Info: col}
+		}
+	}
+	for _, idx := range tblInfo.Indices {
+		if idx.State == model.StatePublic {
+			t.Indices[idx.ID] = &Index{Info: idx}
+		}
+	}
+	return t
 }
 
 func getPseudoRowCountByIndexRanges(sc *stmtctx.StatementContext, indexRanges []*ranger.NewRange,
-	tableRowCount float64) (float64, error) {
+	tableRowCount float64, colsLen int) (float64, error) {
 	if tableRowCount == 0 {
 		return 0, nil
 	}
@@ -354,6 +369,10 @@ func getPseudoRowCountByIndexRanges(sc *stmtctx.StatementContext, indexRanges []
 		i, err := indexRange.PrefixEqualLen(sc)
 		if err != nil {
 			return 0, errors.Trace(err)
+		}
+		if i == colsLen && !indexRange.LowExclude && !indexRange.HighExclude {
+			totalCount += 1.0
+			continue
 		}
 		if i >= len(indexRange.LowVal) {
 			i = len(indexRange.LowVal) - 1
