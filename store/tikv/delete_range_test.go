@@ -35,13 +35,12 @@ func (s *testDeleteRangeSuite) SetUpTest(c *C) {
 	s.OneByOneSuite.SetUpSuite(c)
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithMultiRegions(s.cluster, []byte("a"), []byte("b"), []byte("c"))
-	mvccStore := mocktikv.NewMvccStore()
-	client := mocktikv.NewRPCClient(s.cluster, mvccStore)
-	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
-	spkv := NewMockSafePointKV()
-	store, err := newTikvStore("mocktikv-store", pdCli, spkv, client, false)
+	client, pdClient, err := mocktikv.NewTestClient(s.cluster, nil, "")
 	c.Assert(err, IsNil)
-	s.store = store
+
+	store, err := NewTestTiKVStore(client, pdClient, nil, nil)
+	c.Check(err, IsNil)
+	s.store = store.(*tikvStore)
 }
 
 func (s *testDeleteRangeSuite) TearDownSuite(c *C) {
