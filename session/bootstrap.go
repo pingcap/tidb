@@ -275,7 +275,7 @@ func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 	r := rs[0]
 	defer terror.Call(r.Close)
 	chk := r.NewChunk()
-	err = r.NextChunk(ctx, chk)
+	err = r.Next(ctx, chk)
 	if err != nil || chk.NumRows() == 0 {
 		return "", true, errors.Trace(err)
 	}
@@ -489,7 +489,7 @@ func upgradeToVer12(s Session) {
 	defer terror.Call(r.Close)
 	chk := r.NewChunk()
 	it := chunk.NewIterator4Chunk(chk)
-	err = r.NextChunk(ctx, chk)
+	err = r.Next(ctx, chk)
 	for err == nil && chk.NumRows() != 0 {
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			user := row.GetString(0)
@@ -501,7 +501,7 @@ func upgradeToVer12(s Session) {
 			updateSQL := fmt.Sprintf(`UPDATE mysql.user set password = "%s" where user="%s" and host="%s"`, newPass, user, host)
 			sqls = append(sqls, updateSQL)
 		}
-		err = r.NextChunk(ctx, chk)
+		err = r.Next(ctx, chk)
 	}
 	terror.MustNil(err)
 
