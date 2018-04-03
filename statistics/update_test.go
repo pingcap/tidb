@@ -430,7 +430,7 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 	}{
 		{
 			sql: "select * from t where t.a <= 5",
-			hist: "column:1 ndv:3\n" +
+			hist: "column:1 ndv:3 totColSize:0\n" +
 				"num: 1\tlower_bound: 1\tupper_bound: 1\trepeats: 1\n" +
 				"num: 2\tlower_bound: 2\tupper_bound: 2\trepeats: 1\n" +
 				"num: 4\tlower_bound: 3\tupper_bound: 6\trepeats: 0",

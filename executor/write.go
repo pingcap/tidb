@@ -161,7 +161,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 	colSize := make(map[int64]int64)
 	for id, col := range t.WritableCols() {
 		if col.State == model.StatePublic {
-			val := int64(newData[id].Size() - oldData[id].Size())
+			val := int64(len(newData[id].GetBytes()) - len(oldData[id].GetBytes()))
 			if val != 0 {
 				colSize[col.ID] = val
 			}
@@ -396,7 +396,7 @@ func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h int64, d
 	colSize := make(map[int64]int64)
 	for id, col := range t.WritableCols() {
 		if col.State == model.StatePublic {
-			val := -int64(data[id].Size())
+			val := -int64(len(data[id].GetBytes()))
 			if val != 0 {
 				colSize[col.ID] = val
 			}

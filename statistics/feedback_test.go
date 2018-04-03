@@ -69,7 +69,7 @@ func (s *testFeedbackSuite) TestUpdateHistogram(c *C) {
 	defaultBucketCount = 5
 	defer func() { defaultBucketCount = originBucketCount }()
 	c.Assert(UpdateHistogram(q.Hist(), []*QueryFeedback{q}).ToString(0), Equals,
-		"column:0 ndv:0\n"+
+		"column:0 ndv:0 totColSize:0\n"+
 			"num: 10000\tlower_bound: 0\tupper_bound: 1\trepeats: 0\n"+
 			"num: 10003\tlower_bound: 2\tupper_bound: 3\trepeats: 0\n"+
 			"num: 10021\tlower_bound: 4\tupper_bound: 20\trepeats: 0\n"+
@@ -87,7 +87,7 @@ func (s *testFeedbackSuite) TestSplitBuckets(c *C) {
 	q.feedback = feedbacks
 	buckets, isNewBuckets, totalCount := splitBuckets(q.Hist(), []*QueryFeedback{q})
 	c.Assert(buildNewHistogram(q.Hist(), buckets).ToString(0), Equals,
-		"column:0 ndv:0\n"+
+		"column:0 ndv:0 totColSize:0\n"+
 			"num: 1\tlower_bound: 0\tupper_bound: 1\trepeats: 0\n"+
 			"num: 1\tlower_bound: 2\tupper_bound: 3\trepeats: 0\n"+
 			"num: 1\tlower_bound: 5\tupper_bound: 7\trepeats: 0\n"+
@@ -106,7 +106,7 @@ func (s *testFeedbackSuite) TestSplitBuckets(c *C) {
 	q.feedback = feedbacks
 	buckets, isNewBuckets, totalCount = splitBuckets(q.Hist(), []*QueryFeedback{q})
 	c.Assert(buildNewHistogram(q.Hist(), buckets).ToString(0), Equals,
-		"column:0 ndv:0\n"+
+		"column:0 ndv:0 totColSize:0\n"+
 			"num: 100000\tlower_bound: 0\tupper_bound: 1\trepeats: 0\n"+
 			"num: 100000\tlower_bound: 2\tupper_bound: 3\trepeats: 0\n"+
 			"num: 100000\tlower_bound: 5\tupper_bound: 7\trepeats: 0\n"+
@@ -126,7 +126,7 @@ func (s *testFeedbackSuite) TestSplitBuckets(c *C) {
 	q.feedback = feedbacks
 	buckets, isNewBuckets, totalCount = splitBuckets(q.Hist(), []*QueryFeedback{q})
 	c.Assert(buildNewHistogram(q.Hist(), buckets).ToString(0), Equals,
-		"column:0 ndv:0\n"+
+		"column:0 ndv:0 totColSize:0\n"+
 			"num: 1000000\tlower_bound: 0\tupper_bound: 1000000\trepeats: 0")
 	c.Assert(isNewBuckets, DeepEquals, []bool{false})
 	c.Assert(totalCount, Equals, int64(1000000))
@@ -147,14 +147,14 @@ func (s *testFeedbackSuite) TestMergeBuckets(c *C) {
 			counts:       []int64{1},
 			isNewBuckets: []bool{false},
 			bucketCount:  1,
-			result:       "column:0 ndv:0\nnum: 1\tlower_bound: 1\tupper_bound: 2\trepeats: 0",
+			result:       "column:0 ndv:0 totColSize:0\nnum: 1\tlower_bound: 1\tupper_bound: 2\trepeats: 0",
 		},
 		{
 			points:       []int64{1, 2, 2, 3, 3, 4},
 			counts:       []int64{100000, 1, 1},
 			isNewBuckets: []bool{false, false, false},
 			bucketCount:  2,
-			result: "column:0 ndv:0\n" +
+			result: "column:0 ndv:0 totColSize:0\n" +
 				"num: 100000\tlower_bound: 1\tupper_bound: 2\trepeats: 0\n" +
 				"num: 100002\tlower_bound: 2\tupper_bound: 4\trepeats: 0",
 		},
@@ -164,7 +164,7 @@ func (s *testFeedbackSuite) TestMergeBuckets(c *C) {
 			counts:       []int64{1, 1, 100000, 100000},
 			isNewBuckets: []bool{false, false, false, false},
 			bucketCount:  3,
-			result: "column:0 ndv:0\n" +
+			result: "column:0 ndv:0 totColSize:0\n" +
 				"num: 2\tlower_bound: 1\tupper_bound: 3\trepeats: 0\n" +
 				"num: 100002\tlower_bound: 3\tupper_bound: 4\trepeats: 0\n" +
 				"num: 200002\tlower_bound: 4\tupper_bound: 5\trepeats: 0",

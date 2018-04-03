@@ -437,7 +437,7 @@ func (t *Table) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleChe
 	colSize := make(map[int64]int64)
 	for id, col := range t.WritableCols() {
 		if col.State == model.StatePublic {
-			val := int64(r[id].Size())
+			val := int64(len(r[id].GetBytes()))
 			if val != 0 {
 				colSize[col.ID] = val
 			}

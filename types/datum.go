@@ -122,11 +122,6 @@ func (d *Datum) IsNull() bool {
 	return d.k == KindNull
 }
 
-// Size gets the length of byte of the datum.
-func (d *Datum) Size() int {
-	return len(d.b)
-}
-
 // GetInt64 gets int64 value.
 func (d *Datum) GetInt64() int64 {
 	return d.i

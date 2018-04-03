@@ -119,7 +119,7 @@ func (h *Handle) insertColStats2KV(tableID int64, colInfo *model.ColumnInfo) err
 			}
 		} else {
 			// If this stats exists, we insert histogram meta first, the distinct_count will always be one.
-			_, err = exec.Execute(ctx, fmt.Sprintf("insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count, tot_col_size) values (%d, %d, 0, %d, 1, %d)", h.ctx.Txn().StartTS(), tableID, colInfo.ID, int64(value.Size())*count))
+			_, err = exec.Execute(ctx, fmt.Sprintf("insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count, tot_col_size) values (%d, %d, 0, %d, 1, %d)", h.ctx.Txn().StartTS(), tableID, colInfo.ID, int64(len(value.GetBytes()))*count))
 			if err != nil {
 				return errors.Trace(err)
 			}
