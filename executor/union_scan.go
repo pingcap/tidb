@@ -113,8 +113,8 @@ type UnionScanExec struct {
 	cursor4SnapshotRows int
 }
 
-// NextChunk implements the Executor NextChunk interface.
-func (us *UnionScanExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+// Next implements the Executor Next interface.
+func (us *UnionScanExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	mutableRow := chunk.MutRowFromTypes(us.retTypes())
 	for i, batchSize := 0, us.ctx.GetSessionVars().MaxChunkSize; i < batchSize; i++ {
@@ -183,7 +183,7 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) (Row, error) {
 	us.snapshotRows = us.snapshotRows[:0]
 	for len(us.snapshotRows) == 0 {
 		chk := chunk.NewChunkWithCapacity(us.retTypes(), us.maxChunkSize)
-		err = us.children[0].NextChunk(ctx, chk)
+		err = us.children[0].Next(ctx, chk)
 		if err != nil || chk.NumRows() == 0 {
 			return nil, errors.Trace(err)
 		}
