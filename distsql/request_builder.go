@@ -125,7 +125,13 @@ func (builder *RequestBuilder) SetKeepOrder(order bool) *RequestBuilder {
 }
 
 func (builder *RequestBuilder) getIsolationLevel(sv *variable.SessionVars) kv.IsoLevel {
-	isoLevel, _ := sv.GetSystemVar(variable.TxnIsolation)
+	var isoLevel string
+	if sv.TxnIsolationLevelOneShot.State == 2 {
+		isoLevel = sv.TxnIsolationLevelOneShot.Value
+	}
+	if isoLevel == "" {
+		isoLevel, _ = sv.GetSystemVar(variable.TxnIsolation)
+	}
 	if isoLevel == ast.ReadCommitted {
 		return kv.RC
 	}
