@@ -494,16 +494,16 @@ func buildNewHistogram(h *Histogram, buckets []bucket) *Histogram {
 	return hist
 }
 
-// QueryFeedbackPB is used to serialize the QueryFeedback.
-type QueryFeedbackPB struct {
+// queryFeedback is used to serialize the QueryFeedback.
+type queryFeedback struct {
 	IntRanges   []int64
 	HashValues  []uint64 // HashValues is the murmur hash values for each index point.
 	IndexRanges [][]byte
 	Counts      []int64 // Counts is the number of scan keys in each range.
 }
 
-func encodePKFeedback(q *QueryFeedback) (*QueryFeedbackPB, error) {
-	pb := &QueryFeedbackPB{}
+func encodePKFeedback(q *QueryFeedback) (*queryFeedback, error) {
+	pb := &queryFeedback{}
 	for _, fb := range q.feedback {
 		err := q.DecodeInt()
 		if err != nil {
@@ -519,8 +519,8 @@ func encodePKFeedback(q *QueryFeedback) (*QueryFeedbackPB, error) {
 	return pb, nil
 }
 
-func encodeIndexFeedback(q *QueryFeedback) *QueryFeedbackPB {
-	pb := &QueryFeedbackPB{}
+func encodeIndexFeedback(q *QueryFeedback) *queryFeedback {
+	pb := &queryFeedback{}
 	var pointCounts []int64
 	for _, fb := range q.feedback {
 		if bytes.Equal(kv.Key(fb.lower.GetBytes()).PrefixNext(), fb.upper.GetBytes()) {
@@ -537,7 +537,7 @@ func encodeIndexFeedback(q *QueryFeedback) *QueryFeedbackPB {
 }
 
 func encodeFeedback(q *QueryFeedback) ([]byte, error) {
-	var pb *QueryFeedbackPB
+	var pb *queryFeedback
 	var err error
 	if q.hist.tp.Tp == mysql.TypeLong {
 		pb, err = encodePKFeedback(q)
@@ -559,7 +559,7 @@ func encodeFeedback(q *QueryFeedback) ([]byte, error) {
 func decodeFeedback(val []byte, q *QueryFeedback, c *CMSketch) error {
 	buf := bytes.NewBuffer(val)
 	dec := gob.NewDecoder(buf)
-	pb := &QueryFeedbackPB{}
+	pb := &queryFeedback{}
 	err := dec.Decode(pb)
 	if err != nil {
 		return errors.Trace(err)
