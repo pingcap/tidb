@@ -221,6 +221,7 @@ LOOP:
 		case <-ticker.C:
 			d.Stop()
 			d.start(context.Background())
+			time.Sleep(time.Millisecond * 20)
 		case err := <-done:
 			c.Assert(err, IsNil)
 			break LOOP
@@ -239,22 +240,20 @@ func (s *testSchemaSuite) TestSchemaResume(c *C) {
 	testCheckOwner(c, d1, true)
 
 	dbInfo := testSchemaInfo(c, d1, "test")
-
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		Type:       model.ActionCreateSchema,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{dbInfo},
 	}
-
 	testRunInterruptedJob(c, d1, job)
 	testCheckSchemaState(c, d1, dbInfo, model.StatePublic)
+
 	job = &model.Job{
 		SchemaID:   dbInfo.ID,
 		Type:       model.ActionDropSchema,
 		BinlogInfo: &model.HistoryInfo{},
 	}
-
 	testRunInterruptedJob(c, d1, job)
 	testCheckSchemaState(c, d1, dbInfo, model.StateNone)
 }

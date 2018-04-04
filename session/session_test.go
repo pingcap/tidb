@@ -1977,6 +1977,30 @@ func (s *testSessionSuite) TestRollbackOnCompileError(c *C) {
 	c.Assert(recoverErr, IsTrue)
 }
 
+func (s *testSessionSuite) TestSetTransactionIsolationOneShot(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t (k int, v int)")
+	tk.MustExec("insert t values (1, 42)")
+	tk.MustExec("set transaction isolation level read committed")
+
+	// Check isolation level is set to read committed.
+	ctx := context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
+		c.Assert(req.IsolationLevel, Equals, kv.RC)
+	})
+	tk.Se.Execute(ctx, "select * from t where k = 1")
+
+	// Check it just take effect for one time.
+	ctx = context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
+		c.Assert(req.IsolationLevel, Equals, kv.SI)
+	})
+	tk.Se.Execute(ctx, "select * from t where k = 1")
+
+	// Can't change isolation level when it's inside a transaction.
+	tk.MustExec("begin")
+	_, err := tk.Se.Execute(ctx, "set transaction isolation level read committed")
+	c.Assert(err, NotNil)
+}
+
 func (s *testSessionSuite) TestDBUserNameLength(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table if not exists t (a int)")

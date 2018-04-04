@@ -66,29 +66,31 @@ var (
 
 // Error instances.
 var (
-	ErrUnknownPlan          = terror.ClassExecutor.New(codeUnknownPlan, "Unknown plan")
-	ErrPrepareMulti         = terror.ClassExecutor.New(codePrepareMulti, "Can not prepare multiple statements")
-	ErrPrepareDDL           = terror.ClassExecutor.New(codePrepareDDL, "Can not prepare DDL statements")
-	ErrPasswordNoMatch      = terror.ClassExecutor.New(CodePasswordNoMatch, "Can't find any matching row in the user table")
-	ErrResultIsEmpty        = terror.ClassExecutor.New(codeResultIsEmpty, "result is empty")
-	ErrBuildExecutor        = terror.ClassExecutor.New(codeErrBuildExec, "Failed to build executor")
-	ErrBatchInsertFail      = terror.ClassExecutor.New(codeBatchInsertFail, "Batch insert failed, please clean the table and try again.")
-	ErrWrongValueCountOnRow = terror.ClassExecutor.New(codeWrongValueCountOnRow, "Column count doesn't match value count at row %d")
-	ErrPasswordFormat       = terror.ClassExecutor.New(codePasswordFormat, "The password hash doesn't have the expected format. Check if the correct password algorithm is being used with the PASSWORD() function.")
+	ErrUnknownPlan                 = terror.ClassExecutor.New(codeUnknownPlan, "Unknown plan")
+	ErrPrepareMulti                = terror.ClassExecutor.New(codePrepareMulti, "Can not prepare multiple statements")
+	ErrPrepareDDL                  = terror.ClassExecutor.New(codePrepareDDL, "Can not prepare DDL statements")
+	ErrPasswordNoMatch             = terror.ClassExecutor.New(CodePasswordNoMatch, "Can't find any matching row in the user table")
+	ErrResultIsEmpty               = terror.ClassExecutor.New(codeResultIsEmpty, "result is empty")
+	ErrBuildExecutor               = terror.ClassExecutor.New(codeErrBuildExec, "Failed to build executor")
+	ErrBatchInsertFail             = terror.ClassExecutor.New(codeBatchInsertFail, "Batch insert failed, please clean the table and try again.")
+	ErrWrongValueCountOnRow        = terror.ClassExecutor.New(codeWrongValueCountOnRow, "Column count doesn't match value count at row %d")
+	ErrPasswordFormat              = terror.ClassExecutor.New(codePasswordFormat, "The password hash doesn't have the expected format. Check if the correct password algorithm is being used with the PASSWORD() function.")
+	ErrCantChangeTxCharacteristics = terror.ClassExecutor.New(codeErrCantChangeTxCharacteristics, "Transaction characteristics can't be changed while a transaction is in progress")
 )
 
 // Error codes.
 const (
-	codeUnknownPlan          terror.ErrCode = 1
-	codePrepareMulti         terror.ErrCode = 2
-	codePrepareDDL           terror.ErrCode = 7
-	codeResultIsEmpty        terror.ErrCode = 8
-	codeErrBuildExec         terror.ErrCode = 9
-	codeBatchInsertFail      terror.ErrCode = 10
-	CodePasswordNoMatch      terror.ErrCode = 1133 // MySQL error code
-	CodeCannotUser           terror.ErrCode = 1396 // MySQL error code
-	codeWrongValueCountOnRow terror.ErrCode = 1136 // MySQL error code
-	codePasswordFormat       terror.ErrCode = 1827 // MySQL error code
+	codeUnknownPlan                    terror.ErrCode = 1
+	codePrepareMulti                   terror.ErrCode = 2
+	codePrepareDDL                     terror.ErrCode = 7
+	codeResultIsEmpty                  terror.ErrCode = 8
+	codeErrBuildExec                   terror.ErrCode = 9
+	codeBatchInsertFail                terror.ErrCode = 10
+	CodePasswordNoMatch                terror.ErrCode = 1133 // MySQL error code
+	CodeCannotUser                     terror.ErrCode = 1396 // MySQL error code
+	codeWrongValueCountOnRow           terror.ErrCode = 1136 // MySQL error code
+	codePasswordFormat                 terror.ErrCode = 1827 // MySQL error code
+	codeErrCantChangeTxCharacteristics terror.ErrCode = 1568
 )
 
 // Row represents a result set row, it may be returned from a table, a join, or a projection.
@@ -604,10 +606,11 @@ func init() {
 		}
 	}
 	tableMySQLErrCodes := map[terror.ErrCode]uint16{
-		CodeCannotUser:           mysql.ErrCannotUser,
-		CodePasswordNoMatch:      mysql.ErrPasswordNoMatch,
-		codeWrongValueCountOnRow: mysql.ErrWrongValueCountOnRow,
-		codePasswordFormat:       mysql.ErrPasswordFormat,
+		CodeCannotUser:                     mysql.ErrCannotUser,
+		CodePasswordNoMatch:                mysql.ErrPasswordNoMatch,
+		codeWrongValueCountOnRow:           mysql.ErrWrongValueCountOnRow,
+		codePasswordFormat:                 mysql.ErrPasswordFormat,
+		codeErrCantChangeTxCharacteristics: mysql.ErrCantChangeTxCharacteristics,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassExecutor] = tableMySQLErrCodes
 }
