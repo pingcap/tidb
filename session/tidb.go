@@ -222,7 +222,7 @@ func GetRows4Test(ctx context.Context, sctx sessionctx.Context, rs ast.RecordSet
 		chk := rs.NewChunk()
 		iter := chunk.NewIterator4Chunk(chk)
 
-		err := rs.NextChunk(ctx, chk)
+		err := rs.Next(ctx, chk)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
