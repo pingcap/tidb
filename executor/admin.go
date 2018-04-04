@@ -58,12 +58,12 @@ type CheckIndexRangeExec struct {
 	cols   []*model.ColumnInfo
 }
 
-// NextChunk implements the Executor NextChunk interface.
-func (e *CheckIndexRangeExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+// Next implements the Executor Next interface.
+func (e *CheckIndexRangeExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	handleIdx := e.schema.Len() - 1
 	for {
-		err := e.result.NextChunk(ctx, e.srcChunk)
+		err := e.result.Next(ctx, e.srcChunk)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -318,7 +318,7 @@ func (e *RecoverIndexExec) fetchRecoverRows(ctx context.Context, srcResult dists
 	result.scanRowCount = 0
 
 	for {
-		err := srcResult.NextChunk(ctx, e.srcChunk)
+		err := srcResult.Next(ctx, e.srcChunk)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -428,8 +428,8 @@ func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transa
 	return result, nil
 }
 
-// NextChunk implements the Executor NextChunk interface.
-func (e *RecoverIndexExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+// Next implements the Executor Next interface.
+func (e *RecoverIndexExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.done {
 		return nil
@@ -537,7 +537,7 @@ func (e *CleanupIndexExec) fetchIndex(ctx context.Context, txn kv.Transaction) e
 
 	sc := e.ctx.GetSessionVars().StmtCtx
 	for {
-		err := result.NextChunk(ctx, e.idxChunk)
+		err := result.Next(ctx, e.idxChunk)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -563,8 +563,8 @@ func (e *CleanupIndexExec) fetchIndex(ctx context.Context, txn kv.Transaction) e
 	}
 }
 
-// NextChunk implements the Executor NextChunk interface.
-func (e *CleanupIndexExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+// Next implements the Executor Next interface.
+func (e *CleanupIndexExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.done {
 		return nil

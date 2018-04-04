@@ -182,8 +182,8 @@ type DeleteExec struct {
 	finished bool
 }
 
-// NextChunk implements the Executor NextChunk interface.
-func (e *DeleteExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+// Next implements the Executor Next interface.
+func (e *DeleteExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.finished {
 		return nil
@@ -259,7 +259,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 		chk := e.children[0].newChunk()
 		iter := chunk.NewIterator4Chunk(chk)
 
-		err := e.children[0].NextChunk(ctx, chk)
+		err := e.children[0].Next(ctx, chk)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -339,7 +339,7 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 		chk := e.children[0].newChunk()
 		iter := chunk.NewIterator4Chunk(chk)
 
-		err := e.children[0].NextChunk(ctx, chk)
+		err := e.children[0].Next(ctx, chk)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -711,8 +711,8 @@ func (k loadDataVarKeyType) String() string {
 // LoadDataVarKey is a variable key for load data.
 const LoadDataVarKey loadDataVarKeyType = 0
 
-// NextChunk implements the Executor NextChunk interface.
-func (e *LoadData) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+// Next implements the Executor Next interface.
+func (e *LoadData) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	// TODO: support load data without local field.
 	if !e.IsLocal {
@@ -995,8 +995,8 @@ func batchMarkDupRows(ctx sessionctx.Context, t table.Table, rows [][]types.Datu
 	return rows, nil
 }
 
-// NextChunk implements Exec NextChunk interface.
-func (e *InsertExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+// Next implements Exec Next interface.
+func (e *InsertExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.finished {
 		return nil
@@ -1268,7 +1268,7 @@ func (e *InsertValues) getRowsSelectChunk(ctx context.Context, cols []*table.Col
 		chk := selectExec.newChunk()
 		iter := chunk.NewIterator4Chunk(chk)
 
-		err := selectExec.NextChunk(ctx, chk)
+		err := selectExec.Next(ctx, chk)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1580,8 +1580,8 @@ func (e *ReplaceExec) exec(ctx context.Context, rows [][]types.Datum) (Row, erro
 	return nil, nil
 }
 
-// NextChunk implements the Executor NextChunk interface.
-func (e *ReplaceExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+// Next implements the Executor Next interface.
+func (e *ReplaceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.finished {
 		return nil
@@ -1673,8 +1673,8 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema) (Row, 
 	return Row{}, nil
 }
 
-// NextChunk implements the Executor NextChunk interface.
-func (e *UpdateExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+// Next implements the Executor Next interface.
+func (e *UpdateExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if !e.fetched {
 		err := e.fetchChunkRows(ctx)
@@ -1714,7 +1714,7 @@ func (e *UpdateExec) fetchChunkRows(ctx context.Context) error {
 	globalRowIdx := 0
 	for {
 		chk := chunk.NewChunk(fields)
-		err := e.children[0].NextChunk(ctx, chk)
+		err := e.children[0].Next(ctx, chk)
 		if err != nil {
 			return errors.Trace(err)
 		}
