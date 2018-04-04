@@ -822,13 +822,12 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) (Row, error
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-	}
-	// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
-	// For example, without IGNORE, a row that duplicates an existing UNIQUE index or PRIMARY KEY value in
-	// the table causes a duplicate-key error and the statement is aborted. With IGNORE, the row is discarded and no error occurs.
-	// However, if the `on duplicate update` is also specified, the duplicated row will be updated.
-	// Using BatchGet in insert ignore to mark rows as duplicated before we add records to the table.
-	if len(e.OnDuplicate) == 0 && e.IgnoreErr {
+	} else if len(e.OnDuplicate) == 0 && e.IgnoreErr {
+		// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
+		// For example, without IGNORE, a row that duplicates an existing UNIQUE index or PRIMARY KEY value in
+		// the table causes a duplicate-key error and the statement is aborted. With IGNORE, the row is discarded and no error occurs.
+		// However, if the `on duplicate update` is also specified, the duplicated row will be updated.
+		// Using BatchGet in insert ignore to mark rows as duplicated before we add records to the table.
 		var err error
 		rows, err = batchMarkDupRows(e.ctx, e.Table, rows)
 		if err != nil {
