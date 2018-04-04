@@ -795,9 +795,13 @@ type InsertExec struct {
 	Priority  mysql.PriorityEnum
 	IgnoreErr bool
 
-	finished      bool
-	rowCount      int
-	dirtyRowValue map[string][]byte
+	finished bool
+	rowCount int
+
+	// For duplicate key update
+	uniqueKeysInRows [][]keyWithDupError
+	dupKeyValues     map[string][]byte
+	dupOldRowValue   map[string][]byte
 }
 
 func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) (Row, error) {
@@ -856,7 +860,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) (Row, error
 				if err1 != nil {
 					return nil, errors.Trace(err1)
 				}
-				if _, _, _, err = e.onDupUpdateRow(h, data, row, e.OnDuplicate); err != nil {
+				if _, _, _, err = e.doDupRowUpdate(h, data, row, e.OnDuplicate); err != nil {
 					return nil, errors.Trace(err)
 				}
 				e.rowCount++
@@ -1046,13 +1050,12 @@ func (e *InsertExec) checkBatchLimit() error {
 	return nil
 }
 
-func (e *InsertExec) initDirtyRowValue(newRows [][]types.Datum, keysInRows [][]keyWithDupError,
-	values map[string][]byte) (err error) {
-	e.dirtyRowValue = make(map[string][]byte, len(newRows))
+func (e *InsertExec) initDirtyRowValue(newRows [][]types.Datum) (err error) {
+	e.dupOldRowValue = make(map[string][]byte, len(newRows))
 	handles := make([]int64, 0, len(newRows))
-	for _, keysInRow := range keysInRows {
+	for _, keysInRow := range e.uniqueKeysInRows {
 		for _, k := range keysInRow {
-			if val, found := values[string(k.key)]; found {
+			if val, found := e.dupKeyValues[string(k.key)]; found {
 				var handle int64
 				if k.isRecordKey {
 					handle, err = tablecodec.DecodeRowKey(k.key)
@@ -1070,68 +1073,92 @@ func (e *InsertExec) initDirtyRowValue(newRows [][]types.Datum, keysInRows [][]k
 			}
 		}
 	}
-	e.dirtyRowValue, err = getOldValues(e.ctx, e.Table, handles)
+	e.dupOldRowValue, err = getOldValues(e.ctx, e.Table, handles)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	return nil
 }
 
+// decodeOldHandle decode old handle by key-value pair.
+// The key-value pair should only be a table record or a distinct index record.
+// If the key is a record key, decode handle from the key, else decode handle from the value.
+func decodeOldHandle(k keyWithDupError, value []byte) (oldHandle int64, err error) {
+	if k.isRecordKey {
+		oldHandle, err = tablecodec.DecodeRowKey(k.key)
+	} else {
+		oldHandle, err = tables.DecodeHandle(value)
+	}
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	return oldHandle, nil
+}
+
+func (e *InsertExec) updateDupRow(keys []keyWithDupError, k keyWithDupError, val []byte, newRow []types.Datum, onDuplicate []*expression.Assignment) (err error) {
+	oldHandle, err := decodeOldHandle(k, val)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// Get the table record row from storage for update.
+	oldValue, ok := e.dupOldRowValue[string(e.Table.RecordKey(oldHandle))]
+	if !ok {
+		return errors.NotFoundf("can not be duplicated row, due to old row not found. handle %d", oldHandle)
+	}
+	oldRow, err := tables.DecodeRawRowData(e.ctx, e.Table.Meta(), oldHandle, e.Table.WritableCols(), oldValue)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// Do update row.
+	updatedRow, handleChanged, newHandle, err := e.doDupRowUpdate(oldHandle, oldRow, newRow, onDuplicate)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return e.updateDupKeyValues(keys, oldHandle, newHandle, handleChanged, updatedRow)
+}
+
+// updateDupKeyValues updates the e.dupKeyValues for further duplicate key check.
+func (e *InsertExec) updateDupKeyValues(keys []keyWithDupError, oldHandle int64,
+	newHandle int64, handleChanged bool, updatedRow []types.Datum) error {
+	// There is only one row per update.
+	fillBackKeysInRows, err := getKeysNeedCheck(e.ctx, e.Table, [][]types.Datum{updatedRow})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// Delete key-values belong to the old row.
+	for _, del := range keys {
+		delete(e.dupKeyValues, string(del.key))
+	}
+	// Fill back new key-values of the updated row.
+	if handleChanged {
+		delete(e.dupOldRowValue, string(e.Table.RecordKey(oldHandle)))
+		e.fillBackKeys(fillBackKeysInRows[0], newHandle)
+	} else {
+		e.fillBackKeys(fillBackKeysInRows[0], oldHandle)
+	}
+	return nil
+}
+
 func (e *InsertExec) batchUpdateDupRows(newRows [][]types.Datum, onDuplicate []*expression.Assignment) ([][]types.Datum, error) {
-	keysInRows, values, err := batchGetInsertKeys(e.ctx, e.Table, newRows)
+	var err error
+	e.uniqueKeysInRows, e.dupKeyValues, err = batchGetInsertKeys(e.ctx, e.Table, newRows)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	err = e.initDirtyRowValue(newRows, keysInRows, values)
+	err = e.initDirtyRowValue(newRows)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	for i, keysInRow := range keysInRows {
+	for i, keysInRow := range e.uniqueKeysInRows {
 		for _, k := range keysInRow {
-			if val, found := values[string(k.key)]; found {
-				var handle int64
-				if k.isRecordKey {
-					handle, err = tablecodec.DecodeRowKey(k.key)
-					if err != nil {
-						return nil, errors.Trace(err)
-					}
-				} else {
-					handle, err = tables.DecodeHandle(val)
-					if err != nil {
-						return nil, errors.Trace(err)
-					}
-				}
-				oldValue, ok := e.dirtyRowValue[string(e.Table.RecordKey(handle))]
-				if !ok {
-					return nil, errors.NotFoundf("can not be duplicated row, due to old row not found. handle %d", handle)
-				}
-				oldRow, err := tables.DecodeRawRowData(e.ctx, e.Table.Meta(), handle, e.Table.WritableCols(), oldValue)
+			if val, found := e.dupKeyValues[string(k.key)]; found {
+				err := e.updateDupRow(keysInRow, k, val, newRows[i], e.OnDuplicate)
 				if err != nil {
 					return nil, errors.Trace(err)
-				}
-				updatedRow, handleChanged, newHandle, err := e.onDupUpdateRow(handle, oldRow, newRows[i], onDuplicate)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-
-				// There is only one row per update.
-				fillBackKeysInRows, err := getKeysNeedCheck(e.ctx, e.Table, [][]types.Datum{updatedRow})
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				fillBackKeysInRow := fillBackKeysInRows[0]
-
-				// Cleanup old and fill back new key-values.
-				for _, del := range keysInRow {
-					delete(values, string(del.key))
-				}
-				if handleChanged {
-					delete(e.dirtyRowValue, string(e.Table.RecordKey(handle)))
-					values = e.fillBackKeys(values, fillBackKeysInRow, newHandle)
-				} else {
-					values = e.fillBackKeys(values, fillBackKeysInRow, handle)
 				}
 				// Clean up row for latest add record operation.
 				newRows[i] = nil
@@ -1143,23 +1170,22 @@ func (e *InsertExec) batchUpdateDupRows(newRows [][]types.Datum, onDuplicate []*
 		// There may be duplicate keys inside the insert statement.
 		if newRows[i] == nil {
 			for _, k := range keysInRow {
-				values[string(k.key)] = k.newRowValue
+				e.dupKeyValues[string(k.key)] = k.newRowValue
 			}
 		}
 	}
 	return newRows, nil
 }
 
-func (e *InsertExec) fillBackKeys(values map[string][]byte, fillBackKeysInRow []keyWithDupError, handle int64) map[string][]byte {
-	e.dirtyRowValue[string(e.Table.RecordKey(handle))] = fillBackKeysInRow[0].newRowValue
+func (e *InsertExec) fillBackKeys(fillBackKeysInRow []keyWithDupError, handle int64) {
+	e.dupOldRowValue[string(e.Table.RecordKey(handle))] = fillBackKeysInRow[0].newRowValue
 	for _, insert := range fillBackKeysInRow {
 		if insert.isRecordKey {
-			values[string(e.Table.RecordKey(handle))] = insert.newRowValue
+			e.dupKeyValues[string(e.Table.RecordKey(handle))] = insert.newRowValue
 		} else {
-			values[string(insert.key)] = tables.EncodeHandle(handle)
+			e.dupKeyValues[string(insert.key)] = tables.EncodeHandle(handle)
 		}
 	}
-	return values
 }
 
 // batchMarkDupRows marks rows with duplicate errors as nil.
@@ -1667,9 +1693,9 @@ func (e *InsertValues) adjustAutoIncrementDatum(row []types.Datum, i int, c *tab
 	return nil
 }
 
-// onDupUpdateRow updates the duplicate row.
+// doDupRowUpdate updates the duplicate row.
 // TODO: Report rows affected and last insert id.
-func (e *InsertExec) onDupUpdateRow(handle int64, oldRow []types.Datum, newRow []types.Datum,
+func (e *InsertExec) doDupRowUpdate(handle int64, oldRow []types.Datum, newRow []types.Datum,
 	cols []*expression.Assignment) ([]types.Datum, bool, int64, error) {
 	assignFlag := make([]bool, len(e.Table.WritableCols()))
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
