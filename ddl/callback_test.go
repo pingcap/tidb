@@ -16,7 +16,6 @@ package ddl
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/util/testleak"
 	"golang.org/x/net/context"
 )
 

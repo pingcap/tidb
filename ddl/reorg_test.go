@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/testleak"
 	"golang.org/x/net/context"
 )
 
