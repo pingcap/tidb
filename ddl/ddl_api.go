@@ -1767,6 +1767,6 @@ func checkModifyingDefinition(ctx sessionctx.Context, ident ast.Ident, originalC
 		ctx.GetSessionVars().StmtCtx.AppendWarning(errInvalidUseOfNull)
 		return errInvalidUseOfNull
 	}
-	log.Infof("Records: %d  Duplicates: %d  Warnings: %d", len(recordRows), len(rows), ctx.GetSessionVars().StmtCtx.WarningCount())
+	ctx.GetSessionVars().StmtCtx.AddAffectedRows(uint64(len(recordRows)))
 	return nil
 }
