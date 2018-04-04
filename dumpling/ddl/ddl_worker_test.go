@@ -38,12 +38,16 @@ type testDDLSuite struct{}
 const testLease = 5 * time.Millisecond
 
 func (s *testDDLSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
 	// set ReorgWaitTimeout to small value, make test to be faster.
 	ReorgWaitTimeout = 50 * time.Millisecond
 }
 
+func (s *testDDLSuite) TearDownSuite(c *C) {
+	testleak.AfterTest(c)()
+}
+
 func (s *testDDLSuite) TestCheckOwner(c *C) {
-	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_owner")
 	defer store.Close()
 
@@ -59,7 +63,6 @@ func (s *testDDLSuite) TestCheckOwner(c *C) {
 
 // TestRunWorker tests no job is handled when the value of RunWorker is false.
 func (s *testDDLSuite) TestRunWorker(c *C) {
-	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_run_worker")
 	defer store.Close()
 
@@ -223,7 +226,6 @@ func (s *testDDLSuite) TestCleanJobs(c *C) {
 }
 
 func (s *testDDLSuite) TestSchemaError(c *C) {
-	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_schema_error")
 	defer store.Close()
 
@@ -235,7 +237,6 @@ func (s *testDDLSuite) TestSchemaError(c *C) {
 }
 
 func (s *testDDLSuite) TestTableError(c *C) {
-	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_table_error")
 	defer store.Close()
 
@@ -277,7 +278,6 @@ func (s *testDDLSuite) TestTableError(c *C) {
 }
 
 func (s *testDDLSuite) TestForeignKeyError(c *C) {
-	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_foreign_key_error")
 	defer store.Close()
 
@@ -296,7 +296,6 @@ func (s *testDDLSuite) TestForeignKeyError(c *C) {
 }
 
 func (s *testDDLSuite) TestIndexError(c *C) {
-	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_index_error")
 	defer store.Close()
 
@@ -333,7 +332,6 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 }
 
 func (s *testDDLSuite) TestColumnError(c *C) {
-	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_column_error")
 	defer store.Close()
 	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
@@ -475,7 +473,6 @@ func buildCancelJobTests(firstID int64) []testCancelJob {
 }
 
 func (s *testDDLSuite) TestCancelJob(c *C) {
-	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_cancel_job")
 	defer store.Close()
 	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)

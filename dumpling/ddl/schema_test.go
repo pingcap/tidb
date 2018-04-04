@@ -33,6 +33,14 @@ var _ = Suite(&testSchemaSuite{})
 
 type testSchemaSuite struct{}
 
+func (s *testSchemaSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
+}
+
+func (s *testSchemaSuite) TearDownSuite(c *C) {
+	testleak.AfterTest(c)()
+}
+
 func testSchemaInfo(c *C, d *ddl, name string) *model.DBInfo {
 	var err error
 	dbInfo := &model.DBInfo{
@@ -115,7 +123,6 @@ func testCheckSchemaState(c *C, d *ddl, dbInfo *model.DBInfo, state model.Schema
 }
 
 func (s *testSchemaSuite) TestSchema(c *C) {
-	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_schema")
 	defer store.Close()
 	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
@@ -176,7 +183,6 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 }
 
 func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
-	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_schema_wait")
 	defer store.Close()
 
@@ -230,7 +236,6 @@ LOOP:
 }
 
 func (s *testSchemaSuite) TestSchemaResume(c *C) {
-	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_schema_resume")
 	defer store.Close()
 
