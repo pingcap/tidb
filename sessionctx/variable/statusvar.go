@@ -127,10 +127,11 @@ var tlsCipherString = map[uint16]string{
 }
 
 var defaultStatus = map[string]*StatusVal{
-	"Ssl_cipher":      {ScopeGlobal | ScopeSession, ""},
-	"Ssl_cipher_list": {ScopeGlobal | ScopeSession, ""},
-	"Ssl_verify_mode": {ScopeGlobal | ScopeSession, 0},
-	"Ssl_version":     {ScopeGlobal | ScopeSession, ""},
+	"Ssl_cipher":        {ScopeGlobal | ScopeSession, ""},
+	"Ssl_cipher_list":   {ScopeGlobal | ScopeSession, ""},
+	"Ssl_verify_mode":   {ScopeGlobal | ScopeSession, 0},
+	"Ssl_version":       {ScopeGlobal | ScopeSession, ""},
+	"mysqlx_ssl_cipher": {ScopeGlobal | ScopeSession, ""},
 }
 
 type defaultStatusStat struct {

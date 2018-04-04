@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/hack"
@@ -1020,4 +1021,24 @@ func (cc *clientConn) upgradeToTLS(tlsConfig *tls.Config) error {
 	cc.setConn(tlsConn)
 	cc.tlsConn = tlsConn
 	return nil
+}
+
+func (cc *clientConn) id() uint32 {
+	return cc.connectionID
+}
+
+func (cc *clientConn) showProcess() util.ProcessInfo {
+	return cc.ctx.ShowProcess()
+}
+
+func (cc *clientConn) lockConn() {
+	cc.mu.RLock()
+}
+
+func (cc *clientConn) unlockConn() {
+	cc.mu.RUnlock()
+}
+
+func (cc *clientConn) getCancelFunc() context.CancelFunc {
+	return cc.mu.cancelFunc
 }

@@ -898,4 +898,21 @@ var MySQLErrName = map[uint16]string{
 	ErrGCTooEarly:         "GC life time is shorter than transaction duration",
 
 	ErrTxnTooLarge: "Transaction is too large",
+
+	ErrXBadMessage:                "Invalid message",
+	ErrXBadSchema:                 "Invalid schema",
+	ErrXBadNotice:                 "Invalid notice name %s",
+	ErrXBadTable:                  "Invalid collection name",
+	ErrXCapabilitiesPrepareFailed: "Capability prepare failed for '%s'",
+	ErrXInvalidNamespace:          "Unknown namespace %s",
+	ErrXInvalidAdminCommand:       "Invalid %s command %s",
+	ErrXCmdNumArguments:           "Invalid number of arguments, expected %d but got %d",
+	ErrXCmdArgumentType:           "Invalid type for argument '%s' at #%d (should be %s)",
+	ErrXCannotDisableNotice:       "Cannot disable notice %s",
+	ErrXExprBadTypeValue:          "%s",
+	ErrXExprBadValue:              "%s",
+	ErrXBadUpdateData:             "%s",
+	ErrXBadColumnToUpdate:         "%s",
+	ErrXBadTypeOfUpdate:           "%s",
+	ErrXBadMemberToUpdate:         "%s",
 }

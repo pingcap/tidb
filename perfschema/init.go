@@ -32,13 +32,13 @@ type columnInfo struct {
 }
 
 var globalStatusCols = []columnInfo{
-	{mysql.TypeString, 64, mysql.NotNullFlag, `%`, nil},
-	{mysql.TypeString, 1024, 0, `%`, nil},
+	{mysql.TypeVarString, 64, mysql.NotNullFlag, `%`, nil},
+	{mysql.TypeVarString, 3072, 0, `%`, nil},
 }
 
 var sessionStatusCols = []columnInfo{
-	{mysql.TypeString, 64, mysql.NotNullFlag, `%`, nil},
-	{mysql.TypeString, 1024, 0, `%`, nil},
+	{mysql.TypeVarString, 64, mysql.NotNullFlag, `%`, nil},
+	{mysql.TypeVarString, 3072, 0, `%`, nil},
 }
 
 var setupActorsCols = []columnInfo{
