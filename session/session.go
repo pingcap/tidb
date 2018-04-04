@@ -350,6 +350,17 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	metrics.StatementPerTransaction.WithLabelValues(metrics.RetLabel(err)).Observe(float64(counter))
 	metrics.TransactionDuration.WithLabelValues(metrics.RetLabel(err)).Observe(float64(duration))
 	s.cleanRetryInfo()
+
+	if isoLevelOneShot := &s.sessionVars.TxnIsolationLevelOneShot; isoLevelOneShot.State != 0 {
+		switch isoLevelOneShot.State {
+		case 1:
+			isoLevelOneShot.State = 2
+		case 2:
+			isoLevelOneShot.State = 0
+			isoLevelOneShot.Value = ""
+		}
+	}
+
 	if err != nil {
 		log.Warnf("[%d] finished txn:%v, %v", s.sessionVars.ConnectionID, s.txn, err)
 		return errors.Trace(err)
