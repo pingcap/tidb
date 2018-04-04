@@ -24,7 +24,6 @@ import (
 )
 
 func (s *testColumnChangeSuite) TestFailBeforeDecodeArgs(c *C) {
-	defer testleak.AfterTest(c)()
 	d := testNewDDL(context.Background(), nil, s.store, nil, nil, testLease)
 	defer d.Stop()
 	// create table t_fail (c1 int, c2 int);

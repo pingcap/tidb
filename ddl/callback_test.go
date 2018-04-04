@@ -61,7 +61,6 @@ func (tc *TestDDLCallback) OnWatched(ctx context.Context) {
 }
 
 func (s *testDDLSuite) TestCallback(c *C) {
-	defer testleak.AfterTest(c)()
 	cb := &BaseCallback{}
 	c.Assert(cb.OnChanged(nil), IsNil)
 	cb.OnJobRunBefore(nil)
