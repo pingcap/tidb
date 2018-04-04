@@ -89,13 +89,13 @@ func (s *testExecSuite) TestShowProcessList(c *C) {
 	it := chunk.NewIterator4Chunk(chk)
 	// Run test and check results.
 	for _, p := range ps {
-		err = e.NextChunk(context.Background(), chk)
+		err = e.Next(context.Background(), chk)
 		c.Assert(err, IsNil)
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			c.Assert(row.GetUint64(0), Equals, p.ID)
 		}
 	}
-	err = e.NextChunk(context.Background(), chk)
+	err = e.Next(context.Background(), chk)
 	c.Assert(err, IsNil)
 	c.Assert(chk.NumRows(), Equals, 0)
 	err = e.Close()
