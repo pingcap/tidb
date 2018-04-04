@@ -236,7 +236,9 @@ func (d *ddl) handleDDLJobQueue() error {
 
 			if job.IsDone() {
 				binloginfo.SetDDLBinlog(d.workerVars.BinlogClient, txn, job.ID, job.Query)
-				job.State = model.JobStateSynced
+				if !job.IsRollbackDone() {
+					job.State = model.JobStateSynced
+				}
 				err = d.finishDDLJob(t, job)
 				return errors.Trace(err)
 			}

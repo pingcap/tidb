@@ -221,7 +221,12 @@ func (job *Job) IsFinished() bool {
 
 // IsCancelled returns whether the job is cancelled or not.
 func (job *Job) IsCancelled() bool {
-	return job.State == JobStateCancelled || job.State == JobStateRollbackDone
+	return job.State == JobStateCancelled
+}
+
+// IsRollbackDone returns whether the job is rolled back or not.
+func (job *Job) IsRollbackDone() bool {
+	return job.State == JobStateRollbackDone
 }
 
 // IsRollingback returns whether the job is rolling back or not.
@@ -241,7 +246,7 @@ func (job *Job) IsSynced() bool {
 
 // IsDone returns whether job is done.
 func (job *Job) IsDone() bool {
-	return job.State == JobStateDone
+	return job.State == JobStateDone || job.State == JobStateRollbackDone
 }
 
 // IsRunning returns whether job is still running or not.
