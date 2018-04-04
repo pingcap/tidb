@@ -640,16 +640,8 @@ func (it *copIterator) handleCopStreamResult(bo *Backoffer, stream *tikvrpc.CopS
 			}
 
 			// No coprocessor.Response for network error, rebuild task based on the last success one.
-			ranges := task.ranges
-			if lastRange != nil {
-				if it.req.Desc {
-					ranges, _ = ranges.split(lastRange.Start)
-				} else {
-					_, ranges = ranges.split(lastRange.End)
-				}
-			}
 			log.Info("stream recv timeout:", err)
-			return buildCopTasks(bo, it.store.regionCache, ranges, it.req.Desc, true)
+			return buildCopTasksFromRemain(bo, it.store.regionCache, lastRange, task, it.req.Desc, true)
 		}
 		lastRange = resp.Range
 	}

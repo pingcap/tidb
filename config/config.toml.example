@@ -39,7 +39,7 @@ enable-chunk = true
 oom-action = "log"
 
 # Enable coprocessor streaming.
-enable-streaming = false
+enable-streaming = true
 
 # Set system variable 'lower_case_table_names'
 lower-case-table-names = 2
