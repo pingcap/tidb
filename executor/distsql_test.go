@@ -55,7 +55,7 @@ func (s *testSuite) TestIndexDoubleReadClose(c *C) {
 	rs, err := tk.Exec("select * from dist where c_idx between 0 and 100")
 	c.Assert(err, IsNil)
 	chk := rs.NewChunk()
-	err = rs.NextChunk(context.Background(), chk)
+	err = rs.Next(context.Background(), chk)
 	c.Assert(err, IsNil)
 	c.Assert(err, IsNil)
 	keyword := "pickAndExecTask"
@@ -106,7 +106,7 @@ func (s *testSuite) TestCopClientSend(c *C) {
 	c.Assert(err, IsNil)
 	defer rs.Close()
 	chk := rs.NewChunk()
-	err = rs.NextChunk(ctx, chk)
+	err = rs.Next(ctx, chk)
 	c.Assert(err, IsNil)
 	c.Assert(chk.GetRow(0).GetMyDecimal(0).String(), Equals, "499500")
 
@@ -120,7 +120,7 @@ func (s *testSuite) TestCopClientSend(c *C) {
 	rs, err = tk.Exec("select sum(id) from copclient")
 	c.Assert(err, IsNil)
 	chk = rs.NewChunk()
-	err = rs.NextChunk(ctx, chk)
+	err = rs.Next(ctx, chk)
 	c.Assert(err, IsNil)
 	c.Assert(chk.GetRow(0).GetMyDecimal(0).String(), Equals, "499500")
 	rs.Close()
@@ -129,7 +129,7 @@ func (s *testSuite) TestCopClientSend(c *C) {
 	rs, err = tk.Exec("select * from copclient order by id")
 	c.Assert(err, IsNil)
 	chk = rs.NewChunk()
-	err = rs.NextChunk(ctx, chk)
+	err = rs.Next(ctx, chk)
 	c.Assert(err, IsNil)
 	rs.Close()
 	keyword := "(*copIterator).work"

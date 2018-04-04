@@ -146,7 +146,7 @@ func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *
 					TotColSize:        totColSize,
 				},
 				Info:  colInfo,
-				Count: count,
+				Count:     count + nullCount
 			}
 			break
 		}
@@ -273,7 +273,7 @@ func (t *Table) ColumnIsInvalid(sc *stmtctx.StatementContext, colID int64) bool 
 		sc.SetHistogramsNotLoad()
 		histogramNeededColumns.insert(tableColumnID{tableID: t.TableID, columnID: colID})
 	}
-	return !ok || col.Len() == 0
+	return !ok || col.totalRowCount() == 0 || (col.NDV > 0 && col.Len() == 0)
 }
 
 // ColumnGreaterRowCount estimates the row count where the column greater than value.
