@@ -210,16 +210,7 @@ func (e *analyzeColumnsExec) getNext(ctx context.Context) ([]types.Datum, error)
 	return datumRow, nil
 }
 
-// Next implements the ast.RecordSet Next interface.
-func (e *analyzeColumnsExec) Next(ctx context.Context) (types.Row, error) {
-	row, err := e.getNext(ctx)
-	if row == nil || err != nil {
-		return nil, errors.Trace(err)
-	}
-	return types.DatumRow(row), nil
-}
-
-func (e *analyzeColumnsExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+func (e *analyzeColumnsExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	row, err := e.getNext(ctx)
 	if row == nil || err != nil {

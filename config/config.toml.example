@@ -31,9 +31,6 @@ split-table = true
 # The limit of concurrent executed sessions.
 token-limit = 1000
 
-# Enable chunk executors.
-enable-chunk = true
-
 # Only print a log when out of memory quota.
 # Valid options: ["log", "cancel"]
 oom-action = "log"
