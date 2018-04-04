@@ -159,13 +159,20 @@ func (c *RawKVClient) Delete(key []byte) error {
 // DeleteRange deletes all key-value pairs in a range from TiKV
 func (c *RawKVClient) DeleteRange(startKey []byte, endKey []byte) error {
 	start := time.Now()
+	var err error
 	defer func() {
-		metrics.TiKVRawkvCmdHistogram.WithLabelValues("delete_range").Observe(time.Since(start).Seconds())
+		var label = "delete_range"
+		if err != nil {
+			label += "_error"
+		}
+		metrics.TiKVRawkvCmdHistogram.WithLabelValues(label).Observe(time.Since(start).Seconds())
 	}()
 
 	// Process each affected region respectively
 	for !bytes.Equal(startKey, endKey) {
-		resp, actualEndKey, err := c.sendDeleteRangeReq(startKey, endKey)
+		var resp *tikvrpc.Response
+		var actualEndKey []byte
+		resp, actualEndKey, err = c.sendDeleteRangeReq(startKey, endKey)
 		if err != nil {
 			return errors.Trace(err)
 		}
