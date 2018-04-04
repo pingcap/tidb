@@ -105,6 +105,123 @@ func (s *testDDLSuite) TestRunWorker(c *C) {
 	<-exitCh
 }
 
+func (s *testDDLSuite) TestCleanJobs(c *C) {
+	defer testleak.AfterTest(c)()
+	store := testCreateStore(c, "test_clean_jobs")
+	defer store.Close()
+	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
+
+	ctx := testNewContext(d)
+	dbInfo := testSchemaInfo(c, d, "test")
+	testCreateSchema(c, ctx, d, dbInfo)
+	tblInfo := testTableInfo(c, d, "t", 2)
+	testCreateTable(c, ctx, d, dbInfo, tblInfo)
+
+	var failedJobIDs []int64
+	job := &model.Job{
+		SchemaID:   dbInfo.ID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionAddIndex,
+		BinlogInfo: &model.HistoryInfo{},
+	}
+	idxColNames := []*ast.IndexColName{{
+		Column: &ast.ColumnName{Name: model.NewCIStr("c1")},
+		Length: types.UnspecifiedLength}}
+	// Add some adding index jobs to AddIndexJobList.
+	backfillAddIndexJob := func(jobArgs []interface{}) {
+		kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+			var err error
+			t := meta.NewMeta(txn)
+			t.SetJobListKey(meta.AddIndexJobListKey)
+			job.ID, err = t.GenGlobalID()
+			c.Assert(err, IsNil)
+			failedJobIDs = append(failedJobIDs, job.ID)
+			job.Args = jobArgs
+			err = t.EnQueueDDLJob(job)
+			c.Assert(err, IsNil)
+			return nil
+		})
+	}
+
+	// Add a StateNone job.
+	indexName := model.NewCIStr("idx_none")
+	args := []interface{}{false, indexName, idxColNames, nil}
+	backfillAddIndexJob(args)
+	// Add a StateDeleteOnly job.
+	indexName = model.NewCIStr("idx_delete_only")
+	args = []interface{}{false, indexName, idxColNames, nil}
+	backfillAddIndexJob(args)
+	changeJobState := func() {
+		kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+			t := meta.NewMeta(txn)
+			t.SetJobListKey(meta.AddIndexJobListKey)
+			lastJobID := int64(len(failedJobIDs) - 1)
+			job, err1 := t.GetDDLJob(lastJobID)
+			c.Assert(err1, IsNil)
+			_, err1 = d.runDDLJob(t, job)
+			c.Assert(err1, IsNil)
+			_, err1 = updateSchemaVersion(t, job)
+			c.Assert(err1, IsNil)
+			err1 = t.UpdateDDLJob(lastJobID, job, true)
+			c.Assert(err1, IsNil)
+			return nil
+		})
+		err := d.callHookOnChanged(nil)
+		c.Assert(err, IsNil)
+	}
+	changeJobState()
+	// Add a StateWriteReorganization job.
+	indexName = model.NewCIStr("idx_write_reorg")
+	args = []interface{}{false, indexName, idxColNames, nil}
+	backfillAddIndexJob(args)
+	changeJobState() // convert to delete only
+	changeJobState() // convert to write only
+	changeJobState() // convert to write reorg
+	writeReorgTbl, err := getCurrentTable(d, dbInfo.ID, tblInfo.ID)
+	c.Assert(err, IsNil)
+
+	err = d.Stop()
+	c.Assert(err, IsNil)
+	// Make sure shouldCleanJobs is ture.
+	d = testNewDDL(context.Background(), nil, store, nil, nil, testLease)
+	defer d.Stop()
+	testCreateIndex(c, ctx, d, dbInfo, writeReorgTbl.Meta(), false, "idx_normal", "c2")
+
+	// Make sure all DDL jobs are done.
+	for {
+		var isAllJobDone bool
+		kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+			t := meta.NewMeta(txn)
+			len, err := t.DDLJobQueueLen()
+			c.Assert(err, IsNil)
+			if len == 0 {
+				isAllJobDone = true
+			}
+			return nil
+		})
+		if isAllJobDone {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	// Check that the jobs in add index list are finished.
+	kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		for i, id := range failedJobIDs {
+			historyJob, err := t.GetHistoryDDLJob(id)
+			c.Assert(err, IsNil)
+			c.Assert(historyJob, NotNil)
+			if i == 0 {
+				c.Assert(historyJob.State, Equals, model.JobStateCancelled)
+			} else {
+				c.Assert(historyJob.State, Equals, model.JobStateRollbackDone)
+			}
+		}
+		return nil
+	})
+}
+
 func (s *testDDLSuite) TestSchemaError(c *C) {
 	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_schema_error")

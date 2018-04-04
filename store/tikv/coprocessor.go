@@ -612,15 +612,20 @@ func (it *copIterator) handleTaskOnce(bo *Backoffer, task *copTask, ch chan copR
 	}
 
 	// Handles the response for non-streaming copTask.
-	return it.handleCopResponse(bo, resp.Cop, task, ch)
+	return it.handleCopResponse(bo, resp.Cop, task, ch, nil)
 }
 
 func (it *copIterator) handleCopStreamResult(bo *Backoffer, stream *tikvrpc.CopStreamResponse, task *copTask, ch chan copResponse) ([]*copTask, error) {
 	defer stream.Close()
-	var resp, lastResp *coprocessor.Response
+	var resp *coprocessor.Response
+	var lastRange *coprocessor.KeyRange
 	resp = stream.Response
+	if resp == nil {
+		// streaming request returns io.EOF, so the first Response is nil.
+		return nil, nil
+	}
 	for {
-		remainedTasks, err := it.handleCopResponse(bo, resp, task, ch)
+		remainedTasks, err := it.handleCopResponse(bo, resp, task, ch, lastRange)
 		if err != nil || len(remainedTasks) != 0 {
 			return remainedTasks, errors.Trace(err)
 		}
@@ -635,24 +640,18 @@ func (it *copIterator) handleCopStreamResult(bo *Backoffer, stream *tikvrpc.CopS
 			}
 
 			// No coprocessor.Response for network error, rebuild task based on the last success one.
-			ranges := task.ranges
-			if lastResp != nil {
-				if it.req.Desc {
-					ranges, _ = ranges.split(lastResp.GetRange().Start)
-				} else {
-					_, ranges = ranges.split(lastResp.GetRange().End)
-				}
-			}
 			log.Info("stream recv timeout:", err)
-			return buildCopTasks(bo, it.store.regionCache, ranges, it.req.Desc, true)
+			return buildCopTasksFromRemain(bo, it.store.regionCache, lastRange, task, it.req.Desc, true)
 		}
-		lastResp = resp
+		lastRange = resp.Range
 	}
 }
 
 // handleCopResponse checks coprocessor Response for region split and lock,
 // returns more tasks when that happens, or handles the response if no error.
-func (it *copIterator) handleCopResponse(bo *Backoffer, resp *coprocessor.Response, task *copTask, ch chan copResponse) ([]*copTask, error) {
+// if we're handling streaming coprocessor response, lastRange is the range of last
+// successful response, otherwise it's nil.
+func (it *copIterator) handleCopResponse(bo *Backoffer, resp *coprocessor.Response, task *copTask, ch chan copResponse, lastRange *coprocessor.KeyRange) ([]*copTask, error) {
 	if regionErr := resp.GetRegionError(); regionErr != nil {
 		if err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String())); err != nil {
 			return nil, errors.Trace(err)
@@ -672,7 +671,7 @@ func (it *copIterator) handleCopResponse(bo *Backoffer, resp *coprocessor.Respon
 				return nil, errors.Trace(err)
 			}
 		}
-		return buildCopTasksFromRemain(bo, it.store.regionCache, resp, task, it.req.Desc, it.req.Streaming)
+		return buildCopTasksFromRemain(bo, it.store.regionCache, lastRange, task, it.req.Desc, it.req.Streaming)
 	}
 	if otherErr := resp.GetOtherError(); otherErr != "" {
 		err := errors.Errorf("other error: %s", otherErr)
@@ -690,10 +689,10 @@ func (it *copIterator) handleCopResponse(bo *Backoffer, resp *coprocessor.Respon
 	return nil, nil
 }
 
-func buildCopTasksFromRemain(bo *Backoffer, cache *RegionCache, resp *coprocessor.Response, task *copTask, desc bool, streaming bool) ([]*copTask, error) {
+func buildCopTasksFromRemain(bo *Backoffer, cache *RegionCache, lastRange *coprocessor.KeyRange, task *copTask, desc bool, streaming bool) ([]*copTask, error) {
 	remainedRanges := task.ranges
-	if streaming {
-		remainedRanges = calculateRemain(task.ranges, resp.Range, desc)
+	if streaming && lastRange != nil {
+		remainedRanges = calculateRemain(task.ranges, lastRange, desc)
 	}
 	return buildCopTasks(bo, cache, remainedRanges, desc, streaming)
 }
