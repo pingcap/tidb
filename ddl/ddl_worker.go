@@ -503,6 +503,9 @@ func (d *ddl) cleanAddIndexQueueJobs(txn kv.Transaction) error {
 		if job.SchemaState == model.StatePublic || job.SchemaState == model.StateNone {
 			if job.SchemaState == model.StateNone {
 				job.State = model.JobStateCancelled
+			} else {
+				binloginfo.SetDDLBinlog(d.workerVars.BinlogClient, txn, job.ID, job.Query)
+				job.State = model.JobStateSynced
 			}
 			err = d.finishDDLJob(m, job)
 			if err != nil {
