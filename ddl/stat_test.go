@@ -28,6 +28,14 @@ var _ = Suite(&testStatSuite{})
 type testStatSuite struct {
 }
 
+func (s *testStatSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
+}
+
+func (s *testStatSuite) TearDownSuite(c *C) {
+	testleak.AfterTest(c)()
+}
+
 func (s *testStatSuite) getDDLSchemaVer(c *C, d *ddl) int64 {
 	m, err := d.Stats(nil)
 	c.Assert(err, IsNil)
@@ -36,7 +44,6 @@ func (s *testStatSuite) getDDLSchemaVer(c *C, d *ddl) int64 {
 }
 
 func (s *testStatSuite) TestStat(c *C) {
-	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_stat")
 	defer store.Close()
 
@@ -78,6 +85,7 @@ LOOP:
 			d.close()
 			c.Assert(s.getDDLSchemaVer(c, d), GreaterEqual, ver)
 			d.start(context.Background())
+			time.Sleep(time.Millisecond * 20)
 		case err := <-done:
 			c.Assert(err, IsNil)
 			// TODO: Get this information from etcd.

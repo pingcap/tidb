@@ -1332,10 +1332,11 @@ func (s *testSessionSuite) TestIssue986(c *C) {
 	tk.MustExec(`insert into address values ('10')`)
 }
 
-func (s *testSessionSuite) TestIssue1089(c *C) {
+func (s *testSessionSuite) TestCast(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustQuery("select cast(0.5 as unsigned)")
 	tk.MustQuery("select cast(-0.5 as signed)")
+	tk.MustQuery("select hex(cast(0x10 as binary(2)))").Check(testkit.Rows("1000"))
 }
 
 func (s *testSessionSuite) TestTableInfoMeta(c *C) {
@@ -1974,6 +1975,30 @@ func (s *testSessionSuite) TestRollbackOnCompileError(c *C) {
 		}
 	}
 	c.Assert(recoverErr, IsTrue)
+}
+
+func (s *testSessionSuite) TestSetTransactionIsolationOneShot(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t (k int, v int)")
+	tk.MustExec("insert t values (1, 42)")
+	tk.MustExec("set transaction isolation level read committed")
+
+	// Check isolation level is set to read committed.
+	ctx := context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
+		c.Assert(req.IsolationLevel, Equals, kv.RC)
+	})
+	tk.Se.Execute(ctx, "select * from t where k = 1")
+
+	// Check it just take effect for one time.
+	ctx = context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
+		c.Assert(req.IsolationLevel, Equals, kv.SI)
+	})
+	tk.Se.Execute(ctx, "select * from t where k = 1")
+
+	// Can't change isolation level when it's inside a transaction.
+	tk.MustExec("begin")
+	_, err := tk.Se.Execute(ctx, "set transaction isolation level read committed")
+	c.Assert(err, NotNil)
 }
 
 func (s *testSessionSuite) TestDBUserNameLength(c *C) {
