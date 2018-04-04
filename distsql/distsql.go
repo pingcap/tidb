@@ -36,7 +36,7 @@ var (
 )
 
 var (
-	_ SelectResult  = &selectResult{}
+	_ SelectResult = &selectResult{}
 )
 
 // SelectResult is an iterator of coprocessor partial results.
