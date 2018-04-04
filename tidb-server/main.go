@@ -48,8 +48,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/systimemon"
-	"github.com/pingcap/tidb/x-server"
-	binlog "github.com/pingcap/tipb/go-binlog"
+	"github.com/pingcap/tipb/go-binlog"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 	log "github.com/sirupsen/logrus"
@@ -117,7 +116,7 @@ var (
 	storage  kv.Storage
 	dom      *domain.Domain
 	svr      *server.Server
-	xsvr     *xserver.Server
+	xsvr     *server.Server
 	graceful bool
 )
 
@@ -411,15 +410,10 @@ func createServer() {
 	var driver server.IDriver
 	driver = server.NewTiDBDriver(storage)
 	var err error
-	svr, err = server.NewServer(cfg, driver)
+	svr, err = server.NewServer(cfg, driver, server.MySQLProtocol)
 	terror.MustNil(err)
 	if cfg.XProtocol.XServer {
-		xcfg := &xserver.Config{
-			Addr:       fmt.Sprintf("%s:%d", cfg.XProtocol.XHost, cfg.XProtocol.XPort),
-			Socket:     cfg.XProtocol.XSocket,
-			TokenLimit: cfg.TokenLimit,
-		}
-		xsvr, err = xserver.NewServer(xcfg)
+		xsvr, err = server.NewServer(cfg, driver, server.MySQLXProtocol)
 		terror.MustNil(err)
 	}
 }
@@ -440,7 +434,7 @@ func setupSignalHandler() {
 		}
 
 		if xsvr != nil {
-			xsvr.Close() // Should close xserver before server.
+			xsvr.Close() // Should close mysqlx server before server.
 		}
 		svr.Close()
 	}()
@@ -474,10 +468,17 @@ func setupTracing() {
 }
 
 func runServer() {
-	err := svr.Run()
-	terror.MustNil(err)
+	srvError := make(chan error)
+	go func() {
+		srvError <- svr.Run()
+	}()
 	if cfg.XProtocol.XServer {
-		err := xsvr.Run()
+		go func() {
+			srvError <- xsvr.Run()
+		}()
+	}
+	select {
+	case err := <-srvError:
 		terror.MustNil(err)
 	}
 }

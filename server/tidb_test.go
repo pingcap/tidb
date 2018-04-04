@@ -39,6 +39,7 @@ import (
 type TidbTestSuite struct {
 	tidbdrv *TiDBDriver
 	server  *Server
+	xserver *Server
 }
 
 var suite = new(TidbTestSuite)
@@ -56,11 +57,19 @@ func (ts *TidbTestSuite) SetUpSuite(c *C) {
 	cfg.Status.ReportStatus = true
 	cfg.Status.StatusPort = 10090
 	cfg.Performance.TCPKeepAlive = true
+	cfg.XProtocol.XServer = true
+	cfg.XProtocol.XPort = defaultXPort
 
-	server, err := NewServer(cfg, ts.tidbdrv)
+	server, err := NewServer(cfg, ts.tidbdrv, MySQLProtocol)
 	c.Assert(err, IsNil)
 	ts.server = server
 	go ts.server.Run()
+
+	xserver, err := NewServer(cfg, ts.tidbdrv, MySQLXProtocol)
+	c.Assert(err, IsNil)
+	ts.xserver = xserver
+	go ts.xserver.Run()
+
 	waitUntilServerOnline(cfg.Status.StatusPort)
 
 	// Run this test here because parallel would affect the result of it.
@@ -147,7 +156,7 @@ func (ts *TidbTestSuite) TestSocket(c *C) {
 	cfg.Socket = "/tmp/tidbtest.sock"
 	cfg.Status.StatusPort = 10091
 
-	server, err := NewServer(cfg, ts.tidbdrv)
+	server, err := NewServer(cfg, ts.tidbdrv, MySQLProtocol)
 	c.Assert(err, IsNil)
 	go server.Run()
 	time.Sleep(time.Millisecond * 100)
@@ -279,7 +288,7 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 	cfg.Port = 4002
 	cfg.Status.ReportStatus = true
 	cfg.Status.StatusPort = 10091
-	server, err := NewServer(cfg, ts.tidbdrv)
+	server, err := NewServer(cfg, ts.tidbdrv, MySQLProtocol)
 	c.Assert(err, IsNil)
 	go server.Run()
 	time.Sleep(time.Millisecond * 100)
@@ -301,7 +310,7 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 		SSLCert: "/tmp/server-cert.pem",
 		SSLKey:  "/tmp/server-key.pem",
 	}
-	server, err = NewServer(cfg, ts.tidbdrv)
+	server, err = NewServer(cfg, ts.tidbdrv, MySQLProtocol)
 	c.Assert(err, IsNil)
 	go server.Run()
 	time.Sleep(time.Millisecond * 100)
@@ -332,7 +341,7 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 		SSLCert: "/tmp/server-cert.pem",
 		SSLKey:  "/tmp/server-key.pem",
 	}
-	server, err = NewServer(cfg, ts.tidbdrv)
+	server, err = NewServer(cfg, ts.tidbdrv, MySQLProtocol)
 	c.Assert(err, IsNil)
 	go server.Run()
 	time.Sleep(time.Millisecond * 100)
@@ -510,4 +519,14 @@ func (ts *TidbTestSuite) TestFieldList(c *C) {
 func (ts *TidbTestSuite) TestSumAvg(c *C) {
 	c.Parallel()
 	runTestSumAvg(c)
+}
+
+func (ts *TidbTestSuite) TestXServerCommon(c *C) {
+	c.Parallel()
+	runXTestCommon(c)
+}
+
+func (ts *TidbTestSuite) TestXServerValue(c *C) {
+	c.Parallel()
+	runXTestValue(c)
 }

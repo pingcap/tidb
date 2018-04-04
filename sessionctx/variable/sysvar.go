@@ -203,6 +203,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "ssl_cert", ""},
 	{ScopeNone, "ssl_key", ""},
 	{ScopeNone, "ssl_cipher", ""},
+	{ScopeNone, "mysqlx_ssl_cipher", ""},
 	{ScopeNone, "tls_version", "TLSv1,TLSv1.1,TLSv1.2"},
 	{ScopeNone, "system_time_zone", "CST"},
 	{ScopeGlobal, "innodb_print_all_deadlocks", "OFF"},

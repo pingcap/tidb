@@ -38,6 +38,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
 	// For pprof
 	_ "net/http/pprof"
 
@@ -49,6 +50,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/arena"
+	"github.com/pingcap/tidb/xprotocol/xpacketio"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -73,6 +76,15 @@ const defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
 	mysql.ClientMultiStatements | mysql.ClientMultiResults | mysql.ClientLocalFiles |
 	mysql.ClientConnectAtts | mysql.ClientPluginAuth
 
+type protocolType uint32
+
+const (
+	// MySQLProtocol is MySQL Protocol
+	MySQLProtocol protocolType = iota
+	// MySQLXProtocol is MySQL X Protocol
+	MySQLXProtocol
+)
+
 // Server is the MySQL protocol server
 type Server struct {
 	cfg               *config.Config
@@ -81,7 +93,8 @@ type Server struct {
 	listener          net.Listener
 	rwlock            *sync.RWMutex
 	concurrentLimiter *TokenLimiter
-	clients           map[uint32]*clientConn
+	tp                protocolType
+	clients           map[uint32]baseClientConn
 	capability        uint32
 
 	// stopListenerCh is used when a critical error occurred, we don't want to exit the process, because there may be
@@ -99,6 +112,24 @@ func (s *Server) ConnectionCount() int {
 	return cnt
 }
 
+type xClientInfo struct {
+	clientID  uint32
+	user      string
+	host      string
+	sessionID uint32
+}
+
+func (s *Server) getXClientsInfo() []xClientInfo {
+	var info []xClientInfo
+	s.rwlock.RLock()
+	for _, v := range s.clients {
+		c := v.(*xClientConn)
+		info = append(info, xClientInfo{clientID: c.id(), user: c.user, host: "", sessionID: c.xsession.sessionID})
+	}
+	s.rwlock.RUnlock()
+	return info
+}
+
 func (s *Server) getToken() *Token {
 	return s.concurrentLimiter.Get()
 }
@@ -107,7 +138,7 @@ func (s *Server) releaseToken(token *Token) {
 	s.concurrentLimiter.Put(token)
 }
 
-// newConn creates a new *clientConn from a net.Conn.
+// newConn creates a new *ClientConn from a net.Conn.
 // It allocates a connection ID and random salt data for authentication.
 func (s *Server) newConn(conn net.Conn) *clientConn {
 	cc := newClientConn(s)
@@ -120,8 +151,21 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 		}
 	}
 	cc.setConn(conn)
-	cc.salt = util.RandomBuf(20)
+	cc.salt = util.RandomBuf(mysql.ScrambleLength)
 	return cc
+}
+
+func (s *Server) newXConn(conn net.Conn) *xClientConn {
+	return &xClientConn{
+		conn:         conn,
+		pkt:          xpacketio.NewXPacketIO(conn),
+		server:       s,
+		capability:   defaultCapability,
+		connectionID: atomic.AddUint32(&baseConnID, 1),
+		collation:    mysql.DefaultCollationID,
+		alloc:        arena.NewAllocator(32 * 1024),
+		salt:         util.RandomBuf(mysql.ScrambleLength),
+	}
 }
 
 func (s *Server) skipAuth() bool {
@@ -129,13 +173,14 @@ func (s *Server) skipAuth() bool {
 }
 
 // NewServer creates a new Server.
-func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
+func NewServer(cfg *config.Config, driver IDriver, protocolType protocolType) (*Server, error) {
 	s := &Server{
 		cfg:               cfg,
 		driver:            driver,
 		concurrentLimiter: NewTokenLimiter(cfg.TokenLimit),
 		rwlock:            &sync.RWMutex{},
-		clients:           make(map[uint32]*clientConn),
+		tp:                protocolType,
+		clients:           make(map[uint32]baseClientConn),
 		stopListenerCh:    make(chan struct{}, 1),
 	}
 	s.loadTLSCertificates()
@@ -145,15 +190,23 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		s.capability |= mysql.ClientSSL
 	}
 
+	socket := cfg.Socket
+	addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
+	protocol := "MySQL"
+	if protocolType == MySQLXProtocol {
+		socket = cfg.XProtocol.XSocket
+		addr = fmt.Sprintf("%s:%d", s.cfg.XProtocol.XHost, s.cfg.XProtocol.XPort)
+		protocol = "MySQL X"
+	}
+
 	var err error
-	if cfg.Socket != "" {
-		if s.listener, err = net.Listen("unix", cfg.Socket); err == nil {
-			log.Infof("Server is running MySQL Protocol through Socket [%s]", cfg.Socket)
+	if socket != "" {
+		if s.listener, err = net.Listen("unix", socket); err == nil {
+			log.Infof("Server is running %s Protocol through Socket [%s]", protocol, socket)
 		}
 	} else {
-		addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
 		if s.listener, err = net.Listen("tcp", addr); err == nil {
-			log.Infof("Server is running MySQL Protocol at [%s]", addr)
+			log.Infof("Server is running %s Protocol at [%s]", protocol, addr)
 		}
 	}
 
@@ -292,9 +345,10 @@ func (s *Server) Close() {
 
 // onConn runs in its own goroutine, handles queries from this connection.
 func (s *Server) onConn(c net.Conn) {
-	conn := s.newConn(c)
+	conn := createClientConn(c, s)
+
 	defer func() {
-		log.Infof("[%d] close connection", conn.connectionID)
+		log.Infof("[%d] close connection", conn.id())
 	}()
 
 	if err := conn.handshake(); err != nil {
@@ -307,7 +361,7 @@ func (s *Server) onConn(c net.Conn) {
 	}
 
 	s.rwlock.Lock()
-	s.clients[conn.connectionID] = conn
+	s.clients[conn.id()] = conn
 	connections := len(s.clients)
 	s.rwlock.Unlock()
 	metrics.ConnGauge.Set(float64(connections))
@@ -320,10 +374,18 @@ func (s *Server) ShowProcessList() []util.ProcessInfo {
 	var rs []util.ProcessInfo
 	s.rwlock.RLock()
 	for _, client := range s.clients {
-		if atomic.LoadInt32(&client.status) == connStatusWaitShutdown {
-			continue
+		// TODO: need check for x client.
+		if c, ok := client.(*clientConn); ok {
+			if atomic.LoadInt32(&c.status) == connStatusWaitShutdown {
+				continue
+			}
 		}
-		rs = append(rs, client.ctx.ShowProcess())
+		if c, ok := client.(*xClientConn); ok {
+			if c.isKilled() {
+				continue
+			}
+		}
+		rs = append(rs, client.showProcess())
 	}
 	s.rwlock.RUnlock()
 	return rs
@@ -341,9 +403,9 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 		return
 	}
 
-	conn.mu.RLock()
-	cancelFunc := conn.mu.cancelFunc
-	conn.mu.RUnlock()
+	conn.lockConn()
+	cancelFunc := conn.getCancelFunc()
+	conn.unlockConn()
 	if cancelFunc != nil {
 		cancelFunc()
 	}
@@ -351,7 +413,14 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 	if !query {
 		// Mark the client connection status as WaitShutdown, when the goroutine detect
 		// this, it will end the dispatch loop and exit.
-		atomic.StoreInt32(&conn.status, connStatusWaitShutdown)
+		// TODO: need check for x client.
+		if c, ok := conn.(*clientConn); ok {
+			atomic.StoreInt32(&c.status, connStatusWaitShutdown)
+		}
+	}
+
+	if c, ok := conn.(*xClientConn); ok {
+		c.Cancel(query)
 	}
 }
 
@@ -374,20 +443,26 @@ func (s *Server) GracefulDown() {
 }
 
 func (s *Server) kickIdleConnection() {
-	var conns []*clientConn
+	var conns []baseClientConn
 	s.rwlock.RLock()
 	for _, cc := range s.clients {
-		if cc.ShutdownOrNotify() {
-			// Shutdowned conn will be closed by us, and notified conn will exist themselves.
-			conns = append(conns, cc)
+		// TODO: need check for x client.
+		if c, ok := cc.(*clientConn); ok {
+			if c.ShutdownOrNotify() {
+				// Shutdowned conn will be closed by us, and notified conn will exist themselves.
+				conns = append(conns, cc)
+			}
 		}
 	}
 	s.rwlock.RUnlock()
 
 	for _, cc := range conns {
-		err := cc.Close()
-		if err != nil {
-			log.Error("close connection error:", err)
+		// TODO: need check for x client.
+		if c, ok := cc.(*clientConn); ok {
+			err := c.Close()
+			if err != nil {
+				log.Error("close connection error:", err)
+			}
 		}
 	}
 }

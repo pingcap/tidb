@@ -817,10 +817,25 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 		er.err = errors.Trace(err)
 		return
 	}
-	e := datumToConstant(types.NewStringDatum(val), mysql.TypeVarString)
+	// These code fix the field type of "lower_case_table_names" which required by establishing a connection using x protocol.
+	// Field type of each system var in TiDB is string, which is different with MySQL.
+	// TODO: assign the suitable field types for all system variables as MySQL, then we can remove these code.
+	var e *expression.Constant
+	if strings.EqualFold(name, "lower_case_table_names") {
+		num, err := strconv.Atoi(val)
+		if err != nil {
+			er.err = errors.Trace(err)
+			return
+		}
+		e = datumToConstant(types.NewIntDatum(int64(num)), mysql.TypeLonglong)
+		e.RetType.Flag |= mysql.UnsignedFlag
+	} else {
+		e = datumToConstant(types.NewStringDatum(val), mysql.TypeVarString)
+	}
 	e.RetType.Charset, _ = er.ctx.GetSessionVars().GetSystemVar(variable.CharacterSetConnection)
 	e.RetType.Collate, _ = er.ctx.GetSessionVars().GetSystemVar(variable.CollationConnection)
 	er.ctxStack = append(er.ctxStack, e)
+	return
 }
 
 func (er *expressionRewriter) unaryOpToExpression(v *ast.UnaryOperationExpr) {
