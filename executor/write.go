@@ -911,7 +911,7 @@ func getOldValues(ctx sessionctx.Context, t table.Table, handles []int64) (map[s
 	for _, handle := range handles {
 		batchKeys = append(batchKeys, t.RecordKey(handle))
 	}
-	values, err := ctx.Txn().GetSnapshot().BatchGet(batchKeys)
+	values, err := kv.BatchGetValues(ctx.Txn(), batchKeys)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

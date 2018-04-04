@@ -482,6 +482,40 @@ func (s *testSuite) TestInsertOnDup(c *C) {
 	tk.MustExec("insert into t values (1, 1) on duplicate key update j = values(j)")
 	r = tk.MustQuery("select * from t;")
 	r.Check(testkit.Rows(rowStr1))
+
+	testSQL = `drop table if exists test;
+create table test (i int primary key, j int unique);
+begin;
+insert into test values (1,1);
+insert into test values (2,1) on duplicate key update i = -i, j = -j;
+commit;`
+	tk.MustExec(testSQL)
+	testSQL = `select * from test;`
+	r = tk.MustQuery(testSQL)
+	r.Check(testkit.Rows("-1 -1"))
+
+	testSQL = `delete from test;
+insert into test values (1, 1);
+begin;
+delete from test where i = 1;
+insert into test values (2, 1) on duplicate key update i = -i, j = -j;
+commit;`
+	tk.MustExec(testSQL)
+	testSQL = `select * from test;`
+	r = tk.MustQuery(testSQL)
+	r.Check(testkit.Rows("2 1"))
+
+	testSQL = `delete from test;
+insert into test values (1, 1);
+begin;
+update test set i = 2, j = 2 where i = 1;
+insert into test values (1, 3) on duplicate key update i = -i, j = -j;
+insert into test values (2, 4) on duplicate key update i = -i, j = -j;
+commit;`
+	tk.MustExec(testSQL)
+	testSQL = `select * from test order by i;`
+	r = tk.MustQuery(testSQL)
+	r.Check(testkit.Rows("-2 -2", "1 3"))
 }
 
 func (s *testSuite) TestReplace(c *C) {
