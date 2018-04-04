@@ -45,14 +45,23 @@
 		RawGetResponse
 		RawPutRequest
 		RawPutResponse
+		RawBatchPutRequest
+		RawBatchPutResponse
+		RawBatchGetRequest
+		RawBatchGetResponse
 		RawDeleteRequest
 		RawDeleteResponse
+		RawBatchDeleteRequest
+		RawBatchDeleteResponse
 		DeleteRangeRequest
 		DeleteRangeResponse
 		RawDeleteRangeRequest
 		RawDeleteRangeResponse
 		RawScanRequest
 		RawScanResponse
+		KeyRange
+		RawBatchScanRequest
+		RawBatchScanResponse
 		MvccWrite
 		MvccValue
 		MvccLock
@@ -1315,6 +1324,102 @@ func (m *RawPutResponse) GetError() string {
 	return ""
 }
 
+type RawBatchPutRequest struct {
+	Context *Context  `protobuf:"bytes,1,opt,name=context" json:"context,omitempty"`
+	Pairs   []*KvPair `protobuf:"bytes,2,rep,name=pairs" json:"pairs,omitempty"`
+}
+
+func (m *RawBatchPutRequest) Reset()                    { *m = RawBatchPutRequest{} }
+func (m *RawBatchPutRequest) String() string            { return proto.CompactTextString(m) }
+func (*RawBatchPutRequest) ProtoMessage()               {}
+func (*RawBatchPutRequest) Descriptor() ([]byte, []int) { return fileDescriptorKvrpcpb, []int{36} }
+
+func (m *RawBatchPutRequest) GetContext() *Context {
+	if m != nil {
+		return m.Context
+	}
+	return nil
+}
+
+func (m *RawBatchPutRequest) GetPairs() []*KvPair {
+	if m != nil {
+		return m.Pairs
+	}
+	return nil
+}
+
+type RawBatchPutResponse struct {
+	RegionError *errorpb.Error `protobuf:"bytes,1,opt,name=region_error,json=regionError" json:"region_error,omitempty"`
+	Error       string         `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
+}
+
+func (m *RawBatchPutResponse) Reset()                    { *m = RawBatchPutResponse{} }
+func (m *RawBatchPutResponse) String() string            { return proto.CompactTextString(m) }
+func (*RawBatchPutResponse) ProtoMessage()               {}
+func (*RawBatchPutResponse) Descriptor() ([]byte, []int) { return fileDescriptorKvrpcpb, []int{37} }
+
+func (m *RawBatchPutResponse) GetRegionError() *errorpb.Error {
+	if m != nil {
+		return m.RegionError
+	}
+	return nil
+}
+
+func (m *RawBatchPutResponse) GetError() string {
+	if m != nil {
+		return m.Error
+	}
+	return ""
+}
+
+type RawBatchGetRequest struct {
+	Context *Context `protobuf:"bytes,1,opt,name=context" json:"context,omitempty"`
+	Keys    [][]byte `protobuf:"bytes,2,rep,name=keys" json:"keys,omitempty"`
+}
+
+func (m *RawBatchGetRequest) Reset()                    { *m = RawBatchGetRequest{} }
+func (m *RawBatchGetRequest) String() string            { return proto.CompactTextString(m) }
+func (*RawBatchGetRequest) ProtoMessage()               {}
+func (*RawBatchGetRequest) Descriptor() ([]byte, []int) { return fileDescriptorKvrpcpb, []int{38} }
+
+func (m *RawBatchGetRequest) GetContext() *Context {
+	if m != nil {
+		return m.Context
+	}
+	return nil
+}
+
+func (m *RawBatchGetRequest) GetKeys() [][]byte {
+	if m != nil {
+		return m.Keys
+	}
+	return nil
+}
+
+type RawBatchGetResponse struct {
+	RegionError *errorpb.Error `protobuf:"bytes,1,opt,name=region_error,json=regionError" json:"region_error,omitempty"`
+	Pairs       []*KvPair      `protobuf:"bytes,2,rep,name=pairs" json:"pairs,omitempty"`
+}
+
+func (m *RawBatchGetResponse) Reset()                    { *m = RawBatchGetResponse{} }
+func (m *RawBatchGetResponse) String() string            { return proto.CompactTextString(m) }
+func (*RawBatchGetResponse) ProtoMessage()               {}
+func (*RawBatchGetResponse) Descriptor() ([]byte, []int) { return fileDescriptorKvrpcpb, []int{39} }
+
+func (m *RawBatchGetResponse) GetRegionError() *errorpb.Error {
+	if m != nil {
+		return m.RegionError
+	}
+	return nil
+}
+
+func (m *RawBatchGetResponse) GetPairs() []*KvPair {
+	if m != nil {
+		return m.Pairs
+	}
+	return nil
+}
+
 type RawDeleteRequest struct {
 	Context *Context `protobuf:"bytes,1,opt,name=context" json:"context,omitempty"`
 	Key     []byte   `protobuf:"bytes,2,opt,name=key,proto3" json:"key,omitempty"`
@@ -1323,7 +1428,7 @@ type RawDeleteRequest struct {
 func (m *RawDeleteRequest) Reset()                    { *m = RawDeleteRequest{} }
 func (m *RawDeleteRequest) String() string            { return proto.CompactTextString(m) }
 func (*RawDeleteRequest) ProtoMessage()               {}
-func (*RawDeleteRequest) Descriptor() ([]byte, []int) { return fileDescriptorKvrpcpb, []int{36} }
+func (*RawDeleteRequest) Descriptor() ([]byte, []int) { return fileDescriptorKvrpcpb, []int{40} }
 
 func (m *RawDeleteRequest) GetContext() *Context {
 	if m != nil {
@@ -1347,7 +1452,7 @@ type RawDeleteResponse struct {
 func (m *RawDeleteResponse) Reset()                    { *m = RawDeleteResponse{} }
 func (m *RawDeleteResponse) String() string            { return proto.CompactTextString(m) }
 func (*RawDeleteResponse) ProtoMessage()               {}
-func (*RawDeleteResponse) Descriptor() ([]byte, []int) { return fileDescriptorKvrpcpb, []int{37} }
+func (*RawDeleteResponse) Descriptor() ([]byte, []int) { return fileDescriptorKvrpcpb, []int{41} }
 
 func (m *RawDeleteResponse) GetRegionError() *errorpb.Error {
 	if m != nil {
@@ -1363,6 +1468,54 @@ func (m *RawDeleteResponse) GetError() string {
 	return ""
 }
 
+type RawBatchDeleteRequest struct {
+	Context *Context `protobuf:"bytes,1,opt,name=context" json:"context,omitempty"`
+	Keys    [][]byte `protobuf:"bytes,2,rep,name=keys" json:"keys,omitempty"`
+}
+
+func (m *RawBatchDeleteRequest) Reset()                    { *m = RawBatchDeleteRequest{} }
+func (m *RawBatchDeleteRequest) String() string            { return proto.CompactTextString(m) }
+func (*RawBatchDeleteRequest) ProtoMessage()               {}
+func (*RawBatchDeleteRequest) Descriptor() ([]byte, []int) { return fileDescriptorKvrpcpb, []int{42} }
+
+func (m *RawBatchDeleteRequest) GetContext() *Context {
+	if m != nil {
+		return m.Context
+	}
+	return nil
+}
+
+func (m *RawBatchDeleteRequest) GetKeys() [][]byte {
+	if m != nil {
+		return m.Keys
+	}
+	return nil
+}
+
+type RawBatchDeleteResponse struct {
+	RegionError *errorpb.Error `protobuf:"bytes,1,opt,name=region_error,json=regionError" json:"region_error,omitempty"`
+	Error       string         `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
+}
+
+func (m *RawBatchDeleteResponse) Reset()                    { *m = RawBatchDeleteResponse{} }
+func (m *RawBatchDeleteResponse) String() string            { return proto.CompactTextString(m) }
+func (*RawBatchDeleteResponse) ProtoMessage()               {}
+func (*RawBatchDeleteResponse) Descriptor() ([]byte, []int) { return fileDescriptorKvrpcpb, []int{43} }
+
+func (m *RawBatchDeleteResponse) GetRegionError() *errorpb.Error {
+	if m != nil {
+		return m.RegionError
+	}
+	return nil
+}
+
+func (m *RawBatchDeleteResponse) GetError() string {
+	if m != nil {
+		return m.Error
+	}
+	return ""
+}
+
 type DeleteRangeRequest struct {
 	Context  *Context `protobuf:"bytes,1,opt,name=context" json:"context,omitempty"`
 	StartKey []byte   `protobuf:"bytes,2,opt,name=start_key,json=startKey,proto3" json:"start_key,omitempty"`
@@ -1372,7 +1525,7 @@ type DeleteRangeRequest struct {
 func (m *DeleteRangeRequest) Reset()                    { *m = DeleteRangeRequest{} }
 func (m *DeleteRangeRequest) String() string            { return proto.CompactTextString(m) }
 func (*DeleteRangeRequest) ProtoMessage()               {}
-func (*DeleteRangeRequest) Descriptor() ([]byte, []int) { return fileDescriptorKvrpcpb, []int{38} }
+func (*DeleteRangeRequest) Descriptor() ([]byte, []int) { return fileDescriptorKvrpcpb, []int{44} }
 
 func (m *DeleteRangeRequest) GetContext() *Context {
 	if m != nil {
@@ -1403,7 +1556,7 @@ type DeleteRangeResponse struct {
 func (m *DeleteRangeResponse) Reset()                    { *m = DeleteRangeResponse{} }
 func (m *DeleteRangeResponse) String() string            { return proto.CompactTextString(m) }
 func (*DeleteRangeResponse) ProtoMessage()               {}
-func (*DeleteRangeResponse) Descriptor() ([]byte, []int) { return fileDescriptorKvrpcpb, []int{39} }
+func (*DeleteRangeResponse) Descriptor() ([]byte, []int) { return fileDescriptorKvrpcpb, []int{45} }
 
 func (m *DeleteRangeResponse) GetRegionError() *errorpb.Error {
 	if m != nil {
@@ -1428,7 +1581,7 @@ type RawDeleteRangeRequest struct {
 func (m *RawDeleteRangeRequest) Reset()                    { *m = RawDeleteRangeRequest{} }
 func (m *RawDeleteRangeRequest) String() string            { return proto.CompactTextString(m) }
 func (*RawDeleteRangeRequest) ProtoMessage()               {}
-func (*RawDeleteRangeRequest) Descriptor() ([]byte, []int) { return fileDescriptorKvrpcpb, []int{40} }
+func (*RawDeleteRangeRequest) Descriptor() ([]byte, []int) { return fileDescriptorKvrpcpb, []int{46} }
 
 func (m *RawDeleteRangeRequest) GetContext() *Context {
 	if m != nil {
@@ -1459,7 +1612,7 @@ type RawDeleteRangeResponse struct {
 func (m *RawDeleteRangeResponse) Reset()                    { *m = RawDeleteRangeResponse{} }
 func (m *RawDeleteRangeResponse) String() string            { return proto.CompactTextString(m) }
 func (*RawDeleteRangeResponse) ProtoMessage()               {}
-func (*RawDeleteRangeResponse) Descriptor() ([]byte, []int) { return fileDescriptorKvrpcpb, []int{41} }
+func (*RawDeleteRangeResponse) Descriptor() ([]byte, []int) { return fileDescriptorKvrpcpb, []int{47} }
 
 func (m *RawDeleteRangeResponse) GetRegionError() *errorpb.Error {
 	if m != nil {
@@ -1479,12 +1632,13 @@ type RawScanRequest struct {
 	Context  *Context `protobuf:"bytes,1,opt,name=context" json:"context,omitempty"`
 	StartKey []byte   `protobuf:"bytes,2,opt,name=start_key,json=startKey,proto3" json:"start_key,omitempty"`
 	Limit    uint32   `protobuf:"varint,3,opt,name=limit,proto3" json:"limit,omitempty"`
+	KeyOnly  bool     `protobuf:"varint,4,opt,name=key_only,json=keyOnly,proto3" json:"key_only,omitempty"`
 }
 
 func (m *RawScanRequest) Reset()                    { *m = RawScanRequest{} }
 func (m *RawScanRequest) String() string            { return proto.CompactTextString(m) }
 func (*RawScanRequest) ProtoMessage()               {}
-func (*RawScanRequest) Descriptor() ([]byte, []int) { return fileDescriptorKvrpcpb, []int{42} }
+func (*RawScanRequest) Descriptor() ([]byte, []int) { return fileDescriptorKvrpcpb, []int{48} }
 
 func (m *RawScanRequest) GetContext() *Context {
 	if m != nil {
@@ -1507,6 +1661,13 @@ func (m *RawScanRequest) GetLimit() uint32 {
 	return 0
 }
 
+func (m *RawScanRequest) GetKeyOnly() bool {
+	if m != nil {
+		return m.KeyOnly
+	}
+	return false
+}
+
 type RawScanResponse struct {
 	RegionError *errorpb.Error `protobuf:"bytes,1,opt,name=region_error,json=regionError" json:"region_error,omitempty"`
 	Kvs         []*KvPair      `protobuf:"bytes,2,rep,name=kvs" json:"kvs,omitempty"`
@@ -1515,7 +1676,7 @@ type RawScanResponse struct {
 func (m *RawScanResponse) Reset()                    { *m = RawScanResponse{} }
 func (m *RawScanResponse) String() string            { return proto.CompactTextString(m) }
 func (*RawScanResponse) ProtoMessage()               {}
-func (*RawScanResponse) Descriptor() ([]byte, []int) { return fileDescriptorKvrpcpb, []int{43} }
+func (*RawScanResponse) Descriptor() ([]byte, []int) { return fileDescriptorKvrpcpb, []int{49} }
 
 func (m *RawScanResponse) GetRegionError() *errorpb.Error {
 	if m != nil {
@@ -1525,6 +1686,94 @@ func (m *RawScanResponse) GetRegionError() *errorpb.Error {
 }
 
 func (m *RawScanResponse) GetKvs() []*KvPair {
+	if m != nil {
+		return m.Kvs
+	}
+	return nil
+}
+
+type KeyRange struct {
+	StartKey []byte `protobuf:"bytes,1,opt,name=start_key,json=startKey,proto3" json:"start_key,omitempty"`
+	EndKey   []byte `protobuf:"bytes,2,opt,name=end_key,json=endKey,proto3" json:"end_key,omitempty"`
+}
+
+func (m *KeyRange) Reset()                    { *m = KeyRange{} }
+func (m *KeyRange) String() string            { return proto.CompactTextString(m) }
+func (*KeyRange) ProtoMessage()               {}
+func (*KeyRange) Descriptor() ([]byte, []int) { return fileDescriptorKvrpcpb, []int{50} }
+
+func (m *KeyRange) GetStartKey() []byte {
+	if m != nil {
+		return m.StartKey
+	}
+	return nil
+}
+
+func (m *KeyRange) GetEndKey() []byte {
+	if m != nil {
+		return m.EndKey
+	}
+	return nil
+}
+
+type RawBatchScanRequest struct {
+	Context   *Context    `protobuf:"bytes,1,opt,name=context" json:"context,omitempty"`
+	Ranges    []*KeyRange `protobuf:"bytes,2,rep,name=ranges" json:"ranges,omitempty"`
+	EachLimit uint32      `protobuf:"varint,3,opt,name=each_limit,json=eachLimit,proto3" json:"each_limit,omitempty"`
+	KeyOnly   bool        `protobuf:"varint,4,opt,name=key_only,json=keyOnly,proto3" json:"key_only,omitempty"`
+}
+
+func (m *RawBatchScanRequest) Reset()                    { *m = RawBatchScanRequest{} }
+func (m *RawBatchScanRequest) String() string            { return proto.CompactTextString(m) }
+func (*RawBatchScanRequest) ProtoMessage()               {}
+func (*RawBatchScanRequest) Descriptor() ([]byte, []int) { return fileDescriptorKvrpcpb, []int{51} }
+
+func (m *RawBatchScanRequest) GetContext() *Context {
+	if m != nil {
+		return m.Context
+	}
+	return nil
+}
+
+func (m *RawBatchScanRequest) GetRanges() []*KeyRange {
+	if m != nil {
+		return m.Ranges
+	}
+	return nil
+}
+
+func (m *RawBatchScanRequest) GetEachLimit() uint32 {
+	if m != nil {
+		return m.EachLimit
+	}
+	return 0
+}
+
+func (m *RawBatchScanRequest) GetKeyOnly() bool {
+	if m != nil {
+		return m.KeyOnly
+	}
+	return false
+}
+
+type RawBatchScanResponse struct {
+	RegionError *errorpb.Error `protobuf:"bytes,1,opt,name=region_error,json=regionError" json:"region_error,omitempty"`
+	Kvs         []*KvPair      `protobuf:"bytes,2,rep,name=kvs" json:"kvs,omitempty"`
+}
+
+func (m *RawBatchScanResponse) Reset()                    { *m = RawBatchScanResponse{} }
+func (m *RawBatchScanResponse) String() string            { return proto.CompactTextString(m) }
+func (*RawBatchScanResponse) ProtoMessage()               {}
+func (*RawBatchScanResponse) Descriptor() ([]byte, []int) { return fileDescriptorKvrpcpb, []int{52} }
+
+func (m *RawBatchScanResponse) GetRegionError() *errorpb.Error {
+	if m != nil {
+		return m.RegionError
+	}
+	return nil
+}
+
+func (m *RawBatchScanResponse) GetKvs() []*KvPair {
 	if m != nil {
 		return m.Kvs
 	}
@@ -1541,7 +1790,7 @@ type MvccWrite struct {
 func (m *MvccWrite) Reset()                    { *m = MvccWrite{} }
 func (m *MvccWrite) String() string            { return proto.CompactTextString(m) }
 func (*MvccWrite) ProtoMessage()               {}
-func (*MvccWrite) Descriptor() ([]byte, []int) { return fileDescriptorKvrpcpb, []int{44} }
+func (*MvccWrite) Descriptor() ([]byte, []int) { return fileDescriptorKvrpcpb, []int{53} }
 
 func (m *MvccWrite) GetType() Op {
 	if m != nil {
@@ -1579,7 +1828,7 @@ type MvccValue struct {
 func (m *MvccValue) Reset()                    { *m = MvccValue{} }
 func (m *MvccValue) String() string            { return proto.CompactTextString(m) }
 func (*MvccValue) ProtoMessage()               {}
-func (*MvccValue) Descriptor() ([]byte, []int) { return fileDescriptorKvrpcpb, []int{45} }
+func (*MvccValue) Descriptor() ([]byte, []int) { return fileDescriptorKvrpcpb, []int{54} }
 
 func (m *MvccValue) GetStartTs() uint64 {
 	if m != nil {
@@ -1605,7 +1854,7 @@ type MvccLock struct {
 func (m *MvccLock) Reset()                    { *m = MvccLock{} }
 func (m *MvccLock) String() string            { return proto.CompactTextString(m) }
 func (*MvccLock) ProtoMessage()               {}
-func (*MvccLock) Descriptor() ([]byte, []int) { return fileDescriptorKvrpcpb, []int{46} }
+func (*MvccLock) Descriptor() ([]byte, []int) { return fileDescriptorKvrpcpb, []int{55} }
 
 func (m *MvccLock) GetType() Op {
 	if m != nil {
@@ -1644,7 +1893,7 @@ type MvccInfo struct {
 func (m *MvccInfo) Reset()                    { *m = MvccInfo{} }
 func (m *MvccInfo) String() string            { return proto.CompactTextString(m) }
 func (*MvccInfo) ProtoMessage()               {}
-func (*MvccInfo) Descriptor() ([]byte, []int) { return fileDescriptorKvrpcpb, []int{47} }
+func (*MvccInfo) Descriptor() ([]byte, []int) { return fileDescriptorKvrpcpb, []int{56} }
 
 func (m *MvccInfo) GetLock() *MvccLock {
 	if m != nil {
@@ -1675,7 +1924,7 @@ type MvccGetByKeyRequest struct {
 func (m *MvccGetByKeyRequest) Reset()                    { *m = MvccGetByKeyRequest{} }
 func (m *MvccGetByKeyRequest) String() string            { return proto.CompactTextString(m) }
 func (*MvccGetByKeyRequest) ProtoMessage()               {}
-func (*MvccGetByKeyRequest) Descriptor() ([]byte, []int) { return fileDescriptorKvrpcpb, []int{48} }
+func (*MvccGetByKeyRequest) Descriptor() ([]byte, []int) { return fileDescriptorKvrpcpb, []int{57} }
 
 func (m *MvccGetByKeyRequest) GetContext() *Context {
 	if m != nil {
@@ -1700,7 +1949,7 @@ type MvccGetByKeyResponse struct {
 func (m *MvccGetByKeyResponse) Reset()                    { *m = MvccGetByKeyResponse{} }
 func (m *MvccGetByKeyResponse) String() string            { return proto.CompactTextString(m) }
 func (*MvccGetByKeyResponse) ProtoMessage()               {}
-func (*MvccGetByKeyResponse) Descriptor() ([]byte, []int) { return fileDescriptorKvrpcpb, []int{49} }
+func (*MvccGetByKeyResponse) Descriptor() ([]byte, []int) { return fileDescriptorKvrpcpb, []int{58} }
 
 func (m *MvccGetByKeyResponse) GetRegionError() *errorpb.Error {
 	if m != nil {
@@ -1731,7 +1980,7 @@ type MvccGetByStartTsRequest struct {
 func (m *MvccGetByStartTsRequest) Reset()                    { *m = MvccGetByStartTsRequest{} }
 func (m *MvccGetByStartTsRequest) String() string            { return proto.CompactTextString(m) }
 func (*MvccGetByStartTsRequest) ProtoMessage()               {}
-func (*MvccGetByStartTsRequest) Descriptor() ([]byte, []int) { return fileDescriptorKvrpcpb, []int{50} }
+func (*MvccGetByStartTsRequest) Descriptor() ([]byte, []int) { return fileDescriptorKvrpcpb, []int{59} }
 
 func (m *MvccGetByStartTsRequest) GetContext() *Context {
 	if m != nil {
@@ -1757,7 +2006,7 @@ type MvccGetByStartTsResponse struct {
 func (m *MvccGetByStartTsResponse) Reset()                    { *m = MvccGetByStartTsResponse{} }
 func (m *MvccGetByStartTsResponse) String() string            { return proto.CompactTextString(m) }
 func (*MvccGetByStartTsResponse) ProtoMessage()               {}
-func (*MvccGetByStartTsResponse) Descriptor() ([]byte, []int) { return fileDescriptorKvrpcpb, []int{51} }
+func (*MvccGetByStartTsResponse) Descriptor() ([]byte, []int) { return fileDescriptorKvrpcpb, []int{60} }
 
 func (m *MvccGetByStartTsResponse) GetRegionError() *errorpb.Error {
 	if m != nil {
@@ -1795,7 +2044,7 @@ type SplitRegionRequest struct {
 func (m *SplitRegionRequest) Reset()                    { *m = SplitRegionRequest{} }
 func (m *SplitRegionRequest) String() string            { return proto.CompactTextString(m) }
 func (*SplitRegionRequest) ProtoMessage()               {}
-func (*SplitRegionRequest) Descriptor() ([]byte, []int) { return fileDescriptorKvrpcpb, []int{52} }
+func (*SplitRegionRequest) Descriptor() ([]byte, []int) { return fileDescriptorKvrpcpb, []int{61} }
 
 func (m *SplitRegionRequest) GetContext() *Context {
 	if m != nil {
@@ -1820,7 +2069,7 @@ type SplitRegionResponse struct {
 func (m *SplitRegionResponse) Reset()                    { *m = SplitRegionResponse{} }
 func (m *SplitRegionResponse) String() string            { return proto.CompactTextString(m) }
 func (*SplitRegionResponse) ProtoMessage()               {}
-func (*SplitRegionResponse) Descriptor() ([]byte, []int) { return fileDescriptorKvrpcpb, []int{53} }
+func (*SplitRegionResponse) Descriptor() ([]byte, []int) { return fileDescriptorKvrpcpb, []int{62} }
 
 func (m *SplitRegionResponse) GetRegionError() *errorpb.Error {
 	if m != nil {
@@ -1880,14 +2129,23 @@ func init() {
 	proto.RegisterType((*RawGetResponse)(nil), "kvrpcpb.RawGetResponse")
 	proto.RegisterType((*RawPutRequest)(nil), "kvrpcpb.RawPutRequest")
 	proto.RegisterType((*RawPutResponse)(nil), "kvrpcpb.RawPutResponse")
+	proto.RegisterType((*RawBatchPutRequest)(nil), "kvrpcpb.RawBatchPutRequest")
+	proto.RegisterType((*RawBatchPutResponse)(nil), "kvrpcpb.RawBatchPutResponse")
+	proto.RegisterType((*RawBatchGetRequest)(nil), "kvrpcpb.RawBatchGetRequest")
+	proto.RegisterType((*RawBatchGetResponse)(nil), "kvrpcpb.RawBatchGetResponse")
 	proto.RegisterType((*RawDeleteRequest)(nil), "kvrpcpb.RawDeleteRequest")
 	proto.RegisterType((*RawDeleteResponse)(nil), "kvrpcpb.RawDeleteResponse")
+	proto.RegisterType((*RawBatchDeleteRequest)(nil), "kvrpcpb.RawBatchDeleteRequest")
+	proto.RegisterType((*RawBatchDeleteResponse)(nil), "kvrpcpb.RawBatchDeleteResponse")
 	proto.RegisterType((*DeleteRangeRequest)(nil), "kvrpcpb.DeleteRangeRequest")
 	proto.RegisterType((*DeleteRangeResponse)(nil), "kvrpcpb.DeleteRangeResponse")
 	proto.RegisterType((*RawDeleteRangeRequest)(nil), "kvrpcpb.RawDeleteRangeRequest")
 	proto.RegisterType((*RawDeleteRangeResponse)(nil), "kvrpcpb.RawDeleteRangeResponse")
 	proto.RegisterType((*RawScanRequest)(nil), "kvrpcpb.RawScanRequest")
 	proto.RegisterType((*RawScanResponse)(nil), "kvrpcpb.RawScanResponse")
+	proto.RegisterType((*KeyRange)(nil), "kvrpcpb.KeyRange")
+	proto.RegisterType((*RawBatchScanRequest)(nil), "kvrpcpb.RawBatchScanRequest")
+	proto.RegisterType((*RawBatchScanResponse)(nil), "kvrpcpb.RawBatchScanResponse")
 	proto.RegisterType((*MvccWrite)(nil), "kvrpcpb.MvccWrite")
 	proto.RegisterType((*MvccValue)(nil), "kvrpcpb.MvccValue")
 	proto.RegisterType((*MvccLock)(nil), "kvrpcpb.MvccLock")
@@ -3404,6 +3662,156 @@ func (m *RawPutResponse) MarshalTo(dAtA []byte) (int, error) {
 	return i, nil
 }
 
+func (m *RawBatchPutRequest) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *RawBatchPutRequest) MarshalTo(dAtA []byte) (int, error) {
+	var i int
+	_ = i
+	var l int
+	_ = l
+	if m.Context != nil {
+		dAtA[i] = 0xa
+		i++
+		i = encodeVarintKvrpcpb(dAtA, i, uint64(m.Context.Size()))
+		n42, err := m.Context.MarshalTo(dAtA[i:])
+		if err != nil {
+			return 0, err
+		}
+		i += n42
+	}
+	if len(m.Pairs) > 0 {
+		for _, msg := range m.Pairs {
+			dAtA[i] = 0x12
+			i++
+			i = encodeVarintKvrpcpb(dAtA, i, uint64(msg.Size()))
+			n, err := msg.MarshalTo(dAtA[i:])
+			if err != nil {
+				return 0, err
+			}
+			i += n
+		}
+	}
+	return i, nil
+}
+
+func (m *RawBatchPutResponse) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *RawBatchPutResponse) MarshalTo(dAtA []byte) (int, error) {
+	var i int
+	_ = i
+	var l int
+	_ = l
+	if m.RegionError != nil {
+		dAtA[i] = 0xa
+		i++
+		i = encodeVarintKvrpcpb(dAtA, i, uint64(m.RegionError.Size()))
+		n43, err := m.RegionError.MarshalTo(dAtA[i:])
+		if err != nil {
+			return 0, err
+		}
+		i += n43
+	}
+	if len(m.Error) > 0 {
+		dAtA[i] = 0x12
+		i++
+		i = encodeVarintKvrpcpb(dAtA, i, uint64(len(m.Error)))
+		i += copy(dAtA[i:], m.Error)
+	}
+	return i, nil
+}
+
+func (m *RawBatchGetRequest) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *RawBatchGetRequest) MarshalTo(dAtA []byte) (int, error) {
+	var i int
+	_ = i
+	var l int
+	_ = l
+	if m.Context != nil {
+		dAtA[i] = 0xa
+		i++
+		i = encodeVarintKvrpcpb(dAtA, i, uint64(m.Context.Size()))
+		n44, err := m.Context.MarshalTo(dAtA[i:])
+		if err != nil {
+			return 0, err
+		}
+		i += n44
+	}
+	if len(m.Keys) > 0 {
+		for _, b := range m.Keys {
+			dAtA[i] = 0x12
+			i++
+			i = encodeVarintKvrpcpb(dAtA, i, uint64(len(b)))
+			i += copy(dAtA[i:], b)
+		}
+	}
+	return i, nil
+}
+
+func (m *RawBatchGetResponse) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *RawBatchGetResponse) MarshalTo(dAtA []byte) (int, error) {
+	var i int
+	_ = i
+	var l int
+	_ = l
+	if m.RegionError != nil {
+		dAtA[i] = 0xa
+		i++
+		i = encodeVarintKvrpcpb(dAtA, i, uint64(m.RegionError.Size()))
+		n45, err := m.RegionError.MarshalTo(dAtA[i:])
+		if err != nil {
+			return 0, err
+		}
+		i += n45
+	}
+	if len(m.Pairs) > 0 {
+		for _, msg := range m.Pairs {
+			dAtA[i] = 0x12
+			i++
+			i = encodeVarintKvrpcpb(dAtA, i, uint64(msg.Size()))
+			n, err := msg.MarshalTo(dAtA[i:])
+			if err != nil {
+				return 0, err
+			}
+			i += n
+		}
+	}
+	return i, nil
+}
+
 func (m *RawDeleteRequest) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
 	dAtA = make([]byte, size)
@@ -3423,11 +3831,11 @@ func (m *RawDeleteRequest) MarshalTo(dAtA []byte) (int, error) {
 		dAtA[i] = 0xa
 		i++
 		i = encodeVarintKvrpcpb(dAtA, i, uint64(m.Context.Size()))
-		n42, err := m.Context.MarshalTo(dAtA[i:])
+		n46, err := m.Context.MarshalTo(dAtA[i:])
 		if err != nil {
 			return 0, err
 		}
-		i += n42
+		i += n46
 	}
 	if len(m.Key) > 0 {
 		dAtA[i] = 0x12
@@ -3457,11 +3865,81 @@ func (m *RawDeleteResponse) MarshalTo(dAtA []byte) (int, error) {
 		dAtA[i] = 0xa
 		i++
 		i = encodeVarintKvrpcpb(dAtA, i, uint64(m.RegionError.Size()))
-		n43, err := m.RegionError.MarshalTo(dAtA[i:])
+		n47, err := m.RegionError.MarshalTo(dAtA[i:])
 		if err != nil {
 			return 0, err
 		}
-		i += n43
+		i += n47
+	}
+	if len(m.Error) > 0 {
+		dAtA[i] = 0x12
+		i++
+		i = encodeVarintKvrpcpb(dAtA, i, uint64(len(m.Error)))
+		i += copy(dAtA[i:], m.Error)
+	}
+	return i, nil
+}
+
+func (m *RawBatchDeleteRequest) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *RawBatchDeleteRequest) MarshalTo(dAtA []byte) (int, error) {
+	var i int
+	_ = i
+	var l int
+	_ = l
+	if m.Context != nil {
+		dAtA[i] = 0xa
+		i++
+		i = encodeVarintKvrpcpb(dAtA, i, uint64(m.Context.Size()))
+		n48, err := m.Context.MarshalTo(dAtA[i:])
+		if err != nil {
+			return 0, err
+		}
+		i += n48
+	}
+	if len(m.Keys) > 0 {
+		for _, b := range m.Keys {
+			dAtA[i] = 0x12
+			i++
+			i = encodeVarintKvrpcpb(dAtA, i, uint64(len(b)))
+			i += copy(dAtA[i:], b)
+		}
+	}
+	return i, nil
+}
+
+func (m *RawBatchDeleteResponse) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *RawBatchDeleteResponse) MarshalTo(dAtA []byte) (int, error) {
+	var i int
+	_ = i
+	var l int
+	_ = l
+	if m.RegionError != nil {
+		dAtA[i] = 0xa
+		i++
+		i = encodeVarintKvrpcpb(dAtA, i, uint64(m.RegionError.Size()))
+		n49, err := m.RegionError.MarshalTo(dAtA[i:])
+		if err != nil {
+			return 0, err
+		}
+		i += n49
 	}
 	if len(m.Error) > 0 {
 		dAtA[i] = 0x12
@@ -3491,11 +3969,11 @@ func (m *DeleteRangeRequest) MarshalTo(dAtA []byte) (int, error) {
 		dAtA[i] = 0xa
 		i++
 		i = encodeVarintKvrpcpb(dAtA, i, uint64(m.Context.Size()))
-		n44, err := m.Context.MarshalTo(dAtA[i:])
+		n50, err := m.Context.MarshalTo(dAtA[i:])
 		if err != nil {
 			return 0, err
 		}
-		i += n44
+		i += n50
 	}
 	if len(m.StartKey) > 0 {
 		dAtA[i] = 0x12
@@ -3531,11 +4009,11 @@ func (m *DeleteRangeResponse) MarshalTo(dAtA []byte) (int, error) {
 		dAtA[i] = 0xa
 		i++
 		i = encodeVarintKvrpcpb(dAtA, i, uint64(m.RegionError.Size()))
-		n45, err := m.RegionError.MarshalTo(dAtA[i:])
+		n51, err := m.RegionError.MarshalTo(dAtA[i:])
 		if err != nil {
 			return 0, err
 		}
-		i += n45
+		i += n51
 	}
 	if len(m.Error) > 0 {
 		dAtA[i] = 0x12
@@ -3565,11 +4043,11 @@ func (m *RawDeleteRangeRequest) MarshalTo(dAtA []byte) (int, error) {
 		dAtA[i] = 0xa
 		i++
 		i = encodeVarintKvrpcpb(dAtA, i, uint64(m.Context.Size()))
-		n46, err := m.Context.MarshalTo(dAtA[i:])
+		n52, err := m.Context.MarshalTo(dAtA[i:])
 		if err != nil {
 			return 0, err
 		}
-		i += n46
+		i += n52
 	}
 	if len(m.StartKey) > 0 {
 		dAtA[i] = 0x12
@@ -3605,11 +4083,11 @@ func (m *RawDeleteRangeResponse) MarshalTo(dAtA []byte) (int, error) {
 		dAtA[i] = 0xa
 		i++
 		i = encodeVarintKvrpcpb(dAtA, i, uint64(m.RegionError.Size()))
-		n47, err := m.RegionError.MarshalTo(dAtA[i:])
+		n53, err := m.RegionError.MarshalTo(dAtA[i:])
 		if err != nil {
 			return 0, err
 		}
-		i += n47
+		i += n53
 	}
 	if len(m.Error) > 0 {
 		dAtA[i] = 0x12
@@ -3639,11 +4117,11 @@ func (m *RawScanRequest) MarshalTo(dAtA []byte) (int, error) {
 		dAtA[i] = 0xa
 		i++
 		i = encodeVarintKvrpcpb(dAtA, i, uint64(m.Context.Size()))
-		n48, err := m.Context.MarshalTo(dAtA[i:])
+		n54, err := m.Context.MarshalTo(dAtA[i:])
 		if err != nil {
 			return 0, err
 		}
-		i += n48
+		i += n54
 	}
 	if len(m.StartKey) > 0 {
 		dAtA[i] = 0x12
@@ -3655,6 +4133,16 @@ func (m *RawScanRequest) MarshalTo(dAtA []byte) (int, error) {
 		dAtA[i] = 0x18
 		i++
 		i = encodeVarintKvrpcpb(dAtA, i, uint64(m.Limit))
+	}
+	if m.KeyOnly {
+		dAtA[i] = 0x20
+		i++
+		if m.KeyOnly {
+			dAtA[i] = 1
+		} else {
+			dAtA[i] = 0
+		}
+		i++
 	}
 	return i, nil
 }
@@ -3678,11 +4166,136 @@ func (m *RawScanResponse) MarshalTo(dAtA []byte) (int, error) {
 		dAtA[i] = 0xa
 		i++
 		i = encodeVarintKvrpcpb(dAtA, i, uint64(m.RegionError.Size()))
-		n49, err := m.RegionError.MarshalTo(dAtA[i:])
+		n55, err := m.RegionError.MarshalTo(dAtA[i:])
 		if err != nil {
 			return 0, err
 		}
-		i += n49
+		i += n55
+	}
+	if len(m.Kvs) > 0 {
+		for _, msg := range m.Kvs {
+			dAtA[i] = 0x12
+			i++
+			i = encodeVarintKvrpcpb(dAtA, i, uint64(msg.Size()))
+			n, err := msg.MarshalTo(dAtA[i:])
+			if err != nil {
+				return 0, err
+			}
+			i += n
+		}
+	}
+	return i, nil
+}
+
+func (m *KeyRange) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *KeyRange) MarshalTo(dAtA []byte) (int, error) {
+	var i int
+	_ = i
+	var l int
+	_ = l
+	if len(m.StartKey) > 0 {
+		dAtA[i] = 0xa
+		i++
+		i = encodeVarintKvrpcpb(dAtA, i, uint64(len(m.StartKey)))
+		i += copy(dAtA[i:], m.StartKey)
+	}
+	if len(m.EndKey) > 0 {
+		dAtA[i] = 0x12
+		i++
+		i = encodeVarintKvrpcpb(dAtA, i, uint64(len(m.EndKey)))
+		i += copy(dAtA[i:], m.EndKey)
+	}
+	return i, nil
+}
+
+func (m *RawBatchScanRequest) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *RawBatchScanRequest) MarshalTo(dAtA []byte) (int, error) {
+	var i int
+	_ = i
+	var l int
+	_ = l
+	if m.Context != nil {
+		dAtA[i] = 0xa
+		i++
+		i = encodeVarintKvrpcpb(dAtA, i, uint64(m.Context.Size()))
+		n56, err := m.Context.MarshalTo(dAtA[i:])
+		if err != nil {
+			return 0, err
+		}
+		i += n56
+	}
+	if len(m.Ranges) > 0 {
+		for _, msg := range m.Ranges {
+			dAtA[i] = 0x12
+			i++
+			i = encodeVarintKvrpcpb(dAtA, i, uint64(msg.Size()))
+			n, err := msg.MarshalTo(dAtA[i:])
+			if err != nil {
+				return 0, err
+			}
+			i += n
+		}
+	}
+	if m.EachLimit != 0 {
+		dAtA[i] = 0x18
+		i++
+		i = encodeVarintKvrpcpb(dAtA, i, uint64(m.EachLimit))
+	}
+	if m.KeyOnly {
+		dAtA[i] = 0x20
+		i++
+		if m.KeyOnly {
+			dAtA[i] = 1
+		} else {
+			dAtA[i] = 0
+		}
+		i++
+	}
+	return i, nil
+}
+
+func (m *RawBatchScanResponse) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *RawBatchScanResponse) MarshalTo(dAtA []byte) (int, error) {
+	var i int
+	_ = i
+	var l int
+	_ = l
+	if m.RegionError != nil {
+		dAtA[i] = 0xa
+		i++
+		i = encodeVarintKvrpcpb(dAtA, i, uint64(m.RegionError.Size()))
+		n57, err := m.RegionError.MarshalTo(dAtA[i:])
+		if err != nil {
+			return 0, err
+		}
+		i += n57
 	}
 	if len(m.Kvs) > 0 {
 		for _, msg := range m.Kvs {
@@ -3826,11 +4439,11 @@ func (m *MvccInfo) MarshalTo(dAtA []byte) (int, error) {
 		dAtA[i] = 0xa
 		i++
 		i = encodeVarintKvrpcpb(dAtA, i, uint64(m.Lock.Size()))
-		n50, err := m.Lock.MarshalTo(dAtA[i:])
+		n58, err := m.Lock.MarshalTo(dAtA[i:])
 		if err != nil {
 			return 0, err
 		}
-		i += n50
+		i += n58
 	}
 	if len(m.Writes) > 0 {
 		for _, msg := range m.Writes {
@@ -3878,11 +4491,11 @@ func (m *MvccGetByKeyRequest) MarshalTo(dAtA []byte) (int, error) {
 		dAtA[i] = 0xa
 		i++
 		i = encodeVarintKvrpcpb(dAtA, i, uint64(m.Context.Size()))
-		n51, err := m.Context.MarshalTo(dAtA[i:])
+		n59, err := m.Context.MarshalTo(dAtA[i:])
 		if err != nil {
 			return 0, err
 		}
-		i += n51
+		i += n59
 	}
 	if len(m.Key) > 0 {
 		dAtA[i] = 0x12
@@ -3912,11 +4525,11 @@ func (m *MvccGetByKeyResponse) MarshalTo(dAtA []byte) (int, error) {
 		dAtA[i] = 0xa
 		i++
 		i = encodeVarintKvrpcpb(dAtA, i, uint64(m.RegionError.Size()))
-		n52, err := m.RegionError.MarshalTo(dAtA[i:])
+		n60, err := m.RegionError.MarshalTo(dAtA[i:])
 		if err != nil {
 			return 0, err
 		}
-		i += n52
+		i += n60
 	}
 	if len(m.Error) > 0 {
 		dAtA[i] = 0x12
@@ -3928,11 +4541,11 @@ func (m *MvccGetByKeyResponse) MarshalTo(dAtA []byte) (int, error) {
 		dAtA[i] = 0x1a
 		i++
 		i = encodeVarintKvrpcpb(dAtA, i, uint64(m.Info.Size()))
-		n53, err := m.Info.MarshalTo(dAtA[i:])
+		n61, err := m.Info.MarshalTo(dAtA[i:])
 		if err != nil {
 			return 0, err
 		}
-		i += n53
+		i += n61
 	}
 	return i, nil
 }
@@ -3956,11 +4569,11 @@ func (m *MvccGetByStartTsRequest) MarshalTo(dAtA []byte) (int, error) {
 		dAtA[i] = 0xa
 		i++
 		i = encodeVarintKvrpcpb(dAtA, i, uint64(m.Context.Size()))
-		n54, err := m.Context.MarshalTo(dAtA[i:])
+		n62, err := m.Context.MarshalTo(dAtA[i:])
 		if err != nil {
 			return 0, err
 		}
-		i += n54
+		i += n62
 	}
 	if m.StartTs != 0 {
 		dAtA[i] = 0x10
@@ -3989,11 +4602,11 @@ func (m *MvccGetByStartTsResponse) MarshalTo(dAtA []byte) (int, error) {
 		dAtA[i] = 0xa
 		i++
 		i = encodeVarintKvrpcpb(dAtA, i, uint64(m.RegionError.Size()))
-		n55, err := m.RegionError.MarshalTo(dAtA[i:])
+		n63, err := m.RegionError.MarshalTo(dAtA[i:])
 		if err != nil {
 			return 0, err
 		}
-		i += n55
+		i += n63
 	}
 	if len(m.Error) > 0 {
 		dAtA[i] = 0x12
@@ -4011,11 +4624,11 @@ func (m *MvccGetByStartTsResponse) MarshalTo(dAtA []byte) (int, error) {
 		dAtA[i] = 0x22
 		i++
 		i = encodeVarintKvrpcpb(dAtA, i, uint64(m.Info.Size()))
-		n56, err := m.Info.MarshalTo(dAtA[i:])
+		n64, err := m.Info.MarshalTo(dAtA[i:])
 		if err != nil {
 			return 0, err
 		}
-		i += n56
+		i += n64
 	}
 	return i, nil
 }
@@ -4039,11 +4652,11 @@ func (m *SplitRegionRequest) MarshalTo(dAtA []byte) (int, error) {
 		dAtA[i] = 0xa
 		i++
 		i = encodeVarintKvrpcpb(dAtA, i, uint64(m.Context.Size()))
-		n57, err := m.Context.MarshalTo(dAtA[i:])
+		n65, err := m.Context.MarshalTo(dAtA[i:])
 		if err != nil {
 			return 0, err
 		}
-		i += n57
+		i += n65
 	}
 	if len(m.SplitKey) > 0 {
 		dAtA[i] = 0x12
@@ -4073,31 +4686,31 @@ func (m *SplitRegionResponse) MarshalTo(dAtA []byte) (int, error) {
 		dAtA[i] = 0xa
 		i++
 		i = encodeVarintKvrpcpb(dAtA, i, uint64(m.RegionError.Size()))
-		n58, err := m.RegionError.MarshalTo(dAtA[i:])
+		n66, err := m.RegionError.MarshalTo(dAtA[i:])
 		if err != nil {
 			return 0, err
 		}
-		i += n58
+		i += n66
 	}
 	if m.Left != nil {
 		dAtA[i] = 0x12
 		i++
 		i = encodeVarintKvrpcpb(dAtA, i, uint64(m.Left.Size()))
-		n59, err := m.Left.MarshalTo(dAtA[i:])
+		n67, err := m.Left.MarshalTo(dAtA[i:])
 		if err != nil {
 			return 0, err
 		}
-		i += n59
+		i += n67
 	}
 	if m.Right != nil {
 		dAtA[i] = 0x1a
 		i++
 		i = encodeVarintKvrpcpb(dAtA, i, uint64(m.Right.Size()))
-		n60, err := m.Right.MarshalTo(dAtA[i:])
+		n68, err := m.Right.MarshalTo(dAtA[i:])
 		if err != nil {
 			return 0, err
 		}
-		i += n60
+		i += n68
 	}
 	return i, nil
 }
@@ -4761,6 +5374,68 @@ func (m *RawPutResponse) Size() (n int) {
 	return n
 }
 
+func (m *RawBatchPutRequest) Size() (n int) {
+	var l int
+	_ = l
+	if m.Context != nil {
+		l = m.Context.Size()
+		n += 1 + l + sovKvrpcpb(uint64(l))
+	}
+	if len(m.Pairs) > 0 {
+		for _, e := range m.Pairs {
+			l = e.Size()
+			n += 1 + l + sovKvrpcpb(uint64(l))
+		}
+	}
+	return n
+}
+
+func (m *RawBatchPutResponse) Size() (n int) {
+	var l int
+	_ = l
+	if m.RegionError != nil {
+		l = m.RegionError.Size()
+		n += 1 + l + sovKvrpcpb(uint64(l))
+	}
+	l = len(m.Error)
+	if l > 0 {
+		n += 1 + l + sovKvrpcpb(uint64(l))
+	}
+	return n
+}
+
+func (m *RawBatchGetRequest) Size() (n int) {
+	var l int
+	_ = l
+	if m.Context != nil {
+		l = m.Context.Size()
+		n += 1 + l + sovKvrpcpb(uint64(l))
+	}
+	if len(m.Keys) > 0 {
+		for _, b := range m.Keys {
+			l = len(b)
+			n += 1 + l + sovKvrpcpb(uint64(l))
+		}
+	}
+	return n
+}
+
+func (m *RawBatchGetResponse) Size() (n int) {
+	var l int
+	_ = l
+	if m.RegionError != nil {
+		l = m.RegionError.Size()
+		n += 1 + l + sovKvrpcpb(uint64(l))
+	}
+	if len(m.Pairs) > 0 {
+		for _, e := range m.Pairs {
+			l = e.Size()
+			n += 1 + l + sovKvrpcpb(uint64(l))
+		}
+	}
+	return n
+}
+
 func (m *RawDeleteRequest) Size() (n int) {
 	var l int
 	_ = l
@@ -4776,6 +5451,36 @@ func (m *RawDeleteRequest) Size() (n int) {
 }
 
 func (m *RawDeleteResponse) Size() (n int) {
+	var l int
+	_ = l
+	if m.RegionError != nil {
+		l = m.RegionError.Size()
+		n += 1 + l + sovKvrpcpb(uint64(l))
+	}
+	l = len(m.Error)
+	if l > 0 {
+		n += 1 + l + sovKvrpcpb(uint64(l))
+	}
+	return n
+}
+
+func (m *RawBatchDeleteRequest) Size() (n int) {
+	var l int
+	_ = l
+	if m.Context != nil {
+		l = m.Context.Size()
+		n += 1 + l + sovKvrpcpb(uint64(l))
+	}
+	if len(m.Keys) > 0 {
+		for _, b := range m.Keys {
+			l = len(b)
+			n += 1 + l + sovKvrpcpb(uint64(l))
+		}
+	}
+	return n
+}
+
+func (m *RawBatchDeleteResponse) Size() (n int) {
 	var l int
 	_ = l
 	if m.RegionError != nil {
@@ -4867,10 +5572,65 @@ func (m *RawScanRequest) Size() (n int) {
 	if m.Limit != 0 {
 		n += 1 + sovKvrpcpb(uint64(m.Limit))
 	}
+	if m.KeyOnly {
+		n += 2
+	}
 	return n
 }
 
 func (m *RawScanResponse) Size() (n int) {
+	var l int
+	_ = l
+	if m.RegionError != nil {
+		l = m.RegionError.Size()
+		n += 1 + l + sovKvrpcpb(uint64(l))
+	}
+	if len(m.Kvs) > 0 {
+		for _, e := range m.Kvs {
+			l = e.Size()
+			n += 1 + l + sovKvrpcpb(uint64(l))
+		}
+	}
+	return n
+}
+
+func (m *KeyRange) Size() (n int) {
+	var l int
+	_ = l
+	l = len(m.StartKey)
+	if l > 0 {
+		n += 1 + l + sovKvrpcpb(uint64(l))
+	}
+	l = len(m.EndKey)
+	if l > 0 {
+		n += 1 + l + sovKvrpcpb(uint64(l))
+	}
+	return n
+}
+
+func (m *RawBatchScanRequest) Size() (n int) {
+	var l int
+	_ = l
+	if m.Context != nil {
+		l = m.Context.Size()
+		n += 1 + l + sovKvrpcpb(uint64(l))
+	}
+	if len(m.Ranges) > 0 {
+		for _, e := range m.Ranges {
+			l = e.Size()
+			n += 1 + l + sovKvrpcpb(uint64(l))
+		}
+	}
+	if m.EachLimit != 0 {
+		n += 1 + sovKvrpcpb(uint64(m.EachLimit))
+	}
+	if m.KeyOnly {
+		n += 2
+	}
+	return n
+}
+
+func (m *RawBatchScanResponse) Size() (n int) {
 	var l int
 	_ = l
 	if m.RegionError != nil {
@@ -9860,6 +10620,458 @@ func (m *RawPutResponse) Unmarshal(dAtA []byte) error {
 	}
 	return nil
 }
+func (m *RawBatchPutRequest) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowKvrpcpb
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= (uint64(b) & 0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: RawBatchPutRequest: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: RawBatchPutRequest: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Context", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowKvrpcpb
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= (int(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthKvrpcpb
+			}
+			postIndex := iNdEx + msglen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if m.Context == nil {
+				m.Context = &Context{}
+			}
+			if err := m.Context.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Pairs", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowKvrpcpb
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= (int(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthKvrpcpb
+			}
+			postIndex := iNdEx + msglen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Pairs = append(m.Pairs, &KvPair{})
+			if err := m.Pairs[len(m.Pairs)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipKvrpcpb(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if skippy < 0 {
+				return ErrInvalidLengthKvrpcpb
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *RawBatchPutResponse) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowKvrpcpb
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= (uint64(b) & 0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: RawBatchPutResponse: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: RawBatchPutResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field RegionError", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowKvrpcpb
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= (int(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthKvrpcpb
+			}
+			postIndex := iNdEx + msglen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if m.RegionError == nil {
+				m.RegionError = &errorpb.Error{}
+			}
+			if err := m.RegionError.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Error", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowKvrpcpb
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= (uint64(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthKvrpcpb
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Error = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipKvrpcpb(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if skippy < 0 {
+				return ErrInvalidLengthKvrpcpb
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *RawBatchGetRequest) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowKvrpcpb
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= (uint64(b) & 0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: RawBatchGetRequest: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: RawBatchGetRequest: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Context", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowKvrpcpb
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= (int(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthKvrpcpb
+			}
+			postIndex := iNdEx + msglen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if m.Context == nil {
+				m.Context = &Context{}
+			}
+			if err := m.Context.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Keys", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowKvrpcpb
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= (int(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthKvrpcpb
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Keys = append(m.Keys, make([]byte, postIndex-iNdEx))
+			copy(m.Keys[len(m.Keys)-1], dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipKvrpcpb(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if skippy < 0 {
+				return ErrInvalidLengthKvrpcpb
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *RawBatchGetResponse) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowKvrpcpb
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= (uint64(b) & 0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: RawBatchGetResponse: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: RawBatchGetResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field RegionError", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowKvrpcpb
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= (int(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthKvrpcpb
+			}
+			postIndex := iNdEx + msglen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if m.RegionError == nil {
+				m.RegionError = &errorpb.Error{}
+			}
+			if err := m.RegionError.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Pairs", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowKvrpcpb
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= (int(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthKvrpcpb
+			}
+			postIndex := iNdEx + msglen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Pairs = append(m.Pairs, &KvPair{})
+			if err := m.Pairs[len(m.Pairs)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipKvrpcpb(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if skippy < 0 {
+				return ErrInvalidLengthKvrpcpb
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
 func (m *RawDeleteRequest) Unmarshal(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -10001,6 +11213,230 @@ func (m *RawDeleteResponse) Unmarshal(dAtA []byte) error {
 		}
 		if fieldNum <= 0 {
 			return fmt.Errorf("proto: RawDeleteResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field RegionError", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowKvrpcpb
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= (int(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthKvrpcpb
+			}
+			postIndex := iNdEx + msglen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if m.RegionError == nil {
+				m.RegionError = &errorpb.Error{}
+			}
+			if err := m.RegionError.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Error", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowKvrpcpb
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= (uint64(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthKvrpcpb
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Error = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipKvrpcpb(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if skippy < 0 {
+				return ErrInvalidLengthKvrpcpb
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *RawBatchDeleteRequest) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowKvrpcpb
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= (uint64(b) & 0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: RawBatchDeleteRequest: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: RawBatchDeleteRequest: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Context", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowKvrpcpb
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= (int(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthKvrpcpb
+			}
+			postIndex := iNdEx + msglen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if m.Context == nil {
+				m.Context = &Context{}
+			}
+			if err := m.Context.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Keys", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowKvrpcpb
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= (int(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthKvrpcpb
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Keys = append(m.Keys, make([]byte, postIndex-iNdEx))
+			copy(m.Keys[len(m.Keys)-1], dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipKvrpcpb(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if skippy < 0 {
+				return ErrInvalidLengthKvrpcpb
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *RawBatchDeleteResponse) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowKvrpcpb
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= (uint64(b) & 0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: RawBatchDeleteResponse: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: RawBatchDeleteResponse: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
 		case 1:
@@ -10712,6 +12148,26 @@ func (m *RawScanRequest) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
+		case 4:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field KeyOnly", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowKvrpcpb
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= (int(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.KeyOnly = bool(v != 0)
 		default:
 			iNdEx = preIndex
 			skippy, err := skipKvrpcpb(dAtA[iNdEx:])
@@ -10760,6 +12216,385 @@ func (m *RawScanResponse) Unmarshal(dAtA []byte) error {
 		}
 		if fieldNum <= 0 {
 			return fmt.Errorf("proto: RawScanResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field RegionError", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowKvrpcpb
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= (int(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthKvrpcpb
+			}
+			postIndex := iNdEx + msglen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if m.RegionError == nil {
+				m.RegionError = &errorpb.Error{}
+			}
+			if err := m.RegionError.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Kvs", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowKvrpcpb
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= (int(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthKvrpcpb
+			}
+			postIndex := iNdEx + msglen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Kvs = append(m.Kvs, &KvPair{})
+			if err := m.Kvs[len(m.Kvs)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipKvrpcpb(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if skippy < 0 {
+				return ErrInvalidLengthKvrpcpb
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *KeyRange) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowKvrpcpb
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= (uint64(b) & 0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: KeyRange: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: KeyRange: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field StartKey", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowKvrpcpb
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= (int(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthKvrpcpb
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.StartKey = append(m.StartKey[:0], dAtA[iNdEx:postIndex]...)
+			if m.StartKey == nil {
+				m.StartKey = []byte{}
+			}
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field EndKey", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowKvrpcpb
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= (int(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthKvrpcpb
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.EndKey = append(m.EndKey[:0], dAtA[iNdEx:postIndex]...)
+			if m.EndKey == nil {
+				m.EndKey = []byte{}
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipKvrpcpb(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if skippy < 0 {
+				return ErrInvalidLengthKvrpcpb
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *RawBatchScanRequest) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowKvrpcpb
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= (uint64(b) & 0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: RawBatchScanRequest: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: RawBatchScanRequest: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Context", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowKvrpcpb
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= (int(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthKvrpcpb
+			}
+			postIndex := iNdEx + msglen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if m.Context == nil {
+				m.Context = &Context{}
+			}
+			if err := m.Context.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Ranges", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowKvrpcpb
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= (int(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthKvrpcpb
+			}
+			postIndex := iNdEx + msglen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Ranges = append(m.Ranges, &KeyRange{})
+			if err := m.Ranges[len(m.Ranges)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 3:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field EachLimit", wireType)
+			}
+			m.EachLimit = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowKvrpcpb
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.EachLimit |= (uint32(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 4:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field KeyOnly", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowKvrpcpb
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= (int(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.KeyOnly = bool(v != 0)
+		default:
+			iNdEx = preIndex
+			skippy, err := skipKvrpcpb(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if skippy < 0 {
+				return ErrInvalidLengthKvrpcpb
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *RawBatchScanResponse) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowKvrpcpb
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= (uint64(b) & 0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: RawBatchScanResponse: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: RawBatchScanResponse: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
 		case 1:
@@ -12288,119 +14123,126 @@ var (
 func init() { proto.RegisterFile("kvrpcpb.proto", fileDescriptorKvrpcpb) }
 
 var fileDescriptorKvrpcpb = []byte{
-	// 1809 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xbc, 0x59, 0x5f, 0x6f, 0x23, 0x49,
-	0x11, 0xdf, 0xb1, 0xc7, 0xf6, 0xb8, 0xec, 0x38, 0xbe, 0x4e, 0xf6, 0x76, 0xb8, 0xe5, 0x76, 0x73,
-	0xcd, 0xad, 0x36, 0x17, 0x44, 0x56, 0xe4, 0x4e, 0x3c, 0x21, 0x84, 0x36, 0xbb, 0xec, 0xe5, 0xb2,
-	0x61, 0xa3, 0x4e, 0xb4, 0x68, 0x25, 0xc0, 0x74, 0xc6, 0x1d, 0x7b, 0xe4, 0x99, 0xe9, 0xd9, 0x99,
-	0xb6, 0x93, 0x11, 0x42, 0x08, 0xa1, 0x43, 0xe2, 0x11, 0x84, 0x04, 0x0f, 0xf0, 0xc0, 0x23, 0x9f,
-	0x81, 0x2f, 0xc0, 0x23, 0x1f, 0x01, 0x2d, 0x5f, 0x04, 0xf5, 0x9f, 0xf1, 0x78, 0xec, 0x84, 0x5b,
-	0xf9, 0xbc, 0x79, 0xf2, 0x74, 0x55, 0x75, 0x57, 0xfd, 0xaa, 0xaa, 0xab, 0xba, 0xdb, 0xb0, 0x36,
-	0x9a, 0x24, 0xb1, 0x17, 0x9f, 0xed, 0xc6, 0x09, 0x17, 0x1c, 0x35, 0xcc, 0xf0, 0x83, 0x76, 0xc8,
-	0x04, 0xcd, 0xc9, 0x1f, 0xac, 0xb1, 0x24, 0xe1, 0xc9, 0x74, 0xb8, 0x39, 0xe0, 0x03, 0xae, 0x3e,
-	0x1f, 0xc9, 0x2f, 0x4d, 0xc5, 0xbf, 0x02, 0xe7, 0x39, 0xf7, 0x46, 0x07, 0xd1, 0x39, 0x47, 0x1f,
-	0x41, 0x3b, 0x4e, 0xfc, 0x90, 0x26, 0x59, 0x2f, 0xe0, 0xde, 0xc8, 0xb5, 0xb6, 0xac, 0xed, 0x36,
-	0x69, 0x19, 0x9a, 0x14, 0x93, 0x22, 0x92, 0xd5, 0x9b, 0xb0, 0x24, 0xf5, 0x79, 0xe4, 0x56, 0xb6,
-	0xac, 0x6d, 0x9b, 0xb4, 0x24, 0xed, 0xa5, 0x26, 0xa1, 0x2e, 0x54, 0x47, 0x2c, 0x73, 0xab, 0x6a,
-	0xb2, 0xfc, 0x44, 0xdf, 0x00, 0x47, 0x4d, 0x12, 0x22, 0x70, 0x6d, 0x35, 0xa1, 0x21, 0xc7, 0xa7,
-	0x22, 0xc0, 0x3e, 0x38, 0x87, 0x2c, 0x7b, 0x2a, 0x0d, 0x45, 0x9f, 0x40, 0x5d, 0x92, 0x59, 0x5f,
-	0x29, 0x6e, 0xed, 0xbd, 0xb7, 0x9b, 0xc3, 0xcc, 0x2d, 0x24, 0x46, 0x00, 0x7d, 0x13, 0x9a, 0x09,
-	0x13, 0x49, 0x46, 0xcf, 0x02, 0xa6, 0x6c, 0x68, 0x92, 0x82, 0x80, 0x36, 0xa1, 0x46, 0xcf, 0x78,
-	0x22, 0x94, 0x0d, 0x4d, 0xa2, 0x07, 0xf8, 0x6f, 0x55, 0x68, 0xec, 0xf3, 0x48, 0xb0, 0x4b, 0x81,
-	0xee, 0xca, 0xf9, 0x03, 0x9f, 0x47, 0x3d, 0x5f, 0x6b, 0xb3, 0x89, 0xa3, 0x09, 0x07, 0x7d, 0xf4,
-	0x3d, 0x68, 0x1b, 0x26, 0x8b, 0xb9, 0x37, 0x54, 0xeb, 0xb7, 0xf6, 0x36, 0x76, 0x8d, 0x73, 0x89,
-	0xe2, 0x3d, 0x95, 0x2c, 0xd2, 0x4a, 0x8a, 0x01, 0xda, 0x02, 0x3b, 0x66, 0x2c, 0x51, 0x5a, 0x5b,
-	0x7b, 0xed, 0x5c, 0xfe, 0x98, 0xb1, 0x84, 0x28, 0x0e, 0x42, 0x60, 0x0b, 0x96, 0x84, 0x6e, 0x4d,
-	0x69, 0x54, 0xdf, 0xe8, 0x11, 0x38, 0x71, 0xe2, 0xf3, 0xc4, 0x17, 0x99, 0x5b, 0xdf, 0xb2, 0xb6,
-	0x3b, 0x7b, 0x1b, 0x53, 0xdc, 0xfb, 0x3c, 0x0c, 0x69, 0xd4, 0x3f, 0x4e, 0x7c, 0x32, 0x15, 0x42,
-	0x3f, 0x84, 0x75, 0x3f, 0xe5, 0x01, 0x15, 0xd2, 0xc2, 0x80, 0x4d, 0x58, 0xe0, 0x36, 0xd4, 0xbc,
-	0x3b, 0xd3, 0x79, 0x07, 0x39, 0xff, 0xb9, 0x64, 0x93, 0x8e, 0x5f, 0x1a, 0xa3, 0x8f, 0xa1, 0x13,
-	0x71, 0xd1, 0x3b, 0xf7, 0x83, 0xa0, 0xe7, 0x51, 0x6f, 0xc8, 0x5c, 0x67, 0xcb, 0xda, 0x76, 0x48,
-	0x3b, 0xe2, 0xe2, 0x47, 0x7e, 0x10, 0xec, 0x4b, 0x9a, 0x8c, 0x5a, 0x9a, 0x45, 0x5e, 0x2f, 0xe0,
-	0x03, 0xb7, 0xa9, 0xf8, 0x0d, 0x39, 0x7e, 0xce, 0x07, 0xe8, 0x3e, 0xb4, 0x86, 0x34, 0xea, 0x07,
-	0xac, 0x27, 0xfc, 0x90, 0xb9, 0xa0, 0xb8, 0xa0, 0x49, 0xa7, 0x7e, 0xc8, 0xa4, 0x40, 0xea, 0xd1,
-	0xa8, 0xd7, 0x67, 0x82, 0xfa, 0x81, 0xdb, 0xd2, 0x02, 0x92, 0xf4, 0x44, 0x51, 0xbe, 0xb0, 0x1d,
-	0xbb, 0x5b, 0x93, 0xee, 0xa3, 0xfd, 0xde, 0xeb, 0x31, 0x4f, 0xc6, 0x21, 0x7e, 0x02, 0xf0, 0x79,
-	0xb1, 0xc2, 0x1d, 0x68, 0x5c, 0x50, 0x5f, 0xf4, 0xc2, 0x54, 0xc5, 0xa7, 0x4a, 0xea, 0x72, 0x78,
-	0x94, 0xa2, 0x0f, 0x01, 0xe2, 0x84, 0x7b, 0x2c, 0x4d, 0x25, 0xaf, 0xa2, 0x78, 0x4d, 0x43, 0x39,
-	0x4a, 0xf1, 0x0f, 0xc0, 0x39, 0xf1, 0x68, 0xa4, 0xf2, 0x79, 0x13, 0x6a, 0x82, 0x0b, 0x1a, 0x98,
-	0x15, 0xf4, 0x40, 0xe6, 0x8e, 0x11, 0x67, 0xfd, 0xb9, 0xf9, 0xac, 0x8f, 0x7f, 0x6b, 0x01, 0x9c,
-	0x4c, 0xed, 0x44, 0x0f, 0xa1, 0x76, 0x91, 0xf8, 0x82, 0x2d, 0xa4, 0x64, 0xae, 0x84, 0x68, 0x3e,
-	0x7a, 0x00, 0xb6, 0xda, 0x33, 0x95, 0xeb, 0xe4, 0x14, 0x5b, 0x8a, 0xf5, 0xa9, 0xa0, 0x26, 0x47,
-	0xae, 0x12, 0x93, 0x6c, 0x9c, 0x41, 0xeb, 0xe9, 0x25, 0xf3, 0xb4, 0x11, 0x29, 0xfa, 0xac, 0xec,
-	0x6f, 0xcb, 0x24, 0x64, 0x3e, 0xb9, 0x70, 0x5b, 0x29, 0x08, 0x9f, 0x95, 0x83, 0x50, 0x99, 0x9b,
-	0x55, 0xa0, 0x9c, 0x8d, 0x0c, 0xee, 0x03, 0x3c, 0x63, 0x82, 0xb0, 0xd7, 0x63, 0x96, 0x0a, 0xb4,
-	0x03, 0x0d, 0x4f, 0xef, 0x19, 0xa3, 0xb5, 0x3b, 0x93, 0x9c, 0x8a, 0x4e, 0x72, 0x81, 0x7c, 0xe3,
-	0x57, 0x8a, 0x8d, 0xef, 0x42, 0x23, 0x2f, 0x14, 0x55, 0xbd, 0xef, 0xcd, 0x10, 0xff, 0x1a, 0x5a,
-	0x4a, 0x4b, 0x1a, 0xf3, 0x28, 0x65, 0xe8, 0xbb, 0xc5, 0x96, 0x93, 0xa5, 0xc0, 0xe8, 0xea, 0xec,
-	0xe6, 0x15, 0x4c, 0x15, 0x88, 0xe9, 0x6e, 0x53, 0xd5, 0xe2, 0x21, 0xd4, 0xb4, 0xec, 0xbc, 0xc7,
-	0xf3, 0x7a, 0x42, 0x34, 0x5f, 0x66, 0xc1, 0x84, 0x06, 0x63, 0x66, 0x2a, 0x92, 0x1e, 0xe0, 0xbf,
-	0x5b, 0xd0, 0x92, 0x1e, 0x58, 0x06, 0xe8, 0x5d, 0x68, 0xa6, 0x82, 0x26, 0xa2, 0x57, 0xc0, 0x75,
-	0x14, 0xe1, 0x90, 0x65, 0x52, 0x5d, 0xe0, 0x87, 0xbe, 0x2e, 0x3e, 0x6b, 0x44, 0x0f, 0x66, 0x3d,
-	0x61, 0x97, 0x3c, 0x21, 0xb7, 0xd9, 0x88, 0x65, 0x3d, 0x1e, 0x05, 0x99, 0xaa, 0x0b, 0x0e, 0x69,
-	0x8c, 0x58, 0xf6, 0x22, 0x0a, 0x32, 0xfc, 0x0a, 0xea, 0x87, 0x93, 0x63, 0xea, 0xcf, 0x80, 0xb5,
-	0xbe, 0x02, 0xec, 0x62, 0x0c, 0xae, 0x86, 0x3f, 0x84, 0xb6, 0x46, 0xbf, 0x7c, 0x00, 0x1e, 0x40,
-	0x2d, 0xa6, 0x7e, 0x22, 0xf7, 0x60, 0x75, 0xbb, 0xb5, 0xb7, 0x5e, 0xd8, 0xa4, 0x6c, 0x26, 0x9a,
-	0x8b, 0x5f, 0x80, 0x73, 0x34, 0x16, 0xaa, 0xfa, 0xa0, 0xbb, 0x50, 0xe1, 0xb1, 0x5a, 0xbb, 0xb3,
-	0xd7, 0x9a, 0xca, 0xbf, 0x88, 0x49, 0x85, 0xc7, 0x6f, 0x6d, 0xfa, 0x97, 0x15, 0x58, 0x3f, 0x4e,
-	0x98, 0xda, 0x76, 0xcb, 0x44, 0xef, 0x11, 0x34, 0x43, 0x63, 0x50, 0x6e, 0x7b, 0xe1, 0xcf, 0xdc,
-	0x54, 0x52, 0xc8, 0x2c, 0xb4, 0xc5, 0xea, 0x62, 0x5b, 0xfc, 0x16, 0xac, 0xe9, 0x8c, 0x28, 0x07,
-	0xb9, 0xad, 0x88, 0x2f, 0x8b, 0x48, 0x4f, 0xdb, 0x60, 0xad, 0xd4, 0x06, 0xd1, 0x1e, 0xdc, 0x4e,
-	0x47, 0x7e, 0xdc, 0xf3, 0x78, 0x94, 0x8a, 0x84, 0xfa, 0x91, 0xe8, 0x79, 0x43, 0xe6, 0x8d, 0x54,
-	0x47, 0x70, 0xc8, 0x86, 0x64, 0xee, 0x4f, 0x79, 0xfb, 0x92, 0x85, 0x63, 0xe8, 0x16, 0x6e, 0x58,
-	0x3e, 0x8c, 0x9f, 0x40, 0x5d, 0x71, 0x17, 0x7d, 0x31, 0xcd, 0x2d, 0x23, 0x80, 0xff, 0x61, 0xc1,
-	0x9a, 0x6c, 0x49, 0xfe, 0x52, 0xe5, 0x61, 0xc1, 0x47, 0x95, 0x2b, 0x7c, 0x84, 0xc0, 0x1e, 0xb1,
-	0x2c, 0x75, 0xab, 0x5b, 0xd5, 0xed, 0x36, 0x51, 0xdf, 0xe8, 0x01, 0x74, 0x3c, 0xa5, 0x75, 0xce,
-	0xbb, 0x6b, 0x9a, 0x6a, 0xa6, 0x7e, 0x61, 0x3b, 0xb5, 0x6e, 0x9d, 0xd4, 0xcf, 0xfc, 0x28, 0xe0,
-	0x03, 0x1c, 0x40, 0x27, 0x37, 0xf5, 0xdd, 0xd7, 0x18, 0x3c, 0x80, 0xb5, 0x83, 0x30, 0xe6, 0xc9,
-	0xd4, 0x31, 0xa5, 0x24, 0xb3, 0xde, 0x22, 0xc9, 0x16, 0x41, 0x56, 0xae, 0x00, 0x89, 0x5f, 0x41,
-	0x27, 0x57, 0xb4, 0x3c, 0xac, 0xcd, 0x59, 0x58, 0xcd, 0x1c, 0xc3, 0x2f, 0x61, 0xf3, 0x31, 0x15,
-	0xde, 0x90, 0xf0, 0x20, 0x38, 0xa3, 0xde, 0xe8, 0x26, 0x63, 0x8c, 0x53, 0xb8, 0x3d, 0xa7, 0xfc,
-	0x06, 0xa2, 0x96, 0x42, 0x67, 0x3f, 0x60, 0x34, 0x1a, 0xc7, 0xab, 0x69, 0x77, 0x0b, 0xe8, 0xab,
-	0x8b, 0xe8, 0xf1, 0x9f, 0x2c, 0x58, 0x9f, 0x6a, 0xbd, 0x81, 0xf6, 0xb7, 0x98, 0x58, 0xd5, 0xab,
-	0x12, 0x6b, 0x04, 0xeb, 0x2a, 0x00, 0x4b, 0xf6, 0xfe, 0x3c, 0xa6, 0x95, 0x99, 0x7d, 0x7b, 0x7d,
-	0xf7, 0x0f, 0xa0, 0x5b, 0x28, 0x7b, 0xe7, 0x1d, 0xe8, 0x0f, 0x16, 0xac, 0xcb, 0x66, 0x27, 0x2b,
-	0xf5, 0x32, 0xd8, 0xee, 0x43, 0x2b, 0xa4, 0x97, 0x73, 0x29, 0x0d, 0x21, 0xbd, 0xcc, 0x13, 0xba,
-	0x74, 0x1e, 0xa8, 0x5e, 0x77, 0x1e, 0xb0, 0x67, 0xce, 0x03, 0xf8, 0xcf, 0x16, 0x74, 0x0b, 0x9b,
-	0x6e, 0x20, 0x0d, 0x1e, 0x42, 0x4d, 0x36, 0x1b, 0xbd, 0xeb, 0xae, 0xbc, 0x5b, 0x69, 0x3e, 0xfe,
-	0x14, 0x1a, 0xa7, 0x97, 0xfa, 0xfc, 0xdc, 0x85, 0xaa, 0xb8, 0x8c, 0xcc, 0xfd, 0x48, 0x7e, 0xa2,
-	0xf7, 0xa1, 0x9e, 0x0a, 0x2a, 0xc6, 0xa9, 0xf1, 0x82, 0x19, 0xe1, 0x7f, 0x5a, 0x80, 0x08, 0x4b,
-	0x79, 0x30, 0x61, 0xcb, 0x7a, 0xf9, 0xad, 0x4a, 0xc7, 0xdb, 0x25, 0x33, 0xfa, 0x0e, 0x34, 0xc5,
-	0x65, 0xd4, 0xf3, 0xa3, 0x73, 0x9e, 0xba, 0xb6, 0x02, 0x5c, 0x68, 0x36, 0xe8, 0x88, 0x23, 0xf4,
-	0x47, 0x8a, 0x5f, 0xc3, 0x46, 0xc9, 0xf8, 0x1b, 0x28, 0x3d, 0x2f, 0xa1, 0xf9, 0x6c, 0x7f, 0x19,
-	0x37, 0x7d, 0x08, 0x90, 0xd2, 0x73, 0xd6, 0x8b, 0xb9, 0x1f, 0x09, 0xe3, 0xa3, 0xa6, 0xa4, 0x1c,
-	0x4b, 0x02, 0x1e, 0x02, 0xc8, 0x75, 0x6f, 0x00, 0xc1, 0x11, 0xac, 0x11, 0x7a, 0xb1, 0xaa, 0xab,
-	0x02, 0xe6, 0xd0, 0xc9, 0x97, 0x5b, 0x71, 0x63, 0xbb, 0xe6, 0x18, 0xe9, 0x29, 0xfb, 0x8f, 0xc7,
-	0x2b, 0xba, 0xea, 0x5c, 0xad, 0xe4, 0x95, 0x42, 0xa5, 0x94, 0xac, 0xba, 0x5d, 0x1f, 0x43, 0x97,
-	0xd0, 0x8b, 0x27, 0x2c, 0x60, 0xcb, 0x1d, 0x83, 0x17, 0x43, 0xf0, 0x53, 0x78, 0x6f, 0x66, 0xc5,
-	0x55, 0xdb, 0x3b, 0x01, 0x64, 0x96, 0xa6, 0xd1, 0x80, 0xad, 0xfc, 0xda, 0x75, 0x07, 0x1a, 0x2c,
-	0xea, 0xcf, 0x54, 0xe0, 0x3a, 0x8b, 0xfa, 0x87, 0x2c, 0xc3, 0x3f, 0x87, 0x8d, 0x92, 0xde, 0x55,
-	0xe3, 0xca, 0xe0, 0x76, 0xe1, 0xb5, 0x9b, 0x85, 0x46, 0xe1, 0xfd, 0x79, 0xd5, 0xab, 0x46, 0xa7,
-	0xb7, 0xe5, 0xcd, 0x5d, 0x94, 0xf1, 0x00, 0xd6, 0xa7, 0x0a, 0x97, 0x07, 0xf3, 0x11, 0x54, 0x47,
-	0x93, 0x6b, 0xcf, 0x05, 0x92, 0x87, 0xbf, 0xb4, 0xa0, 0x79, 0x34, 0xf1, 0xbc, 0x9f, 0xa8, 0xe7,
-	0x9b, 0xfb, 0x60, 0x8b, 0x2c, 0x66, 0x57, 0xdd, 0x4d, 0x15, 0x43, 0xbd, 0x86, 0x29, 0x28, 0x22,
-	0xef, 0x7d, 0x0d, 0x35, 0x3e, 0x4d, 0x25, 0x4a, 0xd3, 0x94, 0x44, 0x6a, 0xfa, 0x91, 0xa3, 0x09,
-	0xa7, 0xa9, 0x7a, 0x09, 0x1b, 0x72, 0xd9, 0xd6, 0x54, 0x75, 0xb0, 0x95, 0x13, 0x40, 0x91, 0x5e,
-	0xaa, 0x12, 0xf1, 0x7d, 0x6d, 0x86, 0x1a, 0x94, 0xb4, 0x58, 0x65, 0x2d, 0xd3, 0x02, 0x53, 0x99,
-	0x2d, 0x30, 0xbf, 0xb1, 0xc0, 0x91, 0xd3, 0xd5, 0x2d, 0xf4, 0xeb, 0x80, 0x70, 0xa1, 0x61, 0x2e,
-	0xb4, 0x26, 0xc9, 0xf2, 0xe1, 0x57, 0x23, 0xf8, 0xbd, 0xb1, 0x41, 0x9d, 0x19, 0xf2, 0x77, 0xb0,
-	0xf9, 0x87, 0x8a, 0xdc, 0x48, 0xf3, 0x0e, 0xb6, 0x03, 0x75, 0x75, 0x73, 0xcd, 0x63, 0x84, 0x4a,
-	0x82, 0x2a, 0x26, 0xc4, 0x48, 0x48, 0x59, 0xa5, 0x3a, 0x3f, 0xbb, 0x94, 0x65, 0x95, 0x0d, 0xc4,
-	0x48, 0xe0, 0x13, 0xd8, 0x90, 0xc4, 0x67, 0x4c, 0x3c, 0xce, 0x0e, 0x59, 0xb6, 0x9a, 0xc2, 0xf8,
-	0x3b, 0x0b, 0x36, 0xcb, 0xab, 0xae, 0xba, 0x45, 0x3d, 0x00, 0x5b, 0x1e, 0x56, 0x16, 0x9e, 0x05,
-	0x73, 0xb7, 0x12, 0xc5, 0xc6, 0xbf, 0x80, 0x3b, 0x53, 0x3b, 0x4e, 0x74, 0xe0, 0x96, 0x41, 0x78,
-	0x7d, 0x1a, 0xe0, 0xbf, 0x5a, 0xe0, 0x2e, 0xaa, 0x58, 0x35, 0xdc, 0xc5, 0xbf, 0x08, 0x72, 0x07,
-	0xd8, 0xff, 0xdf, 0x01, 0x3f, 0x03, 0x74, 0x12, 0x07, 0xf2, 0x52, 0x2f, 0x55, 0x2c, 0x5b, 0x92,
-	0xe4, 0x0a, 0xa5, 0x92, 0x24, 0x09, 0xb2, 0xa0, 0xfe, 0xd1, 0x82, 0x8d, 0xd2, 0xfa, 0xcb, 0x03,
-	0xc7, 0x60, 0x07, 0xec, 0x5c, 0x98, 0x63, 0x54, 0xa7, 0xfc, 0xe7, 0x01, 0x51, 0x3c, 0xf4, 0x31,
-	0xd4, 0x12, 0x7f, 0x30, 0x14, 0x26, 0xec, 0xf3, 0x42, 0x9a, 0xb9, 0xf3, 0x6d, 0x80, 0xe2, 0x7f,
-	0x00, 0x04, 0x50, 0xff, 0x31, 0x4f, 0x42, 0x1a, 0x74, 0x6f, 0xa1, 0x06, 0x54, 0x9f, 0xf3, 0x8b,
-	0xae, 0x85, 0x1c, 0xb0, 0x3f, 0xf7, 0x07, 0xc3, 0x6e, 0x65, 0x67, 0x0b, 0x3a, 0xe5, 0xc7, 0x7f,
-	0x54, 0x87, 0xca, 0xc9, 0x41, 0xf7, 0x96, 0xfc, 0x25, 0xfb, 0x5d, 0x6b, 0x67, 0x17, 0x2a, 0x2f,
-	0x62, 0x39, 0xf5, 0x78, 0x2c, 0xf4, 0x1a, 0x4f, 0x58, 0xa0, 0xd7, 0x90, 0xfb, 0xb3, 0x5b, 0x41,
-	0x6d, 0x70, 0xf2, 0x6b, 0x78, 0xb7, 0xfa, 0x78, 0xe7, 0x5f, 0x6f, 0xee, 0x59, 0xff, 0x7e, 0x73,
-	0xcf, 0xfa, 0xcf, 0x9b, 0x7b, 0xd6, 0x5f, 0xfe, 0x7b, 0xef, 0x16, 0xb8, 0x1e, 0x0f, 0x77, 0x63,
-	0x3f, 0x1a, 0x78, 0x34, 0xde, 0x15, 0xfe, 0x68, 0xb2, 0x3b, 0x9a, 0xa8, 0x3f, 0x93, 0xce, 0xea,
-	0xea, 0xe7, 0xd3, 0xff, 0x05, 0x00, 0x00, 0xff, 0xff, 0xf8, 0xdd, 0xae, 0x02, 0xa0, 0x1a, 0x00,
-	0x00,
+	// 1922 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xc4, 0x59, 0x51, 0x8f, 0x1b, 0x49,
+	0x11, 0xce, 0xd8, 0x63, 0x7b, 0x5c, 0xf6, 0x7a, 0x7d, 0xbd, 0x9b, 0x8b, 0xb9, 0x70, 0xc9, 0xde,
+	0x70, 0x51, 0x36, 0x8b, 0xd8, 0x88, 0xbd, 0x13, 0x4f, 0x08, 0x9d, 0xb2, 0x09, 0xb9, 0x5c, 0x76,
+	0xc9, 0xaa, 0x77, 0x95, 0x53, 0x24, 0xc0, 0xf4, 0x8e, 0x7b, 0xed, 0x91, 0xc7, 0xd3, 0x93, 0x99,
+	0xb6, 0x77, 0x47, 0x08, 0x21, 0x84, 0x0e, 0x09, 0xde, 0x40, 0x48, 0xf0, 0x00, 0x0f, 0xbc, 0x20,
+	0xf1, 0x1b, 0xf8, 0x03, 0x3c, 0xf2, 0x13, 0x50, 0xf8, 0x23, 0xa8, 0x6b, 0x7a, 0x3c, 0x1e, 0xdb,
+	0x4b, 0x56, 0x83, 0xb3, 0x3c, 0x79, 0xba, 0xaa, 0xba, 0xab, 0xbe, 0xaa, 0xea, 0xaa, 0xee, 0x36,
+	0xac, 0x0d, 0x27, 0x61, 0xe0, 0x04, 0xa7, 0xbb, 0x41, 0x28, 0xa4, 0x20, 0x35, 0x3d, 0xfc, 0xa0,
+	0x39, 0xe2, 0x92, 0xa5, 0xe4, 0x0f, 0xd6, 0x78, 0x18, 0x8a, 0x70, 0x3a, 0xdc, 0xec, 0x8b, 0xbe,
+	0xc0, 0xcf, 0x87, 0xea, 0x2b, 0xa1, 0xda, 0x3f, 0x03, 0xeb, 0x40, 0x38, 0xc3, 0x67, 0xfe, 0x99,
+	0x20, 0x1f, 0x41, 0x33, 0x08, 0xdd, 0x11, 0x0b, 0xe3, 0xae, 0x27, 0x9c, 0x61, 0xc7, 0xd8, 0x32,
+	0xb6, 0x9b, 0xb4, 0xa1, 0x69, 0x4a, 0x4c, 0x89, 0x28, 0x56, 0x77, 0xc2, 0xc3, 0xc8, 0x15, 0x7e,
+	0xa7, 0xb4, 0x65, 0x6c, 0x9b, 0xb4, 0xa1, 0x68, 0x2f, 0x13, 0x12, 0x69, 0x43, 0x79, 0xc8, 0xe3,
+	0x4e, 0x19, 0x27, 0xab, 0x4f, 0xf2, 0x35, 0xb0, 0x70, 0x92, 0x94, 0x5e, 0xc7, 0xc4, 0x09, 0x35,
+	0x35, 0x3e, 0x91, 0x9e, 0xed, 0x82, 0xf5, 0x9c, 0xc7, 0x4f, 0x94, 0xa1, 0xe4, 0x01, 0x54, 0x15,
+	0x99, 0xf7, 0x50, 0x71, 0x63, 0xef, 0xbd, 0xdd, 0x14, 0x66, 0x6a, 0x21, 0xd5, 0x02, 0xe4, 0xeb,
+	0x50, 0x0f, 0xb9, 0x0c, 0x63, 0x76, 0xea, 0x71, 0xb4, 0xa1, 0x4e, 0x33, 0x02, 0xd9, 0x84, 0x0a,
+	0x3b, 0x15, 0xa1, 0x44, 0x1b, 0xea, 0x34, 0x19, 0xd8, 0x7f, 0x2e, 0x43, 0x6d, 0x5f, 0xf8, 0x92,
+	0x5f, 0x48, 0x72, 0x5b, 0xcd, 0xef, 0xbb, 0xc2, 0xef, 0xba, 0x89, 0x36, 0x93, 0x5a, 0x09, 0xe1,
+	0x59, 0x8f, 0x7c, 0x07, 0x9a, 0x9a, 0xc9, 0x03, 0xe1, 0x0c, 0x70, 0xfd, 0xc6, 0xde, 0xc6, 0xae,
+	0x76, 0x2e, 0x45, 0xde, 0x13, 0xc5, 0xa2, 0x8d, 0x30, 0x1b, 0x90, 0x2d, 0x30, 0x03, 0xce, 0x43,
+	0xd4, 0xda, 0xd8, 0x6b, 0xa6, 0xf2, 0x47, 0x9c, 0x87, 0x14, 0x39, 0x84, 0x80, 0x29, 0x79, 0x38,
+	0xea, 0x54, 0x50, 0x23, 0x7e, 0x93, 0x87, 0x60, 0x05, 0xa1, 0x2b, 0x42, 0x57, 0xc6, 0x9d, 0xea,
+	0x96, 0xb1, 0xdd, 0xda, 0xdb, 0x98, 0xe2, 0xde, 0x17, 0xa3, 0x11, 0xf3, 0x7b, 0x47, 0xa1, 0x4b,
+	0xa7, 0x42, 0xe4, 0x33, 0x58, 0x77, 0x23, 0xe1, 0x31, 0xa9, 0x2c, 0xf4, 0xf8, 0x84, 0x7b, 0x9d,
+	0x1a, 0xce, 0xbb, 0x35, 0x9d, 0xf7, 0x2c, 0xe5, 0x1f, 0x28, 0x36, 0x6d, 0xb9, 0xb9, 0x31, 0xf9,
+	0x18, 0x5a, 0xbe, 0x90, 0xdd, 0x33, 0xd7, 0xf3, 0xba, 0x0e, 0x73, 0x06, 0xbc, 0x63, 0x6d, 0x19,
+	0xdb, 0x16, 0x6d, 0xfa, 0x42, 0x7e, 0xdf, 0xf5, 0xbc, 0x7d, 0x45, 0x53, 0x51, 0x8b, 0x62, 0xdf,
+	0xe9, 0x7a, 0xa2, 0xdf, 0xa9, 0x23, 0xbf, 0xa6, 0xc6, 0x07, 0xa2, 0x4f, 0xee, 0x42, 0x63, 0xc0,
+	0xfc, 0x9e, 0xc7, 0xbb, 0xd2, 0x1d, 0xf1, 0x0e, 0x20, 0x17, 0x12, 0xd2, 0x89, 0x3b, 0xe2, 0x4a,
+	0x20, 0x72, 0x98, 0xdf, 0xed, 0x71, 0xc9, 0x5c, 0xaf, 0xd3, 0x48, 0x04, 0x14, 0xe9, 0x31, 0x52,
+	0xbe, 0x30, 0x2d, 0xb3, 0x5d, 0x51, 0xee, 0x63, 0xbd, 0xee, 0xeb, 0xb1, 0x08, 0xc7, 0x23, 0xfb,
+	0x31, 0xc0, 0xe7, 0xd9, 0x0a, 0xb7, 0xa0, 0x76, 0xce, 0x5c, 0xd9, 0x1d, 0x45, 0x18, 0x9f, 0x32,
+	0xad, 0xaa, 0xe1, 0x61, 0x44, 0x3e, 0x04, 0x08, 0x42, 0xe1, 0xf0, 0x28, 0x52, 0xbc, 0x12, 0xf2,
+	0xea, 0x9a, 0x72, 0x18, 0xd9, 0xdf, 0x03, 0xeb, 0xd8, 0x61, 0x3e, 0xe6, 0xf3, 0x26, 0x54, 0xa4,
+	0x90, 0xcc, 0xd3, 0x2b, 0x24, 0x03, 0x95, 0x3b, 0x5a, 0x9c, 0xf7, 0xe6, 0xe6, 0xf3, 0x9e, 0xfd,
+	0x4b, 0x03, 0xe0, 0x78, 0x6a, 0x27, 0xb9, 0x0f, 0x95, 0xf3, 0xd0, 0x95, 0x7c, 0x21, 0x25, 0x53,
+	0x25, 0x34, 0xe1, 0x93, 0x7b, 0x60, 0xe2, 0x9e, 0x29, 0x5d, 0x26, 0x87, 0x6c, 0x25, 0xd6, 0x63,
+	0x92, 0xe9, 0x1c, 0x59, 0x26, 0xa6, 0xd8, 0x76, 0x0c, 0x8d, 0x27, 0x17, 0xdc, 0x49, 0x8c, 0x88,
+	0xc8, 0xa7, 0x79, 0x7f, 0x1b, 0x3a, 0x21, 0xd3, 0xc9, 0x99, 0xdb, 0x72, 0x41, 0xf8, 0x34, 0x1f,
+	0x84, 0xd2, 0xdc, 0xac, 0x0c, 0xe5, 0x6c, 0x64, 0xec, 0x1e, 0xc0, 0x53, 0x2e, 0x29, 0x7f, 0x3d,
+	0xe6, 0x91, 0x24, 0x3b, 0x50, 0x73, 0x92, 0x3d, 0xa3, 0xb5, 0xb6, 0x67, 0x92, 0x13, 0xe9, 0x34,
+	0x15, 0x48, 0x37, 0x7e, 0x29, 0xdb, 0xf8, 0x1d, 0xa8, 0xa5, 0x85, 0xa2, 0x9c, 0xec, 0x7b, 0x3d,
+	0xb4, 0x7f, 0x0e, 0x0d, 0xd4, 0x12, 0x05, 0xc2, 0x8f, 0x38, 0xf9, 0x76, 0xb6, 0xe5, 0x54, 0x29,
+	0xd0, 0xba, 0x5a, 0xbb, 0x69, 0x05, 0xc3, 0x02, 0x31, 0xdd, 0x6d, 0x58, 0x2d, 0xee, 0x43, 0x25,
+	0x91, 0x9d, 0xf7, 0x78, 0x5a, 0x4f, 0x68, 0xc2, 0x57, 0x59, 0x30, 0x61, 0xde, 0x98, 0xeb, 0x8a,
+	0x94, 0x0c, 0xec, 0xbf, 0x18, 0xd0, 0x50, 0x1e, 0x28, 0x02, 0xf4, 0x36, 0xd4, 0x23, 0xc9, 0x42,
+	0xd9, 0xcd, 0xe0, 0x5a, 0x48, 0x78, 0xce, 0x63, 0xa5, 0xce, 0x73, 0x47, 0x6e, 0x52, 0x7c, 0xd6,
+	0x68, 0x32, 0x98, 0xf5, 0x84, 0x99, 0xf3, 0x84, 0xda, 0x66, 0x43, 0x1e, 0x77, 0x85, 0xef, 0xc5,
+	0x58, 0x17, 0x2c, 0x5a, 0x1b, 0xf2, 0xf8, 0x85, 0xef, 0xc5, 0xf6, 0x2b, 0xa8, 0x3e, 0x9f, 0x1c,
+	0x31, 0x77, 0x06, 0xac, 0xf1, 0x16, 0xb0, 0x8b, 0x31, 0x58, 0x0e, 0x7f, 0x00, 0xcd, 0x04, 0x7d,
+	0xf1, 0x00, 0xdc, 0x83, 0x4a, 0xc0, 0xdc, 0x50, 0xed, 0xc1, 0xf2, 0x76, 0x63, 0x6f, 0x3d, 0xb3,
+	0x09, 0x6d, 0xa6, 0x09, 0xd7, 0x7e, 0x01, 0xd6, 0xe1, 0x58, 0x62, 0xf5, 0x21, 0xb7, 0xa1, 0x24,
+	0x02, 0x5c, 0xbb, 0xb5, 0xd7, 0x98, 0xca, 0xbf, 0x08, 0x68, 0x49, 0x04, 0x57, 0x36, 0xfd, 0xab,
+	0x12, 0xac, 0x1f, 0x85, 0x1c, 0xb7, 0x5d, 0x91, 0xe8, 0x3d, 0x84, 0xfa, 0x48, 0x1b, 0x94, 0xda,
+	0x9e, 0xf9, 0x33, 0x35, 0x95, 0x66, 0x32, 0x0b, 0x6d, 0xb1, 0xbc, 0xd8, 0x16, 0xbf, 0x01, 0x6b,
+	0x49, 0x46, 0xe4, 0x83, 0xdc, 0x44, 0xe2, 0xcb, 0x2c, 0xd2, 0xd3, 0x36, 0x58, 0xc9, 0xb5, 0x41,
+	0xb2, 0x07, 0x37, 0xa3, 0xa1, 0x1b, 0x74, 0x1d, 0xe1, 0x47, 0x32, 0x64, 0xae, 0x2f, 0xbb, 0xce,
+	0x80, 0x3b, 0x43, 0xec, 0x08, 0x16, 0xdd, 0x50, 0xcc, 0xfd, 0x29, 0x6f, 0x5f, 0xb1, 0xec, 0x00,
+	0xda, 0x99, 0x1b, 0x8a, 0x87, 0xf1, 0x01, 0x54, 0x91, 0xbb, 0xe8, 0x8b, 0x69, 0x6e, 0x69, 0x01,
+	0xfb, 0x6f, 0x06, 0xac, 0xa9, 0x96, 0xe4, 0x16, 0x2a, 0x0f, 0x0b, 0x3e, 0x2a, 0x2d, 0xf1, 0x11,
+	0x01, 0x73, 0xc8, 0xe3, 0xa8, 0x53, 0xde, 0x2a, 0x6f, 0x37, 0x29, 0x7e, 0x93, 0x7b, 0xd0, 0x72,
+	0x50, 0xeb, 0x9c, 0x77, 0xd7, 0x12, 0xaa, 0x9e, 0xfa, 0x85, 0x69, 0x55, 0xda, 0x55, 0x5a, 0x3d,
+	0x75, 0x7d, 0x4f, 0xf4, 0x6d, 0x0f, 0x5a, 0xa9, 0xa9, 0xef, 0xbe, 0xc6, 0xd8, 0x7d, 0x58, 0x7b,
+	0x36, 0x0a, 0x44, 0x38, 0x75, 0x4c, 0x2e, 0xc9, 0x8c, 0x2b, 0x24, 0xd9, 0x22, 0xc8, 0xd2, 0x12,
+	0x90, 0xf6, 0x2b, 0x68, 0xa5, 0x8a, 0x8a, 0xc3, 0xda, 0x9c, 0x85, 0x55, 0x4f, 0x31, 0xfc, 0x14,
+	0x36, 0x1f, 0x31, 0xe9, 0x0c, 0xa8, 0xf0, 0xbc, 0x53, 0xe6, 0x0c, 0xaf, 0x33, 0xc6, 0x76, 0x04,
+	0x37, 0xe7, 0x94, 0x5f, 0x43, 0xd4, 0x22, 0x68, 0xed, 0x7b, 0x9c, 0xf9, 0xe3, 0x60, 0x35, 0xed,
+	0x6e, 0x01, 0x7d, 0x79, 0x11, 0xbd, 0xfd, 0x7b, 0x03, 0xd6, 0xa7, 0x5a, 0xaf, 0xa1, 0xfd, 0x2d,
+	0x26, 0x56, 0x79, 0x59, 0x62, 0x0d, 0x61, 0x1d, 0x03, 0x50, 0xb0, 0xf7, 0xa7, 0x31, 0x2d, 0xcd,
+	0xec, 0xdb, 0xcb, 0xbb, 0xbf, 0x07, 0xed, 0x4c, 0xd9, 0x3b, 0xef, 0x40, 0xbf, 0x35, 0x60, 0x5d,
+	0x35, 0x3b, 0x55, 0xa9, 0x8b, 0x60, 0xbb, 0x0b, 0x8d, 0x11, 0xbb, 0x98, 0x4b, 0x69, 0x18, 0xb1,
+	0x8b, 0x34, 0xa1, 0x73, 0xe7, 0x81, 0xf2, 0x65, 0xe7, 0x01, 0x73, 0xe6, 0x3c, 0x60, 0xff, 0xc1,
+	0x80, 0x76, 0x66, 0xd3, 0x35, 0xa4, 0xc1, 0x7d, 0xa8, 0xa8, 0x66, 0x93, 0xec, 0xba, 0xa5, 0x77,
+	0xab, 0x84, 0x6f, 0x7f, 0x02, 0xb5, 0x93, 0x8b, 0xe4, 0xfc, 0xdc, 0x86, 0xb2, 0xbc, 0xf0, 0xf5,
+	0xfd, 0x48, 0x7d, 0x92, 0xf7, 0xa1, 0x1a, 0x49, 0x26, 0xc7, 0x91, 0xf6, 0x82, 0x1e, 0xd9, 0x7f,
+	0x37, 0x80, 0x50, 0x1e, 0x09, 0x6f, 0xc2, 0x8b, 0x7a, 0xf9, 0x4a, 0xa5, 0xe3, 0x6a, 0xc9, 0x4c,
+	0xbe, 0x05, 0x75, 0x79, 0xe1, 0x77, 0x5d, 0xff, 0x4c, 0x44, 0x1d, 0x13, 0x01, 0x67, 0x9a, 0x35,
+	0x3a, 0x6a, 0xc9, 0xe4, 0x23, 0xb2, 0x5f, 0xc3, 0x46, 0xce, 0xf8, 0x6b, 0x28, 0x3d, 0x2f, 0xa1,
+	0xfe, 0x74, 0xbf, 0x88, 0x9b, 0x3e, 0x04, 0x88, 0xd8, 0x19, 0xef, 0x06, 0xc2, 0xf5, 0xa5, 0xf6,
+	0x51, 0x5d, 0x51, 0x8e, 0x14, 0xc1, 0x1e, 0x00, 0xa8, 0x75, 0xaf, 0x01, 0xc1, 0x21, 0xac, 0x51,
+	0x76, 0xbe, 0xaa, 0xab, 0x82, 0x2d, 0xa0, 0x95, 0x2e, 0xb7, 0xe2, 0xc6, 0x76, 0xc9, 0x31, 0xd2,
+	0x41, 0xfb, 0x8f, 0xc6, 0x2b, 0xba, 0xea, 0x2c, 0x57, 0xf2, 0x0a, 0x51, 0xa1, 0x92, 0x55, 0xb7,
+	0xeb, 0x3e, 0x10, 0xca, 0xce, 0xb1, 0x8c, 0x16, 0x04, 0x71, 0xc5, 0xf2, 0xf9, 0x63, 0xd8, 0xc8,
+	0x29, 0x5a, 0x35, 0x90, 0x93, 0x0c, 0xc8, 0xea, 0x9a, 0x8f, 0x2d, 0x32, 0xab, 0xaf, 0xa7, 0xcb,
+	0x1c, 0x41, 0x9b, 0xb2, 0xf3, 0xc7, 0xdc, 0xe3, 0xc5, 0xae, 0x25, 0x8b, 0x5b, 0xe2, 0x87, 0xf0,
+	0xde, 0xcc, 0x8a, 0xab, 0x76, 0xfb, 0x97, 0x70, 0x33, 0x75, 0x50, 0x71, 0xa3, 0x97, 0x79, 0x9e,
+	0xc1, 0xfb, 0xf3, 0x0b, 0xaf, 0xda, 0xf6, 0x09, 0x10, 0xbd, 0x34, 0xf3, 0xfb, 0x7c, 0xe5, 0x57,
+	0xf8, 0x5b, 0x50, 0xe3, 0x7e, 0x6f, 0xa6, 0x9b, 0x57, 0xb9, 0xdf, 0x7b, 0xce, 0x63, 0xb5, 0x15,
+	0x72, 0x7a, 0x57, 0x8d, 0x2b, 0xc6, 0x98, 0xfc, 0x5f, 0xa0, 0x25, 0x51, 0x7b, 0xa7, 0xe8, 0x7e,
+	0x63, 0x60, 0x35, 0xbc, 0xc6, 0x57, 0x97, 0xd9, 0xb7, 0x15, 0x33, 0xff, 0xb6, 0xd2, 0x87, 0xf5,
+	0xa9, 0x2d, 0xc5, 0x81, 0x7e, 0x04, 0xe5, 0xe1, 0xe4, 0xd2, 0xca, 0xa0, 0x78, 0xf6, 0x67, 0xf8,
+	0xc2, 0x8d, 0x2e, 0xcd, 0x43, 0x30, 0x2e, 0x0f, 0x4d, 0x29, 0x17, 0x9a, 0xbf, 0x1a, 0x59, 0x2d,
+	0x2b, 0xea, 0xbc, 0x07, 0x50, 0x0d, 0x95, 0x09, 0x4b, 0x6f, 0xf9, 0x49, 0xbc, 0xb5, 0x80, 0x3a,
+	0x61, 0x70, 0xe6, 0x0c, 0xba, 0xb3, 0xfe, 0xac, 0x2b, 0xca, 0xc1, 0xdb, 0x7c, 0xea, 0xc1, 0x66,
+	0xde, 0xce, 0x77, 0xea, 0xd8, 0xaf, 0x0c, 0xa8, 0x1f, 0x4e, 0x1c, 0xe7, 0x4b, 0x7c, 0x7f, 0xbd,
+	0x0b, 0xa6, 0x8c, 0x03, 0xbe, 0xec, 0x71, 0x09, 0x19, 0xf8, 0x9c, 0x8d, 0xbe, 0x97, 0xe9, 0xe1,
+	0xb5, 0x86, 0xe3, 0x93, 0x48, 0x85, 0x45, 0x9f, 0x2a, 0x65, 0xa4, 0x0f, 0x94, 0x56, 0x42, 0x38,
+	0x89, 0xf0, 0x29, 0x7b, 0x20, 0xd4, 0xb9, 0x14, 0xdb, 0xbb, 0x89, 0xa1, 0x01, 0x24, 0xbd, 0xc4,
+	0x1e, 0xff, 0xdd, 0xc4, 0x0c, 0x1c, 0xe4, 0xb4, 0x18, 0x79, 0x2d, 0xd3, 0x13, 0x42, 0x69, 0xf6,
+	0x84, 0xf0, 0x0b, 0x03, 0x2c, 0x35, 0x1d, 0x9f, 0x91, 0xfe, 0x17, 0x10, 0x1d, 0xa8, 0xe9, 0x17,
+	0x29, 0xbd, 0xb3, 0xd3, 0xe1, 0xdb, 0x11, 0xfc, 0x5a, 0xdb, 0x80, 0x87, 0xfe, 0xf4, 0x21, 0x7b,
+	0xfe, 0xa5, 0x31, 0x35, 0x52, 0x3f, 0x64, 0xef, 0x40, 0x15, 0x9f, 0x9e, 0xd2, 0x18, 0x91, 0x9c,
+	0x20, 0xc6, 0x84, 0x6a, 0x09, 0x25, 0x8b, 0xaa, 0xd3, 0xcb, 0x47, 0x5e, 0x16, 0x6d, 0xa0, 0x5a,
+	0xc2, 0x3e, 0x86, 0x0d, 0x45, 0x7c, 0xca, 0xe5, 0xa3, 0x58, 0xa5, 0xe6, 0x4a, 0x3a, 0xe9, 0xaf,
+	0x0c, 0xd8, 0xcc, 0xaf, 0xba, 0xea, 0x33, 0xe6, 0x3d, 0x30, 0xd5, 0x6d, 0x63, 0xe1, 0x5d, 0x3f,
+	0x75, 0x2b, 0x45, 0xb6, 0xfd, 0x13, 0xb8, 0x35, 0xb5, 0xe3, 0x38, 0x09, 0x5c, 0x11, 0x84, 0x97,
+	0xa7, 0x81, 0xfd, 0x27, 0x03, 0x3a, 0x8b, 0x2a, 0x56, 0x0d, 0x77, 0xf1, 0x3f, 0xbe, 0xd4, 0x01,
+	0xe6, 0x7f, 0x77, 0xc0, 0x8f, 0x80, 0x1c, 0x07, 0x9e, 0x2b, 0x93, 0x3f, 0xd1, 0x8a, 0xb6, 0x01,
+	0xb5, 0x42, 0xae, 0x0d, 0x28, 0x82, 0x2a, 0x95, 0xbf, 0x33, 0x60, 0x23, 0xb7, 0x7e, 0x71, 0xe0,
+	0x36, 0x98, 0x1e, 0x3f, 0x93, 0xfa, 0x1e, 0xd4, 0xca, 0xff, 0xfb, 0x47, 0x91, 0x47, 0x3e, 0x86,
+	0x4a, 0xe8, 0xf6, 0x07, 0x52, 0x87, 0x7d, 0x5e, 0x28, 0x61, 0xee, 0x7c, 0x13, 0x20, 0xfb, 0x23,
+	0x8f, 0x00, 0x54, 0x7f, 0x20, 0xc2, 0x11, 0xf3, 0xda, 0x37, 0x48, 0x0d, 0xca, 0x07, 0xe2, 0xbc,
+	0x6d, 0x10, 0x0b, 0xcc, 0xcf, 0xdd, 0xfe, 0xa0, 0x5d, 0xda, 0xd9, 0x82, 0x56, 0xfe, 0xdf, 0x3b,
+	0x52, 0x85, 0xd2, 0xf1, 0xb3, 0xf6, 0x0d, 0xf5, 0x4b, 0xf7, 0xdb, 0xc6, 0xce, 0x2e, 0x94, 0x5e,
+	0x04, 0x6a, 0xea, 0xd1, 0x58, 0x26, 0x6b, 0x3c, 0xe6, 0x5e, 0xb2, 0x86, 0xda, 0x9f, 0xed, 0x12,
+	0x69, 0x82, 0x95, 0xbe, 0xa3, 0xb5, 0xcb, 0x8f, 0x76, 0xfe, 0xf1, 0xe6, 0x8e, 0xf1, 0xcf, 0x37,
+	0x77, 0x8c, 0x7f, 0xbd, 0xb9, 0x63, 0xfc, 0xf1, 0xdf, 0x77, 0x6e, 0x40, 0xc7, 0x11, 0xa3, 0xdd,
+	0xc0, 0xf5, 0xfb, 0x0e, 0x0b, 0x76, 0xa5, 0x3b, 0x9c, 0xec, 0x0e, 0x27, 0xf8, 0x6f, 0xf0, 0x69,
+	0x15, 0x7f, 0x3e, 0xf9, 0x4f, 0x00, 0x00, 0x00, 0xff, 0xff, 0xe2, 0x8f, 0x9a, 0x77, 0x61, 0x1e,
+	0x00, 0x00,
 }
