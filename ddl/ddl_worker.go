@@ -53,6 +53,7 @@ func (d *ddl) onDDLWorker() {
 		}
 	}()
 
+	// shouldCleanJobs is used to determine whether to clean up the job in adding index queue.
 	shouldCleanJobs := true
 	for {
 		select {
@@ -196,7 +197,7 @@ func (d *ddl) getHistoryDDLJob(id int64) (*model.Job, error) {
 	return job, errors.Trace(err)
 }
 
-// handleDDLJobQueue handle DDL jobs in DDL Job queue.
+// handleDDLJobQueue handles DDL jobs in DDL Job queue.
 // shouldCleanJobs is used to determine whether to clean up the job in adding index queue.
 func (d *ddl) handleDDLJobQueue(shouldCleanJobs bool) error {
 	once := true
@@ -480,6 +481,9 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 	return schemaVersion, errors.Trace(err)
 }
 
+// cleanAddIndexQueueJobs cleans jobs in adding index queue.
+// It's only done once after the worker become the owner.
+// TODO: Remove this logic after we support the adding index queue.
 func (d *ddl) cleanAddIndexQueueJobs(txn kv.Transaction) error {
 	startTime := time.Now()
 	m := meta.NewMeta(txn)
@@ -497,7 +501,9 @@ func (d *ddl) cleanAddIndexQueueJobs(txn kv.Transaction) error {
 
 		// The types of these jobs must be ActionAddIndex.
 		if job.SchemaState == model.StatePublic || job.SchemaState == model.StateNone {
-			job.State = model.JobStateCancelled
+			if job.SchemaState == model.StateNone {
+				job.State = model.JobStateCancelled
+			}
 			err = d.finishDDLJob(m, job)
 			if err != nil {
 				return errors.Trace(err)
@@ -505,7 +511,7 @@ func (d *ddl) cleanAddIndexQueueJobs(txn kv.Transaction) error {
 			continue
 		}
 
-		// When the job not in "none" state, we need to rollback it.
+		// When the job not in "none" and "public" state, we need to rollback it.
 		schemaID := job.SchemaID
 		tblInfo, err := getTableInfo(m, job, schemaID)
 		if err != nil {
