@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/parser"
 )
 
-// OneByOneSuite is a suite, When with-tikv flag is true, there is only one storage, so the test suite have to open one by one.
+// OneByOneSuite is a suite, When with-tikv flag is true, there is only one storage, so the test suite have to run one by one.
 type OneByOneSuite struct {
 }
 

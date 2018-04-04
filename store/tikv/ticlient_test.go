@@ -29,7 +29,7 @@ import (
 
 var (
 	withTiKVGlobalLock sync.Mutex
-	withTiKV           = flag.Bool("with-tikv", false, "open tests with TiKV cluster started. (not use the mock server)")
+	withTiKV           = flag.Bool("with-tikv", false, "run tests with TiKV cluster started. (not use the mock server)")
 	pdAddrs            = flag.String("pd-addrs", "127.0.0.1:2379", "pd addrs")
 )
 
