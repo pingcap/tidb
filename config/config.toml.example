@@ -36,7 +36,7 @@ token-limit = 1000
 oom-action = "log"
 
 # Enable coprocessor streaming.
-enable-streaming = true
+enable-streaming = false
 
 # Set system variable 'lower_case_table_names'
 lower-case-table-names = 2
