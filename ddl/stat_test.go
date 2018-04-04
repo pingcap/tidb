@@ -85,6 +85,7 @@ LOOP:
 			d.close()
 			c.Assert(s.getDDLSchemaVer(c, d), GreaterEqual, ver)
 			d.start(context.Background())
+			time.Sleep(time.Millisecond * 20)
 		case err := <-done:
 			c.Assert(err, IsNil)
 			// TODO: Get this information from etcd.
