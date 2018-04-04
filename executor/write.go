@@ -801,7 +801,7 @@ type InsertExec struct {
 	// For duplicate key update
 	uniqueKeysInRows [][]keyWithDupError
 	dupKeyValues     map[string][]byte
-	dupOldRowValue   map[string][]byte
+	dupOldRowValues  map[string][]byte
 }
 
 func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) (Row, error) {
@@ -813,6 +813,9 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) (Row, error
 	if !sessVars.ImportingData {
 		sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(e.ctx.Txn(), kv.TempTxnMemBufCap)
 	}
+
+	// If `ON DUPLICATE KEY UPDATE` is specified, and no `IGNORE` keyword,
+	// the to-be-insert rows will be check on duplicate keys and update to the new rows.
 	if len(e.OnDuplicate) > 0 && !e.IgnoreErr {
 		var err error
 		rows, err = e.batchUpdateDupRows(rows, e.OnDuplicate)
@@ -885,6 +888,7 @@ type keyWithDupError struct {
 	newRowValue []byte
 }
 
+// genNewHandles generates the handles of to-be-insert rows.
 func genNewHandles(ctx sessionctx.Context, t table.Table, rows [][]types.Datum) ([]int64, error) {
 	handles := make([]int64, 0, len(rows))
 	if t.Meta().PKIsHandle {
@@ -910,7 +914,8 @@ func genNewHandles(ctx sessionctx.Context, t table.Table, rows [][]types.Datum) 
 	return handles, nil
 }
 
-func getOldValues(ctx sessionctx.Context, t table.Table, handles []int64) (map[string][]byte, error) {
+// batchGetOldValues gets the values of storage in batch.
+func batchGetOldValues(ctx sessionctx.Context, t table.Table, handles []int64) (map[string][]byte, error) {
 	batchKeys := make([]kv.Key, 0, len(handles))
 	for _, handle := range handles {
 		batchKeys = append(batchKeys, t.RecordKey(handle))
@@ -922,6 +927,7 @@ func getOldValues(ctx sessionctx.Context, t table.Table, handles []int64) (map[s
 	return values, nil
 }
 
+// encodeNewRow encodes a new row to value.
 func encodeNewRow(ctx sessionctx.Context, t table.Table, row []types.Datum) ([]byte, error) {
 	colIDs := make([]int64, 0, len(row))
 	skimmedRow := make([]types.Datum, 0, len(row))
@@ -962,7 +968,7 @@ func getKeysNeedCheck(ctx sessionctx.Context, t table.Table, rows [][]types.Datu
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		// append record keys and errors
+		// Append record keys and errors.
 		if t.Meta().PKIsHandle {
 			keysWithErr = append(keysWithErr, keyWithDupError{
 				true,
@@ -978,18 +984,16 @@ func getKeysNeedCheck(ctx sessionctx.Context, t table.Table, rows [][]types.Datu
 			if !v.Meta().Unique {
 				continue
 			}
-			var colVals []types.Datum
-			colVals, err = v.FetchValues(row, nil)
-			if err != nil {
-				return nil, errors.Trace(err)
+			colVals, err1 := v.FetchValues(row, nil)
+			if err1 != nil {
+				return nil, errors.Trace(err1)
 			}
-			var key []byte
-			var distinct bool
-			key, distinct, err = v.GenIndexKey(ctx.GetSessionVars().StmtCtx,
+			key, distinct, err2 := v.GenIndexKey(ctx.GetSessionVars().StmtCtx,
 				colVals, handles[i], nil)
-			if err != nil {
-				return nil, errors.Trace(err)
+			if err2 != nil {
+				return nil, errors.Trace(err2)
 			}
+			// Skip the non-distinct keys.
 			if !distinct {
 				continue
 			}
@@ -1008,13 +1012,13 @@ func getKeysNeedCheck(ctx sessionctx.Context, t table.Table, rows [][]types.Datu
 
 // batchGetInsertKeys uses batch-get to fetch all key-value pairs to be checked for ignore or duplicate key update.
 func batchGetInsertKeys(ctx sessionctx.Context, t table.Table, newRows [][]types.Datum) ([][]keyWithDupError, map[string][]byte, error) {
-	// get keys need to be checked
+	// Get keys need to be checked.
 	keysInRows, err := getKeysNeedCheck(ctx, t, newRows)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 
-	// batch get values
+	// Batch get values.
 	nKeys := 0
 	for _, v := range keysInRows {
 		nKeys += len(v)
@@ -1032,6 +1036,7 @@ func batchGetInsertKeys(ctx sessionctx.Context, t table.Table, newRows [][]types
 	return keysInRows, values, nil
 }
 
+// checkBatchLimit check the batchSize limitation.
 func (e *InsertExec) checkBatchLimit() error {
 	sessVars := e.ctx.GetSessionVars()
 	batchInsert := sessVars.BatchInsert && !sessVars.InTxn()
@@ -1050,30 +1055,24 @@ func (e *InsertExec) checkBatchLimit() error {
 	return nil
 }
 
-func (e *InsertExec) initDirtyRowValue(newRows [][]types.Datum) (err error) {
-	e.dupOldRowValue = make(map[string][]byte, len(newRows))
+// initDupOldRowValue initializes dupOldRowValues which contain the to-be-updated rows from storage.
+func (e *InsertExec) initDupOldRowValue(newRows [][]types.Datum) (err error) {
+	e.dupOldRowValues = make(map[string][]byte, len(newRows))
 	handles := make([]int64, 0, len(newRows))
 	for _, keysInRow := range e.uniqueKeysInRows {
 		for _, k := range keysInRow {
 			if val, found := e.dupKeyValues[string(k.key)]; found {
 				var handle int64
-				if k.isRecordKey {
-					handle, err = tablecodec.DecodeRowKey(k.key)
-					if err != nil {
-						return errors.Trace(err)
-					}
-				} else {
-					handle, err = tables.DecodeHandle(val)
-					if err != nil {
-						return errors.Trace(err)
-					}
+				handle, err = decodeOldHandle(k, val)
+				if err != nil {
+					return errors.Trace(err)
 				}
 				handles = append(handles, handle)
 				break
 			}
 		}
 	}
-	e.dupOldRowValue, err = getOldValues(e.ctx, e.Table, handles)
+	e.dupOldRowValues, err = batchGetOldValues(e.ctx, e.Table, handles)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1095,6 +1094,7 @@ func decodeOldHandle(k keyWithDupError, value []byte) (oldHandle int64, err erro
 	return oldHandle, nil
 }
 
+// updateDupRow updates a duplicate row to a new row.
 func (e *InsertExec) updateDupRow(keys []keyWithDupError, k keyWithDupError, val []byte, newRow []types.Datum, onDuplicate []*expression.Assignment) (err error) {
 	oldHandle, err := decodeOldHandle(k, val)
 	if err != nil {
@@ -1102,7 +1102,7 @@ func (e *InsertExec) updateDupRow(keys []keyWithDupError, k keyWithDupError, val
 	}
 
 	// Get the table record row from storage for update.
-	oldValue, ok := e.dupOldRowValue[string(e.Table.RecordKey(oldHandle))]
+	oldValue, ok := e.dupOldRowValues[string(e.Table.RecordKey(oldHandle))]
 	if !ok {
 		return errors.NotFoundf("can not be duplicated row, due to old row not found. handle %d", oldHandle)
 	}
@@ -1119,7 +1119,7 @@ func (e *InsertExec) updateDupRow(keys []keyWithDupError, k keyWithDupError, val
 	return e.updateDupKeyValues(keys, oldHandle, newHandle, handleChanged, updatedRow)
 }
 
-// updateDupKeyValues updates the e.dupKeyValues for further duplicate key check.
+// updateDupKeyValues updates the dupKeyValues for further duplicate key check.
 func (e *InsertExec) updateDupKeyValues(keys []keyWithDupError, oldHandle int64,
 	newHandle int64, handleChanged bool, updatedRow []types.Datum) error {
 	// There is only one row per update.
@@ -1133,7 +1133,7 @@ func (e *InsertExec) updateDupKeyValues(keys []keyWithDupError, oldHandle int64,
 	}
 	// Fill back new key-values of the updated row.
 	if handleChanged {
-		delete(e.dupOldRowValue, string(e.Table.RecordKey(oldHandle)))
+		delete(e.dupOldRowValues, string(e.Table.RecordKey(oldHandle)))
 		e.fillBackKeys(fillBackKeysInRows[0], newHandle)
 	} else {
 		e.fillBackKeys(fillBackKeysInRows[0], oldHandle)
@@ -1141,6 +1141,7 @@ func (e *InsertExec) updateDupKeyValues(keys []keyWithDupError, oldHandle int64,
 	return nil
 }
 
+// batchUpdateDupRows updates multi-rows in batch if they are duplicate with rows in table.
 func (e *InsertExec) batchUpdateDupRows(newRows [][]types.Datum, onDuplicate []*expression.Assignment) ([][]types.Datum, error) {
 	var err error
 	e.uniqueKeysInRows, e.dupKeyValues, err = batchGetInsertKeys(e.ctx, e.Table, newRows)
@@ -1148,7 +1149,8 @@ func (e *InsertExec) batchUpdateDupRows(newRows [][]types.Datum, onDuplicate []*
 		return nil, errors.Trace(err)
 	}
 
-	err = e.initDirtyRowValue(newRows)
+	// Batch get the to-be-updated rows in storage.
+	err = e.initDupOldRowValue(newRows)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1177,8 +1179,9 @@ func (e *InsertExec) batchUpdateDupRows(newRows [][]types.Datum, onDuplicate []*
 	return newRows, nil
 }
 
+// fillBackKeys fills the updated key-value pair to the dupKeyValues for further check.
 func (e *InsertExec) fillBackKeys(fillBackKeysInRow []keyWithDupError, handle int64) {
-	e.dupOldRowValue[string(e.Table.RecordKey(handle))] = fillBackKeysInRow[0].newRowValue
+	e.dupOldRowValues[string(e.Table.RecordKey(handle))] = fillBackKeysInRow[0].newRowValue
 	for _, insert := range fillBackKeysInRow {
 		if insert.isRecordKey {
 			e.dupKeyValues[string(e.Table.RecordKey(handle))] = insert.newRowValue
