@@ -1993,6 +1993,11 @@ func (s *testSessionSuite) TestSetTransactionIsolationOneShot(c *C) {
 		c.Assert(req.IsolationLevel, Equals, kv.SI)
 	})
 	tk.Se.Execute(ctx, "select * from t where k = 1")
+
+	// Can't change isolation level when it's inside a transaction.
+	tk.MustExec("begin")
+	_, err := tk.Se.Execute(ctx, "set transaction isolation level read committed")
+	c.Assert(err, NotNil)
 }
 
 func (s *testSessionSuite) TestDBUserNameLength(c *C) {

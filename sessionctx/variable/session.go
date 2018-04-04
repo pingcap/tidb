@@ -457,7 +457,7 @@ func (s *SessionVars) deleteSystemVar(name string) error {
 // SetSystemVar sets the value of a system variable.
 func (s *SessionVars) SetSystemVar(name string, val string) error {
 	switch name {
-	case "tx_isolation_one_shot":
+	case TxnIsolationOneShot:
 		s.TxnIsolationLevelOneShot.State = 1
 		s.TxnIsolationLevelOneShot.Value = val
 	case TimeZone:
@@ -548,6 +548,7 @@ const (
 	MaxAllowedPacket    = "max_allowed_packet"
 	TimeZone            = "time_zone"
 	TxnIsolation        = "tx_isolation"
+	TxnIsolationOneShot = "tx_isolation_one_shot"
 )
 
 // TableDelta stands for the changed count for one table.
