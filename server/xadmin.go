@@ -393,7 +393,7 @@ func (xsql *xSQL) isCollection(goCtx goctx.Context, schema string, collection st
 
 	defer terror.Call(rs[0].Close)
 	chk := rs[0].NewChunk()
-	err = rs[0].NextChunk(goCtx, chk)
+	err = rs[0].Next(goCtx, chk)
 	if err != nil {
 		return false, errors.Trace(err)
 	}

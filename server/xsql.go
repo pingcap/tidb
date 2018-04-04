@@ -239,7 +239,7 @@ func writeColumnsInfo(columns []*ColumnInfo, pkt *xpacketio.XPacketIO) error {
 func WriteResultSet(goCtx goctx.Context, r ResultSet, pkt *xpacketio.XPacketIO, alloc arena.Allocator) error {
 	defer terror.Call(r.Close)
 	chk := r.NewChunk()
-	err := r.NextChunk(goCtx, chk)
+	err := r.Next(goCtx, chk)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -276,7 +276,7 @@ func WriteResultSet(goCtx goctx.Context, r ResultSet, pkt *xpacketio.XPacketIO, 
 			}
 
 		}
-		err = r.NextChunk(goCtx, chk)
+		err = r.Next(goCtx, chk)
 	}
 
 	if err := pkt.WritePacket(Mysqlx.ServerMessages_RESULTSET_FETCH_DONE, []byte{}); err != nil {
