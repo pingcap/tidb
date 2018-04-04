@@ -146,7 +146,7 @@ func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *
 					TotColSize:        totColSize,
 				},
 				Info:  colInfo,
-				Count:     count + nullCount
+				Count: count + nullCount,
 			}
 			break
 		}

@@ -172,11 +172,12 @@ func (h *Handle) DumpStatsDeltaToKV() error {
 		if err = h.dumpTableStatColSizeToKV(id, item); err != nil {
 			return errors.Trace(err)
 		}
-		m := h.globalMap[id]
-		m.ColSize = nil
-		h.globalMap[id] = m
 		if updated {
 			delete(h.globalMap, id)
+		} else {
+			m := h.globalMap[id]
+			m.ColSize = nil
+			h.globalMap[id] = m
 		}
 	}
 	return nil
