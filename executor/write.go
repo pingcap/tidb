@@ -883,7 +883,6 @@ type keyWithDupError struct {
 	isRecordKey bool
 	key         kv.Key
 	dupErr      error
-	handle      int64
 	newRowValue []byte
 }
 
@@ -973,7 +972,6 @@ func getKeysNeedCheck(ctx sessionctx.Context, t table.Table, rows [][]types.Datu
 				true,
 				t.RecordKey(handles[i]),
 				kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key 'PRIMARY'", handles[i]),
-				handles[i],
 				newRowValue,
 			})
 		}
@@ -1000,7 +998,6 @@ func getKeysNeedCheck(ctx sessionctx.Context, t table.Table, rows [][]types.Datu
 				false,
 				key,
 				kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key '%s'", handles[i], v.Meta().Name),
-				handles[i],
 				newRowValue,
 			})
 		}
