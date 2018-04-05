@@ -1140,8 +1140,10 @@ func (s *testDBSuite) TestChangeColumn(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrWrongDBName)
 	sql = "alter table t3 change t.a aa bigint"
 	s.testErrorCode(c, sql, tmysql.ErrWrongTableName)
-	sql = "alter table t3 change aa a bigint not null"
-	s.testErrorCode(c, sql, tmysql.ErrUnknown)
+	s.mustExec(c, "create table t4 (a int default '0', b varchar(10), d int not null default '0')")
+	s.tk.MustExec("insert into t4(a) values (null);")
+	sql = "alter table t4 change a a1 bigint not null"
+	s.testErrorCode(c, sql, tmysql.ErrInvalidUseOfNull)
 	sql = "alter table t3 modify en enum('a', 'z', 'b', 'c') not null default 'a'"
 	s.testErrorCode(c, sql, tmysql.ErrUnknown)
 

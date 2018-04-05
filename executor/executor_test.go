@@ -2658,3 +2658,22 @@ func (s *testSuite) TestCoprocessorStreamingFlag(c *C) {
 		rs[0].Close()
 	}
 }
+
+func (s *testSuite) ModifyingDefinition(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test1")
+	tk.MustExec("create table test1 (c1 int, c2 int, c3 int default 1, index (c1))")
+	result := tk.MustQuery("select is_nullable from information_schema.columns where table_name ='test1' and column_name='a';")
+	result.Check(testkit.Rows("YES"))
+	tk.MustExec("alter table test1 change c1 a bigint not null;")
+	result = tk.MustQuery("select is_nullable from information_schema.columns where table_name ='test1' and column_name='a';")
+	result.Check(testkit.Rows("NO"))
+
+	tk.MustExec("drop table if exists test2")
+	tk.MustExec("create table test2 (c1 int, c2 int, c3 int default 1, index (c1))")
+	tk.MustExec("insert into test2(c1) values (1);")
+	tk.MustExec("alter table test2 change c1 a bigint not null;")
+	result = tk.MustQuery("select is_nullable from information_schema.columns where table_name ='test2' and column_name='a';")
+	result.Check(testkit.Rows("NO"))
+}
