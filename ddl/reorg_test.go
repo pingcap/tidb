@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/testleak"
 	"golang.org/x/net/context"
 )
 
@@ -34,7 +33,6 @@ func (k testCtxKeyType) String() string {
 const testCtxKey testCtxKeyType = 0
 
 func (s *testDDLSuite) TestReorg(c *C) {
-	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_reorg")
 	defer store.Close()
 
@@ -142,7 +140,6 @@ func (s *testDDLSuite) TestReorg(c *C) {
 }
 
 func (s *testDDLSuite) TestReorgOwner(c *C) {
-	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_reorg_owner")
 	defer store.Close()
 
