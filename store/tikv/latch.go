@@ -107,12 +107,6 @@ func NewTLock(startTs uint64, requiredSlots []int) TLock {
 	}
 }
 
-//// Acquired Returns true if all the required latches(keys) have be acquired,
-//// false otherwise.
-//func (lock *TLock) Acquired() bool {
-//	return lock.acquiredCount == len(lock.requiredSlots)
-//}
-
 // Latches which are used for concurrency control
 // Each latch is indexed by a slit ID, hence the term latch and slot are used in interchangeable,
 // but conceptually a latch is a queue, and a slot is an index to the queue
@@ -131,13 +125,14 @@ func NewLatches(size int) Latches {
 	}
 }
 
+// GenTLock generates TLock for the transaction with startTs and keys
 func (latches *Latches) GenTLock(startTs uint64, keys [][]byte) TLock {
 	hashes := make(map[int]bool)
-	for id := 0; id < len(keys); id++ {
-		hashes[latches.hash(keys[id])] = true
+	for _, key := range keys {
+		hashes[latches.hash(key)] = true
 	}
 	slots := make([]int, 0, len(hashes))
-	for key, _ := range hashes {
+	for key := range hashes {
 		slots = append(slots, key)
 	}
 	sort.Ints(slots)
