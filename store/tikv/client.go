@@ -15,6 +15,7 @@
 package tikv
 
 import (
+	"io"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/terror"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -254,7 +256,10 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	var first *coprocessor.Response
 	first, err = copStream.Recv()
 	if err != nil {
-		return nil, errors.Trace(err)
+		if errors.Cause(err) != io.EOF {
+			return nil, errors.Trace(err)
+		}
+		log.Debug("copstream returns nothing for the request.")
 	}
 	copStream.Response = first
 	return resp, nil

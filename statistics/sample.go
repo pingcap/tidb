@@ -158,7 +158,7 @@ func (s SampleBuilder) CollectColumnStats() ([]*SampleCollector, *SortedBuilder,
 	chk := s.RecordSet.NewChunk()
 	it := chunk.NewIterator4Chunk(chk)
 	for {
-		err := s.RecordSet.NextChunk(ctx, chk)
+		err := s.RecordSet.Next(ctx, chk)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}

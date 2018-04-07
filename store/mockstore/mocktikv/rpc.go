@@ -387,6 +387,17 @@ func (h *rpcHandler) handleKvRawDelete(req *kvrpcpb.RawDeleteRequest) *kvrpcpb.R
 	return &kvrpcpb.RawDeleteResponse{}
 }
 
+func (h *rpcHandler) handleKvRawDeleteRange(req *kvrpcpb.RawDeleteRangeRequest) *kvrpcpb.RawDeleteRangeResponse {
+	rawKV, ok := h.mvccStore.(RawKV)
+	if !ok {
+		return &kvrpcpb.RawDeleteRangeResponse{
+			Error: "not implemented",
+		}
+	}
+	rawKV.RawDeleteRange(req.GetStartKey(), req.GetEndKey())
+	return &kvrpcpb.RawDeleteRangeResponse{}
+}
+
 func (h *rpcHandler) handleKvRawScan(req *kvrpcpb.RawScanRequest) *kvrpcpb.RawScanResponse {
 	rawKV, ok := h.mvccStore.(RawKV)
 	if !ok {
@@ -598,6 +609,13 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 			return resp, nil
 		}
 		resp.RawDelete = handler.handleKvRawDelete(r)
+	case tikvrpc.CmdRawDeleteRange:
+		r := req.RawDeleteRange
+		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
+			resp.RawDeleteRange = &kvrpcpb.RawDeleteRangeResponse{RegionError: err}
+			return resp, nil
+		}
+		resp.RawDeleteRange = handler.handleKvRawDeleteRange(r)
 	case tikvrpc.CmdRawScan:
 		r := req.RawScan
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
