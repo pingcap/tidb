@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	log "github.com/sirupsen/logrus"
@@ -46,7 +47,13 @@ var (
 // Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
 // ignoreErr indicate that update statement has the `IGNORE` modifier, in this situation, update statement will not update
 // the keys which cause duplicate conflicts and ignore the error.
-func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datum, modified []bool, t table.Table, onDup, ignoreErr bool) (bool, error) {
+// The return values:
+//     1. changed (bool) : does the update really change the row values. e.g. update set i = 1 where i = 1;
+//     2. handleChanged (bool) : is the handle changed after the update.
+//     3. newHandle (int64) : if handleChanged == true, the newHandle means the new handle after update.
+//     4. err (error) : error in the update.
+func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datum, modified []bool, t table.Table,
+	onDup, ignoreErr bool) (bool, bool, int64, error) {
 	var sc = ctx.GetSessionVars().StmtCtx
 	var changed, handleChanged = false, false
 	// onUpdateSpecified is for "UPDATE SET ts_field = old_value", the
@@ -62,7 +69,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 			// Cast changed fields with respective columns.
 			v, err := table.CastValue(ctx, newData[i], col.ToInfo())
 			if err != nil {
-				return false, errors.Trace(err)
+				return false, handleChanged, newHandle, errors.Trace(err)
 			}
 			newData[i] = v
 		}
@@ -70,20 +77,20 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		// Rebase auto increment id if the field is changed.
 		if mysql.HasAutoIncrementFlag(col.Flag) {
 			if newData[i].IsNull() {
-				return false, errors.Errorf("Column '%v' cannot be null", col.Name.O)
+				return false, handleChanged, newHandle, errors.Errorf("Column '%v' cannot be null", col.Name.O)
 			}
 			val, errTI := newData[i].ToInt64(sc)
 			if errTI != nil {
-				return false, errors.Trace(errTI)
+				return false, handleChanged, newHandle, errors.Trace(errTI)
 			}
 			err := t.RebaseAutoID(ctx, val, true)
 			if err != nil {
-				return false, errors.Trace(err)
+				return false, handleChanged, newHandle, errors.Trace(err)
 			}
 		}
 		cmp, err := newData[i].CompareDatum(sc, &oldData[i])
 		if err != nil {
-			return false, errors.Trace(err)
+			return false, handleChanged, newHandle, errors.Trace(err)
 		}
 		if cmp != 0 {
 			changed = true
@@ -104,7 +111,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 	// Check the not-null constraints.
 	err := table.CheckNotNull(t.Cols(), newData)
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, handleChanged, newHandle, errors.Trace(err)
 	}
 
 	if !changed {
@@ -112,7 +119,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		if ctx.GetSessionVars().ClientCapability&mysql.ClientFoundRows > 0 {
 			sc.AddAffectedRows(1)
 		}
-		return false, nil
+		return false, handleChanged, newHandle, nil
 	}
 
 	// Fill values into on-update-now fields, only if they are really changed.
@@ -120,7 +127,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		if mysql.HasOnUpdateNowFlag(col.Flag) && !modified[i] && !onUpdateSpecified[i] {
 			v, errGT := expression.GetTimeValue(ctx, strings.ToUpper(ast.CurrentTimestamp), col.Tp, col.Decimal)
 			if errGT != nil {
-				return false, errors.Trace(errGT)
+				return false, handleChanged, newHandle, errors.Trace(errGT)
 			}
 			newData[i] = v
 			modified[i] = true
@@ -132,21 +139,21 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		if ignoreErr {
 			// if the new handle exists. `UPDATE IGNORE` will avoid removing record, and do nothing.
 			if err = tables.CheckHandleExists(ctx, t, newHandle); err != nil {
-				return false, errors.Trace(err)
+				return false, handleChanged, newHandle, errors.Trace(err)
 			}
 			skipHandleCheck = true
 		}
 		err = t.RemoveRecord(ctx, h, oldData)
 		if err != nil {
-			return false, errors.Trace(err)
+			return false, handleChanged, newHandle, errors.Trace(err)
 		}
-		_, err = t.AddRecord(ctx, newData, skipHandleCheck)
+		newHandle, err = t.AddRecord(ctx, newData, skipHandleCheck)
 	} else {
 		// Update record to new value and update index.
 		err = t.UpdateRecord(ctx, h, oldData, newData, modified)
 	}
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, handleChanged, newHandle, errors.Trace(err)
 	}
 
 	tid := t.Meta().ID
@@ -160,7 +167,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 	}
 
 	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.Meta().ID, 0, 1)
-	return true, nil
+	return true, handleChanged, newHandle, nil
 }
 
 // DeleteExec represents a delete executor.
@@ -789,27 +796,38 @@ type InsertExec struct {
 	IgnoreErr bool
 
 	finished bool
+	rowCount int
+
+	// For duplicate key update
+	uniqueKeysInRows [][]keyWithDupError
+	dupKeyValues     map[string][]byte
+	dupOldRowValues  map[string][]byte
 }
 
 func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) (Row, error) {
 	// If tidb_batch_insert is ON and not in a transaction, we could use BatchInsert mode.
 	sessVars := e.ctx.GetSessionVars()
 	defer sessVars.CleanBuffers()
-	batchInsert := sessVars.BatchInsert && !sessVars.InTxn()
-	batchSize := sessVars.DMLBatchSize
 
-	txn := e.ctx.Txn()
-	rowCount := 0
-	writeBufs := sessVars.GetWriteStmtBufs()
+	e.rowCount = 0
 	if !sessVars.ImportingData {
-		writeBufs.BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
+		sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(e.ctx.Txn(), kv.TempTxnMemBufCap)
 	}
-	// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
-	// For example, without IGNORE, a row that duplicates an existing UNIQUE index or PRIMARY KEY value in
-	// the table causes a duplicate-key error and the statement is aborted. With IGNORE, the row is discarded and no error occurs.
-	// However, if the `on duplicate update` is also specified, the duplicated row will be updated.
-	// Using BatchGet in insert ignore to mark rows as duplicated before we add records to the table.
-	if e.IgnoreErr && len(e.OnDuplicate) == 0 {
+
+	// If `ON DUPLICATE KEY UPDATE` is specified, and no `IGNORE` keyword,
+	// the to-be-insert rows will be check on duplicate keys and update to the new rows.
+	if len(e.OnDuplicate) > 0 && !e.IgnoreErr {
+		var err error
+		rows, err = e.batchUpdateDupRows(rows, e.OnDuplicate)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	} else if len(e.OnDuplicate) == 0 && e.IgnoreErr {
+		// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
+		// For example, without IGNORE, a row that duplicates an existing UNIQUE index or PRIMARY KEY value in
+		// the table causes a duplicate-key error and the statement is aborted. With IGNORE, the row is discarded and no error occurs.
+		// However, if the `on duplicate update` is also specified, the duplicated row will be updated.
+		// Using BatchGet in insert ignore to mark rows as duplicated before we add records to the table.
 		var err error
 		rows, err = batchMarkDupRows(e.ctx, e.Table, rows)
 		if err != nil {
@@ -822,37 +840,32 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) (Row, error
 		if row == nil {
 			continue
 		}
-		if batchInsert && rowCount >= batchSize {
-			e.ctx.StmtCommit()
-			if err := e.ctx.NewTxn(); err != nil {
-				// We should return a special error for batch insert.
-				return nil, ErrBatchInsertFail.Gen("BatchInsert failed with error: %v", err)
-			}
-			txn = e.ctx.Txn()
-			rowCount = 0
-			if !sessVars.ImportingData {
-				writeBufs.BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
-			}
+		if err := e.checkBatchLimit(); err != nil {
+			return nil, errors.Trace(err)
 		}
 		if len(e.OnDuplicate) == 0 && !e.IgnoreErr {
-			txn.SetOption(kv.PresumeKeyNotExists, nil)
+			e.ctx.Txn().SetOption(kv.PresumeKeyNotExists, nil)
 		}
 		h, err := e.Table.AddRecord(e.ctx, row, false)
-		txn.DelOption(kv.PresumeKeyNotExists)
+		e.ctx.Txn().DelOption(kv.PresumeKeyNotExists)
 		if err == nil {
 			if !sessVars.ImportingData {
 				e.ctx.StmtAddDirtyTableOP(DirtyTableAddRow, e.Table.Meta().ID, h, row)
 			}
-			rowCount++
+			e.rowCount++
 			continue
 		}
-
 		if kv.ErrKeyExists.Equal(err) {
-			if len(e.OnDuplicate) > 0 {
-				if err = e.onDuplicateUpdate(row, h, e.OnDuplicate); err != nil {
+			// TODO: Use batch get to speed up `insert ignore on duplicate key update`.
+			if len(e.OnDuplicate) > 0 && e.IgnoreErr {
+				data, err1 := e.Table.RowWithCols(e.ctx, h, e.Table.WritableCols())
+				if err1 != nil {
+					return nil, errors.Trace(err1)
+				}
+				if _, _, _, err = e.doDupRowUpdate(h, data, row, e.OnDuplicate); err != nil {
 					return nil, errors.Trace(err)
 				}
-				rowCount++
+				e.rowCount++
 				continue
 			}
 		}
@@ -867,38 +880,46 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) (Row, error
 }
 
 type keyWithDupError struct {
-	key    kv.Key
-	dupErr error
+	isRecordKey bool
+	key         kv.Key
+	dupErr      error
+	newRowValue []byte
 }
 
-func getRecordIDs(ctx sessionctx.Context, t table.Table, rows [][]types.Datum) ([]int64, error) {
-	recordIDs := make([]int64, 0, len(rows))
-	if t.Meta().PKIsHandle {
-		var handleCol *table.Column
-		for _, col := range t.Cols() {
-			if col.IsPKHandleColumn(t.Meta()) {
-				handleCol = col
-				break
-			}
-		}
-		for _, row := range rows {
-			recordIDs = append(recordIDs, row[handleCol.Offset].GetInt64())
-		}
-	} else {
-		for range rows {
-			recordID, err := t.AllocAutoID(ctx)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			recordIDs = append(recordIDs, recordID)
+// batchGetOldValues gets the values of storage in batch.
+func batchGetOldValues(ctx sessionctx.Context, t table.Table, handles []int64) (map[string][]byte, error) {
+	batchKeys := make([]kv.Key, 0, len(handles))
+	for _, handle := range handles {
+		batchKeys = append(batchKeys, t.RecordKey(handle))
+	}
+	values, err := kv.BatchGetValues(ctx.Txn(), batchKeys)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return values, nil
+}
+
+// encodeNewRow encodes a new row to value.
+func encodeNewRow(ctx sessionctx.Context, t table.Table, row []types.Datum) ([]byte, error) {
+	colIDs := make([]int64, 0, len(row))
+	skimmedRow := make([]types.Datum, 0, len(row))
+	for _, col := range t.WritableCols() {
+		if !tables.CanSkip(t.Meta(), col, row[col.Offset]) {
+			colIDs = append(colIDs, col.ID)
+			skimmedRow = append(skimmedRow, row[col.Offset])
 		}
 	}
-	return recordIDs, nil
+	newRowValue, err := tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, skimmedRow, colIDs, nil, nil)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return newRowValue, nil
 }
 
 // getKeysNeedCheck gets keys converted from to-be-insert rows to record keys and unique index keys,
 // which need to be checked whether they are duplicate keys.
-func getKeysNeedCheck(ctx sessionctx.Context, t table.Table, rows [][]types.Datum) ([][]keyWithDupError, error) {
+func getKeysNeedCheck(ctx sessionctx.Context, t table.Table, rows [][]types.Datum) ([][]keyWithDupError,
+	error) {
 	nUnique := 0
 	for _, v := range t.WritableIndices() {
 		if v.Meta().Unique {
@@ -907,17 +928,32 @@ func getKeysNeedCheck(ctx sessionctx.Context, t table.Table, rows [][]types.Datu
 	}
 	rowWithKeys := make([][]keyWithDupError, 0, len(rows))
 
-	// get recordIDs
-	recordIDs, err := getRecordIDs(ctx, t, rows)
-	if err != nil {
-		return nil, errors.Trace(err)
+	var handleCol *table.Column
+	// Get handle column if PK is handle.
+	if t.Meta().PKIsHandle {
+		for _, col := range t.Cols() {
+			if col.IsPKHandleColumn(t.Meta()) {
+				handleCol = col
+				break
+			}
+		}
 	}
 
-	for i, row := range rows {
+	for _, row := range rows {
 		keysWithErr := make([]keyWithDupError, 0, nUnique+1)
-		// append record keys and errors
+		newRowValue, err := encodeNewRow(ctx, t, row)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		// Append record keys and errors.
 		if t.Meta().PKIsHandle {
-			keysWithErr = append(keysWithErr, keyWithDupError{t.RecordKey(recordIDs[i]), kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key 'PRIMARY'", recordIDs[i])})
+			handle := row[handleCol.Offset].GetInt64()
+			keysWithErr = append(keysWithErr, keyWithDupError{
+				true,
+				t.RecordKey(handle),
+				kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key 'PRIMARY'", handle),
+				newRowValue,
+			})
 		}
 
 		// append unique keys and errors
@@ -925,51 +961,227 @@ func getKeysNeedCheck(ctx sessionctx.Context, t table.Table, rows [][]types.Datu
 			if !v.Meta().Unique {
 				continue
 			}
-			var colVals []types.Datum
-			colVals, err = v.FetchValues(row, nil)
-			if err != nil {
-				return nil, errors.Trace(err)
+			colVals, err1 := v.FetchValues(row, nil)
+			if err1 != nil {
+				return nil, errors.Trace(err1)
 			}
-			var key []byte
-			var distinct bool
-			key, distinct, err = v.GenIndexKey(ctx.GetSessionVars().StmtCtx,
-				colVals, recordIDs[i], nil)
-			if err != nil {
-				return nil, errors.Trace(err)
+			// Pass handle = 0 to GenIndexKey,
+			// due to we only care about distinct key.
+			key, distinct, err1 := v.GenIndexKey(ctx.GetSessionVars().StmtCtx,
+				colVals, 0, nil)
+			if err1 != nil {
+				return nil, errors.Trace(err1)
 			}
+			// Skip the non-distinct keys.
 			if !distinct {
 				continue
 			}
-			keysWithErr = append(keysWithErr, keyWithDupError{key, kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key '%s'", recordIDs[i], v.Meta().Name)})
+			colValStr, err1 := types.DatumsToString(colVals)
+			if err1 != nil {
+				return nil, errors.Trace(err1)
+			}
+			keysWithErr = append(keysWithErr, keyWithDupError{
+				false,
+				key,
+				kv.ErrKeyExists.FastGen("Duplicate entry '%s' for key '%s'",
+					colValStr, v.Meta().Name),
+				newRowValue,
+			})
 		}
 		rowWithKeys = append(rowWithKeys, keysWithErr)
 	}
 	return rowWithKeys, nil
 }
 
-// batchMarkDupRows marks rows with duplicate errors as nil.
-// All duplicate rows were marked and appended as duplicate warnings
-// to the statement context in batch.
-func batchMarkDupRows(ctx sessionctx.Context, t table.Table, rows [][]types.Datum) ([][]types.Datum, error) {
-	// get keys need to be checked
-	rowWithKeys, err := getKeysNeedCheck(ctx, t, rows)
+// batchGetInsertKeys uses batch-get to fetch all key-value pairs to be checked for ignore or duplicate key update.
+func batchGetInsertKeys(ctx sessionctx.Context, t table.Table, newRows [][]types.Datum) ([][]keyWithDupError, map[string][]byte, error) {
+	// Get keys need to be checked.
+	keysInRows, err := getKeysNeedCheck(ctx, t, newRows)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
 
-	// batch get values
+	// Batch get values.
 	nKeys := 0
-	for _, v := range rowWithKeys {
+	for _, v := range keysInRows {
 		nKeys += len(v)
 	}
 	batchKeys := make([]kv.Key, 0, nKeys)
-	for _, v := range rowWithKeys {
+	for _, v := range keysInRows {
 		for _, k := range v {
 			batchKeys = append(batchKeys, k.key)
 		}
 	}
 	values, err := kv.BatchGetValues(ctx.Txn(), batchKeys)
 	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	return keysInRows, values, nil
+}
+
+// checkBatchLimit check the batchSize limitation.
+func (e *InsertExec) checkBatchLimit() error {
+	sessVars := e.ctx.GetSessionVars()
+	batchInsert := sessVars.BatchInsert && !sessVars.InTxn()
+	batchSize := sessVars.DMLBatchSize
+	if batchInsert && e.rowCount >= batchSize {
+		e.ctx.StmtCommit()
+		if err := e.ctx.NewTxn(); err != nil {
+			// We should return a special error for batch insert.
+			return ErrBatchInsertFail.Gen("BatchInsert failed with error: %v", err)
+		}
+		e.rowCount = 0
+		if !sessVars.ImportingData {
+			sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(e.ctx.Txn(), kv.TempTxnMemBufCap)
+		}
+	}
+	return nil
+}
+
+// initDupOldRowValue initializes dupOldRowValues which contain the to-be-updated rows from storage.
+func (e *InsertExec) initDupOldRowValue(newRows [][]types.Datum) (err error) {
+	e.dupOldRowValues = make(map[string][]byte, len(newRows))
+	handles := make([]int64, 0, len(newRows))
+	for _, keysInRow := range e.uniqueKeysInRows {
+		for _, k := range keysInRow {
+			if val, found := e.dupKeyValues[string(k.key)]; found {
+				var handle int64
+				handle, err = decodeOldHandle(k, val)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				handles = append(handles, handle)
+				break
+			}
+		}
+	}
+	e.dupOldRowValues, err = batchGetOldValues(e.ctx, e.Table, handles)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+// decodeOldHandle decode old handle by key-value pair.
+// The key-value pair should only be a table record or a distinct index record.
+// If the key is a record key, decode handle from the key, else decode handle from the value.
+func decodeOldHandle(k keyWithDupError, value []byte) (oldHandle int64, err error) {
+	if k.isRecordKey {
+		oldHandle, err = tablecodec.DecodeRowKey(k.key)
+	} else {
+		oldHandle, err = tables.DecodeHandle(value)
+	}
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	return oldHandle, nil
+}
+
+// updateDupRow updates a duplicate row to a new row.
+func (e *InsertExec) updateDupRow(keys []keyWithDupError, k keyWithDupError, val []byte, newRow []types.Datum, onDuplicate []*expression.Assignment) (err error) {
+	oldHandle, err := decodeOldHandle(k, val)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// Get the table record row from storage for update.
+	oldValue, ok := e.dupOldRowValues[string(e.Table.RecordKey(oldHandle))]
+	if !ok {
+		return errors.NotFoundf("can not be duplicated row, due to old row not found. handle %d", oldHandle)
+	}
+	oldRow, err := tables.DecodeRawRowData(e.ctx, e.Table.Meta(), oldHandle, e.Table.WritableCols(), oldValue)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// Do update row.
+	updatedRow, handleChanged, newHandle, err := e.doDupRowUpdate(oldHandle, oldRow, newRow, onDuplicate)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return e.updateDupKeyValues(keys, oldHandle, newHandle, handleChanged, updatedRow)
+}
+
+// updateDupKeyValues updates the dupKeyValues for further duplicate key check.
+func (e *InsertExec) updateDupKeyValues(keys []keyWithDupError, oldHandle int64,
+	newHandle int64, handleChanged bool, updatedRow []types.Datum) error {
+	// There is only one row per update.
+	fillBackKeysInRows, err := getKeysNeedCheck(e.ctx, e.Table, [][]types.Datum{updatedRow})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// Delete key-values belong to the old row.
+	for _, del := range keys {
+		delete(e.dupKeyValues, string(del.key))
+	}
+	// Fill back new key-values of the updated row.
+	if handleChanged {
+		delete(e.dupOldRowValues, string(e.Table.RecordKey(oldHandle)))
+		e.fillBackKeys(fillBackKeysInRows[0], newHandle)
+	} else {
+		e.fillBackKeys(fillBackKeysInRows[0], oldHandle)
+	}
+	return nil
+}
+
+// batchUpdateDupRows updates multi-rows in batch if they are duplicate with rows in table.
+func (e *InsertExec) batchUpdateDupRows(newRows [][]types.Datum, onDuplicate []*expression.Assignment) ([][]types.Datum, error) {
+	var err error
+	e.uniqueKeysInRows, e.dupKeyValues, err = batchGetInsertKeys(e.ctx, e.Table, newRows)
+	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
+	// Batch get the to-be-updated rows in storage.
+	err = e.initDupOldRowValue(newRows)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	for i, keysInRow := range e.uniqueKeysInRows {
+		for _, k := range keysInRow {
+			if val, found := e.dupKeyValues[string(k.key)]; found {
+				err := e.updateDupRow(keysInRow, k, val, newRows[i], e.OnDuplicate)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				// Clean up row for latest add record operation.
+				newRows[i] = nil
+				break
+			}
+		}
+		// If row was checked with no duplicate keys,
+		// it should be add to values map for the further row check.
+		// There may be duplicate keys inside the insert statement.
+		if newRows[i] == nil {
+			for _, k := range keysInRow {
+				e.dupKeyValues[string(k.key)] = k.newRowValue
+			}
+		}
+	}
+	return newRows, nil
+}
+
+// fillBackKeys fills the updated key-value pair to the dupKeyValues for further check.
+func (e *InsertExec) fillBackKeys(fillBackKeysInRow []keyWithDupError, handle int64) {
+	e.dupOldRowValues[string(e.Table.RecordKey(handle))] = fillBackKeysInRow[0].newRowValue
+	for _, insert := range fillBackKeysInRow {
+		if insert.isRecordKey {
+			e.dupKeyValues[string(e.Table.RecordKey(handle))] = insert.newRowValue
+		} else {
+			e.dupKeyValues[string(insert.key)] = tables.EncodeHandle(handle)
+		}
+	}
+}
+
+// batchMarkDupRows marks rows with duplicate errors as nil.
+// All duplicate rows were marked and appended as duplicate warnings
+// to the statement context in batch.
+func batchMarkDupRows(ctx sessionctx.Context, t table.Table, rows [][]types.Datum) ([][]types.Datum, error) {
+	rowWithKeys, values, err := batchGetInsertKeys(ctx, t, rows)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	// append warnings and get no duplicated error rows
 	for i, v := range rowWithKeys {
 		for _, k := range v {
@@ -989,7 +1201,6 @@ func batchMarkDupRows(ctx sessionctx.Context, t table.Table, rows [][]types.Datu
 			}
 		}
 	}
-
 	// this statement was already been checked
 	ctx.GetSessionVars().StmtCtx.BatchCheck = true
 	return rows, nil
@@ -1468,33 +1679,32 @@ func (e *InsertValues) adjustAutoIncrementDatum(row []types.Datum, i int, c *tab
 	return nil
 }
 
-// onDuplicateUpdate updates the duplicate row.
+// doDupRowUpdate updates the duplicate row.
 // TODO: Report rows affected and last insert id.
-func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols []*expression.Assignment) error {
-	data, err := e.Table.RowWithCols(e.ctx, h, e.Table.WritableCols())
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
-	e.ctx.GetSessionVars().CurrInsertValues = types.DatumRow(row)
-
-	// evaluate assignment
+func (e *InsertExec) doDupRowUpdate(handle int64, oldRow []types.Datum, newRow []types.Datum,
+	cols []*expression.Assignment) ([]types.Datum, bool, int64, error) {
 	assignFlag := make([]bool, len(e.Table.WritableCols()))
-	newData := make(types.DatumRow, len(data))
-	copy(newData, data)
+	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
+	e.ctx.GetSessionVars().CurrInsertValues = types.DatumRow(newRow)
+	newData := make(types.DatumRow, len(oldRow))
+	copy(newData, oldRow)
 	for _, col := range cols {
 		val, err1 := col.Expr.Eval(newData)
 		if err1 != nil {
-			return errors.Trace(err1)
+			return nil, false, 0, errors.Trace(err1)
 		}
 		newData[col.Col.Index] = val
 		assignFlag[col.Col.Index] = true
 	}
-	if _, err = updateRecord(e.ctx, h, data, newData, assignFlag, e.Table, true, false); err != nil {
-		return errors.Trace(err)
+	_, handleChanged, newHandle, err := updateRecord(e.ctx, handle, oldRow, newData, assignFlag, e.Table, true, false)
+	if err != nil {
+		return nil, false, 0, errors.Trace(err)
 	}
-	return nil
+	e.rowCount++
+	if err := e.checkBatchLimit(); err != nil {
+		return nil, false, 0, errors.Trace(err)
+	}
+	return newData, handleChanged, newHandle, nil
 }
 
 // ReplaceExec represents a replace executor.
@@ -1654,7 +1864,7 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema) (Row, 
 				continue
 			}
 			// Update row
-			changed, err1 := updateRecord(e.ctx, handle, oldData, newTableData, flags, tbl, false, e.IgnoreErr)
+			changed, _, _, err1 := updateRecord(e.ctx, handle, oldData, newTableData, flags, tbl, false, e.IgnoreErr)
 			if err1 == nil {
 				if changed {
 					e.updatedRowKeys[id][handle] = struct{}{}
