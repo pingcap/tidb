@@ -389,7 +389,7 @@ func testCheckJobCancelled(c *C, d *ddl, job *model.Job, state *model.SchemaStat
 		t := meta.NewMeta(txn)
 		historyJob, err := t.GetHistoryDDLJob(job.ID)
 		c.Assert(err, IsNil)
-		c.Assert(historyJob.IsCancelled(), IsTrue, Commentf("histroy job %s", historyJob))
+		c.Assert(historyJob.IsCancelled() || historyJob.IsRollbackDone(), IsTrue, Commentf("histroy job %s", historyJob))
 		if state != nil {
 			c.Assert(historyJob.SchemaState, Equals, *state)
 		}
