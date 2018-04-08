@@ -480,7 +480,6 @@ func (cc *clientConn) Run() {
 			}
 			log.Warnf("[%d] dispatch error:\n%s\n%q\n%s",
 				cc.connectionID, cc, queryStrForLog(string(data[1:])), errStrForLog(err))
-			log.Warnf("YUSP %v", errors.ErrorStack(err))
 			err1 := cc.writeError(err)
 			terror.Log(errors.Trace(err1))
 		}
