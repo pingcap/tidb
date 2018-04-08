@@ -525,6 +525,16 @@ commit;`
 	testSQL = `select * from test order by i;`
 	r = tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("1 3"))
+
+	testSQL = `create table tmp (id int auto_increment, code int, primary key(id, code));
+	create table m (id int primary key auto_increment, code int unique);
+	insert tmp (code) values (1);
+	insert tmp (code) values (1);
+	insert m (code) select code from tmp on duplicate key update code = values(code);`
+	tk.MustExec(testSQL)
+	testSQL = `select * from m;`
+	r = tk.MustQuery(testSQL)
+	r.Check(testkit.Rows("1 1"))
 }
 
 func (s *testSuite) TestReplace(c *C) {

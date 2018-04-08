@@ -1177,10 +1177,7 @@ func (e *InsertExec) batchUpdateDupRows(newRows [][]types.Datum, onDuplicate []*
 			if err != nil {
 				return errors.Trace(err)
 			}
-			e.dupOldRowValues[string(e.Table.RecordKey(newHandle))] = keysInRow[0].newRowValue
-			for _, k := range keysInRow {
-				e.dupKeyValues[string(k.key)] = k.newRowValue
-			}
+			e.fillBackKeys(keysInRow, newHandle)
 		}
 	}
 	return nil
