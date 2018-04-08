@@ -804,6 +804,23 @@ type InsertExec struct {
 	dupOldRowValues  map[string][]byte
 }
 
+func (e *InsertExec) insertOneRow(row []types.Datum) (int64, error) {
+	if err := e.checkBatchLimit(); err != nil {
+		return 0, errors.Trace(err)
+	}
+	e.ctx.Txn().SetOption(kv.PresumeKeyNotExists, nil)
+	h, err := e.Table.AddRecord(e.ctx, row, false)
+	e.ctx.Txn().DelOption(kv.PresumeKeyNotExists)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if !e.ctx.GetSessionVars().ImportingData {
+		e.ctx.StmtAddDirtyTableOP(DirtyTableAddRow, e.Table.Meta().ID, h, row)
+	}
+	e.rowCount++
+	return h, nil
+}
+
 func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) (types.DatumRow, error) {
 	// If tidb_batch_insert is ON and not in a transaction, we could use BatchInsert mode.
 	sessVars := e.ctx.GetSessionVars()
@@ -817,59 +834,60 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) (types.Datu
 	// If `ON DUPLICATE KEY UPDATE` is specified, and no `IGNORE` keyword,
 	// the to-be-insert rows will be check on duplicate keys and update to the new rows.
 	if len(e.OnDuplicate) > 0 && !e.IgnoreErr {
-		var err error
-		rows, err = e.batchUpdateDupRows(rows, e.OnDuplicate)
+		err := e.batchUpdateDupRows(rows, e.OnDuplicate)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-	} else if len(e.OnDuplicate) == 0 && e.IgnoreErr {
-		// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
-		// For example, without IGNORE, a row that duplicates an existing UNIQUE index or PRIMARY KEY value in
-		// the table causes a duplicate-key error and the statement is aborted. With IGNORE, the row is discarded and no error occurs.
-		// However, if the `on duplicate update` is also specified, the duplicated row will be updated.
-		// Using BatchGet in insert ignore to mark rows as duplicated before we add records to the table.
-		var err error
-		rows, err = batchMarkDupRows(e.ctx, e.Table, rows)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	for _, row := range rows {
-		// duplicate row will be marked as nil in batchMarkDupRows if
-		// IgnoreErr is true. For IgnoreErr is false, it is a protection.
-		if row == nil {
-			continue
-		}
-		if err := e.checkBatchLimit(); err != nil {
-			return nil, errors.Trace(err)
-		}
-		if len(e.OnDuplicate) == 0 && !e.IgnoreErr {
-			e.ctx.Txn().SetOption(kv.PresumeKeyNotExists, nil)
-		}
-		h, err := e.Table.AddRecord(e.ctx, row, false)
-		e.ctx.Txn().DelOption(kv.PresumeKeyNotExists)
-		if err == nil {
-			if !sessVars.ImportingData {
-				e.ctx.StmtAddDirtyTableOP(DirtyTableAddRow, e.Table.Meta().ID, h, row)
+	} else {
+		if len(e.OnDuplicate) == 0 && e.IgnoreErr {
+			// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
+			// For example, without IGNORE, a row that duplicates an existing UNIQUE index or PRIMARY KEY value in
+			// the table causes a duplicate-key error and the statement is aborted. With IGNORE, the row is discarded and no error occurs.
+			// However, if the `on duplicate update` is also specified, the duplicated row will be updated.
+			// Using BatchGet in insert ignore to mark rows as duplicated before we add records to the table.
+			var err error
+			rows, err = batchMarkDupRows(e.ctx, e.Table, rows)
+			if err != nil {
+				return nil, errors.Trace(err)
 			}
-			e.rowCount++
-			continue
 		}
-		if kv.ErrKeyExists.Equal(err) {
-			// TODO: Use batch get to speed up `insert ignore on duplicate key update`.
-			if len(e.OnDuplicate) > 0 && e.IgnoreErr {
-				data, err1 := e.Table.RowWithCols(e.ctx, h, e.Table.WritableCols())
-				if err1 != nil {
-					return nil, errors.Trace(err1)
-				}
-				if _, _, _, err = e.doDupRowUpdate(h, data, row, e.OnDuplicate); err != nil {
-					return nil, errors.Trace(err)
+		for _, row := range rows {
+			// duplicate row will be marked as nil in batchMarkDupRows if
+			// IgnoreErr is true. For IgnoreErr is false, it is a protection.
+			if row == nil {
+				continue
+			}
+			if err := e.checkBatchLimit(); err != nil {
+				return nil, errors.Trace(err)
+			}
+			if len(e.OnDuplicate) == 0 && !e.IgnoreErr {
+				e.ctx.Txn().SetOption(kv.PresumeKeyNotExists, nil)
+			}
+			h, err := e.Table.AddRecord(e.ctx, row, false)
+			e.ctx.Txn().DelOption(kv.PresumeKeyNotExists)
+			if err == nil {
+				if !sessVars.ImportingData {
+					e.ctx.StmtAddDirtyTableOP(DirtyTableAddRow, e.Table.Meta().ID, h, row)
 				}
 				e.rowCount++
 				continue
 			}
+			if kv.ErrKeyExists.Equal(err) {
+				// TODO: Use batch get to speed up `insert ignore on duplicate key update`.
+				if len(e.OnDuplicate) > 0 && e.IgnoreErr {
+					data, err1 := e.Table.RowWithCols(e.ctx, h, e.Table.WritableCols())
+					if err1 != nil {
+						return nil, errors.Trace(err1)
+					}
+					if _, _, _, err = e.doDupRowUpdate(h, data, row, e.OnDuplicate); err != nil {
+						return nil, errors.Trace(err)
+					}
+					e.rowCount++
+					continue
+				}
+			}
+			return nil, errors.Trace(err)
 		}
-		return nil, errors.Trace(err)
 	}
 
 	if e.lastInsertID != 0 {
@@ -1125,17 +1143,17 @@ func (e *InsertExec) updateDupKeyValues(keys []keyWithDupError, oldHandle int64,
 }
 
 // batchUpdateDupRows updates multi-rows in batch if they are duplicate with rows in table.
-func (e *InsertExec) batchUpdateDupRows(newRows [][]types.Datum, onDuplicate []*expression.Assignment) ([][]types.Datum, error) {
+func (e *InsertExec) batchUpdateDupRows(newRows [][]types.Datum, onDuplicate []*expression.Assignment) error {
 	var err error
 	e.uniqueKeysInRows, e.dupKeyValues, err = batchGetInsertKeys(e.ctx, e.Table, newRows)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 
 	// Batch get the to-be-updated rows in storage.
 	err = e.initDupOldRowValue(newRows)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 
 	for i, keysInRow := range e.uniqueKeysInRows {
@@ -1143,7 +1161,7 @@ func (e *InsertExec) batchUpdateDupRows(newRows [][]types.Datum, onDuplicate []*
 			if val, found := e.dupKeyValues[string(k.key)]; found {
 				err := e.updateDupRow(keysInRow, k, val, newRows[i], e.OnDuplicate)
 				if err != nil {
-					return nil, errors.Trace(err)
+					return errors.Trace(err)
 				}
 				// Clean up row for latest add record operation.
 				newRows[i] = nil
@@ -1151,15 +1169,18 @@ func (e *InsertExec) batchUpdateDupRows(newRows [][]types.Datum, onDuplicate []*
 			}
 		}
 		// If row was checked with no duplicate keys,
-		// it should be add to values map for the further row check.
-		// There may be duplicate keys inside the insert statement.
-		if newRows[i] == nil {
-			for _, k := range keysInRow {
-				e.dupKeyValues[string(k.key)] = k.newRowValue
+		// we should do insert the row,
+		// and key-values should be filled back to dupOldRowValues for the further row check,
+		// due to there may be duplicate keys inside the insert statement.
+		if newRows[i] != nil {
+			newHandle, err := e.insertOneRow(newRows[i])
+			if err != nil {
+				return errors.Trace(err)
 			}
+			e.fillBackKeys(keysInRow, newHandle)
 		}
 	}
-	return newRows, nil
+	return nil
 }
 
 // fillBackKeys fills the updated key-value pair to the dupKeyValues for further check.
