@@ -246,7 +246,7 @@ func (job *Job) IsSynced() bool {
 
 // IsDone returns whether job is done.
 func (job *Job) IsDone() bool {
-	return job.State == JobStateDone || job.State == JobStateRollbackDone
+	return job.State == JobStateDone
 }
 
 // IsRunning returns whether job is still running or not.

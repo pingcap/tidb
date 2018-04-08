@@ -234,7 +234,7 @@ func (d *ddl) handleDDLJobQueue() error {
 				return nil
 			}
 
-			if job.IsDone() {
+			if job.IsDone() || job.IsRollbackDone() {
 				binloginfo.SetDDLBinlog(d.workerVars.BinlogClient, txn, job.ID, job.Query)
 				if !job.IsRollbackDone() {
 					job.State = model.JobStateSynced
@@ -271,7 +271,7 @@ func (d *ddl) handleDDLJobQueue() error {
 		// Here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
 		// If the job is done or still running or rolling back, we will wait 2 * lease time to guarantee other servers to update
 		// the newest schema.
-		if job.IsRunning() || job.IsRollingback() || job.IsDone() {
+		if job.IsRunning() || job.IsRollingback() || job.IsDone() || job.IsRollbackDone() {
 			d.waitSchemaChanged(nil, waitTime, schemaVer)
 		}
 		if job.IsSynced() {
@@ -434,7 +434,7 @@ func (d *ddl) waitSchemaChanged(ctx context.Context, waitTime time.Duration, lat
 // So here we get the latest schema version to make sure all servers' schema version update to the latest schema version
 // in a cluster, or to wait for 2 * lease time.
 func (d *ddl) waitSchemaSynced(job *model.Job, waitTime time.Duration) {
-	if !job.IsRunning() && !job.IsRollingback() && !job.IsDone() {
+	if !job.IsRunning() && !job.IsRollingback() && !job.IsDone() && !job.IsRollbackDone() {
 		return
 	}
 	// TODO: Make ctx exits when the d is close.
