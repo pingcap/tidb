@@ -2897,6 +2897,20 @@ func (c *unixTimestampFunctionClass) getFunction(ctx sessionctx.Context, args []
 		if argEvaltp == types.ETString {
 			// Treat types.ETString as unspecified decimal.
 			retDecimal = types.UnspecifiedLength
+			if cnst, ok := args[0].(*Constant); ok {
+				tmpStr, isNull, err := cnst.EvalString(ctx, nil)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				if isNull {
+					retDecimal = 0
+				} else {
+					dotIdx := strings.LastIndex(tmpStr, ".")
+					if dotIdx >= 0 {
+						retDecimal = len(tmpStr) - dotIdx - 1
+					}
+				}
+			}
 		} else {
 			retDecimal = argType.Decimal
 		}

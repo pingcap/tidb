@@ -1476,8 +1476,8 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("0"))
 	result = tk.MustQuery("SELECT UNIX_TIMESTAMP('1970-01-01 08:00:00');")
 	result.Check(testkit.Rows("0.000000"))
-	result = tk.MustQuery("SELECT UNIX_TIMESTAMP('2015-11-13 18:20:19.012');")
-	result.Check(testkit.Rows("1447410019.012000"))
+	result = tk.MustQuery("SELECT UNIX_TIMESTAMP('2015-11-13 18:20:19.012'), UNIX_TIMESTAMP('2015-11-13 18:20:19.0123');")
+	result.Check(testkit.Rows("1447410019.012 1447410019.0123"))
 	result = tk.MustQuery("SELECT UNIX_TIMESTAMP('2038-01-19 11:14:07.999999');")
 	result.Check(testkit.Rows("2147483647.999999"))
 
