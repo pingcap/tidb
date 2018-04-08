@@ -42,8 +42,8 @@ type SetExecutor struct {
 	done bool
 }
 
-// NextChunk implements the Executor NextChunk interface.
-func (e *SetExecutor) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+// Next implements the Executor Next interface.
+func (e *SetExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.done {
 		return nil
@@ -150,6 +150,9 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 			return errors.Trace(err)
 		}
 		oldSnapshotTS := sessionVars.SnapshotTS
+		if name == variable.TxnIsolationOneShot && sessionVars.InTxn() {
+			return errors.Trace(ErrCantChangeTxCharacteristics)
+		}
 		err = variable.SetSessionSystemVar(sessionVars, name, value)
 		if err != nil {
 			return errors.Trace(err)

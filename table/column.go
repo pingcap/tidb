@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/hack"
 	log "github.com/sirupsen/logrus"
 )
@@ -370,7 +371,13 @@ func GetZeroValue(col *model.ColumnInfo) types.Datum {
 		d.SetFloat64(0)
 	case mysql.TypeNewDecimal:
 		d.SetMysqlDecimal(new(types.MyDecimal))
-	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar:
+	case mysql.TypeString:
+		if col.Flen > 0 && col.Charset == charset.CharsetBin {
+			d.SetBytes(make([]byte, col.Flen))
+		} else {
+			d.SetString("")
+		}
+	case mysql.TypeVarString, mysql.TypeVarchar:
 		d.SetString("")
 	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		d.SetBytes([]byte{})

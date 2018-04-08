@@ -91,7 +91,6 @@ func checkHistoryJob(c *C, job *model.Job) {
 }
 
 func checkHistoryJobArgs(c *C, ctx sessionctx.Context, id int64, args *historyJobArgs) {
-	c.Assert(ctx.NewTxn(), IsNil)
 	t := meta.NewMeta(ctx.Txn())
 	historyJob, err := t.GetHistoryDDLJob(id)
 	c.Assert(err, IsNil)

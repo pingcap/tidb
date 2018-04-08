@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/codec"
 )
 
 func (e *ShowExec) fetchShowStatsMeta() error {
@@ -31,7 +30,7 @@ func (e *ShowExec) fetchShowStatsMeta() error {
 	dbs := do.InfoSchema().AllSchemas()
 	for _, db := range dbs {
 		for _, tbl := range db.Tables {
-			statsTbl := h.GetTableStats(tbl.ID)
+			statsTbl := h.GetTableStats(tbl)
 			if !statsTbl.Pseudo {
 				e.appendRow([]interface{}{
 					db.Name.O,
@@ -52,7 +51,7 @@ func (e *ShowExec) fetchShowStatsHistogram() error {
 	dbs := do.InfoSchema().AllSchemas()
 	for _, db := range dbs {
 		for _, tbl := range db.Tables {
-			statsTbl := h.GetTableStats(tbl.ID)
+			statsTbl := h.GetTableStats(tbl)
 			if !statsTbl.Pseudo {
 				for _, col := range statsTbl.Columns {
 					e.histogramToRow(db.Name.O, tbl.Name.O, col.Info.Name.O, 0, col.Histogram, col.AvgColSize())
@@ -90,7 +89,7 @@ func (e *ShowExec) fetchShowStatsBuckets() error {
 	dbs := do.InfoSchema().AllSchemas()
 	for _, db := range dbs {
 		for _, tbl := range db.Tables {
-			statsTbl := h.GetTableStats(tbl.ID)
+			statsTbl := h.GetTableStats(tbl)
 			if !statsTbl.Pseudo {
 				for _, col := range statsTbl.Columns {
 					err := e.bucketsToRows(db.Name.O, tbl.Name.O, col.Info.Name.O, 0, col.Histogram)
@@ -118,11 +117,11 @@ func (e *ShowExec) bucketsToRows(dbName, tblName, colName string, numOfCols int,
 		isIndex = 1
 	}
 	for i := 0; i < hist.Len(); i++ {
-		lowerBoundStr, err := e.valueToString(hist.GetLower(i), numOfCols)
+		lowerBoundStr, err := statistics.ValueToString(hist.GetLower(i), numOfCols)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		upperBoundStr, err := e.valueToString(hist.GetUpper(i), numOfCols)
+		upperBoundStr, err := statistics.ValueToString(hist.GetUpper(i), numOfCols)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -141,30 +140,13 @@ func (e *ShowExec) bucketsToRows(dbName, tblName, colName string, numOfCols int,
 	return nil
 }
 
-// valueToString converts a possible encoded value to a formatted string. If the value is encoded, then
-// size equals to number of origin values, else size is 0.
-func (e *ShowExec) valueToString(value *types.Datum, size int) (string, error) {
-	if size == 0 {
-		return value.ToString()
-	}
-	decodedVals, err := codec.Decode(value.GetBytes(), size)
-	if err != nil {
-		return "", errors.Trace(err)
-	}
-	str, err := types.DatumsToString(decodedVals)
-	if err != nil {
-		return "", errors.Trace(err)
-	}
-	return str, nil
-}
-
 func (e *ShowExec) fetchShowStatsHealthy() {
 	do := domain.GetDomain(e.ctx)
 	h := do.StatsHandle()
 	dbs := do.InfoSchema().AllSchemas()
 	for _, db := range dbs {
 		for _, tbl := range db.Tables {
-			statsTbl := h.GetTableStats(tbl.ID)
+			statsTbl := h.GetTableStats(tbl)
 			if !statsTbl.Pseudo {
 				var healthy int64
 				if statsTbl.ModifyCount < statsTbl.Count {

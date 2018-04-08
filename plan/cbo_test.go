@@ -123,6 +123,35 @@ func (s *testAnalyzeSuite) TestStraightJoin(c *C) {
 	))
 }
 
+func (s *testAnalyzeSuite) TestTableDual(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	testKit := testkit.NewTestKit(c, store)
+	testKit.MustExec(`use test`)
+	h := dom.StatsHandle()
+	testKit.MustExec(`create table t(a int)`)
+	testKit.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10)")
+	c.Assert(h.HandleDDLEvent(<-h.DDLEventCh()), IsNil)
+
+	h.DumpStatsDeltaToKV()
+	c.Assert(h.Update(dom.InfoSchema()), IsNil)
+
+	testKit.MustQuery(`explain select * from t where 1 = 0`).Check(testkit.Rows(
+		`TableDual_6 Projection_5  root rows:0 0.00`,
+		`Projection_5  TableDual_6 root test.t.a 0.00`,
+	))
+
+	testKit.MustQuery(`explain select * from t where 1 = 1 limit 0`).Check(testkit.Rows(
+		`TableDual_5   root rows:0 0.00`,
+	))
+}
+
 func (s *testAnalyzeSuite) TestEstimation(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
@@ -324,7 +353,7 @@ func (s *testAnalyzeSuite) TestEmptyTable(c *C) {
 		},
 		{
 			sql:  "select * from t limit 0",
-			best: "TableReader(Table(t)->Limit)->Limit",
+			best: "Dual",
 		},
 	}
 	for _, tt := range tests {
@@ -510,6 +539,47 @@ func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {
 	}
 	cfg.PreparedPlanCache.Enabled = orgEnable
 	cfg.PreparedPlanCache.Capacity = orgCapacity
+}
+
+func (s *testAnalyzeSuite) TestNullCount(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t (a int, b int, index idx(a))")
+	testKit.MustExec("insert into t values (null, null), (null, null)")
+	testKit.MustExec("analyze table t")
+	testKit.MustQuery("explain select * from t where a is null").Check(testkit.Rows(
+		"TableScan_5 Selection_6  cop table:t, range:[-inf,+inf], keep order:false 2.00",
+		"Selection_6  TableScan_5 cop isnull(test.t.a) 2.00",
+		"TableReader_7   root data:Selection_6 2.00",
+	))
+	testKit.MustQuery("explain select * from t use index(idx) where a is null").Check(testkit.Rows(
+		"IndexScan_5   cop table:t, index:a, range:[<nil>,<nil>], keep order:false 2.00",
+		"TableScan_6   cop table:t, keep order:false 2.00",
+		"IndexLookUp_7   root index:IndexScan_5, table:TableScan_6 2.00",
+	))
+	h := dom.StatsHandle()
+	h.Clear()
+	h.Lease = 1
+	defer func() { h.Lease = 0 }()
+	c.Assert(h.Update(dom.InfoSchema()), IsNil)
+	testKit.MustQuery("explain select * from t where b = 1").Check(testkit.Rows(
+		"TableScan_5 Selection_6  cop table:t, range:[-inf,+inf], keep order:false 2.00",
+		"Selection_6  TableScan_5 cop eq(test.t.b, 1) 0.00",
+		"TableReader_7   root data:Selection_6 0.00",
+	))
+	testKit.MustQuery("explain select * from t where b < 1").Check(testkit.Rows(
+		"TableScan_5 Selection_6  cop table:t, range:[-inf,+inf], keep order:false 2.00",
+		"Selection_6  TableScan_5 cop lt(test.t.b, 1) 0.00",
+		"TableReader_7   root data:Selection_6 0.00",
+	))
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {

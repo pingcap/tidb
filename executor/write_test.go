@@ -409,6 +409,113 @@ func (s *testSuite) TestInsertIgnore(c *C) {
 	c.Assert(err, IsNil)
 	r = tk.MustQuery("SHOW WARNINGS")
 	r.Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 'PRIMARY'"))
+
+	testSQL = `drop table if exists test;
+create table test (i int primary key, j int unique);
+begin;
+insert into test values (1,1);
+insert ignore into test values (2,1);
+commit;`
+	tk.MustExec(testSQL)
+	testSQL = `select * from test;`
+	r = tk.MustQuery(testSQL)
+	r.Check(testkit.Rows("1 1"))
+
+	testSQL = `delete from test;
+insert into test values (1, 1);
+begin;
+delete from test where i = 1;
+insert ignore into test values (2, 1);
+commit;`
+	tk.MustExec(testSQL)
+	testSQL = `select * from test;`
+	r = tk.MustQuery(testSQL)
+	r.Check(testkit.Rows("2 1"))
+
+	testSQL = `delete from test;
+insert into test values (1, 1);
+begin;
+update test set i = 2, j = 2 where i = 1;
+insert ignore into test values (1, 3);
+insert ignore into test values (2, 4);
+commit;`
+	tk.MustExec(testSQL)
+	testSQL = `select * from test order by i;`
+	r = tk.MustQuery(testSQL)
+	r.Check(testkit.Rows("1 3", "2 2"))
+}
+
+func (s *testSuite) TestInsertOnDup(c *C) {
+	var cfg kv.InjectionConfig
+	tk := testkit.NewTestKit(c, kv.NewInjectedStore(s.store, &cfg))
+	tk.MustExec("use test")
+	testSQL := `drop table if exists t;
+    create table t (i int unique key);`
+	tk.MustExec(testSQL)
+	testSQL = `insert into t values (1),(2);`
+	tk.MustExec(testSQL)
+
+	r := tk.MustQuery("select * from t;")
+	rowStr1 := fmt.Sprintf("%v", "1")
+	rowStr2 := fmt.Sprintf("%v", "2")
+	r.Check(testkit.Rows(rowStr1, rowStr2))
+
+	tk.MustExec("insert into t values (1), (2) on duplicate key update i = values(i)")
+	r = tk.MustQuery("select * from t;")
+	r.Check(testkit.Rows(rowStr1, rowStr2))
+
+	tk.MustExec("insert into t values (2), (3) on duplicate key update i = 3")
+	r = tk.MustQuery("select * from t;")
+	rowStr3 := fmt.Sprintf("%v", "3")
+	r.Check(testkit.Rows(rowStr1, rowStr3))
+
+	testSQL = `drop table if exists t;
+    create table t (i int primary key, j int unique key);`
+	tk.MustExec(testSQL)
+	testSQL = `insert into t values (-1, 1);`
+	tk.MustExec(testSQL)
+
+	r = tk.MustQuery("select * from t;")
+	rowStr1 = fmt.Sprintf("%v %v", "-1", "1")
+	r.Check(testkit.Rows(rowStr1))
+
+	tk.MustExec("insert into t values (1, 1) on duplicate key update j = values(j)")
+	r = tk.MustQuery("select * from t;")
+	r.Check(testkit.Rows(rowStr1))
+
+	testSQL = `drop table if exists test;
+create table test (i int primary key, j int unique);
+begin;
+insert into test values (1,1);
+insert into test values (2,1) on duplicate key update i = -i, j = -j;
+commit;`
+	tk.MustExec(testSQL)
+	testSQL = `select * from test;`
+	r = tk.MustQuery(testSQL)
+	r.Check(testkit.Rows("-1 -1"))
+
+	testSQL = `delete from test;
+insert into test values (1, 1);
+begin;
+delete from test where i = 1;
+insert into test values (2, 1) on duplicate key update i = -i, j = -j;
+commit;`
+	tk.MustExec(testSQL)
+	testSQL = `select * from test;`
+	r = tk.MustQuery(testSQL)
+	r.Check(testkit.Rows("2 1"))
+
+	testSQL = `delete from test;
+insert into test values (1, 1);
+begin;
+update test set i = 2, j = 2 where i = 1;
+insert into test values (1, 3) on duplicate key update i = -i, j = -j;
+insert into test values (2, 4) on duplicate key update i = -i, j = -j;
+commit;`
+	tk.MustExec(testSQL)
+	testSQL = `select * from test order by i;`
+	r = tk.MustQuery(testSQL)
+	r.Check(testkit.Rows("-2 -2", "1 3"))
 }
 
 func (s *testSuite) TestReplace(c *C) {
@@ -1391,4 +1498,17 @@ func (s *testSuite) TestInsertCalculatedValue(c *C) {
 	tk.MustExec("create table t(a int not null, b int, c int as (sqrt(a)))")
 	tk.MustExec("insert t set b = a, a = 4")
 	tk.MustQuery("select * from t").Check(testkit.Rows("4 0 2"))
+}
+
+func (s *testSuite) TestDataTooLongErrMsg(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a varchar(2));")
+	_, err := tk.Exec("insert into t values('123');")
+	c.Assert(types.ErrDataTooLong.Equal(err), IsTrue)
+	c.Assert(err.Error(), Equals, "[types:1406]Data too long for column 'a' at row 1")
+	tk.MustExec("insert into t values('12')")
+	_, err = tk.Exec("update t set a = '123' where a = '12';")
+	c.Assert(types.ErrDataTooLong.Equal(err), IsTrue)
+	c.Assert(err.Error(), Equals, "[types:1406]Data too long for column 'a' at row 1")
 }
