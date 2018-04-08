@@ -18,8 +18,9 @@ import (
 	"hash/fnv"
 	"math"
 	"sort"
-
 	"sync"
+
+	log "github.com/sirupsen/logrus"
 )
 
 // Latch stores a key's waiting transactions
@@ -142,7 +143,10 @@ func (latches *Latches) GenTLock(startTs uint64, keys [][]byte) TLock {
 // return hash int for current key
 func (latches *Latches) hash(key []byte) int {
 	h := fnv.New32a()
-	h.Write(key)
+	_, err := h.Write(key)
+	if err != nil {
+		log.Warn("hash key %v failed with err:%+v", key, err)
+	}
 	return int(h.Sum32()) & (latches.size - 1)
 }
 
@@ -151,33 +155,32 @@ func (latches *Latches) hash(key []byte) int {
 // when the lock.startTs is smaller than any key's last commitTs).
 // It returns with acquired = true when acquire success and the transaction
 // is ready to 2PC
-func (l *Latches) Acquire(lock *TLock) (acquired, timeout bool) {
+func (latches *Latches) Acquire(lock *TLock) (acquired, timeout bool) {
 	var newWait bool
 	for lock.acquiredCount < len(lock.requiredSlots) {
 		slotID := lock.requiredSlots[lock.acquiredCount]
-		acquired, timeout, newWait = l.slots[slotID].acquire(lock.startTs)
+		acquired, timeout, newWait = latches.slots[slotID].acquire(lock.startTs)
 		if newWait {
-			lock.waitedCount += 1
+			lock.waitedCount++
 		}
 		if timeout || !acquired {
 			return
 		}
-		lock.acquiredCount += 1
+		lock.acquiredCount++
 	}
 	return
 }
 
-// Releases all latches owned by the `lock` and returns the wakeup list.
+// Release releases all latches owned by the `lock` and returns the wakeup list.
 // Preconditions: the caller must ensure the transaction is at the front of the latches.
-func (l *Latches) Release(lock *TLock, commitTs uint64) (wakeupList []uint64) {
+func (latches *Latches) Release(lock *TLock, commitTs uint64) (wakeupList []uint64) {
 	wakeupList = make([]uint64, 0, lock.waitedCount)
 	for id := 0; id < lock.waitedCount; id++ {
 		slotID := lock.requiredSlots[id]
-		isEmpty, front := l.slots[slotID].release(lock.startTs, commitTs)
+		isEmpty, front := latches.slots[slotID].release(lock.startTs, commitTs)
 		if !isEmpty {
 			wakeupList = append(wakeupList, front)
 		}
-
 	}
 	return
 }
