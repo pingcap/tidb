@@ -886,32 +886,6 @@ type keyWithDupError struct {
 	newRowValue []byte
 }
 
-// genNewHandles generates the handles of to-be-insert rows.
-func genNewHandles(ctx sessionctx.Context, t table.Table, rows [][]types.Datum) ([]int64, error) {
-	handles := make([]int64, 0, len(rows))
-	if t.Meta().PKIsHandle {
-		var handleCol *table.Column
-		for _, col := range t.Cols() {
-			if col.IsPKHandleColumn(t.Meta()) {
-				handleCol = col
-				break
-			}
-		}
-		for _, row := range rows {
-			handles = append(handles, row[handleCol.Offset].GetInt64())
-		}
-	} else {
-		for range rows {
-			handle, err := t.AllocAutoID(ctx)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			handles = append(handles, handle)
-		}
-	}
-	return handles, nil
-}
-
 // batchGetOldValues gets the values of storage in batch.
 func batchGetOldValues(ctx sessionctx.Context, t table.Table, handles []int64) (map[string][]byte, error) {
 	batchKeys := make([]kv.Key, 0, len(handles))
@@ -954,13 +928,18 @@ func getKeysNeedCheck(ctx sessionctx.Context, t table.Table, rows [][]types.Datu
 	}
 	rowWithKeys := make([][]keyWithDupError, 0, len(rows))
 
-	// Get the new handles.
-	handles, err := genNewHandles(ctx, t, rows)
-	if err != nil {
-		return nil, errors.Trace(err)
+	var handleCol *table.Column
+	// Get handle column if PK is handle.
+	if t.Meta().PKIsHandle {
+		for _, col := range t.Cols() {
+			if col.IsPKHandleColumn(t.Meta()) {
+				handleCol = col
+				break
+			}
+		}
 	}
 
-	for i, row := range rows {
+	for _, row := range rows {
 		keysWithErr := make([]keyWithDupError, 0, nUnique+1)
 		newRowValue, err := encodeNewRow(ctx, t, row)
 		if err != nil {
@@ -968,10 +947,11 @@ func getKeysNeedCheck(ctx sessionctx.Context, t table.Table, rows [][]types.Datu
 		}
 		// Append record keys and errors.
 		if t.Meta().PKIsHandle {
+			handle := row[handleCol.Offset].GetInt64()
 			keysWithErr = append(keysWithErr, keyWithDupError{
 				true,
-				t.RecordKey(handles[i]),
-				kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key 'PRIMARY'", handles[i]),
+				t.RecordKey(handle),
+				kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key 'PRIMARY'", handle),
 				newRowValue,
 			})
 		}
@@ -985,19 +965,26 @@ func getKeysNeedCheck(ctx sessionctx.Context, t table.Table, rows [][]types.Datu
 			if err1 != nil {
 				return nil, errors.Trace(err1)
 			}
-			key, distinct, err2 := v.GenIndexKey(ctx.GetSessionVars().StmtCtx,
-				colVals, handles[i], nil)
-			if err2 != nil {
-				return nil, errors.Trace(err2)
+			// Pass handle = 0 to GenIndexKey,
+			// due to we only care about distinct key.
+			key, distinct, err1 := v.GenIndexKey(ctx.GetSessionVars().StmtCtx,
+				colVals, 0, nil)
+			if err1 != nil {
+				return nil, errors.Trace(err1)
 			}
 			// Skip the non-distinct keys.
 			if !distinct {
 				continue
 			}
+			colValStr, err1 := types.DatumsToString(colVals)
+			if err1 != nil {
+				return nil, errors.Trace(err1)
+			}
 			keysWithErr = append(keysWithErr, keyWithDupError{
 				false,
 				key,
-				kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key '%s'", handles[i], v.Meta().Name),
+				kv.ErrKeyExists.FastGen("Duplicate entry '%s' for key '%s'",
+					colValStr, v.Meta().Name),
 				newRowValue,
 			})
 		}
