@@ -264,11 +264,15 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef) (
 		FieldType: *colDef.Tp,
 	})
 
-	// Check and set TimestampFlag and OnUpdateNowFlag.
-	if col.Tp == mysql.TypeTimestamp {
-		col.Flag |= mysql.TimestampFlag
-		col.Flag |= mysql.OnUpdateNowFlag
-		col.Flag |= mysql.NotNullFlag
+	notExplicit := strings.EqualFold(variable.GetSysVar(
+		"explicit_defaults_for_timestamp").Value, "OFF")
+	if notExplicit {
+		// Check and set TimestampFlag and OnUpdateNowFlag.
+		if col.Tp == mysql.TypeTimestamp {
+			col.Flag |= mysql.TimestampFlag
+			col.Flag |= mysql.OnUpdateNowFlag
+			col.Flag |= mysql.NotNullFlag
+		}
 	}
 
 	setOnUpdateNow := false
@@ -336,7 +340,9 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef) (
 		}
 	}
 
-	setTimestampDefaultValue(col, hasDefaultValue, setOnUpdateNow)
+	if notExplicit {
+		setTimestampDefaultValue(col, hasDefaultValue, setOnUpdateNow)
+	}
 
 	// Set `NoDefaultValueFlag` if this field doesn't have a default value and
 	// it is `not null` and not an `AUTO_INCREMENT` field or `TIMESTAMP` field.
@@ -1266,7 +1272,11 @@ func setDefaultAndComment(ctx sessionctx.Context, col *table.Column, options []*
 		}
 	}
 
-	setTimestampDefaultValue(col, hasDefaultValue, setOnUpdateNow)
+	notExplicit := strings.EqualFold(variable.GetSysVar(
+		"explicit_defaults_for_timestamp").Value, "OFF")
+	if notExplicit {
+		setTimestampDefaultValue(col, hasDefaultValue, setOnUpdateNow)
+	}
 
 	// Set `NoDefaultValueFlag` if this field doesn't have a default value and
 	// it is `not null` and not an `AUTO_INCREMENT` field or `TIMESTAMP` field.
