@@ -111,18 +111,18 @@ func (p *mockBinlogPump) PullBinlogs(ctx context.Context, in *binlog.PullBinlogR
 }
 
 func (s *testSessionSuite) TestForCoverage(c *C) {
-	planCache := plan.PlanCacheEnabled
 	plan.GlobalPlanCache = kvcache.NewShardedLRUCache(2, 1)
-	defer func() {
-		plan.PlanCacheEnabled = planCache
-	}()
 
 	// Just for test coverage.
 	tk := testkit.NewTestKitWithInit(c, s.store)
+	planCache := tk.Se.GetSessionVars().PlanCacheEnabled
+	defer func() {
+		tk.Se.GetSessionVars().PlanCacheEnabled = planCache
+	}()
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int auto_increment, v int, index (id))")
 	tk.MustExec("insert t values ()")
-	plan.PlanCacheEnabled = true
+	tk.Se.GetSessionVars().PlanCacheEnabled = true
 	tk.MustExec("insert t values ()")
 	tk.MustExec("insert t values ()")
 
