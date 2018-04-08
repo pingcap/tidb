@@ -215,7 +215,7 @@ type tblColPosInfo struct {
 // tableRowMapType is a map for unique (Table, Row) pair. key is the tableID.
 // the key in map[int64]Row is the joined table handle, which represent a unique reference row.
 // the value in map[int64]Row is the deleting row.
-type tableRowMapType map[int64]map[int64]Row
+type tableRowMapType map[int64]map[int64]types.DatumRow
 
 // matchingDeletingTable checks whether this column is from the table which is in the deleting list.
 func (e *DeleteExec) matchingDeletingTable(tableID int64, col *expression.Column) bool {
@@ -231,7 +231,7 @@ func (e *DeleteExec) matchingDeletingTable(tableID int64, col *expression.Column
 	return false
 }
 
-func (e *DeleteExec) deleteOneRow(tbl table.Table, handleCol *expression.Column, row Row) error {
+func (e *DeleteExec) deleteOneRow(tbl table.Table, handleCol *expression.Column, row types.DatumRow) error {
 	end := len(row)
 	if handleIsExtra(handleCol) {
 		end--
@@ -321,11 +321,11 @@ func (e *DeleteExec) getColPosInfos(schema *expression.Schema) []tblColPosInfo {
 	return colPosInfos
 }
 
-func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []tblColPosInfo, joinedRow Row) {
+func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []tblColPosInfo, joinedRow types.DatumRow) {
 	// iterate all the joined tables, and got the copresonding rows in joinedRow.
 	for _, info := range colPosInfos {
 		if tblRowMap[info.tblID] == nil {
-			tblRowMap[info.tblID] = make(map[int64]Row)
+			tblRowMap[info.tblID] = make(map[int64]types.DatumRow)
 		}
 		handle := joinedRow[info.handleIndex].GetInt64()
 		// tblRowMap[info.tblID][handle] hold the row datas binding to this table and this handle.
@@ -804,7 +804,7 @@ type InsertExec struct {
 	dupOldRowValues  map[string][]byte
 }
 
-func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) (Row, error) {
+func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) (types.DatumRow, error) {
 	// If tidb_batch_insert is ON and not in a transaction, we could use BatchInsert mode.
 	sessVars := e.ctx.GetSessionVars()
 	defer sessVars.CleanBuffers()
@@ -1730,7 +1730,7 @@ func (e *ReplaceExec) Open(ctx context.Context) error {
 	return nil
 }
 
-func (e *ReplaceExec) exec(ctx context.Context, rows [][]types.Datum) (Row, error) {
+func (e *ReplaceExec) exec(ctx context.Context, rows [][]types.Datum) (types.DatumRow, error) {
 	/*
 	 * MySQL uses the following algorithm for REPLACE (and LOAD DATA ... REPLACE):
 	 *  1. Try to insert the new row into the table
@@ -1827,13 +1827,13 @@ type UpdateExec struct {
 	updatedRowKeys map[int64]map[int64]struct{}
 	tblID2table    map[int64]table.Table
 
-	rows        []Row           // The rows fetched from TableExec.
-	newRowsData [][]types.Datum // The new values to be set.
+	rows        []types.DatumRow // The rows fetched from TableExec.
+	newRowsData []types.DatumRow // The new values to be set.
 	fetched     bool
 	cursor      int
 }
 
-func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema) (Row, error) {
+func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema) (types.DatumRow, error) {
 	assignFlag, err := getUpdateColumns(e.OrderedList, schema.Len())
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1880,7 +1880,7 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema) (Row, 
 		}
 	}
 	e.cursor++
-	return Row{}, nil
+	return types.DatumRow{}, nil
 }
 
 // Next implements the Executor Next interface.
@@ -1960,7 +1960,7 @@ func (e *UpdateExec) handleErr(colName model.CIStr, rowIdx int, err error) error
 	return errors.Trace(err)
 }
 
-func (e *UpdateExec) composeNewRow(rowIdx int, oldRow Row) (Row, error) {
+func (e *UpdateExec) composeNewRow(rowIdx int, oldRow types.DatumRow) (types.DatumRow, error) {
 	newRowData := oldRow.Copy()
 	for _, assign := range e.OrderedList {
 		val, err := assign.Expr.Eval(newRowData)
