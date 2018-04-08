@@ -477,7 +477,7 @@ func (s *testDDLSuite) TestIgnorableSpec(c *C) {
 	}
 }
 
-func (s *testDDLSuite) TestSetJobRelation(c *C) {
+func (s *testDDLSuite) TestBuildJobDependence(c *C) {
 	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_set_job_relation")
 	defer store.Close()
@@ -504,25 +504,25 @@ func (s *testDDLSuite) TestSetJobRelation(c *C) {
 	job4 := &model.Job{ID: 4, TableID: 1}
 	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		err := setJobRelation(t, job4)
+		err := buildJobDependence(t, job4)
 		c.Assert(err, IsNil)
-		c.Assert(job4.RelatedID, Equals, int64(2))
+		c.Assert(job4.DependentID, Equals, int64(2))
 		return nil
 	})
 	job5 := &model.Job{ID: 5, TableID: 2}
 	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		err := setJobRelation(t, job5)
+		err := buildJobDependence(t, job5)
 		c.Assert(err, IsNil)
-		c.Assert(job5.RelatedID, Equals, int64(3))
+		c.Assert(job5.DependentID, Equals, int64(3))
 		return nil
 	})
 	job8 := &model.Job{ID: 8, TableID: 3}
 	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		err := setJobRelation(t, job8)
+		err := buildJobDependence(t, job8)
 		c.Assert(err, IsNil)
-		c.Assert(job8.RelatedID, Equals, int64(0))
+		c.Assert(job8.DependentID, Equals, int64(0))
 		return nil
 	})
 }

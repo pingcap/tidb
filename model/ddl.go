@@ -127,8 +127,8 @@ type Job struct {
 	// StartTS uses timestamp allocated by TSO.
 	// Now it's the TS when we put the job to TiKV queue.
 	StartTS uint64 `json:"start_ts"`
-	//RelatedID is a job's ID that relates with the current job.
-	RelatedID int64 `json:"related_id"`
+	// DependentID is the job's ID that the current job depends on.
+	DependentID int64 `json:"related_id"`
 	// Query string of the ddl job.
 	Query      string       `json:"query"`
 	BinlogInfo *HistoryInfo `json:"binlog"`
@@ -215,17 +215,17 @@ func (job *Job) String() string {
 		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args), tsConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer)
 }
 
-func (job *Job) isRelatedSchema(job1 *Job) (bool, error) {
-	if job1.Type == ActionDropSchema || job1.Type == ActionCreateSchema {
-		if job1.SchemaID == job.SchemaID {
+func (job *Job) hasDependentSchema(other *Job) (bool, error) {
+	if other.Type == ActionDropSchema || other.Type == ActionCreateSchema {
+		if other.SchemaID == job.SchemaID {
 			return true, nil
 		}
 		if job.Type == ActionRenameTable {
-			var schemaID int64
-			if err := job.DecodeArgs(&schemaID); err != nil {
+			var oldSchemaID int64
+			if err := job.DecodeArgs(&oldSchemaID); err != nil {
 				return false, errors.Trace(err)
 			}
-			if job1.SchemaID == schemaID {
+			if other.SchemaID == oldSchemaID {
 				return true, nil
 			}
 		}
@@ -233,18 +233,18 @@ func (job *Job) isRelatedSchema(job1 *Job) (bool, error) {
 	return false, nil
 }
 
-// IsRelatedJob returns whether job and job1 are related or not.
-func (job *Job) IsRelatedJob(job1 *Job) (bool, error) {
-	isRelated, err := job.isRelatedSchema(job1)
-	if err != nil || isRelated {
-		return isRelated, errors.Trace(err)
+// IsDependentOn returns whether job depends on other.
+func (job *Job) IsDependentOn(other *Job) (bool, error) {
+	isDependent, err := job.hasDependentSchema(other)
+	if err != nil || isDependent {
+		return isDependent, errors.Trace(err)
 	}
-	isRelated, err = job1.isRelatedSchema(job)
-	if err != nil || isRelated {
-		return isRelated, errors.Trace(err)
+	isDependent, err = other.hasDependentSchema(job)
+	if err != nil || isDependent {
+		return isDependent, errors.Trace(err)
 	}
 
-	if job1.TableID == job.TableID {
+	if other.TableID == job.TableID {
 		return true, nil
 	}
 	return false, nil

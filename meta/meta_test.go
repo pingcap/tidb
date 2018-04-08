@@ -1,4 +1,3 @@
-// LGetAll gets all elements of this list in order from left to right.
 // Copyright 2015 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");

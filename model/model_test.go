@@ -151,7 +151,7 @@ func (*testModelSuite) TestJobCodec(c *C) {
 	job.BinlogInfo.AddDBInfo(123, &DBInfo{ID: 1, Name: NewCIStr("test_history_db")})
 	job.BinlogInfo.AddTableInfo(123, &TableInfo{ID: 1, Name: NewCIStr("test_history_tbl")})
 
-	// Test IsRelatedJob.
+	// Test IsDependentOn.
 	// job: table ID is 2
 	// job1: table ID is 2
 	var err error
@@ -165,9 +165,9 @@ func (*testModelSuite) TestJobCodec(c *C) {
 	}
 	job1.RawArgs, err = json.Marshal(job1.Args)
 	c.Assert(err, IsNil)
-	isRelated, err := job.IsRelatedJob(job1)
+	isDependent, err := job.IsDependentOn(job1)
 	c.Assert(err, IsNil)
-	c.Assert(isRelated, IsTrue)
+	c.Assert(isDependent, IsTrue)
 	// job1: rename table, old schema ID is 3
 	// job2: create schema, schema ID is 3
 	job2 := &Job{
@@ -177,9 +177,9 @@ func (*testModelSuite) TestJobCodec(c *C) {
 		Type:       ActionCreateSchema,
 		BinlogInfo: &HistoryInfo{},
 	}
-	isRelated, err = job2.IsRelatedJob(job1)
+	isDependent, err = job2.IsDependentOn(job1)
 	c.Assert(err, IsNil)
-	c.Assert(isRelated, IsTrue)
+	c.Assert(isDependent, IsTrue)
 
 	c.Assert(job.IsCancelled(), Equals, false)
 	b, err := job.Encode(false)

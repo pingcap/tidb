@@ -91,9 +91,9 @@ func (d *ddl) isOwner() bool {
 	return isOwner
 }
 
-// setJobRelation sets the current job's relation-ID to the ID of a job that is related to current job.
-// The related job's ID must less than the current job's ID, and we need the largest one in the list.
-func setJobRelation(t *meta.Meta, curJob *model.Job) error {
+// buildJobDependence sets the current job's dependence-ID that the current job depends on.
+// The dependent job's ID must less than the current job's ID, and we need the largest one in the list.
+func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
 	jobs, err := t.GetAllDDLJobs()
 	if err != nil {
 		return errors.Trace(err)
@@ -102,12 +102,12 @@ func setJobRelation(t *meta.Meta, curJob *model.Job) error {
 		if curJob.ID < job.ID {
 			continue
 		}
-		isRelated, err := curJob.IsRelatedJob(job)
+		isDependent, err := curJob.IsDependentOn(job)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if isRelated {
-			curJob.RelatedID = job.ID
+		if isDependent {
+			curJob.DependentID = job.ID
 			break
 		}
 	}
