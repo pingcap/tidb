@@ -255,6 +255,10 @@ func checkColumnCantHaveDefaultValue(col *table.Column, value interface{}) (err 
 	return nil
 }
 
+func isExplicitTimeStamp() bool {
+	return strings.EqualFold(variable.GetSysVar("explicit_defaults_for_timestamp").Value, "ON")
+}
+
 // columnDefToCol converts ColumnDef to Col and TableConstraints.
 func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef) (*table.Column, []*ast.Constraint, error) {
 	var constraints = make([]*ast.Constraint, 0)
@@ -264,9 +268,8 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef) (
 		FieldType: *colDef.Tp,
 	})
 
-	notExplicit := strings.EqualFold(variable.GetSysVar(
-		"explicit_defaults_for_timestamp").Value, "OFF")
-	if notExplicit {
+	isExplicit := isExplicitTimeStamp()
+	if !isExplicit {
 		// Check and set TimestampFlag and OnUpdateNowFlag.
 		if col.Tp == mysql.TypeTimestamp {
 			col.Flag |= mysql.TimestampFlag
@@ -340,7 +343,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef) (
 		}
 	}
 
-	if notExplicit {
+	if !isExplicit {
 		setTimestampDefaultValue(col, hasDefaultValue, setOnUpdateNow)
 	}
 
@@ -1272,9 +1275,7 @@ func setDefaultAndComment(ctx sessionctx.Context, col *table.Column, options []*
 		}
 	}
 
-	notExplicit := strings.EqualFold(variable.GetSysVar(
-		"explicit_defaults_for_timestamp").Value, "OFF")
-	if notExplicit {
+	if !isExplicitTimeStamp() {
 		setTimestampDefaultValue(col, hasDefaultValue, setOnUpdateNow)
 	}
 
