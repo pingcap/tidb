@@ -516,6 +516,15 @@ commit;`
 	testSQL = `select * from test order by i;`
 	r = tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("-2 -2", "1 3"))
+
+	testSQL = `delete from test;
+begin;
+insert into test values (1, 3), (1, 3) on duplicate key update i = values(i), j = values(j);
+commit;`
+	tk.MustExec(testSQL)
+	testSQL = `select * from test order by i;`
+	r = tk.MustQuery(testSQL)
+	r.Check(testkit.Rows("1 3"))
 }
 
 func (s *testSuite) TestReplace(c *C) {
