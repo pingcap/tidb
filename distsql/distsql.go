@@ -36,8 +36,7 @@ var (
 )
 
 var (
-	_ SelectResult  = &selectResult{}
-	_ PartialResult = &partialResult{}
+	_ SelectResult = &selectResult{}
 )
 
 // SelectResult is an iterator of coprocessor partial results.
@@ -51,15 +50,6 @@ type SelectResult interface {
 	// Fetch fetches partial results from client.
 	// The caller should call SetFields() before call Fetch().
 	Fetch(context.Context)
-}
-
-// PartialResult is the result from a single region server.
-type PartialResult interface {
-	// Next returns the next rowData of the sub result.
-	// If no more row to return, rowData would be nil.
-	Next(context.Context) (rowData []types.Datum, err error)
-	// Close closes the partial result.
-	Close() error
 }
 
 type selectResult struct {
@@ -209,36 +199,6 @@ func (r *selectResult) Close() error {
 	return r.resp.Close()
 }
 
-type partialResult struct {
-	resp     *tipb.SelectResponse
-	chunkIdx int
-	rowLen   int
-}
-
-func (pr *partialResult) unmarshal(resultSubset []byte) error {
-	pr.resp = new(tipb.SelectResponse)
-	err := pr.resp.Unmarshal(resultSubset)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	if pr.resp.Error != nil {
-		return errInvalidResp.Gen("[%d %s]", pr.resp.Error.GetCode(), pr.resp.Error.GetMsg())
-	}
-
-	return nil
-}
-
-// Next returns the next row of the sub result.
-// If no more row to return, data would be nil.
-func (pr *partialResult) Next(ctx context.Context) (data []types.Datum, err error) {
-	nextChunk := pr.getChunk()
-	if nextChunk == nil {
-		return nil, nil
-	}
-	return readRowFromChunk(nextChunk, pr.rowLen)
-}
-
 func readRowFromChunk(chunk *tipb.Chunk, numCols int) (row []types.Datum, err error) {
 	row = make([]types.Datum, numCols)
 	for i := 0; i < numCols; i++ {
@@ -250,24 +210,6 @@ func readRowFromChunk(chunk *tipb.Chunk, numCols int) (row []types.Datum, err er
 		row[i].SetRaw(raw)
 	}
 	return
-}
-
-func (pr *partialResult) getChunk() *tipb.Chunk {
-	for {
-		if pr.chunkIdx >= len(pr.resp.Chunks) {
-			return nil
-		}
-		currentChunk := &pr.resp.Chunks[pr.chunkIdx]
-		if len(currentChunk.RowsData) > 0 {
-			return currentChunk
-		}
-		pr.chunkIdx++
-	}
-}
-
-// Close closes the sub result.
-func (pr *partialResult) Close() error {
-	return nil
 }
 
 // Select sends a DAG request, returns SelectResult.

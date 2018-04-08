@@ -147,20 +147,3 @@ func (r *streamResult) Close() error {
 	metrics.DistSQLPartialCountHistogram.Observe(float64(r.partialCount))
 	return nil
 }
-
-// streamPartialResult implements PartialResult.
-type streamPartialResult struct {
-	tipb.Chunk
-	rowLen int
-}
-
-func (pr *streamPartialResult) Next(ctx context.Context) (data []types.Datum, err error) {
-	if len(pr.Chunk.RowsData) == 0 {
-		return nil, nil // partial result finished.
-	}
-	return readRowFromChunk(&pr.Chunk, pr.rowLen)
-}
-
-func (pr *streamPartialResult) Close() error {
-	return nil
-}
