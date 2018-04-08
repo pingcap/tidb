@@ -29,7 +29,8 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 )
 
-func encodeHandle(h int64) []byte {
+// EncodeHandle encodes handle in data.
+func EncodeHandle(h int64) []byte {
 	buf := &bytes.Buffer{}
 	err := binary.Write(buf, binary.BigEndian, h)
 	if err != nil {
@@ -189,7 +190,7 @@ func (c *index) Create(ctx sessionctx.Context, rm kv.RetrieverMutator, indexedVa
 	}
 
 	if skipCheck || kv.IsErrNotFound(err) {
-		err = rm.Set(key, encodeHandle(h))
+		err = rm.Set(key, EncodeHandle(h))
 		return 0, errors.Trace(err)
 	}
 
