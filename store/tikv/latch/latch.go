@@ -11,16 +11,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikv
+package latch
 
 import (
 	"fmt"
-	"hash/fnv"
 	"math"
 	"sort"
 	"sync"
 
 	log "github.com/sirupsen/logrus"
+	"github.com/spaolacci/murmur3"
 )
 
 // Latch stores a key's waiting transactions
@@ -86,8 +86,8 @@ func (l *Latch) append(startTs uint64) bool {
 	return true
 }
 
-// TLock is the locks' information required for a transaction
-type TLock struct {
+// Lock is the locks' information required for a transaction
+type Lock struct {
 	// the slot IDs of the latches(keys) that a startTs must acquire before being able to processed
 	requiredSlots []int
 	/// The number of latches that the transaction has acquired.
@@ -98,9 +98,9 @@ type TLock struct {
 	startTs uint64
 }
 
-// NewTLock creates a new lock
-func NewTLock(startTs uint64, requiredSlots []int) TLock {
-	return TLock{
+// NewLock creates a new lock
+func NewLock(startTs uint64, requiredSlots []int) Lock {
+	return Lock{
 		requiredSlots: requiredSlots,
 		acquiredCount: 0,
 		waitedCount:   0,
@@ -126,8 +126,8 @@ func NewLatches(size int) Latches {
 	}
 }
 
-// GenTLock generates TLock for the transaction with startTs and keys
-func (latches *Latches) GenTLock(startTs uint64, keys [][]byte) TLock {
+// GenLock generates Lock for the transaction with startTs and keys
+func (latches *Latches) GenLock(startTs uint64, keys [][]byte) Lock {
 	hashes := make(map[int]bool)
 	for _, key := range keys {
 		hashes[latches.hash(key)] = true
@@ -137,12 +137,12 @@ func (latches *Latches) GenTLock(startTs uint64, keys [][]byte) TLock {
 		slots = append(slots, key)
 	}
 	sort.Ints(slots)
-	return NewTLock(startTs, slots)
+	return NewLock(startTs, slots)
 }
 
 // return hash int for current key
 func (latches *Latches) hash(key []byte) int {
-	h := fnv.New32a()
+	h := murmur3.New32()
 	_, err := h.Write(key)
 	if err != nil {
 		log.Warn("hash key %v failed with err:%+v", key, err)
@@ -155,7 +155,7 @@ func (latches *Latches) hash(key []byte) int {
 // when the lock.startTs is smaller than any key's last commitTs).
 // It returns with acquired = true when acquire success and the transaction
 // is ready to 2PC
-func (latches *Latches) Acquire(lock *TLock) (acquired, timeout bool) {
+func (latches *Latches) Acquire(lock *Lock) (acquired, timeout bool) {
 	var newWait bool
 	for lock.acquiredCount < len(lock.requiredSlots) {
 		slotID := lock.requiredSlots[lock.acquiredCount]
@@ -173,7 +173,7 @@ func (latches *Latches) Acquire(lock *TLock) (acquired, timeout bool) {
 
 // Release releases all latches owned by the `lock` and returns the wakeup list.
 // Preconditions: the caller must ensure the transaction is at the front of the latches.
-func (latches *Latches) Release(lock *TLock, commitTs uint64) (wakeupList []uint64) {
+func (latches *Latches) Release(lock *Lock, commitTs uint64) (wakeupList []uint64) {
 	wakeupList = make([]uint64, 0, lock.waitedCount)
 	for id := 0; id < lock.waitedCount; id++ {
 		slotID := lock.requiredSlots[id]

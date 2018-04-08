@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikv
+package latch
 
 import (
 	. "github.com/pingcap/check"
@@ -40,11 +40,11 @@ func (s *testLatchSuite) TestWakeUp(c *C) {
 	keysA := [][]byte{
 		[]byte("a"), []byte("a"), []byte("b"), []byte("c")}
 	startTsA := getTso()
-	lockA := latches.GenTLock(startTsA, keysA)
+	lockA := latches.GenLock(startTsA, keysA)
 
 	keysB := [][]byte{[]byte("d"), []byte("e"), []byte("a"), []byte("c")}
 	startTsB := getTso()
-	lockB := latches.GenTLock(startTsB, keysB)
+	lockB := latches.GenLock(startTsB, keysB)
 
 	//A acquire lock success
 	acquired, timeout := latches.Acquire(&lockA)
@@ -72,7 +72,7 @@ func (s *testLatchSuite) TestWakeUp(c *C) {
 
 	// B restart:get a new startTso
 	startTsB = getTso()
-	lockB = latches.GenTLock(startTsB, keysB)
+	lockB = latches.GenLock(startTsB, keysB)
 	acquired, timeout = latches.Acquire(&lockB)
 	c.Assert(acquired, IsTrue)
 	c.Assert(timeout, IsFalse)
@@ -81,10 +81,10 @@ func (s *testLatchSuite) TestWakeUp(c *C) {
 type txn struct {
 	keys    [][]byte
 	startTs uint64
-	lock    TLock
+	lock    Lock
 }
 
-func newTxn(keys [][]byte, startTs uint64, lock TLock) txn {
+func newTxn(keys [][]byte, startTs uint64, lock Lock) txn {
 	return txn{
 		keys:    keys,
 		startTs: startTs,
@@ -143,7 +143,7 @@ func (store *txnStore) runTxn(startTs uint64) {
 
 func (store *txnStore) newTxn(keys [][]byte) {
 	startTs := getTso()
-	lock := store.latches.GenTLock(startTs, keys)
+	lock := store.latches.GenLock(startTs, keys)
 	t := newTxn(keys, startTs, lock)
 	store.lock.Lock()
 	defer store.lock.Unlock()
