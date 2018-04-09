@@ -215,7 +215,7 @@ type tblColPosInfo struct {
 // tableRowMapType is a map for unique (Table, Row) pair. key is the tableID.
 // the key in map[int64]Row is the joined table handle, which represent a unique reference row.
 // the value in map[int64]Row is the deleting row.
-type tableRowMapType map[int64]map[int64]Row
+type tableRowMapType map[int64]map[int64]types.DatumRow
 
 // matchingDeletingTable checks whether this column is from the table which is in the deleting list.
 func (e *DeleteExec) matchingDeletingTable(tableID int64, col *expression.Column) bool {
@@ -231,7 +231,7 @@ func (e *DeleteExec) matchingDeletingTable(tableID int64, col *expression.Column
 	return false
 }
 
-func (e *DeleteExec) deleteOneRow(tbl table.Table, handleCol *expression.Column, row Row) error {
+func (e *DeleteExec) deleteOneRow(tbl table.Table, handleCol *expression.Column, row types.DatumRow) error {
 	end := len(row)
 	if handleIsExtra(handleCol) {
 		end--
@@ -321,11 +321,11 @@ func (e *DeleteExec) getColPosInfos(schema *expression.Schema) []tblColPosInfo {
 	return colPosInfos
 }
 
-func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []tblColPosInfo, joinedRow Row) {
+func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []tblColPosInfo, joinedRow types.DatumRow) {
 	// iterate all the joined tables, and got the copresonding rows in joinedRow.
 	for _, info := range colPosInfos {
 		if tblRowMap[info.tblID] == nil {
-			tblRowMap[info.tblID] = make(map[int64]Row)
+			tblRowMap[info.tblID] = make(map[int64]types.DatumRow)
 		}
 		handle := joinedRow[info.handleIndex].GetInt64()
 		// tblRowMap[info.tblID][handle] hold the row datas binding to this table and this handle.
@@ -804,7 +804,24 @@ type InsertExec struct {
 	dupOldRowValues  map[string][]byte
 }
 
-func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) (Row, error) {
+func (e *InsertExec) insertOneRow(row []types.Datum) (int64, error) {
+	if err := e.checkBatchLimit(); err != nil {
+		return 0, errors.Trace(err)
+	}
+	e.ctx.Txn().SetOption(kv.PresumeKeyNotExists, nil)
+	h, err := e.Table.AddRecord(e.ctx, row, false)
+	e.ctx.Txn().DelOption(kv.PresumeKeyNotExists)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if !e.ctx.GetSessionVars().ImportingData {
+		e.ctx.StmtAddDirtyTableOP(DirtyTableAddRow, e.Table.Meta().ID, h, row)
+	}
+	e.rowCount++
+	return h, nil
+}
+
+func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) (types.DatumRow, error) {
 	// If tidb_batch_insert is ON and not in a transaction, we could use BatchInsert mode.
 	sessVars := e.ctx.GetSessionVars()
 	defer sessVars.CleanBuffers()
@@ -817,59 +834,60 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) (Row, error
 	// If `ON DUPLICATE KEY UPDATE` is specified, and no `IGNORE` keyword,
 	// the to-be-insert rows will be check on duplicate keys and update to the new rows.
 	if len(e.OnDuplicate) > 0 && !e.IgnoreErr {
-		var err error
-		rows, err = e.batchUpdateDupRows(rows, e.OnDuplicate)
+		err := e.batchUpdateDupRows(rows, e.OnDuplicate)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-	} else if len(e.OnDuplicate) == 0 && e.IgnoreErr {
-		// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
-		// For example, without IGNORE, a row that duplicates an existing UNIQUE index or PRIMARY KEY value in
-		// the table causes a duplicate-key error and the statement is aborted. With IGNORE, the row is discarded and no error occurs.
-		// However, if the `on duplicate update` is also specified, the duplicated row will be updated.
-		// Using BatchGet in insert ignore to mark rows as duplicated before we add records to the table.
-		var err error
-		rows, err = batchMarkDupRows(e.ctx, e.Table, rows)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	for _, row := range rows {
-		// duplicate row will be marked as nil in batchMarkDupRows if
-		// IgnoreErr is true. For IgnoreErr is false, it is a protection.
-		if row == nil {
-			continue
-		}
-		if err := e.checkBatchLimit(); err != nil {
-			return nil, errors.Trace(err)
-		}
-		if len(e.OnDuplicate) == 0 && !e.IgnoreErr {
-			e.ctx.Txn().SetOption(kv.PresumeKeyNotExists, nil)
-		}
-		h, err := e.Table.AddRecord(e.ctx, row, false)
-		e.ctx.Txn().DelOption(kv.PresumeKeyNotExists)
-		if err == nil {
-			if !sessVars.ImportingData {
-				e.ctx.StmtAddDirtyTableOP(DirtyTableAddRow, e.Table.Meta().ID, h, row)
+	} else {
+		if len(e.OnDuplicate) == 0 && e.IgnoreErr {
+			// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
+			// For example, without IGNORE, a row that duplicates an existing UNIQUE index or PRIMARY KEY value in
+			// the table causes a duplicate-key error and the statement is aborted. With IGNORE, the row is discarded and no error occurs.
+			// However, if the `on duplicate update` is also specified, the duplicated row will be updated.
+			// Using BatchGet in insert ignore to mark rows as duplicated before we add records to the table.
+			var err error
+			rows, err = batchMarkDupRows(e.ctx, e.Table, rows)
+			if err != nil {
+				return nil, errors.Trace(err)
 			}
-			e.rowCount++
-			continue
 		}
-		if kv.ErrKeyExists.Equal(err) {
-			// TODO: Use batch get to speed up `insert ignore on duplicate key update`.
-			if len(e.OnDuplicate) > 0 && e.IgnoreErr {
-				data, err1 := e.Table.RowWithCols(e.ctx, h, e.Table.WritableCols())
-				if err1 != nil {
-					return nil, errors.Trace(err1)
-				}
-				if _, _, _, err = e.doDupRowUpdate(h, data, row, e.OnDuplicate); err != nil {
-					return nil, errors.Trace(err)
+		for _, row := range rows {
+			// duplicate row will be marked as nil in batchMarkDupRows if
+			// IgnoreErr is true. For IgnoreErr is false, it is a protection.
+			if row == nil {
+				continue
+			}
+			if err := e.checkBatchLimit(); err != nil {
+				return nil, errors.Trace(err)
+			}
+			if len(e.OnDuplicate) == 0 && !e.IgnoreErr {
+				e.ctx.Txn().SetOption(kv.PresumeKeyNotExists, nil)
+			}
+			h, err := e.Table.AddRecord(e.ctx, row, false)
+			e.ctx.Txn().DelOption(kv.PresumeKeyNotExists)
+			if err == nil {
+				if !sessVars.ImportingData {
+					e.ctx.StmtAddDirtyTableOP(DirtyTableAddRow, e.Table.Meta().ID, h, row)
 				}
 				e.rowCount++
 				continue
 			}
+			if kv.ErrKeyExists.Equal(err) {
+				// TODO: Use batch get to speed up `insert ignore on duplicate key update`.
+				if len(e.OnDuplicate) > 0 && e.IgnoreErr {
+					data, err1 := e.Table.RowWithCols(e.ctx, h, e.Table.WritableCols())
+					if err1 != nil {
+						return nil, errors.Trace(err1)
+					}
+					if _, _, _, err = e.doDupRowUpdate(h, data, row, e.OnDuplicate); err != nil {
+						return nil, errors.Trace(err)
+					}
+					e.rowCount++
+					continue
+				}
+			}
+			return nil, errors.Trace(err)
 		}
-		return nil, errors.Trace(err)
 	}
 
 	if e.lastInsertID != 0 {
@@ -1125,17 +1143,17 @@ func (e *InsertExec) updateDupKeyValues(keys []keyWithDupError, oldHandle int64,
 }
 
 // batchUpdateDupRows updates multi-rows in batch if they are duplicate with rows in table.
-func (e *InsertExec) batchUpdateDupRows(newRows [][]types.Datum, onDuplicate []*expression.Assignment) ([][]types.Datum, error) {
+func (e *InsertExec) batchUpdateDupRows(newRows [][]types.Datum, onDuplicate []*expression.Assignment) error {
 	var err error
 	e.uniqueKeysInRows, e.dupKeyValues, err = batchGetInsertKeys(e.ctx, e.Table, newRows)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 
 	// Batch get the to-be-updated rows in storage.
 	err = e.initDupOldRowValue(newRows)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 
 	for i, keysInRow := range e.uniqueKeysInRows {
@@ -1143,7 +1161,7 @@ func (e *InsertExec) batchUpdateDupRows(newRows [][]types.Datum, onDuplicate []*
 			if val, found := e.dupKeyValues[string(k.key)]; found {
 				err := e.updateDupRow(keysInRow, k, val, newRows[i], e.OnDuplicate)
 				if err != nil {
-					return nil, errors.Trace(err)
+					return errors.Trace(err)
 				}
 				// Clean up row for latest add record operation.
 				newRows[i] = nil
@@ -1151,15 +1169,18 @@ func (e *InsertExec) batchUpdateDupRows(newRows [][]types.Datum, onDuplicate []*
 			}
 		}
 		// If row was checked with no duplicate keys,
-		// it should be add to values map for the further row check.
-		// There may be duplicate keys inside the insert statement.
-		if newRows[i] == nil {
-			for _, k := range keysInRow {
-				e.dupKeyValues[string(k.key)] = k.newRowValue
+		// we should do insert the row,
+		// and key-values should be filled back to dupOldRowValues for the further row check,
+		// due to there may be duplicate keys inside the insert statement.
+		if newRows[i] != nil {
+			newHandle, err := e.insertOneRow(newRows[i])
+			if err != nil {
+				return errors.Trace(err)
 			}
+			e.fillBackKeys(keysInRow, newHandle)
 		}
 	}
-	return newRows, nil
+	return nil
 }
 
 // fillBackKeys fills the updated key-value pair to the dupKeyValues for further check.
@@ -1730,7 +1751,7 @@ func (e *ReplaceExec) Open(ctx context.Context) error {
 	return nil
 }
 
-func (e *ReplaceExec) exec(ctx context.Context, rows [][]types.Datum) (Row, error) {
+func (e *ReplaceExec) exec(ctx context.Context, rows [][]types.Datum) (types.DatumRow, error) {
 	/*
 	 * MySQL uses the following algorithm for REPLACE (and LOAD DATA ... REPLACE):
 	 *  1. Try to insert the new row into the table
@@ -1827,13 +1848,13 @@ type UpdateExec struct {
 	updatedRowKeys map[int64]map[int64]struct{}
 	tblID2table    map[int64]table.Table
 
-	rows        []Row           // The rows fetched from TableExec.
-	newRowsData [][]types.Datum // The new values to be set.
+	rows        []types.DatumRow // The rows fetched from TableExec.
+	newRowsData []types.DatumRow // The new values to be set.
 	fetched     bool
 	cursor      int
 }
 
-func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema) (Row, error) {
+func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema) (types.DatumRow, error) {
 	assignFlag, err := getUpdateColumns(e.OrderedList, schema.Len())
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1880,7 +1901,7 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema) (Row, 
 		}
 	}
 	e.cursor++
-	return Row{}, nil
+	return types.DatumRow{}, nil
 }
 
 // Next implements the Executor Next interface.
@@ -1960,7 +1981,7 @@ func (e *UpdateExec) handleErr(colName model.CIStr, rowIdx int, err error) error
 	return errors.Trace(err)
 }
 
-func (e *UpdateExec) composeNewRow(rowIdx int, oldRow Row) (Row, error) {
+func (e *UpdateExec) composeNewRow(rowIdx int, oldRow types.DatumRow) (types.DatumRow, error) {
 	newRowData := oldRow.Copy()
 	for _, assign := range e.OrderedList {
 		val, err := assign.Expr.Eval(newRowData)

@@ -516,6 +516,25 @@ commit;`
 	testSQL = `select * from test order by i;`
 	r = tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("-2 -2", "1 3"))
+
+	testSQL = `delete from test;
+begin;
+insert into test values (1, 3), (1, 3) on duplicate key update i = values(i), j = values(j);
+commit;`
+	tk.MustExec(testSQL)
+	testSQL = `select * from test order by i;`
+	r = tk.MustQuery(testSQL)
+	r.Check(testkit.Rows("1 3"))
+
+	testSQL = `create table tmp (id int auto_increment, code int, primary key(id, code));
+	create table m (id int primary key auto_increment, code int unique);
+	insert tmp (code) values (1);
+	insert tmp (code) values (1);
+	insert m (code) select code from tmp on duplicate key update code = values(code);`
+	tk.MustExec(testSQL)
+	testSQL = `select * from m;`
+	r = tk.MustQuery(testSQL)
+	r.Check(testkit.Rows("1 1"))
 }
 
 func (s *testSuite) TestReplace(c *C) {
