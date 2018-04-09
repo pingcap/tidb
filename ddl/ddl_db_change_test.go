@@ -292,12 +292,19 @@ type sqlWithErr struct {
 	expectErr error
 }
 
+func (s *testStateChangeSuite) TestWriteOnlyOnDupUpdate(c *C) {
+	sqls := make([]sqlWithErr, 1)
+	sqls[0] = sqlWithErr{"insert t set c1 = 'c1_dup', c3 = '2018-02-12', c4 = 2 on duplicate key update c1 = values(c1)", nil}
+	addColumnSQL := "alter table t add column a int not null default 1 after c4"
+	s.runTestInSchemaState(c, model.StateWriteOnly, "", addColumnSQL, sqls)
+}
+
 // TestWriteOnly tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
 func (s *testStateChangeSuite) TestWriteOnly(c *C) {
 	sqls := make([]sqlWithErr, 3)
 	sqls[0] = sqlWithErr{"delete from t where c1 = 'a'", nil}
 	sqls[1] = sqlWithErr{"update t use index(idx2) set c1 = 'c1_update' where c1 = 'a'", nil}
-	sqls[0] = sqlWithErr{"insert t set c1 = 'c1_insert', c3 = '2018-02-12', c4 = 1", nil}
+	sqls[2] = sqlWithErr{"insert t set c1 = 'c1_insert', c3 = '2018-02-12', c4 = 1", nil}
 	addColumnSQL := "alter table t add column a int not null default 1 first"
 	s.runTestInSchemaState(c, model.StateWriteOnly, "", addColumnSQL, sqls)
 }

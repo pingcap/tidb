@@ -919,13 +919,9 @@ func batchGetOldValues(ctx sessionctx.Context, t table.Table, handles []int64) (
 
 // encodeNewRow encodes a new row to value.
 func encodeNewRow(ctx sessionctx.Context, t table.Table, row []types.Datum) ([]byte, error) {
-	colIDs := make([]int64, 0, len(row))
-	skimmedRow := make([]types.Datum, 0, len(row))
-	for _, col := range t.WritableCols() {
-		if !tables.CanSkip(t.Meta(), col, row[col.Offset]) {
-			colIDs = append(colIDs, col.ID)
-			skimmedRow = append(skimmedRow, row[col.Offset])
-		}
+	skimmedRow, colIDs, err := tables.ShrinkRow(ctx, t, row)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 	newRowValue, err := tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, skimmedRow, colIDs, nil, nil)
 	if err != nil {

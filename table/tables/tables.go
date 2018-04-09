@@ -244,13 +244,13 @@ func (t *Table) UpdateRecord(ctx sessionctx.Context, h int64, oldData, newData [
 		var value types.Datum
 		if col.State != model.StatePublic {
 			// If col is in write only or write reorganization state we should keep the oldData.
-			// Because the oldData must be the orignal data(it's changed by other TiDBs.) or the orignal default value.
+			// Because the oldData must be the original data (it's changed by other TiDBs.) or the original default value.
 			// TODO: Use newData directly.
 			value = oldData[col.Offset]
 		} else {
 			value = newData[col.Offset]
 		}
-		if !t.canSkip(col, value) {
+		if !CanSkip(t.Meta(), col, value) {
 			colIDs = append(colIDs, col.ID)
 			row = append(row, value)
 		}
@@ -387,26 +387,12 @@ func (t *Table) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleChe
 		return h, errors.Trace(err)
 	}
 
-	var colIDs, binlogColIDs []int64
+	var binlogColIDs []int64
 	var row, binlogRow []types.Datum
-	colIDs = make([]int64, 0, len(r))
-	row = make([]types.Datum, 0, len(r))
 
-	for _, col := range t.WritableCols() {
-		var value types.Datum
-		if col.State != model.StatePublic {
-			// If col is in write only or write reorganization state, we must add it with its default value.
-			value, err = table.GetColOriginDefaultValue(ctx, col.ToInfo())
-			if err != nil {
-				return 0, errors.Trace(err)
-			}
-		} else {
-			value = r[col.Offset]
-		}
-		if !t.canSkip(col, value) {
-			colIDs = append(colIDs, col.ID)
-			row = append(row, value)
-		}
+	row, colIDs, err := ShrinkRow(ctx, t, r)
+	if err != nil {
+		return h, errors.Trace(err)
 	}
 	writeBufs := sessVars.GetWriteStmtBufs()
 	adjustRowValuesBuf(writeBufs, len(row))
@@ -436,6 +422,30 @@ func (t *Table) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleChe
 	sessVars.StmtCtx.AddAffectedRows(1)
 	sessVars.TxnCtx.UpdateDeltaForTable(t.ID, 1, 1)
 	return recordID, nil
+}
+
+// ShrinkRow shrinks rows to a ready to encoded row.
+func ShrinkRow(ctx sessionctx.Context, t table.Table, row []types.Datum) ([]types.Datum, []int64, error) {
+	colIDs := make([]int64, 0, len(row))
+	skimmedRow := make([]types.Datum, 0, len(row))
+	var err error
+	for _, col := range t.WritableCols() {
+		var value types.Datum
+		if col.State != model.StatePublic {
+			// If col is in write only or write reorganization state, we must add it with its default value.
+			value, err = table.GetColOriginDefaultValue(ctx, col.ToInfo())
+			if err != nil {
+				return nil, nil, errors.Trace(err)
+			}
+		} else {
+			value = row[col.Offset]
+		}
+		if !CanSkip(t.Meta(), col, value) {
+			colIDs = append(colIDs, col.ID)
+			skimmedRow = append(skimmedRow, value)
+		}
+	}
+	return skimmedRow, colIDs, nil
 }
 
 // genIndexKeyStr generates index content string representation.
@@ -845,10 +855,6 @@ func shouldWriteBinlog(ctx sessionctx.Context) bool {
 
 func (t *Table) getMutation(ctx sessionctx.Context) *binlog.TableMutation {
 	return ctx.StmtGetMutation(t.ID)
-}
-
-func (t *Table) canSkip(col *table.Column, value types.Datum) bool {
-	return CanSkip(t.Meta(), col, value)
 }
 
 // CanSkip is for these cases, we can skip the columns in encoded row:
