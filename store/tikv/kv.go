@@ -136,7 +136,8 @@ type tikvStore struct {
 	kv        SafePointKV
 	safePoint uint64
 	spTime    time.Time
-	spMutex   sync.RWMutex  // this is used to update safePoint and spTime
+	spMutex   sync.RWMutex // this is used to update safePoint and spTime
+	txnStore  txnStore
 	closed    chan struct{} // this is used to nofity when the store is closed
 }
 
@@ -180,6 +181,7 @@ func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Clie
 		kv:          spkv,
 		safePoint:   0,
 		spTime:      time.Now(),
+		txnStore:    newTxnStore(),
 		closed:      make(chan struct{}),
 	}
 	store.lockResolver = newLockResolver(store)
