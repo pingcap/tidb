@@ -26,7 +26,7 @@ package variable
 	8. Use this variable to control the behavior in code.
 */
 
-// TiDB session only system variable names.
+// TiDB system variable names that only in session scope.
 const (
 	// tidb_snapshot is used for reading history data, the default value is empty string.
 	// When the value is set to a datetime string like '2017-11-11 20:20:20', the session reads history data of that time.
@@ -100,7 +100,7 @@ const (
 	TiDBEnableStreaming = "tidb_enable_streaming"
 )
 
-// TiDB session and global system variable names.
+// TiDB system variable names that both in session and global scope.
 const (
 	// tidb_distsql_scan_concurrency is used to set the concurrency of a distsql scan task.
 	// A distsql scan task can be a table scan or a index scan, which may be distributed to many TiKV nodes.
