@@ -2938,10 +2938,7 @@ func (c *unixTimestampFunctionClass) getFunction(ctx sessionctx.Context, args []
 		sig = &builtinUnixTimestampIntSig{bf}
 	} else if retTp == types.ETDecimal {
 		sig = &builtinUnixTimestampDecSig{bf}
-	} else {
-		panic("Unexpected retTp")
 	}
-
 	return sig, nil
 }
 
