@@ -195,6 +195,7 @@ func (*testModelSuite) TestJobCodec(c *C) {
 	c.Assert(job.IsFinished(), IsTrue)
 	c.Assert(job.IsRunning(), IsFalse)
 	c.Assert(job.IsSynced(), IsFalse)
+	c.Assert(job.IsRollbackDone(), IsFalse)
 	job.SetRowCount(3)
 	c.Assert(job.GetRowCount(), Equals, int64(3))
 }

@@ -1231,6 +1231,9 @@ func (s *testInferTypeSuite) createTestCase4TimeFuncs() []typeInferTestCase {
 		{"unix_timestamp(c_blob_d     )", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 18, 6},
 		{"unix_timestamp(c_set        )", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 18, 6},
 		{"unix_timestamp(c_enum       )", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 18, 6},
+		{"unix_timestamp(null         )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 11, 0},
+		{"unix_timestamp('12:12:12.123')", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 15, 3},
+		{"unix_timestamp('12:12:12.1234')", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 16, 4},
 		// TODO: Add string literal tests for UNIX_TIMESTAMP. UNIX_TIMESTAMP respects the fsp in string literals.
 
 		{"timestampdiff(MONTH, c_datetime, c_datetime)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 20, 0},

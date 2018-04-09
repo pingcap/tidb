@@ -1467,14 +1467,13 @@ func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {
 		{2, types.NewDecimalDatum(types.NewDecFromStringForTest("151113102019.12")), types.KindMysqlDecimal, "1447410019.12"},          // YYMMDDHHMMSS
 		{7, types.NewDecimalDatum(types.NewDecFromStringForTest("151113102019.1234567")), types.KindMysqlDecimal, "1447410019.123457"}, // YYMMDDHHMMSS
 		{0, types.NewIntDatum(20151113102019), types.KindInt64, "1447410019"},                                                          // YYYYMMDDHHMMSS
-		// TODO: for string literal inputs as below, fsp should be based on user input.
-		{0, types.NewStringDatum("2015-11-13 10:20:19"), types.KindMysqlDecimal, "1447410019.000000"},
-		{0, types.NewStringDatum("2015-11-13 10:20:19.012"), types.KindMysqlDecimal, "1447410019.012000"},
-		{0, types.NewStringDatum("1970-01-01 00:00:00"), types.KindMysqlDecimal, "0.000000"},                 // Min timestamp
+		{0, types.NewStringDatum("2015-11-13 10:20:19"), types.KindInt64, "1447410019"},
+		{0, types.NewStringDatum("2015-11-13 10:20:19.012"), types.KindMysqlDecimal, "1447410019.012"},
+		{0, types.NewStringDatum("1970-01-01 00:00:00"), types.KindInt64, "0"},                               // Min timestamp
 		{0, types.NewStringDatum("2038-01-19 03:14:07.999999"), types.KindMysqlDecimal, "2147483647.999999"}, // Max timestamp
-		{0, types.NewStringDatum("2017-00-02"), types.KindMysqlDecimal, "0"},                                 // Invalid date
+		{0, types.NewStringDatum("2017-00-02"), types.KindInt64, "0"},                                        // Invalid date
 		{0, types.NewStringDatum("1969-12-31 23:59:59.999999"), types.KindMysqlDecimal, "0"},                 // Invalid timestamp
-		{0, types.NewStringDatum("2038-01-19 03:14:08"), types.KindMysqlDecimal, "0"},                        // Invalid timestamp
+		{0, types.NewStringDatum("2038-01-19 03:14:08"), types.KindInt64, "0"},                               // Invalid timestamp
 		// Below tests irregular inputs.
 		{0, types.NewIntDatum(0), types.KindInt64, "0"},
 		{0, types.NewIntDatum(-1), types.KindInt64, "0"},
