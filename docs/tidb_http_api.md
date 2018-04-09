@@ -43,11 +43,6 @@
     ```shell
     curl http://{TiDBIP}:10080/schema/{db}
     ```
-1. Get All DDL Job History
-
-    ```shell
-    curl http://{TiDBIP}:10080/ddl/history
-    ```
 
 1. Get schema Information about db.table, and you can get schema info by tableID (tableID is the **unique** identifier of table in TiDB)
 
@@ -109,3 +104,9 @@ timezone.*
     curl http://{TiDBIP}:10080/tables/{colID}/{colFlag}/{colLen}?rowBin={val}
     ```
     *Hint: For the column which field type is timezone dependent, e.g. `timestamp`, convert its value to UTC timezone.*
+
+1. Get All DDL Jobs History Information
+
+    ```shell
+    curl http://{TiDBIP}:10080/ddl/history
+    ```

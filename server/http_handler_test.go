@@ -28,9 +28,13 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
@@ -551,9 +555,16 @@ func (ts *HTTPHandlerTestSuite) TestAllHistory(c *C) {
 	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:10090/ddl/history"))
 	c.Assert(err, IsNil)
 	decoder := json.NewDecoder(resp.Body)
+
 	var jobs []*model.Job
-	data, _ := ts.server.newTikvHandlerTool().GetAllHistory()
+	s, _ := session.CreateSession(ts.server.newTikvHandlerTool().store.(kv.Storage))
+	store := domain.GetDomain(s.(sessionctx.Context)).Store()
+	txn, _ := store.Begin()
+	tt := meta.NewMeta(txn)
+	tt.GetAllHistoryDDLJobs()
+	data, _ := tt.GetAllHistoryDDLJobs()
 	err = decoder.Decode(&jobs)
+
 	c.Assert(err, IsNil)
 	c.Assert(jobs, DeepEquals, data)
 }
