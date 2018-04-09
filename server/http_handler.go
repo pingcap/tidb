@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -273,6 +274,25 @@ func (t *tikvHandlerTool) handleMvccGetByHex(params map[string]string) (interfac
 	return t.getMvccByEncodedKey(encodedKey)
 }
 
+func (t *tikvHandlerTool) GetAllHistory() ([]*model.Job, error) {
+	session, err := session.CreateSession(t.store.(kv.Storage))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	store := domain.GetDomain(session.(sessionctx.Context)).Store()
+	txn, err := store.Begin()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	tt := meta.NewMeta(txn)
+
+	jobs, err := tt.GetAllHistoryDDLJobs()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return jobs, nil
+}
+
 // settingsHandler is the handler for list tidb server settings.
 type settingsHandler struct {
 }
@@ -292,6 +312,11 @@ type regionHandler struct {
 type tableHandler struct {
 	*tikvHandlerTool
 	op string
+}
+
+// histryHandler is the handler for list job histry.
+type histryHandler struct {
+	*tikvHandlerTool
 }
 
 // valueHandle is the handler for get value.
@@ -574,6 +599,16 @@ func (h tableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	default:
 		writeError(w, errors.New("method not found"))
 	}
+}
+
+// ServeHTTP handles request of list tidb server settings.
+func (h histryHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	jobs, err := h.GetAllHistory()
+	if err != nil {
+		writeError(w, errors.New("ddl history not found"))
+	}
+	writeData(w, jobs)
+	return
 }
 
 func (h tableHandler) handleRegionRequest(schema infoschema.InfoSchema, tbl table.Table, w http.ResponseWriter, req *http.Request) {

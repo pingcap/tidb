@@ -43,6 +43,11 @@
     ```shell
     curl http://{TiDBIP}:10080/schema/{db}
     ```
+1. Get All DDL History
+
+    ```shell
+    curl http://{TiDBIP}:10080/ddl/history
+    ```
 
 1. Get schema Information about db.table, and you can get schema info by tableID (tableID is the **unique** identifier of table in TiDB)
 

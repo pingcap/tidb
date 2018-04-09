@@ -543,3 +543,17 @@ func (ts *HTTPHandlerTestSuite) TestGetSchema(c *C) {
 	_, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/schema/tidb/abc"))
 	c.Assert(err, IsNil)
 }
+
+func (ts *HTTPHandlerTestSuite) TestAllHistory(c *C) {
+	ts.startServer(c)
+	ts.prepareData(c)
+	defer ts.stopServer(c)
+	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:10090/ddl/history"))
+	c.Assert(err, IsNil)
+	decoder := json.NewDecoder(resp.Body)
+	var jobs []*model.Job
+	data, _ := ts.server.newTikvHandlerTool().GetAllHistory()
+	err = decoder.Decode(&jobs)
+	c.Assert(err, IsNil)
+	c.Assert(jobs, DeepEquals, data)
+}
