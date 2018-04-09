@@ -52,8 +52,8 @@ type GrantExec struct {
 	done bool
 }
 
-// NextChunk implements the Executor NextChunk interface.
-func (e *GrantExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+// Next implements the Executor Next interface.
+func (e *GrantExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if e.done {
 		return nil
 	}

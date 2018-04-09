@@ -51,7 +51,7 @@ import (
 
 const (
 	// waitForCleanDataRound indicates how many times should we check data is cleaned or not.
-	waitForCleanDataRound = 60
+	waitForCleanDataRound = 150
 	// waitForCleanDataInterval is a min duration between 2 check for data clean.
 	waitForCleanDataInterval = time.Millisecond * 100
 )
@@ -736,6 +736,7 @@ LOOP:
 }
 
 func checkDelRangeDone(c *C, ctx sessionctx.Context, idx table.Index) {
+	startTime := time.Now()
 	f := func() map[int64]struct{} {
 		handles := make(map[int64]struct{})
 
@@ -767,7 +768,7 @@ func checkDelRangeDone(c *C, ctx sessionctx.Context, idx table.Index) {
 			break
 		}
 	}
-	c.Assert(handles, HasLen, 0)
+	c.Assert(handles, HasLen, 0, Commentf("take time %v", time.Since(startTime)))
 }
 
 func (s *testDBSuite) TestAddIndexWithDupCols(c *C) {

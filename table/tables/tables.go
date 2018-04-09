@@ -506,14 +506,24 @@ func (t *Table) RowWithCols(ctx sessionctx.Context, h int64, cols []*table.Colum
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	// Decode raw row data.
+	v, err := DecodeRawRowData(ctx, t.Meta(), h, cols, value)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return v, nil
+}
+
+// DecodeRawRowData decodes raw row data to a datum row.
+func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h int64, cols []*table.Column,
+	value []byte) ([]types.Datum,
+	error) {
 	v := make([]types.Datum, len(cols))
 	colTps := make(map[int64]*types.FieldType, len(cols))
 	for i, col := range cols {
 		if col == nil {
 			continue
 		}
-		if col.IsPKHandleColumn(t.meta) {
+		if col.IsPKHandleColumn(meta) {
 			if mysql.HasUnsignedFlag(col.Flag) {
 				v[i].SetUint64(uint64(h))
 			} else {
@@ -532,7 +542,7 @@ func (t *Table) RowWithCols(ctx sessionctx.Context, h int64, cols []*table.Colum
 		if col == nil {
 			continue
 		}
-		if col.IsPKHandleColumn(t.meta) {
+		if col.IsPKHandleColumn(meta) {
 			continue
 		}
 		ri, ok := rowMap[col.ID]
@@ -837,12 +847,16 @@ func (t *Table) getMutation(ctx sessionctx.Context) *binlog.TableMutation {
 	return ctx.StmtGetMutation(t.ID)
 }
 
-// canSkip is for these cases, we can skip the columns in encoded row:
+func (t *Table) canSkip(col *table.Column, value types.Datum) bool {
+	return CanSkip(t.Meta(), col, value)
+}
+
+// CanSkip is for these cases, we can skip the columns in encoded row:
 // 1. the column is included in primary key;
 // 2. the column's default value is null, and the value equals to that;
 // 3. the column is virtual generated.
-func (t *Table) canSkip(col *table.Column, value types.Datum) bool {
-	if col.IsPKHandleColumn(t.meta) {
+func CanSkip(info *model.TableInfo, col *table.Column, value types.Datum) bool {
+	if col.IsPKHandleColumn(info) {
 		return true
 	}
 	if col.DefaultValue == nil && value.IsNull() {

@@ -111,18 +111,18 @@ func (p *mockBinlogPump) PullBinlogs(ctx context.Context, in *binlog.PullBinlogR
 }
 
 func (s *testSessionSuite) TestForCoverage(c *C) {
-	planCache := plan.PlanCacheEnabled
 	plan.GlobalPlanCache = kvcache.NewShardedLRUCache(2, 1)
-	defer func() {
-		plan.PlanCacheEnabled = planCache
-	}()
 
 	// Just for test coverage.
 	tk := testkit.NewTestKitWithInit(c, s.store)
+	planCache := tk.Se.GetSessionVars().PlanCacheEnabled
+	defer func() {
+		tk.Se.GetSessionVars().PlanCacheEnabled = planCache
+	}()
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int auto_increment, v int, index (id))")
 	tk.MustExec("insert t values ()")
-	plan.PlanCacheEnabled = true
+	tk.Se.GetSessionVars().PlanCacheEnabled = true
 	tk.MustExec("insert t values ()")
 	tk.MustExec("insert t values ()")
 
@@ -934,7 +934,7 @@ func (s *testSessionSuite) TestResultType(c *C) {
 	rs, err := tk.Exec(`select cast(null as char(30))`)
 	c.Assert(err, IsNil)
 	chk := rs.NewChunk()
-	err = rs.NextChunk(context.Background(), chk)
+	err = rs.Next(context.Background(), chk)
 	c.Assert(err, IsNil)
 	c.Assert(chk.GetRow(0).IsNull(0), IsTrue)
 	c.Assert(rs.Fields()[0].Column.FieldType.Tp, Equals, mysql.TypeVarString)
@@ -1332,10 +1332,11 @@ func (s *testSessionSuite) TestIssue986(c *C) {
 	tk.MustExec(`insert into address values ('10')`)
 }
 
-func (s *testSessionSuite) TestIssue1089(c *C) {
+func (s *testSessionSuite) TestCast(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustQuery("select cast(0.5 as unsigned)")
 	tk.MustQuery("select cast(-0.5 as signed)")
+	tk.MustQuery("select hex(cast(0x10 as binary(2)))").Check(testkit.Rows("1000"))
 }
 
 func (s *testSessionSuite) TestTableInfoMeta(c *C) {
@@ -1655,7 +1656,7 @@ func (s *testSchemaSuite) TestTableReaderChunk(c *C) {
 	var count int
 	var numChunks int
 	for {
-		err = rs.NextChunk(context.TODO(), chk)
+		err = rs.Next(context.TODO(), chk)
 		c.Assert(err, IsNil)
 		numRows := chk.NumRows()
 		if numRows == 0 {
@@ -1688,7 +1689,7 @@ func (s *testSchemaSuite) TestInsertExecChunk(c *C) {
 	var idx int
 	for {
 		chk := rs.NewChunk()
-		err = rs.NextChunk(context.TODO(), chk)
+		err = rs.Next(context.TODO(), chk)
 		c.Assert(err, IsNil)
 		if chk.NumRows() == 0 {
 			break
@@ -1722,7 +1723,7 @@ func (s *testSchemaSuite) TestUpdateExecChunk(c *C) {
 	var idx int
 	for {
 		chk := rs.NewChunk()
-		err = rs.NextChunk(context.TODO(), chk)
+		err = rs.Next(context.TODO(), chk)
 		c.Assert(err, IsNil)
 		if chk.NumRows() == 0 {
 			break
@@ -1757,7 +1758,7 @@ func (s *testSchemaSuite) TestDeleteExecChunk(c *C) {
 	c.Assert(err, IsNil)
 
 	chk := rs.NewChunk()
-	err = rs.NextChunk(context.TODO(), chk)
+	err = rs.Next(context.TODO(), chk)
 	c.Assert(err, IsNil)
 	c.Assert(chk.NumRows(), Equals, 1)
 
@@ -1789,7 +1790,7 @@ func (s *testSchemaSuite) TestDeleteMultiTableExecChunk(c *C) {
 	var idx int
 	for {
 		chk := rs.NewChunk()
-		err = rs.NextChunk(context.TODO(), chk)
+		err = rs.Next(context.TODO(), chk)
 		c.Assert(err, IsNil)
 
 		if chk.NumRows() == 0 {
@@ -1809,7 +1810,7 @@ func (s *testSchemaSuite) TestDeleteMultiTableExecChunk(c *C) {
 	c.Assert(err, IsNil)
 
 	chk := rs.NewChunk()
-	err = rs.NextChunk(context.TODO(), chk)
+	err = rs.Next(context.TODO(), chk)
 	c.Assert(err, IsNil)
 	c.Assert(chk.NumRows(), Equals, 0)
 	rs.Close()
@@ -1834,7 +1835,7 @@ func (s *testSchemaSuite) TestIndexLookUpReaderChunk(c *C) {
 	chk := rs.NewChunk()
 	var count int
 	for {
-		err = rs.NextChunk(context.TODO(), chk)
+		err = rs.Next(context.TODO(), chk)
 		c.Assert(err, IsNil)
 		numRows := chk.NumRows()
 		if numRows == 0 {
@@ -1854,7 +1855,7 @@ func (s *testSchemaSuite) TestIndexLookUpReaderChunk(c *C) {
 	chk = rs.NewChunk()
 	count = 0
 	for {
-		err = rs.NextChunk(context.TODO(), chk)
+		err = rs.Next(context.TODO(), chk)
 		c.Assert(err, IsNil)
 		numRows := chk.NumRows()
 		if numRows == 0 {
@@ -1974,6 +1975,30 @@ func (s *testSessionSuite) TestRollbackOnCompileError(c *C) {
 		}
 	}
 	c.Assert(recoverErr, IsTrue)
+}
+
+func (s *testSessionSuite) TestSetTransactionIsolationOneShot(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t (k int, v int)")
+	tk.MustExec("insert t values (1, 42)")
+	tk.MustExec("set transaction isolation level read committed")
+
+	// Check isolation level is set to read committed.
+	ctx := context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
+		c.Assert(req.IsolationLevel, Equals, kv.RC)
+	})
+	tk.Se.Execute(ctx, "select * from t where k = 1")
+
+	// Check it just take effect for one time.
+	ctx = context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
+		c.Assert(req.IsolationLevel, Equals, kv.SI)
+	})
+	tk.Se.Execute(ctx, "select * from t where k = 1")
+
+	// Can't change isolation level when it's inside a transaction.
+	tk.MustExec("begin")
+	_, err := tk.Se.Execute(ctx, "set transaction isolation level read committed")
+	c.Assert(err, NotNil)
 }
 
 func (s *testSessionSuite) TestDBUserNameLength(c *C) {

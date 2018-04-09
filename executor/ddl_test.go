@@ -68,7 +68,7 @@ func (s *testSuite) TestCreateTable(c *C) {
 	chk := rs.NewChunk()
 	it := chunk.NewIterator4Chunk(chk)
 	for {
-		err1 := rs.NextChunk(ctx, chk)
+		err1 := rs.Next(ctx, chk)
 		c.Assert(err1, IsNil)
 		if chk.NumRows() == 0 {
 			break
@@ -82,7 +82,7 @@ func (s *testSuite) TestCreateTable(c *C) {
 	chk = rs.NewChunk()
 	it = chunk.NewIterator4Chunk(chk)
 	for {
-		err1 := rs.NextChunk(ctx, chk)
+		err1 := rs.Next(ctx, chk)
 		c.Assert(err1, IsNil)
 		if chk.NumRows() == 0 {
 			break
@@ -156,7 +156,7 @@ func (s *testSuite) TestAlterTableAddColumn(c *C) {
 	r, err := tk.Exec("select c2 from alter_test")
 	c.Assert(err, IsNil)
 	chk := r.NewChunk()
-	err = r.NextChunk(context.Background(), chk)
+	err = r.Next(context.Background(), chk)
 	c.Assert(err, IsNil)
 	row := chk.GetRow(0)
 	c.Assert(row.Len(), Equals, 1)
