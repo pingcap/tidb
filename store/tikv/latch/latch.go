@@ -25,9 +25,10 @@ import (
 
 // Latch stores a key's waiting transactions
 type Latch struct {
+	// A queue by startTs of those waiting transactions
 	waiting      []uint64
 	lastCommitTs uint64
-	lock         sync.Mutex
+	sync.Mutex
 }
 
 // acquire tries to get current key's lock for the transaction with startTs
@@ -35,8 +36,8 @@ type Latch struct {
 // timeout is true when the startTs is already timeout
 // newWait is true when current transaction is new for the current latch
 func (l *Latch) acquire(startTs uint64) (acquire, timeout, newWait bool) {
-	l.lock.Lock()
-	defer l.lock.Unlock()
+	l.Lock()
+	defer l.Unlock()
 	timeout = startTs <= l.lastCommitTs
 	if timeout {
 		return
@@ -54,10 +55,10 @@ func (l *Latch) acquire(startTs uint64) (acquire, timeout, newWait bool) {
 // isEmpty is true when the waiting queue is empty after release current transaction,
 // otherwise return the front transaction in queue.
 func (l *Latch) release(startTs uint64, commitTs uint64) (isEmpty bool, front uint64) {
-	l.lock.Lock()
-	defer l.lock.Unlock()
+	l.Lock()
+	defer l.Unlock()
 	if startTs != l.waiting[0] {
-		panic(fmt.Sprintf("invalid front ts %v, latch:%+v", startTs, l))
+		panic(fmt.Sprintf("invalid front ts %d, latch:%+v", startTs, l))
 	}
 	// for rollback or timeout, the commitTs maybe zero
 	if commitTs > l.lastCommitTs {
@@ -65,25 +66,12 @@ func (l *Latch) release(startTs uint64, commitTs uint64) (isEmpty bool, front ui
 	}
 	l.waiting = l.waiting[1:]
 	if len(l.waiting) == 0 {
-		// Should we reset the lastCommitTs since next key
-		// may different from current key?
-		// l.lastCommitTs = 0
 		isEmpty = true
 	} else {
 		front = l.waiting[0]
 		isEmpty = false
 	}
 	return
-}
-
-// try append startTs into latch, return false
-// when startTs is already timeout
-func (l *Latch) append(startTs uint64) bool {
-	if startTs <= l.lastCommitTs {
-		return false
-	}
-	l.waiting = append(l.waiting, startTs)
-	return true
 }
 
 // Lock is the locks' information required for a transaction
@@ -111,23 +99,17 @@ func NewLock(startTs uint64, requiredSlots []int) Lock {
 // Latches which are used for concurrency control
 // Each latch is indexed by a slit ID, hence the term latch and slot are used in interchangeable,
 // but conceptually a latch is a queue, and a slot is an index to the queue
-type Latches struct {
-	slots []Latch
-	size  int
-}
+type Latches []Latch
 
 // NewLatches the size will be rounded up to the power of 2
 func NewLatches(size int) Latches {
-	powerOfTwoSize := int(math.Pow(2, math.Ceil(math.Log2(float64(size)))))
-	slots := make([]Latch, powerOfTwoSize, powerOfTwoSize)
-	return Latches{
-		slots: slots,
-		size:  powerOfTwoSize,
-	}
+	powerOfTwoSize := 1 << uint(math.Ceil(math.Log2(float64(size))))
+	latches := make([]Latch, powerOfTwoSize, powerOfTwoSize)
+	return latches
 }
 
 // GenLock generates Lock for the transaction with startTs and keys
-func (latches *Latches) GenLock(startTs uint64, keys [][]byte) Lock {
+func (latches Latches) GenLock(startTs uint64, keys [][]byte) Lock {
 	hashes := make(map[int]bool)
 	for _, key := range keys {
 		hashes[latches.hash(key)] = true
@@ -141,13 +123,13 @@ func (latches *Latches) GenLock(startTs uint64, keys [][]byte) Lock {
 }
 
 // return hash int for current key
-func (latches *Latches) hash(key []byte) int {
+func (latches Latches) hash(key []byte) int {
 	h := murmur3.New32()
 	_, err := h.Write(key)
 	if err != nil {
 		log.Warn("hash key %v failed with err:%+v", key, err)
 	}
-	return int(h.Sum32()) & (latches.size - 1)
+	return int(h.Sum32()) & (len(latches) - 1)
 }
 
 // Acquire tries to acquire the lock for a transaction
@@ -155,11 +137,11 @@ func (latches *Latches) hash(key []byte) int {
 // when the lock.startTs is smaller than any key's last commitTs).
 // It returns with acquired = true when acquire success and the transaction
 // is ready to 2PC
-func (latches *Latches) Acquire(lock *Lock) (acquired, timeout bool) {
+func (latches Latches) Acquire(lock *Lock) (acquired, timeout bool) {
 	var newWait bool
 	for lock.acquiredCount < len(lock.requiredSlots) {
 		slotID := lock.requiredSlots[lock.acquiredCount]
-		acquired, timeout, newWait = latches.slots[slotID].acquire(lock.startTs)
+		acquired, timeout, newWait = latches[slotID].acquire(lock.startTs)
 		if newWait {
 			lock.waitedCount++
 		}
@@ -173,11 +155,11 @@ func (latches *Latches) Acquire(lock *Lock) (acquired, timeout bool) {
 
 // Release releases all latches owned by the `lock` and returns the wakeup list.
 // Preconditions: the caller must ensure the transaction is at the front of the latches.
-func (latches *Latches) Release(lock *Lock, commitTs uint64) (wakeupList []uint64) {
+func (latches Latches) Release(lock *Lock, commitTs uint64) (wakeupList []uint64) {
 	wakeupList = make([]uint64, 0, lock.waitedCount)
 	for id := 0; id < lock.waitedCount; id++ {
 		slotID := lock.requiredSlots[id]
-		isEmpty, front := latches.slots[slotID].release(lock.startTs, commitTs)
+		isEmpty, front := latches[slotID].release(lock.startTs, commitTs)
 		if !isEmpty {
 			wakeupList = append(wakeupList, front)
 		}
