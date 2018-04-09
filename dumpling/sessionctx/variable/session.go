@@ -192,6 +192,9 @@ type SessionVars struct {
 	// PlanID is the unique id of logical and physical plan.
 	PlanID int
 
+	// PlanCacheEnabled stores the global config "plan-cache-enabled", and it will be only updated in tests.
+	PlanCacheEnabled bool
+
 	// User is the user identity with which the session login.
 	User *auth.UserIdentity
 
@@ -349,6 +352,7 @@ func NewSessionVars() *SessionVars {
 	} else {
 		enableStreaming = "0"
 	}
+	vars.PlanCacheEnabled = config.GetGlobalConfig().PlanCache.Enabled
 	terror.Log(vars.SetSystemVar(TiDBEnableStreaming, enableStreaming))
 	return vars
 }
