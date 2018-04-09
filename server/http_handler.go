@@ -279,6 +279,7 @@ func (t *tikvHandlerTool) GetAllHistory() ([]*model.Job, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
 	store := domain.GetDomain(session.(sessionctx.Context)).Store()
 	txn, err := store.Begin()
 	if err != nil {
@@ -314,8 +315,8 @@ type tableHandler struct {
 	op string
 }
 
-// histryHandler is the handler for list job histry.
-type histryHandler struct {
+// historyHandler is the handler for list job histry.
+type historyHandler struct {
 	*tikvHandlerTool
 }
 
@@ -602,7 +603,7 @@ func (h tableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 }
 
 // ServeHTTP handles request of list tidb server settings.
-func (h histryHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func (h historyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	jobs, err := h.GetAllHistory()
 	if err != nil {
 		writeError(w, errors.New("ddl history not found"))
