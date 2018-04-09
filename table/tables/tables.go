@@ -244,13 +244,13 @@ func (t *Table) UpdateRecord(ctx sessionctx.Context, h int64, oldData, newData [
 		var value types.Datum
 		if col.State != model.StatePublic {
 			// If col is in write only or write reorganization state we should keep the oldData.
-			// Because the oldData must be the orignal data(it's changed by other TiDBs.) or the orignal default value.
+			// Because the oldData must be the original data (it's changed by other TiDBs.) or the original default value.
 			// TODO: Use newData directly.
 			value = oldData[col.Offset]
 		} else {
 			value = newData[col.Offset]
 		}
-		if !t.canSkip(col, value) {
+		if !CanSkip(t.Meta(), col, value) {
 			colIDs = append(colIDs, col.ID)
 			row = append(row, value)
 		}
@@ -403,7 +403,7 @@ func (t *Table) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleChe
 		} else {
 			value = r[col.Offset]
 		}
-		if !t.canSkip(col, value) {
+		if !CanSkip(t.Meta(), col, value) {
 			colIDs = append(colIDs, col.ID)
 			row = append(row, value)
 		}
@@ -845,10 +845,6 @@ func shouldWriteBinlog(ctx sessionctx.Context) bool {
 
 func (t *Table) getMutation(ctx sessionctx.Context) *binlog.TableMutation {
 	return ctx.StmtGetMutation(t.ID)
-}
-
-func (t *Table) canSkip(col *table.Column, value types.Datum) bool {
-	return CanSkip(t.Meta(), col, value)
 }
 
 // CanSkip is for these cases, we can skip the columns in encoded row:
