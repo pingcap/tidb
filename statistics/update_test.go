@@ -397,7 +397,7 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
-	testKit.MustExec("create table t (a int, b int, primary key(a), index idx(b))")
+	testKit.MustExec("create table t (a bigint(64), b bigint(64), primary key(a), index idx(b))")
 	testKit.MustExec("insert into t values (1,2),(2,2),(4,5)")
 	testKit.MustExec("analyze table t")
 	testKit.MustExec("insert into t values (3,4)")

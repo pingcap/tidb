@@ -147,10 +147,10 @@ func (q *QueryFeedback) Update(startKey kv.Key, counts []int64) {
 		return
 	}
 
-	if q.hist.tp.Tp == mysql.TypeLong {
-		startKey = tablecodec.CutRowKeyPrefix(startKey)
-	} else {
+	if q.hist.tp.Tp == mysql.TypeBlob {
 		startKey = tablecodec.CutIndexPrefix(startKey)
+	} else {
+		startKey = tablecodec.CutRowKeyPrefix(startKey)
 	}
 	// Find the range that startKey falls in.
 	idx := sort.Search(len(q.feedback), func(i int) bool {
@@ -539,13 +539,13 @@ func encodeIndexFeedback(q *QueryFeedback) *queryFeedback {
 func encodeFeedback(q *QueryFeedback) ([]byte, error) {
 	var pb *queryFeedback
 	var err error
-	if q.hist.tp.Tp == mysql.TypeLong {
+	if q.hist.tp.Tp == mysql.TypeBlob {
+		pb = encodeIndexFeedback(q)
+	} else {
 		pb, err = encodePKFeedback(q)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-	} else {
-		pb = encodeIndexFeedback(q)
 	}
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)

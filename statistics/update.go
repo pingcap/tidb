@@ -213,10 +213,10 @@ func (h *Handle) dumpFeedbackToKV(fb *QueryFeedback) error {
 		return nil
 	}
 	var isIndex int64
-	if fb.hist.tp.Tp == mysql.TypeLong {
-		isIndex = 0
-	} else {
+	if fb.hist.tp.Tp == mysql.TypeBlob {
 		isIndex = 1
+	} else {
+		isIndex = 0
 	}
 	sql := fmt.Sprintf("insert into mysql.stats_feedback (table_id, hist_id, is_index, feedback) values "+
 		"(%d, %d, %d, X'%X')", fb.tableID, fb.hist.ID, isIndex, vals)
