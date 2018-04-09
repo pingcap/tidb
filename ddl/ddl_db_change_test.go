@@ -294,7 +294,7 @@ type sqlWithErr struct {
 
 func (s *testStateChangeSuite) TestWriteOnlyOnDupUpdate(c *C) {
 	sqls := make([]sqlWithErr, 1)
-	sqls[3] = sqlWithErr{"insert t set c1 = 'c1_dup', c3 = '2018-02-12', c4 = 2 on duplicate key update c1 = values(c1)", nil}
+	sqls[0] = sqlWithErr{"insert t set c1 = 'c1_dup', c3 = '2018-02-12', c4 = 2 on duplicate key update c1 = values(c1)", nil}
 	addColumnSQL := "alter table t add column a int not null default 1 after c4"
 	s.runTestInSchemaState(c, model.StateWriteOnly, "", addColumnSQL, sqls)
 }
