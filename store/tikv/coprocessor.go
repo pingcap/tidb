@@ -382,7 +382,7 @@ type copIterator struct {
 	wg       sync.WaitGroup
 }
 
-// copIteratorWorker receive tasks from copIteratorTaskSender and handle tasks, sent the copResponse to respChan.
+// copIteratorWorker receive tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
 type copIteratorWorker struct {
 	taskCh   <-chan *copTask
 	wg       *sync.WaitGroup
