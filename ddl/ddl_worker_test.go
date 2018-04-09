@@ -180,15 +180,12 @@ func (s *testDDLSuite) TestCleanJobs(c *C) {
 	changeJobState() // convert to delete only
 	changeJobState() // convert to write only
 	changeJobState() // convert to write reorg
-	writeReorgTbl, err := getCurrentTable(d, dbInfo.ID, tblInfo.ID)
-	c.Assert(err, IsNil)
 
-	err = d.Stop()
+	err := d.Stop()
 	c.Assert(err, IsNil)
 	// Make sure shouldCleanJobs is ture.
 	d = testNewDDL(context.Background(), nil, store, nil, nil, testLease)
 	defer d.Stop()
-	testCreateIndex(c, ctx, d, dbInfo, writeReorgTbl.Meta(), false, "idx_normal", "c2")
 
 	// Make sure all DDL jobs are done.
 	for {
@@ -197,7 +194,10 @@ func (s *testDDLSuite) TestCleanJobs(c *C) {
 			t := meta.NewMeta(txn)
 			len, err := t.DDLJobQueueLen()
 			c.Assert(err, IsNil)
-			if len == 0 {
+			t.SetJobListKey(meta.AddIndexJobListKey)
+			addIndexLen, err := t.DDLJobQueueLen()
+			c.Assert(err, IsNil)
+			if len == 0 && addIndexLen == 0 {
 				isAllJobDone = true
 			}
 			return nil
@@ -214,7 +214,7 @@ func (s *testDDLSuite) TestCleanJobs(c *C) {
 		for i, id := range failedJobIDs {
 			historyJob, err := t.GetHistoryDDLJob(id)
 			c.Assert(err, IsNil)
-			c.Assert(historyJob, NotNil)
+			c.Assert(historyJob, NotNil, Commentf("job %v", historyJob))
 			if i == 0 {
 				c.Assert(historyJob.State, Equals, model.JobStateCancelled)
 			} else {
