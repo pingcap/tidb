@@ -1112,7 +1112,7 @@ func (e *InsertExec) updateDupRow(keys []keyWithDupError, k keyWithDupError, val
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// Fill write-only columns with originDefaultValue if not found in oldValue is null.
+	// Fill write-only and write-reorg columns with originDefaultValue if not found in oldValue.
 	for _, col := range cols {
 		if col.State != model.StatePublic && oldRow[col.Offset].IsNull() {
 			_, found := oldRowMap[col.ID]
