@@ -155,6 +155,7 @@ func Compile(ctx context.Context, sctx sessionctx.Context, stmtNode ast.StmtNode
 
 // runStmt executes the ast.Statement and commit or rollback the current transaction.
 func runStmt(ctx context.Context, sctx sessionctx.Context, s ast.Statement) (ast.RecordSet, error) {
+	log.Infof("++++++++++++++++++++++++++++++ ..., s %v", s.OriginText())
 	span, ctx1 := opentracing.StartSpanFromContext(ctx, "runStmt")
 	span.LogKV("sql", s.OriginText())
 	defer span.Finish()

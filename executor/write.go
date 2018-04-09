@@ -139,6 +139,11 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		if err != nil {
 			return false, errors.Trace(err)
 		}
+
+		for i, c := range t.WritableCols() {
+			log.Warnf("no.%v c %v, data %v", i, c, newData[i])
+		}
+
 		_, err = t.AddRecord(ctx, newData, skipHandleCheck)
 	} else {
 		// Update record to new value and update index.

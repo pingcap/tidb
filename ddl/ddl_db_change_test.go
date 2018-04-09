@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/ast"
@@ -296,9 +297,18 @@ func (s *testStateChangeSuite) TestWriteOnly(c *C) {
 	sqls := make([]sqlWithErr, 3)
 	sqls[0] = sqlWithErr{"delete from t where c1 = 'a'", nil}
 	sqls[1] = sqlWithErr{"update t use index(idx2) set c1 = 'c1_update' where c1 = 'a'", nil}
-	sqls[0] = sqlWithErr{"insert t set c1 = 'c1_insert', c3 = '2018-02-12', c4 = 1", nil}
-	addColumnSQL := "alter table t add column a int not null default 1 first"
-	s.runTestInSchemaState(c, model.StateWriteOnly, "", addColumnSQL, sqls)
+	sqls[2] = sqlWithErr{"insert t set c1 = 'c1_insert', c3 = '2018-02-12', c4 = 1", nil}
+	addColumnSQL := "alter table t add column a int not null default 2 first"
+	s.runTestInSchemaState(c, model.StateWriteReorganization, "", addColumnSQL, sqls)
+}
+
+// TestWriteReorg ...
+// TODO: finish comments.
+func (s *testStateChangeSuite) TestWriteReorg(c *C) {
+	sqls := make([]sqlWithErr, 1)
+	sqls[0] = sqlWithErr{"insert t (c4) values (8) on duplicate key update c4=5", nil}
+	addColumnSQL := "alter table t add column a int not null default 2 first"
+	s.runTestInSchemaState(c, model.StateWriteReorganization, "", addColumnSQL, sqls)
 }
 
 // TestDeletaOnly tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
@@ -343,8 +353,11 @@ func (s *testStateChangeSuite) runTestInSchemaState(c *C, state model.SchemaStat
 		if job.SchemaState != state {
 			return
 		}
+		log.Warning("...............................")
 		for _, sqlWithErr := range sqlWithErrs {
+			log.Errorf("...............................")
 			_, err = se.Execute(context.Background(), sqlWithErr.sql)
+			log.Errorf("............................... end")
 			if !terror.ErrorEqual(err, sqlWithErr.expectErr) {
 				checkErr = err
 				break
@@ -353,11 +366,22 @@ func (s *testStateChangeSuite) runTestInSchemaState(c *C, state model.SchemaStat
 	}
 	d := s.dom.DDL()
 	d.SetHook(callback)
+	log.Errorf("...............................0")
 	_, err = s.se.Execute(context.Background(), alterTableSQL)
 	c.Assert(err, IsNil)
+	log.Errorf("...............................1")
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	callback = &ddl.TestDDLCallback{}
 	d.SetHook(callback)
+	if state == model.StateWriteReorganization {
+		rss, err := s.se.Execute(context.Background(), "select a from t")
+		c.Assert(err, IsNil)
+		rs := rss[0]
+		defer rs.Close()
+		val, err := rs.Next(context.Background())
+		c.Assert(err, IsNil)
+		c.Assert(val, DeepEquals, "", Commentf("val %v", val))
+	}
 }
 
 func (s *testStateChangeSuite) execQuery(tk *testkit.TestKit, sql string, args ...interface{}) (*testkit.Result, error) {
