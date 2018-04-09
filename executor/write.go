@@ -1107,9 +1107,19 @@ func (e *InsertExec) updateDupRow(keys []keyWithDupError, k keyWithDupError, val
 	if !ok {
 		return errors.NotFoundf("can not be duplicated row, due to old row not found. handle %d", oldHandle)
 	}
-	oldRow, err := tables.DecodeRawRowData(e.ctx, e.Table.Meta(), oldHandle, e.Table.WritableCols(), oldValue)
+	cols := e.Table.WritableCols()
+	oldRow, err := tables.DecodeRawRowData(e.ctx, e.Table.Meta(), oldHandle, cols, oldValue)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	// Fill write-only columns with originDefaultValue if value is null.
+	for _, col := range cols {
+		if col.State != model.StatePublic && oldRow[col.Offset].IsNull() {
+			oldRow[col.Offset], err = table.GetColOriginDefaultValue(e.ctx, col.ToInfo())
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
 	}
 
 	// Do update row.

@@ -1814,8 +1814,10 @@ func (s *testDBSuite) TestCharacterSetInColumns(c *C) {
 }
 
 func (s *testDBSuite) TestAddNotNullColumnWhileInsertOnDupUpdate(c *C) {
-	tk1 := testkit.NewTestKitWithInit(c, s.store)
-	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use " + s.schemaName)
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use " + s.schemaName)
 	closeCh := make(chan bool)
 	wg := new(sync.WaitGroup)
 	wg.Add(1)
