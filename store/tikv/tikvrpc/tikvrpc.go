@@ -82,6 +82,8 @@ func (t CmdType) String() string {
 		return "GC"
 	case CmdDeleteRange:
 		return "DeleteRange"
+	case CmdUnsafeCleanupRange:
+		return "UnsafeCleanupRange"
 	case CmdRawGet:
 		return "RawGet"
 	case CmdRawPut:
@@ -196,6 +198,8 @@ func SetContext(req *Request, region *metapb.Region, peer *metapb.Peer) error {
 		req.GC.Context = ctx
 	case CmdDeleteRange:
 		req.DeleteRange.Context = ctx
+	case CmdUnsafeCleanupRange:
+		req.UnsafeCleanupRange.Context = ctx
 	case CmdRawGet:
 		req.RawGet.Context = ctx
 	case CmdRawPut:
@@ -270,6 +274,10 @@ func GenRegionErrorResp(req *Request, e *errorpb.Error) (*Response, error) {
 		resp.DeleteRange = &kvrpcpb.DeleteRangeResponse{
 			RegionError: e,
 		}
+	case CmdUnsafeCleanupRange:
+		resp.UnsafeCleanupRange = &kvrpcpb.UnsafeCleanupRangeResponse{
+			RegionError: e,
+		}
 	case CmdRawGet:
 		resp.RawGet = &kvrpcpb.RawGetResponse{
 			RegionError: e,
@@ -340,6 +348,8 @@ func (resp *Response) GetRegionError() (*errorpb.Error, error) {
 		e = resp.GC.GetRegionError()
 	case CmdDeleteRange:
 		e = resp.DeleteRange.GetRegionError()
+	case CmdUnsafeCleanupRange:
+		e = resp.UnsafeCleanupRange.GetRegionError()
 	case CmdRawGet:
 		e = resp.RawGet.GetRegionError()
 	case CmdRawPut:
@@ -394,6 +404,8 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Resp
 		resp.GC, err = client.KvGC(ctx, req.GC)
 	case CmdDeleteRange:
 		resp.DeleteRange, err = client.KvDeleteRange(ctx, req.DeleteRange)
+	case CmdUnsafeCleanupRange:
+		resp.UnsafeCleanupRange, err = client.KvUnsafeCleanupRange(ctx, req.UnsafeCleanupRange)
 	case CmdRawGet:
 		resp.RawGet, err = client.RawGet(ctx, req.RawGet)
 	case CmdRawPut:
