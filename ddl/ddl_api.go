@@ -256,7 +256,8 @@ func checkColumnCantHaveDefaultValue(col *table.Column, value interface{}) (err 
 }
 
 func isExplicitTimeStamp() bool {
-	return strings.EqualFold(variable.GetSysVar("explicit_defaults_for_timestamp").Value, "ON")
+	// TODO: implement the behavior as MySQL when explicit_defaults_for_timestamp = off, then this function could return false.
+	return true
 }
 
 // columnDefToCol converts ColumnDef to Col and TableConstraints.
