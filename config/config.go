@@ -144,7 +144,6 @@ type Performance struct {
 	MaxProcs            uint    `toml:"max-procs" json:"max-procs"`
 	TCPKeepAlive        bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
 	RetryLimit          uint    `toml:"retry-limit" json:"retry-limit"`
-	JoinConcurrency     uint    `toml:"join-concurrency" json:"join-concurrency"`
 	CrossJoin           bool    `toml:"cross-join" json:"cross-join"`
 	StatsLease          string  `toml:"stats-lease" json:"stats-lease"`
 	RunAutoAnalyze      bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
@@ -250,7 +249,6 @@ var defaultConf = Config{
 	Performance: Performance{
 		TCPKeepAlive:        true,
 		RetryLimit:          10,
-		JoinConcurrency:     5,
 		CrossJoin:           true,
 		StatsLease:          "3s",
 		RunAutoAnalyze:      true,

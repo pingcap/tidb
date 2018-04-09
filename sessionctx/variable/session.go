@@ -15,6 +15,7 @@ package variable
 
 import (
 	"crypto/tls"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -268,6 +269,9 @@ type SessionVars struct {
 	// DistSQLScanConcurrency is the number of concurrent dist SQL scan worker.
 	DistSQLScanConcurrency int
 
+	// HashJoinConcurrency is the number of concurrent hash join outer worker.
+	HashJoinConcurrency int
+
 	// IndexSerialScanConcurrency is the number of concurrent index serial scan worker.
 	IndexSerialScanConcurrency int
 
@@ -406,6 +410,15 @@ func (s *SessionVars) GetStatusFlag(flag uint16) bool {
 	return s.Status&flag > 0
 }
 
+// GetHashJoinConcurrency gets the value of SessionVars.HashJoinConcurrency.
+func (s *SessionVars) GetHashJoinConcurrency() uint {
+	concurrency, err := strconv.Atoi(s.systems[TiDBHashJoinConcurrency])
+	if err != nil {
+		return uint(DefTiDBHashJoinConcurrency)
+	}
+	return uint(concurrency)
+}
+
 // InTxn returns if the session is in transaction.
 func (s *SessionVars) InTxn() bool {
 	return s.GetStatusFlag(mysql.ServerStatusInTrans)
@@ -505,6 +518,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.IndexJoinBatchSize = tidbOptPositiveInt(val, DefIndexJoinBatchSize)
 	case TiDBIndexLookupSize:
 		s.IndexLookupSize = tidbOptPositiveInt(val, DefIndexLookupSize)
+	case TiDBHashJoinConcurrency:
+		s.HashJoinConcurrency = tidbOptPositiveInt(val, DefTiDBHashJoinConcurrency)
 	case TiDBDistSQLScanConcurrency:
 		s.DistSQLScanConcurrency = tidbOptPositiveInt(val, DefDistSQLScanConcurrency)
 	case TiDBIndexSerialScanConcurrency:

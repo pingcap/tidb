@@ -26,10 +26,8 @@ package variable
 	8. Use this variable to control the behavior in code.
 */
 
-// TiDB system variable names.
+// TiDB session only system variable names.
 const (
-	/* Session only */
-
 	// tidb_snapshot is used for reading history data, the default value is empty string.
 	// When the value is set to a datetime string like '2017-11-11 20:20:20', the session reads history data of that time.
 	TiDBSnapshot = "tidb_snapshot"
@@ -38,7 +36,7 @@ const (
 	// When the value is set to true, unique index constraint is not checked.
 	TiDBImportingData = "tidb_import_data"
 
-	// tidb_opt_agg_push_down is used to endable/disable the optimizer rule of aggregation push down.
+	// tidb_opt_agg_push_down is used to enable/disable the optimizer rule of aggregation push down.
 	TiDBOptAggPushDown = "tidb_opt_agg_push_down"
 
 	// tidb_opt_insubquery_unfold is used to enable/disable the optimizer rule of in subquery unfold.
@@ -59,42 +57,6 @@ const (
 
 	// tidb_config is a read-only variable that shows the config of the current server.
 	TiDBConfig = "tidb_config"
-
-	/* Session and global */
-
-	// tidb_distsql_scan_concurrency is used to set the concurrency of a distsql scan task.
-	// A distsql scan task can be a table scan or a index scan, which may be distributed to many TiKV nodes.
-	// Higher concurrency may reduce latency, but with the cost of higher memory usage and system performance impact.
-	// If the query has a LIMIT clause, high concurrency makes the system do much more work than needed.
-	TiDBDistSQLScanConcurrency = "tidb_distsql_scan_concurrency"
-
-	// tidb_index_join_batch_size is used to set the batch size of a index lookup join.
-	// The index lookup join fetches batches of data from outer executor and constructs ranges for inner executor.
-	// This value controls how much of data in a batch to do the index join.
-	// Large value may reduce the latency but consumes more system resource.
-	TiDBIndexJoinBatchSize = "tidb_index_join_batch_size"
-
-	// tidb_index_lookup_size is used for index lookup executor.
-	// The index lookup executor first scan a batch of handles from a index, then use those handles to lookup the table
-	// rows, this value controls how much of handles in a batch to do a lookup task.
-	// Small value sends more RPCs to TiKV, consume more system resource.
-	// Large value may do more work than needed if the query has a limit.
-	TiDBIndexLookupSize = "tidb_index_lookup_size"
-
-	// tidb_index_lookup_concurrency is used for index lookup executor.
-	// A lookup task may have 'tidb_index_lookup_size' of handles at maximun, the handles may be distributed
-	// in many TiKV nodes, we executes multiple concurrent index lookup tasks concurrently to reduce the time
-	// waiting for a task to finish.
-	// Set this value higher may reduce the latency but consumes more system resource.
-	TiDBIndexLookupConcurrency = "tidb_index_lookup_concurrency"
-
-	// tidb_index_serial_scan_concurrency is used for controlling the concurrency of index scan operation
-	// when we need to keep the data output order the same as the order of index data.
-	TiDBIndexSerialScanConcurrency = "tidb_index_serial_scan_concurrency"
-
-	// tidb_skip_utf8_check skips the UTF8 validate process, validate UTF8 has performance cost, if we can make sure
-	// the input string values are valid, we can skip the check.
-	TiDBSkipUTF8Check = "tidb_skip_utf8_check"
 
 	// tidb_batch_insert is used to enable/disable auto-split insert data. If set this option on, insert executor will automatically
 	// insert data into multiple batches and use a single txn for each batch. This will be helpful when inserting large data.
@@ -138,6 +100,47 @@ const (
 	TiDBEnableStreaming = "tidb_enable_streaming"
 )
 
+// TiDB session and global system variable names.
+const (
+	// tidb_distsql_scan_concurrency is used to set the concurrency of a distsql scan task.
+	// A distsql scan task can be a table scan or a index scan, which may be distributed to many TiKV nodes.
+	// Higher concurrency may reduce latency, but with the cost of higher memory usage and system performance impact.
+	// If the query has a LIMIT clause, high concurrency makes the system do much more work than needed.
+	TiDBDistSQLScanConcurrency = "tidb_distsql_scan_concurrency"
+
+	// tidb_index_join_batch_size is used to set the batch size of a index lookup join.
+	// The index lookup join fetches batches of data from outer executor and constructs ranges for inner executor.
+	// This value controls how much of data in a batch to do the index join.
+	// Large value may reduce the latency but consumes more system resource.
+	TiDBIndexJoinBatchSize = "tidb_index_join_batch_size"
+
+	// tidb_index_lookup_size is used for index lookup executor.
+	// The index lookup executor first scan a batch of handles from a index, then use those handles to lookup the table
+	// rows, this value controls how much of handles in a batch to do a lookup task.
+	// Small value sends more RPCs to TiKV, consume more system resource.
+	// Large value may do more work than needed if the query has a limit.
+	TiDBIndexLookupSize = "tidb_index_lookup_size"
+
+	// tidb_index_lookup_concurrency is used for index lookup executor.
+	// A lookup task may have 'tidb_index_lookup_size' of handles at maximum, the handles may be distributed
+	// in many TiKV nodes, we executes multiple concurrent index lookup tasks concurrently to reduce the time
+	// waiting for a task to finish.
+	// Set this value higher may reduce the latency but consumes more system resource.
+	TiDBIndexLookupConcurrency = "tidb_index_lookup_concurrency"
+
+	// tidb_index_serial_scan_concurrency is used for controlling the concurrency of index scan operation
+	// when we need to keep the data output order the same as the order of index data.
+	TiDBIndexSerialScanConcurrency = "tidb_index_serial_scan_concurrency"
+
+	// tidb_skip_utf8_check skips the UTF8 validate process, validate UTF8 has performance cost, if we can make sure
+	// the input string values are valid, we can skip the check.
+	TiDBSkipUTF8Check = "tidb_skip_utf8_check"
+
+	// tidb_hash_join_concurrency is used for hash join executor.
+	// The hash join outer executor starts multiple concurrent join workers to probe the hash table.
+	TiDBHashJoinConcurrency = "tidb_hash_join_concurrency"
+)
+
 // Default TiDB system variable values.
 const (
 	DefIndexLookupConcurrency        = 4
@@ -164,6 +167,7 @@ const (
 	DefTiDBMemQuotaIndexLookupJoin   = 32 << 30 // 32GB.
 	DefTiDBMemQuotaNestedLoopApply   = 32 << 30 // 32GB.
 	DefTiDBGeneralLog                = 0
+	DefTiDBHashJoinConcurrency       = 5
 )
 
 // Process global variables.

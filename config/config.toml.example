@@ -124,9 +124,6 @@ tcp-keep-alive = true
 # The maximum number of retries when commit a transaction.
 retry-limit = 10
 
-# The number of goroutines that participate joining.
-join-concurrency = 5
-
 # Whether support cartesian product.
 cross-join = true
 

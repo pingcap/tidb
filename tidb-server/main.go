@@ -368,7 +368,6 @@ func setGlobalVars() {
 	ddl.RunWorker = cfg.RunDDL
 	ddl.EnableSplitTableRegion = cfg.SplitTable
 	session.SetCommitRetryLimit(cfg.Performance.RetryLimit)
-	plan.JoinConcurrency = cfg.Performance.JoinConcurrency
 	plan.AllowCartesianProduct = cfg.Performance.CrossJoin
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
 
