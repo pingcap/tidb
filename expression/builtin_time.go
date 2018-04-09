@@ -2898,17 +2898,13 @@ func (c *unixTimestampFunctionClass) getFunction(ctx sessionctx.Context, args []
 			// Treat types.ETString as unspecified decimal.
 			retDecimal = types.UnspecifiedLength
 			if cnst, ok := args[0].(*Constant); ok {
-				tmpStr, isNull, err := cnst.EvalString(ctx, nil)
+				tmpStr, _, err := cnst.EvalString(ctx, nil)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
-				if isNull {
-					retDecimal = 0
-				} else {
-					dotIdx := strings.LastIndex(tmpStr, ".")
-					if dotIdx >= 0 {
-						retDecimal = len(tmpStr) - dotIdx - 1
-					}
+				retDecimal = 0
+				if dotIdx := strings.LastIndex(tmpStr, "."); dotIdx >= 0 {
+					retDecimal = len(tmpStr) - dotIdx - 1
 				}
 			}
 		} else {
