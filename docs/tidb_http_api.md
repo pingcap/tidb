@@ -8,12 +8,6 @@
     curl http://{TiDBIP}:10080/status
     ```
 
-1. Get All ddl Jobs History Information
-
-    ```shell
-    curl http://{TiDBIP}:10080/ddl/history
-    ```
-	
 1. Get all metrics of TiDB
 
     ```shell
