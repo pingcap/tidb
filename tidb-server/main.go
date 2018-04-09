@@ -372,11 +372,8 @@ func setGlobalVars() {
 	plan.AllowCartesianProduct = cfg.Performance.CrossJoin
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
 
-	plan.PlanCacheEnabled = cfg.PlanCache.Enabled
-	if plan.PlanCacheEnabled {
-		plan.PlanCacheCapacity = cfg.PlanCache.Capacity
-		plan.PlanCacheShards = cfg.PlanCache.Shards
-		plan.GlobalPlanCache = kvcache.NewShardedLRUCache(plan.PlanCacheCapacity, plan.PlanCacheShards)
+	if cfg.PlanCache.Enabled {
+		plan.GlobalPlanCache = kvcache.NewShardedLRUCache(cfg.PlanCache.Capacity, cfg.PlanCache.Shards)
 	}
 
 	plan.PreparedPlanCacheEnabled = cfg.PreparedPlanCache.Enabled
