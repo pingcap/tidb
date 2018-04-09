@@ -226,7 +226,7 @@ func (h *Handle) dumpFeedbackToKV(fb *QueryFeedback) error {
 
 // HandleUpdateStats update the stats using feedback.
 func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
-	sql := fmt.Sprintf("select table_id, hist_id, is_index, feedback from mysql.stats_feedback order by table_id, hist_id, is_index")
+	sql := "select table_id, hist_id, is_index, feedback from mysql.stats_feedback order by table_id, hist_id, is_index"
 	rows, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, sql)
 	if len(rows) == 0 || err != nil {
 		return errors.Trace(err)
