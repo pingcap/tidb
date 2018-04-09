@@ -43,7 +43,7 @@
     ```shell
     curl http://{TiDBIP}:10080/schema/{db}
     ```
-1. Get All DDL History
+1. Get All DDL Job History
 
     ```shell
     curl http://{TiDBIP}:10080/ddl/history
