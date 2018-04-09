@@ -88,6 +88,11 @@ const (
 	// Set this value higher may reduce the latency but consumes more system resource.
 	TiDBIndexLookupConcurrency = "tidb_index_lookup_concurrency"
 
+	// tidb_index_lookup_join_concurrency is used for index lookup join executor.
+	// IndexLookUpJoin starts "tidb_index_lookup_join_concurrency" inner workers
+	// to fetch inner rows and join the matched (outer, inner) row pairs.
+	TiDBIndexLookupJoinConcurrency = "tidb_index_lookup_join_concurrency"
+
 	// tidb_index_serial_scan_concurrency is used for controlling the concurrency of index scan operation
 	// when we need to keep the data output order the same as the order of index data.
 	TiDBIndexSerialScanConcurrency = "tidb_index_serial_scan_concurrency"
@@ -141,6 +146,7 @@ const (
 // Default TiDB system variable values.
 const (
 	DefIndexLookupConcurrency        = 4
+	DefIndexLookupJoinConcurrency    = 4
 	DefIndexSerialScanConcurrency    = 1
 	DefIndexJoinBatchSize            = 25000
 	DefIndexLookupSize               = 20000
