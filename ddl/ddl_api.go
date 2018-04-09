@@ -255,6 +255,9 @@ func checkColumnCantHaveDefaultValue(col *table.Column, value interface{}) (err 
 	return nil
 }
 
+// isExplicitTimeStamp is used to check if explicit_defaults_for_timestamp is on or off.
+// Check out this link for more details.
+// https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_explicit_defaults_for_timestamp
 func isExplicitTimeStamp() bool {
 	// TODO: implement the behavior as MySQL when explicit_defaults_for_timestamp = off, then this function could return false.
 	return true
