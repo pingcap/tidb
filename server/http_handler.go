@@ -275,12 +275,12 @@ func (t *tikvHandlerTool) handleMvccGetByHex(params map[string]string) (interfac
 }
 
 func (t *tikvHandlerTool) GetAllHistory() ([]*model.Job, error) {
-	session, err := session.CreateSession(t.store.(kv.Storage))
+	s, err := session.CreateSession(t.store.(kv.Storage))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	store := domain.GetDomain(session.(sessionctx.Context)).Store()
+	store := domain.GetDomain(s.(sessionctx.Context)).Store()
 	txn, err := store.Begin()
 	if err != nil {
 		return nil, errors.Trace(err)
