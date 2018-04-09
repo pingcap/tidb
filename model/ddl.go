@@ -127,8 +127,8 @@ type Job struct {
 	// StartTS uses timestamp allocated by TSO.
 	// Now it's the TS when we put the job to TiKV queue.
 	StartTS uint64 `json:"start_ts"`
-	// DependentID is the job's ID that the current job depends on.
-	DependentID int64 `json:"related_id"`
+	// DependencyID is the job's ID that the current job depends on.
+	DependencyID int64 `json:"dependency_id"`
 	// Query string of the ddl job.
 	Query      string       `json:"query"`
 	BinlogInfo *HistoryInfo `json:"binlog"`
@@ -233,7 +233,10 @@ func (job *Job) hasDependentSchema(other *Job) (bool, error) {
 	return false, nil
 }
 
-// IsDependentOn returns whether job depends on other.
+// IsDependentOn returns whether the job depends on "other".
+// How to check the job depends on "other"?
+// 1. The two jobs handle the same database when one of the two jobs is an ActionDropSchema or ActionCreateSchema type.
+// 2. Or the two jobs handle the same table.
 func (job *Job) IsDependentOn(other *Job) (bool, error) {
 	isDependent, err := job.hasDependentSchema(other)
 	if err != nil || isDependent {

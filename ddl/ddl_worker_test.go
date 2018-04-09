@@ -506,7 +506,7 @@ func (s *testDDLSuite) TestBuildJobDependence(c *C) {
 		t := meta.NewMeta(txn)
 		err := buildJobDependence(t, job4)
 		c.Assert(err, IsNil)
-		c.Assert(job4.DependentID, Equals, int64(2))
+		c.Assert(job4.DependencyID, Equals, int64(2))
 		return nil
 	})
 	job5 := &model.Job{ID: 5, TableID: 2}
@@ -514,7 +514,7 @@ func (s *testDDLSuite) TestBuildJobDependence(c *C) {
 		t := meta.NewMeta(txn)
 		err := buildJobDependence(t, job5)
 		c.Assert(err, IsNil)
-		c.Assert(job5.DependentID, Equals, int64(3))
+		c.Assert(job5.DependencyID, Equals, int64(3))
 		return nil
 	})
 	job8 := &model.Job{ID: 8, TableID: 3}
@@ -522,7 +522,7 @@ func (s *testDDLSuite) TestBuildJobDependence(c *C) {
 		t := meta.NewMeta(txn)
 		err := buildJobDependence(t, job8)
 		c.Assert(err, IsNil)
-		c.Assert(job8.DependentID, Equals, int64(0))
+		c.Assert(job8.DependencyID, Equals, int64(0))
 		return nil
 	})
 }

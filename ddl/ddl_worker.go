@@ -91,8 +91,8 @@ func (d *ddl) isOwner() bool {
 	return isOwner
 }
 
-// buildJobDependence sets the current job's dependence-ID that the current job depends on.
-// The dependent job's ID must less than the current job's ID, and we need the largest one in the list.
+// buildJobDependence sets the curjob's dependency-ID.
+// The dependency-job's ID must less than the current job's ID, and we need the largest one in the list.
 func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
 	jobs, err := t.GetAllDDLJobs()
 	if err != nil {
@@ -107,7 +107,7 @@ func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
 			return errors.Trace(err)
 		}
 		if isDependent {
-			curJob.DependentID = job.ID
+			curJob.DependencyID = job.ID
 			break
 		}
 	}
