@@ -139,6 +139,9 @@ run-auto-analyze = true
 # Probability to use the query feedback to update stats, 0 or 1 for always false/true.
 feedback-probability = 0.0
 
+# The max number of query feedback that cache in memory.
+query-feedback-limit = 1024
+
 # Pseudo stats will be used if the ratio between the modify count and
 # row count in statistics of a table is greater than it.
 pseudo-estimate-ratio = 0.7
