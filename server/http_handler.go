@@ -67,7 +67,7 @@ const (
 
 // For query string
 const qTableID = "table_id"
-const qLimitID = "limit"
+const qLimit = "limit"
 
 const (
 	headerContentType = "Content-Type"
@@ -277,9 +277,12 @@ func (t *tikvHandlerTool) handleMvccGetByHex(params map[string]string) (interfac
 
 func (t *tikvHandlerTool) GetAllHistoryDDL() ([]*model.Job, error) {
 	s, err := session.CreateSession(t.store.(kv.Storage))
-	defer s.Close()
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+
+	if s != nil {
+		defer s.Close()
 	}
 
 	store := domain.GetDomain(s.(sessionctx.Context)).Store()
@@ -318,7 +321,7 @@ type tableHandler struct {
 	op string
 }
 
-// ddlHistoryJobHandler is the handler for list job histry.
+// ddlHistoryJobHandler is the handler for list job history.
 type ddlHistoryJobHandler struct {
 	*tikvHandlerTool
 }
@@ -607,7 +610,7 @@ func (h tableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 // ServeHTTP handles request of ddl jobs history.
 func (h ddlHistoryJobHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	if limitID := req.FormValue(qLimitID); len(limitID) > 0 {
+	if limitID := req.FormValue(qLimit); len(limitID) > 0 {
 		lid, err := strconv.Atoi(limitID)
 		if err != nil {
 			writeError(w, err)
@@ -621,6 +624,7 @@ func (h ddlHistoryJobHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		jobs, err := h.GetAllHistoryDDL()
 		if err != nil {
 			writeError(w, errors.New("ddl history not found"))
+			return
 		}
 
 		jobsLen := len(jobs)
@@ -635,6 +639,7 @@ func (h ddlHistoryJobHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 	jobs, err := h.GetAllHistoryDDL()
 	if err != nil {
 		writeError(w, errors.New("ddl history not found"))
+		return
 	}
 	writeData(w, jobs)
 	return
