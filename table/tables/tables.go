@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/spaolacci/murmur3"
-	"github.com/pingcap/tidb/_vendor/src/github.com/pingcap/tipb/go-binlog"
 )
 
 // Table implements table.Table interface.
