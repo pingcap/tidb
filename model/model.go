@@ -235,11 +235,11 @@ const (
 
 // PartitionInfo provides table partition info.
 type PartitionInfo struct {
-	Type           PartitionType
-	Expr           string
-	Columns        []CIStr
+	Type    PartitionType
+	Expr    string
+	Columns []CIStr
 
-	Definitions    []PartitionDefinition
+	Definitions []PartitionDefinition
 }
 
 // PartitionDefinition defines a single partition.
