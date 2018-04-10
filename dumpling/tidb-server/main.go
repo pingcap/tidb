@@ -365,6 +365,7 @@ func setGlobalVars() {
 	session.SetStatsLease(statsLeaseDuration)
 	domain.RunAutoAnalyze = cfg.Performance.RunAutoAnalyze
 	statistics.FeedbackProbability = cfg.Performance.FeedbackProbability
+	plan.RatioOfPseudoEstimate = cfg.Performance.PseudoEstimateRatio
 	ddl.RunWorker = cfg.RunDDL
 	ddl.EnableSplitTableRegion = cfg.SplitTable
 	session.SetCommitRetryLimit(cfg.Performance.RetryLimit)
