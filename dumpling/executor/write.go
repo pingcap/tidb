@@ -921,7 +921,7 @@ func batchGetOldValues(ctx sessionctx.Context, t table.Table, handles []int64) (
 func encodeNewRow(ctx sessionctx.Context, t table.Table, row []types.Datum) ([]byte, error) {
 	colIDs := make([]int64, 0, len(row))
 	skimmedRow := make([]types.Datum, 0, len(row))
-	for _, col := range t.WritableCols() {
+	for _, col := range t.Cols() {
 		if !tables.CanSkip(t.Meta(), col, row[col.Offset]) {
 			colIDs = append(colIDs, col.ID)
 			skimmedRow = append(skimmedRow, row[col.Offset])
@@ -1107,9 +1107,22 @@ func (e *InsertExec) updateDupRow(keys []keyWithDupError, k keyWithDupError, val
 	if !ok {
 		return errors.NotFoundf("can not be duplicated row, due to old row not found. handle %d", oldHandle)
 	}
-	oldRow, err := tables.DecodeRawRowData(e.ctx, e.Table.Meta(), oldHandle, e.Table.WritableCols(), oldValue)
+	cols := e.Table.WritableCols()
+	oldRow, oldRowMap, err := tables.DecodeRawRowData(e.ctx, e.Table.Meta(), oldHandle, cols, oldValue)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	// Fill write-only and write-reorg columns with originDefaultValue if not found in oldValue.
+	for _, col := range cols {
+		if col.State != model.StatePublic && oldRow[col.Offset].IsNull() {
+			_, found := oldRowMap[col.ID]
+			if !found {
+				oldRow[col.Offset], err = table.GetColOriginDefaultValue(e.ctx, col.ToInfo())
+				if err != nil {
+					return errors.Trace(err)
+				}
+			}
+		}
 	}
 
 	// Do update row.
