@@ -552,8 +552,7 @@ func (ts *HTTPHandlerTestSuite) TestAllHistory(c *C) {
 	ts.startServer(c)
 	ts.prepareData(c)
 	defer ts.stopServer(c)
-
-	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:10090/ddl/history/?limit=10"))
+	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:10090/ddl/history/?limit=3"))
 	c.Assert(err, IsNil)
 	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/ddl/history/?limit=-1"))
 	c.Assert(err, IsNil)

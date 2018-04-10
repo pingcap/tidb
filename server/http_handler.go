@@ -612,6 +612,7 @@ func (h tableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 func (h ddlHistoryJobHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if limitID := req.FormValue(qLimit); len(limitID) > 0 {
 		lid, err := strconv.Atoi(limitID)
+
 		if err != nil {
 			writeError(w, err)
 			return
@@ -621,6 +622,7 @@ func (h ddlHistoryJobHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 			writeError(w, errors.New("ddl history limit must be greater than 1"))
 			return
 		}
+
 		jobs, err := h.GetAllHistoryDDL()
 		if err != nil {
 			writeError(w, errors.New("ddl history not found"))
