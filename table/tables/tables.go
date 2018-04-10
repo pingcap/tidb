@@ -74,7 +74,7 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 
 	columns := make([]*table.Column, 0, len(tblInfo.Columns))
 	for _, colInfo := range tblInfo.Columns {
-		log.Infof("FOR TEST COLINFO: %+v", colInfo)
+		log.Infof("FOR TEST COLINFO: %#v", colInfo)
 		if colInfo.State == model.StateNone {
 			return nil, table.ErrColumnStateCantNone.Gen("column %s can't be in none state", colInfo.Name)
 		}
@@ -94,7 +94,7 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 		columns = append(columns, col)
 	}
 
-	log.Infof("FOR TEST %+v", tblInfo)
+	log.Infof("FOR TEST %#v", tblInfo)
 	t := newTable(tblInfo.ID, columns, alloc)
 
 	for _, idxInfo := range tblInfo.Indices {
