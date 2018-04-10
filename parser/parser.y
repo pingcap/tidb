@@ -260,6 +260,7 @@ import (
 	cascaded	"CASCADED"
 	charsetKwd	"CHARSET"
 	checksum	"CHECKSUM"
+	cleanup		"CLEANUP"
 	client		"CLIENT"
 	coalesce	"COALESCE"
 	collation	"COLLATION"
@@ -2532,7 +2533,7 @@ Identifier:
 identifier | UnReservedKeyword | NotKeywordToken | TiDBKeyword
 
 UnReservedKeyword:
- "ACTION" | "ASCII" | "AUTO_INCREMENT" | "AFTER" | "ALWAYS" | "AVG" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "BTREE" | "BYTE" | "CHARSET"
+ "ACTION" | "ASCII" | "AUTO_INCREMENT" | "AFTER" | "ALWAYS" | "AVG" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "BTREE" | "BYTE" | "CLEANUP" | "CHARSET"
 | "COLUMNS" | "COMMIT" | "COMPACT" | "COMPRESSED" | "CONSISTENT" | "DATA" | "DATE" %prec lowerThanStringLitToken| "DATETIME" | "DAY" | "DEALLOCATE" | "DO" | "DUPLICATE"
 | "DYNAMIC"| "END" | "ENGINE" | "ENGINES" | "ENUM" | "ESCAPE" | "EXECUTE" | "FIELDS" | "FIRST" | "FIXED" | "FLUSH" | "FORMAT" | "FULL" |"GLOBAL"
 | "HASH" | "HOUR" | "LESS" | "LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "REDUNDANT"
@@ -3709,6 +3710,9 @@ CastType:
 	{
 		x := types.NewFieldType(mysql.TypeVarString)
 		x.Flen = $2.(int)  // TODO: Flen should be the flen of expression
+		if x.Flen != types.UnspecifiedLength {
+			x.Tp = mysql.TypeString
+		}
 		x.Charset = charset.CharsetBin
 		x.Collate = charset.CollationBin
 		x.Flag |= mysql.BinaryFlag
@@ -4556,7 +4560,14 @@ SetStmt:
 	}
 |	"SET" "TRANSACTION" TransactionChars
 	{
-		$$ = &ast.SetStmt{Variables: $3.([]*ast.VariableAssignment)}
+		assigns := $3.([]*ast.VariableAssignment)
+		for i:=0; i<len(assigns); i++ {
+			if assigns[i].Name == "tx_isolation" {
+				// A special session variable that make setting tx_isolation take effect one time.
+				assigns[i].Name = "tx_isolation_one_shot"
+			}
+		}
+		$$ = &ast.SetStmt{Variables: assigns}
 	}
 
 TransactionChars:
@@ -4819,6 +4830,14 @@ AdminStmt:
 	{
 		$$ = &ast.AdminStmt{
 			Tp: ast.AdminRecoverIndex,
+			Tables: []*ast.TableName{$4.(*ast.TableName)},
+			Index: string($5),
+		}
+	}
+|	"ADMIN" "CLEANUP" "INDEX" TableName Identifier
+	{
+		$$ = &ast.AdminStmt{
+			Tp: ast.AdminCleanupIndex,
 			Tables: []*ast.TableName{$4.(*ast.TableName)},
 			Index: string($5),
 		}

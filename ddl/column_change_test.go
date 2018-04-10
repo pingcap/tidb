@@ -41,6 +41,7 @@ type testColumnChangeSuite struct {
 }
 
 func (s *testColumnChangeSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
 	s.store = testCreateStore(c, "test_column_change")
 	s.dbInfo = &model.DBInfo{
 		Name: model.NewCIStr("test_column_change"),
@@ -53,8 +54,12 @@ func (s *testColumnChangeSuite) SetUpSuite(c *C) {
 	c.Check(err, IsNil)
 }
 
+func (s *testColumnChangeSuite) TearDownSuite(c *C) {
+	s.store.Close()
+	testleak.AfterTest(c)()
+}
+
 func (s *testColumnChangeSuite) TestColumnChange(c *C) {
-	defer testleak.AfterTest(c)()
 	d := testNewDDL(context.Background(), nil, s.store, nil, nil, testLease)
 	defer d.Stop()
 	// create table t (c1 int, c2 int);

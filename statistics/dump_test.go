@@ -61,6 +61,6 @@ func (s *testDumpStatsSuite) TestConversion(c *C) {
 	c.Assert(err, IsNil)
 	loadTbl, err := h.LoadStatsFromJSON(tableInfo.Meta(), jsonTbl)
 	c.Assert(err, IsNil)
-	tbl := h.GetTableStats(tableInfo.Meta().ID)
+	tbl := h.GetTableStats(tableInfo.Meta())
 	assertTableEqual(c, loadTbl, tbl)
 }

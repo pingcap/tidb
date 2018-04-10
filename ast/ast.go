@@ -137,8 +137,8 @@ type RecordSet interface {
 	// Fields gets result fields.
 	Fields() []*ResultField
 
-	// NextChunk reads records into chunk.
-	NextChunk(ctx context.Context, chk *chunk.Chunk) error
+	// Next reads records into chunk.
+	Next(ctx context.Context, chk *chunk.Chunk) error
 
 	// NewChunk creates a new chunk with initial capacity.
 	NewChunk() *chunk.Chunk

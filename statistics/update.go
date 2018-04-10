@@ -228,7 +228,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) error {
 		tbls := is.SchemaTables(model.NewCIStr(db))
 		for _, tbl := range tbls {
 			tblInfo := tbl.Meta()
-			statsTbl := h.GetTableStats(tblInfo.ID)
+			statsTbl := h.GetTableStats(tblInfo)
 			if statsTbl.Pseudo || statsTbl.Count == 0 {
 				continue
 			}

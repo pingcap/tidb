@@ -30,7 +30,7 @@ func (e *ShowExec) fetchShowStatsMeta() error {
 	dbs := do.InfoSchema().AllSchemas()
 	for _, db := range dbs {
 		for _, tbl := range db.Tables {
-			statsTbl := h.GetTableStats(tbl.ID)
+			statsTbl := h.GetTableStats(tbl)
 			if !statsTbl.Pseudo {
 				e.appendRow([]interface{}{
 					db.Name.O,
@@ -51,7 +51,7 @@ func (e *ShowExec) fetchShowStatsHistogram() error {
 	dbs := do.InfoSchema().AllSchemas()
 	for _, db := range dbs {
 		for _, tbl := range db.Tables {
-			statsTbl := h.GetTableStats(tbl.ID)
+			statsTbl := h.GetTableStats(tbl)
 			if !statsTbl.Pseudo {
 				for _, col := range statsTbl.Columns {
 					e.histogramToRow(db.Name.O, tbl.Name.O, col.Info.Name.O, 0, col.Histogram, col.AvgColSize())
@@ -89,7 +89,7 @@ func (e *ShowExec) fetchShowStatsBuckets() error {
 	dbs := do.InfoSchema().AllSchemas()
 	for _, db := range dbs {
 		for _, tbl := range db.Tables {
-			statsTbl := h.GetTableStats(tbl.ID)
+			statsTbl := h.GetTableStats(tbl)
 			if !statsTbl.Pseudo {
 				for _, col := range statsTbl.Columns {
 					err := e.bucketsToRows(db.Name.O, tbl.Name.O, col.Info.Name.O, 0, col.Histogram)
@@ -146,7 +146,7 @@ func (e *ShowExec) fetchShowStatsHealthy() {
 	dbs := do.InfoSchema().AllSchemas()
 	for _, db := range dbs {
 		for _, tbl := range db.Tables {
-			statsTbl := h.GetTableStats(tbl.ID)
+			statsTbl := h.GetTableStats(tbl)
 			if !statsTbl.Pseudo {
 				var healthy int64
 				if statsTbl.ModifyCount < statsTbl.Count {

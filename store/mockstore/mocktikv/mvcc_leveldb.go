@@ -789,6 +789,10 @@ func (mvcc *MVCCLevelDB) ResolveLock(startKey, endKey []byte, startTS, commitTS 
 	mvcc.mu.Lock()
 	defer mvcc.mu.Unlock()
 
+	// startKey and endKey are MvccKey type actually, take out the raw key here.
+	startKey = MvccKey(startKey).Raw()
+	endKey = MvccKey(endKey).Raw()
+
 	iter, currKey, err := newScanIterator(mvcc.db, startKey, endKey)
 	defer iter.Release()
 	if err != nil {
@@ -861,6 +865,24 @@ func (mvcc *MVCCLevelDB) BatchResolveLock(startKey, endKey []byte, txnInfos map[
 		}
 		currKey = skip.currKey
 	}
+	return mvcc.db.Write(batch, nil)
+}
+
+// DeleteRange implements the MVCCStore interface.
+func (mvcc *MVCCLevelDB) DeleteRange(startKey, endKey []byte) error {
+	mvcc.mu.Lock()
+	defer mvcc.mu.Unlock()
+
+	batch := &leveldb.Batch{}
+
+	iter := mvcc.db.NewIterator(&util.Range{
+		Start: startKey,
+		Limit: endKey,
+	}, nil)
+	for iter.Next() {
+		batch.Delete(iter.Key())
+	}
+
 	return mvcc.db.Write(batch, nil)
 }
 
