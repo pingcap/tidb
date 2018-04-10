@@ -40,7 +40,8 @@ type testClusterSuite struct {
 func (s *testClusterSuite) TestClusterSplit(c *C) {
 	cluster := mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(cluster)
-	mvccStore := mocktikv.NewMvccStore()
+	mvccStore, err := mocktikv.NewMVCCLevelDB("")
+	c.Assert(err, IsNil)
 	store, err := mockstore.NewMockTikvStore(
 		mockstore.WithCluster(cluster),
 		mockstore.WithMVCCStore(mvccStore),

@@ -39,7 +39,7 @@ type testRegionRequestSuite struct {
 	cache               *RegionCache
 	bo                  *Backoffer
 	regionRequestSender *RegionRequestSender
-	mvccStore           *mocktikv.MvccStore
+	mvccStore           mocktikv.MVCCStore
 }
 
 var _ = Suite(&testRegionRequestSuite{})
@@ -50,7 +50,8 @@ func (s *testRegionRequestSuite) SetUpTest(c *C) {
 	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
 	s.cache = NewRegionCache(pdCli)
 	s.bo = NewBackoffer(context.Background(), 1)
-	s.mvccStore = mocktikv.NewMvccStore()
+	s.mvccStore, err = mocktikv.NewMVCCLevelDB("")
+	c.Assert(err, IsNil)
 	client := mocktikv.NewRPCClient(s.cluster, s.mvccStore)
 	s.regionRequestSender = NewRegionRequestSender(s.cache, client)
 }

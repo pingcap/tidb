@@ -285,14 +285,18 @@ func (s *testRegionCacheSuite) TestRequestFail2(c *C) {
 }
 
 func (s *testRegionCacheSuite) TestUpdateStoreAddr(c *C) {
+	mvccStore, err := mocktikv.NewMVCCLevelDB("")
+	c.Assert(err, IsNil)
+	defer mvccStore.Close()
+
 	client := &RawKVClient{
 		clusterID:   0,
 		regionCache: NewRegionCache(mocktikv.NewPDClient(s.cluster)),
-		rpcClient:   mocktikv.NewRPCClient(s.cluster, mocktikv.NewMvccStore()),
+		rpcClient:   mocktikv.NewRPCClient(s.cluster, mvccStore),
 	}
 	testKey := []byte("test_key")
 	testValue := []byte("test_value")
-	err := client.Put(testKey, testValue)
+	err = client.Put(testKey, testValue)
 	c.Assert(err, IsNil)
 	// tikv-server reports `StoreNotMatch` And retry
 	store1Addr := s.storeAddr(s.store1)

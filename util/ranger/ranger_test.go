@@ -51,7 +51,8 @@ func (s *testRangerSuite) SetUpSuite(c *C) {
 func newStoreWithBootstrap(c *C) (kv.Storage, error) {
 	cluster := mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(cluster)
-	mvccStore := mocktikv.NewMvccStore()
+	mvccStore, err := mocktikv.NewMVCCLevelDB("")
+	c.Assert(err, IsNil)
 	store, err := mockstore.NewMockTikvStore(
 		mockstore.WithCluster(cluster),
 		mockstore.WithMVCCStore(mvccStore),

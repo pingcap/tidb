@@ -73,7 +73,7 @@ var _ = Suite(&testContextOptionSuite{})
 
 type testSuite struct {
 	cluster   *mocktikv.Cluster
-	mvccStore *mocktikv.MvccStore
+	mvccStore mocktikv.MVCCStore
 	store     kv.Storage
 	domain    *domain.Domain
 	*parser.Parser
@@ -94,7 +94,8 @@ func (s *testSuite) SetUpSuite(c *C) {
 	if useMockTikv {
 		s.cluster = mocktikv.NewCluster()
 		mocktikv.BootstrapWithSingleStore(s.cluster)
-		s.mvccStore = mocktikv.NewMvccStore()
+		mvccStore, err := mocktikv.NewMVCCLevelDB("")
+		s.mvccStore = mvccStore
 		store, err := mockstore.NewMockTikvStore(
 			mockstore.WithCluster(s.cluster),
 			mockstore.WithMVCCStore(s.mvccStore),
