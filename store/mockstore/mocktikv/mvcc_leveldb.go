@@ -901,7 +901,7 @@ func (mvcc *MVCCLevelDB) RawPut(key, value []byte) {
 	if value == nil {
 		value = []byte{}
 	}
-	mvcc.db.Put(key, value, nil)
+	terror.Log(mvcc.db.Put(key, value, nil))
 }
 
 // RawGet implements the RawKV interface.
@@ -909,7 +909,8 @@ func (mvcc *MVCCLevelDB) RawGet(key []byte) []byte {
 	mvcc.mu.Lock()
 	defer mvcc.mu.Unlock()
 
-	ret, _ := mvcc.db.Get(key, nil)
+	ret, err := mvcc.db.Get(key, nil)
+	terror.Log(err)
 	return ret
 }
 
@@ -918,7 +919,7 @@ func (mvcc *MVCCLevelDB) RawDelete(key []byte) {
 	mvcc.mu.Lock()
 	defer mvcc.mu.Unlock()
 
-	mvcc.db.Delete(key, nil)
+	terror.Log(mvcc.db.Delete(key, nil))
 }
 
 // RawScan implements the RawKV interface.
@@ -949,5 +950,5 @@ func (mvcc *MVCCLevelDB) RawScan(startKey, endKey []byte, limit int) []Pair {
 
 // RawDeleteRange implements the RawKV interface.
 func (mvcc *MVCCLevelDB) RawDeleteRange(startKey, endKey []byte) {
-	mvcc.DeleteRange(startKey, endKey)
+	terror.Log(mvcc.DeleteRange(startKey, endKey))
 }
