@@ -510,9 +510,8 @@ func (e *HashJoinExec) buildHashTableForList() error {
 type NestedLoopApplyExec struct {
 	baseExecutor
 
-	innerRows   []Row
+	innerRows   []chunk.Row
 	cursor      int
-	resultRows  []Row
 	innerExec   Executor
 	outerExec   Executor
 	innerFilter expression.CNFExprs
@@ -537,7 +536,6 @@ type NestedLoopApplyExec struct {
 
 // Close implements the Executor interface.
 func (e *NestedLoopApplyExec) Close() error {
-	e.resultRows = nil
 	e.innerRows = nil
 
 	e.memTracker.Detach()
@@ -552,7 +550,6 @@ func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	e.cursor = 0
-	e.resultRows = e.resultRows[:0]
 	e.innerRows = e.innerRows[:0]
 	e.outerChunk = e.outerExec.newChunk()
 	e.innerChunk = e.innerExec.newChunk()

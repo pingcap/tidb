@@ -765,7 +765,7 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []ast.Rec
 		cacheValue       kvcache.Value
 		hitCache         = false
 		connID           = s.sessionVars.ConnectionID
-		planCacheEnabled = plan.PlanCacheEnabled // Read global configuration only once.
+		planCacheEnabled = s.sessionVars.PlanCacheEnabled // Its value is read from the global configuration, and it will be only updated in tests.
 	)
 
 	if planCacheEnabled {
@@ -1267,6 +1267,7 @@ const loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variab
 	variable.TiDBIndexJoinBatchSize + quoteCommaQuote +
 	variable.TiDBIndexLookupSize + quoteCommaQuote +
 	variable.TiDBIndexLookupConcurrency + quoteCommaQuote +
+	variable.TiDBIndexLookupJoinConcurrency + quoteCommaQuote +
 	variable.TiDBIndexSerialScanConcurrency + quoteCommaQuote +
 	variable.TiDBDistSQLScanConcurrency + "')"
 

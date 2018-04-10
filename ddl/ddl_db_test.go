@@ -20,6 +20,7 @@ import (
 	"math/rand"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/juju/errors"
@@ -1810,4 +1811,35 @@ func (s *testDBSuite) TestCharacterSetInColumns(c *C) {
 	s.tk.MustExec("create table t (c1 int, s1 varchar(10), s2 text)")
 	s.tk.MustQuery("select count(*) from information_schema.columns where table_schema = 'varchar_test' and character_set_name != 'utf8'").Check(testkit.Rows("0"))
 	s.tk.MustQuery("select count(*) from information_schema.columns where table_schema = 'varchar_test' and character_set_name = 'utf8'").Check(testkit.Rows("2"))
+}
+
+func (s *testDBSuite) TestAddNotNullColumnWhileInsertOnDupUpdate(c *C) {
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use " + s.schemaName)
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use " + s.schemaName)
+	closeCh := make(chan bool)
+	wg := new(sync.WaitGroup)
+	wg.Add(1)
+	tk1.MustExec("create table nn (a int primary key, b int)")
+	tk1.MustExec("insert nn values (1, 1)")
+	var tk2Err error
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-closeCh:
+				return
+			default:
+			}
+			_, tk2Err = tk2.Exec("insert nn (a, b) values (1, 1) on duplicate key update a = 1, b = b + 1")
+			if tk2Err != nil {
+				return
+			}
+		}
+	}()
+	tk1.MustExec("alter table nn add column c int not null default 0")
+	close(closeCh)
+	wg.Wait()
+	c.Assert(tk2Err, IsNil)
 }

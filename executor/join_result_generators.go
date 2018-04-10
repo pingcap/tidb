@@ -50,7 +50,7 @@ type joinResultGenerator interface {
 }
 
 func newJoinResultGenerator(ctx sessionctx.Context, joinType plan.JoinType,
-	outerIsRight bool, defaultInner Row, filter []expression.Expression,
+	outerIsRight bool, defaultInner types.DatumRow, filter []expression.Expression,
 	lhsColTypes, rhsColTypes []*types.FieldType) joinResultGenerator {
 	base := baseJoinResultGenerator{
 		ctx:          ctx,
@@ -101,7 +101,7 @@ type baseJoinResultGenerator struct {
 	maxChunkSize int
 }
 
-func (outputer *baseJoinResultGenerator) initDefaultInner(innerTypes []*types.FieldType, defaultInner Row) {
+func (outputer *baseJoinResultGenerator) initDefaultInner(innerTypes []*types.FieldType, defaultInner types.DatumRow) {
 	mutableRow := chunk.MutRowFromTypes(innerTypes)
 	mutableRow.SetDatums(defaultInner[:len(innerTypes)]...)
 	outputer.defaultInner = mutableRow.ToRow()
