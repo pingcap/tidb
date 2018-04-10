@@ -22,7 +22,7 @@ binlog-socket = ""
 run-ddl = true
 
 # Schema lease duration, very dangerous to change only if you know what you do.
-lease = "60s"
+lease = "45s"
 
 # When create table, split a separated region for it. It is recommended to
 # turn off this option if there will be a large number of tables created.
