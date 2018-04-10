@@ -36,8 +36,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
-	log "github.com/sirupsen/logrus"
-	"encoding/json"
 )
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) (err error) {
@@ -826,8 +824,6 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		}
 		tbInfo.Partition = pi
 	}
-	tblJSON, _ := json.Marshal(tbInfo)
-	log.Infof("tblInfo %s", tblJSON)
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
