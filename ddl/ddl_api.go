@@ -272,9 +272,8 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef) (
 		FieldType: *colDef.Tp,
 	})
 
-	isExplicit := isExplicitTimeStamp()
-	if !isExplicit {
-		// Check and set TimestampFlag and OnUpdateNowFlag.
+	if !isExplicitTimeStamp() {
+		// Check and set TimestampFlag, OnUpdateNowFlag and NotNullFlag.
 		if col.Tp == mysql.TypeTimestamp {
 			col.Flag |= mysql.TimestampFlag
 			col.Flag |= mysql.OnUpdateNowFlag
@@ -347,9 +346,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef) (
 		}
 	}
 
-	if !isExplicit {
-		setTimestampDefaultValue(col, hasDefaultValue, setOnUpdateNow)
-	}
+	setTimestampDefaultValue(col, hasDefaultValue, setOnUpdateNow)
 
 	// Set `NoDefaultValueFlag` if this field doesn't have a default value and
 	// it is `not null` and not an `AUTO_INCREMENT` field or `TIMESTAMP` field.
