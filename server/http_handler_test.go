@@ -552,12 +552,19 @@ func (ts *HTTPHandlerTestSuite) TestAllHistory(c *C) {
 	ts.startServer(c)
 	ts.prepareData(c)
 	defer ts.stopServer(c)
-	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:10090/ddl/history"))
+
+	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:10090/ddl/history/?limit=10"))
+	c.Assert(err, IsNil)
+	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/ddl/history/?limit=-1"))
+	c.Assert(err, IsNil)
+
+	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/ddl/history"))
 	c.Assert(err, IsNil)
 	decoder := json.NewDecoder(resp.Body)
 
 	var jobs []*model.Job
 	s, _ := session.CreateSession(ts.server.newTikvHandlerTool().store.(kv.Storage))
+	defer s.Close()
 	store := domain.GetDomain(s.(sessionctx.Context)).Store()
 	txn, _ := store.Begin()
 	txnMeta := meta.NewMeta(txn)
