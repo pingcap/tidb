@@ -1276,9 +1276,7 @@ func setDefaultAndComment(ctx sessionctx.Context, col *table.Column, options []*
 		}
 	}
 
-	if !isExplicitTimeStamp() {
-		setTimestampDefaultValue(col, hasDefaultValue, setOnUpdateNow)
-	}
+	setTimestampDefaultValue(col, hasDefaultValue, setOnUpdateNow)
 
 	// Set `NoDefaultValueFlag` if this field doesn't have a default value and
 	// it is `not null` and not an `AUTO_INCREMENT` field or `TIMESTAMP` field.
