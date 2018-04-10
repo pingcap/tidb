@@ -150,6 +150,7 @@ type Performance struct {
 	RunAutoAnalyze      bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
 	StmtCountLimit      uint    `toml:"stmt-count-limit" json:"stmt-count-limit"`
 	FeedbackProbability float64 `toml:"feedback-probability" json:"feedback-probability"`
+	QueryFeedbackLimit  uint    `toml:"query-feedback-limit" json:"query-feedback-limit"`
 	PseudoEstimateRatio float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
 }
 
@@ -227,7 +228,7 @@ var defaultConf = Config{
 	Path:                "/tmp/tidb",
 	RunDDL:              true,
 	SplitTable:          true,
-	Lease:               "10s",
+	Lease:               "45s",
 	TokenLimit:          1000,
 	OOMAction:           "log",
 	EnableStreaming:     false,
@@ -257,6 +258,7 @@ var defaultConf = Config{
 		RunAutoAnalyze:      true,
 		StmtCountLimit:      5000,
 		FeedbackProbability: 0,
+		QueryFeedbackLimit:  1024,
 		PseudoEstimateRatio: 0.7,
 	},
 	XProtocol: XProtocol{
