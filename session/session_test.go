@@ -111,18 +111,18 @@ func (p *mockBinlogPump) PullBinlogs(ctx context.Context, in *binlog.PullBinlogR
 }
 
 func (s *testSessionSuite) TestForCoverage(c *C) {
-	planCache := plan.PlanCacheEnabled
 	plan.GlobalPlanCache = kvcache.NewShardedLRUCache(2, 1)
-	defer func() {
-		plan.PlanCacheEnabled = planCache
-	}()
 
 	// Just for test coverage.
 	tk := testkit.NewTestKitWithInit(c, s.store)
+	planCache := tk.Se.GetSessionVars().PlanCacheEnabled
+	defer func() {
+		tk.Se.GetSessionVars().PlanCacheEnabled = planCache
+	}()
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int auto_increment, v int, index (id))")
 	tk.MustExec("insert t values ()")
-	plan.PlanCacheEnabled = true
+	tk.Se.GetSessionVars().PlanCacheEnabled = true
 	tk.MustExec("insert t values ()")
 	tk.MustExec("insert t values ()")
 
@@ -1975,6 +1975,30 @@ func (s *testSessionSuite) TestRollbackOnCompileError(c *C) {
 		}
 	}
 	c.Assert(recoverErr, IsTrue)
+}
+
+func (s *testSessionSuite) TestSetTransactionIsolationOneShot(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t (k int, v int)")
+	tk.MustExec("insert t values (1, 42)")
+	tk.MustExec("set transaction isolation level read committed")
+
+	// Check isolation level is set to read committed.
+	ctx := context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
+		c.Assert(req.IsolationLevel, Equals, kv.RC)
+	})
+	tk.Se.Execute(ctx, "select * from t where k = 1")
+
+	// Check it just take effect for one time.
+	ctx = context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
+		c.Assert(req.IsolationLevel, Equals, kv.SI)
+	})
+	tk.Se.Execute(ctx, "select * from t where k = 1")
+
+	// Can't change isolation level when it's inside a transaction.
+	tk.MustExec("begin")
+	_, err := tk.Se.Execute(ctx, "set transaction isolation level read committed")
+	c.Assert(err, NotNil)
 }
 
 func (s *testSessionSuite) TestDBUserNameLength(c *C) {

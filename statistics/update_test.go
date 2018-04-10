@@ -410,7 +410,7 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
-	testKit.MustExec("create table t (a int, b int, primary key(a), index idx(b))")
+	testKit.MustExec("create table t (a bigint(64), b bigint(64), primary key(a), index idx(b))")
 	testKit.MustExec("insert into t values (1,2),(2,2),(4,5)")
 	testKit.MustExec("analyze table t")
 	testKit.MustExec("insert into t values (3,4)")
@@ -429,6 +429,7 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 		idxCols int
 	}{
 		{
+			// test primary key feedback
 			sql: "select * from t where t.a <= 5",
 			hist: "column:1 ndv:3 totColSize:0\n" +
 				"num: 1\tlower_bound: 1\tupper_bound: 1\trepeats: 1\n" +
@@ -437,6 +438,7 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 			idxCols: 0,
 		},
 		{
+			// test index feedback by double read
 			sql: "select * from t use index(idx) where t.b <= 5",
 			hist: "index:1 ndv:2\n" +
 				"num: 2\tlower_bound: 2\tupper_bound: 2\trepeats: 2\n" +
@@ -444,6 +446,7 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 			idxCols: 1,
 		},
 		{
+			// test index feedback by single read
 			sql: "select b from t use index(idx) where t.b <= 5",
 			hist: "index:1 ndv:2\n" +
 				"num: 2\tlower_bound: 2\tupper_bound: 2\trepeats: 2\n" +
@@ -459,8 +462,23 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 		if t.idxCols == 0 {
 			c.Assert(feedback[0].DecodeInt(), IsNil)
 		}
-		c.Assert(statistics.UpdateHistogram(feedback[0].Hist(), feedback).ToString(t.idxCols), Equals, t.hist)
+		c.Assert(statistics.UpdateHistogram(feedback[0].Hist(), feedback[0]).ToString(t.idxCols), Equals, t.hist)
 	}
+
+	for _, t := range tests {
+		testKit.MustQuery(t.sql)
+	}
+	c.Assert(h.DumpStatsDeltaToKV(), IsNil)
+	c.Assert(h.DumpStatsFeedbackToKV(), IsNil)
+	c.Assert(h.HandleUpdateStats(s.do.InfoSchema()), IsNil)
+	is := s.do.InfoSchema()
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	h.Update(s.do.InfoSchema())
+	tblInfo := table.Meta()
+	tbl := h.GetTableStats(tblInfo)
+	c.Assert(tbl.Columns[tblInfo.Columns[0].ID].ToString(0), Equals, tests[0].hist)
+	c.Assert(tbl.Indices[tblInfo.Indices[0].ID].ToString(1), Equals, tests[1].hist)
 
 	// Feedback from limit executor may not be accurate.
 	testKit.MustQuery("select * from t where t.a <= 2 limit 1")
