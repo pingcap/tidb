@@ -133,8 +133,14 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	case InnerJoin:
 		p.LeftConditions = nil
 		p.RightConditions = nil
-		p.EqualConditions = equalCond
-		p.OtherConditions = otherCond
+		p.EqualConditions = make([]*expression.ScalarFunction, 0, len(equalCond))
+		for _, cond := range equalCond {
+			p.EqualConditions = append(p.EqualConditions, cond.Clone().(*expression.ScalarFunction))
+		}
+		p.OtherConditions = make([]expression.Expression, 0, len(otherCond))
+		for _, cond := range otherCond {
+			p.OtherConditions = append(p.OtherConditions, cond.Clone())
+		}
 		leftCond = leftPushCond
 		rightCond = rightPushCond
 	}
