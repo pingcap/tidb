@@ -3710,6 +3710,9 @@ CastType:
 	{
 		x := types.NewFieldType(mysql.TypeVarString)
 		x.Flen = $2.(int)  // TODO: Flen should be the flen of expression
+		if x.Flen != types.UnspecifiedLength {
+			x.Tp = mysql.TypeString
+		}
 		x.Charset = charset.CharsetBin
 		x.Collate = charset.CollationBin
 		x.Flag |= mysql.BinaryFlag
@@ -4557,7 +4560,14 @@ SetStmt:
 	}
 |	"SET" "TRANSACTION" TransactionChars
 	{
-		$$ = &ast.SetStmt{Variables: $3.([]*ast.VariableAssignment)}
+		assigns := $3.([]*ast.VariableAssignment)
+		for i:=0; i<len(assigns); i++ {
+			if assigns[i].Name == "tx_isolation" {
+				// A special session variable that make setting tx_isolation take effect one time.
+				assigns[i].Name = "tx_isolation_one_shot"
+			}
+		}
+		$$ = &ast.SetStmt{Variables: assigns}
 	}
 
 TransactionChars:

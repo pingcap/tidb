@@ -61,7 +61,7 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
 	chk := rc[0].NewChunk()
 	iter := chunk.NewIterator4Chunk(chk)
 	for {
-		err := rc[0].NextChunk(context.TODO(), chk)
+		err := rc[0].Next(context.TODO(), chk)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -111,7 +111,7 @@ func initStatsHistograms4Chunk(is infoschema.InfoSchema, tables statsCache, iter
 				continue
 			}
 			hist := NewHistogram(id, ndv, nullCount, version, &colInfo.FieldType, 0, totColSize)
-			table.Columns[hist.ID] = &Column{Histogram: *hist, Info: colInfo}
+			table.Columns[hist.ID] = &Column{Histogram: *hist, Info: colInfo, Count: nullCount}
 		}
 	}
 }
@@ -128,7 +128,7 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables statsCache
 	chk := rc[0].NewChunk()
 	iter := chunk.NewIterator4Chunk(chk)
 	for {
-		err := rc[0].NextChunk(context.TODO(), chk)
+		err := rc[0].Next(context.TODO(), chk)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -198,7 +198,7 @@ func (h *Handle) initStatsBuckets(tables statsCache) error {
 	chk := rc[0].NewChunk()
 	iter := chunk.NewIterator4Chunk(chk)
 	for {
-		err := rc[0].NextChunk(context.TODO(), chk)
+		err := rc[0].Next(context.TODO(), chk)
 		if err != nil {
 			return errors.Trace(err)
 		}

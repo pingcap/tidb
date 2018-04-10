@@ -138,7 +138,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	r, err := tk.Exec("admin cancel ddl jobs 1")
 	c.Assert(err, IsNil, Commentf("err %v", err))
 	chk := r.NewChunk()
-	err = r.NextChunk(ctx, chk)
+	err = r.Next(ctx, chk)
 	c.Assert(err, IsNil)
 	row := chk.GetRow(0)
 	c.Assert(row.Len(), Equals, 2)
@@ -148,7 +148,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	r, err = tk.Exec("admin show ddl")
 	c.Assert(err, IsNil)
 	chk = r.NewChunk()
-	err = r.NextChunk(ctx, chk)
+	err = r.Next(ctx, chk)
 	c.Assert(err, IsNil)
 	row = chk.GetRow(0)
 	c.Assert(row.Len(), Equals, 4)
@@ -163,7 +163,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	// c.Assert(rowOwnerInfos[0], Equals, ownerInfos[0])
 	c.Assert(row.GetString(2), Equals, "")
 	chk = r.NewChunk()
-	err = r.NextChunk(ctx, chk)
+	err = r.Next(ctx, chk)
 	c.Assert(err, IsNil)
 	c.Assert(chk.NumRows() == 0, IsTrue)
 	err = txn.Rollback()
@@ -173,7 +173,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	r, err = tk.Exec("admin show ddl jobs")
 	c.Assert(err, IsNil)
 	chk = r.NewChunk()
-	err = r.NextChunk(ctx, chk)
+	err = r.Next(ctx, chk)
 	c.Assert(err, IsNil)
 	row = chk.GetRow(0)
 	c.Assert(row.Len(), Equals, 2)
@@ -756,7 +756,7 @@ func (s *testSuite) TestIssue2612(c *C) {
 	rs, err := tk.Exec(`select timediff(finish_at, create_at) from t;`)
 	c.Assert(err, IsNil)
 	chk := rs.NewChunk()
-	err = rs.NextChunk(context.Background(), chk)
+	err = rs.Next(context.Background(), chk)
 	c.Assert(err, IsNil)
 	c.Assert(chk.GetRow(0).GetDuration(0).String(), Equals, "-46:09:02")
 }
@@ -2310,7 +2310,7 @@ func (s *testSuite) TestBit(c *C) {
 	r, err := tk.Exec("select * from t where c1 = 2")
 	c.Assert(err, IsNil)
 	chk := r.NewChunk()
-	err = r.NextChunk(context.Background(), chk)
+	err = r.Next(context.Background(), chk)
 	c.Assert(err, IsNil)
 	c.Assert(types.BinaryLiteral(chk.GetRow(0).GetBytes(0)), DeepEquals, types.NewBinaryLiteralFromUint(2, -1))
 
@@ -2475,7 +2475,7 @@ func (s *testSuite) TestEarlyClose(c *C) {
 		c.Assert(err1, IsNil)
 		rs := rss[0]
 		chk := rs.NewChunk()
-		err = rs.NextChunk(ctx, chk)
+		err = rs.Next(ctx, chk)
 		c.Assert(err, IsNil)
 		rs.Close()
 	}
@@ -2487,7 +2487,7 @@ func (s *testSuite) TestEarlyClose(c *C) {
 	c.Assert(err, IsNil)
 	rs := rss[0]
 	chk := rs.NewChunk()
-	err = rs.NextChunk(ctx, chk)
+	err = rs.Next(ctx, chk)
 	c.Assert(err, NotNil)
 	rs.Close()
 }
@@ -2653,7 +2653,7 @@ func (s *testSuite) TestCoprocessorStreamingFlag(c *C) {
 		rs, err := tk.Se.Execute(ctx1, test.sql)
 		c.Assert(err, IsNil)
 		chk := rs[0].NewChunk()
-		err = rs[0].NextChunk(ctx, chk)
+		err = rs[0].Next(ctx, chk)
 		c.Assert(err, IsNil)
 		rs[0].Close()
 	}

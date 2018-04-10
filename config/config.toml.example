@@ -142,6 +142,10 @@ feedback-probability = 0.0
 # The max number of query feedback that cache in memory.
 query-feedback-limit = 1024
 
+# Pseudo stats will be used if the ratio between the modify count and
+# row count in statistics of a table is greater than it.
+pseudo-estimate-ratio = 0.7
+
 [proxy-protocol]
 # PROXY protocol acceptable client networks.
 # Empty string means disable PROXY protocol, * means all networks.

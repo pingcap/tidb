@@ -162,6 +162,15 @@ type SessionVars struct {
 	// Should be reset on transaction finished.
 	TxnCtx *TransactionContext
 
+	// TxnIsolationLevelOneShot is used to implements "set transaction isolation level ..."
+	TxnIsolationLevelOneShot struct {
+		// state 0 means default
+		// state 1 means it's set in current transaction.
+		// state 2 means it should be used in current transaction.
+		State int
+		Value string
+	}
+
 	// Following variables are special for current session.
 
 	Status           uint16
@@ -182,6 +191,9 @@ type SessionVars struct {
 
 	// PlanID is the unique id of logical and physical plan.
 	PlanID int
+
+	// PlanCacheEnabled stores the global config "plan-cache-enabled", and it will be only updated in tests.
+	PlanCacheEnabled bool
 
 	// User is the user identity with which the session login.
 	User *auth.UserIdentity
@@ -252,6 +264,9 @@ type SessionVars struct {
 
 	// IndexLookupConcurrency is the number of concurrent index lookup worker.
 	IndexLookupConcurrency int
+
+	// IndexLookupJoinConcurrency is the number of concurrent index lookup join inner worker.
+	IndexLookupJoinConcurrency int
 
 	// DistSQLScanConcurrency is the number of concurrent dist SQL scan worker.
 	DistSQLScanConcurrency int
@@ -340,6 +355,7 @@ func NewSessionVars() *SessionVars {
 	} else {
 		enableStreaming = "0"
 	}
+	vars.PlanCacheEnabled = config.GetGlobalConfig().PlanCache.Enabled
 	terror.Log(vars.SetSystemVar(TiDBEnableStreaming, enableStreaming))
 	return vars
 }
@@ -448,6 +464,9 @@ func (s *SessionVars) deleteSystemVar(name string) error {
 // SetSystemVar sets the value of a system variable.
 func (s *SessionVars) SetSystemVar(name string, val string) error {
 	switch name {
+	case TxnIsolationOneShot:
+		s.TxnIsolationLevelOneShot.State = 1
+		s.TxnIsolationLevelOneShot.Value = val
 	case TimeZone:
 		tz, err := parseTimeZone(val)
 		if err != nil {
@@ -485,6 +504,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.AllowInSubqueryUnFolding = TiDBOptOn(val)
 	case TiDBIndexLookupConcurrency:
 		s.IndexLookupConcurrency = tidbOptPositiveInt(val, DefIndexLookupConcurrency)
+	case TiDBIndexLookupJoinConcurrency:
+		s.IndexLookupJoinConcurrency = tidbOptPositiveInt(val, DefIndexLookupJoinConcurrency)
 	case TiDBIndexJoinBatchSize:
 		s.IndexJoinBatchSize = tidbOptPositiveInt(val, DefIndexJoinBatchSize)
 	case TiDBIndexLookupSize:
@@ -536,6 +557,7 @@ const (
 	MaxAllowedPacket    = "max_allowed_packet"
 	TimeZone            = "time_zone"
 	TxnIsolation        = "tx_isolation"
+	TxnIsolationOneShot = "tx_isolation_one_shot"
 )
 
 // TableDelta stands for the changed count for one table.

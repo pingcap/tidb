@@ -366,6 +366,7 @@ func setGlobalVars() {
 	domain.RunAutoAnalyze = cfg.Performance.RunAutoAnalyze
 	statistics.FeedbackProbability = cfg.Performance.FeedbackProbability
 	statistics.MaxQueryFeedbackCount = int(cfg.Performance.QueryFeedbackLimit)
+	plan.RatioOfPseudoEstimate = cfg.Performance.PseudoEstimateRatio
 	ddl.RunWorker = cfg.RunDDL
 	ddl.EnableSplitTableRegion = cfg.SplitTable
 	session.SetCommitRetryLimit(cfg.Performance.RetryLimit)
@@ -373,11 +374,8 @@ func setGlobalVars() {
 	plan.AllowCartesianProduct = cfg.Performance.CrossJoin
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
 
-	plan.PlanCacheEnabled = cfg.PlanCache.Enabled
-	if plan.PlanCacheEnabled {
-		plan.PlanCacheCapacity = cfg.PlanCache.Capacity
-		plan.PlanCacheShards = cfg.PlanCache.Shards
-		plan.GlobalPlanCache = kvcache.NewShardedLRUCache(plan.PlanCacheCapacity, plan.PlanCacheShards)
+	if cfg.PlanCache.Enabled {
+		plan.GlobalPlanCache = kvcache.NewShardedLRUCache(cfg.PlanCache.Capacity, cfg.PlanCache.Shards)
 	}
 
 	plan.PreparedPlanCacheEnabled = cfg.PreparedPlanCache.Enabled

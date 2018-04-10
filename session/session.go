@@ -350,6 +350,17 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	metrics.StatementPerTransaction.WithLabelValues(metrics.RetLabel(err)).Observe(float64(counter))
 	metrics.TransactionDuration.WithLabelValues(metrics.RetLabel(err)).Observe(float64(duration))
 	s.cleanRetryInfo()
+
+	if isoLevelOneShot := &s.sessionVars.TxnIsolationLevelOneShot; isoLevelOneShot.State != 0 {
+		switch isoLevelOneShot.State {
+		case 1:
+			isoLevelOneShot.State = 2
+		case 2:
+			isoLevelOneShot.State = 0
+			isoLevelOneShot.Value = ""
+		}
+	}
+
 	if err != nil {
 		log.Warnf("[%d] finished txn:%v, %v", s.sessionVars.ConnectionID, s.txn, err)
 		return errors.Trace(err)
@@ -610,7 +621,7 @@ func drainRecordSet(ctx context.Context, rs ast.RecordSet) ([]types.Row, error) 
 	var rows []types.Row
 	for {
 		chk := rs.NewChunk()
-		err := rs.NextChunk(ctx, chk)
+		err := rs.Next(ctx, chk)
 		if err != nil || chk.NumRows() == 0 {
 			return rows, errors.Trace(err)
 		}
@@ -754,7 +765,7 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []ast.Rec
 		cacheValue       kvcache.Value
 		hitCache         = false
 		connID           = s.sessionVars.ConnectionID
-		planCacheEnabled = plan.PlanCacheEnabled // Read global configuration only once.
+		planCacheEnabled = s.sessionVars.PlanCacheEnabled // Its value is read from the global configuration, and it will be only updated in tests.
 	)
 
 	if planCacheEnabled {
@@ -860,7 +871,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	// So we have to call PrepareTxnCtx here.
 	s.PrepareTxnCtx(ctx)
 	prepareExec := executor.NewPrepareExec(s, executor.GetInfoSchema(s), sql)
-	err = prepareExec.NextChunk(ctx, nil)
+	err = prepareExec.Next(ctx, nil)
 	if err != nil {
 		err = errors.Trace(err)
 		return
@@ -1256,6 +1267,7 @@ const loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variab
 	variable.TiDBIndexJoinBatchSize + quoteCommaQuote +
 	variable.TiDBIndexLookupSize + quoteCommaQuote +
 	variable.TiDBIndexLookupConcurrency + quoteCommaQuote +
+	variable.TiDBIndexLookupJoinConcurrency + quoteCommaQuote +
 	variable.TiDBIndexSerialScanConcurrency + quoteCommaQuote +
 	variable.TiDBDistSQLScanConcurrency + "')"
 

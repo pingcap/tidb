@@ -54,7 +54,7 @@ func (s *testSuite) TestSelectNormal(c *C) {
 	colTypes = append(colTypes, colTypes[0])
 	colTypes = append(colTypes, colTypes[0])
 
-	// Test NextChunk.
+	// Test Next.
 	response, err := Select(context.TODO(), s.sctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false))
 	c.Assert(err, IsNil)
 	result, ok := response.(*selectResult)
@@ -64,11 +64,11 @@ func (s *testSuite) TestSelectNormal(c *C) {
 
 	response.Fetch(context.TODO())
 
-	// Test NextChunk.
+	// Test Next.
 	chk := chunk.NewChunk(colTypes)
 	numAllRows := 0
 	for {
-		err = response.NextChunk(context.TODO(), chk)
+		err = response.Next(context.TODO(), chk)
 		c.Assert(err, IsNil)
 		numAllRows += chk.NumRows()
 		if chk.NumRows() == 0 {
@@ -108,7 +108,7 @@ func (s *testSuite) TestSelectStreaming(c *C) {
 
 	s.sctx.GetSessionVars().EnableStreaming = true
 
-	// Test NextChunk.
+	// Test Next.
 	response, err := Select(context.TODO(), s.sctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false))
 	c.Assert(err, IsNil)
 	result, ok := response.(*streamResult)
@@ -117,11 +117,11 @@ func (s *testSuite) TestSelectStreaming(c *C) {
 
 	response.Fetch(context.TODO())
 
-	// Test NextChunk.
+	// Test Next.
 	chk := chunk.NewChunk(colTypes)
 	numAllRows := 0
 	for {
-		err = response.NextChunk(context.TODO(), chk)
+		err = response.Next(context.TODO(), chk)
 		c.Assert(err, IsNil)
 		numAllRows += chk.NumRows()
 		if chk.NumRows() == 0 {
