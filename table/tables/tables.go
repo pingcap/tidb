@@ -506,17 +506,16 @@ func (t *Table) RowWithCols(ctx sessionctx.Context, h int64, cols []*table.Colum
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	v, err := DecodeRawRowData(ctx, t.Meta(), h, cols, value)
+	v, _, err := DecodeRawRowData(ctx, t.Meta(), h, cols, value)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	return v, nil
 }
 
-// DecodeRawRowData decodes raw row data to a datum row.
+// DecodeRawRowData decodes raw row data into a datum slice and a (columnID:columnValue) map.
 func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h int64, cols []*table.Column,
-	value []byte) ([]types.Datum,
-	error) {
+	value []byte) ([]types.Datum, map[int64]types.Datum, error) {
 	v := make([]types.Datum, len(cols))
 	colTps := make(map[int64]*types.FieldType, len(cols))
 	for i, col := range cols {
@@ -535,7 +534,7 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h int64, co
 	}
 	rowMap, err := tablecodec.DecodeRow(value, colTps, ctx.GetSessionVars().GetTimeZone())
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, rowMap, errors.Trace(err)
 	}
 	defaultVals := make([]types.Datum, len(cols))
 	for i, col := range cols {
@@ -552,10 +551,10 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h int64, co
 		}
 		v[i], err = GetColDefaultValue(ctx, col, defaultVals)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, rowMap, errors.Trace(err)
 		}
 	}
-	return v, nil
+	return v, rowMap, nil
 }
 
 // Row implements table.Table Row interface.
