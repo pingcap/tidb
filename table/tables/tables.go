@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/spaolacci/murmur3"
+	"github.com/pingcap/tidb/_vendor/src/github.com/pingcap/tipb/go-binlog"
 )
 
 // Table implements table.Table interface.
@@ -74,6 +75,7 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 
 	columns := make([]*table.Column, 0, len(tblInfo.Columns))
 	for _, colInfo := range tblInfo.Columns {
+		log.Infof("FOR TEST COLINFO: %+v", colInfo)
 		if colInfo.State == model.StateNone {
 			return nil, table.ErrColumnStateCantNone.Gen("column %s can't be in none state", colInfo.Name)
 		}
@@ -93,6 +95,7 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 		columns = append(columns, col)
 	}
 
+	log.Infof("FOR TEST %+v", tblInfo)
 	t := newTable(tblInfo.ID, columns, alloc)
 
 	for _, idxInfo := range tblInfo.Indices {
