@@ -560,9 +560,9 @@ func (ts *HTTPHandlerTestSuite) TestAllHistory(c *C) {
 	s, _ := session.CreateSession(ts.server.newTikvHandlerTool().store.(kv.Storage))
 	store := domain.GetDomain(s.(sessionctx.Context)).Store()
 	txn, _ := store.Begin()
-	tt := meta.NewMeta(txn)
-	tt.GetAllHistoryDDLJobs()
-	data, _ := tt.GetAllHistoryDDLJobs()
+	txnMeta := meta.NewMeta(txn)
+	txnMeta.GetAllHistoryDDLJobs()
+	data, _ := txnMeta.GetAllHistoryDDLJobs()
 	err = decoder.Decode(&jobs)
 
 	c.Assert(err, IsNil)

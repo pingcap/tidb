@@ -274,7 +274,7 @@ func (t *tikvHandlerTool) handleMvccGetByHex(params map[string]string) (interfac
 	return t.getMvccByEncodedKey(encodedKey)
 }
 
-func (t *tikvHandlerTool) GetAllHistory() ([]*model.Job, error) {
+func (t *tikvHandlerTool) GetAllHistoryDDL() ([]*model.Job, error) {
 	s, err := session.CreateSession(t.store.(kv.Storage))
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -285,9 +285,9 @@ func (t *tikvHandlerTool) GetAllHistory() ([]*model.Job, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	tt := meta.NewMeta(txn)
+	txnMeta := meta.NewMeta(txn)
 
-	jobs, err := tt.GetAllHistoryDDLJobs()
+	jobs, err := txnMeta.GetAllHistoryDDLJobs()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -315,8 +315,8 @@ type tableHandler struct {
 	op string
 }
 
-// historyHandler is the handler for list job histry.
-type historyHandler struct {
+// ddlHistoryJobHandler is the handler for list job histry.
+type ddlHistoryJobHandler struct {
 	*tikvHandlerTool
 }
 
@@ -602,9 +602,9 @@ func (h tableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
-// ServeHTTP handles request of list tidb server settings.
-func (h historyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	jobs, err := h.GetAllHistory()
+// ServeHTTP handles request of ddl jobs history.
+func (h ddlHistoryJobHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	jobs, err := h.GetAllHistoryDDL()
 	if err != nil {
 		writeError(w, errors.New("ddl history not found"))
 	}
