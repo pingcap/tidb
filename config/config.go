@@ -228,7 +228,7 @@ var defaultConf = Config{
 	Path:                "/tmp/tidb",
 	RunDDL:              true,
 	SplitTable:          true,
-	Lease:               "10s",
+	Lease:               "45s",
 	TokenLimit:          1000,
 	OOMAction:           "log",
 	EnableStreaming:     false,
