@@ -450,6 +450,8 @@ func (d *ddl) doModifyColumn(t *meta.Meta, job *model.Job, col *model.ColumnInfo
 		return ver, infoschema.ErrColumnNotExists.GenByArgs(oldName, tblInfo.Name)
 	}
 
+	col.Offset = oldCol.Offset
+	col.State = oldCol.State
 	// Calculate column's new position.
 	oldPos, newPos := oldCol.Offset, oldCol.Offset
 	if pos.Tp == ast.ColumnPositionAfter {
