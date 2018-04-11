@@ -128,17 +128,8 @@ func (q *QueryFeedback) Update(startKey kv.Key, counts []int64) {
 		q.Invalidate()
 		return
 	}
-	length := len(counts)
-	// The `counts` was the output count of each push down executor.
-	if counts[length-1] != -1 {
-		metrics.DistSQLScanKeysPartialHistogram.Observe(float64(counts[0]))
-		q.actual += counts[0]
-		return
-	}
-	// The counts is the scan count of each range now.
 	sum := int64(0)
-	rangeCounts := counts[:length-1]
-	for _, count := range rangeCounts {
+	for _, count := range counts {
 		sum += count
 	}
 	metrics.DistSQLScanKeysPartialHistogram.Observe(float64(sum))
@@ -162,13 +153,13 @@ func (q *QueryFeedback) Update(startKey kv.Key, counts []int64) {
 	}
 	// If the desc is true, the counts is reversed, so here we need to reverse it back.
 	if q.desc {
-		for i := 0; i < len(rangeCounts)/2; i++ {
-			j := len(rangeCounts) - i - 1
-			rangeCounts[i], rangeCounts[j] = rangeCounts[j], rangeCounts[i]
+		for i := 0; i < len(counts)/2; i++ {
+			j := len(counts) - i - 1
+			counts[i], counts[j] = counts[j], counts[i]
 		}
 	}
 	// Update the feedback count info.
-	for i, count := range rangeCounts {
+	for i, count := range counts {
 		if i+idx >= len(q.feedback) {
 			q.Invalidate()
 			break
