@@ -204,6 +204,7 @@ func (e *ShowExec) fetchShowProcessList() error {
 			t,
 			fmt.Sprintf("%d", pi.State),
 			info,
+			pi.Mem,
 		})
 	}
 	return nil
