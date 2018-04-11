@@ -72,35 +72,22 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 		return nil, table.ErrTableStateCantNone.Gen("table %s can't be in none state", tblInfo.Name)
 	}
 
-	colLen := len(tblInfo.Columns)
-	var needUpdated bool
-	for i := 0; i < colLen; i++ {
-		if tblInfo.Columns[i].Offset != i {
-			log.Warnf("the table %#v schema is wrong, cols len %v, no.%v col %#v", tblInfo, colLen, i, tblInfo.Columns[i])
-			needUpdated = true
-		}
-	}
-	if needUpdated {
-		for i := 0; i < colLen; i++ {
-			tblInfo.Columns[i].Offset = i
-		}
-		for _, idx := range tblInfo.Indices {
-			for _, col := range idx.Columns {
-				for _, c := range tblInfo.Columns {
-					if col.Name.L == c.Name.L {
-						col.Offset = c.Offset
-					}
-				}
-				log.Warnf("update idx %#v", idx)
-			}
-		}
-		log.Warnf("update finished")
-	}
-
-	columns := make([]*table.Column, 0, len(tblInfo.Columns))
-	for _, colInfo := range tblInfo.Columns {
+	colsLen := len(tblInfo.Columns)
+	columns := make([]*table.Column, 0, colsLen)
+	for i, colInfo := range tblInfo.Columns {
 		if colInfo.State == model.StateNone {
 			return nil, table.ErrColumnStateCantNone.Gen("column %s can't be in none state", colInfo.Name)
+		}
+
+		// Add information about the column's offset.
+		if colInfo.Offset != i {
+			if i == colsLen-1 && colInfo.Offset >= colsLen {
+				log.Errorf("[tables] table %#v schema is wrong, col %#v, cols len %v", tblInfo, tblInfo.Columns[colsLen-1], colsLen)
+			} else {
+				// When we do the operation of 'add column' or 'drop column',
+				// the colInfo's offset and i may not be equal.
+				log.Infof("[tables] table %#v, the offset of col %#v isn't equal to %d", tblInfo, colInfo, i)
+			}
 		}
 
 		col := table.ToColumn(colInfo)
@@ -182,7 +169,6 @@ func (t *Table) Cols() []*table.Column {
 		return t.publicColumns
 	}
 	publicColumns := make([]*table.Column, len(t.Columns))
-
 	maxOffset := -1
 	for _, col := range t.Columns {
 		if col.State != model.StatePublic {
