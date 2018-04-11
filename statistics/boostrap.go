@@ -111,7 +111,7 @@ func initStatsHistograms4Chunk(is infoschema.InfoSchema, tables statsCache, iter
 				continue
 			}
 			hist := NewHistogram(id, ndv, nullCount, version, &colInfo.FieldType, 0, totColSize)
-			table.Columns[hist.ID] = &Column{Histogram: *hist, Info: colInfo}
+			table.Columns[hist.ID] = &Column{Histogram: *hist, Info: colInfo, Count: nullCount}
 		}
 	}
 }

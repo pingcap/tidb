@@ -194,8 +194,14 @@ func SaveStatsToStorage(sctx sessionctx.Context, tableID int64, count int64, isI
 	}
 	txn := sctx.Txn()
 	version := txn.StartTS()
-	replaceSQL := fmt.Sprintf("replace into mysql.stats_meta (version, table_id, count) values (%d, %d, %d)", version, tableID, count)
-	_, err = exec.Execute(ctx, replaceSQL)
+	var sql string
+	// If the count is less than 0, then we do not want to update the modify count and count.
+	if count >= 0 {
+		sql = fmt.Sprintf("replace into mysql.stats_meta (version, table_id, count) values (%d, %d, %d)", version, tableID, count)
+	} else {
+		sql = fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d", version, tableID)
+	}
+	_, err = exec.Execute(ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -203,7 +209,7 @@ func SaveStatsToStorage(sctx sessionctx.Context, tableID int64, count int64, isI
 	if err != nil {
 		return errors.Trace(err)
 	}
-	replaceSQL = fmt.Sprintf("replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size) values (%d, %d, %d, %d, %d, %d, X'%X', %d)",
+	replaceSQL := fmt.Sprintf("replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size) values (%d, %d, %d, %d, %d, %d, X'%X', %d)",
 		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, data, hg.TotColSize)
 	_, err = exec.Execute(ctx, replaceSQL)
 	if err != nil {
@@ -358,6 +364,10 @@ func (hg *Histogram) greaterAndEqRowCount(value types.Datum) float64 {
 
 // lessRowCount estimates the row count where the column less than value.
 func (hg *Histogram) lessRowCount(value types.Datum) float64 {
+	// all the values is null
+	if hg.Bounds == nil {
+		return 0
+	}
 	index, match := hg.Bounds.LowerBound(0, &value)
 	if index == hg.Bounds.NumRows() {
 		return hg.totalRowCount()
@@ -389,7 +399,7 @@ func (hg *Histogram) betweenRowCount(a, b types.Datum) float64 {
 	lessCountB := hg.lessRowCount(b)
 	// If lessCountA is not less than lessCountB, it may be that they fall to the same bucket and we cannot estimate
 	// the fraction, so we use `totalCount / NDV` to estimate the row count, but the result should not greater than lessCountB.
-	if lessCountA >= lessCountB {
+	if lessCountA >= lessCountB && hg.NDV > 0 {
 		return math.Min(lessCountB, hg.totalRowCount()/float64(hg.NDV))
 	}
 	return lessCountB - lessCountA
@@ -397,9 +407,9 @@ func (hg *Histogram) betweenRowCount(a, b types.Datum) float64 {
 
 func (hg *Histogram) totalRowCount() float64 {
 	if hg.Len() == 0 {
-		return 0
+		return float64(hg.NullCount)
 	}
-	return float64(hg.Buckets[hg.Len()-1].Count)
+	return float64(hg.Buckets[hg.Len()-1].Count + hg.NullCount)
 }
 
 // mergeBuckets is used to merge every two neighbor buckets.
@@ -425,7 +435,7 @@ func (hg *Histogram) mergeBuckets(bucketIdx int) {
 
 // getIncreaseFactor will return a factor of data increasing after the last analysis.
 func (hg *Histogram) getIncreaseFactor(totalCount int64) float64 {
-	columnCount := int64(hg.totalRowCount()) + hg.NullCount
+	columnCount := int64(hg.totalRowCount())
 	if columnCount == 0 {
 		// avoid dividing by 0
 		return 1.0
@@ -615,9 +625,16 @@ func (c *Column) String() string {
 }
 
 func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum) (float64, error) {
+	if val.IsNull() {
+		return float64(c.NullCount), nil
+	}
 	if c.CMSketch != nil {
 		count, err := c.CMSketch.queryValue(sc, val)
 		return float64(count), errors.Trace(err)
+	}
+	// all the values is null
+	if c.Histogram.Bounds == nil {
+		return 0.0, nil
 	}
 	return c.Histogram.equalRowCount(val), nil
 }

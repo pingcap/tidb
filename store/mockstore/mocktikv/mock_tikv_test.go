@@ -33,25 +33,15 @@ type testMockTiKVSuite struct {
 
 type testMarshal struct{}
 
-var (
-	_ = Suite(&testMvccStore{})
-	_ = Suite(&testMVCCLevelDB{})
-	_ = Suite(testMarshal{})
-)
-
-// testMvccStore is used to test MvccStore implementation.
-type testMvccStore struct {
-	testMockTiKVSuite
-}
-
-func (s *testMvccStore) SetUpTest(c *C) {
-	s.store = NewMvccStore()
-}
-
 // testMVCCLevelDB is used to test MVCCLevelDB implementation.
 type testMVCCLevelDB struct {
 	testMockTiKVSuite
 }
+
+var (
+	_ = Suite(&testMVCCLevelDB{})
+	_ = Suite(testMarshal{})
+)
 
 func (s *testMockTiKVSuite) SetUpTest(c *C) {
 	var err error
