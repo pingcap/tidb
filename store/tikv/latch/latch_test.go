@@ -55,31 +55,31 @@ func (s *testLatchSuite) TestWakeUp(c *C) {
 	keysB := [][]byte{[]byte("d"), []byte("e"), []byte("a"), []byte("c")}
 	startTSB, lockB := s.newLock(keysB)
 
-	//A acquire lock success
+	// A acquire lock success.
 	acquired, timeout := s.latches.Acquire(&lockA)
 	c.Assert(timeout, IsFalse)
 	c.Assert(acquired, IsTrue)
 
-	// B acquire lock failed
+	// B acquire lock failed.
 	acquired, timeout = s.latches.Acquire(&lockB)
 	c.Assert(timeout, IsFalse)
 	c.Assert(acquired, IsFalse)
 
-	// A release lock, and get wakeup list
+	// A release lock, and get wakeup list.
 	commitTSA := getTso()
 	wakeupList := s.latches.Release(&lockA, commitTSA)
 	c.Assert(wakeupList[0], Equals, startTSB)
 
-	// B acquire failed since startTSB has timeout for some keys
+	// B acquire failed since startTSB has timeout for some keys.
 	acquired, timeout = s.latches.Acquire(&lockB)
 	c.Assert(timeout, IsTrue)
 	c.Assert(acquired, IsFalse)
 
-	// B release lock since it received a timeout
+	// B release lock since it received a timeout.
 	wakeupList = s.latches.Release(&lockB, 0)
 	c.Assert(len(wakeupList), Equals, 0)
 
-	// B restart:get a new startTSo
+	// B restart:get a new startTS.
 	startTSB = getTso()
 	lockB = s.latches.GenLock(startTSB, keysB)
 	acquired, timeout = s.latches.Acquire(&lockB)
