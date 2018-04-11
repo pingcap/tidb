@@ -100,7 +100,7 @@ type txnScheduler struct {
 	wait    *sync.WaitGroup
 }
 
-func newTxnStore(wait *sync.WaitGroup) *txnScheduler {
+func newTxnScheduler(wait *sync.WaitGroup) *txnScheduler {
 	txnsMap := make(map[uint64]*txn)
 	return &txnScheduler{
 		txns:    txnsMap,
@@ -159,10 +159,12 @@ func (s *testLatchSuite) TestWithConcurrency(c *C) {
 		[]byte("a"), []byte("d"), []byte("e"), []byte("f")}
 	txn3 := [][]byte{
 		[]byte("e"), []byte("f"), []byte("g"), []byte("h")}
-	waitGroup.Add(3)
-	store := newTxnStore(&waitGroup)
-	go store.newTxn(txn1)
-	go store.newTxn(txn2)
-	go store.newTxn(txn3)
+	txns := [][][]byte{txn1, txn2, txn3}
+
+	store := newTxnScheduler(&waitGroup)
+	waitGroup.Add(len(txns))
+	for _, txn := range txns {
+		go store.newTxn(txn)
+	}
 	waitGroup.Wait()
 }
