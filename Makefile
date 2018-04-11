@@ -71,13 +71,9 @@ parserlib: parser/parser.go
 parser/parser.go: parser/parser.y
 	make parser
 
-check: errcheck
-	go get github.com/golang/lint/golint
+check: fmt errcheck lint vet
 
-	@echo "vet"
-	@ go tool vet -all -shadow $(TOPDIRS) 2>&1 | awk '{print} END{if(NR>0) {exit 1}}'
-	@echo "golint"
-	@ golint -set_exit_status $(PACKAGES)
+fmt:
 	@echo "gofmt (simplify)"
 	@ gofmt -s -l -w $(FILES) 2>&1 | grep -v "vendor|parser/parser.go" | awk '{print} END{if(NR>0) {exit 1}}'
 
@@ -88,7 +84,17 @@ goword:
 
 errcheck:
 	go get github.com/kisielk/errcheck
+	@echo "errcheck"
 	@ GOPATH=$(GOPATH) errcheck -blank $(PACKAGES) | grep -v "_test\.go" | awk '{print} END{if(NR>0) {exit 1}}'
+
+lint:
+	go get github.com/golang/lint/golint
+	@echo "golint"
+	@ golint -set_exit_status $(PACKAGES)
+
+vet:
+	@echo "vet"
+	@ go tool vet -all -shadow $(TOPDIRS) 2>&1 | awk '{print} END{if(NR>0) {exit 1}}'
 
 clean:
 	$(GO) clean -i ./...
