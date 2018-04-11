@@ -69,7 +69,7 @@ func (s *testFeedbackSuite) TestUpdateHistogram(c *C) {
 	originBucketCount := defaultBucketCount
 	defaultBucketCount = 5
 	defer func() { defaultBucketCount = originBucketCount }()
-	c.Assert(UpdateHistogram(q.Hist(), []*QueryFeedback{q}).ToString(0), Equals,
+	c.Assert(UpdateHistogram(q.Hist(), q).ToString(0), Equals,
 		"column:0 ndv:0 totColSize:0\n"+
 			"num: 10000\tlower_bound: 0\tupper_bound: 1\trepeats: 0\n"+
 			"num: 10003\tlower_bound: 2\tupper_bound: 3\trepeats: 0\n"+
