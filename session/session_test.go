@@ -52,7 +52,7 @@ var _ = Suite(&testSessionSuite{})
 
 type testSessionSuite struct {
 	cluster   *mocktikv.Cluster
-	mvccStore *mocktikv.MvccStore
+	mvccStore mocktikv.MVCCStore
 	store     kv.Storage
 	dom       *domain.Domain
 }
@@ -61,7 +61,7 @@ func (s *testSessionSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(s.cluster)
-	s.mvccStore = mocktikv.NewMvccStore()
+	s.mvccStore = mocktikv.MustNewMVCCStore()
 	store, err := mockstore.NewMockTikvStore(
 		mockstore.WithCluster(s.cluster),
 		mockstore.WithMVCCStore(s.mvccStore),
@@ -111,18 +111,18 @@ func (p *mockBinlogPump) PullBinlogs(ctx context.Context, in *binlog.PullBinlogR
 }
 
 func (s *testSessionSuite) TestForCoverage(c *C) {
-	planCache := plan.PlanCacheEnabled
 	plan.GlobalPlanCache = kvcache.NewShardedLRUCache(2, 1)
-	defer func() {
-		plan.PlanCacheEnabled = planCache
-	}()
 
 	// Just for test coverage.
 	tk := testkit.NewTestKitWithInit(c, s.store)
+	planCache := tk.Se.GetSessionVars().PlanCacheEnabled
+	defer func() {
+		tk.Se.GetSessionVars().PlanCacheEnabled = planCache
+	}()
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int auto_increment, v int, index (id))")
 	tk.MustExec("insert t values ()")
-	plan.PlanCacheEnabled = true
+	tk.Se.GetSessionVars().PlanCacheEnabled = true
 	tk.MustExec("insert t values ()")
 	tk.MustExec("insert t values ()")
 
@@ -1420,7 +1420,7 @@ var _ = Suite(&testSchemaSuite{})
 
 type testSchemaSuite struct {
 	cluster   *mocktikv.Cluster
-	mvccStore *mocktikv.MvccStore
+	mvccStore mocktikv.MVCCStore
 	store     kv.Storage
 	lease     time.Duration
 	dom       *domain.Domain
@@ -1440,7 +1440,7 @@ func (s *testSchemaSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(s.cluster)
-	s.mvccStore = mocktikv.NewMvccStore()
+	s.mvccStore = mocktikv.MustNewMVCCStore()
 	store, err := mockstore.NewMockTikvStore(
 		mockstore.WithCluster(s.cluster),
 		mockstore.WithMVCCStore(s.mvccStore),

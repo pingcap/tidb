@@ -22,7 +22,7 @@ binlog-socket = ""
 run-ddl = true
 
 # Schema lease duration, very dangerous to change only if you know what you do.
-lease = "10s"
+lease = "45s"
 
 # When create table, split a separated region for it. It is recommended to
 # turn off this option if there will be a large number of tables created.
@@ -138,6 +138,13 @@ run-auto-analyze = true
 
 # Probability to use the query feedback to update stats, 0 or 1 for always false/true.
 feedback-probability = 0.0
+
+# The max number of query feedback that cache in memory.
+query-feedback-limit = 1024
+
+# Pseudo stats will be used if the ratio between the modify count and
+# row count in statistics of a table is greater than it.
+pseudo-estimate-ratio = 0.7
 
 [proxy-protocol]
 # PROXY protocol acceptable client networks.

@@ -192,6 +192,9 @@ type SessionVars struct {
 	// PlanID is the unique id of logical and physical plan.
 	PlanID int
 
+	// PlanCacheEnabled stores the global config "plan-cache-enabled", and it will be only updated in tests.
+	PlanCacheEnabled bool
+
 	// User is the user identity with which the session login.
 	User *auth.UserIdentity
 
@@ -261,6 +264,9 @@ type SessionVars struct {
 
 	// IndexLookupConcurrency is the number of concurrent index lookup worker.
 	IndexLookupConcurrency int
+
+	// IndexLookupJoinConcurrency is the number of concurrent index lookup join inner worker.
+	IndexLookupJoinConcurrency int
 
 	// DistSQLScanConcurrency is the number of concurrent dist SQL scan worker.
 	DistSQLScanConcurrency int
@@ -349,6 +355,7 @@ func NewSessionVars() *SessionVars {
 	} else {
 		enableStreaming = "0"
 	}
+	vars.PlanCacheEnabled = config.GetGlobalConfig().PlanCache.Enabled
 	terror.Log(vars.SetSystemVar(TiDBEnableStreaming, enableStreaming))
 	return vars
 }
@@ -497,6 +504,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.AllowInSubqueryUnFolding = TiDBOptOn(val)
 	case TiDBIndexLookupConcurrency:
 		s.IndexLookupConcurrency = tidbOptPositiveInt(val, DefIndexLookupConcurrency)
+	case TiDBIndexLookupJoinConcurrency:
+		s.IndexLookupJoinConcurrency = tidbOptPositiveInt(val, DefIndexLookupJoinConcurrency)
 	case TiDBIndexJoinBatchSize:
 		s.IndexJoinBatchSize = tidbOptPositiveInt(val, DefIndexJoinBatchSize)
 	case TiDBIndexLookupSize:
