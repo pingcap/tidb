@@ -392,9 +392,6 @@ func (iw *innerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 
 		err := iw.handleTask(ctx, task)
 		task.doneCh <- errors.Trace(err)
-		if err != nil {
-			return
-		}
 	}
 }
 
