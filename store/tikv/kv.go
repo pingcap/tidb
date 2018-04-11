@@ -133,11 +133,12 @@ type tikvStore struct {
 	mock         bool
 	enableGC     bool
 
-	kv        SafePointKV
-	safePoint uint64
-	spTime    time.Time
-	spMutex   sync.RWMutex  // this is used to update safePoint and spTime
-	closed    chan struct{} // this is used to nofity when the store is closed
+	kv           SafePointKV
+	safePoint    uint64
+	spTime       time.Time
+	spMutex      sync.RWMutex // this is used to update safePoint and spTime
+	txnScheduler txnScheduler
+	closed       chan struct{} // this is used to nofity when the store is closed
 }
 
 func (s *tikvStore) UpdateSPCache(cachedSP uint64, cachedTime time.Time) {
@@ -171,16 +172,17 @@ func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Clie
 		return nil, errors.Trace(err)
 	}
 	store := &tikvStore{
-		clusterID:   pdClient.GetClusterID(context.TODO()),
-		uuid:        uuid,
-		oracle:      o,
-		client:      client,
-		pdClient:    pdClient,
-		regionCache: NewRegionCache(pdClient),
-		kv:          spkv,
-		safePoint:   0,
-		spTime:      time.Now(),
-		closed:      make(chan struct{}),
+		clusterID:    pdClient.GetClusterID(context.TODO()),
+		uuid:         uuid,
+		oracle:       o,
+		client:       client,
+		pdClient:     pdClient,
+		regionCache:  NewRegionCache(pdClient),
+		kv:           spkv,
+		safePoint:    0,
+		spTime:       time.Now(),
+		txnScheduler: newTxnScheduler(),
+		closed:       make(chan struct{}),
 	}
 	store.lockResolver = newLockResolver(store)
 	store.enableGC = enableGC
