@@ -794,7 +794,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 			Expr: s.Partition.Expr.Text(),
 		}
 		if s.Partition.Expr != nil {
-			var buf = bytes.NewBuffer([]byte{})
+			buf := new(bytes.Buffer)
 			s.Partition.Expr.Format(buf)
 			pi.Expr = buf.String()
 		} else if s.Partition.ColumnNames != nil {
@@ -816,7 +816,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 				MaxValue: def.MaxValue,
 			}
 			for _, expr := range def.LessThan {
-				var buf = bytes.NewBuffer([]byte{})
+				buf := new(bytes.Buffer)
 				expr.Format(buf)
 				piDef.LessThan = append(piDef.LessThan, buf.String())
 			}
