@@ -17,10 +17,10 @@ import (
 	"bytes"
 	"context"
 	"math/rand"
+	"sort"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
-	"sort"
 )
 
 type testDeleteRangeSuite struct {
