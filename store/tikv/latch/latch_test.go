@@ -14,9 +14,10 @@
 package latch
 
 import (
-	. "github.com/pingcap/check"
 	"sync"
 	"sync/atomic"
+
+	. "github.com/pingcap/check"
 )
 
 var _ = Suite(&testLatchSuite{})
@@ -92,24 +93,23 @@ func newTxn(keys [][]byte, startTs uint64, lock Lock) txn {
 	}
 }
 
-type txnStore struct {
+type txnScheduler struct {
 	txns    map[uint64]*txn
 	latches Latches
 	lock    sync.Mutex
 	wait    *sync.WaitGroup
 }
 
-func newTxnStore(wait *sync.WaitGroup) *txnStore {
+func newTxnStore(wait *sync.WaitGroup) *txnScheduler {
 	txnsMap := make(map[uint64]*txn)
-	return &txnStore{
+	return &txnScheduler{
 		txns:    txnsMap,
 		latches: NewLatches(256),
-		lock:    sync.Mutex{},
 		wait:    wait,
 	}
 }
 
-func (store *txnStore) runTxn(startTs uint64) {
+func (store *txnScheduler) runTxn(startTs uint64) {
 	store.lock.Lock()
 	txn, ok := store.txns[startTs]
 	store.lock.Unlock()
@@ -141,7 +141,7 @@ func (store *txnStore) runTxn(startTs uint64) {
 	}
 }
 
-func (store *txnStore) newTxn(keys [][]byte) {
+func (store *txnScheduler) newTxn(keys [][]byte) {
 	startTs := getTso()
 	lock := store.latches.GenLock(startTs, keys)
 	t := newTxn(keys, startTs, lock)

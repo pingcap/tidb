@@ -1,13 +1,27 @@
+// Copyright 2018 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package tikv
 
 import (
 	"fmt"
+	"sync"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/store/tikv/latch"
 	binlog "github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
-	"sync"
 )
 
 type txnCommiter struct {
@@ -17,8 +31,8 @@ type txnCommiter struct {
 	lock     latch.Lock
 }
 
-func (txn *txnCommiter) execute(timeout bool) (commitTs uint64) {
-	commitTs = uint64(0)
+func (txn *txnCommiter) execute(timeout bool) (commitTS uint64) {
+	commitTS = uint64(0)
 	if timeout {
 		err := errors.Errorf("startTs %d timeout", txn.commiter.startTS)
 		log.Warn(txn.commiter.connID, err)
@@ -31,29 +45,28 @@ func (txn *txnCommiter) execute(timeout bool) (commitTs uint64) {
 	if err != nil {
 		txn.commiter.writeFinishBinlog(binlog.BinlogType_Rollback, 0)
 	} else {
-		commitTs = txn.commiter.commitTS
-		txn.commiter.writeFinishBinlog(binlog.BinlogType_Commit, int64(commitTs))
+		commitTS = txn.commiter.commitTS
+		txn.commiter.writeFinishBinlog(binlog.BinlogType_Commit, int64(commitTS))
 	}
 	txn.ch <- errors.Trace(err)
-	log.Debug(txn.commiter.connID, "finish txn with startTs:", txn.commiter.startTS, " commitTs:", commitTs, " error:", err)
-	return commitTs
+	log.Debug(txn.commiter.connID, "finish txn with startTs:", txn.commiter.startTS, " commitTS:", commitTS, " error:", err)
+	return commitTS
 }
 
-type txnStore struct {
+type txnScheduler struct {
 	latches latch.Latches
 	txns    map[uint64]*txnCommiter
 	sync.RWMutex
 }
 
-func newTxnStore() txnStore {
-	return txnStore{
-		latch.NewLatches(1024000), //TODO
-		make(map[uint64]*txnCommiter),
-		sync.RWMutex{},
+func newTxnScheduler() txnScheduler {
+	return txnScheduler{
+		latches: latch.NewLatches(1024000), //TODO
+		txns:    make(map[uint64]*txnCommiter),
 	}
 }
 
-func (store *txnStore) execute(ctx context.Context, txn *tikvTxn, connID uint64) (err error) {
+func (store *txnScheduler) execute(ctx context.Context, txn *tikvTxn, connID uint64) (err error) {
 	commiter, err := newTwoPhaseCommitter(txn, connID)
 	if err != nil || commiter == nil {
 		return errors.Trace(err)
@@ -75,38 +88,38 @@ func (store *txnStore) execute(ctx context.Context, txn *tikvTxn, connID uint64)
 	return err
 }
 
-func (store *txnStore) getTxn(startTs uint64) (*txnCommiter, bool) {
+func (store *txnScheduler) getTxn(startTs uint64) (*txnCommiter, bool) {
 	store.RLock()
 	defer store.RUnlock()
 	c, ok := store.txns[startTs]
 	return c, ok
 }
 
-func (store *txnStore) putTxn(txn *txnCommiter) {
+func (store *txnScheduler) putTxn(txn *txnCommiter) {
 	store.Lock()
 	defer store.Unlock()
 	if _, ok := store.txns[txn.commiter.startTS]; ok {
-		panic(fmt.Sprintf("The startTs %d shouldn't used in two transaction", txn.commiter.startTS))
+		panic(fmt.Sprintf("The startTS %d shouldn't be used in two transaction", txn.commiter.startTS))
 	}
 	store.txns[txn.commiter.startTS] = txn
 }
 
-func (store *txnStore) run(startTs uint64) {
-	txn, ok := store.getTxn(startTs)
+func (store *txnScheduler) run(startTS uint64) {
+	txn, ok := store.getTxn(startTS)
 	if !ok {
-		panic(startTs)
+		panic(startTS)
 	}
 	acquired, timeout := store.latches.Acquire(&txn.lock)
 	if !timeout && !acquired {
 		// wait for next wakeup
 		return
 	}
-	commitTs := txn.execute(timeout)
-	wakeupList := store.latches.Release(&txn.lock, commitTs)
+	commitTS := txn.execute(timeout)
+	wakeupList := store.latches.Release(&txn.lock, commitTS)
 	for _, s := range wakeupList {
 		go store.run(s)
 	}
 	store.Lock()
 	defer store.Unlock()
-	delete(store.txns, startTs)
+	delete(store.txns, startTS)
 }

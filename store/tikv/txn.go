@@ -174,7 +174,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	if val != nil {
 		connID = val.(uint64)
 	}
-	return errors.Trace(txn.store.txnStore.execute(ctx, txn, connID))
+	return errors.Trace(txn.store.txnScheduler.execute(ctx, txn, connID))
 }
 
 func (txn *tikvTxn) close() {
