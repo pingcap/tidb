@@ -285,10 +285,13 @@ func (s *testRegionCacheSuite) TestRequestFail2(c *C) {
 }
 
 func (s *testRegionCacheSuite) TestUpdateStoreAddr(c *C) {
+	mvccStore := mocktikv.MustNewMVCCStore()
+	defer mvccStore.Close()
+
 	client := &RawKVClient{
 		clusterID:   0,
 		regionCache: NewRegionCache(mocktikv.NewPDClient(s.cluster)),
-		rpcClient:   mocktikv.NewRPCClient(s.cluster, mocktikv.NewMvccStore()),
+		rpcClient:   mocktikv.NewRPCClient(s.cluster, mvccStore),
 	}
 	testKey := []byte("test_key")
 	testValue := []byte("test_value")
