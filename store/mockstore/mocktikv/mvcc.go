@@ -425,6 +425,7 @@ type MVCCStore interface {
 	ResolveLock(startKey, endKey []byte, startTS, commitTS uint64) error
 	BatchResolveLock(startKey, endKey []byte, txnInfos map[uint64]uint64) error
 	DeleteRange(startKey, endKey []byte) error
+	Close() error
 }
 
 // RawKV is a key-value storage. MVCCStore can be implemented upon it with timestamp encoded into key.

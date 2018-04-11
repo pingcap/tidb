@@ -61,8 +61,7 @@ func (ds *testDumpStatsSuite) TestDumpStatsAPI(c *C) {
 }
 
 func (ds *testDumpStatsSuite) startServer(c *C) {
-	mvccStore, err := mocktikv.NewMVCCLevelDB("")
-	c.Assert(err, IsNil)
+	mvccStore := mocktikv.MustNewMVCCStore()
 	store, err := mockstore.NewMockTikvStore(mockstore.WithMVCCStore(mvccStore))
 	c.Assert(err, IsNil)
 

@@ -34,8 +34,7 @@ func (s *testRawKVSuite) SetUpTest(c *C) {
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(s.cluster)
 	pdClient := mocktikv.NewPDClient(s.cluster)
-	mvccStore, err := mocktikv.NewMVCCLevelDB("")
-	c.Assert(err, IsNil)
+	mvccStore := mocktikv.MustNewMVCCStore()
 	s.client = &RawKVClient{
 		clusterID:   0,
 		regionCache: NewRegionCache(pdClient),

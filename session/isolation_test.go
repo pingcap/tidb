@@ -37,9 +37,7 @@ func (s *testIsolationSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(s.cluster)
-	mvccStore, err := mocktikv.NewMVCCLevelDB("")
-	c.Assert(err, IsNil)
-	s.mvccStore = mvccStore
+	s.mvccStore = mocktikv.MustNewMVCCStore()
 	store, err := mockstore.NewMockTikvStore(
 		mockstore.WithCluster(s.cluster),
 		mockstore.WithMVCCStore(s.mvccStore),

@@ -95,6 +95,15 @@ func mvccDecode(encodedKey []byte) ([]byte, uint64, error) {
 	return key, ver, nil
 }
 
+// MustNewMVCCStore is used for testing, use NewMVCCLevelDB instead.
+func MustNewMVCCStore() MVCCStore {
+	mvccStore, err := NewMVCCLevelDB("")
+	if err != nil {
+		panic(err)
+	}
+	return mvccStore
+}
+
 // NewMVCCLevelDB returns a new MVCCLevelDB object.
 func NewMVCCLevelDB(path string) (*MVCCLevelDB, error) {
 	var (

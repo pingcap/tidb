@@ -221,8 +221,7 @@ func (ts *HTTPHandlerTestSuite) TestRegionsFromMeta(c *C) {
 }
 
 func (ts *HTTPHandlerTestSuite) startServer(c *C) {
-	mvccStore, err := mocktikv.NewMVCCLevelDB("")
-	c.Assert(err, IsNil)
+	mvccStore := mocktikv.MustNewMVCCStore()
 	store, err := mockstore.NewMockTikvStore(mockstore.WithMVCCStore(mvccStore))
 	c.Assert(err, IsNil)
 	_, err = session.BootstrapSession(store)
