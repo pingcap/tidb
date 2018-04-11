@@ -11,13 +11,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-
 package executor_test
 
 import (
+	"context"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testkit"
-	"context"
 )
 
 func (s *testSuite) TestIndexLookupJoinHang(c *C) {
