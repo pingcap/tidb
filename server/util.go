@@ -35,6 +35,7 @@
 package server
 
 import (
+	"bytes"
 	"encoding/binary"
 	"io"
 	"math"
@@ -293,14 +294,14 @@ func dumpTextRow(buffer []byte, columns []*ColumnInfo, row types.Row) ([]byte, e
 			if columns[i].Decimal > 0 && int(col.Decimal) != mysql.NotFixedDec {
 				prec = int(col.Decimal)
 			}
-			tmp = strconv.AppendFloat(tmp[:0], float64(row.GetFloat32(i)), 'f', prec, 32)
+			tmp = appendFormatFloat(tmp[:0], float64(row.GetFloat32(i)), prec, 32)
 			buffer = dumpLengthEncodedString(buffer, tmp)
 		case mysql.TypeDouble:
-			prec := -1
+			prec := types.UnspecifiedLength
 			if col.Decimal > 0 && int(col.Decimal) != mysql.NotFixedDec {
 				prec = int(col.Decimal)
 			}
-			tmp = strconv.AppendFloat(tmp[:0], row.GetFloat64(i), 'f', prec, 64)
+			tmp = appendFormatFloat(tmp[:0], row.GetFloat64(i), prec, 64)
 			buffer = dumpLengthEncodedString(buffer, tmp)
 		case mysql.TypeNewDecimal:
 			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetMyDecimal(i).String()))
@@ -322,4 +323,27 @@ func dumpTextRow(buffer []byte, columns []*ColumnInfo, row types.Row) ([]byte, e
 		}
 	}
 	return buffer, nil
+}
+
+const (
+	expFormatBig   = 1e15
+	expFormatSmall = 1e-15
+)
+
+func appendFormatFloat(in []byte, fVal float64, prec, bitSize int) []byte {
+	absVal := math.Abs(fVal)
+	var out []byte
+	if prec == types.UnspecifiedLength && (absVal >= expFormatBig || (absVal != 0 && absVal < expFormatSmall)) {
+		out = strconv.AppendFloat(in, fVal, 'e', prec, bitSize)
+		valStr := out[len(in):]
+		// remove the '+' from the string for compatibility.
+		plusPos := bytes.IndexByte(valStr, '+')
+		if plusPos > 0 {
+			plusPosInOut := len(in) + plusPos
+			out = append(out[:plusPosInOut], out[plusPosInOut+1:]...)
+		}
+	} else {
+		out = strconv.AppendFloat(in, fVal, 'f', prec, bitSize)
+	}
+	return out
 }

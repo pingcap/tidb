@@ -47,6 +47,7 @@ type testStateChangeSuite struct {
 }
 
 func (s *testStateChangeSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
 	s.lease = 200 * time.Millisecond
 	var err error
 	s.store, err = mockstore.NewMockTikvStore()
@@ -68,6 +69,7 @@ func (s *testStateChangeSuite) TearDownSuite(c *C) {
 	s.se.Close()
 	s.dom.Close()
 	s.store.Close()
+	testleak.AfterTest(c)()
 }
 
 func (s *testStateChangeSuite) TestTwoStates(c *C) {
@@ -103,7 +105,6 @@ func (s *testStateChangeSuite) TestTwoStates(c *C) {
 }
 
 func (s *testStateChangeSuite) test(c *C, tableName, alterTableSQL string, testInfo *testExecInfo) {
-	defer testleak.AfterTest(c)()
 	_, err := s.se.Execute(context.Background(), `create table t (
 		c1 int,
 		c2 varchar(64),
@@ -312,7 +313,6 @@ func (s *testStateChangeSuite) TestDeleteOnly(c *C) {
 
 func (s *testStateChangeSuite) runTestInSchemaState(c *C, state model.SchemaState, tableName, alterTableSQL string,
 	sqlWithErrs []sqlWithErr) {
-	defer testleak.AfterTest(c)()
 	_, err := s.se.Execute(context.Background(), `create table t (
 		c1 varchar(64),
 		c2 enum('N','Y') not null default 'N',
@@ -390,7 +390,6 @@ func (s *testStateChangeSuite) CheckResult(tk *testkit.TestKit, sql string, args
 }
 
 func (s *testStateChangeSuite) TestShowIndex(c *C) {
-	defer testleak.AfterTest(c)()
 	_, err := s.se.Execute(context.Background(), `create table t(c1 int primary key, c2 int)`)
 	c.Assert(err, IsNil)
 	defer s.se.Execute(context.Background(), "drop table t")

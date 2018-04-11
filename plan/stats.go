@@ -62,6 +62,18 @@ func (p *basePhysicalPlan) StatsInfo() *statsInfo {
 	return p.stats
 }
 
+func (p *LogicalTableDual) deriveStats() *statsInfo {
+	profile := &statsInfo{
+		count:       float64(p.RowCount),
+		cardinality: make([]float64, p.Schema().Len()),
+	}
+	for i := range profile.cardinality {
+		profile.cardinality[i] = float64(p.RowCount)
+	}
+	p.stats = profile
+	return p.stats
+}
+
 func (p *baseLogicalPlan) deriveStats() *statsInfo {
 	if len(p.children) == 0 {
 		profile := &statsInfo{

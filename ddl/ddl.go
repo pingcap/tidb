@@ -98,7 +98,7 @@ var (
 	errInvalidUseOfNull         = terror.ClassDDL.New(codeInvalidUseOfNull, "Invalid use of NULL value")
 	errTooManyFields            = terror.ClassDDL.New(codeTooManyFields, "Too many columns")
 	errInvalidSplitRegionRanges = terror.ClassDDL.New(codeInvalidRanges, "Failed to split region ranges")
-	errReorgWorkerNotRunnable   = terror.ClassDDL.New(codeReorgWorkerNotRunnable, "reorg worker is not runnable.")
+	errReorgPanic               = terror.ClassDDL.New(codeReorgWorkerPanic, "reorg worker panic.")
 
 	// errWrongKeyColumn is for table column cannot be indexed.
 	errWrongKeyColumn = terror.ClassDDL.New(codeWrongKeyColumn, mysql.MySQLErrName[mysql.ErrWrongKeyColumn])
@@ -146,6 +146,8 @@ var (
 	ErrWrongColumnName = terror.ClassDDL.New(codeWrongColumnName, mysql.MySQLErrName[mysql.ErrWrongColumnName])
 	// ErrWrongNameForIndex returns for wrong index name.
 	ErrWrongNameForIndex = terror.ClassDDL.New(codeWrongNameForIndex, mysql.MySQLErrName[mysql.ErrWrongNameForIndex])
+	// ErrUnknownCharacterSet returns unknown character set.
+	ErrUnknownCharacterSet = terror.ClassDDL.New(codeUnknownCharacterSet, "Unknown character set: '%s'")
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -502,19 +504,19 @@ func (d *ddl) WorkerVars() *variable.SessionVars {
 
 // DDL error codes.
 const (
-	codeInvalidWorker          terror.ErrCode = 1
-	codeNotOwner                              = 2
-	codeInvalidDDLJob                         = 3
-	codeInvalidJobFlag                        = 5
-	codeRunMultiSchemaChanges                 = 6
-	codeWaitReorgTimeout                      = 7
-	codeInvalidStoreVer                       = 8
-	codeUnknownTypeLength                     = 9
-	codeUnknownFractionLength                 = 10
-	codeInvalidJobVersion                     = 11
-	codeCancelledDDLJob                       = 12
-	codeInvalidRanges                         = 13
-	codeReorgWorkerNotRunnable                = 14
+	codeInvalidWorker         terror.ErrCode = 1
+	codeNotOwner                             = 2
+	codeInvalidDDLJob                        = 3
+	codeInvalidJobFlag                       = 5
+	codeRunMultiSchemaChanges                = 6
+	codeWaitReorgTimeout                     = 7
+	codeInvalidStoreVer                      = 8
+	codeUnknownTypeLength                    = 9
+	codeUnknownFractionLength                = 10
+	codeInvalidJobVersion                    = 11
+	codeCancelledDDLJob                      = 12
+	codeInvalidRanges                        = 13
+	codeReorgWorkerPanic                     = 14
 
 	codeInvalidDBState         = 100
 	codeInvalidTableState      = 101
@@ -555,6 +557,7 @@ const (
 	codeJSONUsedAsKey                = 3152
 	codeWrongNameForIndex            = terror.ErrCode(mysql.ErrWrongNameForIndex)
 	codeErrTooLongIndexComment       = terror.ErrCode(mysql.ErrTooLongIndexComment)
+	codeUnknownCharacterSet          = terror.ErrCode(mysql.ErrUnknownCharacterSet)
 )
 
 func init() {
@@ -585,6 +588,7 @@ func init() {
 		codeWrongNameForIndex:            mysql.ErrWrongNameForIndex,
 		codeTooManyFields:                mysql.ErrTooManyFields,
 		codeErrTooLongIndexComment:       mysql.ErrTooLongIndexComment,
+		codeUnknownCharacterSet:          mysql.ErrUnknownCharacterSet,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }

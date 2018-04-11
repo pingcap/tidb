@@ -788,6 +788,11 @@ func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan 
 	if count > math.MaxUint64-offset {
 		count = math.MaxUint64 - offset
 	}
+	if offset+count == 0 {
+		tableDual := LogicalTableDual{RowCount: 0}.init(b.ctx)
+		tableDual.schema = src.Schema()
+		return tableDual
+	}
 	li := LogicalLimit{
 		Offset: offset,
 		Count:  count,
@@ -1624,25 +1629,25 @@ var RatioOfPseudoEstimate = 0.7
 // 1. tidb-server started and statistics handle has not been initialized.
 // 2. table row count from statistics is zero.
 // 3. statistics is outdated.
-func (b *planBuilder) getStatsTable(tableID int64) *statistics.Table {
+func (b *planBuilder) getStatsTable(tblInfo *model.TableInfo) *statistics.Table {
 	statsHandle := domain.GetDomain(b.ctx).StatsHandle()
 
 	// 1. tidb-server started and statistics handle has not been initialized.
 	if statsHandle == nil {
-		return statistics.PseudoTable(tableID)
+		return statistics.PseudoTable(tblInfo)
 	}
 
-	statsTbl := statsHandle.GetTableStats(tableID)
+	statsTbl := statsHandle.GetTableStats(tblInfo)
 
 	// 2. table row count from statistics is zero.
 	if statsTbl.Count == 0 {
-		return statistics.PseudoTable(tableID)
+		return statistics.PseudoTable(tblInfo)
 	}
 
 	// 3. statistics is outdated.
 	if float64(statsTbl.ModifyCount)/float64(statsTbl.Count) > RatioOfPseudoEstimate {
 		countFromStats := statsTbl.Count
-		statsTbl = statistics.PseudoTable(tableID)
+		statsTbl = statistics.PseudoTable(tblInfo)
 		// Table row count from statistics is more meaningful than the
 		// pseudo row count in most cases.
 		statsTbl.Count = countFromStats
@@ -1682,7 +1687,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	ds := DataSource{
 		DBName:           dbName,
 		tableInfo:        tableInfo,
-		statisticTable:   b.getStatsTable(tableInfo.ID),
+		statisticTable:   b.getStatsTable(tableInfo),
 		indexHints:       tn.IndexHints,
 		availableIndices: availableIdxes,
 		Columns:          make([]*model.ColumnInfo, 0, len(columns)),

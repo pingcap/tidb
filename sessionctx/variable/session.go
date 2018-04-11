@@ -162,6 +162,15 @@ type SessionVars struct {
 	// Should be reset on transaction finished.
 	TxnCtx *TransactionContext
 
+	// TxnIsolationLevelOneShot is used to implements "set transaction isolation level ..."
+	TxnIsolationLevelOneShot struct {
+		// state 0 means default
+		// state 1 means it's set in current transaction.
+		// state 2 means it should be used in current transaction.
+		State int
+		Value string
+	}
+
 	// Following variables are special for current session.
 
 	Status           uint16
@@ -182,6 +191,9 @@ type SessionVars struct {
 
 	// PlanID is the unique id of logical and physical plan.
 	PlanID int
+
+	// PlanCacheEnabled stores the global config "plan-cache-enabled", and it will be only updated in tests.
+	PlanCacheEnabled bool
 
 	// User is the user identity with which the session login.
 	User *auth.UserIdentity
@@ -253,6 +265,9 @@ type SessionVars struct {
 	// IndexLookupConcurrency is the number of concurrent index lookup worker.
 	IndexLookupConcurrency int
 
+	// IndexLookupJoinConcurrency is the number of concurrent index lookup join inner worker.
+	IndexLookupJoinConcurrency int
+
 	// DistSQLScanConcurrency is the number of concurrent dist SQL scan worker.
 	DistSQLScanConcurrency int
 
@@ -283,12 +298,18 @@ type SessionVars struct {
 	MemQuotaQuery int64
 	// MemQuotaHashJoin defines the memory quota for a hash join executor.
 	MemQuotaHashJoin int64
+	// MemQuotaMergeJoin defines the memory quota for a merge join executor.
+	MemQuotaMergeJoin int64
 	// MemQuotaSort defines the memory quota for a sort executor.
 	MemQuotaSort int64
 	// MemQuotaTopn defines the memory quota for a top n executor.
 	MemQuotaTopn int64
 	// MemQuotaIndexLookupReader defines the memory quota for a index lookup reader executor.
 	MemQuotaIndexLookupReader int64
+	// MemQuotaIndexLookupJoin defines the memory quota for a index lookup join executor.
+	MemQuotaIndexLookupJoin int64
+	// MemQuotaNestedLoopApply defines the memory quota for a nested loop apply executor.
+	MemQuotaNestedLoopApply int64
 
 	// EnableStreaming indicates whether the coprocessor request can use streaming API.
 	// TODO: remove this after tidb-server configuration "enable-streaming' removed.
@@ -321,9 +342,12 @@ func NewSessionVars() *SessionVars {
 		DMLBatchSize:               DefDMLBatchSize,
 		MemQuotaQuery:              DefTiDBMemQuotaQuery,
 		MemQuotaHashJoin:           DefTiDBMemQuotaHashJoin,
+		MemQuotaMergeJoin:          DefTiDBMemQuotaMergeJoin,
 		MemQuotaSort:               DefTiDBMemQuotaSort,
 		MemQuotaTopn:               DefTiDBMemQuotaTopn,
 		MemQuotaIndexLookupReader:  DefTiDBMemQuotaIndexLookupReader,
+		MemQuotaIndexLookupJoin:    DefTiDBMemQuotaIndexLookupJoin,
+		MemQuotaNestedLoopApply:    DefTiDBMemQuotaNestedLoopApply,
 	}
 	var enableStreaming string
 	if config.GetGlobalConfig().EnableStreaming {
@@ -331,6 +355,7 @@ func NewSessionVars() *SessionVars {
 	} else {
 		enableStreaming = "0"
 	}
+	vars.PlanCacheEnabled = config.GetGlobalConfig().PlanCache.Enabled
 	terror.Log(vars.SetSystemVar(TiDBEnableStreaming, enableStreaming))
 	return vars
 }
@@ -439,6 +464,9 @@ func (s *SessionVars) deleteSystemVar(name string) error {
 // SetSystemVar sets the value of a system variable.
 func (s *SessionVars) SetSystemVar(name string, val string) error {
 	switch name {
+	case TxnIsolationOneShot:
+		s.TxnIsolationLevelOneShot.State = 1
+		s.TxnIsolationLevelOneShot.Value = val
 	case TimeZone:
 		tz, err := parseTimeZone(val)
 		if err != nil {
@@ -476,6 +504,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.AllowInSubqueryUnFolding = TiDBOptOn(val)
 	case TiDBIndexLookupConcurrency:
 		s.IndexLookupConcurrency = tidbOptPositiveInt(val, DefIndexLookupConcurrency)
+	case TiDBIndexLookupJoinConcurrency:
+		s.IndexLookupJoinConcurrency = tidbOptPositiveInt(val, DefIndexLookupJoinConcurrency)
 	case TiDBIndexJoinBatchSize:
 		s.IndexJoinBatchSize = tidbOptPositiveInt(val, DefIndexJoinBatchSize)
 	case TiDBIndexLookupSize:
@@ -498,12 +528,18 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.MemQuotaQuery = tidbOptInt64(val, DefTiDBMemQuotaQuery)
 	case TIDBMemQuotaHashJoin:
 		s.MemQuotaHashJoin = tidbOptInt64(val, DefTiDBMemQuotaHashJoin)
+	case TIDBMemQuotaMergeJoin:
+		s.MemQuotaMergeJoin = tidbOptInt64(val, DefTiDBMemQuotaMergeJoin)
 	case TIDBMemQuotaSort:
 		s.MemQuotaSort = tidbOptInt64(val, DefTiDBMemQuotaSort)
 	case TIDBMemQuotaTopn:
 		s.MemQuotaTopn = tidbOptInt64(val, DefTiDBMemQuotaTopn)
 	case TIDBMemQuotaIndexLookupReader:
 		s.MemQuotaIndexLookupReader = tidbOptInt64(val, DefTiDBMemQuotaIndexLookupReader)
+	case TIDBMemQuotaIndexLookupJoin:
+		s.MemQuotaIndexLookupJoin = tidbOptInt64(val, DefTiDBMemQuotaIndexLookupJoin)
+	case TIDBMemQuotaNestedLoopApply:
+		s.MemQuotaNestedLoopApply = tidbOptInt64(val, DefTiDBMemQuotaNestedLoopApply)
 	case TiDBGeneralLog:
 		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt(val, DefTiDBGeneralLog)))
 	case TiDBEnableStreaming:
@@ -521,6 +557,7 @@ const (
 	MaxAllowedPacket    = "max_allowed_packet"
 	TimeZone            = "time_zone"
 	TxnIsolation        = "tx_isolation"
+	TxnIsolationOneShot = "tx_isolation_one_shot"
 )
 
 // TableDelta stands for the changed count for one table.

@@ -37,6 +37,13 @@ func (s *testSuite) TestJoinPanic(c *C) {
 
 func (s *testSuite) TestJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("set @@tidb_index_lookup_join_concurrency = 200")
+	c.Assert(tk.Se.GetSessionVars().IndexLookupJoinConcurrency, Equals, 200)
+
+	tk.MustExec("set @@tidb_index_lookup_join_concurrency = 4")
+	c.Assert(tk.Se.GetSessionVars().IndexLookupJoinConcurrency, Equals, 4)
+
 	tk.MustExec("set @@tidb_index_lookup_size = 2")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -742,7 +749,7 @@ func (s *testSuite) TestJoinLeak(c *C) {
 	result, err := tk.Exec("select * from t t1 left join (select 1) t2 on 1")
 	c.Assert(err, IsNil)
 	chk := result.NewChunk()
-	err = result.NextChunk(context.Background(), chk)
+	err = result.Next(context.Background(), chk)
 	c.Assert(err, IsNil)
 	time.Sleep(100 * time.Millisecond)
 	result.Close()

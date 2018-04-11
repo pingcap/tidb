@@ -67,6 +67,9 @@ func numericContextResultType(ft *types.FieldType) types.EvalType {
 		}
 		return types.ETInt
 	}
+	if types.IsBinaryStr(ft) {
+		return types.ETInt
+	}
 	evalTp4Ft := types.ETReal
 	if !ft.Hybrid() {
 		evalTp4Ft = ft.EvalType()

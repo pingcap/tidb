@@ -14,7 +14,6 @@
 package tikv
 
 import (
-	"fmt"
 	"math"
 	"runtime"
 	"time"
@@ -34,7 +33,6 @@ type testLockSuite struct {
 var _ = Suite(&testLockSuite{})
 
 func (s *testLockSuite) SetUpTest(c *C) {
-	fmt.Println("SetUpTest .... test Lock suite")
 	s.store = NewTestStore(c).(*tikvStore)
 }
 
@@ -57,7 +55,7 @@ func (s *testLockSuite) lockKey(c *C, key, value, primaryKey, primaryValue []byt
 		err = txn.Delete(primaryKey)
 	}
 	c.Assert(err, IsNil)
-	tpc, err := newTwoPhaseCommitter(txn)
+	tpc, err := newTwoPhaseCommitter(txn, 0)
 	c.Assert(err, IsNil)
 	tpc.keys = [][]byte{primaryKey, key}
 
@@ -200,7 +198,7 @@ func (s *testLockSuite) TestRC(c *C) {
 }
 
 func (s *testLockSuite) prewriteTxn(c *C, txn *tikvTxn) {
-	committer, err := newTwoPhaseCommitter(txn)
+	committer, err := newTwoPhaseCommitter(txn, 0)
 	c.Assert(err, IsNil)
 	err = committer.prewriteKeys(NewBackoffer(context.Background(), prewriteMaxBackoff), committer.keys)
 	c.Assert(err, IsNil)

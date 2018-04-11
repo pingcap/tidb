@@ -34,7 +34,7 @@ import (
 //
 // NOTE: We only protect concurrent access to "bytesConsumed" and "children",
 // that is to say:
-// 1. Only "BytesConsumed()", "Consume()" and "AttachTo()" are thread-safe.
+// 1. Only "BytesConsumed()", "Consume()", "AttachTo()" and "Detach" are thread-safe.
 // 2. Other operations of a Tracker tree is not thread-safe.
 type Tracker struct {
 	sync.Mutex // For synchronization.
@@ -74,7 +74,7 @@ func (t *Tracker) SetLabel(label string) {
 // Its consumed memory usage is used to update all its ancestors.
 func (t *Tracker) AttachTo(parent *Tracker) {
 	if t.parent != nil {
-		t.parent.ReplaceChild(t, nil)
+		t.parent.remove(t)
 	}
 	parent.Lock()
 	parent.children = append(parent.children, t)
@@ -84,15 +84,37 @@ func (t *Tracker) AttachTo(parent *Tracker) {
 	t.parent.Consume(t.BytesConsumed())
 }
 
+// Detach detaches this Tracker from its parent.
+func (t *Tracker) Detach() {
+	t.parent.remove(t)
+}
+
+func (t *Tracker) remove(oldChild *Tracker) {
+	t.Lock()
+	defer t.Unlock()
+	for i, child := range t.children {
+		if child != oldChild {
+			continue
+		}
+
+		t.bytesConsumed -= oldChild.BytesConsumed()
+		oldChild.parent = nil
+		t.children = append(t.children[:i], t.children[i+1:]...)
+		break
+	}
+}
+
 // ReplaceChild removes the old child specified in "oldChild" and add a new
 // child specified in "newChild". old child's memory consumption will be
 // removed and new child's memory consumption will be added.
 func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
-	newConsumed := int64(0)
-	if newChild != nil {
-		newConsumed = newChild.BytesConsumed()
-		newChild.parent = t
+	if newChild == nil {
+		t.remove(oldChild)
+		return
 	}
+
+	newConsumed := newChild.BytesConsumed()
+	newChild.parent = t
 
 	t.Lock()
 	for i, child := range t.children {

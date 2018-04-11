@@ -20,7 +20,6 @@ import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/terror"
 	"golang.org/x/net/context"
 )
@@ -28,7 +27,6 @@ import (
 type testSafePointSuite struct {
 	OneByOneSuite
 	store  *tikvStore
-	oracle *mockoracle.MockOracle
 	prefix string
 }
 
@@ -37,8 +35,6 @@ var _ = Suite(&testSafePointSuite{})
 func (s *testSafePointSuite) SetUpSuite(c *C) {
 	s.OneByOneSuite.SetUpSuite(c)
 	s.store = NewTestStore(c).(*tikvStore)
-	s.oracle = &mockoracle.MockOracle{}
-	s.store.oracle = s.oracle
 	s.prefix = fmt.Sprintf("seek_%d", time.Now().Unix())
 }
 

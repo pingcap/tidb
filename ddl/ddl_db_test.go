@@ -20,6 +20,7 @@ import (
 	"math/rand"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/juju/errors"
@@ -51,7 +52,7 @@ import (
 
 const (
 	// waitForCleanDataRound indicates how many times should we check data is cleaned or not.
-	waitForCleanDataRound = 60
+	waitForCleanDataRound = 150
 	// waitForCleanDataInterval is a min duration between 2 check for data clean.
 	waitForCleanDataInterval = time.Millisecond * 100
 )
@@ -124,6 +125,12 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrTooLongIdent)
 	sql = "create database test"
 	s.testErrorCode(c, sql, tmysql.ErrDBCreateExists)
+	sql = "create database test1 character set uft8;"
+	s.testErrorCode(c, sql, tmysql.ErrUnknownCharacterSet)
+	sql = "create database test2 character set gkb;"
+	s.testErrorCode(c, sql, tmysql.ErrUnknownCharacterSet)
+	sql = "create database test3 character set laitn1;"
+	s.testErrorCode(c, sql, tmysql.ErrUnknownCharacterSet)
 	// drop database
 	sql = "drop database db_not_exist"
 	s.testErrorCode(c, sql, tmysql.ErrDBDropExists)
@@ -149,12 +156,21 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrInvalidDefault)
 	sql = "CREATE TABLE `t` (`a` double DEFAULT now());"
 	s.testErrorCode(c, sql, tmysql.ErrInvalidDefault)
+	sql = "create table t1(a int) character set uft8;"
+	s.testErrorCode(c, sql, tmysql.ErrUnknownCharacterSet)
+	sql = "create table t1(a int) character set gkb;"
+	s.testErrorCode(c, sql, tmysql.ErrUnknownCharacterSet)
+	sql = "create table t1(a int) character set laitn1;"
+	s.testErrorCode(c, sql, tmysql.ErrUnknownCharacterSet)
 
 	// add column
 	sql = "alter table test_error_code_succ add column c1 int"
 	s.testErrorCode(c, sql, tmysql.ErrDupFieldName)
 	sql = "alter table test_error_code_succ add column aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa int"
 	s.testErrorCode(c, sql, tmysql.ErrTooLongIdent)
+	sql = "alter table test_comment comment 'test comment'"
+	s.testErrorCode(c, sql, tmysql.ErrNoSuchTable)
+
 	// drop column
 	sql = "alter table test_error_code_succ drop c_not_exist"
 	s.testErrorCode(c, sql, tmysql.ErrCantDropFieldOrKey)
@@ -311,6 +327,7 @@ func (s *testDBSuite) TestCancelAddIndex(c *C) {
 	}
 
 	var checkErr error
+	var c3IdxInfo *model.IndexInfo
 	hook := &ddl.TestDDLCallback{}
 	first := true
 	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
@@ -323,6 +340,16 @@ func (s *testDBSuite) TestCancelAddIndex(c *C) {
 		// If the action is adding index and the state is writing reorganization, it want to test the case of cancelling the job when backfilling indexes.
 		// When the job satisfies this case of addIndexNotFirstReorg, the worker will start to backfill indexes.
 		if !addIndexNotFirstReorg {
+			// Get the index's meta.
+			if c3IdxInfo != nil {
+				return
+			}
+			t := s.testGetTable(c, "t1")
+			for _, index := range t.WritableIndices() {
+				if index.Meta().Name.L == "c3_index" {
+					c3IdxInfo = index.Meta()
+				}
+			}
 			return
 		}
 		// The job satisfies the case of addIndexNotFirst for the first time, the worker hasn't finished a batch of backfill indexes.
@@ -395,6 +422,10 @@ LOOP:
 		c.Assert(strings.EqualFold(tidx.Meta().Name.L, "c3_index"), IsFalse)
 	}
 
+	ctx := s.s.(sessionctx.Context)
+	idx := tables.NewIndex(t.Meta(), c3IdxInfo)
+	checkDelRangeDone(c, ctx, idx)
+
 	s.mustExec(c, "drop table t1")
 	ddl.ReorgWaitTimeout = oldReorgWaitTimeout
 }
@@ -449,7 +480,7 @@ func (s *testDBSuite) TestAddAnonymousIndex(c *C) {
 	c.Assert(t.Indices()[1].Meta().Name.String(), Equals, "primary_3")
 }
 
-// Issue 5134
+// TestModifyColumnAfterAddIndex Issue 5134
 func (s *testDBSuite) TestModifyColumnAfterAddIndex(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
@@ -701,6 +732,12 @@ LOOP:
 	c.Assert(nidx, IsNil)
 
 	idx := tables.NewIndex(t.Meta(), c3idx.Meta())
+	checkDelRangeDone(c, ctx, idx)
+	s.tk.MustExec("drop table test_drop_index")
+}
+
+func checkDelRangeDone(c *C, ctx sessionctx.Context, idx table.Index) {
+	startTime := time.Now()
 	f := func() map[int64]struct{} {
 		handles := make(map[int64]struct{})
 
@@ -732,9 +769,7 @@ LOOP:
 			break
 		}
 	}
-	c.Assert(handles, HasLen, 0)
-
-	s.tk.MustExec("drop table test_drop_index")
+	c.Assert(handles, HasLen, 0, Commentf("take time %v", time.Since(startTime)))
 }
 
 func (s *testDBSuite) TestAddIndexWithDupCols(c *C) {
@@ -771,6 +806,22 @@ func (s *testDBSuite) TestIssue2293(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrInvalidDefault)
 	s.tk.MustExec("insert into t_issue_2293 value(1)")
 	s.tk.MustQuery("select * from t_issue_2293").Check(testkit.Rows("1"))
+}
+
+func (s *testDBSuite) TestIssue6101(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+	s.tk.MustExec("create table t1 (quantity decimal(2) unsigned);")
+	_, err := s.tk.Exec("insert into t1 values (500), (-500), (~0), (-1);")
+	terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(tmysql.ErrDataOutOfRange))
+	s.tk.MustExec("drop table t1")
+
+	s.tk.MustExec("set sql_mode=''")
+	s.tk.MustExec("create table t1 (quantity decimal(2) unsigned);")
+	s.tk.MustExec("insert into t1 values (500), (-500), (~0), (-1);")
+	s.tk.MustQuery("select * from t1").Check(testkit.Rows("99", "0", "99", "0"))
+	s.tk.MustExec("drop table t1")
 }
 
 func (s *testDBSuite) TestCreateIndexType(c *C) {
@@ -1001,7 +1052,7 @@ LOOP:
 	c.Assert(count, Greater, int64(0))
 }
 
-// This test is for insert value with a to-be-dropped column when do drop column.
+// testDropColumn2 is for inserting value with a to-be-dropped column when do drop column.
 // Column info from schema in build-insert-plan should be public only,
 // otherwise they will not be consist with Table.Col(), then the server will panic.
 func (s *testDBSuite) testDropColumn2(c *C) {
@@ -1760,4 +1811,35 @@ func (s *testDBSuite) TestCharacterSetInColumns(c *C) {
 	s.tk.MustExec("create table t (c1 int, s1 varchar(10), s2 text)")
 	s.tk.MustQuery("select count(*) from information_schema.columns where table_schema = 'varchar_test' and character_set_name != 'utf8'").Check(testkit.Rows("0"))
 	s.tk.MustQuery("select count(*) from information_schema.columns where table_schema = 'varchar_test' and character_set_name = 'utf8'").Check(testkit.Rows("2"))
+}
+
+func (s *testDBSuite) TestAddNotNullColumnWhileInsertOnDupUpdate(c *C) {
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use " + s.schemaName)
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use " + s.schemaName)
+	closeCh := make(chan bool)
+	wg := new(sync.WaitGroup)
+	wg.Add(1)
+	tk1.MustExec("create table nn (a int primary key, b int)")
+	tk1.MustExec("insert nn values (1, 1)")
+	var tk2Err error
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-closeCh:
+				return
+			default:
+			}
+			_, tk2Err = tk2.Exec("insert nn (a, b) values (1, 1) on duplicate key update a = 1, b = b + 1")
+			if tk2Err != nil {
+				return
+			}
+		}
+	}()
+	tk1.MustExec("alter table nn add column c int not null default 0")
+	close(closeCh)
+	wg.Wait()
+	c.Assert(tk2Err, IsNil)
 }

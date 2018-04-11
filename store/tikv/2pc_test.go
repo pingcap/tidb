@@ -38,7 +38,8 @@ var _ = Suite(&testCommitterSuite{})
 func (s *testCommitterSuite) SetUpTest(c *C) {
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithMultiRegions(s.cluster, []byte("a"), []byte("b"), []byte("c"))
-	mvccStore := mocktikv.NewMvccStore()
+	mvccStore, err := mocktikv.NewMVCCLevelDB("")
+	c.Assert(err, IsNil)
 	client := mocktikv.NewRPCClient(s.cluster, mvccStore)
 	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
 	spkv := NewMockSafePointKV()
@@ -130,7 +131,7 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 	c.Assert(err, IsNil)
 	err = txn1.Set([]byte("b"), []byte("b1"))
 	c.Assert(err, IsNil)
-	committer, err := newTwoPhaseCommitter(txn1)
+	committer, err := newTwoPhaseCommitter(txn1, 0)
 	c.Assert(err, IsNil)
 	err = committer.prewriteKeys(NewBackoffer(ctx, prewriteMaxBackoff), committer.keys)
 	c.Assert(err, IsNil)
@@ -148,7 +149,7 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 		c.Assert(err, IsNil)
 		err = txn1.Set([]byte("b"), []byte("b1"))
 		c.Assert(err, IsNil)
-		committer, err = newTwoPhaseCommitter(txn1)
+		committer, err = newTwoPhaseCommitter(txn1, 0)
 		c.Assert(err, IsNil)
 		err = committer.prewriteKeys(NewBackoffer(ctx, prewriteMaxBackoff), committer.keys)
 		c.Assert(err, IsNil)
@@ -170,7 +171,7 @@ func (s *testCommitterSuite) TestContextCancel(c *C) {
 	c.Assert(err, IsNil)
 	err = txn1.Set([]byte("b"), []byte("b1"))
 	c.Assert(err, IsNil)
-	committer, err := newTwoPhaseCommitter(txn1)
+	committer, err := newTwoPhaseCommitter(txn1, 0)
 	c.Assert(err, IsNil)
 
 	bo := NewBackoffer(context.Background(), prewriteMaxBackoff)
@@ -185,7 +186,7 @@ func (s *testCommitterSuite) TestContextCancelRetryable(c *C) {
 	// txn1 locks "b"
 	err := txn1.Set([]byte("b"), []byte("b1"))
 	c.Assert(err, IsNil)
-	committer, err := newTwoPhaseCommitter(txn1)
+	committer, err := newTwoPhaseCommitter(txn1, 0)
 	c.Assert(err, IsNil)
 	err = committer.prewriteKeys(NewBackoffer(context.Background(), prewriteMaxBackoff), committer.keys)
 	c.Assert(err, IsNil)
@@ -277,14 +278,14 @@ type slowClient struct {
 	regionDelays map[uint64]time.Duration
 }
 
-func (c *slowClient) SendReq(ctx context.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+func (c *slowClient) SendReq(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	for id, delay := range c.regionDelays {
 		reqCtx := &req.Context
 		if reqCtx.GetRegionId() == id {
 			time.Sleep(delay)
 		}
 	}
-	return c.Client.SendReq(ctx, addr, req)
+	return c.Client.SendRequest(ctx, addr, req, timeout)
 }
 
 func (s *testCommitterSuite) TestIllegalTso(c *C) {
@@ -311,7 +312,7 @@ func (s *testCommitterSuite) TestCommitBeforePrewrite(c *C) {
 	txn := s.begin(c)
 	err := txn.Set([]byte("a"), []byte("a1"))
 	c.Assert(err, IsNil)
-	commiter, err := newTwoPhaseCommitter(txn)
+	commiter, err := newTwoPhaseCommitter(txn, 0)
 	c.Assert(err, IsNil)
 	ctx := context.Background()
 	err = commiter.cleanupKeys(NewBackoffer(ctx, cleanupMaxBackoff), commiter.keys)
@@ -356,7 +357,7 @@ func (s *testCommitterSuite) TestPrewritePrimaryKeyFailed(c *C) {
 
 	// clean again, shouldn't be failed when a rollback already exist.
 	ctx := context.Background()
-	commiter, err := newTwoPhaseCommitter(txn2)
+	commiter, err := newTwoPhaseCommitter(txn2, 0)
 	c.Assert(err, IsNil)
 	err = commiter.cleanupKeys(NewBackoffer(ctx, cleanupMaxBackoff), commiter.keys)
 	c.Assert(err, IsNil)

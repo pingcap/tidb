@@ -37,6 +37,7 @@ type jsonColumn struct {
 	Histogram         *tipb.Histogram `json:"histogram"`
 	CMSketch          *tipb.CMSketch  `json:"cm_sketch"`
 	NullCount         int64           `json:"null_count"`
+	TotColSize        int64           `json:"tot_col_size"`
 	LastUpdateVersion uint64          `json:"last_update_version"`
 }
 
@@ -44,6 +45,7 @@ func dumpJSONCol(hist *Histogram, CMSketch *CMSketch) *jsonColumn {
 	jsonCol := &jsonColumn{
 		Histogram:         HistogramToProto(hist),
 		NullCount:         hist.NullCount,
+		TotColSize:        hist.TotColSize,
 		LastUpdateVersion: hist.LastUpdateVersion,
 	}
 	if CMSketch != nil {
@@ -118,7 +120,7 @@ func (h *Handle) LoadStatsFromJSON(tableInfo *model.TableInfo, jsonTbl *JSONTabl
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			hist.ID, hist.NullCount, hist.LastUpdateVersion = colInfo.ID, jsonCol.NullCount, jsonCol.LastUpdateVersion
+			hist.ID, hist.NullCount, hist.LastUpdateVersion, hist.TotColSize = colInfo.ID, jsonCol.NullCount, jsonCol.LastUpdateVersion, jsonCol.TotColSize
 			col := &Column{
 				Histogram: *hist,
 				CMSketch:  CMSketchFromProto(jsonCol.CMSketch),

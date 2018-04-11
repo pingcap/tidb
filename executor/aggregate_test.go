@@ -243,7 +243,7 @@ func (s *testSuite) TestAggregation(c *C) {
 
 	result = tk.MustQuery("select count(*) from information_schema.columns")
 	// When adding new memory columns in information_schema, please update this variable.
-	columnCountOfAllInformationSchemaTables := "736"
+	columnCountOfAllInformationSchemaTables := "741"
 	result.Check(testkit.Rows(columnCountOfAllInformationSchemaTables))
 
 	tk.MustExec("drop table if exists t1")
@@ -357,8 +357,8 @@ func (s *testSuite) TestGroupConcatAggr(c *C) {
 	result = tk.MustQuery("select id, group_concat(name SEPARATOR ',') from test group by id")
 	result.Check(testkit.Rows("1 10,20,30", "2 20", "3 200,500"))
 
-	result = tk.MustQuery("select id, group_concat(name SEPARATOR '%') from test group by id")
-	result.Check(testkit.Rows("1 10%20%30", "2 20", "3 200%500"))
+	result = tk.MustQuery(`select id, group_concat(name SEPARATOR '%') from test group by id`)
+	result.Check(testkit.Rows("1 10%20%30", "2 20", `3 200%500`))
 
 	result = tk.MustQuery("select id, group_concat(name SEPARATOR '') from test group by id")
 	result.Check(testkit.Rows("1 102030", "2 20", "3 200500"))
@@ -527,15 +527,13 @@ func (s *testSuite) TestAggEliminator(c *C) {
 
 func (s *testSuite) TestIssue5663(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-
 	plan.GlobalPlanCache = kvcache.NewShardedLRUCache(2, 1)
-	if plan.GlobalPlanCache != nil {
-		plan.PlanCacheEnabled = true
-		defer func() {
-			plan.PlanCacheEnabled = false
-		}()
-	}
+	planCahche := tk.Se.GetSessionVars().PlanCacheEnabled
+	defer func() {
+		tk.Se.GetSessionVars().PlanCacheEnabled = planCahche
+	}()
 
+	tk.Se.GetSessionVars().PlanCacheEnabled = true
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1 (i int unsigned, primary key(i));")
 	tk.MustExec("insert into t1 values (1),(2),(3);")

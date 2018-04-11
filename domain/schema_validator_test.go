@@ -30,7 +30,7 @@ type leaseGrantItem struct {
 func (*testSuite) TestSchemaValidator(c *C) {
 	defer testleak.AfterTest(c)()
 
-	lease := 5 * time.Millisecond
+	lease := 10 * time.Millisecond
 	leaseGrantCh := make(chan leaseGrantItem)
 	oracleCh := make(chan uint64)
 	exit := make(chan struct{})
@@ -92,7 +92,7 @@ func (*testSuite) TestSchemaValidator(c *C) {
 	valid = validator.Check(ts, newItem.schemaVer, nil)
 	c.Assert(valid, Equals, ResultUnknown)
 
-	exit <- struct{}{}
+	close(exit)
 }
 
 func reload(validator SchemaValidator, leaseGrantCh chan leaseGrantItem, ids ...int64) int64 {
@@ -110,9 +110,9 @@ func serverFunc(lease time.Duration, requireLease chan leaseGrantItem, oracleCh 
 	ticker := time.NewTicker(lease)
 	for {
 		select {
-		case <-ticker.C:
+		case now := <-ticker.C:
 			version++
-			leaseTS = uint64(time.Now().UnixNano())
+			leaseTS = uint64(now.UnixNano())
 		case requireLease <- leaseGrantItem{
 			leaseGrantTS: leaseTS,
 			oldVer:       version - 1,

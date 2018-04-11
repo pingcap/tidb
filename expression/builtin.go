@@ -45,6 +45,9 @@ func (b *baseBuiltinFunc) setPbCode(c tipb.ScalarFuncSig) {
 }
 
 func newBaseBuiltinFunc(ctx sessionctx.Context, args []Expression) baseBuiltinFunc {
+	if ctx == nil {
+		panic("ctx should not be nil")
+	}
 	return baseBuiltinFunc{
 		args: args,
 		ctx:  ctx,
@@ -58,6 +61,9 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, args []Expression) baseBuiltinFu
 func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType types.EvalType, argTps ...types.EvalType) (bf baseBuiltinFunc) {
 	if len(args) != len(argTps) {
 		panic("unexpected length of args and argTps")
+	}
+	if ctx == nil {
+		panic("ctx should not be nil")
 	}
 	for i := range args {
 		switch argTps[i] {

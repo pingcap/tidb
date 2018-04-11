@@ -61,6 +61,8 @@ func (ls *LogicalSort) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 	} else if topN.isLimit() {
 		topN.ByItems = ls.ByItems
 		// If a Limit is pushed down, the LogicalSort should be converted to topN and be pushed again.
+		// Since the limit is combined with the sort operator. It's not a partial one any more.
+		topN.partial = false
 		return ls.children[0].pushDownTopN(topN)
 	}
 	// If a TopN is pushed down, this sort is useless.
