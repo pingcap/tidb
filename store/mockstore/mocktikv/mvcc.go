@@ -757,7 +757,7 @@ func (s *MvccStore) DeleteRange(startKey, endKey []byte) error {
 		entriesToDelete = append(entriesToDelete, entry)
 		return true
 	}
-	s.tree.AscendRange(newEntry(startKey), newEntry(endKey), iterator)
+	s.tree.AscendRange(newEntry(NewMvccKey(startKey)), newEntry(NewMvccKey(endKey)), iterator)
 
 	for _, key := range entriesToDelete {
 		s.tree.Delete(key)

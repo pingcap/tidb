@@ -876,8 +876,8 @@ func (mvcc *MVCCLevelDB) DeleteRange(startKey, endKey []byte) error {
 	batch := &leveldb.Batch{}
 
 	iter := mvcc.db.NewIterator(&util.Range{
-		Start: startKey,
-		Limit: endKey,
+		Start: codec.EncodeBytes(nil, startKey),
+		Limit: codec.EncodeBytes(nil, endKey),
 	}, nil)
 	for iter.Next() {
 		batch.Delete(iter.Key())

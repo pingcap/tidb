@@ -521,8 +521,11 @@ func (s *testMockTiKVSuite) TestDeleteRange(c *C) {
 	s.mustDeleteRange(c, "41", "42")
 	s.mustScanOK(c, "0", 10, 50, "1", "v1", "4", "v4", "5", "v5")
 
+	s.mustDeleteRange(c, "4\x00", "5\x00")
+	s.mustScanOK(c, "0", 10, 60, "1", "v1", "4", "v4")
+
 	s.mustDeleteRange(c, "0", "9")
-	s.mustScanOK(c, "0", 10, 60)
+	s.mustScanOK(c, "0", 10, 70)
 }
 
 func (s *testMockTiKVSuite) mustWriteWriteConflict(c *C, errs []error, i int) {
