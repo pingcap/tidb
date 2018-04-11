@@ -187,3 +187,13 @@ func DivIntWithUint(a int64, b uint64) (uint64, error) {
 
 	return uint64(a) / b, nil
 }
+
+// DivFloat64 divides float64 a with b, returns int64 if no overflow error.
+// It just checks overflow, if b is zero, a "divide by zero" panic throws.
+func DivFloat64(a float64, b float64) (int64, error) {
+	c := a / b
+	if c > math.MaxInt64 || c < math.MinInt64 {
+		return 0, ErrOverflow.GenByArgs("BIGINT", fmt.Sprintf("(%f, %f)", a, b))
+	}
+	return int64(c), nil
+}

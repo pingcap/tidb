@@ -48,6 +48,7 @@ var (
 	_ builtinFunc = &builtinArithmeticMultiplyIntUnsignedSig{}
 	_ builtinFunc = &builtinArithmeticMultiplyIntSig{}
 	_ builtinFunc = &builtinArithmeticIntDivideIntSig{}
+	_ builtinFunc = &builtinArithmeticIntDivideRealSig{}
 	_ builtinFunc = &builtinArithmeticIntDivideDecimalSig{}
 	_ builtinFunc = &builtinArithmeticModIntSig{}
 	_ builtinFunc = &builtinArithmeticModRealSig{}
@@ -583,6 +584,14 @@ func (c *arithmeticIntDivideFunctionClass) getFunction(ctx sessionctx.Context, a
 		sig := &builtinArithmeticIntDivideIntSig{bf}
 		return sig, nil
 	}
+	if lhsEvalTp == types.ETReal || rhsEvalTp == types.ETReal {
+		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETReal, types.ETReal)
+		if mysql.HasUnsignedFlag(lhsTp.Flag) || mysql.HasUnsignedFlag(rhsTp.Flag) {
+			bf.tp.Flag |= mysql.UnsignedFlag
+		}
+		sig := &builtinArithmeticIntDivideRealSig{bf}
+		return sig, nil
+	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETDecimal, types.ETDecimal)
 	if mysql.HasUnsignedFlag(lhsTp.Flag) || mysql.HasUnsignedFlag(rhsTp.Flag) {
 		bf.tp.Flag |= mysql.UnsignedFlag
@@ -592,6 +601,7 @@ func (c *arithmeticIntDivideFunctionClass) getFunction(ctx sessionctx.Context, a
 }
 
 type builtinArithmeticIntDivideIntSig struct{ baseBuiltinFunc }
+type builtinArithmeticIntDivideRealSig struct{ baseBuiltinFunc }
 type builtinArithmeticIntDivideDecimalSig struct{ baseBuiltinFunc }
 
 func (s *builtinArithmeticIntDivideIntSig) evalInt(row types.Row) (int64, bool, error) {
@@ -629,6 +639,26 @@ func (s *builtinArithmeticIntDivideIntSig) evalInt(row types.Row) (int64, bool, 
 		ret, err = types.DivInt64(a, b)
 	}
 
+	return ret, err != nil, errors.Trace(err)
+}
+
+func (s *builtinArithmeticIntDivideRealSig) evalInt(row types.Row) (int64, bool, error) {
+	sc := s.ctx.GetSessionVars().StmtCtx
+	b, isNull, err := s.args[1].EvalReal(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+
+	if b == 0 {
+		return 0, true, errors.Trace(handleDivisionByZeroError(s.ctx))
+	}
+
+	a, isNull, err := s.args[0].EvalReal(row, sc)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+
+	ret, err := types.DivFloat64(a, b)
 	return ret, err != nil, errors.Trace(err)
 }
 
