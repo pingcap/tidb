@@ -24,6 +24,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -1001,6 +1002,7 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 
 	// Check whether added column has existed.
 	colName := spec.NewColumn.Name.Name.O
+	log.Warnf("cols ............")
 	col := table.FindCol(t.Cols(), colName)
 	if col != nil {
 		return infoschema.ErrColumnExists.GenByArgs(colName)
@@ -1259,9 +1261,8 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 	}
 
 	newCol := table.ToColumn(&model.ColumnInfo{
-		ID:                 col.ID,
-		Offset:             col.Offset,
-		State:              col.State,
+		ID: col.ID,
+		// TODO:
 		OriginDefaultValue: col.OriginDefaultValue,
 		FieldType:          *spec.NewColumn.Tp,
 		Name:               spec.NewColumn.Name.Name,

@@ -414,6 +414,7 @@ func (d *ddl) onModifyColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) 
 
 // doModifyColumn updates the column information and reorders all columns.
 func (d *ddl) doModifyColumn(t *meta.Meta, job *model.Job, col *model.ColumnInfo, oldName *model.CIStr, pos *ast.ColumnPosition) (ver int64, _ error) {
+	log.Warnf("........................ ")
 	tblInfo, err := getTableInfo(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -425,6 +426,8 @@ func (d *ddl) doModifyColumn(t *meta.Meta, job *model.Job, col *model.ColumnInfo
 		return ver, infoschema.ErrColumnNotExists.GenByArgs(oldName, tblInfo.Name)
 	}
 
+	col.Offset = oldCol.Offset
+	col.State = oldCol.State
 	// Calculate column's new position.
 	oldPos, newPos := oldCol.Offset, oldCol.Offset
 	if pos.Tp == ast.ColumnPositionAfter {
