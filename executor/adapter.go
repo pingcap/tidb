@@ -79,13 +79,13 @@ func schema2ResultFields(schema *expression.Schema, defaultDB string) (rfs []*as
 	return rfs
 }
 
-// NextChunk use uses recordSet's executor to get next available chunk for later usage.
+// Next use uses recordSet's executor to get next available chunk for later usage.
 // If chunk does not contain any rows, then we update last query found rows in session variable as current found rows.
 // The reason we need update is that chunk with 0 rows indicating we already finished current query, we need prepare for
 // next query.
 // If stmt is not nil and chunk with some rows inside, we simply update last query found rows by the number of row in chunk.
-func (a *recordSet) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
-	err := a.executor.NextChunk(ctx, chk)
+func (a *recordSet) Next(ctx context.Context, chk *chunk.Chunk) error {
+	err := a.executor.Next(ctx, chk)
 	if err != nil {
 		a.lastErr = err
 		return errors.Trace(err)
@@ -262,7 +262,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 		a.logSlowQuery(txnTS, err == nil)
 	}()
 
-	err = e.NextChunk(ctx, e.newChunk())
+	err = e.Next(ctx, e.newChunk())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

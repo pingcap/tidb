@@ -491,6 +491,10 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 		p := &RecoverIndex{Table: as.Tables[0], IndexName: as.Index}
 		p.SetSchema(buildRecoverIndexFields())
 		ret = p
+	case ast.AdminCleanupIndex:
+		p := &CleanupIndex{Table: as.Tables[0], IndexName: as.Index}
+		p.SetSchema(buildCleanupIndexFields())
+		ret = p
 	case ast.AdminChecksumTable:
 		p := &ChecksumTable{Tables: as.Tables}
 		p.SetSchema(buildChecksumTableSchema())
@@ -662,6 +666,12 @@ func buildRecoverIndexFields() *expression.Schema {
 	schema := expression.NewSchema(make([]*expression.Column, 0, 2)...)
 	schema.Append(buildColumn("", "ADDED_COUNT", mysql.TypeLonglong, 4))
 	schema.Append(buildColumn("", "SCAN_COUNT", mysql.TypeLonglong, 4))
+	return schema
+}
+
+func buildCleanupIndexFields() *expression.Schema {
+	schema := expression.NewSchema(make([]*expression.Column, 0, 1)...)
+	schema.Append(buildColumn("", "REMOVED_COUNT", mysql.TypeLonglong, 4))
 	return schema
 }
 

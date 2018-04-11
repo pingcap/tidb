@@ -74,8 +74,8 @@ func (e *HashAggExec) Open(ctx context.Context) error {
 	return nil
 }
 
-// NextChunk implements the Executor NextChunk interface.
-func (e *HashAggExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+// Next implements the Executor Next interface.
+func (e *HashAggExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	// In this stage we consider all data from src as a single group.
 	if !e.executed {
 		err := e.execute(ctx)
@@ -110,11 +110,11 @@ func (e *HashAggExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
 	}
 }
 
-// innerNextChunk fetches Chunks from src and update each aggregate function for each row in Chunk.
+// execute fetches Chunks from src and update each aggregate function for each row in Chunk.
 func (e *HashAggExec) execute(ctx context.Context) (err error) {
 	inputIter := chunk.NewIterator4Chunk(e.childrenResults[0])
 	for {
-		err := e.children[0].NextChunk(ctx, e.childrenResults[0])
+		err := e.children[0].Next(ctx, e.childrenResults[0])
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -141,7 +141,7 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 	}
 }
 
-func (e *HashAggExec) getGroupKey(row types.Row) ([]byte, error) {
+func (e *HashAggExec) getGroupKey(row chunk.Row) ([]byte, error) {
 	vals := make([]types.Datum, 0, len(e.GroupByItems))
 	for _, item := range e.GroupByItems {
 		v, err := item.Eval(row)
@@ -217,8 +217,8 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 	return nil
 }
 
-// NextChunk implements the Executor NextChunk interface.
-func (e *StreamAggExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+// Next implements the Executor Next interface.
+func (e *StreamAggExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 
 	for !e.executed && chk.NumRows() < e.maxChunkSize {
@@ -264,7 +264,7 @@ func (e *StreamAggExec) fetchChildIfNecessary(ctx context.Context, chk *chunk.Ch
 		return nil
 	}
 
-	err := e.children[0].NextChunk(ctx, e.childrenResults[0])
+	err := e.children[0].Next(ctx, e.childrenResults[0])
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -296,7 +296,7 @@ func (e *StreamAggExec) appendResult2Chunk(chk *chunk.Chunk) {
 }
 
 // meetNewGroup returns a value that represents if the new group is different from last group.
-func (e *StreamAggExec) meetNewGroup(row types.Row) (bool, error) {
+func (e *StreamAggExec) meetNewGroup(row chunk.Row) (bool, error) {
 	if len(e.GroupByItems) == 0 {
 		return false, nil
 	}

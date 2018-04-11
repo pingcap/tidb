@@ -198,6 +198,16 @@ func (s *testSelectivitySuite) TestSelectivity(c *C) {
 	}
 }
 
+func (s *testSelectivitySuite) TestPseudoSelectivity(c *C) {
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, b int, unique key idx(a,b))")
+	testKit.MustQuery("explain select * from t where a = 1 and b = 1").Check(testkit.Rows(
+		"IndexScan_8   cop table:t, index:a, b, range:[1 1,1 1], keep order:false 1.00",
+		"IndexReader_9   root index:IndexScan_8 1.00"))
+}
+
 func BenchmarkSelectivity(b *testing.B) {
 	c := &C{}
 	s := &testSelectivitySuite{}

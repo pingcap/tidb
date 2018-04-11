@@ -65,6 +65,14 @@ type RecoverIndex struct {
 	IndexName string
 }
 
+// CleanupIndex is used to delete dangling index data.
+type CleanupIndex struct {
+	baseSchemaProducer
+
+	Table     *ast.TableName
+	IndexName string
+}
+
 // CheckIndex is used for checking index data, built from the 'admin check index' statement.
 type CheckIndex struct {
 	baseSchemaProducer

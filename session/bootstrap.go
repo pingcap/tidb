@@ -71,7 +71,7 @@ const (
 	CreateDBPrivTable = `CREATE TABLE if not exists mysql.db (
 		Host			CHAR(60),
 		DB			CHAR(64),
-		User			CHAR(16),
+		User			CHAR(32),
 		Select_priv		ENUM('N','Y') Not Null DEFAULT 'N',
 		Insert_priv		ENUM('N','Y') Not Null DEFAULT 'N',
 		Update_priv		ENUM('N','Y') Not Null DEFAULT 'N',
@@ -95,8 +95,8 @@ const (
 	// CreateTablePrivTable is the SQL statement creates table scope privilege table in system db.
 	CreateTablePrivTable = `CREATE TABLE if not exists mysql.tables_priv (
 		Host		CHAR(60),
-		DB			CHAR(64),
-		User		CHAR(16),
+		DB		CHAR(64),
+		User		CHAR(32),
 		Table_name	CHAR(64),
 		Grantor		CHAR(77),
 		Timestamp	Timestamp DEFAULT CURRENT_TIMESTAMP,
@@ -106,8 +106,8 @@ const (
 	// CreateColumnPrivTable is the SQL statement creates column scope privilege table in system db.
 	CreateColumnPrivTable = `CREATE TABLE if not exists mysql.columns_priv(
 		Host		CHAR(60),
-		DB			CHAR(64),
-		User		CHAR(16),
+		DB		CHAR(64),
+		User		CHAR(32),
 		Table_name	CHAR(64),
 		Column_name	CHAR(64),
 		Timestamp	Timestamp DEFAULT CURRENT_TIMESTAMP,
@@ -188,6 +188,15 @@ const (
 		UNIQUE KEY (element_id),
 		KEY (job_id, element_id)
 	);`
+
+	// CreateStatsFeedbackTable stores the feedback info which is used to update stats.
+	CreateStatsFeedbackTable = `CREATE TABLE IF NOT EXISTS mysql.stats_feedback (
+		table_id bigint(64) NOT NULL,
+		is_index tinyint(2) NOT NULL,
+		hist_id bigint(64) NOT NULL,
+		feedback blob NOT NULL,
+		index hist(table_id, is_index, hist_id)
+	);`
 )
 
 // bootstrap initiates system DB for a store.
@@ -232,6 +241,8 @@ const (
 	version16 = 16
 	version17 = 17
 	version18 = 18
+	version19 = 19
+	version20 = 20
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -274,7 +285,7 @@ func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 	r := rs[0]
 	defer terror.Call(r.Close)
 	chk := r.NewChunk()
-	err = r.NextChunk(ctx, chk)
+	err = r.Next(ctx, chk)
 	if err != nil || chk.NumRows() == 0 {
 		return "", true, errors.Trace(err)
 	}
@@ -360,6 +371,14 @@ func upgrade(s Session) {
 
 	if ver < version18 {
 		upgradeToVer18(s)
+	}
+
+	if ver < version19 {
+		upgradeToVer19(s)
+	}
+
+	if ver < version20 {
+		upgradeToVer20(s)
 	}
 
 	updateBootstrapVer(s)
@@ -484,7 +503,7 @@ func upgradeToVer12(s Session) {
 	defer terror.Call(r.Close)
 	chk := r.NewChunk()
 	it := chunk.NewIterator4Chunk(chk)
-	err = r.NextChunk(ctx, chk)
+	err = r.Next(ctx, chk)
 	for err == nil && chk.NumRows() != 0 {
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			user := row.GetString(0)
@@ -496,7 +515,7 @@ func upgradeToVer12(s Session) {
 			updateSQL := fmt.Sprintf(`UPDATE mysql.user set password = "%s" where user="%s" and host="%s"`, newPass, user, host)
 			sqls = append(sqls, updateSQL)
 		}
-		err = r.NextChunk(ctx, chk)
+		err = r.Next(ctx, chk)
 	}
 	terror.MustNil(err)
 
@@ -578,6 +597,16 @@ func upgradeToVer18(s Session) {
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `tot_col_size` bigint(64) NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
 }
 
+func upgradeToVer19(s Session) {
+	doReentrantDDL(s, "ALTER TABLE mysql.db MODIFY User CHAR(32)")
+	doReentrantDDL(s, "ALTER TABLE mysql.tables_priv MODIFY User CHAR(32)")
+	doReentrantDDL(s, "ALTER TABLE mysql.columns_priv MODIFY User CHAR(32)")
+}
+
+func upgradeToVer20(s Session) {
+	doReentrantDDL(s, CreateStatsFeedbackTable)
+}
+
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
 func updateBootstrapVer(s Session) {
 	// Update bootstrap version.
@@ -624,6 +653,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateStatsBucketsTable)
 	// Create gc_delete_range table.
 	mustExecute(s, CreateGCDeleteRangeTable)
+	// Create stats_feedback table.
+	mustExecute(s, CreateStatsFeedbackTable)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.
