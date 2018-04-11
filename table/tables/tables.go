@@ -73,8 +73,13 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 	}
 
 	columns := make([]*table.Column, 0, len(tblInfo.Columns))
+	for i := range tblInfo.Columns {
+		if tblInfo.Columns[i].Offset != i {
+			log.Warning("Wrong table offset table name: %s, column name %s, column offset: %d, column index: %d", tblInfo.Name.String(), tblInfo.Columns[i].Name.String(), tblInfo.Columns[i].Offset, i)
+			tblInfo.Columns[i].Offset = i
+		}
+	}
 	for _, colInfo := range tblInfo.Columns {
-		log.Infof("FOR TEST COLINFO: %#v", colInfo)
 		if colInfo.State == model.StateNone {
 			return nil, table.ErrColumnStateCantNone.Gen("column %s can't be in none state", colInfo.Name)
 		}
@@ -94,7 +99,6 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 		columns = append(columns, col)
 	}
 
-	log.Infof("FOR TEST %#v", tblInfo)
 	t := newTable(tblInfo.ID, columns, alloc)
 
 	for _, idxInfo := range tblInfo.Indices {
