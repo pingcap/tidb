@@ -72,6 +72,31 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 		return nil, table.ErrTableStateCantNone.Gen("table %s can't be in none state", tblInfo.Name)
 	}
 
+	colLen := len(tblInfo.Columns)
+	var needUpdated bool
+	for i := 0; i < colLen; i++ {
+		if tblInfo.Columns[i].Offset != i {
+			log.Warnf("the table %#v schema is wrong, cols len %v, no.%v col %#v", tblInfo, colLen, i, tblInfo.Columns[i])
+			needUpdated = true
+		}
+	}
+	if needUpdated {
+		for i := 0; i < colLen; i++ {
+			tblInfo.Columns[i].Offset = i
+		}
+		for _, idx := range tblInfo.Indices {
+			for _, col := range idx.Columns {
+				for _, c := range tblInfo.Columns {
+					if col.Name.L == c.Name.L {
+						col.Offset = c.Offset
+					}
+				}
+				log.Warnf("update idx %#v", idx)
+			}
+		}
+		log.Warnf("update finished")
+	}
+
 	columns := make([]*table.Column, 0, len(tblInfo.Columns))
 	for _, colInfo := range tblInfo.Columns {
 		if colInfo.State == model.StateNone {
@@ -157,6 +182,7 @@ func (t *Table) Cols() []*table.Column {
 		return t.publicColumns
 	}
 	publicColumns := make([]*table.Column, len(t.Columns))
+
 	maxOffset := -1
 	for _, col := range t.Columns {
 		if col.State != model.StatePublic {
