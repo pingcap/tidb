@@ -52,8 +52,7 @@ func (s *testMySQLConstSuite) SetUpSuite(c *C) {
 	if useMockTikv {
 		s.cluster = mocktikv.NewCluster()
 		mocktikv.BootstrapWithSingleStore(s.cluster)
-		mvccStore, err := mocktikv.NewMVCCLevelDB("")
-		s.mvccStore = mvccStore
+		s.mvccStore = mocktikv.MustNewMVCCStore()
 		store, err := mockstore.NewMockTikvStore(
 			mockstore.WithCluster(s.cluster),
 			mockstore.WithMVCCStore(s.mvccStore),
