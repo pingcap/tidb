@@ -403,6 +403,7 @@ type CreateTableStmt struct {
 	Cols        []*ColumnDef
 	Constraints []*Constraint
 	Options     []*TableOption
+	Partition   *PartitionOptions
 }
 
 // Accept implements Node Accept interface.
@@ -845,4 +846,20 @@ func (n *TruncateTableStmt) Accept(v Visitor) (Node, bool) {
 	}
 	n.Table = node.(*TableName)
 	return v.Leave(n)
+}
+
+// PartitionDefinition defines a single partition.
+type PartitionDefinition struct {
+	Name     string
+	LessThan []ExprNode
+	MaxValue bool
+	Comment  string
+}
+
+// PartitionOptions specifies the partition options.
+type PartitionOptions struct {
+	Tp          model.PartitionType
+	Expr        ExprNode
+	ColumnNames []*ColumnName
+	Definitions []*PartitionDefinition
 }
