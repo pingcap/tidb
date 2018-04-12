@@ -221,6 +221,20 @@ func (b *baseBuiltinFunc) getCtx() sessionctx.Context {
 	return b.ctx
 }
 
+func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
+	b.args = make([]Expression, 0, len(b.args))
+	for _, arg := range from.args {
+		b.args = append(b.args, arg.Clone())
+	}
+	b.ctx = from.ctx
+	b.tp = from.tp
+	b.pbCode = from.pbCode
+}
+
+func (b *baseBuiltinFunc) Clone() builtinFunc {
+	panic("you should not call this method.")
+}
+
 // builtinFunc stands for a particular function signature.
 type builtinFunc interface {
 	// evalInt evaluates int result of builtinFunc by given row.
@@ -249,6 +263,8 @@ type builtinFunc interface {
 	setPbCode(tipb.ScalarFuncSig)
 	// PbCode returns PbCode of this signature.
 	PbCode() tipb.ScalarFuncSig
+	// Clone returns a copy of itself.
+	Clone() builtinFunc
 }
 
 // baseFunctionClass will be contained in every struct that implement functionClass interface.

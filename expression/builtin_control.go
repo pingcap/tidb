@@ -212,6 +212,12 @@ type builtinCaseWhenIntSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinCaseWhenIntSig) Clone() builtinFunc {
+	newSig := &builtinCaseWhenIntSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalInt evals a builtinCaseWhenIntSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/case.html
 func (b *builtinCaseWhenIntSig) evalInt(row types.Row) (ret int64, isNull bool, err error) {
@@ -240,6 +246,12 @@ func (b *builtinCaseWhenIntSig) evalInt(row types.Row) (ret int64, isNull bool, 
 
 type builtinCaseWhenRealSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinCaseWhenRealSig) Clone() builtinFunc {
+	newSig := &builtinCaseWhenRealSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalReal evals a builtinCaseWhenRealSig.
@@ -272,6 +284,12 @@ type builtinCaseWhenDecimalSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinCaseWhenDecimalSig) Clone() builtinFunc {
+	newSig := &builtinCaseWhenDecimalSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalDecimal evals a builtinCaseWhenDecimalSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/case.html
 func (b *builtinCaseWhenDecimalSig) evalDecimal(row types.Row) (ret *types.MyDecimal, isNull bool, err error) {
@@ -300,6 +318,12 @@ func (b *builtinCaseWhenDecimalSig) evalDecimal(row types.Row) (ret *types.MyDec
 
 type builtinCaseWhenStringSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinCaseWhenStringSig) Clone() builtinFunc {
+	newSig := &builtinCaseWhenStringSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalString evals a builtinCaseWhenStringSig.
@@ -332,6 +356,12 @@ type builtinCaseWhenTimeSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinCaseWhenTimeSig) Clone() builtinFunc {
+	newSig := &builtinCaseWhenTimeSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalTime evals a builtinCaseWhenTimeSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/case.html
 func (b *builtinCaseWhenTimeSig) evalTime(row types.Row) (ret types.Time, isNull bool, err error) {
@@ -360,6 +390,12 @@ func (b *builtinCaseWhenTimeSig) evalTime(row types.Row) (ret types.Time, isNull
 
 type builtinCaseWhenDurationSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinCaseWhenDurationSig) Clone() builtinFunc {
+	newSig := &builtinCaseWhenDurationSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalDuration evals a builtinCaseWhenDurationSig.
@@ -432,6 +468,12 @@ type builtinIfIntSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinIfIntSig) Clone() builtinFunc {
+	newSig := &builtinIfIntSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 func (b *builtinIfIntSig) evalInt(row types.Row) (ret int64, isNull bool, err error) {
 	arg0, isNull0, err := b.args[0].EvalInt(b.ctx, row)
 	if err != nil {
@@ -447,6 +489,12 @@ func (b *builtinIfIntSig) evalInt(row types.Row) (ret int64, isNull bool, err er
 
 type builtinIfRealSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinIfRealSig) Clone() builtinFunc {
+	newSig := &builtinIfRealSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 func (b *builtinIfRealSig) evalReal(row types.Row) (ret float64, isNull bool, err error) {
@@ -466,6 +514,12 @@ type builtinIfDecimalSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinIfDecimalSig) Clone() builtinFunc {
+	newSig := &builtinIfDecimalSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 func (b *builtinIfDecimalSig) evalDecimal(row types.Row) (ret *types.MyDecimal, isNull bool, err error) {
 	arg0, isNull0, err := b.args[0].EvalInt(b.ctx, row)
 	if err != nil {
@@ -481,6 +535,12 @@ func (b *builtinIfDecimalSig) evalDecimal(row types.Row) (ret *types.MyDecimal, 
 
 type builtinIfStringSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinIfStringSig) Clone() builtinFunc {
+	newSig := &builtinIfStringSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 func (b *builtinIfStringSig) evalString(row types.Row) (ret string, isNull bool, err error) {
@@ -500,6 +560,12 @@ type builtinIfTimeSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinIfTimeSig) Clone() builtinFunc {
+	newSig := &builtinIfTimeSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 func (b *builtinIfTimeSig) evalTime(row types.Row) (ret types.Time, isNull bool, err error) {
 	arg0, isNull0, err := b.args[0].EvalInt(b.ctx, row)
 	if err != nil {
@@ -517,6 +583,12 @@ type builtinIfDurationSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinIfDurationSig) Clone() builtinFunc {
+	newSig := &builtinIfDurationSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 func (b *builtinIfDurationSig) evalDuration(row types.Row) (ret types.Duration, isNull bool, err error) {
 	arg0, isNull0, err := b.args[0].EvalInt(b.ctx, row)
 	if err != nil {
@@ -532,6 +604,12 @@ func (b *builtinIfDurationSig) evalDuration(row types.Row) (ret types.Duration, 
 
 type builtinIfJSONSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinIfJSONSig) Clone() builtinFunc {
+	newSig := &builtinIfJSONSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 func (b *builtinIfJSONSig) evalJSON(row types.Row) (ret json.BinaryJSON, isNull bool, err error) {
@@ -605,6 +683,12 @@ type builtinIfNullIntSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinIfNullIntSig) Clone() builtinFunc {
+	newSig := &builtinIfNullIntSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 func (b *builtinIfNullIntSig) evalInt(row types.Row) (int64, bool, error) {
 	arg0, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if !isNull || err != nil {
@@ -616,6 +700,12 @@ func (b *builtinIfNullIntSig) evalInt(row types.Row) (int64, bool, error) {
 
 type builtinIfNullRealSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinIfNullRealSig) Clone() builtinFunc {
+	newSig := &builtinIfNullRealSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 func (b *builtinIfNullRealSig) evalReal(row types.Row) (float64, bool, error) {
@@ -631,6 +721,12 @@ type builtinIfNullDecimalSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinIfNullDecimalSig) Clone() builtinFunc {
+	newSig := &builtinIfNullDecimalSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 func (b *builtinIfNullDecimalSig) evalDecimal(row types.Row) (*types.MyDecimal, bool, error) {
 	arg0, isNull, err := b.args[0].EvalDecimal(b.ctx, row)
 	if !isNull || err != nil {
@@ -642,6 +738,12 @@ func (b *builtinIfNullDecimalSig) evalDecimal(row types.Row) (*types.MyDecimal, 
 
 type builtinIfNullStringSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinIfNullStringSig) Clone() builtinFunc {
+	newSig := &builtinIfNullStringSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 func (b *builtinIfNullStringSig) evalString(row types.Row) (string, bool, error) {
@@ -657,6 +759,12 @@ type builtinIfNullTimeSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinIfNullTimeSig) Clone() builtinFunc {
+	newSig := &builtinIfNullTimeSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 func (b *builtinIfNullTimeSig) evalTime(row types.Row) (types.Time, bool, error) {
 	arg0, isNull, err := b.args[0].EvalTime(b.ctx, row)
 	if !isNull || err != nil {
@@ -670,6 +778,12 @@ type builtinIfNullDurationSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinIfNullDurationSig) Clone() builtinFunc {
+	newSig := &builtinIfNullDurationSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 func (b *builtinIfNullDurationSig) evalDuration(row types.Row) (types.Duration, bool, error) {
 	arg0, isNull, err := b.args[0].EvalDuration(b.ctx, row)
 	if !isNull || err != nil {
@@ -681,6 +795,12 @@ func (b *builtinIfNullDurationSig) evalDuration(row types.Row) (types.Duration, 
 
 type builtinIfNullJSONSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinIfNullJSONSig) Clone() builtinFunc {
+	newSig := &builtinIfNullJSONSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 func (b *builtinIfNullJSONSig) evalJSON(row types.Row) (json.BinaryJSON, bool, error) {
