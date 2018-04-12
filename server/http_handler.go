@@ -275,7 +275,7 @@ func (t *tikvHandlerTool) handleMvccGetByHex(params map[string]string) (interfac
 	return t.getMvccByEncodedKey(encodedKey)
 }
 
-func (t *tikvHandlerTool) GetAllHistoryDDL() ([]*model.Job, error) {
+func (t *tikvHandlerTool) getAllHistoryDDL() ([]*model.Job, error) {
 	s, err := session.CreateSession(t.store.(kv.Storage))
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -623,7 +623,7 @@ func (h ddlHistoryJobHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 			return
 		}
 
-		jobs, err := h.GetAllHistoryDDL()
+		jobs, err := h.getAllHistoryDDL()
 		if err != nil {
 			writeError(w, errors.New("ddl history not found"))
 			return
@@ -638,7 +638,7 @@ func (h ddlHistoryJobHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		writeData(w, jobs)
 		return
 	}
-	jobs, err := h.GetAllHistoryDDL()
+	jobs, err := h.getAllHistoryDDL()
 	if err != nil {
 		writeError(w, errors.New("ddl history not found"))
 		return
