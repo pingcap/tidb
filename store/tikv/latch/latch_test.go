@@ -30,7 +30,7 @@ var _ = Suite(&testLatchSuite{})
 var baseTso uint64
 
 type testLatchSuite struct {
-	latches Latches
+	latches *Latches
 }
 
 func (s *testLatchSuite) SetUpTest(c *C) {
@@ -49,7 +49,7 @@ func getTso() uint64 {
 
 func (s *testLatchSuite) TestWakeUp(c *C) {
 	keysA := [][]byte{
-		[]byte("a"), []byte("a"), []byte("b"), []byte("c")}
+		[]byte("a"), []byte("b"), []byte("c"), []byte("c")}
 	_, lockA := s.newLock(keysA)
 
 	keysB := [][]byte{[]byte("d"), []byte("e"), []byte("a"), []byte("c")}
@@ -103,12 +103,12 @@ func newTxn(keys [][]byte, startTS uint64, lock Lock) txn {
 
 type txnScheduler struct {
 	txns    map[uint64]*txn
-	latches Latches
+	latches *Latches
 	lock    sync.Mutex
 	wait    *sync.WaitGroup
 }
 
-func newTxnScheduler(wait *sync.WaitGroup, latches Latches) *txnScheduler {
+func newTxnScheduler(wait *sync.WaitGroup, latches *Latches) *txnScheduler {
 	return &txnScheduler{
 		txns:    make(map[uint64]*txn),
 		latches: latches,
