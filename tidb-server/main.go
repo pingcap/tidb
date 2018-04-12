@@ -93,7 +93,7 @@ var (
 	socket       = flag.String(nmSocket, "", "The socket file to use for connection.")
 	binlogSocket = flag.String(nmBinlogSocket, "", "socket file to write binlog")
 	runDDL       = flagBoolean(nmRunDDL, true, "run ddl worker on this tidb-server")
-	ddlLease     = flag.String(nmDdlLease, "10s", "schema lease duration, very dangerous to change only if you know what you do")
+	ddlLease     = flag.String(nmDdlLease, "45s", "schema lease duration, very dangerous to change only if you know what you do")
 	tokenLimit   = flag.Int(nmTokenLimit, 1000, "the limit of concurrent executed sessions")
 
 	// Log
@@ -365,6 +365,8 @@ func setGlobalVars() {
 	session.SetStatsLease(statsLeaseDuration)
 	domain.RunAutoAnalyze = cfg.Performance.RunAutoAnalyze
 	statistics.FeedbackProbability = cfg.Performance.FeedbackProbability
+	statistics.MaxQueryFeedbackCount = int(cfg.Performance.QueryFeedbackLimit)
+	plan.RatioOfPseudoEstimate = cfg.Performance.PseudoEstimateRatio
 	ddl.RunWorker = cfg.RunDDL
 	ddl.EnableSplitTableRegion = cfg.SplitTable
 	session.SetCommitRetryLimit(cfg.Performance.RetryLimit)
