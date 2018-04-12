@@ -39,9 +39,6 @@ const (
 	cpuFactor          = 0.9
 )
 
-// JoinConcurrency means the number of goroutines that participate in joining.
-var JoinConcurrency uint = 5
-
 // wholeTaskTypes records all possible kinds of task that a plan can return. For Agg, TopN and Limit, we will try to get
 // these tasks one by one.
 var wholeTaskTypes = [...]taskType{copSingleReadTaskType, copDoubleReadTaskType, rootTaskType}
