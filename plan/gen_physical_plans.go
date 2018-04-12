@@ -170,7 +170,7 @@ func (p *LogicalJoin) getHashJoin(prop *requiredProp, innerIdx int) *PhysicalHas
 		RightConditions: p.RightConditions,
 		OtherConditions: p.OtherConditions,
 		JoinType:        p.JoinType,
-		Concurrency:     JoinConcurrency,
+		Concurrency:     uint(p.ctx.GetSessionVars().HashJoinConcurrency),
 		DefaultValues:   p.DefaultValues,
 		InnerChildIdx:   innerIdx,
 	}.init(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt), chReqProps...)
