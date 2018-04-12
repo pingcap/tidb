@@ -337,6 +337,8 @@ const (
 	codeAccessDenied      = mysql.ErrAccessDenied
 )
 
+// For testing.
+
 func init() {
 	serverMySQLErrCodes := map[terror.ErrCode]uint16{
 		codeNotAllowedCommand: mysql.ErrNotAllowedCommand,
