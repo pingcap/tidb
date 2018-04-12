@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -273,31 +272,6 @@ func (t *tikvHandlerTool) handleMvccGetByHex(params map[string]string) (interfac
 		return nil, errors.Trace(err)
 	}
 	return t.getMvccByEncodedKey(encodedKey)
-}
-
-func (t *tikvHandlerTool) getAllHistoryDDL() ([]*model.Job, error) {
-	s, err := session.CreateSession(t.store.(kv.Storage))
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	if s != nil {
-		defer s.Close()
-	}
-
-	store := domain.GetDomain(s.(sessionctx.Context)).Store()
-	txn, err := store.Begin()
-
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	txnMeta := meta.NewMeta(txn)
-
-	jobs, err := txnMeta.GetAllHistoryDDLJobs()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return jobs, nil
 }
 
 // settingsHandler is the handler for list tidb server settings.
@@ -606,45 +580,6 @@ func (h tableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	default:
 		writeError(w, errors.New("method not found"))
 	}
-}
-
-// ServeHTTP handles request of ddl jobs history.
-func (h ddlHistoryJobHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	if limitID := req.FormValue(qLimit); len(limitID) > 0 {
-		lid, err := strconv.Atoi(limitID)
-
-		if err != nil {
-			writeError(w, err)
-			return
-		}
-
-		if lid < 1 {
-			writeError(w, errors.New("ddl history limit must be greater than 1"))
-			return
-		}
-
-		jobs, err := h.getAllHistoryDDL()
-		if err != nil {
-			writeError(w, errors.New("ddl history not found"))
-			return
-		}
-
-		jobsLen := len(jobs)
-		if jobsLen > lid {
-			start := jobsLen - lid
-			jobs = jobs[start:]
-		}
-
-		writeData(w, jobs)
-		return
-	}
-	jobs, err := h.getAllHistoryDDL()
-	if err != nil {
-		writeError(w, errors.New("ddl history not found"))
-		return
-	}
-	writeData(w, jobs)
-	return
 }
 
 func (h tableHandler) handleRegionRequest(schema infoschema.InfoSchema, tbl table.Table, w http.ResponseWriter, req *http.Request) {
