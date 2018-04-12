@@ -66,7 +66,6 @@ const (
 
 // For query string
 const qTableID = "table_id"
-const qLimit = "limit"
 
 const (
 	headerContentType = "Content-Type"
@@ -293,11 +292,6 @@ type regionHandler struct {
 type tableHandler struct {
 	*tikvHandlerTool
 	op string
-}
-
-// ddlHistoryJobHandler is the handler for list job history.
-type ddlHistoryJobHandler struct {
-	*tikvHandlerTool
 }
 
 // valueHandle is the handler for get value.
