@@ -1259,8 +1259,7 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 	}
 
 	newCol := table.ToColumn(&model.ColumnInfo{
-		ID: col.ID,
-		// TODO: Determine if we need to set it in the file of column.go.
+		ID:                 col.ID,
 		OriginDefaultValue: col.OriginDefaultValue,
 		FieldType:          *spec.NewColumn.Tp,
 		Name:               spec.NewColumn.Name.Name,
