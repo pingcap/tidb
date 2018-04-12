@@ -24,6 +24,7 @@ import (
 
 // Latch stores a key's waiting transactions information.
 type Latch struct {
+	// Whether there is any transaction in waitingQueue except head.
 	hasWaiting bool
 	// The startTS of the transaction which is the head of waiting transactions.
 	head        uint64
@@ -32,9 +33,8 @@ type Latch struct {
 }
 
 // acquire tries to get current key's lock for the transaction with startTS.
-// success is true when success
-// stale is true when the startTS is already stale
-// newWait is true when current transaction is new for the current latch
+// success is true when success.
+// stale is true when the startTS is already stale.
 func (l *Latch) acquire(startTS uint64) (success, stale bool) {
 	l.Lock()
 	defer l.Unlock()
@@ -43,11 +43,13 @@ func (l *Latch) acquire(startTS uint64) (success, stale bool) {
 		return
 	}
 
-	if !l.hasWaiting {
+	if l.head == 0 {
 		l.head = startTS
-		l.hasWaiting = true
 	}
 	success = l.head == startTS
+	if !success {
+		l.hasWaiting = true
+	}
 	return
 }
 
@@ -116,14 +118,16 @@ func (latches *Latches) GenLock(startTS uint64, keys [][]byte) Lock {
 		slots = append(slots, latches.hash(key))
 	}
 	sort.Ints(slots)
-	size := 0
-	for _, v := range slots {
-		if size == 0 || slots[size-1] != v {
-			slots[size] = v
-			size++
+	if len(slots) == 0 {
+		return NewLock(startTS, slots)
+	}
+	dedup := slots[:1]
+	for i := 1; i < len(slots); i++ {
+		if slots[i] != slots[i-1] {
+			dedup = append(dedup, slots[i])
 		}
 	}
-	return NewLock(startTS, slots[0:size])
+	return NewLock(startTS, dedup)
 }
 
 // hash return hash int for current key.
@@ -170,18 +174,30 @@ func (latches *Latches) Release(lock *Lock, commitTS uint64) (wakeupList []uint6
 }
 
 func (latches *Latches) releaseSlot(slotID int, startTS, commitTS uint64) (hasNext bool, nextStartTS uint64) {
+	latch := &latches.slots[slotID]
+	latch.Lock()
+	defer latch.Unlock()
+	if latch.maxCommitTS < commitTS {
+		latch.maxCommitTS = commitTS
+	}
+	if !latch.hasWaiting {
+		latch.head = 0
+		return
+	}
+
 	latches.Lock()
 	if waiting, ok := latches.waitingQueue[slotID]; ok {
 		hasNext = true
 		nextStartTS = waiting[0]
 		if len(waiting) == 1 {
 			delete(latches.waitingQueue, slotID)
+			latch.hasWaiting = false
 		} else {
 			latches.waitingQueue[slotID] = waiting[1:]
 		}
 	}
 	latches.Unlock()
-	latches.slots[slotID].release(startTS, commitTS, hasNext, nextStartTS)
+	latch.head = nextStartTS
 	return
 }
 
