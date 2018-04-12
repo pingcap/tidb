@@ -43,6 +43,13 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 
+	dbInfo, err := t.GetDatabase(job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.SchemaName = dbInfo.Name.L
+	job.TableName = tbInfo.Name.L
+
 	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)

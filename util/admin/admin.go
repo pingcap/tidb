@@ -136,7 +136,7 @@ func GetDDLJobs(txn kv.Transaction) ([]*model.Job, error) {
 }
 
 // MaxHistoryJobs is exported for testing.
-const MaxHistoryJobs = 10
+const MaxHistoryJobs = 20
 
 // GetHistoryDDLJobs returns the DDL history jobs and an error.
 // The maximum count of history jobs is MaxHistoryJobs.

@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
+	"time"
 )
 
 var (
@@ -340,11 +341,25 @@ func (e *ShowDDLJobsExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 	numCurBatch := mathutil.Min(e.maxChunkSize, len(e.jobs)-e.cursor)
 	for i := e.cursor; i < e.cursor+numCurBatch; i++ {
-		chk.AppendString(0, e.jobs[i].String())
-		chk.AppendString(1, e.jobs[i].State.String())
+		chk.AppendInt64(0, e.jobs[i].ID)
+		chk.AppendString(1, e.jobs[i].SchemaName)
+		chk.AppendString(2, e.jobs[i].TableName)
+		chk.AppendString(3, e.jobs[i].Type.String())
+		chk.AppendString(4, e.jobs[i].SchemaState.String())
+		chk.AppendInt64(5, e.jobs[i].SchemaID)
+		chk.AppendInt64(6, e.jobs[i].TableID)
+		chk.AppendInt64(7, e.jobs[i].RowCount)
+		chk.AppendString(8, tsConvert2Time(e.jobs[i].StartTS).String())
+		chk.AppendString(9, e.jobs[i].State.String())
 	}
 	e.cursor += numCurBatch
 	return nil
+}
+
+// tsConvert2Time converts timestamp to time.
+func tsConvert2Time(ts uint64) time.Time {
+	t := int64(ts >> 18) // 18 is for the logical time.
+	return time.Unix(t/1e3, (t%1e3)*1e6)
 }
 
 // CheckTableExec represents a check table executor.
