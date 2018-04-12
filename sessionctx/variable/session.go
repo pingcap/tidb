@@ -15,7 +15,6 @@ package variable
 
 import (
 	"crypto/tls"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -412,15 +411,6 @@ func (s *SessionVars) SetStatusFlag(flag uint16, on bool) {
 // GetStatusFlag gets the session server status variable, returns true if it is on.
 func (s *SessionVars) GetStatusFlag(flag uint16) bool {
 	return s.Status&flag > 0
-}
-
-// GetHashJoinConcurrency gets the value of SessionVars.HashJoinConcurrency.
-func (s *SessionVars) GetHashJoinConcurrency() uint {
-	concurrency, err := strconv.Atoi(s.systems[TiDBHashJoinConcurrency])
-	if err != nil {
-		return uint(DefTiDBHashJoinConcurrency)
-	}
-	return uint(concurrency)
 }
 
 // InTxn returns if the session is in transaction.
