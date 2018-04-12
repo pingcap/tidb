@@ -56,13 +56,13 @@ func (s *testLatchSuite) TestWakeUp(c *C) {
 	startTSB, lockB := s.newLock(keysB)
 
 	// A acquire lock success.
-	acquired, timeout := s.latches.Acquire(&lockA)
-	c.Assert(timeout, IsFalse)
+	acquired, stale := s.latches.Acquire(&lockA)
+	c.Assert(stale, IsFalse)
 	c.Assert(acquired, IsTrue)
 
 	// B acquire lock failed.
-	acquired, timeout = s.latches.Acquire(&lockB)
-	c.Assert(timeout, IsFalse)
+	acquired, stale = s.latches.Acquire(&lockB)
+	c.Assert(stale, IsFalse)
 	c.Assert(acquired, IsFalse)
 
 	// A release lock, and get wakeup list.
@@ -70,21 +70,21 @@ func (s *testLatchSuite) TestWakeUp(c *C) {
 	wakeupList := s.latches.Release(&lockA, commitTSA)
 	c.Assert(wakeupList[0], Equals, startTSB)
 
-	// B acquire failed since startTSB has timeout for some keys.
-	acquired, timeout = s.latches.Acquire(&lockB)
-	c.Assert(timeout, IsTrue)
+	// B acquire failed since startTSB has stale for some keys.
+	acquired, stale = s.latches.Acquire(&lockB)
+	c.Assert(stale, IsTrue)
 	c.Assert(acquired, IsFalse)
 
-	// B release lock since it received a timeout.
+	// B release lock since it received a stale.
 	wakeupList = s.latches.Release(&lockB, 0)
 	c.Assert(len(wakeupList), Equals, 0)
 
 	// B restart:get a new startTS.
 	startTSB = getTso()
 	lockB = s.latches.GenLock(startTSB, keysB)
-	acquired, timeout = s.latches.Acquire(&lockB)
+	acquired, stale = s.latches.Acquire(&lockB)
 	c.Assert(acquired, IsTrue)
-	c.Assert(timeout, IsFalse)
+	c.Assert(stale, IsFalse)
 }
 
 type txn struct {
@@ -123,13 +123,13 @@ func (store *txnScheduler) runTxn(startTS uint64) {
 	if !ok {
 		panic(startTS)
 	}
-	acquired, timeout := store.latches.Acquire(&txn.lock)
+	acquired, stale := store.latches.Acquire(&txn.lock)
 
-	if !timeout && !acquired {
+	if !stale && !acquired {
 		return
 	}
 	commitTs := uint64(0)
-	if timeout {
+	if stale {
 		// restart Txn
 		go store.newTxn(txn.keys)
 	} else {
@@ -151,8 +151,8 @@ func (store *txnScheduler) newTxn(keys [][]byte) {
 	lock := store.latches.GenLock(startTS, keys)
 	t := newTxn(keys, startTS, lock)
 	store.lock.Lock()
-	defer store.lock.Unlock()
 	store.txns[t.startTS] = &t
+	store.lock.Unlock()
 	go store.runTxn(t.startTS)
 }
 

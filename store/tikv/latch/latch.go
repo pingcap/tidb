@@ -33,20 +33,19 @@ type Latch struct {
 
 // acquire tries to get current key's lock for the transaction with startTS.
 // success is true when success
-// timeout is true when the startTS is already timeout
+// stale is true when the startTS is already stale
 // newWait is true when current transaction is new for the current latch
-func (l *Latch) acquire(startTS uint64) (success, timeout, newWait bool) {
+func (l *Latch) acquire(startTS uint64) (success, stale bool) {
 	l.Lock()
 	defer l.Unlock()
 
-	if timeout = startTS <= l.maxCommitTS; timeout {
+	if stale = startTS <= l.maxCommitTS; stale {
 		return
 	}
 
-	if l.hasWaiting == false {
+	if !l.hasWaiting {
 		l.head = startTS
 		l.hasWaiting = true
-		newWait = true
 	}
 	success = l.head == startTS
 	return
@@ -73,8 +72,8 @@ type Lock struct {
 	requiredSlots []int
 	// The number of latches that the transaction has acquired.
 	acquiredCount int
-	// The number of latches whose waiting queue contains current transaction.
-	waitedCount int
+	// Whether current transaction is waiting
+	waiting bool
 	// Current transaction's startTS.
 	startTS uint64
 }
@@ -84,7 +83,7 @@ func NewLock(startTS uint64, requiredSlots []int) Lock {
 	return Lock{
 		requiredSlots: requiredSlots,
 		acquiredCount: 0,
-		waitedCount:   0,
+		waiting:       false,
 		startTS:       startTS,
 	}
 }
@@ -133,20 +132,21 @@ func (latches *Latches) hash(key []byte) int {
 }
 
 // Acquire tries to acquire the lock for a transaction.
-// It returns with timeout = true when the transaction is timeout(
+// It returns with stale = true when the transaction is stale(
 // when the lock.startTS is smaller than any key's last commitTS).
-func (latches *Latches) Acquire(lock *Lock) (success, timeout bool) {
-	var new bool
+func (latches *Latches) Acquire(lock *Lock) (success, stale bool) {
 	for lock.acquiredCount < len(lock.requiredSlots) {
 		slotID := lock.requiredSlots[lock.acquiredCount]
-		success, timeout, new = latches.acquireSlot(slotID, lock.startTS)
-		if new {
-			lock.waitedCount++
+		success, stale = latches.acquireSlot(slotID, lock.startTS)
+		if success {
+			lock.acquiredCount++
+			lock.waiting = false
+			continue
 		}
-		if timeout || !success {
-			return
+		if !stale {
+			lock.waiting = true
 		}
-		lock.acquiredCount++
+		return
 	}
 	return
 }
@@ -154,8 +154,12 @@ func (latches *Latches) Acquire(lock *Lock) (success, timeout bool) {
 // Release releases all latches owned by the `lock` and returns the wakeup list.
 // Preconditions: the caller must ensure the transaction is at the front of the latches.
 func (latches *Latches) Release(lock *Lock, commitTS uint64) (wakeupList []uint64) {
-	wakeupList = make([]uint64, 0, lock.waitedCount)
-	for id := 0; id < lock.waitedCount; id++ {
+	wakeupCount := lock.acquiredCount
+	if lock.waiting {
+		wakeupCount++
+	}
+	wakeupList = make([]uint64, 0, wakeupCount)
+	for id := 0; id < wakeupCount; id++ {
 		slotID := lock.requiredSlots[id]
 
 		if hasNext, nextStartTS := latches.releaseSlot(slotID, lock.startTS, commitTS); hasNext {
@@ -181,16 +185,15 @@ func (latches *Latches) releaseSlot(slotID int, startTS, commitTS uint64) (hasNe
 	return
 }
 
-func (latches *Latches) acquireSlot(slotID int, startTS uint64) (success, timeout, new bool) {
-	success, timeout, new = latches.slots[slotID].acquire(startTS)
-	if success || timeout {
+func (latches *Latches) acquireSlot(slotID int, startTS uint64) (success, stale bool) {
+	success, stale = latches.slots[slotID].acquire(startTS)
+	if success || stale {
 		return
 	}
-	new = true
 	latches.Lock()
 	defer latches.Unlock()
-	if waiting, ok := latches.waitingQueue[slotID]; ok {
-		latches.waitingQueue[slotID] = append(waiting, startTS)
+	if waitingQueue, ok := latches.waitingQueue[slotID]; ok {
+		latches.waitingQueue[slotID] = append(waitingQueue, startTS)
 	} else {
 		latches.waitingQueue[slotID] = []uint64{startTS}
 	}
