@@ -750,14 +750,22 @@ func (d *ddl) CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.
 	return errors.Trace(err)
 }
 
-func (d *ddl) CreateTable(ctx sessionctx.Context, ident ast.Ident, colDefs []*ast.ColumnDef,
-	constraints []*ast.Constraint, options []*ast.TableOption) (err error) {
+func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err error) {
+	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
+	if s.ReferTable != nil {
+		referIdent := ast.Ident{Schema: s.ReferTable.Schema, Name: s.ReferTable.Name}
+		return d.CreateTableWithLike(ctx, ident, referIdent)
+	}
+	colDefs := s.Cols
 	is := d.GetInformationSchema()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenByArgs(ident.Schema)
 	}
 	if is.TableExists(ident.Schema, ident.Name) {
+		if s.IfNotExists {
+			return nil
+		}
 		return infoschema.ErrTableExists.GenByArgs(ident)
 	}
 	if err = checkTooLongTable(ident.Name); err != nil {
@@ -776,7 +784,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, ident ast.Ident, colDefs []*as
 		return errors.Trace(err)
 	}
 
-	cols, newConstraints, err := buildColumnsAndConstraints(ctx, colDefs, constraints)
+	cols, newConstraints, err := buildColumnsAndConstraints(ctx, colDefs, s.Constraints)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -790,6 +798,42 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, ident ast.Ident, colDefs []*as
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if s.Partition != nil {
+		pi := &model.PartitionInfo{
+			Type: s.Partition.Tp,
+			Expr: s.Partition.Expr.Text(),
+		}
+		if s.Partition.Expr != nil {
+			buf := new(bytes.Buffer)
+			s.Partition.Expr.Format(buf)
+			pi.Expr = buf.String()
+		} else if s.Partition.ColumnNames != nil {
+			pi.Columns = make([]model.CIStr, 0, len(s.Partition.ColumnNames))
+			for _, cn := range s.Partition.ColumnNames {
+				pi.Columns = append(pi.Columns, cn.Name)
+			}
+		}
+		for _, def := range s.Partition.Definitions {
+			// TODO: generate multiple global ID for paritions.
+			pid, err1 := d.genGlobalID()
+			if err1 != nil {
+				return errors.Trace(err1)
+			}
+			piDef := model.PartitionDefinition{
+				Name:     def.Name,
+				ID:       pid,
+				Comment:  def.Comment,
+				MaxValue: def.MaxValue,
+			}
+			for _, expr := range def.LessThan {
+				buf := new(bytes.Buffer)
+				expr.Format(buf)
+				piDef.LessThan = append(piDef.LessThan, buf.String())
+			}
+			pi.Definitions = append(pi.Definitions, piDef)
+		}
+		tbInfo.Partition = pi
+	}
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -799,7 +843,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, ident ast.Ident, colDefs []*as
 		Args:       []interface{}{tbInfo},
 	}
 
-	handleTableOptions(options, tbInfo)
+	handleTableOptions(s.Options, tbInfo)
 	err = checkCharsetAndCollation(tbInfo.Charset, tbInfo.Collate)
 	if err != nil {
 		return errors.Trace(err)
