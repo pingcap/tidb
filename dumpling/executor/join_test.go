@@ -244,8 +244,7 @@ func (s *testSuite) TestJoin(c *C) {
 	// This case is for testing:
 	// when the main thread calls Executor.Close() while the out data fetch worker and join workers are still working,
 	// we need to stop the goroutines as soon as possible to avoid unexpected error.
-	savedConcurrency := plan.JoinConcurrency
-	plan.JoinConcurrency = 5
+	tk.MustExec("set @@tidb_hash_join_concurrency=5")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int)")
 	for i := 0; i < 100; i++ {
@@ -253,7 +252,6 @@ func (s *testSuite) TestJoin(c *C) {
 	}
 	result = tk.MustQuery("select /*+ TIDB_HJ(s, r) */ * from t as s join t as r on s.a = r.a limit 1;")
 	result.Check(testkit.Rows("1 1"))
-	plan.JoinConcurrency = savedConcurrency
 }
 
 func (s *testSuite) TestJoinCast(c *C) {
@@ -494,11 +492,8 @@ func (s *testSuite) TestSubquerySameTable(c *C) {
 }
 
 func (s *testSuite) TestSubquery(c *C) {
-	plan.JoinConcurrency = 1
-	defer func() {
-		plan.JoinConcurrency = 5
-	}()
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_hash_join_concurrency=1")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c int, d int)")
@@ -659,6 +654,8 @@ func (s *testSuite) TestSubquery(c *C) {
 	tk.MustExec("insert into t1 values(1)")
 	tk.MustExec("insert into t2 values(1)")
 	tk.MustQuery("select * from t1 where a in (select a from t2)").Check(testkit.Rows("1"))
+
+	tk.MustExec("set @@tidb_hash_join_concurrency=5")
 }
 
 func (s *testSuite) TestInSubquery(c *C) {
@@ -732,12 +729,8 @@ func (s *testSuite) TestInSubquery(c *C) {
 }
 
 func (s *testSuite) TestJoinLeak(c *C) {
-	savedConcurrency := plan.JoinConcurrency
-	plan.JoinConcurrency = 1
-	defer func() {
-		plan.JoinConcurrency = savedConcurrency
-	}()
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_hash_join_concurrency=1")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (d int)")
@@ -753,6 +746,8 @@ func (s *testSuite) TestJoinLeak(c *C) {
 	c.Assert(err, IsNil)
 	time.Sleep(100 * time.Millisecond)
 	result.Close()
+
+	tk.MustExec("set @@tidb_hash_join_concurrency=5")
 }
 
 func (s *testSuite) TestHashJoinExecEncodeDecodeRow(c *C) {
