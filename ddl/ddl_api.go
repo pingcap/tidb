@@ -1260,8 +1260,6 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, ident ast.Ident, origi
 
 	newCol := table.ToColumn(&model.ColumnInfo{
 		ID:                 col.ID,
-		Offset:             col.Offset,
-		State:              col.State,
 		OriginDefaultValue: col.OriginDefaultValue,
 		FieldType:          *spec.NewColumn.Tp,
 		Name:               spec.NewColumn.Name.Name,

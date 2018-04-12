@@ -14,7 +14,9 @@
 package ddl_test
 
 import (
+	"github.com/pingcap/tidb/meta"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/juju/errors"
@@ -354,6 +356,76 @@ func (s *testStateChangeSuite) runTestInSchemaState(c *C, state model.SchemaStat
 	_, err = s.se.Execute(alterTableSQL)
 	c.Assert(err, IsNil)
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
+	callback = &ddl.TestDDLCallback{}
+	d.SetHook(callback)
+}
+
+func (s *testStateChangeSuite) TestParallelDDL(c *C) {
+	defer testleak.AfterTest(c)()
+	_, err := s.se.Execute("use test_db_state")
+	c.Assert(err, IsNil)
+	_, err = s.se.Execute("create table t(a int, b int, c int)")
+	c.Assert(err, IsNil)
+	defer s.se.Execute("drop table t")
+
+	callback := &ddl.TestDDLCallback{}
+	times := 0
+	callback.OnJobUpdatedExported = func(job *model.Job) {
+		if times != 0 {
+			return
+		}
+		var qLen int64
+		var err error
+		for {
+			kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+				m := meta.NewMeta(txn)
+				qLen, err = m.DDLJobQueueLen()
+				if err != nil {
+					return err
+				}
+				return nil
+			})
+			if qLen == 2 {
+				break
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		times++
+	}
+	d := s.dom.DDL()
+	d.SetHook(callback)
+
+	wg := sync.WaitGroup{}
+	var err1 error
+	var err2 error
+	se, err := tidb.CreateSession(s.store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute("use test_db_state")
+	c.Assert(err, IsNil)
+	se1, err := tidb.CreateSession(s.store)
+	c.Assert(err, IsNil)
+	_, err = se1.Execute("use test_db_state")
+	c.Assert(err, IsNil)
+	go func() {
+		wg.Add(1)
+		defer wg.Done()
+		_, err1 = se.Execute("ALTER TABLE t MODIFY COLUMN b int FIRST;")
+	}()
+
+	go func() {
+		wg.Add(1)
+		defer wg.Done()
+		_, err2 = se1.Execute("ALTER TABLE t MODIFY COLUMN b int FIRST;")
+	}()
+
+	time.Sleep(1 * time.Second)
+	wg.Wait()
+	c.Assert(err1, IsNil)
+	c.Assert(err2, IsNil)
+
+	_, err = s.se.Execute("select * from t")
+	c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
+
 	callback = &ddl.TestDDLCallback{}
 	d.SetHook(callback)
 }

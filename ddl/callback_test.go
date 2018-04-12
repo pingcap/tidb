@@ -23,13 +23,18 @@ import (
 type TestDDLCallback struct {
 	*BaseCallback
 
-	onJobRunBefore       func(*model.Job)
-	onJobUpdated         func(*model.Job)
-	OnJobUpdatedExported func(*model.Job)
-	onWatched            func(ctx goctx.Context)
+	onJobRunBefore         func(*model.Job)
+	OnJobRunBeforeExported func(*model.Job)
+	onJobUpdated           func(*model.Job)
+	OnJobUpdatedExported   func(*model.Job)
+	onWatched              func(ctx goctx.Context)
 }
 
 func (tc *TestDDLCallback) OnJobRunBefore(job *model.Job) {
+	if tc.OnJobRunBeforeExported != nil {
+		tc.OnJobRunBeforeExported(job)
+		return
+	}
 	if tc.onJobRunBefore != nil {
 		tc.onJobRunBefore(job)
 		return
