@@ -165,8 +165,14 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 	} else {
 		sc.AddAffectedRows(1)
 	}
-
-	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.Meta().ID, 0, 1)
+	colSize := make(map[int64]int64)
+	for id, col := range t.Cols() {
+		val := int64(len(newData[id].GetBytes()) - len(oldData[id].GetBytes()))
+		if val != 0 {
+			colSize[col.ID] = val
+		}
+	}
+	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.Meta().ID, 0, 1, colSize)
 	return true, handleChanged, newHandle, nil
 }
 
@@ -392,7 +398,14 @@ func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h int64, d
 	}
 	ctx.StmtAddDirtyTableOP(DirtyTableDeleteRow, t.Meta().ID, h, nil)
 	ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
-	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.Meta().ID, -1, 1)
+	colSize := make(map[int64]int64)
+	for id, col := range t.Cols() {
+		val := -int64(len(data[id].GetBytes()))
+		if val != 0 {
+			colSize[col.ID] = val
+		}
+	}
+	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.Meta().ID, -1, 1, colSize)
 	return nil
 }
 
