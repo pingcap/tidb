@@ -192,6 +192,11 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 		return ver, errors.Trace(err)
 	}
 
+	err = setTableAndDataBaseName(t, job, tblInfo)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
 	var (
 		unique      bool
 		indexName   model.CIStr
@@ -338,6 +343,11 @@ func (d *ddl) convert2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.T
 func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tblInfo, err := getTableInfo(t, job, schemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	err = setTableAndDataBaseName(t, job, tblInfo)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}

@@ -162,7 +162,7 @@ func (s *testSuite) TestGetHistoryDDLJobs(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	t := meta.NewMeta(txn)
-	cnt := 21
+	cnt := 11
 	jobs := make([]*model.Job, cnt)
 	for i := 0; i < cnt; i++ {
 		jobs[i] = &model.Job{

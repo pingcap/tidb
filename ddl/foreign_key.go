@@ -27,6 +27,11 @@ func (d *ddl) onCreateForeignKey(t *meta.Meta, job *model.Job) (ver int64, _ err
 		return ver, errors.Trace(err)
 	}
 
+	err = setTableAndDataBaseName(t, job, tblInfo)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
 	var fkInfo model.FKInfo
 	err = job.DecodeArgs(&fkInfo)
 	if err != nil {
@@ -57,6 +62,11 @@ func (d *ddl) onCreateForeignKey(t *meta.Meta, job *model.Job) (ver int64, _ err
 func (d *ddl) onDropForeignKey(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tblInfo, err := getTableInfo(t, job, schemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	err = setTableAndDataBaseName(t, job, tblInfo)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
