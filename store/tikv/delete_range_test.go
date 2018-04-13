@@ -133,6 +133,7 @@ func (s *testDeleteRangeSuite) TestDeleteRange(c *C) {
 	s.mustDeleteRange(c, []byte("b"), []byte("c0"), testData)
 	s.mustDeleteRange(c, []byte("c11"), []byte("c12"), testData)
 	s.mustDeleteRange(c, []byte("d0"), []byte("d0"), testData)
+	s.mustDeleteRange(c, []byte("d0\x00"), []byte("d1\x00"), testData)
 	s.mustDeleteRange(c, []byte("c5"), []byte("d5"), testData)
 	s.mustDeleteRange(c, []byte("a"), []byte("z"), testData)
 }
