@@ -101,7 +101,7 @@ type TransactionContext struct {
 }
 
 // UpdateDeltaForTable updates the delta info for some table.
-func (tc *TransactionContext) UpdateDeltaForTable(tableID int64, delta int64, count int64, colSize *map[int64]int64) {
+func (tc *TransactionContext) UpdateDeltaForTable(tableID int64, delta int64, count int64, colSize map[int64]int64) {
 	if tc.TableDeltaMap == nil {
 		tc.TableDeltaMap = make(map[int64]TableDelta)
 	}
@@ -111,10 +111,8 @@ func (tc *TransactionContext) UpdateDeltaForTable(tableID int64, delta int64, co
 	}
 	item.Delta += delta
 	item.Count += count
-	if colSize != nil {
-		for key, val := range *colSize {
-			item.ColSize[key] += val
-		}
+	for key, val := range colSize {
+		item.ColSize[key] += val
 	}
 	tc.TableDeltaMap[tableID] = item
 }
