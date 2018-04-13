@@ -27,8 +27,8 @@ type Latch struct {
 	// Whether there is any transaction in waitingQueue except head.
 	hasWaiting bool
 	// The startTS of the transaction which is the head of waiting transactions.
-	head        uint64
-	maxCommitTS uint64
+	waitingQueueHead uint64
+	maxCommitTS      uint64
 	sync.Mutex
 }
 
@@ -82,7 +82,7 @@ func (latches *Latches) GenLock(startTS uint64, keys [][]byte) Lock {
 		slots = append(slots, latches.hash(key))
 	}
 	sort.Ints(slots)
-	if len(slots) == 0 {
+	if len(slots) <= 1 {
 		return NewLock(startTS, slots)
 	}
 	dedup := slots[:1]
@@ -141,30 +141,29 @@ func (latches *Latches) releaseSlot(slotID int, startTS, commitTS uint64) (hasNe
 	latch := &latches.slots[slotID]
 	latch.Lock()
 	defer latch.Unlock()
-	if startTS != latch.head {
+	if startTS != latch.waitingQueueHead {
 		panic(fmt.Sprintf("invalid front ts %d, latch:%#v", startTS, latch))
 	}
 	if latch.maxCommitTS < commitTS {
 		latch.maxCommitTS = commitTS
 	}
 	if !latch.hasWaiting {
-		latch.head = 0
+		latch.waitingQueueHead = 0
 		return
 	}
 
 	latches.Lock()
-	if waiting, ok := latches.waitingQueue[slotID]; ok {
-		hasNext = true
-		nextStartTS = waiting[0]
-		if len(waiting) == 1 {
-			delete(latches.waitingQueue, slotID)
-			latch.hasWaiting = false
-		} else {
-			latches.waitingQueue[slotID] = waiting[1:]
-		}
+	waiting := latches.waitingQueue[slotID]
+	hasNext = true
+	nextStartTS = waiting[0]
+	if len(waiting) == 1 {
+		delete(latches.waitingQueue, slotID)
+		latch.hasWaiting = false
+	} else {
+		latches.waitingQueue[slotID] = waiting[1:]
 	}
 	latches.Unlock()
-	latch.head = nextStartTS
+	latch.waitingQueueHead = nextStartTS
 	return
 }
 
@@ -176,10 +175,10 @@ func (latches *Latches) acquireSlot(slotID int, startTS uint64) (success, stale 
 		return
 	}
 	// Empty latch
-	if latch.head == 0 {
-		latch.head = startTS
+	if latch.waitingQueueHead == 0 {
+		latch.waitingQueueHead = startTS
 	}
-	if success = latch.head == startTS; success {
+	if success = latch.waitingQueueHead == startTS; success {
 		return
 	}
 	// push current transaction into waitingQueue
