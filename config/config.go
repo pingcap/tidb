@@ -144,12 +144,12 @@ type Performance struct {
 	MaxProcs            uint    `toml:"max-procs" json:"max-procs"`
 	TCPKeepAlive        bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
 	RetryLimit          uint    `toml:"retry-limit" json:"retry-limit"`
-	JoinConcurrency     uint    `toml:"join-concurrency" json:"join-concurrency"`
 	CrossJoin           bool    `toml:"cross-join" json:"cross-join"`
 	StatsLease          string  `toml:"stats-lease" json:"stats-lease"`
 	RunAutoAnalyze      bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
 	StmtCountLimit      uint    `toml:"stmt-count-limit" json:"stmt-count-limit"`
 	FeedbackProbability float64 `toml:"feedback-probability" json:"feedback-probability"`
+	QueryFeedbackLimit  uint    `toml:"query-feedback-limit" json:"query-feedback-limit"`
 	PseudoEstimateRatio float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
 }
 
@@ -227,7 +227,7 @@ var defaultConf = Config{
 	Path:                "/tmp/tidb",
 	RunDDL:              true,
 	SplitTable:          true,
-	Lease:               "10s",
+	Lease:               "45s",
 	TokenLimit:          1000,
 	OOMAction:           "log",
 	EnableStreaming:     false,
@@ -251,12 +251,12 @@ var defaultConf = Config{
 	Performance: Performance{
 		TCPKeepAlive:        true,
 		RetryLimit:          10,
-		JoinConcurrency:     5,
 		CrossJoin:           true,
 		StatsLease:          "3s",
 		RunAutoAnalyze:      true,
 		StmtCountLimit:      5000,
 		FeedbackProbability: 0,
+		QueryFeedbackLimit:  1024,
 		PseudoEstimateRatio: 0.7,
 	},
 	XProtocol: XProtocol{
