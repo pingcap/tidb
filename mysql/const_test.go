@@ -38,7 +38,7 @@ var _ = Suite(&testMySQLConstSuite{})
 
 type testMySQLConstSuite struct {
 	cluster   *mocktikv.Cluster
-	mvccStore *mocktikv.MvccStore
+	mvccStore mocktikv.MVCCStore
 	store     kv.Storage
 	*parser.Parser
 }
@@ -52,7 +52,7 @@ func (s *testMySQLConstSuite) SetUpSuite(c *C) {
 	if useMockTikv {
 		s.cluster = mocktikv.NewCluster()
 		mocktikv.BootstrapWithSingleStore(s.cluster)
-		s.mvccStore = mocktikv.NewMvccStore()
+		s.mvccStore = mocktikv.MustNewMVCCStore()
 		store, err := mockstore.NewMockTikvStore(
 			mockstore.WithCluster(s.cluster),
 			mockstore.WithMVCCStore(s.mvccStore),
