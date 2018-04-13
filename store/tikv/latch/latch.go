@@ -32,27 +32,6 @@ type Latch struct {
 	sync.Mutex
 }
 
-// acquire tries to get current key's lock for the transaction with startTS.
-// success is true when success.
-// stale is true when the startTS is already stale.
-func (l *Latch) acquire(startTS uint64) (success, stale bool) {
-	l.Lock()
-	defer l.Unlock()
-
-	if stale = startTS <= l.maxCommitTS; stale {
-		return
-	}
-
-	if l.head == 0 {
-		l.head = startTS
-	}
-	success = l.head == startTS
-	if !success {
-		l.hasWaiting = true
-	}
-	return
-}
-
 // Lock is the locks' information required for a transaction.
 type Lock struct {
 	// The slot IDs of the latches(keys) that a startTS must acquire before being able to processed.
@@ -190,10 +169,21 @@ func (latches *Latches) releaseSlot(slotID int, startTS, commitTS uint64) (hasNe
 }
 
 func (latches *Latches) acquireSlot(slotID int, startTS uint64) (success, stale bool) {
-	success, stale = latches.slots[slotID].acquire(startTS)
-	if success || stale {
+	latch := &latches.slots[slotID]
+	latch.Lock()
+	defer latch.Unlock()
+	if stale = latch.maxCommitTS > startTS; stale {
 		return
 	}
+	// Empty latch
+	if latch.head == 0 {
+		latch.head = startTS
+	}
+	if success = latch.head == startTS; success {
+		return
+	}
+	// push current transaction into waitingQueue
+	latch.hasWaiting = true
 	latches.Lock()
 	defer latches.Unlock()
 	if waitingQueue, ok := latches.waitingQueue[slotID]; ok {
