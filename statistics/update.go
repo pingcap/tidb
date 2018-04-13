@@ -264,6 +264,11 @@ func (h *Handle) dumpFeedbackToKV(fb *QueryFeedback) error {
 	sql := fmt.Sprintf("insert into mysql.stats_feedback (table_id, hist_id, is_index, feedback) values "+
 		"(%d, %d, %d, X'%X')", fb.tableID, fb.hist.ID, isIndex, vals)
 	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+	if err != nil {
+		metrics.DumpFeedbackCounter.WithLabelValues(metrics.LblError).Inc()
+	} else {
+		metrics.DumpFeedbackCounter.WithLabelValues(metrics.LblOK).Inc()
+	}
 	return errors.Trace(err)
 }
 
@@ -331,9 +336,16 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 	return errors.Trace(err)
 }
 
-func (h *Handle) dumpStatsUpdateToKV(tableID int64, isIndex int, q *QueryFeedback, hist *Histogram, cms *CMSketch) error {
+func (h *Handle) dumpStatsUpdateToKV(tableID int64, isIndex int, q *QueryFeedback, hist *Histogram, cms *CMSketch) (err error) {
+	defer func() {
+		if err != nil {
+			metrics.UpdateStatsCounter.WithLabelValues(metrics.LblError).Inc()
+		} else {
+			metrics.UpdateStatsCounter.WithLabelValues(metrics.LblOK).Inc()
+		}
+	}()
 	hist = UpdateHistogram(hist, q)
-	err := SaveStatsToStorage(h.ctx, tableID, -1, isIndex, hist, cms)
+	err = SaveStatsToStorage(h.ctx, tableID, -1, isIndex, hist, cms)
 	if err != nil {
 		return errors.Trace(err)
 	}

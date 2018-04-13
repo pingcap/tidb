@@ -52,6 +52,22 @@ var (
 			Name:      "pseudo_estimation_total",
 			Help:      "Counter of pseudo estimation caused by outdated stats.",
 		})
+
+	DumpFeedbackCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "statistics",
+			Name:      "dump_feedback_total",
+			Help:      "Counter of dumping feedback.",
+		}, []string{LblType})
+
+	UpdateStatsCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "statistics",
+			Name:      "update_stats_total",
+			Help:      "Counter of updating stats using feedback.",
+		}, []string{LblType})
 )
 
 func init() {
@@ -59,4 +75,6 @@ func init() {
 	prometheus.MustRegister(AutoAnalyzeCounter)
 	prometheus.MustRegister(StatsInaccuracyRate)
 	prometheus.MustRegister(PseudoEstimation)
+	prometheus.MustRegister(DumpFeedbackCounter)
+	prometheus.MustRegister(UpdateStatsCounter)
 }

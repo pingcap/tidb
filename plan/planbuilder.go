@@ -1377,9 +1377,9 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar,
 		}
 	case ast.ShowProcessList:
-		names = []string{"Id", "User", "Host", "db", "Command", "Time", "State", "Info"}
+		names = []string{"Id", "User", "Host", "db", "Command", "Time", "State", "Info", "Mem"}
 		ftypes = []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar,
-			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar, mysql.TypeString}
+			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar, mysql.TypeString, mysql.TypeLonglong}
 	case ast.ShowStatsMeta:
 		names = []string{"Db_name", "Table_name", "Update_time", "Modify_count", "Row_count"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDatetime, mysql.TypeLonglong, mysql.TypeLonglong}

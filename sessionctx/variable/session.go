@@ -279,6 +279,9 @@ type SessionVars struct {
 	// DistSQLScanConcurrency is the number of concurrent dist SQL scan worker.
 	DistSQLScanConcurrency int
 
+	// HashJoinConcurrency is the number of concurrent hash join outer worker.
+	HashJoinConcurrency int
+
 	// IndexSerialScanConcurrency is the number of concurrent index serial scan worker.
 	IndexSerialScanConcurrency int
 
@@ -345,6 +348,7 @@ func NewSessionVars() *SessionVars {
 		IndexLookupSize:            DefIndexLookupSize,
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
 		IndexSerialScanConcurrency: DefIndexSerialScanConcurrency,
+		IndexLookupJoinConcurrency: DefIndexLookupJoinConcurrency,
 		DistSQLScanConcurrency:     DefDistSQLScanConcurrency,
 		MaxChunkSize:               DefMaxChunkSize,
 		DMLBatchSize:               DefDMLBatchSize,
@@ -518,6 +522,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.IndexJoinBatchSize = tidbOptPositiveInt(val, DefIndexJoinBatchSize)
 	case TiDBIndexLookupSize:
 		s.IndexLookupSize = tidbOptPositiveInt(val, DefIndexLookupSize)
+	case TiDBHashJoinConcurrency:
+		s.HashJoinConcurrency = tidbOptPositiveInt(val, DefTiDBHashJoinConcurrency)
 	case TiDBDistSQLScanConcurrency:
 		s.DistSQLScanConcurrency = tidbOptPositiveInt(val, DefDistSQLScanConcurrency)
 	case TiDBIndexSerialScanConcurrency:
