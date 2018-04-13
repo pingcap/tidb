@@ -53,21 +53,6 @@ func (l *Latch) acquire(startTS uint64) (success, stale bool) {
 	return
 }
 
-// release releases the transaction with startTS and commitTS from current latch,
-// and set the next transaction to head if hasNext is true.
-func (l *Latch) release(startTS, commitTS uint64, hasNext bool, nextStartTS uint64) {
-	l.Lock()
-	defer l.Unlock()
-	if startTS != l.head {
-		panic(fmt.Sprintf("invalid front ts %d, latch:%#v", startTS, l))
-	}
-	if commitTS > l.maxCommitTS {
-		l.maxCommitTS = commitTS
-	}
-	l.hasWaiting = hasNext
-	l.head = nextStartTS
-}
-
 // Lock is the locks' information required for a transaction.
 type Lock struct {
 	// The slot IDs of the latches(keys) that a startTS must acquire before being able to processed.
@@ -177,6 +162,9 @@ func (latches *Latches) releaseSlot(slotID int, startTS, commitTS uint64) (hasNe
 	latch := &latches.slots[slotID]
 	latch.Lock()
 	defer latch.Unlock()
+	if startTS != latch.head {
+		panic(fmt.Sprintf("invalid front ts %d, latch:%#v", startTS, latch))
+	}
 	if latch.maxCommitTS < commitTS {
 		latch.maxCommitTS = commitTS
 	}
