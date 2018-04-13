@@ -22,11 +22,8 @@ import (
 )
 
 func (s *testSuite) TestAggregation(c *C) {
-	plan.JoinConcurrency = 1
-	defer func() {
-		plan.JoinConcurrency = 5
-	}()
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_hash_join_concurrency=1")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c int, d int)")
@@ -296,6 +293,8 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustExec(`insert into t values (6, '{"i": 0, "n": "n6"}')`)
 	tk.MustExec(`insert into t values (7, '{"i": -1, "n": "n7"}')`)
 	tk.MustQuery("select sum(tags->'$.i') from t").Check(testkit.Rows("14"))
+
+	tk.MustExec("set @@tidb_hash_join_concurrency=5")
 }
 
 func (s *testSuite) TestStreamAggPushDown(c *C) {
