@@ -116,35 +116,12 @@ func ScalarFuncs2Exprs(funcs []*ScalarFunction) []Expression {
 
 // Clone implements Expression interface.
 func (sf *ScalarFunction) Clone() Expression {
-	newArgs := make([]Expression, 0, len(sf.GetArgs()))
-	for _, arg := range sf.GetArgs() {
-		newArgs = append(newArgs, arg.Clone())
+	return &ScalarFunction{
+		FuncName: sf.FuncName,
+		RetType:  sf.RetType,
+		Function: sf.Function.Clone(),
+		hashcode: sf.hashcode,
 	}
-	switch sf.FuncName.L {
-	case ast.Cast:
-		return BuildCastFunction(sf.GetCtx(), sf.GetArgs()[0], sf.GetType())
-	case ast.Values:
-		var offset int
-		switch sf.GetType().EvalType() {
-		case types.ETInt:
-			offset = sf.Function.(*builtinValuesIntSig).offset
-		case types.ETReal:
-			offset = sf.Function.(*builtinValuesRealSig).offset
-		case types.ETDecimal:
-			offset = sf.Function.(*builtinValuesDecimalSig).offset
-		case types.ETString:
-			offset = sf.Function.(*builtinValuesStringSig).offset
-		case types.ETDatetime, types.ETTimestamp:
-			offset = sf.Function.(*builtinValuesTimeSig).offset
-		case types.ETDuration:
-			offset = sf.Function.(*builtinValuesDurationSig).offset
-		case types.ETJson:
-			offset = sf.Function.(*builtinValuesJSONSig).offset
-		}
-		return NewValuesFunc(sf.GetCtx(), offset, sf.GetType())
-	}
-	newFunc := NewFunctionInternal(sf.GetCtx(), sf.FuncName.L, sf.RetType, newArgs...)
-	return newFunc
 }
 
 // GetType implements Expression interface.
