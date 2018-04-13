@@ -434,7 +434,14 @@ func (t *Table) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleChe
 		}
 	}
 	sessVars.StmtCtx.AddAffectedRows(1)
-	sessVars.TxnCtx.UpdateDeltaForTable(t.ID, 1, 1)
+	colSize := make(map[int64]int64)
+	for id, col := range t.Cols() {
+		val := int64(len(r[id].GetBytes()))
+		if val != 0 {
+			colSize[col.ID] = val
+		}
+	}
+	sessVars.TxnCtx.UpdateDeltaForTable(t.ID, 1, 1, colSize)
 	return recordID, nil
 }
 
