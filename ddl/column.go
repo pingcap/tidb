@@ -451,6 +451,13 @@ func (d *ddl) doModifyColumn(t *meta.Meta, job *model.Job, col *model.ColumnInfo
 		job.State = model.JobStateCancelled
 		return ver, infoschema.ErrColumnNotExists.GenByArgs(oldName, tblInfo.Name)
 	}
+	// If we want to rename the column name, we need to check whether it already exists.
+	if col.Name.L != oldName.L {
+		c := findCol(tblInfo.Columns, col.Name.L)
+		if c != nil {
+			return ver, infoschema.ErrColumnExists.GenByArgs(col.Name)
+		}
+	}
 
 	// Calculate column's new position.
 	oldPos, newPos := oldCol.Offset, oldCol.Offset
