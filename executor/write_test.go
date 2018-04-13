@@ -537,6 +537,26 @@ commit;`
 	r.Check(testkit.Rows("1 1"))
 }
 
+func (s *testSuite) TestInsertIgnoreOnDup(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	testSQL := `drop table if exists t;
+    create table t (i int not null primary key, j int unique key);`
+	tk.MustExec(testSQL)
+	testSQL = `insert into t values (1, 1), (2, 2);`
+	tk.MustExec(testSQL)
+	testSQL = `insert ignore into t values(1, 1) on duplicate key update i = 2;`
+	tk.MustExec(testSQL)
+	testSQL = `select * from t;`
+	r := tk.MustQuery(testSQL)
+	r.Check(testkit.Rows("1 1", "2 2"))
+	testSQL = `insert ignore into t values(1, 1) on duplicate key update j = 2;`
+	tk.MustExec(testSQL)
+	testSQL = `select * from t;`
+	r = tk.MustQuery(testSQL)
+	r.Check(testkit.Rows("1 1", "2 2"))
+}
+
 func (s *testSuite) TestReplace(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

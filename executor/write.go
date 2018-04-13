@@ -879,7 +879,12 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) (types.Datu
 					if err1 != nil {
 						return nil, errors.Trace(err1)
 					}
-					if _, _, _, err = e.doDupRowUpdate(h, data, row, e.OnDuplicate); err != nil {
+					_, _, _, err = e.doDupRowUpdate(h, data, row, e.OnDuplicate)
+					if kv.ErrKeyExists.Equal(err) && e.IgnoreErr {
+						e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+						continue
+					}
+					if err != nil {
 						return nil, errors.Trace(err)
 					}
 					e.rowCount++
@@ -1730,7 +1735,7 @@ func (e *InsertExec) doDupRowUpdate(handle int64, oldRow []types.Datum, newRow [
 		newData[col.Col.Index] = val
 		assignFlag[col.Col.Index] = true
 	}
-	_, handleChanged, newHandle, err := updateRecord(e.ctx, handle, oldRow, newData, assignFlag, e.Table, true, false)
+	_, handleChanged, newHandle, err := updateRecord(e.ctx, handle, oldRow, newData, assignFlag, e.Table, true, e.IgnoreErr)
 	if err != nil {
 		return nil, false, 0, errors.Trace(err)
 	}
