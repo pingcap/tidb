@@ -19,13 +19,14 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/cznic/mathutil"
 	"github.com/spaolacci/murmur3"
 )
 
 // Latch stores a key's waiting transactions information.
 type Latch struct {
 	// Whether there is any transaction in waitingQueue except head.
-	hasWaiting bool
+	hasMoreWaiting bool
 	// The startTS of the transaction which is the head of waiting transactions.
 	waitingQueueHead uint64
 	maxCommitTS      uint64
@@ -47,7 +48,7 @@ type Lock struct {
 	// The number of latches that the transaction has acquired.
 	acquiredCount int
 	// Whether current transaction is waiting
-	waiting bool
+	isWaiting bool
 	// Current transaction's startTS.
 	startTS uint64
 }
@@ -57,7 +58,7 @@ func NewLock(startTS uint64, requiredSlots []int) Lock {
 	return Lock{
 		requiredSlots: requiredSlots,
 		acquiredCount: 0,
-		waiting:       false,
+		isWaiting:     false,
 		startTS:       startTS,
 	}
 }
@@ -68,7 +69,7 @@ func NewLock(startTS uint64, requiredSlots []int) Lock {
 type Latches struct {
 	slots []Latch
 	// The waiting queue for each slot(slotID => slice of startTS).
-	waitingQueue map[int][]uint64
+	waitingQueues map[int][]uint64
 	sync.RWMutex
 }
 
@@ -78,8 +79,8 @@ func NewLatches(size int) *Latches {
 	powerOfTwoSize := 1 << uint32(bits.Len32(uint32(size-1)))
 	slots := make([]Latch, powerOfTwoSize)
 	return &Latches{
-		slots:        slots,
-		waitingQueue: make(map[int][]uint64),
+		slots:         slots,
+		waitingQueues: make(map[int][]uint64),
 	}
 }
 
@@ -87,7 +88,7 @@ func NewLatches(size int) *Latches {
 func (latches *Latches) GenLock(startTS uint64, keys [][]byte) Lock {
 	slots := make([]int, 0, len(keys))
 	for _, key := range keys {
-		slots = append(slots, latches.hash(key))
+		slots = append(slots, latches.slotID(key))
 	}
 	sort.Ints(slots)
 	if len(slots) <= 1 {
@@ -102,8 +103,8 @@ func (latches *Latches) GenLock(startTS uint64, keys [][]byte) Lock {
 	return NewLock(startTS, dedup)
 }
 
-// hash return hash int for current key.
-func (latches *Latches) hash(key []byte) int {
+// hash return slotID for current key.
+func (latches *Latches) slotID(key []byte) int {
 	return int(murmur3.Sum32(key)) & (len(latches.slots) - 1)
 }
 
@@ -116,11 +117,11 @@ func (latches *Latches) Acquire(lock *Lock) (success, stale bool) {
 		success, stale = latches.acquireSlot(slotID, lock.startTS)
 		if success {
 			lock.acquiredCount++
-			lock.waiting = false
+			lock.isWaiting = false
 			continue
 		}
 		if !stale {
-			lock.waiting = true
+			lock.isWaiting = true
 		}
 		return
 	}
@@ -130,12 +131,12 @@ func (latches *Latches) Acquire(lock *Lock) (success, stale bool) {
 // Release releases all latches owned by the `lock` and returns the wakeup list.
 // Preconditions: the caller must ensure the transaction is at the front of the latches.
 func (latches *Latches) Release(lock *Lock, commitTS uint64) (wakeupList []uint64) {
-	wakeupCount := lock.acquiredCount
-	if lock.waiting {
-		wakeupCount++
+	releaseCount := lock.acquiredCount
+	if lock.isWaiting {
+		releaseCount++
 	}
-	wakeupList = make([]uint64, 0, wakeupCount)
-	for id := 0; id < wakeupCount; id++ {
+	wakeupList = make([]uint64, 0, releaseCount)
+	for id := 0; id < releaseCount; id++ {
 		slotID := lock.requiredSlots[id]
 
 		if hasNext, nextStartTS := latches.releaseSlot(slotID, lock.startTS, commitTS); hasNext {
@@ -152,23 +153,22 @@ func (latches *Latches) releaseSlot(slotID int, startTS, commitTS uint64) (hasNe
 	if startTS != latch.waitingQueueHead {
 		panic(fmt.Sprintf("invalid front ts %d, latch:%#v", startTS, latch))
 	}
-	if latch.maxCommitTS < commitTS {
-		latch.maxCommitTS = commitTS
-	}
-	if !latch.hasWaiting {
+	latch.maxCommitTS = mathutil.MaxUint64(latch.maxCommitTS, commitTS)
+	if !latch.hasMoreWaiting {
 		latch.free()
 		return
 	}
 
+	// pop next transaction from the waitingQueue.
 	latches.Lock()
-	waiting := latches.waitingQueue[slotID]
+	waiting := latches.waitingQueues[slotID]
 	hasNext = true
 	nextStartTS = waiting[0]
 	if len(waiting) == 1 {
-		delete(latches.waitingQueue, slotID)
-		latch.hasWaiting = false
+		delete(latches.waitingQueues, slotID)
+		latch.hasMoreWaiting = false
 	} else {
-		latches.waitingQueue[slotID] = waiting[1:]
+		latches.waitingQueues[slotID] = waiting[1:]
 	}
 	latches.Unlock()
 	latch.waitingQueueHead = nextStartTS
@@ -190,13 +190,13 @@ func (latches *Latches) acquireSlot(slotID int, startTS uint64) (success, stale 
 		return
 	}
 	// push current transaction into waitingQueue
-	latch.hasWaiting = true
+	latch.hasMoreWaiting = true
 	latches.Lock()
 	defer latches.Unlock()
-	if waitingQueue, ok := latches.waitingQueue[slotID]; ok {
-		latches.waitingQueue[slotID] = append(waitingQueue, startTS)
+	if waitingQueue, ok := latches.waitingQueues[slotID]; ok {
+		latches.waitingQueues[slotID] = append(waitingQueue, startTS)
 	} else {
-		latches.waitingQueue[slotID] = []uint64{startTS}
+		latches.waitingQueues[slotID] = []uint64{startTS}
 	}
 	return
 }
