@@ -452,10 +452,11 @@ func (d *ddl) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnI
 		return ver, infoschema.ErrColumnNotExists.GenByArgs(oldName, tblInfo.Name)
 	}
 	// If we want to rename the column name, we need to check whether it already exists.
-	if col.Name.L != oldName.L {
-		c := findCol(tblInfo.Columns, col.Name.L)
+	if newCol.Name.L != oldName.L {
+		c := findCol(tblInfo.Columns, newCol.Name.L)
 		if c != nil {
-			return ver, infoschema.ErrColumnExists.GenByArgs(col.Name)
+			job.State = model.JobStateCancelled
+			return ver, infoschema.ErrColumnExists.GenByArgs(newCol.Name)
 		}
 	}
 
