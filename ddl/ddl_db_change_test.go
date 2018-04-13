@@ -375,13 +375,13 @@ func (s *testStateChangeSuite) TestParallelDDL(c *C) {
 			return
 		}
 		var qLen int64
-		var err error
+		var err1 error
 		for {
 			kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
 				m := meta.NewMeta(txn)
-				qLen, err = m.DDLJobQueueLen()
-				if err != nil {
-					return err
+				qLen, err1 = m.DDLJobQueueLen()
+				if err1 != nil {
+					return err1
 				}
 				return nil
 			})
