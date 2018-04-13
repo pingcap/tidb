@@ -127,6 +127,8 @@ type Job struct {
 	// StartTS uses timestamp allocated by TSO.
 	// Now it's the TS when we put the job to TiKV queue.
 	StartTS uint64 `json:"start_ts"`
+	// DependencyID is the job's ID that the current job depends on.
+	DependencyID int64 `json:"dependency_id"`
 	// Query string of the ddl job.
 	Query      string       `json:"query"`
 	BinlogInfo *HistoryInfo `json:"binlog"`
@@ -211,6 +213,44 @@ func (job *Job) String() string {
 	rowCount := job.GetRowCount()
 	return fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v, Err:%v, ErrCount:%d, SnapshotVersion:%v",
 		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args), tsConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer)
+}
+
+func (job *Job) hasDependentSchema(other *Job) (bool, error) {
+	if other.Type == ActionDropSchema || other.Type == ActionCreateSchema {
+		if other.SchemaID == job.SchemaID {
+			return true, nil
+		}
+		if job.Type == ActionRenameTable {
+			var oldSchemaID int64
+			if err := job.DecodeArgs(&oldSchemaID); err != nil {
+				return false, errors.Trace(err)
+			}
+			if other.SchemaID == oldSchemaID {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+// IsDependentOn returns whether the job depends on "other".
+// How to check the job depends on "other"?
+// 1. The two jobs handle the same database when one of the two jobs is an ActionDropSchema or ActionCreateSchema type.
+// 2. Or the two jobs handle the same table.
+func (job *Job) IsDependentOn(other *Job) (bool, error) {
+	isDependent, err := job.hasDependentSchema(other)
+	if err != nil || isDependent {
+		return isDependent, errors.Trace(err)
+	}
+	isDependent, err = other.hasDependentSchema(job)
+	if err != nil || isDependent {
+		return isDependent, errors.Trace(err)
+	}
+
+	if other.TableID == job.TableID {
+		return true, nil
+	}
+	return false, nil
 }
 
 // IsFinished returns whether job is finished or not.
