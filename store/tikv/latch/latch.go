@@ -32,6 +32,14 @@ type Latch struct {
 	sync.Mutex
 }
 
+func (l *Latch) occupied() bool {
+	return l.waitingQueueHead != 0
+}
+
+func (l *Latch) free() {
+	l.waitingQueueHead = 0
+}
+
 // Lock is the locks' information required for a transaction.
 type Lock struct {
 	// The slot IDs of the latches(keys) that a startTS must acquire before being able to processed.
@@ -148,7 +156,7 @@ func (latches *Latches) releaseSlot(slotID int, startTS, commitTS uint64) (hasNe
 		latch.maxCommitTS = commitTS
 	}
 	if !latch.hasWaiting {
-		latch.waitingQueueHead = 0
+		latch.free()
 		return
 	}
 
@@ -175,7 +183,7 @@ func (latches *Latches) acquireSlot(slotID int, startTS uint64) (success, stale 
 		return
 	}
 	// Empty latch
-	if latch.waitingQueueHead == 0 {
+	if !latch.occupied() {
 		latch.waitingQueueHead = startTS
 	}
 	if success = latch.waitingQueueHead == startTS; success {
