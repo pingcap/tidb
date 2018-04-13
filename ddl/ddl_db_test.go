@@ -1410,6 +1410,7 @@ func (s *testDBSuite) TestCreateTableWithLike(c *C) {
 func (s *testDBSuite) TestCreateTable(c *C) {
 	s.tk.MustExec("use test")
 	s.tk.MustExec("CREATE TABLE `t` (`a` double DEFAULT 1.0 DEFAULT now() DEFAULT 2.0 );")
+	s.tk.MustExec("CREATE TABLE IF NOT EXISTS `t` (`a` double DEFAULT 1.0 DEFAULT now() DEFAULT 2.0 );")
 	ctx := s.tk.Se.(sessionctx.Context)
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -1427,6 +1428,33 @@ func (s *testDBSuite) TestCreateTable(c *C) {
 
 	_, err = s.tk.Exec("CREATE TABLE `t` (`a` int) DEFAULT CHARSET=abcdefg")
 	c.Assert(err, NotNil)
+}
+
+func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
+	s.tk.MustExec("use test")
+	s.tk.MustExec(`CREATE TABLE tp (a int) PARTITION BY RANGE(a) (
+	PARTITION p0 VALUES LESS THAN (10),
+	PARTITION p1 VALUES LESS THAN (20),
+	PARTITION p2 VALUES LESS THAN (MAXVALUE)
+);`)
+	ctx := s.tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().Partition, NotNil)
+	part := tbl.Meta().Partition
+	c.Assert(part.Type, Equals, model.PartitionTypeRange)
+	c.Assert(part.Expr, Equals, "`a`")
+	for _, pdef := range part.Definitions {
+		c.Assert(pdef.ID, Greater, int64(0))
+	}
+	c.Assert(part.Definitions, HasLen, 3)
+	c.Assert(part.Definitions[0].LessThan[0], Equals, "10")
+	c.Assert(part.Definitions[0].Name, Equals, "p0")
+	c.Assert(part.Definitions[1].LessThan[0], Equals, "20")
+	c.Assert(part.Definitions[1].Name, Equals, "p1")
+	c.Assert(part.Definitions[2].MaxValue, IsTrue)
+	c.Assert(part.Definitions[2].Name, Equals, "p2")
 }
 
 func (s *testDBSuite) TestTruncateTable(c *C) {

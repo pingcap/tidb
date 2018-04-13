@@ -112,7 +112,7 @@ func (d *Datum) Length() int {
 	return int(d.length)
 }
 
-// SetLength sets the length of the datum
+// SetLength sets the length of the datum.
 func (d *Datum) SetLength(l int) {
 	d.length = uint32(l)
 }
