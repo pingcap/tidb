@@ -75,8 +75,11 @@ func (c *Constant) MarshalJSON() ([]byte, error) {
 
 // Clone implements Expression interface.
 func (c *Constant) Clone() Expression {
-	con := *c
-	return &con
+	if c.DeferredExpr != nil {
+		con := *c
+		return &con
+	}
+	return c
 }
 
 // GetType implements Expression interface.
