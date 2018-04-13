@@ -18,6 +18,7 @@ import (
 	"runtime"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
@@ -38,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
-	"time"
 )
 
 var (
