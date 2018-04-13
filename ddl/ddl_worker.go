@@ -97,6 +97,29 @@ func (d *ddl) isOwner() bool {
 	return isOwner
 }
 
+// buildJobDependence sets the curjob's dependency-ID.
+// The dependency-job's ID must less than the current job's ID, and we need the largest one in the list.
+func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
+	jobs, err := t.GetAllDDLJobs()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, job := range jobs {
+		if curJob.ID < job.ID {
+			continue
+		}
+		isDependent, err := curJob.IsDependentOn(job)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if isDependent {
+			curJob.DependencyID = job.ID
+			break
+		}
+	}
+	return nil
+}
+
 // addDDLJob gets a global job ID and puts the DDL job in the DDL queue.
 func (d *ddl) addDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	startTime := time.Now()
