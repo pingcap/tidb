@@ -856,6 +856,11 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 			err = d.handleAutoIncID(tbInfo, schema.ID)
 		}
 	}
+
+	// table exists, but if_not_exits flags is true, so we ignore this error.
+	if infoschema.ErrTableExists.Equal(err) && s.IfNotExists {
+		return nil
+	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }

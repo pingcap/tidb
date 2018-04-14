@@ -433,7 +433,6 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 }
 
 func (s *testStateChangeSuite) TestParallelDDL(c *C) {
-	defer testleak.AfterTest(c)()
 	_, err := s.se.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
 	_, err = s.se.Execute(context.Background(), "create table t(a int, b int, c int)")
@@ -478,14 +477,13 @@ func (s *testStateChangeSuite) TestParallelDDL(c *C) {
 	c.Assert(err, IsNil)
 	_, err = se1.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
+	wg.Add(2)
 	go func() {
-		wg.Add(1)
 		defer wg.Done()
 		_, err1 = se.Execute(context.Background(), "ALTER TABLE t MODIFY COLUMN b int FIRST;")
 	}()
 
 	go func() {
-		wg.Add(1)
 		defer wg.Done()
 		_, err2 = se1.Execute(context.Background(), "ALTER TABLE t MODIFY COLUMN b int FIRST;")
 	}()
@@ -498,6 +496,88 @@ func (s *testStateChangeSuite) TestParallelDDL(c *C) {
 	_, err = s.se.Execute(context.Background(), "select * from t")
 	c.Assert(err, IsNil)
 
+	callback = &ddl.TestDDLCallback{}
+	d.SetHook(callback)
+}
+
+func (s *testStateChangeSuite) TestCreateIfNotExists(c *C) {
+	callback := &ddl.TestDDLCallback{}
+	once := sync.Once{}
+	callback.OnJobUpdatedExported = func(job *model.Job) {
+		// sleep a while, let other job enque.
+		once.Do(func() {
+			time.Sleep(time.Millisecond * 10)
+		})
+	}
+
+	defer s.se.Execute(context.Background(), "drop table test_not_exists")
+
+	se, err := session.CreateSession(s.store)
+	_, err = se.Execute(context.Background(), "use test_db_state")
+	c.Assert(err, IsNil)
+
+	se1, err1 := session.CreateSession(s.store)
+	_, err1 = se1.Execute(context.Background(), "use test_db_state")
+	c.Assert(err1, IsNil)
+
+	d := s.dom.DDL()
+	d.SetHook(callback)
+
+	var err2, err3 error
+	wg := sync.WaitGroup{}
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		_, err2 = se.Execute(context.Background(), "create table if not exists test_not_exists(a int);")
+	}()
+
+	go func() {
+		defer wg.Done()
+		_, err3 = se1.Execute(context.Background(), "create table if not exists test_not_exists(a int);")
+	}()
+	wg.Wait()
+	c.Assert(err2, IsNil)
+	c.Assert(err3, IsNil)
+	callback = &ddl.TestDDLCallback{}
+	d.SetHook(callback)
+}
+
+func (s *testStateChangeSuite) TestCreateIfNotExists1(c *C) {
+	callback := &ddl.TestDDLCallback{}
+	once := sync.Once{}
+	callback.OnJobUpdatedExported = func(job *model.Job) {
+		// sleep a while, let other job enque.
+		once.Do(func() {
+			time.Sleep(time.Millisecond * 10)
+		})
+	}
+	defer s.se.Execute(context.Background(), "drop database test_not_exists")
+
+	se, err := session.CreateSession(s.store)
+	c.Assert(err, IsNil)
+
+	se1, err1 := session.CreateSession(s.store)
+	c.Assert(err1, IsNil)
+
+	var err2, err3 error
+	wg := sync.WaitGroup{}
+
+	d := s.dom.DDL()
+	d.SetHook(callback)
+
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		_, err2 = se.Execute(context.Background(), "create database if not exists test_not_exists;")
+	}()
+
+	go func() {
+		defer wg.Done()
+		_, err3 = se1.Execute(context.Background(), "create database if not exists test_not_exists;")
+	}()
+	wg.Wait()
+	c.Assert(err2, IsNil)
+	c.Assert(err3, IsNil)
 	callback = &ddl.TestDDLCallback{}
 	d.SetHook(callback)
 }
