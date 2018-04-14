@@ -113,7 +113,8 @@ func (e *LoadStatsInfo) Update(data []byte) error {
 			Cms:     cms,
 			Count:   tbl.Count,
 			IsIndex: 0,
-			Err:     nil}
+			Err:     nil,
+		}
 
 		hists = make([]*statistics.Histogram, 0, len(tbl.Indices))
 		cms = make([]*statistics.CMSketch, 0, len(tbl.Indices))
@@ -127,9 +128,10 @@ func (e *LoadStatsInfo) Update(data []byte) error {
 			Cms:     cms,
 			Count:   tbl.Count,
 			IsIndex: 1,
-			Err:     nil}
-
-		return nil
+			Err:     nil,
+		}
+		err = statistics.SaveMetaToStorage(e.Ctx, tbl.TableID, tbl.Count, tbl.ModifyCount, tbl.Version)
+		return errors.Trace(err)
 	}
 	for _, col := range tbl.Columns {
 		err = statistics.SaveStatsToStorage(e.Ctx, tbl.TableID, tbl.Count, 0, &col.Histogram, col.CMSketch)
@@ -142,6 +144,10 @@ func (e *LoadStatsInfo) Update(data []byte) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+	}
+	err = statistics.SaveMetaToStorage(e.Ctx, tbl.TableID, tbl.Count, tbl.ModifyCount, tbl.Version)
+	if err != nil {
+		return errors.Trace(err)
 	}
 	err = h.Update(GetInfoSchema(e.Ctx))
 	return errors.Trace(err)
