@@ -500,6 +500,7 @@ func (s *testStateChangeSuite) TestParallelDDL(c *C) {
 	d.SetHook(callback)
 }
 
+// TestCreateIfNotExists parallel exec create table if not exists xxx. No error returns is expected.
 func (s *testStateChangeSuite) TestCreateIfNotExists(c *C) {
 	callback := &ddl.TestDDLCallback{}
 	once := sync.Once{}
@@ -542,6 +543,7 @@ func (s *testStateChangeSuite) TestCreateIfNotExists(c *C) {
 	d.SetHook(callback)
 }
 
+// TestCreateIfNotExists parallel exec create database if not exists xxx. No error returns is expected.
 func (s *testStateChangeSuite) TestCreateIfNotExists1(c *C) {
 	callback := &ddl.TestDDLCallback{}
 	once := sync.Once{}
