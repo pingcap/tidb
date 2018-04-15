@@ -877,20 +877,7 @@ func (mvcc *MVCCLevelDB) BatchResolveLock(startKey, endKey []byte, txnInfos map[
 
 // DeleteRange implements the MVCCStore interface.
 func (mvcc *MVCCLevelDB) DeleteRange(startKey, endKey []byte) error {
-	mvcc.mu.Lock()
-	defer mvcc.mu.Unlock()
-
-	batch := &leveldb.Batch{}
-
-	iter := mvcc.db.NewIterator(&util.Range{
-		Start: startKey,
-		Limit: endKey,
-	}, nil)
-	for iter.Next() {
-		batch.Delete(iter.Key())
-	}
-
-	return mvcc.db.Write(batch, nil)
+	return mvcc.doRawDeleteRange(codec.EncodeBytes(nil, startKey), codec.EncodeBytes(nil, endKey))
 }
 
 // Close calls leveldb's Close to free resources.
@@ -955,5 +942,23 @@ func (mvcc *MVCCLevelDB) RawScan(startKey, endKey []byte, limit int) []Pair {
 
 // RawDeleteRange implements the RawKV interface.
 func (mvcc *MVCCLevelDB) RawDeleteRange(startKey, endKey []byte) {
-	terror.Log(mvcc.DeleteRange(startKey, endKey))
+	terror.Log(mvcc.doRawDeleteRange(startKey, endKey))
+}
+
+// doRawDeleteRange deletes all keys in a range and return the error if any.
+func (mvcc *MVCCLevelDB) doRawDeleteRange(startKey, endKey []byte) error {
+	mvcc.mu.Lock()
+	defer mvcc.mu.Unlock()
+
+	batch := &leveldb.Batch{}
+
+	iter := mvcc.db.NewIterator(&util.Range{
+		Start: startKey,
+		Limit: endKey,
+	}, nil)
+	for iter.Next() {
+		batch.Delete(iter.Key())
+	}
+
+	return mvcc.db.Write(batch, nil)
 }

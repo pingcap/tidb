@@ -16,6 +16,7 @@ package ddl_test
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/juju/errors"
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/session"
@@ -426,6 +428,76 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 	c.Assert(err, IsNil)
 	err = checkResult(result, testkit.Rows("t 0 PRIMARY 1 c1 A 0 <nil> <nil>  BTREE  ", "t 1 c2 1 c2 A 0 <nil> <nil> YES BTREE  "))
 	c.Assert(err, IsNil)
+	callback = &ddl.TestDDLCallback{}
+	d.SetHook(callback)
+}
+
+func (s *testStateChangeSuite) TestParallelDDL(c *C) {
+	defer testleak.AfterTest(c)()
+	_, err := s.se.Execute(context.Background(), "use test_db_state")
+	c.Assert(err, IsNil)
+	_, err = s.se.Execute(context.Background(), "create table t(a int, b int, c int)")
+	c.Assert(err, IsNil)
+	defer s.se.Execute(context.Background(), "drop table t")
+
+	callback := &ddl.TestDDLCallback{}
+	times := 0
+	callback.OnJobUpdatedExported = func(job *model.Job) {
+		if times != 0 {
+			return
+		}
+		var qLen int64
+		var err1 error
+		for {
+			kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+				m := meta.NewMeta(txn)
+				qLen, err1 = m.DDLJobQueueLen()
+				if err1 != nil {
+					return err1
+				}
+				return nil
+			})
+			if qLen == 2 {
+				break
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		times++
+	}
+	d := s.dom.DDL()
+	d.SetHook(callback)
+
+	wg := sync.WaitGroup{}
+	var err1 error
+	var err2 error
+	se, err := session.CreateSession(s.store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "use test_db_state")
+	c.Assert(err, IsNil)
+	se1, err := session.CreateSession(s.store)
+	c.Assert(err, IsNil)
+	_, err = se1.Execute(context.Background(), "use test_db_state")
+	c.Assert(err, IsNil)
+	go func() {
+		wg.Add(1)
+		defer wg.Done()
+		_, err1 = se.Execute(context.Background(), "ALTER TABLE t MODIFY COLUMN b int FIRST;")
+	}()
+
+	go func() {
+		wg.Add(1)
+		defer wg.Done()
+		_, err2 = se1.Execute(context.Background(), "ALTER TABLE t MODIFY COLUMN b int FIRST;")
+	}()
+
+	time.Sleep(1 * time.Second)
+	wg.Wait()
+	c.Assert(err1, IsNil)
+	c.Assert(err2, IsNil)
+
+	_, err = s.se.Execute(context.Background(), "select * from t")
+	c.Assert(err, IsNil)
+
 	callback = &ddl.TestDDLCallback{}
 	d.SetHook(callback)
 }

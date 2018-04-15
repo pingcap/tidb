@@ -17,23 +17,28 @@ import (
 	"github.com/pingcap/tidb/expression"
 )
 
-func (ds *DataSource) preparePossibleProperties() (result [][]*expression.Column) {
+func (ds *DataSource) preparePossibleProperties() [][]*expression.Column {
 	indices := ds.availableIndices.indices
 	includeTS := ds.availableIndices.includeTableScan
+
+	result := make([][]*expression.Column, 0, len(indices))
 	ds.relevantIndices = make([]bool, len(indices))
+
 	if includeTS {
 		col := ds.getPKIsHandleCol()
 		if col != nil {
 			result = append(result, []*expression.Column{col})
 		}
+
 		cols := expression.ExtractColumnsFromExpressions(make([]*expression.Column, 0, 10), ds.pushedDownConds, nil)
+		colsSet := make(map[string]struct{}, len(cols))
+		for _, col := range cols {
+			colsSet[col.ColName.L] = struct{}{}
+		}
+
 		for i, idx := range indices {
-			for _, col := range cols {
-				if col.ColName.L == idx.Columns[0].Name.L {
-					ds.relevantIndices[i] = true
-					break
-				}
-			}
+			_, ok := colsSet[idx.Columns[0].Name.L]
+			ds.relevantIndices[i] = ok
 		}
 	} else {
 		for i := range ds.relevantIndices {
@@ -46,7 +51,7 @@ func (ds *DataSource) preparePossibleProperties() (result [][]*expression.Column
 			result = append(result, cols)
 		}
 	}
-	return
+	return result
 }
 
 func (p *LogicalSelection) preparePossibleProperties() (result [][]*expression.Column) {

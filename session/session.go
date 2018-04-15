@@ -368,7 +368,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	mapper := s.GetSessionVars().TxnCtx.TableDeltaMap
 	if s.statsCollector != nil && mapper != nil {
 		for id, item := range mapper {
-			s.statsCollector.Update(id, item.Delta, item.Count)
+			s.statsCollector.Update(id, item.Delta, item.Count, &item.ColSize)
 		}
 	}
 	return nil
@@ -1269,6 +1269,7 @@ const loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variab
 	variable.TiDBIndexLookupConcurrency + quoteCommaQuote +
 	variable.TiDBIndexLookupJoinConcurrency + quoteCommaQuote +
 	variable.TiDBIndexSerialScanConcurrency + quoteCommaQuote +
+	variable.TiDBHashJoinConcurrency + quoteCommaQuote +
 	variable.TiDBDistSQLScanConcurrency + "')"
 
 // loadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.
