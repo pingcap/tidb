@@ -35,6 +35,7 @@ var _ = Suite(&testSafePointSuite{})
 
 func (s *testSafePointSuite) SetUpSuite(c *C) {
 	store, err := NewMockTikvStore()
+	c.Assert(err, IsNil)
 	s.store = store.(*tikvStore)
 	s.oracle = &mockOracle{}
 	s.store.oracle = s.oracle

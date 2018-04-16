@@ -32,6 +32,7 @@ var _ = Suite(&testGCWorkerSuite{})
 
 func (s *testGCWorkerSuite) SetUpTest(c *C) {
 	store, err := NewMockTikvStore()
+	c.Assert(err, IsNil)
 	s.store = store.(*tikvStore)
 	s.oracle = &mockOracle{}
 	s.store.oracle = s.oracle
