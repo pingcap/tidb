@@ -857,7 +857,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		}
 	}
 
-	// table exists, but if_not_exits flags is true, so we ignore this error.
+	// table exists, but if_not_exists flags is true, so we ignore this error.
 	if infoschema.ErrTableExists.Equal(err) && s.IfNotExists {
 		return nil
 	}
