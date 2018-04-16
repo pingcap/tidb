@@ -361,6 +361,7 @@ func NewSessionVars() *SessionVars {
 		MemQuotaIndexLookupReader:  DefTiDBMemQuotaIndexLookupReader,
 		MemQuotaIndexLookupJoin:    DefTiDBMemQuotaIndexLookupJoin,
 		MemQuotaNestedLoopApply:    DefTiDBMemQuotaNestedLoopApply,
+		OptimizerSelectivityLevel:  DefTiDBOptimizerSelectivityLevel,
 	}
 	var enableStreaming string
 	if config.GetGlobalConfig().EnableStreaming {
