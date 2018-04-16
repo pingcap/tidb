@@ -558,8 +558,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt(val, DefTiDBGeneralLog)))
 	case TiDBEnableStreaming:
 		s.EnableStreaming = TiDBOptOn(val)
-	case TiDBOptimizationLevel:
-		s.OptimizationLevel = tidbOptInt64(val, DefTiDBOptimizationLevel)
+	case TiDBOptimizerSelectivityLevel:
+		s.OptimizationLevel = tidbOptInt64(val, DefTiDBOptimizerSelectivityLevel)
 	}
 	s.systems[name] = val
 	return nil

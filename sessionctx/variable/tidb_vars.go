@@ -145,9 +145,8 @@ const (
 	// The hash join outer executor starts multiple concurrent join workers to probe the hash table.
 	TiDBHashJoinConcurrency = "tidb_hash_join_concurrency"
 
-	// tidb_optimization_level is used for control the level of tidb's planner. The higher it is, the more optimizations
-	// planner will do.
-	TiDBOptimizationLevel = "tidb_optimization_level"
+	// tidb_optimier_selectivity_level is used for control the content of each operator's statistic information.
+	TiDBOptimizerSelectivityLevel = "tidb_optimizer_selectivity_level"
 )
 
 // Default TiDB system variable values.
@@ -178,7 +177,7 @@ const (
 	DefTiDBMemQuotaNestedLoopApply   = 32 << 30 // 32GB.
 	DefTiDBGeneralLog                = 0
 	DefTiDBHashJoinConcurrency       = 5
-	DefTiDBOptimizationLevel         = 0
+	DefTiDBOptimizerSelectivityLevel = 0
 )
 
 // Process global variables.
