@@ -99,7 +99,7 @@ const (
 	// tidb_enable_streaming enables TiDB to use streaming API for coprocessor requests.
 	TiDBEnableStreaming = "tidb_enable_streaming"
 
-	// tidb_optimizer_selectivity_level is used for control the content of each operator's statistic information.
+	// tidb_optimizer_selectivity_level is used to control the selectivity estimation level.
 	TiDBOptimizerSelectivityLevel = "tidb_optimizer_selectivity_level"
 )
 
