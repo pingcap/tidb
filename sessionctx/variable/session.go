@@ -347,6 +347,7 @@ func NewSessionVars() *SessionVars {
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
 		IndexSerialScanConcurrency: DefIndexSerialScanConcurrency,
 		IndexLookupJoinConcurrency: DefIndexLookupJoinConcurrency,
+		HashJoinConcurrency:        DefTiDBHashJoinConcurrency,
 		DistSQLScanConcurrency:     DefDistSQLScanConcurrency,
 		MaxChunkSize:               DefMaxChunkSize,
 		DMLBatchSize:               DefDMLBatchSize,
