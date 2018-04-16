@@ -19,38 +19,55 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 )
 
-var _ autoid.Allocator = &allocator{}
+var _ autoid.Allocator = &Allocator{}
 
 var (
 	step = int64(5000)
 )
 
-// NewAllocator new an allocator.
+// NewAllocator new an Allocator.
 func NewAllocator() autoid.Allocator {
-	return &allocator{}
+	return &Allocator{}
 }
 
-type allocator struct {
+// Allocator is a id allocator, it is only used in lightning.
+type Allocator struct {
 	base int64
 }
 
-func (alloc *allocator) Alloc(tableID int64) (int64, error) {
+func (alloc *Allocator) Alloc(tableID int64) (int64, error) {
 	return atomic.AddInt64(&alloc.base, 1), nil
 }
 
-func (alloc *allocator) Rebase(tableID, newBase int64, allocIDs bool) error {
+// ResetBase allow newBase smaller than alloc.base, and will set the alloc.base to newBase.
+func (alloc *Allocator) ResetBase(newBase int64) {
 	atomic.StoreInt64(&alloc.base, newBase)
+}
+
+// Rebase not allow newBase smaller than alloc.base, and will skip the smaller newBase.
+func (alloc *Allocator) Rebase(tableID, newBase int64, allocIDs bool) error {
+	// CAS
+	for {
+		oldBase := atomic.LoadInt64(&alloc.base)
+		if newBase <= oldBase {
+			break
+		}
+		if atomic.CompareAndSwapInt64(&alloc.base, oldBase, newBase) {
+			break
+		}
+	}
+
 	return nil
 }
 
-func (alloc *allocator) Base() int64 {
+func (alloc *Allocator) Base() int64 {
 	return atomic.LoadInt64(&alloc.base)
 }
 
-func (alloc *allocator) End() int64 {
+func (alloc *Allocator) End() int64 {
 	return alloc.Base() + step
 }
 
-func (alloc *allocator) NextGlobalAutoID(tableID int64) (int64, error) {
+func (alloc *Allocator) NextGlobalAutoID(tableID int64) (int64, error) {
 	return alloc.End() + 1, nil
 }
