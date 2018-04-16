@@ -1145,6 +1145,10 @@ func (s *testDBSuite) TestChangeColumn(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrUnknown)
 	sql = "alter table t3 modify en enum('a', 'z', 'b', 'c') not null default 'a'"
 	s.testErrorCode(c, sql, tmysql.ErrUnknown)
+	// Rename to an existing column.
+	s.mustExec(c, "alter table t3 add column a bigint")
+	sql = "alter table t3 change aa a bigint"
+	s.testErrorCode(c, sql, tmysql.ErrDupFieldName)
 
 	s.tk.MustExec("drop table t3")
 }
