@@ -97,6 +97,29 @@ func (d *ddl) isOwner() bool {
 	return isOwner
 }
 
+// buildJobDependence sets the curjob's dependency-ID.
+// The dependency-job's ID must less than the current job's ID, and we need the largest one in the list.
+func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
+	jobs, err := t.GetAllDDLJobs()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, job := range jobs {
+		if curJob.ID < job.ID {
+			continue
+		}
+		isDependent, err := curJob.IsDependentOn(job)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if isDependent {
+			curJob.DependencyID = job.ID
+			break
+		}
+	}
+	return nil
+}
+
 // addDDLJob gets a global job ID and puts the DDL job in the DDL queue.
 func (d *ddl) addDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	startTime := time.Now()
@@ -248,9 +271,11 @@ func (d *ddl) handleDDLJobQueue(shouldCleanJobs bool) error {
 				return nil
 			}
 
-			if job.IsDone() {
+			if job.IsDone() || job.IsRollbackDone() {
 				binloginfo.SetDDLBinlog(d.workerVars.BinlogClient, txn, job.ID, job.Query)
-				job.State = model.JobStateSynced
+				if !job.IsRollbackDone() {
+					job.State = model.JobStateSynced
+				}
 				err = d.finishDDLJob(t, job)
 				return errors.Trace(err)
 			}
@@ -283,7 +308,7 @@ func (d *ddl) handleDDLJobQueue(shouldCleanJobs bool) error {
 		// Here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
 		// If the job is done or still running or rolling back, we will wait 2 * lease time to guarantee other servers to update
 		// the newest schema.
-		if job.IsRunning() || job.IsRollingback() || job.IsDone() {
+		if job.IsRunning() || job.IsRollingback() || job.IsDone() || job.IsRollbackDone() {
 			d.waitSchemaChanged(nil, waitTime, schemaVer)
 		}
 		if job.IsSynced() {
@@ -446,7 +471,7 @@ func (d *ddl) waitSchemaChanged(ctx context.Context, waitTime time.Duration, lat
 // So here we get the latest schema version to make sure all servers' schema version update to the latest schema version
 // in a cluster, or to wait for 2 * lease time.
 func (d *ddl) waitSchemaSynced(job *model.Job, waitTime time.Duration) {
-	if !job.IsRunning() && !job.IsRollingback() && !job.IsDone() {
+	if !job.IsRunning() && !job.IsRollingback() && !job.IsDone() && !job.IsRollbackDone() {
 		return
 	}
 	// TODO: Make ctx exits when the d is close.

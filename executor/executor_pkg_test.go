@@ -52,9 +52,9 @@ func (msm *mockSessionManager) Kill(cid uint64, query bool) {
 
 func (s *testExecSuite) TestShowProcessList(c *C) {
 	// Compose schema.
-	names := []string{"Id", "User", "Host", "db", "Command", "Time", "State", "Info"}
+	names := []string{"Id", "User", "Host", "db", "Command", "Time", "State", "Info", "Mem"}
 	ftypes := []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar,
-		mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar, mysql.TypeString}
+		mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar, mysql.TypeString, mysql.TypeLonglong}
 	schema := buildSchema(names, ftypes)
 
 	// Compose a mocked session manager.

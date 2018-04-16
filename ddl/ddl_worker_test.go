@@ -180,15 +180,12 @@ func (s *testDDLSuite) TestCleanJobs(c *C) {
 	changeJobState() // convert to delete only
 	changeJobState() // convert to write only
 	changeJobState() // convert to write reorg
-	writeReorgTbl, err := getCurrentTable(d, dbInfo.ID, tblInfo.ID)
-	c.Assert(err, IsNil)
 
-	err = d.Stop()
+	err := d.Stop()
 	c.Assert(err, IsNil)
 	// Make sure shouldCleanJobs is ture.
 	d = testNewDDL(context.Background(), nil, store, nil, nil, testLease)
 	defer d.Stop()
-	testCreateIndex(c, ctx, d, dbInfo, writeReorgTbl.Meta(), false, "idx_normal", "c2")
 
 	// Make sure all DDL jobs are done.
 	for {
@@ -197,7 +194,10 @@ func (s *testDDLSuite) TestCleanJobs(c *C) {
 			t := meta.NewMeta(txn)
 			len, err := t.DDLJobQueueLen()
 			c.Assert(err, IsNil)
-			if len == 0 {
+			t.SetJobListKey(meta.AddIndexJobListKey)
+			addIndexLen, err := t.DDLJobQueueLen()
+			c.Assert(err, IsNil)
+			if len == 0 && addIndexLen == 0 {
 				isAllJobDone = true
 			}
 			return nil
@@ -214,7 +214,7 @@ func (s *testDDLSuite) TestCleanJobs(c *C) {
 		for i, id := range failedJobIDs {
 			historyJob, err := t.GetHistoryDDLJob(id)
 			c.Assert(err, IsNil)
-			c.Assert(historyJob, NotNil)
+			c.Assert(historyJob, NotNil, Commentf("job %v", historyJob))
 			if i == 0 {
 				c.Assert(historyJob.State, Equals, model.JobStateCancelled)
 			} else {
@@ -389,7 +389,7 @@ func testCheckJobCancelled(c *C, d *ddl, job *model.Job, state *model.SchemaStat
 		t := meta.NewMeta(txn)
 		historyJob, err := t.GetHistoryDDLJob(job.ID)
 		c.Assert(err, IsNil)
-		c.Assert(historyJob.IsCancelled(), IsTrue, Commentf("histroy job %s", historyJob))
+		c.Assert(historyJob.IsCancelled() || historyJob.IsRollbackDone(), IsTrue, Commentf("histroy job %s", historyJob))
 		if state != nil {
 			c.Assert(historyJob.SchemaState, Equals, *state)
 		}
@@ -589,4 +589,54 @@ func (s *testDDLSuite) TestIgnorableSpec(c *C) {
 	for _, spec := range ignorableSpecs {
 		c.Assert(isIgnorableSpec(spec), IsTrue)
 	}
+}
+
+func (s *testDDLSuite) TestBuildJobDependence(c *C) {
+	defer testleak.AfterTest(c)()
+	store := testCreateStore(c, "test_set_job_relation")
+	defer store.Close()
+
+	job1 := &model.Job{ID: 1, TableID: 1}
+	job2 := &model.Job{ID: 2, TableID: 1}
+	job3 := &model.Job{ID: 3, TableID: 2}
+	job6 := &model.Job{ID: 6, TableID: 1}
+	job7 := &model.Job{ID: 7, TableID: 2}
+	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		err := t.EnQueueDDLJob(job1)
+		c.Assert(err, IsNil)
+		err = t.EnQueueDDLJob(job2)
+		c.Assert(err, IsNil)
+		err = t.EnQueueDDLJob(job3)
+		c.Assert(err, IsNil)
+		err = t.EnQueueDDLJob(job6)
+		c.Assert(err, IsNil)
+		err = t.EnQueueDDLJob(job7)
+		c.Assert(err, IsNil)
+		return nil
+	})
+	job4 := &model.Job{ID: 4, TableID: 1}
+	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		err := buildJobDependence(t, job4)
+		c.Assert(err, IsNil)
+		c.Assert(job4.DependencyID, Equals, int64(2))
+		return nil
+	})
+	job5 := &model.Job{ID: 5, TableID: 2}
+	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		err := buildJobDependence(t, job5)
+		c.Assert(err, IsNil)
+		c.Assert(job5.DependencyID, Equals, int64(3))
+		return nil
+	})
+	job8 := &model.Job{ID: 8, TableID: 3}
+	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		err := buildJobDependence(t, job8)
+		c.Assert(err, IsNil)
+		c.Assert(job8.DependencyID, Equals, int64(0))
+		return nil
+	})
 }

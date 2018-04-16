@@ -139,7 +139,7 @@ func (e *IndexLookUpJoin) Open(ctx context.Context) error {
 }
 
 func (e *IndexLookUpJoin) startWorkers(ctx context.Context) {
-	concurrency := e.ctx.GetSessionVars().IndexLookupConcurrency
+	concurrency := e.ctx.GetSessionVars().IndexLookupJoinConcurrency
 	resultCh := make(chan *lookUpJoinTask, concurrency)
 	e.resultCh = resultCh
 	workerCtx, cancelFunc := context.WithCancel(ctx)
@@ -392,9 +392,6 @@ func (iw *innerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 
 		err := iw.handleTask(ctx, task)
 		task.doneCh <- errors.Trace(err)
-		if err != nil {
-			return
-		}
 	}
 }
 

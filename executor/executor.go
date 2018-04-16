@@ -94,17 +94,6 @@ const (
 	codeErrCantChangeTxCharacteristics terror.ErrCode = 1568
 )
 
-// Row represents a result set row, it may be returned from a table, a join, or a projection.
-//
-// The following cases will need store the handle information:
-//
-// If the top plan is update or delete, then every executor will need the handle.
-// If there is an union scan, then the below scan plan must store the handle.
-// If there is sort need in the double read, then the table scan of the double read must store the handle.
-// If there is a select for update. then we need to store the handle until the lock plan. But if there is aggregation, the handle info can be removed.
-// Otherwise the executor's returned rows don't need to store the handle information.
-type Row = types.DatumRow
-
 type baseExecutor struct {
 	ctx             sessionctx.Context
 	id              string
@@ -183,16 +172,24 @@ func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id strin
 	return e
 }
 
-// Executor executes a query.
+// Executor is the physical implementation of a algebra operator.
+//
+// In TiDB, all algebra operators are implemented as iterators, i.e., they
+// support a simple Open-Next-Close protocol. See this paper for more details:
+//
+// "Volcano-An Extensible and Parallel Query Evaluation System"
+//
+// Different from Volcano's execution model, a "Next" function call in TiDB will
+// return a batch of rows, other than a single row in Volcano.
+// NOTE: Executors must call "chk.Reset()" before appending their results to it.
 type Executor interface {
-	Close() error
 	Open(context.Context) error
+	Next(ctx context.Context, chk *chunk.Chunk) error
+	Close() error
 	Schema() *expression.Schema
+
 	retTypes() []*types.FieldType
 	newChunk() *chunk.Chunk
-	// Next fills a chunk with multiple rows
-	// NOTE: chunk has to call Reset() method before any use.
-	Next(ctx context.Context, chk *chunk.Chunk) error
 }
 
 // CancelDDLJobsExec represents a cancel DDL jobs executor.
@@ -482,7 +479,7 @@ func (e *SelectLockExec) Open(ctx context.Context) error {
 	txnCtx.ForUpdate = true
 	for id := range e.Schema().TblID2Handle {
 		// This operation is only for schema validator check.
-		txnCtx.UpdateDeltaForTable(id, 0, 0)
+		txnCtx.UpdateDeltaForTable(id, 0, 0, map[int64]int64{})
 	}
 	return nil
 }
@@ -902,7 +899,7 @@ func (e *TableScanExec) seekRange(handle int64) (inRange bool) {
 	}
 }
 
-func (e *TableScanExec) getRow(handle int64) (Row, error) {
+func (e *TableScanExec) getRow(handle int64) (types.DatumRow, error) {
 	columns := make([]*table.Column, e.schema.Len())
 	for i, v := range e.columns {
 		columns[i] = table.ToColumn(v)

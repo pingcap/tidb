@@ -257,6 +257,12 @@ type builtinDateSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinDateSig) Clone() builtinFunc {
+	newSig := &builtinDateSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalTime evals DATE(expr).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date
 func (b *builtinDateSig) evalTime(row types.Row) (types.Time, bool, error) {
@@ -309,6 +315,12 @@ type builtinDateLiteralSig struct {
 	literal types.Time
 }
 
+func (b *builtinDateLiteralSig) Clone() builtinFunc {
+	newSig := &builtinDateLiteralSig{literal: b.literal}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalTime evals DATE 'stringLit'.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html
 func (b *builtinDateLiteralSig) evalTime(row types.Row) (types.Time, bool, error) {
@@ -337,6 +349,12 @@ func (c *dateDiffFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 
 type builtinDateDiffSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinDateDiffSig) Clone() builtinFunc {
+	newSig := &builtinDateDiffSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalInt evals a builtinDateDiffSig.
@@ -426,6 +444,12 @@ type builtinDurationDurationTimeDiffSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinDurationDurationTimeDiffSig) Clone() builtinFunc {
+	newSig := &builtinDurationDurationTimeDiffSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalDuration evals a builtinDurationDurationTimeDiffSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_timediff
 func (b *builtinDurationDurationTimeDiffSig) evalDuration(row types.Row) (d types.Duration, isNull bool, err error) {
@@ -445,6 +469,12 @@ func (b *builtinDurationDurationTimeDiffSig) evalDuration(row types.Row) (d type
 
 type builtinTimeTimeTimeDiffSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinTimeTimeTimeDiffSig) Clone() builtinFunc {
+	newSig := &builtinTimeTimeTimeDiffSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalDuration evals a builtinTimeTimeTimeDiffSig.
@@ -467,6 +497,12 @@ func (b *builtinTimeTimeTimeDiffSig) evalDuration(row types.Row) (d types.Durati
 
 type builtinDurationStringTimeDiffSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinDurationStringTimeDiffSig) Clone() builtinFunc {
+	newSig := &builtinDurationStringTimeDiffSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalDuration evals a builtinDurationStringTimeDiffSig.
@@ -494,6 +530,12 @@ func (b *builtinDurationStringTimeDiffSig) evalDuration(row types.Row) (d types.
 
 type builtinStringDurationTimeDiffSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinStringDurationTimeDiffSig) Clone() builtinFunc {
+	newSig := &builtinStringDurationTimeDiffSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalDuration evals a builtinStringDurationTimeDiffSig.
@@ -548,6 +590,12 @@ type builtinTimeStringTimeDiffSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinTimeStringTimeDiffSig) Clone() builtinFunc {
+	newSig := &builtinTimeStringTimeDiffSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalDuration evals a builtinTimeStringTimeDiffSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_timediff
 func (b *builtinTimeStringTimeDiffSig) evalDuration(row types.Row) (d types.Duration, isNull bool, err error) {
@@ -575,6 +623,12 @@ type builtinStringTimeTimeDiffSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinStringTimeTimeDiffSig) Clone() builtinFunc {
+	newSig := &builtinStringTimeTimeDiffSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalDuration evals a builtinStringTimeTimeDiffSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_timediff
 func (b *builtinStringTimeTimeDiffSig) evalDuration(row types.Row) (d types.Duration, isNull bool, err error) {
@@ -600,6 +654,12 @@ func (b *builtinStringTimeTimeDiffSig) evalDuration(row types.Row) (d types.Dura
 
 type builtinStringStringTimeDiffSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinStringStringTimeDiffSig) Clone() builtinFunc {
+	newSig := &builtinStringStringTimeDiffSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalDuration evals a builtinStringStringTimeDiffSig.
@@ -644,6 +704,12 @@ type builtinNullTimeDiffSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinNullTimeDiffSig) Clone() builtinFunc {
+	newSig := &builtinNullTimeDiffSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalDuration evals a builtinNullTimeDiffSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_timediff
 func (b *builtinNullTimeDiffSig) evalDuration(row types.Row) (d types.Duration, isNull bool, err error) {
@@ -683,6 +749,12 @@ type builtinDateFormatSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinDateFormatSig) Clone() builtinFunc {
+	newSig := &builtinDateFormatSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalString evals a builtinDateFormatSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-format
 func (b *builtinDateFormatSig) evalString(row types.Row) (string, bool, error) {
@@ -720,6 +792,12 @@ type builtinFromDaysSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinFromDaysSig) Clone() builtinFunc {
+	newSig := &builtinFromDaysSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalTime evals FROM_DAYS(N).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_from-days
 func (b *builtinFromDaysSig) evalTime(row types.Row) (types.Time, bool, error) {
@@ -747,6 +825,12 @@ func (c *hourFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 
 type builtinHourSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinHourSig) Clone() builtinFunc {
+	newSig := &builtinHourSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalInt evals HOUR(time).
@@ -778,6 +862,12 @@ type builtinMinuteSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinMinuteSig) Clone() builtinFunc {
+	newSig := &builtinMinuteSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalInt evals MINUTE(time).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_minute
 func (b *builtinMinuteSig) evalInt(row types.Row) (int64, bool, error) {
@@ -805,6 +895,12 @@ func (c *secondFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 
 type builtinSecondSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinSecondSig) Clone() builtinFunc {
+	newSig := &builtinSecondSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalInt evals SECOND(time).
@@ -836,6 +932,12 @@ type builtinMicroSecondSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinMicroSecondSig) Clone() builtinFunc {
+	newSig := &builtinMicroSecondSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalInt evals MICROSECOND(expr).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_microsecond
 func (b *builtinMicroSecondSig) evalInt(row types.Row) (int64, bool, error) {
@@ -863,6 +965,12 @@ func (c *monthFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 
 type builtinMonthSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinMonthSig) Clone() builtinFunc {
+	newSig := &builtinMonthSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalInt evals MONTH(date).
@@ -900,6 +1008,12 @@ type builtinMonthNameSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinMonthNameSig) Clone() builtinFunc {
+	newSig := &builtinMonthNameSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 func (b *builtinMonthNameSig) evalString(row types.Row) (string, bool, error) {
 	arg, isNull, err := b.args[0].EvalTime(b.ctx, row)
 	if isNull || err != nil {
@@ -930,6 +1044,12 @@ func (c *dayNameFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 
 type builtinDayNameSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinDayNameSig) Clone() builtinFunc {
+	newSig := &builtinDayNameSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalString evals a builtinDayNameSig.
@@ -967,6 +1087,12 @@ type builtinDayOfMonthSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinDayOfMonthSig) Clone() builtinFunc {
+	newSig := &builtinDayOfMonthSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalInt evals a builtinDayOfMonthSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_dayofmonth
 func (b *builtinDayOfMonthSig) evalInt(row types.Row) (int64, bool, error) {
@@ -996,6 +1122,12 @@ func (c *dayOfWeekFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 
 type builtinDayOfWeekSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinDayOfWeekSig) Clone() builtinFunc {
+	newSig := &builtinDayOfWeekSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalInt evals a builtinDayOfWeekSig.
@@ -1028,6 +1160,12 @@ func (c *dayOfYearFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 
 type builtinDayOfYearSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinDayOfYearSig) Clone() builtinFunc {
+	newSig := &builtinDayOfYearSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalInt evals a builtinDayOfYearSig.
@@ -1075,6 +1213,12 @@ type builtinWeekWithModeSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinWeekWithModeSig) Clone() builtinFunc {
+	newSig := &builtinWeekWithModeSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalInt evals WEEK(date, mode).
 // see: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_week
 func (b *builtinWeekWithModeSig) evalInt(row types.Row) (int64, bool, error) {
@@ -1099,6 +1243,12 @@ func (b *builtinWeekWithModeSig) evalInt(row types.Row) (int64, bool, error) {
 
 type builtinWeekWithoutModeSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinWeekWithoutModeSig) Clone() builtinFunc {
+	newSig := &builtinWeekWithoutModeSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalInt evals WEEK(date).
@@ -1138,6 +1288,12 @@ type builtinWeekDaySig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinWeekDaySig) Clone() builtinFunc {
+	newSig := &builtinWeekDaySig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalInt evals WEEKDAY(date).
 func (b *builtinWeekDaySig) evalInt(row types.Row) (int64, bool, error) {
 	date, isNull, err := b.args[0].EvalTime(b.ctx, row)
@@ -1168,6 +1324,12 @@ func (c *weekOfYearFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 
 type builtinWeekOfYearSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinWeekOfYearSig) Clone() builtinFunc {
+	newSig := &builtinWeekOfYearSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalInt evals WEEKOFYEAR(date).
@@ -1203,6 +1365,12 @@ func (c *yearFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 
 type builtinYearSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinYearSig) Clone() builtinFunc {
+	newSig := &builtinYearSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalInt evals YEAR(date).
@@ -1251,6 +1419,12 @@ type builtinYearWeekWithModeSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinYearWeekWithModeSig) Clone() builtinFunc {
+	newSig := &builtinYearWeekWithModeSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalInt evals YEARWEEK(date,mode).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_yearweek
 func (b *builtinYearWeekWithModeSig) evalInt(row types.Row) (int64, bool, error) {
@@ -1280,6 +1454,12 @@ func (b *builtinYearWeekWithModeSig) evalInt(row types.Row) (int64, bool, error)
 
 type builtinYearWeekWithoutModeSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinYearWeekWithoutModeSig) Clone() builtinFunc {
+	newSig := &builtinYearWeekWithoutModeSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalInt evals YEARWEEK(date).
@@ -1401,6 +1581,12 @@ type builtinFromUnixTime1ArgSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinFromUnixTime1ArgSig) Clone() builtinFunc {
+	newSig := &builtinFromUnixTime1ArgSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalTime evals a builtinFromUnixTime1ArgSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_from-unixtime
 func (b *builtinFromUnixTime1ArgSig) evalTime(row types.Row) (res types.Time, isNull bool, err error) {
@@ -1409,6 +1595,12 @@ func (b *builtinFromUnixTime1ArgSig) evalTime(row types.Row) (res types.Time, is
 
 type builtinFromUnixTime2ArgSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinFromUnixTime2ArgSig) Clone() builtinFunc {
+	newSig := &builtinFromUnixTime2ArgSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalString evals a builtinFromUnixTime2ArgSig.
@@ -1442,6 +1634,12 @@ func (c *getFormatFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 
 type builtinGetFormatSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinGetFormatSig) Clone() builtinFunc {
+	newSig := &builtinGetFormatSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalString evals a builtinGetFormatSig.
@@ -1563,6 +1761,12 @@ type builtinStrToDateDateSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinStrToDateDateSig) Clone() builtinFunc {
+	newSig := &builtinStrToDateDateSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 func (b *builtinStrToDateDateSig) evalTime(row types.Row) (types.Time, bool, error) {
 	date, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
@@ -1586,6 +1790,12 @@ type builtinStrToDateDatetimeSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinStrToDateDatetimeSig) Clone() builtinFunc {
+	newSig := &builtinStrToDateDatetimeSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 func (b *builtinStrToDateDatetimeSig) evalTime(row types.Row) (types.Time, bool, error) {
 	date, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
@@ -1607,6 +1817,12 @@ func (b *builtinStrToDateDatetimeSig) evalTime(row types.Row) (types.Time, bool,
 
 type builtinStrToDateDurationSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinStrToDateDurationSig) Clone() builtinFunc {
+	newSig := &builtinStrToDateDurationSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // TODO: If the NO_ZERO_DATE or NO_ZERO_IN_DATE SQL mode is enabled, zero dates or part of dates are disallowed.
@@ -1659,6 +1875,12 @@ type builtinSysDateWithFspSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinSysDateWithFspSig) Clone() builtinFunc {
+	newSig := &builtinSysDateWithFspSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalTime evals SYSDATE(fsp).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_sysdate
 func (b *builtinSysDateWithFspSig) evalTime(row types.Row) (d types.Time, isNull bool, err error) {
@@ -1678,6 +1900,12 @@ func (b *builtinSysDateWithFspSig) evalTime(row types.Row) (d types.Time, isNull
 
 type builtinSysDateWithoutFspSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinSysDateWithoutFspSig) Clone() builtinFunc {
+	newSig := &builtinSysDateWithoutFspSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalTime evals SYSDATE().
@@ -1708,6 +1936,12 @@ func (c *currentDateFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 
 type builtinCurrentDateSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinCurrentDateSig) Clone() builtinFunc {
+	newSig := &builtinCurrentDateSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalTime evals CURDATE().
@@ -1761,6 +1995,12 @@ type builtinCurrentTime0ArgSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinCurrentTime0ArgSig) Clone() builtinFunc {
+	newSig := &builtinCurrentTime0ArgSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 func (b *builtinCurrentTime0ArgSig) evalDuration(row types.Row) (types.Duration, bool, error) {
 	tz := b.ctx.GetSessionVars().GetTimeZone()
 	dur := time.Now().In(tz).Format(types.TimeFormat)
@@ -1773,6 +2013,12 @@ func (b *builtinCurrentTime0ArgSig) evalDuration(row types.Row) (types.Duration,
 
 type builtinCurrentTime1ArgSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinCurrentTime1ArgSig) Clone() builtinFunc {
+	newSig := &builtinCurrentTime1ArgSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 func (b *builtinCurrentTime1ArgSig) evalDuration(row types.Row) (types.Duration, bool, error) {
@@ -1804,6 +2050,12 @@ func (c *timeFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 
 type builtinTimeSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinTimeSig) Clone() builtinFunc {
+	newSig := &builtinTimeSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalDuration evals a builtinTimeSig.
@@ -1869,6 +2121,12 @@ type builtinTimeLiteralSig struct {
 	duration types.Duration
 }
 
+func (b *builtinTimeLiteralSig) Clone() builtinFunc {
+	newSig := &builtinTimeLiteralSig{duration: b.duration}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalDuration evals TIME 'stringLit'.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html
 func (b *builtinTimeLiteralSig) evalDuration(row types.Row) (types.Duration, bool, error) {
@@ -1891,6 +2149,12 @@ func (c *utcDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 
 type builtinUTCDateSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinUTCDateSig) Clone() builtinFunc {
+	newSig := &builtinUTCDateSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalTime evals UTC_DATE, UTC_DATE().
@@ -1964,6 +2228,12 @@ type builtinUTCTimestampWithArgSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinUTCTimestampWithArgSig) Clone() builtinFunc {
+	newSig := &builtinUTCTimestampWithArgSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalTime evals UTC_TIMESTAMP(fsp).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_utc-timestamp
 func (b *builtinUTCTimestampWithArgSig) evalTime(row types.Row) (types.Time, bool, error) {
@@ -1985,6 +2255,12 @@ func (b *builtinUTCTimestampWithArgSig) evalTime(row types.Row) (types.Time, boo
 
 type builtinUTCTimestampWithoutArgSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinUTCTimestampWithoutArgSig) Clone() builtinFunc {
+	newSig := &builtinUTCTimestampWithoutArgSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalTime evals UTC_TIMESTAMP().
@@ -2046,6 +2322,12 @@ type builtinNowWithArgSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinNowWithArgSig) Clone() builtinFunc {
+	newSig := &builtinNowWithArgSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalTime evals NOW(fsp)
 // see: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_now
 func (b *builtinNowWithArgSig) evalTime(row types.Row) (types.Time, bool, error) {
@@ -2069,6 +2351,12 @@ func (b *builtinNowWithArgSig) evalTime(row types.Row) (types.Time, bool, error)
 
 type builtinNowWithoutArgSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinNowWithoutArgSig) Clone() builtinFunc {
+	newSig := &builtinNowWithoutArgSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalTime evals NOW()
@@ -2123,6 +2411,12 @@ type builtinExtractDatetimeSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinExtractDatetimeSig) Clone() builtinFunc {
+	newSig := &builtinExtractDatetimeSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalInt evals a builtinExtractDatetimeSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_extract
 func (b *builtinExtractDatetimeSig) evalInt(row types.Row) (int64, bool, error) {
@@ -2140,6 +2434,12 @@ func (b *builtinExtractDatetimeSig) evalInt(row types.Row) (int64, bool, error) 
 
 type builtinExtractDurationSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinExtractDurationSig) Clone() builtinFunc {
+	newSig := &builtinExtractDurationSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalInt evals a builtinExtractDurationSig.
@@ -2398,6 +2698,12 @@ type builtinAddDateStringStringSig struct {
 	baseDateArithmitical
 }
 
+func (b *builtinAddDateStringStringSig) Clone() builtinFunc {
+	newSig := &builtinAddDateStringStringSig{baseDateArithmitical: b.baseDateArithmitical}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalTime evals ADDDATE(date,INTERVAL expr unit).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_adddate
 func (b *builtinAddDateStringStringSig) evalTime(row types.Row) (types.Time, bool, error) {
@@ -2423,6 +2729,12 @@ func (b *builtinAddDateStringStringSig) evalTime(row types.Row) (types.Time, boo
 type builtinAddDateStringIntSig struct {
 	baseBuiltinFunc
 	baseDateArithmitical
+}
+
+func (b *builtinAddDateStringIntSig) Clone() builtinFunc {
+	newSig := &builtinAddDateStringIntSig{baseDateArithmitical: b.baseDateArithmitical}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalTime evals ADDDATE(date,INTERVAL expr unit).
@@ -2452,6 +2764,12 @@ type builtinAddDateStringDecimalSig struct {
 	baseDateArithmitical
 }
 
+func (b *builtinAddDateStringDecimalSig) Clone() builtinFunc {
+	newSig := &builtinAddDateStringDecimalSig{baseDateArithmitical: b.baseDateArithmitical}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalTime evals ADDDATE(date,INTERVAL expr unit).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_adddate
 func (b *builtinAddDateStringDecimalSig) evalTime(row types.Row) (types.Time, bool, error) {
@@ -2477,6 +2795,12 @@ func (b *builtinAddDateStringDecimalSig) evalTime(row types.Row) (types.Time, bo
 type builtinAddDateIntStringSig struct {
 	baseBuiltinFunc
 	baseDateArithmitical
+}
+
+func (b *builtinAddDateIntStringSig) Clone() builtinFunc {
+	newSig := &builtinAddDateIntStringSig{baseDateArithmitical: b.baseDateArithmitical}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalTime evals ADDDATE(date,INTERVAL expr unit).
@@ -2506,6 +2830,12 @@ type builtinAddDateIntIntSig struct {
 	baseDateArithmitical
 }
 
+func (b *builtinAddDateIntIntSig) Clone() builtinFunc {
+	newSig := &builtinAddDateIntIntSig{baseDateArithmitical: b.baseDateArithmitical}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalTime evals ADDDATE(date,INTERVAL expr unit).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_adddate
 func (b *builtinAddDateIntIntSig) evalTime(row types.Row) (types.Time, bool, error) {
@@ -2533,6 +2863,12 @@ type builtinAddDateDatetimeStringSig struct {
 	baseDateArithmitical
 }
 
+func (b *builtinAddDateDatetimeStringSig) Clone() builtinFunc {
+	newSig := &builtinAddDateDatetimeStringSig{baseDateArithmitical: b.baseDateArithmitical}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalTime evals ADDDATE(date,INTERVAL expr unit).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_adddate
 func (b *builtinAddDateDatetimeStringSig) evalTime(row types.Row) (types.Time, bool, error) {
@@ -2558,6 +2894,12 @@ func (b *builtinAddDateDatetimeStringSig) evalTime(row types.Row) (types.Time, b
 type builtinAddDateDatetimeIntSig struct {
 	baseBuiltinFunc
 	baseDateArithmitical
+}
+
+func (b *builtinAddDateDatetimeIntSig) Clone() builtinFunc {
+	newSig := &builtinAddDateDatetimeIntSig{baseDateArithmitical: b.baseDateArithmitical}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalTime evals ADDDATE(date,INTERVAL expr unit).
@@ -2650,6 +2992,12 @@ type builtinSubDateStringStringSig struct {
 	baseDateArithmitical
 }
 
+func (b *builtinSubDateStringStringSig) Clone() builtinFunc {
+	newSig := &builtinSubDateStringStringSig{baseDateArithmitical: b.baseDateArithmitical}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalTime evals SUBDATE(date,INTERVAL expr unit).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subdate
 func (b *builtinSubDateStringStringSig) evalTime(row types.Row) (types.Time, bool, error) {
@@ -2675,6 +3023,12 @@ func (b *builtinSubDateStringStringSig) evalTime(row types.Row) (types.Time, boo
 type builtinSubDateStringIntSig struct {
 	baseBuiltinFunc
 	baseDateArithmitical
+}
+
+func (b *builtinSubDateStringIntSig) Clone() builtinFunc {
+	newSig := &builtinSubDateStringIntSig{baseDateArithmitical: b.baseDateArithmitical}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalTime evals SUBDATE(date,INTERVAL expr unit).
@@ -2704,6 +3058,12 @@ type builtinSubDateStringDecimalSig struct {
 	baseDateArithmitical
 }
 
+func (b *builtinSubDateStringDecimalSig) Clone() builtinFunc {
+	newSig := &builtinSubDateStringDecimalSig{baseDateArithmitical: b.baseDateArithmitical}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 func (b *builtinSubDateStringDecimalSig) evalTime(row types.Row) (types.Time, bool, error) {
 	unit, isNull, err := b.args[2].EvalString(b.ctx, row)
 	if isNull || err != nil {
@@ -2727,6 +3087,12 @@ func (b *builtinSubDateStringDecimalSig) evalTime(row types.Row) (types.Time, bo
 type builtinSubDateIntStringSig struct {
 	baseBuiltinFunc
 	baseDateArithmitical
+}
+
+func (b *builtinSubDateIntStringSig) Clone() builtinFunc {
+	newSig := &builtinSubDateIntStringSig{baseDateArithmitical: b.baseDateArithmitical}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalTime evals SUBDATE(date,INTERVAL expr unit).
@@ -2756,6 +3122,12 @@ type builtinSubDateIntIntSig struct {
 	baseDateArithmitical
 }
 
+func (b *builtinSubDateIntIntSig) Clone() builtinFunc {
+	newSig := &builtinSubDateIntIntSig{baseDateArithmitical: b.baseDateArithmitical}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalTime evals SUBDATE(date,INTERVAL expr unit).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subdate
 func (b *builtinSubDateIntIntSig) evalTime(row types.Row) (types.Time, bool, error) {
@@ -2783,6 +3155,12 @@ type builtinSubDateDatetimeStringSig struct {
 	baseDateArithmitical
 }
 
+func (b *builtinSubDateDatetimeStringSig) Clone() builtinFunc {
+	newSig := &builtinSubDateDatetimeStringSig{baseDateArithmitical: b.baseDateArithmitical}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalTime evals SUBDATE(date,INTERVAL expr unit).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subdate
 func (b *builtinSubDateDatetimeStringSig) evalTime(row types.Row) (types.Time, bool, error) {
@@ -2808,6 +3186,12 @@ func (b *builtinSubDateDatetimeStringSig) evalTime(row types.Row) (types.Time, b
 type builtinSubDateDatetimeIntSig struct {
 	baseBuiltinFunc
 	baseDateArithmitical
+}
+
+func (b *builtinSubDateDatetimeIntSig) Clone() builtinFunc {
+	newSig := &builtinSubDateDatetimeIntSig{baseDateArithmitical: b.baseDateArithmitical}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalTime evals SUBDATE(date,INTERVAL expr unit).
@@ -2847,6 +3231,12 @@ func (c *timestampDiffFunctionClass) getFunction(ctx sessionctx.Context, args []
 
 type builtinTimestampDiffSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinTimestampDiffSig) Clone() builtinFunc {
+	newSig := &builtinTimestampDiffSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalInt evals a builtinTimestampDiffSig.
@@ -2897,6 +3287,16 @@ func (c *unixTimestampFunctionClass) getFunction(ctx sessionctx.Context, args []
 		if argEvaltp == types.ETString {
 			// Treat types.ETString as unspecified decimal.
 			retDecimal = types.UnspecifiedLength
+			if cnst, ok := args[0].(*Constant); ok {
+				tmpStr, _, err := cnst.EvalString(ctx, nil)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				retDecimal = 0
+				if dotIdx := strings.LastIndex(tmpStr, "."); dotIdx >= 0 {
+					retDecimal = len(tmpStr) - dotIdx - 1
+				}
+			}
 		} else {
 			retDecimal = argType.Decimal
 		}
@@ -2928,10 +3328,7 @@ func (c *unixTimestampFunctionClass) getFunction(ctx sessionctx.Context, args []
 		sig = &builtinUnixTimestampIntSig{bf}
 	} else if retTp == types.ETDecimal {
 		sig = &builtinUnixTimestampDecSig{bf}
-	} else {
-		panic("Unexpected retTp")
 	}
-
 	return sig, nil
 }
 
@@ -2957,6 +3354,12 @@ type builtinUnixTimestampCurrentSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinUnixTimestampCurrentSig) Clone() builtinFunc {
+	newSig := &builtinUnixTimestampCurrentSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalInt evals a UNIX_TIMESTAMP().
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_unix-timestamp
 func (b *builtinUnixTimestampCurrentSig) evalInt(row types.Row) (int64, bool, error) {
@@ -2971,6 +3374,12 @@ func (b *builtinUnixTimestampCurrentSig) evalInt(row types.Row) (int64, bool, er
 
 type builtinUnixTimestampIntSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinUnixTimestampIntSig) Clone() builtinFunc {
+	newSig := &builtinUnixTimestampIntSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalInt evals a UNIX_TIMESTAMP(time).
@@ -2999,6 +3408,12 @@ func (b *builtinUnixTimestampIntSig) evalInt(row types.Row) (int64, bool, error)
 
 type builtinUnixTimestampDecSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinUnixTimestampDecSig) Clone() builtinFunc {
+	newSig := &builtinUnixTimestampDecSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalDecimal evals a UNIX_TIMESTAMP(time).
@@ -3077,6 +3492,12 @@ type builtinTimestamp1ArgSig struct {
 	isFloat bool
 }
 
+func (b *builtinTimestamp1ArgSig) Clone() builtinFunc {
+	newSig := &builtinTimestamp1ArgSig{isFloat: b.isFloat}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalTime evals a builtinTimestamp1ArgSig.
 // See https://dev.mysql.com/doc/refman/5.5/en/date-and-time-functions.html#function_timestamp
 func (b *builtinTimestamp1ArgSig) evalTime(row types.Row) (types.Time, bool, error) {
@@ -3101,6 +3522,12 @@ type builtinTimestamp2ArgsSig struct {
 	baseBuiltinFunc
 
 	isFloat bool
+}
+
+func (b *builtinTimestamp2ArgsSig) Clone() builtinFunc {
+	newSig := &builtinTimestamp2ArgsSig{isFloat: b.isFloat}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalTime evals a builtinTimestamp2ArgsSig.
@@ -3177,6 +3604,12 @@ func (c *timestampLiteralFunctionClass) getFunction(ctx sessionctx.Context, args
 type builtinTimestampLiteralSig struct {
 	baseBuiltinFunc
 	tm types.Time
+}
+
+func (b *builtinTimestampLiteralSig) Clone() builtinFunc {
+	newSig := &builtinTimestampLiteralSig{tm: b.tm}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalTime evals TIMESTAMP 'stringLit'.
@@ -3382,6 +3815,12 @@ type builtinAddTimeDateTimeNullSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinAddTimeDateTimeNullSig) Clone() builtinFunc {
+	newSig := &builtinAddTimeDateTimeNullSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalTime evals a builtinAddTimeDateTimeNullSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_addtime
 func (b *builtinAddTimeDateTimeNullSig) evalTime(row types.Row) (types.Time, bool, error) {
@@ -3390,6 +3829,12 @@ func (b *builtinAddTimeDateTimeNullSig) evalTime(row types.Row) (types.Time, boo
 
 type builtinAddDatetimeAndDurationSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinAddDatetimeAndDurationSig) Clone() builtinFunc {
+	newSig := &builtinAddDatetimeAndDurationSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalTime evals a builtinAddDatetimeAndDurationSig.
@@ -3409,6 +3854,12 @@ func (b *builtinAddDatetimeAndDurationSig) evalTime(row types.Row) (types.Time, 
 
 type builtinAddDatetimeAndStringSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinAddDatetimeAndStringSig) Clone() builtinFunc {
+	newSig := &builtinAddDatetimeAndStringSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalTime evals a builtinAddDatetimeAndStringSig.
@@ -3437,6 +3888,12 @@ type builtinAddTimeDurationNullSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinAddTimeDurationNullSig) Clone() builtinFunc {
+	newSig := &builtinAddTimeDurationNullSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalDuration evals a builtinAddTimeDurationNullSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_addtime
 func (b *builtinAddTimeDurationNullSig) evalDuration(row types.Row) (types.Duration, bool, error) {
@@ -3445,6 +3902,12 @@ func (b *builtinAddTimeDurationNullSig) evalDuration(row types.Row) (types.Durat
 
 type builtinAddDurationAndDurationSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinAddDurationAndDurationSig) Clone() builtinFunc {
+	newSig := &builtinAddDurationAndDurationSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalDuration evals a builtinAddDurationAndDurationSig.
@@ -3467,6 +3930,12 @@ func (b *builtinAddDurationAndDurationSig) evalDuration(row types.Row) (types.Du
 
 type builtinAddDurationAndStringSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinAddDurationAndStringSig) Clone() builtinFunc {
+	newSig := &builtinAddDurationAndStringSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalDuration evals a builtinAddDurationAndStringSig.
@@ -3498,6 +3967,12 @@ type builtinAddTimeStringNullSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinAddTimeStringNullSig) Clone() builtinFunc {
+	newSig := &builtinAddTimeStringNullSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalString evals a builtinAddDurationAndDurationSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_addtime
 func (b *builtinAddTimeStringNullSig) evalString(row types.Row) (string, bool, error) {
@@ -3506,6 +3981,12 @@ func (b *builtinAddTimeStringNullSig) evalString(row types.Row) (string, bool, e
 
 type builtinAddStringAndDurationSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinAddStringAndDurationSig) Clone() builtinFunc {
+	newSig := &builtinAddStringAndDurationSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalString evals a builtinAddStringAndDurationSig.
@@ -3537,6 +4018,12 @@ func (b *builtinAddStringAndDurationSig) evalString(row types.Row) (result strin
 
 type builtinAddStringAndStringSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinAddStringAndStringSig) Clone() builtinFunc {
+	newSig := &builtinAddStringAndStringSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalString evals a builtinAddStringAndStringSig.
@@ -3574,6 +4061,12 @@ type builtinAddDateAndDurationSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinAddDateAndDurationSig) Clone() builtinFunc {
+	newSig := &builtinAddDateAndDurationSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalString evals a builtinAddDurationAndDurationSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_addtime
 func (b *builtinAddDateAndDurationSig) evalString(row types.Row) (string, bool, error) {
@@ -3591,6 +4084,12 @@ func (b *builtinAddDateAndDurationSig) evalString(row types.Row) (string, bool, 
 
 type builtinAddDateAndStringSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinAddDateAndStringSig) Clone() builtinFunc {
+	newSig := &builtinAddDateAndStringSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalString evals a builtinAddDateAndStringSig.
@@ -3666,6 +4165,12 @@ func (c *convertTzFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 type builtinConvertTzSig struct {
 	baseBuiltinFunc
 	timezoneRegex *regexp.Regexp
+}
+
+func (b *builtinConvertTzSig) Clone() builtinFunc {
+	newSig := &builtinConvertTzSig{timezoneRegex: b.timezoneRegex}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalTime evals CONVERT_TZ(dt,from_tz,to_tz).
@@ -3745,6 +4250,12 @@ type builtinMakeDateSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinMakeDateSig) Clone() builtinFunc {
+	newSig := &builtinMakeDateSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalTime evaluates a builtinMakeDateSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_makedate
 func (b *builtinMakeDateSig) evalTime(row types.Row) (d types.Time, isNull bool, err error) {
@@ -3812,6 +4323,12 @@ func (c *makeTimeFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 
 type builtinMakeTimeSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinMakeTimeSig) Clone() builtinFunc {
+	newSig := &builtinMakeTimeSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalDuration evals a builtinMakeTimeIntSig.
@@ -3916,6 +4433,12 @@ type builtinPeriodAddSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinPeriodAddSig) Clone() builtinFunc {
+	newSig := &builtinPeriodAddSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalInt evals PERIOD_ADD(P,N).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_period-add
 func (b *builtinPeriodAddSig) evalInt(row types.Row) (int64, bool, error) {
@@ -3955,6 +4478,12 @@ type builtinPeriodDiffSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinPeriodDiffSig) Clone() builtinFunc {
+	newSig := &builtinPeriodDiffSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalInt evals PERIOD_DIFF(P1,P2).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_period-diff
 func (b *builtinPeriodDiffSig) evalInt(row types.Row) (int64, bool, error) {
@@ -3989,6 +4518,12 @@ func (c *quarterFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 
 type builtinQuarterSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinQuarterSig) Clone() builtinFunc {
+	newSig := &builtinQuarterSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalInt evals QUARTER(date).
@@ -4039,6 +4574,12 @@ func (c *secToTimeFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 
 type builtinSecToTimeSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinSecToTimeSig) Clone() builtinFunc {
+	newSig := &builtinSecToTimeSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalDuration evals SEC_TO_TIME(seconds).
@@ -4137,6 +4678,12 @@ type builtinSubDatetimeAndDurationSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinSubDatetimeAndDurationSig) Clone() builtinFunc {
+	newSig := &builtinSubDatetimeAndDurationSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalTime evals a builtinSubDatetimeAndDurationSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subtime
 func (b *builtinSubDatetimeAndDurationSig) evalTime(row types.Row) (types.Time, bool, error) {
@@ -4160,6 +4707,12 @@ func (b *builtinSubDatetimeAndDurationSig) evalTime(row types.Row) (types.Time, 
 
 type builtinSubDatetimeAndStringSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinSubDatetimeAndStringSig) Clone() builtinFunc {
+	newSig := &builtinSubDatetimeAndStringSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalTime evals a builtinSubDatetimeAndStringSig.
@@ -4197,6 +4750,12 @@ type builtinSubTimeDateTimeNullSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinSubTimeDateTimeNullSig) Clone() builtinFunc {
+	newSig := &builtinSubTimeDateTimeNullSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalTime evals a builtinSubTimeDateTimeNullSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subtime
 func (b *builtinSubTimeDateTimeNullSig) evalTime(row types.Row) (types.Time, bool, error) {
@@ -4205,6 +4764,12 @@ func (b *builtinSubTimeDateTimeNullSig) evalTime(row types.Row) (types.Time, boo
 
 type builtinSubStringAndDurationSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinSubStringAndDurationSig) Clone() builtinFunc {
+	newSig := &builtinSubStringAndDurationSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalString evals a builtinSubStringAndDurationSig.
@@ -4236,6 +4801,12 @@ func (b *builtinSubStringAndDurationSig) evalString(row types.Row) (result strin
 
 type builtinSubStringAndStringSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinSubStringAndStringSig) Clone() builtinFunc {
+	newSig := &builtinSubStringAndStringSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalString evals a builtinAddStringAndStringSig.
@@ -4273,6 +4844,12 @@ type builtinSubTimeStringNullSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinSubTimeStringNullSig) Clone() builtinFunc {
+	newSig := &builtinSubTimeStringNullSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalString evals a builtinSubTimeStringNullSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subtime
 func (b *builtinSubTimeStringNullSig) evalString(row types.Row) (string, bool, error) {
@@ -4281,6 +4858,12 @@ func (b *builtinSubTimeStringNullSig) evalString(row types.Row) (string, bool, e
 
 type builtinSubDurationAndDurationSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinSubDurationAndDurationSig) Clone() builtinFunc {
+	newSig := &builtinSubDurationAndDurationSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalDuration evals a builtinAddDurationAndDurationSig.
@@ -4303,6 +4886,12 @@ func (b *builtinSubDurationAndDurationSig) evalDuration(row types.Row) (types.Du
 
 type builtinSubDurationAndStringSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinSubDurationAndStringSig) Clone() builtinFunc {
+	newSig := &builtinSubDurationAndStringSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalDuration evals a builtinAddDurationAndStringSig.
@@ -4331,6 +4920,12 @@ type builtinSubTimeDurationNullSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinSubTimeDurationNullSig) Clone() builtinFunc {
+	newSig := &builtinSubTimeDurationNullSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalTime evals a builtinSubTimeDurationNullSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subtime
 func (b *builtinSubTimeDurationNullSig) evalDuration(row types.Row) (types.Duration, bool, error) {
@@ -4339,6 +4934,12 @@ func (b *builtinSubTimeDurationNullSig) evalDuration(row types.Row) (types.Durat
 
 type builtinSubDateAndDurationSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinSubDateAndDurationSig) Clone() builtinFunc {
+	newSig := &builtinSubDateAndDurationSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalString evals a builtinAddDateAndDurationSig.
@@ -4358,6 +4959,12 @@ func (b *builtinSubDateAndDurationSig) evalString(row types.Row) (string, bool, 
 
 type builtinSubDateAndStringSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinSubDateAndStringSig) Clone() builtinFunc {
+	newSig := &builtinSubDateAndStringSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalString evals a builtinAddDateAndStringSig.
@@ -4402,6 +5009,12 @@ func (c *timeFormatFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 
 type builtinTimeFormatSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinTimeFormatSig) Clone() builtinFunc {
+	newSig := &builtinTimeFormatSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalString evals a builtinTimeFormatSig.
@@ -4451,6 +5064,12 @@ type builtinTimeToSecSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinTimeToSecSig) Clone() builtinFunc {
+	newSig := &builtinTimeToSecSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalInt evals TIME_TO_SEC(time).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_time-to-sec
 func (b *builtinTimeToSecSig) evalInt(row types.Row) (int64, bool, error) {
@@ -4484,6 +5103,12 @@ func (c *timestampAddFunctionClass) getFunction(ctx sessionctx.Context, args []E
 
 type builtinTimestampAddSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinTimestampAddSig) Clone() builtinFunc {
+	newSig := &builtinTimestampAddSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalString evals a builtinTimestampAddSig.
@@ -4554,6 +5179,12 @@ type builtinToDaysSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinToDaysSig) Clone() builtinFunc {
+	newSig := &builtinToDaysSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalInt evals a builtinToDaysSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_to-days
 func (b *builtinToDaysSig) evalInt(row types.Row) (int64, bool, error) {
@@ -4584,6 +5215,12 @@ func (c *toSecondsFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 
 type builtinToSecondsSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinToSecondsSig) Clone() builtinFunc {
+	newSig := &builtinToSecondsSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalInt evals a builtinToSecondsSig.
@@ -4651,6 +5288,12 @@ type builtinUTCTimeWithoutArgSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinUTCTimeWithoutArgSig) Clone() builtinFunc {
+	newSig := &builtinUTCTimeWithoutArgSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalDuration evals a builtinUTCTimeWithoutArgSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_utc-time
 func (b *builtinUTCTimeWithoutArgSig) evalDuration(row types.Row) (types.Duration, bool, error) {
@@ -4660,6 +5303,12 @@ func (b *builtinUTCTimeWithoutArgSig) evalDuration(row types.Row) (types.Duratio
 
 type builtinUTCTimeWithArgSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinUTCTimeWithArgSig) Clone() builtinFunc {
+	newSig := &builtinUTCTimeWithArgSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalDuration evals a builtinUTCTimeWithArgSig.
@@ -4695,6 +5344,12 @@ func (c *lastDayFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 
 type builtinLastDaySig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinLastDaySig) Clone() builtinFunc {
+	newSig := &builtinLastDaySig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalTime evals a builtinLastDaySig.

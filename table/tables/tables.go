@@ -74,10 +74,16 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 		return nil, table.ErrTableStateCantNone.Gen("table %s can't be in none state", tblInfo.Name)
 	}
 
-	columns := make([]*table.Column, 0, len(tblInfo.Columns))
-	for _, colInfo := range tblInfo.Columns {
+	colsLen := len(tblInfo.Columns)
+	columns := make([]*table.Column, 0, colsLen)
+	for i, colInfo := range tblInfo.Columns {
 		if colInfo.State == model.StateNone {
 			return nil, table.ErrColumnStateCantNone.Gen("column %s can't be in none state", colInfo.Name)
+		}
+
+		// Print some information when the column's offset isn't equal to i.
+		if colInfo.Offset != i {
+			log.Errorf("[tables] table %#v schema is wrong, no.%d col %#v, cols len %v", tblInfo, i, tblInfo.Columns[i], colsLen)
 		}
 
 		col := table.ToColumn(colInfo)
@@ -434,7 +440,14 @@ func (t *Table) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleChe
 		}
 	}
 	sessVars.StmtCtx.AddAffectedRows(1)
-	sessVars.TxnCtx.UpdateDeltaForTable(t.ID, 1, 1)
+	colSize := make(map[int64]int64)
+	for id, col := range t.Cols() {
+		val := int64(len(r[id].GetBytes()))
+		if val != 0 {
+			colSize[col.ID] = val
+		}
+	}
+	sessVars.TxnCtx.UpdateDeltaForTable(t.ID, 1, 1, colSize)
 	return recordID, nil
 }
 
@@ -506,17 +519,16 @@ func (t *Table) RowWithCols(ctx sessionctx.Context, h int64, cols []*table.Colum
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	v, err := DecodeRawRowData(ctx, t.Meta(), h, cols, value)
+	v, _, err := DecodeRawRowData(ctx, t.Meta(), h, cols, value)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	return v, nil
 }
 
-// DecodeRawRowData decodes raw row data to a datum row.
+// DecodeRawRowData decodes raw row data into a datum slice and a (columnID:columnValue) map.
 func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h int64, cols []*table.Column,
-	value []byte) ([]types.Datum,
-	error) {
+	value []byte) ([]types.Datum, map[int64]types.Datum, error) {
 	v := make([]types.Datum, len(cols))
 	colTps := make(map[int64]*types.FieldType, len(cols))
 	for i, col := range cols {
@@ -535,7 +547,7 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h int64, co
 	}
 	rowMap, err := tablecodec.DecodeRow(value, colTps, ctx.GetSessionVars().GetTimeZone())
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, rowMap, errors.Trace(err)
 	}
 	defaultVals := make([]types.Datum, len(cols))
 	for i, col := range cols {
@@ -552,10 +564,10 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h int64, co
 		}
 		v[i], err = GetColDefaultValue(ctx, col, defaultVals)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, rowMap, errors.Trace(err)
 		}
 	}
-	return v, nil
+	return v, rowMap, nil
 }
 
 // Row implements table.Table Row interface.
