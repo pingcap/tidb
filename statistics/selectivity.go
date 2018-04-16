@@ -44,32 +44,68 @@ const (
 	colType
 )
 
-// checkColumnConstant receives two expressions and makes sure one of them is column and another is constant.
-func checkColumnConstant(e []expression.Expression) bool {
+const unknownColumnID = math.MinInt64
+
+// getConstantColumnID receives two expressions and if one of them is column and another is constant, it returns the
+// ID of the column.
+func getConstantColumnID(e []expression.Expression) int64 {
 	if len(e) != 2 {
-		return false
+		return unknownColumnID
 	}
-	_, ok1 := e[0].(*expression.Column)
+	col, ok1 := e[0].(*expression.Column)
 	_, ok2 := e[1].(*expression.Constant)
 	if ok1 && ok2 {
-		return true
+		return col.ID
 	}
-	_, ok1 = e[1].(*expression.Column)
+	col, ok1 = e[1].(*expression.Column)
 	_, ok2 = e[0].(*expression.Constant)
-	return ok1 && ok2
+	if ok1 && ok2 {
+		return col.ID
+	}
+	return unknownColumnID
 }
 
-func pseudoSelectivity(exprs []expression.Expression) float64 {
+func pseudoSelectivity(t *Table, exprs []expression.Expression) float64 {
 	minFactor := selectionFactor
+	uniqueCol := make(map[string]bool)
 	for _, expr := range exprs {
-		if fun, ok := expr.(*expression.ScalarFunction); ok && checkColumnConstant(fun.GetArgs()) {
-			switch fun.FuncName.L {
-			case ast.EQ, ast.NullEQ:
-				minFactor = math.Min(minFactor, 1.0/pseudoEqualRate)
-			case ast.GE, ast.GT, ast.LE, ast.LT:
-				minFactor = math.Min(minFactor, 1.0/pseudoLessRate)
-				// FIXME: To resolve the between case.
+		fun, ok := expr.(*expression.ScalarFunction)
+		if !ok {
+			continue
+		}
+		colID := getConstantColumnID(fun.GetArgs())
+		if colID == unknownColumnID {
+			continue
+		}
+		switch fun.FuncName.L {
+		case ast.EQ, ast.NullEQ, ast.In:
+			col, ok := t.Columns[colID]
+			if ok && (mysql.HasUniKeyFlag(col.Info.Flag) || mysql.HasPriKeyFlag(col.Info.Flag)) {
+				uniqueCol[col.Info.Name.L] = true
 			}
+			minFactor = math.Min(minFactor, 1.0/pseudoEqualRate)
+		case ast.GE, ast.GT, ast.LE, ast.LT:
+			minFactor = math.Min(minFactor, 1.0/pseudoLessRate)
+			// FIXME: To resolve the between case.
+		}
+	}
+	if len(uniqueCol) == 0 {
+		return minFactor
+	}
+	// use the unique key info
+	for _, idx := range t.Indices {
+		if !idx.Info.Unique {
+			continue
+		}
+		unique := true
+		for _, col := range idx.Info.Columns {
+			if !uniqueCol[col.Name.L] {
+				unique = false
+				break
+			}
+		}
+		if unique {
+			return 1.0 / float64(t.Count)
 		}
 	}
 	return minFactor
@@ -88,7 +124,7 @@ func (t *Table) Selectivity(ctx sessionctx.Context, exprs []expression.Expressio
 	// TODO: If len(exprs) is bigger than 63, we could use bitset structure to replace the int64.
 	// This will simplify some code and speed up if we use this rather than a boolean slice.
 	if t.Pseudo || len(exprs) > 63 || (len(t.Columns) == 0 && len(t.Indices) == 0) {
-		return pseudoSelectivity(exprs), nil
+		return pseudoSelectivity(t, exprs), nil
 	}
 	var sets []*exprSet
 	sc := ctx.GetSessionVars().StmtCtx

@@ -52,9 +52,9 @@ func (msm *mockSessionManager) Kill(cid uint64, query bool) {
 
 func (s *testExecSuite) TestShowProcessList(c *C) {
 	// Compose schema.
-	names := []string{"Id", "User", "Host", "db", "Command", "Time", "State", "Info"}
+	names := []string{"Id", "User", "Host", "db", "Command", "Time", "State", "Info", "Mem"}
 	ftypes := []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar,
-		mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar, mysql.TypeString}
+		mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar, mysql.TypeString, mysql.TypeLonglong}
 	schema := buildSchema(names, ftypes)
 
 	// Compose a mocked session manager.
@@ -82,19 +82,24 @@ func (s *testExecSuite) TestShowProcessList(c *C) {
 	}
 
 	ctx := context.Background()
+	err := e.Open(ctx)
+	c.Assert(err, IsNil)
+
+	chk := e.newChunk()
+	it := chunk.NewIterator4Chunk(chk)
 	// Run test and check results.
 	for _, p := range ps {
-		chk := e.newChunk()
-		err := e.NextChunk(context.Background(), chk)
+		err = e.Next(context.Background(), chk)
 		c.Assert(err, IsNil)
-		it := chunk.NewIterator4Chunk(chk)
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			c.Assert(row.GetUint64(0), Equals, p.ID)
 		}
 	}
-	r, err := e.Next(ctx)
+	err = e.Next(context.Background(), chk)
 	c.Assert(err, IsNil)
-	c.Assert(r, IsNil)
+	c.Assert(chk.NumRows(), Equals, 0)
+	err = e.Close()
+	c.Assert(err, IsNil)
 }
 
 func buildSchema(names []string, ftypes []byte) *expression.Schema {

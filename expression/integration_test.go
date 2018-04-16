@@ -1378,11 +1378,11 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("00:01:23 AM"))
 
 	// for date_format
-	result = tk.MustQuery("SELECT DATE_FORMAT('2017-06-15', '%W %M %e %Y %r %y');")
+	result = tk.MustQuery(`SELECT DATE_FORMAT('2017-06-15', '%W %M %e %Y %r %y');`)
 	result.Check(testkit.Rows("Thursday June 15 2017 12:00:00 AM 17"))
-	result = tk.MustQuery("SELECT DATE_FORMAT(151113102019.12, '%W %M %e %Y %r %y');")
+	result = tk.MustQuery(`SELECT DATE_FORMAT(151113102019.12, '%W %M %e %Y %r %y');`)
 	result.Check(testkit.Rows("Friday November 13 2015 10:20:19 AM 15"))
-	result = tk.MustQuery("SELECT DATE_FORMAT('0000-00-00', '%W %M %e %Y %r %y');")
+	result = tk.MustQuery(`SELECT DATE_FORMAT('0000-00-00', '%W %M %e %Y %r %y');`)
 	result.Check(testkit.Rows("<nil>"))
 
 	// for yearweek
@@ -1451,11 +1451,11 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result = tk.MustQuery("SELECT UNIX_TIMESTAMP(20151113102019);")
 	result.Check(testkit.Rows("1447410019"))
 	result = tk.MustQuery("SELECT UNIX_TIMESTAMP('2015-11-13 10:20:19');")
-	result.Check(testkit.Rows("1447410019.000000"))
+	result.Check(testkit.Rows("1447410019"))
 	result = tk.MustQuery("SELECT UNIX_TIMESTAMP('2015-11-13 10:20:19.012');")
-	result.Check(testkit.Rows("1447410019.012000"))
+	result.Check(testkit.Rows("1447410019.012"))
 	result = tk.MustQuery("SELECT UNIX_TIMESTAMP('1970-01-01 00:00:00');")
-	result.Check(testkit.Rows("0.000000"))
+	result.Check(testkit.Rows("0"))
 	result = tk.MustQuery("SELECT UNIX_TIMESTAMP('1969-12-31 23:59:59');")
 	result.Check(testkit.Rows("0"))
 	result = tk.MustQuery("SELECT UNIX_TIMESTAMP('1970-13-01 00:00:00');")
@@ -1470,14 +1470,16 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("0"))
 	result = tk.MustQuery("SELECT UNIX_TIMESTAMP(12345);")
 	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("SELECT UNIX_TIMESTAMP('2017-01-01')")
+	result.Check(testkit.Rows("1483228800"))
 	// Test different time zone.
 	tk.MustExec("SET time_zone = '+08:00';")
 	result = tk.MustQuery("SELECT UNIX_TIMESTAMP('1970-01-01 00:00:00');")
 	result.Check(testkit.Rows("0"))
 	result = tk.MustQuery("SELECT UNIX_TIMESTAMP('1970-01-01 08:00:00');")
-	result.Check(testkit.Rows("0.000000"))
-	result = tk.MustQuery("SELECT UNIX_TIMESTAMP('2015-11-13 18:20:19.012');")
-	result.Check(testkit.Rows("1447410019.012000"))
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("SELECT UNIX_TIMESTAMP('2015-11-13 18:20:19.012'), UNIX_TIMESTAMP('2015-11-13 18:20:19.0123');")
+	result.Check(testkit.Rows("1447410019.012 1447410019.0123"))
 	result = tk.MustQuery("SELECT UNIX_TIMESTAMP('2038-01-19 11:14:07.999999');")
 	result.Check(testkit.Rows("2147483647.999999"))
 
@@ -2150,7 +2152,7 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 		{"a", "a", 1},
 		{"a", "b", 0},
 		{"aA", "Aa", 0},
-		{"aA%", "aAab", 1},
+		{`aA%`, "aAab", 1},
 		{"aA_", "Aaab", 0},
 		{"Aa_", "Aab", 1},
 		{"", "", 1},

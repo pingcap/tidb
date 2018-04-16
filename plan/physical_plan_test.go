@@ -769,8 +769,8 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 		},
 		// Test stream agg + index double.
 		{
-			sql:  "select sum(e), avg(b + c) from t where c = 1 and e = 1 group by c",
-			best: "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t))->StreamAgg",
+			sql:  "select sum(e), avg(b + c) from t where c = 1 and b = 1 group by c",
+			best: "IndexLookUp(Index(t.c_d_e)[[1,1]], Table(t)->Sel([eq(test.t.b, 1)]))->StreamAgg",
 		},
 		// Test hash agg + order.
 		{
@@ -1015,7 +1015,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 			best: "TableReader(Table(t)->Sel([like(test.t.c_str, _abc, 92)]))->Projection",
 		},
 		{
-			sql:  "select a from t where c_str like 'abc%'",
+			sql:  `select a from t where c_str like 'abc%'`,
 			best: "IndexReader(Index(t.c_d_e_str)[[abc,abd)])->Projection",
 		},
 		{

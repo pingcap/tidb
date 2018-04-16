@@ -534,11 +534,6 @@ func (mock *mockCopStreamClient) readBlockFromExecutor() (tipb.Chunk, bool, *cop
 
 func buildResp(chunks []tipb.Chunk, counts []int64, err error, warnings []error) *coprocessor.Response {
 	resp := &coprocessor.Response{}
-	// The counts was the output count of each executor, but now it is the scan count of each range,
-	// so we need a flag to tell them apart.
-	if counts != nil {
-		counts = append(counts, -1)
-	}
 	selResp := &tipb.SelectResponse{
 		Error:        toPBError(err),
 		Chunks:       chunks,

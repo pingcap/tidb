@@ -255,6 +255,14 @@ func checkColumnCantHaveDefaultValue(col *table.Column, value interface{}) (err 
 	return nil
 }
 
+// isExplicitTimeStamp is used to check if explicit_defaults_for_timestamp is on or off.
+// Check out this link for more details.
+// https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_explicit_defaults_for_timestamp
+func isExplicitTimeStamp() bool {
+	// TODO: implement the behavior as MySQL when explicit_defaults_for_timestamp = off, then this function could return false.
+	return true
+}
+
 // columnDefToCol converts ColumnDef to Col and TableConstraints.
 func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef) (*table.Column, []*ast.Constraint, error) {
 	var constraints = make([]*ast.Constraint, 0)
@@ -264,11 +272,13 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef) (
 		FieldType: *colDef.Tp,
 	})
 
-	// Check and set TimestampFlag and OnUpdateNowFlag.
-	if col.Tp == mysql.TypeTimestamp {
-		col.Flag |= mysql.TimestampFlag
-		col.Flag |= mysql.OnUpdateNowFlag
-		col.Flag |= mysql.NotNullFlag
+	if !isExplicitTimeStamp() {
+		// Check and set TimestampFlag, OnUpdateNowFlag and NotNullFlag.
+		if col.Tp == mysql.TypeTimestamp {
+			col.Flag |= mysql.TimestampFlag
+			col.Flag |= mysql.OnUpdateNowFlag
+			col.Flag |= mysql.NotNullFlag
+		}
 	}
 
 	setOnUpdateNow := false
@@ -740,14 +750,22 @@ func (d *ddl) CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.
 	return errors.Trace(err)
 }
 
-func (d *ddl) CreateTable(ctx sessionctx.Context, ident ast.Ident, colDefs []*ast.ColumnDef,
-	constraints []*ast.Constraint, options []*ast.TableOption) (err error) {
+func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err error) {
+	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
+	if s.ReferTable != nil {
+		referIdent := ast.Ident{Schema: s.ReferTable.Schema, Name: s.ReferTable.Name}
+		return d.CreateTableWithLike(ctx, ident, referIdent)
+	}
+	colDefs := s.Cols
 	is := d.GetInformationSchema()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenByArgs(ident.Schema)
 	}
 	if is.TableExists(ident.Schema, ident.Name) {
+		if s.IfNotExists {
+			return nil
+		}
 		return infoschema.ErrTableExists.GenByArgs(ident)
 	}
 	if err = checkTooLongTable(ident.Name); err != nil {
@@ -766,7 +784,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, ident ast.Ident, colDefs []*as
 		return errors.Trace(err)
 	}
 
-	cols, newConstraints, err := buildColumnsAndConstraints(ctx, colDefs, constraints)
+	cols, newConstraints, err := buildColumnsAndConstraints(ctx, colDefs, s.Constraints)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -780,6 +798,42 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, ident ast.Ident, colDefs []*as
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if s.Partition != nil {
+		pi := &model.PartitionInfo{
+			Type: s.Partition.Tp,
+			Expr: s.Partition.Expr.Text(),
+		}
+		if s.Partition.Expr != nil {
+			buf := new(bytes.Buffer)
+			s.Partition.Expr.Format(buf)
+			pi.Expr = buf.String()
+		} else if s.Partition.ColumnNames != nil {
+			pi.Columns = make([]model.CIStr, 0, len(s.Partition.ColumnNames))
+			for _, cn := range s.Partition.ColumnNames {
+				pi.Columns = append(pi.Columns, cn.Name)
+			}
+		}
+		for _, def := range s.Partition.Definitions {
+			// TODO: generate multiple global ID for paritions.
+			pid, err1 := d.genGlobalID()
+			if err1 != nil {
+				return errors.Trace(err1)
+			}
+			piDef := model.PartitionDefinition{
+				Name:     def.Name,
+				ID:       pid,
+				Comment:  def.Comment,
+				MaxValue: def.MaxValue,
+			}
+			for _, expr := range def.LessThan {
+				buf := new(bytes.Buffer)
+				expr.Format(buf)
+				piDef.LessThan = append(piDef.LessThan, buf.String())
+			}
+			pi.Definitions = append(pi.Definitions, piDef)
+		}
+		tbInfo.Partition = pi
+	}
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -789,7 +843,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, ident ast.Ident, colDefs []*as
 		Args:       []interface{}{tbInfo},
 	}
 
-	handleTableOptions(options, tbInfo)
+	handleTableOptions(s.Options, tbInfo)
 	err = checkCharsetAndCollation(tbInfo.Charset, tbInfo.Collate)
 	if err != nil {
 		return errors.Trace(err)
@@ -801,6 +855,11 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, ident ast.Ident, colDefs []*as
 			// If the first id is expected to greater than 1, we need to do rebase.
 			err = d.handleAutoIncID(tbInfo, schema.ID)
 		}
+	}
+
+	// table exists, but if_not_exists flags is true, so we ignore this error.
+	if infoschema.ErrTableExists.Equal(err) && s.IfNotExists {
+		return nil
 	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
@@ -934,6 +993,9 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 					err = d.ShardRowID(ctx, ident, opt.UintValue)
 				case ast.TableOptionAutoIncrement:
 					err = d.RebaseAutoID(ctx, ident, int64(opt.UintValue))
+				case ast.TableOptionComment:
+					spec.Comment = opt.StrValue
+					err = d.AlterTableComment(ctx, ident, spec)
 				}
 				if err != nil {
 					return errors.Trace(err)
@@ -1293,6 +1355,14 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	if col == nil {
 		return nil, infoschema.ErrColumnNotExists.GenByArgs(originalColName, ident.Name)
 	}
+	newColName := specNewColumn.Name.Name
+	// If we want to rename the column name, we need to check whether it already exists.
+	if newColName.L != originalColName.L {
+		c := table.FindCol(t.Cols(), newColName.L)
+		if c != nil {
+			return nil, infoschema.ErrColumnExists.GenByArgs(newColName)
+		}
+	}
 
 	// Constraints in the new column means adding new constraints. Errors should thrown,
 	// which will be done by `setDefaultAndComment` later.
@@ -1303,11 +1373,9 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 
 	newCol := table.ToColumn(&model.ColumnInfo{
 		ID:                 col.ID,
-		Offset:             col.Offset,
-		State:              col.State,
 		OriginDefaultValue: col.OriginDefaultValue,
 		FieldType:          *specNewColumn.Tp,
-		Name:               specNewColumn.Name.Name,
+		Name:               newColName,
 	})
 
 	err = setCharsetCollationFlenDecimal(&newCol.FieldType)
@@ -1441,6 +1509,32 @@ func (d *ddl) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 		Type:       model.ActionSetDefaultValue,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{col},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+// AlterTableComment updates the table comment information.
+func (d *ddl) AlterTableComment(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	is := d.infoHandle.Get()
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenByArgs(ident.Schema)
+	}
+
+	tb, err := is.TableByName(ident.Schema, ident.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ident.Schema, ident.Name))
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tb.Meta().ID,
+		Type:       model.ActionModifyTableComment,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{spec.Comment},
 	}
 
 	err = d.doDDLJob(ctx, job)

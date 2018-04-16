@@ -260,6 +260,7 @@ import (
 	cascaded	"CASCADED"
 	charsetKwd	"CHARSET"
 	checksum	"CHECKSUM"
+	cleanup		"CLEANUP"
 	client		"CLIENT"
 	coalesce	"COALESCE"
 	collation	"COLLATION"
@@ -665,6 +666,7 @@ import (
 	PartitionDefinitionListOpt	"Partition definition list option"
 	PartitionOpt			"Partition option"
 	PartitionNumOpt			"PARTITION NUM option"
+	PartDefCommentOpt		"Partition comment"
 	PartDefValuesOpt		"VALUES {LESS THAN {(expr | value_list) | MAXVALUE} | IN {value_list}"
 	PartDefStorageOpt		"ENGINE = xxx or empty"
 	PasswordOpt			"Password option"
@@ -1702,12 +1704,17 @@ CreateTableStmt:
 			yylex.Errorf("Column Definition List can't be empty.")
 			return 1
 		}
+		var part *ast.PartitionOptions
+		if $9 != nil {
+			part = $9.(*ast.PartitionOptions)
+		}
 		$$ = &ast.CreateTableStmt{
 			Table:          $4.(*ast.TableName),
 			IfNotExists:    $3.(bool),
 			Cols:           columnDefs,
 			Constraints:    constraints,
 			Options:        $8.([]*ast.TableOption),
+			Partition:	part,
 		}
 	}
 |	"CREATE" "TABLE" IfNotExists TableName "LIKE" TableName
@@ -1724,15 +1731,41 @@ DefaultKwdOpt:
 |	"DEFAULT"
 
 PartitionOpt:
-	{}
+	{
+		$$ = nil
+	}
 |	"PARTITION" "BY" "KEY" '(' ColumnNameList ')' PartitionNumOpt PartitionDefinitionListOpt
-	{}
+	{
+		$$ = nil
+	}
 |	"PARTITION" "BY" "HASH" '(' Expression ')' PartitionNumOpt PartitionDefinitionListOpt
-	{}
+	{
+		$$ = nil
+	}
 |	"PARTITION" "BY" "RANGE" '(' Expression ')' PartitionNumOpt  PartitionDefinitionListOpt
-	{}
+	{
+		var defs []*ast.PartitionDefinition
+		if $8 != nil {
+			defs = $8.([]*ast.PartitionDefinition)
+		}
+		$$ = &ast.PartitionOptions{
+			Tp:		model.PartitionTypeRange,
+			Expr:		$5.(ast.ExprNode),
+			Definitions:	defs,
+		}
+	}
 |	"PARTITION" "BY" "RANGE" "COLUMNS" '(' ColumnNameList ')' PartitionNumOpt PartitionDefinitionListOpt
-	{}
+	{
+		var defs []*ast.PartitionDefinition
+		if $9 != nil {
+			defs = $9.([]*ast.PartitionDefinition)
+		}
+		$$ = &ast.PartitionOptions{
+			Tp:		model.PartitionTypeRange,
+			ColumnNames:	$6.([]*ast.ColumnName),
+			Definitions:	defs,
+		}
+	}
 
 PartitionNumOpt:
 	{}
@@ -1740,33 +1773,65 @@ PartitionNumOpt:
 	{}
 
 PartitionDefinitionListOpt:
-	{}
+	{
+		$$ = nil
+	}
 |	'(' PartitionDefinitionList ')'
-	{}
+	{
+		$$ = $2.([]*ast.PartitionDefinition)
+	}
 
 PartitionDefinitionList:
 	PartitionDefinition
-	{}
+	{
+		$$ = []*ast.PartitionDefinition{$1.(*ast.PartitionDefinition)}
+	}
 |	PartitionDefinitionList ',' PartitionDefinition
-	{}
+	{
+		$$ = append($1.([]*ast.PartitionDefinition), $3.(*ast.PartitionDefinition))
+	}
 
 PartitionDefinition:
 	"PARTITION" Identifier PartDefValuesOpt PartDefCommentOpt PartDefStorageOpt
-	{}
+	{
+		partDef := &ast.PartitionDefinition{
+			Name:		$2,
+			Comment:	$4.(string),
+		}
+		switch $3.(type) {
+		case []ast.ExprNode:
+			partDef.LessThan = $3.([]ast.ExprNode)
+		case bool:
+			partDef.MaxValue = true
+		}
+		$$ = partDef
+	}
 
 PartDefCommentOpt:
-	{}
+	{
+		$$ = ""
+	}
 |	"COMMENT" eq stringLit
-	{}
+	{
+		$$ = $3
+	}
 
 PartDefValuesOpt:
-	{}
+	{
+		$$ = nil
+	}
 |	"VALUES" "LESS" "THAN" "MAXVALUE"
-	{}
+	{
+		$$ = true
+	}
 |	"VALUES" "LESS" "THAN" '(' "MAXVALUE" ')'
-	{}
+	{
+		$$ = true
+	}
 |	"VALUES" "LESS" "THAN" '(' ExpressionList ')'
-	{}
+	{
+		$$ = $5
+	}
 
 PartDefStorageOpt:
 	{}
@@ -2532,7 +2597,7 @@ Identifier:
 identifier | UnReservedKeyword | NotKeywordToken | TiDBKeyword
 
 UnReservedKeyword:
- "ACTION" | "ASCII" | "AUTO_INCREMENT" | "AFTER" | "ALWAYS" | "AVG" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "BTREE" | "BYTE" | "CHARSET"
+ "ACTION" | "ASCII" | "AUTO_INCREMENT" | "AFTER" | "ALWAYS" | "AVG" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "BTREE" | "BYTE" | "CLEANUP" | "CHARSET"
 | "COLUMNS" | "COMMIT" | "COMPACT" | "COMPRESSED" | "CONSISTENT" | "DATA" | "DATE" %prec lowerThanStringLitToken| "DATETIME" | "DAY" | "DEALLOCATE" | "DO" | "DUPLICATE"
 | "DYNAMIC"| "END" | "ENGINE" | "ENGINES" | "ENUM" | "ESCAPE" | "EXECUTE" | "FIELDS" | "FIRST" | "FIXED" | "FLUSH" | "FORMAT" | "FULL" |"GLOBAL"
 | "HASH" | "HOUR" | "LESS" | "LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "REDUNDANT"
@@ -3709,6 +3774,9 @@ CastType:
 	{
 		x := types.NewFieldType(mysql.TypeVarString)
 		x.Flen = $2.(int)  // TODO: Flen should be the flen of expression
+		if x.Flen != types.UnspecifiedLength {
+			x.Tp = mysql.TypeString
+		}
 		x.Charset = charset.CharsetBin
 		x.Collate = charset.CollationBin
 		x.Flag |= mysql.BinaryFlag
@@ -4556,7 +4624,14 @@ SetStmt:
 	}
 |	"SET" "TRANSACTION" TransactionChars
 	{
-		$$ = &ast.SetStmt{Variables: $3.([]*ast.VariableAssignment)}
+		assigns := $3.([]*ast.VariableAssignment)
+		for i:=0; i<len(assigns); i++ {
+			if assigns[i].Name == "tx_isolation" {
+				// A special session variable that make setting tx_isolation take effect one time.
+				assigns[i].Name = "tx_isolation_one_shot"
+			}
+		}
+		$$ = &ast.SetStmt{Variables: assigns}
 	}
 
 TransactionChars:
@@ -4819,6 +4894,14 @@ AdminStmt:
 	{
 		$$ = &ast.AdminStmt{
 			Tp: ast.AdminRecoverIndex,
+			Tables: []*ast.TableName{$4.(*ast.TableName)},
+			Index: string($5),
+		}
+	}
+|	"ADMIN" "CLEANUP" "INDEX" TableName Identifier
+	{
+		$$ = &ast.AdminStmt{
+			Tp: ast.AdminCleanupIndex,
 			Tables: []*ast.TableName{$4.(*ast.TableName)},
 			Index: string($5),
 		}

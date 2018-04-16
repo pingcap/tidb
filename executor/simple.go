@@ -47,8 +47,8 @@ type SimpleExec struct {
 	is        infoschema.InfoSchema
 }
 
-// NextChunk implements the Executor NextChunk interface.
-func (e *SimpleExec) NextChunk(ctx context.Context, chk *chunk.Chunk) (err error) {
+// Next implements the Executor Next interface.
+func (e *SimpleExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 	if e.done {
 		return nil
 	}

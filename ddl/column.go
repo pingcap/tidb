@@ -440,7 +440,7 @@ func (d *ddl) onModifyColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) 
 }
 
 // doModifyColumn updates the column information and reorders all columns.
-func (d *ddl) doModifyColumn(t *meta.Meta, job *model.Job, col *model.ColumnInfo, oldName *model.CIStr, pos *ast.ColumnPosition) (ver int64, _ error) {
+func (d *ddl) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldName *model.CIStr, pos *ast.ColumnPosition) (ver int64, _ error) {
 	tblInfo, err := getTableInfo(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -451,7 +451,18 @@ func (d *ddl) doModifyColumn(t *meta.Meta, job *model.Job, col *model.ColumnInfo
 		job.State = model.JobStateCancelled
 		return ver, infoschema.ErrColumnNotExists.GenByArgs(oldName, tblInfo.Name)
 	}
+	// If we want to rename the column name, we need to check whether it already exists.
+	if newCol.Name.L != oldName.L {
+		c := findCol(tblInfo.Columns, newCol.Name.L)
+		if c != nil {
+			job.State = model.JobStateCancelled
+			return ver, infoschema.ErrColumnExists.GenByArgs(newCol.Name)
+		}
+	}
 
+	// We need the latest column's offset and state. This information can be obtained from the store.
+	newCol.Offset = oldCol.Offset
+	newCol.State = oldCol.State
 	// Calculate column's new position.
 	oldPos, newPos := oldCol.Offset, oldCol.Offset
 	if pos.Tp == ast.ColumnPositionAfter {
@@ -477,10 +488,10 @@ func (d *ddl) doModifyColumn(t *meta.Meta, job *model.Job, col *model.ColumnInfo
 	}
 
 	columnChanged := make(map[string]*model.ColumnInfo)
-	columnChanged[oldName.L] = col
+	columnChanged[oldName.L] = newCol
 
 	if newPos == oldPos {
-		tblInfo.Columns[newPos] = col
+		tblInfo.Columns[newPos] = newCol
 	} else {
 		cols := tblInfo.Columns
 
@@ -490,7 +501,7 @@ func (d *ddl) doModifyColumn(t *meta.Meta, job *model.Job, col *model.ColumnInfo
 		} else {
 			copy(cols[oldPos:], cols[oldPos+1:newPos+1])
 		}
-		cols[newPos] = col
+		cols[newPos] = newCol
 
 		for i, col := range tblInfo.Columns {
 			if col.Offset != i {
