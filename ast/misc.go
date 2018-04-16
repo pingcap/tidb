@@ -570,7 +570,14 @@ const (
 	AdminCheckTable
 	AdminShowDDLJobs
 	AdminCancelDDLJobs
+	AdminCheckIndex
 )
+
+// HandleRange represents a range where handle value >= Begin and < End.
+type HandleRange struct {
+	Begin int64
+	End   int64
+}
 
 // AdminStmt is the struct for Admin statement.
 type AdminStmt struct {
@@ -579,6 +586,9 @@ type AdminStmt struct {
 	Tp     AdminStmtType
 	Tables []*TableName
 	JobIDs []int64
+
+	IndexName    string
+	HandleRanges []HandleRange
 }
 
 // Accept implements Node Accpet interface.

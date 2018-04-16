@@ -545,6 +545,8 @@ import (
 	GroupByClause			"GROUP BY clause"
 	HashString			"Hashed string"
 	HavingClause			"HAVING clause"
+	HandleRange			"handle range"
+	HandleRangeList			"handle range list"
 	IfExists			"If Exists"
 	IfNotExists			"If Not Exists"
 	IgnoreOptional			"IGNORE or empty"
@@ -4484,6 +4486,31 @@ AdminStmt:
 			Tp: ast.AdminCancelDDLJobs,
 			JobIDs: $5.([]int64),
 		}
+	}
+|	"ADMIN" "CHECK" "INDEX" TableName IndexName HandleRangeList
+	{
+		$$ = &ast.AdminStmt{
+			Tp: ast.AdminCheckIndex,
+			Tables:	[]*ast.TableName{$4.(*ast.TableName)},
+			IndexName: $5.(string),
+			HandleRanges: $6.([]ast.HandleRange),
+		}
+	}
+
+HandleRangeList:
+	HandleRange
+	{
+		$$ = []ast.HandleRange{$1.(ast.HandleRange)}
+	}
+|	HandleRangeList ',' HandleRange
+	{
+		$$ = append($1.([]ast.HandleRange), $3.(ast.HandleRange))
+	}
+
+HandleRange:
+	'(' NUM ',' NUM ')'
+	{
+		$$ = ast.HandleRange{Begin: $2.(int64), End: $4.(int64)}
 	}
 
 NumList:
