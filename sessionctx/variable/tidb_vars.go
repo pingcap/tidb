@@ -98,6 +98,9 @@ const (
 
 	// tidb_enable_streaming enables TiDB to use streaming API for coprocessor requests.
 	TiDBEnableStreaming = "tidb_enable_streaming"
+
+	// tidb_optimizer_selectivity_level is used for control the content of each operator's statistic information.
+	TiDBOptimizerSelectivityLevel = "tidb_optimizer_selectivity_level"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -144,9 +147,6 @@ const (
 	// tidb_hash_join_concurrency is used for hash join executor.
 	// The hash join outer executor starts multiple concurrent join workers to probe the hash table.
 	TiDBHashJoinConcurrency = "tidb_hash_join_concurrency"
-
-	// tidb_optimier_selectivity_level is used for control the content of each operator's statistic information.
-	TiDBOptimizerSelectivityLevel = "tidb_optimizer_selectivity_level"
 )
 
 // Default TiDB system variable values.
