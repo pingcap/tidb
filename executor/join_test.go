@@ -252,6 +252,15 @@ func (s *testSuite) TestJoin(c *C) {
 	}
 	result = tk.MustQuery("select /*+ TIDB_HJ(s, r) */ * from t as s join t as r on s.a = r.a limit 1;")
 	result.Check(testkit.Rows("1 1"))
+
+	tk.MustExec("drop table if exists user, aa, bb")
+	tk.MustExec("create table aa(id int)")
+	tk.MustExec("insert into aa values(1)")
+	tk.MustExec("create table bb(id int)")
+	tk.MustExec("insert into bb values(1)")
+	tk.MustExec("create table user(id int, name varchar(20))")
+	tk.MustExec("insert into user values(1, 'a'), (2, 'b')")
+	tk.MustQuery("select user.id,user.name from user left join aa on aa.id = user.id left join bb on aa.id = bb.id where bb.id < 10;").Check(testkit.Rows("1 a"))
 }
 
 func (s *testSuite) TestJoinCast(c *C) {
