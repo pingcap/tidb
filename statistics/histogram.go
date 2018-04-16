@@ -258,6 +258,8 @@ func SaveMetaToStorage(sctx sessionctx.Context, tableID, count, modifyCount int6
 	var sql string
 	sql = fmt.Sprintf("replace into mysql.stats_meta (version, table_id, count, modify_count) values (%d, %d, %d, %d)", version, tableID, count, modifyCount)
 	if _, err = exec.Execute(ctx, sql); err != nil {
+		_, err1 := exec.Execute(ctx, "rollback")
+		terror.Log(errors.Trace(err1))
 		return errors.Trace(err)
 	}
 	_, err = exec.Execute(ctx, "commit")
