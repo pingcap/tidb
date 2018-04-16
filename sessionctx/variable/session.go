@@ -149,6 +149,9 @@ func (ib *WriteStmtBufs) clean() {
 
 // SessionVars is to handle user-defined or global variables in the current session.
 type SessionVars struct {
+	Concurrency
+	MemQuota
+	BatchSize
 	// UsersLock is a lock for user defined variables.
 	UsersLock sync.RWMutex
 	// Users are user defined variables.
@@ -259,66 +262,15 @@ type SessionVars struct {
 	// SkipUTF8Check check on input value.
 	SkipUTF8Check bool
 
-	// BuildStatsConcurrencyVar is used to control statistics building concurrency.
-	BuildStatsConcurrencyVar int
-
-	// IndexJoinBatchSize is the batch size of a index lookup join.
-	IndexJoinBatchSize int
-
-	// IndexLookupSize is the number of handles for an index lookup task in index double read executor.
-	IndexLookupSize int
-
-	// IndexLookupConcurrency is the number of concurrent index lookup worker.
-	IndexLookupConcurrency int
-
-	// IndexLookupJoinConcurrency is the number of concurrent index lookup join inner worker.
-	IndexLookupJoinConcurrency int
-
-	// DistSQLScanConcurrency is the number of concurrent dist SQL scan worker.
-	DistSQLScanConcurrency int
-
-	// HashJoinConcurrency is the number of concurrent hash join outer worker.
-	HashJoinConcurrency int
-
-	// IndexSerialScanConcurrency is the number of concurrent index serial scan worker.
-	IndexSerialScanConcurrency int
-
 	// BatchInsert indicates if we should split insert data into multiple batches.
 	BatchInsert bool
 
 	// BatchDelete indicates if we should split delete data into multiple batches.
 	BatchDelete bool
 
-	// DMLBatchSize indicates the size of batches for DML.
-	// It will be used when BatchInsert or BatchDelete is on.
-	DMLBatchSize int
-
-	// MaxRowCountForINLJ defines max row count that the outer table of index nested loop join could be without force hint.
-	MaxRowCountForINLJ int
-
 	// IDAllocator is provided by kvEncoder, if it is provided, we will use it to alloc auto id instead of using
 	// Table.alloc.
 	IDAllocator autoid.Allocator
-
-	// MaxChunkSize defines max row count of a Chunk during query execution.
-	MaxChunkSize int
-
-	// MemQuotaQuery defines the memory quota for a query.
-	MemQuotaQuery int64
-	// MemQuotaHashJoin defines the memory quota for a hash join executor.
-	MemQuotaHashJoin int64
-	// MemQuotaMergeJoin defines the memory quota for a merge join executor.
-	MemQuotaMergeJoin int64
-	// MemQuotaSort defines the memory quota for a sort executor.
-	MemQuotaSort int64
-	// MemQuotaTopn defines the memory quota for a top n executor.
-	MemQuotaTopn int64
-	// MemQuotaIndexLookupReader defines the memory quota for a index lookup reader executor.
-	MemQuotaIndexLookupReader int64
-	// MemQuotaIndexLookupJoin defines the memory quota for a index lookup join executor.
-	MemQuotaIndexLookupJoin int64
-	// MemQuotaNestedLoopApply defines the memory quota for a nested loop apply executor.
-	MemQuotaNestedLoopApply int64
 
 	// EnableStreaming indicates whether the coprocessor request can use streaming API.
 	// TODO: remove this after tidb-server configuration "enable-streaming' removed.
@@ -330,35 +282,41 @@ type SessionVars struct {
 // NewSessionVars creates a session vars object.
 func NewSessionVars() *SessionVars {
 	vars := &SessionVars{
-		Users:                      make(map[string]string),
-		systems:                    make(map[string]string),
-		PreparedStmts:              make(map[uint32]interface{}),
-		PreparedStmtNameToID:       make(map[string]uint32),
-		PreparedParams:             make([]interface{}, 10),
-		TxnCtx:                     &TransactionContext{},
-		RetryInfo:                  &RetryInfo{},
-		StrictSQLMode:              true,
-		Status:                     mysql.ServerStatusAutocommit,
-		StmtCtx:                    new(stmtctx.StatementContext),
-		AllowAggPushDown:           false,
+		Users:                make(map[string]string),
+		systems:              make(map[string]string),
+		PreparedStmts:        make(map[uint32]interface{}),
+		PreparedStmtNameToID: make(map[string]uint32),
+		PreparedParams:       make([]interface{}, 10),
+		TxnCtx:               &TransactionContext{},
+		RetryInfo:            &RetryInfo{},
+		StrictSQLMode:        true,
+		Status:               mysql.ServerStatusAutocommit,
+		StmtCtx:              new(stmtctx.StatementContext),
+		AllowAggPushDown:     false,
+	}
+	vars.Concurrency = Concurrency{
 		BuildStatsConcurrencyVar:   DefBuildStatsConcurrency,
-		IndexJoinBatchSize:         DefIndexJoinBatchSize,
-		IndexLookupSize:            DefIndexLookupSize,
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
 		IndexSerialScanConcurrency: DefIndexSerialScanConcurrency,
 		IndexLookupJoinConcurrency: DefIndexLookupJoinConcurrency,
 		HashJoinConcurrency:        DefTiDBHashJoinConcurrency,
 		DistSQLScanConcurrency:     DefDistSQLScanConcurrency,
-		MaxChunkSize:               DefMaxChunkSize,
-		DMLBatchSize:               DefDMLBatchSize,
-		MemQuotaQuery:              DefTiDBMemQuotaQuery,
-		MemQuotaHashJoin:           DefTiDBMemQuotaHashJoin,
-		MemQuotaMergeJoin:          DefTiDBMemQuotaMergeJoin,
-		MemQuotaSort:               DefTiDBMemQuotaSort,
-		MemQuotaTopn:               DefTiDBMemQuotaTopn,
-		MemQuotaIndexLookupReader:  DefTiDBMemQuotaIndexLookupReader,
-		MemQuotaIndexLookupJoin:    DefTiDBMemQuotaIndexLookupJoin,
-		MemQuotaNestedLoopApply:    DefTiDBMemQuotaNestedLoopApply,
+	}
+	vars.MemQuota = MemQuota{
+		MemQuotaQuery:             DefTiDBMemQuotaQuery,
+		MemQuotaHashJoin:          DefTiDBMemQuotaHashJoin,
+		MemQuotaMergeJoin:         DefTiDBMemQuotaMergeJoin,
+		MemQuotaSort:              DefTiDBMemQuotaSort,
+		MemQuotaTopn:              DefTiDBMemQuotaTopn,
+		MemQuotaIndexLookupReader: DefTiDBMemQuotaIndexLookupReader,
+		MemQuotaIndexLookupJoin:   DefTiDBMemQuotaIndexLookupJoin,
+		MemQuotaNestedLoopApply:   DefTiDBMemQuotaNestedLoopApply,
+	}
+	vars.BatchSize = BatchSize{
+		IndexJoinBatchSize: DefIndexJoinBatchSize,
+		IndexLookupSize:    DefIndexLookupSize,
+		MaxChunkSize:       DefMaxChunkSize,
+		DMLBatchSize:       DefDMLBatchSize,
 	}
 	var enableStreaming string
 	if config.GetGlobalConfig().EnableStreaming {
@@ -578,4 +536,61 @@ type TableDelta struct {
 	Delta   int64
 	Count   int64
 	ColSize map[int64]int64
+}
+
+// Concurrency defines concurrency values.
+type Concurrency struct {
+	// BuildStatsConcurrencyVar is used to control statistics building concurrency.
+	BuildStatsConcurrencyVar int
+
+	// IndexLookupConcurrency is the number of concurrent index lookup worker.
+	IndexLookupConcurrency int
+
+	// IndexLookupJoinConcurrency is the number of concurrent index lookup join inner worker.
+	IndexLookupJoinConcurrency int
+
+	// DistSQLScanConcurrency is the number of concurrent dist SQL scan worker.
+	DistSQLScanConcurrency int
+
+	// HashJoinConcurrency is the number of concurrent hash join outer worker.
+	HashJoinConcurrency int
+
+	// IndexSerialScanConcurrency is the number of concurrent index serial scan worker.
+	IndexSerialScanConcurrency int
+}
+
+// MemQuota defines memory quota values.
+type MemQuota struct {
+	// MemQuotaQuery defines the memory quota for a query.
+	MemQuotaQuery int64
+	// MemQuotaHashJoin defines the memory quota for a hash join executor.
+	MemQuotaHashJoin int64
+	// MemQuotaMergeJoin defines the memory quota for a merge join executor.
+	MemQuotaMergeJoin int64
+	// MemQuotaSort defines the memory quota for a sort executor.
+	MemQuotaSort int64
+	// MemQuotaTopn defines the memory quota for a top n executor.
+	MemQuotaTopn int64
+	// MemQuotaIndexLookupReader defines the memory quota for a index lookup reader executor.
+	MemQuotaIndexLookupReader int64
+	// MemQuotaIndexLookupJoin defines the memory quota for a index lookup join executor.
+	MemQuotaIndexLookupJoin int64
+	// MemQuotaNestedLoopApply defines the memory quota for a nested loop apply executor.
+	MemQuotaNestedLoopApply int64
+}
+
+// BatchSize defines batch size values.
+type BatchSize struct {
+	// DMLBatchSize indicates the size of batches for DML.
+	// It will be used when BatchInsert or BatchDelete is on.
+	DMLBatchSize int
+
+	// IndexJoinBatchSize is the batch size of a index lookup join.
+	IndexJoinBatchSize int
+
+	// IndexLookupSize is the number of handles for an index lookup task in index double read executor.
+	IndexLookupSize int
+
+	// MaxChunkSize defines max row count of a Chunk during query execution.
+	MaxChunkSize int
 }

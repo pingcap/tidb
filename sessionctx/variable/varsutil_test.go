@@ -15,6 +15,7 @@ package variable
 
 import (
 	"encoding/json"
+	"reflect"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -74,6 +75,17 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.MemQuotaIndexLookupReader, Equals, int64(DefTiDBMemQuotaIndexLookupReader))
 	c.Assert(vars.MemQuotaIndexLookupJoin, Equals, int64(DefTiDBMemQuotaIndexLookupJoin))
 	c.Assert(vars.MemQuotaNestedLoopApply, Equals, int64(DefTiDBMemQuotaNestedLoopApply))
+
+	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.Concurrency))
+	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.MemQuota))
+	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.BatchSize))
+}
+
+func assertFieldsGreaterThanZero(c *C, val reflect.Value) {
+	for i := 0; i < val.NumField(); i++ {
+		fieldVal := val.Field(i)
+		c.Assert(fieldVal.Int(), Greater, int64(0))
+	}
 }
 
 func (s *testVarsutilSuite) TestVarsutil(c *C) {
