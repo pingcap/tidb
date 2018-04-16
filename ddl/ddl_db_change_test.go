@@ -515,6 +515,7 @@ func (s *testStateChangeSuite) TestParallelChangeColumnName(c *C) {
 		once.Do(func() {
 			var qLen int64
 			var err error
+			// Make sure the both DDL statements have entered the DDL queue before running the DDL jobs.
 			for {
 				kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
 					m := meta.NewMeta(txn)
@@ -534,6 +535,7 @@ func (s *testStateChangeSuite) TestParallelChangeColumnName(c *C) {
 	d := s.dom.DDL()
 	d.SetHook(callback)
 
+	// Use two sessions to run DDL statements in parallel.
 	wg := sync.WaitGroup{}
 	var err1 error
 	var err2 error
@@ -550,13 +552,13 @@ func (s *testStateChangeSuite) TestParallelChangeColumnName(c *C) {
 		defer wg.Done()
 		_, err1 = se.Execute(context.Background(), "ALTER TABLE t CHANGE a aa int;")
 	}()
-
 	go func() {
 		defer wg.Done()
 		_, err2 = se1.Execute(context.Background(), "ALTER TABLE t CHANGE b aa int;")
 	}()
 
 	wg.Wait()
+	// Make sure only a DDL encounters the error of 'duplicate column name'.
 	var oneErr error
 	if (err1 != nil && err2 == nil) || (err1 == nil && err2 != nil) {
 		if err1 != nil {
