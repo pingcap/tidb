@@ -198,76 +198,64 @@ func (pc PbConverter) columnToPBExpr(column *Column) *tipb.Expr {
 }
 
 func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
-	switch expr.FuncName.L {
-	case ast.LT, ast.LE, ast.EQ, ast.NE, ast.GE, ast.GT,
-		ast.NullEQ:
-		return pc.compareOpsToPBExpr(expr)
-	case ast.Like:
-		return pc.likeToPBExpr(expr)
-	case ast.Plus, ast.Minus, ast.Mul, ast.Div:
-		return pc.arithmeticalOpsToPBExpr(expr)
-	case ast.LogicAnd, ast.LogicOr, ast.UnaryNot, ast.LogicXor:
-		return pc.logicalOpsToPBExpr(expr)
-	case ast.And, ast.Or, ast.BitNeg, ast.Xor:
-		return pc.bitwiseFuncToPBExpr(expr)
-	case ast.Case, ast.Coalesce, ast.If, ast.Ifnull, ast.IsNull, ast.IsTruth, ast.IsFalsity, ast.In:
-		return pc.builtinFuncToPBExpr(expr)
-	case ast.JSONType, ast.JSONExtract, ast.JSONUnquote, ast.JSONValid,
-		ast.JSONObject, ast.JSONArray, ast.JSONMerge, ast.JSONSet,
-		ast.JSONInsert, ast.JSONReplace, ast.JSONRemove, ast.JSONContains:
-		return pc.jsonFuncToPBExpr(expr)
-	case ast.DateFormat:
-		return pc.dateFuncToPBExpr(expr)
-	default:
+	// check whether this function can be pushed.
+	if !pc.canFuncBePushed(expr) {
 		return nil
 	}
-}
 
-func (pc PbConverter) compareOpsToPBExpr(expr *ScalarFunction) *tipb.Expr {
-	var tp tipb.ExprType
-	switch expr.FuncName.L {
-	case ast.LT:
-		tp = tipb.ExprType_LT
-	case ast.LE:
-		tp = tipb.ExprType_LE
-	case ast.EQ:
-		tp = tipb.ExprType_EQ
-	case ast.NE:
-		tp = tipb.ExprType_NE
-	case ast.GE:
-		tp = tipb.ExprType_GE
-	case ast.GT:
-		tp = tipb.ExprType_GT
-	case ast.NullEQ:
-		tp = tipb.ExprType_NullEQ
-	}
-	return pc.convertToPBExpr(expr, tp)
-}
-
-func (pc PbConverter) likeToPBExpr(expr *ScalarFunction) *tipb.Expr {
-	if !pc.client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tipb.ExprType_Like)) {
+	// check whether this function has ProtoBuf signature.
+	pbCode := expr.Function.PbCode()
+	if pbCode <= 0 {
 		return nil
 	}
-	return pc.convertToPBExpr(expr, tipb.ExprType_Like)
+
+	// check whether all of its parameters can be pushed.
+	children := make([]*tipb.Expr, 0, len(expr.GetArgs()))
+	for _, arg := range expr.GetArgs() {
+		pbArg := pc.ExprToPB(arg)
+		if pbArg == nil {
+			return nil
+		}
+		children = append(children, pbArg)
+	}
+
+	// construct expression ProtoBuf.
+	return &tipb.Expr{
+		Tp:        tipb.ExprType_ScalarFunc,
+		Sig:       pbCode,
+		Children:  children,
+		FieldType: toPBFieldType(expr.RetType),
+	}
 }
 
-func (pc PbConverter) arithmeticalOpsToPBExpr(expr *ScalarFunction) *tipb.Expr {
-	var tp tipb.ExprType
-	switch expr.FuncName.L {
-	case ast.Plus:
-		tp = tipb.ExprType_Plus
-	case ast.Minus:
-		tp = tipb.ExprType_Minus
-	case ast.Mul:
-		tp = tipb.ExprType_Mul
-	case ast.Div:
-		tp = tipb.ExprType_Div
-	case ast.Mod:
-		tp = tipb.ExprType_Mod
-	case ast.IntDiv:
-		tp = tipb.ExprType_IntDiv
+func (pc PbConverter) canFuncBePushed(scalaFunc *ScalarFunction) bool {
+	if false || // make golang happy.
+
+		// compare functions.
+		scalaFunc.FuncName.L == ast.LT ||
+		scalaFunc.FuncName.L == ast.LE ||
+		scalaFunc.FuncName.L == ast.EQ ||
+		scalaFunc.FuncName.L == ast.NE ||
+		scalaFunc.FuncName.L == ast.GE ||
+		scalaFunc.FuncName.L == ast.GT ||
+		scalaFunc.FuncName.L == ast.NullEQ ||
+
+		// like functions.
+		scalaFunc.FuncName.L == ast.Like ||
+
+		// arithmetical functions.
+		scalaFunc.FuncName.L == ast.Plus ||
+		scalaFunc.FuncName.L == ast.Minus ||
+		scalaFunc.FuncName.L == ast.Mul ||
+		scalaFunc.FuncName.L == ast.Div ||
+		scalaFunc.FuncName.L == ast.Mod ||
+		scalaFunc.FuncName.L == ast.IntDiv ||
+
+		// make golang happy.
+		false {
+		return true
 	}
-	return pc.convertToPBExpr(expr, tp)
+	return false
 }
 
 func (pc PbConverter) logicalOpsToPBExpr(expr *ScalarFunction) *tipb.Expr {
