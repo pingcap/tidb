@@ -432,7 +432,7 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 	d.SetHook(callback)
 }
 
-func (s *testStateChangeSuite) TestParallelDDL(c *C) {
+func (s *testStateChangeSuite) TestParallelAlterModifyColumn(c *C) {
 	_, err := s.se.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
 	_, err = s.se.Execute(context.Background(), "create table t(a int, b int, c int)")
@@ -500,8 +500,18 @@ func (s *testStateChangeSuite) TestParallelDDL(c *C) {
 	d.SetHook(callback)
 }
 
-// TestCreateIfNotExists parallel exec create table if not exists xxx. No error returns is expected.
-func (s *testStateChangeSuite) TestCreateIfNotExists(c *C) {
+func (s *testStateChangeSuite) testParrallelExecSQL(c *C, sql string) {
+	se, err := session.CreateSession(s.store)
+	_, err = se.Execute(context.Background(), "use test_db_state")
+	c.Assert(err, IsNil)
+
+	se1, err1 := session.CreateSession(s.store)
+	_, err = se1.Execute(context.Background(), "use test_db_state")
+	c.Assert(err1, IsNil)
+
+	var err2, err3 error
+	wg := sync.WaitGroup{}
+
 	callback := &ddl.TestDDLCallback{}
 	once := sync.Once{}
 	callback.OnJobUpdatedExported = func(job *model.Job) {
@@ -511,30 +521,18 @@ func (s *testStateChangeSuite) TestCreateIfNotExists(c *C) {
 		})
 	}
 
-	defer s.se.Execute(context.Background(), "drop table test_not_exists")
-
-	se, err := session.CreateSession(s.store)
-	_, err = se.Execute(context.Background(), "use test_db_state")
-	c.Assert(err, IsNil)
-
-	se1, err1 := session.CreateSession(s.store)
-	_, err1 = se1.Execute(context.Background(), "use test_db_state")
-	c.Assert(err1, IsNil)
-
 	d := s.dom.DDL()
 	d.SetHook(callback)
 
-	var err2, err3 error
-	wg := sync.WaitGroup{}
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		_, err2 = se.Execute(context.Background(), "create table if not exists test_not_exists(a int);")
+		_, err2 = se.Execute(context.Background(), sql)
 	}()
 
 	go func() {
 		defer wg.Done()
-		_, err3 = se1.Execute(context.Background(), "create table if not exists test_not_exists(a int);")
+		_, err3 = se1.Execute(context.Background(), sql)
 	}()
 	wg.Wait()
 	c.Assert(err2, IsNil)
@@ -543,43 +541,14 @@ func (s *testStateChangeSuite) TestCreateIfNotExists(c *C) {
 	d.SetHook(callback)
 }
 
-// TestCreateIfNotExists parallel exec create database if not exists xxx. No error returns is expected.
-func (s *testStateChangeSuite) TestCreateIfNotExists1(c *C) {
-	callback := &ddl.TestDDLCallback{}
-	once := sync.Once{}
-	callback.OnJobUpdatedExported = func(job *model.Job) {
-		// sleep a while, let other job enque.
-		once.Do(func() {
-			time.Sleep(time.Millisecond * 10)
-		})
-	}
+// TestCreateTableIfNotExists parallel exec create table if not exists xxx. No error returns is expected.
+func (s *testStateChangeSuite) TestCreateTableIfNotExists(c *C) {
+	defer s.se.Execute(context.Background(), "drop table test_not_exists")
+	s.testParrallelExecSQL(c, "create table if not exists test_not_exists(a int);")
+}
+
+// TestCreateDBIfNotExists parallel exec create database if not exists xxx. No error returns is expected.
+func (s *testStateChangeSuite) TestCreateDBIfNotExists(c *C) {
 	defer s.se.Execute(context.Background(), "drop database test_not_exists")
-
-	se, err := session.CreateSession(s.store)
-	c.Assert(err, IsNil)
-
-	se1, err1 := session.CreateSession(s.store)
-	c.Assert(err1, IsNil)
-
-	var err2, err3 error
-	wg := sync.WaitGroup{}
-
-	d := s.dom.DDL()
-	d.SetHook(callback)
-
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		_, err2 = se.Execute(context.Background(), "create database if not exists test_not_exists;")
-	}()
-
-	go func() {
-		defer wg.Done()
-		_, err3 = se1.Execute(context.Background(), "create database if not exists test_not_exists;")
-	}()
-	wg.Wait()
-	c.Assert(err2, IsNil)
-	c.Assert(err3, IsNil)
-	callback = &ddl.TestDDLCallback{}
-	d.SetHook(callback)
+	s.testParrallelExecSQL(c, "create database if not exists test_not_exists;")
 }
