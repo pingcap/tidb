@@ -79,7 +79,7 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 			return nil, table.ErrColumnStateCantNone.Gen("column %s can't be in none state", colInfo.Name)
 		}
 
-		// Add information about the column's offset.
+		// Print some information when the column's offset isn't equal to i.
 		if colInfo.Offset != i {
 			if i == colsLen-1 && colInfo.Offset >= colsLen {
 				log.Errorf("[tables] table %#v schema is wrong, col %#v, cols len %v", tblInfo, tblInfo.Columns[colsLen-1], colsLen)
