@@ -424,7 +424,7 @@ func (s *testStateChangeSuite) TestParallelDDL(c *C) {
 	c.Assert(err2, IsNil)
 
 	_, err = s.se.Execute("select * from t")
-	c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
+	c.Assert(err, IsNil)
 
 	callback = &ddl.TestDDLCallback{}
 	d.SetHook(callback)
