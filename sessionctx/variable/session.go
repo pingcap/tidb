@@ -319,8 +319,8 @@ type SessionVars struct {
 	MemQuotaIndexLookupJoin int64
 	// MemQuotaNestedLoopApply defines the memory quota for a nested loop apply executor.
 	MemQuotaNestedLoopApply int64
-	// OptimizationLevel defines the level of tidb's planner.
-	OptimizationLevel int64
+	// OptimizerSelectivityLevel defines the level of tidb's planner.
+	OptimizerSelectivityLevel int64
 
 	// EnableStreaming indicates whether the coprocessor request can use streaming API.
 	// TODO: remove this after tidb-server configuration "enable-streaming' removed.
@@ -559,7 +559,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBEnableStreaming:
 		s.EnableStreaming = TiDBOptOn(val)
 	case TiDBOptimizerSelectivityLevel:
-		s.OptimizationLevel = tidbOptInt64(val, DefTiDBOptimizerSelectivityLevel)
+		s.OptimizerSelectivityLevel = tidbOptInt64(val, DefTiDBOptimizerSelectivityLevel)
 	}
 	s.systems[name] = val
 	return nil
