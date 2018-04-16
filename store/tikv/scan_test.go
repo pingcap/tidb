@@ -58,6 +58,13 @@ func (s *testScanSuite) beginTxn(c *C) *tikvTxn {
 }
 
 func (s *testScanSuite) TestSeek(c *C) {
+	// Skip to run this test with TiKV.
+	mockStore, err := NewMockTikvStore()
+	c.Assert(err, IsNil)
+	originalStore := s.store
+	defer func() { s.store = originalStore }()
+	s.store = mockStore.(*tikvStore)
+
 	for _, rowNum := range s.rowNums {
 		txn := s.beginTxn(c)
 		for i := 0; i < rowNum; i++ {
