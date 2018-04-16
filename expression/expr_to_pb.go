@@ -228,82 +228,73 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 	}
 }
 
-func (pc PbConverter) canFuncBePushed(scalaFunc *ScalarFunction) bool {
-	if false || // make golang happy.
-
+func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
+	switch sf.FuncName.L {
+	case
 		// compare functions.
-		scalaFunc.FuncName.L == ast.LT ||
-		scalaFunc.FuncName.L == ast.LE ||
-		scalaFunc.FuncName.L == ast.EQ ||
-		scalaFunc.FuncName.L == ast.NE ||
-		scalaFunc.FuncName.L == ast.GE ||
-		scalaFunc.FuncName.L == ast.GT ||
-		scalaFunc.FuncName.L == ast.NullEQ ||
+		ast.LT,
+		ast.LE,
+		ast.EQ,
+		ast.NE,
+		ast.GE,
+		ast.GT,
+		ast.NullEQ,
 
 		// like functions.
-		scalaFunc.FuncName.L == ast.Like ||
+		ast.Like,
 
 		// arithmetical functions.
-		scalaFunc.FuncName.L == ast.Plus ||
-		scalaFunc.FuncName.L == ast.Minus ||
-		scalaFunc.FuncName.L == ast.Mul ||
-		scalaFunc.FuncName.L == ast.Div ||
-		scalaFunc.FuncName.L == ast.Mod ||
-		scalaFunc.FuncName.L == ast.IntDiv ||
+		ast.Plus,
+		ast.Minus,
+		ast.Mul,
+		ast.Div,
+		ast.Mod,
+		ast.IntDiv,
 
-		// make golang happy.
-		false {
+		// logical functions.
+		ast.LogicAnd,
+		ast.LogicOr,
+		ast.LogicXor,
+		ast.UnaryNot,
+
+		// bitwise functions.
+		ast.And,
+		ast.Or,
+		ast.Xor,
+		ast.LeftShift,
+		ast.RightShift,
+		ast.BitNeg,
+
+		// json functions.
+		ast.JSONType,
+		ast.JSONExtract,
+		ast.JSONUnquote,
+		ast.JSONValid,
+		ast.JSONObject,
+		ast.JSONArray,
+		ast.JSONMerge,
+		ast.JSONSet,
+		ast.JSONInsert,
+		ast.JSONReplace,
+		ast.JSONRemove,
+		ast.JSONContains,
+
+		// control flow functions.
+		ast.Case,
+		ast.If,
+		ast.Ifnull,
+		ast.Nullif,
+
+		// date functions.
+		ast.DateFormat,
+
+		// other functions.
+		ast.Coalesce,
+		ast.IsNull,
+		ast.In:
 		return true
 	}
 	return false
-}
-
-func (pc PbConverter) logicalOpsToPBExpr(expr *ScalarFunction) *tipb.Expr {
-	var tp tipb.ExprType
-	switch expr.FuncName.L {
-	case ast.LogicAnd:
-		tp = tipb.ExprType_And
-	case ast.LogicOr:
-		tp = tipb.ExprType_Or
-	case ast.LogicXor:
-		tp = tipb.ExprType_Xor
-	case ast.UnaryNot:
-		tp = tipb.ExprType_Not
-	}
-	return pc.convertToPBExpr(expr, tp)
-}
-
-func (pc PbConverter) bitwiseFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
-	var tp tipb.ExprType
-	switch expr.FuncName.L {
-	case ast.And:
-		tp = tipb.ExprType_BitAnd
-	case ast.Or:
-		tp = tipb.ExprType_BitOr
-	case ast.Xor:
-		tp = tipb.ExprType_BitXor
-	case ast.LeftShift:
-		tp = tipb.ExprType_LeftShift
-	case ast.RightShift:
-		tp = tipb.ExprType_RighShift
-	case ast.BitNeg:
-		tp = tipb.ExprType_BitNeg
-	}
-	return pc.convertToPBExpr(expr, tp)
-}
-
-func (pc PbConverter) jsonFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
-	var tp = jsonFunctionNameToPB[expr.FuncName.L]
-	return pc.convertToPBExpr(expr, tp)
-}
-
-func (pc PbConverter) dateFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
-	var tp tipb.ExprType
-	switch expr.FuncName.L {
-	case ast.DateFormat:
-		tp = tipb.ExprType_DateFormat
-	}
-	return pc.convertToPBExpr(expr, tp)
 }
 
 // GroupByItemToPB converts group by items to pb.
@@ -324,65 +315,4 @@ func SortByItemToPB(sc *stmtctx.StatementContext, client kv.Client, expr Express
 		return nil
 	}
 	return &tipb.ByItem{Expr: e, Desc: desc}
-}
-
-func (pc PbConverter) builtinFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
-	switch expr.FuncName.L {
-	case ast.Case, ast.If, ast.Ifnull, ast.Nullif:
-		return pc.controlFuncsToPBExpr(expr)
-	case ast.Coalesce, ast.IsNull, ast.In:
-		return pc.otherFuncsToPBExpr(expr)
-	default:
-		return nil
-	}
-}
-
-func (pc PbConverter) otherFuncsToPBExpr(expr *ScalarFunction) *tipb.Expr {
-	var tp tipb.ExprType
-	switch expr.FuncName.L {
-	case ast.Coalesce:
-		tp = tipb.ExprType_Coalesce
-	case ast.IsNull:
-		tp = tipb.ExprType_IsNull
-	case ast.In:
-		tp = tipb.ExprType_In
-	}
-	return pc.convertToPBExpr(expr, tp)
-}
-
-func (pc PbConverter) controlFuncsToPBExpr(expr *ScalarFunction) *tipb.Expr {
-	var tp tipb.ExprType
-	switch expr.FuncName.L {
-	case ast.If:
-		tp = tipb.ExprType_If
-	case ast.Ifnull:
-		tp = tipb.ExprType_IfNull
-	case ast.Case:
-		tp = tipb.ExprType_Case
-	case ast.Nullif:
-		tp = tipb.ExprType_NullIf
-	}
-	return pc.convertToPBExpr(expr, tp)
-}
-
-func (pc PbConverter) convertToPBExpr(expr *ScalarFunction, tp tipb.ExprType) *tipb.Expr {
-	if !pc.client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tp)) {
-		return nil
-	}
-	children := make([]*tipb.Expr, 0, len(expr.GetArgs()))
-	for _, arg := range expr.GetArgs() {
-		pbArg := pc.ExprToPB(arg)
-		if pbArg == nil {
-			return nil
-		}
-		children = append(children, pbArg)
-	}
-	if pc.client.IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeSignature) {
-		code := expr.Function.PbCode()
-		if code > 0 {
-			return &tipb.Expr{Tp: tipb.ExprType_ScalarFunc, Sig: code, Children: children, FieldType: toPBFieldType(expr.RetType)}
-		}
-		return nil
-	}
-	return &tipb.Expr{Tp: tp, Children: children}
 }
