@@ -98,11 +98,21 @@ func (s *testTxStructureSuite) TestList(c *C) {
 	err = tx.LPush(key, []byte("3"), []byte("2"), []byte("1"))
 	c.Assert(err, IsNil)
 
+	// Test LGetAll.
+	err = tx.LPush(key, []byte("11"))
+	c.Assert(err, IsNil)
+	values, err := tx.LGetAll(key)
+	c.Assert(err, IsNil)
+	c.Assert(values, DeepEquals, [][]byte{[]byte("3"), []byte("2"), []byte("1"), []byte("11")})
+	value, err := tx.LPop(key)
+	c.Assert(err, IsNil)
+	c.Assert(value, DeepEquals, []byte("11"))
+
 	l, err := tx.LLen(key)
 	c.Assert(err, IsNil)
 	c.Assert(l, Equals, int64(3))
 
-	value, err := tx.LIndex(key, 1)
+	value, err = tx.LIndex(key, 1)
 	c.Assert(err, IsNil)
 	c.Assert(value, DeepEquals, []byte("2"))
 

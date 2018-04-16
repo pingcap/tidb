@@ -122,16 +122,32 @@ func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *
 			continue
 		}
 		isHandle := tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag)
-		needNotLoad := col == nil || (col.Len() == 0 && col.LastUpdateVersion < histVer)
-		if h.Lease > 0 && !isHandle && needNotLoad && !loadAll {
+		// We will not load buckets if:
+		// 1. Lease > 0, and:
+		// 2. this column is not handle, and:
+		// 3. the column doesn't has buckets before, and:
+		// 4. loadAll is false.
+		notNeedLoad := h.Lease > 0 &&
+			!isHandle &&
+			(col == nil || col.Len() == 0 && col.LastUpdateVersion < histVer) &&
+			!loadAll
+		if notNeedLoad {
 			count, err := columnCountFromStorage(h.ctx, table.TableID, histID)
 			if err != nil {
 				return errors.Trace(err)
 			}
 			col = &Column{
-				Histogram: Histogram{ID: histID, NDV: distinct, NullCount: nullCount, tp: &colInfo.FieldType, LastUpdateVersion: histVer, TotColSize: totColSize},
-				Info:      colInfo,
-				Count:     count + nullCount}
+				Histogram: Histogram{
+					ID:                histID,
+					NDV:               distinct,
+					NullCount:         nullCount,
+					tp:                &colInfo.FieldType,
+					LastUpdateVersion: histVer,
+					TotColSize:        totColSize,
+				},
+				Info:  colInfo,
+				Count: count + nullCount,
+			}
 			break
 		}
 		if col == nil || col.LastUpdateVersion < histVer || loadAll {
@@ -143,7 +159,12 @@ func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *
 			if err != nil {
 				return errors.Trace(err)
 			}
-			col = &Column{Histogram: *hg, Info: colInfo, CMSketch: cms, Count: int64(hg.totalRowCount())}
+			col = &Column{
+				Histogram: *hg,
+				Info:      colInfo,
+				CMSketch:  cms,
+				Count:     int64(hg.totalRowCount()),
+			}
 		}
 		break
 	}

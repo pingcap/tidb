@@ -17,6 +17,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/codec"
 )
 
 var _ = Suite(&testFeedbackSuite{})
@@ -68,8 +69,8 @@ func (s *testFeedbackSuite) TestUpdateHistogram(c *C) {
 	originBucketCount := defaultBucketCount
 	defaultBucketCount = 5
 	defer func() { defaultBucketCount = originBucketCount }()
-	c.Assert(UpdateHistogram(q.Hist(), []*QueryFeedback{q}).ToString(0), Equals,
-		"column:0 ndv:0\n"+
+	c.Assert(UpdateHistogram(q.Hist(), q).ToString(0), Equals,
+		"column:0 ndv:0 totColSize:0\n"+
 			"num: 10000\tlower_bound: 0\tupper_bound: 1\trepeats: 0\n"+
 			"num: 10003\tlower_bound: 2\tupper_bound: 3\trepeats: 0\n"+
 			"num: 10021\tlower_bound: 4\tupper_bound: 20\trepeats: 0\n"+
@@ -85,9 +86,9 @@ func (s *testFeedbackSuite) TestSplitBuckets(c *C) {
 	}
 	q := NewQueryFeedback(0, genHistogram(), 0, false)
 	q.feedback = feedbacks
-	buckets, isNewBuckets, totalCount := splitBuckets(q.Hist(), []*QueryFeedback{q})
+	buckets, isNewBuckets, totalCount := splitBuckets(q.Hist(), q)
 	c.Assert(buildNewHistogram(q.Hist(), buckets).ToString(0), Equals,
-		"column:0 ndv:0\n"+
+		"column:0 ndv:0 totColSize:0\n"+
 			"num: 1\tlower_bound: 0\tupper_bound: 1\trepeats: 0\n"+
 			"num: 1\tlower_bound: 2\tupper_bound: 3\trepeats: 0\n"+
 			"num: 1\tlower_bound: 5\tupper_bound: 7\trepeats: 0\n"+
@@ -104,9 +105,9 @@ func (s *testFeedbackSuite) TestSplitBuckets(c *C) {
 	}
 	q = NewQueryFeedback(0, genHistogram(), 0, false)
 	q.feedback = feedbacks
-	buckets, isNewBuckets, totalCount = splitBuckets(q.Hist(), []*QueryFeedback{q})
+	buckets, isNewBuckets, totalCount = splitBuckets(q.Hist(), q)
 	c.Assert(buildNewHistogram(q.Hist(), buckets).ToString(0), Equals,
-		"column:0 ndv:0\n"+
+		"column:0 ndv:0 totColSize:0\n"+
 			"num: 100000\tlower_bound: 0\tupper_bound: 1\trepeats: 0\n"+
 			"num: 100000\tlower_bound: 2\tupper_bound: 3\trepeats: 0\n"+
 			"num: 100000\tlower_bound: 5\tupper_bound: 7\trepeats: 0\n"+
@@ -124,9 +125,9 @@ func (s *testFeedbackSuite) TestSplitBuckets(c *C) {
 	}
 	q = NewQueryFeedback(0, h, 0, false)
 	q.feedback = feedbacks
-	buckets, isNewBuckets, totalCount = splitBuckets(q.Hist(), []*QueryFeedback{q})
+	buckets, isNewBuckets, totalCount = splitBuckets(q.Hist(), q)
 	c.Assert(buildNewHistogram(q.Hist(), buckets).ToString(0), Equals,
-		"column:0 ndv:0\n"+
+		"column:0 ndv:0 totColSize:0\n"+
 			"num: 1000000\tlower_bound: 0\tupper_bound: 1000000\trepeats: 0")
 	c.Assert(isNewBuckets, DeepEquals, []bool{false})
 	c.Assert(totalCount, Equals, int64(1000000))
@@ -147,14 +148,14 @@ func (s *testFeedbackSuite) TestMergeBuckets(c *C) {
 			counts:       []int64{1},
 			isNewBuckets: []bool{false},
 			bucketCount:  1,
-			result:       "column:0 ndv:0\nnum: 1\tlower_bound: 1\tupper_bound: 2\trepeats: 0",
+			result:       "column:0 ndv:0 totColSize:0\nnum: 1\tlower_bound: 1\tupper_bound: 2\trepeats: 0",
 		},
 		{
 			points:       []int64{1, 2, 2, 3, 3, 4},
 			counts:       []int64{100000, 1, 1},
 			isNewBuckets: []bool{false, false, false},
 			bucketCount:  2,
-			result: "column:0 ndv:0\n" +
+			result: "column:0 ndv:0 totColSize:0\n" +
 				"num: 100000\tlower_bound: 1\tupper_bound: 2\trepeats: 0\n" +
 				"num: 100002\tlower_bound: 2\tupper_bound: 4\trepeats: 0",
 		},
@@ -164,7 +165,7 @@ func (s *testFeedbackSuite) TestMergeBuckets(c *C) {
 			counts:       []int64{1, 1, 100000, 100000},
 			isNewBuckets: []bool{false, false, false, false},
 			bucketCount:  3,
-			result: "column:0 ndv:0\n" +
+			result: "column:0 ndv:0 totColSize:0\n" +
 				"num: 2\tlower_bound: 1\tupper_bound: 3\trepeats: 0\n" +
 				"num: 100002\tlower_bound: 3\tupper_bound: 4\trepeats: 0\n" +
 				"num: 200002\tlower_bound: 4\tupper_bound: 5\trepeats: 0",
@@ -183,4 +184,35 @@ func (s *testFeedbackSuite) TestMergeBuckets(c *C) {
 		result := buildNewHistogram(&Histogram{tp: types.NewFieldType(mysql.TypeLong)}, bkts).ToString(0)
 		c.Assert(result, Equals, t.result)
 	}
+}
+
+func encodeInt(v int64) *types.Datum {
+	val := codec.EncodeInt(nil, v)
+	d := types.NewBytesDatum(val)
+	return &d
+}
+
+func (s *testFeedbackSuite) TestFeedbackEncoding(c *C) {
+	hist := NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeLong), 0, 0)
+	q := &QueryFeedback{hist: hist}
+	q.feedback = append(q.feedback, feedback{encodeInt(0), encodeInt(3), 1, 0})
+	q.feedback = append(q.feedback, feedback{encodeInt(0), encodeInt(5), 1, 0})
+	val, err := encodeFeedback(q)
+	c.Assert(err, IsNil)
+	rq := &QueryFeedback{}
+	c.Assert(decodeFeedback(val, rq, nil), IsNil)
+	c.Assert(q.Equal(rq), IsTrue)
+
+	hist.tp = types.NewFieldType(mysql.TypeBlob)
+	q = &QueryFeedback{hist: hist}
+	q.feedback = append(q.feedback, feedback{encodeInt(0), encodeInt(3), 1, 0})
+	q.feedback = append(q.feedback, feedback{encodeInt(0), encodeInt(1), 1, 0})
+	val, err = encodeFeedback(q)
+	c.Assert(err, IsNil)
+	rq = &QueryFeedback{}
+	cms := NewCMSketch(4, 4)
+	c.Assert(decodeFeedback(val, rq, cms), IsNil)
+	c.Assert(cms.queryBytes(codec.EncodeInt(nil, 0)), Equals, uint32(1))
+	q.feedback = q.feedback[:1]
+	c.Assert(q.Equal(rq), IsTrue)
 }
