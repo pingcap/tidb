@@ -512,10 +512,10 @@ func (s *testStateChangeSuite) TestParallelChangeColumnName(c *C) {
 	callback := &ddl.TestDDLCallback{}
 	once := sync.Once{}
 	callback.OnJobUpdatedExported = func(job *model.Job) {
+		// Make sure the both DDL statements have entered the DDL queue before running the DDL jobs.
 		once.Do(func() {
 			var qLen int64
 			var err error
-			// Make sure the both DDL statements have entered the DDL queue before running the DDL jobs.
 			for {
 				kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
 					m := meta.NewMeta(txn)
