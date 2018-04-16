@@ -319,6 +319,8 @@ type SessionVars struct {
 	MemQuotaIndexLookupJoin int64
 	// MemQuotaNestedLoopApply defines the memory quota for a nested loop apply executor.
 	MemQuotaNestedLoopApply int64
+	// OptimizationLevel defines the level of tidb's planner.
+	OptimizationLevel int64
 
 	// EnableStreaming indicates whether the coprocessor request can use streaming API.
 	// TODO: remove this after tidb-server configuration "enable-streaming' removed.
@@ -556,6 +558,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt(val, DefTiDBGeneralLog)))
 	case TiDBEnableStreaming:
 		s.EnableStreaming = TiDBOptOn(val)
+	case TiDBOptimizationLevel:
+		s.OptimizationLevel = tidbOptInt64(val, DefTiDBOptimizationLevel)
 	}
 	s.systems[name] = val
 	return nil
