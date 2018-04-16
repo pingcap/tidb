@@ -98,6 +98,9 @@ const (
 
 	// tidb_enable_streaming enables TiDB to use streaming API for coprocessor requests.
 	TiDBEnableStreaming = "tidb_enable_streaming"
+
+	// tidb_optimizer_selectivity_level is used to control the selectivity estimation level.
+	TiDBOptimizerSelectivityLevel = "tidb_optimizer_selectivity_level"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -174,6 +177,7 @@ const (
 	DefTiDBMemQuotaNestedLoopApply   = 32 << 30 // 32GB.
 	DefTiDBGeneralLog                = 0
 	DefTiDBHashJoinConcurrency       = 5
+	DefTiDBOptimizerSelectivityLevel = 0
 )
 
 // Process global variables.
