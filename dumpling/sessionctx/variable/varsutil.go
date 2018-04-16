@@ -128,7 +128,7 @@ func TiDBOptOn(opt string) bool {
 	return strings.EqualFold(opt, "ON") || opt == "1"
 }
 
-func tidbOptPositiveInt(opt string, defaultVal int) int {
+func tidbOptPositiveInt32(opt string, defaultVal int) int {
 	val, err := strconv.Atoi(opt)
 	if err != nil || val <= 0 {
 		return defaultVal
