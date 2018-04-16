@@ -321,7 +321,7 @@ type SessionVars struct {
 	MemQuotaNestedLoopApply int64
 	// OptimizerSelectivityLevel defines the what content operator will hold in its statistic information. The higher it
 	// is, the more complex content operator will hold.
-	OptimizerSelectivityLevel int64
+	OptimizerSelectivityLevel int
 
 	// EnableStreaming indicates whether the coprocessor request can use streaming API.
 	// TODO: remove this after tidb-server configuration "enable-streaming' removed.
@@ -517,29 +517,29 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBOptInSubqUnFolding:
 		s.AllowInSubqueryUnFolding = TiDBOptOn(val)
 	case TiDBIndexLookupConcurrency:
-		s.IndexLookupConcurrency = tidbOptPositiveInt(val, DefIndexLookupConcurrency)
+		s.IndexLookupConcurrency = tidbOptInt32(val, DefIndexLookupConcurrency)
 	case TiDBIndexLookupJoinConcurrency:
-		s.IndexLookupJoinConcurrency = tidbOptPositiveInt(val, DefIndexLookupJoinConcurrency)
+		s.IndexLookupJoinConcurrency = tidbOptInt32(val, DefIndexLookupJoinConcurrency)
 	case TiDBIndexJoinBatchSize:
-		s.IndexJoinBatchSize = tidbOptPositiveInt(val, DefIndexJoinBatchSize)
+		s.IndexJoinBatchSize = tidbOptInt32(val, DefIndexJoinBatchSize)
 	case TiDBIndexLookupSize:
-		s.IndexLookupSize = tidbOptPositiveInt(val, DefIndexLookupSize)
+		s.IndexLookupSize = tidbOptInt32(val, DefIndexLookupSize)
 	case TiDBHashJoinConcurrency:
-		s.HashJoinConcurrency = tidbOptPositiveInt(val, DefTiDBHashJoinConcurrency)
+		s.HashJoinConcurrency = tidbOptInt32(val, DefTiDBHashJoinConcurrency)
 	case TiDBDistSQLScanConcurrency:
-		s.DistSQLScanConcurrency = tidbOptPositiveInt(val, DefDistSQLScanConcurrency)
+		s.DistSQLScanConcurrency = tidbOptInt32(val, DefDistSQLScanConcurrency)
 	case TiDBIndexSerialScanConcurrency:
-		s.IndexSerialScanConcurrency = tidbOptPositiveInt(val, DefIndexSerialScanConcurrency)
+		s.IndexSerialScanConcurrency = tidbOptInt32(val, DefIndexSerialScanConcurrency)
 	case TiDBBatchInsert:
 		s.BatchInsert = TiDBOptOn(val)
 	case TiDBBatchDelete:
 		s.BatchDelete = TiDBOptOn(val)
 	case TiDBDMLBatchSize:
-		s.DMLBatchSize = tidbOptPositiveInt(val, DefDMLBatchSize)
+		s.DMLBatchSize = tidbOptInt32(val, DefDMLBatchSize)
 	case TiDBCurrentTS, TiDBConfig:
 		return ErrReadOnly
 	case TiDBMaxChunkSize:
-		s.MaxChunkSize = tidbOptPositiveInt(val, DefMaxChunkSize)
+		s.MaxChunkSize = tidbOptInt32(val, DefMaxChunkSize)
 	case TIDBMemQuotaQuery:
 		s.MemQuotaQuery = tidbOptInt64(val, DefTiDBMemQuotaQuery)
 	case TIDBMemQuotaHashJoin:
@@ -557,11 +557,11 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TIDBMemQuotaNestedLoopApply:
 		s.MemQuotaNestedLoopApply = tidbOptInt64(val, DefTiDBMemQuotaNestedLoopApply)
 	case TiDBGeneralLog:
-		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt(val, DefTiDBGeneralLog)))
+		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptInt32(val, DefTiDBGeneralLog)))
 	case TiDBEnableStreaming:
 		s.EnableStreaming = TiDBOptOn(val)
 	case TiDBOptimizerSelectivityLevel:
-		s.OptimizerSelectivityLevel = tidbOptInt64(val, DefTiDBOptimizerSelectivityLevel)
+		s.OptimizerSelectivityLevel = tidbOptInt32(val, DefTiDBOptimizerSelectivityLevel)
 	}
 	s.systems[name] = val
 	return nil
