@@ -613,6 +613,25 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	} else {
 		buf.WriteString(fmt.Sprintf(" DEFAULT CHARSET=%s COLLATE=%s", charsetName, collate))
 	}
+	buf.WriteString("\n")
+
+	// add partition info here.
+	partitionInfo := tb.Meta().Partition
+	if partitionInfo != nil {
+		buf.WriteString(fmt.Sprintf("PARTITION BY %s ( %s ) (\n", partitionInfo.Type.String(), partitionInfo.Expr))
+		for i, def := range partitionInfo.Definitions {
+			if i < len(partitionInfo.Definitions)-1 {
+				buf.WriteString(fmt.Sprintf("  PARTITION %s VALUES LESS THAN %s,\n", def.Name, def.LessThan[0]))
+			} else {
+				if def.MaxValue {
+					buf.WriteString(fmt.Sprintf("  PARTITION %s VALUES LESS THAN %s\n", def.Name, "MAXVALUE"))
+				} else {
+					buf.WriteString(fmt.Sprintf("  PARTITION %s VALUES LESS THAN %s\n", def.Name, def.LessThan[0]))
+				}
+			}
+		}
+		buf.WriteString(")")
+	}
 
 	if hasAutoIncID {
 		autoIncID, err := tb.Allocator(e.ctx).NextGlobalAutoID(tb.Meta().ID)

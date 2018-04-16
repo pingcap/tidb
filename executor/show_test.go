@@ -313,6 +313,8 @@ func (s *testSuite) TestShow(c *C) {
 	))
 
 	tk.MustExec(`drop table if exists t`)
+
+	// Test range partition
 }
 
 func (s *testSuite) TestShowVisibility(c *C) {
