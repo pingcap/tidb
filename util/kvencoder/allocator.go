@@ -26,7 +26,7 @@ var (
 )
 
 // NewAllocator new an Allocator.
-func NewAllocator() autoid.Allocator {
+func NewAllocator() *Allocator {
 	return &Allocator{}
 }
 

@@ -365,7 +365,7 @@ func (s *testKvEncoderSuite) TestRetryWithAllocator(c *C) {
 		baseID := alloc.Base()
 		kvPairs, _, err1 := encoder.Encode(sql, tableID)
 		c.Assert(err1, IsNil, Commentf("sql:%s", sql))
-		alloc.(*Allocator).ResetBase(baseID)
+		alloc.ResetBase(baseID)
 		retryKvPairs, _, err1 := encoder.Encode(sql, tableID)
 		c.Assert(err1, IsNil, Commentf("sql:%s", sql))
 		c.Assert(len(kvPairs), Equals, len(retryKvPairs))
@@ -411,7 +411,7 @@ func (s *testKvEncoderSuite) TestRetryWithAllocator(c *C) {
 		baseID := alloc.Base()
 		kvPairs, _, err1 := encoder.Encode(sql, tableID)
 		c.Assert(err1, IsNil, Commentf("sql:%s", sql))
-		alloc.(*Allocator).ResetBase(baseID)
+		alloc.ResetBase(baseID)
 		retryKvPairs, _, err1 := encoder.Encode(sql, tableID)
 		c.Assert(err1, IsNil, Commentf("sql:%s", sql))
 		c.Assert(len(kvPairs), Equals, len(retryKvPairs))
@@ -465,7 +465,7 @@ func (s *testKvEncoderSuite) TestAllocatorRebaseSmaller(c *C) {
 	c.Assert(alloc.Base(), Equals, int64(100))
 	alloc.Rebase(1, 1, false)
 	c.Assert(alloc.Base(), Equals, int64(100))
-	alloc.(*Allocator).ResetBase(1)
+	alloc.ResetBase(1)
 	c.Assert(alloc.Base(), Equals, int64(1))
 }
 
