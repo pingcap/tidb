@@ -34,10 +34,12 @@ type testSafePointSuite struct {
 var _ = Suite(&testSafePointSuite{})
 
 func (s *testSafePointSuite) SetUpSuite(c *C) {
-	s.store = newTestStore(c)
+	store, err := NewMockTikvStore()
+	c.Assert(err, IsNil)
+	s.store = store.(*tikvStore)
 	s.oracle = &mockOracle{}
 	s.store.oracle = s.oracle
-	_, err := tidb.BootstrapSession(s.store)
+	_, err = tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 	gcWorker, err := NewGCWorker(s.store, false)
 	c.Assert(err, IsNil)

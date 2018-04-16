@@ -110,6 +110,13 @@ func (s *testLockSuite) TestScanLockResolveWithGet(c *C) {
 }
 
 func (s *testLockSuite) TestScanLockResolveWithSeek(c *C) {
+	// Skip to run this test with TiKV.
+	mockStore, err := NewMockTikvStore()
+	c.Assert(err, IsNil)
+	originalStore := s.store
+	defer func() { s.store = originalStore }()
+	s.store = mockStore.(*tikvStore)
+
 	s.putAlphabets(c)
 	s.prepareAlphabetLocks(c)
 
