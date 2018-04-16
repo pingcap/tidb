@@ -72,10 +72,22 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 		return nil, table.ErrTableStateCantNone.Gen("table %s can't be in none state", tblInfo.Name)
 	}
 
-	columns := make([]*table.Column, 0, len(tblInfo.Columns))
-	for _, colInfo := range tblInfo.Columns {
+	colsLen := len(tblInfo.Columns)
+	columns := make([]*table.Column, 0, colsLen)
+	for i, colInfo := range tblInfo.Columns {
 		if colInfo.State == model.StateNone {
 			return nil, table.ErrColumnStateCantNone.Gen("column %s can't be in none state", colInfo.Name)
+		}
+
+		// Print some information when the column's offset isn't equal to i.
+		if colInfo.Offset != i {
+			if i == colsLen-1 && colInfo.Offset >= colsLen {
+				log.Errorf("[tables] table %#v schema is wrong, col %#v, cols len %v", tblInfo, tblInfo.Columns[colsLen-1], colsLen)
+			} else {
+				// When we do the operation of 'add column' or 'drop column',
+				// the colInfo's offset and i may not be equal.
+				log.Infof("[tables] table %#v, the offset of col %#v isn't equal to %d", tblInfo, colInfo, i)
+			}
 		}
 
 		col := table.ToColumn(colInfo)

@@ -31,10 +31,12 @@ type testGCWorkerSuite struct {
 var _ = Suite(&testGCWorkerSuite{})
 
 func (s *testGCWorkerSuite) SetUpTest(c *C) {
-	s.store = newTestStore(c)
+	store, err := NewMockTikvStore()
+	c.Assert(err, IsNil)
+	s.store = store.(*tikvStore)
 	s.oracle = &mockOracle{}
 	s.store.oracle = s.oracle
-	_, err := tidb.BootstrapSession(s.store)
+	_, err = tidb.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 	gcWorker, err := NewGCWorker(s.store, true)
 	c.Assert(err, IsNil)
