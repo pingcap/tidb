@@ -35,6 +35,7 @@ type Allocator struct {
 	base int64
 }
 
+// Alloc allocs the next autoID for table with tableID.
 func (alloc *Allocator) Alloc(tableID int64) (int64, error) {
 	return atomic.AddInt64(&alloc.base, 1), nil
 }
@@ -60,14 +61,17 @@ func (alloc *Allocator) Rebase(tableID, newBase int64, allocIDs bool) error {
 	return nil
 }
 
+// Base return the current base of Allocator.
 func (alloc *Allocator) Base() int64 {
 	return atomic.LoadInt64(&alloc.base)
 }
 
+// End is only used for test.
 func (alloc *Allocator) End() int64 {
 	return alloc.Base() + step
 }
 
+// NextGlobalAutoID returns the next global autoID.
 func (alloc *Allocator) NextGlobalAutoID(tableID int64) (int64, error) {
 	return alloc.End() + 1, nil
 }
