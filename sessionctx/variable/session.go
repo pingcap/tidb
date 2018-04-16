@@ -319,7 +319,8 @@ type SessionVars struct {
 	MemQuotaIndexLookupJoin int64
 	// MemQuotaNestedLoopApply defines the memory quota for a nested loop apply executor.
 	MemQuotaNestedLoopApply int64
-	// OptimizerSelectivityLevel defines the level of tidb's planner.
+	// OptimizerSelectivityLevel defines the what content operator will hold in its statistic information. The higher it
+	// is, the more complex content operator will hold.
 	OptimizerSelectivityLevel int64
 
 	// EnableStreaming indicates whether the coprocessor request can use streaming API.
