@@ -501,3 +501,72 @@ func (s *testStateChangeSuite) TestParallelDDL(c *C) {
 	callback = &ddl.TestDDLCallback{}
 	d.SetHook(callback)
 }
+
+func (s *testStateChangeSuite) TestParallelChangeColumnName(c *C) {
+	_, err := s.se.Execute(context.Background(), "use test_db_state")
+	c.Assert(err, IsNil)
+	_, err = s.se.Execute(context.Background(), "create table t(a int, b int, c int)")
+	c.Assert(err, IsNil)
+	defer s.se.Execute(context.Background(), "drop table t")
+
+	callback := &ddl.TestDDLCallback{}
+	once := sync.Once{}
+	callback.OnJobUpdatedExported = func(job *model.Job) {
+		once.Do(func() {
+			var qLen int64
+			var err error
+			for {
+				kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+					m := meta.NewMeta(txn)
+					qLen, err = m.DDLJobQueueLen()
+					if err != nil {
+						return err
+					}
+					return nil
+				})
+				if qLen == 2 {
+					break
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+		})
+	}
+	d := s.dom.DDL()
+	d.SetHook(callback)
+
+	wg := sync.WaitGroup{}
+	var err1 error
+	var err2 error
+	se, err := session.CreateSession(s.store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "use test_db_state")
+	c.Assert(err, IsNil)
+	se1, err := session.CreateSession(s.store)
+	c.Assert(err, IsNil)
+	_, err = se1.Execute(context.Background(), "use test_db_state")
+	c.Assert(err, IsNil)
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		_, err1 = se.Execute(context.Background(), "ALTER TABLE t CHANGE a aa int;")
+	}()
+
+	go func() {
+		defer wg.Done()
+		_, err2 = se1.Execute(context.Background(), "ALTER TABLE t CHANGE b aa int;")
+	}()
+
+	wg.Wait()
+	var oneErr error
+	if (err1 != nil && err2 == nil) || (err1 == nil && err2 != nil) {
+		if err1 != nil {
+			oneErr = err1
+		} else {
+			oneErr = err2
+		}
+	}
+	c.Assert(oneErr.Error(), Equals, "[schema:1060]Duplicate column name 'aa'")
+
+	callback = &ddl.TestDDLCallback{}
+	d.SetHook(callback)
+}
