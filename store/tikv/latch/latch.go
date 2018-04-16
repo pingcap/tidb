@@ -103,7 +103,7 @@ func (latches *Latches) GenLock(startTS uint64, keys [][]byte) Lock {
 	return NewLock(startTS, dedup)
 }
 
-// hash return slotID for current key.
+// slotID return slotID for current key.
 func (latches *Latches) slotID(key []byte) int {
 	return int(murmur3.Sum32(key)) & (len(latches.slots) - 1)
 }
@@ -136,8 +136,8 @@ func (latches *Latches) Release(lock *Lock, commitTS uint64) (wakeupList []uint6
 		releaseCount++
 	}
 	wakeupList = make([]uint64, 0, releaseCount)
-	for id := 0; id < releaseCount; id++ {
-		slotID := lock.requiredSlots[id]
+	for i := 0; i < releaseCount; i++ {
+		slotID := lock.requiredSlots[i]
 
 		if hasNext, nextStartTS := latches.releaseSlot(slotID, lock.startTS, commitTS); hasNext {
 			wakeupList = append(wakeupList, nextStartTS)
@@ -158,20 +158,21 @@ func (latches *Latches) releaseSlot(slotID int, startTS, commitTS uint64) (hasNe
 		latch.free()
 		return
 	}
+	latch.waitingQueueHead, latch.hasMoreWaiting = latches.popFromWaitingQueue(slotID)
+	return true, latch.waitingQueueHead
+}
 
-	// pop next transaction from the waitingQueue.
+func (latches *Latches) popFromWaitingQueue(slotID int) (front uint64, hasMoreWaiting bool) {
 	latches.Lock()
+	defer latches.Unlock()
 	waiting := latches.waitingQueues[slotID]
-	hasNext = true
-	nextStartTS = waiting[0]
+	front = waiting[0]
 	if len(waiting) == 1 {
 		delete(latches.waitingQueues, slotID)
-		latch.hasMoreWaiting = false
 	} else {
 		latches.waitingQueues[slotID] = waiting[1:]
+		hasMoreWaiting = true
 	}
-	latches.Unlock()
-	latch.waitingQueueHead = nextStartTS
 	return
 }
 
@@ -193,10 +194,6 @@ func (latches *Latches) acquireSlot(slotID int, startTS uint64) (success, stale 
 	latch.hasMoreWaiting = true
 	latches.Lock()
 	defer latches.Unlock()
-	if waitingQueue, ok := latches.waitingQueues[slotID]; ok {
-		latches.waitingQueues[slotID] = append(waitingQueue, startTS)
-	} else {
-		latches.waitingQueues[slotID] = []uint64{startTS}
-	}
+	latches.waitingQueues[slotID] = append(latches.waitingQueues[slotID], startTS)
 	return
 }
