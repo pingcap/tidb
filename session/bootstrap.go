@@ -753,12 +753,23 @@ func fixNoneStateUsers(m *meta.Meta, db *model.DBInfo) error {
 		case "db", "tables_priv", "columns_priv":
 			for _, col := range tbl.Columns {
 				if col.Name.L == "user" && col.State == model.StateNone {
-					log.Warn("fix none state column %s.User", tbl.Name.O)
+					log.Warnf("fix none state column %s.User", tbl.Name.O)
 					col.State = model.StatePublic
 					col.Offset = 2
 				}
 			}
-			m.UpdateTable(db.ID, tbl)
+			for _, idx := range tbl.Indices {
+				for _, idxCol := range idx.Columns {
+					if idxCol.Name.L == "user" && idxCol.Offset == 0 {
+						log.Warnf("fix index column offset for %s.User", tbl.Name.O)
+						idxCol.Offset = 2
+					}
+				}
+			}
+			err = m.UpdateTable(db.ID, tbl)
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	return nil
