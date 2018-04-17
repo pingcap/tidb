@@ -856,6 +856,11 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 			err = d.handleAutoIncID(tbInfo, schema.ID)
 		}
 	}
+
+	// table exists, but if_not_exists flags is true, so we ignore this error.
+	if infoschema.ErrTableExists.Equal(err) && s.IfNotExists {
+		return nil
+	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
@@ -1350,6 +1355,14 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	if col == nil {
 		return nil, infoschema.ErrColumnNotExists.GenByArgs(originalColName, ident.Name)
 	}
+	newColName := specNewColumn.Name.Name
+	// If we want to rename the column name, we need to check whether it already exists.
+	if newColName.L != originalColName.L {
+		c := table.FindCol(t.Cols(), newColName.L)
+		if c != nil {
+			return nil, infoschema.ErrColumnExists.GenByArgs(newColName)
+		}
+	}
 
 	// Constraints in the new column means adding new constraints. Errors should thrown,
 	// which will be done by `setDefaultAndComment` later.
@@ -1362,7 +1375,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		ID:                 col.ID,
 		OriginDefaultValue: col.OriginDefaultValue,
 		FieldType:          *specNewColumn.Tp,
-		Name:               specNewColumn.Name.Name,
+		Name:               newColName,
 	})
 
 	err = setCharsetCollationFlenDecimal(&newCol.FieldType)
