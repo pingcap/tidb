@@ -259,7 +259,7 @@ var defaultConf = Config{
 		FeedbackProbability: 0,
 		QueryFeedbackLimit:  1024,
 		PseudoEstimateRatio: 0.7,
-		AutoAnalyzeRatio:    -1.0,
+		AutoAnalyzeRatio:    1e100,
 	},
 	XProtocol: XProtocol{
 		XHost: "",

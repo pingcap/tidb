@@ -366,7 +366,8 @@ const (
 // AutoAnalyzeMinCnt means if the count of table is less than this value, we needn't do auto analyze.
 var AutoAnalyzeMinCnt int64 = 1000
 
-var AutoAnalyzeRatio = -1.0
+// AutoAnalyzeRatio is the ratio which auto analyze will run when modify_count/count is greater than.
+var AutoAnalyzeRatio = 1e100
 
 func needAnalyzeTable(tbl *Table, limit time.Duration) bool {
 	if tbl.ModifyCount == 0 || tbl.Count < AutoAnalyzeMinCnt {
@@ -376,7 +377,7 @@ func needAnalyzeTable(tbl *Table, limit time.Duration) bool {
 	if time.Since(t) < limit {
 		return false
 	}
-	if AutoAnalyzeRatio >= 0 && float64(tbl.ModifyCount)/float64(tbl.Count) > AutoAnalyzeRatio {
+	if AutoAnalyzeRatio > 0 && float64(tbl.ModifyCount)/float64(tbl.Count) > AutoAnalyzeRatio {
 		return true
 	}
 	for _, col := range tbl.Columns {

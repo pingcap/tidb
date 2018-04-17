@@ -144,9 +144,9 @@ query-feedback-limit = 1024
 pseudo-estimate-ratio = 0.7
 
 # Auto analyze will run if the ratio between the modify count and
-# the row count of a table is greater than it. If set it to a negative
-# number, auto analyze won't run.
-auto-analyze-ratio = -1.0
+# the row count of a table is greater than it. It should be a positive
+# number.
+auto-analyze-ratio = 1e100
 
 [proxy-protocol]
 # PROXY protocol acceptable client networks.
