@@ -228,75 +228,6 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 	}
 }
 
-func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
-	switch sf.FuncName.L {
-	case
-		// compare functions.
-		ast.LT,
-		ast.LE,
-		ast.EQ,
-		ast.NE,
-		ast.GE,
-		ast.GT,
-		ast.NullEQ,
-
-		// like functions.
-		ast.Like,
-
-		// arithmetical functions.
-		ast.Plus,
-		ast.Minus,
-		ast.Mul,
-		ast.Div,
-		ast.Mod,
-		ast.IntDiv,
-
-		// logical functions.
-		ast.LogicAnd,
-		ast.LogicOr,
-		ast.LogicXor,
-		ast.UnaryNot,
-
-		// bitwise functions.
-		ast.And,
-		ast.Or,
-		ast.Xor,
-		ast.LeftShift,
-		ast.RightShift,
-		ast.BitNeg,
-
-		// json functions.
-		ast.JSONType,
-		ast.JSONExtract,
-		ast.JSONUnquote,
-		ast.JSONValid,
-		ast.JSONObject,
-		ast.JSONArray,
-		ast.JSONMerge,
-		ast.JSONSet,
-		ast.JSONInsert,
-		ast.JSONReplace,
-		ast.JSONRemove,
-		ast.JSONContains,
-
-		// control flow functions.
-		ast.Case,
-		ast.If,
-		ast.Ifnull,
-		ast.Nullif,
-
-		// date functions.
-		ast.DateFormat,
-
-		// other functions.
-		ast.Coalesce,
-		ast.IsNull,
-		ast.In:
-		return true
-	}
-	return false
-}
-
 // GroupByItemToPB converts group by items to pb.
 func GroupByItemToPB(sc *stmtctx.StatementContext, client kv.Client, expr Expression) *tipb.ByItem {
 	pc := PbConverter{client: client, sc: sc}
@@ -315,4 +246,56 @@ func SortByItemToPB(sc *stmtctx.StatementContext, client kv.Client, expr Express
 		return nil
 	}
 	return &tipb.ByItem{Expr: e, Desc: desc}
+}
+
+func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
+	switch sf.FuncName.L {
+	case
+		// logical functions.
+		ast.LogicAnd,
+		ast.LogicOr,
+		ast.UnaryNot,
+
+		// compare functions.
+		ast.LT,
+		ast.LE,
+		ast.EQ,
+		ast.NE,
+		ast.GE,
+		ast.GT,
+		ast.NullEQ,
+		ast.In,
+		ast.IsNull,
+		ast.Like,
+
+		// arithmetical functions.
+		ast.Plus,
+		ast.Minus,
+		ast.Mul,
+		ast.Div,
+
+		// control flow functions.
+		ast.Case,
+		ast.If,
+		ast.Ifnull,
+		ast.Coalesce,
+
+		// json functions.
+		ast.JSONType,
+		ast.JSONExtract,
+		ast.JSONUnquote,
+		ast.JSONObject,
+		ast.JSONArray,
+		ast.JSONMerge,
+		ast.JSONSet,
+		ast.JSONInsert,
+		ast.JSONReplace,
+		ast.JSONRemove,
+
+		// date functions.
+		ast.DateFormat:
+
+		return true
+	}
+	return false
 }
