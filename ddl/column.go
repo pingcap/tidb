@@ -460,6 +460,13 @@ func (d *ddl) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnI
 		}
 	}
 
+	// gofail: var uninitializedOffsetAndState bool
+	// if uninitializedOffsetAndState {
+	// if newCol.State != model.StatePublic {
+	//      return ver, errors.New("the column state is wrong")
+	// }
+	// }
+
 	// We need the latest column's offset and state. This information can be obtained from the store.
 	newCol.Offset = oldCol.Offset
 	newCol.State = oldCol.State
