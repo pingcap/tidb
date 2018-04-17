@@ -470,13 +470,15 @@ func (t *Table) addIndices(ctx context.Context, recordID int64, r []types.Datum,
 	return 0, nil
 }
 
-// RowWithCols implements table.Table RowWithCols interface.
-func (t *Table) RowWithCols(ctx context.Context, h int64, cols []*table.Column) ([]types.Datum, error) {
+// RowWithColsForRead is used to return a row get from the storage, it does not set the default value for non public columns,
+// because non public columns should not be returned as a result.
+// It also return a row value map for duplicate update which needs to set a default value for non public columns to do the update.
+func RowWithColsForRead(ctx context.Context, t table.Table, h int64, cols []*table.Column) ([]types.Datum, map[int64]types.Datum, error) {
 	// Get raw row data from kv.
 	key := t.RecordKey(h)
 	value, err := ctx.Txn().Get(key)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, nil, errors.Trace(err)
 	}
 	// Decode raw row data.
 	v := make([]types.Datum, len(cols))
@@ -485,7 +487,7 @@ func (t *Table) RowWithCols(ctx context.Context, h int64, cols []*table.Column) 
 		if col == nil {
 			continue
 		}
-		if col.IsPKHandleColumn(t.meta) {
+		if col.IsPKHandleColumn(t.Meta()) {
 			if mysql.HasUnsignedFlag(col.Flag) {
 				v[i].SetUint64(uint64(h))
 			} else {
@@ -497,14 +499,14 @@ func (t *Table) RowWithCols(ctx context.Context, h int64, cols []*table.Column) 
 	}
 	rowMap, err := tablecodec.DecodeRow(value, colTps, ctx.GetSessionVars().GetTimeZone())
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, nil, errors.Trace(err)
 	}
 	defaultVals := make([]types.Datum, len(cols))
 	for i, col := range cols {
 		if col == nil {
 			continue
 		}
-		if col.IsPKHandleColumn(t.meta) {
+		if col.IsPKHandleColumn(t.Meta()) {
 			continue
 		}
 		ri, ok := rowMap[col.ID]
@@ -514,8 +516,17 @@ func (t *Table) RowWithCols(ctx context.Context, h int64, cols []*table.Column) 
 		}
 		v[i], err = GetColDefaultValue(ctx, col, defaultVals)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, nil, errors.Trace(err)
 		}
+	}
+	return v, rowMap, nil
+}
+
+// RowWithCols implements table.Table RowWithCols interface.
+func (t *Table) RowWithCols(ctx context.Context, h int64, cols []*table.Column) ([]types.Datum, error) {
+	v, _, err := RowWithColsForRead(ctx, t, h, cols)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 	return v, nil
 }

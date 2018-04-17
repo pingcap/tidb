@@ -24,8 +24,10 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -1302,10 +1304,31 @@ func (e *InsertValues) adjustAutoIncrementDatum(row []types.Datum, i int, c *tab
 	return nil
 }
 
+// rowWithCols is **ONLY** used for onDuplicateUpdate to avoid null value inserted to not null column.
+func (e *InsertExec) rowWithCols(h int64, cols []*table.Column) ([]types.Datum, error) {
+	oldRow, oldRowMap, err := tables.RowWithColsForRead(e.ctx, e.Table, h, cols)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	// Fill write-only and write-reorg columns with originDefaultValue if not found in oldValue.
+	for _, col := range cols {
+		if col.State != model.StatePublic && oldRow[col.Offset].IsNull() {
+			_, found := oldRowMap[col.ID]
+			if !found {
+				oldRow[col.Offset], err = table.GetColOriginDefaultValue(e.ctx, col.ToInfo())
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+			}
+		}
+	}
+	return oldRow, nil
+}
+
 // onDuplicateUpdate updates the duplicate row.
 // TODO: Report rows affected and last insert id.
 func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols []*expression.Assignment) error {
-	data, err := e.Table.RowWithCols(e.ctx, h, e.Table.WritableCols())
+	data, err := e.rowWithCols(h, e.Table.WritableCols())
 	if err != nil {
 		return errors.Trace(err)
 	}
