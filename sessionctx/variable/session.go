@@ -285,18 +285,18 @@ type SessionVars struct {
 // NewSessionVars creates a session vars object.
 func NewSessionVars() *SessionVars {
 	vars := &SessionVars{
-		Users:                make(map[string]string),
-		systems:              make(map[string]string),
-		PreparedStmts:        make(map[uint32]interface{}),
-		PreparedStmtNameToID: make(map[string]uint32),
-		PreparedParams:       make([]interface{}, 10),
-		TxnCtx:               &TransactionContext{},
-		RetryInfo:            &RetryInfo{},
-		StrictSQLMode:        true,
-		Status:               mysql.ServerStatusAutocommit,
-		StmtCtx:              new(stmtctx.StatementContext),
-		AllowAggPushDown:     false,
-		OptimizerSelectivityLevel:  DefTiDBOptimizerSelectivityLevel,
+		Users:                     make(map[string]string),
+		systems:                   make(map[string]string),
+		PreparedStmts:             make(map[uint32]interface{}),
+		PreparedStmtNameToID:      make(map[string]uint32),
+		PreparedParams:            make([]interface{}, 10),
+		TxnCtx:                    &TransactionContext{},
+		RetryInfo:                 &RetryInfo{},
+		StrictSQLMode:             true,
+		Status:                    mysql.ServerStatusAutocommit,
+		StmtCtx:                   new(stmtctx.StatementContext),
+		AllowAggPushDown:          false,
+		OptimizerSelectivityLevel: DefTiDBOptimizerSelectivityLevel,
 	}
 	vars.Concurrency = Concurrency{
 		BuildStatsConcurrencyVar:   DefBuildStatsConcurrency,
