@@ -46,16 +46,21 @@ func (s *testStoreSuite) TearDownTest(c *C) {
 }
 
 func (s *testStoreSuite) TestParsePath(c *C) {
-	etcdAddrs, disableGC, err := parsePath("tikv://node1:2379,node2:2379")
+	etcdAddrs, disableGC, disableTxnLatches, err := parsePath("tikv://node1:2379,node2:2379")
 	c.Assert(err, IsNil)
 	c.Assert(etcdAddrs, DeepEquals, []string{"node1:2379", "node2:2379"})
 	c.Assert(disableGC, IsFalse)
+	c.Assert(disableTxnLatches, IsFalse)
 
-	_, _, err = parsePath("tikv://node1:2379")
+	_, _, _, err = parsePath("tikv://node1:2379")
 	c.Assert(err, IsNil)
-	_, disableGC, err = parsePath("tikv://node1:2379?disableGC=true")
+	_, disableGC, disableTxnLatches, err = parsePath("tikv://node1:2379?disableGC=true")
 	c.Assert(err, IsNil)
 	c.Assert(disableGC, IsTrue)
+	c.Assert(disableTxnLatches, IsFalse)
+	_, _, disableTxnLatches, err = parsePath("tikv://node1:2379?disableTxnLatches=true")
+	c.Assert(err, IsNil)
+	c.Assert(disableTxnLatches, IsTrue)
 }
 
 func (s *testStoreSuite) TestOracle(c *C) {

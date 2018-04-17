@@ -60,8 +60,8 @@ type Lock struct {
 }
 
 // NewLock creates a new lock.
-func NewLock(startTS uint64, requiredSlots []int) Lock {
-	return Lock{
+func NewLock(startTS uint64, requiredSlots []int) *Lock {
+	return &Lock{
 		requiredSlots: requiredSlots,
 		acquiredCount: 0,
 		isWaiting:     false,
@@ -96,7 +96,7 @@ func NewLatches(size int) *Latches {
 }
 
 // GenLock generates Lock for the transaction with startTS and keys.
-func (latches *Latches) GenLock(startTS uint64, keys [][]byte) Lock {
+func (latches *Latches) GenLock(startTS uint64, keys [][]byte) *Lock {
 	slots := make([]int, 0, len(keys))
 	for _, key := range keys {
 		slots = append(slots, latches.slotID(key))

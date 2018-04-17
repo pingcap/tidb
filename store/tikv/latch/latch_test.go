@@ -37,7 +37,7 @@ func (s *testLatchSuite) SetUpTest(c *C) {
 	s.latches = NewLatches(256)
 }
 
-func (s *testLatchSuite) newLock(keys [][]byte) (startTS uint64, lock Lock) {
+func (s *testLatchSuite) newLock(keys [][]byte) (startTS uint64, lock *Lock) {
 	startTS = getTso()
 	lock = s.latches.GenLock(startTS, keys)
 	return
@@ -56,33 +56,33 @@ func (s *testLatchSuite) TestWakeUp(c *C) {
 	startTSB, lockB := s.newLock(keysB)
 
 	// A acquire lock success.
-	acquired, stale := s.latches.Acquire(&lockA)
+	acquired, stale := s.latches.Acquire(lockA)
 	c.Assert(stale, IsFalse)
 	c.Assert(acquired, IsTrue)
 
 	// B acquire lock failed.
-	acquired, stale = s.latches.Acquire(&lockB)
+	acquired, stale = s.latches.Acquire(lockB)
 	c.Assert(stale, IsFalse)
 	c.Assert(acquired, IsFalse)
 
 	// A release lock, and get wakeup list.
 	commitTSA := getTso()
-	wakeupList := s.latches.Release(&lockA, commitTSA)
+	wakeupList := s.latches.Release(lockA, commitTSA)
 	c.Assert(wakeupList[0], Equals, startTSB)
 
 	// B acquire failed since startTSB has stale for some keys.
-	acquired, stale = s.latches.Acquire(&lockB)
+	acquired, stale = s.latches.Acquire(lockB)
 	c.Assert(stale, IsTrue)
 	c.Assert(acquired, IsFalse)
 
 	// B release lock since it received a stale.
-	wakeupList = s.latches.Release(&lockB, 0)
+	wakeupList = s.latches.Release(lockB, 0)
 	c.Assert(len(wakeupList), Equals, 0)
 
 	// B restart:get a new startTS.
 	startTSB = getTso()
 	lockB = s.latches.GenLock(startTSB, keysB)
-	acquired, stale = s.latches.Acquire(&lockB)
+	acquired, stale = s.latches.Acquire(lockB)
 	c.Assert(acquired, IsTrue)
 	c.Assert(stale, IsFalse)
 }
@@ -90,10 +90,10 @@ func (s *testLatchSuite) TestWakeUp(c *C) {
 type txn struct {
 	keys    [][]byte
 	startTS uint64
-	lock    Lock
+	lock    *Lock
 }
 
-func newTxn(keys [][]byte, startTS uint64, lock Lock) txn {
+func newTxn(keys [][]byte, startTS uint64, lock *Lock) txn {
 	return txn{
 		keys:    keys,
 		startTS: startTS,
@@ -123,7 +123,7 @@ func (store *txnScheduler) runTxn(startTS uint64) {
 	if !ok {
 		panic(startTS)
 	}
-	acquired, stale := store.latches.Acquire(&txn.lock)
+	acquired, stale := store.latches.Acquire(txn.lock)
 
 	if !stale && !acquired {
 		return
@@ -137,7 +137,7 @@ func (store *txnScheduler) runTxn(startTS uint64) {
 		commitTs = getTso()
 		store.wait.Done()
 	}
-	wakeupList := store.latches.Release(&txn.lock, commitTs)
+	wakeupList := store.latches.Release(txn.lock, commitTs)
 	for _, s := range wakeupList {
 		go store.runTxn(s)
 	}

@@ -25,56 +25,63 @@ import (
 	"golang.org/x/net/context"
 )
 
-type txnCommiter struct {
-	commiter *twoPhaseCommitter
-	ch       chan error
-	ctx      context.Context
-	lock     latch.Lock
+type txnCommitter struct {
+	committer *twoPhaseCommitter
+	ch        chan error
+	ctx       context.Context
+	lock      *latch.Lock
 }
 
-func (txn *txnCommiter) commit(timeout bool) uint64 {
+func newTxnCommiter(ctx context.Context, committer *twoPhaseCommitter) *txnCommitter {
+	return &txnCommitter{
+		committer: committer,
+		ctx:       ctx,
+	}
+}
+
+func (txn *txnCommitter) commit(timeout bool) uint64 {
 	if timeout {
-		err := errors.Errorf("startTS %d timeout", txn.commiter.startTS)
-		log.Warn(txn.commiter.connID, err)
+		err := errors.Errorf("startTS %d timeout", txn.committer.startTS)
+		log.Debug(txn.committer.connID, err)
 		txn.ch <- errors.Annotate(err, txnRetryableMark)
 		return uint64(0)
 	}
 
 	commitTS, err := txn.execute()
 	txn.ch <- errors.Trace(err)
-	log.Debug(txn.commiter.connID, "finish txn with startTS:", txn.commiter.startTS, " commitTS:", commitTS, " error:", err)
+	log.Debug(txn.committer.connID, " finish txn with startTS:", txn.committer.startTS, " commitTS:", commitTS, " error:", err)
 	return commitTS
 }
 
-func (txn *txnCommiter) execute() (commitTS uint64, err error) {
-	err = txn.commiter.execute(txn.ctx)
+func (txn *txnCommitter) execute() (commitTS uint64, err error) {
+	err = txn.committer.execute(txn.ctx)
 	if err != nil {
-		txn.commiter.writeFinishBinlog(binlog.BinlogType_Rollback, 0)
+		txn.committer.writeFinishBinlog(binlog.BinlogType_Rollback, 0)
 	} else {
-		commitTS = txn.commiter.commitTS
-		txn.commiter.writeFinishBinlog(binlog.BinlogType_Commit, int64(commitTS))
+		commitTS = txn.committer.commitTS
+		txn.committer.writeFinishBinlog(binlog.BinlogType_Commit, int64(commitTS))
 	}
 	return
 }
 
 type txnMap struct {
-	txns map[uint64]*txnCommiter
+	txns map[uint64]*txnCommitter
 	sync.RWMutex
 }
 
-func (t *txnMap) put(startTS uint64, txn *txnCommiter) {
+func (t *txnMap) put(startTS uint64, txn *txnCommitter) {
 	t.Lock()
 	defer t.Unlock()
 	if t.txns == nil {
-		t.txns = make(map[uint64]*txnCommiter)
+		t.txns = make(map[uint64]*txnCommitter)
 	}
 	if _, ok := t.txns[startTS]; ok {
-		panic(fmt.Sprintf("The startTS %d shouldn't be used in two transaction", txn.commiter.startTS))
+		panic(fmt.Sprintf("The startTS %d shouldn't be used in two transaction", txn.committer.startTS))
 	}
 	t.txns[startTS] = txn
 }
 
-func (t *txnMap) get(startTS uint64) *txnCommiter {
+func (t *txnMap) get(startTS uint64) *txnCommitter {
 	t.RLock()
 	defer t.RUnlock()
 	return t.txns[startTS]
@@ -97,41 +104,41 @@ const (
 	txnSchedulerMapsCount   = 256
 )
 
-func newTxnScheduler() *txnScheduler {
+func newTxnScheduler(enableLatches bool) *txnScheduler {
+	if !enableLatches {
+		return &txnScheduler{
+			latches: nil,
+			txns:    nil,
+		}
+	}
 	return &txnScheduler{
 		latches: latch.NewLatches(txnSchedulerLatchesSize),
 		txns:    make([]txnMap, txnSchedulerMapsCount),
 	}
 }
 
-func (store *txnScheduler) execute(ctx context.Context, txn *tikvTxn, connID uint64) (err error) {
-	commiter, err := newTwoPhaseCommitter(txn, connID)
-	if err != nil || commiter == nil {
+func (store *txnScheduler) execute(ctx context.Context, txn *twoPhaseCommitter, connID uint64) error {
+	newCommitter := newTxnCommiter(ctx, txn)
+	// latches disabled
+	if store.latches == nil {
+		_, err := newCommitter.execute()
 		return errors.Trace(err)
 	}
-	ch := make(chan error, 1)
-	lock := store.latches.GenLock(commiter.startTS, commiter.keys)
-	newCommiter := &txnCommiter{
-		commiter,
-		ch,
-		ctx,
-		lock,
-	}
-
+	// latches enabled
+	newCommitter.lock = store.latches.GenLock(txn.startTS, txn.keys)
 	// for transactions which is not retryable, commit directly.
 	if !sessionctx.GetRetryAble(ctx) {
-		txn.commitTS, err = store.runForUnRetryAble(newCommiter)
-		return
+		err := store.runForUnRetryAble(newCommitter)
+		return errors.Trace(err)
 	}
+	// for transactions which need to acquire latches
+	ch := make(chan error, 1)
+	newCommitter.ch = ch
+	store.putTxn(txn.startTS, newCommitter)
+	go store.run(txn.startTS)
 
-	store.putTxn(txn.startTS, newCommiter)
-	go store.run(commiter.startTS)
-
-	err = errors.Trace(<-ch)
-	if err == nil {
-		txn.commitTS = commiter.commitTS
-	}
-	return err
+	err := errors.Trace(<-ch)
+	return errors.Trace(err)
 }
 
 func (store *txnScheduler) getMap(startTS uint64) *txnMap {
@@ -139,7 +146,7 @@ func (store *txnScheduler) getMap(startTS uint64) *txnMap {
 	return &store.txns[id]
 }
 
-func (store *txnScheduler) getTxn(startTS uint64) *txnCommiter {
+func (store *txnScheduler) getTxn(startTS uint64) *txnCommitter {
 	return store.getMap(startTS).get(startTS)
 }
 
@@ -147,18 +154,18 @@ func (store *txnScheduler) deleteTxn(startTS uint64) {
 	store.getMap(startTS).delete(startTS)
 }
 
-func (store *txnScheduler) putTxn(startTS uint64, txn *txnCommiter) {
+func (store *txnScheduler) putTxn(startTS uint64, txn *txnCommitter) {
 	store.getMap(startTS).put(startTS, txn)
 }
 
 // run the transaction directly which is not retryable.
-func (store *txnScheduler) runForUnRetryAble(txn *txnCommiter) (commitTS uint64, err error) {
-	commitTS, err = txn.execute()
+func (store *txnScheduler) runForUnRetryAble(txn *txnCommitter) error {
+	commitTS, err := txn.execute()
 	if err == nil {
 		go store.latches.RefreshCommitTS(txn.lock.RequiredSlots(), commitTS)
 	}
-	log.Debug(txn.commiter.connID, "finish txn with startTS:", txn.commiter.startTS, " commitTS:", commitTS, " error:", err)
-	return
+	log.Debug(txn.committer.connID, " finish txn with startTS:", txn.committer.startTS, " commitTS:", commitTS, " error:", err)
+	return errors.Trace(err)
 }
 
 // run a normal transaction, it needs to acquire latches before 2pc.
@@ -167,13 +174,13 @@ func (store *txnScheduler) run(startTS uint64) {
 	if txn == nil {
 		panic(startTS)
 	}
-	acquired, timeout := store.latches.Acquire(&txn.lock)
+	acquired, timeout := store.latches.Acquire(txn.lock)
 	if !timeout && !acquired {
 		// wait for next wakeup
 		return
 	}
 	commitTS := txn.commit(timeout)
-	wakeupList := store.latches.Release(&txn.lock, commitTS)
+	wakeupList := store.latches.Release(txn.lock, commitTS)
 	for _, s := range wakeupList {
 		go store.run(s)
 	}

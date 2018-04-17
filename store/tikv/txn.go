@@ -174,8 +174,15 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	if val != nil {
 		connID = val.(uint64)
 	}
-
-	return errors.Trace(txn.store.txnScheduler.execute(ctx, txn, connID))
+	committer, err := newTwoPhaseCommitter(txn, connID)
+	if err != nil || committer == nil {
+		return errors.Trace(err)
+	}
+	err = txn.store.txnScheduler.execute(ctx, committer, connID)
+	if err == nil {
+		txn.commitTS = committer.commitTS
+	}
+	return errors.Trace(err)
 }
 
 func (txn *tikvTxn) close() {
