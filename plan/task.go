@@ -507,6 +507,13 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 		return invalidTask
 	}
 	t := tasks[0].copy()
+	hasDistinct := false
+	for _, aggFunc := range p.AggFuncs {
+		if aggFunc.HasDistinct {
+			hasDistinct = true
+			break
+		}
+	}
 	if cop, ok := t.(*copTask); ok {
 		partialAgg, finalAgg := p.newPartialAggregate()
 		if partialAgg != nil {
@@ -521,9 +528,15 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 		t = finishCopTask(p.ctx, cop)
 		attachPlan2Task(finalAgg, t)
 		t.addCost(t.count() * cpuFactor)
+		if hasDistinct {
+			t.addCost(t.count() * cpuFactor * distinctAggFactor)
+		}
 	} else {
 		attachPlan2Task(p, t)
 		t.addCost(t.count() * cpuFactor)
+		if hasDistinct {
+			t.addCost(t.count() * cpuFactor * distinctAggFactor)
+		}
 	}
 	return t
 }
@@ -535,6 +548,13 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 	}
 	cardinality := p.StatsInfo().count
 	task := tasks[0].copy()
+	hasDistinct := false
+	for _, aggFunc := range p.AggFuncs {
+		if aggFunc.HasDistinct {
+			hasDistinct = true
+			break
+		}
+	}
 	if cop, ok := task.(*copTask); ok {
 		partialAgg, finalAgg := p.newPartialAggregate()
 		if partialAgg != nil {
@@ -549,10 +569,16 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 		}
 		task = finishCopTask(p.ctx, cop)
 		attachPlan2Task(finalAgg, task)
-		task.addCost(task.count()*cpuFactor + cardinality*hashAggMemFactor)
+		task.addCost(task.count()*cpuFactor*hashAggFactor + cardinality*createAggCtxFactor)
+		if hasDistinct {
+			task.addCost(task.count() * cpuFactor * distinctAggFactor)
+		}
 	} else {
 		attachPlan2Task(p, task)
-		task.addCost(task.count()*cpuFactor + cardinality*hashAggMemFactor)
+		task.addCost(task.count()*cpuFactor*hashAggFactor + cardinality*createAggCtxFactor)
+		if hasDistinct {
+			task.addCost(task.count() * cpuFactor * distinctAggFactor)
+		}
 	}
 	return task
 }
