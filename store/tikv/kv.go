@@ -127,6 +127,7 @@ type tikvStore struct {
 	pdClient     pd.Client
 	regionCache  *RegionCache
 	lockResolver *LockResolver
+	txnScheduler *txnScheduler
 	gcWorker     GCHandler
 	etcdAddrs    []string
 	tlsConfig    *tls.Config
@@ -183,6 +184,7 @@ func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Clie
 		closed:      make(chan struct{}),
 	}
 	store.lockResolver = newLockResolver(store)
+	store.txnScheduler = newTxnScheduler()
 	store.enableGC = enableGC
 
 	go store.runSafePointChecker()

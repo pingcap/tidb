@@ -41,6 +41,12 @@ func (l *Latch) free() {
 	l.waitingQueueHead = 0
 }
 
+func (l *Latch) refreshCommitTS(commitTS uint64) {
+	l.Lock()
+	defer l.Unlock()
+	l.maxCommitTS = mathutil.MaxUint64(commitTS, l.maxCommitTS)
+}
+
 // Lock is the locks' information required for a transaction.
 type Lock struct {
 	// The slot IDs of the latches(keys) that a startTS must acquire before being able to processed.
@@ -61,6 +67,11 @@ func NewLock(startTS uint64, requiredSlots []int) Lock {
 		isWaiting:     false,
 		startTS:       startTS,
 	}
+}
+
+// RequiredSlots returns required slots.
+func (l *Lock) RequiredSlots() []int {
+	return l.requiredSlots
 }
 
 // Latches which are used for concurrency control.
@@ -144,6 +155,13 @@ func (latches *Latches) Release(lock *Lock, commitTS uint64) (wakeupList []uint6
 		}
 	}
 	return
+}
+
+// RefreshCommitTS refresh slot's commitTS.
+func (latches *Latches) RefreshCommitTS(slotIDs []int, commitTS uint64) {
+	for _, slotID := range slotIDs {
+		latches.slots[slotID].refreshCommitTS(commitTS)
+	}
 }
 
 func (latches *Latches) releaseSlot(slotID int, startTS, commitTS uint64) (hasNext bool, nextStartTS uint64) {
