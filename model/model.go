@@ -233,6 +233,20 @@ const (
 	PartitionTypeList  PartitionType = 3
 )
 
+func (p PartitionType) String() string {
+	switch p {
+	case PartitionTypeRange:
+		return "RANGE"
+	case PartitionTypeHash:
+		return "HASH"
+	case PartitionTypeList:
+		return "LIST"
+	default:
+		return ""
+	}
+
+}
+
 // PartitionInfo provides table partition info.
 type PartitionInfo struct {
 	Type    PartitionType

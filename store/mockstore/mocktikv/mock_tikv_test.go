@@ -349,6 +349,14 @@ func (s *testMockTiKVSuite) TestScanLock(c *C) {
 	s.mustPrewriteOK(c, putMutations("p1", "v5", "s1", "v5"), "p1", 5)
 	s.mustPrewriteOK(c, putMutations("p2", "v10", "s2", "v10"), "p2", 10)
 	s.mustPrewriteOK(c, putMutations("p3", "v20", "s3", "v20"), "p3", 20)
+
+	locks, err := s.store.ScanLock([]byte("a"), []byte("r"), 12)
+	c.Assert(err, IsNil)
+	c.Assert(locks, DeepEquals, []*kvrpcpb.LockInfo{
+		lock("p1", "p1", 5),
+		lock("p2", "p2", 10),
+	})
+
 	s.mustScanLock(c, 10, []*kvrpcpb.LockInfo{
 		lock("p1", "p1", 5),
 		lock("p2", "p2", 10),
