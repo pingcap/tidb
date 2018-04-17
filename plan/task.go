@@ -507,13 +507,6 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 		return invalidTask
 	}
 	t := tasks[0].copy()
-	hasDistinct := false
-	for _, aggFunc := range p.AggFuncs {
-		if aggFunc.HasDistinct {
-			hasDistinct = true
-			break
-		}
-	}
 	if cop, ok := t.(*copTask); ok {
 		partialAgg, finalAgg := p.newPartialAggregate()
 		if partialAgg != nil {
@@ -527,16 +520,19 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 		}
 		t = finishCopTask(p.ctx, cop)
 		attachPlan2Task(finalAgg, t)
-		t.addCost(t.count() * cpuFactor)
-		if hasDistinct {
-			t.addCost(t.count() * cpuFactor * distinctAggFactor)
-		}
 	} else {
 		attachPlan2Task(p, t)
-		t.addCost(t.count() * cpuFactor)
-		if hasDistinct {
-			t.addCost(t.count() * cpuFactor * distinctAggFactor)
+	}
+	hasDistinct := false
+	for _, aggFunc := range p.AggFuncs {
+		if aggFunc.HasDistinct {
+			hasDistinct = true
+			break
 		}
+	}
+	t.addCost(t.count() * cpuFactor)
+	if hasDistinct {
+		t.addCost(t.count() * cpuFactor * distinctAggFactor)
 	}
 	return t
 }
@@ -547,15 +543,8 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 		return invalidTask
 	}
 	cardinality := p.StatsInfo().count
-	task := tasks[0].copy()
-	hasDistinct := false
-	for _, aggFunc := range p.AggFuncs {
-		if aggFunc.HasDistinct {
-			hasDistinct = true
-			break
-		}
-	}
-	if cop, ok := task.(*copTask); ok {
+	t := tasks[0].copy()
+	if cop, ok := t.(*copTask); ok {
 		partialAgg, finalAgg := p.newPartialAggregate()
 		if partialAgg != nil {
 			if cop.tablePlan != nil {
@@ -567,18 +556,21 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 				cop.indexPlan = partialAgg
 			}
 		}
-		task = finishCopTask(p.ctx, cop)
-		attachPlan2Task(finalAgg, task)
-		task.addCost(task.count()*cpuFactor*hashAggFactor + cardinality*createAggCtxFactor)
-		if hasDistinct {
-			task.addCost(task.count() * cpuFactor * distinctAggFactor)
-		}
+		t = finishCopTask(p.ctx, cop)
+		attachPlan2Task(finalAgg, t)
 	} else {
-		attachPlan2Task(p, task)
-		task.addCost(task.count()*cpuFactor*hashAggFactor + cardinality*createAggCtxFactor)
-		if hasDistinct {
-			task.addCost(task.count() * cpuFactor * distinctAggFactor)
+		attachPlan2Task(p, t)
+	}
+	hasDistinct := false
+	for _, aggFunc := range p.AggFuncs {
+		if aggFunc.HasDistinct {
+			hasDistinct = true
+			break
 		}
 	}
-	return task
+	t.addCost(t.count()*cpuFactor*hashAggFactor + cardinality*createAggCtxFactor)
+	if hasDistinct {
+		t.addCost(t.count() * cpuFactor * distinctAggFactor)
+	}
+	return t
 }
