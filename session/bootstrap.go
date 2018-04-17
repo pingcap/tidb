@@ -28,6 +28,9 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
@@ -721,4 +724,42 @@ func oldPasswordUpgrade(pass string) (string, error) {
 	hash2 := auth.Sha1Hash(hash1)
 	newpass := fmt.Sprintf("*%X", hash2)
 	return newpass, nil
+}
+
+func fixNoneStates(store kv.Storage) error {
+	err1 := kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		dbs, err := m.ListDatabases()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for _, db := range dbs {
+			if db.Name.L == "mysql" {
+				err = fixNoneStateUsers(m, db)
+			}
+		}
+		return errors.Trace(err)
+	})
+	return errors.Trace(err1)
+}
+
+func fixNoneStateUsers(m *meta.Meta, db *model.DBInfo) error {
+	tbls, err := m.ListTables(db.ID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, tbl := range tbls {
+		switch tbl.Name.L {
+		case "db", "tables_priv", "columns_priv":
+			for _, col := range tbl.Columns {
+				if col.Name.L == "user" && col.State == model.StateNone {
+					log.Warn("fix none state column %s.User", tbl.Name.O)
+					col.State = model.StatePublic
+					col.Offset = 2
+				}
+			}
+			m.UpdateTable(db.ID, tbl)
+		}
+	}
+	return nil
 }

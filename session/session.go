@@ -1103,7 +1103,15 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if ver == notBootstrapped {
 		runInBootstrapSession(store, bootstrap)
 	} else if ver < currentBootstrapVersion {
+		err := fixNoneStates(store)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		runInBootstrapSession(store, upgrade)
+		err = fixNoneStates(store)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 
 	se, err := createSession(store)
