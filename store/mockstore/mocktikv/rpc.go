@@ -326,7 +326,9 @@ func (h *rpcHandler) handleKvBatchRollback(req *kvrpcpb.BatchRollbackRequest) *k
 }
 
 func (h *rpcHandler) handleKvScanLock(req *kvrpcpb.ScanLockRequest) *kvrpcpb.ScanLockResponse {
-	locks, err := h.mvccStore.ScanLock(h.startKey, h.endKey, req.GetMaxVersion())
+	startKey := MvccKey(h.startKey).Raw()
+	endKey := MvccKey(h.endKey).Raw()
+	locks, err := h.mvccStore.ScanLock(startKey, endKey, req.GetMaxVersion())
 	if err != nil {
 		return &kvrpcpb.ScanLockResponse{
 			Error: convertToKeyError(err),
@@ -338,7 +340,9 @@ func (h *rpcHandler) handleKvScanLock(req *kvrpcpb.ScanLockRequest) *kvrpcpb.Sca
 }
 
 func (h *rpcHandler) handleKvResolveLock(req *kvrpcpb.ResolveLockRequest) *kvrpcpb.ResolveLockResponse {
-	err := h.mvccStore.ResolveLock(h.startKey, h.endKey, req.GetStartVersion(), req.GetCommitVersion())
+	startKey := MvccKey(h.startKey).Raw()
+	endKey := MvccKey(h.endKey).Raw()
+	err := h.mvccStore.ResolveLock(startKey, endKey, req.GetStartVersion(), req.GetCommitVersion())
 	if err != nil {
 		return &kvrpcpb.ResolveLockResponse{
 			Error: convertToKeyError(err),
