@@ -297,7 +297,7 @@ type expectQuery struct {
 	rows []string
 }
 
-// https://github.com/pingcap/tidb/pull/6249 fix the following two test cases.
+// https://github.com/pingcap/tidb/pull/6249 fixes the following two test cases.
 func (s *testStateChangeSuite) TestWriteOnlyWriteNULL(c *C) {
 	sqls := make([]sqlWithErr, 1)
 	sqls[0] = sqlWithErr{"insert t set c1 = 'c1_new', c3 = '2019-02-12', c4 = 8 on duplicate key update c1 = values(c1)", nil}
