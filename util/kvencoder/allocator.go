@@ -25,23 +25,23 @@ var (
 	step = int64(5000)
 )
 
-// NewAllocator new an Allocator.
+// NewAllocator creates an Allocator.
 func NewAllocator() *Allocator {
 	return &Allocator{}
 }
 
-// Allocator is a id allocator, it is only used in lightning.
+// Allocator is an id allocator, it is only used in lightning.
 type Allocator struct {
 	base int64
 }
 
-// Alloc allocs the next autoID for table with tableID.
+// Alloc allocs a next autoID for table with tableID.
 func (alloc *Allocator) Alloc(tableID int64) (int64, error) {
 	return atomic.AddInt64(&alloc.base, 1), nil
 }
 
-// ResetBase allow newBase smaller than alloc.base, and will set the alloc.base to newBase.
-func (alloc *Allocator) ResetBase(newBase int64) {
+// Reset allow newBase smaller than alloc.base, and will set the alloc.base to newBase.
+func (alloc *Allocator) Reset(newBase int64) {
 	atomic.StoreInt64(&alloc.base, newBase)
 }
 
@@ -61,7 +61,7 @@ func (alloc *Allocator) Rebase(tableID, newBase int64, allocIDs bool) error {
 	return nil
 }
 
-// Base return the current base of Allocator.
+// Base returns the current base of Allocator.
 func (alloc *Allocator) Base() int64 {
 	return atomic.LoadInt64(&alloc.base)
 }
