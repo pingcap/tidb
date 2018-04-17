@@ -145,8 +145,8 @@ pseudo-estimate-ratio = 0.7
 
 # Auto analyze will run if the ratio between the modify count and
 # the row count of a table is greater than it. It should be a positive
-# number.
-auto-analyze-ratio = 1e100
+# float number, otherwise auto analyze won't run.
+auto-analyze-ratio = 0.0
 
 [proxy-protocol]
 # PROXY protocol acceptable client networks.

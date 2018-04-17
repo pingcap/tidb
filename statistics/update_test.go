@@ -280,7 +280,7 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	statistics.AutoAnalyzeRatio = 0.6
 	defer func() {
 		statistics.AutoAnalyzeMinCnt = 1000
-		statistics.AutoAnalyzeRatio = -1.0
+		statistics.AutoAnalyzeRatio = 0.0
 	}()
 
 	do := s.do
