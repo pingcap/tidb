@@ -523,15 +523,8 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 	} else {
 		attachPlan2Task(p, t)
 	}
-	hasDistinct := false
-	for _, aggFunc := range p.AggFuncs {
-		if aggFunc.HasDistinct {
-			hasDistinct = true
-			break
-		}
-	}
 	t.addCost(t.count() * cpuFactor)
-	if hasDistinct {
+	if p.hasDistinctFunc() {
 		t.addCost(t.count() * cpuFactor * distinctAggFactor)
 	}
 	return t
@@ -561,15 +554,8 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 	} else {
 		attachPlan2Task(p, t)
 	}
-	hasDistinct := false
-	for _, aggFunc := range p.AggFuncs {
-		if aggFunc.HasDistinct {
-			hasDistinct = true
-			break
-		}
-	}
 	t.addCost(t.count()*cpuFactor*hashAggFactor + cardinality*createAggCtxFactor)
-	if hasDistinct {
+	if p.hasDistinctFunc() {
 		t.addCost(t.count() * cpuFactor * distinctAggFactor)
 	}
 	return t
