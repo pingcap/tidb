@@ -205,7 +205,7 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 
 	// check whether this function has ProtoBuf signature.
 	pbCode := expr.Function.PbCode()
-	if pbCode <= 0 {
+	if pbCode < 0 {
 		return nil
 	}
 
