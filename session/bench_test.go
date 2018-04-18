@@ -81,12 +81,6 @@ func prepareJoinBenchData(se Session, colType string, valueFormat string, valueC
 	mustExecute(se, "commit")
 }
 
-func prepareUnionScanData(se Session) {
-	mustExecute(se, "drop table if exists t")
-	mustExecute(se, "create table t(a int)")
-	mustExecute(se, "insert into t value(1), (2), (3), (4), (5), (6), (7), (8), (9), (10)")
-}
-
 func readResult(ctx context.Context, rs ast.RecordSet, count int) {
 	chk := rs.NewChunk()
 	for count > 0 {
@@ -346,21 +340,4 @@ func BenchmarkJoinLimit(b *testing.B) {
 		}
 		readResult(ctx, rs[0], 1)
 	}
-}
-
-func BenchmarkUnionScan(b *testing.B) {
-	ctx := context.Background()
-	b.StopTimer()
-	se := prepareBenchSession()
-	prepareUnionScanData(se)
-	b.StartTimer()
-	mustExecute(se, "begin")
-	mustExecute(se, "insert into t value(11), (12), (13)")
-	for i := 0; i < b.N; i++ {
-		_, err := se.Execute(ctx, "select * from t")
-		if err != nil {
-			b.Fatal(err)
-		}
-	}
-	mustExecute(se, "commit")
 }
