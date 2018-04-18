@@ -135,7 +135,7 @@ func (scheduler *txnScheduler) execute(ctx context.Context, txn *twoPhaseCommitt
 	ch := make(chan error, 1)
 	newCommitter.ch = ch
 	scheduler.putTxn(txn.startTS, newCommitter)
-	go scheduler.run(txn.startTS)
+	scheduler.run(txn.startTS)
 
 	err := errors.Trace(<-ch)
 	return errors.Trace(err)
@@ -162,7 +162,7 @@ func (scheduler *txnScheduler) putTxn(startTS uint64, txn *txnCommitter) {
 func (scheduler *txnScheduler) runForUnRetryAble(txn *txnCommitter) error {
 	commitTS, err := txn.execute()
 	if err == nil {
-		go scheduler.latches.RefreshCommitTS(txn.lock.RequiredSlots(), commitTS)
+		scheduler.latches.RefreshCommitTS(txn.lock.RequiredSlots(), commitTS)
 	}
 	log.Debug(txn.twoPC.connID, " finish txn with startTS:", txn.twoPC.startTS, " commitTS:", commitTS, " error:", err)
 	return errors.Trace(err)
@@ -184,6 +184,6 @@ func (scheduler *txnScheduler) run(startTS uint64) {
 	scheduler.deleteTxn(startTS)
 	wakeupList := scheduler.latches.Release(txn.lock, commitTS)
 	for _, s := range wakeupList {
-		scheduler.run(s)
+		go scheduler.run(s)
 	}
 }
