@@ -1272,6 +1272,13 @@ const loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variab
 	variable.TiDBHashJoinConcurrency + quoteCommaQuote +
 	variable.TiDBDistSQLScanConcurrency + "')"
 
+var globalVariableCache = struct {
+	sync.RWMutex
+	lastModify time.Time
+	rows       []types.Row
+	fields     []*ast.ResultField
+}{}
+
 // loadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.
 func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	vars := s.sessionVars
@@ -1282,14 +1289,37 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 		// When running bootstrap or upgrade, we should not access global storage.
 		return nil
 	}
-	// Set the variable to true to prevent cyclic recursive call.
-	vars.CommonGlobalLoaded = true
-	rows, fields, err := s.ExecRestrictedSQL(s, loadCommonGlobalVarsSQL)
-	if err != nil {
-		vars.CommonGlobalLoaded = false
-		log.Errorf("Failed to load common global variables.")
-		return errors.Trace(err)
+
+	var rows []types.Row
+	var fields []*ast.ResultField
+	var err error
+
+	now := time.Now()
+	globalVariableCache.RLock()
+	if now.Sub(globalVariableCache.lastModify) < 2*time.Second {
+		// Use cache if TiDB just loaded global variables within 2 second ago.
+		// When a lot of connections connect to TiDB concurrently, it can protect TiKV meta region from overload.
+		rows = globalVariableCache.rows
+		fields = globalVariableCache.fields
+		globalVariableCache.RUnlock()
+	} else {
+		globalVariableCache.RUnlock()
+		// Set the variable to true to prevent cyclic recursive call.
+		vars.CommonGlobalLoaded = true
+		rows, fields, err = s.ExecRestrictedSQL(s, loadCommonGlobalVarsSQL)
+		if err != nil {
+			vars.CommonGlobalLoaded = false
+			log.Errorf("Failed to load common global variables.")
+			return errors.Trace(err)
+		}
+
+		globalVariableCache.Lock()
+		globalVariableCache.lastModify = time.Now()
+		globalVariableCache.rows = rows
+		globalVariableCache.fields = fields
+		globalVariableCache.Unlock()
 	}
+
 	for _, row := range rows {
 		varName := row.GetString(0)
 		varVal := row.GetDatum(1, &fields[1].Column.FieldType)
