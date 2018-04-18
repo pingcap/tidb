@@ -820,10 +820,10 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 				return errors.Trace(err1)
 			}
 			piDef := model.PartitionDefinition{
-				Name:     def.Name,
-				ID:       pid,
-				Comment:  def.Comment,
-				MaxValue: def.MaxValue,
+				Name:    def.Name,
+				ID:      pid,
+				Comment: def.Comment,
+				// MaxValue: def.MaxValue,
 			}
 			for _, expr := range def.LessThan {
 				buf := new(bytes.Buffer)

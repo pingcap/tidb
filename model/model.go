@@ -262,7 +262,7 @@ type PartitionDefinition struct {
 	Name     string
 	LessThan []string
 	Comment  string `json:"omit_empty"`
-	MaxValue bool
+	// MaxValue bool
 }
 
 // IndexColumn provides index column info.
