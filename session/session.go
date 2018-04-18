@@ -1272,12 +1272,33 @@ const loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variab
 	variable.TiDBHashJoinConcurrency + quoteCommaQuote +
 	variable.TiDBDistSQLScanConcurrency + "')"
 
-var globalVariableCache = struct {
+type globalVariableCache struct {
 	sync.RWMutex
 	lastModify time.Time
 	rows       []types.Row
 	fields     []*ast.ResultField
-}{}
+}
+
+var gvc globalVariableCache
+
+func (gvc *globalVariableCache) Update(rows []types.Row, fields []*ast.ResultField) {
+	gvc.Lock()
+	gvc.lastModify = time.Now()
+	gvc.rows = rows
+	gvc.fields = fields
+	gvc.Unlock()
+}
+
+func (gvc *globalVariableCache) Get() (succ bool, rows []types.Row, fields []*ast.ResultField) {
+	gvc.RLock()
+	defer gvc.RUnlock()
+	if time.Now().Sub(gvc.lastModify) < 2*time.Second {
+		succ, rows, fields = true, gvc.rows, gvc.fields
+		return
+	}
+	succ = false
+	return
+}
 
 // loadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.
 func (s *session) loadCommonGlobalVariablesIfNeeded() error {
@@ -1290,20 +1311,11 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 		return nil
 	}
 
-	var rows []types.Row
-	var fields []*ast.ResultField
 	var err error
-
-	now := time.Now()
-	globalVariableCache.RLock()
-	if now.Sub(globalVariableCache.lastModify) < 2*time.Second {
-		// Use cache if TiDB just loaded global variables within 2 second ago.
-		// When a lot of connections connect to TiDB concurrently, it can protect TiKV meta region from overload.
-		rows = globalVariableCache.rows
-		fields = globalVariableCache.fields
-		globalVariableCache.RUnlock()
-	} else {
-		globalVariableCache.RUnlock()
+	// Use globalVariableCache if TiDB just loaded global variables within 2 second ago.
+	// When a lot of connections connect to TiDB simultaneously, it can protect TiKV meta region from overload.
+	succ, rows, fields := gvc.Get()
+	if !succ {
 		// Set the variable to true to prevent cyclic recursive call.
 		vars.CommonGlobalLoaded = true
 		rows, fields, err = s.ExecRestrictedSQL(s, loadCommonGlobalVarsSQL)
@@ -1312,12 +1324,7 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 			log.Errorf("Failed to load common global variables.")
 			return errors.Trace(err)
 		}
-
-		globalVariableCache.Lock()
-		globalVariableCache.lastModify = time.Now()
-		globalVariableCache.rows = rows
-		globalVariableCache.fields = fields
-		globalVariableCache.Unlock()
+		gvc.Update(rows, fields)
 	}
 
 	for _, row := range rows {
