@@ -165,8 +165,14 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 	} else {
 		sc.AddAffectedRows(1)
 	}
-
-	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.Meta().ID, 0, 1)
+	colSize := make(map[int64]int64)
+	for id, col := range t.Cols() {
+		val := int64(len(newData[id].GetBytes()) - len(oldData[id].GetBytes()))
+		if val != 0 {
+			colSize[col.ID] = val
+		}
+	}
+	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.Meta().ID, 0, 1, colSize)
 	return true, handleChanged, newHandle, nil
 }
 
@@ -392,7 +398,14 @@ func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h int64, d
 	}
 	ctx.StmtAddDirtyTableOP(DirtyTableDeleteRow, t.Meta().ID, h, nil)
 	ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
-	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.Meta().ID, -1, 1)
+	colSize := make(map[int64]int64)
+	for id, col := range t.Cols() {
+		val := -int64(len(data[id].GetBytes()))
+		if val != 0 {
+			colSize[col.ID] = val
+		}
+	}
+	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.Meta().ID, -1, 1, colSize)
 	return nil
 }
 
@@ -879,7 +892,12 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) (types.Datu
 					if err1 != nil {
 						return nil, errors.Trace(err1)
 					}
-					if _, _, _, err = e.doDupRowUpdate(h, data, row, e.OnDuplicate); err != nil {
+					_, _, _, err = e.doDupRowUpdate(h, data, row, e.OnDuplicate)
+					if kv.ErrKeyExists.Equal(err) && e.IgnoreErr {
+						e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+						continue
+					}
+					if err != nil {
 						return nil, errors.Trace(err)
 					}
 					e.rowCount++
@@ -1730,7 +1748,7 @@ func (e *InsertExec) doDupRowUpdate(handle int64, oldRow []types.Datum, newRow [
 		newData[col.Col.Index] = val
 		assignFlag[col.Col.Index] = true
 	}
-	_, handleChanged, newHandle, err := updateRecord(e.ctx, handle, oldRow, newData, assignFlag, e.Table, true, false)
+	_, handleChanged, newHandle, err := updateRecord(e.ctx, handle, oldRow, newData, assignFlag, e.Table, true, e.IgnoreErr)
 	if err != nil {
 		return nil, false, 0, errors.Trace(err)
 	}

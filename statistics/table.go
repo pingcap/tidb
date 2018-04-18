@@ -48,6 +48,7 @@ type Table struct {
 	ModifyCount int64 // Total modify count in a table.
 	Version     uint64
 	Pseudo      bool
+	PKIsHandle  bool
 }
 
 func (t *Table) copy() *Table {
@@ -122,16 +123,32 @@ func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *
 			continue
 		}
 		isHandle := tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag)
-		needNotLoad := col == nil || (col.Len() == 0 && col.LastUpdateVersion < histVer)
-		if h.Lease > 0 && !isHandle && needNotLoad && !loadAll {
+		// We will not load buckets if:
+		// 1. Lease > 0, and:
+		// 2. this column is not handle, and:
+		// 3. the column doesn't has buckets before, and:
+		// 4. loadAll is false.
+		notNeedLoad := h.Lease > 0 &&
+			!isHandle &&
+			(col == nil || col.Len() == 0 && col.LastUpdateVersion < histVer) &&
+			!loadAll
+		if notNeedLoad {
 			count, err := columnCountFromStorage(h.ctx, table.TableID, histID)
 			if err != nil {
 				return errors.Trace(err)
 			}
 			col = &Column{
-				Histogram: Histogram{ID: histID, NDV: distinct, NullCount: nullCount, tp: &colInfo.FieldType, LastUpdateVersion: histVer, TotColSize: totColSize},
-				Info:      colInfo,
-				Count:     count + nullCount}
+				Histogram: Histogram{
+					ID:                histID,
+					NDV:               distinct,
+					NullCount:         nullCount,
+					tp:                &colInfo.FieldType,
+					LastUpdateVersion: histVer,
+					TotColSize:        totColSize,
+				},
+				Info:  colInfo,
+				Count: count + nullCount,
+			}
 			break
 		}
 		if col == nil || col.LastUpdateVersion < histVer || loadAll {
@@ -143,7 +160,12 @@ func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *
 			if err != nil {
 				return errors.Trace(err)
 			}
-			col = &Column{Histogram: *hg, Info: colInfo, CMSketch: cms, Count: int64(hg.totalRowCount())}
+			col = &Column{
+				Histogram: *hg,
+				Info:      colInfo,
+				CMSketch:  cms,
+				Count:     int64(hg.totalRowCount()),
+			}
 		}
 		break
 	}
@@ -339,11 +361,12 @@ func (t *Table) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idxID int
 // PseudoTable creates a pseudo table statistics.
 func PseudoTable(tblInfo *model.TableInfo) *Table {
 	t := &Table{
-		TableID: tblInfo.ID,
-		Pseudo:  true,
-		Count:   pseudoRowCount,
-		Columns: make(map[int64]*Column, len(tblInfo.Columns)),
-		Indices: make(map[int64]*Index, len(tblInfo.Indices)),
+		TableID:    tblInfo.ID,
+		Pseudo:     true,
+		Count:      pseudoRowCount,
+		PKIsHandle: tblInfo.PKIsHandle,
+		Columns:    make(map[int64]*Column, len(tblInfo.Columns)),
+		Indices:    make(map[int64]*Index, len(tblInfo.Indices)),
 	}
 	for _, col := range tblInfo.Columns {
 		if col.State == model.StatePublic {

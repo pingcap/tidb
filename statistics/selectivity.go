@@ -79,11 +79,20 @@ func pseudoSelectivity(t *Table, exprs []expression.Expression) float64 {
 		}
 		switch fun.FuncName.L {
 		case ast.EQ, ast.NullEQ, ast.In:
+			minFactor = math.Min(minFactor, 1.0/pseudoEqualRate)
 			col, ok := t.Columns[colID]
-			if ok && (mysql.HasUniKeyFlag(col.Info.Flag) || mysql.HasPriKeyFlag(col.Info.Flag)) {
+			if !ok {
+				continue
+			}
+			if mysql.HasUniKeyFlag(col.Info.Flag) {
 				uniqueCol[col.Info.Name.L] = true
 			}
-			minFactor = math.Min(minFactor, 1.0/pseudoEqualRate)
+			if mysql.HasPriKeyFlag(col.Info.Flag) {
+				if t.PKIsHandle {
+					return 1.0 / float64(t.Count)
+				}
+				uniqueCol[col.Info.Name.L] = true
+			}
 		case ast.GE, ast.GT, ast.LE, ast.LT:
 			minFactor = math.Min(minFactor, 1.0/pseudoLessRate)
 			// FIXME: To resolve the between case.

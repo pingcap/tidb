@@ -432,8 +432,7 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 	d.SetHook(callback)
 }
 
-func (s *testStateChangeSuite) TestParallelDDL(c *C) {
-	defer testleak.AfterTest(c)()
+func (s *testStateChangeSuite) TestParallelAlterModifyColumn(c *C) {
 	_, err := s.se.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
 	_, err = s.se.Execute(context.Background(), "create table t(a int, b int, c int)")
@@ -447,13 +446,13 @@ func (s *testStateChangeSuite) TestParallelDDL(c *C) {
 			return
 		}
 		var qLen int64
-		var err error
+		var err1 error
 		for {
 			kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
 				m := meta.NewMeta(txn)
-				qLen, err = m.DDLJobQueueLen()
-				if err != nil {
-					return err
+				qLen, err1 = m.DDLJobQueueLen()
+				if err1 != nil {
+					return err1
 				}
 				return nil
 			})
@@ -478,14 +477,13 @@ func (s *testStateChangeSuite) TestParallelDDL(c *C) {
 	c.Assert(err, IsNil)
 	_, err = se1.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
+	wg.Add(2)
 	go func() {
-		wg.Add(1)
 		defer wg.Done()
 		_, err1 = se.Execute(context.Background(), "ALTER TABLE t MODIFY COLUMN b int FIRST;")
 	}()
 
 	go func() {
-		wg.Add(1)
 		defer wg.Done()
 		_, err2 = se1.Execute(context.Background(), "ALTER TABLE t MODIFY COLUMN b int FIRST;")
 	}()
@@ -497,6 +495,130 @@ func (s *testStateChangeSuite) TestParallelDDL(c *C) {
 
 	_, err = s.se.Execute(context.Background(), "select * from t")
 	c.Assert(err, IsNil)
+
+	callback = &ddl.TestDDLCallback{}
+	d.SetHook(callback)
+}
+
+func (s *testStateChangeSuite) testParrallelExecSQL(c *C, sql string) {
+	se, err := session.CreateSession(s.store)
+	_, err = se.Execute(context.Background(), "use test_db_state")
+	c.Assert(err, IsNil)
+
+	se1, err1 := session.CreateSession(s.store)
+	_, err = se1.Execute(context.Background(), "use test_db_state")
+	c.Assert(err1, IsNil)
+
+	var err2, err3 error
+	wg := sync.WaitGroup{}
+
+	callback := &ddl.TestDDLCallback{}
+	once := sync.Once{}
+	callback.OnJobUpdatedExported = func(job *model.Job) {
+		// sleep a while, let other job enqueue.
+		once.Do(func() {
+			time.Sleep(time.Millisecond * 10)
+		})
+	}
+
+	d := s.dom.DDL()
+	d.SetHook(callback)
+
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		_, err2 = se.Execute(context.Background(), sql)
+	}()
+
+	go func() {
+		defer wg.Done()
+		_, err3 = se1.Execute(context.Background(), sql)
+	}()
+	wg.Wait()
+	c.Assert(err2, IsNil)
+	c.Assert(err3, IsNil)
+	callback = &ddl.TestDDLCallback{}
+	d.SetHook(callback)
+}
+
+// TestCreateTableIfNotExists parallel exec create table if not exists xxx. No error returns is expected.
+func (s *testStateChangeSuite) TestCreateTableIfNotExists(c *C) {
+	defer s.se.Execute(context.Background(), "drop table test_not_exists")
+	s.testParrallelExecSQL(c, "create table if not exists test_not_exists(a int);")
+}
+
+// TestCreateDBIfNotExists parallel exec create database if not exists xxx. No error returns is expected.
+func (s *testStateChangeSuite) TestCreateDBIfNotExists(c *C) {
+	defer s.se.Execute(context.Background(), "drop database test_not_exists")
+	s.testParrallelExecSQL(c, "create database if not exists test_not_exists;")
+}
+
+func (s *testStateChangeSuite) TestParallelChangeColumnName(c *C) {
+	_, err := s.se.Execute(context.Background(), "use test_db_state")
+	c.Assert(err, IsNil)
+	_, err = s.se.Execute(context.Background(), "create table t(a int, b int, c int)")
+	c.Assert(err, IsNil)
+	defer s.se.Execute(context.Background(), "drop table t")
+
+	callback := &ddl.TestDDLCallback{}
+	once := sync.Once{}
+	callback.OnJobUpdatedExported = func(job *model.Job) {
+		// Make sure the both DDL statements have entered the DDL queue before running the DDL jobs.
+		once.Do(func() {
+			var qLen int64
+			var err error
+			for {
+				kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+					m := meta.NewMeta(txn)
+					qLen, err = m.DDLJobQueueLen()
+					if err != nil {
+						return err
+					}
+					return nil
+				})
+				if qLen == 2 {
+					break
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+		})
+	}
+	d := s.dom.DDL()
+	d.SetHook(callback)
+
+	// Use two sessions to run DDL statements in parallel.
+	wg := sync.WaitGroup{}
+	var err1 error
+	var err2 error
+	se, err := session.CreateSession(s.store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "use test_db_state")
+	c.Assert(err, IsNil)
+	se1, err := session.CreateSession(s.store)
+	c.Assert(err, IsNil)
+	_, err = se1.Execute(context.Background(), "use test_db_state")
+	c.Assert(err, IsNil)
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		_, err1 = se.Execute(context.Background(), "ALTER TABLE t CHANGE a aa int;")
+	}()
+	go func() {
+		defer wg.Done()
+		_, err2 = se1.Execute(context.Background(), "ALTER TABLE t CHANGE b aa int;")
+	}()
+
+	wg.Wait()
+	// Make sure only a DDL encounters the error of 'duplicate column name'.
+	var oneErr error
+	if (err1 != nil && err2 == nil) || (err1 == nil && err2 != nil) {
+		if err1 != nil {
+			oneErr = err1
+		} else {
+			oneErr = err2
+		}
+	}
+	c.Assert(oneErr.Error(), Equals, "[schema:1060]Duplicate column name 'aa'")
 
 	callback = &ddl.TestDDLCallback{}
 	d.SetHook(callback)
