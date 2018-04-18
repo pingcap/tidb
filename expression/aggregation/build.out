@@ -1,0 +1,11 @@
+{"tp":3002,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":83,"charset":""}}],"sig":0},
+{"tp":3001,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":83,"charset":""}}],"sig":0},
+{"tp":3003,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":83,"charset":""}}],"sig":0},
+null,
+{"tp":3005,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":83,"charset":""}}],"sig":0},
+{"tp":3004,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":83,"charset":""}}],"sig":0},
+{"tp":3006,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":83,"charset":""}}],"sig":0},
+PASS: agg_to_pb_test.go:63: testEvaluatorSuite.TestAggFunc2Pb	0.000s
+OK: 1 passed
+PASS
+ok  	github.com/pingcap/tidb/expression/aggregation	0.022s

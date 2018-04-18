@@ -1,0 +1,6 @@
+PASS: expr_to_pb_test.go:559: testEvaluatorSuite.TestSortByItem2Pb	0.000s
+OK: 1 passed
+PASS: expr_to_pb_test.go:559: testEvaluatorSuite.TestSortByItem2Pb	0.000s
+OK: 1 passed
+PASS
+ok  	github.com/pingcap/tidb/expression	0.026s

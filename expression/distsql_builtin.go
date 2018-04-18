@@ -496,6 +496,9 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *stmtctx.StatementCont
 	case tipb.ExprType_MysqlTime:
 		return convertTime(expr.Val, expr.FieldType, sc.TimeZone)
 	}
+	if expr.Tp != tipb.ExprType_ScalarFunc {
+		panic("should be a tipb.ExprType_ScalarFunc")
+	}
 	// Then it must be a scalar function.
 	args := make([]Expression, 0, len(expr.Children))
 	for _, child := range expr.Children {
