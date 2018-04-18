@@ -65,13 +65,14 @@ func createEtcdKV(addrs []string, tlsConfig *tls.Config) (*clientv3.Client, erro
 }
 
 // Open opens or creates an TiKV storage with given path.
-// Path example: tikv://etcd-node1:port,etcd-node2:port?cluster=1&disableGC=false&disableTxnLatches=false
+// Path example: tikv://etcd-node1:port,etcd-node2:port?cluster=1&disableGC=false
 func (d Driver) Open(path string) (kv.Storage, error) {
 	mc.Lock()
 	defer mc.Unlock()
 
 	security := config.GetGlobalConfig().Security
-	etcdAddrs, disableGC, disableTxnLatches, err := parsePath(path)
+	enableTxnLocalLatches := config.GetGlobalConfig().EnableTxnLocalLatches
+	etcdAddrs, disableGC, err := parsePath(path)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -105,7 +106,7 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 		return nil, errors.Trace(err)
 	}
 
-	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, spkv, newRPCClient(security), !disableGC, !disableTxnLatches)
+	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, spkv, newRPCClient(security), !disableGC, enableTxnLocalLatches)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -166,7 +167,7 @@ func (s *tikvStore) CheckVisibility(startTime uint64) error {
 	return nil
 }
 
-func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client, enableGC, enableTxnLatches bool) (*tikvStore, error) {
+func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client, enableGC, enableTxnLocalLatches bool) (*tikvStore, error) {
 	o, err := oracles.NewPdOracle(pdClient, time.Duration(oracleUpdateInterval)*time.Millisecond)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -184,7 +185,7 @@ func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Clie
 		closed:      make(chan struct{}),
 	}
 	store.lockResolver = newLockResolver(store)
-	store.txnScheduler = newTxnScheduler(enableTxnLatches)
+	store.txnScheduler = newTxnScheduler(enableTxnLocalLatches)
 	store.enableGC = enableGC
 
 	go store.runSafePointChecker()
@@ -359,7 +360,7 @@ func (s *tikvStore) GetTiKVClient() (client Client) {
 	return s.client
 }
 
-func parsePath(path string) (etcdAddrs []string, disableGC, disableTxnLatches bool, err error) {
+func parsePath(path string) (etcdAddrs []string, disableGC bool, err error) {
 	var u *url.URL
 	u, err = url.Parse(path)
 	if err != nil {
@@ -371,24 +372,12 @@ func parsePath(path string) (etcdAddrs []string, disableGC, disableTxnLatches bo
 		log.Error(err)
 		return
 	}
-	getBoolValue := func(key string) (value bool, err error) {
-		switch strings.ToLower(u.Query().Get(key)) {
-		case "true":
-			value = true
-		case "false", "":
-			value = false
-		default:
-			err = fmt.Errorf("%s flag should be true/false", key)
-		}
-		return
-	}
-
-	disableGC, err = getBoolValue("disableGC")
-	if err != nil {
-		return
-	}
-	disableTxnLatches, err = getBoolValue("disableTxnLatches")
-	if err != nil {
+	switch strings.ToLower(u.Query().Get("disableGC")) {
+	case "true":
+		disableGC = true
+	case "false", "":
+	default:
+		err = errors.New("disableGC flag should be true/false")
 		return
 	}
 	etcdAddrs = strings.Split(u.Host, ",")
