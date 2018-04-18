@@ -23,29 +23,43 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/codec"
 	tipb "github.com/pingcap/tipb/go-tipb"
 	log "github.com/sirupsen/logrus"
 )
 
 // ExpressionsToPB converts expression to tipb.Expr.
-func ExpressionsToPB(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client) (pbExpr *tipb.Expr, pushed []Expression, remained []Expression) {
+func ExpressionsToPB(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client) (pbCNF *tipb.Expr, pushed []Expression, remained []Expression) {
 	pc := PbConverter{client: client, sc: sc}
+	retTypeOfAnd := &types.FieldType{
+		Tp:      mysql.TypeLonglong,
+		Flen:    1,
+		Decimal: 0,
+		Flag:    mysql.BinaryFlag,
+		Charset: charset.CharsetBin,
+		Collate: charset.CollationBin,
+	}
+
 	for _, expr := range exprs {
-		v := pc.ExprToPB(expr)
-		if v == nil {
+		pbExpr := pc.ExprToPB(expr)
+		if pbExpr == nil {
 			remained = append(remained, expr)
 			continue
 		}
+
 		pushed = append(pushed, expr)
-		if pbExpr == nil {
-			pbExpr = v
-		} else {
-			// Merge multiple converted pb expression into a CNF.
-			pbExpr = &tipb.Expr{
-				Tp:       tipb.ExprType_And,
-				Children: []*tipb.Expr{pbExpr, v},
-			}
+		if pbCNF == nil {
+			pbCNF = pbExpr
+			continue
+		}
+
+		// Merge multiple converted pb expression into a CNF.
+		pbCNF = &tipb.Expr{
+			Tp:        tipb.ExprType_ScalarFunc,
+			Sig:       tipb.ScalarFuncSig_LogicalAnd,
+			Children:  []*tipb.Expr{pbCNF, pbExpr},
+			FieldType: toPBFieldType(retTypeOfAnd),
 		}
 	}
 	return
