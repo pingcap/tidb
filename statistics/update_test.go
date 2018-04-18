@@ -277,8 +277,10 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	testKit.MustExec("create table t (a varchar(20))")
 
 	statistics.AutoAnalyzeMinCnt = 0
+	statistics.AutoAnalyzeRatio = 0.6
 	defer func() {
 		statistics.AutoAnalyzeMinCnt = 1000
+		statistics.AutoAnalyzeRatio = 0.0
 	}()
 
 	do := s.do
@@ -309,6 +311,28 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 		break
 	}
 
+	_, err = testKit.Exec("insert into t values ('fff')")
+	c.Assert(err, IsNil)
+	c.Assert(h.DumpStatsDeltaToKV(), IsNil)
+	c.Assert(h.Update(is), IsNil)
+	err = h.HandleAutoAnalyze(is)
+	c.Assert(err, IsNil)
+	h.Update(is)
+	stats = h.GetTableStats(tableInfo)
+	c.Assert(stats.Count, Equals, int64(2))
+	c.Assert(stats.ModifyCount, Equals, int64(1))
+
+	_, err = testKit.Exec("insert into t values ('fff')")
+	c.Assert(err, IsNil)
+	c.Assert(h.DumpStatsDeltaToKV(), IsNil)
+	c.Assert(h.Update(is), IsNil)
+	err = h.HandleAutoAnalyze(is)
+	c.Assert(err, IsNil)
+	h.Update(is)
+	stats = h.GetTableStats(tableInfo)
+	c.Assert(stats.Count, Equals, int64(3))
+	c.Assert(stats.ModifyCount, Equals, int64(0))
+
 	_, err = testKit.Exec("insert into t values ('eee')")
 	c.Assert(err, IsNil)
 	h.DumpStatsDeltaToKV()
@@ -321,12 +345,12 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	c.Assert(err, IsNil)
 	h.Update(is)
 	stats = h.GetTableStats(tableInfo)
-	c.Assert(stats.Count, Equals, int64(2))
+	c.Assert(stats.Count, Equals, int64(4))
 	// Modify count is non-zero means that we do not analyze the table.
 	c.Assert(stats.ModifyCount, Equals, int64(1))
 	for _, item := range stats.Columns {
 		// TotColSize = 6, because the table has not been analyzed, and insert statement will add 3(length of 'eee') to TotColSize.
-		c.Assert(item.TotColSize, Equals, int64(6))
+		c.Assert(item.TotColSize, Equals, int64(14))
 		break
 	}
 
@@ -339,12 +363,12 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	h.HandleAutoAnalyze(is)
 	h.Update(is)
 	stats = h.GetTableStats(tableInfo)
-	c.Assert(stats.Count, Equals, int64(2))
+	c.Assert(stats.Count, Equals, int64(4))
 	c.Assert(stats.ModifyCount, Equals, int64(0))
 	hg, ok := stats.Indices[tableInfo.Indices[0].ID]
 	c.Assert(ok, IsTrue)
-	c.Assert(hg.NDV, Equals, int64(2))
-	c.Assert(hg.Len(), Equals, 2)
+	c.Assert(hg.NDV, Equals, int64(3))
+	c.Assert(hg.Len(), Equals, 3)
 }
 
 func appendBucket(h *statistics.Histogram, l, r int64) {
