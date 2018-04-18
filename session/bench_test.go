@@ -355,6 +355,7 @@ func BenchmarkUnionScan(b *testing.B) {
 	prepareUnionScanData(se)
 	b.StartTimer()
 	mustExecute(se, "begin")
+	mustExecute(se, "insert into t value(11), (12), (13)")
 	for i := 0; i < b.N; i++ {
 		_, err := se.Execute(ctx, "select * from t")
 		if err != nil {
