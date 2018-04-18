@@ -115,6 +115,7 @@ type UnionScanExec struct {
 	it4SnapshotChunkBuffer *chunk.Iterator4Chunk
 }
 
+// Open implements the Executor Open interface.
 func (us *UnionScanExec) Open(ctx context.Context) error {
 	if err := us.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
