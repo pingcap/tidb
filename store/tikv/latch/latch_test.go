@@ -56,24 +56,21 @@ func (s *testLatchSuite) TestWakeUp(c *C) {
 	startTSB, lockB := s.newLock(keysB)
 
 	// A acquire lock success.
-	acquired, stale := s.latches.Acquire(&lockA)
-	c.Assert(stale, IsFalse)
-	c.Assert(acquired, IsTrue)
+	result := s.latches.Acquire(&lockA)
+	c.Assert(result, Equals, AcquireSuccess)
 
 	// B acquire lock failed.
-	acquired, stale = s.latches.Acquire(&lockB)
-	c.Assert(stale, IsFalse)
-	c.Assert(acquired, IsFalse)
+	result = s.latches.Acquire(&lockB)
+	c.Assert(result, Equals, AcquireLocked)
 
 	// A release lock, and get wakeup list.
 	commitTSA := getTso()
 	wakeupList := s.latches.Release(&lockA, commitTSA)
-	c.Assert(wakeupList[0], Equals, startTSB)
+	c.Assert(wakeupList[0].startTS, Equals, startTSB)
 
 	// B acquire failed since startTSB has stale for some keys.
-	acquired, stale = s.latches.Acquire(&lockB)
-	c.Assert(stale, IsTrue)
-	c.Assert(acquired, IsFalse)
+	result = s.latches.Acquire(&lockB)
+	c.Assert(result, Equals, AcquireStale)
 
 	// B release lock since it received a stale.
 	wakeupList = s.latches.Release(&lockB, 0)
@@ -82,92 +79,113 @@ func (s *testLatchSuite) TestWakeUp(c *C) {
 	// B restart:get a new startTS.
 	startTSB = getTso()
 	lockB = s.latches.GenLock(startTSB, keysB)
-	acquired, stale = s.latches.Acquire(&lockB)
-	c.Assert(acquired, IsTrue)
-	c.Assert(stale, IsFalse)
+	result = s.latches.Acquire(&lockB)
+	c.Assert(result, Equals, AcquireSuccess)
 }
 
-type txn struct {
-	keys    [][]byte
-	startTS uint64
-	lock    Lock
+// txnLock wraps Lock to provide a real lock, when Lock() fail, the goroutine will block.
+type txnLock struct {
+	lock     Lock
+	commitTS uint64
+	sched    *txnScheduler
 }
 
-func newTxn(keys [][]byte, startTS uint64, lock Lock) txn {
-	return txn{
-		keys:    keys,
-		startTS: startTS,
-		lock:    lock,
+func (l *txnLock) Lock() (stale bool) {
+	l.lock.wg.Add(1)
+	result := l.sched.latches.Acquire(&l.lock)
+	if result == AcquireLocked {
+		l.lock.wg.Wait()
+		result = l.lock.result
 	}
+
+	if result == AcquireSuccess {
+		return false
+	} else if result == AcquireStale {
+		return true
+	}
+	panic("should never run here")
 }
+
+func (l *txnLock) Unlock(commitTS uint64) {
+	l.commitTS = commitTS
+	l.sched.msgCh <- l
+}
+
+// Design Note:
+// Each txn corresponds to their own goroutine, and the global scheduler runs in a goroutine.
+// If the txn is blocked by the lock, the goroutine will sleep, until the scheduler wake up it.
+// When a txn releases lock, it sends a message to scheduler, then the scheduler may wakeup
+// runnable txns.
 
 type txnScheduler struct {
-	txns    map[uint64]*txn
 	latches *Latches
-	lock    sync.Mutex
-	wait    *sync.WaitGroup
+	msgCh   chan *txnLock
 }
 
-func newTxnScheduler(wait *sync.WaitGroup, latches *Latches) *txnScheduler {
+func newTxnScheduler(latches *Latches) *txnScheduler {
 	return &txnScheduler{
-		txns:    make(map[uint64]*txn),
 		latches: latches,
-		wait:    wait,
+		msgCh:   make(chan *txnLock, 100),
 	}
 }
 
-func (store *txnScheduler) runTxn(startTS uint64) {
-	store.lock.Lock()
-	txn, ok := store.txns[startTS]
-	store.lock.Unlock()
-	if !ok {
-		panic(startTS)
+// Loop runs in txnScheduler's goroutine.
+func (sched *txnScheduler) Loop() {
+	for txnLock := range sched.msgCh {
+		lock := &txnLock.lock
+		wakeupList := sched.latches.Release(lock, txnLock.commitTS)
+		if len(wakeupList) > 0 {
+			sched.handleWakeupList(wakeupList)
+		}
 	}
-	acquired, stale := store.latches.Acquire(&txn.lock)
-
-	if !stale && !acquired {
-		return
-	}
-	commitTs := uint64(0)
-	if stale {
-		// restart Txn
-		go store.newTxn(txn.keys)
-	} else {
-		// DO commit
-		commitTs = getTso()
-		store.wait.Done()
-	}
-	wakeupList := store.latches.Release(&txn.lock, commitTs)
-	for _, s := range wakeupList {
-		go store.runTxn(s)
-	}
-	store.lock.Lock()
-	delete(store.txns, startTS)
-	store.lock.Unlock()
 }
 
-func (store *txnScheduler) newTxn(keys [][]byte) {
-	startTS := getTso()
-	lock := store.latches.GenLock(startTS, keys)
-	t := newTxn(keys, startTS, lock)
-	store.lock.Lock()
-	store.txns[t.startTS] = &t
-	store.lock.Unlock()
-	go store.runTxn(t.startTS)
+func (sched *txnScheduler) handleWakeupList(wakeupList []*Lock) {
+	for _, lock := range wakeupList {
+		result := sched.latches.Acquire(lock)
+		switch result {
+		case AcquireSuccess:
+			lock.result = AcquireSuccess
+			lock.wg.Done()
+		case AcquireStale:
+			lock.result = AcquireStale
+			lock.wg.Done()
+		case AcquireLocked:
+		}
+	}
+}
+
+func (sched *txnScheduler) newLock(startTS uint64, keys [][]byte) *txnLock {
+	return &txnLock{
+		lock:  sched.latches.GenLock(startTS, keys),
+		sched: sched,
+	}
+}
+
+func (sched *txnScheduler) Close() {
+	close(sched.msgCh)
 }
 
 func (s *testLatchSuite) TestWithConcurrency(c *C) {
-	waitGroup := sync.WaitGroup{}
 	txns := [][][]byte{
 		{[]byte("a"), []byte("a"), []byte("b"), []byte("c")},
 		{[]byte("a"), []byte("d"), []byte("e"), []byte("f")},
 		{[]byte("e"), []byte("f"), []byte("g"), []byte("h")},
 	}
+	sched := newTxnScheduler(s.latches)
+	go sched.Loop()
+	defer sched.Close()
 
-	store := newTxnScheduler(&waitGroup, s.latches)
-	waitGroup.Add(len(txns))
-	for _, txn := range txns {
-		go store.newTxn(txn)
+	var wg sync.WaitGroup
+	wg.Add(len(txns))
+	for i := 0; i < len(txns); i++ {
+		txn := txns[i]
+		go func(txn [][]byte, wg *sync.WaitGroup) {
+			lock := sched.newLock(getTso(), txn)
+			lock.Lock()
+			lock.Unlock(getTso())
+			wg.Done()
+		}(txn, &wg)
 	}
-	waitGroup.Wait()
+	wg.Wait()
 }
