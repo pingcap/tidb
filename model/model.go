@@ -120,6 +120,8 @@ type TableInfo struct {
 
 	// ShardRowIDBits specify if the implicit row ID is sharded.
 	ShardRowIDBits uint64
+
+	Partition *PartitionInfo
 }
 
 // GetUpdateTime gets the table's updating time.
@@ -219,6 +221,48 @@ func (t *TableInfo) ColumnIsInIndex(c *ColumnInfo) bool {
 		}
 	}
 	return false
+}
+
+// PartitionType is the type for PartitionInfo
+type PartitionType int
+
+// Partition types.
+const (
+	PartitionTypeRange PartitionType = 1
+	PartitionTypeHash  PartitionType = 2
+	PartitionTypeList  PartitionType = 3
+)
+
+func (p PartitionType) String() string {
+	switch p {
+	case PartitionTypeRange:
+		return "RANGE"
+	case PartitionTypeHash:
+		return "HASH"
+	case PartitionTypeList:
+		return "LIST"
+	default:
+		return ""
+	}
+
+}
+
+// PartitionInfo provides table partition info.
+type PartitionInfo struct {
+	Type    PartitionType
+	Expr    string
+	Columns []CIStr
+
+	Definitions []PartitionDefinition
+}
+
+// PartitionDefinition defines a single partition.
+type PartitionDefinition struct {
+	ID       int64
+	Name     string
+	LessThan []string
+	Comment  string `json:"omit_empty"`
+	MaxValue bool
 }
 
 // IndexColumn provides index column info.

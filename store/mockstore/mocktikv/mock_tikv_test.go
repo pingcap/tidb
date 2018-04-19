@@ -14,7 +14,6 @@
 package mocktikv
 
 import (
-	"bytes"
 	"strings"
 	"testing"
 
@@ -34,82 +33,15 @@ type testMockTiKVSuite struct {
 
 type testMarshal struct{}
 
-// testMvccStore is used to test MvccStore implementation.
-type testMvccStore struct {
-	testMockTiKVSuite
-}
-
 // testMVCCLevelDB is used to test MVCCLevelDB implementation.
 type testMVCCLevelDB struct {
 	testMockTiKVSuite
 }
 
 var (
-	_ = Suite(&testMvccStore{})
 	_ = Suite(&testMVCCLevelDB{})
 	_ = Suite(testMarshal{})
 )
-
-func (s *testMvccStore) SetUpTest(c *C) {
-	s.store = NewMvccStore()
-}
-
-func (s *testMvccStore) mustRawGet(c *C, key []byte, value []byte) {
-	rawkv := s.store.(RawKV)
-	actualValue := rawkv.RawGet(key)
-	c.Assert(actualValue, DeepEquals, value)
-}
-
-func (s *testMvccStore) rawPut(c *C, key []byte, value []byte) {
-	rawkv := s.store.(RawKV)
-	rawkv.RawPut(key, value)
-}
-
-func (s *testMvccStore) checkRawData(c *C, expected map[string]string) {
-	rawkv := s.store.(RawKV)
-	pairs := rawkv.RawScan([]byte(""), []byte("zzzzzzzz"), len(expected)+1)
-	c.Assert(len(pairs), Equals, len(expected))
-
-	actual := map[string]string{}
-	for _, pair := range pairs {
-		actual[string(pair.Key)] = string(pair.Value)
-	}
-
-	c.Assert(actual, DeepEquals, expected)
-}
-
-func (s *testMvccStore) mustRawDeleteRange(c *C, startKey, endKey []byte, expectedData map[string]string) {
-	rawkv := s.store.(RawKV)
-	rawkv.RawDeleteRange(startKey, endKey)
-
-	for strKey := range expectedData {
-		key := []byte(strKey)
-		if bytes.Compare(startKey, key) <= 0 && bytes.Compare(key, endKey) < 0 {
-			delete(expectedData, strKey)
-		}
-	}
-
-	s.checkRawData(c, expectedData)
-}
-
-func (s *testMvccStore) TestRawDeleteRange(c *C) {
-	testData := map[string]string{}
-
-	for i := byte('a'); i <= byte('g'); i++ {
-		key := []byte{i}
-		value := []byte{'v', i}
-		s.rawPut(c, key, value)
-		testData[string(key)] = string(value)
-	}
-
-	s.checkRawData(c, testData)
-
-	s.mustRawDeleteRange(c, []byte("b"), []byte("b"), testData)
-	s.mustRawDeleteRange(c, []byte("d"), []byte("f"), testData)
-	s.mustRawDeleteRange(c, []byte("b"), []byte("c"), testData)
-	s.mustRawDeleteRange(c, []byte("c11"), []byte("c99"), testData)
-	s.mustRawDeleteRange(c, []byte("a"), []byte("z"), testData)
-}
 
 func (s *testMockTiKVSuite) SetUpTest(c *C) {
 	var err error
@@ -417,6 +349,14 @@ func (s *testMockTiKVSuite) TestScanLock(c *C) {
 	s.mustPrewriteOK(c, putMutations("p1", "v5", "s1", "v5"), "p1", 5)
 	s.mustPrewriteOK(c, putMutations("p2", "v10", "s2", "v10"), "p2", 10)
 	s.mustPrewriteOK(c, putMutations("p3", "v20", "s3", "v20"), "p3", 20)
+
+	locks, err := s.store.ScanLock([]byte("a"), []byte("r"), 12)
+	c.Assert(err, IsNil)
+	c.Assert(locks, DeepEquals, []*kvrpcpb.LockInfo{
+		lock("p1", "p1", 5),
+		lock("p2", "p2", 10),
+	})
+
 	s.mustScanLock(c, 10, []*kvrpcpb.LockInfo{
 		lock("p1", "p1", 5),
 		lock("p2", "p2", 10),
@@ -521,8 +461,11 @@ func (s *testMockTiKVSuite) TestDeleteRange(c *C) {
 	s.mustDeleteRange(c, "41", "42")
 	s.mustScanOK(c, "0", 10, 50, "1", "v1", "4", "v4", "5", "v5")
 
+	s.mustDeleteRange(c, "4\x00", "5\x00")
+	s.mustScanOK(c, "0", 10, 60, "1", "v1", "4", "v4")
+
 	s.mustDeleteRange(c, "0", "9")
-	s.mustScanOK(c, "0", 10, 60)
+	s.mustScanOK(c, "0", 10, 70)
 }
 
 func (s *testMockTiKVSuite) mustWriteWriteConflict(c *C, errs []error, i int) {
