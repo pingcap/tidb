@@ -979,7 +979,7 @@ type MaxValueExpr struct {
 }
 
 func (n *MaxValueExpr) Format(w io.Writer) {
-	panic("Not implemented")
+	fmt.Fprint(w, n.Name)
 }
 
 // Accept implements Node Accept interface.
