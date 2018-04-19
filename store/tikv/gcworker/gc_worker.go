@@ -232,7 +232,14 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 
 	w.gcIsRunning = true
 	log.Infof("[gc worker] %s starts the whole job, safePoint: %v", w.uuid, safePoint)
-	go w.runGCJob(ctx, safePoint)
+	go func() {
+		concurrency, err := w.loadGCConcurrencyWithDefault()
+		if err != nil {
+			log.Errorf("[gc worker] %s failed to load gcConcurrency, err %s", w.uuid, err)
+			concurrency = gcDefaultConcurrency
+		}
+		w.runGCJob(ctx, safePoint, concurrency)
+	}()
 	return nil
 }
 
@@ -308,7 +315,7 @@ func (w *GCWorker) calculateNewSafePoint(now time.Time) (*time.Time, error) {
 	return &safePoint, nil
 }
 
-func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64) {
+func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, gcConcurrency int) {
 	gcWorkerCounter.WithLabelValues("run_job").Inc()
 	err := w.resolveLocks(ctx, safePoint)
 	if err != nil {
@@ -324,7 +331,7 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64) {
 		w.done <- errors.Trace(err)
 		return
 	}
-	err = w.doGC(ctx, safePoint)
+	err = w.doGC(ctx, safePoint, gcConcurrency)
 	if err != nil {
 		log.Errorf("[gc worker] %s do GC returns an error %v", w.uuid, errors.ErrorStack(err))
 		w.gcIsRunning = false
@@ -665,14 +672,8 @@ func (w *GCWorker) genNextGCTask(bo *tikv.Backoffer, safePoint uint64, key kv.Ke
 	return task, nil
 }
 
-func (w *GCWorker) doGC(ctx context.Context, safePoint uint64) error {
-	concurrency, err := w.loadGCConcurrencyWithDefault()
-	if err != nil {
-		log.Errorf("[gc worker] %s failed to load gcConcurrency, err %s", w.uuid, err)
-		concurrency = gcDefaultConcurrency
-	}
-
-	return w.doGCInternal(ctx, safePoint, concurrency)
+func (w *GCWorker) doGC(ctx context.Context, safePoint uint64, gcConcurrency int) error {
+	return w.doGCInternal(ctx, safePoint, gcConcurrency)
 }
 
 func (w *GCWorker) doGCInternal(ctx context.Context, safePoint uint64, concurrency int) error {
