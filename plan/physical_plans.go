@@ -303,6 +303,15 @@ type basePhysicalAgg struct {
 	GroupByItems []expression.Expression
 }
 
+func (p *basePhysicalAgg) hasDistinctFunc() bool {
+	for _, fun := range p.AggFuncs {
+		if fun.HasDistinct {
+			return true
+		}
+	}
+	return false
+}
+
 // PhysicalHashAgg is hash operator of aggregate.
 type PhysicalHashAgg struct {
 	basePhysicalAgg
