@@ -187,16 +187,16 @@ func (s *testGCWorkerSuite) TestDoGC(c *C) {
 
 	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcDefaultConcurrency), s.gcWorker.session)
 	c.Assert(err, IsNil)
-	err = s.gcWorker.doGC(ctx, 20)
+	err = s.gcWorker.doGC(ctx, 20, gcDefaultConcurrency)
 	c.Assert(err, IsNil)
 
 	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcMinConcurrency), s.gcWorker.session)
 	c.Assert(err, IsNil)
-	err = s.gcWorker.doGC(ctx, 20)
+	err = s.gcWorker.doGC(ctx, 20, gcDefaultConcurrency)
 	c.Assert(err, IsNil)
 
 	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcMaxConcurrency), s.gcWorker.session)
 	c.Assert(err, IsNil)
-	err = s.gcWorker.doGC(ctx, 20)
+	err = s.gcWorker.doGC(ctx, 20, gcDefaultConcurrency)
 	c.Assert(err, IsNil)
 }
