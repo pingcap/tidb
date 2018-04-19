@@ -612,12 +612,112 @@ func init() {
 	terror.ErrClassToMySQLCodes[terror.ClassExecutor] = tableMySQLErrCodes
 }
 
+const projectionConcurrency = 8
+
 // ProjectionExec represents a select fields executor.
 type ProjectionExec struct {
 	baseExecutor
 
-	evaluatorSuit    *expression.EvaluatorSuit
+	evaluatorSuit    *expression.EvaluatorSuit // dispatched to projection workers.
 	calculateNoDelay bool
+
+	prepared  bool
+	output    chan *projectionOutput
+	fetcher   projectionInputFetcher
+	waitGroup sync.WaitGroup
+	workers   []*projectionWorker
+}
+
+type projectionInputFetcher struct {
+	child  Executor
+	input  chan *projectionInput
+	output chan *projectionOutput
+}
+
+func (w *projectionInputFetcher) run(ctx context.Context, dst chan<- *projectionOutput) {
+	defer func() {
+		for input := range w.input {
+			close(input.worker.input)
+			close(input.worker.output)
+		}
+	}()
+
+	for {
+		input, ok1 := <-w.input
+		if !ok1 {
+			return
+		}
+
+		output, ok2 := <-w.output
+		if !ok2 {
+			close(input.worker.input)
+			close(input.worker.output)
+			return
+		}
+
+		dst <- output
+
+		err := w.child.Next(ctx, input.chk)
+		if err != nil {
+			output.done <- errors.Trace(err)
+			close(input.worker.input)
+			close(input.worker.output)
+			return
+		}
+
+		if input.chk.NumRows() == 0 {
+			output.done <- nil
+			close(input.worker.input)
+			close(input.worker.output)
+			return
+		}
+
+		input.worker.input <- input
+
+		input.worker.output <- output
+	}
+}
+
+type projectionWorker struct {
+	ctx           sessionctx.Context
+	evaluatorSuit *expression.EvaluatorSuit
+
+	input  chan *projectionInput
+	output chan *projectionOutput
+}
+
+func (w *projectionWorker) run(giveBack chan<- *projectionInput, waitGroup *sync.WaitGroup) {
+	defer waitGroup.Done()
+
+	for {
+		input, ok1 := <-w.input
+		if !ok1 {
+			return
+		}
+
+		output, ok2 := <-w.output
+		if !ok2 {
+			return
+		}
+
+		err := w.evaluatorSuit.Run(w.ctx, input.chk, output.chk)
+		output.done <- errors.Trace(err)
+
+		if err != nil {
+			return
+		}
+		giveBack <- input
+	}
+}
+
+type projectionInput struct {
+	chk    *chunk.Chunk
+	worker *projectionWorker
+}
+
+type projectionOutput struct {
+	chk  *chunk.Chunk
+	done chan error
 }
 
 // Open implements the Executor Open interface.
@@ -625,16 +725,79 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
+
+	e.prepared = false
+	e.output = make(chan *projectionOutput, projectionConcurrency)
+
+	e.fetcher.child = e.children[0]
+	e.fetcher.input = make(chan *projectionInput, projectionConcurrency)
+	e.fetcher.output = make(chan *projectionOutput, projectionConcurrency)
+
+	e.workers = make([]*projectionWorker, 0, projectionConcurrency)
+	for i := 0; i < projectionConcurrency; i++ {
+		e.workers = append(e.workers, &projectionWorker{
+			ctx:           e.ctx,
+			evaluatorSuit: e.evaluatorSuit,
+			input:         make(chan *projectionInput, 1),
+			output:        make(chan *projectionOutput, 1),
+		})
+
+		e.fetcher.input <- &projectionInput{
+			chk:    e.children[0].newChunk(),
+			worker: e.workers[i],
+		}
+		e.fetcher.output <- &projectionOutput{
+			chk:  e.newChunk(),
+			done: make(chan error, 1),
+		}
+	}
+
 	return nil
+}
+
+func (e *ProjectionExec) prepare(ctx context.Context) {
+	go e.fetcher.run(ctx, e.output)
+
+	e.waitGroup.Add(len(e.workers))
+	for i := range e.workers {
+		go e.workers[i].run(e.fetcher.input, &e.waitGroup)
+	}
+
+	go e.waitAndFinish()
+}
+
+func (e *ProjectionExec) waitAndFinish() {
+	e.waitGroup.Wait()
+	close(e.output)
 }
 
 // Next implements the Executor Next interface.
 func (e *ProjectionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	if !e.prepared {
+		e.prepare(ctx)
+		e.prepared = true
+	}
+
 	chk.Reset()
-	if err := e.children[0].Next(ctx, e.childrenResults[0]); err != nil {
+	output, ok := <-e.output
+	if !ok {
+		return nil
+	}
+
+	err := <-output.done
+	if err != nil {
 		return errors.Trace(err)
 	}
-	return errors.Trace(e.evaluatorSuit.Run(e.ctx, e.childrenResults[0], chk))
+
+	chk.SwapColumns(output.chk)
+	e.fetcher.output <- output
+	return nil
+}
+
+func (e *ProjectionExec) Close() error {
+	close(e.fetcher.input)
+	close(e.fetcher.output)
+	return errors.Trace(e.baseExecutor.Close())
 }
 
 // TableDualExec represents a dual table executor.
