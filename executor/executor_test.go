@@ -949,7 +949,6 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustQuery("select 1 from (select a from t union all select a from t) tmp").Check(testkit.Rows("1", "1", "1", "1"))
 	tk.MustQuery("select 1 from (select a from t limit 1 union all select a from t limit 1) tmp").Check(testkit.Rows("1", "1"))
 	tk.MustQuery("select count(1) from (select a from t union all select a from t) tmp").Check(testkit.Rows("4"))
-
 }
 
 func (s *testSuite) TestIn(c *C) {
