@@ -111,11 +111,15 @@ func (latches *Latches) slotID(key []byte) int {
 	return int(murmur3.Sum32(key)) & (len(latches.slots) - 1)
 }
 
+// AcquireResult is the result type for Acquire()
 type AcquireResult int32
 
 const (
+	// AcquireSuccess is a type constant for AcquireResult.
 	AcquireSuccess AcquireResult = iota
+	// AcquireLocked is a type constant for AcquireResult.
 	AcquireLocked
+	// AcquireStale is a type constant for AcquireResult.
 	AcquireStale
 )
 
