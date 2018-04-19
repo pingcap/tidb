@@ -248,7 +248,7 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		},
 		{
 			sql:  "select count(*) from t where e > 1 group by b",
-			best: "TableReader(Table(t)->Sel([gt(test.t.e, 1)])->HashAgg)->HashAgg",
+			best: "IndexLookUp(Index(t.b)[[<nil>,+inf]], Table(t)->Sel([gt(test.t.e, 1)]))->StreamAgg",
 		},
 		{
 			sql:  "select count(e) from t where t.b <= 20",
