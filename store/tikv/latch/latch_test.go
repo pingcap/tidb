@@ -14,7 +14,6 @@
 package latch
 
 import (
-	"sync"
 	"sync/atomic"
 	"testing"
 
