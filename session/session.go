@@ -1281,6 +1281,8 @@ type globalVariableCache struct {
 
 var gvc globalVariableCache
 
+const globalVariableCacheExpiry time.Duration = 2 * time.Second
+
 func (gvc *globalVariableCache) Update(rows []types.Row, fields []*ast.ResultField) {
 	gvc.Lock()
 	gvc.lastModify = time.Now()
@@ -1292,7 +1294,7 @@ func (gvc *globalVariableCache) Update(rows []types.Row, fields []*ast.ResultFie
 func (gvc *globalVariableCache) Get() (succ bool, rows []types.Row, fields []*ast.ResultField) {
 	gvc.RLock()
 	defer gvc.RUnlock()
-	if time.Now().Sub(gvc.lastModify) < 2*time.Second {
+	if time.Now().Sub(gvc.lastModify) < globalVariableCacheExpiry {
 		succ, rows, fields = true, gvc.rows, gvc.fields
 		return
 	}
