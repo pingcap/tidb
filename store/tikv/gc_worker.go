@@ -325,7 +325,14 @@ func (w *GCWorker) leaderTick(ctx goctx.Context) error {
 
 	w.gcIsRunning = true
 	log.Infof("[gc worker] %s starts the whole job, safePoint: %v", w.uuid, safePoint)
-	go w.runGCJob(ctx, safePoint)
+	go func() {
+		concurrency, err := w.loadGCConcurrencyWithDefault()
+		if err != nil {
+			log.Errorf("[gc worker] %s failed to load gcConcurrency, err %s", w.uuid, err)
+			concurrency = gcDefaultConcurrency
+		}
+		w.runGCJob(ctx, safePoint, concurrency)
+	}()
 	return nil
 }
 
@@ -401,7 +408,7 @@ func (w *GCWorker) calculateNewSafePoint(now time.Time) (*time.Time, error) {
 	return &safePoint, nil
 }
 
-func (w *GCWorker) runGCJob(ctx goctx.Context, safePoint uint64) {
+func (w *GCWorker) runGCJob(ctx goctx.Context, safePoint uint64, concurrency int) {
 	gcWorkerCounter.WithLabelValues("run_job").Inc()
 	err := w.resolveLocks(ctx, safePoint)
 	if err != nil {
@@ -417,7 +424,7 @@ func (w *GCWorker) runGCJob(ctx goctx.Context, safePoint uint64) {
 		w.done <- errors.Trace(err)
 		return
 	}
-	err = w.doGC(ctx, safePoint)
+	err = w.doGC(ctx, safePoint, concurrency)
 	if err != nil {
 		log.Errorf("[gc worker] %s do GC returns an error %v", w.uuid, errors.ErrorStack(err))
 		w.gcIsRunning = false
@@ -744,7 +751,7 @@ func (w *GCWorker) genNextGCTask(bo *Backoffer, safePoint uint64, key kv.Key) (*
 	return task, nil
 }
 
-func (w *GCWorker) doGC(ctx goctx.Context, safePoint uint64) error {
+func (w *GCWorker) doGC(ctx goctx.Context, safePoint uint64, concurrency int) error {
 	gcWorkerCounter.WithLabelValues("do_gc").Inc()
 
 	err := w.saveSafePoint(gcSavedSafePoint, safePoint)
@@ -754,12 +761,6 @@ func (w *GCWorker) doGC(ctx goctx.Context, safePoint uint64) error {
 
 	// Sleep to wait for all other tidb instances update their safepoint cache.
 	time.Sleep(gcSafePointCacheInterval)
-
-	concurrency, err := w.loadGCConcurrencyWithDefault()
-	if err != nil {
-		log.Errorf("[gc worker] %s failed to load gcConcurrency, err %s", w.uuid, err)
-		concurrency = gcDefaultConcurrency
-	}
 
 	log.Infof("[gc worker] %s start gc, concurrency %v, safePoint: %v.", w.uuid, concurrency, safePoint)
 	startTime := time.Now()
