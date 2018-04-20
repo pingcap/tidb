@@ -143,6 +143,11 @@ query-feedback-limit = 1024
 # row count in statistics of a table is greater than it.
 pseudo-estimate-ratio = 0.7
 
+# Auto analyze will run if the ratio between the modify count and
+# the row count of a table is greater than it. It should be a positive
+# float number. Setting this to 0.0 can disable auto analyze.
+auto-analyze-ratio = 0.0
+
 [proxy-protocol]
 # PROXY protocol acceptable client networks.
 # Empty string means disable PROXY protocol, * means all networks.

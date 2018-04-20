@@ -33,10 +33,13 @@ const (
 	scanFactor         = 2.0
 	descScanFactor     = 5 * scanFactor
 	memoryFactor       = 5.0
-	hashAggMemFactor   = 2.0
+	// 0.5 is the looking up agg context factor.
+	hashAggFactor      = 1.2 + 0.5
 	selectionFactor    = 0.8
 	distinctFactor     = 0.8
 	cpuFactor          = 0.9
+	distinctAggFactor  = 1.6
+	createAggCtxFactor = 6
 )
 
 // wholeTaskTypes records all possible kinds of task that a plan can return. For Agg, TopN and Limit, we will try to get
