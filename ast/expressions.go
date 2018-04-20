@@ -977,6 +977,7 @@ type MaxValueExpr struct {
 	exprNode
 }
 
+// Format the ExprNode into a Writer.
 func (n *MaxValueExpr) Format(w io.Writer) {
 	fmt.Fprint(w, "MAXVALUE")
 }
