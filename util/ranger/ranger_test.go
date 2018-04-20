@@ -51,7 +51,7 @@ func (s *testRangerSuite) SetUpSuite(c *C) {
 func newStoreWithBootstrap(c *C) (kv.Storage, error) {
 	cluster := mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(cluster)
-	mvccStore := mocktikv.NewMvccStore()
+	mvccStore := mocktikv.MustNewMVCCStore()
 	store, err := mockstore.NewMockTikvStore(
 		mockstore.WithCluster(cluster),
 		mockstore.WithMVCCStore(mvccStore),
@@ -532,7 +532,7 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		}
 		cols, lengths := expression.IndexInfo2Cols(selection.Schema().Columns, tbl.Indices[tt.indexPos])
 		c.Assert(cols, NotNil)
-		ranges, conds, filter, _, err := ranger.DetachCondAndBuildRangeForIndex(ctx.GetSessionVars().StmtCtx, conds, cols, lengths)
+		ranges, conds, filter, _, err := ranger.DetachCondAndBuildRangeForIndex(ctx, conds, cols, lengths)
 		c.Assert(err, IsNil)
 		c.Assert(fmt.Sprintf("%s", conds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
 		c.Assert(fmt.Sprintf("%s", filter), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))

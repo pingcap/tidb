@@ -112,7 +112,7 @@ func (d *Datum) Length() int {
 	return int(d.length)
 }
 
-// SetLength sets the length of the datum
+// SetLength sets the length of the datum.
 func (d *Datum) SetLength(l int) {
 	d.length = uint32(l)
 }
@@ -1102,6 +1102,10 @@ func ProduceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *stmtctx.Statem
 	if ErrOverflow.Equal(err) {
 		// TODO: warnErr need to be ErrWarnDataOutOfRange
 		err = sc.HandleOverflow(err, err)
+	}
+	unsigned := mysql.HasUnsignedFlag(tp.Flag)
+	if unsigned && dec.IsNegative() {
+		dec = dec.FromUint(0)
 	}
 	return dec, errors.Trace(err)
 }

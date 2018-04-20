@@ -30,9 +30,6 @@ import (
 )
 
 const (
-	// Default number of buckets a column histogram has.
-	defaultBucketCount = 256
-
 	// When we haven't analyzed a table, we use pseudo statistics to estimate costs.
 	// It has row count 10000, equal condition selects 1/1000 of total rows, less condition selects 1/3 of total rows,
 	// between condition selects 1/40 of total rows.
@@ -51,6 +48,7 @@ type Table struct {
 	ModifyCount int64 // Total modify count in a table.
 	Version     uint64
 	Pseudo      bool
+	PKIsHandle  bool
 }
 
 func (t *Table) copy() *Table {
@@ -125,16 +123,32 @@ func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *
 			continue
 		}
 		isHandle := tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag)
-		needNotLoad := col == nil || (col.Len() == 0 && col.LastUpdateVersion < histVer)
-		if h.Lease > 0 && !isHandle && needNotLoad && !loadAll {
+		// We will not load buckets if:
+		// 1. Lease > 0, and:
+		// 2. this column is not handle, and:
+		// 3. the column doesn't has buckets before, and:
+		// 4. loadAll is false.
+		notNeedLoad := h.Lease > 0 &&
+			!isHandle &&
+			(col == nil || col.Len() == 0 && col.LastUpdateVersion < histVer) &&
+			!loadAll
+		if notNeedLoad {
 			count, err := columnCountFromStorage(h.ctx, table.TableID, histID)
 			if err != nil {
 				return errors.Trace(err)
 			}
 			col = &Column{
-				Histogram: Histogram{ID: histID, NDV: distinct, NullCount: nullCount, tp: &colInfo.FieldType, LastUpdateVersion: histVer, TotColSize: totColSize},
-				Info:      colInfo,
-				Count:     count}
+				Histogram: Histogram{
+					ID:                histID,
+					NDV:               distinct,
+					NullCount:         nullCount,
+					tp:                &colInfo.FieldType,
+					LastUpdateVersion: histVer,
+					TotColSize:        totColSize,
+				},
+				Info:  colInfo,
+				Count: count + nullCount,
+			}
 			break
 		}
 		if col == nil || col.LastUpdateVersion < histVer || loadAll {
@@ -146,7 +160,12 @@ func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *
 			if err != nil {
 				return errors.Trace(err)
 			}
-			col = &Column{Histogram: *hg, Info: colInfo, CMSketch: cms, Count: int64(hg.totalRowCount())}
+			col = &Column{
+				Histogram: *hg,
+				Info:      colInfo,
+				CMSketch:  cms,
+				Count:     int64(hg.totalRowCount()),
+			}
 		}
 		break
 	}
@@ -164,7 +183,7 @@ func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *
 // tableStatsFromStorage loads table stats info from storage.
 func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, loadAll bool) (*Table, error) {
 	table, ok := h.statsCache.Load().(statsCache)[tableInfo.ID]
-	if !ok {
+	if !ok || table.Pseudo {
 		table = &Table{
 			TableID: tableInfo.ID,
 			Columns: make(map[int64]*Column, len(tableInfo.Columns)),
@@ -255,7 +274,7 @@ func (t *Table) ColumnIsInvalid(sc *stmtctx.StatementContext, colID int64) bool 
 		sc.SetHistogramsNotLoad()
 		histogramNeededColumns.insert(tableColumnID{tableID: t.TableID, columnID: colID})
 	}
-	return !ok || col.Len() == 0
+	return !ok || col.totalRowCount() == 0 || (col.NDV > 0 && col.Len() == 0)
 }
 
 // ColumnGreaterRowCount estimates the row count where the column greater than value.
@@ -328,7 +347,11 @@ func (t *Table) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, colID in
 func (t *Table) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idxID int64, indexRanges []*ranger.NewRange) (float64, error) {
 	idx := t.Indices[idxID]
 	if t.Pseudo || idx == nil || idx.Len() == 0 {
-		return getPseudoRowCountByIndexRanges(sc, indexRanges, float64(t.Count))
+		colsLen := -1
+		if idx != nil && idx.Info.Unique {
+			colsLen = len(idx.Info.Columns)
+		}
+		return getPseudoRowCountByIndexRanges(sc, indexRanges, float64(t.Count), colsLen)
 	}
 	result, err := idx.getRowCount(sc, indexRanges)
 	result *= idx.getIncreaseFactor(t.Count)
@@ -336,18 +359,30 @@ func (t *Table) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idxID int
 }
 
 // PseudoTable creates a pseudo table statistics.
-func PseudoTable(tableID int64) *Table {
-	return &Table{
-		TableID: tableID,
-		Pseudo:  true,
-		Count:   pseudoRowCount,
-		Columns: make(map[int64]*Column),
-		Indices: make(map[int64]*Index),
+func PseudoTable(tblInfo *model.TableInfo) *Table {
+	t := &Table{
+		TableID:    tblInfo.ID,
+		Pseudo:     true,
+		Count:      pseudoRowCount,
+		PKIsHandle: tblInfo.PKIsHandle,
+		Columns:    make(map[int64]*Column, len(tblInfo.Columns)),
+		Indices:    make(map[int64]*Index, len(tblInfo.Indices)),
 	}
+	for _, col := range tblInfo.Columns {
+		if col.State == model.StatePublic {
+			t.Columns[col.ID] = &Column{Info: col}
+		}
+	}
+	for _, idx := range tblInfo.Indices {
+		if idx.State == model.StatePublic {
+			t.Indices[idx.ID] = &Index{Info: idx}
+		}
+	}
+	return t
 }
 
 func getPseudoRowCountByIndexRanges(sc *stmtctx.StatementContext, indexRanges []*ranger.NewRange,
-	tableRowCount float64) (float64, error) {
+	tableRowCount float64, colsLen int) (float64, error) {
 	if tableRowCount == 0 {
 		return 0, nil
 	}
@@ -357,6 +392,10 @@ func getPseudoRowCountByIndexRanges(sc *stmtctx.StatementContext, indexRanges []
 		i, err := indexRange.PrefixEqualLen(sc)
 		if err != nil {
 			return 0, errors.Trace(err)
+		}
+		if i == colsLen && !indexRange.LowExclude && !indexRange.HighExclude {
+			totalCount += 1.0
+			continue
 		}
 		if i >= len(indexRange.LowVal) {
 			i = len(indexRange.LowVal) - 1

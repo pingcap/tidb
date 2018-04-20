@@ -22,12 +22,11 @@ type pkgTestSuite struct {
 type MockExec struct {
 	baseExecutor
 
-	fields    []*ast.ResultField
-	Rows      []Row
+	Rows      []types.DatumRow
 	curRowIdx int
 }
 
-func (m *MockExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+func (m *MockExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	colTypes := m.retTypes()
 	for ; m.curRowIdx < len(m.Rows) && chk.NumRows() < m.maxChunkSize; m.curRowIdx++ {
@@ -59,7 +58,7 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 	outerSchema := expression.NewSchema(col0)
 	outerExec := &MockExec{
 		baseExecutor: newBaseExecutor(sctx, outerSchema, ""),
-		Rows: []Row{
+		Rows: []types.DatumRow{
 			types.MakeDatums(1),
 			types.MakeDatums(2),
 			types.MakeDatums(3),
@@ -70,7 +69,7 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 	innerSchema := expression.NewSchema(col1)
 	innerExec := &MockExec{
 		baseExecutor: newBaseExecutor(sctx, innerSchema, ""),
-		Rows: []Row{
+		Rows: []types.DatumRow{
 			types.MakeDatums(1),
 			types.MakeDatums(2),
 			types.MakeDatums(3),
@@ -98,7 +97,7 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 	joinChk := join.newChunk()
 	it := chunk.NewIterator4Chunk(joinChk)
 	for rowIdx := 1; ; {
-		err := join.NextChunk(ctx, joinChk)
+		err := join.Next(ctx, joinChk)
 		c.Check(err, IsNil)
 		if joinChk.NumRows() == 0 {
 			break

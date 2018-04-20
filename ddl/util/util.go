@@ -58,7 +58,7 @@ func LoadDeleteRanges(ctx sessionctx.Context, safePoint uint64) (ranges []DelRan
 	chk := rs.NewChunk()
 	it := chunk.NewIterator4Chunk(chk)
 	for {
-		err = rs.NextChunk(context.TODO(), chk)
+		err = rs.Next(context.TODO(), chk)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

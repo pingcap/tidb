@@ -105,7 +105,10 @@ func (hg *Histogram) GetUpper(idx int) *types.Datum {
 }
 
 // AvgColSize is the average column size of the histogram.
-func (c *Column) AvgColSize() float64 {
+func (c *Column) AvgColSize(count int64) float64 {
+	if count == 0 {
+		return 0
+	}
 	switch c.Histogram.tp.Tp {
 	case mysql.TypeFloat:
 		return 4
@@ -117,10 +120,8 @@ func (c *Column) AvgColSize() float64 {
 	case mysql.TypeNewDecimal:
 		return types.MyDecimalStructSize
 	default:
-		if c.Count == 0 {
-			return 0
-		}
-		return float64(c.TotColSize) / float64(c.Count)
+		// Keep two decimal place.
+		return math.Round(float64(c.TotColSize)/float64(count)*100) / 100
 	}
 }
 
@@ -181,7 +182,7 @@ func HistogramEqual(a, b *Histogram, ignoreID bool) bool {
 		b.ID = a.ID
 		defer func() { b.ID = old }()
 	}
-	return bytes.Equal([]byte(a.toString(false)), []byte(b.toString(false)))
+	return bytes.Equal([]byte(a.ToString(0)), []byte(b.ToString(0)))
 }
 
 // SaveStatsToStorage saves the stats to storage.
@@ -194,8 +195,14 @@ func SaveStatsToStorage(sctx sessionctx.Context, tableID int64, count int64, isI
 	}
 	txn := sctx.Txn()
 	version := txn.StartTS()
-	replaceSQL := fmt.Sprintf("replace into mysql.stats_meta (version, table_id, count) values (%d, %d, %d)", version, tableID, count)
-	_, err = exec.Execute(ctx, replaceSQL)
+	var sql string
+	// If the count is less than 0, then we do not want to update the modify count and count.
+	if count >= 0 {
+		sql = fmt.Sprintf("replace into mysql.stats_meta (version, table_id, count) values (%d, %d, %d)", version, tableID, count)
+	} else {
+		sql = fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d", version, tableID)
+	}
+	_, err = exec.Execute(ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -203,7 +210,7 @@ func SaveStatsToStorage(sctx sessionctx.Context, tableID int64, count int64, isI
 	if err != nil {
 		return errors.Trace(err)
 	}
-	replaceSQL = fmt.Sprintf("replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size) values (%d, %d, %d, %d, %d, %d, X'%X', %d)",
+	replaceSQL := fmt.Sprintf("replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size) values (%d, %d, %d, %d, %d, %d, X'%X', %d)",
 		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, data, hg.TotColSize)
 	_, err = exec.Execute(ctx, replaceSQL)
 	if err != nil {
@@ -287,17 +294,35 @@ func columnCountFromStorage(ctx sessionctx.Context, tableID, colID int64) (int64
 	return rows[0].GetMyDecimal(0).ToInt()
 }
 
-func (hg *Histogram) toString(isIndex bool) string {
+// ValueToString converts a possible encoded value to a formatted string. If the value is encoded, then
+// idxCols equals to number of origin values, else idxCols is 0.
+func ValueToString(value *types.Datum, idxCols int) (string, error) {
+	if idxCols == 0 {
+		return value.ToString()
+	}
+	decodedVals, err := codec.Decode(value.GetBytes(), idxCols)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	str, err := types.DatumsToString(decodedVals)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	return str, nil
+}
+
+// ToString gets the string representation for the histogram.
+func (hg *Histogram) ToString(idxCols int) string {
 	strs := make([]string, 0, hg.Len()+1)
-	if isIndex {
+	if idxCols > 0 {
 		strs = append(strs, fmt.Sprintf("index:%d ndv:%d", hg.ID, hg.NDV))
 	} else {
-		strs = append(strs, fmt.Sprintf("column:%d ndv:%d", hg.ID, hg.NDV))
+		strs = append(strs, fmt.Sprintf("column:%d ndv:%d totColSize:%d", hg.ID, hg.NDV, hg.TotColSize))
 	}
 	for i := 0; i < hg.Len(); i++ {
-		upperVal, err := hg.GetUpper(i).ToString()
+		upperVal, err := ValueToString(hg.GetUpper(i), idxCols)
 		terror.Log(errors.Trace(err))
-		lowerVal, err := hg.GetLower(i).ToString()
+		lowerVal, err := ValueToString(hg.GetLower(i), idxCols)
 		terror.Log(errors.Trace(err))
 		strs = append(strs, fmt.Sprintf("num: %d\tlower_bound: %s\tupper_bound: %s\trepeats: %d", hg.Buckets[i].Count, lowerVal, upperVal, hg.Buckets[i].Repeat))
 	}
@@ -340,6 +365,10 @@ func (hg *Histogram) greaterAndEqRowCount(value types.Datum) float64 {
 
 // lessRowCount estimates the row count where the column less than value.
 func (hg *Histogram) lessRowCount(value types.Datum) float64 {
+	// all the values is null
+	if hg.Bounds == nil {
+		return 0
+	}
 	index, match := hg.Bounds.LowerBound(0, &value)
 	if index == hg.Bounds.NumRows() {
 		return hg.totalRowCount()
@@ -371,7 +400,7 @@ func (hg *Histogram) betweenRowCount(a, b types.Datum) float64 {
 	lessCountB := hg.lessRowCount(b)
 	// If lessCountA is not less than lessCountB, it may be that they fall to the same bucket and we cannot estimate
 	// the fraction, so we use `totalCount / NDV` to estimate the row count, but the result should not greater than lessCountB.
-	if lessCountA >= lessCountB {
+	if lessCountA >= lessCountB && hg.NDV > 0 {
 		return math.Min(lessCountB, hg.totalRowCount()/float64(hg.NDV))
 	}
 	return lessCountB - lessCountA
@@ -379,9 +408,9 @@ func (hg *Histogram) betweenRowCount(a, b types.Datum) float64 {
 
 func (hg *Histogram) totalRowCount() float64 {
 	if hg.Len() == 0 {
-		return 0
+		return float64(hg.NullCount)
 	}
-	return float64(hg.Buckets[hg.Len()-1].Count)
+	return float64(hg.Buckets[hg.Len()-1].Count + hg.NullCount)
 }
 
 // mergeBuckets is used to merge every two neighbor buckets.
@@ -407,7 +436,7 @@ func (hg *Histogram) mergeBuckets(bucketIdx int) {
 
 // getIncreaseFactor will return a factor of data increasing after the last analysis.
 func (hg *Histogram) getIncreaseFactor(totalCount int64) float64 {
-	columnCount := int64(hg.totalRowCount()) + hg.NullCount
+	columnCount := int64(hg.totalRowCount())
 	if columnCount == 0 {
 		// avoid dividing by 0
 		return 1.0
@@ -593,13 +622,20 @@ type Column struct {
 }
 
 func (c *Column) String() string {
-	return c.Histogram.toString(false)
+	return c.Histogram.ToString(0)
 }
 
 func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum) (float64, error) {
+	if val.IsNull() {
+		return float64(c.NullCount), nil
+	}
 	if c.CMSketch != nil {
 		count, err := c.CMSketch.queryValue(sc, val)
 		return float64(count), errors.Trace(err)
+	}
+	// all the values is null
+	if c.Histogram.Bounds == nil {
+		return 0.0, nil
 	}
 	return c.Histogram.equalRowCount(val), nil
 }
@@ -658,7 +694,7 @@ type Index struct {
 }
 
 func (idx *Index) String() string {
-	return idx.Histogram.toString(true)
+	return idx.Histogram.ToString(len(idx.Info.Columns))
 }
 
 func (idx *Index) equalRowCount(sc *stmtctx.StatementContext, b []byte) float64 {

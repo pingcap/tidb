@@ -327,7 +327,7 @@ func DecodeOne(b []byte) (remain []byte, d types.Datum, err error) {
 		d.SetFloat64(v)
 	case bytesFlag:
 		var v []byte
-		b, v, err = DecodeBytes(b)
+		b, v, err = DecodeBytes(b, nil)
 		d.SetBytes(v)
 	case compactBytesFlag:
 		var v []byte
@@ -481,11 +481,29 @@ func peekUvarint(b []byte) (int, error) {
 	return n, nil
 }
 
-// DecodeOneToChunk decodes one value to chunk and returns the remained bytes.
-func DecodeOneToChunk(b []byte, chk *chunk.Chunk, colIdx int, ft *types.FieldType, loc *time.Location) (remain []byte, err error) {
+// Decoder is used to decode value to chunk.
+type Decoder struct {
+	chk      *chunk.Chunk
+	timezone *time.Location
+
+	// buf is only used for DecodeBytes to avoid the cost of makeslice.
+	buf []byte
+}
+
+// NewDecoder creates a Decoder.
+func NewDecoder(chk *chunk.Chunk, timezone *time.Location) *Decoder {
+	return &Decoder{
+		chk:      chk,
+		timezone: timezone,
+	}
+}
+
+// DecodeOne decodes one value to chunk and returns the remained bytes.
+func (decoder *Decoder) DecodeOne(b []byte, colIdx int, ft *types.FieldType) (remain []byte, err error) {
 	if len(b) < 1 {
 		return nil, errors.New("invalid encoded key")
 	}
+	chk := decoder.chk
 	flag := b[0]
 	b = b[1:]
 	switch flag {
@@ -502,7 +520,7 @@ func DecodeOneToChunk(b []byte, chk *chunk.Chunk, colIdx int, ft *types.FieldTyp
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = appendUintToChunk(v, chk, colIdx, ft, loc)
+		err = appendUintToChunk(v, chk, colIdx, ft, decoder.timezone)
 	case varintFlag:
 		var v int64
 		b, v, err = DecodeVarint(b)
@@ -516,7 +534,7 @@ func DecodeOneToChunk(b []byte, chk *chunk.Chunk, colIdx int, ft *types.FieldTyp
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = appendUintToChunk(v, chk, colIdx, ft, loc)
+		err = appendUintToChunk(v, chk, colIdx, ft, decoder.timezone)
 	case floatFlag:
 		var v float64
 		b, v, err = DecodeFloat(b)
@@ -525,12 +543,11 @@ func DecodeOneToChunk(b []byte, chk *chunk.Chunk, colIdx int, ft *types.FieldTyp
 		}
 		appendFloatToChunk(v, chk, colIdx, ft)
 	case bytesFlag:
-		var v []byte
-		b, v, err = DecodeBytes(b)
+		b, decoder.buf, err = DecodeBytes(b, decoder.buf)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		chk.AppendBytes(colIdx, v)
+		chk.AppendBytes(colIdx, decoder.buf)
 	case compactBytesFlag:
 		var v []byte
 		b, v, err = DecodeCompactBytes(b)
@@ -569,7 +586,7 @@ func DecodeOneToChunk(b []byte, chk *chunk.Chunk, colIdx int, ft *types.FieldTyp
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return b, nil
+	return b, errors.Trace(err)
 }
 
 func appendIntToChunk(val int64, chk *chunk.Chunk, colIdx int, ft *types.FieldType) {

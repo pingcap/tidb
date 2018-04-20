@@ -350,6 +350,17 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	metrics.StatementPerTransaction.WithLabelValues(metrics.RetLabel(err)).Observe(float64(counter))
 	metrics.TransactionDuration.WithLabelValues(metrics.RetLabel(err)).Observe(float64(duration))
 	s.cleanRetryInfo()
+
+	if isoLevelOneShot := &s.sessionVars.TxnIsolationLevelOneShot; isoLevelOneShot.State != 0 {
+		switch isoLevelOneShot.State {
+		case 1:
+			isoLevelOneShot.State = 2
+		case 2:
+			isoLevelOneShot.State = 0
+			isoLevelOneShot.Value = ""
+		}
+	}
+
 	if err != nil {
 		log.Warnf("[%d] finished txn:%v, %v", s.sessionVars.ConnectionID, s.txn, err)
 		return errors.Trace(err)
@@ -357,7 +368,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	mapper := s.GetSessionVars().TxnCtx.TableDeltaMap
 	if s.statsCollector != nil && mapper != nil {
 		for id, item := range mapper {
-			s.statsCollector.Update(id, item.Delta, item.Count)
+			s.statsCollector.Update(id, item.Delta, item.Count, &item.ColSize)
 		}
 	}
 	return nil
@@ -610,7 +621,7 @@ func drainRecordSet(ctx context.Context, rs ast.RecordSet) ([]types.Row, error) 
 	var rows []types.Row
 	for {
 		chk := rs.NewChunk()
-		err := rs.NextChunk(ctx, chk)
+		err := rs.Next(ctx, chk)
 		if err != nil || chk.NumRows() == 0 {
 			return rows, errors.Trace(err)
 		}
@@ -754,7 +765,7 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []ast.Rec
 		cacheValue       kvcache.Value
 		hitCache         = false
 		connID           = s.sessionVars.ConnectionID
-		planCacheEnabled = plan.PlanCacheEnabled // Read global configuration only once.
+		planCacheEnabled = s.sessionVars.PlanCacheEnabled // Its value is read from the global configuration, and it will be only updated in tests.
 	)
 
 	if planCacheEnabled {
@@ -766,6 +777,7 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []ast.Rec
 	}
 
 	if hitCache {
+		metrics.PlanCacheCounter.WithLabelValues("select").Inc()
 		stmtNode := cacheValue.(*plan.SQLCacheValue).StmtNode
 		stmt := &executor.ExecStmt{
 			InfoSchema: executor.GetInfoSchema(s),
@@ -859,7 +871,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	// So we have to call PrepareTxnCtx here.
 	s.PrepareTxnCtx(ctx)
 	prepareExec := executor.NewPrepareExec(s, executor.GetInfoSchema(s), sql)
-	err = prepareExec.NextChunk(ctx, nil)
+	err = prepareExec.Next(ctx, nil)
 	if err != nil {
 		err = errors.Trace(err)
 		return
@@ -1196,7 +1208,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 18
+	currentBootstrapVersion = 20
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -1255,7 +1267,9 @@ const loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variab
 	variable.TiDBIndexJoinBatchSize + quoteCommaQuote +
 	variable.TiDBIndexLookupSize + quoteCommaQuote +
 	variable.TiDBIndexLookupConcurrency + quoteCommaQuote +
+	variable.TiDBIndexLookupJoinConcurrency + quoteCommaQuote +
 	variable.TiDBIndexSerialScanConcurrency + quoteCommaQuote +
+	variable.TiDBHashJoinConcurrency + quoteCommaQuote +
 	variable.TiDBDistSQLScanConcurrency + "')"
 
 // loadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.
@@ -1367,6 +1381,7 @@ func (s *session) ShowProcess() util.ProcessInfo {
 	tmp := s.processInfo.Load()
 	if tmp != nil {
 		pi = tmp.(util.ProcessInfo)
+		pi.Mem = s.GetSessionVars().StmtCtx.MemTracker.BytesConsumed()
 	}
 	return pi
 }

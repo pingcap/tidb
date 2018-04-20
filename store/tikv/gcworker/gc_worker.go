@@ -889,7 +889,7 @@ func (w *GCWorker) loadValueFromSysTable(key string, s session.Session) (string,
 		return "", errors.Trace(err)
 	}
 	chk := rs[0].NewChunk()
-	err = rs[0].NextChunk(ctx, chk)
+	err = rs[0].Next(ctx, chk)
 	if err != nil {
 		return "", errors.Trace(err)
 	}

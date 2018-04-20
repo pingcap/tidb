@@ -186,7 +186,7 @@ func (p *MySQLPrivilege) loadTable(sctx sessionctx.Context, sql string,
 	chk := rs.NewChunk()
 	it := chunk.NewIterator4Chunk(chk)
 	for {
-		err = rs.NextChunk(context.TODO(), chk)
+		err = rs.Next(context.TODO(), chk)
 		if err != nil {
 			return errors.Trace(err)
 		}

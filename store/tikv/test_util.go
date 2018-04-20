@@ -14,13 +14,10 @@
 package tikv
 
 import (
-	"fmt"
-	"math/rand"
-	"time"
-
 	"github.com/juju/errors"
 	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb/kv"
+	"github.com/twinj/uuid"
 )
 
 // NewTestTiKVStore creates a test store with Option
@@ -35,11 +32,9 @@ func NewTestTiKVStore(client Client, pdClient pd.Client, clientHijack func(Clien
 	}
 
 	// Make sure the uuid is unique.
-	partID := fmt.Sprintf("%05d", rand.Intn(100000))
-	uuid := fmt.Sprintf("mocktikv-store-%v-%v", time.Now().Unix(), partID)
-
+	uid := uuid.NewV4().String()
 	spkv := NewMockSafePointKV()
-	tikvStore, err := newTikvStore(uuid, pdCli, spkv, client, false)
+	tikvStore, err := newTikvStore(uid, pdCli, spkv, client, false)
 	tikvStore.mock = true
 	return tikvStore, errors.Trace(err)
 }
