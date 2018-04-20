@@ -1454,7 +1454,7 @@ func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
 	c.Assert(part.Definitions[0].Name, Equals, "p0")
 	c.Assert(part.Definitions[1].LessThan[0], Equals, "20")
 	c.Assert(part.Definitions[1].Name, Equals, "p1")
-	c.Assert(part.Definitions[2].MaxValue, IsTrue)
+	c.Assert(part.Definitions[2].LessThan[0], Equals, "MAXVALUE")
 	c.Assert(part.Definitions[2].Name, Equals, "p2")
 }
 
