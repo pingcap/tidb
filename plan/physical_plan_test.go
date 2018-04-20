@@ -161,8 +161,8 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 		},
 		// Test PK in index single read.
 		{
-			sql:  "select c from t where t.c = 1 and t.a = 1 order by t.d limit 1",
-			best: "IndexReader(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.a, 1)])->Limit)->Limit->Projection",
+			sql:  "select c from t where t.c = 1 and t.a > 1 order by t.d limit 1",
+			best: "IndexReader(Index(t.c_d_e)[[1,1]]->Sel([gt(test.t.a, 1)])->Limit)->Limit->Projection",
 		},
 		// Test composed index.
 		// FIXME: The TopN didn't be pushed.

@@ -141,7 +141,7 @@ func (s *testSuite) TestAnalyze(c *C) {
 		Build()
 	c.Assert(err, IsNil)
 
-	response, err := Analyze(context.TODO(), s.sctx.GetClient(), request)
+	response, err := Analyze(context.TODO(), s.sctx.GetClient(), request, kv.DefaultVars)
 	c.Assert(err, IsNil)
 
 	result, ok := response.(*selectResult)

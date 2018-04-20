@@ -366,6 +366,9 @@ const (
 // AutoAnalyzeMinCnt means if the count of table is less than this value, we needn't do auto analyze.
 var AutoAnalyzeMinCnt int64 = 1000
 
+// AutoAnalyzeRatio is the ratio which auto analyze will run when modify_count/count is greater than.
+var AutoAnalyzeRatio float64
+
 func needAnalyzeTable(tbl *Table, limit time.Duration) bool {
 	if tbl.ModifyCount == 0 || tbl.Count < AutoAnalyzeMinCnt {
 		return false
@@ -373,6 +376,9 @@ func needAnalyzeTable(tbl *Table, limit time.Duration) bool {
 	t := time.Unix(0, oracle.ExtractPhysical(tbl.Version)*int64(time.Millisecond))
 	if time.Since(t) < limit {
 		return false
+	}
+	if AutoAnalyzeRatio > 0 && float64(tbl.ModifyCount)/float64(tbl.Count) > AutoAnalyzeRatio {
+		return true
 	}
 	for _, col := range tbl.Columns {
 		if col.Count > 0 {

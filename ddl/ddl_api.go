@@ -801,7 +801,6 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	if s.Partition != nil {
 		pi := &model.PartitionInfo{
 			Type: s.Partition.Tp,
-			Expr: s.Partition.Expr.Text(),
 		}
 		if s.Partition.Expr != nil {
 			buf := new(bytes.Buffer)
@@ -820,10 +819,9 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 				return errors.Trace(err1)
 			}
 			piDef := model.PartitionDefinition{
-				Name:     def.Name,
-				ID:       pid,
-				Comment:  def.Comment,
-				MaxValue: def.MaxValue,
+				Name:    def.Name,
+				ID:      pid,
+				Comment: def.Comment,
 			}
 			for _, expr := range def.LessThan {
 				buf := new(bytes.Buffer)
@@ -1372,7 +1370,16 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	}
 
 	newCol := table.ToColumn(&model.ColumnInfo{
-		ID:                 col.ID,
+		ID: col.ID,
+		// We use this PR(https://github.com/pingcap/tidb/pull/6274) as the dividing line to define whether it is a new version or an old version TiDB.
+		// The old version TiDB initializes the column's offset and state here.
+		// The new version TiDB doesn't initialize the column's offset and state, and it will do the initialization in run DDL function.
+		// When we do the rolling upgrade the following may happen:
+		// a new version TiDB builds the DDL job that doesn't be set the column's offset and state,
+		// and the old version TiDB is the DDL owner, it doesn't get offset and state from the store. Then it will encounter errors.
+		// So here we set offset and state to support the rolling upgrade.
+		Offset:             col.Offset,
+		State:              col.State,
 		OriginDefaultValue: col.OriginDefaultValue,
 		FieldType:          *specNewColumn.Tp,
 		Name:               newColName,
