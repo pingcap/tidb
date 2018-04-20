@@ -102,6 +102,13 @@ func NewEvaluatorSuit(exprs []Expression) *EvaluatorSuit {
 	return e
 }
 
+func (e *EvaluatorSuit) Vectorizable() bool {
+	if e.defaultEvaluator != nil && !e.defaultEvaluator.vectorizable {
+		return false
+	}
+	return true
+}
+
 // Run evaluates all the expressions hold by this EvaluatorSuit.
 // NOTE: "defaultEvaluator" must be evaluated before "columnEvaluator".
 func (e *EvaluatorSuit) Run(ctx sessionctx.Context, input, output *chunk.Chunk) error {

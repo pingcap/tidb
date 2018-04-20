@@ -612,8 +612,6 @@ func init() {
 	terror.ErrClassToMySQLCodes[terror.ClassExecutor] = tableMySQLErrCodes
 }
 
-const projectionConcurrency = 8
-
 // ProjectionExec represents a select fields executor.
 type ProjectionExec struct {
 	baseExecutor
@@ -621,11 +619,12 @@ type ProjectionExec struct {
 	evaluatorSuit    *expression.EvaluatorSuit // dispatched to projection workers.
 	calculateNoDelay bool
 
-	prepared  bool
-	output    chan *projectionOutput
-	fetcher   projectionInputFetcher
-	waitGroup sync.WaitGroup
-	workers   []*projectionWorker
+	prepared              bool
+	projectionConcurrency int
+	output                chan *projectionOutput
+	fetcher               projectionInputFetcher
+	waitGroup             sync.WaitGroup
+	workers               []*projectionWorker
 }
 
 type projectionInputFetcher struct {
@@ -726,15 +725,21 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
+	if e.evaluatorSuit.Vectorizable() {
+		e.projectionConcurrency = 8
+	} else {
+		e.projectionConcurrency = 1
+	}
+
 	e.prepared = false
-	e.output = make(chan *projectionOutput, projectionConcurrency)
+	e.output = make(chan *projectionOutput, e.projectionConcurrency)
 
 	e.fetcher.child = e.children[0]
-	e.fetcher.input = make(chan *projectionInput, projectionConcurrency)
-	e.fetcher.output = make(chan *projectionOutput, projectionConcurrency)
+	e.fetcher.input = make(chan *projectionInput, e.projectionConcurrency)
+	e.fetcher.output = make(chan *projectionOutput, e.projectionConcurrency)
 
-	e.workers = make([]*projectionWorker, 0, projectionConcurrency)
-	for i := 0; i < projectionConcurrency; i++ {
+	e.workers = make([]*projectionWorker, 0, e.projectionConcurrency)
+	for i := 0; i < e.projectionConcurrency; i++ {
 		e.workers = append(e.workers, &projectionWorker{
 			ctx:           e.ctx,
 			evaluatorSuit: e.evaluatorSuit,
