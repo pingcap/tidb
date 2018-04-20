@@ -45,6 +45,7 @@ type tikvSnapshot struct {
 	priority       pb.CommandPri
 	notFillCache   bool
 	syncLog        bool
+	vars           *kv.Variables
 }
 
 var snapshotGP = gp.New(time.Minute)
@@ -56,6 +57,7 @@ func newTiKVSnapshot(store *tikvStore, ver kv.Version) *tikvSnapshot {
 		version:        ver,
 		isolationLevel: kv.SI,
 		priority:       pb.CommandPri_Normal,
+		vars:           kv.DefaultVars,
 	}
 }
 
@@ -72,7 +74,7 @@ func (s *tikvSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 
 	// We want [][]byte instead of []kv.Key, use some magic to save memory.
 	bytesKeys := *(*[][]byte)(unsafe.Pointer(&keys))
-	bo := NewBackoffer(context.Background(), batchGetMaxBackoff)
+	bo := NewBackoffer(context.Background(), batchGetMaxBackoff).WithVars(s.vars)
 
 	// Create a map to collect key-values from region servers.
 	var mu sync.Mutex
@@ -194,7 +196,7 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 				return errors.Trace(err)
 			}
 			if !ok {
-				err = bo.Backoff(BoTxnLock, errors.Errorf("batchGet lockedKeys: %d", len(lockedKeys)))
+				err = bo.Backoff(boTxnLockFast, errors.Errorf("batchGet lockedKeys: %d", len(lockedKeys)))
 				if err != nil {
 					return errors.Trace(err)
 				}
