@@ -76,7 +76,7 @@ func (t *txnMap) put(startTS uint64, txn *txnCommitter) {
 		t.txns = make(map[uint64]*txnCommitter)
 	}
 	if _, ok := t.txns[startTS]; ok {
-		panic(fmt.Sprintf("The startTS %d shouldn't be used in two transaction", txn.twoPC.startTS))
+		panic(fmt.Sprintf("The startTS %d shouldn't be used in two transactions.", txn.twoPC.startTS))
 	}
 	t.txns[startTS] = txn
 }
@@ -126,8 +126,8 @@ func (scheduler *txnScheduler) execute(ctx context.Context, txn *twoPhaseCommitt
 	}
 	// latches enabled
 	newCommitter.lock = scheduler.latches.GenLock(txn.startTS, txn.keys)
-	// for transactions which is not retryable, commit directly.
-	if !sessionctx.GetRetryAble(ctx) {
+	// for transactions not retryable, commit directly.
+	if !sessionctx.GetRetryable(ctx) {
 		err := scheduler.runForUnRetryAble(newCommitter)
 		return errors.Trace(err)
 	}

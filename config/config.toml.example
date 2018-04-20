@@ -38,7 +38,8 @@ oom-action = "log"
 # Enable coprocessor streaming.
 enable-streaming = false
 
-# Enable local latches for transactions.
+# Enable local latches for transactions. Enable it when
+# there are lots of conflicts between transactions.
 enable-txn-local-latches = false
 
 # Set system variable 'lower_case_table_names'
