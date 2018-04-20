@@ -1274,6 +1274,36 @@ const loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variab
 	variable.TiDBBackoffLockFast + quoteCommaQuote +
 	variable.TiDBDistSQLScanConcurrency + "')"
 
+type globalVariableCache struct {
+	sync.RWMutex
+	lastModify time.Time
+	rows       []types.Row
+	fields     []*ast.ResultField
+}
+
+var gvc globalVariableCache
+
+const globalVariableCacheExpiry time.Duration = 2 * time.Second
+
+func (gvc *globalVariableCache) Update(rows []types.Row, fields []*ast.ResultField) {
+	gvc.Lock()
+	gvc.lastModify = time.Now()
+	gvc.rows = rows
+	gvc.fields = fields
+	gvc.Unlock()
+}
+
+func (gvc *globalVariableCache) Get() (succ bool, rows []types.Row, fields []*ast.ResultField) {
+	gvc.RLock()
+	defer gvc.RUnlock()
+	if time.Now().Sub(gvc.lastModify) < globalVariableCacheExpiry {
+		succ, rows, fields = true, gvc.rows, gvc.fields
+		return
+	}
+	succ = false
+	return
+}
+
 // loadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.
 func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	vars := s.sessionVars
@@ -1284,14 +1314,23 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 		// When running bootstrap or upgrade, we should not access global storage.
 		return nil
 	}
-	// Set the variable to true to prevent cyclic recursive call.
-	vars.CommonGlobalLoaded = true
-	rows, fields, err := s.ExecRestrictedSQL(s, loadCommonGlobalVarsSQL)
-	if err != nil {
-		vars.CommonGlobalLoaded = false
-		log.Errorf("Failed to load common global variables.")
-		return errors.Trace(err)
+
+	var err error
+	// Use globalVariableCache if TiDB just loaded global variables within 2 second ago.
+	// When a lot of connections connect to TiDB simultaneously, it can protect TiKV meta region from overload.
+	succ, rows, fields := gvc.Get()
+	if !succ {
+		// Set the variable to true to prevent cyclic recursive call.
+		vars.CommonGlobalLoaded = true
+		rows, fields, err = s.ExecRestrictedSQL(s, loadCommonGlobalVarsSQL)
+		if err != nil {
+			vars.CommonGlobalLoaded = false
+			log.Errorf("Failed to load common global variables.")
+			return errors.Trace(err)
+		}
+		gvc.Update(rows, fields)
 	}
+
 	for _, row := range rows {
 		varName := row.GetString(0)
 		varVal := row.GetDatum(1, &fields[1].Column.FieldType)
