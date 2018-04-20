@@ -14,7 +14,6 @@
 package latch
 
 import (
-	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -85,89 +84,4 @@ func (s *testLatchSuite) TestWakeUp(c *C) {
 	acquired, stale = s.latches.Acquire(&lockB)
 	c.Assert(acquired, IsTrue)
 	c.Assert(stale, IsFalse)
-}
-
-type txn struct {
-	keys    [][]byte
-	startTS uint64
-	lock    Lock
-}
-
-func newTxn(keys [][]byte, startTS uint64, lock Lock) txn {
-	return txn{
-		keys:    keys,
-		startTS: startTS,
-		lock:    lock,
-	}
-}
-
-type txnScheduler struct {
-	txns    map[uint64]*txn
-	latches *Latches
-	lock    sync.Mutex
-	wait    *sync.WaitGroup
-}
-
-func newTxnScheduler(wait *sync.WaitGroup, latches *Latches) *txnScheduler {
-	return &txnScheduler{
-		txns:    make(map[uint64]*txn),
-		latches: latches,
-		wait:    wait,
-	}
-}
-
-func (store *txnScheduler) runTxn(startTS uint64) {
-	store.lock.Lock()
-	txn, ok := store.txns[startTS]
-	store.lock.Unlock()
-	if !ok {
-		panic(startTS)
-	}
-	acquired, stale := store.latches.Acquire(&txn.lock)
-
-	if !stale && !acquired {
-		return
-	}
-	commitTs := uint64(0)
-	if stale {
-		// restart Txn
-		go store.newTxn(txn.keys)
-	} else {
-		// DO commit
-		commitTs = getTso()
-		store.wait.Done()
-	}
-	wakeupList := store.latches.Release(&txn.lock, commitTs)
-	for _, s := range wakeupList {
-		go store.runTxn(s)
-	}
-	store.lock.Lock()
-	delete(store.txns, startTS)
-	store.lock.Unlock()
-}
-
-func (store *txnScheduler) newTxn(keys [][]byte) {
-	startTS := getTso()
-	lock := store.latches.GenLock(startTS, keys)
-	t := newTxn(keys, startTS, lock)
-	store.lock.Lock()
-	store.txns[t.startTS] = &t
-	store.lock.Unlock()
-	go store.runTxn(t.startTS)
-}
-
-func (s *testLatchSuite) TestWithConcurrency(c *C) {
-	waitGroup := sync.WaitGroup{}
-	txns := [][][]byte{
-		{[]byte("a"), []byte("a"), []byte("b"), []byte("c")},
-		{[]byte("a"), []byte("d"), []byte("e"), []byte("f")},
-		{[]byte("e"), []byte("f"), []byte("g"), []byte("h")},
-	}
-
-	store := newTxnScheduler(&waitGroup, s.latches)
-	waitGroup.Add(len(txns))
-	for _, txn := range txns {
-		go store.newTxn(txn)
-	}
-	waitGroup.Wait()
 }
