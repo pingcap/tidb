@@ -916,7 +916,7 @@ func (w *GCWorker) saveValueToSysTable(key, value string, s session.Session) err
 }
 
 // RunGCJob sends GC command to KV. it is exported for kv api, do not use it with GCWorker at the same time.
-func RunGCJob(ctx context.Context, s tikv.Storage, safePoint uint64, identifier string) error {
+func RunGCJob(ctx context.Context, s tikv.Storage, safePoint uint64, identifier string, concurrency int) error {
 	gcWorker := &GCWorker{
 		store: s,
 		uuid:  identifier,
@@ -926,7 +926,7 @@ func RunGCJob(ctx context.Context, s tikv.Storage, safePoint uint64, identifier 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = gcWorker.doGCInternal(ctx, safePoint, gcDefaultConcurrency)
+	err = gcWorker.doGCInternal(ctx, safePoint, concurrency)
 	if err != nil {
 		return errors.Trace(err)
 	}
