@@ -801,7 +801,6 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	if s.Partition != nil {
 		pi := &model.PartitionInfo{
 			Type: s.Partition.Tp,
-			Expr: s.Partition.Expr.Text(),
 		}
 		if s.Partition.Expr != nil {
 			buf := new(bytes.Buffer)
@@ -820,10 +819,9 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 				return errors.Trace(err1)
 			}
 			piDef := model.PartitionDefinition{
-				Name:     def.Name,
-				ID:       pid,
-				Comment:  def.Comment,
-				MaxValue: def.MaxValue,
+				Name:    def.Name,
+				ID:      pid,
+				Comment: def.Comment,
 			}
 			for _, expr := range def.LessThan {
 				buf := new(bytes.Buffer)

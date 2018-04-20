@@ -2010,3 +2010,37 @@ func (s *testSessionSuite) TestDBUserNameLength(c *C) {
 	tk.MustExec(`grant all privileges on test.* to 'abcddfjakldfjaldddds'@'%' identified by ''`)
 	tk.MustExec(`grant all privileges on test.t to 'abcddfjakldfjaldddds'@'%' identified by ''`)
 }
+
+func (s *testSessionSuite) TestKVVars(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table kvvars (a int, b int)")
+	tk.MustExec("insert kvvars values (1, 1)")
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk2.MustExec("set @@tidb_backoff_lock_fast = 1")
+	backoffVal := new(int64)
+	tk2.Se.GetSessionVars().KVVars.Hook = func(name string, vars *kv.Variables) {
+		atomic.StoreInt64(backoffVal, int64(vars.BackoffLockFast))
+	}
+	wg := new(sync.WaitGroup)
+	wg.Add(2)
+	go func() {
+		for {
+			tk2.MustQuery("select * from kvvars")
+			if atomic.LoadInt64(backoffVal) != 0 {
+				break
+			}
+		}
+		wg.Done()
+	}()
+	go func() {
+		for {
+			tk.MustExec("update kvvars set b = b + 1 where a = 1")
+			if atomic.LoadInt64(backoffVal) != 0 {
+				break
+			}
+		}
+		wg.Done()
+	}()
+	wg.Wait()
+	c.Assert(atomic.LoadInt64(backoffVal), Equals, int64(1))
+}
