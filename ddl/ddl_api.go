@@ -822,7 +822,6 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 				Name:    def.Name,
 				ID:      pid,
 				Comment: def.Comment,
-				// MaxValue: def.MaxValue,
 			}
 			for _, expr := range def.LessThan {
 				buf := new(bytes.Buffer)
