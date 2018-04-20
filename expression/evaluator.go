@@ -102,6 +102,7 @@ func NewEvaluatorSuit(exprs []Expression) *EvaluatorSuit {
 	return e
 }
 
+// Vectorizable checks whether this EvaluatorSuit can use vectorizd execution mode.
 func (e *EvaluatorSuit) Vectorizable() bool {
 	if e.defaultEvaluator != nil && !e.defaultEvaluator.vectorizable {
 		return false

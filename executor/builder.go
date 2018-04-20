@@ -900,8 +900,12 @@ func (b *executorBuilder) buildProjection(v *plan.PhysicalProjection) Executor {
 	}
 	e := &ProjectionExec{
 		baseExecutor:     newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), childExec),
+		numWorkers:       b.ctx.GetSessionVars().ProjectionConcurrency,
 		evaluatorSuit:    expression.NewEvaluatorSuit(v.Exprs),
 		calculateNoDelay: v.CalculateNoDelay,
+	}
+	if v.StatsInfo().Count() < int64(b.ctx.GetSessionVars().MaxChunkSize) {
+		e.numWorkers = 0
 	}
 	return e
 }

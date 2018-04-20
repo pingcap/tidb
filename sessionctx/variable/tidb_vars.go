@@ -147,6 +147,10 @@ const (
 	// tidb_hash_join_concurrency is used for hash join executor.
 	// The hash join outer executor starts multiple concurrent join workers to probe the hash table.
 	TiDBHashJoinConcurrency = "tidb_hash_join_concurrency"
+
+	// tidb_projection_concurrency is used for projection operator.
+	// This variable controls the worker number of projection operator.
+	TiDBProjectionConcurrency = "tidb_projection_concurrency"
 )
 
 // Default TiDB system variable values.
@@ -177,6 +181,7 @@ const (
 	DefTiDBMemQuotaNestedLoopApply   = 32 << 30 // 32GB.
 	DefTiDBGeneralLog                = 0
 	DefTiDBHashJoinConcurrency       = 5
+	DefTiDBProjectionConcurrency     = 4
 	DefTiDBOptimizerSelectivityLevel = 0
 )
 
