@@ -975,11 +975,10 @@ func (n *VariableExpr) Accept(v Visitor) (Node, bool) {
 // MaxValueExpr is the expression for "maxvalue" used in partition.
 type MaxValueExpr struct {
 	exprNode
-	Name string
 }
 
 func (n *MaxValueExpr) Format(w io.Writer) {
-	fmt.Fprint(w, n.Name)
+	fmt.Fprint(w, "MAXVALUE")
 }
 
 // Accept implements Node Accept interface.

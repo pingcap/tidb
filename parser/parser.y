@@ -1800,9 +1800,9 @@ PartitionDefinition:
 		}
 		switch $3.(type) {
 		case []ast.ExprNode:
-						partDef.LessThan = $3.([]ast.ExprNode)
+				partDef.LessThan = $3.([]ast.ExprNode)
 		case ast.ExprNode:
-						partDef.LessThan[0] = $3.(ast.ExprNode)
+				artDef.LessThan[0] = $3.(ast.ExprNode)
 		}
 		$$ = partDef
 	}
@@ -1822,7 +1822,7 @@ PartDefValuesOpt:
 	}
 |	"VALUES" "LESS" "THAN" "MAXVALUE" 
 	{
-		$$ = &ast.MaxValueExpr{Name:"MAXVALUE"}
+		$$ = &ast.MaxValueExpr{}
 	}
 |	"VALUES" "LESS" "THAN" '(' ExpressionList ')'
 	{
@@ -2181,7 +2181,7 @@ Expression:
 |	BoolPri
 |	"MAXVALUE"
 	{
-		$$ = &ast.MaxValueExpr{Name:"MAXVALUE"}
+		$$ = &ast.MaxValueExpr{}
 	}
 
 
