@@ -745,6 +745,16 @@ func (w *GCWorker) genNextGCTask(bo *Backoffer, safePoint uint64, key kv.Key) (*
 }
 
 func (w *GCWorker) doGC(ctx goctx.Context, safePoint uint64) error {
+	concurrency, err := w.loadGCConcurrencyWithDefault()
+	if err != nil {
+		log.Errorf("[gc worker] %s failed to load gcConcurrency, err %s", w.uuid, err)
+		concurrency = gcDefaultConcurrency
+	}
+
+	return w.doGCInternal(ctx, safePoint, concurrency)
+}
+
+func (w *GCWorker) doGCInternal(ctx goctx.Context, safePoint uint64, concurrency int) error {
 	gcWorkerCounter.WithLabelValues("do_gc").Inc()
 
 	err := w.saveSafePoint(gcSavedSafePoint, safePoint)
@@ -754,12 +764,6 @@ func (w *GCWorker) doGC(ctx goctx.Context, safePoint uint64) error {
 
 	// Sleep to wait for all other tidb instances update their safepoint cache.
 	time.Sleep(gcSafePointCacheInterval)
-
-	concurrency, err := w.loadGCConcurrencyWithDefault()
-	if err != nil {
-		log.Errorf("[gc worker] %s failed to load gcConcurrency, err %s", w.uuid, err)
-		concurrency = gcDefaultConcurrency
-	}
 
 	log.Infof("[gc worker] %s start gc, concurrency %v, safePoint: %v.", w.uuid, concurrency, safePoint)
 	startTime := time.Now()
@@ -997,6 +1001,28 @@ func (w *GCWorker) saveValueToSysTable(key, value string, s tidb.Session) error 
 	_, err := s.Execute(stmt)
 	log.Debugf("[gc worker] save kv, %s:%s %v", key, value, err)
 	return errors.Trace(err)
+}
+
+// RunGCJob sends GC command to KV. it is exported for kv api, do not use it with GCWorker at the same time.
+func RunGCJob(ctx goctx.Context, s *tikvStore, safePoint uint64, identifier string, concurrency int) error {
+	gcWorker := &GCWorker{
+		store: s,
+		uuid:  identifier,
+	}
+
+	err := gcWorker.resolveLocks(ctx, safePoint)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if concurrency <= 0 {
+		return errors.Errorf("[gc worker] gc concurrency should greater than 0, current concurrency: %v", concurrency)
+	}
+	err = gcWorker.doGCInternal(ctx, safePoint, concurrency)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 // MockGCWorker is for test.
