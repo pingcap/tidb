@@ -799,7 +799,6 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		return errors.Trace(err)
 	}
 	if s.Partition != nil {
-		fmt.Printf("expr is %v", s.Partition.Expr)
 		pi := &model.PartitionInfo{
 			Type: s.Partition.Tp,
 		}
