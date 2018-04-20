@@ -1016,7 +1016,7 @@ func RunGCJob(ctx goctx.Context, s *tikvStore, safePoint uint64, identifier stri
 	}
 
 	if concurrency <= 0 {
-		log.Fatalf("[gc worker] gc concurrency should greater than 0, current concurrency: %v", concurrency)
+		return errors.Errorf("[gc worker] gc concurrency should greater than 0, current concurrency: %v", concurrency)
 	}
 	err = gcWorker.doGCInternal(ctx, safePoint, concurrency)
 	if err != nil {
