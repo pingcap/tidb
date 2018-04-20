@@ -158,8 +158,7 @@ type projectionInputFetcher struct {
 func (w *projectionInputFetcher) run(ctx context.Context, dst chan<- *projectionOutput) {
 	defer func() {
 		for input := range w.input {
-			close(input.worker.input)
-			close(input.worker.output)
+			input.worker.finish()
 		}
 	}()
 
@@ -171,8 +170,7 @@ func (w *projectionInputFetcher) run(ctx context.Context, dst chan<- *projection
 
 		output, ok2 := <-w.output
 		if !ok2 {
-			close(input.worker.input)
-			close(input.worker.output)
+			input.worker.finish()
 			return
 		}
 
@@ -181,20 +179,17 @@ func (w *projectionInputFetcher) run(ctx context.Context, dst chan<- *projection
 		err := w.child.Next(ctx, input.chk)
 		if err != nil {
 			output.done <- errors.Trace(err)
-			close(input.worker.input)
-			close(input.worker.output)
+			input.worker.finish()
 			return
 		}
 
 		if input.chk.NumRows() == 0 {
 			output.done <- nil
-			close(input.worker.input)
-			close(input.worker.output)
+			input.worker.finish()
 			return
 		}
 
 		input.worker.input <- input
-
 		input.worker.output <- output
 	}
 }
@@ -229,4 +224,9 @@ func (w *projectionWorker) run(giveBack chan<- *projectionInput, waitGroup *sync
 		}
 		giveBack <- input
 	}
+}
+
+func (w *projectionWorker) finish() {
+	close(w.input)
+	close(w.output)
 }
