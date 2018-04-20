@@ -982,6 +982,7 @@ func (s *session) NewTxn() error {
 		return errors.Trace(err)
 	}
 	txn.SetCap(s.getMembufCap())
+	txn.SetVars(s.sessionVars.KVVars)
 	s.txn.changeInvalidToValid(txn)
 	s.sessionVars.TxnCtx.StartTS = txn.StartTS()
 	return nil
@@ -1270,6 +1271,7 @@ const loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variab
 	variable.TiDBIndexLookupJoinConcurrency + quoteCommaQuote +
 	variable.TiDBIndexSerialScanConcurrency + quoteCommaQuote +
 	variable.TiDBHashJoinConcurrency + quoteCommaQuote +
+	variable.TiDBBackoffLockFast + quoteCommaQuote +
 	variable.TiDBDistSQLScanConcurrency + "')"
 
 // loadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.

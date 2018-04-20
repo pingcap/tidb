@@ -80,10 +80,10 @@ func (c *CopClient) supportExpr(exprType tipb.ExprType) bool {
 }
 
 // Send builds the request and gets the coprocessor iterator response.
-func (c *CopClient) Send(ctx context.Context, req *kv.Request) kv.Response {
+func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variables) kv.Response {
 	metrics.TiKVCoprocessorCounter.WithLabelValues("send").Inc()
 
-	bo := NewBackoffer(ctx, copBuildTaskMaxBackoff)
+	bo := NewBackoffer(ctx, copBuildTaskMaxBackoff).WithVars(vars)
 	tasks, err := buildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req.Desc, req.Streaming)
 	if err != nil {
 		return copErrorResponse{err}
@@ -93,6 +93,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request) kv.Response {
 		req:         req,
 		concurrency: req.Concurrency,
 		finished:    make(chan struct{}),
+		vars:        vars,
 	}
 	it.tasks = tasks
 	if it.concurrency > len(tasks) {
@@ -357,6 +358,8 @@ type copIterator struct {
 	// Otherwise, results are stored in respChan.
 	respChan chan copResponse
 	wg       sync.WaitGroup
+
+	vars *kv.Variables
 }
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
@@ -367,6 +370,7 @@ type copIteratorWorker struct {
 	req      *kv.Request
 	respChan chan<- copResponse
 	finished <-chan struct{}
+	vars     *kv.Variables
 }
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
@@ -399,7 +403,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 			respCh = task.respChan
 		}
 
-		bo := NewBackoffer(ctx1, copNextMaxBackoff)
+		bo := NewBackoffer(ctx1, copNextMaxBackoff).WithVars(worker.vars)
 		worker.handleTask(bo, task, respCh)
 		if bo.totalSleep > 0 {
 			metrics.TiKVBackoffHistogram.Observe(float64(bo.totalSleep) / 1000)
@@ -426,6 +430,7 @@ func (it *copIterator) open(ctx context.Context) {
 			req:      it.req,
 			respChan: it.respChan,
 			finished: it.finished,
+			vars:     it.vars,
 		}
 		copIteratorGP.Go(func() {
 			worker.run(ctx)
