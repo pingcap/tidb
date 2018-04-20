@@ -488,6 +488,7 @@ import (
 
 %type	<expr>
 	Expression			"expression"
+	MaxValueOrExpression		"maxvalue or expression"
 	BoolPri				"boolean primary expression"
 	ExprOrDefault			"expression or default"
 	PredicateExpr			"Predicate expression factor"
@@ -603,6 +604,7 @@ import (
 	EscapedTableRef 		"escaped table reference"
 	Escaped				"Escaped by"
 	ExpressionList			"expression list"
+	MaxValueOrExpressionList	"maxvalue or expression list"
 	ExpressionListOpt		"expression list opt"
 	FuncDatetimePrecListOpt	        "Function datetime precision list opt"
 	FuncDatetimePrecList	        "Function datetime precision list"
@@ -1802,7 +1804,7 @@ PartitionDefinition:
 		case []ast.ExprNode:
 				partDef.LessThan = $3.([]ast.ExprNode)
 		case ast.ExprNode:
-				artDef.LessThan[0] = $3.(ast.ExprNode)
+				partDef.LessThan[0] = $3.(ast.ExprNode)
 		}
 		$$ = partDef
 	}
@@ -1824,7 +1826,7 @@ PartDefValuesOpt:
 	{
 		$$ = &ast.MaxValueExpr{}
 	}
-|	"VALUES" "LESS" "THAN" '(' ExpressionList ')'
+|	"VALUES" "LESS" "THAN" '(' MaxValueOrExpressionList ')'
 	{
 		$$ = $5
 	}
@@ -2179,10 +2181,13 @@ Expression:
 		$$ = &ast.IsNullExpr{Expr: $1, Not: !$2.(bool)}
 	}
 |	BoolPri
-|	"MAXVALUE"
+
+MaxValueOrExpression:
+	"MAXVALUE"
 	{
 		$$ = &ast.MaxValueExpr{}
 	}
+|	Expression
 
 
 logOr:
@@ -2201,6 +2206,17 @@ ExpressionList:
 	{
 		$$ = append($1.([]ast.ExprNode), $3)
 	}
+
+MaxValueOrExpressionList:
+	MaxValueOrExpression
+	{
+		$$ = []ast.ExprNode{$1}
+}
+|	MaxValueOrExpressionList ',' MaxValueOrExpression
+{
+		$$ = append($1.([]ast.ExprNode), $3)
+	}
+
 
 ExpressionListOpt:
 	{
