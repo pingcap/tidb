@@ -179,12 +179,11 @@ func (e *AnalyzeIndexExec) open() error {
 	kvReq, err := builder.SetIndexRanges(e.ctx.GetSessionVars().StmtCtx, e.tblInfo.ID, e.idxInfo.ID, ranger.FullNewRange()).
 		SetAnalyzeRequest(e.analyzePB).
 		SetKeepOrder(true).
-		SetPriority(e.priority).
 		Build()
 	kvReq.Concurrency = e.concurrency
 	kvReq.IsolationLevel = kv.RC
 	ctx := context.TODO()
-	e.result, err = distsql.Analyze(ctx, e.ctx.GetClient(), kvReq)
+	e.result, err = distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -296,7 +295,6 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.NewRange) (distsql.Selec
 	kvReq, err := builder.SetTableRanges(e.tblInfo.ID, ranges, nil).
 		SetAnalyzeRequest(e.analyzePB).
 		SetKeepOrder(e.keepOrder).
-		SetPriority(e.priority).
 		Build()
 	kvReq.IsolationLevel = kv.RC
 	kvReq.Concurrency = e.concurrency
@@ -304,7 +302,7 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.NewRange) (distsql.Selec
 		return nil, errors.Trace(err)
 	}
 	ctx := context.TODO()
-	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq)
+	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

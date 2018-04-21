@@ -124,7 +124,7 @@ var (
 func main() {
 	flag.Parse()
 	if *version {
-		printer.PrintRawTiDBInfo()
+		fmt.Println(printer.GetTiDBInfo())
 		os.Exit(0)
 	}
 

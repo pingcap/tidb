@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/israce"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -41,6 +42,7 @@ func PrintTiDBInfo() {
 	log.Infof("Git Branch: %s", TiDBGitBranch)
 	log.Infof("UTC Build Time:  %s", TiDBBuildTS)
 	log.Infof("GoVersion:  %s", GoVersion)
+	log.Infof("Race Enabled: %v", israce.RaceEnabled)
 	log.Infof("TiKV Min Version: %s", TiKVMinVersion)
 	configJSON, err := json.Marshal(config.GetGlobalConfig())
 	if err != nil {
@@ -49,20 +51,22 @@ func PrintTiDBInfo() {
 	log.Infof("Config: %s", configJSON)
 }
 
-// PrintRawTiDBInfo prints the TiDB version information without log info.
-func PrintRawTiDBInfo() {
-	fmt.Println("Release Version: ", mysql.TiDBReleaseVersion)
-	fmt.Println("Git Commit Hash: ", TiDBGitHash)
-	fmt.Println("Git Commit Branch: ", TiDBGitBranch)
-	fmt.Println("UTC Build Time: ", TiDBBuildTS)
-	fmt.Println("GoVersion: ", GoVersion)
-	fmt.Println("TiKV Min Version: ", TiKVMinVersion)
-}
-
 // GetTiDBInfo returns the git hash and build time of this tidb-server binary.
 func GetTiDBInfo() string {
-	return fmt.Sprintf("Release Version: %s\nGit Commit Hash: %s\nGit Branch: %s\nUTC Build Time: %s\nGoVersion: %s\nTiKV Min Version: %s",
-		mysql.TiDBReleaseVersion, TiDBGitHash, TiDBGitBranch, TiDBBuildTS, GoVersion, TiKVMinVersion)
+	return fmt.Sprintf("Release Version: %s\n"+
+		"Git Commit Hash: %s\n"+
+		"Git Branch: %s\n"+
+		"UTC Build Time: %s\n"+
+		"GoVersion: %s\n"+
+		"Race Enabled: %v\n"+
+		"TiKV Min Version: %s",
+		mysql.TiDBReleaseVersion,
+		TiDBGitHash,
+		TiDBGitBranch,
+		TiDBBuildTS,
+		GoVersion,
+		israce.RaceEnabled,
+		TiKVMinVersion)
 }
 
 // checkValidity checks whether cols and every data have the same length.
