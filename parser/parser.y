@@ -4548,16 +4548,104 @@ SelectLockOpt:
 		$$ = ast.SelectLockInShareMode
 	}
 
-// See https://dev.mysql.com/doc/refman/5.7/en/union.html
 UnionStmt:
-	UnionClauseList "UNION" UnionOpt SelectStmt
+	UnionClauseList "UNION" UnionOpt "SELECT" SelectStmtOpts SelectStmtFieldList OrderByOptional SelectStmtLimit SelectLockOpt
 	{
+		sel := &ast.SelectStmt {
+			SelectStmtOpts: $5.(*ast.SelectStmtOpts),
+			Distinct:      $5.(*ast.SelectStmtOpts).Distinct,
+			Fields:        $6.(*ast.FieldList),
+		}
+		lastField := sel.Fields.Fields[len(sel.Fields.Fields)-1]
+		if lastField.Expr != nil && lastField.AsName.O == "" {
+			src := parser.src
+			var lastEnd = len(src)
+			if src[lastEnd-1] == ';' {
+				lastEnd--
+			}
+			lastField.SetText(src[lastField.Offset:lastEnd])
+		}
 		union := $1.(*ast.UnionStmt)
 		union.Distinct = union.Distinct || $3.(bool)
 		lastSelect := union.SelectList.Selects[len(union.SelectList.Selects)-1]
-		endOffset := parser.endOffset(&yyS[yypt-2])
+		endOffset := parser.endOffset(&yyS[yypt-7])
 		parser.setLastSelectFieldText(lastSelect, endOffset)
-		union.SelectList.Selects = append(union.SelectList.Selects, $4.(*ast.SelectStmt))
+		union.SelectList.Selects = append(union.SelectList.Selects, sel)
+		if $7 != nil {
+		    union.OrderBy = $7.(*ast.OrderByClause)
+		}
+		if $8 != nil {
+		    union.Limit = $8.(*ast.Limit)
+		}
+		$$ = union
+	}
+|	UnionClauseList "UNION" UnionOpt "SELECT" SelectStmtOpts SelectStmtFieldList FromDual WhereClauseOptional SelectStmtLimit SelectLockOpt
+	{
+   		sel := &ast.SelectStmt {
+   			SelectStmtOpts: $5.(*ast.SelectStmtOpts),
+   			Distinct:      $5.(*ast.SelectStmtOpts).Distinct,
+   			Fields:        $6.(*ast.FieldList),
+   		}
+   		lastField := sel.Fields.Fields[len(sel.Fields.Fields)-1]
+   		if lastField.Expr != nil && lastField.AsName.O == "" {
+   			lastEnd := yyS[yypt-3].offset-1
+    		lastField.SetText(parser.src[lastField.Offset:lastEnd])
+    	}
+   		if $8 != nil {
+    		sel.Where = $8.(ast.ExprNode)
+   		}
+		union := $1.(*ast.UnionStmt)
+		union.Distinct = union.Distinct || $3.(bool)
+		lastSelect := union.SelectList.Selects[len(union.SelectList.Selects)-1]
+		endOffset := parser.endOffset(&yyS[yypt-8])
+		parser.setLastSelectFieldText(lastSelect, endOffset)
+		union.SelectList.Selects = append(union.SelectList.Selects, sel)
+		if $9 != nil {
+		    union.Limit = $9.(*ast.Limit)
+		}
+		$$ = union
+	}
+|	UnionClauseList "UNION" UnionOpt "SELECT" SelectStmtOpts SelectStmtFieldList "FROM"
+   	TableRefsClause WhereClauseOptional SelectStmtGroup HavingClause OrderByOptional
+   	SelectStmtLimit SelectLockOpt
+	{
+		opts := $5.(*ast.SelectStmtOpts)
+    	st := &ast.SelectStmt{
+    		SelectStmtOpts: $5.(*ast.SelectStmtOpts),
+    		Distinct:		opts.Distinct,
+    		Fields:		$6.(*ast.FieldList),
+    		From:		$8.(*ast.TableRefsClause),
+    	}
+    	if opts.TableHints != nil {
+    		st.TableHints = opts.TableHints
+    	}
+    	lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
+    	if lastField.Expr != nil && lastField.AsName.O == "" {
+    	    lastEnd := parser.endOffset(&yyS[yypt-7])
+    	    lastField.SetText(parser.src[lastField.Offset:lastEnd])
+    	}
+    	if $9 != nil {
+    	    st.Where = $9.(ast.ExprNode)
+    	}
+    	if $10!= nil {
+    		st.GroupBy = $10.(*ast.GroupByClause)
+    	}
+    	if $11 != nil {
+    		st.Having = $11.(*ast.HavingClause)
+    	}
+
+		union := $1.(*ast.UnionStmt)
+		union.Distinct = union.Distinct || $3.(bool)
+		lastSelect := union.SelectList.Selects[len(union.SelectList.Selects)-1]
+		endOffset := parser.endOffset(&yyS[yypt-12])
+		parser.setLastSelectFieldText(lastSelect, endOffset)
+		union.SelectList.Selects = append(union.SelectList.Selects, st)
+    	if $12 != nil {
+    		union.OrderBy = $12.(*ast.OrderByClause)
+    	}
+    	if $13 != nil {
+    		union.Limit = $13.(*ast.Limit)
+    	}
 		$$ = union
 	}
 |	UnionClauseList "UNION" UnionOpt '(' SelectStmt ')' OrderByOptional SelectStmtLimit
