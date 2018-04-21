@@ -471,7 +471,10 @@ func checkDefaultValue(ctx sessionctx.Context, c *table.Column, hasDefaultValue 
 		if types.ErrTruncated.Equal(err) {
 			return types.ErrInvalidDefault.GenByArgs(c.Name)
 		}
-		return errors.Trace(err)
+		if err != nil {
+			return errors.Trace(types.ErrInvalidDefault.GenByArgs(c.Name))
+		}
+		return nil
 	}
 
 	// Set not null but default null is invalid.
