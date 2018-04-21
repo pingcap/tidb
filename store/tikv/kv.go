@@ -71,6 +71,7 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 	defer mc.Unlock()
 
 	security := config.GetGlobalConfig().Security
+	enableTxnLocalLatches := config.GetGlobalConfig().EnableTxnLocalLatches
 	etcdAddrs, disableGC, err := parsePath(path)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -105,7 +106,7 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 		return nil, errors.Trace(err)
 	}
 
-	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, spkv, newRPCClient(security), !disableGC)
+	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, spkv, newRPCClient(security), !disableGC, enableTxnLocalLatches)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -127,6 +128,7 @@ type tikvStore struct {
 	pdClient     pd.Client
 	regionCache  *RegionCache
 	lockResolver *LockResolver
+	txnScheduler *txnScheduler
 	gcWorker     GCHandler
 	etcdAddrs    []string
 	tlsConfig    *tls.Config
@@ -165,7 +167,7 @@ func (s *tikvStore) CheckVisibility(startTime uint64) error {
 	return nil
 }
 
-func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client, enableGC bool) (*tikvStore, error) {
+func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client, enableGC, enableTxnLocalLatches bool) (*tikvStore, error) {
 	o, err := oracles.NewPdOracle(pdClient, time.Duration(oracleUpdateInterval)*time.Millisecond)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -183,6 +185,7 @@ func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Clie
 		closed:      make(chan struct{}),
 	}
 	store.lockResolver = newLockResolver(store)
+	store.txnScheduler = newTxnScheduler(enableTxnLocalLatches)
 	store.enableGC = enableGC
 
 	go store.runSafePointChecker()

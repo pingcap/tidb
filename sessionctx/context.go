@@ -112,7 +112,22 @@ type contextKey string
 // ConnID is the key in context.
 const ConnID contextKey = "conn ID"
 
-// SetConnID2Ctx sets the connection ID to context.
-func SetConnID2Ctx(ctx context.Context, sessCtx Context) context.Context {
-	return context.WithValue(ctx, ConnID, sessCtx.GetSessionVars().ConnectionID)
+// Retryable is the key in context
+const Retryable contextKey = "Retryable"
+
+// SetCommitCtx sets the variables for context before commit a transaction.
+func SetCommitCtx(ctx context.Context, sessCtx Context) context.Context {
+	ctx = context.WithValue(ctx, ConnID, sessCtx.GetSessionVars().ConnectionID)
+	retryAble := !sessCtx.GetSessionVars().TxnCtx.ForUpdate
+	return context.WithValue(ctx, Retryable, retryAble)
+}
+
+// GetRetryable returns the value of GetRetryable from the ctx.
+func GetRetryable(ctx context.Context) bool {
+	var retryAble bool
+	val := ctx.Value(Retryable)
+	if val != nil {
+		retryAble = val.(bool)
+	}
+	return retryAble
 }

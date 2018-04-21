@@ -76,7 +76,7 @@ func NewLockResolver(etcdAddrs []string, security config.Security) (*LockResolve
 		return nil, errors.Trace(err)
 	}
 
-	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, spkv, newRPCClient(security), false)
+	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, spkv, newRPCClient(security), false, false)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
