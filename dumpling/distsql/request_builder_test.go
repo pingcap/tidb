@@ -19,6 +19,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -260,7 +261,6 @@ func (s *testSuite) TestRequestBuilder1(c *C) {
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
 		SetKeepOrder(false).
-		SetPriority(kv.PriorityNormal).
 		SetFromSessionVars(variable.NewSessionVars()).
 		Build()
 	c.Assert(err, IsNil)
@@ -335,7 +335,6 @@ func (s *testSuite) TestRequestBuilder2(c *C) {
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
 		SetKeepOrder(false).
-		SetPriority(kv.PriorityNormal).
 		SetFromSessionVars(variable.NewSessionVars()).
 		Build()
 	c.Assert(err, IsNil)
@@ -384,7 +383,6 @@ func (s *testSuite) TestRequestBuilder3(c *C) {
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
 		SetKeepOrder(false).
-		SetPriority(kv.PriorityNormal).
 		SetFromSessionVars(variable.NewSessionVars()).
 		Build()
 	c.Assert(err, IsNil)
@@ -446,7 +444,6 @@ func (s *testSuite) TestRequestBuilder4(c *C) {
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
 		SetKeepOrder(false).
-		SetPriority(kv.PriorityNormal).
 		SetStreaming(true).
 		SetFromSessionVars(variable.NewSessionVars()).
 		Build()
@@ -488,10 +485,13 @@ func (s *testSuite) TestRequestBuilder5(c *C) {
 		},
 	}
 
+	sv := variable.NewSessionVars()
+	sv.StmtCtx.Priority = mysql.LowPriority
+	sv.StmtCtx.NotFillCache = true
 	actual, err := (&RequestBuilder{}).SetKeyRanges(keyRanges).
 		SetAnalyzeRequest(&tipb.AnalyzeReq{}).
 		SetKeepOrder(true).
-		SetPriority(kv.PriorityLow).
+		SetFromSessionVars(sv).
 		Build()
 	c.Assert(err, IsNil)
 	expect := &kv.Request{
@@ -501,7 +501,7 @@ func (s *testSuite) TestRequestBuilder5(c *C) {
 		KeyRanges:      keyRanges,
 		KeepOrder:      true,
 		Desc:           false,
-		Concurrency:    0,
+		Concurrency:    15,
 		IsolationLevel: 0,
 		Priority:       1,
 		NotFillCache:   true,
