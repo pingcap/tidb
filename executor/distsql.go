@@ -207,7 +207,6 @@ type TableReaderExecutor struct {
 	// resultHandler handles the order of the result. Since (MAXInt64, MAXUint64] stores before [0, MaxInt64] physically
 	// for unsigned int.
 	resultHandler *tableResultHandler
-	priority      int
 	streaming     bool
 	feedback      *statistics.QueryFeedback
 }
@@ -263,7 +262,6 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ne
 		SetDAGRequest(e.dagPB).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
-		SetPriority(e.priority).
 		SetStreaming(e.streaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		Build()
@@ -344,7 +342,6 @@ type IndexReaderExecutor struct {
 	result distsql.SelectResult
 	// columns are only required by union scan.
 	columns   []*model.ColumnInfo
-	priority  int
 	streaming bool
 	feedback  *statistics.QueryFeedback
 }
@@ -385,7 +382,6 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		SetDAGRequest(e.dagPB).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
-		SetPriority(e.priority).
 		SetStreaming(e.streaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		Build()
@@ -418,7 +414,6 @@ type IndexLookUpExecutor struct {
 	tableRequest *tipb.DAGRequest
 	// columns are only required by union scan.
 	columns        []*model.ColumnInfo
-	priority       int
 	indexStreaming bool
 	tableStreaming bool
 	*dataReaderBuilder
@@ -485,7 +480,6 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		SetDAGRequest(e.dagPB).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
-		SetPriority(e.priority).
 		SetStreaming(e.indexStreaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		Build()
@@ -558,7 +552,6 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []in
 		table:        e.table,
 		tableID:      e.tableID,
 		dagPB:        e.tableRequest,
-		priority:     e.priority,
 		streaming:    e.tableStreaming,
 		feedback:     statistics.NewQueryFeedback(0, nil, 0, false),
 	}, handles)
