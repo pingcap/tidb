@@ -13,12 +13,12 @@ ignored = ["github.com/coreos/etcd/etcdserver", "github.com/coreos/etcd/mvcc", "
   branch = "master"
   name = "github.com/blacktear23/go-proxyprotocol"
 
-# lock etcd version at 3.2.14
+# lock etcd version at 3.2.18
 [[constraint]]
   name = "github.com/coreos/etcd"
-  version = "=3.2.14"
+  version = "=3.2.18"
 
-# lock grpc version at 1.7.5 becuase etcd depdens on this version
+# lock grpc version at 1.7.5 because etcd depdens on this version
 [[constraint]]
   name = "google.golang.org/grpc"
   source = "https://github.com/grpc/grpc-go.git"
