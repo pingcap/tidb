@@ -179,7 +179,6 @@ func (e *AnalyzeIndexExec) open() error {
 	kvReq, err := builder.SetIndexRanges(e.ctx.GetSessionVars().StmtCtx, e.tblInfo.ID, e.idxInfo.ID, ranger.FullNewRange()).
 		SetAnalyzeRequest(e.analyzePB).
 		SetKeepOrder(true).
-		SetPriority(e.priority).
 		Build()
 	kvReq.Concurrency = e.concurrency
 	kvReq.IsolationLevel = kv.RC
@@ -296,7 +295,6 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.NewRange) (distsql.Selec
 	kvReq, err := builder.SetTableRanges(e.tblInfo.ID, ranges, nil).
 		SetAnalyzeRequest(e.analyzePB).
 		SetKeepOrder(e.keepOrder).
-		SetPriority(e.priority).
 		Build()
 	kvReq.IsolationLevel = kv.RC
 	kvReq.Concurrency = e.concurrency

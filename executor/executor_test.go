@@ -1547,6 +1547,8 @@ func (s *testSuite) TestSQLMode(c *C) {
 	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES'")
 	tk.MustExec("set @@global.sql_mode = ''")
 
+	// With the existance of global variable cache, it have to sleep a while here.
+	time.Sleep(3 * time.Second)
 	tk2 := testkit.NewTestKit(c, s.store)
 	tk2.MustExec("use test")
 	tk2.MustExec("create table t2 (a varchar(3))")
@@ -2202,7 +2204,7 @@ func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
 	tk.MustQuery("select count(*) from t")
 	tk.MustExec("update t set id = 3")
 	tk.MustExec("delete from t")
-	tk.MustExec("insert into t values (2)")
+	tk.MustExec("insert into t select * from t limit 2")
 	tk.MustExec("delete from t")
 
 	// Insert some data to make sure plan build IndexLookup for t.
