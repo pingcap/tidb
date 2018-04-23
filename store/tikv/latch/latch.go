@@ -77,15 +77,6 @@ const (
 	acquireStale
 )
 
-// NewLock creates a new lock.
-func NewLock(startTS uint64, requiredSlots []int) *Lock {
-	return &Lock{
-		requiredSlots: requiredSlots,
-		acquiredCount: 0,
-		startTS:       startTS,
-	}
-}
-
 // IsStale returns whether the status is stale.
 func (l *Lock) IsStale() bool {
 	return l.status == acquireStale
@@ -112,9 +103,13 @@ func NewLatches(size int) *Latches {
 	}
 }
 
-// GenLock generates Lock for the transaction with startTS and keys.
-func (latches *Latches) GenLock(startTS uint64, keys [][]byte) *Lock {
-	return NewLock(startTS, latches.genSlotIDs(keys))
+// genLock generates Lock for the transaction with startTS and keys.
+func (latches *Latches) genLock(startTS uint64, keys [][]byte) *Lock {
+	return &Lock{
+		requiredSlots: latches.genSlotIDs(keys),
+		acquiredCount: 0,
+		startTS:       startTS,
+	}
 }
 
 func (latches *Latches) genSlotIDs(keys [][]byte) []int {

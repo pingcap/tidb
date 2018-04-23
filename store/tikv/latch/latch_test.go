@@ -38,7 +38,7 @@ func (s *testLatchSuite) SetUpTest(c *C) {
 
 func (s *testLatchSuite) newLock(keys [][]byte) (startTS uint64, lock *Lock) {
 	startTS = getTso()
-	lock = s.latches.GenLock(startTS, keys)
+	lock = s.latches.genLock(startTS, keys)
 	return
 }
 
@@ -77,7 +77,7 @@ func (s *testLatchSuite) TestWakeUp(c *C) {
 
 	// B restart:get a new startTS.
 	startTSB = getTso()
-	lockB = s.latches.GenLock(startTSB, keysB)
+	lockB = s.latches.genLock(startTSB, keysB)
 	result = s.latches.acquire(lockB)
 	c.Assert(result, Equals, acquireSuccess)
 }

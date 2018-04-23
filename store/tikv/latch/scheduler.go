@@ -21,8 +21,8 @@ type LatchesScheduler struct {
 	lockCh  chan *Lock
 }
 
-//NewLatchesScheduler create the LatchesScheduler.
-func NewLatchesScheduler(size int) *LatchesScheduler {
+//NewScheduler create the LatchesScheduler.
+func NewScheduler(size int) *LatchesScheduler {
 	latches := NewLatches(size)
 	lockCh := make(chan *Lock, lockChanSize)
 	scheduler := &LatchesScheduler{
@@ -55,9 +55,11 @@ func (scheduler *LatchesScheduler) Close() {
 	close(scheduler.lockCh)
 }
 
-// Lock acquire the lock for transaction with startTS and keys.
+// Lock acquire the lock for transaction with startTS and keys. The caller goroutine
+// would be blocked if the lock can't be obtained now. When this function returns,
+// the lock state would be either success or stale(call lock.IsStale)
 func (scheduler *LatchesScheduler) Lock(startTS uint64, keys [][]byte) *Lock {
-	lock := scheduler.latches.GenLock(startTS, keys)
+	lock := scheduler.latches.genLock(startTS, keys)
 	lock.wg.Add(1)
 	if scheduler.latches.acquire(lock) == acquireLocked {
 		lock.wg.Wait()
@@ -74,7 +76,8 @@ func (scheduler *LatchesScheduler) UnLock(lock *Lock, commitTS uint64) {
 	scheduler.lockCh <- lock
 }
 
-// RefreshCommitTS refresh commitTS for keys.
+// RefreshCommitTS refreshes commitTS for keys. It could be used for the transaction not retryable,
+// which would do 2PC directly and wouldn't get a lock.
 func (scheduler *LatchesScheduler) RefreshCommitTS(keys [][]byte, commitTS uint64) {
 	scheduler.latches.refreshCommitTS(keys, commitTS)
 }

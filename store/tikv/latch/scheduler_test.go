@@ -14,8 +14,9 @@
 package latch
 
 import (
-	. "github.com/pingcap/check"
 	"sync"
+
+	. "github.com/pingcap/check"
 )
 
 var _ = Suite(&testSchedulerSuite{})
@@ -32,7 +33,7 @@ func (s *testSchedulerSuite) TestWithConcurrency(c *C) {
 		{[]byte("a"), []byte("d"), []byte("e"), []byte("f")},
 		{[]byte("e"), []byte("f"), []byte("g"), []byte("h")},
 	}
-	sched := NewLatchesScheduler(1024)
+	sched := NewScheduler(1024)
 	defer sched.Close()
 
 	var wg sync.WaitGroup
@@ -41,7 +42,12 @@ func (s *testSchedulerSuite) TestWithConcurrency(c *C) {
 		txn := txns[i]
 		go func(txn [][]byte, wg *sync.WaitGroup) {
 			lock := sched.Lock(getTso(), txn)
-			sched.UnLock(lock, getTso())
+			defer sched.UnLock(lock, getTso())
+			if lock.IsStale() {
+				// Should restart the transaction or return error
+			} else {
+				// Do 2pc
+			}
 			wg.Done()
 		}(txn, &wg)
 	}
