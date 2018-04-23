@@ -85,7 +85,7 @@ func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo) (*JS
 	return jsonTbl, nil
 }
 
-// LoadStatsFromJson will load statistic from JSONTable, and save it to the storage.
+// LoadStatsFromJSON will load statistic from JSONTable, and save it to the storage.
 func (h *Handle) LoadStatsFromJSON(is infoschema.InfoSchema, jsonTbl *JSONTable) error {
 	tableInfo, err := is.TableByName(model.NewCIStr(jsonTbl.DatabaseName), model.NewCIStr(jsonTbl.TableName))
 	if err != nil {
@@ -153,7 +153,7 @@ func (h *Handle) LoadStatsFromJSON(is infoschema.InfoSchema, jsonTbl *JSONTable)
 	return errors.Trace(h.Update(is))
 }
 
-// LoadStatsFromJSON load statistic from JSONTable and return the Table of statistic.
+// LoadStatsFromJSONToTable load statistic from JSONTable and return the Table of statistic.
 func (h *Handle) LoadStatsFromJSONToTable(tableInfo *model.TableInfo, jsonTbl *JSONTable) (*Table, error) {
 	tbl := &Table{
 		TableID:     tableInfo.ID,
