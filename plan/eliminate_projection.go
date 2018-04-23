@@ -32,6 +32,9 @@ func canProjectionBeEliminatedLoose(p *LogicalProjection) bool {
 // canProjectionBeEliminatedStrict checks whether a projection can be eliminated, returns true if
 // the projection just copy its child's output.
 func canProjectionBeEliminatedStrict(p *PhysicalProjection) bool {
+	if p.Schema().Len() == 0 {
+		return true
+	}
 	child := p.Children()[0]
 	if p.Schema().Len() != child.Schema().Len() {
 		return false

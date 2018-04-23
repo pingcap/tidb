@@ -273,7 +273,6 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 
 // buildExecutor build a executor from plan, prepared statement may need additional procedure.
 func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
-	priority := kv.PriorityNormal
 	if _, ok := a.Plan.(*plan.Execute); !ok {
 		// Do not sync transaction for Execute statement, because the real optimization work is done in
 		// "ExecuteExec.Build".
@@ -290,22 +289,21 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 			return nil, errors.Trace(err)
 		}
 
-		if stmtPri := ctx.GetSessionVars().StmtCtx.Priority; stmtPri != mysql.NoPriority {
-			priority = int(stmtPri)
-		} else {
+		stmtCtx := ctx.GetSessionVars().StmtCtx
+		if stmtPri := stmtCtx.Priority; stmtPri == mysql.NoPriority {
 			switch {
 			case isPointGet:
-				priority = kv.PriorityHigh
+				stmtCtx.Priority = kv.PriorityHigh
 			case a.Expensive:
-				priority = kv.PriorityLow
+				stmtCtx.Priority = kv.PriorityLow
 			}
 		}
 	}
 	if _, ok := a.Plan.(*plan.Analyze); ok && ctx.GetSessionVars().InRestrictedSQL {
-		priority = kv.PriorityLow
+		ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityLow
 	}
 
-	b := newExecutorBuilder(ctx, a.InfoSchema, priority)
+	b := newExecutorBuilder(ctx, a.InfoSchema)
 	e := b.build(a.Plan)
 	if b.err != nil {
 		return nil, errors.Trace(b.err)

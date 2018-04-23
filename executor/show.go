@@ -622,11 +622,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 			if i < len(partitionInfo.Definitions)-1 {
 				buf.WriteString(fmt.Sprintf("  PARTITION %s VALUES LESS THAN %s,\n", def.Name, def.LessThan[0]))
 			} else {
-				if def.MaxValue {
-					buf.WriteString(fmt.Sprintf("  PARTITION %s VALUES LESS THAN %s\n", def.Name, "MAXVALUE"))
-				} else {
-					buf.WriteString(fmt.Sprintf("  PARTITION %s VALUES LESS THAN %s\n", def.Name, def.LessThan[0]))
-				}
+				buf.WriteString(fmt.Sprintf("  PARTITION %s VALUES LESS THAN %s\n", def.Name, def.LessThan[0]))
 			}
 		}
 		buf.WriteString(")")

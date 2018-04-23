@@ -147,6 +147,9 @@ const (
 	// tidb_hash_join_concurrency is used for hash join executor.
 	// The hash join outer executor starts multiple concurrent join workers to probe the hash table.
 	TiDBHashJoinConcurrency = "tidb_hash_join_concurrency"
+
+	// tidb_backoff_lock_fast is used for tikv backoff base time in milliseconds.
+	TiDBBackoffLockFast = "tidb_backoff_lock_fast"
 )
 
 // Default TiDB system variable values.
