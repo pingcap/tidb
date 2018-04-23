@@ -341,18 +341,17 @@ func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
 	}
 	connID := a.Ctx.GetSessionVars().ConnectionID
 	currentDB := a.Ctx.GetSessionVars().CurrentDB
-	logEntry := log.NewEntry(logutil.SlowQueryLogger)
-	logEntry.Data = log.Fields{
-		"connectionId": connID,
-		"costTime":     costTime,
-		"database":     currentDB,
-		"sql":          sql,
-		"txnStartTS":   txnTS,
-	}
+	tableIDs := a.Ctx.GetSessionVars().StmtCtx.TableIDs
+	indexIDs := a.Ctx.GetSessionVars().StmtCtx.IndexIDs
+
 	if costTime < threshold {
-		logEntry.WithField("type", "query").WithField("succ", succ).Debugf("query")
+		logutil.SlowQueryLogger.Debugf(
+			"[QUERY] costTime=%v succ=%v connectionId=%v txnStartTS=%v database=%v tableIDs=%v IndexIDs=%v sql=%v",
+			costTime, succ, connID, txnTS, currentDB, tableIDs, indexIDs, sql)
 	} else {
-		logEntry.WithField("type", "slow-query").WithField("succ", succ).Warnf("slow-query")
+		logutil.SlowQueryLogger.Warnf(
+			"[SLOW_QUERY] costTime=%v succ=%v connectionId=%v txnStartTS=%v database=%v tableIDs=%v IndexIDs=%v sql=%v",
+			costTime, succ, connID, txnTS, currentDB, tableIDs, indexIDs, sql)
 	}
 }
 
