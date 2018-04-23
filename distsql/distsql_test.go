@@ -34,7 +34,6 @@ func (s *testSuite) TestSelectNormal(c *C) {
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
 		SetKeepOrder(false).
-		SetPriority(kv.PriorityNormal).
 		SetFromSessionVars(variable.NewSessionVars()).
 		Build()
 	c.Assert(err, IsNil)
@@ -85,7 +84,6 @@ func (s *testSuite) TestSelectStreaming(c *C) {
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
 		SetKeepOrder(false).
-		SetPriority(kv.PriorityNormal).
 		SetFromSessionVars(variable.NewSessionVars()).
 		SetStreaming(true).
 		Build()
@@ -137,7 +135,6 @@ func (s *testSuite) TestAnalyze(c *C) {
 	request, err := (&RequestBuilder{}).SetKeyRanges(nil).
 		SetAnalyzeRequest(&tipb.AnalyzeReq{}).
 		SetKeepOrder(true).
-		SetPriority(kv.PriorityLow).
 		Build()
 	c.Assert(err, IsNil)
 
