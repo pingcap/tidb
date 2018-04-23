@@ -611,14 +611,14 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	// Set task.storeAddr field so its task.String() method have the store address information.
+	task.storeAddr = sender.storeAddr
 	costTime := time.Since(startTime)
 	if costTime > minLogCopTaskTime {
-		log.Infof("[TIME_COP_TASK] %s%s %s", costTime, bo, task)
+		worker.logTimeCopTask(costTime, task, bo, resp)
 	}
 	metrics.TiKVCoprocessorCounter.WithLabelValues("handle_task").Inc()
 	metrics.TiKVCoprocessorHistogram.Observe(costTime.Seconds())
-	// Set task.storeAddr field so its task.String() method have the store address information.
-	task.storeAddr = sender.storeAddr
 
 	if task.cmdType == tikvrpc.CmdCopStream {
 		return worker.handleCopStreamResult(bo, resp.CopStream, task, ch)
@@ -626,6 +626,57 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 
 	// Handles the response for non-streaming copTask.
 	return worker.handleCopResponse(bo, resp.Cop, task, ch, nil)
+}
+
+const (
+	minLogBackoffTime       = 100
+	minLogKVProcessTime     = 100
+	minLogKVWaitTime        = 200
+	minLogScanProcessedInfo = 100000
+	minLogScanTotalInfo     = 200000
+)
+
+func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *copTask, bo *Backoffer, resp *tikvrpc.Response) {
+	logStr := fmt.Sprintf("[TIME_COP_TASK] cop_resp_time:%s, cop_start_ts:%d, cop_region_id:%d, cop_store_addr:%s", costTime, worker.req.StartTs, task.region.id, task.storeAddr)
+	if bo.totalSleep > minLogBackoffTime {
+		logStr += fmt.Sprintf(", cop_backoff_ms:%d", bo.totalSleep)
+	}
+	var detail *kvrpcpb.ExecDetails
+	if task.cmdType == tikvrpc.CmdCopStream {
+		detail = resp.CopStream.ExecDetails
+	} else {
+		detail = resp.Cop.ExecDetails
+	}
+	if detail != nil {
+		if detail.HandleTime != nil {
+			processMs := detail.HandleTime.ProcessMs
+			waitMs := detail.HandleTime.WaitMs
+			if processMs > minLogKVProcessTime {
+				logStr += fmt.Sprintf(", cop_kv_process_ms:%d", processMs)
+			}
+			if waitMs > minLogKVWaitTime {
+				logStr += fmt.Sprintf(", cop_kv_wait_ms:%d", waitMs)
+			}
+		}
+		if detail.ScanDetail != nil {
+			logStr = appendScanDetail(logStr, "write", detail.ScanDetail.Write)
+			logStr = appendScanDetail(logStr, "data", detail.ScanDetail.Data)
+			logStr = appendScanDetail(logStr, "lock", detail.ScanDetail.Lock)
+		}
+	}
+	log.Info(logStr)
+}
+
+func appendScanDetail(logStr string, columnFamily string, scanInfo *kvrpcpb.ScanInfo) string {
+	if scanInfo != nil {
+		if scanInfo.Total > minLogScanTotalInfo {
+			logStr += fmt.Sprintf(", cop_scan_total_%s:%d", columnFamily, scanInfo.Total)
+		}
+		if scanInfo.Processed > minLogScanProcessedInfo {
+			logStr += fmt.Sprintf(", cop_scan_processed_%s:%d", columnFamily, scanInfo.Processed)
+		}
+	}
+	return logStr
 }
 
 func (worker *copIteratorWorker) handleCopStreamResult(bo *Backoffer, stream *tikvrpc.CopStreamResponse, task *copTask, ch chan<- copResponse) ([]*copTask, error) {
