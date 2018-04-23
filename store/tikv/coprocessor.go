@@ -637,9 +637,9 @@ const (
 )
 
 func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *copTask, bo *Backoffer, resp *tikvrpc.Response) {
-	logStr := fmt.Sprintf("[TIME_COP_TASK] cop_resp_time:%s, cop_start_ts:%d, cop_region_id:%d, cop_store_addr:%s", costTime, worker.req.StartTs, task.region.id, task.storeAddr)
+	logStr := fmt.Sprintf("[TIME_COP_TASK] resp_time:%s start_ts:%d region_id:%d store_addr:%s", costTime, worker.req.StartTs, task.region.id, task.storeAddr)
 	if bo.totalSleep > minLogBackoffTime {
-		logStr += fmt.Sprintf(", cop_backoff_ms:%d", bo.totalSleep)
+		logStr += fmt.Sprintf(" backoff_ms:%d", bo.totalSleep)
 	}
 	var detail *kvrpcpb.ExecDetails
 	if task.cmdType == tikvrpc.CmdCopStream {
@@ -652,10 +652,10 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 			processMs := detail.HandleTime.ProcessMs
 			waitMs := detail.HandleTime.WaitMs
 			if processMs > minLogKVProcessTime {
-				logStr += fmt.Sprintf(", cop_kv_process_ms:%d", processMs)
+				logStr += fmt.Sprintf(" kv_process_ms:%d", processMs)
 			}
 			if waitMs > minLogKVWaitTime {
-				logStr += fmt.Sprintf(", cop_kv_wait_ms:%d", waitMs)
+				logStr += fmt.Sprintf(" kv_wait_ms:%d", waitMs)
 			}
 		}
 		if detail.ScanDetail != nil {
@@ -670,10 +670,10 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 func appendScanDetail(logStr string, columnFamily string, scanInfo *kvrpcpb.ScanInfo) string {
 	if scanInfo != nil {
 		if scanInfo.Total > minLogScanTotalInfo {
-			logStr += fmt.Sprintf(", cop_scan_total_%s:%d", columnFamily, scanInfo.Total)
+			logStr += fmt.Sprintf(" scan_total_%s:%d", columnFamily, scanInfo.Total)
 		}
 		if scanInfo.Processed > minLogScanProcessedInfo {
-			logStr += fmt.Sprintf(", cop_scan_processed_%s:%d", columnFamily, scanInfo.Processed)
+			logStr += fmt.Sprintf(" scan_processed_%s:%d", columnFamily, scanInfo.Processed)
 		}
 	}
 	return logStr
