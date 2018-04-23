@@ -19,6 +19,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
@@ -138,18 +139,25 @@ func (builder *RequestBuilder) getIsolationLevel(sv *variable.SessionVars) kv.Is
 	return kv.SI
 }
 
+func (builder *RequestBuilder) getKVPriority(sv *variable.SessionVars) int {
+	switch sv.StmtCtx.Priority {
+	case mysql.NoPriority, mysql.DelayedPriority:
+		return kv.PriorityNormal
+	case mysql.LowPriority:
+		return kv.PriorityLow
+	case mysql.HighPriority:
+		return kv.PriorityHigh
+	}
+	return kv.PriorityNormal
+}
+
 // SetFromSessionVars sets the following fields for "kv.Request" from session variables:
 // "Concurrency", "IsolationLevel", "NotFillCache".
 func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *RequestBuilder {
 	builder.Request.Concurrency = sv.DistSQLScanConcurrency
 	builder.Request.IsolationLevel = builder.getIsolationLevel(sv)
 	builder.Request.NotFillCache = sv.StmtCtx.NotFillCache
-	return builder
-}
-
-// SetPriority sets "Priority" for "kv.Request".
-func (builder *RequestBuilder) SetPriority(priority int) *RequestBuilder {
-	builder.Request.Priority = priority
+	builder.Request.Priority = builder.getKVPriority(sv)
 	return builder
 }
 
