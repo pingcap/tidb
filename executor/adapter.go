@@ -16,6 +16,7 @@ package executor
 import (
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/juju/errors"
@@ -341,16 +342,16 @@ func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
 	}
 	connID := a.Ctx.GetSessionVars().ConnectionID
 	currentDB := a.Ctx.GetSessionVars().CurrentDB
-	tableIDs := a.Ctx.GetSessionVars().StmtCtx.TableIDs
-	indexIDs := a.Ctx.GetSessionVars().StmtCtx.IndexIDs
+	tableIDs := strings.Replace(fmt.Sprintf("%v", a.Ctx.GetSessionVars().StmtCtx.TableIDs), " ", ",", -1)
+	indexIDs := strings.Replace(fmt.Sprintf("%v", a.Ctx.GetSessionVars().StmtCtx.IndexIDs), " ", ",", -1)
 
 	if costTime < threshold {
 		logutil.SlowQueryLogger.Debugf(
-			"[QUERY] costTime=%v succ=%v connectionId=%v txnStartTS=%v database=%v tableIDs=%v IndexIDs=%v sql=%v",
+			"[QUERY] cost_time:%v succ:%v connection_id:%v txn_start_ts:%v database:%v table_ids:%v index_ids:%v sql:%v",
 			costTime, succ, connID, txnTS, currentDB, tableIDs, indexIDs, sql)
 	} else {
 		logutil.SlowQueryLogger.Warnf(
-			"[SLOW_QUERY] costTime=%v succ=%v connectionId=%v txnStartTS=%v database=%v tableIDs=%v IndexIDs=%v sql=%v",
+			"[SLOW_QUERY] cost_time:%v succ:%v connection_id:%v txn_start_ts:%v database:%v table_ids:%v index_ids:%v sql:%v",
 			costTime, succ, connID, txnTS, currentDB, tableIDs, indexIDs, sql)
 	}
 }
