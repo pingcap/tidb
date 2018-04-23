@@ -535,6 +535,20 @@ commit;`
 	testSQL = `select * from m;`
 	r = tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("1 1"))
+
+	testSQL = `DROP TABLE IF EXISTS t1;
+	CREATE TABLE t1 (f1 INT AUTO_INCREMENT PRIMARY KEY,
+	f2 VARCHAR(5) NOT NULL UNIQUE);
+	INSERT t1 (f2) VALUES ('test') ON DUPLICATE KEY UPDATE f1 = LAST_INSERT_ID(f1);`
+	tk.MustExec(testSQL)
+	testSQL = `SELECT LAST_INSERT_ID();`
+	r = tk.MustQuery(testSQL)
+	r.Check(testkit.Rows("1"))
+	testSQL = `INSERT t1 (f2) VALUES ('test') ON DUPLICATE KEY UPDATE f1 = LAST_INSERT_ID(f1);`
+	tk.MustExec(testSQL)
+	testSQL = `SELECT LAST_INSERT_ID();`
+	r = tk.MustQuery(testSQL)
+	r.Check(testkit.Rows("1"))
 }
 
 func (s *testSuite) TestInsertIgnoreOnDup(c *C) {
