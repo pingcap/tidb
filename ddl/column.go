@@ -208,7 +208,6 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 
-
 	var colName model.CIStr
 	err = job.DecodeArgs(&colName)
 	if err != nil {
