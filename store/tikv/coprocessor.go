@@ -637,7 +637,7 @@ const (
 )
 
 func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *copTask, bo *Backoffer, resp *tikvrpc.Response) {
-	logStr := fmt.Sprintf("[TIME_COP_TASK] resp_time:%s start_ts:%d region_id:%d store_addr:%s", costTime, worker.req.StartTs, task.region.id, task.storeAddr)
+	logStr := fmt.Sprintf("[TIME_COP_TASK] resp_time:%s txn_start_ts:%d region_id:%d store_addr:%s", costTime, worker.req.StartTs, task.region.id, task.storeAddr)
 	if bo.totalSleep > minLogBackoffTime {
 		logStr += fmt.Sprintf(" backoff_ms:%d", bo.totalSleep)
 	}
