@@ -25,20 +25,16 @@ import (
 
 // latch stores a key's waiting transactions information.
 type latch struct {
-	// Whether there is any transaction in waitingQueue except head.
-	hasMoreWaiting bool
-	// The startTS of the transaction which is the head of waiting transactions.
-	waitingQueueHead uint64
-	maxCommitTS      uint64
+	// Whether there is any transaction in waitingQueue.
+	hasWaiting bool
+	// The startTS of the transaction which has acquired current latch.
+	acquiredTxn uint64
+	maxCommitTS uint64
 	sync.Mutex
 }
 
-func (l *latch) occupied() bool {
-	return l.waitingQueueHead != 0
-}
-
-func (l *latch) free() {
-	l.waitingQueueHead = 0
+func (l *latch) isFree() bool {
+	return l.acquiredTxn == 0 && l.hasWaiting == false
 }
 
 func (l *latch) refreshCommitTS(commitTS uint64) {
@@ -136,7 +132,21 @@ func (latches *Latches) slotID(key []byte) int {
 	return int(murmur3.Sum32(key)) & (len(latches.slots) - 1)
 }
 
-// acquire tries to acquire the lock for a transaction.
+// acquire retries tries to acquire the lock for a transaction.
+// Preconditions: the caller must ensure the lock's last call of
+// acquire or retryAcquire is locked.
+func (latches *Latches) retryAcquire(lock *Lock) acquireResult {
+	retrySlotID := lock.requiredSlots[lock.acquiredCount]
+	latches.retryAcquireSlot(retrySlotID, lock)
+	if lock.status != acquireSuccess {
+		return lock.status
+	}
+	return latches.acquire(lock)
+}
+
+// acquire tries to acquire the lock for a transaction
+// Preconditions: the caller must ensure lock's last slot was acquired
+// successfully.
 func (latches *Latches) acquire(lock *Lock) acquireResult {
 	for lock.acquiredCount < len(lock.requiredSlots) {
 		slotID := lock.requiredSlots[lock.acquiredCount]
@@ -161,7 +171,7 @@ func (latches *Latches) release(lock *Lock, commitTS uint64) (wakeupList []*Lock
 	for i := 0; i < releaseCount; i++ {
 		slotID := lock.requiredSlots[i]
 
-		if hasNext, nextLock := latches.releaseSlot(slotID, lock.startTS, commitTS); hasNext {
+		if nextLock := latches.releaseSlot(slotID, lock.startTS, commitTS); nextLock != nil {
 			wakeupList = append(wakeupList, nextLock)
 		}
 	}
@@ -176,24 +186,23 @@ func (latches *Latches) refreshCommitTS(keys [][]byte, commitTS uint64) {
 	}
 }
 
-func (latches *Latches) releaseSlot(slotID int, startTS, commitTS uint64) (hasNext bool, nextLock *Lock) {
+func (latches *Latches) releaseSlot(slotID int, startTS, commitTS uint64) (nextLock *Lock) {
 	latch := &latches.slots[slotID]
 	latch.Lock()
 	defer latch.Unlock()
-	if startTS != latch.waitingQueueHead {
+	if startTS != latch.acquiredTxn {
 		panic(fmt.Sprintf("invalid front ts %d, latch:%#v", startTS, latch))
 	}
 	latch.maxCommitTS = mathutil.MaxUint64(latch.maxCommitTS, commitTS)
-	if !latch.hasMoreWaiting {
-		latch.free()
+	latch.acquiredTxn = 0
+	if !latch.hasWaiting {
 		return
 	}
-	nextLock, latch.hasMoreWaiting = latches.popFromWaitingQueue(slotID)
-	latch.waitingQueueHead = nextLock.startTS
-	return true, nextLock
+
+	return latches.frontOfWaitingQueue(slotID)
 }
 
-func (latches *Latches) popFromWaitingQueue(slotID int) (front *Lock, hasMoreWaiting bool) {
+func (latches *Latches) popFromWaitingQueue(slotID int) (front *Lock, hasWaiting bool) {
 	latches.Lock()
 	defer latches.Unlock()
 	waiting := latches.waitingQueues[slotID]
@@ -202,33 +211,61 @@ func (latches *Latches) popFromWaitingQueue(slotID int) (front *Lock, hasMoreWai
 		delete(latches.waitingQueues, slotID)
 	} else {
 		latches.waitingQueues[slotID] = waiting[1:]
-		hasMoreWaiting = true
+		hasWaiting = true
 	}
 	return
 }
 
+func (latches *Latches) frontOfWaitingQueue(slotID int) *Lock {
+	latches.RLock()
+	defer latches.RUnlock()
+	return latches.waitingQueues[slotID][0]
+}
+
+// acquireSlot tries to acquire a slot first time.
 func (latches *Latches) acquireSlot(slotID int, lock *Lock) {
 	latch := &latches.slots[slotID]
 	latch.Lock()
 	defer latch.Unlock()
-	if !latch.occupied() || latch.waitingQueueHead == lock.startTS {
-		latch.waitingQueueHead = lock.startTS
+	if latch.isFree() {
+		latch.acquiredTxn = lock.startTS
 		lock.acquiredCount++
+		lock.status = acquireSuccess
+		return
 	}
-
 	if latch.maxCommitTS > lock.startTS {
 		lock.status = acquireStale
 		return
 	}
-
-	if latch.waitingQueueHead == lock.startTS {
-		lock.status = acquireSuccess
-		return
-	}
 	lock.status = acquireLocked
 	// Push the current transaction into waitingQueue.
-	latch.hasMoreWaiting = true
+	latch.hasWaiting = true
 	latches.Lock()
 	defer latches.Unlock()
 	latches.waitingQueues[slotID] = append(latches.waitingQueues[slotID], lock)
+}
+
+// retryAcquireSlot retries to acquire slot for current lock.
+// Preconditions: the caller must ensure the last call of acquireSlot
+// is failed.
+func (latches *Latches) retryAcquireSlot(slotID int, lock *Lock) {
+	latch := &latches.slots[slotID]
+	latch.Lock()
+	defer latch.Unlock()
+	if latch.isFree() {
+		panic(fmt.Sprintf("Invalid latch:%#v", latch))
+	}
+	var front *Lock
+	front, latch.hasWaiting = latches.popFromWaitingQueue(slotID)
+	if front.startTS != lock.startTS {
+		panic(fmt.Sprintf("invalid front ts %d, lock:%#v", front.startTS, lock))
+	}
+
+	lock.acquiredCount++
+	latch.acquiredTxn = lock.startTS
+	if latch.maxCommitTS > lock.startTS {
+		lock.status = acquireStale
+	} else {
+		lock.status = acquireSuccess
+	}
 }

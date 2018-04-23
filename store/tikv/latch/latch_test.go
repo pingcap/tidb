@@ -68,7 +68,7 @@ func (s *testLatchSuite) TestWakeUp(c *C) {
 	c.Assert(wakeupList[0].startTS, Equals, startTSB)
 
 	// B acquire failed since startTSB has stale for some keys.
-	result = s.latches.acquire(lockB)
+	result = s.latches.retryAcquire(lockB)
 	c.Assert(result, Equals, acquireStale)
 
 	// B release lock since it received a stale.

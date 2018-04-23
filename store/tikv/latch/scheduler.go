@@ -44,7 +44,7 @@ func (scheduler *LatchesScheduler) run() {
 
 func (scheduler *LatchesScheduler) wakeup(wakeupList []*Lock) {
 	for _, lock := range wakeupList {
-		if scheduler.latches.acquire(lock) != acquireLocked {
+		if scheduler.latches.retryAcquire(lock) != acquireLocked {
 			lock.wg.Done()
 		}
 	}
