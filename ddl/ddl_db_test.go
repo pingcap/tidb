@@ -1145,6 +1145,10 @@ func (s *testDBSuite) TestChangeColumn(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrUnknown)
 	sql = "alter table t3 modify en enum('a', 'z', 'b', 'c') not null default 'a'"
 	s.testErrorCode(c, sql, tmysql.ErrUnknown)
+	// Rename to an existing column.
+	s.mustExec(c, "alter table t3 add column a bigint")
+	sql = "alter table t3 change aa a bigint"
+	s.testErrorCode(c, sql, tmysql.ErrDupFieldName)
 
 	s.tk.MustExec("drop table t3")
 }
@@ -1450,7 +1454,7 @@ func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
 	c.Assert(part.Definitions[0].Name, Equals, "p0")
 	c.Assert(part.Definitions[1].LessThan[0], Equals, "20")
 	c.Assert(part.Definitions[1].Name, Equals, "p1")
-	c.Assert(part.Definitions[2].MaxValue, IsTrue)
+	c.Assert(part.Definitions[2].LessThan[0], Equals, "MAXVALUE")
 	c.Assert(part.Definitions[2].Name, Equals, "p2")
 }
 

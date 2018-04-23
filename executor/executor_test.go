@@ -942,6 +942,13 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("insert into t value ('2017-01-01'), ('2017-01-02')")
 	r = tk.MustQuery("(select a from t where a < 0) union (select a from t where a > 0) order by a")
 	r.Check(testkit.Rows("2017-01-01", "2017-01-02"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t value(0),(0)")
+	tk.MustQuery("select 1 from (select a from t union all select a from t) tmp").Check(testkit.Rows("1", "1", "1", "1"))
+	tk.MustQuery("select 1 from (select a from t limit 1 union all select a from t limit 1) tmp").Check(testkit.Rows("1", "1"))
+	tk.MustQuery("select count(1) from (select a from t union all select a from t) tmp").Check(testkit.Rows("4"))
 }
 
 func (s *testSuite) TestIn(c *C) {

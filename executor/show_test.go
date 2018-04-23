@@ -312,7 +312,17 @@ func (s *testSuite) TestShow(c *C) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 
+	// Test range partition
 	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`CREATE TABLE t (a int) PARTITION BY RANGE(a) (
+ 	PARTITION p0 VALUES LESS THAN (10),
+ 	PARTITION p1 VALUES LESS THAN (20),
+ 	PARTITION p2 VALUES LESS THAN (MAXVALUE))`)
+	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
+		"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"+"\nPARTITION BY RANGE ( `a` ) (\n  PARTITION p0 VALUES LESS THAN 10,\n  PARTITION p1 VALUES LESS THAN 20,\n  PARTITION p2 VALUES LESS THAN MAXVALUE\n)",
+	))
 }
 
 func (s *testSuite) TestShowVisibility(c *C) {

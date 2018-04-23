@@ -98,6 +98,9 @@ const (
 
 	// tidb_enable_streaming enables TiDB to use streaming API for coprocessor requests.
 	TiDBEnableStreaming = "tidb_enable_streaming"
+
+	// tidb_optimizer_selectivity_level is used to control the selectivity estimation level.
+	TiDBOptimizerSelectivityLevel = "tidb_optimizer_selectivity_level"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -144,6 +147,9 @@ const (
 	// tidb_hash_join_concurrency is used for hash join executor.
 	// The hash join outer executor starts multiple concurrent join workers to probe the hash table.
 	TiDBHashJoinConcurrency = "tidb_hash_join_concurrency"
+
+	// tidb_backoff_lock_fast is used for tikv backoff base time in milliseconds.
+	TiDBBackoffLockFast = "tidb_backoff_lock_fast"
 )
 
 // Default TiDB system variable values.
@@ -174,6 +180,7 @@ const (
 	DefTiDBMemQuotaNestedLoopApply   = 32 << 30 // 32GB.
 	DefTiDBGeneralLog                = 0
 	DefTiDBHashJoinConcurrency       = 5
+	DefTiDBOptimizerSelectivityLevel = 0
 )
 
 // Process global variables.
