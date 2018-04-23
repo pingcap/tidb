@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/ranger"
 )
 
 var (
@@ -299,13 +300,23 @@ type DataSource struct {
 
 	statisticTable *statistics.Table
 
-	// availableIndices is used for storing result of availableIndices function.
-	availableIndices *availableIndices
+	// possibleIndexPaths stores all the possible index path for physical plan, including table scan.
+	// Please make true table scan is always the first element.
+	possibleIndexPaths []*indexPath
 }
 
-type availableIndices struct {
-	indices          []*model.IndexInfo
-	includeTableScan bool
+type indexPath struct {
+	index            *model.IndexInfo
+	ranges           []*ranger.NewRange
+	countAfterAccess float64
+	countAfterIndex  float64
+	accessConds      []expression.Expression
+	eqCondCount      int
+	indexFilters     []expression.Expression
+	tableFilters     []expression.Expression
+	filterUnmatched  bool
+	isRowID          bool
+	forced           bool
 }
 
 func (ds *DataSource) getPKIsHandleCol() *expression.Column {

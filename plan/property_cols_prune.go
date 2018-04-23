@@ -18,37 +18,19 @@ import (
 )
 
 func (ds *DataSource) preparePossibleProperties() [][]*expression.Column {
-	indices := ds.availableIndices.indices
-	includeTS := ds.availableIndices.includeTableScan
+	result := make([][]*expression.Column, 0, len(ds.possibleIndexPaths))
 
-	result := make([][]*expression.Column, 0, len(indices))
-	ds.relevantIndices = make([]bool, len(indices))
-
-	if includeTS {
-		col := ds.getPKIsHandleCol()
-		if col != nil {
-			result = append(result, []*expression.Column{col})
-		}
-
-		cols := expression.ExtractColumnsFromExpressions(make([]*expression.Column, 0, 10), ds.pushedDownConds, nil)
-		colsSet := make(map[string]struct{}, len(cols))
-		for _, col := range cols {
-			colsSet[col.ColName.L] = struct{}{}
-		}
-
-		for i, idx := range indices {
-			_, ok := colsSet[idx.Columns[0].Name.L]
-			ds.relevantIndices[i] = ok
-		}
-	} else {
-		for i := range ds.relevantIndices {
-			ds.relevantIndices[i] = true
-		}
-	}
-	for _, idx := range indices {
-		cols, _ := expression.IndexInfo2Cols(ds.schema.Columns, idx)
-		if len(cols) > 0 {
-			result = append(result, cols)
+	for _, path := range ds.possibleIndexPaths {
+		if path.isRowID {
+			col := ds.getPKIsHandleCol()
+			if col != nil {
+				result = append(result, []*expression.Column{col})
+			}
+		} else {
+			cols, _ := expression.IndexInfo2Cols(ds.schema.Columns, path.index)
+			if len(cols) > 0 {
+				result = append(result, cols)
+			}
 		}
 	}
 	return result

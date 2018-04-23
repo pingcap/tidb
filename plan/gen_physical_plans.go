@@ -256,9 +256,9 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 	if !ok {
 		return nil
 	}
-	indices := x.availableIndices.indices
-	includeTableScan := x.availableIndices.includeTableScan
-	if includeTableScan && len(innerJoinKeys) == 1 {
+	indexPaths := x.possibleIndexPaths
+	if len(x.possibleIndexPaths) > 0 && x.possibleIndexPaths[0].isRowID {
+		indexPaths = indexPaths[1:]
 		pkCol := x.getPKIsHandleCol()
 		if pkCol != nil && innerJoinKeys[0].Equal(nil, pkCol) {
 			innerPlan := x.forceToTableScan(pkCol)
@@ -272,7 +272,8 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 		remainedOfBest []expression.Expression
 		keyOff2IdxOff  []int
 	)
-	for _, indexInfo := range indices {
+	for _, path := range indexPaths {
+		indexInfo := path.index
 		ranges, remained, tmpKeyOff2IdxOff := p.buildRangeForIndexJoin(indexInfo, x, innerJoinKeys)
 		// We choose the index by the number of used columns of the range, the much the better.
 		// Notice that there may be the cases like `t1.a=t2.a and b > 2 and b < 1`. So ranges can be nil though the conditions are valid.

@@ -122,6 +122,11 @@ func (d *Datum) IsNull() bool {
 	return d.k == KindNull
 }
 
+// IsMaxValue checks if datum is max value.
+func (d *Datum) IsMaxValue() bool {
+	return d.k == KindMaxValue
+}
+
 // GetInt64 gets int64 value.
 func (d *Datum) GetInt64() int64 {
 	return d.i
