@@ -54,6 +54,8 @@ type Handle struct {
 	feedback []*QueryFeedback
 
 	Lease time.Duration
+	// loadMetaCh is a channel to notify a load stats operation has done.
+	loadMetaCh chan *LoadMeta
 }
 
 // Clear the statsCache, only for test.
@@ -205,4 +207,9 @@ func (h *Handle) LoadNeededHistograms() error {
 		histogramNeededColumns.delete(col)
 	}
 	return nil
+}
+
+// LoadMetaCh returns loaded statistic meta channel in handle.
+func (h *Handle) LoadMetaCh() chan *LoadMeta {
+	return h.loadMetaCh
 }

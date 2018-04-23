@@ -21,90 +21,27 @@ import (
 	"os"
 
 	"github.com/go-sql-driver/mysql"
+	"github.com/gorilla/mux"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
-	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 type testDumpStatsSuite struct {
 	server *Server
-	store  kv.Storage
-	do     *domain.Domain
-	db     *sql.DB
-	tk     *testkit.TestKit
+	sh     *StatsHandler
 }
 
 var _ = Suite(new(testDumpStatsSuite))
-
-func (ds *testDumpStatsSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
-	var err error
-	ds.store, ds.do, err = newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	ds.db, err = sql.Open("mysql", getDSN(func(config *mysql.Config) {
-		config.AllowAllFiles = true
-		config.Strict = false
-	}))
-	c.Assert(err, IsNil, Commentf("Error connecting"))
-	ds.tk = testkit.NewTestKit(c, ds.store)
-}
-
-func (ds *testDumpStatsSuite) TearDownSuite(c *C) {
-	dbt := ds.tk
-	dbt.MustExec("use tidb")
-	r := ds.tk.MustQuery("show tables")
-	for _, tb := range r.Rows() {
-		tableName := tb[0]
-		ds.tk.MustExec(fmt.Sprintf("drop table %v", tableName))
-	}
-	ds.do.StatsHandle().Clear()
-	dbt.MustExec("truncate table mysql.stats_meta")
-	dbt.MustExec("truncate table mysql.stats_histograms")
-	dbt.MustExec("truncate table mysql.stats_buckets")
-	ds.db.Close()
-	ds.store.Close()
-	testleak.AfterTest(c)()
-}
-
-func (ds *testDumpStatsSuite) TestDumpStatsAPI(c *C) {
-	ds.startServer(c)
-	ds.prepareData(c)
-	defer ds.stopServer(c)
-
-	resp, err := http.Get("http://127.0.0.1:10090/stats/dump/tidb/test")
-	c.Assert(err, IsNil)
-
-	path := "/tmp/stats.json"
-	fp, err := os.Create(path)
-	c.Assert(err, IsNil)
-	c.Assert(fp, NotNil)
-
-	defer func() {
-		err = fp.Close()
-		c.Assert(err, IsNil)
-		err = os.Remove(path)
-		c.Assert(err, IsNil)
-	}()
-
-	js, err := ioutil.ReadAll(resp.Body)
-	c.Assert(err, IsNil)
-	fp.Write(js)
-	ds.checkData(c, path)
-}
 
 func (ds *testDumpStatsSuite) startServer(c *C) {
 	mvccStore := mocktikv.MustNewMVCCStore()
 	store, err := mockstore.NewMockTikvStore(mockstore.WithMVCCStore(mvccStore))
 	c.Assert(err, IsNil)
 
+	session.SetStatsLease(0)
 	_, err = session.BootstrapSession(store)
 	c.Assert(err, IsNil)
 
@@ -121,6 +58,10 @@ func (ds *testDumpStatsSuite) startServer(c *C) {
 	ds.server = server
 	go server.Run()
 	waitUntilServerOnline(cfg.Status.StatusPort)
+
+	do, err := session.GetDomain(store)
+	c.Assert(err, IsNil)
+	ds.sh = &StatsHandler{do}
 }
 
 func (ds *testDumpStatsSuite) stopServer(c *C) {
@@ -129,59 +70,86 @@ func (ds *testDumpStatsSuite) stopServer(c *C) {
 	}
 }
 
-func (ds *testDumpStatsSuite) prepareData(c *C) {
-	dbt := ds.tk
-	dbt.MustExec("create database tidb")
-	dbt.MustExec("use tidb")
-	dbt.MustExec("create table test (a int, b varchar(20))")
-	dbt.MustExec("create index c on test (a, b)")
-	dbt.MustExec("insert test values (1, 's')")
-	dbt.MustExec("analyze table test")
-	dbt.MustExec("insert into test(a,b) values (1, 'v'),(3, 'vvv'),(5, 'vv')")
+func (ds *testDumpStatsSuite) TestDumpStatsAPI(c *C) {
+	ds.startServer(c)
+	ds.prepareData(c)
+	defer ds.stopServer(c)
 
-	is := ds.do.InfoSchema()
-	h := ds.do.StatsHandle()
-	h.DumpStatsDeltaToKV()
-	h.Update(is)
+	router := mux.NewRouter()
+	router.Handle("/stats/dump/{db}/{table}", ds.sh)
+
+	srv := &http.Server{Addr: ":10098", Handler: router}
+	go srv.ListenAndServe()
+	defer srv.Close()
+
+	resp, err := http.Get("http://127.0.0.1:10098/stats/dump/tidb/test")
+	c.Assert(err, IsNil)
+
+	path := "/tmp/stats.json"
+	fp, err := os.Create(path)
+	c.Assert(err, IsNil)
+	c.Assert(fp, NotNil)
+	defer func() {
+		c.Assert(fp.Close(), IsNil)
+		c.Assert(os.Remove(path), IsNil)
+	}()
+
+	js, err := ioutil.ReadAll(resp.Body)
+	c.Assert(err, IsNil)
+	fp.Write(js)
+	ds.checkData(c, path)
+}
+
+func (ds *testDumpStatsSuite) prepareData(c *C) {
+	db, err := sql.Open("mysql", getDSN())
+	c.Assert(err, IsNil, Commentf("Error connecting"))
+	defer db.Close()
+	dbt := &DBTest{c, db}
+
+	h := ds.sh.do.StatsHandle()
+	dbt.mustExec("create database tidb")
+	dbt.mustExec("use tidb")
+	dbt.mustExec("create table test (a int, b varchar(20))")
+	h.HandleDDLEvent(<-h.DDLEventCh())
+	dbt.mustExec("create index c on test (a, b)")
+	dbt.mustExec("insert test values (1, 's')")
+	c.Assert(h.DumpStatsDeltaToKV(), IsNil)
+	dbt.mustExec("analyze table test")
+	dbt.mustExec("insert into test(a,b) values (1, 'v'),(3, 'vvv'),(5, 'vv')")
+	is := ds.sh.do.InfoSchema()
+	c.Assert(h.DumpStatsDeltaToKV(), IsNil)
+	c.Assert(h.Update(is), IsNil)
 }
 
 func (ds *testDumpStatsSuite) checkData(c *C, path string) {
-	is := ds.do.InfoSchema()
-	h := ds.do.StatsHandle()
-	tableInfo, err := is.TableByName(model.NewCIStr("tidb"), model.NewCIStr("test"))
-	c.Assert(err, IsNil)
-	tbl := h.GetTableStats(tableInfo.Meta())
+	db, err := sql.Open("mysql", getDSN(func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Strict = false
+	}))
+	c.Assert(err, IsNil, Commentf("Error connecting"))
+	dbt := &DBTest{c, db}
+	defer func() {
+		dbt.mustExec("drop database tidb")
+		dbt.mustExec("truncate table mysql.stats_meta")
+		dbt.mustExec("truncate table mysql.stats_histograms")
+		dbt.mustExec("truncate table mysql.stats_buckets")
+		db.Close()
+	}()
 
-	dbt := ds.tk
-	dbt.MustExec("use tidb")
-	dbt.MustExec("drop stats test")
-	_, err = dbt.Exec(fmt.Sprintf("load stats '%s'", path))
+	dbt.mustExec("use tidb")
+	dbt.mustExec("drop stats test")
+	_, err = dbt.db.Exec(fmt.Sprintf("load stats '%s'", path))
 	c.Assert(err, IsNil)
-	loadTbl := h.GetTableStats(tableInfo.Meta())
-	assertTableEqual(c, loadTbl, tbl)
-}
 
-func assertTableEqual(c *C, a *statistics.Table, b *statistics.Table) {
-	c.Assert(a.Version, Equals, b.Version)
-	c.Assert(a.Count, Equals, b.Count)
-	c.Assert(a.ModifyCount, Equals, b.ModifyCount)
-	c.Assert(len(a.Columns), Equals, len(b.Columns))
-	for i := range a.Columns {
-		c.Assert(a.Columns[i].Count, Equals, b.Columns[i].Count)
-		c.Assert(statistics.HistogramEqual(&a.Columns[i].Histogram, &b.Columns[i].Histogram, false), IsTrue)
-		if a.Columns[i].CMSketch == nil {
-			c.Assert(b.Columns[i].CMSketch, IsNil)
-		} else {
-			c.Assert(a.Columns[i].CMSketch.Equal(b.Columns[i].CMSketch), IsTrue)
-		}
-	}
-	c.Assert(len(a.Indices), Equals, len(b.Indices))
-	for i := range a.Indices {
-		c.Assert(statistics.HistogramEqual(&a.Indices[i].Histogram, &b.Indices[i].Histogram, false), IsTrue)
-		if a.Columns[i].CMSketch == nil {
-			c.Assert(b.Columns[i].CMSketch, IsNil)
-		} else {
-			c.Assert(a.Columns[i].CMSketch.Equal(b.Columns[i].CMSketch), IsTrue)
-		}
-	}
+	rows := dbt.mustQuery("show stats_meta")
+	dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+	var dbName, tableName string
+	var modifyCount, count int64
+	var other interface{}
+	err = rows.Scan(&dbName, &tableName, &other, &modifyCount, &count)
+	dbt.Check(err, IsNil)
+	dbt.Check(dbName, Equals, "tidb")
+	dbt.Check(tableName, Equals, "test")
+	dbt.Check(modifyCount, Equals, int64(3))
+	dbt.Check(count, Equals, int64(4))
 }

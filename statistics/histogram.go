@@ -248,7 +248,7 @@ func SaveStatsToStorage(sctx sessionctx.Context, tableID int64, count int64, isI
 }
 
 // SaveMetaToStorage will save stats_meta to storage.
-func SaveMetaToStorage(sctx sessionctx.Context, tableID, count, modifyCount int64, version uint64) error {
+func SaveMetaToStorage(sctx sessionctx.Context, tableID, count, modifyCount int64) error {
 	ctx := context.TODO()
 	exec := sctx.(sqlexec.SQLExecutor)
 	_, err := exec.Execute(ctx, "begin")
@@ -256,6 +256,7 @@ func SaveMetaToStorage(sctx sessionctx.Context, tableID, count, modifyCount int6
 		return errors.Trace(err)
 	}
 	var sql string
+	version := sctx.Txn().StartTS()
 	sql = fmt.Sprintf("replace into mysql.stats_meta (version, table_id, count, modify_count) values (%d, %d, %d, %d)", version, tableID, count, modifyCount)
 	if _, err = exec.Execute(ctx, sql); err != nil {
 		_, err1 := exec.Execute(ctx, "rollback")
