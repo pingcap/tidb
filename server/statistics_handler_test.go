@@ -78,12 +78,15 @@ func (ds *testDumpStatsSuite) TestDumpStatsAPI(c *C) {
 	router := mux.NewRouter()
 	router.Handle("/stats/dump/{db}/{table}", ds.sh)
 
-	srv := &http.Server{Addr: ":10098", Handler: router}
+	srv := &http.Server{Addr: ":10099", Handler: router}
 	go srv.ListenAndServe()
 	defer srv.Close()
 
-	resp, err := http.Get("http://127.0.0.1:10098/stats/dump/tidb/test")
+	waitUntilServerOnline(10099)
+
+	resp, err := http.Get("http://127.0.0.1:10099/stats/dump/tidb/test")
 	c.Assert(err, IsNil)
+	defer resp.Body.Close()
 
 	path := "/tmp/stats.json"
 	fp, err := os.Create(path)
