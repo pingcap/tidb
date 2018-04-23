@@ -2206,7 +2206,7 @@ func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
 	tk.MustQuery("select count(*) from t")
 	tk.MustExec("update t set id = 3")
 	tk.MustExec("delete from t")
-	tk.MustExec("insert into t values (2)")
+	tk.MustExec("insert into t select * from t limit 2")
 	tk.MustExec("delete from t")
 
 	// Insert some data to make sure plan build IndexLookup for t.
