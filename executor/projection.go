@@ -23,9 +23,23 @@ import (
 	"golang.org/x/net/context"
 )
 
+// This file contains the implementation of the physical Projection Operator:
+//
+// https://en.wikipedia.org/wiki/Projection_(relational_algebra)
+//
+// For parallel implementation, a "projectionInputFetcher" fetches input Chunks
+// and dispatches them to many "projectionWorker"s, every "projectionWorker"
+// picks an input Chunk and do the projection operation then output the result
+// Chunk to the main thread: "ProjectionExec.Next()" function.
+// NOTE:
+// 1. number of "projectionWorker"s is controlled by the global session
+//    variable "tidb_projection_concurrency".
+// 2. if "tidb_projection_concurrency" is 0, we use the old non-parallel
+//    implementation.
+
 type projectionInput struct {
-	chk    *chunk.Chunk
-	worker *projectionWorker
+	chk          *chunk.Chunk
+	targetWorker *projectionWorker
 }
 
 type projectionOutput struct {
@@ -54,33 +68,41 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	if e.numWorkers > 0 && !e.evaluatorSuit.Vectorizable() {
-		e.numWorkers = 1
-	}
-
 	if e.numWorkers <= 0 {
 		return nil
+	}
+
+	// For now a Projection can not be executated vectorially only because it
+	// contains "SetVar" or "GetVar" functions, in this scenario this
+	// Projection can not be executed parallelly by more than 1 worker as well.
+	if !e.evaluatorSuit.Vectorizable() {
+		e.numWorkers = 1
 	}
 
 	e.output = make(chan *projectionOutput, e.numWorkers)
 	e.prepared = false
 
+	// initialize projectionInputFetcher.
 	e.fetcher.child = e.children[0]
+	e.fetcher.globalOutput = e.output
 	e.fetcher.input = make(chan *projectionInput, e.numWorkers)
 	e.fetcher.output = make(chan *projectionOutput, e.numWorkers)
 
+	// initialize projectionWorker.
 	e.workers = make([]*projectionWorker, 0, e.numWorkers)
 	for i := int64(0); i < e.numWorkers; i++ {
 		e.workers = append(e.workers, &projectionWorker{
-			ctx:           e.ctx,
+			sctx:          e.ctx,
 			evaluatorSuit: e.evaluatorSuit,
+			globalWG:      &e.waitGroup,
+			inputGiveBack: e.fetcher.input,
 			input:         make(chan *projectionInput, 1),
 			output:        make(chan *projectionOutput, 1),
 		})
 
 		e.fetcher.input <- &projectionInput{
-			chk:    e.children[0].newChunk(),
-			worker: e.workers[i],
+			chk:          e.children[0].newChunk(),
+			targetWorker: e.workers[i],
 		}
 		e.fetcher.output <- &projectionOutput{
 			chk:  e.newChunk(),
@@ -125,11 +147,11 @@ func (e *ProjectionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 }
 
 func (e *ProjectionExec) prepare(ctx context.Context) {
-	go e.fetcher.run(ctx, e.output)
+	go e.fetcher.run(ctx)
 
 	e.waitGroup.Add(len(e.workers))
 	for i := range e.workers {
-		go e.workers[i].run(e.fetcher.input, &e.waitGroup)
+		go e.workers[i].run(ctx)
 	}
 
 	go e.waitAndFinish()
@@ -150,15 +172,17 @@ func (e *ProjectionExec) Close() error {
 }
 
 type projectionInputFetcher struct {
-	child  Executor
+	child        Executor
+	globalOutput chan<- *projectionOutput
+
 	input  chan *projectionInput
 	output chan *projectionOutput
 }
 
-func (w *projectionInputFetcher) run(ctx context.Context, dst chan<- *projectionOutput) {
+func (w *projectionInputFetcher) run(ctx context.Context) {
 	defer func() {
 		for input := range w.input {
-			input.worker.finish()
+			input.targetWorker.finish()
 		}
 	}()
 
@@ -167,43 +191,45 @@ func (w *projectionInputFetcher) run(ctx context.Context, dst chan<- *projection
 		if !ok1 {
 			return
 		}
+		targetWorker := input.targetWorker
 
 		output, ok2 := <-w.output
 		if !ok2 {
-			input.worker.finish()
+			targetWorker.finish()
 			return
 		}
 
-		dst <- output
+		w.globalOutput <- output
 
 		err := w.child.Next(ctx, input.chk)
-		if err != nil {
+		if err != nil || input.chk.NumRows() == 0 {
 			output.done <- errors.Trace(err)
-			input.worker.finish()
+			targetWorker.finish()
 			return
 		}
 
-		if input.chk.NumRows() == 0 {
-			output.done <- nil
-			input.worker.finish()
-			return
-		}
-
-		input.worker.input <- input
-		input.worker.output <- output
+		targetWorker.input <- input
+		targetWorker.output <- output
 	}
 }
 
 type projectionWorker struct {
-	ctx           sessionctx.Context
+	sctx          sessionctx.Context
 	evaluatorSuit *expression.EvaluatorSuit
+	globalWG      *sync.WaitGroup
+	inputGiveBack chan<- *projectionInput
 
+	// channel "input" and "output" is :
+	// 0. inited  by "ProjectionExec.Open"
+	// 1. written by "projectionInputFetcher.run"
+	// 2. read    by "projectionWorker.run"
+	// 3. closed  by "projectionWorker.finish"
 	input  chan *projectionInput
 	output chan *projectionOutput
 }
 
-func (w *projectionWorker) run(giveBack chan<- *projectionInput, waitGroup *sync.WaitGroup) {
-	defer waitGroup.Done()
+func (w *projectionWorker) run(ctx context.Context) {
+	defer w.globalWG.Done()
 
 	for {
 		input, ok1 := <-w.input
@@ -216,13 +242,13 @@ func (w *projectionWorker) run(giveBack chan<- *projectionInput, waitGroup *sync
 			return
 		}
 
-		err := w.evaluatorSuit.Run(w.ctx, input.chk, output.chk)
+		err := w.evaluatorSuit.Run(w.sctx, input.chk, output.chk)
 		output.done <- errors.Trace(err)
 
 		if err != nil {
 			return
 		}
-		giveBack <- input
+		w.inputGiveBack <- input
 	}
 }
 
