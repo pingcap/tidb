@@ -138,24 +138,12 @@ func (latches *Latches) slotID(key []byte) int {
 
 // acquire tries to acquire the lock for a transaction.
 func (latches *Latches) acquire(lock *Lock) acquireResult {
-
 	for lock.acquiredCount < len(lock.requiredSlots) {
 		slotID := lock.requiredSlots[lock.acquiredCount]
-		status := latches.acquireSlot(slotID, lock)
-		// When the previous status is locked while current status is stale,
-		// which means the current lock is already in the latch's queue, so the
-		// current latch should also be counted into released number. Since it will
-		// release `acquireCount` number of latches when status is `stale`,
-		// the `acquireCount` should be increased here.
-		if status == acquireStale && lock.status == acquireLocked {
-			lock.acquiredCount++
+		latches.acquireSlot(slotID, lock)
+		if lock.status != acquireSuccess {
+			return lock.status
 		}
-		lock.status = status
-		if lock.status == acquireSuccess {
-			lock.acquiredCount++
-			continue
-		}
-		return lock.status
 	}
 	return lock.status
 }
@@ -219,24 +207,28 @@ func (latches *Latches) popFromWaitingQueue(slotID int) (front *Lock, hasMoreWai
 	return
 }
 
-func (latches *Latches) acquireSlot(slotID int, lock *Lock) acquireResult {
+func (latches *Latches) acquireSlot(slotID int, lock *Lock) {
 	latch := &latches.slots[slotID]
 	latch.Lock()
 	defer latch.Unlock()
-	if latch.maxCommitTS > lock.startTS {
-		return acquireStale
-	}
-	// Empty latch.
-	if !latch.occupied() {
+	if !latch.occupied() || latch.waitingQueueHead == lock.startTS {
 		latch.waitingQueueHead = lock.startTS
+		lock.acquiredCount++
 	}
+
+	if latch.maxCommitTS > lock.startTS {
+		lock.status = acquireStale
+		return
+	}
+
 	if latch.waitingQueueHead == lock.startTS {
-		return acquireSuccess
+		lock.status = acquireSuccess
+		return
 	}
+	lock.status = acquireLocked
 	// Push the current transaction into waitingQueue.
 	latch.hasMoreWaiting = true
 	latches.Lock()
 	defer latches.Unlock()
 	latches.waitingQueues[slotID] = append(latches.waitingQueues[slotID], lock)
-	return acquireLocked
 }
