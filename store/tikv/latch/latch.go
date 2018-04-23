@@ -51,7 +51,8 @@ func (l *latch) refreshCommitTS(commitTS uint64) {
 type Lock struct {
 	// The slot IDs of the latches(keys) that a startTS must acquire before being able to processed.
 	requiredSlots []int
-	// The number of latches that the transaction has acquired.
+	// The number of latches that the transaction has acquired. For status is stale, it include the
+	// latch whose front is current lock already.
 	acquiredCount int
 	// Current transaction's startTS.
 	startTS uint64
@@ -141,8 +142,11 @@ func (latches *Latches) acquire(lock *Lock) acquireResult {
 	for lock.acquiredCount < len(lock.requiredSlots) {
 		slotID := lock.requiredSlots[lock.acquiredCount]
 		status := latches.acquireSlot(slotID, lock)
-		// The current slotID is acquired when previous status is locked while
-		// current status is stale.
+		// When the previous status is locked while current status is stale,
+		// which means the current lock is already in the latch's queue, so the
+		// current latch should also be counted into released number. Since it will
+		// release `acquireCount` number of latches when status is `stale`,
+		// the `acquireCount` should be increased here.
 		if status == acquireStale && lock.status == acquireLocked {
 			lock.acquiredCount++
 		}
@@ -160,6 +164,8 @@ func (latches *Latches) acquire(lock *Lock) acquireResult {
 // Preconditions: the caller must ensure the transaction is at the front of the latches.
 func (latches *Latches) release(lock *Lock, commitTS uint64) (wakeupList []*Lock) {
 	releaseCount := lock.acquiredCount
+	// for status is locked, the number of latches to release is
+	// acquiredCount + 1 since the last latch is locked.
 	if lock.status == acquireLocked {
 		releaseCount++
 	}
