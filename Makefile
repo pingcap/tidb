@@ -71,7 +71,8 @@ parserlib: parser/parser.go
 parser/parser.go: parser/parser.y
 	make parser
 
-check: fmt errcheck lint vet
+# TODO: add lint back when the golint repo is fixed.
+check: fmt errcheck vet
 
 fmt:
 	@echo "gofmt (simplify)"
