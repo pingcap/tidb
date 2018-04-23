@@ -255,6 +255,7 @@ type ShowDDLJobsExec struct {
 
 	cursor int
 	jobs   []*model.Job
+	is     infoschema.InfoSchema
 }
 
 // ShowDDLJobQueriesExec represents a show DDL job queries executor.
@@ -339,8 +340,8 @@ func (e *ShowDDLJobsExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	numCurBatch := mathutil.Min(e.maxChunkSize, len(e.jobs)-e.cursor)
 	for i := e.cursor; i < e.cursor+numCurBatch; i++ {
 		chk.AppendInt64(0, e.jobs[i].ID)
-		chk.AppendString(1, e.jobs[i].SchemaName)
-		chk.AppendString(2, e.jobs[i].TableName)
+		chk.AppendString(1, getSchemaName(e.is, e.jobs[i].SchemaID))
+		chk.AppendString(2, getTableName(e.is,e.jobs[i].TableID))
 		chk.AppendString(3, e.jobs[i].Type.String())
 		chk.AppendString(4, e.jobs[i].SchemaState.String())
 		chk.AppendInt64(5, e.jobs[i].SchemaID)
@@ -357,6 +358,26 @@ func (e *ShowDDLJobsExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 func tsConvert2Time(ts uint64) time.Time {
 	t := int64(ts >> 18) // 18 is for the logical time.
 	return time.Unix(t/1e3, (t%1e3)*1e6)
+}
+
+func getSchemaName(is infoschema.InfoSchema, id int64) string {
+	var schemaName string
+	DBInfo, ok := is.SchemaByID(id)
+	if ok {
+		schemaName = DBInfo.Name.O
+		return schemaName
+	}
+	return schemaName
+}
+
+func getTableName(is infoschema.InfoSchema, id int64) string {
+	var tableName string
+	table, ok := is.TableByID(id)
+	if ok {
+		tableName = table.Meta().Name.O
+		return table.Meta().Name.O
+	}
+	return tableName
 }
 
 // CheckTableExec represents a check table executor.

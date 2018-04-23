@@ -47,7 +47,6 @@ func (d *ddl) onCreateSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) 
 			dbInfo = db
 		}
 	}
-	job.SchemaName = dbInfo.Name.L
 	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -79,7 +78,6 @@ func (d *ddl) onDropSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.State = model.JobStateCancelled
 		return ver, infoschema.ErrDatabaseDropExists.GenByArgs("")
 	}
-	job.SchemaName = dbInfo.Name.L
 	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)

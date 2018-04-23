@@ -134,10 +134,6 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	// if errorBeforeDecodeArgs {
 	// 	return ver, errors.New("occur an error before decode args")
 	// }
-	err = setTableAndDataBaseName(t, job, tblInfo)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
 
 	col := &model.ColumnInfo{}
 	pos := &ast.ColumnPosition{}
@@ -212,10 +208,6 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 
-	err = setTableAndDataBaseName(t, job, tblInfo)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
 
 	var colName model.CIStr
 	err = job.DecodeArgs(&colName)
@@ -455,11 +447,6 @@ func (d *ddl) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnI
 		return ver, errors.Trace(err)
 	}
 
-	err = setTableAndDataBaseName(t, job, tblInfo)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-
 	oldCol := findCol(tblInfo.Columns, oldName.L)
 	if oldCol == nil || oldCol.State != model.StatePublic {
 		job.State = model.JobStateCancelled
@@ -556,11 +543,6 @@ func (d *ddl) updateColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInf
 		return ver, infoschema.ErrColumnNotExists.GenByArgs(newCol.Name, tblInfo.Name)
 	}
 	*oldCol = *newCol
-
-	err = setTableAndDataBaseName(t, job, tblInfo)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
 
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {

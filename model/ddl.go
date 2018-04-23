@@ -110,9 +110,7 @@ type Job struct {
 	ID         int64         `json:"id"`
 	Type       ActionType    `json:"type"`
 	SchemaID   int64         `json:"schema_id"`
-	SchemaName string        `json:"schema_name"`
 	TableID    int64         `json:"table_id"`
-	TableName  string        `json:"table_name"`
 	State      JobState      `json:"state"`
 	Error      *terror.Error `json:"err"`
 	// ErrorCount will be increased, every time we meet an error when running job.

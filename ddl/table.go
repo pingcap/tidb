@@ -43,11 +43,6 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 
-	err = setTableAndDataBaseName(t, job, tbInfo)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-
 	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -103,10 +98,6 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		))
 	}
 
-	err = setTableAndDataBaseName(t, job, tblInfo)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
 	originalState := job.SchemaState
 	switch tblInfo.State {
 	case model.StatePublic:
@@ -204,11 +195,6 @@ func (d *ddl) onTruncateTable(t *meta.Meta, job *model.Job) (ver int64, _ error)
 		return ver, errors.Trace(err)
 	}
 
-	err = setTableAndDataBaseName(t, job, tblInfo)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-
 	err = t.DropTable(schemaID, tblInfo.ID, true)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -259,11 +245,6 @@ func (d *ddl) onRebaseAutoID(t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		return ver, errors.Trace(err)
 	}
 
-	err = setTableAndDataBaseName(t, job, tblInfo)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -287,11 +268,6 @@ func (d *ddl) onShardRowID(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	}
 	tblInfo.ShardRowIDBits = shardRowIDBits
 
-	err = setTableAndDataBaseName(t, job, tblInfo)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -311,11 +287,6 @@ func (d *ddl) onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	}
 
 	tblInfo, err := getTableInfo(t, job, oldSchemaID)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-
-	err = setTableAndDataBaseName(t, job, tblInfo)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -381,11 +352,6 @@ func (d *ddl) onModifyTableComment(t *meta.Meta, job *model.Job) (ver int64, _ e
 
 	tblInfo.Comment = comment
 
-	err = setTableAndDataBaseName(t, job, tblInfo)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -414,17 +380,6 @@ func checkTableNotExists(t *meta.Meta, job *model.Job, schemaID int64, tableName
 		}
 	}
 
-	return nil
-}
-
-func setTableAndDataBaseName(t *meta.Meta, job *model.Job, tbInfo *model.TableInfo) error {
-	dbInfo, err := t.GetDatabase(job.SchemaID)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	job.SchemaName = dbInfo.Name.L
-	job.TableName = tbInfo.Name.L
 	return nil
 }
 
