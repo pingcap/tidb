@@ -123,7 +123,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		if ctx.GetSessionVars().ClientCapability&mysql.ClientFoundRows > 0 {
 			sc.AddAffectedRows(1)
 		}
-		return false, handleChanged, newHandle, 0, nil
+		return false, handleChanged, newHandle, lastInsertID, nil
 	}
 
 	// Fill values into on-update-now fields, only if they are really changed.
