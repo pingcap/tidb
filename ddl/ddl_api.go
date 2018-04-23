@@ -467,11 +467,7 @@ func checkDefaultValue(ctx sessionctx.Context, c *table.Column, hasDefaultValue 
 	}
 
 	if c.DefaultValue != nil {
-		_, err := table.GetColDefaultValue(ctx, c.ToInfo())
-		if types.ErrTruncated.Equal(err) {
-			return types.ErrInvalidDefault.GenByArgs(c.Name)
-		}
-		if err != nil {
+		if _, err := table.GetColDefaultValue(ctx, c.ToInfo()); err != nil {
 			return errors.Trace(types.ErrInvalidDefault.GenByArgs(c.Name))
 		}
 		return nil
