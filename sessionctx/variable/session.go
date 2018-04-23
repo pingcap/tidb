@@ -171,6 +171,9 @@ type SessionVars struct {
 	// Should be reset on transaction finished.
 	TxnCtx *TransactionContext
 
+	// KVVars is the variables for KV storage.
+	KVVars *kv.Variables
+
 	// TxnIsolationLevelOneShot is used to implements "set transaction isolation level ..."
 	TxnIsolationLevelOneShot struct {
 		// state 0 means default
@@ -291,6 +294,7 @@ func NewSessionVars() *SessionVars {
 		PreparedStmtNameToID:      make(map[string]uint32),
 		PreparedParams:            make([]interface{}, 10),
 		TxnCtx:                    &TransactionContext{},
+		KVVars:                    kv.NewVariables(),
 		RetryInfo:                 &RetryInfo{},
 		StrictSQLMode:             true,
 		Status:                    mysql.ServerStatusAutocommit,
@@ -492,6 +496,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.DistSQLScanConcurrency = tidbOptPositiveInt32(val, DefDistSQLScanConcurrency)
 	case TiDBIndexSerialScanConcurrency:
 		s.IndexSerialScanConcurrency = tidbOptPositiveInt32(val, DefIndexSerialScanConcurrency)
+	case TiDBBackoffLockFast:
+		s.KVVars.BackoffLockFast = tidbOptPositiveInt32(val, kv.DefBackoffLockFast)
 	case TiDBBatchInsert:
 		s.BatchInsert = TiDBOptOn(val)
 	case TiDBBatchDelete:

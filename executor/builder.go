@@ -48,19 +48,17 @@ import (
 // executorBuilder builds an Executor from a Plan.
 // The InfoSchema must not change during execution.
 type executorBuilder struct {
-	ctx      sessionctx.Context
-	is       infoschema.InfoSchema
-	priority int
-	startTS  uint64 // cached when the first time getStartTS() is called
+	ctx     sessionctx.Context
+	is      infoschema.InfoSchema
+	startTS uint64 // cached when the first time getStartTS() is called
 	// err is set when there is error happened during Executor building process.
 	err error
 }
 
-func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, priority int) *executorBuilder {
+func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema) *executorBuilder {
 	return &executorBuilder{
-		ctx:      ctx,
-		is:       is,
-		priority: priority,
+		ctx: ctx,
+		is:  is,
 	}
 }
 
@@ -525,7 +523,6 @@ func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 	insert := &InsertExec{
 		InsertValues: ivs,
 		OnDuplicate:  append(v.OnDuplicate, v.GenCols.OnDuplicates...),
-		Priority:     v.Priority,
 		IgnoreErr:    v.IgnoreErr,
 	}
 	return insert
@@ -1113,7 +1110,6 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plan.AnalyzeIndexTask) 
 		tblInfo:     task.TableInfo,
 		idxInfo:     task.IndexInfo,
 		concurrency: b.ctx.GetSessionVars().IndexSerialScanConcurrency,
-		priority:    b.priority,
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeIndex,
 			StartTs:        math.MaxUint64,
@@ -1147,7 +1143,6 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plan.AnalyzeColumnsTa
 		colsInfo:    task.ColsInfo,
 		pkInfo:      task.PKInfo,
 		concurrency: b.ctx.GetSessionVars().DistSQLScanConcurrency,
-		priority:    b.priority,
 		keepOrder:   keepOrder,
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeColumn,
@@ -1311,7 +1306,6 @@ func buildNoRangeTableReader(b *executorBuilder, v *plan.PhysicalTableReader) (*
 		keepOrder:    ts.KeepOrder,
 		desc:         ts.Desc,
 		columns:      ts.Columns,
-		priority:     b.priority,
 		streaming:    streaming,
 	}
 	if containsLimit(dagReq.Executors) {
@@ -1357,7 +1351,6 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plan.PhysicalIndexReader) (*
 		keepOrder:    is.KeepOrder,
 		desc:         is.Desc,
 		columns:      is.Columns,
-		priority:     b.priority,
 		streaming:    streaming,
 	}
 	if containsLimit(dagReq.Executors) {
@@ -1414,7 +1407,6 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plan.PhysicalIndexLook
 		desc:              is.Desc,
 		tableRequest:      tableReq,
 		columns:           is.Columns,
-		priority:          b.priority,
 		indexStreaming:    indexStreaming,
 		tableStreaming:    tableStreaming,
 		dataReaderBuilder: &dataReaderBuilder{executorBuilder: b},
@@ -1490,7 +1482,6 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Contex
 		SetDAGRequest(e.dagPB).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
-		SetPriority(e.priority).
 		SetStreaming(e.streaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		Build()

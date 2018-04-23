@@ -42,6 +42,7 @@ type tikvTxn struct {
 	lockKeys  [][]byte
 	dirty     bool
 	setCnt    int64
+	vars      *kv.Variables
 }
 
 func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
@@ -64,7 +65,13 @@ func newTikvTxnWithStartTS(store *tikvStore, startTS uint64) (*tikvTxn, error) {
 		startTS:   startTS,
 		startTime: time.Now(),
 		valid:     true,
+		vars:      kv.DefaultVars,
 	}, nil
+}
+
+func (txn *tikvTxn) SetVars(vars *kv.Variables) {
+	txn.vars = vars
+	txn.snapshot.vars = vars
 }
 
 // SetMemBufCap sets the transaction's MemBuffer capability, to reduce memory allocations.

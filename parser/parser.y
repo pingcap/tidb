@@ -488,6 +488,7 @@ import (
 
 %type	<expr>
 	Expression			"expression"
+	MaxValueOrExpression		"maxvalue or expression"
 	BoolPri				"boolean primary expression"
 	ExprOrDefault			"expression or default"
 	PredicateExpr			"Predicate expression factor"
@@ -603,6 +604,7 @@ import (
 	EscapedTableRef 		"escaped table reference"
 	Escaped				"Escaped by"
 	ExpressionList			"expression list"
+	MaxValueOrExpressionList	"maxvalue or expression list"
 	ExpressionListOpt		"expression list opt"
 	FuncDatetimePrecListOpt	        "Function datetime precision list opt"
 	FuncDatetimePrecList	        "Function datetime precision list"
@@ -1801,8 +1803,9 @@ PartitionDefinition:
 		switch $3.(type) {
 		case []ast.ExprNode:
 			partDef.LessThan = $3.([]ast.ExprNode)
-		case bool:
-			partDef.MaxValue = true
+		case ast.ExprNode:
+			partDef.LessThan = make([]ast.ExprNode, 1)
+			partDef.LessThan[0] = $3.(ast.ExprNode)
 		}
 		$$ = partDef
 	}
@@ -1822,13 +1825,9 @@ PartDefValuesOpt:
 	}
 |	"VALUES" "LESS" "THAN" "MAXVALUE"
 	{
-		$$ = true
+		$$ = &ast.MaxValueExpr{}
 	}
-|	"VALUES" "LESS" "THAN" '(' "MAXVALUE" ')'
-	{
-		$$ = true
-	}
-|	"VALUES" "LESS" "THAN" '(' ExpressionList ')'
+|	"VALUES" "LESS" "THAN" '(' MaxValueOrExpressionList ')'
 	{
 		$$ = $5
 	}
@@ -2184,6 +2183,16 @@ Expression:
 	}
 |	BoolPri
 
+MaxValueOrExpression:
+	"MAXVALUE"
+	{
+		$$ = &ast.MaxValueExpr{}
+	}
+|	Expression
+	{
+		$$ = $1
+	}
+
 
 logOr:
 	pipesAsOr
@@ -2201,6 +2210,17 @@ ExpressionList:
 	{
 		$$ = append($1.([]ast.ExprNode), $3)
 	}
+
+MaxValueOrExpressionList:
+	MaxValueOrExpression
+	{
+		$$ = []ast.ExprNode{$1}
+}
+|	MaxValueOrExpressionList ',' MaxValueOrExpression
+{
+		$$ = append($1.([]ast.ExprNode), $3)
+	}
+
 
 ExpressionListOpt:
 	{

@@ -151,6 +151,9 @@ const (
 	// tidb_projection_concurrency is used for projection operator.
 	// This variable controls the worker number of projection operator.
 	TiDBProjectionConcurrency = "tidb_projection_concurrency"
+
+	// tidb_backoff_lock_fast is used for tikv backoff base time in milliseconds.
+	TiDBBackoffLockFast = "tidb_backoff_lock_fast"
 )
 
 // Default TiDB system variable values.

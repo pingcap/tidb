@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
@@ -42,6 +43,10 @@ const (
 // optional jitters.
 // See http://www.awsarchitectureblog.com/2015/03/backoff.html
 func NewBackoffFn(base, cap, jitter int) func(ctx context.Context) int {
+	if base < 2 {
+		// Top prevent panic in 'rand.Intn'.
+		base = 2
+	}
 	attempts := 0
 	lastSleep := base
 	return func(ctx context.Context) int {
@@ -58,7 +63,7 @@ func NewBackoffFn(base, cap, jitter int) func(ctx context.Context) int {
 		case DecorrJitter:
 			sleep = int(math.Min(float64(cap), float64(base+rand.Intn(lastSleep*3-base))))
 		}
-
+		log.Debugf("backoff base %d, sleep %d", base, sleep)
 		select {
 		case <-time.After(time.Duration(sleep) * time.Millisecond):
 		case <-ctx.Done():
@@ -87,14 +92,17 @@ const (
 	boServerBusy
 )
 
-func (t backoffType) createFn() func(context.Context) int {
+func (t backoffType) createFn(vars *kv.Variables) func(context.Context) int {
+	if vars.Hook != nil {
+		vars.Hook(t.String(), vars)
+	}
 	switch t {
 	case boTiKVRPC:
 		return NewBackoffFn(100, 2000, EqualJitter)
 	case BoTxnLock:
 		return NewBackoffFn(200, 3000, EqualJitter)
 	case boTxnLockFast:
-		return NewBackoffFn(100, 3000, EqualJitter)
+		return NewBackoffFn(vars.BackoffLockFast, 3000, EqualJitter)
 	case boPDRPC:
 		return NewBackoffFn(500, 3000, EqualJitter)
 	case BoRegionMiss:
@@ -172,6 +180,7 @@ type Backoffer struct {
 	totalSleep int
 	errors     []error
 	types      []backoffType
+	vars       *kv.Variables
 }
 
 // NewBackoffer creates a Backoffer with maximum sleep time(in ms).
@@ -179,7 +188,14 @@ func NewBackoffer(ctx context.Context, maxSleep int) *Backoffer {
 	return &Backoffer{
 		Context:  ctx,
 		maxSleep: maxSleep,
+		vars:     kv.DefaultVars,
 	}
+}
+
+// WithVars sets the kv.Variables to the Backoffer and return it.
+func (b *Backoffer) WithVars(vars *kv.Variables) *Backoffer {
+	b.vars = vars
+	return b
 }
 
 // Backoff sleeps a while base on the backoffType and records the error message.
@@ -198,7 +214,7 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 	}
 	f, ok := b.fn[typ]
 	if !ok {
-		f = typ.createFn()
+		f = typ.createFn(b.vars)
 		b.fn[typ] = f
 	}
 
@@ -237,6 +253,7 @@ func (b *Backoffer) Clone() *Backoffer {
 		maxSleep:   b.maxSleep,
 		totalSleep: b.totalSleep,
 		errors:     b.errors,
+		vars:       b.vars,
 	}
 }
 
@@ -249,5 +266,6 @@ func (b *Backoffer) Fork() (*Backoffer, context.CancelFunc) {
 		maxSleep:   b.maxSleep,
 		totalSleep: b.totalSleep,
 		errors:     b.errors,
+		vars:       b.vars,
 	}, cancel
 }
