@@ -87,6 +87,7 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration) *Handle {
 		globalMap:       make(tableDeltaMap),
 		Lease:           lease,
 		feedback:        make([]*QueryFeedback, 0, MaxQueryFeedbackCount),
+		loadMetaCh:      make(chan *LoadMeta, 1),
 	}
 	handle.statsCache.Store(statsCache{})
 	return handle
