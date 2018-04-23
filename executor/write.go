@@ -1761,7 +1761,9 @@ func (e *InsertExec) doDupRowUpdate(handle int64, oldRow []types.Datum, newRow [
 	if err := e.checkBatchLimit(); err != nil {
 		return nil, false, 0, errors.Trace(err)
 	}
-	e.lastInsertID = lastInsertID
+	if lastInsertID != 0 {
+		e.lastInsertID = lastInsertID
+	}
 	return newData, handleChanged, newHandle, nil
 }
 
