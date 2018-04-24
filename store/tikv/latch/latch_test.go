@@ -81,3 +81,22 @@ func (s *testLatchSuite) TestWakeUp(c *C) {
 	result = s.latches.acquire(lockB)
 	c.Assert(result, Equals, acquireSuccess)
 }
+
+func (s *testLatchSuite) TestFirstAcquireFailedWithStale(c *C) {
+	keys := [][]byte{
+		[]byte("a"), []byte("b"), []byte("c"), []byte("c")}
+	_, lockA := s.newLock(keys)
+	startTSB, lockB := s.newLock(keys)
+	// acquire lockA success
+	result := s.latches.acquire(lockA)
+	c.Assert(result, Equals, acquireSuccess)
+	// release lockA
+	commitTSA := getTso()
+	s.latches.release(lockA, commitTSA)
+
+	c.Assert(commitTSA > startTSB, IsTrue)
+	// acquire lockB first time, should be failed with stale since commitTSA > startTSB
+	result = s.latches.acquire(lockB)
+	c.Assert(result, Equals, acquireStale)
+	s.latches.release(lockB, 0)
+}

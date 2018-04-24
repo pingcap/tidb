@@ -64,7 +64,7 @@ func (scheduler *LatchesScheduler) Lock(startTS uint64, keys [][]byte) *Lock {
 	if scheduler.latches.acquire(lock) == acquireLocked {
 		lock.wg.Wait()
 	}
-	if lock.status == acquireLocked {
+	if lock.isLocked() {
 		panic("should never run here")
 	}
 	return lock
