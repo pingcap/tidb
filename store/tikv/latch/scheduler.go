@@ -17,24 +17,24 @@ const lockChanSize = 100
 
 // LatchesScheduler is used to schedule latches for transactions.
 type LatchesScheduler struct {
-	latches *Latches
-	lockCh  chan *Lock
+	latches  *Latches
+	unlockCh chan *Lock
 }
 
-//NewScheduler create the LatchesScheduler.
+// NewScheduler create the LatchesScheduler.
 func NewScheduler(size int) *LatchesScheduler {
 	latches := NewLatches(size)
-	lockCh := make(chan *Lock, lockChanSize)
+	unlockCh := make(chan *Lock, lockChanSize)
 	scheduler := &LatchesScheduler{
-		latches: latches,
-		lockCh:  lockCh,
+		latches:  latches,
+		unlockCh: unlockCh,
 	}
 	go scheduler.run()
 	return scheduler
 }
 
 func (scheduler *LatchesScheduler) run() {
-	for lock := range scheduler.lockCh {
+	for lock := range scheduler.unlockCh {
 		wakeupList := scheduler.latches.release(lock, lock.commitTS)
 		if len(wakeupList) > 0 {
 			scheduler.wakeup(wakeupList)
@@ -52,7 +52,7 @@ func (scheduler *LatchesScheduler) wakeup(wakeupList []*Lock) {
 
 // Close closes LatchesScheduler.
 func (scheduler *LatchesScheduler) Close() {
-	close(scheduler.lockCh)
+	close(scheduler.unlockCh)
 }
 
 // Lock acquire the lock for transaction with startTS and keys. The caller goroutine
@@ -73,7 +73,7 @@ func (scheduler *LatchesScheduler) Lock(startTS uint64, keys [][]byte) *Lock {
 // UnLock unlocks a lock with commitTS.
 func (scheduler *LatchesScheduler) UnLock(lock *Lock, commitTS uint64) {
 	lock.commitTS = commitTS
-	scheduler.lockCh <- lock
+	scheduler.unlockCh <- lock
 }
 
 // RefreshCommitTS refreshes commitTS for keys. It could be used for the transaction not retryable,

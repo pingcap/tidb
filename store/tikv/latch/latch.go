@@ -14,7 +14,6 @@
 package latch
 
 import (
-	"fmt"
 	"math/bits"
 	"sort"
 	"sync"
@@ -158,13 +157,10 @@ func (latches *Latches) acquire(lock *Lock) acquireResult {
 // release releases all latches owned by the `lock` and returns the wakeup list.
 // Preconditions: the caller must ensure the transaction's status is not locked.
 func (latches *Latches) release(lock *Lock, commitTS uint64) (wakeupList []*Lock) {
-	if lock.isLocked() {
-		panic(fmt.Sprintf("Cann't release locked transaction:%#v", lock))
-	}
-	wakeupList = make([]*Lock, 0, lock.acquiredCount)
+	wakeupList = make([]*Lock, 0)
 	for i := 0; i < lock.acquiredCount; i++ {
 		slotID := lock.requiredSlots[i]
-		if nextLock := latches.releaseSlot(slotID, lock.startTS, commitTS); nextLock != nil {
+		if nextLock := latches.releaseSlot(slotID, commitTS); nextLock != nil {
 			wakeupList = append(wakeupList, nextLock)
 		}
 	}
@@ -179,13 +175,10 @@ func (latches *Latches) refreshCommitTS(keys [][]byte, commitTS uint64) {
 	}
 }
 
-func (latches *Latches) releaseSlot(slotID int, startTS, commitTS uint64) (nextLock *Lock) {
+func (latches *Latches) releaseSlot(slotID int, commitTS uint64) (nextLock *Lock) {
 	latch := &latches.slots[slotID]
 	latch.Lock()
 	defer latch.Unlock()
-	if startTS != latch.waitingQueueHead {
-		panic(fmt.Sprintf("invalid front ts %d, latch:%#v", startTS, latch))
-	}
 	latch.maxCommitTS = mathutil.MaxUint64(latch.maxCommitTS, commitTS)
 	if !latch.hasMoreWaiting {
 		latch.free()

@@ -38,8 +38,7 @@ func (s *testSchedulerSuite) TestWithConcurrency(c *C) {
 
 	var wg sync.WaitGroup
 	wg.Add(len(txns))
-	for i := 0; i < len(txns); i++ {
-		txn := txns[i]
+	for _, txn := range txns {
 		go func(txn [][]byte, wg *sync.WaitGroup) {
 			lock := sched.Lock(getTso(), txn)
 			defer sched.UnLock(lock, getTso())

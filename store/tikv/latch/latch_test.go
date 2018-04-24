@@ -73,7 +73,7 @@ func (s *testLatchSuite) TestWakeUp(c *C) {
 
 	// B release lock since it received a stale.
 	wakeupList = s.latches.release(lockB, 0)
-	c.Assert(len(wakeupList), Equals, 0)
+	c.Assert(wakeupList, HasLen, 0)
 
 	// B restart:get a new startTS.
 	startTSB = getTso()
@@ -94,7 +94,7 @@ func (s *testLatchSuite) TestFirstAcquireFailedWithStale(c *C) {
 	commitTSA := getTso()
 	s.latches.release(lockA, commitTSA)
 
-	c.Assert(commitTSA > startTSB, IsTrue)
+	c.Assert(commitTSA, Greater, startTSB)
 	// acquire lockB first time, should be failed with stale since commitTSA > startTSB
 	result = s.latches.acquire(lockB)
 	c.Assert(result, Equals, acquireStale)
