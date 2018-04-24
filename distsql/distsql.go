@@ -223,7 +223,7 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 	if !sctx.GetSessionVars().EnableStreaming {
 		kvReq.Streaming = false
 	}
-	resp := sctx.GetClient().Send(ctx, kvReq)
+	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars)
 	if resp == nil {
 		err := errors.New("client returns nil response")
 		return nil, errors.Trace(err)
@@ -252,8 +252,8 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 }
 
 // Analyze do a analyze request.
-func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request) (SelectResult, error) {
-	resp := client.Send(ctx, kvReq)
+func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv.Variables) (SelectResult, error) {
+	resp := client.Send(ctx, kvReq, vars)
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
 	}
@@ -268,8 +268,8 @@ func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request) (SelectRe
 }
 
 // Checksum sends a checksum request.
-func Checksum(ctx context.Context, client kv.Client, kvReq *kv.Request) (SelectResult, error) {
-	resp := client.Send(ctx, kvReq)
+func Checksum(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv.Variables) (SelectResult, error) {
+	resp := client.Send(ctx, kvReq, vars)
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
 	}

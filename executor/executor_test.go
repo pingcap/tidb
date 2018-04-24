@@ -942,6 +942,13 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("insert into t value ('2017-01-01'), ('2017-01-02')")
 	r = tk.MustQuery("(select a from t where a < 0) union (select a from t where a > 0) order by a")
 	r.Check(testkit.Rows("2017-01-01", "2017-01-02"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t value(0),(0)")
+	tk.MustQuery("select 1 from (select a from t union all select a from t) tmp").Check(testkit.Rows("1", "1", "1", "1"))
+	tk.MustQuery("select 1 from (select a from t limit 1 union all select a from t limit 1) tmp").Check(testkit.Rows("1", "1"))
+	tk.MustQuery("select count(1) from (select a from t union all select a from t) tmp").Check(testkit.Rows("4"))
 }
 
 func (s *testSuite) TestIn(c *C) {
@@ -1540,6 +1547,8 @@ func (s *testSuite) TestSQLMode(c *C) {
 	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES'")
 	tk.MustExec("set @@global.sql_mode = ''")
 
+	// With the existance of global variable cache, it have to sleep a while here.
+	time.Sleep(3 * time.Second)
 	tk2 := testkit.NewTestKit(c, s.store)
 	tk2.MustExec("use test")
 	tk2.MustExec("create table t2 (a varchar(3))")
@@ -2195,7 +2204,7 @@ func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
 	tk.MustQuery("select count(*) from t")
 	tk.MustExec("update t set id = 3")
 	tk.MustExec("delete from t")
-	tk.MustExec("insert into t values (2)")
+	tk.MustExec("insert into t select * from t limit 2")
 	tk.MustExec("delete from t")
 
 	// Insert some data to make sure plan build IndexLookup for t.

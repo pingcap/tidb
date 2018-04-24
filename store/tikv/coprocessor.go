@@ -66,32 +66,9 @@ func (c *CopClient) supportExpr(exprType tipb.ExprType) bool {
 		tipb.ExprType_MysqlDuration, tipb.ExprType_MysqlTime, tipb.ExprType_MysqlDecimal,
 		tipb.ExprType_Float32, tipb.ExprType_Float64, tipb.ExprType_ColumnRef:
 		return true
-	// logic operators.
-	case tipb.ExprType_And, tipb.ExprType_Or, tipb.ExprType_Not:
-		return true
-	// compare operators.
-	case tipb.ExprType_LT, tipb.ExprType_LE, tipb.ExprType_EQ, tipb.ExprType_NE,
-		tipb.ExprType_GE, tipb.ExprType_GT, tipb.ExprType_NullEQ,
-		tipb.ExprType_In, tipb.ExprType_ValueList, tipb.ExprType_IsNull,
-		tipb.ExprType_Like:
-		return true
-	// arithmetic operators.
-	case tipb.ExprType_Plus, tipb.ExprType_Div, tipb.ExprType_Minus, tipb.ExprType_Mul:
-		return true
-	// control functions
-	case tipb.ExprType_Case, tipb.ExprType_If, tipb.ExprType_IfNull, tipb.ExprType_Coalesce:
-		return true
 	// aggregate functions.
 	case tipb.ExprType_Count, tipb.ExprType_First, tipb.ExprType_Max, tipb.ExprType_Min, tipb.ExprType_Sum, tipb.ExprType_Avg,
 		tipb.ExprType_Agg_BitXor, tipb.ExprType_Agg_BitAnd, tipb.ExprType_Agg_BitOr:
-		return true
-	// json functions.
-	case tipb.ExprType_JsonType, tipb.ExprType_JsonExtract, tipb.ExprType_JsonUnquote,
-		tipb.ExprType_JsonObject, tipb.ExprType_JsonArray, tipb.ExprType_JsonMerge,
-		tipb.ExprType_JsonSet, tipb.ExprType_JsonInsert, tipb.ExprType_JsonReplace, tipb.ExprType_JsonRemove:
-		return true
-	// date functions.
-	case tipb.ExprType_DateFormat:
 		return true
 	case kv.ReqSubTypeDesc:
 		return true
@@ -103,10 +80,10 @@ func (c *CopClient) supportExpr(exprType tipb.ExprType) bool {
 }
 
 // Send builds the request and gets the coprocessor iterator response.
-func (c *CopClient) Send(ctx context.Context, req *kv.Request) kv.Response {
+func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variables) kv.Response {
 	metrics.TiKVCoprocessorCounter.WithLabelValues("send").Inc()
 
-	bo := NewBackoffer(ctx, copBuildTaskMaxBackoff)
+	bo := NewBackoffer(ctx, copBuildTaskMaxBackoff).WithVars(vars)
 	tasks, err := buildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req.Desc, req.Streaming)
 	if err != nil {
 		return copErrorResponse{err}
@@ -116,6 +93,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request) kv.Response {
 		req:         req,
 		concurrency: req.Concurrency,
 		finished:    make(chan struct{}),
+		vars:        vars,
 	}
 	it.tasks = tasks
 	if it.concurrency > len(tasks) {
@@ -380,6 +358,8 @@ type copIterator struct {
 	// Otherwise, results are stored in respChan.
 	respChan chan copResponse
 	wg       sync.WaitGroup
+
+	vars *kv.Variables
 }
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
@@ -390,6 +370,7 @@ type copIteratorWorker struct {
 	req      *kv.Request
 	respChan chan<- copResponse
 	finished <-chan struct{}
+	vars     *kv.Variables
 }
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
@@ -422,7 +403,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 			respCh = task.respChan
 		}
 
-		bo := NewBackoffer(ctx1, copNextMaxBackoff)
+		bo := NewBackoffer(ctx1, copNextMaxBackoff).WithVars(worker.vars)
 		worker.handleTask(bo, task, respCh)
 		if bo.totalSleep > 0 {
 			metrics.TiKVBackoffHistogram.Observe(float64(bo.totalSleep) / 1000)
@@ -449,6 +430,7 @@ func (it *copIterator) open(ctx context.Context) {
 			req:      it.req,
 			respChan: it.respChan,
 			finished: it.finished,
+			vars:     it.vars,
 		}
 		copIteratorGP.Go(func() {
 			worker.run(ctx)

@@ -934,7 +934,6 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		Columns:     insert.Columns,
 		tableSchema: schema,
 		IsReplace:   insert.IsReplace,
-		Priority:    insert.Priority,
 		IgnoreErr:   insert.IgnoreErr,
 	}.init(b.ctx)
 
