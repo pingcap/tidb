@@ -4038,20 +4038,20 @@ RollbackStmt:
 	}
 
 SelectStmtPart1:
-    "SELECT" SelectStmtOpts SelectStmtFieldList
-    {
+	"SELECT" SelectStmtOpts SelectStmtFieldList
+	{
 		st := &ast.SelectStmt {
 			SelectStmtOpts: $2.(*ast.SelectStmtOpts),
 			Distinct:      $2.(*ast.SelectStmtOpts).Distinct,
 			Fields:        $3.(*ast.FieldList),
 		}
 		$$ = st
-    }
+	}
 
 SelectStmtPart2:
-    SelectStmtPart1 FromDual WhereClauseOptional
-    {
-	    st := $1.(*ast.SelectStmt)
+	SelectStmtPart1 FromDual WhereClauseOptional
+	{
+		st := $1.(*ast.SelectStmt)
 		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
 		if lastField.Expr != nil && lastField.AsName.O == "" {
 			lastEnd := yyS[yypt-1].offset-1
@@ -4060,14 +4060,14 @@ SelectStmtPart2:
 		if $3 != nil {
 			st.Where = $3.(ast.ExprNode)
 		}
-    }
+	}
 
 
 SelectStmtPart3:
 	SelectStmtPart1 "FROM"
 	TableRefsClause WhereClauseOptional SelectStmtGroup HavingClause
 	{
-	    st := $1.(*ast.SelectStmt)
+		st := $1.(*ast.SelectStmt)
 		st.From = $3.(*ast.TableRefsClause)
 		if st.SelectStmtOpts.TableHints != nil {
 			st.TableHints = st.SelectStmtOpts.TableHints
@@ -4122,7 +4122,7 @@ SelectStmt:
 	}
 |	SelectStmtPart2 SelectStmtLimit SelectLockOpt
 	{
-	    st := $1.(*ast.SelectStmt)
+		st := $1.(*ast.SelectStmt)
 		st.LockTp = $3.(ast.SelectLockType)
 		if $2 != nil {
 			st.Limit = $2.(*ast.Limit)
@@ -4131,7 +4131,7 @@ SelectStmt:
 	}
 |	SelectStmtPart3 OrderByOptional SelectStmtLimit SelectLockOpt
 	{
-	    st := $1.(*ast.SelectStmt)
+		st := $1.(*ast.SelectStmt)
 		st.LockTp = $4.(ast.SelectLockType)
 		if $2 != nil {
 			st.OrderBy = $2.(*ast.OrderByClause)
@@ -4566,7 +4566,7 @@ SelectLockOpt:
 UnionStmt:
 	UnionClauseList "UNION" UnionOpt SelectStmtPart1 OrderByOptional SelectStmtLimit SelectLockOpt
 	{
-	    st := $4.(*ast.SelectStmt)
+		st := $4.(*ast.SelectStmt)
 		union := $1.(*ast.UnionStmt)
 		union.Distinct = union.Distinct || $3.(bool)
 		lastSelect := union.SelectList.Selects[len(union.SelectList.Selects)-1]
@@ -4583,7 +4583,7 @@ UnionStmt:
 	}
 |	UnionClauseList "UNION" UnionOpt SelectStmtPart2 SelectStmtLimit SelectLockOpt
 	{
-	    st := $4.(*ast.SelectStmt)
+		st := $4.(*ast.SelectStmt)
 		union := $1.(*ast.UnionStmt)
 		union.Distinct = union.Distinct || $3.(bool)
 		lastSelect := union.SelectList.Selects[len(union.SelectList.Selects)-1]
@@ -4598,19 +4598,19 @@ UnionStmt:
 |	UnionClauseList "UNION" UnionOpt SelectStmtPart3 OrderByOptional
    	SelectStmtLimit SelectLockOpt
 	{
-	    st := $4.(*ast.SelectStmt)
+		st := $4.(*ast.SelectStmt)
 		union := $1.(*ast.UnionStmt)
 		union.Distinct = union.Distinct || $3.(bool)
 		lastSelect := union.SelectList.Selects[len(union.SelectList.Selects)-1]
 		endOffset := parser.endOffset(&yyS[yypt-3])
 		parser.setLastSelectFieldText(lastSelect, endOffset)
 		union.SelectList.Selects = append(union.SelectList.Selects, st)
-    	if $5 != nil {
-    		union.OrderBy = $5.(*ast.OrderByClause)
-    	}
-    	if $6 != nil {
-    		union.Limit = $6.(*ast.Limit)
-    	}
+		if $5 != nil {
+			union.OrderBy = $5.(*ast.OrderByClause)
+		}
+		if $6 != nil {
+			union.Limit = $6.(*ast.Limit)
+		}
 		$$ = union
 	}
 |	UnionClauseList "UNION" UnionOpt '(' SelectStmt ')' OrderByOptional SelectStmtLimit
