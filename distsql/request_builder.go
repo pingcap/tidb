@@ -216,23 +216,17 @@ func TableHandlesToKVRanges(tid int64, handles []int64) []kv.KeyRange {
 	krs := make([]kv.KeyRange, 0, len(handles))
 	i := 0
 	for i < len(handles) {
-		h := handles[i]
-		if h == math.MaxInt64 {
-			// We can't convert MaxInt64 into an left closed, right open range.
-			i++
-			continue
-		}
 		j := i + 1
-		endHandle := h + 1
-		for ; j < len(handles); j++ {
-			if handles[j] == endHandle {
-				endHandle = handles[j] + 1
-				continue
+		for ; j < len(handles) && handles[j-1] != math.MaxInt64; j++ {
+			if handles[j] != handles[j-1]+1 {
+				break
 			}
-			break
 		}
-		startKey := tablecodec.EncodeRowKeyWithHandle(tid, h)
-		endKey := tablecodec.EncodeRowKeyWithHandle(tid, endHandle)
+		low := codec.EncodeInt(nil, handles[i])
+		high := codec.EncodeInt(nil, handles[j-1])
+		high = []byte(kv.Key(high).PrefixNext())
+		startKey := tablecodec.EncodeRowKey(tid, low)
+		endKey := tablecodec.EncodeRowKey(tid, high)
 		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
 		i = j
 	}

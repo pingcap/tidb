@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
@@ -82,22 +83,26 @@ type handleRange struct {
 func (s *testSuite) getExpectedRanges(tid int64, hrs []*handleRange) []kv.KeyRange {
 	krs := make([]kv.KeyRange, 0, len(hrs))
 	for _, hr := range hrs {
-		startKey := tablecodec.EncodeRowKeyWithHandle(tid, hr.start)
-		endKey := tablecodec.EncodeRowKeyWithHandle(tid, hr.end)
+		low := codec.EncodeInt(nil, hr.start)
+		high := codec.EncodeInt(nil, hr.end)
+		high = []byte(kv.Key(high).PrefixNext())
+		startKey := tablecodec.EncodeRowKey(tid, low)
+		endKey := tablecodec.EncodeRowKey(tid, high)
 		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
 	}
 	return krs
 }
 
 func (s *testSuite) TestTableHandlesToKVRanges(c *C) {
-	handles := []int64{0, 2, 3, 4, 5, 10, 11, 100}
+	handles := []int64{0, 2, 3, 4, 5, 10, 11, 100, 9223372036854775806, 9223372036854775807}
 
 	// Build expected key ranges.
 	hrs := make([]*handleRange, 0, len(handles))
-	hrs = append(hrs, &handleRange{start: 0, end: 1})
-	hrs = append(hrs, &handleRange{start: 2, end: 6})
-	hrs = append(hrs, &handleRange{start: 10, end: 12})
-	hrs = append(hrs, &handleRange{start: 100, end: 101})
+	hrs = append(hrs, &handleRange{start: 0, end: 0})
+	hrs = append(hrs, &handleRange{start: 2, end: 5})
+	hrs = append(hrs, &handleRange{start: 10, end: 11})
+	hrs = append(hrs, &handleRange{start: 100, end: 100})
+	hrs = append(hrs, &handleRange{start: 9223372036854775806, end: 9223372036854775807})
 
 	// Build key ranges.
 	expect := s.getExpectedRanges(1, hrs)
