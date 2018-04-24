@@ -230,7 +230,11 @@ func (latches *Latches) acquireSlot(slotID int, lock *Lock) {
 	if latch.isFree() {
 		latch.acquiredTxn = lock.startTS
 		lock.acquiredCount++
-		lock.status = acquireSuccess
+		if latch.maxCommitTS > lock.startTS {
+			lock.status = acquireStale
+		} else {
+			lock.status = acquireSuccess
+		}
 		return
 	}
 	if latch.maxCommitTS > lock.startTS {
