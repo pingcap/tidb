@@ -132,7 +132,7 @@ func (latches *Latches) slotID(key []byte) int {
 	return int(murmur3.Sum32(key)) & (len(latches.slots) - 1)
 }
 
-// acquire retries tries to acquire the lock for a transaction.
+// retryAcquire retries tries to acquire the lock for a transaction.
 // Preconditions: the caller must ensure the lock's last call of
 // acquire or retryAcquire is locked.
 func (latches *Latches) retryAcquire(lock *Lock) acquireResult {
