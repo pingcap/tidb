@@ -36,9 +36,9 @@ func (s *testLatchSuite) SetUpTest(c *C) {
 	s.latches = NewLatches(256)
 }
 
-func (s *testLatchSuite) newLock(keys [][]byte) (startTS uint64, lock Lock) {
+func (s *testLatchSuite) newLock(keys [][]byte) (startTS uint64, lock *Lock) {
 	startTS = getTso()
-	lock = s.latches.GenLock(startTS, keys)
+	lock = s.latches.genLock(startTS, keys)
 	return
 }
 
@@ -54,34 +54,39 @@ func (s *testLatchSuite) TestWakeUp(c *C) {
 	keysB := [][]byte{[]byte("d"), []byte("e"), []byte("a"), []byte("c")}
 	startTSB, lockB := s.newLock(keysB)
 
+	keysC := [][]byte{[]byte("d"), []byte("e"), []byte("a"), []byte("c")}
+	_, lockC := s.newLock(keysC)
+
 	// A acquire lock success.
-	acquired, stale := s.latches.Acquire(&lockA)
-	c.Assert(stale, IsFalse)
-	c.Assert(acquired, IsTrue)
+	result := s.latches.acquire(lockA)
+	c.Assert(result, Equals, acquireSuccess)
 
 	// B acquire lock failed.
-	acquired, stale = s.latches.Acquire(&lockB)
-	c.Assert(stale, IsFalse)
-	c.Assert(acquired, IsFalse)
+	result = s.latches.acquire(lockB)
+	c.Assert(result, Equals, acquireLocked)
 
 	// A release lock, and get wakeup list.
 	commitTSA := getTso()
-	wakeupList := s.latches.Release(&lockA, commitTSA)
-	c.Assert(wakeupList[0], Equals, startTSB)
+	wakeupList := s.latches.release(lockA, commitTSA)
+	c.Assert(wakeupList[0].startTS, Equals, startTSB)
 
 	// B acquire failed since startTSB has stale for some keys.
-	acquired, stale = s.latches.Acquire(&lockB)
-	c.Assert(stale, IsTrue)
-	c.Assert(acquired, IsFalse)
+	result = s.latches.retryAcquire(lockB)
+	c.Assert(result, Equals, acquireStale)
 
 	// B release lock since it received a stale.
-	wakeupList = s.latches.Release(&lockB, 0)
+	wakeupList = s.latches.release(lockB, 0)
+	c.Assert(len(wakeupList), Equals, 0)
+
+	// C acquire failed at the first time since StartTS is stale
+	result = s.latches.acquire(lockC)
+	c.Assert(result, Equals, acquireStale)
+	wakeupList = s.latches.release(lockC, 0)
 	c.Assert(len(wakeupList), Equals, 0)
 
 	// B restart:get a new startTS.
 	startTSB = getTso()
-	lockB = s.latches.GenLock(startTSB, keysB)
-	acquired, stale = s.latches.Acquire(&lockB)
-	c.Assert(acquired, IsTrue)
-	c.Assert(stale, IsFalse)
+	lockB = s.latches.genLock(startTSB, keysB)
+	result = s.latches.acquire(lockB)
+	c.Assert(result, Equals, acquireSuccess)
 }
