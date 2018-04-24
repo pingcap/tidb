@@ -536,7 +536,8 @@ func checkTooManyColumns(colDefs []*ast.ColumnDef) error {
 	return nil
 }
 
-func checkContainDotColumn(tableName string, colDefs []*ast.ColumnDef) error {
+// checkContainDotColumns check field contains the table name.
+func checkContainDotColumns(tableName string, colDefs []*ast.ColumnDef) error {
 	for _, colDef := range colDefs {
 		if colDef.Name.Table.O != tableName && len(colDef.Name.Table.O) != 0 {
 			return ErrWrongTableName.GenByArgs(colDef.Name.Table.O)
@@ -793,7 +794,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		return errors.Trace(err)
 	}
 
-	if err = checkContainDotColumn(ident.Name.O, colDefs); err != nil {
+	if err = checkContainDotColumns(ident.Name.O, colDefs); err != nil {
 		return errors.Trace(err)
 	}
 
