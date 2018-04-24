@@ -306,6 +306,12 @@
   version = "v1.1"
 
 [[projects]]
+  name = "github.com/tiancaiamao/shen-go"
+  packages = ["runtime"]
+  revision = "c398ef37310f7d78c29e637fb8f78ad79b45d0a0"
+  version = "v0.3"
+
+[[projects]]
   name = "github.com/twinj/uuid"
   packages = ["."]
   revision = "835a10bbd6bce40820349a68b1368a62c3c5617c"
@@ -444,6 +450,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "32fc0e11bd9b3f065eae2606f528e2425f6326e1dbf2ad3a193c623c7e7b6fc9"
+  inputs-digest = "8aed55a8c94e515d6d1be1a9bac8d0f1d3129a634e521323008dd167408dc62a"
   solver-name = "gps-cdcl"
   solver-version = 1
