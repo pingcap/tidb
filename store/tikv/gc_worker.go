@@ -1004,7 +1004,12 @@ func (w *GCWorker) saveValueToSysTable(key, value string, s tidb.Session) error 
 }
 
 // RunGCJob sends GC command to KV. it is exported for kv api, do not use it with GCWorker at the same time.
-func RunGCJob(ctx goctx.Context, s *tikvStore, safePoint uint64, identifier string, concurrency int) error {
+func RunGCJob(ctx goctx.Context, store kv.Storage, safePoint uint64, identifier string, concurrency int) error {
+	s, ok := store.(*tikvStore)
+	if !ok {
+		return errors.Errorf("[gc worker] unexpected store type, tikvStore is needed")
+	}
+
 	gcWorker := &GCWorker{
 		store: s,
 		uuid:  identifier,
