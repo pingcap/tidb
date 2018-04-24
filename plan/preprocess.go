@@ -224,6 +224,11 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		return
 	}
 
+	if tableName, ok := checksContainDotColumns(tName, stmt.Cols); ok {
+		p.err = ddl.ErrWrongTableName.GenByArgs(tableName)
+		return
+	}
+
 	countPrimaryKey := 0
 	for _, colDef := range stmt.Cols {
 		if err := checkColumn(colDef); err != nil {
@@ -460,6 +465,16 @@ func isIncorrectName(name string) bool {
 		return true
 	}
 	return false
+}
+
+// checksContainDotColumns check field contains the table name.
+func checksContainDotColumns(tableName string, colDefs []*ast.ColumnDef) (string, bool) {
+	for _, colDef := range colDefs {
+		if colDef.Name.Table.O != tableName && len(colDef.Name.Table.O) != 0 {
+			return colDef.Name.Table.O, true
+		}
+	}
+	return "", false
 }
 
 func (p *preprocessor) handleTableName(tn *ast.TableName) {
