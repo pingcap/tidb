@@ -1,140 +1,65 @@
 package uuid
 
-/****************
- * Date: 21/06/15
- * Time: 5:48 PM
- ***************/
-
 import (
-	"encoding/gob"
-	"log"
-	"os"
-	"time"
+	"fmt"
 )
 
-func init() {
-	gob.Register(stateEntity{})
+// Sequence represents an iterated value to help ensure unique UUID generations
+// values across the same domain, server restarts and clock issues.
+type Sequence uint16
+
+// Node represents the last node id setup used by the generator.
+type Node []byte
+
+// Store is used for storage of UUID generation history to ensure continuous
+// running of the UUID generator between restarts and to monitor synchronicity
+// while generating new V1 or V2 UUIDs.
+type Store struct {
+	Timestamp
+	Sequence
+	Node
 }
 
-func SetupFileSystemStateSaver(pConfig StateSaverConfig) {
-	saver := &FileSystemSaver{}
-	saver.saveReport = pConfig.SaveReport
-	saver.saveSchedule = int64(pConfig.SaveSchedule)
-	SetupCustomStateSaver(saver)
+// String returns a string representation of the Store.
+func (o Store) String() string {
+	return fmt.Sprintf("Timestamp[%s]-Sequence[%d]-Node[%x]", o.Timestamp, o.Sequence, o.Node)
 }
 
-// A wrapper for default setup of the FileSystemStateSaver
-type StateSaverConfig struct {
+// Saver is an interface to setup a non volatile store within your system
+// if you wish to use V1 and V2 UUIDs based on your node id and a constant time
+// it is highly recommended to implement this.
+// A default implementation has been provided. FileSystemStorage, the default
+// behaviour of the package is to generate random sequences where a Saver is not
+// specified.
+type Saver interface {
+	// Read is run once, use this to setup your UUID state machine
+	// Read should also return the UUID state from the non volatile store
+	Read() (Store, error)
 
-	// Print save log
-	SaveReport bool
+	// Save saves the state to the non volatile store and is called only if
+	Save(Store)
 
-	// Save every x nanoseconds
-	SaveSchedule time.Duration
+	// Init allows default setup of a new Saver
+	Init() Saver
 }
 
-// ***********************************************  StateEntity
-
-// StateEntity acts as a marshaller struct for the state
-type stateEntity struct {
-	Past     Timestamp
-	Node     []byte
-	Sequence uint16
-}
-
-// This implements the StateSaver interface for UUIDs
-type FileSystemSaver struct {
-	cache        *os.File
-	saveState    uint64
-	saveReport   bool
-	saveSchedule int64
-}
-
-// Saves the current state of the generator
-// If the scheduled file save is reached then the file is synced
-func (o *FileSystemSaver) Save(pState *State) {
-	if pState.past >= pState.next {
-		err := o.open()
-		defer o.cache.Close()
-		if err != nil {
-			log.Println("uuid.State.save:", err)
-			return
-		}
-		// do the save
-		o.encode(pState)
-		// a tick is 100 nano seconds
-		pState.next = pState.past + Timestamp(o.saveSchedule / 100)
-		if o.saveReport {
-			log.Printf("UUID STATE: SAVED %d", pState.past)
-		}
+// RegisterSaver register's a uuid.Saver implementation to the default package
+// uuid.Generator. If you wish to save the generator state, this function must
+// be run before any calls to V1 or V2 UUIDs. uuid.RegisterSaver cannot be run
+// in conjunction with uuid.Init. You may implement the uuid.Saver interface
+// or use the provided uuid.Saver's from the uuid/savers package.
+func RegisterSaver(saver Saver) (err error) {
+	notOnce := true
+	once.Do(func() {
+		generator.Lock()
+		generator.Saver = saver
+		generator.Unlock()
+		err = generator.init()
+		notOnce = false
+		return
+	})
+	if notOnce {
+		panic("uuid: Register* methods cannot be called more than once.")
 	}
-}
-
-func (o *FileSystemSaver) Init(pState *State) {
-	pState.saver = o
-	err := o.open()
-	defer o.cache.Close()
-	if err != nil {
-		if os.IsNotExist(err) {
-			log.Printf("'%s' created\n", "uuid.SaveState")
-			var err error
-			o.cache, err = os.Create(os.TempDir() + "/state.unique")
-			if err != nil {
-				log.Println("uuid.State.init: SaveState error:", err)
-				goto pastInit
-			}
-			o.encode(pState)
-		} else {
-			log.Println("uuid.State.init: SaveState error:", err)
-			goto pastInit
-		}
-	}
-	err = o.decode(pState)
-	if err != nil {
-		goto pastInit
-	}
-	pState.randomSequence = false
-pastInit:
-	if timestamp() <= pState.past {
-		pState.sequence++
-	}
-	pState.next = pState.past
-}
-
-func (o *FileSystemSaver) reset() {
-	o.cache.Seek(0, 0)
-}
-
-func (o *FileSystemSaver) open() error {
-	var err error
-	o.cache, err = os.OpenFile(os.TempDir()+"/state.unique", os.O_RDWR, os.ModeExclusive)
-	return err
-}
-
-// Encodes State generator data into a saved file
-func (o *FileSystemSaver) encode(pState *State) {
-	// ensure reader state is ready for use
-	o.reset()
-	enc := gob.NewEncoder(o.cache)
-	// Wrap private State data into the StateEntity
-	err := enc.Encode(&stateEntity{pState.past, pState.node, pState.sequence})
-	if err != nil {
-		log.Panic("UUID.encode error:", err)
-	}
-}
-
-// Decodes StateEntity data into the main State
-func (o *FileSystemSaver) decode(pState *State) error {
-	o.reset()
-	dec := gob.NewDecoder(o.cache)
-	entity := stateEntity{}
-	err := dec.Decode(&entity)
-	if err != nil {
-		log.Println("uuid.decode error:", err)
-		return err
-	}
-	pState.past = entity.Past
-	pState.node = entity.Node
-	pState.sequence = entity.Sequence
-	return nil
+	return
 }
