@@ -199,7 +199,7 @@ type TableReaderExecutor struct {
 	tableID   int64
 	keepOrder bool
 	desc      bool
-	ranges    []*ranger.NewRange
+	ranges    []*ranger.Range
 	dagPB     *tipb.DAGRequest
 	// columns are only required by union scan.
 	columns []*model.ColumnInfo
@@ -256,7 +256,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 
 // buildResp first build request and send it to tikv using distsql.Select. It uses SelectResut returned by the callee
 // to fetch all results.
-func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.NewRange) (distsql.SelectResult, error) {
+func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Range) (distsql.SelectResult, error) {
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetTableRanges(e.tableID, ranges, e.feedback).
 		SetDAGRequest(e.dagPB).
@@ -276,7 +276,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ne
 	return result, nil
 }
 
-func splitRanges(ranges []*ranger.NewRange, keepOrder bool) ([]*ranger.NewRange, []*ranger.NewRange) {
+func splitRanges(ranges []*ranger.Range, keepOrder bool) ([]*ranger.Range, []*ranger.Range) {
 	if len(ranges) == 0 || ranges[0].LowVal[0].Kind() == types.KindInt64 {
 		return ranges, nil
 	}
@@ -292,15 +292,15 @@ func splitRanges(ranges []*ranger.NewRange, keepOrder bool) ([]*ranger.NewRange,
 		}
 		return signedRanges, unsignedRanges
 	}
-	signedRanges := make([]*ranger.NewRange, 0, idx+1)
-	unsignedRanges := make([]*ranger.NewRange, 0, len(ranges)-idx)
+	signedRanges := make([]*ranger.Range, 0, idx+1)
+	unsignedRanges := make([]*ranger.Range, 0, len(ranges)-idx)
 	signedRanges = append(signedRanges, ranges[0:idx]...)
-	signedRanges = append(signedRanges, &ranger.NewRange{
+	signedRanges = append(signedRanges, &ranger.Range{
 		LowVal:     ranges[idx].LowVal,
 		LowExclude: ranges[idx].LowExclude,
 		HighVal:    []types.Datum{types.NewUintDatum(math.MaxInt64)},
 	})
-	unsignedRanges = append(unsignedRanges, &ranger.NewRange{
+	unsignedRanges = append(unsignedRanges, &ranger.Range{
 		LowVal:      []types.Datum{types.NewUintDatum(math.MaxInt64 + 1)},
 		HighVal:     ranges[idx].HighVal,
 		HighExclude: ranges[idx].HighExclude,
@@ -335,7 +335,7 @@ type IndexReaderExecutor struct {
 	tableID   int64
 	keepOrder bool
 	desc      bool
-	ranges    []*ranger.NewRange
+	ranges    []*ranger.Range
 	dagPB     *tipb.DAGRequest
 
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
@@ -407,7 +407,7 @@ type IndexLookUpExecutor struct {
 	tableID   int64
 	keepOrder bool
 	desc      bool
-	ranges    []*ranger.NewRange
+	ranges    []*ranger.Range
 	dagPB     *tipb.DAGRequest
 	// handleIdx is the index of handle, which is only used for case of keeping order.
 	handleIdx    int

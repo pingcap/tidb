@@ -44,7 +44,7 @@ func (builder *RequestBuilder) Build() (*kv.Request, error) {
 
 // SetTableRanges sets "KeyRanges" for "kv.Request" by converting "tableRanges"
 // to "KeyRanges" firstly.
-func (builder *RequestBuilder) SetTableRanges(tid int64, tableRanges []*ranger.NewRange, fb *statistics.QueryFeedback) *RequestBuilder {
+func (builder *RequestBuilder) SetTableRanges(tid int64, tableRanges []*ranger.Range, fb *statistics.QueryFeedback) *RequestBuilder {
 	if builder.err != nil {
 		return builder
 	}
@@ -54,7 +54,7 @@ func (builder *RequestBuilder) SetTableRanges(tid int64, tableRanges []*ranger.N
 
 // SetIndexRanges sets "KeyRanges" for "kv.Request" by converting index range
 // "ranges" to "KeyRanges" firstly.
-func (builder *RequestBuilder) SetIndexRanges(sc *stmtctx.StatementContext, tid, idxID int64, ranges []*ranger.NewRange) *RequestBuilder {
+func (builder *RequestBuilder) SetIndexRanges(sc *stmtctx.StatementContext, tid, idxID int64, ranges []*ranger.Range) *RequestBuilder {
 	if builder.err != nil {
 		return builder
 	}
@@ -174,20 +174,20 @@ func (builder *RequestBuilder) SetConcurrency(concurrency int) *RequestBuilder {
 }
 
 // TableRangesToKVRanges converts table ranges to "KeyRange".
-func TableRangesToKVRanges(tid int64, ranges []*ranger.NewRange, fb *statistics.QueryFeedback) []kv.KeyRange {
+func TableRangesToKVRanges(tid int64, ranges []*ranger.Range, fb *statistics.QueryFeedback) []kv.KeyRange {
 	if fb == nil || fb.Hist() == nil {
 		return tableRangesToKVRangesWithoutSplit(tid, ranges)
 	}
 	ranges = fb.Hist().SplitRange(ranges)
 	krs := make([]kv.KeyRange, 0, len(ranges))
-	newRanges := make([]*ranger.NewRange, 0, len(ranges))
+	newRanges := make([]*ranger.Range, 0, len(ranges))
 	for _, ran := range ranges {
 		low, high := encodeHandleKey(ran)
 		startKey := tablecodec.EncodeRowKey(tid, low)
 		endKey := tablecodec.EncodeRowKey(tid, high)
 		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
 
-		r := &ranger.NewRange{LowVal: []types.Datum{types.NewBytesDatum(low)},
+		r := &ranger.Range{LowVal: []types.Datum{types.NewBytesDatum(low)},
 			HighVal: []types.Datum{types.NewBytesDatum(high)}}
 		newRanges = append(newRanges, r)
 	}
@@ -195,7 +195,7 @@ func TableRangesToKVRanges(tid int64, ranges []*ranger.NewRange, fb *statistics.
 	return krs
 }
 
-func tableRangesToKVRangesWithoutSplit(tid int64, ranges []*ranger.NewRange) []kv.KeyRange {
+func tableRangesToKVRangesWithoutSplit(tid int64, ranges []*ranger.Range) []kv.KeyRange {
 	krs := make([]kv.KeyRange, 0, len(ranges))
 	for _, ran := range ranges {
 		low, high := encodeHandleKey(ran)
@@ -206,7 +206,7 @@ func tableRangesToKVRangesWithoutSplit(tid int64, ranges []*ranger.NewRange) []k
 	return krs
 }
 
-func encodeHandleKey(ran *ranger.NewRange) ([]byte, []byte) {
+func encodeHandleKey(ran *ranger.Range) ([]byte, []byte) {
 	low := codec.EncodeInt(nil, ran.LowVal[0].GetInt64())
 	high := codec.EncodeInt(nil, ran.HighVal[0].GetInt64())
 	if ran.LowExclude {
@@ -248,17 +248,17 @@ func TableHandlesToKVRanges(tid int64, handles []int64) []kv.KeyRange {
 }
 
 // IndexRangesToKVRanges converts index ranges to "KeyRange".
-func IndexRangesToKVRanges(sc *stmtctx.StatementContext, tid, idxID int64, ranges []*ranger.NewRange, fb *statistics.QueryFeedback) ([]kv.KeyRange, error) {
+func IndexRangesToKVRanges(sc *stmtctx.StatementContext, tid, idxID int64, ranges []*ranger.Range, fb *statistics.QueryFeedback) ([]kv.KeyRange, error) {
 	if fb == nil || fb.Hist() == nil {
 		return indexRangesToKVWithoutSplit(sc, tid, idxID, ranges)
 	}
-	newRanges := make([]*ranger.NewRange, 0, len(ranges))
+	newRanges := make([]*ranger.Range, 0, len(ranges))
 	for _, ran := range ranges {
 		low, high, err := encodeIndexKey(sc, ran)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		newRanges = append(newRanges, &ranger.NewRange{LowVal: []types.Datum{types.NewBytesDatum(low)},
+		newRanges = append(newRanges, &ranger.Range{LowVal: []types.Datum{types.NewBytesDatum(low)},
 			HighVal: []types.Datum{types.NewBytesDatum(high)}, LowExclude: false, HighExclude: true})
 	}
 	ranges = fb.Hist().SplitRange(newRanges)
@@ -278,7 +278,7 @@ func IndexRangesToKVRanges(sc *stmtctx.StatementContext, tid, idxID int64, range
 	return krs, nil
 }
 
-func indexRangesToKVWithoutSplit(sc *stmtctx.StatementContext, tid, idxID int64, ranges []*ranger.NewRange) ([]kv.KeyRange, error) {
+func indexRangesToKVWithoutSplit(sc *stmtctx.StatementContext, tid, idxID int64, ranges []*ranger.Range) ([]kv.KeyRange, error) {
 	krs := make([]kv.KeyRange, 0, len(ranges))
 	for _, ran := range ranges {
 		low, high, err := encodeIndexKey(sc, ran)
@@ -292,7 +292,7 @@ func indexRangesToKVWithoutSplit(sc *stmtctx.StatementContext, tid, idxID int64,
 	return krs, nil
 }
 
-func encodeIndexKey(sc *stmtctx.StatementContext, ran *ranger.NewRange) ([]byte, []byte, error) {
+func encodeIndexKey(sc *stmtctx.StatementContext, ran *ranger.Range) ([]byte, []byte, error) {
 	low, err := codec.EncodeKey(sc, nil, ran.LowVal...)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
