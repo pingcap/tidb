@@ -126,7 +126,7 @@ type TableInfo struct {
 
 // GetUpdateTime gets the table's updating time.
 func (t *TableInfo) GetUpdateTime() time.Time {
-	return tsConvert2Time(t.UpdateTS)
+	return TSConvert2Time(t.UpdateTS)
 }
 
 // GetDBID returns the schema ID that is used to create an allocator.

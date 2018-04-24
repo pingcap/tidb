@@ -347,17 +347,11 @@ func (e *ShowDDLJobsExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		chk.AppendInt64(5, e.jobs[i].SchemaID)
 		chk.AppendInt64(6, e.jobs[i].TableID)
 		chk.AppendInt64(7, e.jobs[i].RowCount)
-		chk.AppendString(8, tsConvert2Time(e.jobs[i].StartTS).String())
+		chk.AppendString(8, model.TSConvert2Time(e.jobs[i].StartTS).String())
 		chk.AppendString(9, e.jobs[i].State.String())
 	}
 	e.cursor += numCurBatch
 	return nil
-}
-
-// tsConvert2Time converts timestamp to time.
-func tsConvert2Time(ts uint64) time.Time {
-	t := int64(ts >> 18) // 18 is for the logical time.
-	return time.Unix(t/1e3, (t%1e3)*1e6)
 }
 
 func getSchemaName(is infoschema.InfoSchema, id int64) string {
@@ -376,7 +370,7 @@ func getTableName(is infoschema.InfoSchema, id int64) string {
 	table, ok := is.TableByID(id)
 	if ok {
 		tableName = table.Meta().Name.O
-		return table.Meta().Name.O
+		return tableName
 	}
 
 	return tableName
