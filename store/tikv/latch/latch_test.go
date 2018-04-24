@@ -54,6 +54,9 @@ func (s *testLatchSuite) TestWakeUp(c *C) {
 	keysB := [][]byte{[]byte("d"), []byte("e"), []byte("a"), []byte("c")}
 	startTSB, lockB := s.newLock(keysB)
 
+	keysC := [][]byte{[]byte("d"), []byte("e"), []byte("a"), []byte("c")}
+	_, lockC := s.newLock(keysC)
+
 	// A acquire lock success.
 	result := s.latches.acquire(lockA)
 	c.Assert(result, Equals, acquireSuccess)
@@ -73,6 +76,12 @@ func (s *testLatchSuite) TestWakeUp(c *C) {
 
 	// B release lock since it received a stale.
 	wakeupList = s.latches.release(lockB, 0)
+	c.Assert(len(wakeupList), Equals, 0)
+
+	// C acquire failed at the first time since StartTS is stale
+	result = s.latches.acquire(lockC)
+	c.Assert(result, Equals, acquireStale)
+	wakeupList = s.latches.release(lockC, 0)
 	c.Assert(len(wakeupList), Equals, 0)
 
 	// B restart:get a new startTS.
