@@ -937,7 +937,6 @@ func (b *executorBuilder) buildMemTable(v *plan.PhysicalMemTable) Executor {
 		t:              tb,
 		columns:        v.Columns,
 		seekHandle:     math.MinInt64,
-		ranges:         v.Ranges,
 		isVirtualTable: tb.Type() == table.VirtualTable,
 	}
 	return e
