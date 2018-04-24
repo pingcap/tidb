@@ -333,6 +333,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	}
 	err := s.doCommit(ctx)
 	if err != nil {
+		commitRetryLimit := atomic.LoadUint32(&variable.CommitRetryLimit)
 		// Don't retry in BatchInsert mode. As a counter-example, insert into t1 select * from t2,
 		// BatchInsert already commit the first batch 1000 rows, then it commit 1000-2000 and retry the statement,
 		// Finally t1 will have more data than t2, with no errors return to user!
@@ -341,8 +342,8 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 			// Transactions will retry 2 ~ commitRetryLimit times.
 			// We make larger transactions retry less times to prevent cluster resource outage.
 			txnSizeRate := float64(txnSize) / float64(kv.TxnTotalSizeLimit)
-			maxRetryCount := commitRetryLimit - uint(float64(commitRetryLimit-1)*txnSizeRate)
-			err = s.retry(ctx, maxRetryCount)
+			maxRetryCount := commitRetryLimit - uint32(float64(commitRetryLimit-1)*txnSizeRate)
+			err = s.retry(ctx, uint(maxRetryCount))
 		}
 	}
 	counter := s.sessionVars.TxnCtx.StatementCount
