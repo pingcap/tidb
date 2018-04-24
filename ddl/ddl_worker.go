@@ -100,6 +100,7 @@ func (d *ddl) isOwner() bool {
 // buildJobDependence sets the curjob's dependency-ID.
 // The dependency-job's ID must less than the current job's ID, and we need the largest one in the list.
 func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
+
 	jobs, err := t.GetAllDDLJobs()
 	if err != nil {
 		return errors.Trace(err)
@@ -133,6 +134,14 @@ func (d *ddl) addDDLJob(ctx sessionctx.Context, job *model.Job) error {
 			return errors.Trace(err)
 		}
 		job.StartTS = txn.StartTS()
+		if job.Type == model.ActionAddIndex {
+			buildJobDependence(t, job)
+			t.SetJobListKey(meta.AddIndexJobListKey)
+		} else {
+			t.SetJobListKey(meta.AddIndexJobListKey)
+			buildJobDependence(t, job)
+			t.SetJobListKey(meta.DefaultJobListKey)
+		}
 		err = t.EnQueueDDLJob(job)
 		return errors.Trace(err)
 	})
@@ -249,12 +258,6 @@ func (d *ddl) handleDDLJobQueue(shouldCleanJobs bool) error {
 			// We are not owner, return and retry checking later.
 			if !d.isOwner() {
 				return nil
-			}
-
-			// It's used for clean up the job in adding index queue before we support adding index queue.
-			// TODO: Remove this logic after we support the adding index queue.
-			if shouldCleanJobs {
-				return errors.Trace(d.cleanAddIndexQueueJobs(txn))
 			}
 
 			var err error
@@ -517,67 +520,4 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 	}
 	err = t.SetSchemaDiff(diff)
 	return schemaVersion, errors.Trace(err)
-}
-
-// cleanAddIndexQueueJobs cleans jobs in adding index queue.
-// It's only done once after the worker become the owner.
-// TODO: Remove this logic after we support the adding index queue.
-func (d *ddl) cleanAddIndexQueueJobs(txn kv.Transaction) error {
-	startTime := time.Now()
-	m := meta.NewMeta(txn)
-	m.SetJobListKey(meta.AddIndexJobListKey)
-	for {
-		job, err := d.getFirstDDLJob(m)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if job == nil {
-			log.Infof("[ddl] cleaning jobs in the adding index queue takes time %v.", time.Since(startTime))
-			return nil
-		}
-		log.Infof("[ddl] cleaning job %v in the adding index queue.", job)
-
-		// The types of these jobs must be ActionAddIndex.
-		if job.SchemaState == model.StatePublic || job.SchemaState == model.StateNone {
-			if job.SchemaState == model.StateNone {
-				job.State = model.JobStateCancelled
-			} else {
-				binloginfo.SetDDLBinlog(d.workerVars.BinlogClient, txn, job.ID, job.Query)
-				job.State = model.JobStateSynced
-			}
-			err = d.finishDDLJob(m, job)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			continue
-		}
-
-		// When the job not in "none" and "public" state, we need to rollback it.
-		schemaID := job.SchemaID
-		tblInfo, err := getTableInfo(m, job, schemaID)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		var indexName model.CIStr
-		var unique bool
-		err = job.DecodeArgs(&unique, &indexName)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		indexInfo := findIndexByName(indexName.L, tblInfo.Indices)
-		_, err = d.convert2RollbackJob(m, job, tblInfo, indexInfo, nil)
-		if err == nil {
-			_, err = m.DeQueueDDLJob()
-		}
-		if err != nil {
-			return errors.Trace(err)
-		}
-		// Put the job to the default job list.
-		m.SetJobListKey(meta.DefaultJobListKey)
-		err = m.EnQueueDDLJob(job)
-		m.SetJobListKey(meta.AddIndexJobListKey)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
 }
