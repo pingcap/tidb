@@ -13,12 +13,15 @@
 
 package latch
 
+import "sync/atomic"
+
 const lockChanSize = 100
 
 // LatchesScheduler is used to schedule latches for transactions.
 type LatchesScheduler struct {
 	latches  *Latches
 	unlockCh chan *Lock
+	closed   int32
 }
 
 // NewScheduler create the LatchesScheduler.
@@ -52,6 +55,7 @@ func (scheduler *LatchesScheduler) wakeup(wakeupList []*Lock) {
 
 // Close closes LatchesScheduler.
 func (scheduler *LatchesScheduler) Close() {
+	atomic.StoreInt32(&scheduler.closed, 1)
 	close(scheduler.unlockCh)
 }
 
@@ -73,7 +77,10 @@ func (scheduler *LatchesScheduler) Lock(startTS uint64, keys [][]byte) *Lock {
 // UnLock unlocks a lock with commitTS.
 func (scheduler *LatchesScheduler) UnLock(lock *Lock, commitTS uint64) {
 	lock.commitTS = commitTS
-	scheduler.unlockCh <- lock
+	if atomic.LoadInt32(&scheduler.closed) == 0 {
+		scheduler.unlockCh <- lock
+	}
+
 }
 
 // RefreshCommitTS refreshes commitTS for keys. It could be used for the transaction not retryable,
