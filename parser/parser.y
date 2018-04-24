@@ -4092,7 +4092,7 @@ SelectStmtPart3:
 SelectStmt:
 	SelectStmtPart1 OrderByOptional SelectStmtLimit SelectLockOpt
 	{
-	    st := $1.(*ast.SelectStmt)
+		st := $1.(*ast.SelectStmt)
 		st.LockTp = $4.(ast.SelectLockType)
 		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
 		if lastField.Expr != nil && lastField.AsName.O == "" {
