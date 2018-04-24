@@ -203,7 +203,7 @@ func (ds *DataSource) findBestTask(prop *requiredProp) (task, error) {
 
 	t = invalidTask
 
-	for _, path := range ds.possibleIndexPaths {
+	for _, path := range ds.possibleAccessPaths {
 		if path.isRowID {
 			tblTask, err := ds.convertToTableScan(prop, path)
 			if err != nil {
@@ -276,7 +276,7 @@ func (ds *DataSource) forceToIndexScan(idx *model.IndexInfo, remainedConds []exp
 	}
 	is.initSchema(ds.id, idx, cop.tablePlan != nil)
 	indexConds, tblConds := splitIndexFilterConditions(remainedConds, idx.Columns, ds.tableInfo)
-	path := &indexPath{indexFilters: indexConds, tableFilters: tblConds, countAfterIndex: math.MaxFloat64}
+	path := &accessPath{indexFilters: indexConds, tableFilters: tblConds, countAfterIndex: math.MaxFloat64}
 	is.addPushedDownSelection(cop, ds, math.MaxFloat64, path)
 	t := finishCopTask(ds.ctx, cop)
 	return t.plan()
@@ -295,7 +295,7 @@ func (ts *PhysicalTableScan) appendExtraHandleCol(ds *DataSource) {
 }
 
 // convertToIndexScan converts the DataSource to index scan with idx.
-func (ds *DataSource) convertToIndexScan(prop *requiredProp, path *indexPath) (task task, err error) {
+func (ds *DataSource) convertToIndexScan(prop *requiredProp, path *accessPath) (task task, err error) {
 	idx := path.index
 	is := PhysicalIndexScan{
 		Table:            ds.tableInfo,
@@ -401,7 +401,7 @@ func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, isDoubleRe
 	is.SetSchema(expression.NewSchema(indexCols...))
 }
 
-func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSource, expectedCnt float64, path *indexPath) {
+func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSource, expectedCnt float64, path *accessPath) {
 	// Add filter condition to table plan now.
 	indexConds, tableConds := path.indexFilters, path.tableFilters
 	if indexConds != nil {
@@ -501,7 +501,7 @@ func (ds *DataSource) forceToTableScan(pk *expression.Column) PhysicalPlan {
 }
 
 // convertToTableScan converts the DataSource to table scan.
-func (ds *DataSource) convertToTableScan(prop *requiredProp, path *indexPath) (task task, err error) {
+func (ds *DataSource) convertToTableScan(prop *requiredProp, path *accessPath) (task task, err error) {
 	// It will be handled in convertToIndexScan.
 	if prop.taskTp == copDoubleReadTaskType {
 		return &copTask{cst: math.MaxFloat64}, nil

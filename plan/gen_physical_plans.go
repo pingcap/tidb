@@ -256,8 +256,8 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 	if !ok {
 		return nil
 	}
-	indexPaths := x.possibleIndexPaths
-	if len(x.possibleIndexPaths) > 0 && x.possibleIndexPaths[0].isRowID {
+	indexPaths := x.possibleAccessPaths
+	if len(x.possibleAccessPaths) > 0 && x.possibleAccessPaths[0].isRowID {
 		indexPaths = indexPaths[1:]
 		pkCol := x.getPKIsHandleCol()
 		if pkCol != nil && innerJoinKeys[0].Equal(nil, pkCol) {

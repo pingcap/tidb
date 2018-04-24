@@ -1671,7 +1671,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	tableInfo := tbl.Meta()
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "")
 
-	possiblePaths, err := getPossibleIndexPaths(tn.IndexHints, tableInfo)
+	possiblePaths, err := getPossibleAccessPaths(tn.IndexHints, tableInfo)
 	if err != nil {
 		b.err = errors.Trace(err)
 		return nil
@@ -1685,12 +1685,12 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	}
 
 	ds := DataSource{
-		DBName:             dbName,
-		tableInfo:          tableInfo,
-		statisticTable:     b.getStatsTable(tableInfo),
-		indexHints:         tn.IndexHints,
-		possibleIndexPaths: possiblePaths,
-		Columns:            make([]*model.ColumnInfo, 0, len(columns)),
+		DBName:              dbName,
+		tableInfo:           tableInfo,
+		statisticTable:      b.getStatsTable(tableInfo),
+		indexHints:          tn.IndexHints,
+		possibleAccessPaths: possiblePaths,
+		Columns:             make([]*model.ColumnInfo, 0, len(columns)),
 	}.init(b.ctx)
 
 	var handleCol *expression.Column

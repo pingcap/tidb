@@ -174,7 +174,7 @@ func (p *LogicalJoin) buildKeyInfo() {
 func (ds *DataSource) buildKeyInfo() {
 	ds.schema.Keys = nil
 	ds.baseLogicalPlan.buildKeyInfo()
-	for _, path := range ds.possibleIndexPaths {
+	for _, path := range ds.possibleAccessPaths {
 		if path.isRowID {
 			continue
 		}

@@ -19,8 +19,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/util/ranger"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -131,65 +129,18 @@ func (ds *DataSource) deriveStats() (*statsInfo, error) {
 		ds.pushedDownConds[i] = expression.PushDownNot(nil, expr, false)
 	}
 	ds.statsAfterSelect = ds.getStatsByFilter(ds.pushedDownConds)
-	sc := ds.ctx.GetSessionVars().StmtCtx
-	for _, path := range ds.possibleIndexPaths {
-		path.countAfterAccess = float64(ds.statisticTable.Count)
-		path.countAfterIndex = float64(ds.statisticTable.Count)
+	for _, path := range ds.possibleAccessPaths {
 		var err error
 		if path.isRowID {
-			var pkCol *expression.Column
-			if ds.tableInfo.PKIsHandle {
-				if pkColInfo := ds.tableInfo.GetPkColInfo(); pkColInfo != nil {
-					pkCol = expression.ColInfo2Col(ds.schema.Columns, pkColInfo)
-				}
-			}
-			if pkCol != nil {
-				path.ranges = ranger.FullIntNewRange(mysql.HasUnsignedFlag(pkCol.RetType.Flag))
-			} else {
-				path.ranges = ranger.FullIntNewRange(false)
-			}
-			if len(ds.pushedDownConds) > 0 {
-				if pkCol != nil {
-					path.accessConds, path.tableFilters = ranger.DetachCondsForTableRange(ds.ctx, ds.pushedDownConds, pkCol)
-					path.ranges, err = ranger.BuildTableRange(path.accessConds, sc, pkCol.RetType)
-					if err != nil {
-						return nil, errors.Trace(err)
-					}
-					path.countAfterAccess, err = ds.statisticTable.GetRowCountByIntColumnRanges(sc, pkCol.ID, path.ranges)
-					if err != nil {
-						return nil, errors.Trace(err)
-					}
-				} else {
-					path.tableFilters = ds.pushedDownConds
-				}
+			err = ds.prepareTablePath(path)
+			if err != nil {
+				return nil, errors.Trace(err)
 			}
 			continue
 		}
-		path.ranges = ranger.FullNewRange()
-		if len(ds.pushedDownConds) > 0 {
-			idxCols, lengths := expression.IndexInfo2Cols(ds.schema.Columns, path.index)
-			if len(idxCols) != 0 {
-				path.ranges, path.accessConds, path.indexFilters, path.eqCondCount, err = ranger.DetachCondAndBuildRangeForIndex(ds.ctx, ds.pushedDownConds, idxCols, lengths)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				path.countAfterAccess, err = ds.statisticTable.GetRowCountByIndexRanges(sc, path.index.ID, path.ranges)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				path.indexFilters, path.tableFilters = splitIndexFilterConditions(path.indexFilters, path.index.Columns, ds.tableInfo)
-			} else {
-				path.indexFilters, path.tableFilters = splitIndexFilterConditions(ds.pushedDownConds, path.index.Columns, ds.tableInfo)
-			}
-			path.countAfterIndex = path.countAfterAccess
-			if path.indexFilters != nil {
-				selectivity, err := ds.statisticTable.Selectivity(ds.ctx, path.indexFilters)
-				if err != nil {
-					log.Warnf("An error happened: %v, we have to use the default selectivity", err.Error())
-					selectivity = selectionFactor
-				}
-				path.countAfterIndex = math.Max(path.countAfterAccess*selectivity, ds.statsAfterSelect.count)
-			}
+		err = ds.prepareIndexPath(path)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 	}
 	return ds.statsAfterSelect, nil
