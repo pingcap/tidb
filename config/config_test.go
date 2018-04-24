@@ -56,7 +56,7 @@ commit-timeout="41s"`)
 	c.Assert(conf.BinlogSocket, Equals, "/tmp/socket")
 
 	// Test that the value will be overwritten by the config file.
-	c.Assert(conf.Performance.RetryLimit, Equals, uint(10))
+	c.Assert(conf.Performance.RetryLimit, Equals, uint32(10))
 
 	c.Assert(conf.TiKVClient.CommitTimeout, Equals, "41s")
 	c.Assert(f.Close(), IsNil)
