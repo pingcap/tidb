@@ -32,7 +32,7 @@ func CodeGenRequestFieldExtractor(fullMethod string, req interface{}) map[string
 	return nil
 }
 
-// TagedRequestFiledExtractor is a function that relies on Go struct tags to export log fields from requests.
+// TagBasedRequestFieldExtractor is a function that relies on Go struct tags to export log fields from requests.
 // These are usualy coming from a protoc-plugin, such as Gogo protobuf.
 //
 //  message Metadata {

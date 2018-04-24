@@ -71,3 +71,7 @@ ignored = ["github.com/coreos/etcd/etcdserver", "github.com/coreos/etcd/mvcc", "
 [[constraint]]
   name = "gopkg.in/natefinch/lumberjack.v2"
   version = "2.0.0"
+
+[[constraint]]
+  name = "github.com/grpc-ecosystem/go-grpc-middleware"
+  revision = "0e9bafcdad94657d492d0395b9347d4af3dbdca8"

@@ -621,6 +621,7 @@ func (y *y) conflicts() error {
 				panic("internal error")
 			}
 
+			sort.Slice(r, func(i, j int) bool { return r[i].arg < r[j].arg })
 			var in, out [][2]action
 			if len(s) != 0 {
 				s := s[0]
@@ -679,6 +680,7 @@ func (y *y) conflicts() error {
 
 				ra = append(ra, action)
 			}
+			sort.Slice(ra, func(i, j int) bool { return ra[i].arg < ra[j].arg })
 			state.actions[sym] = append(state.actions[sym], sa...)
 			state.actions[sym] = append(state.actions[sym], ra...)
 		}

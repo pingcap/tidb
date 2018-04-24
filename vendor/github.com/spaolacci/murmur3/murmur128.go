@@ -18,6 +18,7 @@ var (
 	_ bmixer    = new(digest128)
 )
 
+// Hash128 represents a 128-bit hasher
 // Hack: the standard api doesn't define any Hash128 interface.
 type Hash128 interface {
 	hash.Hash
@@ -31,8 +32,13 @@ type digest128 struct {
 	h2 uint64 // Unfinalized running hash part 2.
 }
 
-func New128() Hash128 {
+// New128 returns a 128-bit hasher
+func New128() Hash128 { return New128WithSeed(0) }
+
+// New128WithSeed returns a 128-bit hasher set with explicit seed value
+func New128WithSeed(seed uint32) Hash128 {
 	d := new(digest128)
+	d.seed = seed
 	d.bmixer = d
 	d.Reset()
 	return d
@@ -40,7 +46,7 @@ func New128() Hash128 {
 
 func (d *digest128) Size() int { return 16 }
 
-func (d *digest128) reset() { d.h1, d.h2 = 0, 0 }
+func (d *digest128) reset() { d.h1, d.h2 = uint64(d.seed), uint64(d.seed) }
 
 func (d *digest128) Sum(b []byte) []byte {
 	h1, h2 := d.Sum128()
@@ -181,8 +187,16 @@ func rotl64(x uint64, r byte) uint64 {
 //     hasher := New128()
 //     hasher.Write(data)
 //     return hasher.Sum128()
-func Sum128(data []byte) (h1 uint64, h2 uint64) {
-	d := &digest128{h1: 0, h2: 0}
+func Sum128(data []byte) (h1 uint64, h2 uint64) { return Sum128WithSeed(data, 0) }
+
+// Sum128WithSeed returns the MurmurHash3 sum of data. It is equivalent to the
+// following sequence (without the extra burden and the extra allocation):
+//     hasher := New128WithSeed(seed)
+//     hasher.Write(data)
+//     return hasher.Sum128()
+func Sum128WithSeed(data []byte, seed uint32) (h1 uint64, h2 uint64) {
+	d := &digest128{h1: uint64(seed), h2: uint64(seed)}
+	d.seed = seed
 	d.tail = d.bmix(data)
 	d.clen = len(data)
 	return d.Sum128()

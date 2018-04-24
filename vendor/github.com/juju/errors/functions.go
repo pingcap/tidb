@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// New is a drop in replacement for the standard libary errors module that records
+// New is a drop in replacement for the standard library errors module that records
 // the location that the error is created.
 //
 // For example:

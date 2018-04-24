@@ -56,7 +56,7 @@ func (w *wrappedStream) Context() context.Context {
 
 func (w *wrappedStream) RecvMsg(m interface{}) error {
 	err := w.ServerStream.RecvMsg(m)
-	// We only do log fields extraction on the single-reqest of a server-side stream.
+	// We only do log fields extraction on the single-request of a server-side stream.
 	if !w.info.IsClientStream || w.opts.requestFieldsFromInitial && w.initial {
 		w.initial = false
 

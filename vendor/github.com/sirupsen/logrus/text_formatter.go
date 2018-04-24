@@ -14,7 +14,7 @@ const (
 	red     = 31
 	green   = 32
 	yellow  = 33
-	blue    = 34
+	blue    = 36
 	gray    = 37
 )
 
@@ -26,6 +26,7 @@ func init() {
 	baseTimestamp = time.Now()
 }
 
+// TextFormatter formats logs into text
 type TextFormatter struct {
 	// Set to true to bypass checking for a TTY before outputting colors.
 	ForceColors bool
@@ -52,10 +53,6 @@ type TextFormatter struct {
 	// QuoteEmptyFields will wrap empty fields in quotes if true
 	QuoteEmptyFields bool
 
-	// QuoteCharacter can be set to the override the default quoting character "
-	// with something else. For example: ', or `.
-	QuoteCharacter string
-
 	// Whether the logger's out is to a terminal
 	isTerminal bool
 
@@ -63,14 +60,12 @@ type TextFormatter struct {
 }
 
 func (f *TextFormatter) init(entry *Entry) {
-	if len(f.QuoteCharacter) == 0 {
-		f.QuoteCharacter = "\""
-	}
 	if entry.Logger != nil {
-		f.isTerminal = IsTerminal(entry.Logger.Out)
+		f.isTerminal = checkIfTerminal(entry.Logger.Out)
 	}
 }
 
+// Format renders a single log entry
 func (f *TextFormatter) Format(entry *Entry) ([]byte, error) {
 	var b *bytes.Buffer
 	keys := make([]string, 0, len(entry.Data))
@@ -95,7 +90,7 @@ func (f *TextFormatter) Format(entry *Entry) ([]byte, error) {
 
 	timestampFormat := f.TimestampFormat
 	if timestampFormat == "" {
-		timestampFormat = DefaultTimestampFormat
+		timestampFormat = defaultTimestampFormat
 	}
 	if isColored {
 		f.printColored(b, entry, keys, timestampFormat)
@@ -153,7 +148,7 @@ func (f *TextFormatter) needsQuoting(text string) bool {
 		if !((ch >= 'a' && ch <= 'z') ||
 			(ch >= 'A' && ch <= 'Z') ||
 			(ch >= '0' && ch <= '9') ||
-			ch == '-' || ch == '.') {
+			ch == '-' || ch == '.' || ch == '_' || ch == '/' || ch == '@' || ch == '^' || ch == '+') {
 			return true
 		}
 	}
@@ -161,29 +156,23 @@ func (f *TextFormatter) needsQuoting(text string) bool {
 }
 
 func (f *TextFormatter) appendKeyValue(b *bytes.Buffer, key string, value interface{}) {
-
+	if b.Len() > 0 {
+		b.WriteByte(' ')
+	}
 	b.WriteString(key)
 	b.WriteByte('=')
 	f.appendValue(b, value)
-	b.WriteByte(' ')
 }
 
 func (f *TextFormatter) appendValue(b *bytes.Buffer, value interface{}) {
-	switch value := value.(type) {
-	case string:
-		if !f.needsQuoting(value) {
-			b.WriteString(value)
-		} else {
-			fmt.Fprintf(b, "%s%v%s", f.QuoteCharacter, value, f.QuoteCharacter)
-		}
-	case error:
-		errmsg := value.Error()
-		if !f.needsQuoting(errmsg) {
-			b.WriteString(errmsg)
-		} else {
-			fmt.Fprintf(b, "%s%v%s", f.QuoteCharacter, errmsg, f.QuoteCharacter)
-		}
-	default:
-		fmt.Fprint(b, value)
+	stringVal, ok := value.(string)
+	if !ok {
+		stringVal = fmt.Sprint(value)
+	}
+
+	if !f.needsQuoting(stringVal) {
+		b.WriteString(stringVal)
+	} else {
+		b.WriteString(fmt.Sprintf("%q", stringVal))
 	}
 }
