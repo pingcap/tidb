@@ -446,7 +446,7 @@ func (hg *Histogram) getIncreaseFactor(totalCount int64) float64 {
 
 // validRange checks if the range is valid, it is used by `SplitRange` to remove the invalid range,
 // the possible types of range are index key range and handle key range.
-func validRange(ran *ranger.NewRange) bool {
+func validRange(ran *ranger.Range) bool {
 	var low, high []byte
 	if ran.LowVal[0].Kind() == types.KindBytes {
 		low, high = ran.LowVal[0].GetBytes(), ran.HighVal[0].GetBytes()
@@ -465,8 +465,8 @@ func validRange(ran *ranger.NewRange) bool {
 // SplitRange splits the range according to the histogram upper bound. Note that we treat last bucket's upper bound
 // as inf, so all the split ranges will totally fall in one of the (-inf, u(0)], (u(0), u(1)],...(u(n-3), u(n-2)],
 // (u(n-2), +inf), where n is the number of buckets, u(i) is the i-th bucket's upper bound.
-func (hg *Histogram) SplitRange(ranges []*ranger.NewRange) []*ranger.NewRange {
-	split := make([]*ranger.NewRange, 0, len(ranges))
+func (hg *Histogram) SplitRange(ranges []*ranger.Range) []*ranger.Range {
+	split := make([]*ranger.Range, 0, len(ranges))
 	for len(ranges) > 0 {
 		// Find the last bound that greater or equal to the LowVal.
 		idx := hg.Bounds.UpperBound(0, &ranges[0].LowVal[0])
@@ -502,7 +502,7 @@ func (hg *Histogram) SplitRange(ranges []*ranger.NewRange) []*ranger.NewRange {
 		cmp := chunk.Compare(upperBound, 0, &ranges[0].LowVal[0])
 		if cmp > 0 || (cmp == 0 && !ranges[0].LowExclude) {
 			upper := upperBound.GetDatum(0, hg.tp)
-			split = append(split, &ranger.NewRange{
+			split = append(split, &ranger.Range{
 				LowExclude:  ranges[0].LowExclude,
 				LowVal:      []types.Datum{ranges[0].LowVal[0]},
 				HighVal:     []types.Datum{upper},
@@ -640,8 +640,8 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum) (f
 	return c.Histogram.equalRowCount(val), nil
 }
 
-// getColumnRowCount estimates the row count by a slice of NewRange.
-func (c *Column) getColumnRowCount(sc *stmtctx.StatementContext, ranges []*ranger.NewRange) (float64, error) {
+// getColumnRowCount estimates the row count by a slice of Range.
+func (c *Column) getColumnRowCount(sc *stmtctx.StatementContext, ranges []*ranger.Range) (float64, error) {
 	var rowCount float64
 	for _, rg := range ranges {
 		cmp, err := rg.LowVal[0].CompareDatum(sc, &rg.HighVal[0])
@@ -704,7 +704,7 @@ func (idx *Index) equalRowCount(sc *stmtctx.StatementContext, b []byte) float64 
 	return idx.Histogram.equalRowCount(types.NewBytesDatum(b))
 }
 
-func (idx *Index) getRowCount(sc *stmtctx.StatementContext, indexRanges []*ranger.NewRange) (float64, error) {
+func (idx *Index) getRowCount(sc *stmtctx.StatementContext, indexRanges []*ranger.Range) (float64, error) {
 	totalCount := float64(0)
 	for _, indexRange := range indexRanges {
 		lb, err := codec.EncodeKey(sc, nil, indexRange.LowVal...)

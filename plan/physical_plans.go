@@ -95,7 +95,7 @@ type PhysicalIndexScan struct {
 
 	Table     *model.TableInfo
 	Index     *model.IndexInfo
-	Ranges    []*ranger.NewRange
+	Ranges    []*ranger.Range
 	Columns   []*model.ColumnInfo
 	DBName    model.CIStr
 	Desc      bool
@@ -147,7 +147,7 @@ type PhysicalTableScan struct {
 	Columns []*model.ColumnInfo
 	DBName  model.CIStr
 	Desc    bool
-	Ranges  []*ranger.NewRange
+	Ranges  []*ranger.Range
 	pkCol   *expression.Column
 
 	TableAsName *model.CIStr
@@ -226,7 +226,7 @@ type PhysicalIndexJoin struct {
 	DefaultValues []types.Datum
 
 	// Ranges stores the IndexRanges when the inner plan is index scan.
-	Ranges []*ranger.NewRange
+	Ranges []*ranger.Range
 	// KeyOff2IdxOff maps the offsets in join key to the offsets in the index.
 	KeyOff2IdxOff []int
 }
