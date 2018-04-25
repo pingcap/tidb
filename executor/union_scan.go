@@ -111,6 +111,16 @@ type UnionScanExec struct {
 	sortErr             error
 	snapshotRows        []types.DatumRow
 	cursor4SnapshotRows int
+	snapshotChunkBuffer *chunk.Chunk
+}
+
+// Open implements the Executor Open interface.
+func (us *UnionScanExec) Open(ctx context.Context) error {
+	if err := us.baseExecutor.Open(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	us.snapshotChunkBuffer = us.newChunk()
+	return nil
 }
 
 // Next implements the Executor Next interface.
@@ -182,13 +192,12 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) (types.DatumRow, er
 	us.cursor4SnapshotRows = 0
 	us.snapshotRows = us.snapshotRows[:0]
 	for len(us.snapshotRows) == 0 {
-		chk := chunk.NewChunkWithCapacity(us.retTypes(), us.maxChunkSize)
-		err = us.children[0].Next(ctx, chk)
-		if err != nil || chk.NumRows() == 0 {
+		err = us.children[0].Next(ctx, us.snapshotChunkBuffer)
+		if err != nil || us.snapshotChunkBuffer.NumRows() == 0 {
 			return nil, errors.Trace(err)
 		}
-		it := chunk.NewIterator4Chunk(chk)
-		for row := it.Begin(); row != it.End(); row = it.Next() {
+		iter := chunk.NewIterator4Chunk(us.snapshotChunkBuffer)
+		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			snapshotHandle := row.GetInt64(us.belowHandleIndex)
 			if _, ok := us.dirty.deletedRows[snapshotHandle]; ok {
 				continue
