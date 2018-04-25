@@ -642,20 +642,18 @@ func (e *ShowExec) fetchShowCreateTable() error {
 				}
 			}
 
+			var parDef string
+			if multipleLt {
+				parDef = fmt.Sprintf("  PARTITION %s VALUES LESS THAN (%s)", def.Name, lessThans)
+			} else {
+				parDef = fmt.Sprintf("  PARTITION %s VALUES LESS THAN %s", def.Name, lessThans)
+			}
 			if i < len(partitionInfo.Definitions)-1 {
-				if multipleLt {
-					buf.WriteString(fmt.Sprintf("  PARTITION %s VALUES LESS THAN (%s)", def.Name, lessThans))
-				} else {
-					buf.WriteString(fmt.Sprintf("  PARTITION %s VALUES LESS THAN %s", def.Name, lessThans))
-				}
+				buf.WriteString(parDef)
 				buf.WriteString(",\n")
 			} else {
-				if multipleLt {
-
-					buf.WriteString(fmt.Sprintf("  PARTITION %s VALUES LESS THAN (%s)\n", def.Name, lessThans))
-				} else {
-					buf.WriteString(fmt.Sprintf("  PARTITION %s VALUES LESS THAN %s\n", def.Name, lessThans))
-				}
+				buf.WriteString(parDef)
+				buf.WriteString("\n")
 			}
 		}
 		buf.WriteString(")")
