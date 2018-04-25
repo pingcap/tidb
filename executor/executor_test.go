@@ -2517,11 +2517,17 @@ func (s *testSuite) TestIssue5341(c *C) {
 
 func (s *testSuite) TestContainDotColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists test.t1")
 	tk.MustExec("create table test.t1(t1.a char)")
 	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t2(a char, t2.b int)")
+
+	tk.MustExec("drop table if exists t3")
+	_, err := tk.Exec("create table t3(s.a char);")
+	terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrWrongTableName))
 }
 
 func (s *testSuite) TestCheckIndex(c *C) {

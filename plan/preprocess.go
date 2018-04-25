@@ -52,6 +52,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.CreateTableStmt:
 		p.inCreateOrDropTable = true
 		p.checkCreateTableGrammar(node)
+		p.checkContainDotColumn(node)
 	case *ast.DropTableStmt:
 		p.inCreateOrDropTable = true
 		p.checkDropTableGrammar(node)
@@ -223,12 +224,6 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		p.err = ddl.ErrWrongTableName.GenByArgs(tName)
 		return
 	}
-
-	if tableName, ok := checksContainDotColumns(tName, stmt.Cols); ok {
-		p.err = ddl.ErrWrongTableName.GenByArgs(tableName)
-		return
-	}
-
 	countPrimaryKey := 0
 	for _, colDef := range stmt.Cols {
 		if err := checkColumn(colDef); err != nil {
@@ -467,14 +462,16 @@ func isIncorrectName(name string) bool {
 	return false
 }
 
-// checksContainDotColumns check field contains the table name.
-func checksContainDotColumns(tableName string, colDefs []*ast.ColumnDef) (string, bool) {
-	for _, colDef := range colDefs {
-		if colDef.Name.Table.O != tableName && len(colDef.Name.Table.O) != 0 {
-			return colDef.Name.Table.O, true
+// checkContainDotColumn checks field contains the table name.
+// for example :create table t (c1.c2 int default null).
+func (p *preprocessor) checkContainDotColumn(stmt *ast.CreateTableStmt) {
+	tName := stmt.Table.Name.String()
+	for _, colDef := range stmt.Cols {
+		// check table name.
+		if colDef.Name.Table.O != tName && len(colDef.Name.Table.O) != 0 {
+			p.err = ddl.ErrWrongTableName.GenByArgs(colDef.Name.Table.O)
 		}
 	}
-	return "", false
 }
 
 func (p *preprocessor) handleTableName(tn *ast.TableName) {
