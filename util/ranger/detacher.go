@@ -139,10 +139,10 @@ func getEqOrInColOffset(expr expression.Expression, cols []*expression.Column) i
 // It will first find the point query column and then extract the range query column.
 // considerDNF is true means it will try to extract access conditions from the DNF expressions.
 func detachCNFCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []expression.Expression, cols []*expression.Column,
-	tpSlice []*types.FieldType, lengths []int, considerDNF bool) ([]*NewRange, []expression.Expression, []expression.Expression, int, error) {
+	tpSlice []*types.FieldType, lengths []int, considerDNF bool) ([]*Range, []expression.Expression, []expression.Expression, int, error) {
 	var (
 		eqCount int
-		ranges  []*NewRange
+		ranges  []*Range
 		err     error
 	)
 
@@ -211,7 +211,7 @@ func extractEqAndInCondition(conditions []expression.Expression, cols []*express
 // detachDNFCondAndBuildRangeForIndex will detach the index filters from table filters when it's a DNF.
 // We will detach the conditions of every DNF items, then compose them to a DNF.
 func detachDNFCondAndBuildRangeForIndex(sctx sessionctx.Context, condition *expression.ScalarFunction,
-	cols []*expression.Column, newTpSlice []*types.FieldType, lengths []int) ([]*NewRange, []expression.Expression, bool, error) {
+	cols []*expression.Column, newTpSlice []*types.FieldType, lengths []int) ([]*Range, []expression.Expression, bool, error) {
 	sc := sctx.GetSessionVars().StmtCtx
 	firstColumnChecker := &conditionChecker{
 		colName:       cols[0].ColName,
@@ -221,7 +221,7 @@ func detachDNFCondAndBuildRangeForIndex(sctx sessionctx.Context, condition *expr
 	rb := builder{sc: sc}
 	dnfItems := expression.FlattenDNFConditions(condition)
 	newAccessItems := make([]expression.Expression, 0, len(dnfItems))
-	var totalRanges []*NewRange
+	var totalRanges []*Range
 	hasResidual := false
 	for _, item := range dnfItems {
 		if sf, ok := item.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicAnd {
@@ -232,7 +232,7 @@ func detachDNFCondAndBuildRangeForIndex(sctx sessionctx.Context, condition *expr
 				return nil, nil, false, nil
 			}
 			if len(accesses) == 0 {
-				return FullNewRange(), nil, true, nil
+				return FullRange(), nil, true, nil
 			}
 			if len(filters) > 0 {
 				hasResidual = true
@@ -245,18 +245,18 @@ func detachDNFCondAndBuildRangeForIndex(sctx sessionctx.Context, condition *expr
 				firstColumnChecker.shouldReserve = lengths[0] != types.UnspecifiedLength
 			}
 			points := rb.build(item)
-			ranges, err := points2NewRanges(sc, points, newTpSlice[0])
+			ranges, err := points2Ranges(sc, points, newTpSlice[0])
 			if err != nil {
 				return nil, nil, false, errors.Trace(err)
 			}
 			totalRanges = append(totalRanges, ranges...)
 			newAccessItems = append(newAccessItems, item)
 		} else {
-			return FullNewRange(), nil, true, nil
+			return FullRange(), nil, true, nil
 		}
 	}
 
-	totalRanges, err := unionNewRanges(sc, totalRanges)
+	totalRanges, err := unionRanges(sc, totalRanges)
 	if err != nil {
 		return nil, nil, false, errors.Trace(err)
 	}
@@ -268,7 +268,7 @@ func detachDNFCondAndBuildRangeForIndex(sctx sessionctx.Context, condition *expr
 // If the top layer is DNF, we return a int slice which is eqAndInCount of every DNF item.
 // Otherwise just one number is returned.
 func DetachCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []expression.Expression, cols []*expression.Column,
-	lengths []int) ([]*NewRange, []expression.Expression, []expression.Expression, int, error) {
+	lengths []int) ([]*Range, []expression.Expression, []expression.Expression, int, error) {
 	newTpSlice := make([]*types.FieldType, 0, len(cols))
 	for _, col := range cols {
 		newTpSlice = append(newTpSlice, newFieldType(col.RetType))
@@ -292,7 +292,7 @@ func DetachCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []expre
 // DetachSimpleCondAndBuildRangeForIndex will detach the index filters from table filters.
 // It will find the point query column firstly and then extract the range query column.
 func DetachSimpleCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []expression.Expression,
-	cols []*expression.Column, lengths []int) (ranges []*NewRange, accessConds []expression.Expression, err error) {
+	cols []*expression.Column, lengths []int) (ranges []*Range, accessConds []expression.Expression, err error) {
 	newTpSlice := make([]*types.FieldType, 0, len(cols))
 	for _, col := range cols {
 		newTpSlice = append(newTpSlice, newFieldType(col.RetType))
