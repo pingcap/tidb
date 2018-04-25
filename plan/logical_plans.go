@@ -331,31 +331,29 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath) error {
 	var err error
 	sc := ds.ctx.GetSessionVars().StmtCtx
 	path.countAfterAccess = float64(ds.statisticTable.Count)
+	path.tableFilters = ds.pushedDownConds
 	var pkCol *expression.Column
 	if ds.tableInfo.PKIsHandle {
 		if pkColInfo := ds.tableInfo.GetPkColInfo(); pkColInfo != nil {
 			pkCol = expression.ColInfo2Col(ds.schema.Columns, pkColInfo)
 		}
 	}
-	if pkCol != nil {
-		path.ranges = ranger.FullIntRange(mysql.HasUnsignedFlag(pkCol.RetType.Flag))
-	} else {
+	if pkCol == nil {
 		path.ranges = ranger.FullIntRange(false)
+		return nil
 	}
-	if len(ds.pushedDownConds) > 0 {
-		if pkCol != nil {
-			path.accessConds, path.tableFilters = ranger.DetachCondsForTableRange(ds.ctx, ds.pushedDownConds, pkCol)
-			path.ranges, err = ranger.BuildTableRange(path.accessConds, sc, pkCol.RetType)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			path.countAfterAccess, err = ds.statisticTable.GetRowCountByIntColumnRanges(sc, pkCol.ID, path.ranges)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		} else {
-			path.tableFilters = ds.pushedDownConds
-		}
+	path.ranges = ranger.FullIntRange(mysql.HasUnsignedFlag(pkCol.RetType.Flag))
+	if len(ds.pushedDownConds) == 0 {
+		return nil
+	}
+	path.accessConds, path.tableFilters = ranger.DetachCondsForTableRange(ds.ctx, ds.pushedDownConds, pkCol)
+	path.ranges, err = ranger.BuildTableRange(path.accessConds, sc, pkCol.RetType)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	path.countAfterAccess, err = ds.statisticTable.GetRowCountByIntColumnRanges(sc, pkCol.ID, path.ranges)
+	if err != nil {
+		return errors.Trace(err)
 	}
 	return nil
 }
