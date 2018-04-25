@@ -312,7 +312,7 @@ type DataSource struct {
 // accessPath tells how we access one index or just access table.
 type accessPath struct {
 	index  *model.IndexInfo
-	ranges []*ranger.NewRange
+	ranges []*ranger.Range
 	// countAfterAccess is the row count after we apply range seek and before we use other filter to filter data.
 	countAfterAccess float64
 	// countAfterIndex is the row count after we apply filters on index and before we apply the table filters.
@@ -338,9 +338,9 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath) error {
 		}
 	}
 	if pkCol != nil {
-		path.ranges = ranger.FullIntNewRange(mysql.HasUnsignedFlag(pkCol.RetType.Flag))
+		path.ranges = ranger.FullIntRange(mysql.HasUnsignedFlag(pkCol.RetType.Flag))
 	} else {
-		path.ranges = ranger.FullIntNewRange(false)
+		path.ranges = ranger.FullIntRange(false)
 	}
 	if len(ds.pushedDownConds) > 0 {
 		if pkCol != nil {
@@ -363,7 +363,7 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath) error {
 func (ds *DataSource) deriveIndexPathStats(path *accessPath) error {
 	var err error
 	sc := ds.ctx.GetSessionVars().StmtCtx
-	path.ranges = ranger.FullNewRange()
+	path.ranges = ranger.FullRange()
 	path.countAfterAccess = float64(ds.statisticTable.Count)
 	idxCols, lengths := expression.IndexInfo2Cols(ds.schema.Columns, path.index)
 	if len(idxCols) != 0 {

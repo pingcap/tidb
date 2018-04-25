@@ -467,7 +467,7 @@ func (b *planBuilder) buildCheckIndex(dbName model.CIStr, as *ast.AdminStmt) Pla
 		Columns:          columns,
 		Index:            idx,
 		dataSourceSchema: schema,
-		Ranges:           ranger.FullNewRange(),
+		Ranges:           ranger.FullRange(),
 		KeepOrder:        false,
 	}.init(b.ctx)
 	is.stats = &statsInfo{}

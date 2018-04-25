@@ -135,7 +135,6 @@ func (ds *DataSource) tryToGetMemTask(prop *requiredProp) (task task, err error)
 		TableAsName: ds.TableAsName,
 	}.init(ds.ctx, ds.stats)
 	memTable.SetSchema(ds.schema)
-	memTable.Ranges = ranger.FullIntRange()
 
 	// Stop to push down these conditions.
 	var retPlan PhysicalPlan = memTable
@@ -260,7 +259,7 @@ func (ds *DataSource) forceToIndexScan(idx *model.IndexInfo, remainedConds []exp
 		Columns:          ds.Columns,
 		Index:            idx,
 		dataSourceSchema: ds.schema,
-		Ranges:           ranger.FullNewRange(),
+		Ranges:           ranger.FullRange(),
 		KeepOrder:        false,
 	}.init(ds.ctx)
 	is.filterCondition = remainedConds
@@ -309,7 +308,7 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, path *accessPath) (
 	if statsTbl.Indices[idx.ID] != nil {
 		is.Hist = &statsTbl.Indices[idx.ID].Histogram
 	}
-	is.Ranges = ranger.FullNewRange()
+	is.Ranges = ranger.FullRange()
 	eqCount := 0
 	is.AccessCondition, is.Ranges, is.filterCondition, eqCount = path.accessConds, path.ranges, path.indexFilters, path.eqCondCount
 	rowCount := path.countAfterAccess
@@ -474,11 +473,11 @@ func checkIndexCondition(condition expression.Expression, indexColumns []*model.
 }
 
 func (ds *DataSource) forceToTableScan(pk *expression.Column) PhysicalPlan {
-	var ranges []*ranger.NewRange
+	var ranges []*ranger.Range
 	if pk != nil {
-		ranges = ranger.FullIntNewRange(mysql.HasUnsignedFlag(pk.RetType.Flag))
+		ranges = ranger.FullIntRange(mysql.HasUnsignedFlag(pk.RetType.Flag))
 	} else {
-		ranges = ranger.FullIntNewRange(false)
+		ranges = ranger.FullIntRange(false)
 	}
 	ts := PhysicalTableScan{
 		Table:       ds.tableInfo,
