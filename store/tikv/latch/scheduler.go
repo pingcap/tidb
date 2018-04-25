@@ -13,7 +13,9 @@
 
 package latch
 
-import "sync/atomic"
+import (
+	"sync"
+)
 
 const lockChanSize = 100
 
@@ -21,7 +23,8 @@ const lockChanSize = 100
 type LatchesScheduler struct {
 	latches  *Latches
 	unlockCh chan *Lock
-	closed   int32
+	closed   bool
+	sync.RWMutex
 }
 
 // NewScheduler create the LatchesScheduler.
@@ -31,6 +34,7 @@ func NewScheduler(size int) *LatchesScheduler {
 	scheduler := &LatchesScheduler{
 		latches:  latches,
 		unlockCh: unlockCh,
+		closed:   false,
 	}
 	go scheduler.run()
 	return scheduler
@@ -55,8 +59,12 @@ func (scheduler *LatchesScheduler) wakeup(wakeupList []*Lock) {
 
 // Close closes LatchesScheduler.
 func (scheduler *LatchesScheduler) Close() {
-	atomic.StoreInt32(&scheduler.closed, 1)
-	close(scheduler.unlockCh)
+	scheduler.RWMutex.Lock()
+	defer scheduler.RWMutex.Unlock()
+	if !scheduler.closed {
+		close(scheduler.unlockCh)
+		scheduler.closed = true
+	}
 }
 
 // Lock acquire the lock for transaction with startTS and keys. The caller goroutine
@@ -76,11 +84,11 @@ func (scheduler *LatchesScheduler) Lock(startTS uint64, keys [][]byte) *Lock {
 
 // UnLock unlocks a lock with commitTS.
 func (scheduler *LatchesScheduler) UnLock(lock *Lock, commitTS uint64) {
-	lock.commitTS = commitTS
-	if atomic.LoadInt32(&scheduler.closed) == 0 {
+	scheduler.RLock()
+	defer scheduler.RUnlock()
+	if !scheduler.closed {
 		scheduler.unlockCh <- lock
 	}
-
 }
 
 // RefreshCommitTS refreshes commitTS for keys. It could be used for the transaction not retryable,
