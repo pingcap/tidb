@@ -466,10 +466,12 @@ func isIncorrectName(name string) bool {
 // for example :create table t (c1.c2 int default null).
 func (p *preprocessor) checkContainDotColumn(stmt *ast.CreateTableStmt) {
 	tName := stmt.Table.Name.String()
+
 	for _, colDef := range stmt.Cols {
 		// check table name.
 		if colDef.Name.Table.O != tName && len(colDef.Name.Table.O) != 0 {
 			p.err = ddl.ErrWrongTableName.GenByArgs(colDef.Name.Table.O)
+			return
 		}
 	}
 }
