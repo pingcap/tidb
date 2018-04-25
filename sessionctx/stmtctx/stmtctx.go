@@ -54,6 +54,8 @@ type StatementContext struct {
 	Priority     mysql.PriorityEnum
 	NotFillCache bool
 	MemTracker   *memory.Tracker
+	TableIDs     []int64
+	IndexIDs     []int64
 }
 
 // AddAffectedRows adds affected rows.
