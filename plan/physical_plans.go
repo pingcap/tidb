@@ -122,7 +122,6 @@ type PhysicalMemTable struct {
 	DBName      model.CIStr
 	Table       *model.TableInfo
 	Columns     []*model.ColumnInfo
-	Ranges      []ranger.IntColumnRange
 	TableAsName *model.CIStr
 }
 

@@ -16,39 +16,12 @@ package ranger
 import (
 	"fmt"
 	"math"
-	"strconv"
 	"strings"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 )
-
-// IntColumnRange represents a range for a integer column, both low and high are inclusive.
-type IntColumnRange struct {
-	LowVal  int64
-	HighVal int64
-}
-
-// IsPoint returns if the table range is a point.
-func (tr *IntColumnRange) IsPoint() bool {
-	return tr.HighVal == tr.LowVal
-}
-
-func (tr IntColumnRange) String() string {
-	var l, r string
-	if tr.LowVal == math.MinInt64 {
-		l = "(-inf"
-	} else {
-		l = "[" + strconv.FormatInt(tr.LowVal, 10)
-	}
-	if tr.HighVal == math.MaxInt64 {
-		r = "+inf)"
-	} else {
-		r = strconv.FormatInt(tr.HighVal, 10) + "]"
-	}
-	return l + "," + r
-}
 
 // NewRange represents a range generated in physical plan building phase.
 type NewRange struct {

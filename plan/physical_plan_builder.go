@@ -136,7 +136,6 @@ func (ds *DataSource) tryToGetMemTask(prop *requiredProp) (task task, err error)
 		TableAsName: ds.TableAsName,
 	}.init(ds.ctx, ds.stats)
 	memTable.SetSchema(ds.schema)
-	memTable.Ranges = ranger.FullIntRange()
 
 	// Stop to push down these conditions.
 	var retPlan PhysicalPlan = memTable
