@@ -458,7 +458,7 @@ func (s *testStatisticsSuite) TestColumnRange(c *C) {
 		Count:   int64(col.totalRowCount()),
 		Columns: make(map[int64]*Column),
 	}
-	ran := []*ranger.NewRange{{
+	ran := []*ranger.Range{{
 		LowVal:  []types.Datum{{}},
 		HighVal: []types.Datum{types.MaxValueDatum()},
 	}}
@@ -525,7 +525,7 @@ func (s *testStatisticsSuite) TestIntColumnRanges(c *C) {
 		Count:   int64(col.totalRowCount()),
 		Columns: make(map[int64]*Column),
 	}
-	ran := []*ranger.NewRange{{
+	ran := []*ranger.Range{{
 		LowVal:  []types.Datum{types.NewIntDatum(math.MinInt64)},
 		HighVal: []types.Datum{types.NewIntDatum(math.MaxInt64)},
 	}}
@@ -548,7 +548,7 @@ func (s *testStatisticsSuite) TestIntColumnRanges(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 1)
 
-	ran = []*ranger.NewRange{{
+	ran = []*ranger.Range{{
 		LowVal:  []types.Datum{types.NewUintDatum(0)},
 		HighVal: []types.Datum{types.NewUintDatum(math.MaxUint64)},
 	}}
@@ -615,7 +615,7 @@ func (s *testStatisticsSuite) TestIndexRanges(c *C) {
 		Count:   int64(idx.totalRowCount()),
 		Indices: make(map[int64]*Index),
 	}
-	ran := []*ranger.NewRange{{
+	ran := []*ranger.Range{{
 		LowVal:  []types.Datum{types.MinNotNullDatum()},
 		HighVal: []types.Datum{types.MaxValueDatum()},
 	}}

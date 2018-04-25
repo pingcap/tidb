@@ -412,9 +412,9 @@ func (s *testStatsUpdateSuite) TestSplitRange(c *C) {
 		},
 	}
 	for _, t := range tests {
-		ranges := make([]*ranger.NewRange, 0, len(t.points)/2)
+		ranges := make([]*ranger.Range, 0, len(t.points)/2)
 		for i := 0; i < len(t.points); i += 2 {
-			ranges = append(ranges, &ranger.NewRange{
+			ranges = append(ranges, &ranger.Range{
 				LowVal:      []types.Datum{types.NewIntDatum(t.points[i])},
 				LowExclude:  t.exclude[i],
 				HighVal:     []types.Datum{types.NewIntDatum(t.points[i+1])},
