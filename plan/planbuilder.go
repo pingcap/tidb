@@ -453,7 +453,7 @@ func (b *planBuilder) buildCheckIndex(dbName model.CIStr, as *ast.AdminStmt) Pla
 		Columns:          columns,
 		Index:            idx,
 		dataSourceSchema: schema,
-		Ranges:           ranger.FullNewRange(),
+		Ranges:           ranger.FullRange(),
 		KeepOrder:        false,
 	}.init(b.ctx)
 	is.stats = &statsInfo{}
@@ -926,7 +926,6 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		Columns:     insert.Columns,
 		tableSchema: schema,
 		IsReplace:   insert.IsReplace,
-		Priority:    insert.Priority,
 		IgnoreErr:   insert.IgnoreErr,
 	}.init(b.ctx)
 

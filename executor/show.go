@@ -617,16 +617,36 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	// add partition info here.
 	partitionInfo := tb.Meta().Partition
 	if partitionInfo != nil {
-		buf.WriteString(fmt.Sprintf("\nPARTITION BY %s ( %s ) (\n", partitionInfo.Type.String(), partitionInfo.Expr))
-		for i, def := range partitionInfo.Definitions {
-			if i < len(partitionInfo.Definitions)-1 {
-				buf.WriteString(fmt.Sprintf("  PARTITION %s VALUES LESS THAN %s,\n", def.Name, def.LessThan[0]))
-			} else {
-				if def.MaxValue {
-					buf.WriteString(fmt.Sprintf("  PARTITION %s VALUES LESS THAN %s\n", def.Name, "MAXVALUE"))
-				} else {
-					buf.WriteString(fmt.Sprintf("  PARTITION %s VALUES LESS THAN %s\n", def.Name, def.LessThan[0]))
+		// this if statement takes care of range columns case
+		if partitionInfo.Columns != nil && partitionInfo.Type == model.PartitionTypeRange {
+			buf.WriteString(fmt.Sprintf("\nPARTITION BY RANGE COLUMNS("))
+			for i, col := range partitionInfo.Columns {
+				buf.WriteString(col.L)
+				if i < len(partitionInfo.Columns)-1 {
+					buf.WriteString(",")
 				}
+			}
+			buf.WriteString(") (\n")
+		} else {
+			buf.WriteString(fmt.Sprintf("\nPARTITION BY %s ( %s ) (\n", partitionInfo.Type.String(), partitionInfo.Expr))
+		}
+		for i, def := range partitionInfo.Definitions {
+			lessThans := ""
+			lessThans = strings.Join(def.LessThan, ",")
+			multipleLt := len(def.LessThan) > 1
+
+			var parDef string
+			if multipleLt {
+				parDef = fmt.Sprintf("  PARTITION %s VALUES LESS THAN (%s)", def.Name, lessThans)
+			} else {
+				parDef = fmt.Sprintf("  PARTITION %s VALUES LESS THAN %s", def.Name, lessThans)
+			}
+			if i < len(partitionInfo.Definitions)-1 {
+				buf.WriteString(parDef)
+				buf.WriteString(",\n")
+			} else {
+				buf.WriteString(parDef)
+				buf.WriteString("\n")
 			}
 		}
 		buf.WriteString(")")

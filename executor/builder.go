@@ -48,19 +48,17 @@ import (
 // executorBuilder builds an Executor from a Plan.
 // The InfoSchema must not change during execution.
 type executorBuilder struct {
-	ctx      sessionctx.Context
-	is       infoschema.InfoSchema
-	priority int
-	startTS  uint64 // cached when the first time getStartTS() is called
+	ctx     sessionctx.Context
+	is      infoschema.InfoSchema
+	startTS uint64 // cached when the first time getStartTS() is called
 	// err is set when there is error happened during Executor building process.
 	err error
 }
 
-func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, priority int) *executorBuilder {
+func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema) *executorBuilder {
 	return &executorBuilder{
-		ctx:      ctx,
-		is:       is,
-		priority: priority,
+		ctx: ctx,
+		is:  is,
 	}
 }
 
@@ -226,7 +224,7 @@ func (b *executorBuilder) buildCheckIndex(v *plan.CheckIndex) Executor {
 		b.err = errors.Trace(err)
 		return nil
 	}
-	readerExec.ranges = ranger.FullNewRange()
+	readerExec.ranges = ranger.FullRange()
 	readerExec.isCheckOp = true
 
 	e := &CheckIndexExec{
@@ -525,7 +523,6 @@ func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 	insert := &InsertExec{
 		InsertValues: ivs,
 		OnDuplicate:  append(v.OnDuplicate, v.GenCols.OnDuplicates...),
-		Priority:     v.Priority,
 		IgnoreErr:    v.IgnoreErr,
 	}
 	return insert
@@ -939,7 +936,6 @@ func (b *executorBuilder) buildMemTable(v *plan.PhysicalMemTable) Executor {
 		t:              tb,
 		columns:        v.Columns,
 		seekHandle:     math.MinInt64,
-		ranges:         v.Ranges,
 		isVirtualTable: tb.Type() == table.VirtualTable,
 	}
 	return e
@@ -1109,7 +1105,6 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plan.AnalyzeIndexTask) 
 		tblInfo:     task.TableInfo,
 		idxInfo:     task.IndexInfo,
 		concurrency: b.ctx.GetSessionVars().IndexSerialScanConcurrency,
-		priority:    b.priority,
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeIndex,
 			StartTs:        math.MaxUint64,
@@ -1143,7 +1138,6 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plan.AnalyzeColumnsTa
 		colsInfo:    task.ColsInfo,
 		pkInfo:      task.PKInfo,
 		concurrency: b.ctx.GetSessionVars().DistSQLScanConcurrency,
-		priority:    b.priority,
 		keepOrder:   keepOrder,
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeColumn,
@@ -1307,7 +1301,6 @@ func buildNoRangeTableReader(b *executorBuilder, v *plan.PhysicalTableReader) (*
 		keepOrder:    ts.KeepOrder,
 		desc:         ts.Desc,
 		columns:      ts.Columns,
-		priority:     b.priority,
 		streaming:    streaming,
 	}
 	if containsLimit(dagReq.Executors) {
@@ -1353,7 +1346,6 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plan.PhysicalIndexReader) (*
 		keepOrder:    is.KeepOrder,
 		desc:         is.Desc,
 		columns:      is.Columns,
-		priority:     b.priority,
 		streaming:    streaming,
 	}
 	if containsLimit(dagReq.Executors) {
@@ -1410,7 +1402,6 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plan.PhysicalIndexLook
 		desc:              is.Desc,
 		tableRequest:      tableReq,
 		columns:           is.Columns,
-		priority:          b.priority,
 		indexStreaming:    indexStreaming,
 		tableStreaming:    tableStreaming,
 		dataReaderBuilder: &dataReaderBuilder{executorBuilder: b},
@@ -1455,7 +1446,7 @@ type dataReaderBuilder struct {
 }
 
 func (builder *dataReaderBuilder) buildExecutorForIndexJoin(ctx context.Context, datums [][]types.Datum,
-	IndexRanges []*ranger.NewRange, keyOff2IdxOff []int) (Executor, error) {
+	IndexRanges []*ranger.Range, keyOff2IdxOff []int) (Executor, error) {
 	switch v := builder.Plan.(type) {
 	case *plan.PhysicalTableReader:
 		return builder.buildTableReaderForIndexJoin(ctx, v, datums)
@@ -1486,7 +1477,6 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Contex
 		SetDAGRequest(e.dagPB).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
-		SetPriority(e.priority).
 		SetStreaming(e.streaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		Build()
@@ -1504,7 +1494,7 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Contex
 }
 
 func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Context, v *plan.PhysicalIndexReader,
-	values [][]types.Datum, indexRanges []*ranger.NewRange, keyOff2IdxOff []int) (Executor, error) {
+	values [][]types.Datum, indexRanges []*ranger.Range, keyOff2IdxOff []int) (Executor, error) {
 	e, err := buildNoRangeIndexReader(builder.executorBuilder, v)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1518,7 +1508,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 }
 
 func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context.Context, v *plan.PhysicalIndexLookUpReader,
-	values [][]types.Datum, indexRanges []*ranger.NewRange, keyOff2IdxOff []int) (Executor, error) {
+	values [][]types.Datum, indexRanges []*ranger.Range, keyOff2IdxOff []int) (Executor, error) {
 	e, err := buildNoRangeIndexLookUpReader(builder.executorBuilder, v)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1532,7 +1522,7 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 }
 
 // buildKvRangesForIndexJoin builds kv ranges for index join when the inner plan is index scan plan.
-func buildKvRangesForIndexJoin(sc *stmtctx.StatementContext, tableID, indexID int64, keyDatums [][]types.Datum, indexRanges []*ranger.NewRange, keyOff2IdxOff []int) ([]kv.KeyRange, error) {
+func buildKvRangesForIndexJoin(sc *stmtctx.StatementContext, tableID, indexID int64, keyDatums [][]types.Datum, indexRanges []*ranger.Range, keyOff2IdxOff []int) ([]kv.KeyRange, error) {
 	kvRanges := make([]kv.KeyRange, 0, len(indexRanges)*len(keyDatums))
 	for _, val := range keyDatums {
 		for _, ran := range indexRanges {

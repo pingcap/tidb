@@ -176,15 +176,14 @@ type AnalyzeIndexExec struct {
 
 func (e *AnalyzeIndexExec) open() error {
 	var builder distsql.RequestBuilder
-	kvReq, err := builder.SetIndexRanges(e.ctx.GetSessionVars().StmtCtx, e.tblInfo.ID, e.idxInfo.ID, ranger.FullNewRange()).
+	kvReq, err := builder.SetIndexRanges(e.ctx.GetSessionVars().StmtCtx, e.tblInfo.ID, e.idxInfo.ID, ranger.FullRange()).
 		SetAnalyzeRequest(e.analyzePB).
 		SetKeepOrder(true).
-		SetPriority(e.priority).
 		Build()
 	kvReq.Concurrency = e.concurrency
 	kvReq.IsolationLevel = kv.RC
 	ctx := context.TODO()
-	e.result, err = distsql.Analyze(ctx, e.ctx.GetClient(), kvReq)
+	e.result, err = distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -265,11 +264,11 @@ type AnalyzeColumnsExec struct {
 }
 
 func (e *AnalyzeColumnsExec) open() error {
-	var ranges []*ranger.NewRange
+	var ranges []*ranger.Range
 	if e.pkInfo != nil {
-		ranges = ranger.FullIntNewRange(mysql.HasUnsignedFlag(e.pkInfo.Flag))
+		ranges = ranger.FullIntRange(mysql.HasUnsignedFlag(e.pkInfo.Flag))
 	} else {
-		ranges = ranger.FullIntNewRange(false)
+		ranges = ranger.FullIntRange(false)
 	}
 	e.resultHandler = &tableResultHandler{}
 	firstPartRanges, secondPartRanges := splitRanges(ranges, e.keepOrder)
@@ -291,12 +290,11 @@ func (e *AnalyzeColumnsExec) open() error {
 	return nil
 }
 
-func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.NewRange) (distsql.SelectResult, error) {
+func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectResult, error) {
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetTableRanges(e.tblInfo.ID, ranges, nil).
 		SetAnalyzeRequest(e.analyzePB).
 		SetKeepOrder(e.keepOrder).
-		SetPriority(e.priority).
 		Build()
 	kvReq.IsolationLevel = kv.RC
 	kvReq.Concurrency = e.concurrency
@@ -304,7 +302,7 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.NewRange) (distsql.Selec
 		return nil, errors.Trace(err)
 	}
 	ctx := context.TODO()
-	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq)
+	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
