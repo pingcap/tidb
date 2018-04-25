@@ -632,15 +632,8 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		}
 		for i, def := range partitionInfo.Definitions {
 			lessThans := ""
-			multipleLt := false
-			for j, lessThan := range def.LessThan {
-				if j > 0 {
-					lessThans = lessThans + "," + lessThan
-					multipleLt = true
-				} else {
-					lessThans = lessThan
-				}
-			}
+			lessThans = strings.Join(def.LessThan, ",")
+			multipleLt := len(def.LessThan) > 1
 
 			var parDef string
 			if multipleLt {
