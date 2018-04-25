@@ -323,6 +323,22 @@ func (s *testSuite) TestShow(c *C) {
 			"  `a` int(11) DEFAULT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"+"\nPARTITION BY RANGE ( `a` ) (\n  PARTITION p0 VALUES LESS THAN 10,\n  PARTITION p1 VALUES LESS THAN 20,\n  PARTITION p2 VALUES LESS THAN MAXVALUE\n)",
 	))
+
+	// Test range columns partition
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`CREATE TABLE t (a int, b int, c char, d int) PARTITION BY RANGE COLUMNS(a,d,c) (
+ 	PARTITION p0 VALUES LESS THAN (5,10,'ggg'),
+ 	PARTITION p1 VALUES LESS THAN (10,20,'mmm'),
+ 	PARTITION p2 VALUES LESS THAN (15,30,'sss'),
+        PARTITION p3 VALUES LESS THAN (50,MAXVALUE,MAXVALUE))`)
+	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
+		"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) DEFAULT NULL,\n"+
+			"  `b` int(11) DEFAULT NULL,\n"+
+			"  `c` char(1) DEFAULT NULL,\n"+
+			"  `d` int(11) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"+"\nPARTITION BY RANGE COLUMNS(a,d,c) (\n  PARTITION p0 VALUES LESS THAN (5,10,\"ggg\"),\n  PARTITION p1 VALUES LESS THAN (10,20,\"mmm\"),\n  PARTITION p2 VALUES LESS THAN (15,30,\"sss\"),\n  PARTITION p3 VALUES LESS THAN (50,MAXVALUE,MAXVALUE)\n)",
+	))
 }
 
 func (s *testSuite) TestShowVisibility(c *C) {
