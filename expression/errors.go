@@ -31,6 +31,8 @@ var (
 	errUnknownCharacterSet           = terror.ClassExpression.New(mysql.ErrUnknownCharacterSet, mysql.MySQLErrName[mysql.ErrUnknownCharacterSet])
 	errDefaultValue                  = terror.ClassExpression.New(mysql.ErrInvalidDefault, "invalid default value")
 	errDeprecatedSyntaxNoReplacement = terror.ClassExpression.New(mysql.ErrWarnDeprecatedSyntaxNoReplacement, mysql.MySQLErrName[mysql.ErrWarnDeprecatedSyntaxNoReplacement])
+	errBadField                      = terror.ClassExpression.New(mysql.ErrBadField, mysql.MySQLErrName[mysql.ErrBadField])
+	ErrOperandColumns                = terror.ClassExpression.New(mysql.ErrOperandColumns, mysql.MySQLErrName[mysql.ErrOperandColumns])
 )
 
 func init() {
@@ -43,6 +45,8 @@ func init() {
 		mysql.ErrUnknownCharacterSet:               mysql.ErrUnknownCharacterSet,
 		mysql.ErrInvalidDefault:                    mysql.ErrInvalidDefault,
 		mysql.ErrWarnDeprecatedSyntaxNoReplacement: mysql.ErrWarnDeprecatedSyntaxNoReplacement,
+		mysql.ErrWrongColumnName:                   mysql.ErrWrongColumnName,
+		mysql.ErrOperandColumns:                    mysql.ErrOperandColumns,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassExpression] = expressionMySQLErrCodes
 }

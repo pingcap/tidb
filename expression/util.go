@@ -357,3 +357,80 @@ func extractFiltersFromDNF(ctx sessionctx.Context, dnfFunc *ScalarFunction) ([]E
 	}
 	return extractedExpr, ComposeDNFCondition(ctx, newDNFItems...)
 }
+
+// GetFuncArgLen gets the length of the row.
+func GetFuncArgLen(e Expression) int {
+	if f, ok := e.(*ScalarFunction); ok && f.FuncName.L == ast.RowFunc {
+		return len(f.GetArgs())
+	}
+	return 1
+}
+
+// CheckArgsOneColumn checks the arg has one column.
+func CheckArgsOneColumn(args ...Expression) error {
+	for _, arg := range args {
+		if GetFuncArgLen(arg) != 1 {
+			return ErrOperandColumns.GenByArgs(1)
+		}
+	}
+	return nil
+}
+
+// GetFuncArg gets the argument of the function at idx.
+func GetFuncArg(e Expression, idx int) Expression {
+	if f, ok := e.(*ScalarFunction); ok {
+		return f.GetArgs()[idx]
+	}
+	return nil
+}
+
+// PopFuncFirstArg pops the first element and return the rest of row.
+// e.g. After this function (1, 2, 3) becomes (2, 3).
+func PopFuncFirstArg(ctx sessionctx.Context, e Expression) (ret Expression, err error) {
+	if f, ok := e.(*ScalarFunction); ok {
+		args := f.GetArgs()
+		if len(args) == 2 {
+			return args[1].Clone(), nil
+		}
+		ret, err = NewFunction(ctx, f.FuncName.L, f.GetType(), args[1:]...)
+		return ret, errors.Trace(err)
+	}
+	return
+}
+
+// ExprStack is a stack of expressions.
+type ExprStack struct {
+	stack []Expression
+}
+
+// Pop pops an expression from the stack.
+func (s *ExprStack) Pop() Expression {
+	if len(s.stack) == 0 {
+		return nil
+	}
+	lastIdx := len(s.stack) - 1
+	expr := s.stack[lastIdx]
+	s.stack = s.stack[:lastIdx]
+	return expr
+}
+
+// PopN pops n expression from the stack.
+func (s *ExprStack) PopN(n int) []Expression {
+	if n > len(s.stack) {
+		n = len(s.stack)
+	}
+	idx := len(s.stack) - n
+	exprs := s.stack[idx:]
+	s.stack = s.stack[:idx]
+	return exprs
+}
+
+// Push pushes one expression to the stack.
+func (s *ExprStack) Push(expr Expression) {
+	s.stack = append(s.stack, expr)
+}
+
+// Len returns the length of the stack
+func (s *ExprStack) Len() int {
+	return len(s.stack)
+}

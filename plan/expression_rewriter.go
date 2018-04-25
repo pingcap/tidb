@@ -100,8 +100,9 @@ func (b *planBuilder) rewriteWithPreprocess(expr ast.ExprNode, p LogicalPlan, ag
 	if len(rewriter.ctxStack) != 1 {
 		return nil, nil, errors.Errorf("context len %v is invalid", len(rewriter.ctxStack))
 	}
-	if getRowLen(rewriter.ctxStack[0]) != 1 {
-		return nil, nil, ErrOperandColumns.GenByArgs(1)
+	rewriter.err = expression.CheckArgsOneColumn(rewriter.ctxStack[0])
+	if rewriter.err != nil {
+		return nil, nil, errors.Trace(rewriter.err)
 	}
 	b.rewriterCounter--
 	return rewriter.ctxStack[0], rewriter.p, nil
@@ -122,34 +123,6 @@ type expressionRewriter struct {
 	preprocess func(ast.Node) ast.Node
 }
 
-func getRowLen(e expression.Expression) int {
-	if f, ok := e.(*expression.ScalarFunction); ok && f.FuncName.L == ast.RowFunc {
-		return len(f.GetArgs())
-	}
-	return 1
-}
-
-func getRowArg(e expression.Expression, idx int) expression.Expression {
-	if f, ok := e.(*expression.ScalarFunction); ok {
-		return f.GetArgs()[idx]
-	}
-	return nil
-}
-
-// popRowArg pops the first element and return the rest of row.
-// e.g. After this function (1, 2, 3) becomes (2, 3).
-func popRowArg(ctx sessionctx.Context, e expression.Expression) (ret expression.Expression, err error) {
-	if f, ok := e.(*expression.ScalarFunction); ok {
-		args := f.GetArgs()
-		if len(args) == 2 {
-			return args[1].Clone(), nil
-		}
-		ret, err = expression.NewFunction(ctx, f.FuncName.L, f.GetType(), args[1:]...)
-		return ret, errors.Trace(err)
-	}
-	return
-}
-
 // 1. If op are EQ or NE or NullEQ, constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to (a0 op b0) and (a1 op b1) and (a2 op b2)
 // 2. If op are LE or GE, constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to
 // `IF( (a0 op b0) EQ 0, 0,
@@ -161,7 +134,7 @@ func popRowArg(ctx sessionctx.Context, e expression.Expression) (ret expression.
 //          a2 op b2)
 // )`
 func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression, r expression.Expression, op string) (expression.Expression, error) {
-	lLen, rLen := getRowLen(l), getRowLen(r)
+	lLen, rLen := expression.GetFuncArgLen(l), expression.GetFuncArgLen(r)
 	if lLen == 1 && rLen == 1 {
 		return expression.NewFunction(er.ctx, op, types.NewFieldType(mysql.TypeTiny), l, r)
 	} else if rLen != lLen {
@@ -172,14 +145,14 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 		funcs := make([]expression.Expression, lLen)
 		for i := 0; i < lLen; i++ {
 			var err error
-			funcs[i], err = er.constructBinaryOpFunction(getRowArg(l, i), getRowArg(r, i), op)
+			funcs[i], err = er.constructBinaryOpFunction(expression.GetFuncArg(l, i), expression.GetFuncArg(r, i), op)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
 		return expression.ComposeCNFCondition(er.ctx, funcs...), nil
 	default:
-		larg0, rarg0 := getRowArg(l, 0), getRowArg(r, 0)
+		larg0, rarg0 := expression.GetFuncArg(l, 0), expression.GetFuncArg(r, 0)
 		var expr1, expr2, expr3 expression.Expression
 		if op == ast.LE || op == ast.GE {
 			expr1 = expression.NewFunctionInternal(er.ctx, op, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
@@ -190,11 +163,11 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 			expr2 = expression.NewFunctionInternal(er.ctx, op, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
 		}
 		var err error
-		l, err = popRowArg(er.ctx, l)
+		l, err = expression.PopFuncFirstArg(er.ctx, l)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		r, err = popRowArg(er.ctx, r)
+		r, err = expression.PopFuncFirstArg(er.ctx, r)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -300,11 +273,11 @@ func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) 
 	}
 	// Only (a,b,c) = any (...) and (a,b,c) != all (...) can use row expression.
 	canMultiCol := (!v.All && v.Op == opcode.EQ) || (v.All && v.Op == opcode.NE)
-	if !canMultiCol && (getRowLen(lexpr) != 1 || np.Schema().Len() != 1) {
+	if !canMultiCol && (expression.GetFuncArgLen(lexpr) != 1 || np.Schema().Len() != 1) {
 		er.err = ErrOperandColumns.GenByArgs(1)
 		return v, true
 	}
-	lLen := getRowLen(lexpr)
+	lLen := expression.GetFuncArgLen(lexpr)
 	if lLen != np.Schema().Len() {
 		er.err = ErrOperandColumns.GenByArgs(lLen)
 		return v, true
@@ -565,7 +538,7 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 	if er.err != nil {
 		return v, true
 	}
-	lLen := getRowLen(lexpr)
+	lLen := expression.GetFuncArgLen(lexpr)
 	if lLen != np.Schema().Len() {
 		er.err = ErrOperandColumns.GenByArgs(lLen)
 		return v, true
@@ -728,7 +701,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		er.caseToExpression(v)
 	case *ast.FuncCastExpr:
 		arg := er.ctxStack[len(er.ctxStack)-1]
-		er.checkArgsOneColumn(arg)
+		er.err = expression.CheckArgsOneColumn(arg)
 		if er.err != nil {
 			return retNode, false
 		}
@@ -840,7 +813,7 @@ func (er *expressionRewriter) unaryOpToExpression(v *ast.UnaryOperationExpr) {
 		er.err = errors.Errorf("Unknown Unary Op %T", v.Op)
 		return
 	}
-	if getRowLen(er.ctxStack[stkLen-1]) != 1 {
+	if expression.GetFuncArgLen(er.ctxStack[stkLen-1]) != 1 {
 		er.err = ErrOperandColumns.GenByArgs(1)
 		return
 	}
@@ -855,8 +828,8 @@ func (er *expressionRewriter) binaryOpToExpression(v *ast.BinaryOperationExpr) {
 		function, er.err = er.constructBinaryOpFunction(er.ctxStack[stkLen-2], er.ctxStack[stkLen-1],
 			v.Op.String())
 	default:
-		lLen := getRowLen(er.ctxStack[stkLen-2])
-		rLen := getRowLen(er.ctxStack[stkLen-1])
+		lLen := expression.GetFuncArgLen(er.ctxStack[stkLen-2])
+		rLen := expression.GetFuncArgLen(er.ctxStack[stkLen-1])
 		if lLen != 1 || rLen != 1 {
 			er.err = ErrOperandColumns.GenByArgs(1)
 			return
@@ -892,7 +865,7 @@ func (er *expressionRewriter) notToExpression(hasNot bool, op string, tp *types.
 
 func (er *expressionRewriter) isNullToExpression(v *ast.IsNullExpr) {
 	stkLen := len(er.ctxStack)
-	if getRowLen(er.ctxStack[stkLen-1]) != 1 {
+	if expression.GetFuncArgLen(er.ctxStack[stkLen-1]) != 1 {
 		er.err = ErrOperandColumns.GenByArgs(1)
 		return
 	}
@@ -915,7 +888,7 @@ func (er *expressionRewriter) isTrueToScalarFunc(v *ast.IsTruthExpr) {
 	if v.True == 0 {
 		op = ast.IsFalsity
 	}
-	if getRowLen(er.ctxStack[stkLen-1]) != 1 {
+	if expression.GetFuncArgLen(er.ctxStack[stkLen-1]) != 1 {
 		er.err = ErrOperandColumns.GenByArgs(1)
 		return
 	}
@@ -929,9 +902,9 @@ func (er *expressionRewriter) isTrueToScalarFunc(v *ast.IsTruthExpr) {
 // a in (b, c, d) will be rewritten as `(a = b) or (a = c) or (a = d)`.
 func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.FieldType) {
 	stkLen := len(er.ctxStack)
-	l := getRowLen(er.ctxStack[stkLen-lLen-1])
+	l := expression.GetFuncArgLen(er.ctxStack[stkLen-lLen-1])
 	for i := 0; i < lLen; i++ {
-		if l != getRowLen(er.ctxStack[stkLen-lLen+i]) {
+		if l != expression.GetFuncArgLen(er.ctxStack[stkLen-lLen+i]) {
 			er.err = ErrOperandColumns.GenByArgs(l)
 			return
 		}
@@ -990,7 +963,7 @@ func (er *expressionRewriter) caseToExpression(v *ast.CaseExpr) {
 	if v.ElseClause != nil {
 		argsLen++
 	}
-	er.checkArgsOneColumn(er.ctxStack[stkLen-argsLen:]...)
+	er.err = expression.CheckArgsOneColumn(er.ctxStack[stkLen-argsLen:]...)
 	if er.err != nil {
 		return
 	}
@@ -1037,7 +1010,7 @@ func (er *expressionRewriter) caseToExpression(v *ast.CaseExpr) {
 
 func (er *expressionRewriter) likeToScalarFunc(v *ast.PatternLikeExpr) {
 	l := len(er.ctxStack)
-	er.checkArgsOneColumn(er.ctxStack[l-2:]...)
+	er.err = expression.CheckArgsOneColumn(er.ctxStack[l-2:]...)
 	if er.err != nil {
 		return
 	}
@@ -1051,7 +1024,7 @@ func (er *expressionRewriter) likeToScalarFunc(v *ast.PatternLikeExpr) {
 
 func (er *expressionRewriter) regexpToScalarFunc(v *ast.PatternRegexpExpr) {
 	l := len(er.ctxStack)
-	er.checkArgsOneColumn(er.ctxStack[l-2:]...)
+	er.err = expression.CheckArgsOneColumn(er.ctxStack[l-2:]...)
 	if er.err != nil {
 		return
 	}
@@ -1078,7 +1051,7 @@ func (er *expressionRewriter) rowToScalarFunc(v *ast.RowExpr) {
 
 func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 	stkLen := len(er.ctxStack)
-	er.checkArgsOneColumn(er.ctxStack[stkLen-3:]...)
+	er.err = expression.CheckArgsOneColumn(er.ctxStack[stkLen-3:]...)
 	if er.err != nil {
 		return
 	}
@@ -1107,15 +1080,6 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 	}
 	er.ctxStack = er.ctxStack[:stkLen-3]
 	er.ctxStack = append(er.ctxStack, function)
-}
-
-func (er *expressionRewriter) checkArgsOneColumn(args ...expression.Expression) {
-	for _, arg := range args {
-		if getRowLen(arg) != 1 {
-			er.err = ErrOperandColumns.GenByArgs(1)
-			return
-		}
-	}
 }
 
 // rewriteFuncCall handles a FuncCallExpr and generates a customized function.
@@ -1161,7 +1125,7 @@ func (er *expressionRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 	stackLen := len(er.ctxStack)
 	args := er.ctxStack[stackLen-len(v.Args):]
-	er.checkArgsOneColumn(args...)
+	er.err = expression.CheckArgsOneColumn(args...)
 	if er.err != nil {
 		return
 	}
