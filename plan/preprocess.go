@@ -52,7 +52,6 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.CreateTableStmt:
 		p.inCreateOrDropTable = true
 		p.checkCreateTableGrammar(node)
-		p.checkContainDotColumn(node)
 	case *ast.DropTableStmt:
 		p.inCreateOrDropTable = true
 		p.checkDropTableGrammar(node)
@@ -224,6 +223,7 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		p.err = ddl.ErrWrongTableName.GenByArgs(tName)
 		return
 	}
+	p.checkContainDotColumn(stmt)
 	countPrimaryKey := 0
 	for _, colDef := range stmt.Cols {
 		if err := checkColumn(colDef); err != nil {
