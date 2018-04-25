@@ -19,6 +19,7 @@ import (
 )
 
 var (
+	// ErrWrongUsage is returned when SQL operators are not properly used.
 	ErrWrongUsage = terror.ClassParser.New(codeWrongUsage, mysql.MySQLErrName[mysql.ErrWrongUsage])
 )
 
