@@ -212,15 +212,15 @@ func (ds *DataSource) findBestTask(prop *requiredProp) (task, error) {
 			if tblTask.cost() < t.cost() {
 				t = tblTask
 			}
-		} else {
-			if len(path.accessConds) > 0 || len(prop.cols) > 0 || path.forced {
-				idxTask, err := ds.convertToIndexScan(prop, path)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				if idxTask.cost() < t.cost() {
-					t = idxTask
-				}
+			continue
+		}
+		if len(path.accessConds) > 0 || len(prop.cols) > 0 || path.forced {
+			idxTask, err := ds.convertToIndexScan(prop, path)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if idxTask.cost() < t.cost() {
+				t = idxTask
 			}
 		}
 	}
@@ -309,11 +309,10 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, path *accessPath) (
 	if statsTbl.Indices[idx.ID] != nil {
 		is.Hist = &statsTbl.Indices[idx.ID].Histogram
 	}
-	rowCount := float64(statsTbl.Count)
 	is.Ranges = ranger.FullNewRange()
 	eqCount := 0
 	is.AccessCondition, is.Ranges, is.filterCondition, eqCount = path.accessConds, path.ranges, path.indexFilters, path.eqCondCount
-	rowCount = path.countAfterAccess
+	rowCount := path.countAfterAccess
 	cop := &copTask{indexPlan: is}
 	if !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle) {
 		// On this way, it's double read case.

@@ -304,8 +304,8 @@ type DataSource struct {
 
 	statisticTable *statistics.Table
 
-	// possibleAccessPaths stores all the possible index path for physical plan, including table scan.
-	// Please make sure table scan is always the first element.
+	// possibleAccessPaths stores all the possible access path for physical plan, including table scan.
+	// Please make sure table path is always the first element.
 	possibleAccessPaths []*accessPath
 }
 
@@ -327,17 +327,21 @@ type accessPath struct {
 	forced bool
 }
 
-func (ds *DataSource) prepareTablePath(path *accessPath) error {
+func (ds *DataSource) deriveTablePathStats(path *accessPath) error {
 	var err error
 	sc := ds.ctx.GetSessionVars().StmtCtx
 	path.countAfterAccess = float64(ds.statisticTable.Count)
 	var pkCol *expression.Column
+	if ds.tableInfo.PKIsHandle {
+		if pkColInfo := ds.tableInfo.GetPkColInfo(); pkColInfo != nil {
+			pkCol = expression.ColInfo2Col(ds.schema.Columns, pkColInfo)
+		}
+	}
 	if pkCol != nil {
 		path.ranges = ranger.FullIntNewRange(mysql.HasUnsignedFlag(pkCol.RetType.Flag))
 	} else {
 		path.ranges = ranger.FullIntNewRange(false)
 	}
-	path.countAfterAccess = float64(ds.statisticTable.Count)
 	if len(ds.pushedDownConds) > 0 {
 		if pkCol != nil {
 			path.accessConds, path.tableFilters = ranger.DetachCondsForTableRange(ds.ctx, ds.pushedDownConds, pkCol)
@@ -356,12 +360,11 @@ func (ds *DataSource) prepareTablePath(path *accessPath) error {
 	return nil
 }
 
-func (ds *DataSource) prepareIndexPath(path *accessPath) error {
+func (ds *DataSource) deriveIndexPathStats(path *accessPath) error {
 	var err error
 	sc := ds.ctx.GetSessionVars().StmtCtx
 	path.ranges = ranger.FullNewRange()
 	path.countAfterAccess = float64(ds.statisticTable.Count)
-	path.countAfterIndex = float64(ds.statisticTable.Count)
 	idxCols, lengths := expression.IndexInfo2Cols(ds.schema.Columns, path.index)
 	if len(idxCols) != 0 {
 		path.ranges, path.accessConds, path.indexFilters, path.eqCondCount, err = ranger.DetachCondAndBuildRangeForIndex(ds.ctx, ds.pushedDownConds, idxCols, lengths)

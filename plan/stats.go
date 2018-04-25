@@ -130,15 +130,14 @@ func (ds *DataSource) deriveStats() (*statsInfo, error) {
 	}
 	ds.statsAfterSelect = ds.getStatsByFilter(ds.pushedDownConds)
 	for _, path := range ds.possibleAccessPaths {
-		var err error
 		if path.isRowID {
-			err = ds.prepareTablePath(path)
+			err := ds.deriveTablePathStats(path)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			continue
 		}
-		err = ds.prepareIndexPath(path)
+		err := ds.deriveIndexPathStats(path)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
