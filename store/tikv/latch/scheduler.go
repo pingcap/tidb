@@ -41,8 +41,9 @@ func NewScheduler(size int) *LatchesScheduler {
 }
 
 func (scheduler *LatchesScheduler) run() {
+	wakeupList := make([]*Lock, 0)
 	for lock := range scheduler.unlockCh {
-		wakeupList := scheduler.latches.release(lock, lock.commitTS)
+		wakeupList = scheduler.latches.release(lock, lock.commitTS, wakeupList)
 		if len(wakeupList) > 0 {
 			scheduler.wakeup(wakeupList)
 		}

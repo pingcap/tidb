@@ -156,15 +156,15 @@ func (latches *Latches) acquire(lock *Lock) acquireResult {
 
 // release releases all latches owned by the `lock` and returns the wakeup list.
 // Preconditions: the caller must ensure the transaction's status is not locked.
-func (latches *Latches) release(lock *Lock, commitTS uint64) (wakeupList []*Lock) {
-	wakeupList = make([]*Lock, 0)
+func (latches *Latches) release(lock *Lock, commitTS uint64, wakeupList []*Lock) []*Lock {
+	wakeupList = wakeupList[:0]
 	for i := 0; i < lock.acquiredCount; i++ {
 		slotID := lock.requiredSlots[i]
 		if nextLock := latches.releaseSlot(slotID, commitTS); nextLock != nil {
 			wakeupList = append(wakeupList, nextLock)
 		}
 	}
-	return
+	return wakeupList
 }
 
 // refreshCommitTS refreshes commitTS for keys.
