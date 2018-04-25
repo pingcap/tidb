@@ -37,10 +37,11 @@
     "clientv3/concurrency",
     "etcdserver/api/v3rpc/rpctypes",
     "etcdserver/etcdserverpb",
-    "mvcc/mvccpb"
+    "mvcc/mvccpb",
+    "pkg/types"
   ]
-  revision = "fb5cd6f1c72c2b98e0c4453444cdfba306da867b"
-  version = "v3.2.14"
+  revision = "eddf599c689ec85f4752060edff5a72e81e9106a"
+  version = "v3.2.18"
 
 [[projects]]
   branch = "master"
@@ -199,6 +200,7 @@
   revision = "8d44bfdf1030639ae7130922c95df12d6d4da3b6"
 
 [[projects]]
+  branch = "master"
   name = "github.com/pingcap/kvproto"
   packages = [
     "pkg/coprocessor",
@@ -210,12 +212,13 @@
     "pkg/raft_serverpb",
     "pkg/tikvpb"
   ]
-  revision = "2cf2492c337c4d0281d8ead8686d47764f1df6c4"
+  revision = "05b1d9675489f16f81b7c950ed039cf5fdc93055"
 
 [[projects]]
+  branch = "master"
   name = "github.com/pingcap/pd"
   packages = ["pd-client"]
-  revision = "eed819b6999186a4bf2d25255f8d61b371a450d6"
+  revision = "720f00cc907a439b67d47ebac58412479c6b278a"
 
 [[projects]]
   branch = "master"
@@ -392,6 +395,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "92c7c81ac2ac3df66a63416a81e48b40ad4812849569a9dcefb4a9aa2a6f4cbd"
+  inputs-digest = "0e1e1a67dfb026d9d437715949c2e23495d24c92b2aa3559d471deab3b7091af"
   solver-name = "gps-cdcl"
   solver-version = 1
