@@ -850,7 +850,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	if err == nil {
 		if tbInfo.AutoIncID > 1 {
 			// Default tableAutoIncID base is 0.
-			// If the first id is expected to greater than 1, we need to do rebase.
+			// If the first ID is expected to greater than 1, we need to do rebase.
 			err = d.handleAutoIncID(tbInfo, schema.ID)
 		}
 	}
