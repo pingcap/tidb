@@ -118,7 +118,7 @@ func (s *testSuite) TestTableHandlesToKVRanges(c *C) {
 }
 
 func (s *testSuite) TestTableRangesToKVRanges(c *C) {
-	ranges := []*ranger.NewRange{
+	ranges := []*ranger.Range{
 		{
 			LowVal:  []types.Datum{types.NewIntDatum(1)},
 			HighVal: []types.Datum{types.NewIntDatum(2)},
@@ -175,7 +175,7 @@ func (s *testSuite) TestTableRangesToKVRanges(c *C) {
 }
 
 func (s *testSuite) TestIndexRangesToKVRanges(c *C) {
-	ranges := []*ranger.NewRange{
+	ranges := []*ranger.Range{
 		{
 			LowVal:  []types.Datum{types.NewIntDatum(1)},
 			HighVal: []types.Datum{types.NewIntDatum(2)},
@@ -234,7 +234,7 @@ func (s *testSuite) TestIndexRangesToKVRanges(c *C) {
 }
 
 func (s *testSuite) TestRequestBuilder1(c *C) {
-	ranges := []*ranger.NewRange{
+	ranges := []*ranger.Range{
 		{
 			LowVal:  []types.Datum{types.NewIntDatum(1)},
 			HighVal: []types.Datum{types.NewIntDatum(2)},
@@ -308,7 +308,7 @@ func (s *testSuite) TestRequestBuilder1(c *C) {
 }
 
 func (s *testSuite) TestRequestBuilder2(c *C) {
-	ranges := []*ranger.NewRange{
+	ranges := []*ranger.Range{
 		{
 			LowVal:  []types.Datum{types.NewIntDatum(1)},
 			HighVal: []types.Datum{types.NewIntDatum(2)},
