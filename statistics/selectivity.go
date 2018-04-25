@@ -34,7 +34,7 @@ type exprSet struct {
 	// mask is a bit pattern whose ith bit will indicate whether the ith expression is covered by this index/column.
 	mask int64
 	// ranges contains all the ranges we got.
-	ranges []*ranger.NewRange
+	ranges []*ranger.Range
 }
 
 // The type of the exprSet.
@@ -194,7 +194,7 @@ func (t *Table) Selectivity(ctx sessionctx.Context, exprs []expression.Expressio
 }
 
 func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, rangeType ranger.RangeType,
-	lengths []int, cols ...*expression.Column) (mask int64, ranges []*ranger.NewRange, err error) {
+	lengths []int, cols ...*expression.Column) (mask int64, ranges []*ranger.Range, err error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	var accessConds []expression.Expression
 	switch rangeType {
