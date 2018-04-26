@@ -1947,9 +1947,9 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) Plan {
 	}
 	p = np
 
+	b.ctx.GetSessionVars().StmtCtx.IgnoreErr = update.IgnoreErr
 	updt := Update{
 		OrderedList: orderedList,
-		IgnoreErr:   update.IgnoreErr,
 	}.init(b.ctx)
 	updt.SetSchema(p.Schema())
 	updt.SelectPlan, b.err = doOptimize(b.optFlag, p)

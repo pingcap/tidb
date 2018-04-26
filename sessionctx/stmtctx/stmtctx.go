@@ -32,6 +32,7 @@ type StatementContext struct {
 	InSelectStmt           bool
 	IgnoreTruncate         bool
 	IgnoreZeroInDate       bool
+	IgnoreErr              bool
 	DividedByZeroAsWarning bool
 	TruncateAsWarning      bool
 	OverflowAsWarning      bool
