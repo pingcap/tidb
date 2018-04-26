@@ -16,6 +16,7 @@ package executor
 import (
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/juju/errors"
@@ -341,18 +342,17 @@ func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
 	}
 	connID := a.Ctx.GetSessionVars().ConnectionID
 	currentDB := a.Ctx.GetSessionVars().CurrentDB
-	logEntry := log.NewEntry(logutil.SlowQueryLogger)
-	logEntry.Data = log.Fields{
-		"connectionId": connID,
-		"costTime":     costTime,
-		"database":     currentDB,
-		"sql":          sql,
-		"txnStartTS":   txnTS,
-	}
+	tableIDs := strings.Replace(fmt.Sprintf("%v", a.Ctx.GetSessionVars().StmtCtx.TableIDs), " ", ",", -1)
+	indexIDs := strings.Replace(fmt.Sprintf("%v", a.Ctx.GetSessionVars().StmtCtx.IndexIDs), " ", ",", -1)
+
 	if costTime < threshold {
-		logEntry.WithField("type", "query").WithField("succ", succ).Debugf("query")
+		logutil.SlowQueryLogger.Debugf(
+			"[QUERY] cost_time:%v succ:%v connection_id:%v txn_start_ts:%v database:%v table_ids:%v index_ids:%v sql:%v",
+			costTime, succ, connID, txnTS, currentDB, tableIDs, indexIDs, sql)
 	} else {
-		logEntry.WithField("type", "slow-query").WithField("succ", succ).Warnf("slow-query")
+		logutil.SlowQueryLogger.Warnf(
+			"[SLOW_QUERY] cost_time:%v succ:%v connection_id:%v txn_start_ts:%v database:%v table_ids:%v index_ids:%v sql:%v",
+			costTime, succ, connID, txnTS, currentDB, tableIDs, indexIDs, sql)
 	}
 }
 
