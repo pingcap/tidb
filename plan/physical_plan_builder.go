@@ -124,7 +124,11 @@ func (ds *DataSource) tryToGetMemTask(prop *requiredProp) (task task, err error)
 	}
 	client := ds.ctx.GetClient()
 	memDB := infoschema.IsMemoryDB(ds.DBName.L)
-	isDistReq := !memDB && client != nil && client.IsRequestTypeSupported(kv.ReqTypeSelect, 0)
+	if !memDB {
+		return nil, nil
+	}
+
+	isDistReq := client != nil && client.IsRequestTypeSupported(kv.ReqTypeSelect, 0)
 	if isDistReq {
 		return nil, nil
 	}
