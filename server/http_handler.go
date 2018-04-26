@@ -673,8 +673,8 @@ func (h tableHandler) addScatterSchedule(startKey, endKey []byte, name string) e
 	}
 	input := map[string]string{
 		"name":       "scatter-range-leader",
-		"start_key":  string(startKey),
-		"end_key":    string(endKey),
+		"start_key":  url.QueryEscape(string(startKey)),
+		"end_key":    url.QueryEscape(string(endKey)),
 		"range_name": name,
 	}
 	v, err := json.Marshal(input)
@@ -716,6 +716,8 @@ func (h tableHandler) handleScatterTableRequest(schema infoschema.InfoSchema, tb
 	// for record
 	tableID := tbl.Meta().ID
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(tableID)
+	startKey = codec.EncodeBytes([]byte{}, startKey)
+	endKey = codec.EncodeBytes([]byte{}, endKey)
 	tableName := tbl.Meta().Name.String()
 	err := h.addScatterSchedule(startKey, endKey, tableName)
 	if err != nil {
@@ -727,7 +729,9 @@ func (h tableHandler) handleScatterTableRequest(schema infoschema.InfoSchema, tb
 		indexID := index.Meta().ID
 		indexName := index.Meta().Name.String()
 		startKey, endKey := tablecodec.GetTableIndexKeyRange(tableID, indexID)
-		name := tableName + "/" + indexName
+		startKey = codec.EncodeBytes([]byte{}, startKey)
+		endKey = codec.EncodeBytes([]byte{}, endKey)
+		name := tableName + "-" + indexName
 		err := h.addScatterSchedule(startKey, endKey, name)
 		if err != nil {
 			writeError(w, errors.Annotatef(err, "scatter index(%s) error", name))
@@ -748,7 +752,7 @@ func (h tableHandler) handleStopScatterTableRequest(schema infoschema.InfoSchema
 	// for indices
 	for _, index := range tbl.Indices() {
 		indexName := index.Meta().Name.String()
-		name := tableName + "/" + indexName
+		name := tableName + "-" + indexName
 		err := h.deleteScatterSchedule(name)
 		if err != nil {
 			writeError(w, errors.Annotatef(err, "delete scatter index(%s) error", name))
