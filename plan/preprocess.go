@@ -238,7 +238,7 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		p.err = ddl.ErrWrongTableName.GenByArgs(tName)
 		return
 	}
-
+	p.checkContainDotColumn(stmt)
 	countPrimaryKey := 0
 	for _, colDef := range stmt.Cols {
 		if err := checkColumn(colDef); err != nil {
@@ -490,6 +490,20 @@ func isIncorrectName(name string) bool {
 		return true
 	}
 	return false
+}
+
+// checkContainDotColumn checks field contains the table name.
+// for example :create table t (c1.c2 int default null).
+func (p *preprocessor) checkContainDotColumn(stmt *ast.CreateTableStmt) {
+	tName := stmt.Table.Name.String()
+
+	for _, colDef := range stmt.Cols {
+		// check table name.
+		if colDef.Name.Table.O != tName && len(colDef.Name.Table.O) != 0 {
+			p.err = ddl.ErrWrongTableName.GenByArgs(colDef.Name.Table.O)
+			return
+		}
+	}
 }
 
 func (p *preprocessor) handleTableName(tn *ast.TableName) {
