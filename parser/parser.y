@@ -59,10 +59,10 @@ import (
 	andand					"&&"
 	pipes					"||"
 
-	/* The following tokens belong to ODBCDateTimeType */
+	/* The following tokens belong to ODBCDateTimeType. */
 	odbcDateType			"d"
 	odbcTimeType			"t"
-	odbcTimestampType			"ts"
+	odbcTimestampType		"ts"
 
 	/* The following tokens belong to ReservedKeyword. */
 	add			"ADD"
