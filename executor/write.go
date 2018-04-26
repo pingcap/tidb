@@ -548,6 +548,7 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte) ([]byte, []byte, bool) 
 // If the number of inserted rows reaches the batchRows, then the second return value is true.
 // If prevData isn't nil and curData is nil, there are no other data to deal with and the isEOF is true.
 func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error) {
+	e.Ctx.GetSessionVars().StmtCtx.IgnoreErr = true
 	// TODO: support enclosed and escape.
 	if len(prevData) == 0 && len(curData) == 0 {
 		return nil, false, nil

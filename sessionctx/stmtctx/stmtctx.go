@@ -27,11 +27,18 @@ import (
 type StatementContext struct {
 	// Set the following variables before execution
 
-	InInsertStmt           bool
-	InUpdateOrDeleteStmt   bool
-	InSelectStmt           bool
-	IgnoreTruncate         bool
-	IgnoreZeroInDate       bool
+	InInsertStmt         bool
+	InUpdateOrDeleteStmt bool
+	InSelectStmt         bool
+	IgnoreTruncate       bool
+	IgnoreZeroInDate     bool
+	// IgnoreErr is used for the following statements to avoid return an
+	// error, `insert`, `update`, and `delete`.
+	// If IgnoreErr is true and the statements meet some errors,
+	// e.g. duplicate keys, insert null to a not null column...,
+	// the errors will be appended as warnings.
+	// For the `load data` statement, IgnoreErr should be always true,
+	// because it is the same behavior as `insert ignore` statement.
 	IgnoreErr              bool
 	DividedByZeroAsWarning bool
 	TruncateAsWarning      bool
