@@ -1203,8 +1203,6 @@ func (s *testPlanSuite) TestRequestTypeSupportedOff(c *C) {
 
 	stmt, err := s.ParseOneStmt(sql, "", "")
 	c.Assert(err, IsNil)
-	sc := se.(sessionctx.Context).GetSessionVars().StmtCtx
-	sc.IgnoreTruncate = false
 	p, err := plan.Optimize(se, stmt, s.is)
 	c.Assert(err, IsNil)
 	c.Assert(plan.ToString(p), Equals, expect, Commentf("for %s", sql))
