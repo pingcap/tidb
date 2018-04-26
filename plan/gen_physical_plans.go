@@ -259,10 +259,12 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 	accessPaths := x.possibleAccessPaths
 	if len(accessPaths) > 0 && x.possibleAccessPaths[0].isRowID {
 		accessPaths = accessPaths[1:]
-		pkCol := x.getPKIsHandleCol()
-		if pkCol != nil && innerJoinKeys[0].Equal(nil, pkCol) {
-			innerPlan := x.forceToTableScan(pkCol)
-			return p.constructIndexJoin(prop, innerJoinKeys, outerJoinKeys, outerIdx, innerPlan, nil, nil)
+		if len(innerJoinKeys) == 1 {
+			pkCol := x.getPKIsHandleCol()
+			if pkCol != nil && innerJoinKeys[0].Equal(nil, pkCol) {
+				innerPlan := x.forceToTableScan(pkCol)
+				return p.constructIndexJoin(prop, innerJoinKeys, outerJoinKeys, outerIdx, innerPlan, nil, nil)
+			}
 		}
 	}
 	var (
