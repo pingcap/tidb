@@ -46,6 +46,18 @@ func ExtractColumns(expr Expression) (cols []*Column) {
 	return extractColumns(result, expr, nil)
 }
 
+func ExtractCorColumns(expr Expression) (cols []*CorrelatedColumn) {
+	switch v := expr.(type) {
+	case *CorrelatedColumn:
+		return []*CorrelatedColumn{v}
+	case *ScalarFunction:
+		for _, arg := range v.GetArgs() {
+			cols = append(cols, ExtractCorColumns(arg)...)
+		}
+	}
+	return
+}
+
 // ExtractColumnsFromExpressions is a more efficient version of ExtractColumns for batch operation.
 // filter can be nil, or a function to filter the result column.
 // It's often observed that the pattern of the caller like this:

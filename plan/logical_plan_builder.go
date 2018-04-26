@@ -177,18 +177,6 @@ func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) LogicalPlan {
 	}
 }
 
-func extractCorColumns(expr expression.Expression) (cols []*expression.CorrelatedColumn) {
-	switch v := expr.(type) {
-	case *expression.CorrelatedColumn:
-		return []*expression.CorrelatedColumn{v}
-	case *expression.ScalarFunction:
-		for _, arg := range v.GetArgs() {
-			cols = append(cols, extractCorColumns(arg)...)
-		}
-	}
-	return
-}
-
 func extractOnCondition(conditions []expression.Expression, left LogicalPlan, right LogicalPlan) (
 	eqCond []*expression.ScalarFunction, leftCond []expression.Expression, rightCond []expression.Expression,
 	otherCond []expression.Expression) {

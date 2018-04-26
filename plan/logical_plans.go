@@ -151,16 +151,16 @@ func (p *LogicalJoin) attachOnConds(onConds []expression.Expression) {
 func (p *LogicalJoin) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := p.baseLogicalPlan.extractCorrelatedCols()
 	for _, fun := range p.EqualConditions {
-		corCols = append(corCols, extractCorColumns(fun)...)
+		corCols = append(corCols, expression.ExtractCorColumns(fun)...)
 	}
 	for _, fun := range p.LeftConditions {
-		corCols = append(corCols, extractCorColumns(fun)...)
+		corCols = append(corCols, expression.ExtractCorColumns(fun)...)
 	}
 	for _, fun := range p.RightConditions {
-		corCols = append(corCols, extractCorColumns(fun)...)
+		corCols = append(corCols, expression.ExtractCorColumns(fun)...)
 	}
 	for _, fun := range p.OtherConditions {
-		corCols = append(corCols, extractCorColumns(fun)...)
+		corCols = append(corCols, expression.ExtractCorColumns(fun)...)
 	}
 	return corCols
 }
@@ -185,7 +185,7 @@ type LogicalProjection struct {
 func (p *LogicalProjection) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := p.baseLogicalPlan.extractCorrelatedCols()
 	for _, expr := range p.Exprs {
-		corCols = append(corCols, extractCorColumns(expr)...)
+		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
 	}
 	return corCols
 }
@@ -206,11 +206,11 @@ type LogicalAggregation struct {
 func (la *LogicalAggregation) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := la.baseLogicalPlan.extractCorrelatedCols()
 	for _, expr := range la.GroupByItems {
-		corCols = append(corCols, extractCorColumns(expr)...)
+		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
 	}
 	for _, fun := range la.AggFuncs {
 		for _, arg := range fun.Args {
-			corCols = append(corCols, extractCorColumns(arg)...)
+			corCols = append(corCols, expression.ExtractCorColumns(arg)...)
 		}
 	}
 	return corCols
@@ -229,7 +229,7 @@ type LogicalSelection struct {
 func (p *LogicalSelection) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := p.baseLogicalPlan.extractCorrelatedCols()
 	for _, cond := range p.Conditions {
-		corCols = append(corCols, extractCorColumns(cond)...)
+		corCols = append(corCols, expression.ExtractCorColumns(cond)...)
 	}
 	return corCols
 }
@@ -340,7 +340,7 @@ type LogicalSort struct {
 func (ls *LogicalSort) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := ls.baseLogicalPlan.extractCorrelatedCols()
 	for _, item := range ls.ByItems {
-		corCols = append(corCols, extractCorColumns(item.Expr)...)
+		corCols = append(corCols, expression.ExtractCorColumns(item.Expr)...)
 	}
 	return corCols
 }

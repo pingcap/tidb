@@ -95,22 +95,55 @@ func (pc PbConverter) ExprToPB(expr Expression) *tipb.Expr {
 		return pc.columnToPBExpr(x)
 	case *ScalarFunction:
 		return pc.scalarFuncToPBExpr(x)
+	case *CorrelatedColumn:
+		return pc.corColumnToPBExpr(x)
 	}
 	return nil
 }
 
+func (pc PbConverter) corColumnToPBExpr(c *CorrelatedColumn) *tipb.Expr {
+	ft := c.GetType()
+	d, err := c.Eval(nil)
+	if err != nil {
+		log.Errorf("Fail to eval correlated column, err: %s", err.Error())
+		return nil
+	}
+	tp, val, ok := pc.encodeDatum(d)
+
+	if !ok {
+		return nil
+	}
+
+	if !pc.client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tp)) {
+		return nil
+	}
+	return &tipb.Expr{Tp: tp, Val: val, FieldType: toPBFieldType(ft)}
+}
+
 func (pc PbConverter) constantToPBExpr(con *Constant) *tipb.Expr {
-	var (
-		tp  tipb.ExprType
-		val []byte
-		ft  = con.GetType()
-	)
+	ft := con.GetType()
 	d, err := con.Eval(nil)
 	if err != nil {
 		log.Errorf("Fail to eval constant, err: %s", err.Error())
 		return nil
 	}
+	tp, val, ok := pc.encodeDatum(d)
 
+	if !ok {
+		return nil
+	}
+
+	if !pc.client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tp)) {
+		return nil
+	}
+	return &tipb.Expr{Tp: tp, Val: val, FieldType: toPBFieldType(ft)}
+}
+
+func (pc *PbConverter) encodeDatum(d types.Datum) (tipb.ExprType, []byte, bool) {
+	var (
+		tp  tipb.ExprType
+		val []byte
+	)
 	switch d.Kind() {
 	case types.KindNull:
 		tp = tipb.ExprType_Null
@@ -150,19 +183,16 @@ func (pc PbConverter) constantToPBExpr(con *Constant) *tipb.Expr {
 			v, err := t.ToPackedUint()
 			if err != nil {
 				log.Errorf("Fail to encode value, err: %s", err.Error())
-				return nil
+				return tp, nil, false
 			}
 			val = codec.EncodeUint(nil, v)
-			return &tipb.Expr{Tp: tp, Val: val, FieldType: toPBFieldType(ft)}
+			return tp, val, true
 		}
-		return nil
+		return tp, nil, false
 	default:
-		return nil
+		return tp, nil, false
 	}
-	if !pc.client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tp)) {
-		return nil
-	}
-	return &tipb.Expr{Tp: tp, Val: val, FieldType: toPBFieldType(ft)}
+	return tp, val, true
 }
 
 func toPBFieldType(ft *types.FieldType) *tipb.FieldType {
