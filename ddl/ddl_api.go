@@ -39,7 +39,7 @@ import (
 )
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) (err error) {
-	is := d.GetInformationSchema()
+	is := d.getInformationSchema()
 	_, ok := is.SchemaByName(schema)
 	if ok {
 		return infoschema.ErrDatabaseExists.GenByArgs(schema)
@@ -81,7 +81,7 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetIn
 }
 
 func (d *ddl) DropSchema(ctx sessionctx.Context, schema model.CIStr) (err error) {
-	is := d.GetInformationSchema()
+	is := d.getInformationSchema()
 	old, ok := is.SchemaByName(schema)
 	if !ok {
 		return errors.Trace(infoschema.ErrDatabaseNotExists)
@@ -712,7 +712,7 @@ func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols 
 }
 
 func (d *ddl) CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.Ident) error {
-	is := d.GetInformationSchema()
+	is := d.getInformationSchema()
 	_, ok := is.SchemaByName(referIdent.Schema)
 	if !ok {
 		return infoschema.ErrTableNotExists.GenByArgs(referIdent.Schema, referIdent.Name)
@@ -757,7 +757,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		return d.CreateTableWithLike(ctx, ident, referIdent)
 	}
 	colDefs := s.Cols
-	is := d.GetInformationSchema()
+	is := d.getInformationSchema()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenByArgs(ident.Schema)
@@ -850,7 +850,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	if err == nil {
 		if tbInfo.AutoIncID > 1 {
 			// Default tableAutoIncID base is 0.
-			// If the first id is expected to greater than 1, we need to do rebase.
+			// If the first ID is expected to greater than 1, we need to do rebase.
 			err = d.handleAutoIncID(tbInfo, schema.ID)
 		}
 	}
@@ -1012,7 +1012,7 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 }
 
 func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int64) error {
-	is := d.GetInformationSchema()
+	is := d.getInformationSchema()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenByArgs(ident.Schema)
@@ -1052,7 +1052,7 @@ func (d *ddl) ShardRowID(ctx sessionctx.Context, tableIdent ast.Ident, uVal uint
 }
 
 func (d *ddl) createJobForTable(tableIdent ast.Ident) (*model.Job, error) {
-	is := d.GetInformationSchema()
+	is := d.getInformationSchema()
 	schema, ok := is.SchemaByName(tableIdent.Schema)
 	if !ok {
 		return nil, infoschema.ErrDatabaseNotExists.GenByArgs(tableIdent.Schema)
@@ -1551,7 +1551,7 @@ func (d *ddl) AlterTableComment(ctx sessionctx.Context, ident ast.Ident, spec *a
 
 // DropTable will proceed even if some table in the list does not exists.
 func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident) (err error) {
-	is := d.GetInformationSchema()
+	is := d.getInformationSchema()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenByArgs(ti.Schema)
@@ -1575,7 +1575,7 @@ func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident) (err error) {
 }
 
 func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
-	is := d.GetInformationSchema()
+	is := d.getInformationSchema()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenByArgs(ti.Schema)
@@ -1601,7 +1601,7 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 }
 
 func (d *ddl) RenameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident) error {
-	is := d.GetInformationSchema()
+	is := d.getInformationSchema()
 	oldSchema, ok := is.SchemaByName(oldIdent.Schema)
 	if !ok {
 		return errFileNotFound.GenByArgs(oldIdent.Schema, oldIdent.Name)
