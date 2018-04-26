@@ -1,6 +1,6 @@
-  # TiDB Change Log
+# TiDB Change Log
 All notable changes to this project will be documented in this file.
-See also [TiDB change log][tidb_change_log] and [PD change log][pd_change_log].
+See also [Release Notes](https://github.com/pingcap/docs/blob/master/releases/rn.md)
 
 [tikv_change_log]: https://github.com/pingcap/tikv/CHANGELOG.md
 [pd_change_log]: https://github.com/pingcap/pd/CHANGELOG.md
@@ -148,4 +148,3 @@ Fix an DML issue when running the Add Column After statement
 * optimize the `Use Database` performance.
 * support statistics on the memory usage of physical operators.
 
-All contents are got from [release notes](https://github.com/pingcap/docs/blob/master/releases/rn.md)
