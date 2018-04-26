@@ -1171,3 +1171,39 @@ func (s *testPlanSuite) TestAggEliminater(c *C) {
 		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
 }
+
+type overrideStore struct{ kv.Storage }
+
+func (store overrideStore) GetClient() kv.Client {
+	cli := store.Storage.GetClient()
+	return overrideClient{cli}
+}
+
+type overrideClient struct{ kv.Client }
+
+func (cli overrideClient) IsRequestTypeSupported(reqType, subType int64) bool {
+	return false
+}
+
+func (s *testPlanSuite) TestRequestTypeSupportedOff(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	se, err := session.CreateSession4Test(overrideStore{store})
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "use test")
+	c.Assert(err, IsNil)
+
+	sql := "select * from t where a in (1, 10, 20)"
+	expect := "TableReader(Table(t))->Sel([in(test.t.a, 1, 10, 20)])"
+
+	stmt, err := s.ParseOneStmt(sql, "", "")
+	c.Assert(err, IsNil)
+	p, err := plan.Optimize(se, stmt, s.is)
+	c.Assert(err, IsNil)
+	c.Assert(plan.ToString(p), Equals, expect, Commentf("for %s", sql))
+}
