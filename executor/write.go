@@ -836,6 +836,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) (types.Datu
 	// If tidb_batch_insert is ON and not in a transaction, we could use BatchInsert mode.
 	sessVars := e.ctx.GetSessionVars()
 	defer sessVars.CleanBuffers()
+	ignoreErr := sessVars.StmtCtx.IgnoreErr
 
 	e.rowCount = 0
 	if !sessVars.ImportingData {
@@ -844,13 +845,13 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) (types.Datu
 
 	// If `ON DUPLICATE KEY UPDATE` is specified, and no `IGNORE` keyword,
 	// the to-be-insert rows will be check on duplicate keys and update to the new rows.
-	if len(e.OnDuplicate) > 0 && !e.ctx.GetSessionVars().StmtCtx.IgnoreErr {
+	if len(e.OnDuplicate) > 0 && !ignoreErr {
 		err := e.batchUpdateDupRows(rows, e.OnDuplicate)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	} else {
-		if len(e.OnDuplicate) == 0 && e.ctx.GetSessionVars().StmtCtx.IgnoreErr {
+		if len(e.OnDuplicate) == 0 && ignoreErr {
 			// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
 			// For example, without IGNORE, a row that duplicates an existing UNIQUE index or PRIMARY KEY value in
 			// the table causes a duplicate-key error and the statement is aborted. With IGNORE, the row is discarded and no error occurs.
@@ -871,7 +872,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) (types.Datu
 			if err := e.checkBatchLimit(); err != nil {
 				return nil, errors.Trace(err)
 			}
-			if len(e.OnDuplicate) == 0 && !e.ctx.GetSessionVars().StmtCtx.IgnoreErr {
+			if len(e.OnDuplicate) == 0 && !ignoreErr {
 				e.ctx.Txn().SetOption(kv.PresumeKeyNotExists, nil)
 			}
 			h, err := e.Table.AddRecord(e.ctx, row, false)
@@ -885,13 +886,13 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) (types.Datu
 			}
 			if kv.ErrKeyExists.Equal(err) {
 				// TODO: Use batch get to speed up `insert ignore on duplicate key update`.
-				if len(e.OnDuplicate) > 0 && e.ctx.GetSessionVars().StmtCtx.IgnoreErr {
+				if len(e.OnDuplicate) > 0 && ignoreErr {
 					data, err1 := e.Table.RowWithCols(e.ctx, h, e.Table.WritableCols())
 					if err1 != nil {
 						return nil, errors.Trace(err1)
 					}
 					_, _, _, err = e.doDupRowUpdate(h, data, row, e.OnDuplicate)
-					if kv.ErrKeyExists.Equal(err) && e.ctx.GetSessionVars().StmtCtx.IgnoreErr {
+					if kv.ErrKeyExists.Equal(err) {
 						e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 						continue
 					}
