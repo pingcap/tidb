@@ -16,7 +16,6 @@ package ranger
 import (
 	"fmt"
 	"math"
-	"strconv"
 	"strings"
 
 	"github.com/juju/errors"
@@ -24,34 +23,8 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
-// IntColumnRange represents a range for a integer column, both low and high are inclusive.
-type IntColumnRange struct {
-	LowVal  int64
-	HighVal int64
-}
-
-// IsPoint returns if the table range is a point.
-func (tr *IntColumnRange) IsPoint() bool {
-	return tr.HighVal == tr.LowVal
-}
-
-func (tr IntColumnRange) String() string {
-	var l, r string
-	if tr.LowVal == math.MinInt64 {
-		l = "(-inf"
-	} else {
-		l = "[" + strconv.FormatInt(tr.LowVal, 10)
-	}
-	if tr.HighVal == math.MaxInt64 {
-		r = "+inf)"
-	} else {
-		r = strconv.FormatInt(tr.HighVal, 10) + "]"
-	}
-	return l + "," + r
-}
-
-// NewRange represents a range generated in physical plan building phase.
-type NewRange struct {
+// Range represents a range generated in physical plan building phase.
+type Range struct {
 	LowVal  []types.Datum
 	HighVal []types.Datum
 
@@ -59,9 +32,9 @@ type NewRange struct {
 	HighExclude bool // High value is exclusive.
 }
 
-// Clone clones a NewRange.
-func (ran *NewRange) Clone() *NewRange {
-	newRange := &NewRange{
+// Clone clones a Range.
+func (ran *Range) Clone() *Range {
+	newRange := &Range{
 		LowVal:      make([]types.Datum, 0, len(ran.LowVal)),
 		HighVal:     make([]types.Datum, 0, len(ran.HighVal)),
 		LowExclude:  ran.LowExclude,
@@ -77,7 +50,7 @@ func (ran *NewRange) Clone() *NewRange {
 }
 
 // IsPoint returns if the range is a point.
-func (ran *NewRange) IsPoint(sc *stmtctx.StatementContext) bool {
+func (ran *Range) IsPoint(sc *stmtctx.StatementContext) bool {
 	if len(ran.LowVal) != len(ran.HighVal) {
 		return false
 	}
@@ -98,8 +71,8 @@ func (ran *NewRange) IsPoint(sc *stmtctx.StatementContext) bool {
 	return !ran.LowExclude && !ran.HighExclude
 }
 
-// Convert2NewRange implements the Convert2NewRange interface.
-func (ran *NewRange) String() string {
+// String implements the Stringer interface.
+func (ran *Range) String() string {
 	lowStrs := make([]string, 0, len(ran.LowVal))
 	for _, d := range ran.LowVal {
 		lowStrs = append(lowStrs, formatDatum(d, true))
@@ -120,7 +93,7 @@ func (ran *NewRange) String() string {
 
 // PrefixEqualLen tells you how long the prefix of the range is a point.
 // e.g. If this range is (1 2 3, 1 2 +inf), then the return value is 2.
-func (ran *NewRange) PrefixEqualLen(sc *stmtctx.StatementContext) (int, error) {
+func (ran *Range) PrefixEqualLen(sc *stmtctx.StatementContext) (int, error) {
 	// Here, len(ran.LowVal) always equal to len(ran.HighVal)
 	for i := 0; i < len(ran.LowVal); i++ {
 		cmp, err := ran.LowVal[i].CompareDatum(sc, &ran.HighVal[i])
