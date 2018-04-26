@@ -59,6 +59,11 @@ import (
 	andand					"&&"
 	pipes					"||"
 
+	/* The following tokens belong to ODBCDateTimeType */
+	odbcDateType			"d"
+	odbcTimeType			"t"
+	odbcTimestampType			"ts"
+
 	/* The following tokens belong to ReservedKeyword. */
 	add			"ADD"
 	all 			"ALL"
@@ -822,6 +827,7 @@ import (
 	GetFormatSelector	"{DATE|DATETIME|TIME|TIMESTAMP}"
 
 %type	<ident>
+	ODBCDateTimeType		"ODBC type keywords for date and time literals"
 	Identifier			"identifier or unreserved keyword"
 	NotKeywordToken			"Tokens not mysql keyword but treated specially"
 	UnReservedKeyword		"MySQL unreserved keywords"
@@ -2447,6 +2453,16 @@ Field:
 		asName := $2.(string)
 		$$ = &ast.SelectField{Expr: expr, AsName: model.NewCIStr(asName)}
 	}
+|	'{' Identifier Expression '}' FieldAsNameOpt
+	{
+		/*
+		* ODBC escape syntax.
+		* See https://dev.mysql.com/doc/refman/5.7/en/expressions.html
+		*/
+		expr := $3
+		asName := $5.(string)
+		$$ = &ast.SelectField{Expr: expr, AsName: model.NewCIStr(asName)}
+	}
 
 FieldAsNameOpt:
 	/* EMPTY */
@@ -2637,7 +2653,7 @@ TiDBKeyword:
 "ADMIN" | "CANCEL" | "DDL" | "JOBS" | "JOB" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "STATS_HEALTHY" | "TIDB" | "TIDB_HJ" | "TIDB_SMJ" | "TIDB_INLJ"
 
 NotKeywordToken:
- "ADDDATE" | "BIT_AND" | "BIT_OR" | "BIT_XOR" | "CAST" | "COPY" | "COUNT" | "CURTIME" | "DATE_ADD" | "DATE_SUB" | "EXTRACT" | "GET_FORMAT" | "GROUP_CONCAT" 
+ "ADDDATE" | "BIT_AND" | "BIT_OR" | "BIT_XOR" | "CAST" | "COPY" | "COUNT" | "CURTIME" | "DATE_ADD" | "DATE_SUB" | "EXTRACT" | "GET_FORMAT" | "GROUP_CONCAT"
 | "INPLACE" |"MIN" | "MAX" | "NOW" | "POSITION" | "SUBDATE" | "SUBSTRING" | "SUM" | "TIMESTAMPADD" | "TIMESTAMPDIFF" | "TRIM"
 
 /************************************************************************************
@@ -2816,6 +2832,20 @@ ReplacePriority:
 	}
 
 /***********************************Replace Statements END************************************/
+
+ODBCDateTimeType:
+	"d"
+	{
+		$$ = ast.DateLiteral
+	}
+|	"t"
+	{
+		$$ = ast.TimeLiteral
+	}
+|	"ts"
+	{
+		$$ = ast.TimestampLiteral
+	}
 
 Literal:
 	"FALSE"
@@ -3353,21 +3383,12 @@ FunctionCallKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName:model.NewCIStr(ast.PasswordFunc), Args: $3.([]ast.ExprNode)}
 	}
-|	'{' Identifier stringLit '}'
+|	'{' ODBCDateTimeType stringLit '}'
 	{
-		// This is ODBC syntax.
+		// This is ODBC syntax for date and time literals.
 		// See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html
 		expr := ast.NewValueExpr($3)
-		tp := $2
-		if tp == "ts" {
-			$$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.TimestampLiteral), Args: []ast.ExprNode{expr}}
-		} else if tp == "t" {
-			$$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.TimeLiteral), Args: []ast.ExprNode{expr}}
-		} else if tp == "d" {
-			$$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.DateLiteral), Args: []ast.ExprNode{expr}}
-		} else {
-			$$ = expr
-		}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($2), Args: []ast.ExprNode{expr}}
 	}
 
 FunctionCallNonKeyword:
