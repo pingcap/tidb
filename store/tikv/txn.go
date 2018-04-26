@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/juju/errors"
@@ -40,6 +41,7 @@ type tikvTxn struct {
 	commitTS  uint64
 	valid     bool
 	lockKeys  [][]byte
+	mu        sync.Mutex // For thread-safe LockKeys function.
 	dirty     bool
 	setCnt    int64
 }
@@ -214,9 +216,11 @@ func (txn *tikvTxn) Rollback() error {
 
 func (txn *tikvTxn) LockKeys(keys ...kv.Key) error {
 	metrics.TiKVTxnCmdCounter.WithLabelValues("lock_keys").Inc()
+	txn.mu.Lock()
 	for _, key := range keys {
 		txn.lockKeys = append(txn.lockKeys, key)
 	}
+	txn.mu.Unlock()
 	return nil
 }
 
