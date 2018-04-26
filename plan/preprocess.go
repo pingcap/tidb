@@ -57,6 +57,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkDropTableGrammar(node)
 	case *ast.RenameTableStmt:
 		p.inCreateOrDropTable = true
+		p.checkRenameTableGrammar(node)
 	case *ast.CreateIndexStmt:
 		p.checkCreateIndexGrammar(node)
 	case *ast.AlterTableStmt:
@@ -68,6 +69,8 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkDropDatabaseGrammar(node)
 	case *ast.ShowStmt:
 		p.resolveShowStmt(node)
+	case *ast.UnionSelectList:
+		p.checkUnionSelectList(node)
 	case *ast.DeleteTableList:
 		return in, true
 	}
@@ -205,6 +208,18 @@ func (p *preprocessor) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 	}
 }
 
+func (p *preprocessor) checkUnionSelectList(stmt *ast.UnionSelectList) {
+	for idx, sel := range stmt.Selects {
+		if idx != len(stmt.Selects)-1 {
+			if sel.OrderBy != nil {
+				p.err = ErrWrongUsage.GenByArgs("UNION", "ORDER BY")
+			} else if sel.Limit != nil {
+				p.err = ErrWrongUsage.GenByArgs("UNION", "LIMIT")
+			}
+		}
+	}
+}
+
 func (p *preprocessor) checkCreateDatabaseGrammar(stmt *ast.CreateDatabaseStmt) {
 	if isIncorrectName(stmt.Name) {
 		p.err = ddl.ErrWrongDBName.GenByArgs(stmt.Name)
@@ -284,6 +299,21 @@ func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 		return
 	}
 	p.err = checkIndexInfo(stmt.IndexName, stmt.IndexColNames)
+}
+
+func (p *preprocessor) checkRenameTableGrammar(stmt *ast.RenameTableStmt) {
+	oldTable := stmt.OldTable.Name.String()
+	newTable := stmt.NewTable.Name.String()
+
+	if isIncorrectName(oldTable) {
+		p.err = ddl.ErrWrongTableName.GenByArgs(oldTable)
+		return
+	}
+
+	if isIncorrectName(newTable) {
+		p.err = ddl.ErrWrongTableName.GenByArgs(newTable)
+		return
+	}
 }
 
 func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
