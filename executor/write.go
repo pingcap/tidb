@@ -1921,8 +1921,9 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema) (types
 				continue
 			}
 
-			if kv.ErrKeyExists.Equal(err1) && e.ctx.GetSessionVars().StmtCtx.IgnoreErr {
-				e.ctx.GetSessionVars().StmtCtx.AppendWarning(err1)
+			sc := e.ctx.GetSessionVars().StmtCtx
+			if kv.ErrKeyExists.Equal(err1) && sc.IgnoreErr {
+				sc.AppendWarning(err1)
 				continue
 			}
 			return nil, errors.Trace(err1)
