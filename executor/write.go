@@ -45,8 +45,6 @@ var (
 // updateRecord updates the row specified by the handle `h`, from `oldData` to `newData`.
 // `modified` means which columns are really modified. It's used for secondary indices.
 // Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
-// ignoreErr indicate that update statement has the `IGNORE` modifier, in this situation, update statement will not update
-// the keys which cause duplicate conflicts and ignore the error.
 // The return values:
 //     1. changed (bool) : does the update really change the row values. e.g. update set i = 1 where i = 1;
 //     2. handleChanged (bool) : is the handle changed after the update.
@@ -55,7 +53,6 @@ var (
 func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datum, modified []bool, t table.Table,
 	onDup bool) (bool, bool, int64, error) {
 	var sc = ctx.GetSessionVars().StmtCtx
-	ignoreErr := sc.IgnoreErr
 	var changed, handleChanged = false, false
 	// onUpdateSpecified is for "UPDATE SET ts_field = old_value", the
 	// timestamp field is explicitly set, but not changed in fact.
@@ -137,7 +134,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 
 	if handleChanged {
 		skipHandleCheck := false
-		if ignoreErr {
+		if sc.IgnoreErr {
 			// if the new handle exists. `UPDATE IGNORE` will avoid removing record, and do nothing.
 			if err = tables.CheckHandleExists(ctx, t, newHandle); err != nil {
 				return false, handleChanged, newHandle, errors.Trace(err)
@@ -806,7 +803,7 @@ type InsertExec struct {
 
 	OnDuplicate []*expression.Assignment
 
-	Priority  mysql.PriorityEnum
+	Priority mysql.PriorityEnum
 
 	finished bool
 	rowCount int
@@ -893,7 +890,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) (types.Datu
 						return nil, errors.Trace(err1)
 					}
 					_, _, _, err = e.doDupRowUpdate(h, data, row, e.OnDuplicate)
-					if kv.ErrKeyExists.Equal(err) && e.ctx.GetSessionVars().StmtCtx.IgnoreErr{
+					if kv.ErrKeyExists.Equal(err) && e.ctx.GetSessionVars().StmtCtx.IgnoreErr {
 						e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 						continue
 					}
