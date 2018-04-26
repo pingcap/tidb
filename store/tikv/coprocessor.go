@@ -631,11 +631,9 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 }
 
 const (
-	minLogBackoffTime       = 100
-	minLogKVProcessTime     = 100
-	minLogKVWaitTime        = 200
-	minLogScanProcessedInfo = 100000
-	minLogScanTotalInfo     = 200000
+	minLogBackoffTime   = 100
+	minLogKVProcessTime = 100
+	minLogKVWaitTime    = 200
 )
 
 func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *copTask, bo *Backoffer, resp *tikvrpc.Response) {
@@ -656,15 +654,15 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 			waitMs := detail.HandleTime.WaitMs
 			if processMs > minLogKVProcessTime {
 				logStr += fmt.Sprintf(" kv_process_ms:%d", processMs)
+				if detail.ScanDetail != nil {
+					logStr = appendScanDetail(logStr, "write", detail.ScanDetail.Write)
+					logStr = appendScanDetail(logStr, "data", detail.ScanDetail.Data)
+					logStr = appendScanDetail(logStr, "lock", detail.ScanDetail.Lock)
+				}
 			}
 			if waitMs > minLogKVWaitTime {
 				logStr += fmt.Sprintf(" kv_wait_ms:%d", waitMs)
 			}
-		}
-		if detail.ScanDetail != nil {
-			logStr = appendScanDetail(logStr, "write", detail.ScanDetail.Write)
-			logStr = appendScanDetail(logStr, "data", detail.ScanDetail.Data)
-			logStr = appendScanDetail(logStr, "lock", detail.ScanDetail.Lock)
 		}
 	}
 	log.Info(logStr)
@@ -672,12 +670,8 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 
 func appendScanDetail(logStr string, columnFamily string, scanInfo *kvrpcpb.ScanInfo) string {
 	if scanInfo != nil {
-		if scanInfo.Total > minLogScanTotalInfo {
-			logStr += fmt.Sprintf(" scan_total_%s:%d", columnFamily, scanInfo.Total)
-		}
-		if scanInfo.Processed > minLogScanProcessedInfo {
-			logStr += fmt.Sprintf(" scan_processed_%s:%d", columnFamily, scanInfo.Processed)
-		}
+		logStr += fmt.Sprintf(" scan_total_%s:%d", columnFamily, scanInfo.Total)
+		logStr += fmt.Sprintf(" scan_processed_%s:%d", columnFamily, scanInfo.Processed)
 	}
 	return logStr
 }
