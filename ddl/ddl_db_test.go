@@ -1564,7 +1564,7 @@ func (s *testDBSuite) testRenameTable(c *C, sql string) {
 	s.tk.MustExec("use test1")
 	s.tk.MustExec("create table if not exists t (c1 int, c2 int)")
 	s.tk.MustExec("create table if not exists t1 (c1 int, c2 int)")
-	s.tk.MustExec(fmt.Sprintf(sql, "test1.t", "test1.t"))
+	s.tk.MustExec(fmt.Sprintf(sql, "test1.t", "t"))
 	s.tk.MustExec(fmt.Sprintf(sql, "test1.t1", "test1.t1"))
 
 	s.tk.MustExec("drop database test1")
