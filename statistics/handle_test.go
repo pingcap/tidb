@@ -111,6 +111,8 @@ func (s *testStatsCacheSuite) TestStatsCache(c *C) {
 }
 
 func assertTableEqual(c *C, a *statistics.Table, b *statistics.Table) {
+	c.Assert(a.Count, Equals, b.Count)
+	c.Assert(a.ModifyCount, Equals, b.ModifyCount)
 	c.Assert(len(a.Columns), Equals, len(b.Columns))
 	for i := range a.Columns {
 		c.Assert(a.Columns[i].Count, Equals, b.Columns[i].Count)
