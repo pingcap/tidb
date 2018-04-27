@@ -1947,7 +1947,6 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) Plan {
 	}
 	p = np
 
-	b.ctx.GetSessionVars().StmtCtx.IgnoreErr = update.IgnoreErr
 	updt := Update{
 		OrderedList: orderedList,
 	}.init(b.ctx)
