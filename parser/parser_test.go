@@ -1594,6 +1594,10 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE `hello-world@dev`.`User` ADD COLUMN `name` mediumtext CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL , ALGORITHM = DEFAULT;", true},
 		{"ALTER TABLE `hello-world@dev`.`User` ADD COLUMN `name` mediumtext CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL , ALGORITHM = INPLACE;", true},
 		{"ALTER TABLE `hello-world@dev`.`User` ADD COLUMN `name` mediumtext CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL , ALGORITHM = COPY;", true},
+		{"ALTER TABLE t CONVERT TO CHARACTER SET utf8;", true},
+		{"ALTER TABLE t CONVERT TO CHARSET utf8;", true},
+		{"ALTER TABLE t CONVERT TO CHARACTER SET utf8 COLLATE utf8_bin;", true},
+		{"ALTER TABLE t CONVERT TO CHARSET utf8 COLLATE utf8_bin;", true},
 
 		// For create index statement
 		{"CREATE INDEX idx ON t (a)", true},
