@@ -121,6 +121,16 @@ func (s *testSuite) TestSetVar(c *C) {
 	c.Assert(charset, Equals, "utf8")
 	c.Assert(collation, Equals, "utf8_bin")
 
+	tk.MustExec("set names latin1 collate latin1_swedish_ci")
+	charset, collation = vars.GetCharsetInfo()
+	c.Assert(charset, Equals, "latin1")
+	c.Assert(collation, Equals, "latin1_swedish_ci")
+
+	tk.MustExec("set names utf8 collate default")
+	charset, collation = vars.GetCharsetInfo()
+	c.Assert(charset, Equals, "utf8")
+	c.Assert(collation, Equals, "utf8_bin")
+
 	tk.MustExec("set @@character_set_results = NULL")
 
 	c.Assert(vars.ImportingData, IsFalse)
