@@ -3,7 +3,7 @@ All notable changes to this project will be documented in this file. See also [R
 
 ## [2.0.0-rc.5] - 2018-04-17
 ### New Features
-* Support showing memory usage of the executing statements in the `Show Process List` statement
+* Support showing memory usage of the executing statements in the `SHOW PROCESSLIST` statement
 * Support setting the table comment using the `Alter` statement
 ### Improvements
 * Clean up the written data while rolling back the `Add Index` operation, to reduce consumed space
