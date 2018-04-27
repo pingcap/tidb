@@ -906,7 +906,7 @@ AlterTableSpec:
 	{
 		op := &ast.AlterTableSpec{
 			Tp: ast.AlterTableOption,
-			Options:[]*ast.TableOption { &ast.TableOption{Tp: ast.TableOptionCharset, StrValue: $4.(string)}},
+			Options:[]*ast.TableOption{{Tp: ast.TableOptionCharset, StrValue: $4.(string)}},
 		}
 		if $5 != "" {
 			op.Options = append(op.Options, &ast.TableOption{Tp: ast.TableOptionCollate, StrValue: $5.(string)})
