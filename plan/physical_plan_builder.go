@@ -19,7 +19,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
@@ -119,10 +118,7 @@ func (ds *DataSource) tryToGetMemTask(prop *requiredProp) (task task, err error)
 	if !prop.isEmpty() {
 		return nil, nil
 	}
-	client := ds.ctx.GetClient()
-	memDB := infoschema.IsMemoryDB(ds.DBName.L)
-	isDistReq := !memDB && client != nil && client.IsRequestTypeSupported(kv.ReqTypeSelect, 0)
-	if isDistReq {
+	if !infoschema.IsMemoryDB(ds.DBName.L) {
 		return nil, nil
 	}
 
