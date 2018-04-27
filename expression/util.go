@@ -46,6 +46,7 @@ func ExtractColumns(expr Expression) (cols []*Column) {
 	return extractColumns(result, expr, nil)
 }
 
+// ExtractCorColumns extracts correlated column from given expression.
 func ExtractCorColumns(expr Expression) (cols []*CorrelatedColumn) {
 	switch v := expr.(type) {
 	case *CorrelatedColumn:
