@@ -36,7 +36,7 @@ func (s *baseLogicalPlan) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 	return p
 }
 
-// setChild set p as topn's child. If eliminable is true, this topn plan can be removed.
+// setChild set p as topn's child.
 func (lt *LogicalTopN) setChild(p LogicalPlan) LogicalPlan {
 	if lt.isLimit() {
 		limit := LogicalLimit{
