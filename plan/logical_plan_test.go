@@ -1520,8 +1520,8 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 			best: "UnionAll{DataScan(t)->Limit->Projection->DataScan(s)->TopN([s.a],0,5)->Projection}->Limit",
 		},
 	}
-	for _, tt := range tests {
-		comment := Commentf("for %s", tt.sql)
+	for i, tt := range tests {
+		comment := Commentf("case:%v sql:%s", i, tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is, false)
