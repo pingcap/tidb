@@ -92,7 +92,7 @@ func (q *QueryFeedback) CollectFeedback(numOfRanges int) bool {
 }
 
 // StoreRanges stores the ranges for update.
-func (q *QueryFeedback) StoreRanges(ranges []*ranger.NewRange) {
+func (q *QueryFeedback) StoreRanges(ranges []*ranger.Range) {
 	q.feedback = make([]feedback, 0, len(ranges))
 	for _, ran := range ranges {
 		q.feedback = append(q.feedback, feedback{&ran.LowVal[0], &ran.HighVal[0], 0, 0})

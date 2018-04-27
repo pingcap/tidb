@@ -566,13 +566,13 @@ func (s *testStateChangeSuite) TestParallelChangeColumnName(c *C) {
 		// Make sure the both DDL statements have entered the DDL queue before running the DDL jobs.
 		once.Do(func() {
 			var qLen int64
-			var err1 error
+			var err2 error
 			for {
 				kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
 					m := meta.NewMeta(txn)
-					qLen, err1 = m.DDLJobQueueLen()
-					if err1 != nil {
-						return err1
+					qLen, err2 = m.DDLJobQueueLen()
+					if err2 != nil {
+						return err2
 					}
 					return nil
 				})
