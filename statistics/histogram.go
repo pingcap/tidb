@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
-	tipb "github.com/pingcap/tipb/go-tipb"
+	"github.com/pingcap/tipb/go-tipb"
 	"golang.org/x/net/context"
 )
 
@@ -242,6 +242,26 @@ func SaveStatsToStorage(sctx sessionctx.Context, tableID int64, count int64, isI
 		if err != nil {
 			return errors.Trace(err)
 		}
+	}
+	_, err = exec.Execute(ctx, "commit")
+	return errors.Trace(err)
+}
+
+// SaveMetaToStorage will save stats_meta to storage.
+func SaveMetaToStorage(sctx sessionctx.Context, tableID, count, modifyCount int64) error {
+	ctx := context.TODO()
+	exec := sctx.(sqlexec.SQLExecutor)
+	_, err := exec.Execute(ctx, "begin")
+	if err != nil {
+		return errors.Trace(err)
+	}
+	var sql string
+	version := sctx.Txn().StartTS()
+	sql = fmt.Sprintf("replace into mysql.stats_meta (version, table_id, count, modify_count) values (%d, %d, %d, %d)", version, tableID, count, modifyCount)
+	if _, err = exec.Execute(ctx, sql); err != nil {
+		_, err1 := exec.Execute(ctx, "rollback")
+		terror.Log(errors.Trace(err1))
+		return errors.Trace(err)
 	}
 	_, err = exec.Execute(ctx, "commit")
 	return errors.Trace(err)
