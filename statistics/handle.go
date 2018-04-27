@@ -54,6 +54,8 @@ type Handle struct {
 	feedback []*QueryFeedback
 
 	Lease time.Duration
+	// loadMetaCh is a channel to notify a load stats operation has done.
+	loadMetaCh chan *LoadMeta
 }
 
 // Clear the statsCache, only for test.
@@ -85,6 +87,7 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration) *Handle {
 		globalMap:       make(tableDeltaMap),
 		Lease:           lease,
 		feedback:        make([]*QueryFeedback, 0, MaxQueryFeedbackCount),
+		loadMetaCh:      make(chan *LoadMeta, 1),
 	}
 	handle.statsCache.Store(statsCache{})
 	return handle
@@ -205,4 +208,9 @@ func (h *Handle) LoadNeededHistograms() error {
 		histogramNeededColumns.delete(col)
 	}
 	return nil
+}
+
+// LoadMetaCh returns loaded statistic meta channel in handle.
+func (h *Handle) LoadMetaCh() chan *LoadMeta {
+	return h.loadMetaCh
 }
