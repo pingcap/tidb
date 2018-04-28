@@ -46,6 +46,7 @@ const (
 	codeNonUpdatableTable    = mysql.ErrNonUpdatableTable
 )
 
+// error definitions.
 var (
 	ErrUnsupportedType             = terror.ClassOptimizer.New(codeUnsupportedType, "Unsupported type %T")
 	ErrAnalyzeMissIndex            = terror.ClassOptimizer.New(codeAnalyzeMissIndex, "Index '%s' in field list does not exist in table '%s'")
@@ -54,7 +55,6 @@ var (
 	ErrWrongParamCount             = terror.ClassOptimizer.New(codeWrongParamCount, "Wrong parameter count")
 	ErrSchemaChanged               = terror.ClassOptimizer.New(codeSchemaChanged, "Schema has changed")
 
-	// ErrWrongUsage is returned when SQL operators are not properly used.
 	ErrWrongUsage           = terror.ClassOptimizer.New(codeWrongUsage, mysql.MySQLErrName[mysql.ErrWrongUsage])
 	ErrAmbiguous            = terror.ClassOptimizer.New(codeAmbiguous, mysql.MySQLErrName[mysql.ErrNonUniq])
 	ErrUnknownColumn        = terror.ClassOptimizer.New(codeUnknownColumn, mysql.MySQLErrName[mysql.ErrBadField])

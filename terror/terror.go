@@ -94,7 +94,7 @@ var errClz2Str = map[ErrClass]string{
 	ClassAdmin:      "admin",
 	ClassMeta:       "meta",
 	ClassKV:         "kv",
-	ClassOptimizer:  "optimizer",
+	ClassOptimizer:  "planner",
 	ClassParser:     "parser",
 	ClassPerfSchema: "perfschema",
 	ClassPrivilege:  "privilege",
