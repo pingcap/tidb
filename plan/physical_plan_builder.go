@@ -216,7 +216,7 @@ func (ds *DataSource) findBestTask(prop *requiredProp) (task, error) {
 		// We will use index to generate physical plan if:
 		// this path's access cond is not nil or
 		// we have prop to match or
-		// this index is force to choose.
+		// this index is forced to choose.
 		if len(path.accessConds) > 0 || len(prop.cols) > 0 || path.forced {
 			idxTask, err := ds.convertToIndexScan(prop, path)
 			if err != nil {

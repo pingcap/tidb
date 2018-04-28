@@ -26,11 +26,11 @@ func (ds *DataSource) preparePossibleProperties() [][]*expression.Column {
 			if col != nil {
 				result = append(result, []*expression.Column{col})
 			}
-		} else {
-			cols, _ := expression.IndexInfo2Cols(ds.schema.Columns, path.index)
-			if len(cols) > 0 {
-				result = append(result, cols)
-			}
+			continue
+		}
+		cols, _ := expression.IndexInfo2Cols(ds.schema.Columns, path.index)
+		if len(cols) > 0 {
+			result = append(result, cols)
 		}
 	}
 	return result

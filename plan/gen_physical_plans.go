@@ -256,22 +256,18 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 	if !ok {
 		return nil
 	}
-	accessPaths := x.possibleAccessPaths
 	var tblPath *accessPath
-	for i, path := range accessPaths {
+	for _, path := range x.possibleAccessPaths {
 		if path.isTablePath {
 			tblPath = path
-			accessPaths = append(accessPaths[:i], accessPaths[i+1:]...)
 			break
 		}
 	}
-	if tblPath != nil {
-		if len(innerJoinKeys) == 1 {
-			pkCol := x.getPKIsHandleCol()
-			if pkCol != nil && innerJoinKeys[0].Equal(nil, pkCol) {
-				innerPlan := x.forceToTableScan(pkCol)
-				return p.constructIndexJoin(prop, innerJoinKeys, outerJoinKeys, outerIdx, innerPlan, nil, nil)
-			}
+	if tblPath != nil && len(innerJoinKeys) == 1 {
+		pkCol := x.getPKIsHandleCol()
+		if pkCol != nil && innerJoinKeys[0].Equal(nil, pkCol) {
+			innerPlan := x.forceToTableScan(pkCol)
+			return p.constructIndexJoin(prop, innerJoinKeys, outerJoinKeys, outerIdx, innerPlan, nil, nil)
 		}
 	}
 	var (
@@ -281,7 +277,10 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 		remainedOfBest []expression.Expression
 		keyOff2IdxOff  []int
 	)
-	for _, path := range accessPaths {
+	for _, path := range x.possibleAccessPaths {
+		if path.isTablePath {
+			continue
+		}
 		indexInfo := path.index
 		ranges, remained, tmpKeyOff2IdxOff := p.buildRangeForIndexJoin(indexInfo, x, innerJoinKeys)
 		// We choose the index by the number of used columns of the range, the much the better.
