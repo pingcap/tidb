@@ -34,7 +34,8 @@ func NewTestTiKVStore(client Client, pdClient pd.Client, clientHijack func(Clien
 	// Make sure the uuid is unique.
 	uid := uuid.NewV4().String()
 	spkv := NewMockSafePointKV()
-	tikvStore, err := newTikvStore(uid, pdCli, spkv, client, false, true)
+	tikvStore, err := newTikvStore(uid, pdCli, spkv, client, false)
+	tikvStore.EnableTxnLocalLatches(1024)
 	tikvStore.mock = true
 	return tikvStore, errors.Trace(err)
 }

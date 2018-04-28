@@ -103,7 +103,7 @@ type Latches struct {
 
 // NewLatches create a Latches with fixed length,
 // the size will be rounded up to the power of 2.
-func NewLatches(size int) *Latches {
+func NewLatches(size uint) *Latches {
 	powerOfTwoSize := 1 << uint32(bits.Len32(uint32(size-1)))
 	slots := make([]latch, powerOfTwoSize)
 	return &Latches{

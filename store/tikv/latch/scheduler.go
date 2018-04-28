@@ -28,7 +28,7 @@ type LatchesScheduler struct {
 }
 
 // NewScheduler create the LatchesScheduler.
-func NewScheduler(size int) *LatchesScheduler {
+func NewScheduler(size uint) *LatchesScheduler {
 	latches := NewLatches(size)
 	unlockCh := make(chan *Lock, lockChanSize)
 	scheduler := &LatchesScheduler{
