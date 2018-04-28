@@ -902,6 +902,17 @@ AlterTableSpec:
 			Options:$1.([]*ast.TableOption),
 		}
 	}
+|	"CONVERT" "TO" CharsetKw CharsetName OptCollate
+	{
+		op := &ast.AlterTableSpec{
+			Tp: ast.AlterTableOption,
+			Options:[]*ast.TableOption{{Tp: ast.TableOptionCharset, StrValue: $4.(string)}},
+		}
+		if $5 != "" {
+			op.Options = append(op.Options, &ast.TableOption{Tp: ast.TableOptionCollate, StrValue: $5.(string)})
+		}
+		$$ = op
+	}
 |	"ADD" ColumnKeywordOpt ColumnDef ColumnPosition
 	{
 		$$ = &ast.AlterTableSpec{
