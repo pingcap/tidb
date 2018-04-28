@@ -672,7 +672,7 @@ func (h tableHandler) addScatterSchedule(startKey, endKey []byte, name string) e
 		return err
 	}
 	input := map[string]string{
-		"name":       "scatter-range-leader",
+		"name":       "scatter-range",
 		"start_key":  url.QueryEscape(string(startKey)),
 		"end_key":    url.QueryEscape(string(endKey)),
 		"range_name": name,
@@ -697,7 +697,7 @@ func (h tableHandler) deleteScatterSchedule(name string) error {
 	if err != nil {
 		return err
 	}
-	scheduleURL := fmt.Sprintf("http://%s/pd/api/v1/schedulers/scatter-range-leader-%s", pdAddrs[0], name)
+	scheduleURL := fmt.Sprintf("http://%s/pd/api/v1/schedulers/scatter-range-%s", pdAddrs[0], name)
 	req, err := http.NewRequest(http.MethodDelete, scheduleURL, nil)
 	if err != nil {
 		return err
