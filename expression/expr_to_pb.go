@@ -106,9 +106,9 @@ func (pc PbConverter) conOrCorColToPBExpr(expr Expression) *tipb.Expr {
 		log.Errorf("Fail to eval constant, err: %s", err.Error())
 		return nil
 	}
-	tp, val, ok := pc.encodeDatum(d)
+	tp, val := pc.encodeDatum(d)
 
-	if !ok {
+	if val == nil {
 		return nil
 	}
 
@@ -118,7 +118,7 @@ func (pc PbConverter) conOrCorColToPBExpr(expr Expression) *tipb.Expr {
 	return &tipb.Expr{Tp: tp, Val: val, FieldType: toPBFieldType(ft)}
 }
 
-func (pc *PbConverter) encodeDatum(d types.Datum) (tipb.ExprType, []byte, bool) {
+func (pc *PbConverter) encodeDatum(d types.Datum) (tipb.ExprType, []byte) {
 	var (
 		tp  tipb.ExprType
 		val []byte
@@ -126,6 +126,7 @@ func (pc *PbConverter) encodeDatum(d types.Datum) (tipb.ExprType, []byte, bool) 
 	switch d.Kind() {
 	case types.KindNull:
 		tp = tipb.ExprType_Null
+		val = []byte{}
 	case types.KindInt64:
 		tp = tipb.ExprType_Int64
 		val = codec.EncodeInt(nil, d.GetInt64())
@@ -162,16 +163,16 @@ func (pc *PbConverter) encodeDatum(d types.Datum) (tipb.ExprType, []byte, bool) 
 			v, err := t.ToPackedUint()
 			if err != nil {
 				log.Errorf("Fail to encode value, err: %s", err.Error())
-				return tp, nil, false
+				return tp, nil
 			}
 			val = codec.EncodeUint(nil, v)
-			return tp, val, true
+			return tp, val
 		}
-		return tp, nil, false
+		return tp, nil
 	default:
-		return tp, nil, false
+		return tp, nil
 	}
-	return tp, val, true
+	return tp, val
 }
 
 func toPBFieldType(ft *types.FieldType) *tipb.FieldType {
