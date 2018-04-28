@@ -203,7 +203,7 @@ func (ds *DataSource) findBestTask(prop *requiredProp) (task, error) {
 	t = invalidTask
 
 	for _, path := range ds.possibleAccessPaths {
-		if path.isRowID {
+		if path.isTablePath {
 			tblTask, err := ds.convertToTableScan(prop, path)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -213,6 +213,10 @@ func (ds *DataSource) findBestTask(prop *requiredProp) (task, error) {
 			}
 			continue
 		}
+		// We will use index to generate physical plan if:
+		// this path's access cond is not nil or
+		// we have prop to match or
+		// this index is force to choose.
 		if len(path.accessConds) > 0 || len(prop.cols) > 0 || path.forced {
 			idxTask, err := ds.convertToIndexScan(prop, path)
 			if err != nil {

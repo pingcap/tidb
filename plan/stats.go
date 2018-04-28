@@ -83,10 +83,7 @@ func (p *baseLogicalPlan) deriveStats() (*statsInfo, error) {
 	if len(p.children) == 1 {
 		var err error
 		p.stats, err = p.children[0].deriveStats()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		return p.stats, nil
+		return p.stats, errors.Trace(err)
 	}
 
 	profile := &statsInfo{
@@ -130,7 +127,7 @@ func (ds *DataSource) deriveStats() (*statsInfo, error) {
 	}
 	ds.statsAfterSelect = ds.getStatsByFilter(ds.pushedDownConds)
 	for _, path := range ds.possibleAccessPaths {
-		if path.isRowID {
+		if path.isTablePath {
 			err := ds.deriveTablePathStats(path)
 			if err != nil {
 				return nil, errors.Trace(err)

@@ -317,7 +317,7 @@ func (b *planBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
 	return false
 }
 
-func matchPathByIndexName(paths []*accessPath, idxName model.CIStr) *accessPath {
+func getPathByIndexName(paths []*accessPath, idxName model.CIStr) *accessPath {
 	for _, path := range paths {
 		if path.index.Name.L == idxName.L {
 			return path
@@ -328,7 +328,7 @@ func matchPathByIndexName(paths []*accessPath, idxName model.CIStr) *accessPath 
 
 func getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInfo *model.TableInfo) ([]*accessPath, error) {
 	publicPaths := make([]*accessPath, 0, len(tblInfo.Indices)+1)
-	publicPaths = append(publicPaths, &accessPath{isRowID: true})
+	publicPaths = append(publicPaths, &accessPath{isTablePath: true})
 	for _, index := range tblInfo.Indices {
 		if index.State == model.StatePublic {
 			publicPaths = append(publicPaths, &accessPath{index: index})
@@ -345,7 +345,7 @@ func getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInfo *model.TableInf
 
 		hasScanHint = true
 		for _, idxName := range hint.IndexNames {
-			path := matchPathByIndexName(publicPaths[1:], idxName)
+			path := getPathByIndexName(publicPaths[1:], idxName)
 			if path == nil {
 				return nil, ErrKeyDoesNotExist.GenByArgs(idxName, tblInfo.Name)
 			}
@@ -362,11 +362,8 @@ func getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInfo *model.TableInf
 		}
 	}
 
-	if !hasScanHint {
-		return publicPaths, nil
-	}
-	if !hasUseOrForce {
-		return removeIgnoredPaths(publicPaths, ignored), nil
+	if !hasScanHint || !hasUseOrForce {
+		available = publicPaths
 	}
 
 	available = removeIgnoredPaths(available, ignored)
@@ -374,7 +371,7 @@ func getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInfo *model.TableInf
 	// If we have got "FORCE" or "USE" index hint but got no available index,
 	// we have to use table scan.
 	if len(available) == 0 {
-		available = append(available, &accessPath{isRowID: true})
+		available = append(available, &accessPath{isTablePath: true})
 	}
 	return available, nil
 }
@@ -385,7 +382,7 @@ func removeIgnoredPaths(paths, ignoredPaths []*accessPath) []*accessPath {
 	}
 	remainedPaths := make([]*accessPath, 0, len(paths))
 	for _, path := range paths {
-		if path.isRowID || matchPathByIndexName(ignoredPaths, path.index.Name) == nil {
+		if path.isTablePath || getPathByIndexName(ignoredPaths, path.index.Name) == nil {
 			remainedPaths = append(remainedPaths, path)
 		}
 	}

@@ -21,7 +21,7 @@ func (ds *DataSource) preparePossibleProperties() [][]*expression.Column {
 	result := make([][]*expression.Column, 0, len(ds.possibleAccessPaths))
 
 	for _, path := range ds.possibleAccessPaths {
-		if path.isRowID {
+		if path.isTablePath {
 			col := ds.getPKIsHandleCol()
 			if col != nil {
 				result = append(result, []*expression.Column{col})
