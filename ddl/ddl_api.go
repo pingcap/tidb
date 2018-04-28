@@ -809,14 +809,10 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 			if s.Partition.Tp == model.PartitionTypeRange {
 				if _, ok := s.Partition.Expr.(*ast.ColumnNameExpr); ok {
 					for _, col := range cols {
-						if col.Name.L == pi.Expr && col.Tp != types.KindInt64 {
+						name := strings.Replace(col.Name.String(), ".", "`.`", -1)
+						if fmt.Sprintf("`%s`", name) == pi.Expr && col.Tp != mysql.TypeLong {
 							return errors.Trace(fmt.Errorf("Field '%s' is of a not allowed type for this type of partitioning", pi.Expr))
 						}
-					}
-				}
-				if fnExpr, ok := s.Partition.Expr.(*ast.FuncCallExpr); ok {
-					if fnExpr.Type.Tp != types.KindInt64 {
-						return errors.Trace(fmt.Errorf("Field '%s' is of a not allowed type for this type of partitioning", pi.Expr))
 					}
 				}
 			}
