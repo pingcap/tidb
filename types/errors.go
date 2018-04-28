@@ -76,8 +76,7 @@ const (
 	codeUnknown             = terror.ErrCode(mysql.ErrUnknown)
 	codeInvalidDefault      = terror.ErrCode(mysql.ErrInvalidDefault)
 	codeMBiggerThanD        = terror.ErrCode(mysql.ErrMBiggerThanD)
-
-	codeDataOutOfRange = terror.ErrCode(mysql.ErrWarnDataOutOfRange)
+	codeDataOutOfRange      = terror.ErrCode(mysql.ErrWarnDataOutOfRange)
 )
 
 var (
