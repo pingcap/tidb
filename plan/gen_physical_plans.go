@@ -468,7 +468,6 @@ func (lt *LogicalTopN) getPhysTopN() []PhysicalPlan {
 			ByItems: lt.ByItems,
 			Count:   lt.Count,
 			Offset:  lt.Offset,
-			partial: lt.partial,
 		}.init(lt.ctx, lt.stats, resultProp)
 		ret = append(ret, topN)
 	}
@@ -484,9 +483,8 @@ func (lt *LogicalTopN) getPhysLimits() []PhysicalPlan {
 	for _, tp := range wholeTaskTypes {
 		resultProp := &requiredProp{taskTp: tp, expectedCnt: float64(lt.Count + lt.Offset), cols: prop.cols, desc: prop.desc}
 		limit := PhysicalLimit{
-			Count:   lt.Count,
-			Offset:  lt.Offset,
-			partial: lt.partial,
+			Count:  lt.Count,
+			Offset: lt.Offset,
 		}.init(lt.ctx, lt.stats, resultProp)
 		ret = append(ret, limit)
 	}
@@ -609,9 +607,8 @@ func (p *LogicalLimit) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan {
 	for _, tp := range wholeTaskTypes {
 		resultProp := &requiredProp{taskTp: tp, expectedCnt: float64(p.Count + p.Offset)}
 		limit := PhysicalLimit{
-			Offset:  p.Offset,
-			Count:   p.Count,
-			partial: p.partial,
+			Offset: p.Offset,
+			Count:  p.Count,
 		}.init(p.ctx, p.stats, resultProp)
 		ret = append(ret, limit)
 	}

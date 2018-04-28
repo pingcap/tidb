@@ -189,8 +189,8 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 			best: "IndexJoin{TableReader(Table(t)->TopN([test.t.b],0,10))->TopN([test.t.b],0,10)->TableReader(Table(t))}(test.t.a,t1.a)->Limit",
 		},
 	}
-	for _, tt := range tests {
-		comment := Commentf("for %s", tt.sql)
+	for i, tt := range tests {
+		comment := Commentf("case:%v sql:%s", i, tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
@@ -198,7 +198,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 		c.Assert(err, IsNil)
 		p, err := plan.Optimize(se, stmt, s.is)
 		c.Assert(err, IsNil)
-		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
+		c.Assert(plan.ToString(p), Equals, tt.best, comment)
 	}
 }
 
@@ -250,7 +250,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 		},
 		{
 			sql:  "select * from t t1 left join t t2 on t1.b = t2.a where 1 = 1 limit 1",
-			best: "IndexJoin{TableReader(Table(t)->Limit)->TableReader(Table(t))}(t1.b,t2.a)->Limit",
+			best: "IndexJoin{TableReader(Table(t)->Limit)->Limit->TableReader(Table(t))}(t1.b,t2.a)->Limit",
 		},
 		{
 			sql:  "select * from t t1 join t t2 on t1.b = t2.a and t1.c = 1 and t1.d = 1 and t1.e = 1 order by t1.a limit 1",
@@ -380,14 +380,14 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 			best: "MergeSemiJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)",
 		},
 	}
-	for _, tt := range tests {
-		comment := Commentf("for %s", tt.sql)
+	for i, tt := range tests {
+		comment := Commentf("case:%v sql:%s", i, tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
 		p, err := plan.Optimize(se, stmt, s.is)
 		c.Assert(err, IsNil)
-		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
+		c.Assert(plan.ToString(p), Equals, tt.best, comment)
 	}
 }
 
@@ -480,15 +480,15 @@ func (s *testPlanSuite) TestDAGPlanTopN(c *C) {
 	}{
 		{
 			sql:  "select * from t t1 left join t t2 on t1.b = t2.b left join t t3 on t2.b = t3.b order by t1.a limit 1",
-			best: "LeftHashJoin{LeftHashJoin{TableReader(Table(t)->Limit)->TableReader(Table(t))}(t1.b,t2.b)->TableReader(Table(t))}(t2.b,t3.b)->TopN([t1.a],0,1)",
+			best: "LeftHashJoin{LeftHashJoin{TableReader(Table(t)->Limit)->Limit->TableReader(Table(t))}(t1.b,t2.b)->TopN([t1.a],0,1)->TableReader(Table(t))}(t2.b,t3.b)->TopN([t1.a],0,1)",
 		},
 		{
 			sql:  "select * from t t1 left join t t2 on t1.b = t2.b left join t t3 on t2.b = t3.b order by t1.b limit 1",
-			best: "LeftHashJoin{LeftHashJoin{TableReader(Table(t)->TopN([t1.b],0,1))->TableReader(Table(t))}(t1.b,t2.b)->TableReader(Table(t))}(t2.b,t3.b)->TopN([t1.b],0,1)",
+			best: "LeftHashJoin{LeftHashJoin{TableReader(Table(t)->TopN([t1.b],0,1))->TopN([t1.b],0,1)->TableReader(Table(t))}(t1.b,t2.b)->TopN([t1.b],0,1)->TableReader(Table(t))}(t2.b,t3.b)->TopN([t1.b],0,1)",
 		},
 		{
 			sql:  "select * from t t1 left join t t2 on t1.b = t2.b left join t t3 on t2.b = t3.b limit 1",
-			best: "LeftHashJoin{LeftHashJoin{TableReader(Table(t)->Limit)->TableReader(Table(t))}(t1.b,t2.b)->TableReader(Table(t))}(t2.b,t3.b)->Limit",
+			best: "LeftHashJoin{LeftHashJoin{TableReader(Table(t)->Limit)->Limit->TableReader(Table(t))}(t1.b,t2.b)->Limit->TableReader(Table(t))}(t2.b,t3.b)->Limit",
 		},
 		{
 			sql:  "select * from t where b = 1 and c = 1 order by c limit 1",
@@ -507,14 +507,14 @@ func (s *testPlanSuite) TestDAGPlanTopN(c *C) {
 			best: "IndexReader(Index(t.c_d_e)[[<nil>,+inf]]->Limit)->Limit",
 		},
 	}
-	for _, tt := range tests {
-		comment := Commentf("for %s", tt.sql)
+	for i, tt := range tests {
+		comment := Commentf("case:%v sql:%s", i, tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
 		p, err := plan.Optimize(se, stmt, s.is)
 		c.Assert(err, IsNil)
-		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
+		c.Assert(plan.ToString(p), Equals, tt.best, comment)
 	}
 }
 
@@ -630,22 +630,22 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnion(c *C) {
 		// Test Limit + Union.
 		{
 			sql:  "select * from t union all (select * from t) limit 1",
-			best: "UnionAll{TableReader(Table(t)->Limit)->TableReader(Table(t)->Limit)}->Limit",
+			best: "UnionAll{TableReader(Table(t)->Limit)->Limit->TableReader(Table(t)->Limit)->Limit}->Limit",
 		},
 		// Test TopN + Union.
 		{
 			sql:  "select a from t union all (select c from t) order by a limit 1",
-			best: "UnionAll{TableReader(Table(t)->Limit)->IndexReader(Index(t.c_d_e)[[<nil>,+inf]]->Limit)}->TopN([t.a],0,1)",
+			best: "UnionAll{TableReader(Table(t)->Limit)->Limit->IndexReader(Index(t.c_d_e)[[<nil>,+inf]]->Limit)->Limit}->TopN([t.a],0,1)",
 		},
 	}
-	for _, tt := range tests {
-		comment := Commentf("for %s", tt.sql)
+	for i, tt := range tests {
+		comment := Commentf("case:%v sql:%s", i, tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
 		p, err := plan.Optimize(se, stmt, s.is)
 		c.Assert(err, IsNil)
-		c.Assert(plan.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
+		c.Assert(plan.ToString(p), Equals, tt.best, comment)
 	}
 }
 
