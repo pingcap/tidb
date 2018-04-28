@@ -122,12 +122,12 @@ func SetCommitCtx(ctx context.Context, sessCtx Context) context.Context {
 	return context.WithValue(ctx, Retryable, retryAble)
 }
 
-// GetRetryable returns the value of GetRetryable from the ctx.
+// GetRetryable returns the value of Retryable from the ctx.
 func GetRetryable(ctx context.Context) bool {
-	var retryAble bool
+	var retryable bool
 	val := ctx.Value(Retryable)
 	if val != nil {
-		retryAble = val.(bool)
+		retryable = val.(bool)
 	}
-	return retryAble
+	return retryable
 }
