@@ -183,7 +183,7 @@ func GetStmtLabel(stmtNode ast.StmtNode) string {
 	case *ast.PrepareStmt:
 		return "Prepare"
 	case *ast.UseStmt:
-		return "IGNORE"
+		return "Use"
 	}
 	return "other"
 }
