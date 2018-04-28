@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
-	binlog "github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -185,20 +184,44 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 		connID = val.(uint64)
 	}
 	committer, err := newTwoPhaseCommitter(txn, connID)
-	if err != nil {
+	if err != nil || committer == nil {
 		return errors.Trace(err)
 	}
-	if committer == nil {
-		return nil
-	}
-	err = committer.execute(ctx)
-	if err != nil {
-		committer.writeFinishBinlog(binlog.BinlogType_Rollback, 0)
+
+	defer func() {
+		if err == nil {
+			txn.commitTS = committer.commitTS
+		}
+	}()
+	// latches disabled
+	if txn.store.txnLatches == nil {
+		err = committer.executeAndWriteFinishBinlog(ctx)
 		return errors.Trace(err)
 	}
-	committer.writeFinishBinlog(binlog.BinlogType_Commit, int64(committer.commitTS))
-	txn.commitTS = committer.commitTS
-	return nil
+
+	// latches enabled
+	// for transactions not retryable, commit directly.
+	if !sessionctx.GetRetryable(ctx) {
+		err = committer.executeAndWriteFinishBinlog(ctx)
+		txn.store.txnLatches.RefreshCommitTS(committer.keys, committer.startTS)
+		return errors.Trace(err)
+	}
+
+	// for transactions which need to acquire latches
+	lock := txn.store.txnLatches.Lock(committer.startTS, committer.keys)
+	defer func() {
+		commitTS := uint64(0)
+		if err == nil {
+			commitTS = committer.commitTS
+		}
+		txn.store.txnLatches.UnLock(lock, commitTS)
+	}()
+	if lock.IsStale() {
+		err = errors.Errorf("startTS %d is stale", txn.startTS)
+		return errors.Annotate(err, txnRetryableMark)
+	}
+	err = committer.executeAndWriteFinishBinlog(ctx)
+	return errors.Trace(err)
 }
 
 func (txn *tikvTxn) close() {

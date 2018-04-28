@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/store/tikv/latch"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -71,6 +72,7 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 	defer mc.Unlock()
 
 	security := config.GetGlobalConfig().Security
+	enableTxnLocalLatches := config.GetGlobalConfig().EnableTxnLocalLatches
 	etcdAddrs, disableGC, err := parsePath(path)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -105,7 +107,7 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 		return nil, errors.Trace(err)
 	}
 
-	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, spkv, newRPCClient(security), !disableGC)
+	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, spkv, newRPCClient(security), !disableGC, enableTxnLocalLatches)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -127,6 +129,7 @@ type tikvStore struct {
 	pdClient     pd.Client
 	regionCache  *RegionCache
 	lockResolver *LockResolver
+	txnLatches   *latch.LatchesScheduler
 	gcWorker     GCHandler
 	etcdAddrs    []string
 	tlsConfig    *tls.Config
@@ -165,7 +168,7 @@ func (s *tikvStore) CheckVisibility(startTime uint64) error {
 	return nil
 }
 
-func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client, enableGC bool) (*tikvStore, error) {
+func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client, enableGC, enableTxnLocalLatches bool) (*tikvStore, error) {
 	o, err := oracles.NewPdOracle(pdClient, time.Duration(oracleUpdateInterval)*time.Millisecond)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -183,6 +186,11 @@ func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Clie
 		closed:      make(chan struct{}),
 	}
 	store.lockResolver = newLockResolver(store)
+	if enableTxnLocalLatches {
+		store.txnLatches = latch.NewScheduler(102400)
+	} else {
+		store.txnLatches = nil
+	}
 	store.enableGC = enableGC
 
 	go store.runSafePointChecker()
@@ -273,6 +281,10 @@ func (s *tikvStore) Close() error {
 	close(s.closed)
 	if err := s.client.Close(); err != nil {
 		return errors.Trace(err)
+	}
+
+	if s.txnLatches != nil {
+		s.txnLatches.Close()
 	}
 	return nil
 }
