@@ -806,6 +806,20 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 			buf := new(bytes.Buffer)
 			s.Partition.Expr.Format(buf)
 			pi.Expr = buf.String()
+			if s.Partition.Tp == model.PartitionTypeRange {
+				if _, ok := s.Partition.Expr.(*ast.ColumnNameExpr); ok {
+					for _, col := range cols {
+						if col.Name.L == pi.Expr && col.Tp != types.KindInt64 {
+							return errors.Trace(fmt.Errorf("Field '%s' is of a not allowed type for this type of partitioning", pi.Expr))
+						}
+					}
+				}
+				if fnExpr, ok := s.Partition.Expr.(*ast.FuncCallExpr); ok {
+					if fnExpr.Type.Tp != types.KindInt64 {
+						return errors.Trace(fmt.Errorf("Field '%s' is of a not allowed type for this type of partitioning", pi.Expr))
+					}
+				}
+			}
 		} else if s.Partition.ColumnNames != nil {
 			pi.Columns = make([]model.CIStr, 0, len(s.Partition.ColumnNames))
 			for _, cn := range s.Partition.ColumnNames {
