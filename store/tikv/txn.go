@@ -209,18 +209,15 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 
 	// for transactions which need to acquire latches
 	lock := txn.store.txnLatches.Lock(committer.startTS, committer.keys)
-	defer func() {
-		commitTS := uint64(0)
-		if err == nil {
-			commitTS = committer.commitTS
-		}
-		txn.store.txnLatches.UnLock(lock, commitTS)
-	}()
+	defer txn.store.txnLatches.UnLock(lock)
 	if lock.IsStale() {
 		err = errors.Errorf("startTS %d is stale", txn.startTS)
 		return errors.Annotate(err, txnRetryableMark)
 	}
 	err = committer.executeAndWriteFinishBinlog(ctx)
+	if err == nil {
+		lock.SetCommitTS(committer.commitTS)
+	}
 	return errors.Trace(err)
 }
 
