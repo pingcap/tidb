@@ -4773,6 +4773,13 @@ VariableAssignment:
 			Value: ast.NewValueExpr($2.(string)),
 		}
 	}
+|	"NAMES" CharsetName "COLLATE" "DEFAULT"
+	{
+		$$ = &ast.VariableAssignment{
+			Name: ast.SetNames,
+			Value: ast.NewValueExpr($2.(string)),
+		}
+	}
 |	"NAMES" CharsetName "COLLATE" StringName
 	{
 		$$ = &ast.VariableAssignment{
