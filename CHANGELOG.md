@@ -1,0 +1,142 @@
+# TiDB Changelog
+All notable changes to this project will be documented in this file. See also [Release Notes](https://github.com/pingcap/docs/blob/master/releases/rn.md), [TiKV Changelog](https://github.com/pingcap/tikv/blob/master/CHANGELOG.md) and [PD Changelog](https://github.com/pingcap/pd/blob/master/CHANGELOG.md).
+
+## [2.0.0-rc.5] - 2018-04-17
+### New Features
+* Support showing memory usage of the executing statements in the `SHOW PROCESSLIST` statement
+* Support setting the table comment using the `Alter` statement
+### Improvements
+* Clean up the written data while rolling back the `Add Index` operation, to reduce consumed space
+* Optimize the insert on duplicate key update statement to improve the performance by 10 times
+### Bug Fixes
+* Fix the issue about applying the Top-N pushdown rule
+* Fix the issue that `Alter Table Modify Column` reports an error in extreme conditions
+* Fix the issue about the type of the results returned by the `UNIX_TIMESTAMP` function
+* Fix the issue that the NULL value is inserted while adding NOT NULL columns
+* Fix the estimation of the number of rows for the columns that contain NULL values
+* Fix the zero value of the Binary type
+* Fix the BatchGet issue within a transaction
+
+## [2.0.0-rc.4] - 2018-04-01
+### New Features
+* Support `SHOW GRANTS FOR CURRENT_USER();`
+* Support the `SET TRANSACTION` syntax
+* Support displaying floating point numbers using scientific notation
+### Improvements
+* Improve the execution performance of `DecodeBytes`
+* Optimize `LIMIT 0` to `TableDual`, to avoid building useless execution plans
+### Bug Fixes
+* Fix the issue that the `Expression` in `UnionScan` is not cloned
+* Fix the potential goroutine leak issue in `copIterator`
+* Fix the issue that admin check table misjudges the unique index including null
+* Fix the type inference issue during binary literal computing
+* Fix the issue in parsing the `CREATE VIEW` statement
+* Fix the panic issue when one statement contains both `ORDER BY` and `LIMIT 0`
+
+## [2.0.0-rc.3] - 2018-03-23
+### New Features
+* Support closing the `Join Reorder` optimization in the optimizer using `STRAIGHT_JOIN`
+* Output more detailed status information of DDL jobs in `ADMIN SHOW DDL JOBS`
+* Support querying the original statements of currently running DDL jobs using `ADMIN SHOW DDL JOB QUERIES`
+* Support recovering the index data using `ADMIN RECOVER INDEX` for disaster recovery
+* Attach a lower priority to the `ADD INDEX` operation to reduce the impact on online business
+* Support aggregation functions with JSON type parameters, such as `SUM/AVG`
+* Support modifying the `lower_case_table_names` system variable in the configuration file, to support the OGG data synchronization tool
+* Support using implicit `RowID` in CRUD operations
+### Improvements
+* Improve compatibility with the Navicat management tool
+* Use the Stream Aggregation operator when the `GROUP BY` clause is empty, to increase the speed
+* Optimize the execution speed of `ADD INDEX` to greatly increase the speed in some scenarios
+* Optimize checks on length and precision of the floating point type, to improve compatibility with MySQL
+* Improve the parsing error log of time type and add more error information
+* Improve memory control and add statistics about `IndexLookupExecutor` memory
+### Bug Fixes
+* Fix the wrong result issue of `MAX/MIN` in some scenarios
+* Fix the issue that the result of `Sort Merge Join` does not show in order of `Join Key` in some scenarios
+* Fix the error of comparison between uint and int in boundary conditions
+
+## [2.0.0-rc.2] - 2018-03-15
+Only TiKV has this release
+
+## [2.0.0-rc.1] - 2018-03-09
+### New Features
+* Support limiting the memory usage by a single SQL statement, to reduce the risk of OOM
+* Support pushing the Stream Aggregate operator down to TiKV
+* Support validating the configuration file
+* Support obtaining the information of TiDB configuration through HTTP API
+### Improvements
+* Improve the compatibility with Navicat
+* Improve the optimizer and extract common expressions with multiple OR conditions, to choose better query plan
+* Improve the optimizer and convert subqueries to Join operators in more scenarios, to choose better query plan
+* Compatible with more MySQL syntax in Parser
+* Resolve Lock in the Batch mode to increase the garbage collection speed
+* Optimize the `Add Index` operation and give lower priority to all write and read operations, to reduce the impact on online business
+### Bug Fixes
+* Fix the length of Boolean field to improve compatibility
+
+## [1.1.0-beta] - 2018-02-24
+### New Features
+* Add more monitoring metrics and refine the log
+* Add the `tidb_config` session variable to output the current TiDB configuration
+* Support displaying the table creating time in `information_schema`
+### Improvements
+* Compatible with more MySQL syntax
+* Optimize queries containing the `MaxOneRow` operator
+* Configure the size of intermediate result sets generated by Join, to further reduce the memory used by Join
+* Optimize the query performance of the SQL engine to improve the test result of the Sysbench Select/OLTP by 10%
+* Improve the computing speed of subqueries in the optimizer using the new execution engine; compared with TiDB 1.0, TiDB 1.1 Beta has great improvement in tests like TPC-H and TPC-DS
+### Bug Fixes
+* Fix the panic issue in the `Union` and `Index Join` operators
+* Fix the wrong result issue of the `Sort Merge Join` operator in some scenarios
+* Fix the issue that the `Show Index` statement shows indexes that are in the process of adding
+* Fix the failure of the `Drop Stats` statement
+
+## [1.0.8] - 2018-02-11
+### New Features
+* Add limitation (Configurable, the default value is 5000) to the DML statements number within a transaction
+### Improvements
+* Improve the stability of the GC process by ignoring the regions with GC errors
+* Run GC concurrently to accelerate the GC process
+* Provide syntax support for the `CREATE INDEX` statement
+* Optimize the performance of the `InsertIntoIgnore` statement
+### Bug Fixes
+* Fix issues in the `Outer Join` result in some scenarios
+* Fix the issue in the `ShardRowID` option
+* Fix an issue in the `Table/Column` aliases returned by the Prepare statement
+* Fix an issue in updating statistics delta
+* Fix a panic error in the `Drop Column` statement
+* Fix an DML issue when running the `Add Column After` statement
+
+## [1.0.7] - 2018-01-22
+### Improvements
+* Optimize the `FIELD_LIST` command
+* Fix data race of the information schema
+* Avoid adding read-only statements to history
+* Add the session variable to control the log query
+* Add schema info API for the http status server
+* Update the behavior when `RunWorker` is false in DDL
+* Improve the stability of test results in statistics
+* Support `PACK_KEYS` syntax for the `CREATE TABLE` statement
+* Add `row_id` column for the null pushdown schema to optimize performance
+### Bug Fixes
+* Fix the resource leak issue in statistics
+* Fix the goroutine leak issue
+* Fix an issue about `IndexJoin`
+
+## [1.1.0-alpha] - 2018-01-19
+### New Features
+* Support the PROXY protocol
+### Improvements
+* Support more syntax
+* Reduce memory usage of statistics info using more compact structure
+* Speed up loading statistics info when starting tidb-server
+* Provide more accurate query cost evaluation
+* Use `Count-Min Sketch` to estimate the cost of queries using unique index more accurately
+* Support more complex conditions to make full use of index
+* Refactor all executor operators using Chunk architecture, improve the execution performance of analytical statements and reduce memory usage
+* Optimize performance of the `INSERT IGNORE` statement
+* Push down more types and functions to TiKV
+* Support more `SQL_MODE`
+* Optimize the `Load Data` performance to increase the speed by 10 times
+* Optimize the `Use Database` performance
+* Support statistics on the memory usage of physical operators

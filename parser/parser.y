@@ -4773,6 +4773,13 @@ VariableAssignment:
 			Value: ast.NewValueExpr($2.(string)),
 		}
 	}
+|	"NAMES" CharsetName "COLLATE" "DEFAULT"
+	{
+		$$ = &ast.VariableAssignment{
+			Name: ast.SetNames,
+			Value: ast.NewValueExpr($2.(string)),
+		}
+	}
 |	"NAMES" CharsetName "COLLATE" StringName
 	{
 		$$ = &ast.VariableAssignment{
@@ -5485,7 +5492,7 @@ TableOption:
 	{
 		$$ = &ast.TableOption{Tp: ast.TableOptionCollate, StrValue: $4.(string)}
 	}
-|	"AUTO_INCREMENT" eq LengthNum
+|	"AUTO_INCREMENT" EqOpt LengthNum
 	{
 		$$ = &ast.TableOption{Tp: ast.TableOptionAutoIncrement, UintValue: $3.(uint64)}
 	}
