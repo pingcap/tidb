@@ -257,8 +257,15 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 		return nil
 	}
 	accessPaths := x.possibleAccessPaths
-	if len(accessPaths) > 0 && accessPaths[0].isTablePath {
-		accessPaths = accessPaths[1:]
+	var tblPath *accessPath
+	for i, path := range accessPaths {
+		if path.isTablePath {
+			tblPath = path
+			accessPaths = append(accessPaths[:i], accessPaths[i+1:]...)
+			break
+		}
+	}
+	if tblPath != nil {
 		if len(innerJoinKeys) == 1 {
 			pkCol := x.getPKIsHandleCol()
 			if pkCol != nil && innerJoinKeys[0].Equal(nil, pkCol) {

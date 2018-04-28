@@ -305,7 +305,6 @@ type DataSource struct {
 	statisticTable *statistics.Table
 
 	// possibleAccessPaths stores all the possible access path for physical plan, including table scan.
-	// Please make sure table path is always the first element if we have table path.
 	possibleAccessPaths []*accessPath
 }
 
