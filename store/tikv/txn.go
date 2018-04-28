@@ -203,7 +203,9 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	// for transactions not retryable, commit directly.
 	if !sessionctx.GetRetryable(ctx) {
 		err = committer.executeAndWriteFinishBinlog(ctx)
-		txn.store.txnLatches.RefreshCommitTS(committer.keys, committer.startTS)
+		if err == nil {
+			txn.store.txnLatches.RefreshCommitTS(committer.keys, committer.commitTS)
+		}
 		return errors.Trace(err)
 	}
 
