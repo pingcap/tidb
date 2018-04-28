@@ -651,9 +651,11 @@ func (s *testParserSuite) TestExpression(c *C) {
 		{"select {ts '1989-09-10 11:11:11'}", true},
 		{"select {d '1989-09-10'}", true},
 		{"select {t '00:00:00.111'}", true},
-		// If the identifier is not in (t, d, ts), we just ignore it and consider the following expression as a string literal.
-		// This is the same behavior with MySQL.
+		// If the identifier is not in (t, d, ts), we just ignore it and consider the following expression as the value.
+		// See: https://dev.mysql.com/doc/refman/5.7/en/expressions.html
 		{"select {ts123 '1989-09-10 11:11:11'}", true},
+		{"select {ts123 123}", true},
+		{"select {ts123 1 xor 1}", true},
 	}
 	s.RunTest(c, table)
 }
@@ -1596,6 +1598,10 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE `hello-world@dev`.`User` ADD COLUMN `name` mediumtext CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL , ALGORITHM = DEFAULT;", true},
 		{"ALTER TABLE `hello-world@dev`.`User` ADD COLUMN `name` mediumtext CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL , ALGORITHM = INPLACE;", true},
 		{"ALTER TABLE `hello-world@dev`.`User` ADD COLUMN `name` mediumtext CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL , ALGORITHM = COPY;", true},
+		{"ALTER TABLE t CONVERT TO CHARACTER SET utf8;", true},
+		{"ALTER TABLE t CONVERT TO CHARSET utf8;", true},
+		{"ALTER TABLE t CONVERT TO CHARACTER SET utf8 COLLATE utf8_bin;", true},
+		{"ALTER TABLE t CONVERT TO CHARSET utf8 COLLATE utf8_bin;", true},
 
 		// For create index statement
 		{"CREATE INDEX idx ON t (a)", true},
