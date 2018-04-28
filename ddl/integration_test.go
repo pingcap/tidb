@@ -37,7 +37,7 @@ type testIntegrationSuite struct {
 	ctx   sessionctx.Context
 }
 
-func (s *testIntegrationSuite) cleanEnv(c *C) {
+func (s *testIntegrationSuite) TearDownTest(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	r := tk.MustQuery("show tables")
@@ -63,7 +63,6 @@ func (s *testIntegrationSuite) TearDownSuite(c *C) {
 
 func (s *testIntegrationSuite) TestInvalidDefault(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	defer s.cleanEnv(c)
 
 	tk.MustExec("USE test;")
 
