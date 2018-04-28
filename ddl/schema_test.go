@@ -146,13 +146,13 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 		_, err := tbl1.AddRecord(ctx, types.MakeDatums(i, i, i), false)
 		c.Assert(err, IsNil)
 	}
-	// create table t1 with defaultBatchCnt+10 records.
+	// create table t1 with 1034 records.
 	tblInfo2 := testTableInfo(c, d, "t1", 3)
 	tJob2 := testCreateTable(c, ctx, d, dbInfo, tblInfo2)
 	testCheckTableState(c, d, dbInfo, tblInfo2, model.StatePublic)
 	testCheckJobDone(c, d, tJob2, true)
 	tbl2 := testGetTable(c, d, dbInfo.ID, tblInfo2.ID)
-	for i := 1; i <= defaultBatchCnt+10; i++ {
+	for i := 1; i <= 1034; i++ {
 		_, err := tbl2.AddRecord(ctx, types.MakeDatums(i, i, i), false)
 		c.Assert(err, IsNil)
 	}
