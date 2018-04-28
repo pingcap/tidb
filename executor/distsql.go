@@ -393,7 +393,6 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	defer span.Finish()
 
 	var err error
-
 	if e.haveCorCol {
 		e.dagPB.Executors, _, err = constructDistExec(e.ctx, e.plans)
 		if err != nil {

@@ -89,40 +89,19 @@ func NewPBConverter(client kv.Client, sc *stmtctx.StatementContext) PbConverter 
 // ExprToPB converts Expression to TiPB.
 func (pc PbConverter) ExprToPB(expr Expression) *tipb.Expr {
 	switch x := expr.(type) {
-	case *Constant:
-		return pc.constantToPBExpr(x)
+	case *Constant, *CorrelatedColumn:
+		return pc.conOrCorColToPBExpr(expr)
 	case *Column:
 		return pc.columnToPBExpr(x)
 	case *ScalarFunction:
 		return pc.scalarFuncToPBExpr(x)
-	case *CorrelatedColumn:
-		return pc.corColumnToPBExpr(x)
 	}
 	return nil
 }
 
-func (pc PbConverter) corColumnToPBExpr(c *CorrelatedColumn) *tipb.Expr {
-	ft := c.GetType()
-	d, err := c.Eval(nil)
-	if err != nil {
-		log.Errorf("Fail to eval correlated column, err: %s", err.Error())
-		return nil
-	}
-	tp, val, ok := pc.encodeDatum(d)
-
-	if !ok {
-		return nil
-	}
-
-	if !pc.client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tp)) {
-		return nil
-	}
-	return &tipb.Expr{Tp: tp, Val: val, FieldType: toPBFieldType(ft)}
-}
-
-func (pc PbConverter) constantToPBExpr(con *Constant) *tipb.Expr {
-	ft := con.GetType()
-	d, err := con.Eval(nil)
+func (pc PbConverter) conOrCorColToPBExpr(expr Expression) *tipb.Expr {
+	ft := expr.GetType()
+	d, err := expr.Eval(nil)
 	if err != nil {
 		log.Errorf("Fail to eval constant, err: %s", err.Error())
 		return nil
