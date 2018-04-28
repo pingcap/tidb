@@ -5492,7 +5492,7 @@ TableOption:
 	{
 		$$ = &ast.TableOption{Tp: ast.TableOptionCollate, StrValue: $4.(string)}
 	}
-|	"AUTO_INCREMENT" eq LengthNum
+|	"AUTO_INCREMENT" EqOpt LengthNum
 	{
 		$$ = &ast.TableOption{Tp: ast.TableOptionAutoIncrement, UintValue: $3.(uint64)}
 	}
