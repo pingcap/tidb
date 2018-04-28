@@ -1353,7 +1353,7 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		{
 			sql: `show create table test.ttt`,
 			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "ttt", ""},
+				{0, "test", "ttt", ""},
 			},
 		},
 	}
