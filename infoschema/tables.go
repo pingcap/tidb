@@ -656,6 +656,8 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 		return nil, errors.Trace(err)
 	}
 
+	checker := privilege.GetPrivilegeManager(ctx)
+
 	var rows [][]types.Datum
 	createTimeTp := tablesCols[15].tp
 	for _, schema := range schemas {
@@ -668,6 +670,11 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 				Time: types.FromGoTime(table.GetUpdateTime()),
 				Type: createTimeTp,
 			}
+
+			if checker != nil && !checker.RequestVerification(schema.Name.L, table.Name.L, "", mysql.SelectPriv) {
+				continue
+			}
+
 			record := types.MakeDatums(
 				catalogVal,             // TABLE_CATALOG
 				schema.Name.O,          // TABLE_SCHEMA
@@ -697,10 +704,15 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 	return rows, nil
 }
 
-func dataForColumns(schemas []*model.DBInfo) [][]types.Datum {
+func dataForColumns(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.Datum {
+	checker := privilege.GetPrivilegeManager(ctx)
 	var rows [][]types.Datum
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
+			if checker != nil && !checker.RequestVerification(schema.Name.L, table.Name.L, "", mysql.SelectPriv) {
+				continue
+			}
+
 			rs := dataForColumnsInTable(schema, table)
 			rows = append(rows, rs...)
 		}
@@ -1084,7 +1096,7 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	case tableTables:
 		fullRows, err = dataForTables(ctx, dbs)
 	case tableColumns:
-		fullRows = dataForColumns(dbs)
+		fullRows = dataForColumns(ctx, dbs)
 	case tableStatistics:
 		fullRows = dataForStatistics(dbs)
 	case tableCharacterSets:

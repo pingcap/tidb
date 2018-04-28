@@ -36,7 +36,7 @@ type Manager interface {
 	// If table is not "", check global/db/table scope privileges.
 	RequestVerification(db, table, column string, priv mysql.PrivilegeType) bool
 	// ConnectionVerification verifies user privilege for connection.
-	ConnectionVerification(host, user string, auth, salt []byte) bool
+	ConnectionVerification(user, host string, auth, salt []byte) bool
 
 	// DBIsVisible returns true is the database is visible to current user.
 	DBIsVisible(db string) bool
