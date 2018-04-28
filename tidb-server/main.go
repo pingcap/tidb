@@ -325,6 +325,8 @@ func overrideConfig() {
 	}
 }
 
+const minAutoAnalyzeRatio = 0.3
+
 func validateConfig() {
 	if cfg.Security.SkipGrantTable && !hasRootPrivilege() {
 		log.Error("TiDB run with skip-grant-table need root privilege.")
@@ -354,6 +356,9 @@ func validateConfig() {
 	if cfg.LowerCaseTableNames < 0 || cfg.LowerCaseTableNames > 2 {
 		log.Errorf("lower-case-table-names should be 0 or 1 or 2.")
 		os.Exit(-1)
+	}
+	if cfg.Performance.AutoAnalyzeRatio > 0 && cfg.Performance.AutoAnalyzeRatio < minAutoAnalyzeRatio {
+		cfg.Performance.AutoAnalyzeRatio = minAutoAnalyzeRatio
 	}
 }
 

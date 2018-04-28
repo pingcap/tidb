@@ -209,7 +209,7 @@ func joinKeyMatchIndexCol(key *expression.Column, indexCols []*expression.Column
 
 // When inner plan is TableReader, the last two parameter will be nil
 func (p *LogicalJoin) constructIndexJoin(prop *requiredProp, innerJoinKeys, outerJoinKeys []*expression.Column, outerIdx int,
-	innerPlan PhysicalPlan, ranges []*ranger.NewRange, keyOff2IdxOff []int) []PhysicalPlan {
+	innerPlan PhysicalPlan, ranges []*ranger.Range, keyOff2IdxOff []int) []PhysicalPlan {
 	joinType := p.JoinType
 	outerSchema := p.children[outerIdx].Schema()
 	// If the order by columns are not all from outer child, index join cannot promise the order.
@@ -267,7 +267,7 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 	}
 	var (
 		bestIndexInfo  *model.IndexInfo
-		rangesOfBest   []*ranger.NewRange
+		rangesOfBest   []*ranger.Range
 		maxUsedCols    int
 		remainedOfBest []expression.Expression
 		keyOff2IdxOff  []int
@@ -295,7 +295,7 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 // buildRangeForIndexJoin checks whether this index can be used for building index join and return the range if this index is ok.
 // If this index is invalid, just return nil range.
 func (p *LogicalJoin) buildRangeForIndexJoin(indexInfo *model.IndexInfo, innerPlan *DataSource, innerJoinKeys []*expression.Column) (
-	[]*ranger.NewRange, []expression.Expression, []int) {
+	[]*ranger.Range, []expression.Expression, []int) {
 	idxCols, colLengths := expression.IndexInfo2Cols(innerPlan.Schema().Columns, indexInfo)
 	if len(idxCols) == 0 {
 		return nil, nil, nil
@@ -468,7 +468,6 @@ func (lt *LogicalTopN) getPhysTopN() []PhysicalPlan {
 			ByItems: lt.ByItems,
 			Count:   lt.Count,
 			Offset:  lt.Offset,
-			partial: lt.partial,
 		}.init(lt.ctx, lt.stats, resultProp)
 		ret = append(ret, topN)
 	}
@@ -484,9 +483,8 @@ func (lt *LogicalTopN) getPhysLimits() []PhysicalPlan {
 	for _, tp := range wholeTaskTypes {
 		resultProp := &requiredProp{taskTp: tp, expectedCnt: float64(lt.Count + lt.Offset), cols: prop.cols, desc: prop.desc}
 		limit := PhysicalLimit{
-			Count:   lt.Count,
-			Offset:  lt.Offset,
-			partial: lt.partial,
+			Count:  lt.Count,
+			Offset: lt.Offset,
 		}.init(lt.ctx, lt.stats, resultProp)
 		ret = append(ret, limit)
 	}
@@ -609,9 +607,8 @@ func (p *LogicalLimit) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan {
 	for _, tp := range wholeTaskTypes {
 		resultProp := &requiredProp{taskTp: tp, expectedCnt: float64(p.Count + p.Offset)}
 		limit := PhysicalLimit{
-			Offset:  p.Offset,
-			Count:   p.Count,
-			partial: p.partial,
+			Offset: p.Offset,
+			Count:  p.Count,
 		}.init(p.ctx, p.stats, resultProp)
 		ret = append(ret, limit)
 	}
