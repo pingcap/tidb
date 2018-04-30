@@ -609,6 +609,8 @@ func (w *addIndexWorker) handleBackfillTask(task *reorgIndexTask) *addIndexResul
 			break
 		}
 	}
+	log.Infof("[ddl-reorg] worker(%v), finish region ranges [%v,%v) addedCount:%v, scanCount:%v, nextHandle:%v",
+		w.id, task.startHandle, task.endHandle, result.addedCount, result.scanCount, result.nextHandle)
 
 	return result
 }
@@ -762,6 +764,8 @@ func (d *ddl) backfillKVRangesIndex(workers []*addIndexWorker, kvRanges []kv.Key
 	)
 	totalAddedCount := job.GetRowCount()
 	batchTasks := make([]*reorgIndexTask, 0, len(workers))
+
+	log.Infof("[ddl-reorg] start to reorg index of %v region ranges.", len(kvRanges))
 	for i, keyRange := range kvRanges {
 		startTime = time.Now()
 
