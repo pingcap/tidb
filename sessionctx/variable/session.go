@@ -278,9 +278,6 @@ type SessionVars struct {
 	// OptimizerSelectivityLevel defines the level of the selectivity estimation in planner.
 	OptimizerSelectivityLevel int
 
-	// DDLReorgWorkerCount defines the count of ddl reorganization workers.
-	DDLReorgWorkerCount int
-
 	// EnableStreaming indicates whether the coprocessor request can use streaming API.
 	// TODO: remove this after tidb-server configuration "enable-streaming' removed.
 	EnableStreaming bool
@@ -304,7 +301,6 @@ func NewSessionVars() *SessionVars {
 		StmtCtx:                   new(stmtctx.StatementContext),
 		AllowAggPushDown:          false,
 		OptimizerSelectivityLevel: DefTiDBOptimizerSelectivityLevel,
-		DDLReorgWorkerCount:       DefTiDBDDLReorgWorkerCount,
 	}
 	vars.Concurrency = Concurrency{
 		BuildStatsConcurrencyVar:   DefBuildStatsConcurrency,
@@ -313,6 +309,7 @@ func NewSessionVars() *SessionVars {
 		IndexLookupJoinConcurrency: DefIndexLookupJoinConcurrency,
 		HashJoinConcurrency:        DefTiDBHashJoinConcurrency,
 		DistSQLScanConcurrency:     DefDistSQLScanConcurrency,
+		DDLReorgWorkerCount:        DefTiDBDDLReorgWorkerCount,
 	}
 	vars.MemQuota = MemQuota{
 		MemQuotaQuery:             DefTiDBMemQuotaQuery,
@@ -575,6 +572,9 @@ type Concurrency struct {
 
 	// IndexSerialScanConcurrency is the number of concurrent index serial scan worker.
 	IndexSerialScanConcurrency int
+
+	// DDLReorgWorkerCount defines the count of ddl reorganization workers.
+	DDLReorgWorkerCount int
 }
 
 // MemQuota defines memory quota values.
