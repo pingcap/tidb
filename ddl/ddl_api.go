@@ -810,7 +810,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 				if _, ok := s.Partition.Expr.(*ast.ColumnNameExpr); ok {
 					for _, col := range cols {
 						name := strings.Replace(col.Name.String(), ".", "`.`", -1)
-						if col.Tp != mysql.TypeLong && fmt.Sprintf("`%s`", name) == pi.Expr {
+						if !(col.Tp == mysql.TypeLong || col.Tp == mysql.TypeLonglong) && fmt.Sprintf("`%s`", name) == pi.Expr {
 							return errors.Trace(ErrNotAllowedTypeInPartition.GenByArgs(pi.Expr))
 						}
 					}
