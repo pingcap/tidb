@@ -149,7 +149,7 @@ var (
 	// ErrUnknownCharacterSet returns unknown character set.
 	ErrUnknownCharacterSet = terror.ClassDDL.New(codeUnknownCharacterSet, "Unknown character set: '%s'")
 
-	// ErrNotAllowedTypeInPartition returns not allowed type error when creating table partiton with unsupport expression type
+	// ErrNotAllowedTypeInPartition returns not allowed type error when creating table partiton with unsupport expression type.
 	ErrNotAllowedTypeInPartition = terror.ClassDDL.New(codeCantCreateTable, "Field '%s' is of a not allowed type for this type of partitioning")
 )
 
