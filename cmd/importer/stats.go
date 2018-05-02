@@ -40,7 +40,7 @@ func loadStats(tblInfo *model.TableInfo, path string) (*stats.Table, error) {
 		return nil, errors.Trace(err)
 	}
 	handle := stats.NewHandle(mock.NewContext(), 0)
-	return handle.LoadStatsFromJSON(tblInfo, jsTable)
+	return handle.LoadStatsFromJSONToTable(tblInfo, jsTable)
 }
 
 type histogram struct {
