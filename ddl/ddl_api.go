@@ -811,7 +811,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 					for _, col := range cols {
 						name := strings.Replace(col.Name.String(), ".", "`.`", -1)
 						if col.Tp != mysql.TypeLong && fmt.Sprintf("`%s`", name) == pi.Expr {
-							return errors.Trace(fmt.Errorf("Field '%s' is of a not allowed type for this type of partitioning", pi.Expr))
+							return errors.Trace(ErrNotAllowedTypeInPartition.GenByArgs(pi.Expr))
 						}
 					}
 				}

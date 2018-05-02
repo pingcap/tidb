@@ -148,6 +148,9 @@ var (
 	ErrWrongNameForIndex = terror.ClassDDL.New(codeWrongNameForIndex, mysql.MySQLErrName[mysql.ErrWrongNameForIndex])
 	// ErrUnknownCharacterSet returns unknown character set.
 	ErrUnknownCharacterSet = terror.ClassDDL.New(codeUnknownCharacterSet, "Unknown character set: '%s'")
+
+	// ErrNotAllowedTypeInPartition returns not allowed type error when creating table partiton with unsupport expression type
+	ErrNotAllowedTypeInPartition = terror.ClassDDL.New(codeCantCreateTable, "Field '%s' is of a not allowed type for this type of partitioning")
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -563,6 +566,7 @@ const (
 	codeWrongNameForIndex            = terror.ErrCode(mysql.ErrWrongNameForIndex)
 	codeErrTooLongIndexComment       = terror.ErrCode(mysql.ErrTooLongIndexComment)
 	codeUnknownCharacterSet          = terror.ErrCode(mysql.ErrUnknownCharacterSet)
+	codeCantCreateTable              = terror.ErrCode(mysql.ErrCantCreateTable)
 )
 
 func init() {
