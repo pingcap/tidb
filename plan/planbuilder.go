@@ -768,7 +768,7 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 				return nil
 			}
 		case ast.ShowCreateTable:
-			b.visitInfo = appendVisitInfo(b.visitInfo, 0, show.Table.Schema.L, show.Table.Name.L, "")
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AllPrivMask, show.Table.Schema.L, show.Table.Name.L, "")
 		}
 		p.SetSchema(buildShowSchema(show))
 	}
