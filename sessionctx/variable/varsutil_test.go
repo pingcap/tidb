@@ -216,6 +216,13 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(v.OptimizerSelectivityLevel, Equals, DefTiDBOptimizerSelectivityLevel)
 	SetSessionSystemVar(v, TiDBOptimizerSelectivityLevel, types.NewIntDatum(1))
 	c.Assert(v.OptimizerSelectivityLevel, Equals, 1)
+
+	c.Assert(v.DDLReorgWorkerCount, Equals, DefTiDBDDLReorgWorkerCount)
+	SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, types.NewIntDatum(1))
+	c.Assert(v.DDLReorgWorkerCount, Equals, 1)
+
+	SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, types.NewIntDatum(-1))
+	c.Assert(v.DDLReorgWorkerCount, Equals, DefTiDBDDLReorgWorkerCount)
 }
 
 type mockGlobalAccessor struct {

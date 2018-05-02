@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -372,4 +373,26 @@ func (s *testSuite) TestShardRowIDBits(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(count, Equals, 100)
 	c.Assert(hasShardedID, IsTrue)
+}
+
+func (s *testSuite) TestSetDDLReorgWorkerCnt(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	c.Assert(domain.GetDomain(tk.Se).DDL().WorkerVars().DDLReorgWorkerCount, Equals, variable.DefTiDBDDLReorgWorkerCount)
+	tk.MustExec("set tidb_ddl_reorg_worker_cnt = 1")
+	c.Assert(domain.GetDomain(tk.Se).DDL().WorkerVars().DDLReorgWorkerCount, Equals, 1)
+	tk.MustExec("set tidb_ddl_reorg_worker_cnt = 100")
+	c.Assert(domain.GetDomain(tk.Se).DDL().WorkerVars().DDLReorgWorkerCount, Equals, 100)
+	tk.MustExec("set tidb_ddl_reorg_worker_cnt = invalid_val")
+	c.Assert(domain.GetDomain(tk.Se).DDL().WorkerVars().DDLReorgWorkerCount, Equals, variable.DefTiDBDDLReorgWorkerCount)
+	tk.MustExec("set tidb_ddl_reorg_worker_cnt = 100")
+	c.Assert(domain.GetDomain(tk.Se).DDL().WorkerVars().DDLReorgWorkerCount, Equals, 100)
+	tk.MustExec("set tidb_ddl_reorg_worker_cnt = -1")
+	c.Assert(domain.GetDomain(tk.Se).DDL().WorkerVars().DDLReorgWorkerCount, Equals, variable.DefTiDBDDLReorgWorkerCount)
+
+	res := tk.MustQuery("select @@tidb_ddl_reorg_worker_cnt")
+	res.Check(testkit.Rows("-1"))
+	tk.MustExec("set tidb_ddl_reorg_worker_cnt = 100")
+	res = tk.MustQuery("select @@tidb_ddl_reorg_worker_cnt")
+	res.Check(testkit.Rows("100"))
 }

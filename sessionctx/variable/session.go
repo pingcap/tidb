@@ -278,6 +278,9 @@ type SessionVars struct {
 	// OptimizerSelectivityLevel defines the level of the selectivity estimation in planner.
 	OptimizerSelectivityLevel int
 
+	// DDLReorgWorkerCount defines the count of ddl reorganization workers.
+	DDLReorgWorkerCount int
+
 	// EnableStreaming indicates whether the coprocessor request can use streaming API.
 	// TODO: remove this after tidb-server configuration "enable-streaming' removed.
 	EnableStreaming bool
@@ -301,6 +304,7 @@ func NewSessionVars() *SessionVars {
 		StmtCtx:                   new(stmtctx.StatementContext),
 		AllowAggPushDown:          false,
 		OptimizerSelectivityLevel: DefTiDBOptimizerSelectivityLevel,
+		DDLReorgWorkerCount:       DefTiDBDDLReorgWorkerCount,
 	}
 	vars.Concurrency = Concurrency{
 		BuildStatsConcurrencyVar:   DefBuildStatsConcurrency,
@@ -527,6 +531,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableStreaming = TiDBOptOn(val)
 	case TiDBOptimizerSelectivityLevel:
 		s.OptimizerSelectivityLevel = tidbOptPositiveInt32(val, DefTiDBOptimizerSelectivityLevel)
+	case TiDBDDLReorgWorkerCount:
+		s.DDLReorgWorkerCount = tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)
 	}
 	s.systems[name] = val
 	return nil
