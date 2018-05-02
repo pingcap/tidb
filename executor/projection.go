@@ -66,16 +66,51 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	if e.numWorkers <= 0 {
-		return nil
-	}
-
 	// For now a Projection can not be executated vectorially only because it
 	// contains "SetVar" or "GetVar" functions, in this scenario this
 	// Projection can not be executed parallelly by more than 1 worker as well.
-	if !e.evaluatorSuit.Vectorizable() {
+	if e.numWorkers > 0 && !e.evaluatorSuit.Vectorizable() {
 		e.numWorkers = 1
 	}
+
+	return nil
+}
+
+// Next implements the Executor Next interface.
+func (e *ProjectionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+
+	if e.numWorkers <= 0 {
+		err := e.children[0].Next(ctx, e.childrenResults[0])
+		if err != nil {
+			return errors.Trace(err)
+		}
+		err = e.evaluatorSuit.Run(e.ctx, e.childrenResults[0], chk)
+		return errors.Trace(err)
+	}
+
+	if !e.prepared {
+		e.prepare(ctx)
+		e.prepared = true
+	}
+
+	output, ok := <-e.outputCh
+	if !ok {
+		e.outputCh = nil
+		return nil
+	}
+
+	err := <-output.done
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	chk.SwapColumns(output.chk)
+	e.fetcher.outputCh <- output
+	return nil
+}
+
+func (e *ProjectionExec) prepare(ctx context.Context) {
 
 	e.finishCh = make(chan struct{})
 	e.outputCh = make(chan *projectionOutput, e.numWorkers)
@@ -112,43 +147,6 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 		}
 	}
 
-	return nil
-}
-
-// Next implements the Executor Next interface.
-func (e *ProjectionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
-
-	if e.numWorkers <= 0 {
-		err := e.children[0].Next(ctx, e.childrenResults[0])
-		if err != nil {
-			return errors.Trace(err)
-		}
-		err = e.evaluatorSuit.Run(e.ctx, e.childrenResults[0], chk)
-		return errors.Trace(err)
-	}
-
-	if !e.prepared {
-		e.prepare(ctx)
-		e.prepared = true
-	}
-
-	output, ok := <-e.outputCh
-	if !ok {
-		return nil
-	}
-
-	err := <-output.done
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	chk.SwapColumns(output.chk)
-	e.fetcher.outputCh <- output
-	return nil
-}
-
-func (e *ProjectionExec) prepare(ctx context.Context) {
 	go e.fetcher.run(ctx)
 
 	for i := range e.workers {
@@ -158,8 +156,12 @@ func (e *ProjectionExec) prepare(ctx context.Context) {
 
 // Close implements the Executor Close interface.
 func (e *ProjectionExec) Close() error {
-	if e.numWorkers > 0 {
+	// wait for projectionInputFetcher to be finished.
+	if e.outputCh != nil {
 		close(e.finishCh)
+		for range e.outputCh {
+		}
+		e.outputCh = nil
 	}
 	return errors.Trace(e.baseExecutor.Close())
 }
