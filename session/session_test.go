@@ -556,10 +556,8 @@ func (s *testSessionSuite) TestSessionAuth(c *C) {
 
 func (s *testSessionSuite) TestSkipWithGrant(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	save1 := privileges.Enable
 	save2 := privileges.SkipWithGrant
 
-	privileges.Enable = true
 	privileges.SkipWithGrant = false
 	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "user_not_exist"}, []byte("yyy"), []byte("zzz")), IsFalse)
 
@@ -568,7 +566,6 @@ func (s *testSessionSuite) TestSkipWithGrant(c *C) {
 	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: `%`}, []byte(""), []byte("")), IsTrue)
 	tk.MustExec("create table t (id int)")
 
-	privileges.Enable = save1
 	privileges.SkipWithGrant = save2
 }
 
