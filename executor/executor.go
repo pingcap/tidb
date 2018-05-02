@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/ranger"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -745,10 +744,8 @@ type TableScanExec struct {
 	baseExecutor
 
 	t                     table.Table
-	ranges                []ranger.IntColumnRange
 	seekHandle            int64
 	iter                  kv.Iterator
-	cursor                int
 	columns               []*model.ColumnInfo
 	isVirtualTable        bool
 	virtualTableChunkList *chunk.List
@@ -810,52 +807,11 @@ func (e *TableScanExec) nextChunk4InfoSchema(ctx context.Context, chk *chunk.Chu
 // nextHandle gets the unique handle for next row.
 func (e *TableScanExec) nextHandle() (handle int64, found bool, err error) {
 	for {
-		if e.cursor >= len(e.ranges) {
-			return 0, false, nil
-		}
-		ran := e.ranges[e.cursor]
-		if e.seekHandle < ran.LowVal {
-			e.seekHandle = ran.LowVal
-		}
-		if e.seekHandle > ran.HighVal {
-			e.cursor++
-			continue
-		}
 		handle, found, err = e.t.Seek(e.ctx, e.seekHandle)
 		if err != nil || !found {
 			return 0, false, errors.Trace(err)
 		}
-		if handle > ran.HighVal {
-			// The handle is out of the current range, but may be in following ranges.
-			// We seek to the range that may contains the handle, so we
-			// don't need to seek key again.
-			inRange := e.seekRange(handle)
-			if !inRange {
-				// The handle may be less than the current range low value, can not
-				// return directly.
-				continue
-			}
-		}
 		return handle, true, nil
-	}
-}
-
-// seekRange increments the range cursor to the range
-// with high value greater or equal to handle.
-func (e *TableScanExec) seekRange(handle int64) (inRange bool) {
-	for {
-		e.cursor++
-		if e.cursor >= len(e.ranges) {
-			return false
-		}
-		ran := e.ranges[e.cursor]
-		if handle < ran.LowVal {
-			return false
-		}
-		if handle > ran.HighVal {
-			continue
-		}
-		return true
 	}
 }
 
@@ -876,7 +832,6 @@ func (e *TableScanExec) getRow(handle int64) (types.DatumRow, error) {
 func (e *TableScanExec) Open(ctx context.Context) error {
 	e.iter = nil
 	e.virtualTableChunkList = nil
-	e.cursor = 0
 	return nil
 }
 
