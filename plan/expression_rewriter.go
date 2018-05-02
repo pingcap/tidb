@@ -138,7 +138,7 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 	if lLen == 1 && rLen == 1 {
 		return expression.NewFunction(er.ctx, op, types.NewFieldType(mysql.TypeTiny), l, r)
 	} else if rLen != lLen {
-		return nil, ErrOperandColumns.GenByArgs(lLen)
+		return nil, expression.ErrOperandColumns.GenByArgs(lLen)
 	}
 	switch op {
 	case ast.EQ, ast.NE, ast.NullEQ:
@@ -274,12 +274,12 @@ func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) 
 	// Only (a,b,c) = any (...) and (a,b,c) != all (...) can use row expression.
 	canMultiCol := (!v.All && v.Op == opcode.EQ) || (v.All && v.Op == opcode.NE)
 	if !canMultiCol && (expression.GetFuncArgLen(lexpr) != 1 || np.Schema().Len() != 1) {
-		er.err = ErrOperandColumns.GenByArgs(1)
+		er.err = expression.ErrOperandColumns.GenByArgs(1)
 		return v, true
 	}
 	lLen := expression.GetFuncArgLen(lexpr)
 	if lLen != np.Schema().Len() {
-		er.err = ErrOperandColumns.GenByArgs(lLen)
+		er.err = expression.ErrOperandColumns.GenByArgs(lLen)
 		return v, true
 	}
 	var condition expression.Expression
@@ -540,7 +540,7 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 	}
 	lLen := expression.GetFuncArgLen(lexpr)
 	if lLen != np.Schema().Len() {
-		er.err = ErrOperandColumns.GenByArgs(lLen)
+		er.err = expression.ErrOperandColumns.GenByArgs(lLen)
 		return v, true
 	}
 	// Sometimes we can unfold the in subquery. For example, a in (select * from t) can rewrite to `a in (1,2,3,4)`.
@@ -814,7 +814,7 @@ func (er *expressionRewriter) unaryOpToExpression(v *ast.UnaryOperationExpr) {
 		return
 	}
 	if expression.GetFuncArgLen(er.ctxStack[stkLen-1]) != 1 {
-		er.err = ErrOperandColumns.GenByArgs(1)
+		er.err = expression.ErrOperandColumns.GenByArgs(1)
 		return
 	}
 	er.ctxStack[stkLen-1], er.err = expression.NewFunction(er.ctx, op, &v.Type, er.ctxStack[stkLen-1])
@@ -831,7 +831,7 @@ func (er *expressionRewriter) binaryOpToExpression(v *ast.BinaryOperationExpr) {
 		lLen := expression.GetFuncArgLen(er.ctxStack[stkLen-2])
 		rLen := expression.GetFuncArgLen(er.ctxStack[stkLen-1])
 		if lLen != 1 || rLen != 1 {
-			er.err = ErrOperandColumns.GenByArgs(1)
+			er.err = expression.ErrOperandColumns.GenByArgs(1)
 			return
 		}
 		function, er.err = expression.NewFunction(er.ctx, v.Op.String(), types.NewFieldType(mysql.TypeUnspecified), er.ctxStack[stkLen-2:]...)
@@ -866,7 +866,7 @@ func (er *expressionRewriter) notToExpression(hasNot bool, op string, tp *types.
 func (er *expressionRewriter) isNullToExpression(v *ast.IsNullExpr) {
 	stkLen := len(er.ctxStack)
 	if expression.GetFuncArgLen(er.ctxStack[stkLen-1]) != 1 {
-		er.err = ErrOperandColumns.GenByArgs(1)
+		er.err = expression.ErrOperandColumns.GenByArgs(1)
 		return
 	}
 	function := er.notToExpression(v.Not, ast.IsNull, &v.Type, er.ctxStack[stkLen-1])
@@ -889,7 +889,7 @@ func (er *expressionRewriter) isTrueToScalarFunc(v *ast.IsTruthExpr) {
 		op = ast.IsFalsity
 	}
 	if expression.GetFuncArgLen(er.ctxStack[stkLen-1]) != 1 {
-		er.err = ErrOperandColumns.GenByArgs(1)
+		er.err = expression.ErrOperandColumns.GenByArgs(1)
 		return
 	}
 	function := er.notToExpression(v.Not, op, &v.Type, er.ctxStack[stkLen-1])
@@ -905,7 +905,7 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 	l := expression.GetFuncArgLen(er.ctxStack[stkLen-lLen-1])
 	for i := 0; i < lLen; i++ {
 		if l != expression.GetFuncArgLen(er.ctxStack[stkLen-lLen+i]) {
-			er.err = ErrOperandColumns.GenByArgs(l)
+			er.err = expression.ErrOperandColumns.GenByArgs(l)
 			return
 		}
 	}
