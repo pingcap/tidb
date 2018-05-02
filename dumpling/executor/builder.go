@@ -523,7 +523,6 @@ func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 	insert := &InsertExec{
 		InsertValues: ivs,
 		OnDuplicate:  append(v.OnDuplicate, v.GenCols.OnDuplicates...),
-		IgnoreErr:    v.IgnoreErr,
 	}
 	return insert
 }
@@ -1074,7 +1073,6 @@ func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
 		SelectExec:   selExec,
 		OrderedList:  v.OrderedList,
 		tblID2table:  tblID2table,
-		IgnoreErr:    v.IgnoreErr,
 	}
 	return updateExec
 }
