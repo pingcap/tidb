@@ -182,14 +182,24 @@ func TableRangesToKVRanges(tid int64, ranges []*ranger.Range, fb *statistics.Que
 	krs := make([]kv.KeyRange, 0, len(ranges))
 	newRanges := make([]*ranger.Range, 0, len(ranges))
 	for _, ran := range ranges {
-		low, high := encodeHandleKey(ran)
-		startKey := tablecodec.EncodeRowKey(tid, low)
-		endKey := tablecodec.EncodeRowKey(tid, high)
-		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
-
+		low := codec.EncodeInt(nil, ran.LowVal[0].GetInt64())
+		high := codec.EncodeInt(nil, ran.HighVal[0].GetInt64())
+		if ran.LowExclude {
+			low = []byte(kv.Key(low).PrefixNext())
+		}
+		// If this range is split by histogram, then the high val will equal to one bucket's upper bound,
+		// since we need to guarantee each range falls inside the exactly one bucket, `PerfixNext` will make the
+		// high value greater than upper bound, so we store the range here.
 		r := &ranger.Range{LowVal: []types.Datum{types.NewBytesDatum(low)},
 			HighVal: []types.Datum{types.NewBytesDatum(high)}}
 		newRanges = append(newRanges, r)
+
+		if !ran.HighExclude {
+			high = []byte(kv.Key(high).PrefixNext())
+		}
+		startKey := tablecodec.EncodeRowKey(tid, low)
+		endKey := tablecodec.EncodeRowKey(tid, high)
+		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
 	}
 	fb.StoreRanges(newRanges)
 	return krs
@@ -258,14 +268,20 @@ func IndexRangesToKVRanges(sc *stmtctx.StatementContext, tid, idxID int64, range
 	ranges = fb.Hist().SplitRange(newRanges)
 	krs := make([]kv.KeyRange, 0, len(ranges))
 	for _, ran := range ranges {
+		low, high := ran.LowVal[0].GetBytes(), ran.HighVal[0].GetBytes()
 		if ran.LowExclude {
-			ran.LowVal[0].SetBytes(kv.Key(ran.LowVal[0].GetBytes()).PrefixNext())
+			low = kv.Key(low).PrefixNext()
 		}
+		ran.LowVal[0].SetBytes(low)
+		// If this range is split by histogram, then the high val will equal to one bucket's upper bound,
+		// since we need to guarantee each range falls inside the exactly one bucket, `PerfixNext` will make the
+		// high value greater than upper bound, so we store the high value here.
+		ran.HighVal[0].SetBytes(high)
 		if !ran.HighExclude {
-			ran.HighVal[0].SetBytes(kv.Key(ran.HighVal[0].GetBytes()).PrefixNext())
+			high = kv.Key(high).PrefixNext()
 		}
-		startKey := tablecodec.EncodeIndexSeekKey(tid, idxID, ran.LowVal[0].GetBytes())
-		endKey := tablecodec.EncodeIndexSeekKey(tid, idxID, ran.HighVal[0].GetBytes())
+		startKey := tablecodec.EncodeIndexSeekKey(tid, idxID, low)
+		endKey := tablecodec.EncodeIndexSeekKey(tid, idxID, high)
 		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
 	}
 	fb.StoreRanges(ranges)
