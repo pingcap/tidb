@@ -358,18 +358,18 @@ func extractFiltersFromDNF(ctx sessionctx.Context, dnfFunc *ScalarFunction) ([]E
 	return extractedExpr, ComposeDNFCondition(ctx, newDNFItems...)
 }
 
-// GetFuncArgLen gets the length of the row.
-func GetFuncArgLen(e Expression) int {
+// GetRowLen gets the length if the func is row, returns 1 if not row.
+func GetRowLen(e Expression) int {
 	if f, ok := e.(*ScalarFunction); ok && f.FuncName.L == ast.RowFunc {
 		return len(f.GetArgs())
 	}
 	return 1
 }
 
-// CheckArgsOneColumn checks the arg has one column.
-func CheckArgsOneColumn(args ...Expression) error {
+// CheckArgsNotMultiColumnRow checks the args are not multi-column row.
+func CheckArgsNotMultiColumnRow(args ...Expression) error {
 	for _, arg := range args {
-		if GetFuncArgLen(arg) != 1 {
+		if GetRowLen(arg) != 1 {
 			return ErrOperandColumns.GenByArgs(1)
 		}
 	}
@@ -384,10 +384,10 @@ func GetFuncArg(e Expression, idx int) Expression {
 	return nil
 }
 
-// PopFuncFirstArg pops the first element and return the rest of row.
+// PopRowFirstArg pops the first element and return the rest of row.
 // e.g. After this function (1, 2, 3) becomes (2, 3).
-func PopFuncFirstArg(ctx sessionctx.Context, e Expression) (ret Expression, err error) {
-	if f, ok := e.(*ScalarFunction); ok {
+func PopRowFirstArg(ctx sessionctx.Context, e Expression) (ret Expression, err error) {
+	if f, ok := e.(*ScalarFunction); ok && f.FuncName.L == ast.RowFunc {
 		args := f.GetArgs()
 		if len(args) == 2 {
 			return args[1].Clone(), nil
@@ -414,9 +414,10 @@ func (s *ExprStack) Pop() Expression {
 	return expr
 }
 
-// PopN pops n expression from the stack.
+// PopN pops n expressions from the stack.
+// If n greater than stack length or n is negative, it pops all the expressions.
 func (s *ExprStack) PopN(n int) []Expression {
-	if n > len(s.stack) {
+	if n > len(s.stack) || n < 0 {
 		n = len(s.stack)
 	}
 	idx := len(s.stack) - n
@@ -430,7 +431,7 @@ func (s *ExprStack) Push(expr Expression) {
 	s.stack = append(s.stack, expr)
 }
 
-// Len returns the length of the stack
+// Len returns the length of the stack.
 func (s *ExprStack) Len() int {
 	return len(s.stack)
 }

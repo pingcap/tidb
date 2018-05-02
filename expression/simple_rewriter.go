@@ -1,3 +1,16 @@
+// Copyright 2018 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package expression
 
 import (
@@ -79,7 +92,7 @@ func (sr *simpleRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok boo
 		sr.funcCallToExpression(v)
 	case *ast.FuncCastExpr:
 		arg := sr.stack.Pop()
-		sr.err = CheckArgsOneColumn(arg)
+		sr.err = CheckArgsNotMultiColumnRow(arg)
 		if sr.err != nil {
 			return retNode, false
 		}
@@ -125,8 +138,8 @@ func (sr *simpleRewriter) binaryOpToExpression(v *ast.BinaryOperationExpr) {
 		function, sr.err = sr.constructBinaryOpFunction(left, right,
 			v.Op.String())
 	default:
-		lLen := GetFuncArgLen(left)
-		rLen := GetFuncArgLen(right)
+		lLen := GetRowLen(left)
+		rLen := GetRowLen(right)
 		if lLen != 1 || rLen != 1 {
 			sr.err = ErrOperandColumns.GenByArgs(1)
 			return
@@ -142,7 +155,7 @@ func (sr *simpleRewriter) binaryOpToExpression(v *ast.BinaryOperationExpr) {
 
 func (sr *simpleRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 	args := sr.stack.PopN(len(v.Args))
-	sr.err = CheckArgsOneColumn(args...)
+	sr.err = CheckArgsNotMultiColumnRow(args...)
 	if sr.err != nil {
 		return
 	}
@@ -200,7 +213,7 @@ func (sr *simpleRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 //          a2 op b2)
 // )`
 func (sr *simpleRewriter) constructBinaryOpFunction(l Expression, r Expression, op string) (Expression, error) {
-	lLen, rLen := GetFuncArgLen(l), GetFuncArgLen(r)
+	lLen, rLen := GetRowLen(l), GetRowLen(r)
 	if lLen == 1 && rLen == 1 {
 		return NewFunction(sr.ctx, op, types.NewFieldType(mysql.TypeTiny), l, r)
 	} else if rLen != lLen {
@@ -229,11 +242,11 @@ func (sr *simpleRewriter) constructBinaryOpFunction(l Expression, r Expression, 
 			expr2 = NewFunctionInternal(sr.ctx, op, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
 		}
 		var err error
-		l, err = PopFuncFirstArg(sr.ctx, l)
+		l, err = PopRowFirstArg(sr.ctx, l)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		r, err = PopFuncFirstArg(sr.ctx, r)
+		r, err = PopRowFirstArg(sr.ctx, r)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -262,7 +275,7 @@ func (sr *simpleRewriter) unaryOpToExpression(v *ast.UnaryOperationExpr) {
 		return
 	}
 	expr := sr.stack.Pop()
-	if GetFuncArgLen(expr) != 1 {
+	if GetRowLen(expr) != 1 {
 		sr.err = ErrOperandColumns.GenByArgs(1)
 		return
 	}
@@ -274,7 +287,7 @@ func (sr *simpleRewriter) unaryOpToExpression(v *ast.UnaryOperationExpr) {
 func (sr *simpleRewriter) likeToScalarFunc(v *ast.PatternLikeExpr) {
 	pattern := sr.stack.Pop()
 	expr := sr.stack.Pop()
-	sr.err = CheckArgsOneColumn(expr, pattern)
+	sr.err = CheckArgsNotMultiColumnRow(expr, pattern)
 	if sr.err != nil {
 		return
 	}
@@ -288,7 +301,7 @@ func (sr *simpleRewriter) likeToScalarFunc(v *ast.PatternLikeExpr) {
 func (sr *simpleRewriter) regexpToScalarFunc(v *ast.PatternRegexpExpr) {
 	parttern := sr.stack.Pop()
 	expr := sr.stack.Pop()
-	sr.err = CheckArgsOneColumn(expr, parttern)
+	sr.err = CheckArgsNotMultiColumnRow(expr, parttern)
 	if sr.err != nil {
 		return
 	}
@@ -310,7 +323,7 @@ func (sr *simpleRewriter) betweenToExpression(v *ast.BetweenExpr) {
 	right := sr.stack.Pop()
 	left := sr.stack.Pop()
 	expr := sr.stack.Pop()
-	sr.err = CheckArgsOneColumn(expr)
+	sr.err = CheckArgsNotMultiColumnRow(expr)
 	if sr.err != nil {
 		return
 	}
@@ -340,7 +353,7 @@ func (sr *simpleRewriter) betweenToExpression(v *ast.BetweenExpr) {
 
 func (sr *simpleRewriter) isNullToExpression(v *ast.IsNullExpr) {
 	arg := sr.stack.Pop()
-	if GetFuncArgLen(arg) != 1 {
+	if GetRowLen(arg) != 1 {
 		sr.err = ErrOperandColumns.GenByArgs(1)
 		return
 	}
@@ -373,7 +386,7 @@ func (sr *simpleRewriter) isTrueToScalarFunc(v *ast.IsTruthExpr) {
 	if v.True == 0 {
 		op = ast.IsFalsity
 	}
-	if GetFuncArgLen(arg) != 1 {
+	if GetRowLen(arg) != 1 {
 		sr.err = ErrOperandColumns.GenByArgs(1)
 		return
 	}
@@ -388,9 +401,9 @@ func (sr *simpleRewriter) inToExpression(lLen int, not bool, tp *types.FieldType
 	exprs := sr.stack.PopN(lLen + 1)
 	leftExpr := exprs[0]
 	elems := exprs[1:]
-	l := GetFuncArgLen(leftExpr)
+	l := GetRowLen(leftExpr)
 	for i := 0; i < lLen; i++ {
-		if l != GetFuncArgLen(elems[i]) {
+		if l != GetRowLen(elems[i]) {
 			sr.err = ErrOperandColumns.GenByArgs(l)
 			return
 		}
