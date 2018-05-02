@@ -1353,7 +1353,7 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		{
 			sql: `show create table test.ttt`,
 			ans: []visitInfo{
-				{0, "test", "ttt", ""},
+				{mysql.AllPrivMask, "test", "ttt", ""},
 			},
 		},
 	}
