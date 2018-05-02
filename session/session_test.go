@@ -15,7 +15,6 @@ package session_test
 
 import (
 	"fmt"
-	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -160,10 +159,6 @@ func (s *testSessionSuite) TestErrorRollback(c *C) {
 	cnt := 4
 	wg.Add(cnt)
 	num := 100
-
-	// retry forever
-	session.SetCommitRetryLimit(math.MaxInt32)
-	defer session.SetCommitRetryLimit(10)
 
 	for i := 0; i < cnt; i++ {
 		go func() {
@@ -1090,10 +1085,6 @@ func (s *testSessionSuite) TestRetry(c *C) {
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	tk3 := testkit.NewTestKitWithInit(c, s.store)
 	tk3.MustExec("SET SESSION autocommit=0;")
-
-	// retry forever
-	session.SetCommitRetryLimit(math.MaxInt32)
-	defer session.SetCommitRetryLimit(10)
 
 	var wg sync.WaitGroup
 	wg.Add(3)
@@ -2048,7 +2039,6 @@ func (s *testSessionSuite) TestCommitRetryCount(c *C) {
 	tk1.MustExec("create table no_retry (id int)")
 	tk1.MustExec("insert into no_retry values (1)")
 	tk1.MustExec("set @@tidb_retry_limit = 0")
-	defer session.SetCommitRetryLimit(10)
 
 	tk1.MustExec("begin")
 	tk1.MustExec("update no_retry set id = 2")

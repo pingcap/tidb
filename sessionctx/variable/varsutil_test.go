@@ -222,8 +222,7 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	val, err = GetSessionSystemVar(v, TiDBRetryLimit)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "3")
-	c.Assert(CommitRetryLimit, Equals, uint32(3))
-	CommitRetryLimit = DefTiDBRetryLimit
+	c.Assert(v.RetryLimit, Equals, int64(3))
 }
 
 type mockGlobalAccessor struct {

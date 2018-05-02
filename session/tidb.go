@@ -21,7 +21,6 @@ import (
 	"net/url"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/juju/errors"
@@ -33,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
@@ -120,15 +118,6 @@ func SetSchemaLease(lease time.Duration) {
 // SetStatsLease changes the default stats lease time for loading stats info.
 func SetStatsLease(lease time.Duration) {
 	statsLease = lease
-}
-
-// SetCommitRetryLimit setups the maximum number of retries when trying to recover
-// from retryable errors.
-// Retryable errors are generally refer to temporary errors that are expected to be
-// reinstated by retry, including network interruption, transaction conflicts, and
-// so on.
-func SetCommitRetryLimit(limit uint32) {
-	atomic.StoreUint32(&variable.CommitRetryLimit, limit)
 }
 
 // Parse parses a query string to raw ast.StmtNode.

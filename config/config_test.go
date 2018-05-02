@@ -34,7 +34,6 @@ func TestT(t *testing.T) {
 func (s *testConfigSuite) TestConfig(c *C) {
 	conf := new(Config)
 	conf.BinlogSocket = "/tmp/socket"
-	conf.Performance.RetryLimit = 20
 	conf.TiKVClient.CommitTimeout = "10s"
 
 	configFile := "config.toml"
@@ -44,7 +43,6 @@ func (s *testConfigSuite) TestConfig(c *C) {
 	f, err := os.Create(configFile)
 	c.Assert(err, IsNil)
 	_, err = f.WriteString(`[performance]
-retry-limit=10
 [tikv-client]
 commit-timeout="41s"`)
 	c.Assert(err, IsNil)
@@ -54,9 +52,6 @@ commit-timeout="41s"`)
 
 	// Test that the original value will not be clear by load the config file that does not contain the option.
 	c.Assert(conf.BinlogSocket, Equals, "/tmp/socket")
-
-	// Test that the value will be overwritten by the config file.
-	c.Assert(conf.Performance.RetryLimit, Equals, uint32(10))
 
 	c.Assert(conf.TiKVClient.CommitTimeout, Equals, "41s")
 	c.Assert(f.Close(), IsNil)

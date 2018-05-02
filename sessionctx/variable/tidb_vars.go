@@ -190,6 +190,4 @@ const (
 // Process global variables.
 var (
 	ProcessGeneralLog uint32
-	// The maximum number of retries to recover from retryable errors.
-	CommitRetryLimit uint32 = DefTiDBRetryLimit
 )
