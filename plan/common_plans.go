@@ -323,7 +323,6 @@ type Insert struct {
 	OnDuplicate []*expression.Assignment
 
 	IsReplace bool
-	IgnoreErr bool
 
 	// NeedFillDefaultValue is true when expr in value list reference other column.
 	NeedFillDefaultValue bool
@@ -338,7 +337,6 @@ type Update struct {
 	baseSchemaProducer
 
 	OrderedList []*expression.Assignment
-	IgnoreErr   bool
 
 	SelectPlan PhysicalPlan
 }

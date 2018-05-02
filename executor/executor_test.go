@@ -257,7 +257,9 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 	c *C, tk *testkit.TestKit, ctx sessionctx.Context, selectSQL, deleteSQL string) {
 	for _, tt := range tests {
 		c.Assert(ctx.NewTxn(), IsNil)
+		ctx.GetSessionVars().StmtCtx.IgnoreErr = true
 		data, reachLimit, err1 := ld.InsertData(tt.data1, tt.data2)
+		ctx.GetSessionVars().StmtCtx.IgnoreErr = false
 		c.Assert(err1, IsNil)
 		c.Assert(reachLimit, IsFalse)
 		if tt.restData == nil {
@@ -2522,6 +2524,21 @@ func (s *testSuite) TestIssue5341(c *C) {
 	tk.MustExec("create table test.t(a char)")
 	tk.MustExec("insert into test.t value('a')")
 	tk.MustQuery("select * from test.t where a < 1 order by a limit 0;").Check(testkit.Rows())
+}
+
+func (s *testSuite) TestContainDotColumn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test.t1")
+	tk.MustExec("create table test.t1(t1.a char)")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2(a char, t2.b int)")
+
+	tk.MustExec("drop table if exists t3")
+	_, err := tk.Exec("create table t3(s.a char);")
+	terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrWrongTableName))
 }
 
 func (s *testSuite) TestCheckIndex(c *C) {

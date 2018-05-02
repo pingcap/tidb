@@ -1032,7 +1032,9 @@ func (s *testSuite) TestLoadData(c *C) {
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"
 	// data1 = nil, data2 = nil, fields and lines is default
+	ctx.GetSessionVars().StmtCtx.IgnoreErr = true
 	_, reachLimit, err := ld.InsertData(nil, nil)
+	ctx.GetSessionVars().StmtCtx.IgnoreErr = false
 	c.Assert(err, IsNil)
 	c.Assert(reachLimit, IsFalse)
 	r := tk.MustQuery(selectSQL)

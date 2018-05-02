@@ -256,9 +256,14 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 	if !ok {
 		return nil
 	}
-	indices := x.availableIndices.indices
-	includeTableScan := x.availableIndices.includeTableScan
-	if includeTableScan && len(innerJoinKeys) == 1 {
+	var tblPath *accessPath
+	for _, path := range x.possibleAccessPaths {
+		if path.isTablePath {
+			tblPath = path
+			break
+		}
+	}
+	if tblPath != nil && len(innerJoinKeys) == 1 {
 		pkCol := x.getPKIsHandleCol()
 		if pkCol != nil && innerJoinKeys[0].Equal(nil, pkCol) {
 			innerPlan := x.forceToTableScan(pkCol)
@@ -272,7 +277,11 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 		remainedOfBest []expression.Expression
 		keyOff2IdxOff  []int
 	)
-	for _, indexInfo := range indices {
+	for _, path := range x.possibleAccessPaths {
+		if path.isTablePath {
+			continue
+		}
+		indexInfo := path.index
 		ranges, remained, tmpKeyOff2IdxOff := p.buildRangeForIndexJoin(indexInfo, x, innerJoinKeys)
 		// We choose the index by the number of used columns of the range, the much the better.
 		// Notice that there may be the cases like `t1.a=t2.a and b > 2 and b < 1`. So ranges can be nil though the conditions are valid.
@@ -468,7 +477,6 @@ func (lt *LogicalTopN) getPhysTopN() []PhysicalPlan {
 			ByItems: lt.ByItems,
 			Count:   lt.Count,
 			Offset:  lt.Offset,
-			partial: lt.partial,
 		}.init(lt.ctx, lt.stats, resultProp)
 		ret = append(ret, topN)
 	}
@@ -484,9 +492,8 @@ func (lt *LogicalTopN) getPhysLimits() []PhysicalPlan {
 	for _, tp := range wholeTaskTypes {
 		resultProp := &requiredProp{taskTp: tp, expectedCnt: float64(lt.Count + lt.Offset), cols: prop.cols, desc: prop.desc}
 		limit := PhysicalLimit{
-			Count:   lt.Count,
-			Offset:  lt.Offset,
-			partial: lt.partial,
+			Count:  lt.Count,
+			Offset: lt.Offset,
 		}.init(lt.ctx, lt.stats, resultProp)
 		ret = append(ret, limit)
 	}
@@ -609,9 +616,8 @@ func (p *LogicalLimit) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan {
 	for _, tp := range wholeTaskTypes {
 		resultProp := &requiredProp{taskTp: tp, expectedCnt: float64(p.Count + p.Offset)}
 		limit := PhysicalLimit{
-			Offset:  p.Offset,
-			Count:   p.Count,
-			partial: p.partial,
+			Offset: p.Offset,
+			Count:  p.Count,
 		}.init(p.ctx, p.stats, resultProp)
 		ret = append(ret, limit)
 	}
