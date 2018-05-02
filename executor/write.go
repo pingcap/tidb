@@ -1079,19 +1079,26 @@ func (e *InsertExec) initDupOldRowValue(newRows [][]types.Datum) (err error) {
 	for _, keysInRow := range e.uniqueKeysInRows {
 		for _, k := range keysInRow {
 			if val, found := e.dupKeyValues[string(k.key)]; found {
-				var handle int64
-				handle, err = decodeOldHandle(k, val)
-				if err != nil {
-					return errors.Trace(err)
+				if k.isRecordKey {
+					e.dupOldRowValues[string(k.key)] = val
+				} else {
+					var handle int64
+					handle, err = decodeOldHandle(k, val)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					handles = append(handles, handle)
 				}
-				handles = append(handles, handle)
 				break
 			}
 		}
 	}
-	e.dupOldRowValues, err = batchGetOldValues(e.ctx, e.Table, handles)
+	valuesMap, err := batchGetOldValues(e.ctx, e.Table, handles)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	for k, v := range valuesMap {
+		e.dupOldRowValues[k] = v
 	}
 	return nil
 }

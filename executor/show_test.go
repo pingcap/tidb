@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
@@ -324,6 +323,13 @@ func (s *testSuite) TestShow(c *C) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"+"\nPARTITION BY RANGE ( `a` ) (\n  PARTITION p0 VALUES LESS THAN 10,\n  PARTITION p1 VALUES LESS THAN 20,\n  PARTITION p2 VALUES LESS THAN MAXVALUE\n)",
 	))
 
+	tk.MustExec(`drop table if exists t`)
+	_, err := tk.Exec(`CREATE TABLE t (x int, y char) PARTITION BY RANGE(y) (
+ 	PARTITION p0 VALUES LESS THAN (10),
+ 	PARTITION p1 VALUES LESS THAN (20),
+ 	PARTITION p2 VALUES LESS THAN (MAXVALUE))`)
+	c.Assert(err, NotNil)
+
 	// Test range columns partition
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`CREATE TABLE t (a int, b int, c char, d int) PARTITION BY RANGE COLUMNS(a,d,c) (
@@ -342,8 +348,6 @@ func (s *testSuite) TestShow(c *C) {
 }
 
 func (s *testSuite) TestShowVisibility(c *C) {
-	save := privileges.Enable
-	privileges.Enable = true
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database showdatabase")
 	tk.MustExec("use showdatabase")
@@ -381,7 +385,6 @@ func (s *testSuite) TestShowVisibility(c *C) {
 	rows := tk1.MustQuery("show databases").Rows()
 	c.Assert(len(rows), GreaterEqual, 2) // At least INFORMATION_SCHEMA and showdatabase
 
-	privileges.Enable = save
 	tk.MustExec(`drop user 'show'@'%'`)
 	tk.MustExec("drop database showdatabase")
 }
