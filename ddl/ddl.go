@@ -148,6 +148,9 @@ var (
 	ErrWrongNameForIndex = terror.ClassDDL.New(codeWrongNameForIndex, mysql.MySQLErrName[mysql.ErrWrongNameForIndex])
 	// ErrUnknownCharacterSet returns unknown character set.
 	ErrUnknownCharacterSet = terror.ClassDDL.New(codeUnknownCharacterSet, "Unknown character set: '%s'")
+
+	// ErrNotAllowedTypeInPartition returns not allowed type error when creating table partiton with unsupport expression type.
+	ErrNotAllowedTypeInPartition = terror.ClassDDL.New(codeCantCreateTable, "Field '%s' is of a not allowed type for this type of partitioning")
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -160,10 +163,10 @@ type DDL interface {
 	CreateIndex(ctx sessionctx.Context, tableIdent ast.Ident, unique bool, indexName model.CIStr,
 		columnNames []*ast.IndexColName, indexOption *ast.IndexOption) error
 	DropIndex(ctx sessionctx.Context, tableIdent ast.Ident, indexName model.CIStr) error
-	GetInformationSchema() infoschema.InfoSchema
 	AlterTable(ctx sessionctx.Context, tableIdent ast.Ident, spec []*ast.AlterTableSpec) error
 	TruncateTable(ctx sessionctx.Context, tableIdent ast.Ident) error
 	RenameTable(ctx sessionctx.Context, oldTableIdent, newTableIdent ast.Ident) error
+
 	// SetLease will reset the lease time for online DDL change,
 	// it's a very dangerous function and you must guarantee that all servers have the same lease time.
 	SetLease(ctx context.Context, lease time.Duration)
@@ -181,7 +184,8 @@ type DDL interface {
 	SchemaSyncer() SchemaSyncer
 	// OwnerManager gets the owner manager, and it's used for testing.
 	OwnerManager() owner.Manager
-	// WorkerVars gets the session variables for DDL worker.
+
+	// WorkerVars gets the session variables for DDL worker. It's exported for testing.
 	WorkerVars() *variable.SessionVars
 	// SetHook sets the hook. It's exported for testing.
 	SetHook(h Callback)
@@ -299,13 +303,13 @@ func newDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 	return d
 }
 
+// Stop implements DDL.Stop interface.
 func (d *ddl) Stop() error {
 	d.m.Lock()
 	defer d.m.Unlock()
 
 	d.close()
 	log.Infof("stop DDL:%s", d.uuid)
-
 	return nil
 }
 
@@ -333,6 +337,7 @@ func (d *ddl) close() {
 	if d.isClosed() {
 		return
 	}
+
 	close(d.quitCh)
 	d.ownerManager.Cancel()
 	err := d.schemaSyncer.RemoveSelfVersionPath()
@@ -340,6 +345,7 @@ func (d *ddl) close() {
 		log.Errorf("[ddl] remove self version path failed %v", err)
 	}
 	d.wait.Wait()
+
 	d.delRangeManager.clear()
 	log.Infof("close DDL:%s", d.uuid)
 }
@@ -353,6 +359,7 @@ func (d *ddl) isClosed() bool {
 	}
 }
 
+// SetLease implements DDL.SetLease interface.
 func (d *ddl) SetLease(ctx context.Context, lease time.Duration) {
 	d.m.Lock()
 	defer d.m.Unlock()
@@ -375,6 +382,7 @@ func (d *ddl) SetLease(ctx context.Context, lease time.Duration) {
 	d.start(ctx)
 }
 
+// GetLease implements DDL.GetLease interface.
 func (d *ddl) GetLease() time.Duration {
 	d.m.RLock()
 	lease := d.lease
@@ -382,7 +390,7 @@ func (d *ddl) GetLease() time.Duration {
 	return lease
 }
 
-func (d *ddl) GetInformationSchema() infoschema.InfoSchema {
+func (d *ddl) getInformationSchema() infoschema.InfoSchema {
 	return d.infoHandle.Get()
 }
 
@@ -497,6 +505,7 @@ func (d *ddl) GetHook() Callback {
 	return d.hook
 }
 
+// WorkerVars implements DDL.WorkerVars interface.
 func (d *ddl) WorkerVars() *variable.SessionVars {
 	return d.workerVars
 }
@@ -557,6 +566,7 @@ const (
 	codeWrongNameForIndex            = terror.ErrCode(mysql.ErrWrongNameForIndex)
 	codeErrTooLongIndexComment       = terror.ErrCode(mysql.ErrTooLongIndexComment)
 	codeUnknownCharacterSet          = terror.ErrCode(mysql.ErrUnknownCharacterSet)
+	codeCantCreateTable              = terror.ErrCode(mysql.ErrCantCreateTable)
 )
 
 func init() {

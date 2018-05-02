@@ -88,7 +88,7 @@ errcheck:
 	@ GOPATH=$(GOPATH) errcheck -blank $(PACKAGES) | grep -v "_test\.go" | awk '{print} END{if(NR>0) {exit 1}}'
 
 lint:
-	go get github.com/golang/lint/golint
+	go get golang.org/x/lint/golint
 	@echo "golint"
 	@ golint -set_exit_status $(PACKAGES)
 

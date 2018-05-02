@@ -134,6 +134,8 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"alter table t change column a `a ` int", true, errors.New("[ddl:1166]Incorrect column name 'a '")},
 		{"create index idx on `t ` (a)", true, errors.New("[ddl:1103]Incorrect table name 't '")},
 		{"create index idx on  `` (a)", true, errors.New("[ddl:1103]Incorrect table name ''")},
+		{"rename table t to ``", false, errors.New("[ddl:1103]Incorrect table name ''")},
+		{"rename table `` to t", false, errors.New("[ddl:1103]Incorrect table name ''")},
 
 		// issue 3844
 		{`create table t (a set("a, b", "c, d"))`, true, errors.New("[types:1367]Illegal set 'a, b' value found during parsing")},

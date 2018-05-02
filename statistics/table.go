@@ -53,11 +53,13 @@ type Table struct {
 
 func (t *Table) copy() *Table {
 	nt := &Table{
-		TableID: t.TableID,
-		Count:   t.Count,
-		Pseudo:  t.Pseudo,
-		Columns: make(map[int64]*Column),
-		Indices: make(map[int64]*Index),
+		TableID:     t.TableID,
+		Count:       t.Count,
+		ModifyCount: t.ModifyCount,
+		Version:     t.Version,
+		Pseudo:      t.Pseudo,
+		Columns:     make(map[int64]*Column),
+		Indices:     make(map[int64]*Index),
 	}
 	for id, col := range t.Columns {
 		nt.Columns[id] = col
@@ -316,7 +318,7 @@ func (t *Table) ColumnEqualRowCount(sc *stmtctx.StatementContext, value types.Da
 }
 
 // GetRowCountByIntColumnRanges estimates the row count by a slice of IntColumnRange.
-func (t *Table) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext, colID int64, intRanges []*ranger.NewRange) (float64, error) {
+func (t *Table) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext, colID int64, intRanges []*ranger.Range) (float64, error) {
 	if t.ColumnIsInvalid(sc, colID) {
 		if len(intRanges) == 0 {
 			return float64(t.Count), nil
@@ -332,8 +334,8 @@ func (t *Table) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext, colID
 	return result, errors.Trace(err)
 }
 
-// GetRowCountByColumnRanges estimates the row count by a slice of NewRange.
-func (t *Table) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, colID int64, colRanges []*ranger.NewRange) (float64, error) {
+// GetRowCountByColumnRanges estimates the row count by a slice of Range.
+func (t *Table) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, colID int64, colRanges []*ranger.Range) (float64, error) {
 	if t.ColumnIsInvalid(sc, colID) {
 		return getPseudoRowCountByColumnRanges(sc, float64(t.Count), colRanges, 0)
 	}
@@ -343,8 +345,8 @@ func (t *Table) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, colID in
 	return result, errors.Trace(err)
 }
 
-// GetRowCountByIndexRanges estimates the row count by a slice of NewRange.
-func (t *Table) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idxID int64, indexRanges []*ranger.NewRange) (float64, error) {
+// GetRowCountByIndexRanges estimates the row count by a slice of Range.
+func (t *Table) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idxID int64, indexRanges []*ranger.Range) (float64, error) {
 	idx := t.Indices[idxID]
 	if t.Pseudo || idx == nil || idx.Len() == 0 {
 		colsLen := -1
@@ -381,7 +383,7 @@ func PseudoTable(tblInfo *model.TableInfo) *Table {
 	return t
 }
 
-func getPseudoRowCountByIndexRanges(sc *stmtctx.StatementContext, indexRanges []*ranger.NewRange,
+func getPseudoRowCountByIndexRanges(sc *stmtctx.StatementContext, indexRanges []*ranger.Range,
 	tableRowCount float64, colsLen int) (float64, error) {
 	if tableRowCount == 0 {
 		return 0, nil
@@ -400,7 +402,7 @@ func getPseudoRowCountByIndexRanges(sc *stmtctx.StatementContext, indexRanges []
 		if i >= len(indexRange.LowVal) {
 			i = len(indexRange.LowVal) - 1
 		}
-		rowCount, err := getPseudoRowCountByColumnRanges(sc, tableRowCount, []*ranger.NewRange{indexRange}, i)
+		rowCount, err := getPseudoRowCountByColumnRanges(sc, tableRowCount, []*ranger.Range{indexRange}, i)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -418,7 +420,7 @@ func getPseudoRowCountByIndexRanges(sc *stmtctx.StatementContext, indexRanges []
 	return totalCount, nil
 }
 
-func getPseudoRowCountByColumnRanges(sc *stmtctx.StatementContext, tableRowCount float64, columnRanges []*ranger.NewRange, colIdx int) (float64, error) {
+func getPseudoRowCountByColumnRanges(sc *stmtctx.StatementContext, tableRowCount float64, columnRanges []*ranger.Range, colIdx int) (float64, error) {
 	var rowCount float64
 	var err error
 	for _, ran := range columnRanges {
@@ -456,7 +458,7 @@ func getPseudoRowCountByColumnRanges(sc *stmtctx.StatementContext, tableRowCount
 	return rowCount, nil
 }
 
-func getPseudoRowCountBySignedIntRanges(intRanges []*ranger.NewRange, tableRowCount float64) float64 {
+func getPseudoRowCountBySignedIntRanges(intRanges []*ranger.Range, tableRowCount float64) float64 {
 	var rowCount float64
 	for _, rg := range intRanges {
 		var cnt float64
@@ -486,7 +488,7 @@ func getPseudoRowCountBySignedIntRanges(intRanges []*ranger.NewRange, tableRowCo
 	return rowCount
 }
 
-func getPseudoRowCountByUnsignedIntRanges(intRanges []*ranger.NewRange, tableRowCount float64) float64 {
+func getPseudoRowCountByUnsignedIntRanges(intRanges []*ranger.Range, tableRowCount float64) float64 {
 	var rowCount float64
 	for _, rg := range intRanges {
 		var cnt float64
