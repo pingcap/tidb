@@ -25,9 +25,6 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// Enable enables the new privilege check feature.
-var Enable = true
-
 // SkipWithGrant causes the server to start without using the privilege system at all.
 var SkipWithGrant = false
 
@@ -54,7 +51,7 @@ type UserPrivileges struct {
 
 // RequestVerification implements the Manager interface.
 func (p *UserPrivileges) RequestVerification(db, table, column string, priv mysql.PrivilegeType) bool {
-	if !Enable || SkipWithGrant {
+	if SkipWithGrant {
 		return true
 	}
 
@@ -121,7 +118,7 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 
 // DBIsVisible implements the Manager interface.
 func (p *UserPrivileges) DBIsVisible(db string) bool {
-	if !Enable || SkipWithGrant {
+	if SkipWithGrant {
 		return true
 	}
 	mysqlPriv := p.Handle.Get()
