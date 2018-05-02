@@ -345,14 +345,13 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64) error {
 		return errors.Trace(err)
 	}
 
-	bo := tikv.NewBackoffer(ctx, tikv.GcDeleteRangeMaxBackoff)
 	log.Infof("[gc worker] %s start delete %v ranges", w.uuid, len(ranges))
 	startTime := time.Now()
 	regions := 0
 	for _, r := range ranges {
 		startKey, rangeEndKey := r.Range()
 
-		deleteRangeTask := tikv.NewDeleteRangeTask(ctx, w.store, bo, startKey, rangeEndKey)
+		deleteRangeTask := tikv.NewDeleteRangeTask(ctx, w.store, startKey, rangeEndKey)
 		err := deleteRangeTask.Execute()
 
 		if err != nil {
@@ -417,7 +416,6 @@ func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64) error {
 			Limit:      gcScanLockLimit,
 		},
 	}
-	bo := tikv.NewBackoffer(ctx, tikv.GcResolveLockMaxBackoff)
 
 	log.Infof("[gc worker] %s start resolve locks, safePoint: %v.", w.uuid, safePoint)
 	startTime := time.Now()
@@ -430,6 +428,8 @@ func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64) error {
 			return errors.New("[gc worker] gc job canceled")
 		default:
 		}
+
+		bo := tikv.NewBackoffer(ctx, tikv.GcResolveLockMaxBackoff)
 
 		req.ScanLock.StartKey = key
 		loc, err := w.store.GetRegionCache().LocateKey(bo, key)

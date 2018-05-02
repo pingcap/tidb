@@ -153,19 +153,19 @@ func (t backoffType) TError() *terror.Error {
 
 // Maximum total sleep time(in ms) for kv/cop commands.
 const (
-	copBuildTaskMaxBackoff  = 5000
-	tsoMaxBackoff           = 5000
-	scannerNextMaxBackoff   = 20000
-	batchGetMaxBackoff      = 20000
-	copNextMaxBackoff       = 20000
-	getMaxBackoff           = 20000
-	prewriteMaxBackoff      = 20000
-	cleanupMaxBackoff       = 20000
-	GcOneRegionMaxBackoff   = 20000
-	GcResolveLockMaxBackoff = 100000
-	GcDeleteRangeMaxBackoff = 100000
-	rawkvMaxBackoff         = 20000
-	splitRegionBackoff      = 20000
+	copBuildTaskMaxBackoff         = 5000
+	tsoMaxBackoff                  = 5000
+	scannerNextMaxBackoff          = 20000
+	batchGetMaxBackoff             = 20000
+	copNextMaxBackoff              = 20000
+	getMaxBackoff                  = 20000
+	prewriteMaxBackoff             = 20000
+	cleanupMaxBackoff              = 20000
+	GcOneRegionMaxBackoff          = 20000
+	GcResolveLockMaxBackoff        = 100000
+	DeleteRangeOneRegionMaxBackoff = 100000
+	rawkvMaxBackoff                = 20000
+	splitRegionBackoff             = 20000
 )
 
 // CommitMaxBackoff is max sleep time of the 'commit' command
