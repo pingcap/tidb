@@ -14,8 +14,6 @@
 package executor
 
 import (
-	"sync"
-
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
@@ -55,9 +53,9 @@ type ProjectionExec struct {
 	calculateNoDelay bool
 
 	prepared   bool
-	output     chan *projectionOutput
+	finishCh   chan struct{}
+	outputCh   chan *projectionOutput
 	fetcher    projectionInputFetcher
-	waitGroup  sync.WaitGroup
 	numWorkers int64
 	workers    []*projectionWorker
 }
@@ -79,32 +77,36 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 		e.numWorkers = 1
 	}
 
-	e.output = make(chan *projectionOutput, e.numWorkers)
+	e.finishCh = make(chan struct{})
+	e.outputCh = make(chan *projectionOutput, e.numWorkers)
 	e.prepared = false
 
 	// initialize projectionInputFetcher.
-	e.fetcher.child = e.children[0]
-	e.fetcher.globalOutput = e.output
-	e.fetcher.input = make(chan *projectionInput, e.numWorkers)
-	e.fetcher.output = make(chan *projectionOutput, e.numWorkers)
+	e.fetcher = projectionInputFetcher{
+		child:          e.children[0],
+		globalFinishCh: e.finishCh,
+		globalOutputCh: e.outputCh,
+		inputCh:        make(chan *projectionInput, e.numWorkers),
+		outputCh:       make(chan *projectionOutput, e.numWorkers),
+	}
 
 	// initialize projectionWorker.
 	e.workers = make([]*projectionWorker, 0, e.numWorkers)
 	for i := int64(0); i < e.numWorkers; i++ {
 		e.workers = append(e.workers, &projectionWorker{
-			sctx:          e.ctx,
-			evaluatorSuit: e.evaluatorSuit,
-			globalWG:      &e.waitGroup,
-			inputGiveBack: e.fetcher.input,
-			input:         make(chan *projectionInput, 1),
-			output:        make(chan *projectionOutput, 1),
+			sctx:            e.ctx,
+			evaluatorSuit:   e.evaluatorSuit,
+			globalFinishCh:  e.finishCh,
+			inputGiveBackCh: e.fetcher.inputCh,
+			inputCh:         make(chan *projectionInput, 1),
+			outputCh:        make(chan *projectionOutput, 1),
 		})
 
-		e.fetcher.input <- &projectionInput{
+		e.fetcher.inputCh <- &projectionInput{
 			chk:          e.children[0].newChunk(),
 			targetWorker: e.workers[i],
 		}
-		e.fetcher.output <- &projectionOutput{
+		e.fetcher.outputCh <- &projectionOutput{
 			chk:  e.newChunk(),
 			done: make(chan error, 1),
 		}
@@ -131,7 +133,7 @@ func (e *ProjectionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		e.prepared = true
 	}
 
-	output, ok := <-e.output
+	output, ok := <-e.outputCh
 	if !ok {
 		return nil
 	}
@@ -142,103 +144,89 @@ func (e *ProjectionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 
 	chk.SwapColumns(output.chk)
-	e.fetcher.output <- output
+	e.fetcher.outputCh <- output
 	return nil
 }
 
 func (e *ProjectionExec) prepare(ctx context.Context) {
 	go e.fetcher.run(ctx)
 
-	e.waitGroup.Add(len(e.workers))
 	for i := range e.workers {
 		go e.workers[i].run(ctx)
 	}
-
-	go e.waitAndFinish()
-}
-
-func (e *ProjectionExec) waitAndFinish() {
-	e.waitGroup.Wait()
-	close(e.output)
 }
 
 // Close implements the Executor Close interface.
 func (e *ProjectionExec) Close() error {
 	if e.numWorkers > 0 {
-		close(e.fetcher.input)
-		close(e.fetcher.output)
+		close(e.finishCh)
 	}
 	return errors.Trace(e.baseExecutor.Close())
 }
 
 type projectionInputFetcher struct {
-	child        Executor
-	globalOutput chan<- *projectionOutput
+	child          Executor
+	globalFinishCh <-chan struct{}
+	globalOutputCh chan<- *projectionOutput
 
-	input  chan *projectionInput
-	output chan *projectionOutput
+	inputCh  chan *projectionInput
+	outputCh chan *projectionOutput
 }
 
 func (w *projectionInputFetcher) run(ctx context.Context) {
 	defer func() {
-		for input := range w.input {
-			input.targetWorker.finish()
-		}
+		close(w.globalOutputCh)
 	}()
 
 	for {
-		input, ok1 := <-w.input
-		if !ok1 {
+		input := readProjectionInput(w.inputCh, w.globalFinishCh)
+		if input == nil {
 			return
 		}
 		targetWorker := input.targetWorker
 
-		output, ok2 := <-w.output
-		if !ok2 {
-			targetWorker.finish()
+		output := readProjectionOutput(w.outputCh, w.globalFinishCh)
+		if output == nil {
 			return
 		}
 
-		w.globalOutput <- output
+		w.globalOutputCh <- output
 
 		err := w.child.Next(ctx, input.chk)
 		if err != nil || input.chk.NumRows() == 0 {
 			output.done <- errors.Trace(err)
-			targetWorker.finish()
 			return
 		}
 
-		targetWorker.input <- input
-		targetWorker.output <- output
+		targetWorker.inputCh <- input
+		targetWorker.outputCh <- output
 	}
 }
 
 type projectionWorker struct {
-	sctx          sessionctx.Context
-	evaluatorSuit *expression.EvaluatorSuit
-	globalWG      *sync.WaitGroup
-	inputGiveBack chan<- *projectionInput
+	sctx            sessionctx.Context
+	evaluatorSuit   *expression.EvaluatorSuit
+	globalFinishCh  <-chan struct{}
+	inputGiveBackCh chan<- *projectionInput
 
 	// channel "input" and "output" is :
 	// 0. inited  by "ProjectionExec.Open"
 	// 1. written by "projectionInputFetcher.run"
 	// 2. read    by "projectionWorker.run"
-	// 3. closed  by "projectionWorker.finish"
-	input  chan *projectionInput
-	output chan *projectionOutput
+	// 3. closed  by "projectionInputFetcher.run"
+	inputCh  chan *projectionInput
+	outputCh chan *projectionOutput
 }
 
 func (w *projectionWorker) run(ctx context.Context) {
-	defer w.globalWG.Done()
-
 	for {
-		input, ok1 := <-w.input
-		if !ok1 {
+		input := readProjectionInput(w.inputCh, w.globalFinishCh)
+		if input == nil {
 			return
 		}
 
-		output, ok2 := <-w.output
-		if !ok2 {
+		output := readProjectionOutput(w.outputCh, w.globalFinishCh)
+		if output == nil {
 			return
 		}
 
@@ -248,11 +236,31 @@ func (w *projectionWorker) run(ctx context.Context) {
 		if err != nil {
 			return
 		}
-		w.inputGiveBack <- input
+
+		w.inputGiveBackCh <- input
 	}
 }
 
-func (w *projectionWorker) finish() {
-	close(w.input)
-	close(w.output)
+func readProjectionInput(inputCh <-chan *projectionInput, finishCh <-chan struct{}) *projectionInput {
+	select {
+	case <-finishCh:
+		return nil
+	case input, ok := <-inputCh:
+		if !ok {
+			return nil
+		}
+		return input
+	}
+}
+
+func readProjectionOutput(outputCh <-chan *projectionOutput, finishCh <-chan struct{}) *projectionOutput {
+	select {
+	case <-finishCh:
+		return nil
+	case output, ok := <-outputCh:
+		if !ok {
+			return nil
+		}
+		return output
+	}
 }
