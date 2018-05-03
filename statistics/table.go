@@ -53,11 +53,13 @@ type Table struct {
 
 func (t *Table) copy() *Table {
 	nt := &Table{
-		TableID: t.TableID,
-		Count:   t.Count,
-		Pseudo:  t.Pseudo,
-		Columns: make(map[int64]*Column),
-		Indices: make(map[int64]*Index),
+		TableID:     t.TableID,
+		Count:       t.Count,
+		ModifyCount: t.ModifyCount,
+		Version:     t.Version,
+		Pseudo:      t.Pseudo,
+		Columns:     make(map[int64]*Column),
+		Indices:     make(map[int64]*Index),
 	}
 	for id, col := range t.Columns {
 		nt.Columns[id] = col
