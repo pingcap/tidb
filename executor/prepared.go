@@ -275,44 +275,38 @@ func ResetStmtCtx(ctx sessionctx.Context, s ast.StmtNode) {
 
 	switch stmt := s.(type) {
 	case *ast.UpdateStmt:
-		sc.IgnoreErr = stmt.IgnoreErr
-		sc.IgnoreTruncate = false
-		sc.OverflowAsWarning = false
-		sc.TruncateAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
 		sc.InUpdateOrDeleteStmt = true
-		sc.DividedByZeroAsWarning = stmt.IgnoreErr
+		sc.DupKeyAsWarning = stmt.IgnoreErr
+		sc.BadNullAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
+		sc.TruncateAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
+		sc.DividedByZeroAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
 		sc.IgnoreZeroInDate = !sessVars.StrictSQLMode || stmt.IgnoreErr
 		if stmt.LowPriority {
 			sc.Priority = mysql.LowPriority
 		}
 	case *ast.DeleteStmt:
-		sc.IgnoreErr = stmt.IgnoreErr
-		sc.IgnoreTruncate = false
-		sc.OverflowAsWarning = false
-		sc.TruncateAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
 		sc.InUpdateOrDeleteStmt = true
-		sc.DividedByZeroAsWarning = stmt.IgnoreErr
+		sc.DupKeyAsWarning = stmt.IgnoreErr
+		sc.BadNullAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
+		sc.TruncateAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
+		sc.DividedByZeroAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
 		sc.IgnoreZeroInDate = !sessVars.StrictSQLMode || stmt.IgnoreErr
 		if stmt.LowPriority {
 			sc.Priority = mysql.LowPriority
 		}
 	case *ast.InsertStmt:
-		sc.IgnoreErr = stmt.IgnoreErr
-		sc.IgnoreTruncate = false
-		sc.TruncateAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
 		sc.InInsertStmt = true
-		sc.DividedByZeroAsWarning = stmt.IgnoreErr
+		sc.DupKeyAsWarning = stmt.IgnoreErr
+		sc.BadNullAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
+		sc.TruncateAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
+		sc.DividedByZeroAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
 		sc.IgnoreZeroInDate = !sessVars.StrictSQLMode || stmt.IgnoreErr
 		sc.Priority = stmt.Priority
 	case *ast.CreateTableStmt, *ast.AlterTableStmt:
 		// Make sure the sql_mode is strict when checking column default value.
-		sc.IgnoreTruncate = false
-		sc.OverflowAsWarning = false
-		sc.TruncateAsWarning = false
 	case *ast.LoadDataStmt:
-		sc.IgnoreErr = true
-		sc.IgnoreTruncate = false
-		sc.OverflowAsWarning = false
+		sc.DupKeyAsWarning = true
+		sc.BadNullAsWarning = true
 		sc.TruncateAsWarning = !sessVars.StrictSQLMode
 	case *ast.SelectStmt:
 		sc.InSelectStmt = true
@@ -324,7 +318,6 @@ func ResetStmtCtx(ctx sessionctx.Context, s ast.StmtNode) {
 		sc.OverflowAsWarning = true
 
 		// Return warning for truncate error in selection.
-		sc.IgnoreTruncate = false
 		sc.TruncateAsWarning = true
 		sc.IgnoreZeroInDate = true
 		if opts := stmt.SelectStmtOpts; opts != nil {
@@ -332,16 +325,13 @@ func ResetStmtCtx(ctx sessionctx.Context, s ast.StmtNode) {
 			sc.NotFillCache = !opts.SQLCache
 		}
 		sc.PadCharToFullLength = ctx.GetSessionVars().SQLMode.HasPadCharToFullLengthMode()
-	default:
+	case *ast.ShowStmt:
 		sc.IgnoreTruncate = true
-		sc.OverflowAsWarning = false
-		if show, ok := s.(*ast.ShowStmt); ok {
-			if show.Tp == ast.ShowWarnings {
-				sc.InShowWarning = true
-				sc.SetWarnings(sessVars.StmtCtx.GetWarnings())
-			}
-		}
 		sc.IgnoreZeroInDate = true
+		if stmt.Tp == ast.ShowWarnings {
+			sc.InShowWarning = true
+			sc.SetWarnings(sessVars.StmtCtx.GetWarnings())
+		}
 	}
 	if sessVars.LastInsertID > 0 {
 		sessVars.PrevLastInsertID = sessVars.LastInsertID

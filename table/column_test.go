@@ -237,10 +237,10 @@ func (t *testTableSuite) TestCastValue(c *C) {
 
 	err = CastValues(ctx, []types.Datum{types.NewDatum("test")}, []*Column{col})
 	c.Assert(err, NotNil)
-	ctx.GetSessionVars().StmtCtx.IgnoreErr = true
+	ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
 	err = CastValues(ctx, []types.Datum{types.NewDatum("test")}, []*Column{col})
 	c.Assert(err, IsNil)
-	ctx.GetSessionVars().StmtCtx.IgnoreErr = false
+	ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = false
 
 	colInfoS := model.ColumnInfo{
 		FieldType: *types.NewFieldType(mysql.TypeString),

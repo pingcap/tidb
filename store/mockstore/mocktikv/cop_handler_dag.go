@@ -383,26 +383,12 @@ func (e *evalContext) decodeRelatedColumnVals(relatedColOffsets []int, value [][
 	return nil
 }
 
-// Flags are used by tipb.SelectRequest.Flags to handle execution mode, like how to handle truncate error.
-const (
-	// FlagIgnoreTruncate indicates if truncate error should be ignored.
-	// Read-only statements should ignore truncate error, write statements should not ignore truncate error.
-	FlagIgnoreTruncate uint64 = 1
-	// FlagTruncateAsWarning indicates if truncate error should be returned as warning.
-	// This flag only matters if FlagIgnoreTruncate is not set, in strict sql mode, truncate error should
-	// be returned as error, in non-strict sql mode, truncate error should be saved as warning.
-	FlagTruncateAsWarning uint64 = 1 << 1
-
-	// FlagPadCharToFullLength indicates if sql_mode 'PAD_CHAR_TO_FULL_LENGTH' is set.
-	FlagPadCharToFullLength uint64 = 1 << 2
-)
-
 // flagsToStatementContext creates a StatementContext from a `tipb.SelectRequest.Flags`.
 func flagsToStatementContext(flags uint64) *stmtctx.StatementContext {
 	sc := new(stmtctx.StatementContext)
-	sc.IgnoreTruncate = (flags & FlagIgnoreTruncate) > 0
-	sc.TruncateAsWarning = (flags & FlagTruncateAsWarning) > 0
-	sc.PadCharToFullLength = (flags & FlagPadCharToFullLength) > 0
+	sc.IgnoreTruncate = (flags & stmtctx.FlagIgnoreTruncate) > 0
+	sc.TruncateAsWarning = (flags & stmtctx.FlagTruncateAsWarning) > 0
+	sc.PadCharToFullLength = (flags & stmtctx.FlagPadCharToFullLength) > 0
 	return sc
 }
 

@@ -134,7 +134,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 
 	if handleChanged {
 		skipHandleCheck := false
-		if sc.IgnoreErr {
+		if sc.DupKeyAsWarning {
 			// if the new handle exists. `UPDATE IGNORE` will avoid removing record, and do nothing.
 			if err = tables.CheckHandleExists(ctx, t, newHandle); err != nil {
 				return false, handleChanged, newHandle, errors.Trace(err)
@@ -835,7 +835,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) (types.Datu
 	// If tidb_batch_insert is ON and not in a transaction, we could use BatchInsert mode.
 	sessVars := e.ctx.GetSessionVars()
 	defer sessVars.CleanBuffers()
-	ignoreErr := sessVars.StmtCtx.IgnoreErr
+	ignoreErr := sessVars.StmtCtx.DupKeyAsWarning
 
 	e.rowCount = 0
 	if !sessVars.ImportingData {
@@ -1603,7 +1603,7 @@ func (e *InsertValues) filterErr(err error) error {
 	if err == nil {
 		return nil
 	}
-	if !e.ctx.GetSessionVars().StmtCtx.IgnoreErr {
+	if !e.ctx.GetSessionVars().StmtCtx.DupKeyAsWarning {
 		return errors.Trace(err)
 	}
 
@@ -1928,7 +1928,7 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema) (types
 			}
 
 			sc := e.ctx.GetSessionVars().StmtCtx
-			if kv.ErrKeyExists.Equal(err1) && sc.IgnoreErr {
+			if kv.ErrKeyExists.Equal(err1) && sc.DupKeyAsWarning {
 				sc.AppendWarning(err1)
 				continue
 			}

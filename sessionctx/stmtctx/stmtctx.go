@@ -22,24 +22,47 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 )
 
+// Flags are used by tipb.SelectRequest.Flags to handle execution mode, like how to handle truncate error.
+const (
+	// FlagIgnoreTruncate indicates if truncate error should be ignored.
+	// Read-only statements should ignore truncate error, write statements should not ignore truncate error.
+	FlagIgnoreTruncate uint64 = 1
+	// FlagTruncateAsWarning indicates if truncate error should be returned as warning.
+	// This flag only matters if FlagIgnoreTruncate is not set, in strict sql mode, truncate error should
+	// be returned as error, in non-strict sql mode, truncate error should be saved as warning.
+	FlagTruncateAsWarning = 1 << 1
+	// FlagPadCharToFullLength indicates if sql_mode 'PAD_CHAR_TO_FULL_LENGTH' is set.
+	FlagPadCharToFullLength = 1 << 2
+	// FlagInInsertStmt indicates if this is a INSERT statement.
+	FlagInInsertStmt = 1 << 3
+	// FlagInUpdateOrDeleteStmt indicates if this is a UPDATE statement or a DELETE statement.
+	FlagInUpdateOrDeleteStmt = 1 << 4
+	// FlagInSelectStmt indicates if this is a SELECT statement.
+	FlagInSelectStmt = 1 << 5
+	// FlagOverflowAsWarning indicates if overflow error should be returned as warning.
+	// In strict sql mode, overflow error should be returned as error,
+	// in non-strict sql mode, overflow error should be saved as warning.
+	FlagOverflowAsWarning = 1 << 6
+	// FlagIgnoreZeroInDate indicates if ZeroInDate error should be ignored.
+	// Read-only statements should ignore ZeroInDate error.
+	// Write statements should not ignore ZeroInDate error in strict sql mode.
+	FlagIgnoreZeroInDate = 1 << 7
+	// FlagDividedByZeroAsWarning indicates if DividedByZero should be returned as warning.
+	FlagDividedByZeroAsWarning = 1 << 8
+)
+
 // StatementContext contains variables for a statement.
 // It should be reset before executing a statement.
 type StatementContext struct {
 	// Set the following variables before execution
 
-	InInsertStmt         bool
-	InUpdateOrDeleteStmt bool
-	InSelectStmt         bool
-	IgnoreTruncate       bool
-	IgnoreZeroInDate     bool
-	// IgnoreErr is used for the following statements to avoid return an
-	// error, `insert`, `update`, and `delete`.
-	// If IgnoreErr is true and the statements meet some errors,
-	// e.g. duplicate keys, insert null to a not null column...,
-	// the errors will be appended as warnings.
-	// For the `load data` statement, IgnoreErr should be always true,
-	// because it is the same behavior as `insert ignore` statement.
-	IgnoreErr              bool
+	InInsertStmt           bool
+	InUpdateOrDeleteStmt   bool
+	InSelectStmt           bool
+	IgnoreTruncate         bool
+	IgnoreZeroInDate       bool
+	DupKeyAsWarning        bool
+	BadNullAsWarning       bool
 	DividedByZeroAsWarning bool
 	TruncateAsWarning      bool
 	OverflowAsWarning      bool

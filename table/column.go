@@ -132,7 +132,7 @@ func CastValues(ctx sessionctx.Context, rec []types.Datum, cols []*Column) (err 
 		var converted types.Datum
 		converted, err = CastValue(ctx, rec[c.Offset], c.ToInfo())
 		if err != nil {
-			if sc.IgnoreErr {
+			if sc.DupKeyAsWarning {
 				sc.AppendWarning(err)
 				log.Warnf("cast values failed:%v", err)
 			} else {
