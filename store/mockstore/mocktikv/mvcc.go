@@ -23,6 +23,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/util/codec"
+	"math"
 )
 
 type mvccValueType int
@@ -196,6 +197,20 @@ func (l *mvccLock) lockErr(key []byte) error {
 	}
 }
 
+func (l *mvccLock) check(ts uint64, key []byte) (uint64, error) {
+	if l.startTS > ts {
+		return ts, nil
+	}
+
+	if l.op == kvrpcpb.Op_Lock {
+		return l.startTS - 1, nil
+	}
+	if ts == math.MaxUint64 && bytes.Equal(l.primary, key) {
+		return l.startTS - 1, nil
+	}
+	return 0, l.lockErr(key)
+}
+
 func (e *mvccEntry) Clone() *mvccEntry {
 	var entry mvccEntry
 	entry.key = append([]byte(nil), e.key...)
@@ -223,19 +238,12 @@ func (e *mvccEntry) Less(than btree.Item) bool {
 	return bytes.Compare(e.key, than.(*mvccEntry).key) < 0
 }
 
-func (e *mvccEntry) lockErr() error {
-	return &ErrLocked{
-		Key:     e.key,
-		Primary: e.lock.primary,
-		StartTS: e.lock.startTS,
-		TTL:     e.lock.ttl,
-	}
-}
-
 func (e *mvccEntry) Get(ts uint64, isoLevel kvrpcpb.IsolationLevel) ([]byte, error) {
-	if isoLevel == kvrpcpb.IsolationLevel_SI {
-		if e.lock != nil && e.lock.startTS <= ts {
-			return nil, e.lockErr()
+	if isoLevel == kvrpcpb.IsolationLevel_SI && e.lock != nil {
+		var err error
+		ts, err = e.lock.check(ts, e.key.Raw())
+		if err != nil {
+			return nil, err
 		}
 	}
 	for _, v := range e.values {
@@ -254,7 +262,7 @@ func (e *mvccEntry) Prewrite(mutation *kvrpcpb.Mutation, startTS uint64, primary
 	}
 	if e.lock != nil {
 		if e.lock.startTS != startTS {
-			return e.lockErr()
+			return e.lock.lockErr(e.key.Raw())
 		}
 		return nil
 	}
