@@ -384,7 +384,7 @@ func GetFuncArg(e Expression, idx int) Expression {
 	return nil
 }
 
-// PopRowFirstArg pops the first element and return the rest of row.
+// PopRowFirstArg pops the first element and returns the rest of row.
 // e.g. After this function (1, 2, 3) becomes (2, 3).
 func PopRowFirstArg(ctx sessionctx.Context, e Expression) (ret Expression, err error) {
 	if f, ok := e.(*ScalarFunction); ok && f.FuncName.L == ast.RowFunc {
@@ -392,46 +392,46 @@ func PopRowFirstArg(ctx sessionctx.Context, e Expression) (ret Expression, err e
 		if len(args) == 2 {
 			return args[1].Clone(), nil
 		}
-		ret, err = NewFunction(ctx, f.FuncName.L, f.GetType(), args[1:]...)
+		ret, err = NewFunction(ctx, ast.RowFunc, f.GetType(), args[1:]...)
 		return ret, errors.Trace(err)
 	}
 	return
 }
 
-// ExprStack is a stack of expressions.
-type ExprStack struct {
+// exprStack is a stack of expressions.
+type exprStack struct {
 	stack []Expression
 }
 
-// Pop pops an expression from the stack.
-func (s *ExprStack) Pop() Expression {
-	if len(s.stack) == 0 {
+// pop pops an expression from the stack.
+func (s *exprStack) pop() Expression {
+	if s.len() == 0 {
 		return nil
 	}
-	lastIdx := len(s.stack) - 1
+	lastIdx := s.len() - 1
 	expr := s.stack[lastIdx]
 	s.stack = s.stack[:lastIdx]
 	return expr
 }
 
-// PopN pops n expressions from the stack.
+// popN pops n expressions from the stack.
 // If n greater than stack length or n is negative, it pops all the expressions.
-func (s *ExprStack) PopN(n int) []Expression {
-	if n > len(s.stack) || n < 0 {
-		n = len(s.stack)
+func (s *exprStack) popN(n int) []Expression {
+	if n > s.len() || n < 0 {
+		n = s.len()
 	}
-	idx := len(s.stack) - n
+	idx := s.len() - n
 	exprs := s.stack[idx:]
 	s.stack = s.stack[:idx]
 	return exprs
 }
 
-// Push pushes one expression to the stack.
-func (s *ExprStack) Push(expr Expression) {
+// push pushes one expression to the stack.
+func (s *exprStack) push(expr Expression) {
 	s.stack = append(s.stack, expr)
 }
 
-// Len returns the length of the stack.
-func (s *ExprStack) Len() int {
+// len returns the length of th stack.
+func (s *exprStack) len() int {
 	return len(s.stack)
 }

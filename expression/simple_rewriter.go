@@ -14,8 +14,6 @@
 package expression
 
 import (
-	"fmt"
-
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
@@ -27,35 +25,35 @@ import (
 )
 
 type simpleRewriter struct {
-	tbl *model.TableInfo
+	exprStack
 
-	stack *ExprStack
-	err   error
-	ctx   sessionctx.Context
+	tbl *model.TableInfo
+	err error
+	ctx sessionctx.Context
 }
 
 // ParseSimpleExpr parses simple expression string to Expression.
 // The expression string must only reference the column in table Info.
 func ParseSimpleExpr(ctx sessionctx.Context, exprStr string, tableInfo *model.TableInfo) (Expression, error) {
-	exprStr = fmt.Sprintf("select %s", exprStr)
+	exprStr = "select " + exprStr
 	stmts, err := parser.New().Parse(exprStr, "", "")
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	expr := stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr
-	rewriter := &simpleRewriter{tbl: tableInfo, ctx: ctx, stack: new(ExprStack)}
+	rewriter := &simpleRewriter{tbl: tableInfo, ctx: ctx}
 	expr.Accept(rewriter)
 	if rewriter.err != nil {
 		return nil, errors.Trace(rewriter.err)
 	}
-	return rewriter.stack.Pop(), nil
+	return rewriter.pop(), nil
 }
 
-func (sr *simpleRewriter) rewriteColumn(cn *ast.ColumnNameExpr) (*Column, error) {
-	cols := sr.tbl.Columns
-	for i, col := range cols {
-		if col.Name.L == cn.Name.Name.L {
-			eCol := &Column{
+func (sr *simpleRewriter) rewriteColumn(nodeColName *ast.ColumnNameExpr) (*Column, error) {
+	tblCols := sr.tbl.Columns
+	for i, col := range tblCols {
+		if col.Name.L == nodeColName.Name.Name.L {
+			return &Column{
 				FromID:      1,
 				ColName:     col.Name,
 				OrigTblName: sr.tbl.Name,
@@ -65,11 +63,10 @@ func (sr *simpleRewriter) rewriteColumn(cn *ast.ColumnNameExpr) (*Column, error)
 				ID:          col.ID,
 				Position:    col.Offset,
 				Index:       i,
-			}
-			return eCol, nil
+			}, nil
 		}
 	}
-	return nil, errBadField.Gen(cn.Name.Name.O, "expression")
+	return nil, errBadField.Gen(nodeColName.Name.Name.O, "expression")
 }
 
 func (sr *simpleRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
@@ -81,22 +78,22 @@ func (sr *simpleRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok boo
 	case *ast.ColumnNameExpr:
 		column, err := sr.rewriteColumn(v)
 		if err != nil {
-			sr.err = err
+			sr.err = errors.Trace(err)
 			return originInNode, false
 		}
-		sr.stack.Push(column)
+		sr.push(column)
 	case *ast.ValueExpr:
 		value := &Constant{Value: v.Datum, RetType: &v.Type}
-		sr.stack.Push(value)
+		sr.push(value)
 	case *ast.FuncCallExpr:
 		sr.funcCallToExpression(v)
 	case *ast.FuncCastExpr:
-		arg := sr.stack.Pop()
-		sr.err = CheckArgsNotMultiColumnRow(arg)
+		arg := sr.pop()
+		sr.err = errors.Trace(CheckArgsNotMultiColumnRow(arg))
 		if sr.err != nil {
 			return retNode, false
 		}
-		sr.stack.Push(BuildCastFunction(sr.ctx, arg, v.Tp))
+		sr.push(BuildCastFunction(sr.ctx, arg, v.Tp))
 	case *ast.BinaryOperationExpr:
 		sr.binaryOpToExpression(v)
 	case *ast.UnaryOperationExpr:
@@ -130,8 +127,8 @@ func (sr *simpleRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok boo
 }
 
 func (sr *simpleRewriter) binaryOpToExpression(v *ast.BinaryOperationExpr) {
-	right := sr.stack.Pop()
-	left := sr.stack.Pop()
+	right := sr.pop()
+	left := sr.pop()
 	var function Expression
 	switch v.Op {
 	case opcode.EQ, opcode.NE, opcode.NullEQ, opcode.GT, opcode.GE, opcode.LT, opcode.LE:
@@ -150,12 +147,12 @@ func (sr *simpleRewriter) binaryOpToExpression(v *ast.BinaryOperationExpr) {
 		sr.err = errors.Trace(sr.err)
 		return
 	}
-	sr.stack.Push(function)
+	sr.push(function)
 }
 
 func (sr *simpleRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
-	args := sr.stack.PopN(len(v.Args))
-	sr.err = CheckArgsNotMultiColumnRow(args...)
+	args := sr.popN(len(v.Args))
+	sr.err = errors.Trace(CheckArgsNotMultiColumnRow(args...))
 	if sr.err != nil {
 		return
 	}
@@ -164,7 +161,7 @@ func (sr *simpleRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 	}
 	var function Expression
 	function, sr.err = NewFunction(sr.ctx, v.FnName.L, &v.Type, args...)
-	sr.stack.Push(function)
+	sr.push(function)
 }
 
 func (sr *simpleRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
@@ -174,8 +171,8 @@ func (sr *simpleRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 			sr.err = ErrIncorrectParameterCount.GenByArgs(v.FnName.O)
 			return true
 		}
-		param2 := sr.stack.Pop()
-		param1 := sr.stack.Pop()
+		param2 := sr.pop()
+		param1 := sr.pop()
 		// param1 = param2
 		funcCompare, err := sr.constructBinaryOpFunction(param1, param2, ast.EQ)
 		if err != nil {
@@ -195,7 +192,7 @@ func (sr *simpleRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 			sr.err = err
 			return true
 		}
-		sr.stack.Push(funcIf)
+		sr.push(funcIf)
 		return true
 	default:
 		return false
@@ -274,20 +271,20 @@ func (sr *simpleRewriter) unaryOpToExpression(v *ast.UnaryOperationExpr) {
 		sr.err = errors.Errorf("Unknown Unary Op %T", v.Op)
 		return
 	}
-	expr := sr.stack.Pop()
+	expr := sr.pop()
 	if GetRowLen(expr) != 1 {
 		sr.err = ErrOperandColumns.GenByArgs(1)
 		return
 	}
 	newExpr, err := NewFunction(sr.ctx, op, &v.Type, expr)
 	sr.err = err
-	sr.stack.Push(newExpr)
+	sr.push(newExpr)
 }
 
 func (sr *simpleRewriter) likeToScalarFunc(v *ast.PatternLikeExpr) {
-	pattern := sr.stack.Pop()
-	expr := sr.stack.Pop()
-	sr.err = CheckArgsNotMultiColumnRow(expr, pattern)
+	pattern := sr.pop()
+	expr := sr.pop()
+	sr.err = errors.Trace(CheckArgsNotMultiColumnRow(expr, pattern))
 	if sr.err != nil {
 		return
 	}
@@ -295,35 +292,35 @@ func (sr *simpleRewriter) likeToScalarFunc(v *ast.PatternLikeExpr) {
 	types.DefaultTypeForValue(int(v.Escape), escapeTp)
 	function := sr.notToExpression(v.Not, ast.Like, &v.Type,
 		expr, pattern, &Constant{Value: types.NewIntDatum(int64(v.Escape)), RetType: escapeTp})
-	sr.stack.Push(function)
+	sr.push(function)
 }
 
 func (sr *simpleRewriter) regexpToScalarFunc(v *ast.PatternRegexpExpr) {
-	parttern := sr.stack.Pop()
-	expr := sr.stack.Pop()
-	sr.err = CheckArgsNotMultiColumnRow(expr, parttern)
+	parttern := sr.pop()
+	expr := sr.pop()
+	sr.err = errors.Trace(CheckArgsNotMultiColumnRow(expr, parttern))
 	if sr.err != nil {
 		return
 	}
 	function := sr.notToExpression(v.Not, ast.Regexp, &v.Type, expr, parttern)
-	sr.stack.Push(function)
+	sr.push(function)
 }
 
 func (sr *simpleRewriter) rowToScalarFunc(v *ast.RowExpr) {
-	elems := sr.stack.PopN(len(v.Values))
+	elems := sr.popN(len(v.Values))
 	function, err := NewFunction(sr.ctx, ast.RowFunc, elems[0].GetType(), elems...)
 	if err != nil {
 		sr.err = errors.Trace(err)
 		return
 	}
-	sr.stack.Push(function)
+	sr.push(function)
 }
 
 func (sr *simpleRewriter) betweenToExpression(v *ast.BetweenExpr) {
-	right := sr.stack.Pop()
-	left := sr.stack.Pop()
-	expr := sr.stack.Pop()
-	sr.err = CheckArgsNotMultiColumnRow(expr)
+	right := sr.pop()
+	left := sr.pop()
+	expr := sr.pop()
+	sr.err = errors.Trace(CheckArgsNotMultiColumnRow(expr))
 	if sr.err != nil {
 		return
 	}
@@ -348,17 +345,17 @@ func (sr *simpleRewriter) betweenToExpression(v *ast.BetweenExpr) {
 			return
 		}
 	}
-	sr.stack.Push(function)
+	sr.push(function)
 }
 
 func (sr *simpleRewriter) isNullToExpression(v *ast.IsNullExpr) {
-	arg := sr.stack.Pop()
+	arg := sr.pop()
 	if GetRowLen(arg) != 1 {
 		sr.err = ErrOperandColumns.GenByArgs(1)
 		return
 	}
 	function := sr.notToExpression(v.Not, ast.IsNull, &v.Type, arg)
-	sr.stack.Push(function)
+	sr.push(function)
 }
 
 func (sr *simpleRewriter) notToExpression(hasNot bool, op string, tp *types.FieldType,
@@ -381,7 +378,7 @@ func (sr *simpleRewriter) notToExpression(hasNot bool, op string, tp *types.Fiel
 }
 
 func (sr *simpleRewriter) isTrueToScalarFunc(v *ast.IsTruthExpr) {
-	arg := sr.stack.Pop()
+	arg := sr.pop()
 	op := ast.IsTruth
 	if v.True == 0 {
 		op = ast.IsFalsity
@@ -391,14 +388,14 @@ func (sr *simpleRewriter) isTrueToScalarFunc(v *ast.IsTruthExpr) {
 		return
 	}
 	function := sr.notToExpression(v.Not, op, &v.Type, arg)
-	sr.stack.Push(function)
+	sr.push(function)
 }
 
 // inToExpression converts in expression to a scalar function. The argument lLen means the length of in list.
 // The argument not means if the expression is not in. The tp stands for the expression type, which is always bool.
 // a in (b, c, d) will be rewritten as `(a = b) or (a = c) or (a = d)`.
 func (sr *simpleRewriter) inToExpression(lLen int, not bool, tp *types.FieldType) {
-	exprs := sr.stack.PopN(lLen + 1)
+	exprs := sr.popN(lLen + 1)
 	leftExpr := exprs[0]
 	elems := exprs[1:]
 	l := GetRowLen(leftExpr)
@@ -410,7 +407,7 @@ func (sr *simpleRewriter) inToExpression(lLen int, not bool, tp *types.FieldType
 	}
 	leftIsNull := leftExpr.GetType().Tp == mysql.TypeNull
 	if leftIsNull {
-		sr.stack.Push(Null.Clone())
+		sr.push(Null.Clone())
 		return
 	}
 	leftEt := leftExpr.GetType().EvalType()
@@ -451,5 +448,5 @@ func (sr *simpleRewriter) inToExpression(lLen int, not bool, tp *types.FieldType
 			}
 		}
 	}
-	sr.stack.Push(function)
+	sr.push(function)
 }
