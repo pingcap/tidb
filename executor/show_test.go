@@ -323,6 +323,13 @@ func (s *testSuite) TestShow(c *C) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"+"\nPARTITION BY RANGE ( `a` ) (\n  PARTITION p0 VALUES LESS THAN 10,\n  PARTITION p1 VALUES LESS THAN 20,\n  PARTITION p2 VALUES LESS THAN MAXVALUE\n)",
 	))
 
+	tk.MustExec(`drop table if exists t`)
+	_, err := tk.Exec(`CREATE TABLE t (x int, y char) PARTITION BY RANGE(y) (
+ 	PARTITION p0 VALUES LESS THAN (10),
+ 	PARTITION p1 VALUES LESS THAN (20),
+ 	PARTITION p2 VALUES LESS THAN (MAXVALUE))`)
+	c.Assert(err, NotNil)
+
 	// Test range columns partition
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`CREATE TABLE t (a int, b int, c char, d int) PARTITION BY RANGE COLUMNS(a,d,c) (
