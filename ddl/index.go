@@ -806,7 +806,7 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 	log.Infof("[ddl-reorg] addTableIndex, job:%s, reorgInfo:%#v", job, reorgInfo)
 	colFieldMap := makeupIndexColFieldMap(t, indexInfo)
 
-	// d.reorgWorkerCnt can be modified by system variable "tidb_ddl_reorg_worker_cnt".
+	// variable.DDLReorgWorkerCounter can be modified by system variable "tidb_ddl_reorg_worker_cnt".
 	workerCnt := variable.GetDDLReorgWorkerCounter()
 	workers := make([]*addIndexWorker, workerCnt)
 	for i := 0; i < int(workerCnt); i++ {
