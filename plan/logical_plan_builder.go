@@ -844,7 +844,7 @@ func resolveFromSelectFields(v *ast.ColumnNameExpr, fields []*ast.SelectField, i
 				index = i
 			} else if !colMatch(matchedExpr.(*ast.ColumnNameExpr).Name, curCol.Name) &&
 				!colMatch(curCol.Name, matchedExpr.(*ast.ColumnNameExpr).Name) {
-				return -1, ErrAmbiguous.GenByArgs(curCol.Name.Name.L, "field list")
+				return -1, ErrAmbiguous.GenByArgs(curCol.Name.Name.L, clauseMsg[fieldList])
 			}
 		}
 	}
