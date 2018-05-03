@@ -198,13 +198,11 @@ func (l *mvccLock) lockErr(key []byte) error {
 }
 
 func (l *mvccLock) check(ts uint64, key []byte) (uint64, error) {
-	if l.startTS > ts {
+	// ignore when ts is older than lock or lock's type is Lock.
+	if l.startTS > ts || l.op == kvrpcpb.Op_Lock {
 		return ts, nil
 	}
-
-	if l.op == kvrpcpb.Op_Lock {
-		return l.startTS - 1, nil
-	}
+	// for point get latest version.
 	if ts == math.MaxUint64 && bytes.Equal(l.primary, key) {
 		return l.startTS - 1, nil
 	}
