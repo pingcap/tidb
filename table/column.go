@@ -126,13 +126,13 @@ func truncateTrailingSpaces(v *types.Datum) {
 }
 
 // CastValues casts values based on columns type.
-func CastValues(ctx sessionctx.Context, rec []types.Datum, cols []*Column, ignoreErr bool) (err error) {
+func CastValues(ctx sessionctx.Context, rec []types.Datum, cols []*Column) (err error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	for _, c := range cols {
 		var converted types.Datum
 		converted, err = CastValue(ctx, rec[c.Offset], c.ToInfo())
 		if err != nil {
-			if ignoreErr {
+			if sc.IgnoreErr {
 				sc.AppendWarning(err)
 				log.Warnf("cast values failed:%v", err)
 			} else {
