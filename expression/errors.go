@@ -45,7 +45,6 @@ func init() {
 		mysql.ErrUnknownCharacterSet:               mysql.ErrUnknownCharacterSet,
 		mysql.ErrInvalidDefault:                    mysql.ErrInvalidDefault,
 		mysql.ErrWarnDeprecatedSyntaxNoReplacement: mysql.ErrWarnDeprecatedSyntaxNoReplacement,
-		mysql.ErrWrongColumnName:                   mysql.ErrWrongColumnName,
 		mysql.ErrOperandColumns:                    mysql.ErrOperandColumns,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassExpression] = expressionMySQLErrCodes
