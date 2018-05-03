@@ -176,7 +176,6 @@ func dropIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 }
 
 func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
-	log.Warnf("create index, state %v", job.SchemaState)
 	// Handle the rolling back job.
 	if job.IsRollingback() {
 		ver, err = onDropIndex(t, job)
@@ -722,7 +721,7 @@ func (w *worker) waitTaskResults(workers []*addIndexWorker, taskCnt int, totalAd
 	return nextHandle, addedCount, errors.Trace(firstErr)
 }
 
-// buildBatchTasks send tasks to workers, and waits all the running worker return back result,
+// buildBatchTasks sends tasks to workers, and waits all the running worker return back result,
 // there are taskCnt running workers.
 func (w *worker) buildBatchTasks(startTime time.Time, startHandle int64, reorgInfo *reorgInfo, totalAddedCount *int64, workers []*addIndexWorker, batchTasks []*reorgIndexTask) error {
 	for i, task := range batchTasks {

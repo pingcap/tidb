@@ -70,12 +70,14 @@ func (w *worker) close() {
 	close(w.quitCh)
 	w.delRangeManager.clear()
 	w.wg.Wait()
+	log.Infof("[ddl] close DDL worker %v", w.tp)
 }
 
 // TODO:
 // onDDLWorker is for async online schema changing, it will try to become the owner firstly,
 // then wait or pull the job queue to handle a schema change job.
 func (w *worker) start(d *ddlCtx) {
+	log.Infof("[ddl] start DDL worker %v", w.tp)
 	defer w.wg.Done()
 
 	w.delRangeManager.start()
@@ -91,7 +93,7 @@ func (w *worker) start(d *ddlCtx) {
 		r := recover()
 		if r != nil {
 			buf := util.GetStack()
-			log.Errorf("ddlWorker %v %s", r, buf)
+			log.Errorf("[ddl] worker %v %s", r, buf)
 			metrics.PanicCounter.WithLabelValues(metrics.LabelDDL).Inc()
 		}
 	}()
@@ -101,8 +103,8 @@ func (w *worker) start(d *ddlCtx) {
 	for {
 		select {
 		case <-ticker.C:
+			log.Debugf("[ddl] wait %s to check DDL status again", checkTime)
 		case <-d.ddlJobCh:
-			log.Warnf("ddl job chan")
 		case <-w.quitCh:
 			return
 		}

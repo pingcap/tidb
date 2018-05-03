@@ -289,7 +289,6 @@ func newDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 	d.start(ctx, ctxPool)
 	variable.RegisterStatistics(d)
 
-	log.Infof("[ddl] start DDL:%s", d.uuid)
 	metrics.DDLCounter.WithLabelValues(metrics.CreateDDL).Inc()
 	return d
 }
@@ -305,6 +304,7 @@ func (d *ddl) Stop() error {
 }
 
 func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
+	log.Infof("[ddl] start DDL:%s, run worker %v", d.uuid, RunWorker)
 	d.quitCh = make(chan struct{})
 
 	// If RunWorker is true, we need campaign owner and do DDL job.
@@ -314,6 +314,7 @@ func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 		terror.Log(errors.Trace(err))
 
 		d.workers = make([]*worker, 1)
+		// TODO: Add addIdxWorker.
 		d.workers[0] = newWorker(normalWorker, d.store, ctxPool)
 		for _, worker := range d.workers {
 			worker.wg.Add(1)
