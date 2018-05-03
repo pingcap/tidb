@@ -196,6 +196,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	// latches disabled
 	if txn.store.txnLatches == nil {
 		err = committer.executeAndWriteFinishBinlog(ctx)
+		log.Debug("[kv]", connID, " txnLatches disabled, 2pc directly:", err)
 		return errors.Trace(err)
 	}
 
@@ -206,6 +207,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 		if err == nil {
 			txn.store.txnLatches.RefreshCommitTS(committer.keys, committer.commitTS)
 		}
+		log.Debug("[kv]", connID, " txnLatches enabled while txn not retryable, 2pc directly:", err)
 		return errors.Trace(err)
 	}
 
@@ -220,6 +222,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	if err == nil {
 		lock.SetCommitTS(committer.commitTS)
 	}
+	log.Debug("[kv]", connID, " txnLatches enabled while txn retryable:", err)
 	return errors.Trace(err)
 }
 
