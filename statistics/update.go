@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -393,24 +394,29 @@ func needAnalyzeTable(tbl *Table, limit time.Duration, autoAnalyzeRatio float64)
 
 const minAutoAnalyzeRatio = 0.3
 
-// HandleAutoAnalyze analyzes the newly created table or index.
-func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) error {
-	dbs := is.AllSchemaNames()
+func getAutoAnalyzeRatio(sctx sessionctx.Context) float64 {
 	sql := fmt.Sprintf("select variable_value from mysql.global_variables where variable_name = '%s'", variable.TiDBAutoAnalyzeRatio)
-	rows, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, sql)
+	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sctx, sql)
 	if err != nil {
-		return errors.Trace(err)
+		return variable.DefAutoAnalyzeRatio
 	}
 	autoAnalyzeRatio := variable.DefAutoAnalyzeRatio
 	if len(rows) > 0 {
 		autoAnalyzeRatio, err = strconv.ParseFloat(rows[0].GetString(0), 64)
 		if err != nil {
-			autoAnalyzeRatio = variable.DefAutoAnalyzeRatio
+			return variable.DefAutoAnalyzeRatio
 		}
 	}
 	if autoAnalyzeRatio > 0 {
 		autoAnalyzeRatio = math.Max(autoAnalyzeRatio, minAutoAnalyzeRatio)
 	}
+	return autoAnalyzeRatio
+}
+
+// HandleAutoAnalyze analyzes the newly created table or index.
+func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) error {
+	dbs := is.AllSchemaNames()
+	autoAnalyzeRatio := getAutoAnalyzeRatio(h.ctx)
 	for _, db := range dbs {
 		tbls := is.SchemaTables(model.NewCIStr(db))
 		for _, tbl := range tbls {
