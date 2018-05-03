@@ -309,7 +309,6 @@ func NewSessionVars() *SessionVars {
 		IndexLookupJoinConcurrency: DefIndexLookupJoinConcurrency,
 		HashJoinConcurrency:        DefTiDBHashJoinConcurrency,
 		DistSQLScanConcurrency:     DefDistSQLScanConcurrency,
-		DDLReorgWorkerCount:        DefTiDBDDLReorgWorkerCount,
 	}
 	vars.MemQuota = MemQuota{
 		MemQuotaQuery:             DefTiDBMemQuotaQuery,
@@ -529,7 +528,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBOptimizerSelectivityLevel:
 		s.OptimizerSelectivityLevel = tidbOptPositiveInt32(val, DefTiDBOptimizerSelectivityLevel)
 	case TiDBDDLReorgWorkerCount:
-		s.DDLReorgWorkerCount = tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)
+		workerCnt := tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)
+		SetDDLReorgWorkerCounter(int32(workerCnt))
 	}
 	s.systems[name] = val
 	return nil
@@ -572,9 +572,6 @@ type Concurrency struct {
 
 	// IndexSerialScanConcurrency is the number of concurrent index serial scan worker.
 	IndexSerialScanConcurrency int
-
-	// DDLReorgWorkerCount defines the count of ddl reorganization workers.
-	DDLReorgWorkerCount int
 }
 
 // MemQuota defines memory quota values.

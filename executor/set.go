@@ -186,8 +186,6 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		if isoLevel == ast.ReadCommitted {
 			e.ctx.Txn().SetOption(kv.IsolationLevel, kv.RC)
 		}
-	} else if name == variable.TiDBDDLReorgWorkerCount {
-		domain.GetDomain(e.ctx).DDL().WorkerVars().DDLReorgWorkerCount = sessionVars.DDLReorgWorkerCount
 	}
 
 	return nil

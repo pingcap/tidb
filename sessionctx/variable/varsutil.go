@@ -27,6 +27,14 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
+func SetDDLReorgWorkerCounter(cnt int32) {
+	atomic.StoreInt32(&DDLReorgWorkerCounter, cnt)
+}
+
+func GetDDLReorgWorkerCounter() int32 {
+	return atomic.LoadInt32(&DDLReorgWorkerCounter)
+}
+
 // GetSessionSystemVar gets a system variable.
 // If it is a session only variable, use the default value defined in code.
 // Returns error if there is no such variable.
