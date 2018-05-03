@@ -1351,6 +1351,12 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 				{mysql.SuperPriv, "", "", ""},
 			},
 		},
+		{
+			sql: `show create table test.ttt`,
+			ans: []visitInfo{
+				{mysql.AllPrivMask, "test", "ttt", ""},
+			},
+		},
 	}
 
 	for _, tt := range tests {
