@@ -275,6 +275,7 @@ func ResetStmtCtx(ctx sessionctx.Context, s ast.StmtNode) {
 
 	switch stmt := s.(type) {
 	case *ast.UpdateStmt:
+		sc.IgnoreErr = stmt.IgnoreErr
 		sc.IgnoreTruncate = false
 		sc.OverflowAsWarning = false
 		sc.TruncateAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
@@ -285,6 +286,7 @@ func ResetStmtCtx(ctx sessionctx.Context, s ast.StmtNode) {
 			sc.Priority = mysql.LowPriority
 		}
 	case *ast.DeleteStmt:
+		sc.IgnoreErr = stmt.IgnoreErr
 		sc.IgnoreTruncate = false
 		sc.OverflowAsWarning = false
 		sc.TruncateAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
@@ -295,6 +297,7 @@ func ResetStmtCtx(ctx sessionctx.Context, s ast.StmtNode) {
 			sc.Priority = mysql.LowPriority
 		}
 	case *ast.InsertStmt:
+		sc.IgnoreErr = stmt.IgnoreErr
 		sc.IgnoreTruncate = false
 		sc.TruncateAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
 		sc.InInsertStmt = true
@@ -307,6 +310,7 @@ func ResetStmtCtx(ctx sessionctx.Context, s ast.StmtNode) {
 		sc.OverflowAsWarning = false
 		sc.TruncateAsWarning = false
 	case *ast.LoadDataStmt:
+		sc.IgnoreErr = true
 		sc.IgnoreTruncate = false
 		sc.OverflowAsWarning = false
 		sc.TruncateAsWarning = !sessVars.StrictSQLMode

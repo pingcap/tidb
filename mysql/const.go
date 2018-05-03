@@ -217,6 +217,7 @@ const (
 )
 
 // AllPrivMask is the mask for PrivilegeType with all bits set to 1.
+// If it's passed to RequestVerification, it means any privilege would be OK.
 const AllPrivMask = AllPriv - 1
 
 // MySQL type maximum length.
