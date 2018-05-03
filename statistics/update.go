@@ -366,10 +366,7 @@ const (
 // AutoAnalyzeMinCnt means if the count of table is less than this value, we needn't do auto analyze.
 var AutoAnalyzeMinCnt int64 = 1000
 
-// AutoAnalyzeRatio is the ratio which auto analyze will run when modify_count/count is greater than.
-var AutoAnalyzeRatio float64
-
-func needAnalyzeTable(tbl *Table, limit time.Duration) bool {
+func needAnalyzeTable(tbl *Table, limit time.Duration, autoAnalyzeRatio float64) bool {
 	if tbl.ModifyCount == 0 || tbl.Count < AutoAnalyzeMinCnt {
 		return false
 	}
@@ -377,7 +374,7 @@ func needAnalyzeTable(tbl *Table, limit time.Duration) bool {
 	if time.Since(t) < limit {
 		return false
 	}
-	if AutoAnalyzeRatio > 0 && float64(tbl.ModifyCount)/float64(tbl.Count) > AutoAnalyzeRatio {
+	if autoAnalyzeRatio > 0 && float64(tbl.ModifyCount)/float64(tbl.Count) > autoAnalyzeRatio {
 		return true
 	}
 	for _, col := range tbl.Columns {
@@ -393,9 +390,15 @@ func needAnalyzeTable(tbl *Table, limit time.Duration) bool {
 	return true
 }
 
+const minAutoAnalyzeRatio = 0.3
+
 // HandleAutoAnalyze analyzes the newly created table or index.
 func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) error {
 	dbs := is.AllSchemaNames()
+	autoAnalyzeRatio := h.ctx.GetSessionVars().AutoAnalyzeRatio
+	if autoAnalyzeRatio > 0 {
+		autoAnalyzeRatio = math.Max(autoAnalyzeRatio, minAutoAnalyzeRatio)
+	}
 	for _, db := range dbs {
 		tbls := is.SchemaTables(model.NewCIStr(db))
 		for _, tbl := range tbls {
@@ -405,7 +408,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) error {
 				continue
 			}
 			tblName := "`" + db + "`.`" + tblInfo.Name.O + "`"
-			if needAnalyzeTable(statsTbl, 20*h.Lease) {
+			if needAnalyzeTable(statsTbl, 20*h.Lease, autoAnalyzeRatio) {
 				sql := fmt.Sprintf("analyze table %s", tblName)
 				log.Infof("[stats] auto analyze table %s now", tblName)
 				return errors.Trace(h.execAutoAnalyze(sql))

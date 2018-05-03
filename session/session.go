@@ -1272,7 +1272,8 @@ const loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variab
 	variable.TiDBIndexSerialScanConcurrency + quoteCommaQuote +
 	variable.TiDBHashJoinConcurrency + quoteCommaQuote +
 	variable.TiDBBackoffLockFast + quoteCommaQuote +
-	variable.TiDBDistSQLScanConcurrency + "')"
+	variable.TiDBDistSQLScanConcurrency + quoteCommaQuote +
+	variable.TiDBAutoAnalyzeRatio + "')"
 
 type globalVariableCache struct {
 	sync.RWMutex

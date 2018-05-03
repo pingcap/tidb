@@ -278,6 +278,9 @@ type SessionVars struct {
 	// OptimizerSelectivityLevel defines the level of the selectivity estimation in planner.
 	OptimizerSelectivityLevel int
 
+	// Auto analyze will run if (table modify count)/(table row count) is greater than this value.
+	AutoAnalyzeRatio float64
+
 	// EnableStreaming indicates whether the coprocessor request can use streaming API.
 	// TODO: remove this after tidb-server configuration "enable-streaming' removed.
 	EnableStreaming bool
@@ -301,6 +304,7 @@ func NewSessionVars() *SessionVars {
 		StmtCtx:                   new(stmtctx.StatementContext),
 		AllowAggPushDown:          false,
 		OptimizerSelectivityLevel: DefTiDBOptimizerSelectivityLevel,
+		AutoAnalyzeRatio:          DefAutoAnalyzeRatio,
 	}
 	vars.Concurrency = Concurrency{
 		BuildStatsConcurrencyVar:   DefBuildStatsConcurrency,
@@ -527,6 +531,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableStreaming = TiDBOptOn(val)
 	case TiDBOptimizerSelectivityLevel:
 		s.OptimizerSelectivityLevel = tidbOptPositiveInt32(val, DefTiDBOptimizerSelectivityLevel)
+	case TiDBAutoAnalyzeRatio:
+		s.AutoAnalyzeRatio = tidbOptFloat64(val, DefAutoAnalyzeRatio)
 	}
 	s.systems[name] = val
 	return nil
