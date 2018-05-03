@@ -375,7 +375,6 @@ func setGlobalVars() {
 	plan.RatioOfPseudoEstimate = cfg.Performance.PseudoEstimateRatio
 	ddl.RunWorker = cfg.RunDDL
 	ddl.EnableSplitTableRegion = cfg.SplitTable
-	session.SetCommitRetryLimit(cfg.Performance.RetryLimit)
 	plan.AllowCartesianProduct = cfg.Performance.CrossJoin
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
 
