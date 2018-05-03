@@ -70,6 +70,14 @@ func (rc *reorgCtx) isReorgCanceled() bool {
 	return atomic.LoadInt32(&rc.notifyCancelReorgJob) == 1
 }
 
+func (rc *reorgCtx) setNextHandle(doneHandle int64) {
+	atomic.StoreInt64(&rc.doneHandle, doneHandle)
+}
+
+func (rc *reorgCtx) increaseRowCount(count int64) {
+	atomic.AddInt64(&rc.rowCount, count)
+}
+
 func (rc *reorgCtx) setRowCountAndHandle(count, doneHandle int64) {
 	atomic.StoreInt64(&rc.rowCount, count)
 	atomic.StoreInt64(&rc.doneHandle, doneHandle)

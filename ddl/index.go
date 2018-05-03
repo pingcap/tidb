@@ -278,6 +278,8 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 			return ver, errors.Trace(err)
 		}
 
+		// initial reorgCtx
+		d.reorgCtx.setRowCountAndHandle(job.GetRowCount(), reorgInfo.Handle)
 		err = d.runReorgJob(t, job, func() error {
 			return d.addTableIndex(tbl, indexInfo, reorgInfo, job)
 		})
@@ -599,6 +601,8 @@ func (w *addIndexWorker) handleBackfillTask(task *reorgIndexTask) *addIndexResul
 		result.nextHandle = nextHandle
 		result.addedCount += addedCount
 		result.scanCount += scanCount
+		w.d.reorgCtx.increaseRowCount(int64(addedCount))
+
 		if result.scanCount-lastLogCount >= 30000 {
 			lastLogCount = result.scanCount
 			log.Infof("[ddl-reorg] worker(%v), finish batch addedCount:%v backfill, task addedCount:%v, task scanCount:%v, nextHandle:%v",
@@ -716,8 +720,6 @@ func (d *ddl) waitTaskResults(workers []*addIndexWorker, taskCnt int, totalAdded
 			*totalAddedCount += int64(result.addedCount)
 			addedCount += int64(result.addedCount)
 			nextHandle = result.nextHandle
-
-			d.reorgCtx.setRowCountAndHandle(*totalAddedCount, nextHandle)
 		}
 	}
 
@@ -749,7 +751,7 @@ func (d *ddl) backfillBatchTasks(startTime time.Time, startHandle int64, reorgIn
 	}
 
 	// nextHandle will be updated periodically in runReorgJob, so no need to update it here.
-	d.reorgCtx.setRowCountAndHandle(*totalAddedCount, nextHandle)
+	d.reorgCtx.setNextHandle(nextHandle)
 	metrics.BatchAddIdxHistogram.Observe(elapsedTime)
 	log.Infof("[ddl-reorg] total added index for %d rows, this task [%d,%d) added index for %d rows, take time %v",
 		*totalAddedCount, startHandle, nextHandle, taskAddedCount, elapsedTime)
