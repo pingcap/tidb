@@ -201,6 +201,10 @@ func (s *testFeedbackSuite) TestFeedbackEncoding(c *C) {
 	c.Assert(err, IsNil)
 	rq := &QueryFeedback{}
 	c.Assert(decodeFeedback(val, rq, nil), IsNil)
+	for _, fb := range rq.feedback {
+		fb.lower.SetBytes(codec.EncodeInt(nil, fb.lower.GetInt64()))
+		fb.upper.SetBytes(codec.EncodeInt(nil, fb.upper.GetInt64()))
+	}
 	c.Assert(q.Equal(rq), IsTrue)
 
 	hist.tp = types.NewFieldType(mysql.TypeBlob)

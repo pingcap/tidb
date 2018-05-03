@@ -169,23 +169,6 @@ func (q *QueryFeedback) Update(startKey kv.Key, counts []int64) {
 	return
 }
 
-// DecodeInt decodes the int value stored in the feedback.
-func (q *QueryFeedback) DecodeInt() error {
-	for _, fb := range q.feedback {
-		_, v, err := codec.DecodeInt(fb.lower.GetBytes())
-		if err != nil {
-			return errors.Trace(err)
-		}
-		fb.lower.SetInt64(v)
-		_, v, err = codec.DecodeInt(fb.upper.GetBytes())
-		if err != nil {
-			return errors.Trace(err)
-		}
-		fb.upper.SetInt64(v)
-	}
-	return nil
-}
-
 // BucketFeedback stands for all the feedback for a bucket.
 type BucketFeedback struct {
 	feedback []feedback   // All the feedback info in the same bucket.
@@ -312,7 +295,7 @@ func (b *BucketFeedback) getBucketCount(count float64) int64 {
 	maxFraction := minBucketFraction
 	for _, fb := range b.feedback {
 		fraction := b.getFraction(fb.lower, fb.upper)
-		if fraction > maxFraction {
+		if fraction >= maxFraction {
 			maxFraction = fraction
 			count = float64(fb.count) / fraction
 		}
@@ -507,16 +490,19 @@ type queryFeedback struct {
 func encodePKFeedback(q *QueryFeedback) (*queryFeedback, error) {
 	pb := &queryFeedback{}
 	for _, fb := range q.feedback {
-		err := q.DecodeInt()
+		// There is no need to update the point queries.
+		if bytes.Compare(kv.Key(fb.lower.GetBytes()).PrefixNext(), fb.upper.GetBytes()) >= 0 {
+			continue
+		}
+		_, low, err := codec.DecodeInt(fb.lower.GetBytes())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		// There is no need to update the point queries.
-		result := fb.upper.GetInt64() - fb.lower.GetInt64()
-		if result <= 1 && !(fb.lower.GetInt64() < 0 && result < fb.upper.GetInt64()) {
-			continue
+		_, high, err := codec.DecodeInt(fb.upper.GetBytes())
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
-		pb.IntRanges = append(pb.IntRanges, fb.lower.GetInt64(), fb.upper.GetInt64())
+		pb.IntRanges = append(pb.IntRanges, low, high)
 		pb.Counts = append(pb.Counts, fb.count)
 	}
 	return pb, nil
