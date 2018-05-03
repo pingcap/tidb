@@ -16,6 +16,7 @@ package statistics
 import (
 	"fmt"
 	"math"
+	"strconv"
 	"sync"
 	"time"
 
@@ -395,7 +396,18 @@ const minAutoAnalyzeRatio = 0.3
 // HandleAutoAnalyze analyzes the newly created table or index.
 func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) error {
 	dbs := is.AllSchemaNames()
-	autoAnalyzeRatio := h.ctx.GetSessionVars().AutoAnalyzeRatio
+	sql := fmt.Sprintf("select variable_value from mysql.global_variables where variable_name = '%s'", variable.TiDBAutoAnalyzeRatio)
+	rows, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, sql)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	autoAnalyzeRatio := variable.DefAutoAnalyzeRatio
+	if len(rows) > 0 {
+		autoAnalyzeRatio, err = strconv.ParseFloat(rows[0].GetString(0), 64)
+		if err != nil {
+			autoAnalyzeRatio = variable.DefAutoAnalyzeRatio
+		}
+	}
 	if autoAnalyzeRatio > 0 {
 		autoAnalyzeRatio = math.Max(autoAnalyzeRatio, minAutoAnalyzeRatio)
 	}

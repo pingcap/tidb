@@ -278,9 +278,6 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 
 	statistics.AutoAnalyzeMinCnt = 0
 	testKit.MustExec("set global tidb_auto_analyze_ratio = 0.6")
-	// Since we use global variable cache if TiDB just loaded global variables within 2 second ago,
-	// so sleep 2 seconds here before it can take effect.
-	time.Sleep(2 * time.Second)
 	defer func() {
 		statistics.AutoAnalyzeMinCnt = 1000
 		testKit.MustExec("set global tidb_auto_analyze_ratio = 0.0")

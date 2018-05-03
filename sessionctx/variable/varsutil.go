@@ -144,14 +144,6 @@ func tidbOptInt64(opt string, defaultVal int64) int64 {
 	return val
 }
 
-func tidbOptFloat64(opt string, defaultVal float64) float64 {
-	val, err := strconv.ParseFloat(opt, 64)
-	if err != nil {
-		return defaultVal
-	}
-	return val
-}
-
 func parseTimeZone(s string) (*time.Location, error) {
 	if s == "SYSTEM" {
 		// TODO: Support global time_zone variable, it should be set to global time_zone value.
