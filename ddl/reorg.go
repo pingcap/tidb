@@ -45,9 +45,9 @@ type reorgCtx struct {
 }
 
 // newContext gets a context. It is only used for adding column in reorganization state.
-func (d *ddl) newContext() sessionctx.Context {
+func newContext(store kv.Storage) sessionctx.Context {
 	c := mock.NewContext()
-	c.Store = d.store
+	c.Store = store
 	c.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, false)
 	c.GetSessionVars().StmtCtx.TimeZone = time.UTC
 	return c
@@ -86,43 +86,43 @@ func (rc *reorgCtx) clean() {
 	rc.doneCh = nil
 }
 
-func (d *ddl) runReorgJob(t *meta.Meta, job *model.Job, f func() error) error {
-	if d.reorgCtx.doneCh == nil {
+func (w *worker) runReorgJob(t *meta.Meta, job *model.Job, lease time.Duration, f func() error) error {
+	if w.reorgCtx.doneCh == nil {
 		// start a reorganization job
-		d.wait.Add(1)
-		d.reorgCtx.doneCh = make(chan error, 1)
+		w.wg.Add(1)
+		w.reorgCtx.doneCh = make(chan error, 1)
 		go func() {
-			defer d.wait.Done()
-			d.reorgCtx.doneCh <- f()
+			defer w.wg.Done()
+			w.reorgCtx.doneCh <- f()
 		}()
 	}
 
 	waitTimeout := defaultWaitReorgTimeout
-	// if d.lease is 0, we are using a local storage,
+	// if lease is 0, we are using a local storage,
 	// and we can wait the reorganization to be done here.
-	// if d.lease > 0, we don't need to wait here because
+	// if lease > 0, we don't need to wait here because
 	// we should update some job's progress context and try checking again,
 	// so we use a very little timeout here.
-	if d.lease > 0 {
+	if lease > 0 {
 		waitTimeout = ReorgWaitTimeout
 	}
 
 	// wait reorganization job done or timeout
 	select {
-	case err := <-d.reorgCtx.doneCh:
-		rowCount, _ := d.reorgCtx.getRowCountAndHandle()
+	case err := <-w.reorgCtx.doneCh:
+		rowCount, _ := w.reorgCtx.getRowCountAndHandle()
 		log.Infof("[ddl] run reorg job done, handled %d rows", rowCount)
 		// Update a job's RowCount.
 		job.SetRowCount(rowCount)
-		d.reorgCtx.clean()
+		w.reorgCtx.clean()
 		return errors.Trace(err)
-	case <-d.quitCh:
+	case <-w.quitCh:
 		log.Info("[ddl] run reorg job ddl quit")
-		d.reorgCtx.setRowCountAndHandle(0, 0)
+		w.reorgCtx.setRowCountAndHandle(0, 0)
 		// We return errWaitReorgTimeout here too, so that outer loop will break.
 		return errWaitReorgTimeout
 	case <-time.After(waitTimeout):
-		rowCount, doneHandle := d.reorgCtx.getRowCountAndHandle()
+		rowCount, doneHandle := w.reorgCtx.getRowCountAndHandle()
 		// Update a job's RowCount.
 		job.SetRowCount(rowCount)
 		// Update a reorgInfo's handle.
@@ -133,18 +133,18 @@ func (d *ddl) runReorgJob(t *meta.Meta, job *model.Job, f func() error) error {
 	}
 }
 
-func (d *ddl) isReorgRunnable() error {
-	if d.isClosed() {
+func (w *worker) isReorgRunnable(d *ddlCtx) error {
+	if isClosed(w.quitCh) {
 		// Worker is closed. So it can't do the reorganizational job.
 		return errInvalidWorker.Gen("worker is closed")
 	}
 
-	if d.reorgCtx.isReorgCanceled() {
+	if w.reorgCtx.isReorgCanceled() {
 		// Job is cancelled. So it can't be done.
 		return errCancelledDDLJob
 	}
 
-	if !d.isOwner() {
+	if !isOwner(d.ownerManager, d.uuid) {
 		// If it's not the owner, we will try later, so here just returns an error.
 		log.Infof("[ddl] the %s not the job owner", d.uuid)
 		return errors.Trace(errNotOwner)
@@ -155,11 +155,11 @@ func (d *ddl) isReorgRunnable() error {
 type reorgInfo struct {
 	*model.Job
 	Handle int64
-	d      *ddl
+	d      *ddlCtx
 	first  bool
 }
 
-func (d *ddl) getReorgInfo(t *meta.Meta, job *model.Job) (*reorgInfo, error) {
+func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job) (*reorgInfo, error) {
 	var err error
 
 	info := &reorgInfo{

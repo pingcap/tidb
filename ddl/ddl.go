@@ -164,9 +164,6 @@ type DDL interface {
 	TruncateTable(ctx sessionctx.Context, tableIdent ast.Ident) error
 	RenameTable(ctx sessionctx.Context, oldTableIdent, newTableIdent ast.Ident) error
 
-	// SetLease will reset the lease time for online DDL change,
-	// it's a very dangerous function and you must guarantee that all servers have the same lease time.
-	SetLease(ctx context.Context, lease time.Duration)
 	// GetLease returns current schema lease time.
 	GetLease() time.Duration
 	// Stats returns the DDL statistics.
@@ -192,28 +189,30 @@ type DDL interface {
 
 // ddl represents the statements which are used to define the database structure or schema.
 type ddl struct {
-	m sync.RWMutex
+	m          sync.RWMutex
+	infoHandle *infoschema.Handle
+	quitCh     chan struct{}
+	wait       sync.WaitGroup
 
-	infoHandle   *infoschema.Handle
-	hook         Callback
-	hookMu       sync.RWMutex
+	*ddlCtx
+	workers []*worker
+}
+
+type ddlCtx struct {
+	uuid         string
 	store        kv.Storage
 	ownerManager owner.Manager
 	schemaSyncer SchemaSyncer
-	// lease is schema seconds.
-	lease        time.Duration
-	uuid         string
 	ddlJobCh     chan struct{}
 	ddlJobDoneCh chan struct{}
 	ddlEventCh   chan<- *util.Event
-	// reorgCtx is for reorganization.
-	reorgCtx *reorgCtx
+	lease        time.Duration // lease is schema seconds.
 
-	quitCh chan struct{}
-	wait   sync.WaitGroup
+	// hook may be modified.
+	hook   Callback
+	hookMu sync.RWMutex
 
-	workerVars      *variable.SessionVars
-	delRangeManager delRangeManager
+	workerVars *variable.SessionVars // workerVars is used for Binlog.
 }
 
 // RegisterEventCh registers passed channel for ddl Event.
@@ -223,7 +222,7 @@ func (d *ddl) RegisterEventCh(ch chan<- *util.Event) {
 
 // asyncNotifyEvent will notify the ddl event to outside world, say statistic handle. When the channel is full, we may
 // give up notify and log it.
-func (d *ddl) asyncNotifyEvent(e *util.Event) {
+func asyncNotifyEvent(d *ddlCtx, e *util.Event) {
 	if d.ddlEventCh != nil {
 		if d.lease == 0 {
 			// If lease is 0, it's always used in test.
@@ -269,30 +268,25 @@ func newDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 		manager = owner.NewOwnerManager(etcdCli, ddlPrompt, id, DDLOwnerKey, cancelFunc)
 		syncer = NewSchemaSyncer(etcdCli, id)
 	}
-	d := &ddl{
-		infoHandle:   infoHandle,
-		hook:         hook,
-		store:        store,
+
+	ddlCtx := &ddlCtx{
 		uuid:         id,
+		store:        store,
 		lease:        lease,
 		ddlJobCh:     make(chan struct{}, 1),
 		ddlJobDoneCh: make(chan struct{}, 1),
-		reorgCtx:     &reorgCtx{notifyCancelReorgJob: 0},
 		ownerManager: manager,
 		schemaSyncer: syncer,
 		workerVars:   variable.NewSessionVars(),
+		hook:         hook,
+	}
+	d := &ddl{
+		infoHandle: infoHandle,
+		ddlCtx:     ddlCtx,
 	}
 	d.workerVars.BinlogClient = binloginfo.GetPumpClient()
 
-	if ctxPool != nil {
-		supportDelRange := store.SupportDeleteRange()
-		d.delRangeManager = newDelRangeManager(d, ctxPool, supportDelRange)
-		log.Infof("[ddl] start delRangeManager OK, with emulator: %t", !supportDelRange)
-	} else {
-		d.delRangeManager = newMockDelRangeManager()
-	}
-
-	d.start(ctx)
+	d.start(ctx, ctxPool)
 	variable.RegisterStatistics(d)
 
 	log.Infof("[ddl] start DDL:%s", d.uuid)
@@ -310,7 +304,7 @@ func (d *ddl) Stop() error {
 	return nil
 }
 
-func (d *ddl) start(ctx context.Context) {
+func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 	d.quitCh = make(chan struct{})
 
 	// If RunWorker is true, we need campaign owner and do DDL job.
@@ -318,20 +312,24 @@ func (d *ddl) start(ctx context.Context) {
 	if RunWorker {
 		err := d.ownerManager.CampaignOwner(ctx)
 		terror.Log(errors.Trace(err))
-		d.wait.Add(1)
-		go d.onDDLWorker()
-		metrics.DDLCounter.WithLabelValues(metrics.CreateDDLWorker).Inc()
+
+		d.workers = make([]*worker, 1)
+		d.workers[0] = newWorker(normalWorker, d.store, ctxPool)
+		for _, worker := range d.workers {
+			worker.wg.Add(1)
+			go worker.start(d.ddlCtx)
+			// TODO: Add the type of DDL worker.
+			metrics.DDLCounter.WithLabelValues(metrics.CreateDDLWorker).Inc()
+		}
 	}
 
 	// For every start, we will send a fake job to let worker
 	// check owner firstly and try to find whether a job exists and run.
 	asyncNotify(d.ddlJobCh)
-
-	d.delRangeManager.start()
 }
 
 func (d *ddl) close() {
-	if d.isClosed() {
+	if isClosed(d.quitCh) {
 		return
 	}
 
@@ -343,40 +341,10 @@ func (d *ddl) close() {
 	}
 	d.wait.Wait()
 
-	d.delRangeManager.clear()
+	for _, worker := range d.workers {
+		worker.close()
+	}
 	log.Infof("close DDL:%s", d.uuid)
-}
-
-func (d *ddl) isClosed() bool {
-	select {
-	case <-d.quitCh:
-		return true
-	default:
-		return false
-	}
-}
-
-// SetLease implements DDL.SetLease interface.
-func (d *ddl) SetLease(ctx context.Context, lease time.Duration) {
-	d.m.Lock()
-	defer d.m.Unlock()
-
-	if lease == d.lease {
-		return
-	}
-
-	log.Warnf("[ddl] change schema lease %s -> %s", d.lease, lease)
-
-	if d.isClosed() {
-		// If already closed, just set lease and return.
-		d.lease = lease
-		return
-	}
-
-	// Close the running worker and start again.
-	d.close()
-	d.lease = lease
-	d.start(ctx)
 }
 
 // GetLease implements DDL.GetLease interface.
@@ -400,6 +368,23 @@ func (d *ddl) genGlobalID() (int64, error) {
 	})
 
 	return globalID, errors.Trace(err)
+}
+
+func isOwner(ownerManager owner.Manager, id string) bool {
+	isOwner := ownerManager.IsOwner()
+	log.Debugf("[ddl] it's the DDL owner %v, self ID %s", isOwner, id)
+	if isOwner {
+		metrics.DDLCounter.WithLabelValues(metrics.IsDDLOwner).Inc()
+	}
+	return isOwner
+}
+
+// normalWorker retruns the normal worker. It's used for testing.
+func (d *ddl) normalWorker() *worker {
+	if len(d.workers) == 0 {
+		return nil
+	}
+	return d.workers[0]
 }
 
 // SchemaSyncer implements DDL.SchemaSyncer interface.

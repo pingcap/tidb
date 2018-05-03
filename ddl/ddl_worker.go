@@ -14,9 +14,11 @@
 package ddl
 
 import (
+	"sync"
 	"time"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
@@ -32,10 +34,51 @@ import (
 // RunWorker indicates if this TiDB server starts DDL worker and can run DDL job.
 var RunWorker = true
 
+type workerType byte
+
+const (
+	normalWorker workerType = 0
+	addIdxWorker workerType = 1
+)
+
+type worker struct {
+	tp     workerType
+	quitCh chan struct{}
+	wg     sync.WaitGroup
+
+	reorgCtx        *reorgCtx // reorgCtx is for reorganization.
+	delRangeManager delRangeManager
+}
+
+func newWorker(tp workerType, store kv.Storage, ctxPool *pools.ResourcePool) *worker {
+	worker := &worker{
+		tp:       tp,
+		quitCh:   make(chan struct{}, 1),
+		reorgCtx: &reorgCtx{notifyCancelReorgJob: 0},
+	}
+
+	if ctxPool != nil {
+		worker.delRangeManager = newDelRangeManager(store, ctxPool)
+		log.Infof("[ddl] start delRangeManager OK, with emulator: %t", store.SupportDeleteRange())
+	} else {
+		worker.delRangeManager = newMockDelRangeManager()
+	}
+	return worker
+}
+
+func (w *worker) close() {
+	close(w.quitCh)
+	w.delRangeManager.clear()
+	w.wg.Wait()
+}
+
+// TODO:
 // onDDLWorker is for async online schema changing, it will try to become the owner firstly,
 // then wait or pull the job queue to handle a schema change job.
-func (d *ddl) onDDLWorker() {
-	defer d.wait.Done()
+func (w *worker) start(d *ddlCtx) {
+	defer w.wg.Done()
+
+	w.delRangeManager.start()
 
 	// We use 4 * lease time to check owner's timeout, so here, we will update owner's status
 	// every 2 * lease time. If lease is 0, we will use default 1s.
@@ -58,13 +101,13 @@ func (d *ddl) onDDLWorker() {
 	for {
 		select {
 		case <-ticker.C:
-			log.Debugf("[ddl] wait %s to check DDL status again", checkTime)
 		case <-d.ddlJobCh:
-		case <-d.quitCh:
+			log.Warnf("ddl job chan")
+		case <-w.quitCh:
 			return
 		}
 
-		err := d.handleDDLJobQueue(shouldCleanJobs)
+		err := w.handleDDLJobQueue(d, shouldCleanJobs)
 		if err != nil {
 			log.Errorf("[ddl] handle ddl job err %v", errors.ErrorStack(err))
 		} else if shouldCleanJobs {
@@ -81,19 +124,9 @@ func asyncNotify(ch chan struct{}) {
 	}
 }
 
-func (d *ddl) isOwner() bool {
-	isOwner := d.ownerManager.IsOwner()
-	log.Debugf("[ddl] it's the DDL owner %v, self ID %s", isOwner, d.uuid)
-	if isOwner {
-		metrics.DDLCounter.WithLabelValues(metrics.IsDDLOwner).Inc()
-	}
-	return isOwner
-}
-
 // buildJobDependence sets the curjob's dependency-ID.
 // The dependency-job's ID must less than the current job's ID, and we need the largest one in the list.
 func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
-
 	jobs, err := t.GetAllDDLJobs()
 	if err != nil {
 		return errors.Trace(err)
@@ -127,97 +160,10 @@ func (d *ddl) addDDLJob(ctx sessionctx.Context, job *model.Job) error {
 			return errors.Trace(err)
 		}
 		job.StartTS = txn.StartTS()
-		if job.Type == model.ActionAddIndex {
-			buildJobDependence(t, job)
-			t.SetJobListKey(meta.AddIndexJobListKey)
-		} else {
-			t.SetJobListKey(meta.AddIndexJobListKey)
-			buildJobDependence(t, job)
-			t.SetJobListKey(meta.DefaultJobListKey)
-		}
 		err = t.EnQueueDDLJob(job)
 		return errors.Trace(err)
 	})
 	metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerAddDDLJob, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
-	return errors.Trace(err)
-}
-
-// getFirstDDLJob gets the first DDL job form DDL queue.
-func (d *ddl) getFirstDDLJob(t *meta.Meta) (*model.Job, error) {
-	job, err := t.GetDDLJob(0)
-	return job, errors.Trace(err)
-}
-
-// handleUpdateJobError handles the too large DDL job.
-func (d *ddl) handleUpdateJobError(t *meta.Meta, job *model.Job, err error) error {
-	if err == nil {
-		return nil
-	}
-	if kv.ErrEntryTooLarge.Equal(err) {
-		log.Warnf("[ddl] update DDL job %v failed %v", job, errors.ErrorStack(err))
-		// Reduce this txn entry size.
-		job.BinlogInfo.Clean()
-		job.Error = toTError(err)
-		job.SchemaState = model.StateNone
-		job.State = model.JobStateCancelled
-		err = d.finishDDLJob(t, job)
-	}
-	return errors.Trace(err)
-}
-
-// updateDDLJob updates the DDL job information.
-// Every time we enter another state except final state, we must call this function.
-func (d *ddl) updateDDLJob(t *meta.Meta, job *model.Job, meetErr bool) error {
-	updateRawArgs := true
-	// If there is an error when running job and the RawArgs hasn't been decoded by DecodeArgs,
-	// so we shouldn't replace RawArgs with the marshaling Args.
-	if meetErr && (job.RawArgs != nil && job.Args == nil) {
-		log.Infof("[ddl] update DDL Job %s shouldn't update raw args", job)
-		updateRawArgs = false
-	}
-	return errors.Trace(t.UpdateDDLJob(0, job, updateRawArgs))
-}
-
-func (d *ddl) deleteRange(job *model.Job) error {
-	var err error
-	if job.Version <= currentVersion {
-		err = d.delRangeManager.addDelRangeJob(job)
-	} else {
-		err = errInvalidJobVersion.GenByArgs(job.Version, currentVersion)
-	}
-	return errors.Trace(err)
-}
-
-// finishDDLJob deletes the finished DDL job in the ddl queue and puts it to history queue.
-// If the DDL job need to handle in background, it will prepare a background job.
-func (d *ddl) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
-	startTime := time.Now()
-	defer func() {
-		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerFinishDDLJob, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
-	}()
-
-	switch job.Type {
-	case model.ActionAddIndex:
-		if job.State != model.JobStateRollbackDone {
-			break
-		}
-		// After rolling back an AddIndex operation, we need to use delete-range to delete the half-done index data.
-		err = d.deleteRange(job)
-	case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex:
-		err = d.deleteRange(job)
-	}
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	_, err = t.DeQueueDDLJob()
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	job.BinlogInfo.FinishedTS = t.StartTS
-	log.Infof("[ddl] finish DDL job %v", job)
-	err = t.AddHistoryDDLJob(job)
 	return errors.Trace(err)
 }
 
@@ -235,12 +181,91 @@ func (d *ddl) getHistoryDDLJob(id int64) (*model.Job, error) {
 	return job, errors.Trace(err)
 }
 
+// getFirstDDLJob gets the first DDL job form DDL queue.
+func (w *worker) getFirstDDLJob(t *meta.Meta) (*model.Job, error) {
+	job, err := t.GetDDLJob(0)
+	return job, errors.Trace(err)
+}
+
+// handleUpdateJobError handles the too large DDL job.
+func (w *worker) handleUpdateJobError(t *meta.Meta, job *model.Job, err error) error {
+	if err == nil {
+		return nil
+	}
+	if kv.ErrEntryTooLarge.Equal(err) {
+		log.Warnf("[ddl] update DDL job %v failed %v", job, errors.ErrorStack(err))
+		// Reduce this txn entry size.
+		job.BinlogInfo.Clean()
+		job.Error = toTError(err)
+		job.SchemaState = model.StateNone
+		job.State = model.JobStateCancelled
+		err = w.finishDDLJob(t, job)
+	}
+	return errors.Trace(err)
+}
+
+// updateDDLJob updates the DDL job information.
+// Every time we enter another state except final state, we must call this function.
+func (w *worker) updateDDLJob(t *meta.Meta, job *model.Job, meetErr bool) error {
+	updateRawArgs := true
+	// If there is an error when running job and the RawArgs hasn't been decoded by DecodeArgs,
+	// so we shouldn't replace RawArgs with the marshaling Args.
+	if meetErr && (job.RawArgs != nil && job.Args == nil) {
+		log.Infof("[ddl] update DDL Job %s shouldn't update raw args", job)
+		updateRawArgs = false
+	}
+	return errors.Trace(t.UpdateDDLJob(0, job, updateRawArgs))
+}
+
+func (w *worker) deleteRange(job *model.Job) error {
+	var err error
+	if job.Version <= currentVersion {
+		err = w.delRangeManager.addDelRangeJob(job)
+	} else {
+		err = errInvalidJobVersion.GenByArgs(job.Version, currentVersion)
+	}
+	return errors.Trace(err)
+}
+
+// finishDDLJob deletes the finished DDL job in the ddl queue and puts it to history queue.
+// If the DDL job need to handle in background, it will prepare a background job.
+func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
+	startTime := time.Now()
+	defer func() {
+		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerFinishDDLJob, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+	}()
+
+	switch job.Type {
+	case model.ActionAddIndex:
+		if job.State != model.JobStateRollbackDone {
+			break
+		}
+		// After rolling back an AddIndex operation, we need to use delete-range to delete the half-done index data.
+		err = w.deleteRange(job)
+	case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex:
+		err = w.deleteRange(job)
+	}
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	_, err = t.DeQueueDDLJob()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	job.BinlogInfo.FinishedTS = t.StartTS
+	log.Infof("[ddl] finish DDL job %v", job)
+	err = t.AddHistoryDDLJob(job)
+	return errors.Trace(err)
+}
+
 // handleDDLJobQueue handles DDL jobs in DDL Job queue.
 // shouldCleanJobs is used to determine whether to clean up the job in adding index queue.
-func (d *ddl) handleDDLJobQueue(shouldCleanJobs bool) error {
+func (w *worker) handleDDLJobQueue(d *ddlCtx, shouldCleanJobs bool) error {
 	once := true
 	for {
-		if d.isClosed() {
+		if isClosed(w.quitCh) {
 			return nil
 		}
 
@@ -249,20 +274,27 @@ func (d *ddl) handleDDLJobQueue(shouldCleanJobs bool) error {
 		var schemaVer int64
 		err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 			// We are not owner, return and retry checking later.
-			if !d.isOwner() {
+			if !isOwner(d.ownerManager, d.uuid) {
 				return nil
+			}
+
+			// It's used for clean up the job in adding index queue before we support adding index queue.
+			// TODO: Remove this logic after we support the adding index queue.
+			if shouldCleanJobs {
+				return errors.Trace(w.cleanAddIndexQueueJobs(d, txn))
 			}
 
 			var err error
 			t := meta.NewMeta(txn)
 			// We become the owner. Get the first job and run it.
-			job, err = d.getFirstDDLJob(t)
+			job, err = w.getFirstDDLJob(t)
 			if job == nil || err != nil {
 				return errors.Trace(err)
 			}
 
+			log.Warnf("get job %v", job)
 			if once {
-				d.waitSchemaSynced(job, waitTime)
+				w.waitSchemaSynced(d, job, waitTime)
 				once = false
 				return nil
 			}
@@ -272,7 +304,7 @@ func (d *ddl) handleDDLJobQueue(shouldCleanJobs bool) error {
 				if !job.IsRollbackDone() {
 					job.State = model.JobStateSynced
 				}
-				err = d.finishDDLJob(t, job)
+				err = w.finishDDLJob(t, job)
 				return errors.Trace(err)
 			}
 
@@ -282,13 +314,13 @@ func (d *ddl) handleDDLJobQueue(shouldCleanJobs bool) error {
 
 			// If running job meets error, we will save this error in job Error
 			// and retry later if the job is not cancelled.
-			schemaVer, err = d.runDDLJob(t, job)
+			schemaVer, err = w.runDDLJob(d, t, job)
 			if job.IsCancelled() {
-				err = d.finishDDLJob(t, job)
+				err = w.finishDDLJob(t, job)
 				return errors.Trace(err)
 			}
-			err = d.updateDDLJob(t, job, err != nil)
-			return errors.Trace(d.handleUpdateJobError(t, job, err))
+			err = w.updateDDLJob(t, job, err != nil)
+			return errors.Trace(w.handleUpdateJobError(t, job, err))
 		})
 		if err != nil {
 			return errors.Trace(err)
@@ -305,7 +337,7 @@ func (d *ddl) handleDDLJobQueue(shouldCleanJobs bool) error {
 		// If the job is done or still running or rolling back, we will wait 2 * lease time to guarantee other servers to update
 		// the newest schema.
 		if job.IsRunning() || job.IsRollingback() || job.IsDone() || job.IsRollbackDone() {
-			d.waitSchemaChanged(nil, waitTime, schemaVer)
+			w.waitSchemaChanged(nil, d, waitTime, schemaVer)
 		}
 		if job.IsSynced() {
 			asyncNotify(d.ddlJobDoneCh)
@@ -321,7 +353,7 @@ func chooseLeaseTime(t, max time.Duration) time.Duration {
 }
 
 // runDDLJob runs a DDL job. It returns the current schema version in this transaction and the error.
-func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) (ver int64, err error) {
+func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	log.Infof("[ddl] run DDL job %s", job)
 	if job.IsFinished() {
 		return
@@ -331,7 +363,7 @@ func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) (ver int64, err error) {
 		// If the value of SnapshotVer isn't zero, it means the work is backfilling the indexes.
 		if job.Type == model.ActionAddIndex && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
 			log.Infof("[ddl] run the cancelling DDL job %s", job)
-			d.reorgCtx.notifyReorgCancel()
+			w.reorgCtx.notifyReorgCancel()
 		} else {
 			job.State = model.JobStateCancelled
 			job.Error = errCancelledDDLJob
@@ -346,39 +378,39 @@ func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) (ver int64, err error) {
 
 	switch job.Type {
 	case model.ActionCreateSchema:
-		ver, err = d.onCreateSchema(t, job)
+		ver, err = onCreateSchema(t, job)
 	case model.ActionDropSchema:
-		ver, err = d.onDropSchema(t, job)
+		ver, err = onDropSchema(t, job)
 	case model.ActionCreateTable:
-		ver, err = d.onCreateTable(t, job)
+		ver, err = onCreateTable(d, t, job)
 	case model.ActionDropTable:
-		ver, err = d.onDropTable(t, job)
+		ver, err = onDropTable(t, job)
 	case model.ActionAddColumn:
-		ver, err = d.onAddColumn(t, job)
+		ver, err = onAddColumn(d, t, job)
 	case model.ActionDropColumn:
-		ver, err = d.onDropColumn(t, job)
+		ver, err = onDropColumn(t, job)
 	case model.ActionModifyColumn:
-		ver, err = d.onModifyColumn(t, job)
-	case model.ActionAddIndex:
-		ver, err = d.onCreateIndex(t, job)
-	case model.ActionDropIndex:
-		ver, err = d.onDropIndex(t, job)
-	case model.ActionAddForeignKey:
-		ver, err = d.onCreateForeignKey(t, job)
-	case model.ActionDropForeignKey:
-		ver, err = d.onDropForeignKey(t, job)
-	case model.ActionTruncateTable:
-		ver, err = d.onTruncateTable(t, job)
-	case model.ActionRebaseAutoID:
-		ver, err = d.onRebaseAutoID(t, job)
-	case model.ActionRenameTable:
-		ver, err = d.onRenameTable(t, job)
+		ver, err = onModifyColumn(t, job)
 	case model.ActionSetDefaultValue:
-		ver, err = d.onSetDefaultValue(t, job)
+		ver, err = onSetDefaultValue(t, job)
+	case model.ActionAddIndex:
+		ver, err = w.onCreateIndex(d, t, job)
+	case model.ActionDropIndex:
+		ver, err = onDropIndex(t, job)
+	case model.ActionAddForeignKey:
+		ver, err = onCreateForeignKey(t, job)
+	case model.ActionDropForeignKey:
+		ver, err = onDropForeignKey(t, job)
+	case model.ActionTruncateTable:
+		ver, err = onTruncateTable(t, job)
+	case model.ActionRebaseAutoID:
+		ver, err = onRebaseAutoID(d.store, t, job)
+	case model.ActionRenameTable:
+		ver, err = onRenameTable(t, job)
 	case model.ActionShardRowID:
-		ver, err = d.onShardRowID(t, job)
+		ver, err = onShardRowID(t, job)
 	case model.ActionModifyTableComment:
-		ver, err = d.onModifyTableComment(t, job)
+		ver, err = onModifyTableComment(t, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled
@@ -413,7 +445,7 @@ func toTError(err error) *terror.Error {
 
 // waitSchemaChanged waits for the completion of updating all servers' schema. In order to make sure that happens,
 // we wait 2 * lease time.
-func (d *ddl) waitSchemaChanged(ctx context.Context, waitTime time.Duration, latestSchemaVersion int64) {
+func (w *worker) waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time.Duration, latestSchemaVersion int64) {
 	if waitTime == 0 {
 		return
 	}
@@ -466,7 +498,7 @@ func (d *ddl) waitSchemaChanged(ctx context.Context, waitTime time.Duration, lat
 // but in this case we don't wait enough 2 * lease time to let other servers update the schema.
 // So here we get the latest schema version to make sure all servers' schema version update to the latest schema version
 // in a cluster, or to wait for 2 * lease time.
-func (d *ddl) waitSchemaSynced(job *model.Job, waitTime time.Duration) {
+func (w *worker) waitSchemaSynced(d *ddlCtx, job *model.Job, waitTime time.Duration) {
 	if !job.IsRunning() && !job.IsRollingback() && !job.IsDone() && !job.IsRollbackDone() {
 		return
 	}
@@ -480,7 +512,7 @@ func (d *ddl) waitSchemaSynced(job *model.Job, waitTime time.Duration) {
 		log.Warnf("[ddl] handle exception take time %v", time.Since(startTime))
 		return
 	}
-	d.waitSchemaChanged(ctx, waitTime, latestSchemaVersion)
+	w.waitSchemaChanged(ctx, d, waitTime, latestSchemaVersion)
 	log.Infof("[ddl] the handle exception take time %v", time.Since(startTime))
 }
 
@@ -513,4 +545,76 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 	}
 	err = t.SetSchemaDiff(diff)
 	return schemaVersion, errors.Trace(err)
+}
+
+// cleanAddIndexQueueJobs cleans jobs in adding index queue.
+// It's only done once after the worker become the owner.
+// TODO: Remove this logic after we support the adding index queue.
+func (w *worker) cleanAddIndexQueueJobs(d *ddlCtx, txn kv.Transaction) error {
+	startTime := time.Now()
+	m := meta.NewMeta(txn)
+	m.SetJobListKey(meta.AddIndexJobListKey)
+	for {
+		job, err := w.getFirstDDLJob(m)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if job == nil {
+			log.Infof("[ddl] cleaning jobs in the adding index queue takes time %v.", time.Since(startTime))
+			return nil
+		}
+		log.Infof("[ddl] cleaning job %v in the adding index queue.", job)
+
+		// The types of these jobs must be ActionAddIndex.
+		if job.SchemaState == model.StatePublic || job.SchemaState == model.StateNone {
+			if job.SchemaState == model.StateNone {
+				job.State = model.JobStateCancelled
+			} else {
+				binloginfo.SetDDLBinlog(d.workerVars.BinlogClient, txn, job.ID, job.Query)
+				job.State = model.JobStateSynced
+			}
+			err = w.finishDDLJob(m, job)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			continue
+		}
+
+		// When the job not in "none" and "public" state, we need to rollback it.
+		schemaID := job.SchemaID
+		tblInfo, err := getTableInfo(m, job, schemaID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		var indexName model.CIStr
+		var unique bool
+		err = job.DecodeArgs(&unique, &indexName)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		indexInfo := findIndexByName(indexName.L, tblInfo.Indices)
+		_, err = convert2RollbackJob(m, job, tblInfo, indexInfo, nil)
+		if err == nil {
+			_, err = m.DeQueueDDLJob()
+		}
+		if err != nil {
+			return errors.Trace(err)
+		}
+		// Put the job to the default job list.
+		m.SetJobListKey(meta.DefaultJobListKey)
+		err = m.EnQueueDDLJob(job)
+		m.SetJobListKey(meta.AddIndexJobListKey)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+}
+
+func isClosed(quitCh chan struct{}) bool {
+	select {
+	case <-quitCh:
+		return true
+	default:
+		return false
+	}
 }

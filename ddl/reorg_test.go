@@ -62,7 +62,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	rowCount := int64(10)
 	handle := int64(100)
 	f := func() error {
-		d.reorgCtx.setRowCountAndHandle(rowCount, handle)
+		d.normalWorker().reorgCtx.setRowCountAndHandle(rowCount, handle)
 		time.Sleep(1*ReorgWaitTimeout + 100*time.Millisecond)
 		return nil
 	}
@@ -73,16 +73,16 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	err = ctx.NewTxn()
 	c.Assert(err, IsNil)
 	m := meta.NewMeta(ctx.Txn())
-	err = d.runReorgJob(m, job, f)
+	err = d.normalWorker().runReorgJob(m, job, d.lease, f)
 	c.Assert(err, NotNil)
 
 	// The longest to wait for 5 seconds to make sure the function of f is returned.
 	for i := 0; i < 1000; i++ {
 		time.Sleep(5 * time.Millisecond)
-		err = d.runReorgJob(m, job, f)
+		err = d.normalWorker().runReorgJob(m, job, d.lease, f)
 		if err == nil {
 			c.Assert(job.RowCount, Equals, rowCount)
-			c.Assert(d.reorgCtx.rowCount, Equals, int64(0))
+			c.Assert(d.normalWorker().reorgCtx.rowCount, Equals, int64(0))
 
 			// Test whether reorgInfo's Handle is update.
 			err = ctx.Txn().Commit(context.Background())
@@ -90,17 +90,17 @@ func (s *testDDLSuite) TestReorg(c *C) {
 			err = ctx.NewTxn()
 			c.Assert(err, IsNil)
 			m = meta.NewMeta(ctx.Txn())
-			info, err1 := d.getReorgInfo(m, job)
+			info, err1 := getReorgInfo(d.ddlCtx, m, job)
 			c.Assert(err1, IsNil)
 			c.Assert(info.Handle, Equals, handle)
-			c.Assert(d.reorgCtx.doneHandle, Equals, int64(0))
+			c.Assert(d.normalWorker().reorgCtx.doneHandle, Equals, int64(0))
 			break
 		}
 	}
 	c.Assert(err, IsNil)
 
 	d.Stop()
-	err = d.runReorgJob(m, job, func() error {
+	err = d.normalWorker().runReorgJob(m, job, d.lease, func() error {
 		time.Sleep(4 * testLease)
 		return nil
 	})
@@ -108,7 +108,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	err = ctx.Txn().Commit(context.Background())
 	c.Assert(err, IsNil)
 
-	d.start(context.Background())
+	d.start(context.Background(), nil)
 	job = &model.Job{
 		ID:       2,
 		SchemaID: 1,
@@ -120,7 +120,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err1 error
-		info, err1 = d.getReorgInfo(t, job)
+		info, err1 = getReorgInfo(d.ddlCtx, t, job)
 		c.Assert(err1, IsNil)
 		err1 = info.UpdateHandle(txn, 1)
 		c.Assert(err1, IsNil)
@@ -131,7 +131,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err1 error
-		info, err1 = d.getReorgInfo(t, job)
+		info, err1 = getReorgInfo(d.ddlCtx, t, job)
 		c.Assert(err1, IsNil)
 		c.Assert(info.Handle, Greater, int64(0))
 		return nil
