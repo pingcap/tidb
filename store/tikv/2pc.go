@@ -261,13 +261,6 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 		return errors.Trace(e)
 	}
 
-	// For prewrite, stop sending other requests after receiving first error.
-	backoffer := bo
-	var cancel context.CancelFunc
-	if action == actionPrewrite {
-		backoffer, cancel = bo.Fork()
-	}
-
 	// Concurrently do the work for each batch.
 	ch := make(chan error, len(batches))
 	for _, batch1 := range batches {
@@ -282,10 +275,10 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 				// Here we makes a new clone of the original backoffer for this goroutine
 				// exclusively to avoid the data race when using the same backoffer
 				// in concurrent goroutines.
-				singleBatchBackoffer := backoffer.Clone()
+				singleBatchBackoffer := bo.Clone()
 				ch <- singleBatchActionFunc(singleBatchBackoffer, batch)
 			} else {
-				singleBatchBackoffer, singleBatchCancel := backoffer.Fork()
+				singleBatchBackoffer, singleBatchCancel := bo.Fork()
 				defer singleBatchCancel()
 				ch <- singleBatchActionFunc(singleBatchBackoffer, batch)
 			}
@@ -295,11 +288,6 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 	for i := 0; i < len(batches); i++ {
 		if e := <-ch; e != nil {
 			log.Debugf("[%d] 2PC doActionOnBatches %s failed: %v, tid: %d", c.connID, action, e, c.startTS)
-			// Cancel other requests and return the first error.
-			if cancel != nil {
-				log.Debugf("[%d] 2PC doActionOnBatches %s to cancel other actions, tid: %d", c.connID, action, c.startTS)
-				cancel()
-			}
 			if err == nil {
 				err = e
 			}
