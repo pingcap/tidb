@@ -83,7 +83,7 @@ func (scheduler *LatchesScheduler) Lock(startTS uint64, keys [][]byte) *Lock {
 	return lock
 }
 
-// UnLock unlocks a lock with commitTS.
+// UnLock unlocks a lock.
 func (scheduler *LatchesScheduler) UnLock(lock *Lock) {
 	scheduler.RLock()
 	defer scheduler.RUnlock()
