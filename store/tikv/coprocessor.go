@@ -661,10 +661,10 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 		logStr += fmt.Sprintf(" backoff_ms:%d backoff_types:%s", bo.totalSleep, backoffTypes)
 	}
 	var detail *kvrpcpb.ExecDetails
-	if task.cmdType == tikvrpc.CmdCopStream {
-		detail = resp.CopStream.ExecDetails
-	} else {
+	if resp.Cop != nil {
 		detail = resp.Cop.ExecDetails
+	} else if resp.CopStream != nil {
+		detail = resp.CopStream.ExecDetails
 	}
 	if detail != nil {
 		if detail.HandleTime != nil {
