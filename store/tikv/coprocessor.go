@@ -644,8 +644,10 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 	}
 	var detail *kvrpcpb.ExecDetails
 	// CopStream can be nil if server returns io.EOF.
-	if task.cmdType == tikvrpc.CmdCopStream && resp.CopStream != nil {
-		detail = resp.CopStream.ExecDetails
+	if task.cmdType == tikvrpc.CmdCopStream {
+		if resp.CopStream != nil {
+			detail = resp.CopStream.ExecDetails
+		}
 	} else {
 		detail = resp.Cop.ExecDetails
 	}
