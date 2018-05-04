@@ -130,7 +130,8 @@ func (d *ddl) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, f func() error) er
 		return errors.Trace(err)
 	case <-d.quitCh:
 		log.Info("[ddl] run reorg job ddl quit")
-		d.reorgCtx.setRowCountAndHandle(0, 0)
+		d.reorgCtx.setNextHandle(0)
+		d.reorgCtx.setRowCount(0)
 		// We return errWaitReorgTimeout here too, so that outer loop will break.
 		return errWaitReorgTimeout
 	case <-time.After(waitTimeout):

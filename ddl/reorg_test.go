@@ -62,7 +62,8 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	rowCount := int64(10)
 	handle := int64(100)
 	f := func() error {
-		d.reorgCtx.setRowCountAndHandle(rowCount, handle)
+		d.reorgCtx.setRowCount(rowCount)
+		d.reorgCtx.setNextHandle(handle)
 		time.Sleep(1*ReorgWaitTimeout + 100*time.Millisecond)
 		return nil
 	}
