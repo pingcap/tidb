@@ -643,8 +643,8 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 		logStr += fmt.Sprintf(" backoff_ms:%d backoff_types:%s", bo.totalSleep, backoffTypes)
 	}
 	var detail *kvrpcpb.ExecDetails
-	// CopStream can be nil if server returns io.EOF.
 	if task.cmdType == tikvrpc.CmdCopStream {
+		// CopStream can be nil if server returns io.EOF.
 		if resp.CopStream != nil {
 			detail = resp.CopStream.ExecDetails
 		}
