@@ -14,12 +14,12 @@
 package mocktikv
 
 import (
+	"math"
 	"strings"
 	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"math"
 )
 
 func TestT(t *testing.T) {
