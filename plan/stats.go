@@ -19,6 +19,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/statistics"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -26,6 +27,7 @@ import (
 type statsInfo struct {
 	count       float64
 	cardinality []float64
+	colHist     []statistics.Column
 }
 
 func (s *statsInfo) String() string {
