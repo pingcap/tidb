@@ -278,10 +278,8 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 			return ver, errors.Trace(err)
 		}
 
-		// initial reorgCtx
-		d.reorgCtx.setRowCountAndHandle(job.GetRowCount(), reorgInfo.Handle)
-		err = d.runReorgJob(t, job, func() error {
-			return d.addTableIndex(tbl, indexInfo, reorgInfo, job)
+		err = d.runReorgJob(t, reorgInfo, func() error {
+			return d.addTableIndex(tbl, indexInfo, reorgInfo)
 		})
 		if err != nil {
 			if errWaitReorgTimeout.Equal(err) {
@@ -804,7 +802,8 @@ func (d *ddl) backfillKVRangesIndex(workers []*addIndexWorker, kvRanges []kv.Key
 //	4. Wait all these running tasks finished, then continue to step 3, until all tasks is done.
 // The above operations are completed in a transaction.
 // Finally, update the concurrent processing of the total number of rows, and store the completed handle value.
-func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo *reorgInfo, job *model.Job) error {
+func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo *reorgInfo) error {
+	job := reorgInfo.Job
 	log.Infof("[ddl-reorg] addTableIndex, job:%s, reorgInfo:%#v", job, reorgInfo)
 	colFieldMap := makeupIndexColFieldMap(t, indexInfo)
 

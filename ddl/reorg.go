@@ -94,11 +94,14 @@ func (rc *reorgCtx) clean() {
 	rc.doneCh = nil
 }
 
-func (d *ddl) runReorgJob(t *meta.Meta, job *model.Job, f func() error) error {
+func (d *ddl) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, f func() error) error {
+	job := reorgInfo.Job
 	if d.reorgCtx.doneCh == nil {
 		// start a reorganization job
 		d.wait.Add(1)
 		d.reorgCtx.doneCh = make(chan error, 1)
+		// initial reorgCtx
+		d.reorgCtx.setRowCountAndHandle(job.GetRowCount(), reorgInfo.Handle)
 		go func() {
 			defer d.wait.Done()
 			d.reorgCtx.doneCh <- f()
