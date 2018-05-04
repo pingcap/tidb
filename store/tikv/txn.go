@@ -187,12 +187,6 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	if err != nil || committer == nil {
 		return errors.Trace(err)
 	}
-
-	defer func() {
-		if err == nil {
-			txn.commitTS = committer.commitTS
-		}
-	}()
 	// latches disabled
 	if txn.store.txnLatches == nil {
 		err = committer.executeAndWriteFinishBinlog(ctx)

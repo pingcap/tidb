@@ -568,6 +568,7 @@ func (c *twoPhaseCommitter) executeAndWriteFinishBinlog(ctx context.Context) err
 	if err != nil {
 		c.writeFinishBinlog(binlog.BinlogType_Rollback, 0)
 	} else {
+		c.txn.commitTS = c.commitTS
 		c.writeFinishBinlog(binlog.BinlogType_Commit, int64(c.commitTS))
 	}
 	return errors.Trace(err)
