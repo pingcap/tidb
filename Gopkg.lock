@@ -212,7 +212,7 @@
     "pkg/raft_serverpb",
     "pkg/tikvpb"
   ]
-  revision = "05b1d9675489f16f81b7c950ed039cf5fdc93055"
+  revision = "5ef8fa297ea3547b015ef5069cb500bba67b0d94"
 
 [[projects]]
   branch = "master"
