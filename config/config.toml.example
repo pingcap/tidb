@@ -121,9 +121,6 @@ stmt-count-limit = 5000
 # Set keep alive option for tcp connection.
 tcp-keep-alive = true
 
-# The maximum number of retries when commit a transaction.
-retry-limit = 10
-
 # Whether support cartesian product.
 cross-join = true
 
@@ -142,12 +139,6 @@ query-feedback-limit = 1024
 # Pseudo stats will be used if the ratio between the modify count and
 # row count in statistics of a table is greater than it.
 pseudo-estimate-ratio = 0.7
-
-# Auto analyze will run if (table modify count)/(table row count) is greater than this value.
-# The minimum allowed ratio value is 0.3.
-# The suggested ratio value is 0.5.
-# Setting the value to 0.0 disables auto-analyze.
-auto-analyze-ratio = 0.0
 
 [proxy-protocol]
 # PROXY protocol acceptable client networks.

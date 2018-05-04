@@ -143,7 +143,6 @@ type Status struct {
 type Performance struct {
 	MaxProcs            uint    `toml:"max-procs" json:"max-procs"`
 	TCPKeepAlive        bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
-	RetryLimit          uint    `toml:"retry-limit" json:"retry-limit"`
 	CrossJoin           bool    `toml:"cross-join" json:"cross-join"`
 	StatsLease          string  `toml:"stats-lease" json:"stats-lease"`
 	RunAutoAnalyze      bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
@@ -151,7 +150,6 @@ type Performance struct {
 	FeedbackProbability float64 `toml:"feedback-probability" json:"feedback-probability"`
 	QueryFeedbackLimit  uint    `toml:"query-feedback-limit" json:"query-feedback-limit"`
 	PseudoEstimateRatio float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
-	AutoAnalyzeRatio    float64 `toml:"auto-analyze-ratio" json:"auto-analyze-ratio"`
 }
 
 // XProtocol is the XProtocol section of the config.
@@ -251,7 +249,6 @@ var defaultConf = Config{
 	},
 	Performance: Performance{
 		TCPKeepAlive:        true,
-		RetryLimit:          10,
 		CrossJoin:           true,
 		StatsLease:          "3s",
 		RunAutoAnalyze:      true,
@@ -259,7 +256,6 @@ var defaultConf = Config{
 		FeedbackProbability: 0,
 		QueryFeedbackLimit:  1024,
 		PseudoEstimateRatio: 0.7,
-		AutoAnalyzeRatio:    0,
 	},
 	XProtocol: XProtocol{
 		XHost: "",
