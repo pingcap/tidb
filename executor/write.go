@@ -72,10 +72,17 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 			newData[i] = v
 		}
 
+		if mysql.HasNotNullFlag(col.Flag) && newData[i].IsNull() {
+			var err error
+			newData[i], err = table.GetColDefaultValue(ctx, col.ToInfo())
+			if err != nil {
+				return false, handleChanged, newHandle, errors.Trace(err)
+			}
+		}
 		// Rebase auto increment id if the field is changed.
 		if mysql.HasAutoIncrementFlag(col.Flag) {
 			if newData[i].IsNull() {
-				return false, handleChanged, newHandle, errors.Errorf("Column '%v' cannot be null", col.Name.O)
+				return false, handleChanged, newHandle, table.ErrColumnCantNull.GenByArgs(col.Name)
 			}
 			val, errTI := newData[i].ToInt64(sc)
 			if errTI != nil {
@@ -686,8 +693,8 @@ func (e *LoadDataInfo) colsToRow(cols []string) types.DatumRow {
 	}
 	row, err := e.insertVal.fillRowData(e.columns, e.row)
 	if err != nil {
-		warnLog := fmt.Sprintf("Load Data: insert data:%v failed:%v", e.row, errors.ErrorStack(err))
-		e.insertVal.handleLoadDataWarnings(err, warnLog)
+		e.insertVal.handleWarning(err,
+			fmt.Sprintf("Load Data: insert data:%v failed:%v", e.row, errors.ErrorStack(err)))
 		return nil
 	}
 	return row
@@ -699,15 +706,9 @@ func (e *LoadDataInfo) insertData(row types.DatumRow) {
 	}
 	_, err := e.Table.AddRecord(e.insertVal.ctx, row, false)
 	if err != nil {
-		warnLog := fmt.Sprintf("Load Data: insert data:%v failed:%v", row, errors.ErrorStack(err))
-		e.insertVal.handleLoadDataWarnings(err, warnLog)
+		e.insertVal.handleWarning(err,
+			fmt.Sprintf("Load Data: insert data:%v failed:%v", e.row, errors.ErrorStack(err)))
 	}
-}
-
-func (e *InsertValues) handleLoadDataWarnings(err error, logInfo string) {
-	sc := e.ctx.GetSessionVars().StmtCtx
-	sc.AppendWarning(err)
-	log.Warn(logInfo)
 }
 
 // LoadData represents a load data executor.
@@ -812,6 +813,12 @@ type InsertExec struct {
 	uniqueKeysInRows [][]keyWithDupError
 	dupKeyValues     map[string][]byte
 	dupOldRowValues  map[string][]byte
+}
+
+func (e *InsertValues) handleWarning(err error, logInfo string) {
+	sc := e.ctx.GetSessionVars().StmtCtx
+	sc.AppendWarning(err)
+	log.Warn(logInfo)
 }
 
 func (e *InsertExec) insertOneRow(row []types.Datum) (int64, error) {
@@ -1515,7 +1522,7 @@ func (e *InsertValues) fillDefaultValues(row []types.Datum, hasValue []bool) err
 			if table.ErrNoDefaultValue.Equal(err) {
 				row[i] = table.GetZeroValue(c.ToInfo())
 				hasValue[c.Offset] = false
-			} else if err = e.filterErr(err); err != nil {
+			} else if e.filterErr(err) != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -1562,7 +1569,7 @@ func (e *InsertValues) fillRowData(cols []*table.Column, vals []types.Datum) ([]
 	hasValue := make([]bool, len(e.Table.Cols()))
 	for i, v := range vals {
 		casted, err := table.CastValue(e.ctx, v, cols[i].ToInfo())
-		if err = e.filterErr(err); err != nil {
+		if e.filterErr(err) != nil {
 			return nil, errors.Trace(err)
 		}
 
@@ -1582,7 +1589,7 @@ func (e *InsertValues) fillGenColData(cols []*table.Column, valLen int, hasValue
 	for i, expr := range e.GenExprs {
 		var val types.Datum
 		val, err = expr.Eval(row)
-		if err = e.filterErr(err); err != nil {
+		if e.filterErr(err) != nil {
 			return nil, errors.Trace(err)
 		}
 		val, err = table.CastValue(e.ctx, val, cols[valLen+i].ToInfo())
@@ -1603,12 +1610,11 @@ func (e *InsertValues) filterErr(err error) error {
 	if err == nil {
 		return nil
 	}
-	if !e.ctx.GetSessionVars().StmtCtx.DupKeyAsWarning {
+	if !e.ctx.GetSessionVars().StmtCtx.BadNullAsWarning {
 		return errors.Trace(err)
 	}
-
-	warnLog := fmt.Sprintf("ignore err:%v", errors.ErrorStack(err))
-	e.handleLoadDataWarnings(err, warnLog)
+	// TODO: should not filter all types of errors here.
+	e.handleWarning(err, fmt.Sprintf("ignore err:%v", errors.ErrorStack(err)))
 	return nil
 }
 
@@ -1632,35 +1638,27 @@ func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (d types.D
 // initDefaultValues fills generated columns, auto_increment column and empty column.
 // For NOT NULL column, it will return error or use zero value based on sql_mode.
 func (e *InsertValues) initDefaultValues(row []types.Datum, hasValue []bool) error {
-	strictSQL := e.ctx.GetSessionVars().StrictSQLMode
 	for i, c := range e.Table.Cols() {
-		var needDefaultValue bool
-		if !hasValue[i] {
-			needDefaultValue = true
-		} else if mysql.HasNotNullFlag(c.Flag) && row[i].IsNull() && !strictSQL {
-			needDefaultValue = true
-			// TODO: Append Warning ErrColumnCantNull.
-		}
 		if mysql.HasAutoIncrementFlag(c.Flag) || c.IsGenerated() {
 			// Just leave generated column as null. It will be calculated later
 			// but before we check whether the column can be null or not.
-			needDefaultValue = false
 			if !hasValue[i] {
 				row[i].SetNull()
 			}
-		}
-		if needDefaultValue {
-			var err error
-			row[i], err = e.getColDefaultValue(i, c)
-			if e.filterErr(err) != nil {
-				return errors.Trace(err)
+			// Adjust the value if this column has auto increment flag.
+			if mysql.HasAutoIncrementFlag(c.Flag) {
+				if err := e.adjustAutoIncrementDatum(row, i, c); err != nil {
+					return errors.Trace(err)
+				}
 			}
-		}
-
-		// Adjust the value if this column has auto increment flag.
-		if mysql.HasAutoIncrementFlag(c.Flag) {
-			if err := e.adjustAutoIncrementDatum(row, i, c); err != nil {
-				return errors.Trace(err)
+		} else {
+			if !hasValue[i] || (mysql.HasNotNullFlag(c.Flag) && row[i].
+				IsNull() && e.ctx.GetSessionVars().StmtCtx.BadNullAsWarning) {
+				var err error
+				row[i], err = e.getColDefaultValue(i, c)
+				if e.filterErr(err) != nil {
+					return errors.Trace(err)
+				}
 			}
 		}
 	}
@@ -1686,7 +1684,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(row []types.Datum, i int, c *tab
 	var recordID int64
 	if !row[i].IsNull() {
 		recordID, err = row[i].ToInt64(e.ctx.GetSessionVars().StmtCtx)
-		if e.filterErr(errors.Trace(err)) != nil {
+		if e.filterErr(err) != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -1710,7 +1708,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(row []types.Datum, i int, c *tab
 	// Change value 0 to auto id, if NoAutoValueOnZero SQL mode is not set.
 	if row[i].IsNull() || e.ctx.GetSessionVars().SQLMode&mysql.ModeNoAutoValueOnZero == 0 {
 		recordID, err = e.Table.AllocAutoID(e.ctx)
-		if e.filterErr(errors.Trace(err)) != nil {
+		if e.filterErr(err) != nil {
 			return errors.Trace(err)
 		}
 		// It's compatible with mysql. So it sets last insert id to the first row.

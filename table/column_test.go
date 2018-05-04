@@ -344,7 +344,7 @@ func (t *testTableSuite) TestGetDefaultValue(c *C) {
 	}
 
 	for _, tt := range tests {
-		ctx.GetSessionVars().StrictSQLMode = tt.strict
+		ctx.GetSessionVars().StmtCtx.BadNullAsWarning = !tt.strict
 		val, err := GetColDefaultValue(ctx, tt.colInfo)
 		if err != nil {
 			c.Assert(tt.err, NotNil, Commentf("%v", err))
@@ -354,7 +354,7 @@ func (t *testTableSuite) TestGetDefaultValue(c *C) {
 	}
 
 	for _, tt := range tests {
-		ctx.GetSessionVars().StrictSQLMode = tt.strict
+		ctx.GetSessionVars().StmtCtx.BadNullAsWarning = !tt.strict
 		val, err := GetColOriginDefaultValue(ctx, tt.colInfo)
 		if err != nil {
 			c.Assert(tt.err, NotNil, Commentf("%v", err))

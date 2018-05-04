@@ -273,6 +273,10 @@ func ResetStmtCtx(ctx sessionctx.Context, s ast.StmtNode) {
 		sc.MemTracker.SetActionOnExceed(&memory.LogOnExceed{})
 	}
 
+	// TODO: Many same bool variables here.
+	// We should set only two variables (
+	// IgnoreErr and StrictSQLMode) to avoid set the same bool variables and
+	// push them down to TiKV as flags.
 	switch stmt := s.(type) {
 	case *ast.UpdateStmt:
 		sc.InUpdateOrDeleteStmt = true
@@ -332,6 +336,9 @@ func ResetStmtCtx(ctx sessionctx.Context, s ast.StmtNode) {
 			sc.InShowWarning = true
 			sc.SetWarnings(sessVars.StmtCtx.GetWarnings())
 		}
+	default:
+		sc.IgnoreTruncate = true
+		sc.IgnoreZeroInDate = true
 	}
 	if sessVars.LastInsertID > 0 {
 		sessVars.PrevLastInsertID = sessVars.LastInsertID

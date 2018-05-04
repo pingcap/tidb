@@ -313,7 +313,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef) (
 			case ast.ColumnOptionDefaultValue:
 				value, err := getDefaultValue(ctx, v, colDef.Tp.Tp, colDef.Tp.Decimal)
 				if err != nil {
-					return nil, nil, ErrColumnBadNull.Gen("invalid default value - %s", err)
+					return nil, nil, ErrColumnBadNull.GenByArgs(colDef.Name.Name)
 				}
 				if err = checkColumnCantHaveDefaultValue(col, value); err != nil {
 					return nil, nil, errors.Trace(err)
@@ -1265,7 +1265,7 @@ func modifiable(origin *types.FieldType, to *types.FieldType) error {
 func setDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) error {
 	value, err := getDefaultValue(ctx, option, col.Tp, col.Decimal)
 	if err != nil {
-		return ErrColumnBadNull.Gen("invalid default value - %s", err)
+		return ErrColumnBadNull.GenByArgs(col.Name)
 	}
 	col.DefaultValue = value
 	return errors.Trace(checkDefaultValue(ctx, col, true))
@@ -1291,7 +1291,7 @@ func setDefaultAndComment(ctx sessionctx.Context, col *table.Column, options []*
 		case ast.ColumnOptionDefaultValue:
 			value, err := getDefaultValue(ctx, opt, col.Tp, col.Decimal)
 			if err != nil {
-				return ErrColumnBadNull.Gen("invalid default value - %s", err)
+				return ErrColumnBadNull.GenByArgs(col.Name)
 			}
 			if err = checkColumnCantHaveDefaultValue(col, value); err != nil {
 				return errors.Trace(err)
