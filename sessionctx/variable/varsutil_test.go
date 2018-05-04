@@ -223,6 +223,13 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 
 	SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, types.NewIntDatum(-1))
 	c.Assert(GetDDLReorgWorkerCounter(), Equals, int32(DefTiDBDDLReorgWorkerCount))
+
+	err = SetSessionSystemVar(v, TiDBRetryLimit, types.NewStringDatum("3"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBRetryLimit)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "3")
+	c.Assert(v.RetryLimit, Equals, int64(3))
 }
 
 type mockGlobalAccessor struct {

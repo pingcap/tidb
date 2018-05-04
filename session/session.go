@@ -333,16 +333,17 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	}
 	err := s.doCommit(ctx)
 	if err != nil {
+		commitRetryLimit := s.sessionVars.RetryLimit
 		// Don't retry in BatchInsert mode. As a counter-example, insert into t1 select * from t2,
 		// BatchInsert already commit the first batch 1000 rows, then it commit 1000-2000 and retry the statement,
 		// Finally t1 will have more data than t2, with no errors return to user!
-		if s.isRetryableError(err) && !s.sessionVars.BatchInsert && commitRetryLimit != 0 {
+		if s.isRetryableError(err) && !s.sessionVars.BatchInsert && commitRetryLimit > 0 {
 			log.Warnf("[%d] retryable error: %v, txn: %v", s.sessionVars.ConnectionID, err, s.txn)
 			// Transactions will retry 2 ~ commitRetryLimit times.
 			// We make larger transactions retry less times to prevent cluster resource outage.
 			txnSizeRate := float64(txnSize) / float64(kv.TxnTotalSizeLimit)
-			maxRetryCount := commitRetryLimit - uint(float64(commitRetryLimit-1)*txnSizeRate)
-			err = s.retry(ctx, maxRetryCount)
+			maxRetryCount := commitRetryLimit - int64(float64(commitRetryLimit-1)*txnSizeRate)
+			err = s.retry(ctx, uint(maxRetryCount))
 		}
 	}
 	counter := s.sessionVars.TxnCtx.StatementCount
@@ -1273,7 +1274,8 @@ const loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variab
 	variable.TiDBHashJoinConcurrency + quoteCommaQuote +
 	variable.TiDBBackoffLockFast + quoteCommaQuote +
 	variable.TiDBDDLReorgWorkerCount + quoteCommaQuote +
-	variable.TiDBDistSQLScanConcurrency + "')"
+	variable.TiDBDistSQLScanConcurrency + quoteCommaQuote +
+	variable.TiDBRetryLimit + "')"
 
 type globalVariableCache struct {
 	sync.RWMutex
