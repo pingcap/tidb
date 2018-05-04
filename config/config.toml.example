@@ -121,9 +121,6 @@ stmt-count-limit = 5000
 # Set keep alive option for tcp connection.
 tcp-keep-alive = true
 
-# The maximum number of retries when commit a transaction.
-retry-limit = 10
-
 # Whether support cartesian product.
 cross-join = true
 
