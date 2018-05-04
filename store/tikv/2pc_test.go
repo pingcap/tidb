@@ -404,8 +404,8 @@ func (s *testCommitterSuite) TestWrittenKeysOnConflict(c *C) {
 		err = commiter1.execute(context.Background())
 		c.Assert(err, NotNil)
 		commiter1.mu.RLock()
-		writtenKeys := commiter1.mu.writtenKeys
-		commiter1.mu.RLock()
-		c.Assert(len(writtenKeys), Equals, 1)
+		writtenKeyLen := len(commiter1.mu.writtenKeys)
+		commiter1.mu.RUnlock()
+		c.Assert(writtenKeyLen, Equals, 1)
 	}
 }
