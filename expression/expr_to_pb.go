@@ -107,7 +107,6 @@ func (pc PbConverter) conOrCorColToPBExpr(expr Expression) *tipb.Expr {
 		return nil
 	}
 	tp, val, ok := pc.encodeDatum(d)
-
 	if !ok {
 		return nil
 	}

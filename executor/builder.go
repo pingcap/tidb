@@ -1216,11 +1216,13 @@ func (b *executorBuilder) constructDAGReq(plans []plan.PhysicalPlan) (dagReq *ti
 
 func (b *executorBuilder) corColInDistPlan(plans []plan.PhysicalPlan) bool {
 	for _, p := range plans {
-		if x, ok := p.(*plan.PhysicalSelection); ok {
-			for _, cond := range x.Conditions {
-				if len(expression.ExtractCorColumns(cond)) > 0 {
-					return true
-				}
+		x, ok := p.(*plan.PhysicalSelection)
+		if !ok {
+			continue
+		}
+		for _, cond := range x.Conditions {
+			if len(expression.ExtractCorColumns(cond)) > 0 {
+				return true
 			}
 		}
 	}
