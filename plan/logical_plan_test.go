@@ -20,6 +20,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -921,27 +922,27 @@ func (s *testPlanSuite) TestValidate(c *C) {
 	}{
 		{
 			sql: "select date_format((1,2), '%H');",
-			err: ErrOperandColumns,
+			err: expression.ErrOperandColumns,
 		},
 		{
 			sql: "select cast((1,2) as date)",
-			err: ErrOperandColumns,
+			err: expression.ErrOperandColumns,
 		},
 		{
 			sql: "select (1,2) between (3,4) and (5,6)",
-			err: ErrOperandColumns,
+			err: expression.ErrOperandColumns,
 		},
 		{
 			sql: "select (1,2) rlike '1'",
-			err: ErrOperandColumns,
+			err: expression.ErrOperandColumns,
 		},
 		{
 			sql: "select (1,2) like '1'",
-			err: ErrOperandColumns,
+			err: expression.ErrOperandColumns,
 		},
 		{
 			sql: "select case(1,2) when(1,2) then true end",
-			err: ErrOperandColumns,
+			err: expression.ErrOperandColumns,
 		},
 		{
 			sql: "select (1,2) in ((3,4),(5,6))",
@@ -949,7 +950,7 @@ func (s *testPlanSuite) TestValidate(c *C) {
 		},
 		{
 			sql: "select row(1,(2,3)) in (select a,b from t)",
-			err: ErrOperandColumns,
+			err: expression.ErrOperandColumns,
 		},
 		{
 			sql: "select row(1,2) in (select a,b from t)",
@@ -957,15 +958,15 @@ func (s *testPlanSuite) TestValidate(c *C) {
 		},
 		{
 			sql: "select (1,2) in ((3,4),5)",
-			err: ErrOperandColumns,
+			err: expression.ErrOperandColumns,
 		},
 		{
 			sql: "select (1,2) is true",
-			err: ErrOperandColumns,
+			err: expression.ErrOperandColumns,
 		},
 		{
 			sql: "select (1,2) is null",
-			err: ErrOperandColumns,
+			err: expression.ErrOperandColumns,
 		},
 		{
 			sql: "select (+(1,2))=(1,2)",
@@ -973,11 +974,11 @@ func (s *testPlanSuite) TestValidate(c *C) {
 		},
 		{
 			sql: "select (-(1,2))=(1,2)",
-			err: ErrOperandColumns,
+			err: expression.ErrOperandColumns,
 		},
 		{
 			sql: "select (1,2)||(1,2)",
-			err: ErrOperandColumns,
+			err: expression.ErrOperandColumns,
 		},
 		{
 			sql: "select (1,2) < (3,4)",
@@ -985,7 +986,7 @@ func (s *testPlanSuite) TestValidate(c *C) {
 		},
 		{
 			sql: "select (1,2) < 3",
-			err: ErrOperandColumns,
+			err: expression.ErrOperandColumns,
 		},
 		{
 			sql: "select 1, * from t",
@@ -1348,6 +1349,12 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 			sql: `set password for 'root'@'%' = 'xxxxx'`,
 			ans: []visitInfo{
 				{mysql.SuperPriv, "", "", ""},
+			},
+		},
+		{
+			sql: `show create table test.ttt`,
+			ans: []visitInfo{
+				{mysql.AllPrivMask, "test", "ttt", ""},
 			},
 		},
 	}
