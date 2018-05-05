@@ -235,10 +235,12 @@ func (t *testTableSuite) TestCastValue(c *C) {
 		State:     model.StatePublic,
 	})
 
-	err = CastValues(ctx, []types.Datum{types.NewDatum("test")}, []*Column{col}, false)
+	err = CastValues(ctx, []types.Datum{types.NewDatum("test")}, []*Column{col})
 	c.Assert(err, NotNil)
-	err = CastValues(ctx, []types.Datum{types.NewDatum("test")}, []*Column{col}, true)
+	ctx.GetSessionVars().StmtCtx.IgnoreErr = true
+	err = CastValues(ctx, []types.Datum{types.NewDatum("test")}, []*Column{col})
 	c.Assert(err, IsNil)
+	ctx.GetSessionVars().StmtCtx.IgnoreErr = false
 
 	colInfoS := model.ColumnInfo{
 		FieldType: *types.NewFieldType(mysql.TypeString),

@@ -1937,7 +1937,6 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) Plan {
 
 	updt := Update{
 		OrderedList: orderedList,
-		IgnoreErr:   update.IgnoreErr,
 	}.init(b.ctx)
 	updt.SetSchema(p.Schema())
 	updt.SelectPlan, b.err = doOptimize(b.optFlag, p)
