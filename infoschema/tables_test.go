@@ -17,6 +17,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -60,4 +61,16 @@ func (s *testSuite) TestDataForTableRowsCountField(c *C) {
 	h.Update(is)
 	tk.MustQuery("select table_rows from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("2"))
+
+	tk.MustExec("create user xxx")
+	tk.MustExec("flush privileges")
+
+	tk1 := testkit.NewTestKit(c, store)
+	tk1.MustExec("use test")
+	c.Assert(tk1.Se.Auth(&auth.UserIdentity{
+		Username: "xxx",
+		Hostname: "127.0.0.1",
+	}, nil, nil), IsTrue)
+
+	tk1.MustQuery("select distinct(table_schema) from information_schema.tables").Check(testkit.Rows("INFORMATION_SCHEMA"))
 }
