@@ -1605,6 +1605,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t CONVERT TO CHARSET utf8;", true},
 		{"ALTER TABLE t CONVERT TO CHARACTER SET utf8 COLLATE utf8_bin;", true},
 		{"ALTER TABLE t CONVERT TO CHARSET utf8 COLLATE utf8_bin;", true},
+		{"ALTER TABLE t FORCE", true},
 		{"ALTER TABLE t DROP INDEX;", false},
 
 		// For create index statement
