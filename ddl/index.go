@@ -747,7 +747,14 @@ func (d *ddl) backfillBatchTasks(startTime time.Time, startHandle int64, reorgIn
 
 	// nextHandle will be updated periodically in runReorgJob, so no need to update it here.
 	d.reorgCtx.setRowCountAndHandle(*totalAddedCount, nextHandle)
-	metrics.BatchAddIdxHistogram.Observe(elapsedTime)
+
+	metrics.JobsGauge.WithLabelValues(reorgInfo.Type.String()).Inc()
+	timeStart := time.Now()
+	defer func() {
+		metrics.JobsGauge.WithLabelValues(reorgInfo.Type.String()).Dec()
+		metrics.BatchAddIdxHistogram.WithLabelValues(reorgInfo.Type.String(), metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
+	}()
+
 	log.Infof("[ddl-reorg] total added index for %d rows, this task [%d,%d) added index for %d rows, take time %v",
 		*totalAddedCount, startHandle, nextHandle, taskAddedCount, elapsedTime)
 	return nil
