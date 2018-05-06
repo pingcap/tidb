@@ -277,10 +277,10 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	testKit.MustExec("create table t (a varchar(20))")
 
 	statistics.AutoAnalyzeMinCnt = 0
-	statistics.AutoAnalyzeRatio = 0.6
+	testKit.MustExec("set global tidb_auto_analyze_ratio = 0.6")
 	defer func() {
 		statistics.AutoAnalyzeMinCnt = 1000
-		statistics.AutoAnalyzeRatio = 0.0
+		testKit.MustExec("set global tidb_auto_analyze_ratio = 0.0")
 	}()
 
 	do := s.do
@@ -412,9 +412,9 @@ func (s *testStatsUpdateSuite) TestSplitRange(c *C) {
 		},
 	}
 	for _, t := range tests {
-		ranges := make([]*ranger.NewRange, 0, len(t.points)/2)
+		ranges := make([]*ranger.Range, 0, len(t.points)/2)
 		for i := 0; i < len(t.points); i += 2 {
-			ranges = append(ranges, &ranger.NewRange{
+			ranges = append(ranges, &ranger.Range{
 				LowVal:      []types.Datum{types.NewIntDatum(t.points[i])},
 				LowExclude:  t.exclude[i],
 				HighVal:     []types.Datum{types.NewIntDatum(t.points[i+1])},

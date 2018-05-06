@@ -668,6 +668,11 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 					log.Error("[stats] save histogram to storage fail: ", errors.ErrorStack(err))
 				}
 			}
+		case t := <-statsHandle.LoadMetaCh():
+			err = statistics.SaveMetaToStorage(ctx, t.TableID, t.Count, t.ModifyCount)
+			if err != nil {
+				log.Error("[stats] save meta to storage fail: ", errors.ErrorStack(err))
+			}
 		case <-deltaUpdateTicker.C:
 			err = statsHandle.DumpStatsDeltaToKV()
 			if err != nil {

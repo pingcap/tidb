@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
-	tipb "github.com/pingcap/tipb/go-tipb"
+	"github.com/pingcap/tipb/go-tipb"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -216,7 +216,7 @@ func (c *checksumContext) buildTableRequest(ctx sessionctx.Context) (*kv.Request
 		Algorithm: tipb.ChecksumAlgorithm_Crc64_Xor,
 	}
 
-	ranges := ranger.FullIntNewRange(false)
+	ranges := ranger.FullIntRange(false)
 
 	var builder distsql.RequestBuilder
 	return builder.SetTableRanges(c.TableInfo.ID, ranges, nil).
@@ -232,7 +232,7 @@ func (c *checksumContext) buildIndexRequest(ctx sessionctx.Context, indexInfo *m
 		Algorithm: tipb.ChecksumAlgorithm_Crc64_Xor,
 	}
 
-	ranges := ranger.FullNewRange()
+	ranges := ranger.FullRange()
 
 	var builder distsql.RequestBuilder
 	return builder.SetIndexRanges(ctx.GetSessionVars().StmtCtx, c.TableInfo.ID, indexInfo.ID, ranges).
