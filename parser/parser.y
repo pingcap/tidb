@@ -1050,6 +1050,14 @@ AlterTableSpec:
 			Tp:    		ast.AlterTableAlgorithm,
 		}
 	}
+| "FORCE"
+	{
+		// Parse it and ignore it. Just for compatibility.
+		$$ = &ast.AlterTableSpec{
+			Tp:    		ast.AlterTableForce,
+		}
+	}
+
 
 AlterAlgorithm:
 	"DEFAULT" | "INPLACE" | "COPY"
