@@ -782,6 +782,7 @@ import (
 	FloatOpt		"Floating-point type option"
 	Precision		"Floating-point precision option"
 	OptBinary		"Optional BINARY"
+	OptBinMod		"Optional BINARY mode"
 	OptCharset		"Optional Character setting"
 	OptCollate		"Optional Collate setting"
 	NUM			"A number"
@@ -953,11 +954,11 @@ AlterTableSpec:
 	{
 		$$ = &ast.AlterTableSpec{Tp: ast.AlterTableDropPrimaryKey}
 	}
-|	"DROP" KeyOrIndex IndexName
+|	"DROP" KeyOrIndex Identifier
 	{
 		$$ = &ast.AlterTableSpec{
 			Tp: ast.AlterTableDropIndex,
-			Name: $3.(string),
+			Name: $3,
 		}
 	}
 |	"DROP" "FOREIGN" "KEY" Symbol
@@ -3842,12 +3843,12 @@ CastType:
 		x.Flag |= mysql.BinaryFlag
 		$$ = x
 	}
-|	"CHAR" OptFieldLen OptBinary OptCharset
+|	"CHAR" OptFieldLen OptBinary
 	{
 		x := types.NewFieldType(mysql.TypeVarString)
 		x.Flen = $2.(int)  // TODO: Flen should be the flen of expression
-		x.Charset = $4.(string)
-		if $3.(bool) {
+		x.Charset = $3.(*ast.OptBinary).Charset
+		if $3.(*ast.OptBinary).IsBinary{
 			x.Flag |= mysql.BinaryFlag
 		}
 		if x.Charset == "" {
@@ -5858,34 +5859,34 @@ BitValueType:
 	}
 
 StringType:
-	NationalOpt "CHAR" FieldLen OptBinary OptCharset OptCollate
+	NationalOpt "CHAR" FieldLen OptBinary OptCollate
 	{
 		x := types.NewFieldType(mysql.TypeString)
 		x.Flen = $3.(int)
-		x.Charset = $5.(string)
-		x.Collate = $6.(string)
-		if $4.(bool) {
+		x.Charset = $4.(*ast.OptBinary).Charset
+		x.Collate = $5.(string)
+		if $4.(*ast.OptBinary).IsBinary {
 			x.Flag |= mysql.BinaryFlag
 		}
 		$$ = x
 	}
-|	NationalOpt "CHAR" OptBinary OptCharset OptCollate
+|	NationalOpt "CHAR" OptBinary OptCollate
 	{
 		x := types.NewFieldType(mysql.TypeString)
-		x.Charset = $4.(string)
-		x.Collate = $5.(string)
-		if $3.(bool) {
+		x.Charset = $3.(*ast.OptBinary).Charset
+		x.Collate = $4.(string)
+		if $3.(*ast.OptBinary).IsBinary {
 			x.Flag |= mysql.BinaryFlag
 		}
 		$$ = x
 	}
-|	Varchar FieldLen OptBinary OptCharset OptCollate
+|	Varchar FieldLen OptBinary OptCollate
 	{
 		x := types.NewFieldType(mysql.TypeVarchar)
 		x.Flen = $2.(int)
-		x.Charset = $4.(string)
-		x.Collate = $5.(string)
-		if $3.(bool) {
+		x.Charset = $3.(*ast.OptBinary).Charset
+		x.Collate = $4.(string)
+		if $3.(*ast.OptBinary).IsBinary {
 			x.Flag |= mysql.BinaryFlag
 		}
 		$$ = x
@@ -5916,12 +5917,12 @@ StringType:
 		x.Flag |= mysql.BinaryFlag
 		$$ = $1.(*types.FieldType)
 	}
-|	TextType OptBinary OptCharset OptCollate
+|	TextType OptBinary OptCollate
 	{
 		x := $1.(*types.FieldType)
-		x.Charset = $3.(string)
-		x.Collate = $4.(string)
-		if $2.(bool) {
+		x.Charset = $2.(*ast.OptBinary).Charset
+		x.Collate = $3.(string)
+		if $2.(*ast.OptBinary).IsBinary {
 			x.Flag |= mysql.BinaryFlag
 		}
 		$$ = x
@@ -6118,13 +6119,35 @@ Precision:
 		$$ = &ast.FloatOpt{Flen: int($2.(uint64)), Decimal: int($4.(uint64))}
 	}
 
-OptBinary:
+OptBinMod:
 	{
 		$$ = false
 	}
 |	"BINARY"
 	{
 		$$ = true
+	}
+
+OptBinary:
+	{
+		$$ = &ast.OptBinary{
+			IsBinary: false,
+			Charset:  "",
+		}
+	}
+|	"BINARY" OptCharset
+	{
+		$$ = &ast.OptBinary{
+			IsBinary: true,
+			Charset:  $2.(string),
+		}
+	}
+|	CharsetKw CharsetName OptBinMod
+	{
+		$$ = &ast.OptBinary{
+			IsBinary: $3.(bool),
+			Charset:  $2.(string),
+		}
 	}
 
 OptCharset:

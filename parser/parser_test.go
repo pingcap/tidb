@@ -1347,6 +1347,8 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"CREATE TABLE foo (name CHAR(50) BINARY)", true},
 		{"CREATE TABLE foo (name CHAR(50) COLLATE utf8_bin)", true},
 		{"CREATE TABLE foo (name CHAR(50) CHARACTER SET utf8)", true},
+		{"CREATE TABLE foo (name CHAR(50) CHARACTER SET utf8 BINARY)", true},
+		{"CREATE TABLE foo (name CHAR(50) CHARACTER SET utf8 BINARY CHARACTER set utf8)", false},
 		{"CREATE TABLE foo (name CHAR(50) BINARY CHARACTER SET utf8 COLLATE utf8_bin)", true},
 		{"CREATE TABLE foo (a.b, b);", false},
 		{"CREATE TABLE foo (a, b.c);", false},
@@ -1555,6 +1557,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t ENABLE KEYS", true},
 		{"ALTER TABLE t MODIFY COLUMN a varchar(255)", true},
 		{"ALTER TABLE t CHANGE COLUMN a b varchar(255)", true},
+		{"ALTER TABLE t CHANGE COLUMN a b varchar(255) CHARACTER SET utf8 BINARY", true},
 		{"ALTER TABLE t CHANGE COLUMN a b varchar(255) FIRST", true},
 		{"ALTER TABLE db.t RENAME to db1.t1", true},
 		{"ALTER TABLE db.t RENAME db1.t1", true},
@@ -1603,6 +1606,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t CONVERT TO CHARACTER SET utf8 COLLATE utf8_bin;", true},
 		{"ALTER TABLE t CONVERT TO CHARSET utf8 COLLATE utf8_bin;", true},
 		{"ALTER TABLE t FORCE", true},
+		{"ALTER TABLE t DROP INDEX;", false},
 
 		// For create index statement
 		{"CREATE INDEX idx ON t (a)", true},
