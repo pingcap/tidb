@@ -17,13 +17,13 @@ import (
 	"bytes"
 	"encoding/binary"
 	"io"
+	"math"
 	"sort"
 
 	"github.com/google/btree"
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/util/codec"
-	"math"
 )
 
 type mvccValueType int
