@@ -181,6 +181,7 @@ func (w *GCWorker) tick(ctx context.Context) {
 	isLeader, err := w.checkLeader()
 	if err != nil {
 		log.Warnf("[gc worker] check leader err: %v", err)
+		gcJobFailureCounter.WithLabelValues("check_leader").Inc()
 		return
 	}
 	if isLeader {
@@ -220,6 +221,9 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 
 	ok, safePoint, err := w.prepare()
 	if err != nil || !ok {
+		if err != nil {
+			gcJobFailureCounter.WithLabelValues("prepare").Inc()
+		}
 		w.gcIsRunning = false
 		return errors.Trace(err)
 	}
