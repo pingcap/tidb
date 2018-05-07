@@ -79,6 +79,7 @@ type twoPhaseCommitter struct {
 	priority pb.CommandPri
 	syncLog  bool
 	connID   uint64 // connID is used for log.
+	cleanWg  sync.WaitGroup
 }
 
 // newTwoPhaseCommitter creates a twoPhaseCommitter.
@@ -570,6 +571,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 		undetermined := c.mu.undeterminedErr != nil
 		c.mu.RUnlock()
 		if !committed && !undetermined {
+			c.cleanWg.Add(1)
 			twoPhaseCommitGP.Go(func() {
 				err := c.cleanupKeys(NewBackoffer(context.Background(), cleanupMaxBackoff).WithVars(c.txn.vars), c.keys)
 				if err != nil {
@@ -578,6 +580,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 				} else {
 					log.Infof("[%d] 2PC clean up done, tid: %d", c.connID, c.startTS)
 				}
+				c.cleanWg.Done()
 			})
 		}
 	}()
