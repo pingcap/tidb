@@ -54,6 +54,92 @@ func (e *SetExecutor) Next() (Row, error) {
 	return nil, nil
 }
 
+func (e *SetExecutor) getSynonyms(varName string) []string {
+	synonyms, ok := variable.SynonymsSysVariables[varName]
+	if ok {
+		return synonyms
+	}
+
+	synonyms = []string{varName}
+	return synonyms
+}
+
+func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) error {
+	sessionVars := e.ctx.GetSessionVars()
+	sysVar := variable.GetSysVar(name)
+	if sysVar == nil {
+		return variable.UnknownSystemVar.GenByArgs(name)
+	}
+	if sysVar.Scope == variable.ScopeNone {
+		return errors.Errorf("Variable '%s' is a read only variable", name)
+	}
+	if v.IsGlobal {
+		// Set global scope system variable.
+		if sysVar.Scope&variable.ScopeGlobal == 0 {
+			return errors.Errorf("Variable '%s' is a SESSION variable and can't be used with SET GLOBAL", name)
+		}
+		value, err := e.getVarValue(v, sysVar)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if value.IsNull() {
+			value.SetString("")
+		}
+		svalue, err := value.ToString()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(name, svalue)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	} else {
+		// Set session scope system variable.
+		if sysVar.Scope&variable.ScopeSession == 0 {
+			return errors.Errorf("Variable '%s' is a GLOBAL variable and should be set with SET GLOBAL", name)
+		}
+		value, err := e.getVarValue(v, nil)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		oldSnapshotTS := sessionVars.SnapshotTS
+		err = varsutil.SetSessionSystemVar(sessionVars, name, value)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		newSnapshotIsSet := sessionVars.SnapshotTS > 0 && sessionVars.SnapshotTS != oldSnapshotTS
+		if newSnapshotIsSet {
+			err = validateSnapshot(e.ctx, sessionVars.SnapshotTS)
+			if err != nil {
+				sessionVars.SnapshotTS = oldSnapshotTS
+				return errors.Trace(err)
+			}
+		}
+		err = e.loadSnapshotInfoSchemaIfNeeded(name)
+		if err != nil {
+			sessionVars.SnapshotTS = oldSnapshotTS
+			return errors.Trace(err)
+		}
+		var valStr string
+		if value.IsNull() {
+			valStr = "NULL"
+		} else {
+			var err error
+			valStr, err = value.ToString()
+			terror.Log(errors.Trace(err))
+		}
+		log.Infof("[%d] set system variable %s = %s", sessionVars.ConnectionID, name, valStr)
+	}
+
+	if name == variable.TxnIsolation {
+		if sessionVars.Systems[variable.TxnIsolation] == ast.ReadCommitted {
+			e.ctx.Txn().SetOption(kv.IsolationLevel, kv.RC)
+		}
+	}
+
+	return nil
+}
+
 func (e *SetExecutor) executeSet() error {
 	sessionVars := e.ctx.GetSessionVars()
 	for _, v := range e.vars {
@@ -92,74 +178,11 @@ func (e *SetExecutor) executeSet() error {
 		}
 
 		// Set system variable
-		sysVar := variable.GetSysVar(name)
-		if sysVar == nil {
-			return variable.UnknownSystemVar.GenByArgs(name)
-		}
-		if sysVar.Scope == variable.ScopeNone {
-			return errors.Errorf("Variable '%s' is a read only variable", name)
-		}
-		if v.IsGlobal {
-			// Set global scope system variable.
-			if sysVar.Scope&variable.ScopeGlobal == 0 {
-				return errors.Errorf("Variable '%s' is a SESSION variable and can't be used with SET GLOBAL", name)
-			}
-			value, err := e.getVarValue(v, sysVar)
+		syns := e.getSynonyms(name)
+		for _, n := range syns {
+			err := e.setSysVariable(n, v)
 			if err != nil {
 				return errors.Trace(err)
-			}
-			if value.IsNull() {
-				value.SetString("")
-			}
-			svalue, err := value.ToString()
-			if err != nil {
-				return errors.Trace(err)
-			}
-			err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(name, svalue)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		} else {
-			// Set session scope system variable.
-			if sysVar.Scope&variable.ScopeSession == 0 {
-				return errors.Errorf("Variable '%s' is a GLOBAL variable and should be set with SET GLOBAL", name)
-			}
-			value, err := e.getVarValue(v, nil)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			oldSnapshotTS := sessionVars.SnapshotTS
-			err = varsutil.SetSessionSystemVar(sessionVars, name, value)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			newSnapshotIsSet := sessionVars.SnapshotTS > 0 && sessionVars.SnapshotTS != oldSnapshotTS
-			if newSnapshotIsSet {
-				err = validateSnapshot(e.ctx, sessionVars.SnapshotTS)
-				if err != nil {
-					sessionVars.SnapshotTS = oldSnapshotTS
-					return errors.Trace(err)
-				}
-			}
-			err = e.loadSnapshotInfoSchemaIfNeeded(name)
-			if err != nil {
-				sessionVars.SnapshotTS = oldSnapshotTS
-				return errors.Trace(err)
-			}
-			var valStr string
-			if value.IsNull() {
-				valStr = "NULL"
-			} else {
-				var err error
-				valStr, err = value.ToString()
-				terror.Log(errors.Trace(err))
-			}
-			log.Infof("[%d] set system variable %s = %s", sessionVars.ConnectionID, name, valStr)
-		}
-
-		if name == variable.TxnIsolation {
-			if sessionVars.Systems[variable.TxnIsolation] == ast.ReadCommitted {
-				e.ctx.Txn().SetOption(kv.IsolationLevel, kv.RC)
 			}
 		}
 	}
