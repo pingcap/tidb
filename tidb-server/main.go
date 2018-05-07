@@ -325,8 +325,6 @@ func overrideConfig() {
 	}
 }
 
-const minAutoAnalyzeRatio = 0.3
-
 func validateConfig() {
 	if cfg.Security.SkipGrantTable && !hasRootPrivilege() {
 		log.Error("TiDB run with skip-grant-table need root privilege.")
@@ -357,9 +355,6 @@ func validateConfig() {
 		log.Errorf("lower-case-table-names should be 0 or 1 or 2.")
 		os.Exit(-1)
 	}
-	if cfg.Performance.AutoAnalyzeRatio > 0 && cfg.Performance.AutoAnalyzeRatio < minAutoAnalyzeRatio {
-		cfg.Performance.AutoAnalyzeRatio = minAutoAnalyzeRatio
-	}
 }
 
 func setGlobalVars() {
@@ -371,7 +366,6 @@ func setGlobalVars() {
 	domain.RunAutoAnalyze = cfg.Performance.RunAutoAnalyze
 	statistics.FeedbackProbability = cfg.Performance.FeedbackProbability
 	statistics.MaxQueryFeedbackCount = int(cfg.Performance.QueryFeedbackLimit)
-	statistics.AutoAnalyzeRatio = cfg.Performance.AutoAnalyzeRatio
 	plan.RatioOfPseudoEstimate = cfg.Performance.PseudoEstimateRatio
 	ddl.RunWorker = cfg.RunDDL
 	ddl.EnableSplitTableRegion = cfg.SplitTable
