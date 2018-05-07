@@ -46,6 +46,9 @@ const (
 	// those indices can be scanned concurrently, with the cost of higher system performance impact.
 	TiDBBuildStatsConcurrency = "tidb_build_stats_concurrency"
 
+	// Auto analyze will run if (table modify count)/(table row count) is greater than this value.
+	TiDBAutoAnalyzeRatio = "tidb_auto_analyze_ratio"
+
 	// tidb_checksum_table_concurrency is used to speed up the ADMIN CHECKSUM TABLE
 	// statement, when a table has multiple indices, those indices can be
 	// scanned concurrently, with the cost of higher system performance impact.
@@ -158,6 +161,7 @@ const (
 	DefIndexLookupSize               = 20000
 	DefDistSQLScanConcurrency        = 15
 	DefBuildStatsConcurrency         = 4
+	DefAutoAnalyzeRatio              = 0.0
 	DefChecksumTableConcurrency      = 4
 	DefSkipUTF8Check                 = false
 	DefOptAggPushDown                = false
