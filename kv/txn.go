@@ -24,6 +24,12 @@ import (
 	"golang.org/x/net/context"
 )
 
+// ContextKey is the type of context's key
+type ContextKey string
+
+// Retryable is the key in context
+const Retryable ContextKey = "Retryable"
+
 // RunInNewTxn will run the f in a new transaction environment.
 func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) error {
 	var (
@@ -54,7 +60,7 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 			return errors.Trace(err)
 		}
 
-		err = txn.Commit(context.Background())
+		err = txn.Commit(context.WithValue(context.Background(), Retryable, retryable))
 		if err == nil {
 			break
 		}
