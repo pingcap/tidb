@@ -39,12 +39,12 @@ const (
 	// tidb_opt_agg_push_down is used to enable/disable the optimizer rule of aggregation push down.
 	TiDBOptAggPushDown = "tidb_opt_agg_push_down"
 
-	// tidb_opt_insubquery_unfold is used to enable/disable the optimizer rule of in subquery unfold.
-	TiDBOptInSubqUnFolding = "tidb_opt_insubquery_unfold"
-
 	// tidb_build_stats_concurrency is used to speed up the ANALYZE statement, when a table has multiple indices,
 	// those indices can be scanned concurrently, with the cost of higher system performance impact.
 	TiDBBuildStatsConcurrency = "tidb_build_stats_concurrency"
+
+	// Auto analyze will run if (table modify count)/(table row count) is greater than this value.
+	TiDBAutoAnalyzeRatio = "tidb_auto_analyze_ratio"
 
 	// tidb_checksum_table_concurrency is used to speed up the ADMIN CHECKSUM TABLE
 	// statement, when a table has multiple indices, those indices can be
@@ -114,6 +114,9 @@ const (
 	// If the query has a LIMIT clause, high concurrency makes the system do much more work than needed.
 	TiDBDistSQLScanConcurrency = "tidb_distsql_scan_concurrency"
 
+	// tidb_opt_insubquery_unfold is used to enable/disable the optimizer rule of in subquery unfold.
+	TiDBOptInSubqUnFolding = "tidb_opt_insubquery_unfold"
+
 	// tidb_index_join_batch_size is used to set the batch size of a index lookup join.
 	// The index lookup join fetches batches of data from outer executor and constructs ranges for inner executor.
 	// This value controls how much of data in a batch to do the index join.
@@ -164,6 +167,7 @@ const (
 	DefIndexLookupSize               = 20000
 	DefDistSQLScanConcurrency        = 15
 	DefBuildStatsConcurrency         = 4
+	DefAutoAnalyzeRatio              = 0.0
 	DefChecksumTableConcurrency      = 4
 	DefSkipUTF8Check                 = false
 	DefOptAggPushDown                = false

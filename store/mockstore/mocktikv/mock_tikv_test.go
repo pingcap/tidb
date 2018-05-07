@@ -14,6 +14,7 @@
 package mocktikv
 
 import (
+	"math"
 	"strings"
 	"testing"
 
@@ -189,6 +190,27 @@ func (s *testMockTiKVSuite) TestGet(c *C) {
 	s.mustGetNone(c, "x", 9)
 	s.mustGetOK(c, "x", 10, "x")
 	s.mustGetOK(c, "x", 11, "x")
+}
+
+func (s *testMockTiKVSuite) TestGetWithLock(c *C) {
+	key := "key"
+	value := "value"
+	s.mustPutOK(c, key, value, 5, 10)
+	mutations := []*kvrpcpb.Mutation{{
+		Op:  kvrpcpb.Op_Lock,
+		Key: []byte(key),
+	},
+	}
+	// test with lock's type is lock
+	s.mustPrewriteOK(c, mutations, key, 20)
+	s.mustGetOK(c, key, 25, value)
+	s.mustCommitOK(c, [][]byte{[]byte(key)}, 20, 30)
+
+	// test get with lock's max ts and primary key
+	s.mustPrewriteOK(c, putMutations(key, "value2", "key2", "v5"), key, 40)
+	s.mustGetErr(c, key, 41)
+	s.mustGetErr(c, "key2", math.MaxUint64)
+	s.mustGetOK(c, key, math.MaxUint64, "value")
 }
 
 func (s *testMockTiKVSuite) TestDelete(c *C) {

@@ -46,6 +46,19 @@ func ExtractColumns(expr Expression) (cols []*Column) {
 	return extractColumns(result, expr, nil)
 }
 
+// ExtractCorColumns extracts correlated column from given expression.
+func ExtractCorColumns(expr Expression) (cols []*CorrelatedColumn) {
+	switch v := expr.(type) {
+	case *CorrelatedColumn:
+		return []*CorrelatedColumn{v}
+	case *ScalarFunction:
+		for _, arg := range v.GetArgs() {
+			cols = append(cols, ExtractCorColumns(arg)...)
+		}
+	}
+	return
+}
+
 // ExtractColumnsFromExpressions is a more efficient version of ExtractColumns for batch operation.
 // filter can be nil, or a function to filter the result column.
 // It's often observed that the pattern of the caller like this:
@@ -356,4 +369,82 @@ func extractFiltersFromDNF(ctx sessionctx.Context, dnfFunc *ScalarFunction) ([]E
 		return extractedExpr, nil
 	}
 	return extractedExpr, ComposeDNFCondition(ctx, newDNFItems...)
+}
+
+// GetRowLen gets the length if the func is row, returns 1 if not row.
+func GetRowLen(e Expression) int {
+	if f, ok := e.(*ScalarFunction); ok && f.FuncName.L == ast.RowFunc {
+		return len(f.GetArgs())
+	}
+	return 1
+}
+
+// CheckArgsNotMultiColumnRow checks the args are not multi-column row.
+func CheckArgsNotMultiColumnRow(args ...Expression) error {
+	for _, arg := range args {
+		if GetRowLen(arg) != 1 {
+			return ErrOperandColumns.GenByArgs(1)
+		}
+	}
+	return nil
+}
+
+// GetFuncArg gets the argument of the function at idx.
+func GetFuncArg(e Expression, idx int) Expression {
+	if f, ok := e.(*ScalarFunction); ok {
+		return f.GetArgs()[idx]
+	}
+	return nil
+}
+
+// PopRowFirstArg pops the first element and returns the rest of row.
+// e.g. After this function (1, 2, 3) becomes (2, 3).
+func PopRowFirstArg(ctx sessionctx.Context, e Expression) (ret Expression, err error) {
+	if f, ok := e.(*ScalarFunction); ok && f.FuncName.L == ast.RowFunc {
+		args := f.GetArgs()
+		if len(args) == 2 {
+			return args[1].Clone(), nil
+		}
+		ret, err = NewFunction(ctx, ast.RowFunc, f.GetType(), args[1:]...)
+		return ret, errors.Trace(err)
+	}
+	return
+}
+
+// exprStack is a stack of expressions.
+type exprStack struct {
+	stack []Expression
+}
+
+// pop pops an expression from the stack.
+func (s *exprStack) pop() Expression {
+	if s.len() == 0 {
+		return nil
+	}
+	lastIdx := s.len() - 1
+	expr := s.stack[lastIdx]
+	s.stack = s.stack[:lastIdx]
+	return expr
+}
+
+// popN pops n expressions from the stack.
+// If n greater than stack length or n is negative, it pops all the expressions.
+func (s *exprStack) popN(n int) []Expression {
+	if n > s.len() || n < 0 {
+		n = s.len()
+	}
+	idx := s.len() - n
+	exprs := s.stack[idx:]
+	s.stack = s.stack[:idx]
+	return exprs
+}
+
+// push pushes one expression to the stack.
+func (s *exprStack) push(expr Expression) {
+	s.stack = append(s.stack, expr)
+}
+
+// len returns the length of th stack.
+func (s *exprStack) len() int {
+	return len(s.stack)
 }

@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/codec"
-	tipb "github.com/pingcap/tipb/go-tipb"
+	"github.com/pingcap/tipb/go-tipb"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -89,8 +89,8 @@ func NewPBConverter(client kv.Client, sc *stmtctx.StatementContext) PbConverter 
 // ExprToPB converts Expression to TiPB.
 func (pc PbConverter) ExprToPB(expr Expression) *tipb.Expr {
 	switch x := expr.(type) {
-	case *Constant:
-		return pc.constantToPBExpr(x)
+	case *Constant, *CorrelatedColumn:
+		return pc.conOrCorColToPBExpr(expr)
 	case *Column:
 		return pc.columnToPBExpr(x)
 	case *ScalarFunction:
@@ -99,18 +99,29 @@ func (pc PbConverter) ExprToPB(expr Expression) *tipb.Expr {
 	return nil
 }
 
-func (pc PbConverter) constantToPBExpr(con *Constant) *tipb.Expr {
-	var (
-		tp  tipb.ExprType
-		val []byte
-		ft  = con.GetType()
-	)
-	d, err := con.Eval(nil)
+func (pc PbConverter) conOrCorColToPBExpr(expr Expression) *tipb.Expr {
+	ft := expr.GetType()
+	d, err := expr.Eval(nil)
 	if err != nil {
 		log.Errorf("Fail to eval constant, err: %s", err.Error())
 		return nil
 	}
+	tp, val, ok := pc.encodeDatum(d)
+	if !ok {
+		return nil
+	}
 
+	if !pc.client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tp)) {
+		return nil
+	}
+	return &tipb.Expr{Tp: tp, Val: val, FieldType: toPBFieldType(ft)}
+}
+
+func (pc *PbConverter) encodeDatum(d types.Datum) (tipb.ExprType, []byte, bool) {
+	var (
+		tp  tipb.ExprType
+		val []byte
+	)
 	switch d.Kind() {
 	case types.KindNull:
 		tp = tipb.ExprType_Null
@@ -150,19 +161,16 @@ func (pc PbConverter) constantToPBExpr(con *Constant) *tipb.Expr {
 			v, err := t.ToPackedUint()
 			if err != nil {
 				log.Errorf("Fail to encode value, err: %s", err.Error())
-				return nil
+				return tp, nil, false
 			}
 			val = codec.EncodeUint(nil, v)
-			return &tipb.Expr{Tp: tp, Val: val, FieldType: toPBFieldType(ft)}
+			return tp, val, true
 		}
-		return nil
+		return tp, nil, false
 	default:
-		return nil
+		return tp, nil, false
 	}
-	if !pc.client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tp)) {
-		return nil
-	}
-	return &tipb.Expr{Tp: tp, Val: val, FieldType: toPBFieldType(ft)}
+	return tp, val, true
 }
 
 func toPBFieldType(ft *types.FieldType) *tipb.FieldType {
