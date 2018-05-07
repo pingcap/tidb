@@ -536,6 +536,8 @@ commit;`
 	r = tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("1 1"))
 
+	// The following two cases are used for guaranteeing the last_insert_id
+	// to be set as the value of on-duplicate-update assigned.
 	testSQL = `DROP TABLE IF EXISTS t1;
 	CREATE TABLE t1 (f1 INT AUTO_INCREMENT PRIMARY KEY,
 	f2 VARCHAR(5) NOT NULL UNIQUE);
