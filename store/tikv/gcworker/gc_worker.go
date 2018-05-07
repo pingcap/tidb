@@ -107,7 +107,7 @@ const (
 	gcDefaultLifeTime    = time.Minute * 10
 	gcSafePointKey       = "tikv_gc_safe_point"
 	gcConcurrencyKey     = "tikv_gc_concurrency"
-	gcDefaultConcurrency = 1
+	gcDefaultConcurrency = 2
 	gcMinConcurrency     = 1
 	gcMaxConcurrency     = 128
 	// We don't want gc to sweep out the cached info belong to other processes, like coprocessor.
@@ -124,7 +124,7 @@ var gcVariableComments = map[string]string{
 	gcRunIntervalKey: "GC run interval, at least 10m, in Go format.",
 	gcLifeTimeKey:    "All versions within life time will not be collected by GC, at least 10m, in Go format.",
 	gcSafePointKey:   "All versions after safe point can be accessed. (DO NOT EDIT)",
-	gcConcurrencyKey: "How many go routines used to do GC parallel, [1, 128], default 1",
+	gcConcurrencyKey: "How many go routines used to do GC parallel, [1, 128], default 2",
 }
 
 func (w *GCWorker) start(ctx context.Context, wg *sync.WaitGroup) {
