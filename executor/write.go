@@ -72,7 +72,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 			newData[i] = v
 		}
 
-		if mysql.HasNotNullFlag(col.Flag) && newData[i].IsNull() {
+		if mysql.HasNotNullFlag(col.Flag) && newData[i].IsNull() && sc.BadNullAsWarning {
 			var err error
 			newData[i], err = table.GetColDefaultValue(ctx, col.ToInfo())
 			if err != nil {
