@@ -40,6 +40,44 @@ func (p *LogicalSelection) preparePossibleProperties() (result [][]*expression.C
 	return p.children[0].preparePossibleProperties()
 }
 
+func (p *LogicalSort) preparePossibleProperties() (result [][]*expression.Column) {
+	childResult := p.children[0].preparePossibleProperties()
+	result = make([][]*expression.Column, 0, 1+len(childResult))
+	result = append(result, childResult...)
+	cols := make([]*expression.Column, 0, len(p.ByItems))
+	for _, item := range p.ByItems {
+		if col, ok := item.Expr.(*expression.Column); ok {
+			cols = append(cols, col)
+		} else {
+			break
+		}
+	}
+	if len(cols) == 0 {
+		return nil
+	}
+	result = append(result, cols)
+	return result
+}
+
+func (p *LogicalTopN) preparePossibleProperties() (result [][]*expression.Column) {
+	childResult := p.children[0].preparePossibleProperties()
+	result = make([][]*expression.Column, 0, 1+len(childResult))
+	result = append(result, childResult...)
+	cols := make([]*expression.Column, 0, len(p.ByItems))
+	for _, item := range p.ByItems {
+		if col, ok := item.Expr.(*expression.Column); ok {
+			cols = append(cols, col)
+		} else {
+			break
+		}
+	}
+	if len(cols) == 0 {
+		return nil
+	}
+	result = append(result, cols)
+	return result
+}
+
 func (p *baseLogicalPlan) preparePossibleProperties() [][]*expression.Column {
 	for _, ch := range p.children {
 		ch.preparePossibleProperties()
