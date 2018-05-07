@@ -528,6 +528,8 @@ func (s *testStateChangeSuite) testControlParallelExecSQL(c *C, sql1, sql2 strin
 	go func() {
 		defer wg.Done()
 		<-ch
+		// Make sure sql2 is executed after the sql1.
+		time.Sleep(time.Millisecond * 10)
 		_, err2 = se1.Execute(context.Background(), sql2)
 	}()
 
