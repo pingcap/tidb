@@ -300,7 +300,7 @@ func extractLockFromKeyErr(keyErr *pb.KeyError) (*Lock, error) {
 		return NewLock(locked), nil
 	}
 	if keyErr.Conflict != nil {
-		err := errors.Errorf(conflictToString(keyErr.Conflict))
+		err := errors.New(conflictToString(keyErr.Conflict))
 		return nil, errors.Annotate(err, txnRetryableMark)
 	}
 	if keyErr.Retryable != "" {
