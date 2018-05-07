@@ -205,6 +205,7 @@ func (b *executorBuilder) buildShowDDL(v *plan.ShowDDL) Executor {
 
 func (b *executorBuilder) buildShowDDLJobs(v *plan.ShowDDLJobs) Executor {
 	e := &ShowDDLJobsExec{
+		is:           b.is,
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 	}
 	return e
