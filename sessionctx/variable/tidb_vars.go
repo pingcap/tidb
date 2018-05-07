@@ -46,6 +46,9 @@ const (
 	// those indices can be scanned concurrently, with the cost of higher system performance impact.
 	TiDBBuildStatsConcurrency = "tidb_build_stats_concurrency"
 
+	// Auto analyze will run if (table modify count)/(table row count) is greater than this value.
+	TiDBAutoAnalyzeRatio = "tidb_auto_analyze_ratio"
+
 	// tidb_checksum_table_concurrency is used to speed up the ADMIN CHECKSUM TABLE
 	// statement, when a table has multiple indices, those indices can be
 	// scanned concurrently, with the cost of higher system performance impact.
@@ -95,6 +98,9 @@ const (
 
 	// tidb_general_log is used to log every query in the server in info level.
 	TiDBGeneralLog = "tidb_general_log"
+
+	// tidb_retry_limit is the maximun number of retries when committing a transaction.
+	TiDBRetryLimit = "tidb_retry_limit"
 
 	// tidb_enable_streaming enables TiDB to use streaming API for coprocessor requests.
 	TiDBEnableStreaming = "tidb_enable_streaming"
@@ -161,6 +167,7 @@ const (
 	DefIndexLookupSize               = 20000
 	DefDistSQLScanConcurrency        = 15
 	DefBuildStatsConcurrency         = 4
+	DefAutoAnalyzeRatio              = 0.0
 	DefChecksumTableConcurrency      = 4
 	DefSkipUTF8Check                 = false
 	DefOptAggPushDown                = false
@@ -179,6 +186,7 @@ const (
 	DefTiDBMemQuotaIndexLookupJoin   = 32 << 30 // 32GB.
 	DefTiDBMemQuotaNestedLoopApply   = 32 << 30 // 32GB.
 	DefTiDBGeneralLog                = 0
+	DefTiDBRetryLimit                = 10
 	DefTiDBHashJoinConcurrency       = 5
 	DefTiDBOptimizerSelectivityLevel = 0
 )
