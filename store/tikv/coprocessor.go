@@ -515,8 +515,6 @@ func (rs *copResultSubset) GetStartKey() kv.Key {
 // Next returns next coprocessor result.
 // NOTE: Use nil to indicate finish, so if the returned ResultSubset is not nil, reader should continue to call Next().
 func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
-	metrics.TiKVCoprocessorCounter.WithLabelValues("next").Inc()
-
 	var (
 		resp   copResponse
 		ok     bool
