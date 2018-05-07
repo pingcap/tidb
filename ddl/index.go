@@ -432,9 +432,9 @@ type addIndexWorker struct {
 }
 
 type reorgIndexTask struct {
-	startHandle  int64
-	endHandle    int64
-	endInclusive bool
+	startHandle int64
+	endHandle   int64
+	endIncluded bool
 }
 
 type addIndexResult struct {
@@ -513,7 +513,7 @@ func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgInde
 	handleOutOfRange := false
 	err := iterateSnapshotRows(w.sessCtx.GetStore(), w.table, txn.StartTS(), taskRange.startHandle,
 		func(handle int64, recordKey kv.Key, rawRow []byte) (bool, error) {
-			if !taskRange.endInclusive {
+			if !taskRange.endIncluded {
 				handleOutOfRange = handle >= taskRange.endHandle
 			} else {
 				handleOutOfRange = handle > taskRange.endHandle
@@ -784,11 +784,11 @@ func (d *ddl) backfillKVRangesIndex(t table.Table, workers []*addIndexWorker, kv
 			return errors.Trace(err)
 		}
 		endKey := t.RecordKey(endHandle)
-		endInclusive := false
+		endIncluded := false
 		if endKey.Cmp(keyRange.EndKey) < 0 {
-			endInclusive = true
+			endIncluded = true
 		}
-		task := &reorgIndexTask{startHandle, endHandle, endInclusive}
+		task := &reorgIndexTask{startHandle, endHandle, endIncluded}
 
 		batchTasks = append(batchTasks, task)
 		if len(batchTasks) >= len(workers) || i == (len(kvRanges)-1) {
