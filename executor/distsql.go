@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
@@ -209,6 +210,9 @@ type TableReaderExecutor struct {
 	resultHandler *tableResultHandler
 	streaming     bool
 	feedback      *statistics.QueryFeedback
+
+	haveCorCol bool
+	plans      []plan.PhysicalPlan
 }
 
 // Close implements the Executor Close interface.
@@ -232,6 +236,14 @@ func (e *TableReaderExecutor) Next(ctx context.Context, chk *chunk.Chunk) error 
 func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	span, ctx := startSpanFollowsContext(ctx, "executor.TableReader.Open")
 	defer span.Finish()
+
+	var err error
+	if e.haveCorCol {
+		e.dagPB.Executors, _, err = constructDistExec(e.ctx, e.plans)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 
 	e.resultHandler = &tableResultHandler{}
 	firstPartRanges, secondPartRanges := splitRanges(e.ranges, e.keepOrder)
@@ -344,6 +356,9 @@ type IndexReaderExecutor struct {
 	columns   []*model.ColumnInfo
 	streaming bool
 	feedback  *statistics.QueryFeedback
+
+	haveCorCol bool
+	plans      []plan.PhysicalPlan
 }
 
 // Close clears all resources hold by current object.
@@ -376,6 +391,14 @@ func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) error {
 	span, ctx := startSpanFollowsContext(ctx, "executor.IndexReader.Open")
 	defer span.Finish()
+
+	var err error
+	if e.haveCorCol {
+		e.dagPB.Executors, _, err = constructDistExec(e.ctx, e.plans)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetKeyRanges(kvRanges).
@@ -432,6 +455,11 @@ type IndexLookUpExecutor struct {
 
 	// isCheckOp is used to determine whether we need to check the consistency of the index data.
 	isCheckOp bool
+
+	corColInIdxSide bool
+	idxPlans        []plan.PhysicalPlan
+	corColInTblSide bool
+	tblPlans        []plan.PhysicalPlan
 }
 
 // Open implements the Executor Open interface.
@@ -462,10 +490,25 @@ func (e *IndexLookUpExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	e.finished = make(chan struct{})
 	e.resultCh = make(chan *lookupTableTask, atomic.LoadInt32(&LookupTableTaskChannelSize))
 
+	var err error
+	if e.corColInIdxSide {
+		e.dagPB.Executors, _, err = constructDistExec(e.ctx, e.idxPlans)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	if e.corColInTblSide {
+		e.tableRequest.Executors, _, err = constructDistExec(e.ctx, e.tblPlans)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	// indexWorker will write to workCh and tableWorker will read from workCh,
 	// so fetching index and getting table data can run concurrently.
 	workCh := make(chan *lookupTableTask, 1)
-	err := e.startIndexWorker(ctx, kvRanges, workCh)
+	err = e.startIndexWorker(ctx, kvRanges, workCh)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -554,6 +597,8 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []in
 		dagPB:        e.tableRequest,
 		streaming:    e.tableStreaming,
 		feedback:     statistics.NewQueryFeedback(0, nil, 0, false),
+		haveCorCol:   e.corColInTblSide,
+		plans:        e.tblPlans,
 	}, handles)
 	if err != nil {
 		log.Error(err)
