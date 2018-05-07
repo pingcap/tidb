@@ -153,8 +153,8 @@ func (job *Job) FinishDBJob(jobState JobState, schemaState SchemaState, ver int6
 	job.BinlogInfo.AddDBInfo(ver, dbInfo)
 }
 
-// tsConvert2Time converts timestamp to time.
-func tsConvert2Time(ts uint64) time.Time {
+// TSConvert2Time converts timestamp to time.
+func TSConvert2Time(ts uint64) time.Time {
 	t := int64(ts >> 18) // 18 is for the logical time.
 	return time.Unix(t/1e3, (t%1e3)*1e6)
 }
@@ -212,7 +212,7 @@ func (job *Job) DecodeArgs(args ...interface{}) error {
 func (job *Job) String() string {
 	rowCount := job.GetRowCount()
 	return fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v, Err:%v, ErrCount:%d, SnapshotVersion:%v",
-		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args), tsConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer)
+		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args), TSConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer)
 }
 
 func (job *Job) hasDependentSchema(other *Job) (bool, error) {

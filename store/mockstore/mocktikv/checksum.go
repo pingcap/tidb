@@ -17,7 +17,7 @@ import (
 	"fmt"
 
 	"github.com/pingcap/kvproto/pkg/coprocessor"
-	tipb "github.com/pingcap/tipb/go-tipb"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 func (h *rpcHandler) handleCopChecksumRequest(req *coprocessor.Request) *coprocessor.Response {

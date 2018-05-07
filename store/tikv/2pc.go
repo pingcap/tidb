@@ -551,6 +551,17 @@ func (c *twoPhaseCommitter) cleanupKeys(bo *Backoffer, keys [][]byte) error {
 // should be less than `gcRunInterval`.
 const maxTxnTimeUse = 590000
 
+func (c *twoPhaseCommitter) executeAndWriteFinishBinlog(ctx context.Context) error {
+	err := c.execute(ctx)
+	if err != nil {
+		c.writeFinishBinlog(binlog.BinlogType_Rollback, 0)
+	} else {
+		c.txn.commitTS = c.commitTS
+		c.writeFinishBinlog(binlog.BinlogType_Commit, int64(c.commitTS))
+	}
+	return errors.Trace(err)
+}
+
 // execute executes the two-phase commit protocol.
 func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 	defer func() {

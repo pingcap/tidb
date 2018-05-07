@@ -45,6 +45,7 @@ func (s *testCommitterSuite) SetUpTest(c *C) {
 	spkv := NewMockSafePointKV()
 	store, err := newTikvStore("mocktikv-store", pdCli, spkv, client, false)
 	c.Assert(err, IsNil)
+	store.EnableTxnLocalLatches(1024000)
 	s.store = store
 	CommitMaxBackoff = 2000
 }
