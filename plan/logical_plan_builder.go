@@ -177,18 +177,6 @@ func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) LogicalPlan {
 	}
 }
 
-func extractCorColumns(expr expression.Expression) (cols []*expression.CorrelatedColumn) {
-	switch v := expr.(type) {
-	case *expression.CorrelatedColumn:
-		return []*expression.CorrelatedColumn{v}
-	case *expression.ScalarFunction:
-		for _, arg := range v.GetArgs() {
-			cols = append(cols, extractCorColumns(arg)...)
-		}
-	}
-	return
-}
-
 func extractOnCondition(conditions []expression.Expression, left LogicalPlan, right LogicalPlan) (
 	eqCond []*expression.ScalarFunction, leftCond []expression.Expression, rightCond []expression.Expression,
 	otherCond []expression.Expression) {
@@ -1671,7 +1659,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	tableInfo := tbl.Meta()
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "")
 
-	availableIdxes, err := getAvailableIndices(tn.IndexHints, tableInfo)
+	possiblePaths, err := getPossibleAccessPaths(tn.IndexHints, tableInfo)
 	if err != nil {
 		b.err = errors.Trace(err)
 		return nil
@@ -1685,12 +1673,12 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	}
 
 	ds := DataSource{
-		DBName:           dbName,
-		tableInfo:        tableInfo,
-		statisticTable:   b.getStatsTable(tableInfo),
-		indexHints:       tn.IndexHints,
-		availableIndices: availableIdxes,
-		Columns:          make([]*model.ColumnInfo, 0, len(columns)),
+		DBName:              dbName,
+		tableInfo:           tableInfo,
+		statisticTable:      b.getStatsTable(tableInfo),
+		indexHints:          tn.IndexHints,
+		possibleAccessPaths: possiblePaths,
+		Columns:             make([]*model.ColumnInfo, 0, len(columns)),
 	}.init(b.ctx)
 
 	var handleCol *expression.Column
@@ -1949,7 +1937,6 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) Plan {
 
 	updt := Update{
 		OrderedList: orderedList,
-		IgnoreErr:   update.IgnoreErr,
 	}.init(b.ctx)
 	updt.SetSchema(p.Schema())
 	updt.SelectPlan, b.err = doOptimize(b.optFlag, p)

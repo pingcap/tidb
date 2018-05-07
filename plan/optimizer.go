@@ -145,7 +145,10 @@ func logicalOptimize(flag uint64, logic LogicalPlan) (LogicalPlan, error) {
 
 func physicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
 	logic.preparePossibleProperties()
-	logic.deriveStats()
+	_, err := logic.deriveStats()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	t, err := logic.findBestTask(&requiredProp{taskTp: rootTaskType, expectedCnt: math.MaxFloat64})
 	if err != nil {
 		return nil, errors.Trace(err)

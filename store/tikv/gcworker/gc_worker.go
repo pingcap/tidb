@@ -107,7 +107,7 @@ const (
 	gcDefaultLifeTime    = time.Minute * 10
 	gcSafePointKey       = "tikv_gc_safe_point"
 	gcConcurrencyKey     = "tikv_gc_concurrency"
-	gcDefaultConcurrency = 1
+	gcDefaultConcurrency = 2
 	gcMinConcurrency     = 1
 	gcMaxConcurrency     = 128
 	// We don't want gc to sweep out the cached info belong to other processes, like coprocessor.
@@ -124,7 +124,7 @@ var gcVariableComments = map[string]string{
 	gcRunIntervalKey: "GC run interval, at least 10m, in Go format.",
 	gcLifeTimeKey:    "All versions within life time will not be collected by GC, at least 10m, in Go format.",
 	gcSafePointKey:   "All versions after safe point can be accessed. (DO NOT EDIT)",
-	gcConcurrencyKey: "How many go routines used to do GC parallel, [1, 128], default 1",
+	gcConcurrencyKey: "How many go routines used to do GC parallel, [1, 128], default 2",
 }
 
 func (w *GCWorker) start(ctx context.Context, wg *sync.WaitGroup) {
@@ -181,6 +181,7 @@ func (w *GCWorker) tick(ctx context.Context) {
 	isLeader, err := w.checkLeader()
 	if err != nil {
 		log.Warnf("[gc worker] check leader err: %v", err)
+		gcJobFailureCounter.WithLabelValues("check_leader").Inc()
 		return
 	}
 	if isLeader {
@@ -220,6 +221,9 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 
 	ok, safePoint, err := w.prepare()
 	if err != nil || !ok {
+		if err != nil {
+			gcJobFailureCounter.WithLabelValues("prepare").Inc()
+		}
 		w.gcIsRunning = false
 		return errors.Trace(err)
 	}
@@ -351,61 +355,20 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64) error {
 	regions := 0
 	for _, r := range ranges {
 		startKey, rangeEndKey := r.Range()
-		for {
-			select {
-			case <-ctx.Done():
-				return errors.New("[gc worker] gc job canceled")
-			default:
-			}
 
-			loc, err := w.store.GetRegionCache().LocateKey(bo, startKey)
-			if err != nil {
-				return errors.Trace(err)
-			}
+		deleteRangeTask := tikv.NewDeleteRangeTask(ctx, w.store, bo, startKey, rangeEndKey)
+		err := deleteRangeTask.Execute()
 
-			endKey := loc.EndKey
-			if loc.Contains(rangeEndKey) {
-				endKey = rangeEndKey
-			}
-
-			req := &tikvrpc.Request{
-				Type: tikvrpc.CmdDeleteRange,
-				DeleteRange: &kvrpcpb.DeleteRangeRequest{
-					StartKey: startKey,
-					EndKey:   endKey,
-				},
-			}
-
-			resp, err := w.store.SendReq(bo, req, loc.Region, tikv.ReadTimeoutMedium)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			regionErr, err := resp.GetRegionError()
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if regionErr != nil {
-				err = bo.Backoff(tikv.BoRegionMiss, errors.New(regionErr.String()))
-				if err != nil {
-					return errors.Trace(err)
-				}
-				continue
-			}
-			deleteRangeResp := resp.DeleteRange
-			if deleteRangeResp == nil {
-				return errors.Trace(tikv.ErrBodyMissing)
-			}
-			if err := deleteRangeResp.GetError(); err != "" {
-				return errors.Errorf("unexpected delete range err: %v", err)
-			}
-			regions++
-			if bytes.Equal(endKey, rangeEndKey) {
-				break
-			}
-			startKey = endKey
+		if err != nil {
+			return errors.Trace(err)
 		}
+		if deleteRangeTask.IsCanceled() {
+			return errors.New("[gc worker] gc job canceled")
+		}
+
+		regions += deleteRangeTask.CompletedRegions()
 		se := createSession(w.store)
-		err := util.CompleteDeleteRange(se, r)
+		err = util.CompleteDeleteRange(se, r)
 		se.Close()
 		if err != nil {
 			return errors.Trace(err)
@@ -880,7 +843,7 @@ func (w *GCWorker) loadDurationWithDefault(key string, def time.Duration) (*time
 
 func (w *GCWorker) loadValueFromSysTable(key string, s session.Session) (string, error) {
 	ctx := context.Background()
-	stmt := fmt.Sprintf(`SELECT (variable_value) FROM mysql.tidb WHERE variable_name='%s' FOR UPDATE`, key)
+	stmt := fmt.Sprintf(`SELECT HIGH_PRIORITY (variable_value) FROM mysql.tidb WHERE variable_name='%s' FOR UPDATE`, key)
 	rs, err := s.Execute(ctx, stmt)
 	if len(rs) > 0 {
 		defer terror.Call(rs[0].Close)
