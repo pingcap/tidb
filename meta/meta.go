@@ -443,10 +443,11 @@ func (m *Meta) GetTable(dbID int64, tableID int64) (*model.TableInfo, error) {
 // to operate DDL jobs, and dispatch them to MR Jobs.
 
 var (
-	mDDLJobListKey    = []byte("DDLJobList")
-	mDDLJobAddIdxList = []byte("DDLJobAddIdxList")
-	mDDLJobHistoryKey = []byte("DDLJobHistory")
-	mDDLJobReorgKey   = []byte("DDLJobReorg")
+	mDDLJobListKey      = []byte("DDLJobList")
+	mDDLJobAddIdxList   = []byte("DDLJobAddIdxList")
+	mDDLJobHistoryKey   = []byte("DDLJobHistory")
+	mDDLJobReorgKey     = []byte("DDLJobReorg")
+	mDDLJobReorgMetaKey = []byte("DDLJobReorgMeta")
 )
 
 // JobListKeyType is a key type of the DDL job queue.
@@ -661,6 +662,37 @@ func (m *Meta) RemoveDDLReorgHandle(job *model.Job) error {
 func (m *Meta) GetDDLReorgHandle(job *model.Job) (int64, error) {
 	value, err := m.txn.HGetInt64(mDDLJobReorgKey, m.jobIDKey(job.ID))
 	return value, errors.Trace(err)
+}
+
+// UpdateDDLReorgMeta saves the job's reorg meta info.
+func (m *Meta) UpdateDDLReorgMeta(job *model.Job, reorgMeta *model.DDLReorgMeta) error {
+	val, err := reorgMeta.Encode()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = m.txn.HSet(mDDLJobReorgMetaKey, m.jobIDKey(job.ID), val)
+	return errors.Trace(err)
+}
+
+// RemoveDDLReorgMeta remove the job reorganization meta info.
+func (m *Meta) RemoveDDLReorgMeta(job *model.Job) error {
+	err := m.txn.HDel(mDDLJobReorgMetaKey, m.jobIDKey(job.ID))
+	return errors.Trace(err)
+}
+
+// GetDDLReorgMeta gets the meta info of job reorganization.
+func (m *Meta) GetDDLReorgMeta(job *model.Job) (*model.DDLReorgMeta, error) {
+	value, err := m.txn.HGet(mDDLJobReorgMetaKey, m.jobIDKey(job.ID))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	reorgMeta := model.NewDDLReorgMeta()
+	if value == nil {
+		return reorgMeta, nil
+	}
+	err = reorgMeta.Decode(value)
+	return reorgMeta, errors.Trace(err)
 }
 
 func (m *Meta) tableStatsKey(tableID int64) []byte {

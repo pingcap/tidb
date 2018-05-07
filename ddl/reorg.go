@@ -14,17 +14,26 @@
 package ddl
 
 import (
+	"math"
 	"sync/atomic"
 	"time"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tipb/go-tipb"
 	log "github.com/sirupsen/logrus"
+	"golang.org/x/net/context"
 )
 
 // reorgCtx is for reorganization.
@@ -167,18 +176,128 @@ func (d *ddl) isReorgRunnable() error {
 
 type reorgInfo struct {
 	*model.Job
-	Handle int64
-	d      *ddl
-	first  bool
+	Handle    int64
+	d         *ddl
+	first     bool
+	reorgMeta *model.DDLReorgMeta
+}
+
+func constructDescTableScanPB(tblInfo *model.TableInfo, pbColumnInfos []*tipb.ColumnInfo) *tipb.Executor {
+	tblScan := &tipb.TableScan{
+		TableId: tblInfo.ID,
+		Columns: pbColumnInfos,
+		Desc:    true,
+	}
+
+	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tblScan}
+}
+
+func constructLimitPB(count uint64) *tipb.Executor {
+	limitExec := &tipb.Limit{
+		Limit: count,
+	}
+	return &tipb.Executor{Tp: tipb.ExecType_TypeLimit, Limit: limitExec}
+}
+
+func buildDAG(startTS uint64, tblInfo *model.TableInfo, columns []*model.ColumnInfo, limit uint64) (*tipb.DAGRequest, error) {
+	dagReq := &tipb.DAGRequest{}
+	dagReq.StartTs = startTS
+	_, timeZoneOffset := time.Now().In(time.UTC).Zone()
+	dagReq.TimeZoneOffset = int64(timeZoneOffset)
+	for i := range columns {
+		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
+	}
+
+	pbColumnInfos := model.ColumnsToProto(columns, tblInfo.PKIsHandle)
+	tblScanExec := constructDescTableScanPB(tblInfo, pbColumnInfos)
+	dagReq.Executors = append(dagReq.Executors, tblScanExec)
+	dagReq.Executors = append(dagReq.Executors, constructLimitPB(limit))
+	return dagReq, nil
+}
+
+func getColumnsTypes(columns []*model.ColumnInfo) []*types.FieldType {
+	colTypes := make([]*types.FieldType, 0, len(columns))
+	for _, col := range columns {
+		colTypes = append(colTypes, &col.FieldType)
+	}
+	return colTypes
+}
+
+func (d *ddl) buildTableScan(ctx context.Context, startTS uint64, tblInfo *model.TableInfo, columns []*model.ColumnInfo) (distsql.SelectResult, error) {
+	dagPB, err := buildDAG(startTS, tblInfo, columns, 1)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	ranges := ranger.FullIntRange(false)
+	var builder distsql.RequestBuilder
+	builder.SetTableRanges(tblInfo.ID, ranges, nil).
+		SetDAGRequest(dagPB).
+		SetKeepOrder(true).
+		SetConcurrency(1)
+
+	builder.Request.NotFillCache = true
+	builder.Request.Priority = kv.PriorityLow
+	builder.Request.IsolationLevel = kv.SI
+
+	kvReq, err := builder.Build()
+	sctx := d.newContext()
+	result, err := distsql.Select(ctx, sctx, kvReq, getColumnsTypes(columns), statistics.NewQueryFeedback(0, nil, 0, false))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	result.Fetch(ctx)
+	return result, nil
+}
+
+// GetTableMaxRowID get the last row id of the table.
+func (d *ddl) GetTableMaxRowID(startTS uint64, tblInfo *model.TableInfo) (int64, error) {
+	var columns []*model.ColumnInfo
+	if tblInfo.PKIsHandle {
+		for _, col := range tblInfo.Columns {
+			if mysql.HasPriKeyFlag(col.Flag) {
+				columns = []*model.ColumnInfo{col}
+				break
+			}
+		}
+	} else {
+		columns = []*model.ColumnInfo{model.NewExtraHandleColInfo()}
+	}
+
+	if len(columns) == 0 {
+		return 0, errors.Errorf("columns should not be nil")
+	}
+
+	ctx := context.Background()
+	maxRowID := int64(math.MaxInt64)
+	src, err := d.buildTableScan(ctx, startTS, tblInfo, columns)
+	if err != nil {
+		return maxRowID, errors.Trace(err)
+	}
+	defer terror.Call(src.Close)
+
+	chk := chunk.NewChunk(getColumnsTypes(columns))
+	err = src.Next(ctx, chk)
+	if err != nil {
+		return maxRowID, errors.Trace(err)
+	}
+
+	if chk.NumRows() == 0 {
+		// empty table
+		return 0, nil
+	}
+	row := chk.GetRow(0)
+	maxRowID = row.GetInt64(0)
+	return maxRowID, nil
 }
 
 func (d *ddl) getReorgInfo(t *meta.Meta, job *model.Job) (*reorgInfo, error) {
 	var err error
 
 	info := &reorgInfo{
-		Job:   job,
-		d:     d,
-		first: job.SnapshotVer == 0,
+		Job:       job,
+		d:         d,
+		first:     job.SnapshotVer == 0,
+		reorgMeta: model.NewDDLReorgMeta(),
 	}
 
 	if info.first {
@@ -194,6 +313,11 @@ func (d *ddl) getReorgInfo(t *meta.Meta, job *model.Job) (*reorgInfo, error) {
 		job.SnapshotVer = ver.Ver
 	} else {
 		info.Handle, err = t.GetDDLReorgHandle(job)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		info.reorgMeta, err = t.GetDDLReorgMeta(job)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

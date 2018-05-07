@@ -16,6 +16,7 @@ package model
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -103,6 +104,31 @@ func (h *HistoryInfo) Clean() {
 	h.SchemaVersion = 0
 	h.DBInfo = nil
 	h.TableInfo = nil
+}
+
+// DDLReorgMeta is meta info of ddl reorganization.
+type DDLReorgMeta struct {
+	EndHandle int64 `json:"end_handle"`
+	Inited    bool  `json:"inited"`
+}
+
+// NewDDLReorgMeta new a DDLReorgMeta.
+func NewDDLReorgMeta() *DDLReorgMeta {
+	return &DDLReorgMeta{
+		EndHandle: math.MaxInt64,
+		Inited:    false,
+	}
+}
+
+// Encode encodes DDLReorgMeta to json format.
+func (m *DDLReorgMeta) Encode() ([]byte, error) {
+	b, err := json.Marshal(m)
+	return b, errors.Trace(err)
+}
+
+// Decode decodes json format to DDLReorgMeta.
+func (m *DDLReorgMeta) Decode(b []byte) error {
+	return errors.Trace(json.Unmarshal(b, m))
 }
 
 // Job is for a DDL operation.
