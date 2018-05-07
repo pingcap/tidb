@@ -73,7 +73,6 @@ type twoPhaseCommitter struct {
 	commitTS  uint64
 	mu        struct {
 		sync.RWMutex
-		writtenKeys     [][]byte
 		committed       bool
 		undeterminedErr error // undeterminedErr saves the rpc error we encounter when commit primary key.
 	}
@@ -261,6 +260,13 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 		return errors.Trace(e)
 	}
 
+	// For prewrite, stop sending other requests after receiving first error.
+	backoffer := bo
+	var cancel context.CancelFunc
+	if action == actionPrewrite {
+		backoffer, cancel = bo.Fork()
+	}
+
 	// Concurrently do the work for each batch.
 	ch := make(chan error, len(batches))
 	for _, batch1 := range batches {
@@ -275,10 +281,10 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 				// Here we makes a new clone of the original backoffer for this goroutine
 				// exclusively to avoid the data race when using the same backoffer
 				// in concurrent goroutines.
-				singleBatchBackoffer := bo.Clone()
+				singleBatchBackoffer := backoffer.Clone()
 				ch <- singleBatchActionFunc(singleBatchBackoffer, batch)
 			} else {
-				singleBatchBackoffer, singleBatchCancel := bo.Fork()
+				singleBatchBackoffer, singleBatchCancel := backoffer.Fork()
 				defer singleBatchCancel()
 				ch <- singleBatchActionFunc(singleBatchBackoffer, batch)
 			}
@@ -288,6 +294,11 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 	for i := 0; i < len(batches); i++ {
 		if e := <-ch; e != nil {
 			log.Debugf("[%d] 2PC doActionOnBatches %s failed: %v, tid: %d", c.connID, action, e, c.startTS)
+			// Cancel other requests and return the first error.
+			if cancel != nil {
+				log.Debugf("[%d] 2PC doActionOnBatches %s to cancel other actions, tid: %d", c.connID, action, c.startTS)
+				cancel()
+			}
 			if err == nil {
 				err = e
 			}
@@ -350,18 +361,6 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 		}
 		keyErrs := prewriteResp.GetErrors()
 		if len(keyErrs) == 0 {
-			// We need to cleanup all written keys if transaction aborts.
-			c.mu.Lock()
-			defer c.mu.Unlock()
-			// Primary key should always been in the front since in `cleanup` we
-			// would check whether the `writtenKeys`'s first key is primary key.
-			if bytes.Equal(batch.keys[0], c.primary()) {
-				tmpKeys := make([][]byte, 0, len(batch.keys)+len(c.mu.writtenKeys))
-				tmpKeys = append(tmpKeys, batch.keys...)
-				c.mu.writtenKeys = append(tmpKeys, c.mu.writtenKeys...)
-			} else {
-				c.mu.writtenKeys = append(c.mu.writtenKeys, batch.keys...)
-			}
 			return nil
 		}
 		var locks []*Lock
@@ -567,13 +566,12 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 	defer func() {
 		// Always clean up all written keys if the txn does not commit.
 		c.mu.RLock()
-		writtenKeys := c.mu.writtenKeys
 		committed := c.mu.committed
 		undetermined := c.mu.undeterminedErr != nil
 		c.mu.RUnlock()
 		if !committed && !undetermined {
 			twoPhaseCommitGP.Go(func() {
-				err := c.cleanupKeys(NewBackoffer(context.Background(), cleanupMaxBackoff).WithVars(c.txn.vars), writtenKeys)
+				err := c.cleanupKeys(NewBackoffer(context.Background(), cleanupMaxBackoff).WithVars(c.txn.vars), c.keys)
 				if err != nil {
 					metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("rollback").Inc()
 					log.Infof("[%d] 2PC cleanup err: %v, tid: %d", c.connID, err, c.startTS)
