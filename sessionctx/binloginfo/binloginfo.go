@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/juju/errors"
@@ -37,6 +38,7 @@ func init() {
 // shared by all sessions.
 var pumpClient binlog.PumpClient
 var pumpClientLock sync.RWMutex
+var errorStopped uint32
 
 // BinlogInfo contains binlog data and binlog client.
 type BinlogInfo struct {
@@ -59,6 +61,11 @@ func SetPumpClient(client binlog.PumpClient) {
 	pumpClientLock.Unlock()
 }
 
+// StopPumpClient stops binlog writting.
+func StopPumpClient() {
+	atomic.StoreUint32(&errorStopped, 1)
+}
+
 // GetPrewriteValue gets binlog prewrite value in the context.
 func GetPrewriteValue(ctx sessionctx.Context, createIfNotExists bool) *binlog.PrewriteValue {
 	vars := ctx.GetSessionVars()
@@ -73,6 +80,10 @@ func GetPrewriteValue(ctx sessionctx.Context, createIfNotExists bool) *binlog.Pr
 
 // WriteBinlog writes a binlog to Pump.
 func (info *BinlogInfo) WriteBinlog(clusterID uint64) error {
+	if atomic.LoadUint32(&errorStopped) != 0 {
+		return terror.ErrCritical.GenByArgs(errors.New("binilog already stopped"))
+	}
+
 	commitData, err := info.Data.Marshal()
 	if err != nil {
 		return errors.Trace(err)
