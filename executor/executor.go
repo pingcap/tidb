@@ -563,8 +563,11 @@ func (e *LimitExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 			if newCursor > e.end {
 				end = e.end - e.cursor
 			}
-			chk.Append(e.childrenResults[0], int(begin), int(end))
 			e.cursor += end
+			if begin == end {
+				break
+			}
+			chk.Append(e.childrenResults[0], int(begin), int(end))
 			return nil
 		}
 		e.cursor += batchSize
