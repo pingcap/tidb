@@ -111,6 +111,7 @@ var errClz2Str = map[ErrClass]string{
 	ClassMockTikv:      "mocktikv",
 	ClassJSON:          "json",
 	ClassTiKV:          "tikv",
+	ClassSession:       "session",
 }
 
 // String implements fmt.Stringer interface.
