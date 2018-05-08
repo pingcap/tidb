@@ -173,7 +173,7 @@ var CommitMaxBackoff = 41000
 
 // Backoffer is a utility for retrying queries.
 type Backoffer struct {
-	context.Context
+	ctx context.Context
 
 	fn         map[backoffType]func(context.Context) int
 	maxSleep   int
@@ -186,7 +186,7 @@ type Backoffer struct {
 // NewBackoffer creates a Backoffer with maximum sleep time(in ms).
 func NewBackoffer(ctx context.Context, maxSleep int) *Backoffer {
 	return &Backoffer{
-		Context:  ctx,
+		ctx:      ctx,
 		maxSleep: maxSleep,
 		vars:     kv.DefaultVars,
 	}
@@ -202,7 +202,7 @@ func (b *Backoffer) WithVars(vars *kv.Variables) *Backoffer {
 // It returns a retryable error if total sleep time exceeds maxSleep.
 func (b *Backoffer) Backoff(typ backoffType, err error) error {
 	select {
-	case <-b.Context.Done():
+	case <-b.ctx.Done():
 		return errors.Trace(err)
 	default:
 	}
@@ -218,7 +218,7 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 		b.fn[typ] = f
 	}
 
-	b.totalSleep += f(b)
+	b.totalSleep += f(b.ctx)
 	b.types = append(b.types, typ)
 
 	log.Debugf("%v, retry later(totalSleep %dms, maxSleep %dms)", err, b.totalSleep, b.maxSleep)
@@ -249,7 +249,7 @@ func (b *Backoffer) String() string {
 // current Backoffer's context.
 func (b *Backoffer) Clone() *Backoffer {
 	return &Backoffer{
-		Context:    b.Context,
+		ctx:        b.ctx,
 		maxSleep:   b.maxSleep,
 		totalSleep: b.totalSleep,
 		errors:     b.errors,
@@ -260,9 +260,9 @@ func (b *Backoffer) Clone() *Backoffer {
 // Fork creates a new Backoffer which keeps current Backoffer's sleep time and errors, and holds
 // a child context of current Backoffer's context.
 func (b *Backoffer) Fork() (*Backoffer, context.CancelFunc) {
-	ctx, cancel := context.WithCancel(b.Context)
+	ctx, cancel := context.WithCancel(b.ctx)
 	return &Backoffer{
-		Context:    ctx,
+		ctx:        ctx,
 		maxSleep:   b.maxSleep,
 		totalSleep: b.totalSleep,
 		errors:     b.errors,
