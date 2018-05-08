@@ -144,6 +144,43 @@ func (p *LogicalJoin) getMergeJoin(prop *requiredProp) []PhysicalPlan {
 	return joins
 }
 
+func (p *LogicalJoin) getEnforcedMergeJoin(prop *requiredProp) []PhysicalPlan {
+	// Check whether SMJ can satisfy the parents property
+	for _, col := range prop.cols {
+		log.Info(col)
+		isExist := false
+		for _, key := range p.LeftJoinKeys {
+			log.Info(key)
+			if key == col {
+				isExist = true;
+				break;
+			}
+		}
+		if !isExist && !prop.enforced {
+			return nil
+		}
+	}
+	// Generate the enforcing sort merge join
+	log.Info("hhh")
+	lProp := &requiredProp{taskTp: rootTaskType, cols: p.LeftJoinKeys, expectedCnt: math.MaxFloat64, enforced: true}
+	rProp := &requiredProp{taskTp: rootTaskType, cols: p.RightJoinKeys, expectedCnt: math.MaxFloat64, enforced: true}
+	enforcePhysicalMergeJoin := PhysicalMergeJoin{
+		JoinType:        p.JoinType,
+		LeftConditions:  p.LeftConditions,
+		RightConditions: p.RightConditions,
+		DefaultValues:   p.DefaultValues,
+		leftKeys:        p.LeftJoinKeys,
+		rightKeys:       p.RightJoinKeys,
+		EqualConditions: make([]*expression.ScalarFunction, len(p.EqualConditions)),
+		OtherConditions: make([]expression.Expression, len(p.OtherConditions)),
+	}.init(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt))
+	copy(enforcePhysicalMergeJoin.OtherConditions, p.OtherConditions)
+	copy(enforcePhysicalMergeJoin.EqualConditions, p.EqualConditions)
+	enforcePhysicalMergeJoin.SetSchema(p.schema)
+	enforcePhysicalMergeJoin.childrenReqProps = []*requiredProp{lProp, rProp}
+	return []PhysicalPlan {enforcePhysicalMergeJoin}
+}
+
 func (p *LogicalJoin) getHashJoins(prop *requiredProp) []PhysicalPlan {
 	if !prop.isEmpty() { // hash join doesn't promise any orders
 		return nil
@@ -417,29 +454,12 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *requiredProp) ([]PhysicalPlan, boo
 // If the hint is not figured, we will pick all candidates.
 func (p *LogicalJoin) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan {
 	mergeJoins := p.getMergeJoin(prop)
-	log.Info(len(mergeJoins))
 	if (p.preferJoinType&preferMergeJoin) > 0 {
 		// If there are some joinKeys in children property.
 		if len(mergeJoins) > 0 {
 			return mergeJoins
 		} else {
-			lProp := &requiredProp{taskTp: rootTaskType, cols: p.LeftJoinKeys, expectedCnt: math.MaxFloat64, enforced: true}
-			rProp := &requiredProp{taskTp: rootTaskType, cols: p.RightJoinKeys, expectedCnt: math.MaxFloat64, enforced: true}
-			enforcePhysicalMergeJoin := PhysicalMergeJoin{
-				JoinType:        p.JoinType,
-				LeftConditions:  p.LeftConditions,
-				RightConditions: p.RightConditions,
-				DefaultValues:   p.DefaultValues,
-				leftKeys:        p.LeftJoinKeys,
-				rightKeys:       p.RightJoinKeys,
-				EqualConditions: make([]*expression.ScalarFunction, len(p.EqualConditions)),
-				OtherConditions: make([]expression.Expression, len(p.OtherConditions)),
-			}.init(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt))
-			copy(enforcePhysicalMergeJoin.OtherConditions, p.OtherConditions)
-			copy(enforcePhysicalMergeJoin.EqualConditions, p.EqualConditions)
-			enforcePhysicalMergeJoin.SetSchema(p.schema)
-			enforcePhysicalMergeJoin.childrenReqProps = []*requiredProp{lProp, rProp}
-			return []PhysicalPlan {enforcePhysicalMergeJoin}
+			return p.getEnforcedMergeJoin(prop);
 		}
 	}
 	joins := make([]PhysicalPlan, 0, 5)
