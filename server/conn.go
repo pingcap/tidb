@@ -50,6 +50,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/opentracing/opentracing-go"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -472,11 +473,15 @@ func (cc *clientConn) Run() {
 				log.Errorf("[%d] critical error, stop the server listener %s",
 					cc.connectionID, errors.ErrorStack(err))
 				metrics.CriticalErrorCounter.Add(1)
-				select {
-				case cc.server.stopListenerCh <- struct{}{}:
-				default:
+
+				cfg := config.GetGlobalConfig()
+				if !cfg.Binlog.IgnoreError {
+					select {
+					case cc.server.stopListenerCh <- struct{}{}:
+					default:
+					}
+					return
 				}
-				return
 			}
 			log.Warnf("[%d] dispatch error:\n%s\n%q\n%s",
 				cc.connectionID, cc, queryStrForLog(string(data[1:])), errStrForLog(err))
