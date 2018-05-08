@@ -718,6 +718,7 @@ const (
 	AlterTableLock
 	AlterTableAlgorithm
 	AlterTableRenameIndex
+	AlterTableForce
 
 // TODO: Add more actions
 )
