@@ -99,15 +99,21 @@ func (a *connArray) Init(addr string, security config.Security) error {
 		opt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))
 	}
 
-	for i := range a.v {
-		unaryInterceptor := grpc_middleware.ChainUnaryClient(
-			grpc_prometheus.UnaryClientInterceptor,
+	unaryInterceptor := grpc_prometheus.UnaryClientInterceptor
+	streamInterceptor := grpc_prometheus.StreamClientInterceptor
+	cfg := config.GetGlobalConfig()
+	if cfg.OpenTracing.Enable {
+		unaryInterceptor = grpc_middleware.ChainUnaryClient(
+			unaryInterceptor,
 			grpc_opentracing.UnaryClientInterceptor(),
 		)
-		streamInterceptor := grpc_middleware.ChainStreamClient(
-			grpc_prometheus.StreamClientInterceptor,
+		streamInterceptor = grpc_middleware.ChainStreamClient(
+			streamInterceptor,
 			grpc_opentracing.StreamClientInterceptor(),
 		)
+	}
+
+	for i := range a.v {
 
 		ctx, cancel := context.WithTimeout(context.Background(), dialTimeout)
 		conn, err := grpc.DialContext(
