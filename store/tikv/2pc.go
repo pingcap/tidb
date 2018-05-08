@@ -73,13 +73,13 @@ type twoPhaseCommitter struct {
 	commitTS  uint64
 	mu        struct {
 		sync.RWMutex
-		writtenKeys     [][]byte
 		committed       bool
 		undeterminedErr error // undeterminedErr saves the rpc error we encounter when commit primary key.
 	}
 	priority pb.CommandPri
 	syncLog  bool
 	connID   uint64 // connID is used for log.
+	cleanWg  sync.WaitGroup
 }
 
 // newTwoPhaseCommitter creates a twoPhaseCommitter.
@@ -362,18 +362,6 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 		}
 		keyErrs := prewriteResp.GetErrors()
 		if len(keyErrs) == 0 {
-			// We need to cleanup all written keys if transaction aborts.
-			c.mu.Lock()
-			defer c.mu.Unlock()
-			// Primary key should always been in the front since in `cleanup` we
-			// would check whether the `writtenKeys`'s first key is primary key.
-			if bytes.Equal(batch.keys[0], c.primary()) {
-				tmpKeys := make([][]byte, 0, len(batch.keys)+len(c.mu.writtenKeys))
-				tmpKeys = append(tmpKeys, batch.keys...)
-				c.mu.writtenKeys = append(tmpKeys, c.mu.writtenKeys...)
-			} else {
-				c.mu.writtenKeys = append(c.mu.writtenKeys, batch.keys...)
-			}
 			return nil
 		}
 		var locks []*Lock
@@ -568,19 +556,20 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 	defer func() {
 		// Always clean up all written keys if the txn does not commit.
 		c.mu.RLock()
-		writtenKeys := c.mu.writtenKeys
 		committed := c.mu.committed
 		undetermined := c.mu.undeterminedErr != nil
 		c.mu.RUnlock()
 		if !committed && !undetermined {
+			c.cleanWg.Add(1)
 			twoPhaseCommitGP.Go(func() {
-				err := c.cleanupKeys(NewBackoffer(context.Background(), cleanupMaxBackoff), writtenKeys)
+				err := c.cleanupKeys(NewBackoffer(context.Background(), cleanupMaxBackoff), c.keys)
 				if err != nil {
 					metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("rollback").Inc()
 					log.Infof("[%d] 2PC cleanup err: %v, tid: %d", c.connID, err, c.startTS)
 				} else {
 					log.Infof("[%d] 2PC clean up done, tid: %d", c.connID, c.startTS)
 				}
+				c.cleanWg.Done()
 			})
 		}
 	}()
