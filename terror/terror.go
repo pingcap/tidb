@@ -83,6 +83,7 @@ const (
 	ClassMockTikv
 	ClassJSON
 	ClassTiKV
+	ClassSession
 	// Add more as needed.
 )
 
