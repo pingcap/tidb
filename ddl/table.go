@@ -373,6 +373,12 @@ func (d *ddl) onRenameIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	if idx == nil {
 		return ver, errors.Trace(infoschema.ErrKeyNotExists.GenByArgs(from, tblInfo.Name))
 	}
+	if from.O == to.O {
+		return ver, nil
+	}
+	if i := findIndexByName(to.L, tblInfo.Indices); i != nil && from.L != to.L {
+		return ver, errors.Trace(infoschema.ErrKeyNameDuplicate.GenByArgs(to.O))
+	}
 	idx.Name = to
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {

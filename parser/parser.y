@@ -1039,7 +1039,7 @@ AlterTableSpec:
 |	"RENAME" KeyOrIndex Identifier "TO" Identifier
 	{
 		$$ = &ast.AlterTableSpec{
-			Tp:    		ast.AlterTableRenameIndex,
+			Tp:    	    ast.AlterTableRenameIndex,
 			FromKey:    model.NewCIStr($3),
 			ToKey:      model.NewCIStr($5),
 		}

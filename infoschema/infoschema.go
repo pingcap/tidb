@@ -53,7 +53,7 @@ var (
 	// ErrKeyNameDuplicate returns for index duplicate when rename index.
 	ErrKeyNameDuplicate = terror.ClassSchema.New(codeKeyNameDuplicate, "Duplicate key name '%s'")
 	// ErrKeyNotExists returns for index not exists.
-	ErrKeyNotExists = terror.ClassSchema.New(codeKeyNotExists, " Key '%s' doesn't exist in table '%s'")
+	ErrKeyNotExists = terror.ClassSchema.New(codeKeyNotExists, "Key '%s' doesn't exist in table '%s'")
 	// ErrMultiplePriKey returns for multiple primary keys.
 	ErrMultiplePriKey = terror.ClassSchema.New(codeMultiplePriKey, "Multiple primary key defined")
 	// ErrTooManyKeyParts returns for too many key parts.
