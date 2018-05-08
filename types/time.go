@@ -379,7 +379,7 @@ func (t Time) RoundFrac(sc *stmtctx.StatementContext, fsp int) (Time, error) {
 
 // GetFsp gets the fsp of a string.
 func GetFsp(s string) (fsp int) {
-	fsp = len(s) - strings.Index(s, ".") - 1
+	fsp = len(s) - strings.LastIndex(s, ".") - 1
 	if fsp == len(s) {
 		fsp = 0
 	} else if fsp > 6 {
@@ -1003,7 +1003,12 @@ func ParseDuration(str string, fsp int) (Duration, error) {
 				if err1 != nil {
 					return ZeroDuration, ErrTruncatedWrongVal.GenByArgs("time", origStr)
 				}
-				return t.ConvertToDuration()
+				var dur Duration
+				dur, err1 = t.ConvertToDuration()
+				if err1 != nil {
+					return ZeroDuration, errors.Trace(err)
+				}
+				return dur.RoundFrac(fsp)
 			}
 		}
 	case 2:
