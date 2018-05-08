@@ -14,6 +14,7 @@
 package plan
 
 import (
+	"reflect"
 	"math"
 
 	"github.com/juju/errors"
@@ -25,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
-	log "github.com/sirupsen/logrus"
 )
 
 func (p *LogicalUnionScan) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan {
@@ -147,21 +147,24 @@ func (p *LogicalJoin) getMergeJoin(prop *requiredProp) []PhysicalPlan {
 func (p *LogicalJoin) getEnforcedMergeJoin(prop *requiredProp) []PhysicalPlan {
 	// Check whether SMJ can satisfy the parents property
 	for _, col := range prop.cols {
-		log.Info(col)
 		isExist := false
 		for _, key := range p.LeftJoinKeys {
-			log.Info(key)
-			if key == col {
+			if reflect.DeepEqual(*key, *col) {
 				isExist = true;
 				break;
 			}
 		}
-		if !isExist && !prop.enforced {
+		for _, key := range p.RightJoinKeys {
+			if reflect.DeepEqual(*key, *col) {
+				isExist = true;
+				break;
+			}
+		}
+		if !isExist && (prop == nil || !prop.enforced) {
 			return nil
 		}
 	}
 	// Generate the enforcing sort merge join
-	log.Info("hhh")
 	lProp := &requiredProp{taskTp: rootTaskType, cols: p.LeftJoinKeys, expectedCnt: math.MaxFloat64, enforced: true}
 	rProp := &requiredProp{taskTp: rootTaskType, cols: p.RightJoinKeys, expectedCnt: math.MaxFloat64, enforced: true}
 	enforcePhysicalMergeJoin := PhysicalMergeJoin{
@@ -619,7 +622,7 @@ func (la *LogicalAggregation) getStreamAggs(prop *requiredProp) []PhysicalPlan {
 }
 
 func (la *LogicalAggregation) getHashAggs(prop *requiredProp) []PhysicalPlan {
-	if !prop.isEmpty() {
+	if !prop.isEmpty() && !prop.enforced {
 		return nil
 	}
 	hashAggs := make([]PhysicalPlan, 0, len(wholeTaskTypes))
@@ -652,7 +655,7 @@ func (p *LogicalSelection) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPl
 }
 
 func (p *LogicalLimit) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan {
-	if !prop.isEmpty() {
+	if !prop.isEmpty() && !prop.enforced {
 		return nil
 	}
 	ret := make([]PhysicalPlan, 0, len(wholeTaskTypes))
@@ -676,7 +679,7 @@ func (p *LogicalLock) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan {
 
 func (p *LogicalUnionAll) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan {
 	// TODO: UnionAll can not pass any order, but we can change it to sort merge to keep order.
-	if !prop.isEmpty() {
+	if !prop.isEmpty() && !prop.enforced {
 		return nil
 	}
 	chReqProps := make([]*requiredProp, 0, len(p.children))
@@ -717,7 +720,7 @@ func (ls *LogicalSort) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan {
 }
 
 func (p *LogicalExists) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan {
-	if !prop.isEmpty() {
+	if !prop.isEmpty() && !prop.enforced {
 		return nil
 	}
 	exists := PhysicalExists{}.init(p.ctx, p.stats, &requiredProp{expectedCnt: 1})
@@ -726,7 +729,7 @@ func (p *LogicalExists) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan 
 }
 
 func (p *LogicalMaxOneRow) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan {
-	if !prop.isEmpty() {
+	if !prop.isEmpty() && !prop.enforced {
 		return nil
 	}
 	mor := PhysicalMaxOneRow{}.init(p.ctx, p.stats, &requiredProp{expectedCnt: 2})

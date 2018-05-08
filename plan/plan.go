@@ -135,19 +135,19 @@ func (p *requiredProp) hashCode() []byte {
 	hashcodeSize := 8 + 8 + 8 + 16*len(p.cols) + 8
 	p.hashcode = make([]byte, 0, hashcodeSize)
 	if p.desc {
-		p.hashcode = codec.EncodeInt(p.hashcode, 1)
+		p.hashcode = codec.EncodeInt(p.hashcode, int64(1))
 	} else {
-		p.hashcode = codec.EncodeInt(p.hashcode, 0)
+		p.hashcode = codec.EncodeInt(p.hashcode, int64(0))
+	}
+	if p.enforced {
+		p.hashcode = codec.EncodeInt(p.hashcode, int64(1))
+	} else {
+		p.hashcode = codec.EncodeInt(p.hashcode, int64(0))
 	}
 	p.hashcode = codec.EncodeInt(p.hashcode, int64(p.taskTp))
 	p.hashcode = codec.EncodeFloat(p.hashcode, p.expectedCnt)
 	for i, length := 0, len(p.cols); i < length; i++ {
 		p.hashcode = append(p.hashcode, p.cols[i].HashCode(nil)...)
-	}
-	if p.enforced {
-		p.hashcode = codec.EncodeInt(p.hashcode, 1)
-	} else {
-		p.hashcode = codec.EncodeInt(p.hashcode, 0)
 	}
 	return p.hashcode
 }

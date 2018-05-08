@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
-	// log "github.com/sirupsen/logrus"
 )
 
 const (
@@ -67,7 +66,7 @@ func getPropByOrderByItems(items []*ByItems) (*requiredProp, bool) {
 }
 
 func (p *LogicalTableDual) findBestTask(prop *requiredProp) (task, error) {
-	if !prop.isEmpty() {
+	if !prop.isEmpty() && !prop.enforced {
 		return invalidTask, nil
 	}
 	dual := PhysicalTableDual{RowCount: p.RowCount}.init(p.ctx, p.stats)
@@ -106,6 +105,7 @@ func (p *baseLogicalPlan) findBestTask(prop *requiredProp) (bestTask task, err e
 		// combine best child tasks with parent physical plan.
 		curTask := pp.attach2Task(childTasks...)
 
+		// enforce curTask property
 		if prop.enforced {
 			curTask = prop.enforceProperty(curTask, p.basePlan.ctx);
 		}
@@ -180,7 +180,6 @@ func (ds *DataSource) findBestTask(prop *requiredProp) (task, error) {
 	if prop == nil {
 		return nil, nil
 	}
-
 	oldPropCols := prop.cols
 	if prop.enforced {
 		prop.cols = []*expression.Column{}
