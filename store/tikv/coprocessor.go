@@ -82,8 +82,6 @@ func (c *CopClient) supportExpr(exprType tipb.ExprType) bool {
 
 // Send builds the request and gets the coprocessor iterator response.
 func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variables) kv.Response {
-	metrics.TiKVCoprocessorCounter.WithLabelValues("send").Inc()
-
 	bo := NewBackoffer(ctx, copBuildTaskMaxBackoff).WithVars(vars)
 	tasks, err := buildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req.Desc, req.Streaming)
 	if err != nil {
@@ -237,8 +235,6 @@ func (r *copRanges) split(key []byte) (*copRanges, *copRanges) {
 }
 
 func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bool, streaming bool) ([]*copTask, error) {
-	metrics.TiKVCoprocessorCounter.WithLabelValues("build_task").Inc()
-
 	start := time.Now()
 	rangesLen := ranges.len()
 	cmdType := tikvrpc.CmdCop
@@ -517,8 +513,6 @@ func (rs *copResultSubset) GetStartKey() kv.Key {
 // Next returns next coprocessor result.
 // NOTE: Use nil to indicate finish, so if the returned ResultSubset is not nil, reader should continue to call Next().
 func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
-	metrics.TiKVCoprocessorCounter.WithLabelValues("next").Inc()
-
 	var (
 		resp   copResponse
 		ok     bool
@@ -621,7 +615,6 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	if costTime > minLogCopTaskTime {
 		worker.logTimeCopTask(costTime, task, bo, resp)
 	}
-	metrics.TiKVCoprocessorCounter.WithLabelValues("handle_task").Inc()
 	metrics.TiKVCoprocessorHistogram.Observe(costTime.Seconds())
 
 	if task.cmdType == tikvrpc.CmdCopStream {
@@ -720,7 +713,6 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, resp *coproces
 			return nil, errors.Trace(err)
 		}
 		// We may meet RegionError at the first packet, but not during visiting the stream.
-		metrics.TiKVCoprocessorCounter.WithLabelValues("rebuild_task").Inc()
 		return buildCopTasks(bo, worker.store.regionCache, task.ranges, worker.req.Desc, worker.req.Streaming)
 	}
 	if lockErr := resp.GetLocked(); lockErr != nil {
