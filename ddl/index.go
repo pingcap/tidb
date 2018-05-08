@@ -434,6 +434,8 @@ type addIndexWorker struct {
 type reorgIndexTask struct {
 	startHandle int64
 	endHandle   int64
+	// When the last handle is math.MaxInt64, set endIncluded to true to
+	// tell worker backfilling index of endHandle.
 	endIncluded bool
 }
 
