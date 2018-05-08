@@ -14,6 +14,7 @@
 package plan
 
 import (
+	"math"
 	"fmt"
 
 	"github.com/juju/errors"
@@ -77,6 +78,22 @@ type requiredProp struct {
 	expectedCnt float64
 	// hashcode stores the hash code of a requiredProp, will be lazily calculated when function "hashCode()" being called.
 	hashcode []byte
+	// whether need to enforce property.
+	enforced bool
+}
+
+func (p *requiredProp) enforceProperty(tsk task, ctx sessionctx.Context) task {
+	if p.isEmpty() || tsk.plan() == nil {
+		return tsk
+	}
+	tsk = finishCopTask(ctx, tsk);
+	sortReqProp := &requiredProp{taskTp: rootTaskType, cols: p.cols, expectedCnt: math.MaxFloat64}
+	sort := PhysicalSort{ByItems: make([]*ByItems, 0, len(p.cols))}.init(ctx, tsk.plan().StatsInfo(), sortReqProp)
+	sort.SetSchema(tsk.plan().Schema())
+	for _, col := range p.cols {
+		sort.ByItems = append(sort.ByItems, &ByItems{col, p.desc})
+	}
+	return sort.attach2Task(tsk)
 }
 
 func (p *requiredProp) allColsFromSchema(schema *expression.Schema) bool {
@@ -115,7 +132,7 @@ func (p *requiredProp) hashCode() []byte {
 	if p.hashcode != nil {
 		return p.hashcode
 	}
-	hashcodeSize := 8 + 8 + 8 + 16*len(p.cols)
+	hashcodeSize := 8 + 8 + 8 + 16*len(p.cols) + 8
 	p.hashcode = make([]byte, 0, hashcodeSize)
 	if p.desc {
 		p.hashcode = codec.EncodeInt(p.hashcode, 1)
@@ -126,6 +143,11 @@ func (p *requiredProp) hashCode() []byte {
 	p.hashcode = codec.EncodeFloat(p.hashcode, p.expectedCnt)
 	for i, length := 0, len(p.cols); i < length; i++ {
 		p.hashcode = append(p.hashcode, p.cols[i].HashCode(nil)...)
+	}
+	if p.enforced {
+		p.hashcode = codec.EncodeInt(p.hashcode, 1)
+	} else {
+		p.hashcode = codec.EncodeInt(p.hashcode, 0)
 	}
 	return p.hashcode
 }

@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
+	// log "github.com/sirupsen/logrus"
 )
 
 const (
@@ -105,6 +106,10 @@ func (p *baseLogicalPlan) findBestTask(prop *requiredProp) (bestTask task, err e
 		// combine best child tasks with parent physical plan.
 		curTask := pp.attach2Task(childTasks...)
 
+		if prop.enforced {
+			curTask = prop.enforceProperty(curTask, p.basePlan.ctx);
+		}
+
 		// get the most efficient one.
 		if curTask.cost() < bestTask.cost() {
 			bestTask = curTask
@@ -171,8 +176,14 @@ func (ds *DataSource) findBestTask(prop *requiredProp) (task, error) {
 	// So here we do nothing.
 	// TODO: Add a special prop to handle IndexJoin's inner plan.
 	// Then we can remove forceToTableScan and forceToIndexScan.
+
 	if prop == nil {
 		return nil, nil
+	}
+
+	oldPropCols := prop.cols
+	if prop.enforced {
+		prop.cols = []*expression.Column{}
 	}
 
 	t := ds.getTask(prop)
@@ -184,7 +195,13 @@ func (ds *DataSource) findBestTask(prop *requiredProp) (task, error) {
 		return nil, errors.Trace(err)
 	}
 	if t != nil {
-		ds.storeTask(prop, t)
+		if prop.enforced {
+			prop.cols = oldPropCols
+			t = prop.enforceProperty(t, ds.basePlan.ctx)
+			ds.storeTask(prop, t)
+		} else {
+			ds.storeTask(prop, t)
+		}
 		return t, nil
 	}
 	t, err = ds.tryToGetMemTask(prop)
@@ -192,10 +209,15 @@ func (ds *DataSource) findBestTask(prop *requiredProp) (task, error) {
 		return nil, errors.Trace(err)
 	}
 	if t != nil {
-		ds.storeTask(prop, t)
+		if prop.enforced {
+			prop.cols = oldPropCols
+			t = prop.enforceProperty(t, ds.basePlan.ctx)
+			ds.storeTask(prop, t)
+		} else {
+			ds.storeTask(prop, t)
+		}
 		return t, nil
 	}
-
 	t = invalidTask
 
 	for _, path := range ds.possibleAccessPaths {
@@ -223,8 +245,13 @@ func (ds *DataSource) findBestTask(prop *requiredProp) (task, error) {
 			}
 		}
 	}
-
-	ds.storeTask(prop, t)
+	if prop.enforced {
+		prop.cols = oldPropCols
+		t = prop.enforceProperty(t, ds.basePlan.ctx)
+		ds.storeTask(prop, t)
+	} else {
+		ds.storeTask(prop, t)
+	}
 	return t, nil
 }
 

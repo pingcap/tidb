@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
+	log "github.com/sirupsen/logrus"
 )
 
 func (p *LogicalUnionScan) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan {
@@ -416,8 +417,30 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *requiredProp) ([]PhysicalPlan, boo
 // If the hint is not figured, we will pick all candidates.
 func (p *LogicalJoin) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan {
 	mergeJoins := p.getMergeJoin(prop)
-	if (p.preferJoinType&preferMergeJoin) > 0 && len(mergeJoins) > 0 {
-		return mergeJoins
+	log.Info(len(mergeJoins))
+	if (p.preferJoinType&preferMergeJoin) > 0 {
+		// If there are some joinKeys in children property.
+		if len(mergeJoins) > 0 {
+			return mergeJoins
+		} else {
+			lProp := &requiredProp{taskTp: rootTaskType, cols: p.LeftJoinKeys, expectedCnt: math.MaxFloat64, enforced: true}
+			rProp := &requiredProp{taskTp: rootTaskType, cols: p.RightJoinKeys, expectedCnt: math.MaxFloat64, enforced: true}
+			enforcePhysicalMergeJoin := PhysicalMergeJoin{
+				JoinType:        p.JoinType,
+				LeftConditions:  p.LeftConditions,
+				RightConditions: p.RightConditions,
+				DefaultValues:   p.DefaultValues,
+				leftKeys:        p.LeftJoinKeys,
+				rightKeys:       p.RightJoinKeys,
+				EqualConditions: make([]*expression.ScalarFunction, len(p.EqualConditions)),
+				OtherConditions: make([]expression.Expression, len(p.OtherConditions)),
+			}.init(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt))
+			copy(enforcePhysicalMergeJoin.OtherConditions, p.OtherConditions)
+			copy(enforcePhysicalMergeJoin.EqualConditions, p.EqualConditions)
+			enforcePhysicalMergeJoin.SetSchema(p.schema)
+			enforcePhysicalMergeJoin.childrenReqProps = []*requiredProp{lProp, rProp}
+			return []PhysicalPlan {enforcePhysicalMergeJoin}
+		}
 	}
 	joins := make([]PhysicalPlan, 0, 5)
 	joins = append(joins, mergeJoins...)
@@ -646,6 +669,7 @@ func (p *LogicalUnionAll) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPla
 
 func (ls *LogicalSort) getPhysicalSort(prop *requiredProp) *PhysicalSort {
 	ps := PhysicalSort{ByItems: ls.ByItems}.init(ls.ctx, ls.stats.scaleByExpectCnt(prop.expectedCnt), &requiredProp{expectedCnt: math.MaxFloat64})
+	ps.SetSchema(ls.Schema())
 	return ps
 }
 
