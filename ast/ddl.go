@@ -717,6 +717,7 @@ const (
 	AlterTableAlterColumn
 	AlterTableLock
 	AlterTableAlgorithm
+	AlterTableForce
 
 // TODO: Add more actions
 )
