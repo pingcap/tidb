@@ -2718,3 +2718,48 @@ func (s *testSuite) TestIncorrectLimitArg(c *C) {
 	_, err = tk.Se.Execute(context.TODO(), `execute stmt2 using @b, @a;`)
 	c.Assert(err.Error(), Equals, `[planner:1210]Incorrect arguments to LIMIT`)
 }
+
+func (s *testSuite) TestLimit(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a bigint, b bigint);`)
+	tk.MustExec(`insert into t values(1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6);`)
+	tk.MustQuery(`select * from t order by a limit 1, 1;`).Check(testkit.Rows(
+		"2 2",
+	))
+	tk.MustQuery(`select * from t order by a limit 1, 2;`).Check(testkit.Rows(
+		"2 2",
+		"3 3",
+	))
+	tk.MustQuery(`select * from t order by a limit 1, 3;`).Check(testkit.Rows(
+		"2 2",
+		"3 3",
+		"4 4",
+	))
+	tk.MustQuery(`select * from t order by a limit 1, 4;`).Check(testkit.Rows(
+		"2 2",
+		"3 3",
+		"4 4",
+		"5 5",
+	))
+	tk.MustExec(`set @@tidb_max_chunk_size=2;`)
+	tk.MustQuery(`select * from t order by a limit 2, 1;`).Check(testkit.Rows(
+		"3 3",
+	))
+	tk.MustQuery(`select * from t order by a limit 2, 2;`).Check(testkit.Rows(
+		"3 3",
+		"4 4",
+	))
+	tk.MustQuery(`select * from t order by a limit 2, 3;`).Check(testkit.Rows(
+		"3 3",
+		"4 4",
+		"5 5",
+	))
+	tk.MustQuery(`select * from t order by a limit 2, 4;`).Check(testkit.Rows(
+		"3 3",
+		"4 4",
+		"5 5",
+		"6 6",
+	))
+}
