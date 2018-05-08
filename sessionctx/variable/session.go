@@ -570,7 +570,7 @@ type Concurrency struct {
 	// HashJoinConcurrency is the number of concurrent hash join outer worker.
 	HashJoinConcurrency int
 
-	// ProjectionConcurrency is the number of concurrent hash join outer worker.
+	// ProjectionConcurrency is the number of concurrent projection worker.
 	ProjectionConcurrency int64
 
 	// IndexSerialScanConcurrency is the number of concurrent index serial scan worker.

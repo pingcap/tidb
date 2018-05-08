@@ -22,18 +22,15 @@ import (
 )
 
 // This file contains the implementation of the physical Projection Operator:
-//
 // https://en.wikipedia.org/wiki/Projection_(relational_algebra)
 //
-// For parallel implementation, a "projectionInputFetcher" fetches input Chunks
-// and dispatches them to many "projectionWorker"s, every "projectionWorker"
-// picks an input Chunk and do the projection operation then output the result
-// Chunk to the main thread: "ProjectionExec.Next()" function.
 // NOTE:
-// 1. number of "projectionWorker"s is controlled by the global session
+// 1. The number of "projectionWorker" is controlled by the global session
 //    variable "tidb_projection_concurrency".
-// 2. if "tidb_projection_concurrency" is 0, we use the old non-parallel
-//    implementation.
+// 2. Non-parallel version is used once:
+//    a. "tidb_projection_concurrency" is set to 0.
+//    b. The estimated input size is smaller than "tidb_max_chunk_size".
+//    c. This projection can not be executed vectorially.
 
 type projectionInput struct {
 	chk          *chunk.Chunk
@@ -79,6 +76,57 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 }
 
 // Next implements the Executor Next interface.
+//
+// Here we explain the execution flow of the parallel projection implementation.
+// There are 3 main components:
+//   1. "projectionInputFetcher": Fetch input "Chunk" from child
+//   2. "projectionWorker"        Do the projection work.
+//   3. "ProjectionExec.Next":    Return result to parent.
+//
+// 1. "projectionInputFetcher" gets its input and output resources from its
+// "inputCh" and "outputCh" channel, once the input and output resources is
+// abtained, it fetches child's result into "input.chk" and:
+//   a. Dispatches this input to the worker specified in "input.targetWorker"
+//   b. Dispatches this output to the main thread: "ProjectionExec.Next"
+//   c. Dispatches this output to the worker specified in "input.targetWorker"
+//
+// 2. "projectionWorker" gets its input and output resources from its
+// "inputCh" and "outputCh" channel, once the input and output resources is
+// abtained, it calculate the projection result use "input.chk" as the input
+// and "output.chk" as output, once the calculatation is done, it:
+//   a. Sending "nil" or error to "output.done" to mark this input is finished.
+//   b. Returns the "input" resource to "projectionInputFetcher.inputCh"
+//
+// 3. "ProjectionExec.Next" gets its output resources from its "outputCh" channel.
+// After receiving an output from "outputCh", it should wait to receive a "nil"
+// or error from "output.done" channel. Once a "nil" or error is received:
+//   a. Returns this output to its parent
+//   b. Returns the "output" resource to "projectionInputFetcher.outputCh"
+//
+//  +-----------+----------------------+--------------------------+
+//  |           |                      |                          |
+//  |  +--------+---------+   +--------+---------+       +--------+---------+
+//  |  | projectionWorker |   + projectionWorker |  ...  + projectionWorker |
+//  |  +------------------+   +------------------+       +------------------+
+//  |       ^       ^              ^       ^                  ^       ^
+//  |       |       |              |       |                  |       |
+//  |    inputCh outputCh       inputCh outputCh           inputCh outputCh
+//  |       ^       ^              ^       ^                  ^       ^
+//  |       |       |              |       |                  |       |
+//  |                              |       |
+//  |                              |       +----------------->outputCh
+//  |                              |       |                      |
+//  |                              |       |                      v
+//  |                      +-------+-------+--------+   +---------------------+
+//  |                      | projectionInputFetcher |   | ProjectionExec.Next |
+//  |                      +------------------------+   +---------+-----------+
+//  |                              ^       ^                      |
+//  |                              |       |                      |
+//  |                           inputCh outputCh                  |
+//  |                              ^       ^                      |
+//  |                              |       |                      |
+//  +------------------------------+       +----------------------+
+//
 func (e *ProjectionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 
@@ -112,10 +160,8 @@ func (e *ProjectionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 }
 
 func (e *ProjectionExec) prepare(ctx context.Context) {
-
 	e.finishCh = make(chan struct{})
 	e.outputCh = make(chan *projectionOutput, e.numWorkers)
-	e.prepared = false
 
 	// initialize projectionInputFetcher.
 	e.fetcher = projectionInputFetcher{
