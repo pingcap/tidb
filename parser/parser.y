@@ -699,9 +699,9 @@ import (
 	SelectStmtFieldList		"SELECT statement field list"
 	SelectStmtLimit			"SELECT statement optional LIMIT clause"
 	SelectStmtOpts			"Select statement options"
-	SelectStmtPart1			"SELECT statement part 1"
-	SelectStmtPart2			"SELECT statement part 2"
-	SelectStmtPart3			"SELECT statement part 3"
+	SelectStmtBasic			"SELECT statement from constant value"
+	SelectStmtFromDual			"SELECT statement from dual"
+	SelectStmtFromTable			"SELECT statement from table"
 	SelectStmtGroup			"SELECT statement optional GROUP BY clause"
 	ShowTargetFilterable    	"Show target that can be filtered by WHERE or LIKE"
 	ShowDatabaseNameOpt		"Show tables/columns statement database name option"
@@ -4070,7 +4070,7 @@ RollbackStmt:
 		$$ = &ast.RollbackStmt{}
 	}
 
-SelectStmtPart1:
+SelectStmtBasic:
 	"SELECT" SelectStmtOpts SelectStmtFieldList
 	{
 		st := &ast.SelectStmt {
@@ -4081,8 +4081,8 @@ SelectStmtPart1:
 		$$ = st
 	}
 
-SelectStmtPart2:
-	SelectStmtPart1 FromDual WhereClauseOptional
+SelectStmtFromDual:
+	SelectStmtBasic FromDual WhereClauseOptional
 	{
 		st := $1.(*ast.SelectStmt)
 		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
@@ -4096,8 +4096,8 @@ SelectStmtPart2:
 	}
 
 
-SelectStmtPart3:
-	SelectStmtPart1 "FROM"
+SelectStmtFromTable:
+	SelectStmtBasic "FROM"
 	TableRefsClause WhereClauseOptional SelectStmtGroup HavingClause
 	{
 		st := $1.(*ast.SelectStmt)
@@ -4123,7 +4123,7 @@ SelectStmtPart3:
 	}
 
 SelectStmt:
-	SelectStmtPart1 OrderByOptional SelectStmtLimit SelectLockOpt
+	SelectStmtBasic OrderByOptional SelectStmtLimit SelectLockOpt
 	{
 		st := $1.(*ast.SelectStmt)
 		st.LockTp = $4.(ast.SelectLockType)
@@ -4153,7 +4153,7 @@ SelectStmt:
 		}
 		$$ = st
 	}
-|	SelectStmtPart2 SelectStmtLimit SelectLockOpt
+|	SelectStmtFromDual SelectStmtLimit SelectLockOpt
 	{
 		st := $1.(*ast.SelectStmt)
 		st.LockTp = $3.(ast.SelectLockType)
@@ -4162,7 +4162,7 @@ SelectStmt:
 		}
 		$$ = st
 	}
-|	SelectStmtPart3 OrderByOptional SelectStmtLimit SelectLockOpt
+|	SelectStmtFromTable OrderByOptional SelectStmtLimit SelectLockOpt
 	{
 		st := $1.(*ast.SelectStmt)
 		st.LockTp = $4.(ast.SelectLockType)
@@ -4597,7 +4597,7 @@ SelectLockOpt:
 
 // See https://dev.mysql.com/doc/refman/5.7/en/union.html
 UnionStmt:
-	UnionClauseList "UNION" UnionOpt SelectStmtPart1 OrderByOptional SelectStmtLimit SelectLockOpt
+	UnionClauseList "UNION" UnionOpt SelectStmtBasic OrderByOptional SelectStmtLimit SelectLockOpt
 	{
 		st := $4.(*ast.SelectStmt)
 		union := $1.(*ast.UnionStmt)
@@ -4614,7 +4614,7 @@ UnionStmt:
 		}
 		$$ = union
 	}
-|	UnionClauseList "UNION" UnionOpt SelectStmtPart2 SelectStmtLimit SelectLockOpt
+|	UnionClauseList "UNION" UnionOpt SelectStmtFromDual SelectStmtLimit SelectLockOpt
 	{
 		st := $4.(*ast.SelectStmt)
 		union := $1.(*ast.UnionStmt)
@@ -4628,7 +4628,7 @@ UnionStmt:
 		}
 		$$ = union
 	}
-|	UnionClauseList "UNION" UnionOpt SelectStmtPart3 OrderByOptional
+|	UnionClauseList "UNION" UnionOpt SelectStmtFromTable OrderByOptional
    	SelectStmtLimit SelectLockOpt
 	{
 		st := $4.(*ast.SelectStmt)
