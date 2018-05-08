@@ -15,6 +15,7 @@ package ddl_test
 
 import (
 	"fmt"
+
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
