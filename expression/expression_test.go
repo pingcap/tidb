@@ -17,7 +17,6 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -37,14 +36,13 @@ func (s *testEvaluatorSuite) TestNewValuesFunc(c *C) {
 
 func (s *testEvaluatorSuite) TestEvaluateExprWithNull(c *C) {
 	defer testleak.AfterTest(c)()
+	tblInfo := newTestTableBuilder("").add("col0", mysql.TypeLonglong).add("col1", mysql.TypeLonglong).build()
+	ifnullOuter, err := ParseSimpleExpr(s.ctx, "ifnull(col0, ifnull(col1, 1))", tblInfo)
+	c.Assert(err, IsNil)
+	schema := tableInfoToSchemaForTest(tblInfo)
+	col1 := schema.Columns[1]
+	schema.Columns = schema.Columns[:1]
 
-	col0 := &Column{RetType: types.NewFieldType(mysql.TypeLonglong), FromID: 0, Position: 0, ColName: model.NewCIStr("col0")}
-	col1 := &Column{RetType: types.NewFieldType(mysql.TypeLonglong), FromID: 0, Position: 1, ColName: model.NewCIStr("col1")}
-	ifnullInner := newFunction(ast.Ifnull, col1, One)
-	ifnullOuter := newFunction(ast.Ifnull, col0, ifnullInner)
-
-	// ifnull(null, ifnull(col1, 1))
-	schema := NewSchema(col0)
 	res := EvaluateExprWithNull(s.ctx, schema, ifnullOuter)
 	c.Assert(res.String(), Equals, "ifnull(<nil>, ifnull(col1, 1))")
 
@@ -81,4 +79,58 @@ func (s *testEvaluatorSuite) TestIsBinaryLiteral(c *C) {
 	c.Assert(IsBinaryLiteral(con), IsTrue)
 	con.Value = types.NewIntDatum(1)
 	c.Assert(IsBinaryLiteral(con), IsFalse)
+}
+
+type testTableBuilder struct {
+	tableName   string
+	columnNames []string
+	tps         []byte
+}
+
+func newTestTableBuilder(tableName string) *testTableBuilder {
+	return &testTableBuilder{tableName: tableName}
+}
+
+func (builder *testTableBuilder) add(name string, tp byte) *testTableBuilder {
+	builder.columnNames = append(builder.columnNames, name)
+	builder.tps = append(builder.tps, tp)
+	return builder
+}
+
+func (builder *testTableBuilder) build() *model.TableInfo {
+	ti := &model.TableInfo{
+		ID:    1,
+		Name:  model.NewCIStr(builder.tableName),
+		State: model.StatePublic,
+	}
+	for i, colName := range builder.columnNames {
+		tp := builder.tps[i]
+		fieldType := types.NewFieldType(tp)
+		fieldType.Flen, fieldType.Decimal = mysql.GetDefaultFieldLengthAndDecimal(tp)
+		fieldType.Charset, fieldType.Collate = types.DefaultCharsetForType(tp)
+		ti.Columns = append(ti.Columns, &model.ColumnInfo{
+			ID:        int64(i + 1),
+			Name:      model.NewCIStr(colName),
+			Offset:    i,
+			FieldType: *fieldType,
+			State:     model.StatePublic,
+		})
+	}
+	return ti
+}
+
+func tableInfoToSchemaForTest(tableInfo *model.TableInfo) *Schema {
+	columns := tableInfo.Columns
+	schema := NewSchema(make([]*Column, 0, len(columns))...)
+	for i, col := range columns {
+		schema.Append(&Column{
+			FromID:   1,
+			Position: i,
+			TblName:  tableInfo.Name,
+			ColName:  col.Name,
+			ID:       col.ID,
+			RetType:  &col.FieldType,
+		})
+	}
+	return schema
 }

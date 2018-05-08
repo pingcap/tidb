@@ -278,8 +278,8 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 			return ver, errors.Trace(err)
 		}
 
-		err = w.runReorgJob(t, job, d.lease, func() error {
-			return w.addTableIndex(tbl, indexInfo, reorgInfo, job)
+		err = w.runReorgJob(t, reorgInfo, d.lease, func() error {
+			return w.addTableIndex(tbl, indexInfo, reorgInfo)
 		})
 		if err != nil {
 			if errWaitReorgTimeout.Equal(err) {
@@ -582,6 +582,7 @@ func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *ad
 	handleRange := *task
 	result := &addIndexResult{addedCount: 0, nextHandle: handleRange.startHandle, err: nil}
 	lastLogCount := 0
+	startTime := time.Now()
 	for {
 		addedCount := 0
 		nextHandle, addedCount, scanCount, err := w.backfillIndexInTxn(handleRange)
@@ -598,6 +599,8 @@ func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *ad
 		result.nextHandle = nextHandle
 		result.addedCount += addedCount
 		result.scanCount += scanCount
+		w.ddlWorker.reorgCtx.increaseRowCount(int64(addedCount))
+
 		if result.scanCount-lastLogCount >= 30000 {
 			lastLogCount = result.scanCount
 			log.Infof("[ddl-reorg] worker(%v), finish batch addedCount:%v backfill, task addedCount:%v, task scanCount:%v, nextHandle:%v",
@@ -609,6 +612,8 @@ func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *ad
 			break
 		}
 	}
+	log.Infof("[ddl-reorg] worker(%v), finish region ranges [%v,%v) addedCount:%v, scanCount:%v, nextHandle:%v, elapsed time(s):%v",
+		w.id, task.startHandle, task.endHandle, result.addedCount, result.scanCount, result.nextHandle, time.Since(startTime).Seconds())
 
 	return result
 }
@@ -713,8 +718,6 @@ func (w *worker) waitTaskResults(workers []*addIndexWorker, taskCnt int, totalAd
 			*totalAddedCount += int64(result.addedCount)
 			addedCount += int64(result.addedCount)
 			nextHandle = result.nextHandle
-
-			w.reorgCtx.setRowCountAndHandle(*totalAddedCount, nextHandle)
 		}
 	}
 
@@ -746,7 +749,7 @@ func (w *worker) buildBatchTasks(startTime time.Time, startHandle int64, reorgIn
 	}
 
 	// nextHandle will be updated periodically in runReorgJob, so no need to update it here.
-	w.reorgCtx.setRowCountAndHandle(*totalAddedCount, nextHandle)
+	w.reorgCtx.setNextHandle(nextHandle)
 	metrics.BatchAddIdxHistogram.Observe(elapsedTime)
 	log.Infof("[ddl-reorg] total added index for %d rows, this task [%d,%d) added index for %d rows, take time %v",
 		*totalAddedCount, startHandle, nextHandle, taskAddedCount, elapsedTime)
@@ -762,6 +765,8 @@ func (w *worker) buildKVRangesIndex(workers []*addIndexWorker, kvRanges []kv.Key
 	)
 	totalAddedCount := job.GetRowCount()
 	batchTasks := make([]*reorgIndexTask, 0, len(workers))
+
+	log.Infof("[ddl-reorg] start to reorg index of %v region ranges.", len(kvRanges))
 	for i, keyRange := range kvRanges {
 		startTime = time.Now()
 
@@ -797,7 +802,8 @@ func (w *worker) buildKVRangesIndex(workers []*addIndexWorker, kvRanges []kv.Key
 //	4. Wait all these running tasks finished, then continue to step 3, until all tasks is done.
 // The above operations are completed in a transaction.
 // Finally, update the concurrent processing of the total number of rows, and store the completed handle value.
-func (w *worker) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo *reorgInfo, job *model.Job) error {
+func (w *worker) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo *reorgInfo) error {
+	job := reorgInfo.Job
 	log.Infof("[ddl-reorg] addTableIndex, job:%s, reorgInfo:%#v", job, reorgInfo)
 	colFieldMap := makeupIndexColFieldMap(t, indexInfo)
 

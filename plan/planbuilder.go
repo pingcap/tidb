@@ -317,17 +317,27 @@ func (b *planBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
 	return false
 }
 
-func getAvailableIndices(indexHints []*ast.IndexHint, tableInfo *model.TableInfo) (*availableIndices, error) {
-	publicIndices := make([]*model.IndexInfo, 0, len(tableInfo.Indices))
-	for _, index := range tableInfo.Indices {
+func getPathByIndexName(paths []*accessPath, idxName model.CIStr) *accessPath {
+	for _, path := range paths {
+		if path.index.Name.L == idxName.L {
+			return path
+		}
+	}
+	return nil
+}
+
+func getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInfo *model.TableInfo) ([]*accessPath, error) {
+	publicPaths := make([]*accessPath, 0, len(tblInfo.Indices)+1)
+	publicPaths = append(publicPaths, &accessPath{isTablePath: true})
+	for _, index := range tblInfo.Indices {
 		if index.State == model.StatePublic {
-			publicIndices = append(publicIndices, index)
+			publicPaths = append(publicPaths, &accessPath{index: index})
 		}
 	}
 
 	hasScanHint, hasUseOrForce := false, false
-	available := make([]*model.IndexInfo, 0, len(indexHints))
-	ignored := make([]*model.IndexInfo, 0, len(indexHints))
+	available := make([]*accessPath, 0, len(publicPaths))
+	ignored := make([]*accessPath, 0, len(publicPaths))
 	for _, hint := range indexHints {
 		if hint.HintScope != ast.HintForScan {
 			continue
@@ -335,47 +345,48 @@ func getAvailableIndices(indexHints []*ast.IndexHint, tableInfo *model.TableInfo
 
 		hasScanHint = true
 		for _, idxName := range hint.IndexNames {
-			idx := findIndexByName(publicIndices, idxName)
-			if idx == nil {
-				return nil, ErrKeyDoesNotExist.GenByArgs(idxName, tableInfo.Name)
+			path := getPathByIndexName(publicPaths[1:], idxName)
+			if path == nil {
+				return nil, ErrKeyDoesNotExist.GenByArgs(idxName, tblInfo.Name)
 			}
 			if hint.HintType == ast.HintIgnore {
 				// Collect all the ignored index hints.
-				ignored = append(ignored, idx)
+				ignored = append(ignored, path)
 				continue
 			}
 			// Currently we don't distinguish between "FORCE" and "USE" because
 			// our cost estimation is not reliable.
 			hasUseOrForce = true
-			available = append(available, idx)
+			path.forced = true
+			available = append(available, path)
 		}
 	}
 
-	if !hasScanHint {
-		return &availableIndices{publicIndices, true}, nil
-	}
-	if !hasUseOrForce {
-		available = removeIgnoredIndices(publicIndices, ignored)
-		return &availableIndices{available, true}, nil
+	if !hasScanHint || !hasUseOrForce {
+		available = publicPaths
 	}
 
-	available = removeIgnoredIndices(available, ignored)
+	available = removeIgnoredPaths(available, ignored)
+
 	// If we have got "FORCE" or "USE" index hint but got no available index,
 	// we have to use table scan.
-	return &availableIndices{available, len(available) == 0}, nil
+	if len(available) == 0 {
+		available = append(available, &accessPath{isTablePath: true})
+	}
+	return available, nil
 }
 
-func removeIgnoredIndices(indices, ignores []*model.IndexInfo) []*model.IndexInfo {
-	if len(ignores) == 0 {
-		return indices
+func removeIgnoredPaths(paths, ignoredPaths []*accessPath) []*accessPath {
+	if len(ignoredPaths) == 0 {
+		return paths
 	}
-	var remainedIndices []*model.IndexInfo
-	for _, index := range indices {
-		if findIndexByName(ignores, index.Name) == nil {
-			remainedIndices = append(remainedIndices, index)
+	remainedPaths := make([]*accessPath, 0, len(paths))
+	for _, path := range paths {
+		if path.isTablePath || getPathByIndexName(ignoredPaths, path.index.Name) == nil {
+			remainedPaths = append(remainedPaths, path)
 		}
 	}
-	return remainedIndices
+	return remainedPaths
 }
 
 func findIndexByName(indices []*model.IndexInfo, name model.CIStr) *model.IndexInfo {
@@ -417,7 +428,7 @@ func (b *planBuilder) buildCheckIndex(dbName model.CIStr, as *ast.AdminStmt) Pla
 	// get index information
 	var idx *model.IndexInfo
 	for _, index := range tblInfo.Indices {
-		if index.Name.L == as.Index {
+		if index.Name.L == strings.ToLower(as.Index) {
 			idx = index
 			break
 		}
@@ -676,8 +687,16 @@ func buildCleanupIndexFields() *expression.Schema {
 }
 
 func buildShowDDLJobsFields() *expression.Schema {
-	schema := expression.NewSchema(make([]*expression.Column, 0, 2)...)
-	schema.Append(buildColumn("", "JOBS", mysql.TypeVarchar, 128))
+	schema := expression.NewSchema(make([]*expression.Column, 0, 10)...)
+	schema.Append(buildColumn("", "JOB_ID", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "DB_NAME", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "TABLE_NAME", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "JOB_TYPE", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "SCHEMA_STATE", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "SCHEMA_ID", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "TABLE_ID", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "ROW_COUNT", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "START_TIME", mysql.TypeVarchar, 64))
 	schema.Append(buildColumn("", "STATE", mysql.TypeVarchar, 64))
 	return schema
 }
@@ -767,6 +786,8 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 				b.err = ErrNoDB
 				return nil
 			}
+		case ast.ShowCreateTable:
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AllPrivMask, show.Table.Schema.L, show.Table.Name.L, "")
 		}
 		p.SetSchema(buildShowSchema(show))
 	}
@@ -926,7 +947,6 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		Columns:     insert.Columns,
 		tableSchema: schema,
 		IsReplace:   insert.IsReplace,
-		IgnoreErr:   insert.IgnoreErr,
 	}.init(b.ctx)
 
 	b.visitInfo = append(b.visitInfo, visitInfo{

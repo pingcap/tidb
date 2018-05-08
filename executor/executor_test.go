@@ -176,14 +176,14 @@ func (s *testSuite) TestAdmin(c *C) {
 	err = r.Next(ctx, chk)
 	c.Assert(err, IsNil)
 	row = chk.GetRow(0)
-	c.Assert(row.Len(), Equals, 2)
+	c.Assert(row.Len(), Equals, 10)
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
 	historyJobs, err := admin.GetHistoryDDLJobs(txn)
 	c.Assert(len(historyJobs), Greater, 1)
-	c.Assert(len(row.GetString(0)), Greater, 0)
+	c.Assert(len(row.GetString(1)), Greater, 0)
 	c.Assert(err, IsNil)
-	c.Assert(row.GetString(1), Equals, historyJobs[0].State.String())
+	c.Assert(row.GetInt64(0), Equals, historyJobs[0].ID)
 	c.Assert(err, IsNil)
 
 	// show DDL job queries test
@@ -257,7 +257,9 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 	c *C, tk *testkit.TestKit, ctx sessionctx.Context, selectSQL, deleteSQL string) {
 	for _, tt := range tests {
 		c.Assert(ctx.NewTxn(), IsNil)
+		ctx.GetSessionVars().StmtCtx.IgnoreErr = true
 		data, reachLimit, err1 := ld.InsertData(tt.data1, tt.data2)
+		ctx.GetSessionVars().StmtCtx.IgnoreErr = false
 		c.Assert(err1, IsNil)
 		c.Assert(reachLimit, IsFalse)
 		if tt.restData == nil {
@@ -2524,6 +2526,21 @@ func (s *testSuite) TestIssue5341(c *C) {
 	tk.MustQuery("select * from test.t where a < 1 order by a limit 0;").Check(testkit.Rows())
 }
 
+func (s *testSuite) TestContainDotColumn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test.t1")
+	tk.MustExec("create table test.t1(t1.a char)")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2(a char, t2.b int)")
+
+	tk.MustExec("drop table if exists t3")
+	_, err := tk.Exec("create table t3(s.a char);")
+	terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrWrongTableName))
+}
+
 func (s *testSuite) TestCheckIndex(c *C) {
 	s.ctx = mock.NewContext()
 	s.ctx.Store = s.store
@@ -2550,6 +2567,12 @@ func (s *testSuite) TestCheckIndex(c *C) {
 
 	alloc := autoid.NewAllocator(s.store, dbInfo.ID)
 	tb, err := tables.TableFromMeta(alloc, tbInfo)
+	c.Assert(err, IsNil)
+
+	_, err = se.Execute(context.Background(), "admin check index t c")
+	c.Assert(err, IsNil)
+
+	_, err = se.Execute(context.Background(), "admin check index t C")
 	c.Assert(err, IsNil)
 
 	// set data to:

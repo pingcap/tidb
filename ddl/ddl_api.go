@@ -806,6 +806,16 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 			buf := new(bytes.Buffer)
 			s.Partition.Expr.Format(buf)
 			pi.Expr = buf.String()
+			if s.Partition.Tp == model.PartitionTypeRange {
+				if _, ok := s.Partition.Expr.(*ast.ColumnNameExpr); ok {
+					for _, col := range cols {
+						name := strings.Replace(col.Name.String(), ".", "`.`", -1)
+						if !(col.Tp == mysql.TypeLong || col.Tp == mysql.TypeLonglong) && fmt.Sprintf("`%s`", name) == pi.Expr {
+							return errors.Trace(ErrNotAllowedTypeInPartition.GenByArgs(pi.Expr))
+						}
+					}
+				}
+			}
 		} else if s.Partition.ColumnNames != nil {
 			pi.Columns = make([]model.CIStr, 0, len(s.Partition.ColumnNames))
 			for _, cn := range s.Partition.ColumnNames {
@@ -1609,6 +1619,10 @@ func (d *ddl) RenameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident) 
 	oldTbl, err := is.TableByName(oldIdent.Schema, oldIdent.Name)
 	if err != nil {
 		return errFileNotFound.GenByArgs(oldIdent.Schema, oldIdent.Name)
+	}
+	if newIdent.Schema.L == oldIdent.Schema.L && newIdent.Name.L == oldIdent.Name.L {
+		// oldIdent is equal to newIdent, do nothing
+		return nil
 	}
 	newSchema, ok := is.SchemaByName(newIdent.Schema)
 	if !ok {

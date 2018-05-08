@@ -147,7 +147,10 @@ func logicalOptimize(flag uint64, logic LogicalPlan) (LogicalPlan, error) {
 
 func physicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
 	logic.preparePossibleProperties()
-	logic.deriveStats()
+	_, err := logic.deriveStats()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	t, err := logic.findBestTask(&requiredProp{taskTp: rootTaskType, expectedCnt: math.MaxFloat64})
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -171,8 +174,7 @@ func existsCartesianProduct(p LogicalPlan) bool {
 
 // Optimizer error codes.
 const (
-	CodeOperandColumns  terror.ErrCode = 1
-	CodeInvalidWildCard                = 3
+	CodeInvalidWildCard terror.ErrCode = 3
 	CodeUnsupported                    = 4
 	CodeStmtNotFound                   = 7
 	CodeWrongParamCount                = 8
@@ -190,7 +192,6 @@ const (
 
 // Optimizer base errors.
 var (
-	ErrOperandColumns              = terror.ClassOptimizer.New(CodeOperandColumns, "Operand should contain %d column(s)")
 	ErrInvalidWildCard             = terror.ClassOptimizer.New(CodeInvalidWildCard, "Wildcard fields without any table name appears in wrong place")
 	ErrCartesianProductUnsupported = terror.ClassOptimizer.New(CodeUnsupported, "Cartesian product is unsupported")
 	ErrInvalidGroupFuncUse         = terror.ClassOptimizer.New(CodeInvalidGroupFuncUse, "Invalid use of group function")
@@ -207,7 +208,6 @@ var (
 
 func init() {
 	mySQLErrCodes := map[terror.ErrCode]uint16{
-		CodeOperandColumns:       mysql.ErrOperandColumns,
 		CodeInvalidWildCard:      mysql.ErrParse,
 		CodeInvalidGroupFuncUse:  mysql.ErrInvalidGroupFuncUse,
 		CodeIllegalReference:     mysql.ErrIllegalReference,

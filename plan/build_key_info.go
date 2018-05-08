@@ -174,8 +174,11 @@ func (p *LogicalJoin) buildKeyInfo() {
 func (ds *DataSource) buildKeyInfo() {
 	ds.schema.Keys = nil
 	ds.baseLogicalPlan.buildKeyInfo()
-	indices := ds.availableIndices.indices
-	for _, idx := range indices {
+	for _, path := range ds.possibleAccessPaths {
+		if path.isTablePath {
+			continue
+		}
+		idx := path.index
 		if !idx.Unique {
 			continue
 		}

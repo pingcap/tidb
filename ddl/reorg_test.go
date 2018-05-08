@@ -62,7 +62,8 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	rowCount := int64(10)
 	handle := int64(100)
 	f := func() error {
-		d.normalWorker().reorgCtx.setRowCountAndHandle(rowCount, handle)
+		d.normalWorker().reorgCtx.setRowCount(rowCount)
+		d.normalWorker().reorgCtx.setNextHandle(handle)
 		time.Sleep(1*ReorgWaitTimeout + 100*time.Millisecond)
 		return nil
 	}
@@ -73,13 +74,16 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	err = ctx.NewTxn()
 	c.Assert(err, IsNil)
 	m := meta.NewMeta(ctx.Txn())
-	err = d.normalWorker().runReorgJob(m, job, d.lease, f)
+	rInfo := &reorgInfo{
+		Job: job,
+	}
+	err = d.normalWorker().runReorgJob(m, rInfo, d.lease, f)
 	c.Assert(err, NotNil)
 
 	// The longest to wait for 5 seconds to make sure the function of f is returned.
 	for i := 0; i < 1000; i++ {
 		time.Sleep(5 * time.Millisecond)
-		err = d.normalWorker().runReorgJob(m, job, d.lease, f)
+		err = d.normalWorker().runReorgJob(m, rInfo, d.lease, f)
 		if err == nil {
 			c.Assert(job.RowCount, Equals, rowCount)
 			c.Assert(d.normalWorker().reorgCtx.rowCount, Equals, int64(0))
@@ -100,7 +104,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	c.Assert(err, IsNil)
 
 	d.Stop()
-	err = d.normalWorker().runReorgJob(m, job, d.lease, func() error {
+	err = d.normalWorker().runReorgJob(m, rInfo, d.lease, func() error {
 		time.Sleep(4 * testLease)
 		return nil
 	})
