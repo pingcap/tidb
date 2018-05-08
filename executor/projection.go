@@ -42,7 +42,8 @@ type projectionOutput struct {
 	done chan error
 }
 
-// ProjectionExec represents a select fields executor.
+// ProjectionExec implements the physical Projection Operator:
+// https://en.wikipedia.org/wiki/Projection_(relational_algebra)
 type ProjectionExec struct {
 	baseExecutor
 
@@ -67,7 +68,7 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 
 	// For now a Projection can not be executated vectorially only because it
 	// contains "SetVar" or "GetVar" functions, in this scenario this
-	// Projection can not be executed parallelly by more than 1 worker as well.
+	// Projection can not be executed parallelly.
 	if e.numWorkers > 0 && !e.evaluatorSuit.Vectorizable() {
 		e.numWorkers = 0
 	}
@@ -84,18 +85,23 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 //   3. "ProjectionExec.Next":    Return result to parent.
 //
 // 1. "projectionInputFetcher" gets its input and output resources from its
-// "inputCh" and "outputCh" channel, once the input and output resources is
+// "inputCh" and "outputCh" channel, once the input and output resources are
 // abtained, it fetches child's result into "input.chk" and:
 //   a. Dispatches this input to the worker specified in "input.targetWorker"
 //   b. Dispatches this output to the main thread: "ProjectionExec.Next"
 //   c. Dispatches this output to the worker specified in "input.targetWorker"
+// It is finished and exited once:
+//   a. There is no more input from child.
+//   b. "ProjectionExec" close the "globalFinishCh"
 //
 // 2. "projectionWorker" gets its input and output resources from its
-// "inputCh" and "outputCh" channel, once the input and output resources is
+// "inputCh" and "outputCh" channel, once the input and output resources are
 // abtained, it calculate the projection result use "input.chk" as the input
-// and "output.chk" as output, once the calculatation is done, it:
+// and "output.chk" as the output, once the calculatation is done, it:
 //   a. Sending "nil" or error to "output.done" to mark this input is finished.
 //   b. Returns the "input" resource to "projectionInputFetcher.inputCh"
+// They are finished and exited once:
+//   a. "ProjectionExec" close the "globalFinishCh"
 //
 // 3. "ProjectionExec.Next" gets its output resources from its "outputCh" channel.
 // After receiving an output from "outputCh", it should wait to receive a "nil"
@@ -203,9 +209,9 @@ func (e *ProjectionExec) prepare(ctx context.Context) {
 
 // Close implements the Executor Close interface.
 func (e *ProjectionExec) Close() error {
-	// wait for projectionInputFetcher to be finished.
 	if e.outputCh != nil {
 		close(e.finishCh)
+		// Wait for "projectionInputFetcher" to finish and exit.
 		for range e.outputCh {
 		}
 		e.outputCh = nil
@@ -222,6 +228,16 @@ type projectionInputFetcher struct {
 	outputCh chan *projectionOutput
 }
 
+// run gets projectionInputFetcher's input and output resources from its
+// "inputCh" and "outputCh" channel, once the input and output resources are
+// abtained, it fetches child's result into "input.chk" and:
+//   a. Dispatches this input to the worker specified in "input.targetWorker"
+//   b. Dispatches this output to the main thread: "ProjectionExec.Next"
+//   c. Dispatches this output to the worker specified in "input.targetWorker"
+//
+// It is finished and exited once:
+//   a. There is no more input from child.
+//   b. "ProjectionExec" close the "globalFinishCh"
 func (w *projectionInputFetcher) run(ctx context.Context) {
 	defer func() {
 		close(w.globalOutputCh)
@@ -259,14 +275,22 @@ type projectionWorker struct {
 	inputGiveBackCh chan<- *projectionInput
 
 	// channel "input" and "output" is :
-	// 0. inited  by "ProjectionExec.Open"
-	// 1. written by "projectionInputFetcher.run"
-	// 2. read    by "projectionWorker.run"
-	// 3. closed  by "projectionInputFetcher.run"
+	// a. inited  by "ProjectionExec.prepare"
+	// b. written by "projectionInputFetcher.run"
+	// c. read    by "projectionWorker.run"
 	inputCh  chan *projectionInput
 	outputCh chan *projectionOutput
 }
 
+// run gets projectionWorker's input and output resources from its
+// "inputCh" and "outputCh" channel, once the input and output resources are
+// abtained, it calculate the projection result use "input.chk" as the input
+// and "output.chk" as the output, once the calculatation is done, it:
+//   a. Sending "nil" or error to "output.done" to mark this input is finished.
+//   b. Returns the "input" resource to "projectionInputFetcher.inputCh"
+//
+// It is finished and exited once:
+//   a. "ProjectionExec" close the "globalFinishCh"
 func (w *projectionWorker) run(ctx context.Context) {
 	for {
 		input := readProjectionInput(w.inputCh, w.globalFinishCh)
