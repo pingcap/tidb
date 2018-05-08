@@ -461,9 +461,8 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan {
 		// If there are some joinKeys in children property.
 		if len(mergeJoins) > 0 {
 			return mergeJoins
-		} else {
-			return p.getEnforcedMergeJoin(prop)
 		}
+		return p.getEnforcedMergeJoin(prop)
 	}
 	joins := make([]PhysicalPlan, 0, 5)
 	joins = append(joins, mergeJoins...)
