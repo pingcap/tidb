@@ -85,14 +85,6 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 20),
 		}, []string{LblType, "store"})
 
-	TiKVCoprocessorCounter = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "tikvclient",
-			Name:      "cop_actions_total",
-			Help:      "Counter of coprocessor actions.",
-		}, []string{LblType})
-
 	TiKVCoprocessorHistogram = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
@@ -196,7 +188,6 @@ func init() {
 	prometheus.MustRegister(TiKVBackoffHistogram)
 	prometheus.MustRegister(TiKVSendReqHistogram)
 	prometheus.MustRegister(TiKVConnPoolHistogram)
-	prometheus.MustRegister(TiKVCoprocessorCounter)
 	prometheus.MustRegister(TiKVCoprocessorHistogram)
 	prometheus.MustRegister(TiKVLockResolverCounter)
 	prometheus.MustRegister(TiKVRegionErrorCounter)
