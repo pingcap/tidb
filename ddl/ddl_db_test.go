@@ -162,6 +162,16 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrUnknownCharacterSet)
 	sql = "create table t1(a int) character set laitn1;"
 	s.testErrorCode(c, sql, tmysql.ErrUnknownCharacterSet)
+	sql = "create table test_error_code (a int not null ,b int not null,c int not null, d int not null, foreign key (b, c) references product(id));"
+	s.testErrorCode(c, sql, tmysql.ErrWrongFkDef)
+	sql = "create table test_error_code_2(c1 int, c2 int, c3 int, primary key(c1), primary key(c2));"
+	s.testErrorCode(c, sql, tmysql.ErrMultiplePriKey)
+	sql = "create table test_error_code_3(pt blob ,primary key (pt));"
+	s.testErrorCode(c, sql, tmysql.ErrBlobKeyWithoutLength)
+	sql = "create table test_error_code_3(a text, unique (a(3073)));"
+	s.testErrorCode(c, sql, tmysql.ErrTooLongKey)
+	sql = "create table test_error_code_3(`id` int, key `primary`(`id`));"
+	s.testErrorCode(c, sql, tmysql.ErrWrongNameForIndex)
 
 	// add column
 	sql = "alter table test_error_code_succ add column c1 int"
@@ -170,10 +180,18 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrTooLongIdent)
 	sql = "alter table test_comment comment 'test comment'"
 	s.testErrorCode(c, sql, tmysql.ErrNoSuchTable)
+	sql = "alter table test_comment add column `a ` int ;"
+	s.testErrorCode(c, sql, tmysql.ErrWrongColumnName)
+	s.tk.MustExec("create table test_on_update (c1 int, c2 int, c3 int ); ")
+	sql = "alter table test_on_update add column c4 int on update current_timestamp;"
+	s.testErrorCode(c, sql, tmysql.ErrInvalidOnUpdate)
 
 	// drop column
 	sql = "alter table test_error_code_succ drop c_not_exist"
 	s.testErrorCode(c, sql, tmysql.ErrCantDropFieldOrKey)
+	s.tk.MustExec("create table test_drop_column (c1 int );")
+	sql = "alter table t1 drop column c1;"
+	s.testErrorCode(c, sql, tmysql.ErrCantRemoveAllFields)
 	// add index
 	sql = "alter table test_error_code_succ add index idx (c_not_exist)"
 	s.testErrorCode(c, sql, tmysql.ErrKeyColumnDoesNotExits)
@@ -190,6 +208,10 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrWrongDBName)
 	sql = "alter table test_error_code_succ modify t.c1 bigint"
 	s.testErrorCode(c, sql, tmysql.ErrWrongTableName)
+	// insert value
+	s.tk.MustExec("create table t3(c1 char(100) not null);")
+	sql = "insert into t3 (c1) values(null);"
+	s.testErrorCode(c, sql, tmysql.ErrBadNull)
 }
 
 func (s *testDBSuite) TestAddIndexAfterAddColumn(c *C) {
@@ -201,6 +223,8 @@ func (s *testDBSuite) TestAddIndexAfterAddColumn(c *C) {
 	s.tk.MustExec("alter table test_add_index_after_add_col add column c int not null default '0'")
 	sql := "alter table test_add_index_after_add_col add unique index cc(c) "
 	s.testErrorCode(c, sql, tmysql.ErrDupEntry)
+	sql = "alter table test_add_index_after_add_col add index idx_test(f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13,f14,f15,f16,f17);"
+	s.testErrorCode(c, sql, tmysql.ErrTooManyKeyParts)
 }
 
 func (s *testDBSuite) TestAddIndexWithPK(c *C) {
