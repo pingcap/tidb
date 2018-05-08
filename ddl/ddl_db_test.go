@@ -190,7 +190,7 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	sql = "alter table test_error_code_succ drop c_not_exist"
 	s.testErrorCode(c, sql, tmysql.ErrCantDropFieldOrKey)
 	s.tk.MustExec("create table test_drop_column (c1 int );")
-	sql = "alter table t1 drop column c1;"
+	sql = "alter table test_drop_column drop column c1;"
 	s.testErrorCode(c, sql, tmysql.ErrCantRemoveAllFields)
 	// add index
 	sql = "alter table test_error_code_succ add index idx (c_not_exist)"
