@@ -14,8 +14,8 @@
 package plan
 
 import (
-	"reflect"
 	"math"
+	"reflect"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -150,14 +150,14 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *requiredProp) []PhysicalPlan {
 		isExist := false
 		for _, key := range p.LeftJoinKeys {
 			if reflect.DeepEqual(*key, *col) {
-				isExist = true;
-				break;
+				isExist = true
+				break
 			}
 		}
 		for _, key := range p.RightJoinKeys {
 			if reflect.DeepEqual(*key, *col) {
-				isExist = true;
-				break;
+				isExist = true
+				break
 			}
 		}
 		if !isExist && (prop == nil || !prop.enforced) {
@@ -181,7 +181,7 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *requiredProp) []PhysicalPlan {
 	copy(enforcePhysicalMergeJoin.EqualConditions, p.EqualConditions)
 	enforcePhysicalMergeJoin.SetSchema(p.schema)
 	enforcePhysicalMergeJoin.childrenReqProps = []*requiredProp{lProp, rProp}
-	return []PhysicalPlan {enforcePhysicalMergeJoin}
+	return []PhysicalPlan{enforcePhysicalMergeJoin}
 }
 
 func (p *LogicalJoin) getHashJoins(prop *requiredProp) []PhysicalPlan {
@@ -457,12 +457,12 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *requiredProp) ([]PhysicalPlan, boo
 // If the hint is not figured, we will pick all candidates.
 func (p *LogicalJoin) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan {
 	mergeJoins := p.getMergeJoin(prop)
-	if (p.preferJoinType&preferMergeJoin) > 0 {
+	if (p.preferJoinType & preferMergeJoin) > 0 {
 		// If there are some joinKeys in children property.
 		if len(mergeJoins) > 0 {
 			return mergeJoins
 		} else {
-			return p.getEnforcedMergeJoin(prop);
+			return p.getEnforcedMergeJoin(prop)
 		}
 	}
 	joins := make([]PhysicalPlan, 0, 5)

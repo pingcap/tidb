@@ -14,8 +14,8 @@
 package plan
 
 import (
-	"math"
 	"fmt"
+	"math"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -86,7 +86,7 @@ func (p *requiredProp) enforceProperty(tsk task, ctx sessionctx.Context) task {
 	if p.isEmpty() || tsk.plan() == nil {
 		return tsk
 	}
-	tsk = finishCopTask(ctx, tsk);
+	tsk = finishCopTask(ctx, tsk)
 	sortReqProp := &requiredProp{taskTp: rootTaskType, cols: p.cols, expectedCnt: math.MaxFloat64}
 	sort := PhysicalSort{ByItems: make([]*ByItems, 0, len(p.cols))}.init(ctx, tsk.plan().StatsInfo(), sortReqProp)
 	sort.SetSchema(tsk.plan().Schema())

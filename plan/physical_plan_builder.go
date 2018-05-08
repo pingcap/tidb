@@ -107,7 +107,7 @@ func (p *baseLogicalPlan) findBestTask(prop *requiredProp) (bestTask task, err e
 
 		// enforce curTask property
 		if prop.enforced {
-			curTask = prop.enforceProperty(curTask, p.basePlan.ctx);
+			curTask = prop.enforceProperty(curTask, p.basePlan.ctx)
 		}
 
 		// get the most efficient one.
