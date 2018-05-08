@@ -83,6 +83,12 @@ type ExprNode interface {
 	Format(w io.Writer)
 }
 
+// OptBinary is used for parser.
+type OptBinary struct {
+	IsBinary bool
+	Charset  string
+}
+
 // FuncNode represents function call expression node.
 type FuncNode interface {
 	ExprNode

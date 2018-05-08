@@ -28,7 +28,7 @@ type LatchesScheduler struct {
 }
 
 // NewScheduler create the LatchesScheduler.
-func NewScheduler(size int) *LatchesScheduler {
+func NewScheduler(size uint) *LatchesScheduler {
 	latches := NewLatches(size)
 	unlockCh := make(chan *Lock, lockChanSize)
 	scheduler := &LatchesScheduler{
@@ -83,8 +83,8 @@ func (scheduler *LatchesScheduler) Lock(startTS uint64, keys [][]byte) *Lock {
 	return lock
 }
 
-// UnLock unlocks a lock with commitTS.
-func (scheduler *LatchesScheduler) UnLock(lock *Lock, commitTS uint64) {
+// UnLock unlocks a lock.
+func (scheduler *LatchesScheduler) UnLock(lock *Lock) {
 	scheduler.RLock()
 	defer scheduler.RUnlock()
 	if !scheduler.closed {
