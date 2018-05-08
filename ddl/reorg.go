@@ -70,9 +70,16 @@ func (rc *reorgCtx) isReorgCanceled() bool {
 	return atomic.LoadInt32(&rc.notifyCancelReorgJob) == 1
 }
 
-func (rc *reorgCtx) setRowCountAndHandle(count, doneHandle int64) {
+func (rc *reorgCtx) setRowCount(count int64) {
 	atomic.StoreInt64(&rc.rowCount, count)
+}
+
+func (rc *reorgCtx) setNextHandle(doneHandle int64) {
 	atomic.StoreInt64(&rc.doneHandle, doneHandle)
+}
+
+func (rc *reorgCtx) increaseRowCount(count int64) {
+	atomic.AddInt64(&rc.rowCount, count)
 }
 
 func (rc *reorgCtx) getRowCountAndHandle() (int64, int64) {
@@ -82,15 +89,20 @@ func (rc *reorgCtx) getRowCountAndHandle() (int64, int64) {
 }
 
 func (rc *reorgCtx) clean() {
-	rc.setRowCountAndHandle(0, 0)
+	rc.setRowCount(0)
+	rc.setNextHandle(0)
 	rc.doneCh = nil
 }
 
-func (d *ddl) runReorgJob(t *meta.Meta, job *model.Job, f func() error) error {
+func (d *ddl) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, f func() error) error {
+	job := reorgInfo.Job
 	if d.reorgCtx.doneCh == nil {
 		// start a reorganization job
 		d.wait.Add(1)
 		d.reorgCtx.doneCh = make(chan error, 1)
+		// initial reorgCtx
+		d.reorgCtx.setRowCount(job.GetRowCount())
+		d.reorgCtx.setNextHandle(reorgInfo.Handle)
 		go func() {
 			defer d.wait.Done()
 			d.reorgCtx.doneCh <- f()
@@ -118,7 +130,8 @@ func (d *ddl) runReorgJob(t *meta.Meta, job *model.Job, f func() error) error {
 		return errors.Trace(err)
 	case <-d.quitCh:
 		log.Info("[ddl] run reorg job ddl quit")
-		d.reorgCtx.setRowCountAndHandle(0, 0)
+		d.reorgCtx.setNextHandle(0)
+		d.reorgCtx.setRowCount(0)
 		// We return errWaitReorgTimeout here too, so that outer loop will break.
 		return errWaitReorgTimeout
 	case <-time.After(waitTimeout):

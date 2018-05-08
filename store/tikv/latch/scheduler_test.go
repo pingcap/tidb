@@ -41,10 +41,11 @@ func (s *testSchedulerSuite) TestWithConcurrency(c *C) {
 	for _, txn := range txns {
 		go func(txn [][]byte, wg *sync.WaitGroup) {
 			lock := sched.Lock(getTso(), txn)
-			defer sched.UnLock(lock, getTso())
+			defer sched.UnLock(lock)
 			if lock.IsStale() {
 				// Should restart the transaction or return error
 			} else {
+				lock.SetCommitTS(getTso())
 				// Do 2pc
 			}
 			wg.Done()
