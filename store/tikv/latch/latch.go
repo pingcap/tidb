@@ -86,6 +86,11 @@ func (l *Lock) isLocked() bool {
 	return !l.isStale && l.acquiredCount != len(l.requiredSlots)
 }
 
+// SetCommitTS sets the lock's commitTS.
+func (l *Lock) SetCommitTS(commitTS uint64) {
+	l.commitTS = commitTS
+}
+
 // Latches which are used for concurrency control.
 // Each latch is indexed by a slot's ID, hence the term latch and slot are used in interchangeable,
 // but conceptually a latch is a queue, and a slot is an index to the queue
@@ -98,7 +103,7 @@ type Latches struct {
 
 // NewLatches create a Latches with fixed length,
 // the size will be rounded up to the power of 2.
-func NewLatches(size int) *Latches {
+func NewLatches(size uint) *Latches {
 	powerOfTwoSize := 1 << uint32(bits.Len32(uint32(size-1)))
 	slots := make([]latch, powerOfTwoSize)
 	return &Latches{
