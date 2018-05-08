@@ -66,11 +66,13 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
+	e.prepared = false
+
 	// For now a Projection can not be executated vectorially only because it
 	// contains "SetVar" or "GetVar" functions, in this scenario this
 	// Projection can not be executed parallelly by more than 1 worker as well.
 	if e.numWorkers > 0 && !e.evaluatorSuit.Vectorizable() {
-		e.numWorkers = 1
+		e.numWorkers = 0
 	}
 
 	return nil
@@ -96,7 +98,6 @@ func (e *ProjectionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 	output, ok := <-e.outputCh
 	if !ok {
-		e.outputCh = nil
 		return nil
 	}
 
