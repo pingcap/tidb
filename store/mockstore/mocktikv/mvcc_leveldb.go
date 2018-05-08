@@ -313,15 +313,12 @@ func (mvcc *MVCCLevelDB) getValue(key []byte, startTS uint64, isoLevel kvrpcpb.I
 func getValue(iter *Iterator, key []byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel) ([]byte, error) {
 	dec1 := lockDecoder{expectKey: key}
 	ok, err := dec1.Decode(iter)
+	if ok && isoLevel == kvrpcpb.IsolationLevel_SI {
+		startTS, err = dec1.lock.check(startTS, key)
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if ok {
-		if isoLevel == kvrpcpb.IsolationLevel_SI && dec1.lock.startTS <= startTS {
-			return nil, dec1.lock.lockErr(key)
-		}
-	}
-
 	dec2 := valueDecoder{expectKey: key}
 	for iter.Valid() {
 		ok, err := dec2.Decode(iter)
