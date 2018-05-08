@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/goroutine_pool"
-	tipb "github.com/pingcap/tipb/go-tipb"
+	"github.com/pingcap/tipb/go-tipb"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -394,8 +394,10 @@ const minLogCopTaskTime = 300 * time.Millisecond
 // run is a worker function that get a copTask from channel, handle it and
 // send the result back.
 func (worker *copIteratorWorker) run(ctx context.Context) {
-	span, ctx1 := opentracing.StartSpanFromContext(ctx, "copIteratorWorker.run")
-	defer span.Finish()
+	if span := opentracing.SpanFromContext(ctx); span != nil {
+		span, ctx = opentracing.StartSpanFromContext(ctx, "copIteratorWorker.run")
+		defer span.Finish()
+	}
 
 	defer worker.wg.Done()
 	for task := range worker.taskCh {
@@ -404,7 +406,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 			respCh = task.respChan
 		}
 
-		bo := NewBackoffer(ctx1, copNextMaxBackoff).WithVars(worker.vars)
+		bo := NewBackoffer(ctx, copNextMaxBackoff).WithVars(worker.vars)
 		worker.handleTask(bo, task, respCh)
 		if bo.totalSleep > 0 {
 			metrics.TiKVBackoffHistogram.Observe(float64(bo.totalSleep) / 1000)
