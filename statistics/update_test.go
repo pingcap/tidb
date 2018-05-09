@@ -277,10 +277,10 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	testKit.MustExec("create table t (a varchar(20))")
 
 	statistics.AutoAnalyzeMinCnt = 0
-	statistics.AutoAnalyzeRatio = 0.6
+	testKit.MustExec("set global tidb_auto_analyze_ratio = 0.6")
 	defer func() {
 		statistics.AutoAnalyzeMinCnt = 1000
-		statistics.AutoAnalyzeRatio = 0.0
+		testKit.MustExec("set global tidb_auto_analyze_ratio = 0.0")
 	}()
 
 	do := s.do
