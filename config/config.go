@@ -230,7 +230,7 @@ type TiKVClient struct {
 type Binlog struct {
 	BinlogSocket string `toml:"binlog-socket" json:"binlog-socket"`
 	// If IgnoreError is true, when writting binlog meets error, TiDB would
-	// stop writting binlog, but still provide service.
+	// ignore the error.
 	IgnoreError bool `toml:"ignore-error" json:"ignore-error"`
 }
 

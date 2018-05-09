@@ -472,7 +472,6 @@ func (cc *clientConn) Run() {
 				log.Errorf("[%d] critical error, stop the server listener %s",
 					cc.connectionID, errors.ErrorStack(err))
 				metrics.CriticalErrorCounter.Add(1)
-
 				select {
 				case cc.server.stopListenerCh <- struct{}{}:
 				default:
