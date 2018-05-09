@@ -2103,7 +2103,7 @@ func (c *timeLiteralFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	if !isDuration(str) {
 		return nil, types.ErrIncorrectDatetimeValue.GenByArgs(str)
 	}
-	duration, err := types.ParseDuration(str, getFsp(str))
+	duration, err := types.ParseDuration(str, types.GetFsp(str))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -3508,9 +3508,9 @@ func (b *builtinTimestamp1ArgSig) evalTime(row types.Row) (types.Time, bool, err
 	var tm types.Time
 	sc := b.ctx.GetSessionVars().StmtCtx
 	if b.isFloat {
-		tm, err = types.ParseTimeFromFloatString(sc, s, mysql.TypeDatetime, getFsp(s))
+		tm, err = types.ParseTimeFromFloatString(sc, s, mysql.TypeDatetime, types.GetFsp(s))
 	} else {
-		tm, err = types.ParseTime(sc, s, mysql.TypeDatetime, getFsp(s))
+		tm, err = types.ParseTime(sc, s, mysql.TypeDatetime, types.GetFsp(s))
 	}
 	if err != nil {
 		return types.Time{}, true, errors.Trace(handleInvalidTimeError(b.ctx, err))
@@ -3540,9 +3540,9 @@ func (b *builtinTimestamp2ArgsSig) evalTime(row types.Row) (types.Time, bool, er
 	var tm types.Time
 	sc := b.ctx.GetSessionVars().StmtCtx
 	if b.isFloat {
-		tm, err = types.ParseTimeFromFloatString(sc, arg0, mysql.TypeDatetime, getFsp(arg0))
+		tm, err = types.ParseTimeFromFloatString(sc, arg0, mysql.TypeDatetime, types.GetFsp(arg0))
 	} else {
-		tm, err = types.ParseTime(sc, arg0, mysql.TypeDatetime, getFsp(arg0))
+		tm, err = types.ParseTime(sc, arg0, mysql.TypeDatetime, types.GetFsp(arg0))
 	}
 	if err != nil {
 		return types.Time{}, true, errors.Trace(handleInvalidTimeError(b.ctx, err))
@@ -3554,7 +3554,7 @@ func (b *builtinTimestamp2ArgsSig) evalTime(row types.Row) (types.Time, bool, er
 	if !isDuration(arg1) {
 		return types.Time{}, true, nil
 	}
-	duration, err := types.ParseDuration(arg1, getFsp(arg1))
+	duration, err := types.ParseDuration(arg1, types.GetFsp(arg1))
 	if err != nil {
 		return types.Time{}, true, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
@@ -3588,7 +3588,7 @@ func (c *timestampLiteralFunctionClass) getFunction(ctx sessionctx.Context, args
 	if !timestampPattern.MatchString(str) {
 		return nil, types.ErrIncorrectDatetimeValue.GenByArgs(str)
 	}
-	tm, err := types.ParseTime(ctx.GetSessionVars().StmtCtx, str, mysql.TypeTimestamp, getFsp(str))
+	tm, err := types.ParseTime(ctx.GetSessionVars().StmtCtx, str, mysql.TypeTimestamp, types.GetFsp(str))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -3616,16 +3616,6 @@ func (b *builtinTimestampLiteralSig) Clone() builtinFunc {
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html
 func (b *builtinTimestampLiteralSig) evalTime(row types.Row) (types.Time, bool, error) {
 	return b.tm, false, nil
-}
-
-func getFsp(s string) (fsp int) {
-	fsp = len(s) - strings.Index(s, ".") - 1
-	if fsp == len(s) {
-		fsp = 0
-	} else if fsp > 6 {
-		fsp = 6
-	}
-	return
 }
 
 // getFsp4TimeAddSub is used to in function 'ADDTIME' and 'SUBTIME' to evaluate `fsp` for the
@@ -3727,7 +3717,7 @@ func strDatetimeSubDuration(sc *stmtctx.StatementContext, d string, arg1 types.D
 	if err != nil {
 		return "", errors.Trace(err)
 	}
-	arg1time, err := arg1.ConvertToTime(sc, uint8(getFsp(arg1.String())))
+	arg1time, err := arg1.ConvertToTime(sc, uint8(types.GetFsp(arg1.String())))
 	if err != nil {
 		return "", errors.Trace(err)
 	}
@@ -3876,7 +3866,7 @@ func (b *builtinAddDatetimeAndStringSig) evalTime(row types.Row) (types.Time, bo
 	if !isDuration(s) {
 		return types.ZeroDatetime, true, nil
 	}
-	arg1, err := types.ParseDuration(s, getFsp(s))
+	arg1, err := types.ParseDuration(s, types.GetFsp(s))
 	if err != nil {
 		return types.ZeroDatetime, true, errors.Trace(err)
 	}
@@ -3952,7 +3942,7 @@ func (b *builtinAddDurationAndStringSig) evalDuration(row types.Row) (types.Dura
 	if !isDuration(s) {
 		return types.ZeroDuration, true, nil
 	}
-	arg1, err := types.ParseDuration(s, getFsp(s))
+	arg1, err := types.ParseDuration(s, types.GetFsp(s))
 	if err != nil {
 		return types.ZeroDuration, true, errors.Trace(err)
 	}
@@ -4732,7 +4722,7 @@ func (b *builtinSubDatetimeAndStringSig) evalTime(row types.Row) (types.Time, bo
 	if !isDuration(s) {
 		return types.ZeroDatetime, true, nil
 	}
-	arg1, err := types.ParseDuration(s, getFsp(s))
+	arg1, err := types.ParseDuration(s, types.GetFsp(s))
 	if err != nil {
 		return types.ZeroDatetime, true, errors.Trace(err)
 	}
@@ -4908,7 +4898,7 @@ func (b *builtinSubDurationAndStringSig) evalDuration(row types.Row) (types.Dura
 	if !isDuration(s) {
 		return types.ZeroDuration, true, nil
 	}
-	arg1, err := types.ParseDuration(s, getFsp(s))
+	arg1, err := types.ParseDuration(s, types.GetFsp(s))
 	if err != nil {
 		return types.ZeroDuration, true, errors.Trace(err)
 	}
