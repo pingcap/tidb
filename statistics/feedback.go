@@ -169,23 +169,6 @@ func (q *QueryFeedback) Update(startKey kv.Key, counts []int64) {
 	return
 }
 
-// DecodeInt decodes the int value stored in the feedback.
-func (q *QueryFeedback) DecodeInt() error {
-	for _, fb := range q.feedback {
-		_, v, err := codec.DecodeInt(fb.lower.GetBytes())
-		if err != nil {
-			return errors.Trace(err)
-		}
-		fb.lower.SetInt64(v)
-		_, v, err = codec.DecodeInt(fb.upper.GetBytes())
-		if err != nil {
-			return errors.Trace(err)
-		}
-		fb.upper.SetInt64(v)
-	}
-	return nil
-}
-
 // BucketFeedback stands for all the feedback for a bucket.
 type BucketFeedback struct {
 	feedback []feedback   // All the feedback info in the same bucket.
@@ -296,7 +279,7 @@ func (b *BucketFeedback) getFraction(lowerVal, upperVal *types.Datum) float64 {
 	return calcFraction(b.scalar.lower, b.scalar.upper, upper) - calcFraction(b.scalar.lower, b.scalar.upper, lower)
 }
 
-func (b *BucketFeedback) getBucketCount() int64 {
+func (b *BucketFeedback) getBucketCount(count float64) int64 {
 	// Get the scalar info for boundary.
 	prefixLen := commonPrefixLength(b.lower.GetBytes(), b.upper.GetBytes())
 	if b.lower.Kind() == types.KindBytes {
@@ -307,11 +290,12 @@ func (b *BucketFeedback) getBucketCount() int64 {
 		b.scalar.lower = float64(b.lower.GetInt64())
 		b.scalar.upper = float64(b.upper.GetInt64())
 	}
-	// Use the feedback that covers most to update this bucket's count.
-	var maxFraction, count float64
+	// Use the feedback that covers most to update this bucket's count. We only consider feedback that covers at
+	// least minBucketFraction.
+	maxFraction := minBucketFraction
 	for _, fb := range b.feedback {
 		fraction := b.getFraction(fb.lower, fb.upper)
-		if fraction > maxFraction {
+		if fraction >= maxFraction {
 			maxFraction = fraction
 			count = float64(fb.count) / fraction
 		}
@@ -336,14 +320,24 @@ func (b *BucketFeedback) splitBucket(newBktNum int, totalCount float64, count fl
 			bounds[i] = bounds[i-1]
 			continue
 		}
-		bkts = append(bkts, bucket{lower: &bounds[i-1], upper: &bounds[i], count: newCount, repeat: 0})
+		bkts = append(bkts, bucket{lower: &bounds[i-1], upper: bounds[i].Copy(), count: newCount, repeat: 0})
+		// To guarantee that each bucket's range will not overlap.
+		if bounds[i].Kind() == types.KindBytes {
+			bounds[i].SetBytes(kv.Key(bounds[i].GetBytes()).PrefixNext())
+		} else if bounds[i].Kind() == types.KindInt64 {
+			bounds[i].SetInt64(bounds[i].GetInt64() + 1)
+		} else if bounds[i].Kind() == types.KindUint64 {
+			bounds[i].SetUint64(bounds[i].GetUint64() + 1)
+		}
 	}
 	return bkts
 }
 
 // Get the split count for the histogram.
-func getSplitCount(count int) int {
-	return mathutil.Min(10, count/10)
+func getSplitCount(count, remainBuckets int) int {
+	remainBuckets = mathutil.Max(remainBuckets, 10)
+	// Split more if have more buckets available.
+	return mathutil.Min(remainBuckets, count/10)
 }
 
 type bucketScore struct {
@@ -437,7 +431,7 @@ func splitBuckets(h *Histogram, feedback *QueryFeedback) ([]bucket, []bool, int6
 		if !ok {
 			counts = append(counts, h.bucketCount(i))
 		} else {
-			counts = append(counts, bkt.getBucketCount())
+			counts = append(counts, bkt.getBucketCount(float64(h.bucketCount(i))))
 		}
 	}
 	totCount := int64(0)
@@ -446,7 +440,7 @@ func splitBuckets(h *Histogram, feedback *QueryFeedback) ([]bucket, []bool, int6
 	}
 	buckets := make([]bucket, 0, h.Len())
 	isNewBuckets := make([]bool, 0, h.Len())
-	splitCount := getSplitCount(fbNum)
+	splitCount := getSplitCount(fbNum, defaultBucketCount-h.Len())
 	for i := 0; i < h.Len(); i++ {
 		bkt, ok := bktID2FB[i]
 		// No feedback, just use the original one.
@@ -496,15 +490,19 @@ type queryFeedback struct {
 func encodePKFeedback(q *QueryFeedback) (*queryFeedback, error) {
 	pb := &queryFeedback{}
 	for _, fb := range q.feedback {
-		err := q.DecodeInt()
+		// There is no need to update the point queries.
+		if bytes.Compare(kv.Key(fb.lower.GetBytes()).PrefixNext(), fb.upper.GetBytes()) >= 0 {
+			continue
+		}
+		_, low, err := codec.DecodeInt(fb.lower.GetBytes())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		// There is no need to update the point queries.
-		if fb.upper.GetInt64()-fb.lower.GetInt64() <= 1 {
-			continue
+		_, high, err := codec.DecodeInt(fb.upper.GetBytes())
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
-		pb.IntRanges = append(pb.IntRanges, fb.lower.GetInt64(), fb.upper.GetInt64())
+		pb.IntRanges = append(pb.IntRanges, low, high)
 		pb.Counts = append(pb.Counts, fb.count)
 	}
 	return pb, nil

@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -372,4 +373,21 @@ func (s *testSuite) TestShardRowIDBits(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(count, Equals, 100)
 	c.Assert(hasShardedID, IsTrue)
+}
+
+func (s *testSuite) TestMaxHandleAddIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a bigint PRIMARY KEY, b int)")
+	tk.MustExec(fmt.Sprintf("insert into t values(%v, 1)", math.MaxInt64))
+	tk.MustExec(fmt.Sprintf("insert into t values(%v, 1)", math.MinInt64))
+	tk.MustExec("alter table t add index idx_b(b)")
+	tk.MustExec("admin check table t")
+
+	tk.MustExec("create table t1(a bigint UNSIGNED PRIMARY KEY, b int)")
+	tk.MustExec(fmt.Sprintf("insert into t1 values(%v, 1)", uint64(math.MaxUint64)))
+	tk.MustExec(fmt.Sprintf("insert into t1 values(%v, 1)", 0))
+	tk.MustExec("alter table t1 add index idx_b(b)")
+	tk.MustExec("admin check table t1")
 }
