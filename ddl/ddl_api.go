@@ -1620,6 +1620,10 @@ func (d *ddl) RenameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident) 
 	if err != nil {
 		return errFileNotFound.GenByArgs(oldIdent.Schema, oldIdent.Name)
 	}
+	if newIdent.Schema.L == oldIdent.Schema.L && newIdent.Name.L == oldIdent.Name.L {
+		// oldIdent is equal to newIdent, do nothing
+		return nil
+	}
 	newSchema, ok := is.SchemaByName(newIdent.Schema)
 	if !ok {
 		return errErrorOnRename.GenByArgs(oldIdent.Schema, oldIdent.Name, newIdent.Schema, newIdent.Name)

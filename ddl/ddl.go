@@ -302,7 +302,7 @@ func newDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 	variable.RegisterStatistics(d)
 
 	log.Infof("[ddl] start DDL:%s", d.uuid)
-	metrics.DDLCounter.WithLabelValues(metrics.CreateDDL).Inc()
+	metrics.DDLCounter.WithLabelValues(metrics.CreateDDLInstance).Inc()
 	return d
 }
 

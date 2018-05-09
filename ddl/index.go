@@ -454,6 +454,11 @@ type addIndexWorker struct {
 type reorgIndexTask struct {
 	startHandle int64
 	endHandle   int64
+<<<<<<< HEAD
+=======
+	// When the last handle is math.MaxInt64, set endIncluded to true to
+	// tell worker backfilling index of endHandle.
+>>>>>>> upstream/master
 	endIncluded bool
 }
 
@@ -550,6 +555,10 @@ func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgInde
 
 			w.idxRecords = append(w.idxRecords, idxRecord)
 			if handle == taskRange.endHandle {
+<<<<<<< HEAD
+=======
+				// If !taskRange.endIncluded, we will not reach here when handle == taskRange.endHandle
+>>>>>>> upstream/master
 				handleOutOfRange = true
 				return false, nil
 			}

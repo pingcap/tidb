@@ -1187,24 +1187,45 @@ func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 	return e
 }
 
-func (b *executorBuilder) constructDAGReq(plans []plan.PhysicalPlan) (*tipb.DAGRequest, bool, error) {
-	dagReq := &tipb.DAGRequest{}
-	dagReq.StartTs = b.getStartTS()
-	dagReq.TimeZoneOffset = timeZoneOffset(b.ctx)
-	sc := b.ctx.GetSessionVars().StmtCtx
-	dagReq.Flags = statementContextToFlags(sc)
+func constructDistExec(sctx sessionctx.Context, plans []plan.PhysicalPlan) ([]*tipb.Executor, bool, error) {
 	streaming := true
+	executors := make([]*tipb.Executor, 0, len(plans))
 	for _, p := range plans {
-		execPB, err := p.ToPB(b.ctx)
+		execPB, err := p.ToPB(sctx)
 		if err != nil {
 			return nil, false, errors.Trace(err)
 		}
 		if !plan.SupportStreaming(p) {
 			streaming = false
 		}
-		dagReq.Executors = append(dagReq.Executors, execPB)
+		executors = append(executors, execPB)
 	}
-	return dagReq, streaming, nil
+	return executors, streaming, nil
+}
+
+func (b *executorBuilder) constructDAGReq(plans []plan.PhysicalPlan) (dagReq *tipb.DAGRequest, streaming bool, err error) {
+	dagReq = &tipb.DAGRequest{}
+	dagReq.StartTs = b.getStartTS()
+	dagReq.TimeZoneOffset = timeZoneOffset(b.ctx)
+	sc := b.ctx.GetSessionVars().StmtCtx
+	dagReq.Flags = statementContextToFlags(sc)
+	dagReq.Executors, streaming, err = constructDistExec(b.ctx, plans)
+	return dagReq, streaming, errors.Trace(err)
+}
+
+func (b *executorBuilder) corColInDistPlan(plans []plan.PhysicalPlan) bool {
+	for _, p := range plans {
+		x, ok := p.(*plan.PhysicalSelection)
+		if !ok {
+			continue
+		}
+		for _, cond := range x.Conditions {
+			if len(expression.ExtractCorColumns(cond)) > 0 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Executor {
@@ -1301,6 +1322,8 @@ func buildNoRangeTableReader(b *executorBuilder, v *plan.PhysicalTableReader) (*
 		desc:         ts.Desc,
 		columns:      ts.Columns,
 		streaming:    streaming,
+		haveCorCol:   b.corColInDistPlan(v.TablePlans),
+		plans:        v.TablePlans,
 	}
 	if containsLimit(dagReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, ts.Desc)
@@ -1348,6 +1371,8 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plan.PhysicalIndexReader) (*
 		desc:         is.Desc,
 		columns:      is.Columns,
 		streaming:    streaming,
+		haveCorCol:   b.corColInDistPlan(v.IndexPlans),
+		plans:        v.IndexPlans,
 	}
 	if containsLimit(dagReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, is.Desc)
@@ -1408,6 +1433,10 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plan.PhysicalIndexLook
 		indexStreaming:    indexStreaming,
 		tableStreaming:    tableStreaming,
 		dataReaderBuilder: &dataReaderBuilder{executorBuilder: b},
+		corColInIdxSide:   b.corColInDistPlan(v.IndexPlans),
+		corColInTblSide:   b.corColInDistPlan(v.TablePlans),
+		idxPlans:          v.IndexPlans,
+		tblPlans:          v.TablePlans,
 	}
 	if containsLimit(indexReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, is.Desc)
