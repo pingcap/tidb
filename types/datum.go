@@ -1009,6 +1009,19 @@ func (d *Datum) convertToMysqlDuration(sc *stmtctx.StatementContext, target *Fie
 		if err != nil {
 			return ret, errors.Trace(err)
 		}
+	case KindInt64, KindFloat32, KindFloat64, KindMysqlDecimal:
+		// TODO: We need a ParseDurationFromNum to avoid the cost of converting a num to string.
+		timeStr, err := d.ToString()
+		if err != nil {
+			return ret, errors.Trace(err)
+		} else if timeStr[0] == '-' {
+			return ret, ErrInvalidTimeFormat.Gen("Incorrect time value '%s'", timeStr)
+		}
+		t, err := ParseDuration(timeStr, fsp)
+		ret.SetValue(t)
+		if err != nil {
+			return ret, errors.Trace(err)
+		}
 	case KindString, KindBytes:
 		t, err := ParseDuration(d.GetString(), fsp)
 		ret.SetValue(t)
