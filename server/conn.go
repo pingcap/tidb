@@ -50,13 +50,11 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/opentracing/opentracing-go"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/auth"
@@ -475,17 +473,11 @@ func (cc *clientConn) Run() {
 					cc.connectionID, errors.ErrorStack(err))
 				metrics.CriticalErrorCounter.Add(1)
 
-				cfg := config.GetGlobalConfig()
-				if cfg.Binlog.IgnoreError {
-					// Once it meets error, we'll not write binlog any more.
-					binloginfo.StopPumpClient()
-				} else {
-					select {
-					case cc.server.stopListenerCh <- struct{}{}:
-					default:
-					}
-					return
+				select {
+				case cc.server.stopListenerCh <- struct{}{}:
+				default:
 				}
+				return
 			}
 			log.Warnf("[%d] dispatch error:\n%s\n%q\n%s",
 				cc.connectionID, cc, queryStrForLog(string(data[1:])), errStrForLog(err))
