@@ -180,14 +180,15 @@ func (ds *DataSource) findBestTask(prop *requiredProp) (task, error) {
 	if prop == nil {
 		return nil, nil
 	}
-	oldPropCols := prop.cols
-	if prop.enforced {
-		prop.cols = []*expression.Column{}
-	}
 
 	t := ds.getTask(prop)
 	if t != nil {
 		return t, nil
+	}
+
+	oldPropCols := prop.cols
+	if prop.enforced {
+		prop.cols = []*expression.Column{}
 	}
 	t, err := ds.tryToGetDualTask()
 	if err != nil {
