@@ -457,7 +457,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) error {
 
 	connID := s.sessionVars.ConnectionID
 	if s.sessionVars.TxnCtx.ForUpdate {
-		return errors.Errorf("[%d] can not retry select for update statement", connID)
+		return errForUpdateCantRetry.GenByArgs(connID)
 	}
 	s.sessionVars.RetryInfo.Retrying = true
 	var retryCnt uint
