@@ -1141,7 +1141,7 @@ func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 	column, err := er.schema.FindColumn(v)
 	if err != nil {
-		er.err = ErrAmbiguous.GenByArgs(v.Name)
+		er.err = ErrAmbiguous.GenByArgs(v.Name, clauseMsg[fieldList])
 		return
 	}
 	if column != nil {
@@ -1156,7 +1156,7 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			return
 		}
 		if err != nil {
-			er.err = ErrAmbiguous.GenByArgs(v.Name)
+			er.err = ErrAmbiguous.GenByArgs(v.Name, clauseMsg[fieldList])
 			return
 		}
 	}
