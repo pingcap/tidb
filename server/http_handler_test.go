@@ -22,7 +22,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
+	"sync/atomic"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -36,12 +38,14 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	log "github.com/sirupsen/logrus"
 )
 
 type HTTPHandlerTestSuite struct {
@@ -577,4 +581,28 @@ func (ts *HTTPHandlerTestSuite) TestAllHistory(c *C) {
 
 	c.Assert(err, IsNil)
 	c.Assert(jobs, DeepEquals, data)
+}
+
+func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
+	ts.startServer(c)
+	ts.prepareData(c)
+	defer ts.stopServer(c)
+	form := make(url.Values)
+	form.Set("log_level", "error")
+	form.Set("tidb_general_log", "1")
+	resp, err := http.PostForm("http://127.0.0.1:10090/settings", form)
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	c.Assert(log.GetLevel(), Equals, log.ErrorLevel)
+	c.Assert(config.GetGlobalConfig().Log.Level, Equals, "error")
+	c.Assert(atomic.LoadUint32(&variable.ProcessGeneralLog), Equals, uint32(1))
+	form = make(url.Values)
+	form.Set("log_level", "info")
+	form.Set("tidb_general_log", "0")
+	resp, err = http.PostForm("http://127.0.0.1:10090/settings", form)
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	c.Assert(log.GetLevel(), Equals, log.InfoLevel)
+	c.Assert(config.GetGlobalConfig().Log.Level, Equals, "info")
+	c.Assert(atomic.LoadUint32(&variable.ProcessGeneralLog), Equals, uint32(0))
 }
