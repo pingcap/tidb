@@ -1152,7 +1152,7 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 		outerSchema := er.b.outerSchemas[i]
 		column, err = outerSchema.FindColumn(v)
 		if column != nil {
-			er.ctxStack = append(er.ctxStack, &expression.CorrelatedColumn{Column: *column})
+			er.ctxStack = append(er.ctxStack, &expression.CorrelatedColumn{Column: *column, Data: new(types.Datum)})
 			return
 		}
 		if err != nil {
