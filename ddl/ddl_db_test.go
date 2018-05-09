@@ -182,9 +182,6 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrNoSuchTable)
 	sql = "alter table test_error_code_succ add column `a ` int ;"
 	s.testErrorCode(c, sql, tmysql.ErrWrongColumnName)
-	s.tk.MustExec("create table test_on_update (c1 int, c2 int, c3 int ); ")
-	sql = "alter table test_on_update add column c4 int on update current_timestamp;"
-	s.testErrorCode(c, sql, tmysql.ErrInvalidOnUpdate)
 
 	// drop column
 	sql = "alter table test_error_code_succ drop c_not_exist"
