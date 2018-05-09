@@ -17,10 +17,13 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
 	binlog "github.com/pingcap/tipb/go-binlog"
@@ -71,8 +74,20 @@ func GetPrewriteValue(ctx sessionctx.Context, createIfNotExists bool) *binlog.Pr
 	return v
 }
 
+var errorStopped uint32
+
+// ResetErrorStopFlag is only used in the test code.
+func ResetErrorStopFlag() {
+	atomic.StoreUint32(&errorStopped, 0)
+}
+
 // WriteBinlog writes a binlog to Pump.
 func (info *BinlogInfo) WriteBinlog(clusterID uint64) error {
+	if atomic.LoadUint32(&errorStopped) != 0 {
+		metrics.CriticalErrorCounter.Add(1)
+		return nil
+	}
+
 	commitData, err := info.Data.Marshal()
 	if err != nil {
 		return errors.Trace(err)
@@ -96,6 +111,17 @@ func (info *BinlogInfo) WriteBinlog(clusterID uint64) error {
 		log.Errorf("write binlog error %v", err)
 		time.Sleep(time.Second)
 	}
+
+	if err != nil {
+		cfg := config.GetGlobalConfig()
+		if cfg.Binlog.IgnoreError {
+			log.Errorf("critical error, write binlog fail but error ignored: %s", errors.ErrorStack(err))
+			metrics.CriticalErrorCounter.Add(1)
+			atomic.StoreUint32(&errorStopped, 1)
+			return nil
+		}
+	}
+
 	return terror.ErrCritical.GenByArgs(err)
 }
 

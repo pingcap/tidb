@@ -23,7 +23,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/opentracing/opentracing-go"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
@@ -605,13 +604,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 	if binlogChan != nil {
 		binlogErr := <-binlogChan
 		if binlogErr != nil {
-			cfg := config.GetGlobalConfig()
-			if !cfg.Binlog.IgnoreError {
-				return errors.Trace(binlogErr)
-			}
-
-			log.Errorf("write binlog fail but error ignored: %s", errors.ErrorStack(binlogErr))
-			metrics.CriticalErrorCounter.Add(1)
+			return errors.Trace(binlogErr)
 		}
 	}
 	if err != nil {
