@@ -57,6 +57,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkDropTableGrammar(node)
 	case *ast.RenameTableStmt:
 		p.inCreateOrDropTable = true
+		p.checkRenameTableGrammar(node)
 	case *ast.CreateIndexStmt:
 		p.checkCreateIndexGrammar(node)
 	case *ast.AlterTableStmt:
@@ -284,6 +285,21 @@ func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 		return
 	}
 	p.err = checkIndexInfo(stmt.IndexName, stmt.IndexColNames)
+}
+
+func (p *preprocessor) checkRenameTableGrammar(stmt *ast.RenameTableStmt) {
+	oldTable := stmt.OldTable.Name.String()
+	newTable := stmt.NewTable.Name.String()
+
+	if isIncorrectName(oldTable) {
+		p.err = ddl.ErrWrongTableName.GenByArgs(oldTable)
+		return
+	}
+
+	if isIncorrectName(newTable) {
+		p.err = ddl.ErrWrongTableName.GenByArgs(newTable)
+		return
+	}
 }
 
 func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {

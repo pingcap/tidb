@@ -327,7 +327,8 @@ func (d *ddl) addTableColumn(t table.Table, columnInfo *model.ColumnInfo, reorgI
 			return errors.Trace(err)
 		}
 
-		d.reorgCtx.setRowCountAndHandle(count, seekHandle)
+		d.reorgCtx.setRowCount(count)
+		d.reorgCtx.setNextHandle(seekHandle)
 		log.Infof("[ddl] added column for %v rows, take time %v", count, sub)
 	}
 }

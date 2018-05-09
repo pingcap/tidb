@@ -48,6 +48,7 @@ type Table struct {
 	ModifyCount int64 // Total modify count in a table.
 	Version     uint64
 	Pseudo      bool
+	PKIsHandle  bool
 }
 
 func (t *Table) copy() *Table {
@@ -360,11 +361,12 @@ func (t *Table) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idxID int
 // PseudoTable creates a pseudo table statistics.
 func PseudoTable(tblInfo *model.TableInfo) *Table {
 	t := &Table{
-		TableID: tblInfo.ID,
-		Pseudo:  true,
-		Count:   pseudoRowCount,
-		Columns: make(map[int64]*Column, len(tblInfo.Columns)),
-		Indices: make(map[int64]*Index, len(tblInfo.Indices)),
+		TableID:    tblInfo.ID,
+		Pseudo:     true,
+		Count:      pseudoRowCount,
+		PKIsHandle: tblInfo.PKIsHandle,
+		Columns:    make(map[int64]*Column, len(tblInfo.Columns)),
+		Indices:    make(map[int64]*Index, len(tblInfo.Indices)),
 	}
 	for _, col := range tblInfo.Columns {
 		if col.State == model.StatePublic {
