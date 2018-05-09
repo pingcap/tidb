@@ -172,6 +172,8 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrTooLongKey)
 	sql = "create table test_error_code_3(`id` int, key `primary`(`id`));"
 	s.testErrorCode(c, sql, tmysql.ErrWrongNameForIndex)
+	sql = "create table t2(c1.c2 blob default null);"
+	s.testErrorCode(c, sql, tmysql.ErrWrongTableName)
 
 	// add column
 	sql = "alter table test_error_code_succ add column c1 int"
@@ -1554,6 +1556,7 @@ func (s *testDBSuite) testRenameTable(c *C, sql string) {
 	c.Assert(newTblInfo.Meta().ID, Equals, oldTblID)
 	s.tk.MustQuery("select * from t1").Check(testkit.Rows("1 1", "2 2"))
 	s.tk.MustExec("use test")
+
 	// Make sure t doesn't exist.
 	s.tk.MustExec("create table t (c1 int, c2 int)")
 	s.tk.MustExec("drop table t")
@@ -1573,12 +1576,19 @@ func (s *testDBSuite) testRenameTable(c *C, sql string) {
 	// for failure case
 	failSQL := fmt.Sprintf(sql, "test_not_exist.t", "test_not_exist.t")
 	s.testErrorCode(c, failSQL, tmysql.ErrFileNotFound)
+	failSQL = fmt.Sprintf(sql, "test.test_not_exist", "test.test_not_exist")
+	s.testErrorCode(c, failSQL, tmysql.ErrFileNotFound)
 	failSQL = fmt.Sprintf(sql, "test.t_not_exist", "test_not_exist.t")
 	s.testErrorCode(c, failSQL, tmysql.ErrFileNotFound)
 	failSQL = fmt.Sprintf(sql, "test1.t2", "test_not_exist.t")
 	s.testErrorCode(c, failSQL, tmysql.ErrErrorOnRename)
-	failSQL = fmt.Sprintf(sql, "test1.t2", "test1.t2")
-	s.testErrorCode(c, failSQL, tmysql.ErrTableExists)
+
+	// for the same table name
+	s.tk.MustExec("use test1")
+	s.tk.MustExec("create table if not exists t (c1 int, c2 int)")
+	s.tk.MustExec("create table if not exists t1 (c1 int, c2 int)")
+	s.tk.MustExec(fmt.Sprintf(sql, "test1.t", "t"))
+	s.tk.MustExec(fmt.Sprintf(sql, "test1.t1", "test1.t1"))
 
 	s.tk.MustExec("drop database test1")
 }

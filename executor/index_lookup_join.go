@@ -62,7 +62,7 @@ type IndexLookUpJoin struct {
 
 	resultGenerator joinResultGenerator
 
-	indexRanges   []*ranger.NewRange
+	indexRanges   []*ranger.Range
 	keyOff2IdxOff []int
 	innerPtrBytes [][]byte
 
@@ -121,7 +121,7 @@ type innerWorker struct {
 	ctx         sessionctx.Context
 	executorChk *chunk.Chunk
 
-	indexRanges   []*ranger.NewRange
+	indexRanges   []*ranger.Range
 	keyOff2IdxOff []int
 }
 
@@ -170,7 +170,7 @@ func (e *IndexLookUpJoin) newOuterWorker(resultCh, innerCh chan *lookUpJoinTask)
 
 func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWorker {
 	// Since multiple inner workers run concurrently, we should copy join's indexRanges for every worker to avoid data race.
-	copiedRanges := make([]*ranger.NewRange, 0, len(e.indexRanges))
+	copiedRanges := make([]*ranger.Range, 0, len(e.indexRanges))
 	for _, ran := range e.indexRanges {
 		copiedRanges = append(copiedRanges, ran.Clone())
 	}

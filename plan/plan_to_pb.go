@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/ranger"
-	tipb "github.com/pingcap/tipb/go-tipb"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // ToPB implements PhysicalPlan ToPB interface.
@@ -102,7 +102,7 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error)
 
 // checkCoverIndex checks whether we can pass unique info to TiKV. We should push it if and only if the length of
 // range and index are equal.
-func checkCoverIndex(idx *model.IndexInfo, ranges []*ranger.NewRange) bool {
+func checkCoverIndex(idx *model.IndexInfo, ranges []*ranger.Range) bool {
 	// If the index is (c1, c2) but the query range only contains c1, it is not a unique get.
 	if !idx.Unique {
 		return false

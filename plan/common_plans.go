@@ -222,7 +222,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 				return errors.Trace(err)
 			}
 		} else {
-			ts.Ranges = ranger.FullIntNewRange(false)
+			ts.Ranges = ranger.FullIntRange(false)
 		}
 	case *PhysicalIndexReader:
 		is := x.IndexPlans[0].(*PhysicalIndexScan)
@@ -250,10 +250,10 @@ func (e *Execute) rebuildRange(p Plan) error {
 	return nil
 }
 
-func (e *Execute) buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) ([]*ranger.NewRange, error) {
+func (e *Execute) buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) ([]*ranger.Range, error) {
 	cols := expression.ColumnInfos2ColumnsWithDBName(is.DBName, is.Table.Name, is.Columns)
 	idxCols, colLengths := expression.IndexInfo2Cols(cols, is.Index)
-	ranges := ranger.FullNewRange()
+	ranges := ranger.FullRange()
 	if len(idxCols) > 0 {
 		var err error
 		ranges, _, _, _, err = ranger.DetachCondAndBuildRangeForIndex(sctx, is.conditions, idxCols, colLengths)
@@ -323,7 +323,6 @@ type Insert struct {
 	OnDuplicate []*expression.Assignment
 
 	IsReplace bool
-	IgnoreErr bool
 
 	// NeedFillDefaultValue is true when expr in value list reference other column.
 	NeedFillDefaultValue bool
@@ -338,7 +337,6 @@ type Update struct {
 	baseSchemaProducer
 
 	OrderedList []*expression.Assignment
-	IgnoreErr   bool
 
 	SelectPlan PhysicalPlan
 }

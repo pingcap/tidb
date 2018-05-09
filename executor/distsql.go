@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
@@ -38,7 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
-	tipb "github.com/pingcap/tipb/go-tipb"
+	"github.com/pingcap/tipb/go-tipb"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -199,7 +200,7 @@ type TableReaderExecutor struct {
 	tableID   int64
 	keepOrder bool
 	desc      bool
-	ranges    []*ranger.NewRange
+	ranges    []*ranger.Range
 	dagPB     *tipb.DAGRequest
 	// columns are only required by union scan.
 	columns []*model.ColumnInfo
@@ -209,6 +210,9 @@ type TableReaderExecutor struct {
 	resultHandler *tableResultHandler
 	streaming     bool
 	feedback      *statistics.QueryFeedback
+
+	haveCorCol bool
+	plans      []plan.PhysicalPlan
 }
 
 // Close implements the Executor Close interface.
@@ -233,6 +237,14 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	span, ctx := startSpanFollowsContext(ctx, "executor.TableReader.Open")
 	defer span.Finish()
 
+	var err error
+	if e.haveCorCol {
+		e.dagPB.Executors, _, err = constructDistExec(e.ctx, e.plans)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	e.resultHandler = &tableResultHandler{}
 	firstPartRanges, secondPartRanges := splitRanges(e.ranges, e.keepOrder)
 	firstResult, err := e.buildResp(ctx, firstPartRanges)
@@ -256,7 +268,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 
 // buildResp first build request and send it to tikv using distsql.Select. It uses SelectResut returned by the callee
 // to fetch all results.
-func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.NewRange) (distsql.SelectResult, error) {
+func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Range) (distsql.SelectResult, error) {
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetTableRanges(e.tableID, ranges, e.feedback).
 		SetDAGRequest(e.dagPB).
@@ -276,7 +288,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ne
 	return result, nil
 }
 
-func splitRanges(ranges []*ranger.NewRange, keepOrder bool) ([]*ranger.NewRange, []*ranger.NewRange) {
+func splitRanges(ranges []*ranger.Range, keepOrder bool) ([]*ranger.Range, []*ranger.Range) {
 	if len(ranges) == 0 || ranges[0].LowVal[0].Kind() == types.KindInt64 {
 		return ranges, nil
 	}
@@ -292,15 +304,15 @@ func splitRanges(ranges []*ranger.NewRange, keepOrder bool) ([]*ranger.NewRange,
 		}
 		return signedRanges, unsignedRanges
 	}
-	signedRanges := make([]*ranger.NewRange, 0, idx+1)
-	unsignedRanges := make([]*ranger.NewRange, 0, len(ranges)-idx)
+	signedRanges := make([]*ranger.Range, 0, idx+1)
+	unsignedRanges := make([]*ranger.Range, 0, len(ranges)-idx)
 	signedRanges = append(signedRanges, ranges[0:idx]...)
-	signedRanges = append(signedRanges, &ranger.NewRange{
+	signedRanges = append(signedRanges, &ranger.Range{
 		LowVal:     ranges[idx].LowVal,
 		LowExclude: ranges[idx].LowExclude,
 		HighVal:    []types.Datum{types.NewUintDatum(math.MaxInt64)},
 	})
-	unsignedRanges = append(unsignedRanges, &ranger.NewRange{
+	unsignedRanges = append(unsignedRanges, &ranger.Range{
 		LowVal:      []types.Datum{types.NewUintDatum(math.MaxInt64 + 1)},
 		HighVal:     ranges[idx].HighVal,
 		HighExclude: ranges[idx].HighExclude,
@@ -335,7 +347,7 @@ type IndexReaderExecutor struct {
 	tableID   int64
 	keepOrder bool
 	desc      bool
-	ranges    []*ranger.NewRange
+	ranges    []*ranger.Range
 	dagPB     *tipb.DAGRequest
 
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
@@ -344,6 +356,9 @@ type IndexReaderExecutor struct {
 	columns   []*model.ColumnInfo
 	streaming bool
 	feedback  *statistics.QueryFeedback
+
+	haveCorCol bool
+	plans      []plan.PhysicalPlan
 }
 
 // Close clears all resources hold by current object.
@@ -377,6 +392,14 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	span, ctx := startSpanFollowsContext(ctx, "executor.IndexReader.Open")
 	defer span.Finish()
 
+	var err error
+	if e.haveCorCol {
+		e.dagPB.Executors, _, err = constructDistExec(e.ctx, e.plans)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetKeyRanges(kvRanges).
 		SetDAGRequest(e.dagPB).
@@ -407,7 +430,7 @@ type IndexLookUpExecutor struct {
 	tableID   int64
 	keepOrder bool
 	desc      bool
-	ranges    []*ranger.NewRange
+	ranges    []*ranger.Range
 	dagPB     *tipb.DAGRequest
 	// handleIdx is the index of handle, which is only used for case of keeping order.
 	handleIdx    int
@@ -432,6 +455,11 @@ type IndexLookUpExecutor struct {
 
 	// isCheckOp is used to determine whether we need to check the consistency of the index data.
 	isCheckOp bool
+
+	corColInIdxSide bool
+	idxPlans        []plan.PhysicalPlan
+	corColInTblSide bool
+	tblPlans        []plan.PhysicalPlan
 }
 
 // Open implements the Executor Open interface.
@@ -462,10 +490,25 @@ func (e *IndexLookUpExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	e.finished = make(chan struct{})
 	e.resultCh = make(chan *lookupTableTask, atomic.LoadInt32(&LookupTableTaskChannelSize))
 
+	var err error
+	if e.corColInIdxSide {
+		e.dagPB.Executors, _, err = constructDistExec(e.ctx, e.idxPlans)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	if e.corColInTblSide {
+		e.tableRequest.Executors, _, err = constructDistExec(e.ctx, e.tblPlans)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	// indexWorker will write to workCh and tableWorker will read from workCh,
 	// so fetching index and getting table data can run concurrently.
 	workCh := make(chan *lookupTableTask, 1)
-	err := e.startIndexWorker(ctx, kvRanges, workCh)
+	err = e.startIndexWorker(ctx, kvRanges, workCh)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -554,6 +597,8 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []in
 		dagPB:        e.tableRequest,
 		streaming:    e.tableStreaming,
 		feedback:     statistics.NewQueryFeedback(0, nil, 0, false),
+		haveCorCol:   e.corColInTblSide,
+		plans:        e.tblPlans,
 	}, handles)
 	if err != nil {
 		log.Error(err)

@@ -41,7 +41,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/ranger"
-	tipb "github.com/pingcap/tipb/go-tipb"
+	"github.com/pingcap/tipb/go-tipb"
 	"golang.org/x/net/context"
 )
 
@@ -205,6 +205,7 @@ func (b *executorBuilder) buildShowDDL(v *plan.ShowDDL) Executor {
 
 func (b *executorBuilder) buildShowDDLJobs(v *plan.ShowDDLJobs) Executor {
 	e := &ShowDDLJobsExec{
+		is:           b.is,
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 	}
 	return e
@@ -224,7 +225,7 @@ func (b *executorBuilder) buildCheckIndex(v *plan.CheckIndex) Executor {
 		b.err = errors.Trace(err)
 		return nil
 	}
-	readerExec.ranges = ranger.FullNewRange()
+	readerExec.ranges = ranger.FullRange()
 	readerExec.isCheckOp = true
 
 	e := &CheckIndexExec{
@@ -523,7 +524,6 @@ func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 	insert := &InsertExec{
 		InsertValues: ivs,
 		OnDuplicate:  append(v.OnDuplicate, v.GenCols.OnDuplicates...),
-		IgnoreErr:    v.IgnoreErr,
 	}
 	return insert
 }
@@ -936,7 +936,6 @@ func (b *executorBuilder) buildMemTable(v *plan.PhysicalMemTable) Executor {
 		t:              tb,
 		columns:        v.Columns,
 		seekHandle:     math.MinInt64,
-		ranges:         v.Ranges,
 		isVirtualTable: tb.Type() == table.VirtualTable,
 	}
 	return e
@@ -1075,7 +1074,6 @@ func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
 		SelectExec:   selExec,
 		OrderedList:  v.OrderedList,
 		tblID2table:  tblID2table,
-		IgnoreErr:    v.IgnoreErr,
 	}
 	return updateExec
 }
@@ -1189,24 +1187,45 @@ func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 	return e
 }
 
-func (b *executorBuilder) constructDAGReq(plans []plan.PhysicalPlan) (*tipb.DAGRequest, bool, error) {
-	dagReq := &tipb.DAGRequest{}
-	dagReq.StartTs = b.getStartTS()
-	dagReq.TimeZoneOffset = timeZoneOffset(b.ctx)
-	sc := b.ctx.GetSessionVars().StmtCtx
-	dagReq.Flags = statementContextToFlags(sc)
+func constructDistExec(sctx sessionctx.Context, plans []plan.PhysicalPlan) ([]*tipb.Executor, bool, error) {
 	streaming := true
+	executors := make([]*tipb.Executor, 0, len(plans))
 	for _, p := range plans {
-		execPB, err := p.ToPB(b.ctx)
+		execPB, err := p.ToPB(sctx)
 		if err != nil {
 			return nil, false, errors.Trace(err)
 		}
 		if !plan.SupportStreaming(p) {
 			streaming = false
 		}
-		dagReq.Executors = append(dagReq.Executors, execPB)
+		executors = append(executors, execPB)
 	}
-	return dagReq, streaming, nil
+	return executors, streaming, nil
+}
+
+func (b *executorBuilder) constructDAGReq(plans []plan.PhysicalPlan) (dagReq *tipb.DAGRequest, streaming bool, err error) {
+	dagReq = &tipb.DAGRequest{}
+	dagReq.StartTs = b.getStartTS()
+	dagReq.TimeZoneOffset = timeZoneOffset(b.ctx)
+	sc := b.ctx.GetSessionVars().StmtCtx
+	dagReq.Flags = statementContextToFlags(sc)
+	dagReq.Executors, streaming, err = constructDistExec(b.ctx, plans)
+	return dagReq, streaming, errors.Trace(err)
+}
+
+func (b *executorBuilder) corColInDistPlan(plans []plan.PhysicalPlan) bool {
+	for _, p := range plans {
+		x, ok := p.(*plan.PhysicalSelection)
+		if !ok {
+			continue
+		}
+		for _, cond := range x.Conditions {
+			if len(expression.ExtractCorColumns(cond)) > 0 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Executor {
@@ -1303,6 +1322,8 @@ func buildNoRangeTableReader(b *executorBuilder, v *plan.PhysicalTableReader) (*
 		desc:         ts.Desc,
 		columns:      ts.Columns,
 		streaming:    streaming,
+		haveCorCol:   b.corColInDistPlan(v.TablePlans),
+		plans:        v.TablePlans,
 	}
 	if containsLimit(dagReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, ts.Desc)
@@ -1328,6 +1349,8 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) *TableRe
 
 	ts := v.TablePlans[0].(*plan.PhysicalTableScan)
 	ret.ranges = ts.Ranges
+	sctx := b.ctx.GetSessionVars().StmtCtx
+	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
 	return ret
 }
 
@@ -1348,6 +1371,8 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plan.PhysicalIndexReader) (*
 		desc:         is.Desc,
 		columns:      is.Columns,
 		streaming:    streaming,
+		haveCorCol:   b.corColInDistPlan(v.IndexPlans),
+		plans:        v.IndexPlans,
 	}
 	if containsLimit(dagReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, is.Desc)
@@ -1373,6 +1398,8 @@ func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) *IndexRe
 
 	is := v.IndexPlans[0].(*plan.PhysicalIndexScan)
 	ret.ranges = is.Ranges
+	sctx := b.ctx.GetSessionVars().StmtCtx
+	sctx.IndexIDs = append(sctx.IndexIDs, is.Index.ID)
 	return ret
 }
 
@@ -1406,6 +1433,10 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plan.PhysicalIndexLook
 		indexStreaming:    indexStreaming,
 		tableStreaming:    tableStreaming,
 		dataReaderBuilder: &dataReaderBuilder{executorBuilder: b},
+		corColInIdxSide:   b.corColInDistPlan(v.IndexPlans),
+		corColInTblSide:   b.corColInDistPlan(v.TablePlans),
+		idxPlans:          v.IndexPlans,
+		tblPlans:          v.TablePlans,
 	}
 	if containsLimit(indexReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, is.Desc)
@@ -1431,8 +1462,13 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 	}
 
 	is := v.IndexPlans[0].(*plan.PhysicalIndexScan)
+	ts := v.TablePlans[0].(*plan.PhysicalTableScan)
+
 	ret.ranges = is.Ranges
 	metrics.ExecutorCounter.WithLabelValues("IndexLookUpExecutor").Inc()
+	sctx := b.ctx.GetSessionVars().StmtCtx
+	sctx.IndexIDs = append(sctx.IndexIDs, is.Index.ID)
+	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
 	return ret
 }
 
@@ -1447,7 +1483,7 @@ type dataReaderBuilder struct {
 }
 
 func (builder *dataReaderBuilder) buildExecutorForIndexJoin(ctx context.Context, datums [][]types.Datum,
-	IndexRanges []*ranger.NewRange, keyOff2IdxOff []int) (Executor, error) {
+	IndexRanges []*ranger.Range, keyOff2IdxOff []int) (Executor, error) {
 	switch v := builder.Plan.(type) {
 	case *plan.PhysicalTableReader:
 		return builder.buildTableReaderForIndexJoin(ctx, v, datums)
@@ -1495,7 +1531,7 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Contex
 }
 
 func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Context, v *plan.PhysicalIndexReader,
-	values [][]types.Datum, indexRanges []*ranger.NewRange, keyOff2IdxOff []int) (Executor, error) {
+	values [][]types.Datum, indexRanges []*ranger.Range, keyOff2IdxOff []int) (Executor, error) {
 	e, err := buildNoRangeIndexReader(builder.executorBuilder, v)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1509,7 +1545,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 }
 
 func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context.Context, v *plan.PhysicalIndexLookUpReader,
-	values [][]types.Datum, indexRanges []*ranger.NewRange, keyOff2IdxOff []int) (Executor, error) {
+	values [][]types.Datum, indexRanges []*ranger.Range, keyOff2IdxOff []int) (Executor, error) {
 	e, err := buildNoRangeIndexLookUpReader(builder.executorBuilder, v)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1523,7 +1559,7 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 }
 
 // buildKvRangesForIndexJoin builds kv ranges for index join when the inner plan is index scan plan.
-func buildKvRangesForIndexJoin(sc *stmtctx.StatementContext, tableID, indexID int64, keyDatums [][]types.Datum, indexRanges []*ranger.NewRange, keyOff2IdxOff []int) ([]kv.KeyRange, error) {
+func buildKvRangesForIndexJoin(sc *stmtctx.StatementContext, tableID, indexID int64, keyDatums [][]types.Datum, indexRanges []*ranger.Range, keyOff2IdxOff []int) ([]kv.KeyRange, error) {
 	kvRanges := make([]kv.KeyRange, 0, len(indexRanges)*len(keyDatums))
 	for _, val := range keyDatums {
 		for _, ran := range indexRanges {

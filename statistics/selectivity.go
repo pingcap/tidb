@@ -34,7 +34,7 @@ type exprSet struct {
 	// mask is a bit pattern whose ith bit will indicate whether the ith expression is covered by this index/column.
 	mask int64
 	// ranges contains all the ranges we got.
-	ranges []*ranger.NewRange
+	ranges []*ranger.Range
 }
 
 // The type of the exprSet.
@@ -132,7 +132,7 @@ func (t *Table) Selectivity(ctx sessionctx.Context, exprs []expression.Expressio
 	}
 	// TODO: If len(exprs) is bigger than 63, we could use bitset structure to replace the int64.
 	// This will simplify some code and speed up if we use this rather than a boolean slice.
-	if t.Pseudo || len(exprs) > 63 || (len(t.Columns) == 0 && len(t.Indices) == 0) {
+	if len(exprs) > 63 || (len(t.Columns) == 0 && len(t.Indices) == 0) {
 		return pseudoSelectivity(t, exprs), nil
 	}
 	var sets []*exprSet
@@ -142,8 +142,7 @@ func (t *Table) Selectivity(ctx sessionctx.Context, exprs []expression.Expressio
 	extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, exprs, nil)
 	for _, colInfo := range t.Columns {
 		col := expression.ColInfo2Col(extractedCols, colInfo.Info)
-		// This column should have histogram.
-		if col != nil && !t.ColumnIsInvalid(ctx.GetSessionVars().StmtCtx, col.ID) {
+		if col != nil {
 			maskCovered, ranges, err := getMaskAndRanges(ctx, exprs, ranger.ColumnRangeType, nil, col)
 			if err != nil {
 				return 0, errors.Trace(err)
@@ -156,8 +155,7 @@ func (t *Table) Selectivity(ctx sessionctx.Context, exprs []expression.Expressio
 	}
 	for _, idxInfo := range t.Indices {
 		idxCols, lengths := expression.IndexInfo2Cols(extractedCols, idxInfo.Info)
-		// This index should have histogram.
-		if len(idxCols) > 0 && idxInfo.Histogram.Len() > 0 {
+		if len(idxCols) > 0 {
 			maskCovered, ranges, err := getMaskAndRanges(ctx, exprs, ranger.IndexRangeType, lengths, idxCols...)
 			if err != nil {
 				return 0, errors.Trace(err)
@@ -176,7 +174,9 @@ func (t *Table) Selectivity(ctx sessionctx.Context, exprs []expression.Expressio
 			err      error
 		)
 		switch set.tp {
-		case pkType, colType:
+		case pkType:
+			rowCount, err = t.GetRowCountByIntColumnRanges(sc, set.ID, set.ranges)
+		case colType:
 			rowCount, err = t.GetRowCountByColumnRanges(sc, set.ID, set.ranges)
 		case indexType:
 			rowCount, err = t.GetRowCountByIndexRanges(sc, set.ID, set.ranges)
@@ -194,7 +194,7 @@ func (t *Table) Selectivity(ctx sessionctx.Context, exprs []expression.Expressio
 }
 
 func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, rangeType ranger.RangeType,
-	lengths []int, cols ...*expression.Column) (mask int64, ranges []*ranger.NewRange, err error) {
+	lengths []int, cols ...*expression.Column) (mask int64, ranges []*ranger.Range, err error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	var accessConds []expression.Expression
 	switch rangeType {

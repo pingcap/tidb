@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -30,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/goroutine_pool"
-	tipb "github.com/pingcap/tipb/go-tipb"
+	"github.com/pingcap/tipb/go-tipb"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -81,8 +82,6 @@ func (c *CopClient) supportExpr(exprType tipb.ExprType) bool {
 
 // Send builds the request and gets the coprocessor iterator response.
 func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variables) kv.Response {
-	metrics.TiKVCoprocessorCounter.WithLabelValues("send").Inc()
-
 	bo := NewBackoffer(ctx, copBuildTaskMaxBackoff).WithVars(vars)
 	tasks, err := buildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req.Desc, req.Streaming)
 	if err != nil {
@@ -236,8 +235,6 @@ func (r *copRanges) split(key []byte) (*copRanges, *copRanges) {
 }
 
 func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bool, streaming bool) ([]*copTask, error) {
-	metrics.TiKVCoprocessorCounter.WithLabelValues("build_task").Inc()
-
 	start := time.Now()
 	rangesLen := ranges.len()
 	cmdType := tikvrpc.CmdCop
@@ -393,8 +390,10 @@ const minLogCopTaskTime = 300 * time.Millisecond
 // run is a worker function that get a copTask from channel, handle it and
 // send the result back.
 func (worker *copIteratorWorker) run(ctx context.Context) {
-	span, ctx1 := opentracing.StartSpanFromContext(ctx, "copIteratorWorker.run")
-	defer span.Finish()
+	if span := opentracing.SpanFromContext(ctx); span != nil {
+		span, ctx = opentracing.StartSpanFromContext(ctx, "copIteratorWorker.run")
+		defer span.Finish()
+	}
 
 	defer worker.wg.Done()
 	for task := range worker.taskCh {
@@ -403,7 +402,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 			respCh = task.respChan
 		}
 
-		bo := NewBackoffer(ctx1, copNextMaxBackoff).WithVars(worker.vars)
+		bo := NewBackoffer(ctx, copNextMaxBackoff).WithVars(worker.vars)
 		worker.handleTask(bo, task, respCh)
 		if bo.totalSleep > 0 {
 			metrics.TiKVBackoffHistogram.Observe(float64(bo.totalSleep) / 1000)
@@ -514,8 +513,6 @@ func (rs *copResultSubset) GetStartKey() kv.Key {
 // Next returns next coprocessor result.
 // NOTE: Use nil to indicate finish, so if the returned ResultSubset is not nil, reader should continue to call Next().
 func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
-	metrics.TiKVCoprocessorCounter.WithLabelValues("next").Inc()
-
 	var (
 		resp   copResponse
 		ok     bool
@@ -604,6 +601,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 			IsolationLevel: pbIsolationLevel(worker.req.IsolationLevel),
 			Priority:       kvPriorityToCommandPri(worker.req.Priority),
 			NotFillCache:   worker.req.NotFillCache,
+			HandleTime:     true,
 		},
 	}
 	startTime := time.Now()
@@ -611,14 +609,13 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	costTime := time.Since(startTime)
-	if costTime > minLogCopTaskTime {
-		log.Infof("[TIME_COP_TASK] %s%s %s", costTime, bo, task)
-	}
-	metrics.TiKVCoprocessorCounter.WithLabelValues("handle_task").Inc()
-	metrics.TiKVCoprocessorHistogram.Observe(costTime.Seconds())
 	// Set task.storeAddr field so its task.String() method have the store address information.
 	task.storeAddr = sender.storeAddr
+	costTime := time.Since(startTime)
+	if costTime > minLogCopTaskTime {
+		worker.logTimeCopTask(costTime, task, bo, resp)
+	}
+	metrics.TiKVCoprocessorHistogram.Observe(costTime.Seconds())
 
 	if task.cmdType == tikvrpc.CmdCopStream {
 		return worker.handleCopStreamResult(bo, resp.CopStream, task, ch)
@@ -626,6 +623,52 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 
 	// Handles the response for non-streaming copTask.
 	return worker.handleCopResponse(bo, resp.Cop, task, ch, nil)
+}
+
+const (
+	minLogBackoffTime   = 100
+	minLogKVProcessTime = 100
+	minLogKVWaitTime    = 200
+)
+
+func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *copTask, bo *Backoffer, resp *tikvrpc.Response) {
+	logStr := fmt.Sprintf("[TIME_COP_TASK] resp_time:%s txn_start_ts:%d region_id:%d store_addr:%s", costTime, worker.req.StartTs, task.region.id, task.storeAddr)
+	if bo.totalSleep > minLogBackoffTime {
+		backoffTypes := strings.Replace(fmt.Sprintf("%v", bo.types), " ", ",", -1)
+		logStr += fmt.Sprintf(" backoff_ms:%d backoff_types:%s", bo.totalSleep, backoffTypes)
+	}
+	var detail *kvrpcpb.ExecDetails
+	if resp.Cop != nil {
+		detail = resp.Cop.ExecDetails
+	} else if resp.CopStream != nil {
+		detail = resp.CopStream.ExecDetails
+	}
+	if detail != nil {
+		if detail.HandleTime != nil {
+			processMs := detail.HandleTime.ProcessMs
+			waitMs := detail.HandleTime.WaitMs
+			if processMs > minLogKVProcessTime {
+				logStr += fmt.Sprintf(" kv_process_ms:%d", processMs)
+				if detail.ScanDetail != nil {
+					logStr = appendScanDetail(logStr, "write", detail.ScanDetail.Write)
+					logStr = appendScanDetail(logStr, "data", detail.ScanDetail.Data)
+					logStr = appendScanDetail(logStr, "lock", detail.ScanDetail.Lock)
+				}
+			}
+			if waitMs > minLogKVWaitTime {
+				logStr += fmt.Sprintf(" kv_wait_ms:%d", waitMs)
+			}
+		}
+	}
+	log.Info(logStr)
+}
+
+func appendScanDetail(logStr string, columnFamily string, scanInfo *kvrpcpb.ScanInfo) string {
+	if scanInfo != nil {
+		logStr += fmt.Sprintf(" scan_total_%s:%d", columnFamily, scanInfo.Total)
+		logStr += fmt.Sprintf(" scan_processed_%s:%d", columnFamily, scanInfo.Processed)
+	}
+	return logStr
 }
 
 func (worker *copIteratorWorker) handleCopStreamResult(bo *Backoffer, stream *tikvrpc.CopStreamResponse, task *copTask, ch chan<- copResponse) ([]*copTask, error) {
@@ -670,7 +713,6 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, resp *coproces
 			return nil, errors.Trace(err)
 		}
 		// We may meet RegionError at the first packet, but not during visiting the stream.
-		metrics.TiKVCoprocessorCounter.WithLabelValues("rebuild_task").Inc()
 		return buildCopTasks(bo, worker.store.regionCache, task.ranges, worker.req.Desc, worker.req.Streaming)
 	}
 	if lockErr := resp.GetLocked(); lockErr != nil {
