@@ -532,6 +532,7 @@ func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgInde
 
 			w.idxRecords = append(w.idxRecords, idxRecord)
 			if handle == taskRange.endHandle {
+				// If !taskRange.endIncluded, we will not reach here when handle == taskRange.endHandle
 				handleOutOfRange = true
 				return false, nil
 			}
