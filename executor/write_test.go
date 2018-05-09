@@ -146,7 +146,7 @@ func (s *testSuite) TestInsert(c *C) {
 	_, err = tk.Exec("insert into t value(0)")
 	c.Assert(err, IsNil)
 	_, err = tk.Exec("insert into t value(1)")
-	c.Assert(types.ErrOverflow.Equal(err), IsTrue)
+	c.Assert(types.ErrWarnDataOutOfRange.Equal(err), IsTrue)
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(c binary(255))")

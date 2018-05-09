@@ -1464,6 +1464,9 @@ func (e *InsertValues) handleErr(col *table.Column, rowIdx int, err error) error
 		return resetErrDataTooLong(col.Name.O, rowIdx+1, err)
 	}
 
+	if types.ErrOverflow.Equal(err) {
+		return types.ErrWarnDataOutOfRange.GenByArgs(col.Name.O, int64(rowIdx+1))
+	}
 	return e.filterErr(err)
 }
 
