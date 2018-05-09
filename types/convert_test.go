@@ -618,12 +618,12 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeDuration, "10:11:12", "10:11:12")
 	signedAccept(c, mysql.TypeDuration, ZeroDatetime, "00:00:00")
 	signedAccept(c, mysql.TypeDuration, ZeroDuration, "00:00:00")
+	signedAccept(c, mysql.TypeDuration, 0, "00:00:00")
 
 	signedDeny(c, mysql.TypeDate, "2012-08-x", "0000-00-00")
 	signedDeny(c, mysql.TypeDatetime, "2012-08-x", "0000-00-00 00:00:00")
 	signedDeny(c, mysql.TypeTimestamp, "2012-08-x", "0000-00-00 00:00:00")
 	signedDeny(c, mysql.TypeDuration, "2012-08-x", "00:00:00")
-	signedDeny(c, mysql.TypeDuration, 0, "<nil>")
 
 	// string from string
 	signedAccept(c, mysql.TypeString, "abc", "abc")
