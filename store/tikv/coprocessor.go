@@ -436,9 +436,10 @@ func (it *copIterator) open(ctx context.Context) {
 		})
 	}
 	taskSender := &copIteratorTaskSender{
-		taskCh: taskCh,
-		wg:     &it.wg,
-		tasks:  it.tasks,
+		taskCh:   taskCh,
+		wg:       &it.wg,
+		tasks:    it.tasks,
+		finished: it.finished,
 	}
 	taskSender.respChan = it.respChan
 	copIteratorGP.Go(taskSender.run)
