@@ -213,6 +213,17 @@ func (s *testSuite) TestInsert(c *C) {
 	tk.MustQuery("select * from test use index (id) where id = 2").Check(testkit.Rows("2 2"))
 	tk.MustExec("insert into test values(2, 3)")
 	tk.MustQuery("select * from test use index (id) where id = 2").Check(testkit.Rows("2 2", "2 3"))
+
+	// issue 6424
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a time(6))")
+	tk.MustExec("insert into t value('20070219173709.055870'), ('20070219173709.055'), ('-20070219173709.055870'), ('20070219173709.055870123')")
+	tk.MustQuery("select * from t").Check(testkit.Rows("17:37:09.055870", "17:37:09.055000", "17:37:09.055870", "17:37:09.055870"))
+	tk.MustExec("truncate table t")
+	tk.MustExec("insert into t value(20070219173709.055870), (20070219173709.055), (20070219173709.055870123)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("17:37:09.055870", "17:37:09.055000", "17:37:09.055870"))
+	_, err = tk.Exec("insert into t value(-20070219173709.055870)")
+	c.Assert(err.Error(), Equals, "[types:1292]Incorrect time value '-20070219173709.055870'")
 }
 
 func (s *testSuite) TestInsertAutoInc(c *C) {
