@@ -434,6 +434,9 @@ type addIndexWorker struct {
 type reorgIndexTask struct {
 	startHandle int64
 	endHandle   int64
+	// When the last handle is math.MaxInt64, set endIncluded to true to
+	// tell worker backfilling index of endHandle.
+	endIncluded bool
 }
 
 type addIndexResult struct {
@@ -512,8 +515,12 @@ func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgInde
 	handleOutOfRange := false
 	err := iterateSnapshotRows(w.sessCtx.GetStore(), w.table, txn.StartTS(), taskRange.startHandle,
 		func(handle int64, recordKey kv.Key, rawRow []byte) (bool, error) {
-			// Don't create endHandle index.
-			handleOutOfRange = handle >= taskRange.endHandle
+			if !taskRange.endIncluded {
+				handleOutOfRange = handle >= taskRange.endHandle
+			} else {
+				handleOutOfRange = handle > taskRange.endHandle
+			}
+
 			if handleOutOfRange || len(w.idxRecords) >= w.batchCnt {
 				return false, nil
 			}
@@ -524,6 +531,11 @@ func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgInde
 			}
 
 			w.idxRecords = append(w.idxRecords, idxRecord)
+			if handle == taskRange.endHandle {
+				// If !taskRange.endIncluded, we will not reach here when handle == taskRange.endHandle
+				handleOutOfRange = true
+				return false, nil
+			}
 			return true, nil
 		})
 
@@ -656,7 +668,7 @@ func makeupIndexColFieldMap(t table.Table, indexInfo *model.IndexInfo) map[int64
 // to speed up adding index in table with disperse handle.
 func (d *ddl) splitTableRanges(t table.Table, startHandle int64) ([]kv.KeyRange, error) {
 	startRecordKey := t.RecordKey(startHandle)
-	endRecordKey := t.RecordKey(math.MaxInt64)
+	endRecordKey := t.RecordKey(math.MaxInt64).Next()
 	kvRange := kv.KeyRange{StartKey: startRecordKey, EndKey: endRecordKey}
 	store, ok := d.store.(tikv.Storage)
 	if !ok {
@@ -756,7 +768,7 @@ func (d *ddl) backfillBatchTasks(startTime time.Time, startHandle int64, reorgIn
 	return nil
 }
 
-func (d *ddl) backfillKVRangesIndex(workers []*addIndexWorker, kvRanges []kv.KeyRange, job *model.Job, reorgInfo *reorgInfo) error {
+func (d *ddl) backfillKVRangesIndex(t table.Table, workers []*addIndexWorker, kvRanges []kv.KeyRange, job *model.Job, reorgInfo *reorgInfo) error {
 	var (
 		startTime   time.Time
 		startHandle int64
@@ -774,7 +786,12 @@ func (d *ddl) backfillKVRangesIndex(workers []*addIndexWorker, kvRanges []kv.Key
 		if err != nil {
 			return errors.Trace(err)
 		}
-		task := &reorgIndexTask{startHandle, endHandle}
+		endKey := t.RecordKey(endHandle)
+		endIncluded := false
+		if endKey.Cmp(keyRange.EndKey) < 0 {
+			endIncluded = true
+		}
+		task := &reorgIndexTask{startHandle, endHandle, endIncluded}
 
 		batchTasks = append(batchTasks, task)
 		if len(batchTasks) >= len(workers) || i == (len(kvRanges)-1) {
@@ -822,7 +839,7 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 		return errors.Trace(err)
 	}
 
-	return d.backfillKVRangesIndex(workers, kvRanges, job, reorgInfo)
+	return d.backfillKVRangesIndex(t, workers, kvRanges, job, reorgInfo)
 }
 
 func findIndexByName(idxName string, indices []*model.IndexInfo) *model.IndexInfo {
