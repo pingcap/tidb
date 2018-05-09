@@ -35,7 +35,8 @@ import (
 )
 
 const (
-	insertDeleteRangeSQL = `INSERT IGNORE INTO mysql.gc_delete_range VALUES ("%d", "%d", "%s", "%s", "%d", FALSE)`
+	insertDeleteRangeSQL = `INSERT INTO mysql.gc_delete_range VALUES ("%d", "%d", "%s", "%s", "%d", FALSE)
+							ON DUPLICATE KEY UPDATE is_done = FALSE, start_key = "%[3]s", end_key = "%[4]s", ts = "%[5]d"`
 
 	delBatchSize = 65536
 	delBackLog   = 128
