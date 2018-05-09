@@ -15,7 +15,6 @@ package plan
 
 import (
 	"math"
-	"reflect"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -141,21 +140,26 @@ func (p *LogicalJoin) getMergeJoin(prop *requiredProp) []PhysicalPlan {
 			joins = append(joins, mergeJoin)
 		}
 	}
-	return joins
+	// If there are some joinKeys in children property.
+	if len(joins) > 0 {
+		return joins
+	}
+	// Otherwise, generate enforced merge join plan.
+	return p.getEnforcedMergeJoin(prop)
 }
 
 func (p *LogicalJoin) getEnforcedMergeJoin(prop *requiredProp) []PhysicalPlan {
-	// Check whether SMJ can satisfy the parents property
+	// Check whether SMJ can satisfy the required property
 	for _, col := range prop.cols {
 		isExist := false
 		for _, key := range p.LeftJoinKeys {
-			if reflect.DeepEqual(*key, *col) {
+			if key.Equal(p.ctx, col) {
 				isExist = true
 				break
 			}
 		}
 		for _, key := range p.RightJoinKeys {
-			if reflect.DeepEqual(*key, *col) {
+			if key.Equal(p.ctx, col) {
 				isExist = true
 				break
 			}
@@ -164,7 +168,7 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *requiredProp) []PhysicalPlan {
 			return nil
 		}
 	}
-	// Generate the enforcing sort merge join
+	// Generate the enforced sort merge join
 	lProp := &requiredProp{taskTp: rootTaskType, cols: p.LeftJoinKeys, expectedCnt: math.MaxFloat64, enforced: true}
 	rProp := &requiredProp{taskTp: rootTaskType, cols: p.RightJoinKeys, expectedCnt: math.MaxFloat64, enforced: true}
 	enforcePhysicalMergeJoin := PhysicalMergeJoin{
@@ -458,11 +462,7 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *requiredProp) ([]PhysicalPlan, boo
 func (p *LogicalJoin) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan {
 	mergeJoins := p.getMergeJoin(prop)
 	if (p.preferJoinType & preferMergeJoin) > 0 {
-		// If there are some joinKeys in children property.
-		if len(mergeJoins) > 0 {
-			return mergeJoins
-		}
-		return p.getEnforcedMergeJoin(prop)
+		return mergeJoins
 	}
 	joins := make([]PhysicalPlan, 0, 5)
 	joins = append(joins, mergeJoins...)
