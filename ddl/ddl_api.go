@@ -1561,9 +1561,9 @@ func (d *ddl) AlterTableComment(ctx sessionctx.Context, ident ast.Ident, spec *a
 	return errors.Trace(err)
 }
 
-// RenameIndex renames an index. Several checks will be done here:
-// 1. The rename source must exist
-// 2. The rename target must not exist, unless the source and the target are the same (case-insensitive)
+// RenameIndex renames an index.
+// In TiDB, indexes are case-insensitive (so index 'a' and 'A" are considered the same index),
+// but index names are case-sensitive (we can rename index 'a' to 'A')
 func (d *ddl) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ident.Schema)
@@ -1579,9 +1579,13 @@ func (d *ddl) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 	if fromIdx := findIndexByName(spec.FromKey.L, tb.Meta().Indices); fromIdx == nil {
 		return errors.Trace(infoschema.ErrKeyNotExists.GenByArgs(spec.FromKey.O, tb.Meta().Name))
 	}
+	// Take case-sensitivity into account, if `FromKey` and  `ToKey` are the same, nothing need to be changed
 	if spec.FromKey.O == spec.ToKey.O {
 		return nil
 	}
+	// If spec.FromKey.L == spec.ToKey.L, we operate on the same index(case-insensitive) and change its name (case-sensitive)
+	// e.g: from `inDex` to `IndEX`. Otherwise, we try to rename an index to another different index which already exists,
+	// that's illegal by rule.
 	if toIdx := findIndexByName(spec.ToKey.L, tb.Meta().Indices); toIdx != nil && spec.FromKey.L != spec.ToKey.L {
 		return errors.Trace(infoschema.ErrKeyNameDuplicate.GenByArgs(toIdx.Name.O))
 	}
