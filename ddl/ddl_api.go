@@ -1561,7 +1561,9 @@ func (d *ddl) AlterTableComment(ctx sessionctx.Context, ident ast.Ident, spec *a
 	return errors.Trace(err)
 }
 
-// RenameIndex updates the table comment information.
+// RenameIndex renames an index. Several checks will be done here:
+// 1. The rename source must exist
+// 2. The rename target must not exist, unless the source and the target are the same (case-insensitive)
 func (d *ddl) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ident.Schema)
