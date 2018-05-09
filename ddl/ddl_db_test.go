@@ -180,7 +180,7 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrTooLongIdent)
 	sql = "alter table test_comment comment 'test comment'"
 	s.testErrorCode(c, sql, tmysql.ErrNoSuchTable)
-	sql = "alter table test_comment add column `a ` int ;"
+	sql = "alter table test_error_code_succ add column `a ` int ;"
 	s.testErrorCode(c, sql, tmysql.ErrWrongColumnName)
 	s.tk.MustExec("create table test_on_update (c1 int, c2 int, c3 int ); ")
 	sql = "alter table test_on_update add column c4 int on update current_timestamp;"
@@ -209,8 +209,8 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	sql = "alter table test_error_code_succ modify t.c1 bigint"
 	s.testErrorCode(c, sql, tmysql.ErrWrongTableName)
 	// insert value
-	s.tk.MustExec("create table t3(c1 char(100) not null);")
-	sql = "insert into t3 (c1) values(null);"
+	s.tk.MustExec("create table test_error_code_null(c1 char(100) not null);")
+	sql = "insert into test_error_code_null (c1) values(null);"
 	s.testErrorCode(c, sql, tmysql.ErrBadNull)
 }
 
