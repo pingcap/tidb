@@ -627,7 +627,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 
 const (
 	minLogBackoffTime = 100
-	waitFactor        = 3
+	minLogWaitFactor  = 3
 )
 
 func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *copTask, bo *Backoffer, resp *tikvrpc.Response) {
@@ -642,7 +642,7 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 		processMS = int(detail.HandleTime.ProcessMs)
 		waitMS = int(detail.HandleTime.WaitMs)
 	}
-	if waitMS > (processMS+bo.totalSleep)*waitFactor {
+	if waitMS > (processMS+bo.totalSleep)*minLogWaitFactor {
 		// Do not log if most of the time is wait.
 		return
 	}
