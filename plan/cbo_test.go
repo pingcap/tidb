@@ -495,8 +495,8 @@ func (s *testAnalyzeSuite) TestOutdatedAnalyze(c *C) {
 	testKit.MustQuery("explain select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
 		"IndexScan_8   cop table:t, index:a, range:[-inf,5], keep order:false 26.59",
 		"TableScan_9 Selection_10  cop table:t, keep order:false 26.59",
-		"Selection_10  TableScan_9 cop le(test.t.b, 5) 26.67",
-		"IndexLookUp_11   root index:IndexScan_8, table:Selection_10 26.67",
+		"Selection_10  TableScan_9 cop le(test.t.b, 5) 8.84",
+		"IndexLookUp_11   root index:IndexScan_8, table:Selection_10 8.84",
 	))
 }
 
