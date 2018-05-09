@@ -27,8 +27,8 @@ import (
 )
 
 const (
-	loadDeleteRangeSQL     = `SELECT HIGH_PRIORITY job_id, element_id, start_key, end_key FROM mysql.gc_delete_range WHERE ts < %v ORDER BY ts`
-	completeDeleteRangeSQL = `DELETE FROM mysql.gc_delete_range WHERE job_id = %d AND element_id = %d`
+	loadDeleteRangeSQL     = `SELECT HIGH_PRIORITY job_id, element_id, start_key, end_key FROM mysql.gc_delete_range WHERE ts < %v AND is_done = FALSE ORDER BY ts`
+	completeDeleteRangeSQL = `UPDATE mysql.gc_delete_range SET is_done = TRUE WHERE job_id = %d AND element_id = %d`
 	updateDeleteRangeSQL   = `UPDATE mysql.gc_delete_range SET start_key = "%s" WHERE job_id = %d AND element_id = %d AND start_key = "%s"`
 )
 

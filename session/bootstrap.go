@@ -185,6 +185,7 @@ const (
 		start_key VARCHAR(255) NOT NULL COMMENT "encoded in hex",
 		end_key VARCHAR(255) NOT NULL COMMENT "encoded in hex",
 		ts BIGINT NOT NULL COMMENT "timestamp in int64",
+		is_done BOOL NOT NULL DEFAULT FALSE COMMENT "marks the delete range job has been done",
 		UNIQUE KEY (element_id),
 		KEY (job_id, element_id)
 	);`
@@ -243,6 +244,7 @@ const (
 	version18 = 18
 	version19 = 19
 	version20 = 20
+	version21 = 21
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -379,6 +381,10 @@ func upgrade(s Session) {
 
 	if ver < version20 {
 		upgradeToVer20(s)
+	}
+
+	if ver < version21 {
+		upgradeToVer21(s)
 	}
 
 	updateBootstrapVer(s)
@@ -605,6 +611,10 @@ func upgradeToVer19(s Session) {
 
 func upgradeToVer20(s Session) {
 	doReentrantDDL(s, CreateStatsFeedbackTable)
+}
+
+func upgradeToVer21(s Session) {
+	doReentrantDDL(s, "ALTER TABLE mysql.gc_delete_range ADD COLUMN `is_done` BOOL NOT NULL DEFAULT FALSE", infoschema.ErrColumnExists)
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
