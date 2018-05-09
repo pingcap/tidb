@@ -408,7 +408,7 @@ func parseBinaryDuration(pos int, paramValues []byte, isNegative uint32) (int, s
 	pos++
 	seconds := binary.LittleEndian.Uint32(paramValues[pos : pos+1])
 	pos++
-	return pos, fmt.Sprintf("%s%dd %d:%d:%d", sign, days, hours, minutes, seconds)
+	return pos, fmt.Sprintf("%s%d %d:%d:%d", sign, days, hours, minutes, seconds)
 }
 
 func parseBinaryDurationWithMS(pos int, paramValues []byte,
