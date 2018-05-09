@@ -456,16 +456,16 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 			// test primary key feedback
 			sql: "select * from t where t.a <= 5",
 			hist: "column:1 ndv:3 totColSize:0\n" +
-				"num: 1\tlower_bound: 1\tupper_bound: 1\trepeats: 1\n" +
+				"num: 1\tlower_bound: -9223372036854775808\tupper_bound: 1\trepeats: 0\n" +
 				"num: 2\tlower_bound: 2\tupper_bound: 2\trepeats: 1\n" +
-				"num: 4\tlower_bound: 3\tupper_bound: 6\trepeats: 0",
+				"num: 4\tlower_bound: 3\tupper_bound: 5\trepeats: 0",
 			idxCols: 0,
 		},
 		{
 			// test index feedback by double read
 			sql: "select * from t use index(idx) where t.b <= 5",
 			hist: "index:1 ndv:2\n" +
-				"num: 2\tlower_bound: 2\tupper_bound: 2\trepeats: 2\n" +
+				"num: 2\tlower_bound: \tupper_bound: 2\trepeats: 0\n" +
 				"num: 4\tlower_bound: 3\tupper_bound: 6\trepeats: 0",
 			idxCols: 1,
 		},
@@ -473,36 +473,28 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 			// test index feedback by single read
 			sql: "select b from t use index(idx) where t.b <= 5",
 			hist: "index:1 ndv:2\n" +
-				"num: 2\tlower_bound: 2\tupper_bound: 2\trepeats: 2\n" +
+				"num: 2\tlower_bound: \tupper_bound: 2\trepeats: 0\n" +
 				"num: 4\tlower_bound: 3\tupper_bound: 6\trepeats: 0",
 			idxCols: 1,
 		},
 	}
-	for _, t := range tests {
-		testKit.MustQuery(t.sql)
-		h.DumpStatsDeltaToKV()
-		feedback := h.GetQueryFeedback()
-		c.Assert(len(feedback), Equals, 1)
-		if t.idxCols == 0 {
-			c.Assert(feedback[0].DecodeInt(), IsNil)
-		}
-		c.Assert(statistics.UpdateHistogram(feedback[0].Hist(), feedback[0]).ToString(t.idxCols), Equals, t.hist)
-	}
-
-	for _, t := range tests {
-		testKit.MustQuery(t.sql)
-	}
-	c.Assert(h.DumpStatsDeltaToKV(), IsNil)
-	c.Assert(h.DumpStatsFeedbackToKV(), IsNil)
-	c.Assert(h.HandleUpdateStats(s.do.InfoSchema()), IsNil)
 	is := s.do.InfoSchema()
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	h.Update(s.do.InfoSchema())
-	tblInfo := table.Meta()
-	tbl := h.GetTableStats(tblInfo)
-	c.Assert(tbl.Columns[tblInfo.Columns[0].ID].ToString(0), Equals, tests[0].hist)
-	c.Assert(tbl.Indices[tblInfo.Indices[0].ID].ToString(1), Equals, tests[1].hist)
+	for i, t := range tests {
+		testKit.MustQuery(t.sql)
+		c.Assert(h.DumpStatsDeltaToKV(), IsNil)
+		c.Assert(h.DumpStatsFeedbackToKV(), IsNil)
+		c.Assert(h.HandleUpdateStats(s.do.InfoSchema()), IsNil)
+		c.Assert(err, IsNil)
+		h.Update(is)
+		tblInfo := table.Meta()
+		tbl := h.GetTableStats(tblInfo)
+		if t.idxCols == 0 {
+			c.Assert(tbl.Columns[tblInfo.Columns[0].ID].ToString(0), Equals, tests[i].hist)
+		} else {
+			c.Assert(tbl.Indices[tblInfo.Indices[0].ID].ToString(1), Equals, tests[i].hist)
+		}
+	}
 
 	// Feedback from limit executor may not be accurate.
 	testKit.MustQuery("select * from t where t.a <= 2 limit 1")
