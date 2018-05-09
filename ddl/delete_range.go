@@ -35,6 +35,8 @@ import (
 )
 
 const (
+	// Use ON DUPLICATE KEY UPDATE to avoid already-processed records in the table breaking tests.
+	// This may not happen under production environments.
 	insertDeleteRangeSQL = `INSERT INTO mysql.gc_delete_range VALUES ("%d", "%d", "%s", "%s", "%d", FALSE)
 							ON DUPLICATE KEY UPDATE is_done = FALSE, start_key = "%[3]s", end_key = "%[4]s", ts = "%[5]d"`
 
