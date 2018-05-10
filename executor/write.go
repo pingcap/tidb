@@ -1458,7 +1458,7 @@ func (e *InsertValues) handleErr(col *table.Column, rowIdx int, err error, ignor
 	if types.ErrOverflow.Equal(err) {
 		return types.ErrWarnDataOutOfRange.GenByArgs(col.Name.O, int64(rowIdx+1))
 	}
-	return e.filterErr(err)
+	return e.filterErr(err, ignoreErr)
 }
 
 // getRow eval the insert statement. Because the value of column may calculated based on other column,
