@@ -186,8 +186,7 @@ const (
 		end_key VARCHAR(255) NOT NULL COMMENT "encoded in hex",
 		ts BIGINT NOT NULL COMMENT "timestamp in int64",
 		is_done BOOL NOT NULL DEFAULT FALSE COMMENT "marks the delete range job has been done",
-		UNIQUE KEY (element_id),
-		KEY (job_id, element_id)
+		UNIQUE KEY (job_id, element_id)
 	);`
 
 	// CreateStatsFeedbackTable stores the feedback info which is used to update stats.
@@ -614,6 +613,9 @@ func upgradeToVer20(s Session) {
 }
 
 func upgradeToVer21(s Session) {
+	doReentrantDDL(s, "ALTER TABLE mysql.gc_delete_range DROP INDEX element_id", ddl.ErrCantDropFieldOrKey)
+	doReentrantDDL(s, "ALTER TABLE mysql.gc_delete_range DROP INDEX job_id", ddl.ErrCantDropFieldOrKey)
+	doReentrantDDL(s, "ALTER TABLE mysql.gc_delete_range ADD UNIQUE INDEX job_id (job_id, element_id)")
 	doReentrantDDL(s, "ALTER TABLE mysql.gc_delete_range ADD COLUMN `is_done` BOOL NOT NULL DEFAULT FALSE", infoschema.ErrColumnExists)
 }
 
