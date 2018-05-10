@@ -1886,12 +1886,12 @@ func (s *testDBSuite) TestAddNotNullColumnWhileInsertOnDupUpdate(c *C) {
 	c.Assert(tk2Err, IsNil)
 }
 
-func (s *testDBSuite) getMaxTableRowID(c *C, d ddl.DDL, tbl table.Table) int64 {
+func (s *testDBSuite) getMaxTableRowID(c *C, d ddl.DDL, tbl table.Table) (int64, bool) {
 	curVer, err := s.store.CurrentVersion()
 	c.Assert(err, IsNil)
-	maxID, err := d.GetTableMaxRowID(curVer.Ver, tbl.Meta())
+	maxID, emptyTable, err := d.GetTableMaxRowID(curVer.Ver, tbl.Meta())
 	c.Assert(err, IsNil)
-	return maxID
+	return maxID, emptyTable
 }
 
 func (s *testDBSuite) TestGetTableEndHandle(c *C) {
@@ -1908,23 +1908,32 @@ func (s *testDBSuite) TestGetTableEndHandle(c *C) {
 	c.Assert(err, IsNil)
 
 	// test empty table
-	maxID := s.getMaxTableRowID(c, d, tbl)
-	c.Assert(maxID, Equals, int64(0))
+	maxID, emptyTable := s.getMaxTableRowID(c, d, tbl)
+	c.Assert(emptyTable, IsTrue)
+	c.Assert(maxID, Equals, int64(math.MaxInt64))
+
+	tk.MustExec("insert into t values(-1, 1)")
+	maxID, emptyTable = s.getMaxTableRowID(c, d, tbl)
+	c.Assert(maxID, Equals, int64(-1))
+	c.Assert(emptyTable, IsFalse)
 
 	tk.MustExec("insert into t values(9223372036854775806, 1)")
-	maxID = s.getMaxTableRowID(c, d, tbl)
+	maxID, emptyTable = s.getMaxTableRowID(c, d, tbl)
 	c.Assert(maxID, Equals, int64(9223372036854775806))
+	c.Assert(emptyTable, IsFalse)
 
 	tk.MustExec("insert into t values(9223372036854775807, 1)")
 
-	maxID = s.getMaxTableRowID(c, d, tbl)
+	maxID, emptyTable = s.getMaxTableRowID(c, d, tbl)
 	c.Assert(maxID, Equals, int64(9223372036854775807))
+	c.Assert(emptyTable, IsFalse)
 
 	tk.MustExec("insert into t values(10, 1)")
 	tk.MustExec("insert into t values(102149142, 1)")
 
-	maxID = s.getMaxTableRowID(c, d, tbl)
+	maxID, emptyTable = s.getMaxTableRowID(c, d, tbl)
 	c.Assert(maxID, Equals, int64(9223372036854775807))
+	c.Assert(emptyTable, IsFalse)
 
 	tk.MustExec("create table t1(a bigint PRIMARY KEY, b int)")
 
@@ -1934,8 +1943,9 @@ func (s *testDBSuite) TestGetTableEndHandle(c *C) {
 	is = s.dom.InfoSchema()
 	tbl, err = is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
-	maxID = s.getMaxTableRowID(c, d, tbl)
+	maxID, emptyTable = s.getMaxTableRowID(c, d, tbl)
 	c.Assert(maxID, Equals, int64(999))
+	c.Assert(emptyTable, IsFalse)
 
 	// Test PK is not handle
 	tk.MustExec("create table t2(a varchar(255))")
@@ -1943,36 +1953,42 @@ func (s *testDBSuite) TestGetTableEndHandle(c *C) {
 	is = s.dom.InfoSchema()
 	tbl, err = is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t2"))
 	c.Assert(err, IsNil)
-	maxID = s.getMaxTableRowID(c, d, tbl)
-	c.Assert(maxID, Equals, int64(0))
+	maxID, emptyTable = s.getMaxTableRowID(c, d, tbl)
+	c.Assert(maxID, Equals, int64(math.MaxInt64))
+	c.Assert(emptyTable, IsTrue)
 
 	for i := 0; i < 1000; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t2 values(%v)", i))
 	}
 
 	result := tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxID = s.getMaxTableRowID(c, d, tbl)
+	maxID, emptyTable = s.getMaxTableRowID(c, d, tbl)
 	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
+	c.Assert(emptyTable, IsFalse)
 
 	tk.MustExec("insert into t2 values(100000)")
 	result = tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxID = s.getMaxTableRowID(c, d, tbl)
+	maxID, emptyTable = s.getMaxTableRowID(c, d, tbl)
 	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
+	c.Assert(emptyTable, IsFalse)
 
 	tk.MustExec(fmt.Sprintf("insert into t2 values(%v)", math.MaxInt64-1))
 	result = tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxID = s.getMaxTableRowID(c, d, tbl)
+	maxID, emptyTable = s.getMaxTableRowID(c, d, tbl)
 	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
+	c.Assert(emptyTable, IsFalse)
 
 	tk.MustExec(fmt.Sprintf("insert into t2 values(%v)", math.MaxInt64))
 
 	result = tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxID = s.getMaxTableRowID(c, d, tbl)
+	maxID, emptyTable = s.getMaxTableRowID(c, d, tbl)
 	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
+	c.Assert(emptyTable, IsFalse)
 
 	tk.MustExec("insert into t2 values(100)")
 
 	result = tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxID = s.getMaxTableRowID(c, d, tbl)
+	maxID, emptyTable = s.getMaxTableRowID(c, d, tbl)
 	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
+	c.Assert(emptyTable, IsFalse)
 }

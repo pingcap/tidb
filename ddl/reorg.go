@@ -250,7 +250,8 @@ func (d *ddl) buildTableScan(ctx context.Context, startTS uint64, tblInfo *model
 }
 
 // GetTableMaxRowID get the last row id of the table.
-func (d *ddl) GetTableMaxRowID(startTS uint64, tblInfo *model.TableInfo) (int64, error) {
+func (d *ddl) GetTableMaxRowID(startTS uint64, tblInfo *model.TableInfo) (maxRowID int64, emptyTable bool, err error) {
+	maxRowID = int64(math.MaxInt64)
 	var columns []*model.ColumnInfo
 	if tblInfo.PKIsHandle {
 		for _, col := range tblInfo.Columns {
@@ -264,30 +265,30 @@ func (d *ddl) GetTableMaxRowID(startTS uint64, tblInfo *model.TableInfo) (int64,
 	}
 
 	if len(columns) == 0 {
-		return 0, errors.Errorf("columns should not be nil")
+		return maxRowID, false, errors.Errorf("columns should not be nil")
 	}
 
 	ctx := context.Background()
-	maxRowID := int64(math.MaxInt64)
+
 	src, err := d.buildTableScan(ctx, startTS, tblInfo, columns)
 	if err != nil {
-		return maxRowID, errors.Trace(err)
+		return maxRowID, false, errors.Trace(err)
 	}
 	defer terror.Call(src.Close)
 
 	chk := chunk.NewChunk(getColumnsTypes(columns))
 	err = src.Next(ctx, chk)
 	if err != nil {
-		return maxRowID, errors.Trace(err)
+		return maxRowID, false, errors.Trace(err)
 	}
 
 	if chk.NumRows() == 0 {
 		// empty table
-		return 0, nil
+		return maxRowID, true, nil
 	}
 	row := chk.GetRow(0)
 	maxRowID = row.GetInt64(0)
-	return maxRowID, nil
+	return maxRowID, false, nil
 }
 
 func (d *ddl) getReorgInfo(t *meta.Meta, job *model.Job) (*reorgInfo, error) {

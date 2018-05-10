@@ -282,13 +282,13 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 		if !reorgMeta.Inited {
 			// update the real table end handle, the new added row after the index being writable,
 			// has no needs to backfill.
-			endHandle, err1 := d.GetTableMaxRowID(reorgInfo.SnapshotVer, tbl.Meta())
+			endHandle, emptyTable, err1 := d.GetTableMaxRowID(reorgInfo.SnapshotVer, tbl.Meta())
 			if err1 != nil {
 				return ver, errors.Trace(err1)
 			}
 			log.Infof("[ddl] job(%v) get table end handle:%v, reorgInfo.Handle:%v", job.ID, endHandle, reorgInfo.Handle)
 
-			if endHandle < reorgInfo.Handle {
+			if endHandle < reorgInfo.Handle || emptyTable {
 				endHandle = reorgInfo.Handle
 			}
 
