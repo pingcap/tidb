@@ -78,7 +78,7 @@ func (p *baseLogicalPlan) preparePossibleProperties() [][]*expression.Column {
 }
 
 func (p *LogicalProjection) preparePossibleProperties() [][]*expression.Column {
-	childResult := p.children[0].preparePossibleProperties()
+	childProperties := p.children[0].preparePossibleProperties()
 	oldCols := make([]*expression.Column, 0, p.schema.Len())
 	newCols := make([]*expression.Column, 0, p.schema.Len())
 	for i, expr := range p.Exprs {
@@ -88,21 +88,21 @@ func (p *LogicalProjection) preparePossibleProperties() [][]*expression.Column {
 		}
 	}
 	tmpSchema := expression.NewSchema(oldCols...)
-	for i := len(childResult) - 1; i >= 0; i-- {
-		for j, col := range childResult[i] {
+	for i := len(childProperties) - 1; i >= 0; i-- {
+		for j, col := range childProperties[i] {
 			pos := tmpSchema.ColumnIndex(col)
 			if pos >= 0 {
-				childResult[i][j] = newCols[pos]
+				childProperties[i][j] = newCols[pos]
 			} else {
-				childResult[i] = childResult[i][:j]
+				childProperties[i] = childProperties[i][:j]
 				break
 			}
 		}
-		if len(childResult[i]) == 0 {
-			childResult = append(childResult[:i], childResult[i+1:]...)
+		if len(childProperties[i]) == 0 {
+			childProperties = append(childProperties[:i], childProperties[i+1:]...)
 		}
 	}
-	return childResult
+	return childProperties
 }
 
 func (p *LogicalJoin) preparePossibleProperties() [][]*expression.Column {
