@@ -69,6 +69,8 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkDropDatabaseGrammar(node)
 	case *ast.ShowStmt:
 		p.resolveShowStmt(node)
+	case *ast.UnionSelectList:
+		p.checkUnionSelectList(node)
 	case *ast.DeleteTableList:
 		return in, true
 	}
@@ -203,6 +205,18 @@ func (p *preprocessor) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 		mysql.TypeFloat, mysql.TypeDouble, mysql.TypeLonglong, mysql.TypeInt24:
 	default:
 		p.err = errors.Errorf("Incorrect column specifier for column '%s'", autoIncrementCol.Name.Name.O)
+	}
+}
+
+func (p *preprocessor) checkUnionSelectList(stmt *ast.UnionSelectList) {
+	for idx, sel := range stmt.Selects {
+		if idx != len(stmt.Selects)-1 {
+			if sel.OrderBy != nil {
+				p.err = ErrWrongUsage.GenByArgs("UNION", "ORDER BY")
+			} else if sel.Limit != nil {
+				p.err = ErrWrongUsage.GenByArgs("UNION", "LIMIT")
+			}
+		}
 	}
 }
 
