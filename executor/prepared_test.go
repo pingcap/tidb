@@ -100,7 +100,7 @@ func (s *testSuite) TestPrepared(c *C) {
 
 		// Check that rebuild plan works.
 		tk.Se.PrepareTxnCtx(ctx)
-		err = stmt.RebuildPlan()
+		_, err = stmt.RebuildPlan()
 		c.Assert(err, IsNil)
 		rs, err = stmt.Exec(ctx)
 		c.Assert(err, IsNil)

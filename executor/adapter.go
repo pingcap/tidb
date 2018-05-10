@@ -161,18 +161,19 @@ func (a *ExecStmt) IsReadOnly() bool {
 }
 
 // RebuildPlan rebuilds current execute statement plan.
-func (a *ExecStmt) RebuildPlan() error {
+// It returns the current information schema version that 'a' is using.
+func (a *ExecStmt) RebuildPlan() (int64, error) {
 	is := GetInfoSchema(a.Ctx)
 	a.InfoSchema = is
 	if err := plan.Preprocess(a.Ctx, a.StmtNode, is, false); err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 	p, err := plan.Optimize(a.Ctx, a.StmtNode, is)
 	if err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 	a.Plan = p
-	return nil
+	return is.SchemaMetaVersion(), nil
 }
 
 // Exec builds an Executor from a plan. If the Executor doesn't return result,

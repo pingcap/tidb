@@ -464,13 +464,13 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 			log.Errorf("[ddl] get history DDL job err %v, check again", err)
 			continue
 		} else if historyJob == nil {
-			log.Debugf("[ddl] DDL job %d is not in history, maybe not run", jobID)
+			log.Debugf("[ddl] DDL job ID:%d is not in history, maybe not run", jobID)
 			continue
 		}
 
 		// If a job is a history job, the state must be JobSynced or JobCancel.
 		if historyJob.IsSynced() {
-			log.Infof("[ddl] DDL job %d is finished", jobID)
+			log.Infof("[ddl] DDL job ID:%d is finished", jobID)
 			return nil
 		}
 
