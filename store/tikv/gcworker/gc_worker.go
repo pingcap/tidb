@@ -181,6 +181,7 @@ func (w *GCWorker) tick(ctx context.Context) {
 	isLeader, err := w.checkLeader()
 	if err != nil {
 		log.Warnf("[gc worker] check leader err: %v", err)
+		gcJobFailureCounter.WithLabelValues("check_leader").Inc()
 		return
 	}
 	if isLeader {
@@ -220,6 +221,9 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 
 	ok, safePoint, err := w.prepare()
 	if err != nil || !ok {
+		if err != nil {
+			gcJobFailureCounter.WithLabelValues("prepare").Inc()
+		}
 		w.gcIsRunning = false
 		return errors.Trace(err)
 	}
@@ -880,7 +884,7 @@ func (w *GCWorker) loadDurationWithDefault(key string, def time.Duration) (*time
 
 func (w *GCWorker) loadValueFromSysTable(key string, s session.Session) (string, error) {
 	ctx := context.Background()
-	stmt := fmt.Sprintf(`SELECT (variable_value) FROM mysql.tidb WHERE variable_name='%s' FOR UPDATE`, key)
+	stmt := fmt.Sprintf(`SELECT HIGH_PRIORITY (variable_value) FROM mysql.tidb WHERE variable_name='%s' FOR UPDATE`, key)
 	rs, err := s.Execute(ctx, stmt)
 	if len(rs) > 0 {
 		defer terror.Call(rs[0].Close)
