@@ -146,7 +146,7 @@ func (s *testSuite) TestInsert(c *C) {
 	_, err = tk.Exec("insert into t value(0)")
 	c.Assert(err, IsNil)
 	_, err = tk.Exec("insert into t value(1)")
-	c.Assert(types.ErrOverflow.Equal(err), IsTrue)
+	c.Assert(types.ErrWarnDataOutOfRange.Equal(err), IsTrue)
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(c binary(255))")
@@ -213,6 +213,17 @@ func (s *testSuite) TestInsert(c *C) {
 	tk.MustQuery("select * from test use index (id) where id = 2").Check(testkit.Rows("2 2"))
 	tk.MustExec("insert into test values(2, 3)")
 	tk.MustQuery("select * from test use index (id) where id = 2").Check(testkit.Rows("2 2", "2 3"))
+
+	// issue 6424
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a time(6))")
+	tk.MustExec("insert into t value('20070219173709.055870'), ('20070219173709.055'), ('-20070219173709.055870'), ('20070219173709.055870123')")
+	tk.MustQuery("select * from t").Check(testkit.Rows("17:37:09.055870", "17:37:09.055000", "17:37:09.055870", "17:37:09.055870"))
+	tk.MustExec("truncate table t")
+	tk.MustExec("insert into t value(20070219173709.055870), (20070219173709.055), (20070219173709.055870123)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("17:37:09.055870", "17:37:09.055000", "17:37:09.055870"))
+	_, err = tk.Exec("insert into t value(-20070219173709.055870)")
+	c.Assert(err.Error(), Equals, "[types:1292]Incorrect time value '-20070219173709.055870'")
 }
 
 func (s *testSuite) TestInsertAutoInc(c *C) {
@@ -535,6 +546,36 @@ commit;`
 	testSQL = `select * from m;`
 	r = tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("1 1"))
+
+	// The following two cases are used for guaranteeing the last_insert_id
+	// to be set as the value of on-duplicate-update assigned.
+	testSQL = `DROP TABLE IF EXISTS t1;
+	CREATE TABLE t1 (f1 INT AUTO_INCREMENT PRIMARY KEY,
+	f2 VARCHAR(5) NOT NULL UNIQUE);
+	INSERT t1 (f2) VALUES ('test') ON DUPLICATE KEY UPDATE f1 = LAST_INSERT_ID(f1);`
+	tk.MustExec(testSQL)
+	testSQL = `SELECT LAST_INSERT_ID();`
+	r = tk.MustQuery(testSQL)
+	r.Check(testkit.Rows("1"))
+	testSQL = `INSERT t1 (f2) VALUES ('test') ON DUPLICATE KEY UPDATE f1 = LAST_INSERT_ID(f1);`
+	tk.MustExec(testSQL)
+	testSQL = `SELECT LAST_INSERT_ID();`
+	r = tk.MustQuery(testSQL)
+	r.Check(testkit.Rows("1"))
+
+	testSQL = `DROP TABLE IF EXISTS t1;
+	CREATE TABLE t1 (f1 INT AUTO_INCREMENT UNIQUE,
+	f2 VARCHAR(5) NOT NULL UNIQUE);
+	INSERT t1 (f2) VALUES ('test') ON DUPLICATE KEY UPDATE f1 = LAST_INSERT_ID(f1);`
+	tk.MustExec(testSQL)
+	testSQL = `SELECT LAST_INSERT_ID();`
+	r = tk.MustQuery(testSQL)
+	r.Check(testkit.Rows("1"))
+	testSQL = `INSERT t1 (f2) VALUES ('test') ON DUPLICATE KEY UPDATE f1 = LAST_INSERT_ID(f1);`
+	tk.MustExec(testSQL)
+	testSQL = `SELECT LAST_INSERT_ID();`
+	r = tk.MustQuery(testSQL)
+	r.Check(testkit.Rows("1"))
 }
 
 func (s *testSuite) TestInsertIgnoreOnDup(c *C) {

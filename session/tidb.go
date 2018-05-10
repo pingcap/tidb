@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
@@ -330,5 +331,18 @@ func IsQuery(sql string) bool {
 	return false
 }
 
+var (
+	errForUpdateCantRetry = terror.ClassSession.New(codeForUpdateCantRetry,
+		mysql.MySQLErrName[mysql.ErrForUpdateCantRetry])
+)
+
+const (
+	codeForUpdateCantRetry terror.ErrCode = mysql.ErrForUpdateCantRetry
+)
+
 func init() {
+	sessionMySQLErrCodes := map[terror.ErrCode]uint16{
+		codeForUpdateCantRetry: mysql.ErrForUpdateCantRetry,
+	}
+	terror.ErrClassToMySQLCodes[terror.ClassSession] = sessionMySQLErrCodes
 }
