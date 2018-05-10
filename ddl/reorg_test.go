@@ -69,7 +69,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	}
 	job := &model.Job{
 		ID:          1,
-		SnapshotVer: 1, // Make sure it is not zero. So the reorgInfo's frist is false.
+		SnapshotVer: 1, // Make sure it is not zero. So the reorgInfo's first is false.
 	}
 	err = ctx.NewTxn()
 	c.Assert(err, IsNil)
@@ -119,7 +119,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 		SchemaID:    1,
 		Type:        model.ActionCreateSchema,
 		Args:        []interface{}{model.NewCIStr("test")},
-		SnapshotVer: 1, // Make sure it is not zero. So the reorgInfo's frist is false.
+		SnapshotVer: 1, // Make sure it is not zero. So the reorgInfo's first is false.
 	}
 
 	var info *reorgInfo
