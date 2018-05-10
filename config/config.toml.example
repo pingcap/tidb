@@ -138,7 +138,7 @@ query-feedback-limit = 1024
 
 # Pseudo stats will be used if the ratio between the modify count and
 # row count in statistics of a table is greater than it.
-pseudo-estimate-ratio = 0.7
+pseudo-estimate-ratio = 0.8
 
 [proxy-protocol]
 # PROXY protocol acceptable client networks.

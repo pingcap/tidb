@@ -171,7 +171,7 @@ const (
 	DefIndexLookupSize               = 20000
 	DefDistSQLScanConcurrency        = 15
 	DefBuildStatsConcurrency         = 4
-	DefAutoAnalyzeRatio              = 0.7
+	DefAutoAnalyzeRatio              = 0.5
 	DefChecksumTableConcurrency      = 4
 	DefSkipUTF8Check                 = false
 	DefOptAggPushDown                = false
