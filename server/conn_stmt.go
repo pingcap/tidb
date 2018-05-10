@@ -311,13 +311,13 @@ func parseStmtArgs(args []interface{}, boundParams [][]byte, nullBitmap, paramTy
 			}
 			// See https://dev.mysql.com/doc/internals/en/binary-protocol-value.html
 			// for more details.
-			length := binary.LittleEndian.Uint32(paramValues[pos : pos+1])
+			length := uint8(paramValues[pos])
 			pos++
 			switch length {
 			case 0:
 				args[i] = "0"
 			case 8:
-				isNegative := binary.LittleEndian.Uint32(paramValues[pos : pos+1])
+				isNegative := uint8(paramValues[pos])
 				if isNegative > 1 {
 					err = mysql.ErrMalformPacket
 					return
@@ -325,7 +325,7 @@ func parseStmtArgs(args []interface{}, boundParams [][]byte, nullBitmap, paramTy
 				pos++
 				pos, args[i] = parseBinaryDuration(pos, paramValues, isNegative)
 			case 12:
-				isNegative := binary.LittleEndian.Uint32(paramValues[pos : pos+1])
+				isNegative := uint8(paramValues[pos])
 				if isNegative > 1 {
 					err = mysql.ErrMalformPacket
 					return
@@ -395,7 +395,7 @@ func parseBinaryTimestamp(pos int, paramValues []byte) (int, string) {
 	return pos, fmt.Sprintf("%s.%d", dateTime, microSecond)
 }
 
-func parseBinaryDuration(pos int, paramValues []byte, isNegative uint32) (int, string) {
+func parseBinaryDuration(pos int, paramValues []byte, isNegative uint8) (int, string) {
 	sign := ""
 	if isNegative == 1 {
 		sign = "-"
@@ -412,7 +412,7 @@ func parseBinaryDuration(pos int, paramValues []byte, isNegative uint32) (int, s
 }
 
 func parseBinaryDurationWithMS(pos int, paramValues []byte,
-	isNegative uint32) (int, string) {
+	isNegative uint8) (int, string) {
 	pos, dur := parseBinaryDuration(pos, paramValues, isNegative)
 	microSecond := binary.LittleEndian.Uint32(paramValues[pos : pos+4])
 	pos += 4
