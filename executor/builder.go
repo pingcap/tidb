@@ -902,7 +902,7 @@ func (b *executorBuilder) buildProjection(v *plan.PhysicalProjection) Executor {
 		calculateNoDelay: v.CalculateNoDelay,
 	}
 
-	// If the calculatation row count for this Projection operator is smaller
+	// If the calculation row count for this Projection operator is smaller
 	// than a Chunk size, we turn back to the un-parallel Projection
 	// implementation to reduce the goroutine overhead.
 	if v.StatsInfo().Count() < int64(b.ctx.GetSessionVars().MaxChunkSize) {
