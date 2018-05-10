@@ -14,6 +14,7 @@
 package plan
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -1160,6 +1161,10 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			return
 		}
 	}
+	if _, ok := er.p.(*LogicalJoin); ok {
+		fmt.Printf("expressionRewriter.toColumn: this is in a join\n")
+	}
+
 	if join, ok := er.p.(*LogicalJoin); ok && join.redundantSchema != nil {
 		column, err := join.redundantSchema.FindColumn(v)
 		if err != nil {
