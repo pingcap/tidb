@@ -116,7 +116,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request) kv.Response {
 		store:       c.store,
 		req:         req,
 		concurrency: req.Concurrency,
-		finished:    make(chan struct{}),
+		finishCh:    make(chan struct{}),
 	}
 	it.tasks = tasks
 	if it.concurrency > len(tasks) {
@@ -369,8 +369,8 @@ type copIterator struct {
 	store       *tikvStore
 	req         *kv.Request
 	concurrency int
-	finished    chan struct{}
-	// There are two cases we need to close the `finished` channel, one is when context is done, the other one is
+	finishCh    chan struct{}
+	// There are two cases we need to close the `finishCh` channel, one is when context is done, the other one is
 	// when the Close is called. we use atomic.CompareAndSwap `closed` to to make sure the channel is not closed twice.
 	closed uint32
 
@@ -390,7 +390,7 @@ type copIteratorWorker struct {
 	store    *tikvStore
 	req      *kv.Request
 	respChan chan<- copResponse
-	finished <-chan struct{}
+	finishCh <-chan struct{}
 }
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
@@ -398,7 +398,7 @@ type copIteratorTaskSender struct {
 	taskCh   chan<- *copTask
 	wg       *sync.WaitGroup
 	tasks    []*copTask
-	finished <-chan struct{}
+	finishCh <-chan struct{}
 	respChan chan<- copResponse
 }
 
@@ -430,7 +430,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 		}
 		close(task.respChan)
 		select {
-		case <-worker.finished:
+		case <-worker.finishCh:
 			return
 		default:
 		}
@@ -449,16 +449,17 @@ func (it *copIterator) open(ctx context.Context) {
 			store:    it.store,
 			req:      it.req,
 			respChan: it.respChan,
-			finished: it.finished,
+			finishCh: it.finishCh,
 		}
 		copIteratorGP.Go(func() {
 			worker.run(ctx)
 		})
 	}
 	taskSender := &copIteratorTaskSender{
-		taskCh: taskCh,
-		wg:     &it.wg,
-		tasks:  it.tasks,
+		taskCh:   taskCh,
+		wg:       &it.wg,
+		tasks:    it.tasks,
+		finishCh: it.finishCh,
 	}
 	taskSender.respChan = it.respChan
 	copIteratorGP.Go(taskSender.run)
@@ -484,12 +485,12 @@ func (sender *copIteratorTaskSender) run() {
 func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan copResponse) (resp copResponse, ok bool, exit bool) {
 	select {
 	case resp, ok = <-respCh:
-	case <-it.finished:
+	case <-it.finishCh:
 		exit = true
 	case <-ctx.Done():
 		// We select the ctx.Done() in the thread of `Next` instead of in the worker to avoid the cost of `WithCancel`.
 		if atomic.CompareAndSwapUint32(&it.closed, 0, 1) {
-			close(it.finished)
+			close(it.finishCh)
 		}
 		exit = true
 	}
@@ -499,7 +500,7 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan copResp
 func (sender *copIteratorTaskSender) sendToTaskCh(t *copTask) (exit bool) {
 	select {
 	case sender.taskCh <- t:
-	case <-sender.finished:
+	case <-sender.finishCh:
 		exit = true
 	}
 	return
@@ -508,7 +509,7 @@ func (sender *copIteratorTaskSender) sendToTaskCh(t *copTask) (exit bool) {
 func (worker *copIteratorWorker) sendToRespCh(resp copResponse, respCh chan<- copResponse) (exit bool) {
 	select {
 	case respCh <- resp:
-	case <-worker.finished:
+	case <-worker.finishCh:
 		exit = true
 	}
 	return
@@ -551,7 +552,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	} else {
 		for {
 			if it.curr >= len(it.tasks) {
-				// Resp will be nil if iterator is finished.
+				// Resp will be nil if iterator is finishCh.
 				return nil, nil
 			}
 			task := it.tasks[it.curr]
@@ -794,7 +795,7 @@ func (worker *copIteratorWorker) calculateRemain(ranges *copRanges, split *copro
 
 func (it *copIterator) Close() error {
 	if atomic.CompareAndSwapUint32(&it.closed, 0, 1) {
-		close(it.finished)
+		close(it.finishCh)
 	}
 	it.wg.Wait()
 	return nil
