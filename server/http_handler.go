@@ -24,6 +24,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -39,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/table"
@@ -514,7 +516,35 @@ func (t *tikvHandlerTool) getRegionsMeta(regionIDs []uint64) ([]RegionMeta, erro
 
 // ServeHTTP handles request of list tidb server settings.
 func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	writeData(w, config.GetGlobalConfig())
+	if req.Method == "POST" {
+		err := req.ParseForm()
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		if levelStr := req.Form.Get("log_level"); levelStr != "" {
+			l, err1 := log.ParseLevel(levelStr)
+			if err1 != nil {
+				writeError(w, err1)
+				return
+			}
+			log.SetLevel(l)
+			config.GetGlobalConfig().Log.Level = levelStr
+		}
+		if generalLog := req.Form.Get("tidb_general_log"); generalLog != "" {
+			switch generalLog {
+			case "0":
+				atomic.StoreUint32(&variable.ProcessGeneralLog, 0)
+			case "1":
+				atomic.StoreUint32(&variable.ProcessGeneralLog, 1)
+			default:
+				writeError(w, errors.New("illegal argument"))
+				return
+			}
+		}
+	} else {
+		writeData(w, config.GetGlobalConfig())
+	}
 	return
 }
 
