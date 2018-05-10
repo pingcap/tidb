@@ -262,17 +262,8 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 		}
 
 		var reorgInfo *reorgInfo
-		reorgInfo, err = d.getReorgInfo(t, job)
+		reorgInfo, err = d.getReorgInfo(t, job, tbl)
 		if err != nil || reorgInfo.first {
-			if err == nil {
-				// Get the first handle of this table.
-				err = iterateSnapshotRows(d.store, tbl, reorgInfo.SnapshotVer, math.MinInt64,
-					func(h int64, rowKey kv.Key, rawRecord []byte) (bool, error) {
-						reorgInfo.Handle = h
-						return false, nil
-					})
-				return ver, errors.Trace(t.UpdateDDLReorgHandle(reorgInfo.Job, reorgInfo.Handle))
-			}
 			// If we run reorg firstly, we should update the job snapshot version
 			// and then run the reorg next time.
 			return ver, errors.Trace(err)
