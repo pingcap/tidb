@@ -2541,6 +2541,12 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	tb, err := tables.TableFromMeta(alloc, tbInfo)
 	c.Assert(err, IsNil)
 
+	_, err = se.Execute(context.Background(), "admin check index t c")
+	c.Assert(err, IsNil)
+
+	_, err = se.Execute(context.Background(), "admin check index t C")
+	c.Assert(err, IsNil)
+
 	// set data to:
 	// index     data (handle, data): (1, 10), (2, 20)
 	// table     data (handle, data): (1, 10), (2, 20)
