@@ -287,7 +287,7 @@ func parseStmtArgs(args []interface{}, boundParams [][]byte, nullBitmap, paramTy
 			}
 			// See https://dev.mysql.com/doc/internals/en/binary-protocol-value.html
 			// for more details.
-			length := binary.LittleEndian.Uint32(paramValues[pos : pos+1])
+			length := uint8(paramValues[pos])
 			pos++
 			switch length {
 			case 0:
@@ -368,24 +368,24 @@ func parseStmtArgs(args []interface{}, boundParams [][]byte, nullBitmap, paramTy
 }
 
 func parseBinaryDate(pos int, paramValues []byte) (int, string) {
-	year := binary.LittleEndian.Uint32(paramValues[pos : pos+2])
+	year := binary.LittleEndian.Uint16(paramValues[pos : pos+2])
 	pos += 2
-	month := binary.LittleEndian.Uint32(paramValues[pos : pos+1])
+	month := uint8(paramValues[pos])
 	pos++
-	day := binary.LittleEndian.Uint32(paramValues[pos : pos+1])
+	day := uint8(paramValues[pos])
 	pos++
-	return pos, fmt.Sprintf("%d-%d-%d", year, month, day)
+	return pos, fmt.Sprintf("%04d-%02d-%02d", year, month, day)
 }
 
 func parseBinaryDateTime(pos int, paramValues []byte) (int, string) {
 	pos, date := parseBinaryDate(pos, paramValues)
-	hour := binary.LittleEndian.Uint32(paramValues[pos : pos+1])
+	hour := uint8(paramValues[pos])
 	pos++
-	minute := binary.LittleEndian.Uint32(paramValues[pos : pos+1])
+	minute := uint8(paramValues[pos])
 	pos++
-	second := binary.LittleEndian.Uint32(paramValues[pos : pos+1])
+	second := uint8(paramValues[pos])
 	pos++
-	return pos, fmt.Sprintf("%s %d:%d:%d", date, hour, minute, second)
+	return pos, fmt.Sprintf("%s %02d:%02d:%02d", date, hour, minute, second)
 }
 
 func parseBinaryTimestamp(pos int, paramValues []byte) (int, string) {
@@ -402,13 +402,13 @@ func parseBinaryDuration(pos int, paramValues []byte, isNegative uint32) (int, s
 	}
 	days := binary.LittleEndian.Uint32(paramValues[pos : pos+4])
 	pos += 4
-	hours := binary.LittleEndian.Uint32(paramValues[pos : pos+1])
+	hours := uint8(paramValues[pos])
 	pos++
-	minutes := binary.LittleEndian.Uint32(paramValues[pos : pos+1])
+	minutes := uint8(paramValues[pos])
 	pos++
-	seconds := binary.LittleEndian.Uint32(paramValues[pos : pos+1])
+	seconds := uint8(paramValues[pos])
 	pos++
-	return pos, fmt.Sprintf("%s%d %d:%d:%d", sign, days, hours, minutes, seconds)
+	return pos, fmt.Sprintf("%s%d %02d:%02d:%02d", sign, days, hours, minutes, seconds)
 }
 
 func parseBinaryDurationWithMS(pos int, paramValues []byte,
