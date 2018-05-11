@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	gofail "github.com/coreos/gofail/runtime"
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ddl"
@@ -1874,4 +1875,19 @@ func (s *testDBSuite) TestAddNotNullColumnWhileInsertOnDupUpdate(c *C) {
 	close(closeCh)
 	wg.Wait()
 	c.Assert(tk2Err, IsNil)
+}
+
+func (s *testDBSuite) TestUpdateHandleFailed(c *C) {
+	gofail.Enable("github.com/pingcap/tidb/ddl/errorUpdateReorgHandle", `return(true)`)
+	defer gofail.Disable("github.com/pingcap/tidb/ddl/errorUpdateReorgHandle")
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test_handle_failed")
+	defer tk.MustExec("drop database test_handle_failed")
+	tk.MustExec("use test_handle_failed")
+	tk.MustExec("create table t(a int primary key, b int)")
+	tk.MustExec("insert into t values(-1, 1)")
+	tk.MustExec("alter table t add index idx_b(b)")
+	result := tk.MustQuery("select count(*) from t use index(idx_b)")
+	result.Check(testkit.Rows("1"))
+	tk.MustExec("admin check index t idx_b")
 }
