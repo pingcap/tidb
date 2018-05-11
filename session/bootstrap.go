@@ -185,8 +185,17 @@ const (
 		start_key VARCHAR(255) NOT NULL COMMENT "encoded in hex",
 		end_key VARCHAR(255) NOT NULL COMMENT "encoded in hex",
 		ts BIGINT NOT NULL COMMENT "timestamp in int64",
-		is_done BOOL NOT NULL DEFAULT FALSE COMMENT "marks the delete range job has been done",
 		UNIQUE KEY delete_range_index (job_id, element_id)
+	);`
+
+	// CreateGCDeleteRangeDoneTable stores schemas which are already deleted by DeleteRange.
+	CreateGCDeleteRangeDoneTable = `CREATE TABLE IF NOT EXISTS mysql.gc_delete_range_done (
+		job_id BIGINT NOT NULL COMMENT "the DDL job ID",
+		element_id BIGINT NOT NULL COMMENT "the schema element ID",
+		start_key VARCHAR(255) NOT NULL COMMENT "encoded in hex",
+		end_key VARCHAR(255) NOT NULL COMMENT "encoded in hex",
+		ts BIGINT NOT NULL COMMENT "timestamp in int64",
+		UNIQUE KEY delete_range_done_index (job_id, element_id)
 	);`
 
 	// CreateStatsFeedbackTable stores the feedback info which is used to update stats.
@@ -613,10 +622,11 @@ func upgradeToVer20(s Session) {
 }
 
 func upgradeToVer21(s Session) {
-	doReentrantDDL(s, "ALTER TABLE mysql.gc_delete_range ADD COLUMN `is_done` BOOL NOT NULL DEFAULT FALSE", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.gc_delete_range DROP INDEX element_id", ddl.ErrCantDropFieldOrKey)
 	doReentrantDDL(s, "ALTER TABLE mysql.gc_delete_range DROP INDEX job_id", ddl.ErrCantDropFieldOrKey)
 	doReentrantDDL(s, "ALTER TABLE mysql.gc_delete_range ADD UNIQUE INDEX delete_range_index (job_id, element_id)", ddl.ErrDupKeyName)
+
+	mustExecute(s, CreateGCDeleteRangeDoneTable)
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
@@ -665,6 +675,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateStatsBucketsTable)
 	// Create gc_delete_range table.
 	mustExecute(s, CreateGCDeleteRangeTable)
+	// Create gc_delete_range_done table.
+	mustExecute(s, CreateGCDeleteRangeDoneTable)
 	// Create stats_feedback table.
 	mustExecute(s, CreateStatsFeedbackTable)
 }
