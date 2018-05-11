@@ -1602,8 +1602,6 @@ func (s *testSuite) TestUpdateSelect(c *C) {
 	tk.MustExec("insert msg values ('abc', 1, 1)")
 	tk.MustExec("create table detail (id varchar(8), start varchar(8), status int, index idx_start(start))")
 	tk.MustExec("insert detail values ('abc', '123', 2)")
-	tk.MustExec(`
-UPDATE msg SET msg.status = (SELECT detail.status FROM detail WHERE detail.start = '123' AND msg.id = detail.id)
-WHERE EXISTS (SELECT 1 FROM detail d WHERE  d.start = '123' AND msg.id = d.id)`)
+	tk.MustExec("UPDATE msg SET msg.status = (SELECT detail.status FROM detail WHERE msg.id = detail.id)")
 	tk.MustExec("admin check table msg")
 }
