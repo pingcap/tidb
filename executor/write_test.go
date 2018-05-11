@@ -1592,3 +1592,14 @@ func (s *testSuite) TestDataTooLongErrMsg(c *C) {
 	c.Assert(types.ErrDataTooLong.Equal(err), IsTrue)
 	c.Assert(err.Error(), Equals, "[types:1406]Data too long for column 'a' at row 1")
 }
+
+func (s *testSuite) TestUpdateSelect(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table msg (id varchar(8), b int, status int, primary key (id, b))")
+	tk.MustExec("insert msg values ('abc', 1, 1)")
+	tk.MustExec("create table detail (id varchar(8), start varchar(8), status int, index idx_start(start))")
+	tk.MustExec("insert detail values ('abc', '123', 2)")
+	tk.MustExec("UPDATE msg SET msg.status = (SELECT detail.status FROM detail WHERE msg.id = detail.id)")
+	tk.MustExec("admin check table msg")
+}
