@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -291,7 +292,9 @@ func (d *ddl) GetTableMaxRowID(startTS uint64, tblInfo *model.TableInfo) (maxRow
 	return maxRowID, false, nil
 }
 
-func (d *ddl) getReorgInfo(t *meta.Meta, job *model.Job) (*reorgInfo, error) {
+var gofailOnceGuard bool
+
+func (d *ddl) getReorgInfo(t *meta.Meta, job *model.Job, tbl table.Table) (*reorgInfo, error) {
 	var err error
 
 	info := &reorgInfo{
@@ -309,6 +312,26 @@ func (d *ddl) getReorgInfo(t *meta.Meta, job *model.Job) (*reorgInfo, error) {
 			return nil, errors.Trace(err)
 		} else if ver.Ver <= 0 {
 			return nil, errInvalidStoreVer.Gen("invalid storage current version %d", ver.Ver)
+		}
+
+		// Get the first handle of this table.
+		err = iterateSnapshotRows(d.store, tbl, ver.Ver, math.MinInt64,
+			func(h int64, rowKey kv.Key, rawRecord []byte) (bool, error) {
+				info.Handle = h
+				return false, nil
+			})
+		if err != nil {
+			return info, errors.Trace(err)
+		}
+		// gofail: var errorUpdateReorgHandle bool
+		// if errorUpdateReorgHandle && !gofailOnceGuard {
+		//  // only return error once.
+		//	gofailOnceGuard = true
+		// 	return info, errors.New("occur an error when update reorg handle.")
+		// }
+		err = t.UpdateDDLReorgHandle(job, info.Handle)
+		if err != nil {
+			return info, errors.Trace(err)
 		}
 
 		job.SnapshotVer = ver.Ver

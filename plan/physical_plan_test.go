@@ -738,6 +738,14 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 			sql:  "select distinct b from t",
 			best: "TableReader(Table(t)->HashAgg)->HashAgg",
 		},
+		{
+			sql:  "select count(*) from (select * from t order by b) t group by b",
+			best: "TableReader(Table(t))->Sort->StreamAgg",
+		},
+		{
+			sql:  "select count(*), x from (select b as bbb, a + 1 as x from (select * from t order by b) t) t group by bbb",
+			best: "TableReader(Table(t))->Sort->Projection->StreamAgg",
+		},
 		// Test agg + table.
 		{
 			sql:  "select sum(a), avg(b + c) from t group by d",
