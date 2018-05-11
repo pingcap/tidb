@@ -893,6 +893,7 @@ const (
 
 	// TiDB self-defined errors.
 	ErrMemExceedThreshold = 8001
+	ErrForUpdateCantRetry = 8002
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout    = 9001
