@@ -15,7 +15,6 @@ package ddl
 
 import (
 	"context"
-	"math"
 	"time"
 
 	"github.com/juju/errors"
