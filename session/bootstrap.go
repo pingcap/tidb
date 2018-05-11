@@ -613,10 +613,10 @@ func upgradeToVer20(s Session) {
 }
 
 func upgradeToVer21(s Session) {
+	doReentrantDDL(s, "ALTER TABLE mysql.gc_delete_range ADD COLUMN `is_done` BOOL NOT NULL DEFAULT FALSE", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.gc_delete_range DROP INDEX element_id", ddl.ErrCantDropFieldOrKey)
 	doReentrantDDL(s, "ALTER TABLE mysql.gc_delete_range DROP INDEX job_id", ddl.ErrCantDropFieldOrKey)
 	doReentrantDDL(s, "ALTER TABLE mysql.gc_delete_range ADD UNIQUE INDEX delete_range_index (job_id, element_id)", ddl.ErrDupKeyName)
-	doReentrantDDL(s, "ALTER TABLE mysql.gc_delete_range ADD COLUMN `is_done` BOOL NOT NULL DEFAULT FALSE", infoschema.ErrColumnExists)
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
