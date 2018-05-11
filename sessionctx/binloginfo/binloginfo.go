@@ -76,9 +76,10 @@ func GetPrewriteValue(ctx sessionctx.Context, createIfNotExists bool) *binlog.Pr
 
 var errorStopped uint32
 
-// ResetErrorStopFlag is only used in the test code.
+// ResetErrorStopFlag resets the errorStopped flag.
 func ResetErrorStopFlag() {
 	atomic.StoreUint32(&errorStopped, 0)
+	log.Warn("[binloginfo] reset error stop flag")
 }
 
 // WriteBinlog writes a binlog to Pump.
