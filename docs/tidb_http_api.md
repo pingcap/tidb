@@ -96,13 +96,6 @@ timezone.*
     curl http://{TiDBIP}:10080/settings
     ```
 
-1. Change TiDB server log level
-
-    ```shell
-    curl -x POST -d "log_level=debug" http://{TiDBIP}:10080/settings
-    curl -x POST -d "log_level=info" http://{TiDBIP}:10080/settings
-    ```
-
 1. Enable/Disable TiDB server general log
 
     ```shell
