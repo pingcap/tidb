@@ -89,7 +89,6 @@ func (p *requiredProp) enforceProperty(tsk task, ctx sessionctx.Context) task {
 	tsk = finishCopTask(ctx, tsk)
 	sortReqProp := &requiredProp{taskTp: rootTaskType, cols: p.cols, expectedCnt: math.MaxFloat64}
 	sort := PhysicalSort{ByItems: make([]*ByItems, 0, len(p.cols))}.init(ctx, tsk.plan().StatsInfo(), sortReqProp)
-	sort.SetSchema(tsk.plan().Schema())
 	for _, col := range p.cols {
 		sort.ByItems = append(sort.ByItems, &ByItems{col, p.desc})
 	}

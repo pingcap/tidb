@@ -243,9 +243,8 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *requiredProp) []PhysicalPlan {
 		leftKeys:        leftKeys,
 		rightKeys:       rightKeys,
 		EqualConditions: equalConditions,
-		OtherConditions: make([]expression.Expression, len(p.OtherConditions)),
+		OtherConditions: p.OtherConditions,
 	}.init(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt))
-	copy(enforcePhysicalMergeJoin.OtherConditions, p.OtherConditions)
 	enforcePhysicalMergeJoin.SetSchema(p.schema)
 	enforcePhysicalMergeJoin.childrenReqProps = []*requiredProp{lProp, rProp}
 	return []PhysicalPlan{enforcePhysicalMergeJoin}
@@ -754,7 +753,6 @@ func (p *LogicalUnionAll) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPla
 
 func (ls *LogicalSort) getPhysicalSort(prop *requiredProp) *PhysicalSort {
 	ps := PhysicalSort{ByItems: ls.ByItems}.init(ls.ctx, ls.stats.scaleByExpectCnt(prop.expectedCnt), &requiredProp{expectedCnt: math.MaxFloat64})
-	ps.SetSchema(ls.Schema())
 	return ps
 }
 
