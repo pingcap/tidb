@@ -15,9 +15,6 @@ path = "/tmp/tidb"
 # The socket file to use for connection.
 socket = ""
 
-# Socket file to write binlog.
-binlog-socket = ""
-
 # Run ddl worker on this tidb-server.
 run-ddl = true
 
@@ -217,3 +214,12 @@ grpc-connection-count = 16
 
 # max time for commit command, must be twice bigger than raft election timeout.
 commit-timeout = "41s"
+
+[binlog]
+
+# Socket file to write binlog.
+binlog-socket = ""
+
+# If IgnoreError is true, when writting binlog meets error, TiDB would stop writting binlog,
+# but still provide service.
+ignore-error = false
