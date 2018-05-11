@@ -48,6 +48,7 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/stats/dump/{db}/{table}", s.newStatsHandler())
 
 	router.Handle("/settings", settingsHandler{})
+	router.Handle("/binlog/recover", binlogRecover{})
 
 	tikvHandlerTool := s.newTikvHandlerTool()
 	router.Handle("/schema", schemaHandler{tikvHandlerTool})
