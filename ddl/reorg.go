@@ -335,6 +335,28 @@ func (d *ddl) getReorgInfo(t *meta.Meta, job *model.Job, tbl table.Table) (*reor
 			return info, errors.Trace(err)
 		}
 
+		reorgMeta := info.reorgMeta
+		if !reorgMeta.Inited {
+			// update the real table end handle, the new added row after the index being writable,
+			// has no needs to backfill.
+			endHandle, emptyTable, err1 := d.GetTableMaxRowID(ver.Ver, tbl.Meta())
+			if err1 != nil {
+				return info, errors.Trace(err1)
+			}
+			log.Infof("[ddl] job(%v) get table end handle:%v, reorgInfo.Handle:%v", job.ID, endHandle, info.Handle)
+
+			if endHandle < info.Handle || emptyTable {
+				endHandle = info.Handle
+			}
+
+			reorgMeta.Inited = true
+			reorgMeta.EndHandle = endHandle
+			err = t.UpdateDDLReorgMeta(job, reorgMeta)
+			if err != nil {
+				return info, errors.Trace(err)
+			}
+		}
+
 		job.SnapshotVer = ver.Ver
 	} else {
 		info.Handle, err = t.GetDDLReorgHandle(job)
