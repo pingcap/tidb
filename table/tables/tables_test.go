@@ -42,17 +42,25 @@ var _ = Suite(&testSuite{})
 
 type testSuite struct {
 	store kv.Storage
+	dom   *domain.Domain
 	se    session.Session
 }
 
 func (ts *testSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
 	store, err := mockstore.NewMockTikvStore()
 	c.Check(err, IsNil)
 	ts.store = store
-	_, err = session.BootstrapSession(store)
+	ts.dom, err = session.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	ts.se, err = session.CreateSession4Test(ts.store)
 	c.Assert(err, IsNil)
+}
+
+func (ts *testSuite) TearDownSuite(c *C) {
+	ts.dom.Close()
+	c.Assert(ts.store.Close(), IsNil)
+	testleak.AfterTest(c)
 }
 
 func (ts *testSuite) TestBasic(c *C) {
@@ -269,7 +277,6 @@ func (ts *testSuite) TestRowKeyCodec(c *C) {
 }
 
 func (ts *testSuite) TestUnsignedPK(c *C) {
-	defer testleak.AfterTest(c)()
 	ts.se.Execute(context.Background(), "DROP TABLE IF EXISTS test.tPK")
 	_, err := ts.se.Execute(context.Background(), "CREATE TABLE test.tPK (a bigint unsigned primary key, b varchar(255))")
 	c.Assert(err, IsNil)
@@ -288,7 +295,6 @@ func (ts *testSuite) TestUnsignedPK(c *C) {
 }
 
 func (ts *testSuite) TestIterRecords(c *C) {
-	defer testleak.AfterTest(c)()
 	ts.se.Execute(context.Background(), "DROP TABLE IF EXISTS test.tIter")
 	_, err := ts.se.Execute(context.Background(), "CREATE TABLE test.tIter (a int primary key, b int)")
 	c.Assert(err, IsNil)
@@ -311,7 +317,6 @@ func (ts *testSuite) TestIterRecords(c *C) {
 }
 
 func (ts *testSuite) TestTableFromMeta(c *C) {
-	defer testleak.AfterTest(c)()
 	_, err := ts.se.Execute(context.Background(), "CREATE TABLE test.meta (a int primary key auto_increment, b varchar(255) unique)")
 	c.Assert(err, IsNil)
 	sctx := ts.se.(sessionctx.Context)
