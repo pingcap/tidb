@@ -4027,6 +4027,10 @@ func (b *builtinAddStringAndStringSig) evalString(row types.Row) (result string,
 	if isNull || err != nil {
 		return "", isNull, errors.Trace(err)
 	}
+	arg1Type := b.args[1].GetType()
+	if mysql.HasBinaryFlag(arg1Type.Flag) {
+		return "", true, nil
+	}
 	arg1Str, isNull, err = b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", isNull, errors.Trace(err)
@@ -4809,6 +4813,10 @@ func (b *builtinSubStringAndStringSig) evalString(row types.Row) (result string,
 	arg0, isNull, err = b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", isNull, errors.Trace(err)
+	}
+	arg1Type := b.args[1].GetType()
+	if mysql.HasBinaryFlag(arg1Type.Flag) {
+		return "", true, nil
 	}
 	s, isNull, err = b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
