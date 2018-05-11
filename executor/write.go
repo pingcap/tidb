@@ -51,15 +51,17 @@ var (
 //     1. changed (bool) : does the update really change the row values. e.g. update set i = 1 where i = 1;
 //     2. handleChanged (bool) : is the handle changed after the update.
 //     3. newHandle (int64) : if handleChanged == true, the newHandle means the new handle after update.
-//     4. err (error) : error in the update.
+//     4. lastInsertID (uint64) : the lastInsertID should be set by the newData.
+//     5. err (error) : error in the update.
 func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datum, modified []bool, t table.Table,
-	onDup, ignoreErr bool) (bool, bool, int64, error) {
+	onDup, ignoreErr bool) (bool, bool, int64, uint64, error) {
 	var sc = ctx.GetSessionVars().StmtCtx
 	var changed, handleChanged = false, false
 	// onUpdateSpecified is for "UPDATE SET ts_field = old_value", the
 	// timestamp field is explicitly set, but not changed in fact.
 	var onUpdateSpecified = make(map[int]bool)
 	var newHandle int64
+	var lastInsertID uint64
 
 	// We can iterate on public columns not writable columns,
 	// because all of them are sorted by their `Offset`, which
@@ -69,7 +71,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 			// Cast changed fields with respective columns.
 			v, err := table.CastValue(ctx, newData[i], col.ToInfo())
 			if err != nil {
-				return false, handleChanged, newHandle, errors.Trace(err)
+				return false, handleChanged, newHandle, 0, errors.Trace(err)
 			}
 			newData[i] = v
 		}
@@ -77,20 +79,22 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		// Rebase auto increment id if the field is changed.
 		if mysql.HasAutoIncrementFlag(col.Flag) {
 			if newData[i].IsNull() {
-				return false, handleChanged, newHandle, errors.Errorf("Column '%v' cannot be null", col.Name.O)
+				return false, handleChanged, newHandle, 0,
+					errors.Errorf("Column '%v' cannot be null", col.Name.O)
 			}
 			val, errTI := newData[i].ToInt64(sc)
 			if errTI != nil {
-				return false, handleChanged, newHandle, errors.Trace(errTI)
+				return false, handleChanged, newHandle, 0, errors.Trace(errTI)
 			}
+			lastInsertID = uint64(val)
 			err := t.RebaseAutoID(ctx, val, true)
 			if err != nil {
-				return false, handleChanged, newHandle, errors.Trace(err)
+				return false, handleChanged, newHandle, 0, errors.Trace(err)
 			}
 		}
 		cmp, err := newData[i].CompareDatum(sc, &oldData[i])
 		if err != nil {
-			return false, handleChanged, newHandle, errors.Trace(err)
+			return false, handleChanged, newHandle, 0, errors.Trace(err)
 		}
 		if cmp != 0 {
 			changed = true
@@ -111,7 +115,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 	// Check the not-null constraints.
 	err := table.CheckNotNull(t.Cols(), newData)
 	if err != nil {
-		return false, handleChanged, newHandle, errors.Trace(err)
+		return false, handleChanged, newHandle, 0, errors.Trace(err)
 	}
 
 	if !changed {
@@ -119,7 +123,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		if ctx.GetSessionVars().ClientCapability&mysql.ClientFoundRows > 0 {
 			sc.AddAffectedRows(1)
 		}
-		return false, handleChanged, newHandle, nil
+		return false, handleChanged, newHandle, lastInsertID, nil
 	}
 
 	// Fill values into on-update-now fields, only if they are really changed.
@@ -127,7 +131,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		if mysql.HasOnUpdateNowFlag(col.Flag) && !modified[i] && !onUpdateSpecified[i] {
 			v, errGT := expression.GetTimeValue(ctx, strings.ToUpper(ast.CurrentTimestamp), col.Tp, col.Decimal)
 			if errGT != nil {
-				return false, handleChanged, newHandle, errors.Trace(errGT)
+				return false, handleChanged, newHandle, 0, errors.Trace(errGT)
 			}
 			newData[i] = v
 			modified[i] = true
@@ -139,13 +143,13 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		if ignoreErr {
 			// if the new handle exists. `UPDATE IGNORE` will avoid removing record, and do nothing.
 			if err = tables.CheckHandleExists(ctx, t, newHandle); err != nil {
-				return false, handleChanged, newHandle, errors.Trace(err)
+				return false, handleChanged, newHandle, 0, errors.Trace(err)
 			}
 			skipHandleCheck = true
 		}
 		err = t.RemoveRecord(ctx, h, oldData)
 		if err != nil {
-			return false, handleChanged, newHandle, errors.Trace(err)
+			return false, handleChanged, newHandle, 0, errors.Trace(err)
 		}
 		newHandle, err = t.AddRecord(ctx, newData, skipHandleCheck)
 	} else {
@@ -153,7 +157,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		err = t.UpdateRecord(ctx, h, oldData, newData, modified)
 	}
 	if err != nil {
-		return false, handleChanged, newHandle, errors.Trace(err)
+		return false, handleChanged, newHandle, 0, errors.Trace(err)
 	}
 
 	tid := t.Meta().ID
@@ -173,7 +177,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		}
 	}
 	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.Meta().ID, 0, 1, colSize)
-	return true, handleChanged, newHandle, nil
+	return true, handleChanged, newHandle, lastInsertID, nil
 }
 
 // DeleteExec represents a delete executor.
@@ -1732,7 +1736,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(row []types.Datum, i int, c *tab
 }
 
 // doDupRowUpdate updates the duplicate row.
-// TODO: Report rows affected and last insert id.
+// TODO: Report rows affected.
 func (e *InsertExec) doDupRowUpdate(handle int64, oldRow []types.Datum, newRow []types.Datum,
 	cols []*expression.Assignment) ([]types.Datum, bool, int64, error) {
 	assignFlag := make([]bool, len(e.Table.WritableCols()))
@@ -1748,13 +1752,16 @@ func (e *InsertExec) doDupRowUpdate(handle int64, oldRow []types.Datum, newRow [
 		newData[col.Col.Index] = val
 		assignFlag[col.Col.Index] = true
 	}
-	_, handleChanged, newHandle, err := updateRecord(e.ctx, handle, oldRow, newData, assignFlag, e.Table, true, e.IgnoreErr)
+	_, handleChanged, newHandle, lastInsertID, err := updateRecord(e.ctx, handle, oldRow, newData, assignFlag, e.Table, true, e.IgnoreErr)
 	if err != nil {
 		return nil, false, 0, errors.Trace(err)
 	}
 	e.rowCount++
 	if err := e.checkBatchLimit(); err != nil {
 		return nil, false, 0, errors.Trace(err)
+	}
+	if lastInsertID != 0 {
+		e.lastInsertID = lastInsertID
 	}
 	return newData, handleChanged, newHandle, nil
 }
@@ -1916,7 +1923,7 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema) (types
 				continue
 			}
 			// Update row
-			changed, _, _, err1 := updateRecord(e.ctx, handle, oldData, newTableData, flags, tbl, false, e.IgnoreErr)
+			changed, _, _, _, err1 := updateRecord(e.ctx, handle, oldData, newTableData, flags, tbl, false, e.IgnoreErr)
 			if err1 == nil {
 				if changed {
 					e.updatedRowKeys[id][handle] = struct{}{}
