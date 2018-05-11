@@ -323,6 +323,7 @@ func (d *ddl) getReorgInfo(t *meta.Meta, job *model.Job, tbl table.Table) (*reor
 		if err != nil {
 			return info, errors.Trace(err)
 		}
+
 		// gofail: var errorUpdateReorgHandle bool
 		// if errorUpdateReorgHandle && !gofailOnceGuard {
 		//  // only return error once.
