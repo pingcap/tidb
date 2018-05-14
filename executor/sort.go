@@ -111,7 +111,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 	e.rowChunks.GetMemTracker().SetLabel("rowChunks")
 	for {
-		chk := chunk.NewChunk(fields)
+		chk := e.children[0].newChunk()
 		err := e.children[0].Next(ctx, chk)
 		if err != nil {
 			return errors.Trace(err)
@@ -176,7 +176,7 @@ func (e *SortExec) buildKeyChunks() error {
 	e.keyChunks.GetMemTracker().AttachTo(e.memTracker)
 
 	for chkIdx := 0; chkIdx < e.rowChunks.NumChunks(); chkIdx++ {
-		keyChk := chunk.NewChunk(e.keyTypes)
+		keyChk := chunk.NewChunkWithCapacity(e.keyTypes, e.rowChunks.GetChunk(chkIdx).NumRows())
 		childIter := chunk.NewIterator4Chunk(e.rowChunks.GetChunk(chkIdx))
 		err := expression.VectorizedExecute(e.ctx, e.keyExprs, childIter, keyChk)
 		if err != nil {
@@ -360,7 +360,7 @@ func (e *TopNExec) executeTopN(ctx context.Context) error {
 	}
 	var childKeyChk *chunk.Chunk
 	if e.keyChunks != nil {
-		childKeyChk = chunk.NewChunk(e.keyTypes)
+		childKeyChk = chunk.NewChunkWithCapacity(e.keyTypes, e.maxChunkSize)
 	}
 	childRowChk := e.children[0].newChunk()
 	for {

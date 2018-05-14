@@ -577,7 +577,7 @@ func HistogramFromProto(protoHg *tipb.Histogram) *Histogram {
 
 func (hg *Histogram) popFirstBucket() {
 	hg.Buckets = hg.Buckets[1:]
-	c := chunk.NewChunk([]*types.FieldType{hg.tp, hg.tp})
+	c := chunk.NewChunkWithCapacity([]*types.FieldType{hg.tp, hg.tp}, hg.Bounds.NumRows()-2)
 	c.Append(hg.Bounds, 2, hg.Bounds.NumRows())
 	hg.Bounds = c
 }
