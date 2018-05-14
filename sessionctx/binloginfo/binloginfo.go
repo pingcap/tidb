@@ -76,12 +76,14 @@ func GetPrewriteValue(ctx sessionctx.Context, createIfNotExists bool) *binlog.Pr
 var stopped uint32
 var ignoreError uint32
 
-// ResetErrorStopFlag resets the errorStopped flag.
+// ResetStopFlag resets the errorStopped flag.
 func ResetStopFlag() {
 	atomic.StoreUint32(&stopped, 0)
 	log.Warn("[binloginfo] reset stop flag")
 }
 
+// SetIgnoreError sets the ignoreError flag, this function called when TiDB start
+// up and find config.Binlog.IgnoreError is true.
 func SetIgnoreError() {
 	atomic.StoreUint32(&ignoreError, 1)
 }
