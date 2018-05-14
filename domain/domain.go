@@ -99,7 +99,7 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 		log.Errorf("[ddl] failed to load schema diff err %v", err)
 	}
 	if ok {
-		log.Infof("[ddl] diff load InfoSchema from version %d to %d in %v, tbls %v",
+		log.Infof("[ddl] diff load InfoSchema from version %d to %d in %v, tableIDs %v",
 			usedSchemaVersion, latestSchemaVersion, time.Since(startTime), tblIDs)
 		return latestSchemaVersion, tblIDs, fullLoad, nil
 	}
