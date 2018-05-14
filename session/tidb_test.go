@@ -178,7 +178,6 @@ func (s *testMainSuite) TestSysSessionPoolGoroutineLeak(c *C) {
 }
 
 func (s *testMainSuite) TestSchemaCheckerSimple(c *C) {
-	defer testleak.AfterTest(c)()
 	lease := 5 * time.Millisecond
 	validator := domain.NewSchemaValidator(lease)
 	checker := &schemaLeaseChecker{SchemaValidator: validator}
