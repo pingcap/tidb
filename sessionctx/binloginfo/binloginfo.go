@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
@@ -74,17 +73,29 @@ func GetPrewriteValue(ctx sessionctx.Context, createIfNotExists bool) *binlog.Pr
 	return v
 }
 
-var errorStopped uint32
+const (
+	ignoreError = 1 + iota
+	errorStopped
+)
+
+// specialBinlogFlag could be ignoreError or errorStopped, when it's used.
+var specialBinlogFlag uint32
 
 // ResetErrorStopFlag resets the errorStopped flag.
 func ResetErrorStopFlag() {
-	atomic.StoreUint32(&errorStopped, 0)
-	log.Warn("[binloginfo] reset error stop flag")
+	res := atomic.CompareAndSwapUint32(&specialBinlogFlag, errorStopped, ignoreError)
+	log.Warn("[binloginfo] reset error stop flag", res)
+}
+
+// SetIgnoreError sets specialBinlogFlag to ignoreError, when TiDB has ignore binlog error
+// config, it would be called.
+func SetIgnoreError() {
+	atomic.StoreUint32(&specialBinlogFlag, ignoreError)
 }
 
 // WriteBinlog writes a binlog to Pump.
 func (info *BinlogInfo) WriteBinlog(clusterID uint64) error {
-	if atomic.LoadUint32(&errorStopped) != 0 {
+	if atomic.LoadUint32(&specialBinlogFlag) == errorStopped {
 		metrics.CriticalErrorCounter.Add(1)
 		return nil
 	}
@@ -114,11 +125,10 @@ func (info *BinlogInfo) WriteBinlog(clusterID uint64) error {
 	}
 
 	if err != nil {
-		cfg := config.GetGlobalConfig()
-		if cfg.Binlog.IgnoreError {
+		if atomic.LoadUint32(&specialBinlogFlag) == ignoreError {
 			log.Errorf("critical error, write binlog fail but error ignored: %s", errors.ErrorStack(err))
 			metrics.CriticalErrorCounter.Add(1)
-			atomic.StoreUint32(&errorStopped, 1)
+			atomic.StoreUint32(&specialBinlogFlag, errorStopped)
 			return nil
 		}
 	}
