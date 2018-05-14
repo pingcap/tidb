@@ -22,7 +22,11 @@ ignored = ["github.com/coreos/etcd/etcdserver", "github.com/coreos/etcd/mvcc", "
 [[constraint]]
   name = "google.golang.org/grpc"
   source = "https://github.com/grpc/grpc-go.git"
-  version = "=1.7.5"
+  version = "1.12.0"
+
+[[constraint]]
+  version = "1.1.0"
+  name = "github.com/golang/protobuf"
 
 [[constraint]]
   branch = "master"
@@ -70,7 +74,7 @@ ignored = ["github.com/coreos/etcd/etcdserver", "github.com/coreos/etcd/mvcc", "
 
 [[constraint]]
   name = "github.com/pingcap/pd"
-  branch = "master"
+  branch = "update_grpc_version"
 
 [[constraint]]
   name = "github.com/pingcap/kvproto"
