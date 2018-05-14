@@ -158,7 +158,7 @@ func (e *IndexLookUpJoin) newOuterWorker(resultCh, innerCh chan *lookUpJoinTask)
 		outerCtx:         e.outerCtx,
 		ctx:              e.ctx,
 		executor:         e.children[0],
-		executorChk:      chunk.NewChunk(e.outerCtx.rowTypes),
+		executorChk:      chunk.NewChunkWithCapacity(e.outerCtx.rowTypes, e.maxChunkSize),
 		resultCh:         resultCh,
 		innerCh:          innerCh,
 		batchSize:        32,
@@ -179,7 +179,7 @@ func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWork
 		outerCtx:      e.outerCtx,
 		taskCh:        taskCh,
 		ctx:           e.ctx,
-		executorChk:   chunk.NewChunk(e.innerCtx.rowTypes),
+		executorChk:   chunk.NewChunkWithCapacity(e.innerCtx.rowTypes, e.maxChunkSize),
 		indexRanges:   copiedRanges,
 		keyOff2IdxOff: e.keyOff2IdxOff,
 	}
@@ -318,7 +318,7 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 	task := &lookUpJoinTask{
 		doneCh:            make(chan error, 1),
 		outerResult:       ow.executor.newChunk(),
-		encodedLookUpKeys: chunk.NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeBlob)}),
+		encodedLookUpKeys: chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeBlob)}, ow.ctx.GetSessionVars().MaxChunkSize),
 		lookupMap:         mvmap.NewMVMap(),
 	}
 	task.memTracker = memory.NewTracker(fmt.Sprintf("lookup join task %p", task), -1)
@@ -519,7 +519,7 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 			break
 		}
 		innerResult.Add(iw.executorChk)
-		iw.executorChk = chunk.NewChunk(iw.innerCtx.rowTypes)
+		iw.executorChk = innerExec.newChunk()
 	}
 	task.innerResult = innerResult
 	return nil
