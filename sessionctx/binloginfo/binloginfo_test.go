@@ -21,7 +21,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/juju/errors"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -52,13 +54,18 @@ type mockBinlogPump struct {
 	mu struct {
 		sync.Mutex
 		payloads [][]byte
+		mockFail bool
 	}
 }
 
 func (p *mockBinlogPump) WriteBinlog(ctx context.Context, req *binlog.WriteBinlogReq) (*binlog.WriteBinlogResp, error) {
 	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.mu.mockFail {
+		return &binlog.WriteBinlogResp{}, errors.New("mock fail")
+	}
 	p.mu.payloads = append(p.mu.payloads, req.Payload)
-	p.mu.Unlock()
 	return &binlog.WriteBinlogResp{}, nil
 }
 
@@ -361,4 +368,30 @@ func mutationRowsToRows(c *C, mutationRows [][]byte, columnValueOffsets ...int) 
 		rows = append(rows, row)
 	}
 	return rows
+}
+
+func (s *testBinlogSuite) TestIgnoreError(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.Se.GetSessionVars().BinlogClient = s.client
+	tk.MustExec("drop table if exists ignore_error")
+	tk.MustExec("create table t (id int)")
+
+	s.pump.mu.Lock()
+	s.pump.mu.mockFail = true
+	s.pump.mu.Unlock()
+
+	_, err := tk.Exec("insert into t values (1)")
+	c.Assert(err, NotNil)
+
+	cfg := config.GetGlobalConfig()
+	cfg.Binlog.IgnoreError = true
+	tk.MustExec("insert into t values (1)")
+
+	// Clean up.
+	s.pump.mu.Lock()
+	s.pump.mu.mockFail = false
+	s.pump.mu.Unlock()
+	cfg.Binlog.IgnoreError = false
+	binloginfo.ResetErrorStopFlag()
 }

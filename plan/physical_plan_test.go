@@ -77,7 +77,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 		// Test TopN to table branch in double read.
 		{
 			sql:  "select * from t where t.c = 1 and t.e = 1 order by t.b limit 1",
-			best: "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t)->TopN([test.t.b],0,1))->TopN([test.t.b],0,1)",
+			best: "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t))->TopN([test.t.b],0,1)",
 		},
 		// Test Null Range
 		{
@@ -92,7 +92,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 		// Test TopN to index branch in double read.
 		{
 			sql:  "select * from t where t.c = 1 and t.e = 1 order by t.e limit 1",
-			best: "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)])->TopN([test.t.e],0,1), Table(t))->TopN([test.t.e],0,1)",
+			best: "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t))->TopN([test.t.e],0,1)",
 		},
 		// Test TopN to Limit in double read.
 		{
@@ -439,7 +439,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSubquery(c *C) {
 		// Test Apply.
 		{
 			sql:  "select t.c in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t",
-			best: "Apply{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->Sel([eq(s.a, test.t.a)])->TableReader(Table(t))}(s.a,t1.a)->StreamAgg}->Projection",
+			best: "Apply{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t)->Sel([eq(s.a, test.t.a)]))->TableReader(Table(t))}(s.a,t1.a)->StreamAgg}->Projection",
 		},
 		{
 			sql:  "select (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t",
@@ -738,6 +738,14 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 			sql:  "select distinct b from t",
 			best: "TableReader(Table(t)->HashAgg)->HashAgg",
 		},
+		{
+			sql:  "select count(*) from (select * from t order by b) t group by b",
+			best: "TableReader(Table(t))->Sort->StreamAgg",
+		},
+		{
+			sql:  "select count(*), x from (select b as bbb, a + 1 as x from (select * from t order by b) t) t group by bbb",
+			best: "TableReader(Table(t))->Sort->Projection->StreamAgg",
+		},
 		// Test agg + table.
 		{
 			sql:  "select sum(a), avg(b + c) from t group by d",
@@ -765,7 +773,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 		// Test hash agg + index double.
 		{
 			sql:  "select sum(e), avg(b + c) from t where c = 1 and e = 1 group by d",
-			best: "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t)->HashAgg)->HashAgg",
+			best: "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t))->HashAgg",
 		},
 		// Test stream agg + index double.
 		{
@@ -775,7 +783,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 		// Test hash agg + order.
 		{
 			sql:  "select sum(e) as k, avg(b + c) from t where c = 1 and b = 1 and e = 1 group by d order by k",
-			best: "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t)->Sel([eq(test.t.b, 1)])->HashAgg)->HashAgg->Sort",
+			best: "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t)->Sel([eq(test.t.b, 1)]))->HashAgg->Sort",
 		},
 		// Test stream agg + order.
 		{
