@@ -207,7 +207,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 	indexInfo := findIndexByName(indexName.L, tblInfo.Indices)
 	if indexInfo != nil && indexInfo.State == model.StatePublic {
 		job.State = model.JobStateCancelled
-		return ver, errDupKeyName.Gen("index already exist %s", indexName)
+		return ver, ErrDupKeyName.Gen("index already exist %s", indexName)
 	}
 
 	if indexInfo == nil {
