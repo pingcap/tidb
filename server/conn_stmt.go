@@ -392,7 +392,7 @@ func parseBinaryTimestamp(pos int, paramValues []byte) (int, string) {
 	pos, dateTime := parseBinaryDateTime(pos, paramValues)
 	microSecond := binary.LittleEndian.Uint32(paramValues[pos : pos+4])
 	pos += 4
-	return pos, fmt.Sprintf("%s.%d", dateTime, microSecond)
+	return pos, fmt.Sprintf("%s.%06d", dateTime, microSecond)
 }
 
 func parseBinaryDuration(pos int, paramValues []byte, isNegative uint8) (int, string) {
@@ -416,7 +416,7 @@ func parseBinaryDurationWithMS(pos int, paramValues []byte,
 	pos, dur := parseBinaryDuration(pos, paramValues, isNegative)
 	microSecond := binary.LittleEndian.Uint32(paramValues[pos : pos+4])
 	pos += 4
-	return pos, fmt.Sprintf("%s.%d", dur, microSecond)
+	return pos, fmt.Sprintf("%s.%06d", dur, microSecond)
 }
 
 func (cc *clientConn) handleStmtClose(data []byte) (err error) {
