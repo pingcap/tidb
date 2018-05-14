@@ -101,9 +101,6 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	se, err = CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	doDMLWorks(se)
-
-	err = store.Close()
-	c.Assert(err, IsNil)
 }
 
 func globalVarsCount() int64 {
@@ -189,9 +186,8 @@ func (s *testBootstrapSuite) testBootstrapWithError(c *C) {
 func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	ctx := context.Background()
 	defer testleak.AfterTest(c)()
-	store, dom := newStoreWithBootstrap(c, s.dbName)
+	store, _ := newStoreWithBootstrap(c, s.dbName)
 	defer store.Close()
-	defer dom.Close()
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, "USE mysql;")
 
