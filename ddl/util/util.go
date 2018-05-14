@@ -87,7 +87,7 @@ func LoadDeleteRanges(ctx sessionctx.Context, safePoint uint64) (ranges []DelRan
 	return ranges, nil
 }
 
-// CompleteDeleteRange deletes a record from gc_delete_range table.
+// CompleteDeleteRange moves a record from gc_delete_range table to gc_delete_range_done table.
 // NOTE: This function WILL NOT start and run in a new transaction internally.
 func CompleteDeleteRange(ctx sessionctx.Context, dr DelRangeTask) error {
 	sql := fmt.Sprintf(recordDoneDeletedRangeSQL, dr.JobID, dr.ElementID)
