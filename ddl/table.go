@@ -66,7 +66,6 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
-		log.Warnf("xxx create table %v", tbInfo.Name)
 		asyncNotifyEvent(d, &util.Event{Tp: model.ActionCreateTable, TableInfo: tbInfo})
 		return ver, nil
 	default:
@@ -289,15 +288,16 @@ func onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+	newSchemaID := job.SchemaID
+	err = checkTableNotExists(t, job, newSchemaID, tableName.L)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
 	var baseID int64
 	shouldDelAutoID := false
-	newSchemaID := job.SchemaID
 	if newSchemaID != oldSchemaID {
 		shouldDelAutoID = true
-		err = checkTableNotExists(t, job, newSchemaID, tblInfo.Name.L)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
 		baseID, err = t.GetAutoTableID(tblInfo.GetDBID(oldSchemaID), tblInfo.ID)
 		if err != nil {
 			job.State = model.JobStateCancelled

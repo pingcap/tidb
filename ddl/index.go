@@ -262,17 +262,8 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 		}
 
 		var reorgInfo *reorgInfo
-		reorgInfo, err = getReorgInfo(d, t, job)
+		reorgInfo, err = getReorgInfo(d, t, job, tbl)
 		if err != nil || reorgInfo.first {
-			if err == nil {
-				// Get the first handle of this table.
-				err = iterateSnapshotRows(d.store, tbl, reorgInfo.SnapshotVer, math.MinInt64,
-					func(h int64, rowKey kv.Key, rawRecord []byte) (bool, error) {
-						reorgInfo.Handle = h
-						return false, nil
-					})
-				return ver, errors.Trace(t.UpdateDDLReorgHandle(reorgInfo.Job, reorgInfo.Handle))
-			}
 			// If we run reorg firstly, we should update the job snapshot version
 			// and then run the reorg next time.
 			return ver, errors.Trace(err)
@@ -404,7 +395,7 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 
 const (
 	defaultTaskHandleCnt = 128
-	defaultWorkers       = 16
+	defaultIndexWorkers  = 16
 )
 
 // indexRecord is the record information of an index.
@@ -434,6 +425,9 @@ type addIndexWorker struct {
 type reorgIndexTask struct {
 	startHandle int64
 	endHandle   int64
+	// When the last handle is math.MaxInt64, set endIncluded to true to
+	// tell worker backfilling index of endHandle.
+	endIncluded bool
 }
 
 type addIndexResult struct {
@@ -512,8 +506,12 @@ func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgInde
 	handleOutOfRange := false
 	err := iterateSnapshotRows(w.sessCtx.GetStore(), w.table, txn.StartTS(), taskRange.startHandle,
 		func(handle int64, recordKey kv.Key, rawRow []byte) (bool, error) {
-			// Don't create endHandle index.
-			handleOutOfRange = handle >= taskRange.endHandle
+			if !taskRange.endIncluded {
+				handleOutOfRange = handle >= taskRange.endHandle
+			} else {
+				handleOutOfRange = handle > taskRange.endHandle
+			}
+
 			if handleOutOfRange || len(w.idxRecords) >= w.batchCnt {
 				return false, nil
 			}
@@ -524,6 +522,11 @@ func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgInde
 			}
 
 			w.idxRecords = append(w.idxRecords, idxRecord)
+			if handle == taskRange.endHandle {
+				// If !taskRange.endIncluded, we will not reach here when handle == taskRange.endHandle
+				handleOutOfRange = true
+				return false, nil
+			}
 			return true, nil
 		})
 
@@ -656,7 +659,7 @@ func makeupIndexColFieldMap(t table.Table, indexInfo *model.IndexInfo) map[int64
 // to speed up adding index in table with disperse handle.
 func splitTableRanges(store kv.Storage, t table.Table, startHandle int64) ([]kv.KeyRange, error) {
 	startRecordKey := t.RecordKey(startHandle)
-	endRecordKey := t.RecordKey(math.MaxInt64)
+	endRecordKey := t.RecordKey(math.MaxInt64).Next()
 	kvRange := kv.KeyRange{StartKey: startRecordKey, EndKey: endRecordKey}
 	s, ok := store.(tikv.Storage)
 	if !ok {
@@ -756,7 +759,7 @@ func (w *worker) buildBatchTasks(startTime time.Time, startHandle int64, reorgIn
 	return nil
 }
 
-func (w *worker) buildKVRangesIndex(workers []*addIndexWorker, kvRanges []kv.KeyRange, job *model.Job, reorgInfo *reorgInfo) error {
+func (w *worker) buildKVRangesIndex(t table.Table, workers []*addIndexWorker, kvRanges []kv.KeyRange, job *model.Job, reorgInfo *reorgInfo) error {
 	var (
 		startTime   time.Time
 		startHandle int64
@@ -774,7 +777,12 @@ func (w *worker) buildKVRangesIndex(workers []*addIndexWorker, kvRanges []kv.Key
 		if err != nil {
 			return errors.Trace(err)
 		}
-		task := &reorgIndexTask{startHandle, endHandle}
+		endKey := t.RecordKey(endHandle)
+		endIncluded := false
+		if endKey.Cmp(keyRange.EndKey) < 0 {
+			endIncluded = true
+		}
+		task := &reorgIndexTask{startHandle, endHandle, endIncluded}
 
 		batchTasks = append(batchTasks, task)
 		if len(batchTasks) >= len(workers) || i == (len(kvRanges)-1) {
@@ -808,21 +816,21 @@ func (w *worker) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgI
 	colFieldMap := makeupIndexColFieldMap(t, indexInfo)
 
 	// TODO: make workerCnt can be modified by system variable.
-	workerCnt := defaultWorkers
-	workers := make([]*addIndexWorker, workerCnt)
+	workerCnt := defaultIndexWorkers
+	idxWorkers := make([]*addIndexWorker, workerCnt)
 	for i := 0; i < workerCnt; i++ {
 		sessCtx := newContext(reorgInfo.d.store)
-		workers[i] = newAddIndexWorker(sessCtx, w, i, t, indexInfo, colFieldMap)
-		go workers[i].run(reorgInfo.d)
+		idxWorkers[i] = newAddIndexWorker(sessCtx, w, i, t, indexInfo, colFieldMap)
+		go idxWorkers[i].run(reorgInfo.d)
 	}
-	defer closeAddIndexWorkers(workers)
+	defer closeAddIndexWorkers(idxWorkers)
 
 	kvRanges, err := splitTableRanges(reorgInfo.d.store, t, reorgInfo.Handle)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	return w.buildKVRangesIndex(workers, kvRanges, job, reorgInfo)
+	return w.buildKVRangesIndex(t, idxWorkers, kvRanges, job, reorgInfo)
 }
 
 func findIndexByName(idxName string, indices []*model.IndexInfo) *model.IndexInfo {

@@ -45,7 +45,6 @@ type Config struct {
 	Store           string          `toml:"store" json:"store"`
 	Path            string          `toml:"path" json:"path"`
 	Socket          string          `toml:"socket" json:"socket"`
-	BinlogSocket    string          `toml:"binlog-socket" json:"binlog-socket"`
 	Lease           string          `toml:"lease" json:"lease"`
 	RunDDL          bool            `toml:"run-ddl" json:"run-ddl"`
 	SplitTable      bool            `toml:"split-table" json:"split-table"`
@@ -67,6 +66,7 @@ type Config struct {
 	OpenTracing       OpenTracing       `toml:"opentracing" json:"opentracing"`
 	ProxyProtocol     ProxyProtocol     `toml:"proxy-protocol" json:"proxy-protocol"`
 	TiKVClient        TiKVClient        `toml:"tikv-client" json:"tikv-client"`
+	Binlog            Binlog            `toml:"binlog" json:"binlog"`
 }
 
 // Log is the log section of config.
@@ -226,6 +226,14 @@ type TiKVClient struct {
 	CommitTimeout string `toml:"commit-timeout" json:"commit-timeout"`
 }
 
+// Binlog is the config for binlog.
+type Binlog struct {
+	BinlogSocket string `toml:"binlog-socket" json:"binlog-socket"`
+	// If IgnoreError is true, when writting binlog meets error, TiDB would
+	// ignore the error.
+	IgnoreError bool `toml:"ignore-error" json:"ignore-error"`
+}
+
 var defaultConf = Config{
 	Host:            "0.0.0.0",
 	Port:            4000,
@@ -264,9 +272,9 @@ var defaultConf = Config{
 		StatsLease:          "3s",
 		RunAutoAnalyze:      true,
 		StmtCountLimit:      5000,
-		FeedbackProbability: 0,
+		FeedbackProbability: 0.05,
 		QueryFeedbackLimit:  1024,
-		PseudoEstimateRatio: 0.7,
+		PseudoEstimateRatio: 0.8,
 	},
 	XProtocol: XProtocol{
 		XHost: "",

@@ -88,7 +88,7 @@ func (s *testDDLSuite) TestRunWorker(c *C) {
 	// The reason for doing it twice is to eliminate the operation in the start function.
 	<-d.ddlJobCh
 	<-d.ddlJobCh
-	// Make sure the DDL worker is nill.
+	// Make sure the DDL worker is nil.
 	worker := d.normalWorker()
 	c.Assert(worker, IsNil)
 	// Make sure the DDL job can be done and exit that goroutine.

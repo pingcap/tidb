@@ -195,7 +195,6 @@ type ddl struct {
 	m          sync.RWMutex
 	infoHandle *infoschema.Handle
 	quitCh     chan struct{}
-	wait       sync.WaitGroup
 
 	*ddlCtx
 	workers []*worker
@@ -337,18 +336,18 @@ func (d *ddl) close() {
 		return
 	}
 
+	startTime := time.Now()
 	close(d.quitCh)
 	d.ownerManager.Cancel()
 	err := d.schemaSyncer.RemoveSelfVersionPath()
 	if err != nil {
 		log.Errorf("[ddl] remove self version path failed %v", err)
 	}
-	d.wait.Wait()
 
 	for _, worker := range d.workers {
 		worker.close()
 	}
-	log.Infof("close DDL:%s", d.uuid)
+	log.Infof("close DDL:%s take time %v", d.uuid, time.Since(startTime))
 }
 
 // GetLease implements DDL.GetLease interface.
