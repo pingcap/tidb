@@ -1,4 +1,5 @@
 ignored = ["github.com/coreos/etcd/etcdserver", "github.com/coreos/etcd/mvcc", "github.com/coreos/etcd/auth"]
+required = ["github.com/golang/protobuf/jsonpb"]
 
 [prune]
   non-go = true
