@@ -216,10 +216,10 @@
   revision = "5ef8fa297ea3547b015ef5069cb500bba67b0d94"
 
 [[projects]]
-  branch = "update_grpc_version"
+  branch = "master"
   name = "github.com/pingcap/pd"
   packages = ["pd-client"]
-  revision = "c104048ae326e3bd68e6017d8b9572bedcf5383e"
+  revision = "ea6597638eb7f3d7d50248b90e60888352ac8e85"
 
 [[projects]]
   branch = "master"
@@ -403,6 +403,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "512b79ff30c104f5e5652565753d908bdbeefdd1881d0b8672f5d6720383cf68"
+  inputs-digest = "694a975684b7c0f029ffaf7e5202e5c3cc3c737f524a182d021a3d63adcd2421"
   solver-name = "gps-cdcl"
   solver-version = 1

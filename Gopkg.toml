@@ -74,7 +74,7 @@ ignored = ["github.com/coreos/etcd/etcdserver", "github.com/coreos/etcd/mvcc", "
 
 [[constraint]]
   name = "github.com/pingcap/pd"
-  branch = "update_grpc_version"
+  branch = "master"
 
 [[constraint]]
   name = "github.com/pingcap/kvproto"
