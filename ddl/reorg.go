@@ -200,7 +200,7 @@ func constructLimitPB(count uint64) *tipb.Executor {
 	return &tipb.Executor{Tp: tipb.ExecType_TypeLimit, Limit: limitExec}
 }
 
-func buildDAG(startTS uint64, tblInfo *model.TableInfo, columns []*model.ColumnInfo, limit uint64) (*tipb.DAGRequest, error) {
+func buildDescTableScanDAG(startTS uint64, tblInfo *model.TableInfo, columns []*model.ColumnInfo, limit uint64) (*tipb.DAGRequest, error) {
 	dagReq := &tipb.DAGRequest{}
 	dagReq.StartTs = startTS
 	_, timeZoneOffset := time.Now().In(time.UTC).Zone()
@@ -208,6 +208,7 @@ func buildDAG(startTS uint64, tblInfo *model.TableInfo, columns []*model.ColumnI
 	for i := range columns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
+	dagReq.Flags |= model.FlagInSelectStmt
 
 	pbColumnInfos := model.ColumnsToProto(columns, tblInfo.PKIsHandle)
 	tblScanExec := constructDescTableScanPB(tblInfo, pbColumnInfos)
@@ -224,8 +225,9 @@ func getColumnsTypes(columns []*model.ColumnInfo) []*types.FieldType {
 	return colTypes
 }
 
-func (d *ddl) buildTableScan(ctx context.Context, startTS uint64, tblInfo *model.TableInfo, columns []*model.ColumnInfo) (distsql.SelectResult, error) {
-	dagPB, err := buildDAG(startTS, tblInfo, columns, 1)
+// builds a desc table scan upon tblInfo.
+func (d *ddl) buildDescTableScan(ctx context.Context, startTS uint64, tblInfo *model.TableInfo, columns []*model.ColumnInfo, limit uint64) (distsql.SelectResult, error) {
+	dagPB, err := buildDescTableScanDAG(startTS, tblInfo, columns, limit)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -250,7 +252,7 @@ func (d *ddl) buildTableScan(ctx context.Context, startTS uint64, tblInfo *model
 	return result, nil
 }
 
-// GetTableMaxRowID get the last row id of the table.
+// GetTableMaxRowID gets the last row id of the table.
 func (d *ddl) GetTableMaxRowID(startTS uint64, tblInfo *model.TableInfo) (maxRowID int64, emptyTable bool, err error) {
 	maxRowID = int64(math.MaxInt64)
 	var columns []*model.ColumnInfo
@@ -271,7 +273,8 @@ func (d *ddl) GetTableMaxRowID(startTS uint64, tblInfo *model.TableInfo) (maxRow
 
 	ctx := context.Background()
 
-	src, err := d.buildTableScan(ctx, startTS, tblInfo, columns)
+	// build a desc scan of tblInfo, which limit is 1, we can use it to retrive the last handle of the table.
+	src, err := d.buildDescTableScan(ctx, startTS, tblInfo, columns, 1)
 	if err != nil {
 		return maxRowID, false, errors.Trace(err)
 	}
