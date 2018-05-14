@@ -15,9 +15,6 @@ path = "/tmp/tidb"
 # The socket file to use for connection.
 socket = ""
 
-# Socket file to write binlog.
-binlog-socket = ""
-
 # Run ddl worker on this tidb-server.
 run-ddl = true
 
@@ -138,7 +135,7 @@ query-feedback-limit = 1024
 
 # Pseudo stats will be used if the ratio between the modify count and
 # row count in statistics of a table is greater than it.
-pseudo-estimate-ratio = 0.7
+pseudo-estimate-ratio = 0.8
 
 [proxy-protocol]
 # PROXY protocol acceptable client networks.
@@ -220,3 +217,12 @@ commit-timeout = "41s"
 # there are lots of conflicts between transactions.
 enabled = false
 capacity = 1024000
+
+[binlog]
+
+# Socket file to write binlog.
+binlog-socket = ""
+
+# If IgnoreError is true, when writting binlog meets error, TiDB would stop writting binlog,
+# but still provide service.
+ignore-error = false

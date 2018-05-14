@@ -949,6 +949,8 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert into t value(0),(0)")
 	tk.MustQuery("select 1 from (select a from t union all select a from t) tmp").Check(testkit.Rows("1", "1", "1", "1"))
+	tk.MustQuery("select 10 as a from dual union select a from t order by a desc limit 1 ").Check(testkit.Rows("10"))
+	tk.MustQuery("select -10 as a from dual union select a from t order by a limit 1 ").Check(testkit.Rows("-10"))
 	tk.MustQuery("select count(1) from (select a from t union all select a from t) tmp").Check(testkit.Rows("4"))
 
 	_, err := tk.Exec("select 1 from (select a from t limit 1 union all select a from t limit 1) tmp")
@@ -2762,4 +2764,17 @@ func (s *testSuite) TestLimit(c *C) {
 		"5 5",
 		"6 6",
 	))
+}
+
+func (s *testSuite) TestCoprocessorStreamingWarning(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a double)")
+	tk.MustExec("insert into t value(1.2)")
+	tk.MustExec("set @@session.tidb_enable_streaming = 1")
+
+	result := tk.MustQuery("select * from t where a/0 > 1")
+	result.Check(testkit.Rows())
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|Division by 0"))
 }
