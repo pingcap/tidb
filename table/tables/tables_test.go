@@ -60,7 +60,7 @@ func (ts *testSuite) SetUpSuite(c *C) {
 func (ts *testSuite) TearDownSuite(c *C) {
 	ts.dom.Close()
 	c.Assert(ts.store.Close(), IsNil)
-	testleak.AfterTest(c)
+	testleak.AfterTest(c)()
 }
 
 func (ts *testSuite) TestBasic(c *C) {
