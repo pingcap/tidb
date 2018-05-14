@@ -2686,11 +2686,9 @@ func (s *testSuite) TestCoprocessorStreamingFlag(c *C) {
 		{"select * from t order by value limit 3", false}, // TopN
 	}
 
-	count := 0
 	ctx := context.Background()
 	for _, test := range tests {
 		ctx1 := context.WithValue(ctx, "CheckSelectRequestHook", func(req *kv.Request) {
-			count++
 			if req.Streaming != test.expect {
 				c.Errorf("sql=%s, expect=%v, get=%v", test.sql, test.expect, req.Streaming)
 			}
@@ -2699,7 +2697,6 @@ func (s *testSuite) TestCoprocessorStreamingFlag(c *C) {
 		c.Assert(err, IsNil)
 		tk.ResultSetToResult(rs[0], Commentf("sql: %v", test.sql))
 	}
-	c.Assert(count, Equals, len(tests)) // Make sure the hook function is called.
 }
 
 func (s *testSuite) TestIncorrectLimitArg(c *C) {
