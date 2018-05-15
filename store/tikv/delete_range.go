@@ -36,7 +36,7 @@ type DeleteRangeTask struct {
 }
 
 // NewDeleteRangeTask creates a DeleteRangeTask. Deleting will not be performed right away.
-// WARMING: Currently this API may last some dirty keys in TiKV. Be careful using this API.
+// WARNING: Currently this API may last some dirty keys in TiKV. Be careful using this API.
 func NewDeleteRangeTask(ctx context.Context, store Storage, bo *Backoffer, startKey []byte, endKey []byte) *DeleteRangeTask {
 	return &DeleteRangeTask{
 		completedRegions: 0,
