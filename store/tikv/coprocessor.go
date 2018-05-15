@@ -627,37 +627,38 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 }
 
 const (
-	minLogBackoffTime   = 100
-	minLogKVProcessTime = 100
-	minLogKVWaitTime    = 200
+	minLogBackoffTime = 100
+	minLogWaitFactor  = 3
 )
 
 func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *copTask, bo *Backoffer, resp *tikvrpc.Response) {
-	logStr := fmt.Sprintf("[TIME_COP_TASK] resp_time:%s txn_start_ts:%d region_id:%d store_addr:%s", costTime, worker.req.StartTs, task.region.id, task.storeAddr)
-	if bo.totalSleep > minLogBackoffTime {
-		backoffTypes := strings.Replace(fmt.Sprintf("%v", bo.types), " ", ",", -1)
-		logStr += fmt.Sprintf(" backoff_ms:%d backoff_types:%s", bo.totalSleep, backoffTypes)
-	}
+	var processMS, waitMS int
 	var detail *kvrpcpb.ExecDetails
 	if resp.Cop != nil {
 		detail = resp.Cop.ExecDetails
 	} else if resp.CopStream != nil {
 		detail = resp.CopStream.ExecDetails
 	}
+	if detail != nil && detail.HandleTime != nil {
+		processMS = int(detail.HandleTime.ProcessMs)
+		waitMS = int(detail.HandleTime.WaitMs)
+	}
+	if waitMS > (processMS+bo.totalSleep)*minLogWaitFactor {
+		// Do not log if most of the time is wait.
+		return
+	}
+	logStr := fmt.Sprintf("[TIME_COP_TASK] resp_time:%s txn_start_ts:%d region_id:%d store_addr:%s", costTime, worker.req.StartTs, task.region.id, task.storeAddr)
+	if bo.totalSleep > minLogBackoffTime {
+		backoffTypes := strings.Replace(fmt.Sprintf("%v", bo.types), " ", ",", -1)
+		logStr += fmt.Sprintf(" backoff_ms:%d backoff_types:%s", bo.totalSleep, backoffTypes)
+	}
 	if detail != nil {
 		if detail.HandleTime != nil {
-			processMs := detail.HandleTime.ProcessMs
-			waitMs := detail.HandleTime.WaitMs
-			if processMs > minLogKVProcessTime {
-				logStr += fmt.Sprintf(" kv_process_ms:%d", processMs)
-				if detail.ScanDetail != nil {
-					logStr = appendScanDetail(logStr, "write", detail.ScanDetail.Write)
-					logStr = appendScanDetail(logStr, "data", detail.ScanDetail.Data)
-					logStr = appendScanDetail(logStr, "lock", detail.ScanDetail.Lock)
-				}
-			}
-			if waitMs > minLogKVWaitTime {
-				logStr += fmt.Sprintf(" kv_wait_ms:%d", waitMs)
+			logStr += fmt.Sprintf(" kv_process_ms:%d kv_wait_ms:%d", processMS, waitMS)
+			if detail.ScanDetail != nil {
+				logStr = appendScanDetail(logStr, "write", detail.ScanDetail.Write)
+				logStr = appendScanDetail(logStr, "data", detail.ScanDetail.Data)
+				logStr = appendScanDetail(logStr, "lock", detail.ScanDetail.Lock)
 			}
 		}
 	}
