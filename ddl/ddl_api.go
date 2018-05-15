@@ -323,7 +323,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef) (
 				removeOnUpdateNowFlag(col)
 			case ast.ColumnOptionOnUpdate:
 				// TODO: Support other time functions.
-				if !expression.IsCurrentTimestampExpr(v.Expr) {
+				if col.Tp != mysql.TypeTimestamp || !expression.IsCurrentTimestampExpr(v.Expr) {
 					return nil, nil, ErrInvalidOnUpdate.Gen("invalid ON UPDATE for - %s", col.Name)
 				}
 				col.Flag |= mysql.OnUpdateNowFlag
@@ -1313,7 +1313,7 @@ func setDefaultAndComment(ctx sessionctx.Context, col *table.Column, options []*
 			return errUnsupportedModifyColumn.Gen("unsupported modify column constraint - %v", opt.Tp)
 		case ast.ColumnOptionOnUpdate:
 			// TODO: Support other time functions.
-			if !expression.IsCurrentTimestampExpr(opt.Expr) {
+			if col.Tp != mysql.TypeTimestamp || !expression.IsCurrentTimestampExpr(opt.Expr) {
 				return ErrInvalidOnUpdate.Gen("invalid ON UPDATE for - %s", col.Name)
 			}
 			col.Flag |= mysql.OnUpdateNowFlag
