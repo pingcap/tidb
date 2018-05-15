@@ -443,11 +443,10 @@ func (m *Meta) GetTable(dbID int64, tableID int64) (*model.TableInfo, error) {
 // to operate DDL jobs, and dispatch them to MR Jobs.
 
 var (
-	mDDLJobListKey      = []byte("DDLJobList")
-	mDDLJobAddIdxList   = []byte("DDLJobAddIdxList")
-	mDDLJobHistoryKey   = []byte("DDLJobHistory")
-	mDDLJobReorgKey     = []byte("DDLJobReorg")
-	mDDLJobReorgMetaKey = []byte("DDLJobReorgMeta")
+	mDDLJobListKey    = []byte("DDLJobList")
+	mDDLJobAddIdxList = []byte("DDLJobAddIdxList")
+	mDDLJobHistoryKey = []byte("DDLJobHistory")
+	mDDLJobReorgKey   = []byte("DDLJobReorg")
 )
 
 // JobListKeyType is a key type of the DDL job queue.
