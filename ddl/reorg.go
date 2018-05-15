@@ -280,7 +280,7 @@ func (d *ddl) GetTableMaxRowID(startTS uint64, tblInfo *model.TableInfo) (maxRow
 	}
 	defer terror.Call(src.Close)
 
-	chk := chunk.NewChunk(getColumnsTypes(columns))
+	chk := chunk.NewChunkWithCapacity(getColumnsTypes(columns), 1)
 	err = src.Next(ctx, chk)
 	if err != nil {
 		return maxRowID, false, errors.Trace(err)
