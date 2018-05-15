@@ -109,6 +109,12 @@ func (e *AnalyzeExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	for _, result := range results {
+		for _, hg := range result.Hist {
+			dom.StatsHandle().ClearErrorRate(result.TableID, hg.ID, result.IsIndex, dom.InfoSchema())
+		}
+	}
 	return nil
 }
 

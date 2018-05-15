@@ -674,6 +674,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 				log.Error("[stats] save meta to storage fail: ", errors.ErrorStack(err))
 			}
 		case <-deltaUpdateTicker.C:
+			statsHandle.UpdateErrorRate(do.InfoSchema())
 			err = statsHandle.DumpStatsDeltaToKV()
 			if err != nil {
 				log.Error("[stats] dump stats delta fail: ", errors.ErrorStack(err))

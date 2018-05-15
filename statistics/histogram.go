@@ -456,12 +456,12 @@ func (hg *Histogram) mergeBuckets(bucketIdx int) {
 
 // getIncreaseFactor will return a factor of data increasing after the last analysis.
 func (hg *Histogram) getIncreaseFactor(totalCount int64) float64 {
-	columnCount := int64(hg.totalRowCount())
+	columnCount := hg.totalRowCount()
 	if columnCount == 0 {
 		// avoid dividing by 0
 		return 1.0
 	}
-	return float64(totalCount) / float64(columnCount)
+	return float64(totalCount) / columnCount
 }
 
 // validRange checks if the range is valid, it is used by `SplitRange` to remove the invalid range,
@@ -633,12 +633,43 @@ func MergeHistograms(sc *stmtctx.StatementContext, lh *Histogram, rh *Histogram,
 	return lh, nil
 }
 
+// ErrorRate is the error rate of estimate row count by bucket.
+type ErrorRate struct {
+	ErrorTotal float64
+	QueryTotal int64
+}
+
+// MaxErrorRate is the max error rate of estimate row count of a not pseudo column.
+// If the table is pseudo, but the average error rate is less than MaxErrorRate,
+// then the column is not pseudo.
+const MaxErrorRate = 0.25
+
+// IsPseudo is true when the total of query is zero or the average error
+// rate is less than MaxErrorRate.
+func (e *ErrorRate) IsPseudo() bool {
+	if e.QueryTotal == 0 {
+		return true
+	}
+	return e.ErrorTotal/float64(e.QueryTotal) > MaxErrorRate
+}
+
+func (e *ErrorRate) update(rate float64) {
+	e.QueryTotal++
+	e.ErrorTotal += rate
+}
+
+func (e *ErrorRate) merge(rate *ErrorRate) {
+	e.QueryTotal += rate.QueryTotal
+	e.ErrorTotal += rate.ErrorTotal
+}
+
 // Column represents a column histogram.
 type Column struct {
 	Histogram
 	*CMSketch
 	Count int64
 	Info  *model.ColumnInfo
+	ErrorRate
 }
 
 func (c *Column) String() string {
@@ -711,6 +742,7 @@ type Index struct {
 	Histogram
 	*CMSketch
 	Info *model.IndexInfo
+	ErrorRate
 }
 
 func (idx *Index) String() string {

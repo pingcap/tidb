@@ -50,6 +50,8 @@ type Handle struct {
 	listHead *SessionStatsCollector
 	// globalMap contains all the delta map from collectors when we dump them to KV.
 	globalMap tableDeltaMap
+	// rateMap contains the error rate delta from feedback.
+	rateMap errorRateDeltaMap
 	// feedback is used to store query feedback info.
 	feedback []*QueryFeedback
 
@@ -72,6 +74,7 @@ func (h *Handle) Clear() {
 	h.ctx.GetSessionVars().MaxChunkSize = 1
 	h.listHead = &SessionStatsCollector{mapper: make(tableDeltaMap)}
 	h.globalMap = make(tableDeltaMap)
+	h.rateMap = make(errorRateDeltaMap)
 }
 
 // MaxQueryFeedbackCount is the max number of feedback that cache in memory.
@@ -88,6 +91,7 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration) *Handle {
 		Lease:           lease,
 		feedback:        make([]*QueryFeedback, 0, MaxQueryFeedbackCount),
 		loadMetaCh:      make(chan *LoadMeta, 1),
+		rateMap:         make(errorRateDeltaMap),
 	}
 	handle.statsCache.Store(statsCache{})
 	return handle

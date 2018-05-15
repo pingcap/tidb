@@ -554,28 +554,27 @@ func decodeFeedback(val []byte, q *QueryFeedback, c *CMSketch) error {
 		return errors.Trace(err)
 	}
 	// decode feedback for index
-	if len(pb.IndexRanges) > 0 {
+	if len(pb.Counts) > 0 {
 		// decode the index range feedback
 		for i := 0; i < len(pb.IndexRanges); i += 2 {
 			lower, upper := types.NewBytesDatum(pb.IndexRanges[i]), types.NewBytesDatum(pb.IndexRanges[i+1])
 			q.feedback = append(q.feedback, feedback{&lower, &upper, pb.Counts[i/2], 0})
 		}
-		if c == nil {
-			return nil
+		if c != nil {
+			// decode the index point feedback, just set value count in CM Sketch
+			start := len(pb.IndexRanges) / 2
+			for i := 0; i < len(pb.HashValues); i += 2 {
+				c.setValue(pb.HashValues[i], pb.HashValues[i+1], uint32(pb.Counts[start+i/2]))
+			}
 		}
-		// decode the index point feedback, just set value count in CM Sketch
-		start := len(pb.IndexRanges) / 2
-		for i := 0; i < len(pb.HashValues); i += 2 {
-			c.setValue(pb.HashValues[i], pb.HashValues[i+1], uint32(pb.Counts[start+i/2]))
+		// decode feedback for primary key
+		for i := 0; i < len(pb.IntRanges); i += 2 {
+			lower, upper := types.NewIntDatum(pb.IntRanges[i]), types.NewIntDatum(pb.IntRanges[i+1])
+			q.feedback = append(q.feedback, feedback{&lower, &upper, pb.Counts[i/2], 0})
 		}
-		return nil
-	}
-	// decode feedback for primary key
-	for i := 0; i < len(pb.IntRanges); i += 2 {
-		lower, upper := types.NewIntDatum(pb.IntRanges[i]), types.NewIntDatum(pb.IntRanges[i+1])
-		q.feedback = append(q.feedback, feedback{&lower, &upper, pb.Counts[i/2], 0})
 	}
 	return nil
+
 }
 
 // Equal tests if two query feedback equal, it is only used in test.

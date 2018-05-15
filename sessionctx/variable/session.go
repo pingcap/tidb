@@ -106,7 +106,7 @@ func (tc *TransactionContext) UpdateDeltaForTable(tableID int64, delta int64, co
 		tc.TableDeltaMap = make(map[int64]TableDelta)
 	}
 	item := tc.TableDeltaMap[tableID]
-	if item.ColSize == nil {
+	if item.ColSize == nil && colSize != nil {
 		item.ColSize = make(map[int64]int64)
 	}
 	item.Delta += delta

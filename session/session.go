@@ -220,7 +220,14 @@ func (s *session) GetSessionManager() util.SessionManager {
 
 func (s *session) StoreQueryFeedback(feedback interface{}) {
 	if s.statsCollector != nil {
-		s.statsCollector.StoreQueryFeedback(feedback)
+		do, err := GetDomain(s.store)
+		if err != nil {
+			log.Warnf("domain not found.")
+		}
+		err = s.statsCollector.StoreQueryFeedback(feedback, do.StatsHandle(), do.InfoSchema())
+		if err != nil {
+			log.Warnf("store query feedback error: ", err)
+		}
 	}
 }
 
