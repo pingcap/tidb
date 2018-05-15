@@ -658,7 +658,7 @@ func makeupIndexColFieldMap(t table.Table, indexInfo *model.IndexInfo) map[int64
 // to speed up adding index in table with disperse handle.
 func (d *ddl) splitTableRanges(t table.Table, reorgInfo *reorgInfo) ([]kv.KeyRange, error) {
 	startHandle := reorgInfo.Handle
-	endHandle := reorgInfo.reorgMeta.EndHandle
+	endHandle := reorgInfo.ReorgMeta.EndHandle
 	startRecordKey := t.RecordKey(startHandle)
 	endRecordKey := t.RecordKey(endHandle).Next()
 	kvRange := kv.KeyRange{StartKey: startRecordKey, EndKey: endRecordKey}

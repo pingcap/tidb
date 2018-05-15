@@ -664,37 +664,6 @@ func (m *Meta) GetDDLReorgHandle(job *model.Job) (int64, error) {
 	return value, errors.Trace(err)
 }
 
-// UpdateDDLReorgMeta saves the job's reorg meta info.
-func (m *Meta) UpdateDDLReorgMeta(job *model.Job, reorgMeta *model.DDLReorgMeta) error {
-	val, err := reorgMeta.Encode()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = m.txn.HSet(mDDLJobReorgMetaKey, m.jobIDKey(job.ID), val)
-	return errors.Trace(err)
-}
-
-// RemoveDDLReorgMeta remove the job reorganization meta info.
-func (m *Meta) RemoveDDLReorgMeta(job *model.Job) error {
-	err := m.txn.HDel(mDDLJobReorgMetaKey, m.jobIDKey(job.ID))
-	return errors.Trace(err)
-}
-
-// GetDDLReorgMeta gets the meta info of job reorganization.
-func (m *Meta) GetDDLReorgMeta(job *model.Job) (*model.DDLReorgMeta, error) {
-	value, err := m.txn.HGet(mDDLJobReorgMetaKey, m.jobIDKey(job.ID))
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	reorgMeta := model.NewDDLReorgMeta()
-	if value == nil {
-		return reorgMeta, nil
-	}
-	err = reorgMeta.Decode(value)
-	return reorgMeta, errors.Trace(err)
-}
-
 func (m *Meta) tableStatsKey(tableID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mTableStatsPrefix, tableID))
 }

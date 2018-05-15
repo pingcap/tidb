@@ -108,30 +108,19 @@ func (h *HistoryInfo) Clean() {
 
 // DDLReorgMeta is meta info of ddl reorganization.
 type DDLReorgMeta struct {
+	// StartHandle is the first handle of the adding indices table.
+	StartHandle int64 `json:"start_handle"`
 	// EndHandle is the last handle of the adding indices table.
 	// We should only backfill indices in the range [startHandle, EndHandle].
 	EndHandle int64 `json:"end_handle"`
-	// Inited indicate whether the DDLReorgMeta is initialled.
-	Inited bool `json:"inited"`
 }
 
 // NewDDLReorgMeta new a DDLReorgMeta.
 func NewDDLReorgMeta() *DDLReorgMeta {
 	return &DDLReorgMeta{
-		EndHandle: math.MaxInt64,
-		Inited:    false,
+		StartHandle: math.MinInt64,
+		EndHandle:   math.MaxInt64,
 	}
-}
-
-// Encode encodes DDLReorgMeta to json format.
-func (m *DDLReorgMeta) Encode() ([]byte, error) {
-	b, err := json.Marshal(m)
-	return b, errors.Trace(err)
-}
-
-// Decode decodes json format to DDLReorgMeta.
-func (m *DDLReorgMeta) Decode(b []byte) error {
-	return errors.Trace(json.Unmarshal(b, m))
 }
 
 // Job is for a DDL operation.
@@ -164,6 +153,9 @@ type Job struct {
 
 	// Version indicates the DDL job version. For old jobs, it will be 0.
 	Version int64 `json:"version"`
+
+	// ReorgMeta is meta info of ddl reorganization.
+	ReorgMeta *DDLReorgMeta `json:"reorg_meta"`
 }
 
 // FinishTableJob is called when a job is finished.

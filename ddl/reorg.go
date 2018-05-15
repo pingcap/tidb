@@ -177,10 +177,9 @@ func (d *ddl) isReorgRunnable() error {
 
 type reorgInfo struct {
 	*model.Job
-	Handle    int64
-	d         *ddl
-	first     bool
-	reorgMeta *model.DDLReorgMeta
+	Handle int64
+	d      *ddl
+	first  bool
 }
 
 func constructDescTableScanPB(tblInfo *model.TableInfo, pbColumnInfos []*tipb.ColumnInfo) *tipb.Executor {
@@ -301,10 +300,11 @@ func (d *ddl) getReorgInfo(t *meta.Meta, job *model.Job, tbl table.Table) (*reor
 	var err error
 
 	info := &reorgInfo{
-		Job:       job,
-		d:         d,
-		first:     job.SnapshotVer == 0,
-		reorgMeta: model.NewDDLReorgMeta(),
+		Job: job,
+		d:   d,
+		// init start handle is math.MinInt64
+		Handle: math.MinInt64,
+		first:  job.SnapshotVer == 0,
 	}
 
 	if info.first {
@@ -338,36 +338,26 @@ func (d *ddl) getReorgInfo(t *meta.Meta, job *model.Job, tbl table.Table) (*reor
 			return info, errors.Trace(err)
 		}
 
-		reorgMeta := info.reorgMeta
-		if !reorgMeta.Inited {
-			// update the real table end handle, the new added row after the index being writable,
-			// has no needs to backfill.
-			endHandle, emptyTable, err1 := d.GetTableMaxRowID(ver.Ver, tbl.Meta())
-			if err1 != nil {
-				return info, errors.Trace(err1)
-			}
-			log.Infof("[ddl] job(%v) get table end handle:%v, reorgInfo.Handle:%v", job.ID, endHandle, info.Handle)
-
-			if endHandle < info.Handle || emptyTable {
-				endHandle = info.Handle
-			}
-
-			reorgMeta.Inited = true
-			reorgMeta.EndHandle = endHandle
-			err = t.UpdateDDLReorgMeta(job, reorgMeta)
-			if err != nil {
-				return info, errors.Trace(err)
-			}
+		reorgMeta := model.NewDDLReorgMeta()
+		reorgMeta.StartHandle = info.Handle
+		// Gets the real table end handle, the new added row after the index being writable,
+		// has no needs to backfill.
+		endHandle, emptyTable, err1 := d.GetTableMaxRowID(ver.Ver, tbl.Meta())
+		if err1 != nil {
+			return info, errors.Trace(err1)
 		}
 
+		if endHandle < reorgMeta.StartHandle || emptyTable {
+			endHandle = reorgMeta.StartHandle
+		}
+
+		reorgMeta.EndHandle = endHandle
+		log.Infof("[ddl] job(%v) get table startHandle:%v, endHandle:%v", job.ID, reorgMeta.StartHandle, reorgMeta.EndHandle)
+
+		job.ReorgMeta = reorgMeta
 		job.SnapshotVer = ver.Ver
 	} else {
 		info.Handle, err = t.GetDDLReorgHandle(job)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-
-		info.reorgMeta, err = t.GetDDLReorgMeta(job)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

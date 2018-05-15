@@ -14,7 +14,6 @@
 package meta_test
 
 import (
-	"math"
 	"testing"
 	"time"
 
@@ -324,47 +323,4 @@ func (s *testSuite) TestDDL(c *C) {
 
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
-}
-
-func (s *testSuite) TestReorgMeta(c *C) {
-	defer testleak.AfterTest(c)()
-	store, err := mockstore.NewMockTikvStore()
-	c.Assert(err, IsNil)
-	defer store.Close()
-
-	txn, err := store.Begin()
-	c.Assert(err, IsNil)
-
-	defer txn.Rollback()
-
-	t := meta.NewMeta(txn)
-
-	job := &model.Job{ID: 1}
-	rMeta, err := t.GetDDLReorgMeta(job)
-	c.Assert(err, IsNil)
-	c.Assert(rMeta.Inited, Equals, false)
-	c.Assert(rMeta.EndHandle, Equals, int64(math.MaxInt64))
-
-	rMeta.EndHandle = 1
-	err = t.UpdateDDLReorgMeta(job, rMeta)
-	c.Assert(err, IsNil)
-	rMeta, err = t.GetDDLReorgMeta(job)
-	c.Assert(rMeta.Inited, Equals, false)
-	c.Assert(rMeta.EndHandle, Equals, int64(1))
-
-	rMeta.EndHandle = 2
-	rMeta.Inited = true
-	err = t.UpdateDDLReorgMeta(job, rMeta)
-	c.Assert(err, IsNil)
-
-	rMeta, err = t.GetDDLReorgMeta(job)
-	c.Assert(rMeta.Inited, Equals, true)
-	c.Assert(rMeta.EndHandle, Equals, int64(2))
-
-	err = t.RemoveDDLReorgMeta(job)
-	c.Assert(err, IsNil)
-
-	rMeta, err = t.GetDDLReorgMeta(job)
-	c.Assert(rMeta.Inited, Equals, false)
-	c.Assert(rMeta.EndHandle, Equals, int64(math.MaxInt64))
 }
