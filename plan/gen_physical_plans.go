@@ -197,18 +197,34 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *requiredProp) []PhysicalPlan {
 		isExist := false
 		for leftJoinKeyPos, key := range p.LeftJoinKeys {
 			if key.Equal(p.ctx, col) {
+				for i := 0; i < len(leftOffsets)-1; i++ {
+					if leftOffsets[i] == leftJoinKeyPos {
+						return nil
+					}
+				}
 				isExist = true
-				leftOffsets = append(leftOffsets, leftJoinKeyPos)
+				if len(leftOffsets) == 0 || leftOffsets[len(leftOffsets)-1] != leftJoinKeyPos {
+					leftOffsets = append(leftOffsets, leftJoinKeyPos)
+					rightOffsets = append(rightOffsets, leftJoinKeyPos)
+				}
 				break
 			}
 		}
 		if isExist {
 			continue
 		}
-		for rightJoinKeysPos, key := range p.RightJoinKeys {
+		for rightJoinKeyPos, key := range p.RightJoinKeys {
 			if key.Equal(p.ctx, col) {
+				for i := 0; i < len(rightOffsets)-1; i++ {
+					if rightOffsets[i] == rightJoinKeyPos {
+						return nil
+					}
+				}
 				isExist = true
-				rightOffsets = append(rightOffsets, rightJoinKeysPos)
+				if len(rightOffsets) == 0 || rightOffsets[len(rightOffsets)-1] != rightJoinKeyPos {
+					leftOffsets = append(leftOffsets, rightJoinKeyPos)
+					rightOffsets = append(rightOffsets, rightJoinKeyPos)
+				}
 				break
 			}
 		}
@@ -216,16 +232,6 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *requiredProp) []PhysicalPlan {
 			return nil
 		}
 	}
-	compareSize := len(rightOffsets)
-	if len(leftOffsets) < len(rightOffsets) {
-		compareSize = len(leftOffsets)
-	}
-	for i := 0; i < compareSize; i++ {
-		if leftOffsets[i] != rightOffsets[i] {
-			return nil
-		}
-	}
-
 	// Generate the enforced sort merge join
 	if len(rightOffsets) > len(leftOffsets) {
 		leftOffsets = rightOffsets
