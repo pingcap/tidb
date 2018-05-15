@@ -42,26 +42,32 @@ var _ = Suite(&testSuite{})
 
 type testSuite struct {
 	store kv.Storage
+	dom   *domain.Domain
 	se    session.Session
 }
 
 func (ts *testSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
 	store, err := mockstore.NewMockTikvStore()
 	c.Check(err, IsNil)
 	ts.store = store
-	_, err = session.BootstrapSession(store)
+	ts.dom, err = session.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	ts.se, err = session.CreateSession4Test(ts.store)
 	c.Assert(err, IsNil)
 }
 
+func (ts *testSuite) TearDownSuite(c *C) {
+	ts.dom.Close()
+	c.Assert(ts.store.Close(), IsNil)
+	testleak.AfterTest(c)()
+}
+
 func (ts *testSuite) TestBasic(c *C) {
 	_, err := ts.se.Execute(context.Background(), "CREATE TABLE test.t (a int primary key auto_increment, b varchar(255) unique)")
 	c.Assert(err, IsNil)
-	ctx := ts.se.(sessionctx.Context)
-	c.Assert(ctx.NewTxn(), IsNil)
-	dom := domain.GetDomain(ctx)
-	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(ts.se.NewTxn(), IsNil)
+	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	c.Assert(tb.Meta().ID, Greater, int64(0))
 	c.Assert(tb.Meta().Name.L, Equals, "t")
@@ -76,6 +82,7 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(autoid, Greater, int64(0))
 
+	ctx := ts.se
 	ctx.GetSessionVars().BinlogClient = binloginfo.GetPumpClient()
 	ctx.GetSessionVars().InRestrictedSQL = false
 	rid, err := tb.AddRecord(ctx, types.MakeDatums(1, "abc"), false)
@@ -150,9 +157,7 @@ func (ts *testSuite) TestTypes(c *C) {
 	ctx := context.Background()
 	_, err := ts.se.Execute(context.Background(), "CREATE TABLE test.t (c1 tinyint, c2 smallint, c3 int, c4 bigint, c5 text, c6 blob, c7 varchar(64), c8 time, c9 timestamp null default CURRENT_TIMESTAMP, c10 decimal(10,1))")
 	c.Assert(err, IsNil)
-	sctx := ts.se.(sessionctx.Context)
-	dom := domain.GetDomain(sctx)
-	_, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	_, err = ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	_, err = ts.se.Execute(ctx, "insert test.t values (1, 2, 3, 4, '5', '6', '7', '10:10:10', null, 1.4)")
 	c.Assert(err, IsNil)
@@ -201,9 +206,7 @@ func (ts *testSuite) TestUniqueIndexMultipleNullEntries(c *C) {
 	c.Assert(err, IsNil)
 	_, err = ts.se.Execute(ctx, "CREATE TABLE test.t (a int primary key auto_increment, b varchar(255) unique)")
 	c.Assert(err, IsNil)
-	sctx := ts.se.(sessionctx.Context)
-	dom := domain.GetDomain(sctx)
-	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	c.Assert(tb.Meta().ID, Greater, int64(0))
 	c.Assert(tb.Meta().Name.L, Equals, "t")
@@ -215,6 +218,7 @@ func (ts *testSuite) TestUniqueIndexMultipleNullEntries(c *C) {
 	c.Assert(tables.FindIndexByColName(tb, "b"), NotNil)
 
 	autoid, err := tb.AllocAutoID(nil)
+	sctx := ts.se
 	c.Assert(err, IsNil)
 	c.Assert(autoid, Greater, int64(0))
 	c.Assert(sctx.NewTxn(), IsNil)
@@ -269,55 +273,46 @@ func (ts *testSuite) TestRowKeyCodec(c *C) {
 }
 
 func (ts *testSuite) TestUnsignedPK(c *C) {
-	defer testleak.AfterTest(c)()
 	ts.se.Execute(context.Background(), "DROP TABLE IF EXISTS test.tPK")
 	_, err := ts.se.Execute(context.Background(), "CREATE TABLE test.tPK (a bigint unsigned primary key, b varchar(255))")
 	c.Assert(err, IsNil)
-	sctx := ts.se.(sessionctx.Context)
-	dom := domain.GetDomain(sctx)
-	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tPK"))
+	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tPK"))
 	c.Assert(err, IsNil)
-	c.Assert(sctx.NewTxn(), IsNil)
-	rid, err := tb.AddRecord(sctx, types.MakeDatums(1, "abc"), false)
+	c.Assert(ts.se.NewTxn(), IsNil)
+	rid, err := tb.AddRecord(ts.se, types.MakeDatums(1, "abc"), false)
 	c.Assert(err, IsNil)
-	row, err := tb.Row(sctx, rid)
+	row, err := tb.Row(ts.se, rid)
 	c.Assert(err, IsNil)
 	c.Assert(len(row), Equals, 2)
 	c.Assert(row[0].Kind(), Equals, types.KindUint64)
-	c.Assert(sctx.Txn().Commit(context.Background()), IsNil)
+	c.Assert(ts.se.Txn().Commit(context.Background()), IsNil)
 }
 
 func (ts *testSuite) TestIterRecords(c *C) {
-	defer testleak.AfterTest(c)()
 	ts.se.Execute(context.Background(), "DROP TABLE IF EXISTS test.tIter")
 	_, err := ts.se.Execute(context.Background(), "CREATE TABLE test.tIter (a int primary key, b int)")
 	c.Assert(err, IsNil)
 	_, err = ts.se.Execute(context.Background(), "INSERT test.tIter VALUES (-1, 2), (2, NULL)")
 	c.Assert(err, IsNil)
-	sctx := ts.se.(sessionctx.Context)
-	c.Assert(sctx.NewTxn(), IsNil)
-	dom := domain.GetDomain(sctx)
-	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tIter"))
+	c.Assert(ts.se.NewTxn(), IsNil)
+	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tIter"))
 	c.Assert(err, IsNil)
 	totalCount := 0
-	err = tb.IterRecords(sctx, tb.FirstKey(), tb.Cols(), func(h int64, rec []types.Datum, cols []*table.Column) (bool, error) {
+	err = tb.IterRecords(ts.se, tb.FirstKey(), tb.Cols(), func(h int64, rec []types.Datum, cols []*table.Column) (bool, error) {
 		totalCount++
 		c.Assert(rec[0].IsNull(), IsFalse)
 		return true, nil
 	})
 	c.Assert(err, IsNil)
 	c.Assert(totalCount, Equals, 2)
-	c.Assert(sctx.Txn().Commit(context.Background()), IsNil)
+	c.Assert(ts.se.Txn().Commit(context.Background()), IsNil)
 }
 
 func (ts *testSuite) TestTableFromMeta(c *C) {
-	defer testleak.AfterTest(c)()
 	_, err := ts.se.Execute(context.Background(), "CREATE TABLE test.meta (a int primary key auto_increment, b varchar(255) unique)")
 	c.Assert(err, IsNil)
-	sctx := ts.se.(sessionctx.Context)
-	c.Assert(sctx.NewTxn(), IsNil)
-	dom := domain.GetDomain(sctx)
-	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("meta"))
+	c.Assert(ts.se.NewTxn(), IsNil)
+	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("meta"))
 	tbInfo := tb.Meta()
 	tbInfo.Columns[0].GeneratedExprString = "test"
 	tables.TableFromMeta(nil, tbInfo)
