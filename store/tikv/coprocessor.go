@@ -658,7 +658,7 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 		}
 		if waitMs > minLogKVWaitTime {
 			logStr += fmt.Sprintf(" kv_wait_ms:%d", waitMs)
-			if !(processMs > minLogKVProcessTime) {
+			if processMs <= minLogKVProcessTime {
 				logStr = strings.Replace(logStr, "TIME_COP_PROCESS", "TIME_COP_WAIT", 1)
 			}
 		}
