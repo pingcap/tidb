@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
@@ -306,6 +307,11 @@ func (t *tikvHandlerTool) getAllHistoryDDL() ([]*model.Job, error) {
 type settingsHandler struct {
 }
 
+// binlogRecover is used to recover binlog service.
+// When config binlog IgnoreError, binlog service will stop after meeting the first error.
+// It can be recovered using HTTP API.
+type binlogRecover struct{}
+
 // schemaHandler is the handler for list database or table schemas.
 type schemaHandler struct {
 	*tikvHandlerTool
@@ -537,6 +543,11 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		writeData(w, config.GetGlobalConfig())
 	}
 	return
+}
+
+// ServeHTTP recovers binlog service.
+func (h binlogRecover) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	binloginfo.DisableSkipBinlogFlag()
 }
 
 // ServeHTTP handles request of list a database or table's schemas.
