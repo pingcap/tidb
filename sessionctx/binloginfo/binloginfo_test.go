@@ -23,7 +23,6 @@ import (
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -377,21 +376,17 @@ func (s *testBinlogSuite) TestIgnoreError(c *C) {
 	tk.MustExec("drop table if exists ignore_error")
 	tk.MustExec("create table t (id int)")
 
+	binloginfo.SetIgnoreError(true)
 	s.pump.mu.Lock()
 	s.pump.mu.mockFail = true
 	s.pump.mu.Unlock()
 
-	_, err := tk.Exec("insert into t values (1)")
-	c.Assert(err, NotNil)
-
-	cfg := config.GetGlobalConfig()
-	cfg.Binlog.IgnoreError = true
 	tk.MustExec("insert into t values (1)")
 
 	// Clean up.
 	s.pump.mu.Lock()
 	s.pump.mu.mockFail = false
 	s.pump.mu.Unlock()
-	cfg.Binlog.IgnoreError = false
-	binloginfo.ResetErrorStopFlag()
+	binloginfo.DisableSkipBinlogFlag()
+	binloginfo.SetIgnoreError(false)
 }
