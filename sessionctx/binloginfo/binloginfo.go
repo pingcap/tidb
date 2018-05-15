@@ -73,13 +73,13 @@ func GetPrewriteValue(ctx sessionctx.Context, createIfNotExists bool) *binlog.Pr
 	return v
 }
 
-var stopped uint32
+var skipBinlog uint32
 var ignoreError uint32
 
-// ResetStopFlag resets the errorStopped flag.
-func ResetStopFlag() {
-	atomic.StoreUint32(&stopped, 0)
-	log.Warn("[binloginfo] reset stop flag")
+// DisableSkipBinlogFlag disable the skipBinlog flag.
+func DisableSkipBinlogFlag() {
+	atomic.StoreUint32(&skipBinlog, 0)
+	log.Warn("[binloginfo] disable the skipBinlog flag")
 }
 
 // SetIgnoreError sets the ignoreError flag, this function called when TiDB start
@@ -90,8 +90,8 @@ func SetIgnoreError() {
 
 // WriteBinlog writes a binlog to Pump.
 func (info *BinlogInfo) WriteBinlog(clusterID uint64) error {
-	valueStopped := atomic.LoadUint32(&stopped)
-	if valueStopped > 0 {
+	skip := atomic.LoadUint32(&skipBinlog)
+	if skip > 0 {
 		metrics.CriticalErrorCounter.Add(1)
 		return nil
 	}
@@ -125,7 +125,7 @@ func (info *BinlogInfo) WriteBinlog(clusterID uint64) error {
 			log.Errorf("critical error, write binlog fail but error ignored: %s", errors.ErrorStack(err))
 			metrics.CriticalErrorCounter.Add(1)
 			// If error happens once, we'll stop writing binlog.
-			atomic.CompareAndSwapUint32(&stopped, valueStopped, valueStopped+1)
+			atomic.CompareAndSwapUint32(&skipBinlog, skip, skip+1)
 			return nil
 		}
 	}
