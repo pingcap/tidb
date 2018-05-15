@@ -16,6 +16,7 @@ package ddl
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/model"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
@@ -30,6 +31,7 @@ type TestDDLCallback struct {
 }
 
 func (tc *TestDDLCallback) OnJobRunBefore(job *model.Job) {
+	log.Infof("on job run before, job %v", job)
 	if tc.OnJobRunBeforeExported != nil {
 		tc.OnJobRunBeforeExported(job)
 		return
@@ -43,6 +45,7 @@ func (tc *TestDDLCallback) OnJobRunBefore(job *model.Job) {
 }
 
 func (tc *TestDDLCallback) OnJobUpdated(job *model.Job) {
+	log.Infof("on job updated, job %v", job)
 	if tc.OnJobUpdatedExported != nil {
 		tc.OnJobUpdatedExported(job)
 		return

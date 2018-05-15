@@ -513,6 +513,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		keepOrder:    e.keepOrder,
 		batchSize:    e.maxChunkSize,
 		maxBatchSize: e.ctx.GetSessionVars().IndexLookupSize,
+		maxChunkSize: e.maxChunkSize,
 	}
 	if worker.batchSize > worker.maxBatchSize {
 		worker.batchSize = worker.maxBatchSize
@@ -648,6 +649,7 @@ type indexWorker struct {
 	// batchSize is for lightweight startup. It will be increased exponentially until reaches the max batch size value.
 	batchSize    int
 	maxBatchSize int
+	maxChunkSize int
 }
 
 // fetchHandles fetches a batch of handles from index data and builds the index lookup tasks.
@@ -671,7 +673,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 			}
 		}
 	}()
-	chk := chunk.NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)})
+	chk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, w.maxChunkSize)
 	for {
 		handles, err := w.extractTaskHandles(ctx, chk, result)
 		if err != nil {
