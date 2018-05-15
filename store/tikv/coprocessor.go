@@ -656,7 +656,7 @@ const (
 )
 
 func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *copTask, bo *Backoffer, resp *tikvrpc.Response) {
-	logStr := fmt.Sprintf("[TIME_COP_TASK] resp_time:%s txn_start_ts:%d region_id:%d store_addr:%s", costTime, worker.req.StartTs, task.region.id, task.storeAddr)
+	logStr := fmt.Sprintf("[TIME_COP_PROCESS] resp_time:%s txn_start_ts:%d region_id:%d store_addr:%s", costTime, worker.req.StartTs, task.region.id, task.storeAddr)
 	if bo.totalSleep > minLogBackoffTime {
 		backoffTypes := strings.Replace(fmt.Sprintf("%v", bo.types), " ", ",", -1)
 		logStr += fmt.Sprintf(" backoff_ms:%d backoff_types:%s", bo.totalSleep, backoffTypes)
@@ -667,20 +667,22 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 	} else if resp.CopStream != nil {
 		detail = resp.CopStream.ExecDetails
 	}
-	if detail != nil {
-		if detail.HandleTime != nil {
-			processMs := detail.HandleTime.ProcessMs
-			waitMs := detail.HandleTime.WaitMs
-			if processMs > minLogKVProcessTime {
-				logStr += fmt.Sprintf(" kv_process_ms:%d", processMs)
-				if detail.ScanDetail != nil {
-					logStr = appendScanDetail(logStr, "write", detail.ScanDetail.Write)
-					logStr = appendScanDetail(logStr, "data", detail.ScanDetail.Data)
-					logStr = appendScanDetail(logStr, "lock", detail.ScanDetail.Lock)
-				}
+
+	if detail != nil && detail.HandleTime != nil {
+		processMs := detail.HandleTime.ProcessMs
+		waitMs := detail.HandleTime.WaitMs
+		if processMs > minLogKVProcessTime {
+			logStr += fmt.Sprintf(" kv_process_ms:%d", processMs)
+			if detail.ScanDetail != nil {
+				logStr = appendScanDetail(logStr, "write", detail.ScanDetail.Write)
+				logStr = appendScanDetail(logStr, "data", detail.ScanDetail.Data)
+				logStr = appendScanDetail(logStr, "lock", detail.ScanDetail.Lock)
 			}
-			if waitMs > minLogKVWaitTime {
-				logStr += fmt.Sprintf(" kv_wait_ms:%d", waitMs)
+		}
+		if waitMs > minLogKVWaitTime {
+			logStr += fmt.Sprintf(" kv_wait_ms:%d", waitMs)
+			if processMs <= minLogKVProcessTime {
+				logStr = strings.Replace(logStr, "TIME_COP_PROCESS", "TIME_COP_WAIT", 1)
 			}
 		}
 	}

@@ -278,7 +278,7 @@ func (e *Error) getMySQLErrorCode() uint16 {
 	}
 	code, ok := codeMap[e.code]
 	if !ok {
-		log.Warnf("Unknown error class: %v code: %v", e.class, e.code)
+		log.Debugf("Unknown error class: %v code: %v", e.class, e.code)
 		return defaultMySQLErrorCode
 	}
 	return code

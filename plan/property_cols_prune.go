@@ -58,11 +58,69 @@ func (p *LogicalSelection) preparePossibleProperties() (result [][]*expression.C
 	return p.children[0].preparePossibleProperties()
 }
 
+func (p *LogicalSort) preparePossibleProperties() [][]*expression.Column {
+	p.children[0].preparePossibleProperties()
+	propCols := getPossiblePropertyFromByItems(p.ByItems)
+	if len(propCols) == 0 {
+		return nil
+	}
+	return [][]*expression.Column{propCols}
+}
+
+func (p *LogicalTopN) preparePossibleProperties() [][]*expression.Column {
+	p.children[0].preparePossibleProperties()
+	propCols := getPossiblePropertyFromByItems(p.ByItems)
+	if len(propCols) == 0 {
+		return nil
+	}
+	return [][]*expression.Column{propCols}
+}
+
+func getPossiblePropertyFromByItems(items []*ByItems) []*expression.Column {
+	cols := make([]*expression.Column, 0, len(items))
+	for _, item := range items {
+		if col, ok := item.Expr.(*expression.Column); ok {
+			cols = append(cols, col)
+		} else {
+			break
+		}
+	}
+	return cols
+}
+
 func (p *baseLogicalPlan) preparePossibleProperties() [][]*expression.Column {
 	for _, ch := range p.children {
 		ch.preparePossibleProperties()
 	}
 	return nil
+}
+
+func (p *LogicalProjection) preparePossibleProperties() [][]*expression.Column {
+	childProperties := p.children[0].preparePossibleProperties()
+	oldCols := make([]*expression.Column, 0, p.schema.Len())
+	newCols := make([]*expression.Column, 0, p.schema.Len())
+	for i, expr := range p.Exprs {
+		if col, ok := expr.(*expression.Column); ok {
+			newCols = append(newCols, p.schema.Columns[i])
+			oldCols = append(oldCols, col)
+		}
+	}
+	tmpSchema := expression.NewSchema(oldCols...)
+	for i := len(childProperties) - 1; i >= 0; i-- {
+		for j, col := range childProperties[i] {
+			pos := tmpSchema.ColumnIndex(col)
+			if pos >= 0 {
+				childProperties[i][j] = newCols[pos]
+			} else {
+				childProperties[i] = childProperties[i][:j]
+				break
+			}
+		}
+		if len(childProperties[i]) == 0 {
+			childProperties = append(childProperties[:i], childProperties[i+1:]...)
+		}
+	}
+	return childProperties
 }
 
 func (p *LogicalJoin) preparePossibleProperties() [][]*expression.Column {
@@ -76,9 +134,16 @@ func (p *LogicalJoin) preparePossibleProperties() [][]*expression.Column {
 	} else if p.JoinType == RightOuterJoin {
 		leftProperties = nil
 	}
-	resultProperties := make([][]*expression.Column, len(leftProperties), len(leftProperties)+len(rightProperties))
-	copy(resultProperties, leftProperties)
-	resultProperties = append(resultProperties, rightProperties...)
+	resultProperties := make([][]*expression.Column, len(leftProperties)+len(rightProperties))
+	for i, cols := range leftProperties {
+		resultProperties[i] = make([]*expression.Column, len(cols))
+		copy(resultProperties[i], cols)
+	}
+	leftLen := len(leftProperties)
+	for i, cols := range rightProperties {
+		resultProperties[leftLen+i] = make([]*expression.Column, len(cols))
+		copy(resultProperties[leftLen+i], cols)
+	}
 	return resultProperties
 }
 
