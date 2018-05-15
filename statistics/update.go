@@ -378,6 +378,7 @@ func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
 	h.UpdateTableStats(tbls, nil)
 }
 
+// ClearErrorRate clear the error rate information in the table.
 func (h *Handle) ClearErrorRate(tblID int64, histID int64, isIndex int, is infoschema.InfoSchema) {
 	table, ok := is.TableByID(tblID)
 	if !ok {
