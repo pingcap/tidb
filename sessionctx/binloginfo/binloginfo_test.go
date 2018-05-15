@@ -376,14 +376,12 @@ func (s *testBinlogSuite) TestIgnoreError(c *C) {
 	tk.MustExec("drop table if exists ignore_error")
 	tk.MustExec("create table t (id int)")
 
+	binloginfo.SetIgnoreError(true)
 	s.pump.mu.Lock()
 	s.pump.mu.mockFail = true
 	s.pump.mu.Unlock()
 
-	_, err := tk.Exec("insert into t values (1)")
-	c.Assert(err, NotNil)
-
-	binloginfo.SetIgnoreError()
+	tk.MustExec("insert into t values (1)")
 	tk.MustExec("insert into t values (1)")
 
 	// Clean up.
@@ -391,4 +389,5 @@ func (s *testBinlogSuite) TestIgnoreError(c *C) {
 	s.pump.mu.mockFail = false
 	s.pump.mu.Unlock()
 	binloginfo.DisableSkipBinlogFlag()
+	binloginfo.SetIgnoreError(false)
 }
