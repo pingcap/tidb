@@ -545,7 +545,7 @@ func checkDuplicateConstraint(namesMap map[string]bool, name string, foreign boo
 		if foreign {
 			return infoschema.ErrCannotAddForeign
 		}
-		return errDupKeyName.Gen("duplicate key name %s", name)
+		return ErrDupKeyName.Gen("duplicate key name %s", name)
 	}
 	namesMap[nameLower] = true
 	return nil
@@ -1665,7 +1665,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, unique bool, ind
 	}
 
 	if indexInfo := findIndexByName(indexName.L, t.Meta().Indices); indexInfo != nil {
-		return errDupKeyName.Gen("index already exist %s", indexName)
+		return ErrDupKeyName.Gen("index already exist %s", indexName)
 	}
 
 	if err = checkTooLongIndex(indexName); err != nil {
