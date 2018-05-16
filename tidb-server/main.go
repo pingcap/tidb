@@ -435,7 +435,7 @@ func setupSignalHandler() {
 	go func() {
 		sig := <-sc
 		log.Infof("Got signal [%s] to exit.", sig)
-		if sig == syscall.SIGTERM {
+		if sig == syscall.SIGQUIT {
 			graceful = true
 		}
 
