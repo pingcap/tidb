@@ -1972,24 +1972,26 @@ DoStmt:
  *
  *******************************************************************/
 DeleteFromStmt:
-	"DELETE" LowPriorityOptional QuickOptional IgnoreOptional "FROM" TableName WhereClauseOptional OrderByOptional LimitClause
+	"DELETE" LowPriorityOptional QuickOptional IgnoreOptional "FROM" TableName IndexHintListOpt WhereClauseOptional OrderByOptional LimitClause
 	{
 		// Single Table
-		join := &ast.Join{Left: &ast.TableSource{Source: $6.(ast.ResultSetNode)}, Right: nil}
+		tn := $6.(*ast.TableName)
+		tn.IndexHints = $7.([]*ast.IndexHint)
+		join := &ast.Join{Left: &ast.TableSource{Source: tn}, Right: nil}
 		x := &ast.DeleteStmt{
 			TableRefs:	&ast.TableRefsClause{TableRefs: join},
 			LowPriority:	$2.(bool),
 			Quick:		$3.(bool),
 			IgnoreErr:		$4.(bool),
 		}
-		if $7 != nil {
-			x.Where = $7.(ast.ExprNode)
-		}
 		if $8 != nil {
-			x.Order = $8.(*ast.OrderByClause)
+			x.Where = $8.(ast.ExprNode)
 		}
 		if $9 != nil {
-			x.Limit = $9.(*ast.Limit)
+			x.Order = $9.(*ast.OrderByClause)
+		}
+		if $10 != nil {
+			x.Limit = $10.(*ast.Limit)
 		}
 
 		$$ = x
