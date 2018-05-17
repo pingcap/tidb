@@ -1063,7 +1063,7 @@ func (d *ddl) ShardRowID(ctx sessionctx.Context, tableIdent ast.Ident, uVal uint
 		return errUnsupportedShardRowIDBits
 	}
 	job := &model.Job{
-		Type:   model.ActionShardRowID,
+		Type:       model.ActionShardRowID,
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
 		BinlogInfo: &model.HistoryInfo{},
