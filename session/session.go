@@ -320,6 +320,10 @@ func (s *session) doCommit(ctx context.Context) error {
 		schemaVer:       s.sessionVars.TxnCtx.SchemaVersion,
 		relatedTableIDs: tableIDs,
 	})
+	if s.sessionVars.TxnCtx.ForUpdate {
+		s.txn.SetOption(kv.ForUpdate, true)
+	}
+
 	if err := s.txn.Commit(sessionctx.SetCommitCtx(ctx, s)); err != nil {
 		return errors.Trace(err)
 	}
