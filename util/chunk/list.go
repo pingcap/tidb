@@ -115,7 +115,7 @@ func (l *List) allocChunk() (chk *Chunk) {
 		chk.Reset()
 		return
 	}
-	return NewChunk(l.fieldTypes)
+	return NewChunkWithCapacity(l.fieldTypes, l.maxChunkSize)
 }
 
 // GetRow gets a Row from the list by RowPtr.

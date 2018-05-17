@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	gofail "github.com/coreos/gofail/runtime"
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ddl"
@@ -162,6 +163,16 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrUnknownCharacterSet)
 	sql = "create table t1(a int) character set laitn1;"
 	s.testErrorCode(c, sql, tmysql.ErrUnknownCharacterSet)
+	sql = "create table test_error_code (a int not null ,b int not null,c int not null, d int not null, foreign key (b, c) references product(id));"
+	s.testErrorCode(c, sql, tmysql.ErrWrongFkDef)
+	sql = "create table test_error_code_2(c1 int, c2 int, c3 int, primary key(c1), primary key(c2));"
+	s.testErrorCode(c, sql, tmysql.ErrMultiplePriKey)
+	sql = "create table test_error_code_3(pt blob ,primary key (pt));"
+	s.testErrorCode(c, sql, tmysql.ErrBlobKeyWithoutLength)
+	sql = "create table test_error_code_3(a text, unique (a(3073)));"
+	s.testErrorCode(c, sql, tmysql.ErrTooLongKey)
+	sql = "create table test_error_code_3(`id` int, key `primary`(`id`));"
+	s.testErrorCode(c, sql, tmysql.ErrWrongNameForIndex)
 	sql = "create table t2(c1.c2 blob default null);"
 	s.testErrorCode(c, sql, tmysql.ErrWrongTableName)
 
@@ -172,10 +183,15 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrTooLongIdent)
 	sql = "alter table test_comment comment 'test comment'"
 	s.testErrorCode(c, sql, tmysql.ErrNoSuchTable)
+	sql = "alter table test_error_code_succ add column `a ` int ;"
+	s.testErrorCode(c, sql, tmysql.ErrWrongColumnName)
 
 	// drop column
 	sql = "alter table test_error_code_succ drop c_not_exist"
 	s.testErrorCode(c, sql, tmysql.ErrCantDropFieldOrKey)
+	s.tk.MustExec("create table test_drop_column (c1 int );")
+	sql = "alter table test_drop_column drop column c1;"
+	s.testErrorCode(c, sql, tmysql.ErrCantRemoveAllFields)
 	// add index
 	sql = "alter table test_error_code_succ add index idx (c_not_exist)"
 	s.testErrorCode(c, sql, tmysql.ErrKeyColumnDoesNotExits)
@@ -192,6 +208,10 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrWrongDBName)
 	sql = "alter table test_error_code_succ modify t.c1 bigint"
 	s.testErrorCode(c, sql, tmysql.ErrWrongTableName)
+	// insert value
+	s.tk.MustExec("create table test_error_code_null(c1 char(100) not null);")
+	sql = "insert into test_error_code_null (c1) values(null);"
+	s.testErrorCode(c, sql, tmysql.ErrBadNull)
 }
 
 func (s *testDBSuite) TestAddIndexAfterAddColumn(c *C) {
@@ -203,6 +223,8 @@ func (s *testDBSuite) TestAddIndexAfterAddColumn(c *C) {
 	s.tk.MustExec("alter table test_add_index_after_add_col add column c int not null default '0'")
 	sql := "alter table test_add_index_after_add_col add unique index cc(c) "
 	s.testErrorCode(c, sql, tmysql.ErrDupEntry)
+	sql = "alter table test_add_index_after_add_col add index idx_test(f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13,f14,f15,f16,f17);"
+	s.testErrorCode(c, sql, tmysql.ErrTooManyKeyParts)
 }
 
 func (s *testDBSuite) TestAddIndexWithPK(c *C) {
@@ -816,7 +838,7 @@ func (s *testDBSuite) TestIssue6101(c *C) {
 	s.tk.MustExec("create table t1 (quantity decimal(2) unsigned);")
 	_, err := s.tk.Exec("insert into t1 values (500), (-500), (~0), (-1);")
 	terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(tmysql.ErrDataOutOfRange))
+	c.Assert(terr.Code(), Equals, terror.ErrCode(tmysql.ErrWarnDataOutOfRange))
 	s.tk.MustExec("drop table t1")
 
 	s.tk.MustExec("set sql_mode=''")
@@ -1535,6 +1557,7 @@ func (s *testDBSuite) testRenameTable(c *C, sql string) {
 	c.Assert(newTblInfo.Meta().ID, Equals, oldTblID)
 	s.tk.MustQuery("select * from t1").Check(testkit.Rows("1 1", "2 2"))
 	s.tk.MustExec("use test")
+
 	// Make sure t doesn't exist.
 	s.tk.MustExec("create table t (c1 int, c2 int)")
 	s.tk.MustExec("drop table t")
@@ -1554,12 +1577,19 @@ func (s *testDBSuite) testRenameTable(c *C, sql string) {
 	// for failure case
 	failSQL := fmt.Sprintf(sql, "test_not_exist.t", "test_not_exist.t")
 	s.testErrorCode(c, failSQL, tmysql.ErrFileNotFound)
+	failSQL = fmt.Sprintf(sql, "test.test_not_exist", "test.test_not_exist")
+	s.testErrorCode(c, failSQL, tmysql.ErrFileNotFound)
 	failSQL = fmt.Sprintf(sql, "test.t_not_exist", "test_not_exist.t")
 	s.testErrorCode(c, failSQL, tmysql.ErrFileNotFound)
 	failSQL = fmt.Sprintf(sql, "test1.t2", "test_not_exist.t")
 	s.testErrorCode(c, failSQL, tmysql.ErrErrorOnRename)
-	failSQL = fmt.Sprintf(sql, "test1.t2", "test1.t2")
-	s.testErrorCode(c, failSQL, tmysql.ErrTableExists)
+
+	// for the same table name
+	s.tk.MustExec("use test1")
+	s.tk.MustExec("create table if not exists t (c1 int, c2 int)")
+	s.tk.MustExec("create table if not exists t1 (c1 int, c2 int)")
+	s.tk.MustExec(fmt.Sprintf(sql, "test1.t", "t"))
+	s.tk.MustExec(fmt.Sprintf(sql, "test1.t1", "test1.t1"))
 
 	s.tk.MustExec("drop database test1")
 }
@@ -1876,4 +1906,19 @@ func (s *testDBSuite) TestAddNotNullColumnWhileInsertOnDupUpdate(c *C) {
 	close(closeCh)
 	wg.Wait()
 	c.Assert(tk2Err, IsNil)
+}
+
+func (s *testDBSuite) TestUpdateHandleFailed(c *C) {
+	gofail.Enable("github.com/pingcap/tidb/ddl/errorUpdateReorgHandle", `return(true)`)
+	defer gofail.Disable("github.com/pingcap/tidb/ddl/errorUpdateReorgHandle")
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test_handle_failed")
+	defer tk.MustExec("drop database test_handle_failed")
+	tk.MustExec("use test_handle_failed")
+	tk.MustExec("create table t(a int primary key, b int)")
+	tk.MustExec("insert into t values(-1, 1)")
+	tk.MustExec("alter table t add index idx_b(b)")
+	result := tk.MustQuery("select count(*) from t use index(idx_b)")
+	result.Check(testkit.Rows("1"))
+	tk.MustExec("admin check index t idx_b")
 }
