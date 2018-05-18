@@ -24,6 +24,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -38,7 +39,9 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/table"
@@ -304,6 +307,11 @@ func (t *tikvHandlerTool) getAllHistoryDDL() ([]*model.Job, error) {
 type settingsHandler struct {
 }
 
+// binlogRecover is used to recover binlog service.
+// When config binlog IgnoreError, binlog service will stop after meeting the first error.
+// It can be recovered using HTTP API.
+type binlogRecover struct{}
+
 // schemaHandler is the handler for list database or table schemas.
 type schemaHandler struct {
 	*tikvHandlerTool
@@ -516,8 +524,32 @@ func (t *tikvHandlerTool) getRegionsMeta(regionIDs []uint64) ([]RegionMeta, erro
 
 // ServeHTTP handles request of list tidb server settings.
 func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	writeData(w, config.GetGlobalConfig())
+	if req.Method == "POST" {
+		err := req.ParseForm()
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		if generalLog := req.Form.Get("tidb_general_log"); generalLog != "" {
+			switch generalLog {
+			case "0":
+				atomic.StoreUint32(&variable.ProcessGeneralLog, 0)
+			case "1":
+				atomic.StoreUint32(&variable.ProcessGeneralLog, 1)
+			default:
+				writeError(w, errors.New("illegal argument"))
+				return
+			}
+		}
+	} else {
+		writeData(w, config.GetGlobalConfig())
+	}
 	return
+}
+
+// ServeHTTP recovers binlog service.
+func (h binlogRecover) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	binloginfo.DisableSkipBinlogFlag()
 }
 
 // ServeHTTP handles request of list a database or table's schemas.
