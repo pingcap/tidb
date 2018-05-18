@@ -84,8 +84,12 @@ func DisableSkipBinlogFlag() {
 
 // SetIgnoreError sets the ignoreError flag, this function called when TiDB start
 // up and find config.Binlog.IgnoreError is true.
-func SetIgnoreError() {
-	atomic.StoreUint32(&ignoreError, 1)
+func SetIgnoreError(on bool) {
+	if on {
+		atomic.StoreUint32(&ignoreError, 1)
+	} else {
+		atomic.StoreUint32(&ignoreError, 0)
+	}
 }
 
 // WriteBinlog writes a binlog to Pump.

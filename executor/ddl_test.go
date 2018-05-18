@@ -373,6 +373,14 @@ func (s *testSuite) TestShardRowIDBits(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(count, Equals, 100)
 	c.Assert(hasShardedID, IsTrue)
+
+	// Test that audo_increment column can not use shard_row_id_bits.
+	_, err = tk.Exec("create table auto (id int not null auto_increment primary key) shard_row_id_bits = 4")
+	c.Assert(err, NotNil)
+	tk.MustExec("create table auto (id int not null auto_increment primary key) shard_row_id_bits = 0")
+	_, err = tk.Exec("alter table auto shard_row_id_bits = 4")
+	c.Assert(err, NotNil)
+	tk.MustExec("alter table auto shard_row_id_bits = 0")
 }
 
 func (s *testSuite) TestMaxHandleAddIndex(c *C) {
