@@ -173,6 +173,9 @@ func setupBinlogClient() {
 	})
 	clientConn, err := session.DialPumpClientWithRetry(cfg.Binlog.BinlogSocket, util.DefaultMaxRetries, dialerOpt)
 	terror.MustNil(err)
+	if cfg.Binlog.IgnoreError {
+		binloginfo.SetIgnoreError(true)
+	}
 	binloginfo.SetPumpClient(binlog.NewPumpClient(clientConn))
 	log.Infof("created binlog client at %s, ignore error %v", cfg.Binlog.BinlogSocket, cfg.Binlog.IgnoreError)
 }
@@ -432,7 +435,7 @@ func setupSignalHandler() {
 	go func() {
 		sig := <-sc
 		log.Infof("Got signal [%s] to exit.", sig)
-		if sig == syscall.SIGTERM {
+		if sig == syscall.SIGQUIT {
 			graceful = true
 		}
 

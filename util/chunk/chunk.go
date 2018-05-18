@@ -41,11 +41,6 @@ const (
 	InitialCapacity = 32
 )
 
-// NewChunk creates a new chunk with field types.
-func NewChunk(fields []*types.FieldType) *Chunk {
-	return NewChunkWithCapacity(fields, InitialCapacity)
-}
-
 // NewChunkWithCapacity creates a new chunk with field types and capacity.
 func NewChunkWithCapacity(fields []*types.FieldType, cap int) *Chunk {
 	chk := new(Chunk)

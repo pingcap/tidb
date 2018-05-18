@@ -98,7 +98,7 @@ func (r *recordSet) NewChunk() *chunk.Chunk {
 	for _, field := range r.fields {
 		fields = append(fields, &field.Column.FieldType)
 	}
-	return chunk.NewChunk(fields)
+	return chunk.NewChunkWithCapacity(fields, 32)
 }
 
 func (r *recordSet) Close() error {
