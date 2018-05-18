@@ -85,7 +85,7 @@ goword:
 errcheck:
 	go get github.com/kisielk/errcheck
 	@echo "errcheck"
-	@ GOPATH=$(GOPATH) errcheck -blank $(PACKAGES) | grep -vE "_test\.go|Fprint" | awk '{print} END{if(NR>0) {exit 1}}'
+	@ GOPATH=$(GOPATH) errcheck  -ignore 'fmt:[FS]?[Pp]rint*' -blank $(PACKAGES) | grep -v "_test\.go" | awk '{print} END{if(NR>0) {exit 1}}'
 
 lint:
 	go get golang.org/x/lint/golint
