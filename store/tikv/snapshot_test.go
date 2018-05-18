@@ -18,6 +18,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
@@ -140,4 +141,16 @@ func makeKeys(rowNum int, prefix string) []kv.Key {
 		keys = append(keys, k)
 	}
 	return keys
+}
+
+func (s *testSnapshotSuite) TestWriteConflictPrettyFormat(c *C) {
+	conflict := &pb.WriteConflict{
+		StartTs:    399402937522847774,
+		ConflictTs: 399402937719455772,
+		Key:        []byte{116, 128, 0, 0, 0, 0, 0, 1, 155, 95, 105, 128, 0, 0, 0, 0, 0, 0, 1, 1, 82, 87, 48, 49, 0, 0, 0, 0, 251, 1, 55, 54, 56, 50, 50, 49, 49, 48, 255, 57, 0, 0, 0, 0, 0, 0, 0, 248, 1, 0, 0, 0, 0, 0, 0, 0, 0, 247},
+		Primary:    []byte{116, 128, 0, 0, 0, 0, 0, 1, 155, 95, 105, 128, 0, 0, 0, 0, 0, 0, 1, 1, 82, 87, 48, 49, 0, 0, 0, 0, 251, 1, 55, 54, 56, 50, 50, 49, 49, 48, 255, 57, 0, 0, 0, 0, 0, 0, 0, 248, 1, 0, 0, 0, 0, 0, 0, 0, 0, 247},
+	}
+
+	expectedStr := `WriteConflict: startTS=399402937522847774, conflictTS=399402937719455772, key={tableID=411, indexID=1, indexValues={RW01, 768221109, , }} primary={tableID=411, indexID=1, indexValues={RW01, 768221109, , }}`
+	c.Assert(conflictToString(conflict), Equals, expectedStr)
 }
