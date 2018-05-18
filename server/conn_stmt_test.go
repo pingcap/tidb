@@ -15,6 +15,7 @@ package server
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 )
 
@@ -29,7 +30,7 @@ func (ts ConnTestSuite) TestParseStmtArgs(c *C) {
 	tests := []struct {
 		args   args
 		err    error
-		expect string
+		expect interface{}
 	}{
 		// Tests for date/datetime/timestamp
 		{
@@ -120,6 +121,40 @@ func (ts ConnTestSuite) TestParseStmtArgs(c *C) {
 			},
 			nil,
 			"0",
+		},
+		// For error test
+		{
+			args{
+				make([]interface{}, 1),
+				[][]byte{nil},
+				[]byte{0x0},
+				[]byte{7, 0},
+				[]byte{10},
+			},
+			mysql.ErrMalformPacket,
+			nil,
+		},
+		{
+			args{
+				make([]interface{}, 1),
+				[][]byte{nil},
+				[]byte{0x0},
+				[]byte{11, 0},
+				[]byte{10},
+			},
+			mysql.ErrMalformPacket,
+			nil,
+		},
+		{
+			args{
+				make([]interface{}, 1),
+				[][]byte{nil},
+				[]byte{0x0},
+				[]byte{11, 0},
+				[]byte{8, 2},
+			},
+			mysql.ErrMalformPacket,
+			nil,
 		},
 	}
 	for _, tt := range tests {
