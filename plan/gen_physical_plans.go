@@ -169,12 +169,12 @@ func getNewJoinKeysByOffsets(oldJoinKeys []*expression.Column, offsets []int) []
 	return newKeys
 }
 
-func getNewEqualConditionsByOffsets(old []*expression.ScalarFunction, offsets []int) []*expression.ScalarFunction {
-	new := make([]*expression.ScalarFunction, 0, len(old))
+func getNewEqualConditionsByOffsets(oldEqualCond []*expression.ScalarFunction, offsets []int) []*expression.ScalarFunction {
+	newEqualCond := make([]*expression.ScalarFunction, 0, len(oldEqualCond))
 	for _, offset := range offsets {
-		new = append(new, old[offset])
+		newEqualCond = append(newEqualCond, oldEqualCond[offset])
 	}
-	for pos, condition := range old {
+	for pos, condition := range oldEqualCond {
 		isExist := false
 		for _, p := range offsets {
 			if p == pos {
@@ -183,65 +183,61 @@ func getNewEqualConditionsByOffsets(old []*expression.ScalarFunction, offsets []
 			}
 		}
 		if !isExist {
-			new = append(new, condition)
+			newEqualCond = append(newEqualCond, condition)
 		}
 	}
-	return new
+	return newEqualCond
 }
 
 func (p *LogicalJoin) getEnforcedMergeJoin(prop *requiredProp) []PhysicalPlan {
 	// Check whether SMJ can satisfy the required property
-	leftOffsets := make([]int, 0, len(p.LeftJoinKeys))
-	rightOffsets := make([]int, 0, len(p.RightJoinKeys))
+	offsets := make([]int, 0, len(p.LeftJoinKeys))
 	for _, col := range prop.cols {
 		isExist := false
 		for leftJoinKeyPos, key := range p.LeftJoinKeys {
-			if key.Equal(p.ctx, col) {
-				for i := 0; i < len(leftOffsets)-1; i++ {
-					if leftOffsets[i] == leftJoinKeyPos {
-						return nil
-					}
-				}
-				isExist = true
-				if len(leftOffsets) == 0 || leftOffsets[len(leftOffsets)-1] != leftJoinKeyPos {
-					leftOffsets = append(leftOffsets, leftJoinKeyPos)
-					rightOffsets = append(rightOffsets, leftJoinKeyPos)
-				}
-				break
+			if !key.Equal(p.ctx, col) {
+				continue
 			}
+			for i := 0; i < len(offsets)-1; i++ {
+				if offsets[i] == leftJoinKeyPos {
+					return nil
+				}
+			}
+			if len(offsets) == 0 || offsets[len(offsets)-1] != leftJoinKeyPos {
+				offsets = append(offsets, leftJoinKeyPos)
+			}
+			isExist = true
+			break
 		}
 		if isExist {
 			continue
 		}
 		for rightJoinKeyPos, key := range p.RightJoinKeys {
-			if key.Equal(p.ctx, col) {
-				for i := 0; i < len(rightOffsets)-1; i++ {
-					if rightOffsets[i] == rightJoinKeyPos {
-						return nil
-					}
-				}
-				isExist = true
-				if len(rightOffsets) == 0 || rightOffsets[len(rightOffsets)-1] != rightJoinKeyPos {
-					leftOffsets = append(leftOffsets, rightJoinKeyPos)
-					rightOffsets = append(rightOffsets, rightJoinKeyPos)
-				}
-				break
+			if !key.Equal(p.ctx, col) {
+				continue
 			}
+			for i := 0; i < len(offsets)-1; i++ {
+				if offsets[i] == rightJoinKeyPos {
+					return nil
+				}
+			}
+			if len(offsets) == 0 || offsets[len(offsets)-1] != rightJoinKeyPos {
+				offsets = append(offsets, rightJoinKeyPos)
+			}
+			isExist = true
+			break
 		}
 		if !isExist {
 			return nil
 		}
 	}
 	// Generate the enforced sort merge join
-	if len(rightOffsets) > len(leftOffsets) {
-		leftOffsets = rightOffsets
-	}
-	leftKeys := getNewJoinKeysByOffsets(p.LeftJoinKeys, leftOffsets)
-	rightKeys := getNewJoinKeysByOffsets(p.RightJoinKeys, leftOffsets)
-	equalConditions := getNewEqualConditionsByOffsets(p.EqualConditions, leftOffsets)
+	leftKeys := getNewJoinKeysByOffsets(p.LeftJoinKeys, offsets)
+	rightKeys := getNewJoinKeysByOffsets(p.RightJoinKeys, offsets)
+	equalConditions := getNewEqualConditionsByOffsets(p.EqualConditions, offsets)
 	lProp := &requiredProp{taskTp: rootTaskType, cols: leftKeys, expectedCnt: math.MaxFloat64, enforced: true, desc: prop.desc}
 	rProp := &requiredProp{taskTp: rootTaskType, cols: rightKeys, expectedCnt: math.MaxFloat64, enforced: true, desc: prop.desc}
-	enforcePhysicalMergeJoin := PhysicalMergeJoin{
+	enforcedPhysicalMergeJoin := PhysicalMergeJoin{
 		JoinType:        p.JoinType,
 		LeftConditions:  p.LeftConditions,
 		RightConditions: p.RightConditions,
@@ -251,9 +247,9 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *requiredProp) []PhysicalPlan {
 		EqualConditions: equalConditions,
 		OtherConditions: p.OtherConditions,
 	}.init(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt))
-	enforcePhysicalMergeJoin.SetSchema(p.schema)
-	enforcePhysicalMergeJoin.childrenReqProps = []*requiredProp{lProp, rProp}
-	return []PhysicalPlan{enforcePhysicalMergeJoin}
+	enforcedPhysicalMergeJoin.SetSchema(p.schema)
+	enforcedPhysicalMergeJoin.childrenReqProps = []*requiredProp{lProp, rProp}
+	return []PhysicalPlan{enforcedPhysicalMergeJoin}
 }
 
 func (p *LogicalJoin) getHashJoins(prop *requiredProp) []PhysicalPlan {
