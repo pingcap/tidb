@@ -320,6 +320,10 @@ func (s *session) doCommit(ctx context.Context) error {
 		schemaVer:       s.sessionVars.TxnCtx.SchemaVersion,
 		relatedTableIDs: tableIDs,
 	})
+	if s.sessionVars.TxnCtx.ForUpdate {
+		s.txn.SetOption(kv.ForUpdate, true)
+	}
+
 	if err := s.txn.Commit(sessionctx.SetCommitCtx(ctx, s)); err != nil {
 		return errors.Trace(err)
 	}
@@ -1213,7 +1217,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 20
+	currentBootstrapVersion = 21
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
