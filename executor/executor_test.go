@@ -947,8 +947,17 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert into t value(0),(0)")
 	tk.MustQuery("select 1 from (select a from t union all select a from t) tmp").Check(testkit.Rows("1", "1", "1", "1"))
-	tk.MustQuery("select 1 from (select a from t limit 1 union all select a from t limit 1) tmp").Check(testkit.Rows("1", "1"))
 	tk.MustQuery("select count(1) from (select a from t union all select a from t) tmp").Check(testkit.Rows("4"))
+
+	_, err := tk.Exec("select 1 from (select a from t limit 1 union all select a from t limit 1) tmp")
+	c.Assert(err, NotNil)
+	terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrWrongUsage))
+
+	_, err = tk.Exec("select 1 from (select a from t order by a union all select a from t limit 1) tmp")
+	c.Assert(err, NotNil)
+	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrWrongUsage))
 }
 
 func (s *testSuite) TestIn(c *C) {
@@ -2541,6 +2550,12 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	tb, err := tables.TableFromMeta(alloc, tbInfo)
 	c.Assert(err, IsNil)
 
+	_, err = se.Execute(context.Background(), "admin check index t c")
+	c.Assert(err, IsNil)
+
+	_, err = se.Execute(context.Background(), "admin check index t C")
+	c.Assert(err, IsNil)
+
 	// set data to:
 	// index     data (handle, data): (1, 10), (2, 20)
 	// table     data (handle, data): (1, 10), (2, 20)
@@ -2664,4 +2679,49 @@ func (s *testSuite) TestCoprocessorStreamingFlag(c *C) {
 		c.Assert(err, IsNil)
 		rs[0].Close()
 	}
+}
+
+func (s *testSuite) TestLimit(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a bigint, b bigint);`)
+	tk.MustExec(`insert into t values(1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6);`)
+	tk.MustQuery(`select * from t order by a limit 1, 1;`).Check(testkit.Rows(
+		"2 2",
+	))
+	tk.MustQuery(`select * from t order by a limit 1, 2;`).Check(testkit.Rows(
+		"2 2",
+		"3 3",
+	))
+	tk.MustQuery(`select * from t order by a limit 1, 3;`).Check(testkit.Rows(
+		"2 2",
+		"3 3",
+		"4 4",
+	))
+	tk.MustQuery(`select * from t order by a limit 1, 4;`).Check(testkit.Rows(
+		"2 2",
+		"3 3",
+		"4 4",
+		"5 5",
+	))
+	tk.MustExec(`set @@tidb_max_chunk_size=2;`)
+	tk.MustQuery(`select * from t order by a limit 2, 1;`).Check(testkit.Rows(
+		"3 3",
+	))
+	tk.MustQuery(`select * from t order by a limit 2, 2;`).Check(testkit.Rows(
+		"3 3",
+		"4 4",
+	))
+	tk.MustQuery(`select * from t order by a limit 2, 3;`).Check(testkit.Rows(
+		"3 3",
+		"4 4",
+		"5 5",
+	))
+	tk.MustQuery(`select * from t order by a limit 2, 4;`).Check(testkit.Rows(
+		"3 3",
+		"4 4",
+		"5 5",
+		"6 6",
+	))
 }

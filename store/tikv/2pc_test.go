@@ -379,3 +379,35 @@ func (s *testCommitterSuite) TestPrewritePrimaryKeyFailed(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, BytesEquals, []byte("a3"))
 }
+
+func (s *testCommitterSuite) TestWrittenKeysOnConflict(c *C) {
+	// This test checks that when there is a write conflict, written keys is collected,
+	// so we can use it to clean up keys.
+	region, _ := s.cluster.GetRegionByKey([]byte("x"))
+	newRegionID := s.cluster.AllocID()
+	newPeerID := s.cluster.AllocID()
+	s.cluster.Split(region.Id, newRegionID, []byte("y"), []uint64{newPeerID}, newPeerID)
+	var totalTime time.Duration
+	for i := 0; i < 10; i++ {
+		txn1 := s.begin(c)
+		txn2 := s.begin(c)
+		txn2.Set([]byte("x1"), []byte("1"))
+		commiter2, err := newTwoPhaseCommitter(txn2, 2)
+		c.Assert(err, IsNil)
+		err = commiter2.execute(context.Background())
+		c.Assert(err, IsNil)
+		txn1.Set([]byte("x1"), []byte("1"))
+		txn1.Set([]byte("y1"), []byte("2"))
+		commiter1, err := newTwoPhaseCommitter(txn1, 2)
+		c.Assert(err, IsNil)
+		err = commiter1.execute(context.Background())
+		c.Assert(err, NotNil)
+		commiter1.cleanWg.Wait()
+		txn3 := s.begin(c)
+		start := time.Now()
+		txn3.Get([]byte("y1"))
+		totalTime += time.Since(start)
+		txn3.Commit(context.Background())
+	}
+	c.Assert(totalTime, Less, time.Millisecond*200)
+}

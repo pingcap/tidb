@@ -417,7 +417,7 @@ func (b *planBuilder) buildCheckIndex(dbName model.CIStr, as *ast.AdminStmt) Pla
 	// get index information
 	var idx *model.IndexInfo
 	for _, index := range tblInfo.Indices {
-		if index.Name.L == as.Index {
+		if index.Name.L == strings.ToLower(as.Index) {
 			idx = index
 			break
 		}

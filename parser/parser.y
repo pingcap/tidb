@@ -934,11 +934,11 @@ AlterTableSpec:
 	{
 		$$ = &ast.AlterTableSpec{Tp: ast.AlterTableDropPrimaryKey}
 	}
-|	"DROP" KeyOrIndex IndexName
+|	"DROP" KeyOrIndex Identifier
 	{
 		$$ = &ast.AlterTableSpec{
 			Tp: ast.AlterTableDropIndex,
-			Name: $3.(string),
+			Name: $3,
 		}
 	}
 |	"DROP" "FOREIGN" "KEY" Symbol
