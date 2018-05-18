@@ -630,7 +630,8 @@ func parseDatetime(str string, fsp int, isFloat bool) (Time, error) {
 				// 20170118.123423 => 2017-01-18 00:00:00
 			} else {
 				// '20170118.123423' => 2017-01-18 12:34:23.234
-				fmt.Sscanf(fracStr, "%2d%2d%2d", &hour, &minute, &second)
+				_, err1 := fmt.Sscanf(fracStr, "%2d%2d%2d", &hour, &minute, &second)
+				terror.Log(err1)
 			}
 		}
 	case 3:

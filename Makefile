@@ -85,7 +85,7 @@ goword:
 errcheck:
 	go get github.com/kisielk/errcheck
 	@echo "errcheck"
-	@ GOPATH=$(GOPATH) errcheck -blank $(PACKAGES) | grep -v "_test\.go" | awk '{print} END{if(NR>0) {exit 1}}'
+	@ GOPATH=$(GOPATH) errcheck -exclude errcheck_excludes.txt -blank $(PACKAGES) | grep -v "_test\.go" | awk '{print} END{if(NR>0) {exit 1}}'
 
 lint:
 	go get golang.org/x/lint/golint
