@@ -563,6 +563,11 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 			sql:  "delete from t",
 			best: "TableReader(Table(t))->Delete",
 		},
+		// Test "USE INDEX" hint in delete statement from single table
+		{
+			sql:  "delete from t use index(c_d_e) where b = 1",
+			best: "IndexLookUp(Index(t.c_d_e)[[<nil>,+inf]], Table(t)->Sel([eq(test.t.b, 1)]))->Delete",
+		},
 		// Test complex insert.
 		{
 			sql:  "insert into t select * from t where b < 1 order by d limit 1",
