@@ -106,7 +106,10 @@ todo:
 	@grep -n BUG */*.go parser/parser.y || true
 	@grep -n println */*.go parser/parser.y || true
 
-test: checklist gotest
+test: checklist gotest explaintest
+
+explaintest: server
+	@cd cmd/explaintest && ./run-tests.sh -s ../../bin/tidb-server
 
 gotest: parserlib
 	go get github.com/coreos/gofail
@@ -166,6 +169,7 @@ benchraw:
 
 benchdb:
 	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/benchdb cmd/benchdb/main.go
+
 importer:
 	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/importer ./cmd/importer
 
