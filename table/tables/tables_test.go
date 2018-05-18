@@ -167,6 +167,7 @@ func (ts *testSuite) TestTypes(c *C) {
 	err = rs[0].Next(ctx, chk)
 	c.Assert(err, IsNil)
 	c.Assert(chk.NumRows() == 0, IsFalse)
+	c.Assert(rs[0].Close(), IsNil)
 	_, err = ts.se.Execute(ctx, "drop table test.t")
 	c.Assert(err, IsNil)
 
@@ -182,6 +183,7 @@ func (ts *testSuite) TestTypes(c *C) {
 	c.Assert(chk.NumRows() == 0, IsFalse)
 	row := chk.GetRow(0)
 	c.Assert(types.BinaryLiteral(row.GetBytes(5)), DeepEquals, types.NewBinaryLiteralFromUint(6, -1))
+	c.Assert(rs[0].Close(), IsNil)
 	_, err = ts.se.Execute(ctx, "drop table test.t")
 	c.Assert(err, IsNil)
 
@@ -196,6 +198,7 @@ func (ts *testSuite) TestTypes(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(chk.NumRows() == 0, IsFalse)
 	c.Assert(chk.GetRow(0).GetFloat64(0), DeepEquals, float64(2))
+	c.Assert(rs[0].Close(), IsNil)
 	_, err = ts.se.Execute(ctx, "drop table test.t")
 	c.Assert(err, IsNil)
 }
