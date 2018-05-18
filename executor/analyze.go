@@ -114,11 +114,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 func getBuildStatsConcurrency(ctx sessionctx.Context) (int, error) {
 	sessionVars := ctx.GetSessionVars()
-	concurrency, err := sessionVars.GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBBuildStatsConcurrency)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	err = sessionVars.SetSystemVar(variable.TiDBBuildStatsConcurrency, concurrency)
+	concurrency, err := variable.GetSessionSystemVar(sessionVars, variable.TiDBBuildStatsConcurrency)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
