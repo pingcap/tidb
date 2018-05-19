@@ -240,7 +240,7 @@ var defaultConf = Config{
 	Store:           "mocktikv",
 	Path:            "/tmp/tidb",
 	RunDDL:          true,
-	SplitTable:      false,
+	SplitTable:      true,
 	Lease:           "45s",
 	TokenLimit:      1000,
 	OOMAction:       "log",
