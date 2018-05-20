@@ -305,7 +305,6 @@ func NewSessionVars() *SessionVars {
 		RetryLimit:                DefTiDBRetryLimit,
 	}
 	vars.Concurrency = Concurrency{
-		BuildStatsConcurrencyVar:   DefBuildStatsConcurrency,
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
 		IndexSerialScanConcurrency: DefIndexSerialScanConcurrency,
 		IndexLookupJoinConcurrency: DefIndexLookupJoinConcurrency,
@@ -559,9 +558,6 @@ type TableDelta struct {
 
 // Concurrency defines concurrency values.
 type Concurrency struct {
-	// BuildStatsConcurrencyVar is used to control statistics building concurrency.
-	BuildStatsConcurrencyVar int
-
 	// IndexLookupConcurrency is the number of concurrent index lookup worker.
 	IndexLookupConcurrency int
 
