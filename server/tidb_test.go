@@ -95,6 +95,11 @@ func (ts *TidbTestSuite) TestPreparedString(c *C) {
 	runTestPreparedString(c)
 }
 
+func (ts *TidbTestSuite) TestPreparedTimestamp(c *C) {
+	c.Parallel()
+	runTestPreparedTimestamp(c)
+}
+
 func (ts *TidbTestSuite) TestLoadData(c *C) {
 	c.Parallel()
 	runTestLoadData(c, suite.server)
