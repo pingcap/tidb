@@ -139,7 +139,7 @@ func (e *baseExecutor) Schema() *expression.Schema {
 
 // newChunk creates a new chunk to buffer current executor's result.
 func (e *baseExecutor) newChunk() *chunk.Chunk {
-	return chunk.NewChunk(e.retTypes())
+	return chunk.NewChunkWithCapacity(e.retTypes(), e.maxChunkSize)
 }
 
 // retTypes returns all output column types.
@@ -563,8 +563,11 @@ func (e *LimitExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 			if newCursor > e.end {
 				end = e.end - e.cursor
 			}
-			chk.Append(e.childrenResults[0], int(begin), int(end))
 			e.cursor += end
+			if begin == end {
+				break
+			}
+			chk.Append(e.childrenResults[0], int(begin), int(end))
 			return nil
 		}
 		e.cursor += batchSize

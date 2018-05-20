@@ -93,10 +93,10 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20),
 		}, []string{LblType, LblResult})
 
-	CreateDDL       = "create_ddl"
-	CreateDDLWorker = "create_ddl_worker"
-	IsDDLOwner      = "is_ddl_owner"
-	DDLCounter      = prometheus.NewCounterVec(
+	CreateDDLInstance = "create_ddl_instance"
+	CreateDDLWorker   = "create_ddl_worker"
+	IsDDLOwner        = "is_ddl_owner"
+	DDLCounter        = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",

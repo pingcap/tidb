@@ -68,7 +68,6 @@ const (
 	ClassKV
 	ClassMeta
 	ClassOptimizer
-	ClassOptimizerPlan
 	ClassParser
 	ClassPerfSchema
 	ClassPrivilege
@@ -83,33 +82,34 @@ const (
 	ClassMockTikv
 	ClassJSON
 	ClassTiKV
+	ClassSession
 	// Add more as needed.
 )
 
 var errClz2Str = map[ErrClass]string{
-	ClassAutoid:        "autoid",
-	ClassDDL:           "ddl",
-	ClassDomain:        "domain",
-	ClassExecutor:      "executor",
-	ClassExpression:    "expression",
-	ClassAdmin:         "admin",
-	ClassMeta:          "meta",
-	ClassKV:            "kv",
-	ClassOptimizer:     "optimizer",
-	ClassOptimizerPlan: "plan",
-	ClassParser:        "parser",
-	ClassPerfSchema:    "perfschema",
-	ClassPrivilege:     "privilege",
-	ClassSchema:        "schema",
-	ClassServer:        "server",
-	ClassStructure:     "structure",
-	ClassVariable:      "variable",
-	ClassTable:         "table",
-	ClassTypes:         "types",
-	ClassGlobal:        "global",
-	ClassMockTikv:      "mocktikv",
-	ClassJSON:          "json",
-	ClassTiKV:          "tikv",
+	ClassAutoid:     "autoid",
+	ClassDDL:        "ddl",
+	ClassDomain:     "domain",
+	ClassExecutor:   "executor",
+	ClassExpression: "expression",
+	ClassAdmin:      "admin",
+	ClassMeta:       "meta",
+	ClassKV:         "kv",
+	ClassOptimizer:  "planner",
+	ClassParser:     "parser",
+	ClassPerfSchema: "perfschema",
+	ClassPrivilege:  "privilege",
+	ClassSchema:     "schema",
+	ClassServer:     "server",
+	ClassStructure:  "structure",
+	ClassVariable:   "variable",
+	ClassTable:      "table",
+	ClassTypes:      "types",
+	ClassGlobal:     "global",
+	ClassMockTikv:   "mocktikv",
+	ClassJSON:       "json",
+	ClassTiKV:       "tikv",
+	ClassSession:    "session",
 }
 
 // String implements fmt.Stringer interface.
@@ -278,7 +278,7 @@ func (e *Error) getMySQLErrorCode() uint16 {
 	}
 	code, ok := codeMap[e.code]
 	if !ok {
-		log.Warnf("Unknown error class: %v code: %v", e.class, e.code)
+		log.Debugf("Unknown error class: %v code: %v", e.class, e.code)
 		return defaultMySQLErrorCode
 	}
 	return code

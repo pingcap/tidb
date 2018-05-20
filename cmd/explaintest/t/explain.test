@@ -1,0 +1,8 @@
+drop table if exists t;
+create table t (id int, c1 timestamp);
+show columns from t;
+explain t;
+describe t;
+desc t;
+desc t c1;
+desc t id;

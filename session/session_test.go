@@ -164,6 +164,7 @@ func (s *testSessionSuite) TestErrorRollback(c *C) {
 		go func() {
 			defer wg.Done()
 			localTk := testkit.NewTestKitWithInit(c, s.store)
+			localTk.MustExec("set @@session.tidb_retry_limit = 100")
 			for j := 0; j < num; j++ {
 				localTk.Exec("insert into t_rollback values (1, 1)")
 				localTk.MustExec("update t_rollback set c2 = c2 + 1 where c1 = 0")

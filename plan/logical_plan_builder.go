@@ -177,18 +177,6 @@ func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) LogicalPlan {
 	}
 }
 
-func extractCorColumns(expr expression.Expression) (cols []*expression.CorrelatedColumn) {
-	switch v := expr.(type) {
-	case *expression.CorrelatedColumn:
-		return []*expression.CorrelatedColumn{v}
-	case *expression.ScalarFunction:
-		for _, arg := range v.GetArgs() {
-			cols = append(cols, extractCorColumns(arg)...)
-		}
-	}
-	return
-}
-
 func extractOnCondition(conditions []expression.Expression, left LogicalPlan, right LogicalPlan) (
 	eqCond []*expression.ScalarFunction, leftCond []expression.Expression, rightCond []expression.Expression,
 	otherCond []expression.Expression) {
@@ -774,14 +762,14 @@ func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan 
 	if limit.Offset != nil {
 		offset, err = getUintForLimitOffset(sc, limit.Offset.GetValue())
 		if err != nil {
-			b.err = ErrWrongArguments
+			b.err = ErrWrongArguments.GenByArgs("LIMIT")
 			return nil
 		}
 	}
 	if limit.Count != nil {
 		count, err = getUintForLimitOffset(sc, limit.Count.GetValue())
 		if err != nil {
-			b.err = ErrWrongArguments
+			b.err = ErrWrongArguments.GenByArgs("LIMIT")
 			return nil
 		}
 	}
@@ -844,7 +832,7 @@ func resolveFromSelectFields(v *ast.ColumnNameExpr, fields []*ast.SelectField, i
 				index = i
 			} else if !colMatch(matchedExpr.(*ast.ColumnNameExpr).Name, curCol.Name) &&
 				!colMatch(curCol.Name, matchedExpr.(*ast.ColumnNameExpr).Name) {
-				return -1, ErrAmbiguous.GenByArgs(curCol.Name.Name.L)
+				return -1, ErrAmbiguous.GenByArgs(curCol.Name.Name.L, clauseMsg[fieldList])
 			}
 		}
 	}
