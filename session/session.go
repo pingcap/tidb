@@ -320,6 +320,10 @@ func (s *session) doCommit(ctx context.Context) error {
 		schemaVer:       s.sessionVars.TxnCtx.SchemaVersion,
 		relatedTableIDs: tableIDs,
 	})
+	if s.sessionVars.TxnCtx.ForUpdate {
+		s.txn.SetOption(kv.ForUpdate, true)
+	}
+
 	if err := s.txn.Commit(sessionctx.SetCommitCtx(ctx, s)); err != nil {
 		return errors.Trace(err)
 	}
@@ -471,6 +475,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) error {
 
 	nh := GetHistory(s)
 	var err error
+	var schemaVersion int64
 	for {
 		s.PrepareTxnCtx(ctx)
 		s.sessionVars.RetryInfo.ResetOffset()
@@ -479,7 +484,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) error {
 			if st.IsReadOnly() {
 				continue
 			}
-			err = st.RebuildPlan()
+			schemaVersion, err = st.RebuildPlan()
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -487,9 +492,9 @@ func (s *session) retry(ctx context.Context, maxCnt uint) error {
 			if retryCnt == 0 {
 				// We do not have to log the query every time.
 				// We print the queries at the first try only.
-				log.Warnf("[%d] Retry [%d] query [%d] %s", connID, retryCnt, i, sqlForLog(st.OriginText()))
+				log.Warnf("[con:%d][schema ver:%d] Retry [%d] query [%d] %s", connID, schemaVersion, retryCnt, i, sqlForLog(st.OriginText()))
 			} else {
-				log.Warnf("[%d] Retry [%d] query [%d]", connID, retryCnt, i)
+				log.Warnf("[con:%d][schema ver:%d] Retry [%d] query [%d]", connID, schemaVersion, retryCnt, i)
 			}
 			s.sessionVars.StmtCtx = sr.stmtCtx
 			s.sessionVars.StmtCtx.ResetForRetry()
@@ -742,7 +747,8 @@ func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode 
 	recordSet, err := runStmt(ctx, s, stmt)
 	if err != nil {
 		if !kv.ErrKeyExists.Equal(err) {
-			log.Warnf("[%d] session error:\n%v\n%s", connID, errors.ErrorStack(err), s)
+			log.Warnf("[con:%d][schema ver:%d] session error:\n%v\n%s",
+				connID, s.sessionVars.TxnCtx.SchemaVersion, errors.ErrorStack(err), s)
 		}
 		return nil, errors.Trace(err)
 	}
@@ -975,7 +981,8 @@ func (s *session) NewTxn() error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		log.Infof("[con:%d] NewTxn() inside a transaction auto commit: %d", s.GetSessionVars().ConnectionID, txnID)
+		vars := s.GetSessionVars()
+		log.Infof("[con:%d][schema ver:%d] NewTxn() inside a transaction auto commit: %d", vars.ConnectionID, vars.TxnCtx.SchemaVersion, txnID)
 	}
 
 	txn, err := s.store.Begin()
@@ -1210,7 +1217,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 20
+	currentBootstrapVersion = 21
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -1438,10 +1445,11 @@ func logStmt(node ast.StmtNode, vars *variable.SessionVars) {
 		*ast.RevokeStmt, *ast.AlterTableStmt, *ast.CreateDatabaseStmt, *ast.CreateIndexStmt, *ast.CreateTableStmt,
 		*ast.DropDatabaseStmt, *ast.DropIndexStmt, *ast.DropTableStmt, *ast.RenameTableStmt, *ast.TruncateTableStmt:
 		user := vars.User
+		schemaVersion := vars.TxnCtx.SchemaVersion
 		if ss, ok := node.(ast.SensitiveStmtNode); ok {
-			log.Infof("[CRUCIAL OPERATION] [con:%v] %s (by %s).", vars.ConnectionID, ss.SecureText(), user)
+			log.Infof("[CRUCIAL OPERATION] [con:%d][schema ver:%d] %s (by %s).", vars.ConnectionID, schemaVersion, ss.SecureText(), user)
 		} else {
-			log.Infof("[CRUCIAL OPERATION] [con:%v] %s (by %s).", vars.ConnectionID, stmt.Text(), user)
+			log.Infof("[CRUCIAL OPERATION] [con:%d][schema ver:%d] %s (by %s).", vars.ConnectionID, schemaVersion, stmt.Text(), user)
 		}
 	default:
 		logQuery(node.Text(), vars)
@@ -1450,6 +1458,6 @@ func logStmt(node ast.StmtNode, vars *variable.SessionVars) {
 
 func logQuery(query string, vars *variable.SessionVars) {
 	if atomic.LoadUint32(&variable.ProcessGeneralLog) != 0 && !vars.InRestrictedSQL {
-		log.Infof("[con:%d][txn:%d] %s", vars.ConnectionID, vars.TxnCtx.StartTS, query)
+		log.Infof("[con:%d][schema ver:%d][txn:%d] %s", vars.ConnectionID, vars.TxnCtx.SchemaVersion, vars.TxnCtx.StartTS, query)
 	}
 }

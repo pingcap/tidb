@@ -42,6 +42,8 @@ const (
 	NotFillCache
 	// SyncLog decides whether the WAL(write-ahead log) of this request should be synchronized.
 	SyncLog
+	// ForUpdate option would be set to true in 'select for update' transaction.
+	ForUpdate
 )
 
 // Priority value for transaction priority.

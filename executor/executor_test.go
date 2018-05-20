@@ -949,6 +949,8 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert into t value(0),(0)")
 	tk.MustQuery("select 1 from (select a from t union all select a from t) tmp").Check(testkit.Rows("1", "1", "1", "1"))
+	tk.MustQuery("select 10 as a from dual union select a from t order by a desc limit 1 ").Check(testkit.Rows("10"))
+	tk.MustQuery("select -10 as a from dual union select a from t order by a limit 1 ").Check(testkit.Rows("-10"))
 	tk.MustQuery("select count(1) from (select a from t union all select a from t) tmp").Check(testkit.Rows("4"))
 
 	_, err := tk.Exec("select 1 from (select a from t limit 1 union all select a from t limit 1) tmp")
@@ -2051,16 +2053,14 @@ func (s *testSuite) TestIssue4024(c *C) {
 const (
 	checkRequestOff          = 0
 	checkRequestPriority     = 1
-	checkRequestNotFillCache = 2
 	checkRequestSyncLog      = 3
 	checkDDLAddIndexPriority = 4
 )
 
 type checkRequestClient struct {
 	tikv.Client
-	priority     pb.CommandPri
-	notFillCache bool
-	mu           struct {
+	priority pb.CommandPri
+	mu       struct {
 		sync.RWMutex
 		checkFlags     uint32
 		lowPriorityCnt uint32
@@ -2079,10 +2079,6 @@ func (c *checkRequestClient) SendRequest(ctx context.Context, addr string, req *
 			if c.priority != req.Priority {
 				return nil, errors.New("fail to set priority")
 			}
-		}
-	} else if checkFlags == checkRequestNotFillCache {
-		if c.notFillCache != req.NotFillCache {
-			return nil, errors.New("fail to set not fail cache")
 		}
 	} else if checkFlags == checkRequestSyncLog {
 		switch req.Type {
@@ -2251,27 +2247,35 @@ func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
 	cli.mu.Unlock()
 }
 
-func (s *testContextOptionSuite) TestNotFillCache(c *C) {
+func (s *testSuite) TestNotFillCacheFlag(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int primary key)")
 	defer tk.MustExec("drop table t")
 	tk.MustExec("insert into t values (1)")
 
-	cli := s.cli
-	cli.mu.Lock()
-	cli.mu.checkFlags = checkRequestNotFillCache
-	cli.mu.Unlock()
-	cli.notFillCache = true
-	tk.MustQuery("select SQL_NO_CACHE * from t")
-
-	cli.notFillCache = false
-	tk.MustQuery("select SQL_CACHE * from t")
-	tk.MustQuery("select * from t")
-
-	cli.mu.Lock()
-	cli.mu.checkFlags = checkRequestOff
-	cli.mu.Unlock()
+	tests := []struct {
+		sql    string
+		expect bool
+	}{
+		{"select SQL_NO_CACHE * from t", true},
+		{"select SQL_CACHE * from t", false},
+		{"select * from t", false},
+	}
+	count := 0
+	ctx := context.Background()
+	for _, test := range tests {
+		ctx1 := context.WithValue(ctx, "CheckSelectRequestHook", func(req *kv.Request) {
+			count++
+			if req.NotFillCache != test.expect {
+				c.Errorf("sql=%s, expect=%v, get=%v", test.sql, test.expect, req.NotFillCache)
+			}
+		})
+		rs, err := tk.Se.Execute(ctx1, test.sql)
+		c.Assert(err, IsNil)
+		tk.ResultSetToResult(rs[0], Commentf("sql: %v", test.sql))
+	}
+	c.Assert(count, Equals, len(tests)) // Make sure the hook function is called.
 }
 
 func (s *testContextOptionSuite) TestSyncLog(c *C) {
@@ -2738,10 +2742,7 @@ func (s *testSuite) TestCoprocessorStreamingFlag(c *C) {
 		})
 		rs, err := tk.Se.Execute(ctx1, test.sql)
 		c.Assert(err, IsNil)
-		chk := rs[0].NewChunk()
-		err = rs[0].Next(ctx, chk)
-		c.Assert(err, IsNil)
-		rs[0].Close()
+		tk.ResultSetToResult(rs[0], Commentf("sql: %v", test.sql))
 	}
 }
 
@@ -2807,4 +2808,17 @@ func (s *testSuite) TestLimit(c *C) {
 		"5 5",
 		"6 6",
 	))
+}
+
+func (s *testSuite) TestCoprocessorStreamingWarning(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a double)")
+	tk.MustExec("insert into t value(1.2)")
+	tk.MustExec("set @@session.tidb_enable_streaming = 1")
+
+	result := tk.MustQuery("select * from t where a/0 > 1")
+	result.Check(testkit.Rows())
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|Division by 0"))
 }
