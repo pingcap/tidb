@@ -404,6 +404,11 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"select straight_join * from t1 right join t2 on t1.id = t2.id", true},
 		{"select straight_join * from t1 straight_join t2 on t1.id = t2.id", true},
 
+		// for "USE INDEX" in delete statement
+		{"DELETE FROM t1 USE INDEX(idx_a) WHERE t1.id=1;", true},
+		{"DELETE t1, t2 FROM t1 USE INDEX(idx_a) JOIN t2 WHERE t1.id=t2.id;", true},
+		{"DELETE t1, t2 FROM t1 USE INDEX(idx_a) JOIN t2 USE INDEX(idx_a) WHERE t1.id=t2.id;", true},
+
 		// for admin
 		{"admin show ddl;", true},
 		{"admin show ddl jobs;", true},

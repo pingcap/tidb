@@ -44,6 +44,7 @@ func (s *testBootstrapSuite) SetUpSuite(c *C) {
 func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom := newStoreWithBootstrap(c, s.dbName)
+	defer store.Close()
 	defer dom.Close()
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, "USE mysql;")
@@ -100,9 +101,6 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	se, err = CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	doDMLWorks(se)
-
-	err = store.Close()
-	c.Assert(err, IsNil)
 }
 
 func globalVarsCount() int64 {
@@ -141,14 +139,18 @@ func (s *testBootstrapSuite) testBootstrapWithError(c *C) {
 	ctx := context.Background()
 	defer testleak.AfterTest(c)()
 	store := newStore(c, s.dbNameBootstrap)
+	defer store.Close()
 	s.bootstrapWithOnlyDDLWork(store, c)
+	dom, err := domap.Get(store)
+	c.Assert(err, IsNil)
+	defer dom.Close()
 
 	BootstrapSession(store)
 	se := newSession(c, store, s.dbNameBootstrap)
 	mustExecSQL(c, se, "USE mysql;")
 	r := mustExecSQL(c, se, `select * from user;`)
 	chk := r.NewChunk()
-	err := r.Next(ctx, chk)
+	err = r.Next(ctx, chk)
 	c.Assert(err, IsNil)
 	c.Assert(chk.NumRows() == 0, IsFalse)
 	row := chk.GetRow(0)
@@ -249,7 +251,6 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 }
 
 func (s *testBootstrapSuite) TestOldPasswordUpgrade(c *C) {
-	defer testleak.AfterTest(c)()
 	pwd := "abc"
 	oldpwd := fmt.Sprintf("%X", auth.Sha1Hash([]byte(pwd)))
 	newpwd, err := oldPasswordUpgrade(oldpwd)
