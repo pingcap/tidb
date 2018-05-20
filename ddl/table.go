@@ -365,23 +365,26 @@ func (d *ddl) onRenameIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	}
 	tblInfo, err := getTableInfo(t, job, job.SchemaID)
 	if err != nil {
+		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
 	// Double check. See function `RenameIndex` in ddl_api.go
 	idx := findIndexByName(from.L, tblInfo.Indices)
 	if idx == nil {
+		job.State = model.JobStateCancelled
 		return ver, errors.Trace(infoschema.ErrKeyNotExists.GenByArgs(from, tblInfo.Name))
 	}
 	if from.O == to.O {
 		return ver, nil
 	}
 	if i := findIndexByName(to.L, tblInfo.Indices); i != nil && from.L != to.L {
+		job.State = model.JobStateCancelled
 		return ver, errors.Trace(infoschema.ErrKeyNameDuplicate.GenByArgs(to.O))
 	}
 	idx.Name = to
-	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
-	if err != nil {
+	if ver, err = updateVersionAndTableInfo(t, job, tblInfo, true); err != nil {
+		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
