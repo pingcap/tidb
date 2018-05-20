@@ -34,11 +34,14 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 20),
 		}, []string{LblType, LblResult})
 
+	BatchAddIndexSucc = "batch_add_idx_succ"
+	BatchAddIndexFail = "batch_add_idx_fail"
+
 	BatchAddIdxHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
-			Name:      "batch_add_idx_succ",
+			Name:      "batch_add_idx_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of batch handle data",
 			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 20),
 		}, []string{LblType, LblResult})

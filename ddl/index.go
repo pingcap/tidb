@@ -727,7 +727,6 @@ func (d *ddl) waitTaskResults(workers []*addIndexWorker, taskCnt int, totalAdded
 // backfillBatchTasks send tasks to workers, and waits all the running worker return back result,
 // there are taskCnt running workers.
 func (d *ddl) backfillBatchTasks(startTime time.Time, startHandle int64, reorgInfo *reorgInfo, totalAddedCount *int64, workers []*addIndexWorker, batchTasks []*reorgIndexTask) error {
-	timeStart := time.Now()
 	for i, task := range batchTasks {
 		workers[i].taskCh <- task
 	}
@@ -744,6 +743,7 @@ func (d *ddl) backfillBatchTasks(startTime time.Time, startHandle int64, reorgIn
 		err1 := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 			return errors.Trace(reorgInfo.UpdateHandle(txn, nextHandle))
 		})
+		metrics.BatchAddIdxHistogram.WithLabelValues(metrics.BatchAddIndexFail, metrics.RetLabel(err)).Observe(elapsedTime)
 		log.Warnf("[ddl-reorg] total added index for %d rows, this task [%d,%d) add index for %d failed %v, take time %v, update handle err %v",
 			*totalAddedCount, startHandle, nextHandle, taskAddedCount, err, elapsedTime, err1)
 		return errors.Trace(err)
@@ -751,11 +751,7 @@ func (d *ddl) backfillBatchTasks(startTime time.Time, startHandle int64, reorgIn
 
 	// nextHandle will be updated periodically in runReorgJob, so no need to update it here.
 	d.reorgCtx.setNextHandle(nextHandle)
-	metrics.JobsGauge.WithLabelValues(reorgInfo.Type.String()).Inc()
-	defer func() {
-		metrics.JobsGauge.WithLabelValues(reorgInfo.Type.String()).Dec()
-		metrics.BatchAddIdxHistogram.WithLabelValues(reorgInfo.Type.String(), metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
-	}()
+	metrics.BatchAddIdxHistogram.WithLabelValues(metrics.BatchAddIndexSucc, metrics.RetLabel(err)).Observe(elapsedTime)
 
 	log.Infof("[ddl-reorg] total added index for %d rows, this task [%d,%d) added index for %d rows, take time %v",
 		*totalAddedCount, startHandle, nextHandle, taskAddedCount, elapsedTime)
