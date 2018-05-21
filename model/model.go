@@ -121,7 +121,7 @@ type TableInfo struct {
 	// ShardRowIDBits specify if the implicit row ID is sharded.
 	ShardRowIDBits uint64
 
-	Partition *PartitionInfo
+	Partition *PartitionInfo `json:"partition"`
 }
 
 // GetUpdateTime gets the table's updating time.
