@@ -66,6 +66,7 @@ func SetPumpClient(client binlog.PumpClient) {
 // SetGRPCTimeout sets grpc timeout for writing binlog.
 func SetGRPCTimeout(timeout time.Duration) {
 	if timeout < 300*time.Millisecond {
+		log.Warnf("set binlog grpc timeout %s ignored, use default value %s", timeout, binlogWriteTimeout)
 		return // Avoid invalid value
 	}
 	binlogWriteTimeout = timeout
