@@ -120,8 +120,8 @@ func (info *BinlogInfo) WriteBinlog(clusterID uint64) error {
 	for i := 0; i < 20; i++ {
 		var resp *binlog.WriteBinlogResp
 		ctx, cancel := context.WithTimeout(context.Background(), binlogWriteTimeout)
-		defer cancel()
 		resp, err = info.Client.WriteBinlog(ctx, req)
+		cancel()
 		if err == nil && resp.Errmsg != "" {
 			err = errors.New(resp.Errmsg)
 		}
