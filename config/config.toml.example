@@ -220,6 +220,9 @@ commit-timeout = "41s"
 # Socket file to write binlog.
 binlog-socket = ""
 
+# WriteTimeout specifies how long it will wait for writing binlog to pump.
+write-timeout = "15s"
+
 # If IgnoreError is true, when writting binlog meets error, TiDB would stop writting binlog,
 # but still provide service.
 ignore-error = false

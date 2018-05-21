@@ -35,6 +35,8 @@ func init() {
 	grpc.EnableTracing = false
 }
 
+var binlogWriteTimeout = 15 * time.Second
+
 // pumpClient is the gRPC client to write binlog, it is opened on server start and never close,
 // shared by all sessions.
 var pumpClient binlog.PumpClient
@@ -52,6 +54,15 @@ func GetPumpClient() binlog.PumpClient {
 	client := pumpClient
 	pumpClientLock.RUnlock()
 	return client
+}
+
+// SetGRPCTimeout sets grpc timeout for writing binlog.
+func SetGRPCTimeout(timeout time.Duration) {
+	if timeout < 300*time.Millisecond {
+		log.Warnf("set binlog grpc timeout %s ignored, use default value %s", timeout, binlogWriteTimeout)
+		return // Avoid invalid value
+	}
+	binlogWriteTimeout = timeout
 }
 
 // SetPumpClient sets the pump client instance.
@@ -109,7 +120,9 @@ func (info *BinlogInfo) WriteBinlog(clusterID uint64) error {
 	// Retry many times because we may raise CRITICAL error here.
 	for i := 0; i < 20; i++ {
 		var resp *binlog.WriteBinlogResp
-		resp, err = info.Client.WriteBinlog(context.Background(), req)
+		ctx, cancel := context.WithTimeout(context.Background(), binlogWriteTimeout)
+		resp, err = info.Client.WriteBinlog(ctx, req)
+		cancel()
 		if err == nil && resp.Errmsg != "" {
 			err = errors.New(resp.Errmsg)
 		}
