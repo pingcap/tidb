@@ -564,14 +564,16 @@ func (b *builtinCeilDecToDecSig) evalDecimal(row types.Row) (*types.MyDecimal, b
 	if isNull || err != nil {
 		return nil, isNull, errors.Trace(err)
 	}
+	res := new(types.MyDecimal)
 	if val.GetDigitsFrac() > 0 && !val.IsNegative() {
-		err = types.DecimalAdd(val, types.NewDecFromInt(1), val)
+		err = types.DecimalAdd(val, types.NewDecFromInt(1), res)
 		if err != nil {
 			return nil, true, errors.Trace(err)
 		}
+		err = res.Round(res, 0, types.ModeTruncate)
+	} else {
+		err = val.Round(res, 0, types.ModeTruncate)
 	}
-	res := new(types.MyDecimal)
-	err = val.Round(res, 0, types.ModeTruncate)
 	if err != nil {
 		return nil, true, errors.Trace(err)
 	}
