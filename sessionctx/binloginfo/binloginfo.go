@@ -35,7 +35,7 @@ func init() {
 	grpc.EnableTracing = false
 }
 
-var binlogWriteTimeout time.Duration = 15 * time.Second
+var binlogWriteTimeout = 15 * time.Second
 
 // pumpClient is the gRPC client to write binlog, it is opened on server start and never close,
 // shared by all sessions.
