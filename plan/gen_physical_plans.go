@@ -198,12 +198,12 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *requiredProp) []PhysicalPlan {
 			if !key.Equal(p.ctx, col) {
 				continue
 			}
-			for i := 0; i < len(offsets)-1; i++ {
+			for i := 0; i < len(offsets); i++ {
 				if offsets[i] == leftJoinKeyPos {
-					return nil
+					isExist = true
 				}
 			}
-			if len(offsets) == 0 || offsets[len(offsets)-1] != leftJoinKeyPos {
+			if !isExist {
 				offsets = append(offsets, leftJoinKeyPos)
 			}
 			isExist = true
@@ -216,12 +216,12 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *requiredProp) []PhysicalPlan {
 			if !key.Equal(p.ctx, col) {
 				continue
 			}
-			for i := 0; i < len(offsets)-1; i++ {
+			for i := 0; i < len(offsets); i++ {
 				if offsets[i] == rightJoinKeyPos {
-					return nil
+					isExist = true
 				}
 			}
-			if len(offsets) == 0 || offsets[len(offsets)-1] != rightJoinKeyPos {
+			if !isExist {
 				offsets = append(offsets, rightJoinKeyPos)
 			}
 			isExist = true
