@@ -112,7 +112,7 @@ func (d *ddl) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, f func() error) er
 		d.reorgCtx.doneCh = make(chan error, 1)
 		// initial reorgCtx
 		d.reorgCtx.setRowCount(job.GetRowCount())
-		d.reorgCtx.setNextHandle(reorgInfo.Handle)
+		d.reorgCtx.setNextHandle(reorgInfo.StartHandle)
 		go func() {
 			defer d.wait.Done()
 			d.reorgCtx.doneCh <- f()
@@ -177,9 +177,12 @@ func (d *ddl) isReorgRunnable() error {
 
 type reorgInfo struct {
 	*model.Job
-	Handle int64
-	d      *ddl
-	first  bool
+	// StartHandle is the first handle of the adding indices table.
+	StartHandle int64
+	// EndHandle is the last handle of the adding indices table.
+	EndHandle int64
+	d         *ddl
+	first     bool
 }
 
 func constructDescTableScanPB(tblInfo *model.TableInfo, pbColumnInfos []*tipb.ColumnInfo) *tipb.Executor {
@@ -303,8 +306,10 @@ func (d *ddl) getReorgInfo(t *meta.Meta, job *model.Job, tbl table.Table) (*reor
 		Job: job,
 		d:   d,
 		// init start handle is math.MinInt64
-		Handle: math.MinInt64,
-		first:  job.SnapshotVer == 0,
+		StartHandle: math.MinInt64,
+		// init end handle is math.MaxInt64
+		EndHandle: math.MaxInt64,
+		first:     job.SnapshotVer == 0,
 	}
 
 	if info.first {
@@ -320,7 +325,7 @@ func (d *ddl) getReorgInfo(t *meta.Meta, job *model.Job, tbl table.Table) (*reor
 		// Get the first handle of this table.
 		err = iterateSnapshotRows(d.store, tbl, ver.Ver, math.MinInt64,
 			func(h int64, rowKey kv.Key, rawRecord []byte) (bool, error) {
-				info.Handle = h
+				info.StartHandle = h
 				return false, nil
 			})
 		if err != nil {
@@ -333,34 +338,37 @@ func (d *ddl) getReorgInfo(t *meta.Meta, job *model.Job, tbl table.Table) (*reor
 		//	gofailOnceGuard = true
 		// 	return info, errors.New("occur an error when update reorg handle.")
 		// }
-		err = t.UpdateDDLReorgHandle(job, info.Handle)
+		err = t.UpdateDDLReorgHandle(job, info.StartHandle)
 		if err != nil {
 			return info, errors.Trace(err)
 		}
 
+		job.SnapshotVer = ver.Ver
+	} else {
+		info.StartHandle, err = t.GetDDLReorgHandle(job)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
+	// init the reorg meta info of job. tbl set to nil is only in the tests.
+	if job.ReorgMeta == nil && tbl != nil {
 		reorgMeta := model.NewDDLReorgMeta()
-		reorgMeta.StartHandle = info.Handle
 		// Gets the real table end handle, the new added row after the index being writable,
 		// has no needs to backfill.
-		endHandle, emptyTable, err1 := d.GetTableMaxRowID(ver.Ver, tbl.Meta())
+		endHandle, emptyTable, err1 := d.GetTableMaxRowID(job.SnapshotVer, tbl.Meta())
 		if err1 != nil {
 			return info, errors.Trace(err1)
 		}
 
-		if endHandle < reorgMeta.StartHandle || emptyTable {
-			endHandle = reorgMeta.StartHandle
+		if endHandle < info.StartHandle || emptyTable {
+			endHandle = info.StartHandle
 		}
 
 		reorgMeta.EndHandle = endHandle
-		log.Infof("[ddl] job(%v) get table startHandle:%v, endHandle:%v", job.ID, reorgMeta.StartHandle, reorgMeta.EndHandle)
-
+		info.EndHandle = endHandle
+		log.Infof("[ddl] job %v get table startHandle:%v, endHandle:%v", job.ID, info.StartHandle, info.EndHandle)
 		job.ReorgMeta = reorgMeta
-		job.SnapshotVer = ver.Ver
-	} else {
-		info.Handle, err = t.GetDDLReorgHandle(job)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
 	}
 
 	return info, errors.Trace(err)

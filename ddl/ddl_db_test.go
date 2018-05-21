@@ -26,6 +26,7 @@ import (
 	gofail "github.com/coreos/gofail/runtime"
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
@@ -2027,5 +2028,88 @@ func (s *testDBSuite) TestUpdateHandleFailed(c *C) {
 	tk.MustExec("alter table t add index idx_b(b)")
 	result := tk.MustQuery("select count(*) from t use index(idx_b)")
 	result.Check(testkit.Rows("1"))
+	tk.MustExec("admin check index t idx_b")
+}
+
+func (s *testDBSuite) getHistoryDDLJob(id int64) (*model.Job, error) {
+	var job *model.Job
+
+	err := kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		var err1 error
+		job, err1 = t.GetHistoryDDLJob(id)
+		return errors.Trace(err1)
+	})
+
+	return job, errors.Trace(err)
+}
+
+func (s *testDBSuite) TestBackwardCompatibility(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test_backward_compatibility")
+	defer tk.MustExec("drop database test_backward_compatibility")
+	tk.MustExec("use test_backward_compatibility")
+	tk.MustExec("create table t(a int primary key, b int)")
+	for i := 0; i < 200; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values(%v, %v)", i, i))
+	}
+
+	// alter table t add index idx_b(b);
+	is := s.dom.DDL().GetInformationSchema()
+	schemaName := model.NewCIStr("test_backward_compatibility")
+	tableName := model.NewCIStr("t")
+	schema, ok := is.SchemaByName(schemaName)
+	c.Assert(ok, IsTrue)
+	tbl, err := is.TableByName(schemaName, tableName)
+	c.Assert(err, IsNil)
+
+	unique := false
+	indexName := model.NewCIStr("idx_b")
+	idxColName := &ast.IndexColName{
+		Column: &ast.ColumnName{
+			Schema: schemaName,
+			Table:  tableName,
+			Name:   model.NewCIStr("b"),
+		},
+		Length: types.UnspecifiedLength,
+	}
+	idxColNames := []*ast.IndexColName{idxColName}
+	var indexOption *ast.IndexOption
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tbl.Meta().ID,
+		Type:       model.ActionAddIndex,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{unique, indexName, idxColNames, indexOption},
+	}
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	t := meta.NewMeta(txn)
+	job.ID, err = t.GenGlobalID()
+	c.Assert(err, IsNil)
+	job.Version = 1
+	job.StartTS = txn.StartTS()
+	// simulate old TiDB init the add index job.
+	job.SnapshotVer = txn.StartTS()
+	err = t.EnQueueDDLJob(job)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+	ticker := time.NewTicker(s.lease)
+	for range ticker.C {
+		historyJob, err := s.getHistoryDDLJob(job.ID)
+		c.Assert(err, IsNil)
+		if historyJob == nil {
+
+			continue
+		}
+		c.Assert(historyJob.Error, IsNil)
+
+		if historyJob.IsSynced() {
+			break
+		}
+	}
+
+	// finished add index
 	tk.MustExec("admin check index t idx_b")
 }

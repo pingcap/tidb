@@ -657,8 +657,8 @@ func makeupIndexColFieldMap(t table.Table, indexInfo *model.IndexInfo) map[int64
 // splitTableRanges uses PD region's key ranges to split the backfilling table key range space,
 // to speed up adding index in table with disperse handle.
 func (d *ddl) splitTableRanges(t table.Table, reorgInfo *reorgInfo) ([]kv.KeyRange, error) {
-	startHandle := reorgInfo.Handle
-	endHandle := reorgInfo.ReorgMeta.EndHandle
+	startHandle := reorgInfo.StartHandle
+	endHandle := reorgInfo.EndHandle
 	startRecordKey := t.RecordKey(startHandle)
 	endRecordKey := t.RecordKey(endHandle).Next()
 	kvRange := kv.KeyRange{StartKey: startRecordKey, EndKey: endRecordKey}

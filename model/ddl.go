@@ -108,8 +108,6 @@ func (h *HistoryInfo) Clean() {
 
 // DDLReorgMeta is meta info of ddl reorganization.
 type DDLReorgMeta struct {
-	// StartHandle is the first handle of the adding indices table.
-	StartHandle int64 `json:"start_handle"`
 	// EndHandle is the last handle of the adding indices table.
 	// We should only backfill indices in the range [startHandle, EndHandle].
 	EndHandle int64 `json:"end_handle"`
@@ -118,8 +116,7 @@ type DDLReorgMeta struct {
 // NewDDLReorgMeta new a DDLReorgMeta.
 func NewDDLReorgMeta() *DDLReorgMeta {
 	return &DDLReorgMeta{
-		StartHandle: math.MinInt64,
-		EndHandle:   math.MaxInt64,
+		EndHandle: math.MaxInt64,
 	}
 }
 
