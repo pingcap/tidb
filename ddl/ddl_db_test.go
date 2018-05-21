@@ -185,8 +185,10 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrNoSuchTable)
 	sql = "alter table test_error_code_succ add column `a ` int ;"
 	s.testErrorCode(c, sql, tmysql.ErrWrongColumnName)
-	s.tk.MustExec("create table test_on_update (c1 int, c2 int, c3 int );")
-	sql = "alter table test_on_update add column c4 int on update current_timestamp;"
+	s.tk.MustExec("create table test_on_update (c1 int, c2 int);")
+	sql = "alter table test_on_update add column c3 int on update current_timestamp;"
+	s.testErrorCode(c, sql, tmysql.ErrInvalidOnUpdate)
+	sql = "create table test_on_update_2(c int on update current_timestamp);"
 	s.testErrorCode(c, sql, tmysql.ErrInvalidOnUpdate)
 
 	// drop column
@@ -1023,6 +1025,18 @@ LOOP:
 	}
 	rows = s.mustQuery(c, "select count(c4) from t2 where c4 = -1")
 	matchRows(c, rows, [][]interface{}{{count - int64(step)}})
+
+	// add timestamp type column
+	s.mustExec(c, "create table test_on_update_c (c1 int, c2 int);")
+	s.mustExec(c, "alter table test_on_update_c add column c3 timestamp null default '2017-02-11' on update current_timestamp;")
+	is := domain.GetDomain(ctx).InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_on_update_c"))
+	c.Assert(err, IsNil)
+	tblInfo := tbl.Meta()
+	colC := tblInfo.Columns[2]
+	c.Assert(colC.Tp, Equals, mysql.TypeTimestamp)
+	hasNotNull := tmysql.HasNotNullFlag(colC.Flag)
+	c.Assert(hasNotNull, IsFalse)
 }
 
 func (s *testDBSuite) testDropColumn(c *C) {
@@ -1156,17 +1170,6 @@ func (s *testDBSuite) TestChangeColumn(c *C) {
 	tblInfo = tbl.Meta()
 	colC := tblInfo.Columns[3]
 	c.Assert(colC.Comment, Equals, "col c comment")
-	hasNotNull = tmysql.HasNotNullFlag(colC.Flag)
-	c.Assert(hasNotNull, IsFalse)
-
-	s.mustExec(c, "create table test_on_update_c (c1 int, c2 int);")
-	s.mustExec(c, "alter table test_on_update_c add column c3 timestamp null default '2017-02-11' on update current_timestamp;")
-	is = domain.GetDomain(ctx).InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_on_update_c"))
-	c.Assert(err, IsNil)
-	tblInfo = tbl.Meta()
-	colC = tblInfo.Columns[2]
-	c.Assert(colC.Tp, Equals, mysql.TypeTimestamp)
 	hasNotNull = tmysql.HasNotNullFlag(colC.Flag)
 	c.Assert(hasNotNull, IsFalse)
 
