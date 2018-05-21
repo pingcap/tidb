@@ -121,7 +121,7 @@ type TableInfo struct {
 	// ShardRowIDBits specify if the implicit row ID is sharded.
 	ShardRowIDBits uint64
 
-	Partition *PartitionInfo
+	Partition *PartitionInfo `json:"partition"`
 }
 
 // GetUpdateTime gets the table's updating time.
@@ -249,19 +249,24 @@ func (p PartitionType) String() string {
 
 // PartitionInfo provides table partition info.
 type PartitionInfo struct {
-	Type    PartitionType
-	Expr    string
-	Columns []CIStr
+	Type    PartitionType `json:"type"`
+	Expr    string        `json:"expr"`
+	Columns []CIStr       `json:"columns"`
 
-	Definitions []PartitionDefinition
+	// User may already creates table with partition but table partition is not
+	// yet supported back then. When Enable is true, write/read need use tid
+	// rather than pid.
+	Enable bool `json:"enable"`
+
+	Definitions []PartitionDefinition `json:"definitions"`
 }
 
 // PartitionDefinition defines a single partition.
 type PartitionDefinition struct {
-	ID       int64
-	Name     string
-	LessThan []string
-	Comment  string `json:"omit_empty"`
+	ID       int64    `json:"id"`
+	Name     string   `json:"name"`
+	LessThan []string `json:"less_than"`
+	Comment  string   `json:"comment,omitempty"`
 }
 
 // IndexColumn provides index column info.
