@@ -454,58 +454,53 @@ func (s *testStatisticsSuite) TestColumnRange(c *C) {
 	hg.PreCalculateScalar()
 	c.Check(err, IsNil)
 	col := &Column{Histogram: *hg, CMSketch: buildCMSketch(s.rc.(*recordSet).data), Info: &model.ColumnInfo{}}
-	tbl := &Table{
-		Count:   int64(col.totalRowCount()),
-		Columns: make(map[int64]*Column),
-	}
 	ran := []*ranger.Range{{
 		LowVal:  []types.Datum{{}},
 		HighVal: []types.Datum{types.MaxValueDatum()},
 	}}
-	count, err := tbl.GetRowCountByColumnRanges(sc, 0, ran)
+	count, err := GetRowCountByColumnRanges(sc, nil, int64(col.totalRowCount()), ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 100000)
 	ran[0].LowVal[0] = types.MinNotNullDatum()
-	count, err = tbl.GetRowCountByColumnRanges(sc, 0, ran)
+	count, err = GetRowCountByColumnRanges(sc, nil, int64(col.totalRowCount()), ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 99900)
 	ran[0].LowVal[0] = types.NewIntDatum(1000)
 	ran[0].LowExclude = true
 	ran[0].HighVal[0] = types.NewIntDatum(2000)
 	ran[0].HighExclude = true
-	count, err = tbl.GetRowCountByColumnRanges(sc, 0, ran)
+	count, err = GetRowCountByColumnRanges(sc, nil, int64(col.totalRowCount()), ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 2500)
 	ran[0].LowExclude = false
 	ran[0].HighExclude = false
-	count, err = tbl.GetRowCountByColumnRanges(sc, 0, ran)
+	count, err = GetRowCountByColumnRanges(sc, nil, int64(col.totalRowCount()), ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 2500)
 	ran[0].LowVal[0] = ran[0].HighVal[0]
-	count, err = tbl.GetRowCountByColumnRanges(sc, 0, ran)
+	count, err = GetRowCountByColumnRanges(sc, nil, int64(col.totalRowCount()), ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 100)
 
-	tbl.Columns[0] = col
 	ran[0].LowVal[0] = types.Datum{}
 	ran[0].HighVal[0] = types.MaxValueDatum()
-	count, err = tbl.GetRowCountByColumnRanges(sc, 0, ran)
+	count, err = GetRowCountByColumnRanges(sc, col, int64(col.totalRowCount()), ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 100000)
 	ran[0].LowVal[0] = types.NewIntDatum(1000)
 	ran[0].LowExclude = true
 	ran[0].HighVal[0] = types.NewIntDatum(2000)
 	ran[0].HighExclude = true
-	count, err = tbl.GetRowCountByColumnRanges(sc, 0, ran)
+	count, err = GetRowCountByColumnRanges(sc, col, int64(col.totalRowCount()), ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 9998)
 	ran[0].LowExclude = false
 	ran[0].HighExclude = false
-	count, err = tbl.GetRowCountByColumnRanges(sc, 0, ran)
+	count, err = GetRowCountByColumnRanges(sc, col, int64(col.totalRowCount()), ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 10000)
 	ran[0].LowVal[0] = ran[0].HighVal[0]
-	count, err = tbl.GetRowCountByColumnRanges(sc, 0, ran)
+	count, err = GetRowCountByColumnRanges(sc, col, int64(col.totalRowCount()), ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 1)
 }
@@ -521,30 +516,26 @@ func (s *testStatisticsSuite) TestIntColumnRanges(c *C) {
 	c.Check(err, IsNil)
 	c.Check(rowCount, Equals, int64(100000))
 	col := &Column{Histogram: *hg, Info: &model.ColumnInfo{}}
-	tbl := &Table{
-		Count:   int64(col.totalRowCount()),
-		Columns: make(map[int64]*Column),
-	}
 	ran := []*ranger.Range{{
 		LowVal:  []types.Datum{types.NewIntDatum(math.MinInt64)},
 		HighVal: []types.Datum{types.NewIntDatum(math.MaxInt64)},
 	}}
-	count, err := tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
+	count, err := GetRowCountByIntColumnRanges(sc, nil, int64(col.totalRowCount()), ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 100000)
 	ran[0].LowVal[0].SetInt64(1000)
 	ran[0].HighVal[0].SetInt64(2000)
-	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
+	count, err = GetRowCountByIntColumnRanges(sc, nil, int64(col.totalRowCount()), ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 1000)
 	ran[0].LowVal[0].SetInt64(1001)
 	ran[0].HighVal[0].SetInt64(1999)
-	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
+	count, err = GetRowCountByIntColumnRanges(sc, nil, int64(col.totalRowCount()), ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 998)
 	ran[0].LowVal[0].SetInt64(1000)
 	ran[0].HighVal[0].SetInt64(1000)
-	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
+	count, err = GetRowCountByIntColumnRanges(sc, nil, int64(col.totalRowCount()), ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 1)
 
@@ -552,49 +543,47 @@ func (s *testStatisticsSuite) TestIntColumnRanges(c *C) {
 		LowVal:  []types.Datum{types.NewUintDatum(0)},
 		HighVal: []types.Datum{types.NewUintDatum(math.MaxUint64)},
 	}}
-	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
+	count, err = GetRowCountByIntColumnRanges(sc, nil, int64(col.totalRowCount()), ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 100000)
 	ran[0].LowVal[0].SetUint64(1000)
 	ran[0].HighVal[0].SetUint64(2000)
-	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
+	count, err = GetRowCountByIntColumnRanges(sc, nil, int64(col.totalRowCount()), ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 1000)
 	ran[0].LowVal[0].SetUint64(1001)
 	ran[0].HighVal[0].SetUint64(1999)
-	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
+	count, err = GetRowCountByIntColumnRanges(sc, nil, int64(col.totalRowCount()), ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 998)
 	ran[0].LowVal[0].SetUint64(1000)
 	ran[0].HighVal[0].SetUint64(1000)
-	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
+	count, err = GetRowCountByIntColumnRanges(sc, nil, int64(col.totalRowCount()), ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 1)
 
-	tbl.Columns[0] = col
 	ran[0].LowVal[0].SetInt64(math.MinInt64)
 	ran[0].HighVal[0].SetInt64(math.MaxInt64)
-	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
+	count, err = GetRowCountByIntColumnRanges(sc, col, int64(col.totalRowCount()), ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 100000)
 	ran[0].LowVal[0].SetInt64(1000)
 	ran[0].HighVal[0].SetInt64(2000)
-	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
+	count, err = GetRowCountByIntColumnRanges(sc, col, int64(col.totalRowCount()), ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 1001)
 	ran[0].LowVal[0].SetInt64(1001)
 	ran[0].HighVal[0].SetInt64(1999)
-	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
+	count, err = GetRowCountByIntColumnRanges(sc, col, int64(col.totalRowCount()), ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 999)
 	ran[0].LowVal[0].SetInt64(1000)
 	ran[0].HighVal[0].SetInt64(1000)
-	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
+	count, err = GetRowCountByIntColumnRanges(sc, col, int64(col.totalRowCount()), ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 1)
 
-	tbl.Count *= 10
-	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
+	count, err = GetRowCountByIntColumnRanges(sc, col, int64(col.totalRowCount()*10), ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 10)
 }
@@ -619,51 +608,51 @@ func (s *testStatisticsSuite) TestIndexRanges(c *C) {
 		LowVal:  []types.Datum{types.MinNotNullDatum()},
 		HighVal: []types.Datum{types.MaxValueDatum()},
 	}}
-	count, err := tbl.GetRowCountByIndexRanges(sc, 0, ran)
+	count, err := GetRowCountByIndexRanges(sc, nil, int64(idx.totalRowCount()), ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 99900)
 	ran[0].LowVal[0] = types.NewIntDatum(1000)
 	ran[0].HighVal[0] = types.NewIntDatum(2000)
-	count, err = tbl.GetRowCountByIndexRanges(sc, 0, ran)
+	count, err = GetRowCountByIndexRanges(sc, nil, int64(idx.totalRowCount()), ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 2500)
 	ran[0].LowVal[0] = types.NewIntDatum(1001)
 	ran[0].HighVal[0] = types.NewIntDatum(1999)
-	count, err = tbl.GetRowCountByIndexRanges(sc, 0, ran)
+	count, err = GetRowCountByIndexRanges(sc, nil, int64(idx.totalRowCount()), ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 2500)
 	ran[0].LowVal[0] = types.NewIntDatum(1000)
 	ran[0].HighVal[0] = types.NewIntDatum(1000)
-	count, err = tbl.GetRowCountByIndexRanges(sc, 0, ran)
+	count, err = GetRowCountByIndexRanges(sc, nil, int64(idx.totalRowCount()), ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 100)
 
-	tbl.Indices[0] = &Index{Info: &model.IndexInfo{Columns: []*model.IndexColumn{{Offset: 0}}, Unique: true}}
+	emptyIdxHist := &Index{Info: &model.IndexInfo{Columns: []*model.IndexColumn{{Offset: 0}}, Unique: true}}
 	ran[0].LowVal[0] = types.NewIntDatum(1000)
 	ran[0].HighVal[0] = types.NewIntDatum(1000)
-	count, err = tbl.GetRowCountByIndexRanges(sc, 0, ran)
+	count, err = GetRowCountByIndexRanges(sc, emptyIdxHist, int64(idx.totalRowCount()), ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 1)
 
 	tbl.Indices[0] = idx
 	ran[0].LowVal[0] = types.MinNotNullDatum()
 	ran[0].HighVal[0] = types.MaxValueDatum()
-	count, err = tbl.GetRowCountByIndexRanges(sc, 0, ran)
+	count, err = GetRowCountByIndexRanges(sc, idx, int64(idx.totalRowCount()), ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 100000)
 	ran[0].LowVal[0] = types.NewIntDatum(1000)
 	ran[0].HighVal[0] = types.NewIntDatum(2000)
-	count, err = tbl.GetRowCountByIndexRanges(sc, 0, ran)
+	count, err = GetRowCountByIndexRanges(sc, idx, int64(idx.totalRowCount()), ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 1000)
 	ran[0].LowVal[0] = types.NewIntDatum(1001)
 	ran[0].HighVal[0] = types.NewIntDatum(1990)
-	count, err = tbl.GetRowCountByIndexRanges(sc, 0, ran)
+	count, err = GetRowCountByIndexRanges(sc, idx, int64(idx.totalRowCount()), ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 989)
 	ran[0].LowVal[0] = types.NewIntDatum(1000)
 	ran[0].HighVal[0] = types.NewIntDatum(1000)
-	count, err = tbl.GetRowCountByIndexRanges(sc, 0, ran)
+	count, err = GetRowCountByIndexRanges(sc, idx, int64(idx.totalRowCount()), ran)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 0)
 }

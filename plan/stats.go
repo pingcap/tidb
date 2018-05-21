@@ -19,6 +19,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/statistics"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -112,7 +113,11 @@ func (ds *DataSource) getStatsByFilter(conds expression.CNFExprs) *statsInfo {
 		}
 	}
 	ds.stats = profile
-	selectivity, err := ds.statisticTable.Selectivity(ds.ctx, conds)
+	for _, colInfo := range ds.Columns {
+		ds.statisticTable.ColumnIsInvalid(ds.ctx.GetSessionVars().StmtCtx, colInfo.ID)
+	}
+	colHists, idxHists := ds.statisticTable.Columns, ds.statisticTable.Indices
+	selectivity, err := statistics.Selectivity(ds.ctx, profile.Count(), colHists, idxHists, conds)
 	if err != nil {
 		log.Warnf("An error happened: %v, we have to use the default selectivity", err.Error())
 		selectivity = selectionFactor

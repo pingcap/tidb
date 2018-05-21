@@ -350,7 +350,11 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	path.countAfterAccess, err = ds.statisticTable.GetRowCountByIntColumnRanges(sc, pkCol.ID, path.ranges)
+	var pkColHist *statistics.Column
+	if !ds.statisticTable.ColumnIsInvalid(sc, pkCol.ID) {
+		pkColHist = ds.statisticTable.Columns[pkCol.ID]
+	}
+	path.countAfterAccess, err = statistics.GetRowCountByIntColumnRanges(sc, pkColHist, ds.statisticTable.Count, path.ranges)
 	return errors.Trace(err)
 }
 
@@ -358,14 +362,16 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) error {
 	var err error
 	sc := ds.ctx.GetSessionVars().StmtCtx
 	path.ranges = ranger.FullRange()
-	path.countAfterAccess = float64(ds.statisticTable.Count)
+	statsTbl := ds.statisticTable
+	path.countAfterAccess = float64(statsTbl.Count)
 	idxCols, lengths := expression.IndexInfo2Cols(ds.schema.Columns, path.index)
 	if len(idxCols) != 0 {
 		path.ranges, path.accessConds, path.indexFilters, path.eqCondCount, err = ranger.DetachCondAndBuildRangeForIndex(ds.ctx, ds.pushedDownConds, idxCols, lengths)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		path.countAfterAccess, err = ds.statisticTable.GetRowCountByIndexRanges(sc, path.index.ID, path.ranges)
+		idxHist := statsTbl.Indices[path.index.ID]
+		path.countAfterAccess, err = statistics.GetRowCountByIndexRanges(sc, idxHist, statsTbl.Count, path.ranges)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -375,7 +381,7 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) error {
 	}
 	path.countAfterIndex = path.countAfterAccess
 	if path.indexFilters != nil {
-		selectivity, err := ds.statisticTable.Selectivity(ds.ctx, path.indexFilters)
+		selectivity, err := statistics.Selectivity(ds.ctx, statsTbl.Count, statsTbl.Columns, statsTbl.Indices, path.indexFilters)
 		if err != nil {
 			log.Warnf("An error happened: %v, we have to use the default selectivity", err.Error())
 			selectivity = selectionFactor
