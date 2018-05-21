@@ -223,6 +223,7 @@ type TiKVClient struct {
 // Binlog is the config for binlog.
 type Binlog struct {
 	BinlogSocket string `toml:"binlog-socket" json:"binlog-socket"`
+	WriteTimeout string `toml:"write-timeout" json:"write-timeout"`
 	// If IgnoreError is true, when writting binlog meets error, TiDB would
 	// ignore the error.
 	IgnoreError bool `toml:"ignore-error" json:"ignore-error"`
@@ -295,6 +296,9 @@ var defaultConf = Config{
 	TiKVClient: TiKVClient{
 		GrpcConnectionCount: 16,
 		CommitTimeout:       "41s",
+	},
+	Binlog: Binlog{
+		WriteTimeout: "15s",
 	},
 }
 
