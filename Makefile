@@ -11,7 +11,7 @@ export PATH := $(path_to_add):$(PATH)
 
 GO        := go
 GOBUILD   := CGO_ENABLED=0 $(GO) build $(BUILD_FLAG)
-GOTEST    := CGO_ENABLED=1 $(GO) test -p 3
+GOTEST    := CGO_ENABLED=1 $(GO) test -parallel 8
 OVERALLS  := CGO_ENABLED=1 overalls
 GOVERALLS := goveralls
 
