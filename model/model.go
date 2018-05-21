@@ -266,7 +266,7 @@ type PartitionDefinition struct {
 	ID       int64    `json:"id"`
 	Name     string   `json:"name"`
 	LessThan []string `json:"lessthan"`
-	Comment  string   `json:"omit_empty"`
+	Comment  string   `json:"comment,omit_empty"`
 }
 
 // IndexColumn provides index column info.
