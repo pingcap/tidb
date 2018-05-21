@@ -254,9 +254,9 @@ type PartitionInfo struct {
 	Columns []CIStr
 
 	// User may already creates table with partition but table partition is not
-	// yet supported back then. When UsedTID is true, write/read need use tid
+	// yet supported back then. When Enable is true, write/read need use tid
 	// rather than pid.
-	UsedTID bool
+	Enable bool
 
 	Definitions []PartitionDefinition
 }
