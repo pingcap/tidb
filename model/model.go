@@ -265,7 +265,7 @@ type PartitionInfo struct {
 type PartitionDefinition struct {
 	ID       int64    `json:"id"`
 	Name     string   `json:"name"`
-	LessThan []string `json:"lessthan"`
+	LessThan []string `json:"less_than"`
 	Comment  string   `json:"comment,omit_empty"`
 }
 
