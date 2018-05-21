@@ -34,9 +34,6 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 20),
 		}, []string{LblType, LblResult})
 
-	BatchAddIndexSucc = "batch_add_idx_succ"
-	BatchAddIndexFail = "batch_add_idx_fail"
-
 	BatchAddIdxHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
