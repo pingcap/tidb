@@ -746,7 +746,7 @@ func (d *ddl) backfillBatchTasks(startTime time.Time, startHandle int64, reorgIn
 		err1 := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 			return errors.Trace(reorgInfo.UpdateHandle(txn, nextHandle))
 		})
-		metrics.BatchAddIdxHistogram.WithLabelValues(metrics.BatchAddIndexFail, metrics.RetLabel(err)).Observe(elapsedTime)
+		metrics.BatchAddIdxHistogram.WithLabelValues(metrics.BatchAddIndexFail, metrics.LblError).Observe(elapsedTime)
 		log.Warnf("[ddl-reorg] total added index for %d rows, this task [%d,%d) add index for %d failed %v, take time %v, update handle err %v",
 			*totalAddedCount, startHandle, nextHandle, taskAddedCount, err, elapsedTime, err1)
 		return errors.Trace(err)
