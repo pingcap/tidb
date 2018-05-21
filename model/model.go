@@ -263,10 +263,10 @@ type PartitionInfo struct {
 
 // PartitionDefinition defines a single partition.
 type PartitionDefinition struct {
-	ID       int64
-	Name     string
-	LessThan []string
-	Comment  string `json:"omit_empty"`
+	ID       int64    `json:"id"`
+	Name     string   `json:"name"`
+	LessThan []string `json:"lessthan"`
+	Comment  string   `json:"omit_empty"`
 }
 
 // IndexColumn provides index column info.
