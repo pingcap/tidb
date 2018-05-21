@@ -1225,12 +1225,11 @@ func (e *InsertExec) batchUpdateDupRows(newRows [][]types.Datum, onDuplicate []*
 
 // fillBackKeys fills the updated key-value pair to the dupKeyValues for further check.
 func (e *InsertExec) fillBackKeys(fillBackKeysInRow []keyWithDupError, handle int64) {
-	filled := false
+	if len(fillBackKeysInRow) == 0 {
+		return
+	}
+	e.dupOldRowValues[string(e.Table.RecordKey(handle))] = fillBackKeysInRow[0].newRowValue
 	for _, insert := range fillBackKeysInRow {
-		if !filled {
-			e.dupOldRowValues[string(e.Table.RecordKey(handle))] = insert.newRowValue
-			filled = true
-		}
 		if insert.isRecordKey {
 			e.dupKeyValues[string(e.Table.RecordKey(handle))] = insert.newRowValue
 		} else {
