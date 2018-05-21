@@ -249,16 +249,16 @@ func (p PartitionType) String() string {
 
 // PartitionInfo provides table partition info.
 type PartitionInfo struct {
-	Type    PartitionType
-	Expr    string
-	Columns []CIStr
+	Type    PartitionType `json:"type"`
+	Expr    string        `json:"expr"`
+	Columns []CIStr       `json:"columns"`
 
 	// User may already creates table with partition but table partition is not
 	// yet supported back then. When Enable is true, write/read need use tid
 	// rather than pid.
-	Enable bool
+	Enable bool `json:"enable"`
 
-	Definitions []PartitionDefinition
+	Definitions []PartitionDefinition `json:"definitions"`
 }
 
 // PartitionDefinition defines a single partition.
