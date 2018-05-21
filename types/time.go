@@ -110,10 +110,12 @@ var (
 	// MaxDatetime is the maximum for mysql datetime type.
 	MaxDatetime = FromDate(9999, 12, 31, 23, 59, 59, 999999)
 
+	// min and max timestamp timezone
+	boundTimezone = gotime.Local
 	// MinTimestamp is the minimum for mysql timestamp type.
-	MinTimestamp = FromDate(1970, 1, 1, 0, 0, 1, 0)
+	MinTimestamp, _ = FromDate(1970, 1, 1, 0, 0, 1, 0).convertTimeZone(gotime.UTC, boundTimezone)
 	// maxTimestamp is the maximum for mysql timestamp type.
-	maxTimestamp = FromDate(2038, 1, 19, 3, 14, 7, 999999)
+	maxTimestamp, _ = FromDate(2038, 1, 19, 3, 14, 7, 999999).convertTimeZone(gotime.UTC, boundTimezone)
 
 	// WeekdayNames lists names of weekdays, which are used in builtin time function `dayname`.
 	WeekdayNames = []string{
@@ -187,12 +189,11 @@ func CurrentTime(tp uint8) Time {
 // The input time should be a valid timestamp.
 func (t *Time) ConvertTimeZone(from, to *gotime.Location) error {
 	if !t.IsZero() {
-		raw, err := t.Time.GoTime(from)
+		converted, err := t.Time.convertTimeZone(from, to)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
-		converted := raw.In(to)
-		t.Time = FromGoTime(converted)
+		t.Time = converted
 	}
 	return nil
 }
@@ -217,7 +218,7 @@ func (t Time) String() string {
 
 // IsZero returns a boolean indicating whether the time is equal to ZeroTime.
 func (t Time) IsZero() bool {
-	return compareTime(t.Time, ZeroTime) == 0
+	return t.Time.isZero()
 }
 
 // InvalidZero returns a boolean indicating whether the month or day is zero.
@@ -296,27 +297,6 @@ func (t Time) ConvertToDuration() (Duration, error) {
 // If t is after o, return 1, equal o, return 0, before o, return -1.
 func (t Time) Compare(o Time) int {
 	return compareTime(t.Time, o.Time)
-}
-
-func compareTime(a, b MysqlTime) int {
-	ta := datetimeToUint64(a)
-	tb := datetimeToUint64(b)
-
-	switch {
-	case ta < tb:
-		return -1
-	case ta > tb:
-		return 1
-	}
-
-	switch {
-	case a.Microsecond() < b.Microsecond():
-		return -1
-	case a.Microsecond() > b.Microsecond():
-		return 1
-	}
-
-	return 0
 }
 
 // CompareString is like Compare,
@@ -463,7 +443,7 @@ func (t *Time) check(sc *stmtctx.StatementContext) error {
 	var err error
 	switch t.Type {
 	case mysql.TypeTimestamp:
-		err = checkTimestampType(t.Time)
+		err = checkTimestampType(sc, t.Time)
 	case mysql.TypeDatetime:
 		err = checkDatetimeType(t.Time, allowZeroInDate)
 	case mysql.TypeDate:
@@ -473,8 +453,8 @@ func (t *Time) check(sc *stmtctx.StatementContext) error {
 }
 
 // Check if 't' is valid
-func (t *Time) Check() error {
-	return t.check(nil)
+func (t *Time) Check(sc *stmtctx.StatementContext) error {
+	return t.check(sc)
 }
 
 // Sub subtracts t1 from t, returns a duration value.
@@ -506,7 +486,7 @@ func (t *Time) Sub(sc *stmtctx.StatementContext, t1 *Time) Duration {
 }
 
 // Add adds d to t, returns the result time value.
-func (t *Time) Add(d Duration) (Time, error) {
+func (t *Time) Add(sc *stmtctx.StatementContext, d Duration) (Time, error) {
 	sign, hh, mm, ss, micro := splitDuration(d.Duration)
 	seconds, microseconds, _ := calcTimeDiff(t.Time, FromDate(0, 0, 0, hh, mm, ss, micro), -sign)
 	days := seconds / secondsIn24Hour
@@ -529,7 +509,7 @@ func (t *Time) Add(d Duration) (Time, error) {
 		Type: t.Type,
 		Fsp:  fsp,
 	}
-	return ret, ret.Check()
+	return ret, ret.Check(sc)
 }
 
 // TimestampDiff returns t2 - t1 where t1 and t2 are date or datetime expressions.
@@ -854,7 +834,7 @@ func (d Duration) ConvertToTime(sc *stmtctx.StatementContext, tp uint8) (Time, e
 		Type: mysql.TypeDatetime,
 		Fsp:  d.Fsp,
 	}
-	return t.Convert(nil, tp)
+	return t.Convert(sc, tp)
 }
 
 // RoundFrac rounds fractional seconds precision with new fsp and returns a new one.
@@ -1345,12 +1325,24 @@ func checkMonthDay(year, month, day int) error {
 	return nil
 }
 
-func checkTimestampType(t MysqlTime) error {
+func checkTimestampType(sc *stmtctx.StatementContext, t MysqlTime) error {
 	if compareTime(t, ZeroTime) == 0 {
 		return nil
 	}
 
-	if compareTime(t, maxTimestamp) > 0 || compareTime(t, MinTimestamp) < 0 {
+	if sc == nil {
+		return errors.New("statementContext is required during checkTimestampType")
+	}
+
+	maxTs, err := maxTimestamp.convertTimeZone(boundTimezone, sc.TimeZone)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	minTs, err := MinTimestamp.convertTimeZone(boundTimezone, sc.TimeZone)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if compareTime(t, maxTs) > 0 || compareTime(t, minTs) < 0 {
 		return errors.Trace(ErrInvalidTimeFormat.GenByArgs(t))
 	}
 

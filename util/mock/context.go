@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/kvcache"
 	binlog "github.com/pingcap/tipb/go-binlog"
 	"golang.org/x/net/context"
+	"time"
 )
 
 var _ sessionctx.Context = (*Context)(nil)
@@ -217,6 +218,7 @@ func NewContext() *Context {
 		cancel:      cancel,
 	}
 	sctx.sessionVars.MaxChunkSize = 2
+	sctx.sessionVars.StmtCtx.TimeZone = time.Local
 	return sctx
 }
 
