@@ -1027,7 +1027,7 @@ LOOP:
 	matchRows(c, rows, [][]interface{}{{count - int64(step)}})
 
 	// add timestamp type column
-	s.mustExec(c, "create table test_on_update_c (c1 int, c2 int);")
+	s.mustExec(c, "create table test_on_update_c (c1 int, c2 timestamp);")
 	s.mustExec(c, "alter table test_on_update_c add column c3 timestamp null default '2017-02-11' on update current_timestamp;")
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_on_update_c"))
@@ -1036,6 +1036,17 @@ LOOP:
 	colC := tblInfo.Columns[2]
 	c.Assert(colC.Tp, Equals, mysql.TypeTimestamp)
 	hasNotNull := tmysql.HasNotNullFlag(colC.Flag)
+	c.Assert(hasNotNull, IsFalse)
+	// add datetime type column
+	s.mustExec(c, "create table test_on_update_d (c1 int, c2 datetime);")
+	s.mustExec(c, "alter table test_on_update_d add column c3 datetime on update current_timestamp;")
+	is = domain.GetDomain(ctx).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_on_update_d"))
+	c.Assert(err, IsNil)
+	tblInfo = tbl.Meta()
+	colC = tblInfo.Columns[2]
+	c.Assert(colC.Tp, Equals, mysql.TypeDatetime)
+	hasNotNull = tmysql.HasNotNullFlag(colC.Flag)
 	c.Assert(hasNotNull, IsFalse)
 }
 
@@ -1172,7 +1183,6 @@ func (s *testDBSuite) TestChangeColumn(c *C) {
 	c.Assert(colC.Comment, Equals, "col c comment")
 	hasNotNull = tmysql.HasNotNullFlag(colC.Flag)
 	c.Assert(hasNotNull, IsFalse)
-
 	// for enum
 	s.mustExec(c, "alter table t3 add column en enum('a', 'b', 'c') not null default 'a'")
 
