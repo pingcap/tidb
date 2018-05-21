@@ -58,11 +58,7 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			return ver, errors.Trace(err)
 		}
 		if EnableSplitTableRegion {
-			err = d.splitTableRegion(tbInfo.ID)
-			// It will be automatically splitting by TiKV later.
-			if err != nil {
-				log.Warnf("[ddl] split table region failed %v", err)
-			}
+			go d.splitTableRegion(tbInfo.ID)
 		}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
@@ -130,17 +126,19 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return ver, errors.Trace(err)
 }
 
+type splitableStore interface {
+	SplitRegion(splitKey kv.Key) error
+}
+
 func (d *ddl) splitTableRegion(tableID int64) error {
-	type splitableStore interface {
-		SplitRegion(splitKey kv.Key) error
-	}
 	store, ok := d.store.(splitableStore)
 	if !ok {
 		return nil
 	}
 	tableStartKey := tablecodec.GenTablePrefix(tableID)
 	if err := store.SplitRegion(tableStartKey); err != nil {
-		return errors.Trace(err)
+		// It will be automatically splitting by TiKV later.
+		log.Warnf("[ddl] split table region failed %v", errors.ErrorStack(err))
 	}
 	return nil
 }
