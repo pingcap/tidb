@@ -120,6 +120,7 @@ func (s *testBootstrapSuite) bootstrapWithOnlyDDLWork(store kv.Storage, c *C) {
 		parser:      parser.New(),
 		sessionVars: variable.NewSessionVars(),
 	}
+	ss.txn.init()
 	ss.mu.values = make(map[fmt.Stringer]interface{})
 	ss.SetValue(sessionctx.Initing, true)
 	dom, err := domap.Get(store)
@@ -135,7 +136,7 @@ func (s *testBootstrapSuite) bootstrapWithOnlyDDLWork(store kv.Storage, c *C) {
 // testBootstrapWithError :
 // When a session failed in bootstrap process (for example, the session is killed after doDDLWorks()).
 // We should make sure that the following session could finish the bootstrap process.
-func (s *testBootstrapSuite) testBootstrapWithError(c *C) {
+func (s *testBootstrapSuite) TestBootstrapWithError(c *C) {
 	ctx := context.Background()
 	defer testleak.AfterTest(c)()
 	store := newStore(c, s.dbNameBootstrap)
@@ -143,9 +144,13 @@ func (s *testBootstrapSuite) testBootstrapWithError(c *C) {
 	s.bootstrapWithOnlyDDLWork(store, c)
 	dom, err := domap.Get(store)
 	c.Assert(err, IsNil)
-	defer dom.Close()
+	domap.Delete(store)
+	dom.Close()
 
-	BootstrapSession(store)
+	dom1, err := BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer dom1.Close()
+
 	se := newSession(c, store, s.dbNameBootstrap)
 	mustExecSQL(c, se, "USE mysql;")
 	r := mustExecSQL(c, se, `select * from user;`)
@@ -155,7 +160,7 @@ func (s *testBootstrapSuite) testBootstrapWithError(c *C) {
 	c.Assert(chk.NumRows() == 0, IsFalse)
 	row := chk.GetRow(0)
 	datums := ast.RowToDatums(row, r.Fields())
-	match(c, datums, []byte(`%`), []byte("root"), []byte(""), "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
+	match(c, datums, []byte(`%`), []byte("root"), []byte(""), "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
 	mustExecSQL(c, se, "USE test;")
 	// Check privilege tables.
 	mustExecSQL(c, se, "SELECT * from mysql.db;")
@@ -177,9 +182,6 @@ func (s *testBootstrapSuite) testBootstrapWithError(c *C) {
 	row = chk.GetRow(0)
 	c.Assert(row.Len(), Equals, 1)
 	c.Assert(row.GetBytes(0), BytesEquals, []byte("True"))
-
-	err = store.Close()
-	c.Assert(err, IsNil)
 }
 
 // TestUpgrade tests upgrading
