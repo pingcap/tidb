@@ -366,11 +366,10 @@ func (d *ddl) getReorgInfo(t *meta.Meta, job *model.Job, tbl table.Table) (*reor
 		}
 
 		reorgMeta.EndHandle = endHandle
-		info.EndHandle = endHandle
 		log.Infof("[ddl] job %v get table startHandle:%v, endHandle:%v", job.ID, info.StartHandle, info.EndHandle)
 		job.ReorgMeta = reorgMeta
 	}
-
+	info.EndHandle = job.ReorgMeta.EndHandle
 	return info, errors.Trace(err)
 }
 
