@@ -29,7 +29,7 @@ func (s *testChunkSuite) TestList(c *check.C) {
 		types.NewFieldType(mysql.TypeLonglong),
 	}
 	l := NewList(fields, 2)
-	srcChunk := NewChunk(fields)
+	srcChunk := NewChunkWithCapacity(fields, 32)
 	srcChunk.AppendInt64(0, 1)
 	srcRow := srcChunk.GetRow(0)
 
@@ -52,7 +52,7 @@ func (s *testChunkSuite) TestList(c *check.C) {
 
 	// Test add chunk then append row.
 	l.Reset()
-	nChunk := NewChunk(fields)
+	nChunk := NewChunkWithCapacity(fields, 32)
 	nChunk.AppendNull(0)
 	l.Add(nChunk)
 	ptr := l.AppendRow(srcRow)
@@ -65,7 +65,7 @@ func (s *testChunkSuite) TestList(c *check.C) {
 	// Test iteration.
 	l.Reset()
 	for i := 0; i < 5; i++ {
-		tmp := NewChunk(fields)
+		tmp := NewChunkWithCapacity(fields, 32)
 		tmp.AppendInt64(0, int64(i))
 		l.AppendRow(tmp.GetRow(0))
 	}
@@ -87,30 +87,26 @@ func (s *testChunkSuite) TestListMemoryUsage(c *check.C) {
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeDatetime})
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeDuration})
 
-	maxChunkSize := 2
-	list := NewList(fieldTypes, maxChunkSize)
-	c.Assert(list.GetMemTracker().BytesConsumed(), check.Equals, int64(0))
-
-	initCap := 10
-	srcChk := NewChunkWithCapacity(fieldTypes, initCap)
-
 	jsonObj, err := json.ParseBinaryFromString("1")
 	c.Assert(err, check.IsNil)
 	timeObj := types.Time{Time: types.FromGoTime(time.Now()), Fsp: 0, Type: mysql.TypeDatetime}
 	durationObj := types.Duration{Duration: math.MaxInt64, Fsp: 0}
 
+	maxChunkSize := 2
+	srcChk := NewChunkWithCapacity(fieldTypes, maxChunkSize)
 	srcChk.AppendFloat32(0, 12.4)
 	srcChk.AppendString(1, "123")
 	srcChk.AppendJSON(2, jsonObj)
 	srcChk.AppendTime(3, timeObj)
 	srcChk.AppendDuration(4, durationObj)
 
-	row := srcChk.GetRow(0)
-	list.AppendRow(row)
-
-	memUsage := NewChunk(fieldTypes).MemoryUsage()
+	list := NewList(fieldTypes, maxChunkSize)
 	c.Assert(list.GetMemTracker().BytesConsumed(), check.Equals, int64(0))
 
+	list.AppendRow(srcChk.GetRow(0))
+	c.Assert(list.GetMemTracker().BytesConsumed(), check.Equals, int64(0))
+
+	memUsage := list.chunks[0].MemoryUsage()
 	list.Reset()
 	c.Assert(list.GetMemTracker().BytesConsumed(), check.Equals, memUsage)
 
