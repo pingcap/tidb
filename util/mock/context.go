@@ -17,6 +17,7 @@ package mock
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
@@ -27,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/util/kvcache"
 	binlog "github.com/pingcap/tipb/go-binlog"
 	"golang.org/x/net/context"
-	"time"
 )
 
 var _ sessionctx.Context = (*Context)(nil)

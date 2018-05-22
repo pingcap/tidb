@@ -1023,7 +1023,7 @@ func (s *testTimeSuite) TestCheckTimestamp(c *C) {
 	}
 
 	for _, t := range tests {
-		validTimestamp := types.CheckTimestampType(&stmtctx.StatementContext{TimeZone: t.tz}, t.input)
+		validTimestamp := types.CheckTimestampTypeForTest(&stmtctx.StatementContext{TimeZone: t.tz}, t.input)
 		if t.expectRetError {
 			c.Assert(validTimestamp, NotNil)
 		} else {

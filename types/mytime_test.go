@@ -14,8 +14,9 @@
 package types
 
 import (
-	. "github.com/pingcap/check"
 	"time"
+
+	. "github.com/pingcap/check"
 )
 
 type testMyTimeSuite struct{}
