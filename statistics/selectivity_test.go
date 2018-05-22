@@ -172,7 +172,7 @@ func (s *testSelectivitySuite) TestSelectivity(c *C) {
 		},
 		{
 			exprs:       "a > 1 and b < 2 and c > 3 and d < 4 and e > 5",
-			selectivity: 0.00352249826,
+			selectivity: 0,
 		},
 	}
 	for _, tt := range tests {

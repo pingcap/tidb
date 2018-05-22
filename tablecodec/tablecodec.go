@@ -16,7 +16,6 @@ package tablecodec
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
 	"math"
 	"time"
 
@@ -131,7 +130,11 @@ func DecodeIndexKey(key kv.Key) (tableID int64, indexID int64, indexValues []str
 		if e != nil {
 			return 0, 0, nil, errInvalidIndexKey.Gen("invalid index key - %q %v", k, e)
 		}
-		indexValues = append(indexValues, fmt.Sprintf("%d-%v", d.Kind(), d.GetValue()))
+		str, e1 := d.ToString()
+		if e1 != nil {
+			return 0, 0, nil, errInvalidIndexKey.Gen("invalid index key - %q %v", k, e1)
+		}
+		indexValues = append(indexValues, str)
 		key = remain
 	}
 	return

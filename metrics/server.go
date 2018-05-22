@@ -102,6 +102,15 @@ var (
 			Name:      "plan_cache_total",
 			Help:      "Counter of query using plan cache.",
 		}, []string{LblType})
+
+	HandShakeErrorCounter = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "handshake_error_total",
+			Help:      "Counter of hand shake error.",
+		},
+	)
 )
 
 func init() {
@@ -114,6 +123,7 @@ func init() {
 	prometheus.MustRegister(TimeJumpBackCounter)
 	prometheus.MustRegister(KeepAliveCounter)
 	prometheus.MustRegister(PlanCacheCounter)
+	prometheus.MustRegister(HandShakeErrorCounter)
 }
 
 // ExecuteErrorToLabel converts an execute error to label.

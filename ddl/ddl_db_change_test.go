@@ -294,14 +294,40 @@ type sqlWithErr struct {
 	expectErr error
 }
 
+type expectQuery struct {
+	sql  string
+	rows []string
+}
+
+// https://github.com/pingcap/tidb/pull/6249 fixes the following two test cases.
+func (s *testStateChangeSuite) TestWriteOnlyWriteNULL(c *C) {
+	sqls := make([]sqlWithErr, 1)
+	sqls[0] = sqlWithErr{"insert t set c1 = 'c1_new', c3 = '2019-02-12', c4 = 8 on duplicate key update c1 = values(c1)", nil}
+	addColumnSQL := "alter table t add column c5 int not null default 1 after c4"
+	expectQuery := &expectQuery{"select c4, c5 from t", []string{"8 1"}}
+	// TODO: This case should always fail in write-only state, but it doesn't. We use write-reorganization state here to keep it running stable. It need a double check.
+	s.runTestInSchemaState(c, model.StateWriteReorganization, "", addColumnSQL, sqls, expectQuery)
+}
+
+func (s *testStateChangeSuite) TestWriteOnlyOnDupUpdate(c *C) {
+	sqls := make([]sqlWithErr, 3)
+	sqls[0] = sqlWithErr{"delete from t", nil}
+	sqls[1] = sqlWithErr{"insert t set c1 = 'c1_dup', c3 = '2018-02-12', c4 = 2 on duplicate key update c1 = values(c1)", nil}
+	sqls[2] = sqlWithErr{"insert t set c1 = 'c1_new', c3 = '2019-02-12', c4 = 2 on duplicate key update c1 = values(c1)", nil}
+	addColumnSQL := "alter table t add column c5 int not null default 1 after c4"
+	expectQuery := &expectQuery{"select c4, c5 from t", []string{"2 1"}}
+	// TODO: This case should always fail in write-only state, but it doesn't. We use write-reorganization state here to keep it running stable. It need a double check.
+	s.runTestInSchemaState(c, model.StateWriteReorganization, "", addColumnSQL, sqls, expectQuery)
+}
+
 // TestWriteOnly tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
 func (s *testStateChangeSuite) TestWriteOnly(c *C) {
 	sqls := make([]sqlWithErr, 3)
 	sqls[0] = sqlWithErr{"delete from t where c1 = 'a'", nil}
 	sqls[1] = sqlWithErr{"update t use index(idx2) set c1 = 'c1_update' where c1 = 'a'", nil}
-	sqls[0] = sqlWithErr{"insert t set c1 = 'c1_insert', c3 = '2018-02-12', c4 = 1", nil}
-	addColumnSQL := "alter table t add column a int not null default 1 first"
-	s.runTestInSchemaState(c, model.StateWriteOnly, "", addColumnSQL, sqls)
+	sqls[2] = sqlWithErr{"insert t set c1 = 'c1_insert', c3 = '2018-02-12', c4 = 1", nil}
+	addColumnSQL := "alter table t add column c5 int not null default 1 first"
+	s.runTestInSchemaState(c, model.StateWriteOnly, "", addColumnSQL, sqls, nil)
 }
 
 // TestDeletaOnly tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
@@ -310,11 +336,11 @@ func (s *testStateChangeSuite) TestDeleteOnly(c *C) {
 	sqls[0] = sqlWithErr{"insert t set c1 = 'c1_insert', c3 = '2018-02-12', c4 = 1",
 		errors.Errorf("Can't find column c1")}
 	dropColumnSQL := "alter table t drop column c1"
-	s.runTestInSchemaState(c, model.StateDeleteOnly, "", dropColumnSQL, sqls)
+	s.runTestInSchemaState(c, model.StateDeleteOnly, "", dropColumnSQL, sqls, nil)
 }
 
 func (s *testStateChangeSuite) runTestInSchemaState(c *C, state model.SchemaState, tableName, alterTableSQL string,
-	sqlWithErrs []sqlWithErr) {
+	sqlWithErrs []sqlWithErr, expectQuery *expectQuery) {
 	_, err := s.se.Execute(context.Background(), `create table t (
 		c1 varchar(64),
 		c2 enum('N','Y') not null default 'N',
@@ -360,6 +386,15 @@ func (s *testStateChangeSuite) runTestInSchemaState(c *C, state model.SchemaStat
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	callback = &ddl.TestDDLCallback{}
 	d.SetHook(callback)
+
+	if expectQuery != nil {
+		tk := testkit.NewTestKit(c, s.store)
+		tk.MustExec("use test_db_state")
+		result, err := s.execQuery(tk, expectQuery.sql)
+		c.Assert(err, IsNil)
+		err = checkResult(result, testkit.Rows(expectQuery.rows...))
+		c.Assert(err, IsNil)
+	}
 }
 
 func (s *testStateChangeSuite) execQuery(tk *testkit.TestKit, sql string, args ...interface{}) (*testkit.Result, error) {
