@@ -127,7 +127,7 @@ func (c *index) getIndexKeyBuf(buf []byte, defaultCap int) []byte {
 
 // GenIndexKey generates storage key for index values. Returned distinct indicates whether the
 // indexed values should be distinct in storage (i.e. whether handle is encoded in the key).
-func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.Datum, h int64, buf []byte) (key []byte, distinct bool, err error) {
+func (c *index) GenIndexKey(sc *stmtctx.StatementContext, partitionID int64, indexedValues []types.Datum, h int64, buf []byte) (key []byte, distinct bool, err error) {
 	if c.idxInfo.Unique {
 		// See https://dev.mysql.com/doc/refman/5.7/en/create-index.html
 		// A UNIQUE index creates a constraint such that all values in the index must be distinct.
@@ -154,8 +154,9 @@ func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.
 			}
 		}
 	}
-	key = c.getIndexKeyBuf(buf, len(c.prefix)+len(indexedValues)*9+9)
-	key = append(key, []byte(c.prefix)...)
+	prefix := tablecodec.EncodeTableIndexPrefix(partitionID, c.idxInfo.ID)
+	key = c.getIndexKeyBuf(buf, len(prefix)+len(indexedValues)*9+9)
+	key = append(key, []byte(prefix)...)
 	key, err = codec.EncodeKey(sc, key, indexedValues...)
 	if !distinct && err == nil {
 		key, err = codec.EncodeKey(sc, key, types.NewDatum(h))
@@ -169,10 +170,10 @@ func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.
 // Create creates a new entry in the kvIndex data.
 // If the index is unique and there is an existing entry with the same key,
 // Create will return the existing entry's handle as the first return value, ErrKeyExists as the second return value.
-func (c *index) Create(ctx sessionctx.Context, rm kv.RetrieverMutator, indexedValues []types.Datum, h int64) (int64, error) {
+func (c *index) Create(ctx sessionctx.Context, rm kv.RetrieverMutator, partitionID int64, indexedValues []types.Datum, h int64) (int64, error) {
 	writeBufs := ctx.GetSessionVars().GetWriteStmtBufs()
 	skipCheck := ctx.GetSessionVars().ImportingData || ctx.GetSessionVars().StmtCtx.BatchCheck
-	key, distinct, err := c.GenIndexKey(ctx.GetSessionVars().StmtCtx, indexedValues, h, writeBufs.IndexKeyBuf)
+	key, distinct, err := c.GenIndexKey(ctx.GetSessionVars().StmtCtx, partitionID, indexedValues, h, writeBufs.IndexKeyBuf)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -203,7 +204,8 @@ func (c *index) Create(ctx sessionctx.Context, rm kv.RetrieverMutator, indexedVa
 
 // Delete removes the entry for handle h and indexdValues from KV index.
 func (c *index) Delete(sc *stmtctx.StatementContext, m kv.Mutator, indexedValues []types.Datum, h int64) error {
-	key, _, err := c.GenIndexKey(sc, indexedValues, h, nil)
+	// FIXME: Consider partition here.
+	key, _, err := c.GenIndexKey(sc, c.tblInfo.ID, indexedValues, h, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -238,7 +240,8 @@ func (c *index) Drop(rm kv.RetrieverMutator) error {
 
 // Seek searches KV index for the entry with indexedValues.
 func (c *index) Seek(sc *stmtctx.StatementContext, r kv.Retriever, indexedValues []types.Datum) (iter table.IndexIterator, hit bool, err error) {
-	key, _, err := c.GenIndexKey(sc, indexedValues, 0, nil)
+	// FIXME: Consider partition here.
+	key, _, err := c.GenIndexKey(sc, c.tblInfo.ID, indexedValues, 0, nil)
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}
@@ -264,7 +267,8 @@ func (c *index) SeekFirst(r kv.Retriever) (iter table.IndexIterator, err error) 
 }
 
 func (c *index) Exist(sc *stmtctx.StatementContext, rm kv.RetrieverMutator, indexedValues []types.Datum, h int64) (bool, int64, error) {
-	key, distinct, err := c.GenIndexKey(sc, indexedValues, h, nil)
+	// FIXME: Consider partition here.
+	key, distinct, err := c.GenIndexKey(sc, c.tblInfo.ID, indexedValues, h, nil)
 	if err != nil {
 		return false, 0, errors.Trace(err)
 	}

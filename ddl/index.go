@@ -557,7 +557,8 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (nextHan
 
 			// Create the index.
 			// TODO: backfill unique-key will check constraint every row, we can speed up this case by using batch check.
-			handle, err := w.index.Create(w.sessCtx, txn, idxRecord.vals, idxRecord.handle)
+			// FIXME: Consider partition here.
+			handle, err := w.index.Create(w.sessCtx, txn, w.table.Meta().ID, idxRecord.vals, idxRecord.handle)
 			if err != nil {
 				if kv.ErrKeyExists.Equal(err) && idxRecord.handle == handle {
 					// Index already exists, skip it.

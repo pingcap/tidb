@@ -351,7 +351,8 @@ func (e *RecoverIndexExec) batchMarkDup(txn kv.Transaction, rows []recoverRows) 
 	sc := e.ctx.GetSessionVars().StmtCtx
 	distinctFlags := make([]bool, len(rows))
 	for i, row := range rows {
-		idxKey, distinct, err := e.index.GenIndexKey(sc, row.idxVals, row.handle, e.idxKeyBufs[i])
+		// FIXME: Consider partition here.
+		idxKey, distinct, err := e.index.GenIndexKey(sc, e.table.Meta().ID, row.idxVals, row.handle, e.idxKeyBufs[i])
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -418,8 +419,8 @@ func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transa
 		if err != nil {
 			return result, errors.Trace(err)
 		}
-
-		_, err = e.index.Create(e.ctx, txn, row.idxVals, row.handle)
+		// FIXME: Consider partition here.
+		_, err = e.index.Create(e.ctx, txn, e.table.Meta().ID, row.idxVals, row.handle)
 		if err != nil {
 			return result, errors.Trace(err)
 		}
@@ -550,7 +551,8 @@ func (e *CleanupIndexExec) fetchIndex(ctx context.Context, txn kv.Transaction) e
 			idxVals := extractIdxVals(row, e.idxValsBufs[e.scanRowCnt], e.idxColFieldTypes)
 			e.idxValsBufs[e.scanRowCnt] = idxVals
 			e.idxValues[handle] = idxVals
-			idxKey, _, err := e.index.GenIndexKey(sc, idxVals, handle, nil)
+			// FIXME: Consider partition here.
+			idxKey, _, err := e.index.GenIndexKey(sc, e.table.Meta().ID, idxVals, handle, nil)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -635,7 +637,8 @@ func (e *CleanupIndexExec) Open(ctx context.Context) error {
 	e.batchKeys = make([]kv.Key, 0, e.batchSize)
 	e.idxValsBufs = make([][]types.Datum, e.batchSize)
 	sc := e.ctx.GetSessionVars().StmtCtx
-	idxKey, _, err := e.index.GenIndexKey(sc, []types.Datum{{}}, math.MinInt64, nil)
+	// FIXME: Consider partition here.
+	idxKey, _, err := e.index.GenIndexKey(sc, e.table.Meta().ID, []types.Datum{{}}, math.MinInt64, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}

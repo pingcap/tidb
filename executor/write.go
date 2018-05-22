@@ -140,7 +140,8 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		skipHandleCheck := false
 		if sc.IgnoreErr {
 			// if the new handle exists. `UPDATE IGNORE` will avoid removing record, and do nothing.
-			if err = tables.CheckHandleExists(ctx, t, newHandle); err != nil {
+			// FIXME: Consider partition here.
+			if err = tables.CheckHandleExists(ctx, t, t.Meta().ID, newHandle); err != nil {
 				return false, handleChanged, newHandle, 0, errors.Trace(err)
 			}
 			skipHandleCheck = true
@@ -1005,8 +1006,9 @@ func getKeysNeedCheck(ctx sessionctx.Context, t table.Table, rows [][]types.Datu
 			}
 			// Pass handle = 0 to GenIndexKey,
 			// due to we only care about distinct key.
+			// FIXME: Consider partition here.
 			key, distinct, err1 := v.GenIndexKey(ctx.GetSessionVars().StmtCtx,
-				colVals, 0, nil)
+				t.Meta().ID, colVals, 0, nil)
 			if err1 != nil {
 				return nil, errors.Trace(err1)
 			}

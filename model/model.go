@@ -124,6 +124,14 @@ type TableInfo struct {
 	Partition *PartitionInfo `json:"partition"`
 }
 
+// GetPartition returns the partition information.
+func (t *TableInfo) GetPartitionInfo() *PartitionInfo {
+	if t.Partition != nil && t.Partition.Enable {
+		return t.Partition
+	}
+	return nil
+}
+
 // GetUpdateTime gets the table's updating time.
 func (t *TableInfo) GetUpdateTime() time.Time {
 	return TSConvert2Time(t.UpdateTS)
@@ -228,9 +236,10 @@ type PartitionType int
 
 // Partition types.
 const (
-	PartitionTypeRange PartitionType = 1
-	PartitionTypeHash  PartitionType = 2
-	PartitionTypeList  PartitionType = 3
+	PartitionTypeRange       PartitionType = 1
+	PartitionTypeHash        PartitionType = 2
+	PartitionTypeList        PartitionType = 3
+	PartitionTypeRangeColumn PartitionType = 4
 )
 
 func (p PartitionType) String() string {
