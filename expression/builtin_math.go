@@ -564,18 +564,20 @@ func (b *builtinCeilDecToDecSig) evalDecimal(row types.Row) (*types.MyDecimal, b
 	if isNull || err != nil {
 		return nil, isNull, errors.Trace(err)
 	}
-	if val.GetDigitsFrac() > 0 && !val.IsNegative() {
-		err = types.DecimalAdd(val, types.NewDecFromInt(1), val)
-		if err != nil {
-			return nil, true, errors.Trace(err)
-		}
-	}
+
 	res := new(types.MyDecimal)
-	err = val.Round(res, 0, types.ModeTruncate)
-	if err != nil {
-		return nil, true, errors.Trace(err)
+	if val.IsNegative() {
+		err = val.Round(res, 0, types.ModeTruncate)
+		return res, err != nil, errors.Trace(err)
 	}
-	return res, false, nil
+
+	err = val.Round(res, 0, types.ModeTruncate)
+	if err != nil || res.Compare(val) == 0 {
+		return res, err != nil, errors.Trace(err)
+	}
+
+	err = types.DecimalAdd(res, types.NewDecFromInt(1), res)
+	return res, err != nil, errors.Trace(err)
 }
 
 type floorFunctionClass struct {
