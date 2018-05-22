@@ -869,6 +869,11 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 			sql:  "select sum(d) from t",
 			best: "TableReader(Table(t)->StreamAgg)->StreamAgg",
 		},
+		// Test join hint for delete and update
+		{
+			sql:  "delete /*+ tidb_inlj(a, b) */ a, b from a, b where a.g=b.g and a.g=1;",
+			best: "",
+		},
 	}
 	for _, tt := range tests {
 		comment := Commentf("for %s", tt.sql)

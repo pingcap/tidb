@@ -791,6 +791,8 @@ type DeleteStmt struct {
 	Quick        bool
 	IsMultiTable bool
 	BeforeFrom   bool
+	// TableHints represents the level Optimizer Hint
+	TableHints []*TableOptimizerHint
 }
 
 // Accept implements Node Accept interface.
@@ -850,6 +852,7 @@ type UpdateStmt struct {
 	LowPriority   bool
 	IgnoreErr     bool
 	MultipleTable bool
+	TableHints    []*TableOptimizerHint
 }
 
 // Accept implements Node Accept interface.

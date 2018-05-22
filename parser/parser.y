@@ -2024,36 +2024,42 @@ DeleteFromStmt:
 
 		$$ = x
 	}
-|	"DELETE" LowPriorityOptional QuickOptional IgnoreOptional TableNameList "FROM" TableRefs WhereClauseOptional
+|	"DELETE" TableOptimizerHints LowPriorityOptional QuickOptional IgnoreOptional TableNameList "FROM" TableRefs WhereClauseOptional
 	{
 		// Multiple Table
 		x := &ast.DeleteStmt{
-			LowPriority:	$2.(bool),
-			Quick:		$3.(bool),
-			IgnoreErr:		$4.(bool),
+			LowPriority:	$3.(bool),
+			Quick:		$4.(bool),
+			IgnoreErr:		$5.(bool),
 			IsMultiTable:	true,
 			BeforeFrom:	true,
-			Tables:		&ast.DeleteTableList{Tables: $5.([]*ast.TableName)},
-			TableRefs:	&ast.TableRefsClause{TableRefs: $7.(*ast.Join)},
-		}
-		if $8 != nil {
-			x.Where = $8.(ast.ExprNode)
-		}
-		$$ = x
-	}
-|	"DELETE" LowPriorityOptional QuickOptional IgnoreOptional "FROM" TableNameList "USING" TableRefs WhereClauseOptional
-	{
-		// Multiple Table
-		x := &ast.DeleteStmt{
-			LowPriority:	$2.(bool),
-			Quick:		$3.(bool),
-			IgnoreErr:		$4.(bool),
-			IsMultiTable:	true,
 			Tables:		&ast.DeleteTableList{Tables: $6.([]*ast.TableName)},
 			TableRefs:	&ast.TableRefsClause{TableRefs: $8.(*ast.Join)},
 		}
+		if $2 != nil {
+			x.TableHints = $2.([]*ast.TableOptimizerHint)
+		}
 		if $9 != nil {
 			x.Where = $9.(ast.ExprNode)
+		}
+		$$ = x
+	}
+|	"DELETE" TableOptimizerHints LowPriorityOptional QuickOptional IgnoreOptional "FROM" TableNameList "USING" TableRefs WhereClauseOptional
+	{
+		// Multiple Table
+		x := &ast.DeleteStmt{
+			LowPriority:	$3.(bool),
+			Quick:		$4.(bool),
+			IgnoreErr:		$5.(bool),
+			IsMultiTable:	true,
+			Tables:		&ast.DeleteTableList{Tables: $7.([]*ast.TableName)},
+			TableRefs:	&ast.TableRefsClause{TableRefs: $9.(*ast.Join)},
+		}
+		if $2 != nil {
+			x.TableHints = $2.([]*ast.TableOptimizerHint)
+		}
+		if $10 != nil {
+			x.Where = $10.(ast.ExprNode)
 		}
 		$$ = x
 	}
@@ -6252,41 +6258,47 @@ StringName:
  * See https://dev.mysql.com/doc/refman/5.7/en/update.html
  ***********************************************************************************/
 UpdateStmt:
-	"UPDATE" LowPriorityOptional IgnoreOptional TableRef "SET" AssignmentList WhereClauseOptional OrderByOptional LimitClause
+	"UPDATE" TableOptimizerHints LowPriorityOptional IgnoreOptional TableRef "SET" AssignmentList WhereClauseOptional OrderByOptional LimitClause
 	{
 		var refs *ast.Join
-		if x, ok := $4.(*ast.Join); ok {
+		if x, ok := $5.(*ast.Join); ok {
 			refs = x
 		} else {
-			refs = &ast.Join{Left: $4.(ast.ResultSetNode)}
+			refs = &ast.Join{Left: $5.(ast.ResultSetNode)}
 		}
 		st := &ast.UpdateStmt{
-			LowPriority:	$2.(bool),
+			LowPriority:	$3.(bool),
 			TableRefs:	&ast.TableRefsClause{TableRefs: refs},
-			List:		$6.([]*ast.Assignment),
-			IgnoreErr:		$3.(bool),
+			List:		$7.([]*ast.Assignment),
+			IgnoreErr:		$4.(bool),
 		}
-		if $7 != nil {
-			st.Where = $7.(ast.ExprNode)
+		if $2 != nil {
+			st.TableHints = $2.([]*ast.TableOptimizerHint)
 		}
 		if $8 != nil {
-			st.Order = $8.(*ast.OrderByClause)
+			st.Where = $8.(ast.ExprNode)
 		}
 		if $9 != nil {
-			st.Limit = $9.(*ast.Limit)
+			st.Order = $9.(*ast.OrderByClause)
+		}
+		if $10 != nil {
+			st.Limit = $10.(*ast.Limit)
 		}
 		$$ = st
 	}
-|	"UPDATE" LowPriorityOptional IgnoreOptional TableRefs "SET" AssignmentList WhereClauseOptional
+|	"UPDATE" TableOptimizerHints LowPriorityOptional IgnoreOptional TableRefs "SET" AssignmentList WhereClauseOptional
 	{
 		st := &ast.UpdateStmt{
-			LowPriority:	$2.(bool),
-			TableRefs:	&ast.TableRefsClause{TableRefs: $4.(*ast.Join)},
-			List:		$6.([]*ast.Assignment),
-			IgnoreErr:		$3.(bool),
+			LowPriority:	$3.(bool),
+			TableRefs:	&ast.TableRefsClause{TableRefs: $5.(*ast.Join)},
+			List:		$7.([]*ast.Assignment),
+			IgnoreErr:		$4.(bool),
 		}
-		if $7 != nil {
-			st.Where = $7.(ast.ExprNode)
+		if $2 != nil {
+			st.TableHints = $2.([]*ast.TableOptimizerHint)
+		}
+		if $8 != nil {
+			st.Where = $8.(ast.ExprNode)
 		}
 		$$ = st
 	}
