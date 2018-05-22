@@ -350,9 +350,13 @@ func (d *ddl) getReorgInfo(t *meta.Meta, job *model.Job, tbl table.Table) (*reor
 			return nil, errors.Trace(err)
 		}
 	}
+	// tbl set to nil is only in the tests.
+	if tbl != nil {
+		return info, errors.Trace(err)
+	}
 
-	// init the reorg meta info of job. tbl set to nil is only in the tests.
-	if job.ReorgMeta == nil && tbl != nil {
+	// init the reorg meta info of job.
+	if job.ReorgMeta == nil {
 		reorgMeta := model.NewDDLReorgMeta()
 		// Gets the real table end handle, the new added row after the index being writable,
 		// has no needs to backfill.
