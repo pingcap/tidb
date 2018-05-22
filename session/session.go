@@ -1282,6 +1282,7 @@ const loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variab
 	variable.TiDBBackoffLockFast + quoteCommaQuote +
 	variable.TiDBOptInSubqUnFolding + quoteCommaQuote +
 	variable.TiDBDistSQLScanConcurrency + quoteCommaQuote +
+	variable.TiDBMaxChunkSize + quoteCommaQuote +
 	variable.TiDBRetryLimit + "')"
 
 type globalVariableCache struct {
