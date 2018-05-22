@@ -351,7 +351,7 @@ func (d *ddl) getReorgInfo(t *meta.Meta, job *model.Job, tbl table.Table) (*reor
 		}
 	}
 	// tbl set to nil is only in the tests.
-	if tbl != nil {
+	if tbl == nil {
 		return info, errors.Trace(err)
 	}
 
