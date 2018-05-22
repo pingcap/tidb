@@ -2783,6 +2783,7 @@ func (s *testSuite) TestYearTypeDeleteIndex(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a YEAR, PRIMARY KEY(a));")
+	tk.MustExec("insert into test set a = '2151';")
 	tk.MustExec("delete from t;")
 	tk.MustExec("admin check table t")
 }
