@@ -269,12 +269,7 @@ func (d *ddl) GetTableMaxRowID(startTS uint64, tblInfo *model.TableInfo) (maxRow
 		columns = []*model.ColumnInfo{model.NewExtraHandleColInfo()}
 	}
 
-	if len(columns) == 0 {
-		return maxRowID, false, errors.Errorf("columns should not be nil")
-	}
-
 	ctx := context.Background()
-
 	// build a desc scan of tblInfo, which limit is 1, we can use it to retrive the last handle of the table.
 	src, err := d.buildDescTableScan(ctx, startTS, tblInfo, columns, 1)
 	if err != nil {
