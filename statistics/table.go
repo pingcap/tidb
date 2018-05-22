@@ -157,8 +157,9 @@ func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *
 					LastUpdateVersion: histVer,
 					TotColSize:        totColSize,
 				},
-				Info:  colInfo,
-				Count: count + nullCount,
+				Info:      colInfo,
+				Count:     count + nullCount,
+				ErrorRate: errorRate,
 			}
 			break
 		}
@@ -176,12 +177,12 @@ func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *
 				Info:      colInfo,
 				CMSketch:  cms,
 				Count:     int64(hg.totalRowCount()),
+				ErrorRate: errorRate,
 			}
 		}
 		break
 	}
 	if col != nil {
-		col.ErrorRate = errorRate
 		table.Columns[col.ID] = col
 	} else {
 		// If we didn't find a Column or Index in tableInfo, we won't load the histogram for it.

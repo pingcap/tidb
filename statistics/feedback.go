@@ -574,7 +574,6 @@ func decodeFeedback(val []byte, q *QueryFeedback, c *CMSketch) error {
 		}
 	}
 	return nil
-
 }
 
 // Equal tests if two query feedback equal, it is only used in test.

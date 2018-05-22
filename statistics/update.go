@@ -143,10 +143,9 @@ func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Hand
 	if !ok {
 		return nil
 	}
-	t := h.GetTableStats(table.Meta())
+	t := *(h.GetTableStats(table.Meta()))
 	sc := h.ctx.GetSessionVars().StmtCtx
 
-	t = &(*t)
 	if t.Pseudo == true {
 		t.Pseudo = false
 		defer func() { t.Pseudo = true }()
