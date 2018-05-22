@@ -496,12 +496,58 @@ func (s *testStateChangeSuite) TestParallelChangeColumnName(c *C) {
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
 
+func (s *testStateChangeSuite) TestParallelAlterAddIndex(c *C) {
+	sql1 := "ALTER TABLE t add index index_b(b);"
+	sql2 := "CREATE INDEX index_b ON t (c);"
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2.Error(), Equals, "[ddl:1061]index already exist index_b")
+	}
+	s.testControlParallelExecSQL(c, sql1, sql2, f)
+}
+
+func (s *testStateChangeSuite) TestParallelDropColumn(c *C) {
+	sql := "ALTER TABLE t_tb drop COLUMN c ;"
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2.Error(), Equals, "[ddl:1091]column c doesn't exist")
+	}
+	s.testControlParallelExecSQL(c, sql, sql, f)
+}
+
+func (s *testStateChangeSuite) TestParallelDropDataBase(c *C) {
+	_, err := s.se.Execute(context.Background(), "create database if not exists test_drop_db;")
+	c.Assert(err, IsNil)
+	sql := "drop database test_drop_db;"
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2.Error(), Equals, "[schema:1008]Can't drop database ''; database doesn't exist")
+	}
+	s.testControlParallelExecSQL(c, sql, sql, f)
+}
+
 func (s *testStateChangeSuite) TestParallelCreateAndRename(c *C) {
 	sql1 := "create table t_exists(c int);"
 	sql2 := "alter table t rename to t_exists;"
+	defer s.se.Execute(context.Background(), "drop table t_exists")
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
 		c.Assert(err2.Error(), Equals, "[schema:1050]Table 't_exists' already exists")
+	}
+	s.testControlParallelExecSQL(c, sql1, sql2, f)
+}
+
+func (s *testStateChangeSuite) TestParallelAddColumnAndRename(c *C) {
+	sql1 := "alter table t_tb_a rename to t_tb_b;"
+	sql2 := "alter table t_tb_a add column a2 int;"
+	defer s.se.Execute(context.Background(), "drop table t_tb_a")
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		if err2 != nil {
+			c.Assert(err2.Error(), Equals, "[schema:1146]Table 'test_db_state.t_tb_a' doesn't exist")
+		}
+		_, err := s.se.Execute(context.Background(), "select a2 from t_tb_a")
+		c.Assert(err.Error(), Equals, "[schema:1146]Table 'test_db_state.t_tb_a' doesn't exist")
 	}
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
@@ -513,7 +559,13 @@ func (s *testStateChangeSuite) testControlParallelExecSQL(c *C, sql1, sql2 strin
 	c.Assert(err, IsNil)
 	_, err = s.se.Execute(context.Background(), "create table t(a int, b int, c int)")
 	c.Assert(err, IsNil)
+	_, err = s.se.Execute(context.Background(), "create table t_tb(a int, b int, c int)")
+	c.Assert(err, IsNil)
+	_, err = s.se.Execute(context.Background(), "create table t_tb_a(a int)")
+	c.Assert(err, IsNil)
+	defer s.se.Execute(context.Background(), "drop table t_tb")
 	defer s.se.Execute(context.Background(), "drop table t")
+	defer s.se.Execute(context.Background(), "drop table t_tb_a")
 
 	callback := &ddl.TestDDLCallback{}
 	times := 0
