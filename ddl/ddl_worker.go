@@ -393,6 +393,8 @@ func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) (ver int64, err error) {
 
 		job.Error = toTError(err)
 		job.ErrorCount++
+
+		metrics.DDLJobErrCounter.WithLabelValues("failed").Inc()
 		// wait a while to retry again. If we don't wait here, ddl will retry this job immediately,
 		// which may act like a deadlock.
 		time.Sleep(waitTimeWhenErrorOccured)
