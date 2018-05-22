@@ -67,7 +67,8 @@ func (e *AnalyzeExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 	close(taskCh)
 	dom := domain.GetDomain(e.ctx)
-	lease := dom.StatsHandle().Lease
+	h := dom.StatsHandle()
+	lease := h.Lease
 	if lease > 0 {
 		var err1 error
 		for i := 0; i < len(e.tasks); i++ {
@@ -77,7 +78,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 				log.Error(errors.ErrorStack(err1))
 				continue
 			}
-			dom.StatsHandle().AnalyzeResultCh() <- &result
+			h.AnalyzeResultCh() <- &result
 		}
 		// We sleep two lease to make sure other tidb node has updated this node.
 		time.Sleep(lease * 2)
@@ -105,14 +106,14 @@ func (e *AnalyzeExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 			}
 		}
 	}
-	err = dom.StatsHandle().Update(GetInfoSchema(e.ctx))
+	is := dom.InfoSchema()
+	err = h.Update(is)
 	if err != nil {
 		return errors.Trace(err)
 	}
-
 	for _, result := range results {
 		for _, hg := range result.Hist {
-			dom.StatsHandle().ClearErrorRate(result.TableID, hg.ID, result.IsIndex, dom.InfoSchema())
+			h.ClearErrorRate(result.TableID, hg.ID, result.IsIndex, is)
 		}
 	}
 	return nil

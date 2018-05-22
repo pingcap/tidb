@@ -130,7 +130,7 @@ func mergeQueryFeedback(lq []*QueryFeedback, rq []*QueryFeedback) []*QueryFeedba
 }
 
 // StoreQueryFeedback will merges the feedback into stats collector.
-func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Handle, is infoschema.InfoSchema) (err error) {
+func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Handle, is infoschema.InfoSchema) error {
 	q := feedback.(*QueryFeedback)
 	// TODO: If the error rate is small or actual scan count is small, we do not need to store the feed back.
 	if !q.valid || q.hist == nil {
@@ -146,6 +146,7 @@ func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Hand
 	t := h.GetTableStats(table.Meta())
 	sc := h.ctx.GetSessionVars().StmtCtx
 
+	t = &(*t)
 	if t.Pseudo == true {
 		t.Pseudo = false
 		defer func() { t.Pseudo = true }()
@@ -169,6 +170,7 @@ func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Hand
 				HighVal: []types.Datum{high},
 			}))
 		}
+		var err error
 		if isIndex {
 			expected, err = t.GetRowCountByIndexRanges(sc, q.hist.ID, ranges)
 		} else {
@@ -406,6 +408,7 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 		cms  *CMSketch
 		hist *Histogram
 		col  *Column
+		idx  *Index
 	)
 	for _, row := range rows {
 		// merge into previous feedback
@@ -439,7 +442,7 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 		}
 		tbl := h.GetTableStats(table.Meta())
 		if isIndex == 1 {
-			idx, ok := tbl.Indices[histID]
+			idx, ok = tbl.Indices[histID]
 			if !ok {
 				hist, cms = nil, nil
 				continue
