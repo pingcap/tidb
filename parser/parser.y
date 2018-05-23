@@ -2000,26 +2000,26 @@ DoStmt:
  *
  *******************************************************************/
 DeleteFromStmt:
-	"DELETE" LowPriorityOptional QuickOptional IgnoreOptional "FROM" TableName IndexHintListOpt WhereClauseOptional OrderByOptional LimitClause
+	"DELETE" TableOptimizerHints LowPriorityOptional QuickOptional IgnoreOptional "FROM" TableName IndexHintListOpt WhereClauseOptional OrderByOptional LimitClause
 	{
 		// Single Table
-		tn := $6.(*ast.TableName)
-		tn.IndexHints = $7.([]*ast.IndexHint)
+		tn := $7.(*ast.TableName)
+		tn.IndexHints = $8.([]*ast.IndexHint)
 		join := &ast.Join{Left: &ast.TableSource{Source: tn}, Right: nil}
 		x := &ast.DeleteStmt{
 			TableRefs:	&ast.TableRefsClause{TableRefs: join},
-			LowPriority:	$2.(bool),
-			Quick:		$3.(bool),
-			IgnoreErr:		$4.(bool),
-		}
-		if $8 != nil {
-			x.Where = $8.(ast.ExprNode)
+			LowPriority:	$3.(bool),
+			Quick:		$4.(bool),
+			IgnoreErr:		$5.(bool),
 		}
 		if $9 != nil {
-			x.Order = $9.(*ast.OrderByClause)
+			x.Where = $9.(ast.ExprNode)
 		}
 		if $10 != nil {
-			x.Limit = $10.(*ast.Limit)
+			x.Order = $10.(*ast.OrderByClause)
+		}
+		if $11 != nil {
+			x.Limit = $11.(*ast.Limit)
 		}
 
 		$$ = x

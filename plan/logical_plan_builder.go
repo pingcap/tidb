@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	log "github.com/sirupsen/logrus"
 )
 
 const (
@@ -233,9 +232,7 @@ func (p *LogicalJoin) setPreferredJoinType(hintInfo *tableHintInfo) error {
 
 	lhsAlias := extractTableAlias(p.children[0])
 	rhsAlias := extractTableAlias(p.children[1])
-	log.Info("jhhh")
 	if hintInfo.ifPreferMergeJoin(lhsAlias, rhsAlias) {
-		log.Info("jhhh")
 		p.preferJoinType |= preferMergeJoin
 	}
 	if hintInfo.ifPreferHashJoin(lhsAlias, rhsAlias) {
@@ -275,7 +272,6 @@ func (b *planBuilder) buildJoin(joinNode *ast.Join) LogicalPlan {
 	if b.err != nil {
 		return nil
 	}
-	log.Info("skip")
 	joinPlan := LogicalJoin{StraightJoin: joinNode.StraightJoin || b.inStraightJoin}.init(b.ctx)
 	joinPlan.SetChildren(leftPlan, rightPlan)
 	joinPlan.SetSchema(expression.MergeSchema(leftPlan.Schema(), rightPlan.Schema()))
@@ -302,7 +298,6 @@ func (b *planBuilder) buildJoin(joinNode *ast.Join) LogicalPlan {
 	}
 	joinPlan.redundantSchema = expression.MergeSchema(lRedundant, rRedundant)
 
-	log.Info("before enter setPreferredJoinType")
 	// Set preferred join algorithm if some join hints is specified by user.
 	err := joinPlan.setPreferredJoinType(b.TableHints())
 	if err != nil {
@@ -2065,9 +2060,7 @@ func extractTableAsNameForUpdate(p LogicalPlan, asNames map[*model.TableInfo][]*
 }
 
 func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) Plan {
-	log.Info(delete.TableHints)
 	if delete.TableHints != nil {
-		log.Info("delete TableHints is not empty.")
 		// table hints without query block support only visible in current DELETE
 		if b.pushTableHints(delete.TableHints) {
 			defer b.popTableHints()
