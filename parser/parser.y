@@ -648,7 +648,6 @@ import (
 	LinesTerminated			"Lines terminated by"
 	LocalOpt			"Local opt"
 	LockClause         		"Alter table lock clause"
-	LowPriorityOptional		"LOW_PRIORITY or empty"
 	NumLiteral			"Num/Int/Float/Decimal Literal"
 	NoWriteToBinLogAliasOpt 	"NO_WRITE_TO_BINLOG alias LOCAL or empty"
 	ObjectType			"Grant statement object type"
@@ -672,7 +671,7 @@ import (
 	PasswordOpt			"Password option"
 	ColumnPosition			"Column position [First|After ColumnName]"
 	PrepareSQL			"Prepare statement sql string"
-	Priority			"insert statement priority"
+	PriorityOpt			"Statement priority option"
 	PrivElem			"Privilege element"
 	PrivElemList			"Privilege element list"
 	PrivLevel			"Privilege scope"
@@ -682,7 +681,6 @@ import (
 	OnUpdateOpt			"optional ON UPDATE clause"
 	OptGConcatSeparator		"optional GROUP_CONCAT SEPARATOR"
 	ReferOpt			"reference option"
-	ReplacePriority			"replace statement priority"
 	RowFormat			"Row format option"
 	RowValue			"Row value"
 	SelectLockOpt			"FOR UPDATE or LOCK IN SHARE MODE,"
@@ -1972,7 +1970,7 @@ DoStmt:
  *
  *******************************************************************/
 DeleteFromStmt:
-	"DELETE" LowPriorityOptional QuickOptional IgnoreOptional "FROM" TableName IndexHintListOpt WhereClauseOptional OrderByOptional LimitClause
+	"DELETE" PriorityOpt QuickOptional IgnoreOptional "FROM" TableName IndexHintListOpt WhereClauseOptional OrderByOptional LimitClause
 	{
 		// Single Table
 		tn := $6.(*ast.TableName)
@@ -1980,7 +1978,7 @@ DeleteFromStmt:
 		join := &ast.Join{Left: &ast.TableSource{Source: tn}, Right: nil}
 		x := &ast.DeleteStmt{
 			TableRefs:	&ast.TableRefsClause{TableRefs: join},
-			LowPriority:	$2.(bool),
+			Priority:	$2.(mysql.PriorityEnum),
 			Quick:		$3.(bool),
 			IgnoreErr:		$4.(bool),
 		}
@@ -1996,11 +1994,11 @@ DeleteFromStmt:
 
 		$$ = x
 	}
-|	"DELETE" LowPriorityOptional QuickOptional IgnoreOptional TableNameList "FROM" TableRefs WhereClauseOptional
+|	"DELETE" PriorityOpt QuickOptional IgnoreOptional TableNameList "FROM" TableRefs WhereClauseOptional
 	{
 		// Multiple Table
 		x := &ast.DeleteStmt{
-			LowPriority:	$2.(bool),
+			Priority:	$2.(mysql.PriorityEnum),
 			Quick:		$3.(bool),
 			IgnoreErr:		$4.(bool),
 			IsMultiTable:	true,
@@ -2013,11 +2011,11 @@ DeleteFromStmt:
 		}
 		$$ = x
 	}
-|	"DELETE" LowPriorityOptional QuickOptional IgnoreOptional "FROM" TableNameList "USING" TableRefs WhereClauseOptional
+|	"DELETE" PriorityOpt QuickOptional IgnoreOptional "FROM" TableNameList "USING" TableRefs WhereClauseOptional
 	{
 		// Multiple Table
 		x := &ast.DeleteStmt{
-			LowPriority:	$2.(bool),
+			Priority:	$2.(mysql.PriorityEnum),
 			Quick:		$3.(bool),
 			IgnoreErr:		$4.(bool),
 			IsMultiTable:	true,
@@ -2629,7 +2627,7 @@ NotKeywordToken:
  *  TODO: support PARTITION
  **********************************************************************************/
 InsertIntoStmt:
-	"INSERT" Priority IgnoreOptional IntoOpt TableName InsertValues OnDuplicateKeyUpdate
+	"INSERT" PriorityOpt IgnoreOptional IntoOpt TableName InsertValues OnDuplicateKeyUpdate
 	{
 		x := $6.(*ast.InsertStmt)
 		x.Priority = $2.(mysql.PriorityEnum)
@@ -2774,7 +2772,7 @@ OnDuplicateKeyUpdate:
  *  TODO: support PARTITION
  **********************************************************************************/
 ReplaceIntoStmt:
-	"REPLACE" ReplacePriority IntoOpt TableName InsertValues
+	"REPLACE" PriorityOpt IntoOpt TableName InsertValues
 	{
 		x := $5.(*ast.InsertStmt)
 		x.IsReplace = true
@@ -2782,19 +2780,6 @@ ReplaceIntoStmt:
 		ts := &ast.TableSource{Source: $4.(*ast.TableName)}
 		x.Table = &ast.TableRefsClause{TableRefs: &ast.Join{Left: ts}}
 		$$ = x
-	}
-
-ReplacePriority:
-	{
-		$$ = mysql.NoPriority
-	}
-|	"LOW_PRIORITY"
-	{
-		$$ = mysql.LowPriority
-	}
-|	"DELAYED"
-	{
-		$$ = mysql.DelayedPriority
 	}
 
 /***********************************Replace Statements END************************************/
@@ -3868,8 +3853,7 @@ CastType:
 		$$ = x
 	}
 
-
-Priority:
+PriorityOpt:
 	{
 		$$ = mysql.NoPriority
 	}
@@ -3884,15 +3868,6 @@ Priority:
 |	"DELAYED"
 	{
 		$$ = mysql.DelayedPriority
-	}
-
-LowPriorityOptional:
-	{
-		$$ = false
-	}
-|	"LOW_PRIORITY"
-	{
-		$$ = true
 	}
 
 TableName:
@@ -4381,7 +4356,7 @@ SelectStmtLimit:
 
 
 SelectStmtOpts:
-	TableOptimizerHints DefaultFalseDistinctOpt Priority SelectStmtSQLCache SelectStmtCalcFoundRows SelectStmtStraightJoin
+	TableOptimizerHints DefaultFalseDistinctOpt PriorityOpt SelectStmtSQLCache SelectStmtCalcFoundRows SelectStmtStraightJoin
 	{
 		opt := &ast.SelectStmtOpts{}
 		if $1 != nil {
@@ -6109,7 +6084,7 @@ StringName:
  * See https://dev.mysql.com/doc/refman/5.7/en/update.html
  ***********************************************************************************/
 UpdateStmt:
-	"UPDATE" LowPriorityOptional IgnoreOptional TableRef "SET" AssignmentList WhereClauseOptional OrderByOptional LimitClause
+	"UPDATE" PriorityOpt IgnoreOptional TableRef "SET" AssignmentList WhereClauseOptional OrderByOptional LimitClause
 	{
 		var refs *ast.Join
 		if x, ok := $4.(*ast.Join); ok {
@@ -6118,7 +6093,7 @@ UpdateStmt:
 			refs = &ast.Join{Left: $4.(ast.ResultSetNode)}
 		}
 		st := &ast.UpdateStmt{
-			LowPriority:	$2.(bool),
+			Priority:	$2.(mysql.PriorityEnum),
 			TableRefs:	&ast.TableRefsClause{TableRefs: refs},
 			List:		$6.([]*ast.Assignment),
 			IgnoreErr:		$3.(bool),
@@ -6134,10 +6109,10 @@ UpdateStmt:
 		}
 		$$ = st
 	}
-|	"UPDATE" LowPriorityOptional IgnoreOptional TableRefs "SET" AssignmentList WhereClauseOptional
+|	"UPDATE" PriorityOpt IgnoreOptional TableRefs "SET" AssignmentList WhereClauseOptional
 	{
 		st := &ast.UpdateStmt{
-			LowPriority:	$2.(bool),
+			Priority:	$2.(mysql.PriorityEnum),
 			TableRefs:	&ast.TableRefsClause{TableRefs: $4.(*ast.Join)},
 			List:		$6.([]*ast.Assignment),
 			IgnoreErr:		$3.(bool),
