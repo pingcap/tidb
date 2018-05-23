@@ -415,7 +415,7 @@ func CompareTableRecord(txn kv.Transaction, t table.Table, data []*RecordData, e
 		vals2, ok := m[h]
 		if !ok {
 			record := &RecordData{Handle: h, Values: vals}
-			return false, errDateNotEqual.Gen("data:%v != record:%v", nil, record)
+			return false, errDateNotEqual.Gen("data:%#v != record:%#v", nil, record)
 		}
 		if !exact {
 			delete(m, h)
@@ -425,7 +425,7 @@ func CompareTableRecord(txn kv.Transaction, t table.Table, data []*RecordData, e
 		if !reflect.DeepEqual(vals, vals2) {
 			record1 := &RecordData{Handle: h, Values: vals2}
 			record2 := &RecordData{Handle: h, Values: vals}
-			return false, errDateNotEqual.Gen("data:%v != record:%v", record1, record2)
+			return false, errDateNotEqual.Gen("data:%#v != record:%#v", record1, record2)
 		}
 
 		delete(m, h)
@@ -439,7 +439,7 @@ func CompareTableRecord(txn kv.Transaction, t table.Table, data []*RecordData, e
 
 	for h, vals := range m {
 		record := &RecordData{Handle: h, Values: vals}
-		return errDateNotEqual.Gen("data:%v != record:%v", record, nil)
+		return errDateNotEqual.Gen("data:%#v != record:%#v", record, nil)
 	}
 
 	return nil
