@@ -194,35 +194,25 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *requiredProp) []PhysicalPlan {
 	offsets := make([]int, 0, len(p.LeftJoinKeys))
 	for _, col := range prop.cols {
 		isExist := false
-		for leftJoinKeyPos, key := range p.LeftJoinKeys {
-			if !key.Equal(p.ctx, col) {
+		for joinKeyPos := 0; joinKeyPos < len(p.LeftJoinKeys); joinKeyPos++ {
+			var key *expression.Column
+			if col.Equal(p.ctx, p.LeftJoinKeys[joinKeyPos]) {
+				key = p.LeftJoinKeys[joinKeyPos]
+			}
+			if col.Equal(p.ctx, p.RightJoinKeys[joinKeyPos]) {
+				key = p.RightJoinKeys[joinKeyPos]
+			}
+			if key == nil {
 				continue
 			}
 			for i := 0; i < len(offsets); i++ {
-				if offsets[i] == leftJoinKeyPos {
+				if offsets[i] == joinKeyPos {
 					isExist = true
+					break
 				}
 			}
 			if !isExist {
-				offsets = append(offsets, leftJoinKeyPos)
-			}
-			isExist = true
-			break
-		}
-		if isExist {
-			continue
-		}
-		for rightJoinKeyPos, key := range p.RightJoinKeys {
-			if !key.Equal(p.ctx, col) {
-				continue
-			}
-			for i := 0; i < len(offsets); i++ {
-				if offsets[i] == rightJoinKeyPos {
-					isExist = true
-				}
-			}
-			if !isExist {
-				offsets = append(offsets, rightJoinKeyPos)
+				offsets = append(offsets, joinKeyPos)
 			}
 			isExist = true
 			break
