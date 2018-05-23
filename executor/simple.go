@@ -234,7 +234,6 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 		_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 		if err != nil {
 			failedUsers = append(failedUsers, user.String())
-			err = nil
 		}
 
 		if user.Hostname == "%" {
@@ -242,8 +241,8 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 		} else {
 			sql = fmt.Sprintf(`DELETE FROM %s.%s WHERE Host = "%s" and User = "%s";`, mysql.SystemDB, mysql.DBTable, user.Hostname, user.Username)
 		}
-		_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
-		if err != nil {
+		_, _, err2 := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+		if err2 != nil {
 			failedUsers = append(failedUsers, user.String())
 		}
 	}
