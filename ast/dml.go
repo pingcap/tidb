@@ -786,7 +786,7 @@ type DeleteStmt struct {
 	Where        ExprNode
 	Order        *OrderByClause
 	Limit        *Limit
-	LowPriority  bool
+	Priority     mysql.PriorityEnum
 	IgnoreErr    bool
 	Quick        bool
 	IsMultiTable bool
@@ -847,7 +847,7 @@ type UpdateStmt struct {
 	Where         ExprNode
 	Order         *OrderByClause
 	Limit         *Limit
-	LowPriority   bool
+	Priority      mysql.PriorityEnum
 	IgnoreErr     bool
 	MultipleTable bool
 }
