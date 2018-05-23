@@ -624,6 +624,8 @@ func (cc *clientConn) dispatch(data []byte) error {
 		return cc.handleStmtReset(data)
 	case mysql.ComSetOption:
 		return cc.handleSetOption(data)
+	case mysql.ComChangeUser:
+		return cc.handleChangeUser(data)
 	default:
 		return mysql.NewErrf(mysql.ErrUnknown, "command %d not supported now", cmd)
 	}
@@ -1022,4 +1024,45 @@ func (cc *clientConn) upgradeToTLS(tlsConfig *tls.Config) error {
 	cc.setConn(tlsConn)
 	cc.tlsConn = tlsConn
 	return nil
+}
+
+func (cc *clientConn) handleChangeUser(data []byte) error {
+	user, data := parseNullTermString(data)
+	cc.user = hack.String(user)
+	if len(data) < 1 {
+		return mysql.ErrMalformPacket
+	}
+	passLen := data[0]
+	data = data[1:]
+	pass := data[:passLen]
+	data = data[passLen:]
+	dbName, data := parseNullTermString(data)
+	cc.dbname = hack.String(dbName)
+
+	// Open session and do auth.
+	var tlsStatePtr *tls.ConnectionState
+	if cc.tlsConn != nil {
+		tlsState := cc.tlsConn.ConnectionState()
+		tlsStatePtr = &tlsState
+	}
+	err := cc.ctx.Close()
+	if err != nil {
+		log.Debug(err)
+	}
+	cc.ctx, err = cc.server.driver.OpenCtx(uint64(cc.connectionID), cc.capability, cc.collation, cc.dbname, tlsStatePtr)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if !cc.server.skipAuth() {
+		// Do Auth.
+		addr := cc.bufReadConn.RemoteAddr().String()
+		host, _, err1 := net.SplitHostPort(addr)
+		if err1 != nil {
+			return errors.Trace(errAccessDenied.GenByArgs(cc.user, addr, "YES"))
+		}
+		if !cc.ctx.Auth(&auth.UserIdentity{Username: cc.user, Hostname: host}, pass, cc.salt) {
+			return errors.Trace(errAccessDenied.GenByArgs(cc.user, host, "YES"))
+		}
+	}
+	return cc.writeOK()
 }
