@@ -232,6 +232,10 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 		}
 		sql := fmt.Sprintf(`DELETE FROM %s.%s WHERE Host = "%s" and User = "%s";`, mysql.SystemDB, mysql.UserTable, user.Hostname, user.Username)
 		_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+		if err != nil {
+			failedUsers = append(failedUsers, user.String())
+			err = nil
+		}
 
 		if user.Hostname == "%" {
 			sql = fmt.Sprintf(`DELETE FROM %s.%s WHERE User = "%s";`, mysql.SystemDB, mysql.DBTable, user.Username)
