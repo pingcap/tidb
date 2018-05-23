@@ -588,13 +588,18 @@ func (r Row) GetDatumRow(fields []*types.FieldType) types.DatumRow {
 func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 	var d types.Datum
 	switch tp.Tp {
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		if !r.IsNull(colIdx) {
 			if mysql.HasUnsignedFlag(tp.Flag) {
 				d.SetUint64(r.GetUint64(colIdx))
 			} else {
 				d.SetInt64(r.GetInt64(colIdx))
 			}
+		}
+	case mysql.TypeYear:
+		// FIXBUG: because insert type of TypeYear is definite int64, so we regardless of the unsigned flag.
+		if !r.IsNull(colIdx) {
+			d.SetInt64(r.GetInt64(colIdx))
 		}
 	case mysql.TypeFloat:
 		if !r.IsNull(colIdx) {
