@@ -304,6 +304,7 @@ func ColumnInfos2ColumnsWithDBName(dbName, tblName model.CIStr, colInfos []*mode
 			continue
 		}
 		newCol := &Column{
+			FromID:   1,
 			ColName:  col.Name,
 			TblName:  tblName,
 			DBName:   dbName,
