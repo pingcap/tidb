@@ -71,7 +71,7 @@ func (s *testIsolationSuite) SetWithRetry(c *C, k, v []byte) writeRecord {
 				commitTS: txn.(*tikvTxn).commitTS,
 			}
 		}
-		c.Assert(kv.IsRetryableError(err) || terror.ErrorEqual(err, terror.ErrResultUndetermined), IsTrue, Commentf(err))
+		c.Assert(kv.IsRetryableError(err) || terror.ErrorEqual(err, terror.ErrResultUndetermined), IsTrue, Commentf("%s", err))
 	}
 }
 
