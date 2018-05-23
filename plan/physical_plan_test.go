@@ -280,23 +280,6 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 			sql:  "select t.c in (select b from t s where s.a = t.a) from t",
 			best: "MergeLeftOuterSemiJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,s.a)->Projection",
 		},
-		// Test join hint for delete and update
-		{
-			sql:  "delete /*+ TIDB_INLJ(t1, t2) */ t1, t2 from t1, t2 where t1.a=t2.a and t1.a=1;",
-			best: "",
-		},
-		{
-			sql:  "delete /*+ TIDB_SMJ(t1, t2) */ t1 using t1, t2 where t1.a=t2.a;",
-			best: "",
-		},
-		{
-			sql:  "update /*+ TIDB_SMJ(t1, t2) */ t1, t2 set t1.a=1, t2.a=1 where t1.a=t2.a;",
-			best: "",
-		},
-		{
-			sql:  "update /*+ TIDB_HJ(t1, t2) */ t1, t2 set t1.a=1, t2.a=1 where t1.a=t2.a;",
-			best: "",
-		},
 		// Test Single Merge Join.
 		// Merge Join will no longer enforce a sort. If a hint doesn't take effect, we will choose other types of join.
 		{
@@ -570,6 +553,23 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 			best: "TableReader(Table(t))->Update",
 		},
 		// TODO: Test delete/update with join.
+		// Test join hint for delete and update
+		{
+			sql:  "delete /*+ TIDB_INLJ(t1, t2) */ t1 from t t1, t t2 where t1.c=t2.c",
+			best: "IndexJoin{TableReader(Table(t))->IndexLookUp(Index(t.c_d_e)[[<nil>,+inf]], Table(t))}(t1.c,t2.c)->Delete",
+		},
+		{
+			sql:  "delete /*+ TIDB_SMJ(t1, t2) */ from t1 using t t1, t t2 where t1.c=t2.c",
+			best: "MergeInnerJoin{IndexLookUp(Index(t.c_d_e)[[<nil>,+inf]], Table(t))->IndexLookUp(Index(t.c_d_e)[[<nil>,+inf]], Table(t))}(t1.c,t2.c)->Delete",
+		},
+		{
+			sql:  "update /*+ TIDB_SMJ(t1, t2) */ t t1, t t2 set t1.a=1, t2.a=1 where t1.a=t2.a",
+			best: "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->Update",
+		},
+		{
+			sql:  "update /*+ TIDB_HJ(t1, t2) */ t t1, t t2 set t1.a=1, t2.a=1 where t1.a=t2.a",
+			best: "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->Update",
+		},
 		// Test complex delete.
 		{
 			sql:  "delete from t where b < 1 order by d limit 1",
