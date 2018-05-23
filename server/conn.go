@@ -375,13 +375,17 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse() error {
 	cc.dbname = resp.DBName
 	cc.collation = resp.Collation
 	cc.attrs = resp.Attrs
+	err = cc.openSessionAndDoAuth(resp.Auth)
+	return errors.Trace(err)
+}
 
-	// Open session and do auth.
+func (cc *clientConn) openSessionAndDoAuth(authData []byte) error {
 	var tlsStatePtr *tls.ConnectionState
 	if cc.tlsConn != nil {
 		tlsState := cc.tlsConn.ConnectionState()
 		tlsStatePtr = &tlsState
 	}
+	var err error
 	cc.ctx, err = cc.server.driver.OpenCtx(uint64(cc.connectionID), cc.capability, cc.collation, cc.dbname, tlsStatePtr)
 	if err != nil {
 		return errors.Trace(err)
@@ -393,7 +397,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse() error {
 		if err1 != nil {
 			return errors.Trace(errAccessDenied.GenByArgs(cc.user, addr, "YES"))
 		}
-		if !cc.ctx.Auth(&auth.UserIdentity{Username: cc.user, Hostname: host}, resp.Auth, cc.salt) {
+		if !cc.ctx.Auth(&auth.UserIdentity{Username: cc.user, Hostname: host}, authData, cc.salt) {
 			return errors.Trace(errAccessDenied.GenByArgs(cc.user, host, "YES"))
 		}
 	}
@@ -1038,31 +1042,13 @@ func (cc *clientConn) handleChangeUser(data []byte) error {
 	data = data[passLen:]
 	dbName, data := parseNullTermString(data)
 	cc.dbname = hack.String(dbName)
-
-	// Open session and do auth.
-	var tlsStatePtr *tls.ConnectionState
-	if cc.tlsConn != nil {
-		tlsState := cc.tlsConn.ConnectionState()
-		tlsStatePtr = &tlsState
-	}
 	err := cc.ctx.Close()
 	if err != nil {
 		log.Debug(err)
 	}
-	cc.ctx, err = cc.server.driver.OpenCtx(uint64(cc.connectionID), cc.capability, cc.collation, cc.dbname, tlsStatePtr)
+	err = cc.openSessionAndDoAuth(pass)
 	if err != nil {
 		return errors.Trace(err)
-	}
-	if !cc.server.skipAuth() {
-		// Do Auth.
-		addr := cc.bufReadConn.RemoteAddr().String()
-		host, _, err1 := net.SplitHostPort(addr)
-		if err1 != nil {
-			return errors.Trace(errAccessDenied.GenByArgs(cc.user, addr, "YES"))
-		}
-		if !cc.ctx.Auth(&auth.UserIdentity{Username: cc.user, Hostname: host}, pass, cc.salt) {
-			return errors.Trace(errAccessDenied.GenByArgs(cc.user, host, "YES"))
-		}
 	}
 	return cc.writeOK()
 }
