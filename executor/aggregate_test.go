@@ -539,3 +539,17 @@ func (s *testSuite) TestIssue5663(c *C) {
 	tk.MustQuery("select group_concat(i) from t1 where i > 1;").Check(testkit.Rows("2,3"))
 	tk.MustQuery("select group_concat(i) from t1 where i > 1;").Check(testkit.Rows("2,3"))
 }
+
+func (s *testSuite) TestMaxMinFloatScalaFunc(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	plan.GlobalPlanCache = kvcache.NewShardedLRUCache(2, 1)
+	planCahche := tk.Se.GetSessionVars().PlanCacheEnabled
+	defer func() {
+		tk.Se.GetSessionVars().PlanCacheEnabled = planCahche
+	}()
+
+	tk.MustExec(`DROP TABLE IF EXISTS T;`)
+	tk.MustExec(`CREATE TABLE T(A VARCHAR(10), B VARCHAR(10), C FLOAT);`)
+	tk.MustExec(`INSERT INTO T VALUES('0', "val_b", 12.191);`)
+	tk.MustQuery(`SELECT MAX(CASE B WHEN 'val_b'  THEN C ELSE 0 END) val_b FROM T WHERE cast(A as signed) = 0 GROUP BY a;`).Check(testkit.Rows("12.190999984741211"))
+}
