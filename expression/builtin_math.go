@@ -517,7 +517,14 @@ func (b *builtinCeilIntToDecSig) Clone() builtinFunc {
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_Ceil
 func (b *builtinCeilIntToDecSig) evalDecimal(row types.Row) (*types.MyDecimal, bool, error) {
 	val, isNull, err := b.args[0].EvalInt(b.ctx, row)
-	return types.NewDecFromUint(uint64(val)), isNull, errors.Trace(err)
+	if isNull || err != nil {
+		return nil, true, errors.Trace(err)
+	}
+
+	if mysql.HasUnsignedFlag(b.args[0].GetType().Flag) || val >= 0 {
+		return types.NewDecFromUint(uint64(val)), false, nil
+	}
+	return types.NewDecFromInt(val), false, nil
 }
 
 type builtinCeilDecToIntSig struct {
