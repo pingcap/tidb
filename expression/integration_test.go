@@ -377,6 +377,12 @@ func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
 	result.Check(testkit.Rows("18446744073709551615 18446744073709551616"))
 	result = tk.MustQuery("select floor(-18446744073709551617), ceil(-18446744073709551617), floor(-18446744073709551617.11), ceil(-18446744073709551617.11)")
 	result.Check(testkit.Rows("-18446744073709551617 -18446744073709551617 -18446744073709551618 -18446744073709551617"))
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a decimal(40,20) UNSIGNED);")
+	tk.MustExec("insert into t values(2.99999999900000000000), (12), (0);")
+	tk.MustQuery("select a, ceil(a) from t where ceil(a) > 1;").Check(testkit.Rows("2.99999999900000000000 3", "12.00000000000000000000 12"))
+	tk.MustQuery("select a, ceil(a) from t;").Check(testkit.Rows("2.99999999900000000000 3", "12.00000000000000000000 12", "0.00000000000000000000 0"))
+	tk.MustQuery("select ceil(-29464);").Check(testkit.Rows("-29464"))
 
 	// for cot
 	result = tk.MustQuery("select cot(1), cot(-1), cot(NULL)")
@@ -2531,6 +2537,12 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	result = tk.MustQuery("select * from t where a/0 > 1")
 	result.Check(testkit.Rows())
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|Division by 0"))
+
+	tk.MustExec("USE test;")
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("CREATE TABLE t(a BIGINT, b DECIMAL(6, 2));")
+	tk.MustExec("INSERT INTO t VALUES(0, 1.12), (1, 1.21);")
+	tk.MustQuery("SELECT a/b FROM t;").Check(testkit.Rows("0.0000", "0.8264"))
 }
 
 func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
