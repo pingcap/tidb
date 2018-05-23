@@ -637,8 +637,13 @@ func (s *builtinArithmeticDivideDecimalSig) evalDecimal(row types.Row) (*types.M
 	err = types.DecimalDiv(a, b, c, types.DivFracIncr)
 	if err == types.ErrDivByZero {
 		return c, true, errors.Trace(handleDivisionByZeroError(s.ctx))
+	} else if err == nil {
+		_, frac := c.PrecisionAndFrac()
+		if frac < s.baseBuiltinFunc.tp.Decimal {
+			err = c.Round(c, s.baseBuiltinFunc.tp.Decimal, types.ModeHalfEven)
+		}
 	}
-	return c, false, err
+	return c, false, errors.Trace(err)
 }
 
 type arithmeticIntDivideFunctionClass struct {
