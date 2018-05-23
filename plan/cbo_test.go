@@ -264,7 +264,11 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		},
 		{
 			sql:  "select count(e) from t where t.b <= 50",
-			best: "TableReader(Table(t)->Sel([le(test.t.b, 50)])->StreamAgg)->StreamAgg",
+			best: "IndexLookUp(Index(t.b)[[-inf,50]], Table(t)->HashAgg)->HashAgg",
+		},
+		{
+			sql:  "select count(e) from t where t.b <= 100000000000",
+			best: "TableReader(Table(t)->Sel([le(test.t.b, 100000000000)])->StreamAgg)->StreamAgg",
 		},
 		{
 			sql:  "select * from t where t.b <= 40",
@@ -272,12 +276,16 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		},
 		{
 			sql:  "select * from t where t.b <= 50",
-			best: "TableReader(Table(t)->Sel([le(test.t.b, 50)]))",
+			best: "IndexLookUp(Index(t.b)[[-inf,50]], Table(t))",
+		},
+		{
+			sql:  "select * from t where t.b <= 10000000000",
+			best: "TableReader(Table(t)->Sel([le(test.t.b, 10000000000)]))",
 		},
 		// test panic
 		{
 			sql:  "select * from t where 1 and t.b <= 50",
-			best: "TableReader(Table(t)->Sel([le(test.t.b, 50)]))",
+			best: "IndexLookUp(Index(t.b)[[-inf,50]], Table(t))",
 		},
 		{
 			sql:  "select * from t where t.b <= 100 order by t.a limit 1",
