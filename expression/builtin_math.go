@@ -521,7 +521,7 @@ func (b *builtinCeilIntToDecSig) evalDecimal(row types.Row) (*types.MyDecimal, b
 		return nil, true, errors.Trace(err)
 	}
 
-	if mysql.HasUnsignedFlag(b.baseBuiltinFunc.tp.Flag) {
+	if mysql.HasUnsignedFlag(b.args[0].GetType().Flag) || val >= 0 {
 		return types.NewDecFromUint(uint64(val)), false, nil
 	}
 	return types.NewDecFromInt(val), false, nil
