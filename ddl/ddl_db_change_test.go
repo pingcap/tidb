@@ -563,10 +563,12 @@ func (s *testStateChangeSuite) testControlParallelExecSQL(c *C, sql1, sql2 strin
 	c.Assert(err, IsNil)
 	_, err = s.se.Execute(context.Background(), "create table t_tb_a(a int)")
 	c.Assert(err, IsNil)
-	defer s.se.Execute(context.Background(), "drop table t_tb")
-	defer s.se.Execute(context.Background(), "drop table t")
-	defer s.se.Execute(context.Background(), "drop table t_tb_a")
-
+	defer func () {
+		s.se.Execute(context.Background(), "drop table t_tb")
+		s.se.Execute(context.Background(), "drop table t")
+		s.se.Execute(context.Background(), "drop table t_tb_a")
+	}()
+	
 	callback := &ddl.TestDDLCallback{}
 	times := 0
 	callback.OnJobUpdatedExported = func(job *model.Job) {
