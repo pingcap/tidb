@@ -115,9 +115,7 @@ func (s *testTimeSuite) TestTimestamp(c *C) {
 	}
 
 	for _, test := range table {
-		t, err := types.ParseTimestamp(&stmtctx.StatementContext{
-			TimeZone: time.Local,
-		}, test.Input)
+		t, err := types.ParseTimestamp(&stmtctx.StatementContext{TimeZone: time.UTC}, test.Input)
 		c.Assert(err, IsNil)
 		c.Assert(t.String(), Equals, test.Expect)
 	}
@@ -128,7 +126,7 @@ func (s *testTimeSuite) TestTimestamp(c *C) {
 	}
 
 	for _, test := range errTable {
-		_, err := types.ParseTimestamp(nil, test)
+		_, err := types.ParseTimestamp(&stmtctx.StatementContext{TimeZone: time.UTC}, test)
 		c.Assert(err, NotNil)
 	}
 }
@@ -411,7 +409,7 @@ func (s *testTimeSuite) getLocation(c *C) *time.Location {
 func (s *testTimeSuite) TestCodec(c *C) {
 	defer testleak.AfterTest(c)()
 
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 
 	// MySQL timestamp value doesn't allow month=0 or day=0.
 	t, err := types.ParseTimestamp(sc, "2016-12-00 00:00:00")
@@ -525,7 +523,7 @@ func (s *testTimeSuite) TestParseTimeFromNum(c *C) {
 
 		// testtypes.ParseTimestampFromNum
 		t, err = types.ParseTimestampFromNum(&stmtctx.StatementContext{
-			TimeZone: time.Local,
+			TimeZone: time.UTC,
 		}, test.Input)
 		if test.ExpectTimeStampError {
 			c.Assert(err, NotNil)
@@ -660,7 +658,7 @@ func (s *testTimeSuite) TestParseFrac(c *C) {
 func (s *testTimeSuite) TestRoundFrac(c *C) {
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
-	sc.TimeZone = time.Local
+	sc.TimeZone = time.UTC
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Input  string
@@ -932,7 +930,7 @@ func (s *testTimeSuite) TestTimeAdd(c *C) {
 	}
 
 	sc := &stmtctx.StatementContext{
-		TimeZone: time.Local,
+		TimeZone: time.UTC,
 	}
 	for _, t := range tbl {
 		v1, err := types.ParseTime(nil, t.Arg1, mysql.TypeDatetime, types.MaxFsp)
@@ -1025,9 +1023,9 @@ func (s *testTimeSuite) TestCheckTimestamp(c *C) {
 	for _, t := range tests {
 		validTimestamp := types.CheckTimestampTypeForTest(&stmtctx.StatementContext{TimeZone: t.tz}, t.input)
 		if t.expectRetError {
-			c.Assert(validTimestamp, NotNil)
+			c.Assert(validTimestamp, NotNil, Commentf("For %s", t.input))
 		} else {
-			c.Assert(validTimestamp, IsNil)
+			c.Assert(validTimestamp, IsNil, Commentf("For %s", t.input))
 		}
 	}
 }

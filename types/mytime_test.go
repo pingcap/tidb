@@ -14,8 +14,6 @@
 package types
 
 import (
-	"time"
-
 	. "github.com/pingcap/check"
 )
 
@@ -211,30 +209,4 @@ func (s *testMyTimeSuite) TestIsLeapYear(c *C) {
 	for _, tt := range tests {
 		c.Assert(tt.T.IsLeapYear(), Equals, tt.Expect)
 	}
-}
-
-func (s *testMyTimeSuite) TestConvertTimeZone(c *C) {
-	loc, _ := time.LoadLocation("Asia/Shanghai")
-	tests := []struct {
-		input  MysqlTime
-		from   *time.Location
-		to     *time.Location
-		expect MysqlTime
-	}{
-		{FromDate(2017, 1, 1, 0, 0, 0, 0), time.UTC, loc, FromDate(2017, 1, 1, 8, 0, 0, 0)},
-		{FromDate(2017, 1, 1, 8, 0, 0, 0), loc, time.UTC, FromDate(2017, 1, 1, 0, 0, 0, 0)},
-		{FromDate(0, 0, 0, 0, 0, 0, 0), loc, time.UTC, FromDate(0, 0, 0, 0, 0, 0, 0)},
-	}
-	for _, t := range tests {
-		converted, err := t.input.convertTimeZone(t.from, t.to)
-		c.Assert(err, IsNil)
-		c.Assert(compareTime(converted, t.expect), Equals, 0)
-	}
-
-	loc1, _ := time.LoadLocation("Asia/Shanghai")
-	loc2, _ := time.LoadLocation("Asia/Shanghai")
-	input := FromDate(2017, 1, 1, 0, 0, 0, 0)
-	converted, err := input.convertTimeZone(loc1, loc2)
-	c.Assert(err, IsNil)
-	c.Assert(compareTime(converted, input), Equals, 0)
 }

@@ -117,31 +117,6 @@ func (t MysqlTime) GoTime(loc *gotime.Location) (gotime.Time, error) {
 	return tm, nil
 }
 
-// ConvertTimeZone converts the mysql time value from one timezone to another.
-// `t` must match the timezone of `from`
-func (t MysqlTime) convertTimeZone(from, to *gotime.Location) (MysqlTime, error) {
-	if t.isZero() {
-		return t, nil
-	}
-	if from == nil || to == nil {
-		return ZeroTime, errors.New("timezone is required for convert")
-	}
-	if from == to {
-		return t, nil
-	}
-	raw, err := t.GoTime(from)
-	if err != nil {
-		return ZeroTime, errors.Trace(err)
-	}
-	converted := raw.In(to)
-	return FromGoTime(converted), nil
-}
-
-// IsZero returns a boolean indicating whether the time is equal to ZeroTime.
-func (t MysqlTime) isZero() bool {
-	return compareTime(t, ZeroTime) == 0
-}
-
 // IsLeapYear returns if it's leap year.
 func (t MysqlTime) IsLeapYear() bool {
 	return (t.year%4 == 0 && t.year%100 != 0) || t.year%400 == 0
@@ -180,32 +155,6 @@ func calcTimeDiff(t1, t2 MysqlTime, sign int) (seconds, microseconds int, neg bo
 	seconds = int(tmp / 1e6)
 	microseconds = int(tmp % 1e6)
 	return
-}
-
-// compareTime compare twe MysqlTime.
-// return:
-//  0: if a == b
-//  1: if a > b
-// -1: if a < b
-func compareTime(a, b MysqlTime) int {
-	ta := datetimeToUint64(a)
-	tb := datetimeToUint64(b)
-
-	switch {
-	case ta < tb:
-		return -1
-	case ta > tb:
-		return 1
-	}
-
-	switch {
-	case a.Microsecond() < b.Microsecond():
-		return -1
-	case a.Microsecond() > b.Microsecond():
-		return 1
-	}
-
-	return 0
 }
 
 // datetimeToUint64 converts time value to integer in YYYYMMDDHHMMSS format.

@@ -110,12 +110,20 @@ var (
 	// MaxDatetime is the maximum for mysql datetime type.
 	MaxDatetime = FromDate(9999, 12, 31, 23, 59, 59, 999999)
 
-	// min and max timestamp timezone
-	boundTimezone = gotime.Local
+	// BoundTimezone is the timezone for min and max timestamp.
+	BoundTimezone = gotime.UTC
 	// MinTimestamp is the minimum for mysql timestamp type.
-	MinTimestamp, _ = FromDate(1970, 1, 1, 0, 0, 1, 0).convertTimeZone(gotime.UTC, boundTimezone)
+	MinTimestamp = Time{
+		Time: FromDate(1970, 1, 1, 0, 0, 1, 0),
+		Type: mysql.TypeTimestamp,
+		Fsp:  DefaultFsp,
+	}
 	// maxTimestamp is the maximum for mysql timestamp type.
-	maxTimestamp, _ = FromDate(2038, 1, 19, 3, 14, 7, 999999).convertTimeZone(gotime.UTC, boundTimezone)
+	maxTimestamp = Time{
+		Time: FromDate(2038, 1, 19, 3, 14, 7, 999999),
+		Type: mysql.TypeTimestamp,
+		Fsp:  DefaultFsp,
+	}
 
 	// WeekdayNames lists names of weekdays, which are used in builtin time function `dayname`.
 	WeekdayNames = []string{
@@ -189,11 +197,12 @@ func CurrentTime(tp uint8) Time {
 // The input time should be a valid timestamp.
 func (t *Time) ConvertTimeZone(from, to *gotime.Location) error {
 	if !t.IsZero() {
-		converted, err := t.Time.convertTimeZone(from, to)
+		raw, err := t.Time.GoTime(from)
 		if err != nil {
-			return err
+			return errors.Trace(err)
 		}
-		t.Time = converted
+		converted := raw.In(to)
+		t.Time = FromGoTime(converted)
 	}
 	return nil
 }
@@ -218,7 +227,7 @@ func (t Time) String() string {
 
 // IsZero returns a boolean indicating whether the time is equal to ZeroTime.
 func (t Time) IsZero() bool {
-	return t.Time.isZero()
+	return compareTime(t.Time, ZeroTime) == 0
 }
 
 // InvalidZero returns a boolean indicating whether the month or day is zero.
@@ -297,6 +306,32 @@ func (t Time) ConvertToDuration() (Duration, error) {
 // If t is after o, return 1, equal o, return 0, before o, return -1.
 func (t Time) Compare(o Time) int {
 	return compareTime(t.Time, o.Time)
+}
+
+// compareTime compare two MysqlTime.
+// return:
+//  0: if a == b
+//  1: if a > b
+// -1: if a < b
+func compareTime(a, b MysqlTime) int {
+	ta := datetimeToUint64(a)
+	tb := datetimeToUint64(b)
+
+	switch {
+	case ta < tb:
+		return -1
+	case ta > tb:
+		return 1
+	}
+
+	switch {
+	case a.Microsecond() < b.Microsecond():
+		return -1
+	case a.Microsecond() > b.Microsecond():
+		return 1
+	}
+
+	return 0
 }
 
 // CompareString is like Compare,
@@ -1334,15 +1369,18 @@ func checkTimestampType(sc *stmtctx.StatementContext, t MysqlTime) error {
 		return errors.New("statementContext is required during checkTimestampType")
 	}
 
-	maxTs, err := maxTimestamp.convertTimeZone(boundTimezone, sc.TimeZone)
-	if err != nil {
-		return errors.Trace(err)
+	var checkTime MysqlTime
+	if sc.TimeZone != BoundTimezone {
+		convertTime := Time{Time: t, Type: mysql.TypeTimestamp}
+		err := convertTime.ConvertTimeZone(sc.TimeZone, BoundTimezone)
+		if err != nil {
+			return err
+		}
+		checkTime = convertTime.Time
+	} else {
+		checkTime = t
 	}
-	minTs, err := MinTimestamp.convertTimeZone(boundTimezone, sc.TimeZone)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if compareTime(t, maxTs) > 0 || compareTime(t, minTs) < 0 {
+	if compareTime(checkTime, maxTimestamp.Time) > 0 || compareTime(checkTime, MinTimestamp.Time) < 0 {
 		return errors.Trace(ErrInvalidTimeFormat.GenByArgs(t))
 	}
 

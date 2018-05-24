@@ -218,7 +218,7 @@ func NewContext() *Context {
 		cancel:      cancel,
 	}
 	sctx.sessionVars.MaxChunkSize = 2
-	sctx.sessionVars.StmtCtx.TimeZone = time.Local
+	sctx.sessionVars.StmtCtx.TimeZone = time.UTC
 	return sctx
 }
 

@@ -13,5 +13,5 @@
 
 package types
 
-// CheckTimestampTypeForTest export CheckTimestampType for test
+// CheckTimestampTypeForTest export CheckTimestampType for test.
 var CheckTimestampTypeForTest = checkTimestampType
