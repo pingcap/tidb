@@ -236,15 +236,21 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 			failedUsers = append(failedUsers, user.String())
 		}
 
-		if user.Hostname == "%" {
-			sql = fmt.Sprintf(`DELETE FROM %s.%s WHERE User = "%s";`, mysql.SystemDB, mysql.DBTable, user.Username)
-		} else {
-			sql = fmt.Sprintf(`DELETE FROM %s.%s WHERE Host = "%s" and User = "%s";`, mysql.SystemDB, mysql.DBTable, user.Hostname, user.Username)
-		}
+		// delete privileges from mysql.db
+		sql = fmt.Sprintf(`DELETE FROM %s.%s WHERE Host = "%s" and User = "%s";`, mysql.SystemDB, mysql.DBTable, user.Hostname, user.Username)
 		_, _, err2 := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 		if err2 != nil {
 			failedUsers = append(failedUsers, user.String())
 		}
+
+		// delete privileges from mysql.tables_priv
+		sql = fmt.Sprintf(`DELETE FROM %s.%s WHERE Host = "%s" and User = "%s";`, mysql.SystemDB, mysql.TablePrivTable, user.Hostname, user.Username)
+		_, _, err3 := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+		if err3 != nil {
+			failedUsers = append(failedUsers, user.String())
+		}
+
+		//TODO: (tidb-team) need delete columns_priv once we implement columns_priv functionality.
 	}
 	if len(failedUsers) > 0 {
 		// Commit the transaction even if we returns error
