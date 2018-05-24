@@ -2029,7 +2029,7 @@ DeleteFromStmt:
 			Priority:	  $3.(mysql.PriorityEnum),
 			Quick:		  $4.(bool),
 			IgnoreErr:	  $5.(bool),
-			IsMultiTable: true,
+			IsMultiTable: 	  true,
 			BeforeFrom:	  true,
 			Tables:		  &ast.DeleteTableList{Tables: $6.([]*ast.TableName)},
 			TableRefs:	  &ast.TableRefsClause{TableRefs: $8.(*ast.Join)},
@@ -2050,7 +2050,7 @@ DeleteFromStmt:
 			Priority:	  $3.(mysql.PriorityEnum),
 			Quick:		  $4.(bool),
 			IgnoreErr:	  $5.(bool),
-			IsMultiTable: true,
+			IsMultiTable:	  true,
 			Tables:		  &ast.DeleteTableList{Tables: $7.([]*ast.TableName)},
 			TableRefs:	  &ast.TableRefsClause{TableRefs: $9.(*ast.Join)},
 		}
