@@ -26,6 +26,10 @@ import (
 func (s *testSuite) TestPrepared(c *C) {
 	orgEnable := plan.PreparedPlanCacheEnabled
 	orgCapacity := plan.PreparedPlanCacheCapacity
+	defer func() {
+		plan.PreparedPlanCacheEnabled = orgEnable
+		plan.PreparedPlanCacheCapacity = orgCapacity
+	}()
 	flags := []bool{false, true}
 	ctx := context.Background()
 	for _, flag := range flags {
@@ -177,13 +181,15 @@ func (s *testSuite) TestPrepared(c *C) {
 		exec.Next(ctx, nil)
 		exec.Close()
 	}
-	plan.PreparedPlanCacheEnabled = orgEnable
-	plan.PreparedPlanCacheCapacity = orgCapacity
 }
 
 func (s *testSuite) TestPreparedLimitOffset(c *C) {
 	orgEnable := plan.PreparedPlanCacheEnabled
 	orgCapacity := plan.PreparedPlanCacheCapacity
+	defer func() {
+		plan.PreparedPlanCacheEnabled = orgEnable
+		plan.PreparedPlanCacheCapacity = orgCapacity
+	}()
 	flags := []bool{false, true}
 	ctx := context.Background()
 	for _, flag := range flags {
@@ -211,13 +217,15 @@ func (s *testSuite) TestPreparedLimitOffset(c *C) {
 		_, err = tk.Se.ExecutePreparedStmt(ctx, stmtID, 1)
 		c.Assert(err, IsNil)
 	}
-	plan.PreparedPlanCacheEnabled = orgEnable
-	plan.PreparedPlanCacheCapacity = orgCapacity
 }
 
 func (s *testSuite) TestPreparedNullParam(c *C) {
 	orgEnable := plan.PreparedPlanCacheEnabled
 	orgCapacity := plan.PreparedPlanCacheCapacity
+	defer func() {
+		plan.PreparedPlanCacheEnabled = orgEnable
+		plan.PreparedPlanCacheCapacity = orgCapacity
+	}()
 	flags := []bool{false, true}
 	for _, flag := range flags {
 		plan.PreparedPlanCacheEnabled = flag
@@ -245,8 +253,6 @@ func (s *testSuite) TestPreparedNullParam(c *C) {
 		r = tk.MustQuery(`execute stmt using @id;`)
 		r.Check(testkit.Rows("1"))
 	}
-	plan.PreparedPlanCacheEnabled = orgEnable
-	plan.PreparedPlanCacheCapacity = orgCapacity
 }
 
 func (s *testSuite) TestPreparedNameResolver(c *C) {
