@@ -171,30 +171,30 @@ func (ds *DataSource) tryToGetDualTask() (task, error) {
 
 // findBestTask implements the PhysicalPlan interface.
 // It will enumerate all the available indices and choose a plan with least cost.
-func (ds *DataSource) findBestTask(prop *requiredProp) (task, error) {
+func (ds *DataSource) findBestTask(prop *requiredProp) (t task, err error) {
 	// If ds is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself.
 	// So here we do nothing.
 	// TODO: Add a special prop to handle IndexJoin's inner plan.
 	// Then we can remove forceToTableScan and forceToIndexScan.
-
 	if prop == nil {
 		return nil, nil
 	}
 
-	t := ds.getTask(prop)
+	t = ds.getTask(prop)
 	if t != nil {
 		return t, nil
 	}
 
+	// If prop.enforced is true, the prop.cols need to be set nil for ds.findBestTask.
+	// Before function return, reset it for enforcing task prop and storing map<prop,task>.
 	oldPropCols := prop.cols
 	if prop.enforced {
 		prop.cols = []*expression.Column{}
 	}
-	t, err := ds.tryToGetDualTask()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if t != nil {
+	defer func() {
+		if err != nil {
+			return
+		}
 		if prop.enforced {
 			prop.cols = oldPropCols
 			t = prop.enforceProperty(t, ds.basePlan.ctx)
@@ -202,21 +202,21 @@ func (ds *DataSource) findBestTask(prop *requiredProp) (task, error) {
 		} else {
 			ds.storeTask(prop, t)
 		}
-		return t, nil
+	}()
+
+	t, err = ds.tryToGetDualTask()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if t != nil {
+		return
 	}
 	t, err = ds.tryToGetMemTask(prop)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	if t != nil {
-		if prop.enforced {
-			prop.cols = oldPropCols
-			t = prop.enforceProperty(t, ds.basePlan.ctx)
-			ds.storeTask(prop, t)
-		} else {
-			ds.storeTask(prop, t)
-		}
-		return t, nil
+		return
 	}
 	t = invalidTask
 
@@ -245,14 +245,7 @@ func (ds *DataSource) findBestTask(prop *requiredProp) (task, error) {
 			}
 		}
 	}
-	if prop.enforced {
-		prop.cols = oldPropCols
-		t = prop.enforceProperty(t, ds.basePlan.ctx)
-		ds.storeTask(prop, t)
-	} else {
-		ds.storeTask(prop, t)
-	}
-	return t, nil
+	return
 }
 
 func isCoveringIndex(columns []*model.ColumnInfo, indexColumns []*model.IndexColumn, pkIsHandle bool) bool {
