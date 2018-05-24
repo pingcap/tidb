@@ -233,18 +233,12 @@ func (ds *DataSource) findBestTask(prop *requiredProp) (t task, err error) {
 	}()
 
 	t, err = ds.tryToGetDualTask()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if t != nil {
-		return
+	if err != nil || t != nil {
+		return t, errors.Trace(err)
 	}
 	t, err = ds.tryToGetMemTask(prop)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if t != nil {
-		return
+	if err != nil || t != nil {
+		return t, errors.Trace(err)
 	}
 	t = invalidTask
 
