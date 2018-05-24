@@ -791,7 +791,7 @@ type DeleteStmt struct {
 	Quick        bool
 	IsMultiTable bool
 	BeforeFrom   bool
-	// TableHints represents the level Optimizer Hint
+	// TableHints represents the level Optimizer Hint for join type.
 	TableHints []*TableOptimizerHint
 }
 

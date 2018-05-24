@@ -2005,10 +2005,10 @@ DeleteFromStmt:
 		tn.IndexHints = $8.([]*ast.IndexHint)
 		join := &ast.Join{Left: &ast.TableSource{Source: tn}, Right: nil}
 		x := &ast.DeleteStmt{
-			TableRefs:	&ast.TableRefsClause{TableRefs: join},
-			Priority:	$3.(mysql.PriorityEnum),
-			Quick:		$4.(bool),
-			IgnoreErr:		$5.(bool),
+			TableRefs: &ast.TableRefsClause{TableRefs: join},
+			Priority:  $3.(mysql.PriorityEnum),
+			Quick:	   $4.(bool),
+			IgnoreErr: $5.(bool),
 		}
 		if $9 != nil {
 			x.Where = $9.(ast.ExprNode)
@@ -2026,13 +2026,13 @@ DeleteFromStmt:
 	{
 		// Multiple Table
 		x := &ast.DeleteStmt{
-			Priority:	$3.(mysql.PriorityEnum),
-			Quick:		$4.(bool),
-			IgnoreErr:		$5.(bool),
-			IsMultiTable:	true,
-			BeforeFrom:	true,
-			Tables:		&ast.DeleteTableList{Tables: $6.([]*ast.TableName)},
-			TableRefs:	&ast.TableRefsClause{TableRefs: $8.(*ast.Join)},
+			Priority:	  $3.(mysql.PriorityEnum),
+			Quick:		  $4.(bool),
+			IgnoreErr:	  $5.(bool),
+			IsMultiTable: true,
+			BeforeFrom:	  true,
+			Tables:		  &ast.DeleteTableList{Tables: $6.([]*ast.TableName)},
+			TableRefs:	  &ast.TableRefsClause{TableRefs: $8.(*ast.Join)},
 		}
 		if $2 != nil {
 			x.TableHints = $2.([]*ast.TableOptimizerHint)
@@ -2047,12 +2047,12 @@ DeleteFromStmt:
 	{
 		// Multiple Table
 		x := &ast.DeleteStmt{
-			Priority:	$3.(mysql.PriorityEnum),
-			Quick:		$4.(bool),
-			IgnoreErr:		$5.(bool),
-			IsMultiTable:	true,
-			Tables:		&ast.DeleteTableList{Tables: $7.([]*ast.TableName)},
-			TableRefs:	&ast.TableRefsClause{TableRefs: $9.(*ast.Join)},
+			Priority:	  $3.(mysql.PriorityEnum),
+			Quick:		  $4.(bool),
+			IgnoreErr:	  $5.(bool),
+			IsMultiTable: true,
+			Tables:		  &ast.DeleteTableList{Tables: $7.([]*ast.TableName)},
+			TableRefs:	  &ast.TableRefsClause{TableRefs: $9.(*ast.Join)},
 		}
 		if $2 != nil {
 			x.TableHints = $2.([]*ast.TableOptimizerHint)
@@ -6243,10 +6243,10 @@ UpdateStmt:
 			refs = &ast.Join{Left: $5.(ast.ResultSetNode)}
 		}
 		st := &ast.UpdateStmt{
-			Priority:	$3.(mysql.PriorityEnum),
-			TableRefs:	&ast.TableRefsClause{TableRefs: refs},
-			List:		$7.([]*ast.Assignment),
-			IgnoreErr:		$4.(bool),
+			Priority:  $3.(mysql.PriorityEnum),
+			TableRefs: &ast.TableRefsClause{TableRefs: refs},
+			List:	   $7.([]*ast.Assignment),
+			IgnoreErr: $4.(bool),
 		}
 		if $2 != nil {
 			st.TableHints = $2.([]*ast.TableOptimizerHint)
@@ -6265,10 +6265,10 @@ UpdateStmt:
 |	"UPDATE" TableOptimizerHints PriorityOpt IgnoreOptional TableRefs "SET" AssignmentList WhereClauseOptional
 	{
 		st := &ast.UpdateStmt{
-			Priority:	$3.(mysql.PriorityEnum),
-			TableRefs:	&ast.TableRefsClause{TableRefs: $5.(*ast.Join)},
-			List:		$7.([]*ast.Assignment),
-			IgnoreErr:		$4.(bool),
+			Priority:  $3.(mysql.PriorityEnum),
+			TableRefs: &ast.TableRefsClause{TableRefs: $5.(*ast.Join)},
+			List:	   $7.([]*ast.Assignment),
+			IgnoreErr: $4.(bool),
 		}
 		if $2 != nil {
 			st.TableHints = $2.([]*ast.TableOptimizerHint)
