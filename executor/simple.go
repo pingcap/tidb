@@ -231,33 +231,39 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 			continue
 		}
 
-		// begin a transaction to delete.
-		if _, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, "begin"); err != nil {
-			return errors.Trace(errors.New("Failed to begin a transaction during drop user."))
+		// begin a transaction to delete a user.
+		if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "begin"); err != nil {
+			fmt.Println(err)
+			return errors.Trace(err)
 		}
 		sql := fmt.Sprintf(`DELETE FROM %s.%s WHERE Host = "%s" and User = "%s";`, mysql.SystemDB, mysql.UserTable, user.Hostname, user.Username)
-		if _, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql); err != nil {
+		if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql); err != nil {
 			failedUsers = append(failedUsers, user.String())
 		}
 
 		// delete privileges from mysql.db
 		sql = fmt.Sprintf(`DELETE FROM %s.%s WHERE Host = "%s" and User = "%s";`, mysql.SystemDB, mysql.DBTable, user.Hostname, user.Username)
-		if _, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql); err != nil {
+		if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql); err != nil {
 			failedUsers = append(failedUsers, user.String())
 		}
 
 		// delete privileges from mysql.tables_priv
 		sql = fmt.Sprintf(`DELETE FROM %s.%s WHERE Host = "%s" and User = "%s";`, mysql.SystemDB, mysql.TablePrivTable, user.Hostname, user.Username)
-		if _, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql); err != nil {
+		if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql); err != nil {
 			failedUsers = append(failedUsers, user.String())
 		}
 
 		//TODO: (tidb-team) need delete columns_priv once we implement columns_priv functionality.
-		if _, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, "commit"); err != nil {
-			return errors.Trace(errors.New("Failed to commit a transaction during drop user."))
+		if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "commit"); err != nil {
+			return errors.Trace(err)
 		}
 	}
 	if len(failedUsers) > 0 {
+		// Commit the transaction even if we returns error
+		// err := e.ctx.Txn().Commit(sessionctx.SetCommitCtx(context.Background(), e.ctx))
+		// if err != nil {
+		// 	return errors.Trace(err)
+		// }
 		errMsg := "Operation DROP USER failed for " + strings.Join(failedUsers, ",")
 		return terror.ClassExecutor.New(CodeCannotUser, errMsg)
 	}
