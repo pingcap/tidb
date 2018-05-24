@@ -57,7 +57,7 @@ func (t *DeleteRangeTask) Execute() error {
 			return nil
 		default:
 		}
-		bo := NewBackoffer(t.ctx, DeleteRangeOneRegionMaxBackoff)
+		bo := NewBackoffer(t.ctx, deleteRangeOneRegionMaxBackoff)
 		loc, err := t.store.GetRegionCache().LocateKey(bo, startKey)
 		if err != nil {
 			return errors.Trace(err)

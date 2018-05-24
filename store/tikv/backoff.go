@@ -163,7 +163,7 @@ const (
 	cleanupMaxBackoff              = 20000
 	GcOneRegionMaxBackoff          = 20000
 	GcResolveLockMaxBackoff        = 100000
-	DeleteRangeOneRegionMaxBackoff = 100000
+	deleteRangeOneRegionMaxBackoff = 100000
 	rawkvMaxBackoff                = 20000
 	splitRegionBackoff             = 20000
 )
