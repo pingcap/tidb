@@ -217,6 +217,7 @@ import (
 	tinyIntType		"TINYINT"
 	tinytextType		"TINYTEXT"
 	to			"TO"
+	trace			"TRACE"
 	trailing		"TRAILING"
 	trigger			"TRIGGER"
 	trueKwd			"TRUE"
@@ -541,6 +542,7 @@ import (
 	EmptyStmt			"empty statement"
 	ExecuteStmt			"Execute statement"
 	ExplainStmt			"EXPLAIN statement"
+	ExplainableStmt			"explainable statement"
 	FlushStmt			"Flush statement"
 	GrantStmt			"Grant statement"
 	InsertIntoStmt			"INSERT INTO statement"
@@ -557,7 +559,8 @@ import (
 	SetStmt				"Set variable statement"
 	ShowStmt			"Show engines/databases/tables/columns/warnings/status statement"
 	Statement			"statement"
-	ExplainableStmt			"explainable statement"
+	TraceStmt			"TRACE statement"
+	TraceableStmt			"traceable statment"
 	TruncateTableStmt		"TRUNCATE TABLE statement"
 	UnlockTablesStmt		"Unlock tables statement"
 	UpdateStmt			"UPDATE statement"
@@ -2127,6 +2130,16 @@ EmptyStmt:
 	/* EMPTY */
 	{
 		$$ = nil
+	}
+
+TraceStmt:
+	"TRACE" TraceableStmt
+	{
+		$$ = &ast.TraceStmt{
+			Stmt:	$2,
+			Format: "row",
+		}
+
 	}
 
 ExplainSym:
@@ -5491,6 +5504,14 @@ Statement:
 |	UseStmt
 |	UnlockTablesStmt
 |	LockTablesStmt
+
+TraceableStmt:
+	SelectStmt
+|	DeleteFromStmt
+|	UpdateStmt
+|	InsertIntoStmt
+|	ReplaceIntoStmt
+|	UnionStmt
 
 ExplainableStmt:
 	SelectStmt
