@@ -198,10 +198,8 @@ func (ds *DataSource) findBestTask(prop *requiredProp) (t task, err error) {
 		if prop.enforced {
 			prop.cols = oldPropCols
 			t = prop.enforceProperty(t, ds.basePlan.ctx)
-			ds.storeTask(prop, t)
-		} else {
-			ds.storeTask(prop, t)
 		}
+		ds.storeTask(prop, t)
 	}()
 
 	t, err = ds.tryToGetDualTask()

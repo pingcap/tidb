@@ -281,7 +281,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 			best: "MergeLeftOuterSemiJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,s.a)->Projection",
 		},
 		// Test Single Merge Join.
-		// Merge Join will now enforce a sort.
+		// Merge Join now enforce a sort.
 		{
 			sql:  "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.a = t2.b",
 			best: "MergeInnerJoin{TableReader(Table(t))->Sort->TableReader(Table(t))->Sort}(t1.a,t2.b)",
