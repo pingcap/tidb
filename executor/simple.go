@@ -259,7 +259,7 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 	}
 	if len(failedUsers) > 0 {
 		errMsg := "Operation DROP USER failed for " + strings.Join(failedUsers, ",")
-		eturn terror.ClassExecutor.New(CodeCannotUser, errMsg)
+		return terror.ClassExecutor.New(CodeCannotUser, errMsg)
 	}
 	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
 	return nil
