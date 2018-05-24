@@ -89,14 +89,23 @@ func (p *baseLogicalPlan) findBestTask(prop *requiredProp) (bestTask task, err e
 		return invalidTask, nil
 	}
 
+	bestTask = invalidTask
+	childTasks := make([]task, 0, len(p.children))
+
 	// If prop.enforced is true, cols of prop as parameter in exhaustPhysicalPlans should be nil
 	// And reset it for enforcing task prop and storing map<prop,task>
 	oldPropCols := prop.cols
 	if prop.enforced {
+		// First, get the bestTask without enforced prop
+		prop.enforced = false
+		bestTask, err = p.findBestTask(prop)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		prop.enforced = true
+		// Next, get the bestTask with enforced prop
 		prop.cols = []*expression.Column{}
 	}
-	bestTask = invalidTask
-	childTasks := make([]task, 0, len(p.children))
 	physicalPlans := p.self.exhaustPhysicalPlans(prop)
 	prop.cols = oldPropCols
 
@@ -191,13 +200,25 @@ func (ds *DataSource) findBestTask(prop *requiredProp) (t task, err error) {
 
 	t = ds.getTask(prop)
 	if t != nil {
-		return t, nil
+		return
 	}
 
 	// If prop.enforced is true, the prop.cols need to be set nil for ds.findBestTask.
 	// Before function return, reset it for enforcing task prop and storing map<prop,task>.
 	oldPropCols := prop.cols
 	if prop.enforced {
+		// First, get the bestTask without enforced prop
+		prop.enforced = false
+		t, err = ds.findBestTask(prop)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		prop.enforced = true
+		if t != invalidTask {
+			ds.storeTask(prop, t)
+			return
+		}
+		// Next, get the bestTask with enforced prop
 		prop.cols = []*expression.Column{}
 	}
 	defer func() {
