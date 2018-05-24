@@ -17,6 +17,7 @@ package mock
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
@@ -217,6 +218,7 @@ func NewContext() *Context {
 		cancel:      cancel,
 	}
 	sctx.sessionVars.MaxChunkSize = 2
+	sctx.sessionVars.StmtCtx.TimeZone = time.UTC
 	return sctx
 }
 
