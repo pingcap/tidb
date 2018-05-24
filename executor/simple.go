@@ -233,7 +233,7 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 
 		// begin a transaction to delete.
 		if _, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, "begin"); err != nil {
-			return errors.Trace("Failed to begin a transaction during drop user.")
+			return errors.Trace(errors.New("Failed to begin a transaction during drop user."))
 		}
 		sql := fmt.Sprintf(`DELETE FROM %s.%s WHERE Host = "%s" and User = "%s";`, mysql.SystemDB, mysql.UserTable, user.Hostname, user.Username)
 		if _, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql); err != nil {
@@ -254,7 +254,7 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 
 		//TODO: (tidb-team) need delete columns_priv once we implement columns_priv functionality.
 		if _, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, "commit"); err != nil {
-			return errors.Trace("Failed to commit a transaction during drop user.")
+			return errors.Trace(errors.New("Failed to commit a transaction during drop user."))
 		}
 	}
 	if len(failedUsers) > 0 {
