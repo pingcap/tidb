@@ -1810,18 +1810,6 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 	return errors.Trace(err)
 }
 
-// findCol finds column in cols by name.
-func findCol(cols []*model.ColumnInfo, name string) *model.ColumnInfo {
-	name = strings.ToLower(name)
-	for _, col := range cols {
-		if col.Name.L == name {
-			return col
-		}
-	}
-
-	return nil
-}
-
 func isDroppableColumn(tblInfo *model.TableInfo, colName model.CIStr) error {
 	// Check whether there are other columns depend on this column or not.
 	for _, col := range tblInfo.Columns {
