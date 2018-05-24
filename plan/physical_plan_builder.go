@@ -89,9 +89,18 @@ func (p *baseLogicalPlan) findBestTask(prop *requiredProp) (bestTask task, err e
 		return invalidTask, nil
 	}
 
+	// If prop.enforced is true, cols of prop as parameter in exhaustPhysicalPlans should be nil
+	// And reset it for enforcing task prop and storing map<prop,task>
+	oldPropCols := prop.cols
+	if prop.enforced {
+		prop.cols = []*expression.Column{}
+	}
 	bestTask = invalidTask
 	childTasks := make([]task, 0, len(p.children))
-	for _, pp := range p.self.exhaustPhysicalPlans(prop) {
+	physicalPlans := p.self.exhaustPhysicalPlans(prop)
+	prop.cols = oldPropCols
+
+	for _, pp := range physicalPlans {
 		// find best child tasks firstly.
 		childTasks = childTasks[:0]
 		for i, child := range p.children {
