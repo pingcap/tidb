@@ -1036,8 +1036,11 @@ func (cc *clientConn) handleChangeUser(data []byte) error {
 	if len(data) < 1 {
 		return mysql.ErrMalformPacket
 	}
-	passLen := data[0]
+	passLen := int(data[0])
 	data = data[1:]
+	if passLen > len(data) {
+		return mysql.ErrMalformPacket
+	}
 	pass := data[:passLen]
 	data = data[passLen:]
 	dbName, data := parseNullTermString(data)
