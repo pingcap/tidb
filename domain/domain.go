@@ -640,7 +640,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	t := time.Now()
 	err := statsHandle.InitStats(do.InfoSchema())
 	if err != nil {
-		log.Error("[stats] init stats info failed: ", errors.ErrorStack(err))
+		log.Debug("[stats] init stats info failed: ", errors.ErrorStack(err))
 	} else {
 		log.Info("[stats] init stats info takes ", time.Now().Sub(t))
 	}
@@ -650,7 +650,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 		case <-loadTicker.C:
 			err = statsHandle.Update(do.InfoSchema())
 			if err != nil {
-				log.Error("[stats] update stats info fail: ", errors.ErrorStack(err))
+				log.Debug("[stats] update stats info fail: ", errors.ErrorStack(err))
 			}
 		case <-do.exit:
 			do.wg.Done()
@@ -659,24 +659,24 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 		case t := <-statsHandle.DDLEventCh():
 			err = statsHandle.HandleDDLEvent(t)
 			if err != nil {
-				log.Error("[stats] handle ddl event fail: ", errors.ErrorStack(err))
+				log.Debug("[stats] handle ddl event fail: ", errors.ErrorStack(err))
 			}
 		case t := <-statsHandle.AnalyzeResultCh():
 			for i, hg := range t.Hist {
 				err = statistics.SaveStatsToStorage(ctx, t.TableID, t.Count, t.IsIndex, hg, t.Cms[i])
 				if err != nil {
-					log.Error("[stats] save histogram to storage fail: ", errors.ErrorStack(err))
+					log.Debug("[stats] save histogram to storage fail: ", errors.ErrorStack(err))
 				}
 			}
 		case <-deltaUpdateTicker.C:
 			err = statsHandle.DumpStatsDeltaToKV()
 			if err != nil {
-				log.Error("[stats] dump stats delta fail: ", errors.ErrorStack(err))
+				log.Debug("[stats] dump stats delta fail: ", errors.ErrorStack(err))
 			}
 		case <-loadHistogramTicker.C:
 			err = statsHandle.LoadNeededHistograms()
 			if err != nil {
-				log.Error("[stats] load histograms fail: ", errors.ErrorStack(err))
+				log.Debug("[stats] load histograms fail: ", errors.ErrorStack(err))
 			}
 		case <-loadFeedbackTicker.C:
 			if !owner.IsOwner() {
@@ -684,12 +684,12 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			}
 			err = statsHandle.HandleUpdateStats(do.InfoSchema())
 			if err != nil {
-				log.Errorf("[stats] update stats using feedback fail: ", errors.ErrorStack(err))
+				log.Debug("[stats] update stats using feedback fail: ", errors.ErrorStack(err))
 			}
 		case <-dumpFeedbackTicker.C:
 			err = statsHandle.DumpStatsFeedbackToKV()
 			if err != nil {
-				log.Error("[stats] dump stats feedback fail: ", errors.ErrorStack(err))
+				log.Debug("[stats] dump stats feedback fail: ", errors.ErrorStack(err))
 			}
 		case <-gcStatsTicker.C:
 			if !owner.IsOwner() {
@@ -697,7 +697,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			}
 			err = statsHandle.GCStats(do.InfoSchema(), do.DDL().GetLease())
 			if err != nil {
-				log.Error("[stats] gc stats fail: ", errors.ErrorStack(err))
+				log.Debug("[stats] gc stats fail: ", errors.ErrorStack(err))
 			}
 		}
 	}
