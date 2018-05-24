@@ -2708,6 +2708,12 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 	tk.MustExec("create table t(a bigint unsigned)")
 	tk.MustExec("insert into t value(17666000000000000000)")
 	tk.MustQuery("select * from t where a = 17666000000000000000").Check(testkit.Rows("17666000000000000000"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a timestamp)")
+	tk.MustExec("insert into t value('1991-05-06 04:59:28')")
+	tk.MustExec("delete from t where a = '1991-05-06 04:59:28'")
+	tk.MustQuery("select * from t").Check(testkit.Rows())
 }
 
 func (s *testIntegrationSuite) TestAggregationBuiltin(c *C) {
