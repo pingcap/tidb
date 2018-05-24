@@ -272,7 +272,7 @@ func (a *aggregationOptimizer) makeNewAgg(ctx sessionctx.Context, aggFuncs []*ag
 	}
 	agg.AggFuncs = newAggFuncDescs
 	agg.SetSchema(schema)
-	// TODO: Add a Projection if any argument of aggregate funcs or group by items are scala functions.
+	// TODO: Add a Projection if any argument of aggregate funcs or group by items are scalar functions.
 	// agg.buildProjectionIfNecessary()
 	return agg
 }
