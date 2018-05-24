@@ -2535,10 +2535,17 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	tk.MustExec("insert into t value(1.2)")
 	result = tk.MustQuery("select * from t where a/0 > 1")
 	result.Check(testkit.Rows())
+
 	// TODO: tipb.StreamResponse should encode the warning fields, fix here.
 	if !tk.Se.GetSessionVars().EnableStreaming {
 		tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|Division by 0"))
 	}
+
+	tk.MustExec("USE test;")
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("CREATE TABLE t(a BIGINT, b DECIMAL(6, 2));")
+	tk.MustExec("INSERT INTO t VALUES(0, 1.12), (1, 1.21);")
+	tk.MustQuery("SELECT a/b FROM t;").Check(testkit.Rows("0.0000", "0.8264"))
 }
 
 func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
