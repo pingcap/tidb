@@ -655,7 +655,6 @@ import (
 	LinesTerminated			"Lines terminated by"
 	LocalOpt			"Local opt"
 	LockClause         		"Alter table lock clause"
-	LowPriorityOptional		"LOW_PRIORITY or empty"
 	NumLiteral			"Num/Int/Float/Decimal Literal"
 	NoWriteToBinLogAliasOpt 	"NO_WRITE_TO_BINLOG alias LOCAL or empty"
 	ObjectType			"Grant statement object type"
@@ -679,7 +678,7 @@ import (
 	PasswordOpt			"Password option"
 	ColumnPosition			"Column position [First|After ColumnName]"
 	PrepareSQL			"Prepare statement sql string"
-	Priority			"insert statement priority"
+	PriorityOpt			"Statement priority option"
 	PrivElem			"Privilege element"
 	PrivElemList			"Privilege element list"
 	PrivLevel			"Privilege scope"
@@ -689,7 +688,6 @@ import (
 	OnUpdateOpt			"optional ON UPDATE clause"
 	OptGConcatSeparator		"optional GROUP_CONCAT SEPARATOR"
 	ReferOpt			"reference option"
-	ReplacePriority			"replace statement priority"
 	RowFormat			"Row format option"
 	RowValue			"Row value"
 	SelectLockOpt			"FOR UPDATE or LOCK IN SHARE MODE,"
@@ -699,6 +697,9 @@ import (
 	SelectStmtFieldList		"SELECT statement field list"
 	SelectStmtLimit			"SELECT statement optional LIMIT clause"
 	SelectStmtOpts			"Select statement options"
+	SelectStmtBasic			"SELECT statement from constant value"
+	SelectStmtFromDual			"SELECT statement from dual"
+	SelectStmtFromTable			"SELECT statement from table"
 	SelectStmtGroup			"SELECT statement optional GROUP BY clause"
 	ShowTargetFilterable    	"Show target that can be filtered by WHERE or LIKE"
 	ShowDatabaseNameOpt		"Show tables/columns statement database name option"
@@ -782,6 +783,7 @@ import (
 	FloatOpt		"Floating-point type option"
 	Precision		"Floating-point precision option"
 	OptBinary		"Optional BINARY"
+	OptBinMod		"Optional BINARY mode"
 	OptCharset		"Optional Character setting"
 	OptCollate		"Optional Collate setting"
 	NUM			"A number"
@@ -953,11 +955,11 @@ AlterTableSpec:
 	{
 		$$ = &ast.AlterTableSpec{Tp: ast.AlterTableDropPrimaryKey}
 	}
-|	"DROP" KeyOrIndex IndexName
+|	"DROP" KeyOrIndex Identifier
 	{
 		$$ = &ast.AlterTableSpec{
 			Tp: ast.AlterTableDropIndex,
-			Name: $3.(string),
+			Name: $3,
 		}
 	}
 |	"DROP" "FOREIGN" "KEY" Symbol
@@ -1049,6 +1051,14 @@ AlterTableSpec:
 			Tp:    		ast.AlterTableAlgorithm,
 		}
 	}
+| "FORCE"
+	{
+		// Parse it and ignore it. Just for compatibility.
+		$$ = &ast.AlterTableSpec{
+			Tp:    		ast.AlterTableForce,
+		}
+	}
+
 
 AlterAlgorithm:
 	"DEFAULT" | "INPLACE" | "COPY"
@@ -1988,33 +1998,35 @@ DoStmt:
  *
  *******************************************************************/
 DeleteFromStmt:
-	"DELETE" LowPriorityOptional QuickOptional IgnoreOptional "FROM" TableName WhereClauseOptional OrderByOptional LimitClause
+	"DELETE" PriorityOpt QuickOptional IgnoreOptional "FROM" TableName IndexHintListOpt WhereClauseOptional OrderByOptional LimitClause
 	{
 		// Single Table
-		join := &ast.Join{Left: &ast.TableSource{Source: $6.(ast.ResultSetNode)}, Right: nil}
+		tn := $6.(*ast.TableName)
+		tn.IndexHints = $7.([]*ast.IndexHint)
+		join := &ast.Join{Left: &ast.TableSource{Source: tn}, Right: nil}
 		x := &ast.DeleteStmt{
 			TableRefs:	&ast.TableRefsClause{TableRefs: join},
-			LowPriority:	$2.(bool),
+			Priority:	$2.(mysql.PriorityEnum),
 			Quick:		$3.(bool),
 			IgnoreErr:		$4.(bool),
 		}
-		if $7 != nil {
-			x.Where = $7.(ast.ExprNode)
-		}
 		if $8 != nil {
-			x.Order = $8.(*ast.OrderByClause)
+			x.Where = $8.(ast.ExprNode)
 		}
 		if $9 != nil {
-			x.Limit = $9.(*ast.Limit)
+			x.Order = $9.(*ast.OrderByClause)
+		}
+		if $10 != nil {
+			x.Limit = $10.(*ast.Limit)
 		}
 
 		$$ = x
 	}
-|	"DELETE" LowPriorityOptional QuickOptional IgnoreOptional TableNameList "FROM" TableRefs WhereClauseOptional
+|	"DELETE" PriorityOpt QuickOptional IgnoreOptional TableNameList "FROM" TableRefs WhereClauseOptional
 	{
 		// Multiple Table
 		x := &ast.DeleteStmt{
-			LowPriority:	$2.(bool),
+			Priority:	$2.(mysql.PriorityEnum),
 			Quick:		$3.(bool),
 			IgnoreErr:		$4.(bool),
 			IsMultiTable:	true,
@@ -2027,11 +2039,11 @@ DeleteFromStmt:
 		}
 		$$ = x
 	}
-|	"DELETE" LowPriorityOptional QuickOptional IgnoreOptional "FROM" TableNameList "USING" TableRefs WhereClauseOptional
+|	"DELETE" PriorityOpt QuickOptional IgnoreOptional "FROM" TableNameList "USING" TableRefs WhereClauseOptional
 	{
 		// Multiple Table
 		x := &ast.DeleteStmt{
-			LowPriority:	$2.(bool),
+			Priority:	$2.(mysql.PriorityEnum),
 			Quick:		$3.(bool),
 			IgnoreErr:		$4.(bool),
 			IsMultiTable:	true,
@@ -2674,7 +2686,7 @@ NotKeywordToken:
  *  TODO: support PARTITION
  **********************************************************************************/
 InsertIntoStmt:
-	"INSERT" Priority IgnoreOptional IntoOpt TableName InsertValues OnDuplicateKeyUpdate
+	"INSERT" PriorityOpt IgnoreOptional IntoOpt TableName InsertValues OnDuplicateKeyUpdate
 	{
 		x := $6.(*ast.InsertStmt)
 		x.Priority = $2.(mysql.PriorityEnum)
@@ -2819,7 +2831,7 @@ OnDuplicateKeyUpdate:
  *  TODO: support PARTITION
  **********************************************************************************/
 ReplaceIntoStmt:
-	"REPLACE" ReplacePriority IntoOpt TableName InsertValues
+	"REPLACE" PriorityOpt IntoOpt TableName InsertValues
 	{
 		x := $5.(*ast.InsertStmt)
 		x.IsReplace = true
@@ -2827,19 +2839,6 @@ ReplaceIntoStmt:
 		ts := &ast.TableSource{Source: $4.(*ast.TableName)}
 		x.Table = &ast.TableRefsClause{TableRefs: &ast.Join{Left: ts}}
 		$$ = x
-	}
-
-ReplacePriority:
-	{
-		$$ = mysql.NoPriority
-	}
-|	"LOW_PRIORITY"
-	{
-		$$ = mysql.LowPriority
-	}
-|	"DELAYED"
-	{
-		$$ = mysql.DelayedPriority
 	}
 
 /***********************************Replace Statements END************************************/
@@ -3834,12 +3833,12 @@ CastType:
 		x.Flag |= mysql.BinaryFlag
 		$$ = x
 	}
-|	"CHAR" OptFieldLen OptBinary OptCharset
+|	"CHAR" OptFieldLen OptBinary
 	{
 		x := types.NewFieldType(mysql.TypeVarString)
 		x.Flen = $2.(int)  // TODO: Flen should be the flen of expression
-		x.Charset = $4.(string)
-		if $3.(bool) {
+		x.Charset = $3.(*ast.OptBinary).Charset
+		if $3.(*ast.OptBinary).IsBinary{
 			x.Flag |= mysql.BinaryFlag
 		}
 		if x.Charset == "" {
@@ -3918,8 +3917,7 @@ CastType:
 		$$ = x
 	}
 
-
-Priority:
+PriorityOpt:
 	{
 		$$ = mysql.NoPriority
 	}
@@ -3934,15 +3932,6 @@ Priority:
 |	"DELAYED"
 	{
 		$$ = mysql.DelayedPriority
-	}
-
-LowPriorityOptional:
-	{
-		$$ = false
-	}
-|	"LOW_PRIORITY"
-	{
-		$$ = true
 	}
 
 TableName:
@@ -4066,24 +4055,72 @@ RollbackStmt:
 		$$ = &ast.RollbackStmt{}
 	}
 
-SelectStmt:
-	"SELECT" SelectStmtOpts SelectStmtFieldList OrderByOptional SelectStmtLimit SelectLockOpt
+SelectStmtBasic:
+	"SELECT" SelectStmtOpts SelectStmtFieldList
 	{
 		st := &ast.SelectStmt {
 			SelectStmtOpts: $2.(*ast.SelectStmtOpts),
 			Distinct:      $2.(*ast.SelectStmtOpts).Distinct,
 			Fields:        $3.(*ast.FieldList),
-			LockTp:	       $6.(ast.SelectLockType),
 		}
+		$$ = st
+	}
+
+SelectStmtFromDual:
+	SelectStmtBasic FromDual WhereClauseOptional
+	{
+		st := $1.(*ast.SelectStmt)
+		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
+		if lastField.Expr != nil && lastField.AsName.O == "" {
+			lastEnd := yyS[yypt-1].offset-1
+			lastField.SetText(parser.src[lastField.Offset:lastEnd])
+		}
+		if $3 != nil {
+			st.Where = $3.(ast.ExprNode)
+		}
+	}
+
+
+SelectStmtFromTable:
+	SelectStmtBasic "FROM"
+	TableRefsClause WhereClauseOptional SelectStmtGroup HavingClause
+	{
+		st := $1.(*ast.SelectStmt)
+		st.From = $3.(*ast.TableRefsClause)
+		if st.SelectStmtOpts.TableHints != nil {
+			st.TableHints = st.SelectStmtOpts.TableHints
+		}
+		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
+		if lastField.Expr != nil && lastField.AsName.O == "" {
+			lastEnd := parser.endOffset(&yyS[yypt-4])
+			lastField.SetText(parser.src[lastField.Offset:lastEnd])
+		}
+		if $4 != nil {
+			st.Where = $4.(ast.ExprNode)
+		}
+		if $5 != nil {
+			st.GroupBy = $5.(*ast.GroupByClause)
+		}
+		if $6 != nil {
+			st.Having = $6.(*ast.HavingClause)
+		}
+		$$ = st
+	}
+
+SelectStmt:
+	SelectStmtBasic OrderByOptional SelectStmtLimit SelectLockOpt
+	{
+		st := $1.(*ast.SelectStmt)
+		st.LockTp = $4.(ast.SelectLockType)
 		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
 		if lastField.Expr != nil && lastField.AsName.O == "" {
 			src := parser.src
 			var lastEnd int
-			if $4 != nil {
+			if $2 != nil {
 				lastEnd = yyS[yypt-2].offset-1
-			} else if $5 != nil {
+			} else if $3 != nil {
 				lastEnd = yyS[yypt-1].offset-1
-			} else if $6 != ast.SelectLockNone {
+			} else if $4 != ast.SelectLockNone {
 				lastEnd = yyS[yypt].offset-1
 			} else {
 				lastEnd = len(src)
@@ -4093,69 +4130,32 @@ SelectStmt:
 			}
 			lastField.SetText(src[lastField.Offset:lastEnd])
 		}
-		if $4 != nil {
-			st.OrderBy = $4.(*ast.OrderByClause)
+		if $2 != nil {
+			st.OrderBy = $2.(*ast.OrderByClause)
 		}
-		if $5 != nil {
-			st.Limit = $5.(*ast.Limit)
-		}
-		$$ = st
-	}
-|	"SELECT" SelectStmtOpts SelectStmtFieldList FromDual WhereClauseOptional SelectStmtLimit SelectLockOpt
-	{
-		st := &ast.SelectStmt {
-			SelectStmtOpts: $2.(*ast.SelectStmtOpts),
-			Distinct:      $2.(*ast.SelectStmtOpts).Distinct,
-			Fields:        $3.(*ast.FieldList),
-			LockTp:	       $7.(ast.SelectLockType),
-		}
-		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
-		if lastField.Expr != nil && lastField.AsName.O == "" {
-			lastEnd := yyS[yypt-3].offset-1
-			lastField.SetText(parser.src[lastField.Offset:lastEnd])
-		}
-		if $5 != nil {
-			st.Where = $5.(ast.ExprNode)
-		}
-		if $6 != nil {
-			st.Limit = $6.(*ast.Limit)
+		if $3 != nil {
+			st.Limit = $3.(*ast.Limit)
 		}
 		$$ = st
 	}
-|	"SELECT" SelectStmtOpts SelectStmtFieldList "FROM"
-	TableRefsClause WhereClauseOptional SelectStmtGroup HavingClause OrderByOptional
-	SelectStmtLimit SelectLockOpt
+|	SelectStmtFromDual SelectStmtLimit SelectLockOpt
 	{
-		opts := $2.(*ast.SelectStmtOpts)
-		st := &ast.SelectStmt{
-			SelectStmtOpts: $2.(*ast.SelectStmtOpts),
-			Distinct:		opts.Distinct,
-			Fields:		$3.(*ast.FieldList),
-			From:		$5.(*ast.TableRefsClause),
-			LockTp:		$11.(ast.SelectLockType),
+		st := $1.(*ast.SelectStmt)
+		st.LockTp = $3.(ast.SelectLockType)
+		if $2 != nil {
+			st.Limit = $2.(*ast.Limit)
 		}
-		if opts.TableHints != nil {
-			st.TableHints = opts.TableHints
+		$$ = st
+	}
+|	SelectStmtFromTable OrderByOptional SelectStmtLimit SelectLockOpt
+	{
+		st := $1.(*ast.SelectStmt)
+		st.LockTp = $4.(ast.SelectLockType)
+		if $2 != nil {
+			st.OrderBy = $2.(*ast.OrderByClause)
 		}
-		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
-		if lastField.Expr != nil && lastField.AsName.O == "" {
-			lastEnd := parser.endOffset(&yyS[yypt-7])
-			lastField.SetText(parser.src[lastField.Offset:lastEnd])
-		}
-		if $6 != nil {
-			st.Where = $6.(ast.ExprNode)
-		}
-		if $7 != nil {
-			st.GroupBy = $7.(*ast.GroupByClause)
-		}
-		if $8 != nil {
-			st.Having = $8.(*ast.HavingClause)
-		}
-		if $9 != nil {
-			st.OrderBy = $9.(*ast.OrderByClause)
-		}
-		if $10 != nil {
-			st.Limit = $10.(*ast.Limit)
+		if $3 != nil {
+			st.Limit = $3.(*ast.Limit)
 		}
 		$$ = st
 	}
@@ -4431,7 +4431,7 @@ SelectStmtLimit:
 
 
 SelectStmtOpts:
-	TableOptimizerHints DefaultFalseDistinctOpt Priority SelectStmtSQLCache SelectStmtCalcFoundRows SelectStmtStraightJoin
+	TableOptimizerHints DefaultFalseDistinctOpt PriorityOpt SelectStmtSQLCache SelectStmtCalcFoundRows SelectStmtStraightJoin
 	{
 		opt := &ast.SelectStmtOpts{}
 		if $1 != nil {
@@ -4582,14 +4582,53 @@ SelectLockOpt:
 
 // See https://dev.mysql.com/doc/refman/5.7/en/union.html
 UnionStmt:
-	UnionClauseList "UNION" UnionOpt SelectStmt
+	UnionClauseList "UNION" UnionOpt SelectStmtBasic OrderByOptional SelectStmtLimit SelectLockOpt
 	{
+		st := $4.(*ast.SelectStmt)
 		union := $1.(*ast.UnionStmt)
 		union.Distinct = union.Distinct || $3.(bool)
 		lastSelect := union.SelectList.Selects[len(union.SelectList.Selects)-1]
-		endOffset := parser.endOffset(&yyS[yypt-2])
+		endOffset := parser.endOffset(&yyS[yypt-5])
 		parser.setLastSelectFieldText(lastSelect, endOffset)
-		union.SelectList.Selects = append(union.SelectList.Selects, $4.(*ast.SelectStmt))
+		union.SelectList.Selects = append(union.SelectList.Selects, st)
+		if $5 != nil {
+		    union.OrderBy = $5.(*ast.OrderByClause)
+		}
+		if $6 != nil {
+		    union.Limit = $6.(*ast.Limit)
+		}
+		$$ = union
+	}
+|	UnionClauseList "UNION" UnionOpt SelectStmtFromDual SelectStmtLimit SelectLockOpt
+	{
+		st := $4.(*ast.SelectStmt)
+		union := $1.(*ast.UnionStmt)
+		union.Distinct = union.Distinct || $3.(bool)
+		lastSelect := union.SelectList.Selects[len(union.SelectList.Selects)-1]
+		endOffset := parser.endOffset(&yyS[yypt-4])
+		parser.setLastSelectFieldText(lastSelect, endOffset)
+		union.SelectList.Selects = append(union.SelectList.Selects, st)
+		if $5 != nil {
+		    union.Limit = $5.(*ast.Limit)
+		}
+		$$ = union
+	}
+|	UnionClauseList "UNION" UnionOpt SelectStmtFromTable OrderByOptional
+   	SelectStmtLimit SelectLockOpt
+	{
+		st := $4.(*ast.SelectStmt)
+		union := $1.(*ast.UnionStmt)
+		union.Distinct = union.Distinct || $3.(bool)
+		lastSelect := union.SelectList.Selects[len(union.SelectList.Selects)-1]
+		endOffset := parser.endOffset(&yyS[yypt-5])
+		parser.setLastSelectFieldText(lastSelect, endOffset)
+		union.SelectList.Selects = append(union.SelectList.Selects, st)
+		if $5 != nil {
+			union.OrderBy = $5.(*ast.OrderByClause)
+		}
+		if $6 != nil {
+			union.Limit = $6.(*ast.Limit)
+		}
 		$$ = union
 	}
 |	UnionClauseList "UNION" UnionOpt '(' SelectStmt ')' OrderByOptional SelectStmtLimit
@@ -5850,34 +5889,34 @@ BitValueType:
 	}
 
 StringType:
-	NationalOpt "CHAR" FieldLen OptBinary OptCharset OptCollate
+	NationalOpt "CHAR" FieldLen OptBinary OptCollate
 	{
 		x := types.NewFieldType(mysql.TypeString)
 		x.Flen = $3.(int)
-		x.Charset = $5.(string)
-		x.Collate = $6.(string)
-		if $4.(bool) {
+		x.Charset = $4.(*ast.OptBinary).Charset
+		x.Collate = $5.(string)
+		if $4.(*ast.OptBinary).IsBinary {
 			x.Flag |= mysql.BinaryFlag
 		}
 		$$ = x
 	}
-|	NationalOpt "CHAR" OptBinary OptCharset OptCollate
+|	NationalOpt "CHAR" OptBinary OptCollate
 	{
 		x := types.NewFieldType(mysql.TypeString)
-		x.Charset = $4.(string)
-		x.Collate = $5.(string)
-		if $3.(bool) {
+		x.Charset = $3.(*ast.OptBinary).Charset
+		x.Collate = $4.(string)
+		if $3.(*ast.OptBinary).IsBinary {
 			x.Flag |= mysql.BinaryFlag
 		}
 		$$ = x
 	}
-|	Varchar FieldLen OptBinary OptCharset OptCollate
+|	Varchar FieldLen OptBinary OptCollate
 	{
 		x := types.NewFieldType(mysql.TypeVarchar)
 		x.Flen = $2.(int)
-		x.Charset = $4.(string)
-		x.Collate = $5.(string)
-		if $3.(bool) {
+		x.Charset = $3.(*ast.OptBinary).Charset
+		x.Collate = $4.(string)
+		if $3.(*ast.OptBinary).IsBinary {
 			x.Flag |= mysql.BinaryFlag
 		}
 		$$ = x
@@ -5908,12 +5947,12 @@ StringType:
 		x.Flag |= mysql.BinaryFlag
 		$$ = $1.(*types.FieldType)
 	}
-|	TextType OptBinary OptCharset OptCollate
+|	TextType OptBinary OptCollate
 	{
 		x := $1.(*types.FieldType)
-		x.Charset = $3.(string)
-		x.Collate = $4.(string)
-		if $2.(bool) {
+		x.Charset = $2.(*ast.OptBinary).Charset
+		x.Collate = $3.(string)
+		if $2.(*ast.OptBinary).IsBinary {
 			x.Flag |= mysql.BinaryFlag
 		}
 		$$ = x
@@ -6110,13 +6149,35 @@ Precision:
 		$$ = &ast.FloatOpt{Flen: int($2.(uint64)), Decimal: int($4.(uint64))}
 	}
 
-OptBinary:
+OptBinMod:
 	{
 		$$ = false
 	}
 |	"BINARY"
 	{
 		$$ = true
+	}
+
+OptBinary:
+	{
+		$$ = &ast.OptBinary{
+			IsBinary: false,
+			Charset:  "",
+		}
+	}
+|	"BINARY" OptCharset
+	{
+		$$ = &ast.OptBinary{
+			IsBinary: true,
+			Charset:  $2.(string),
+		}
+	}
+|	CharsetKw CharsetName OptBinMod
+	{
+		$$ = &ast.OptBinary{
+			IsBinary: $3.(bool),
+			Charset:  $2.(string),
+		}
 	}
 
 OptCharset:
@@ -6166,7 +6227,7 @@ StringName:
  * See https://dev.mysql.com/doc/refman/5.7/en/update.html
  ***********************************************************************************/
 UpdateStmt:
-	"UPDATE" LowPriorityOptional IgnoreOptional TableRef "SET" AssignmentList WhereClauseOptional OrderByOptional LimitClause
+	"UPDATE" PriorityOpt IgnoreOptional TableRef "SET" AssignmentList WhereClauseOptional OrderByOptional LimitClause
 	{
 		var refs *ast.Join
 		if x, ok := $4.(*ast.Join); ok {
@@ -6175,7 +6236,7 @@ UpdateStmt:
 			refs = &ast.Join{Left: $4.(ast.ResultSetNode)}
 		}
 		st := &ast.UpdateStmt{
-			LowPriority:	$2.(bool),
+			Priority:	$2.(mysql.PriorityEnum),
 			TableRefs:	&ast.TableRefsClause{TableRefs: refs},
 			List:		$6.([]*ast.Assignment),
 			IgnoreErr:		$3.(bool),
@@ -6191,10 +6252,10 @@ UpdateStmt:
 		}
 		$$ = st
 	}
-|	"UPDATE" LowPriorityOptional IgnoreOptional TableRefs "SET" AssignmentList WhereClauseOptional
+|	"UPDATE" PriorityOpt IgnoreOptional TableRefs "SET" AssignmentList WhereClauseOptional
 	{
 		st := &ast.UpdateStmt{
-			LowPriority:	$2.(bool),
+			Priority:	$2.(mysql.PriorityEnum),
 			TableRefs:	&ast.TableRefsClause{TableRefs: $4.(*ast.Join)},
 			List:		$6.([]*ast.Assignment),
 			IgnoreErr:		$3.(bool),

@@ -15,7 +15,6 @@ package session_test
 
 import (
 	"fmt"
-	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -161,14 +160,11 @@ func (s *testSessionSuite) TestErrorRollback(c *C) {
 	wg.Add(cnt)
 	num := 100
 
-	// retry forever
-	session.SetCommitRetryLimit(math.MaxInt64)
-	defer session.SetCommitRetryLimit(10)
-
 	for i := 0; i < cnt; i++ {
 		go func() {
 			defer wg.Done()
 			localTk := testkit.NewTestKitWithInit(c, s.store)
+			localTk.MustExec("set @@session.tidb_retry_limit = 100")
 			for j := 0; j < num; j++ {
 				localTk.Exec("insert into t_rollback values (1, 1)")
 				localTk.MustExec("update t_rollback set c2 = c2 + 1 where c1 = 0")
@@ -1091,10 +1087,6 @@ func (s *testSessionSuite) TestRetry(c *C) {
 	tk3 := testkit.NewTestKitWithInit(c, s.store)
 	tk3.MustExec("SET SESSION autocommit=0;")
 
-	// retry forever
-	session.SetCommitRetryLimit(math.MaxInt64)
-	defer session.SetCommitRetryLimit(10)
-
 	var wg sync.WaitGroup
 	wg.Add(3)
 	f1 := func() {
@@ -1647,6 +1639,10 @@ func (s *testSchemaSuite) TestTableReaderChunk(c *C) {
 	s.cluster.SplitTable(s.mvccStore, tbl.Meta().ID, 10)
 
 	tk.Se.GetSessionVars().DistSQLScanConcurrency = 1
+	tk.MustExec("set tidb_max_chunk_size = 2")
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set tidb_max_chunk_size = %d", variable.DefMaxChunkSize))
+	}()
 	rs, err := tk.Exec("select * from chk")
 	c.Assert(err, IsNil)
 	chk := rs.NewChunk()
@@ -2040,4 +2036,23 @@ func (s *testSessionSuite) TestKVVars(c *C) {
 	}()
 	wg.Wait()
 	c.Assert(atomic.LoadInt64(backoffVal), Equals, int64(1))
+}
+
+func (s *testSessionSuite) TestCommitRetryCount(c *C) {
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustExec("create table no_retry (id int)")
+	tk1.MustExec("insert into no_retry values (1)")
+	tk1.MustExec("set @@tidb_retry_limit = 0")
+
+	tk1.MustExec("begin")
+	tk1.MustExec("update no_retry set id = 2")
+
+	tk2.MustExec("begin")
+	tk2.MustExec("update no_retry set id = 3")
+	tk2.MustExec("commit")
+
+	// No auto retry because retry limit is set to 0.
+	_, err := tk1.Se.Execute(context.Background(), "commit")
+	c.Assert(err, NotNil)
 }

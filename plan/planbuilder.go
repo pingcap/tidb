@@ -26,56 +26,9 @@ import (
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
 )
-
-// Error instances.
-var (
-	ErrUnsupportedType      = terror.ClassOptimizerPlan.New(CodeUnsupportedType, "Unsupported type %T")
-	SystemInternalErrorType = terror.ClassOptimizerPlan.New(SystemInternalError, "System internal error")
-	ErrUnknownColumn        = terror.ClassOptimizerPlan.New(CodeUnknownColumn, mysql.MySQLErrName[mysql.ErrBadField])
-	ErrUnknownTable         = terror.ClassOptimizerPlan.New(CodeUnknownTable, mysql.MySQLErrName[mysql.ErrUnknownTable])
-	ErrWrongArguments       = terror.ClassOptimizerPlan.New(CodeWrongArguments, "Incorrect arguments to EXECUTE")
-	ErrAmbiguous            = terror.ClassOptimizerPlan.New(CodeAmbiguous, "Column '%s' in field list is ambiguous")
-	ErrAnalyzeMissIndex     = terror.ClassOptimizerPlan.New(CodeAnalyzeMissIndex, "Index '%s' in field list does not exist in table '%s'")
-	ErrAlterAutoID          = terror.ClassAutoid.New(CodeAlterAutoID, "No support for setting auto_increment using alter_table")
-	ErrBadGeneratedColumn   = terror.ClassOptimizerPlan.New(CodeBadGeneratedColumn, mysql.MySQLErrName[mysql.ErrBadGeneratedColumn])
-	ErrFieldNotInGroupBy    = terror.ClassOptimizerPlan.New(CodeFieldNotInGroupBy, mysql.MySQLErrName[mysql.ErrFieldNotInGroupBy])
-	ErrBadTable             = terror.ClassOptimizerPlan.New(CodeBadTable, mysql.MySQLErrName[mysql.ErrBadTable])
-	ErrKeyDoesNotExist      = terror.ClassOptimizerPlan.New(CodeKeyDoesNotExist, mysql.MySQLErrName[mysql.ErrKeyDoesNotExist])
-)
-
-// Error codes.
-const (
-	CodeUnsupportedType    terror.ErrCode = 1
-	SystemInternalError                   = 2
-	CodeAlterAutoID                       = 3
-	CodeAnalyzeMissIndex                  = 4
-	CodeAmbiguous                         = 1052
-	CodeUnknownColumn                     = mysql.ErrBadField
-	CodeUnknownTable                      = mysql.ErrUnknownTable
-	CodeWrongArguments                    = 1210
-	CodeBadGeneratedColumn                = mysql.ErrBadGeneratedColumn
-	CodeFieldNotInGroupBy                 = mysql.ErrFieldNotInGroupBy
-	CodeBadTable                          = mysql.ErrBadTable
-	CodeKeyDoesNotExist                   = mysql.ErrKeyDoesNotExist
-)
-
-func init() {
-	tableMySQLErrCodes := map[terror.ErrCode]uint16{
-		CodeUnknownColumn:      mysql.ErrBadField,
-		CodeUnknownTable:       mysql.ErrBadTable,
-		CodeAmbiguous:          mysql.ErrNonUniq,
-		CodeWrongArguments:     mysql.ErrWrongArguments,
-		CodeBadGeneratedColumn: mysql.ErrBadGeneratedColumn,
-		CodeFieldNotInGroupBy:  mysql.ErrFieldNotInGroupBy,
-		CodeBadTable:           mysql.ErrBadTable,
-		CodeKeyDoesNotExist:    mysql.ErrKeyDoesNotExist,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassOptimizerPlan] = tableMySQLErrCodes
-}
 
 type visitInfo struct {
 	privilege mysql.PrivilegeType
@@ -428,7 +381,7 @@ func (b *planBuilder) buildCheckIndex(dbName model.CIStr, as *ast.AdminStmt) Pla
 	// get index information
 	var idx *model.IndexInfo
 	for _, index := range tblInfo.Indices {
-		if index.Name.L == as.Index {
+		if index.Name.L == strings.ToLower(as.Index) {
 			idx = index
 			break
 		}
@@ -687,8 +640,16 @@ func buildCleanupIndexFields() *expression.Schema {
 }
 
 func buildShowDDLJobsFields() *expression.Schema {
-	schema := expression.NewSchema(make([]*expression.Column, 0, 2)...)
-	schema.Append(buildColumn("", "JOBS", mysql.TypeVarchar, 128))
+	schema := expression.NewSchema(make([]*expression.Column, 0, 10)...)
+	schema.Append(buildColumn("", "JOB_ID", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "DB_NAME", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "TABLE_NAME", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "JOB_TYPE", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "SCHEMA_STATE", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "SCHEMA_ID", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "TABLE_ID", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "ROW_COUNT", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "START_TIME", mysql.TypeVarchar, 64))
 	schema.Append(buildColumn("", "STATE", mysql.TypeVarchar, 64))
 	return schema
 }
@@ -778,6 +739,8 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 				b.err = ErrNoDB
 				return nil
 			}
+		case ast.ShowCreateTable:
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AllPrivMask, show.Table.Schema.L, show.Table.Name.L, "")
 		}
 		p.SetSchema(buildShowSchema(show))
 	}
@@ -937,7 +900,6 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		Columns:     insert.Columns,
 		tableSchema: schema,
 		IsReplace:   insert.IsReplace,
-		IgnoreErr:   insert.IgnoreErr,
 	}.init(b.ctx)
 
 	b.visitInfo = append(b.visitInfo, visitInfo{

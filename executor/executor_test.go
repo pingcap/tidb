@@ -176,14 +176,14 @@ func (s *testSuite) TestAdmin(c *C) {
 	err = r.Next(ctx, chk)
 	c.Assert(err, IsNil)
 	row = chk.GetRow(0)
-	c.Assert(row.Len(), Equals, 2)
+	c.Assert(row.Len(), Equals, 10)
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
 	historyJobs, err := admin.GetHistoryDDLJobs(txn)
 	c.Assert(len(historyJobs), Greater, 1)
-	c.Assert(len(row.GetString(0)), Greater, 0)
+	c.Assert(len(row.GetString(1)), Greater, 0)
 	c.Assert(err, IsNil)
-	c.Assert(row.GetString(1), Equals, historyJobs[0].State.String())
+	c.Assert(row.GetInt64(0), Equals, historyJobs[0].ID)
 	c.Assert(err, IsNil)
 
 	// show DDL job queries test
@@ -257,7 +257,9 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 	c *C, tk *testkit.TestKit, ctx sessionctx.Context, selectSQL, deleteSQL string) {
 	for _, tt := range tests {
 		c.Assert(ctx.NewTxn(), IsNil)
+		ctx.GetSessionVars().StmtCtx.IgnoreErr = true
 		data, reachLimit, err1 := ld.InsertData(tt.data1, tt.data2)
+		ctx.GetSessionVars().StmtCtx.IgnoreErr = false
 		c.Assert(err1, IsNil)
 		c.Assert(reachLimit, IsFalse)
 		if tt.restData == nil {
@@ -947,6 +949,8 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert into t value(0),(0)")
 	tk.MustQuery("select 1 from (select a from t union all select a from t) tmp").Check(testkit.Rows("1", "1", "1", "1"))
+	tk.MustQuery("select 10 as a from dual union select a from t order by a desc limit 1 ").Check(testkit.Rows("10"))
+	tk.MustQuery("select -10 as a from dual union select a from t order by a limit 1 ").Check(testkit.Rows("-10"))
 	tk.MustQuery("select count(1) from (select a from t union all select a from t) tmp").Check(testkit.Rows("4"))
 
 	_, err := tk.Exec("select 1 from (select a from t limit 1 union all select a from t limit 1) tmp")
@@ -2049,16 +2053,14 @@ func (s *testSuite) TestIssue4024(c *C) {
 const (
 	checkRequestOff          = 0
 	checkRequestPriority     = 1
-	checkRequestNotFillCache = 2
 	checkRequestSyncLog      = 3
 	checkDDLAddIndexPriority = 4
 )
 
 type checkRequestClient struct {
 	tikv.Client
-	priority     pb.CommandPri
-	notFillCache bool
-	mu           struct {
+	priority pb.CommandPri
+	mu       struct {
 		sync.RWMutex
 		checkFlags     uint32
 		lowPriorityCnt uint32
@@ -2077,10 +2079,6 @@ func (c *checkRequestClient) SendRequest(ctx context.Context, addr string, req *
 			if c.priority != req.Priority {
 				return nil, errors.New("fail to set priority")
 			}
-		}
-	} else if checkFlags == checkRequestNotFillCache {
-		if c.notFillCache != req.NotFillCache {
-			return nil, errors.New("fail to set not fail cache")
 		}
 	} else if checkFlags == checkRequestSyncLog {
 		switch req.Type {
@@ -2249,27 +2247,35 @@ func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
 	cli.mu.Unlock()
 }
 
-func (s *testContextOptionSuite) TestNotFillCache(c *C) {
+func (s *testSuite) TestNotFillCacheFlag(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int primary key)")
 	defer tk.MustExec("drop table t")
 	tk.MustExec("insert into t values (1)")
 
-	cli := s.cli
-	cli.mu.Lock()
-	cli.mu.checkFlags = checkRequestNotFillCache
-	cli.mu.Unlock()
-	cli.notFillCache = true
-	tk.MustQuery("select SQL_NO_CACHE * from t")
-
-	cli.notFillCache = false
-	tk.MustQuery("select SQL_CACHE * from t")
-	tk.MustQuery("select * from t")
-
-	cli.mu.Lock()
-	cli.mu.checkFlags = checkRequestOff
-	cli.mu.Unlock()
+	tests := []struct {
+		sql    string
+		expect bool
+	}{
+		{"select SQL_NO_CACHE * from t", true},
+		{"select SQL_CACHE * from t", false},
+		{"select * from t", false},
+	}
+	count := 0
+	ctx := context.Background()
+	for _, test := range tests {
+		ctx1 := context.WithValue(ctx, "CheckSelectRequestHook", func(req *kv.Request) {
+			count++
+			if req.NotFillCache != test.expect {
+				c.Errorf("sql=%s, expect=%v, get=%v", test.sql, test.expect, req.NotFillCache)
+			}
+		})
+		rs, err := tk.Se.Execute(ctx1, test.sql)
+		c.Assert(err, IsNil)
+		tk.ResultSetToResult(rs[0], Commentf("sql: %v", test.sql))
+	}
+	c.Assert(count, Equals, len(tests)) // Make sure the hook function is called.
 }
 
 func (s *testContextOptionSuite) TestSyncLog(c *C) {
@@ -2567,6 +2573,12 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	tb, err := tables.TableFromMeta(alloc, tbInfo)
 	c.Assert(err, IsNil)
 
+	_, err = se.Execute(context.Background(), "admin check index t c")
+	c.Assert(err, IsNil)
+
+	_, err = se.Execute(context.Background(), "admin check index t C")
+	c.Assert(err, IsNil)
+
 	// set data to:
 	// index     data (handle, data): (1, 10), (2, 20)
 	// table     data (handle, data): (1, 10), (2, 20)
@@ -2685,9 +2697,93 @@ func (s *testSuite) TestCoprocessorStreamingFlag(c *C) {
 		})
 		rs, err := tk.Se.Execute(ctx1, test.sql)
 		c.Assert(err, IsNil)
-		chk := rs[0].NewChunk()
-		err = rs[0].Next(ctx, chk)
-		c.Assert(err, IsNil)
-		rs[0].Close()
+		tk.ResultSetToResult(rs[0], Commentf("sql: %v", test.sql))
 	}
+}
+
+func (s *testSuite) TestIncorrectLimitArg(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a bigint);`)
+	tk.MustExec(`prepare stmt1 from 'select * from t limit ?';`)
+	tk.MustExec(`prepare stmt2 from 'select * from t limit ?, ?';`)
+	tk.MustExec(`set @a = -1;`)
+	tk.MustExec(`set @b =  1;`)
+
+	var err error
+	_, err = tk.Se.Execute(context.TODO(), `execute stmt1 using @a;`)
+	c.Assert(err.Error(), Equals, `[planner:1210]Incorrect arguments to LIMIT`)
+
+	_, err = tk.Se.Execute(context.TODO(), `execute stmt2 using @b, @a;`)
+	c.Assert(err.Error(), Equals, `[planner:1210]Incorrect arguments to LIMIT`)
+}
+
+func (s *testSuite) TestLimit(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a bigint, b bigint);`)
+	tk.MustExec(`insert into t values(1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6);`)
+	tk.MustQuery(`select * from t order by a limit 1, 1;`).Check(testkit.Rows(
+		"2 2",
+	))
+	tk.MustQuery(`select * from t order by a limit 1, 2;`).Check(testkit.Rows(
+		"2 2",
+		"3 3",
+	))
+	tk.MustQuery(`select * from t order by a limit 1, 3;`).Check(testkit.Rows(
+		"2 2",
+		"3 3",
+		"4 4",
+	))
+	tk.MustQuery(`select * from t order by a limit 1, 4;`).Check(testkit.Rows(
+		"2 2",
+		"3 3",
+		"4 4",
+		"5 5",
+	))
+	tk.MustExec(`set @@tidb_max_chunk_size=2;`)
+	tk.MustQuery(`select * from t order by a limit 2, 1;`).Check(testkit.Rows(
+		"3 3",
+	))
+	tk.MustQuery(`select * from t order by a limit 2, 2;`).Check(testkit.Rows(
+		"3 3",
+		"4 4",
+	))
+	tk.MustQuery(`select * from t order by a limit 2, 3;`).Check(testkit.Rows(
+		"3 3",
+		"4 4",
+		"5 5",
+	))
+	tk.MustQuery(`select * from t order by a limit 2, 4;`).Check(testkit.Rows(
+		"3 3",
+		"4 4",
+		"5 5",
+		"6 6",
+	))
+}
+
+func (s *testSuite) TestCoprocessorStreamingWarning(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a double)")
+	tk.MustExec("insert into t value(1.2)")
+	tk.MustExec("set @@session.tidb_enable_streaming = 1")
+
+	result := tk.MustQuery("select * from t where a/0 > 1")
+	result.Check(testkit.Rows())
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|Division by 0"))
+}
+
+func (s *testSuite) TestYearTypeDeleteIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a YEAR, PRIMARY KEY(a));")
+	tk.MustExec("insert into t set a = '2151';")
+	tk.MustExec("delete from t;")
+	tk.MustExec("admin check table t")
 }

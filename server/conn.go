@@ -124,7 +124,9 @@ func (cc *clientConn) handshake() error {
 	}
 	if err := cc.readOptionalSSLRequestAndHandshakeResponse(); err != nil {
 		err1 := cc.writeError(err)
-		terror.Log(errors.Trace(err1))
+		if err1 != nil {
+			log.Debug(err1)
+		}
 		return errors.Trace(err)
 	}
 	data := cc.alloc.AllocWithLen(4, 32)
@@ -806,7 +808,7 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 		}
 		return errors.Trace(err)
 	}
-	return errors.Trace(txn.Commit(sessionctx.SetConnID2Ctx(ctx, loadDataInfo.Ctx)))
+	return errors.Trace(txn.Commit(sessionctx.SetCommitCtx(ctx, loadDataInfo.Ctx)))
 }
 
 // handleLoadStats does the additional work after processing the 'load stats' query.

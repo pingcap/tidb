@@ -48,6 +48,7 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/stats/dump/{db}/{table}", s.newStatsHandler())
 
 	router.Handle("/settings", settingsHandler{})
+	router.Handle("/binlog/recover", binlogRecover{})
 
 	tikvHandlerTool := s.newTikvHandlerTool()
 	router.Handle("/schema", schemaHandler{tikvHandlerTool})
@@ -58,6 +59,8 @@ func (s *Server) startHTTPServer() {
 	if s.cfg.Store == "tikv" {
 		// HTTP path for tikv
 		router.Handle("/tables/{db}/{table}/regions", tableHandler{tikvHandlerTool, opTableRegions})
+		router.Handle("/tables/{db}/{table}/scatter", tableHandler{tikvHandlerTool, opTableScatter})
+		router.Handle("/tables/{db}/{table}/stop-scatter", tableHandler{tikvHandlerTool, opStopTableScatter})
 		router.Handle("/tables/{db}/{table}/disk-usage", tableHandler{tikvHandlerTool, opTableDiskUsage})
 		router.Handle("/regions/meta", regionHandler{tikvHandlerTool})
 		router.Handle("/regions/{regionID}", regionHandler{tikvHandlerTool})

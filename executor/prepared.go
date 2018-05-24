@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
@@ -275,26 +274,25 @@ func ResetStmtCtx(ctx sessionctx.Context, s ast.StmtNode) {
 
 	switch stmt := s.(type) {
 	case *ast.UpdateStmt:
+		sc.IgnoreErr = stmt.IgnoreErr
 		sc.IgnoreTruncate = false
 		sc.OverflowAsWarning = false
 		sc.TruncateAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
 		sc.InUpdateOrDeleteStmt = true
 		sc.DividedByZeroAsWarning = stmt.IgnoreErr
 		sc.IgnoreZeroInDate = !sessVars.StrictSQLMode || stmt.IgnoreErr
-		if stmt.LowPriority {
-			sc.Priority = mysql.LowPriority
-		}
+		sc.Priority = stmt.Priority
 	case *ast.DeleteStmt:
+		sc.IgnoreErr = stmt.IgnoreErr
 		sc.IgnoreTruncate = false
 		sc.OverflowAsWarning = false
 		sc.TruncateAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
 		sc.InUpdateOrDeleteStmt = true
 		sc.DividedByZeroAsWarning = stmt.IgnoreErr
 		sc.IgnoreZeroInDate = !sessVars.StrictSQLMode || stmt.IgnoreErr
-		if stmt.LowPriority {
-			sc.Priority = mysql.LowPriority
-		}
+		sc.Priority = stmt.Priority
 	case *ast.InsertStmt:
+		sc.IgnoreErr = stmt.IgnoreErr
 		sc.IgnoreTruncate = false
 		sc.TruncateAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
 		sc.InInsertStmt = true
@@ -307,6 +305,7 @@ func ResetStmtCtx(ctx sessionctx.Context, s ast.StmtNode) {
 		sc.OverflowAsWarning = false
 		sc.TruncateAsWarning = false
 	case *ast.LoadDataStmt:
+		sc.IgnoreErr = true
 		sc.IgnoreTruncate = false
 		sc.OverflowAsWarning = false
 		sc.TruncateAsWarning = !sessVars.StrictSQLMode

@@ -341,7 +341,11 @@ func (s *testTableCodecSuite) TestDecodeIndexKey(c *C) {
 	}
 	var valueStrs []string
 	for _, v := range values {
-		valueStrs = append(valueStrs, fmt.Sprintf("%d-%v", v.Kind(), v.GetValue()))
+		str, err := v.ToString()
+		if err != nil {
+			str = fmt.Sprintf("%d-%v", v.Kind(), v.GetValue())
+		}
+		valueStrs = append(valueStrs, str)
 	}
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	encodedValue, err := codec.EncodeKey(sc, nil, values...)

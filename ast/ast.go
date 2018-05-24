@@ -83,6 +83,12 @@ type ExprNode interface {
 	Format(w io.Writer)
 }
 
+// OptBinary is used for parser.
+type OptBinary struct {
+	IsBinary bool
+	Charset  string
+}
+
 // FuncNode represents function call expression node.
 type FuncNode interface {
 	ExprNode
@@ -189,7 +195,7 @@ type Statement interface {
 	IsReadOnly() bool
 
 	// RebuildPlan rebuilds the plan of the statement.
-	RebuildPlan() error
+	RebuildPlan() (schemaVersion int64, err error)
 }
 
 // Visitor visits a Node.

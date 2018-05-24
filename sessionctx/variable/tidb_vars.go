@@ -39,12 +39,8 @@ const (
 	// tidb_opt_agg_push_down is used to enable/disable the optimizer rule of aggregation push down.
 	TiDBOptAggPushDown = "tidb_opt_agg_push_down"
 
-	// tidb_opt_insubquery_unfold is used to enable/disable the optimizer rule of in subquery unfold.
-	TiDBOptInSubqUnFolding = "tidb_opt_insubquery_unfold"
-
-	// tidb_build_stats_concurrency is used to speed up the ANALYZE statement, when a table has multiple indices,
-	// those indices can be scanned concurrently, with the cost of higher system performance impact.
-	TiDBBuildStatsConcurrency = "tidb_build_stats_concurrency"
+	// Auto analyze will run if (table modify count)/(table row count) is greater than this value.
+	TiDBAutoAnalyzeRatio = "tidb_auto_analyze_ratio"
 
 	// tidb_checksum_table_concurrency is used to speed up the ADMIN CHECKSUM TABLE
 	// statement, when a table has multiple indices, those indices can be
@@ -72,9 +68,6 @@ const (
 	// User could change it to a smaller one to avoid breaking the transaction size limitation.
 	TiDBDMLBatchSize = "tidb_dml_batch_size"
 
-	// tidb_max_chunk_capacity is used to control the max chunk size during query execution.
-	TiDBMaxChunkSize = "tidb_max_chunk_size"
-
 	// The following session variables controls the memory quota during query execution.
 	// "tidb_mem_quota_query":				control the memory quota of a query.
 	// "tidb_mem_quota_hashjoin": 			control the memory quota of "HashJoinExec".
@@ -96,6 +89,9 @@ const (
 	// tidb_general_log is used to log every query in the server in info level.
 	TiDBGeneralLog = "tidb_general_log"
 
+	// tidb_retry_limit is the maximun number of retries when committing a transaction.
+	TiDBRetryLimit = "tidb_retry_limit"
+
 	// tidb_enable_streaming enables TiDB to use streaming API for coprocessor requests.
 	TiDBEnableStreaming = "tidb_enable_streaming"
 
@@ -105,11 +101,18 @@ const (
 
 // TiDB system variable names that both in session and global scope.
 const (
+	// tidb_build_stats_concurrency is used to speed up the ANALYZE statement, when a table has multiple indices,
+	// those indices can be scanned concurrently, with the cost of higher system performance impact.
+	TiDBBuildStatsConcurrency = "tidb_build_stats_concurrency"
+
 	// tidb_distsql_scan_concurrency is used to set the concurrency of a distsql scan task.
 	// A distsql scan task can be a table scan or a index scan, which may be distributed to many TiKV nodes.
 	// Higher concurrency may reduce latency, but with the cost of higher memory usage and system performance impact.
 	// If the query has a LIMIT clause, high concurrency makes the system do much more work than needed.
 	TiDBDistSQLScanConcurrency = "tidb_distsql_scan_concurrency"
+
+	// tidb_opt_insubquery_unfold is used to enable/disable the optimizer rule of in subquery unfold.
+	TiDBOptInSubqUnFolding = "tidb_opt_insubquery_unfold"
 
 	// tidb_index_join_batch_size is used to set the batch size of a index lookup join.
 	// The index lookup join fetches batches of data from outer executor and constructs ranges for inner executor.
@@ -140,6 +143,9 @@ const (
 	// when we need to keep the data output order the same as the order of index data.
 	TiDBIndexSerialScanConcurrency = "tidb_index_serial_scan_concurrency"
 
+	// tidb_max_chunk_capacity is used to control the max chunk size during query execution.
+	TiDBMaxChunkSize = "tidb_max_chunk_size"
+
 	// tidb_skip_utf8_check skips the UTF8 validate process, validate UTF8 has performance cost, if we can make sure
 	// the input string values are valid, we can skip the check.
 	TiDBSkipUTF8Check = "tidb_skip_utf8_check"
@@ -161,6 +167,7 @@ const (
 	DefIndexLookupSize               = 20000
 	DefDistSQLScanConcurrency        = 15
 	DefBuildStatsConcurrency         = 4
+	DefAutoAnalyzeRatio              = 0.5
 	DefChecksumTableConcurrency      = 4
 	DefSkipUTF8Check                 = false
 	DefOptAggPushDown                = false
@@ -179,6 +186,7 @@ const (
 	DefTiDBMemQuotaIndexLookupJoin   = 32 << 30 // 32GB.
 	DefTiDBMemQuotaNestedLoopApply   = 32 << 30 // 32GB.
 	DefTiDBGeneralLog                = 0
+	DefTiDBRetryLimit                = 10
 	DefTiDBHashJoinConcurrency       = 5
 	DefTiDBOptimizerSelectivityLevel = 0
 )

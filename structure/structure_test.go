@@ -45,7 +45,7 @@ func (s *testTxStructureSuite) SetUpSuite(c *C) {
 func (s *testTxStructureSuite) TearDownSuite(c *C) {
 	err := s.store.Close()
 	c.Assert(err, IsNil)
-	testleak.AfterTest(c)
+	testleak.AfterTest(c)()
 }
 
 func (s *testTxStructureSuite) TestString(c *C) {

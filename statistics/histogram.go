@@ -419,9 +419,11 @@ func (hg *Histogram) betweenRowCount(a, b types.Datum) float64 {
 	lessCountA := hg.lessRowCount(a)
 	lessCountB := hg.lessRowCount(b)
 	// If lessCountA is not less than lessCountB, it may be that they fall to the same bucket and we cannot estimate
-	// the fraction, so we use `totalCount / NDV` to estimate the row count, but the result should not greater than lessCountB.
+	// the fraction, so we use `totalCount / NDV` to estimate the row count, but the result should not greater than
+	// lessCountB or totalRowCount-lessCountA.
 	if lessCountA >= lessCountB && hg.NDV > 0 {
-		return math.Min(lessCountB, hg.totalRowCount()/float64(hg.NDV))
+		result := math.Min(lessCountB, hg.totalRowCount()-lessCountA)
+		return math.Min(result, hg.totalRowCount()/float64(hg.NDV))
 	}
 	return lessCountB - lessCountA
 }
@@ -577,7 +579,7 @@ func HistogramFromProto(protoHg *tipb.Histogram) *Histogram {
 
 func (hg *Histogram) popFirstBucket() {
 	hg.Buckets = hg.Buckets[1:]
-	c := chunk.NewChunk([]*types.FieldType{hg.tp, hg.tp})
+	c := chunk.NewChunkWithCapacity([]*types.FieldType{hg.tp, hg.tp}, hg.Bounds.NumRows()-2)
 	c.Append(hg.Bounds, 2, hg.Bounds.NumRows())
 	hg.Bounds = c
 }

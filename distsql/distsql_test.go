@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	tipb "github.com/pingcap/tipb/go-tipb"
+	"github.com/pingcap/tipb/go-tipb"
 	"golang.org/x/net/context"
 )
 
@@ -64,7 +64,7 @@ func (s *testSuite) TestSelectNormal(c *C) {
 	response.Fetch(context.TODO())
 
 	// Test Next.
-	chk := chunk.NewChunk(colTypes)
+	chk := chunk.NewChunkWithCapacity(colTypes, 32)
 	numAllRows := 0
 	for {
 		err = response.Next(context.TODO(), chk)
@@ -116,7 +116,7 @@ func (s *testSuite) TestSelectStreaming(c *C) {
 	response.Fetch(context.TODO())
 
 	// Test Next.
-	chk := chunk.NewChunk(colTypes)
+	chk := chunk.NewChunkWithCapacity(colTypes, 32)
 	numAllRows := 0
 	for {
 		err = response.Next(context.TODO(), chk)

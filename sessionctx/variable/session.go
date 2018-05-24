@@ -152,6 +152,7 @@ type SessionVars struct {
 	Concurrency
 	MemQuota
 	BatchSize
+	RetryLimit int64
 	// UsersLock is a lock for user defined variables.
 	UsersLock sync.RWMutex
 	// Users are user defined variables.
@@ -301,9 +302,9 @@ func NewSessionVars() *SessionVars {
 		StmtCtx:                   new(stmtctx.StatementContext),
 		AllowAggPushDown:          false,
 		OptimizerSelectivityLevel: DefTiDBOptimizerSelectivityLevel,
+		RetryLimit:                DefTiDBRetryLimit,
 	}
 	vars.Concurrency = Concurrency{
-		BuildStatsConcurrencyVar:   DefBuildStatsConcurrency,
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
 		IndexSerialScanConcurrency: DefIndexSerialScanConcurrency,
 		IndexLookupJoinConcurrency: DefIndexLookupJoinConcurrency,
@@ -523,6 +524,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.MemQuotaNestedLoopApply = tidbOptInt64(val, DefTiDBMemQuotaNestedLoopApply)
 	case TiDBGeneralLog:
 		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt32(val, DefTiDBGeneralLog)))
+	case TiDBRetryLimit:
+		s.RetryLimit = tidbOptInt64(val, DefTiDBRetryLimit)
 	case TiDBEnableStreaming:
 		s.EnableStreaming = TiDBOptOn(val)
 	case TiDBOptimizerSelectivityLevel:
@@ -552,9 +555,6 @@ type TableDelta struct {
 
 // Concurrency defines concurrency values.
 type Concurrency struct {
-	// BuildStatsConcurrencyVar is used to control statistics building concurrency.
-	BuildStatsConcurrencyVar int
-
 	// IndexLookupConcurrency is the number of concurrent index lookup worker.
 	IndexLookupConcurrency int
 

@@ -63,8 +63,9 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"update", "use", "using", "utc_date", "values", "varbinary", "varchar",
 		"when", "where", "write", "xor", "year_month", "zerofill",
 		"generated", "virtual", "stored", "usage",
+		"delayed", "high_priority", "low_priority",
 		// TODO: support the following keywords
-		// "delayed" , "high_priority" , "low_priority", "with",
+		// "with",
 	}
 	for _, kw := range reservedKws {
 		src := fmt.Sprintf("SELECT * FROM db.%s;", kw)
@@ -403,6 +404,11 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"select straight_join * from t1 left join t2 on t1.id = t2.id", true},
 		{"select straight_join * from t1 right join t2 on t1.id = t2.id", true},
 		{"select straight_join * from t1 straight_join t2 on t1.id = t2.id", true},
+
+		// for "USE INDEX" in delete statement
+		{"DELETE FROM t1 USE INDEX(idx_a) WHERE t1.id=1;", true},
+		{"DELETE t1, t2 FROM t1 USE INDEX(idx_a) JOIN t2 WHERE t1.id=t2.id;", true},
+		{"DELETE t1, t2 FROM t1 USE INDEX(idx_a) JOIN t2 USE INDEX(idx_a) WHERE t1.id=t2.id;", true},
 
 		// for admin
 		{"admin show ddl;", true},
@@ -1347,6 +1353,8 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"CREATE TABLE foo (name CHAR(50) BINARY)", true},
 		{"CREATE TABLE foo (name CHAR(50) COLLATE utf8_bin)", true},
 		{"CREATE TABLE foo (name CHAR(50) CHARACTER SET utf8)", true},
+		{"CREATE TABLE foo (name CHAR(50) CHARACTER SET utf8 BINARY)", true},
+		{"CREATE TABLE foo (name CHAR(50) CHARACTER SET utf8 BINARY CHARACTER set utf8)", false},
 		{"CREATE TABLE foo (name CHAR(50) BINARY CHARACTER SET utf8 COLLATE utf8_bin)", true},
 		{"CREATE TABLE foo (a.b, b);", false},
 		{"CREATE TABLE foo (a, b.c);", false},
@@ -1555,6 +1563,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t ENABLE KEYS", true},
 		{"ALTER TABLE t MODIFY COLUMN a varchar(255)", true},
 		{"ALTER TABLE t CHANGE COLUMN a b varchar(255)", true},
+		{"ALTER TABLE t CHANGE COLUMN a b varchar(255) CHARACTER SET utf8 BINARY", true},
 		{"ALTER TABLE t CHANGE COLUMN a b varchar(255) FIRST", true},
 		{"ALTER TABLE db.t RENAME to db1.t1", true},
 		{"ALTER TABLE db.t RENAME db1.t1", true},
@@ -1602,6 +1611,8 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t CONVERT TO CHARSET utf8;", true},
 		{"ALTER TABLE t CONVERT TO CHARACTER SET utf8 COLLATE utf8_bin;", true},
 		{"ALTER TABLE t CONVERT TO CHARSET utf8 COLLATE utf8_bin;", true},
+		{"ALTER TABLE t FORCE", true},
+		{"ALTER TABLE t DROP INDEX;", false},
 
 		// For create index statement
 		{"CREATE INDEX idx ON t (a)", true},
@@ -1956,9 +1967,20 @@ func (s *testParserSuite) TestPriority(c *C) {
 	defer testleak.AfterTest(c)()
 	table := []testCase{
 		{`select high_priority * from t`, true},
+		{`select low_priority * from t`, true},
+		{`select delayed * from t`, true},
 		{`insert high_priority into t values (1)`, true},
 		{`insert LOW_PRIORITY into t values (1)`, true},
+		{`insert delayed into t values (1)`, true},
 		{`update low_priority t set a = 2`, true},
+		{`update high_priority t set a = 2`, true},
+		{`update delayed t set a = 2`, true},
+		{`delete low_priority from t where a = 2`, true},
+		{`delete high_priority from t where a = 2`, true},
+		{`delete delayed from t where a = 2`, true},
+		{`replace high_priority into t values (1)`, true},
+		{`replace LOW_PRIORITY into t values (1)`, true},
+		{`replace delayed into t values (1)`, true},
 	}
 	s.RunTest(c, table)
 
