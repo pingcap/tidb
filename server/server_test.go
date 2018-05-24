@@ -326,6 +326,7 @@ func runTestPreparedString(t *C) {
 func runTestPreparedTimestamp(t *C) {
 	runTestsOnNewDB(t, nil, "prepared_timestamp", func(dbt *DBTest) {
 		dbt.mustExec("create table test (a timestamp, b time)")
+		dbt.mustExec("set time_zone='+00:00'")
 		insertStmt := dbt.mustPrepare("insert test values (?, ?)")
 		defer insertStmt.Close()
 		vts := time.Unix(1, 1)

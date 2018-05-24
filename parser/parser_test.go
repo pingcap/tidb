@@ -63,8 +63,9 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"update", "use", "using", "utc_date", "values", "varbinary", "varchar",
 		"when", "where", "write", "xor", "year_month", "zerofill",
 		"generated", "virtual", "stored", "usage",
+		"delayed", "high_priority", "low_priority",
 		// TODO: support the following keywords
-		// "delayed" , "high_priority" , "low_priority", "with",
+		// "with",
 	}
 	for _, kw := range reservedKws {
 		src := fmt.Sprintf("SELECT * FROM db.%s;", kw)
@@ -1966,9 +1967,20 @@ func (s *testParserSuite) TestPriority(c *C) {
 	defer testleak.AfterTest(c)()
 	table := []testCase{
 		{`select high_priority * from t`, true},
+		{`select low_priority * from t`, true},
+		{`select delayed * from t`, true},
 		{`insert high_priority into t values (1)`, true},
 		{`insert LOW_PRIORITY into t values (1)`, true},
+		{`insert delayed into t values (1)`, true},
 		{`update low_priority t set a = 2`, true},
+		{`update high_priority t set a = 2`, true},
+		{`update delayed t set a = 2`, true},
+		{`delete low_priority from t where a = 2`, true},
+		{`delete high_priority from t where a = 2`, true},
+		{`delete delayed from t where a = 2`, true},
+		{`replace high_priority into t values (1)`, true},
+		{`replace LOW_PRIORITY into t values (1)`, true},
+		{`replace delayed into t values (1)`, true},
 	}
 	s.RunTest(c, table)
 
