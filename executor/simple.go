@@ -255,15 +255,10 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 
 		//TODO: (tidb-team) need delete columns_priv once we implement columns_priv functionality.
 		if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "commit"); err != nil {
-			return errors.Trace(err)
+			failedUsers = append(failedUsers, user.String())
 		}
 	}
 	if len(failedUsers) > 0 {
-		// Commit the transaction even if we returns error
-		// err := e.ctx.Txn().Commit(sessionctx.SetCommitCtx(context.Background(), e.ctx))
-		// if err != nil {
-		// 	return errors.Trace(err)
-		// }
 		errMsg := "Operation DROP USER failed for " + strings.Join(failedUsers, ",")
 		return terror.ClassExecutor.New(CodeCannotUser, errMsg)
 	}
