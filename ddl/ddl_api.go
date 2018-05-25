@@ -799,7 +799,8 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	}
 	if s.Partition != nil {
 		pi := &model.PartitionInfo{
-			Type: s.Partition.Tp,
+			Type:   s.Partition.Tp,
+			Enable: true,
 		}
 		if s.Partition.Expr != nil {
 			buf := new(bytes.Buffer)
