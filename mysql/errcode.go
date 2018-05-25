@@ -881,7 +881,8 @@ const (
 	ErrAlterOperationNotSupportedReasonNotNull                      = 1861
 	ErrMustChangePasswordLogin                                      = 1862
 	ErrRowInWrongPartition                                          = 1863
-	ErrErrorLast                                                    = 1863
+	ErrUnknownStmtFetchResultSet                                    = 1864
+	ErrErrorLast                                                    = 1864
 	ErrBadGeneratedColumn                                           = 3105
 	ErrUnsupportedOnGeneratedColumn                                 = 3106
 	ErrGeneratedColumnNonPrior                                      = 3107

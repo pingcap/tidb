@@ -47,6 +47,7 @@ type TiDBContext struct {
 	session   session.Session
 	currentDB string
 	stmts     map[int]*TiDBStatement
+	results   map[int]ResultSet
 }
 
 // TiDBStatement implements PreparedStatement.
@@ -122,6 +123,7 @@ func (ts *TiDBStatement) Close() error {
 		return errors.Trace(err)
 	}
 	delete(ts.ctx.stmts, int(ts.id))
+	delete(ts.ctx.results, int(ts.id))
 	return nil
 }
 
@@ -142,6 +144,7 @@ func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint8,
 		session:   se,
 		currentDB: dbname,
 		stmts:     make(map[int]*TiDBStatement),
+		results:   make(map[int]ResultSet),
 	}
 	return tc, nil
 }
@@ -277,6 +280,16 @@ func (tc *TiDBContext) Prepare(sql string) (statement PreparedStatement, columns
 	}
 	tc.stmts[int(stmtID)] = stmt
 	return
+}
+
+// StoreResultSet stores ResultSet for subsequent using.
+func (tc *TiDBContext) StoreResultSet(stmtID int, rs ResultSet) {
+	tc.results[stmtID] = rs
+}
+
+// GetResultSet gets ResultSet by statement ID.
+func (tc *TiDBContext) GetResultSet(stmtID int) ResultSet {
+	return tc.results[stmtID]
 }
 
 // ShowProcess implements QueryCtx ShowProcess method.

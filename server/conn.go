@@ -546,6 +546,8 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 		label = "StmtPrepare"
 	case mysql.ComStmtExecute:
 		label = "StmtExecute"
+	case mysql.ComStmtFetch:
+		label = "StmtFetch"
 	case mysql.ComStmtClose:
 		label = "StmtClose"
 	case mysql.ComStmtSendLongData:
@@ -616,6 +618,8 @@ func (cc *clientConn) dispatch(data []byte) error {
 		return cc.handleStmtPrepare(hack.String(data))
 	case mysql.ComStmtExecute:
 		return cc.handleStmtExecute(ctx1, data)
+	case mysql.ComStmtFetch:
+		return cc.handleStmtFetch(ctx1, data)
 	case mysql.ComStmtClose:
 		return cc.handleStmtClose(data)
 	case mysql.ComStmtSendLongData:
@@ -694,19 +698,17 @@ func (cc *clientConn) writeError(e error) error {
 
 // writeEOF writes an EOF packet.
 // Note this function won't flush the stream because maybe there are more
-// packets following it, the "more" argument would indicates that case.
-// If "more" is true, a mysql.ServerMoreResultsExists bit would be set
+// packets following it.
+// serverStatus, a flag bit represents server information
 // in the packet.
-func (cc *clientConn) writeEOF(more bool) error {
+func (cc *clientConn) writeEOF(serverStatus uint16) error {
 	data := cc.alloc.AllocWithLen(4, 9)
 
 	data = append(data, mysql.EOFHeader)
 	if cc.capability&mysql.ClientProtocol41 > 0 {
 		data = dumpUint16(data, cc.ctx.WarningCount())
 		status := cc.ctx.Status()
-		if more {
-			status |= mysql.ServerMoreResultsExists
-		}
+		status |= serverStatus
 		data = dumpUint16(data, status)
 	}
 
@@ -854,7 +856,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	}
 	if rs != nil {
 		if len(rs) == 1 {
-			err = cc.writeResultset(ctx, rs[0], false, false)
+			err = cc.writeResultset(ctx, rs[0], false, 0, 0)
 		} else {
 			err = cc.writeMultiResultset(ctx, rs, false)
 		}
@@ -896,7 +898,7 @@ func (cc *clientConn) handleFieldList(sql string) (err error) {
 			return errors.Trace(err)
 		}
 	}
-	if err := cc.writeEOF(false); err != nil {
+	if err := cc.writeEOF(0); err != nil {
 		return errors.Trace(err)
 	}
 	return errors.Trace(cc.flush())
@@ -904,11 +906,15 @@ func (cc *clientConn) handleFieldList(sql string) (err error) {
 
 // writeResultset writes data into a resultset and uses rs.Next to get row data back.
 // If binary is true, the data would be encoded in BINARY format.
-// If more is true, a flag bit would be set to indicate there are more
+// serverStatus, a flag bit represents server information
+// fetchSize, the desired number of rows to be fetched each time when client uses cursor
 // resultsets, it's used to support the MULTI_RESULTS capability in mysql protocol.
-func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary bool, more bool) (runErr error) {
+func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary bool, serverStatus uint16, fetchSize int) (runErr error) {
 	defer func() {
-		terror.Call(rs.Close)
+		// close ResultSet when cursor doesn't exist
+		if !mysql.IsCursorExists(serverStatus) {
+			terror.Call(rs.Close)
+		}
 		r := recover()
 		if r == nil {
 			return
@@ -923,14 +929,14 @@ func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary b
 		buf = buf[:stackSize]
 		log.Errorf("query: %s:\n%s", cc.lastCmd, buf)
 	}()
-	err := cc.writeChunks(ctx, rs, binary, more)
+	err := cc.writeChunks(ctx, rs, binary, serverStatus, fetchSize)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	return errors.Trace(cc.flush())
 }
 
-func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo) error {
+func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16) error {
 	data := make([]byte, 4, 1024)
 	data = dumpLengthEncodedInt(data, uint64(len(columns)))
 	if err := cc.writePacket(data); err != nil {
@@ -943,7 +949,7 @@ func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo) error {
 			return errors.Trace(err)
 		}
 	}
-	if err := cc.writeEOF(false); err != nil {
+	if err := cc.writeEOF(serverStatus); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -952,28 +958,37 @@ func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo) error {
 // writeChunks writes data from a Chunk, which filled data by a ResultSet, into a connection.
 // binary specifies the way to dump data. It throws any error while dumping data.
 // more will be passed into writeEOF.
-func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool, more bool) error {
+func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool, serverStatus uint16, fetchSize int) error {
 	data := make([]byte, 4, 1024)
 	chk := rs.NewChunk()
 	gotColumnInfo := false
+	fetchRows := 0
 	for {
 		// Here server.tidbResultSet implements Next method.
 		err := rs.Next(ctx, chk)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if !gotColumnInfo {
+		// if cursor exists, columnInfo has already sent to client when handle COM_STMT_EXECUTE command.
+		if !gotColumnInfo && !mysql.IsCursorExists(serverStatus) {
 			// We need to call Next before we get columns.
 			// Otherwise, we will get incorrect columns info.
 			columns := rs.Columns()
-			err = cc.writeColumnInfo(columns)
+			err = cc.writeColumnInfo(columns, serverStatus)
 			if err != nil {
 				return errors.Trace(err)
 			}
 			gotColumnInfo = true
 		}
 		rowCount := chk.NumRows()
+		fetchRows += rowCount
 		if rowCount == 0 {
+			// tell the client COM_STMT_FETCH has finished by setting proper serverStatus,
+			// and close ResultSet
+			if mysql.IsCursorExists(serverStatus) {
+				serverStatus |= mysql.ServerStatusLastRowSend
+				terror.Call(rs.Close)
+			}
 			break
 		}
 		for i := 0; i < rowCount; i++ {
@@ -990,13 +1005,17 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 				return errors.Trace(err)
 			}
 		}
+		// if cursor exists, checking whether this batch has fetched enough rows.
+		if mysql.IsCursorExists(serverStatus) && fetchRows >= fetchSize {
+			break
+		}
 	}
-	return errors.Trace(cc.writeEOF(more))
+	return errors.Trace(cc.writeEOF(serverStatus))
 }
 
 func (cc *clientConn) writeMultiResultset(ctx context.Context, rss []ResultSet, binary bool) error {
 	for _, rs := range rss {
-		if err := cc.writeResultset(ctx, rs, binary, true); err != nil {
+		if err := cc.writeResultset(ctx, rs, binary, mysql.ServerMoreResultsExists, 0); err != nil {
 			return errors.Trace(err)
 		}
 	}

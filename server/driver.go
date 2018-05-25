@@ -70,6 +70,12 @@ type QueryCtx interface {
 	// GetStatement gets PreparedStatement by statement ID.
 	GetStatement(stmtID int) PreparedStatement
 
+	// StoreResultSet stores ResultSet for subsequent using.
+	StoreResultSet(stmtID int, rs ResultSet)
+
+	// GetResultSet gets ResultSet by statement ID.
+	GetResultSet(stmtID int) ResultSet
+
 	// FieldList returns columns of a table.
 	FieldList(tableName string) (columns []*ColumnInfo, err error)
 
