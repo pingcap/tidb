@@ -149,6 +149,8 @@ func (p *LogicalJoin) getMergeJoin(prop *requiredProp) []PhysicalPlan {
 	return joins
 }
 
+// Change JoinKeys order, by offsets array
+// offsets array is generate by prop check
 func getNewJoinKeysByOffsets(oldJoinKeys []*expression.Column, offsets []int) []*expression.Column {
 	newKeys := make([]*expression.Column, 0, len(oldJoinKeys))
 	for _, offset := range offsets {
@@ -169,6 +171,8 @@ func getNewJoinKeysByOffsets(oldJoinKeys []*expression.Column, offsets []int) []
 	return newKeys
 }
 
+// Change EqualConditions order, by offsets array
+// offsets array is generate by prop check
 func getNewEqualConditionsByOffsets(oldEqualCond []*expression.ScalarFunction, offsets []int) []*expression.ScalarFunction {
 	newEqualCond := make([]*expression.ScalarFunction, 0, len(oldEqualCond))
 	for _, offset := range offsets {
@@ -675,7 +679,7 @@ func (la *LogicalAggregation) getStreamAggs(prop *requiredProp) []PhysicalPlan {
 }
 
 func (la *LogicalAggregation) getHashAggs(prop *requiredProp) []PhysicalPlan {
-	if !prop.isEmpty() && !prop.enforced {
+	if !prop.isEmpty() {
 		return nil
 	}
 	hashAggs := make([]PhysicalPlan, 0, len(wholeTaskTypes))
@@ -708,7 +712,7 @@ func (p *LogicalSelection) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPl
 }
 
 func (p *LogicalLimit) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan {
-	if !prop.isEmpty() && !prop.enforced {
+	if !prop.isEmpty() {
 		return nil
 	}
 	ret := make([]PhysicalPlan, 0, len(wholeTaskTypes))
@@ -732,7 +736,7 @@ func (p *LogicalLock) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan {
 
 func (p *LogicalUnionAll) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan {
 	// TODO: UnionAll can not pass any order, but we can change it to sort merge to keep order.
-	if !prop.isEmpty() && !prop.enforced {
+	if !prop.isEmpty() {
 		return nil
 	}
 	chReqProps := make([]*requiredProp, 0, len(p.children))
@@ -772,7 +776,7 @@ func (ls *LogicalSort) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan {
 }
 
 func (p *LogicalExists) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan {
-	if !prop.isEmpty() && !prop.enforced {
+	if !prop.isEmpty() {
 		return nil
 	}
 	exists := PhysicalExists{}.init(p.ctx, p.stats, &requiredProp{expectedCnt: 1})
@@ -781,7 +785,7 @@ func (p *LogicalExists) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan 
 }
 
 func (p *LogicalMaxOneRow) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan {
-	if !prop.isEmpty() && !prop.enforced {
+	if !prop.isEmpty() {
 		return nil
 	}
 	mor := PhysicalMaxOneRow{}.init(p.ctx, p.stats, &requiredProp{expectedCnt: 2})
