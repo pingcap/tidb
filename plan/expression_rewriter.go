@@ -429,7 +429,7 @@ func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, 
 		cond = expression.ComposeDNFCondition(er.ctx, cond, nullChecker)
 	}
 
-	// TODO: Add a Projection if any argument of aggregate funcs or group by items are scala functions.
+	// TODO: Add a Projection if any argument of aggregate funcs or group by items are scalar functions.
 	// plan4Agg.buildProjectionIfNecessary()
 	if !er.asScalar {
 		// For Semi LogicalApply without aux column, the result is no matter false or null. So we can add it to join predicate.
