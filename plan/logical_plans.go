@@ -306,6 +306,10 @@ type DataSource struct {
 
 	// possibleAccessPaths stores all the possible access path for physical plan, including table scan.
 	possibleAccessPaths []*accessPath
+
+	// The data source may be a partition, rather than a real table.
+	isPartition bool
+	partitionID int64
 }
 
 // accessPath tells how we access one index or just access table.

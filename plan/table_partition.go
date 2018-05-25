@@ -107,11 +107,10 @@ func prunePartition(sel *LogicalSelection, ds *DataSource) (LogicalPlan, error) 
 		}
 
 		// Not a deep copy.
-		newTableInfo := *ds.tableInfo
-		newTableInfo.ID = def.ID
 		newDataSource := *ds
-		newDataSource.tableInfo = &newTableInfo
 		newDataSource.baseLogicalPlan = newBaseLogicalPlan(ds.context(), TypeTableScan, &newDataSource)
+		newDataSource.isPartition = true
+		newDataSource.partitionID = def.ID
 		children = append(children, &newDataSource)
 	}
 	fmt.Println("len children = ", len(children), children)

@@ -156,6 +156,14 @@ type PhysicalTableScan struct {
 	// Hist is the histogram when the query was issued.
 	// It is used for query feedback.
 	Hist *statistics.Histogram
+
+	// The table scan may be a partition, rather than a real table.
+	isPartition bool
+	partitionID int64
+}
+
+func (ts *PhysicalTableScan) IsPartition() (bool, int64) {
+	return ts.isPartition, ts.partitionID
 }
 
 // PhysicalProjection is the physical operator of projection.
