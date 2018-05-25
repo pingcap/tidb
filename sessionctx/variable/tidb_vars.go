@@ -39,10 +39,6 @@ const (
 	// tidb_opt_agg_push_down is used to enable/disable the optimizer rule of aggregation push down.
 	TiDBOptAggPushDown = "tidb_opt_agg_push_down"
 
-	// tidb_build_stats_concurrency is used to speed up the ANALYZE statement, when a table has multiple indices,
-	// those indices can be scanned concurrently, with the cost of higher system performance impact.
-	TiDBBuildStatsConcurrency = "tidb_build_stats_concurrency"
-
 	// Auto analyze will run if (table modify count)/(table row count) is greater than this value.
 	TiDBAutoAnalyzeRatio = "tidb_auto_analyze_ratio"
 
@@ -71,9 +67,6 @@ const (
 	// Its default value is 20000. When the row size is large, 20k rows could be larger than 100MB.
 	// User could change it to a smaller one to avoid breaking the transaction size limitation.
 	TiDBDMLBatchSize = "tidb_dml_batch_size"
-
-	// tidb_max_chunk_capacity is used to control the max chunk size during query execution.
-	TiDBMaxChunkSize = "tidb_max_chunk_size"
 
 	// The following session variables controls the memory quota during query execution.
 	// "tidb_mem_quota_query":				control the memory quota of a query.
@@ -108,6 +101,10 @@ const (
 
 // TiDB system variable names that both in session and global scope.
 const (
+	// tidb_build_stats_concurrency is used to speed up the ANALYZE statement, when a table has multiple indices,
+	// those indices can be scanned concurrently, with the cost of higher system performance impact.
+	TiDBBuildStatsConcurrency = "tidb_build_stats_concurrency"
+
 	// tidb_distsql_scan_concurrency is used to set the concurrency of a distsql scan task.
 	// A distsql scan task can be a table scan or a index scan, which may be distributed to many TiKV nodes.
 	// Higher concurrency may reduce latency, but with the cost of higher memory usage and system performance impact.
@@ -145,6 +142,9 @@ const (
 	// tidb_index_serial_scan_concurrency is used for controlling the concurrency of index scan operation
 	// when we need to keep the data output order the same as the order of index data.
 	TiDBIndexSerialScanConcurrency = "tidb_index_serial_scan_concurrency"
+
+	// tidb_max_chunk_capacity is used to control the max chunk size during query execution.
+	TiDBMaxChunkSize = "tidb_max_chunk_size"
 
 	// tidb_skip_utf8_check skips the UTF8 validate process, validate UTF8 has performance cost, if we can make sure
 	// the input string values are valid, we can skip the check.

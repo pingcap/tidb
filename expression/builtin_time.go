@@ -3558,7 +3558,7 @@ func (b *builtinTimestamp2ArgsSig) evalTime(row types.Row) (types.Time, bool, er
 	if err != nil {
 		return types.Time{}, true, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
-	tmp, err := tm.Add(duration)
+	tmp, err := tm.Add(b.ctx.GetSessionVars().StmtCtx, duration)
 	if err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
@@ -3682,7 +3682,7 @@ func strDatetimeAddDuration(sc *stmtctx.StatementContext, d string, arg1 types.D
 	if err != nil {
 		return "", errors.Trace(err)
 	}
-	ret, err := arg0.Add(arg1)
+	ret, err := arg0.Add(sc, arg1)
 	if err != nil {
 		return "", errors.Trace(err)
 	}
@@ -3838,7 +3838,7 @@ func (b *builtinAddDatetimeAndDurationSig) evalTime(row types.Row) (types.Time, 
 	if isNull || err != nil {
 		return types.ZeroDatetime, isNull, errors.Trace(err)
 	}
-	result, err := arg0.Add(arg1)
+	result, err := arg0.Add(b.ctx.GetSessionVars().StmtCtx, arg1)
 	return result, err != nil, errors.Trace(err)
 }
 
@@ -3870,7 +3870,7 @@ func (b *builtinAddDatetimeAndStringSig) evalTime(row types.Row) (types.Time, bo
 	if err != nil {
 		return types.ZeroDatetime, true, errors.Trace(err)
 	}
-	result, err := arg0.Add(arg1)
+	result, err := arg0.Add(b.ctx.GetSessionVars().StmtCtx, arg1)
 	return result, err != nil, errors.Trace(err)
 }
 
@@ -5154,7 +5154,7 @@ func (b *builtinTimestampAddSig) evalString(row types.Row) (string, bool, error)
 		return "", true, errors.Trace(types.ErrInvalidTimeFormat.GenByArgs(unit))
 	}
 	r := types.Time{Time: types.FromGoTime(tb), Type: mysql.TypeDatetime, Fsp: fsp}
-	if err = r.Check(); err != nil {
+	if err = r.Check(b.ctx.GetSessionVars().StmtCtx); err != nil {
 		return "", true, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
 	return r.String(), false, nil

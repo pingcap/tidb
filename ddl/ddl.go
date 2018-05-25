@@ -83,12 +83,13 @@ var (
 		"unsupported drop integer primary key")
 	errUnsupportedCharset = terror.ClassDDL.New(codeUnsupportedCharset, "unsupported charset %s collate %s")
 
+	errUnsupportedShardRowIDBits = terror.ClassDDL.New(codeUnsupportedShardRowIDBits, "unsupported shard_row_id_bits for table with auto_increment column.")
+
 	errBlobKeyWithoutLength = terror.ClassDDL.New(codeBlobKeyWithoutLength, "index for BLOB/TEXT column must specify a key length")
 	errIncorrectPrefixKey   = terror.ClassDDL.New(codeIncorrectPrefixKey, "Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys")
 	errTooLongKey           = terror.ClassDDL.New(codeTooLongKey,
 		fmt.Sprintf("Specified key was too long; max key length is %d bytes", maxPrefixLength))
 	errKeyColumnDoesNotExits    = terror.ClassDDL.New(codeKeyColumnDoesNotExits, "this key column doesn't exist in table")
-	errDupKeyName               = terror.ClassDDL.New(codeDupKeyName, "duplicate key name")
 	errUnknownTypeLength        = terror.ClassDDL.New(codeUnknownTypeLength, "Unknown length for type tp %d")
 	errUnknownFractionLength    = terror.ClassDDL.New(codeUnknownFractionLength, "Unknown Length for type tp %d and fraction %d")
 	errInvalidJobVersion        = terror.ClassDDL.New(codeInvalidJobVersion, "DDL job with version %d greater than current %d")
@@ -114,6 +115,8 @@ var (
 	errBlobCantHaveDefault = terror.ClassDDL.New(codeBlobCantHaveDefault, mysql.MySQLErrName[mysql.ErrBlobCantHaveDefault])
 	errTooLongIndexComment = terror.ClassDDL.New(codeErrTooLongIndexComment, mysql.MySQLErrName[mysql.ErrTooLongIndexComment])
 
+	// ErrDupKeyName returns for duplicated key name
+	ErrDupKeyName = terror.ClassDDL.New(codeDupKeyName, "duplicate key name")
 	// ErrInvalidDBState returns for invalid database state.
 	ErrInvalidDBState = terror.ClassDDL.New(codeInvalidDBState, "invalid database state")
 	// ErrInvalidTableState returns for invalid Table state.
@@ -135,7 +138,7 @@ var (
 	// ErrCantDropFieldOrKey returns for dropping a non-existent field or key.
 	ErrCantDropFieldOrKey = terror.ClassDDL.New(codeCantDropFieldOrKey, "can't drop field; check that column/key exists")
 	// ErrInvalidOnUpdate returns for invalid ON UPDATE clause.
-	ErrInvalidOnUpdate = terror.ClassDDL.New(codeInvalidOnUpdate, "invalid ON UPDATE clause for the column")
+	ErrInvalidOnUpdate = terror.ClassDDL.New(codeInvalidOnUpdate, mysql.MySQLErrName[mysql.ErrInvalidOnUpdate])
 	// ErrTooLongIdent returns for too long name of database/table/column/index.
 	ErrTooLongIdent = terror.ClassDDL.New(codeTooLongIdent, mysql.MySQLErrName[mysql.ErrTooLongIdent])
 	// ErrWrongDBName returns for wrong database name.
@@ -464,13 +467,13 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 			log.Errorf("[ddl] get history DDL job err %v, check again", err)
 			continue
 		} else if historyJob == nil {
-			log.Debugf("[ddl] DDL job %d is not in history, maybe not run", jobID)
+			log.Debugf("[ddl] DDL job ID:%d is not in history, maybe not run", jobID)
 			continue
 		}
 
 		// If a job is a history job, the state must be JobSynced or JobCancel.
 		if historyJob.IsSynced() {
-			log.Infof("[ddl] DDL job %d is finished", jobID)
+			log.Infof("[ddl] DDL job ID:%d is finished", jobID)
 			return nil
 		}
 
@@ -538,6 +541,7 @@ const (
 	codeUnsupportedDropPKHandle     = 204
 	codeUnsupportedCharset          = 205
 	codeUnsupportedModifyPrimaryKey = 206
+	codeUnsupportedShardRowIDBits   = 207
 
 	codeFileNotFound                 = 1017
 	codeErrorOnRename                = 1025

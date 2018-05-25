@@ -46,7 +46,7 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 	sumLength := 0
 
 	for _, ic := range idxColNames {
-		col := findCol(columns, ic.Column.Name.O)
+		col := model.FindColumnInfo(columns, ic.Column.Name.O)
 		if col == nil {
 			return nil, errKeyColumnDoesNotExits.Gen("column does not exist: %s", ic.Column.Name)
 		}
@@ -207,7 +207,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 	indexInfo := findIndexByName(indexName.L, tblInfo.Indices)
 	if indexInfo != nil && indexInfo.State == model.StatePublic {
 		job.State = model.JobStateCancelled
-		return ver, errDupKeyName.Gen("index already exist %s", indexName)
+		return ver, ErrDupKeyName.Gen("index already exist %s", indexName)
 	}
 
 	if indexInfo == nil {

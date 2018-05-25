@@ -30,19 +30,18 @@ type DeleteRangeTask struct {
 	canceled         bool
 	store            Storage
 	ctx              context.Context
-	bo               *Backoffer
 	startKey         []byte
 	endKey           []byte
 }
 
 // NewDeleteRangeTask creates a DeleteRangeTask. Deleting will not be performed right away.
-func NewDeleteRangeTask(ctx context.Context, store Storage, bo *Backoffer, startKey []byte, endKey []byte) *DeleteRangeTask {
+// WARNING: Currently, this API may leave some waste key-value pairs uncleaned in TiKV. Be careful while using it.
+func NewDeleteRangeTask(ctx context.Context, store Storage, startKey []byte, endKey []byte) *DeleteRangeTask {
 	return &DeleteRangeTask{
 		completedRegions: 0,
 		canceled:         false,
 		store:            store,
 		ctx:              ctx,
-		bo:               bo,
 		startKey:         startKey,
 		endKey:           endKey,
 	}
@@ -58,8 +57,8 @@ func (t *DeleteRangeTask) Execute() error {
 			return nil
 		default:
 		}
-
-		loc, err := t.store.GetRegionCache().LocateKey(t.bo, startKey)
+		bo := NewBackoffer(t.ctx, deleteRangeOneRegionMaxBackoff)
+		loc, err := t.store.GetRegionCache().LocateKey(bo, startKey)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -79,7 +78,7 @@ func (t *DeleteRangeTask) Execute() error {
 			},
 		}
 
-		resp, err := t.store.SendReq(t.bo, req, loc.Region, ReadTimeoutMedium)
+		resp, err := t.store.SendReq(bo, req, loc.Region, ReadTimeoutMedium)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -88,7 +87,7 @@ func (t *DeleteRangeTask) Execute() error {
 			return errors.Trace(err)
 		}
 		if regionErr != nil {
-			err = t.bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return errors.Trace(err)
 			}
