@@ -194,7 +194,7 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 					return nil, errors.Trace(err)
 				}
 				agg.SetChildren(np)
-				// TODO: Add a Projection if any argument of aggregate funcs or group by items are scala functions.
+				// TODO: Add a Projection if any argument of aggregate funcs or group by items are scalar functions.
 				// agg.buildProjectionIfNecessary()
 				agg.collectGroupByColumns()
 				return agg, nil
