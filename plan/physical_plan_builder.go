@@ -66,7 +66,7 @@ func getPropByOrderByItems(items []*ByItems) (*requiredProp, bool) {
 }
 
 func (p *LogicalTableDual) findBestTask(prop *requiredProp) (task, error) {
-	if !prop.isEmpty() && !prop.enforced {
+	if !prop.isEmpty() {
 		return invalidTask, nil
 	}
 	dual := PhysicalTableDual{RowCount: p.RowCount}.init(p.ctx, p.stats)
