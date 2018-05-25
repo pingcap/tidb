@@ -5499,6 +5499,7 @@ Statement:
 		// TODO: This is used to fix issue #320. There may be a better solution.
 		$$ = $1.(*ast.SubqueryExpr).Query.(ast.StmtNode)
 	}
+|	TraceStmt
 |	TruncateTableStmt
 |	UpdateStmt
 |	UseStmt
