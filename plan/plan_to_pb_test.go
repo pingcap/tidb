@@ -35,16 +35,16 @@ func (s *testDistsqlSuite) TestColumnToProto(c *C) {
 	col := &model.ColumnInfo{
 		FieldType: *tp,
 	}
-	pc := columnToProto(col)
+	pc := model.ColumnToProto(col)
 	expect := &tipb.ColumnInfo{ColumnId: 0, Tp: 3, Collation: 83, ColumnLen: -1, Decimal: -1, Flag: 10, Elems: []string(nil), DefaultVal: []uint8(nil), PkHandle: false, XXX_unrecognized: []uint8(nil)}
 	c.Assert(pc, DeepEquals, expect)
 
 	cols := []*model.ColumnInfo{col, col}
-	pcs := ColumnsToProto(cols, false)
+	pcs := model.ColumnsToProto(cols, false)
 	for _, v := range pcs {
 		c.Assert(v.GetFlag(), Equals, int32(10))
 	}
-	pcs = ColumnsToProto(cols, true)
+	pcs = model.ColumnsToProto(cols, true)
 	for _, v := range pcs {
 		c.Assert(v.GetFlag(), Equals, int32(10))
 	}
@@ -56,7 +56,7 @@ func (s *testDistsqlSuite) TestColumnToProto(c *C) {
 	col = &model.ColumnInfo{
 		FieldType: *tp,
 	}
-	pc = columnToProto(col)
+	pc = model.ColumnToProto(col)
 	c.Assert(pc.Collation, Equals, int32(mysql.DefaultCollationID))
 }
 
@@ -116,7 +116,7 @@ func (s *testDistsqlSuite) TestIndexToProto(c *C) {
 		PKIsHandle: true,
 	}
 
-	pIdx := IndexToProto(&tbInfo, idxInfos[0])
+	pIdx := model.IndexToProto(&tbInfo, idxInfos[0])
 	c.Assert(pIdx.TableId, Equals, int64(1))
 	c.Assert(pIdx.IndexId, Equals, int64(1))
 	c.Assert(pIdx.Unique, Equals, true)
