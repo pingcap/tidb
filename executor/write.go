@@ -43,6 +43,10 @@ const (
 	DirtyTableTruncate
 )
 
+type errTransformer interface {
+	transformErrs(col *table.Column, rowIdx int, warn error, err error) (error, error)
+}
+
 // updateRecord updates the row specified by the handle `h`, from `oldData` to `newData`.
 // `modified` means which columns are really modified. It's used for secondary indices.
 // Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
@@ -53,7 +57,7 @@ const (
 //     4. lastInsertID (uint64) : the lastInsertID should be set by the newData.
 //     5. err (error) : error in the update.
 func updateRecord(ctx sessionctx.Context, h int64, oldData, newData types.DatumRow, modified []bool, t table.Table,
-	onDup bool) (bool, bool, int64, uint64, error) {
+	onDup bool, rowIdx int, transformer errTransformer) (bool, bool, int64, uint64, error) {
 	var sc = ctx.GetSessionVars().StmtCtx
 	var changed, handleChanged = false, false
 	// onUpdateSpecified is for "UPDATE SET ts_field = old_value", the
@@ -68,7 +72,11 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData types.DatumR
 	for i, col := range t.Cols() {
 		if modified[i] {
 			// Cast changed fields with respective columns.
-			v, err := table.CastValue(ctx, newData[i], col.ToInfo())
+			v, warn, err := table.CastValue(ctx, newData[i], col.ToInfo())
+			warn, err = transformer.transformErrs(col, rowIdx, warn, err)
+			if warn != nil {
+				ctx.GetSessionVars().StmtCtx.AppendWarning(warn)
+			}
 			if err != nil {
 				return false, handleChanged, newHandle, 0, errors.Trace(err)
 			}

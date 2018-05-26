@@ -215,6 +215,7 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 		isEOF = true
 		prevData, curData = curData, prevData
 	}
+	rowIdx := 0
 	rows := make([]types.DatumRow, 0, e.maxRowsInBatch)
 	for len(curData) > 0 {
 		line, curData, hasStarting = e.getLine(prevData, curData)
@@ -241,8 +242,9 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 		if err != nil {
 			return nil, false, errors.Trace(err)
 		}
-		rows = append(rows, e.colsToRow(cols))
+		rows = append(rows, e.colsToRow(cols, rowIdx))
 		e.rowCount++
+		rowIdx++
 		if e.maxRowsInBatch != 0 && e.rowCount%e.maxRowsInBatch == 0 {
 			reachLimit = true
 			log.Infof("This insert rows has reached the batch %d, current total rows %d",
@@ -264,7 +266,7 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 	return curData, reachLimit, nil
 }
 
-func (e *LoadDataInfo) colsToRow(cols []string) types.DatumRow {
+func (e *LoadDataInfo) colsToRow(cols []string, rowIdx int) types.DatumRow {
 	for i := 0; i < len(e.row); i++ {
 		if i >= len(cols) {
 			e.row[i].SetString("")
@@ -272,7 +274,7 @@ func (e *LoadDataInfo) colsToRow(cols []string) types.DatumRow {
 		}
 		e.row[i].SetString(cols[i])
 	}
-	row, err := e.fillRowData(e.columns, e.row)
+	row, err := e.fillRowData(e.columns, e.row, rowIdx)
 	if err != nil {
 		warnLog := fmt.Sprintf("Load Data: insert data:%v failed:%v", e.row, errors.ErrorStack(err))
 		e.handleLoadDataWarnings(err, warnLog)

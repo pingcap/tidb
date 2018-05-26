@@ -2787,3 +2787,32 @@ func (s *testSuite) TestYearTypeDeleteIndex(c *C) {
 	tk.MustExec("delete from t;")
 	tk.MustExec("admin check table t")
 }
+
+func (s *testSuite) TestDecimalTruncateWarn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	res := tk.MustQuery("show variables like 'sql_mode'")
+	oldSqlMode := res.Rows()[0][1].(string)
+	defer func() {
+		tk.MustExec("set sql_mode='" + oldSqlMode + "';")
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("set SQL_WARNINGS=1;")
+	tk.MustExec("set sql_mode='NO_ENGINE_SUBSTITUTION';")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(`a` decimal(10, 2));")
+	tk.MustExec("insert into t values ('+111111111.11');")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1264|Out of range value for column 'a' at row 1"))
+}
+
+func (s *testSuite) TestDecimalTruncateError(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(`a` decimal(10, 2));")
+	res, err := tk.Exec("insert into t values ('+111111111.11');")
+	c.Assert(err, NotNil)
+	c.Assert(strings.Contains(err.Error(), "Out of range value for column"), IsTrue)
+	if res != nil {
+		c.Assert(res.Close(), IsNil)
+	}
+}

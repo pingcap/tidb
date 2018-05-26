@@ -16,14 +16,17 @@ package table
 import (
 	"testing"
 
+	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
+	log "github.com/sirupsen/logrus"
 )
 
 func TestT(t *testing.T) {
@@ -222,12 +225,14 @@ func (t *testTableSuite) TestCastValue(c *C) {
 		State:     model.StatePublic,
 	}
 	colInfo.Charset = mysql.UTF8Charset
-	val, err := CastValue(ctx, types.Datum{}, &colInfo)
-	c.Assert(err, Equals, nil)
+	val, warn, err := CastValue(ctx, types.Datum{}, &colInfo)
+	c.Assert(warn, IsNil)
+	c.Assert(err, IsNil)
 	c.Assert(val.GetInt64(), Equals, int64(0))
 
-	val, err = CastValue(ctx, types.NewDatum("test"), &colInfo)
-	c.Assert(err, Not(Equals), nil)
+	val, warn, err = CastValue(ctx, types.NewDatum("test"), &colInfo)
+	c.Assert(warn, IsNil)
+	c.Assert(err, NotNil)
 	c.Assert(val.GetInt64(), Equals, int64(0))
 
 	col := ToColumn(&model.ColumnInfo{
@@ -246,9 +251,33 @@ func (t *testTableSuite) TestCastValue(c *C) {
 		FieldType: *types.NewFieldType(mysql.TypeString),
 		State:     model.StatePublic,
 	}
-	val, err = CastValue(ctx, types.NewDatum("test"), &colInfoS)
+	// TODO: add warn not nil case.
+	val, warn, err = CastValue(ctx, types.NewDatum("test"), &colInfoS)
+	c.Assert(err, IsNil)
 	c.Assert(err, IsNil)
 	c.Assert(val, NotNil)
+}
+
+// CastValues casts values based on columns type.
+func CastValues(ctx sessionctx.Context, rec []types.Datum, cols []*Column) (err error) {
+	sc := ctx.GetSessionVars().StmtCtx
+	for _, c := range cols {
+		var converted types.Datum
+		converted, warn, err := CastValue(ctx, rec[c.Offset], c.ToInfo())
+		if warn != nil {
+			sc.AppendWarning(warn)
+		}
+		if err != nil {
+			if sc.IgnoreErr {
+				sc.AppendWarning(err)
+				log.Warnf("cast values failed:%v", err)
+			} else {
+				return errors.Trace(err)
+			}
+		}
+		rec[c.Offset] = converted
+	}
+	return nil
 }
 
 func (t *testTableSuite) TestGetDefaultValue(c *C) {
