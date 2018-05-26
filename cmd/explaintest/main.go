@@ -432,10 +432,7 @@ func (t *tester) create(tableName string, qText string) error {
 		return err
 	}
 
-	if err = ioutil.WriteFile(t.statsFileName(tableName), js, 0644); err != nil {
-		return err
-	}
-	return nil
+	return ioutil.WriteFile(t.statsFileName(tableName), js, 0644)
 }
 
 func (t *tester) commit() error {
