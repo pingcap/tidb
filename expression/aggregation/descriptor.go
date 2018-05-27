@@ -47,9 +47,16 @@ func NewAggFuncDesc(ctx sessionctx.Context, name string, args []expression.Expre
 		Name:        strings.ToLower(name),
 		Args:        args,
 		HasDistinct: hasDistinct,
+		Mode:        Partial1Mode,
 	}
 	a.typeInfer(ctx)
 	return a
+}
+
+func SetAggFuncDescMode(funcs []*AggFuncDesc, mode AggFunctionMode) {
+	for i := range funcs {
+		funcs[i].Mode = mode
+	}
 }
 
 // Equal checks whether two aggregation function signatures are equal.

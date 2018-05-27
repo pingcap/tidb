@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/codec"
 )
 
 type avgFunction struct {
@@ -55,11 +56,16 @@ func (af *avgFunction) ResetContext(sc *stmtctx.StatementContext, evalCtx *AggEv
 }
 
 // Update implements Aggregation interface.
-func (af *avgFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
-	if af.Mode == FinalMode {
-		return af.updateAvg(sc, evalCtx, row)
+func (af *avgFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) (err error) {
+	switch af.Mode {
+	case Partial1Mode, CompleteMode:
+		err = af.updateSum(sc, evalCtx, row)
+	case Partial2Mode, FinalMode:
+		err = af.updateAvg(sc, evalCtx, row)
+	case DedupMode:
+		panic("DedupMode is not supported now.")
 	}
-	return af.updateSum(sc, evalCtx, row)
+	return errors.Trace(err)
 }
 
 // GetResult implements Aggregation interface.
@@ -98,4 +104,10 @@ func (af *avgFunction) GetResult(evalCtx *AggEvaluateContext) (d types.Datum) {
 // GetPartialResult implements Aggregation interface.
 func (af *avgFunction) GetPartialResult(evalCtx *AggEvaluateContext) []types.Datum {
 	return []types.Datum{types.NewIntDatum(evalCtx.Count), evalCtx.Value}
+}
+
+// GetInterResult implements Aggregation interface.
+func (af *avgFunction) GetInterResult(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext) (result []byte, err error) {
+	// TODO: support distinct values
+	return codec.EncodeValue(sc, result, types.NewIntDatum(evalCtx.Count), evalCtx.Value)
 }

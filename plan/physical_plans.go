@@ -123,16 +123,6 @@ type PhysicalMemTable struct {
 	TableAsName *model.CIStr
 }
 
-func needCount(af *aggregation.AggFuncDesc) bool {
-	return af.Name == ast.AggFuncCount || af.Name == ast.AggFuncAvg
-}
-
-func needValue(af *aggregation.AggFuncDesc) bool {
-	return af.Name == ast.AggFuncSum || af.Name == ast.AggFuncAvg || af.Name == ast.AggFuncFirstRow ||
-		af.Name == ast.AggFuncMax || af.Name == ast.AggFuncMin || af.Name == ast.AggFuncGroupConcat ||
-		af.Name == ast.AggFuncBitOr || af.Name == ast.AggFuncBitAnd || af.Name == ast.AggFuncBitXor
-}
-
 // PhysicalTableScan represents a table scan plan.
 type PhysicalTableScan struct {
 	physicalSchemaProducer

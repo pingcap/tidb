@@ -15,13 +15,17 @@ package aggregation
 
 import (
 	"bytes"
+	"fmt"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pingcap/tidb/util/charset"
+	tipb "github.com/pingcap/tipb/go-tipb"
 )
 
 // Aggregation stands for aggregate functions.
@@ -36,11 +40,16 @@ type Aggregation interface {
 	// GetResult will be called when all data have been processed.
 	GetResult(evalCtx *AggEvaluateContext) types.Datum
 
+	GetInterResult(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext) ([]byte, error)
+
 	// Create a new AggEvaluateContext for the aggregation function.
 	CreateContext(sc *stmtctx.StatementContext) *AggEvaluateContext
 
 	// Reset the content of the evaluate context.
 	ResetContext(sc *stmtctx.StatementContext, evalCtx *AggEvaluateContext)
+
+	// GetFinalAggFunc constructs the final agg functions, only used in parallel execution.
+	GetFinalAggFunc(idx int) (int, Aggregation)
 }
 
 // NewDistAggFunc creates new Aggregate function for mock tikv.
@@ -88,13 +97,23 @@ type AggEvaluateContext struct {
 }
 
 // AggFunctionMode stands for the aggregation function's mode.
+// |-----------------|--------------|--------------|
+// | AggFunctionMode | input        | output       |
+// |-----------------|--------------|--------------|
+// | CompleteMode    | origin data  | final result |
+// | FinalMode       | partial data | final result |
+// | Partial1Mode    | origin data  | partial data |
+// | Partial2Mode    | partial data | partial data |
+// | DedupMode       | origin data  | origin data  |
+// |-----------------|--------------|--------------|
 type AggFunctionMode int
 
 const (
-	// CompleteMode function accepts origin data.
 	CompleteMode AggFunctionMode = iota
-	// FinalMode function accepts partial data.
 	FinalMode
+	Partial1Mode
+	Partial2Mode
+	DedupMode
 )
 
 type aggFunction struct {
@@ -149,4 +168,62 @@ func (af *aggFunction) updateSum(sc *stmtctx.StatementContext, evalCtx *AggEvalu
 	}
 	evalCtx.Count++
 	return nil
+}
+
+func (af *aggFunction) GetFinalAggFunc(idx int) (_ int, newAggFunc Aggregation) {
+	switch af.Mode {
+	case DedupMode:
+		panic("DedupMode is not supported now.")
+	case Partial1Mode:
+		args := make([]expression.Expression, 0, 2)
+		if NeedCount(af.Name) {
+			args = append(args, &expression.Column{
+				ColName: model.NewCIStr(fmt.Sprintf("col_%d", idx)),
+				Index:   idx,
+				RetType: &types.FieldType{Tp: mysql.TypeLonglong, Flen: 21, Charset: charset.CharsetBin, Collate: charset.CollationBin},
+			})
+			idx++
+		}
+		if NeedValue(af.Name) {
+			args = append(args, &expression.Column{
+				ColName: model.NewCIStr(fmt.Sprintf("col_%d", idx)),
+				Index:   idx,
+				RetType: af.RetTp,
+			})
+			if af.Name == ast.AggFuncGroupConcat {
+				separator := af.Args[len(af.Args)-1]
+				args = append(args, &expression.Column{
+					ColName: model.NewCIStr(fmt.Sprintf("col_%d", idx)),
+					Index:   idx,
+					RetType: separator.GetType(),
+				})
+			}
+			idx++
+		}
+		desc := af.Clone()
+		desc.Mode = FinalMode
+		desc.Args = args
+		newAggFunc = desc.GetAggFunc()
+	case Partial2Mode:
+		desc := af.Clone()
+		desc.Mode = FinalMode
+		newAggFunc = desc.GetAggFunc()
+	case FinalMode, CompleteMode:
+		panic("GetFinalAggFunc should not be called when aggMode is FinalMode/CompleteMode.")
+	}
+	return idx, newAggFunc
+}
+
+func NeedCount(name string) bool {
+	return name == ast.AggFuncCount || name == ast.AggFuncAvg
+}
+
+func NeedValue(name string) bool {
+	switch name {
+	case ast.AggFuncSum, ast.AggFuncAvg, ast.AggFuncFirstRow, ast.AggFuncMax, ast.AggFuncMin,
+		ast.AggFuncGroupConcat, ast.AggFuncBitOr, ast.AggFuncBitAnd, ast.AggFuncBitXor:
+		return true
+	default:
+		return false
+	}
 }

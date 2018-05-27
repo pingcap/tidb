@@ -17,6 +17,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/codec"
 )
 
 type maxMinFunction struct {
@@ -32,6 +33,12 @@ func (mmf *maxMinFunction) GetResult(evalCtx *AggEvaluateContext) (d types.Datum
 // GetPartialResult implements Aggregation interface.
 func (mmf *maxMinFunction) GetPartialResult(evalCtx *AggEvaluateContext) []types.Datum {
 	return []types.Datum{mmf.GetResult(evalCtx)}
+}
+
+// GetInterResult implements Aggregation interface.
+func (mmf *maxMinFunction) GetInterResult(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext) (result []byte, err error) {
+	// TODO: support distinct values
+	return codec.EncodeValue(sc, result, evalCtx.Value)
 }
 
 // Update implements Aggregation interface.

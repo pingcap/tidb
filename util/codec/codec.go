@@ -274,7 +274,7 @@ func HashChunkRow(sc *stmtctx.StatementContext, b []byte, row chunk.Row, allType
 // Decode decodes values from a byte slice generated with EncodeKey or EncodeValue
 // before.
 // size is the size of decoded datum slice.
-func Decode(b []byte, size int) ([]types.Datum, error) {
+func Decode(b []byte, size int) (types.DatumRow, error) {
 	if len(b) < 1 {
 		return nil, errors.New("invalid encoded key")
 	}

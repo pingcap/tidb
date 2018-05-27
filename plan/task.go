@@ -416,14 +416,20 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 	// Check if this aggregation can push down.
 	sc := p.ctx.GetSessionVars().StmtCtx
 	client := p.ctx.GetClient()
+	//for _, aggFunc := range p.AggFuncs {
+	//	aggFunc.Mode = aggregation.Partial1Mode
+	//}
+	//return nil, p.self
 	for _, aggFunc := range p.AggFuncs {
 		pb := aggregation.AggFuncToPBExpr(sc, client, aggFunc)
 		if pb == nil {
+			aggregation.SetAggFuncDescMode(p.AggFuncs, aggregation.Partial1Mode)
 			return nil, p.self
 		}
 	}
 	_, _, remained := expression.ExpressionsToPB(sc, p.GroupByItems, client)
 	if len(remained) > 0 {
+		aggregation.SetAggFuncDescMode(p.AggFuncs, aggregation.Partial1Mode)
 		return nil, p.self
 	}
 
@@ -438,7 +444,7 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 	for i, aggFun := range p.AggFuncs {
 		finalAggFunc := &aggregation.AggFuncDesc{Name: aggFun.Name, HasDistinct: false}
 		args := make([]expression.Expression, 0, len(aggFun.Args))
-		if needCount(finalAggFunc) {
+		if aggregation.NeedCount(finalAggFunc.Name) {
 			ft := types.NewFieldType(mysql.TypeLonglong)
 			ft.Flen, ft.Charset, ft.Collate = 21, charset.CharsetBin, charset.CollationBin
 			partialSchema.Append(&expression.Column{
@@ -450,7 +456,7 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 			args = append(args, partialSchema.Columns[partialCursor].Clone())
 			partialCursor++
 		}
-		if needValue(finalAggFunc) {
+		if aggregation.NeedValue(finalAggFunc.Name) {
 			partialSchema.Append(&expression.Column{
 				FromID:   p.ID(),
 				Position: partialCursor,
@@ -461,7 +467,7 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 			partialCursor++
 		}
 		finalAggFunc.Args = args
-		finalAggFunc.Mode = aggregation.FinalMode
+		finalAggFunc.Mode = aggregation.Partial2Mode
 		finalAggFunc.RetTp = aggFun.RetTp
 		finalAggFuncs[i] = finalAggFunc
 	}

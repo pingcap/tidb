@@ -85,13 +85,13 @@ func (s *testCodecSuite) TestCodecKey(c *C) {
 		c.Assert(err, IsNil, comment)
 		args, err := Decode(b, 1)
 		c.Assert(err, IsNil)
-		c.Assert(args, DeepEquals, t.Expect)
+		c.Assert([]types.Datum(args), DeepEquals, t.Expect)
 
 		b, err = EncodeValue(sc, nil, t.Input...)
 		c.Assert(err, IsNil)
 		args, err = Decode(b, 1)
 		c.Assert(err, IsNil)
-		c.Assert(args, DeepEquals, t.Expect)
+		c.Assert([]types.Datum(args), DeepEquals, t.Expect)
 	}
 }
 

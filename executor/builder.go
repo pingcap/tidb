@@ -852,6 +852,9 @@ func (b *executorBuilder) buildHashAgg(v *plan.PhysicalHashAgg) Executor {
 	}
 	for _, aggDesc := range v.AggFuncs {
 		e.AggFuncs = append(e.AggFuncs, aggDesc.GetAggFunc())
+		if aggDesc.HasDistinct {
+			e.doesUnparallelExec = true
+		}
 	}
 	metrics.ExecutorCounter.WithLabelValues("HashAggExec").Inc()
 	return e

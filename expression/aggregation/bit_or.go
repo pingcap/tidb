@@ -17,6 +17,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/codec"
 )
 
 type bitOrFunction struct {
@@ -54,4 +55,10 @@ func (bf *bitOrFunction) GetResult(evalCtx *AggEvaluateContext) types.Datum {
 // GetPartialResult implements Aggregation interface.
 func (bf *bitOrFunction) GetPartialResult(evalCtx *AggEvaluateContext) []types.Datum {
 	return []types.Datum{bf.GetResult(evalCtx)}
+}
+
+// GetInterResult implements Aggregation interface.
+func (bf *bitOrFunction) GetInterResult(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext) (result []byte, err error) {
+	// TODO: support distinct values
+	return codec.EncodeValue(sc, result, evalCtx.Value)
 }
