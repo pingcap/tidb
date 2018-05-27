@@ -26,6 +26,8 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
+const timeStampMaxYear = 2038
+
 var (
 	_ functionClass = &coalesceFunctionClass{}
 	_ functionClass = &greatestFunctionClass{}
@@ -968,7 +970,6 @@ func GetAccurateCmpType(lhs, rhs Expression) types.EvalType {
 			if lhsFieldType.EvalType() == types.ETString && rhsFieldType.EvalType() == types.ETTimestamp {
 				cmpType = types.ETTimestamp
 			}
-
 		}
 	} else if lhsFieldType.Tp == mysql.TypeDuration && rhsFieldType.Tp == mysql.TypeDuration {
 		// duration <cmp> duration
@@ -1248,22 +1249,22 @@ func (c *compareFunctionClass) generateCmpSigs(ctx sessionctx.Context, args []Ex
 	case types.ETDatetime, types.ETTimestamp:
 		switch c.op {
 		case opcode.LT:
-			sig = &builtinLTTimeSig{bf}
+			sig = &builtinLTTimeSig{bf, tp}
 			sig.setPbCode(tipb.ScalarFuncSig_LTTime)
 		case opcode.LE:
-			sig = &builtinLETimeSig{bf}
+			sig = &builtinLETimeSig{bf, tp}
 			sig.setPbCode(tipb.ScalarFuncSig_LETime)
 		case opcode.GT:
-			sig = &builtinGTTimeSig{bf}
+			sig = &builtinGTTimeSig{bf, tp}
 			sig.setPbCode(tipb.ScalarFuncSig_GTTime)
 		case opcode.GE:
-			sig = &builtinGETimeSig{bf}
+			sig = &builtinGETimeSig{bf, tp}
 			sig.setPbCode(tipb.ScalarFuncSig_GETime)
 		case opcode.EQ:
-			sig = &builtinEQTimeSig{bf}
+			sig = &builtinEQTimeSig{bf, tp}
 			sig.setPbCode(tipb.ScalarFuncSig_EQTime)
 		case opcode.NE:
-			sig = &builtinNETimeSig{bf}
+			sig = &builtinNETimeSig{bf, tp}
 			sig.setPbCode(tipb.ScalarFuncSig_NETime)
 		case opcode.NullEQ:
 			sig = &builtinNullEQTimeSig{bf}
@@ -1369,6 +1370,7 @@ func (b *builtinLTDurationSig) evalInt(row types.Row) (val int64, isNull bool, e
 
 type builtinLTTimeSig struct {
 	baseBuiltinFunc
+	evalTp types.EvalType
 }
 
 func (b *builtinLTTimeSig) Clone() builtinFunc {
@@ -1378,7 +1380,7 @@ func (b *builtinLTTimeSig) Clone() builtinFunc {
 }
 
 func (b *builtinLTTimeSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
-	return resOfLT(compareTime(b.ctx, b.args, row))
+	return resOfLT(compareTime(b.ctx, b.args, row, b.evalTp))
 }
 
 type builtinLTJSONSig struct {
@@ -1467,6 +1469,7 @@ func (b *builtinLEDurationSig) evalInt(row types.Row) (val int64, isNull bool, e
 
 type builtinLETimeSig struct {
 	baseBuiltinFunc
+	evalTp types.EvalType
 }
 
 func (b *builtinLETimeSig) Clone() builtinFunc {
@@ -1476,7 +1479,7 @@ func (b *builtinLETimeSig) Clone() builtinFunc {
 }
 
 func (b *builtinLETimeSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
-	return resOfLE(compareTime(b.ctx, b.args, row))
+	return resOfLE(compareTime(b.ctx, b.args, row, b.evalTp))
 }
 
 type builtinLEJSONSig struct {
@@ -1565,6 +1568,7 @@ func (b *builtinGTDurationSig) evalInt(row types.Row) (val int64, isNull bool, e
 
 type builtinGTTimeSig struct {
 	baseBuiltinFunc
+	evalTp types.EvalType
 }
 
 func (b *builtinGTTimeSig) Clone() builtinFunc {
@@ -1574,7 +1578,7 @@ func (b *builtinGTTimeSig) Clone() builtinFunc {
 }
 
 func (b *builtinGTTimeSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
-	return resOfGT(compareTime(b.ctx, b.args, row))
+	return resOfGT(compareTime(b.ctx, b.args, row, b.evalTp))
 }
 
 type builtinGTJSONSig struct {
@@ -1663,6 +1667,7 @@ func (b *builtinGEDurationSig) evalInt(row types.Row) (val int64, isNull bool, e
 
 type builtinGETimeSig struct {
 	baseBuiltinFunc
+	evalTp types.EvalType
 }
 
 func (b *builtinGETimeSig) Clone() builtinFunc {
@@ -1672,7 +1677,7 @@ func (b *builtinGETimeSig) Clone() builtinFunc {
 }
 
 func (b *builtinGETimeSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
-	return resOfGE(compareTime(b.ctx, b.args, row))
+	return resOfGE(compareTime(b.ctx, b.args, row, b.evalTp))
 }
 
 type builtinGEJSONSig struct {
@@ -1761,6 +1766,7 @@ func (b *builtinEQDurationSig) evalInt(row types.Row) (val int64, isNull bool, e
 
 type builtinEQTimeSig struct {
 	baseBuiltinFunc
+	evalTp types.EvalType
 }
 
 func (b *builtinEQTimeSig) Clone() builtinFunc {
@@ -1770,7 +1776,7 @@ func (b *builtinEQTimeSig) Clone() builtinFunc {
 }
 
 func (b *builtinEQTimeSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
-	return resOfEQ(compareTime(b.ctx, b.args, row))
+	return resOfEQ(compareTime(b.ctx, b.args, row, b.evalTp))
 }
 
 type builtinEQJSONSig struct {
@@ -1859,6 +1865,7 @@ func (b *builtinNEDurationSig) evalInt(row types.Row) (val int64, isNull bool, e
 
 type builtinNETimeSig struct {
 	baseBuiltinFunc
+	evalTp types.EvalType
 }
 
 func (b *builtinNETimeSig) Clone() builtinFunc {
@@ -1868,7 +1875,7 @@ func (b *builtinNETimeSig) Clone() builtinFunc {
 }
 
 func (b *builtinNETimeSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
-	return resOfNE(compareTime(b.ctx, b.args, row))
+	return resOfNE(compareTime(b.ctx, b.args, row, b.evalTp))
 }
 
 type builtinNEJSONSig struct {
@@ -2265,7 +2272,7 @@ func compareDecimal(ctx sessionctx.Context, args []Expression, row types.Row) (v
 	return int64(arg0.Compare(arg1)), false, nil
 }
 
-func compareTime(ctx sessionctx.Context, args []Expression, row types.Row) (int64, bool, error) {
+func compareTime(ctx sessionctx.Context, args []Expression, row types.Row, tp types.EvalType) (int64, bool, error) {
 	arg0, isNull0, err := args[0].EvalTime(ctx, row)
 	if isNull0 || err != nil {
 		return 0, isNull0, errors.Trace(err)
@@ -2273,6 +2280,11 @@ func compareTime(ctx sessionctx.Context, args []Expression, row types.Row) (int6
 	arg1, isNull1, err := args[1].EvalTime(ctx, row)
 	if isNull1 || err != nil {
 		return 0, isNull1, errors.Trace(err)
+	}
+	if tp == types.ETTimestamp {
+		if arg0.Time.Year() >= timeStampMaxYear || arg1.Time.Year() >= timeStampMaxYear {
+			return 0, false, errors.New("Timestamp's max year is 2038")
+		}
 	}
 	return int64(arg0.Compare(arg1)), false, nil
 }
