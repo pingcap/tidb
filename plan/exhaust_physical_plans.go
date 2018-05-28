@@ -563,12 +563,7 @@ func (la *LogicalAggregation) getStreamAggs(prop *requiredProp) []PhysicalPlan {
 			continue
 		}
 
-		for _, taskTp := range wholeTaskTypes {
-			// Second read in the double can't meet the stream aggregation's require prop.
-			if taskTp == copDoubleReadTaskType {
-				continue
-			}
-
+		for _, taskTp := range []taskType{copSingleReadTaskType, rootTaskType} {
 			copiedChildProperty := new(requiredProp)
 			*copiedChildProperty = *childProp // It's ok to not deep copy the "cols" field.
 			copiedChildProperty.taskTp = taskTp
