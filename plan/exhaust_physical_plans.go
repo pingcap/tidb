@@ -32,17 +32,17 @@ func (p *LogicalUnionScan) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPl
 	return []PhysicalPlan{us}
 }
 
-func getPermutation(cols1, cols2 []*expression.Column) ([]int, []*expression.Column) {
-	tmpSchema := expression.NewSchema(cols2...)
-	permutation := make([]int, 0, len(cols1))
-	for i, col1 := range cols1 {
-		offset := tmpSchema.ColumnIndex(col1)
+func getMaxSortPrefix(sortCols, allCols []*expression.Column) []int {
+	tmpSchema := expression.NewSchema(allCols...)
+	sortColOffsets := make([]int, 0, len(sortCols))
+	for _, sortCol := range sortCols {
+		offset := tmpSchema.ColumnIndex(sortCol)
 		if offset == -1 {
-			return permutation, cols1[:i]
+			return sortColOffsets
 		}
-		permutation = append(permutation, offset)
+		sortColOffsets = append(sortColOffsets, offset)
 	}
-	return permutation, cols1
+	return sortColOffsets
 }
 
 func findMaxPrefixLen(candidates [][]*expression.Column, keys []*expression.Column) int {
@@ -112,16 +112,20 @@ func (p *PhysicalMergeJoin) tryToGetChildReqProp(prop *requiredProp) ([]*require
 func (p *LogicalJoin) getMergeJoin(prop *requiredProp) []PhysicalPlan {
 	joins := make([]PhysicalPlan, 0, len(p.leftProperties))
 	// The leftProperties caches all the possible properties that are provided by its children.
-	for _, leftCols := range p.leftProperties {
-		offsets, leftKeys := getPermutation(leftCols, p.LeftJoinKeys)
+	for _, lhsChildProperty := range p.leftProperties {
+		offsets := getMaxSortPrefix(lhsChildProperty, p.LeftJoinKeys)
 		if len(offsets) == 0 {
 			continue
 		}
+
+		leftKeys := lhsChildProperty[:len(offsets)]
 		rightKeys := expression.NewSchema(p.RightJoinKeys...).ColumnsByIndices(offsets)
+
 		prefixLen := findMaxPrefixLen(p.rightProperties, rightKeys)
 		if prefixLen == 0 {
 			continue
 		}
+
 		leftKeys = leftKeys[:prefixLen]
 		rightKeys = rightKeys[:prefixLen]
 		offsets = offsets[:prefixLen]
@@ -551,7 +555,7 @@ func (la *LogicalApply) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan 
 
 // exhaustPhysicalPlans is only for implementing interface. DataSource and Dual generate task in `findBestTask` directly.
 func (p *baseLogicalPlan) exhaustPhysicalPlans(_ *requiredProp) []PhysicalPlan {
-	panic("This function should not be called")
+	panic("baseLogicalPlan.exhaustPhysicalPlans() should never be called.")
 }
 
 func (la *LogicalAggregation) getStreamAggs(prop *requiredProp) []PhysicalPlan {
@@ -567,33 +571,35 @@ func (la *LogicalAggregation) getStreamAggs(prop *requiredProp) []PhysicalPlan {
 	if len(la.groupByCols) != len(la.GroupByItems) {
 		return nil
 	}
-	streamAggs := make([]PhysicalPlan, 0, len(la.possibleProperties)*2)
-	for _, cols := range la.possibleProperties {
-		_, keys := getPermutation(cols, la.groupByCols)
-		if len(keys) != len(la.groupByCols) {
+
+	streamAggs := make([]PhysicalPlan, 0, len(la.possibleProperties)*(len(wholeTaskTypes)-1))
+	childProp := &requiredProp{
+		desc:        prop.desc,
+		expectedCnt: math.Max(prop.expectedCnt*la.inputCount/la.stats.count, prop.expectedCnt),
+	}
+
+	for _, possibleChildProperty := range la.possibleProperties {
+		sortColOffsets := getMaxSortPrefix(possibleChildProperty, la.groupByCols)
+		if len(sortColOffsets) != len(la.groupByCols) {
 			continue
 		}
-		for _, tp := range wholeTaskTypes {
-			// Second read in the double can't meet the stream aggregation's require prop.
-			if tp == copDoubleReadTaskType {
-				continue
-			}
-			childProp := &requiredProp{
-				taskTp:      tp,
-				cols:        keys,
-				desc:        prop.desc,
-				expectedCnt: prop.expectedCnt * la.inputCount / la.stats.count,
-			}
-			if childProp.expectedCnt < prop.expectedCnt {
-				childProp.expectedCnt = prop.expectedCnt
-			}
-			if !prop.isPrefix(childProp) {
-				continue
-			}
+
+		childProp.cols = possibleChildProperty[:len(sortColOffsets)]
+		if !prop.isPrefix(childProp) {
+			continue
+		}
+
+		// The table read of "copDoubleReadTaskType" can't promises the sort
+		// property that the stream aggregation required, no need to consider.
+		for _, taskTp := range []taskType{copSingleReadTaskType, rootTaskType} {
+			copiedChildProperty := new(requiredProp)
+			*copiedChildProperty = *childProp // It's ok to not deep copy the "cols" field.
+			copiedChildProperty.taskTp = taskTp
+
 			agg := basePhysicalAgg{
 				GroupByItems: la.GroupByItems,
 				AggFuncs:     la.AggFuncs,
-			}.initForStream(la.ctx, la.stats.scaleByExpectCnt(prop.expectedCnt), childProp)
+			}.initForStream(la.ctx, la.stats.scaleByExpectCnt(prop.expectedCnt), copiedChildProperty)
 			agg.SetSchema(la.schema.Clone())
 			streamAggs = append(streamAggs, agg)
 		}
@@ -620,10 +626,7 @@ func (la *LogicalAggregation) getHashAggs(prop *requiredProp) []PhysicalPlan {
 func (la *LogicalAggregation) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan {
 	aggs := make([]PhysicalPlan, 0, len(la.possibleProperties)+1)
 	aggs = append(aggs, la.getHashAggs(prop)...)
-
-	streamAggs := la.getStreamAggs(prop)
-	aggs = append(aggs, streamAggs...)
-
+	aggs = append(aggs, la.getStreamAggs(prop)...)
 	return aggs
 }
 
