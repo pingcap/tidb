@@ -87,7 +87,7 @@ goword:
 
 errcheck:
 	go get github.com/kisielk/errcheck
-	@ GOPATH=$(CURDIR)/_vendor:$(GOPATH) errcheck -blank $(PACKAGES) | grep -v "_test\.go" | awk '{print} END{if(NR>0) {exit 1}}'
+	@ GOPATH=$(CURDIR)/_vendor:$(GOPATH) errcheck -exclude errcheck_excludes.txt -blank $(PACKAGES) | grep -v "_test\.go" | awk '{print} END{if(NR>0) {exit 1}}'
 
 clean:
 	$(GO) clean -i ./...
@@ -126,7 +126,7 @@ leak: parserlib
 tikv_integration_test: parserlib
 	$(GOTEST) ./store/tikv/. -with-tikv=true
 
-RACE_FLAG = 
+RACE_FLAG =
 ifeq ("$(WITH_RACE)", "1")
 	RACE_FLAG = -race
 	GOBUILD   = GOPATH=$(CURDIR)/_vendor:$(GOPATH) CGO_ENABLED=1 $(GO) build
