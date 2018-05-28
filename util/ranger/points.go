@@ -21,6 +21,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
@@ -421,15 +422,45 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction) []point {
 	case ast.IsFalsity:
 		return r.buildFromIsFalse(expr, 1)
 	case ast.In:
-		rangePoints, hasNull := r.buildFromIn(expr)
+		var unsignedInt bool
+		if x, ok := expr.GetArgs()[0].(*expression.Column); ok {
+			unsignedInt = mysql.HasUnsignedFlag(x.RetType.Flag) && mysql.IsIntegerType(x.RetType.Tp)
+		}
+		inPoints, hasNull := r.buildFromIn(expr)
 		if hasNull {
 			return nil
 		}
-		retRangePoints := make([]point, 0, len(rangePoints)+2)
+		var rangePoints []point
+		if unsignedInt {
+			rangePoints = make([]point, 0, 0)
+			for i := 0; i < len(inPoints); i += 2 {
+				value := inPoints[i].value.GetInt64()
+				if value < 0 {
+					continue
+				} else if value == 0 {
+					rangePoints = append(rangePoints, point{value: types.NewIntDatum(0), start: true})
+					rangePoints = append(rangePoints, point{value: types.NewIntDatum(0)})
+				} else {
+					if len(rangePoints) == 0 {
+						rangePoints = append(rangePoints, point{value: types.NewIntDatum(0), start: true, excl: true})
+						rangePoints = append(rangePoints, point{value: types.NewIntDatum(0)})
+					}
+					rangePoints = append(rangePoints, inPoints[i])
+					rangePoints = append(rangePoints, inPoints[i+1])
+				}
+			}
+		} else {
+			rangePoints = inPoints
+		}
+		retRangePoints := make([]point, 0, 0)
 		previousValue := types.Datum{}
 		for i := 0; i < len(rangePoints); i += 2 {
+			exclude := true
+			if i == 0 {
+				exclude = !rangePoints[i].excl
+			}
 			retRangePoints = append(retRangePoints, point{value: previousValue, start: true, excl: true})
-			retRangePoints = append(retRangePoints, point{value: rangePoints[i].value, excl: true})
+			retRangePoints = append(retRangePoints, point{value: rangePoints[i].value, excl: exclude})
 			previousValue = rangePoints[i].value
 		}
 		// Append the interval (last element, max value].
