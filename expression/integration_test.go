@@ -2953,6 +2953,14 @@ func (s *testIntegrationSuite) TestIssue4954(c *C) {
 	r.Check(testkit.Rows("F6"))
 }
 
+func (s *testIntegrationSuite) TestUnsupportedUDF(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer s.cleanEnv(c)
+	_, err := tk.Exec("select * from (select udf_xx(1) as a) t1 join (select udf_xx(2) as a) t2 on t1.a=t2.a;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[expression:1305]FUNCTION udf_xx does not exist")
+}
+
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	store, err := tikv.NewMockTikvStore()
 	if err != nil {
