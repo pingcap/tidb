@@ -1160,7 +1160,6 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			return
 		}
 	}
-
 	if join, ok := er.p.(*LogicalJoin); ok && join.redundantSchema != nil {
 		column, err := join.redundantSchema.FindColumn(v)
 		if err != nil {
