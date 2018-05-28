@@ -387,9 +387,9 @@ func (e *evalContext) decodeRelatedColumnVals(relatedColOffsets []int, value [][
 // flagsToStatementContext creates a StatementContext from a `tipb.SelectRequest.Flags`.
 func flagsToStatementContext(flags uint64) *stmtctx.StatementContext {
 	sc := new(stmtctx.StatementContext)
-	sc.IgnoreTruncate = (flags & stmtctx.FlagIgnoreTruncate) > 0
-	sc.TruncateAsWarning = (flags & stmtctx.FlagTruncateAsWarning) > 0
-	sc.PadCharToFullLength = (flags & stmtctx.FlagPadCharToFullLength) > 0
+	sc.IgnoreTruncate = (flags & model.FlagIgnoreTruncate) > 0
+	sc.TruncateAsWarning = (flags & model.FlagTruncateAsWarning) > 0
+	sc.PadCharToFullLength = (flags & model.FlagPadCharToFullLength) > 0
 	return sc
 }
 
