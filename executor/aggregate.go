@@ -33,13 +33,17 @@ import (
 type aggCtxsMapper map[string][]*aggregation.AggEvaluateContext
 
 type aggWorker struct {
-	finishCh     <-chan struct{}
-	aggFuncs     []aggregation.Aggregation
-	aggCtxsMap   aggCtxsMapper
-	groupByItems []expression.Expression
-	groupKey     []byte
-	maxChunkSize int
 	*sync.WaitGroup
+
+	finishCh      <-chan struct{}
+	aggFuncs      []aggregation.Aggregation
+	aggCtxsMap    aggCtxsMapper
+	groupByItems  []expression.Expression
+	groupKey      []byte
+	groupVals     [][]byte
+	groupMap      *mvmap.MVMap
+	groupIterator *mvmap.Iterator
+	maxChunkSize  int
 }
 
 type HashAggPartialWorker struct {
@@ -56,11 +60,8 @@ type HashAggPartialWorker struct {
 type HashAggFinalWorker struct {
 	aggWorker
 
-	groupMap      *mvmap.MVMap
-	groupIterator *mvmap.Iterator
-	groupVals     [][]byte
-	rowBuffer     []types.Datum
-	mutableRow    chunk.MutRow
+	rowBuffer  []types.Datum
+	mutableRow chunk.MutRow
 
 	inputCh             chan []*AfInterResult
 	outputCh            chan *AfFinalResult
@@ -212,6 +213,8 @@ func (e *HashAggExec) initForParallelExec() {
 				aggCtxsMap:   make(aggCtxsMapper, 0),
 				maxChunkSize: e.maxChunkSize,
 				WaitGroup:    e.partialWorkerWaitGroup,
+				groupMap:     mvmap.NewMVMap(),
+				groupVals:    make([][]byte, 0, 8),
 			},
 			inputCh:             make(chan *chunk.Chunk, 1),
 			interResultHolderCh: e.partialInputCh,
@@ -230,13 +233,13 @@ func (e *HashAggExec) initForParallelExec() {
 				aggCtxsMap:   make(aggCtxsMapper, 0),
 				maxChunkSize: e.maxChunkSize,
 				WaitGroup:    e.finalWorkerWaitGroup,
+				groupMap:     mvmap.NewMVMap(),
+				groupVals:    make([][]byte, 0, 8),
 			},
 			inputCh:             e.partialOutputChs[i],
 			outputCh:            e.finalOutputCh,
 			finalResultHolderCh: make(chan *chunk.Chunk, 1),
 			giveBackCh:          e.partialInputCh,
-			groupMap:            mvmap.NewMVMap(),
-			groupVals:           make([][]byte, 0, 8),
 			rowBuffer:           make([]types.Datum, 0, e.Schema().Len()),
 			mutableRow:          chunk.MutRowFromTypes(e.retTypes()),
 		}
@@ -292,6 +295,9 @@ func (w *HashAggPartialWorker) run(workerId int, ctx sessionctx.Context, finalCo
 				w.globalOutputCh <- &AfFinalResult{err: errors.Trace(err)}
 				return
 			}
+			if len(w.groupMap.Get(groupKey, w.groupVals[:0])) == 0 {
+				w.groupMap.Put(groupKey, []byte{})
+			}
 			aggEvalCtxs := w.getContext(ctx, groupKey)
 			for i, af := range w.aggFuncs {
 				err = af.Update(aggEvalCtxs[i], sc, row)
@@ -327,9 +333,12 @@ func (w *HashAggPartialWorker) shuffleInterResult(sc *stmtctx.StatementContext, 
 		}
 		result[i] = result[i][:0]
 	}
-	for key, aggEvalCtx := range w.aggCtxsMap {
+
+	groupIter := w.groupMap.NewIterator()
+	for groupKey, _ := groupIter.Next(); groupKey != nil; groupKey, _ = groupIter.Next() {
+		aggEvalCtx := w.aggCtxsMap[string(groupKey)]
 		interResult := &AfInterResult{}
-		interResult.GroupKey = []byte(key)
+		interResult.GroupKey = groupKey
 		var value []byte
 		idx := int(murmur3.Sum32(interResult.GroupKey)) % concurrency
 		for i, f := range w.aggFuncs {
@@ -338,10 +347,12 @@ func (w *HashAggPartialWorker) shuffleInterResult(sc *stmtctx.StatementContext, 
 				return nil, false, errors.Trace(err)
 			}
 			value = append(value, r...)
+			f.ResetContext(sc, aggEvalCtx[i])
 		}
 		interResult.InterResult = append(interResult.InterResult, value)
 		result[idx] = append(result[idx], interResult)
 	}
+	w.groupMap = mvmap.NewMVMap()
 	return result, true, nil
 }
 
