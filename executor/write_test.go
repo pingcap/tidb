@@ -584,6 +584,12 @@ commit;`
 	testSQL = `SELECT LAST_INSERT_ID();`
 	r = tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("1"))
+
+	testSQL = `DROP TABLE IF EXISTS t1;
+	CREATE TABLE t1 (f1 INT);
+	INSERT t1 VALUES (1) ON DUPLICATE KEY UPDATE f1 = 1;`
+	tk.MustExec(testSQL)
+	tk.MustQuery(`SELECT * FROM t1;`).Check(testkit.Rows("1"))
 }
 
 func (s *testSuite) TestInsertIgnoreOnDup(c *C) {
@@ -1612,4 +1618,21 @@ func (s *testSuite) TestUpdateSelect(c *C) {
 	tk.MustExec("insert detail values ('abc', '123', 2)")
 	tk.MustExec("UPDATE msg SET msg.status = (SELECT detail.status FROM detail WHERE msg.id = detail.id)")
 	tk.MustExec("admin check table msg")
+}
+
+func (s *testSuite) TestUpdateAffectRowCnt(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table a(id int auto_increment, a int default null, primary key(id))")
+	tk.MustExec("insert into a values (1, 1001), (2, 1001), (10001, 1), (3, 1)")
+	tk.MustExec("update a set id = id*10 where a = 1001")
+	ctx := tk.Se.(sessionctx.Context)
+	c.Assert(ctx.GetSessionVars().StmtCtx.AffectedRows(), Equals, uint64(2))
+
+	tk.MustExec("drop table a")
+	tk.MustExec("create table a ( a bigint, b bigint)")
+	tk.MustExec("insert into a values (1, 1001), (2, 1001), (10001, 1), (3, 1)")
+	tk.MustExec("update a set a = a*10 where b = 1001")
+	ctx = tk.Se.(sessionctx.Context)
+	c.Assert(ctx.GetSessionVars().StmtCtx.AffectedRows(), Equals, uint64(2))
 }

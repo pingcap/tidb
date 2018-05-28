@@ -46,7 +46,7 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 	sumLength := 0
 
 	for _, ic := range idxColNames {
-		col := findCol(columns, ic.Column.Name.O)
+		col := model.FindColumnInfo(columns, ic.Column.Name.O)
 		if col == nil {
 			return nil, errKeyColumnDoesNotExits.Gen("column does not exist: %s", ic.Column.Name)
 		}
@@ -207,7 +207,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 	indexInfo := findIndexByName(indexName.L, tblInfo.Indices)
 	if indexInfo != nil && indexInfo.State == model.StatePublic {
 		job.State = model.JobStateCancelled
-		return ver, errDupKeyName.Gen("index already exist %s", indexName)
+		return ver, ErrDupKeyName.Gen("index already exist %s", indexName)
 	}
 
 	if indexInfo == nil {
@@ -746,6 +746,7 @@ func (d *ddl) backfillBatchTasks(startTime time.Time, startHandle int64, reorgIn
 		err1 := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 			return errors.Trace(reorgInfo.UpdateHandle(txn, nextHandle))
 		})
+		metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblError).Observe(elapsedTime)
 		log.Warnf("[ddl-reorg] total added index for %d rows, this task [%d,%d) add index for %d failed %v, take time %v, update handle err %v",
 			*totalAddedCount, startHandle, nextHandle, taskAddedCount, err, elapsedTime, err1)
 		return errors.Trace(err)
@@ -753,7 +754,7 @@ func (d *ddl) backfillBatchTasks(startTime time.Time, startHandle int64, reorgIn
 
 	// nextHandle will be updated periodically in runReorgJob, so no need to update it here.
 	d.reorgCtx.setNextHandle(nextHandle)
-	metrics.BatchAddIdxHistogram.Observe(elapsedTime)
+	metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblOK).Observe(elapsedTime)
 	log.Infof("[ddl-reorg] total added index for %d rows, this task [%d,%d) added index for %d rows, take time %v",
 		*totalAddedCount, startHandle, nextHandle, taskAddedCount, elapsedTime)
 	return nil

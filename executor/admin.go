@@ -141,7 +141,7 @@ func (e *CheckIndexRangeExec) constructIndexScanPB() *tipb.Executor {
 	idxExec := &tipb.IndexScan{
 		TableId: e.table.ID,
 		IndexId: e.index.ID,
-		Columns: plan.ColumnsToProto(e.cols, e.table.PKIsHandle),
+		Columns: model.ColumnsToProto(e.cols, e.table.PKIsHandle),
 	}
 	return &tipb.Executor{Tp: tipb.ExecType_TypeIndexScan, IdxScan: idxExec}
 }
@@ -192,7 +192,7 @@ func (e *RecoverIndexExec) Open(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	e.srcChunk = chunk.NewChunk(e.columnsTypes())
+	e.srcChunk = chunk.NewChunkWithCapacity(e.columnsTypes(), e.maxChunkSize)
 	e.batchSize = 2048
 	e.recoverRows = make([]recoverRows, 0, e.batchSize)
 	e.idxValsBufs = make([][]types.Datum, e.batchSize)
@@ -227,7 +227,7 @@ func (e *RecoverIndexExec) buildDAGPB(txn kv.Transaction, limitCnt uint64) (*tip
 	}
 
 	tblInfo := e.table.Meta()
-	pbColumnInfos := plan.ColumnsToProto(e.columns, tblInfo.PKIsHandle)
+	pbColumnInfos := model.ColumnsToProto(e.columns, tblInfo.PKIsHandle)
 	err := plan.SetPBColumnsDefaultValue(e.ctx, pbColumnInfos, e.columns)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -630,7 +630,7 @@ func (e *CleanupIndexExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
-	e.idxChunk = chunk.NewChunk(e.getIdxColTypes())
+	e.idxChunk = chunk.NewChunkWithCapacity(e.getIdxColTypes(), e.maxChunkSize)
 	e.idxValues = make(map[int64][]types.Datum, e.batchSize)
 	e.batchKeys = make([]kv.Key, 0, e.batchSize)
 	e.idxValsBufs = make([][]types.Datum, e.batchSize)
@@ -670,7 +670,7 @@ func (e *CleanupIndexExec) constructIndexScanPB() *tipb.Executor {
 	idxExec := &tipb.IndexScan{
 		TableId: e.table.Meta().ID,
 		IndexId: e.index.Meta().ID,
-		Columns: plan.ColumnsToProto(e.idxCols, e.table.Meta().PKIsHandle),
+		Columns: model.ColumnsToProto(e.idxCols, e.table.Meta().PKIsHandle),
 	}
 	return &tipb.Executor{Tp: tipb.ExecType_TypeIndexScan, IdxScan: idxExec}
 }

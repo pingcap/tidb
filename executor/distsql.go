@@ -129,28 +129,28 @@ func timeZoneOffset(ctx sessionctx.Context) int64 {
 func statementContextToFlags(sc *stmtctx.StatementContext) uint64 {
 	var flags uint64
 	if sc.InInsertStmt {
-		flags |= stmtctx.FlagInInsertStmt
+		flags |= model.FlagInInsertStmt
 	} else if sc.InUpdateOrDeleteStmt {
-		flags |= stmtctx.FlagInUpdateOrDeleteStmt
+		flags |= model.FlagInUpdateOrDeleteStmt
 	} else if sc.InSelectStmt {
-		flags |= stmtctx.FlagInSelectStmt
+		flags |= model.FlagInSelectStmt
 	}
 	if sc.IgnoreTruncate {
-		flags |= stmtctx.FlagIgnoreTruncate
+		flags |= model.FlagIgnoreTruncate
 	} else if sc.TruncateAsWarning {
-		flags |= stmtctx.FlagTruncateAsWarning
+		flags |= model.FlagTruncateAsWarning
 	}
 	if sc.OverflowAsWarning {
-		flags |= stmtctx.FlagOverflowAsWarning
+		flags |= model.FlagOverflowAsWarning
 	}
 	if sc.IgnoreZeroInDate {
-		flags |= stmtctx.FlagIgnoreZeroInDate
+		flags |= model.FlagIgnoreZeroInDate
 	}
 	if sc.DividedByZeroAsWarning {
-		flags |= stmtctx.FlagDividedByZeroAsWarning
+		flags |= model.FlagDividedByZeroAsWarning
 	}
 	if sc.PadCharToFullLength {
-		flags |= stmtctx.FlagPadCharToFullLength
+		flags |= model.FlagPadCharToFullLength
 	}
 	return flags
 }
@@ -513,6 +513,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		keepOrder:    e.keepOrder,
 		batchSize:    e.maxChunkSize,
 		maxBatchSize: e.ctx.GetSessionVars().IndexLookupSize,
+		maxChunkSize: e.maxChunkSize,
 	}
 	if worker.batchSize > worker.maxBatchSize {
 		worker.batchSize = worker.maxBatchSize
@@ -648,6 +649,7 @@ type indexWorker struct {
 	// batchSize is for lightweight startup. It will be increased exponentially until reaches the max batch size value.
 	batchSize    int
 	maxBatchSize int
+	maxChunkSize int
 }
 
 // fetchHandles fetches a batch of handles from index data and builds the index lookup tasks.
@@ -671,7 +673,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 			}
 		}
 	}()
-	chk := chunk.NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)})
+	chk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, w.maxChunkSize)
 	for {
 		handles, err := w.extractTaskHandles(ctx, chk, result)
 		if err != nil {

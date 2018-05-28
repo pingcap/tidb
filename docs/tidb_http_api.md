@@ -103,6 +103,13 @@ timezone.*
     curl -x POST -d "tidb_general_log=0" http://{TiDBIP}:10080/settings
     ```
 
+1. Change TiDB server log level
+
+    ```shell
+    curl -x POST -d "log_level=debug" http://{TiDBIP}:10080/settings
+    curl -x POST -d "log_level=info" http://{TiDBIP}:10080/settings
+    ```
+
 1. Get the column value by an encoded row and some information that can be obtained from a column of the table schema information. 
 
     Argument example: rowBin=base64_encoded_row_value
