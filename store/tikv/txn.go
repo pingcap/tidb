@@ -203,12 +203,7 @@ func (txn *tikvTxn) Rollback() error {
 		return kv.ErrInvalidTxn
 	}
 	txn.close()
-	logMsg := fmt.Sprintf("[kv] Rollback txn %d", txn.StartTS())
-	if txn.store.mock {
-		log.Debug(logMsg)
-	} else {
-		log.Info(logMsg)
-	}
+	log.Debugf("[kv] Rollback txn %d", txn.StartTS())
 	metrics.TiKVTxnCmdCounter.WithLabelValues("rollback").Inc()
 
 	return nil
