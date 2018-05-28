@@ -50,6 +50,9 @@ type Aggregation interface {
 
 	// GetFinalAggFunc constructs the final agg functions, only used in parallel execution.
 	GetFinalAggFunc(idx int) (int, Aggregation)
+
+	// GetArgs gets the args of the aggregate function.
+	GetArgs() []expression.Expression
 }
 
 // NewDistAggFunc creates new Aggregate function for mock tikv.
@@ -226,4 +229,8 @@ func NeedValue(name string) bool {
 	default:
 		return false
 	}
+}
+
+func (af *aggFunction) GetArgs() []expression.Expression {
+	return af.Args
 }

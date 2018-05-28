@@ -821,6 +821,7 @@ func (s *testSuite) TestUnion(c *C) {
 	testSQL = `insert union_test values (1),(2)`
 	tk.MustExec(testSQL)
 
+	tk.MustExec(`set @@tidb_hashagg_final_concurrency=1`)
 	testSQL = `select id from union_test union select id from union_test;`
 	r := tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("1", "2"))

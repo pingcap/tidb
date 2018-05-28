@@ -154,13 +154,13 @@ const (
 	// The hash join outer executor starts multiple concurrent join workers to probe the hash table.
 	TiDBHashJoinConcurrency = "tidb_hash_join_concurrency"
 
-	// tidb_hash_agg_partial_concurrency is used for hash agg executor.
+	// tidb_hashagg_partial_concurrency is used for hash agg executor.
 	// The hash agg executor starts multiple concurrent partial workers to do partial aggregate works.
-	TiDBHashAggPartialConcurrency = "tidb_hash_agg_partial_concurrency"
+	TiDBHashAggPartialConcurrency = "tidb_hashagg_partial_concurrency"
 
-	// tidb_hash_agg_final_concurrency is used for hash agg executor.
+	// tidb_hashagg_final_concurrency is used for hash agg executor.
 	// The hash agg executor starts multiple concurrent final workers to do final aggregate works.
-	TiDBHashAggFinalConcurrency = "tidb_hash_agg_final_concurrency"
+	TiDBHashAggFinalConcurrency = "tidb_hashagg_final_concurrency"
 
 	// tidb_backoff_lock_fast is used for tikv backoff base time in milliseconds.
 	TiDBBackoffLockFast = "tidb_backoff_lock_fast"

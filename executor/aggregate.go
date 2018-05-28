@@ -22,12 +22,14 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mvmap"
 	"github.com/spaolacci/murmur3"
 	"golang.org/x/net/context"
+	"time"
 )
 
 type aggCtxsMapper map[string][]*aggregation.AggEvaluateContext
@@ -118,9 +120,18 @@ type AfInterResult struct {
 	InterResult [][]byte
 }
 
-func (r *AfInterResult) ToRows(size int) (result []types.Row, err error) {
+func (r *AfInterResult) ToRows(fts []*types.FieldType, size int, loc *time.Location) (result []types.Row, err error) {
+	// Sql like select 11 from t order by a;
+	// If it use hash agg, the agg funcs would be nil, thus fts would be nil.
+	if len(fts) == 0 {
+		return
+	}
 	for _, interResult := range r.InterResult {
 		row, err := codec.Decode(interResult, size)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		row, err = tablecodec.UnflattenDatums(row, fts, loc)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -342,6 +353,7 @@ func (w *HashAggPartialWorker) shuffleInterResult(sc *stmtctx.StatementContext, 
 		var value []byte
 		idx := int(murmur3.Sum32(interResult.GroupKey)) % concurrency
 		for i, f := range w.aggFuncs {
+			// todo: use HashChunkRow
 			r, err := f.GetInterResult(aggEvalCtx[i], sc)
 			if err != nil {
 				return nil, false, errors.Trace(err)
@@ -398,8 +410,15 @@ func (w *HashAggFinalWorker) run(workerId int, ctx sessionctx.Context) {
 		input  []*AfInterResult
 		ok     bool
 		result *chunk.Chunk
+		fts    = make([]*types.FieldType, 0, len(w.aggFuncs))
 		sc     = ctx.GetSessionVars().StmtCtx
+		loc    = sc.TimeZone
 	)
+	for _, f := range w.aggFuncs {
+		for _, arg := range f.GetArgs() {
+			fts = append(fts, arg.GetType())
+		}
+	}
 	for {
 		select {
 		case <-w.finishCh:
@@ -416,7 +435,8 @@ func (w *HashAggFinalWorker) run(workerId int, ctx sessionctx.Context) {
 				w.groupMap.Put(groupKey, []byte{})
 			}
 			aggEvalCtxs := w.getContext(ctx, groupKey)
-			rows, err := interResult.ToRows(len(w.aggFuncs))
+			// todo: use new decoder
+			rows, err := interResult.ToRows(fts, len(w.aggFuncs), loc)
 			if err != nil {
 				w.outputCh <- &AfFinalResult{err: errors.Trace(err)}
 				return
