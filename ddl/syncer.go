@@ -68,6 +68,8 @@ type SchemaSyncer interface {
 	OwnerUpdateGlobalVersion(ctx context.Context, version int64) error
 	// GlobalVersionCh gets the chan for watching global version.
 	GlobalVersionCh() clientv3.WatchChan
+	// WatchGlobalSchemaVer watches the global schema version.
+	WatchGlobalSchemaVer(ctx context.Context, tryCnt int) error
 	// MustGetGlobalVersion gets the global version. The only reason it fails is that ctx is done.
 	MustGetGlobalVersion(ctx context.Context) (int64, error)
 	// Done returns a channel that closes when the syncer is no longer being refreshed.
@@ -135,7 +137,10 @@ func (s *schemaVersionSyncer) Init(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	s.globalVerCh = s.etcdCli.Watch(ctx, DDLGlobalSchemaVersion)
+	err = s.WatchGlobalSchemaVer(ctx, keyOpDefaultRetryCnt)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	err = s.putKV(ctx, keyOpDefaultRetryCnt, s.selfSchemaVerPath, InitialVersion,
 		clientv3.WithLease(s.session.Lease()))
 	return errors.Trace(err)
@@ -173,6 +178,32 @@ func (s *schemaVersionSyncer) Restart(ctx context.Context) error {
 // GlobalVersionCh implements SchemaSyncer.GlobalVersionCh interface.
 func (s *schemaVersionSyncer) GlobalVersionCh() clientv3.WatchChan {
 	return s.globalVerCh
+}
+
+// WatchGlobalSchemaVer implements SchemaSyncer.WatchGlobalSchemaVer interface.
+func (s *schemaVersionSyncer) WatchGlobalSchemaVer(ctx context.Context, tryCnt int) error {
+	for i := 0; i < tryCnt; i++ {
+		ch := s.etcdCli.Watch(ctx, DDLGlobalSchemaVersion)
+		var err error
+		select {
+		case resp, ok := <-ch:
+			if !ok || resp.Err() != nil {
+				err = resp.Err()
+				break
+			}
+			// This situation should not happen.
+			s.globalVerCh = ch
+			log.Warnf("[syncer] watch global schema finished, but this situation should not happen")
+			return nil
+		default:
+			s.globalVerCh = ch
+			log.Info("[syncer] watch global schema finished")
+			return nil
+		}
+		log.Warnf("[syncer] watch global schema failed %v", err)
+		time.Sleep(keyOpRetryInterval)
+	}
+	return errors.Errorf("syncer watch global schema failed.")
 }
 
 // UpdateSelfVersion implements SchemaSyncer.UpdateSelfVersion interface.

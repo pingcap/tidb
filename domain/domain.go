@@ -326,7 +326,8 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 	defer do.wg.Done()
 	// Lease renewal can run at any frequency.
 	// Use lease/2 here as recommend by paper.
-	ticker := time.NewTicker(lease / 2)
+	interval := lease / 2
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	defer recoverInDomain("loadSchemaInLoop", true)
 	syncer := do.ddl.SchemaSyncer()
@@ -338,10 +339,17 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 			if err != nil {
 				log.Errorf("[ddl] reload schema in loop err %v", errors.ErrorStack(err))
 			}
-		case <-syncer.GlobalVersionCh():
+		case _, ok := <-syncer.GlobalVersionCh():
 			err := do.Reload()
 			if err != nil {
 				log.Errorf("[ddl] reload schema in loop err %v", errors.ErrorStack(err))
+			}
+			if !ok {
+				log.Info("[ddl] reload schema in loop, schema syncer need rewatch")
+				// Make sure the rewatch doesn't affect load schema, so we let the timeout is equal to lease/2.
+				ctx, cancelFunc := context.WithTimeout(context.Background(), interval)
+				syncer.WatchGlobalSchemaVer(ctx, 1)
+				cancelFunc()
 			}
 		case <-syncer.Done():
 			// The schema syncer stops, we need stop the schema validator to synchronize the schema version.
