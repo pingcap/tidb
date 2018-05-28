@@ -91,7 +91,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		store:       c.store,
 		req:         req,
 		concurrency: req.Concurrency,
-		finished:    make(chan struct{}),
+		finishCh:    make(chan struct{}),
 		vars:        vars,
 	}
 	it.tasks = tasks
@@ -343,8 +343,8 @@ type copIterator struct {
 	store       *tikvStore
 	req         *kv.Request
 	concurrency int
-	finished    chan struct{}
-	// There are two cases we need to close the `finished` channel, one is when context is done, the other one is
+	finishCh    chan struct{}
+	// There are two cases we need to close the `finishCh` channel, one is when context is done, the other one is
 	// when the Close is called. we use atomic.CompareAndSwap `closed` to to make sure the channel is not closed twice.
 	closed uint32
 
@@ -366,7 +366,7 @@ type copIteratorWorker struct {
 	store    *tikvStore
 	req      *kv.Request
 	respChan chan<- copResponse
-	finished <-chan struct{}
+	finishCh <-chan struct{}
 	vars     *kv.Variables
 }
 
@@ -375,7 +375,7 @@ type copIteratorTaskSender struct {
 	taskCh   chan<- *copTask
 	wg       *sync.WaitGroup
 	tasks    []*copTask
-	finished <-chan struct{}
+	finishCh <-chan struct{}
 	respChan chan<- copResponse
 }
 
@@ -409,7 +409,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 		}
 		close(task.respChan)
 		select {
-		case <-worker.finished:
+		case <-worker.finishCh:
 			return
 		default:
 		}
@@ -428,7 +428,7 @@ func (it *copIterator) open(ctx context.Context) {
 			store:    it.store,
 			req:      it.req,
 			respChan: it.respChan,
-			finished: it.finished,
+			finishCh: it.finishCh,
 			vars:     it.vars,
 		}
 		copIteratorGP.Go(func() {
@@ -436,9 +436,10 @@ func (it *copIterator) open(ctx context.Context) {
 		})
 	}
 	taskSender := &copIteratorTaskSender{
-		taskCh: taskCh,
-		wg:     &it.wg,
-		tasks:  it.tasks,
+		taskCh:   taskCh,
+		wg:       &it.wg,
+		tasks:    it.tasks,
+		finishCh: it.finishCh,
 	}
 	taskSender.respChan = it.respChan
 	copIteratorGP.Go(taskSender.run)
@@ -464,12 +465,12 @@ func (sender *copIteratorTaskSender) run() {
 func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan copResponse) (resp copResponse, ok bool, exit bool) {
 	select {
 	case resp, ok = <-respCh:
-	case <-it.finished:
+	case <-it.finishCh:
 		exit = true
 	case <-ctx.Done():
 		// We select the ctx.Done() in the thread of `Next` instead of in the worker to avoid the cost of `WithCancel`.
 		if atomic.CompareAndSwapUint32(&it.closed, 0, 1) {
-			close(it.finished)
+			close(it.finishCh)
 		}
 		exit = true
 	}
@@ -479,7 +480,7 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan copResp
 func (sender *copIteratorTaskSender) sendToTaskCh(t *copTask) (exit bool) {
 	select {
 	case sender.taskCh <- t:
-	case <-sender.finished:
+	case <-sender.finishCh:
 		exit = true
 	}
 	return
@@ -488,7 +489,7 @@ func (sender *copIteratorTaskSender) sendToTaskCh(t *copTask) (exit bool) {
 func (worker *copIteratorWorker) sendToRespCh(resp copResponse, respCh chan<- copResponse) (exit bool) {
 	select {
 	case respCh <- resp:
-	case <-worker.finished:
+	case <-worker.finishCh:
 		exit = true
 	}
 	return
@@ -529,7 +530,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	} else {
 		for {
 			if it.curr >= len(it.tasks) {
-				// Resp will be nil if iterator is finished.
+				// Resp will be nil if iterator is finishCh.
 				return nil, nil
 			}
 			task := it.tasks[it.curr]
@@ -632,7 +633,7 @@ const (
 )
 
 func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *copTask, bo *Backoffer, resp *tikvrpc.Response) {
-	logStr := fmt.Sprintf("[TIME_COP_TASK] resp_time:%s txn_start_ts:%d region_id:%d store_addr:%s", costTime, worker.req.StartTs, task.region.id, task.storeAddr)
+	logStr := fmt.Sprintf("[TIME_COP_PROCESS] resp_time:%s txn_start_ts:%d region_id:%d store_addr:%s", costTime, worker.req.StartTs, task.region.id, task.storeAddr)
 	if bo.totalSleep > minLogBackoffTime {
 		backoffTypes := strings.Replace(fmt.Sprintf("%v", bo.types), " ", ",", -1)
 		logStr += fmt.Sprintf(" backoff_ms:%d backoff_types:%s", bo.totalSleep, backoffTypes)
@@ -643,20 +644,22 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 	} else if resp.CopStream != nil {
 		detail = resp.CopStream.ExecDetails
 	}
-	if detail != nil {
-		if detail.HandleTime != nil {
-			processMs := detail.HandleTime.ProcessMs
-			waitMs := detail.HandleTime.WaitMs
-			if processMs > minLogKVProcessTime {
-				logStr += fmt.Sprintf(" kv_process_ms:%d", processMs)
-				if detail.ScanDetail != nil {
-					logStr = appendScanDetail(logStr, "write", detail.ScanDetail.Write)
-					logStr = appendScanDetail(logStr, "data", detail.ScanDetail.Data)
-					logStr = appendScanDetail(logStr, "lock", detail.ScanDetail.Lock)
-				}
+
+	if detail != nil && detail.HandleTime != nil {
+		processMs := detail.HandleTime.ProcessMs
+		waitMs := detail.HandleTime.WaitMs
+		if processMs > minLogKVProcessTime {
+			logStr += fmt.Sprintf(" kv_process_ms:%d", processMs)
+			if detail.ScanDetail != nil {
+				logStr = appendScanDetail(logStr, "write", detail.ScanDetail.Write)
+				logStr = appendScanDetail(logStr, "data", detail.ScanDetail.Data)
+				logStr = appendScanDetail(logStr, "lock", detail.ScanDetail.Lock)
 			}
-			if waitMs > minLogKVWaitTime {
-				logStr += fmt.Sprintf(" kv_wait_ms:%d", waitMs)
+		}
+		if waitMs > minLogKVWaitTime {
+			logStr += fmt.Sprintf(" kv_wait_ms:%d", waitMs)
+			if processMs <= minLogKVProcessTime {
+				logStr = strings.Replace(logStr, "TIME_COP_PROCESS", "TIME_COP_WAIT", 1)
 			}
 		}
 	}
@@ -770,7 +773,7 @@ func (worker *copIteratorWorker) calculateRemain(ranges *copRanges, split *copro
 
 func (it *copIterator) Close() error {
 	if atomic.CompareAndSwapUint32(&it.closed, 0, 1) {
-		close(it.finished)
+		close(it.finishCh)
 	}
 	it.wg.Wait()
 	return nil

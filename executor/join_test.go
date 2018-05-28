@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
 	"golang.org/x/net/context"
 )
 
@@ -668,9 +667,6 @@ func (s *testSuite) TestSubquery(c *C) {
 }
 
 func (s *testSuite) TestInSubquery(c *C) {
-	defer func() {
-		testleak.AfterTest(c)()
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")

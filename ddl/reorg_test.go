@@ -69,7 +69,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	}
 	job := &model.Job{
 		ID:          1,
-		SnapshotVer: 1, // Make sure it is not zero. So the reorgInfo's frist is false.
+		SnapshotVer: 1, // Make sure it is not zero. So the reorgInfo's first is false.
 	}
 	err = ctx.NewTxn()
 	c.Assert(err, IsNil)
@@ -93,8 +93,9 @@ func (s *testDDLSuite) TestReorg(c *C) {
 			c.Assert(err, IsNil)
 			err = ctx.NewTxn()
 			c.Assert(err, IsNil)
+
 			m = meta.NewMeta(ctx.Txn())
-			info, err1 := d.getReorgInfo(m, job)
+			info, err1 := d.getReorgInfo(m, job, nil)
 			c.Assert(err1, IsNil)
 			c.Assert(info.Handle, Equals, handle)
 			c.Assert(d.reorgCtx.doneHandle, Equals, int64(0))
@@ -114,17 +115,18 @@ func (s *testDDLSuite) TestReorg(c *C) {
 
 	d.start(context.Background())
 	job = &model.Job{
-		ID:       2,
-		SchemaID: 1,
-		Type:     model.ActionCreateSchema,
-		Args:     []interface{}{model.NewCIStr("test")},
+		ID:          2,
+		SchemaID:    1,
+		Type:        model.ActionCreateSchema,
+		Args:        []interface{}{model.NewCIStr("test")},
+		SnapshotVer: 1, // Make sure it is not zero. So the reorgInfo's first is false.
 	}
 
 	var info *reorgInfo
 	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err1 error
-		info, err1 = d.getReorgInfo(t, job)
+		info, err1 = d.getReorgInfo(t, job, nil)
 		c.Assert(err1, IsNil)
 		err1 = info.UpdateHandle(txn, 1)
 		c.Assert(err1, IsNil)
@@ -135,7 +137,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err1 error
-		info, err1 = d.getReorgInfo(t, job)
+		info, err1 = d.getReorgInfo(t, job, nil)
 		c.Assert(err1, IsNil)
 		c.Assert(info.Handle, Greater, int64(0))
 		return nil

@@ -110,10 +110,20 @@ var (
 	// MaxDatetime is the maximum for mysql datetime type.
 	MaxDatetime = FromDate(9999, 12, 31, 23, 59, 59, 999999)
 
+	// BoundTimezone is the timezone for min and max timestamp.
+	BoundTimezone = gotime.UTC
 	// MinTimestamp is the minimum for mysql timestamp type.
-	MinTimestamp = FromDate(1970, 1, 1, 0, 0, 1, 0)
+	MinTimestamp = Time{
+		Time: FromDate(1970, 1, 1, 0, 0, 1, 0),
+		Type: mysql.TypeTimestamp,
+		Fsp:  DefaultFsp,
+	}
 	// maxTimestamp is the maximum for mysql timestamp type.
-	maxTimestamp = FromDate(2038, 1, 19, 3, 14, 7, 999999)
+	maxTimestamp = Time{
+		Time: FromDate(2038, 1, 19, 3, 14, 7, 999999),
+		Type: mysql.TypeTimestamp,
+		Fsp:  DefaultFsp,
+	}
 
 	// WeekdayNames lists names of weekdays, which are used in builtin time function `dayname`.
 	WeekdayNames = []string{
@@ -298,6 +308,11 @@ func (t Time) Compare(o Time) int {
 	return compareTime(t.Time, o.Time)
 }
 
+// compareTime compare two MysqlTime.
+// return:
+//  0: if a == b
+//  1: if a > b
+// -1: if a < b
 func compareTime(a, b MysqlTime) int {
 	ta := datetimeToUint64(a)
 	tb := datetimeToUint64(b)
@@ -463,7 +478,7 @@ func (t *Time) check(sc *stmtctx.StatementContext) error {
 	var err error
 	switch t.Type {
 	case mysql.TypeTimestamp:
-		err = checkTimestampType(t.Time)
+		err = checkTimestampType(sc, t.Time)
 	case mysql.TypeDatetime:
 		err = checkDatetimeType(t.Time, allowZeroInDate)
 	case mysql.TypeDate:
@@ -473,8 +488,8 @@ func (t *Time) check(sc *stmtctx.StatementContext) error {
 }
 
 // Check if 't' is valid
-func (t *Time) Check() error {
-	return t.check(nil)
+func (t *Time) Check(sc *stmtctx.StatementContext) error {
+	return t.check(sc)
 }
 
 // Sub subtracts t1 from t, returns a duration value.
@@ -506,7 +521,7 @@ func (t *Time) Sub(sc *stmtctx.StatementContext, t1 *Time) Duration {
 }
 
 // Add adds d to t, returns the result time value.
-func (t *Time) Add(d Duration) (Time, error) {
+func (t *Time) Add(sc *stmtctx.StatementContext, d Duration) (Time, error) {
 	sign, hh, mm, ss, micro := splitDuration(d.Duration)
 	seconds, microseconds, _ := calcTimeDiff(t.Time, FromDate(0, 0, 0, hh, mm, ss, micro), -sign)
 	days := seconds / secondsIn24Hour
@@ -529,7 +544,7 @@ func (t *Time) Add(d Duration) (Time, error) {
 		Type: t.Type,
 		Fsp:  fsp,
 	}
-	return ret, ret.Check()
+	return ret, ret.Check(sc)
 }
 
 // TimestampDiff returns t2 - t1 where t1 and t2 are date or datetime expressions.
@@ -630,7 +645,8 @@ func parseDatetime(str string, fsp int, isFloat bool) (Time, error) {
 				// 20170118.123423 => 2017-01-18 00:00:00
 			} else {
 				// '20170118.123423' => 2017-01-18 12:34:23.234
-				fmt.Sscanf(fracStr, "%2d%2d%2d", &hour, &minute, &second)
+				_, err1 := fmt.Sscanf(fracStr, "%2d%2d%2d", &hour, &minute, &second)
+				terror.Log(err1)
 			}
 		}
 	case 3:
@@ -853,7 +869,7 @@ func (d Duration) ConvertToTime(sc *stmtctx.StatementContext, tp uint8) (Time, e
 		Type: mysql.TypeDatetime,
 		Fsp:  d.Fsp,
 	}
-	return t.Convert(nil, tp)
+	return t.Convert(sc, tp)
 }
 
 // RoundFrac rounds fractional seconds precision with new fsp and returns a new one.
@@ -1344,12 +1360,27 @@ func checkMonthDay(year, month, day int) error {
 	return nil
 }
 
-func checkTimestampType(t MysqlTime) error {
+func checkTimestampType(sc *stmtctx.StatementContext, t MysqlTime) error {
 	if compareTime(t, ZeroTime) == 0 {
 		return nil
 	}
 
-	if compareTime(t, maxTimestamp) > 0 || compareTime(t, MinTimestamp) < 0 {
+	if sc == nil {
+		return errors.New("statementContext is required during checkTimestampType")
+	}
+
+	var checkTime MysqlTime
+	if sc.TimeZone != BoundTimezone {
+		convertTime := Time{Time: t, Type: mysql.TypeTimestamp}
+		err := convertTime.ConvertTimeZone(sc.TimeZone, BoundTimezone)
+		if err != nil {
+			return err
+		}
+		checkTime = convertTime.Time
+	} else {
+		checkTime = t
+	}
+	if compareTime(checkTime, maxTimestamp.Time) > 0 || compareTime(checkTime, MinTimestamp.Time) < 0 {
 		return errors.Trace(ErrInvalidTimeFormat.GenByArgs(t))
 	}
 

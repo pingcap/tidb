@@ -165,7 +165,10 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 	if onDup {
 		sc.AddAffectedRows(2)
 	} else {
-		sc.AddAffectedRows(1)
+		// if handleChanged == true, the `affectedRows` is calculated when add new record.
+		if !handleChanged {
+			sc.AddAffectedRows(1)
+		}
 	}
 	colSize := make(map[int64]int64)
 	for id, col := range t.Cols() {
@@ -1225,6 +1228,9 @@ func (e *InsertExec) batchUpdateDupRows(newRows [][]types.Datum, onDuplicate []*
 
 // fillBackKeys fills the updated key-value pair to the dupKeyValues for further check.
 func (e *InsertExec) fillBackKeys(fillBackKeysInRow []keyWithDupError, handle int64) {
+	if len(fillBackKeysInRow) == 0 {
+		return
+	}
 	e.dupOldRowValues[string(e.Table.RecordKey(handle))] = fillBackKeysInRow[0].newRowValue
 	for _, insert := range fillBackKeysInRow {
 		if insert.isRecordKey {
@@ -1989,7 +1995,7 @@ func (e *UpdateExec) fetchChunkRows(ctx context.Context) error {
 	fields := e.children[0].retTypes()
 	globalRowIdx := 0
 	for {
-		chk := chunk.NewChunk(fields)
+		chk := e.children[0].newChunk()
 		err := e.children[0].Next(ctx, chk)
 		if err != nil {
 			return errors.Trace(err)

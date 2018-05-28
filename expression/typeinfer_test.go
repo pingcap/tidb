@@ -52,6 +52,7 @@ type testInferTypeSuite struct {
 }
 
 func (s *testInferTypeSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
 	s.Parser = parser.New()
 }
 
