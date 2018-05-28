@@ -1937,7 +1937,24 @@ func (s *testDBSuite) TestAddNotNullColumnWhileInsertOnDupUpdate(c *C) {
 	c.Assert(tk2Err, IsNil)
 }
 
-func (s *testDBSuite) getMaxTableRowID(c *C, d ddl.DDL, tbl table.Table) (int64, bool) {
+type testMaxTableRowIDContex struct {
+	c   *C
+	d   ddl.DDL
+	tbl table.Table
+}
+
+func newTestMaxTableRowIDContex(c *C, d ddl.DDL, tbl table.Table) *testMaxTableRowIDContex {
+	return &testMaxTableRowIDContex{
+		c:   c,
+		d:   d,
+		tbl: tbl,
+	}
+}
+
+func (s *testDBSuite) getMaxTableRowID(ctx *testMaxTableRowIDContex) (int64, bool) {
+	c := ctx.c
+	d := ctx.d
+	tbl := ctx.tbl
 	curVer, err := s.store.CurrentVersion()
 	c.Assert(err, IsNil)
 	maxID, emptyTable, err := d.GetTableMaxRowID(curVer.Ver, tbl.Meta())
@@ -1945,7 +1962,15 @@ func (s *testDBSuite) getMaxTableRowID(c *C, d ddl.DDL, tbl table.Table) (int64,
 	return maxID, emptyTable
 }
 
+func (s *testDBSuite) checkGetMaxTableRowID(ctx *testMaxTableRowIDContex, expectEmpty bool, expectMaxID int64) {
+	c := ctx.c
+	maxID, emptyTable := s.getMaxTableRowID(ctx)
+	c.Assert(emptyTable, Equals, expectEmpty)
+	c.Assert(maxID, Equals, expectMaxID)
+}
+
 func (s *testDBSuite) TestGetTableEndHandle(c *C) {
+	// TestGetTableEndHandle test ddl.GetTableMaxRowID method, which will return the max row id of the table.
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("drop database if exists test_get_endhandle")
 	tk.MustExec("create database test_get_endhandle")
@@ -1958,33 +1983,22 @@ func (s *testDBSuite) TestGetTableEndHandle(c *C) {
 	tbl, err := is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 
+	testCtx := newTestMaxTableRowIDContex(c, d, tbl)
 	// test empty table
-	maxID, emptyTable := s.getMaxTableRowID(c, d, tbl)
-	c.Assert(emptyTable, IsTrue)
-	c.Assert(maxID, Equals, int64(math.MaxInt64))
+	s.checkGetMaxTableRowID(testCtx, true, int64(math.MaxInt64))
 
 	tk.MustExec("insert into t values(-1, 1)")
-	maxID, emptyTable = s.getMaxTableRowID(c, d, tbl)
-	c.Assert(maxID, Equals, int64(-1))
-	c.Assert(emptyTable, IsFalse)
+	s.checkGetMaxTableRowID(testCtx, false, int64(-1))
 
 	tk.MustExec("insert into t values(9223372036854775806, 1)")
-	maxID, emptyTable = s.getMaxTableRowID(c, d, tbl)
-	c.Assert(maxID, Equals, int64(9223372036854775806))
-	c.Assert(emptyTable, IsFalse)
+	s.checkGetMaxTableRowID(testCtx, false, int64(9223372036854775806))
 
 	tk.MustExec("insert into t values(9223372036854775807, 1)")
-
-	maxID, emptyTable = s.getMaxTableRowID(c, d, tbl)
-	c.Assert(maxID, Equals, int64(9223372036854775807))
-	c.Assert(emptyTable, IsFalse)
+	s.checkGetMaxTableRowID(testCtx, false, int64(9223372036854775807))
 
 	tk.MustExec("insert into t values(10, 1)")
 	tk.MustExec("insert into t values(102149142, 1)")
-
-	maxID, emptyTable = s.getMaxTableRowID(c, d, tbl)
-	c.Assert(maxID, Equals, int64(9223372036854775807))
-	c.Assert(emptyTable, IsFalse)
+	s.checkGetMaxTableRowID(testCtx, false, int64(9223372036854775807))
 
 	tk.MustExec("create table t1(a bigint PRIMARY KEY, b int)")
 
@@ -1992,54 +2006,50 @@ func (s *testDBSuite) TestGetTableEndHandle(c *C) {
 		tk.MustExec(fmt.Sprintf("insert into t1 values(%v, %v)", i, i))
 	}
 	is = s.dom.InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t1"))
+	testCtx.tbl, err = is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
-	maxID, emptyTable = s.getMaxTableRowID(c, d, tbl)
-	c.Assert(maxID, Equals, int64(999))
-	c.Assert(emptyTable, IsFalse)
+	s.checkGetMaxTableRowID(testCtx, false, int64(999))
 
 	// Test PK is not handle
 	tk.MustExec("create table t2(a varchar(255))")
 
 	is = s.dom.InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t2"))
+	testCtx.tbl, err = is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t2"))
 	c.Assert(err, IsNil)
-	maxID, emptyTable = s.getMaxTableRowID(c, d, tbl)
-	c.Assert(maxID, Equals, int64(math.MaxInt64))
-	c.Assert(emptyTable, IsTrue)
+	s.checkGetMaxTableRowID(testCtx, true, int64(math.MaxInt64))
 
 	for i := 0; i < 1000; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t2 values(%v)", i))
 	}
 
 	result := tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxID, emptyTable = s.getMaxTableRowID(c, d, tbl)
+	maxID, emptyTable := s.getMaxTableRowID(testCtx)
 	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
 	c.Assert(emptyTable, IsFalse)
 
 	tk.MustExec("insert into t2 values(100000)")
 	result = tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxID, emptyTable = s.getMaxTableRowID(c, d, tbl)
+	maxID, emptyTable = s.getMaxTableRowID(testCtx)
 	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
 	c.Assert(emptyTable, IsFalse)
 
 	tk.MustExec(fmt.Sprintf("insert into t2 values(%v)", math.MaxInt64-1))
 	result = tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxID, emptyTable = s.getMaxTableRowID(c, d, tbl)
+	maxID, emptyTable = s.getMaxTableRowID(testCtx)
 	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
 	c.Assert(emptyTable, IsFalse)
 
 	tk.MustExec(fmt.Sprintf("insert into t2 values(%v)", math.MaxInt64))
 
 	result = tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxID, emptyTable = s.getMaxTableRowID(c, d, tbl)
+	maxID, emptyTable = s.getMaxTableRowID(testCtx)
 	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
 	c.Assert(emptyTable, IsFalse)
 
 	tk.MustExec("insert into t2 values(100)")
 
 	result = tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxID, emptyTable = s.getMaxTableRowID(c, d, tbl)
+	maxID, emptyTable = s.getMaxTableRowID(testCtx)
 	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
 	c.Assert(emptyTable, IsFalse)
 }
@@ -2117,7 +2127,9 @@ func (s *testDBSuite) TestBackwardCompatibility(c *C) {
 	c.Assert(err, IsNil)
 	job.Version = 1
 	job.StartTS = txn.StartTS()
-	// simulate old TiDB init the add index job.
+
+	// Simulate old TiDB init the add index job, old TiDB will not init the model.Job.ReorgMeta field,
+	// if we set job.SnapshotVer here, can simulate the behavior.
 	job.SnapshotVer = txn.StartTS()
 	err = t.EnQueueDDLJob(job)
 	c.Assert(err, IsNil)
