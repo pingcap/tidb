@@ -85,6 +85,18 @@ func (c *ColumnInfo) IsGenerated() bool {
 	return len(c.GeneratedExprString) != 0
 }
 
+// FindColumnInfo finds ColumnInfo in cols by name.
+func FindColumnInfo(cols []*ColumnInfo, name string) *ColumnInfo {
+	name = strings.ToLower(name)
+	for _, col := range cols {
+		if col.Name.L == name {
+			return col
+		}
+	}
+
+	return nil
+}
+
 // ExtraHandleID is the column ID of column which we need to append to schema to occupy the handle's position
 // for use of execution phase.
 const ExtraHandleID = -1
@@ -405,32 +417,6 @@ func NewCIStr(s string) (cs CIStr) {
 	return
 }
 
-// TODO: update it when more collate is supported.
-func collationToProto(c string) int32 {
-	v := mysql.CollationNames[c]
-	if v == mysql.BinaryCollationID {
-		return int32(mysql.BinaryCollationID)
-	}
-	// We only support binary and utf8_bin collation.
-	// Setting other collations to utf8_bin for old data compatibility.
-	// For the data created when we didn't enforce utf8_bin collation in create table.
-	return int32(mysql.DefaultCollationID)
-}
-
-// ColumnToProto converts model.ColumnInfo to tipb.ColumnInfo.
-func ColumnToProto(c *ColumnInfo) *tipb.ColumnInfo {
-	pc := &tipb.ColumnInfo{
-		ColumnId:  c.ID,
-		Collation: collationToProto(c.FieldType.Collate),
-		ColumnLen: int32(c.FieldType.Flen),
-		Decimal:   int32(c.FieldType.Decimal),
-		Flag:      int32(c.Flag),
-		Elems:     c.Elems,
-	}
-	pc.Tp = int32(c.FieldType.Tp)
-	return pc
-}
-
 // ColumnsToProto converts a slice of model.ColumnInfo to a slice of tipb.ColumnInfo.
 func ColumnsToProto(columns []*ColumnInfo, pkIsHandle bool) []*tipb.ColumnInfo {
 	cols := make([]*tipb.ColumnInfo, 0, len(columns))
@@ -472,4 +458,30 @@ func IndexToProto(t *TableInfo, idx *IndexInfo) *tipb.IndexInfo {
 	}
 	pi.Columns = cols
 	return pi
+}
+
+// ColumnToProto converts model.ColumnInfo to tipb.ColumnInfo.
+func ColumnToProto(c *ColumnInfo) *tipb.ColumnInfo {
+	pc := &tipb.ColumnInfo{
+		ColumnId:  c.ID,
+		Collation: collationToProto(c.FieldType.Collate),
+		ColumnLen: int32(c.FieldType.Flen),
+		Decimal:   int32(c.FieldType.Decimal),
+		Flag:      int32(c.Flag),
+		Elems:     c.Elems,
+	}
+	pc.Tp = int32(c.FieldType.Tp)
+	return pc
+}
+
+// TODO: update it when more collate is supported.
+func collationToProto(c string) int32 {
+	v := mysql.CollationNames[c]
+	if v == mysql.BinaryCollationID {
+		return int32(mysql.BinaryCollationID)
+	}
+	// We only support binary and utf8_bin collation.
+	// Setting other collations to utf8_bin for old data compatibility.
+	// For the data created when we didn't enforce utf8_bin collation in create table.
+	return int32(mysql.DefaultCollationID)
 }
