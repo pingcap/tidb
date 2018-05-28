@@ -181,16 +181,25 @@ func (p *LogicalJoin) getHashJoin(prop *requiredProp, innerIdx int) *PhysicalHas
 // joinKeysMatchIndex checks if all keys match columns in index.
 // It returns a slice a[] what a[i] means keys[i] is related with indexCols[a[i]].
 func joinKeysMatchIndex(keys, indexCols []*expression.Column, colLengths []int) []int {
-	if len(indexCols) < len(keys) {
-		return nil
-	}
 	keyOff2IdxOff := make([]int, len(keys))
-	for keyOff, key := range keys {
-		idxOff := joinKeyMatchIndexCol(key, indexCols, colLengths)
-		if idxOff == -1 {
-			return nil
+	for i := range keyOff2IdxOff {
+		keyOff2IdxOff[i] = -1
+	}
+	matched := false
+	tmpSchema := expression.NewSchema(keys...)
+	for i, idxCol := range indexCols {
+		if colLengths[i] != types.UnspecifiedLength {
+			continue
 		}
-		keyOff2IdxOff[keyOff] = idxOff
+		keyOff := tmpSchema.ColumnIndex(idxCol)
+		if keyOff == -1 {
+			continue
+		}
+		matched = true
+		keyOff2IdxOff[keyOff] = i
+	}
+	if !matched {
+		return nil
 	}
 	return keyOff2IdxOff
 }
@@ -218,14 +227,28 @@ func (p *LogicalJoin) constructIndexJoin(prop *requiredProp, innerJoinKeys, oute
 	}
 	chReqProps := make([]*requiredProp, 2)
 	chReqProps[outerIdx] = &requiredProp{taskTp: rootTaskType, expectedCnt: prop.expectedCnt, cols: prop.cols, desc: prop.desc}
+	newInnerKeys := make([]*expression.Column, 0, len(innerJoinKeys))
+	newOuterKeys := make([]*expression.Column, 0, len(outerJoinKeys))
+	newKeyOff := make([]int, 0, len(keyOff2IdxOff))
+	newOtherConds := make([]expression.Expression, 0, len(p.OtherConditions)+len(p.EqualConditions))
+	copy(newOtherConds, p.OtherConditions)
+	for keyOff, idxOff := range keyOff2IdxOff {
+		if keyOff2IdxOff[keyOff] < 0 {
+			newOtherConds = append(newOtherConds, p.EqualConditions[keyOff])
+			continue
+		}
+		newInnerKeys = append(newInnerKeys, innerJoinKeys[keyOff])
+		newOuterKeys = append(newOuterKeys, outerJoinKeys[keyOff])
+		newKeyOff = append(newKeyOff, idxOff)
+	}
 	join := PhysicalIndexJoin{
 		OuterIndex:      outerIdx,
 		LeftConditions:  p.LeftConditions,
 		RightConditions: p.RightConditions,
-		OtherConditions: p.OtherConditions,
+		OtherConditions: newOtherConds,
 		JoinType:        joinType,
-		OuterJoinKeys:   outerJoinKeys,
-		InnerJoinKeys:   innerJoinKeys,
+		OuterJoinKeys:   newOuterKeys,
+		InnerJoinKeys:   newInnerKeys,
 		DefaultValues:   p.DefaultValues,
 		innerPlan:       innerPlan,
 		KeyOff2IdxOff:   keyOff2IdxOff,
@@ -267,7 +290,7 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 		pkCol := x.getPKIsHandleCol()
 		if pkCol != nil && innerJoinKeys[0].Equal(nil, pkCol) {
 			innerPlan := x.forceToTableScan(pkCol)
-			return p.constructIndexJoin(prop, innerJoinKeys, outerJoinKeys, outerIdx, innerPlan, nil, nil)
+			return p.constructIndexJoin(prop, innerJoinKeys, outerJoinKeys, outerIdx, innerPlan, nil, []int{1})
 		}
 	}
 	var (
@@ -349,7 +372,10 @@ func (p *LogicalJoin) buildFakeEqCondsForIndexJoin(keys, idxCols []*expression.C
 	conds := make([]expression.Expression, 0, len(keys)+len(innerPlan.pushedDownConds))
 	eqConds = make([]expression.Expression, 0, len(keys))
 	// Construct a fake equal expression for calculating the range.
-	for _, key := range keys {
+	for i, key := range keys {
+		if keyOff2IdxOff[i] < 0 {
+			continue
+		}
 		// Int datum 1 can convert to all column's type(numeric type, string type, json, time type, enum, set) safely.
 		fakeConstant := &expression.Constant{Value: types.NewIntDatum(1), RetType: key.GetType()}
 		eqFunc := expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), key, fakeConstant)
