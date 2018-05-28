@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
@@ -123,7 +124,12 @@ func (ts *TiDBStatement) Close() error {
 		return errors.Trace(err)
 	}
 	delete(ts.ctx.stmts, int(ts.id))
-	delete(ts.ctx.results, int(ts.id))
+
+	// clean ResultSet
+	if resultSet, ok := ts.ctx.results[int(ts.id)]; ok {
+		delete(ts.ctx.results, int(ts.id))
+		terror.Call(resultSet.Close)
+	}
 	return nil
 }
 
@@ -225,6 +231,11 @@ func (tc *TiDBContext) SetClientCapability(flags uint32) {
 // Close implements QueryCtx Close method.
 func (tc *TiDBContext) Close() error {
 	tc.session.Close()
+
+	// close ResultSets associated with this connection
+	for _, v := range tc.results {
+		terror.Call(v.Close)
+	}
 	return nil
 }
 
