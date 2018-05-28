@@ -578,7 +578,7 @@ func (s *testCodecSuite) TestDuration(c *C) {
 		v, err := Decode(b, 1)
 		c.Assert(err, IsNil)
 		m.Fsp = types.MaxFsp
-		c.Assert(v, DeepEquals, types.MakeDatums(m))
+		c.Assert([]types.Datum(v), DeepEquals, types.MakeDatums(m))
 	}
 
 	tblCmp := []struct {

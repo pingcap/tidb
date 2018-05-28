@@ -310,6 +310,8 @@ func NewSessionVars() *SessionVars {
 		IndexLookupJoinConcurrency: DefIndexLookupJoinConcurrency,
 		HashJoinConcurrency:        DefTiDBHashJoinConcurrency,
 		DistSQLScanConcurrency:     DefDistSQLScanConcurrency,
+		HashAggPartialConcurrency:  DefTiDBHashAggPartialConcurrency,
+		HashAggFinalConcurrency:    DefTiDBHashAggFinalConcurrency,
 	}
 	vars.MemQuota = MemQuota{
 		MemQuotaQuery:             DefTiDBMemQuotaQuery,
@@ -490,6 +492,10 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.IndexLookupSize = tidbOptPositiveInt32(val, DefIndexLookupSize)
 	case TiDBHashJoinConcurrency:
 		s.HashJoinConcurrency = tidbOptPositiveInt32(val, DefTiDBHashJoinConcurrency)
+	case TiDBHashAggPartialConcurrency:
+		s.HashAggPartialConcurrency = tidbOptPositiveInt32(val, DefTiDBHashAggPartialConcurrency)
+	case TiDBHashAggFinalConcurrency:
+		s.HashAggFinalConcurrency = tidbOptPositiveInt32(val, DefTiDBHashAggFinalConcurrency)
 	case TiDBDistSQLScanConcurrency:
 		s.DistSQLScanConcurrency = tidbOptPositiveInt32(val, DefDistSQLScanConcurrency)
 	case TiDBIndexSerialScanConcurrency:
@@ -566,6 +572,12 @@ type Concurrency struct {
 
 	// HashJoinConcurrency is the number of concurrent hash join outer worker.
 	HashJoinConcurrency int
+
+	// HashAggPartialConcurrency is the number of concurrent hash aggregation partial worker.
+	HashAggPartialConcurrency int
+
+	// HashAggPartialConcurrency is the number of concurrent hash aggregation final worker.
+	HashAggFinalConcurrency int
 
 	// IndexSerialScanConcurrency is the number of concurrent index serial scan worker.
 	IndexSerialScanConcurrency int

@@ -63,6 +63,8 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.IndexSerialScanConcurrency, Equals, DefIndexSerialScanConcurrency)
 	c.Assert(vars.IndexLookupJoinConcurrency, Equals, DefIndexLookupJoinConcurrency)
 	c.Assert(vars.HashJoinConcurrency, Equals, DefTiDBHashJoinConcurrency)
+	c.Assert(vars.HashAggPartialConcurrency, Equals, DefTiDBHashAggPartialConcurrency)
+	c.Assert(vars.HashAggFinalConcurrency, Equals, DefTiDBHashAggFinalConcurrency)
 	c.Assert(vars.DistSQLScanConcurrency, Equals, DefDistSQLScanConcurrency)
 	c.Assert(vars.MaxChunkSize, Equals, DefMaxChunkSize)
 	c.Assert(vars.DMLBatchSize, Equals, DefDMLBatchSize)

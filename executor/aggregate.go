@@ -130,14 +130,20 @@ func (r *AfInterResult) ToRows(size int) (result []types.Row, err error) {
 
 // Close implements the Executor Close interface.
 func (e *HashAggExec) Close() error {
-	if err := e.baseExecutor.Close(); err != nil {
-		return errors.Trace(err)
-	}
 	if e.doesUnparallelExec {
 		e.groupMap = nil
 		e.groupIterator = nil
 		e.aggCtxsMap = nil
 	} else {
+		// `Close` may be called after `Open` without calling `Next` in test.
+		if !e.prepared {
+			close(e.inputCh)
+			close(e.partialInputCh)
+			for _, ch := range e.partialOutputChs {
+				close(ch)
+			}
+			close(e.finalOutputCh)
+		}
 		close(e.finishCh)
 		for _, ch := range e.partialOutputChs {
 			for range ch {
@@ -146,7 +152,7 @@ func (e *HashAggExec) Close() error {
 		for range e.finalOutputCh {
 		}
 	}
-	return nil
+	return errors.Trace(e.baseExecutor.Close())
 }
 
 // Open implements the Executor Open interface.
@@ -175,9 +181,6 @@ func (e *HashAggExec) initForUnparallelExec() {
 }
 
 func (e *HashAggExec) initForParallelExec() {
-	e.partialConcurrency = 4
-	e.finalConcurrency = 4
-
 	e.partialWorkerWaitGroup = &sync.WaitGroup{}
 	e.finalWorkerWaitGroup = &sync.WaitGroup{}
 	e.finalOutputCh = make(chan *AfFinalResult, e.finalConcurrency)
