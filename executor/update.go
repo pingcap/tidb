@@ -42,7 +42,7 @@ type UpdateExec struct {
 }
 
 func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema) (types.DatumRow, error) {
-	assignFlag, err := getUpdateColumns(e.OrderedList, schema.Len())
+	assignFlag, err := e.getUpdateColumns(schema.Len())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -183,9 +183,9 @@ func (e *UpdateExec) Open(ctx context.Context) error {
 	return e.SelectExec.Open(ctx)
 }
 
-func getUpdateColumns(assignList []*expression.Assignment, schemaLen int) ([]bool, error) {
+func (e *UpdateExec) getUpdateColumns(schemaLen int) ([]bool, error) {
 	assignFlag := make([]bool, schemaLen)
-	for _, v := range assignList {
+	for _, v := range e.OrderedList {
 		idx := v.Col.Index
 		assignFlag[idx] = true
 	}
