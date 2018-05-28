@@ -55,9 +55,9 @@ const (
 	ServerPSOutParams              uint16 = 0x1000
 )
 
-// IsCursorExists return true if cursor exists indicated by server status
-func IsCursorExists(serverStatus uint16) bool {
-	return serverStatus&ServerStatusCursorExists == ServerStatusCursorExists
+// HasCursorExistsFlag return true if cursor exists indicated by server status
+func HasCursorExistsFlag(serverStatus uint16) bool {
+	return serverStatus&ServerStatusCursorExists > 0
 }
 
 // Identifier length limitations.

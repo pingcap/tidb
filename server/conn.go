@@ -912,7 +912,7 @@ func (cc *clientConn) handleFieldList(sql string) (err error) {
 func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary bool, serverStatus uint16, fetchSize int) (runErr error) {
 	defer func() {
 		// close ResultSet when cursor doesn't exist
-		if !mysql.IsCursorExists(serverStatus) {
+		if !mysql.HasCursorExistsFlag(serverStatus) {
 			terror.Call(rs.Close)
 		}
 		r := recover()
@@ -970,7 +970,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 			return errors.Trace(err)
 		}
 		// if cursor exists, columnInfo has already sent to client when handle COM_STMT_EXECUTE command.
-		if !gotColumnInfo && !mysql.IsCursorExists(serverStatus) {
+		if !gotColumnInfo && !mysql.HasCursorExistsFlag(serverStatus) {
 			// We need to call Next before we get columns.
 			// Otherwise, we will get incorrect columns info.
 			columns := rs.Columns()
@@ -985,7 +985,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 		if rowCount == 0 {
 			// tell the client COM_STMT_FETCH has finished by setting proper serverStatus,
 			// and close ResultSet
-			if mysql.IsCursorExists(serverStatus) {
+			if mysql.HasCursorExistsFlag(serverStatus) {
 				serverStatus |= mysql.ServerStatusLastRowSend
 				terror.Call(rs.Close)
 			}
@@ -1006,7 +1006,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 			}
 		}
 		// if cursor exists, checking whether this batch has fetched enough rows.
-		if mysql.IsCursorExists(serverStatus) && fetchRows >= fetchSize {
+		if mysql.HasCursorExistsFlag(serverStatus) && fetchRows >= fetchSize {
 			break
 		}
 	}

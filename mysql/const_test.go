@@ -315,7 +315,7 @@ func (s *testMySQLConstSuite) TestServerStatus(c *C) {
 	}
 
 	for _, t := range tests {
-		ret := mysql.IsCursorExists(t.arg)
+		ret := mysql.HasCursorExistsFlag(t.arg)
 		c.Assert(ret, Equals, t.IsCursorExists)
 	}
 }
