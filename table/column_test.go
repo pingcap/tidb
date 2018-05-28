@@ -220,6 +220,10 @@ func (t *testTableSuite) TestGetZeroValue(c *C) {
 
 func (t *testTableSuite) TestCastValue(c *C) {
 	ctx := mock.NewContext()
+
+	// truncate as warnings == false start
+	ctx.GetSessionVars().StmtCtx.TruncateAsWarning = false
+
 	colInfo := model.ColumnInfo{
 		FieldType: *types.NewFieldType(mysql.TypeLong),
 		State:     model.StatePublic,
@@ -235,6 +239,54 @@ func (t *testTableSuite) TestCastValue(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(val.GetInt64(), Equals, int64(0))
 
+	colInfoS := model.ColumnInfo{
+		FieldType: *types.NewFieldType(mysql.TypeString),
+		State:     model.StatePublic,
+	}
+	val, warn, err = CastValue(ctx, types.NewDatum("test"), &colInfoS)
+	c.Assert(err, IsNil)
+	c.Assert(err, IsNil)
+	c.Assert(val, NotNil)
+
+	colInfoS.Charset = mysql.UTF8Charset
+	val, warn, err = CastValue(ctx, types.NewDatum("\xf0\x9f\x98\xad\xed\xa0\xbd"), &colInfoS)
+	c.Assert(warn, IsNil)
+	c.Assert(err, NotNil)
+	c.Assert(val.GetInt64(), Equals, int64(0))
+
+	colInfoD := model.ColumnInfo{
+		FieldType: *types.NewFieldType(mysql.TypeNewDecimal),
+		State:     model.StatePublic,
+	}
+	val, warn, err = CastValue(ctx, types.NewDatum("1e1111111"), &colInfoD)
+	c.Assert(warn, IsNil)
+	c.Assert(err, NotNil)
+	c.Assert(val.GetInt64(), Equals, int64(0))
+
+	// truncate as warning == true start.
+
+	ctx.GetSessionVars().StmtCtx.TruncateAsWarning = true
+
+	val, warn, err = CastValue(ctx, types.NewDatum("test"), &colInfo)
+	c.Assert(warn, IsNil) // Fix me this run as it was but make warning code has wrong value.
+	c.Assert(err, IsNil)
+	c.Assert(val.GetInt64(), Equals, int64(0))
+
+	colInfoS.Charset = mysql.UTF8Charset
+	val, warn, err = CastValue(ctx, types.NewDatum("\xf0\x9f\x98\xad\xed\xa0\xbd"), &colInfoS)
+	c.Assert(warn, NotNil)
+	c.Assert(err, IsNil)
+	c.Assert(val.GetInt64(), Equals, int64(0))
+
+	val, warn, err = CastValue(ctx, types.NewDatum("1e1111111"), &colInfoD)
+	c.Assert(warn, NotNil)
+	c.Assert(err, IsNil)
+	c.Assert(val.GetInt64(), Equals, int64(0))
+
+	ctx.GetSessionVars().StmtCtx.TruncateAsWarning = false
+
+	// start ignore error test
+
 	col := ToColumn(&model.ColumnInfo{
 		FieldType: *types.NewFieldType(mysql.TypeTiny),
 		State:     model.StatePublic,
@@ -247,15 +299,6 @@ func (t *testTableSuite) TestCastValue(c *C) {
 	c.Assert(err, IsNil)
 	ctx.GetSessionVars().StmtCtx.IgnoreErr = false
 
-	colInfoS := model.ColumnInfo{
-		FieldType: *types.NewFieldType(mysql.TypeString),
-		State:     model.StatePublic,
-	}
-	// TODO: add warn not nil case.
-	val, warn, err = CastValue(ctx, types.NewDatum("test"), &colInfoS)
-	c.Assert(err, IsNil)
-	c.Assert(err, IsNil)
-	c.Assert(val, NotNil)
 }
 
 // CastValues casts values based on columns type.
