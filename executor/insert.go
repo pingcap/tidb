@@ -317,7 +317,7 @@ func (e *InsertExec) doDupRowUpdate(handle int64, oldRow []types.Datum, newRow [
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 	e.ctx.GetSessionVars().CurrInsertValues = types.DatumRow(newRow)
 	newData := make(types.DatumRow, len(oldRow))
-	copy(newData, oldRow)
+	copy(newData, newRow)
 	for _, col := range cols {
 		val, err1 := col.Expr.Eval(newData)
 		if err1 != nil {
