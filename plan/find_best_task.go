@@ -314,17 +314,18 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, path *accessPath) (
 	rowCount := path.countAfterAccess
 	cop := &copTask{indexPlan: is}
 	if !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle) {
+		// If it's parent requires single read task, return max cost.
+		if prop.taskTp == copSingleReadTaskType {
+			return invalidTask, nil
+		}
+
 		// On this way, it's double read case.
 		ts := PhysicalTableScan{Columns: ds.Columns, Table: is.Table}.init(ds.ctx)
 		ts.SetSchema(ds.schema.Clone())
 		cop.tablePlan = ts
-		// If it's parent requires single read task, return max cost.
-		if prop.taskTp == copSingleReadTaskType {
-			return &copTask{cst: math.MaxFloat64}, nil
-		}
 	} else if prop.taskTp == copDoubleReadTaskType {
 		// If it's parent requires double read task, return max cost.
-		return &copTask{cst: math.MaxFloat64}, nil
+		return invalidTask, nil
 	}
 	is.initSchema(ds.id, idx, cop.tablePlan != nil)
 	// Check if this plan matches the property.
@@ -502,7 +503,7 @@ func (ds *DataSource) forceToTableScan(pk *expression.Column) PhysicalPlan {
 func (ds *DataSource) convertToTableScan(prop *requiredProp, path *accessPath) (task task, err error) {
 	// It will be handled in convertToIndexScan.
 	if prop.taskTp == copDoubleReadTaskType {
-		return &copTask{cst: math.MaxFloat64}, nil
+		return invalidTask, nil
 	}
 
 	ts := PhysicalTableScan{
