@@ -17,8 +17,10 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/ranger"
 )
 
 // tablePartition rewrites the ast for table partition.
@@ -123,21 +125,31 @@ func prunePartition(sel *LogicalSelection, ds *DataSource) (LogicalPlan, error) 
 // For example, partition by column a > 3, and select condition is a < 3, then
 // canBePrune would be true.
 func canBePrune(ctx sessionctx.Context, expr expression.Expression, rootConds, copConds []expression.Expression) (bool, error) {
+	lt, ok := expr.(*expression.ScalarFunction)
+	if !ok || lt.FuncName.L != ast.LT {
+		fmt.Println("can be prune 这里不是 lt？")
+		return false, nil
+	}
+	tmp := lt.GetArgs()[0]
+	col, ok := tmp.(*expression.Column)
+	if !ok {
+		fmt.Println("can be prune 这里不是列条件？")
+		return false, nil
+	}
+
 	conds := make([]expression.Expression, 0, 1+len(rootConds)+len(copConds))
 	conds = append(conds, expr)
 	conds = append(conds, rootConds...)
 	conds = append(conds, copConds...)
-	res := expression.PropagateConstant(ctx, conds)
-	if len(res) == 1 {
-		if x, ok := res[0].(*expression.Constant); ok {
-			v, _, err := x.EvalInt(ctx, nil)
-			if err != nil {
-				return false, errors.Trace(err)
-			}
-			if v == 0 {
-				return true, nil
-			}
-		}
+	conds = expression.PropagateConstant(ctx, conds)
+
+	// Calculate the column range to prune.
+	accessConds := ranger.ExtractAccessConditionsForColumn(conds, col.ColName)
+	fmt.Println("access column condition = ", accessConds)
+	r, err := ranger.BuildColumnRange(accessConds, ctx.GetSessionVars().StmtCtx, col.RetType)
+	if err != nil {
+		return false, errors.Trace(err)
 	}
-	return false, nil
+	fmt.Println("ranger = ", r)
+	return len(r) == 0, nil
 }
