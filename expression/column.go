@@ -312,7 +312,6 @@ func (col *Column) ResolveIndices(schema *Schema) {
 	col.Index = schema.ColumnIndex(col)
 	// If col's index equals to -1, it means a internal logic error happens.
 	if col.Index == -1 {
-		//panic(fmt.Sprintf("Can't find column %s in schema %s", col, schema))
 		log.Errorf("Can't find column %s in schema %s", col, schema)
 	}
 }

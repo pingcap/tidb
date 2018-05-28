@@ -14,7 +14,6 @@
 package plan
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 
@@ -1160,9 +1159,6 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			er.err = ErrAmbiguous.GenByArgs(v.Name, clauseMsg[fieldList])
 			return
 		}
-	}
-	if _, ok := er.p.(*LogicalJoin); ok {
-		fmt.Printf("expressionRewriter.toColumn: this is in a join\n")
 	}
 
 	if join, ok := er.p.(*LogicalJoin); ok && join.redundantSchema != nil {
