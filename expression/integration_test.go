@@ -383,6 +383,15 @@ func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
 	tk.MustQuery("select a, ceil(a) from t where ceil(a) > 1;").Check(testkit.Rows("2.99999999900000000000 3", "12.00000000000000000000 12"))
 	tk.MustQuery("select a, ceil(a) from t;").Check(testkit.Rows("2.99999999900000000000 3", "12.00000000000000000000 12", "0.00000000000000000000 0"))
 	tk.MustQuery("select ceil(-29464);").Check(testkit.Rows("-29464"))
+	tk.MustQuery("select a, floor(a) from t where floor(a) > 1;").Check(testkit.Rows("2.99999999900000000000 2", "12.00000000000000000000 12"))
+	tk.MustQuery("select a, floor(a) from t;").Check(testkit.Rows("2.99999999900000000000 2", "12.00000000000000000000 12", "0.00000000000000000000 0"))
+	tk.MustQuery("select floor(-29464);").Check(testkit.Rows("-29464"))
+
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a decimal(40,20), b bigint);`)
+	tk.MustExec(`insert into t values(-2.99999990000000000000, -1);`)
+	tk.MustQuery(`select floor(a), floor(a), floor(a) from t;`).Check(testkit.Rows(`-3 -3 -3`))
+	tk.MustQuery(`select b, floor(b) from t;`).Check(testkit.Rows(`-1 -1`))
 
 	// for cot
 	result = tk.MustQuery("select cot(1), cot(-1), cot(NULL)")
