@@ -249,10 +249,9 @@ type PartitionType int
 
 // Partition types.
 const (
-	PartitionTypeRange       PartitionType = 1
-	PartitionTypeHash        PartitionType = 2
-	PartitionTypeList        PartitionType = 3
-	PartitionTypeRangeColumn PartitionType = 4
+	PartitionTypeRange PartitionType = 1
+	PartitionTypeHash  PartitionType = 2
+	PartitionTypeList  PartitionType = 3
 )
 
 func (p PartitionType) String() string {

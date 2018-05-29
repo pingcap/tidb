@@ -27,10 +27,9 @@ import (
 //
 // create table t (id int) partition by range (id)
 //   (partition
-//	p1 values less than (10),
-//	p2 values less than (20),
-//	p3 values less than (30)
-//   )
+//      p1 values less than (10),
+//      p2 values less than (20),
+//      p3 values less than (30))
 //
 // select * from t is equal to
 // select * from (union all
@@ -80,8 +79,6 @@ func prunePartition(sel *LogicalSelection, ds *DataSource) (LogicalPlan, error) 
 		return selectOnSomething(sel, ds)
 	}
 
-	fmt.Println("prune partition....fuck!!", ds)
-
 	// Rewrite data source to union all partitions, during which we may prune some
 	// partitions according to selection condition.
 	children := make([]LogicalPlan, 0, len(pi.Definitions))
@@ -100,7 +97,6 @@ func prunePartition(sel *LogicalSelection, ds *DataSource) (LogicalPlan, error) 
 
 		// If the selection condition would never satisify, prune that partition.
 		prune, err := canBePrune(ds.context(), expr, selConds, ds.pushedDownConds)
-		fmt.Println(i, "prune = ", prune, err)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -115,7 +111,6 @@ func prunePartition(sel *LogicalSelection, ds *DataSource) (LogicalPlan, error) 
 		newDataSource.partitionID = def.ID
 		children = append(children, &newDataSource)
 	}
-	fmt.Println("len children = ", len(children), children)
 	unionAll := LogicalUnionAll{}.init(ds.context())
 	unionAll.SetChildren(children...)
 	return selectOnSomething(sel, unionAll)
@@ -127,13 +122,11 @@ func prunePartition(sel *LogicalSelection, ds *DataSource) (LogicalPlan, error) 
 func canBePrune(ctx sessionctx.Context, expr expression.Expression, rootConds, copConds []expression.Expression) (bool, error) {
 	lt, ok := expr.(*expression.ScalarFunction)
 	if !ok || lt.FuncName.L != ast.LT {
-		fmt.Println("can be prune 这里不是 lt？")
 		return false, nil
 	}
 	tmp := lt.GetArgs()[0]
 	col, ok := tmp.(*expression.Column)
 	if !ok {
-		fmt.Println("can be prune 这里不是列条件？")
 		return false, nil
 	}
 
@@ -145,11 +138,9 @@ func canBePrune(ctx sessionctx.Context, expr expression.Expression, rootConds, c
 
 	// Calculate the column range to prune.
 	accessConds := ranger.ExtractAccessConditionsForColumn(conds, col.ColName)
-	fmt.Println("access column condition = ", accessConds)
 	r, err := ranger.BuildColumnRange(accessConds, ctx.GetSessionVars().StmtCtx, col.RetType)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	fmt.Println("ranger = ", r)
 	return len(r) == 0, nil
 }

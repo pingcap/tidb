@@ -202,7 +202,7 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []by
 	}
 }
 
-func (t *tikvHandlerTool) getMvccByIdxValue(idx table.Index, tbl table.Table, values url.Values, idxCols []*model.ColumnInfo, handleStr string) (*kvrpcpb.MvccGetByKeyResponse, error) {
+func (t *tikvHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values, idxCols []*model.ColumnInfo, handleStr string) (*kvrpcpb.MvccGetByKeyResponse, error) {
 	sc := new(stmtctx.StatementContext)
 	// HTTP request is not a database session, set timezone to UTC directly here.
 	// See https://github.com/pingcap/tidb/blob/master/docs/tidb_http_api.md for more details.
@@ -215,8 +215,7 @@ func (t *tikvHandlerTool) getMvccByIdxValue(idx table.Index, tbl table.Table, va
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	// FIXME: Consider partition here.
-	encodedKey, _, err := idx.GenIndexKey(sc, tbl.Meta().ID, idxRow, handle, nil)
+	encodedKey, _, err := idx.GenIndexKey(sc, idxRow, handle, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1204,7 +1203,7 @@ func (h mvccTxnHandler) handleMvccGetByIdx(params map[string]string, values url.
 	if idx == nil {
 		return nil, errors.NotFoundf("Index %s not found!", params[pIndexName])
 	}
-	return h.getMvccByIdxValue(idx, t, values, idxCols, handleStr)
+	return h.getMvccByIdxValue(idx, values, idxCols, handleStr)
 }
 
 func (h mvccTxnHandler) handleMvccGetByKey(params map[string]string) (interface{}, error) {

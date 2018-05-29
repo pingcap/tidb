@@ -18,14 +18,11 @@
 package tables
 
 import (
-	"bytes"
 	"encoding/binary"
-	"fmt"
 	"math"
 	"strings"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
@@ -219,11 +216,6 @@ func (t *Table) RecordKey(h int64) kv.Key {
 	return tablecodec.EncodeRecordKey(t.recordPrefix, h)
 }
 
-func partitionRecordKey(pid int64, handle int64) kv.Key {
-	recordPrefix := tablecodec.GenTableRecordPrefix(pid)
-	return tablecodec.EncodeRecordKey(recordPrefix, handle)
-}
-
 // FirstKey implements table.Table FirstKey interface.
 func (t *Table) FirstKey() kv.Key {
 	return t.RecordKey(math.MinInt64)
@@ -361,38 +353,6 @@ func (t *Table) getRollbackableMemStore(ctx sessionctx.Context) kv.RetrieverMuta
 	return bs
 }
 
-// locatePartition returns the partition ID of the input record.
-func (t *Table) locatePartition(ctx sessionctx.Context, r []types.Datum) (int64, error) {
-	pi := t.meta.GetPartitionInfo()
-	if pi == nil {
-		return t.ID, nil
-	}
-	// TODO: Only partition by range is supported currently.
-	if pi.Type != model.PartitionTypeRange {
-		return t.ID, nil
-	}
-
-	var buf bytes.Buffer
-	for _, def := range pi.Definitions {
-		// TODO: Cache expr into Table.
-		fmt.Fprintf(&buf, "%s < %s", pi.Expr, def.LessThan[0])
-		expr, err := expression.ParseSimpleExpr(ctx, buf.String(), t.meta)
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-		val, _, err := expr.EvalInt(ctx, types.DatumRow(r))
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-		if val > 0 {
-			return def.ID, nil
-		}
-		buf.Reset()
-	}
-	// Not belong to any of the partition?
-	return t.ID, nil
-}
-
 // AddRecord implements table.Table AddRecord interface.
 func (t *Table) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
 	var hasRecordID bool
@@ -417,11 +377,6 @@ func (t *Table) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleChe
 		}
 	}
 
-	pid, err := t.locatePartition(ctx, r)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-
 	txn := ctx.Txn()
 	sessVars := ctx.GetSessionVars()
 	// when ImportingData or BatchCheck is true,
@@ -433,7 +388,7 @@ func (t *Table) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleChe
 
 	rm := t.getRollbackableMemStore(ctx)
 	// Insert new entries into indices.
-	h, err := t.addIndices(ctx, pid, recordID, r, rm, skipHandleCheck)
+	h, err := t.addIndices(ctx, recordID, r, rm, skipHandleCheck)
 	if err != nil {
 		return h, errors.Trace(err)
 	}
@@ -461,7 +416,7 @@ func (t *Table) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleChe
 	}
 	writeBufs := sessVars.GetWriteStmtBufs()
 	adjustRowValuesBuf(writeBufs, len(row))
-	key := partitionRecordKey(pid, recordID)
+	key := t.RecordKey(recordID)
 	writeBufs.RowValBuf, err = tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -515,13 +470,13 @@ func (t *Table) genIndexKeyStr(colVals []types.Datum) (string, error) {
 }
 
 // addIndices adds data into indices. If any key is duplicated, returns the original handle.
-func (t *Table) addIndices(ctx sessionctx.Context, partitionID int64, recordID int64, r []types.Datum, rm kv.RetrieverMutator, skipHandleCheck bool) (int64, error) {
+func (t *Table) addIndices(ctx sessionctx.Context, recordID int64, r []types.Datum, rm kv.RetrieverMutator, skipHandleCheck bool) (int64, error) {
 	txn := ctx.Txn()
 	// Clean up lazy check error environment
 	defer txn.DelOption(kv.PresumeKeyNotExistsError)
 	skipCheck := ctx.GetSessionVars().ImportingData || ctx.GetSessionVars().StmtCtx.BatchCheck
 	if t.meta.PKIsHandle && !skipCheck && !skipHandleCheck {
-		if err := CheckHandleExists(ctx, t, partitionID, recordID); err != nil {
+		if err := CheckHandleExists(ctx, t, recordID); err != nil {
 			return recordID, errors.Trace(err)
 		}
 	}
@@ -543,7 +498,7 @@ func (t *Table) addIndices(ctx sessionctx.Context, partitionID int64, recordID i
 			dupKeyErr = kv.ErrKeyExists.FastGen("Duplicate entry '%s' for key '%s'", entryKey, v.Meta().Name)
 			txn.SetOption(kv.PresumeKeyNotExistsError, dupKeyErr)
 		}
-		if dupHandle, err := v.Create(ctx, rm, partitionID, indexVals, recordID); err != nil {
+		if dupHandle, err := v.Create(ctx, rm, indexVals, recordID); err != nil {
 			if kv.ErrKeyExists.Equal(err) {
 				return dupHandle, errors.Trace(dupKeyErr)
 			}
@@ -737,8 +692,7 @@ func (t *Table) removeRowIndex(sc *stmtctx.StatementContext, rm kv.RetrieverMuta
 
 // buildIndexForRow implements table.Table BuildIndexForRow interface.
 func (t *Table) buildIndexForRow(ctx sessionctx.Context, rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index) error {
-	// FIXME: Consider partition here.
-	if _, err := idx.Create(ctx, rm, t.ID, vals, h); err != nil {
+	if _, err := idx.Create(ctx, rm, vals, h); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -955,10 +909,10 @@ func FindIndexByColName(t table.Table, name string) table.Index {
 
 // CheckHandleExists check whether recordID key exists. if not exists, return nil,
 // otherwise return kv.ErrKeyExists error.
-func CheckHandleExists(ctx sessionctx.Context, t table.Table, partitionID int64, recordID int64) error {
+func CheckHandleExists(ctx sessionctx.Context, t table.Table, recordID int64) error {
 	txn := ctx.Txn()
 	// Check key exists.
-	recordKey := partitionRecordKey(partitionID, recordID)
+	recordKey := t.RecordKey(recordID)
 	e := kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key 'PRIMARY'", recordID)
 	txn.SetOption(kv.PresumeKeyNotExistsError, e)
 	defer txn.DelOption(kv.PresumeKeyNotExistsError)
