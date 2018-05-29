@@ -53,6 +53,7 @@ func NewAggFuncDesc(ctx sessionctx.Context, name string, args []expression.Expre
 	return a
 }
 
+// SetAggFuncDescMode sets mode for funcs.
 func SetAggFuncDescMode(funcs []*AggFuncDesc, mode AggFunctionMode) {
 	for i := range funcs {
 		funcs[i].Mode = mode

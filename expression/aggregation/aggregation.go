@@ -100,6 +100,8 @@ type AggEvaluateContext struct {
 }
 
 // AggFunctionMode stands for the aggregation function's mode.
+type AggFunctionMode int
+
 // |-----------------|--------------|--------------|
 // | AggFunctionMode | input        | output       |
 // |-----------------|--------------|--------------|
@@ -109,8 +111,6 @@ type AggEvaluateContext struct {
 // | Partial2Mode    | partial data | partial data |
 // | DedupMode       | origin data  | origin data  |
 // |-----------------|--------------|--------------|
-type AggFunctionMode int
-
 const (
 	CompleteMode AggFunctionMode = iota
 	FinalMode
@@ -217,10 +217,12 @@ func (af *aggFunction) GetFinalAggFunc(idx int) (_ int, newAggFunc Aggregation) 
 	return idx, newAggFunc
 }
 
+// NeedCount indicates whether the aggregate function should record count.
 func NeedCount(name string) bool {
 	return name == ast.AggFuncCount || name == ast.AggFuncAvg
 }
 
+// NeedValue indicates whether the aggregate function should record value.
 func NeedValue(name string) bool {
 	switch name {
 	case ast.AggFuncSum, ast.AggFuncAvg, ast.AggFuncFirstRow, ast.AggFuncMax, ast.AggFuncMin,

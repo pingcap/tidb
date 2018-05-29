@@ -48,6 +48,10 @@ type aggWorker struct {
 	maxChunkSize  int
 }
 
+// HashAggPartialWorker does the following things:
+// 1. accept and handle chunk from the child executor parallelly
+// 2. generate and encode the intermediate results
+// 3. transfer the encoded result to the final workers
 type HashAggPartialWorker struct {
 	aggWorker
 
@@ -59,6 +63,10 @@ type HashAggPartialWorker struct {
 	giveBackCh          chan<- *chunk.Chunk
 }
 
+// HashAggFinalWorker does the following things:
+// 1. accept and decode the encoded intermediate results from partial workers parallelly
+// 2. calculate the final result
+// 3. transfer the final result to the main thread
 type HashAggFinalWorker struct {
 	aggWorker
 
@@ -120,6 +128,7 @@ type AfInterResult struct {
 	InterResult [][]byte
 }
 
+// ToRows decodes the InterResult into []types.Row.
 func (r *AfInterResult) ToRows(fts []*types.FieldType, size int, loc *time.Location) (result []types.Row, err error) {
 	// Sql like select 11 from t order by a;
 	// If it use hash agg, the agg funcs would be nil, thus fts would be nil.
@@ -271,7 +280,7 @@ func (e *HashAggExec) newFinalAggFuncs() (newAggFuncs []aggregation.Aggregation)
 
 // HashAggPartialWorker gets and handles origin data or partial data from inputCh,
 // then shuffle the intermediate results to corresponded final workers.
-func (w *HashAggPartialWorker) run(workerId int, ctx sessionctx.Context, finalConcurrency int) {
+func (w *HashAggPartialWorker) run(ctx sessionctx.Context, finalConcurrency int) {
 	defer func() {
 		w.WaitGroup.Done()
 	}()
@@ -402,7 +411,7 @@ func (w aggWorker) getContext(ctx sessionctx.Context, groupKey []byte) []*aggreg
 	return aggCtxs
 }
 
-func (w *HashAggFinalWorker) run(workerId int, ctx sessionctx.Context) {
+func (w *HashAggFinalWorker) run(ctx sessionctx.Context) {
 	defer func() {
 		w.WaitGroup.Done()
 	}()
@@ -543,12 +552,12 @@ func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error 
 	if !e.prepared {
 		go e.fetchChildData(ctx)
 		for i := range e.partialWorkers {
-			go e.partialWorkers[i].run(i, e.ctx, e.finalConcurrency)
+			go e.partialWorkers[i].run(e.ctx, e.finalConcurrency)
 			e.partialWorkerWaitGroup.Add(1)
 		}
 		go e.waitPartialWorkerAndCloseOutputChs()
 		for i := range e.finalWorkers {
-			go e.finalWorkers[i].run(i, e.ctx)
+			go e.finalWorkers[i].run(e.ctx)
 			e.finalWorkerWaitGroup.Add(1)
 		}
 		go e.waitFinalWorkerAndCloseFinalOutput()
