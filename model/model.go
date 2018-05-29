@@ -137,7 +137,7 @@ type TableInfo struct {
 	Partition *PartitionInfo `json:"partition"`
 }
 
-// GetPartition returns the partition information.
+// GetPartitionInfo returns the partition information.
 func (t *TableInfo) GetPartitionInfo() *PartitionInfo {
 	if t.Partition != nil && t.Partition.Enable {
 		return t.Partition
