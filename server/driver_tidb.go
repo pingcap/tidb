@@ -48,7 +48,6 @@ type TiDBContext struct {
 	session   session.Session
 	currentDB string
 	stmts     map[int]*TiDBStatement
-	results   map[int]ResultSet
 }
 
 // TiDBStatement implements PreparedStatement.
@@ -58,6 +57,7 @@ type TiDBStatement struct {
 	boundParams [][]byte
 	paramsType  []byte
 	ctx         *TiDBContext
+	rs          ResultSet
 }
 
 // ID implements PreparedStatement ID method.
@@ -109,10 +109,33 @@ func (ts *TiDBStatement) GetParamsType() []byte {
 	return ts.paramsType
 }
 
+// StoreResultSet stores ResultSet for stmt fetching
+func (ts *TiDBStatement) StoreResultSet(rs ResultSet) {
+	// refer to https://dev.mysql.com/doc/refman/5.7/en/cursor-restrictions.html
+	// You can have open only a single cursor per prepared statement.
+	// closing previous ResultSet before associating a new ResultSet with this statement
+	// if it exists
+	if ts.rs != nil {
+		terror.Call(ts.rs.Close)
+	}
+	ts.rs = rs
+}
+
+// GetResultSet gets ResultSet associated this statement
+func (ts *TiDBStatement) GetResultSet() ResultSet {
+	return ts.rs
+}
+
 // Reset implements PreparedStatement Reset method.
 func (ts *TiDBStatement) Reset() {
 	for i := range ts.boundParams {
 		ts.boundParams[i] = nil
+	}
+
+	// closing previous ResultSet if it exists
+	if ts.rs != nil {
+		terror.Call(ts.rs.Close)
+		ts.rs = nil
 	}
 }
 
@@ -125,10 +148,9 @@ func (ts *TiDBStatement) Close() error {
 	}
 	delete(ts.ctx.stmts, int(ts.id))
 
-	// clean ResultSet
-	if resultSet, ok := ts.ctx.results[int(ts.id)]; ok {
-		delete(ts.ctx.results, int(ts.id))
-		terror.Call(resultSet.Close)
+	// close ResultSet associated with this statement
+	if ts.rs != nil {
+		terror.Call(ts.rs.Close)
 	}
 	return nil
 }
@@ -150,7 +172,6 @@ func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint8,
 		session:   se,
 		currentDB: dbname,
 		stmts:     make(map[int]*TiDBStatement),
-		results:   make(map[int]ResultSet),
 	}
 	return tc, nil
 }
@@ -230,12 +251,12 @@ func (tc *TiDBContext) SetClientCapability(flags uint32) {
 
 // Close implements QueryCtx Close method.
 func (tc *TiDBContext) Close() error {
-	tc.session.Close()
-
-	// close ResultSets associated with this connection
-	for _, v := range tc.results {
+	// close PreparedStatement associated with this connection
+	for _, v := range tc.stmts {
 		terror.Call(v.Close)
 	}
+
+	tc.session.Close()
 	return nil
 }
 
@@ -291,16 +312,6 @@ func (tc *TiDBContext) Prepare(sql string) (statement PreparedStatement, columns
 	}
 	tc.stmts[int(stmtID)] = stmt
 	return
-}
-
-// StoreResultSet stores ResultSet for subsequent using.
-func (tc *TiDBContext) StoreResultSet(stmtID int, rs ResultSet) {
-	tc.results[stmtID] = rs
-}
-
-// GetResultSet gets ResultSet by statement ID.
-func (tc *TiDBContext) GetResultSet(stmtID int) ResultSet {
-	return tc.results[stmtID]
 }
 
 // ShowProcess implements QueryCtx ShowProcess method.

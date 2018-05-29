@@ -185,10 +185,10 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 	}
 
 	// if the client wants to use cursor,
-	// we should hold the ResultSet in context for next stmt_fetch, and only send back ColumnInfo.
+	// we should hold the ResultSet in PreparedStatement for next stmt_fetch, and only send back ColumnInfo.
 	// Tell the client cursor exists in server by setting proper serverStatus
 	if useCursor {
-		cc.ctx.StoreResultSet(int(stmtID), rs)
+		stmt.StoreResultSet(rs)
 		err = cc.writeColumnInfo(rs.Columns(), mysql.ServerStatusCursorExists)
 		if err != nil {
 			return errors.Trace(err)
@@ -211,10 +211,15 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 		return err
 	}
 
-	rs := cc.ctx.GetResultSet(int(stmtID))
-	if rs == nil {
+	stmt := cc.ctx.GetStatement(int(stmtID))
+	if stmt == nil {
 		return mysql.NewErr(mysql.ErrUnknownStmtHandler,
 			strconv.FormatUint(uint64(stmtID), 10), "stmt_fetch")
+	}
+	rs := stmt.GetResultSet()
+	if rs == nil {
+		return mysql.NewErr(mysql.ErrUnknownStmtHandler,
+			strconv.FormatUint(uint64(stmtID), 10), "stmt_fetch_rs")
 	}
 
 	return errors.Trace(cc.writeResultset(ctx, rs, true, mysql.ServerStatusCursorExists, int(fetchSize)))

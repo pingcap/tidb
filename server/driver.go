@@ -70,12 +70,6 @@ type QueryCtx interface {
 	// GetStatement gets PreparedStatement by statement ID.
 	GetStatement(stmtID int) PreparedStatement
 
-	// StoreResultSet stores ResultSet for subsequent using.
-	StoreResultSet(stmtID int, rs ResultSet)
-
-	// GetResultSet gets ResultSet by statement ID.
-	GetResultSet(stmtID int) ResultSet
-
 	// FieldList returns columns of a table.
 	FieldList(tableName string) (columns []*ColumnInfo, err error)
 
@@ -113,6 +107,12 @@ type PreparedStatement interface {
 
 	// GetParamsType returns the type for parameters.
 	GetParamsType() []byte
+
+	// StoreResultSet stores ResultSet for subsequent stmt fetching
+	StoreResultSet(rs ResultSet)
+
+	// GetResultSet gets ResultSet associated this statement
+	GetResultSet() ResultSet
 
 	// Reset removes all bound parameters.
 	Reset()
