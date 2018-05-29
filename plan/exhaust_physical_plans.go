@@ -255,7 +255,7 @@ func (p *LogicalJoin) constructIndexJoin(prop *requiredProp, innerJoinKeys, oute
 		InnerJoinKeys:   newInnerKeys,
 		DefaultValues:   p.DefaultValues,
 		innerPlan:       innerPlan,
-		KeyOff2IdxOff:   keyOff2IdxOff,
+		KeyOff2IdxOff:   newKeyOff,
 		Ranges:          ranges,
 	}.init(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt), chReqProps...)
 	join.SetSchema(p.schema)
