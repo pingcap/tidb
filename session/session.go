@@ -342,7 +342,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 		// BatchInsert already commit the first batch 1000 rows, then it commit 1000-2000 and retry the statement,
 		// Finally t1 will have more data than t2, with no errors return to user!
 		if s.isRetryableError(err) && !s.sessionVars.BatchInsert && commitRetryLimit > 0 {
-			log.Warnf("[%d] retryable error: %v, txn: %v", s.sessionVars.ConnectionID, err, s.txn)
+			log.Warnf("[con:%d] retryable error: %v, txn: %v", s.sessionVars.ConnectionID, err, s.txn)
 			// Transactions will retry 2 ~ commitRetryLimit times.
 			// We make larger transactions retry less times to prevent cluster resource outage.
 			txnSizeRate := float64(txnSize) / float64(kv.TxnTotalSizeLimit)
@@ -367,7 +367,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	}
 
 	if err != nil {
-		log.Warnf("[%d] finished txn:%v, %v", s.sessionVars.ConnectionID, s.txn, err)
+		log.Warnf("[con:%d] finished txn:%v, %v", s.sessionVars.ConnectionID, s.txn, err)
 		return errors.Trace(err)
 	}
 	mapper := s.GetSessionVars().TxnCtx.TableDeltaMap
@@ -492,9 +492,9 @@ func (s *session) retry(ctx context.Context, maxCnt uint) error {
 			if retryCnt == 0 {
 				// We do not have to log the query every time.
 				// We print the queries at the first try only.
-				log.Warnf("[con:%d][schema ver:%d] Retry [%d] query [%d] %s", connID, schemaVersion, retryCnt, i, sqlForLog(st.OriginText()))
+				log.Warnf("[con:%d][schema ver:%d] Retry:%d query:%d %s", connID, schemaVersion, retryCnt, i, sqlForLog(st.OriginText()))
 			} else {
-				log.Warnf("[con:%d][schema ver:%d] Retry [%d] query [%d]", connID, schemaVersion, retryCnt, i)
+				log.Warnf("[con:%d][schema ver:%d] Retry:%d query:%d", connID, schemaVersion, retryCnt, i)
 			}
 			s.sessionVars.StmtCtx = sr.stmtCtx
 			s.sessionVars.StmtCtx.ResetForRetry()
@@ -516,17 +516,17 @@ func (s *session) retry(ctx context.Context, maxCnt uint) error {
 			}
 		}
 		if !s.isRetryableError(err) {
-			log.Warnf("[%d] session:%v, err:%v in retry", connID, s, err)
+			log.Warnf("[con:%d] session:%v, err:%v in retry", connID, s, err)
 			metrics.SessionRetryErrorCounter.WithLabelValues(metrics.LblUnretryable)
 			return errors.Trace(err)
 		}
 		retryCnt++
 		if retryCnt >= maxCnt {
-			log.Warnf("[%d] Retry reached max count %d", connID, retryCnt)
+			log.Warnf("[con:%d] Retry reached max count %d", connID, retryCnt)
 			metrics.SessionRetryErrorCounter.WithLabelValues(metrics.LblReachMax)
 			return errors.Trace(err)
 		}
-		log.Warnf("[%d] retryable error: %v, txn: %v", connID, err, s.txn)
+		log.Warnf("[con:%d] retryable error: %v, txn: %v", connID, err, s.txn)
 		kv.BackOff(retryCnt)
 		s.txn.changeToInvalid()
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
@@ -813,7 +813,7 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []ast.Rec
 		stmtNodes, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
 		if err != nil {
 			s.rollbackOnError(ctx)
-			log.Warnf("[%d] parse error:\n%v\n%s", connID, err, sql)
+			log.Warnf("[con:%d] parse error:\n%v\n%s", connID, err, sql)
 			return nil, errors.Trace(err)
 		}
 		metrics.SessionExecuteParseDuration.Observe(time.Since(startTS).Seconds())
@@ -829,7 +829,7 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []ast.Rec
 			stmt, err := compiler.Compile(ctx, stmtNode)
 			if err != nil {
 				s.rollbackOnError(ctx)
-				log.Warnf("[%d] compile error:\n%v\n%s", connID, err, sql)
+				log.Warnf("[con:%d] compile error:\n%v\n%s", connID, err, sql)
 				return nil, errors.Trace(err)
 			}
 			metrics.SessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())

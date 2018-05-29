@@ -393,7 +393,8 @@ func (d *ddl) GetLease() time.Duration {
 	return lease
 }
 
-func (d *ddl) getInformationSchema() infoschema.InfoSchema {
+// GetInformationSchema get the infoschema binding to d. It's expoted for testing.
+func (d *ddl) GetInformationSchema() infoschema.InfoSchema {
 	return d.infoHandle.Get()
 }
 
