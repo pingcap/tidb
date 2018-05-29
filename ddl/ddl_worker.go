@@ -425,7 +425,7 @@ func (d *ddl) waitSchemaChanged(ctx context.Context, waitTime time.Duration, lat
 	defer func() {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerWaitSchemaChanged, metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
 	}()
-	// TODO: Do we need to wait for a while?
+
 	if latestSchemaVersion == 0 {
 		log.Infof("[ddl] schema version doesn't change")
 		return
