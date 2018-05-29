@@ -435,9 +435,7 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction) []point {
 		if unsignedInt {
 			rangePoints = make([]point, 0, 2+len(inPoints))
 			for i := 0; i < len(inPoints); i += 2 {
-				if inPoints[i].value.Kind() == types.KindInt64 && inPoints[i].value.GetInt64() < 0 {
-					continue
-				} else {
+				if inPoints[i].value.Kind() == types.KindUint64 || inPoints[i].value.GetInt64() >= 0 {
 					rangePoints = append(rangePoints, inPoints[i], inPoints[i+1])
 				}
 			}
