@@ -385,13 +385,18 @@ func (hg *Histogram) greaterAndEqRowCount(value types.Datum) float64 {
 
 // lessRowCount estimates the row count where the column less than value.
 func (hg *Histogram) lessRowCount(value types.Datum) float64 {
+	count, _, _ := hg.lessRowCountWithFraction(value)
+	return count
+}
+
+func (hg *Histogram) lessRowCountWithFraction(value types.Datum) (float64, int, float64) {
 	// all the values is null
 	if hg.Bounds == nil {
-		return 0
+		return 0, 0, 0
 	}
 	index, match := hg.Bounds.LowerBound(0, &value)
 	if index == hg.Bounds.NumRows() {
-		return hg.totalRowCount()
+		return hg.totalRowCount(), hg.Len(), 0
 	}
 	// Since we store the lower and upper bound together, so dividing the index by 2 will get the bucket index.
 	bucketIdx := index / 2
@@ -402,11 +407,12 @@ func (hg *Histogram) lessRowCount(value types.Datum) float64 {
 	}
 	if index%2 == 1 {
 		if match {
-			return curCount - curRepeat
+			return curCount - curRepeat, bucketIdx, 1
 		}
-		return preCount + hg.calcFraction(bucketIdx, &value)*(curCount-curRepeat-preCount)
+		fraction := hg.calcFraction(bucketIdx, &value)
+		return preCount + fraction*(curCount-curRepeat-preCount), bucketIdx, fraction
 	}
-	return preCount
+	return preCount, bucketIdx, 0
 }
 
 // lessAndEqRowCount estimates the row count where the column less than or equal to value.
@@ -726,6 +732,20 @@ func (idx *Index) equalRowCount(sc *stmtctx.StatementContext, b []byte) float64 
 	return idx.Histogram.equalRowCount(types.NewBytesDatum(b))
 }
 
+func (idx *Index) betweenRowCount(a, b types.Datum) float64 {
+	hg := idx.Histogram
+	if len(idx.Info.Columns) == 1 {
+		return hg.betweenRowCount(a, b)
+	}
+	lessCountA, bucketIdxA, fractionA := hg.lessRowCountWithFraction(a)
+	lessCountB, bucketIdxB, fractionB := hg.lessRowCountWithFraction(b)
+	// If the values fall into the same bucket and the fraction is too small, it would lead to high inaccuracy.
+	if bucketIdxA != hg.Len() && bucketIdxA == bucketIdxB && fractionB-fractionA <= minBucketFraction {
+		return -1
+	}
+	return lessCountB - lessCountA
+}
+
 func (idx *Index) getRowCount(sc *stmtctx.StatementContext, indexRanges []*ranger.Range) (float64, error) {
 	totalCount := float64(0)
 	for _, indexRange := range indexRanges {
@@ -752,7 +772,12 @@ func (idx *Index) getRowCount(sc *stmtctx.StatementContext, indexRanges []*range
 		}
 		l := types.NewBytesDatum(lb)
 		r := types.NewBytesDatum(rb)
-		totalCount += idx.betweenRowCount(l, r)
+		count := idx.betweenRowCount(l, r)
+		// cannot use the index stats to estimate
+		if count < 0 {
+			return -1, nil
+		}
+		totalCount += count
 	}
 	if totalCount > idx.totalRowCount() {
 		totalCount = idx.totalRowCount()

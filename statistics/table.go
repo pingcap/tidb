@@ -356,8 +356,60 @@ func (t *Table) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idxID int
 		return getPseudoRowCountByIndexRanges(sc, indexRanges, float64(t.Count), colsLen)
 	}
 	result, err := idx.getRowCount(sc, indexRanges)
-	result *= idx.getIncreaseFactor(t.Count)
-	return result, errors.Trace(err)
+	if result >= 0 || err != nil {
+		return result * idx.getIncreaseFactor(t.Count), errors.Trace(err)
+	}
+	// cannot use the index stats to estimate, fall back to use the column stats.
+	return t.getIndexRowCountByColumns(sc, idx.Info, indexRanges)
+}
+
+func (t *Table) colIDByName(name string) int64 {
+	for _, col := range t.Columns {
+		if col.Info.Name.L == name {
+			return col.Info.ID
+		}
+	}
+	return -1
+}
+
+// getIndexRowCountByColumns uses columns stats to estimate the index row count, it assumes columns are independent.
+func (t *Table) getIndexRowCountByColumns(sc *stmtctx.StatementContext, indexInfo *model.IndexInfo, indexRanges []*ranger.Range) (float64, error) {
+	selectivity := 1.0
+	ranges := make([]*ranger.Range, 0, len(indexRanges))
+	for i, col := range indexInfo.Columns {
+		ranges = ranges[:0]
+		for _, ran := range indexRanges {
+			var low, high types.Datum
+			var lowExclude, highExclude bool
+
+			if len(ran.LowVal) > i {
+				low = ran.LowVal[i]
+			} else {
+				low = types.MinNotNullDatum()
+			}
+			if len(ran.LowVal)-1 == i {
+				lowExclude = ran.LowExclude
+			}
+
+			if len(ran.HighVal) > i {
+				high = ran.HighVal[i]
+			} else {
+				high = types.MaxValueDatum()
+			}
+			if len(ran.HighVal)-1 == i {
+				highExclude = ran.HighExclude
+			}
+
+			ranges = append(ranges, &ranger.Range{LowVal: []types.Datum{low}, HighVal: []types.Datum{high},
+				LowExclude: lowExclude, HighExclude: highExclude})
+		}
+		count, err := t.GetRowCountByColumnRanges(sc, t.colIDByName(col.Name.L), ranges)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		selectivity = selectivity * count / float64(t.Count)
+	}
+	return selectivity * float64(t.Count), nil
 }
 
 // PseudoTable creates a pseudo table statistics.
