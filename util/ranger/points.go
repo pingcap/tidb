@@ -432,24 +432,13 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction) []point {
 		}
 		var rangePoints []point
 		// negative ranges can be directly ignored for unsigned int columns.
-		// Point `0` should be considered specially here. If the `IN` predicate contains `0`, `0` should be
-		// excluded from the result range, otherwise `0` should be included.
 		if unsignedInt {
 			rangePoints = make([]point, 0, 2+len(inPoints))
 			for i := 0; i < len(inPoints); i += 2 {
-				value := inPoints[i].value.GetInt64()
-				if value < 0 {
+				if inPoints[i].value.Kind() == types.KindInt64 && inPoints[i].value.GetInt64() < 0 {
 					continue
-				} else if value == 0 {
-					rangePoints = append(rangePoints, point{value: types.NewIntDatum(0), start: true})
-					rangePoints = append(rangePoints, point{value: types.NewIntDatum(0)})
 				} else {
-					if len(rangePoints) == 0 {
-						rangePoints = append(rangePoints, point{value: types.NewIntDatum(0), start: true, excl: true})
-						rangePoints = append(rangePoints, point{value: types.NewIntDatum(0)})
-					}
-					rangePoints = append(rangePoints, inPoints[i])
-					rangePoints = append(rangePoints, inPoints[i+1])
+					rangePoints = append(rangePoints, inPoints[i], inPoints[i+1])
 				}
 			}
 		} else {
@@ -458,12 +447,8 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction) []point {
 		retRangePoints := make([]point, 0, 2+len(inPoints))
 		previousValue := types.Datum{}
 		for i := 0; i < len(rangePoints); i += 2 {
-			exclude := true
-			if i == 0 {
-				exclude = !rangePoints[i].excl
-			}
 			retRangePoints = append(retRangePoints, point{value: previousValue, start: true, excl: true})
-			retRangePoints = append(retRangePoints, point{value: rangePoints[i].value, excl: exclude})
+			retRangePoints = append(retRangePoints, point{value: rangePoints[i].value, excl: true})
 			previousValue = rangePoints[i].value
 		}
 		// Append the interval (last element, max value].

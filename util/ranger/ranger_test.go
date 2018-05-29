@@ -571,14 +571,28 @@ func (s *testRangerSuite) TestIndexRangeForUnsignedInt(c *C) {
 			exprStr:     `a not in (-1, 1, 2)`,
 			accessConds: "[not(in(test.t.a, -1, 1, 2))]",
 			filterConds: "[]",
-			resultStr:   `[(<nil>,0] (2,+inf]]`,
+			resultStr:   `[(<nil>,1) (2,+inf]]`,
 		},
 		{
 			indexPos:    0,
 			exprStr:     `a not in (-2, -1, 1, 2)`,
 			accessConds: "[not(in(test.t.a, -2, -1, 1, 2))]",
 			filterConds: "[]",
-			resultStr:   `[(<nil>,0] (2,+inf]]`,
+			resultStr:   `[(<nil>,1) (2,+inf]]`,
+		},
+		{
+			indexPos:    0,
+			exprStr:     `a not in (111)`,
+			accessConds: "[not(in(test.t.a, 111))]",
+			filterConds: "[]",
+			resultStr:   `[(<nil>,111) (111,+inf]]`,
+		},
+		{
+			indexPos:    0,
+			exprStr:     `a not in (1, 2, 9223372036854775810)`,
+			accessConds: "[not(in(test.t.a, 1, 2, 9223372036854775810))]",
+			filterConds: "[]",
+			resultStr:   `[(<nil>,1) (2,9223372036854775810) (9223372036854775810,+inf]]`,
 		},
 	}
 
