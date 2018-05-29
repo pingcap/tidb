@@ -314,17 +314,18 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, path *accessPath) (
 	rowCount := path.countAfterAccess
 	cop := &copTask{indexPlan: is}
 	if !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle) {
+		// If it's parent requires single read task, return max cost.
+		if prop.taskTp == copSingleReadTaskType {
+			return invalidTask, nil
+		}
+
 		// On this way, it's double read case.
 		ts := PhysicalTableScan{Columns: ds.Columns, Table: is.Table}.init(ds.ctx)
 		ts.SetSchema(ds.schema.Clone())
 		cop.tablePlan = ts
-		// If it's parent requires single read task, return max cost.
-		if prop.taskTp == copSingleReadTaskType {
-			return &copTask{cst: math.MaxFloat64}, nil
-		}
 	} else if prop.taskTp == copDoubleReadTaskType {
 		// If it's parent requires double read task, return max cost.
-		return &copTask{cst: math.MaxFloat64}, nil
+		return invalidTask, nil
 	}
 	is.initSchema(ds.id, idx, cop.tablePlan != nil)
 	// Check if this plan matches the property.
@@ -343,8 +344,8 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, path *accessPath) (
 	// Only use expectedCnt when it's smaller than the count we calculated.
 	// e.g. IndexScan(count1)->After Filter(count2). The `ds.statsAfterSelect.count` is count2. count1 is the one we need to calculate
 	// If expectedCnt and count2 are both zero and we go into the below `if` block, the count1 will be set to zero though it's shouldn't be.
-	if matchProperty && prop.expectedCnt < path.countAfterIndex {
-		selectivity := path.countAfterIndex / path.countAfterAccess
+	if (matchProperty || prop.isEmpty()) && prop.expectedCnt < ds.statsAfterSelect.count {
+		selectivity := ds.statsAfterSelect.count / path.countAfterAccess
 		rowCount = math.Min(prop.expectedCnt/selectivity, rowCount)
 	}
 	is.stats = ds.stats.scaleByExpectCnt(rowCount)
@@ -404,9 +405,13 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 	indexConds, tableConds := path.indexFilters, path.tableFilters
 	if indexConds != nil {
 		copTask.cst += copTask.count() * cpuFactor
-		stats := &statsInfo{count: path.countAfterIndex}
-		indexSel := PhysicalSelection{Conditions: indexConds}.init(is.ctx,
-			stats.scaleByExpectCnt(expectedCnt))
+		count := path.countAfterAccess
+		if count >= 1.0 {
+			selectivity := path.countAfterIndex / path.countAfterAccess
+			count = is.stats.count * selectivity
+		}
+		stats := &statsInfo{count: count}
+		indexSel := PhysicalSelection{Conditions: indexConds}.init(is.ctx, stats)
 		indexSel.SetChildren(is)
 		copTask.indexPlan = indexSel
 	}
@@ -502,7 +507,7 @@ func (ds *DataSource) forceToTableScan(pk *expression.Column) PhysicalPlan {
 func (ds *DataSource) convertToTableScan(prop *requiredProp, path *accessPath) (task task, err error) {
 	// It will be handled in convertToIndexScan.
 	if prop.taskTp == copDoubleReadTaskType {
-		return &copTask{cst: math.MaxFloat64}, nil
+		return invalidTask, nil
 	}
 
 	ts := PhysicalTableScan{
@@ -535,7 +540,7 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp, path *accessPath) (
 	// Only use expectedCnt when it's smaller than the count we calculated.
 	// e.g. IndexScan(count1)->After Filter(count2). The `ds.statsAfterSelect.count` is count2. count1 is the one we need to calculate
 	// If expectedCnt and count2 are both zero and we go into the below `if` block, the count1 will be set to zero though it's shouldn't be.
-	if matchProperty && prop.expectedCnt < ds.statsAfterSelect.count {
+	if (matchProperty || prop.isEmpty()) && prop.expectedCnt < ds.statsAfterSelect.count {
 		selectivity := ds.statsAfterSelect.count / rowCount
 		rowCount = math.Min(prop.expectedCnt/selectivity, rowCount)
 	}
