@@ -86,9 +86,9 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, schema model.CIStr) (err error)
 	if !ok {
 		return errors.Trace(infoschema.ErrDatabaseNotExists)
 	}
-
 	job := &model.Job{
 		SchemaID:   old.ID,
+		SchemaName: old.Name.O,
 		Type:       model.ActionDropSchema,
 		BinlogInfo: &model.HistoryInfo{},
 	}

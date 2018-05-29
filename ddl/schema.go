@@ -77,7 +77,7 @@ func (d *ddl) onDropSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	}
 	if dbInfo == nil {
 		job.State = model.JobStateCancelled
-		return ver, infoschema.ErrDatabaseDropExists.GenByArgs("")
+		return ver, infoschema.ErrDatabaseDropExists.GenByArgs(job.SchemaName)
 	}
 
 	ver, err = updateSchemaVersion(t, job)

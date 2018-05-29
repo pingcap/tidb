@@ -521,7 +521,7 @@ func (s *testStateChangeSuite) TestParallelDropDataBase(c *C) {
 	sql := "drop database test_drop_db;"
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
-		c.Assert(err2.Error(), Equals, "[schema:1008]Can't drop database ''; database doesn't exist")
+		c.Assert(err2.Error(), Equals, "[schema:1008]Can't drop database 'test_drop_db'; database doesn't exist")
 	}
 	s.testControlParallelExecSQL(c, sql, sql, f)
 }
