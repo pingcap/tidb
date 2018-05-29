@@ -182,6 +182,9 @@ func (s *schemaVersionSyncer) GlobalVersionCh() clientv3.WatchChan {
 
 // WatchGlobalSchemaVer implements SchemaSyncer.WatchGlobalSchemaVer interface.
 func (s *schemaVersionSyncer) WatchGlobalSchemaVer(ctx context.Context, tryCnt int) error {
+	failedCnt := 0
+	intervalCnt := int(time.Second / keyOpRetryInterval)
+
 	for i := 0; i < tryCnt; i++ {
 		ch := s.etcdCli.Watch(ctx, DDLGlobalSchemaVersion)
 		var err error
@@ -191,16 +194,20 @@ func (s *schemaVersionSyncer) WatchGlobalSchemaVer(ctx context.Context, tryCnt i
 				err = resp.Err()
 				break
 			}
-			// This situation should not happen.
 			s.globalVerCh = ch
-			log.Warnf("[syncer] watch global schema finished, but this situation should not happen")
+			log.Warnf("[syncer] watch global schema finished, and it has a resp %#v", resp)
 			return nil
 		default:
 			s.globalVerCh = ch
 			log.Info("[syncer] watch global schema finished")
 			return nil
 		}
-		log.Warnf("[syncer] watch global schema failed %v", err)
+		if failedCnt%intervalCnt == 0 {
+			log.Warnf("[syncer] watch global schema failed %v", err)
+		} else {
+			log.Debugf("[syncer] watch global schema failed %v", err)
+		}
+		failedCnt++
 		time.Sleep(keyOpRetryInterval)
 	}
 	return errors.Errorf("syncer watch global schema failed.")

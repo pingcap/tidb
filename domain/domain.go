@@ -347,12 +347,11 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 			if !ok {
 				log.Info("[ddl] reload schema in loop, schema syncer need rewatch")
 				// Make sure the rewatch doesn't affect load schema, so we let the timeout is equal to lease/2.
-				ctx, cancelFunc := context.WithTimeout(context.Background(), interval)
+				ctx, _ := context.WithTimeout(context.Background(), interval)
 				err = syncer.WatchGlobalSchemaVer(ctx, 1)
 				if err != nil {
 					log.Warnf("[ddl] reload schema in loop, schema syncer rewatch failed %v", err)
 				}
-				cancelFunc()
 			}
 		case <-syncer.Done():
 			// The schema syncer stops, we need stop the schema validator to synchronize the schema version.
