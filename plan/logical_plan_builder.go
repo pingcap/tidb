@@ -568,7 +568,7 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 	proj := LogicalProjection{Exprs: make([]expression.Expression, 0, len(fields))}.init(b.ctx)
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(fields))...)
 	oldLen := 0
-	for i, field := range fields {
+	for _, field := range fields {
 		newExpr, np, err := b.rewrite(field.Expr, p, mapper, true)
 		if err != nil {
 			b.err = errors.Trace(err)
@@ -577,7 +577,7 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 		p = np
 		proj.Exprs = append(proj.Exprs, newExpr)
 
-		col := b.buildProjectionField(proj.id, i, field, newExpr)
+		col := b.buildProjectionField(proj.id, schema.Len()+1, field, newExpr)
 		schema.Append(col)
 
 		if !field.Auxiliary {
