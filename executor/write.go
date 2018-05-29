@@ -31,7 +31,16 @@ var (
 	_ Executor = &DeleteExec{}
 	_ Executor = &InsertExec{}
 	_ Executor = &ReplaceExec{}
-	_ Executor = &LoadData{}
+	_ Executor = &LoadDataExec{}
+)
+
+const (
+	// DirtyTableAddRow is the constant for dirty table operation type.
+	DirtyTableAddRow = iota
+	// DirtyTableDeleteRow is the constant for dirty table operation type.
+	DirtyTableDeleteRow
+	// DirtyTableTruncate is the constant for dirty table operation type.
+	DirtyTableTruncate
 )
 
 // updateRecord updates the row specified by the handle `h`, from `oldData` to `newData`.
@@ -172,15 +181,6 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.Meta().ID, 0, 1, colSize)
 	return true, handleChanged, newHandle, lastInsertID, nil
 }
-
-const (
-	// DirtyTableAddRow is the constant for dirty table operation type.
-	DirtyTableAddRow = iota
-	// DirtyTableDeleteRow is the constant for dirty table operation type.
-	DirtyTableDeleteRow
-	// DirtyTableTruncate is the constant for dirty table operation type.
-	DirtyTableTruncate
-)
 
 // resetErrDataTooLong reset ErrDataTooLong error msg.
 // types.ErrDataTooLong is produced in types.ProduceStrWithSpecifiedTp, there is no column info in there,
