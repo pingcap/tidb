@@ -394,7 +394,7 @@ func (d *MyDecimal) FromString(str []byte) error {
 	if endIdx+1 <= len(str) && (str[endIdx] == 'e' || str[endIdx] == 'E') {
 		exponent, err1 := strToInt(string(str[endIdx+1:]))
 		if err1 != nil {
-			err = err1
+			err = errors.Cause(err1)
 			if err != ErrTruncated {
 				*d = zeroMyDecimal
 			}

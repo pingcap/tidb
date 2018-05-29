@@ -162,7 +162,7 @@ func strToInt(str string) (int64, error) {
 		hasNum = true
 		if r >= uintCutOff {
 			r = 0
-			err = ErrBadNumber
+			err = errors.Trace(ErrBadNumber)
 			break
 		}
 		r = r * uint64(10)
@@ -170,7 +170,7 @@ func strToInt(str string) (int64, error) {
 		r1 := r + uint64(str[i]-'0')
 		if r1 < r || r1 > maxUint {
 			r = 0
-			err = ErrBadNumber
+			err = errors.Trace(ErrBadNumber)
 			break
 		}
 		r = r1
@@ -180,11 +180,11 @@ func strToInt(str string) (int64, error) {
 	}
 
 	if !negative && r >= intCutOff {
-		return math.MaxInt64, ErrBadNumber
+		return math.MaxInt64, errors.Trace(ErrBadNumber)
 	}
 
 	if negative && r > intCutOff {
-		return math.MinInt64, ErrBadNumber
+		return math.MinInt64, errors.Trace(ErrBadNumber)
 	}
 
 	if negative {

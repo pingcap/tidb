@@ -16,6 +16,7 @@ package types
 import (
 	"strconv"
 
+	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 )
 
@@ -39,7 +40,7 @@ func (s *testTypeHelperSuite) TestStrToInt(c *C) {
 	}
 	for _, tt := range tests {
 		output, err := strToInt(tt.input)
-		c.Assert(err, Equals, tt.err)
+		c.Assert(errors.Cause(err), Equals, tt.err)
 		c.Check(strconv.FormatInt(output, 10), Equals, tt.output)
 	}
 }
