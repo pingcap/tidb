@@ -64,6 +64,8 @@ type Histogram struct {
 	scalars []scalar
 	// TotColSize is the total column size for the histogram.
 	TotColSize int64
+	// IsAnalyzed means the histogram is updated from analyze operation.
+	IsAnalyzed int64
 }
 
 // Bucket store the bucket count and repeat.
@@ -210,8 +212,8 @@ func SaveStatsToStorage(sctx sessionctx.Context, tableID int64, count int64, isI
 	if err != nil {
 		return errors.Trace(err)
 	}
-	replaceSQL := fmt.Sprintf("replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size) values (%d, %d, %d, %d, %d, %d, X'%X', %d)",
-		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, data, hg.TotColSize)
+	replaceSQL := fmt.Sprintf("replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, is_analyzed) values (%d, %d, %d, %d, %d, %d, X'%X', %d, %d)",
+		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, data, hg.TotColSize, hg.IsAnalyzed)
 	_, err = exec.Execute(ctx, replaceSQL)
 	if err != nil {
 		return errors.Trace(err)
@@ -647,7 +649,7 @@ type ErrorRate struct {
 const MaxErrorRate = 0.25
 
 // IsPseudo is true when the total of query is zero or the average error
-// rate is less than MaxErrorRate.
+// rate is greater than MaxErrorRate.
 func (e *ErrorRate) IsPseudo() bool {
 	if e.QueryTotal == 0 {
 		return true

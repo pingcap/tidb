@@ -54,7 +54,8 @@ func (m tableDeltaMap) update(id int64, delta int64, count int64, colSize *map[i
 }
 
 type errorRateDelta struct {
-	ColErrorRate map[int64]*ErrorRate
+	PkID         int64
+	PkErrorRate  *ErrorRate
 	IdxErrorRate map[int64]*ErrorRate
 }
 
@@ -71,13 +72,21 @@ func (m errorRateDeltaMap) update(tableID int64, histID int64, rate float64, isI
 		}
 		item.IdxErrorRate[histID].update(rate)
 	} else {
-		if item.ColErrorRate == nil {
-			item.ColErrorRate = make(map[int64]*ErrorRate)
+		if item.PkErrorRate == nil {
+			item.PkID = histID
+			item.PkErrorRate = &ErrorRate{}
 		}
-		if item.ColErrorRate[histID] == nil {
-			item.ColErrorRate[histID] = &ErrorRate{}
-		}
-		item.ColErrorRate[histID].update(rate)
+		item.PkErrorRate.update(rate)
+	}
+	m[tableID] = item
+}
+
+func (m errorRateDeltaMap) clear(tableID int64, histID int64, isIndex bool) {
+	item := m[tableID]
+	if isIndex {
+		delete(item.IdxErrorRate, histID)
+	} else {
+		item.PkErrorRate = nil
 	}
 	m[tableID] = item
 }
@@ -143,13 +152,9 @@ func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Hand
 	if !ok {
 		return nil
 	}
-	t := *(h.GetTableStats(table.Meta()))
+	t := h.GetTableStats(table.Meta())
 	sc := h.ctx.GetSessionVars().StmtCtx
-
 	if t.Pseudo == true {
-		t.Pseudo = false
-		defer func() { t.Pseudo = true }()
-
 		ranges := make([]*ranger.Range, 0, len(q.feedback))
 		for _, val := range q.feedback {
 			low, high := *val.lower, *val.upper
@@ -171,19 +176,18 @@ func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Hand
 		}
 		var err error
 		if isIndex {
-			expected, err = t.GetRowCountByIndexRanges(sc, q.hist.ID, ranges)
+			idx := t.Indices[q.hist.ID]
+			expected, err = idx.getRowCount(sc, ranges)
+			expected *= idx.getIncreaseFactor(t.Count)
 		} else {
-			if mysql.HasPriKeyFlag(t.Columns[q.hist.ID].Info.Flag) {
-				expected, err = t.GetRowCountByIntColumnRanges(sc, q.hist.ID, ranges)
-			} else {
-				expected, err = t.GetRowCountByColumnRanges(sc, q.hist.ID, ranges)
-			}
+			c := t.Columns[q.hist.ID]
+			expected, err = c.getColumnRowCount(sc, ranges)
+			expected *= c.getIncreaseFactor(t.Count)
 		}
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
-
 	var rate float64
 	if q.actual == 0 {
 		if expected == 0 {
@@ -367,8 +371,8 @@ func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
 			continue
 		}
 		tbl := h.GetTableStats(table.Meta())
-		for key, val := range item.ColErrorRate {
-			tbl.Columns[key].ErrorRate.merge(val)
+		if item.PkErrorRate != nil {
+			tbl.Columns[item.PkID].ErrorRate.merge(item.PkErrorRate)
 		}
 		for key, val := range item.IdxErrorRate {
 			tbl.Indices[key].ErrorRate.merge(val)
@@ -377,21 +381,6 @@ func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
 		delete(h.rateMap, id)
 	}
 	h.UpdateTableStats(tbls, nil)
-}
-
-// ClearErrorRate clear the error rate information in the table.
-func (h *Handle) ClearErrorRate(tblID int64, histID int64, isIndex int, is infoschema.InfoSchema) {
-	table, ok := is.TableByID(tblID)
-	if !ok {
-		return
-	}
-	tbl := h.GetTableStats(table.Meta())
-	if isIndex == 1 {
-		tbl.Indices[histID].ErrorRate = ErrorRate{}
-	} else {
-		tbl.Columns[histID].ErrorRate = ErrorRate{}
-	}
-	h.UpdateTableStats([]*Table{tbl}, nil)
 }
 
 // HandleUpdateStats update the stats using feedback.

@@ -87,9 +87,12 @@ func (h *Handle) indexStatsFromStorage(row types.Row, table *Table, tableInfo *m
 	distinct := row.GetInt64(3)
 	histVer := row.GetUint64(4)
 	nullCount := row.GetInt64(5)
+	isAnalyzed := row.GetInt64(7)
 	idx := table.Indices[histID]
 	errorRate := ErrorRate{}
-	if idx != nil {
+	if isAnalyzed == 1 {
+		h.rateMap.clear(table.TableID, histID, true)
+	} else if idx != nil {
 		errorRate = idx.ErrorRate
 	}
 	for _, idxInfo := range tableInfo.Indices {
@@ -105,12 +108,11 @@ func (h *Handle) indexStatsFromStorage(row types.Row, table *Table, tableInfo *m
 			if err != nil {
 				return errors.Trace(err)
 			}
-			idx = &Index{Histogram: *hg, CMSketch: cms, Info: idxInfo}
+			idx = &Index{Histogram: *hg, CMSketch: cms, Info: idxInfo, ErrorRate: errorRate}
 		}
 		break
 	}
 	if idx != nil {
-		idx.ErrorRate = errorRate
 		table.Indices[histID] = idx
 	} else {
 		log.Warnf("We cannot find index id %d in table info %s now. It may be deleted.", histID, tableInfo.Name)
@@ -124,9 +126,12 @@ func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *
 	histVer := row.GetUint64(4)
 	nullCount := row.GetInt64(5)
 	totColSize := row.GetInt64(6)
+	isAnalyzed := row.GetInt64(7)
 	col := table.Columns[histID]
 	errorRate := ErrorRate{}
-	if col != nil {
+	if isAnalyzed == 1 {
+		h.rateMap.clear(table.TableID, histID, false)
+	} else if col != nil {
 		errorRate = col.ErrorRate
 	}
 	for _, colInfo := range tableInfo.Columns {
@@ -208,9 +213,8 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, loadAll bool)
 		// We copy it before writing to avoid race.
 		table = table.copy()
 	}
-	// After loading from storage, table stats becomes not pseudo.
 	table.Pseudo = false
-	selSQL := fmt.Sprintf("select table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size from mysql.stats_histograms where table_id = %d", tableInfo.ID)
+	selSQL := fmt.Sprintf("select table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, is_analyzed from mysql.stats_histograms where table_id = %d", tableInfo.ID)
 	rows, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, selSQL)
 	if err != nil {
 		return nil, errors.Trace(err)

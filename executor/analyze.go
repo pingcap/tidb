@@ -108,15 +108,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 	is := dom.InfoSchema()
 	err = h.Update(is)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	for _, result := range results {
-		for _, hg := range result.Hist {
-			h.ClearErrorRate(result.TableID, hg.ID, result.IsIndex, is)
-		}
-	}
-	return nil
+	return errors.Trace(err)
 }
 
 func getBuildStatsConcurrency(ctx sessionctx.Context) (int, error) {
@@ -236,6 +228,7 @@ func (e *AnalyzeIndexExec) buildStats() (hist *statistics.Histogram, cms *statis
 		}
 	}
 	hist.ID = e.idxInfo.ID
+	hist.IsAnalyzed = 1
 	return hist, cms, nil
 }
 
@@ -380,6 +373,7 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 			}
 		}
 		hg, err := statistics.BuildColumn(e.ctx, maxBucketSize, col.ID, collectors[i], &col.FieldType)
+		hg.IsAnalyzed = 1
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}

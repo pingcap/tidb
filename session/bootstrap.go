@@ -159,6 +159,7 @@ const (
 		distinct_count bigint(64) NOT NULL,
 		null_count bigint(64) NOT NULL DEFAULT 0,
 		tot_col_size bigint(64) NOT NULL DEFAULT 0,
+		is_analyzed bigint(64) NOT NULL DEFAULT 0,
 		modify_count bigint(64) NOT NULL DEFAULT 0,
 		version bigint(64) unsigned NOT NULL DEFAULT 0,
 		cm_sketch blob,
@@ -253,6 +254,7 @@ const (
 	version19 = 19
 	version20 = 20
 	version21 = 21
+	version22 = 22
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -393,6 +395,10 @@ func upgrade(s Session) {
 
 	if ver < version21 {
 		upgradeToVer21(s)
+	}
+
+	if ver < version22 {
+		upgradeToVer22(s)
 	}
 
 	updateBootstrapVer(s)
@@ -627,6 +633,10 @@ func upgradeToVer21(s Session) {
 	doReentrantDDL(s, "ALTER TABLE mysql.gc_delete_range DROP INDEX job_id", ddl.ErrCantDropFieldOrKey)
 	doReentrantDDL(s, "ALTER TABLE mysql.gc_delete_range ADD UNIQUE INDEX delete_range_index (job_id, element_id)", ddl.ErrDupKeyName)
 	doReentrantDDL(s, "ALTER TABLE mysql.gc_delete_range DROP INDEX element_id", ddl.ErrCantDropFieldOrKey)
+}
+
+func upgradeToVer22(s Session) {
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN is_analyzed bigint(64) NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.

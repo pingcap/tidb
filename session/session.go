@@ -1224,7 +1224,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 21
+	currentBootstrapVersion = 22
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {

@@ -1634,12 +1634,8 @@ func (b *planBuilder) getStatsTable(tblInfo *model.TableInfo) *statistics.Table 
 
 	// 3. statistics is outdated.
 	if float64(statsTbl.ModifyCount)/float64(statsTbl.Count) > RatioOfPseudoEstimate {
-		countFromStats := statsTbl.Count
 		tbl := *statsTbl
 		tbl.Pseudo = true
-		// Table row count from statistics is more meaningful than the
-		// pseudo row count in most cases.
-		tbl.Count = countFromStats
 		statsTbl = &tbl
 		metrics.PseudoEstimation.Inc()
 	}
