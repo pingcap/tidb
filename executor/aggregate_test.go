@@ -24,7 +24,6 @@ import (
 func (s *testSuite) TestAggregation(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@tidb_hash_join_concurrency=1")
-	tk.MustExec("set @@tidb_hashagg_final_concurrency=1")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c int, d int)")

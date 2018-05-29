@@ -66,6 +66,7 @@ func (s *testIntegrationSuite) SetUpSuite(c *C) {
 	s.store, s.dom, err = newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	s.ctx = mock.NewContext()
+	s.ctx.GetSessionVars().HashAggFinalConcurrency = 1
 }
 
 func (s *testIntegrationSuite) TearDownSuite(c *C) {
