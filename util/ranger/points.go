@@ -431,8 +431,11 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction) []point {
 			return nil
 		}
 		var rangePoints []point
+		// negative ranges can be directly ignored for unsigned int columns.
+		// Point `0` should be considered specially here. If the `IN` predicate contains `0`, `0` should be
+		// excluded from the result range, otherwise `0` should be included.
 		if unsignedInt {
-			rangePoints = make([]point, 0, 0)
+			rangePoints = make([]point, 0, 2+len(inPoints))
 			for i := 0; i < len(inPoints); i += 2 {
 				value := inPoints[i].value.GetInt64()
 				if value < 0 {
@@ -452,7 +455,7 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction) []point {
 		} else {
 			rangePoints = inPoints
 		}
-		retRangePoints := make([]point, 0, 0)
+		retRangePoints := make([]point, 0, 2+len(inPoints))
 		previousValue := types.Datum{}
 		for i := 0; i < len(rangePoints); i += 2 {
 			exclude := true
