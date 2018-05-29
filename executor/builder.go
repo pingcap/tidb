@@ -854,7 +854,7 @@ func (b *executorBuilder) buildHashAgg(v *plan.PhysicalHashAgg) Executor {
 		partialConcurrency: sessionVars.HashAggPartialConcurrency,
 		finalConcurrency:   sessionVars.HashAggFinalConcurrency,
 	}
-	if plan.IsAllFirstRow(v.AggFuncs) {
+	if len(v.GroupByItems) != 0 || plan.IsAllFirstRow(v.AggFuncs) {
 		e.defaultVal = nil
 	} else {
 		e.defaultVal = chunk.NewChunkWithCapacity(e.retTypes(), 1)

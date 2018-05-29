@@ -1076,7 +1076,9 @@ func CreateSession4Test(store kv.Storage) (Session, error) {
 	s, err := CreateSession(store)
 	if err == nil {
 		// initialize session variables for test.
-		s.GetSessionVars().MaxChunkSize = 2
+		sessionVars := s.GetSessionVars()
+		sessionVars.MaxChunkSize = 2
+		sessionVars.HashAggFinalConcurrency = 1
 	}
 	return s, errors.Trace(err)
 }

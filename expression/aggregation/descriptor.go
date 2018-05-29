@@ -123,10 +123,9 @@ func (a *AggFuncDesc) CalculateDefaultValue(ctx sessionctx.Context, schema *expr
 	switch a.Name {
 	case ast.AggFuncCount:
 		return a.calculateDefaultValue4Count(ctx, schema)
-	case ast.AggFuncSum, ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncFirstRow:
+	case ast.AggFuncSum, ast.AggFuncMax, ast.AggFuncMin,
+	ast.AggFuncFirstRow, ast.AggFuncAvg, ast.AggFuncGroupConcat:
 		return a.calculateDefaultValue4Sum(ctx, schema)
-	case ast.AggFuncAvg, ast.AggFuncGroupConcat:
-		return types.Datum{}, false
 	case ast.AggFuncBitAnd:
 		return a.calculateDefaultValue4BitAnd(ctx, schema)
 	case ast.AggFuncBitOr, ast.AggFuncBitXor:
@@ -218,7 +217,10 @@ func (a *AggFuncDesc) typeInfer4GroupConcat(ctx sessionctx.Context) {
 }
 
 func (a *AggFuncDesc) typeInfer4MaxMin(ctx sessionctx.Context) {
-	if a.Args[0].GetType().Tp == mysql.TypeFloat {
+	_, argIsScalaFunc := a.Args[0].(*expression.ScalarFunction)
+	if argIsScalaFunc && a.Args[0].GetType().Tp == mysql.TypeFloat {
+		// For scalar function, the result of "float32" is set to the "float64"
+		// field in the "Datum".
 		a.RetTp = new(types.FieldType)
 		*(a.RetTp) = *(a.Args[0].GetType())
 		a.RetTp.Tp = mysql.TypeDouble

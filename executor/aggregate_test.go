@@ -24,6 +24,7 @@ import (
 func (s *testSuite) TestAggregation(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@tidb_hash_join_concurrency=1")
+	tk.MustExec("set @@tidb_hashagg_final_concurrency=1")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c int, d int)")
@@ -378,6 +379,7 @@ func (s *testSuite) TestSelectDistinct(c *C) {
 func (s *testSuite) TestAggPushDown(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_hashagg_final_concurrency=1")
 	tk.MustExec("drop table if exists t, tt")
 	tk.MustExec("create table t(a int primary key, b int, c int)")
 	tk.MustExec("create table tt(a int primary key, b int, c int)")
