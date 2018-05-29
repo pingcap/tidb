@@ -429,7 +429,9 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context) {
 	)
 	for _, f := range w.aggFuncs {
 		for _, arg := range f.GetArgs() {
-			fts = append(fts, arg.GetType())
+			if _, ok := arg.(*expression.Constant); !ok {
+				fts = append(fts, arg.GetType())
+			}
 		}
 	}
 	for {
@@ -556,13 +558,13 @@ func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error 
 	if !e.prepared {
 		go e.fetchChildData(ctx)
 		for i := range e.partialWorkers {
-			go e.partialWorkers[i].run(e.ctx, e.finalConcurrency)
 			e.partialWorkerWaitGroup.Add(1)
+			go e.partialWorkers[i].run(e.ctx, e.finalConcurrency)
 		}
 		go e.waitPartialWorkerAndCloseOutputChs()
 		for i := range e.finalWorkers {
-			go e.finalWorkers[i].run(e.ctx)
 			e.finalWorkerWaitGroup.Add(1)
+			go e.finalWorkers[i].run(e.ctx)
 		}
 		go e.waitFinalWorkerAndCloseFinalOutput()
 		e.prepared = true

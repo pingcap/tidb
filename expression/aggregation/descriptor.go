@@ -124,7 +124,7 @@ func (a *AggFuncDesc) CalculateDefaultValue(ctx sessionctx.Context, schema *expr
 	case ast.AggFuncCount:
 		return a.calculateDefaultValue4Count(ctx, schema)
 	case ast.AggFuncSum, ast.AggFuncMax, ast.AggFuncMin,
-	ast.AggFuncFirstRow, ast.AggFuncAvg, ast.AggFuncGroupConcat:
+		ast.AggFuncFirstRow, ast.AggFuncAvg, ast.AggFuncGroupConcat:
 		return a.calculateDefaultValue4Sum(ctx, schema)
 	case ast.AggFuncBitAnd:
 		return a.calculateDefaultValue4BitAnd(ctx, schema)

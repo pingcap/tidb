@@ -193,15 +193,11 @@ func (af *aggFunction) GetFinalAggFunc(idx int) (_ int, newAggFunc Aggregation) 
 				Index:   idx,
 				RetType: af.RetTp,
 			})
+			idx++
 			if af.Name == ast.AggFuncGroupConcat {
 				separator := af.Args[len(af.Args)-1]
-				args = append(args, &expression.Column{
-					ColName: model.NewCIStr(fmt.Sprintf("col_%d", idx)),
-					Index:   idx,
-					RetType: separator.GetType(),
-				})
+				args = append(args, separator.Clone())
 			}
-			idx++
 		}
 		desc := af.Clone()
 		desc.Mode = FinalMode
