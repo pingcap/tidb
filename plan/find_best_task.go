@@ -314,17 +314,18 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, path *accessPath) (
 	rowCount := path.countAfterAccess
 	cop := &copTask{indexPlan: is}
 	if !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle) {
+		// If it's parent requires single read task, return max cost.
+		if prop.taskTp == copSingleReadTaskType {
+			return invalidTask, nil
+		}
+
 		// On this way, it's double read case.
 		ts := PhysicalTableScan{Columns: ds.Columns, Table: is.Table}.init(ds.ctx)
 		ts.SetSchema(ds.schema.Clone())
 		cop.tablePlan = ts
-		// If it's parent requires single read task, return max cost.
-		if prop.taskTp == copSingleReadTaskType {
-			return &copTask{cst: math.MaxFloat64}, nil
-		}
 	} else if prop.taskTp == copDoubleReadTaskType {
 		// If it's parent requires double read task, return max cost.
-		return &copTask{cst: math.MaxFloat64}, nil
+		return invalidTask, nil
 	}
 	is.initSchema(ds.id, idx, cop.tablePlan != nil)
 	// Check if this plan matches the property.
@@ -403,19 +404,19 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 	// Add filter condition to table plan now.
 	indexConds, tableConds := path.indexFilters, path.tableFilters
 	if indexConds != nil {
+		copTask.cst += copTask.count() * cpuFactor
 		stats := &statsInfo{count: path.countAfterIndex}
 		indexSel := PhysicalSelection{Conditions: indexConds}.init(is.ctx,
 			stats.scaleByExpectCnt(expectedCnt))
 		indexSel.SetChildren(is)
 		copTask.indexPlan = indexSel
-		copTask.cst += copTask.count() * cpuFactor
 	}
 	if tableConds != nil {
 		copTask.finishIndexPlan()
+		copTask.cst += copTask.count() * cpuFactor
 		tableSel := PhysicalSelection{Conditions: tableConds}.init(is.ctx, p.statsAfterSelect.scaleByExpectCnt(expectedCnt))
 		tableSel.SetChildren(copTask.tablePlan)
 		copTask.tablePlan = tableSel
-		copTask.cst += copTask.count() * cpuFactor
 	}
 }
 
@@ -502,7 +503,7 @@ func (ds *DataSource) forceToTableScan(pk *expression.Column) PhysicalPlan {
 func (ds *DataSource) convertToTableScan(prop *requiredProp, path *accessPath) (task task, err error) {
 	// It will be handled in convertToIndexScan.
 	if prop.taskTp == copDoubleReadTaskType {
-		return &copTask{cst: math.MaxFloat64}, nil
+		return invalidTask, nil
 	}
 
 	ts := PhysicalTableScan{
@@ -567,10 +568,9 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp, path *accessPath) (
 func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *statsInfo) {
 	// Add filter condition to table plan now.
 	if len(ts.filterCondition) > 0 {
+		copTask.cst += copTask.count() * cpuFactor
 		sel := PhysicalSelection{Conditions: ts.filterCondition}.init(ts.ctx, stats)
 		sel.SetChildren(ts)
 		copTask.tablePlan = sel
-		// FIXME: It seems wrong...
-		copTask.cst += copTask.count() * cpuFactor
 	}
 }
