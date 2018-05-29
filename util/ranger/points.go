@@ -422,27 +422,27 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction) []point {
 	case ast.IsFalsity:
 		return r.buildFromIsFalse(expr, 1)
 	case ast.In:
-		var unsignedInt bool
+		var (
+			unsignedInt    bool
+			nonNegativePos int
+		)
 		if x, ok := expr.GetArgs()[0].(*expression.Column); ok {
 			unsignedInt = mysql.HasUnsignedFlag(x.RetType.Flag) && mysql.IsIntegerType(x.RetType.Tp)
 		}
-		inPoints, hasNull := r.buildFromIn(expr)
+		rangePoints, hasNull := r.buildFromIn(expr)
 		if hasNull {
 			return nil
 		}
-		var rangePoints []point
 		// negative ranges can be directly ignored for unsigned int columns.
 		if unsignedInt {
-			rangePoints = make([]point, 0, 2+len(inPoints))
-			for i := 0; i < len(inPoints); i += 2 {
-				if inPoints[i].value.Kind() == types.KindUint64 || inPoints[i].value.GetInt64() >= 0 {
-					rangePoints = append(rangePoints, inPoints[i], inPoints[i+1])
+			for nonNegativePos = 0; nonNegativePos < len(rangePoints); nonNegativePos += 2 {
+				if rangePoints[nonNegativePos].value.Kind() == types.KindUint64 || rangePoints[nonNegativePos].value.GetInt64() >= 0 {
+					break
 				}
 			}
-		} else {
-			rangePoints = inPoints
+			rangePoints = rangePoints[nonNegativePos:]
 		}
-		retRangePoints := make([]point, 0, 2+len(inPoints))
+		retRangePoints := make([]point, 0, 2+len(rangePoints))
 		previousValue := types.Datum{}
 		for i := 0; i < len(rangePoints); i += 2 {
 			retRangePoints = append(retRangePoints, point{value: previousValue, start: true, excl: true})
