@@ -120,6 +120,9 @@ type HashAggExec struct {
 	finalWorkers           []HashAggFinalWorker
 	partialWorkerWaitGroup *sync.WaitGroup
 	finalWorkerWaitGroup   *sync.WaitGroup
+	defaultVal             *chunk.Chunk
+	// isInputNull indicates whether the child only returns empty input.
+	isInputNull bool
 }
 
 // AfInterResult indicates the intermediate result of aggPartialWorker.
@@ -202,6 +205,7 @@ func (e *HashAggExec) initForUnparallelExec() {
 }
 
 func (e *HashAggExec) initForParallelExec() {
+	e.isInputNull = true
 	e.partialWorkerWaitGroup = &sync.WaitGroup{}
 	e.finalWorkerWaitGroup = &sync.WaitGroup{}
 	e.finalOutputCh = make(chan *AfFinalResult, e.finalConcurrency)
@@ -569,8 +573,13 @@ func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error 
 			if result != nil {
 				return errors.Trace(result.err)
 			}
+			if e.isInputNull {
+				chk.Append(e.defaultVal, 0, 1)
+				e.isInputNull = false
+			}
 			return nil
 		}
+		e.isInputNull = false
 		chk.SwapColumns(result.chk)
 		// Put result.chk back to the corresponded final worker's finalResultHolderCh.
 		result.giveBackCh <- result.chk

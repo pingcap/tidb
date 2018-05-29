@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"golang.org/x/net/context"
@@ -853,10 +854,15 @@ func (b *executorBuilder) buildHashAgg(v *plan.PhysicalHashAgg) Executor {
 		partialConcurrency: sessionVars.HashAggPartialConcurrency,
 		finalConcurrency:   sessionVars.HashAggFinalConcurrency,
 	}
-	for _, aggDesc := range v.AggFuncs {
+	e.defaultVal = chunk.NewChunkWithCapacity(e.retTypes(), 1)
+	for i, aggDesc := range v.AggFuncs {
 		e.AggFuncs = append(e.AggFuncs, aggDesc.GetAggFunc())
 		if aggDesc.HasDistinct {
 			e.doesUnparallelExec = true
+		}
+		value, existsDefaultValue := aggDesc.CalculateDefaultValue(e.ctx, e.children[0].Schema())
+		if existsDefaultValue {
+			e.defaultVal.AppendDatum(i, &value)
 		}
 	}
 	metrics.ExecutorCounter.WithLabelValues("HashAggExec").Inc()
