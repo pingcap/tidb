@@ -213,7 +213,7 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 
 	rs := cc.ctx.GetResultSet(int(stmtID))
 	if rs == nil {
-		return mysql.NewErr(mysql.ErrUnknownStmtFetchResultSet,
+		return mysql.NewErr(mysql.ErrUnknownStmtHandler,
 			strconv.FormatUint(uint64(stmtID), 10), "stmt_fetch")
 	}
 
