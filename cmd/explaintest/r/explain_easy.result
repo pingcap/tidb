@@ -1,9 +1,10 @@
 use test;
-drop table if exists t1, t2, t3;
+drop table if exists t1, t2, t3, t4;
 create table t1 (c1 int primary key, c2 int, c3 int, index c2 (c2));
 create table t2 (c1 int unique, c2 int);
 insert into t2 values(1, 0), (2, 1);
 create table t3 (a bigint, b bigint, c bigint, d bigint);
+create table t4 (a int, b int, c int, index idx(a, b), primary key(a));
 set @@session.tidb_opt_insubquery_unfold = 1;
 set @@session.tidb_opt_agg_push_down = 1;
 explain select * from t3 where exists (select s.a from t3 s having sum(s.a) = t3.a );
@@ -126,6 +127,22 @@ TableScan_18	Limit_20		cop	table:t1, range:[-inf,+inf], keep order:true, desc	1.
 Limit_20		TableScan_18	cop	offset:0, count:1	1.00
 TableReader_21	Limit_10		root	data:Limit_20	1.00
 Limit_10		TableReader_21	root	offset:0, count:1	1.00
+explain select * from t4 use index(idx) where a > 1 and b > 1 and c > 1 limit 1;
+id	parents	children	task	operator info	count
+IndexScan_12	Selection_14		cop	table:t4, index:a, b, range:(1 +inf,+inf +inf], keep order:false	16.67
+Selection_14		IndexScan_12	cop	gt(test.t4.b, 1)	5.56
+TableScan_13	Selection_15		cop	table:t4, keep order:false	5.56
+Selection_15	Limit_16	TableScan_13	cop	gt(test.t4.c, 1)	1.00
+Limit_16		Selection_15	cop	offset:0, count:1	1.00
+IndexLookUp_17	Limit_9		root	index:Selection_14, table:Limit_16	1.00
+Limit_9		IndexLookUp_17	root	offset:0, count:1	1.00
+explain select * from t4 where a > 1 and c > 1 limit 1;
+id	parents	children	task	operator info	count
+TableScan_11	Selection_12		cop	table:t4, range:(1,+inf], keep order:false	16.67
+Selection_12	Limit_14	TableScan_11	cop	gt(test.t4.c, 1)	1.00
+Limit_14		Selection_12	cop	offset:0, count:1	1.00
+TableReader_15	Limit_8		root	data:Limit_14	1.00
+Limit_8		TableReader_15	root	offset:0, count:1	1.00
 set @@session.tidb_opt_insubquery_unfold = 0;
 explain select sum(t1.c1 in (select c1 from t2)) from t1;
 id	parents	children	task	operator info	count
@@ -209,4 +226,4 @@ label = "cop"
 "TableReader_12" -> "Selection_11"
 }
 
-drop table if exists t1, t2, t3;
+drop table if exists t1, t2, t3, t4;
