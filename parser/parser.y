@@ -1998,60 +1998,67 @@ DoStmt:
  *
  *******************************************************************/
 DeleteFromStmt:
-	"DELETE" PriorityOpt QuickOptional IgnoreOptional "FROM" TableName IndexHintListOpt WhereClauseOptional OrderByOptional LimitClause
+	"DELETE" TableOptimizerHints PriorityOpt QuickOptional IgnoreOptional "FROM" TableName IndexHintListOpt WhereClauseOptional OrderByOptional LimitClause
 	{
 		// Single Table
-		tn := $6.(*ast.TableName)
-		tn.IndexHints = $7.([]*ast.IndexHint)
+		tn := $7.(*ast.TableName)
+		tn.IndexHints = $8.([]*ast.IndexHint)
 		join := &ast.Join{Left: &ast.TableSource{Source: tn}, Right: nil}
 		x := &ast.DeleteStmt{
-			TableRefs:	&ast.TableRefsClause{TableRefs: join},
-			Priority:	$2.(mysql.PriorityEnum),
-			Quick:		$3.(bool),
-			IgnoreErr:		$4.(bool),
-		}
-		if $8 != nil {
-			x.Where = $8.(ast.ExprNode)
+			TableRefs: &ast.TableRefsClause{TableRefs: join},
+			Priority:  $3.(mysql.PriorityEnum),
+			Quick:	   $4.(bool),
+			IgnoreErr: $5.(bool),
 		}
 		if $9 != nil {
-			x.Order = $9.(*ast.OrderByClause)
+			x.Where = $9.(ast.ExprNode)
 		}
 		if $10 != nil {
-			x.Limit = $10.(*ast.Limit)
+			x.Order = $10.(*ast.OrderByClause)
+		}
+		if $11 != nil {
+			x.Limit = $11.(*ast.Limit)
 		}
 
 		$$ = x
 	}
-|	"DELETE" PriorityOpt QuickOptional IgnoreOptional TableNameList "FROM" TableRefs WhereClauseOptional
+|	"DELETE" TableOptimizerHints PriorityOpt QuickOptional IgnoreOptional TableNameList "FROM" TableRefs WhereClauseOptional
 	{
 		// Multiple Table
 		x := &ast.DeleteStmt{
-			Priority:	$2.(mysql.PriorityEnum),
-			Quick:		$3.(bool),
-			IgnoreErr:		$4.(bool),
-			IsMultiTable:	true,
-			BeforeFrom:	true,
-			Tables:		&ast.DeleteTableList{Tables: $5.([]*ast.TableName)},
-			TableRefs:	&ast.TableRefsClause{TableRefs: $7.(*ast.Join)},
+			Priority:	  $3.(mysql.PriorityEnum),
+			Quick:		  $4.(bool),
+			IgnoreErr:	  $5.(bool),
+			IsMultiTable: 	  true,
+			BeforeFrom:	  true,
+			Tables:		  &ast.DeleteTableList{Tables: $6.([]*ast.TableName)},
+			TableRefs:	  &ast.TableRefsClause{TableRefs: $8.(*ast.Join)},
 		}
-		if $8 != nil {
-			x.Where = $8.(ast.ExprNode)
-		}
-		$$ = x
-	}
-|	"DELETE" PriorityOpt QuickOptional IgnoreOptional "FROM" TableNameList "USING" TableRefs WhereClauseOptional
-	{
-		// Multiple Table
-		x := &ast.DeleteStmt{
-			Priority:	$2.(mysql.PriorityEnum),
-			Quick:		$3.(bool),
-			IgnoreErr:		$4.(bool),
-			IsMultiTable:	true,
-			Tables:		&ast.DeleteTableList{Tables: $6.([]*ast.TableName)},
-			TableRefs:	&ast.TableRefsClause{TableRefs: $8.(*ast.Join)},
+		if $2 != nil {
+			x.TableHints = $2.([]*ast.TableOptimizerHint)
 		}
 		if $9 != nil {
 			x.Where = $9.(ast.ExprNode)
+		}
+		$$ = x
+	}
+
+|	"DELETE" TableOptimizerHints PriorityOpt QuickOptional IgnoreOptional "FROM" TableNameList "USING" TableRefs WhereClauseOptional
+	{
+		// Multiple Table
+		x := &ast.DeleteStmt{
+			Priority:	  $3.(mysql.PriorityEnum),
+			Quick:		  $4.(bool),
+			IgnoreErr:	  $5.(bool),
+			IsMultiTable:	  true,
+			Tables:		  &ast.DeleteTableList{Tables: $7.([]*ast.TableName)},
+			TableRefs:	  &ast.TableRefsClause{TableRefs: $9.(*ast.Join)},
+		}
+		if $2 != nil {
+			x.TableHints = $2.([]*ast.TableOptimizerHint)
+		}
+		if $10 != nil {
+			x.Where = $10.(ast.ExprNode)
 		}
 		$$ = x
 	}
@@ -6227,41 +6234,47 @@ StringName:
  * See https://dev.mysql.com/doc/refman/5.7/en/update.html
  ***********************************************************************************/
 UpdateStmt:
-	"UPDATE" PriorityOpt IgnoreOptional TableRef "SET" AssignmentList WhereClauseOptional OrderByOptional LimitClause
+	"UPDATE" TableOptimizerHints PriorityOpt IgnoreOptional TableRef "SET" AssignmentList WhereClauseOptional OrderByOptional LimitClause
 	{
 		var refs *ast.Join
-		if x, ok := $4.(*ast.Join); ok {
+		if x, ok := $5.(*ast.Join); ok {
 			refs = x
 		} else {
-			refs = &ast.Join{Left: $4.(ast.ResultSetNode)}
+			refs = &ast.Join{Left: $5.(ast.ResultSetNode)}
 		}
 		st := &ast.UpdateStmt{
-			Priority:	$2.(mysql.PriorityEnum),
-			TableRefs:	&ast.TableRefsClause{TableRefs: refs},
-			List:		$6.([]*ast.Assignment),
-			IgnoreErr:		$3.(bool),
+			Priority:  $3.(mysql.PriorityEnum),
+			TableRefs: &ast.TableRefsClause{TableRefs: refs},
+			List:	   $7.([]*ast.Assignment),
+			IgnoreErr: $4.(bool),
 		}
-		if $7 != nil {
-			st.Where = $7.(ast.ExprNode)
+		if $2 != nil {
+			st.TableHints = $2.([]*ast.TableOptimizerHint)
 		}
 		if $8 != nil {
-			st.Order = $8.(*ast.OrderByClause)
+			st.Where = $8.(ast.ExprNode)
 		}
 		if $9 != nil {
-			st.Limit = $9.(*ast.Limit)
+			st.Order = $9.(*ast.OrderByClause)
+		}
+		if $10 != nil {
+			st.Limit = $10.(*ast.Limit)
 		}
 		$$ = st
 	}
-|	"UPDATE" PriorityOpt IgnoreOptional TableRefs "SET" AssignmentList WhereClauseOptional
+|	"UPDATE" TableOptimizerHints PriorityOpt IgnoreOptional TableRefs "SET" AssignmentList WhereClauseOptional
 	{
 		st := &ast.UpdateStmt{
-			Priority:	$2.(mysql.PriorityEnum),
-			TableRefs:	&ast.TableRefsClause{TableRefs: $4.(*ast.Join)},
-			List:		$6.([]*ast.Assignment),
-			IgnoreErr:		$3.(bool),
+			Priority:  $3.(mysql.PriorityEnum),
+			TableRefs: &ast.TableRefsClause{TableRefs: $5.(*ast.Join)},
+			List:	   $7.([]*ast.Assignment),
+			IgnoreErr: $4.(bool),
 		}
-		if $7 != nil {
-			st.Where = $7.(ast.ExprNode)
+		if $2 != nil {
+			st.TableHints = $2.([]*ast.TableOptimizerHint)
+		}
+		if $8 != nil {
+			st.Where = $8.(ast.ExprNode)
 		}
 		$$ = st
 	}
