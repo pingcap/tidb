@@ -192,6 +192,7 @@ func (e *InsertExec) initDupOldRowValue(newRows []types.DatumRow) (err error) {
 	return nil
 }
 
+
 // updateDupRow updates a duplicate row to a new row.
 func (e *InsertExec) updateDupRow(keys []keyWithDupError, k keyWithDupError, val []byte, newRow types.DatumRow,
 	onDuplicate []*expression.Assignment, rowIdx int) (err error) {
