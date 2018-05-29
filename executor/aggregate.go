@@ -573,10 +573,10 @@ func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error 
 			if result != nil {
 				return errors.Trace(result.err)
 			}
-			if e.isInputNull {
+			if e.isInputNull && e.defaultVal != nil {
 				chk.Append(e.defaultVal, 0, 1)
-				e.isInputNull = false
 			}
+			e.isInputNull = false
 			return nil
 		}
 		e.isInputNull = false

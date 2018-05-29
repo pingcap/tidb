@@ -243,7 +243,7 @@ func (a *AggFuncDesc) calculateDefaultValue4Count(ctx sessionctx.Context, schema
 			return types.Datum{}, ok
 		}
 	}
-	return types.NewDatum(1), true
+	return types.NewDatum(0), true
 }
 
 func (a *AggFuncDesc) calculateDefaultValue4Sum(ctx sessionctx.Context, schema *expression.Schema) (types.Datum, bool) {

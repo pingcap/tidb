@@ -854,15 +854,21 @@ func (b *executorBuilder) buildHashAgg(v *plan.PhysicalHashAgg) Executor {
 		partialConcurrency: sessionVars.HashAggPartialConcurrency,
 		finalConcurrency:   sessionVars.HashAggFinalConcurrency,
 	}
-	e.defaultVal = chunk.NewChunkWithCapacity(e.retTypes(), 1)
+	if plan.IsAllFirstRow(v.AggFuncs) {
+		e.defaultVal = nil
+	} else {
+		e.defaultVal = chunk.NewChunkWithCapacity(e.retTypes(), 1)
+	}
 	for i, aggDesc := range v.AggFuncs {
 		e.AggFuncs = append(e.AggFuncs, aggDesc.GetAggFunc())
 		if aggDesc.HasDistinct {
 			e.doesUnparallelExec = true
 		}
-		value, existsDefaultValue := aggDesc.CalculateDefaultValue(e.ctx, e.children[0].Schema())
-		if existsDefaultValue {
-			e.defaultVal.AppendDatum(i, &value)
+		if e.defaultVal != nil {
+			value, existsDefaultValue := aggDesc.CalculateDefaultValue(e.ctx, e.children[0].Schema())
+			if existsDefaultValue {
+				e.defaultVal.AppendDatum(i, &value)
+			}
 		}
 	}
 	metrics.ExecutorCounter.WithLabelValues("HashAggExec").Inc()

@@ -594,9 +594,9 @@ func (la *LogicalAggregation) getHashAggs(prop *requiredProp) []PhysicalPlan {
 func (la *LogicalAggregation) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan {
 	aggs := make([]PhysicalPlan, 0, len(la.possibleProperties)+1)
 	aggs = append(aggs, la.getHashAggs(prop)...)
-	//
-	//streamAggs := la.getStreamAggs(prop)
-	//aggs = append(aggs, streamAggs...)
+
+	streamAggs := la.getStreamAggs(prop)
+	aggs = append(aggs, streamAggs...)
 
 	return aggs
 }
