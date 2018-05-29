@@ -389,6 +389,8 @@ func (hg *Histogram) lessRowCount(value types.Datum) float64 {
 	return count
 }
 
+// lessRowCountWithFraction estimates the row count where the column less than value. It also returns the bucket
+// that this value falls in, and the fraction that this value lies within this bucket.
 func (hg *Histogram) lessRowCountWithFraction(value types.Datum) (float64, int, float64) {
 	// all the values is null
 	if hg.Bounds == nil {
