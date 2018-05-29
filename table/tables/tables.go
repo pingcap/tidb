@@ -18,11 +18,15 @@
 package tables
 
 import (
+	"bytes"
 	"encoding/binary"
+	"fmt"
 	"math"
 	"strings"
+	"sync"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
@@ -54,6 +58,12 @@ type Table struct {
 	indexPrefix     kv.Key
 	alloc           autoid.Allocator
 	meta            *model.TableInfo
+
+	// partitionExpr caches partition expression.
+	partitionExpr struct {
+		sync.RWMutex
+		value []expression.Expression
+	}
 }
 
 // MockTableFromMeta only serves for test.
@@ -114,6 +124,30 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 
 	t.meta = tblInfo
 	return t, nil
+}
+
+func generatePartitionExpr(ctx sessionctx.Context, tblInfo *model.TableInfo) ([]expression.Expression, error) {
+	pi := tblInfo.GetPartitionInfo()
+	if pi == nil {
+		return nil, nil
+	}
+	// TODO: Only partition by range is supported currently.
+	if pi.Type != model.PartitionTypeRange {
+		return nil, nil
+	}
+
+	partitionExprs := make([]expression.Expression, 0, len(pi.Definitions))
+	var buf bytes.Buffer
+	for _, def := range pi.Definitions {
+		fmt.Fprintf(&buf, "%s < %s", pi.Expr, def.LessThan[0])
+		expr, err := expression.ParseSimpleExpr(ctx, buf.String(), tblInfo)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		partitionExprs = append(partitionExprs, expr)
+		buf.Reset()
+	}
+	return partitionExprs, nil
 }
 
 // newTable constructs a Table instance.
@@ -214,6 +248,11 @@ func (t *Table) IndexPrefix() kv.Key {
 // RecordKey implements table.Table RecordKey interface.
 func (t *Table) RecordKey(h int64) kv.Key {
 	return tablecodec.EncodeRecordKey(t.recordPrefix, h)
+}
+
+func partitionRecordKey(pid int64, handle int64) kv.Key {
+	recordPrefix := tablecodec.GenTableRecordPrefix(pid)
+	return tablecodec.EncodeRecordKey(recordPrefix, handle)
 }
 
 // FirstKey implements table.Table FirstKey interface.
@@ -353,6 +392,55 @@ func (t *Table) getRollbackableMemStore(ctx sessionctx.Context) kv.RetrieverMuta
 	return bs
 }
 
+func (t *Table) getPartitionExpr(ctx sessionctx.Context) ([]expression.Expression, error) {
+	pi := t.meta.GetPartitionInfo()
+	if pi == nil {
+		return nil, nil
+	}
+
+	var ret []expression.Expression
+	t.partitionExpr.RLock()
+	ret = t.partitionExpr.value
+	t.partitionExpr.RUnlock()
+
+	if ret == nil {
+		var err error
+		ret, err = generatePartitionExpr(ctx, t.meta)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		t.partitionExpr.Lock()
+		t.partitionExpr.value = ret
+		t.partitionExpr.Unlock()
+	}
+	return ret, nil
+}
+
+// locatePartition returns the partition ID of the input record.
+func (t *Table) locatePartition(ctx sessionctx.Context, r []types.Datum) (int64, error) {
+	partitionExpr, err := t.getPartitionExpr(ctx)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if partitionExpr == nil {
+		return t.ID, nil
+	}
+
+	for i, expr := range partitionExpr {
+		val, _, err := expr.EvalInt(ctx, types.DatumRow(r))
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		if val > 0 {
+			// Partition expression eval to true, the value locates into this partition.
+			partitionInfo := t.meta.GetPartitionInfo()
+			return partitionInfo.Definitions[i].ID, nil
+		}
+	}
+	// The data does not belong to any of the partition?
+	return t.ID, nil
+}
+
 // AddRecord implements table.Table AddRecord interface.
 func (t *Table) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
 	var hasRecordID bool
@@ -375,6 +463,11 @@ func (t *Table) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleChe
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
+	}
+
+	pid, err := t.locatePartition(ctx, r)
+	if err != nil {
+		return 0, errors.Trace(err)
 	}
 
 	txn := ctx.Txn()
@@ -416,7 +509,7 @@ func (t *Table) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleChe
 	}
 	writeBufs := sessVars.GetWriteStmtBufs()
 	adjustRowValuesBuf(writeBufs, len(row))
-	key := t.RecordKey(recordID)
+	key := partitionRecordKey(pid, recordID)
 	writeBufs.RowValBuf, err = tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues)
 	if err != nil {
 		return 0, errors.Trace(err)

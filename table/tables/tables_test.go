@@ -328,3 +328,42 @@ func (ts *testSuite) TestTableFromMeta(c *C) {
 	c.Assert(tb, IsNil)
 	c.Assert(err, NotNil)
 }
+
+func (ts *testSuite) TestPartitionAddRecord(c *C) {
+	createTable := `CREATE TABLE test.t1 (id int(11))
+PARTITION BY RANGE ( id ) (
+		PARTITION p0 VALUES LESS THAN (6),
+		PARTITION p1 VALUES LESS THAN (11),
+		PARTITION p2 VALUES LESS THAN (16),
+		PARTITION p3 VALUES LESS THAN (21)
+)`
+	_, err := ts.se.Execute(context.Background(), createTable)
+	c.Assert(err, IsNil)
+	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbInfo := tb.Meta()
+	tbInfo.Partition.Enable = true
+	p0 := tbInfo.Partition.Definitions[0]
+	c.Assert(p0.Name, Equals, "p0")
+
+	c.Assert(ts.se.NewTxn(), IsNil)
+	rid, err := tb.AddRecord(ts.se, types.MakeDatums(1), false)
+	c.Assert(err, IsNil)
+
+	// Check the add record is write to the partition, rather than table.
+	txn := ts.se.Txn()
+	val, err := txn.Get(tables.PartitionRecordKey(p0.ID, rid))
+	c.Assert(err, IsNil)
+	c.Assert(len(val), Greater, 0)
+	_, err = txn.Get(tables.PartitionRecordKey(tbInfo.ID, rid))
+	c.Assert(kv.ErrNotExist.Equal(err), IsTrue)
+
+	// Just to cover more code.
+	_, err = tb.AddRecord(ts.se, types.MakeDatums(7), false)
+	c.Assert(err, IsNil)
+	_, err = tb.AddRecord(ts.se, types.MakeDatums(12), false)
+	c.Assert(err, IsNil)
+	_, err = tb.AddRecord(ts.se, types.MakeDatums(16), false)
+	c.Assert(err, IsNil)
+	_, err = tb.AddRecord(ts.se, types.MakeDatums(22), false)
+	c.Assert(err, IsNil)
+}
