@@ -1077,6 +1077,12 @@ func (d *Datum) convertToMysqlDecimal(sc *stmtctx.StatementContext, target *Fiel
 	if err == nil && err1 != nil {
 		err = err1
 	}
+	if dec.negative && mysql.HasUnsignedFlag(target.Flag) {
+		dec = &zeroMyDecimal
+		if err == nil {
+			err = ErrOverflow.GenByArgs("DECIMAL", fmt.Sprintf("(%d, %d)", target.Flen, target.Decimal))
+		}
+	}
 	ret.SetValue(dec)
 	return ret, errors.Trace(err)
 }
