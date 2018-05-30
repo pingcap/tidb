@@ -51,9 +51,7 @@ func (s *mockSchemaSyncer) GlobalVersionCh() clientv3.WatchChan {
 }
 
 // WatchGlobalSchemaVer implements SchemaSyncer.WatchGlobalSchemaVer interface.
-func (s *mockSchemaSyncer) WatchGlobalSchemaVer(ctx context.Context, tryCnt int) error {
-	return nil
-}
+func (s *mockSchemaSyncer) WatchGlobalSchemaVer(context.Context) {}
 
 // UpdateSelfVersion implements SchemaSyncer.UpdateSelfVersion interface.
 func (s *mockSchemaSyncer) UpdateSelfVersion(ctx context.Context, version int64) error {

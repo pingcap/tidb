@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
@@ -69,7 +70,7 @@ type SchemaSyncer interface {
 	// GlobalVersionCh gets the chan for watching global version.
 	GlobalVersionCh() clientv3.WatchChan
 	// WatchGlobalSchemaVer watches the global schema version.
-	WatchGlobalSchemaVer(ctx context.Context, tryCnt int) error
+	WatchGlobalSchemaVer(ctx context.Context)
 	// MustGetGlobalVersion gets the global version. The only reason it fails is that ctx is done.
 	MustGetGlobalVersion(ctx context.Context) (int64, error)
 	// Done returns a channel that closes when the syncer is no longer being refreshed.
@@ -86,7 +87,10 @@ type schemaVersionSyncer struct {
 	selfSchemaVerPath string
 	etcdCli           *clientv3.Client
 	session           *concurrency.Session
-	globalVerCh       clientv3.WatchChan
+	mu                struct {
+		sync.RWMutex
+		globalVerCh clientv3.WatchChan
+	}
 }
 
 // NewSchemaSyncer creates a new SchemaSyncer.
@@ -137,10 +141,11 @@ func (s *schemaVersionSyncer) Init(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = s.WatchGlobalSchemaVer(ctx, keyOpDefaultRetryCnt)
-	if err != nil {
-		return errors.Trace(err)
-	}
+
+	s.mu.Lock()
+	s.mu.globalVerCh = s.etcdCli.Watch(ctx, DDLGlobalSchemaVersion)
+	s.mu.Unlock()
+
 	err = s.putKV(ctx, keyOpDefaultRetryCnt, s.selfSchemaVerPath, InitialVersion,
 		clientv3.WithLease(s.session.Lease()))
 	return errors.Trace(err)
@@ -177,40 +182,30 @@ func (s *schemaVersionSyncer) Restart(ctx context.Context) error {
 
 // GlobalVersionCh implements SchemaSyncer.GlobalVersionCh interface.
 func (s *schemaVersionSyncer) GlobalVersionCh() clientv3.WatchChan {
-	return s.globalVerCh
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.mu.globalVerCh
 }
 
 // WatchGlobalSchemaVer implements SchemaSyncer.WatchGlobalSchemaVer interface.
-func (s *schemaVersionSyncer) WatchGlobalSchemaVer(ctx context.Context, tryCnt int) error {
-	failedCnt := 0
-	intervalCnt := int(time.Second / keyOpRetryInterval)
+func (s *schemaVersionSyncer) WatchGlobalSchemaVer(ctx context.Context) {
+	startTime := time.Now()
+	// Make sure the globalVerCh doesn't receive the information of 'close' before we finish the rewatch.
+	s.mu.Lock()
+	s.mu.globalVerCh = nil
+	s.mu.Unlock()
 
-	for i := 0; i < tryCnt; i++ {
+	go func() {
+		defer func() {
+			metrics.DeploySyncerHistogram.WithLabelValues(metrics.SyncerRewatch, metrics.RetLabel(nil)).Observe(time.Since(startTime).Seconds())
+		}()
 		ch := s.etcdCli.Watch(ctx, DDLGlobalSchemaVersion)
-		var err error
-		select {
-		case resp, ok := <-ch:
-			if !ok || resp.Err() != nil {
-				err = resp.Err()
-				break
-			}
-			s.globalVerCh = ch
-			log.Warnf("[syncer] watch global schema finished, and it has a resp %#v", resp)
-			return nil
-		default:
-			s.globalVerCh = ch
-			log.Info("[syncer] watch global schema finished")
-			return nil
-		}
-		if failedCnt%intervalCnt == 0 {
-			log.Warnf("[syncer] watch global schema failed %v", err)
-		} else {
-			log.Debugf("[syncer] watch global schema failed %v", err)
-		}
-		failedCnt++
-		time.Sleep(keyOpRetryInterval)
-	}
-	return errors.Errorf("syncer watch global schema failed.")
+
+		s.mu.Lock()
+		s.mu.globalVerCh = ch
+		s.mu.Unlock()
+		log.Info("[syncer] watch global schema finished")
+	}()
 }
 
 // UpdateSelfVersion implements SchemaSyncer.UpdateSelfVersion interface.

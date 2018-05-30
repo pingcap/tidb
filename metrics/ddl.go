@@ -43,10 +43,10 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20),
 		})
 
-	SyncerInit    = "init"
-	SyncerRestart = "restart"
-	SyncerClear   = "clear"
-
+	SyncerInit            = "init"
+	SyncerRestart         = "restart"
+	SyncerClear           = "clear"
+	SyncerRewatch         = "rewatch"
 	DeploySyncerHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
