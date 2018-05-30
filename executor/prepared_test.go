@@ -16,7 +16,6 @@ package executor_test
 import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/terror"
@@ -25,14 +24,17 @@ import (
 )
 
 func (s *testSuite) TestPrepared(c *C) {
-	cfg := config.GetGlobalConfig()
-	orgEnable := cfg.PreparedPlanCache.Enabled
-	orgCapacity := cfg.PreparedPlanCache.Capacity
+	orgEnable := plan.PreparedPlanCacheEnabled
+	orgCapacity := plan.PreparedPlanCacheCapacity
+	defer func() {
+		plan.PreparedPlanCacheEnabled = orgEnable
+		plan.PreparedPlanCacheCapacity = orgCapacity
+	}()
 	flags := []bool{false, true}
 	ctx := context.Background()
 	for _, flag := range flags {
-		cfg.PreparedPlanCache.Enabled = flag
-		cfg.PreparedPlanCache.Capacity = 100
+		plan.PreparedPlanCacheEnabled = flag
+		plan.PreparedPlanCacheCapacity = 100
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists prepare_test")
@@ -179,19 +181,20 @@ func (s *testSuite) TestPrepared(c *C) {
 		exec.Next(ctx, nil)
 		exec.Close()
 	}
-	cfg.PreparedPlanCache.Enabled = orgEnable
-	cfg.PreparedPlanCache.Capacity = orgCapacity
 }
 
 func (s *testSuite) TestPreparedLimitOffset(c *C) {
-	cfg := config.GetGlobalConfig()
-	orgEnable := cfg.PreparedPlanCache.Enabled
-	orgCapacity := cfg.PreparedPlanCache.Capacity
+	orgEnable := plan.PreparedPlanCacheEnabled
+	orgCapacity := plan.PreparedPlanCacheCapacity
+	defer func() {
+		plan.PreparedPlanCacheEnabled = orgEnable
+		plan.PreparedPlanCacheCapacity = orgCapacity
+	}()
 	flags := []bool{false, true}
 	ctx := context.Background()
 	for _, flag := range flags {
-		cfg.PreparedPlanCache.Enabled = flag
-		cfg.PreparedPlanCache.Capacity = 100
+		plan.PreparedPlanCacheEnabled = flag
+		plan.PreparedPlanCacheCapacity = 100
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists prepare_test")
@@ -214,18 +217,19 @@ func (s *testSuite) TestPreparedLimitOffset(c *C) {
 		_, err = tk.Se.ExecutePreparedStmt(ctx, stmtID, 1)
 		c.Assert(err, IsNil)
 	}
-	cfg.PreparedPlanCache.Enabled = orgEnable
-	cfg.PreparedPlanCache.Capacity = orgCapacity
 }
 
 func (s *testSuite) TestPreparedNullParam(c *C) {
-	cfg := config.GetGlobalConfig()
-	orgEnable := cfg.PreparedPlanCache.Enabled
-	orgCapacity := cfg.PreparedPlanCache.Capacity
+	orgEnable := plan.PreparedPlanCacheEnabled
+	orgCapacity := plan.PreparedPlanCacheCapacity
+	defer func() {
+		plan.PreparedPlanCacheEnabled = orgEnable
+		plan.PreparedPlanCacheCapacity = orgCapacity
+	}()
 	flags := []bool{false, true}
 	for _, flag := range flags {
-		cfg.PreparedPlanCache.Enabled = flag
-		cfg.PreparedPlanCache.Capacity = 100
+		plan.PreparedPlanCacheEnabled = flag
+		plan.PreparedPlanCacheCapacity = 100
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
@@ -249,8 +253,6 @@ func (s *testSuite) TestPreparedNullParam(c *C) {
 		r = tk.MustQuery(`execute stmt using @id;`)
 		r.Check(testkit.Rows("1"))
 	}
-	cfg.PreparedPlanCache.Enabled = orgEnable
-	cfg.PreparedPlanCache.Capacity = orgCapacity
 }
 
 func (s *testSuite) TestPreparedNameResolver(c *C) {
