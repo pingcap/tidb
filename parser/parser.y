@@ -2139,7 +2139,6 @@ TraceStmt:
 			Stmt:	$2,
 			Format: "row",
 		}
-
 	}
 
 ExplainSym:
