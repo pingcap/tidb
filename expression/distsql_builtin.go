@@ -195,17 +195,17 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinNullEQDecimalSig{base}
 
 	case tipb.ScalarFuncSig_GTTime:
-		f = &builtinGTTimeSig{base}
+		f = &builtinGTTimeSig{base, types.ETDatetime}
 	case tipb.ScalarFuncSig_GETime:
-		f = &builtinGETimeSig{base}
+		f = &builtinGETimeSig{base, types.ETDatetime}
 	case tipb.ScalarFuncSig_LTTime:
-		f = &builtinLTTimeSig{base}
+		f = &builtinLTTimeSig{base, types.ETDatetime}
 	case tipb.ScalarFuncSig_LETime:
-		f = &builtinLETimeSig{base}
+		f = &builtinLETimeSig{base, types.ETDatetime}
 	case tipb.ScalarFuncSig_EQTime:
-		f = &builtinEQTimeSig{base}
+		f = &builtinEQTimeSig{base, types.ETDatetime}
 	case tipb.ScalarFuncSig_NETime:
-		f = &builtinNETimeSig{base}
+		f = &builtinNETimeSig{base, types.ETDatetime}
 	case tipb.ScalarFuncSig_NullEQTime:
 		f = &builtinNullEQTimeSig{base}
 
