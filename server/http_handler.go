@@ -24,6 +24,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -34,10 +35,13 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/table"
@@ -66,6 +70,7 @@ const (
 
 // For query string
 const qTableID = "table_id"
+const qLimit = "limit"
 
 const (
 	headerContentType = "Content-Type"
@@ -273,9 +278,39 @@ func (t *tikvHandlerTool) handleMvccGetByHex(params map[string]string) (interfac
 	return t.getMvccByEncodedKey(encodedKey)
 }
 
+func (t *tikvHandlerTool) getAllHistoryDDL() ([]*model.Job, error) {
+	s, err := session.CreateSession(t.store.(kv.Storage))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if s != nil {
+		defer s.Close()
+	}
+
+	store := domain.GetDomain(s.(sessionctx.Context)).Store()
+	txn, err := store.Begin()
+
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	txnMeta := meta.NewMeta(txn)
+
+	jobs, err := txnMeta.GetAllHistoryDDLJobs()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return jobs, nil
+}
+
 // settingsHandler is the handler for list tidb server settings.
 type settingsHandler struct {
 }
+
+// binlogRecover is used to recover binlog service.
+// When config binlog IgnoreError, binlog service will stop after meeting the first error.
+// It can be recovered using HTTP API.
+type binlogRecover struct{}
 
 // schemaHandler is the handler for list database or table schemas.
 type schemaHandler struct {
@@ -292,6 +327,11 @@ type regionHandler struct {
 type tableHandler struct {
 	*tikvHandlerTool
 	op string
+}
+
+// ddlHistoryJobHandler is the handler for list job history.
+type ddlHistoryJobHandler struct {
+	*tikvHandlerTool
 }
 
 // valueHandle is the handler for get value.
@@ -482,8 +522,41 @@ func (t *tikvHandlerTool) getRegionsMeta(regionIDs []uint64) ([]RegionMeta, erro
 
 // ServeHTTP handles request of list tidb server settings.
 func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	writeData(w, config.GetGlobalConfig())
+	if req.Method == "POST" {
+		err := req.ParseForm()
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		if levelStr := req.Form.Get("log_level"); levelStr != "" {
+			l, err1 := log.ParseLevel(levelStr)
+			if err1 != nil {
+				writeError(w, err1)
+				return
+			}
+			log.SetLevel(l)
+			config.GetGlobalConfig().Log.Level = levelStr
+		}
+		if generalLog := req.Form.Get("tidb_general_log"); generalLog != "" {
+			switch generalLog {
+			case "0":
+				atomic.StoreUint32(&variable.ProcessGeneralLog, 0)
+			case "1":
+				atomic.StoreUint32(&variable.ProcessGeneralLog, 1)
+			default:
+				writeError(w, errors.New("illegal argument"))
+				return
+			}
+		}
+	} else {
+		writeData(w, config.GetGlobalConfig())
+	}
 	return
+}
+
+// ServeHTTP recovers binlog service.
+func (h binlogRecover) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	binloginfo.DisableSkipBinlogFlag()
 }
 
 // ServeHTTP handles request of list a database or table's schemas.
@@ -574,6 +647,45 @@ func (h tableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	default:
 		writeError(w, errors.New("method not found"))
 	}
+}
+
+// ServeHTTP handles request of ddl jobs history.
+func (h ddlHistoryJobHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if limitID := req.FormValue(qLimit); len(limitID) > 0 {
+		lid, err := strconv.Atoi(limitID)
+
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+
+		if lid < 1 {
+			writeError(w, errors.New("ddl history limit must be greater than 1"))
+			return
+		}
+
+		jobs, err := h.getAllHistoryDDL()
+		if err != nil {
+			writeError(w, errors.New("ddl history not found"))
+			return
+		}
+
+		jobsLen := len(jobs)
+		if jobsLen > lid {
+			start := jobsLen - lid
+			jobs = jobs[start:]
+		}
+
+		writeData(w, jobs)
+		return
+	}
+	jobs, err := h.getAllHistoryDDL()
+	if err != nil {
+		writeError(w, errors.New("ddl history not found"))
+		return
+	}
+	writeData(w, jobs)
+	return
 }
 
 func (h tableHandler) handleRegionRequest(schema infoschema.InfoSchema, tbl table.Table, w http.ResponseWriter, req *http.Request) {

@@ -20,8 +20,10 @@ import (
 	"math/rand"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	gofail "github.com/coreos/gofail/runtime"
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ddl"
@@ -51,7 +53,7 @@ import (
 
 const (
 	// waitForCleanDataRound indicates how many times should we check data is cleaned or not.
-	waitForCleanDataRound = 60
+	waitForCleanDataRound = 150
 	// waitForCleanDataInterval is a min duration between 2 check for data clean.
 	waitForCleanDataInterval = time.Millisecond * 100
 )
@@ -124,6 +126,12 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrTooLongIdent)
 	sql = "create database test"
 	s.testErrorCode(c, sql, tmysql.ErrDBCreateExists)
+	sql = "create database test1 character set uft8;"
+	s.testErrorCode(c, sql, tmysql.ErrUnknownCharacterSet)
+	sql = "create database test2 character set gkb;"
+	s.testErrorCode(c, sql, tmysql.ErrUnknownCharacterSet)
+	sql = "create database test3 character set laitn1;"
+	s.testErrorCode(c, sql, tmysql.ErrUnknownCharacterSet)
 	// drop database
 	sql = "drop database db_not_exist"
 	s.testErrorCode(c, sql, tmysql.ErrDBDropExists)
@@ -149,12 +157,21 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrInvalidDefault)
 	sql = "CREATE TABLE `t` (`a` double DEFAULT now());"
 	s.testErrorCode(c, sql, tmysql.ErrInvalidDefault)
+	sql = "create table t1(a int) character set uft8;"
+	s.testErrorCode(c, sql, tmysql.ErrUnknownCharacterSet)
+	sql = "create table t1(a int) character set gkb;"
+	s.testErrorCode(c, sql, tmysql.ErrUnknownCharacterSet)
+	sql = "create table t1(a int) character set laitn1;"
+	s.testErrorCode(c, sql, tmysql.ErrUnknownCharacterSet)
 
 	// add column
 	sql = "alter table test_error_code_succ add column c1 int"
 	s.testErrorCode(c, sql, tmysql.ErrDupFieldName)
 	sql = "alter table test_error_code_succ add column aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa int"
 	s.testErrorCode(c, sql, tmysql.ErrTooLongIdent)
+	sql = "alter table test_comment comment 'test comment'"
+	s.testErrorCode(c, sql, tmysql.ErrNoSuchTable)
+
 	// drop column
 	sql = "alter table test_error_code_succ drop c_not_exist"
 	s.testErrorCode(c, sql, tmysql.ErrCantDropFieldOrKey)
@@ -311,6 +328,7 @@ func (s *testDBSuite) TestCancelAddIndex(c *C) {
 	}
 
 	var checkErr error
+	var c3IdxInfo *model.IndexInfo
 	hook := &ddl.TestDDLCallback{}
 	first := true
 	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
@@ -323,6 +341,16 @@ func (s *testDBSuite) TestCancelAddIndex(c *C) {
 		// If the action is adding index and the state is writing reorganization, it want to test the case of cancelling the job when backfilling indexes.
 		// When the job satisfies this case of addIndexNotFirstReorg, the worker will start to backfill indexes.
 		if !addIndexNotFirstReorg {
+			// Get the index's meta.
+			if c3IdxInfo != nil {
+				return
+			}
+			t := s.testGetTable(c, "t1")
+			for _, index := range t.WritableIndices() {
+				if index.Meta().Name.L == "c3_index" {
+					c3IdxInfo = index.Meta()
+				}
+			}
 			return
 		}
 		// The job satisfies the case of addIndexNotFirst for the first time, the worker hasn't finished a batch of backfill indexes.
@@ -395,6 +423,10 @@ LOOP:
 		c.Assert(strings.EqualFold(tidx.Meta().Name.L, "c3_index"), IsFalse)
 	}
 
+	ctx := s.s.(sessionctx.Context)
+	idx := tables.NewIndex(t.Meta(), c3IdxInfo)
+	checkDelRangeDone(c, ctx, idx)
+
 	s.mustExec(c, "drop table t1")
 	ddl.ReorgWaitTimeout = oldReorgWaitTimeout
 }
@@ -449,7 +481,7 @@ func (s *testDBSuite) TestAddAnonymousIndex(c *C) {
 	c.Assert(t.Indices()[1].Meta().Name.String(), Equals, "primary_3")
 }
 
-// Issue 5134
+// TestModifyColumnAfterAddIndex Issue 5134
 func (s *testDBSuite) TestModifyColumnAfterAddIndex(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
@@ -701,6 +733,12 @@ LOOP:
 	c.Assert(nidx, IsNil)
 
 	idx := tables.NewIndex(t.Meta(), c3idx.Meta())
+	checkDelRangeDone(c, ctx, idx)
+	s.tk.MustExec("drop table test_drop_index")
+}
+
+func checkDelRangeDone(c *C, ctx sessionctx.Context, idx table.Index) {
+	startTime := time.Now()
 	f := func() map[int64]struct{} {
 		handles := make(map[int64]struct{})
 
@@ -732,9 +770,7 @@ LOOP:
 			break
 		}
 	}
-	c.Assert(handles, HasLen, 0)
-
-	s.tk.MustExec("drop table test_drop_index")
+	c.Assert(handles, HasLen, 0, Commentf("take time %v", time.Since(startTime)))
 }
 
 func (s *testDBSuite) TestAddIndexWithDupCols(c *C) {
@@ -771,6 +807,22 @@ func (s *testDBSuite) TestIssue2293(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrInvalidDefault)
 	s.tk.MustExec("insert into t_issue_2293 value(1)")
 	s.tk.MustQuery("select * from t_issue_2293").Check(testkit.Rows("1"))
+}
+
+func (s *testDBSuite) TestIssue6101(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+	s.tk.MustExec("create table t1 (quantity decimal(2) unsigned);")
+	_, err := s.tk.Exec("insert into t1 values (500), (-500), (~0), (-1);")
+	terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(tmysql.ErrWarnDataOutOfRange))
+	s.tk.MustExec("drop table t1")
+
+	s.tk.MustExec("set sql_mode=''")
+	s.tk.MustExec("create table t1 (quantity decimal(2) unsigned);")
+	s.tk.MustExec("insert into t1 values (500), (-500), (~0), (-1);")
+	s.tk.MustQuery("select * from t1").Check(testkit.Rows("99", "0", "99", "0"))
+	s.tk.MustExec("drop table t1")
 }
 
 func (s *testDBSuite) TestCreateIndexType(c *C) {
@@ -1001,7 +1053,7 @@ LOOP:
 	c.Assert(count, Greater, int64(0))
 }
 
-// This test is for insert value with a to-be-dropped column when do drop column.
+// testDropColumn2 is for inserting value with a to-be-dropped column when do drop column.
 // Column info from schema in build-insert-plan should be public only,
 // otherwise they will not be consist with Table.Col(), then the server will panic.
 func (s *testDBSuite) testDropColumn2(c *C) {
@@ -1094,6 +1146,10 @@ func (s *testDBSuite) TestChangeColumn(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrUnknown)
 	sql = "alter table t3 modify en enum('a', 'z', 'b', 'c') not null default 'a'"
 	s.testErrorCode(c, sql, tmysql.ErrUnknown)
+	// Rename to an existing column.
+	s.mustExec(c, "alter table t3 add column a bigint")
+	sql = "alter table t3 change aa a bigint"
+	s.testErrorCode(c, sql, tmysql.ErrDupFieldName)
 
 	s.tk.MustExec("drop table t3")
 }
@@ -1356,6 +1412,7 @@ func (s *testDBSuite) TestCreateTableWithLike(c *C) {
 func (s *testDBSuite) TestCreateTable(c *C) {
 	s.tk.MustExec("use test")
 	s.tk.MustExec("CREATE TABLE `t` (`a` double DEFAULT 1.0 DEFAULT now() DEFAULT 2.0 );")
+	s.tk.MustExec("CREATE TABLE IF NOT EXISTS `t` (`a` double DEFAULT 1.0 DEFAULT now() DEFAULT 2.0 );")
 	ctx := s.tk.Se.(sessionctx.Context)
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -1373,6 +1430,33 @@ func (s *testDBSuite) TestCreateTable(c *C) {
 
 	_, err = s.tk.Exec("CREATE TABLE `t` (`a` int) DEFAULT CHARSET=abcdefg")
 	c.Assert(err, NotNil)
+}
+
+func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
+	s.tk.MustExec("use test")
+	s.tk.MustExec(`CREATE TABLE tp (a int) PARTITION BY RANGE(a) (
+	PARTITION p0 VALUES LESS THAN (10),
+	PARTITION p1 VALUES LESS THAN (20),
+	PARTITION p2 VALUES LESS THAN (MAXVALUE)
+);`)
+	ctx := s.tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().Partition, NotNil)
+	part := tbl.Meta().Partition
+	c.Assert(part.Type, Equals, model.PartitionTypeRange)
+	c.Assert(part.Expr, Equals, "`a`")
+	for _, pdef := range part.Definitions {
+		c.Assert(pdef.ID, Greater, int64(0))
+	}
+	c.Assert(part.Definitions, HasLen, 3)
+	c.Assert(part.Definitions[0].LessThan[0], Equals, "10")
+	c.Assert(part.Definitions[0].Name, Equals, "p0")
+	c.Assert(part.Definitions[1].LessThan[0], Equals, "20")
+	c.Assert(part.Definitions[1].Name, Equals, "p1")
+	c.Assert(part.Definitions[2].MaxValue, IsTrue)
+	c.Assert(part.Definitions[2].Name, Equals, "p2")
 }
 
 func (s *testDBSuite) TestTruncateTable(c *C) {
@@ -1760,4 +1844,50 @@ func (s *testDBSuite) TestCharacterSetInColumns(c *C) {
 	s.tk.MustExec("create table t (c1 int, s1 varchar(10), s2 text)")
 	s.tk.MustQuery("select count(*) from information_schema.columns where table_schema = 'varchar_test' and character_set_name != 'utf8'").Check(testkit.Rows("0"))
 	s.tk.MustQuery("select count(*) from information_schema.columns where table_schema = 'varchar_test' and character_set_name = 'utf8'").Check(testkit.Rows("2"))
+}
+
+func (s *testDBSuite) TestAddNotNullColumnWhileInsertOnDupUpdate(c *C) {
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use " + s.schemaName)
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use " + s.schemaName)
+	closeCh := make(chan bool)
+	wg := new(sync.WaitGroup)
+	wg.Add(1)
+	tk1.MustExec("create table nn (a int primary key, b int)")
+	tk1.MustExec("insert nn values (1, 1)")
+	var tk2Err error
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-closeCh:
+				return
+			default:
+			}
+			_, tk2Err = tk2.Exec("insert nn (a, b) values (1, 1) on duplicate key update a = 1, b = b + 1")
+			if tk2Err != nil {
+				return
+			}
+		}
+	}()
+	tk1.MustExec("alter table nn add column c int not null default 0")
+	close(closeCh)
+	wg.Wait()
+	c.Assert(tk2Err, IsNil)
+}
+
+func (s *testDBSuite) TestUpdateHandleFailed(c *C) {
+	gofail.Enable("github.com/pingcap/tidb/ddl/errorUpdateReorgHandle", `return(true)`)
+	defer gofail.Disable("github.com/pingcap/tidb/ddl/errorUpdateReorgHandle")
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test_handle_failed")
+	defer tk.MustExec("drop database test_handle_failed")
+	tk.MustExec("use test_handle_failed")
+	tk.MustExec("create table t(a int primary key, b int)")
+	tk.MustExec("insert into t values(-1, 1)")
+	tk.MustExec("alter table t add index idx_b(b)")
+	result := tk.MustQuery("select count(*) from t use index(idx_b)")
+	result.Check(testkit.Rows("1"))
+	tk.MustExec("admin check index t idx_b")
 }

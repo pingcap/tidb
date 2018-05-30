@@ -40,6 +40,10 @@ func (c *Client) IsRequestTypeSupported(reqType, subType int64) bool {
 		default:
 			return c.supportExpr(tipb.ExprType(subType))
 		}
+	case kv.ReqTypeDAG:
+		return c.supportExpr(tipb.ExprType(subType))
+	case kv.ReqTypeAnalyze:
+		return true
 	}
 	return false
 }

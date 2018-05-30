@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
@@ -325,7 +326,9 @@ func (h *rpcHandler) handleKvBatchRollback(req *kvrpcpb.BatchRollbackRequest) *k
 }
 
 func (h *rpcHandler) handleKvScanLock(req *kvrpcpb.ScanLockRequest) *kvrpcpb.ScanLockResponse {
-	locks, err := h.mvccStore.ScanLock(h.startKey, h.endKey, req.GetMaxVersion())
+	startKey := MvccKey(h.startKey).Raw()
+	endKey := MvccKey(h.endKey).Raw()
+	locks, err := h.mvccStore.ScanLock(startKey, endKey, req.GetMaxVersion())
 	if err != nil {
 		return &kvrpcpb.ScanLockResponse{
 			Error: convertToKeyError(err),
@@ -337,7 +340,9 @@ func (h *rpcHandler) handleKvScanLock(req *kvrpcpb.ScanLockRequest) *kvrpcpb.Sca
 }
 
 func (h *rpcHandler) handleKvResolveLock(req *kvrpcpb.ResolveLockRequest) *kvrpcpb.ResolveLockResponse {
-	err := h.mvccStore.ResolveLock(h.startKey, h.endKey, req.GetStartVersion(), req.GetCommitVersion())
+	startKey := MvccKey(h.startKey).Raw()
+	endKey := MvccKey(h.endKey).Raw()
+	err := h.mvccStore.ResolveLock(startKey, endKey, req.GetStartVersion(), req.GetCommitVersion())
 	if err != nil {
 		return &kvrpcpb.ResolveLockResponse{
 			Error: convertToKeyError(err),
@@ -347,9 +352,15 @@ func (h *rpcHandler) handleKvResolveLock(req *kvrpcpb.ResolveLockRequest) *kvrpc
 }
 
 func (h *rpcHandler) handleKvDeleteRange(req *kvrpcpb.DeleteRangeRequest) *kvrpcpb.DeleteRangeResponse {
-	return &kvrpcpb.DeleteRangeResponse{
-		Error: "not implemented",
+	if !h.checkKeyInRegion(req.StartKey) {
+		panic("KvDeleteRange: key not in region")
 	}
+	var resp kvrpcpb.DeleteRangeResponse
+	err := h.mvccStore.DeleteRange(req.StartKey, req.EndKey)
+	if err != nil {
+		resp.Error = err.Error()
+	}
+	return &resp
 }
 
 func (h *rpcHandler) handleKvRawGet(req *kvrpcpb.RawGetRequest) *kvrpcpb.RawGetResponse {
@@ -384,6 +395,17 @@ func (h *rpcHandler) handleKvRawDelete(req *kvrpcpb.RawDeleteRequest) *kvrpcpb.R
 	}
 	rawKV.RawDelete(req.GetKey())
 	return &kvrpcpb.RawDeleteResponse{}
+}
+
+func (h *rpcHandler) handleKvRawDeleteRange(req *kvrpcpb.RawDeleteRangeRequest) *kvrpcpb.RawDeleteRangeResponse {
+	rawKV, ok := h.mvccStore.(RawKV)
+	if !ok {
+		return &kvrpcpb.RawDeleteRangeResponse{
+			Error: "not implemented",
+		}
+	}
+	rawKV.RawDeleteRange(req.GetStartKey(), req.GetEndKey())
+	return &kvrpcpb.RawDeleteRangeResponse{}
 }
 
 func (h *rpcHandler) handleKvRawScan(req *kvrpcpb.RawScanRequest) *kvrpcpb.RawScanResponse {
@@ -465,8 +487,8 @@ func (c *RPCClient) checkArgs(ctx context.Context, addr string) (*rpcHandler, er
 	return handler, nil
 }
 
-// SendReq sends a request to mock cluster.
-func (c *RPCClient) SendReq(ctx context.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+// SendRequest sends a request to mock cluster.
+func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	// gofail: var rpcServerBusy bool
 	// if rpcServerBusy {
 	//	return tikvrpc.GenRegionErrorResp(req, &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}})
@@ -575,7 +597,7 @@ func (c *RPCClient) SendReq(ctx context.Context, addr string, req *tikvrpc.Reque
 			resp.DeleteRange = &kvrpcpb.DeleteRangeResponse{RegionError: err}
 			return resp, nil
 		}
-		resp.DeleteRange = &kvrpcpb.DeleteRangeResponse{}
+		resp.DeleteRange = handler.handleKvDeleteRange(r)
 	case tikvrpc.CmdRawGet:
 		r := req.RawGet
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
@@ -597,6 +619,13 @@ func (c *RPCClient) SendReq(ctx context.Context, addr string, req *tikvrpc.Reque
 			return resp, nil
 		}
 		resp.RawDelete = handler.handleKvRawDelete(r)
+	case tikvrpc.CmdRawDeleteRange:
+		r := req.RawDeleteRange
+		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
+			resp.RawDeleteRange = &kvrpcpb.RawDeleteRangeResponse{RegionError: err}
+			return resp, nil
+		}
+		resp.RawDeleteRange = handler.handleKvRawDeleteRange(r)
 	case tikvrpc.CmdRawScan:
 		r := req.RawScan
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
@@ -642,7 +671,14 @@ func (c *RPCClient) SendReq(ctx context.Context, addr string, req *tikvrpc.Reque
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		streamResp := tikvrpc.NewCopStreamResponse(copStream, nil, cancel, c.streamTimeout)
+
+		streamResp := &tikvrpc.CopStreamResponse{
+			Tikv_CoprocessorStreamClient: copStream,
+		}
+		streamResp.Lease.Cancel = cancel
+		streamResp.Timeout = timeout
+		c.streamTimeout <- &streamResp.Lease
+
 		first, err := streamResp.Recv()
 		if err != nil {
 			return nil, errors.Trace(err)

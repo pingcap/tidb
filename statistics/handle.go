@@ -21,6 +21,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
@@ -71,8 +72,8 @@ func (h *Handle) Clear() {
 	h.globalMap = make(tableDeltaMap)
 }
 
-// For now, we do not use the query feedback, so just set it to 1.
-const maxQueryFeedBackCount = 1
+// MaxQueryFeedbackCount is the max number of feedback that cache in memory.
+var MaxQueryFeedbackCount = 1 << 10
 
 // NewHandle creates a Handle for update stats.
 func NewHandle(ctx sessionctx.Context, lease time.Duration) *Handle {
@@ -83,7 +84,7 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration) *Handle {
 		listHead:        &SessionStatsCollector{mapper: make(tableDeltaMap)},
 		globalMap:       make(tableDeltaMap),
 		Lease:           lease,
-		feedback:        make([]*QueryFeedback, 0, maxQueryFeedBackCount),
+		feedback:        make([]*QueryFeedback, 0, MaxQueryFeedbackCount),
 	}
 	handle.statsCache.Store(statsCache{})
 	return handle
@@ -128,7 +129,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 		tbl, err := h.tableStatsFromStorage(tableInfo, false)
 		// Error is not nil may mean that there are some ddl changes on this table, we will not update it.
 		if err != nil {
-			log.Errorf("Error occurred when read table stats for table id %d. The error message is %s.", tableID, errors.ErrorStack(err))
+			log.Debugf("Error occurred when read table stats for table %s. The error message is %s.", tableInfo.Name.O, errors.ErrorStack(err))
 			continue
 		}
 		if tbl == nil {
@@ -145,10 +146,12 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 }
 
 // GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
-func (h *Handle) GetTableStats(tblID int64) *Table {
-	tbl, ok := h.statsCache.Load().(statsCache)[tblID]
+func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *Table {
+	tbl, ok := h.statsCache.Load().(statsCache)[tblInfo.ID]
 	if !ok {
-		return PseudoTable(tblID)
+		tbl = PseudoTable(tblInfo)
+		h.UpdateTableStats([]*Table{tbl}, nil)
+		return tbl
 	}
 	return tbl
 }
@@ -179,13 +182,17 @@ func (h *Handle) UpdateTableStats(tables []*Table, deletedIDs []int64) {
 func (h *Handle) LoadNeededHistograms() error {
 	cols := histogramNeededColumns.allCols()
 	for _, col := range cols {
-		tbl := h.GetTableStats(col.tableID).copy()
+		tbl, ok := h.statsCache.Load().(statsCache)[col.tableID]
+		if !ok {
+			continue
+		}
+		tbl = tbl.copy()
 		c, ok := tbl.Columns[col.columnID]
 		if !ok || c.Len() > 0 {
 			histogramNeededColumns.delete(col)
 			continue
 		}
-		hg, err := histogramFromStorage(h.ctx, col.tableID, c.ID, &c.Info.FieldType, c.NDV, 0, c.LastUpdateVersion, c.NullCount)
+		hg, err := histogramFromStorage(h.ctx, col.tableID, c.ID, &c.Info.FieldType, c.NDV, 0, c.LastUpdateVersion, c.NullCount, c.TotColSize)
 		if err != nil {
 			return errors.Trace(err)
 		}

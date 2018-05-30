@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -192,6 +193,15 @@ func (t *testTableSuite) TestGetZeroValue(c *C) {
 		{
 			types.NewFieldType(mysql.TypeEnum),
 			types.NewDatum(types.Enum{}),
+		},
+		{
+			&types.FieldType{
+				Tp:      mysql.TypeString,
+				Flen:    2,
+				Charset: charset.CharsetBin,
+				Collate: charset.CollationBin,
+			},
+			types.NewDatum(make([]byte, 2)),
 		},
 	}
 	sc := new(stmtctx.StatementContext)

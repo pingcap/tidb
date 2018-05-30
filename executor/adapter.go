@@ -16,6 +16,7 @@ package executor
 import (
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/juju/errors"
@@ -30,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	log "github.com/sirupsen/logrus"
@@ -80,35 +80,13 @@ func schema2ResultFields(schema *expression.Schema, defaultDB string) (rfs []*as
 	return rfs
 }
 
-// Next uses recordSet's executor to get next available row.
-// If row is nil, then updates LastFoundRows in session variable.
-// If stmt and row are not nil, increase current FoundRows by 1.
-func (a *recordSet) Next(ctx context.Context) (types.Row, error) {
-	row, err := a.executor.Next(ctx)
-	if err != nil {
-		a.lastErr = err
-		return nil, errors.Trace(err)
-	}
-	if row == nil {
-		if a.stmt != nil {
-			a.stmt.Ctx.GetSessionVars().LastFoundRows = a.stmt.Ctx.GetSessionVars().StmtCtx.FoundRows()
-		}
-		return nil, nil
-	}
-
-	if a.stmt != nil {
-		a.stmt.Ctx.GetSessionVars().StmtCtx.AddFoundRows(1)
-	}
-	return row, nil
-}
-
-// NextChunk use uses recordSet's executor to get next available chunk for later usage.
+// Next use uses recordSet's executor to get next available chunk for later usage.
 // If chunk does not contain any rows, then we update last query found rows in session variable as current found rows.
 // The reason we need update is that chunk with 0 rows indicating we already finished current query, we need prepare for
 // next query.
 // If stmt is not nil and chunk with some rows inside, we simply update last query found rows by the number of row in chunk.
-func (a *recordSet) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
-	err := a.executor.NextChunk(ctx, chk)
+func (a *recordSet) Next(ctx context.Context, chk *chunk.Chunk) error {
+	err := a.executor.Next(ctx, chk)
 	if err != nil {
 		a.lastErr = err
 		return errors.Trace(err)
@@ -285,7 +263,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 		a.logSlowQuery(txnTS, err == nil)
 	}()
 
-	err = e.NextChunk(ctx, e.newChunk())
+	err = e.Next(ctx, e.newChunk())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -302,10 +280,10 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 		var err error
 		isPointGet := IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, a.Plan)
 		if isPointGet {
-			log.Debugf("[%d][InitTxnWithStartTS] %s", ctx.GetSessionVars().ConnectionID, a.Text)
+			log.Debugf("[con:%d][InitTxnWithStartTS] %s", ctx.GetSessionVars().ConnectionID, a.Text)
 			err = ctx.InitTxnWithStartTS(math.MaxUint64)
 		} else {
-			log.Debugf("[%d][ActivePendingTxn] %s", ctx.GetSessionVars().ConnectionID, a.Text)
+			log.Debugf("[con:%d][ActivePendingTxn] %s", ctx.GetSessionVars().ConnectionID, a.Text)
 			err = ctx.ActivePendingTxn()
 		}
 		if err != nil {
@@ -364,18 +342,17 @@ func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
 	}
 	connID := a.Ctx.GetSessionVars().ConnectionID
 	currentDB := a.Ctx.GetSessionVars().CurrentDB
-	logEntry := log.NewEntry(logutil.SlowQueryLogger)
-	logEntry.Data = log.Fields{
-		"connectionId": connID,
-		"costTime":     costTime,
-		"database":     currentDB,
-		"sql":          sql,
-		"txnStartTS":   txnTS,
-	}
+	tableIDs := strings.Replace(fmt.Sprintf("%v", a.Ctx.GetSessionVars().StmtCtx.TableIDs), " ", ",", -1)
+	indexIDs := strings.Replace(fmt.Sprintf("%v", a.Ctx.GetSessionVars().StmtCtx.IndexIDs), " ", ",", -1)
+
 	if costTime < threshold {
-		logEntry.WithField("type", "query").WithField("succ", succ).Debugf("query")
+		logutil.SlowQueryLogger.Debugf(
+			"[QUERY] cost_time:%v succ:%v connection_id:%v txn_start_ts:%v database:%v table_ids:%v index_ids:%v sql:%v",
+			costTime, succ, connID, txnTS, currentDB, tableIDs, indexIDs, sql)
 	} else {
-		logEntry.WithField("type", "slow-query").WithField("succ", succ).Warnf("slow-query")
+		logutil.SlowQueryLogger.Warnf(
+			"[SLOW_QUERY] cost_time:%v succ:%v connection_id:%v txn_start_ts:%v database:%v table_ids:%v index_ids:%v sql:%v",
+			costTime, succ, connID, txnTS, currentDB, tableIDs, indexIDs, sql)
 	}
 }
 

@@ -19,7 +19,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
@@ -38,9 +37,6 @@ const (
 	distinctFactor     = 0.8
 	cpuFactor          = 0.9
 )
-
-// JoinConcurrency means the number of goroutines that participate in joining.
-var JoinConcurrency uint = 5
 
 // wholeTaskTypes records all possible kinds of task that a plan can return. For Agg, TopN and Limit, we will try to get
 // these tasks one by one.
@@ -67,7 +63,7 @@ func getPropByOrderByItems(items []*ByItems) (*requiredProp, bool) {
 	return &requiredProp{cols: cols, desc: desc}, true
 }
 
-func (p *LogicalTableDual) convert2PhysicalPlan(prop *requiredProp) (task, error) {
+func (p *LogicalTableDual) findBestTask(prop *requiredProp) (task, error) {
 	if !prop.isEmpty() {
 		return invalidTask, nil
 	}
@@ -76,43 +72,44 @@ func (p *LogicalTableDual) convert2PhysicalPlan(prop *requiredProp) (task, error
 	return &rootTask{p: dual}, nil
 }
 
-// convert2PhysicalPlan implements LogicalPlan interface.
-func (p *baseLogicalPlan) convert2PhysicalPlan(prop *requiredProp) (t task, err error) {
+// findBestTask implements LogicalPlan interface.
+func (p *baseLogicalPlan) findBestTask(prop *requiredProp) (bestTask task, err error) {
 	// Look up the task with this prop in the task map.
 	// It's used to reduce double counting.
-	t = p.getTask(prop)
-	if t != nil {
-		return t, nil
+	bestTask = p.getTask(prop)
+	if bestTask != nil {
+		return bestTask, nil
 	}
-	t = invalidTask
+
 	if prop.taskTp != rootTaskType {
 		// Currently all plan cannot totally push down.
-		p.storeTask(prop, t)
-		return t, nil
+		p.storeTask(prop, invalidTask)
+		return invalidTask, nil
 	}
-	for _, pp := range p.self.genPhysPlansByReqProp(prop) {
-		t, err = p.getBestTask(t, pp)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	p.storeTask(prop, t)
-	return t, nil
-}
 
-func (p *baseLogicalPlan) getBestTask(bestTask task, pp PhysicalPlan) (task, error) {
-	tasks := make([]task, 0, len(p.children))
-	for i, child := range p.children {
-		childTask, err := child.convert2PhysicalPlan(pp.getChildReqProps(i))
-		if err != nil {
-			return nil, errors.Trace(err)
+	bestTask = invalidTask
+	childTasks := make([]task, 0, len(p.children))
+	for _, pp := range p.self.exhaustPhysicalPlans(prop) {
+		// find best child tasks firstly.
+		childTasks = childTasks[:0]
+		for i, child := range p.children {
+			childTask, err := child.findBestTask(pp.getChildReqProps(i))
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			childTasks = append(childTasks, childTask)
 		}
-		tasks = append(tasks, childTask)
+
+		// combine best child tasks with parent physical plan.
+		curTask := pp.attach2Task(childTasks...)
+
+		// get the most efficient one.
+		if curTask.cost() < bestTask.cost() {
+			bestTask = curTask
+		}
 	}
-	resultTask := pp.attach2Task(tasks...)
-	if resultTask.cost() < bestTask.cost() {
-		bestTask = resultTask
-	}
+
+	p.storeTask(prop, bestTask)
 	return bestTask, nil
 }
 
@@ -121,10 +118,7 @@ func (ds *DataSource) tryToGetMemTask(prop *requiredProp) (task task, err error)
 	if !prop.isEmpty() {
 		return nil, nil
 	}
-	client := ds.ctx.GetClient()
-	memDB := infoschema.IsMemoryDB(ds.DBName.L)
-	isDistReq := !memDB && client != nil && client.IsRequestTypeSupported(kv.ReqTypeSelect, 0)
-	if isDistReq {
+	if !infoschema.IsMemoryDB(ds.DBName.L) {
 		return nil, nil
 	}
 
@@ -169,9 +163,9 @@ func (ds *DataSource) tryToGetDualTask() (task, error) {
 	return nil, nil
 }
 
-// convert2PhysicalPlan implements the PhysicalPlan interface.
+// findBestTask implements the PhysicalPlan interface.
 // It will enumerate all the available indices and choose a plan with least cost.
-func (ds *DataSource) convert2PhysicalPlan(prop *requiredProp) (task, error) {
+func (ds *DataSource) findBestTask(prop *requiredProp) (task, error) {
 	// If ds is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself.
 	// So here we do nothing.
 	// TODO: Add a special prop to handle IndexJoin's inner plan.
@@ -275,7 +269,7 @@ func (ds *DataSource) forceToIndexScan(idx *model.IndexInfo, remainedConds []exp
 		cop.tablePlan = ts
 	}
 	is.initSchema(ds.id, idx, cop.tablePlan != nil)
-	is.addPushedDownSelection(cop, ds, math.MaxFloat64)
+	is.addPushedDownSelection(cop, ds, math.MaxFloat64, float64(ds.statisticTable.Count))
 	t := finishCopTask(ds.ctx, cop)
 	return t.plan()
 }
@@ -306,7 +300,7 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInf
 	if statsTbl.Indices[idx.ID] != nil {
 		is.Hist = &statsTbl.Indices[idx.ID].Histogram
 	}
-	rowCount := float64(statsTbl.Count)
+	countAfterAccess := float64(statsTbl.Count)
 	sc := ds.ctx.GetSessionVars().StmtCtx
 	idxCols, colLengths := expression.IndexInfo2Cols(ds.Schema().Columns, idx)
 	is.Ranges = ranger.FullNewRange()
@@ -314,11 +308,11 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInf
 	if len(ds.pushedDownConds) > 0 {
 		is.conditions = ds.pushedDownConds
 		if len(idxCols) > 0 {
-			is.Ranges, is.AccessCondition, is.filterCondition, eqCount, err = ranger.DetachCondAndBuildRangeForIndex(sc, ds.pushedDownConds, idxCols, colLengths)
+			is.Ranges, is.AccessCondition, is.filterCondition, eqCount, err = ranger.DetachCondAndBuildRangeForIndex(ds.ctx, ds.pushedDownConds, idxCols, colLengths)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			rowCount, err = statsTbl.GetRowCountByIndexRanges(sc, is.Index.ID, is.Ranges)
+			countAfterAccess, err = statsTbl.GetRowCountByIndexRanges(sc, is.Index.ID, is.Ranges)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -357,13 +351,10 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInf
 	// Only use expectedCnt when it's smaller than the count we calculated.
 	// e.g. IndexScan(count1)->After Filter(count2). The `ds.statsAfterSelect.count` is count2. count1 is the one we need to calculate
 	// If expectedCnt and count2 are both zero and we go into the below `if` block, the count1 will be set to zero though it's shouldn't be.
-	if matchProperty && prop.expectedCnt < ds.statsAfterSelect.count {
-		selectivity, err := statsTbl.Selectivity(ds.ctx, is.filterCondition)
-		if err != nil {
-			log.Warnf("An error happened: %v, we have to use the default selectivity", err.Error())
-			selectivity = selectionFactor
-		}
-		rowCount = math.Min(prop.expectedCnt/selectivity, rowCount)
+	rowCount := countAfterAccess
+	if (matchProperty || prop.isEmpty()) && prop.expectedCnt < ds.statsAfterSelect.count {
+		selectivity := ds.statsAfterSelect.count / countAfterAccess
+		rowCount = math.Min(prop.expectedCnt/selectivity, countAfterAccess)
 	}
 	is.stats = ds.stats.scaleByExpectCnt(rowCount)
 	cop.cst = rowCount * scanFactor
@@ -378,7 +369,7 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInf
 		}
 		cop.keepOrder = true
 		is.KeepOrder = true
-		is.addPushedDownSelection(cop, ds, prop.expectedCnt)
+		is.addPushedDownSelection(cop, ds, prop.expectedCnt, countAfterAccess)
 	} else {
 		expectedCnt := math.MaxFloat64
 		if prop.isEmpty() {
@@ -386,7 +377,7 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInf
 		} else {
 			return invalidTask, nil
 		}
-		is.addPushedDownSelection(cop, ds, expectedCnt)
+		is.addPushedDownSelection(cop, ds, expectedCnt, countAfterAccess)
 	}
 	if prop.taskTp == rootTaskType {
 		task = finishCopTask(ds.ctx, task)
@@ -417,7 +408,7 @@ func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, isDoubleRe
 	is.SetSchema(expression.NewSchema(indexCols...))
 }
 
-func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSource, expectedCnt float64) {
+func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSource, expectedCnt, countAfterAccess float64) {
 	// Add filter condition to table plan now.
 	if len(is.filterCondition) > 0 {
 		var indexConds, tableConds []expression.Expression
@@ -427,8 +418,17 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 			indexConds = is.filterCondition
 		}
 		if indexConds != nil {
-			indexSel := PhysicalSelection{Conditions: indexConds}.init(is.ctx,
-				p.getStatsByFilter(append(is.AccessCondition, indexConds...)).scaleByExpectCnt(expectedCnt))
+			selectivity := 1.0
+			if countAfterAccess >= 1.0 {
+				indexSelectivity, err := p.statisticTable.Selectivity(p.ctx, indexConds)
+				if err != nil {
+					log.Debugf("An error happened: %v, we have to use the default selectivity", err.Error())
+					indexSelectivity = selectionFactor
+				}
+				countAfterIndex := math.Max(countAfterAccess*indexSelectivity, p.statsAfterSelect.count)
+				selectivity = countAfterIndex / countAfterAccess
+			}
+			indexSel := PhysicalSelection{Conditions: indexConds}.init(is.ctx, is.stats.scale(selectivity))
 			indexSel.SetChildren(is)
 			copTask.indexPlan = indexSel
 			copTask.cst += copTask.count() * cpuFactor
@@ -578,12 +578,8 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp) (task task, err err
 	// Only use expectedCnt when it's smaller than the count we calculated.
 	// e.g. IndexScan(count1)->After Filter(count2). The `ds.statsAfterSelect.count` is count2. count1 is the one we need to calculate
 	// If expectedCnt and count2 are both zero and we go into the below `if` block, the count1 will be set to zero though it's shouldn't be.
-	if matchProperty && prop.expectedCnt < ds.statsAfterSelect.count {
-		selectivity, err := statsTbl.Selectivity(ds.ctx, ts.filterCondition)
-		if err != nil {
-			log.Warnf("An error happened: %v, we have to use the default selectivity", err.Error())
-			selectivity = selectionFactor
-		}
+	if (matchProperty || prop.isEmpty()) && prop.expectedCnt < ds.statsAfterSelect.count {
+		selectivity := ds.statsAfterSelect.count / rowCount
 		rowCount = math.Min(prop.expectedCnt/selectivity, rowCount)
 	}
 	ts.stats = ds.stats.scaleByExpectCnt(rowCount)

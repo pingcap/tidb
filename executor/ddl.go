@@ -38,8 +38,8 @@ type DDLExec struct {
 	done bool
 }
 
-// NextChunk implements the Executor NextChunk interface.
-func (e *DDLExec) NextChunk(ctx context.Context, chk *chunk.Chunk) (err error) {
+// Next implements the Executor Next interface.
+func (e *DDLExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 	if e.done {
 		return nil
 	}
@@ -120,20 +120,7 @@ func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
 }
 
 func (e *DDLExec) executeCreateTable(s *ast.CreateTableStmt) error {
-	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
-	var err error
-	if s.ReferTable == nil {
-		err = domain.GetDomain(e.ctx).DDL().CreateTable(e.ctx, ident, s.Cols, s.Constraints, s.Options)
-	} else {
-		referIdent := ast.Ident{Schema: s.ReferTable.Schema, Name: s.ReferTable.Name}
-		err = domain.GetDomain(e.ctx).DDL().CreateTableWithLike(e.ctx, ident, referIdent)
-	}
-	if infoschema.ErrTableExists.Equal(err) {
-		if s.IfNotExists {
-			return nil
-		}
-		return err
-	}
+	err := domain.GetDomain(e.ctx).DDL().CreateTable(e.ctx, s)
 	return errors.Trace(err)
 }
 

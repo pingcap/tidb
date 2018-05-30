@@ -90,7 +90,7 @@ func (h *benchHelper) init() {
 		h.inputChunk.AppendFloat64(1, 2.019)
 		h.inputChunk.AppendMyDecimal(2, types.NewDecFromFloatForTest(5.9101))
 		for i := 0; i < 20; i++ {
-			h.inputChunk.AppendString(3+i, "abcdefughasfjsaljal1321798273528791!&(*#&@&^%&%^&!)sadfashqwer")
+			h.inputChunk.AppendString(3+i, `abcdefughasfjsaljal1321798273528791!&(*#&@&^%&%^&!)sadfashqwer`)
 		}
 	}
 
@@ -174,4 +174,17 @@ func BenchmarkVectorizedExecute(b *testing.B) {
 			panic("errors happened during \"VectorizedExecute\"")
 		}
 	}
+}
+
+func BenchmarkScalarFunctionClone(b *testing.B) {
+	col := &Column{RetType: types.NewFieldType(mysql.TypeLonglong)}
+	con1 := One.Clone()
+	con2 := Zero.Clone()
+	add := NewFunctionInternal(mock.NewContext(), ast.Plus, types.NewFieldType(mysql.TypeLonglong), col, con1)
+	sub := NewFunctionInternal(mock.NewContext(), ast.Plus, types.NewFieldType(mysql.TypeLonglong), add, con2)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		sub.Clone()
+	}
+	b.ReportAllocs()
 }

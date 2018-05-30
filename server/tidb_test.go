@@ -95,6 +95,11 @@ func (ts *TidbTestSuite) TestPreparedString(c *C) {
 	runTestPreparedString(c)
 }
 
+func (ts *TidbTestSuite) TestPreparedTimestamp(c *C) {
+	c.Parallel()
+	runTestPreparedTimestamp(c)
+}
+
 func (ts *TidbTestSuite) TestLoadData(c *C) {
 	c.Parallel()
 	runTestLoadData(c, suite.server)
@@ -400,7 +405,7 @@ func (ts *TidbTestSuite) TestCreateTableFlen(c *C) {
 	c.Assert(err, IsNil)
 	rs, err := qctx.Execute(ctx, "show create table t1")
 	chk := rs[0].NewChunk()
-	err = rs[0].NextChunk(ctx, chk)
+	err = rs[0].Next(ctx, chk)
 	c.Assert(err, IsNil)
 	cols := rs[0].Columns()
 	c.Assert(err, IsNil)
@@ -429,7 +434,7 @@ func (ts *TidbTestSuite) TestShowTablesFlen(c *C) {
 	c.Assert(err, IsNil)
 	rs, err := qctx.Execute(ctx, "show tables")
 	chk := rs[0].NewChunk()
-	err = rs[0].NextChunk(ctx, chk)
+	err = rs[0].Next(ctx, chk)
 	c.Assert(err, IsNil)
 	cols := rs[0].Columns()
 	c.Assert(err, IsNil)

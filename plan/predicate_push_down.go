@@ -63,7 +63,10 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression)
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
 	p.children[0].PredicatePushDown(predicates)
-	p.conditions = predicates
+	p.conditions = make([]expression.Expression, 0, len(predicates))
+	for _, cond := range predicates {
+		p.conditions = append(p.conditions, cond.Clone())
+	}
 	return nil, p
 }
 
@@ -130,8 +133,14 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	case InnerJoin:
 		p.LeftConditions = nil
 		p.RightConditions = nil
-		p.EqualConditions = equalCond
-		p.OtherConditions = otherCond
+		p.EqualConditions = make([]*expression.ScalarFunction, 0, len(equalCond))
+		for _, cond := range equalCond {
+			p.EqualConditions = append(p.EqualConditions, cond.Clone().(*expression.ScalarFunction))
+		}
+		p.OtherConditions = make([]expression.Expression, 0, len(otherCond))
+		for _, cond := range otherCond {
+			p.OtherConditions = append(p.OtherConditions, cond.Clone())
+		}
 		leftCond = leftPushCond
 		rightCond = rightPushCond
 	}
@@ -189,9 +198,11 @@ func (p *LogicalProjection) appendExpr(expr expression.Expression) *expression.C
 	}
 	expr = expression.ColumnSubstitute(expr, p.schema, p.Exprs)
 	p.Exprs = append(p.Exprs, expr)
+
+	newPosition := p.schema.Columns[p.schema.Len()-1].Position + 1
 	col := &expression.Column{
 		FromID:   p.id,
-		Position: p.schema.Len(),
+		Position: newPosition,
 		ColName:  model.NewCIStr(expr.String()),
 		RetType:  expr.GetType(),
 	}

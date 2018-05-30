@@ -150,7 +150,7 @@
   branch = "master"
   name = "github.com/ngaut/pools"
   packages = ["."]
-  revision = "6352e005618615ffaf1cb1c6622b8e91435751fe"
+  revision = "b7bc8c42aac787667ba45adea78233f53f548443"
 
 [[projects]]
   branch = "master"
@@ -210,7 +210,7 @@
     "pkg/raft_serverpb",
     "pkg/tikvpb"
   ]
-  revision = "7b013aefd7210f4f4dbfca3330b462ddce5dd496"
+  revision = "2cf2492c337c4d0281d8ead8686d47764f1df6c4"
 
 [[projects]]
   name = "github.com/pingcap/pd"
@@ -235,7 +235,7 @@
     "go-tipb",
     "sharedbytes"
   ]
-  revision = "2479f439c9cdd1bf7783dd1eaa4b7187b16d0638"
+  revision = "2d5073e5521a10f8db2adc0eaab2c46ca0a151d9"
 
 [[projects]]
   name = "github.com/prometheus/client_golang"
@@ -268,8 +268,7 @@
 [[projects]]
   name = "github.com/sirupsen/logrus"
   packages = ["."]
-  revision = "ba1b36c82c5e05c4f912a88eab0dcd91a171688f"
-  version = "v0.11.5"
+  revision = "3bcb09397d6d88e7676a9bc8433ca11ba5304837"
 
 [[projects]]
   name = "github.com/spaolacci/murmur3"
@@ -319,9 +318,10 @@
   revision = "d1e1b351919c6738fdeb9893d5c998b161464f0c"
 
 [[projects]]
+  branch = "master"
   name = "golang.org/x/sys"
   packages = ["unix"]
-  revision = "a646d33e2ee3172a661fc09bca23bb4889a41bc8"
+  revision = "7dfd1290c7917b7ba22824b9d24954ab3002fe24"
 
 [[projects]]
   name = "golang.org/x/text"
@@ -392,6 +392,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "92c7c81ac2ac3df66a63416a81e48b40ad4812849569a9dcefb4a9aa2a6f4cbd"
+  inputs-digest = "c9bf9c629dadfe898905efb770e22e92f1d0bf5acb97b815d109aa5123ee7771"
   solver-name = "gps-cdcl"
   solver-version = 1

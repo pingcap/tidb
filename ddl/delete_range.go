@@ -234,6 +234,16 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 		startKey := tablecodec.EncodeTablePrefix(tableID)
 		endKey := tablecodec.EncodeTablePrefix(tableID + 1)
 		return doInsert(s, job.ID, tableID, startKey, endKey, now)
+	// ActionAddIndex needs do it, because it needs to be rolled back when it's canceled.
+	case model.ActionAddIndex:
+		tableID := job.TableID
+		var indexID int64
+		if err := job.DecodeArgs(&indexID); err != nil {
+			return errors.Trace(err)
+		}
+		startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
+		endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
+		return doInsert(s, job.ID, indexID, startKey, endKey, now)
 	case model.ActionDropIndex:
 		tableID := job.TableID
 		var indexName interface{}

@@ -17,7 +17,6 @@ import (
 	"sort"
 
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 )
@@ -150,11 +149,7 @@ func cmpBit(l Row, lCol int, r Row, rCol int) int {
 	}
 	lBit := types.BinaryLiteral(l.GetBytes(lCol))
 	rBit := types.BinaryLiteral(r.GetBytes(rCol))
-	lUint, err := lBit.ToInt()
-	terror.Log(err)
-	rUint, err := rBit.ToInt()
-	terror.Log(err)
-	return types.CompareUint64(lUint, rUint)
+	return lBit.Compare(rBit)
 }
 
 func cmpJSON(l Row, lCol int, r Row, rCol int) int {

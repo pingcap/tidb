@@ -181,6 +181,7 @@ func (w *GCWorker) tick(ctx context.Context) {
 	isLeader, err := w.checkLeader()
 	if err != nil {
 		log.Warnf("[gc worker] check leader err: %v", err)
+		gcJobFailureCounter.WithLabelValues("check_leader").Inc()
 		return
 	}
 	if isLeader {
@@ -220,6 +221,9 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 
 	ok, safePoint, err := w.prepare()
 	if err != nil || !ok {
+		if err != nil {
+			gcJobFailureCounter.WithLabelValues("prepare").Inc()
+		}
 		w.gcIsRunning = false
 		return errors.Trace(err)
 	}
@@ -666,6 +670,16 @@ func (w *GCWorker) genNextGCTask(bo *tikv.Backoffer, safePoint uint64, key kv.Ke
 }
 
 func (w *GCWorker) doGC(ctx context.Context, safePoint uint64) error {
+	concurrency, err := w.loadGCConcurrencyWithDefault()
+	if err != nil {
+		log.Errorf("[gc worker] %s failed to load gcConcurrency, err %s", w.uuid, err)
+		concurrency = gcDefaultConcurrency
+	}
+
+	return w.doGCInternal(ctx, safePoint, concurrency)
+}
+
+func (w *GCWorker) doGCInternal(ctx context.Context, safePoint uint64, concurrency int) error {
 	gcWorkerCounter.WithLabelValues("do_gc").Inc()
 
 	err := w.saveSafePoint(w.store.GetSafePointKV(), tikv.GcSavedSafePoint, safePoint)
@@ -675,12 +689,6 @@ func (w *GCWorker) doGC(ctx context.Context, safePoint uint64) error {
 
 	// Sleep to wait for all other tidb instances update their safepoint cache.
 	time.Sleep(gcSafePointCacheInterval)
-
-	concurrency, err := w.loadGCConcurrencyWithDefault()
-	if err != nil {
-		log.Errorf("[gc worker] %s failed to load gcConcurrency, err %s", w.uuid, err)
-		concurrency = gcDefaultConcurrency
-	}
 
 	log.Infof("[gc worker] %s start gc, concurrency %v, safePoint: %v.", w.uuid, concurrency, safePoint)
 	startTime := time.Now()
@@ -876,7 +884,7 @@ func (w *GCWorker) loadDurationWithDefault(key string, def time.Duration) (*time
 
 func (w *GCWorker) loadValueFromSysTable(key string, s session.Session) (string, error) {
 	ctx := context.Background()
-	stmt := fmt.Sprintf(`SELECT (variable_value) FROM mysql.tidb WHERE variable_name='%s' FOR UPDATE`, key)
+	stmt := fmt.Sprintf(`SELECT HIGH_PRIORITY (variable_value) FROM mysql.tidb WHERE variable_name='%s' FOR UPDATE`, key)
 	rs, err := s.Execute(ctx, stmt)
 	if len(rs) > 0 {
 		defer terror.Call(rs[0].Close)
@@ -885,7 +893,7 @@ func (w *GCWorker) loadValueFromSysTable(key string, s session.Session) (string,
 		return "", errors.Trace(err)
 	}
 	chk := rs[0].NewChunk()
-	err = rs[0].NextChunk(ctx, chk)
+	err = rs[0].Next(ctx, chk)
 	if err != nil {
 		return "", errors.Trace(err)
 	}
@@ -909,6 +917,24 @@ func (w *GCWorker) saveValueToSysTable(key, value string, s session.Session) err
 	_, err := s.Execute(context.Background(), stmt)
 	log.Debugf("[gc worker] save kv, %s:%s %v", key, value, err)
 	return errors.Trace(err)
+}
+
+// RunGCJob sends GC command to KV. it is exported for kv api, do not use it with GCWorker at the same time.
+func RunGCJob(ctx context.Context, s tikv.Storage, safePoint uint64, identifier string) error {
+	gcWorker := &GCWorker{
+		store: s,
+		uuid:  identifier,
+	}
+
+	err := gcWorker.resolveLocks(ctx, safePoint)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = gcWorker.doGCInternal(ctx, safePoint, gcDefaultConcurrency)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 // MockGCWorker is for test.

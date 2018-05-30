@@ -45,7 +45,6 @@ type Config struct {
 	Store           string `toml:"store" json:"store"`
 	Path            string `toml:"path" json:"path"`
 	Socket          string `toml:"socket" json:"socket"`
-	BinlogSocket    string `toml:"binlog-socket" json:"binlog-socket"`
 	Lease           string `toml:"lease" json:"lease"`
 	RunDDL          bool   `toml:"run-ddl" json:"run-ddl"`
 	SplitTable      bool   `toml:"split-table" json:"split-table"`
@@ -66,6 +65,7 @@ type Config struct {
 	OpenTracing       OpenTracing       `toml:"opentracing" json:"opentracing"`
 	ProxyProtocol     ProxyProtocol     `toml:"proxy-protocol" json:"proxy-protocol"`
 	TiKVClient        TiKVClient        `toml:"tikv-client" json:"tikv-client"`
+	Binlog            Binlog            `toml:"binlog" json:"binlog"`
 }
 
 // Log is the log section of config.
@@ -141,14 +141,16 @@ type Status struct {
 
 // Performance is the performance section of the config.
 type Performance struct {
-	MaxProcs        uint   `toml:"max-procs" json:"max-procs"`
-	TCPKeepAlive    bool   `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
-	RetryLimit      uint   `toml:"retry-limit" json:"retry-limit"`
-	JoinConcurrency uint   `toml:"join-concurrency" json:"join-concurrency"`
-	CrossJoin       bool   `toml:"cross-join" json:"cross-join"`
-	StatsLease      string `toml:"stats-lease" json:"stats-lease"`
-	RunAutoAnalyze  bool   `toml:"run-auto-analyze" json:"run-auto-analyze"`
-	StmtCountLimit  uint   `toml:"stmt-count-limit" json:"stmt-count-limit"`
+	MaxProcs            uint    `toml:"max-procs" json:"max-procs"`
+	TCPKeepAlive        bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
+	RetryLimit          uint    `toml:"retry-limit" json:"retry-limit"`
+	CrossJoin           bool    `toml:"cross-join" json:"cross-join"`
+	StatsLease          string  `toml:"stats-lease" json:"stats-lease"`
+	RunAutoAnalyze      bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
+	StmtCountLimit      uint    `toml:"stmt-count-limit" json:"stmt-count-limit"`
+	FeedbackProbability float64 `toml:"feedback-probability" json:"feedback-probability"`
+	QueryFeedbackLimit  uint    `toml:"query-feedback-limit" json:"query-feedback-limit"`
+	PseudoEstimateRatio float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
 }
 
 // XProtocol is the XProtocol section of the config.
@@ -218,6 +220,15 @@ type TiKVClient struct {
 	CommitTimeout string `toml:"commit-timeout" json:"commit-timeout"`
 }
 
+// Binlog is the config for binlog.
+type Binlog struct {
+	BinlogSocket string `toml:"binlog-socket" json:"binlog-socket"`
+	WriteTimeout string `toml:"write-timeout" json:"write-timeout"`
+	// If IgnoreError is true, when writting binlog meets error, TiDB would
+	// ignore the error.
+	IgnoreError bool `toml:"ignore-error" json:"ignore-error"`
+}
+
 var defaultConf = Config{
 	Host:                "0.0.0.0",
 	Port:                4000,
@@ -225,7 +236,7 @@ var defaultConf = Config{
 	Path:                "/tmp/tidb",
 	RunDDL:              true,
 	SplitTable:          true,
-	Lease:               "10s",
+	Lease:               "45s",
 	TokenLimit:          1000,
 	OOMAction:           "log",
 	EnableStreaming:     false,
@@ -247,13 +258,15 @@ var defaultConf = Config{
 		MetricsInterval: 15,
 	},
 	Performance: Performance{
-		TCPKeepAlive:    true,
-		RetryLimit:      10,
-		JoinConcurrency: 5,
-		CrossJoin:       true,
-		StatsLease:      "3s",
-		RunAutoAnalyze:  true,
-		StmtCountLimit:  5000,
+		TCPKeepAlive:        true,
+		RetryLimit:          10,
+		CrossJoin:           true,
+		StatsLease:          "3s",
+		RunAutoAnalyze:      true,
+		StmtCountLimit:      5000,
+		FeedbackProbability: 0,
+		QueryFeedbackLimit:  1024,
+		PseudoEstimateRatio: 0.7,
 	},
 	XProtocol: XProtocol{
 		XHost: "",
@@ -283,6 +296,9 @@ var defaultConf = Config{
 	TiKVClient: TiKVClient{
 		GrpcConnectionCount: 16,
 		CommitTimeout:       "41s",
+	},
+	Binlog: Binlog{
+		WriteTimeout: "15s",
 	},
 }
 
