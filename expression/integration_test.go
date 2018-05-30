@@ -3245,6 +3245,29 @@ func (s *testIntegrationSuite) TestIssues(c *C) {
 	tk.MustQuery("select * from t where cast(a as binary)").Check(testkit.Rows("1"))
 }
 
+func (s *testIntegrationSuite) TestInPredicate4UnsignedInt(c *C) {
+	// for issue #6661
+	tk := testkit.NewTestKit(c, s.store)
+	defer s.cleanEnv(c)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (a bigint unsigned,key (a));")
+	tk.MustExec("INSERT INTO t VALUES (0), (4), (5), (6), (7), (8), (9223372036854775810), (18446744073709551614), (18446744073709551615);")
+	r := tk.MustQuery(`SELECT a FROM t WHERE a NOT IN (-1, -2, 18446744073709551615);`)
+	r.Check(testkit.Rows("0", "4", "5", "6", "7", "8", "9223372036854775810", "18446744073709551614"))
+	r = tk.MustQuery(`SELECT a FROM t WHERE a NOT IN (-1, -2, 4, 9223372036854775810);`)
+	r.Check(testkit.Rows("0", "5", "6", "7", "8", "18446744073709551614", "18446744073709551615"))
+	r = tk.MustQuery(`SELECT a FROM t WHERE a NOT IN (-1, -2, 0, 4, 18446744073709551614);`)
+	r.Check(testkit.Rows("5", "6", "7", "8", "9223372036854775810", "18446744073709551615"))
+
+	// for issue #4473
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t1 (some_id smallint(5) unsigned,key (some_id) )")
+	tk.MustExec("insert into t1 values (1),(2)")
+	r = tk.MustQuery(`select some_id from t1 where some_id not in(2,-1);`)
+	r.Check(testkit.Rows("1"))
+}
+
 func (s *testIntegrationSuite) TestFilterExtractFromDNF(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer s.cleanEnv(c)
