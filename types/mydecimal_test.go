@@ -380,13 +380,21 @@ func (s *testMyDecimalSuite) TestFromString(c *C) {
 		{"1234500009876.5", "1234500009876.5", nil},
 		{"123E5", "12300000", nil},
 		{"123E-2", "1.23", nil},
+		{"1e1073741823", "999999999999999999999999999999999999999999999999999999999999999999999999999999999", ErrOverflow},
+		{"1e18446744073709551620", "0", ErrBadNumber},
+		{"1e", "1", ErrTruncated},
+		{"1e001", "10", nil},
+		{"1e00", "1", nil},
+		{"1eabc", "1", ErrTruncated},
+		{"1e 1dddd ", "10", ErrTruncated},
+		{"1e - 1", "1", ErrTruncated},
+		{"1e -1", "0.1", nil},
 	}
 	for _, ca := range tests {
 		var dec MyDecimal
 		err := dec.FromString([]byte(ca.input))
-		c.Check(err, Equals, ca.err)
+		c.Check(err, Equals, ca.err, Commentf("input: %s", ca.input))
 		result := dec.ToString()
-		c.Check(err, IsNil)
 		c.Check(string(result), Equals, ca.output, Commentf("dec:%s", dec.String()))
 	}
 	wordBufLen = 1
