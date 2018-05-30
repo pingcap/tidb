@@ -254,6 +254,21 @@ func CompareIndexData(sessCtx sessionctx.Context, txn kv.Transaction, t table.Ta
 	return CheckRecordAndIndex(sessCtx, txn, t, idx)
 }
 
+func getIndexFieldTypes(t table.Table, idx table.Index) ([]*types.FieldType, error) {
+	idxColumns := idx.Meta().Columns
+	tblColumns := t.Meta().Columns
+	fieldTypes := make([]*types.FieldType, 0, len(idxColumns))
+	for _, col := range idxColumns {
+		colInfo := model.FindColumnInfo(tblColumns, col.Name.L)
+		if colInfo == nil {
+			return nil, errors.Errorf("index col:%v not found in table:%v", col.Name.String(), t.Meta().Name.String())
+		}
+
+		fieldTypes = append(fieldTypes, &colInfo.FieldType)
+	}
+	return fieldTypes, nil
+}
+
 func checkIndexAndRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table.Table, idx table.Index) error {
 	it, err := idx.SeekFirst(txn)
 	if err != nil {
@@ -266,6 +281,10 @@ func checkIndexAndRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table
 		cols[i] = t.Cols()[col.Offset]
 	}
 
+	fieldTypes, err := getIndexFieldTypes(t, idx)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	for {
 		vals1, h, err := it.Next()
 		if terror.ErrorEqual(err, io.EOF) {
@@ -274,6 +293,10 @@ func checkIndexAndRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table
 			return errors.Trace(err)
 		}
 
+		vals1, err = tablecodec.UnflattenDatums(vals1, fieldTypes, sessCtx.GetSessionVars().GetTimeZone())
+		if err != nil {
+			return errors.Trace(err)
+		}
 		vals2, err := rowWithCols(sessCtx, txn, t, h, cols)
 		if kv.ErrNotExist.Equal(err) {
 			record := &RecordData{Handle: h, Values: vals1}

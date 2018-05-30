@@ -198,9 +198,11 @@ func (p *LogicalProjection) appendExpr(expr expression.Expression) *expression.C
 	}
 	expr = expression.ColumnSubstitute(expr, p.schema, p.Exprs)
 	p.Exprs = append(p.Exprs, expr)
+
+	newPosition := p.schema.Columns[p.schema.Len()-1].Position + 1
 	col := &expression.Column{
 		FromID:   p.id,
-		Position: p.schema.Len(),
+		Position: newPosition,
 		ColName:  model.NewCIStr(expr.String()),
 		RetType:  expr.GetType(),
 	}
