@@ -423,18 +423,18 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction) []point {
 		return r.buildFromIsFalse(expr, 1)
 	case ast.In:
 		var (
-			unsignedInt    bool
-			nonNegativePos int
+			isUnsignedIntCol bool
+			nonNegativePos   int
 		)
-		if x, ok := expr.GetArgs()[0].(*expression.Column); ok {
-			unsignedInt = mysql.HasUnsignedFlag(x.RetType.Flag) && mysql.IsIntegerType(x.RetType.Tp)
-		}
 		rangePoints, hasNull := r.buildFromIn(expr)
 		if hasNull {
 			return nil
 		}
+		if x, ok := expr.GetArgs()[0].(*expression.Column); ok {
+			isUnsignedIntCol = mysql.HasUnsignedFlag(x.RetType.Flag) && mysql.IsIntegerType(x.RetType.Tp)
+		}
 		// negative ranges can be directly ignored for unsigned int columns.
-		if unsignedInt {
+		if isUnsignedIntCol {
 			for nonNegativePos = 0; nonNegativePos < len(rangePoints); nonNegativePos += 2 {
 				if rangePoints[nonNegativePos].value.Kind() == types.KindUint64 || rangePoints[nonNegativePos].value.GetInt64() >= 0 {
 					break
