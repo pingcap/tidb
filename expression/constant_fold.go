@@ -51,8 +51,8 @@ func foldConstant(expr Expression) (Expression, bool) {
 		// This switch is for UDF if or ifnull constant folding.
 		// If first arg is constant, the rest args will not be checked whether is constant.
 		var ctx sessionctx.Context
-		if _, ok := x.Function.(*baseBuiltinFunc); ok {
-			ctx = x.Function.(*baseBuiltinFunc).ctx
+		if bbf, ok := x.Function.(*baseBuiltinFunc); ok {
+			ctx = bbf.ctx
 		}
 		switch x.Function.(type) {
 		case *builtinIfIntSig, *builtinIfRealSig, *builtinIfDecimalSig, *builtinIfStringSig, *builtinIfTimeSig,
@@ -60,68 +60,15 @@ func foldConstant(expr Expression) (Expression, bool) {
 			if fExpr, isDeferred := foldConstantForBuiltinIfSig(args, ctx); fExpr != nil {
 				return fExpr, isDeferred
 			}
-		case *builtinIfNullIntSig:
+		case *builtinIfNullIntSig, *builtinIfNullRealSig, *builtinIfNullDecimalSig, *builtinIfNullStringSig,
+			*builtinIfNullTimeSig, *builtinIfNullDurationSig, *builtinIfNullJSONSig:
 			foldedArg0, _ := foldConstant(args[0])
-			if _, conOK := foldedArg0.(*Constant); conOK {
-				_, isNull0, err := args[0].EvalInt(ctx, nil)
-				if err != nil || !isNull0 {
-					break
+			constArg, isConst := foldedArg0.(*Constant)
+			if isConst {
+				valueNotNull, err := constArg.Value.ToBool(nil)
+				if err != nil && valueNotNull == 0 {
+					return foldConstant(args[1])
 				}
-				return foldConstant(args[1])
-			}
-		case *builtinIfNullRealSig:
-			foldedArg0, _ := foldConstant(args[0])
-			if _, conOK := foldedArg0.(*Constant); conOK {
-				_, isNull0, err := args[0].EvalReal(ctx, nil)
-				if err != nil || !isNull0 {
-					break
-				}
-				return foldConstant(args[1])
-			}
-		case *builtinIfNullDecimalSig:
-			foldedArg0, _ := foldConstant(args[0])
-			if _, conOK := foldedArg0.(*Constant); conOK {
-				_, isNull0, err := args[0].EvalDecimal(ctx, nil)
-				if err != nil || !isNull0 {
-					break
-				}
-				return foldConstant(args[1])
-			}
-		case *builtinIfNullStringSig:
-			foldedArg0, _ := foldConstant(args[0])
-			if _, conOK := foldedArg0.(*Constant); conOK {
-				_, isNull0, err := args[0].EvalString(ctx, nil)
-				if err != nil || !isNull0 {
-					break
-				}
-				return foldConstant(args[1])
-			}
-		case *builtinIfNullTimeSig:
-			foldedArg0, _ := foldConstant(args[0])
-			if _, conOK := foldedArg0.(*Constant); conOK {
-				_, isNull0, err := args[0].EvalTime(ctx, nil)
-				if err != nil || !isNull0 {
-					break
-				}
-				return foldConstant(args[1])
-			}
-		case *builtinIfNullDurationSig:
-			foldedArg0, _ := foldConstant(args[0])
-			if _, conOK := foldedArg0.(*Constant); conOK {
-				_, isNull0, err := args[0].EvalDuration(ctx, nil)
-				if err != nil || !isNull0 {
-					break
-				}
-				return foldConstant(args[1])
-			}
-		case *builtinIfNullJSONSig:
-			foldedArg0, _ := foldConstant(args[0])
-			if _, conOK := foldedArg0.(*Constant); conOK {
-				_, isNull0, err := args[0].EvalJSON(ctx, nil)
-				if err != nil || !isNull0 {
-					break
-				}
-				return foldConstant(args[1])
 			}
 		default:
 			break
