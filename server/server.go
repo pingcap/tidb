@@ -35,6 +35,7 @@ import (
 	"io/ioutil"
 	"math/rand"
 	"net"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -88,6 +89,7 @@ type Server struct {
 	// a supervisor automatically restart it, then new client connection will be created, but we can't server it.
 	// So we just stop the listener and store to force clients to chose other TiDB servers.
 	stopListenerCh chan struct{}
+	statusServer   *http.Server
 }
 
 // ConnectionCount gets current connection count.
@@ -285,6 +287,11 @@ func (s *Server) Close() {
 		err := s.listener.Close()
 		terror.Log(errors.Trace(err))
 		s.listener = nil
+	}
+	if s.statusServer != nil {
+		err := s.statusServer.Shutdown(nil)
+		terror.Log(errors.Trace(err))
+		s.statusServer = nil
 	}
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventClose).Inc()
 }

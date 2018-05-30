@@ -48,7 +48,8 @@ import (
 )
 
 type HTTPHandlerTestSuite struct {
-	server *Server
+	server       *Server
+	statusServer *Server
 }
 
 var _ = Suite(new(HTTPHandlerTestSuite))
