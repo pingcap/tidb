@@ -73,7 +73,7 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 	for _, col := range cols {
 		colIDs = append(colIDs, col.id)
 	}
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	bs, err := EncodeRow(sc, row, colIDs, nil, nil)
 	c.Assert(err, IsNil)
 	c.Assert(bs, NotNil)
@@ -83,7 +83,7 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 	for _, col := range cols {
 		colMap[col.id] = col.tp
 	}
-	r, err := DecodeRow(bs, colMap, time.Local)
+	r, err := DecodeRow(bs, colMap, time.UTC)
 	c.Assert(err, IsNil)
 	c.Assert(r, NotNil)
 	c.Assert(r, HasLen, 3)
@@ -98,7 +98,7 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 
 	// colMap may contains more columns than encoded row.
 	colMap[4] = types.NewFieldType(mysql.TypeFloat)
-	r, err = DecodeRow(bs, colMap, time.Local)
+	r, err = DecodeRow(bs, colMap, time.UTC)
 	c.Assert(err, IsNil)
 	c.Assert(r, NotNil)
 	c.Assert(r, HasLen, 3)
@@ -113,7 +113,7 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 	// colMap may contains less columns than encoded row.
 	delete(colMap, 3)
 	delete(colMap, 4)
-	r, err = DecodeRow(bs, colMap, time.Local)
+	r, err = DecodeRow(bs, colMap, time.UTC)
 	c.Assert(err, IsNil)
 	c.Assert(r, NotNil)
 	c.Assert(r, HasLen, 2)
@@ -133,7 +133,7 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(bs, HasLen, 1)
 
-	r, err = DecodeRow(bs, colMap, time.Local)
+	r, err = DecodeRow(bs, colMap, time.UTC)
 	c.Assert(err, IsNil)
 	c.Assert(r, IsNil)
 }
@@ -151,7 +151,8 @@ func (s *testTableCodecSuite) TestTimeCodec(c *C) {
 	row := make([]types.Datum, colLen)
 	row[0] = types.NewIntDatum(100)
 	row[1] = types.NewBytesDatum([]byte("abc"))
-	ts, err := types.ParseTimestamp(nil, "2016-06-23 11:30:45")
+	ts, err := types.ParseTimestamp(&stmtctx.StatementContext{TimeZone: time.UTC},
+		"2016-06-23 11:30:45")
 	c.Assert(err, IsNil)
 	row[2] = types.NewDatum(ts)
 	du, err := types.ParseDuration("12:59:59.999999", 6)
@@ -163,7 +164,7 @@ func (s *testTableCodecSuite) TestTimeCodec(c *C) {
 	for _, col := range cols {
 		colIDs = append(colIDs, col.id)
 	}
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	bs, err := EncodeRow(sc, row, colIDs, nil, nil)
 	c.Assert(err, IsNil)
 	c.Assert(bs, NotNil)
@@ -173,7 +174,7 @@ func (s *testTableCodecSuite) TestTimeCodec(c *C) {
 	for _, col := range cols {
 		colMap[col.id] = col.tp
 	}
-	r, err := DecodeRow(bs, colMap, time.Local)
+	r, err := DecodeRow(bs, colMap, time.UTC)
 	c.Assert(err, IsNil)
 	c.Assert(r, NotNil)
 	c.Assert(r, HasLen, colLen)
@@ -201,7 +202,7 @@ func (s *testTableCodecSuite) TestCutRow(c *C) {
 	row[1] = types.NewBytesDatum([]byte("abc"))
 	row[2] = types.NewDecimalDatum(types.NewDecFromInt(1))
 
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	data := make([][]byte, 3)
 	data[0], err = EncodeValue(sc, row[0])
 	c.Assert(err, IsNil)
@@ -237,7 +238,7 @@ func (s *testTableCodecSuite) TestCutKeyNew(c *C) {
 	values := []types.Datum{types.NewIntDatum(1), types.NewBytesDatum([]byte("abc")), types.NewFloat64Datum(5.5)}
 	handle := types.NewIntDatum(100)
 	values = append(values, handle)
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	encodedValue, err := codec.EncodeKey(sc, nil, values...)
 	c.Assert(err, IsNil)
 	tableID := int64(4)
@@ -260,7 +261,7 @@ func (s *testTableCodecSuite) TestCutKey(c *C) {
 	values := []types.Datum{types.NewIntDatum(1), types.NewBytesDatum([]byte("abc")), types.NewFloat64Datum(5.5)}
 	handle := types.NewIntDatum(100)
 	values = append(values, handle)
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	encodedValue, err := codec.EncodeKey(sc, nil, values...)
 	c.Assert(err, IsNil)
 	tableID := int64(4)
@@ -347,7 +348,7 @@ func (s *testTableCodecSuite) TestDecodeIndexKey(c *C) {
 		}
 		valueStrs = append(valueStrs, str)
 	}
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	encodedValue, err := codec.EncodeKey(sc, nil, values...)
 	c.Assert(err, IsNil)
 	indexKey := EncodeIndexSeekKey(tableID, indexID, encodedValue)

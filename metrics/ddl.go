@@ -34,14 +34,14 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 20),
 		}, []string{LblType, LblResult})
 
-	BatchAddIdxHistogram = prometheus.NewHistogram(
+	BatchAddIdxHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
 			Name:      "batch_add_idx_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of batch handle data",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20),
-		})
+		}, []string{LblType})
 
 	SyncerInit            = "init"
 	SyncerRestart         = "restart"
