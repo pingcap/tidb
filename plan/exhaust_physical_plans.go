@@ -189,6 +189,7 @@ func joinKeysMatchIndex(keys, indexCols []*expression.Column, colLengths []int) 
 	for i := range keyOff2IdxOff {
 		keyOff2IdxOff[i] = -1
 	}
+	// There should be at least one column in join keys which can match the index's column.
 	matched := false
 	tmpSchema := expression.NewSchema(keys...)
 	for i, idxCol := range indexCols {
@@ -206,18 +207,6 @@ func joinKeysMatchIndex(keys, indexCols []*expression.Column, colLengths []int) 
 		return nil
 	}
 	return keyOff2IdxOff
-}
-
-func joinKeyMatchIndexCol(key *expression.Column, indexCols []*expression.Column, colLengths []int) int {
-	for idxOff, idxCol := range indexCols {
-		if colLengths[idxOff] != types.UnspecifiedLength {
-			continue
-		}
-		if idxCol.ColName.L == key.ColName.L {
-			return idxOff
-		}
-	}
-	return -1
 }
 
 // When inner plan is TableReader, the last two parameter will be nil
