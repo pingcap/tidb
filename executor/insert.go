@@ -87,7 +87,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) (types.Datu
 			// However, if the `on duplicate update` is also specified, the duplicated row will be updated.
 			// Using BatchGet in insert ignore to mark rows as duplicated before we add records to the table.
 			var err error
-			rows, err = batchMarkDupRows(e.ctx, e.Table, rows)
+			rows, err = e.batchMarkDupRows(rows)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -173,7 +173,7 @@ func (e *InsertExec) initDupOldRowValue(newRows [][]types.Datum) (err error) {
 					e.dupOldRowValues[string(k.key)] = val
 				} else {
 					var handle int64
-					handle, err = decodeOldHandle(k, val)
+					handle, err = e.decodeOldHandle(k, val)
 					if err != nil {
 						return errors.Trace(err)
 					}
@@ -183,7 +183,7 @@ func (e *InsertExec) initDupOldRowValue(newRows [][]types.Datum) (err error) {
 			}
 		}
 	}
-	valuesMap, err := batchGetOldValues(e.ctx, e.Table, handles)
+	valuesMap, err := e.batchGetOldValues(handles)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -195,7 +195,7 @@ func (e *InsertExec) initDupOldRowValue(newRows [][]types.Datum) (err error) {
 
 // updateDupRow updates a duplicate row to a new row.
 func (e *InsertExec) updateDupRow(keys []keyWithDupError, k keyWithDupError, val []byte, newRow []types.Datum, onDuplicate []*expression.Assignment) (err error) {
-	oldHandle, err := decodeOldHandle(k, val)
+	oldHandle, err := e.decodeOldHandle(k, val)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -235,7 +235,7 @@ func (e *InsertExec) updateDupRow(keys []keyWithDupError, k keyWithDupError, val
 func (e *InsertExec) updateDupKeyValues(keys []keyWithDupError, oldHandle int64,
 	newHandle int64, handleChanged bool, updatedRow []types.Datum) error {
 	// There is only one row per update.
-	fillBackKeysInRows, err := getKeysNeedCheck(e.ctx, e.Table, [][]types.Datum{updatedRow})
+	fillBackKeysInRows, err := e.getKeysNeedCheck([][]types.Datum{updatedRow})
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -256,7 +256,7 @@ func (e *InsertExec) updateDupKeyValues(keys []keyWithDupError, oldHandle int64,
 // batchUpdateDupRows updates multi-rows in batch if they are duplicate with rows in table.
 func (e *InsertExec) batchUpdateDupRows(newRows [][]types.Datum, onDuplicate []*expression.Assignment) error {
 	var err error
-	e.uniqueKeysInRows, e.dupKeyValues, err = batchGetInsertKeys(e.ctx, e.Table, newRows)
+	e.uniqueKeysInRows, e.dupKeyValues, err = e.batchGetInsertKeys(newRows)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -385,7 +385,7 @@ func (e *InsertExec) Open(ctx context.Context) error {
 // decodeOldHandle decode old handle by key-value pair.
 // The key-value pair should only be a table record or a distinct index record.
 // If the key is a record key, decode handle from the key, else decode handle from the value.
-func decodeOldHandle(k keyWithDupError, value []byte) (oldHandle int64, err error) {
+func (e *InsertExec) decodeOldHandle(k keyWithDupError, value []byte) (oldHandle int64, err error) {
 	if k.isRecordKey {
 		oldHandle, err = tablecodec.DecodeRowKey(k.key)
 	} else {
