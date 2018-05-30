@@ -453,6 +453,47 @@ func getDefaultCollate(charsetName string) string {
 	return ""
 }
 
+func (e *ShowExec) showForeignKeys(buf *bytes.Buffer, tb table.Table) {
+	if len(tb.Indices()) > 0 && len(tb.Meta().ForeignKeys) > 0 {
+		buf.WriteString(",\n")
+	}
+
+	firstFK := true
+	for _, fk := range tb.Meta().ForeignKeys {
+		if fk.State != model.StatePublic {
+			continue
+		}
+		if !firstFK {
+			buf.WriteString(",\n")
+		}
+		firstFK = false
+		cols := make([]string, 0, len(fk.Cols))
+		for _, c := range fk.Cols {
+			cols = append(cols, c.O)
+		}
+
+		refCols := make([]string, 0, len(fk.RefCols))
+		for _, c := range fk.RefCols {
+			refCols = append(refCols, c.O)
+		}
+
+		buf.WriteString(fmt.Sprintf("  CONSTRAINT `%s` FOREIGN KEY (`%s`)", fk.Name.O, strings.Join(cols, "`,`")))
+		buf.WriteString(fmt.Sprintf(" REFERENCES `%s` (`%s`)", fk.RefTable.O, strings.Join(refCols, "`,`")))
+
+		if ast.ReferOptionType(fk.OnDelete) != ast.ReferOptionNoOption {
+			buf.WriteString(fmt.Sprintf(" ON DELETE %s", ast.ReferOptionType(fk.OnDelete)))
+		}
+
+		if ast.ReferOptionType(fk.OnUpdate) != ast.ReferOptionNoOption {
+			buf.WriteString(fmt.Sprintf(" ON UPDATE %s", ast.ReferOptionType(fk.OnUpdate)))
+		}
+	}
+}
+
+// EnableShowForeignKeys enable show forein keys.
+// FIXME: set EnableShowForeignKeys to true, when we do support foreign keys.
+const EnableShowForeignKeys = false
+
 func (e *ShowExec) fetchShowCreateTable() error {
 	tb, err := e.getTable()
 	if err != nil {
@@ -527,7 +568,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		buf.WriteString(fmt.Sprintf("  PRIMARY KEY (`%s`)", pkCol.Name.O))
 	}
 
-	if len(tb.Indices()) > 0 || len(tb.Meta().ForeignKeys) > 0 {
+	if len(tb.Indices()) > 0 || len(tb.Meta().ForeignKeys) > 0 && EnableShowForeignKeys {
 		buf.WriteString(",\n")
 	}
 
@@ -558,40 +599,10 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		}
 	}
 
-	if len(tb.Indices()) > 0 && len(tb.Meta().ForeignKeys) > 0 {
-		buf.WriteString(",\n")
+	if EnableShowForeignKeys {
+		e.showForeignKeys(&buf, tb)
 	}
 
-	firstFK := true
-	for _, fk := range tb.Meta().ForeignKeys {
-		if fk.State != model.StatePublic {
-			continue
-		}
-		if !firstFK {
-			buf.WriteString(",\n")
-		}
-		firstFK = false
-		cols := make([]string, 0, len(fk.Cols))
-		for _, c := range fk.Cols {
-			cols = append(cols, c.O)
-		}
-
-		refCols := make([]string, 0, len(fk.RefCols))
-		for _, c := range fk.RefCols {
-			refCols = append(refCols, c.O)
-		}
-
-		buf.WriteString(fmt.Sprintf("  CONSTRAINT `%s` FOREIGN KEY (`%s`)", fk.Name.O, strings.Join(cols, "`,`")))
-		buf.WriteString(fmt.Sprintf(" REFERENCES `%s` (`%s`)", fk.RefTable.O, strings.Join(refCols, "`,`")))
-
-		if ast.ReferOptionType(fk.OnDelete) != ast.ReferOptionNoOption {
-			buf.WriteString(fmt.Sprintf(" ON DELETE %s", ast.ReferOptionType(fk.OnDelete)))
-		}
-
-		if ast.ReferOptionType(fk.OnUpdate) != ast.ReferOptionNoOption {
-			buf.WriteString(fmt.Sprintf(" ON UPDATE %s", ast.ReferOptionType(fk.OnUpdate)))
-		}
-	}
 	buf.WriteString("\n")
 
 	buf.WriteString(") ENGINE=InnoDB")
