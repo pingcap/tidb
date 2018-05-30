@@ -1435,18 +1435,21 @@ func (s *testSuite) TestGetFieldsFromLine(c *C) {
 			[]string{string([]byte{0, '\b', '\n', '\r', '\t', 26, '\\', ' ', ' ', 'c', '\'', '"'})},
 		},
 	}
-	fieldsInfo := &ast.FieldsClause{
-		Enclosed:   '"',
-		Terminated: ",",
+
+	ldInfo := executor.LoadDataInfo{
+		FieldsInfo: &ast.FieldsClause{
+			Enclosed:   '"',
+			Terminated: ",",
+		},
 	}
 
 	for _, test := range tests {
-		got, err := executor.GetFieldsFromLine([]byte(test.input), fieldsInfo)
+		got, err := ldInfo.GetFieldsFromLine([]byte(test.input))
 		c.Assert(err, IsNil, Commentf("failed: %s", test.input))
 		assertEqualStrings(c, got, test.expected)
 	}
 
-	_, err := executor.GetFieldsFromLine([]byte(`1,a string,100.20`), fieldsInfo)
+	_, err := ldInfo.GetFieldsFromLine([]byte(`1,a string,100.20`))
 	c.Assert(err, NotNil)
 }
 
@@ -1610,4 +1613,21 @@ func (s *testSuite) TestUpdateSelect(c *C) {
 	tk.MustExec("insert detail values ('abc', '123', 2)")
 	tk.MustExec("UPDATE msg SET msg.status = (SELECT detail.status FROM detail WHERE msg.id = detail.id)")
 	tk.MustExec("admin check table msg")
+}
+
+func (s *testSuite) TestUpdateAffectRowCnt(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table a(id int auto_increment, a int default null, primary key(id))")
+	tk.MustExec("insert into a values (1, 1001), (2, 1001), (10001, 1), (3, 1)")
+	tk.MustExec("update a set id = id*10 where a = 1001")
+	ctx := tk.Se.(sessionctx.Context)
+	c.Assert(ctx.GetSessionVars().StmtCtx.AffectedRows(), Equals, uint64(2))
+
+	tk.MustExec("drop table a")
+	tk.MustExec("create table a ( a bigint, b bigint)")
+	tk.MustExec("insert into a values (1, 1001), (2, 1001), (10001, 1), (3, 1)")
+	tk.MustExec("update a set a = a*10 where b = 1001")
+	ctx = tk.Se.(sessionctx.Context)
+	c.Assert(ctx.GetSessionVars().StmtCtx.AffectedRows(), Equals, uint64(2))
 }
