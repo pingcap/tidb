@@ -16,12 +16,10 @@ package executor_test
 import (
 	"fmt"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
