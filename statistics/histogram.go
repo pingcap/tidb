@@ -64,8 +64,6 @@ type Histogram struct {
 	scalars []scalar
 	// TotColSize is the total column size for the histogram.
 	TotColSize int64
-	// IsAnalyzed means the histogram is updated from analyze operation.
-	IsAnalyzed int64
 }
 
 // Bucket store the bucket count and repeat.
@@ -188,7 +186,7 @@ func HistogramEqual(a, b *Histogram, ignoreID bool) bool {
 }
 
 // SaveStatsToStorage saves the stats to storage.
-func SaveStatsToStorage(sctx sessionctx.Context, tableID int64, count int64, isIndex int, hg *Histogram, cms *CMSketch) error {
+func SaveStatsToStorage(sctx sessionctx.Context, tableID int64, count int64, isIndex int, hg *Histogram, cms *CMSketch, isAnalyzed int64) error {
 	ctx := context.TODO()
 	exec := sctx.(sqlexec.SQLExecutor)
 	_, err := exec.Execute(ctx, "begin")
@@ -213,7 +211,7 @@ func SaveStatsToStorage(sctx sessionctx.Context, tableID int64, count int64, isI
 		return errors.Trace(err)
 	}
 	replaceSQL := fmt.Sprintf("replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, is_analyzed) values (%d, %d, %d, %d, %d, %d, X'%X', %d, %d)",
-		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, data, hg.TotColSize, hg.IsAnalyzed)
+		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, data, hg.TotColSize, isAnalyzed)
 	_, err = exec.Execute(ctx, replaceSQL)
 	if err != nil {
 		return errors.Trace(err)

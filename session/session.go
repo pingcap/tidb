@@ -222,11 +222,12 @@ func (s *session) StoreQueryFeedback(feedback interface{}) {
 	if s.statsCollector != nil {
 		do, err := GetDomain(s.store)
 		if err != nil {
-			log.Warnf("domain not found.")
+			log.Debug("domain not found.")
+			return
 		}
 		err = s.statsCollector.StoreQueryFeedback(feedback, do.StatsHandle(), do.InfoSchema())
 		if err != nil {
-			log.Warnf("store query feedback error: ", err)
+			log.Debug("store query feedback error: ", err)
 		}
 	}
 }

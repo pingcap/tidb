@@ -100,7 +100,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 	for _, result := range results {
 		for i, hg := range result.Hist {
-			err = statistics.SaveStatsToStorage(e.ctx, result.TableID, result.Count, result.IsIndex, hg, result.Cms[i])
+			err = statistics.SaveStatsToStorage(e.ctx, result.TableID, result.Count, result.IsIndex, hg, result.Cms[i], 1)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -228,7 +228,6 @@ func (e *AnalyzeIndexExec) buildStats() (hist *statistics.Histogram, cms *statis
 		}
 	}
 	hist.ID = e.idxInfo.ID
-	hist.IsAnalyzed = 1
 	return hist, cms, nil
 }
 
@@ -373,7 +372,6 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 			}
 		}
 		hg, err := statistics.BuildColumn(e.ctx, maxBucketSize, col.ID, collectors[i], &col.FieldType)
-		hg.IsAnalyzed = 1
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}

@@ -28,9 +28,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
@@ -155,26 +152,11 @@ func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Hand
 	t := h.GetTableStats(table.Meta())
 	sc := h.ctx.GetSessionVars().StmtCtx
 	if t.Pseudo == true {
-		ranges := make([]*ranger.Range, 0, len(q.feedback))
-		for _, val := range q.feedback {
-			low, high := *val.lower, *val.upper
-			if !isIndex && mysql.HasPriKeyFlag(t.Columns[q.hist.ID].Info.Flag) {
-				_, lowInt, err := codec.DecodeInt(val.lower.GetBytes())
-				if err != nil {
-					return errors.Trace(err)
-				}
-				_, highInt, err := codec.DecodeInt(val.upper.GetBytes())
-				if err != nil {
-					return errors.Trace(err)
-				}
-				low, high = types.NewIntDatum(lowInt), types.NewIntDatum(highInt)
-			}
-			ranges = append(ranges, &(ranger.Range{
-				LowVal:  []types.Datum{low},
-				HighVal: []types.Datum{high},
-			}))
-		}
 		var err error
+		ranges, err := q.DecodeToRanges(isIndex, mysql.HasPriKeyFlag(t.Columns[q.hist.ID].Info.Flag))
+		if err != nil {
+			return errors.Trace(err)
+		}
 		if isIndex {
 			idx := t.Indices[q.hist.ID]
 			expected, err = idx.getRowCount(sc, ranges)
@@ -471,7 +453,7 @@ func (h *Handle) dumpStatsUpdateToKV(tableID int64, isIndex int, q *QueryFeedbac
 		}
 	}()
 	hist = UpdateHistogram(hist, q)
-	err = SaveStatsToStorage(h.ctx, tableID, -1, isIndex, hist, cms)
+	err = SaveStatsToStorage(h.ctx, tableID, -1, isIndex, hist, cms, 0)
 	if err != nil {
 		return errors.Trace(err)
 	}

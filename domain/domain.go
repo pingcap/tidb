@@ -663,7 +663,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			}
 		case t := <-statsHandle.AnalyzeResultCh():
 			for i, hg := range t.Hist {
-				err = statistics.SaveStatsToStorage(ctx, t.TableID, t.Count, t.IsIndex, hg, t.Cms[i])
+				err = statistics.SaveStatsToStorage(ctx, t.TableID, t.Count, t.IsIndex, hg, t.Cms[i], 1)
 				if err != nil {
 					log.Error("[stats] save histogram to storage fail: ", errors.ErrorStack(err))
 				}

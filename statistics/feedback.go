@@ -91,6 +91,30 @@ func (q *QueryFeedback) CollectFeedback(numOfRanges int) bool {
 	return true
 }
 
+// DecodeToRanges decode the feedback to ranges.
+func (q *QueryFeedback) DecodeToRanges(isIndex bool, isPK bool) ([]*ranger.Range, error) {
+	ranges := make([]*ranger.Range, 0, len(q.feedback))
+	for _, val := range q.feedback {
+		low, high := *val.lower, *val.upper
+		if !isIndex && isPK {
+			_, lowInt, err := codec.DecodeInt(val.lower.GetBytes())
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			_, highInt, err := codec.DecodeInt(val.upper.GetBytes())
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			low, high = types.NewIntDatum(lowInt), types.NewIntDatum(highInt)
+		}
+		ranges = append(ranges, &(ranger.Range{
+			LowVal:  []types.Datum{low},
+			HighVal: []types.Datum{high},
+		}))
+	}
+	return ranges, nil
+}
+
 // StoreRanges stores the ranges for update.
 func (q *QueryFeedback) StoreRanges(ranges []*ranger.Range) {
 	q.feedback = make([]feedback, 0, len(ranges))
