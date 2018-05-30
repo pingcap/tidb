@@ -233,7 +233,6 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 
 		// begin a transaction to delete a user.
 		if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "begin"); err != nil {
-			fmt.Println(err)
 			return errors.Trace(err)
 		}
 		sql := fmt.Sprintf(`DELETE FROM %s.%s WHERE Host = "%s" and User = "%s";`, mysql.SystemDB, mysql.UserTable, user.Hostname, user.Username)
