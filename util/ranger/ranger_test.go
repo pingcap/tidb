@@ -74,7 +74,7 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t(a int, b int)")
+	testKit.MustExec("create table t(a int, b int, c int unsigned)")
 
 	tests := []struct {
 		exprStr     string
@@ -509,6 +509,90 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 			accessConds: "[]",
 			filterConds: "[or(gt(test.t.a, a), gt(test.t.c, 1))]",
 			resultStr:   "[[<nil>,+inf]]",
+		},
+	}
+
+	for _, tt := range tests {
+		sql := "select * from t where " + tt.exprStr
+		ctx := testKit.Se.(sessionctx.Context)
+		stmts, err := session.Parse(ctx, sql)
+		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
+		c.Assert(stmts, HasLen, 1)
+		is := domain.GetDomain(ctx).InfoSchema()
+		err = plan.Preprocess(ctx, stmts[0], is, false)
+		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
+		p, err := plan.BuildLogicalPlan(ctx, stmts[0], is)
+		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
+		selection := p.(plan.LogicalPlan).Children()[0].(*plan.LogicalSelection)
+		tbl := selection.Children()[0].(*plan.DataSource).TableInfo()
+		c.Assert(selection, NotNil, Commentf("expr:%v", tt.exprStr))
+		conds := make([]expression.Expression, 0, len(selection.Conditions))
+		for _, cond := range selection.Conditions {
+			conds = append(conds, expression.PushDownNot(ctx, cond, false))
+		}
+		cols, lengths := expression.IndexInfo2Cols(selection.Schema().Columns, tbl.Indices[tt.indexPos])
+		c.Assert(cols, NotNil)
+		ranges, conds, filter, _, err := ranger.DetachCondAndBuildRangeForIndex(ctx, conds, cols, lengths)
+		c.Assert(err, IsNil)
+		c.Assert(fmt.Sprintf("%s", conds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
+		c.Assert(fmt.Sprintf("%s", filter), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))
+		got := fmt.Sprintf("%v", ranges)
+		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
+	}
+}
+
+// for issue #6661
+func (s *testRangerSuite) TestIndexRangeForUnsignedInt(c *C) {
+	defer testleak.AfterTest(c)()
+	store, err := newStoreWithBootstrap(c)
+	defer store.Close()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t (a smallint(5) unsigned,key (a) )")
+
+	tests := []struct {
+		indexPos    int
+		exprStr     string
+		accessConds string
+		filterConds string
+		resultStr   string
+	}{
+		{
+			indexPos:    0,
+			exprStr:     `a not in (0, 1, 2)`,
+			accessConds: "[not(in(test.t.a, 0, 1, 2))]",
+			filterConds: "[]",
+			resultStr:   `[(<nil>,0) (2,+inf]]`,
+		},
+		{
+			indexPos:    0,
+			exprStr:     `a not in (-1, 1, 2)`,
+			accessConds: "[not(in(test.t.a, -1, 1, 2))]",
+			filterConds: "[]",
+			resultStr:   `[(<nil>,1) (2,+inf]]`,
+		},
+		{
+			indexPos:    0,
+			exprStr:     `a not in (-2, -1, 1, 2)`,
+			accessConds: "[not(in(test.t.a, -2, -1, 1, 2))]",
+			filterConds: "[]",
+			resultStr:   `[(<nil>,1) (2,+inf]]`,
+		},
+		{
+			indexPos:    0,
+			exprStr:     `a not in (111)`,
+			accessConds: "[not(in(test.t.a, 111))]",
+			filterConds: "[]",
+			resultStr:   `[(<nil>,111) (111,+inf]]`,
+		},
+		{
+			indexPos:    0,
+			exprStr:     `a not in (1, 2, 9223372036854775810)`,
+			accessConds: "[not(in(test.t.a, 1, 2, 9223372036854775810))]",
+			filterConds: "[]",
+			resultStr:   `[(<nil>,1) (2,9223372036854775810) (9223372036854775810,+inf]]`,
 		},
 	}
 
