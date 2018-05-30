@@ -261,6 +261,12 @@ func (s *testSuite) TestJoin(c *C) {
 	tk.MustExec("create table user(id int, name varchar(20))")
 	tk.MustExec("insert into user values(1, 'a'), (2, 'b')")
 	tk.MustQuery("select user.id,user.name from user left join aa on aa.id = user.id left join bb on aa.id = bb.id where bb.id < 10;").Check(testkit.Rows("1 a"))
+
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t (a bigint);`)
+	tk.MustExec(`insert into t values (1);`)
+	tk.MustQuery(`select t2.a, t1.a from t t1 inner join (select "1" as a) t2 on t2.a = t1.a;`).Check(testkit.Rows("1 1"))
+	tk.MustQuery(`select t2.a, t1.a from t t1 inner join (select "2" as b, "1" as a) t2 on t2.a = t1.a;`).Check(testkit.Rows("1 1"))
 }
 
 func (s *testSuite) TestJoinCast(c *C) {

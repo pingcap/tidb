@@ -71,3 +71,8 @@ ignored = ["github.com/coreos/etcd/etcdserver", "github.com/coreos/etcd/mvcc", "
 [[constraint]]
   name = "gopkg.in/natefinch/lumberjack.v2"
   version = "2.0.0"
+
+[[constraint]]
+  name = "github.com/sirupsen/logrus"
+  revision = "3bcb09397d6d88e7676a9bc8433ca11ba5304837"
+

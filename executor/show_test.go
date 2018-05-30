@@ -16,7 +16,6 @@ package executor_test
 import (
 	"fmt"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/juju/errors"
@@ -415,95 +414,6 @@ func (s stats) Stats(vars *variable.SessionVars) (map[string]interface{}, error)
 	m["test_interface"] = b
 	m["test_interface_slice"] = []interface{}{"a", "b", "c"}
 	return m, nil
-}
-
-func (s *testSuite) TestForeignKeyInShowCreateTable(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	testSQL := `drop table if exists show_test`
-	tk.MustExec(testSQL)
-	testSQL = `drop table if exists t1`
-	tk.MustExec(testSQL)
-	testSQL = `CREATE TABLE t1 (pk int PRIMARY KEY AUTO_INCREMENT)`
-	tk.MustExec(testSQL)
-
-	// For table with single fk.
-	sqlLines := []string{
-		"CREATE TABLE `show_test` (",
-		"  `id` int(11) NOT NULL AUTO_INCREMENT,",
-		"  PRIMARY KEY (`id`),",
-		"  CONSTRAINT `Fk` FOREIGN KEY (`id`) REFERENCES `t1` (`pk`) ON DELETE CASCADE ON UPDATE CASCADE",
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin",
-	}
-	testSQL = strings.Join(sqlLines, "\n")
-	tk.MustExec(testSQL)
-	result := tk.MustQuery("show create table show_test;")
-	c.Check(result.Rows(), HasLen, 1)
-	row := result.Rows()[0]
-	expectedRow := []interface{}{"show_test", testSQL}
-	for i, r := range row {
-		c.Check(r, Equals, expectedRow[i])
-	}
-
-	// For table with multiple fk.
-	sqlLines = []string{
-		"CREATE TABLE `pilot_languages` (",
-		"  `pilot_id` int(11) NOT NULL,",
-		"  `language_id` int(11) NOT NULL,",
-		"  CONSTRAINT `pilot_language_fkey` FOREIGN KEY (`pilot_id`) REFERENCES `pilots` (`pilot_id`),",
-		"  CONSTRAINT `languages_fkey` FOREIGN KEY (`language_id`) REFERENCES `languages` (`language_id`)",
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin",
-	}
-	testSQL = strings.Join(sqlLines, "\n")
-	tk.MustExec(testSQL)
-	result = tk.MustQuery("show create table pilot_languages;")
-	c.Check(result.Rows(), HasLen, 1)
-	row = result.Rows()[0]
-	expectedRow = []interface{}{"pilot_languages", testSQL}
-	for i, r := range row {
-		c.Check(r, Equals, expectedRow[i])
-	}
-
-	testSQL = "alter table show_test drop foreign key `fk`"
-	tk.MustExec(testSQL)
-	testSQL = "show create table show_test;"
-	result = tk.MustQuery(testSQL)
-	c.Check(result.Rows(), HasLen, 1)
-	row = result.Rows()[0]
-	expectedRow = []interface{}{
-		"show_test", "CREATE TABLE `show_test` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n  PRIMARY KEY (`id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"}
-	for i, r := range row {
-		c.Check(r, Equals, expectedRow[i])
-	}
-
-	testSQL = `CREATE TABLE followers (
-  f1 int NOT NULL REFERENCES user_profiles (uid),
-  f2 int NOT NULL REFERENCES user_profiles (uid),
-  PRIMARY KEY (f1,f2)
-);`
-	tk.MustExec(testSQL)
-	testSQL = "show create table followers;"
-	result = tk.MustQuery(testSQL)
-	c.Check(result.Rows(), HasLen, 1)
-	row = result.Rows()[0]
-	expectedRow = []interface{}{
-		"followers", "CREATE TABLE `followers` (\n  `f1` int(11) NOT NULL,\n  `f2` int(11) NOT NULL,\n" +
-			"  PRIMARY KEY (`f1`,`f2`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"}
-	for i, r := range row {
-		c.Check(r, Equals, expectedRow[i])
-	}
-
-	testSQL = "ALTER TABLE SHOW_TEST ADD CONSTRAINT `Fk` FOREIGN KEY (`id`) REFERENCES `t1` (`pk`) ON DELETE CASCADE ON UPDATE CASCADE\n "
-	tk.MustExec(testSQL)
-	testSQL = "show create table show_test;"
-	result = tk.MustQuery(testSQL)
-	c.Check(result.Rows(), HasLen, 1)
-	row = result.Rows()[0]
-	expectedRow = []interface{}{
-		"show_test", "CREATE TABLE `show_test` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n  PRIMARY KEY (`id`),\n  CONSTRAINT `Fk` FOREIGN KEY (`id`) REFERENCES `t1` (`pk`) ON DELETE CASCADE ON UPDATE CASCADE\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"}
-	for i, r := range row {
-		c.Check(r, Equals, expectedRow[i])
-	}
 }
 
 func (s *testSuite) TestShowWarnings(c *C) {
