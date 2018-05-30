@@ -527,6 +527,10 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		buf.WriteString(fmt.Sprintf("  PRIMARY KEY (`%s`)", pkCol.Name.O))
 	}
 
+	if len(tb.Indices()) > 0 {
+		buf.WriteString(",\n")
+	}
+
 	for i, idx := range tb.Indices() {
 		idxInfo := idx.Meta()
 		if idxInfo.State != model.StatePublic {
