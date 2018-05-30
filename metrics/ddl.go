@@ -102,13 +102,13 @@ var (
 		}, []string{LblType})
 
 	// DDLJobErrCounter is the counter of error occured in ddl job.
-	DDLJobErrCounter = prometheus.NewCounterVec(
+	DDLJobErrCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
 			Name:      "job_error_total",
 			Help:      "Counter of error occured in ddl job.",
-		}, []string{LblType})
+		})
 )
 
 func init() {

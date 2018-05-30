@@ -44,7 +44,7 @@ const (
 	keyOpDefaultTimeout      = 2 * time.Second
 	keyOpRetryInterval       = 30 * time.Millisecond
 	checkVersInterval        = 20 * time.Millisecond
-	waitTimeWhenErrorOccured = 50 * time.Millisecond
+	waitTimeWhenErrorOccured = 1 * time.Second
 )
 
 var (
