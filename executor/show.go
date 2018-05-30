@@ -633,14 +633,9 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		for i, def := range partitionInfo.Definitions {
 			lessThans := ""
 			lessThans = strings.Join(def.LessThan, ",")
-			multipleLt := len(def.LessThan) > 1
 
 			var parDef string
-			if multipleLt {
-				parDef = fmt.Sprintf("  PARTITION %s VALUES LESS THAN (%s)", def.Name, lessThans)
-			} else {
-				parDef = fmt.Sprintf("  PARTITION %s VALUES LESS THAN %s", def.Name, lessThans)
-			}
+			parDef = fmt.Sprintf("  PARTITION %s VALUES LESS THAN (%s)", def.Name, lessThans)
 			if i < len(partitionInfo.Definitions)-1 {
 				buf.WriteString(parDef)
 				buf.WriteString(",\n")
