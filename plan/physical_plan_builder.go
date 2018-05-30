@@ -269,7 +269,7 @@ func (ds *DataSource) forceToIndexScan(idx *model.IndexInfo, remainedConds []exp
 		cop.tablePlan = ts
 	}
 	is.initSchema(ds.id, idx, cop.tablePlan != nil)
-	is.addPushedDownSelection(cop, ds, math.MaxFloat64)
+	is.addPushedDownSelection(cop, ds, math.MaxFloat64, float64(ds.statisticTable.Count))
 	t := finishCopTask(ds.ctx, cop)
 	return t.plan()
 }
@@ -300,7 +300,7 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInf
 	if statsTbl.Indices[idx.ID] != nil {
 		is.Hist = &statsTbl.Indices[idx.ID].Histogram
 	}
-	rowCount := float64(statsTbl.Count)
+	countAfterAccess := float64(statsTbl.Count)
 	sc := ds.ctx.GetSessionVars().StmtCtx
 	idxCols, colLengths := expression.IndexInfo2Cols(ds.Schema().Columns, idx)
 	is.Ranges = ranger.FullNewRange()
@@ -312,7 +312,7 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInf
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			rowCount, err = statsTbl.GetRowCountByIndexRanges(sc, is.Index.ID, is.Ranges)
+			countAfterAccess, err = statsTbl.GetRowCountByIndexRanges(sc, is.Index.ID, is.Ranges)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -351,13 +351,10 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInf
 	// Only use expectedCnt when it's smaller than the count we calculated.
 	// e.g. IndexScan(count1)->After Filter(count2). The `ds.statsAfterSelect.count` is count2. count1 is the one we need to calculate
 	// If expectedCnt and count2 are both zero and we go into the below `if` block, the count1 will be set to zero though it's shouldn't be.
-	if matchProperty && prop.expectedCnt < ds.statsAfterSelect.count {
-		selectivity, err := statsTbl.Selectivity(ds.ctx, is.filterCondition)
-		if err != nil {
-			log.Warnf("An error happened: %v, we have to use the default selectivity", err.Error())
-			selectivity = selectionFactor
-		}
-		rowCount = math.Min(prop.expectedCnt/selectivity, rowCount)
+	rowCount := countAfterAccess
+	if (matchProperty || prop.isEmpty()) && prop.expectedCnt < ds.statsAfterSelect.count {
+		selectivity := ds.statsAfterSelect.count / countAfterAccess
+		rowCount = math.Min(prop.expectedCnt/selectivity, countAfterAccess)
 	}
 	is.stats = ds.stats.scaleByExpectCnt(rowCount)
 	cop.cst = rowCount * scanFactor
@@ -372,7 +369,7 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInf
 		}
 		cop.keepOrder = true
 		is.KeepOrder = true
-		is.addPushedDownSelection(cop, ds, prop.expectedCnt)
+		is.addPushedDownSelection(cop, ds, prop.expectedCnt, countAfterAccess)
 	} else {
 		expectedCnt := math.MaxFloat64
 		if prop.isEmpty() {
@@ -380,7 +377,7 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, idx *model.IndexInf
 		} else {
 			return invalidTask, nil
 		}
-		is.addPushedDownSelection(cop, ds, expectedCnt)
+		is.addPushedDownSelection(cop, ds, expectedCnt, countAfterAccess)
 	}
 	if prop.taskTp == rootTaskType {
 		task = finishCopTask(ds.ctx, task)
@@ -411,7 +408,7 @@ func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, isDoubleRe
 	is.SetSchema(expression.NewSchema(indexCols...))
 }
 
-func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSource, expectedCnt float64) {
+func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSource, expectedCnt, countAfterAccess float64) {
 	// Add filter condition to table plan now.
 	if len(is.filterCondition) > 0 {
 		var indexConds, tableConds []expression.Expression
@@ -421,8 +418,17 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 			indexConds = is.filterCondition
 		}
 		if indexConds != nil {
-			indexSel := PhysicalSelection{Conditions: indexConds}.init(is.ctx,
-				p.getStatsByFilter(append(is.AccessCondition, indexConds...)).scaleByExpectCnt(expectedCnt))
+			selectivity := 1.0
+			if countAfterAccess >= 1.0 {
+				indexSelectivity, err := p.statisticTable.Selectivity(p.ctx, indexConds)
+				if err != nil {
+					log.Debugf("An error happened: %v, we have to use the default selectivity", err.Error())
+					indexSelectivity = selectionFactor
+				}
+				countAfterIndex := math.Max(countAfterAccess*indexSelectivity, p.statsAfterSelect.count)
+				selectivity = countAfterIndex / countAfterAccess
+			}
+			indexSel := PhysicalSelection{Conditions: indexConds}.init(is.ctx, is.stats.scale(selectivity))
 			indexSel.SetChildren(is)
 			copTask.indexPlan = indexSel
 			copTask.cst += copTask.count() * cpuFactor
@@ -572,12 +578,8 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp) (task task, err err
 	// Only use expectedCnt when it's smaller than the count we calculated.
 	// e.g. IndexScan(count1)->After Filter(count2). The `ds.statsAfterSelect.count` is count2. count1 is the one we need to calculate
 	// If expectedCnt and count2 are both zero and we go into the below `if` block, the count1 will be set to zero though it's shouldn't be.
-	if matchProperty && prop.expectedCnt < ds.statsAfterSelect.count {
-		selectivity, err := statsTbl.Selectivity(ds.ctx, ts.filterCondition)
-		if err != nil {
-			log.Warnf("An error happened: %v, we have to use the default selectivity", err.Error())
-			selectivity = selectionFactor
-		}
+	if (matchProperty || prop.isEmpty()) && prop.expectedCnt < ds.statsAfterSelect.count {
+		selectivity := ds.statsAfterSelect.count / rowCount
 		rowCount = math.Min(prop.expectedCnt/selectivity, rowCount)
 	}
 	ts.stats = ds.stats.scaleByExpectCnt(rowCount)
