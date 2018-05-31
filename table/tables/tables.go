@@ -22,6 +22,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 
 	"github.com/juju/errors"
@@ -397,7 +398,8 @@ func (t *Table) getRollbackableMemStore(ctx sessionctx.Context) kv.RetrieverMuta
 
 // locatePartition returns the partition ID of the input record.
 func (t *Table) locatePartition(ctx sessionctx.Context, r []types.Datum) (int64, error) {
-	if t.meta.GetPartitionInfo() == nil {
+	partitionInfo := t.meta.GetPartitionInfo()
+	if partitionInfo == nil {
 		return t.ID, nil
 	}
 
@@ -410,19 +412,23 @@ func (t *Table) locatePartition(ctx sessionctx.Context, r []types.Datum) (int64,
 		t.partitionExpr = partitionExpr
 	}
 
-	for i, expr := range t.partitionExpr {
-		val, _, err := expr.EvalInt(ctx, types.DatumRow(r))
+	var err error
+	idx := sort.Search(len(t.partitionExpr), func(i int) bool {
+		var ret int64
+		ret, _, err = t.partitionExpr[i].EvalInt(ctx, types.DatumRow(r))
 		if err != nil {
-			return 0, errors.Trace(err)
+			return true // Break the search.
 		}
-		if val > 0 {
-			// Partition expression eval to true, the value locates into this partition.
-			partitionInfo := t.meta.GetPartitionInfo()
-			return partitionInfo.Definitions[i].ID, nil
-		}
+		return ret > 0
+	})
+	if err != nil {
+		return 0, errors.Trace(err)
 	}
-	// The data does not belong to any of the partition?
-	return t.ID, nil
+	if idx < 0 || idx >= len(t.partitionExpr) {
+		// The data does not belong to any of the partition?
+		return t.ID, nil
+	}
+	return partitionInfo.Definitions[idx].ID, nil
 }
 
 // AddRecord implements table.Table AddRecord interface.
