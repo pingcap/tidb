@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	log "github.com/sirupsen/logrus"
 )
@@ -50,14 +51,12 @@ func foldConstant(expr Expression) (Expression, bool) {
 
 		// This switch is for UDF if or ifnull constant folding.
 		// If first arg is constant, the rest args will not be checked whether is constant.
-		switch x.Function.(type) {
-		case *builtinIfIntSig, *builtinIfRealSig, *builtinIfDecimalSig, *builtinIfStringSig, *builtinIfTimeSig,
-			*builtinIfDurationSig, *builtinIfJSONSig:
+		switch x.FuncName.L {
+		case ast.If:
 			if fExpr, isDeferred := foldConstantForBuiltinIfSig(args, x.Function.getCtx()); fExpr != nil {
 				return fExpr, isDeferred
 			}
-		case *builtinIfNullIntSig, *builtinIfNullRealSig, *builtinIfNullDecimalSig, *builtinIfNullStringSig,
-			*builtinIfNullTimeSig, *builtinIfNullDurationSig, *builtinIfNullJSONSig:
+		case ast.Ifnull:
 			foldedArg0, _ := foldConstant(args[0])
 			constArg, isConst := foldedArg0.(*Constant)
 			if isConst {
