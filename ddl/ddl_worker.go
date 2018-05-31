@@ -293,9 +293,9 @@ func (d *ddl) handleDDLJobQueue(shouldCleanJobs bool) error {
 		})
 
 		if runJobErr != nil {
-			// wait a while to retry again. If we don't wait here, ddl will retry this job immediately,
+			// wait a while to retry again. If we don't wait here, DDL will retry this job immediately,
 			// which may act like a deadlock.
-			log.Infof("[ddl] run ddl job error, sleep a while:%v then retry it.", waitTimeWhenErrorOccured)
+			log.Infof("[ddl] run DDL job error, sleep a while:%v then retry it.", waitTimeWhenErrorOccured)
 			metrics.DDLJobErrCounter.Inc()
 			time.Sleep(waitTimeWhenErrorOccured)
 		}
