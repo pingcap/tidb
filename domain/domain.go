@@ -338,10 +338,15 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 			if err != nil {
 				log.Errorf("[ddl] reload schema in loop err %v", errors.ErrorStack(err))
 			}
-		case <-syncer.GlobalVersionCh():
+		case _, ok := <-syncer.GlobalVersionCh():
 			err := do.Reload()
 			if err != nil {
 				log.Errorf("[ddl] reload schema in loop err %v", errors.ErrorStack(err))
+			}
+			if !ok {
+				log.Warn("[ddl] reload schema in loop, schema syncer need rewatch")
+				// Make sure the rewatch doesn't affect load schema, so we watch the global schema version asynchronously.
+				syncer.WatchGlobalSchemaVer(context.Background())
 			}
 		case <-syncer.Done():
 			// The schema syncer stops, we need stop the schema validator to synchronize the schema version.
@@ -392,6 +397,7 @@ func (do *Domain) Close() {
 	}
 	do.sysSessionPool.Close()
 	do.wg.Wait()
+	log.Info("[domain] close")
 }
 
 type ddlCallback struct {

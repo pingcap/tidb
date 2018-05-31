@@ -307,7 +307,7 @@ func (d *ddl) Stop() error {
 	defer d.m.Unlock()
 
 	d.close()
-	log.Infof("stop DDL:%s", d.uuid)
+	log.Infof("[ddl] stop DDL:%s", d.uuid)
 
 	return nil
 }
@@ -344,7 +344,7 @@ func (d *ddl) close() {
 	}
 	d.wait.Wait()
 	d.delRangeManager.clear()
-	log.Infof("close DDL:%s", d.uuid)
+	log.Infof("[ddl] close DDL:%s", d.uuid)
 }
 
 func (d *ddl) isClosed() bool {
