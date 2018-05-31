@@ -13,9 +13,6 @@
 package plan
 
 import (
-	"bytes"
-	"fmt"
-
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
@@ -73,10 +70,22 @@ func selectOnSomething(sel *LogicalSelection, lp LogicalPlan) (LogicalPlan, erro
 	return lp, nil
 }
 
+// partitionTable is for those tables which implement partition.
+type partitionTable interface {
+	PartitionExpr() []expression.Expression
+}
+
 func prunePartition(sel *LogicalSelection, ds *DataSource) (LogicalPlan, error) {
-	pi := ds.tableInfo.Partition
-	if pi == nil || !pi.Enable {
+	pi := ds.tableInfo.GetPartitionInfo()
+	if pi == nil {
 		return selectOnSomething(sel, ds)
+	}
+
+	var partitionExpr []expression.Expression
+	if itf, ok := ds.table.(partitionTable); ok {
+		partitionExpr = itf.PartitionExpr()
+	} else {
+		return nil, errors.New("partition expression missing")
 	}
 
 	// Rewrite data source to union all partitions, during which we may prune some
@@ -86,15 +95,8 @@ func prunePartition(sel *LogicalSelection, ds *DataSource) (LogicalPlan, error) 
 	if sel != nil {
 		selConds = sel.Conditions
 	}
-	var buf bytes.Buffer
-	for i, def := range pi.Definitions {
-		buf.Reset()
-		fmt.Fprintf(&buf, "%s < %s", pi.Expr, def.LessThan[0])
-		expr, err := expression.ParseSimpleExpr(ds.context(), buf.String(), ds.tableInfo)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
 
+	for i, expr := range partitionExpr {
 		// If the selection condition would never satisify, prune that partition.
 		prune, err := canBePrune(ds.context(), expr, selConds, ds.pushedDownConds)
 		if err != nil {
@@ -108,7 +110,7 @@ func prunePartition(sel *LogicalSelection, ds *DataSource) (LogicalPlan, error) 
 		newDataSource := *ds
 		newDataSource.baseLogicalPlan = newBaseLogicalPlan(ds.context(), TypeTableScan, &newDataSource)
 		newDataSource.isPartition = true
-		newDataSource.partitionID = def.ID
+		newDataSource.partitionID = pi.Definitions[i].ID
 		children = append(children, &newDataSource)
 	}
 	unionAll := LogicalUnionAll{}.init(ds.context())
@@ -117,8 +119,7 @@ func prunePartition(sel *LogicalSelection, ds *DataSource) (LogicalPlan, error) 
 }
 
 // canBePrune checks if partition expression will never meets the selection condition.
-// For example, partition by column a > 3, and select condition is a < 3, then
-// canBePrune would be true.
+// For example, partition by column a > 3, and select condition is a < 3, then canBePrune returns true.
 func canBePrune(ctx sessionctx.Context, expr expression.Expression, rootConds, copConds []expression.Expression) (bool, error) {
 	lt, ok := expr.(*expression.ScalarFunction)
 	if !ok || lt.FuncName.L != ast.LT {

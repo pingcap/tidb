@@ -162,6 +162,7 @@ type PhysicalTableScan struct {
 	partitionID int64
 }
 
+// IsPartition returns true and partition ID if it's actually a partition.
 func (ts *PhysicalTableScan) IsPartition() (bool, int64) {
 	return ts.isPartition, ts.partitionID
 }

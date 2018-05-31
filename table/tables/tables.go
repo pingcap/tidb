@@ -18,11 +18,14 @@
 package tables
 
 import (
+	"bytes"
 	"encoding/binary"
+	"fmt"
 	"math"
 	"strings"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
@@ -35,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/mock"
 	binlog "github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
 	"github.com/spaolacci/murmur3"
@@ -54,6 +58,9 @@ type Table struct {
 	indexPrefix     kv.Key
 	alloc           autoid.Allocator
 	meta            *model.TableInfo
+
+	// partitionExpr caches partition expression.
+	partitionExpr []expression.Expression
 }
 
 // MockTableFromMeta only serves for test.
@@ -113,7 +120,42 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 	}
 
 	t.meta = tblInfo
+	partitionExpr, err := generatePartitionExpr(tblInfo)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	t.partitionExpr = partitionExpr
 	return t, nil
+}
+
+// PartitionExpr returns the partition expression.
+func (t *Table) PartitionExpr() []expression.Expression {
+	return t.partitionExpr
+}
+
+func generatePartitionExpr(tblInfo *model.TableInfo) ([]expression.Expression, error) {
+	pi := tblInfo.GetPartitionInfo()
+	if pi == nil {
+		return nil, nil
+	}
+	// TODO: Only partition by range is supported currently.
+	if pi.Type != model.PartitionTypeRange {
+		return nil, nil
+	}
+
+	ctx := mock.NewContext()
+	partitionExprs := make([]expression.Expression, 0, len(pi.Definitions))
+	var buf bytes.Buffer
+	for _, def := range pi.Definitions {
+		fmt.Fprintf(&buf, "(%s) < (%s)", pi.Expr, def.LessThan[0])
+		expr, err := expression.ParseSimpleExpr(ctx, buf.String(), tblInfo)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		partitionExprs = append(partitionExprs, expr)
+		buf.Reset()
+	}
+	return partitionExprs, nil
 }
 
 // newTable constructs a Table instance.

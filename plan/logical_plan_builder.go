@@ -1657,7 +1657,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	tableInfo := tbl.Meta()
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "")
 
-	if tableInfo.Partition != nil && tableInfo.Partition.Enable {
+	if tableInfo.GetPartitionInfo() != nil {
 		b.optFlag = b.optFlag | flagTablePartition
 	}
 
@@ -1676,6 +1676,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 
 	ds := DataSource{
 		DBName:              dbName,
+		table:               tbl,
 		tableInfo:           tableInfo,
 		statisticTable:      b.getStatsTable(tableInfo),
 		indexHints:          tn.IndexHints,
