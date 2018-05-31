@@ -583,6 +583,7 @@ func (c *arithmeticDivideFunctionClass) getFunction(ctx sessionctx.Context, args
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETDecimal, types.ETDecimal, types.ETDecimal)
 	c.setType4DivDecimal(bf.tp, lhsTp, rhsTp)
 	sig := &builtinArithmeticDivideDecimalSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_DivideDecimal)
 	return sig, nil
 }
 
@@ -636,8 +637,13 @@ func (s *builtinArithmeticDivideDecimalSig) evalDecimal(row types.Row) (*types.M
 	err = types.DecimalDiv(a, b, c, types.DivFracIncr)
 	if err == types.ErrDivByZero {
 		return c, true, errors.Trace(handleDivisionByZeroError(s.ctx))
+	} else if err == nil {
+		_, frac := c.PrecisionAndFrac()
+		if frac < s.baseBuiltinFunc.tp.Decimal {
+			err = c.Round(c, s.baseBuiltinFunc.tp.Decimal, types.ModeHalfEven)
+		}
 	}
-	return c, false, err
+	return c, false, errors.Trace(err)
 }
 
 type arithmeticIntDivideFunctionClass struct {
@@ -744,7 +750,7 @@ func (s *builtinArithmeticIntDivideDecimalSig) evalInt(row types.Row) (int64, bo
 	ret, err := c.ToInt()
 	// err returned by ToInt may be ErrTruncated or ErrOverflow, only handle ErrOverflow, ignore ErrTruncated.
 	if err == types.ErrOverflow {
-		return 0, true, errors.Trace(err)
+		return 0, true, types.ErrOverflow.GenByArgs("BIGINT", fmt.Sprintf("(%s DIV %s)", s.args[0].String(), s.args[1].String()))
 	}
 	return ret, false, nil
 }

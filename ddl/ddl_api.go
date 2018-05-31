@@ -39,7 +39,7 @@ import (
 )
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) (err error) {
-	is := d.getInformationSchema()
+	is := d.GetInformationSchema()
 	_, ok := is.SchemaByName(schema)
 	if ok {
 		return infoschema.ErrDatabaseExists.GenByArgs(schema)
@@ -81,7 +81,7 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetIn
 }
 
 func (d *ddl) DropSchema(ctx sessionctx.Context, schema model.CIStr) (err error) {
-	is := d.getInformationSchema()
+	is := d.GetInformationSchema()
 	old, ok := is.SchemaByName(schema)
 	if !ok {
 		return errors.Trace(infoschema.ErrDatabaseNotExists)
@@ -323,8 +323,12 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef) (
 				removeOnUpdateNowFlag(col)
 			case ast.ColumnOptionOnUpdate:
 				// TODO: Support other time functions.
-				if !expression.IsCurrentTimestampExpr(v.Expr) {
-					return nil, nil, ErrInvalidOnUpdate.Gen("invalid ON UPDATE for - %s", col.Name)
+				if col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime {
+					if !expression.IsCurrentTimestampExpr(v.Expr) {
+						return nil, nil, ErrInvalidOnUpdate.GenByArgs(col.Name)
+					}
+				} else {
+					return nil, nil, ErrInvalidOnUpdate.GenByArgs(col.Name)
 				}
 				col.Flag |= mysql.OnUpdateNowFlag
 				setOnUpdateNow = true
@@ -467,11 +471,10 @@ func checkDefaultValue(ctx sessionctx.Context, c *table.Column, hasDefaultValue 
 	}
 
 	if c.DefaultValue != nil {
-		_, err := table.GetColDefaultValue(ctx, c.ToInfo())
-		if types.ErrTruncated.Equal(err) {
+		if _, err := table.GetColDefaultValue(ctx, c.ToInfo()); err != nil {
 			return types.ErrInvalidDefault.GenByArgs(c.Name)
 		}
-		return errors.Trace(err)
+		return nil
 	}
 
 	// Set not null but default null is invalid.
@@ -712,7 +715,7 @@ func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols 
 }
 
 func (d *ddl) CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.Ident) error {
-	is := d.getInformationSchema()
+	is := d.GetInformationSchema()
 	_, ok := is.SchemaByName(referIdent.Schema)
 	if !ok {
 		return infoschema.ErrTableNotExists.GenByArgs(referIdent.Schema, referIdent.Name)
@@ -757,7 +760,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		return d.CreateTableWithLike(ctx, ident, referIdent)
 	}
 	colDefs := s.Cols
-	is := d.getInformationSchema()
+	is := d.GetInformationSchema()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenByArgs(ident.Schema)
@@ -1027,7 +1030,7 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 }
 
 func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int64) error {
-	is := d.getInformationSchema()
+	is := d.GetInformationSchema()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenByArgs(ident.Schema)
@@ -1075,7 +1078,7 @@ func (d *ddl) ShardRowID(ctx sessionctx.Context, tableIdent ast.Ident, uVal uint
 }
 
 func (d *ddl) getSchemaAndTableByIdent(tableIdent ast.Ident) (dbInfo *model.DBInfo, t table.Table, err error) {
-	is := d.getInformationSchema()
+	is := d.GetInformationSchema()
 	schema, ok := is.SchemaByName(tableIdent.Schema)
 	if !ok {
 		return nil, nil, infoschema.ErrDatabaseNotExists.GenByArgs(tableIdent.Schema)
@@ -1321,8 +1324,12 @@ func setDefaultAndComment(ctx sessionctx.Context, col *table.Column, options []*
 			return errUnsupportedModifyColumn.Gen("unsupported modify column constraint - %v", opt.Tp)
 		case ast.ColumnOptionOnUpdate:
 			// TODO: Support other time functions.
-			if !expression.IsCurrentTimestampExpr(opt.Expr) {
-				return ErrInvalidOnUpdate.Gen("invalid ON UPDATE for - %s", col.Name)
+			if col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime {
+				if !expression.IsCurrentTimestampExpr(opt.Expr) {
+					return ErrInvalidOnUpdate.GenByArgs(col.Name)
+				}
+			} else {
+				return ErrInvalidOnUpdate.GenByArgs(col.Name)
 			}
 			col.Flag |= mysql.OnUpdateNowFlag
 			setOnUpdateNow = true
@@ -1569,7 +1576,7 @@ func (d *ddl) AlterTableComment(ctx sessionctx.Context, ident ast.Ident, spec *a
 
 // DropTable will proceed even if some table in the list does not exists.
 func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident) (err error) {
-	is := d.getInformationSchema()
+	is := d.GetInformationSchema()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenByArgs(ti.Schema)
@@ -1593,7 +1600,7 @@ func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident) (err error) {
 }
 
 func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
-	is := d.getInformationSchema()
+	is := d.GetInformationSchema()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenByArgs(ti.Schema)
@@ -1619,7 +1626,7 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 }
 
 func (d *ddl) RenameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident) error {
-	is := d.getInformationSchema()
+	is := d.GetInformationSchema()
 	oldSchema, ok := is.SchemaByName(oldIdent.Schema)
 	if !ok {
 		return errFileNotFound.GenByArgs(oldIdent.Schema, oldIdent.Name)
@@ -1820,18 +1827,6 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
-}
-
-// findCol finds column in cols by name.
-func findCol(cols []*model.ColumnInfo, name string) *model.ColumnInfo {
-	name = strings.ToLower(name)
-	for _, col := range cols {
-		if col.Name.L == name {
-			return col
-		}
-	}
-
-	return nil
 }
 
 func isDroppableColumn(tblInfo *model.TableInfo, colName model.CIStr) error {
