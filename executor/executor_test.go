@@ -2816,28 +2816,24 @@ func (s *testSuite) TestUnsignedDecimalOverflow(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a decimal(10,2) unsigned)")
 	for _, t := range tests {
-		func() {
-			res, err := tk.Exec("insert into t values (?)", t.input)
-			if res != nil {
-				defer res.Close()
-			}
-			if t.hasErr {
-				c.Assert(err, NotNil)
-				c.Assert(strings.Contains(err.Error(), t.err), IsTrue)
-			} else {
-				c.Assert(err, IsNil)
-			}
-		}()
+		res, err := tk.Exec("insert into t values (?)", t.input)
+		if res != nil {
+			defer res.Close()
+		}
+		if t.hasErr {
+			c.Assert(err, NotNil)
+			c.Assert(strings.Contains(err.Error(), t.err), IsTrue)
+		} else {
+			c.Assert(err, IsNil)
+		}
+		if res != nil {
+			res.Close()
+		}
 	}
 
-	func() {
-		defer func() {
-			tk.MustExec("set sql_mode=default")
-		}()
-		tk.MustExec("set sql_mode=''")
-		tk.MustExec("delete from t")
-		tk.MustExec("insert into t values (?)", -1)
-		r := tk.MustQuery("select a from t limit 1")
-		r.Check(testkit.Rows("0.00"))
-	}()
+	tk.MustExec("set sql_mode=''")
+	tk.MustExec("delete from t")
+	tk.MustExec("insert into t values (?)", -1)
+	r := tk.MustQuery("select a from t limit 1")
+	r.Check(testkit.Rows("0.00"))
 }
