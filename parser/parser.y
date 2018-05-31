@@ -3603,13 +3603,25 @@ SumExpr:
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$3}}
 	}
+|	builtinBitAnd '(' "ALL" Expression ')'
+	{
+		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}}
+	}
 |	builtinBitOr '(' Expression ')'
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$3}}
 	}
+|	builtinBitOr '(' "ALL" Expression ')'
+	{
+		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}}
+	}
 |	builtinBitXor '(' Expression ')'
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$3}}
+	}
+|	builtinBitXor '(' "ALL" Expression ')'
+	{
+		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}}
 	}
 |	builtinCount '(' DistinctKwd ExpressionList ')'
 	{
