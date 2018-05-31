@@ -527,7 +527,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		buf.WriteString(fmt.Sprintf("  PRIMARY KEY (`%s`)", pkCol.Name.O))
 	}
 
-	if len(tb.Indices()) > 0 || len(tb.Meta().ForeignKeys) > 0 {
+	if len(tb.Indices()) > 0 {
 		buf.WriteString(",\n")
 	}
 
@@ -558,40 +558,6 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		}
 	}
 
-	if len(tb.Indices()) > 0 && len(tb.Meta().ForeignKeys) > 0 {
-		buf.WriteString(",\n")
-	}
-
-	firstFK := true
-	for _, fk := range tb.Meta().ForeignKeys {
-		if fk.State != model.StatePublic {
-			continue
-		}
-		if !firstFK {
-			buf.WriteString(",\n")
-		}
-		firstFK = false
-		cols := make([]string, 0, len(fk.Cols))
-		for _, c := range fk.Cols {
-			cols = append(cols, c.O)
-		}
-
-		refCols := make([]string, 0, len(fk.RefCols))
-		for _, c := range fk.RefCols {
-			refCols = append(refCols, c.O)
-		}
-
-		buf.WriteString(fmt.Sprintf("  CONSTRAINT `%s` FOREIGN KEY (`%s`)", fk.Name.O, strings.Join(cols, "`,`")))
-		buf.WriteString(fmt.Sprintf(" REFERENCES `%s` (`%s`)", fk.RefTable.O, strings.Join(refCols, "`,`")))
-
-		if ast.ReferOptionType(fk.OnDelete) != ast.ReferOptionNoOption {
-			buf.WriteString(fmt.Sprintf(" ON DELETE %s", ast.ReferOptionType(fk.OnDelete)))
-		}
-
-		if ast.ReferOptionType(fk.OnUpdate) != ast.ReferOptionNoOption {
-			buf.WriteString(fmt.Sprintf(" ON UPDATE %s", ast.ReferOptionType(fk.OnUpdate)))
-		}
-	}
 	buf.WriteString("\n")
 
 	buf.WriteString(") ENGINE=InnoDB")
@@ -633,14 +599,9 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		for i, def := range partitionInfo.Definitions {
 			lessThans := ""
 			lessThans = strings.Join(def.LessThan, ",")
-			multipleLt := len(def.LessThan) > 1
 
 			var parDef string
-			if multipleLt {
-				parDef = fmt.Sprintf("  PARTITION %s VALUES LESS THAN (%s)", def.Name, lessThans)
-			} else {
-				parDef = fmt.Sprintf("  PARTITION %s VALUES LESS THAN %s", def.Name, lessThans)
-			}
+			parDef = fmt.Sprintf("  PARTITION %s VALUES LESS THAN (%s)", def.Name, lessThans)
 			if i < len(partitionInfo.Definitions)-1 {
 				buf.WriteString(parDef)
 				buf.WriteString(",\n")

@@ -547,7 +547,7 @@ func (b *executorBuilder) buildLoadData(v *plan.LoadData) Executor {
 		b.err = errors.Trace(err)
 		return nil
 	}
-	loadDataExec := &LoadData{
+	loadDataExec := &LoadDataExec{
 		baseExecutor: newBaseExecutor(b.ctx, nil, v.ExplainID()),
 		IsLocal:      v.IsLocal,
 		loadDataInfo: &LoadDataInfo{
@@ -1151,7 +1151,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plan.AnalyzeColumnsTa
 		BucketSize:    maxBucketSize,
 		SampleSize:    maxRegionSampleSize,
 		SketchSize:    maxSketchSize,
-		ColumnsInfo:   plan.ColumnsToProto(cols, task.TableInfo.PKIsHandle),
+		ColumnsInfo:   model.ColumnsToProto(cols, task.TableInfo.PKIsHandle),
 		CmsketchDepth: &depth,
 		CmsketchWidth: &width,
 	}

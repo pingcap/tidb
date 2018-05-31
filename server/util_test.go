@@ -255,3 +255,36 @@ func (s *testUtilSuite) TestAppendFormatFloat(c *C) {
 		c.Assert(string(appendFormatFloat(nil, t.fVal, t.prec, t.bitSize)), Equals, t.out)
 	}
 }
+
+func (s *testUtilSuite) TestParseNullTermString(c *C) {
+	for _, t := range []struct {
+		input  string
+		str    string
+		remain string
+	}{
+		{
+			"abc\x00def",
+			"abc",
+			"def",
+		},
+		{
+			"\x00def",
+			"",
+			"def",
+		},
+		{
+			"def\x00hig\x00k",
+			"def",
+			"hig\x00k",
+		},
+		{
+			"abcdef",
+			"",
+			"abcdef",
+		},
+	} {
+		str, remain := parseNullTermString([]byte(t.input))
+		c.Assert(string(str), Equals, t.str)
+		c.Assert(string(remain), Equals, t.remain)
+	}
+}

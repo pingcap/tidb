@@ -44,6 +44,7 @@ const (
 	codeWrongGroupField      = mysql.ErrWrongGroupField
 	codeDupFieldName         = mysql.ErrDupFieldName
 	codeNonUpdatableTable    = mysql.ErrNonUpdatableTable
+	codeInternal             = mysql.ErrInternal
 )
 
 // error definitions.
@@ -73,6 +74,7 @@ var (
 	ErrWrongGroupField      = terror.ClassOptimizer.New(codeWrongGroupField, mysql.MySQLErrName[mysql.ErrWrongGroupField])
 	ErrDupFieldName         = terror.ClassOptimizer.New(codeDupFieldName, mysql.MySQLErrName[mysql.ErrDupFieldName])
 	ErrNonUpdatableTable    = terror.ClassOptimizer.New(codeNonUpdatableTable, mysql.MySQLErrName[mysql.ErrNonUpdatableTable])
+	ErrInternal             = terror.ClassOptimizer.New(codeInternal, mysql.MySQLErrName[mysql.ErrInternal])
 )
 
 func init() {
@@ -95,6 +97,7 @@ func init() {
 		codeWrongGroupField:      mysql.ErrWrongGroupField,
 		codeDupFieldName:         mysql.ErrDupFieldName,
 		codeNonUpdatableTable:    mysql.ErrUnknownTable,
+		codeInternal:             mysql.ErrInternal,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassOptimizer] = mysqlErrCodeMap
 }
