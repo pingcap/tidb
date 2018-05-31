@@ -50,14 +50,10 @@ func foldConstant(expr Expression) (Expression, bool) {
 
 		// This switch is for UDF if or ifnull constant folding.
 		// If first arg is constant, the rest args will not be checked whether is constant.
-		var ctx sessionctx.Context
-		if bbf, ok := x.Function.(*baseBuiltinFunc); ok {
-			ctx = bbf.ctx
-		}
 		switch x.Function.(type) {
 		case *builtinIfIntSig, *builtinIfRealSig, *builtinIfDecimalSig, *builtinIfStringSig, *builtinIfTimeSig,
 			*builtinIfDurationSig, *builtinIfJSONSig:
-			if fExpr, isDeferred := foldConstantForBuiltinIfSig(args, ctx); fExpr != nil {
+			if fExpr, isDeferred := foldConstantForBuiltinIfSig(args, x.Function.getCtx()); fExpr != nil {
 				return fExpr, isDeferred
 			}
 		case *builtinIfNullIntSig, *builtinIfNullRealSig, *builtinIfNullDecimalSig, *builtinIfNullStringSig,
