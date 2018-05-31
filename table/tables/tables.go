@@ -139,7 +139,7 @@ func generatePartitionExpr(ctx sessionctx.Context, tblInfo *model.TableInfo) ([]
 	partitionExprs := make([]expression.Expression, 0, len(pi.Definitions))
 	var buf bytes.Buffer
 	for _, def := range pi.Definitions {
-		fmt.Fprintf(&buf, "%s < %s", pi.Expr, def.LessThan[0])
+		fmt.Fprintf(&buf, "(%s) < (%s)", pi.Expr, def.LessThan[0])
 		expr, err := expression.ParseSimpleExpr(ctx, buf.String(), tblInfo)
 		if err != nil {
 			return nil, errors.Trace(err)
