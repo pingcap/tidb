@@ -23,7 +23,6 @@ import (
 	"fmt"
 	"math"
 	"strings"
-	"sync"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/mock"
 	binlog "github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
 	"github.com/spaolacci/murmur3"
@@ -60,10 +60,7 @@ type Table struct {
 	meta            *model.TableInfo
 
 	// partitionExpr caches partition expression.
-	partitionExpr struct {
-		sync.RWMutex
-		value []expression.Expression
-	}
+	partitionExpr []expression.Expression
 }
 
 // MockTableFromMeta only serves for test.
@@ -123,10 +120,15 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 	}
 
 	t.meta = tblInfo
+	partitionExpr, err := generatePartitionExpr(tblInfo)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	t.partitionExpr = partitionExpr
 	return t, nil
 }
 
-func generatePartitionExpr(ctx sessionctx.Context, tblInfo *model.TableInfo) ([]expression.Expression, error) {
+func generatePartitionExpr(tblInfo *model.TableInfo) ([]expression.Expression, error) {
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil {
 		return nil, nil
@@ -136,6 +138,7 @@ func generatePartitionExpr(ctx sessionctx.Context, tblInfo *model.TableInfo) ([]
 		return nil, nil
 	}
 
+	ctx := mock.NewContext()
 	partitionExprs := make([]expression.Expression, 0, len(pi.Definitions))
 	var buf bytes.Buffer
 	for _, def := range pi.Definitions {
@@ -392,41 +395,13 @@ func (t *Table) getRollbackableMemStore(ctx sessionctx.Context) kv.RetrieverMuta
 	return bs
 }
 
-func (t *Table) getPartitionExpr(ctx sessionctx.Context) ([]expression.Expression, error) {
-	pi := t.meta.GetPartitionInfo()
-	if pi == nil {
-		return nil, nil
-	}
-
-	var ret []expression.Expression
-	t.partitionExpr.RLock()
-	ret = t.partitionExpr.value
-	t.partitionExpr.RUnlock()
-
-	if ret == nil {
-		var err error
-		ret, err = generatePartitionExpr(ctx, t.meta)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		t.partitionExpr.Lock()
-		t.partitionExpr.value = ret
-		t.partitionExpr.Unlock()
-	}
-	return ret, nil
-}
-
 // locatePartition returns the partition ID of the input record.
 func (t *Table) locatePartition(ctx sessionctx.Context, r []types.Datum) (int64, error) {
-	partitionExpr, err := t.getPartitionExpr(ctx)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	if partitionExpr == nil {
+	if len(t.partitionExpr) == 0 {
 		return t.ID, nil
 	}
 
-	for i, expr := range partitionExpr {
+	for i, expr := range t.partitionExpr {
 		val, _, err := expr.EvalInt(ctx, types.DatumRow(r))
 		if err != nil {
 			return 0, errors.Trace(err)
