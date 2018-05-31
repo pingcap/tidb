@@ -315,9 +315,8 @@ func isTableAliasDuplicate(node ast.ResultSetNode, tableAliases map[string]inter
 		_, exists := tableAliases[ts.AsName.L]
 		if len(ts.AsName.L) != 0 && exists {
 			return ErrNonUniqTable.GenByArgs(ts.AsName)
-		} else {
-			tableAliases[ts.AsName.L] = nil
 		}
+		tableAliases[ts.AsName.L] = nil
 	}
 	return nil
 }
