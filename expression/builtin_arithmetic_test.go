@@ -354,83 +354,91 @@ func (s *testEvaluatorSuite) TestArithmeticIntDivide(c *C) {
 	defer testleak.AfterTest(c)()
 	testCases := []struct {
 		args   []interface{}
-		expect interface{}
+		expect []interface{}
 	}{
 		{
 			args:   []interface{}{int64(13), int64(11)},
-			expect: int64(1),
+			expect: []interface{}{int64(1), nil},
 		},
 		{
 			args:   []interface{}{int64(-13), int64(11)},
-			expect: int64(-1),
+			expect: []interface{}{int64(-1), nil},
 		},
 		{
 			args:   []interface{}{int64(13), int64(-11)},
-			expect: int64(-1),
+			expect: []interface{}{int64(-1), nil},
 		},
 		{
 			args:   []interface{}{int64(-13), int64(-11)},
-			expect: int64(1),
+			expect: []interface{}{int64(1), nil},
 		},
 		{
 			args:   []interface{}{int64(33), int64(11)},
-			expect: int64(3),
+			expect: []interface{}{int64(3), nil},
 		},
 		{
 			args:   []interface{}{int64(-33), int64(11)},
-			expect: int64(-3),
+			expect: []interface{}{int64(-3), nil},
 		},
 		{
 			args:   []interface{}{int64(33), int64(-11)},
-			expect: int64(-3),
+			expect: []interface{}{int64(-3), nil},
 		},
 		{
 			args:   []interface{}{int64(-33), int64(-11)},
-			expect: int64(3),
+			expect: []interface{}{int64(3), nil},
 		},
 		{
 			args:   []interface{}{int64(11), int64(0)},
-			expect: nil,
+			expect: []interface{}{nil, nil},
 		},
 		{
 			args:   []interface{}{int64(-11), int64(0)},
-			expect: nil,
+			expect: []interface{}{nil, nil},
 		},
 		{
 			args:   []interface{}{float64(11.01), float64(1.1)},
-			expect: int64(10),
+			expect: []interface{}{int64(10), nil},
 		},
 		{
 			args:   []interface{}{float64(-11.01), float64(1.1)},
-			expect: int64(-10),
+			expect: []interface{}{int64(-10), nil},
 		},
 		{
 			args:   []interface{}{float64(11.01), float64(-1.1)},
-			expect: int64(-10),
+			expect: []interface{}{int64(-10), nil},
 		},
 		{
 			args:   []interface{}{float64(-11.01), float64(-1.1)},
-			expect: int64(10),
+			expect: []interface{}{int64(10), nil},
 		},
 		{
 			args:   []interface{}{nil, float64(-0.11101)},
-			expect: nil,
+			expect: []interface{}{nil, nil},
 		},
 		{
 			args:   []interface{}{float64(1.01), nil},
-			expect: nil,
+			expect: []interface{}{nil, nil},
 		},
 		{
 			args:   []interface{}{nil, int64(-1001)},
-			expect: nil,
+			expect: []interface{}{nil, nil},
 		},
 		{
 			args:   []interface{}{int64(101), nil},
-			expect: nil,
+			expect: []interface{}{nil, nil},
 		},
 		{
 			args:   []interface{}{nil, nil},
-			expect: nil,
+			expect: []interface{}{nil, nil},
+		},
+		{
+			args:   []interface{}{float64(123456789100000.0), float64(-0.00001)},
+			expect: []interface{}{nil, "*BIGINT value is out of range in '\\(123456789100000 DIV -0.00001\\)'"},
+		},
+		{
+			args:   []interface{}{int64(-9223372036854775808), float64(-1)},
+			expect: []interface{}{nil, "*BIGINT value is out of range in '\\(-9223372036854775808 DIV -1\\)'"},
 		},
 	}
 
@@ -439,8 +447,12 @@ func (s *testEvaluatorSuite) TestArithmeticIntDivide(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(sig, NotNil)
 		val, err := evalBuiltinFunc(sig, nil)
-		c.Assert(err, IsNil)
-		c.Assert(val, testutil.DatumEquals, types.NewDatum(tc.expect))
+		if tc.expect[1] == nil {
+			c.Assert(err, IsNil)
+			c.Assert(val, testutil.DatumEquals, types.NewDatum(tc.expect[0]))
+		} else {
+			c.Assert(err, ErrorMatches, tc.expect[1])
+		}
 	}
 }
 

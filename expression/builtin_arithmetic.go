@@ -750,7 +750,7 @@ func (s *builtinArithmeticIntDivideDecimalSig) evalInt(row types.Row) (int64, bo
 	ret, err := c.ToInt()
 	// err returned by ToInt may be ErrTruncated or ErrOverflow, only handle ErrOverflow, ignore ErrTruncated.
 	if err == types.ErrOverflow {
-		return 0, true, errors.Trace(types.ErrOverflow.GenByArgs("BIGINT", fmt.Sprintf("(%s DIV %s)", s.args[0].String(), s.args[1].String())))
+		return 0, true, types.ErrOverflow.GenByArgs("BIGINT", fmt.Sprintf("(%s DIV %s)", s.args[0].String(), s.args[1].String()))
 	}
 	return ret, false, nil
 }
