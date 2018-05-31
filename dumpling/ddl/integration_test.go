@@ -18,6 +18,7 @@ import (
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
@@ -74,6 +75,25 @@ func (s *testIntegrationSuite) TestInvalidDefault(c *C) {
 	_, err = tk.Exec("create table t( c1 varchar(2) default 'TiDB');")
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, types.ErrInvalidDefault), IsTrue)
+}
+
+// for issue #3848
+func (s *testIntegrationSuite) TestInvalidNameWhenCreateTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("USE test;")
+
+	_, err := tk.Exec("create table t(xxx.t.a bigint)")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, ddl.ErrWrongDBName), IsTrue)
+
+	_, err = tk.Exec("create table t(test.tttt.a bigint)")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, ddl.ErrWrongTableName), IsTrue)
+
+	_, err = tk.Exec("create table t(t.tttt.a bigint)")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, ddl.ErrWrongDBName), IsTrue)
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
