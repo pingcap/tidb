@@ -143,12 +143,18 @@ func generatePartitionExpr(tblInfo *model.TableInfo) ([]expression.Expression, e
 	partitionExprs := make([]expression.Expression, 0, len(pi.Definitions))
 	var buf bytes.Buffer
 	for _, def := range pi.Definitions {
-		fmt.Fprintf(&buf, "(%s) < (%s)", pi.Expr, def.LessThan[0])
-		expr, err := expression.ParseSimpleExpr(ctx, buf.String(), tblInfo)
-		if err != nil {
-			return nil, errors.Trace(err)
+		if strings.EqualFold(def.LessThan[0], "MAXVALUE") {
+			// Expr less than maxvalue is always true.
+			partitionExprs = append(partitionExprs, expression.One)
+		} else {
+			fmt.Fprintf(&buf, "(%s) < (%s)", pi.Expr, def.LessThan[0])
+			expr, err := expression.ParseSimpleExpr(ctx, buf.String(), tblInfo)
+			if err != nil {
+				fmt.Println(errors.ErrorStack(err), buf.String())
+				return nil, errors.Trace(err)
+			}
+			partitionExprs = append(partitionExprs, expr)
 		}
-		partitionExprs = append(partitionExprs, expr)
 		buf.Reset()
 	}
 	return partitionExprs, nil

@@ -330,14 +330,15 @@ func (ts *testSuite) TestTableFromMeta(c *C) {
 }
 
 func (ts *testSuite) TestPartitionAddRecord(c *C) {
-	createTable := `CREATE TABLE test.t1 (id int(11))
+	createTable1 := `CREATE TABLE test.t1 (id int(11))
 PARTITION BY RANGE ( id ) (
 		PARTITION p0 VALUES LESS THAN (6),
 		PARTITION p1 VALUES LESS THAN (11),
 		PARTITION p2 VALUES LESS THAN (16),
 		PARTITION p3 VALUES LESS THAN (21)
 )`
-	_, err := ts.se.Execute(context.Background(), createTable)
+
+	_, err := ts.se.Execute(context.Background(), createTable1)
 	c.Assert(err, IsNil)
 	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	tbInfo := tb.Meta()
@@ -357,13 +358,30 @@ PARTITION BY RANGE ( id ) (
 	_, err = txn.Get(tables.PartitionRecordKey(tbInfo.ID, rid))
 	c.Assert(kv.ErrNotExist.Equal(err), IsTrue)
 
-	// Just to cover more code.
+	// Cover more code.
 	_, err = tb.AddRecord(ts.se, types.MakeDatums(7), false)
 	c.Assert(err, IsNil)
 	_, err = tb.AddRecord(ts.se, types.MakeDatums(12), false)
 	c.Assert(err, IsNil)
 	_, err = tb.AddRecord(ts.se, types.MakeDatums(16), false)
 	c.Assert(err, IsNil)
+
+	// Value must locates in one partition.
 	_, err = tb.AddRecord(ts.se, types.MakeDatums(22), false)
 	c.Assert(table.ErrTrgInvalidCreationCtx.Equal(err), IsTrue)
+	ts.se.Execute(context.Background(), "rollback")
+
+	createTable2 := `CREATE TABLE test.t2 (id int(11))
+PARTITION BY RANGE ( id ) (
+		PARTITION p0 VALUES LESS THAN (6),
+		PARTITION p3 VALUES LESS THAN MAXVALUE
+)`
+	_, err = ts.se.Execute(context.Background(), createTable2)
+	c.Assert(err, IsNil)
+	c.Assert(ts.se.NewTxn(), IsNil)
+	tb, err = ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	tbInfo = tb.Meta()
+	tbInfo.Partition.Enable = true
+	_, err = tb.AddRecord(ts.se, types.MakeDatums(22), false)
+	c.Assert(err, IsNil) // Insert into maxvalue partition.
 }
