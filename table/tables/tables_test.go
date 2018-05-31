@@ -365,5 +365,5 @@ PARTITION BY RANGE ( id ) (
 	_, err = tb.AddRecord(ts.se, types.MakeDatums(16), false)
 	c.Assert(err, IsNil)
 	_, err = tb.AddRecord(ts.se, types.MakeDatums(22), false)
-	c.Assert(err, IsNil)
+	c.Assert(table.ErrTrgInvalidCreationCtx.Equal(err), IsTrue)
 }

@@ -426,7 +426,7 @@ func (t *Table) locatePartition(ctx sessionctx.Context, r []types.Datum) (int64,
 	}
 	if idx < 0 || idx >= len(t.partitionExpr) {
 		// The data does not belong to any of the partition?
-		return t.ID, nil
+		return 0, errors.Trace(table.ErrTrgInvalidCreationCtx)
 	}
 	return partitionInfo.Definitions[idx].ID, nil
 }
