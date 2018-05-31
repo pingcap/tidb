@@ -153,7 +153,7 @@ func physicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
 		return nil, errors.Trace(err)
 	}
 	if t.invalid() {
-		return nil, ErrInternal.GenByArgs("Can't find a proper physical plan for this query")
+		return nil, errInternal.GenByArgs("Can't find a proper physical plan for this query")
 	}
 	p := t.plan()
 	p.ResolveIndices()

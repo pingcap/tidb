@@ -21,7 +21,7 @@ import (
 var (
 	// ErrWrongUsage is returned when SQL operators are not properly used.
 	ErrWrongUsage = terror.ClassParser.New(codeWrongUsage, mysql.MySQLErrName[mysql.ErrWrongUsage])
-	ErrInternal   = terror.ClassParser.New(codeInternal, mysql.MySQLErrName[mysql.ErrInternal])
+	errInternal   = terror.ClassParser.New(codeInternal, mysql.MySQLErrName[mysql.ErrInternal])
 )
 
 const (
