@@ -281,6 +281,7 @@ func ResetStmtCtx(ctx sessionctx.Context, s ast.StmtNode) {
 		sc.InUpdateOrDeleteStmt = true
 		sc.DividedByZeroAsWarning = stmt.IgnoreErr
 		sc.IgnoreZeroInDate = !sessVars.StrictSQLMode || stmt.IgnoreErr
+		sc.Priority = stmt.Priority
 	case *ast.DeleteStmt:
 		sc.IgnoreTruncate = false
 		sc.OverflowAsWarning = false
@@ -288,6 +289,7 @@ func ResetStmtCtx(ctx sessionctx.Context, s ast.StmtNode) {
 		sc.InUpdateOrDeleteStmt = true
 		sc.DividedByZeroAsWarning = stmt.IgnoreErr
 		sc.IgnoreZeroInDate = !sessVars.StrictSQLMode || stmt.IgnoreErr
+		sc.Priority = stmt.Priority
 	case *ast.InsertStmt:
 		sc.IgnoreTruncate = false
 		sc.TruncateAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
