@@ -15,7 +15,6 @@ package expression
 
 import (
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/sessionctx"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -23,22 +22,6 @@ import (
 func FoldConstant(expr Expression) Expression {
 	e, _ := foldConstant(expr)
 	return e
-}
-
-// foldConstant for BuiltinIfSig like BuiltinIfIntSig, BuiltinIfRealSig, BuiltinIfTimeSig and so on.
-func foldConstantForBuiltinIfSig(args []Expression, ctx sessionctx.Context) (Expression, bool) {
-	foldedArg0, _ := foldConstant(args[0])
-	if _, conOK := foldedArg0.(*Constant); conOK {
-		arg0, isNull0, err := args[0].EvalInt(ctx, nil)
-		if err != nil {
-			return nil, false
-		}
-		if !isNull0 && arg0 != 0 {
-			return foldConstant(args[1])
-		}
-		return foldConstant(args[2])
-	}
-	return nil, false
 }
 
 func foldConstant(expr Expression) (Expression, bool) {
@@ -53,13 +36,21 @@ func foldConstant(expr Expression) (Expression, bool) {
 		// If first arg is constant, the rest args will not be checked whether is constant.
 		switch x.FuncName.L {
 		case ast.If:
-			if fExpr, isDeferred := foldConstantForBuiltinIfSig(args, x.Function.getCtx()); fExpr != nil {
-				return fExpr, isDeferred
+			foldedArg0, _ := foldConstant(args[0])
+			if constArg, isConst := foldedArg0.(*Constant); isConst {
+				arg0, isNull0, err := constArg.EvalInt(x.Function.getCtx(), nil)
+				if err != nil {
+					log.Warnf("fold constant %s: %s", x.ExplainInfo(), err.Error())
+					return expr, false
+				}
+				if !isNull0 && arg0 != 0 {
+					return foldConstant(args[1])
+				}
+				return foldConstant(args[2])
 			}
 		case ast.Ifnull:
 			foldedArg0, _ := foldConstant(args[0])
-			constArg, isConst := foldedArg0.(*Constant)
-			if isConst {
+			if constArg, isConst := foldedArg0.(*Constant); isConst {
 				valueNotNull, err := constArg.Value.ToBool(nil)
 				if err != nil && valueNotNull == 0 {
 					return foldConstant(args[1])
