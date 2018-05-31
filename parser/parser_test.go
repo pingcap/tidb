@@ -64,7 +64,6 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"when", "where", "write", "xor", "year_month", "zerofill",
 		"generated", "virtual", "stored", "usage",
 		"delayed", "high_priority", "low_priority",
-		"trace",
 		// TODO: support the following keywords
 		// "with",
 	}
