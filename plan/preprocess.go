@@ -31,7 +31,7 @@ import (
 
 // Preprocess resolves table names of the node, and checks some statements validation.
 func Preprocess(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema, inPrepare bool) error {
-	v := preprocessor{is: is, ctx: ctx, inPrepare: inPrepare}
+	v := preprocessor{is: is, ctx: ctx, inPrepare: inPrepare, tableAliasInJoin: make([]map[string]interface{}, 0, 0)}
 	node.Accept(&v)
 	return errors.Trace(v.err)
 }
@@ -45,6 +45,9 @@ type preprocessor struct {
 	inPrepare bool
 	// inCreateOrDropTable is true when visiting create/drop table statement.
 	inCreateOrDropTable bool
+
+	tableAliasInJoin []map[string]interface{}
+	isParentJoin     bool
 }
 
 func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
@@ -73,6 +76,10 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkUnionSelectList(node)
 	case *ast.DeleteTableList:
 		return in, true
+	case *ast.Join:
+		p.checkNonUniqTableAlias(node)
+	default:
+		p.isParentJoin = false
 	}
 	return in, p.err != nil
 }
@@ -106,6 +113,10 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		}
 	case *ast.TableName:
 		p.handleTableName(x)
+	case *ast.Join:
+		if len(p.tableAliasInJoin) > 0 {
+			p.tableAliasInJoin = p.tableAliasInJoin[:len(p.tableAliasInJoin)-1]
+		}
 	}
 
 	return in, p.err == nil
@@ -281,6 +292,34 @@ func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {
 			return
 		}
 	}
+}
+
+func (p *preprocessor) checkNonUniqTableAlias(stmt *ast.Join) {
+	if !p.isParentJoin {
+		p.tableAliasInJoin = append(p.tableAliasInJoin, make(map[string]interface{}))
+	}
+	tableAliases := p.tableAliasInJoin[len(p.tableAliasInJoin)-1]
+	if err := isTableAliasDuplicate(stmt.Left, tableAliases); err != nil {
+		p.err = err
+		return
+	}
+	if err := isTableAliasDuplicate(stmt.Right, tableAliases); err != nil {
+		p.err = err
+		return
+	}
+	p.isParentJoin = true
+}
+
+func isTableAliasDuplicate(node ast.ResultSetNode, tableAliases map[string]interface{}) error {
+	if ts, ok := node.(*ast.TableSource); ok {
+		_, exists := tableAliases[ts.AsName.L]
+		if len(ts.AsName.L) != 0 && exists {
+			return ErrNonUniqTable.GenByArgs(ts.AsName)
+		} else {
+			tableAliases[ts.AsName.L] = nil
+		}
+	}
+	return nil
 }
 
 func isPrimary(ops []*ast.ColumnOption) int {
