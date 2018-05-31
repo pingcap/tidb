@@ -503,7 +503,8 @@ func (p *preprocessor) checkContainDotColumn(stmt *ast.CreateTableStmt) {
 		if colDef.Name.Schema.O != sName && len(colDef.Name.Schema.O) != 0 {
 			p.err = ddl.ErrWrongDBName.GenByArgs(colDef.Name.Schema.O)
 			return
-		} else if colDef.Name.Table.O != tName && len(colDef.Name.Table.O) != 0 {
+		}
+		if colDef.Name.Table.O != tName && len(colDef.Name.Table.O) != 0 {
 			p.err = ddl.ErrWrongTableName.GenByArgs(colDef.Name.Table.O)
 			return
 		}
