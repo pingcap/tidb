@@ -244,7 +244,6 @@ func (p *LogicalJoin) setPreferredJoinType(hintInfo *tableHintInfo) error {
 
 	lhsAlias := extractTableAlias(p.children[0])
 	rhsAlias := extractTableAlias(p.children[1])
-
 	if hintInfo.ifPreferMergeJoin(lhsAlias, rhsAlias) {
 		p.preferJoinType |= preferMergeJoin
 	}
@@ -285,7 +284,6 @@ func (b *planBuilder) buildJoin(joinNode *ast.Join) LogicalPlan {
 	if b.err != nil {
 		return nil
 	}
-
 	joinPlan := LogicalJoin{StraightJoin: joinNode.StraightJoin || b.inStraightJoin}.init(b.ctx)
 	joinPlan.SetChildren(leftPlan, rightPlan)
 	joinPlan.SetSchema(expression.MergeSchema(leftPlan.Schema(), rightPlan.Schema()))
@@ -1906,6 +1904,12 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 }
 
 func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) Plan {
+	if update.TableHints != nil {
+		// table hints without query block support only visible in current SELECT
+		if b.pushTableHints(update.TableHints) {
+			defer b.popTableHints()
+		}
+	}
 	b.inUpdateStmt = true
 	sel := &ast.SelectStmt{Fields: &ast.FieldList{}, From: update.TableRefs, Where: update.Where, OrderBy: update.Order, Limit: update.Limit}
 	p := b.buildResultSetNode(sel.From.TableRefs)
@@ -2069,7 +2073,19 @@ func extractTableAsNameForUpdate(p LogicalPlan, asNames map[*model.TableInfo][]*
 }
 
 func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) Plan {
-	sel := &ast.SelectStmt{Fields: &ast.FieldList{}, From: delete.TableRefs, Where: delete.Where, OrderBy: delete.Order, Limit: delete.Limit}
+	if delete.TableHints != nil {
+		// table hints without query block support only visible in current DELETE
+		if b.pushTableHints(delete.TableHints) {
+			defer b.popTableHints()
+		}
+	}
+	sel := &ast.SelectStmt{
+		Fields:  &ast.FieldList{},
+		From:    delete.TableRefs,
+		Where:   delete.Where,
+		OrderBy: delete.Order,
+		Limit:   delete.Limit,
+	}
 	p := b.buildResultSetNode(sel.From.TableRefs)
 	if b.err != nil {
 		return nil
