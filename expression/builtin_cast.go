@@ -838,10 +838,12 @@ func (b *builtinCastDecimalAsDecimalSig) Clone() builtinFunc {
 }
 
 func (b *builtinCastDecimalAsDecimalSig) evalDecimal(row types.Row) (res *types.MyDecimal, isNull bool, err error) {
-	res, isNull, err = b.args[0].EvalDecimal(b.ctx, row)
+	evalDecimal, isNull, err := b.args[0].EvalDecimal(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
+	res = &types.MyDecimal{}
+	*res = *evalDecimal
 	sc := b.ctx.GetSessionVars().StmtCtx
 	res, err = types.ProduceDecWithSpecifiedTp(res, b.tp, sc)
 	return res, false, errors.Trace(err)
