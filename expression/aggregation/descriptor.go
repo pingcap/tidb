@@ -238,13 +238,6 @@ func (a *AggFuncDesc) typeInfer4BitFuncs(ctx sessionctx.Context) {
 }
 
 func (a *AggFuncDesc) calculateDefaultValue4Count(ctx sessionctx.Context, schema *expression.Schema) (types.Datum, bool) {
-	for _, arg := range a.Args {
-		result := expression.EvaluateExprWithNull(ctx, schema, arg)
-		con, ok := result.(*expression.Constant)
-		if !ok || con.Value.IsNull() {
-			return types.Datum{}, ok
-		}
-	}
 	return types.NewDatum(0), true
 }
 

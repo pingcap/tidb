@@ -808,8 +808,9 @@ func (s *testSuite) TestIssue5055(c *C) {
 }
 
 func (s *testSuite) TestUnion(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_hashagg_final_concurrency=1")
 
 	testSQL := `drop table if exists union_test; create table union_test(id int);`
 	tk.MustExec(testSQL)
@@ -821,7 +822,6 @@ func (s *testSuite) TestUnion(c *C) {
 	testSQL = `insert union_test values (1),(2)`
 	tk.MustExec(testSQL)
 
-	tk.MustExec(`set @@tidb_hashagg_final_concurrency=1`)
 	testSQL = `select id from union_test union select id from union_test;`
 	r := tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("1", "2"))
@@ -1824,8 +1824,9 @@ func (s *testSuite) TestScanControlSelection(c *C) {
 }
 
 func (s *testSuite) TestSimpleDAG(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_hashagg_final_concurrency=1")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int, c int)")
 	tk.MustExec("insert into t values (1, 1, 1), (2, 1, 1), (3, 1, 2), (4, 2, 3)")

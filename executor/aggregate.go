@@ -15,6 +15,7 @@ package executor
 
 import (
 	"sync"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
@@ -29,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/util/mvmap"
 	"github.com/spaolacci/murmur3"
 	"golang.org/x/net/context"
-	"time"
 )
 
 type aggCtxsMapper map[string][]*aggregation.AggEvaluateContext
@@ -55,7 +55,6 @@ type aggWorker struct {
 type HashAggPartialWorker struct {
 	aggWorker
 
-	processedRowsNum    int
 	inputCh             chan *chunk.Chunk
 	outputChs           []chan []*AfInterResult
 	interResultHolderCh chan []*AfInterResult
@@ -109,18 +108,18 @@ type HashAggExec struct {
 	// we can remove this attribute.
 	doesUnparallelExec bool
 
-	finishCh               chan struct{}
-	finalOutputCh          chan *AfFinalResult
-	partialInputCh         chan []*AfInterResult
-	partialOutputChs       []chan []*AfInterResult
-	inputCh                chan *chunk.Chunk
-	partialConcurrency     int
-	finalConcurrency       int
-	partialWorkers         []HashAggPartialWorker
-	finalWorkers           []HashAggFinalWorker
-	partialWorkerWaitGroup *sync.WaitGroup
-	finalWorkerWaitGroup   *sync.WaitGroup
-	defaultVal             *chunk.Chunk
+	finishCh                   chan struct{}
+	finalOutputCh              chan *AfFinalResult
+	partialInterResultHolderCh chan []*AfInterResult
+	partialOutputChs           []chan []*AfInterResult
+	inputCh                    chan *chunk.Chunk
+	partialConcurrency         int
+	finalConcurrency           int
+	partialWorkers             []HashAggPartialWorker
+	finalWorkers               []HashAggFinalWorker
+	partialWorkerWaitGroup     *sync.WaitGroup
+	finalWorkerWaitGroup       *sync.WaitGroup
+	defaultVal                 *chunk.Chunk
 	// isInputNull indicates whether the child only returns empty input.
 	isInputNull bool
 }
@@ -162,7 +161,7 @@ func (e *HashAggExec) Close() error {
 		// `Close` may be called after `Open` without calling `Next` in test.
 		if !e.prepared {
 			close(e.inputCh)
-			close(e.partialInputCh)
+			close(e.partialInterResultHolderCh)
 			for _, ch := range e.partialOutputChs {
 				close(ch)
 			}
@@ -213,16 +212,16 @@ func (e *HashAggExec) initForParallelExec() {
 	for i := 0; i < e.partialConcurrency; i++ {
 		e.inputCh <- e.children[0].newChunk()
 	}
+	e.finishCh = make(chan struct{}, 1)
 
 	e.partialOutputChs = make([]chan []*AfInterResult, e.finalConcurrency)
 	for i := range e.partialOutputChs {
 		e.partialOutputChs[i] = make(chan []*AfInterResult, e.partialConcurrency)
 	}
-	e.finishCh = make(chan struct{}, 1)
 
-	e.partialInputCh = make(chan []*AfInterResult, e.finalConcurrency*e.partialConcurrency)
-	for i := 0; i < cap(e.partialInputCh); i++ {
-		e.partialInputCh <- make([]*AfInterResult, 0, e.maxChunkSize)
+	e.partialInterResultHolderCh = make(chan []*AfInterResult, e.finalConcurrency*e.partialConcurrency)
+	for i := 0; i < cap(e.partialInterResultHolderCh); i++ {
+		e.partialInterResultHolderCh <- make([]*AfInterResult, 0, e.maxChunkSize)
 	}
 
 	e.partialWorkers = make([]HashAggPartialWorker, e.partialConcurrency)
@@ -241,9 +240,9 @@ func (e *HashAggExec) initForParallelExec() {
 				groupVals:    make([][]byte, 0, 8),
 			},
 			inputCh:             make(chan *chunk.Chunk, 1),
-			interResultHolderCh: e.partialInputCh,
-			giveBackCh:          e.inputCh,
+			interResultHolderCh: e.partialInterResultHolderCh,
 			outputChs:           e.partialOutputChs,
+			giveBackCh:          e.inputCh,
 		}
 	}
 
@@ -263,7 +262,7 @@ func (e *HashAggExec) initForParallelExec() {
 			inputCh:             e.partialOutputChs[i],
 			outputCh:            e.finalOutputCh,
 			finalResultHolderCh: make(chan *chunk.Chunk, 1),
-			giveBackCh:          e.partialInputCh,
+			giveBackCh:          e.partialInterResultHolderCh,
 			rowBuffer:           make([]types.Datum, 0, e.Schema().Len()),
 			mutableRow:          chunk.MutRowFromTypes(e.retTypes()),
 		}
@@ -289,9 +288,10 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, finalConcurrency int)
 		w.WaitGroup.Done()
 	}()
 	var (
-		chk *chunk.Chunk
-		ok  bool
-		sc  = ctx.GetSessionVars().StmtCtx
+		chk              *chunk.Chunk
+		ok               bool
+		sc               = ctx.GetSessionVars().StmtCtx
+		processedRowsNum = 0
 	)
 	for {
 		select {
@@ -300,7 +300,7 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, finalConcurrency int)
 		case chk, ok = <-w.inputCh:
 		}
 		if !ok {
-			if w.processedRowsNum != 0 {
+			if processedRowsNum > 0 {
 				interResults, ok, err := w.shuffleInterResult(sc, finalConcurrency)
 				if !ok || err != nil {
 					w.globalOutputCh <- &AfFinalResult{err: errors.Trace(err)}
@@ -330,9 +330,9 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, finalConcurrency int)
 				}
 			}
 		}
-		w.processedRowsNum += chk.NumRows()
-		if chk.NumRows() == 0 || w.processedRowsNum >= finalConcurrency*w.maxChunkSize {
-			w.processedRowsNum = 0
+		processedRowsNum += chk.NumRows()
+		if chk.NumRows() == 0 || processedRowsNum >= finalConcurrency*w.maxChunkSize {
+			processedRowsNum = 0
 			interResults, ok, err := w.shuffleInterResult(sc, finalConcurrency)
 			if !ok || err != nil {
 				w.globalOutputCh <- &AfFinalResult{err: errors.Trace(err)}

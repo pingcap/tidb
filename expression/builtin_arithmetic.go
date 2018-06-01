@@ -639,7 +639,7 @@ func (s *builtinArithmeticDivideDecimalSig) evalDecimal(row types.Row) (*types.M
 		return c, true, errors.Trace(handleDivisionByZeroError(s.ctx))
 	} else if err == nil {
 		_, frac := c.PrecisionAndFrac()
-		if frac < s.baseBuiltinFunc.tp.Decimal {
+		if frac != s.baseBuiltinFunc.tp.Decimal {
 			err = c.Round(c, s.baseBuiltinFunc.tp.Decimal, types.ModeHalfEven)
 		}
 	}
