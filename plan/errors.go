@@ -45,7 +45,7 @@ const (
 	codeDupFieldName         = mysql.ErrDupFieldName
 	codeNonUpdatableTable    = mysql.ErrNonUpdatableTable
 	codeInternal             = mysql.ErrInternal
-	codeNonUniqTable         = terror.ErrCode(mysql.ErrNonuniqTable)
+	codeNonUniqTable         = mysql.ErrNonuniqTable
 )
 
 // error definitions.
@@ -76,7 +76,7 @@ var (
 	ErrDupFieldName         = terror.ClassOptimizer.New(codeDupFieldName, mysql.MySQLErrName[mysql.ErrDupFieldName])
 	ErrNonUpdatableTable    = terror.ClassOptimizer.New(codeNonUpdatableTable, mysql.MySQLErrName[mysql.ErrNonUpdatableTable])
 	ErrInternal             = terror.ClassOptimizer.New(codeInternal, mysql.MySQLErrName[mysql.ErrInternal])
-	ErrNonUniqTable         = terror.ClassOptimizer.New(codeNonUniqTable, "Not unique table/alias: '%s'")
+	ErrNonUniqTable         = terror.ClassOptimizer.New(codeNonUniqTable, mysql.MySQLErrName[mysql. ErrNonuniqTable])
 )
 
 func init() {

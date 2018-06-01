@@ -46,8 +46,11 @@ type preprocessor struct {
 	// inCreateOrDropTable is true when visiting create/drop table statement.
 	inCreateOrDropTable bool
 
+	// tableAliasInJoin is a stack that keeps the table alias names for joins.
+	// len(tableAliasInJoin) may bigger than 1 because the left/right child of join may be subquery that contains `JOIN`
 	tableAliasInJoin []map[string]interface{}
-	isParentJoin     bool
+
+	parentIsJoin     bool
 }
 
 func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
@@ -79,7 +82,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.Join:
 		p.checkNonUniqTableAlias(node)
 	default:
-		p.isParentJoin = false
+		p.parentIsJoin = false
 	}
 	return in, p.err != nil
 }
@@ -295,7 +298,7 @@ func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {
 }
 
 func (p *preprocessor) checkNonUniqTableAlias(stmt *ast.Join) {
-	if !p.isParentJoin {
+	if !p.parentIsJoin {
 		p.tableAliasInJoin = append(p.tableAliasInJoin, make(map[string]interface{}))
 	}
 	tableAliases := p.tableAliasInJoin[len(p.tableAliasInJoin)-1]
@@ -307,7 +310,7 @@ func (p *preprocessor) checkNonUniqTableAlias(stmt *ast.Join) {
 		p.err = err
 		return
 	}
-	p.isParentJoin = true
+	p.parentIsJoin = true
 }
 
 func isTableAliasDuplicate(node ast.ResultSetNode, tableAliases map[string]interface{}) error {
