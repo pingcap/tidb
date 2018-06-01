@@ -248,4 +248,3 @@ Only TiKV has this release
 * optimize the `Load Data` performance to increase the speed by 10 times.
 * optimize the `Use Database` performance.
 * support statistics on the memory usage of physical operators.
-
