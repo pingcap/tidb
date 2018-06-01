@@ -26,7 +26,6 @@ See also [Release Notes](https://github.com/pingcap/docs/blob/master/releases/rn
   - Fix a Range calculation issue when using `Prepare` to query and `Plan Cache` is enabled
   - Fix the issue that the Schema information is frequently loaded in abnormal conditions
 
-
 ## [2.0.2] - 2018-05-21
 ### New Features
   - Support using the USE INDEX syntax in the Delete statement
@@ -55,7 +54,6 @@ See also [Release Notes](https://github.com/pingcap/docs/blob/master/releases/rn
   - Fix a compatibility issue when inserting data of `TIME` type
   - Fix a goroutine leak issue caused by `copIteratorTaskSender` in some conditions
   - Fix a bug when there is a subquery in an `Update` statement
-
 
 ## [2.0.0] - 2018-04-27
 * SQL Optimizer
@@ -105,7 +103,6 @@ See also [Release Notes](https://github.com/pingcap/docs/blob/master/releases/rn
   - Support recovering the index data using `Admin Recover Index` for disaster recovery
   - Support modifying Table Options using the `Alter` statement
 
-
 ## [2.0.0-rc.5] - 2018-04-17
 ### New Features
 * Support showing memory usage of the executing statements in the Show Process List statement
@@ -121,7 +118,6 @@ See also [Release Notes](https://github.com/pingcap/docs/blob/master/releases/rn
 * Fix the estimation of the number of rows for the columns that contain NULL values
 * Fix the zero value of the Binary type
 * Fix the BatchGet issue within a transaction
-
 
 ## [2.0.0-rc.4] - 2018-04-01
 ### New Features
@@ -160,7 +156,6 @@ See also [Release Notes](https://github.com/pingcap/docs/blob/master/releases/rn
 * Fix the wrong result issue of MAX/MIN in some scenarios
 * Fix the issue that the result of Sort Merge Join does not show in order of Join Key in some scenarios
 * Fix the error of comparison between uint and int in boundary conditions
-
 
 ## [2.0.0-rc.2] - 2018-03-15
 Only TiKV has this release
@@ -229,7 +224,6 @@ Only TiKV has this release
 * Fix the resource leak issue in statistics
 * Fix the goroutine leak issue
 * Fix an issue about IndexJoin
-
 
 ## [1.1.0-alpha] - 2018-01-19
 ### New Features
