@@ -5,6 +5,104 @@ See also [Release Notes](https://github.com/pingcap/docs/blob/master/releases/rn
 [tikv_change_log]: https://github.com/pingcap/tikv/CHANGELOG.md
 [pd_change_log]: https://github.com/pingcap/pd/CHANGELOG.md
 
+## [2.0.3] - 2018-06-01
+### New Features
+  - Support modifying the log level online
+  - Support the `COM_CHANGE_USER` command
+  - Support using the `TIME` type parameters under the binary protocol
+### Improves
+  - Optimize the cost estimation of query conditions with the `BETWEEN` expression
+  - Do not display the `FOREIGN KEY` information in the result of `SHOW CREATE TABLE`
+  - Optimize the cost estimation for queries with the `LIMIT` clause
+### Bug Fixes
+  - Fix the issue about the `YEAR` type as the unique index
+  - Fix the issue about `ON DUPLICATE KEY UPDATE` in conditions without the unique index
+  - Fix the compatibility issue of the `CEIL` function
+  - Fix the accuracy issue of the `DIV` calculation in the `DECIMAL` type
+  - Fix the false alarm of `ADMIN CHECK TABLE`
+  - Fix the panic issue of `MAX`/`MIN` under specific expression parameters
+  - Fix the issue that the result of `JOIN` is null in special conditions
+  - Fix the `IN` expression issue when building and querying Range
+  - Fix a Range calculation issue when using `Prepare` to query and `Plan Cache` is enabled
+  - Fix the issue that the Schema information is frequently loaded in abnormal conditions
+
+## [2.0.2] - 2018-05-21
+### New Features
+  - Support using the USE INDEX syntax in the Delete statement
+  - Add the timeout mechanism for writing Binlog
+### Bug Fixes
+  - Fix the issue of pushing down the Decimal division expression
+  - Forbid using the shard_row_id_bits feature in columns with Auto-Increment
+
+## [2.0.1] - 2018-05-16
+### New Features
+  - Add the `tidb_auto_analyze_ratio` session variable to control the threshold value of automatic statistics update
+  - Add an option for TiDB to control the behaviour of Binlog failure
+### Improves
+  - Update the progress of `Add Index` to the DDL job information in real time
+  - Refactor the `Coprocessor` slow log，distinguish the scenario of tasks with long processing time and long waiting time
+  - Log nothing when meeting MySQL protocol handshake error. Avoid too many logs caused by load balancer keep alive mechanism
+  - Refine “Out of range value for column” error message
+  - Change the behaviour of handling `SIGTERM`, do not wait for all queries to terminate anymore
+### Bug Fixes
+  - Fix an issue that not all residual states are cleaned up when the transaction commit fails
+  - Fix a bug about adding indexes in some conditions
+  - Fix the correctness related issue when DDL modifies surface operations in some concurrent scenarios
+  - Fix a bug that the result of `LIMIT` is incorrect in some conditions
+  - Fix a capitalization issue of the `ADMIN CHECK INDEX` statement to make its index name case insensitive
+  - Fix a compatibility issue about the `UNION` statement
+  - Fix a compatibility issue when inserting data of `TIME` type
+  - Fix a goroutine leak issue caused by `copIteratorTaskSender` in some conditions
+  - Fix a bug when there is a subquery in an `Update` statement
+
+## [2.0.0] - 2018-04-27
+* SQL Optimizer
+  - Use more compact data structure to reduce the memory usage of statistics information
+  - Speed up the loading statistics information when starting a tidb-server process
+  - Support updating statistics information dynamically [experimental]
+  - Optimize the cost model to provide more accurate query cost evaluation
+  - Use `Count-Min Sketch` to estimate the cost of point queries more accurately
+  - Support analyzing more complex conditions to make full use of indexes
+  - Support manually specifying the `Join` order using the `STRAIGHT_JOIN` syntax
+  - Use the Stream Aggregation operator when the `GROUP BY` clause is empty to improve the performance
+  - Support using indexes for the `MAX/MIN` function
+  - Optimize the processing algorithms for correlated subqueries to support decorrelating more types of correlated subqueries and transform them to `Left Outer Join`
+  - Extend `IndexLookupJoin` to be used in matching the index prefix
+* SQL Execution Engine
+  - Refactor all operators using the Chunk architecture, improve the execution performance of analytical queries, and reduce memory usage.There is a significant improvement in the TPC-H benchmark result.
+  - Support the Streaming Aggregation operators pushdown
+  - Optimize the `Insert Into Ignore` statement to improve the performance by over 10 times
+  - Optimize the `Insert On Duplicate Key Update` statement to improve the performance by over 10 times
+  - Optimize `Load Data` to improve the performance by over 10 times
+  - Push down more data types and functions to TiKV
+  - Support computing the memory usage of physical operators, and specifying the processing behavior in the configuration file and system variables when the memory usage exceeds the threshold
+  - Support limiting the memory usage by a single SQL statement to reduce the risk of OOM
+  - Support using implicit RowID in CRUD operations
+  - Improve the performance of point queries
+* Server
+  - Support the Proxy Protocol
+  - Add more monitoring metrics and refine the log
+  - Support validating the configuration files
+  - Support obtaining the information of TiDB parameters through HTTP API
+  - Resolve Lock in the Batch mode to speed up garbage collection
+  - Support multi-threaded garbage collection
+  - Support TLS
+* Compatibility
+  - Support more MySQL syntaxes
+  - Support modifying the `lower_case_table_names` system variable in the configuration file to support the OGG data synchronization tool
+  - Improve compatibility with the Navicat management tool
+  - Support displaying the table creating time in `Information_Schema`
+  - Fix the issue that the return types of some functions/expressions differ from MySQL
+  - Improve compatibility with JDBC
+  - Support more SQL Modes
+* DDL
+  - Optimize the `Add Index` operation to greatly improve the execution speed in some scenarios
+  - Attach a lower priority to the `Add Index` operation to reduce the impact on online business
+  - Output more detailed status information of the DDL jobs in `Admin Show DDL Jobs`
+  - Support querying the original statements of currently running DDL jobs using `Admin Show DDL Job Queries JobID`
+  - Support recovering the index data using `Admin Recover Index` for disaster recovery
+  - Support modifying Table Options using the `Alter` statement
+
 ## [2.0.0-rc.5] - 2018-04-17
 ### New Features
 * Support showing memory usage of the executing statements in the Show Process List statement
@@ -20,7 +118,6 @@ See also [Release Notes](https://github.com/pingcap/docs/blob/master/releases/rn
 * Fix the estimation of the number of rows for the columns that contain NULL values
 * Fix the zero value of the Binary type
 * Fix the BatchGet issue within a transaction
-
 
 ## [2.0.0-rc.4] - 2018-04-01
 ### New Features
@@ -59,7 +156,6 @@ See also [Release Notes](https://github.com/pingcap/docs/blob/master/releases/rn
 * Fix the wrong result issue of MAX/MIN in some scenarios
 * Fix the issue that the result of Sort Merge Join does not show in order of Join Key in some scenarios
 * Fix the error of comparison between uint and int in boundary conditions
-
 
 ## [2.0.0-rc.2] - 2018-03-15
 Only TiKV has this release
@@ -129,7 +225,6 @@ Only TiKV has this release
 * Fix the goroutine leak issue
 * Fix an issue about IndexJoin
 
-
 ## [1.1.0-alpha] - 2018-01-19
 ### New Features
 * support the PROXY protocol
@@ -147,4 +242,3 @@ Only TiKV has this release
 * optimize the `Load Data` performance to increase the speed by 10 times.
 * optimize the `Use Database` performance.
 * support statistics on the memory usage of physical operators.
-
