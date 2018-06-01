@@ -53,7 +53,7 @@ See also [Release Notes](https://github.com/pingcap/docs/blob/master/releases/rn
   - Fix a capitalization issue of the `ADMIN CHECK INDEX` statement to make its index name case insensitive
   - Fix a compatibility issue about the `UNION` statement
   - Fix a compatibility issue when inserting data of `TIME` type
-  -  Fix a goroutine leak issue caused by `copIteratorTaskSender` in some conditions
+  - Fix a goroutine leak issue caused by `copIteratorTaskSender` in some conditions
   - Fix a bug when there is a subquery in an `Update` statement
 
 
