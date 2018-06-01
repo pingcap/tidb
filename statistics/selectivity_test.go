@@ -215,6 +215,8 @@ func (s *testSelectivitySuite) TestPseudoSelectivity(c *C) {
 		"Projection_4  TableReader_6 root test.t1.b 1.00"))
 }
 
+// TestDiscreteDistribution tests the estimation for discrete data distribution. This is more common when the index
+// consists several columns, and the first column has small NDV.
 func (s *testSelectivitySuite) TestDiscreteDistribution(c *C) {
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
