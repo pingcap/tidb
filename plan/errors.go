@@ -76,7 +76,7 @@ var (
 	ErrDupFieldName         = terror.ClassOptimizer.New(codeDupFieldName, mysql.MySQLErrName[mysql.ErrDupFieldName])
 	ErrNonUpdatableTable    = terror.ClassOptimizer.New(codeNonUpdatableTable, mysql.MySQLErrName[mysql.ErrNonUpdatableTable])
 	ErrInternal             = terror.ClassOptimizer.New(codeInternal, mysql.MySQLErrName[mysql.ErrInternal])
-	ErrNonUniqTable         = terror.ClassOptimizer.New(codeNonUniqTable, mysql.MySQLErrName[mysql. ErrNonuniqTable])
+	ErrNonUniqTable         = terror.ClassOptimizer.New(codeNonUniqTable, mysql.MySQLErrName[mysql.ErrNonuniqTable])
 )
 
 func init() {

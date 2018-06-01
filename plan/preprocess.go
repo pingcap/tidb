@@ -50,7 +50,7 @@ type preprocessor struct {
 	// len(tableAliasInJoin) may bigger than 1 because the left/right child of join may be subquery that contains `JOIN`
 	tableAliasInJoin []map[string]interface{}
 
-	parentIsJoin     bool
+	parentIsJoin bool
 }
 
 func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
