@@ -33,9 +33,7 @@ var once sync.Once
 const defaultStatusAddr = ":10080"
 
 func (s *Server) startStatusHTTP() {
-	once.Do(func() {
-		go s.startHTTPServer()
-	})
+	go s.startHTTPServer()
 }
 
 func (s *Server) startHTTPServer() {
@@ -75,17 +73,20 @@ func (s *Server) startHTTPServer() {
 		addr = defaultStatusAddr
 	}
 	log.Infof("Listening on %v for status and metrics report.", addr)
-	http.Handle("/", router)
 
+	serverMux := http.NewServeMux()
+	serverMux.Handle("/", router)
+
+	s.statusServer = &http.Server{Addr: addr, Handler: serverMux}
 	var err error
 	if len(s.cfg.Security.ClusterSSLCA) != 0 {
-		err = http.ListenAndServeTLS(addr, s.cfg.Security.ClusterSSLCert, s.cfg.Security.ClusterSSLKey, nil)
+		err = s.statusServer.ListenAndServeTLS(s.cfg.Security.ClusterSSLCert, s.cfg.Security.ClusterSSLKey)
 	} else {
-		err = http.ListenAndServe(addr, nil)
+		err = s.statusServer.ListenAndServe()
 	}
 
 	if err != nil {
-		log.Fatal(err)
+		log.Info(err)
 	}
 }
 
