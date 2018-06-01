@@ -510,7 +510,7 @@ func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 		baseExecutor:          baseExec,
 		Columns:               v.Columns,
 		Lists:                 v.Lists,
-		Setlist:               v.Setlist,
+		SetList:               v.SetList,
 		GenColumns:            v.GenCols.Columns,
 		GenExprs:              v.GenCols.Exprs,
 		needFillDefaultValues: v.NeedFillDefaultValue,
@@ -547,18 +547,18 @@ func (b *executorBuilder) buildLoadData(v *plan.LoadData) Executor {
 		b.err = errors.Trace(err)
 		return nil
 	}
-	loadDataExec := &LoadData{
+	loadDataExec := &LoadDataExec{
 		baseExecutor: newBaseExecutor(b.ctx, nil, v.ExplainID()),
 		IsLocal:      v.IsLocal,
 		loadDataInfo: &LoadDataInfo{
-			row:        make([]types.Datum, len(columns)),
-			insertVal:  insertVal,
-			Path:       v.Path,
-			Table:      tbl,
-			FieldsInfo: v.FieldsInfo,
-			LinesInfo:  v.LinesInfo,
-			Ctx:        b.ctx,
-			columns:    columns,
+			row:          make([]types.Datum, len(columns)),
+			InsertValues: insertVal,
+			Path:         v.Path,
+			Table:        tbl,
+			FieldsInfo:   v.FieldsInfo,
+			LinesInfo:    v.LinesInfo,
+			Ctx:          b.ctx,
+			columns:      columns,
 		},
 	}
 
