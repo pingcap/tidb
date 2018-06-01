@@ -60,7 +60,7 @@ type Table struct {
 	alloc           autoid.Allocator
 	meta            *model.TableInfo
 
-	// partitionExpr caches partition expression.
+	// partitionExpr caches the partition definition expressions.
 	partitionExpr []expression.Expression
 }
 
