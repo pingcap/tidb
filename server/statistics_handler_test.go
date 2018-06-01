@@ -40,11 +40,9 @@ func (ds *testDumpStatsSuite) startServer(c *C) {
 	mvccStore := mocktikv.MustNewMVCCStore()
 	store, err := mockstore.NewMockTikvStore(mockstore.WithMVCCStore(mvccStore))
 	c.Assert(err, IsNil)
-
 	session.SetStatsLease(0)
 	_, err = session.BootstrapSession(store)
 	c.Assert(err, IsNil)
-
 	tidbdrv := NewTiDBDriver(store)
 
 	cfg := config.NewConfig()
@@ -54,7 +52,6 @@ func (ds *testDumpStatsSuite) startServer(c *C) {
 
 	server, err := NewServer(cfg, tidbdrv)
 	c.Assert(err, IsNil)
-
 	ds.server = server
 	go server.Run()
 	waitUntilServerOnline(cfg.Status.StatusPort)
@@ -64,27 +61,15 @@ func (ds *testDumpStatsSuite) startServer(c *C) {
 	ds.sh = &StatsHandler{do}
 }
 
-func (ds *testDumpStatsSuite) stopServer(c *C) {
-	if ds.server != nil {
-		ds.server.Close()
-	}
-}
-
 func (ds *testDumpStatsSuite) TestDumpStatsAPI(c *C) {
 	ds.startServer(c)
 	ds.prepareData(c)
-	defer ds.stopServer(c)
+	defer ds.server.Close()
 
 	router := mux.NewRouter()
 	router.Handle("/stats/dump/{db}/{table}", ds.sh)
 
-	srv := &http.Server{Addr: ":10099", Handler: router}
-	go srv.ListenAndServe()
-	defer srv.Close()
-
-	waitUntilServerOnline(10099)
-
-	resp, err := http.Get("http://127.0.0.1:10099/stats/dump/tidb/test")
+	resp, err := http.Get("http://127.0.0.1:10090/stats/dump/tidb/test")
 	c.Assert(err, IsNil)
 	defer resp.Body.Close()
 

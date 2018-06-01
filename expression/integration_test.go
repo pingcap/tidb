@@ -2721,12 +2721,6 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 	tk.MustExec("create table t(a bigint unsigned)")
 	tk.MustExec("insert into t value(17666000000000000000)")
 	tk.MustQuery("select * from t where a = 17666000000000000000").Check(testkit.Rows("17666000000000000000"))
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a timestamp)")
-	tk.MustExec("insert into t value('1991-05-06 04:59:28')")
-	tk.MustExec("delete from t where a = '1991-05-06 04:59:28'")
-	tk.MustQuery("select * from t").Check(testkit.Rows())
 }
 
 func (s *testIntegrationSuite) TestAggregationBuiltin(c *C) {
@@ -3330,4 +3324,17 @@ func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	session.SetSchemaLease(0)
 	dom, err := session.BootstrapSession(store)
 	return store, dom, errors.Trace(err)
+}
+
+func (s *testIntegrationSuite) TestTwoDecimalAssignTruncate(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer s.cleanEnv(c)
+	tk.MustExec("use test")
+	tk.MustExec("set sql_mode=''")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t1(a decimal(10,5), b decimal(10,1))")
+	tk.MustExec("insert into t1 values(123.12345, 123.12345)")
+	tk.MustExec("update t1 set b = a")
+	res := tk.MustQuery("select a, b from t1")
+	res.Check(testkit.Rows("123.12345 123.1"))
 }
