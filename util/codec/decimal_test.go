@@ -48,7 +48,7 @@ func (s *testDecimalSuite) TestDecimalCodec(c *C) {
 		v := types.NewDecFromFloatForTest(input.Input)
 		datum := types.NewDatum(v)
 		b := EncodeDecimal([]byte{}, datum.GetMysqlDecimal(), datum.Length(), datum.Frac())
-		_, d, err := DecodeDecimal(b)
+		_, d, _, _, err := DecodeDecimal(b)
 		c.Assert(err, IsNil)
 		c.Assert(v.Compare(d), Equals, 0)
 	}
@@ -71,7 +71,7 @@ func testFrac(c *C, v *types.MyDecimal) {
 	var d1 types.Datum
 	d1.SetMysqlDecimal(v)
 	b := EncodeDecimal([]byte{}, d1.GetMysqlDecimal(), d1.Length(), d1.Frac())
-	_, dec, err := DecodeDecimal(b)
+	_, dec, _, _, err := DecodeDecimal(b)
 	c.Assert(err, IsNil)
 	c.Assert(dec.String(), Equals, v.String())
 }

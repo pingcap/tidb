@@ -334,9 +334,11 @@ func DecodeOne(b []byte) (remain []byte, d types.Datum, err error) {
 		b, v, err = DecodeCompactBytes(b)
 		d.SetBytes(v)
 	case decimalFlag:
-		var dec *types.MyDecimal
-		b, dec, err = DecodeDecimal(b)
-		precision, frac := dec.PrecisionAndFrac()
+		var (
+			dec             *types.MyDecimal
+			precision, frac int
+		)
+		b, dec, precision, frac, err = DecodeDecimal(b)
 		d.SetMysqlDecimal(dec)
 		d.SetLength(precision)
 		d.SetFrac(frac)
@@ -557,7 +559,7 @@ func (decoder *Decoder) DecodeOne(b []byte, colIdx int, ft *types.FieldType) (re
 		chk.AppendBytes(colIdx, v)
 	case decimalFlag:
 		var dec *types.MyDecimal
-		b, dec, err = DecodeDecimal(b)
+		b, dec, _, _, err = DecodeDecimal(b)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
