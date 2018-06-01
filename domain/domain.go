@@ -629,7 +629,7 @@ func (do *Domain) newStatsOwner() owner.Manager {
 
 func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager) {
 	lease := do.statsLease
-	deltaUpdateDuration := lease * 5
+	deltaUpdateDuration := lease * 20
 	loadTicker := time.NewTicker(lease)
 	defer loadTicker.Stop()
 	deltaUpdateTicker := time.NewTicker(deltaUpdateDuration)

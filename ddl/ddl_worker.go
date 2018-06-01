@@ -243,8 +243,12 @@ func (d *ddl) handleDDLJobQueue(shouldCleanJobs bool) error {
 		}
 
 		waitTime := 2 * d.lease
-		var job *model.Job
-		var schemaVer int64
+
+		var (
+			job       *model.Job
+			schemaVer int64
+			runJobErr error
+		)
 		err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 			// We are not owner, return and retry checking later.
 			if !d.isOwner() {
@@ -286,14 +290,23 @@ func (d *ddl) handleDDLJobQueue(shouldCleanJobs bool) error {
 
 			// If running job meets error, we will save this error in job Error
 			// and retry later if the job is not cancelled.
-			schemaVer, err = d.runDDLJob(t, job)
+			schemaVer, runJobErr = d.runDDLJob(t, job)
 			if job.IsCancelled() {
 				err = d.finishDDLJob(t, job)
 				return errors.Trace(err)
 			}
-			err = d.updateDDLJob(t, job, err != nil)
+			err = d.updateDDLJob(t, job, runJobErr != nil)
 			return errors.Trace(d.handleUpdateJobError(t, job, err))
 		})
+
+		if runJobErr != nil {
+			// wait a while to retry again. If we don't wait here, DDL will retry this job immediately,
+			// which may act like a deadlock.
+			log.Infof("[ddl] run DDL job error, sleep a while:%v then retry it.", waitTimeWhenErrorOccured)
+			metrics.DDLJobErrCounter.Inc()
+			time.Sleep(waitTimeWhenErrorOccured)
+		}
+
 		if err != nil {
 			return errors.Trace(err)
 		} else if job == nil {
@@ -427,7 +440,7 @@ func (d *ddl) waitSchemaChanged(ctx context.Context, waitTime time.Duration, lat
 	defer func() {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerWaitSchemaChanged, metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
 	}()
-	// TODO: Do we need to wait for a while?
+
 	if latestSchemaVersion == 0 {
 		log.Infof("[ddl] schema version doesn't change")
 		return

@@ -63,8 +63,9 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"update", "use", "using", "utc_date", "values", "varbinary", "varchar",
 		"when", "where", "write", "xor", "year_month", "zerofill",
 		"generated", "virtual", "stored", "usage",
+		"delayed", "high_priority", "low_priority",
 		// TODO: support the following keywords
-		// "delayed" , "high_priority" , "low_priority", "with",
+		// "with",
 	}
 	for _, kw := range reservedKws {
 		src := fmt.Sprintf("SELECT * FROM db.%s;", kw)
@@ -431,12 +432,16 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"DELETE t1, t2 FROM t1 INNER JOIN t2 INNER JOIN t3 WHERE t1.id=t2.id AND t2.id=t3.id;", true},
 		{"DELETE FROM t1, t2 USING t1 INNER JOIN t2 INNER JOIN t3 WHERE t1.id=t2.id AND t2.id=t3.id;", true},
 		{"DELETE t1, t2 FROM t1 INNER JOIN t2 INNER JOIN t3 WHERE t1.id=t2.id AND t2.id=t3.id limit 10;", false},
+		{"DELETE /*+ TiDB_INLJ(t1, t2) */ t1, t2 from t1, t2 where t1.id=t2.id;", true},
+		{"DELETE /*+ TiDB_HJ(t1, t2) */ t1, t2 from t1, t2 where t1.id=t2.id", true},
 
 		// for update statement
 		{"UPDATE t SET id = id + 1 ORDER BY id DESC;", true},
 		{"UPDATE items,month SET items.price=month.price WHERE items.id=month.id;", true},
 		{"UPDATE items,month SET items.price=month.price WHERE items.id=month.id LIMIT 10;", false},
 		{"UPDATE user T0 LEFT OUTER JOIN user_profile T1 ON T1.id = T0.profile_id SET T0.profile_id = 1 WHERE T0.profile_id IN (1);", true},
+		{"UPDATE /*+ TiDB_INLJ(t1, t2) */ t1, t2 set t1.profile_id = 1, t2.profile_id = 1 where ta.a=t.ba", true},
+		{"UPDATE /*+ TiDB_SMJ(t1, t2) */ t1, t2 set t1.profile_id = 1, t2.profile_id = 1 where ta.a=t.ba", true},
 
 		// for select with where clause
 		{"SELECT * FROM t WHERE 1 = 1", true},
@@ -1954,9 +1959,20 @@ func (s *testParserSuite) TestPriority(c *C) {
 	defer testleak.AfterTest(c)()
 	table := []testCase{
 		{`select high_priority * from t`, true},
+		{`select low_priority * from t`, true},
+		{`select delayed * from t`, true},
 		{`insert high_priority into t values (1)`, true},
 		{`insert LOW_PRIORITY into t values (1)`, true},
+		{`insert delayed into t values (1)`, true},
 		{`update low_priority t set a = 2`, true},
+		{`update high_priority t set a = 2`, true},
+		{`update delayed t set a = 2`, true},
+		{`delete low_priority from t where a = 2`, true},
+		{`delete high_priority from t where a = 2`, true},
+		{`delete delayed from t where a = 2`, true},
+		{`replace high_priority into t values (1)`, true},
+		{`replace LOW_PRIORITY into t values (1)`, true},
+		{`replace delayed into t values (1)`, true},
 	}
 	s.RunTest(c, table)
 
