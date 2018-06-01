@@ -624,21 +624,6 @@ func (n *UnionStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// UpgradeSelectLock would upgrade the lock type according to SelectLockOption,
-// because UnionStmt's option should act on all of its SelectList.
-func (n *UnionStmt) UpgradeSelectLock(lock SelectLockType) {
-	if lock == SelectLockNone || n.SelectList == nil {
-		return
-	}
-
-	list := n.SelectList
-	for i := 0; i < len(list.Selects); i++ {
-		if list.Selects[i].LockTp < lock {
-			list.Selects[i].LockTp = lock
-		}
-	}
-}
-
 // Assignment is the expression for assignment, like a = 1.
 type Assignment struct {
 	node

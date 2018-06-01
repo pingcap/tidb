@@ -2799,8 +2799,8 @@ func (s *testSuite) TestForSelectScopeInUnion(c *C) {
 	tk1.MustExec("insert into t values (1)")
 
 	tk1.MustExec("begin")
-	// 'For update' would act on the first select.
-	tk1.MustQuery("select a from t union select 1 as a for update")
+	// 'For update' would act on the second select.
+	tk1.MustQuery("select 1 as a union select a from t for update")
 
 	tk2.MustExec("use test")
 	tk2.MustExec("update t set a = a + 1")
@@ -2808,4 +2808,14 @@ func (s *testSuite) TestForSelectScopeInUnion(c *C) {
 	// As tk1 use select 'for update', it should dectect conflict and fail.
 	_, err := tk1.Exec("commit")
 	c.Assert(err, NotNil)
+
+	tk1.MustExec("begin")
+	// 'For update' would be ignored if 'order by' or 'limit' exists.
+	tk1.MustQuery("select 1 as a union select a from t limit 5 for update")
+	tk1.MustQuery("select 1 as a union select a from t order by a for update")
+
+	tk2.MustExec("update t set a = a + 1")
+
+	_, err = tk1.Exec("commit")
+	c.Assert(err, IsNil)
 }
