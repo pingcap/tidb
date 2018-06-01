@@ -3329,3 +3329,16 @@ func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	dom, err := session.BootstrapSession(store)
 	return store, dom, errors.Trace(err)
 }
+
+func (s *testIntegrationSuite) TestTwoDecimalAssignTruncate(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer s.cleanEnv(c)
+	tk.MustExec("use test")
+	tk.MustExec("set sql_mode=''")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t1(a decimal(10,5), b decimal(10,1))")
+	tk.MustExec("insert into t1 values(123.12345, 123.12345)")
+	tk.MustExec("update t1 set b = a")
+	res := tk.MustQuery("select a, b from t1")
+	res.Check(testkit.Rows("123.12345 123.1"))
+}
