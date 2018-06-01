@@ -431,13 +431,13 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, path *accessPath) (
 
 func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, isDoubleRead bool) {
 	indexCols := make([]*expression.Column, 0, len(idx.Columns))
-	for _, col := range idx.Columns {
-		indexCols = append(indexCols, &expression.Column{FromID: id, Position: col.Offset})
+	for _ = range idx.Columns {
+		indexCols = append(indexCols, &expression.Column{Position: is.ctx.GetSessionVars().AllocColID()})
 	}
 	setHandle := false
 	for _, col := range is.Columns {
 		if (mysql.HasPriKeyFlag(col.Flag) && is.Table.PKIsHandle) || col.ID == model.ExtraHandleID {
-			indexCols = append(indexCols, &expression.Column{FromID: id, ID: col.ID, Position: col.Offset})
+			indexCols = append(indexCols, &expression.Column{ID: col.ID, Position: is.ctx.GetSessionVars().AllocColID()})
 			setHandle = true
 			break
 		}
@@ -445,7 +445,7 @@ func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, isDoubleRe
 	// If it's double read case, the first index must return handle. So we should add extra handle column
 	// if there isn't a handle column.
 	if isDoubleRead && !setHandle {
-		indexCols = append(indexCols, &expression.Column{FromID: id, ID: model.ExtraHandleID, Position: -1})
+		indexCols = append(indexCols, &expression.Column{ID: model.ExtraHandleID, Position: is.ctx.GetSessionVars().AllocColID()})
 	}
 	is.SetSchema(expression.NewSchema(indexCols...))
 }

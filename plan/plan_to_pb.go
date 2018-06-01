@@ -118,14 +118,14 @@ func checkCoverIndex(idx *model.IndexInfo, ranges []*ranger.Range) bool {
 func (p *PhysicalIndexScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
 	columns := make([]*model.ColumnInfo, 0, p.schema.Len())
 	tableColumns := p.Table.Cols()
-	for _, col := range p.schema.Columns {
+	for i, col := range p.schema.Columns {
 		if col.ID == model.ExtraHandleID {
 			columns = append(columns, &model.ColumnInfo{
 				ID:   model.ExtraHandleID,
 				Name: model.ExtraHandleName,
 			})
 		} else {
-			columns = append(columns, tableColumns[col.Position])
+			columns = append(columns, tableColumns[i])
 		}
 	}
 	idxExec := &tipb.IndexScan{

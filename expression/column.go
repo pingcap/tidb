@@ -137,7 +137,6 @@ func (col *CorrelatedColumn) ResolveIndices(_ *Schema) {
 
 // Column represents a column.
 type Column struct {
-	FromID      int
 	ColName     model.CIStr
 	DBName      model.CIStr
 	OrigTblName model.CIStr
@@ -161,7 +160,7 @@ type Column struct {
 // Equal implements Expression interface.
 func (col *Column) Equal(_ sessionctx.Context, expr Expression) bool {
 	if newCol, ok := expr.(*Column); ok {
-		return newCol.FromID == col.FromID && newCol.Position == col.Position
+		return newCol.Position == col.Position
 	}
 	return false
 }
@@ -300,9 +299,8 @@ func (col *Column) HashCode(_ *stmtctx.StatementContext) []byte {
 	if len(col.hashcode) != 0 {
 		return col.hashcode
 	}
-	col.hashcode = make([]byte, 0, 17)
+	col.hashcode = make([]byte, 0, 9)
 	col.hashcode = append(col.hashcode, columnFlag)
-	col.hashcode = codec.EncodeInt(col.hashcode, int64(col.FromID))
 	col.hashcode = codec.EncodeInt(col.hashcode, int64(col.Position))
 	return col.hashcode
 }
@@ -312,6 +310,7 @@ func (col *Column) ResolveIndices(schema *Schema) {
 	col.Index = schema.ColumnIndex(col)
 	// If col's index equals to -1, it means a internal logic error happens.
 	if col.Index == -1 {
+		panic(fmt.Sprintf("Column.ResolveIndices failed: col.Position=%v", col.Position))
 		log.Errorf("Can't find column %s in schema %s", col, schema)
 	}
 }

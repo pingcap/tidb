@@ -18,6 +18,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	log "github.com/sirupsen/logrus"
 )
 
 // KeyInfo stores the columns of one unique key or primary key.
@@ -153,7 +154,8 @@ func (s *Schema) IsUniqueKey(col *Column) bool {
 // ColumnIndex finds the index for a column.
 func (s *Schema) ColumnIndex(col *Column) int {
 	for i, c := range s.Columns {
-		if c.FromID == col.FromID && c.Position == col.Position {
+		log.Infof("Schema(%p).ColumnIndex: col.Position=%v, s.Columns[i].Position=%v", s, col.Position, s.Columns[i].Position)
+		if c.Position == col.Position {
 			return i
 		}
 	}

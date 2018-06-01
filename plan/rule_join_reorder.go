@@ -78,7 +78,7 @@ func findColumnIndexByGroup(groups []LogicalPlan, col *expression.Column) int {
 			return i
 		}
 	}
-	log.Errorf("Unknown columns %s, from id %v, position %d", col, col.FromID, col.Position)
+	log.Errorf("Unknown columns %s, position %d", col, col.Position)
 	return -1
 }
 
