@@ -37,14 +37,14 @@ type LoadDataExec struct {
 }
 
 // NewLoadDataInfo returns a LoadDataInfo structure, and it's only used for tests now.
-func NewLoadDataInfo(ctx sessionctx.Context, row []types.Datum, tbl table.Table, cols []*table.Column) *LoadDataInfo {
+func NewLoadDataInfo(ctx sessionctx.Context, row types.DatumRow, tbl table.Table, cols []*table.Column) *LoadDataInfo {
 	insertVal := &InsertValues{baseExecutor: newBaseExecutor(ctx, nil, "InsertValues"), Table: tbl}
 	return &LoadDataInfo{
-		row:       row,
-		insertVal: insertVal,
-		Table:     tbl,
-		Ctx:       ctx,
-		columns:   cols,
+		row:          row,
+		InsertValues: insertVal,
+		Table:        tbl,
+		Ctx:          ctx,
+		columns:      cols,
 	}
 }
 
@@ -60,7 +60,7 @@ func (e *LoadDataExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return errors.New("Load Data: don't support load data terminated is nil")
 	}
 
-	sctx := e.loadDataInfo.insertVal.ctx
+	sctx := e.loadDataInfo.ctx
 	val := sctx.Value(LoadDataVarKey)
 	if val != nil {
 		sctx.SetValue(LoadDataVarKey, nil)
@@ -86,8 +86,9 @@ func (e *LoadDataExec) Open(ctx context.Context) error {
 
 // LoadDataInfo saves the information of loading data operation.
 type LoadDataInfo struct {
-	row       []types.Datum
-	insertVal *InsertValues
+	*InsertValues
+
+	row types.DatumRow
 
 	Path       string
 	Table      table.Table
@@ -99,7 +100,7 @@ type LoadDataInfo struct {
 
 // SetMaxRowsInBatch sets the max number of rows to insert in a batch.
 func (e *LoadDataInfo) SetMaxRowsInBatch(limit uint64) {
-	e.insertVal.maxRowsInBatch = limit
+	e.maxRowsInBatch = limit
 }
 
 // getValidData returns prevData and curData that starts from starting symbol.
@@ -214,7 +215,7 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 		isEOF = true
 		prevData, curData = curData, prevData
 	}
-	rows := make([][]types.Datum, 0, e.insertVal.maxRowsInBatch)
+	rows := make([]types.DatumRow, 0, e.maxRowsInBatch)
 	for len(curData) > 0 {
 		line, curData, hasStarting = e.getLine(prevData, curData)
 		prevData = nil
@@ -241,23 +242,23 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 			return nil, false, errors.Trace(err)
 		}
 		rows = append(rows, e.colsToRow(cols))
-		e.insertVal.rowCount++
-		if e.insertVal.maxRowsInBatch != 0 && e.insertVal.rowCount%e.insertVal.maxRowsInBatch == 0 {
+		e.rowCount++
+		if e.maxRowsInBatch != 0 && e.rowCount%e.maxRowsInBatch == 0 {
 			reachLimit = true
 			log.Infof("This insert rows has reached the batch %d, current total rows %d",
-				e.insertVal.maxRowsInBatch, e.insertVal.rowCount)
+				e.maxRowsInBatch, e.rowCount)
 			break
 		}
 	}
-	rows, err := e.insertVal.batchMarkDupRows(rows)
+	rows, err := e.batchMarkDupRows(rows)
 	if err != nil {
 		return nil, reachLimit, errors.Trace(err)
 	}
 	for _, row := range rows {
 		e.insertData(row)
 	}
-	if e.insertVal.lastInsertID != 0 {
-		e.insertVal.ctx.GetSessionVars().SetLastInsertID(e.insertVal.lastInsertID)
+	if e.lastInsertID != 0 {
+		e.ctx.GetSessionVars().SetLastInsertID(e.lastInsertID)
 	}
 
 	return curData, reachLimit, nil
@@ -271,10 +272,10 @@ func (e *LoadDataInfo) colsToRow(cols []string) types.DatumRow {
 		}
 		e.row[i].SetString(cols[i])
 	}
-	row, err := e.insertVal.fillRowData(e.columns, e.row)
+	row, err := e.fillRowData(e.columns, e.row)
 	if err != nil {
 		warnLog := fmt.Sprintf("Load Data: insert data:%v failed:%v", e.row, errors.ErrorStack(err))
-		e.insertVal.handleLoadDataWarnings(err, warnLog)
+		e.handleLoadDataWarnings(err, warnLog)
 		return nil
 	}
 	return row
@@ -284,10 +285,10 @@ func (e *LoadDataInfo) insertData(row types.DatumRow) {
 	if row == nil {
 		return
 	}
-	_, err := e.Table.AddRecord(e.insertVal.ctx, row, false)
+	_, err := e.Table.AddRecord(e.ctx, row, false)
 	if err != nil {
 		warnLog := fmt.Sprintf("Load Data: insert data:%v failed:%v", row, errors.ErrorStack(err))
-		e.insertVal.handleLoadDataWarnings(err, warnLog)
+		e.handleLoadDataWarnings(err, warnLog)
 	}
 }
 
