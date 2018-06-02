@@ -5377,21 +5377,13 @@ ShowDatabaseNameOpt:
 	{
 		$$ = ""
 	}
-|	"FROM" DBName
-	{
-		$$ = $2.(string)
-	}
-|	"IN" DBName
+|	FromOrIn DBName
 	{
 		$$ = $2.(string)
 	}
 
 ShowTableAliasOpt:
-	"FROM" TableName
-	{
-		$$ = $2.(*ast.TableName)
-	}
-|	"IN" TableName
+	FromOrIn TableName
 	{
 		$$ = $2.(*ast.TableName)
 	}

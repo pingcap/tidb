@@ -787,6 +787,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`SELECT LOCATE('bar', 'foobarbar', 5);`, true},
 
 		{`SELECT tidb_version();`, true},
+		{`SELECT tidb_is_ddl_owner();`, true},
 
 		// for time fsp
 		{"CREATE TABLE t( c1 TIME(2), c2 DATETIME(2), c3 TIMESTAMP(2) );", true},
