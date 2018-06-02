@@ -425,6 +425,12 @@ func (s *testSuite) TestOnlyFullGroupBy(c *C) {
 	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
 	_, err = tk.Exec("select -b from t group by c")
 	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
+	_, err = tk.Exec("select a, max(b) from t")
+	c.Assert(terror.ErrorEqual(err, plan.ErrMixOfGroupFuncAndFields), IsTrue)
+	_, err = tk.Exec("select sum(a)+b from t")
+	c.Assert(terror.ErrorEqual(err, plan.ErrMixOfGroupFuncAndFields), IsTrue)
+	_, err = tk.Exec("select count(b), c from t")
+	c.Assert(terror.ErrorEqual(err, plan.ErrMixOfGroupFuncAndFields), IsTrue)
 	// test compatible with sql_mode = ONLY_FULL_GROUP_BY
 	tk.MustQuery("select a from t group by a,b,c")
 	tk.MustQuery("select b from t group by b")
@@ -444,6 +450,9 @@ func (s *testSuite) TestOnlyFullGroupBy(c *C) {
 	tk.MustQuery("select b like '%a' from t group by b")
 	tk.MustQuery("select c REGEXP '1.*' from t group by c")
 	tk.MustQuery("select -b from t group by b")
+	tk.MustQuery("select max(a+b) from t")
+	tk.MustQuery("select avg(a)+1 from t")
+	_, err = tk.Exec("select count(c), 5 from t")
 	// test functinal depend on primary key
 	tk.MustQuery("select * from t group by a")
 	// test functional depend on unique not null columns
