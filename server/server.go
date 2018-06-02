@@ -289,7 +289,7 @@ func (s *Server) Close() {
 		s.listener = nil
 	}
 	if s.statusServer != nil {
-		err := s.statusServer.Shutdown(nil)
+		err := s.statusServer.Close()
 		terror.Log(errors.Trace(err))
 		s.statusServer = nil
 	}
