@@ -431,6 +431,8 @@ func (s *testSuite) TestOnlyFullGroupBy(c *C) {
 	c.Assert(terror.ErrorEqual(err, plan.ErrMixOfGroupFuncAndFields), IsTrue)
 	_, err = tk.Exec("select count(b), c from t")
 	c.Assert(terror.ErrorEqual(err, plan.ErrMixOfGroupFuncAndFields), IsTrue)
+	_, err = tk.Exec("select distinct a, b, count(a) from t")
+	c.Assert(terror.ErrorEqual(err, plan.ErrMixOfGroupFuncAndFields), IsTrue)
 	// test compatible with sql_mode = ONLY_FULL_GROUP_BY
 	tk.MustQuery("select a from t group by a,b,c")
 	tk.MustQuery("select b from t group by b")
