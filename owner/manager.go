@@ -62,6 +62,12 @@ const (
 	NewSessionRetryUnlimited = math.MaxInt64
 )
 
+// DDLOwnerChecker is used to check whether tidb is owner.
+type DDLOwnerChecker interface {
+	// IsOwner returns whether the ownerManager is the owner.
+	IsOwner() bool
+}
+
 // ownerManager represents the structure which is used for electing owner.
 type ownerManager struct {
 	owner   int32
@@ -281,10 +287,15 @@ func (m *ownerManager) watchOwner(ctx context.Context, etcdSession *concurrency.
 	watchCh := m.etcdCli.Watch(ctx, key)
 	for {
 		select {
-		case resp := <-watchCh:
+		case resp, ok := <-watchCh:
+			if !ok {
+				metrics.WatchOwnerCounter.WithLabelValues(m.prompt, metrics.WatcherClosed).Inc()
+				log.Infof("%s watcher is closed, no owner", logPrefix)
+				return
+			}
 			if resp.Canceled {
 				metrics.WatchOwnerCounter.WithLabelValues(m.prompt, metrics.Cancelled).Inc()
-				log.Infof("%s failed, no owner", logPrefix)
+				log.Infof("%s canceled, no owner", logPrefix)
 				return
 			}
 
