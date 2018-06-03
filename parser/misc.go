@@ -466,6 +466,7 @@ var tokenMap = map[string]int{
 	"TINYINT":                  tinyIntType,
 	"TINYTEXT":                 tinytextType,
 	"TO":                       to,
+	"TRACE":                    trace,
 	"TRAILING":                 trailing,
 	"TRANSACTION":              transaction,
 	"TRIGGER":                  trigger,
