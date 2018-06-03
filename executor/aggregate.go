@@ -243,6 +243,7 @@ func (e *HashAggExec) initForParallelExec() {
 			interResultHolderCh: e.partialInterResultHolderCh,
 			outputChs:           e.partialOutputChs,
 			giveBackCh:          e.inputCh,
+			globalOutputCh:      e.finalOutputCh,
 		}
 	}
 
