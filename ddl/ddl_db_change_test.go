@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
@@ -626,4 +627,51 @@ func (s *testStateChangeSuite) TestCreateTableIfNotExists(c *C) {
 func (s *testStateChangeSuite) TestCreateDBIfNotExists(c *C) {
 	defer s.se.Execute(context.Background(), "drop database test_not_exists")
 	s.testParallelExecSQL(c, "create database if not exists test_not_exists;")
+}
+
+// TestParallelDDLBeforeRunDDLJob tests a session to execute DDL with an outdated information schema.
+func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
+	_, err := s.se.Execute(context.Background(), "create database db_parallel_get_schema")
+	c.Assert(err, IsNil)
+	defer s.se.Execute(context.Background(), "drop database db_parallel_get_schema")
+	_, err = s.se.Execute(context.Background(), "use db_parallel_get_schema")
+	c.Assert(err, IsNil)
+	_, err = s.se.Execute(context.Background(), "create table ddl_fail (c1 int, c2 int default 1, index (c1))")
+	c.Assert(err, IsNil)
+
+	se, err := session.CreateSession(s.store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "use db_parallel_get_schema")
+	c.Assert(err, IsNil)
+	se1, err := session.CreateSession(s.store)
+	c.Assert(err, IsNil)
+	_, err = se1.Execute(context.Background(), "use db_parallel_get_schema")
+	c.Assert(err, IsNil)
+
+	ddl.IsInTest = true
+	defer func() { ddl.IsInTest = false }()
+	ch := make(chan struct{})
+	wg := sync.WaitGroup{}
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+
+		close(ch)
+		se.SetConnectionID(1)
+		log.Warnf("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 111, id %v", se.GetSessionVars().ConnectionID)
+		_, err1 := se.Execute(context.Background(), "alter table ddl_fail drop column c2")
+		c.Assert(err1, IsNil)
+	}()
+	go func() {
+		defer wg.Done()
+
+		<-ch
+		se1.SetConnectionID(2)
+		log.Warnf("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 222, id %v", se1.GetSessionVars().ConnectionID)
+		_, err2 := se1.Execute(context.Background(), "alter table ddl_fail add column c2 int")
+		c.Assert(err2, NotNil)
+		c.Assert(strings.Contains(err2.Error(), "Information schema is changed"), IsTrue)
+	}()
+
+	wg.Wait()
 }

@@ -14,11 +14,14 @@
 package ddl
 
 import (
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"golang.org/x/net/context"
 )
 
-// Callback is the interface supporting callback function when DDL changed.
+type getInfoSchema func() infoschema.InfoSchema
+
 type Callback interface {
 	// OnChanged is called after schema is changed.
 	OnChanged(err error) error
@@ -28,6 +31,7 @@ type Callback interface {
 	OnJobUpdated(job *model.Job)
 	// OnWatched is called after watching owner is completed.
 	OnWatched(ctx context.Context)
+	OnGetInfoSchema(ctx sessionctx.Context, fn getInfoSchema)
 }
 
 // BaseCallback implements Callback.OnChanged interface.
@@ -51,5 +55,9 @@ func (c *BaseCallback) OnJobUpdated(job *model.Job) {
 
 // OnWatched implements Callback.OnWatched interface.
 func (c *BaseCallback) OnWatched(ctx context.Context) {
+	// Nothing to do.
+}
+
+func (c *BaseCallback) OnGetInfoSchema(ctx sessionctx.Context, fn getInfoSchema) {
 	// Nothing to do.
 }

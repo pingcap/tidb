@@ -161,6 +161,16 @@ func (s *schemaValidator) findNewerDeltas(currVer int64) []deltaSchemaInfo {
 
 // Check checks schema validity, returns true if use schemaVer and related tables at txnTS is legal.
 func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedTableIDs []int64) checkResult {
+	return s.check(txnTS, schemaVer, relatedTableIDs, true)
+}
+
+// CheckSchemaVerOnly checks schema validity, returns true if use schemaVer at txnTS legal.
+// TODO: update the function name.
+func (s *schemaValidator) CheckSchemaVerOnly(txnTS uint64, schemaVer int64) checkResult {
+	return s.check(txnTS, schemaVer, nil, false)
+}
+
+func (s *schemaValidator) check(txnTS uint64, schemaVer int64, relatedTableIDs []int64, shouldCheckRelatedTables bool) checkResult {
 	s.mux.RLock()
 	defer s.mux.RUnlock()
 	if !s.isStarted {
@@ -169,6 +179,19 @@ func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedTableIDs [
 	}
 	if s.lease == 0 {
 		return ResultSucc
+	}
+
+	log.Warnf("ver %v", schemaVer)
+	if len(relatedTableIDs) == 0 {
+		if schemaVer < s.latestSchemaVer {
+			return ResultFail
+		} else {
+			t := extractPhysicalTime(txnTS)
+			if t.After(s.latestSchemaExpire) {
+				return ResultUnknown
+			}
+			return ResultSucc
+		}
 	}
 
 	// Schema changed, result decided by whether related tables change.

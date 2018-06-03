@@ -15,6 +15,8 @@ package executor
 
 import (
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -25,6 +27,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/schema_checker"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
@@ -38,12 +42,60 @@ type DDLExec struct {
 	done bool
 }
 
+func (e *DDLExec) toErr(err error) error {
+	dom := domain.GetDomain(e.ctx)
+	checker := schema_checker.NewSchemaChecker(dom, e.is.SchemaMetaVersion(), nil)
+	schemaInfoErr := checker.Check(e.ctx.Txn().StartTS())
+	if schemaInfoErr != nil {
+		return errors.Trace(schemaInfoErr)
+	}
+	return err
+}
+
+var connID uint64
+var ParallelCnt int32
+
 // Next implements the Executor Next interface.
 func (e *DDLExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 	if e.done {
 		return nil
 	}
 	e.done = true
+
+	if ParallelCnt != 0 {
+		atomic.AddInt32(&ParallelCnt, 1)
+		for {
+			cnt := atomic.LoadInt32(&ParallelCnt)
+			log.Warnf("                      cnt %v", cnt)
+			if cnt == 3 {
+				break
+			}
+			time.Sleep(time.Millisecond * 1)
+		}
+		atomic.CompareAndSwapUint64(&connID, 0, e.ctx.GetSessionVars().ConnectionID)
+		for {
+			id := atomic.LoadUint64(&connID)
+			cnt := atomic.LoadInt32(&ParallelCnt)
+			log.Warnf("------------------- id %v, cnt %v", id, cnt)
+			if id == e.ctx.GetSessionVars().ConnectionID || cnt == 0 {
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	// gofail: var parallelCnt int
+	// for parallelCnt == 0 {
+	// 	time.Sleep(time.Millisecond * 5)
+	// }
+	// atomic.CompareAndSwapUint64(&connID, 0, e.ctx.GetSessionVars().ConnectionID)
+	// for {
+	//	id := atomic.LoadUint64(&connID)
+	//	if id == e.ctx.GetSessionVars().ConnectionID || parallelCnt == 0 {
+	//  log.Warnf("------------------- id %v, cnt %v", connID, parallelCnt)
+	// 		break
+	// 	}
+	// 	time.Sleep(10 * time.Millisecond)
+	// }
 
 	switch x := e.stmt.(type) {
 	case *ast.TruncateTableStmt:
@@ -66,7 +118,7 @@ func (e *DDLExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 		err = e.executeRenameTable(x)
 	}
 	if err != nil {
-		return errors.Trace(err)
+		return errors.Trace(e.toErr(err))
 	}
 
 	dom := domain.GetDomain(e.ctx)

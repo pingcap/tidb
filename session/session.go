@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/schema_checker"
 	binlog "github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
@@ -257,39 +258,6 @@ func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
 	return fields, nil
 }
 
-type schemaLeaseChecker struct {
-	domain.SchemaValidator
-	schemaVer       int64
-	relatedTableIDs []int64
-}
-
-var (
-	// SchemaOutOfDateRetryInterval is the sleeping time when we fail to try.
-	SchemaOutOfDateRetryInterval = int64(500 * time.Millisecond)
-	// SchemaOutOfDateRetryTimes is upper bound of retry times when the schema is out of date.
-	SchemaOutOfDateRetryTimes = int32(10)
-)
-
-func (s *schemaLeaseChecker) Check(txnTS uint64) error {
-	schemaOutOfDateRetryInterval := atomic.LoadInt64(&SchemaOutOfDateRetryInterval)
-	schemaOutOfDateRetryTimes := int(atomic.LoadInt32(&SchemaOutOfDateRetryTimes))
-	for i := 0; i < schemaOutOfDateRetryTimes; i++ {
-		result := s.SchemaValidator.Check(txnTS, s.schemaVer, s.relatedTableIDs)
-		switch result {
-		case domain.ResultSucc:
-			return nil
-		case domain.ResultFail:
-			metrics.SchemaLeaseErrorCounter.WithLabelValues("changed").Inc()
-			return domain.ErrInfoSchemaChanged
-		case domain.ResultUnknown:
-			metrics.SchemaLeaseErrorCounter.WithLabelValues("outdated").Inc()
-			time.Sleep(time.Duration(schemaOutOfDateRetryInterval))
-		}
-
-	}
-	return domain.ErrInfoSchemaExpired
-}
-
 func (s *session) doCommit(ctx context.Context) error {
 	if !s.txn.Valid() {
 		return nil
@@ -323,11 +291,7 @@ func (s *session) doCommit(ctx context.Context) error {
 		tableIDs = append(tableIDs, id)
 	}
 	// Set this option for 2 phase commit to validate schema lease.
-	s.txn.SetOption(kv.SchemaLeaseChecker, &schemaLeaseChecker{
-		SchemaValidator: domain.GetDomain(s).SchemaValidator,
-		schemaVer:       s.sessionVars.TxnCtx.SchemaVersion,
-		relatedTableIDs: tableIDs,
-	})
+	s.txn.SetOption(kv.SchemaLeaseChecker, schema_checker.NewSchemaChecker(domain.GetDomain(s), s.sessionVars.TxnCtx.SchemaVersion, tableIDs))
 	if s.sessionVars.TxnCtx.ForUpdate {
 		s.txn.SetOption(kv.ForUpdate, true)
 	}
