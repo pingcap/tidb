@@ -177,6 +177,13 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"CREATE TABLE t (a float(255, 31))", false, types.ErrTooBigScale},
 		{"CREATE TABLE t (a double(256, 30))", false, types.ErrTooBigPrecision},
 		{"CREATE TABLE t (a double(255, 31))", false, types.ErrTooBigScale},
+
+		// FIXME: temporary 'not implemented yet' test for 'CREATE TABLE ... SELECT' (issue 4754)
+		{"CREATE TABLE t SELECT * FROM u", false, errors.New("'CREATE TABLE ... SELECT' is not implemented yet")},
+		{"CREATE TABLE t (m int) SELECT * FROM u", false, errors.New("'CREATE TABLE ... SELECT' is not implemented yet")},
+		{"CREATE TABLE t IGNORE SELECT * FROM u UNION SELECT * from v", false, errors.New("'CREATE TABLE ... SELECT' is not implemented yet")},
+		{"CREATE TABLE t (m int) REPLACE AS (SELECT * FROM u) UNION (SELECT * FROM v)", false, errors.New("'CREATE TABLE ... SELECT' is not implemented yet")},
+
 		{"select * from ( select 1 ) a, (select 2) a;", false, plan.ErrNonUniqTable},
 		{"select * from ( select 1 ) a, (select 2) b, (select 3) a;", false, plan.ErrNonUniqTable},
 		{"select * from ( select 1 ) a, (select 2) b, (select 3) A;", false, plan.ErrNonUniqTable},

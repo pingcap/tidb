@@ -404,6 +404,8 @@ type CreateTableStmt struct {
 	Constraints []*Constraint
 	Options     []*TableOption
 	Partition   *PartitionOptions
+	OnDuplicate OnDuplicateCreateTableSelectType
+	Select      ResultSetNode
 }
 
 // Accept implements Node Accept interface.
@@ -439,6 +441,14 @@ func (n *CreateTableStmt) Accept(v Visitor) (Node, bool) {
 		}
 		n.Constraints[i] = node.(*Constraint)
 	}
+	if n.Select != nil {
+		node, ok := n.Select.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Select = node.(ResultSetNode)
+	}
+
 	return v.Leave(n)
 }
 
@@ -654,6 +664,14 @@ const (
 	RowFormatCompressed
 	RowFormatRedundant
 	RowFormatCompact
+)
+
+type OnDuplicateCreateTableSelectType int
+
+const (
+	OnDuplicateCreateTableSelectError OnDuplicateCreateTableSelectType = iota
+	OnDuplicateCreateTableSelectIgnore
+	OnDuplicateCreateTableSelectReplace
 )
 
 // TableOption is used for parsing table option from SQL.
