@@ -105,6 +105,7 @@ func (p *baseLogicalPlan) findBestTask(prop *requiredProp) (bestTask task, err e
 			childTasks = append(childTasks, childTask)
 		}
 
+		// This check makes sure that there is no invalid child task.
 		if len(childTasks) != len(p.children) {
 			continue
 		}
