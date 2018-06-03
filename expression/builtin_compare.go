@@ -158,7 +158,6 @@ func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 				maxFlen = argTp.Flen
 			}
 		}
-
 		// For integer, field length = maxIntLen + (1/0 for sign bit)
 		// For decimal, field length = maxIntLen + maxDecimal + (1/0 for sign bit)
 		if resultEvalType == types.ETInt || resultEvalType == types.ETDecimal {
@@ -171,8 +170,11 @@ func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 			}
 			bf.tp = resultFieldType
 		} else {
-			// Set the field length to maxFlen for other types.
 			bf.tp.Flen = maxFlen
+		}
+		// Set the field length to maxFlen for other types.
+		if bf.tp.Flen > mysql.MaxDecimalWidth {
+			bf.tp.Flen = mysql.MaxDecimalWidth
 		}
 	}
 
