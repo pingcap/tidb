@@ -106,7 +106,7 @@ func (h *HistoryInfo) Clean() {
 	h.TableInfo = nil
 }
 
-// DDLReorgMeta is meta info of ddl reorganization.
+// DDLReorgMeta is meta info of DDL reorganization.
 type DDLReorgMeta struct {
 	// EndHandle is the last handle of the adding indices table.
 	// We should only backfill indices in the range [startHandle, EndHandle].

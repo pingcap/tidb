@@ -1937,21 +1937,21 @@ func (s *testDBSuite) TestAddNotNullColumnWhileInsertOnDupUpdate(c *C) {
 	c.Assert(tk2Err, IsNil)
 }
 
-type testMaxTableRowIDContex struct {
+type testMaxTableRowIDContext struct {
 	c   *C
 	d   ddl.DDL
 	tbl table.Table
 }
 
-func newTestMaxTableRowIDContex(c *C, d ddl.DDL, tbl table.Table) *testMaxTableRowIDContex {
-	return &testMaxTableRowIDContex{
+func newTestMaxTableRowIDContext(c *C, d ddl.DDL, tbl table.Table) *testMaxTableRowIDContext {
+	return &testMaxTableRowIDContext{
 		c:   c,
 		d:   d,
 		tbl: tbl,
 	}
 }
 
-func (s *testDBSuite) getMaxTableRowID(ctx *testMaxTableRowIDContex) (int64, bool) {
+func (s *testDBSuite) getMaxTableRowID(ctx *testMaxTableRowIDContext) (int64, bool) {
 	c := ctx.c
 	d := ctx.d
 	tbl := ctx.tbl
@@ -1962,7 +1962,7 @@ func (s *testDBSuite) getMaxTableRowID(ctx *testMaxTableRowIDContex) (int64, boo
 	return maxID, emptyTable
 }
 
-func (s *testDBSuite) checkGetMaxTableRowID(ctx *testMaxTableRowIDContex, expectEmpty bool, expectMaxID int64) {
+func (s *testDBSuite) checkGetMaxTableRowID(ctx *testMaxTableRowIDContext, expectEmpty bool, expectMaxID int64) {
 	c := ctx.c
 	maxID, emptyTable := s.getMaxTableRowID(ctx)
 	c.Assert(emptyTable, Equals, expectEmpty)
@@ -1983,7 +1983,7 @@ func (s *testDBSuite) TestGetTableEndHandle(c *C) {
 	tbl, err := is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 
-	testCtx := newTestMaxTableRowIDContex(c, d, tbl)
+	testCtx := newTestMaxTableRowIDContext(c, d, tbl)
 	// test empty table
 	s.checkGetMaxTableRowID(testCtx, true, int64(math.MaxInt64))
 
@@ -2047,7 +2047,6 @@ func (s *testDBSuite) TestGetTableEndHandle(c *C) {
 	c.Assert(emptyTable, IsFalse)
 
 	tk.MustExec("insert into t2 values(100)")
-
 	result = tk.MustQuery("select MAX(_tidb_rowid) from t2")
 	maxID, emptyTable = s.getMaxTableRowID(testCtx)
 	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
@@ -2093,7 +2092,7 @@ func (s *testDBSuite) TestBackwardCompatibility(c *C) {
 	}
 
 	// alter table t add index idx_b(b);
-	is := s.dom.DDL().GetInformationSchema()
+	is := s.dom.InfoSchema()
 	schemaName := model.NewCIStr("test_backward_compatibility")
 	tableName := model.NewCIStr("t")
 	schema, ok := is.SchemaByName(schemaName)
