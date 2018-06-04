@@ -2513,9 +2513,7 @@ func DateFSP(date string) (fsp int) {
 
 // EncodeTso encodes a millisecond into tso.
 func EncodeTso(ts int64) uint64 {
-	var tso uint64
-	tso = uint64(ts)
-	return tso << physicalShiftBits
+	return uint64(ts) << physicalShiftBits
 }
 
 // DecodeTso decodes a tso into a golang's time struct.
