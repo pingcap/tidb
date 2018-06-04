@@ -459,7 +459,6 @@ func (t *Table) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleChe
 
 	pid := t.ID
 	if partitionInfo := t.meta.GetPartitionInfo(); partitionInfo != nil {
-		var err error
 		pid, err = t.locatePartition(ctx, partitionInfo, r)
 		if err != nil {
 			return 0, errors.Trace(err)
