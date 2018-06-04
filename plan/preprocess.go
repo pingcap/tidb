@@ -82,6 +82,7 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 	case *ast.CreateTableStmt:
 		p.inCreateOrDropTable = false
 		p.checkAutoIncrement(x)
+		p.checkContainDotColumn(x)
 	case *ast.DropTableStmt, *ast.AlterTableStmt, *ast.RenameTableStmt:
 		p.inCreateOrDropTable = false
 	case *ast.ParamMarkerExpr:
@@ -238,7 +239,6 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		p.err = ddl.ErrWrongTableName.GenByArgs(tName)
 		return
 	}
-	p.checkContainDotColumn(stmt)
 	countPrimaryKey := 0
 	for _, colDef := range stmt.Cols {
 		if err := checkColumn(colDef); err != nil {
@@ -496,9 +496,14 @@ func isIncorrectName(name string) bool {
 // for example :create table t (c1.c2 int default null).
 func (p *preprocessor) checkContainDotColumn(stmt *ast.CreateTableStmt) {
 	tName := stmt.Table.Name.String()
+	sName := stmt.Table.Schema.String()
 
 	for _, colDef := range stmt.Cols {
-		// check table name.
+		// check schema and table names.
+		if colDef.Name.Schema.O != sName && len(colDef.Name.Schema.O) != 0 {
+			p.err = ddl.ErrWrongDBName.GenByArgs(colDef.Name.Schema.O)
+			return
+		}
 		if colDef.Name.Table.O != tName && len(colDef.Name.Table.O) != 0 {
 			p.err = ddl.ErrWrongTableName.GenByArgs(colDef.Name.Table.O)
 			return

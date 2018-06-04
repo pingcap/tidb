@@ -21,6 +21,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
@@ -43,6 +44,11 @@ type Context struct {
 	cancel      context.CancelFunc
 	sm          util.SessionManager
 	pcache      *kvcache.SimpleLRUCache
+}
+
+// DDLOwnerChecker returns owner.DDLOwnerChecker.
+func (c *Context) DDLOwnerChecker() owner.DDLOwnerChecker {
+	return nil
 }
 
 // SetValue implements sessionctx.Context SetValue interface.

@@ -428,4 +428,10 @@ func (s *testSuite) TestAdminCheckTable(c *C) {
 	tk.MustExec("CREATE TABLE test (  a decimal, PRIMARY KEY (a));")
 	tk.MustExec("insert into test set a=10;")
 	tk.MustExec("admin check table test;")
+
+	// Test timestamp type check table.
+	tk.MustExec(`drop table if exists test`)
+	tk.MustExec(`create table test ( a  TIMESTAMP, primary key(a) );`)
+	tk.MustExec(`insert into test set a='2015-08-10 04:18:49';`)
+	tk.MustExec(`admin check table test;`)
 }
