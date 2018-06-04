@@ -252,7 +252,7 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 			failedUsers = append(failedUsers, user.String())
 		}
 
-		//TODO: (tidb-team) need delete columns_priv once we implement columns_priv functionality.
+		//TODO: need delete columns_priv once we implement columns_priv functionality.
 		if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "commit"); err != nil {
 			failedUsers = append(failedUsers, user.String())
 		}
