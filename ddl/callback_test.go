@@ -16,20 +16,26 @@ package ddl
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/util/testleak"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
 type TestDDLCallback struct {
 	*BaseCallback
 
-	onJobRunBefore       func(*model.Job)
-	onJobUpdated         func(*model.Job)
-	OnJobUpdatedExported func(*model.Job)
-	onWatched            func(ctx context.Context)
+	onJobRunBefore         func(*model.Job)
+	OnJobRunBeforeExported func(*model.Job)
+	onJobUpdated           func(*model.Job)
+	OnJobUpdatedExported   func(*model.Job)
+	onWatched              func(ctx context.Context)
 }
 
 func (tc *TestDDLCallback) OnJobRunBefore(job *model.Job) {
+	log.Infof("on job run before, job %v", job)
+	if tc.OnJobRunBeforeExported != nil {
+		tc.OnJobRunBeforeExported(job)
+		return
+	}
 	if tc.onJobRunBefore != nil {
 		tc.onJobRunBefore(job)
 		return
@@ -39,6 +45,7 @@ func (tc *TestDDLCallback) OnJobRunBefore(job *model.Job) {
 }
 
 func (tc *TestDDLCallback) OnJobUpdated(job *model.Job) {
+	log.Infof("on job updated, job %v", job)
 	if tc.OnJobUpdatedExported != nil {
 		tc.OnJobUpdatedExported(job)
 		return
@@ -61,7 +68,6 @@ func (tc *TestDDLCallback) OnWatched(ctx context.Context) {
 }
 
 func (s *testDDLSuite) TestCallback(c *C) {
-	defer testleak.AfterTest(c)()
 	cb := &BaseCallback{}
 	c.Assert(cb.OnChanged(nil), IsNil)
 	cb.OnJobRunBefore(nil)

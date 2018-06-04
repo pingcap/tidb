@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
@@ -93,8 +92,8 @@ func NewPrepareExec(ctx sessionctx.Context, is infoschema.InfoSchema, sqlTxt str
 	}
 }
 
-// NextChunk implements the Executor NextChunk interface.
-func (e *PrepareExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+// Next implements the Executor Next interface.
+func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	vars := e.ctx.GetSessionVars()
 	if e.ID != 0 {
 		// Must be the case when we retry a prepare.
@@ -184,8 +183,8 @@ type ExecuteExec struct {
 	plan      plan.Plan
 }
 
-// NextChunk implements the Executor NextChunk interface.
-func (e *ExecuteExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+// Next implements the Executor Next interface.
+func (e *ExecuteExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
@@ -201,7 +200,7 @@ func (e *ExecuteExec) Build() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	b := newExecutorBuilder(e.ctx, e.is, kv.PriorityNormal)
+	b := newExecutorBuilder(e.ctx, e.is)
 	stmtExec := b.build(e.plan)
 	if b.err != nil {
 		return errors.Trace(b.err)
@@ -220,8 +219,8 @@ type DeallocateExec struct {
 	Name string
 }
 
-// NextChunk implements the Executor NextChunk interface.
-func (e *DeallocateExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+// Next implements the Executor Next interface.
+func (e *DeallocateExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	vars := e.ctx.GetSessionVars()
 	id, ok := vars.PreparedStmtNameToID[e.Name]
 	if !ok {
@@ -275,31 +274,38 @@ func ResetStmtCtx(ctx sessionctx.Context, s ast.StmtNode) {
 
 	switch stmt := s.(type) {
 	case *ast.UpdateStmt:
+		sc.IgnoreErr = stmt.IgnoreErr
 		sc.IgnoreTruncate = false
 		sc.OverflowAsWarning = false
 		sc.TruncateAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
 		sc.InUpdateOrDeleteStmt = true
 		sc.DividedByZeroAsWarning = stmt.IgnoreErr
 		sc.IgnoreZeroInDate = !sessVars.StrictSQLMode || stmt.IgnoreErr
+		sc.Priority = stmt.Priority
 	case *ast.DeleteStmt:
+		sc.IgnoreErr = stmt.IgnoreErr
 		sc.IgnoreTruncate = false
 		sc.OverflowAsWarning = false
 		sc.TruncateAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
 		sc.InUpdateOrDeleteStmt = true
 		sc.DividedByZeroAsWarning = stmt.IgnoreErr
 		sc.IgnoreZeroInDate = !sessVars.StrictSQLMode || stmt.IgnoreErr
+		sc.Priority = stmt.Priority
 	case *ast.InsertStmt:
+		sc.IgnoreErr = stmt.IgnoreErr
 		sc.IgnoreTruncate = false
 		sc.TruncateAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
 		sc.InInsertStmt = true
 		sc.DividedByZeroAsWarning = stmt.IgnoreErr
 		sc.IgnoreZeroInDate = !sessVars.StrictSQLMode || stmt.IgnoreErr
+		sc.Priority = stmt.Priority
 	case *ast.CreateTableStmt, *ast.AlterTableStmt:
 		// Make sure the sql_mode is strict when checking column default value.
 		sc.IgnoreTruncate = false
 		sc.OverflowAsWarning = false
 		sc.TruncateAsWarning = false
 	case *ast.LoadDataStmt:
+		sc.IgnoreErr = true
 		sc.IgnoreTruncate = false
 		sc.OverflowAsWarning = false
 		sc.TruncateAsWarning = !sessVars.StrictSQLMode

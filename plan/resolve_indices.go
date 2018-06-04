@@ -159,6 +159,9 @@ func (p *PhysicalTopN) ResolveIndices() {
 // ResolveIndices implements Plan interface.
 func (p *PhysicalApply) ResolveIndices() {
 	p.PhysicalJoin.ResolveIndices()
+	for _, col := range p.schema.Columns {
+		col.ResolveIndices(p.PhysicalJoin.schema)
+	}
 	for _, col := range p.OuterSchema {
 		col.Column.ResolveIndices(p.children[0].Schema())
 	}
@@ -179,7 +182,7 @@ func (p *Insert) ResolveIndices() {
 		asgn.Col.ResolveIndices(p.tableSchema)
 		asgn.Expr.ResolveIndices(p.tableSchema)
 	}
-	for _, set := range p.Setlist {
+	for _, set := range p.SetList {
 		set.Col.ResolveIndices(p.tableSchema)
 		set.Expr.ResolveIndices(p.tableSchema)
 	}

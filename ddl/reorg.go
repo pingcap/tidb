@@ -14,6 +14,7 @@
 package ddl
 
 import (
+	"math"
 	"sync/atomic"
 	"time"
 
@@ -23,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/mock"
 	log "github.com/sirupsen/logrus"
 )
@@ -37,7 +39,9 @@ type reorgCtx struct {
 	// rowCount is used to simulate a job's row count.
 	rowCount int64
 	// notifyCancelReorgJob is used to notify the backfilling goroutine if the DDL job is cancelled.
-	notifyCancelReorgJob chan struct{}
+	// 0: job is not canceled.
+	// 1: job is canceled.
+	notifyCancelReorgJob int32
 	// doneHandle is used to simulate the handle that has been processed.
 	doneHandle int64
 }
@@ -51,11 +55,33 @@ func (d *ddl) newContext() sessionctx.Context {
 	return c
 }
 
-const waitReorgTimeout = 10 * time.Second
+const defaultWaitReorgTimeout = 10 * time.Second
 
-func (rc *reorgCtx) setRowCountAndHandle(count, doneHandle int64) {
+// ReorgWaitTimeout is the timeout that wait ddl in write reorganization stage.
+var ReorgWaitTimeout = 1 * time.Second
+
+func (rc *reorgCtx) notifyReorgCancel() {
+	atomic.StoreInt32(&rc.notifyCancelReorgJob, 1)
+}
+
+func (rc *reorgCtx) cleanNotifyReorgCancel() {
+	atomic.StoreInt32(&rc.notifyCancelReorgJob, 0)
+}
+
+func (rc *reorgCtx) isReorgCanceled() bool {
+	return atomic.LoadInt32(&rc.notifyCancelReorgJob) == 1
+}
+
+func (rc *reorgCtx) setRowCount(count int64) {
 	atomic.StoreInt64(&rc.rowCount, count)
+}
+
+func (rc *reorgCtx) setNextHandle(doneHandle int64) {
 	atomic.StoreInt64(&rc.doneHandle, doneHandle)
+}
+
+func (rc *reorgCtx) increaseRowCount(count int64) {
+	atomic.AddInt64(&rc.rowCount, count)
 }
 
 func (rc *reorgCtx) getRowCountAndHandle() (int64, int64) {
@@ -65,29 +91,34 @@ func (rc *reorgCtx) getRowCountAndHandle() (int64, int64) {
 }
 
 func (rc *reorgCtx) clean() {
-	rc.setRowCountAndHandle(0, 0)
+	rc.setRowCount(0)
+	rc.setNextHandle(0)
 	rc.doneCh = nil
 }
 
-func (d *ddl) runReorgJob(t *meta.Meta, job *model.Job, f func() error) error {
+func (d *ddl) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, f func() error) error {
+	job := reorgInfo.Job
 	if d.reorgCtx.doneCh == nil {
 		// start a reorganization job
 		d.wait.Add(1)
 		d.reorgCtx.doneCh = make(chan error, 1)
+		// initial reorgCtx
+		d.reorgCtx.setRowCount(job.GetRowCount())
+		d.reorgCtx.setNextHandle(reorgInfo.Handle)
 		go func() {
 			defer d.wait.Done()
 			d.reorgCtx.doneCh <- f()
 		}()
 	}
 
-	waitTimeout := waitReorgTimeout
+	waitTimeout := defaultWaitReorgTimeout
 	// if d.lease is 0, we are using a local storage,
 	// and we can wait the reorganization to be done here.
 	// if d.lease > 0, we don't need to wait here because
-	// we will wait 2 * lease outer and try checking again,
+	// we should update some job's progress context and try checking again,
 	// so we use a very little timeout here.
 	if d.lease > 0 {
-		waitTimeout = 50 * time.Millisecond
+		waitTimeout = ReorgWaitTimeout
 	}
 
 	// wait reorganization job done or timeout
@@ -101,7 +132,8 @@ func (d *ddl) runReorgJob(t *meta.Meta, job *model.Job, f func() error) error {
 		return errors.Trace(err)
 	case <-d.quitCh:
 		log.Info("[ddl] run reorg job ddl quit")
-		d.reorgCtx.setRowCountAndHandle(0, 0)
+		d.reorgCtx.setNextHandle(0)
+		d.reorgCtx.setRowCount(0)
 		// We return errWaitReorgTimeout here too, so that outer loop will break.
 		return errWaitReorgTimeout
 	case <-time.After(waitTimeout):
@@ -122,11 +154,9 @@ func (d *ddl) isReorgRunnable() error {
 		return errInvalidWorker.Gen("worker is closed")
 	}
 
-	select {
-	case <-d.reorgCtx.notifyCancelReorgJob:
+	if d.reorgCtx.isReorgCanceled() {
 		// Job is cancelled. So it can't be done.
 		return errCancelledDDLJob
-	default:
 	}
 
 	if !d.isOwner() {
@@ -144,7 +174,9 @@ type reorgInfo struct {
 	first  bool
 }
 
-func (d *ddl) getReorgInfo(t *meta.Meta, job *model.Job) (*reorgInfo, error) {
+var gofailOnceGuard bool
+
+func (d *ddl) getReorgInfo(t *meta.Meta, job *model.Job, tbl table.Table) (*reorgInfo, error) {
 	var err error
 
 	info := &reorgInfo{
@@ -161,6 +193,26 @@ func (d *ddl) getReorgInfo(t *meta.Meta, job *model.Job) (*reorgInfo, error) {
 			return nil, errors.Trace(err)
 		} else if ver.Ver <= 0 {
 			return nil, errInvalidStoreVer.Gen("invalid storage current version %d", ver.Ver)
+		}
+
+		// Get the first handle of this table.
+		err = iterateSnapshotRows(d.store, tbl, ver.Ver, math.MinInt64,
+			func(h int64, rowKey kv.Key, rawRecord []byte) (bool, error) {
+				info.Handle = h
+				return false, nil
+			})
+		if err != nil {
+			return info, errors.Trace(err)
+		}
+		// gofail: var errorUpdateReorgHandle bool
+		// if errorUpdateReorgHandle && !gofailOnceGuard {
+		//  // only return error once.
+		//	gofailOnceGuard = true
+		// 	return info, errors.New("occur an error when update reorg handle.")
+		// }
+		err = t.UpdateDDLReorgHandle(job, info.Handle)
+		if err != nil {
+			return info, errors.Trace(err)
 		}
 
 		job.SnapshotVer = ver.Ver

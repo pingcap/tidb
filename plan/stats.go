@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	log "github.com/sirupsen/logrus"
 )
@@ -62,20 +63,38 @@ func (p *basePhysicalPlan) StatsInfo() *statsInfo {
 	return p.stats
 }
 
-func (p *baseLogicalPlan) deriveStats() *statsInfo {
-	if len(p.children) == 0 {
-		profile := &statsInfo{
-			count:       float64(1),
-			cardinality: make([]float64, p.self.Schema().Len()),
-		}
-		for i := range profile.cardinality {
-			profile.cardinality[i] = float64(1)
-		}
-		p.stats = profile
-		return profile
+func (p *LogicalTableDual) deriveStats() (*statsInfo, error) {
+	profile := &statsInfo{
+		count:       float64(p.RowCount),
+		cardinality: make([]float64, p.Schema().Len()),
 	}
-	p.stats = p.children[0].deriveStats()
-	return p.stats
+	for i := range profile.cardinality {
+		profile.cardinality[i] = float64(p.RowCount)
+	}
+	p.stats = profile
+	return p.stats, nil
+}
+
+func (p *baseLogicalPlan) deriveStats() (*statsInfo, error) {
+	if len(p.children) > 1 {
+		panic("LogicalPlans with more than one child should implement their own deriveStats().")
+	}
+
+	if len(p.children) == 1 {
+		var err error
+		p.stats, err = p.children[0].deriveStats()
+		return p.stats, errors.Trace(err)
+	}
+
+	profile := &statsInfo{
+		count:       float64(1),
+		cardinality: make([]float64, p.self.Schema().Len()),
+	}
+	for i := range profile.cardinality {
+		profile.cardinality[i] = float64(1)
+	}
+	p.stats = profile
+	return profile, nil
 }
 
 func (ds *DataSource) getStatsByFilter(conds expression.CNFExprs) *statsInfo {
@@ -101,69 +120,82 @@ func (ds *DataSource) getStatsByFilter(conds expression.CNFExprs) *statsInfo {
 	return profile.scale(selectivity)
 }
 
-func (ds *DataSource) deriveStats() *statsInfo {
+func (ds *DataSource) deriveStats() (*statsInfo, error) {
 	// PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
 	for i, expr := range ds.pushedDownConds {
 		ds.pushedDownConds[i] = expression.PushDownNot(nil, expr, false)
 	}
 	ds.statsAfterSelect = ds.getStatsByFilter(ds.pushedDownConds)
-	return ds.statsAfterSelect
+	for _, path := range ds.possibleAccessPaths {
+		if path.isTablePath {
+			err := ds.deriveTablePathStats(path)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			continue
+		}
+		err := ds.deriveIndexPathStats(path)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return ds.statsAfterSelect, nil
 }
 
-func (p *LogicalSelection) deriveStats() *statsInfo {
-	childProfile := p.children[0].deriveStats()
+func (p *LogicalSelection) deriveStats() (*statsInfo, error) {
+	childProfile, err := p.children[0].deriveStats()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	p.stats = childProfile.scale(selectionFactor)
-	return p.stats
+	return p.stats, nil
 }
 
-func (p *LogicalUnionAll) deriveStats() *statsInfo {
+func (p *LogicalUnionAll) deriveStats() (*statsInfo, error) {
 	p.stats = &statsInfo{
 		cardinality: make([]float64, p.Schema().Len()),
 	}
 	for _, child := range p.children {
-		childProfile := child.deriveStats()
+		childProfile, err := child.deriveStats()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		p.stats.count += childProfile.count
 		for i := range p.stats.cardinality {
 			p.stats.cardinality[i] += childProfile.cardinality[i]
 		}
 	}
-	return p.stats
+	return p.stats, nil
 }
 
-func (p *LogicalLimit) deriveStats() *statsInfo {
-	childProfile := p.children[0].deriveStats()
-	p.stats = &statsInfo{
-		count:       float64(p.Count),
-		cardinality: make([]float64, len(childProfile.cardinality)),
+func (p *LogicalLimit) deriveStats() (*statsInfo, error) {
+	childProfile, err := p.children[0].deriveStats()
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
-	if p.stats.count > childProfile.count {
-		p.stats.count = childProfile.count
+	p.stats = &statsInfo{
+		count:       math.Min(float64(p.Count), childProfile.count),
+		cardinality: make([]float64, len(childProfile.cardinality)),
 	}
 	for i := range p.stats.cardinality {
-		p.stats.cardinality[i] = childProfile.cardinality[i]
-		if p.stats.cardinality[i] > p.stats.count {
-			p.stats.cardinality[i] = p.stats.count
-		}
+		p.stats.cardinality[i] = math.Min(childProfile.cardinality[i], p.stats.count)
 	}
-	return p.stats
+	return p.stats, nil
 }
 
-func (lt *LogicalTopN) deriveStats() *statsInfo {
-	childProfile := lt.children[0].deriveStats()
+func (lt *LogicalTopN) deriveStats() (*statsInfo, error) {
+	childProfile, err := lt.children[0].deriveStats()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	lt.stats = &statsInfo{
-		count:       float64(lt.Count),
+		count:       math.Min(float64(lt.Count), childProfile.count),
 		cardinality: make([]float64, len(childProfile.cardinality)),
 	}
-	if lt.stats.count > childProfile.count {
-		lt.stats.count = childProfile.count
-	}
 	for i := range lt.stats.cardinality {
-		lt.stats.cardinality[i] = childProfile.cardinality[i]
-		if lt.stats.cardinality[i] > lt.stats.count {
-			lt.stats.cardinality[i] = lt.stats.count
-		}
+		lt.stats.cardinality[i] = math.Min(childProfile.cardinality[i], lt.stats.count)
 	}
-	return lt.stats
+	return lt.stats, nil
 }
 
 // getCardinality will return the cardinality of a couple of columns. We simply return the max one, because we cannot know
@@ -176,16 +208,17 @@ func getCardinality(cols []*expression.Column, schema *expression.Schema, profil
 	}
 	var cardinality = 1.0
 	for _, idx := range indices {
-		if cardinality < profile.cardinality[idx] {
-			// It is a very elementary estimation.
-			cardinality = profile.cardinality[idx]
-		}
+		// It is a very elementary estimation.
+		cardinality = math.Max(cardinality, profile.cardinality[idx])
 	}
 	return cardinality
 }
 
-func (p *LogicalProjection) deriveStats() *statsInfo {
-	childProfile := p.children[0].deriveStats()
+func (p *LogicalProjection) deriveStats() (*statsInfo, error) {
+	childProfile, err := p.children[0].deriveStats()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	p.stats = &statsInfo{
 		count:       childProfile.count,
 		cardinality: make([]float64, len(p.Exprs)),
@@ -194,11 +227,14 @@ func (p *LogicalProjection) deriveStats() *statsInfo {
 		cols := expression.ExtractColumns(expr)
 		p.stats.cardinality[i] = getCardinality(cols, p.children[0].Schema(), childProfile)
 	}
-	return p.stats
+	return p.stats, nil
 }
 
-func (la *LogicalAggregation) deriveStats() *statsInfo {
-	childProfile := la.children[0].deriveStats()
+func (la *LogicalAggregation) deriveStats() (*statsInfo, error) {
+	childProfile, err := la.children[0].deriveStats()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	gbyCols := make([]*expression.Column, 0, len(la.GroupByItems))
 	for _, gbyExpr := range la.GroupByItems {
 		cols := expression.ExtractColumns(gbyExpr)
@@ -214,7 +250,7 @@ func (la *LogicalAggregation) deriveStats() *statsInfo {
 		la.stats.cardinality[i] = cardinality
 	}
 	la.inputCount = childProfile.count
-	return la.stats
+	return la.stats, nil
 }
 
 // deriveStats prepares statsInfo.
@@ -224,9 +260,15 @@ func (la *LogicalAggregation) deriveStats() *statsInfo {
 // N(s) stands for the number of rows in relation s. V(s.key) means the cardinality of join key in s.
 // This is a quite simple strategy: We assume every bucket of relation which will participate join has the same number of rows, and apply cross join for
 // every matched bucket.
-func (p *LogicalJoin) deriveStats() *statsInfo {
-	leftProfile := p.children[0].deriveStats()
-	rightProfile := p.children[1].deriveStats()
+func (p *LogicalJoin) deriveStats() (*statsInfo, error) {
+	leftProfile, err := p.children[0].deriveStats()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	rightProfile, err := p.children[1].deriveStats()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
 		p.stats = &statsInfo{
 			count:       leftProfile.count * selectionFactor,
@@ -235,7 +277,7 @@ func (p *LogicalJoin) deriveStats() *statsInfo {
 		for i := range p.stats.cardinality {
 			p.stats.cardinality[i] = leftProfile.cardinality[i] * selectionFactor
 		}
-		return p.stats
+		return p.stats, nil
 	}
 	if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
 		p.stats = &statsInfo{
@@ -244,14 +286,14 @@ func (p *LogicalJoin) deriveStats() *statsInfo {
 		}
 		copy(p.stats.cardinality, leftProfile.cardinality)
 		p.stats.cardinality[len(p.stats.cardinality)-1] = 2.0
-		return p.stats
+		return p.stats, nil
 	}
 	if 0 == len(p.EqualConditions) {
 		p.stats = &statsInfo{
 			count:       leftProfile.count * rightProfile.count,
 			cardinality: append(leftProfile.cardinality, rightProfile.cardinality...),
 		}
-		return p.stats
+		return p.stats, nil
 	}
 	leftKeys := make([]*expression.Column, 0, len(p.EqualConditions))
 	rightKeys := make([]*expression.Column, 0, len(p.EqualConditions))
@@ -277,12 +319,18 @@ func (p *LogicalJoin) deriveStats() *statsInfo {
 		count:       count,
 		cardinality: cardinality,
 	}
-	return p.stats
+	return p.stats, nil
 }
 
-func (la *LogicalApply) deriveStats() *statsInfo {
-	leftProfile := la.children[0].deriveStats()
-	_ = la.children[1].deriveStats()
+func (la *LogicalApply) deriveStats() (*statsInfo, error) {
+	leftProfile, err := la.children[0].deriveStats()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	_, err = la.children[1].deriveStats()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	la.stats = &statsInfo{
 		count:       leftProfile.count,
 		cardinality: make([]float64, la.schema.Len()),
@@ -295,7 +343,7 @@ func (la *LogicalApply) deriveStats() *statsInfo {
 			la.stats.cardinality[i] = leftProfile.count
 		}
 	}
-	return la.stats
+	return la.stats, nil
 }
 
 // Exists and MaxOneRow produce at most one row, so we set the count of stats one.
@@ -310,14 +358,20 @@ func getSingletonStats(len int) *statsInfo {
 	return ret
 }
 
-func (p *LogicalExists) deriveStats() *statsInfo {
-	p.children[0].deriveStats()
+func (p *LogicalExists) deriveStats() (*statsInfo, error) {
+	_, err := p.children[0].deriveStats()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	p.stats = getSingletonStats(1)
-	return p.stats
+	return p.stats, nil
 }
 
-func (p *LogicalMaxOneRow) deriveStats() *statsInfo {
-	p.children[0].deriveStats()
+func (p *LogicalMaxOneRow) deriveStats() (*statsInfo, error) {
+	_, err := p.children[0].deriveStats()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	p.stats = getSingletonStats(p.Schema().Len())
-	return p.stats
+	return p.stats, nil
 }

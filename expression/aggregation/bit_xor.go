@@ -29,6 +29,10 @@ func (bf *bitXorFunction) CreateContext(sc *stmtctx.StatementContext) *AggEvalua
 	return evalCtx
 }
 
+func (bf *bitXorFunction) ResetContext(sc *stmtctx.StatementContext, evalCtx *AggEvaluateContext) {
+	evalCtx.Value.SetUint64(0)
+}
+
 // Update implements Aggregation interface.
 func (bf *bitXorFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
 	a := bf.Args[0]

@@ -20,32 +20,28 @@ import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/terror"
 	"golang.org/x/net/context"
 )
 
 type testSafePointSuite struct {
-	oneByOneSuite
+	OneByOneSuite
 	store  *tikvStore
-	oracle *mockoracle.MockOracle
 	prefix string
 }
 
 var _ = Suite(&testSafePointSuite{})
 
 func (s *testSafePointSuite) SetUpSuite(c *C) {
-	s.oneByOneSuite.SetUpSuite(c)
-	s.store = newTestStore(c)
-	s.oracle = &mockoracle.MockOracle{}
-	s.store.oracle = s.oracle
+	s.OneByOneSuite.SetUpSuite(c)
+	s.store = NewTestStore(c).(*tikvStore)
 	s.prefix = fmt.Sprintf("seek_%d", time.Now().Unix())
 }
 
 func (s *testSafePointSuite) TearDownSuite(c *C) {
 	err := s.store.Close()
 	c.Assert(err, IsNil)
-	s.oneByOneSuite.TearDownSuite(c)
+	s.OneByOneSuite.TearDownSuite(c)
 }
 
 func (s *testSafePointSuite) beginTxn(c *C) *tikvTxn {

@@ -15,6 +15,7 @@ package variable
 
 import (
 	"encoding/json"
+	"reflect"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -49,6 +50,40 @@ func (s *testVarsutilSuite) TestTiDBOptOn(c *C) {
 	for _, t := range tbl {
 		on := TiDBOptOn(t.val)
 		c.Assert(on, Equals, t.on)
+	}
+}
+
+func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
+	defer testleak.AfterTest(c)()
+	vars := NewSessionVars()
+
+	c.Assert(vars.IndexJoinBatchSize, Equals, DefIndexJoinBatchSize)
+	c.Assert(vars.IndexLookupSize, Equals, DefIndexLookupSize)
+	c.Assert(vars.IndexLookupConcurrency, Equals, DefIndexLookupConcurrency)
+	c.Assert(vars.IndexSerialScanConcurrency, Equals, DefIndexSerialScanConcurrency)
+	c.Assert(vars.IndexLookupJoinConcurrency, Equals, DefIndexLookupJoinConcurrency)
+	c.Assert(vars.HashJoinConcurrency, Equals, DefTiDBHashJoinConcurrency)
+	c.Assert(vars.DistSQLScanConcurrency, Equals, DefDistSQLScanConcurrency)
+	c.Assert(vars.MaxChunkSize, Equals, DefMaxChunkSize)
+	c.Assert(vars.DMLBatchSize, Equals, DefDMLBatchSize)
+	c.Assert(vars.MemQuotaQuery, Equals, int64(DefTiDBMemQuotaQuery))
+	c.Assert(vars.MemQuotaHashJoin, Equals, int64(DefTiDBMemQuotaHashJoin))
+	c.Assert(vars.MemQuotaMergeJoin, Equals, int64(DefTiDBMemQuotaMergeJoin))
+	c.Assert(vars.MemQuotaSort, Equals, int64(DefTiDBMemQuotaSort))
+	c.Assert(vars.MemQuotaTopn, Equals, int64(DefTiDBMemQuotaTopn))
+	c.Assert(vars.MemQuotaIndexLookupReader, Equals, int64(DefTiDBMemQuotaIndexLookupReader))
+	c.Assert(vars.MemQuotaIndexLookupJoin, Equals, int64(DefTiDBMemQuotaIndexLookupJoin))
+	c.Assert(vars.MemQuotaNestedLoopApply, Equals, int64(DefTiDBMemQuotaNestedLoopApply))
+
+	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.Concurrency))
+	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.MemQuota))
+	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.BatchSize))
+}
+
+func assertFieldsGreaterThanZero(c *C, val reflect.Value) {
+	for i := 0; i < val.NumField(); i++ {
+		fieldVal := val.Field(i)
+		c.Assert(fieldVal.Int(), Greater, int64(0))
 	}
 }
 
@@ -176,6 +211,17 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "0")
 	c.Assert(v.EnableStreaming, Equals, false)
+
+	c.Assert(v.OptimizerSelectivityLevel, Equals, DefTiDBOptimizerSelectivityLevel)
+	SetSessionSystemVar(v, TiDBOptimizerSelectivityLevel, types.NewIntDatum(1))
+	c.Assert(v.OptimizerSelectivityLevel, Equals, 1)
+
+	err = SetSessionSystemVar(v, TiDBRetryLimit, types.NewStringDatum("3"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBRetryLimit)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "3")
+	c.Assert(v.RetryLimit, Equals, int64(3))
 }
 
 type mockGlobalAccessor struct {

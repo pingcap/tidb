@@ -33,22 +33,8 @@ var (
 	pdAddrs            = flag.String("pd-addrs", "127.0.0.1:2379", "pd addrs")
 )
 
-func newTestTiKVStore() (kv.Storage, error) {
-	client, pdClient, err := mocktikv.NewTestClient(nil, nil, "")
-	if err != nil {
-		return nil, err
-	}
-	store, err := NewTestTiKVStore(client, pdClient, nil, nil)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return store, err
-}
-
-func newTestStore(c *C) *tikvStore {
-	// duplicated code with mockstore NewTestTiKVStorage,
-	// but I have no idea to fix the cycle depenedence
-	// TODO: try to simplify the code later
+// NewTestStore creates a kv.Storage for testing purpose.
+func NewTestStore(c *C) kv.Storage {
 	if !flag.Parsed() {
 		flag.Parse()
 	}
@@ -59,12 +45,15 @@ func newTestStore(c *C) *tikvStore {
 		c.Assert(err, IsNil)
 		err = clearStorage(store)
 		c.Assert(err, IsNil)
-		return store.(*tikvStore)
+		return store
 	}
 
-	store, err := newTestTiKVStore()
+	client, pdClient, err := mocktikv.NewTestClient(nil, nil, "")
 	c.Assert(err, IsNil)
-	return store.(*tikvStore)
+
+	store, err := NewTestTiKVStore(client, pdClient, nil, nil)
+	c.Assert(err, IsNil)
+	return store
 }
 
 func clearStorage(store kv.Storage) error {
@@ -86,7 +75,7 @@ func clearStorage(store kv.Storage) error {
 }
 
 type testTiclientSuite struct {
-	oneByOneSuite
+	OneByOneSuite
 	store *tikvStore
 	// prefix is prefix of each key in this test. It is used for table isolation,
 	// or it may pollute other data.
@@ -96,8 +85,8 @@ type testTiclientSuite struct {
 var _ = Suite(&testTiclientSuite{})
 
 func (s *testTiclientSuite) SetUpSuite(c *C) {
-	s.oneByOneSuite.SetUpSuite(c)
-	s.store = newTestStore(c)
+	s.OneByOneSuite.SetUpSuite(c)
+	s.store = NewTestStore(c).(*tikvStore)
 	s.prefix = fmt.Sprintf("ticlient_%d", time.Now().Unix())
 }
 
@@ -117,7 +106,7 @@ func (s *testTiclientSuite) TearDownSuite(c *C) {
 	c.Assert(err, IsNil)
 	err = s.store.Close()
 	c.Assert(err, IsNil)
-	s.oneByOneSuite.TearDownSuite(c)
+	s.OneByOneSuite.TearDownSuite(c)
 }
 
 func (s *testTiclientSuite) beginTxn(c *C) *tikvTxn {

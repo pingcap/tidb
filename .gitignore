@@ -13,3 +13,5 @@ tags
 temp_parser_file
 y.output
 profile.coverprofile
+explain_test
+cmd/explaintest/explain-test.out

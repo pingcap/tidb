@@ -95,6 +95,11 @@ func (ts *TidbTestSuite) TestPreparedString(c *C) {
 	runTestPreparedString(c)
 }
 
+func (ts *TidbTestSuite) TestPreparedTimestamp(c *C) {
+	c.Parallel()
+	runTestPreparedTimestamp(c)
+}
+
 func (ts *TidbTestSuite) TestLoadData(c *C) {
 	c.Parallel()
 	runTestLoadData(c, suite.server)
@@ -145,7 +150,7 @@ func (ts *TidbTestSuite) TestMultiStatements(c *C) {
 func (ts *TidbTestSuite) TestSocket(c *C) {
 	cfg := config.NewConfig()
 	cfg.Socket = "/tmp/tidbtest.sock"
-	cfg.Status.StatusPort = 10091
+	cfg.Status.ReportStatus = false
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
@@ -277,8 +282,7 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 	}
 	cfg := config.NewConfig()
 	cfg.Port = 4002
-	cfg.Status.ReportStatus = true
-	cfg.Status.StatusPort = 10091
+	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
 	go server.Run()
@@ -295,8 +299,7 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 	}
 	cfg = config.NewConfig()
 	cfg.Port = 4003
-	cfg.Status.ReportStatus = true
-	cfg.Status.StatusPort = 10091
+	cfg.Status.ReportStatus = false
 	cfg.Security = config.Security{
 		SSLCert: "/tmp/server-cert.pem",
 		SSLKey:  "/tmp/server-key.pem",
@@ -325,8 +328,7 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 	}
 	cfg = config.NewConfig()
 	cfg.Port = 4004
-	cfg.Status.ReportStatus = true
-	cfg.Status.StatusPort = 10091
+	cfg.Status.ReportStatus = false
 	cfg.Security = config.Security{
 		SSLCA:   "/tmp/ca-cert.pem",
 		SSLCert: "/tmp/server-cert.pem",
@@ -400,7 +402,7 @@ func (ts *TidbTestSuite) TestCreateTableFlen(c *C) {
 	c.Assert(err, IsNil)
 	rs, err := qctx.Execute(ctx, "show create table t1")
 	chk := rs[0].NewChunk()
-	err = rs[0].NextChunk(ctx, chk)
+	err = rs[0].Next(ctx, chk)
 	c.Assert(err, IsNil)
 	cols := rs[0].Columns()
 	c.Assert(err, IsNil)
@@ -429,7 +431,7 @@ func (ts *TidbTestSuite) TestShowTablesFlen(c *C) {
 	c.Assert(err, IsNil)
 	rs, err := qctx.Execute(ctx, "show tables")
 	chk := rs[0].NewChunk()
-	err = rs[0].NextChunk(ctx, chk)
+	err = rs[0].Next(ctx, chk)
 	c.Assert(err, IsNil)
 	cols := rs[0].Columns()
 	c.Assert(err, IsNil)

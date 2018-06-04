@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	tipb "github.com/pingcap/tipb/go-tipb"
+	"github.com/pingcap/tipb/go-tipb"
 	"golang.org/x/net/context"
 )
 
@@ -34,7 +34,6 @@ func (s *testSuite) TestSelectNormal(c *C) {
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
 		SetKeepOrder(false).
-		SetPriority(kv.PriorityNormal).
 		SetFromSessionVars(variable.NewSessionVars()).
 		Build()
 	c.Assert(err, IsNil)
@@ -54,7 +53,7 @@ func (s *testSuite) TestSelectNormal(c *C) {
 	colTypes = append(colTypes, colTypes[0])
 	colTypes = append(colTypes, colTypes[0])
 
-	// Test NextChunk.
+	// Test Next.
 	response, err := Select(context.TODO(), s.sctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false))
 	c.Assert(err, IsNil)
 	result, ok := response.(*selectResult)
@@ -64,11 +63,11 @@ func (s *testSuite) TestSelectNormal(c *C) {
 
 	response.Fetch(context.TODO())
 
-	// Test NextChunk.
-	chk := chunk.NewChunk(colTypes)
+	// Test Next.
+	chk := chunk.NewChunkWithCapacity(colTypes, 32)
 	numAllRows := 0
 	for {
-		err = response.NextChunk(context.TODO(), chk)
+		err = response.Next(context.TODO(), chk)
 		c.Assert(err, IsNil)
 		numAllRows += chk.NumRows()
 		if chk.NumRows() == 0 {
@@ -85,7 +84,6 @@ func (s *testSuite) TestSelectStreaming(c *C) {
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
 		SetKeepOrder(false).
-		SetPriority(kv.PriorityNormal).
 		SetFromSessionVars(variable.NewSessionVars()).
 		SetStreaming(true).
 		Build()
@@ -108,7 +106,7 @@ func (s *testSuite) TestSelectStreaming(c *C) {
 
 	s.sctx.GetSessionVars().EnableStreaming = true
 
-	// Test NextChunk.
+	// Test Next.
 	response, err := Select(context.TODO(), s.sctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false))
 	c.Assert(err, IsNil)
 	result, ok := response.(*streamResult)
@@ -117,11 +115,11 @@ func (s *testSuite) TestSelectStreaming(c *C) {
 
 	response.Fetch(context.TODO())
 
-	// Test NextChunk.
-	chk := chunk.NewChunk(colTypes)
+	// Test Next.
+	chk := chunk.NewChunkWithCapacity(colTypes, 32)
 	numAllRows := 0
 	for {
-		err = response.NextChunk(context.TODO(), chk)
+		err = response.Next(context.TODO(), chk)
 		c.Assert(err, IsNil)
 		numAllRows += chk.NumRows()
 		if chk.NumRows() == 0 {
@@ -137,11 +135,10 @@ func (s *testSuite) TestAnalyze(c *C) {
 	request, err := (&RequestBuilder{}).SetKeyRanges(nil).
 		SetAnalyzeRequest(&tipb.AnalyzeReq{}).
 		SetKeepOrder(true).
-		SetPriority(kv.PriorityLow).
 		Build()
 	c.Assert(err, IsNil)
 
-	response, err := Analyze(context.TODO(), s.sctx.GetClient(), request)
+	response, err := Analyze(context.TODO(), s.sctx.GetClient(), request, kv.DefaultVars)
 	c.Assert(err, IsNil)
 
 	result, ok := response.(*selectResult)

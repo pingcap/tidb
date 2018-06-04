@@ -15,14 +15,11 @@ path = "/tmp/tidb"
 # The socket file to use for connection.
 socket = ""
 
-# Socket file to write binlog.
-binlog-socket = ""
-
 # Run ddl worker on this tidb-server.
 run-ddl = true
 
 # Schema lease duration, very dangerous to change only if you know what you do.
-lease = "10s"
+lease = "45s"
 
 # When create table, split a separated region for it. It is recommended to
 # turn off this option if there will be a large number of tables created.
@@ -30,9 +27,6 @@ split-table = true
 
 # The limit of concurrent executed sessions.
 token-limit = 1000
-
-# Enable chunk executors.
-enable-chunk = true
 
 # Only print a log when out of memory quota.
 # Valid options: ["log", "cancel"]
@@ -124,12 +118,6 @@ stmt-count-limit = 5000
 # Set keep alive option for tcp connection.
 tcp-keep-alive = true
 
-# The maximum number of retries when commit a transaction.
-retry-limit = 10
-
-# The number of goroutines that participate joining.
-join-concurrency = 5
-
 # Whether support cartesian product.
 cross-join = true
 
@@ -138,6 +126,16 @@ stats-lease = "3s"
 
 # Run auto analyze worker on this tidb-server.
 run-auto-analyze = true
+
+# Probability to use the query feedback to update stats, 0 or 1 for always false/true.
+feedback-probability = 0.05
+
+# The max number of query feedback that cache in memory.
+query-feedback-limit = 1024
+
+# Pseudo stats will be used if the ratio between the modify count and
+# row count in statistics of a table is greater than it.
+pseudo-estimate-ratio = 0.8
 
 [proxy-protocol]
 # PROXY protocol acceptable client networks.
@@ -213,3 +211,21 @@ grpc-connection-count = 16
 
 # max time for commit command, must be twice bigger than raft election timeout.
 commit-timeout = "41s"
+
+[txn-local-latches]
+# Enable local latches for transactions. Enable it when
+# there are lots of conflicts between transactions.
+enabled = false
+capacity = 1024000
+
+[binlog]
+
+# Socket file to write binlog.
+binlog-socket = ""
+
+# WriteTimeout specifies how long it will wait for writing binlog to pump.
+write-timeout = "15s"
+
+# If IgnoreError is true, when writting binlog meets error, TiDB would stop writting binlog,
+# but still provide service.
+ignore-error = false

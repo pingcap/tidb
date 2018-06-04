@@ -15,6 +15,7 @@ package types
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -199,10 +200,11 @@ func (s *testBinaryLiteralSuite) TestToInt(c *C) {
 		{"0x1010ffff8080ff12", 0x1010ffff8080ff12, false},
 		{"0x1010ffff8080ff12ff", 0xffffffffffffffff, true},
 	}
+	sc := new(stmtctx.StatementContext)
 	for _, t := range tbl {
 		hex, err := ParseHexStr(t.Input)
 		c.Assert(err, IsNil)
-		intValue, err := hex.ToInt()
+		intValue, err := hex.ToInt(sc)
 		if t.HasError {
 			c.Assert(err, NotNil)
 		} else {
@@ -240,5 +242,21 @@ func (s *testBinaryLiteralSuite) TestNewBinaryLiteralFromUint(c *C) {
 	for _, t := range tbl {
 		hex := NewBinaryLiteralFromUint(t.Input, t.ByteSize)
 		c.Assert([]byte(hex), DeepEquals, t.Expected, Commentf("%#v", t))
+	}
+}
+
+func (s *testBinaryLiteralSuite) TestCompare(c *C) {
+	tbl := []struct {
+		a   BinaryLiteral
+		b   BinaryLiteral
+		cmp int
+	}{
+		{BinaryLiteral{0, 0, 1}, BinaryLiteral{2}, -1},
+		{BinaryLiteral{0, 1}, BinaryLiteral{0, 0, 2}, -1},
+		{BinaryLiteral{0, 1}, BinaryLiteral{1}, 0},
+		{BinaryLiteral{0, 2, 1}, BinaryLiteral{1, 2}, 1},
+	}
+	for _, t := range tbl {
+		c.Assert(t.a.Compare(t.b), Equals, t.cmp)
 	}
 }

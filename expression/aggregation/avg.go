@@ -46,6 +46,14 @@ func (af *avgFunction) updateAvg(sc *stmtctx.StatementContext, evalCtx *AggEvalu
 	return nil
 }
 
+func (af *avgFunction) ResetContext(sc *stmtctx.StatementContext, evalCtx *AggEvaluateContext) {
+	if af.HasDistinct {
+		evalCtx.DistinctChecker = createDistinctChecker(sc)
+	}
+	evalCtx.Value.SetNull()
+	evalCtx.Count = 0
+}
+
 // Update implements Aggregation interface.
 func (af *avgFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
 	if af.Mode == FinalMode {

@@ -72,8 +72,10 @@ type Join struct {
 	On *OnCondition
 	// Using represents join using clause.
 	Using []*ColumnName
-	// NaturalJoin represents join is natural join
+	// NaturalJoin represents join is natural join.
 	NaturalJoin bool
+	// StraightJoin represents a straight join.
+	StraightJoin bool
 }
 
 // Accept implements Node Accept interface.
@@ -182,7 +184,7 @@ func (n *DeleteTableList) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// OnCondition represetns JOIN on condition.
+// OnCondition represents JOIN on condition.
 type OnCondition struct {
 	node
 
@@ -472,7 +474,7 @@ type SelectStmt struct {
 	Limit *Limit
 	// LockTp is the lock type
 	LockTp SelectLockType
-	// TableHints represents the level Optimizer Hint
+	// TableHints represents the table level Optimizer Hint for join type
 	TableHints []*TableOptimizerHint
 }
 
@@ -784,11 +786,13 @@ type DeleteStmt struct {
 	Where        ExprNode
 	Order        *OrderByClause
 	Limit        *Limit
-	LowPriority  bool
+	Priority     mysql.PriorityEnum
 	IgnoreErr    bool
 	Quick        bool
 	IsMultiTable bool
 	BeforeFrom   bool
+	// TableHints represents the table level Optimizer Hint for join type.
+	TableHints []*TableOptimizerHint
 }
 
 // Accept implements Node Accept interface.
@@ -845,9 +849,10 @@ type UpdateStmt struct {
 	Where         ExprNode
 	Order         *OrderByClause
 	Limit         *Limit
-	LowPriority   bool
+	Priority      mysql.PriorityEnum
 	IgnoreErr     bool
 	MultipleTable bool
+	TableHints    []*TableOptimizerHint
 }
 
 // Accept implements Node Accept interface.

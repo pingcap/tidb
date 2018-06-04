@@ -43,7 +43,7 @@ type preprocessor struct {
 	ctx       sessionctx.Context
 	err       error
 	inPrepare bool
-	// When visiting create/drop table statement.
+	// inCreateOrDropTable is true when visiting create/drop table statement.
 	inCreateOrDropTable bool
 }
 
@@ -57,6 +57,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkDropTableGrammar(node)
 	case *ast.RenameTableStmt:
 		p.inCreateOrDropTable = true
+		p.checkRenameTableGrammar(node)
 	case *ast.CreateIndexStmt:
 		p.checkCreateIndexGrammar(node)
 	case *ast.AlterTableStmt:
@@ -68,6 +69,8 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkDropDatabaseGrammar(node)
 	case *ast.ShowStmt:
 		p.resolveShowStmt(node)
+	case *ast.UnionSelectList:
+		p.checkUnionSelectList(node)
 	case *ast.DeleteTableList:
 		return in, true
 	}
@@ -79,6 +82,7 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 	case *ast.CreateTableStmt:
 		p.inCreateOrDropTable = false
 		p.checkAutoIncrement(x)
+		p.checkContainDotColumn(x)
 	case *ast.DropTableStmt, *ast.AlterTableStmt, *ast.RenameTableStmt:
 		p.inCreateOrDropTable = false
 	case *ast.ParamMarkerExpr:
@@ -205,6 +209,18 @@ func (p *preprocessor) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 	}
 }
 
+func (p *preprocessor) checkUnionSelectList(stmt *ast.UnionSelectList) {
+	for idx, sel := range stmt.Selects {
+		if idx != len(stmt.Selects)-1 {
+			if sel.OrderBy != nil {
+				p.err = ErrWrongUsage.GenByArgs("UNION", "ORDER BY")
+			} else if sel.Limit != nil {
+				p.err = ErrWrongUsage.GenByArgs("UNION", "LIMIT")
+			}
+		}
+	}
+}
+
 func (p *preprocessor) checkCreateDatabaseGrammar(stmt *ast.CreateDatabaseStmt) {
 	if isIncorrectName(stmt.Name) {
 		p.err = ddl.ErrWrongDBName.GenByArgs(stmt.Name)
@@ -223,7 +239,6 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		p.err = ddl.ErrWrongTableName.GenByArgs(tName)
 		return
 	}
-
 	countPrimaryKey := 0
 	for _, colDef := range stmt.Cols {
 		if err := checkColumn(colDef); err != nil {
@@ -284,6 +299,21 @@ func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 		return
 	}
 	p.err = checkIndexInfo(stmt.IndexName, stmt.IndexColNames)
+}
+
+func (p *preprocessor) checkRenameTableGrammar(stmt *ast.RenameTableStmt) {
+	oldTable := stmt.OldTable.Name.String()
+	newTable := stmt.NewTable.Name.String()
+
+	if isIncorrectName(oldTable) {
+		p.err = ddl.ErrWrongTableName.GenByArgs(oldTable)
+		return
+	}
+
+	if isIncorrectName(newTable) {
+		p.err = ddl.ErrWrongTableName.GenByArgs(newTable)
+		return
+	}
 }
 
 func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
@@ -423,7 +453,7 @@ func checkColumn(colDef *ast.ColumnDef) error {
 	return nil
 }
 
-// isNowSymFunc checks whether default value is a NOW() builtin function.
+// isDefaultValNowSymFunc checks whether defaul value is a NOW() builtin function.
 func isDefaultValNowSymFunc(expr ast.ExprNode) bool {
 	if funcCall, ok := expr.(*ast.FuncCallExpr); ok {
 		// Default value NOW() is transformed to CURRENT_TIMESTAMP() in parser.
@@ -450,6 +480,7 @@ func isInvalidDefaultValue(colDef *ast.ColumnDef) bool {
 	return false
 }
 
+// isIncorrectName checks if the identifier is incorrect.
 // See https://dev.mysql.com/doc/refman/5.7/en/identifiers.html
 func isIncorrectName(name string) bool {
 	if len(name) == 0 {
@@ -459,6 +490,25 @@ func isIncorrectName(name string) bool {
 		return true
 	}
 	return false
+}
+
+// checkContainDotColumn checks field contains the table name.
+// for example :create table t (c1.c2 int default null).
+func (p *preprocessor) checkContainDotColumn(stmt *ast.CreateTableStmt) {
+	tName := stmt.Table.Name.String()
+	sName := stmt.Table.Schema.String()
+
+	for _, colDef := range stmt.Cols {
+		// check schema and table names.
+		if colDef.Name.Schema.O != sName && len(colDef.Name.Schema.O) != 0 {
+			p.err = ddl.ErrWrongDBName.GenByArgs(colDef.Name.Schema.O)
+			return
+		}
+		if colDef.Name.Table.O != tName && len(colDef.Name.Table.O) != 0 {
+			p.err = ddl.ErrWrongTableName.GenByArgs(colDef.Name.Table.O)
+			return
+		}
+	}
 }
 
 func (p *preprocessor) handleTableName(tn *ast.TableName) {
@@ -494,6 +544,14 @@ func (p *preprocessor) resolveShowStmt(node *ast.ShowStmt) {
 		}
 	} else if node.Table != nil && node.Table.Schema.L == "" {
 		node.Table.Schema = model.NewCIStr(node.DBName)
+	}
+	if node.User != nil && node.User.CurrentUser {
+		// Fill the Username and Hostname with the current user.
+		currentUser := p.ctx.GetSessionVars().User
+		if currentUser != nil {
+			node.User.Username = currentUser.Username
+			node.User.Hostname = currentUser.Hostname
+		}
 	}
 }
 

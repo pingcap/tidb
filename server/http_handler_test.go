@@ -21,23 +21,32 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net/http"
+	"net/url"
 	"sort"
+	"sync/atomic"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	log "github.com/sirupsen/logrus"
 )
 
 type HTTPHandlerTestSuite struct {
@@ -58,7 +67,11 @@ func (ts *HTTPHandlerTestSuite) TestRegionIndexRange(c *C) {
 	}
 	var expectIndexValues []string
 	for _, v := range indexValues {
-		expectIndexValues = append(expectIndexValues, fmt.Sprintf("%d-%v", v.Kind(), v.GetValue()))
+		str, err := v.ToString()
+		if err != nil {
+			str = fmt.Sprintf("%d-%v", v.Kind(), v.GetValue())
+		}
+		expectIndexValues = append(expectIndexValues, str)
 	}
 	encodedValue, err := codec.EncodeKey(&stmtctx.StatementContext{TimeZone: time.Local}, nil, indexValues...)
 	c.Assert(err, IsNil)
@@ -221,7 +234,7 @@ func (ts *HTTPHandlerTestSuite) TestRegionsFromMeta(c *C) {
 }
 
 func (ts *HTTPHandlerTestSuite) startServer(c *C) {
-	mvccStore := mocktikv.NewMvccStore()
+	mvccStore := mocktikv.MustNewMVCCStore()
 	store, err := mockstore.NewMockTikvStore(mockstore.WithMVCCStore(mvccStore))
 	c.Assert(err, IsNil)
 	_, err = session.BootstrapSession(store)
@@ -290,6 +303,8 @@ func (ts *HTTPHandlerTestSuite) TestGetTableMVCC(c *C) {
 	ts.startServer(c)
 	ts.prepareData(c)
 	defer ts.stopServer(c)
+
+	c.Skip("MVCCLevelDB doesn't implement MVCCDebugger interface.")
 	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:10090/mvcc/key/tidb/test/1"))
 	c.Assert(err, IsNil)
 	decoder := json.NewDecoder(resp.Body)
@@ -321,7 +336,7 @@ func (ts *HTTPHandlerTestSuite) TestGetTableMVCC(c *C) {
 		c.Assert(bytes.Equal(v2, expect.Value), IsTrue)
 	}
 
-	_, key, err := codec.DecodeBytes(p1.Key)
+	_, key, err := codec.DecodeBytes(p1.Key, nil)
 	c.Assert(err, IsNil)
 	hexKey := hex.EncodeToString(key)
 	resp, err = http.Get("http://127.0.0.1:10090/mvcc/hex/" + hexKey)
@@ -345,6 +360,7 @@ func (ts *HTTPHandlerTestSuite) TestGetMVCCNotFound(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(data.Info, IsNil)
 
+	c.Skip("MVCCLevelDB doesn't implement MVCCDebugger interface.")
 	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/mvcc/txn/0"))
 	c.Assert(err, IsNil)
 	var p kvrpcpb.MvccGetByStartTsResponse
@@ -422,6 +438,7 @@ func (ts *HTTPHandlerTestSuite) TestGetIndexMVCC(c *C) {
 	ts.prepareData(c)
 	defer ts.stopServer(c)
 
+	c.Skip("MVCCLevelDB doesn't implement MVCCDebugger interface.")
 	// tests for normal index key
 	resp, err := http.Get("http://127.0.0.1:10090/mvcc/index/tidb/test/idx1/1?a=1&b=2")
 	c.Assert(err, IsNil)
@@ -542,4 +559,71 @@ func (ts *HTTPHandlerTestSuite) TestGetSchema(c *C) {
 
 	_, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/schema/tidb/abc"))
 	c.Assert(err, IsNil)
+}
+
+func (ts *HTTPHandlerTestSuite) TestAllHistory(c *C) {
+	ts.startServer(c)
+	ts.prepareData(c)
+	defer ts.stopServer(c)
+	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:10090/ddl/history/?limit=3"))
+	c.Assert(err, IsNil)
+	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/ddl/history/?limit=-1"))
+	c.Assert(err, IsNil)
+
+	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/ddl/history"))
+	c.Assert(err, IsNil)
+	decoder := json.NewDecoder(resp.Body)
+
+	var jobs []*model.Job
+	s, _ := session.CreateSession(ts.server.newTikvHandlerTool().store.(kv.Storage))
+	defer s.Close()
+	store := domain.GetDomain(s.(sessionctx.Context)).Store()
+	txn, _ := store.Begin()
+	txnMeta := meta.NewMeta(txn)
+	txnMeta.GetAllHistoryDDLJobs()
+	data, _ := txnMeta.GetAllHistoryDDLJobs()
+	err = decoder.Decode(&jobs)
+
+	c.Assert(err, IsNil)
+	c.Assert(jobs, DeepEquals, data)
+}
+
+func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
+	ts.startServer(c)
+	ts.prepareData(c)
+	defer ts.stopServer(c)
+	form := make(url.Values)
+	form.Set("log_level", "error")
+	form.Set("tidb_general_log", "1")
+	resp, err := http.PostForm("http://127.0.0.1:10090/settings", form)
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	c.Assert(log.GetLevel(), Equals, log.ErrorLevel)
+	c.Assert(config.GetGlobalConfig().Log.Level, Equals, "error")
+	c.Assert(atomic.LoadUint32(&variable.ProcessGeneralLog), Equals, uint32(1))
+	form = make(url.Values)
+	form.Set("log_level", "info")
+	form.Set("tidb_general_log", "0")
+	resp, err = http.PostForm("http://127.0.0.1:10090/settings", form)
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	c.Assert(atomic.LoadUint32(&variable.ProcessGeneralLog), Equals, uint32(0))
+	c.Assert(log.GetLevel(), Equals, log.InfoLevel)
+	c.Assert(config.GetGlobalConfig().Log.Level, Equals, "info")
+}
+
+func (ts *HTTPHandlerTestSuite) TestPprof(c *C) {
+	ts.startServer(c)
+	defer ts.stopServer(c)
+	retryTime := 100
+	for retry := 0; retry < retryTime; retry++ {
+		resp, err := http.Get("http://127.0.0.1:10090/debug/pprof/heap")
+		if err == nil {
+			ioutil.ReadAll(resp.Body)
+			resp.Body.Close()
+			return
+		}
+		time.Sleep(time.Millisecond * 10)
+	}
+	log.Fatalf("Failed to get profile for %d retries in every 10 ms", retryTime)
 }

@@ -83,6 +83,12 @@ type ExprNode interface {
 	Format(w io.Writer)
 }
 
+// OptBinary is used for parser.
+type OptBinary struct {
+	IsBinary bool
+	Charset  string
+}
+
 // FuncNode represents function call expression node.
 type FuncNode interface {
 	ExprNode
@@ -137,8 +143,8 @@ type RecordSet interface {
 	// Fields gets result fields.
 	Fields() []*ResultField
 
-	// NextChunk reads records into chunk.
-	NextChunk(ctx context.Context, chk *chunk.Chunk) error
+	// Next reads records into chunk.
+	Next(ctx context.Context, chk *chunk.Chunk) error
 
 	// NewChunk creates a new chunk with initial capacity.
 	NewChunk() *chunk.Chunk
@@ -189,7 +195,7 @@ type Statement interface {
 	IsReadOnly() bool
 
 	// RebuildPlan rebuilds the plan of the statement.
-	RebuildPlan() error
+	RebuildPlan() (schemaVersion int64, err error)
 }
 
 // Visitor visits a Node.

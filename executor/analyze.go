@@ -27,10 +27,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
-	tipb "github.com/pingcap/tipb/go-tipb"
+	"github.com/pingcap/tipb/go-tipb"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -52,8 +51,8 @@ const (
 	defaultCMSketchWidth = 2048
 )
 
-// NextChunk implements the Executor NextChunk interface.
-func (e *AnalyzeExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+// Next implements the Executor Next interface.
+func (e *AnalyzeExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	concurrency, err := getBuildStatsConcurrency(e.ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -176,17 +175,15 @@ type AnalyzeIndexExec struct {
 }
 
 func (e *AnalyzeIndexExec) open() error {
-	idxRange := &ranger.NewRange{LowVal: []types.Datum{types.MinNotNullDatum()}, HighVal: []types.Datum{types.MaxValueDatum()}}
 	var builder distsql.RequestBuilder
-	kvReq, err := builder.SetIndexRanges(e.ctx.GetSessionVars().StmtCtx, e.tblInfo.ID, e.idxInfo.ID, []*ranger.NewRange{idxRange}).
+	kvReq, err := builder.SetIndexRanges(e.ctx.GetSessionVars().StmtCtx, e.tblInfo.ID, e.idxInfo.ID, ranger.FullRange()).
 		SetAnalyzeRequest(e.analyzePB).
 		SetKeepOrder(true).
-		SetPriority(e.priority).
 		Build()
 	kvReq.Concurrency = e.concurrency
 	kvReq.IsolationLevel = kv.RC
 	ctx := context.TODO()
-	e.result, err = distsql.Analyze(ctx, e.ctx.GetClient(), kvReq)
+	e.result, err = distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -267,11 +264,11 @@ type AnalyzeColumnsExec struct {
 }
 
 func (e *AnalyzeColumnsExec) open() error {
-	var ranges []*ranger.NewRange
+	var ranges []*ranger.Range
 	if e.pkInfo != nil {
-		ranges = ranger.FullIntNewRange(mysql.HasUnsignedFlag(e.pkInfo.Flag))
+		ranges = ranger.FullIntRange(mysql.HasUnsignedFlag(e.pkInfo.Flag))
 	} else {
-		ranges = ranger.FullIntNewRange(false)
+		ranges = ranger.FullIntRange(false)
 	}
 	e.resultHandler = &tableResultHandler{}
 	firstPartRanges, secondPartRanges := splitRanges(ranges, e.keepOrder)
@@ -293,12 +290,11 @@ func (e *AnalyzeColumnsExec) open() error {
 	return nil
 }
 
-func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.NewRange) (distsql.SelectResult, error) {
+func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectResult, error) {
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetTableRanges(e.tblInfo.ID, ranges, nil).
 		SetAnalyzeRequest(e.analyzePB).
 		SetKeepOrder(e.keepOrder).
-		SetPriority(e.priority).
 		Build()
 	kvReq.IsolationLevel = kv.RC
 	kvReq.Concurrency = e.concurrency
@@ -306,7 +302,7 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.NewRange) (distsql.Selec
 		return nil, errors.Trace(err)
 	}
 	ctx := context.TODO()
-	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq)
+	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

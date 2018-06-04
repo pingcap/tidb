@@ -14,21 +14,12 @@
 package ddl
 
 import (
-	"time"
-
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/types"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -100,7 +91,7 @@ func (d *ddl) createColumnInfo(tblInfo *model.TableInfo, colInfo *model.ColumnIn
 	if pos.Tp == ast.ColumnPositionFirst {
 		position = 0
 	} else if pos.Tp == ast.ColumnPositionAfter {
-		c := findCol(cols, pos.RelativeColumn.Name.L)
+		c := model.FindColumnInfo(cols, pos.RelativeColumn.Name.L)
 		if c == nil {
 			return nil, 0, infoschema.ErrColumnNotExists.GenByArgs(pos.RelativeColumn, tblInfo.Name)
 		}
@@ -144,7 +135,7 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 
-	columnInfo := findCol(tblInfo.Columns, col.Name.L)
+	columnInfo := model.FindColumnInfo(tblInfo.Columns, col.Name.L)
 	if columnInfo != nil {
 		if columnInfo.State == model.StatePublic {
 			// We already have a column with the same column name.
@@ -215,7 +206,7 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 
-	colInfo := findCol(tblInfo.Columns, colName.L)
+	colInfo := model.FindColumnInfo(tblInfo.Columns, colName.L)
 	if colInfo == nil {
 		job.State = model.JobStateCancelled
 		return ver, ErrCantDropFieldOrKey.Gen("column %s doesn't exist", colName)
@@ -262,159 +253,6 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return ver, errors.Trace(err)
 }
 
-const (
-	defaultBatchCnt      = 1024
-	defaultSmallBatchCnt = 128
-)
-
-// addTableColumn adds a column to the table.
-// TODO: Use it when updating the column type or remove it.
-// How to backfill column data in reorganization state?
-//  1. Generate a snapshot with special version.
-//  2. Traverse the snapshot, get every row in the table.
-//  3. For one row, if the row has been already deleted, skip to next row.
-//  4. If not deleted, check whether column data has existed, if existed, skip to next row.
-//  5. If column data doesn't exist, backfill the column with default value and then continue to handle next row.
-func (d *ddl) addTableColumn(t table.Table, columnInfo *model.ColumnInfo, reorgInfo *reorgInfo, job *model.Job) error {
-	seekHandle := reorgInfo.Handle
-	version := reorgInfo.SnapshotVer
-	count := job.GetRowCount()
-	ctx := d.newContext()
-
-	colMeta := &columnMeta{
-		colID:     columnInfo.ID,
-		oldColMap: make(map[int64]*types.FieldType)}
-	handles := make([]int64, 0, defaultBatchCnt)
-	// Get column default value.
-	var err error
-	if columnInfo.DefaultValue != nil {
-		colMeta.defaultVal, err = table.GetColDefaultValue(ctx, columnInfo)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			log.Errorf("[ddl] fatal: this case shouldn't happen, column %v err %v", columnInfo, err)
-			return errors.Trace(err)
-		}
-	} else if mysql.HasNotNullFlag(columnInfo.Flag) {
-		colMeta.defaultVal = table.GetZeroValue(columnInfo)
-	}
-	for _, col := range t.Meta().Columns {
-		colMeta.oldColMap[col.ID] = &col.FieldType
-	}
-
-	for {
-		startTime := time.Now()
-		handles = handles[:0]
-		err = iterateSnapshotRows(d.store, t, version, seekHandle,
-			func(h int64, rowKey kv.Key, rawRecord []byte) (bool, error) {
-				handles = append(handles, h)
-				if len(handles) == defaultBatchCnt {
-					return false, nil
-				}
-				return true, nil
-			})
-		if err != nil {
-			return errors.Trace(err)
-		} else if len(handles) == 0 {
-			return nil
-		}
-
-		count += int64(len(handles))
-		seekHandle = handles[len(handles)-1] + 1
-		sub := time.Since(startTime).Seconds()
-		err = d.backfillColumn(ctx, t, colMeta, handles, reorgInfo)
-		if err != nil {
-			log.Warnf("[ddl] added column for %v rows failed, take time %v", count, sub)
-			return errors.Trace(err)
-		}
-
-		d.reorgCtx.setRowCountAndHandle(count, seekHandle)
-		log.Infof("[ddl] added column for %v rows, take time %v", count, sub)
-	}
-}
-
-// backfillColumnInTxn deals with a part of backfilling column data in a Transaction.
-// This part of the column data rows is defaultSmallBatchCnt.
-func (d *ddl) backfillColumnInTxn(t table.Table, colMeta *columnMeta, handles []int64, txn kv.Transaction) (int64, error) {
-	nextHandle := handles[0]
-	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
-	for _, handle := range handles {
-		log.Debug("[ddl] backfill column...", handle)
-		rowKey := t.RecordKey(handle)
-		rowVal, err := txn.Get(rowKey)
-		if err != nil {
-			if kv.ErrNotExist.Equal(err) {
-				// If row doesn't exist, skip it.
-				continue
-			}
-			return 0, errors.Trace(err)
-		}
-
-		rowColumns, err := tablecodec.DecodeRow(rowVal, colMeta.oldColMap, time.UTC)
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-		if _, ok := rowColumns[colMeta.colID]; ok {
-			// The column is already added by update or insert statement, skip it.
-			continue
-		}
-
-		newColumnIDs := make([]int64, 0, len(rowColumns)+1)
-		newRow := make([]types.Datum, 0, len(rowColumns)+1)
-		for colID, val := range rowColumns {
-			newColumnIDs = append(newColumnIDs, colID)
-			newRow = append(newRow, val)
-		}
-		newColumnIDs = append(newColumnIDs, colMeta.colID)
-		newRow = append(newRow, colMeta.defaultVal)
-		newRowVal, err := tablecodec.EncodeRow(sc, newRow, newColumnIDs, nil, nil)
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-		err = txn.Set(rowKey, newRowVal)
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-	}
-
-	return nextHandle, nil
-}
-
-type columnMeta struct {
-	colID      int64
-	defaultVal types.Datum
-	oldColMap  map[int64]*types.FieldType
-}
-
-func (d *ddl) backfillColumn(ctx sessionctx.Context, t table.Table, colMeta *columnMeta, handles []int64, reorgInfo *reorgInfo) error {
-	var endIdx int
-	for len(handles) > 0 {
-		if len(handles) >= defaultSmallBatchCnt {
-			endIdx = defaultSmallBatchCnt
-		} else {
-			endIdx = len(handles)
-		}
-
-		err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
-			if err := d.isReorgRunnable(); err != nil {
-				return errors.Trace(err)
-			}
-
-			nextHandle, err1 := d.backfillColumnInTxn(t, colMeta, handles[:endIdx], txn)
-			if err1 != nil {
-				return errors.Trace(err1)
-			}
-			return errors.Trace(reorgInfo.UpdateHandle(txn, nextHandle))
-		})
-
-		if err != nil {
-			return errors.Trace(err)
-		}
-		handles = handles[endIdx:]
-	}
-
-	return nil
-}
-
 func (d *ddl) onSetDefaultValue(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	newCol := &model.ColumnInfo{}
 	err := job.DecodeArgs(newCol)
@@ -440,18 +278,36 @@ func (d *ddl) onModifyColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) 
 }
 
 // doModifyColumn updates the column information and reorders all columns.
-func (d *ddl) doModifyColumn(t *meta.Meta, job *model.Job, col *model.ColumnInfo, oldName *model.CIStr, pos *ast.ColumnPosition) (ver int64, _ error) {
+func (d *ddl) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldName *model.CIStr, pos *ast.ColumnPosition) (ver int64, _ error) {
 	tblInfo, err := getTableInfo(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 
-	oldCol := findCol(tblInfo.Columns, oldName.L)
+	oldCol := model.FindColumnInfo(tblInfo.Columns, oldName.L)
 	if oldCol == nil || oldCol.State != model.StatePublic {
 		job.State = model.JobStateCancelled
 		return ver, infoschema.ErrColumnNotExists.GenByArgs(oldName, tblInfo.Name)
 	}
+	// If we want to rename the column name, we need to check whether it already exists.
+	if newCol.Name.L != oldName.L {
+		c := model.FindColumnInfo(tblInfo.Columns, newCol.Name.L)
+		if c != nil {
+			job.State = model.JobStateCancelled
+			return ver, infoschema.ErrColumnExists.GenByArgs(newCol.Name)
+		}
+	}
 
+	// gofail: var uninitializedOffsetAndState bool
+	// if uninitializedOffsetAndState {
+	// if newCol.State != model.StatePublic {
+	//      return ver, errors.New("the column state is wrong")
+	// }
+	// }
+
+	// We need the latest column's offset and state. This information can be obtained from the store.
+	newCol.Offset = oldCol.Offset
+	newCol.State = oldCol.State
 	// Calculate column's new position.
 	oldPos, newPos := oldCol.Offset, oldCol.Offset
 	if pos.Tp == ast.ColumnPositionAfter {
@@ -461,7 +317,7 @@ func (d *ddl) doModifyColumn(t *meta.Meta, job *model.Job, col *model.ColumnInfo
 			return ver, infoschema.ErrColumnNotExists.GenByArgs(oldName, tblInfo.Name)
 		}
 
-		relative := findCol(tblInfo.Columns, pos.RelativeColumn.Name.L)
+		relative := model.FindColumnInfo(tblInfo.Columns, pos.RelativeColumn.Name.L)
 		if relative == nil || relative.State != model.StatePublic {
 			job.State = model.JobStateCancelled
 			return ver, infoschema.ErrColumnNotExists.GenByArgs(pos.RelativeColumn, tblInfo.Name)
@@ -477,10 +333,10 @@ func (d *ddl) doModifyColumn(t *meta.Meta, job *model.Job, col *model.ColumnInfo
 	}
 
 	columnChanged := make(map[string]*model.ColumnInfo)
-	columnChanged[oldName.L] = col
+	columnChanged[oldName.L] = newCol
 
 	if newPos == oldPos {
-		tblInfo.Columns[newPos] = col
+		tblInfo.Columns[newPos] = newCol
 	} else {
 		cols := tblInfo.Columns
 
@@ -490,7 +346,7 @@ func (d *ddl) doModifyColumn(t *meta.Meta, job *model.Job, col *model.ColumnInfo
 		} else {
 			copy(cols[oldPos:], cols[oldPos+1:newPos+1])
 		}
-		cols[newPos] = col
+		cols[newPos] = newCol
 
 		for i, col := range tblInfo.Columns {
 			if col.Offset != i {
@@ -525,7 +381,7 @@ func (d *ddl) updateColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInf
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	oldCol := findCol(tblInfo.Columns, oldColName.L)
+	oldCol := model.FindColumnInfo(tblInfo.Columns, oldColName.L)
 	if oldCol == nil || oldCol.State != model.StatePublic {
 		job.State = model.JobStateCancelled
 		return ver, infoschema.ErrColumnNotExists.GenByArgs(newCol.Name, tblInfo.Name)

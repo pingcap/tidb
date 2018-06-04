@@ -20,24 +20,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
-	tipb "github.com/pingcap/tipb/go-tipb"
+	"github.com/pingcap/tipb/go-tipb"
 )
-
-// jsonFunctionNameToPB is for pushdown json functions to storage engine.
-var jsonFunctionNameToPB = map[string]tipb.ExprType{
-	ast.JSONType:     tipb.ExprType_JsonType,
-	ast.JSONExtract:  tipb.ExprType_JsonExtract,
-	ast.JSONUnquote:  tipb.ExprType_JsonUnquote,
-	ast.JSONValid:    tipb.ExprType_JsonValid,
-	ast.JSONObject:   tipb.ExprType_JsonObject,
-	ast.JSONArray:    tipb.ExprType_JsonArray,
-	ast.JSONMerge:    tipb.ExprType_JsonMerge,
-	ast.JSONSet:      tipb.ExprType_JsonSet,
-	ast.JSONInsert:   tipb.ExprType_JsonInsert,
-	ast.JSONReplace:  tipb.ExprType_JsonReplace,
-	ast.JSONRemove:   tipb.ExprType_JsonRemove,
-	ast.JSONContains: tipb.ExprType_JsonContains,
-}
 
 var (
 	_ functionClass = &jsonTypeFunctionClass{}
@@ -81,6 +65,12 @@ type builtinJSONTypeSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinJSONTypeSig) Clone() builtinFunc {
+	newSig := &builtinJSONTypeSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 func (c *jsonTypeFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
@@ -107,6 +97,12 @@ type jsonExtractFunctionClass struct {
 
 type builtinJSONExtractSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinJSONExtractSig) Clone() builtinFunc {
+	newSig := &builtinJSONExtractSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 func (c *jsonExtractFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
@@ -157,6 +153,12 @@ type builtinJSONUnquoteSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinJSONUnquoteSig) Clone() builtinFunc {
+	newSig := &builtinJSONUnquoteSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 func (c *jsonUnquoteFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
@@ -184,6 +186,12 @@ type jsonSetFunctionClass struct {
 
 type builtinJSONSetSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinJSONSetSig) Clone() builtinFunc {
+	newSig := &builtinJSONSetSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 func (c *jsonSetFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
@@ -220,6 +228,12 @@ type builtinJSONInsertSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinJSONInsertSig) Clone() builtinFunc {
+	newSig := &builtinJSONInsertSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 func (c *jsonInsertFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
@@ -254,6 +268,12 @@ type builtinJSONReplaceSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinJSONReplaceSig) Clone() builtinFunc {
+	newSig := &builtinJSONReplaceSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 func (c *jsonReplaceFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
@@ -286,6 +306,12 @@ type jsonRemoveFunctionClass struct {
 
 type builtinJSONRemoveSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinJSONRemoveSig) Clone() builtinFunc {
+	newSig := &builtinJSONRemoveSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 func (c *jsonRemoveFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
@@ -337,6 +363,12 @@ type builtinJSONMergeSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinJSONMergeSig) Clone() builtinFunc {
+	newSig := &builtinJSONMergeSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 func (c *jsonMergeFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
@@ -371,6 +403,12 @@ type jsonObjectFunctionClass struct {
 
 type builtinJSONObjectSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinJSONObjectSig) Clone() builtinFunc {
+	newSig := &builtinJSONObjectSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 func (c *jsonObjectFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
@@ -431,6 +469,12 @@ type jsonArrayFunctionClass struct {
 
 type builtinJSONArraySig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinJSONArraySig) Clone() builtinFunc {
+	newSig := &builtinJSONArraySig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 func (c *jsonArrayFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {

@@ -284,7 +284,7 @@ func (s *testKvEncoderSuite) comparePrepareAndNormalEncode(c *C, alloc autoid.Al
 
 	stmtID, err := encoder.PrepareStmt(prepareFormat)
 	c.Assert(err, IsNil, Commentf(comment))
-	alloc.Rebase(tableID, baseID, false)
+	alloc.(*Allocator).Reset(baseID)
 	kvPairs, affectedRows, err := encoder.EncodePrepareStmt(tableID, stmtID, param...)
 	c.Assert(err, IsNil, Commentf(comment))
 	c.Assert(affectedRows, Equals, affectedRowsExpect, Commentf(comment))
@@ -365,7 +365,7 @@ func (s *testKvEncoderSuite) TestRetryWithAllocator(c *C) {
 		baseID := alloc.Base()
 		kvPairs, _, err1 := encoder.Encode(sql, tableID)
 		c.Assert(err1, IsNil, Commentf("sql:%s", sql))
-		alloc.Rebase(tableID, baseID, false)
+		alloc.Reset(baseID)
 		retryKvPairs, _, err1 := encoder.Encode(sql, tableID)
 		c.Assert(err1, IsNil, Commentf("sql:%s", sql))
 		c.Assert(len(kvPairs), Equals, len(retryKvPairs))
@@ -411,7 +411,7 @@ func (s *testKvEncoderSuite) TestRetryWithAllocator(c *C) {
 		baseID := alloc.Base()
 		kvPairs, _, err1 := encoder.Encode(sql, tableID)
 		c.Assert(err1, IsNil, Commentf("sql:%s", sql))
-		alloc.Rebase(tableID, baseID, false)
+		alloc.Reset(baseID)
 		retryKvPairs, _, err1 := encoder.Encode(sql, tableID)
 		c.Assert(err1, IsNil, Commentf("sql:%s", sql))
 		c.Assert(len(kvPairs), Equals, len(retryKvPairs))
@@ -455,6 +455,18 @@ func (s *testKvEncoderSuite) TestAllocatorRebase(c *C) {
 	sql = "insert into t(id, a) values(2000, 'test')"
 	encoder.Encode(sql, tableID)
 	c.Assert(alloc.Base(), Equals, int64(2000))
+}
+
+func (s *testKvEncoderSuite) TestAllocatorRebaseSmaller(c *C) {
+	alloc := NewAllocator()
+	alloc.Rebase(1, 10, false)
+	c.Assert(alloc.Base(), Equals, int64(10))
+	alloc.Rebase(1, 100, false)
+	c.Assert(alloc.Base(), Equals, int64(100))
+	alloc.Rebase(1, 1, false)
+	c.Assert(alloc.Base(), Equals, int64(100))
+	alloc.Reset(1)
+	c.Assert(alloc.Base(), Equals, int64(1))
 }
 
 func (s *testKvEncoderSuite) TestSimpleKeyEncode(c *C) {
@@ -595,4 +607,63 @@ func (s *testKvEncoderSuite) TestEncodeMetaAutoID(c *C) {
 
 	c.Assert(bytes.Compare(kvPair.Key, expectKey), Equals, 0)
 	c.Assert(bytes.Compare(kvPair.Val, expectVal), Equals, 0)
+}
+
+func (s *testKvEncoderSuite) TestGetSetSystemVariable(c *C) {
+	encoder, err := New("test", nil)
+	c.Assert(err, IsNil)
+	defer encoder.Close()
+
+	err = encoder.SetSystemVariable("sql_mode", "")
+	c.Assert(err, IsNil)
+
+	val, ok := encoder.GetSystemVariable("sql_mode")
+	c.Assert(ok, IsTrue)
+	c.Assert(val, Equals, "")
+
+	sqlMode := "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION"
+	err = encoder.SetSystemVariable("sql_mode", sqlMode)
+	c.Assert(err, IsNil)
+
+	val, ok = encoder.GetSystemVariable("sql_mode")
+	c.Assert(ok, IsTrue)
+	c.Assert(val, Equals, sqlMode)
+
+	val, ok = encoder.GetSystemVariable("SQL_MODE")
+	c.Assert(ok, IsTrue)
+	c.Assert(val, Equals, sqlMode)
+}
+
+func (s *testKvEncoderSuite) TestDisableStrictSQLMode(c *C) {
+	sql := "create table `ORDER-LINE` (" +
+		"  ol_w_id         integer   not null," +
+		"  ol_d_id         integer   not null," +
+		"  ol_o_id         integer   not null," +
+		"  ol_number       integer   not null," +
+		"  ol_i_id         integer   not null," +
+		"  ol_delivery_d   timestamp DEFAULT CURRENT_TIMESTAMP," +
+		"  ol_amount       decimal(6,2)," +
+		"  ol_supply_w_id  integer," +
+		"  ol_quantity     decimal(2,0)," +
+		"  ol_dist_info    char(24)," +
+		"  primary key (ol_w_id, ol_d_id, ol_o_id, ol_number)" +
+		");"
+
+	encoder, err := New("test", nil)
+	c.Assert(err, IsNil)
+	defer encoder.Close()
+
+	err = encoder.ExecDDLSQL(sql)
+	c.Assert(err, IsNil)
+	tableID := int64(1)
+	sql = "insert into `ORDER-LINE` values(2, 1, 1, 1, 1, 'NULL', 1, 1, 1, '1');"
+	_, _, err = encoder.Encode(sql, tableID)
+	c.Assert(err, NotNil)
+
+	err = encoder.SetSystemVariable("sql_mode", "")
+	c.Assert(err, IsNil)
+
+	sql = "insert into `ORDER-LINE` values(2, 1, 1, 1, 1, 'NULL', 1, 1, 1, '1');"
+	_, _, err = encoder.Encode(sql, tableID)
+	c.Assert(err, IsNil)
 }

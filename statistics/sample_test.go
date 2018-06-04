@@ -124,6 +124,7 @@ func (s *testSampleSuite) TestCollectorProtoConversion(c *C) {
 		c.Assert(collector.NullCount, Equals, s.NullCount)
 		c.Assert(collector.CMSketch.TotalCount(), Equals, s.CMSketch.TotalCount())
 		c.Assert(collector.FMSketch.NDV(), Equals, s.FMSketch.NDV())
+		c.Assert(collector.TotalSize, Equals, s.TotalSize)
 		c.Assert(len(collector.Samples), Equals, len(s.Samples))
 	}
 }

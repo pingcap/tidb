@@ -71,7 +71,7 @@ const (
 	CreateDBPrivTable = `CREATE TABLE if not exists mysql.db (
 		Host			CHAR(60),
 		DB			CHAR(64),
-		User			CHAR(16),
+		User			CHAR(32),
 		Select_priv		ENUM('N','Y') Not Null DEFAULT 'N',
 		Insert_priv		ENUM('N','Y') Not Null DEFAULT 'N',
 		Update_priv		ENUM('N','Y') Not Null DEFAULT 'N',
@@ -95,8 +95,8 @@ const (
 	// CreateTablePrivTable is the SQL statement creates table scope privilege table in system db.
 	CreateTablePrivTable = `CREATE TABLE if not exists mysql.tables_priv (
 		Host		CHAR(60),
-		DB			CHAR(64),
-		User		CHAR(16),
+		DB		CHAR(64),
+		User		CHAR(32),
 		Table_name	CHAR(64),
 		Grantor		CHAR(77),
 		Timestamp	Timestamp DEFAULT CURRENT_TIMESTAMP,
@@ -106,8 +106,8 @@ const (
 	// CreateColumnPrivTable is the SQL statement creates column scope privilege table in system db.
 	CreateColumnPrivTable = `CREATE TABLE if not exists mysql.columns_priv(
 		Host		CHAR(60),
-		DB			CHAR(64),
-		User		CHAR(16),
+		DB		CHAR(64),
+		User		CHAR(32),
 		Table_name	CHAR(64),
 		Column_name	CHAR(64),
 		Timestamp	Timestamp DEFAULT CURRENT_TIMESTAMP,
@@ -158,6 +158,7 @@ const (
 		hist_id bigint(64) NOT NULL,
 		distinct_count bigint(64) NOT NULL,
 		null_count bigint(64) NOT NULL DEFAULT 0,
+		tot_col_size bigint(64) NOT NULL DEFAULT 0,
 		modify_count bigint(64) NOT NULL DEFAULT 0,
 		version bigint(64) unsigned NOT NULL DEFAULT 0,
 		cm_sketch blob,
@@ -184,8 +185,26 @@ const (
 		start_key VARCHAR(255) NOT NULL COMMENT "encoded in hex",
 		end_key VARCHAR(255) NOT NULL COMMENT "encoded in hex",
 		ts BIGINT NOT NULL COMMENT "timestamp in int64",
-		UNIQUE KEY (element_id),
-		KEY (job_id, element_id)
+		UNIQUE KEY delete_range_index (job_id, element_id)
+	);`
+
+	// CreateGCDeleteRangeDoneTable stores schemas which are already deleted by DeleteRange.
+	CreateGCDeleteRangeDoneTable = `CREATE TABLE IF NOT EXISTS mysql.gc_delete_range_done (
+		job_id BIGINT NOT NULL COMMENT "the DDL job ID",
+		element_id BIGINT NOT NULL COMMENT "the schema element ID",
+		start_key VARCHAR(255) NOT NULL COMMENT "encoded in hex",
+		end_key VARCHAR(255) NOT NULL COMMENT "encoded in hex",
+		ts BIGINT NOT NULL COMMENT "timestamp in int64",
+		UNIQUE KEY delete_range_done_index (job_id, element_id)
+	);`
+
+	// CreateStatsFeedbackTable stores the feedback info which is used to update stats.
+	CreateStatsFeedbackTable = `CREATE TABLE IF NOT EXISTS mysql.stats_feedback (
+		table_id bigint(64) NOT NULL,
+		is_index tinyint(2) NOT NULL,
+		hist_id bigint(64) NOT NULL,
+		feedback blob NOT NULL,
+		index hist(table_id, is_index, hist_id)
 	);`
 )
 
@@ -230,6 +249,10 @@ const (
 	version15 = 15
 	version16 = 16
 	version17 = 17
+	version18 = 18
+	version19 = 19
+	version20 = 20
+	version21 = 21
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -272,7 +295,7 @@ func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 	r := rs[0]
 	defer terror.Call(r.Close)
 	chk := r.NewChunk()
-	err = r.NextChunk(ctx, chk)
+	err = r.Next(ctx, chk)
 	if err != nil || chk.NumRows() == 0 {
 		return "", true, errors.Trace(err)
 	}
@@ -354,6 +377,22 @@ func upgrade(s Session) {
 
 	if ver < version17 {
 		upgradeToVer17(s)
+	}
+
+	if ver < version18 {
+		upgradeToVer18(s)
+	}
+
+	if ver < version19 {
+		upgradeToVer19(s)
+	}
+
+	if ver < version20 {
+		upgradeToVer20(s)
+	}
+
+	if ver < version21 {
+		upgradeToVer21(s)
 	}
 
 	updateBootstrapVer(s)
@@ -478,7 +517,7 @@ func upgradeToVer12(s Session) {
 	defer terror.Call(r.Close)
 	chk := r.NewChunk()
 	it := chunk.NewIterator4Chunk(chk)
-	err = r.NextChunk(ctx, chk)
+	err = r.Next(ctx, chk)
 	for err == nil && chk.NumRows() != 0 {
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			user := row.GetString(0)
@@ -490,7 +529,7 @@ func upgradeToVer12(s Session) {
 			updateSQL := fmt.Sprintf(`UPDATE mysql.user set password = "%s" where user="%s" and host="%s"`, newPass, user, host)
 			sqls = append(sqls, updateSQL)
 		}
-		err = r.NextChunk(ctx, chk)
+		err = r.Next(ctx, chk)
 	}
 	terror.MustNil(err)
 
@@ -568,6 +607,28 @@ func upgradeToVer17(s Session) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user MODIFY User CHAR(32)")
 }
 
+func upgradeToVer18(s Session) {
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `tot_col_size` bigint(64) NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer19(s Session) {
+	doReentrantDDL(s, "ALTER TABLE mysql.db MODIFY User CHAR(32)")
+	doReentrantDDL(s, "ALTER TABLE mysql.tables_priv MODIFY User CHAR(32)")
+	doReentrantDDL(s, "ALTER TABLE mysql.columns_priv MODIFY User CHAR(32)")
+}
+
+func upgradeToVer20(s Session) {
+	doReentrantDDL(s, CreateStatsFeedbackTable)
+}
+
+func upgradeToVer21(s Session) {
+	mustExecute(s, CreateGCDeleteRangeDoneTable)
+
+	doReentrantDDL(s, "ALTER TABLE mysql.gc_delete_range DROP INDEX job_id", ddl.ErrCantDropFieldOrKey)
+	doReentrantDDL(s, "ALTER TABLE mysql.gc_delete_range ADD UNIQUE INDEX delete_range_index (job_id, element_id)", ddl.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.gc_delete_range DROP INDEX element_id", ddl.ErrCantDropFieldOrKey)
+}
+
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
 func updateBootstrapVer(s Session) {
 	// Update bootstrap version.
@@ -614,6 +675,10 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateStatsBucketsTable)
 	// Create gc_delete_range table.
 	mustExecute(s, CreateGCDeleteRangeTable)
+	// Create gc_delete_range_done table.
+	mustExecute(s, CreateGCDeleteRangeDoneTable)
+	// Create stats_feedback table.
+	mustExecute(s, CreateStatsFeedbackTable)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.

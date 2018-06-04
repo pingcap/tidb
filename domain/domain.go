@@ -99,8 +99,8 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 		log.Errorf("[ddl] failed to load schema diff err %v", err)
 	}
 	if ok {
-		log.Infof("[ddl] diff load InfoSchema from version %d to %d, in %v",
-			usedSchemaVersion, latestSchemaVersion, time.Since(startTime))
+		log.Infof("[ddl] diff load InfoSchema from version %d to %d in %v, tableIDs %v",
+			usedSchemaVersion, latestSchemaVersion, time.Since(startTime), tblIDs)
 		return latestSchemaVersion, tblIDs, fullLoad, nil
 	}
 
@@ -338,10 +338,15 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 			if err != nil {
 				log.Errorf("[ddl] reload schema in loop err %v", errors.ErrorStack(err))
 			}
-		case <-syncer.GlobalVersionCh():
+		case _, ok := <-syncer.GlobalVersionCh():
 			err := do.Reload()
 			if err != nil {
 				log.Errorf("[ddl] reload schema in loop err %v", errors.ErrorStack(err))
+			}
+			if !ok {
+				log.Warn("[ddl] reload schema in loop, schema syncer need rewatch")
+				// Make sure the rewatch doesn't affect load schema, so we watch the global schema version asynchronously.
+				syncer.WatchGlobalSchemaVer(context.Background())
 			}
 		case <-syncer.Done():
 			// The schema syncer stops, we need stop the schema validator to synchronize the schema version.
@@ -392,6 +397,7 @@ func (do *Domain) Close() {
 	}
 	do.sysSessionPool.Close()
 	do.wg.Wait()
+	log.Info("[domain] close")
 }
 
 type ddlCallback struct {
@@ -623,7 +629,7 @@ func (do *Domain) newStatsOwner() owner.Manager {
 
 func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager) {
 	lease := do.statsLease
-	deltaUpdateDuration := lease * 5
+	deltaUpdateDuration := lease * 20
 	loadTicker := time.NewTicker(lease)
 	defer loadTicker.Stop()
 	deltaUpdateTicker := time.NewTicker(deltaUpdateDuration)
@@ -632,11 +638,15 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	defer loadHistogramTicker.Stop()
 	gcStatsTicker := time.NewTicker(100 * lease)
 	defer gcStatsTicker.Stop()
+	dumpFeedbackTicker := time.NewTicker(200 * lease)
+	defer dumpFeedbackTicker.Stop()
+	loadFeedbackTicker := time.NewTicker(5 * lease)
+	defer loadFeedbackTicker.Stop()
 	statsHandle := do.StatsHandle()
 	t := time.Now()
 	err := statsHandle.InitStats(do.InfoSchema())
 	if err != nil {
-		log.Error("[stats] init stats info failed: ", errors.ErrorStack(err))
+		log.Debug("[stats] init stats info failed: ", errors.ErrorStack(err))
 	} else {
 		log.Info("[stats] init stats info takes ", time.Now().Sub(t))
 	}
@@ -644,43 +654,61 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	for {
 		select {
 		case <-loadTicker.C:
-			err := statsHandle.Update(do.InfoSchema())
+			err = statsHandle.Update(do.InfoSchema())
 			if err != nil {
-				log.Error("[stats] update stats info fail: ", errors.ErrorStack(err))
+				log.Debug("[stats] update stats info fail: ", errors.ErrorStack(err))
 			}
 		case <-do.exit:
 			do.wg.Done()
 			return
 			// This channel is sent only by ddl owner or the drop stats executor.
 		case t := <-statsHandle.DDLEventCh():
-			err := statsHandle.HandleDDLEvent(t)
+			err = statsHandle.HandleDDLEvent(t)
 			if err != nil {
-				log.Error("[stats] handle ddl event fail: ", errors.ErrorStack(err))
+				log.Debug("[stats] handle ddl event fail: ", errors.ErrorStack(err))
 			}
 		case t := <-statsHandle.AnalyzeResultCh():
 			for i, hg := range t.Hist {
-				err := statistics.SaveStatsToStorage(ctx, t.TableID, t.Count, t.IsIndex, hg, t.Cms[i])
+				err = statistics.SaveStatsToStorage(ctx, t.TableID, t.Count, t.IsIndex, hg, t.Cms[i])
 				if err != nil {
-					log.Error("[stats] save histogram to storage fail: ", errors.ErrorStack(err))
+					log.Debug("[stats] save histogram to storage fail: ", errors.ErrorStack(err))
 				}
 			}
-		case <-deltaUpdateTicker.C:
-			err := statsHandle.DumpStatsDeltaToKV()
+		case t := <-statsHandle.LoadMetaCh():
+			err = statistics.SaveMetaToStorage(ctx, t.TableID, t.Count, t.ModifyCount)
 			if err != nil {
-				log.Error("[stats] dump stats delta fail: ", errors.ErrorStack(err))
+				log.Debug("[stats] save meta to storage fail: ", errors.ErrorStack(err))
+			}
+		case <-deltaUpdateTicker.C:
+			err = statsHandle.DumpStatsDeltaToKV()
+			if err != nil {
+				log.Debug("[stats] dump stats delta fail: ", errors.ErrorStack(err))
 			}
 		case <-loadHistogramTicker.C:
-			err := statsHandle.LoadNeededHistograms()
+			err = statsHandle.LoadNeededHistograms()
 			if err != nil {
-				log.Error("[stats] load histograms fail: ", errors.ErrorStack(err))
+				log.Debug("[stats] load histograms fail: ", errors.ErrorStack(err))
+			}
+		case <-loadFeedbackTicker.C:
+			if !owner.IsOwner() {
+				continue
+			}
+			err = statsHandle.HandleUpdateStats(do.InfoSchema())
+			if err != nil {
+				log.Debug("[stats] update stats using feedback fail: ", errors.ErrorStack(err))
+			}
+		case <-dumpFeedbackTicker.C:
+			err = statsHandle.DumpStatsFeedbackToKV()
+			if err != nil {
+				log.Debug("[stats] dump stats feedback fail: ", errors.ErrorStack(err))
 			}
 		case <-gcStatsTicker.C:
 			if !owner.IsOwner() {
 				continue
 			}
-			err := statsHandle.GCStats(do.InfoSchema(), do.DDL().GetLease())
+			err = statsHandle.GCStats(do.InfoSchema(), do.DDL().GetLease())
 			if err != nil {
-				log.Error("[stats] gc stats fail: ", errors.ErrorStack(err))
+				log.Debug("[stats] gc stats fail: ", errors.ErrorStack(err))
 			}
 		}
 	}

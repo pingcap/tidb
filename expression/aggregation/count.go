@@ -59,6 +59,13 @@ func (cf *countFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Stateme
 	return nil
 }
 
+func (cf *countFunction) ResetContext(sc *stmtctx.StatementContext, evalCtx *AggEvaluateContext) {
+	if cf.HasDistinct {
+		evalCtx.DistinctChecker = createDistinctChecker(sc)
+	}
+	evalCtx.Count = 0
+}
+
 // GetResult implements Aggregation interface.
 func (cf *countFunction) GetResult(evalCtx *AggEvaluateContext) (d types.Datum) {
 	d.SetInt64(evalCtx.Count)

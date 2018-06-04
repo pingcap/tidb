@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	gofail "github.com/coreos/gofail/runtime"
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -72,7 +73,7 @@ var _ = Suite(&testContextOptionSuite{})
 
 type testSuite struct {
 	cluster   *mocktikv.Cluster
-	mvccStore *mocktikv.MvccStore
+	mvccStore mocktikv.MVCCStore
 	store     kv.Storage
 	domain    *domain.Domain
 	*parser.Parser
@@ -84,6 +85,7 @@ type testSuite struct {
 var mockTikv = flag.Bool("mockTikv", true, "use mock tikv store in executor test")
 
 func (s *testSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
 	s.autoIDStep = autoid.GetStep()
 	autoid.SetStep(5000)
 	s.Parser = parser.New()
@@ -92,7 +94,7 @@ func (s *testSuite) SetUpSuite(c *C) {
 	if useMockTikv {
 		s.cluster = mocktikv.NewCluster()
 		mocktikv.BootstrapWithSingleStore(s.cluster)
-		s.mvccStore = mocktikv.NewMvccStore()
+		s.mvccStore = mocktikv.MustNewMVCCStore()
 		store, err := mockstore.NewMockTikvStore(
 			mockstore.WithCluster(s.cluster),
 			mockstore.WithMVCCStore(s.mvccStore),
@@ -111,10 +113,7 @@ func (s *testSuite) TearDownSuite(c *C) {
 	s.domain.Close()
 	s.store.Close()
 	autoid.SetStep(s.autoIDStep)
-}
-
-func (s *testSuite) SetUpTest(c *C) {
-	testleak.BeforeTest()
+	testleak.AfterTest(c)()
 }
 
 func (s *testSuite) TearDownTest(c *C) {
@@ -125,7 +124,6 @@ func (s *testSuite) TearDownTest(c *C) {
 		tableName := tb[0]
 		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
 	}
-	testleak.AfterTest(c)()
 }
 
 func (s *testSuite) TestAdmin(c *C) {
@@ -140,7 +138,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	r, err := tk.Exec("admin cancel ddl jobs 1")
 	c.Assert(err, IsNil, Commentf("err %v", err))
 	chk := r.NewChunk()
-	err = r.NextChunk(ctx, chk)
+	err = r.Next(ctx, chk)
 	c.Assert(err, IsNil)
 	row := chk.GetRow(0)
 	c.Assert(row.Len(), Equals, 2)
@@ -150,7 +148,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	r, err = tk.Exec("admin show ddl")
 	c.Assert(err, IsNil)
 	chk = r.NewChunk()
-	err = r.NextChunk(ctx, chk)
+	err = r.Next(ctx, chk)
 	c.Assert(err, IsNil)
 	row = chk.GetRow(0)
 	c.Assert(row.Len(), Equals, 4)
@@ -165,7 +163,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	// c.Assert(rowOwnerInfos[0], Equals, ownerInfos[0])
 	c.Assert(row.GetString(2), Equals, "")
 	chk = r.NewChunk()
-	err = r.NextChunk(ctx, chk)
+	err = r.Next(ctx, chk)
 	c.Assert(err, IsNil)
 	c.Assert(chk.NumRows() == 0, IsTrue)
 	err = txn.Rollback()
@@ -175,17 +173,17 @@ func (s *testSuite) TestAdmin(c *C) {
 	r, err = tk.Exec("admin show ddl jobs")
 	c.Assert(err, IsNil)
 	chk = r.NewChunk()
-	err = r.NextChunk(ctx, chk)
+	err = r.Next(ctx, chk)
 	c.Assert(err, IsNil)
 	row = chk.GetRow(0)
-	c.Assert(row.Len(), Equals, 2)
+	c.Assert(row.Len(), Equals, 10)
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
 	historyJobs, err := admin.GetHistoryDDLJobs(txn)
 	c.Assert(len(historyJobs), Greater, 1)
-	c.Assert(len(row.GetString(0)), Greater, 0)
+	c.Assert(len(row.GetString(1)), Greater, 0)
 	c.Assert(err, IsNil)
-	c.Assert(row.GetString(1), Equals, historyJobs[0].State.String())
+	c.Assert(row.GetInt64(0), Equals, historyJobs[0].ID)
 	c.Assert(err, IsNil)
 
 	// show DDL job queries test
@@ -259,7 +257,9 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 	c *C, tk *testkit.TestKit, ctx sessionctx.Context, selectSQL, deleteSQL string) {
 	for _, tt := range tests {
 		c.Assert(ctx.NewTxn(), IsNil)
+		ctx.GetSessionVars().StmtCtx.IgnoreErr = true
 		data, reachLimit, err1 := ld.InsertData(tt.data1, tt.data2)
+		ctx.GetSessionVars().StmtCtx.IgnoreErr = false
 		c.Assert(err1, IsNil)
 		c.Assert(reachLimit, IsFalse)
 		if tt.restData == nil {
@@ -758,7 +758,7 @@ func (s *testSuite) TestIssue2612(c *C) {
 	rs, err := tk.Exec(`select timediff(finish_at, create_at) from t;`)
 	c.Assert(err, IsNil)
 	chk := rs.NewChunk()
-	err = rs.NextChunk(context.Background(), chk)
+	err = rs.Next(context.Background(), chk)
 	c.Assert(err, IsNil)
 	c.Assert(chk.GetRow(0).GetDuration(0).String(), Equals, "-46:09:02")
 }
@@ -944,6 +944,24 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("insert into t value ('2017-01-01'), ('2017-01-02')")
 	r = tk.MustQuery("(select a from t where a < 0) union (select a from t where a > 0) order by a")
 	r.Check(testkit.Rows("2017-01-01", "2017-01-02"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t value(0),(0)")
+	tk.MustQuery("select 1 from (select a from t union all select a from t) tmp").Check(testkit.Rows("1", "1", "1", "1"))
+	tk.MustQuery("select 10 as a from dual union select a from t order by a desc limit 1 ").Check(testkit.Rows("10"))
+	tk.MustQuery("select -10 as a from dual union select a from t order by a limit 1 ").Check(testkit.Rows("-10"))
+	tk.MustQuery("select count(1) from (select a from t union all select a from t) tmp").Check(testkit.Rows("4"))
+
+	_, err := tk.Exec("select 1 from (select a from t limit 1 union all select a from t limit 1) tmp")
+	c.Assert(err, NotNil)
+	terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrWrongUsage))
+
+	_, err = tk.Exec("select 1 from (select a from t order by a union all select a from t limit 1) tmp")
+	c.Assert(err, NotNil)
+	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrWrongUsage))
 }
 
 func (s *testSuite) TestIn(c *C) {
@@ -1542,6 +1560,8 @@ func (s *testSuite) TestSQLMode(c *C) {
 	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES'")
 	tk.MustExec("set @@global.sql_mode = ''")
 
+	// With the existance of global variable cache, it have to sleep a while here.
+	time.Sleep(3 * time.Second)
 	tk2 := testkit.NewTestKit(c, s.store)
 	tk2.MustExec("use test")
 	tk2.MustExec("create table t2 (a varchar(3))")
@@ -2033,16 +2053,14 @@ func (s *testSuite) TestIssue4024(c *C) {
 const (
 	checkRequestOff          = 0
 	checkRequestPriority     = 1
-	checkRequestNotFillCache = 2
 	checkRequestSyncLog      = 3
 	checkDDLAddIndexPriority = 4
 )
 
 type checkRequestClient struct {
 	tikv.Client
-	priority     pb.CommandPri
-	notFillCache bool
-	mu           struct {
+	priority pb.CommandPri
+	mu       struct {
 		sync.RWMutex
 		checkFlags     uint32
 		lowPriorityCnt uint32
@@ -2050,8 +2068,8 @@ type checkRequestClient struct {
 	}
 }
 
-func (c *checkRequestClient) SendReq(ctx context.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
-	resp, err := c.Client.SendReq(ctx, addr, req)
+func (c *checkRequestClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	resp, err := c.Client.SendRequest(ctx, addr, req, timeout)
 	c.mu.RLock()
 	checkFlags := c.mu.checkFlags
 	c.mu.RUnlock()
@@ -2061,10 +2079,6 @@ func (c *checkRequestClient) SendReq(ctx context.Context, addr string, req *tikv
 			if c.priority != req.Priority {
 				return nil, errors.New("fail to set priority")
 			}
-		}
-	} else if checkFlags == checkRequestNotFillCache {
-		if c.notFillCache != req.NotFillCache {
-			return nil, errors.New("fail to set not fail cache")
 		}
 	} else if checkFlags == checkRequestSyncLog {
 		switch req.Type {
@@ -2157,6 +2171,19 @@ func (s *testContextOptionSuite) TestAddIndexPriority(c *C) {
 	store.Close()
 }
 
+func (s *testContextOptionSuite) TestAlterTableComment(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_1")
+	tk.MustExec("create table t_1 (c1 int, c2 int, c3 int default 1, index (c1)) comment = 'test table';")
+	tk.MustExec("alter table `t_1` comment 'this is table comment';")
+	result := tk.MustQuery("select table_comment from information_schema.tables where table_name = 't_1';")
+	result.Check(testkit.Rows("this is table comment"))
+	tk.MustExec("alter table `t_1` comment 'table t comment';")
+	result = tk.MustQuery("select table_comment from information_schema.tables where table_name = 't_1';")
+	result.Check(testkit.Rows("table t comment"))
+}
+
 func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -2184,7 +2211,7 @@ func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
 	tk.MustQuery("select count(*) from t")
 	tk.MustExec("update t set id = 3")
 	tk.MustExec("delete from t")
-	tk.MustExec("insert into t values (2)")
+	tk.MustExec("insert into t select * from t limit 2")
 	tk.MustExec("delete from t")
 
 	// Insert some data to make sure plan build IndexLookup for t.
@@ -2220,27 +2247,35 @@ func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
 	cli.mu.Unlock()
 }
 
-func (s *testContextOptionSuite) TestNotFillCache(c *C) {
+func (s *testSuite) TestNotFillCacheFlag(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int primary key)")
 	defer tk.MustExec("drop table t")
 	tk.MustExec("insert into t values (1)")
 
-	cli := s.cli
-	cli.mu.Lock()
-	cli.mu.checkFlags = checkRequestNotFillCache
-	cli.mu.Unlock()
-	cli.notFillCache = true
-	tk.MustQuery("select SQL_NO_CACHE * from t")
-
-	cli.notFillCache = false
-	tk.MustQuery("select SQL_CACHE * from t")
-	tk.MustQuery("select * from t")
-
-	cli.mu.Lock()
-	cli.mu.checkFlags = checkRequestOff
-	cli.mu.Unlock()
+	tests := []struct {
+		sql    string
+		expect bool
+	}{
+		{"select SQL_NO_CACHE * from t", true},
+		{"select SQL_CACHE * from t", false},
+		{"select * from t", false},
+	}
+	count := 0
+	ctx := context.Background()
+	for _, test := range tests {
+		ctx1 := context.WithValue(ctx, "CheckSelectRequestHook", func(req *kv.Request) {
+			count++
+			if req.NotFillCache != test.expect {
+				c.Errorf("sql=%s, expect=%v, get=%v", test.sql, test.expect, req.NotFillCache)
+			}
+		})
+		rs, err := tk.Se.Execute(ctx1, test.sql)
+		c.Assert(err, IsNil)
+		tk.ResultSetToResult(rs[0], Commentf("sql: %v", test.sql))
+	}
+	c.Assert(count, Equals, len(tests)) // Make sure the hook function is called.
 }
 
 func (s *testContextOptionSuite) TestSyncLog(c *C) {
@@ -2299,7 +2334,7 @@ func (s *testSuite) TestBit(c *C) {
 	r, err := tk.Exec("select * from t where c1 = 2")
 	c.Assert(err, IsNil)
 	chk := r.NewChunk()
-	err = r.NextChunk(context.Background(), chk)
+	err = r.Next(context.Background(), chk)
 	c.Assert(err, IsNil)
 	c.Assert(types.BinaryLiteral(chk.GetRow(0).GetBytes(0)), DeepEquals, types.NewBinaryLiteralFromUint(2, -1))
 
@@ -2460,20 +2495,54 @@ func (s *testSuite) TestEarlyClose(c *C) {
 
 	ctx := context.Background()
 	for i := 0; i < 500; i++ {
-		rss, err := tk.Se.Execute(ctx, "select * from earlyclose order by id")
-		c.Assert(err, IsNil)
+		rss, err1 := tk.Se.Execute(ctx, "select * from earlyclose order by id")
+		c.Assert(err1, IsNil)
 		rs := rss[0]
 		chk := rs.NewChunk()
-		err = rs.NextChunk(ctx, chk)
+		err = rs.Next(ctx, chk)
 		c.Assert(err, IsNil)
 		rs.Close()
 	}
+
+	// Goroutine should not leak when error happen.
+	gofail.Enable("github.com/pingcap/tidb/store/tikv/handleTaskOnceError", `return(true)`)
+	defer gofail.Disable("github.com/pingcap/tidb/store/tikv/handleTaskOnceError")
+	rss, err := tk.Se.Execute(ctx, "select * from earlyclose")
+	c.Assert(err, IsNil)
+	rs := rss[0]
+	chk := rs.NewChunk()
+	err = rs.Next(ctx, chk)
+	c.Assert(err, NotNil)
+	rs.Close()
 }
 
 func (s *testSuite) TestIssue5666(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@profiling=1")
 	tk.MustQuery("SELECT QUERY_ID, SUM(DURATION) AS SUM_DURATION FROM INFORMATION_SCHEMA.PROFILING GROUP BY QUERY_ID;").Check(testkit.Rows("0 0"))
+}
+
+func (s *testSuite) TestIssue5341(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop table if exists test.t")
+	tk.MustExec("create table test.t(a char)")
+	tk.MustExec("insert into test.t value('a')")
+	tk.MustQuery("select * from test.t where a < 1 order by a limit 0;").Check(testkit.Rows())
+}
+
+func (s *testSuite) TestContainDotColumn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test.t1")
+	tk.MustExec("create table test.t1(t1.a char)")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2(a char, t2.b int)")
+
+	tk.MustExec("drop table if exists t3")
+	_, err := tk.Exec("create table t3(s.a char);")
+	terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrWrongTableName))
 }
 
 func (s *testSuite) TestCheckIndex(c *C) {
@@ -2502,6 +2571,12 @@ func (s *testSuite) TestCheckIndex(c *C) {
 
 	alloc := autoid.NewAllocator(s.store, dbInfo.ID)
 	tb, err := tables.TableFromMeta(alloc, tbInfo)
+	c.Assert(err, IsNil)
+
+	_, err = se.Execute(context.Background(), "admin check index t c")
+	c.Assert(err, IsNil)
+
+	_, err = se.Execute(context.Background(), "admin check index t C")
 	c.Assert(err, IsNil)
 
 	// set data to:
@@ -2622,9 +2697,143 @@ func (s *testSuite) TestCoprocessorStreamingFlag(c *C) {
 		})
 		rs, err := tk.Se.Execute(ctx1, test.sql)
 		c.Assert(err, IsNil)
-		chk := rs[0].NewChunk()
-		err = rs[0].NextChunk(ctx, chk)
-		c.Assert(err, IsNil)
-		rs[0].Close()
+		tk.ResultSetToResult(rs[0], Commentf("sql: %v", test.sql))
 	}
+}
+
+func (s *testSuite) TestIncorrectLimitArg(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a bigint);`)
+	tk.MustExec(`prepare stmt1 from 'select * from t limit ?';`)
+	tk.MustExec(`prepare stmt2 from 'select * from t limit ?, ?';`)
+	tk.MustExec(`set @a = -1;`)
+	tk.MustExec(`set @b =  1;`)
+
+	var err error
+	_, err = tk.Se.Execute(context.TODO(), `execute stmt1 using @a;`)
+	c.Assert(err.Error(), Equals, `[planner:1210]Incorrect arguments to LIMIT`)
+
+	_, err = tk.Se.Execute(context.TODO(), `execute stmt2 using @b, @a;`)
+	c.Assert(err.Error(), Equals, `[planner:1210]Incorrect arguments to LIMIT`)
+}
+
+func (s *testSuite) TestLimit(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a bigint, b bigint);`)
+	tk.MustExec(`insert into t values(1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6);`)
+	tk.MustQuery(`select * from t order by a limit 1, 1;`).Check(testkit.Rows(
+		"2 2",
+	))
+	tk.MustQuery(`select * from t order by a limit 1, 2;`).Check(testkit.Rows(
+		"2 2",
+		"3 3",
+	))
+	tk.MustQuery(`select * from t order by a limit 1, 3;`).Check(testkit.Rows(
+		"2 2",
+		"3 3",
+		"4 4",
+	))
+	tk.MustQuery(`select * from t order by a limit 1, 4;`).Check(testkit.Rows(
+		"2 2",
+		"3 3",
+		"4 4",
+		"5 5",
+	))
+	tk.MustExec(`set @@tidb_max_chunk_size=2;`)
+	tk.MustQuery(`select * from t order by a limit 2, 1;`).Check(testkit.Rows(
+		"3 3",
+	))
+	tk.MustQuery(`select * from t order by a limit 2, 2;`).Check(testkit.Rows(
+		"3 3",
+		"4 4",
+	))
+	tk.MustQuery(`select * from t order by a limit 2, 3;`).Check(testkit.Rows(
+		"3 3",
+		"4 4",
+		"5 5",
+	))
+	tk.MustQuery(`select * from t order by a limit 2, 4;`).Check(testkit.Rows(
+		"3 3",
+		"4 4",
+		"5 5",
+		"6 6",
+	))
+}
+
+func (s *testSuite) TestCoprocessorStreamingWarning(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a double)")
+	tk.MustExec("insert into t value(1.2)")
+	tk.MustExec("set @@session.tidb_enable_streaming = 1")
+
+	result := tk.MustQuery("select * from t where a/0 > 1")
+	result.Check(testkit.Rows())
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|Division by 0"))
+}
+
+func (s *testSuite) TestYearTypeDeleteIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a YEAR, PRIMARY KEY(a));")
+	tk.MustExec("insert into t set a = '2151';")
+	tk.MustExec("delete from t;")
+	tk.MustExec("admin check table t")
+}
+
+func (s *testSuite) TestUnsignedDecimalOverflow(c *C) {
+	tests := []struct {
+		input  interface{}
+		hasErr bool
+		err    string
+	}{{
+		-1,
+		true,
+		"Out of range value for column",
+	}, {
+		"-1.1e-1",
+		true,
+		"Out of range value for column",
+	}, {
+		-1.1,
+		true,
+		"Out of range value for column",
+	}, {
+		-0,
+		false,
+		"",
+	},
+	}
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a decimal(10,2) unsigned)")
+	for _, t := range tests {
+		res, err := tk.Exec("insert into t values (?)", t.input)
+		if res != nil {
+			defer res.Close()
+		}
+		if t.hasErr {
+			c.Assert(err, NotNil)
+			c.Assert(strings.Contains(err.Error(), t.err), IsTrue)
+		} else {
+			c.Assert(err, IsNil)
+		}
+		if res != nil {
+			res.Close()
+		}
+	}
+
+	tk.MustExec("set sql_mode=''")
+	tk.MustExec("delete from t")
+	tk.MustExec("insert into t values (?)", -1)
+	r := tk.MustQuery("select a from t limit 1")
+	r.Check(testkit.Rows("0.00"))
 }

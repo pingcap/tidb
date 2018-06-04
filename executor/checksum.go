@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
-	tipb "github.com/pingcap/tipb/go-tipb"
+	"github.com/pingcap/tipb/go-tipb"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -82,8 +82,8 @@ func (e *ChecksumTableExec) Open(ctx context.Context) error {
 	return nil
 }
 
-// NextChunk implements the Executor NextChunk interface.
-func (e *ChecksumTableExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+// Next implements the Executor Next interface.
+func (e *ChecksumTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.done {
 		return nil
@@ -128,7 +128,7 @@ func (e *ChecksumTableExec) checksumWorker(taskCh <-chan *checksumTask, resultCh
 
 func (e *ChecksumTableExec) handleChecksumRequest(req *kv.Request) (resp *tipb.ChecksumResponse, err error) {
 	ctx := context.TODO()
-	res, err := distsql.Checksum(ctx, e.ctx.GetClient(), req)
+	res, err := distsql.Checksum(ctx, e.ctx.GetClient(), req, e.ctx.GetSessionVars().KVVars)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -216,7 +216,7 @@ func (c *checksumContext) buildTableRequest(ctx sessionctx.Context) (*kv.Request
 		Algorithm: tipb.ChecksumAlgorithm_Crc64_Xor,
 	}
 
-	ranges := ranger.FullIntNewRange(false)
+	ranges := ranger.FullIntRange(false)
 
 	var builder distsql.RequestBuilder
 	return builder.SetTableRanges(c.TableInfo.ID, ranges, nil).
@@ -232,7 +232,7 @@ func (c *checksumContext) buildIndexRequest(ctx sessionctx.Context, indexInfo *m
 		Algorithm: tipb.ChecksumAlgorithm_Crc64_Xor,
 	}
 
-	ranges := ranger.FullNewRange()
+	ranges := ranger.FullRange()
 
 	var builder distsql.RequestBuilder
 	return builder.SetIndexRanges(ctx.GetSessionVars().StmtCtx, c.TableInfo.ID, indexInfo.ID, ranges).

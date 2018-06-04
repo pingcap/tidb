@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/codec"
-	tipb "github.com/pingcap/tipb/go-tipb"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // Plan is the description of an execution flow.
@@ -148,11 +148,11 @@ type LogicalPlan interface {
 	// PruneColumns prunes the unused columns.
 	PruneColumns([]*expression.Column)
 
-	// convert2PhysicalPlan converts the logical plan to the physical plan. It's a new interface.
+	// findBestTask converts the logical plan to the physical plan. It's a new interface.
 	// It is called recursively from the parent to the children to create the result physical plan.
 	// Some logical plans will convert the children to the physical plans in different ways, and return the one
 	// with the lowest cost.
-	convert2PhysicalPlan(prop *requiredProp) (task, error)
+	findBestTask(prop *requiredProp) (task, error)
 
 	// buildKeyInfo will collect the information of unique keys into schema.
 	buildKeyInfo()
@@ -161,7 +161,7 @@ type LogicalPlan interface {
 	pushDownTopN(topN *LogicalTopN) LogicalPlan
 
 	// deriveStats derives statistic info between plans.
-	deriveStats() *statsInfo
+	deriveStats() (*statsInfo, error)
 
 	// preparePossibleProperties is only used for join and aggregation. Like group by a,b,c, all permutation of (a,b,c) is
 	// valid, but the ordered indices in leaf plan is limited. So we can get all possible order properties by a pre-walking.
@@ -169,8 +169,8 @@ type LogicalPlan interface {
 	// so we can prepare possible properties for every LogicalPlan node.
 	preparePossibleProperties() [][]*expression.Column
 
-	// genPhysPlansByReqProp generates all possible plans that can match the required property.
-	genPhysPlansByReqProp(*requiredProp) []PhysicalPlan
+	// exhaustPhysicalPlans generates all possible plans that can match the required property.
+	exhaustPhysicalPlans(*requiredProp) []PhysicalPlan
 
 	extractCorrelatedCols() []*expression.CorrelatedColumn
 

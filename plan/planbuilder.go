@@ -26,56 +26,9 @@ import (
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
 )
-
-// Error instances.
-var (
-	ErrUnsupportedType      = terror.ClassOptimizerPlan.New(CodeUnsupportedType, "Unsupported type %T")
-	SystemInternalErrorType = terror.ClassOptimizerPlan.New(SystemInternalError, "System internal error")
-	ErrUnknownColumn        = terror.ClassOptimizerPlan.New(CodeUnknownColumn, mysql.MySQLErrName[mysql.ErrBadField])
-	ErrUnknownTable         = terror.ClassOptimizerPlan.New(CodeUnknownTable, mysql.MySQLErrName[mysql.ErrUnknownTable])
-	ErrWrongArguments       = terror.ClassOptimizerPlan.New(CodeWrongArguments, "Incorrect arguments to EXECUTE")
-	ErrAmbiguous            = terror.ClassOptimizerPlan.New(CodeAmbiguous, "Column '%s' in field list is ambiguous")
-	ErrAnalyzeMissIndex     = terror.ClassOptimizerPlan.New(CodeAnalyzeMissIndex, "Index '%s' in field list does not exist in table '%s'")
-	ErrAlterAutoID          = terror.ClassAutoid.New(CodeAlterAutoID, "No support for setting auto_increment using alter_table")
-	ErrBadGeneratedColumn   = terror.ClassOptimizerPlan.New(CodeBadGeneratedColumn, mysql.MySQLErrName[mysql.ErrBadGeneratedColumn])
-	ErrFieldNotInGroupBy    = terror.ClassOptimizerPlan.New(CodeFieldNotInGroupBy, mysql.MySQLErrName[mysql.ErrFieldNotInGroupBy])
-	ErrBadTable             = terror.ClassOptimizerPlan.New(CodeBadTable, mysql.MySQLErrName[mysql.ErrBadTable])
-	ErrKeyDoesNotExist      = terror.ClassOptimizerPlan.New(CodeKeyDoesNotExist, mysql.MySQLErrName[mysql.ErrKeyDoesNotExist])
-)
-
-// Error codes.
-const (
-	CodeUnsupportedType    terror.ErrCode = 1
-	SystemInternalError                   = 2
-	CodeAlterAutoID                       = 3
-	CodeAnalyzeMissIndex                  = 4
-	CodeAmbiguous                         = 1052
-	CodeUnknownColumn                     = mysql.ErrBadField
-	CodeUnknownTable                      = mysql.ErrUnknownTable
-	CodeWrongArguments                    = 1210
-	CodeBadGeneratedColumn                = mysql.ErrBadGeneratedColumn
-	CodeFieldNotInGroupBy                 = mysql.ErrFieldNotInGroupBy
-	CodeBadTable                          = mysql.ErrBadTable
-	CodeKeyDoesNotExist                   = mysql.ErrKeyDoesNotExist
-)
-
-func init() {
-	tableMySQLErrCodes := map[terror.ErrCode]uint16{
-		CodeUnknownColumn:      mysql.ErrBadField,
-		CodeUnknownTable:       mysql.ErrBadTable,
-		CodeAmbiguous:          mysql.ErrNonUniq,
-		CodeWrongArguments:     mysql.ErrWrongArguments,
-		CodeBadGeneratedColumn: mysql.ErrBadGeneratedColumn,
-		CodeFieldNotInGroupBy:  mysql.ErrFieldNotInGroupBy,
-		CodeBadTable:           mysql.ErrBadTable,
-		CodeKeyDoesNotExist:    mysql.ErrKeyDoesNotExist,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassOptimizerPlan] = tableMySQLErrCodes
-}
 
 type visitInfo struct {
 	privilege mysql.PrivilegeType
@@ -170,6 +123,10 @@ type planBuilder struct {
 	// rewriterCounter counts how many rewriter is being used.
 	rewriterPool    []*expressionRewriter
 	rewriterCounter int
+
+	// inStraightJoin represents whether the current "SELECT" statement has
+	// "STRAIGHT_JOIN" option.
+	inStraightJoin bool
 }
 
 func (b *planBuilder) build(node ast.Node) Plan {
@@ -313,17 +270,27 @@ func (b *planBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
 	return false
 }
 
-func getAvailableIndices(indexHints []*ast.IndexHint, tableInfo *model.TableInfo) (*availableIndices, error) {
-	publicIndices := make([]*model.IndexInfo, 0, len(tableInfo.Indices))
-	for _, index := range tableInfo.Indices {
+func getPathByIndexName(paths []*accessPath, idxName model.CIStr) *accessPath {
+	for _, path := range paths {
+		if path.index.Name.L == idxName.L {
+			return path
+		}
+	}
+	return nil
+}
+
+func getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInfo *model.TableInfo) ([]*accessPath, error) {
+	publicPaths := make([]*accessPath, 0, len(tblInfo.Indices)+1)
+	publicPaths = append(publicPaths, &accessPath{isTablePath: true})
+	for _, index := range tblInfo.Indices {
 		if index.State == model.StatePublic {
-			publicIndices = append(publicIndices, index)
+			publicPaths = append(publicPaths, &accessPath{index: index})
 		}
 	}
 
 	hasScanHint, hasUseOrForce := false, false
-	available := make([]*model.IndexInfo, 0, len(indexHints))
-	ignored := make([]*model.IndexInfo, 0, len(indexHints))
+	available := make([]*accessPath, 0, len(publicPaths))
+	ignored := make([]*accessPath, 0, len(publicPaths))
 	for _, hint := range indexHints {
 		if hint.HintScope != ast.HintForScan {
 			continue
@@ -331,47 +298,48 @@ func getAvailableIndices(indexHints []*ast.IndexHint, tableInfo *model.TableInfo
 
 		hasScanHint = true
 		for _, idxName := range hint.IndexNames {
-			idx := findIndexByName(publicIndices, idxName)
-			if idx == nil {
-				return nil, ErrKeyDoesNotExist.GenByArgs(idxName, tableInfo.Name)
+			path := getPathByIndexName(publicPaths[1:], idxName)
+			if path == nil {
+				return nil, ErrKeyDoesNotExist.GenByArgs(idxName, tblInfo.Name)
 			}
 			if hint.HintType == ast.HintIgnore {
 				// Collect all the ignored index hints.
-				ignored = append(ignored, idx)
+				ignored = append(ignored, path)
 				continue
 			}
 			// Currently we don't distinguish between "FORCE" and "USE" because
 			// our cost estimation is not reliable.
 			hasUseOrForce = true
-			available = append(available, idx)
+			path.forced = true
+			available = append(available, path)
 		}
 	}
 
-	if !hasScanHint {
-		return &availableIndices{publicIndices, true}, nil
-	}
-	if !hasUseOrForce {
-		available = removeIgnoredIndices(publicIndices, ignored)
-		return &availableIndices{available, true}, nil
+	if !hasScanHint || !hasUseOrForce {
+		available = publicPaths
 	}
 
-	available = removeIgnoredIndices(available, ignored)
+	available = removeIgnoredPaths(available, ignored)
+
 	// If we have got "FORCE" or "USE" index hint but got no available index,
 	// we have to use table scan.
-	return &availableIndices{available, len(available) == 0}, nil
+	if len(available) == 0 {
+		available = append(available, &accessPath{isTablePath: true})
+	}
+	return available, nil
 }
 
-func removeIgnoredIndices(indices, ignores []*model.IndexInfo) []*model.IndexInfo {
-	if len(ignores) == 0 {
-		return indices
+func removeIgnoredPaths(paths, ignoredPaths []*accessPath) []*accessPath {
+	if len(ignoredPaths) == 0 {
+		return paths
 	}
-	var remainedIndices []*model.IndexInfo
-	for _, index := range indices {
-		if findIndexByName(ignores, index.Name) == nil {
-			remainedIndices = append(remainedIndices, index)
+	remainedPaths := make([]*accessPath, 0, len(paths))
+	for _, path := range paths {
+		if path.isTablePath || getPathByIndexName(ignoredPaths, path.index.Name) == nil {
+			remainedPaths = append(remainedPaths, path)
 		}
 	}
-	return remainedIndices
+	return remainedPaths
 }
 
 func findIndexByName(indices []*model.IndexInfo, name model.CIStr) *model.IndexInfo {
@@ -413,7 +381,7 @@ func (b *planBuilder) buildCheckIndex(dbName model.CIStr, as *ast.AdminStmt) Pla
 	// get index information
 	var idx *model.IndexInfo
 	for _, index := range tblInfo.Indices {
-		if index.Name.L == as.Index {
+		if index.Name.L == strings.ToLower(as.Index) {
 			idx = index
 			break
 		}
@@ -449,7 +417,7 @@ func (b *planBuilder) buildCheckIndex(dbName model.CIStr, as *ast.AdminStmt) Pla
 		Columns:          columns,
 		Index:            idx,
 		dataSourceSchema: schema,
-		Ranges:           ranger.FullNewRange(),
+		Ranges:           ranger.FullRange(),
 		KeepOrder:        false,
 	}.init(b.ctx)
 	is.stats = &statsInfo{}
@@ -486,6 +454,10 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 	case ast.AdminRecoverIndex:
 		p := &RecoverIndex{Table: as.Tables[0], IndexName: as.Index}
 		p.SetSchema(buildRecoverIndexFields())
+		ret = p
+	case ast.AdminCleanupIndex:
+		p := &CleanupIndex{Table: as.Tables[0], IndexName: as.Index}
+		p.SetSchema(buildCleanupIndexFields())
 		ret = p
 	case ast.AdminChecksumTable:
 		p := &ChecksumTable{Tables: as.Tables}
@@ -661,9 +633,23 @@ func buildRecoverIndexFields() *expression.Schema {
 	return schema
 }
 
+func buildCleanupIndexFields() *expression.Schema {
+	schema := expression.NewSchema(make([]*expression.Column, 0, 1)...)
+	schema.Append(buildColumn("", "REMOVED_COUNT", mysql.TypeLonglong, 4))
+	return schema
+}
+
 func buildShowDDLJobsFields() *expression.Schema {
-	schema := expression.NewSchema(make([]*expression.Column, 0, 2)...)
-	schema.Append(buildColumn("", "JOBS", mysql.TypeVarchar, 128))
+	schema := expression.NewSchema(make([]*expression.Column, 0, 10)...)
+	schema.Append(buildColumn("", "JOB_ID", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "DB_NAME", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "TABLE_NAME", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "JOB_TYPE", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "SCHEMA_STATE", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "SCHEMA_ID", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "TABLE_ID", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "ROW_COUNT", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "START_TIME", mysql.TypeVarchar, 64))
 	schema.Append(buildColumn("", "STATE", mysql.TypeVarchar, 64))
 	return schema
 }
@@ -753,6 +739,8 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 				b.err = ErrNoDB
 				return nil
 			}
+		case ast.ShowCreateTable:
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AllPrivMask, show.Table.Schema.L, show.Table.Name.L, "")
 		}
 		p.SetSchema(buildShowSchema(show))
 	}
@@ -912,8 +900,6 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		Columns:     insert.Columns,
 		tableSchema: schema,
 		IsReplace:   insert.IsReplace,
-		Priority:    insert.Priority,
-		IgnoreErr:   insert.IgnoreErr,
 	}.init(b.ctx)
 
 	b.visitInfo = append(b.visitInfo, visitInfo{
@@ -1025,7 +1011,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 			b.err = errors.Trace(err)
 			return nil
 		}
-		insertPlan.Setlist = append(insertPlan.Setlist, &expression.Assignment{
+		insertPlan.SetList = append(insertPlan.SetList, &expression.Assignment{
 			Col:  col,
 			Expr: expr,
 		})
@@ -1363,16 +1349,16 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar,
 		}
 	case ast.ShowProcessList:
-		names = []string{"Id", "User", "Host", "db", "Command", "Time", "State", "Info"}
+		names = []string{"Id", "User", "Host", "db", "Command", "Time", "State", "Info", "Mem"}
 		ftypes = []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar,
-			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar, mysql.TypeString}
+			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar, mysql.TypeString, mysql.TypeLonglong}
 	case ast.ShowStatsMeta:
 		names = []string{"Db_name", "Table_name", "Update_time", "Modify_count", "Row_count"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDatetime, mysql.TypeLonglong, mysql.TypeLonglong}
 	case ast.ShowStatsHistograms:
-		names = []string{"Db_name", "Table_name", "Column_name", "Is_index", "Update_time", "Distinct_count", "Null_count"}
+		names = []string{"Db_name", "Table_name", "Column_name", "Is_index", "Update_time", "Distinct_count", "Null_count", "Avg_col_size"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeTiny, mysql.TypeDatetime,
-			mysql.TypeLonglong, mysql.TypeLonglong}
+			mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeDouble}
 	case ast.ShowStatsBuckets:
 		names = []string{"Db_name", "Table_name", "Column_name", "Is_index", "Bucket_id", "Count",
 			"Repeats", "Lower_Bound", "Upper_Bound"}

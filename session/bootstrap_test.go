@@ -44,6 +44,7 @@ func (s *testBootstrapSuite) SetUpSuite(c *C) {
 func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom := newStoreWithBootstrap(c, s.dbName)
+	defer store.Close()
 	defer dom.Close()
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, "USE mysql;")
@@ -51,11 +52,11 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	c.Assert(r, NotNil)
 	ctx := context.Background()
 	chk := r.NewChunk()
-	err := r.NextChunk(ctx, chk)
+	err := r.Next(ctx, chk)
 	c.Assert(err, IsNil)
 	c.Assert(chk.NumRows() == 0, IsFalse)
 	datums := ast.RowToDatums(chk.GetRow(0), r.Fields())
-	match(c, datums, []byte("%"), []byte("root"), []byte(""), "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
+	match(c, datums, []byte(`%`), []byte("root"), []byte(""), "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
 
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "anyhost"}, []byte(""), []byte("")), IsTrue)
 	mustExecSQL(c, se, "USE test;")
@@ -67,7 +68,7 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	r = mustExecSQL(c, se, "SELECT COUNT(*) from mysql.global_variables;")
 	c.Assert(r, NotNil)
 	chk = r.NewChunk()
-	err = r.NextChunk(ctx, chk)
+	err = r.Next(ctx, chk)
 	c.Assert(err, IsNil)
 	c.Assert(chk.GetRow(0).GetInt64(0), Equals, globalVarsCount())
 
@@ -88,7 +89,7 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	c.Assert(r, NotNil)
 
 	chk = r.NewChunk()
-	err = r.NextChunk(ctx, chk)
+	err = r.Next(ctx, chk)
 	c.Assert(err, IsNil)
 	datums = ast.RowToDatums(chk.GetRow(0), r.Fields())
 	match(c, datums, 3)
@@ -100,9 +101,6 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	se, err = CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	doDMLWorks(se)
-
-	err = store.Close()
-	c.Assert(err, IsNil)
 }
 
 func globalVarsCount() int64 {
@@ -122,6 +120,7 @@ func (s *testBootstrapSuite) bootstrapWithOnlyDDLWork(store kv.Storage, c *C) {
 		parser:      parser.New(),
 		sessionVars: variable.NewSessionVars(),
 	}
+	ss.txn.init()
 	ss.mu.values = make(map[fmt.Stringer]interface{})
 	ss.SetValue(sessionctx.Initing, true)
 	dom, err := domap.Get(store)
@@ -137,23 +136,31 @@ func (s *testBootstrapSuite) bootstrapWithOnlyDDLWork(store kv.Storage, c *C) {
 // testBootstrapWithError :
 // When a session failed in bootstrap process (for example, the session is killed after doDDLWorks()).
 // We should make sure that the following session could finish the bootstrap process.
-func (s *testBootstrapSuite) testBootstrapWithError(c *C) {
+func (s *testBootstrapSuite) TestBootstrapWithError(c *C) {
 	ctx := context.Background()
 	defer testleak.AfterTest(c)()
 	store := newStore(c, s.dbNameBootstrap)
+	defer store.Close()
 	s.bootstrapWithOnlyDDLWork(store, c)
+	dom, err := domap.Get(store)
+	c.Assert(err, IsNil)
+	domap.Delete(store)
+	dom.Close()
 
-	BootstrapSession(store)
+	dom1, err := BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer dom1.Close()
+
 	se := newSession(c, store, s.dbNameBootstrap)
 	mustExecSQL(c, se, "USE mysql;")
 	r := mustExecSQL(c, se, `select * from user;`)
 	chk := r.NewChunk()
-	err := r.NextChunk(ctx, chk)
+	err = r.Next(ctx, chk)
 	c.Assert(err, IsNil)
 	c.Assert(chk.NumRows() == 0, IsFalse)
 	row := chk.GetRow(0)
 	datums := ast.RowToDatums(row, r.Fields())
-	match(c, datums, []byte("%"), []byte("root"), []byte(""), "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
+	match(c, datums, []byte(`%`), []byte("root"), []byte(""), "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
 	mustExecSQL(c, se, "USE test;")
 	// Check privilege tables.
 	mustExecSQL(c, se, "SELECT * from mysql.db;")
@@ -162,22 +169,19 @@ func (s *testBootstrapSuite) testBootstrapWithError(c *C) {
 	// Check global variables.
 	r = mustExecSQL(c, se, "SELECT COUNT(*) from mysql.global_variables;")
 	chk = r.NewChunk()
-	err = r.NextChunk(ctx, chk)
+	err = r.Next(ctx, chk)
 	c.Assert(err, IsNil)
 	v := chk.GetRow(0)
 	c.Assert(v.GetInt64(0), Equals, globalVarsCount())
 
 	r = mustExecSQL(c, se, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="bootstrapped";`)
 	chk = r.NewChunk()
-	err = r.NextChunk(ctx, chk)
+	err = r.Next(ctx, chk)
 	c.Assert(err, IsNil)
 	c.Assert(chk.NumRows() == 0, IsFalse)
 	row = chk.GetRow(0)
 	c.Assert(row.Len(), Equals, 1)
 	c.Assert(row.GetBytes(0), BytesEquals, []byte("True"))
-
-	err = store.Close()
-	c.Assert(err, IsNil)
 }
 
 // TestUpgrade tests upgrading
@@ -192,7 +196,7 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	// bootstrap with currentBootstrapVersion
 	r := mustExecSQL(c, se, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_server_version";`)
 	chk := r.NewChunk()
-	err := r.NextChunk(ctx, chk)
+	err := r.Next(ctx, chk)
 	row := chk.GetRow(0)
 	c.Assert(err, IsNil)
 	c.Assert(chk.NumRows() == 0, IsFalse)
@@ -221,7 +225,7 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	// Make sure the version is downgraded.
 	r = mustExecSQL(c, se1, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_server_version";`)
 	chk = r.NewChunk()
-	err = r.NextChunk(ctx, chk)
+	err = r.Next(ctx, chk)
 	c.Assert(err, IsNil)
 	c.Assert(chk.NumRows() == 0, IsTrue)
 
@@ -236,7 +240,7 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	se2 := newSession(c, store, s.dbName)
 	r = mustExecSQL(c, se2, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_server_version";`)
 	chk = r.NewChunk()
-	err = r.NextChunk(ctx, chk)
+	err = r.Next(ctx, chk)
 	c.Assert(err, IsNil)
 	c.Assert(chk.NumRows() == 0, IsFalse)
 	row = chk.GetRow(0)
@@ -249,7 +253,6 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 }
 
 func (s *testBootstrapSuite) TestOldPasswordUpgrade(c *C) {
-	defer testleak.AfterTest(c)()
 	pwd := "abc"
 	oldpwd := fmt.Sprintf("%X", auth.Sha1Hash([]byte(pwd)))
 	newpwd, err := oldPasswordUpgrade(oldpwd)

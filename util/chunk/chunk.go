@@ -31,7 +31,7 @@ var _ types.Row = Row{}
 // When the chunk is done processing, we can reuse the allocated memory by resetting it.
 type Chunk struct {
 	columns []*column
-	// numVirtualRows indicates the number of virtual rows, witch have zero columns.
+	// numVirtualRows indicates the number of virtual rows, which have zero column.
 	// It is used only when this Chunk doesn't hold any data, i.e. "len(columns)==0".
 	numVirtualRows int
 }
@@ -40,11 +40,6 @@ type Chunk struct {
 const (
 	InitialCapacity = 32
 )
-
-// NewChunk creates a new chunk with field types.
-func NewChunk(fields []*types.FieldType) *Chunk {
-	return NewChunkWithCapacity(fields, InitialCapacity)
-}
 
 // NewChunkWithCapacity creates a new chunk with field types and capacity.
 func NewChunkWithCapacity(fields []*types.FieldType, cap int) *Chunk {
@@ -480,7 +475,7 @@ func (r Row) GetUint64(colIdx int) uint64 {
 	return *(*uint64)(unsafe.Pointer(&col.data[r.idx*8]))
 }
 
-// GetFloat32 returns the float64 value with the colIdx.
+// GetFloat32 returns the float32 value with the colIdx.
 func (r Row) GetFloat32(colIdx int) float32 {
 	col := r.c.columns[colIdx]
 	return *(*float32)(unsafe.Pointer(&col.data[r.idx*4]))
@@ -588,13 +583,18 @@ func (r Row) GetDatumRow(fields []*types.FieldType) types.DatumRow {
 func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 	var d types.Datum
 	switch tp.Tp {
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		if !r.IsNull(colIdx) {
 			if mysql.HasUnsignedFlag(tp.Flag) {
 				d.SetUint64(r.GetUint64(colIdx))
 			} else {
 				d.SetInt64(r.GetInt64(colIdx))
 			}
+		}
+	case mysql.TypeYear:
+		// FIXBUG: because insert type of TypeYear is definite int64, so we regardless of the unsigned flag.
+		if !r.IsNull(colIdx) {
+			d.SetInt64(r.GetInt64(colIdx))
 		}
 	case mysql.TypeFloat:
 		if !r.IsNull(colIdx) {

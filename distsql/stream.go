@@ -19,10 +19,11 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	tipb "github.com/pingcap/tipb/go-tipb"
+	"github.com/pingcap/tipb/go-tipb"
 	"golang.org/x/net/context"
 )
 
@@ -41,17 +42,7 @@ type streamResult struct {
 
 func (r *streamResult) Fetch(context.Context) {}
 
-func (r *streamResult) Next(ctx context.Context) (PartialResult, error) {
-	var ret streamPartialResult
-	ret.rowLen = r.rowLen
-	finished, err := r.readDataFromResponse(ctx, r.resp, &ret.Chunk)
-	if err != nil || finished {
-		return nil, errors.Trace(err)
-	}
-	return &ret, nil
-}
-
-func (r *streamResult) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+func (r *streamResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	maxChunkSize := r.ctx.GetSessionVars().MaxChunkSize
 	for chk.NumRows() < maxChunkSize {
@@ -89,6 +80,9 @@ func (r *streamResult) readDataFromResponse(ctx context.Context, resp kv.Respons
 	if stream.Error != nil {
 		return false, errors.Errorf("stream response error: [%d]%s\n", stream.Error.Code, stream.Error.Msg)
 	}
+	for _, warning := range stream.Warnings {
+		r.ctx.GetSessionVars().StmtCtx.AppendWarning(terror.ClassTiKV.New(terror.ErrCode(warning.Code), warning.Msg))
+	}
 
 	// TODO: Check stream.GetEncodeType() here if we support tipb.EncodeType_TypeArrow some day.
 
@@ -123,10 +117,10 @@ func (r *streamResult) readDataIfNecessary(ctx context.Context) error {
 func (r *streamResult) flushToChunk(chk *chunk.Chunk) (err error) {
 	remainRowsData := r.curr.RowsData
 	maxChunkSize := r.ctx.GetSessionVars().MaxChunkSize
-	timeZone := r.ctx.GetSessionVars().GetTimeZone()
+	decoder := codec.NewDecoder(chk, r.ctx.GetSessionVars().GetTimeZone())
 	for chk.NumRows() < maxChunkSize && len(remainRowsData) > 0 {
 		for i := 0; i < r.rowLen; i++ {
-			remainRowsData, err = codec.DecodeOneToChunk(remainRowsData, chk, i, r.fieldTypes[i], timeZone)
+			remainRowsData, err = decoder.DecodeOne(remainRowsData, i, r.fieldTypes[i])
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -155,22 +149,5 @@ func (r *streamResult) Close() error {
 		metrics.DistSQLScanKeysHistogram.Observe(float64(r.feedback.Actual()))
 	}
 	metrics.DistSQLPartialCountHistogram.Observe(float64(r.partialCount))
-	return nil
-}
-
-// streamPartialResult implements PartialResult.
-type streamPartialResult struct {
-	tipb.Chunk
-	rowLen int
-}
-
-func (pr *streamPartialResult) Next(ctx context.Context) (data []types.Datum, err error) {
-	if len(pr.Chunk.RowsData) == 0 {
-		return nil, nil // partial result finished.
-	}
-	return readRowFromChunk(&pr.Chunk, pr.rowLen)
-}
-
-func (pr *streamPartialResult) Close() error {
 	return nil
 }

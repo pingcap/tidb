@@ -102,6 +102,13 @@ func (cf *concatFunction) GetResult(evalCtx *AggEvaluateContext) (d types.Datum)
 	return d
 }
 
+func (cf *concatFunction) ResetContext(sc *stmtctx.StatementContext, evalCtx *AggEvaluateContext) {
+	if cf.HasDistinct {
+		evalCtx.DistinctChecker = createDistinctChecker(sc)
+	}
+	evalCtx.Buffer = nil
+}
+
 // GetPartialResult implements Aggregation interface.
 func (cf *concatFunction) GetPartialResult(evalCtx *AggEvaluateContext) []types.Datum {
 	return []types.Datum{cf.GetResult(evalCtx)}

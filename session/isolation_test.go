@@ -14,6 +14,8 @@
 package session_test
 
 import (
+	"time"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -28,7 +30,7 @@ var _ = Suite(&testIsolationSuite{})
 
 type testIsolationSuite struct {
 	cluster   *mocktikv.Cluster
-	mvccStore *mocktikv.MvccStore
+	mvccStore mocktikv.MVCCStore
 	store     kv.Storage
 	dom       *domain.Domain
 }
@@ -37,7 +39,7 @@ func (s *testIsolationSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(s.cluster)
-	s.mvccStore = mocktikv.NewMvccStore()
+	s.mvccStore = mocktikv.MustNewMVCCStore()
 	store, err := mockstore.NewMockTikvStore(
 		mockstore.WithCluster(s.cluster),
 		mockstore.WithMVCCStore(s.mvccStore),
@@ -48,11 +50,16 @@ func (s *testIsolationSuite) SetUpSuite(c *C) {
 	session.SetStatsLease(0)
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
-	session.SetCommitRetryLimit(0)
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set @@global.tidb_retry_limit = 0")
+	time.Sleep(3 * time.Second)
 }
 
 func (s *testIsolationSuite) TearDownSuite(c *C) {
-	session.SetCommitRetryLimit(10)
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set @@global.tidb_retry_limit = 10")
+
 	s.dom.Close()
 	s.store.Close()
 	testleak.AfterTest(c)()

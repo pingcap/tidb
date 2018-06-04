@@ -42,6 +42,8 @@ const (
 	NotFillCache
 	// SyncLog decides whether the WAL(write-ahead log) of this request should be synchronized.
 	SyncLog
+	// ForUpdate option would be set to true in 'select for update' transaction.
+	ForUpdate
 )
 
 // Priority value for transaction priority.
@@ -144,12 +146,14 @@ type Transaction interface {
 	GetMemBuffer() MemBuffer
 	// GetSnapshot returns the snapshot of this transaction.
 	GetSnapshot() Snapshot
+	// SetVars sets variables to the transaction.
+	SetVars(vars *Variables)
 }
 
 // Client is used to send request to KV layer.
 type Client interface {
 	// Send sends request to KV layer, returns a Response.
-	Send(ctx context.Context, req *Request) Response
+	Send(ctx context.Context, req *Request, vars *Variables) Response
 
 	// IsRequestTypeSupported checks if reqType and subType is supported.
 	IsRequestTypeSupported(reqType, subType int64) bool

@@ -18,7 +18,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/chunk"
@@ -50,7 +49,9 @@ func (k loadStatsVarKeyType) String() string {
 // LoadStatsVarKey is a variable key for load statistic.
 const LoadStatsVarKey loadStatsVarKeyType = 0
 
-func (e *LoadStatsExec) exec(ctx context.Context) error {
+// Next implements the Executor Next interface.
+func (e *LoadStatsExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	chk.Reset()
 	if len(e.info.Path) == 0 {
 		return errors.New("Load Stats: file path is empty")
 	}
@@ -60,19 +61,7 @@ func (e *LoadStatsExec) exec(ctx context.Context) error {
 		return errors.New("Load Stats: previous load stats option isn't closed normally")
 	}
 	e.ctx.SetValue(LoadStatsVarKey, e.info)
-
 	return nil
-}
-
-// Next implements the Executor Next interface.
-func (e *LoadStatsExec) Next(ctx context.Context) (Row, error) {
-	return nil, e.exec(ctx)
-}
-
-// NextChunk implements the Executor NextChunk interface.
-func (e *LoadStatsExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
-	return errors.Trace(e.exec(ctx))
 }
 
 // Close implements the Executor Close interface.
@@ -91,68 +80,10 @@ func (e *LoadStatsInfo) Update(data []byte) error {
 	if err := json.Unmarshal(data, jsonTbl); err != nil {
 		return errors.Trace(err)
 	}
-
 	do := domain.GetDomain(e.Ctx)
-	is := do.InfoSchema()
-
-	tableInfo, err := is.TableByName(model.NewCIStr(jsonTbl.DatabaseName), model.NewCIStr(jsonTbl.TableName))
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	h := do.StatsHandle()
 	if h == nil {
 		return errors.New("Load Stats: handle is nil")
 	}
-
-	tbl, err := h.LoadStatsFromJSON(tableInfo.Meta(), jsonTbl)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	if h.Lease > 0 {
-		hists := make([]*statistics.Histogram, 0, len(tbl.Columns))
-		cms := make([]*statistics.CMSketch, 0, len(tbl.Columns))
-		for _, col := range tbl.Columns {
-			hists = append(hists, &col.Histogram)
-			cms = append(cms, col.CMSketch)
-		}
-		h.AnalyzeResultCh() <- &statistics.AnalyzeResult{
-			TableID: tbl.TableID,
-			Hist:    hists,
-			Cms:     cms,
-			Count:   tbl.Count,
-			IsIndex: 0,
-			Err:     nil}
-
-		hists = make([]*statistics.Histogram, 0, len(tbl.Indices))
-		cms = make([]*statistics.CMSketch, 0, len(tbl.Indices))
-		for _, idx := range tbl.Indices {
-			hists = append(hists, &idx.Histogram)
-			cms = append(cms, idx.CMSketch)
-		}
-		h.AnalyzeResultCh() <- &statistics.AnalyzeResult{
-			TableID: tbl.TableID,
-			Hist:    hists,
-			Cms:     cms,
-			Count:   tbl.Count,
-			IsIndex: 1,
-			Err:     nil}
-
-		return nil
-	}
-	for _, col := range tbl.Columns {
-		err = statistics.SaveStatsToStorage(e.Ctx, tbl.TableID, tbl.Count, 0, &col.Histogram, col.CMSketch)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	for _, idx := range tbl.Indices {
-		err = statistics.SaveStatsToStorage(e.Ctx, tbl.TableID, tbl.Count, 1, &idx.Histogram, idx.CMSketch)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	err = h.Update(GetInfoSchema(e.Ctx))
-	return errors.Trace(err)
+	return errors.Trace(h.LoadStatsFromJSON(GetInfoSchema(e.Ctx), jsonTbl))
 }

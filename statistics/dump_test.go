@@ -51,16 +51,24 @@ func (s *testDumpStatsSuite) TestConversion(c *C) {
 	tk.MustExec("create index c on t(a,b)")
 	tk.MustExec("insert into t(a,b) values (3, 1),(2, 1),(1, 10)")
 	tk.MustExec("analyze table t")
-
+	tk.MustExec("insert into t(a,b) values (1, 1),(3, 1),(5, 10)")
 	is := s.do.InfoSchema()
 	h := s.do.StatsHandle()
+	h.DumpStatsDeltaToKV()
 	h.Update(is)
+
 	tableInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	jsonTbl, err := h.DumpStatsToJSON("test", tableInfo.Meta())
 	c.Assert(err, IsNil)
-	loadTbl, err := h.LoadStatsFromJSON(tableInfo.Meta(), jsonTbl)
+	loadTbl, err := h.LoadStatsFromJSONToTable(tableInfo.Meta(), jsonTbl)
 	c.Assert(err, IsNil)
-	tbl := h.GetTableStats(tableInfo.Meta().ID)
+
+	tbl := h.GetTableStats(tableInfo.Meta())
 	assertTableEqual(c, loadTbl, tbl)
+
+	err = h.LoadStatsFromJSON(is, jsonTbl)
+	c.Assert(err, IsNil)
+	loadTblInStorage := h.GetTableStats(tableInfo.Meta())
+	assertTableEqual(c, loadTblInStorage, tbl)
 }

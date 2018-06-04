@@ -37,10 +37,11 @@
     "clientv3/concurrency",
     "etcdserver/api/v3rpc/rpctypes",
     "etcdserver/etcdserverpb",
-    "mvcc/mvccpb"
+    "mvcc/mvccpb",
+    "pkg/types"
   ]
-  revision = "fb5cd6f1c72c2b98e0c4453444cdfba306da867b"
-  version = "v3.2.14"
+  revision = "eddf599c689ec85f4752060edff5a72e81e9106a"
+  version = "v3.2.18"
 
 [[projects]]
   branch = "master"
@@ -88,14 +89,17 @@
 [[projects]]
   name = "github.com/golang/protobuf"
   packages = [
+    "jsonpb",
     "proto",
     "protoc-gen-go/descriptor",
     "ptypes",
     "ptypes/any",
     "ptypes/duration",
+    "ptypes/struct",
     "ptypes/timestamp"
   ]
-  revision = "8ee79997227bf9b34611aee7946ae64735e6fd93"
+  revision = "b4deda0973fb4c70b50d226b1af49f3da59f5265"
+  version = "v1.1.0"
 
 [[projects]]
   name = "github.com/golang/snappy"
@@ -150,7 +154,7 @@
   branch = "master"
   name = "github.com/ngaut/pools"
   packages = ["."]
-  revision = "6352e005618615ffaf1cb1c6622b8e91435751fe"
+  revision = "b7bc8c42aac787667ba45adea78233f53f548443"
 
 [[projects]]
   branch = "master"
@@ -199,6 +203,7 @@
   revision = "8d44bfdf1030639ae7130922c95df12d6d4da3b6"
 
 [[projects]]
+  branch = "master"
   name = "github.com/pingcap/kvproto"
   packages = [
     "pkg/coprocessor",
@@ -210,12 +215,13 @@
     "pkg/raft_serverpb",
     "pkg/tikvpb"
   ]
-  revision = "7b013aefd7210f4f4dbfca3330b462ddce5dd496"
+  revision = "5ef8fa297ea3547b015ef5069cb500bba67b0d94"
 
 [[projects]]
+  branch = "master"
   name = "github.com/pingcap/pd"
   packages = ["pd-client"]
-  revision = "eed819b6999186a4bf2d25255f8d61b371a450d6"
+  revision = "ea6597638eb7f3d7d50248b90e60888352ac8e85"
 
 [[projects]]
   branch = "master"
@@ -235,7 +241,7 @@
     "go-tipb",
     "sharedbytes"
   ]
-  revision = "2479f439c9cdd1bf7783dd1eaa4b7187b16d0638"
+  revision = "2d5073e5521a10f8db2adc0eaab2c46ca0a151d9"
 
 [[projects]]
   name = "github.com/prometheus/client_golang"
@@ -268,8 +274,7 @@
 [[projects]]
   name = "github.com/sirupsen/logrus"
   packages = ["."]
-  revision = "ba1b36c82c5e05c4f912a88eab0dcd91a171688f"
-  version = "v0.11.5"
+  revision = "3bcb09397d6d88e7676a9bc8433ca11ba5304837"
 
 [[projects]]
   name = "github.com/spaolacci/murmur3"
@@ -319,9 +324,10 @@
   revision = "d1e1b351919c6738fdeb9893d5c998b161464f0c"
 
 [[projects]]
+  branch = "master"
   name = "golang.org/x/sys"
   packages = ["unix"]
-  revision = "a646d33e2ee3172a661fc09bca23bb4889a41bc8"
+  revision = "7dfd1290c7917b7ba22824b9d24954ab3002fe24"
 
 [[projects]]
   name = "golang.org/x/text"
@@ -362,9 +368,14 @@
   packages = [
     ".",
     "balancer",
+    "balancer/base",
+    "balancer/roundrobin",
+    "channelz",
     "codes",
     "connectivity",
     "credentials",
+    "encoding",
+    "encoding/proto",
     "grpclb/grpc_lb_v1/messages",
     "grpclog",
     "health/grpc_health_v1",
@@ -374,14 +385,16 @@
     "naming",
     "peer",
     "resolver",
+    "resolver/dns",
+    "resolver/passthrough",
     "stats",
     "status",
     "tap",
     "transport"
   ]
-  revision = "5b3c4e850e90a4cf6a20ebd46c8b32a0a3afcb9e"
+  revision = "41344da2231b913fa3d983840a57a6b1b7b631a1"
   source = "https://github.com/grpc/grpc-go.git"
-  version = "v1.7.5"
+  version = "v1.12.0"
 
 [[projects]]
   name = "gopkg.in/natefinch/lumberjack.v2"
@@ -392,6 +405,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "92c7c81ac2ac3df66a63416a81e48b40ad4812849569a9dcefb4a9aa2a6f4cbd"
+  inputs-digest = "788e74759cb6b86aae177485b25bfdf3963eb7a8f0b2e46cf125843fa9adb5bb"
   solver-name = "gps-cdcl"
   solver-version = 1

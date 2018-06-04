@@ -31,16 +31,18 @@ import (
 var errStopped = errors.New("stopped")
 
 type testStoreSuite struct {
-	oneByOneSuite
+	OneByOneSuite
 	store *tikvStore
 }
 
 var _ = Suite(&testStoreSuite{})
 
 func (s *testStoreSuite) SetUpTest(c *C) {
-	store, err := newTestTiKVStore()
-	c.Check(err, IsNil)
-	s.store = store.(*tikvStore)
+	s.store = NewTestStore(c).(*tikvStore)
+}
+
+func (s *testStoreSuite) TearDownTest(c *C) {
+	c.Assert(s.store.Close(), IsNil)
 }
 
 func (s *testStoreSuite) TestParsePath(c *C) {
@@ -163,8 +165,8 @@ type checkRequestClient struct {
 	priority pb.CommandPri
 }
 
-func (c *checkRequestClient) SendReq(ctx context.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
-	resp, err := c.Client.SendReq(ctx, addr, req)
+func (c *checkRequestClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	resp, err := c.Client.SendRequest(ctx, addr, req, timeout)
 	if c.priority != req.Priority {
 		if resp.Get != nil {
 			resp.Get.Error = &pb.KeyError{
