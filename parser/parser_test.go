@@ -2066,6 +2066,19 @@ func (s *testParserSuite) TestExplain(c *C) {
 	s.RunTest(c, table)
 }
 
+func (s *testParserSuite) TestTrace(c *C) {
+	defer testleak.AfterTest(c)()
+	table := []testCase{
+		{"trace select c1 from t1", true},
+		{"trace delete t1, t2 from t1 inner join t2 inner join t3 where t1.id=t2.id and t2.id=t3.id;", true},
+		{"trace insert into t values (1), (2), (3)", true},
+		{"trace replace into foo values (1 || 2)", true},
+		{"trace update t set id = id + 1 order by id desc;", true},
+		{"trace select c1 from t1 union (select c2 from t2) limit 1, 1", true},
+	}
+	s.RunTest(c, table)
+}
+
 func (s *testParserSuite) TestView(c *C) {
 	defer testleak.AfterTest(c)()
 	table := []testCase{
