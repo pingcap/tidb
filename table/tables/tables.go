@@ -134,7 +134,7 @@ func generatePartitionExpr(tblInfo *model.TableInfo) ([]expression.Expression, e
 	if pi == nil {
 		return nil, nil
 	}
-	// TODO: Only partition by range is supported currently.
+	// TODO: Support other partition method.
 	if pi.Type != model.PartitionTypeRange {
 		return nil, nil
 	}
@@ -150,7 +150,8 @@ func generatePartitionExpr(tblInfo *model.TableInfo) ([]expression.Expression, e
 			fmt.Fprintf(&buf, "(%s) < (%s)", pi.Expr, def.LessThan[0])
 			expr, err := expression.ParseSimpleExpr(ctx, buf.String(), tblInfo)
 			if err != nil {
-				fmt.Println(errors.ErrorStack(err), buf.String())
+				// If it got an error here, ddl may hang forever, so this error log is important.
+				log.Error("wrong table partition expression:", errors.ErrorStack(err), buf.String())
 				return nil, errors.Trace(err)
 			}
 			partitionExprs = append(partitionExprs, expr)
