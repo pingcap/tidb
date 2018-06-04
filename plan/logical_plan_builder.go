@@ -1352,7 +1352,6 @@ func (b *planBuilder) checkOnlyFullGroupByWithGroupClause(p LogicalPlan, fields 
 
 func (b *planBuilder) checkOnlyFullGroupByWithOutGroupClause(p LogicalPlan, fields []*ast.SelectField) {
 	resolver := colResolverForOnlyFullGroupBy{}
-	//for idx, field := range fields {
 	for idx, field := range fields {
 		resolver.exprIdx = idx
 		field.Accept(&resolver)
@@ -1363,10 +1362,12 @@ func (b *planBuilder) checkOnlyFullGroupByWithOutGroupClause(p LogicalPlan, fiel
 	}
 }
 
+// colResolverForOnlyFullGroupBy visits Expr tree to find out if an Expr tree is an aggregation function.
+// If so, find out the first column name that not in an aggregation function.
 type colResolverForOnlyFullGroupBy struct {
 	firstNonAggCol     *ast.ColumnName
 	exprIdx            int
-	firstNonAggColIdex int
+	firstNonAggColIdx int
 	hasAggFunc         bool
 }
 
@@ -1377,7 +1378,7 @@ func (c *colResolverForOnlyFullGroupBy) Enter(node ast.Node) (ast.Node, bool) {
 		return node, true
 	case *ast.ColumnNameExpr:
 		if c.firstNonAggCol == nil {
-			c.firstNonAggCol, c.firstNonAggColIdex = node.(*ast.ColumnNameExpr).Name, c.exprIdx
+			c.firstNonAggCol, c.firstNonAggColIdx = node.(*ast.ColumnNameExpr).Name, c.exprIdx
 		}
 		return node, true
 	}
@@ -1390,7 +1391,7 @@ func (c *colResolverForOnlyFullGroupBy) Leave(node ast.Node) (ast.Node, bool) {
 
 func (c *colResolverForOnlyFullGroupBy) Check() error {
 	if c.hasAggFunc && c.firstNonAggCol != nil {
-		return ErrMixOfGroupFuncAndFields.GenByArgs(c.firstNonAggColIdex+1, c.firstNonAggCol.Name.O)
+		return ErrMixOfGroupFuncAndFields.GenByArgs(c.firstNonAggColIdx+1, c.firstNonAggCol.Name.O)
 	}
 	return nil
 }
