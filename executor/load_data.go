@@ -250,7 +250,7 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 			break
 		}
 	}
-	rows, err := e.batchMarkDupRows(rows)
+	rows, err := e.batchMarkDupRows(e.ctx, e.Table, rows)
 	if err != nil {
 		return nil, reachLimit, errors.Trace(err)
 	}
