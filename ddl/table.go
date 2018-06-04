@@ -380,34 +380,6 @@ func checkTableNotExists(t *meta.Meta, job *model.Job, schemaID int64, tableName
 	return nil
 }
 
-func checkOriginalTableNotExists(t *meta.Meta, job *model.Job, schemaID int64, tableName string) error {
-	// Check this table's database.
-	tables, err := t.ListTables(schemaID)
-	if err != nil {
-		if meta.ErrDBNotExists.Equal(err) {
-			job.State = model.JobStateCancelled
-			return infoschema.ErrDatabaseNotExists.GenByArgs("")
-		}
-		return errors.Trace(err)
-	}
-	dbInfo, err := t.GetDatabase(job.SchemaID)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// Check if the table name is the original table name.
-	for _, tbl := range tables {
-		if tbl.Name.L == tableName {
-			if len(job.TableName) != 0 && len(tableName) != 0 {
-				if job.TableName != tableName {
-					job.State = model.JobStateCancelled
-					return infoschema.ErrTableNotExists.GenByArgs(dbInfo.Name.O, job.TableName)
-				}
-			}
-		}
-	}
-	return nil
-}
-
 // updateVersionAndTableInfo updates the schema version and the table information.
 func updateVersionAndTableInfo(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, shouldUpdateVer bool) (
 	ver int64, err error) {

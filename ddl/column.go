@@ -175,9 +175,6 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	case model.StateWriteReorganization:
 		// reorganization -> public
 		// Adjust table column offset.
-		if err = checkOriginalTableNotExists(t, job, job.SchemaID, tblInfo.Name.O); err != nil {
-			return ver, errors.Trace(err)
-		}
 		d.adjustColumnInfoInAddColumn(tblInfo, offset)
 		columnInfo.State = model.StatePublic
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != columnInfo.State)
