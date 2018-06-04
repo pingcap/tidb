@@ -17,7 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sync"
+	"net/http/pprof"
 
 	"github.com/gorilla/mux"
 	"github.com/juju/errors"
@@ -27,8 +27,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	log "github.com/sirupsen/logrus"
 )
-
-var once sync.Once
 
 const defaultStatusAddr = ":10080"
 
@@ -68,16 +66,20 @@ func (s *Server) startHTTPServer() {
 		router.Handle("/mvcc/hex/{hexKey}", mvccTxnHandler{tikvHandlerTool, opMvccGetByHex})
 		router.Handle("/mvcc/index/{db}/{table}/{index}/{handle}", mvccTxnHandler{tikvHandlerTool, opMvccGetByIdx})
 	}
+	// HTTP for pprof
+	router.HandleFunc("/debug/pprof", pprof.Index)
+	router.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	router.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	router.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	router.HandleFunc("/debug/pprof/trace", pprof.Trace)
+
 	addr := fmt.Sprintf(":%d", s.cfg.Status.StatusPort)
 	if s.cfg.Status.StatusPort == 0 {
 		addr = defaultStatusAddr
 	}
 	log.Infof("Listening on %v for status and metrics report.", addr)
+	s.statusServer = &http.Server{Addr: addr, Handler: router}
 
-	http.DefaultServeMux = http.NewServeMux()
-	http.Handle("/", router)
-
-	s.statusServer = &http.Server{Addr: addr, Handler: http.DefaultServeMux}
 	var err error
 	if len(s.cfg.Security.ClusterSSLCA) != 0 {
 		err = s.statusServer.ListenAndServeTLS(s.cfg.Security.ClusterSSLCert, s.cfg.Security.ClusterSSLKey)
