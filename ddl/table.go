@@ -388,6 +388,8 @@ func checkTableNotExists(t *meta.Meta, job *model.Job, schemaID int64, tableName
 	return nil
 }
 
+// Check if the table name is the original table name.
+// Mainly used in tableid has not changed, tablename has changed.
 func checkOriginalTableNotExists(t *meta.Meta, job *model.Job, schemaID int64, tableName string) error {
 	// Check this table's database.
 	tables, err := t.ListTables(schemaID)
