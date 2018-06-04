@@ -198,15 +198,7 @@ func (b *Backoffer) WithVars(vars *kv.Variables) *Backoffer {
 	return b
 }
 
-// Backoff sleeps a while base on the backoffType and records the error message.
-// It returns a retryable error if total sleep time exceeds maxSleep.
-func (b *Backoffer) Backoff(typ backoffType, err error) error {
-	select {
-	case <-b.ctx.Done():
-		return errors.Trace(err)
-	default:
-	}
-
+func (b *Backoffer) backoff(typ backoffType, err error) error {
 	metrics.TiKVBackoffCounter.WithLabelValues(typ.String()).Inc()
 	// Lazy initialize.
 	if b.fn == nil {
@@ -222,7 +214,8 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 	b.types = append(b.types, typ)
 
 	log.Debugf("%v, retry later(totalSleep %dms, maxSleep %dms)", err, b.totalSleep, b.maxSleep)
-	b.errors = append(b.errors, err)
+
+	b.errors = append(b.errors, errors.Errorf("%s at %s", err.Error(), time.Now().Format(time.RFC3339Nano)))
 	if b.maxSleep > 0 && b.totalSleep >= b.maxSleep {
 		errMsg := fmt.Sprintf("backoffer.maxSleep %dms is exceeded, errors:", b.maxSleep)
 		for i, err := range b.errors {
@@ -236,6 +229,18 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 		return typ.TError()
 	}
 	return nil
+}
+
+// Backoff sleeps a while base on the backoffType and records the error message.
+// It returns a retryable error if total sleep time exceeds maxSleep.
+func (b *Backoffer) Backoff(typ backoffType, err error) error {
+	select {
+	case <-b.ctx.Done():
+		return errors.Trace(err)
+	default:
+		return b.backoff(typ, err)
+	}
+
 }
 
 func (b *Backoffer) String() string {
