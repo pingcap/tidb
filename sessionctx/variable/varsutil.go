@@ -176,7 +176,7 @@ func setSnapshotTS(s *SessionVars, sVal string) error {
 		return nil
 	}
 	t, err := types.ParseTime(s.StmtCtx, sVal, mysql.TypeTimestamp, types.MaxFsp)
-	if tso, err2 := strconv.ParseUint(sVal, 10, 64); err2 == nil {
+	if tso, err2 := strconv.ParseUint(sVal, 10, 64); err2 == nil && err != nil {
 		t = types.Time{types.FromGoTime(types.DecodeTso(tso)), mysql.TypeTimestamp, types.MaxFsp}
 	} else {
 		err = err2
