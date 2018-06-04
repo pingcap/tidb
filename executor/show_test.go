@@ -344,6 +344,16 @@ func (s *testSuite) TestShow(c *C) {
 			"  `d` int(11) DEFAULT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"+"\nPARTITION BY RANGE COLUMNS(a,d,c) (\n  PARTITION p0 VALUES LESS THAN (5,10,\"ggg\"),\n  PARTITION p1 VALUES LESS THAN (10,20,\"mmm\"),\n  PARTITION p2 VALUES LESS THAN (15,30,\"sss\"),\n  PARTITION p3 VALUES LESS THAN (50,MAXVALUE,MAXVALUE)\n)",
 	))
+
+	// Test show create table year type
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(y year, x int, primary key(y));`)
+	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
+		"t CREATE TABLE `t` (\n"+
+			"  `y` year NOT NULL,\n"+
+			"  `x` int(11) DEFAULT NULL,\n"+
+			"  PRIMARY KEY (`y`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"))
 }
 
 func (s *testSuite) TestShowVisibility(c *C) {
