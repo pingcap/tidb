@@ -1468,6 +1468,7 @@ func logStmt(node ast.StmtNode, vars *variable.SessionVars) {
 
 func logQuery(query string, vars *variable.SessionVars) {
 	if atomic.LoadUint32(&variable.ProcessGeneralLog) != 0 && !vars.InRestrictedSQL {
-		log.Infof("[con:%d][schema ver:%d][txn:%d] %s", vars.ConnectionID, vars.TxnCtx.SchemaVersion, vars.TxnCtx.StartTS, query)
+		query = executor.QueryReplacer.Replace(query)
+		log.Infof("[con:%d][user:%s][schema_ver:%d][txn:%d] %s", vars.ConnectionID, vars.User, vars.TxnCtx.SchemaVersion, vars.TxnCtx.StartTS, query)
 	}
 }
