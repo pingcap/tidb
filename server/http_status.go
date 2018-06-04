@@ -74,10 +74,10 @@ func (s *Server) startHTTPServer() {
 	}
 	log.Infof("Listening on %v for status and metrics report.", addr)
 
-	serverMux := http.NewServeMux()
-	serverMux.Handle("/", router)
+	http.DefaultServeMux = http.NewServeMux()
+	http.Handle("/", router)
 
-	s.statusServer = &http.Server{Addr: addr, Handler: serverMux}
+	s.statusServer = &http.Server{Addr: addr, Handler: http.DefaultServeMux}
 	var err error
 	if len(s.cfg.Security.ClusterSSLCA) != 0 {
 		err = s.statusServer.ListenAndServeTLS(s.cfg.Security.ClusterSSLCert, s.cfg.Security.ClusterSSLKey)
