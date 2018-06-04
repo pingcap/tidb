@@ -404,12 +404,7 @@ func (t *Table) getRollbackableMemStore(ctx sessionctx.Context) kv.RetrieverMuta
 }
 
 // locatePartition returns the partition ID of the input record.
-func (t *Table) locatePartition(ctx sessionctx.Context, r []types.Datum) (int64, error) {
-	partitionInfo := t.meta.GetPartitionInfo()
-	if partitionInfo == nil {
-		return t.ID, nil
-	}
-
+func (t *Table) locatePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int64, error) {
 	// TODO: Remove this later, when we have better way to TestPartitionAddRecord.
 	if t.partitionExpr == nil {
 		partitionExpr, err := generatePartitionExpr(t.meta)
@@ -435,7 +430,7 @@ func (t *Table) locatePartition(ctx sessionctx.Context, r []types.Datum) (int64,
 		// The data does not belong to any of the partition?
 		return 0, errors.Trace(table.ErrTrgInvalidCreationCtx)
 	}
-	return partitionInfo.Definitions[idx].ID, nil
+	return pi.Definitions[idx].ID, nil
 }
 
 // AddRecord implements table.Table AddRecord interface.
@@ -462,9 +457,13 @@ func (t *Table) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleChe
 		}
 	}
 
-	pid, err := t.locatePartition(ctx, r)
-	if err != nil {
-		return 0, errors.Trace(err)
+	pid := t.ID
+	if partitionInfo := t.meta.GetPartitionInfo(); partitionInfo != nil {
+		var err error
+		pid, err = t.locatePartition(ctx, partitionInfo, r)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
 	}
 
 	txn := ctx.Txn()
@@ -506,7 +505,12 @@ func (t *Table) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleChe
 	}
 	writeBufs := sessVars.GetWriteStmtBufs()
 	adjustRowValuesBuf(writeBufs, len(row))
-	key := partitionRecordKey(pid, recordID)
+	var key kv.Key
+	if pid == t.ID {
+		key = t.RecordKey(recordID)
+	} else {
+		key = partitionRecordKey(pid, recordID)
+	}
 	writeBufs.RowValBuf, err = tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues)
 	if err != nil {
 		return 0, errors.Trace(err)
