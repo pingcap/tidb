@@ -84,7 +84,8 @@ func prunePartition(sel *LogicalSelection, ds *DataSource) (LogicalPlan, error) 
 	var partitionExpr []expression.Expression
 	if itf, ok := ds.table.(partitionTable); ok {
 		partitionExpr = itf.PartitionExpr()
-	} else {
+	}
+	if len(partitionExpr) == 0 {
 		return nil, errors.New("partition expression missing")
 	}
 
@@ -96,9 +97,10 @@ func prunePartition(sel *LogicalSelection, ds *DataSource) (LogicalPlan, error) 
 		selConds = sel.Conditions
 	}
 
+	col := partitionExprAccessColumn(partitionExpr[0])
 	for i, expr := range partitionExpr {
 		// If the selection condition would never satisify, prune that partition.
-		prune, err := canBePrune(ds.context(), expr, selConds, ds.pushedDownConds)
+		prune, err := canBePrune(ds.context(), col, expr, selConds, ds.pushedDownConds)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -113,6 +115,10 @@ func prunePartition(sel *LogicalSelection, ds *DataSource) (LogicalPlan, error) 
 		newDataSource.partitionID = pi.Definitions[i].ID
 		children = append(children, &newDataSource)
 	}
+	if len(children) == 1 {
+		// No need for the union all.
+		return selectOnSomething(sel, children[0])
+	}
 	unionAll := LogicalUnionAll{}.init(ds.context())
 	unionAll.SetChildren(children...)
 	return selectOnSomething(sel, unionAll)
@@ -120,17 +126,10 @@ func prunePartition(sel *LogicalSelection, ds *DataSource) (LogicalPlan, error) 
 
 // canBePrune checks if partition expression will never meets the selection condition.
 // For example, partition by column a > 3, and select condition is a < 3, then canBePrune returns true.
-func canBePrune(ctx sessionctx.Context, expr expression.Expression, rootConds, copConds []expression.Expression) (bool, error) {
-	lt, ok := expr.(*expression.ScalarFunction)
-	if !ok || lt.FuncName.L != ast.LT {
+func canBePrune(ctx sessionctx.Context, col *expression.Column, expr expression.Expression, rootConds, copConds []expression.Expression) (bool, error) {
+	if col == nil {
 		return false, nil
 	}
-	tmp := lt.GetArgs()[0]
-	col, ok := tmp.(*expression.Column)
-	if !ok {
-		return false, nil
-	}
-
 	conds := make([]expression.Expression, 0, 1+len(rootConds)+len(copConds))
 	conds = append(conds, expr)
 	conds = append(conds, rootConds...)
@@ -144,4 +143,17 @@ func canBePrune(ctx sessionctx.Context, expr expression.Expression, rootConds, c
 		return false, errors.Trace(err)
 	}
 	return len(r) == 0, nil
+}
+
+func partitionExprAccessColumn(expr expression.Expression) *expression.Column {
+	lt, ok := expr.(*expression.ScalarFunction)
+	if !ok || lt.FuncName.L != ast.LT {
+		return nil
+	}
+	tmp := lt.GetArgs()[0]
+	col, ok := tmp.(*expression.Column)
+	if !ok {
+		return nil
+	}
+	return col
 }

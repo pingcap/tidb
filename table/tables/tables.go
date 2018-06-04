@@ -72,6 +72,11 @@ func MockTableFromMeta(tableInfo *model.TableInfo) table.Table {
 	}
 	t := newTable(tableInfo.ID, columns, nil)
 	t.meta = tableInfo
+	partitionExpr, err := generatePartitionExpr(tableInfo)
+	if err != nil {
+		return nil
+	}
+	t.partitionExpr = partitionExpr
 	return t
 }
 
@@ -146,10 +151,21 @@ func generatePartitionExpr(tblInfo *model.TableInfo) ([]expression.Expression, e
 	ctx := mock.NewContext()
 	partitionExprs := make([]expression.Expression, 0, len(pi.Definitions))
 	var buf bytes.Buffer
-	for _, def := range pi.Definitions {
-		fmt.Fprintf(&buf, "(%s) < (%s)", pi.Expr, def.LessThan[0])
+	for i := 0; i < len(pi.Definitions); i++ {
+		if strings.EqualFold(pi.Definitions[i].LessThan[0], "MAXVALUE") {
+			// Expr less than maxvalue is always true.
+			fmt.Fprintf(&buf, "true")
+		} else {
+			fmt.Fprintf(&buf, "((%s) < (%s))", pi.Expr, pi.Definitions[i].LessThan[0])
+		}
+		if i > 0 {
+			fmt.Fprintf(&buf, " and ((%s) >= (%s))", pi.Expr, pi.Definitions[i-1].LessThan[0])
+		}
+
 		expr, err := expression.ParseSimpleExpr(ctx, buf.String(), tblInfo)
 		if err != nil {
+			// If it got an error here, ddl may hang forever, so this error log is important.
+			log.Error("wrong table partition expression:", errors.ErrorStack(err), buf.String())
 			return nil, errors.Trace(err)
 		}
 		partitionExprs = append(partitionExprs, expr)

@@ -63,7 +63,7 @@ func newStringType() types.FieldType {
 }
 
 func MockTable() *model.TableInfo {
-	// column: a, b, c, d, e, c_str, d_str, e_str, f, g
+	// column: a, b, c, d, e, c_str, d_str, e_str, f, g, h
 	// PK: a
 	// indeices: c_d_e, e, f, g, f_g, c_d_e_str, c_d_e_str_prefix
 	indices := []*model.IndexInfo{
@@ -107,7 +107,6 @@ func MockTable() *model.TableInfo {
 				{
 					Name:   model.NewCIStr("f"),
 					Length: types.UnspecifiedLength,
-					Offset: 8,
 				},
 			},
 			State:  model.StatePublic,
@@ -254,19 +253,60 @@ func MockTable() *model.TableInfo {
 		FieldType: newLongType(),
 		ID:        10,
 	}
+	col6 := &model.ColumnInfo{
+		State:     model.StatePublic,
+		Offset:    10,
+		Name:      model.NewCIStr("h"),
+		FieldType: newLongType(),
+		ID:        11,
+	}
+	partition := &model.PartitionInfo{
+		Type:   model.PartitionTypeRange,
+		Expr:   "h",
+		Enable: true,
+		Definitions: []model.PartitionDefinition{
+			{
+				ID:       41,
+				Name:     "p1",
+				LessThan: []string{"16"},
+			},
+			{
+				ID:       42,
+				Name:     "p2",
+				LessThan: []string{"32"},
+			},
+			{
+				ID:       43,
+				Name:     "p3",
+				LessThan: []string{"64"},
+			},
+			{
+				ID:       44,
+				Name:     "p4",
+				LessThan: []string{"128"},
+			},
+			{
+				ID:       45,
+				Name:     "p5",
+				LessThan: []string{"maxvalue"},
+			},
+		},
+	}
 
 	pkColumn.Flag = mysql.PriKeyFlag | mysql.NotNullFlag
-	// Column 'b', 'c', 'd', 'f', 'g' is not null.
+	// Column 'b', 'c', 'd', 'f', 'g' 'h' is not null.
 	col0.Flag = mysql.NotNullFlag
 	col1.Flag = mysql.NotNullFlag
 	col2.Flag = mysql.NotNullFlag
 	col4.Flag = mysql.NotNullFlag
 	col5.Flag = mysql.NotNullFlag
+	col6.Flag = mysql.NotNullFlag
 	table := &model.TableInfo{
-		Columns:    []*model.ColumnInfo{pkColumn, col0, col1, col2, col3, colStr1, colStr2, colStr3, col4, col5},
+		Columns:    []*model.ColumnInfo{pkColumn, col0, col1, col2, col3, colStr1, colStr2, colStr3, col4, col5, col6},
 		Indices:    indices,
 		Name:       model.NewCIStr("t"),
 		PKIsHandle: true,
+		Partition:  partition,
 	}
 	return table
 }
@@ -435,6 +475,46 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
 		p, err = logicalOptimize(flagPredicatePushDown|flagDecorrelate|flagPrunColumns, p.(LogicalPlan))
+		c.Assert(err, IsNil)
+		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
+	}
+}
+
+func (s *testPlanSuite) TestTablePartition(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		sql   string
+		first string
+		best  string
+	}{
+		{
+			sql:  "select * from t",
+			best: "UnionAll{DataScan(t)->DataScan(t)->DataScan(t)->DataScan(t)->DataScan(t)}->Projection",
+		},
+		{
+			sql:  "select * from t where t.h < 31",
+			best: "UnionAll{DataScan(t)->DataScan(t)}->Projection",
+		},
+		{
+			sql:  "select * from t where t.h < 61",
+			best: "UnionAll{DataScan(t)->DataScan(t)->DataScan(t)}->Projection",
+		},
+		{
+			sql:  "select * from t where t.h < 8",
+			best: "DataScan(t)->Projection",
+		},
+		{
+			sql:  "select * from t where t.h > 128",
+			best: "DataScan(t)->Projection",
+		},
+	}
+	for _, ca := range tests {
+		comment := Commentf("for %s", ca.sql)
+		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
+		c.Assert(err, IsNil)
+		p, err = logicalOptimize(flagDecorrelate|flagPrunColumns|flagPredicatePushDown|flagTablePartition, p.(LogicalPlan))
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
 	}
