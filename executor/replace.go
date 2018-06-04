@@ -44,7 +44,7 @@ func (e *ReplaceExec) Open(ctx context.Context) error {
 	return nil
 }
 
-func (e *ReplaceExec) exec(ctx context.Context, rows [][]types.Datum) (types.DatumRow, error) {
+func (e *ReplaceExec) exec(rows []types.DatumRow) error {
 	/*
 	 * MySQL uses the following algorithm for REPLACE (and LOAD DATA ... REPLACE):
 	 *  1. Try to insert the new row into the table
@@ -72,15 +72,15 @@ func (e *ReplaceExec) exec(ctx context.Context, rows [][]types.Datum) (types.Dat
 			continue
 		}
 		if err1 != nil && !kv.ErrKeyExists.Equal(err1) {
-			return nil, errors.Trace(err1)
+			return errors.Trace(err1)
 		}
 		oldRow, err1 := e.Table.Row(e.ctx, h)
 		if err1 != nil {
-			return nil, errors.Trace(err1)
+			return errors.Trace(err1)
 		}
 		rowUnchanged, err1 := types.EqualDatums(sc, oldRow, row)
 		if err1 != nil {
-			return nil, errors.Trace(err1)
+			return errors.Trace(err1)
 		}
 		if rowUnchanged {
 			// If row unchanged, we do not need to do insert.
@@ -91,7 +91,7 @@ func (e *ReplaceExec) exec(ctx context.Context, rows [][]types.Datum) (types.Dat
 		// Remove current row and try replace again.
 		err1 = e.Table.RemoveRecord(e.ctx, h, oldRow)
 		if err1 != nil {
-			return nil, errors.Trace(err1)
+			return errors.Trace(err1)
 		}
 		e.ctx.StmtAddDirtyTableOP(DirtyTableDeleteRow, e.Table.Meta().ID, h, nil)
 		e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
@@ -101,7 +101,7 @@ func (e *ReplaceExec) exec(ctx context.Context, rows [][]types.Datum) (types.Dat
 		e.ctx.GetSessionVars().SetLastInsertID(e.lastInsertID)
 	}
 	e.finished = true
-	return nil, nil
+	return nil
 }
 
 // Next implements the Executor Next interface.
@@ -115,7 +115,7 @@ func (e *ReplaceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return errors.Trace(err)
 	}
 
-	var rows [][]types.Datum
+	var rows []types.DatumRow
 	if len(e.children) > 0 && e.children[0] != nil {
 		rows, err = e.getRowsSelectChunk(ctx, cols)
 	} else {
@@ -125,6 +125,5 @@ func (e *ReplaceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return errors.Trace(err)
 	}
 
-	_, err = e.exec(ctx, rows)
-	return errors.Trace(err)
+	return errors.Trace(e.exec(rows))
 }

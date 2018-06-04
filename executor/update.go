@@ -41,7 +41,7 @@ type UpdateExec struct {
 	cursor      int
 }
 
-func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema) (types.DatumRow, error) {
+func (e *UpdateExec) exec(schema *expression.Schema) (types.DatumRow, error) {
 	assignFlag, err := e.getUpdateColumns(schema.Len())
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -103,7 +103,7 @@ func (e *UpdateExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		e.fetched = true
 
 		for {
-			row, err := e.exec(ctx, e.children[0].Schema())
+			row, err := e.exec(e.children[0].Schema())
 			if err != nil {
 				return errors.Trace(err)
 			}
