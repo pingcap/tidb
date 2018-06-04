@@ -317,7 +317,7 @@ type Insert struct {
 	tableSchema *expression.Schema
 	Columns     []*ast.ColumnName
 	Lists       [][]expression.Expression
-	Setlist     []*expression.Assignment
+	SetList     []*expression.Assignment
 	OnDuplicate []*expression.Assignment
 
 	IsReplace bool

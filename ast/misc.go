@@ -90,6 +90,29 @@ type AuthOption struct {
 	// TODO: support auth_plugin
 }
 
+// TraceStmt is a statement to trace what sql actually does at background.
+type TraceStmt struct {
+	stmtNode
+
+	Stmt   StmtNode
+	Format string
+}
+
+// Accept implements Node Accept interface.
+func (n *TraceStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*TraceStmt)
+	node, ok := n.Stmt.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.Stmt = node.(DMLNode)
+	return v.Leave(n)
+}
+
 // ExplainStmt is a statement to provide information about how is SQL statement executed
 // or get columns information in a table.
 // See https://dev.mysql.com/doc/refman/5.7/en/explain.html
