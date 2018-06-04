@@ -476,6 +476,8 @@ type SelectStmt struct {
 	LockTp SelectLockType
 	// TableHints represents the table level Optimizer Hint for join type
 	TableHints []*TableOptimizerHint
+	// UnionDistinct is mark flag that previous union is distinct
+	UnionDistinct bool
 }
 
 // Accept implements Node Accept interface.
@@ -561,7 +563,8 @@ func (n *SelectStmt) Accept(v Visitor) (Node, bool) {
 type UnionSelectList struct {
 	node
 
-	Selects []*SelectStmt
+	Selects  []*SelectStmt
+	Distinct bool
 }
 
 // Accept implements Node Accept interface.

@@ -1428,6 +1428,49 @@ func checkVisitInfo(c *C, v1, v2 []visitInfo, comment CommentInterface) {
 	}
 }
 
+func (s *testPlanSuite) TestUnion(c *C) {
+	defer func() {
+		testleak.AfterTest(c)()
+	}()
+	tests := []struct {
+		sql  string
+		best string
+	}{
+		{
+			sql:  "select a from t union select a from t",
+			best: "UnionAll{DataScan(t)->Projection->DataScan(t)->Projection}->Aggr(firstrow(t.a))",
+		},
+		{
+			sql:  "select a from t union all select a from t",
+			best: "UnionAll{DataScan(t)->Projection->DataScan(t)->Projection}",
+		},
+		{
+			sql:  "select a from t union select a from t union all select a from t",
+			best: "UnionAll{DataScan(t)->Projection->UnionAll{DataScan(t)->Projection->DataScan(t)->Projection}->Aggr(firstrow(t.a))->Projection}",
+		},
+		{
+			sql:  "select a from t union select a from t union all select a from t union select a from t union select a from t",
+			best: "UnionAll{DataScan(t)->Projection->DataScan(t)->Projection->DataScan(t)->Projection->DataScan(t)->Projection->DataScan(t)->Projection}->Aggr(firstrow(t.a))",
+		},
+	}
+	for i, tt := range tests {
+		comment := Commentf("case:%v sql:%s", i, tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		Preprocess(s.ctx, stmt, s.is, false)
+		builder := &planBuilder{
+			ctx:       mockContext(),
+			is:        s.is,
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+		}
+		c.Assert(builder.err, IsNil)
+		p := builder.build(stmt).(LogicalPlan)
+		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan))
+		c.Assert(err, IsNil)
+		c.Assert(ToString(p), Equals, tt.best, comment)
+	}
+}
+
 func (s *testPlanSuite) TestTopNPushDown(c *C) {
 	defer func() {
 		testleak.AfterTest(c)()

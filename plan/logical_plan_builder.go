@@ -668,10 +668,41 @@ func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
 }
 
 func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
+
+	distinctPivot := findDistinctPivot(union)
+
+	unionDistinct := b.buildUnionDistinct(union, distinctPivot)
+
+	unionAll := b.buildUnionAll(unionDistinct, union, distinctPivot)
+
+	var p LogicalPlan
+	if unionAll != nil {
+		p = *unionAll
+	} else if unionDistinct != nil {
+		p = *unionDistinct
+	} else {
+		return nil
+	}
+
+	if union.OrderBy != nil {
+		p = b.buildSort(p, union.OrderBy.Items, nil)
+	}
+
+	if union.Limit != nil {
+		p = b.buildLimit(p, union.Limit)
+	}
+
+	return p
+}
+
+func (b *planBuilder) buildUnionDistinct(unionStmt *ast.UnionStmt, distinctPivot int) *LogicalPlan {
+	if distinctPivot == 0 {
+		return nil
+	}
 	u := LogicalUnionAll{}.init(b.ctx)
-	u.children = make([]LogicalPlan, len(union.SelectList.Selects))
-	for i, sel := range union.SelectList.Selects {
-		u.children[i] = b.buildSelect(sel)
+	u.children = make([]LogicalPlan, distinctPivot)
+	for i := 0; i < distinctPivot; i++ {
+		u.children[i] = b.buildSelect(unionStmt.SelectList.Selects[i])
 		if b.err != nil {
 			return nil
 		}
@@ -680,19 +711,57 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 			return nil
 		}
 	}
-
 	b.buildProjection4Union(u)
 	var p LogicalPlan = u
+	p = b.buildDistinct(u, u.Schema().Len())
+	return &p
+}
+
+func (b *planBuilder) buildUnionAll(unionDistinct *LogicalPlan, unionStmt *ast.UnionStmt, distinctPivot int) *LogicalPlan {
+	if distinctPivot == len(unionStmt.SelectList.Selects) {
+		return nil
+	}
+	u := LogicalUnionAll{}.init(b.ctx)
+	unionAllCount := len(unionStmt.SelectList.Selects) - distinctPivot
+	if unionDistinct != nil {
+		unionAllCount = unionAllCount + 1
+	}
+	u.children = make([]LogicalPlan, unionAllCount)
+	i := 0
+	j := distinctPivot
+	for j < len(unionStmt.SelectList.Selects) {
+		u.children[i] = b.buildSelect(unionStmt.SelectList.Selects[j])
+		if b.err != nil {
+			return nil
+		}
+		if u.children[i].Schema().Len() != u.children[0].Schema().Len() {
+			b.err = errors.New("The used SELECT statements have a different number of columns")
+			return nil
+		}
+		i++
+		j++
+	}
+	if unionDistinct != nil {
+		u.children[i] = *unionDistinct
+	}
+	b.buildProjection4Union(u)
+	var p LogicalPlan = u
+	return &p
+}
+
+func findDistinctPivot(union *ast.UnionStmt) int {
+	distinctPivot := len(union.SelectList.Selects)
 	if union.Distinct {
-		p = b.buildDistinct(u, u.Schema().Len())
+		for distinctPivot > 0 { // 0 must be false
+			if union.SelectList.Selects[distinctPivot-1].UnionDistinct {
+				break
+			}
+			distinctPivot--
+		}
+	} else {
+		distinctPivot = 0
 	}
-	if union.OrderBy != nil {
-		p = b.buildSort(p, union.OrderBy.Items, nil)
-	}
-	if union.Limit != nil {
-		p = b.buildLimit(p, union.Limit)
-	}
-	return p
+	return distinctPivot
 }
 
 // ByItems wraps a "by" item.
