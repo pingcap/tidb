@@ -45,6 +45,10 @@ const (
 	TimeFormat = "2006-01-02 15:04:05"
 	// TimeFSPFormat is time format with fractional seconds precision.
 	TimeFSPFormat = "2006-01-02 15:04:05.000000"
+
+	// used for encodinh/decoding tso
+	physicalShiftBits = 18
+	logicalBits       = 0x3FFFF
 )
 
 const (
@@ -2505,4 +2509,16 @@ func DateFSP(date string) (fsp int) {
 		fsp = len(date) - i - 1
 	}
 	return
+}
+
+func EncodeTso(ts int64) uint64 {
+	var tso uint64
+	tso = uint64(ts) * 1000
+	return tso << physicalShiftBits
+}
+
+func DecodeTso(tso uint64) gotime.Time {
+	physical := tso >> physicalShiftBits
+	physicalTime := gotime.Unix(int64(physical/1000), 0)
+	return physicalTime
 }
