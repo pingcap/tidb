@@ -1,16 +1,13 @@
 # TiDB Change Log
-All notable changes to this project will be documented in this file.
-See also [Release Notes](https://github.com/pingcap/docs/blob/master/releases/rn.md)
 
-[tikv_change_log]: https://github.com/pingcap/tikv/CHANGELOG.md
-[pd_change_log]: https://github.com/pingcap/pd/CHANGELOG.md
+All notable changes to this project will be documented in this file. See also [Release Notes](https://github.com/pingcap/docs/blob/master/releases/rn.md), [TiKV changelog](https://github.com/pingcap/tikv/blob/master/CHANGELOG.md) and [PD changelog](https://github.com/pingcap/pd/blob/master/CHANGELOG.md).
 
 ## [2.0.3] - 2018-06-01
 ### New Features
   - Support modifying the log level online
   - Support the `COM_CHANGE_USER` command
   - Support using the `TIME` type parameters under the binary protocol
-### Improves
+### Improvements
   - Optimize the cost estimation of query conditions with the `BETWEEN` expression
   - Do not display the `FOREIGN KEY` information in the result of `SHOW CREATE TABLE`
   - Optimize the cost estimation for queries with the `LIMIT` clause
@@ -28,17 +25,17 @@ See also [Release Notes](https://github.com/pingcap/docs/blob/master/releases/rn
 
 ## [2.0.2] - 2018-05-21
 ### New Features
-  - Support using the USE INDEX syntax in the Delete statement
+  - Support using the USE INDEX syntax in the `Delete` statement
   - Add the timeout mechanism for writing Binlog
 ### Bug Fixes
   - Fix the issue of pushing down the Decimal division expression
-  - Forbid using the shard_row_id_bits feature in columns with Auto-Increment
+  - Forbid using the `shard_row_id_bits` feature in columns with Auto-Increment
 
 ## [2.0.1] - 2018-05-16
 ### New Features
   - Add the `tidb_auto_analyze_ratio` session variable to control the threshold value of automatic statistics update
   - Add an option for TiDB to control the behaviour of Binlog failure
-### Improves
+### Improvements
   - Update the progress of `Add Index` to the DDL job information in real time
   - Refactor the `Coprocessor` slow log，distinguish the scenario of tasks with long processing time and long waiting time
   - Log nothing when meeting MySQL protocol handshake error. Avoid too many logs caused by load balancer keep alive mechanism
@@ -106,14 +103,14 @@ See also [Release Notes](https://github.com/pingcap/docs/blob/master/releases/rn
 ## [2.0.0-rc.5] - 2018-04-17
 ### New Features
 * Support showing memory usage of the executing statements in the Show Process List statement
-* Support setting the table comment using the Alter statement
-### Improves
-* Clean up the written data while rolling back the Add Index operation, to reduce consumed space
+* Support setting the table comment using the `Alter` statement
+### Improvements
+* Clean up the written data while rolling back the `Add Index` operation, to reduce consumed space
 * Optimize the insert on duplicate key update statement to improve the performance by 10 times
 ### Bug Fixes
 * Fix the issue about applying the Top-N pushdown rule
-* Fix the issue that Alter Table Modify Column reports an error in extreme conditions
-* Fix the issue about the type of the results returned by the UNIX_TIMESTAMP function
+* Fix the issue that `Alter Table Modify Column` reports an error in extreme conditions
+* Fix the issue about the type of the results returned by the `UNIX_TIMESTAMP` function
 * Fix the issue that the NULL value is inserted while adding NOT NULL columns
 * Fix the estimation of the number of rows for the columns that contain NULL values
 * Fix the zero value of the Binary type
@@ -121,10 +118,10 @@ See also [Release Notes](https://github.com/pingcap/docs/blob/master/releases/rn
 
 ## [2.0.0-rc.4] - 2018-04-01
 ### New Features
-* Support SHOW GRANTS FOR CURRENT_USER();
-* Support the SET TRANSACTION syntax
+* Support `SHOW GRANTS FOR CURRENT_USER();`
+* Support the `SET TRANSACTION` syntax
 * Support displaying floating point numbers using scientific notation
-### Improves
+### Improvements
 * Improve the execution performance of DecodeBytes
 * Optimize LIMIT 0 to TableDual, to avoid building useless execution plans
 ### Bug Fixes
@@ -132,29 +129,29 @@ See also [Release Notes](https://github.com/pingcap/docs/blob/master/releases/rn
 * Fix the potential goroutine leak issue in copIterator
 * Fix the issue that admin check table misjudges the unique index including null
 * Fix the type inference issue during binary literal computing
-* Fix the issue in parsing the CREATE VIEW statement
+* Fix the issue in parsing the `CREATE VIEW` statement
 * Fix the panic issue when one statement contains both ORDER BY and LIMIT 0
 
 ## [2.0.0-rc.3] - 2018-03-23
 ### New Features
-* Support closing the Join Reorder optimization in the optimizer using STRAIGHT_JOIN
-* Output more detailed status information of DDL jobs in ADMIN SHOW DDL JOBS
+* Support closing the `Join Reorder` optimization in the optimizer using `STRAIGHT_JOIN`
+* Output more detailed status information of DDL jobs in `ADMIN SHOW DDL JOBS`
 * Support querying the original statements of currently running DDL jobs using ADMIN SHOW DDL JOB QUERIES
-* Support recovering the index data using ADMIN RECOVER INDEX for disaster recovery
-* Attach a lower priority to the ADD INDEX operation to reduce the impact on online business
+* Support recovering the index data using `ADMIN RECOVER INDEX` for disaster recovery
+* Attach a lower priority to the `ADD INDEX` operation to reduce the impact on online business
 * Support aggregation functions with JSON type parameters, such as SUM/AVG
-* Support modifying the lower_case_table_names system variable in the configuration file, to support the OGG data synchronization tool
+* Support modifying the `lower_case_table_names` system variable in the configuration file, to support the OGG data synchronization tool
 * Support using implicit RowID in CRUD operations
-### Improves
+### Improvements
 * Improve compatibility with the Navicat management tool
 * Use the Stream Aggregation operator when the GROUP BY substatement is empty, to increase the speed
-* Optimize the execution speed of ADD INDEX to greatly increase the speed in some scenarios
+* Optimize the execution speed of `ADD INDEX` to greatly increase the speed in some scenarios
 * Optimize checks on length and precision of the floating point type, to improve compatibility with MySQL
 * Improve the parsing error log of time type and add more error information
 * Improve memory control and add statistics about IndexLookupExecutor memory
 ### Bug Fixes
-* Fix the wrong result issue of MAX/MIN in some scenarios
-* Fix the issue that the result of Sort Merge Join does not show in order of Join Key in some scenarios
+* Fix the wrong result issue of `MAX`/`MIN` in some scenarios
+* Fix the issue that the result of `Sort Merge Join` does not show in order of Join Key in some scenarios
 * Fix the error of comparison between uint and int in boundary conditions
 
 ## [2.0.0-rc.2] - 2018-03-15
@@ -166,7 +163,7 @@ Only TiKV has this release
 * Support pushing the Stream Aggregate operator down to TiKV
 * Support validating the configuration file
 * Support obtaining the information of TiDB configuration through HTTP API
-### Improves
+### Improvements
 * Improve the compatibility with Navicat
 * Improve the optimizer and extract common expressions with multiple OR conditions, to choose better query plan
 * Improve the optimizer and convert subqueries to Join operators in more scenarios, to choose better query plan
@@ -181,7 +178,7 @@ Only TiKV has this release
 * Add more monitoring metrics and refine the log
 * Add the tidb_config session variable to output the current TiDB configuration
 * Support displaying the table creating time in information_schema
-### Improves
+### Improvements
 * Compatible with more MySQL syntax
 * Optimize queries containing the MaxOneRow operator
 * Configure the size of intermediate result sets generated by Join, to further reduce the memory used by Join
@@ -196,22 +193,22 @@ Only TiKV has this release
 ## [1.0.8] - 2018-02-11
 ### New Features
 * Add limitation (Configurable, the default value is 5000) to the DML statements number within a transaction
-### Improves
+### Improvements
 * Improve the stability of the GC process by ignoring the regions with GC errors
 * Run GC concurrently to accelerate the GC process
 * Provide syntax support for the CREATE INDEX statement
 * Optimize the performance of the InsertIntoIgnore statement
 ### Bug Fixes
-* Fix issues in the Outer Join result in some scenarios
-* Fix the issue in the ShardRowID option
+* Fix issues in the `Outer Join` result in some scenarios
+* Fix the issue in the `ShardRowID` option
 * Fix an issue in the Table/Column aliases returned by the Prepare statement
 * Fix an issue in updating statistics delta
-* Fix a panic error in the Drop Column statement
-* Fix an DML issue when running the Add Column After statement
+* Fix a panic error in the `Drop Column` statement
+* Fix a DML issue when running the `Add Column After` statement
 
 ## [1.0.7] - 2018-01-22
-### Improves
-* Optimize the FIELD_LIST command
+### Improvements
+* Optimize the `FIELD_LIST` command
 * Fix data race of the information schema
 * Avoid adding read-only statements to history
 * Add the session variable to control the log query
@@ -223,22 +220,22 @@ Only TiKV has this release
 ### Bug Fixes
 * Fix the resource leak issue in statistics
 * Fix the goroutine leak issue
-* Fix an issue about IndexJoin
+* Fix an issue about `IndexJoin`
 
 ## [1.1.0-alpha] - 2018-01-19
 ### New Features
-* support the PROXY protocol
-### Improves
-* support more syntax.
-* reduce memory usage of statistics info using more compact structure.
-* speed up loading statistics info when starting tidb-server.
-* provide more accurate query cost evaluation.
-* use Count-Min Sketch to evaluate the cost of queries using unique index more accurately.
-* support more complex conditions to make full use of index.
-* refactor all executor operators using Chunk architecture, improve the execution performance of analytical statements and reduce memory usage.
-* optimize performance of the `INSERT INGORE` statement.
-* push down more types and functions to TiKV.
-* support more `SQL_MODE`.
-* optimize the `Load Data` performance to increase the speed by 10 times.
-* optimize the `Use Database` performance.
-* support statistics on the memory usage of physical operators.
+* Support the PROXY protocol
+### Improvements
+* Support more syntax
+* Reduce memory usage of statistics info using more compact structure
+* Speed up loading statistics info when starting tidb-server
+* Provide more accurate query cost evaluation
+* Use Count-Min Sketch to evaluate the cost of queries using unique index more accurately
+* Support more complex conditions to make full use of index
+* Refactor all executor operators using Chunk architecture, improve the execution performance of analytical statements and reduce memory usage
+* Optimize performance of the `INSERT INGORE` statement
+* Push down more types and functions to TiKV
+* Support more `SQL_MODE`
+* Optimize the `Load Data` performance to increase the speed by 10 times
+* Optimize the `Use Database` performance
+* Support statistics on the memory usage of physical operators
