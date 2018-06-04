@@ -289,6 +289,8 @@ func (pc PbConverter) canFuncBePushed(sf *ScalarFunction) bool {
 		ast.In,
 		ast.IsNull,
 		ast.Like,
+		ast.IsTruth,
+		ast.IsFalsity,
 
 		// arithmetical functions.
 		ast.Plus,
