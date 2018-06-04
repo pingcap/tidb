@@ -2819,3 +2819,53 @@ func (s *testSuite) TestForSelectScopeInUnion(c *C) {
 	_, err = tk1.Exec("commit")
 	c.Assert(err, IsNil)
 }
+
+func (s *testSuite) TestUnsignedDecimalOverflow(c *C) {
+	tests := []struct {
+		input  interface{}
+		hasErr bool
+		err    string
+	}{{
+		-1,
+		true,
+		"Out of range value for column",
+	}, {
+		"-1.1e-1",
+		true,
+		"Out of range value for column",
+	}, {
+		-1.1,
+		true,
+		"Out of range value for column",
+	}, {
+		-0,
+		false,
+		"",
+	},
+	}
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a decimal(10,2) unsigned)")
+	for _, t := range tests {
+		res, err := tk.Exec("insert into t values (?)", t.input)
+		if res != nil {
+			defer res.Close()
+		}
+		if t.hasErr {
+			c.Assert(err, NotNil)
+			c.Assert(strings.Contains(err.Error(), t.err), IsTrue)
+		} else {
+			c.Assert(err, IsNil)
+		}
+		if res != nil {
+			res.Close()
+		}
+	}
+
+	tk.MustExec("set sql_mode=''")
+	tk.MustExec("delete from t")
+	tk.MustExec("insert into t values (?)", -1)
+	r := tk.MustQuery("select a from t limit 1")
+	r.Check(testkit.Rows("0.00"))
+}
