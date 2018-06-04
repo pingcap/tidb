@@ -67,7 +67,7 @@ func (s *Server) startHTTPServer() {
 		router.Handle("/mvcc/index/{db}/{table}/{index}/{handle}", mvccTxnHandler{tikvHandlerTool, opMvccGetByIdx})
 	}
 	// HTTP for pprof
-	router.HandleFunc("/debug/pprof", pprof.Index)
+	router.HandleFunc("/debug/pprof/", pprof.Index)
 	router.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
 	router.HandleFunc("/debug/pprof/profile", pprof.Profile)
 	router.HandleFunc("/debug/pprof/symbol", pprof.Symbol)

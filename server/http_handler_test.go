@@ -617,7 +617,7 @@ func (ts *HTTPHandlerTestSuite) TestPprof(c *C) {
 	defer ts.stopServer(c)
 	retryTime := 100
 	for retry := 0; retry < retryTime; retry++ {
-		resp, err := http.Get("http://127.0.0.1:10090/debug/pprof")
+		resp, err := http.Get("http://127.0.0.1:10090/debug/pprof/")
 		if err == nil {
 			ioutil.ReadAll(resp.Body)
 			resp.Body.Close()
