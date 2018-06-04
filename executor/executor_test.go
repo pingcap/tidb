@@ -1809,9 +1809,9 @@ func (s *testSuite) TestHistoryRead(c *C) {
 	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2 <nil>", "4 <nil>", "8 8", "9 9"))
 	tk.MustExec("set @@tidb_snapshot = '" + snapshotTime.Format("2006-01-02 15:04:05.999999") + "'")
 	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2", "4"))
-	tk.MustExec("set @@tidb_snapshot = ''")
-	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2 <nil>", "4 <nil>", "8 8", "9 9"))
-	tsoStr := strconv.FormatUint(types.EncodeTso(snapshotTime.Unix()), 10)
+	tsoStr := strconv.FormatUint(types.EncodeTso(snapshotTime.UnixNano()/int64(time.Millisecond)), 10)
+
+	fmt.Println(tsoStr)
 	tk.MustExec("set @@tidb_snapshot = '" + tsoStr + "'")
 	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2", "4"))
 
