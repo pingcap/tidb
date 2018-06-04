@@ -47,7 +47,6 @@ func NewAggFuncDesc(ctx sessionctx.Context, name string, args []expression.Expre
 		Name:        strings.ToLower(name),
 		Args:        args,
 		HasDistinct: hasDistinct,
-		Mode:        Partial1Mode,
 	}
 	a.typeInfer(ctx)
 	return a

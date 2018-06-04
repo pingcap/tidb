@@ -461,7 +461,7 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 			partialCursor++
 		}
 		finalAggFunc.Args = args
-		finalAggFunc.Mode = aggregation.Partial2Mode
+		finalAggFunc.Mode = aggregation.FinalMode
 		finalAggFunc.RetTp = aggFun.RetTp
 		finalAggFuncs[i] = finalAggFunc
 	}
