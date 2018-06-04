@@ -2040,7 +2040,6 @@ func (s *testDBSuite) TestGetTableEndHandle(c *C) {
 	c.Assert(emptyTable, IsFalse)
 
 	tk.MustExec(fmt.Sprintf("insert into t2 values(%v)", math.MaxInt64))
-
 	result = tk.MustQuery("select MAX(_tidb_rowid) from t2")
 	maxID, emptyTable = s.getMaxTableRowID(testCtx)
 	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
