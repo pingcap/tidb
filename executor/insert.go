@@ -91,7 +91,7 @@ func (e *InsertExec) exec(rows []types.DatumRow) error {
 				return errors.Trace(err)
 			}
 		}
-		for _, row := range rows {
+		for rowIdx, row := range rows {
 			// duplicate row will be marked as nil in batchMarkDupRows if
 			// IgnoreErr is true. For IgnoreErr is false, it is a protection.
 			if row == nil {
@@ -119,7 +119,7 @@ func (e *InsertExec) exec(rows []types.DatumRow) error {
 					if err1 != nil {
 						return errors.Trace(err1)
 					}
-					_, _, _, err = e.doDupRowUpdate(h, data, row, e.OnDuplicate)
+					_, _, _, err = e.doDupRowUpdate(h, data, row, e.OnDuplicate, rowIdx)
 					if kv.ErrKeyExists.Equal(err) {
 						e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 						continue
@@ -192,8 +192,10 @@ func (e *InsertExec) initDupOldRowValue(newRows []types.DatumRow) (err error) {
 	return nil
 }
 
+
 // updateDupRow updates a duplicate row to a new row.
-func (e *InsertExec) updateDupRow(keys []keyWithDupError, k keyWithDupError, val []byte, newRow types.DatumRow, onDuplicate []*expression.Assignment) (err error) {
+func (e *InsertExec) updateDupRow(keys []keyWithDupError, k keyWithDupError, val []byte, newRow types.DatumRow,
+	onDuplicate []*expression.Assignment, rowIdx int) (err error) {
 	oldHandle, err := e.decodeOldHandle(k, val)
 	if err != nil {
 		return errors.Trace(err)
@@ -223,7 +225,7 @@ func (e *InsertExec) updateDupRow(keys []keyWithDupError, k keyWithDupError, val
 	}
 
 	// Do update row.
-	updatedRow, handleChanged, newHandle, err := e.doDupRowUpdate(oldHandle, oldRow, newRow, onDuplicate)
+	updatedRow, handleChanged, newHandle, err := e.doDupRowUpdate(oldHandle, oldRow, newRow, onDuplicate, rowIdx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -269,7 +271,7 @@ func (e *InsertExec) batchUpdateDupRows(newRows []types.DatumRow) error {
 	for i, keysInRow := range e.uniqueKeysInRows {
 		for _, k := range keysInRow {
 			if val, found := e.dupKeyValues[string(k.key)]; found {
-				err := e.updateDupRow(keysInRow, k, val, newRows[i], e.OnDuplicate)
+				err := e.updateDupRow(keysInRow, k, val, newRows[i], e.OnDuplicate, i)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -311,7 +313,7 @@ func (e *InsertExec) fillBackKeys(fillBackKeysInRow []keyWithDupError, handle in
 // doDupRowUpdate updates the duplicate row.
 // TODO: Report rows affected.
 func (e *InsertExec) doDupRowUpdate(handle int64, oldRow types.DatumRow, newRow types.DatumRow,
-	cols []*expression.Assignment) (types.DatumRow, bool, int64, error) {
+	cols []*expression.Assignment, rowIdx int) (types.DatumRow, bool, int64, error) {
 	assignFlag := make([]bool, len(e.Table.WritableCols()))
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 	e.ctx.GetSessionVars().CurrInsertValues = types.DatumRow(newRow)
@@ -325,7 +327,7 @@ func (e *InsertExec) doDupRowUpdate(handle int64, oldRow types.DatumRow, newRow 
 		newData[col.Col.Index] = val
 		assignFlag[col.Col.Index] = true
 	}
-	_, handleChanged, newHandle, lastInsertID, err := updateRecord(e.ctx, handle, oldRow, newData, assignFlag, e.Table, true)
+	_, handleChanged, newHandle, lastInsertID, err := updateRecord(e.ctx, handle, oldRow, newData, assignFlag, e.Table, true, rowIdx, e)
 	if err != nil {
 		return nil, false, 0, errors.Trace(err)
 	}

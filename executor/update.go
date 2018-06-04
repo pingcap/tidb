@@ -72,7 +72,7 @@ func (e *UpdateExec) exec(schema *expression.Schema) (types.DatumRow, error) {
 				continue
 			}
 			// Update row
-			changed, _, _, _, err1 := updateRecord(e.ctx, handle, oldData, newTableData, flags, tbl, false)
+			changed, _, _, _, err1 := updateRecord(e.ctx, handle, oldData, newTableData, flags, tbl, false, e.cursor, e)
 			if err1 == nil {
 				if changed {
 					e.updatedRowKeys[id][handle] = struct{}{}
@@ -190,4 +190,23 @@ func (e *UpdateExec) getUpdateColumns(schemaLen int) ([]bool, error) {
 		assignFlag[idx] = true
 	}
 	return assignFlag, nil
+}
+
+func (e *UpdateExec) transformErrs(col *table.Column, rowIdx int, suppress error, actual error) (error, error) {
+	return e.transformErr(col, rowIdx, suppress), e.transformErr(col, rowIdx, actual)
+}
+
+func (e *UpdateExec) transformErr(col *table.Column, rowIdx int, err error) error {
+	if err == nil {
+		return nil
+	}
+
+	if types.ErrDataTooLong.Equal(err) {
+		return resetErrDataTooLong(col.Name.O, rowIdx+1, err)
+	}
+
+	if types.ErrOverflow.Equal(err) {
+		return types.ErrWarnDataOutOfRange.GenByArgs(col.Name.O, int64(rowIdx+1))
+	}
+	return err
 }

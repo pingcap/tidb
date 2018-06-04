@@ -16,14 +16,17 @@ package table
 import (
 	"testing"
 
+	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
+	log "github.com/sirupsen/logrus"
 )
 
 func TestT(t *testing.T) {
@@ -217,18 +220,72 @@ func (t *testTableSuite) TestGetZeroValue(c *C) {
 
 func (t *testTableSuite) TestCastValue(c *C) {
 	ctx := mock.NewContext()
+
+	// truncate as warnings == false start
+	ctx.GetSessionVars().StmtCtx.TruncateAsWarning = false
+
 	colInfo := model.ColumnInfo{
 		FieldType: *types.NewFieldType(mysql.TypeLong),
 		State:     model.StatePublic,
 	}
 	colInfo.Charset = mysql.UTF8Charset
-	val, err := CastValue(ctx, types.Datum{}, &colInfo)
-	c.Assert(err, Equals, nil)
+	val, warn, err := CastValue(ctx, types.Datum{}, &colInfo)
+	c.Assert(warn, IsNil)
+	c.Assert(err, IsNil)
 	c.Assert(val.GetInt64(), Equals, int64(0))
 
-	val, err = CastValue(ctx, types.NewDatum("test"), &colInfo)
-	c.Assert(err, Not(Equals), nil)
+	val, warn, err = CastValue(ctx, types.NewDatum("test"), &colInfo)
+	c.Assert(warn, IsNil)
+	c.Assert(err, NotNil)
 	c.Assert(val.GetInt64(), Equals, int64(0))
+
+	colInfoS := model.ColumnInfo{
+		FieldType: *types.NewFieldType(mysql.TypeString),
+		State:     model.StatePublic,
+	}
+	val, warn, err = CastValue(ctx, types.NewDatum("test"), &colInfoS)
+	c.Assert(err, IsNil)
+	c.Assert(err, IsNil)
+	c.Assert(val, NotNil)
+
+	colInfoS.Charset = mysql.UTF8Charset
+	val, warn, err = CastValue(ctx, types.NewDatum("\xf0\x9f\x98\xad\xed\xa0\xbd"), &colInfoS)
+	c.Assert(warn, IsNil)
+	c.Assert(err, NotNil)
+	c.Assert(val.GetInt64(), Equals, int64(0))
+
+	colInfoD := model.ColumnInfo{
+		FieldType: *types.NewFieldType(mysql.TypeNewDecimal),
+		State:     model.StatePublic,
+	}
+	val, warn, err = CastValue(ctx, types.NewDatum("1e1111111"), &colInfoD)
+	c.Assert(warn, IsNil)
+	c.Assert(err, NotNil)
+	c.Assert(val.GetInt64(), Equals, int64(0))
+
+	// truncate as warning == true start.
+
+	ctx.GetSessionVars().StmtCtx.TruncateAsWarning = true
+
+	val, warn, err = CastValue(ctx, types.NewDatum("test"), &colInfo)
+	c.Assert(warn, IsNil) // Fix me this run as it was but make warning code has wrong value.
+	c.Assert(err, IsNil)
+	c.Assert(val.GetInt64(), Equals, int64(0))
+
+	colInfoS.Charset = mysql.UTF8Charset
+	val, warn, err = CastValue(ctx, types.NewDatum("\xf0\x9f\x98\xad\xed\xa0\xbd"), &colInfoS)
+	c.Assert(warn, NotNil)
+	c.Assert(err, IsNil)
+	c.Assert(val.GetInt64(), Equals, int64(0))
+
+	val, warn, err = CastValue(ctx, types.NewDatum("1e1111111"), &colInfoD)
+	c.Assert(warn, NotNil)
+	c.Assert(err, IsNil)
+	c.Assert(val.GetInt64(), Equals, int64(0))
+
+	ctx.GetSessionVars().StmtCtx.TruncateAsWarning = false
+
+	// start ignore error test
 
 	col := ToColumn(&model.ColumnInfo{
 		FieldType: *types.NewFieldType(mysql.TypeTiny),
@@ -242,13 +299,28 @@ func (t *testTableSuite) TestCastValue(c *C) {
 	c.Assert(err, IsNil)
 	ctx.GetSessionVars().StmtCtx.IgnoreErr = false
 
-	colInfoS := model.ColumnInfo{
-		FieldType: *types.NewFieldType(mysql.TypeString),
-		State:     model.StatePublic,
+}
+
+// CastValues casts values based on columns type.
+func CastValues(ctx sessionctx.Context, rec []types.Datum, cols []*Column) (err error) {
+	sc := ctx.GetSessionVars().StmtCtx
+	for _, c := range cols {
+		var converted types.Datum
+		converted, warn, err := CastValue(ctx, rec[c.Offset], c.ToInfo())
+		if warn != nil {
+			sc.AppendWarning(warn)
+		}
+		if err != nil {
+			if sc.IgnoreErr {
+				sc.AppendWarning(err)
+				log.Warnf("cast values failed:%v", err)
+			} else {
+				return errors.Trace(err)
+			}
+		}
+		rec[c.Offset] = converted
 	}
-	val, err = CastValue(ctx, types.NewDatum("test"), &colInfoS)
-	c.Assert(err, IsNil)
-	c.Assert(val, NotNil)
+	return nil
 }
 
 func (t *testTableSuite) TestGetDefaultValue(c *C) {

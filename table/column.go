@@ -125,33 +125,14 @@ func truncateTrailingSpaces(v *types.Datum) {
 	v.SetString(hack.String(b))
 }
 
-// CastValues casts values based on columns type.
-func CastValues(ctx sessionctx.Context, rec []types.Datum, cols []*Column) (err error) {
-	sc := ctx.GetSessionVars().StmtCtx
-	for _, c := range cols {
-		var converted types.Datum
-		converted, err = CastValue(ctx, rec[c.Offset], c.ToInfo())
-		if err != nil {
-			if sc.IgnoreErr {
-				sc.AppendWarning(err)
-				log.Warnf("cast values failed:%v", err)
-			} else {
-				return errors.Trace(err)
-			}
-		}
-		rec[c.Offset] = converted
-	}
-	return nil
-}
-
 // CastValue casts a value based on column type.
-func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo) (casted types.Datum, err error) {
+func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo) (casted types.Datum, warn error, err error) {
 	sc := ctx.GetSessionVars().StmtCtx
-	casted, err = val.ConvertTo(sc, &col.FieldType)
 	// TODO: make sure all truncate errors are handled by ConvertTo.
-	err = sc.HandleTruncate(err)
+	casted, err = val.ConvertTo(sc, &col.FieldType)
+	warn, err = sc.SuppressTruncate(err)
 	if err != nil {
-		return casted, errors.Trace(err)
+		return casted, warn, errors.Trace(err)
 	}
 
 	if col.Tp == mysql.TypeString && !types.IsBinaryStr(&col.FieldType) {
@@ -159,10 +140,10 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo) (
 	}
 
 	if ctx.GetSessionVars().SkipUTF8Check {
-		return casted, nil
+		return casted, warn, nil
 	}
 	if !mysql.IsUTF8Charset(col.Charset) {
-		return casted, nil
+		return casted, warn, nil
 	}
 	str := casted.GetString()
 	for i, r := range str {
@@ -174,12 +155,11 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo) (
 			log.Errorf("[con:%d] %v", ctx.GetSessionVars().ConnectionID, err)
 			// Truncate to valid utf8 string.
 			casted = types.NewStringDatum(str[:i])
-			err = sc.HandleTruncate(err)
+			warn, err = sc.SuppressTruncate(err)
 			break
 		}
 	}
-
-	return casted, errors.Trace(err)
+	return casted, warn, errors.Trace(err)
 }
 
 // ColDesc describes column information like MySQL desc and show columns do.
@@ -327,7 +307,10 @@ func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVa
 		}
 		return value, nil
 	}
-	value, err := CastValue(ctx, types.NewDatum(defaultVal), col)
+	value, warn, err := CastValue(ctx, types.NewDatum(defaultVal), col)
+	if warn != nil {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(warn)
+	}
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}

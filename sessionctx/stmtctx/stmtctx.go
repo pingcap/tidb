@@ -164,6 +164,17 @@ func (sc *StatementContext) HandleTruncate(err error) error {
 	return err
 }
 
+// SuppressTruncate ignore error, return warn, or return error base on statement context.
+func (sc *StatementContext) SuppressTruncate(err error) (warn error, actualErr error) {
+	if err == nil || sc.IgnoreTruncate {
+		return nil, nil
+	}
+	if sc.TruncateAsWarning {
+		return err, nil
+	}
+	return nil, err
+}
+
 // HandleOverflow treats ErrOverflow as warnings or returns the error based on the StmtCtx.OverflowAsWarning state.
 func (sc *StatementContext) HandleOverflow(err error, warnErr error) error {
 	if err == nil {
