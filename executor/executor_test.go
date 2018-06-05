@@ -2645,51 +2645,6 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	// table     data (handle, data): (1, 10), (2, 20), (4, 40)
 }
 
-func (s *testSuite) TestRenameIndex(c *C) {
-	s.ctx = mock.NewContext()
-	s.ctx.Store = s.store
-	_, err := session.BootstrapSession(s.store)
-	c.Assert(err, IsNil)
-	se, err := session.CreateSession4Test(s.store)
-	c.Assert(err, IsNil)
-	defer se.Close()
-
-	_, err = se.Execute(context.Background(), "create database test_rename_index")
-	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "use test_rename_index")
-	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "create table t (pk int primary key, c int default 1, c1 int default 1, unique key k1(c), key k2(c1))")
-	c.Assert(err, IsNil)
-
-	// Test rename success
-	_, err = se.Execute(context.Background(), "alter table t rename index k1 to k3")
-	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "admin check index t k3")
-	c.Assert(err, IsNil)
-
-	// Test rename to the same name
-	_, err = se.Execute(context.Background(), "alter table t rename index k3 to k3")
-	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "admin check index t k3")
-	c.Assert(err, IsNil)
-
-	// Test rename on non-exists keys
-	_, err = se.Execute(context.Background(), "alter table t rename index x to x")
-	c.Assert(err, NotNil)
-	c.Assert(strings.Contains(err.Error(), "Key 'x' doesn't exist in table 't'"), IsTrue)
-
-	// Test rename on already-exists keys
-	_, err = se.Execute(context.Background(), "alter table t rename index k3 to k2")
-	c.Assert(err, NotNil)
-	c.Assert(strings.Contains(err.Error(), "Duplicate key name 'k2'"), IsTrue)
-
-	_, err = se.Execute(context.Background(), "alter table t rename index k2 to K2")
-	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "alter table t rename key k3 to K2")
-	c.Assert(err, NotNil)
-	c.Assert(strings.Contains(err.Error(), "Duplicate key name 'K2'"), IsTrue)
-}
-
 func setColValue(c *C, txn kv.Transaction, key kv.Key, v types.Datum) {
 	row := []types.Datum{v, {}}
 	colIDs := []int64{2, 3}
