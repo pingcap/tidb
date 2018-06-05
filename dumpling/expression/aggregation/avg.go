@@ -55,11 +55,16 @@ func (af *avgFunction) ResetContext(sc *stmtctx.StatementContext, evalCtx *AggEv
 }
 
 // Update implements Aggregation interface.
-func (af *avgFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
-	if af.Mode == FinalMode {
-		return af.updateAvg(sc, evalCtx, row)
+func (af *avgFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) (err error) {
+	switch af.Mode {
+	case Partial1Mode, CompleteMode:
+		err = af.updateSum(sc, evalCtx, row)
+	case Partial2Mode, FinalMode:
+		err = af.updateAvg(sc, evalCtx, row)
+	case DedupMode:
+		panic("DedupMode is not supported now.")
 	}
-	return af.updateSum(sc, evalCtx, row)
+	return errors.Trace(err)
 }
 
 // GetResult implements Aggregation interface.
