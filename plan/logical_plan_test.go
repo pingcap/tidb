@@ -493,23 +493,27 @@ func (s *testPlanSuite) TestTablePartition(c *C) {
 	}{
 		{
 			sql:  "select * from t",
-			best: "UnionAll{DataScan(t)->DataScan(t)->DataScan(t)->DataScan(t)->DataScan(t)}->Projection",
+			best: "UnionAll{Partition(41)->Partition(42)->Partition(43)->Partition(44)->Partition(45)}->Projection",
 		},
 		{
 			sql:  "select * from t where t.h < 31",
-			best: "UnionAll{DataScan(t)->DataScan(t)}->Projection",
+			best: "UnionAll{Partition(41)->Partition(42)}->Projection",
 		},
 		{
 			sql:  "select * from t where t.h < 61",
-			best: "UnionAll{DataScan(t)->DataScan(t)->DataScan(t)}->Projection",
+			best: "UnionAll{Partition(41)->Partition(42)->Partition(43)}->Projection",
+		},
+		{
+			sql:  "select * from t where t.h > 17 and t.h < 61",
+			best: "UnionAll{Partition(42)->Partition(43)}->Projection",
 		},
 		{
 			sql:  "select * from t where t.h < 8",
-			best: "DataScan(t)->Projection",
+			best: "Partition(41)->Projection",
 		},
 		{
 			sql:  "select * from t where t.h > 128",
-			best: "DataScan(t)->Projection",
+			best: "Partition(45)->Projection",
 		},
 	}
 	for _, ca := range tests {
