@@ -1365,10 +1365,10 @@ func (b *planBuilder) checkOnlyFullGroupByWithOutGroupClause(p LogicalPlan, fiel
 // colResolverForOnlyFullGroupBy visits Expr tree to find out if an Expr tree is an aggregation function.
 // If so, find out the first column name that not in an aggregation function.
 type colResolverForOnlyFullGroupBy struct {
-	firstNonAggCol     *ast.ColumnName
-	exprIdx            int
+	firstNonAggCol    *ast.ColumnName
+	exprIdx           int
 	firstNonAggColIdx int
-	hasAggFunc         bool
+	hasAggFunc        bool
 }
 
 func (c *colResolverForOnlyFullGroupBy) Enter(node ast.Node) (ast.Node, bool) {
