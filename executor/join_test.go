@@ -857,4 +857,14 @@ func (s *testSuite) TestMergejoinOrder(c *C) {
 		"4 100 <nil> <nil>",
 		"5 100 <nil> <nil>",
 	))
+
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a bigint, b bigint, index idx_1(a,b));`)
+	tk.MustExec(`insert into t values(1, 1), (1, 2), (2, 1), (2, 2);`)
+	tk.MustQuery(`select /*+ TIDB_SMJ(t1, t2) */ * from t t1 join t t2 on t1.b = t2.b and t1.a=t2.a;`).Check(testkit.Rows(
+		`1 1 1 1`,
+		`1 2 1 2`,
+		`2 1 2 1`,
+		`2 2 2 2`,
+	))
 }
