@@ -1009,7 +1009,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 			b.err = errors.Trace(err)
 			return nil
 		}
-		insertPlan.Setlist = append(insertPlan.Setlist, &expression.Assignment{
+		insertPlan.SetList = append(insertPlan.SetList, &expression.Assignment{
 			Col:  col,
 			Expr: expr,
 		})

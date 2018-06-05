@@ -92,14 +92,22 @@ func (p *baseLogicalPlan) findBestTask(prop *requiredProp) (bestTask task, err e
 	bestTask = invalidTask
 	childTasks := make([]task, 0, len(p.children))
 	for _, pp := range p.self.exhaustPhysicalPlans(prop) {
-		// find best child tasks firstly.
+		// find the best child tasks firstly.
 		childTasks = childTasks[:0]
 		for i, child := range p.children {
 			childTask, err := child.findBestTask(pp.getChildReqProps(i))
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+			if childTask != nil && childTask.invalid() {
+				break
+			}
 			childTasks = append(childTasks, childTask)
+		}
+
+		// This check makes sure that there is no invalid child task.
+		if len(childTasks) != len(p.children) {
+			continue
 		}
 
 		// combine best child tasks with parent physical plan.

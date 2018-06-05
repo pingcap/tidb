@@ -1894,6 +1894,26 @@ func (s *testDBSuite) TestRebaseAutoID(c *C) {
 	s.testErrorCode(c, "alter table tidb.test2 add column b int auto_increment key, auto_increment=10;", tmysql.ErrUnknown)
 }
 
+func (s *testDBSuite) TestYearTypeCreateTable(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+	s.tk.MustExec("drop table if exists abc;")
+	s.tk.MustExec("create table abc(y year, x int, primary key(y));")
+	is := s.dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("abc"))
+	c.Assert(err, IsNil)
+	var yearCol *model.ColumnInfo
+	for _, col := range tbl.Meta().Columns {
+		if col.Name.String() == "y" {
+			yearCol = col
+			break
+		}
+	}
+	c.Assert(yearCol, NotNil)
+	c.Assert(yearCol.Tp, Equals, mysql.TypeYear)
+	c.Assert(mysql.HasUnsignedFlag(yearCol.Flag), IsFalse)
+}
+
 func (s *testDBSuite) TestCharacterSetInColumns(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("drop database if exists varchar_test;")

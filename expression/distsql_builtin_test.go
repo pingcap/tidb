@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
+	log "github.com/sirupsen/logrus"
 )
 
 var _ = Suite(&testEvalSuite{})
@@ -134,7 +135,11 @@ func datumExpr(d types.Datum) *tipb.Expr {
 		expr.Val = codec.EncodeInt(nil, int64(d.GetMysqlDuration().Duration))
 	case types.KindMysqlDecimal:
 		expr.Tp = tipb.ExprType_MysqlDecimal
-		expr.Val = codec.EncodeDecimal(nil, d.GetMysqlDecimal(), d.Length(), d.Frac())
+		var err error
+		expr.Val, err = codec.EncodeDecimal(nil, d.GetMysqlDecimal(), d.Length(), d.Frac())
+		if err != nil {
+			log.Warnf("err happened when EncodeDecimal in datumExpr:%s", err.Error())
+		}
 	default:
 		expr.Tp = tipb.ExprType_Null
 	}
