@@ -59,8 +59,8 @@ type Table struct {
 	alloc           autoid.Allocator
 	meta            *model.TableInfo
 
-	// partitionExpr caches partition expression.
-	partitionExpr []expression.Expression
+	// partitionExprs caches partition expression.
+	partitionExprs []expression.Expression
 }
 
 // MockTableFromMeta only serves for test.
@@ -72,11 +72,11 @@ func MockTableFromMeta(tableInfo *model.TableInfo) table.Table {
 	}
 	t := newTable(tableInfo.ID, columns, nil)
 	t.meta = tableInfo
-	partitionExpr, err := generatePartitionExpr(tableInfo)
+	partitionExprs, err := generatePartitionExprs(tableInfo)
 	if err != nil {
 		return nil
 	}
-	t.partitionExpr = partitionExpr
+	t.partitionExprs = partitionExprs
 	return t
 }
 
@@ -125,20 +125,20 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 	}
 
 	t.meta = tblInfo
-	partitionExpr, err := generatePartitionExpr(tblInfo)
+	partitionExprs, err := generatePartitionExprs(tblInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	t.partitionExpr = partitionExpr
+	t.partitionExprs = partitionExprs
 	return t, nil
 }
 
-// PartitionExpr returns the partition expression.
-func (t *Table) PartitionExpr() []expression.Expression {
-	return t.partitionExpr
+// PartitionExprs returns the partition expression.
+func (t *Table) PartitionExprs() []expression.Expression {
+	return t.partitionExprs
 }
 
-func generatePartitionExpr(tblInfo *model.TableInfo) ([]expression.Expression, error) {
+func generatePartitionExprs(tblInfo *model.TableInfo) ([]expression.Expression, error) {
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil {
 		return nil, nil

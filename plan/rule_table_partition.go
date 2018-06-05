@@ -72,7 +72,7 @@ func selectOnSomething(sel *LogicalSelection, lp LogicalPlan) (LogicalPlan, erro
 
 // partitionTable is for those tables which implement partition.
 type partitionTable interface {
-	PartitionExpr() []expression.Expression
+	PartitionExprs() []expression.Expression
 }
 
 func prunePartition(sel *LogicalSelection, ds *DataSource) (LogicalPlan, error) {
@@ -81,11 +81,11 @@ func prunePartition(sel *LogicalSelection, ds *DataSource) (LogicalPlan, error) 
 		return selectOnSomething(sel, ds)
 	}
 
-	var partitionExpr []expression.Expression
+	var partitionExprs []expression.Expression
 	if itf, ok := ds.table.(partitionTable); ok {
-		partitionExpr = itf.PartitionExpr()
+		partitionExprs = itf.PartitionExprs()
 	}
-	if len(partitionExpr) == 0 {
+	if len(partitionExprs) == 0 {
 		return nil, errors.New("partition expression missing")
 	}
 
@@ -97,15 +97,17 @@ func prunePartition(sel *LogicalSelection, ds *DataSource) (LogicalPlan, error) 
 		selConds = sel.Conditions
 	}
 
-	col := partitionExprAccessColumn(partitionExpr[0])
-	for i, expr := range partitionExpr {
-		// If the selection condition would never satisify, prune that partition.
-		prune, err := canBePrune(ds.context(), col, expr, selConds, ds.pushedDownConds)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if prune {
-			continue
+	col := partitionExprAccessColumn(partitionExprs[0])
+	for i, expr := range partitionExprs {
+		if col != nil {
+			// If the selection condition would never satisify, prune that partition.
+			prune, err := canBePrune(ds.context(), col, expr, selConds, ds.pushedDownConds)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if prune {
+				continue
+			}
 		}
 
 		// Not a deep copy.
@@ -127,9 +129,6 @@ func prunePartition(sel *LogicalSelection, ds *DataSource) (LogicalPlan, error) 
 // canBePrune checks if partition expression will never meets the selection condition.
 // For example, partition by column a > 3, and select condition is a < 3, then canBePrune returns true.
 func canBePrune(ctx sessionctx.Context, col *expression.Column, expr expression.Expression, rootConds, copConds []expression.Expression) (bool, error) {
-	if col == nil {
-		return false, nil
-	}
 	conds := make([]expression.Expression, 0, 1+len(rootConds)+len(copConds))
 	conds = append(conds, expr)
 	conds = append(conds, rootConds...)
