@@ -48,3 +48,15 @@ func ExtractPhysical(ts uint64) int64 {
 func GetPhysical(t time.Time) int64 {
 	return t.UnixNano() / int64(time.Millisecond)
 }
+
+// EncodeTso encodes a millisecond into tso.
+func EncodeTso(ts int64) uint64 {
+	return uint64(ts) << physicalShiftBits
+}
+
+// DecodeTso decodes a tso into a golang's time struct.
+func DecodeTso(tso uint64) time.Time {
+	physical := tso >> physicalShiftBits
+	physicalTime := time.Unix(int64(physical/1000), 0)
+	return physicalTime
+}
