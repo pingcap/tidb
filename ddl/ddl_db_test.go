@@ -2107,6 +2107,7 @@ func (s *testDBSuite) TestMultiRegionGetTableEndHandle(c *C) {
 
 	// Split the table.
 	s.cluster.SplitTable(s.mvccStore, tblID, 100)
+
 	maxID, emptyTable := s.getMaxTableRowID(testCtx)
 	c.Assert(emptyTable, IsFalse)
 	c.Assert(maxID, Equals, int64(999))
@@ -2168,6 +2169,9 @@ func (s *testDBSuite) TestBackwardCompatibility(c *C) {
 	c.Assert(ok, IsTrue)
 	tbl, err := is.TableByName(schemaName, tableName)
 	c.Assert(err, IsNil)
+
+	// Split the table.
+	s.cluster.SplitTable(s.mvccStore, tbl.Meta().ID, 100)
 
 	unique := false
 	indexName := model.NewCIStr("idx_b")
