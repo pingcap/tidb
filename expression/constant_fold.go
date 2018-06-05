@@ -24,42 +24,63 @@ func FoldConstant(expr Expression) Expression {
 	return e
 }
 
+func ifFoldHandler(expr *ScalarFunction) (Expression, bool) {
+	args := expr.GetArgs()
+	foldedArg0, _ := foldConstant(args[0])
+	if constArg, isConst := foldedArg0.(*Constant); isConst {
+		arg0, isNull0, err := constArg.EvalInt(expr.Function.getCtx(), nil)
+		if err != nil {
+			log.Warnf("fold constant %s: %s", expr.ExplainInfo(), err.Error())
+			return expr, false
+		}
+		if !isNull0 && arg0 != 0 {
+			return foldConstant(args[1])
+		}
+		return foldConstant(args[2])
+	}
+	isDeferredConst := false
+	var isDeferred bool
+	expr.GetArgs()[1], isDeferred = foldConstant(args[1])
+	isDeferredConst = isDeferredConst || isDeferred
+	expr.GetArgs()[2], isDeferred = foldConstant(args[2])
+	isDeferredConst = isDeferredConst || isDeferred
+	return expr, isDeferredConst
+}
+
+func ifNullFoldHandler(expr *ScalarFunction) (Expression, bool) {
+	args := expr.GetArgs()
+	foldedArg0, _ := foldConstant(args[0])
+	if constArg, isConst := foldedArg0.(*Constant); isConst {
+		_, isNull0, err := constArg.EvalInt(expr.Function.getCtx(), nil)
+		if err != nil {
+			log.Warnf("fold constant %s: %s", expr.ExplainInfo(), err.Error())
+			return expr, false
+		}
+		if isNull0 == true {
+			return foldConstant(args[1])
+		}
+	}
+	isDeferredConst := false
+	expr.GetArgs()[1], isDeferredConst = foldConstant(args[1])
+	return expr, isDeferredConst
+}
+
 func foldConstant(expr Expression) (Expression, bool) {
 	switch x := expr.(type) {
 	case *ScalarFunction:
 		if _, ok := unFoldableFunctions[x.FuncName.L]; ok {
 			return expr, false
 		}
-		args := x.GetArgs()
-
-		// This switch is for UDF if or ifnull constant folding.
-		// If first arg is constant, the rest args will not be checked whether is constant.
-		switch x.FuncName.L {
-		case ast.If:
-			foldedArg0, _ := foldConstant(args[0])
-			if constArg, isConst := foldedArg0.(*Constant); isConst {
-				arg0, isNull0, err := constArg.EvalInt(x.Function.getCtx(), nil)
-				if err != nil {
-					log.Warnf("fold constant %s: %s", x.ExplainInfo(), err.Error())
-					return expr, false
-				}
-				if !isNull0 && arg0 != 0 {
-					return foldConstant(args[1])
-				}
-				return foldConstant(args[2])
-			}
-		case ast.Ifnull:
-			foldedArg0, _ := foldConstant(args[0])
-			if constArg, isConst := foldedArg0.(*Constant); isConst {
-				_, isNull0, err := constArg.EvalInt(x.Function.getCtx(), nil)
-				if err == nil && isNull0 == true {
-					return foldConstant(args[1])
-				}
-			}
-		default:
-			break
+		// specialFoldHandler stores functions for special UDF to constant flod
+		var specialFoldHandler = map[string]func(*ScalarFunction) (Expression, bool){
+			ast.If:     ifFoldHandler,
+			ast.Ifnull: ifNullFoldHandler,
+		}
+		if function := specialFoldHandler[x.FuncName.L]; function != nil {
+			return function(x)
 		}
 
+		args := x.GetArgs()
 		canFold := true
 		isDeferredConst := false
 		for i := 0; i < len(args); i++ {
