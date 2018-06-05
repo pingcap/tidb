@@ -38,8 +38,7 @@ func ifFoldHandler(expr *ScalarFunction) (Expression, bool) {
 		}
 		return foldConstant(args[2])
 	}
-	isDeferredConst := false
-	var isDeferred bool
+	var isDeferred, isDeferredConst bool
 	expr.GetArgs()[1], isDeferred = foldConstant(args[1])
 	isDeferredConst = isDeferredConst || isDeferred
 	expr.GetArgs()[2], isDeferred = foldConstant(args[2])
@@ -71,7 +70,7 @@ func foldConstant(expr Expression) (Expression, bool) {
 		if _, ok := unFoldableFunctions[x.FuncName.L]; ok {
 			return expr, false
 		}
-		// specialFoldHandler stores functions for special UDF to constant flod
+		// specialFoldHandler stores functions for special UDF to constant fold
 		var specialFoldHandler = map[string]func(*ScalarFunction) (Expression, bool){
 			ast.If:     ifFoldHandler,
 			ast.Ifnull: ifNullFoldHandler,
