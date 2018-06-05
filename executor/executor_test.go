@@ -1811,7 +1811,6 @@ func (s *testSuite) TestHistoryRead(c *C) {
 	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2", "4"))
 	tsoStr := strconv.FormatUint(types.EncodeTso(snapshotTime.UnixNano()/int64(time.Millisecond)), 10)
 
-	fmt.Println(tsoStr)
 	tk.MustExec("set @@tidb_snapshot = '" + tsoStr + "'")
 	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2", "4"))
 
