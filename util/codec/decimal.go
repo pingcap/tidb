@@ -14,24 +14,19 @@
 package codec
 
 import (
-	"fmt"
-
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/types"
 )
 
 // EncodeDecimal encodes a decimal into a byte slice which can be sorted lexicographically later.
-func EncodeDecimal(b []byte, dec *types.MyDecimal, precision, frac int) []byte {
+func EncodeDecimal(b []byte, dec *types.MyDecimal, precision, frac int) ([]byte, error) {
 	if precision == 0 {
 		precision, frac = dec.PrecisionAndFrac()
 	}
 	b = append(b, byte(precision), byte(frac))
 	bin, err := dec.ToBin(precision, frac)
-	if err != nil {
-		panic(fmt.Sprintf("should not happen, precision %d, frac %d %v", precision, frac, err))
-	}
 	b = append(b, bin...)
-	return b
+	return b, errors.Trace(err)
 }
 
 // DecodeDecimal decodes bytes to decimal.
