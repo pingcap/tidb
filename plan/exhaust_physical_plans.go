@@ -649,7 +649,6 @@ func (la *LogicalAggregation) getStreamAggs(prop *requiredProp) []PhysicalPlan {
 		return nil
 	}
 
-
 	streamAggs := make([]PhysicalPlan, 0, len(la.possibleProperties)*(len(wholeTaskTypes)-1))
 	childProp := &requiredProp{
 		desc:        prop.desc,

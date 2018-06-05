@@ -131,11 +131,11 @@ func (p *baseLogicalPlan) findBestTask(prop *requiredProp) (bestTask task, err e
 		// combine best child tasks with parent physical plan.
 		curTask := pp.attach2Task(childTasks...)
 
-    // enforce curTask property
+		// enforce curTask property
 		if prop.enforced {
 			curTask = prop.enforceProperty(curTask, p.basePlan.ctx)
 		}
-  
+
 		// get the most efficient one.
 		if curTask.cost() < bestTask.cost() {
 			bestTask = curTask
