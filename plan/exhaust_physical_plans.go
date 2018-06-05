@@ -227,7 +227,6 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *requiredProp) []PhysicalPlan {
 	// Generate the enforced sort merge join
 	leftKeys := getNewJoinKeysByOffsets(p.LeftJoinKeys, offsets)
 	rightKeys := getNewJoinKeysByOffsets(p.RightJoinKeys, offsets)
-	equalConditions := getNewEqualConditionsByOffsets(p.EqualConditions, offsets)
 	lProp := &requiredProp{taskTp: rootTaskType, cols: leftKeys, expectedCnt: math.MaxFloat64, enforced: true, desc: prop.desc}
 	rProp := &requiredProp{taskTp: rootTaskType, cols: rightKeys, expectedCnt: math.MaxFloat64, enforced: true, desc: prop.desc}
 	enforcedPhysicalMergeJoin := PhysicalMergeJoin{
@@ -235,9 +234,8 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *requiredProp) []PhysicalPlan {
 		LeftConditions:  p.LeftConditions,
 		RightConditions: p.RightConditions,
 		DefaultValues:   p.DefaultValues,
-		leftKeys:        leftKeys,
-		rightKeys:       rightKeys,
-		EqualConditions: equalConditions,
+		LeftKeys:        leftKeys,
+		RightKeys:       rightKeys,
 		OtherConditions: p.OtherConditions,
 	}.init(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt))
 	enforcedPhysicalMergeJoin.SetSchema(p.schema)
