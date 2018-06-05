@@ -366,7 +366,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef) (
 	if col.Tp == mysql.TypeYear {
 		// For Year field, it's charset is binary but does not have binary flag.
 		col.Flag &= ^mysql.BinaryFlag
-		col.Flag |= mysql.UnsignedFlag | mysql.ZerofillFlag
+		col.Flag |= mysql.ZerofillFlag
 	}
 	err := checkDefaultValue(ctx, col, hasDefaultValue)
 	if err != nil {
