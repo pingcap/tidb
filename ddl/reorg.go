@@ -238,7 +238,7 @@ func (d *ddl) buildDescTableScan(ctx context.Context, startTS uint64, tblInfo *m
 	builder.SetTableRanges(tblInfo.ID, ranges, nil).
 		SetDAGRequest(dagPB).
 		SetKeepOrder(true).
-		SetConcurrency(1)
+		SetConcurrency(1).SetDesc(true)
 
 	builder.Request.NotFillCache = true
 	builder.Request.Priority = kv.PriorityLow
@@ -365,7 +365,7 @@ func (d *ddl) getReorgInfo(t *meta.Meta, job *model.Job, tbl table.Table) (*reor
 		}
 
 		reorgMeta.EndHandle = endHandle
-		log.Infof("[ddl] job %v get table startHandle:%v, endHandle:%v", job.ID, info.StartHandle, info.EndHandle)
+		log.Infof("[ddl] job %v get table startHandle:%v, endHandle:%v", job.ID, info.StartHandle, reorgMeta.EndHandle)
 		job.ReorgMeta = reorgMeta
 	}
 	info.EndHandle = job.ReorgMeta.EndHandle

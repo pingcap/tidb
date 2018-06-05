@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -64,6 +65,8 @@ var _ = Suite(&testDBSuite{})
 const defaultBatchSize = 2048
 
 type testDBSuite struct {
+	cluster    *mocktikv.Cluster
+	mvccStore  mocktikv.MVCCStore
 	store      kv.Storage
 	dom        *domain.Domain
 	schemaName string
@@ -85,7 +88,16 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 	s.autoIDStep = autoid.GetStep()
 	autoid.SetStep(5000)
 
-	s.store, err = mockstore.NewMockTikvStore()
+	s.cluster = mocktikv.NewCluster()
+	mocktikv.BootstrapWithSingleStore(s.cluster)
+	s.mvccStore = mocktikv.MustNewMVCCStore()
+	store, err := mockstore.NewMockTikvStore(
+		mockstore.WithCluster(s.cluster),
+		mockstore.WithMVCCStore(s.mvccStore),
+	)
+	c.Assert(err, IsNil)
+
+	s.store = store
 	c.Assert(err, IsNil)
 
 	s.dom, err = session.BootstrapSession(s.store)
@@ -2070,6 +2082,44 @@ func (s *testDBSuite) TestGetTableEndHandle(c *C) {
 	maxID, emptyTable = s.getMaxTableRowID(testCtx)
 	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
 	c.Assert(emptyTable, IsFalse)
+}
+
+func (s *testDBSuite) TestMultiRegionGetTableEndHandle(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop database if exists test_get_endhandle")
+	tk.MustExec("create database test_get_endhandle")
+	tk.MustExec("use test_get_endhandle")
+
+	tk.MustExec("create table t(a bigint PRIMARY KEY, b int)")
+	for i := 0; i < 1000; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values(%v, %v)", i, i))
+	}
+
+	// Get table ID for split.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblID := tbl.Meta().ID
+
+	d := s.dom.DDL()
+	testCtx := newTestMaxTableRowIDContext(c, d, tbl)
+
+	// Split the table.
+	s.cluster.SplitTable(s.mvccStore, tblID, 100)
+	maxID, emptyTable := s.getMaxTableRowID(testCtx)
+	c.Assert(emptyTable, IsFalse)
+	c.Assert(maxID, Equals, int64(999))
+
+	tk.MustExec("insert into t values(10000, 1000)")
+	maxID, emptyTable = s.getMaxTableRowID(testCtx)
+	c.Assert(emptyTable, IsFalse)
+	c.Assert(maxID, Equals, int64(10000))
+
+	tk.MustExec("insert into t values(-1, 1000)")
+	maxID, emptyTable = s.getMaxTableRowID(testCtx)
+	c.Assert(emptyTable, IsFalse)
+	c.Assert(maxID, Equals, int64(10000))
 }
 
 func (s *testDBSuite) TestUpdateHandleFailed(c *C) {

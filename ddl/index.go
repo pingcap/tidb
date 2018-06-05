@@ -661,6 +661,8 @@ func (d *ddl) splitTableRanges(t table.Table, reorgInfo *reorgInfo) ([]kv.KeyRan
 	endHandle := reorgInfo.EndHandle
 	startRecordKey := t.RecordKey(startHandle)
 	endRecordKey := t.RecordKey(endHandle).Next()
+
+	log.Infof("[ddl-reorg] split handle ranges [%v, %v] from PD", startHandle, endHandle)
 	kvRange := kv.KeyRange{StartKey: startRecordKey, EndKey: endRecordKey}
 	store, ok := d.store.(tikv.Storage)
 	if !ok {
