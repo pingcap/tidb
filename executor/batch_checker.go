@@ -47,48 +47,6 @@ type batchChecker struct {
 	dupOldRowValues map[string][]byte
 }
 
-// batchMarkDupRows marks rows with duplicate errors as nil.
-// All duplicate rows were marked and appended as duplicate warnings
-// to the statement context in batch.
-func (b *batchChecker) batchMarkDupRows(ctx sessionctx.Context, t table.Table, rows []types.DatumRow) ([]types.DatumRow, error) {
-	toBeCheckRows, values, err := b.batchGetInsertKeys(ctx, t, rows)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	// append warnings and get no duplicated error rows
-	for i, r := range toBeCheckRows {
-		if r.handleKey != nil {
-			if _, found := values[string(r.handleKey.newKeyValue.key)]; found {
-				rows[i] = nil
-				ctx.GetSessionVars().StmtCtx.AppendWarning(r.handleKey.dupErr)
-				continue
-			}
-		}
-		for _, uk := range r.uniqueKeys {
-			if _, found := values[string(uk.newKeyValue.key)]; found {
-				// If duplicate keys were found in BatchGet, mark row = nil.
-				rows[i] = nil
-				ctx.GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
-				break
-			}
-		}
-		// If row was checked with no duplicate keys,
-		// it should be add to values map for the further row check.
-		// There may be duplicate keys inside the insert statement.
-		if rows[i] != nil {
-			if r.handleKey != nil {
-				values[string(r.handleKey.newKeyValue.key)] = r.handleKey.newKeyValue.value
-			}
-			for _, uk := range r.uniqueKeys {
-				values[string(uk.newKeyValue.key)] = []byte{}
-			}
-		}
-	}
-	// this statement was already been checked
-	ctx.GetSessionVars().StmtCtx.BatchCheck = true
-	return rows, nil
-}
-
 // batchGetOldValues gets the values of storage in batch.
 func (b *batchChecker) batchGetOldValues(ctx sessionctx.Context, t table.Table, handles []int64) (map[string][]byte, error) {
 	batchKeys := make([]kv.Key, 0, len(handles))

@@ -490,3 +490,49 @@ func (e *InsertValues) handleLoadDataWarnings(err error, logInfo string) {
 	sc.AppendWarning(err)
 	log.Warn(logInfo)
 }
+
+// batchCheckAndInsert checks rows with duplicate errors.
+// All duplicate rows will be ignored and appended as duplicate warnings.
+func (e *InsertValues) batchCheckAndInsert(rows []types.DatumRow, f func(row types.DatumRow) (int64, error)) error {
+	// all the rows will be checked, so it is safe to set BatchCheck = true
+	e.ctx.GetSessionVars().StmtCtx.BatchCheck = true
+	var err error
+	e.toBeCheckRows, e.dupKeyValues, err = e.batchGetInsertKeys(e.ctx, e.Table, rows)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// append warnings and get no duplicated error rows
+	for i, r := range e.toBeCheckRows {
+		if r.handleKey != nil {
+			if _, found := e.dupKeyValues[string(r.handleKey.newKeyValue.key)]; found {
+				rows[i] = nil
+				e.ctx.GetSessionVars().StmtCtx.AppendWarning(r.handleKey.dupErr)
+				continue
+			}
+		}
+		for _, uk := range r.uniqueKeys {
+			if _, found := e.dupKeyValues[string(uk.newKeyValue.key)]; found {
+				// If duplicate keys were found in BatchGet, mark row = nil.
+				rows[i] = nil
+				e.ctx.GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
+				break
+			}
+		}
+		// If row was checked with no duplicate keys,
+		// it should be add to values map for the further row check.
+		// There may be duplicate keys inside the insert statement.
+		if rows[i] != nil {
+			_, err = f(rows[i])
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if r.handleKey != nil {
+				e.dupKeyValues[string(r.handleKey.newKeyValue.key)] = r.handleKey.newKeyValue.value
+			}
+			for _, uk := range r.uniqueKeys {
+				e.dupKeyValues[string(uk.newKeyValue.key)] = []byte{}
+			}
+		}
+	}
+	return nil
+}
