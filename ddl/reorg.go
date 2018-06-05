@@ -271,14 +271,14 @@ func (d *ddl) GetTableMaxRowID(startTS uint64, tblInfo *model.TableInfo) (maxRow
 
 	ctx := context.Background()
 	// build a desc scan of tblInfo, which limit is 1, we can use it to retrive the last handle of the table.
-	src, err := d.buildDescTableScan(ctx, startTS, tblInfo, columns, 1)
+	result, err := d.buildDescTableScan(ctx, startTS, tblInfo, columns, 1)
 	if err != nil {
 		return maxRowID, false, errors.Trace(err)
 	}
-	defer terror.Call(src.Close)
+	defer terror.Call(result.Close)
 
 	chk := chunk.NewChunkWithCapacity(getColumnsTypes(columns), 1)
-	err = src.Next(ctx, chk)
+	err = result.Next(ctx, chk)
 	if err != nil {
 		return maxRowID, false, errors.Trace(err)
 	}
