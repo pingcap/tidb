@@ -191,6 +191,9 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+	if err = checkOriginalTableNotExists(t, job, job.SchemaID, tblInfo.Name.O); err != nil {
+		return ver, errors.Trace(err)
+	}
 
 	var (
 		unique      bool
