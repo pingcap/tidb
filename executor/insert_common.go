@@ -493,7 +493,7 @@ func (e *InsertValues) handleLoadDataWarnings(err error, logInfo string) {
 
 // batchCheckAndInsert checks rows with duplicate errors.
 // All duplicate rows will be ignored and appended as duplicate warnings.
-func (e *InsertValues) batchCheckAndInsert(rows []types.DatumRow, f func(row types.DatumRow) (int64, error)) error {
+func (e *InsertValues) batchCheckAndInsert(rows []types.DatumRow, insertOneRow func(row types.DatumRow) (int64, error)) error {
 	// all the rows will be checked, so it is safe to set BatchCheck = true
 	e.ctx.GetSessionVars().StmtCtx.BatchCheck = true
 	var err error
@@ -522,7 +522,7 @@ func (e *InsertValues) batchCheckAndInsert(rows []types.DatumRow, f func(row typ
 		// it should be add to values map for the further row check.
 		// There may be duplicate keys inside the insert statement.
 		if rows[i] != nil {
-			_, err = f(rows[i])
+			_, err = insertOneRow(rows[i])
 			if err != nil {
 				return errors.Trace(err)
 			}
