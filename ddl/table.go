@@ -78,10 +78,6 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	tableID := job.TableID
 
 	// Check this table's database.
-	dbInfo, err := t.GetDatabase(schemaID)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
 	tblInfo, err := t.GetTable(schemaID, tableID)
 	if err != nil {
 		if meta.ErrDBNotExists.Equal(err) {
@@ -102,6 +98,10 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		))
 	}
 
+	dbInfo, err := t.GetDatabase(schemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
 	if err = checkOriginalTableNotExists(t, job, job.SchemaID, tblInfo.Name.O); err != nil {
 		return ver, infoschema.ErrTableDropExists.GenByArgs(fmt.Sprintf("%s.%s", dbInfo.Name.O, job.TableName))
 	}
@@ -388,31 +388,18 @@ func checkTableNotExists(t *meta.Meta, job *model.Job, schemaID int64, tableName
 	return nil
 }
 
-// Check if the table name is the original table name.
+// checkOriginalTableNotExists check if the table name is the original table name.
 // Mainly used in tableid has not changed, tablename has changed.
 func checkOriginalTableNotExists(t *meta.Meta, job *model.Job, schemaID int64, tableName string) error {
-	// Check this table's database.
-	tables, err := t.ListTables(schemaID)
-	if err != nil {
-		if meta.ErrDBNotExists.Equal(err) {
-			job.State = model.JobStateCancelled
-			return infoschema.ErrDatabaseNotExists.GenByArgs("")
-		}
-		return errors.Trace(err)
-	}
 	dbInfo, err := t.GetDatabase(job.SchemaID)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// Check if the table name is the original table name.
-	for _, tbl := range tables {
-		if tbl.Name.L == tableName {
-			if len(job.TableName) != 0 && len(tableName) != 0 {
-				if job.TableName != tableName {
-					job.State = model.JobStateCancelled
-					return infoschema.ErrTableNotExists.GenByArgs(dbInfo.Name.O, job.TableName)
-				}
-			}
+	if len(job.TableName) != 0 && len(tableName) != 0 {
+		if job.TableName != tableName {
+			job.State = model.JobStateCancelled
+			return infoschema.ErrTableNotExists.GenByArgs(dbInfo.Name.O, job.TableName)
 		}
 	}
 	return nil

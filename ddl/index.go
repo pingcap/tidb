@@ -332,7 +332,6 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-
 	var indexName model.CIStr
 	if err = job.DecodeArgs(&indexName); err != nil {
 		job.State = model.JobStateCancelled
