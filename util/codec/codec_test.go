@@ -743,10 +743,22 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 
 	d := types.NewDecFromStringForTest("-123.123456789")
 	_, err := EncodeDecimal(nil, d, 20, 5)
-
 	c.Assert(terror.ErrorEqual(err, types.ErrTruncated), IsTrue)
 	_, err = EncodeDecimal(nil, d, 12, 10)
 	c.Assert(terror.ErrorEqual(err, types.ErrOverflow), IsTrue)
+
+	sc.IgnoreTruncate = true
+	decimalDatum := types.NewDatum(d)
+	decimalDatum.SetLength(20)
+	decimalDatum.SetFrac(5)
+	_, err = EncodeValue(sc, nil, decimalDatum)
+	c.Assert(err, IsNil)
+
+	sc.OverflowAsWarning = true
+	decimalDatum.SetLength(12)
+	decimalDatum.SetFrac(10)
+	_, err = EncodeValue(sc, nil, decimalDatum)
+	c.Assert(err, IsNil)
 }
 
 func (s *testCodecSuite) TestJSON(c *C) {
