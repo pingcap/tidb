@@ -51,8 +51,8 @@ func foldConstant(expr Expression) (Expression, bool) {
 		case ast.Ifnull:
 			foldedArg0, _ := foldConstant(args[0])
 			if constArg, isConst := foldedArg0.(*Constant); isConst {
-				valueNotNull, err := constArg.Value.ToBool(nil)
-				if err != nil && valueNotNull == 0 {
+				_, isNull0, err := constArg.EvalInt(x.Function.getCtx(), nil)
+				if err == nil && isNull0 == true {
 					return foldConstant(args[1])
 				}
 			}
