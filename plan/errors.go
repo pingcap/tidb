@@ -46,6 +46,7 @@ const (
 	codeNonUpdatableTable       = mysql.ErrNonUpdatableTable
 	codeInternal                = mysql.ErrInternal
 	codeMixOfGroupFuncAndFields = mysql.ErrMixOfGroupFuncAndFields
+	codeNonUniqTable            = mysql.ErrNonuniqTable
 )
 
 // error definitions.
@@ -77,6 +78,7 @@ var (
 	ErrNonUpdatableTable       = terror.ClassOptimizer.New(codeNonUpdatableTable, mysql.MySQLErrName[mysql.ErrNonUpdatableTable])
 	ErrInternal                = terror.ClassOptimizer.New(codeInternal, mysql.MySQLErrName[mysql.ErrInternal])
 	ErrMixOfGroupFuncAndFields = terror.ClassOptimizer.New(codeMixOfGroupFuncAndFields, "In aggregated query without GROUP BY, expression #%d of SELECT list contains nonaggregated column '%s'; this is incompatible with sql_mode=only_full_group_by")
+	ErrNonUniqTable            = terror.ClassOptimizer.New(codeNonUniqTable, mysql.MySQLErrName[mysql.ErrNonuniqTable])
 )
 
 func init() {
@@ -101,6 +103,7 @@ func init() {
 		codeNonUpdatableTable:       mysql.ErrUnknownTable,
 		codeInternal:                mysql.ErrInternal,
 		codeMixOfGroupFuncAndFields: mysql.ErrMixOfGroupFuncAndFields,
+		codeNonUniqTable:            mysql.ErrNonuniqTable,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassOptimizer] = mysqlErrCodeMap
 }
