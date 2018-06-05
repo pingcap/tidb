@@ -416,20 +416,14 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 	// Check if this aggregation can push down.
 	sc := p.ctx.GetSessionVars().StmtCtx
 	client := p.ctx.GetClient()
-	//for _, aggFunc := range p.AggFuncs {
-	//	aggFunc.Mode = aggregation.Partial1Mode
-	//}
-	//return nil, p.self
 	for _, aggFunc := range p.AggFuncs {
 		pb := aggregation.AggFuncToPBExpr(sc, client, aggFunc)
 		if pb == nil {
-			aggregation.SetAggFuncDescMode(p.AggFuncs, aggregation.Partial1Mode)
 			return nil, p.self
 		}
 	}
 	_, _, remained := expression.ExpressionsToPB(sc, p.GroupByItems, client)
 	if len(remained) > 0 {
-		aggregation.SetAggFuncDescMode(p.AggFuncs, aggregation.Partial1Mode)
 		return nil, p.self
 	}
 
@@ -467,7 +461,7 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 			partialCursor++
 		}
 		finalAggFunc.Args = args
-		finalAggFunc.Mode = aggregation.Partial2Mode
+		finalAggFunc.Mode = aggregation.FinalMode
 		finalAggFunc.RetTp = aggFun.RetTp
 		finalAggFuncs[i] = finalAggFunc
 	}

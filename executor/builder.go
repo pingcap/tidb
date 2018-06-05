@@ -859,11 +859,20 @@ func (b *executorBuilder) buildHashAgg(v *plan.PhysicalHashAgg) Executor {
 	} else {
 		e.defaultVal = chunk.NewChunkWithCapacity(e.retTypes(), 1)
 	}
-	for i, aggDesc := range v.AggFuncs {
-		e.AggFuncs = append(e.AggFuncs, aggDesc.GetAggFunc())
+	for _, aggDesc := range v.AggFuncs {
 		if aggDesc.HasDistinct {
 			e.doesUnparallelExec = true
 		}
+	}
+	for i, aggDesc := range v.AggFuncs {
+		if !e.doesUnparallelExec {
+			if aggDesc.Mode == aggregation.CompleteMode {
+				aggDesc.Mode = aggregation.Partial1Mode
+			} else {
+				aggDesc.Mode = aggregation.Partial2Mode
+			}
+		}
+		e.AggFuncs = append(e.AggFuncs, aggDesc.GetAggFunc())
 		if e.defaultVal != nil {
 			value, existsDefaultValue := aggDesc.CalculateDefaultValue(e.ctx, e.children[0].Schema())
 			if existsDefaultValue {
@@ -871,6 +880,7 @@ func (b *executorBuilder) buildHashAgg(v *plan.PhysicalHashAgg) Executor {
 			}
 		}
 	}
+
 	metrics.ExecutorCounter.WithLabelValues("HashAggExec").Inc()
 	return e
 }
