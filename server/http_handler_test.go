@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"net/url"
 	"sort"
@@ -609,4 +610,20 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	c.Assert(atomic.LoadUint32(&variable.ProcessGeneralLog), Equals, uint32(0))
 	c.Assert(log.GetLevel(), Equals, log.InfoLevel)
 	c.Assert(config.GetGlobalConfig().Log.Level, Equals, "info")
+}
+
+func (ts *HTTPHandlerTestSuite) TestPprof(c *C) {
+	ts.startServer(c)
+	defer ts.stopServer(c)
+	retryTime := 100
+	for retry := 0; retry < retryTime; retry++ {
+		resp, err := http.Get("http://127.0.0.1:10090/debug/pprof/heap")
+		if err == nil {
+			ioutil.ReadAll(resp.Body)
+			resp.Body.Close()
+			return
+		}
+		time.Sleep(time.Millisecond * 10)
+	}
+	log.Fatalf("Failed to get profile for %d retries in every 10 ms", retryTime)
 }

@@ -410,6 +410,7 @@ func (e *CheckTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 			txn := e.ctx.Txn()
 			err = admin.CompareIndexData(e.ctx, txn, tb, idx)
 			if err != nil {
+				log.Warnf("%v error:%v", t.Name, errors.ErrorStack(err))
 				return errors.Errorf("%v err:%v", t.Name, err)
 			}
 		}
