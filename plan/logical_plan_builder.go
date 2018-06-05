@@ -668,100 +668,76 @@ func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
 }
 
 func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
+	unionDistinctStmts, unionAllStmts := classifyByDistinct(union.SelectList.Selects)
 
-	distinctPivot := findDistinctPivot(union)
+	unionDistinctPlan := b.buildSubUnion(unionDistinctStmts, true, nil)
+	if b.err != nil {
+		return nil
+	}
+	unionAllPlan := b.buildSubUnion(unionAllStmts, false, unionDistinctPlan)
+	if b.err != nil {
+		return nil
+	}
 
-	unionDistinct := b.buildUnionDistinct(union, distinctPivot)
-
-	unionAll := b.buildUnionAll(unionDistinct, union, distinctPivot)
-
-	var p LogicalPlan
-	if unionAll != nil {
-		p = *unionAll
-	} else if unionDistinct != nil {
-		p = *unionDistinct
+	var unionPlan LogicalPlan
+	if unionAllPlan != nil {
+		unionPlan = unionAllPlan
+	} else if unionDistinctPlan != nil {
+		unionPlan = unionDistinctPlan
 	} else {
 		return nil
 	}
 
 	if union.OrderBy != nil {
-		p = b.buildSort(p, union.OrderBy.Items, nil)
+		unionPlan = b.buildSort(unionPlan, union.OrderBy.Items, nil)
 	}
-
 	if union.Limit != nil {
-		p = b.buildLimit(p, union.Limit)
+		unionPlan = b.buildLimit(unionPlan, union.Limit)
 	}
-
-	return p
+	return unionPlan
 }
 
-func (b *planBuilder) buildUnionDistinct(unionStmt *ast.UnionStmt, distinctPivot int) *LogicalPlan {
-	if distinctPivot == 0 {
+// classifyByDistinct to divide selects into union-all and union-distinct slices.
+// https://dev.mysql.com/doc/refman/5.7/en/union.html
+func classifyByDistinct(selects []*ast.SelectStmt) (unionDistinct []*ast.SelectStmt, unionAll []*ast.SelectStmt) {
+	firstUnionAllIdx := len(selects)
+	for ; firstUnionAllIdx > 0; firstUnionAllIdx-- {
+		if selects[firstUnionAllIdx-1].IsAfterUnionDistinct {
+			break
+		}
+	}
+	return selects[:firstUnionAllIdx], selects[firstUnionAllIdx:]
+}
+
+func (b *planBuilder) buildSubUnion(selects []*ast.SelectStmt, needDistinct bool, subPlan LogicalPlan) LogicalPlan {
+	if selects == nil || len(selects) == 0 {
 		return nil
 	}
 	u := LogicalUnionAll{}.init(b.ctx)
-	u.children = make([]LogicalPlan, distinctPivot)
-	for i := 0; i < distinctPivot; i++ {
-		u.children[i] = b.buildSelect(unionStmt.SelectList.Selects[i])
-		if b.err != nil {
-			return nil
-		}
-		if u.children[i].Schema().Len() != u.children[0].Schema().Len() {
-			b.err = errors.New("The used SELECT statements have a different number of columns")
-			return nil
-		}
+	childLen := len(selects)
+	if subPlan != nil {
+		childLen = childLen + 1
 	}
-	b.buildProjection4Union(u)
-	var p LogicalPlan = u
-	p = b.buildDistinct(u, u.Schema().Len())
-	return &p
-}
-
-func (b *planBuilder) buildUnionAll(unionDistinct *LogicalPlan, unionStmt *ast.UnionStmt, distinctPivot int) *LogicalPlan {
-	if distinctPivot == len(unionStmt.SelectList.Selects) {
-		return nil
-	}
-	u := LogicalUnionAll{}.init(b.ctx)
-	unionAllCount := len(unionStmt.SelectList.Selects) - distinctPivot
-	if unionDistinct != nil {
-		unionAllCount = unionAllCount + 1
-	}
-	u.children = make([]LogicalPlan, unionAllCount)
+	u.children = make([]LogicalPlan, childLen)
 	i := 0
-	j := distinctPivot
-	for j < len(unionStmt.SelectList.Selects) {
-		u.children[i] = b.buildSelect(unionStmt.SelectList.Selects[j])
+	for ; i < len(selects); i++ {
+		u.children[i] = b.buildSelect(selects[i])
 		if b.err != nil {
 			return nil
 		}
 		if u.children[i].Schema().Len() != u.children[0].Schema().Len() {
-			b.err = errors.New("The used SELECT statements have a different number of columns")
+			b.err = ErrWrongNumberOfColumnsInSelect.GenByArgs()
 			return nil
 		}
-		i++
-		j++
 	}
-	if unionDistinct != nil {
-		u.children[i] = *unionDistinct
+	if subPlan != nil {
+		u.children[i] = subPlan
 	}
 	b.buildProjection4Union(u)
-	var p LogicalPlan = u
-	return &p
-}
-
-func findDistinctPivot(union *ast.UnionStmt) int {
-	distinctPivot := len(union.SelectList.Selects)
-	if union.Distinct {
-		for distinctPivot > 0 { // 0 must be false
-			if union.SelectList.Selects[distinctPivot-1].UnionDistinct {
-				break
-			}
-			distinctPivot--
-		}
-	} else {
-		distinctPivot = 0
+	if needDistinct {
+		return b.buildDistinct(u, u.Schema().Len())
 	}
-	return distinctPivot
+	return u
 }
 
 // ByItems wraps a "by" item.

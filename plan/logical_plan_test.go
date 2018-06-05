@@ -1435,22 +1435,32 @@ func (s *testPlanSuite) TestUnion(c *C) {
 	tests := []struct {
 		sql  string
 		best string
+		err  bool
 	}{
 		{
 			sql:  "select a from t union select a from t",
 			best: "UnionAll{DataScan(t)->Projection->DataScan(t)->Projection}->Aggr(firstrow(t.a))",
+			err:  false,
 		},
 		{
 			sql:  "select a from t union all select a from t",
 			best: "UnionAll{DataScan(t)->Projection->DataScan(t)->Projection}",
+			err:  false,
 		},
 		{
 			sql:  "select a from t union select a from t union all select a from t",
 			best: "UnionAll{DataScan(t)->Projection->UnionAll{DataScan(t)->Projection->DataScan(t)->Projection}->Aggr(firstrow(t.a))->Projection}",
+			err:  false,
 		},
 		{
 			sql:  "select a from t union select a from t union all select a from t union select a from t union select a from t",
 			best: "UnionAll{DataScan(t)->Projection->DataScan(t)->Projection->DataScan(t)->Projection->DataScan(t)->Projection->DataScan(t)->Projection}->Aggr(firstrow(t.a))",
+			err:  false,
+		},
+		{
+			sql:  "select a from t union select a, b from t",
+			best: "",
+			err:  true,
 		},
 	}
 	for i, tt := range tests {
@@ -1464,7 +1474,13 @@ func (s *testPlanSuite) TestUnion(c *C) {
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 		}
 		c.Assert(builder.err, IsNil)
-		p := builder.build(stmt).(LogicalPlan)
+		plan := builder.build(stmt)
+		if tt.err {
+			c.Assert(builder.err, NotNil)
+			return
+		}
+		c.Assert(builder.err, IsNil)
+		p := plan.(LogicalPlan)
 		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan))
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, tt.best, comment)
