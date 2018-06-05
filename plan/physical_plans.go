@@ -235,15 +235,14 @@ type PhysicalMergeJoin struct {
 
 	JoinType JoinType
 
-	EqualConditions []*expression.ScalarFunction
 	LeftConditions  []expression.Expression
 	RightConditions []expression.Expression
 	OtherConditions []expression.Expression
 
 	DefaultValues []types.Datum
 
-	leftKeys  []*expression.Column
-	rightKeys []*expression.Column
+	LeftKeys  []*expression.Column
+	RightKeys []*expression.Column
 }
 
 // PhysicalLock is the physical operator of lock, which is used for `select ... for update` clause.
