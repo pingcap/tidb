@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -44,11 +43,10 @@ type InsertValues struct {
 
 	SelectExec Executor
 
-	Table     table.Table
-	Columns   []*ast.ColumnName
-	Lists     [][]expression.Expression
-	Setlist   []*expression.Assignment
-	IsPrepare bool
+	Table   table.Table
+	Columns []*ast.ColumnName
+	Lists   [][]expression.Expression
+	SetList []*expression.Assignment
 
 	GenColumns []*ast.ColumnName
 	GenExprs   []expression.Expression
@@ -56,6 +54,19 @@ type InsertValues struct {
 	// colDefaultVals is used to store casted default value.
 	// Because not every insert statement needs colDefaultVals, so we will init the buffer lazily.
 	colDefaultVals []defaultVal
+}
+
+type defaultVal struct {
+	val types.Datum
+	// We evaluate the default value lazily. The valid indicates whether the val is evaluated.
+	valid bool
+}
+
+type keyWithDupError struct {
+	isRecordKey bool
+	key         kv.Key
+	dupErr      error
+	newRowValue []byte
 }
 
 // getColumns gets the explicitly specified columns of an insert statement. There are three cases:
@@ -68,10 +79,10 @@ func (e *InsertValues) getColumns(tableCols []*table.Column) ([]*table.Column, e
 	var cols []*table.Column
 	var err error
 
-	if len(e.Setlist) > 0 {
+	if len(e.SetList) > 0 {
 		// Process `set` type column.
-		columns := make([]string, 0, len(e.Setlist))
-		for _, v := range e.Setlist {
+		columns := make([]string, 0, len(e.SetList))
+		for _, v := range e.SetList {
 			columns = append(columns, v.Col.ColName.O)
 		}
 		for _, v := range e.GenColumns {
@@ -133,12 +144,12 @@ func (e *InsertValues) lazilyInitColDefaultValBuf() (ok bool) {
 }
 
 func (e *InsertValues) fillValueList() error {
-	if len(e.Setlist) > 0 {
+	if len(e.SetList) > 0 {
 		if len(e.Lists) > 0 {
 			return errors.Errorf("INSERT INTO %s: set type should not use values", e.Table)
 		}
-		l := make([]expression.Expression, 0, len(e.Setlist))
-		for _, v := range e.Setlist {
+		l := make([]expression.Expression, 0, len(e.SetList))
+		for _, v := range e.SetList {
 			l = append(l, v.Expr)
 		}
 		e.Lists = append(e.Lists, l)
@@ -164,7 +175,7 @@ func (e *InsertValues) checkValueCount(insertValueCount, valueCount, genColsCoun
 		if len(e.Columns) != 0 {
 			explicitSetLen = len(e.Columns)
 		} else {
-			explicitSetLen = len(e.Setlist)
+			explicitSetLen = len(e.SetList)
 		}
 		if explicitSetLen > 0 && valueCount+genColsCount != len(cols) {
 			return ErrWrongValueCountOnRow.GenByArgs(num + 1)
@@ -175,13 +186,13 @@ func (e *InsertValues) checkValueCount(insertValueCount, valueCount, genColsCoun
 	return nil
 }
 
-func (e *InsertValues) getRows(cols []*table.Column) (rows [][]types.Datum, err error) {
+func (e *InsertValues) getRows(cols []*table.Column) (rows []types.DatumRow, err error) {
 	// process `insert|replace ... set x=y...`
 	if err = e.fillValueList(); err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	rows = make([][]types.Datum, len(e.Lists))
+	rows = make([]types.DatumRow, len(e.Lists))
 	length := len(e.Lists[0])
 	for i, list := range e.Lists {
 		if err = e.checkValueCount(length, len(list), len(e.GenColumns), i, cols); err != nil {
@@ -213,7 +224,7 @@ func (e *InsertValues) handleErr(col *table.Column, rowIdx int, err error) error
 
 // getRow eval the insert statement. Because the value of column may calculated based on other column,
 // it use fillDefaultValues to init the empty row before eval expressions when needFillDefaultValues is true.
-func (e *InsertValues) getRow(cols []*table.Column, list []expression.Expression, rowIdx int) ([]types.Datum, error) {
+func (e *InsertValues) getRow(cols []*table.Column, list []expression.Expression, rowIdx int) (types.DatumRow, error) {
 	rowLen := len(e.Table.Cols())
 	if e.hasExtraHandle {
 		rowLen++
@@ -250,7 +261,7 @@ func (e *InsertValues) getRow(cols []*table.Column, list []expression.Expression
 //     3. for not null column, use zero value even in strict mode.
 //     4. for auto_increment column, use zero value.
 //     5. for generated column, use NULL.
-func (e *InsertValues) fillDefaultValues(row []types.Datum, hasValue []bool) error {
+func (e *InsertValues) fillDefaultValues(row types.DatumRow, hasValue []bool) error {
 	for i, c := range e.Table.Cols() {
 		var err error
 		if c.IsGenerated() {
@@ -272,13 +283,13 @@ func (e *InsertValues) fillDefaultValues(row []types.Datum, hasValue []bool) err
 	return nil
 }
 
-func (e *InsertValues) getRowsSelectChunk(ctx context.Context, cols []*table.Column) ([][]types.Datum, error) {
+func (e *InsertValues) getRowsSelectChunk(ctx context.Context, cols []*table.Column) ([]types.DatumRow, error) {
 	// process `insert|replace into ... select ... from ...`
 	selectExec := e.children[0]
 	if selectExec.Schema().Len() != len(cols) {
 		return nil, ErrWrongValueCountOnRow.GenByArgs(1)
 	}
-	var rows [][]types.Datum
+	var rows []types.DatumRow
 	fields := selectExec.retTypes()
 	for {
 		chk := selectExec.newChunk()
@@ -305,8 +316,8 @@ func (e *InsertValues) getRowsSelectChunk(ctx context.Context, cols []*table.Col
 	return rows, nil
 }
 
-func (e *InsertValues) fillRowData(cols []*table.Column, vals []types.Datum) ([]types.Datum, error) {
-	row := make([]types.Datum, len(e.Table.Cols()))
+func (e *InsertValues) fillRowData(cols []*table.Column, vals types.DatumRow) (types.DatumRow, error) {
+	row := make(types.DatumRow, len(e.Table.Cols()))
 	hasValue := make([]bool, len(e.Table.Cols()))
 	for i, v := range vals {
 		casted, err := table.CastValue(e.ctx, v, cols[i].ToInfo())
@@ -322,7 +333,7 @@ func (e *InsertValues) fillRowData(cols []*table.Column, vals []types.Datum) ([]
 	return e.fillGenColData(cols, len(vals), hasValue, row)
 }
 
-func (e *InsertValues) fillGenColData(cols []*table.Column, valLen int, hasValue []bool, row types.DatumRow) ([]types.Datum, error) {
+func (e *InsertValues) fillGenColData(cols []*table.Column, valLen int, hasValue []bool, row types.DatumRow) (types.DatumRow, error) {
 	err := e.initDefaultValues(row, hasValue)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -379,7 +390,7 @@ func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (d types.D
 
 // initDefaultValues fills generated columns, auto_increment column and empty column.
 // For NOT NULL column, it will return error or use zero value based on sql_mode.
-func (e *InsertValues) initDefaultValues(row []types.Datum, hasValue []bool) error {
+func (e *InsertValues) initDefaultValues(row types.DatumRow, hasValue []bool) error {
 	strictSQL := e.ctx.GetSessionVars().StrictSQLMode
 	for i, c := range e.Table.Cols() {
 		var needDefaultValue bool
@@ -415,7 +426,7 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, hasValue []bool) err
 	return nil
 }
 
-func (e *InsertValues) adjustAutoIncrementDatum(row []types.Datum, i int, c *table.Column) error {
+func (e *InsertValues) adjustAutoIncrementDatum(row types.DatumRow, i int, c *table.Column) error {
 	retryInfo := e.ctx.GetSessionVars().RetryInfo
 	if retryInfo.Retrying {
 		id, err := retryInfo.GetCurrAutoIncrementID()
@@ -489,17 +500,11 @@ func (e *InsertValues) handleLoadDataWarnings(err error, logInfo string) {
 	log.Warn(logInfo)
 }
 
-type defaultVal struct {
-	val types.Datum
-	// We evaluate the default value lazily. The valid indicates whether the val is evaluated.
-	valid bool
-}
-
 // batchMarkDupRows marks rows with duplicate errors as nil.
 // All duplicate rows were marked and appended as duplicate warnings
 // to the statement context in batch.
-func batchMarkDupRows(ctx sessionctx.Context, t table.Table, rows [][]types.Datum) ([][]types.Datum, error) {
-	rowWithKeys, values, err := batchGetInsertKeys(ctx, t, rows)
+func (e *InsertValues) batchMarkDupRows(rows []types.DatumRow) ([]types.DatumRow, error) {
+	rowWithKeys, values, err := e.batchGetInsertKeys(rows)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -509,7 +514,7 @@ func batchMarkDupRows(ctx sessionctx.Context, t table.Table, rows [][]types.Datu
 			if _, found := values[string(k.key)]; found {
 				// If duplicate keys were found in BatchGet, mark row = nil.
 				rows[i] = nil
-				ctx.GetSessionVars().StmtCtx.AppendWarning(k.dupErr)
+				e.ctx.GetSessionVars().StmtCtx.AppendWarning(k.dupErr)
 				break
 			}
 		}
@@ -523,24 +528,17 @@ func batchMarkDupRows(ctx sessionctx.Context, t table.Table, rows [][]types.Datu
 		}
 	}
 	// this statement was already been checked
-	ctx.GetSessionVars().StmtCtx.BatchCheck = true
+	e.ctx.GetSessionVars().StmtCtx.BatchCheck = true
 	return rows, nil
 }
 
-type keyWithDupError struct {
-	isRecordKey bool
-	key         kv.Key
-	dupErr      error
-	newRowValue []byte
-}
-
 // batchGetOldValues gets the values of storage in batch.
-func batchGetOldValues(ctx sessionctx.Context, t table.Table, handles []int64) (map[string][]byte, error) {
+func (e *InsertValues) batchGetOldValues(handles []int64) (map[string][]byte, error) {
 	batchKeys := make([]kv.Key, 0, len(handles))
 	for _, handle := range handles {
-		batchKeys = append(batchKeys, t.RecordKey(handle))
+		batchKeys = append(batchKeys, e.Table.RecordKey(handle))
 	}
-	values, err := kv.BatchGetValues(ctx.Txn(), batchKeys)
+	values, err := kv.BatchGetValues(e.ctx.Txn(), batchKeys)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -548,16 +546,16 @@ func batchGetOldValues(ctx sessionctx.Context, t table.Table, handles []int64) (
 }
 
 // encodeNewRow encodes a new row to value.
-func encodeNewRow(ctx sessionctx.Context, t table.Table, row []types.Datum) ([]byte, error) {
+func (e *InsertValues) encodeNewRow(row types.DatumRow) ([]byte, error) {
 	colIDs := make([]int64, 0, len(row))
-	skimmedRow := make([]types.Datum, 0, len(row))
-	for _, col := range t.Cols() {
-		if !tables.CanSkip(t.Meta(), col, row[col.Offset]) {
+	skimmedRow := make(types.DatumRow, 0, len(row))
+	for _, col := range e.Table.Cols() {
+		if !tables.CanSkip(e.Table.Meta(), col, row[col.Offset]) {
 			colIDs = append(colIDs, col.ID)
 			skimmedRow = append(skimmedRow, row[col.Offset])
 		}
 	}
-	newRowValue, err := tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, skimmedRow, colIDs, nil, nil)
+	newRowValue, err := tablecodec.EncodeRow(e.ctx.GetSessionVars().StmtCtx, skimmedRow, colIDs, nil, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -566,10 +564,10 @@ func encodeNewRow(ctx sessionctx.Context, t table.Table, row []types.Datum) ([]b
 
 // getKeysNeedCheck gets keys converted from to-be-insert rows to record keys and unique index keys,
 // which need to be checked whether they are duplicate keys.
-func getKeysNeedCheck(ctx sessionctx.Context, t table.Table, rows [][]types.Datum) ([][]keyWithDupError,
+func (e *InsertValues) getKeysNeedCheck(rows []types.DatumRow) ([][]keyWithDupError,
 	error) {
 	nUnique := 0
-	for _, v := range t.WritableIndices() {
+	for _, v := range e.Table.WritableIndices() {
 		if v.Meta().Unique {
 			nUnique++
 		}
@@ -578,9 +576,9 @@ func getKeysNeedCheck(ctx sessionctx.Context, t table.Table, rows [][]types.Datu
 
 	var handleCol *table.Column
 	// Get handle column if PK is handle.
-	if t.Meta().PKIsHandle {
-		for _, col := range t.Cols() {
-			if col.IsPKHandleColumn(t.Meta()) {
+	if e.Table.Meta().PKIsHandle {
+		for _, col := range e.Table.Cols() {
+			if col.IsPKHandleColumn(e.Table.Meta()) {
 				handleCol = col
 				break
 			}
@@ -589,23 +587,23 @@ func getKeysNeedCheck(ctx sessionctx.Context, t table.Table, rows [][]types.Datu
 
 	for _, row := range rows {
 		keysWithErr := make([]keyWithDupError, 0, nUnique+1)
-		newRowValue, err := encodeNewRow(ctx, t, row)
+		newRowValue, err := e.encodeNewRow(row)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		// Append record keys and errors.
-		if t.Meta().PKIsHandle {
+		if e.Table.Meta().PKIsHandle {
 			handle := row[handleCol.Offset].GetInt64()
 			keysWithErr = append(keysWithErr, keyWithDupError{
 				true,
-				t.RecordKey(handle),
+				e.Table.RecordKey(handle),
 				kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key 'PRIMARY'", handle),
 				newRowValue,
 			})
 		}
 
 		// append unique keys and errors
-		for _, v := range t.WritableIndices() {
+		for _, v := range e.Table.WritableIndices() {
 			if !v.Meta().Unique {
 				continue
 			}
@@ -615,7 +613,7 @@ func getKeysNeedCheck(ctx sessionctx.Context, t table.Table, rows [][]types.Datu
 			}
 			// Pass handle = 0 to GenIndexKey,
 			// due to we only care about distinct key.
-			key, distinct, err1 := v.GenIndexKey(ctx.GetSessionVars().StmtCtx,
+			key, distinct, err1 := v.GenIndexKey(e.ctx.GetSessionVars().StmtCtx,
 				colVals, 0, nil)
 			if err1 != nil {
 				return nil, errors.Trace(err1)
@@ -642,9 +640,9 @@ func getKeysNeedCheck(ctx sessionctx.Context, t table.Table, rows [][]types.Datu
 }
 
 // batchGetInsertKeys uses batch-get to fetch all key-value pairs to be checked for ignore or duplicate key update.
-func batchGetInsertKeys(ctx sessionctx.Context, t table.Table, newRows [][]types.Datum) ([][]keyWithDupError, map[string][]byte, error) {
+func (e *InsertValues) batchGetInsertKeys(newRows []types.DatumRow) ([][]keyWithDupError, map[string][]byte, error) {
 	// Get keys need to be checked.
-	keysInRows, err := getKeysNeedCheck(ctx, t, newRows)
+	keysInRows, err := e.getKeysNeedCheck(newRows)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -660,7 +658,7 @@ func batchGetInsertKeys(ctx sessionctx.Context, t table.Table, newRows [][]types
 			batchKeys = append(batchKeys, k.key)
 		}
 	}
-	values, err := kv.BatchGetValues(ctx.Txn(), batchKeys)
+	values, err := kv.BatchGetValues(e.ctx.Txn(), batchKeys)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}

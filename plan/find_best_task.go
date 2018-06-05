@@ -92,14 +92,22 @@ func (p *baseLogicalPlan) findBestTask(prop *requiredProp) (bestTask task, err e
 	bestTask = invalidTask
 	childTasks := make([]task, 0, len(p.children))
 	for _, pp := range p.self.exhaustPhysicalPlans(prop) {
-		// find best child tasks firstly.
+		// find the best child tasks firstly.
 		childTasks = childTasks[:0]
 		for i, child := range p.children {
 			childTask, err := child.findBestTask(pp.getChildReqProps(i))
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+			if childTask != nil && childTask.invalid() {
+				break
+			}
 			childTasks = append(childTasks, childTask)
+		}
+
+		// This check makes sure that there is no invalid child task.
+		if len(childTasks) != len(p.children) {
+			continue
 		}
 
 		// combine best child tasks with parent physical plan.
@@ -344,8 +352,8 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, path *accessPath) (
 	// Only use expectedCnt when it's smaller than the count we calculated.
 	// e.g. IndexScan(count1)->After Filter(count2). The `ds.statsAfterSelect.count` is count2. count1 is the one we need to calculate
 	// If expectedCnt and count2 are both zero and we go into the below `if` block, the count1 will be set to zero though it's shouldn't be.
-	if matchProperty && prop.expectedCnt < path.countAfterIndex {
-		selectivity := path.countAfterIndex / path.countAfterAccess
+	if (matchProperty || prop.isEmpty()) && prop.expectedCnt < ds.statsAfterSelect.count {
+		selectivity := ds.statsAfterSelect.count / path.countAfterAccess
 		rowCount = math.Min(prop.expectedCnt/selectivity, rowCount)
 	}
 	is.stats = ds.stats.scaleByExpectCnt(rowCount)
@@ -405,9 +413,13 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 	indexConds, tableConds := path.indexFilters, path.tableFilters
 	if indexConds != nil {
 		copTask.cst += copTask.count() * cpuFactor
-		stats := &statsInfo{count: path.countAfterIndex}
-		indexSel := PhysicalSelection{Conditions: indexConds}.init(is.ctx,
-			stats.scaleByExpectCnt(expectedCnt))
+		count := path.countAfterAccess
+		if count >= 1.0 {
+			selectivity := path.countAfterIndex / path.countAfterAccess
+			count = is.stats.count * selectivity
+		}
+		stats := &statsInfo{count: count}
+		indexSel := PhysicalSelection{Conditions: indexConds}.init(is.ctx, stats)
 		indexSel.SetChildren(is)
 		copTask.indexPlan = indexSel
 	}
@@ -534,7 +546,7 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp, path *accessPath) (
 	// Only use expectedCnt when it's smaller than the count we calculated.
 	// e.g. IndexScan(count1)->After Filter(count2). The `ds.statsAfterSelect.count` is count2. count1 is the one we need to calculate
 	// If expectedCnt and count2 are both zero and we go into the below `if` block, the count1 will be set to zero though it's shouldn't be.
-	if matchProperty && prop.expectedCnt < ds.statsAfterSelect.count {
+	if (matchProperty || prop.isEmpty()) && prop.expectedCnt < ds.statsAfterSelect.count {
 		selectivity := ds.statsAfterSelect.count / rowCount
 		rowCount = math.Min(prop.expectedCnt/selectivity, rowCount)
 	}

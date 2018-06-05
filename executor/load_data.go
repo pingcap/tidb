@@ -28,10 +28,67 @@ import (
 	"golang.org/x/net/context"
 )
 
+// LoadDataExec represents a load data executor.
+type LoadDataExec struct {
+	baseExecutor
+
+	IsLocal      bool
+	loadDataInfo *LoadDataInfo
+}
+
+// NewLoadDataInfo returns a LoadDataInfo structure, and it's only used for tests now.
+func NewLoadDataInfo(ctx sessionctx.Context, row types.DatumRow, tbl table.Table, cols []*table.Column) *LoadDataInfo {
+	insertVal := &InsertValues{baseExecutor: newBaseExecutor(ctx, nil, "InsertValues"), Table: tbl}
+	return &LoadDataInfo{
+		row:          row,
+		InsertValues: insertVal,
+		Table:        tbl,
+		Ctx:          ctx,
+		columns:      cols,
+	}
+}
+
+// Next implements the Executor Next interface.
+func (e *LoadDataExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	// TODO: support load data without local field.
+	if !e.IsLocal {
+		return errors.New("Load Data: don't support load data without local field")
+	}
+	// TODO: support lines terminated is "".
+	if len(e.loadDataInfo.LinesInfo.Terminated) == 0 {
+		return errors.New("Load Data: don't support load data terminated is nil")
+	}
+
+	sctx := e.loadDataInfo.ctx
+	val := sctx.Value(LoadDataVarKey)
+	if val != nil {
+		sctx.SetValue(LoadDataVarKey, nil)
+		return errors.New("Load Data: previous load data option isn't closed normal")
+	}
+	if e.loadDataInfo.Path == "" {
+		return errors.New("Load Data: infile path is empty")
+	}
+	sctx.SetValue(LoadDataVarKey, e.loadDataInfo)
+
+	return nil
+}
+
+// Close implements the Executor Close interface.
+func (e *LoadDataExec) Close() error {
+	return nil
+}
+
+// Open implements the Executor Open interface.
+func (e *LoadDataExec) Open(ctx context.Context) error {
+	return nil
+}
+
 // LoadDataInfo saves the information of loading data operation.
 type LoadDataInfo struct {
-	row       []types.Datum
-	insertVal *InsertValues
+	*InsertValues
+
+	row types.DatumRow
 
 	Path       string
 	Table      table.Table
@@ -43,7 +100,7 @@ type LoadDataInfo struct {
 
 // SetMaxRowsInBatch sets the max number of rows to insert in a batch.
 func (e *LoadDataInfo) SetMaxRowsInBatch(limit uint64) {
-	e.insertVal.maxRowsInBatch = limit
+	e.maxRowsInBatch = limit
 }
 
 // getValidData returns prevData and curData that starts from starting symbol.
@@ -158,7 +215,7 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 		isEOF = true
 		prevData, curData = curData, prevData
 	}
-	rows := make([][]types.Datum, 0, e.insertVal.maxRowsInBatch)
+	rows := make([]types.DatumRow, 0, e.maxRowsInBatch)
 	for len(curData) > 0 {
 		line, curData, hasStarting = e.getLine(prevData, curData)
 		prevData = nil
@@ -180,28 +237,28 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 			curData = nil
 		}
 
-		cols, err := GetFieldsFromLine(line, e.FieldsInfo)
+		cols, err := e.GetFieldsFromLine(line)
 		if err != nil {
 			return nil, false, errors.Trace(err)
 		}
 		rows = append(rows, e.colsToRow(cols))
-		e.insertVal.rowCount++
-		if e.insertVal.maxRowsInBatch != 0 && e.insertVal.rowCount%e.insertVal.maxRowsInBatch == 0 {
+		e.rowCount++
+		if e.maxRowsInBatch != 0 && e.rowCount%e.maxRowsInBatch == 0 {
 			reachLimit = true
 			log.Infof("This insert rows has reached the batch %d, current total rows %d",
-				e.insertVal.maxRowsInBatch, e.insertVal.rowCount)
+				e.maxRowsInBatch, e.rowCount)
 			break
 		}
 	}
-	rows, err := batchMarkDupRows(e.Ctx, e.Table, rows)
+	rows, err := e.batchMarkDupRows(rows)
 	if err != nil {
 		return nil, reachLimit, errors.Trace(err)
 	}
 	for _, row := range rows {
 		e.insertData(row)
 	}
-	if e.insertVal.lastInsertID != 0 {
-		e.insertVal.ctx.GetSessionVars().SetLastInsertID(e.insertVal.lastInsertID)
+	if e.lastInsertID != 0 {
+		e.ctx.GetSessionVars().SetLastInsertID(e.lastInsertID)
 	}
 
 	return curData, reachLimit, nil
@@ -215,10 +272,10 @@ func (e *LoadDataInfo) colsToRow(cols []string) types.DatumRow {
 		}
 		e.row[i].SetString(cols[i])
 	}
-	row, err := e.insertVal.fillRowData(e.columns, e.row)
+	row, err := e.fillRowData(e.columns, e.row)
 	if err != nil {
 		warnLog := fmt.Sprintf("Load Data: insert data:%v failed:%v", e.row, errors.ErrorStack(err))
-		e.insertVal.handleLoadDataWarnings(err, warnLog)
+		e.handleLoadDataWarnings(err, warnLog)
 		return nil
 	}
 	return row
@@ -228,83 +285,27 @@ func (e *LoadDataInfo) insertData(row types.DatumRow) {
 	if row == nil {
 		return
 	}
-	_, err := e.Table.AddRecord(e.insertVal.ctx, row, false)
+	_, err := e.Table.AddRecord(e.ctx, row, false)
 	if err != nil {
 		warnLog := fmt.Sprintf("Load Data: insert data:%v failed:%v", row, errors.ErrorStack(err))
-		e.insertVal.handleLoadDataWarnings(err, warnLog)
-	}
-}
-
-// LoadData represents a load data executor.
-type LoadData struct {
-	baseExecutor
-
-	IsLocal      bool
-	loadDataInfo *LoadDataInfo
-}
-
-// Next implements the Executor Next interface.
-func (e *LoadData) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
-	// TODO: support load data without local field.
-	if !e.IsLocal {
-		return errors.New("Load Data: don't support load data without local field")
-	}
-	// TODO: support lines terminated is "".
-	if len(e.loadDataInfo.LinesInfo.Terminated) == 0 {
-		return errors.New("Load Data: don't support load data terminated is nil")
-	}
-
-	sctx := e.loadDataInfo.insertVal.ctx
-	val := sctx.Value(LoadDataVarKey)
-	if val != nil {
-		sctx.SetValue(LoadDataVarKey, nil)
-		return errors.New("Load Data: previous load data option isn't closed normal")
-	}
-	if e.loadDataInfo.Path == "" {
-		return errors.New("Load Data: infile path is empty")
-	}
-	sctx.SetValue(LoadDataVarKey, e.loadDataInfo)
-
-	return nil
-}
-
-// Close implements the Executor Close interface.
-func (e *LoadData) Close() error {
-	return nil
-}
-
-// Open implements the Executor Open interface.
-func (e *LoadData) Open(ctx context.Context) error {
-	return nil
-}
-
-// NewLoadDataInfo returns a LoadDataInfo structure, and it's only used for tests now.
-func NewLoadDataInfo(ctx sessionctx.Context, row []types.Datum, tbl table.Table, cols []*table.Column) *LoadDataInfo {
-	insertVal := &InsertValues{baseExecutor: newBaseExecutor(ctx, nil, "InsertValues"), Table: tbl}
-	return &LoadDataInfo{
-		row:       row,
-		insertVal: insertVal,
-		Table:     tbl,
-		Ctx:       ctx,
-		columns:   cols,
+		e.handleLoadDataWarnings(err, warnLog)
 	}
 }
 
 // GetFieldsFromLine splits line according to fieldsInfo, this function is exported for testing.
-func GetFieldsFromLine(line []byte, fieldsInfo *ast.FieldsClause) ([]string, error) {
+func (e *LoadDataInfo) GetFieldsFromLine(line []byte) ([]string, error) {
 	var sep []byte
-	if fieldsInfo.Enclosed != 0 {
-		if line[0] != fieldsInfo.Enclosed || line[len(line)-1] != fieldsInfo.Enclosed {
-			return nil, errors.Errorf("line %s should begin and end with %c", string(line), fieldsInfo.Enclosed)
+	if e.FieldsInfo.Enclosed != 0 {
+		if line[0] != e.FieldsInfo.Enclosed || line[len(line)-1] != e.FieldsInfo.Enclosed {
+			return nil, errors.Errorf("line %s should begin and end with %c", string(line), e.FieldsInfo.Enclosed)
 		}
 		line = line[1 : len(line)-1]
-		sep = make([]byte, 0, len(fieldsInfo.Terminated)+2)
-		sep = append(sep, fieldsInfo.Enclosed)
-		sep = append(sep, fieldsInfo.Terminated...)
-		sep = append(sep, fieldsInfo.Enclosed)
+		sep = make([]byte, 0, len(e.FieldsInfo.Terminated)+2)
+		sep = append(sep, e.FieldsInfo.Enclosed)
+		sep = append(sep, e.FieldsInfo.Terminated...)
+		sep = append(sep, e.FieldsInfo.Enclosed)
 	} else {
-		sep = []byte(fieldsInfo.Terminated)
+		sep = []byte(e.FieldsInfo.Terminated)
 	}
 	rawCols := bytes.Split(line, sep)
 	cols := escapeCols(rawCols)

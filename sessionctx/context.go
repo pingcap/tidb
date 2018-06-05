@@ -17,6 +17,7 @@ import (
 	"fmt"
 
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
@@ -81,6 +82,8 @@ type Context interface {
 	StmtGetMutation(int64) *binlog.TableMutation
 	// StmtAddDirtyTableOP adds the dirty table operation for current statement.
 	StmtAddDirtyTableOP(op int, tid int64, handle int64, row []types.Datum)
+	// DDLOwnerChecker returns owner.DDLOwnerChecker.
+	DDLOwnerChecker() owner.DDLOwnerChecker
 }
 
 type basicCtxType int
