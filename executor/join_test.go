@@ -850,7 +850,7 @@ func (s *testSuite) TestMergejoinOrder(c *C) {
 		"TableReader_11 MergeJoin_15  root data:TableScan_10 10000.00",
 		"TableScan_12   cop table:t2, range:[-inf,+inf], keep order:true 10000.00",
 		"TableReader_13 MergeJoin_15  root data:TableScan_12 10000.00",
-		"MergeJoin_15  TableReader_11,TableReader_13 root left outer join, equal:[eq(test.t1.a, test.t2.a)], left cond:[ne(test.t1.a, 3)], left key:test.t1.a, right key:test.t2.a 12500.00",
+		"MergeJoin_15  TableReader_11,TableReader_13 root left outer join, left cond:[ne(test.t1.a, 3)], left key:test.t1.a, right key:test.t2.a 12500.00",
 	))
 
 	tk.MustExec("set @@tidb_max_chunk_size=1")
@@ -860,5 +860,15 @@ func (s *testSuite) TestMergejoinOrder(c *C) {
 		"3 100 <nil> <nil>",
 		"4 100 <nil> <nil>",
 		"5 100 <nil> <nil>",
+	))
+
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a bigint, b bigint, index idx_1(a,b));`)
+	tk.MustExec(`insert into t values(1, 1), (1, 2), (2, 1), (2, 2);`)
+	tk.MustQuery(`select /*+ TIDB_SMJ(t1, t2) */ * from t t1 join t t2 on t1.b = t2.b and t1.a=t2.a;`).Check(testkit.Rows(
+		`1 1 1 1`,
+		`1 2 1 2`,
+		`2 1 2 1`,
+		`2 2 2 2`,
 	))
 }
