@@ -22,6 +22,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
@@ -734,12 +735,18 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 		d.SetLength(20)
 		d.SetFrac(6)
 		d.SetMysqlDecimal(dec)
-		decs = append(decs, EncodeDecimal(nil, d.GetMysqlDecimal(), d.Length(), d.Frac()))
 	}
 	for i := 0; i < len(decs)-1; i++ {
 		cmp := bytes.Compare(decs[i], decs[i+1])
 		c.Assert(cmp, LessEqual, 0)
 	}
+
+	d := types.NewDecFromStringForTest("-123.123456789")
+	_, err := EncodeDecimal(nil, d, 20, 5)
+
+	c.Assert(terror.ErrorEqual(err, types.ErrTruncated), IsTrue)
+	_, err = EncodeDecimal(nil, d, 12, 10)
+	c.Assert(terror.ErrorEqual(err, types.ErrOverflow), IsTrue)
 }
 
 func (s *testCodecSuite) TestJSON(c *C) {
