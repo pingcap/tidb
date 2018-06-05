@@ -103,7 +103,7 @@ TableScan_22			cop	table:s, range:[-inf,+inf], keep order:true	10000.00
 TableReader_23	Projection_21		root	data:TableScan_22	10000.00
 Projection_21	Selection_20	TableReader_23	root	1, s.c1	10000.00
 Selection_20	MergeJoin_15	Projection_21	root	ne(k, 0)	8000.00
-MergeJoin_15	Projection_14	TableReader_18,Selection_20	root	left outer join, equal:[eq(test.t1.c1, s.c1)], left key:test.t1.c1, right key:s.c1	10000.00
+MergeJoin_15	Projection_14	TableReader_18,Selection_20	root	left outer join, left key:test.t1.c1, right key:s.c1	10000.00
 Projection_14	Projection_13	MergeJoin_15	root	test.t1.c1, ifnull(5_col_0, 0)	10000.00
 Projection_13		Projection_14	root	k	10000.00
 explain select * from information_schema.columns;
@@ -150,7 +150,7 @@ TableScan_18			cop	table:t1, range:[-inf,+inf], keep order:true	10000.00
 TableReader_19	MergeJoin_28		root	data:TableScan_18	10000.00
 IndexScan_22			cop	table:t2, index:c1, range:[<nil>,+inf], keep order:true	10000.00
 IndexReader_23	MergeJoin_28		root	index:IndexScan_22	10000.00
-MergeJoin_28	StreamAgg_12	TableReader_19,IndexReader_23	root	left outer semi join, equal:[eq(test.t1.c1, test.t2.c1)], left key:test.t1.c1, right key:test.t2.c1	10000.00
+MergeJoin_28	StreamAgg_12	TableReader_19,IndexReader_23	root	left outer semi join, left key:test.t1.c1, right key:test.t2.c1	10000.00
 StreamAgg_12		MergeJoin_28	root	, funcs:sum(5_aux_0)	1.00
 explain select 1 in (select c2 from t2) from t1;
 id	parents	children	task	operator info	count

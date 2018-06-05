@@ -51,7 +51,7 @@ func NewTestStore(c *C) kv.Storage {
 	client, pdClient, err := mocktikv.NewTestClient(nil, nil, "")
 	c.Assert(err, IsNil)
 
-	store, err := NewTestTiKVStore(client, pdClient, nil, nil)
+	store, err := NewTestTiKVStore(client, pdClient, nil, nil, false)
 	c.Assert(err, IsNil)
 	return store
 }
