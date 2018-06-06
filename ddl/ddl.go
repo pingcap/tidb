@@ -191,6 +191,9 @@ type DDL interface {
 	SetHook(h Callback)
 	// GetHook gets the hook. It's exported for testing.
 	GetHook() Callback
+
+	// GetTableMaxRowID gets table max row ID. It's exported for testing.
+	GetTableMaxRowID(startTS uint64, tblInfo *model.TableInfo) (int64, bool, error)
 }
 
 // ddl represents the statements which are used to define the database structure or schema.
