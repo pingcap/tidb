@@ -18,6 +18,16 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// specialFoldHandler stores functions for special UDF to constant fold
+var specialFoldHandler = map[string]func(*ScalarFunction) (Expression, bool){}
+
+func init() {
+	specialFoldHandler = map[string]func(*ScalarFunction) (Expression, bool){
+		ast.If:     ifFoldHandler,
+		ast.Ifnull: ifNullFoldHandler,
+	}
+}
+
 // FoldConstant does constant folding optimization on an expression excluding deferred ones.
 func FoldConstant(expr Expression) Expression {
 	e, _ := foldConstant(expr)
@@ -69,11 +79,6 @@ func foldConstant(expr Expression) (Expression, bool) {
 	case *ScalarFunction:
 		if _, ok := unFoldableFunctions[x.FuncName.L]; ok {
 			return expr, false
-		}
-		// specialFoldHandler stores functions for special UDF to constant fold
-		var specialFoldHandler = map[string]func(*ScalarFunction) (Expression, bool){
-			ast.If:     ifFoldHandler,
-			ast.Ifnull: ifNullFoldHandler,
 		}
 		if function := specialFoldHandler[x.FuncName.L]; function != nil {
 			return function(x)
