@@ -210,6 +210,15 @@ func (a *AggFuncDesc) typeInfer4GroupConcat(ctx sessionctx.Context) {
 }
 
 func (a *AggFuncDesc) typeInfer4MaxMin(ctx sessionctx.Context) {
+	_, argIsScalaFunc := a.Args[0].(*expression.ScalarFunction)
+	if argIsScalaFunc && a.Args[0].GetType().Tp == mysql.TypeFloat {
+		// For scalar function, the result of "float32" is set to the "float64"
+		// field in the "Datum".
+		a.RetTp = new(types.FieldType)
+		*(a.RetTp) = *(a.Args[0].GetType())
+		a.RetTp.Tp = mysql.TypeDouble
+		return
+	}
 	a.RetTp = a.Args[0].GetType()
 }
 

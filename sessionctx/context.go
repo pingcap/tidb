@@ -17,6 +17,7 @@ import (
 	"fmt"
 
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
@@ -81,6 +82,8 @@ type Context interface {
 	StmtGetMutation(int64) *binlog.TableMutation
 	// StmtAddDirtyTableOP adds the dirty table operation for current statement.
 	StmtAddDirtyTableOP(op int, tid int64, handle int64, row []types.Datum)
+	// DDLOwnerChecker returns owner.DDLOwnerChecker.
+	DDLOwnerChecker() owner.DDLOwnerChecker
 }
 
 type basicCtxType int
@@ -112,17 +115,5 @@ const ConnID kv.ContextKey = "conn ID"
 
 // SetCommitCtx sets the variables for context before commit a transaction.
 func SetCommitCtx(ctx context.Context, sessCtx Context) context.Context {
-	ctx = context.WithValue(ctx, ConnID, sessCtx.GetSessionVars().ConnectionID)
-	retryAble := !sessCtx.GetSessionVars().TxnCtx.ForUpdate
-	return context.WithValue(ctx, kv.Retryable, retryAble)
-}
-
-// GetRetryable returns the value of Retryable from the ctx.
-func GetRetryable(ctx context.Context) bool {
-	var retryable bool
-	val := ctx.Value(kv.Retryable)
-	if val != nil {
-		retryable = val.(bool)
-	}
-	return retryable
+	return context.WithValue(ctx, ConnID, sessCtx.GetSessionVars().ConnectionID)
 }

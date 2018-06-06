@@ -412,4 +412,20 @@ func (s *testSuite) TestAdminCheckTable(c *C) {
 	tk.MustExec(`ALTER TABLE test_null ADD COLUMN b int NULL DEFAULT '1795454803' AFTER a;`)
 	tk.MustExec(`ALTER TABLE test_null add index b(b);`)
 	tk.MustExec("ADMIN CHECK TABLE test_null")
+
+	// Fix unflatten issue in CheckExec.
+	tk.MustExec(`drop table if exists test`)
+	tk.MustExec(`create table test (
+		a time,
+ 		PRIMARY KEY (a)
+ 		);`)
+
+	tk.MustExec(`insert into test set a='12:10:36';`)
+	tk.MustExec(`admin check table test`)
+
+	// Test timestamp type check table.
+	tk.MustExec(`drop table if exists test`)
+	tk.MustExec(`create table test ( a  TIMESTAMP, primary key(a) );`)
+	tk.MustExec(`insert into test set a='2015-08-10 04:18:49';`)
+	tk.MustExec(`admin check table test;`)
 }

@@ -108,7 +108,7 @@ func (h *Handle) indexStatsFromStorage(row types.Row, table *Table, tableInfo *m
 	if idx != nil {
 		table.Indices[histID] = idx
 	} else {
-		log.Warnf("We cannot find index id %d in table info %s now. It may be deleted.", histID, tableInfo.Name)
+		log.Debugf("We cannot find index id %d in table info %s now. It may be deleted.", histID, tableInfo.Name)
 	}
 	return nil
 }
@@ -177,7 +177,7 @@ func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *
 		// If we didn't find a Column or Index in tableInfo, we won't load the histogram for it.
 		// But don't worry, next lease the ddl will be updated, and we will load a same table for two times to
 		// avoid error.
-		log.Warnf("We cannot find column id %d in table info %s now. It may be deleted.", histID, tableInfo.Name)
+		log.Debugf("We cannot find column id %d in table info %s now. It may be deleted.", histID, tableInfo.Name)
 	}
 	return nil
 }
@@ -463,7 +463,13 @@ func getPseudoRowCountBySignedIntRanges(intRanges []*ranger.Range, tableRowCount
 	for _, rg := range intRanges {
 		var cnt float64
 		low := rg.LowVal[0].GetInt64()
+		if rg.LowVal[0].Kind() == types.KindNull || rg.LowVal[0].Kind() == types.KindMinNotNull {
+			low = math.MinInt64
+		}
 		high := rg.HighVal[0].GetInt64()
+		if rg.HighVal[0].Kind() == types.KindMaxValue {
+			high = math.MaxInt64
+		}
 		if low == math.MinInt64 && high == math.MaxInt64 {
 			cnt = tableRowCount
 		} else if low == math.MinInt64 {
@@ -493,7 +499,13 @@ func getPseudoRowCountByUnsignedIntRanges(intRanges []*ranger.Range, tableRowCou
 	for _, rg := range intRanges {
 		var cnt float64
 		low := rg.LowVal[0].GetUint64()
+		if rg.LowVal[0].Kind() == types.KindNull || rg.LowVal[0].Kind() == types.KindMinNotNull {
+			low = 0
+		}
 		high := rg.HighVal[0].GetUint64()
+		if rg.HighVal[0].Kind() == types.KindMaxValue {
+			high = math.MaxUint64
+		}
 		if low == 0 && high == math.MaxUint64 {
 			cnt = tableRowCount
 		} else if low == 0 {

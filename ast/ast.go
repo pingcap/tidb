@@ -195,7 +195,7 @@ type Statement interface {
 	IsReadOnly() bool
 
 	// RebuildPlan rebuilds the plan of the statement.
-	RebuildPlan() error
+	RebuildPlan() (schemaVersion int64, err error)
 }
 
 // Visitor visits a Node.

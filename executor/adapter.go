@@ -161,18 +161,19 @@ func (a *ExecStmt) IsReadOnly() bool {
 }
 
 // RebuildPlan rebuilds current execute statement plan.
-func (a *ExecStmt) RebuildPlan() error {
+// It returns the current information schema version that 'a' is using.
+func (a *ExecStmt) RebuildPlan() (int64, error) {
 	is := GetInfoSchema(a.Ctx)
 	a.InfoSchema = is
 	if err := plan.Preprocess(a.Ctx, a.StmtNode, is, false); err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 	p, err := plan.Optimize(a.Ctx, a.StmtNode, is)
 	if err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 	a.Plan = p
-	return nil
+	return is.SchemaMetaVersion(), nil
 }
 
 // Exec builds an Executor from a plan. If the Executor doesn't return result,
@@ -243,7 +244,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 	// Check if "tidb_snapshot" is set for the write executors.
 	// In history read mode, we can not do write operations.
 	switch e.(type) {
-	case *DeleteExec, *InsertExec, *UpdateExec, *ReplaceExec, *LoadData, *DDLExec:
+	case *DeleteExec, *InsertExec, *UpdateExec, *ReplaceExec, *LoadDataExec, *DDLExec:
 		snapshotTS := sctx.GetSessionVars().SnapshotTS
 		if snapshotTS != 0 {
 			return nil, errors.New("can not execute write statement when 'tidb_snapshot' is set")
@@ -279,10 +280,10 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 		var err error
 		isPointGet := IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, a.Plan)
 		if isPointGet {
-			log.Debugf("[%d][InitTxnWithStartTS] %s", ctx.GetSessionVars().ConnectionID, a.Text)
+			log.Debugf("[con:%d][InitTxnWithStartTS] %s", ctx.GetSessionVars().ConnectionID, a.Text)
 			err = ctx.InitTxnWithStartTS(math.MaxUint64)
 		} else {
-			log.Debugf("[%d][ActivePendingTxn] %s", ctx.GetSessionVars().ConnectionID, a.Text)
+			log.Debugf("[con:%d][ActivePendingTxn] %s", ctx.GetSessionVars().ConnectionID, a.Text)
 			err = ctx.ActivePendingTxn()
 		}
 		if err != nil {
