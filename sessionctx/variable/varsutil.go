@@ -175,10 +175,17 @@ func setSnapshotTS(s *SessionVars, sVal string) error {
 		s.SnapshotTS = 0
 		return nil
 	}
+
+	if tso, err := strconv.ParseUint(sVal, 10, 64); err == nil {
+		s.SnapshotTS = tso
+		return nil
+	}
+
 	t, err := types.ParseTime(s.StmtCtx, sVal, mysql.TypeTimestamp, types.MaxFsp)
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	// TODO: Consider time_zone variable.
 	t1, err := t.Time.GoTime(time.Local)
 	s.SnapshotTS = GoTimeToTS(t1)
