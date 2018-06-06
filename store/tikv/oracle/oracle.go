@@ -53,10 +53,3 @@ func GetPhysical(t time.Time) int64 {
 func EncodeTSO(ts int64) uint64 {
 	return uint64(ts) << physicalShiftBits
 }
-
-// DecodeTSO decodes a tso into a golang's time struct.
-func DecodeTSO(tso uint64) time.Time {
-	physical := tso >> physicalShiftBits
-	physicalTime := time.Unix(int64(physical/1000), 0)
-	return physicalTime
-}
