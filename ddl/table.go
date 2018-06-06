@@ -370,13 +370,13 @@ func (d *ddl) onRenameIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	}
 
 	// Double check. See function `RenameIndex` in ddl_api.go
-	duplicate, err := d.validateRenameIndex(from, to, tblInfo)
+	duplicate, err := validateRenameIndex(from, to, tblInfo)
 	if duplicate {
 		return ver, nil
 	}
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, err
+		return ver, errors.Trace(err)
 	}
 	idx := findIndexByName(from.L, tblInfo.Indices)
 	idx.Name = to

@@ -20,6 +20,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
@@ -173,6 +174,23 @@ func dropIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 
 		addIndexColumnFlag(tblInfo, index)
 	}
+}
+
+func validateRenameIndex(from, to model.CIStr, tbl *model.TableInfo) (duplicate bool, err error) {
+	if fromIdx := findIndexByName(from.L, tbl.Indices); fromIdx == nil {
+		return false, errors.Trace(infoschema.ErrKeyNotExists.GenByArgs(from.O, tbl.Name))
+	}
+	// Take case-sensitivity into account, if `FromKey` and  `ToKey` are the same, nothing need to be changed
+	if from.O == to.O {
+		return true, nil
+	}
+	// If spec.FromKey.L == spec.ToKey.L, we operate on the same index(case-insensitive) and change its name (case-sensitive)
+	// e.g: from `inDex` to `IndEX`. Otherwise, we try to rename an index to another different index which already exists,
+	// that's illegal by rule.
+	if toIdx := findIndexByName(to.L, tbl.Indices); toIdx != nil && from.L != to.L {
+		return false, errors.Trace(infoschema.ErrKeyNameDuplicate.GenByArgs(toIdx.Name.O))
+	}
+	return false, nil
 }
 
 func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error) {

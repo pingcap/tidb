@@ -1590,12 +1590,12 @@ func (d *ddl) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ident.Schema, ident.Name))
 	}
-	duplicate, err := d.validateRenameIndex(spec.FromKey, spec.ToKey, tb.Meta())
+	duplicate, err := validateRenameIndex(spec.FromKey, spec.ToKey, tb.Meta())
 	if duplicate {
 		return nil
 	}
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 
 	job := &model.Job{
@@ -1609,23 +1609,6 @@ func (d *ddl) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
-}
-
-func (d *ddl) validateRenameIndex(from, to model.CIStr, tbl *model.TableInfo) (duplicate bool, err error) {
-	if fromIdx := findIndexByName(from.L, tbl.Indices); fromIdx == nil {
-		return false, errors.Trace(infoschema.ErrKeyNotExists.GenByArgs(from.O, tbl.Name))
-	}
-	// Take case-sensitivity into account, if `FromKey` and  `ToKey` are the same, nothing need to be changed
-	if from.O == to.O {
-		return true, nil
-	}
-	// If spec.FromKey.L == spec.ToKey.L, we operate on the same index(case-insensitive) and change its name (case-sensitive)
-	// e.g: from `inDex` to `IndEX`. Otherwise, we try to rename an index to another different index which already exists,
-	// that's illegal by rule.
-	if toIdx := findIndexByName(to.L, tbl.Indices); toIdx != nil && from.L != to.L {
-		return false, errors.Trace(infoschema.ErrKeyNameDuplicate.GenByArgs(toIdx.Name.O))
-	}
-	return false, nil
 }
 
 // DropTable will proceed even if some table in the list does not exists.
