@@ -1443,18 +1443,21 @@ func (s *testSuite) TestGetFieldsFromLine(c *C) {
 			[]string{string([]byte{0, '\b', '\n', '\r', '\t', 26, '\\', ' ', ' ', 'c', '\'', '"'})},
 		},
 	}
-	fieldsInfo := &ast.FieldsClause{
-		Enclosed:   '"',
-		Terminated: ",",
+
+	ldInfo := executor.LoadDataInfo{
+		FieldsInfo: &ast.FieldsClause{
+			Enclosed:   '"',
+			Terminated: ",",
+		},
 	}
 
 	for _, test := range tests {
-		got, err := executor.GetFieldsFromLine([]byte(test.input), fieldsInfo)
+		got, err := ldInfo.GetFieldsFromLine([]byte(test.input))
 		c.Assert(err, IsNil, Commentf("failed: %s", test.input))
 		assertEqualStrings(c, got, test.expected)
 	}
 
-	_, err := executor.GetFieldsFromLine([]byte(`1,a string,100.20`), fieldsInfo)
+	_, err := ldInfo.GetFieldsFromLine([]byte(`1,a string,100.20`))
 	c.Assert(err, NotNil)
 }
 
