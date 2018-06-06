@@ -15,7 +15,6 @@ package ddl
 
 import (
 	"context"
-	"math"
 	"time"
 
 	"github.com/juju/errors"
@@ -523,7 +522,7 @@ func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgInde
 
 			w.idxRecords = append(w.idxRecords, idxRecord)
 			if handle == taskRange.endHandle {
-				// If !taskRange.endIncluded, we will not reach here when handle == taskRange.endHandle
+				// If taskRange.endIncluded == false, we will not reach here when handle == taskRange.endHandle
 				handleOutOfRange = true
 				return false, nil
 			}
@@ -657,9 +656,13 @@ func makeupIndexColFieldMap(t table.Table, indexInfo *model.IndexInfo) map[int64
 
 // splitTableRanges uses PD region's key ranges to split the backfilling table key range space,
 // to speed up adding index in table with disperse handle.
-func (d *ddl) splitTableRanges(t table.Table, startHandle int64) ([]kv.KeyRange, error) {
+func (d *ddl) splitTableRanges(t table.Table, reorgInfo *reorgInfo) ([]kv.KeyRange, error) {
+	startHandle := reorgInfo.StartHandle
+	endHandle := reorgInfo.EndHandle
 	startRecordKey := t.RecordKey(startHandle)
-	endRecordKey := t.RecordKey(math.MaxInt64).Next()
+	endRecordKey := t.RecordKey(endHandle).Next()
+
+	log.Infof("[ddl-reorg] split handle ranges [%v, %v] from PD", startHandle, endHandle)
 	kvRange := kv.KeyRange{StartKey: startRecordKey, EndKey: endRecordKey}
 	store, ok := d.store.(tikv.Storage)
 	if !ok {
@@ -826,7 +829,7 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 	}
 	defer closeAddIndexWorkers(workers)
 
-	kvRanges, err := d.splitTableRanges(t, reorgInfo.Handle)
+	kvRanges, err := d.splitTableRanges(t, reorgInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
