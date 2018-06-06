@@ -189,8 +189,9 @@ func (s *testSuite) TestUser(c *C) {
 	c.Assert(terror.ErrorEqual(err, terror.ClassExecutor.New(executor.CodeCannotUser, "")), IsTrue)
 
 	createUserSQL = `CREATE USER 'test1'@'localhost'`
+	tk.MustExec(createUserSQL)
 	createUserSQL = `CREATE USER 'test2'@'localhost'`
-	tk.Exec(createUserSQL)
+	tk.MustExec(createUserSQL)
 
 	dropUserSQL = `DROP USER 'test1'@'localhost', 'test2'@'localhost', 'test3'@'localhost';`
 	_, err = tk.Exec(dropUserSQL)
