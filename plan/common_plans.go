@@ -318,7 +318,9 @@ type Insert struct {
 	Columns     []*ast.ColumnName
 	Lists       [][]expression.Expression
 	SetList     []*expression.Assignment
-	OnDuplicate []*expression.Assignment
+
+	OnDuplicate        []*expression.Assignment
+	Schema4OnDuplicate *expression.Schema
 
 	IsReplace bool
 

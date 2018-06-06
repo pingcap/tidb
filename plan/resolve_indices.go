@@ -182,11 +182,7 @@ func (p *Update) ResolveIndices() {
 func (p *Insert) ResolveIndices() {
 	for _, asgn := range p.OnDuplicate {
 		asgn.Col.ResolveIndices(p.tableSchema)
-		if p.SelectPlan != nil {
-			asgn.Expr.ResolveIndices(p.SelectPlan.Schema())
-		} else {
-			asgn.Expr.ResolveIndices(p.tableSchema)
-		}
+		asgn.Expr.ResolveIndices(p.Schema4OnDuplicate)
 	}
 	for _, set := range p.SetList {
 		set.Col.ResolveIndices(p.tableSchema)
@@ -197,7 +193,7 @@ func (p *Insert) ResolveIndices() {
 	}
 	for _, asgn := range p.GenCols.OnDuplicates {
 		asgn.Col.ResolveIndices(p.tableSchema)
-		asgn.Expr.ResolveIndices(p.tableSchema)
+		asgn.Expr.ResolveIndices(p.Schema4OnDuplicate)
 	}
 }
 

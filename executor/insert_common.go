@@ -69,11 +69,11 @@ type keyWithDupError struct {
 	newRowValue []byte
 }
 
-// getColumns gets the explicitly specified columns of an insert statement. There are three cases:
-// There are three types of insert statements:
-// 1 insert ... values(...)  --> name type column
-// 2 insert ... set x=y...   --> set type column
-// 3 insert ... (select ..)  --> name type column
+// getColumns gets the explicitly specified columns of an insert statement.There
+// are three types of insert statements:
+//   1. INSERT ... VALUES(...)  --> name type column
+//   2. INSERT ... SET x=y...   --> set type column
+//   3. INSERT ... (SELECT ..)  --> name type column
 // See https://dev.mysql.com/doc/refman/5.7/en/insert.html
 func (e *InsertValues) getColumns(tableCols []*table.Column) ([]*table.Column, error) {
 	var cols []*table.Column
@@ -283,7 +283,7 @@ func (e *InsertValues) fillDefaultValues(row types.DatumRow, hasValue []bool) er
 	return nil
 }
 
-func (e *InsertValues) getRowsSelectChunk(ctx context.Context, cols []*table.Column) ([]types.DatumRow, error) {
+func (e *InsertValues) getRowsFromSelectStmt(ctx context.Context, cols []*table.Column) ([]types.DatumRow, error) {
 	// process `insert|replace into ... select ... from ...`
 	selectExec := e.children[0]
 	if selectExec.Schema().Len() != len(cols) {
@@ -564,15 +564,13 @@ func (e *InsertValues) encodeNewRow(row types.DatumRow) ([]byte, error) {
 
 // getKeysNeedCheck gets keys converted from to-be-insert rows to record keys and unique index keys,
 // which need to be checked whether they are duplicate keys.
-func (e *InsertValues) getKeysNeedCheck(rows []types.DatumRow) ([][]keyWithDupError,
-	error) {
-	nUnique := 0
+func (e *InsertValues) getKeysNeedCheck(insertRows []types.DatumRow) ([][]keyWithDupError, error) {
+	numUniqueIndeices := 0
 	for _, v := range e.Table.WritableIndices() {
 		if v.Meta().Unique {
-			nUnique++
+			numUniqueIndeices++
 		}
 	}
-	rowWithKeys := make([][]keyWithDupError, 0, len(rows))
 
 	var handleCol *table.Column
 	// Get handle column if PK is handle.
@@ -585,8 +583,9 @@ func (e *InsertValues) getKeysNeedCheck(rows []types.DatumRow) ([][]keyWithDupEr
 		}
 	}
 
-	for _, row := range rows {
-		keysWithErr := make([]keyWithDupError, 0, nUnique+1)
+	rowWithKeys := make([][]keyWithDupError, 0, len(insertRows))
+	for _, row := range insertRows {
+		keysWithErr := make([]keyWithDupError, 0, numUniqueIndeices+1)
 		newRowValue, err := e.encodeNewRow(row)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -640,9 +639,9 @@ func (e *InsertValues) getKeysNeedCheck(rows []types.DatumRow) ([][]keyWithDupEr
 }
 
 // batchGetInsertKeys uses batch-get to fetch all key-value pairs to be checked for ignore or duplicate key update.
-func (e *InsertValues) batchGetInsertKeys(newRows []types.DatumRow) ([][]keyWithDupError, map[string][]byte, error) {
+func (e *InsertValues) batchGetInsertKeys(insertRows []types.DatumRow) ([][]keyWithDupError, map[string][]byte, error) {
 	// Get keys need to be checked.
-	keysInRows, err := e.getKeysNeedCheck(newRows)
+	keysInRows, err := e.getKeysNeedCheck(insertRows)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
