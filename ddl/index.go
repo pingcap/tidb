@@ -175,7 +175,7 @@ func dropIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 	}
 }
 
-func validateRenameIndex(from, to model.CIStr, tbl *model.TableInfo) (duplicate bool, err error) {
+func validateRenameIndex(from, to model.CIStr, tbl *model.TableInfo) (ignore bool, err error) {
 	if fromIdx := findIndexByName(from.L, tbl.Indices); fromIdx == nil {
 		return false, errors.Trace(infoschema.ErrKeyNotExists.GenByArgs(from.O, tbl.Name))
 	}
