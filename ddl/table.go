@@ -102,7 +102,7 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	if err = checkTableNameNotChanged(t, job, tblInfo.Name.O); err != nil {
+	if err = checkTableNameChange(t, job, tblInfo.Name.O); err != nil {
 		return ver, infoschema.ErrTableDropExists.GenByArgs(fmt.Sprintf("%s.%s", dbInfo.Name.O, job.TableName))
 	}
 
@@ -388,8 +388,8 @@ func checkTableNotExists(t *meta.Meta, job *model.Job, schemaID int64, tableName
 	return nil
 }
 
-// checkTableNameNotChanged check if the table name has been changed.
-func checkTableNameNotChanged(t *meta.Meta, job *model.Job, tableName string) error {
+// checkTableNameChange checks whether the table name has been changed.
+func checkTableNameChange(t *meta.Meta, job *model.Job, tableName string) error {
 	dbInfo, err := t.GetDatabase(job.SchemaID)
 	if err != nil {
 		return errors.Trace(err)
