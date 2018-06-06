@@ -183,6 +183,8 @@ func (s *testSuite) TestUser(c *C) {
 		"% test test Y N N N N N N N N N N N N N N N N N N",
 		"localhost test testDBRevoke N N N N N N N N N N N N N N N N N N N",
 	))
+	_, err = tk.Exec(dropUserSQL)
+	c.Assert(terror.ErrorEqual(err, terror.ClassExecutor.New(executor.CodeCannotUser, "")), IsTrue)
 }
 
 func (s *testSuite) TestSetPwd(c *C) {
