@@ -175,7 +175,7 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	case model.StateWriteReorganization:
 		// reorganization -> public
 		// Adjust table column offset.
-		if err = checkOriginalTableNotExists(t, job, job.SchemaID, tblInfo.Name.O); err != nil {
+		if err = checkTableNameNotChanged(t, job, tblInfo.Name.O); err != nil {
 			return ver, errors.Trace(err)
 		}
 		d.adjustColumnInfoInAddColumn(tblInfo, offset)
@@ -241,7 +241,7 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
 		// All reorganization jobs are done, drop this column.
-		if err = checkOriginalTableNotExists(t, job, job.SchemaID, tblInfo.Name.O); err != nil {
+		if err = checkTableNameNotChanged(t, job, tblInfo.Name.O); err != nil {
 			return ver, errors.Trace(err)
 		}
 		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-1]
@@ -290,7 +290,7 @@ func (d *ddl) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnI
 		return ver, errors.Trace(err)
 	}
 
-	if err = checkOriginalTableNotExists(t, job, job.SchemaID, tblInfo.Name.O); err != nil {
+	if err = checkTableNameNotChanged(t, job, tblInfo.Name.O); err != nil {
 		return ver, errors.Trace(err)
 	}
 

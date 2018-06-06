@@ -102,7 +102,7 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	if err = checkOriginalTableNotExists(t, job, job.SchemaID, tblInfo.Name.O); err != nil {
+	if err = checkTableNameNotChanged(t, job, tblInfo.Name.O); err != nil {
 		return ver, infoschema.ErrTableDropExists.GenByArgs(fmt.Sprintf("%s.%s", dbInfo.Name.O, job.TableName))
 	}
 
@@ -388,14 +388,12 @@ func checkTableNotExists(t *meta.Meta, job *model.Job, schemaID int64, tableName
 	return nil
 }
 
-// checkOriginalTableNotExists check if the table name is the original table name.
-// Mainly used in tableid has not changed, tablename has changed.
-func checkOriginalTableNotExists(t *meta.Meta, job *model.Job, schemaID int64, tableName string) error {
+// checkTableNameNotChanged check if the table name has been changed.
+func checkTableNameNotChanged(t *meta.Meta, job *model.Job, tableName string) error {
 	dbInfo, err := t.GetDatabase(job.SchemaID)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// Check if the table name is the original table name.
 	if len(job.TableName) != 0 && len(tableName) != 0 {
 		if job.TableName != tableName {
 			job.State = model.JobStateCancelled
