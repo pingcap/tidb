@@ -4636,6 +4636,9 @@ UnionStmt:
 		if $6 != nil {
 		    union.Limit = $6.(*ast.Limit)
 		}
+		if $5 == nil && $6 == nil {
+		    st.LockTp = $7.(ast.SelectLockType)
+		}
 		$$ = union
 	}
 |	UnionClauseList "UNION" UnionOpt SelectStmtFromDual SelectStmtLimit SelectLockOpt
@@ -4649,6 +4652,8 @@ UnionStmt:
 		union.SelectList.Selects = append(union.SelectList.Selects, st)
 		if $5 != nil {
 		    union.Limit = $5.(*ast.Limit)
+		} else {
+		    st.LockTp = $6.(ast.SelectLockType)
 		}
 		$$ = union
 	}
@@ -4667,6 +4672,9 @@ UnionStmt:
 		}
 		if $6 != nil {
 			union.Limit = $6.(*ast.Limit)
+		}
+		if $5 == nil && $6 == nil {
+			st.LockTp = $7.(ast.SelectLockType)
 		}
 		$$ = union
 	}
