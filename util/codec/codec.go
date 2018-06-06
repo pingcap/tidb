@@ -44,7 +44,7 @@ const (
 
 // encode will encode a datum and append it to a byte slice. If comparable is true, the encoded bytes can be sorted as it's original order.
 // If hash is true, the encoded bytes can be checked equal as it's original value.
-func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparable bool, hash bool) ([]byte, error) {
+func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparable bool, hash bool) (_ []byte, err error) {
 	for i, length := 0, len(vals); i < length; i++ {
 		switch vals[i].Kind() {
 		case types.KindInt64:
@@ -71,7 +71,7 @@ func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparab
 			// Encoding timestamp need to consider timezone.
 			// If it's not in UTC, transform to UTC first.
 			if t.Type == mysql.TypeTimestamp && sc.TimeZone != time.UTC {
-				err := t.ConvertTimeZone(sc.TimeZone, time.UTC)
+				err = t.ConvertTimeZone(sc.TimeZone, time.UTC)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -97,7 +97,12 @@ func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparab
 				}
 				b = append(b, bin...)
 			} else {
-				b = EncodeDecimal(b, vals[i].GetMysqlDecimal(), vals[i].Length(), vals[i].Frac())
+				b, err = EncodeDecimal(b, vals[i].GetMysqlDecimal(), vals[i].Length(), vals[i].Frac())
+				if terror.ErrorEqual(err, types.ErrTruncated) {
+					err = sc.HandleTruncate(err)
+				} else if terror.ErrorEqual(err, types.ErrOverflow) {
+					err = sc.HandleOverflow(err, err)
+				}
 			}
 		case types.KindMysqlEnum:
 			b = encodeUnsignedInt(b, uint64(vals[i].GetMysqlEnum().ToNumber()), comparable)
@@ -124,7 +129,7 @@ func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparab
 		}
 	}
 
-	return b, nil
+	return b, errors.Trace(err)
 }
 
 func encodeBytes(b []byte, v []byte, comparable bool) []byte {
@@ -173,7 +178,7 @@ func EncodeValue(sc *stmtctx.StatementContext, b []byte, v ...types.Datum) ([]by
 	return encode(sc, b, v, false, false)
 }
 
-func encodeChunkRow(sc *stmtctx.StatementContext, b []byte, row chunk.Row, allTypes []*types.FieldType, colIdx []int, comparable, hash bool) ([]byte, error) {
+func encodeChunkRow(sc *stmtctx.StatementContext, b []byte, row chunk.Row, allTypes []*types.FieldType, colIdx []int, comparable, hash bool) (_ []byte, err error) {
 	for _, i := range colIdx {
 		if row.IsNull(i) {
 			b = append(b, NilFlag)
@@ -210,7 +215,7 @@ func encodeChunkRow(sc *stmtctx.StatementContext, b []byte, row chunk.Row, allTy
 			// Encoding timestamp need to consider timezone.
 			// If it's not in UTC, transform to UTC first.
 			if t.Type == mysql.TypeTimestamp && sc.TimeZone != time.UTC {
-				err := t.ConvertTimeZone(sc.TimeZone, time.UTC)
+				err = t.ConvertTimeZone(sc.TimeZone, time.UTC)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -236,7 +241,10 @@ func encodeChunkRow(sc *stmtctx.StatementContext, b []byte, row chunk.Row, allTy
 				}
 				b = append(b, bin...)
 			} else {
-				b = EncodeDecimal(b, row.GetMyDecimal(i), allTypes[i].Flen, allTypes[i].Decimal)
+				b, err = EncodeDecimal(b, row.GetMyDecimal(i), allTypes[i].Flen, allTypes[i].Decimal)
+				if terror.ErrorEqual(err, types.ErrTruncated) {
+					err = sc.HandleTruncate(err)
+				}
 			}
 		case mysql.TypeEnum:
 			b = encodeUnsignedInt(b, uint64(row.GetEnum(i).ToNumber()), comparable)
@@ -256,7 +264,7 @@ func encodeChunkRow(sc *stmtctx.StatementContext, b []byte, row chunk.Row, allTy
 			return nil, errors.Errorf("unsupport column type for encode %d", allTypes[i].Tp)
 		}
 	}
-	return b, nil
+	return b, errors.Trace(err)
 }
 
 // HashValues appends the encoded values to byte slice b, returning the appended
