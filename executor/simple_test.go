@@ -183,6 +183,16 @@ func (s *testSuite) TestUser(c *C) {
 		"% test test Y N N N N N N N N N N N N N N N N N N",
 		"localhost test testDBRevoke N N N N N N N N N N N N N N N N N N N",
 	))
+
+	// Test drop user meet error
+	_, err = tk.Exec(dropUserSQL)
+	c.Assert(terror.ErrorEqual(err, terror.ClassExecutor.New(executor.CodeCannotUser, "")), IsTrue)
+
+	createUserSQL = `CREATE USER 'test1'@'localhost'`
+	createUserSQL = `CREATE USER 'test2'@'localhost'`
+	tk.Exec(createUserSQL)
+
+	dropUserSQL = `DROP USER 'test1'@'localhost', 'test2'@'localhost', 'test3'@'localhost';`
 	_, err = tk.Exec(dropUserSQL)
 	c.Assert(terror.ErrorEqual(err, terror.ClassExecutor.New(executor.CodeCannotUser, "")), IsTrue)
 }
