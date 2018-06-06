@@ -17,7 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sync"
+	"net/http/pprof"
 
 	"github.com/gorilla/mux"
 	"github.com/juju/errors"
@@ -27,8 +27,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	log "github.com/sirupsen/logrus"
 )
-
-var once sync.Once
 
 const defaultStatusAddr = ":10080"
 
@@ -72,11 +70,17 @@ func (s *Server) startHTTPServer() {
 	if s.cfg.Status.StatusPort == 0 {
 		addr = defaultStatusAddr
 	}
-	log.Infof("Listening on %v for status and metrics report.", addr)
 
 	serverMux := http.NewServeMux()
 	serverMux.Handle("/", router)
 
+	serverMux.HandleFunc("/debug/pprof/", pprof.Index)
+	serverMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	serverMux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	serverMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	serverMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+
+	log.Infof("Listening on %v for status and metrics report.", addr)
 	s.statusServer = &http.Server{Addr: addr, Handler: serverMux}
 	var err error
 	if len(s.cfg.Security.ClusterSSLCA) != 0 {
