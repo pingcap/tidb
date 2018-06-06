@@ -182,8 +182,9 @@ func (p *LogicalJoin) getHashJoin(prop *requiredProp, innerIdx int) *PhysicalHas
 	return hashJoin
 }
 
-// joinKeysMatchIndex checks if all keys match columns in index.
-// It returns a slice a[] what a[i] means keys[i] is related with indexCols[a[i]].
+// joinKeysMatchIndex checks whether the join key is in the index.
+// It returns a slice a[] what a[i] means keys[i] is related with indexCols[a[i]], -1 for no matching column.
+// It will return nil if there's no column in the index.
 func joinKeysMatchIndex(keys, indexCols []*expression.Column, colLengths []int) []int {
 	keyOff2IdxOff := make([]int, len(keys))
 	for i := range keyOff2IdxOff {
@@ -209,7 +210,8 @@ func joinKeysMatchIndex(keys, indexCols []*expression.Column, colLengths []int) 
 	return keyOff2IdxOff
 }
 
-// When inner plan is TableReader, the last two parameter will be nil
+// When inner plan is TableReader, the parameter `ranges` will be nil. Because pk only have one column. So all of its range
+// is generated during execution time.
 func (p *LogicalJoin) constructIndexJoin(prop *requiredProp, innerJoinKeys, outerJoinKeys []*expression.Column, outerIdx int,
 	innerPlan PhysicalPlan, ranges []*ranger.Range, keyOff2IdxOff []int) []PhysicalPlan {
 	joinType := p.JoinType
