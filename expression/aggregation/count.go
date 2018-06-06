@@ -37,7 +37,7 @@ func (cf *countFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Stateme
 		if value.GetValue() == nil {
 			return nil
 		}
-		if cf.Mode == FinalMode {
+		if cf.Mode == FinalMode || cf.Mode == Partial2Mode {
 			evalCtx.Count += value.GetInt64()
 		}
 		if cf.HasDistinct {
@@ -53,7 +53,7 @@ func (cf *countFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Stateme
 			return nil
 		}
 	}
-	if cf.Mode == CompleteMode {
+	if cf.Mode == CompleteMode || cf.Mode == Partial1Mode {
 		evalCtx.Count++
 	}
 	return nil
