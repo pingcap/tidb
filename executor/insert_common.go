@@ -363,7 +363,7 @@ func (e *InsertValues) filterErr(err error) error {
 		return nil
 	}
 	if !e.ctx.GetSessionVars().StmtCtx.DupKeyAsWarning {
-		return errors.Trace(err)
+		return err
 	}
 	// TODO: should not filter all types of errors here.
 	e.handleWarning(err, fmt.Sprintf("ignore err:%v", errors.ErrorStack(err)))
