@@ -14,7 +14,6 @@
 package aggregation
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -26,13 +25,7 @@ type sumFunction struct {
 
 // Update implements Aggregation interface.
 func (sf *sumFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) (err error) {
-	switch sf.Mode {
-	case Partial1Mode, Partial2Mode, FinalMode, CompleteMode:
-		err = sf.updateSum(sc, evalCtx, row)
-	case DedupMode:
-		panic("DedupMode is not supported now.")
-	}
-	return errors.Trace(err)
+	return sf.updateSum(sc, evalCtx, row)
 }
 
 // GetResult implements Aggregation interface.
