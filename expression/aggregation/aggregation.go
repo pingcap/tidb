@@ -232,3 +232,7 @@ func NeedValue(name string) bool {
 func (af *aggFunction) GetArgs() []expression.Expression {
 	return af.Args
 }
+
+func buildInterResult(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, af *Aggregation) {
+
+}
