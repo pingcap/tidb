@@ -143,6 +143,45 @@ Selection_12	Limit_14	TableScan_11	cop	gt(test.t4.c, 1)	1.00
 Limit_14		Selection_12	cop	offset:0, count:1	1.00
 TableReader_15	Limit_8		root	data:Limit_14	1.00
 Limit_8		TableReader_15	root	offset:0, count:1	1.00
+explain select ifnull(null, t1.c1) from t1;
+id	parents	children	task	operator info	count
+TableScan_4			cop	table:t1, range:[-inf,+inf], keep order:false	10000.00
+TableReader_5			root	data:TableScan_4	10000.00
+explain select if(10, t1.c1, t1.c2) from t1;
+id	parents	children	task	operator info	count
+TableScan_4			cop	table:t1, range:[-inf,+inf], keep order:false	10000.00
+TableReader_5			root	data:TableScan_4	10000.00
+explain select c1 from t2 union select c1 from t2 union all select c1 from t2;
+id	parents	children	task	operator info	count
+TableScan_16			cop	table:t2, range:[-inf,+inf], keep order:false	10000.00
+TableReader_17	Union_14		root	data:TableScan_16	10000.00
+IndexScan_34	StreamAgg_26		cop	table:t2, index:c1, range:[<nil>,+inf], keep order:true	10000.00
+StreamAgg_26		IndexScan_34	cop	group by:test.t2.c1, funcs:firstrow(test.t2.c1), firstrow(test.t2.c1)	8000.00
+IndexReader_36	StreamAgg_35		root	index:StreamAgg_26	8000.00
+StreamAgg_35	Union_22	IndexReader_36	root	group by:col_2, funcs:firstrow(col_0), firstrow(col_1)	8000.00
+IndexScan_51	StreamAgg_43		cop	table:t2, index:c1, range:[<nil>,+inf], keep order:true	10000.00
+StreamAgg_43		IndexScan_51	cop	group by:test.t2.c1, funcs:firstrow(test.t2.c1), firstrow(test.t2.c1)	8000.00
+IndexReader_53	StreamAgg_52		root	index:StreamAgg_43	8000.00
+StreamAgg_52	Union_22	IndexReader_53	root	group by:col_2, funcs:firstrow(col_0), firstrow(col_1)	8000.00
+Union_22	HashAgg_21	StreamAgg_35,StreamAgg_52	root		16000.00
+HashAgg_21	Union_14	Union_22	root	group by:t2.c1, funcs:firstrow(join_agg_0)	16000.00
+Union_14		TableReader_17,HashAgg_21	root		26000.00
+explain select c1 from t2 union all select c1 from t2 union select c1 from t2;
+id	parents	children	task	operator info	count
+IndexScan_28	StreamAgg_20		cop	table:t2, index:c1, range:[<nil>,+inf], keep order:true	10000.00
+StreamAgg_20		IndexScan_28	cop	group by:test.t2.c1, funcs:firstrow(test.t2.c1), firstrow(test.t2.c1)	8000.00
+IndexReader_30	StreamAgg_29		root	index:StreamAgg_20	8000.00
+StreamAgg_29	Union_16	IndexReader_30	root	group by:col_2, funcs:firstrow(col_0), firstrow(col_1)	8000.00
+IndexScan_45	StreamAgg_37		cop	table:t2, index:c1, range:[<nil>,+inf], keep order:true	10000.00
+StreamAgg_37		IndexScan_45	cop	group by:test.t2.c1, funcs:firstrow(test.t2.c1), firstrow(test.t2.c1)	8000.00
+IndexReader_47	StreamAgg_46		root	index:StreamAgg_37	8000.00
+StreamAgg_46	Union_16	IndexReader_47	root	group by:col_2, funcs:firstrow(col_0), firstrow(col_1)	8000.00
+IndexScan_62	StreamAgg_54		cop	table:t2, index:c1, range:[<nil>,+inf], keep order:true	10000.00
+StreamAgg_54		IndexScan_62	cop	group by:test.t2.c1, funcs:firstrow(test.t2.c1), firstrow(test.t2.c1)	8000.00
+IndexReader_64	StreamAgg_63		root	index:StreamAgg_54	8000.00
+StreamAgg_63	Union_16	IndexReader_64	root	group by:col_2, funcs:firstrow(col_0), firstrow(col_1)	8000.00
+Union_16	HashAgg_15	StreamAgg_29,StreamAgg_46,StreamAgg_63	root		24000.00
+HashAgg_15		Union_16	root	group by:t2.c1, funcs:firstrow(join_agg_0)	24000.00
 set @@session.tidb_opt_insubquery_unfold = 0;
 explain select sum(t1.c1 in (select c1 from t2)) from t1;
 id	parents	children	task	operator info	count

@@ -14,13 +14,64 @@
 package expression
 
 import (
+	"github.com/pingcap/tidb/ast"
 	log "github.com/sirupsen/logrus"
 )
+
+// specialFoldHandler stores functions for special UDF to constant fold
+var specialFoldHandler = map[string]func(*ScalarFunction) (Expression, bool){}
+
+func init() {
+	specialFoldHandler = map[string]func(*ScalarFunction) (Expression, bool){
+		ast.If:     ifFoldHandler,
+		ast.Ifnull: ifNullFoldHandler,
+	}
+}
 
 // FoldConstant does constant folding optimization on an expression excluding deferred ones.
 func FoldConstant(expr Expression) Expression {
 	e, _ := foldConstant(expr)
 	return e
+}
+
+func ifFoldHandler(expr *ScalarFunction) (Expression, bool) {
+	args := expr.GetArgs()
+	foldedArg0, _ := foldConstant(args[0])
+	if constArg, isConst := foldedArg0.(*Constant); isConst {
+		arg0, isNull0, err := constArg.EvalInt(expr.Function.getCtx(), nil)
+		if err != nil {
+			log.Warnf("fold constant %s: %s", expr.ExplainInfo(), err.Error())
+			return expr, false
+		}
+		if !isNull0 && arg0 != 0 {
+			return foldConstant(args[1])
+		}
+		return foldConstant(args[2])
+	}
+	var isDeferred, isDeferredConst bool
+	expr.GetArgs()[1], isDeferred = foldConstant(args[1])
+	isDeferredConst = isDeferredConst || isDeferred
+	expr.GetArgs()[2], isDeferred = foldConstant(args[2])
+	isDeferredConst = isDeferredConst || isDeferred
+	return expr, isDeferredConst
+}
+
+func ifNullFoldHandler(expr *ScalarFunction) (Expression, bool) {
+	args := expr.GetArgs()
+	foldedArg0, _ := foldConstant(args[0])
+	if constArg, isConst := foldedArg0.(*Constant); isConst {
+		_, isNull0, err := constArg.EvalInt(expr.Function.getCtx(), nil)
+		if err != nil {
+			log.Warnf("fold constant %s: %s", expr.ExplainInfo(), err.Error())
+			return expr, false
+		}
+		if isNull0 == true {
+			return foldConstant(args[1])
+		}
+	}
+	isDeferredConst := false
+	expr.GetArgs()[1], isDeferredConst = foldConstant(args[1])
+	return expr, isDeferredConst
 }
 
 func foldConstant(expr Expression) (Expression, bool) {
@@ -29,6 +80,10 @@ func foldConstant(expr Expression) (Expression, bool) {
 		if _, ok := unFoldableFunctions[x.FuncName.L]; ok {
 			return expr, false
 		}
+		if function := specialFoldHandler[x.FuncName.L]; function != nil {
+			return function(x)
+		}
+
 		args := x.GetArgs()
 		canFold := true
 		isDeferredConst := false
