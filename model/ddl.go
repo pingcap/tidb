@@ -47,6 +47,7 @@ const (
 	ActionSetDefaultValue    ActionType = 15
 	ActionShardRowID         ActionType = 16
 	ActionModifyTableComment ActionType = 17
+	ActionRenameIndex        ActionType = 18
 )
 
 var actionMap = map[ActionType]string{
@@ -67,6 +68,7 @@ var actionMap = map[ActionType]string{
 	ActionSetDefaultValue:    "set default value",
 	ActionShardRowID:         "shard row ID",
 	ActionModifyTableComment: "modify table comment",
+	ActionRenameIndex:        "rename index",
 }
 
 // String return current ddl action in string

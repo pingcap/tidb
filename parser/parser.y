@@ -1040,6 +1040,14 @@ AlterTableSpec:
 			NewTable:      $3.(*ast.TableName),
 		}
 	}
+|	"RENAME" KeyOrIndex Identifier "TO" Identifier
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:    	    ast.AlterTableRenameIndex,
+			FromKey:    model.NewCIStr($3),
+			ToKey:      model.NewCIStr($5),
+		}
+	}
 |	LockClause
 	{
 		$$ = &ast.AlterTableSpec{
