@@ -622,7 +622,7 @@ func (e *InsertValues) getKeysNeedCheck(rows []types.DatumRow) ([][]keyWithDupEr
 			if !distinct {
 				continue
 			}
-			colValStr, err1 := types.DatumsToString(colVals)
+			colValStr, err1 := types.DatumsToString(colVals, false)
 			if err1 != nil {
 				return nil, errors.Trace(err1)
 			}
