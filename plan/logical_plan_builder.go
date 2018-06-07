@@ -682,7 +682,7 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 
 	if unionDistinctPlan != nil {
 		unionDistinctPlan = b.buildDistinct(unionDistinctPlan, unionDistinctPlan.Schema().Len())
-		if len(allSelectPlans) != 0 {
+		if len(allSelectPlans) > 0 {
 			allSelectPlans = append(allSelectPlans, unionDistinctPlan)
 		}
 	}
