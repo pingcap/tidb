@@ -787,6 +787,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`SELECT LOCATE('bar', 'foobarbar', 5);`, true},
 
 		{`SELECT tidb_version();`, true},
+		{`SELECT tidb_is_ddl_owner();`, true},
 
 		// for time fsp
 		{"CREATE TABLE t( c1 TIME(2), c2 DATETIME(2), c3 TIMESTAMP(2) );", true},
@@ -1196,14 +1197,28 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select avg(distinctrow all c1) from t;`, true},
 		{`select avg(c2) from t;`, true},
 		{`select bit_and(c1) from t;`, true},
+		{`select bit_and(all c1) from t;`, true},
+		{`select bit_and(distinct c1) from t;`, false},
+		{`select bit_and(distinctrow c1) from t;`, false},
+		{`select bit_and(distinctrow all c1) from t;`, false},
+		{`select bit_and(distinct all c1) from t;`, false},
 		{`select bit_and(), bit_and(distinct c1) from t;`, false},
 		{`select bit_and(), bit_and(distinctrow c1) from t;`, false},
 		{`select bit_and(), bit_and(all c1) from t;`, false},
 		{`select bit_or(c1) from t;`, true},
+		{`select bit_or(all c1) from t;`, true},
+		{`select bit_or(distinct c1) from t;`, false},
+		{`select bit_or(distinctrow c1) from t;`, false},
+		{`select bit_or(distinctrow all c1) from t;`, false},
+		{`select bit_or(distinct all c1) from t;`, false},
 		{`select bit_or(), bit_or(distinct c1) from t;`, false},
 		{`select bit_or(), bit_or(distinctrow c1) from t;`, false},
 		{`select bit_or(), bit_or(all c1) from t;`, false},
 		{`select bit_xor(c1) from t;`, true},
+		{`select bit_xor(all c1) from t;`, true},
+		{`select bit_xor(distinct c1) from t;`, false},
+		{`select bit_xor(distinctrow c1) from t;`, false},
+		{`select bit_xor(distinctrow all c1) from t;`, false},
 		{`select bit_xor(), bit_xor(distinct c1) from t;`, false},
 		{`select bit_xor(), bit_xor(distinctrow c1) from t;`, false},
 		{`select bit_xor(), bit_xor(all c1) from t;`, false},
@@ -1617,6 +1632,9 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t CONVERT TO CHARSET utf8 COLLATE utf8_bin;", true},
 		{"ALTER TABLE t FORCE", true},
 		{"ALTER TABLE t DROP INDEX;", false},
+		// For #6405
+		{"ALTER TABLE t RENAME KEY a TO b;", true},
+		{"ALTER TABLE t RENAME INDEX a TO b;", true},
 
 		// For create index statement
 		{"CREATE INDEX idx ON t (a)", true},
@@ -2047,6 +2065,19 @@ func (s *testParserSuite) TestExplain(c *C) {
 		{"explain update t set id = id + 1 order by id desc;", true},
 		{"explain select c1 from t1 union (select c2 from t2) limit 1, 1", true},
 		{`explain format = "row" select c1 from t1 union (select c2 from t2) limit 1, 1`, true},
+	}
+	s.RunTest(c, table)
+}
+
+func (s *testParserSuite) TestTrace(c *C) {
+	defer testleak.AfterTest(c)()
+	table := []testCase{
+		{"trace select c1 from t1", true},
+		{"trace delete t1, t2 from t1 inner join t2 inner join t3 where t1.id=t2.id and t2.id=t3.id;", true},
+		{"trace insert into t values (1), (2), (3)", true},
+		{"trace replace into foo values (1 || 2)", true},
+		{"trace update t set id = id + 1 order by id desc;", true},
+		{"trace select c1 from t1 union (select c2 from t2) limit 1, 1", true},
 	}
 	s.RunTest(c, table)
 }

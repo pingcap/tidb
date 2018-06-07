@@ -400,7 +400,9 @@ func (d *MyDecimal) FromString(str []byte) error {
 			}
 		}
 		if exponent > math.MaxInt32/2 {
+			negative := d.negative
 			maxDecimal(wordBufLen*digitsPerWord, 0, d)
+			d.negative = negative
 			err = ErrOverflow
 		}
 		if exponent < math.MinInt32/2 && err != ErrOverflow {
@@ -411,7 +413,9 @@ func (d *MyDecimal) FromString(str []byte) error {
 			shiftErr := d.Shift(int(exponent))
 			if shiftErr != nil {
 				if shiftErr == ErrOverflow {
+					negative := d.negative
 					maxDecimal(wordBufLen*digitsPerWord, 0, d)
+					d.negative = negative
 				}
 				err = shiftErr
 			}

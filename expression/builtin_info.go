@@ -39,6 +39,7 @@ var (
 	_ functionClass = &collationFunctionClass{}
 	_ functionClass = &rowCountFunctionClass{}
 	_ functionClass = &tidbVersionFunctionClass{}
+	_ functionClass = &tidbIsDDLOwnerFunctionClass{}
 )
 
 var (
@@ -344,6 +345,39 @@ func (b *builtinTiDBVersionSig) Clone() builtinFunc {
 // This will show git hash and build time for tidb-server.
 func (b *builtinTiDBVersionSig) evalString(_ types.Row) (string, bool, error) {
 	return printer.GetTiDBInfo(), false, nil
+}
+
+type tidbIsDDLOwnerFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *tidbIsDDLOwnerFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt)
+	sig := &builtinTiDBIsDDLOwnerSig{bf}
+	return sig, nil
+}
+
+type builtinTiDBIsDDLOwnerSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinTiDBIsDDLOwnerSig) Clone() builtinFunc {
+	newSig := &builtinTiDBIsDDLOwnerSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalInt evals a builtinTiDBIsDDLOwnerSig.
+func (b *builtinTiDBIsDDLOwnerSig) evalInt(_ types.Row) (res int64, isNull bool, err error) {
+	ddlOwnerChecker := b.ctx.DDLOwnerChecker()
+	if ddlOwnerChecker.IsOwner() {
+		res = 1
+	}
+
+	return res, false, nil
 }
 
 type benchmarkFunctionClass struct {
