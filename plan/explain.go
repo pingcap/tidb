@@ -43,7 +43,17 @@ func (p *PhysicalIndexScan) ExplainInfo() string {
 			}
 		}
 	}
-	if len(p.Ranges) > 0 {
+	haveCorCol := false
+	for _, cond := range p.AccessCondition {
+		if len(expression.ExtractCorColumns(cond)) > 0 {
+			haveCorCol = true
+			break
+		}
+	}
+	if haveCorCol {
+		buffer.WriteString(", range:")
+		buffer.WriteString(fmt.Sprintf(" decided by %v", p.AccessCondition))
+	} else if len(p.Ranges) > 0 {
 		buffer.WriteString(", range:")
 		for i, idxRange := range p.Ranges {
 			buffer.WriteString(idxRange.String())
@@ -70,7 +80,17 @@ func (p *PhysicalTableScan) ExplainInfo() string {
 	if p.pkCol != nil {
 		buffer.WriteString(fmt.Sprintf(", pk col:%s", p.pkCol.ExplainInfo()))
 	}
-	if len(p.Ranges) > 0 {
+	haveCorCol := false
+	for _, cond := range p.AccessCondition {
+		if len(expression.ExtractCorColumns(cond)) > 0 {
+			haveCorCol = true
+			break
+		}
+	}
+	if haveCorCol {
+		buffer.WriteString(", range:")
+		buffer.WriteString(fmt.Sprintf(" decided by %v", p.AccessCondition))
+	} else if len(p.Ranges) > 0 {
 		buffer.WriteString(", range:")
 		for i, idxRange := range p.Ranges {
 			buffer.WriteString(idxRange.String())

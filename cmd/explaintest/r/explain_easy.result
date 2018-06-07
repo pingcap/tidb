@@ -42,12 +42,12 @@ IndexScan_8			cop	table:t1, index:c2, range:[1,1], keep order:false	10.00
 IndexReader_9			root	index:IndexScan_8	10.00
 explain select * from t1 left join t2 on t1.c2 = t2.c1 where t1.c1 > 1;
 id	parents	children	task	operator info	count
-TableScan_22			cop	table:t1, range:(1,+inf], keep order:false	3333.33
-TableReader_23	IndexJoin_11		root	data:TableScan_22	3333.33
-IndexScan_8			cop	table:t2, index:c1, range:[<nil>,+inf], keep order:false	10000.00
-TableScan_9			cop	table:t2, keep order:false	10000.00
-IndexLookUp_10	IndexJoin_11		root	index:IndexScan_8, table:TableScan_9	10000.00
-IndexJoin_11		TableReader_23,IndexLookUp_10	root	outer:TableReader_23, left outer join, outer key:test.t1.c2, inner key:test.t2.c1	312.50
+TableScan_12			cop	table:t1, range:(1,+inf], keep order:false	3333.33
+TableReader_13	IndexJoin_10		root	data:TableScan_12	3333.33
+IndexScan_7			cop	table:t2, index:c1, range:[<nil>,+inf], keep order:false	10000.00
+TableScan_8			cop	table:t2, keep order:false	10000.00
+IndexLookUp_9	IndexJoin_10		root	index:IndexScan_7, table:TableScan_8	10000.00
+IndexJoin_10		TableReader_13,IndexLookUp_9	root	outer:TableReader_13, left outer join, outer key:test.t1.c2, inner key:test.t2.c1	312.50
 explain update t1 set t1.c2 = 2 where t1.c1 = 1;
 id	parents	children	task	operator info	count
 TableScan_4			cop	table:t1, range:[1,1], keep order:false	1.00
@@ -76,8 +76,8 @@ TopN_7		TableReader_15	root	test.t2.c2:asc, offset:0, count:1	1.00
 explain select * from t1 where c1 > 1 and c2 = 1 and c3 < 1;
 id	parents	children	task	operator info	count
 IndexScan_8	Selection_10		cop	table:t1, index:c2, range:[1,1], keep order:false	10.00
-Selection_10		IndexScan_8	cop	gt(test.t1.c1, 1)	0.25
-TableScan_9	Selection_11		cop	table:t1, keep order:false	0.25
+Selection_10		IndexScan_8	cop	gt(test.t1.c1, 1)	0.08
+TableScan_9	Selection_11		cop	table:t1, keep order:false	0.08
 Selection_11		TableScan_9	cop	lt(test.t1.c3, 1)	0.08
 IndexLookUp_12			root	index:Selection_10, table:Selection_11	0.08
 explain select * from t1 where c1 = 1 and c2 > 1;
@@ -113,12 +113,11 @@ explain select c2 = (select c2 from t2 where t1.c1 = t2.c1 order by c1 limit 1) 
 id	parents	children	task	operator info	count
 TableScan_15			cop	table:t1, range:[-inf,+inf], keep order:false	10000.00
 TableReader_16	Apply_14		root	data:TableScan_15	10000.00
-IndexScan_32	Selection_34		cop	table:t2, index:c1, range:[<nil>,+inf], keep order:true	1.25
-Selection_34	Limit_35	IndexScan_32	cop	eq(test.t1.c1, test.t2.c1)	1.00
-Limit_35		Selection_34	cop	offset:0, count:1	1.00
-TableScan_33			cop	table:t2, keep order:false	1.00
-IndexLookUp_36	Limit_21		root	index:Limit_35, table:TableScan_33	1.00
-Limit_21	Apply_14	IndexLookUp_36	root	offset:0, count:1	1.00
+IndexScan_40	Limit_42		cop	table:t2, index:c1, range: decided by [eq(test.t1.c1, test.t2.c1)], keep order:true	1.25
+Limit_42		IndexScan_40	cop	offset:0, count:1	1.00
+TableScan_41			cop	table:t2, keep order:false	1.00
+IndexLookUp_43	Limit_21		root	index:Limit_42, table:TableScan_41	1.00
+Limit_21	Apply_14	IndexLookUp_43	root	offset:0, count:1	1.00
 Apply_14	Projection_12	TableReader_16,Limit_21	root	left outer join, inner:Limit_21, right:Limit_21	10000.00
 Projection_12		Apply_14	root	eq(test.t1.c2, test.t2.c2)	10000.00
 explain select * from t1 order by c1 desc limit 1;
@@ -130,8 +129,8 @@ Limit_10		TableReader_21	root	offset:0, count:1	1.00
 explain select * from t4 use index(idx) where a > 1 and b > 1 and c > 1 limit 1;
 id	parents	children	task	operator info	count
 IndexScan_12	Selection_14		cop	table:t4, index:a, b, range:(1 +inf,+inf +inf], keep order:false	16.67
-Selection_14		IndexScan_12	cop	gt(test.t4.b, 1)	5.56
-TableScan_13	Selection_15		cop	table:t4, keep order:false	5.56
+Selection_14		IndexScan_12	cop	gt(test.t4.b, 1)	1.00
+TableScan_13	Selection_15		cop	table:t4, keep order:false	1.00
 Selection_15	Limit_16	TableScan_13	cop	gt(test.t4.c, 1)	1.00
 Limit_16		Selection_15	cop	offset:0, count:1	1.00
 IndexLookUp_17	Limit_9		root	index:Selection_14, table:Limit_16	1.00
@@ -146,12 +145,12 @@ Limit_8		TableReader_15	root	offset:0, count:1	1.00
 set @@session.tidb_opt_insubquery_unfold = 0;
 explain select sum(t1.c1 in (select c1 from t2)) from t1;
 id	parents	children	task	operator info	count
-TableScan_18			cop	table:t1, range:[-inf,+inf], keep order:true	10000.00
-TableReader_19	MergeJoin_28		root	data:TableScan_18	10000.00
-IndexScan_22			cop	table:t2, index:c1, range:[<nil>,+inf], keep order:true	10000.00
-IndexReader_23	MergeJoin_28		root	index:IndexScan_22	10000.00
-MergeJoin_28	StreamAgg_12	TableReader_19,IndexReader_23	root	left outer semi join, equal:[eq(test.t1.c1, test.t2.c1)], left key:test.t1.c1, right key:test.t2.c1	10000.00
-StreamAgg_12		MergeJoin_28	root	, funcs:sum(5_aux_0)	1.00
+TableScan_25			cop	table:t1, range:[-inf,+inf], keep order:false	10000.00
+TableReader_26	IndexJoin_23		root	data:TableScan_25	10000.00
+IndexScan_21			cop	table:t2, index:c1, range:[<nil>,+inf], keep order:false	10000.00
+IndexReader_22	IndexJoin_23		root	index:IndexScan_21	10000.00
+IndexJoin_23	StreamAgg_12	TableReader_26,IndexReader_22	root	outer:TableReader_26, left outer semi join, outer key:test.t1.c1, inner key:test.t2.c1	10000.00
+StreamAgg_12		IndexJoin_23	root	, funcs:sum(5_aux_0)	1.00
 explain select 1 in (select c2 from t2) from t1;
 id	parents	children	task	operator info	count
 TableScan_8			cop	table:t1, range:[-inf,+inf], keep order:false	10000.00
@@ -178,24 +177,24 @@ subgraph cluster12{
 node [style=filled, color=lightgrey]
 color=black
 label = "root"
-"StreamAgg_12" -> "MergeJoin_28"
-"MergeJoin_28" -> "TableReader_19"
-"MergeJoin_28" -> "IndexReader_23"
+"StreamAgg_12" -> "IndexJoin_23"
+"IndexJoin_23" -> "TableReader_26"
+"IndexJoin_23" -> "IndexReader_22"
 }
-subgraph cluster18{
+subgraph cluster25{
 node [style=filled, color=lightgrey]
 color=black
 label = "cop"
-"TableScan_18"
+"TableScan_25"
 }
-subgraph cluster22{
+subgraph cluster21{
 node [style=filled, color=lightgrey]
 color=black
 label = "cop"
-"IndexScan_22"
+"IndexScan_21"
 }
-"TableReader_19" -> "TableScan_18"
-"IndexReader_23" -> "IndexScan_22"
+"TableReader_26" -> "TableScan_25"
+"IndexReader_22" -> "IndexScan_21"
 }
 
 explain format="dot" select 1 in (select c2 from t2) from t1;
@@ -227,3 +226,41 @@ label = "cop"
 }
 
 drop table if exists t1, t2, t3, t4;
+create table t(a int primary key, b int, c int, index idx(b));
+explain select t.c in (select count(*) from t s ignore index(idx), t t1 where s.a = t.a and s.a = t1.a) from t;
+id	parents	children	task	operator info	count
+TableScan_14			cop	table:t, range:[-inf,+inf], keep order:false	10000.00
+TableReader_15	Apply_13		root	data:TableScan_14	10000.00
+TableScan_31			cop	table:s, range: decided by [eq(s.a, test.t.a)], keep order:true	10000.00
+TableReader_32	MergeJoin_40		root	data:TableScan_31	10000.00
+TableScan_33			cop	table:t1, range:[-inf,+inf], keep order:true	10000.00
+TableReader_34	MergeJoin_40		root	data:TableScan_33	10000.00
+MergeJoin_40	StreamAgg_20	TableReader_32,TableReader_34	root	inner join, equal:[eq(s.a, t1.a)], left key:s.a, right key:t1.a	10000.00
+StreamAgg_20	Apply_13	MergeJoin_40	root	, funcs:count(1)	1.00
+Apply_13	Projection_11	TableReader_15,StreamAgg_20	root	left outer semi join, inner:StreamAgg_20, equal:[eq(test.t.c, count(*))], right:StreamAgg_20	10000.00
+Projection_11		Apply_13	root	9_aux_0	10000.00
+explain select t.c in (select count(*) from t s use index(idx), t t1 where s.b = t.a and s.a = t1.a) from t;
+id	parents	children	task	operator info	count
+TableScan_14			cop	table:t, range:[-inf,+inf], keep order:false	10000.00
+TableReader_15	Apply_13		root	data:TableScan_14	10000.00
+IndexScan_35			cop	table:s, index:b, range: decided by [eq(s.b, test.t.a)], keep order:false	10000.00
+IndexReader_36	IndexJoin_32		root	index:IndexScan_35	10000.00
+TableScan_30			cop	table:t1, range:[-inf,+inf], keep order:false	10000.00
+TableReader_31	IndexJoin_32		root	data:TableScan_30	10000.00
+IndexJoin_32	StreamAgg_20	IndexReader_36,TableReader_31	root	outer:IndexReader_36, inner join, outer key:s.a, inner key:t1.a	10000.00
+StreamAgg_20	Apply_13	IndexJoin_32	root	, funcs:count(1)	1.00
+Apply_13	Projection_11	TableReader_15,StreamAgg_20	root	left outer semi join, inner:StreamAgg_20, equal:[eq(test.t.c, count(*))], right:StreamAgg_20	10000.00
+Projection_11		Apply_13	root	9_aux_0	10000.00
+explain select t.c in (select count(*) from t s use index(idx), t t1 where s.b = t.a and s.c = t1.a) from t;
+id	parents	children	task	operator info	count
+TableScan_14			cop	table:t, range:[-inf,+inf], keep order:false	10000.00
+TableReader_15	Apply_13		root	data:TableScan_14	10000.00
+IndexScan_36			cop	table:s, index:b, range: decided by [eq(s.b, test.t.a)], keep order:false	10000.00
+TableScan_37			cop	table:t, keep order:false	10000.00
+IndexLookUp_38	IndexJoin_33		root	index:IndexScan_36, table:TableScan_37	10000.00
+TableScan_31			cop	table:t1, range:[-inf,+inf], keep order:false	10000.00
+TableReader_32	IndexJoin_33		root	data:TableScan_31	10000.00
+IndexJoin_33	StreamAgg_20	IndexLookUp_38,TableReader_32	root	outer:IndexLookUp_38, inner join, outer key:s.c, inner key:t1.a	10000.00
+StreamAgg_20	Apply_13	IndexJoin_33	root	, funcs:count(1)	1.00
+Apply_13	Projection_11	TableReader_15,StreamAgg_20	root	left outer semi join, inner:StreamAgg_20, equal:[eq(test.t.c, count(*))], right:StreamAgg_20	10000.00
+Projection_11		Apply_13	root	9_aux_0	10000.00

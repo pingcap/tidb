@@ -1228,6 +1228,22 @@ func (b *executorBuilder) corColInDistPlan(plans []plan.PhysicalPlan) bool {
 	return false
 }
 
+func (b *executorBuilder) corColInAccess(p plan.PhysicalPlan) bool {
+	var access []expression.Expression
+	switch x := p.(type) {
+	case *plan.PhysicalTableScan:
+		access = x.AccessCondition
+	case *plan.PhysicalIndexScan:
+		access = x.AccessCondition
+	}
+	for _, cond := range access {
+		if len(expression.ExtractCorColumns(cond)) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Executor {
 	outerExec := b.build(v.Children()[v.OuterIndex])
 	if b.err != nil {
@@ -1314,16 +1330,17 @@ func buildNoRangeTableReader(b *executorBuilder, v *plan.PhysicalTableReader) (*
 	ts := v.TablePlans[0].(*plan.PhysicalTableScan)
 	table, _ := b.is.TableByID(ts.Table.ID)
 	e := &TableReaderExecutor{
-		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
-		dagPB:        dagReq,
-		tableID:      ts.Table.ID,
-		table:        table,
-		keepOrder:    ts.KeepOrder,
-		desc:         ts.Desc,
-		columns:      ts.Columns,
-		streaming:    streaming,
-		haveCorCol:   b.corColInDistPlan(v.TablePlans),
-		plans:        v.TablePlans,
+		baseExecutor:   newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+		dagPB:          dagReq,
+		tableID:        ts.Table.ID,
+		table:          table,
+		keepOrder:      ts.KeepOrder,
+		desc:           ts.Desc,
+		columns:        ts.Columns,
+		streaming:      streaming,
+		corColInFilter: b.corColInDistPlan(v.TablePlans),
+		corColInAccess: b.corColInAccess(v.TablePlans[0]),
+		plans:          v.TablePlans,
 	}
 	if containsLimit(dagReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, ts.Desc)
@@ -1362,17 +1379,20 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plan.PhysicalIndexReader) (*
 	is := v.IndexPlans[0].(*plan.PhysicalIndexScan)
 	table, _ := b.is.TableByID(is.Table.ID)
 	e := &IndexReaderExecutor{
-		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
-		dagPB:        dagReq,
-		tableID:      is.Table.ID,
-		table:        table,
-		index:        is.Index,
-		keepOrder:    is.KeepOrder,
-		desc:         is.Desc,
-		columns:      is.Columns,
-		streaming:    streaming,
-		haveCorCol:   b.corColInDistPlan(v.IndexPlans),
-		plans:        v.IndexPlans,
+		baseExecutor:   newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+		dagPB:          dagReq,
+		tableID:        is.Table.ID,
+		table:          table,
+		index:          is.Index,
+		keepOrder:      is.KeepOrder,
+		desc:           is.Desc,
+		columns:        is.Columns,
+		streaming:      streaming,
+		corColInFilter: b.corColInDistPlan(v.IndexPlans),
+		corColInAccess: b.corColInAccess(v.IndexPlans[0]),
+		idxCols:        is.IdxCols,
+		colLens:        is.ColLens,
+		plans:          v.IndexPlans,
 	}
 	if containsLimit(dagReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, is.Desc)
@@ -1435,6 +1455,9 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plan.PhysicalIndexLook
 		dataReaderBuilder: &dataReaderBuilder{executorBuilder: b},
 		corColInIdxSide:   b.corColInDistPlan(v.IndexPlans),
 		corColInTblSide:   b.corColInDistPlan(v.TablePlans),
+		corColInAccess:    b.corColInAccess(v.IndexPlans[0]),
+		idxCols:           is.IdxCols,
+		colLens:           is.ColLens,
 		idxPlans:          v.IndexPlans,
 		tblPlans:          v.TablePlans,
 	}

@@ -93,6 +93,8 @@ type PhysicalIndexScan struct {
 
 	Table     *model.TableInfo
 	Index     *model.IndexInfo
+	IdxCols   []*expression.Column
+	ColLens   []int
 	Ranges    []*ranger.Range
 	Columns   []*model.ColumnInfo
 	DBName    model.CIStr

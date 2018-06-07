@@ -132,9 +132,15 @@ func (ds *DataSource) deriveStats() (*statsInfo, error) {
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+			if path.countAfterAccess < ds.statsAfterSelect.count {
+				ds.statsAfterSelect.scale(path.countAfterAccess / ds.statsAfterSelect.count)
+			}
 			continue
 		}
 		err := ds.deriveIndexPathStats(path)
+		if path.countAfterIndex < ds.statsAfterSelect.count {
+			ds.statsAfterSelect.scale(path.countAfterIndex / ds.statsAfterSelect.count)
+		}
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

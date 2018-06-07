@@ -182,8 +182,9 @@ type TableReaderExecutor struct {
 	streaming     bool
 	feedback      *statistics.QueryFeedback
 
-	haveCorCol bool
-	plans      []plan.PhysicalPlan
+	corColInFilter bool
+	corColInAccess bool
+	plans          []plan.PhysicalPlan
 }
 
 // Close implements the Executor Close interface.
@@ -209,8 +210,17 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	defer span.Finish()
 
 	var err error
-	if e.haveCorCol {
+	if e.corColInFilter {
 		e.dagPB.Executors, _, err = constructDistExec(e.ctx, e.plans)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	if e.corColInAccess {
+		ts := e.plans[0].(*plan.PhysicalTableScan)
+		access := ts.AccessCondition
+		pkTP := ts.Table.GetPkColInfo().FieldType
+		e.ranges, err = ranger.BuildTableRange(access, e.ctx.GetSessionVars().StmtCtx, &pkTP)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -328,8 +338,11 @@ type IndexReaderExecutor struct {
 	streaming bool
 	feedback  *statistics.QueryFeedback
 
-	haveCorCol bool
-	plans      []plan.PhysicalPlan
+	corColInFilter bool
+	corColInAccess bool
+	idxCols        []*expression.Column
+	colLens        []int
+	plans          []plan.PhysicalPlan
 }
 
 // Close clears all resources hold by current object.
@@ -351,6 +364,19 @@ func (e *IndexReaderExecutor) Next(ctx context.Context, chk *chunk.Chunk) error 
 
 // Open implements the Executor Open interface.
 func (e *IndexReaderExecutor) Open(ctx context.Context) error {
+	var err error
+	if e.corColInAccess {
+		is := e.plans[0].(*plan.PhysicalIndexScan)
+		access := make([]expression.Expression, 0, len(is.AccessCondition))
+		for _, cond := range is.AccessCondition {
+			newCond, err := expression.SubstituteCorCol2Constant(cond)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			access = append(access, newCond)
+		}
+		e.ranges, _, err = ranger.DetachSimpleCondAndBuildRangeForIndex(e.ctx, access, e.idxCols, e.colLens)
+	}
 	kvRanges, err := distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, e.tableID, e.index.ID, e.ranges, e.feedback)
 	if err != nil {
 		e.feedback.Invalidate()
@@ -364,7 +390,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	defer span.Finish()
 
 	var err error
-	if e.haveCorCol {
+	if e.corColInFilter {
 		e.dagPB.Executors, _, err = constructDistExec(e.ctx, e.plans)
 		if err != nil {
 			return errors.Trace(err)
@@ -431,10 +457,26 @@ type IndexLookUpExecutor struct {
 	idxPlans        []plan.PhysicalPlan
 	corColInTblSide bool
 	tblPlans        []plan.PhysicalPlan
+	corColInAccess  bool
+	idxCols         []*expression.Column
+	colLens         []int
 }
 
 // Open implements the Executor Open interface.
 func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
+	var err error
+	if e.corColInAccess {
+		is := e.idxPlans[0].(*plan.PhysicalIndexScan)
+		access := make([]expression.Expression, 0, len(is.AccessCondition))
+		for _, cond := range is.AccessCondition {
+			newCond, err := expression.SubstituteCorCol2Constant(cond)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			access = append(access, newCond)
+		}
+		e.ranges, _, err = ranger.DetachSimpleCondAndBuildRangeForIndex(e.ctx, access, e.idxCols, e.colLens)
+	}
 	kvRanges, err := distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, e.tableID, e.index.ID, e.ranges, e.feedback)
 	if err != nil {
 		e.feedback.Invalidate()
@@ -563,14 +605,14 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 
 func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []int64) (Executor, error) {
 	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, &TableReaderExecutor{
-		baseExecutor: newBaseExecutor(e.ctx, e.schema, e.id+"_tableReader"),
-		table:        e.table,
-		tableID:      e.tableID,
-		dagPB:        e.tableRequest,
-		streaming:    e.tableStreaming,
-		feedback:     statistics.NewQueryFeedback(0, nil, 0, false),
-		haveCorCol:   e.corColInTblSide,
-		plans:        e.tblPlans,
+		baseExecutor:   newBaseExecutor(e.ctx, e.schema, e.id+"_tableReader"),
+		table:          e.table,
+		tableID:        e.tableID,
+		dagPB:          e.tableRequest,
+		streaming:      e.tableStreaming,
+		feedback:       statistics.NewQueryFeedback(0, nil, 0, false),
+		corColInFilter: e.corColInTblSide,
+		plans:          e.tblPlans,
 	}, handles)
 	if err != nil {
 		log.Error(err)

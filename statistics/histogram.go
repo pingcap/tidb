@@ -647,6 +647,14 @@ func (c *Column) String() string {
 	return c.Histogram.ToString(0)
 }
 
+func (c *Column) AvgCountPerValue(totalCount int64) float64 {
+	curNDV := float64(c.Histogram.NDV) * c.getIncreaseFactor(totalCount)
+	if curNDV == 0 {
+		curNDV = 1
+	}
+	return float64(totalCount) / curNDV
+}
+
 func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum) (float64, error) {
 	if val.IsNull() {
 		return float64(c.NullCount), nil
@@ -724,6 +732,14 @@ func (idx *Index) equalRowCount(sc *stmtctx.StatementContext, b []byte) float64 
 		return float64(idx.CMSketch.queryBytes(b))
 	}
 	return idx.Histogram.equalRowCount(types.NewBytesDatum(b))
+}
+
+func (idx *Index) AvgCountPerValue(totalCount int64) float64 {
+	curNDV := float64(idx.Histogram.NDV) * idx.getIncreaseFactor(totalCount)
+	if curNDV == 0 {
+		curNDV = 1
+	}
+	return float64(totalCount) / curNDV
 }
 
 func (idx *Index) getRowCount(sc *stmtctx.StatementContext, indexRanges []*ranger.Range) (float64, error) {
