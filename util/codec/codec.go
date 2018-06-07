@@ -100,6 +100,8 @@ func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparab
 				b, err = EncodeDecimal(b, vals[i].GetMysqlDecimal(), vals[i].Length(), vals[i].Frac())
 				if terror.ErrorEqual(err, types.ErrTruncated) {
 					err = sc.HandleTruncate(err)
+				} else if terror.ErrorEqual(err, types.ErrOverflow) {
+					err = sc.HandleOverflow(err, err)
 				}
 			}
 		case types.KindMysqlEnum:
