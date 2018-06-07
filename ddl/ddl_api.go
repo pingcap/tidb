@@ -1116,6 +1116,7 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
