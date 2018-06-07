@@ -138,7 +138,7 @@ var (
 	// ErrCantDropFieldOrKey returns for dropping a non-existent field or key.
 	ErrCantDropFieldOrKey = terror.ClassDDL.New(codeCantDropFieldOrKey, "can't drop field; check that column/key exists")
 	// ErrInvalidOnUpdate returns for invalid ON UPDATE clause.
-	ErrInvalidOnUpdate = terror.ClassDDL.New(codeInvalidOnUpdate, "invalid ON UPDATE clause for the column")
+	ErrInvalidOnUpdate = terror.ClassDDL.New(codeInvalidOnUpdate, mysql.MySQLErrName[mysql.ErrInvalidOnUpdate])
 	// ErrTooLongIdent returns for too long name of database/table/column/index.
 	ErrTooLongIdent = terror.ClassDDL.New(codeTooLongIdent, mysql.MySQLErrName[mysql.ErrTooLongIdent])
 	// ErrWrongDBName returns for wrong database name.
@@ -393,7 +393,8 @@ func (d *ddl) GetLease() time.Duration {
 	return lease
 }
 
-func (d *ddl) getInformationSchema() infoschema.InfoSchema {
+// GetInformationSchema get the infoschema binding to d. It's expoted for testing.
+func (d *ddl) GetInformationSchema() infoschema.InfoSchema {
 	return d.infoHandle.Get()
 }
 
