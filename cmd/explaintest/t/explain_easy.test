@@ -42,6 +42,7 @@ explain format="dot" select 1 in (select c2 from t2) from t1;
 
 drop table if exists t1, t2, t3, t4;
 
+drop table if exists t;
 create table t(a int primary key, b int, c int, index idx(b));
 explain select t.c in (select count(*) from t s ignore index(idx), t t1 where s.a = t.a and s.a = t1.a) from t;
 explain select t.c in (select count(*) from t s use index(idx), t t1 where s.b = t.a and s.a = t1.a) from t;
