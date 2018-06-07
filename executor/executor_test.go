@@ -960,6 +960,9 @@ func (s *testSuite) TestUnion(c *C) {
 	c.Assert(err, NotNil)
 	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrWrongUsage))
+
+	tk.MustQuery("select 1 union select 1 union all select 1").Check(testkit.Rows("1", "1"))
+	tk.MustQuery("select 1 union all select 1 union select 1").Check(testkit.Rows("1"))
 }
 
 func (s *testSuite) TestIn(c *C) {
