@@ -69,8 +69,8 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkDropDatabaseGrammar(node)
 	case *ast.ShowStmt:
 		p.resolveShowStmt(node)
-	case *ast.UnionSelectList:
-		p.checkUnionSelectList(node)
+	//case *ast.UnionSelectList:
+	//	p.checkUnionSelectList(node)
 	case *ast.DeleteTableList:
 		return in, true
 	}
