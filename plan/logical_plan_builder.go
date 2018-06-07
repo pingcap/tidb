@@ -1685,7 +1685,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(columns))...)
 	for i, col := range columns {
 		ds.Columns = append(ds.Columns, col.ToInfo())
-		schema.Append(&expression.Column{
+		newCol := &expression.Column{
 			FromID:   ds.id,
 			Position: i,
 			DBName:   dbName,
@@ -1693,13 +1693,14 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 			ColName:  col.Name,
 			ID:       col.ID,
 			RetType:  &col.FieldType,
-		})
+		}
 
 		if tableInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
-			schema.Columns[i].RetType = schema.Columns[i].RetType.Clone()
-			schema.Columns[i].RetType.Flag |= mysql.UniqueKeyFlag
-			handleCol = schema.Columns[i]
+			newCol.RetType = newCol.RetType.Clone()
+			newCol.RetType.Flag |= mysql.UniqueKeyFlag
+			handleCol = newCol
 		}
+		schema.Append(newCol)
 	}
 	ds.SetSchema(schema)
 

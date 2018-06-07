@@ -54,15 +54,8 @@ func NewFieldType(tp byte) *FieldType {
 
 // Clone does a shallow copy.
 func (ft *FieldType) Clone() *FieldType {
-	return &FieldType{
-		Tp:      ft.Tp,
-		Flag:    ft.Flag,
-		Flen:    ft.Flen,
-		Decimal: ft.Decimal,
-		Charset: ft.Charset,
-		Collate: ft.Collate,
-		Elems:   ft.Elems,
-	}
+	newFt := *ft
+	return &newFt
 }
 
 // Equal checks whether two FieldType objects are equal.

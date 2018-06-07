@@ -34,9 +34,7 @@ type exprSet struct {
 	// mask is a bit pattern whose ith bit will indicate whether the ith expression is covered by this index/column.
 	mask int64
 	// ranges contains all the ranges we got.
-	ranges  []*ranger.Range
-	colHist *Column
-	idxHist *Index
+	ranges []*ranger.Range
 }
 
 // The type of the exprSet.
@@ -46,9 +44,9 @@ const (
 	colType
 )
 
-// getConstantColumnID receives two expressions and if one of them is column and another is constant, it returns the
+// getConstantColumn receives two expressions and if one of them is column and another is constant, it returns the
 // ID of the column.
-func getConstantColumnID(e []expression.Expression) *expression.Column {
+func getConstantColumn(e []expression.Expression) *expression.Column {
 	if len(e) != 2 {
 		return nil
 	}
@@ -67,34 +65,29 @@ func getConstantColumnID(e []expression.Expression) *expression.Column {
 
 func pseudoSelectivity(exprs []expression.Expression, totalCount int64, idxHists map[int64]*Index) float64 {
 	minFactor := selectionFactor
-	existsCol := make(map[string]bool)
+	colExists := make(map[string]bool)
 	for _, expr := range exprs {
 		fun, ok := expr.(*expression.ScalarFunction)
 		if !ok {
 			continue
 		}
-		col := getConstantColumnID(fun.GetArgs())
+		col := getConstantColumn(fun.GetArgs())
 		if col == nil {
 			continue
 		}
 		switch fun.FuncName.L {
 		case ast.EQ, ast.NullEQ, ast.In:
 			minFactor = math.Min(minFactor, 1.0/pseudoEqualRate)
-			existsCol[col.ColName.L] = true
+			colExists[col.ColName.L] = true
 			if mysql.HasUniKeyFlag(col.RetType.Flag) {
-				if fun.FuncName.L != ast.NullEQ {
-					return 1.0 / float64(totalCount)
-				}
-				if mysql.HasNotNullFlag(col.RetType.Flag) {
-					return 0
-				}
+				return 1.0 / float64(totalCount)
 			}
 		case ast.GE, ast.GT, ast.LE, ast.LT:
 			minFactor = math.Min(minFactor, 1.0/pseudoLessRate)
 			// FIXME: To resolve the between case.
 		}
 	}
-	if len(existsCol) == 0 {
+	if len(colExists) == 0 {
 		return minFactor
 	}
 	// use the unique key info
@@ -104,7 +97,7 @@ func pseudoSelectivity(exprs []expression.Expression, totalCount int64, idxHists
 		}
 		unique := true
 		for _, col := range idx.Info.Columns {
-			if !existsCol[col.Name.L] {
+			if !colExists[col.Name.L] {
 				unique = false
 				break
 			}
