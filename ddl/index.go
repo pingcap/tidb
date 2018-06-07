@@ -19,6 +19,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
@@ -172,6 +173,54 @@ func dropIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 
 		addIndexColumnFlag(tblInfo, index)
 	}
+}
+
+func validateRenameIndex(from, to model.CIStr, tbl *model.TableInfo) (ignore bool, err error) {
+	if fromIdx := findIndexByName(from.L, tbl.Indices); fromIdx == nil {
+		return false, errors.Trace(infoschema.ErrKeyNotExists.GenByArgs(from.O, tbl.Name))
+	}
+	// Take case-sensitivity into account, if `FromKey` and  `ToKey` are the same, nothing need to be changed
+	if from.O == to.O {
+		return true, nil
+	}
+	// If spec.FromKey.L == spec.ToKey.L, we operate on the same index(case-insensitive) and change its name (case-sensitive)
+	// e.g: from `inDex` to `IndEX`. Otherwise, we try to rename an index to another different index which already exists,
+	// that's illegal by rule.
+	if toIdx := findIndexByName(to.L, tbl.Indices); toIdx != nil && from.L != to.L {
+		return false, errors.Trace(infoschema.ErrKeyNameDuplicate.GenByArgs(toIdx.Name.O))
+	}
+	return false, nil
+}
+
+func onRenameIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	var from, to model.CIStr
+	if err := job.DecodeArgs(&from, &to); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	tblInfo, err := getTableInfo(t, job, job.SchemaID)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	// Double check. See function `RenameIndex` in ddl_api.go
+	duplicate, err := validateRenameIndex(from, to, tblInfo)
+	if duplicate {
+		return ver, nil
+	}
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	idx := findIndexByName(from.L, tblInfo.Indices)
+	idx.Name = to
+	if ver, err = updateVersionAndTableInfo(t, job, tblInfo, true); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	return ver, nil
 }
 
 func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
@@ -730,9 +779,9 @@ func (w *worker) waitTaskResults(workers []*addIndexWorker, taskCnt int, totalAd
 	return nextHandle, addedCount, errors.Trace(firstErr)
 }
 
-// buildBatchTasks sends tasks to workers, and waits all the running worker return back result,
+// handleReorgTasks sends tasks to workers, and waits for all the running workers to return results,
 // there are taskCnt running workers.
-func (w *worker) buildBatchTasks(startTime time.Time, startHandle int64, reorgInfo *reorgInfo, totalAddedCount *int64, workers []*addIndexWorker, batchTasks []*reorgIndexTask) error {
+func (w *worker) handleReorgTasks(startTime time.Time, startHandle int64, reorgInfo *reorgInfo, totalAddedCount *int64, workers []*addIndexWorker, batchTasks []*reorgIndexTask) error {
 	for i, task := range batchTasks {
 		workers[i].taskCh <- task
 	}
@@ -791,7 +840,7 @@ func (w *worker) buildKVRangesIndex(t table.Table, workers []*addIndexWorker, kv
 		batchTasks = append(batchTasks, task)
 		if len(batchTasks) >= len(workers) || i == (len(kvRanges)-1) {
 			// Wait tasks finish.
-			err = w.buildBatchTasks(startTime, startHandle, reorgInfo, &totalAddedCount, workers, batchTasks)
+			err = w.handleReorgTasks(startTime, startHandle, reorgInfo, &totalAddedCount, workers, batchTasks)
 			if err != nil {
 				return errors.Trace(err)
 			}

@@ -1040,6 +1040,14 @@ AlterTableSpec:
 			NewTable:      $3.(*ast.TableName),
 		}
 	}
+|	"RENAME" KeyOrIndex Identifier "TO" Identifier
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:    	    ast.AlterTableRenameIndex,
+			FromKey:    model.NewCIStr($3),
+			ToKey:      model.NewCIStr($5),
+		}
+	}
 |	LockClause
 	{
 		$$ = &ast.AlterTableSpec{
@@ -4617,7 +4625,7 @@ UnionStmt:
 	{
 		st := $4.(*ast.SelectStmt)
 		union := $1.(*ast.UnionStmt)
-		union.Distinct = union.Distinct || $3.(bool)
+		st.IsAfterUnionDistinct = $3.(bool)
 		lastSelect := union.SelectList.Selects[len(union.SelectList.Selects)-1]
 		endOffset := parser.endOffset(&yyS[yypt-5])
 		parser.setLastSelectFieldText(lastSelect, endOffset)
@@ -4628,19 +4636,24 @@ UnionStmt:
 		if $6 != nil {
 		    union.Limit = $6.(*ast.Limit)
 		}
+		if $5 == nil && $6 == nil {
+		    st.LockTp = $7.(ast.SelectLockType)
+		}
 		$$ = union
 	}
 |	UnionClauseList "UNION" UnionOpt SelectStmtFromDual SelectStmtLimit SelectLockOpt
 	{
 		st := $4.(*ast.SelectStmt)
 		union := $1.(*ast.UnionStmt)
-		union.Distinct = union.Distinct || $3.(bool)
+		st.IsAfterUnionDistinct = $3.(bool)
 		lastSelect := union.SelectList.Selects[len(union.SelectList.Selects)-1]
 		endOffset := parser.endOffset(&yyS[yypt-4])
 		parser.setLastSelectFieldText(lastSelect, endOffset)
 		union.SelectList.Selects = append(union.SelectList.Selects, st)
 		if $5 != nil {
 		    union.Limit = $5.(*ast.Limit)
+		} else {
+		    st.LockTp = $6.(ast.SelectLockType)
 		}
 		$$ = union
 	}
@@ -4649,7 +4662,7 @@ UnionStmt:
 	{
 		st := $4.(*ast.SelectStmt)
 		union := $1.(*ast.UnionStmt)
-		union.Distinct = union.Distinct || $3.(bool)
+		st.IsAfterUnionDistinct = $3.(bool)
 		lastSelect := union.SelectList.Selects[len(union.SelectList.Selects)-1]
 		endOffset := parser.endOffset(&yyS[yypt-5])
 		parser.setLastSelectFieldText(lastSelect, endOffset)
@@ -4660,16 +4673,19 @@ UnionStmt:
 		if $6 != nil {
 			union.Limit = $6.(*ast.Limit)
 		}
+		if $5 == nil && $6 == nil {
+			st.LockTp = $7.(ast.SelectLockType)
+		}
 		$$ = union
 	}
 |	UnionClauseList "UNION" UnionOpt '(' SelectStmt ')' OrderByOptional SelectStmtLimit
 	{
 		union := $1.(*ast.UnionStmt)
-		union.Distinct = union.Distinct || $3.(bool)
 		lastSelect := union.SelectList.Selects[len(union.SelectList.Selects)-1]
 		endOffset := parser.endOffset(&yyS[yypt-6])
 		parser.setLastSelectFieldText(lastSelect, endOffset)
 		st := $5.(*ast.SelectStmt)
+		st.IsAfterUnionDistinct = $3.(bool)
 		endOffset = parser.endOffset(&yyS[yypt-2])
 		parser.setLastSelectFieldText(st, endOffset)
 		union.SelectList.Selects = append(union.SelectList.Selects, st)
@@ -4693,11 +4709,12 @@ UnionClauseList:
 |	UnionClauseList "UNION" UnionOpt UnionSelect
 	{
 		union := $1.(*ast.UnionStmt)
-		union.Distinct = union.Distinct || $3.(bool)
+		st := $4.(*ast.SelectStmt)
+		st.IsAfterUnionDistinct = $3.(bool)
 		lastSelect := union.SelectList.Selects[len(union.SelectList.Selects)-1]
 		endOffset := parser.endOffset(&yyS[yypt-2])
 		parser.setLastSelectFieldText(lastSelect, endOffset)
-		union.SelectList.Selects = append(union.SelectList.Selects, $4.(*ast.SelectStmt))
+		union.SelectList.Selects = append(union.SelectList.Selects, st)
 		$$ = union
 	}
 

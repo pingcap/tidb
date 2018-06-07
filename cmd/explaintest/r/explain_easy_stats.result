@@ -14,9 +14,9 @@ TableScan_16			cop	table:t3, range:[-inf,+inf], keep order:false	2000.00
 TableReader_17	Projection_15		root	data:TableScan_16	2000.00
 Projection_15	HashLeftJoin_14	TableReader_17	root	test.t3.a, test.t3.b, test.t3.c, test.t3.d, cast(test.t3.a)	2000.00
 TableScan_29	StreamAgg_22		cop	table:s, range:[-inf,+inf], keep order:false	2000.00
-StreamAgg_22		TableScan_29	cop	, funcs:sum(s.a)	1.00
+StreamAgg_22		TableScan_29	cop	funcs:sum(s.a)	1.00
 TableReader_31	StreamAgg_30		root	data:StreamAgg_22	1.00
-StreamAgg_30	HashLeftJoin_14	TableReader_31	root	, funcs:sum(col_0)	1.00
+StreamAgg_30	HashLeftJoin_14	TableReader_31	root	funcs:sum(col_0)	1.00
 HashLeftJoin_14	Projection_13	Projection_15,StreamAgg_30	root	semi join, inner:StreamAgg_30, equal:[eq(cast(test.t3.a), sel_agg_1)]	1600.00
 Projection_13		HashLeftJoin_14	root	test.t3.a, test.t3.b, test.t3.c, test.t3.d	1600.00
 explain select * from t1;
@@ -69,7 +69,7 @@ TableScan_20	HashAgg_17		cop	table:b, range:[-inf,+inf], keep order:false	1985.0
 HashAgg_17		TableScan_20	cop	group by:b.c2, funcs:count(b.c2), firstrow(b.c2)	1985.00
 TableReader_22	HashAgg_21		root	data:HashAgg_17	1985.00
 HashAgg_21	IndexJoin_14	TableReader_22	root	group by:col_2, funcs:count(col_0), firstrow(col_1)	1985.00
-IndexJoin_14	Projection_11	TableReader_13,HashAgg_21	root	outer:HashAgg_21, inner join, outer key:b.c2, inner key:a.c1	1985.00
+IndexJoin_14	Projection_11	TableReader_13,HashAgg_21	root	inner join, inner:TableReader_13, outer key:b.c2, inner key:a.c1	1985.00
 Projection_11		IndexJoin_14	root	cast(join_agg_0)	1985.00
 explain select * from t2 order by t2.c2 limit 0, 1;
 id	parents	children	task	operator info	count
@@ -106,7 +106,7 @@ Limit_35		Selection_34	cop	offset:0, count:1	1.00
 TableScan_33			cop	table:t2, keep order:false	1.00
 IndexLookUp_36	Limit_21		root	index:Limit_35, table:TableScan_33	1.00
 Limit_21	Apply_14	IndexLookUp_36	root	offset:0, count:1	1.00
-Apply_14	Projection_12	TableReader_16,Limit_21	root	left outer join, inner:Limit_21, right:Limit_21	1999.00
+Apply_14	Projection_12	TableReader_16,Limit_21	root	left outer join, inner:Limit_21	1999.00
 Projection_12		Apply_14	root	eq(test.t1.c2, test.t2.c2)	1999.00
 explain select * from t1 order by c1 desc limit 1;
 id	parents	children	task	operator info	count

@@ -415,6 +415,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = w.onCreateIndex(d, t, job)
 	case model.ActionDropIndex:
 		ver, err = onDropIndex(t, job)
+	case model.ActionRenameIndex:
+		ver, err = onRenameIndex(t, job)
 	case model.ActionAddForeignKey:
 		ver, err = onCreateForeignKey(t, job)
 	case model.ActionDropForeignKey:
