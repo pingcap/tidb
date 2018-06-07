@@ -50,7 +50,7 @@ IndexLookUp_17	MergeJoin_7		root	index:Selection_16, table:TableScan_15	1998.00
 IndexScan_19			cop	table:t2, index:c1, range:[<nil>,+inf], keep order:true	1985.00
 TableScan_20			cop	table:t2, keep order:false	1985.00
 IndexLookUp_21	MergeJoin_7		root	index:IndexScan_19, table:TableScan_20	1985.00
-MergeJoin_7	Projection_6	IndexLookUp_17,IndexLookUp_21	root	left outer join, equal:[eq(test.t1.c2, test.t2.c1)], left key:test.t1.c2, right key:test.t2.c1	2481.25
+MergeJoin_7	Projection_6	IndexLookUp_17,IndexLookUp_21	root	left outer join, left key:test.t1.c2, right key:test.t2.c1	2481.25
 Projection_6		MergeJoin_7	root	test.t1.c1, test.t1.c2, test.t1.c3, test.t2.c1, test.t2.c2	2481.25
 explain update t1 set t1.c2 = 2 where t1.c1 = 1;
 id	parents	children	task	operator info	count

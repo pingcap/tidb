@@ -289,7 +289,13 @@ func (s *testSuite) TestScan(c *C) {
 }
 
 func newDiffRetError(prefix string, ra, rb *RecordData) string {
-	return fmt.Sprintf("[admin:1]%s:%v != record:%v", prefix, ra, rb)
+	if rb == nil {
+		return fmt.Sprintf("[admin:1]%s:%#v != record:%#v", prefix, ra, nil)
+	} else if ra == nil {
+		return fmt.Sprintf("[admin:1]%s:%#v != record:%#v", prefix, nil, rb)
+	} else {
+		return fmt.Sprintf("[admin:1]%s:%#v != record:%#v", prefix, ra, rb)
+	}
 }
 
 func (s *testSuite) testTableData(c *C, tb table.Table, rs []*RecordData) {

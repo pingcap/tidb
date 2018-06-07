@@ -300,6 +300,8 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinFloorIntToDecSig{base}
 	case tipb.ScalarFuncSig_FloorDecToInt:
 		f = &builtinFloorDecToIntSig{base}
+	case tipb.ScalarFuncSig_FloorDecToDec:
+		f = &builtinFloorDecToDecSig{base}
 	case tipb.ScalarFuncSig_FloorReal:
 		f = &builtinFloorRealSig{base}
 
