@@ -44,7 +44,7 @@ func (s *testEvaluatorSuite) TestEvaluateExprWithNull(c *C) {
 	schema.Columns = schema.Columns[:1]
 
 	res := EvaluateExprWithNull(s.ctx, schema, ifnullOuter)
-	c.Assert(res.String(), Equals, "ifnull(<nil>, ifnull(col1, 1))")
+	c.Assert(res.String(), Equals, "ifnull(col1, 1)")
 
 	schema.Columns = append(schema.Columns, col1)
 	// ifnull(null, ifnull(null, 1))

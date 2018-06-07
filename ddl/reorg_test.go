@@ -97,7 +97,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 			m = meta.NewMeta(ctx.Txn())
 			info, err1 := d.getReorgInfo(m, job, nil)
 			c.Assert(err1, IsNil)
-			c.Assert(info.Handle, Equals, handle)
+			c.Assert(info.StartHandle, Equals, handle)
 			c.Assert(d.reorgCtx.doneHandle, Equals, int64(0))
 			break
 		}
@@ -139,7 +139,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 		var err1 error
 		info, err1 = d.getReorgInfo(t, job, nil)
 		c.Assert(err1, IsNil)
-		c.Assert(info.Handle, Greater, int64(0))
+		c.Assert(info.StartHandle, Greater, int64(0))
 		return nil
 	})
 	c.Assert(err, IsNil)

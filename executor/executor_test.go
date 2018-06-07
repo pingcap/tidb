@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -962,6 +963,9 @@ func (s *testSuite) TestUnion(c *C) {
 	c.Assert(err, NotNil)
 	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrWrongUsage))
+
+	tk.MustQuery("select 1 union select 1 union all select 1").Check(testkit.Rows("1", "1"))
+	tk.MustQuery("select 1 union all select 1 union select 1").Check(testkit.Rows("1"))
 }
 
 func (s *testSuite) TestIn(c *C) {
@@ -1809,6 +1813,11 @@ func (s *testSuite) TestHistoryRead(c *C) {
 	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2 <nil>", "4 <nil>", "8 8", "9 9"))
 	tk.MustExec("set @@tidb_snapshot = '" + snapshotTime.Format("2006-01-02 15:04:05.999999") + "'")
 	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2", "4"))
+	tsoStr := strconv.FormatUint(oracle.EncodeTSO(snapshotTime.UnixNano()/int64(time.Millisecond)), 10)
+
+	tk.MustExec("set @@tidb_snapshot = '" + tsoStr + "'")
+	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2", "4"))
+
 	tk.MustExec("set @@tidb_snapshot = ''")
 	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2 <nil>", "4 <nil>", "8 8", "9 9"))
 }
@@ -2786,6 +2795,38 @@ func (s *testSuite) TestYearTypeDeleteIndex(c *C) {
 	tk.MustExec("insert into t set a = '2151';")
 	tk.MustExec("delete from t;")
 	tk.MustExec("admin check table t")
+}
+
+func (s *testSuite) TestForSelectScopeInUnion(c *C) {
+	// A union B for update, the "for update" option belongs to union statement, so
+	// it should works on both A and B.
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test")
+	tk1.MustExec("drop table if exists t")
+	tk1.MustExec("create table t(a int)")
+	tk1.MustExec("insert into t values (1)")
+
+	tk1.MustExec("begin")
+	// 'For update' would act on the second select.
+	tk1.MustQuery("select 1 as a union select a from t for update")
+
+	tk2.MustExec("use test")
+	tk2.MustExec("update t set a = a + 1")
+
+	// As tk1 use select 'for update', it should dectect conflict and fail.
+	_, err := tk1.Exec("commit")
+	c.Assert(err, NotNil)
+
+	tk1.MustExec("begin")
+	// 'For update' would be ignored if 'order by' or 'limit' exists.
+	tk1.MustQuery("select 1 as a union select a from t limit 5 for update")
+	tk1.MustQuery("select 1 as a union select a from t order by a for update")
+
+	tk2.MustExec("update t set a = a + 1")
+
+	_, err = tk1.Exec("commit")
+	c.Assert(err, IsNil)
 }
 
 func (s *testSuite) TestUnsignedDecimalOverflow(c *C) {
