@@ -388,7 +388,10 @@ func checkTableNotExists(t *meta.Meta, job *model.Job, schemaID int64, tableName
 	return nil
 }
 
-// checkTableNameChange checks whether the table name has been changed.
+// checkTableNameChange checks whether the table name has been changed, in cases where both sql1 and sql2 execute in parallel,
+// if sql1 is a renameTable it may execute successfully first, and sql2 may get the old table name, then this is not the desired result,
+// executing the renameTable DDL job does not change the tableID ,sql1 and sql2 were executed successfully,the result was not expected,
+// for example: sql1: "alter table t rename to t_add;"  sql2: "alter table t add a1 int;".
 func checkTableNameChange(t *meta.Meta, job *model.Job, tableName string) error {
 	dbInfo, err := t.GetDatabase(job.SchemaID)
 	if err != nil {
