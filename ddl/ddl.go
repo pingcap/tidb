@@ -206,6 +206,7 @@ type ddl struct {
 	workers []*worker
 }
 
+// ddlCtx is the context when we use worker to handle DDL jobs.
 type ddlCtx struct {
 	uuid         string
 	store        kv.Storage
@@ -338,7 +339,7 @@ func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 }
 
 func (d *ddl) close() {
-	if isClosed(d.quitCh) {
+	if isChanClosed(d.quitCh) {
 		return
 	}
 
@@ -389,7 +390,8 @@ func isOwner(ownerManager owner.Manager, id string) bool {
 	return isOwner
 }
 
-// normalWorker retruns the normal worker. It's used for testing.
+// normalWorker returns the first worker. The ddl structure only a worker before we implement the parallel worker.
+// It's used for testing.
 func (d *ddl) normalWorker() *worker {
 	if len(d.workers) == 0 {
 		return nil

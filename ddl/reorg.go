@@ -157,7 +157,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, lease time.Dura
 }
 
 func (w *worker) isReorgRunnable(d *ddlCtx) error {
-	if isClosed(w.quitCh) {
+	if isChanClosed(w.quitCh) {
 		// Worker is closed. So it can't do the reorganizational job.
 		return errInvalidWorker.Gen("worker is closed")
 	}

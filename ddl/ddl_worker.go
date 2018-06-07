@@ -37,10 +37,15 @@ var RunWorker = true
 type workerType byte
 
 const (
+	// normalWorker is the worker who handles all DDL worker now.
+	// TODO: update the comments when we support the addIdxWorker.
 	normalWorker workerType = 0
 	addIdxWorker workerType = 1
 )
 
+// worker is used for handling DDL jobs.
+// Now we have tow kinds of workers, but we only use the normalWorker.
+// TODO: update the comments when we support the addIdxWorker.
 type worker struct {
 	tp     workerType
 	quitCh chan struct{}
@@ -53,7 +58,7 @@ type worker struct {
 func newWorker(tp workerType, store kv.Storage, ctxPool *pools.ResourcePool) *worker {
 	worker := &worker{
 		tp:       tp,
-		quitCh:   make(chan struct{}, 1),
+		quitCh:   make(chan struct{}),
 		reorgCtx: &reorgCtx{notifyCancelReorgJob: 0},
 	}
 
@@ -73,8 +78,7 @@ func (w *worker) close() {
 	log.Infof("[ddl] close DDL worker %v", w.tp)
 }
 
-// TODO:
-// onDDLWorker is for async online schema changing, it will try to become the owner firstly,
+// start is for async online schema changing, it will try to become the owner firstly,
 // then wait or pull the job queue to handle a schema change job.
 func (w *worker) start(d *ddlCtx) {
 	log.Infof("[ddl] start DDL worker %v", w.tp)
@@ -267,7 +271,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 func (w *worker) handleDDLJobQueue(d *ddlCtx, shouldCleanJobs bool) error {
 	once := true
 	for {
-		if isClosed(w.quitCh) {
+		if isChanClosed(w.quitCh) {
 			return nil
 		}
 
@@ -298,7 +302,6 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx, shouldCleanJobs bool) error {
 				return errors.Trace(err)
 			}
 
-			log.Warnf("get job %v", job)
 			if once {
 				w.waitSchemaSynced(d, job, waitTime)
 				once = false
@@ -625,7 +628,7 @@ func (w *worker) cleanAddIndexQueueJobs(d *ddlCtx, txn kv.Transaction) error {
 	}
 }
 
-func isClosed(quitCh chan struct{}) bool {
+func isChanClosed(quitCh chan struct{}) bool {
 	select {
 	case <-quitCh:
 		return true

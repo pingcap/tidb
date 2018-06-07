@@ -66,7 +66,7 @@ func newDelRangeManager(store kv.Storage, ctxPool *pools.ResourcePool) delRangeM
 		store:        store,
 		ctxPool:      ctxPool,
 		storeSupport: store.SupportDeleteRange(),
-		quitCh:       make(chan struct{}, 1),
+		quitCh:       make(chan struct{}),
 	}
 	if !dr.storeSupport {
 		dr.emulatorCh = make(chan struct{}, delBackLog)
