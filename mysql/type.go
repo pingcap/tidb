@@ -52,28 +52,28 @@ const TypeUnspecified = TypeDecimal
 
 // Flag information.
 const (
-	NotNullFlag     uint = 1   /* Field can't be NULL */
-	PriKeyFlag      uint = 2   /* Field is part of a primary key */
-	UniqueKeyFlag   uint = 4   /* Field is part of a unique key */
-	MultipleKeyFlag uint = 8   /* Field is part of a key */
-	BlobFlag        uint = 16  /* Field is a blob */
-	UnsignedFlag    uint = 32  /* Field is unsigned */
-	ZerofillFlag    uint = 64  /* Field is zerofill */
-	BinaryFlag      uint = 128 /* Field is binary   */
+	NotNullFlag        uint = 1 << 0  /* Field can't be NULL */
+	PriKeyFlag         uint = 1 << 1  /* Field is part of a primary key */
+	UniqueKeyFlag      uint = 1 << 2  /* Field is part of a unique key */
+	MultipleKeyFlag    uint = 1 << 3  /* Field is part of a key */
+	BlobFlag           uint = 1 << 4  /* Field is a blob */
+	UnsignedFlag       uint = 1 << 5  /* Field is unsigned */
+	ZerofillFlag       uint = 1 << 6  /* Field is zerofill */
+	BinaryFlag         uint = 1 << 7  /* Field is binary   */
+	EnumFlag           uint = 1 << 8  /* Field is an enum */
+	AutoIncrementFlag  uint = 1 << 9  /* Field is an auto increment field */
+	TimestampFlag      uint = 1 << 10 /* Field is a timestamp */
+	SetFlag            uint = 1 << 11 /* Field is a set */
+	NoDefaultValueFlag uint = 1 << 12 /* Field doesn't have a default value */
+	OnUpdateNowFlag    uint = 1 << 13 /* Field is set to NOW on UPDATE */
+	PartKeyFlag        uint = 1 << 14 /* Intern: Part of some keys */
+	NumFlag            uint = 1 << 15 /* Field is a num (for clients) */
 
-	EnumFlag           uint = 256    /* Field is an enum */
-	AutoIncrementFlag  uint = 512    /* Field is an auto increment field */
-	TimestampFlag      uint = 1024   /* Field is a timestamp */
-	SetFlag            uint = 2048   /* Field is a set */
-	NoDefaultValueFlag uint = 4096   /* Field doesn't have a default value */
-	OnUpdateNowFlag    uint = 8192   /* Field is set to NOW on UPDATE */
-	NumFlag            uint = 32768  /* Field is a num (for clients) */
-	PartKeyFlag        uint = 16384  /* Intern: Part of some keys */
-	GroupFlag          uint = 32768  /* Intern: Group field */
-	UniqueFlag         uint = 65536  /* Intern: Used by sql_yacc */
-	BinCmpFlag         uint = 131072 /* Intern: Used by sql_yacc */
-	ParseToJSONFlag    uint = 262144 /* Intern: Used when we want to parse string to JSON in CAST */
-	IsBooleanFlag      uint = 524288 /* Intern: Used for telling boolean literal from integer */
+	GroupFlag       uint = 1 << 15 /* Internal: Group field */
+	UniqueFlag      uint = 1 << 16 /* Internal: Used by sql_yacc */
+	BinCmpFlag      uint = 1 << 17 /* Internal: Used by sql_yacc */
+	ParseToJSONFlag uint = 1 << 18 /* Internal: Used when we want to parse string to JSON in CAST */
+	IsBooleanFlag   uint = 1 << 19 /* Internal: Used for telling boolean literal from integer */
 )
 
 // TypeInt24 bounds.
