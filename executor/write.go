@@ -1016,7 +1016,7 @@ func getKeysNeedCheck(ctx sessionctx.Context, t table.Table, rows [][]types.Datu
 			if !distinct {
 				continue
 			}
-			colValStr, err1 := types.DatumsToString(colVals)
+			colValStr, err1 := types.DatumsToString(colVals, false)
 			if err1 != nil {
 				return nil, errors.Trace(err1)
 			}
