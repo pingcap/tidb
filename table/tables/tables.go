@@ -136,6 +136,7 @@ func generatePartitionExpr(tblInfo *model.TableInfo) ([]expression.Expression, e
 	}
 	// TODO: Support other partition method.
 	if pi.Type != model.PartitionTypeRange {
+		// To be compatible with the old code, don't return error here.
 		return nil, nil
 	}
 
