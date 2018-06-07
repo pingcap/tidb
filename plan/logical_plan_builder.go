@@ -668,7 +668,7 @@ func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
 }
 
 func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
-	distinctSelectPlans, allSelectPlans := b.resolveUnionSelectPlans(union.SelectList.Selects)
+	distinctSelectPlans, allSelectPlans := b.divideUnionSelectPlans(union.SelectList.Selects)
 	if b.err != nil {
 		return nil
 	}
@@ -680,10 +680,9 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 
 	if unionDistinctPlan != nil {
 		unionDistinctPlan = b.buildDistinct(unionDistinctPlan, unionDistinctPlan.Schema().Len())
-	}
-
-	if unionDistinctPlan != nil && allSelectPlans != nil && len(allSelectPlans) != 0 {
-		allSelectPlans = append(allSelectPlans, unionDistinctPlan)
+		if allSelectPlans != nil && len(allSelectPlans) != 0 {
+			allSelectPlans = append(allSelectPlans, unionDistinctPlan)
+		}
 	}
 
 	unionAllPlan := b.buildSubUnion(allSelectPlans)
@@ -691,13 +690,9 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 		return nil
 	}
 
-	var unionPlan LogicalPlan
+	unionPlan := unionDistinctPlan
 	if unionAllPlan != nil {
 		unionPlan = unionAllPlan
-	} else if unionDistinctPlan != nil {
-		unionPlan = unionDistinctPlan
-	} else {
-		return nil
 	}
 
 	if union.OrderBy != nil {
@@ -709,16 +704,14 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 	return unionPlan
 }
 
-// resolveUnionSelectPlans to resolve union's select stmts to logical plans.
+// divideUnionSelectPlans resolves union's select stmts to logical plans.
 // and divide result plans into "union-distinct" and "union-all" parts.
 // divide rule ref: https://dev.mysql.com/doc/refman/5.7/en/union.html
 // "Mixed UNION types are treated such that a DISTINCT union overrides any ALL union to its left."
-func (b *planBuilder) resolveUnionSelectPlans(selects []*ast.SelectStmt) (distinctSelects []LogicalPlan, allSelects []LogicalPlan) {
-	if selects == nil || len(selects) == 0 {
-		return nil, nil
-	}
+func (b *planBuilder) divideUnionSelectPlans(selects []*ast.SelectStmt) (distinctSelects []LogicalPlan, allSelects []LogicalPlan) {
 	firstUnionAllIdx, columnNums := 0, -1
-	children := make([]LogicalPlan, len(selects), len(selects)+1) // preserve one for later distinct-all append
+	// The last slot is reserved for appending distinct union outside this function.
+	children := make([]LogicalPlan, len(selects), len(selects)+1)
 	for i := len(selects) - 1; i >= 0; i-- {
 		stmt := selects[i]
 		if firstUnionAllIdx == 0 && stmt.IsAfterUnionDistinct {
@@ -740,12 +733,12 @@ func (b *planBuilder) resolveUnionSelectPlans(selects []*ast.SelectStmt) (distin
 	return children[:firstUnionAllIdx], children[firstUnionAllIdx:]
 }
 
-func (b *planBuilder) buildSubUnion(children []LogicalPlan) LogicalPlan {
-	if children == nil || len(children) == 0 {
+func (b *planBuilder) buildSubUnion(subPlan []LogicalPlan) LogicalPlan {
+	if len(subPlan) == 0 {
 		return nil
 	}
 	u := LogicalUnionAll{}.init(b.ctx)
-	u.children = children
+	u.children = subPlan
 	b.buildProjection4Union(u)
 	return u
 }
