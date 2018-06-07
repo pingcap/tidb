@@ -476,6 +476,8 @@ type SelectStmt struct {
 	LockTp SelectLockType
 	// TableHints represents the table level Optimizer Hint for join type
 	TableHints []*TableOptimizerHint
+	// IsAfterUnionDistinct indicates whether it's a stmt after "union distinct".
+	IsAfterUnionDistinct bool
 }
 
 // Accept implements Node Accept interface.
@@ -587,7 +589,6 @@ type UnionStmt struct {
 	dmlNode
 	resultSetNode
 
-	Distinct   bool
 	SelectList *UnionSelectList
 	OrderBy    *OrderByClause
 	Limit      *Limit
