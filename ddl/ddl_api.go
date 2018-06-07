@@ -539,6 +539,13 @@ func checkTooManyColumns(colDefs []*ast.ColumnDef) error {
 	return nil
 }
 
+func checkAddColumnTooManyColumns(oldCols int, newColDefs []*ast.ColumnDef) error {
+	if colLen := oldCols + len(newColDefs); colLen > TableColumnCountLimit {
+		return errTooManyFields
+	}
+	return nil
+}
+
 func checkDuplicateConstraint(namesMap map[string]bool, name string, foreign bool) error {
 	if name == "" {
 		return nil
@@ -1109,7 +1116,6 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	if err != nil {
 		return errors.Trace(err)
 	}
-
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
@@ -1118,6 +1124,10 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	t, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ti.Schema, ti.Name))
+	}
+
+	if err = checkAddColumnTooManyColumns(len(t.Meta().Columns), spec.NewColumns); err != nil {
+		return errors.Trace(err)
 	}
 
 	// Check whether added column has existed.

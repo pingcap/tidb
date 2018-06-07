@@ -887,6 +887,21 @@ func (s *testDBSuite) TestColumn(c *C) {
 	s.tk.MustExec("drop table t2")
 }
 
+func (s *testDBSuite) TestAddColumnTooLarge(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+	s.tk.MustExec("create table t_column_too_large(abc int)")
+	count := 511
+	var sql string
+	for i := 1; i <= count; i++ {
+		sql = "alter table t_column_too_large add column"
+		sql += fmt.Sprintf("a%d int", i)
+		s.tk.MustExec(sql)
+	}
+	sql = "alter table t_column_too_large add column a_512 int"
+	s.testErrorCode(c, sql, tmysql.ErrTooManyFields)
+}
+
 func sessionExec(c *C, s kv.Storage, sql string) {
 	se, err := session.CreateSession4Test(s)
 	c.Assert(err, IsNil)
@@ -1403,12 +1418,6 @@ func (s *testDBSuite) TestCreateTableTooLarge(c *C) {
 	}
 	sql += ");"
 	s.testErrorCode(c, sql, tmysql.ErrTooManyFields)
-
-	originLimit := ddl.TableColumnCountLimit
-	ddl.TableColumnCountLimit = cnt * 4
-	_, err := s.tk.Exec(sql)
-	c.Assert(kv.ErrEntryTooLarge.Equal(err), IsTrue, Commentf("err:%v", err))
-	ddl.TableColumnCountLimit = originLimit
 }
 
 func (s *testDBSuite) TestCreateTableWithLike(c *C) {
