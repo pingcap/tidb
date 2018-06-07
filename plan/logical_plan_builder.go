@@ -670,23 +670,26 @@ func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
 func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 	distinctSelectPlans, allSelectPlans := b.divideUnionSelectPlans(union.SelectList.Selects)
 	if b.err != nil {
+		b.err = errors.Trace(b.err)
 		return nil
 	}
 
 	unionDistinctPlan := b.buildSubUnion(distinctSelectPlans)
 	if b.err != nil {
+		b.err = errors.Trace(b.err)
 		return nil
 	}
 
 	if unionDistinctPlan != nil {
 		unionDistinctPlan = b.buildDistinct(unionDistinctPlan, unionDistinctPlan.Schema().Len())
-		if allSelectPlans != nil && len(allSelectPlans) != 0 {
+		if len(allSelectPlans) != 0 {
 			allSelectPlans = append(allSelectPlans, unionDistinctPlan)
 		}
 	}
 
 	unionAllPlan := b.buildSubUnion(allSelectPlans)
 	if b.err != nil {
+		b.err = errors.Trace(b.err)
 		return nil
 	}
 
@@ -719,6 +722,7 @@ func (b *planBuilder) divideUnionSelectPlans(selects []*ast.SelectStmt) (distinc
 		}
 		selectPlan := b.buildSelect(stmt)
 		if b.err != nil {
+			b.err = errors.Trace(b.err)
 			return nil, nil
 		}
 		if columnNums == -1 {
