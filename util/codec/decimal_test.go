@@ -50,7 +50,15 @@ func (s *testDecimalSuite) TestDecimalCodec(c *C) {
 
 		b, err := EncodeDecimal([]byte{}, datum.GetMysqlDecimal(), datum.Length(), datum.Frac())
 		c.Assert(err, IsNil)
-		_, d, _, _, err := DecodeDecimal(b)
+		_, d, prec, frac, err := DecodeDecimal(b)
+		if datum.Length() != 0 {
+			c.Assert(prec, Equals, datum.Length())
+			c.Assert(frac, Equals, datum.Frac())
+		} else {
+			prec1, frac1 := datum.GetMysqlDecimal().PrecisionAndFrac()
+			c.Assert(prec, Equals, prec1)
+			c.Assert(frac, Equals, frac1)
+		}
 		c.Assert(err, IsNil)
 		c.Assert(v.Compare(d), Equals, 0)
 	}
