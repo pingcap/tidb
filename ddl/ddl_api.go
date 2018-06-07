@@ -540,7 +540,7 @@ func checkTooManyColumns(colDefs []*ast.ColumnDef) error {
 }
 
 func checkAddColumnTooManyColumns(oldCols int, newColDefs []*ast.ColumnDef) error {
-	if colLen := oldCols + len(newColDefs); colLen > TableColumnCountLimit {
+	if oldCols+len(newColDefs) > TableColumnCountLimit {
 		return errTooManyFields
 	}
 	return nil
