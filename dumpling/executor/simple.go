@@ -210,8 +210,7 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		errMsg := "Operation ALTER USER failed for " + strings.Join(failedUsers, ",")
-		return terror.ClassExecutor.New(CodeCannotUser, errMsg)
+		return ErrCannotUser.GenByArgs("ALTER USER", strings.Join(failedUsers, ","))
 	}
 	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
 	return nil
@@ -270,8 +269,7 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 		}
 	}
 	if len(failedUsers) > 0 {
-		errMsg := "Operation DROP USER failed for " + strings.Join(failedUsers, ",")
-		return terror.ClassExecutor.New(CodeCannotUser, errMsg)
+		return ErrCannotUser.GenByArgs("DROP USER", strings.Join(failedUsers, ","))
 	}
 	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
 	return nil
