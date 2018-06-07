@@ -2681,6 +2681,25 @@ func (s *testSuite) TestCoprocessorStreamingFlag(c *C) {
 	}
 }
 
+func (s *testSuite) TestIncorrectLimitArg(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a bigint);`)
+	tk.MustExec(`prepare stmt1 from 'select * from t limit ?';`)
+	tk.MustExec(`prepare stmt2 from 'select * from t limit ?, ?';`)
+	tk.MustExec(`set @a = -1;`)
+	tk.MustExec(`set @b =  1;`)
+
+	var err error
+	_, err = tk.Se.Execute(context.TODO(), `execute stmt1 using @a;`)
+	c.Assert(err.Error(), Equals, `[planner:1210]Incorrect arguments to LIMIT`)
+
+	_, err = tk.Se.Execute(context.TODO(), `execute stmt2 using @b, @a;`)
+	c.Assert(err.Error(), Equals, `[planner:1210]Incorrect arguments to LIMIT`)
+}
+
 func (s *testSuite) TestLimit(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test;`)

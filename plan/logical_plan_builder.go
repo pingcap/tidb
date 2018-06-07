@@ -772,14 +772,14 @@ func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan 
 	if limit.Offset != nil {
 		offset, err = getUintForLimitOffset(sc, limit.Offset.GetValue())
 		if err != nil {
-			b.err = ErrWrongArguments
+			b.err = ErrWrongArguments.GenByArgs("LIMIT")
 			return nil
 		}
 	}
 	if limit.Count != nil {
 		count, err = getUintForLimitOffset(sc, limit.Count.GetValue())
 		if err != nil {
-			b.err = ErrWrongArguments
+			b.err = ErrWrongArguments.GenByArgs("LIMIT")
 			return nil
 		}
 	}
@@ -842,7 +842,7 @@ func resolveFromSelectFields(v *ast.ColumnNameExpr, fields []*ast.SelectField, i
 				index = i
 			} else if !colMatch(matchedExpr.(*ast.ColumnNameExpr).Name, curCol.Name) &&
 				!colMatch(curCol.Name, matchedExpr.(*ast.ColumnNameExpr).Name) {
-				return -1, ErrAmbiguous.GenByArgs(curCol.Name.Name.L)
+				return -1, ErrAmbiguous.GenByArgs(curCol.Name.Name.L, clauseMsg[fieldList])
 			}
 		}
 	}

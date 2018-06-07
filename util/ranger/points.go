@@ -29,7 +29,7 @@ import (
 
 // Error instances.
 var (
-	ErrUnsupportedType = terror.ClassOptimizerPlan.New(CodeUnsupportedType, "Unsupported type")
+	ErrUnsupportedType = terror.ClassOptimizer.New(CodeUnsupportedType, "Unsupported type")
 )
 
 // Error codes.
