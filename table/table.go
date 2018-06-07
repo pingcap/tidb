@@ -163,11 +163,13 @@ const (
 	codeIndexStateCantNone   = 8
 	codeInvalidRecordKey     = 9
 
-	codeColumnCantNull        = 1048
-	codeUnknownColumn         = 1054
-	codeDuplicateColumn       = 1110
-	codeNoDefaultValue        = 1364
-	codeTruncateWrongValue    = 1366
+	codeColumnCantNull     = 1048
+	codeUnknownColumn      = 1054
+	codeDuplicateColumn    = 1110
+	codeNoDefaultValue     = 1364
+	codeTruncateWrongValue = 1366
+	// MySQL error code, "Trigger creation context of table `%-.64s`.`%-.64s` is invalid".
+	// It may happen when inserting some data outside of all table partitions.
 	codeTrgInvalidCreationCtx = 1604
 )
 
