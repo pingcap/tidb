@@ -200,7 +200,7 @@ const defaultPrivileges = "select,insert,update,references"
 // GetTypeDesc gets the description for column type.
 func (c *Column) GetTypeDesc() string {
 	desc := c.FieldType.CompactStr()
-	if mysql.HasUnsignedFlag(c.Flag) && c.Tp != mysql.TypeBit {
+	if mysql.HasUnsignedFlag(c.Flag) && c.Tp != mysql.TypeBit && c.Tp != mysql.TypeYear {
 		desc += " UNSIGNED"
 	}
 	return desc

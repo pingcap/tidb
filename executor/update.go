@@ -41,8 +41,8 @@ type UpdateExec struct {
 	cursor      int
 }
 
-func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema) (types.DatumRow, error) {
-	assignFlag, err := getUpdateColumns(e.OrderedList, schema.Len())
+func (e *UpdateExec) exec(schema *expression.Schema) (types.DatumRow, error) {
+	assignFlag, err := e.getUpdateColumns(schema.Len())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -103,7 +103,7 @@ func (e *UpdateExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		e.fetched = true
 
 		for {
-			row, err := e.exec(ctx, e.children[0].Schema())
+			row, err := e.exec(e.children[0].Schema())
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -183,9 +183,9 @@ func (e *UpdateExec) Open(ctx context.Context) error {
 	return e.SelectExec.Open(ctx)
 }
 
-func getUpdateColumns(assignList []*expression.Assignment, schemaLen int) ([]bool, error) {
+func (e *UpdateExec) getUpdateColumns(schemaLen int) ([]bool, error) {
 	assignFlag := make([]bool, schemaLen)
-	for _, v := range assignList {
+	for _, v := range e.OrderedList {
 		idx := v.Col.Index
 		assignFlag[idx] = true
 	}

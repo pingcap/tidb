@@ -33,9 +33,9 @@ const (
 	// StateWriteOnly means we can use any write operation on this schema element,
 	// but outer can't read the changed data.
 	StateWriteOnly
-	// StateWriteReorganization means we are re-organizating whole data after write only state.
+	// StateWriteReorganization means we are re-organizing whole data after write only state.
 	StateWriteReorganization
-	// StateDeleteReorganization means we are re-organizating whole data after delete only state.
+	// StateDeleteReorganization means we are re-organizing whole data after delete only state.
 	StateDeleteReorganization
 	// StatePublic means this schema element is ok for all write and read operations.
 	StatePublic
