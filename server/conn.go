@@ -58,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/auth"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/memory"
 	log "github.com/sirupsen/logrus"
@@ -929,7 +930,12 @@ func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary b
 		buf = buf[:stackSize]
 		log.Errorf("query: %s:\n%s", cc.lastCmd, buf)
 	}()
-	err := cc.writeChunks(ctx, rs, binary, serverStatus, fetchSize)
+	var err error
+	if mysql.HasCursorExistsFlag(serverStatus) {
+		err = cc.writeChunksWithFetchSize(ctx, rs, binary, serverStatus, fetchSize)
+	} else {
+		err = cc.writeChunks(ctx, rs, binary, serverStatus)
+	}
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -957,20 +963,18 @@ func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16
 
 // writeChunks writes data from a Chunk, which filled data by a ResultSet, into a connection.
 // binary specifies the way to dump data. It throws any error while dumping data.
-// more will be passed into writeEOF.
-func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool, serverStatus uint16, fetchSize int) error {
+// serverStatus, a flag bit represents server information
+func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool, serverStatus uint16) error {
 	data := make([]byte, 4, 1024)
 	chk := rs.NewChunk()
 	gotColumnInfo := false
-	fetchRows := 0
 	for {
 		// Here server.tidbResultSet implements Next method.
 		err := rs.Next(ctx, chk)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		// if cursor exists, columnInfo has already sent to client when handle COM_STMT_EXECUTE command.
-		if !gotColumnInfo && !mysql.HasCursorExistsFlag(serverStatus) {
+		if !gotColumnInfo {
 			// We need to call Next before we get columns.
 			// Otherwise, we will get incorrect columns info.
 			columns := rs.Columns()
@@ -981,36 +985,70 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 			gotColumnInfo = true
 		}
 		rowCount := chk.NumRows()
+		if rowCount == 0 {
+			break
+		}
+		err = cc.writeRowsInChunk(chk, data, rs.Columns(), binary)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return errors.Trace(cc.writeEOF(serverStatus))
+}
+
+// writeChunksWithFetchSize writes data from a Chunk, which filled data by a ResultSet, into a connection.
+// binary specifies the way to dump data. It throws any error while dumping data.
+// serverStatus, a flag bit represents server information
+// fetchSize, the desired number of rows to be fetched each time when client uses cursor
+func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet, binary bool, serverStatus uint16, fetchSize int) error {
+	data := make([]byte, 4, 1024)
+	chk := rs.NewChunk()
+	fetchRows := 0
+	for {
+		// Here server.tidbResultSet implements Next method.
+		err := rs.Next(ctx, chk)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		rowCount := chk.NumRows()
 		fetchRows += rowCount
 		if rowCount == 0 {
 			// tell the client COM_STMT_FETCH has finished by setting proper serverStatus,
 			// and close ResultSet
-			if mysql.HasCursorExistsFlag(serverStatus) {
-				serverStatus |= mysql.ServerStatusLastRowSend
-				terror.Call(rs.Close)
-			}
+			serverStatus |= mysql.ServerStatusLastRowSend
+			terror.Call(rs.Close)
 			break
 		}
-		for i := 0; i < rowCount; i++ {
-			data = data[0:4]
-			if binary {
-				data, err = dumpBinaryRow(data, rs.Columns(), chk.GetRow(i))
-			} else {
-				data, err = dumpTextRow(data, rs.Columns(), chk.GetRow(i))
-			}
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if err = cc.writePacket(data); err != nil {
-				return errors.Trace(err)
-			}
+		err = cc.writeRowsInChunk(chk, data, rs.Columns(), binary)
+		if err != nil {
+			return errors.Trace(err)
 		}
-		// if cursor exists, checking whether this batch has fetched enough rows.
-		if mysql.HasCursorExistsFlag(serverStatus) && fetchRows >= fetchSize {
+		// checking whether this batch has fetched enough rows.
+		if fetchRows >= fetchSize {
 			break
 		}
 	}
 	return errors.Trace(cc.writeEOF(serverStatus))
+}
+
+// writeRowsInChunk writes rows contained in the chunk into a connection
+func (cc *clientConn) writeRowsInChunk(chk *chunk.Chunk, data []byte, columns []*ColumnInfo, binary bool) error {
+	var err error
+	for i := 0; i < chk.NumRows(); i++ {
+		data = data[0:4]
+		if binary {
+			data, err = dumpBinaryRow(data, columns, chk.GetRow(i))
+		} else {
+			data, err = dumpTextRow(data, columns, chk.GetRow(i))
+		}
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if err = cc.writePacket(data); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }
 
 func (cc *clientConn) writeMultiResultset(ctx context.Context, rss []ResultSet, binary bool) error {

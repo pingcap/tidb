@@ -322,6 +322,7 @@ func (tc *TiDBContext) ShowProcess() util.ProcessInfo {
 type tidbResultSet struct {
 	recordSet ast.RecordSet
 	columns   []*ColumnInfo
+	closed    bool
 }
 
 func (trs *tidbResultSet) NewChunk() *chunk.Chunk {
@@ -333,6 +334,10 @@ func (trs *tidbResultSet) Next(ctx context.Context, chk *chunk.Chunk) error {
 }
 
 func (trs *tidbResultSet) Close() error {
+	if trs.closed {
+		return nil
+	}
+	trs.closed = true
 	return trs.recordSet.Close()
 }
 
