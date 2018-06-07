@@ -144,11 +144,11 @@ func logicalOptimize(flag uint64, logic LogicalPlan) (LogicalPlan, error) {
 }
 
 func physicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
-	logic.preparePossibleProperties()
-
 	if _, err := logic.deriveStats(); err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	logic.preparePossibleProperties()
 
 	prop := &requiredProp{
 		taskTp:      rootTaskType,

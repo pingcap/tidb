@@ -15,6 +15,7 @@ package plan
 
 import (
 	"github.com/pingcap/tidb/expression"
+	"github.com/sirupsen/logrus"
 )
 
 func (ds *DataSource) preparePossibleProperties() [][]*expression.Column {
@@ -28,6 +29,8 @@ func (ds *DataSource) preparePossibleProperties() [][]*expression.Column {
 			}
 			continue
 		}
+		idxCols, _ := expression.IndexInfo2Cols(ds.schema.Columns, path.index)
+		logrus.Warnf("real: %v, fake: %v", idxCols, path.idxCols)
 		if len(path.idxCols) > 0 {
 			result = append(result, path.idxCols)
 		}
