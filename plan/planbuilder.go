@@ -1051,7 +1051,8 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 			b.err = errors.Trace(err)
 			return nil
 		} else if col == nil {
-			b.err = errors.Errorf("column %s not found", assign.Column.Name.O)
+			b.err = ErrUnknownColumn.GenByArgs(assign.Column.OrigColName(), "field list")
+			return nil
 		}
 
 		// Check whether the column to be updated is the generated column.
