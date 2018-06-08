@@ -1408,7 +1408,7 @@ func (b *planBuilder) checkOnlyFullGroupByWithOutGroupClause(p LogicalPlan, fiel
 		resolver.exprIdx = idx
 		field.Accept(&resolver)
 		if err := resolver.Check(); err != nil {
-			b.err = err
+			b.err = errors.Trace(err)
 			return
 		}
 	}
@@ -1424,13 +1424,13 @@ type colResolverForOnlyFullGroupBy struct {
 }
 
 func (c *colResolverForOnlyFullGroupBy) Enter(node ast.Node) (ast.Node, bool) {
-	switch node.(type) {
+	switch t := node.(type) {
 	case *ast.AggregateFuncExpr:
 		c.hasAggFunc = true
 		return node, true
 	case *ast.ColumnNameExpr:
 		if c.firstNonAggCol == nil {
-			c.firstNonAggCol, c.firstNonAggColIdx = node.(*ast.ColumnNameExpr).Name, c.exprIdx
+			c.firstNonAggCol, c.firstNonAggColIdx = t.Name, c.exprIdx
 		}
 		return node, true
 	}
