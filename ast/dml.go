@@ -478,6 +478,8 @@ type SelectStmt struct {
 	TableHints []*TableOptimizerHint
 	// IsAfterUnionDistinct indicates whether it's a stmt after "union distinct".
 	IsAfterUnionDistinct bool
+	// IsInBraces indicates whether it's a stmt in brace.
+	IsInBraces bool
 }
 
 // Accept implements Node Accept interface.
