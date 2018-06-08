@@ -965,9 +965,7 @@ func (s *testSuite) TestUnion(c *C) {
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrWrongUsage))
 
 	_, err = tk.Exec("(select a from t order by a) union all select a from t limit 1 union all select a from t limit 1")
-	c.Assert(err, NotNil)
-	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrWrongUsage))
+	c.Assert(terror.ErrorEqual(err, plan.ErrWrongUsage), IsTrue)
 
 	_, err = tk.Exec("(select a from t limit 1) union all select a from t limit 1")
 	c.Assert(err, IsNil)

@@ -478,7 +478,7 @@ type SelectStmt struct {
 	TableHints []*TableOptimizerHint
 	// IsAfterUnionDistinct indicates whether it's a stmt after "union distinct".
 	IsAfterUnionDistinct bool
-	// IsInBraces indicate whether it's a stmt in brace.
+	// IsInBraces indicates whether it's a stmt in brace.
 	IsInBraces bool
 }
 

@@ -223,7 +223,7 @@ func (p *preprocessor) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 	}
 }
 
-// checkUnionSelectList check union's selectList.
+// checkUnionSelectList checks union's selectList.
 // refer: https://dev.mysql.com/doc/refman/5.7/en/union.html
 // "To apply ORDER BY or LIMIT to an individual SELECT, place the clause inside the parentheses that enclose the SELECT."
 func (p *preprocessor) checkUnionSelectList(stmt *ast.UnionSelectList) {
