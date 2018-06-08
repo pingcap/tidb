@@ -143,6 +143,8 @@ func (e *ShowExec) fetchAll() error {
 		return e.fetchShowPlugins()
 	case ast.ShowProfiles:
 		// empty result
+	case ast.ShowMasterStatus:
+		return e.fetchShowMasterStatus()
 	}
 	return nil
 }
@@ -373,6 +375,13 @@ func (e *ShowExec) fetchShowCharset() error {
 			desc.Maxlen,
 		})
 	}
+	return nil
+}
+
+func (e *ShowExec) fetchShowMasterStatus() error {
+	// tso := e.ctx.Txn().StartTS()
+	tso := e.ctx.GetSessionVars().TxnCtx.StartTS
+	e.appendRow([]interface{}{"tidb-binlog", tso, "", "", ""})
 	return nil
 }
 

@@ -318,6 +318,7 @@ import (
 	local		"LOCAL"
 	less		"LESS"
 	level		"LEVEL"
+	master		"MASTER"
 	microsecond	"MICROSECOND"
 	minute		"MINUTE"
 	mode		"MODE"
@@ -5152,6 +5153,12 @@ ShowStmt:
 			User:	$4.(*auth.UserIdentity),
 		}
 	}
+|	"SHOW" "MASTER" "STATUS"
+	{
+		$$ = &ast.ShowStmt{
+			Tp:	ast.ShowMasterStatus,
+		}
+	}
 |	"SHOW" OptFull "PROCESSLIST"
 	{
 		$$ = &ast.ShowStmt{
@@ -5201,7 +5208,7 @@ ShowStmt:
 		}
 		$$ = stmt
 	}
-|   "SHOW" "STATS_HEALTHY" ShowLikeOrWhereOpt
+|	"SHOW" "STATS_HEALTHY" ShowLikeOrWhereOpt
 	{
 		stmt := &ast.ShowStmt{
 			Tp: ast.ShowStatsHealthy,
