@@ -143,6 +143,8 @@ func (e *ShowExec) fetchAll() error {
 		return e.fetchShowPlugins()
 	case ast.ShowProfiles:
 		// empty result
+	case ast.ShowMasterStatus:
+		return e.fetchShowMasterStatus()
 	}
 	return nil
 }
@@ -296,6 +298,7 @@ func (e *ShowExec) fetchShowColumns() error {
 	return nil
 }
 
+// fetchShowIndex fetches data for ShowIndex statement.
 // TODO: index collation can have values A (ascending) or NULL (not sorted).
 // see: https://dev.mysql.com/doc/refman/5.7/en/show-index.html
 func (e *ShowExec) fetchShowIndex() error {
@@ -373,6 +376,12 @@ func (e *ShowExec) fetchShowCharset() error {
 			desc.Maxlen,
 		})
 	}
+	return nil
+}
+
+func (e *ShowExec) fetchShowMasterStatus() error {
+	tso := e.ctx.GetSessionVars().TxnCtx.StartTS
+	e.appendRow([]interface{}{"tidb-binlog", tso, "", "", ""})
 	return nil
 }
 
