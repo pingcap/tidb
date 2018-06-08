@@ -539,8 +539,8 @@ func checkTooManyColumns(colDefs []*ast.ColumnDef) error {
 	return nil
 }
 
-func checkAddColumnTooManyColumns(oldCols int) error {
-	if oldCols+1 > TableColumnCountLimit {
+func checkAddColumnTooManyColumns(oldCols []*model.ColumnInfo) error {
+	if len(oldCols)+1 > TableColumnCountLimit {
 		return errTooManyFields
 	}
 	return nil

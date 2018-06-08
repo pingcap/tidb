@@ -125,7 +125,7 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	// if errorBeforeDecodeArgs {
 	// 	return ver, errors.New("occur an error before decode args")
 	// }
-	if err = checkAddColumnTooManyColumns(len(tblInfo.Columns)); err != nil {
+	if err = checkAddColumnTooManyColumns(tblInfo.Columns); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
