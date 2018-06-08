@@ -5230,6 +5230,12 @@ ShowStmt:
 			Tp: ast.ShowProfiles,
 		}
 	}
+|	"SHOW" "PRIVILEGES"
+	{
+		$$ = &ast.ShowStmt{
+			Tp: ast.ShowPrivileges,
+		}
+	}
 
 ShowIndexKwd:
 	"INDEX"

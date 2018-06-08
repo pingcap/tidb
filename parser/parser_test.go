@@ -512,6 +512,7 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{`SHOW PLUGINS`, true},
 		{`SHOW PROFILES`, true},
 		{`SHOW MASTER STATUS`, true},
+		{`SHOW PRIVILEGES`, true},
 		// for show character set
 		{"show character set;", true},
 		{"show charset", true},
