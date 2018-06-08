@@ -182,20 +182,14 @@ func (s *schemaValidator) check(txnTS uint64, schemaVer int64, relatedTableIDs [
 	}
 
 	log.Warnf("ver %v", schemaVer)
-	if len(relatedTableIDs) == 0 {
-		if schemaVer < s.latestSchemaVer {
-			return ResultFail
-		} else {
-			t := extractPhysicalTime(txnTS)
-			if t.After(s.latestSchemaExpire) {
-				return ResultUnknown
-			}
-			return ResultSucc
-		}
-	}
-
 	// Schema changed, result decided by whether related tables change.
 	if schemaVer < s.latestSchemaVer {
+		// The DDL relatedTableIDs is empty.
+		if len(relatedTableIDs) == 0 {
+			log.Infof("[domain-ddl] the related table ID is empty, checking %d", schemaVer)
+			return ResultFail
+		}
+
 		if s.isRelatedTablesChanged(schemaVer, relatedTableIDs) {
 			return ResultFail
 		}

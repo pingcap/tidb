@@ -1124,7 +1124,7 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 
 	// Check whether added column has existed.
 	colName := specNewColumn.Name.Name.O
-	col := table.FindCol(t.WritableCols(), colName)
+	col := table.FindCol(t.Cols(), colName)
 	if col != nil {
 		return infoschema.ErrColumnExists.GenByArgs(colName)
 	}

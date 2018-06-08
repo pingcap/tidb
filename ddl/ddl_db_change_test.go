@@ -15,8 +15,10 @@ package ddl_test
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/juju/errors"
@@ -25,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
@@ -631,25 +634,72 @@ func (s *testStateChangeSuite) TestCreateDBIfNotExists(c *C) {
 
 // TestParallelDDLBeforeRunDDLJob tests a session to execute DDL with an outdated information schema.
 func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
-	_, err := s.se.Execute(context.Background(), "create database db_parallel_get_schema")
+	defer s.se.Execute(context.Background(), "drop table test_table")
+	_, err := s.se.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
-	defer s.se.Execute(context.Background(), "drop database db_parallel_get_schema")
-	_, err = s.se.Execute(context.Background(), "use db_parallel_get_schema")
-	c.Assert(err, IsNil)
-	_, err = s.se.Execute(context.Background(), "create table ddl_fail (c1 int, c2 int default 1, index (c1))")
+	_, err = s.se.Execute(context.Background(), "create table test_table (c1 int, c2 int default 1, index (c1))")
 	c.Assert(err, IsNil)
 
+	// Create two sessions.
 	se, err := session.CreateSession(s.store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "use db_parallel_get_schema")
+	_, err = se.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
 	se1, err := session.CreateSession(s.store)
 	c.Assert(err, IsNil)
-	_, err = se1.Execute(context.Background(), "use db_parallel_get_schema")
+	_, err = se1.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
 
 	ddl.IsInTest = true
 	defer func() { ddl.IsInTest = false }()
+	callback := &ddl.TestDDLCallback{}
+	var (
+		testSessionCnt        int32
+		testObtainedSchemaCnt int32 // testObtainedSchemaCnt is the number of sessions that have obtained information schema.
+		testFirstConnID       = uint64(math.MaxUint64)
+	)
+	callback.OnGetInfoSchemaExported = func(ctx sessionctx.Context, fn ddl.GetInfoSchema) infoschema.InfoSchema {
+		log.Warnf("..................... is in test %v", ddl.IsInTest)
+		// The following code is for testing.
+		// Make srue the two sessions get the same information schema before executing DDL.
+		// After the first session executes its DDL, then the second session executes its DDL.
+		var info infoschema.InfoSchema
+		interval := 5 * time.Millisecond
+		atomic.AddInt32(&testSessionCnt, 1)
+		for {
+			cnt := atomic.LoadInt32(&testSessionCnt)
+			// Make sure there are two sessions running here.
+			if cnt == 2 {
+				info = fn()
+				atomic.AddInt32(&testObtainedSchemaCnt, 1)
+				log.Warnf("xx ................. ver %v, id %v, self id %v", info.SchemaMetaVersion(), atomic.LoadUint64(&testFirstConnID), ctx.GetSessionVars().ConnectionID)
+				break
+			}
+			time.Sleep(interval)
+		}
+		currID := ctx.GetSessionVars().ConnectionID
+		if currID == 1 {
+			atomic.CompareAndSwapUint64(&testFirstConnID, math.MaxUint64, currID)
+			time.Sleep(interval)
+		}
+		for {
+			firstID := atomic.LoadUint64(&testFirstConnID)
+			seCnt := atomic.LoadInt32(&testSessionCnt)
+			obtainedSchemaCnt := atomic.LoadInt32(&testObtainedSchemaCnt)
+			log.Warnf("------------------- id %v, cnt %v", firstID, seCnt)
+			// Make sure the two session have got the same information schema. And the first session can continue to go on,
+			// or the frist session finished this SQL, then other sessions can continue to go on.
+			if obtainedSchemaCnt == 2 && (firstID == currID || seCnt == 0) {
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+
+		return info
+	}
+	d := s.dom.DDL()
+	d.SetHook(callback)
+
 	ch := make(chan struct{})
 	wg := sync.WaitGroup{}
 	wg.Add(2)
@@ -658,20 +708,24 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 
 		close(ch)
 		se.SetConnectionID(1)
-		log.Warnf("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 111, id %v", se.GetSessionVars().ConnectionID)
-		_, err1 := se.Execute(context.Background(), "alter table ddl_fail drop column c2")
+		_, err1 := se.Execute(context.Background(), "alter table test_table drop column c2")
 		c.Assert(err1, IsNil)
+		log.Warnf("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 111, id %v", se.GetSessionVars().ConnectionID)
+		atomic.StoreInt32(&testSessionCnt, 0)
 	}()
 	go func() {
 		defer wg.Done()
 
 		<-ch
 		se1.SetConnectionID(2)
-		log.Warnf("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 222, id %v", se1.GetSessionVars().ConnectionID)
-		_, err2 := se1.Execute(context.Background(), "alter table ddl_fail add column c2 int")
+		_, err2 := se1.Execute(context.Background(), "alter table test_table add column c2 int")
 		c.Assert(err2, NotNil)
 		c.Assert(strings.Contains(err2.Error(), "Information schema is changed"), IsTrue)
+		log.Warnf("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 222, id %v", se1.GetSessionVars().ConnectionID)
 	}()
 
 	wg.Wait()
+
+	callback = &ddl.TestDDLCallback{}
+	d.SetHook(callback)
 }

@@ -27,6 +27,8 @@ import (
 type StatementContext struct {
 	// Set the following variables before execution
 
+	// IsDDLJobDone is used to mark whether to enter the function of 'doDDLJob'.
+	IsDDLJobDone         bool
 	InInsertStmt         bool
 	InUpdateOrDeleteStmt bool
 	InSelectStmt         bool

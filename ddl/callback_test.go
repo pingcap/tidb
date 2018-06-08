@@ -15,7 +15,9 @@ package ddl
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -23,11 +25,20 @@ import (
 type TestDDLCallback struct {
 	*BaseCallback
 
-	onJobRunBefore         func(*model.Job)
-	OnJobRunBeforeExported func(*model.Job)
-	onJobUpdated           func(*model.Job)
-	OnJobUpdatedExported   func(*model.Job)
-	onWatched              func(ctx context.Context)
+	onJobRunBefore          func(*model.Job)
+	OnJobRunBeforeExported  func(*model.Job)
+	onJobUpdated            func(*model.Job)
+	OnJobUpdatedExported    func(*model.Job)
+	onWatched               func(ctx context.Context)
+	OnGetInfoSchemaExported func(ctx sessionctx.Context, fn GetInfoSchema) infoschema.InfoSchema
+}
+
+func (tc *TestDDLCallback) OnGetInfoSchema(ctx sessionctx.Context, fn GetInfoSchema) infoschema.InfoSchema {
+	if tc.OnGetInfoSchemaExported != nil {
+		return tc.OnGetInfoSchemaExported(ctx, fn)
+	}
+
+	return tc.BaseCallback.OnGetInfoSchema(ctx, fn)
 }
 
 func (tc *TestDDLCallback) OnJobRunBefore(job *model.Job) {

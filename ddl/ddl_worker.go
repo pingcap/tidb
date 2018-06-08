@@ -277,9 +277,9 @@ func (d *ddl) handleDDLJobQueue(shouldCleanJobs bool) error {
 				return errors.Trace(err)
 			}
 
-			d.hookMu.Lock()
+			d.hookMu.RLock()
 			d.hook.OnJobRunBefore(job)
-			d.hookMu.Unlock()
+			d.hookMu.RUnlock()
 
 			// If running job meets error, we will save this error in job Error
 			// and retry later if the job is not cancelled.
@@ -307,9 +307,9 @@ func (d *ddl) handleDDLJobQueue(shouldCleanJobs bool) error {
 			return nil
 		}
 
-		d.hookMu.Lock()
+		d.hookMu.RLock()
 		d.hook.OnJobUpdated(job)
-		d.hookMu.Unlock()
+		d.hookMu.RUnlock()
 
 		// Here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
 		// If the job is done or still running or rolling back, we will wait 2 * lease time to guarantee other servers to update

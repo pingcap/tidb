@@ -8,7 +8,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 )
 
-type SchemaLeaseChecker struct {
+type schemaLeaseChecker struct {
 	domain.SchemaValidator
 	schemaVer       int64
 	relatedTableIDs []int64
@@ -21,15 +21,15 @@ var (
 	SchemaOutOfDateRetryTimes = int32(10)
 )
 
-func NewSchemaChecker(do *domain.Domain, schemaVer int64, relatedTableIDs []int64) *SchemaLeaseChecker {
-	return &SchemaLeaseChecker{
+func NewSchemaChecker(do *domain.Domain, schemaVer int64, relatedTableIDs []int64) *schemaLeaseChecker {
+	return &schemaLeaseChecker{
 		SchemaValidator: do.SchemaValidator,
 		schemaVer:       schemaVer,
 		relatedTableIDs: relatedTableIDs,
 	}
 }
 
-func (s *SchemaLeaseChecker) Check(txnTS uint64) error {
+func (s *schemaLeaseChecker) Check(txnTS uint64) error {
 	schemaOutOfDateRetryInterval := atomic.LoadInt64(&SchemaOutOfDateRetryInterval)
 	schemaOutOfDateRetryTimes := int(atomic.LoadInt32(&SchemaOutOfDateRetryTimes))
 	for i := 0; i < schemaOutOfDateRetryTimes; i++ {

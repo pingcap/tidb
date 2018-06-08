@@ -20,7 +20,7 @@ import (
 	"golang.org/x/net/context"
 )
 
-type getInfoSchema func() infoschema.InfoSchema
+type GetInfoSchema func() infoschema.InfoSchema
 
 type Callback interface {
 	// OnChanged is called after schema is changed.
@@ -31,7 +31,7 @@ type Callback interface {
 	OnJobUpdated(job *model.Job)
 	// OnWatched is called after watching owner is completed.
 	OnWatched(ctx context.Context)
-	OnGetInfoSchema(ctx sessionctx.Context, fn getInfoSchema)
+	OnGetInfoSchema(ctx sessionctx.Context, fn GetInfoSchema) infoschema.InfoSchema
 }
 
 // BaseCallback implements Callback.OnChanged interface.
@@ -58,6 +58,7 @@ func (c *BaseCallback) OnWatched(ctx context.Context) {
 	// Nothing to do.
 }
 
-func (c *BaseCallback) OnGetInfoSchema(ctx sessionctx.Context, fn getInfoSchema) {
+func (c *BaseCallback) OnGetInfoSchema(ctx sessionctx.Context, fn GetInfoSchema) infoschema.InfoSchema {
 	// Nothing to do.
+	return nil
 }

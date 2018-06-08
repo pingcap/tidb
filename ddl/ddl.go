@@ -19,9 +19,8 @@ package ddl
 
 import (
 	"fmt"
-	"math"
 	"sync"
-	"sync/atomic"
+	//"sync/atomic"
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
@@ -399,10 +398,10 @@ func (d *ddl) GetLease() time.Duration {
 }
 
 var (
-	testSessionCnt        int32
-	testObtainedSchemaCnt int32 // testObtainedSchemaCnt is the number of sessions that have obtained information schema.
-	testFirstConnID       = uint64(math.MaxUint64)
-	IsInTest              bool
+	//	testSessionCnt        int32
+	//	testObtainedSchemaCnt int32 // testObtainedSchemaCnt is the number of sessions that have obtained information schema.
+	//	testFirstConnID       = uint64(math.MaxUint64)
+	IsInTest bool
 )
 
 // GetInformationSchema gets the infoschema binding to d. It's expoted for testing.
@@ -411,42 +410,49 @@ func (d *ddl) GetInformationSchema(ctx sessionctx.Context) infoschema.InfoSchema
 		return d.infoHandle.Get()
 	}
 
-	// The following code is for testing.
-	// Make srue the two sessions get the same information schema before executing DDL.
-	// After the first session executes its DDL, then the second session executes its DDL.
-	var info infoschema.InfoSchema
-	interval := 5 * time.Millisecond
-	atomic.AddInt32(&testSessionCnt, 1)
-	for {
-		cnt := atomic.LoadInt32(&testSessionCnt)
-		// Make sure there are two sessions running here.
-		if cnt == 2 {
-			info = d.infoHandle.Get()
-			atomic.AddInt32(&testObtainedSchemaCnt, 1)
-			log.Warnf("xx ................. ver %v, id %v, self id %v", info.SchemaMetaVersion(), atomic.LoadUint64(&testFirstConnID), ctx.GetSessionVars().ConnectionID)
-			break
-		}
-		time.Sleep(interval)
-	}
-	currID := ctx.GetSessionVars().ConnectionID
-	if currID == 1 {
-		atomic.CompareAndSwapUint64(&testFirstConnID, math.MaxUint64, currID)
-		time.Sleep(interval)
-	}
-	for {
-		firstID := atomic.LoadUint64(&testFirstConnID)
-		seCnt := atomic.LoadInt32(&testSessionCnt)
-		obtainedSchemaCnt := atomic.LoadInt32(&testObtainedSchemaCnt)
-		log.Warnf("------------------- id %v, cnt %v", firstID, seCnt)
-		// Make sure the two session have got the same information schema. And the first session can continue to go on,
-		// or the frist session finished this SQL, then other sessions can continue to go on.
-		if obtainedSchemaCnt == 2 && (firstID == currID || seCnt == 0) {
-			break
-		}
-		time.Sleep(interval)
-	}
+	d.hookMu.RLock()
+	defer d.hookMu.RUnlock()
+	return d.hook.OnGetInfoSchema(ctx,
+		func() infoschema.InfoSchema {
+			return d.infoHandle.Get()
+		})
 
-	return info
+	// 	// The following code is for testing.
+	// 	// Make srue the two sessions get the same information schema before executing DDL.
+	// 	// After the first session executes its DDL, then the second session executes its DDL.
+	// 	var info infoschema.InfoSchema
+	// 	interval := 5 * time.Millisecond
+	// 	atomic.AddInt32(&testSessionCnt, 1)
+	// 	for {
+	// 		cnt := atomic.LoadInt32(&testSessionCnt)
+	// 		// Make sure there are two sessions running here.
+	// 		if cnt == 2 {
+	// 			info = d.infoHandle.Get()
+	// 			atomic.AddInt32(&testObtainedSchemaCnt, 1)
+	// 			log.Warnf("xx ................. ver %v, id %v, self id %v", info.SchemaMetaVersion(), atomic.LoadUint64(&testFirstConnID), ctx.GetSessionVars().ConnectionID)
+	// 			break
+	// 		}
+	// 		time.Sleep(interval)
+	// 	}
+	// 	currID := ctx.GetSessionVars().ConnectionID
+	// 	if currID == 1 {
+	// 		atomic.CompareAndSwapUint64(&testFirstConnID, math.MaxUint64, currID)
+	// 		time.Sleep(interval)
+	// 	}
+	// 	for {
+	// 		firstID := atomic.LoadUint64(&testFirstConnID)
+	// 		seCnt := atomic.LoadInt32(&testSessionCnt)
+	// 		obtainedSchemaCnt := atomic.LoadInt32(&testObtainedSchemaCnt)
+	// 		log.Warnf("------------------- id %v, cnt %v", firstID, seCnt)
+	// 		// Make sure the two session have got the same information schema. And the first session can continue to go on,
+	// 		// or the frist session finished this SQL, then other sessions can continue to go on.
+	// 		if obtainedSchemaCnt == 2 && (firstID == currID || seCnt == 0) {
+	// 			break
+	// 		}
+	// 		time.Sleep(interval)
+	// 	}
+	//
+	// 	return info
 }
 
 func (d *ddl) genGlobalID() (int64, error) {
@@ -480,6 +486,7 @@ func checkJobMaxInterval(job *model.Job) time.Duration {
 }
 
 func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
+	ctx.GetSessionVars().StmtCtx.IsDDLJobDone = true
 	// For every DDL, we must commit current transaction.
 	if err := ctx.NewTxn(); err != nil {
 		return errors.Trace(err)
@@ -526,10 +533,10 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		// If a job is a history job, the state must be JobSynced or JobCancel.
 		if historyJob.IsSynced() {
 			log.Infof("[ddl] DDL job ID:%d is finished", jobID)
-			// This code is for testing.
-			if atomic.LoadUint64(&testFirstConnID) == ctx.GetSessionVars().ConnectionID {
-				atomic.StoreInt32(&testSessionCnt, 0)
-			}
+			//	// This code is for testing.
+			//	if atomic.LoadUint64(&testFirstConnID) == ctx.GetSessionVars().ConnectionID {
+			//		atomic.StoreInt32(&testSessionCnt, 0)
+			//	}
 			return nil
 		}
 
@@ -541,8 +548,8 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 }
 
 func (d *ddl) callHookOnChanged(err error) error {
-	d.hookMu.Lock()
-	defer d.hookMu.Unlock()
+	d.hookMu.RLock()
+	defer d.hookMu.RUnlock()
 
 	err = d.hook.OnChanged(err)
 	return errors.Trace(err)
