@@ -194,6 +194,9 @@ type DDL interface {
 	SetHook(h Callback)
 	// GetHook gets the hook. It's exported for testing.
 	GetHook() Callback
+
+	// GetTableMaxRowID gets table max row ID. It's exported for testing.
+	GetTableMaxRowID(startTS uint64, tblInfo *model.TableInfo) (int64, bool, error)
 }
 
 // ddl represents the statements which are used to define the database structure or schema.
@@ -312,7 +315,7 @@ func (d *ddl) Stop() error {
 	defer d.m.Unlock()
 
 	d.close()
-	log.Infof("stop DDL:%s", d.uuid)
+	log.Infof("[ddl] stop DDL:%s", d.uuid)
 	return nil
 }
 
@@ -350,7 +353,7 @@ func (d *ddl) close() {
 	d.wait.Wait()
 
 	d.delRangeManager.clear()
-	log.Infof("close DDL:%s", d.uuid)
+	log.Infof("[ddl] close DDL:%s", d.uuid)
 }
 
 func (d *ddl) isClosed() bool {

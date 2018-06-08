@@ -17,7 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sync"
+	"net/http/pprof"
 
 	"github.com/gorilla/mux"
 	"github.com/juju/errors"
@@ -28,14 +28,10 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-var once sync.Once
-
 const defaultStatusAddr = ":10080"
 
 func (s *Server) startStatusHTTP() {
-	once.Do(func() {
-		go s.startHTTPServer()
-	})
+	go s.startHTTPServer()
 }
 
 func (s *Server) startHTTPServer() {
@@ -74,18 +70,27 @@ func (s *Server) startHTTPServer() {
 	if s.cfg.Status.StatusPort == 0 {
 		addr = defaultStatusAddr
 	}
-	log.Infof("Listening on %v for status and metrics report.", addr)
-	http.Handle("/", router)
 
+	serverMux := http.NewServeMux()
+	serverMux.Handle("/", router)
+
+	serverMux.HandleFunc("/debug/pprof/", pprof.Index)
+	serverMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	serverMux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	serverMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	serverMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+
+	log.Infof("Listening on %v for status and metrics report.", addr)
+	s.statusServer = &http.Server{Addr: addr, Handler: serverMux}
 	var err error
 	if len(s.cfg.Security.ClusterSSLCA) != 0 {
-		err = http.ListenAndServeTLS(addr, s.cfg.Security.ClusterSSLCert, s.cfg.Security.ClusterSSLKey, nil)
+		err = s.statusServer.ListenAndServeTLS(s.cfg.Security.ClusterSSLCert, s.cfg.Security.ClusterSSLKey)
 	} else {
-		err = http.ListenAndServe(addr, nil)
+		err = s.statusServer.ListenAndServe()
 	}
 
 	if err != nil {
-		log.Fatal(err)
+		log.Info(err)
 	}
 }
 

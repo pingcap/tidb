@@ -229,6 +229,10 @@ func getUsableSetsByGreedy(sets []*exprSet) (newBlocks []*exprSet) {
 		for i, set := range sets {
 			set.mask &= mask
 			bits := popCount(set.mask)
+			// This set cannot cover any thing, just skip it.
+			if bits == 0 {
+				continue
+			}
 			if (bestTp == colType && set.tp < colType) || bestCount < bits {
 				bestID, bestCount, bestTp = i, bits, set.tp
 			}

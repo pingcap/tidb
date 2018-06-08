@@ -1011,7 +1011,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 			b.err = errors.Trace(err)
 			return nil
 		}
-		insertPlan.Setlist = append(insertPlan.Setlist, &expression.Assignment{
+		insertPlan.SetList = append(insertPlan.SetList, &expression.Assignment{
 			Col:  col,
 			Expr: expr,
 		})
@@ -1370,6 +1370,9 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 	case ast.ShowProfiles: // ShowProfiles is deprecated.
 		names = []string{"Query_ID", "Duration", "Query"}
 		ftypes = []byte{mysql.TypeLong, mysql.TypeDouble, mysql.TypeVarchar}
+	case ast.ShowMasterStatus:
+		names = []string{"File", "Position", "Binlog_Do_DB", "Binlog_Ignore_DB", "Executed_Gtid_Set"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
 	}
 
 	schema = expression.NewSchema(make([]*expression.Column, 0, len(names))...)

@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/privilege"
@@ -140,6 +141,13 @@ type session struct {
 	sessionManager util.SessionManager
 
 	statsCollector *statistics.SessionStatsCollector
+	// ddlOwnerChecker is used in `select tidb_is_ddl_owner()` statement;
+	ddlOwnerChecker owner.DDLOwnerChecker
+}
+
+// DDLOwnerChecker returns s.ddlOwnerChecker.
+func (s *session) DDLOwnerChecker() owner.DDLOwnerChecker {
+	return s.ddlOwnerChecker
 }
 
 func (s *session) getMembufCap() int {
@@ -1178,9 +1186,10 @@ func createSession(store kv.Storage) (*session, error) {
 		return nil, errors.Trace(err)
 	}
 	s := &session{
-		store:       store,
-		parser:      parser.New(),
-		sessionVars: variable.NewSessionVars(),
+		store:           store,
+		parser:          parser.New(),
+		sessionVars:     variable.NewSessionVars(),
+		ddlOwnerChecker: dom.DDL().OwnerManager(),
 	}
 	if plan.PreparedPlanCacheEnabled {
 		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plan.PreparedPlanCacheCapacity)
@@ -1279,6 +1288,7 @@ const loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variab
 	variable.TiDBIndexLookupJoinConcurrency + quoteCommaQuote +
 	variable.TiDBIndexSerialScanConcurrency + quoteCommaQuote +
 	variable.TiDBHashJoinConcurrency + quoteCommaQuote +
+	variable.TiDBProjectionConcurrency + quoteCommaQuote +
 	variable.TiDBBackoffLockFast + quoteCommaQuote +
 	variable.TiDBOptInSubqUnFolding + quoteCommaQuote +
 	variable.TiDBDistSQLScanConcurrency + quoteCommaQuote +
