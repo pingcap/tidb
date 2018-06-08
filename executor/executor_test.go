@@ -961,6 +961,23 @@ func (s *testSuite) TestUnion(c *C) {
 	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrWrongUsage))
 
+	_, err = tk.Exec("(select a from t order by a) union all select a from t limit 1 union all select a from t limit 1")
+	c.Assert(terror.ErrorEqual(err, plan.ErrWrongUsage), IsTrue)
+
+	_, err = tk.Exec("(select a from t limit 1) union all select a from t limit 1")
+	c.Assert(err, IsNil)
+	_, err = tk.Exec("(select a from t order by a) union all select a from t order by a")
+	c.Assert(err, IsNil)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t value(1),(2),(3)")
+
+	tk.MustQuery("(select a from t order by a limit 2) union all (select a from t order by a desc limit 2) order by a desc limit 1,2").Check(testkit.Rows("2", "2"))
+	tk.MustQuery("select a from t union all select a from t order by a desc limit 5").Check(testkit.Rows("3", "3", "2", "2", "1"))
+	tk.MustQuery("(select a from t order by a desc limit 2) union all select a from t group by a order by a").Check(testkit.Rows("1", "2", "2", "3", "3"))
+	tk.MustQuery("(select a from t order by a desc limit 2) union all select 33 as a order by a desc limit 2").Check(testkit.Rows("33", "3"))
+
 	tk.MustQuery("select 1 union select 1 union all select 1").Check(testkit.Rows("1", "1"))
 	tk.MustQuery("select 1 union all select 1 union select 1").Check(testkit.Rows("1"))
 }
