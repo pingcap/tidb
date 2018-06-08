@@ -505,6 +505,7 @@ func (t *Table) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleChe
 	}
 	writeBufs := sessVars.GetWriteStmtBufs()
 	adjustRowValuesBuf(writeBufs, len(row))
+	// key may be a partition ID or a table ID.
 	var key kv.Key
 	if pid == t.ID {
 		key = t.RecordKey(recordID)
