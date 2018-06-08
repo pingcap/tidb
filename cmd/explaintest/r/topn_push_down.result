@@ -176,10 +176,10 @@ IndexScan_30			cop	table:te, index:trade_id, range:[<nil>,+inf], keep order:fals
 TableScan_31	Selection_32		cop	table:te, keep order:false	10000.00
 Selection_32		TableScan_31	cop	ge(te.expect_time, 2018-04-23 00:00:00.000000), le(te.expect_time, 2018-04-23 23:59:59.000000)	250.00
 IndexLookUp_33	IndexJoin_34		root	index:IndexScan_30, table:Selection_32	250.00
-IndexJoin_34	TopN_139	IndexLookUp_104,IndexLookUp_33	root	outer:IndexLookUp_104, inner join, outer key:tr.id, inner key:te.trade_id	0.00
+IndexJoin_34	TopN_139	IndexLookUp_104,IndexLookUp_33	root	inner join, inner:IndexLookUp_33, outer key:tr.id, inner key:te.trade_id	0.00
 TopN_139	IndexJoin_136	IndexJoin_34	root	te.expect_time:asc, offset:0, count:5	0.00
 IndexScan_134			cop	table:p, index:relate_id, range:[<nil>,+inf], keep order:false	10000.00
 IndexReader_135	IndexJoin_136		root	index:IndexScan_134	10000.00
-IndexJoin_136	Limit_18	TopN_139,IndexReader_135	root	outer:TopN_139, left outer join, outer key:tr.id, inner key:p.relate_id	0.00
+IndexJoin_136	Limit_18	TopN_139,IndexReader_135	root	left outer join, inner:IndexReader_135, outer key:tr.id, inner key:p.relate_id	0.00
 Limit_18	Projection_12	IndexJoin_136	root	offset:0, count:5	0.00
 Projection_12		Limit_18	root	te.expect_time	0.00
