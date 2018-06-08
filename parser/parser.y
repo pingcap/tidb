@@ -4584,6 +4584,7 @@ UnionStmt:
 		endOffset := parser.endOffset(&yyS[yypt-6])
 		parser.setLastSelectFieldText(lastSelect, endOffset)
 		st := $5.(*ast.SelectStmt)
+		st.IsInBraces = true
 		st.IsAfterUnionDistinct = $3.(bool)
 		endOffset = parser.endOffset(&yyS[yypt-2])
 		parser.setLastSelectFieldText(st, endOffset)
@@ -4625,6 +4626,7 @@ UnionSelect:
 |	'(' SelectStmt ')'
 	{
 		st := $2.(*ast.SelectStmt)
+		st.IsInBraces = true
 		endOffset := parser.endOffset(&yyS[yypt])
 		parser.setLastSelectFieldText(st, endOffset)
 		$$ = $2
