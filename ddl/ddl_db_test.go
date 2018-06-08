@@ -898,7 +898,7 @@ func (s *testDBSuite) TestAddColumnTooMany(c *C) {
 		sql += fmt.Sprintf("a%d int", i)
 		s.tk.MustExec(sql)
 	}
-	sql = "alter table t_column_too_large add column a_512 int"
+	sql = "alter table t_column_too_many add column a_512 int"
 	s.testErrorCode(c, sql, tmysql.ErrTooManyFields)
 }
 
