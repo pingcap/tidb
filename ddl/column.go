@@ -125,6 +125,9 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	// if errorBeforeDecodeArgs {
 	// 	return ver, errors.New("occur an error before decode args")
 	// }
+	if err = checkTableNameChange(t, job, tblInfo.Name.O); err != nil {
+		return ver, errors.Trace(err)
+	}
 
 	col := &model.ColumnInfo{}
 	pos := &ast.ColumnPosition{}
@@ -175,9 +178,6 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	case model.StateWriteReorganization:
 		// reorganization -> public
 		// Adjust table column offset.
-		if err = checkTableNameChange(t, job, tblInfo.Name.O); err != nil {
-			return ver, errors.Trace(err)
-		}
 		d.adjustColumnInfoInAddColumn(tblInfo, offset)
 		columnInfo.State = model.StatePublic
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != columnInfo.State)
@@ -199,6 +199,10 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tblInfo, err := getTableInfo(t, job, schemaID)
 	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	if err = checkTableNameChange(t, job, tblInfo.Name.O); err != nil {
 		return ver, errors.Trace(err)
 	}
 
@@ -241,9 +245,6 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
 		// All reorganization jobs are done, drop this column.
-		if err = checkTableNameChange(t, job, tblInfo.Name.O); err != nil {
-			return ver, errors.Trace(err)
-		}
 		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-1]
 		colInfo.State = model.StateNone
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfo.State)
