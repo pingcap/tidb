@@ -319,6 +319,19 @@ func startSpanFollowsContext(ctx context.Context, operationName string) (opentra
 	return span, opentracing.ContextWithSpan(ctx, span)
 }
 
+func rebuildIndexRanges(ctx sessionctx.Context, is *plan.PhysicalIndexScan, idxCols []*expression.Column, colLens []int) (ranges []*ranger.Range, err error) {
+	access := make([]expression.Expression, 0, len(is.AccessCondition))
+	for _, cond := range is.AccessCondition {
+		newCond, err := expression.SubstituteCorCol2Constant(cond)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		access = append(access, newCond)
+	}
+	ranges, _, err = ranger.DetachSimpleCondAndBuildRangeForIndex(ctx, access, idxCols, colLens)
+	return ranges, err
+}
+
 // IndexReaderExecutor sends dag request and reads index data from kv layer.
 type IndexReaderExecutor struct {
 	baseExecutor
@@ -366,16 +379,10 @@ func (e *IndexReaderExecutor) Next(ctx context.Context, chk *chunk.Chunk) error 
 func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 	var err error
 	if e.corColInAccess {
-		is := e.plans[0].(*plan.PhysicalIndexScan)
-		access := make([]expression.Expression, 0, len(is.AccessCondition))
-		for _, cond := range is.AccessCondition {
-			newCond, err := expression.SubstituteCorCol2Constant(cond)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			access = append(access, newCond)
+		e.ranges, err = rebuildIndexRanges(e.ctx, e.plans[0].(*plan.PhysicalIndexScan), e.idxCols, e.colLens)
+		if err != nil {
+			return errors.Trace(err)
 		}
-		e.ranges, _, err = ranger.DetachSimpleCondAndBuildRangeForIndex(e.ctx, access, e.idxCols, e.colLens)
 	}
 	kvRanges, err := distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, e.tableID, e.index.ID, e.ranges, e.feedback)
 	if err != nil {
@@ -466,16 +473,10 @@ type IndexLookUpExecutor struct {
 func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 	var err error
 	if e.corColInAccess {
-		is := e.idxPlans[0].(*plan.PhysicalIndexScan)
-		access := make([]expression.Expression, 0, len(is.AccessCondition))
-		for _, cond := range is.AccessCondition {
-			newCond, err := expression.SubstituteCorCol2Constant(cond)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			access = append(access, newCond)
+		e.ranges, err = rebuildIndexRanges(e.ctx, e.idxPlans[0].(*plan.PhysicalIndexScan), e.idxCols, e.colLens)
+		if err != nil {
+			return errors.Trace(err)
 		}
-		e.ranges, _, err = ranger.DetachSimpleCondAndBuildRangeForIndex(e.ctx, access, e.idxCols, e.colLens)
 	}
 	kvRanges, err := distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, e.tableID, e.index.ID, e.ranges, e.feedback)
 	if err != nil {

@@ -635,6 +635,15 @@ func MergeHistograms(sc *stmtctx.StatementContext, lh *Histogram, rh *Histogram,
 	return lh, nil
 }
 
+// AvgCountPerValue gets the average row count per value by the data of histogram.
+func (hg *Histogram) AvgCountPerValue(totalCount int64) float64 {
+	curNDV := float64(hg.NDV) * hg.getIncreaseFactor(totalCount)
+	if curNDV == 0 {
+		curNDV = 1
+	}
+	return float64(totalCount) / curNDV
+}
+
 // Column represents a column histogram.
 type Column struct {
 	Histogram
@@ -645,14 +654,6 @@ type Column struct {
 
 func (c *Column) String() string {
 	return c.Histogram.ToString(0)
-}
-
-func (c *Column) AvgCountPerValue(totalCount int64) float64 {
-	curNDV := float64(c.Histogram.NDV) * c.getIncreaseFactor(totalCount)
-	if curNDV == 0 {
-		curNDV = 1
-	}
-	return float64(totalCount) / curNDV
 }
 
 func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum) (float64, error) {
@@ -732,14 +733,6 @@ func (idx *Index) equalRowCount(sc *stmtctx.StatementContext, b []byte) float64 
 		return float64(idx.CMSketch.queryBytes(b))
 	}
 	return idx.Histogram.equalRowCount(types.NewBytesDatum(b))
-}
-
-func (idx *Index) AvgCountPerValue(totalCount int64) float64 {
-	curNDV := float64(idx.Histogram.NDV) * idx.getIncreaseFactor(totalCount)
-	if curNDV == 0 {
-		curNDV = 1
-	}
-	return float64(totalCount) / curNDV
 }
 
 func (idx *Index) getRowCount(sc *stmtctx.StatementContext, indexRanges []*ranger.Range) (float64, error) {

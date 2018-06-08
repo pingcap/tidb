@@ -37,7 +37,6 @@ const (
 	pseudoEqualRate   = 1000
 	pseudoLessRate    = 3
 	pseudoBetweenRate = 40
-	pseudoNDV         = 1000.0
 )
 
 // Table represents statistics for a table.
@@ -361,8 +360,9 @@ func (t *Table) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idxID int
 	return result, errors.Trace(err)
 }
 
+// PseudoAvgCountPerCount gets a pseudo average count if histogram not exists.
 func (t *Table) PseudoAvgCountPerCount() float64 {
-	return float64(t.Count) / pseudoNDV
+	return float64(t.Count) / pseudoEqualRate
 }
 
 // PseudoTable creates a pseudo table statistics.
