@@ -43,6 +43,9 @@ func hasUnVectorizableFunc(expr Expression) bool {
 	if scalaFunc.FuncName.L == ast.SetVar {
 		return true
 	}
+	if scalaFunc.FuncName.L == ast.GetVar {
+		return true
+	}
 	for _, arg := range scalaFunc.GetArgs() {
 		if hasUnVectorizableFunc(arg) {
 			return true
