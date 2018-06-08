@@ -15,11 +15,11 @@ package ddl
 
 import (
 	"context"
-	"math"
 	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
@@ -173,6 +173,23 @@ func dropIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 
 		addIndexColumnFlag(tblInfo, index)
 	}
+}
+
+func validateRenameIndex(from, to model.CIStr, tbl *model.TableInfo) (ignore bool, err error) {
+	if fromIdx := findIndexByName(from.L, tbl.Indices); fromIdx == nil {
+		return false, errors.Trace(infoschema.ErrKeyNotExists.GenByArgs(from.O, tbl.Name))
+	}
+	// Take case-sensitivity into account, if `FromKey` and  `ToKey` are the same, nothing need to be changed
+	if from.O == to.O {
+		return true, nil
+	}
+	// If spec.FromKey.L == spec.ToKey.L, we operate on the same index(case-insensitive) and change its name (case-sensitive)
+	// e.g: from `inDex` to `IndEX`. Otherwise, we try to rename an index to another different index which already exists,
+	// that's illegal by rule.
+	if toIdx := findIndexByName(to.L, tbl.Indices); toIdx != nil && from.L != to.L {
+		return false, errors.Trace(infoschema.ErrKeyNameDuplicate.GenByArgs(toIdx.Name.O))
+	}
+	return false, nil
 }
 
 func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error) {
@@ -525,7 +542,7 @@ func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgInde
 
 			w.idxRecords = append(w.idxRecords, idxRecord)
 			if handle == taskRange.endHandle {
-				// If !taskRange.endIncluded, we will not reach here when handle == taskRange.endHandle
+				// If taskRange.endIncluded == false, we will not reach here when handle == taskRange.endHandle
 				handleOutOfRange = true
 				return false, nil
 			}
@@ -659,9 +676,13 @@ func makeupIndexColFieldMap(t table.Table, indexInfo *model.IndexInfo) map[int64
 
 // splitTableRanges uses PD region's key ranges to split the backfilling table key range space,
 // to speed up adding index in table with disperse handle.
-func (d *ddl) splitTableRanges(t table.Table, startHandle int64) ([]kv.KeyRange, error) {
+func (d *ddl) splitTableRanges(t table.Table, reorgInfo *reorgInfo) ([]kv.KeyRange, error) {
+	startHandle := reorgInfo.StartHandle
+	endHandle := reorgInfo.EndHandle
 	startRecordKey := t.RecordKey(startHandle)
-	endRecordKey := t.RecordKey(math.MaxInt64).Next()
+	endRecordKey := t.RecordKey(endHandle).Next()
+
+	log.Infof("[ddl-reorg] split handle ranges [%v, %v] from PD", startHandle, endHandle)
 	kvRange := kv.KeyRange{StartKey: startRecordKey, EndKey: endRecordKey}
 	store, ok := d.store.(tikv.Storage)
 	if !ok {
@@ -828,7 +849,7 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 	}
 	defer closeAddIndexWorkers(workers)
 
-	kvRanges, err := d.splitTableRanges(t, reorgInfo.Handle)
+	kvRanges, err := d.splitTableRanges(t, reorgInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}

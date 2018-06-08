@@ -149,6 +149,16 @@ func (s *testSuite) TestShow(c *C) {
 	tk.MustQuery("SHOW PLUGINS").Check(testkit.Rows())
 	tk.MustQuery("SHOW PROFILES").Check(testkit.Rows())
 
+	// +-------------+--------------------+--------------+------------------+-------------------+
+	// | File        | Position           | Binlog_Do_DB | Binlog_Ignore_DB | Executed_Gtid_Set |
+	// +-------------+--------------------+--------------+------------------+-------------------+
+	// | tidb-binlog | 400668057259474944 |              |                  |                   |
+	// +-------------+--------------------+--------------+------------------+-------------------+
+	result = tk.MustQuery("SHOW MASTER STATUS")
+	c.Check(result.Rows(), HasLen, 1)
+	row = result.Rows()[0]
+	c.Check(row, HasLen, 5)
+
 	// Test show create database
 	testSQL = `create database show_test_DB`
 	tk.MustExec(testSQL)
@@ -344,6 +354,16 @@ func (s *testSuite) TestShow(c *C) {
 			"  `d` int(11) DEFAULT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"+"\nPARTITION BY RANGE COLUMNS(a,d,c) (\n  PARTITION p0 VALUES LESS THAN (5,10,\"ggg\"),\n  PARTITION p1 VALUES LESS THAN (10,20,\"mmm\"),\n  PARTITION p2 VALUES LESS THAN (15,30,\"sss\"),\n  PARTITION p3 VALUES LESS THAN (50,MAXVALUE,MAXVALUE)\n)",
 	))
+
+	// Test show create table year type
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(y year, x int, primary key(y));`)
+	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
+		"t CREATE TABLE `t` (\n"+
+			"  `y` year NOT NULL,\n"+
+			"  `x` int(11) DEFAULT NULL,\n"+
+			"  PRIMARY KEY (`y`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"))
 }
 
 func (s *testSuite) TestShowVisibility(c *C) {
