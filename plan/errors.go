@@ -26,25 +26,26 @@ const (
 	codeWrongParamCount                 = 5
 	codeSchemaChanged                   = 6
 
-	codeWrongUsage           = mysql.ErrWrongUsage
-	codeAmbiguous            = mysql.ErrNonUniq
-	codeUnknownColumn        = mysql.ErrBadField
-	codeUnknownTable         = mysql.ErrUnknownTable
-	codeWrongArguments       = mysql.ErrWrongArguments
-	codeBadGeneratedColumn   = mysql.ErrBadGeneratedColumn
-	codeFieldNotInGroupBy    = mysql.ErrFieldNotInGroupBy
-	codeBadTable             = mysql.ErrBadTable
-	codeKeyDoesNotExist      = mysql.ErrKeyDoesNotExist
-	codeOperandColumns       = mysql.ErrOperandColumns
-	codeInvalidWildCard      = mysql.ErrParse
-	codeInvalidGroupFuncUse  = mysql.ErrInvalidGroupFuncUse
-	codeIllegalReference     = mysql.ErrIllegalReference
-	codeNoDB                 = mysql.ErrNoDB
-	codeUnknownExplainFormat = mysql.ErrUnknownExplainFormat
-	codeWrongGroupField      = mysql.ErrWrongGroupField
-	codeDupFieldName         = mysql.ErrDupFieldName
-	codeNonUpdatableTable    = mysql.ErrNonUpdatableTable
-	codeInternal             = mysql.ErrInternal
+	codeWrongUsage                   = mysql.ErrWrongUsage
+	codeAmbiguous                    = mysql.ErrNonUniq
+	codeUnknownColumn                = mysql.ErrBadField
+	codeUnknownTable                 = mysql.ErrUnknownTable
+	codeWrongArguments               = mysql.ErrWrongArguments
+	codeWrongNumberOfColumnsInSelect = mysql.ErrWrongNumberOfColumnsInSelect
+	codeBadGeneratedColumn           = mysql.ErrBadGeneratedColumn
+	codeFieldNotInGroupBy            = mysql.ErrFieldNotInGroupBy
+	codeBadTable                     = mysql.ErrBadTable
+	codeKeyDoesNotExist              = mysql.ErrKeyDoesNotExist
+	codeOperandColumns               = mysql.ErrOperandColumns
+	codeInvalidWildCard              = mysql.ErrParse
+	codeInvalidGroupFuncUse          = mysql.ErrInvalidGroupFuncUse
+	codeIllegalReference             = mysql.ErrIllegalReference
+	codeNoDB                         = mysql.ErrNoDB
+	codeUnknownExplainFormat         = mysql.ErrUnknownExplainFormat
+	codeWrongGroupField              = mysql.ErrWrongGroupField
+	codeDupFieldName                 = mysql.ErrDupFieldName
+	codeNonUpdatableTable            = mysql.ErrNonUpdatableTable
+	codeInternal                     = mysql.ErrInternal
 )
 
 // error definitions.
@@ -56,48 +57,50 @@ var (
 	ErrWrongParamCount             = terror.ClassOptimizer.New(codeWrongParamCount, "Wrong parameter count")
 	ErrSchemaChanged               = terror.ClassOptimizer.New(codeSchemaChanged, "Schema has changed")
 
-	ErrWrongUsage           = terror.ClassOptimizer.New(codeWrongUsage, mysql.MySQLErrName[mysql.ErrWrongUsage])
-	ErrAmbiguous            = terror.ClassOptimizer.New(codeAmbiguous, mysql.MySQLErrName[mysql.ErrNonUniq])
-	ErrUnknownColumn        = terror.ClassOptimizer.New(codeUnknownColumn, mysql.MySQLErrName[mysql.ErrBadField])
-	ErrUnknownTable         = terror.ClassOptimizer.New(codeUnknownTable, mysql.MySQLErrName[mysql.ErrUnknownTable])
-	ErrWrongArguments       = terror.ClassOptimizer.New(codeWrongArguments, mysql.MySQLErrName[mysql.ErrWrongArguments])
-	ErrBadGeneratedColumn   = terror.ClassOptimizer.New(codeBadGeneratedColumn, mysql.MySQLErrName[mysql.ErrBadGeneratedColumn])
-	ErrFieldNotInGroupBy    = terror.ClassOptimizer.New(codeFieldNotInGroupBy, mysql.MySQLErrName[mysql.ErrFieldNotInGroupBy])
-	ErrBadTable             = terror.ClassOptimizer.New(codeBadTable, mysql.MySQLErrName[mysql.ErrBadTable])
-	ErrKeyDoesNotExist      = terror.ClassOptimizer.New(codeKeyDoesNotExist, mysql.MySQLErrName[mysql.ErrKeyDoesNotExist])
-	ErrOperandColumns       = terror.ClassOptimizer.New(codeOperandColumns, mysql.MySQLErrName[mysql.ErrOperandColumns])
-	ErrInvalidWildCard      = terror.ClassOptimizer.New(codeInvalidWildCard, "Wildcard fields without any table name appears in wrong place")
-	ErrInvalidGroupFuncUse  = terror.ClassOptimizer.New(codeInvalidGroupFuncUse, mysql.MySQLErrName[mysql.ErrInvalidGroupFuncUse])
-	ErrIllegalReference     = terror.ClassOptimizer.New(codeIllegalReference, mysql.MySQLErrName[mysql.ErrIllegalReference])
-	ErrNoDB                 = terror.ClassOptimizer.New(codeNoDB, mysql.MySQLErrName[mysql.ErrNoDB])
-	ErrUnknownExplainFormat = terror.ClassOptimizer.New(codeUnknownExplainFormat, mysql.MySQLErrName[mysql.ErrUnknownExplainFormat])
-	ErrWrongGroupField      = terror.ClassOptimizer.New(codeWrongGroupField, mysql.MySQLErrName[mysql.ErrWrongGroupField])
-	ErrDupFieldName         = terror.ClassOptimizer.New(codeDupFieldName, mysql.MySQLErrName[mysql.ErrDupFieldName])
-	ErrNonUpdatableTable    = terror.ClassOptimizer.New(codeNonUpdatableTable, mysql.MySQLErrName[mysql.ErrNonUpdatableTable])
-	ErrInternal             = terror.ClassOptimizer.New(codeInternal, mysql.MySQLErrName[mysql.ErrInternal])
+	ErrWrongUsage                   = terror.ClassOptimizer.New(codeWrongUsage, mysql.MySQLErrName[mysql.ErrWrongUsage])
+	ErrAmbiguous                    = terror.ClassOptimizer.New(codeAmbiguous, mysql.MySQLErrName[mysql.ErrNonUniq])
+	ErrUnknownColumn                = terror.ClassOptimizer.New(codeUnknownColumn, mysql.MySQLErrName[mysql.ErrBadField])
+	ErrUnknownTable                 = terror.ClassOptimizer.New(codeUnknownTable, mysql.MySQLErrName[mysql.ErrUnknownTable])
+	ErrWrongArguments               = terror.ClassOptimizer.New(codeWrongArguments, mysql.MySQLErrName[mysql.ErrWrongArguments])
+	ErrWrongNumberOfColumnsInSelect = terror.ClassOptimizer.New(codeWrongNumberOfColumnsInSelect, mysql.MySQLErrName[mysql.ErrWrongNumberOfColumnsInSelect])
+	ErrBadGeneratedColumn           = terror.ClassOptimizer.New(codeBadGeneratedColumn, mysql.MySQLErrName[mysql.ErrBadGeneratedColumn])
+	ErrFieldNotInGroupBy            = terror.ClassOptimizer.New(codeFieldNotInGroupBy, mysql.MySQLErrName[mysql.ErrFieldNotInGroupBy])
+	ErrBadTable                     = terror.ClassOptimizer.New(codeBadTable, mysql.MySQLErrName[mysql.ErrBadTable])
+	ErrKeyDoesNotExist              = terror.ClassOptimizer.New(codeKeyDoesNotExist, mysql.MySQLErrName[mysql.ErrKeyDoesNotExist])
+	ErrOperandColumns               = terror.ClassOptimizer.New(codeOperandColumns, mysql.MySQLErrName[mysql.ErrOperandColumns])
+	ErrInvalidWildCard              = terror.ClassOptimizer.New(codeInvalidWildCard, "Wildcard fields without any table name appears in wrong place")
+	ErrInvalidGroupFuncUse          = terror.ClassOptimizer.New(codeInvalidGroupFuncUse, mysql.MySQLErrName[mysql.ErrInvalidGroupFuncUse])
+	ErrIllegalReference             = terror.ClassOptimizer.New(codeIllegalReference, mysql.MySQLErrName[mysql.ErrIllegalReference])
+	ErrNoDB                         = terror.ClassOptimizer.New(codeNoDB, mysql.MySQLErrName[mysql.ErrNoDB])
+	ErrUnknownExplainFormat         = terror.ClassOptimizer.New(codeUnknownExplainFormat, mysql.MySQLErrName[mysql.ErrUnknownExplainFormat])
+	ErrWrongGroupField              = terror.ClassOptimizer.New(codeWrongGroupField, mysql.MySQLErrName[mysql.ErrWrongGroupField])
+	ErrDupFieldName                 = terror.ClassOptimizer.New(codeDupFieldName, mysql.MySQLErrName[mysql.ErrDupFieldName])
+	ErrNonUpdatableTable            = terror.ClassOptimizer.New(codeNonUpdatableTable, mysql.MySQLErrName[mysql.ErrNonUpdatableTable])
+	ErrInternal                     = terror.ClassOptimizer.New(codeInternal, mysql.MySQLErrName[mysql.ErrInternal])
 )
 
 func init() {
 	mysqlErrCodeMap := map[terror.ErrCode]uint16{
-		codeWrongUsage:           mysql.ErrWrongUsage,
-		codeAmbiguous:            mysql.ErrNonUniq,
-		codeUnknownColumn:        mysql.ErrBadField,
-		codeUnknownTable:         mysql.ErrBadTable,
-		codeWrongArguments:       mysql.ErrWrongArguments,
-		codeBadGeneratedColumn:   mysql.ErrBadGeneratedColumn,
-		codeFieldNotInGroupBy:    mysql.ErrFieldNotInGroupBy,
-		codeBadTable:             mysql.ErrBadTable,
-		codeKeyDoesNotExist:      mysql.ErrKeyDoesNotExist,
-		codeOperandColumns:       mysql.ErrOperandColumns,
-		codeInvalidWildCard:      mysql.ErrParse,
-		codeInvalidGroupFuncUse:  mysql.ErrInvalidGroupFuncUse,
-		codeIllegalReference:     mysql.ErrIllegalReference,
-		codeNoDB:                 mysql.ErrNoDB,
-		codeUnknownExplainFormat: mysql.ErrUnknownExplainFormat,
-		codeWrongGroupField:      mysql.ErrWrongGroupField,
-		codeDupFieldName:         mysql.ErrDupFieldName,
-		codeNonUpdatableTable:    mysql.ErrUnknownTable,
-		codeInternal:             mysql.ErrInternal,
+		codeWrongUsage:                   mysql.ErrWrongUsage,
+		codeAmbiguous:                    mysql.ErrNonUniq,
+		codeUnknownColumn:                mysql.ErrBadField,
+		codeUnknownTable:                 mysql.ErrBadTable,
+		codeWrongArguments:               mysql.ErrWrongArguments,
+		codeWrongNumberOfColumnsInSelect: mysql.ErrWrongNumberOfColumnsInSelect,
+		codeBadGeneratedColumn:           mysql.ErrBadGeneratedColumn,
+		codeFieldNotInGroupBy:            mysql.ErrFieldNotInGroupBy,
+		codeBadTable:                     mysql.ErrBadTable,
+		codeKeyDoesNotExist:              mysql.ErrKeyDoesNotExist,
+		codeOperandColumns:               mysql.ErrOperandColumns,
+		codeInvalidWildCard:              mysql.ErrParse,
+		codeInvalidGroupFuncUse:          mysql.ErrInvalidGroupFuncUse,
+		codeIllegalReference:             mysql.ErrIllegalReference,
+		codeNoDB:                         mysql.ErrNoDB,
+		codeUnknownExplainFormat:         mysql.ErrUnknownExplainFormat,
+		codeWrongGroupField:              mysql.ErrWrongGroupField,
+		codeDupFieldName:                 mysql.ErrDupFieldName,
+		codeNonUpdatableTable:            mysql.ErrUnknownTable,
+		codeInternal:                     mysql.ErrInternal,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassOptimizer] = mysqlErrCodeMap
 }
