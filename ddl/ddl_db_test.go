@@ -894,7 +894,7 @@ func (s *testDBSuite) TestAddColumnTooMany(c *C) {
 	count := ddl.TableColumnCountLimit - 2
 	var sql string
 	for i := 1; i <= count; i++ {
-		sql = "alter table t_column_too_large add column"
+		sql = "alter table t_column_too_many add column"
 		sql += fmt.Sprintf("a%d int", i)
 		s.tk.MustExec(sql)
 	}
