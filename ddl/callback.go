@@ -20,8 +20,10 @@ import (
 	"golang.org/x/net/context"
 )
 
+// GetInfoSchema is used for getting information schema in testing.
 type GetInfoSchema func() infoschema.InfoSchema
 
+// Callback is used for DDL.
 type Callback interface {
 	// OnChanged is called after schema is changed.
 	OnChanged(err error) error
@@ -31,6 +33,7 @@ type Callback interface {
 	OnJobUpdated(job *model.Job)
 	// OnWatched is called after watching owner is completed.
 	OnWatched(ctx context.Context)
+	// OnGetInfoSchema is called in getting information schema. It's used for testing now.
 	OnGetInfoSchema(ctx sessionctx.Context, fn GetInfoSchema) infoschema.InfoSchema
 }
 
@@ -58,6 +61,7 @@ func (c *BaseCallback) OnWatched(ctx context.Context) {
 	// Nothing to do.
 }
 
+// OnGetInfoSchema implements Callback.OnGetInfoSchema interface.
 func (c *BaseCallback) OnGetInfoSchema(ctx sessionctx.Context, fn GetInfoSchema) infoschema.InfoSchema {
 	// Nothing to do.
 	return nil

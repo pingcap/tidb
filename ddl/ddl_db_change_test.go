@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
@@ -659,7 +658,6 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 		testFirstConnID       = uint64(math.MaxUint64)
 	)
 	callback.OnGetInfoSchemaExported = func(ctx sessionctx.Context, fn ddl.GetInfoSchema) infoschema.InfoSchema {
-		log.Warnf("..................... is in test %v", ddl.IsInTest)
 		// The following code is for testing.
 		// Make srue the two sessions get the same information schema before executing DDL.
 		// After the first session executes its DDL, then the second session executes its DDL.
@@ -672,7 +670,6 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 			if cnt == 2 {
 				info = fn()
 				atomic.AddInt32(&testObtainedSchemaCnt, 1)
-				log.Warnf("xx ................. ver %v, id %v, self id %v", info.SchemaMetaVersion(), atomic.LoadUint64(&testFirstConnID), ctx.GetSessionVars().ConnectionID)
 				break
 			}
 			time.Sleep(interval)
@@ -686,7 +683,6 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 			firstID := atomic.LoadUint64(&testFirstConnID)
 			seCnt := atomic.LoadInt32(&testSessionCnt)
 			obtainedSchemaCnt := atomic.LoadInt32(&testObtainedSchemaCnt)
-			log.Warnf("------------------- id %v, cnt %v", firstID, seCnt)
 			// Make sure the two session have got the same information schema. And the first session can continue to go on,
 			// or the frist session finished this SQL, then other sessions can continue to go on.
 			if obtainedSchemaCnt == 2 && (firstID == currID || seCnt == 0) {
@@ -700,6 +696,7 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 	d := s.dom.DDL()
 	d.SetHook(callback)
 
+	// Make sure we
 	ch := make(chan struct{})
 	wg := sync.WaitGroup{}
 	wg.Add(2)
@@ -710,7 +707,6 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 		se.SetConnectionID(1)
 		_, err1 := se.Execute(context.Background(), "alter table test_table drop column c2")
 		c.Assert(err1, IsNil)
-		log.Warnf("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 111, id %v", se.GetSessionVars().ConnectionID)
 		atomic.StoreInt32(&testSessionCnt, 0)
 	}()
 	go func() {
@@ -721,7 +717,6 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 		_, err2 := se1.Execute(context.Background(), "alter table test_table add column c2 int")
 		c.Assert(err2, NotNil)
 		c.Assert(strings.Contains(err2.Error(), "Information schema is changed"), IsTrue)
-		log.Warnf("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 222, id %v", se1.GetSessionVars().ConnectionID)
 	}()
 
 	wg.Wait()

@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/schema_checker"
+	"github.com/pingcap/tidb/util/schemachecker"
 	"golang.org/x/net/context"
 )
 
@@ -45,16 +45,13 @@ func (e *DDLExec) toErr(err error) error {
 	}
 
 	dom := domain.GetDomain(e.ctx)
-	checker := schema_checker.NewSchemaChecker(dom, e.is.SchemaMetaVersion(), nil)
+	checker := schemachecker.NewSchemaChecker(dom, e.is.SchemaMetaVersion(), nil)
 	schemaInfoErr := checker.Check(e.ctx.Txn().StartTS())
 	if schemaInfoErr != nil {
 		return errors.Trace(schemaInfoErr)
 	}
 	return err
 }
-
-var connID uint64
-var ParallelCnt int32
 
 // Next implements the Executor Next interface.
 func (e *DDLExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {

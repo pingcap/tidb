@@ -55,7 +55,7 @@ import (
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/kvcache"
-	"github.com/pingcap/tidb/util/schema_checker"
+	"github.com/pingcap/tidb/util/schemachecker"
 	binlog "github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
@@ -291,7 +291,7 @@ func (s *session) doCommit(ctx context.Context) error {
 		tableIDs = append(tableIDs, id)
 	}
 	// Set this option for 2 phase commit to validate schema lease.
-	s.txn.SetOption(kv.SchemaLeaseChecker, schema_checker.NewSchemaChecker(domain.GetDomain(s), s.sessionVars.TxnCtx.SchemaVersion, tableIDs))
+	s.txn.SetOption(kv.SchemaLeaseChecker, schemachecker.NewSchemaChecker(domain.GetDomain(s), s.sessionVars.TxnCtx.SchemaVersion, tableIDs))
 	if s.sessionVars.TxnCtx.ForUpdate {
 		s.txn.SetOption(kv.ForUpdate, true)
 	}
