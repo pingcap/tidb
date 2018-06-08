@@ -621,7 +621,7 @@ func (e *InsertValues) getKeysNeedCheck(insertRows []types.DatumRow) ([][]keyWit
 			if !distinct {
 				continue
 			}
-			colValStr, err1 := types.DatumsToString(colVals)
+			colValStr, err1 := types.DatumsToString(colVals, false)
 			if err1 != nil {
 				return nil, errors.Trace(err1)
 			}
