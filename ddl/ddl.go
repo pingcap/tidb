@@ -20,7 +20,6 @@ package ddl
 import (
 	"fmt"
 	"sync"
-	//"sync/atomic"
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
