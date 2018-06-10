@@ -34,7 +34,7 @@ import (
 
 // InsertValues is the data to insert.
 type InsertValues struct {
-	baseExecutor
+	operator.BaseExecutor
 
 	rowCount              uint64
 	maxRowsInBatch        uint64
@@ -244,7 +244,7 @@ func (e *InsertValues) getRow(cols []*table.Column, list []expression.Expression
 		if err = e.handleErr(cols[i], rowIdx, err); err != nil {
 			return nil, errors.Trace(err)
 		}
-		val, err = table.CastValue(e.ctx, val, cols[i].ToInfo())
+		val, err = table.CastValue(e.Sctx, val, cols[i].ToInfo())
 		if err = e.handleErr(cols[i], rowIdx, err); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -286,7 +286,7 @@ func (e *InsertValues) fillDefaultValues(row types.DatumRow, hasValue []bool) er
 
 func (e *InsertValues) getRowsSelectChunk(ctx context.Context, cols []*table.Column) ([]types.DatumRow, error) {
 	// process `insert|replace into ... select ... from ...`
-	selectExec := e.children[0]
+	selectExec := e.Children[0]
 	if selectExec.Schema().Len() != len(cols) {
 		return nil, ErrWrongValueCountOnRow.GenByArgs(1)
 	}
@@ -321,7 +321,7 @@ func (e *InsertValues) fillRowData(cols []*table.Column, vals types.DatumRow) (t
 	row := make(types.DatumRow, len(e.Table.Cols()))
 	hasValue := make([]bool, len(e.Table.Cols()))
 	for i, v := range vals {
-		casted, err := table.CastValue(e.ctx, v, cols[i].ToInfo())
+		casted, err := table.CastValue(e.Sctx, v, cols[i].ToInfo())
 		if err = e.filterErr(err); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -345,7 +345,7 @@ func (e *InsertValues) fillGenColData(cols []*table.Column, valLen int, hasValue
 		if err = e.filterErr(err); err != nil {
 			return nil, errors.Trace(err)
 		}
-		val, err = table.CastValue(e.ctx, val, cols[valLen+i].ToInfo())
+		val, err = table.CastValue(e.Sctx, val, cols[valLen+i].ToInfo())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -363,7 +363,7 @@ func (e *InsertValues) filterErr(err error) error {
 	if err == nil {
 		return nil
 	}
-	if !e.ctx.GetSessionVars().StmtCtx.IgnoreErr {
+	if !e.Sctx.GetSessionVars().StmtCtx.IgnoreErr {
 		return errors.Trace(err)
 	}
 
@@ -377,7 +377,7 @@ func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (d types.D
 		return e.colDefaultVals[idx].val, nil
 	}
 
-	defaultVal, err := table.GetColDefaultValue(e.ctx, col.ToInfo())
+	defaultVal, err := table.GetColDefaultValue(e.Sctx, col.ToInfo())
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
@@ -392,7 +392,7 @@ func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (d types.D
 // initDefaultValues fills generated columns, auto_increment column and empty column.
 // For NOT NULL column, it will return error or use zero value based on sql_mode.
 func (e *InsertValues) initDefaultValues(row types.DatumRow, hasValue []bool) error {
-	strictSQL := e.ctx.GetSessionVars().StrictSQLMode
+	strictSQL := e.Sctx.GetSessionVars().StrictSQLMode
 	for i, c := range e.Table.Cols() {
 		var needDefaultValue bool
 		if !hasValue[i] {
@@ -428,7 +428,7 @@ func (e *InsertValues) initDefaultValues(row types.DatumRow, hasValue []bool) er
 }
 
 func (e *InsertValues) adjustAutoIncrementDatum(row types.DatumRow, i int, c *table.Column) error {
-	retryInfo := e.ctx.GetSessionVars().RetryInfo
+	retryInfo := e.Sctx.GetSessionVars().RetryInfo
 	if retryInfo.Retrying {
 		id, err := retryInfo.GetCurrAutoIncrementID()
 		if err != nil {
@@ -445,18 +445,18 @@ func (e *InsertValues) adjustAutoIncrementDatum(row types.DatumRow, i int, c *ta
 	var err error
 	var recordID int64
 	if !row[i].IsNull() {
-		recordID, err = row[i].ToInt64(e.ctx.GetSessionVars().StmtCtx)
+		recordID, err = row[i].ToInt64(e.Sctx.GetSessionVars().StmtCtx)
 		if e.filterErr(errors.Trace(err)) != nil {
 			return errors.Trace(err)
 		}
 	}
 	// Use the value if it's not null and not 0.
 	if recordID != 0 {
-		err = e.Table.RebaseAutoID(e.ctx, recordID, true)
+		err = e.Table.RebaseAutoID(e.Sctx, recordID, true)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		e.ctx.GetSessionVars().InsertID = uint64(recordID)
+		e.Sctx.GetSessionVars().InsertID = uint64(recordID)
 		if mysql.HasUnsignedFlag(c.Flag) {
 			row[i].SetUint64(uint64(recordID))
 		} else {
@@ -466,14 +466,14 @@ func (e *InsertValues) adjustAutoIncrementDatum(row types.DatumRow, i int, c *ta
 		return nil
 	}
 
-	// Change NULL to auto id.
-	// Change value 0 to auto id, if NoAutoValueOnZero SQL mode is not set.
-	if row[i].IsNull() || e.ctx.GetSessionVars().SQLMode&mysql.ModeNoAutoValueOnZero == 0 {
-		recordID, err = e.Table.AllocAutoID(e.ctx)
+	// Change NULL to auto ExplainID.
+	// Change value 0 to auto ExplainID, if NoAutoValueOnZero SQL mode is not set.
+	if row[i].IsNull() || e.Sctx.GetSessionVars().SQLMode&mysql.ModeNoAutoValueOnZero == 0 {
+		recordID, err = e.Table.AllocAutoID(e.Sctx)
 		if e.filterErr(errors.Trace(err)) != nil {
 			return errors.Trace(err)
 		}
-		// It's compatible with mysql. So it sets last insert id to the first row.
+		// It's compatible with mysql. So it sets last insert ExplainID to the first row.
 		if e.rowCount == 0 {
 			e.lastInsertID = uint64(recordID)
 		}
@@ -487,7 +487,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(row types.DatumRow, i int, c *ta
 	retryInfo.AddAutoIncrementID(recordID)
 
 	// the value of row[i] is adjusted by autoid, so we need to cast it again.
-	casted, err := table.CastValue(e.ctx, row[i], c.ToInfo())
+	casted, err := table.CastValue(e.Sctx, row[i], c.ToInfo())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -496,7 +496,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(row types.DatumRow, i int, c *ta
 }
 
 func (e *InsertValues) handleLoadDataWarnings(err error, logInfo string) {
-	sc := e.ctx.GetSessionVars().StmtCtx
+	sc := e.Sctx.GetSessionVars().StmtCtx
 	sc.AppendWarning(err)
 	log.Warn(logInfo)
 }
@@ -515,7 +515,7 @@ func (e *InsertValues) batchMarkDupRows(rows []types.DatumRow) ([]types.DatumRow
 			if _, found := values[string(k.key)]; found {
 				// If duplicate keys were found in BatchGet, mark row = nil.
 				rows[i] = nil
-				e.ctx.GetSessionVars().StmtCtx.AppendWarning(k.dupErr)
+				e.Sctx.GetSessionVars().StmtCtx.AppendWarning(k.dupErr)
 				break
 			}
 		}
@@ -529,7 +529,7 @@ func (e *InsertValues) batchMarkDupRows(rows []types.DatumRow) ([]types.DatumRow
 		}
 	}
 	// this statement was already been checked
-	e.ctx.GetSessionVars().StmtCtx.BatchCheck = true
+	e.Sctx.GetSessionVars().StmtCtx.BatchCheck = true
 	return rows, nil
 }
 
@@ -539,7 +539,7 @@ func (e *InsertValues) batchGetOldValues(handles []int64) (map[string][]byte, er
 	for _, handle := range handles {
 		batchKeys = append(batchKeys, e.Table.RecordKey(handle))
 	}
-	values, err := kv.BatchGetValues(e.ctx.Txn(), batchKeys)
+	values, err := kv.BatchGetValues(e.Sctx.Txn(), batchKeys)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -556,7 +556,7 @@ func (e *InsertValues) encodeNewRow(row types.DatumRow) ([]byte, error) {
 			skimmedRow = append(skimmedRow, row[col.Offset])
 		}
 	}
-	newRowValue, err := tablecodec.EncodeRow(e.ctx.GetSessionVars().StmtCtx, skimmedRow, colIDs, nil, nil)
+	newRowValue, err := tablecodec.EncodeRow(e.Sctx.GetSessionVars().StmtCtx, skimmedRow, colIDs, nil, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -614,7 +614,7 @@ func (e *InsertValues) getKeysNeedCheck(rows []types.DatumRow) ([][]keyWithDupEr
 			}
 			// Pass handle = 0 to GenIndexKey,
 			// due to we only care about distinct key.
-			key, distinct, err1 := v.GenIndexKey(e.ctx.GetSessionVars().StmtCtx,
+			key, distinct, err1 := v.GenIndexKey(e.Sctx.GetSessionVars().StmtCtx,
 				colVals, 0, nil)
 			if err1 != nil {
 				return nil, errors.Trace(err1)
@@ -659,7 +659,7 @@ func (e *InsertValues) batchGetInsertKeys(newRows []types.DatumRow) ([][]keyWith
 			batchKeys = append(batchKeys, k.key)
 		}
 	}
-	values, err := kv.BatchGetValues(e.ctx.Txn(), batchKeys)
+	values, err := kv.BatchGetValues(e.Sctx.Txn(), batchKeys)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}

@@ -46,7 +46,7 @@ type projectionOutput struct {
 // ProjectionExec implements the physical Projection Operator:
 // https://en.wikipedia.org/wiki/Projection_(relational_algebra)
 type ProjectionExec struct {
-	baseExecutor
+	operator.BaseExecutor
 
 	evaluatorSuit    *expression.EvaluatorSuit
 	calculateNoDelay bool
@@ -61,7 +61,7 @@ type ProjectionExec struct {
 
 // Open implements the Executor Open interface.
 func (e *ProjectionExec) Open(ctx context.Context) error {
-	if err := e.baseExecutor.Open(ctx); err != nil {
+	if err := e.BaseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -144,11 +144,11 @@ func (e *ProjectionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 }
 
 func (e *ProjectionExec) unParallelExecute(ctx context.Context, chk *chunk.Chunk) error {
-	err := e.children[0].Next(ctx, e.childrenResults[0])
+	err := e.Children[0].Next(ctx, e.ChildrenResults[0])
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = e.evaluatorSuit.Run(e.ctx, e.childrenResults[0], chk)
+	err = e.evaluatorSuit.Run(e.Sctx, e.ChildrenResults[0], chk)
 	return errors.Trace(err)
 }
 
@@ -179,7 +179,7 @@ func (e *ProjectionExec) prepare(ctx context.Context) {
 
 	// Initialize projectionInputFetcher.
 	e.fetcher = projectionInputFetcher{
-		child:          e.children[0],
+		child:          e.Children[0],
 		globalFinishCh: e.finishCh,
 		globalOutputCh: e.outputCh,
 		inputCh:        make(chan *projectionInput, e.numWorkers),
@@ -190,7 +190,7 @@ func (e *ProjectionExec) prepare(ctx context.Context) {
 	e.workers = make([]*projectionWorker, 0, e.numWorkers)
 	for i := int64(0); i < e.numWorkers; i++ {
 		e.workers = append(e.workers, &projectionWorker{
-			sctx:            e.ctx,
+			sctx:            e.Sctx,
 			evaluatorSuit:   e.evaluatorSuit,
 			globalFinishCh:  e.finishCh,
 			inputGiveBackCh: e.fetcher.inputCh,
@@ -199,7 +199,7 @@ func (e *ProjectionExec) prepare(ctx context.Context) {
 		})
 
 		e.fetcher.inputCh <- &projectionInput{
-			chk:          e.children[0].NewChunk(),
+			chk:          e.Children[0].NewChunk(),
 			targetWorker: e.workers[i],
 		}
 		e.fetcher.outputCh <- &projectionOutput{
@@ -224,7 +224,7 @@ func (e *ProjectionExec) Close() error {
 		}
 		e.outputCh = nil
 	}
-	return errors.Trace(e.baseExecutor.Close())
+	return errors.Trace(e.BaseExecutor.Close())
 }
 
 type projectionInputFetcher struct {

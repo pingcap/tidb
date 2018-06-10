@@ -25,7 +25,7 @@ import (
 )
 
 func (e *ShowExec) fetchShowStatsMeta() error {
-	do := domain.GetDomain(e.ctx)
+	do := domain.GetDomain(e.Sctx)
 	h := do.StatsHandle()
 	dbs := do.InfoSchema().AllSchemas()
 	for _, db := range dbs {
@@ -46,7 +46,7 @@ func (e *ShowExec) fetchShowStatsMeta() error {
 }
 
 func (e *ShowExec) fetchShowStatsHistogram() error {
-	do := domain.GetDomain(e.ctx)
+	do := domain.GetDomain(e.Sctx)
 	h := do.StatsHandle()
 	dbs := do.InfoSchema().AllSchemas()
 	for _, db := range dbs {
@@ -84,7 +84,7 @@ func (e *ShowExec) versionToTime(version uint64) types.Time {
 }
 
 func (e *ShowExec) fetchShowStatsBuckets() error {
-	do := domain.GetDomain(e.ctx)
+	do := domain.GetDomain(e.Sctx)
 	h := do.StatsHandle()
 	dbs := do.InfoSchema().AllSchemas()
 	for _, db := range dbs {
@@ -141,7 +141,7 @@ func (e *ShowExec) bucketsToRows(dbName, tblName, colName string, numOfCols int,
 }
 
 func (e *ShowExec) fetchShowStatsHealthy() {
-	do := domain.GetDomain(e.ctx)
+	do := domain.GetDomain(e.Sctx)
 	h := do.StatsHandle()
 	dbs := do.InfoSchema().AllSchemas()
 	for _, db := range dbs {

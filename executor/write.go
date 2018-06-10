@@ -76,7 +76,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData types.DatumR
 			newData[i] = v
 		}
 
-		// Rebase auto increment id if the field is changed.
+		// Rebase auto increment ExplainID if the field is changed.
 		if mysql.HasAutoIncrementFlag(col.Flag) {
 			if newData[i].IsNull() {
 				return false, handleChanged, newHandle, 0,

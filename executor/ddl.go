@@ -19,6 +19,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor/operator"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -31,7 +32,7 @@ import (
 // DDLExec represents a DDL executor.
 // It grabs a DDL instance from Domain, calling the DDL methods to do the work.
 type DDLExec struct {
-	baseExecutor
+	operator.BaseExecutor
 
 	stmt ast.StmtNode
 	is   infoschema.InfoSchema
@@ -69,20 +70,20 @@ func (e *DDLExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 		return errors.Trace(err)
 	}
 
-	dom := domain.GetDomain(e.ctx)
+	dom := domain.GetDomain(e.Sctx)
 	// Update InfoSchema in TxnCtx, so it will pass schema check.
 	is := dom.InfoSchema()
-	txnCtx := e.ctx.GetSessionVars().TxnCtx
+	txnCtx := e.Sctx.GetSessionVars().TxnCtx
 	txnCtx.InfoSchema = is
 	txnCtx.SchemaVersion = is.SchemaMetaVersion()
 	// DDL will force commit old transaction, after DDL, in transaction status should be false.
-	e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, false)
+	e.Sctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, false)
 	return nil
 }
 
 func (e *DDLExec) executeTruncateTable(s *ast.TruncateTableStmt) error {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
-	err := domain.GetDomain(e.ctx).DDL().TruncateTable(e.ctx, ident)
+	err := domain.GetDomain(e.Sctx).DDL().TruncateTable(e.Sctx, ident)
 	return errors.Trace(err)
 }
 
@@ -93,7 +94,7 @@ func (e *DDLExec) executeRenameTable(s *ast.RenameTableStmt) error {
 	}
 	oldIdent := ast.Ident{Schema: s.OldTable.Schema, Name: s.OldTable.Name}
 	newIdent := ast.Ident{Schema: s.NewTable.Schema, Name: s.NewTable.Name}
-	err := domain.GetDomain(e.ctx).DDL().RenameTable(e.ctx, oldIdent, newIdent)
+	err := domain.GetDomain(e.Sctx).DDL().RenameTable(e.Sctx, oldIdent, newIdent)
 	return errors.Trace(err)
 }
 
@@ -110,7 +111,7 @@ func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
 			}
 		}
 	}
-	err := domain.GetDomain(e.ctx).DDL().CreateSchema(e.ctx, model.NewCIStr(s.Name), opt)
+	err := domain.GetDomain(e.Sctx).DDL().CreateSchema(e.Sctx, model.NewCIStr(s.Name), opt)
 	if err != nil {
 		if infoschema.ErrDatabaseExists.Equal(err) && s.IfNotExists {
 			err = nil
@@ -120,19 +121,19 @@ func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
 }
 
 func (e *DDLExec) executeCreateTable(s *ast.CreateTableStmt) error {
-	err := domain.GetDomain(e.ctx).DDL().CreateTable(e.ctx, s)
+	err := domain.GetDomain(e.Sctx).DDL().CreateTable(e.Sctx, s)
 	return errors.Trace(err)
 }
 
 func (e *DDLExec) executeCreateIndex(s *ast.CreateIndexStmt) error {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
-	err := domain.GetDomain(e.ctx).DDL().CreateIndex(e.ctx, ident, s.Unique, model.NewCIStr(s.IndexName), s.IndexColNames, s.IndexOption)
+	err := domain.GetDomain(e.Sctx).DDL().CreateIndex(e.Sctx, ident, s.Unique, model.NewCIStr(s.IndexName), s.IndexColNames, s.IndexOption)
 	return errors.Trace(err)
 }
 
 func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 	dbName := model.NewCIStr(s.Name)
-	err := domain.GetDomain(e.ctx).DDL().DropSchema(e.ctx, dbName)
+	err := domain.GetDomain(e.Sctx).DDL().DropSchema(e.Sctx, dbName)
 	if infoschema.ErrDatabaseNotExists.Equal(err) {
 		if s.IfExists {
 			err = nil
@@ -140,7 +141,7 @@ func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 			err = infoschema.ErrDatabaseDropExists.GenByArgs(s.Name)
 		}
 	}
-	sessionVars := e.ctx.GetSessionVars()
+	sessionVars := e.Sctx.GetSessionVars()
 	if err == nil && strings.ToLower(sessionVars.CurrentDB) == dbName.L {
 		sessionVars.CurrentDB = ""
 		err = variable.SetSessionSystemVar(sessionVars, variable.CharsetDatabase, types.NewStringDatum("utf8"))
@@ -174,7 +175,7 @@ func (e *DDLExec) executeDropTable(s *ast.DropTableStmt) error {
 			return errors.Trace(err)
 		}
 
-		err = domain.GetDomain(e.ctx).DDL().DropTable(e.ctx, fullti)
+		err = domain.GetDomain(e.Sctx).DDL().DropTable(e.Sctx, fullti)
 		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
 			notExistTables = append(notExistTables, fullti.String())
 		} else if err != nil {
@@ -189,7 +190,7 @@ func (e *DDLExec) executeDropTable(s *ast.DropTableStmt) error {
 
 func (e *DDLExec) executeDropIndex(s *ast.DropIndexStmt) error {
 	ti := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
-	err := domain.GetDomain(e.ctx).DDL().DropIndex(e.ctx, ti, model.NewCIStr(s.IndexName))
+	err := domain.GetDomain(e.Sctx).DDL().DropIndex(e.Sctx, ti, model.NewCIStr(s.IndexName))
 	if (infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err)) && s.IfExists {
 		err = nil
 	}
@@ -198,6 +199,6 @@ func (e *DDLExec) executeDropIndex(s *ast.DropIndexStmt) error {
 
 func (e *DDLExec) executeAlterTable(s *ast.AlterTableStmt) error {
 	ti := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
-	err := domain.GetDomain(e.ctx).DDL().AlterTable(e.ctx, ti, s.Specs)
+	err := domain.GetDomain(e.Sctx).DDL().AlterTable(e.Sctx, ti, s.Specs)
 	return errors.Trace(err)
 }

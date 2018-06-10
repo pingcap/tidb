@@ -357,7 +357,7 @@ func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
 }
 
 // IsPointGetWithPKOrUniqueKeyByAutoCommit returns true when meets following conditions:
-//  1. ctx is auto commit tagged
+//  1. Sctx is auto commit tagged
 //  2. txn is nil
 //  2. plan is point get by pk or unique key
 func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p plan.Plan) bool {

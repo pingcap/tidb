@@ -39,7 +39,7 @@ var _ operator.Executor = &AnalyzeExec{}
 
 // AnalyzeExec represents Analyze executor.
 type AnalyzeExec struct {
-	baseExecutor
+	operator.BaseExecutor
 	tasks []*analyzeTask
 }
 
@@ -54,7 +54,7 @@ const (
 
 // Next implements the Executor Next interface.
 func (e *AnalyzeExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	concurrency, err := getBuildStatsConcurrency(e.ctx)
+	concurrency, err := getBuildStatsConcurrency(e.Sctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -67,7 +67,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		taskCh <- task
 	}
 	close(taskCh)
-	dom := domain.GetDomain(e.ctx)
+	dom := domain.GetDomain(e.Sctx)
 	lease := dom.StatsHandle().Lease
 	if lease > 0 {
 		var err1 error
@@ -100,13 +100,13 @@ func (e *AnalyzeExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 	for _, result := range results {
 		for i, hg := range result.Hist {
-			err = statistics.SaveStatsToStorage(e.ctx, result.TableID, result.Count, result.IsIndex, hg, result.Cms[i])
+			err = statistics.SaveStatsToStorage(e.Sctx, result.TableID, result.Count, result.IsIndex, hg, result.Cms[i])
 			if err != nil {
 				return errors.Trace(err)
 			}
 		}
 	}
-	err = dom.StatsHandle().Update(GetInfoSchema(e.ctx))
+	err = dom.StatsHandle().Update(GetInfoSchema(e.Sctx))
 	if err != nil {
 		return errors.Trace(err)
 	}

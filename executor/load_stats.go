@@ -29,7 +29,7 @@ var _ operator.Executor = &LoadStatsExec{}
 
 // LoadStatsExec represents a load statistic executor.
 type LoadStatsExec struct {
-	baseExecutor
+	operator.BaseExecutor
 	info *LoadStatsInfo
 }
 
@@ -56,12 +56,12 @@ func (e *LoadStatsExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if len(e.info.Path) == 0 {
 		return errors.New("Load Stats: file path is empty")
 	}
-	val := e.ctx.Value(LoadStatsVarKey)
+	val := e.Sctx.Value(LoadStatsVarKey)
 	if val != nil {
-		e.ctx.SetValue(LoadStatsVarKey, nil)
+		e.Sctx.SetValue(LoadStatsVarKey, nil)
 		return errors.New("Load Stats: previous load stats option isn't closed normally")
 	}
-	e.ctx.SetValue(LoadStatsVarKey, e.info)
+	e.Sctx.SetValue(LoadStatsVarKey, e.info)
 	return nil
 }
 

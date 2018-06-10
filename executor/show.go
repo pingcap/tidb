@@ -24,6 +24,7 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/executor/operator"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -42,7 +43,7 @@ import (
 
 // ShowExec represents a show executor.
 type ShowExec struct {
-	baseExecutor
+	operator.BaseExecutor
 
 	Tp     ast.ShowStmtType // Databases/Tables/Columns/....
 	DBName model.CIStr
@@ -86,7 +87,7 @@ func (e *ShowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if e.cursor >= e.result.NumRows() {
 		return nil
 	}
-	numCurBatch := mathutil.Min(e.maxChunkSize, e.result.NumRows()-e.cursor)
+	numCurBatch := mathutil.Min(e.ChunkSize, e.result.NumRows()-e.cursor)
 	chk.Append(e.result, e.cursor, e.cursor+numCurBatch)
 	e.cursor += numCurBatch
 	return nil
@@ -163,7 +164,7 @@ func (e *ShowExec) fetchShowEngines() error {
 
 func (e *ShowExec) fetchShowDatabases() error {
 	dbs := e.is.AllSchemaNames()
-	checker := privilege.GetPrivilegeManager(e.ctx)
+	checker := privilege.GetPrivilegeManager(e.Sctx)
 	// TODO: let information_schema be the first database
 	sort.Strings(dbs)
 	for _, d := range dbs {
@@ -178,7 +179,7 @@ func (e *ShowExec) fetchShowDatabases() error {
 }
 
 func (e *ShowExec) fetchShowProcessList() error {
-	sm := e.ctx.GetSessionManager()
+	sm := e.Sctx.GetSessionManager()
 	if sm == nil {
 		return nil
 	}
@@ -216,7 +217,7 @@ func (e *ShowExec) fetchShowTables() error {
 	if !e.is.SchemaExists(e.DBName) {
 		return errors.Errorf("Can not find DB: %s", e.DBName)
 	}
-	checker := privilege.GetPrivilegeManager(e.ctx)
+	checker := privilege.GetPrivilegeManager(e.Sctx)
 	// sort for tables
 	var tableNames []string
 	for _, v := range e.is.SchemaTables(e.DBName) {
@@ -379,7 +380,7 @@ func (e *ShowExec) fetchShowCharset() error {
 }
 
 func (e *ShowExec) fetchShowMasterStatus() error {
-	tso := e.ctx.GetSessionVars().TxnCtx.StartTS
+	tso := e.Sctx.GetSessionVars().TxnCtx.StartTS
 	e.appendRow([]interface{}{"tidb-binlog", tso, "", "", ""})
 	return nil
 }
@@ -388,7 +389,7 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 	var (
 		value         string
 		ok            bool
-		sessionVars   = e.ctx.GetSessionVars()
+		sessionVars   = e.Sctx.GetSessionVars()
 		unreachedVars = make([]string, 0, len(variable.SysVars))
 	)
 	for _, v := range variable.SysVars {
@@ -430,7 +431,7 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 }
 
 func (e *ShowExec) fetchShowStatus() error {
-	sessionVars := e.ctx.GetSessionVars()
+	sessionVars := e.Sctx.GetSessionVars()
 	statusVars, err := variable.GetStatusVars(sessionVars)
 	if err != nil {
 		return errors.Trace(err)
@@ -622,7 +623,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	}
 
 	if hasAutoIncID {
-		autoIncID, err := tb.Allocator(e.ctx).NextGlobalAutoID(tb.Meta().ID)
+		autoIncID, err := tb.Allocator(e.Sctx).NextGlobalAutoID(tb.Meta().ID)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -682,11 +683,11 @@ func (e *ShowExec) fetchShowCollation() error {
 
 func (e *ShowExec) fetchShowGrants() error {
 	// Get checker
-	checker := privilege.GetPrivilegeManager(e.ctx)
+	checker := privilege.GetPrivilegeManager(e.Sctx)
 	if checker == nil {
 		return errors.New("miss privilege checker")
 	}
-	gs, err := checker.ShowGrants(e.ctx, e.User)
+	gs, err := checker.ShowGrants(e.Sctx, e.User)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -709,7 +710,7 @@ func (e *ShowExec) fetchShowPlugins() error {
 }
 
 func (e *ShowExec) fetchShowWarnings() error {
-	warns := e.ctx.GetSessionVars().StmtCtx.GetWarnings()
+	warns := e.Sctx.GetSessionVars().StmtCtx.GetWarnings()
 	for _, warn := range warns {
 		warn = errors.Cause(warn)
 		switch x := warn.(type) {

@@ -59,22 +59,22 @@ func (e *ReplaceExec) exec(rows []types.DatumRow) error {
 	 */
 	idx := 0
 	rowsLen := len(rows)
-	sc := e.ctx.GetSessionVars().StmtCtx
+	sc := e.Sctx.GetSessionVars().StmtCtx
 	for {
 		if idx >= rowsLen {
 			break
 		}
 		row := rows[idx]
-		h, err1 := e.Table.AddRecord(e.ctx, row, false)
+		h, err1 := e.Table.AddRecord(e.Sctx, row, false)
 		if err1 == nil {
-			e.ctx.StmtAddDirtyTableOP(DirtyTableAddRow, e.Table.Meta().ID, h, row)
+			e.Sctx.StmtAddDirtyTableOP(DirtyTableAddRow, e.Table.Meta().ID, h, row)
 			idx++
 			continue
 		}
 		if err1 != nil && !kv.ErrKeyExists.Equal(err1) {
 			return errors.Trace(err1)
 		}
-		oldRow, err1 := e.Table.Row(e.ctx, h)
+		oldRow, err1 := e.Table.Row(e.Sctx, h)
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
@@ -84,21 +84,21 @@ func (e *ReplaceExec) exec(rows []types.DatumRow) error {
 		}
 		if rowUnchanged {
 			// If row unchanged, we do not need to do insert.
-			e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
+			e.Sctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 			idx++
 			continue
 		}
 		// Remove current row and try replace again.
-		err1 = e.Table.RemoveRecord(e.ctx, h, oldRow)
+		err1 = e.Table.RemoveRecord(e.Sctx, h, oldRow)
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
-		e.ctx.StmtAddDirtyTableOP(DirtyTableDeleteRow, e.Table.Meta().ID, h, nil)
-		e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
+		e.Sctx.StmtAddDirtyTableOP(DirtyTableDeleteRow, e.Table.Meta().ID, h, nil)
+		e.Sctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 	}
 
 	if e.lastInsertID != 0 {
-		e.ctx.GetSessionVars().SetLastInsertID(e.lastInsertID)
+		e.Sctx.GetSessionVars().SetLastInsertID(e.lastInsertID)
 	}
 	e.finished = true
 	return nil
@@ -116,7 +116,7 @@ func (e *ReplaceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 
 	var rows []types.DatumRow
-	if len(e.children) > 0 && e.children[0] != nil {
+	if len(e.Children) > 0 && e.Children[0] != nil {
 		rows, err = e.getRowsSelectChunk(ctx, cols)
 	} else {
 		rows, err = e.getRows(cols)

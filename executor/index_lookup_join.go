@@ -48,7 +48,7 @@ var _ operator.Executor = &IndexLookUpJoin{}
 // 3. main thread receives the task, waits for inner worker finish handling the task.
 // 4. main thread join each outer row by look up the inner rows hash map in the task.
 type IndexLookUpJoin struct {
-	baseExecutor
+	operator.BaseExecutor
 
 	resultCh   <-chan *lookUpJoinTask
 	cancelFunc context.CancelFunc
@@ -128,19 +128,19 @@ type innerWorker struct {
 
 // Open implements the Executor interface.
 func (e *IndexLookUpJoin) Open(ctx context.Context) error {
-	err := e.children[0].Open(ctx)
+	err := e.Children[0].Open(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaIndexLookupJoin)
-	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	e.memTracker = memory.NewTracker(e.ExplainID, e.Sctx.GetSessionVars().MemQuotaIndexLookupJoin)
+	e.memTracker.AttachTo(e.Sctx.GetSessionVars().StmtCtx.MemTracker)
 	e.innerPtrBytes = make([][]byte, 0, 8)
 	e.startWorkers(ctx)
 	return nil
 }
 
 func (e *IndexLookUpJoin) startWorkers(ctx context.Context) {
-	concurrency := e.ctx.GetSessionVars().IndexLookupJoinConcurrency
+	concurrency := e.Sctx.GetSessionVars().IndexLookupJoinConcurrency
 	resultCh := make(chan *lookUpJoinTask, concurrency)
 	e.resultCh = resultCh
 	workerCtx, cancelFunc := context.WithCancel(ctx)
@@ -157,13 +157,13 @@ func (e *IndexLookUpJoin) startWorkers(ctx context.Context) {
 func (e *IndexLookUpJoin) newOuterWorker(resultCh, innerCh chan *lookUpJoinTask) *outerWorker {
 	ow := &outerWorker{
 		outerCtx:         e.outerCtx,
-		ctx:              e.ctx,
-		executor:         e.children[0],
-		executorChk:      chunk.NewChunkWithCapacity(e.outerCtx.rowTypes, e.maxChunkSize),
+		ctx:              e.Sctx,
+		executor:         e.Children[0],
+		executorChk:      chunk.NewChunkWithCapacity(e.outerCtx.rowTypes, e.ChunkSize),
 		resultCh:         resultCh,
 		innerCh:          innerCh,
 		batchSize:        32,
-		maxBatchSize:     e.ctx.GetSessionVars().IndexJoinBatchSize,
+		maxBatchSize:     e.Sctx.GetSessionVars().IndexJoinBatchSize,
 		parentMemTracker: e.memTracker,
 	}
 	return ow
@@ -179,8 +179,8 @@ func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWork
 		innerCtx:      e.innerCtx,
 		outerCtx:      e.outerCtx,
 		taskCh:        taskCh,
-		ctx:           e.ctx,
-		executorChk:   chunk.NewChunkWithCapacity(e.innerCtx.rowTypes, e.maxChunkSize),
+		ctx:           e.Sctx,
+		executorChk:   chunk.NewChunkWithCapacity(e.innerCtx.rowTypes, e.ChunkSize),
 		indexRanges:   copiedRanges,
 		keyOff2IdxOff: e.keyOff2IdxOff,
 	}
@@ -217,7 +217,7 @@ func (e *IndexLookUpJoin) Next(ctx context.Context, chk *chunk.Chunk) error {
 		if e.innerIter.Current() == e.innerIter.End() {
 			task.cursor++
 		}
-		if chk.NumRows() == e.maxChunkSize {
+		if chk.NumRows() == e.ChunkSize {
 			return nil
 		}
 	}
@@ -558,5 +558,5 @@ func (e *IndexLookUpJoin) Close() error {
 	e.workerWg.Wait()
 	e.memTracker.Detach()
 	e.memTracker = nil
-	return errors.Trace(e.children[0].Close())
+	return errors.Trace(e.Children[0].Close())
 }

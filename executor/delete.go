@@ -28,7 +28,7 @@ import (
 // DeleteExec represents a delete executor.
 // See https://dev.mysql.com/doc/refman/5.7/en/delete.html
 type DeleteExec struct {
-	baseExecutor
+	operator.BaseExecutor
 
 	SelectExec operator.Executor
 
@@ -80,7 +80,7 @@ func (e *DeleteExec) deleteOneRow(tbl table.Table, handleCol *expression.Column,
 		end--
 	}
 	handle := row[handleCol.Index].GetInt64()
-	err := e.removeRow(e.ctx, tbl, handle, row[:end])
+	err := e.removeRow(e.Sctx, tbl, handle, row[:end])
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -97,19 +97,19 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 	)
 	for i, t := range e.tblID2Table {
 		id, tbl = i, t
-		handleCol = e.children[0].Schema().TblID2Handle[id][0]
+		handleCol = e.Children[0].Schema().TblID2Handle[id][0]
 		break
 	}
 
 	// If tidb_batch_delete is ON and not in a transaction, we could use BatchDelete mode.
-	batchDelete := e.ctx.GetSessionVars().BatchDelete && !e.ctx.GetSessionVars().InTxn()
-	batchDMLSize := e.ctx.GetSessionVars().DMLBatchSize
-	fields := e.children[0].RetTypes()
+	batchDelete := e.Sctx.GetSessionVars().BatchDelete && !e.Sctx.GetSessionVars().InTxn()
+	batchDMLSize := e.Sctx.GetSessionVars().DMLBatchSize
+	fields := e.Children[0].RetTypes()
 	for {
-		chk := e.children[0].NewChunk()
+		chk := e.Children[0].NewChunk()
 		iter := chunk.NewIterator4Chunk(chk)
 
-		err := e.children[0].Next(ctx, chk)
+		err := e.Children[0].Next(ctx, chk)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -119,8 +119,8 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 
 		for chunkRow := iter.Begin(); chunkRow != iter.End(); chunkRow = iter.Next() {
 			if batchDelete && rowCount >= batchDMLSize {
-				e.ctx.StmtCommit()
-				if err = e.ctx.NewTxn(); err != nil {
+				e.Sctx.StmtCommit()
+				if err = e.Sctx.NewTxn(); err != nil {
 					// We should return a special error for batch insert.
 					return ErrBatchInsertFail.Gen("BatchDelete failed with error: %v", err)
 				}
@@ -148,7 +148,7 @@ func (e *DeleteExec) initialMultiTableTblMap() {
 
 func (e *DeleteExec) getColPosInfos(schema *expression.Schema) []tblColPosInfo {
 	var colPosInfos []tblColPosInfo
-	// Extract the columns' position information of this table in the delete's schema, together with the table id
+	// Extract the columns' position information of this table in the delete's schema, together with the table ExplainID
 	// and its handle's position in the schema.
 	for id, cols := range schema.TblID2Handle {
 		tbl := e.tblID2Table[id]
@@ -182,14 +182,14 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 	}
 
 	e.initialMultiTableTblMap()
-	colPosInfos := e.getColPosInfos(e.children[0].Schema())
+	colPosInfos := e.getColPosInfos(e.Children[0].Schema())
 	tblRowMap := make(tableRowMapType)
-	fields := e.children[0].RetTypes()
+	fields := e.Children[0].RetTypes()
 	for {
-		chk := e.children[0].NewChunk()
+		chk := e.Children[0].NewChunk()
 		iter := chunk.NewIterator4Chunk(chk)
 
-		err := e.children[0].Next(ctx, chk)
+		err := e.Children[0].Next(ctx, chk)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -209,7 +209,7 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 func (e *DeleteExec) removeRowsInTblRowMap(tblRowMap tableRowMapType) error {
 	for id, rowMap := range tblRowMap {
 		for handle, data := range rowMap {
-			err := e.removeRow(e.ctx, e.tblID2Table[id], handle, data)
+			err := e.removeRow(e.Sctx, e.tblID2Table[id], handle, data)
 			if err != nil {
 				return errors.Trace(err)
 			}

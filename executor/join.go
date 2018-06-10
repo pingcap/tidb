@@ -40,7 +40,7 @@ var (
 
 // HashJoinExec implements the hash join algorithm.
 type HashJoinExec struct {
-	baseExecutor
+	operator.BaseExecutor
 
 	outerExec   operator.Executor
 	innerExec   operator.Executor
@@ -126,19 +126,19 @@ func (e *HashJoinExec) Close() error {
 	e.memTracker.Detach()
 	e.memTracker = nil
 
-	err := e.baseExecutor.Close()
+	err := e.BaseExecutor.Close()
 	return errors.Trace(err)
 }
 
 // Open implements the Executor Open interface.
 func (e *HashJoinExec) Open(ctx context.Context) error {
-	if err := e.baseExecutor.Open(ctx); err != nil {
+	if err := e.BaseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
 
 	e.prepared = false
-	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaHashJoin)
-	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	e.memTracker = memory.NewTracker(e.ExplainID, e.Sctx.GetSessionVars().MemQuotaHashJoin)
+	e.memTracker.AttachTo(e.Sctx.GetSessionVars().StmtCtx.MemTracker)
 
 	e.hashTableValBufs = make([][][]byte, e.concurrency)
 	e.hashJoinBuffers = make([]*hashJoinBuffer, 0, e.concurrency)
@@ -174,7 +174,7 @@ func (e *HashJoinExec) getJoinKeyFromChkRow(isOuterKey bool, row chunk.Row, keyB
 	}
 
 	keyBuf = keyBuf[:0]
-	keyBuf, err = codec.HashChunkRow(e.ctx.GetSessionVars().StmtCtx, keyBuf, row, allTypes, keyColIdx)
+	keyBuf, err = codec.HashChunkRow(e.Sctx.GetSessionVars().StmtCtx, keyBuf, row, allTypes, keyColIdx)
 	if err != nil {
 		err = errors.Trace(err)
 	}
@@ -229,11 +229,11 @@ func (e *HashJoinExec) fetchOuterChunks(ctx context.Context) {
 // fetchInnerRows fetches all rows from inner executor,
 // and append them to e.innerResult.
 func (e *HashJoinExec) fetchInnerRows(ctx context.Context) (err error) {
-	e.innerResult = chunk.NewList(e.innerExec.RetTypes(), e.maxChunkSize)
+	e.innerResult = chunk.NewList(e.innerExec.RetTypes(), e.ChunkSize)
 	e.innerResult.GetMemTracker().AttachTo(e.memTracker)
 	e.innerResult.GetMemTracker().SetLabel("innerResult")
 	for {
-		chk := e.children[e.innerIdx].NewChunk()
+		chk := e.Children[e.innerIdx].NewChunk()
 		err = e.innerExec.Next(ctx, chk)
 		if err != nil || chk.NumRows() == 0 {
 			return errors.Trace(err)
@@ -385,7 +385,7 @@ func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID uint, outerRow chunk.R
 			joinResult.err = errors.Trace(err)
 			return false, joinResult
 		}
-		if joinResult.chk.NumRows() == e.maxChunkSize {
+		if joinResult.chk.NumRows() == e.ChunkSize {
 			ok := true
 			e.joinResultCh <- joinResult
 			ok, joinResult = e.getNewJoinResult(workerID)
@@ -413,7 +413,7 @@ func (e *HashJoinExec) getNewJoinResult(workerID uint) (bool, *hashjoinWorkerRes
 func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, joinResult *hashjoinWorkerResult,
 	selected []bool) (ok bool, _ *hashjoinWorkerResult) {
 	var err error
-	selected, err = expression.VectorizedFilter(e.ctx, e.outerFilter, chunk.NewIterator4Chunk(outerChk), selected)
+	selected, err = expression.VectorizedFilter(e.Sctx, e.outerFilter, chunk.NewIterator4Chunk(outerChk), selected)
 	if err != nil {
 		joinResult.err = errors.Trace(err)
 		return false, joinResult
@@ -431,7 +431,7 @@ func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, joinResu
 				return false, joinResult
 			}
 		}
-		if joinResult.chk.NumRows() == e.maxChunkSize {
+		if joinResult.chk.NumRows() == e.ChunkSize {
 			e.joinResultCh <- joinResult
 			ok, joinResult = e.getNewJoinResult(workerID)
 			if !ok {
@@ -509,7 +509,7 @@ func (e *HashJoinExec) buildHashTableForList() error {
 
 // NestedLoopApplyExec is the executor for apply.
 type NestedLoopApplyExec struct {
-	baseExecutor
+	operator.BaseExecutor
 
 	innerRows   []chunk.Row
 	cursor      int
@@ -554,10 +554,10 @@ func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
 	e.innerRows = e.innerRows[:0]
 	e.outerChunk = e.outerExec.NewChunk()
 	e.innerChunk = e.innerExec.NewChunk()
-	e.innerList = chunk.NewList(e.innerExec.RetTypes(), e.maxChunkSize)
+	e.innerList = chunk.NewList(e.innerExec.RetTypes(), e.ChunkSize)
 
-	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaNestedLoopApply)
-	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	e.memTracker = memory.NewTracker(e.ExplainID, e.Sctx.GetSessionVars().MemQuotaNestedLoopApply)
+	e.memTracker.AttachTo(e.Sctx.GetSessionVars().StmtCtx.MemTracker)
 
 	e.innerList.GetMemTracker().SetLabel("innerList")
 	e.innerList.GetMemTracker().AttachTo(e.memTracker)
@@ -576,7 +576,7 @@ func (e *NestedLoopApplyExec) fetchSelectedOuterRow(ctx context.Context, chk *ch
 			if e.outerChunk.NumRows() == 0 {
 				return nil, nil
 			}
-			e.outerSelected, err = expression.VectorizedFilter(e.ctx, e.outerFilter, outerIter, e.outerSelected)
+			e.outerSelected, err = expression.VectorizedFilter(e.Sctx, e.outerFilter, outerIter, e.outerSelected)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -589,7 +589,7 @@ func (e *NestedLoopApplyExec) fetchSelectedOuterRow(ctx context.Context, chk *ch
 			return &outerRow, nil
 		} else if e.outer {
 			err := e.resultGenerator.emit(outerRow, nil, chk)
-			if err != nil || chk.NumRows() == e.maxChunkSize {
+			if err != nil || chk.NumRows() == e.ChunkSize {
 				return nil, errors.Trace(err)
 			}
 		}
@@ -614,7 +614,7 @@ func (e *NestedLoopApplyExec) fetchAllInners(ctx context.Context) error {
 			return nil
 		}
 
-		e.innerSelected, err = expression.VectorizedFilter(e.ctx, e.innerFilter, innerIter, e.innerSelected)
+		e.innerSelected, err = expression.VectorizedFilter(e.Sctx, e.innerFilter, innerIter, e.innerSelected)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -647,7 +647,7 @@ func (e *NestedLoopApplyExec) Next(ctx context.Context, chk *chunk.Chunk) (err e
 		}
 
 		err = e.resultGenerator.emit(*e.outerRow, e.innerIter, chk)
-		if err != nil || chk.NumRows() == e.maxChunkSize {
+		if err != nil || chk.NumRows() == e.ChunkSize {
 			return errors.Trace(err)
 		}
 	}

@@ -27,7 +27,7 @@ import (
 
 // UpdateExec represents a new update executor.
 type UpdateExec struct {
-	baseExecutor
+	operator.BaseExecutor
 
 	SelectExec  operator.Executor
 	OrderedList []*expression.Assignment
@@ -73,7 +73,7 @@ func (e *UpdateExec) exec(schema *expression.Schema) (types.DatumRow, error) {
 				continue
 			}
 			// Update row
-			changed, _, _, _, err1 := updateRecord(e.ctx, handle, oldData, newTableData, flags, tbl, false)
+			changed, _, _, _, err1 := updateRecord(e.Sctx, handle, oldData, newTableData, flags, tbl, false)
 			if err1 == nil {
 				if changed {
 					e.updatedRowKeys[id][handle] = struct{}{}
@@ -81,7 +81,7 @@ func (e *UpdateExec) exec(schema *expression.Schema) (types.DatumRow, error) {
 				continue
 			}
 
-			sc := e.ctx.GetSessionVars().StmtCtx
+			sc := e.Sctx.GetSessionVars().StmtCtx
 			if kv.ErrKeyExists.Equal(err1) && sc.IgnoreErr {
 				sc.AppendWarning(err1)
 				continue
@@ -104,7 +104,7 @@ func (e *UpdateExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		e.fetched = true
 
 		for {
-			row, err := e.exec(e.children[0].Schema())
+			row, err := e.exec(e.Children[0].Schema())
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -121,11 +121,11 @@ func (e *UpdateExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 }
 
 func (e *UpdateExec) fetchChunkRows(ctx context.Context) error {
-	fields := e.children[0].RetTypes()
+	fields := e.Children[0].RetTypes()
 	globalRowIdx := 0
 	for {
-		chk := e.children[0].NewChunk()
-		err := e.children[0].Next(ctx, chk)
+		chk := e.Children[0].NewChunk()
+		err := e.Children[0].Next(ctx, chk)
 		if err != nil {
 			return errors.Trace(err)
 		}

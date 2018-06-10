@@ -15,13 +15,14 @@ package executor
 
 import (
 	"github.com/cznic/mathutil"
+	"github.com/pingcap/tidb/executor/operator"
 	"github.com/pingcap/tidb/util/chunk"
 	"golang.org/x/net/context"
 )
 
 // ExplainExec represents an explain executor.
 type ExplainExec struct {
-	baseExecutor
+	operator.BaseExecutor
 
 	rows   [][]string
 	cursor int
@@ -40,7 +41,7 @@ func (e *ExplainExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return nil
 	}
 
-	numCurRows := mathutil.Min(e.maxChunkSize, len(e.rows)-e.cursor)
+	numCurRows := mathutil.Min(e.ChunkSize, len(e.rows)-e.cursor)
 	for i := e.cursor; i < e.cursor+numCurRows; i++ {
 		for j := range e.rows[i] {
 			chk.AppendString(j, e.rows[i][j])

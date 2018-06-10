@@ -34,7 +34,7 @@ var _ operator.Executor = &ChecksumTableExec{}
 
 // ChecksumTableExec represents ChecksumTable executor.
 type ChecksumTableExec struct {
-	baseExecutor
+	operator.BaseExecutor
 
 	tables map[int64]*checksumContext
 	done   bool
@@ -42,11 +42,11 @@ type ChecksumTableExec struct {
 
 // Open implements the Executor Open interface.
 func (e *ChecksumTableExec) Open(ctx context.Context) error {
-	if err := e.baseExecutor.Open(ctx); err != nil {
+	if err := e.BaseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
 
-	concurrency, err := getChecksumTableConcurrency(e.ctx)
+	concurrency, err := getChecksumTableConcurrency(e.Sctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -103,7 +103,7 @@ func (e *ChecksumTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 func (e *ChecksumTableExec) buildTasks() ([]*checksumTask, error) {
 	var tasks []*checksumTask
 	for id, t := range e.tables {
-		reqs, err := t.BuildRequests(e.ctx)
+		reqs, err := t.BuildRequests(e.Sctx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -129,7 +129,7 @@ func (e *ChecksumTableExec) checksumWorker(taskCh <-chan *checksumTask, resultCh
 
 func (e *ChecksumTableExec) handleChecksumRequest(req *kv.Request) (resp *tipb.ChecksumResponse, err error) {
 	ctx := context.TODO()
-	res, err := distsql.Checksum(ctx, e.ctx.GetClient(), req, e.ctx.GetSessionVars().KVVars)
+	res, err := distsql.Checksum(ctx, e.Sctx.GetClient(), req, e.Sctx.GetSessionVars().KVVars)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

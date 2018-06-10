@@ -39,7 +39,7 @@ var (
 
 // RevokeExec executes RevokeStmt.
 type RevokeExec struct {
-	baseExecutor
+	operator.BaseExecutor
 
 	Privs      []*ast.PrivElem
 	ObjectType ast.ObjectTypeType
