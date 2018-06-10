@@ -67,7 +67,7 @@ func (e *HashAggExec) Open(ctx context.Context) error {
 	e.groupMap = mvmap.NewMVMap()
 	e.groupIterator = e.groupMap.NewIterator()
 	e.aggCtxsMap = make(aggCtxsMapper, 0)
-	e.mutableRow = chunk.MutRowFromTypes(e.retTypes())
+	e.mutableRow = chunk.MutRowFromTypes(e.RetTypes())
 	e.rowBuffer = make([]types.Datum, 0, e.Schema().Len())
 	e.groupKey = make([]byte, 0, 8)
 	e.groupVals = make([][]byte, 0, 8)
@@ -206,7 +206,7 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 	e.hasData = false
 	e.inputIter = chunk.NewIterator4Chunk(e.childrenResults[0])
 	e.inputRow = e.inputIter.End()
-	e.mutableRow = chunk.MutRowFromTypes(e.retTypes())
+	e.mutableRow = chunk.MutRowFromTypes(e.RetTypes())
 	e.rowBuffer = make([]types.Datum, 0, e.Schema().Len())
 
 	e.aggCtxs = make([]*aggregation.AggEvaluateContext, 0, len(e.AggFuncs))

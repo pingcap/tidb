@@ -19,6 +19,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/executor/operator"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -37,9 +38,10 @@ import (
 )
 
 var (
-	_ Executor = &CheckIndexRangeExec{}
-	_ Executor = &RecoverIndexExec{}
-	_ Executor = &CleanupIndexExec{}
+	_ operator.Executor = &baseExecutor{}
+	_ operator.Executor = &CheckIndexRangeExec{}
+	_ operator.Executor = &RecoverIndexExec{}
+	_ operator.Executor = &CleanupIndexExec{}
 )
 
 // CheckIndexRangeExec outputs the index values which has handle between begin and end.
@@ -97,7 +99,7 @@ func (e *CheckIndexRangeExec) Open(ctx context.Context) error {
 		ID:   model.ExtraHandleID,
 		Name: model.ExtraHandleName,
 	})
-	e.srcChunk = e.newChunk()
+	e.srcChunk = e.NewChunk()
 	dagPB, err := e.buildDAGPB()
 	if err != nil {
 		return errors.Trace(err)

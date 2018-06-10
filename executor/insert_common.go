@@ -18,6 +18,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/executor/operator"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -41,7 +42,7 @@ type InsertValues struct {
 	needFillDefaultValues bool
 	hasExtraHandle        bool
 
-	SelectExec Executor
+	SelectExec operator.Executor
 
 	Table   table.Table
 	Columns []*ast.ColumnName
@@ -290,9 +291,9 @@ func (e *InsertValues) getRowsSelectChunk(ctx context.Context, cols []*table.Col
 		return nil, ErrWrongValueCountOnRow.GenByArgs(1)
 	}
 	var rows []types.DatumRow
-	fields := selectExec.retTypes()
+	fields := selectExec.RetTypes()
 	for {
-		chk := selectExec.newChunk()
+		chk := selectExec.NewChunk()
 		iter := chunk.NewIterator4Chunk(chk)
 
 		err := selectExec.Next(ctx, chk)

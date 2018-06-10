@@ -18,13 +18,14 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor/operator"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/chunk"
 	"golang.org/x/net/context"
 )
 
-var _ Executor = &LoadStatsExec{}
+var _ operator.Executor = &LoadStatsExec{}
 
 // LoadStatsExec represents a load statistic executor.
 type LoadStatsExec struct {

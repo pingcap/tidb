@@ -16,6 +16,7 @@ package executor
 import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/executor/operator"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
@@ -29,7 +30,7 @@ import (
 type DeleteExec struct {
 	baseExecutor
 
-	SelectExec Executor
+	SelectExec operator.Executor
 
 	Tables       []*ast.TableName
 	IsMultiTable bool
@@ -103,9 +104,9 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 	// If tidb_batch_delete is ON and not in a transaction, we could use BatchDelete mode.
 	batchDelete := e.ctx.GetSessionVars().BatchDelete && !e.ctx.GetSessionVars().InTxn()
 	batchDMLSize := e.ctx.GetSessionVars().DMLBatchSize
-	fields := e.children[0].retTypes()
+	fields := e.children[0].RetTypes()
 	for {
-		chk := e.children[0].newChunk()
+		chk := e.children[0].NewChunk()
 		iter := chunk.NewIterator4Chunk(chk)
 
 		err := e.children[0].Next(ctx, chk)
@@ -183,9 +184,9 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 	e.initialMultiTableTblMap()
 	colPosInfos := e.getColPosInfos(e.children[0].Schema())
 	tblRowMap := make(tableRowMapType)
-	fields := e.children[0].retTypes()
+	fields := e.children[0].RetTypes()
 	for {
-		chk := e.children[0].newChunk()
+		chk := e.children[0].NewChunk()
 		iter := chunk.NewIterator4Chunk(chk)
 
 		err := e.children[0].Next(ctx, chk)

@@ -15,6 +15,7 @@ package executor
 
 import (
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/executor/operator"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/chunk"
@@ -49,7 +50,7 @@ type MergeJoinExec struct {
 }
 
 type mergeJoinOuterTable struct {
-	reader Executor
+	reader operator.Executor
 	filter []expression.Expression
 	keys   []*expression.Column
 
@@ -64,7 +65,7 @@ type mergeJoinOuterTable struct {
 // All the inner rows which have the same join key are returned when function
 // "rowsWithSameKey()" being called.
 type mergeJoinInnerTable struct {
-	reader   Executor
+	reader   operator.Executor
 	joinKeys []*expression.Column
 	ctx      context.Context
 
@@ -160,9 +161,9 @@ func (t *mergeJoinInnerTable) reallocReaderResult() {
 	// Create a new Chunk and append it to "resourceQueue" if there is no more
 	// available chunk in "resourceQueue".
 	if len(t.resourceQueue) == 0 {
-		newChunk := t.reader.newChunk()
-		t.memTracker.Consume(newChunk.MemoryUsage())
-		t.resourceQueue = append(t.resourceQueue, newChunk)
+		NewChunk := t.reader.NewChunk()
+		t.memTracker.Consume(NewChunk.MemoryUsage())
+		t.resourceQueue = append(t.resourceQueue, NewChunk)
 	}
 
 	// NOTE: "t.curResult" is always the last element of "resultQueue".

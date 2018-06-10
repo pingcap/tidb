@@ -18,6 +18,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/executor/operator"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -27,11 +28,11 @@ import (
 )
 
 var (
-	_ Executor = &UpdateExec{}
-	_ Executor = &DeleteExec{}
-	_ Executor = &InsertExec{}
-	_ Executor = &ReplaceExec{}
-	_ Executor = &LoadDataExec{}
+	_ operator.Executor = &UpdateExec{}
+	_ operator.Executor = &DeleteExec{}
+	_ operator.Executor = &InsertExec{}
+	_ operator.Executor = &ReplaceExec{}
+	_ operator.Executor = &LoadDataExec{}
 )
 
 const (

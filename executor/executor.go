@@ -22,6 +22,7 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/executor/operator"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -39,27 +40,27 @@ import (
 )
 
 var (
-	_ Executor = &CheckTableExec{}
-	_ Executor = &ExistsExec{}
-	_ Executor = &HashAggExec{}
-	_ Executor = &LimitExec{}
-	_ Executor = &MaxOneRowExec{}
-	_ Executor = &ProjectionExec{}
-	_ Executor = &SelectionExec{}
-	_ Executor = &SelectLockExec{}
-	_ Executor = &ShowDDLExec{}
-	_ Executor = &ShowDDLJobsExec{}
-	_ Executor = &ShowDDLJobQueriesExec{}
-	_ Executor = &SortExec{}
-	_ Executor = &StreamAggExec{}
-	_ Executor = &TableDualExec{}
-	_ Executor = &TableScanExec{}
-	_ Executor = &TopNExec{}
-	_ Executor = &UnionExec{}
-	_ Executor = &CheckIndexExec{}
-	_ Executor = &HashJoinExec{}
-	_ Executor = &IndexLookUpExecutor{}
-	_ Executor = &MergeJoinExec{}
+	_ operator.Executor = &CheckTableExec{}
+	_ operator.Executor = &ExistsExec{}
+	_ operator.Executor = &HashAggExec{}
+	_ operator.Executor = &LimitExec{}
+	_ operator.Executor = &MaxOneRowExec{}
+	_ operator.Executor = &ProjectionExec{}
+	_ operator.Executor = &SelectionExec{}
+	_ operator.Executor = &SelectLockExec{}
+	_ operator.Executor = &ShowDDLExec{}
+	_ operator.Executor = &ShowDDLJobsExec{}
+	_ operator.Executor = &ShowDDLJobQueriesExec{}
+	_ operator.Executor = &SortExec{}
+	_ operator.Executor = &StreamAggExec{}
+	_ operator.Executor = &TableDualExec{}
+	_ operator.Executor = &TableScanExec{}
+	_ operator.Executor = &TopNExec{}
+	_ operator.Executor = &UnionExec{}
+	_ operator.Executor = &CheckIndexExec{}
+	_ operator.Executor = &HashJoinExec{}
+	_ operator.Executor = &IndexLookUpExecutor{}
+	_ operator.Executor = &MergeJoinExec{}
 )
 
 type baseExecutor struct {
@@ -67,7 +68,7 @@ type baseExecutor struct {
 	id              string
 	schema          *expression.Schema
 	maxChunkSize    int
-	children        []Executor
+	children        []operator.Executor
 	childrenResults []*chunk.Chunk
 	retFieldTypes   []*types.FieldType
 }
@@ -82,7 +83,7 @@ func (e *baseExecutor) Open(ctx context.Context) error {
 	}
 	e.childrenResults = make([]*chunk.Chunk, 0, len(e.children))
 	for _, child := range e.children {
-		e.childrenResults = append(e.childrenResults, child.newChunk())
+		e.childrenResults = append(e.childrenResults, child.NewChunk())
 	}
 	return nil
 }
@@ -107,13 +108,13 @@ func (e *baseExecutor) Schema() *expression.Schema {
 	return e.schema
 }
 
-// newChunk creates a new chunk to buffer current executor's result.
-func (e *baseExecutor) newChunk() *chunk.Chunk {
-	return chunk.NewChunkWithCapacity(e.retTypes(), e.maxChunkSize)
+// NewChunk creates a new chunk to buffer current executor's result.
+func (e *baseExecutor) NewChunk() *chunk.Chunk {
+	return chunk.NewChunkWithCapacity(e.RetTypes(), e.maxChunkSize)
 }
 
-// retTypes returns all output column types.
-func (e *baseExecutor) retTypes() []*types.FieldType {
+// RetTypes returns all output column types.
+func (e *baseExecutor) RetTypes() []*types.FieldType {
 	return e.retFieldTypes
 }
 
@@ -122,7 +123,7 @@ func (e *baseExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
-func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id string, children ...Executor) baseExecutor {
+func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id string, children ...operator.Executor) baseExecutor {
 	e := baseExecutor{
 		children:     children,
 		ctx:          ctx,
@@ -138,26 +139,6 @@ func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id strin
 		}
 	}
 	return e
-}
-
-// Executor is the physical implementation of a algebra operator.
-//
-// In TiDB, all algebra operators are implemented as iterators, i.e., they
-// support a simple Open-Next-Close protocol. See this paper for more details:
-//
-// "Volcano-An Extensible and Parallel Query Evaluation System"
-//
-// Different from Volcano's execution model, a "Next" function call in TiDB will
-// return a batch of rows, other than a single row in Volcano.
-// NOTE: Executors must call "chk.Reset()" before appending their results to it.
-type Executor interface {
-	Open(context.Context) error
-	Next(ctx context.Context, chk *chunk.Chunk) error
-	Close() error
-	Schema() *expression.Schema
-
-	retTypes() []*types.FieldType
-	newChunk() *chunk.Chunk
 }
 
 // CancelDDLJobsExec represents a cancel DDL jobs executor.
@@ -430,7 +411,7 @@ func (e *CheckIndexExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	chk = e.src.newChunk()
+	chk = e.src.NewChunk()
 	for {
 		err := e.src.Next(ctx, chk)
 		if err != nil {
@@ -591,7 +572,7 @@ func init() {
 			return rows, errors.Trace(err)
 		}
 		for {
-			chk := exec.newChunk()
+			chk := exec.NewChunk()
 			err = exec.Next(ctx, chk)
 			if err != nil {
 				return rows, errors.Trace(err)
@@ -601,7 +582,7 @@ func init() {
 			}
 			iter := chunk.NewIterator4Chunk(chk)
 			for r := iter.Begin(); r != iter.End(); r = iter.Next() {
-				row := r.GetDatumRow(exec.retTypes())
+				row := r.GetDatumRow(exec.RetTypes())
 				rows = append(rows, row)
 			}
 		}
@@ -760,7 +741,7 @@ func (e *TableScanExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return errors.Trace(err)
 	}
 
-	mutableRow := chunk.MutRowFromTypes(e.retTypes())
+	mutableRow := chunk.MutRowFromTypes(e.RetTypes())
 	for chk.NumRows() < e.maxChunkSize {
 		row, err := e.getRow(handle)
 		if err != nil {
@@ -776,12 +757,12 @@ func (e *TableScanExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 func (e *TableScanExec) nextChunk4InfoSchema(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.virtualTableChunkList == nil {
-		e.virtualTableChunkList = chunk.NewList(e.retTypes(), e.maxChunkSize)
+		e.virtualTableChunkList = chunk.NewList(e.RetTypes(), e.maxChunkSize)
 		columns := make([]*table.Column, e.schema.Len())
 		for i, colInfo := range e.columns {
 			columns[i] = table.ToColumn(colInfo)
 		}
-		mutableRow := chunk.MutRowFromTypes(e.retTypes())
+		mutableRow := chunk.MutRowFromTypes(e.RetTypes())
 		err := e.t.IterRecords(e.ctx, nil, columns, func(h int64, rec []types.Datum, cols []*table.Column) (bool, error) {
 			mutableRow.SetDatums(rec...)
 			e.virtualTableChunkList.AppendRow(mutableRow.ToRow())

@@ -20,6 +20,7 @@ import (
 	"unsafe"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/executor/operator"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/terror"
@@ -33,16 +34,16 @@ import (
 )
 
 var (
-	_ Executor = &HashJoinExec{}
-	_ Executor = &NestedLoopApplyExec{}
+	_ operator.Executor = &HashJoinExec{}
+	_ operator.Executor = &NestedLoopApplyExec{}
 )
 
 // HashJoinExec implements the hash join algorithm.
 type HashJoinExec struct {
 	baseExecutor
 
-	outerExec   Executor
-	innerExec   Executor
+	outerExec   operator.Executor
+	innerExec   operator.Executor
 	outerFilter expression.CNFExprs
 	outerKeys   []*expression.Column
 	innerKeys   []*expression.Column
@@ -160,10 +161,10 @@ func (e *HashJoinExec) getJoinKeyFromChkRow(isOuterKey bool, row chunk.Row, keyB
 	var allTypes []*types.FieldType
 	if isOuterKey {
 		keyColIdx = e.outerKeyColIdx
-		allTypes = e.outerExec.retTypes()
+		allTypes = e.outerExec.RetTypes()
 	} else {
 		keyColIdx = e.innerKeyColIdx
-		allTypes = e.innerExec.retTypes()
+		allTypes = e.innerExec.RetTypes()
 	}
 
 	for _, i := range keyColIdx {
@@ -228,11 +229,11 @@ func (e *HashJoinExec) fetchOuterChunks(ctx context.Context) {
 // fetchInnerRows fetches all rows from inner executor,
 // and append them to e.innerResult.
 func (e *HashJoinExec) fetchInnerRows(ctx context.Context) (err error) {
-	e.innerResult = chunk.NewList(e.innerExec.retTypes(), e.maxChunkSize)
+	e.innerResult = chunk.NewList(e.innerExec.RetTypes(), e.maxChunkSize)
 	e.innerResult.GetMemTracker().AttachTo(e.memTracker)
 	e.innerResult.GetMemTracker().SetLabel("innerResult")
 	for {
-		chk := e.children[e.innerIdx].newChunk()
+		chk := e.children[e.innerIdx].NewChunk()
 		err = e.innerExec.Next(ctx, chk)
 		if err != nil || chk.NumRows() == 0 {
 			return errors.Trace(err)
@@ -253,7 +254,7 @@ func (e *HashJoinExec) initializeForProbe() {
 	e.outerChkResourceCh = make(chan *outerChkResource, e.concurrency)
 	for i := uint(0); i < e.concurrency; i++ {
 		e.outerChkResourceCh <- &outerChkResource{
-			chk:  e.outerExec.newChunk(),
+			chk:  e.outerExec.NewChunk(),
 			dest: e.outerResultChs[i],
 		}
 	}
@@ -263,7 +264,7 @@ func (e *HashJoinExec) initializeForProbe() {
 	e.joinChkResourceCh = make([]chan *chunk.Chunk, e.concurrency)
 	for i := uint(0); i < e.concurrency; i++ {
 		e.joinChkResourceCh[i] = make(chan *chunk.Chunk, 1)
-		e.joinChkResourceCh[i] <- e.newChunk()
+		e.joinChkResourceCh[i] <- e.NewChunk()
 	}
 
 	// e.joinResultCh is for transmitting the join result chunks to the main thread.
@@ -512,8 +513,8 @@ type NestedLoopApplyExec struct {
 
 	innerRows   []chunk.Row
 	cursor      int
-	innerExec   Executor
-	outerExec   Executor
+	innerExec   operator.Executor
+	outerExec   operator.Executor
 	innerFilter expression.CNFExprs
 	outerFilter expression.CNFExprs
 	outer       bool
@@ -551,9 +552,9 @@ func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
 	}
 	e.cursor = 0
 	e.innerRows = e.innerRows[:0]
-	e.outerChunk = e.outerExec.newChunk()
-	e.innerChunk = e.innerExec.newChunk()
-	e.innerList = chunk.NewList(e.innerExec.retTypes(), e.maxChunkSize)
+	e.outerChunk = e.outerExec.NewChunk()
+	e.innerChunk = e.innerExec.NewChunk()
+	e.innerList = chunk.NewList(e.innerExec.RetTypes(), e.maxChunkSize)
 
 	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaNestedLoopApply)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)

@@ -15,6 +15,7 @@ package executor
 
 import (
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/executor/operator"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
@@ -198,11 +199,11 @@ func (e *ProjectionExec) prepare(ctx context.Context) {
 		})
 
 		e.fetcher.inputCh <- &projectionInput{
-			chk:          e.children[0].newChunk(),
+			chk:          e.children[0].NewChunk(),
 			targetWorker: e.workers[i],
 		}
 		e.fetcher.outputCh <- &projectionOutput{
-			chk:  e.newChunk(),
+			chk:  e.NewChunk(),
 			done: make(chan error, 1),
 		}
 	}
@@ -227,7 +228,7 @@ func (e *ProjectionExec) Close() error {
 }
 
 type projectionInputFetcher struct {
-	child          Executor
+	child          operator.Executor
 	globalFinishCh <-chan struct{}
 	globalOutputCh chan<- *projectionOutput
 

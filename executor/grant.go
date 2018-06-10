@@ -20,6 +20,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor/operator"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -35,7 +36,7 @@ import (
  * See https://dev.mysql.com/doc/refman/5.7/en/grant.html
  ************************************************************************************/
 var (
-	_ Executor = (*GrantExec)(nil)
+	_ operator.Executor = (*GrantExec)(nil)
 )
 
 // GrantExec executes GrantStmt.

@@ -19,6 +19,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor/operator"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -33,7 +34,7 @@ import (
  * See https://dev.mysql.com/doc/refman/5.7/en/revoke.html
  ************************************************************************************/
 var (
-	_ Executor = (*RevokeExec)(nil)
+	_ operator.Executor = (*RevokeExec)(nil)
 )
 
 // RevokeExec executes RevokeStmt.

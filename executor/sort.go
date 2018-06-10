@@ -106,12 +106,12 @@ func (e *SortExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 }
 
 func (e *SortExec) fetchRowChunks(ctx context.Context) error {
-	fields := e.retTypes()
+	fields := e.RetTypes()
 	e.rowChunks = chunk.NewList(fields, e.maxChunkSize)
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 	e.rowChunks.GetMemTracker().SetLabel("rowChunks")
 	for {
-		chk := e.children[0].newChunk()
+		chk := e.children[0].NewChunk()
 		err := e.children[0].Next(ctx, chk)
 		if err != nil {
 			return errors.Trace(err)
@@ -323,11 +323,11 @@ func (e *TopNExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 	e.chkHeap = &topNChunkHeap{e}
-	e.rowChunks = chunk.NewList(e.retTypes(), e.maxChunkSize)
+	e.rowChunks = chunk.NewList(e.RetTypes(), e.maxChunkSize)
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 	e.rowChunks.GetMemTracker().SetLabel("rowChunks")
 	for e.rowChunks.Len() < e.totalLimit {
-		srcChk := e.children[0].newChunk()
+		srcChk := e.children[0].NewChunk()
 		err := e.children[0].Next(ctx, srcChk)
 		if err != nil {
 			return errors.Trace(err)
@@ -362,7 +362,7 @@ func (e *TopNExec) executeTopN(ctx context.Context) error {
 	if e.keyChunks != nil {
 		childKeyChk = chunk.NewChunkWithCapacity(e.keyTypes, e.maxChunkSize)
 	}
-	childRowChk := e.children[0].newChunk()
+	childRowChk := e.children[0].NewChunk()
 	for {
 		err := e.children[0].Next(ctx, childRowChk)
 		if err != nil {
@@ -425,7 +425,7 @@ func (e *TopNExec) processChildChk(childRowChk, childKeyChk *chunk.Chunk) error 
 // but we want descending top N, then we will keep all data in memory.
 // But if data is distributed randomly, this function will be called log(n) times.
 func (e *TopNExec) doCompaction() error {
-	newRowChunks := chunk.NewList(e.retTypes(), e.maxChunkSize)
+	newRowChunks := chunk.NewList(e.RetTypes(), e.maxChunkSize)
 	newRowPtrs := make([]chunk.RowPtr, 0, e.rowChunks.Len())
 	for _, rowPtr := range e.rowPtrs {
 		newRowPtr := newRowChunks.AppendRow(e.rowChunks.GetRow(rowPtr))

@@ -20,6 +20,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/executor/operator"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser"
@@ -34,9 +35,9 @@ import (
 )
 
 var (
-	_ Executor = &DeallocateExec{}
-	_ Executor = &ExecuteExec{}
-	_ Executor = &PrepareExec{}
+	_ operator.Executor = &DeallocateExec{}
+	_ operator.Executor = &ExecuteExec{}
+	_ operator.Executor = &PrepareExec{}
 )
 
 type paramMarkerSorter struct {
@@ -178,7 +179,7 @@ type ExecuteExec struct {
 	name      string
 	usingVars []expression.Expression
 	id        uint32
-	stmtExec  Executor
+	stmtExec  operator.Executor
 	stmt      ast.StmtNode
 	plan      plan.Plan
 }

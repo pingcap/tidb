@@ -20,6 +20,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor/operator"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -34,7 +35,7 @@ import (
 	"golang.org/x/net/context"
 )
 
-var _ Executor = &AnalyzeExec{}
+var _ operator.Executor = &AnalyzeExec{}
 
 // AnalyzeExec represents Analyze executor.
 type AnalyzeExec struct {

@@ -15,6 +15,7 @@ package executor
 
 import (
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/executor/operator"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -28,7 +29,7 @@ import (
 type UpdateExec struct {
 	baseExecutor
 
-	SelectExec  Executor
+	SelectExec  operator.Executor
 	OrderedList []*expression.Assignment
 
 	// updatedRowKeys is a map for unique (Table, handle) pair.
@@ -120,10 +121,10 @@ func (e *UpdateExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 }
 
 func (e *UpdateExec) fetchChunkRows(ctx context.Context) error {
-	fields := e.children[0].retTypes()
+	fields := e.children[0].RetTypes()
 	globalRowIdx := 0
 	for {
-		chk := e.children[0].newChunk()
+		chk := e.children[0].NewChunk()
 		err := e.children[0].Next(ctx, chk)
 		if err != nil {
 			return errors.Trace(err)

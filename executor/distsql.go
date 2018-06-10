@@ -25,6 +25,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/executor/operator"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -45,9 +46,9 @@ import (
 )
 
 var (
-	_ Executor = &TableReaderExecutor{}
-	_ Executor = &IndexReaderExecutor{}
-	_ Executor = &IndexLookUpExecutor{}
+	_ operator.Executor = &TableReaderExecutor{}
+	_ operator.Executor = &IndexReaderExecutor{}
+	_ operator.Executor = &IndexLookUpExecutor{}
 )
 
 // LookupTableTaskChannelSize represents the channel size of the index double read taskChan.
@@ -251,7 +252,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	result, err := distsql.Select(ctx, e.ctx, kvReq, e.retTypes(), e.feedback)
+	result, err := distsql.Select(ctx, e.ctx, kvReq, e.RetTypes(), e.feedback)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -383,7 +384,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		e.feedback.Invalidate()
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.Select(ctx, e.ctx, kvReq, e.retTypes(), e.feedback)
+	e.result, err = distsql.Select(ctx, e.ctx, kvReq, e.RetTypes(), e.feedback)
 	if err != nil {
 		e.feedback.Invalidate()
 		return errors.Trace(err)
@@ -561,7 +562,7 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 	}
 }
 
-func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []int64) (Executor, error) {
+func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []int64) (operator.Executor, error) {
 	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, &TableReaderExecutor{
 		baseExecutor: newBaseExecutor(e.ctx, e.schema, e.id+"_tableReader"),
 		table:        e.table,
@@ -741,7 +742,7 @@ func (w *indexWorker) buildTableTask(handles []int64) *lookupTableTask {
 type tableWorker struct {
 	workCh         <-chan *lookupTableTask
 	finished       <-chan struct{}
-	buildTblReader func(ctx context.Context, handles []int64) (Executor, error)
+	buildTblReader func(ctx context.Context, handles []int64) (operator.Executor, error)
 	keepOrder      bool
 	handleIdx      int
 
@@ -799,7 +800,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 	handleCnt := len(task.handles)
 	task.rows = make([]chunk.Row, 0, handleCnt)
 	for {
-		chk := tableReader.newChunk()
+		chk := tableReader.NewChunk()
 		err = tableReader.Next(ctx, chk)
 		if err != nil {
 			log.Error(err)

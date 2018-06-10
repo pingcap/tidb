@@ -18,6 +18,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/executor/operator"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
@@ -29,7 +30,7 @@ import (
 	"golang.org/x/net/context"
 )
 
-var _ Executor = &ChecksumTableExec{}
+var _ operator.Executor = &ChecksumTableExec{}
 
 // ChecksumTableExec represents ChecksumTable executor.
 type ChecksumTableExec struct {

@@ -21,6 +21,7 @@ import (
 	"unsafe"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/executor/operator"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -36,7 +37,7 @@ import (
 	"golang.org/x/net/context"
 )
 
-var _ Executor = &IndexLookUpJoin{}
+var _ operator.Executor = &IndexLookUpJoin{}
 
 // IndexLookUpJoin employs one outer worker and N innerWorkers to execute concurrently.
 // It preserves the order of the outer table and support batch lookup.
@@ -100,7 +101,7 @@ type outerWorker struct {
 	outerCtx
 
 	ctx      sessionctx.Context
-	executor Executor
+	executor operator.Executor
 
 	executorChk *chunk.Chunk
 
@@ -313,11 +314,11 @@ func (ow *outerWorker) pushToChan(ctx context.Context, task *lookUpJoinTask, dst
 // buildTask builds a lookUpJoinTask and read outer rows.
 // When err is not nil, task must not be nil to send the error to the main thread via task.
 func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
-	ow.executor.newChunk()
+	ow.executor.NewChunk()
 
 	task := &lookUpJoinTask{
 		doneCh:            make(chan error, 1),
-		outerResult:       ow.executor.newChunk(),
+		outerResult:       ow.executor.NewChunk(),
 		encodedLookUpKeys: chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeBlob)}, ow.ctx.GetSessionVars().MaxChunkSize),
 		lookupMap:         mvmap.NewMVMap(),
 	}
@@ -507,7 +508,7 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 		return errors.Trace(err)
 	}
 	defer terror.Call(innerExec.Close)
-	innerResult := chunk.NewList(innerExec.retTypes(), iw.ctx.GetSessionVars().MaxChunkSize)
+	innerResult := chunk.NewList(innerExec.RetTypes(), iw.ctx.GetSessionVars().MaxChunkSize)
 	innerResult.GetMemTracker().SetLabel("inner result")
 	innerResult.GetMemTracker().AttachTo(task.memTracker)
 	for {
@@ -519,7 +520,7 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 			break
 		}
 		innerResult.Add(iw.executorChk)
-		iw.executorChk = innerExec.newChunk()
+		iw.executorChk = innerExec.NewChunk()
 	}
 	task.innerResult = innerResult
 	return nil

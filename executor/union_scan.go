@@ -119,14 +119,14 @@ func (us *UnionScanExec) Open(ctx context.Context) error {
 	if err := us.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
-	us.snapshotChunkBuffer = us.newChunk()
+	us.snapshotChunkBuffer = us.NewChunk()
 	return nil
 }
 
 // Next implements the Executor Next interface.
 func (us *UnionScanExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
-	mutableRow := chunk.MutRowFromTypes(us.retTypes())
+	mutableRow := chunk.MutRowFromTypes(us.RetTypes())
 	for i, batchSize := 0, us.ctx.GetSessionVars().MaxChunkSize; i < batchSize; i++ {
 		row, err := us.getOneRow(ctx)
 		if err != nil {
@@ -207,7 +207,7 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) (types.DatumRow, er
 				// commit, but for simplicity, we don't handle it here.
 				continue
 			}
-			us.snapshotRows = append(us.snapshotRows, row.GetDatumRow(us.children[0].retTypes()))
+			us.snapshotRows = append(us.snapshotRows, row.GetDatumRow(us.children[0].RetTypes()))
 		}
 	}
 	return us.snapshotRows[0], nil
