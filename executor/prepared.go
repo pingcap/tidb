@@ -35,9 +35,9 @@ import (
 )
 
 var (
-	_ operator.Executor = &DeallocateExec{}
-	_ operator.Executor = &ExecuteExec{}
-	_ operator.Executor = &PrepareExec{}
+	_ operator.Operator = &DeallocateExec{}
+	_ operator.Operator = &ExecuteExec{}
+	_ operator.Operator = &PrepareExec{}
 )
 
 type paramMarkerSorter struct {
@@ -73,7 +73,7 @@ func (e *paramMarkerExtractor) Leave(in ast.Node) (ast.Node, bool) {
 
 // PrepareExec represents a PREPARE executor.
 type PrepareExec struct {
-	operator.BaseExecutor
+	operator.BaseOperator
 
 	is      infoschema.InfoSchema
 	name    string
@@ -87,13 +87,13 @@ type PrepareExec struct {
 // NewPrepareExec creates a new PrepareExec.
 func NewPrepareExec(ctx sessionctx.Context, is infoschema.InfoSchema, sqlTxt string) *PrepareExec {
 	return &PrepareExec{
-		BaseExecutor: operator.NewBaseExecutor(ctx, nil, "PrepareStmt"),
+		BaseOperator: operator.NewBaseOperator(ctx, nil, "PrepareStmt"),
 		is:           is,
 		sqlText:      sqlTxt,
 	}
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	vars := e.Sctx.GetSessionVars()
 	if e.ID != 0 {
@@ -171,20 +171,20 @@ func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 // ExecuteExec represents an EXECUTE executor.
 // It cannot be executed by itself, all it needs to do is to build
-// another Executor from a prepared statement.
+// another Operator from a prepared statement.
 type ExecuteExec struct {
-	operator.BaseExecutor
+	operator.BaseOperator
 
 	is        infoschema.InfoSchema
 	name      string
 	usingVars []expression.Expression
 	id        uint32
-	stmtExec  operator.Executor
+	stmtExec  operator.Operator
 	stmt      ast.StmtNode
 	plan      plan.Plan
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *ExecuteExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	return nil
 }
@@ -215,12 +215,12 @@ func (e *ExecuteExec) Build() error {
 
 // DeallocateExec represent a DEALLOCATE executor.
 type DeallocateExec struct {
-	operator.BaseExecutor
+	operator.BaseOperator
 
 	Name string
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *DeallocateExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	vars := e.Sctx.GetSessionVars()
 	id, ok := vars.PreparedStmtNameToID[e.Name]

@@ -46,9 +46,9 @@ import (
 )
 
 var (
-	_ operator.Executor = &TableReaderExecutor{}
-	_ operator.Executor = &IndexReaderExecutor{}
-	_ operator.Executor = &IndexLookUpExecutor{}
+	_ operator.Operator = &TableReaderExecutor{}
+	_ operator.Operator = &IndexReaderExecutor{}
+	_ operator.Operator = &IndexLookUpExecutor{}
 )
 
 // LookupTableTaskChannelSize represents the channel size of the index double read taskChan.
@@ -166,7 +166,7 @@ func handleIsExtra(col *expression.Column) bool {
 
 // TableReaderExecutor sends dag request and reads table data from kv layer.
 type TableReaderExecutor struct {
-	operator.BaseExecutor
+	operator.BaseOperator
 
 	table     table.Table
 	tableID   int64
@@ -187,7 +187,7 @@ type TableReaderExecutor struct {
 	plans      []plan.PhysicalPlan
 }
 
-// Close implements the Executor Close interface.
+// Close implements the Operator Close interface.
 func (e *TableReaderExecutor) Close() error {
 	e.Sctx.StoreQueryFeedback(e.feedback)
 	err := e.resultHandler.Close()
@@ -312,7 +312,7 @@ func startSpanFollowsContext(ctx context.Context, operationName string) (opentra
 
 // IndexReaderExecutor sends dag request and reads index data from kv layer.
 type IndexReaderExecutor struct {
-	operator.BaseExecutor
+	operator.BaseOperator
 
 	table     table.Table
 	index     *model.IndexInfo
@@ -341,7 +341,7 @@ func (e *IndexReaderExecutor) Close() error {
 	return errors.Trace(err)
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *IndexReaderExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 	err := e.result.Next(ctx, chk)
 	if err != nil {
@@ -350,7 +350,7 @@ func (e *IndexReaderExecutor) Next(ctx context.Context, chk *chunk.Chunk) error 
 	return errors.Trace(err)
 }
 
-// Open implements the Executor Open interface.
+// Open implements the Operator Open interface.
 func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 	kvRanges, err := distsql.IndexRangesToKVRanges(e.Sctx.GetSessionVars().StmtCtx, e.tableID, e.index.ID, e.ranges, e.feedback)
 	if err != nil {
@@ -395,7 +395,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 
 // IndexLookUpExecutor implements double read for index scan.
 type IndexLookUpExecutor struct {
-	operator.BaseExecutor
+	operator.BaseOperator
 
 	table     table.Table
 	index     *model.IndexInfo
@@ -434,7 +434,7 @@ type IndexLookUpExecutor struct {
 	tblPlans        []plan.PhysicalPlan
 }
 
-// Open implements the Executor Open interface.
+// Open implements the Operator Open interface.
 func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 	kvRanges, err := distsql.IndexRangesToKVRanges(e.Sctx.GetSessionVars().StmtCtx, e.tableID, e.index.ID, e.ranges, e.feedback)
 	if err != nil {
@@ -562,9 +562,9 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 	}
 }
 
-func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []int64) (operator.Executor, error) {
+func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []int64) (operator.Operator, error) {
 	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, &TableReaderExecutor{
-		BaseExecutor: operator.NewBaseExecutor(e.Sctx, e.Schema(), e.ExplainID+"_tableReader"),
+		BaseOperator: operator.NewBaseOperator(e.Sctx, e.Schema(), e.ExplainID+"_tableReader"),
 		table:        e.table,
 		tableID:      e.tableID,
 		dagPB:        e.tableRequest,
@@ -742,7 +742,7 @@ func (w *indexWorker) buildTableTask(handles []int64) *lookupTableTask {
 type tableWorker struct {
 	workCh         <-chan *lookupTableTask
 	finished       <-chan struct{}
-	buildTblReader func(ctx context.Context, handles []int64) (operator.Executor, error)
+	buildTblReader func(ctx context.Context, handles []int64) (operator.Operator, error)
 	keepOrder      bool
 	handleIdx      int
 

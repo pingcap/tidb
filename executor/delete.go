@@ -28,9 +28,9 @@ import (
 // DeleteExec represents a delete executor.
 // See https://dev.mysql.com/doc/refman/5.7/en/delete.html
 type DeleteExec struct {
-	operator.BaseExecutor
+	operator.BaseOperator
 
-	SelectExec operator.Executor
+	SelectExec operator.Operator
 
 	Tables       []*ast.TableName
 	IsMultiTable bool
@@ -44,7 +44,7 @@ type DeleteExec struct {
 	finished bool
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *DeleteExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.finished {
@@ -237,12 +237,12 @@ func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h int64, d
 	return nil
 }
 
-// Close implements the Executor Close interface.
+// Close implements the Operator Close interface.
 func (e *DeleteExec) Close() error {
 	return e.SelectExec.Close()
 }
 
-// Open implements the Executor Open interface.
+// Open implements the Operator Open interface.
 func (e *DeleteExec) Open(ctx context.Context) error {
 	return e.SelectExec.Open(ctx)
 }

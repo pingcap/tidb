@@ -33,7 +33,7 @@ type aggCtxsMapper map[string][]*aggregation.AggEvaluateContext
 // It is built from the Aggregate Plan. When Next() is called, it reads all the data from Src
 // and updates all the items in AggFuncs.
 type HashAggExec struct {
-	operator.BaseExecutor
+	operator.BaseOperator
 
 	executed      bool
 	sc            *stmtctx.StatementContext
@@ -48,9 +48,9 @@ type HashAggExec struct {
 	groupVals     [][]byte
 }
 
-// Close implements the Executor Close interface.
+// Close implements the Operator Close interface.
 func (e *HashAggExec) Close() error {
-	if err := e.BaseExecutor.Close(); err != nil {
+	if err := e.BaseOperator.Close(); err != nil {
 		return errors.Trace(err)
 	}
 	e.groupMap = nil
@@ -59,9 +59,9 @@ func (e *HashAggExec) Close() error {
 	return nil
 }
 
-// Open implements the Executor Open interface.
+// Open implements the Operator Open interface.
 func (e *HashAggExec) Open(ctx context.Context) error {
-	if err := e.BaseExecutor.Open(ctx); err != nil {
+	if err := e.BaseOperator.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
 	e.executed = false
@@ -75,7 +75,7 @@ func (e *HashAggExec) Open(ctx context.Context) error {
 	return nil
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *HashAggExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	// In this stage we consider all data from src as a single group.
 	if !e.executed {
@@ -179,7 +179,7 @@ func (e *HashAggExec) getContexts(groupKey []byte) []*aggregation.AggEvaluateCon
 // It assumes all the input data is sorted by group by key.
 // When Next() is called, it will return a result for the same group.
 type StreamAggExec struct {
-	operator.BaseExecutor
+	operator.BaseOperator
 
 	executed     bool
 	hasData      bool
@@ -197,9 +197,9 @@ type StreamAggExec struct {
 	rowBuffer  []types.Datum
 }
 
-// Open implements the Executor Open interface.
+// Open implements the Operator Open interface.
 func (e *StreamAggExec) Open(ctx context.Context) error {
-	if err := e.BaseExecutor.Open(ctx); err != nil {
+	if err := e.BaseOperator.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -218,7 +218,7 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 	return nil
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *StreamAggExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 

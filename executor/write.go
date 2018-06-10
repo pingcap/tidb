@@ -28,11 +28,11 @@ import (
 )
 
 var (
-	_ operator.Executor = &UpdateExec{}
-	_ operator.Executor = &DeleteExec{}
-	_ operator.Executor = &InsertExec{}
-	_ operator.Executor = &ReplaceExec{}
-	_ operator.Executor = &LoadDataExec{}
+	_ operator.Operator = &UpdateExec{}
+	_ operator.Operator = &DeleteExec{}
+	_ operator.Operator = &InsertExec{}
+	_ operator.Operator = &ReplaceExec{}
+	_ operator.Operator = &LoadDataExec{}
 )
 
 const (

@@ -43,7 +43,7 @@ import (
 
 // ShowExec represents a show executor.
 type ShowExec struct {
-	operator.BaseExecutor
+	operator.BaseOperator
 
 	Tp     ast.ShowStmtType // Databases/Tables/Columns/....
 	DBName model.CIStr
@@ -62,7 +62,7 @@ type ShowExec struct {
 	cursor int
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *ShowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.result == nil {

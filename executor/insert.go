@@ -363,7 +363,7 @@ func (e *InsertExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	return errors.Trace(e.exec(rows))
 }
 
-// Close implements the Executor Close interface.
+// Close implements the Operator Close interface.
 func (e *InsertExec) Close() error {
 	e.Sctx.GetSessionVars().CurrInsertValues = nil
 	if e.SelectExec != nil {
@@ -372,7 +372,7 @@ func (e *InsertExec) Close() error {
 	return nil
 }
 
-// Open implements the Executor Close interface.
+// Open implements the Operator Close interface.
 func (e *InsertExec) Open(ctx context.Context) error {
 	if e.SelectExec != nil {
 		return e.SelectExec.Open(ctx)

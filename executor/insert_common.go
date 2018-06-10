@@ -34,7 +34,7 @@ import (
 
 // InsertValues is the data to insert.
 type InsertValues struct {
-	operator.BaseExecutor
+	operator.BaseOperator
 
 	rowCount              uint64
 	maxRowsInBatch        uint64
@@ -42,7 +42,7 @@ type InsertValues struct {
 	needFillDefaultValues bool
 	hasExtraHandle        bool
 
-	SelectExec operator.Executor
+	SelectExec operator.Operator
 
 	Table   table.Table
 	Columns []*ast.ColumnName

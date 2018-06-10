@@ -34,12 +34,12 @@ import (
  * See https://dev.mysql.com/doc/refman/5.7/en/revoke.html
  ************************************************************************************/
 var (
-	_ operator.Executor = (*RevokeExec)(nil)
+	_ operator.Operator = (*RevokeExec)(nil)
 )
 
 // RevokeExec executes RevokeStmt.
 type RevokeExec struct {
-	operator.BaseExecutor
+	operator.BaseOperator
 
 	Privs      []*ast.PrivElem
 	ObjectType ast.ObjectTypeType
@@ -51,7 +51,7 @@ type RevokeExec struct {
 	done bool
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *RevokeExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if e.done {
 		return nil

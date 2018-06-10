@@ -31,7 +31,7 @@ import (
 
 // LoadDataExec represents a load data executor.
 type LoadDataExec struct {
-	operator.BaseExecutor
+	operator.BaseOperator
 
 	IsLocal      bool
 	loadDataInfo *LoadDataInfo
@@ -39,7 +39,7 @@ type LoadDataExec struct {
 
 // NewLoadDataInfo returns a LoadDataInfo structure, and it's only used for tests now.
 func NewLoadDataInfo(ctx sessionctx.Context, row types.DatumRow, tbl table.Table, cols []*table.Column) *LoadDataInfo {
-	insertVal := &InsertValues{BaseExecutor: operator.NewBaseExecutor(ctx, nil, "InsertValues"), Table: tbl}
+	insertVal := &InsertValues{BaseOperator: operator.NewBaseOperator(ctx, nil, "InsertValues"), Table: tbl}
 	return &LoadDataInfo{
 		row:          row,
 		InsertValues: insertVal,
@@ -49,7 +49,7 @@ func NewLoadDataInfo(ctx sessionctx.Context, row types.DatumRow, tbl table.Table
 	}
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *LoadDataExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	// TODO: support load data without local field.
@@ -75,12 +75,12 @@ func (e *LoadDataExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
-// Close implements the Executor Close interface.
+// Close implements the Operator Close interface.
 func (e *LoadDataExec) Close() error {
 	return nil
 }
 
-// Open implements the Executor Open interface.
+// Open implements the Operator Open interface.
 func (e *LoadDataExec) Open(ctx context.Context) error {
 	return nil
 }

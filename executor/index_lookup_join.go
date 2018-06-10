@@ -37,7 +37,7 @@ import (
 	"golang.org/x/net/context"
 )
 
-var _ operator.Executor = &IndexLookUpJoin{}
+var _ operator.Operator = &IndexLookUpJoin{}
 
 // IndexLookUpJoin employs one outer worker and N innerWorkers to execute concurrently.
 // It preserves the order of the outer table and support batch lookup.
@@ -48,7 +48,7 @@ var _ operator.Executor = &IndexLookUpJoin{}
 // 3. main thread receives the task, waits for inner worker finish handling the task.
 // 4. main thread join each outer row by look up the inner rows hash map in the task.
 type IndexLookUpJoin struct {
-	operator.BaseExecutor
+	operator.BaseOperator
 
 	resultCh   <-chan *lookUpJoinTask
 	cancelFunc context.CancelFunc
@@ -101,7 +101,7 @@ type outerWorker struct {
 	outerCtx
 
 	ctx      sessionctx.Context
-	executor operator.Executor
+	executor operator.Operator
 
 	executorChk *chunk.Chunk
 
@@ -126,7 +126,7 @@ type innerWorker struct {
 	keyOff2IdxOff []int
 }
 
-// Open implements the Executor interface.
+// Open implements the Operator interface.
 func (e *IndexLookUpJoin) Open(ctx context.Context) error {
 	err := e.Children[0].Open(ctx)
 	if err != nil {
@@ -187,7 +187,7 @@ func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWork
 	return iw
 }
 
-// Next implements the Executor interface.
+// Next implements the Operator interface.
 func (e *IndexLookUpJoin) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	e.joinResult.Reset()
@@ -550,7 +550,7 @@ func (iw *innerWorker) buildLookUpMap(task *lookUpJoinTask) error {
 	return nil
 }
 
-// Close implements the Executor interface.
+// Close implements the Operator interface.
 func (e *IndexLookUpJoin) Close() error {
 	if e.cancelFunc != nil {
 		e.cancelFunc()

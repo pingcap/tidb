@@ -28,7 +28,7 @@ type ReplaceExec struct {
 	finished bool
 }
 
-// Close implements the Executor Close interface.
+// Close implements the Operator Close interface.
 func (e *ReplaceExec) Close() error {
 	if e.SelectExec != nil {
 		return e.SelectExec.Close()
@@ -36,7 +36,7 @@ func (e *ReplaceExec) Close() error {
 	return nil
 }
 
-// Open implements the Executor Open interface.
+// Open implements the Operator Open interface.
 func (e *ReplaceExec) Open(ctx context.Context) error {
 	if e.SelectExec != nil {
 		return e.SelectExec.Open(ctx)
@@ -104,7 +104,7 @@ func (e *ReplaceExec) exec(rows []types.DatumRow) error {
 	return nil
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *ReplaceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.finished {

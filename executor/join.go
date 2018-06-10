@@ -34,16 +34,16 @@ import (
 )
 
 var (
-	_ operator.Executor = &HashJoinExec{}
-	_ operator.Executor = &NestedLoopApplyExec{}
+	_ operator.Operator = &HashJoinExec{}
+	_ operator.Operator = &NestedLoopApplyExec{}
 )
 
 // HashJoinExec implements the hash join algorithm.
 type HashJoinExec struct {
-	operator.BaseExecutor
+	operator.BaseOperator
 
-	outerExec   operator.Executor
-	innerExec   operator.Executor
+	outerExec   operator.Operator
+	innerExec   operator.Operator
 	outerFilter expression.CNFExprs
 	outerKeys   []*expression.Column
 	innerKeys   []*expression.Column
@@ -97,7 +97,7 @@ type hashJoinBuffer struct {
 	bytes []byte
 }
 
-// Close implements the Executor Close interface.
+// Close implements the Operator Close interface.
 func (e *HashJoinExec) Close() error {
 	close(e.closeCh)
 	e.finished.Store(true)
@@ -126,13 +126,13 @@ func (e *HashJoinExec) Close() error {
 	e.memTracker.Detach()
 	e.memTracker = nil
 
-	err := e.BaseExecutor.Close()
+	err := e.BaseOperator.Close()
 	return errors.Trace(err)
 }
 
-// Open implements the Executor Open interface.
+// Open implements the Operator Open interface.
 func (e *HashJoinExec) Open(ctx context.Context) error {
-	if err := e.BaseExecutor.Open(ctx); err != nil {
+	if err := e.BaseOperator.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -442,7 +442,7 @@ func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, joinResu
 	return true, joinResult
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 // hash join constructs the result following these steps:
 // step 1. fetch data from inner child and build a hash table;
 // step 2. fetch data from outer child in a background goroutine and probe the hash table in multiple join workers.
@@ -509,12 +509,12 @@ func (e *HashJoinExec) buildHashTableForList() error {
 
 // NestedLoopApplyExec is the executor for apply.
 type NestedLoopApplyExec struct {
-	operator.BaseExecutor
+	operator.BaseOperator
 
 	innerRows   []chunk.Row
 	cursor      int
-	innerExec   operator.Executor
-	outerExec   operator.Executor
+	innerExec   operator.Operator
+	outerExec   operator.Operator
 	innerFilter expression.CNFExprs
 	outerFilter expression.CNFExprs
 	outer       bool
@@ -535,7 +535,7 @@ type NestedLoopApplyExec struct {
 	memTracker *memory.Tracker // track memory usage.
 }
 
-// Close implements the Executor interface.
+// Close implements the Operator interface.
 func (e *NestedLoopApplyExec) Close() error {
 	e.innerRows = nil
 
@@ -544,7 +544,7 @@ func (e *NestedLoopApplyExec) Close() error {
 	return errors.Trace(e.outerExec.Close())
 }
 
-// Open implements the Executor interface.
+// Open implements the Operator interface.
 func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
 	err := e.outerExec.Open(ctx)
 	if err != nil {
@@ -626,7 +626,7 @@ func (e *NestedLoopApplyExec) fetchAllInners(ctx context.Context) error {
 	}
 }
 
-// Next implements the Executor interface.
+// Next implements the Operator interface.
 func (e *NestedLoopApplyExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 	chk.Reset()
 	for {

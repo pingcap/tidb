@@ -46,7 +46,7 @@ type projectionOutput struct {
 // ProjectionExec implements the physical Projection Operator:
 // https://en.wikipedia.org/wiki/Projection_(relational_algebra)
 type ProjectionExec struct {
-	operator.BaseExecutor
+	operator.BaseOperator
 
 	evaluatorSuit    *expression.EvaluatorSuit
 	calculateNoDelay bool
@@ -59,9 +59,9 @@ type ProjectionExec struct {
 	workers    []*projectionWorker
 }
 
-// Open implements the Executor Open interface.
+// Open implements the Operator Open interface.
 func (e *ProjectionExec) Open(ctx context.Context) error {
-	if err := e.BaseExecutor.Open(ctx); err != nil {
+	if err := e.BaseOperator.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -77,7 +77,7 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 	return nil
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 //
 // Here we explain the execution flow of the parallel projection implementation.
 // There are 3 main components:
@@ -215,7 +215,7 @@ func (e *ProjectionExec) prepare(ctx context.Context) {
 	}
 }
 
-// Close implements the Executor Close interface.
+// Close implements the Operator Close interface.
 func (e *ProjectionExec) Close() error {
 	if e.outputCh != nil {
 		close(e.finishCh)
@@ -224,11 +224,11 @@ func (e *ProjectionExec) Close() error {
 		}
 		e.outputCh = nil
 	}
-	return errors.Trace(e.BaseExecutor.Close())
+	return errors.Trace(e.BaseOperator.Close())
 }
 
 type projectionInputFetcher struct {
-	child          operator.Executor
+	child          operator.Operator
 	globalFinishCh <-chan struct{}
 	globalOutputCh chan<- *projectionOutput
 

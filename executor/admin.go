@@ -38,14 +38,14 @@ import (
 )
 
 var (
-	_ operator.Executor = &CheckIndexRangeExec{}
-	_ operator.Executor = &RecoverIndexExec{}
-	_ operator.Executor = &CleanupIndexExec{}
+	_ operator.Operator = &CheckIndexRangeExec{}
+	_ operator.Operator = &RecoverIndexExec{}
+	_ operator.Operator = &CleanupIndexExec{}
 )
 
 // CheckIndexRangeExec outputs the index values which has handle between begin and end.
 type CheckIndexRangeExec struct {
-	operator.BaseExecutor
+	operator.BaseOperator
 
 	table    *model.TableInfo
 	index    *model.IndexInfo
@@ -59,7 +59,7 @@ type CheckIndexRangeExec struct {
 	cols   []*model.ColumnInfo
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *CheckIndexRangeExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	handleIdx := e.Schema().Len() - 1
@@ -87,7 +87,7 @@ func (e *CheckIndexRangeExec) Next(ctx context.Context, chk *chunk.Chunk) error 
 	}
 }
 
-// Open implements the Executor Open interface.
+// Open implements the Operator Open interface.
 func (e *CheckIndexRangeExec) Open(ctx context.Context) error {
 	tCols := e.table.Cols()
 	for _, ic := range e.index.Columns {
@@ -147,7 +147,7 @@ func (e *CheckIndexRangeExec) constructIndexScanPB() *tipb.Executor {
 	return &tipb.Executor{Tp: tipb.ExecType_TypeIndexScan, IdxScan: idxExec}
 }
 
-// Close implements the Executor Close interface.
+// Close implements the Operator Close interface.
 func (e *CheckIndexRangeExec) Close() error {
 	return nil
 }
@@ -156,7 +156,7 @@ func (e *CheckIndexRangeExec) Close() error {
 // It is built from "admin recover index" statement, is used to backfill
 // corrupted index.
 type RecoverIndexExec struct {
-	operator.BaseExecutor
+	operator.BaseOperator
 
 	done bool
 
@@ -187,9 +187,9 @@ func (e *RecoverIndexExec) columnsTypes() []*types.FieldType {
 	return e.colFieldTypes
 }
 
-// Open implements the Executor Open interface.
+// Open implements the Operator Open interface.
 func (e *RecoverIndexExec) Open(ctx context.Context) error {
-	if err := e.BaseExecutor.Open(ctx); err != nil {
+	if err := e.BaseOperator.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -429,7 +429,7 @@ func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transa
 	return result, nil
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *RecoverIndexExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.done {
@@ -451,7 +451,7 @@ func (e *RecoverIndexExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 // It is built from "admin cleanup index" statement, is used to delete
 // dangling index data.
 type CleanupIndexExec struct {
-	operator.BaseExecutor
+	operator.BaseOperator
 
 	done      bool
 	removeCnt uint64
@@ -564,7 +564,7 @@ func (e *CleanupIndexExec) fetchIndex(ctx context.Context, txn kv.Transaction) e
 	}
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *CleanupIndexExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.done {
@@ -626,9 +626,9 @@ func (e *CleanupIndexExec) buildIndexScan(ctx context.Context, txn kv.Transactio
 	return result, nil
 }
 
-// Open implements the Executor Open interface.
+// Open implements the Operator Open interface.
 func (e *CleanupIndexExec) Open(ctx context.Context) error {
-	if err := e.BaseExecutor.Open(ctx); err != nil {
+	if err := e.BaseOperator.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
 	e.idxChunk = chunk.NewChunkWithCapacity(e.getIdxColTypes(), e.ChunkSize)
@@ -683,7 +683,7 @@ func (e *CleanupIndexExec) constructLimitPB() *tipb.Executor {
 	return &tipb.Executor{Tp: tipb.ExecType_TypeLimit, Limit: limitExec}
 }
 
-// Close implements the Executor Close interface.
+// Close implements the Operator Close interface.
 func (e *CleanupIndexExec) Close() error {
 	return nil
 }

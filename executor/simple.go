@@ -41,14 +41,14 @@ import (
 // `BeginStmt`, `CommitStmt`, `RollbackStmt`.
 // TODO: list all simple statements.
 type SimpleExec struct {
-	operator.BaseExecutor
+	operator.BaseOperator
 
 	Statement ast.StmtNode
 	done      bool
 	is        infoschema.InfoSchema
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *SimpleExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 	if e.done {
 		return nil

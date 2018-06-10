@@ -40,39 +40,39 @@ import (
 )
 
 var (
-	_ operator.Executor = &CheckTableExec{}
-	_ operator.Executor = &ExistsExec{}
-	_ operator.Executor = &HashAggExec{}
-	_ operator.Executor = &LimitExec{}
-	_ operator.Executor = &MaxOneRowExec{}
-	_ operator.Executor = &ProjectionExec{}
-	_ operator.Executor = &SelectionExec{}
-	_ operator.Executor = &SelectLockExec{}
-	_ operator.Executor = &ShowDDLExec{}
-	_ operator.Executor = &ShowDDLJobsExec{}
-	_ operator.Executor = &ShowDDLJobQueriesExec{}
-	_ operator.Executor = &SortExec{}
-	_ operator.Executor = &StreamAggExec{}
-	_ operator.Executor = &TableDualExec{}
-	_ operator.Executor = &TableScanExec{}
-	_ operator.Executor = &TopNExec{}
-	_ operator.Executor = &UnionExec{}
-	_ operator.Executor = &CheckIndexExec{}
-	_ operator.Executor = &HashJoinExec{}
-	_ operator.Executor = &IndexLookUpExecutor{}
-	_ operator.Executor = &MergeJoinExec{}
+	_ operator.Operator = &CheckTableExec{}
+	_ operator.Operator = &ExistsExec{}
+	_ operator.Operator = &HashAggExec{}
+	_ operator.Operator = &LimitExec{}
+	_ operator.Operator = &MaxOneRowExec{}
+	_ operator.Operator = &ProjectionExec{}
+	_ operator.Operator = &SelectionExec{}
+	_ operator.Operator = &SelectLockExec{}
+	_ operator.Operator = &ShowDDLExec{}
+	_ operator.Operator = &ShowDDLJobsExec{}
+	_ operator.Operator = &ShowDDLJobQueriesExec{}
+	_ operator.Operator = &SortExec{}
+	_ operator.Operator = &StreamAggExec{}
+	_ operator.Operator = &TableDualExec{}
+	_ operator.Operator = &TableScanExec{}
+	_ operator.Operator = &TopNExec{}
+	_ operator.Operator = &UnionExec{}
+	_ operator.Operator = &CheckIndexExec{}
+	_ operator.Operator = &HashJoinExec{}
+	_ operator.Operator = &IndexLookUpExecutor{}
+	_ operator.Operator = &MergeJoinExec{}
 )
 
 // CancelDDLJobsExec represents a cancel DDL jobs executor.
 type CancelDDLJobsExec struct {
-	operator.BaseExecutor
+	operator.BaseOperator
 
 	cursor int
 	jobIDs []int64
 	errs   []error
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *CancelDDLJobsExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.cursor >= len(e.jobIDs) {
@@ -93,7 +93,7 @@ func (e *CancelDDLJobsExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 // ShowDDLExec represents a show DDL executor.
 type ShowDDLExec struct {
-	operator.BaseExecutor
+	operator.BaseOperator
 
 	ddlOwnerID string
 	selfID     string
@@ -101,7 +101,7 @@ type ShowDDLExec struct {
 	done       bool
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *ShowDDLExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.done {
@@ -122,7 +122,7 @@ func (e *ShowDDLExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 // ShowDDLJobsExec represent a show DDL jobs executor.
 type ShowDDLJobsExec struct {
-	operator.BaseExecutor
+	operator.BaseOperator
 
 	cursor int
 	jobs   []*model.Job
@@ -133,16 +133,16 @@ type ShowDDLJobsExec struct {
 // The jobs ExplainID that is given by 'admin show ddl job queries' statement,
 // only be searched in the latest 10 history jobs
 type ShowDDLJobQueriesExec struct {
-	operator.BaseExecutor
+	operator.BaseOperator
 
 	cursor int
 	jobs   []*model.Job
 	jobIDs []int64
 }
 
-// Open implements the Executor Open interface.
+// Open implements the Operator Open interface.
 func (e *ShowDDLJobQueriesExec) Open(ctx context.Context) error {
-	if err := e.BaseExecutor.Open(ctx); err != nil {
+	if err := e.BaseOperator.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
 	jobs, err := admin.GetDDLJobs(e.Sctx.Txn())
@@ -161,7 +161,7 @@ func (e *ShowDDLJobQueriesExec) Open(ctx context.Context) error {
 	return nil
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *ShowDDLJobQueriesExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.cursor >= len(e.jobs) {
@@ -182,9 +182,9 @@ func (e *ShowDDLJobQueriesExec) Next(ctx context.Context, chk *chunk.Chunk) erro
 	return nil
 }
 
-// Open implements the Executor Open interface.
+// Open implements the Operator Open interface.
 func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
-	if err := e.BaseExecutor.Open(ctx); err != nil {
+	if err := e.BaseOperator.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
 	jobs, err := admin.GetDDLJobs(e.Sctx.Txn())
@@ -202,7 +202,7 @@ func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 	return nil
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *ShowDDLJobsExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.cursor >= len(e.jobs) {
@@ -251,23 +251,23 @@ func getTableName(is infoschema.InfoSchema, id int64) string {
 // It is built from the "admin check table" statement, and it checks if the
 // index matches the records in the table.
 type CheckTableExec struct {
-	operator.BaseExecutor
+	operator.BaseOperator
 
 	tables []*ast.TableName
 	done   bool
 	is     infoschema.InfoSchema
 }
 
-// Open implements the Executor Open interface.
+// Open implements the Operator Open interface.
 func (e *CheckTableExec) Open(ctx context.Context) error {
-	if err := e.BaseExecutor.Open(ctx); err != nil {
+	if err := e.BaseOperator.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
 	e.done = false
 	return nil
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *CheckTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if e.done {
 		return nil
@@ -295,7 +295,7 @@ func (e *CheckTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 // It is built from the "admin check index" statement, and it checks
 // the consistency of the index data with the records of the table.
 type CheckIndexExec struct {
-	operator.BaseExecutor
+	operator.BaseOperator
 
 	dbName    string
 	tableName string
@@ -305,9 +305,9 @@ type CheckIndexExec struct {
 	is        infoschema.InfoSchema
 }
 
-// Open implements the Executor Open interface.
+// Open implements the Operator Open interface.
 func (e *CheckIndexExec) Open(ctx context.Context) error {
-	if err := e.BaseExecutor.Open(ctx); err != nil {
+	if err := e.BaseOperator.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
 	if err := e.src.Open(ctx); err != nil {
@@ -317,12 +317,12 @@ func (e *CheckIndexExec) Open(ctx context.Context) error {
 	return nil
 }
 
-// Close implements the Executor Close interface.
+// Close implements the Operator Close interface.
 func (e *CheckIndexExec) Close() error {
 	return errors.Trace(e.src.Close())
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *CheckIndexExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if e.done {
 		return nil
@@ -348,19 +348,19 @@ func (e *CheckIndexExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 // SelectLockExec represents a select lock executor.
 // It is built from the "SELECT .. FOR UPDATE" or the "SELECT .. LOCK IN SHARE MODE" statement.
-// For "SELECT .. FOR UPDATE" statement, it locks every row key from source Executor.
+// For "SELECT .. FOR UPDATE" statement, it locks every row key from source Operator.
 // After the execution, the keys are buffered in transaction, and will be sent to KV
 // when doing commit. If there is any key already locked by another transaction,
 // the transaction will rollback and retry.
 type SelectLockExec struct {
-	operator.BaseExecutor
+	operator.BaseOperator
 
 	Lock ast.SelectLockType
 }
 
-// Open implements the Executor Open interface.
+// Open implements the Operator Open interface.
 func (e *SelectLockExec) Open(ctx context.Context) error {
-	if err := e.BaseExecutor.Open(ctx); err != nil {
+	if err := e.BaseOperator.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -373,7 +373,7 @@ func (e *SelectLockExec) Open(ctx context.Context) error {
 	return nil
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *SelectLockExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	err := e.Children[0].Next(ctx, chk)
@@ -405,7 +405,7 @@ func (e *SelectLockExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 // LimitExec represents limit executor
 // It ignores 'Offset' rows from src, then returns 'Count' rows at maximum.
 type LimitExec struct {
-	operator.BaseExecutor
+	operator.BaseOperator
 
 	begin  uint64
 	end    uint64
@@ -415,7 +415,7 @@ type LimitExec struct {
 	meetFirstBatch bool
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *LimitExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.cursor >= e.end {
@@ -463,9 +463,9 @@ func (e *LimitExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
-// Open implements the Executor Open interface.
+// Open implements the Operator Open interface.
 func (e *LimitExec) Open(ctx context.Context) error {
-	if err := e.BaseExecutor.Open(ctx); err != nil {
+	if err := e.BaseOperator.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
 	e.cursor = 0
@@ -513,20 +513,20 @@ func init() {
 
 // TableDualExec represents a dual table executor.
 type TableDualExec struct {
-	operator.BaseExecutor
+	operator.BaseOperator
 
 	// numDualRows can only be 0 or 1.
 	numDualRows int
 	numReturned int
 }
 
-// Open implements the Executor Open interface.
+// Open implements the Operator Open interface.
 func (e *TableDualExec) Open(ctx context.Context) error {
 	e.numReturned = 0
 	return nil
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *TableDualExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.numReturned >= e.numDualRows {
@@ -545,7 +545,7 @@ func (e *TableDualExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 // SelectionExec represents a filter executor.
 type SelectionExec struct {
-	operator.BaseExecutor
+	operator.BaseOperator
 
 	batched   bool
 	filters   []expression.Expression
@@ -554,9 +554,9 @@ type SelectionExec struct {
 	inputRow  chunk.Row
 }
 
-// Open implements the Executor Open interface.
+// Open implements the Operator Open interface.
 func (e *SelectionExec) Open(ctx context.Context) error {
-	if err := e.BaseExecutor.Open(ctx); err != nil {
+	if err := e.BaseOperator.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
 	e.batched = expression.Vectorizable(e.filters)
@@ -570,14 +570,14 @@ func (e *SelectionExec) Open(ctx context.Context) error {
 
 // Close implements plan.Plan Close interface.
 func (e *SelectionExec) Close() error {
-	if err := e.BaseExecutor.Close(); err != nil {
+	if err := e.BaseOperator.Close(); err != nil {
 		return errors.Trace(err)
 	}
 	e.selected = nil
 	return nil
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *SelectionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 
@@ -641,7 +641,7 @@ func (e *SelectionExec) unBatchedNext(ctx context.Context, chk *chunk.Chunk) err
 
 // TableScanExec is a table scan executor without result fields.
 type TableScanExec struct {
-	operator.BaseExecutor
+	operator.BaseOperator
 
 	t                     table.Table
 	seekHandle            int64
@@ -652,7 +652,7 @@ type TableScanExec struct {
 	virtualTableChunkIdx  int
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *TableScanExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.isVirtualTable {
@@ -728,7 +728,7 @@ func (e *TableScanExec) getRow(handle int64) (types.DatumRow, error) {
 	return row, nil
 }
 
-// Open implements the Executor Open interface.
+// Open implements the Operator Open interface.
 func (e *TableScanExec) Open(ctx context.Context) error {
 	e.iter = nil
 	e.virtualTableChunkList = nil
@@ -737,21 +737,21 @@ func (e *TableScanExec) Open(ctx context.Context) error {
 
 // ExistsExec represents exists executor.
 type ExistsExec struct {
-	operator.BaseExecutor
+	operator.BaseOperator
 
 	evaluated bool
 }
 
-// Open implements the Executor Open interface.
+// Open implements the Operator Open interface.
 func (e *ExistsExec) Open(ctx context.Context) error {
-	if err := e.BaseExecutor.Open(ctx); err != nil {
+	if err := e.BaseOperator.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
 	e.evaluated = false
 	return nil
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *ExistsExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if !e.evaluated {
@@ -772,21 +772,21 @@ func (e *ExistsExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 // MaxOneRowExec checks if the number of rows that a query returns is at maximum one.
 // It's built from subquery expression.
 type MaxOneRowExec struct {
-	operator.BaseExecutor
+	operator.BaseOperator
 
 	evaluated bool
 }
 
-// Open implements the Executor Open interface.
+// Open implements the Operator Open interface.
 func (e *MaxOneRowExec) Open(ctx context.Context) error {
-	if err := e.BaseExecutor.Open(ctx); err != nil {
+	if err := e.BaseOperator.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
 	e.evaluated = false
 	return nil
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *MaxOneRowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.evaluated {
@@ -829,7 +829,7 @@ func (e *MaxOneRowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 //   |--------------------------| main thread | <---------------------+
 //                              +-------------+
 type UnionExec struct {
-	operator.BaseExecutor
+	operator.BaseOperator
 
 	stopFetchData atomic.Value
 	wg            sync.WaitGroup
@@ -855,9 +855,9 @@ func (e *UnionExec) waitAllFinished() {
 	close(e.resultPool)
 }
 
-// Open implements the Executor Open interface.
+// Open implements the Operator Open interface.
 func (e *UnionExec) Open(ctx context.Context) error {
-	if err := e.BaseExecutor.Open(ctx); err != nil {
+	if err := e.BaseOperator.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
 	e.stopFetchData.Store(false)
@@ -917,7 +917,7 @@ func (e *UnionExec) resultPuller(ctx context.Context, childID int) {
 	}
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *UnionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if !e.initialized {
@@ -937,7 +937,7 @@ func (e *UnionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
-// Close implements the Executor Close interface.
+// Close implements the Operator Close interface.
 func (e *UnionExec) Close() error {
 	close(e.finished)
 	if e.resultPool != nil {
@@ -945,5 +945,5 @@ func (e *UnionExec) Close() error {
 		}
 	}
 	e.resourcePools = nil
-	return errors.Trace(e.BaseExecutor.Close())
+	return errors.Trace(e.BaseOperator.Close())
 }

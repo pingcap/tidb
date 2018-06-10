@@ -35,11 +35,11 @@ import (
 	"golang.org/x/net/context"
 )
 
-var _ operator.Executor = &AnalyzeExec{}
+var _ operator.Operator = &AnalyzeExec{}
 
 // AnalyzeExec represents Analyze executor.
 type AnalyzeExec struct {
-	operator.BaseExecutor
+	operator.BaseOperator
 	tasks []*analyzeTask
 }
 
@@ -52,7 +52,7 @@ const (
 	defaultCMSketchWidth = 2048
 )
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *AnalyzeExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	concurrency, err := getBuildStatsConcurrency(e.Sctx)
 	if err != nil {

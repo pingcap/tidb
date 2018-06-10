@@ -21,7 +21,7 @@ type pkgTestSuite struct {
 }
 
 type MockExec struct {
-	operator.BaseExecutor
+	operator.BaseOperator
 
 	Rows      []types.DatumRow
 	curRowIdx int
@@ -58,7 +58,7 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 	con := &expression.Constant{Value: types.NewDatum(6), RetType: types.NewFieldType(mysql.TypeLong)}
 	outerSchema := expression.NewSchema(col0)
 	outerExec := &MockExec{
-		BaseExecutor: operator.NewBaseExecutor(sctx, outerSchema, ""),
+		BaseOperator: operator.NewBaseOperator(sctx, outerSchema, ""),
 		Rows: []types.DatumRow{
 			types.MakeDatums(1),
 			types.MakeDatums(2),
@@ -69,7 +69,7 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 		}}
 	innerSchema := expression.NewSchema(col1)
 	innerExec := &MockExec{
-		BaseExecutor: operator.NewBaseExecutor(sctx, innerSchema, ""),
+		BaseOperator: operator.NewBaseOperator(sctx, innerSchema, ""),
 		Rows: []types.DatumRow{
 			types.MakeDatums(1),
 			types.MakeDatums(2),
@@ -85,7 +85,7 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 		make([]types.Datum, innerExec.Schema().Len()), []expression.Expression{otherFilter}, outerExec.RetTypes(), innerExec.RetTypes())
 	joinSchema := expression.NewSchema(col0, col1)
 	join := &NestedLoopApplyExec{
-		BaseExecutor:    operator.NewBaseExecutor(sctx, joinSchema, ""),
+		BaseOperator:    operator.NewBaseOperator(sctx, joinSchema, ""),
 		outerExec:       outerExec,
 		innerExec:       innerExec,
 		outerFilter:     []expression.Expression{outerFilter},

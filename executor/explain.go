@@ -22,19 +22,19 @@ import (
 
 // ExplainExec represents an explain executor.
 type ExplainExec struct {
-	operator.BaseExecutor
+	operator.BaseOperator
 
 	rows   [][]string
 	cursor int
 }
 
-// Close implements the Executor Close interface.
+// Close implements the Operator Close interface.
 func (e *ExplainExec) Close() error {
 	e.rows = nil
 	return nil
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *ExplainExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.cursor >= len(e.rows) {

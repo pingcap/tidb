@@ -25,11 +25,11 @@ import (
 	"golang.org/x/net/context"
 )
 
-var _ operator.Executor = &LoadStatsExec{}
+var _ operator.Operator = &LoadStatsExec{}
 
 // LoadStatsExec represents a load statistic executor.
 type LoadStatsExec struct {
-	operator.BaseExecutor
+	operator.BaseOperator
 	info *LoadStatsInfo
 }
 
@@ -50,7 +50,7 @@ func (k loadStatsVarKeyType) String() string {
 // LoadStatsVarKey is a variable key for load statistic.
 const LoadStatsVarKey loadStatsVarKeyType = 0
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *LoadStatsExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if len(e.info.Path) == 0 {
@@ -65,12 +65,12 @@ func (e *LoadStatsExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
-// Close implements the Executor Close interface.
+// Close implements the Operator Close interface.
 func (e *LoadStatsExec) Close() error {
 	return nil
 }
 
-// Open implements the Executor Open interface.
+// Open implements the Operator Open interface.
 func (e *LoadStatsExec) Open(ctx context.Context) error {
 	return nil
 }

@@ -32,14 +32,14 @@ import (
 // DDLExec represents a DDL executor.
 // It grabs a DDL instance from Domain, calling the DDL methods to do the work.
 type DDLExec struct {
-	operator.BaseExecutor
+	operator.BaseOperator
 
 	stmt ast.StmtNode
 	is   infoschema.InfoSchema
 	done bool
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *DDLExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 	if e.done {
 		return nil

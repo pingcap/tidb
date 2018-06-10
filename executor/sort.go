@@ -29,7 +29,7 @@ import (
 
 // SortExec represents sorting executor.
 type SortExec struct {
-	operator.BaseExecutor
+	operator.BaseOperator
 
 	ByItems []*plan.ByItems
 	Idx     int
@@ -52,14 +52,14 @@ type SortExec struct {
 	memTracker *memory.Tracker
 }
 
-// Close implements the Executor Close interface.
+// Close implements the Operator Close interface.
 func (e *SortExec) Close() error {
 	e.memTracker.Detach()
 	e.memTracker = nil
 	return errors.Trace(e.Children[0].Close())
 }
 
-// Open implements the Executor Open interface.
+// Open implements the Operator Open interface.
 func (e *SortExec) Open(ctx context.Context) error {
 	e.fetched = false
 	e.Idx = 0
@@ -72,7 +72,7 @@ func (e *SortExec) Open(ctx context.Context) error {
 	return errors.Trace(e.Children[0].Open(ctx))
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *SortExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if !e.fetched {
@@ -288,14 +288,14 @@ func (h *topNChunkHeap) Swap(i, j int) {
 	h.rowPtrs[i], h.rowPtrs[j] = h.rowPtrs[j], h.rowPtrs[i]
 }
 
-// Open implements the Executor Open interface.
+// Open implements the Operator Open interface.
 func (e *TopNExec) Open(ctx context.Context) error {
 	e.memTracker = memory.NewTracker(e.ExplainID, e.Sctx.GetSessionVars().MemQuotaTopn)
 	e.memTracker.AttachTo(e.Sctx.GetSessionVars().StmtCtx.MemTracker)
 	return errors.Trace(e.SortExec.Open(ctx))
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *TopNExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if !e.fetched {

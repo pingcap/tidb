@@ -31,7 +31,7 @@ import (
 // 2. For other cases its preferred not to use SMJ and operator
 // will throw error.
 type MergeJoinExec struct {
-	operator.BaseExecutor
+	operator.BaseOperator
 
 	stmtCtx         *stmtctx.StatementContext
 	compareFuncs    []chunk.CompareFunc
@@ -50,7 +50,7 @@ type MergeJoinExec struct {
 }
 
 type mergeJoinOuterTable struct {
-	reader operator.Executor
+	reader operator.Operator
 	filter []expression.Expression
 	keys   []*expression.Column
 
@@ -65,7 +65,7 @@ type mergeJoinOuterTable struct {
 // All the inner rows which have the same join key are returned when function
 // "rowsWithSameKey()" being called.
 type mergeJoinInnerTable struct {
-	reader   operator.Executor
+	reader   operator.Operator
 	joinKeys []*expression.Column
 	ctx      context.Context
 
@@ -175,17 +175,17 @@ func (t *mergeJoinInnerTable) reallocReaderResult() {
 	t.curResultInUse = false
 }
 
-// Close implements the Executor Close interface.
+// Close implements the Operator Close interface.
 func (e *MergeJoinExec) Close() error {
 	e.memTracker.Detach()
 	e.memTracker = nil
 
-	return errors.Trace(e.BaseExecutor.Close())
+	return errors.Trace(e.BaseOperator.Close())
 }
 
-// Open implements the Executor Open interface.
+// Open implements the Operator Open interface.
 func (e *MergeJoinExec) Open(ctx context.Context) error {
-	if err := e.BaseExecutor.Open(ctx); err != nil {
+	if err := e.BaseOperator.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -235,7 +235,7 @@ func (e *MergeJoinExec) prepare(ctx context.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *MergeJoinExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if !e.prepared {

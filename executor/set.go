@@ -37,13 +37,13 @@ import (
 
 // SetExecutor executes set statement.
 type SetExecutor struct {
-	operator.BaseExecutor
+	operator.BaseOperator
 
 	vars []*expression.VarAssignment
 	done bool
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *SetExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.done {

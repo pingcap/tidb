@@ -36,12 +36,12 @@ import (
  * See https://dev.mysql.com/doc/refman/5.7/en/grant.html
  ************************************************************************************/
 var (
-	_ operator.Executor = (*GrantExec)(nil)
+	_ operator.Operator = (*GrantExec)(nil)
 )
 
 // GrantExec executes GrantStmt.
 type GrantExec struct {
-	operator.BaseExecutor
+	operator.BaseOperator
 
 	Privs      []*ast.PrivElem
 	ObjectType ast.ObjectTypeType
@@ -53,7 +53,7 @@ type GrantExec struct {
 	done bool
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *GrantExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if e.done {
 		return nil

@@ -30,19 +30,19 @@ import (
 	"golang.org/x/net/context"
 )
 
-var _ operator.Executor = &ChecksumTableExec{}
+var _ operator.Operator = &ChecksumTableExec{}
 
 // ChecksumTableExec represents ChecksumTable executor.
 type ChecksumTableExec struct {
-	operator.BaseExecutor
+	operator.BaseOperator
 
 	tables map[int64]*checksumContext
 	done   bool
 }
 
-// Open implements the Executor Open interface.
+// Open implements the Operator Open interface.
 func (e *ChecksumTableExec) Open(ctx context.Context) error {
-	if err := e.BaseExecutor.Open(ctx); err != nil {
+	if err := e.BaseOperator.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -83,7 +83,7 @@ func (e *ChecksumTableExec) Open(ctx context.Context) error {
 	return nil
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *ChecksumTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.done {

@@ -95,7 +95,7 @@ func GetDirtyDB(ctx sessionctx.Context) *DirtyDB {
 
 // UnionScanExec merges the rows from dirty table and the rows from XAPI request.
 type UnionScanExec struct {
-	operator.BaseExecutor
+	operator.BaseOperator
 
 	dirty *DirtyTable
 	// usedIndex is the column offsets of the index which Src executor has used.
@@ -115,16 +115,16 @@ type UnionScanExec struct {
 	snapshotChunkBuffer *chunk.Chunk
 }
 
-// Open implements the Executor Open interface.
+// Open implements the Operator Open interface.
 func (us *UnionScanExec) Open(ctx context.Context) error {
-	if err := us.BaseExecutor.Open(ctx); err != nil {
+	if err := us.BaseOperator.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
 	us.snapshotChunkBuffer = us.NewChunk()
 	return nil
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (us *UnionScanExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	mutableRow := chunk.MutRowFromTypes(us.RetTypes())
