@@ -1605,6 +1605,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE `hello-world@dev`.`User` ADD COLUMN `name` mediumtext CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL , ALGORITHM = INPLACE;", true},
 		{"ALTER TABLE `hello-world@dev`.`User` ADD COLUMN `name` mediumtext CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL , ALGORITHM = COPY;", true},
 		{"ALTER TABLE t DROP INDEX;", false},
+		{"ALTER TABLE t DROP COLUMN a CASCADE", true},
 
 		// For create index statement
 		{"CREATE INDEX idx ON t (a)", true},
