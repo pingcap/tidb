@@ -125,9 +125,6 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	// if errorBeforeDecodeArgs {
 	// 	return ver, errors.New("occur an error before decode args")
 	// }
-	if err = checkTableNameChange(t, job, tblInfo.Name.O); err != nil {
-		return ver, errors.Trace(err)
-	}
 
 	col := &model.ColumnInfo{}
 	pos := &ast.ColumnPosition{}
