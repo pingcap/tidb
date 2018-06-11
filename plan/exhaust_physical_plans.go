@@ -179,7 +179,7 @@ func (p *LogicalJoin) getHashJoin(prop *requiredProp, innerIdx int) *PhysicalHas
 
 // joinKeysMatchIndex checks whether the join key is in the index.
 // It returns a slice a[] what a[i] means keys[i] is related with indexCols[a[i]], -1 for no matching column.
-// It will return nil if there's no column in the index.
+// It will return nil if there's no column that matches index.
 func joinKeysMatchIndex(keys, indexCols []*expression.Column, colLengths []int) []int {
 	keyOff2IdxOff := make([]int, len(keys))
 	for i := range keyOff2IdxOff {
