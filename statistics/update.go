@@ -159,7 +159,8 @@ func (h *Handle) NewSessionStatsCollector() *SessionStatsCollector {
 // DumpStatsDeltaRatio is the lower bound of `Modify Count / Table Count` for stats delta to be dumped.
 var DumpStatsDeltaRatio = 1 / 10000.0
 
-// DumpStatsDeltaToKV sweeps the whole list and updates the global map. Then we dumps every table that held in map to KV.
+// DumpStatsDeltaToKV sweeps the whole list and updates the global map, then we dumps every table that held in map to KV.
+// If the `dumpAll` is false, it will only dump that delta info that `Modify Count / Table Count` greater than a ratio.
 func (h *Handle) DumpStatsDeltaToKV(dumpAll bool) error {
 	h.listHead.Lock()
 	for collector := h.listHead.next; collector != nil; collector = collector.next {
