@@ -506,6 +506,17 @@ func (s *testStateChangeSuite) TestParallelCreateAndRename(c *C) {
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
 
+func (s *testStateChangeSuite) TestParallelRenameModifyColumn(c *C) {
+	sql1 := "alter table t rename to t_add;"
+	sql2 := "alter table t change c d int;"
+	defer s.se.Execute(context.Background(), "drop table t_add;")
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2.Error(), Equals, "[schema:1146]Table 'test_db_state.t' doesn't exist")
+	}
+	s.testControlParallelExecSQL(c, sql1, sql2, f)
+}
+
 func (s *testStateChangeSuite) TestParallelRenameDropTable(c *C) {
 	sql1 := "alter table t rename to t_add;"
 	sql2 := "drop table t;"
@@ -513,6 +524,28 @@ func (s *testStateChangeSuite) TestParallelRenameDropTable(c *C) {
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
 		c.Assert(err2.Error(), Equals, "[schema:1051]Unknown table 'test_db_state.t'")
+	}
+	s.testControlParallelExecSQL(c, sql1, sql2, f)
+}
+
+func (s *testStateChangeSuite) TestParallelRenameAddColumn(c *C) {
+	sql1 := "alter table t rename to t_add;"
+	sql2 := "alter table t add a1 int;"
+	defer s.se.Execute(context.Background(), "drop table t_add;")
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2.Error(), Equals, "[schema:1146]Table 'test_db_state.t' doesn't exist")
+	}
+	s.testControlParallelExecSQL(c, sql1, sql2, f)
+}
+
+func (s *testStateChangeSuite) TestParallelRenameDropColumn(c *C) {
+	sql1 := "alter table t rename to t_add;"
+	sql2 := "alter table t drop c;"
+	defer s.se.Execute(context.Background(), "drop table t_add;")
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2.Error(), Equals, "[schema:1146]Table 'test_db_state.t' doesn't exist")
 	}
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
