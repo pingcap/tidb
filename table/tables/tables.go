@@ -22,6 +22,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 
 	"github.com/juju/errors"
@@ -59,7 +60,7 @@ type Table struct {
 	alloc           autoid.Allocator
 	meta            *model.TableInfo
 
-	// partitionExprs caches partition expression.
+	// partitionExprs caches the partition definition expressions.
 	partitionExprs []expression.Expression
 }
 
@@ -143,8 +144,9 @@ func generatePartitionExprs(tblInfo *model.TableInfo) ([]expression.Expression, 
 	if pi == nil {
 		return nil, nil
 	}
-	// TODO: Only partition by range is supported currently.
+	// TODO: Support other partition method.
 	if pi.Type != model.PartitionTypeRange {
+		// To be compatible with the old code, don't return error here.
 		return nil, nil
 	}
 
@@ -272,6 +274,11 @@ func (t *Table) IndexPrefix() kv.Key {
 // RecordKey implements table.Table RecordKey interface.
 func (t *Table) RecordKey(h int64) kv.Key {
 	return tablecodec.EncodeRecordKey(t.recordPrefix, h)
+}
+
+func partitionRecordKey(pid int64, handle int64) kv.Key {
+	recordPrefix := tablecodec.GenTableRecordPrefix(pid)
+	return tablecodec.EncodeRecordKey(recordPrefix, handle)
 }
 
 // FirstKey implements table.Table FirstKey interface.
@@ -411,6 +418,36 @@ func (t *Table) getRollbackableMemStore(ctx sessionctx.Context) kv.RetrieverMuta
 	return bs
 }
 
+// locatePartition returns the partition ID of the input record.
+func (t *Table) locatePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int64, error) {
+	// TODO: Remove this later, when we have better way to TestPartitionAddRecord.
+	if t.partitionExprs == nil {
+		partitionExpr, err := generatePartitionExprs(t.meta)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		t.partitionExprs = partitionExpr
+	}
+
+	var err error
+	idx := sort.Search(len(t.partitionExprs), func(i int) bool {
+		var ret int64
+		ret, _, err = t.partitionExprs[i].EvalInt(ctx, types.DatumRow(r))
+		if err != nil {
+			return true // Break the search.
+		}
+		return ret > 0
+	})
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if idx < 0 || idx >= len(t.partitionExprs) {
+		// The data does not belong to any of the partition?
+		return 0, errors.Trace(table.ErrTrgInvalidCreationCtx)
+	}
+	return pi.Definitions[idx].ID, nil
+}
+
 // AddRecord implements table.Table AddRecord interface.
 func (t *Table) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
 	var hasRecordID bool
@@ -430,6 +467,14 @@ func (t *Table) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleChe
 	}
 	if !hasRecordID {
 		recordID, err = t.AllocAutoID(ctx)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+	}
+
+	pid := t.ID
+	if partitionInfo := t.meta.GetPartitionInfo(); partitionInfo != nil {
+		pid, err = t.locatePartition(ctx, partitionInfo, r)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -474,7 +519,13 @@ func (t *Table) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleChe
 	}
 	writeBufs := sessVars.GetWriteStmtBufs()
 	adjustRowValuesBuf(writeBufs, len(row))
-	key := t.RecordKey(recordID)
+	// key may be a partition ID or a table ID.
+	var key kv.Key
+	if pid == t.ID {
+		key = t.RecordKey(recordID)
+	} else {
+		key = partitionRecordKey(pid, recordID)
+	}
 	writeBufs.RowValBuf, err = tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues)
 	if err != nil {
 		return 0, errors.Trace(err)

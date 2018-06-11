@@ -511,6 +511,7 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{`SHOW EVENTS FROM test_db WHERE definer = 'current_user'`, true},
 		{`SHOW PLUGINS`, true},
 		{`SHOW PROFILES`, true},
+		{`SHOW MASTER STATUS`, true},
 		// for show character set
 		{"show character set;", true},
 		{"show charset", true},
@@ -787,6 +788,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`SELECT LOCATE('bar', 'foobarbar', 5);`, true},
 
 		{`SELECT tidb_version();`, true},
+		{`SELECT tidb_is_ddl_owner();`, true},
 
 		// for time fsp
 		{"CREATE TABLE t( c1 TIME(2), c2 DATETIME(2), c3 TIMESTAMP(2) );", true},
@@ -1631,6 +1633,11 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t CONVERT TO CHARSET utf8 COLLATE utf8_bin;", true},
 		{"ALTER TABLE t FORCE", true},
 		{"ALTER TABLE t DROP INDEX;", false},
+		{"ALTER TABLE t DROP COLUMN a CASCADE", true},
+
+		// For #6405
+		{"ALTER TABLE t RENAME KEY a TO b;", true},
+		{"ALTER TABLE t RENAME INDEX a TO b;", true},
 
 		// For create index statement
 		{"CREATE INDEX idx ON t (a)", true},
@@ -2061,6 +2068,19 @@ func (s *testParserSuite) TestExplain(c *C) {
 		{"explain update t set id = id + 1 order by id desc;", true},
 		{"explain select c1 from t1 union (select c2 from t2) limit 1, 1", true},
 		{`explain format = "row" select c1 from t1 union (select c2 from t2) limit 1, 1`, true},
+	}
+	s.RunTest(c, table)
+}
+
+func (s *testParserSuite) TestTrace(c *C) {
+	defer testleak.AfterTest(c)()
+	table := []testCase{
+		{"trace select c1 from t1", true},
+		{"trace delete t1, t2 from t1 inner join t2 inner join t3 where t1.id=t2.id and t2.id=t3.id;", true},
+		{"trace insert into t values (1), (2), (3)", true},
+		{"trace replace into foo values (1 || 2)", true},
+		{"trace update t set id = id + 1 order by id desc;", true},
+		{"trace select c1 from t1 union (select c2 from t2) limit 1, 1", true},
 	}
 	s.RunTest(c, table)
 }

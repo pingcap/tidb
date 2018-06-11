@@ -510,7 +510,7 @@ func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 		baseExecutor:          baseExec,
 		Columns:               v.Columns,
 		Lists:                 v.Lists,
-		Setlist:               v.Setlist,
+		SetList:               v.SetList,
 		GenColumns:            v.GenCols.Columns,
 		GenExprs:              v.GenCols.Exprs,
 		needFillDefaultValues: v.NeedFillDefaultValue,
@@ -551,14 +551,14 @@ func (b *executorBuilder) buildLoadData(v *plan.LoadData) Executor {
 		baseExecutor: newBaseExecutor(b.ctx, nil, v.ExplainID()),
 		IsLocal:      v.IsLocal,
 		loadDataInfo: &LoadDataInfo{
-			row:        make([]types.Datum, len(columns)),
-			insertVal:  insertVal,
-			Path:       v.Path,
-			Table:      tbl,
-			FieldsInfo: v.FieldsInfo,
-			LinesInfo:  v.LinesInfo,
-			Ctx:        b.ctx,
-			columns:    columns,
+			row:          make([]types.Datum, len(columns)),
+			InsertValues: insertVal,
+			Path:         v.Path,
+			Table:        tbl,
+			FieldsInfo:   v.FieldsInfo,
+			LinesInfo:    v.LinesInfo,
+			Ctx:          b.ctx,
+			columns:      columns,
 		},
 	}
 
@@ -714,26 +714,8 @@ func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 			leftExec.retTypes(), rightExec.retTypes()),
 	}
 
-	leftKeys := make([]*expression.Column, 0, len(v.EqualConditions))
-	rightKeys := make([]*expression.Column, 0, len(v.EqualConditions))
-	for _, eqCond := range v.EqualConditions {
-		if len(eqCond.GetArgs()) != 2 {
-			b.err = errors.Annotate(ErrBuildExecutor, "invalid join key for equal condition")
-			return nil
-		}
-		leftKey, ok := eqCond.GetArgs()[0].(*expression.Column)
-		if !ok {
-			b.err = errors.Annotate(ErrBuildExecutor, "left side of join key must be column for merge join")
-			return nil
-		}
-		rightKey, ok := eqCond.GetArgs()[1].(*expression.Column)
-		if !ok {
-			b.err = errors.Annotate(ErrBuildExecutor, "right side of join key must be column for merge join")
-			return nil
-		}
-		leftKeys = append(leftKeys, leftKey)
-		rightKeys = append(rightKeys, rightKey)
-	}
+	leftKeys := v.LeftKeys
+	rightKeys := v.RightKeys
 
 	e.outerIdx = 0
 	innerFilter := v.RightConditions
@@ -897,8 +879,16 @@ func (b *executorBuilder) buildProjection(v *plan.PhysicalProjection) Executor {
 	}
 	e := &ProjectionExec{
 		baseExecutor:     newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), childExec),
+		numWorkers:       b.ctx.GetSessionVars().ProjectionConcurrency,
 		evaluatorSuit:    expression.NewEvaluatorSuit(v.Exprs),
 		calculateNoDelay: v.CalculateNoDelay,
+	}
+
+	// If the calculation row count for this Projection operator is smaller
+	// than a Chunk size, we turn back to the un-parallel Projection
+	// implementation to reduce the goroutine overhead.
+	if v.StatsInfo().Count() < int64(b.ctx.GetSessionVars().MaxChunkSize) {
+		e.numWorkers = 0
 	}
 	return e
 }
