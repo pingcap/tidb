@@ -926,16 +926,15 @@ func (s *testDBSuite) TestColumn(c *C) {
 func (s *testDBSuite) TestAddColumnTooMany(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
-	s.tk.MustExec("create table t_column_too_many(abc int)")
 	count := ddl.TableColumnCountLimit - 1
-	var sql string
-	for i := 1; i <= count; i++ {
-		sql = "alter table t_column_too_many add column"
-		sql += fmt.Sprintf("a%d int", i)
-		s.tk.MustExec(sql)
+	var cols []string
+	for i := 0; i <= count; i++ {
+		cols = append(cols, fmt.Sprintf("a%d int", i))
 	}
-	sql = "alter table t_column_too_many add column a_512 int"
-	s.testErrorCode(c, sql, tmysql.ErrTooManyFields)
+	createSQL := fmt.Sprintf("create table t_column_too_many (%s)", strings.Join(cols, ","))
+	s.tk.MustExec(createSQL)
+	alterSQL := "alter table t_column_too_many add column a_512 int"
+	s.testErrorCode(c, alterSQL, tmysql.ErrTooManyFields)
 }
 
 func sessionExec(c *C, s kv.Storage, sql string) {
