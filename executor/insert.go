@@ -60,7 +60,7 @@ func (e *InsertExec) insertOneRow(row types.DatumRow) (int64, error) {
 	return h, nil
 }
 
-func (e *InsertExec) exec(rows []types.DatumRow) error {
+func (e *InsertExec) exec(newRows []types.DatumRow) error {
 	// If tidb_batch_insert is ON and not in a transaction, we could use BatchInsert mode.
 	sessVars := e.ctx.GetSessionVars()
 	defer sessVars.CleanBuffers()
@@ -74,7 +74,7 @@ func (e *InsertExec) exec(rows []types.DatumRow) error {
 	// If `ON DUPLICATE KEY UPDATE` is specified, and no `IGNORE` keyword,
 	// the to-be-insert rows will be check on duplicate keys and update to the new rows.
 	if len(e.OnDuplicate) > 0 && !ignoreErr {
-		err := e.onDuplicateUpdate(rows)
+		err := e.batchUpdateDupRows(newRows)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -86,12 +86,12 @@ func (e *InsertExec) exec(rows []types.DatumRow) error {
 			// However, if the `on duplicate update` is also specified, the duplicated row will be updated.
 			// Using BatchGet in insert ignore to mark rows as duplicated before we add records to the table.
 			var err error
-			rows, err = e.batchMarkDupRows(rows)
+			newRows, err = e.batchMarkDupRows(newRows)
 			if err != nil {
 				return errors.Trace(err)
 			}
 		}
-		for _, row := range rows {
+		for _, row := range newRows {
 			// duplicate row will be marked as nil in batchMarkDupRows if
 			// IgnoreErr is true. For IgnoreErr is false, it is a protection.
 			if row == nil {
@@ -252,8 +252,8 @@ func (e *InsertExec) updateDupKeyValues(keys []keyWithDupError, oldHandle int64,
 	return nil
 }
 
-// onDuplicateUpdate updates multi-rows in batch if they are duplicate with rows in table.
-func (e *InsertExec) onDuplicateUpdate(rows []types.DatumRow) (err error) {
+// batchUpdateDupRows updates multi-rows in batch if they are duplicate with rows in table.
+func (e *InsertExec) batchUpdateDupRows(rows []types.DatumRow) (err error) {
 	e.uniqueKeysInRows, e.dupKeyValues, err = e.batchGetInsertKeys(rows)
 	if err != nil {
 		return errors.Trace(err)
@@ -350,16 +350,16 @@ func (e *InsertExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return nil
 	}
 
-	insertCols, err := e.getColumns(e.Table.Cols())
+	cols, err := e.getColumns(e.Table.Cols())
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	var rows []types.DatumRow
 	if len(e.children) > 0 && e.children[0] != nil {
-		rows, err = e.getRowsFromSelectStmt(ctx, insertCols)
+		rows, err = e.getRowsSelectChunk(ctx, cols)
 	} else {
-		rows, err = e.getRows(insertCols)
+		rows, err = e.getRows(cols)
 	}
 	if err != nil {
 		return errors.Trace(err)

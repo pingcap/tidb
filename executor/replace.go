@@ -117,7 +117,7 @@ func (e *ReplaceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 	var rows []types.DatumRow
 	if len(e.children) > 0 && e.children[0] != nil {
-		rows, err = e.getRowsFromSelectStmt(ctx, cols)
+		rows, err = e.getRowsSelectChunk(ctx, cols)
 	} else {
 		rows, err = e.getRows(cols)
 	}
