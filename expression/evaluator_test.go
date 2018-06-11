@@ -50,6 +50,14 @@ func (s *testEvaluatorSuite) SetUpSuite(c *C) {
 func (s *testEvaluatorSuite) TearDownSuite(c *C) {
 }
 
+func (s *testEvaluatorSuite) SetUpTest(c *C) {
+	testleak.BeforeTest()
+}
+
+func (s *testEvaluatorSuite) TearDownTest(c *C) {
+	testleak.AfterTest(c)()
+}
+
 func (s *testEvaluatorSuite) kindToFieldType(kind byte) types.FieldType {
 	ft := types.FieldType{}
 	switch kind {
@@ -113,7 +121,6 @@ func (s *testEvaluatorSuite) primitiveValsToConstants(args []interface{}) []Expr
 }
 
 func (s *testEvaluatorSuite) TestSleep(c *C) {
-	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	sessVars := ctx.GetSessionVars()
 
@@ -182,7 +189,6 @@ func (s *testEvaluatorSuite) TestSleep(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestBinopComparison(c *C) {
-	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		lhs    interface{}
 		op     string
@@ -260,7 +266,6 @@ func (s *testEvaluatorSuite) TestBinopComparison(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestBinopLogic(c *C) {
-	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		lhs interface{}
 		op  string

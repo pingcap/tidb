@@ -63,11 +63,8 @@ func findMaxPrefixLen(candidates [][]*expression.Column, keys []*expression.Colu
 	return maxLen
 }
 
-func (p *LogicalJoin) getEqAndOtherCondsByOffsets(offsets []int) ([]*expression.ScalarFunction, []expression.Expression) {
-	var (
-		eqConds    = make([]*expression.ScalarFunction, 0, len(p.EqualConditions))
-		otherConds = make([]expression.Expression, len(p.OtherConditions))
-	)
+func (p *LogicalJoin) moveEqualToOtherConditions(offsets []int) []expression.Expression {
+	otherConds := make([]expression.Expression, len(p.OtherConditions))
 	copy(otherConds, p.OtherConditions)
 	for i, eqCond := range p.EqualConditions {
 		match := false
@@ -79,17 +76,15 @@ func (p *LogicalJoin) getEqAndOtherCondsByOffsets(offsets []int) ([]*expression.
 		}
 		if !match {
 			otherConds = append(otherConds, eqCond)
-		} else {
-			eqConds = append(eqConds, eqCond)
 		}
 	}
-	return eqConds, otherConds
+	return otherConds
 }
 
 // Only if the input required prop is the prefix fo join keys, we can pass through this property.
 func (p *PhysicalMergeJoin) tryToGetChildReqProp(prop *requiredProp) ([]*requiredProp, bool) {
-	lProp := &requiredProp{taskTp: rootTaskType, cols: p.leftKeys, expectedCnt: math.MaxFloat64}
-	rProp := &requiredProp{taskTp: rootTaskType, cols: p.rightKeys, expectedCnt: math.MaxFloat64}
+	lProp := &requiredProp{taskTp: rootTaskType, cols: p.LeftKeys, expectedCnt: math.MaxFloat64}
+	rProp := &requiredProp{taskTp: rootTaskType, cols: p.RightKeys, expectedCnt: math.MaxFloat64}
 	if !prop.isEmpty() {
 		// sort merge join fits the cases of massive ordered data, so desc scan is always expensive.
 		if prop.desc {
@@ -134,17 +129,118 @@ func (p *LogicalJoin) getMergeJoin(prop *requiredProp) []PhysicalPlan {
 			LeftConditions:  p.LeftConditions,
 			RightConditions: p.RightConditions,
 			DefaultValues:   p.DefaultValues,
-			leftKeys:        leftKeys,
-			rightKeys:       rightKeys,
+			LeftKeys:        leftKeys,
+			RightKeys:       rightKeys,
 		}.init(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt))
 		mergeJoin.SetSchema(p.schema)
-		mergeJoin.EqualConditions, mergeJoin.OtherConditions = p.getEqAndOtherCondsByOffsets(offsets)
+		mergeJoin.OtherConditions = p.moveEqualToOtherConditions(offsets)
 		if reqProps, ok := mergeJoin.tryToGetChildReqProp(prop); ok {
 			mergeJoin.childrenReqProps = reqProps
 			joins = append(joins, mergeJoin)
 		}
 	}
+	// If TiDB_SMJ hint is existed && no join keys in children property,
+	// it should to enforce merge join.
+	if len(joins) == 0 && (p.preferJoinType&preferMergeJoin) > 0 {
+		return p.getEnforcedMergeJoin(prop)
+	}
+
 	return joins
+}
+
+// Change JoinKeys order, by offsets array
+// offsets array is generate by prop check
+func getNewJoinKeysByOffsets(oldJoinKeys []*expression.Column, offsets []int) []*expression.Column {
+	newKeys := make([]*expression.Column, 0, len(oldJoinKeys))
+	for _, offset := range offsets {
+		newKeys = append(newKeys, oldJoinKeys[offset])
+	}
+	for pos, key := range oldJoinKeys {
+		isExist := false
+		for _, p := range offsets {
+			if p == pos {
+				isExist = true
+				break
+			}
+		}
+		if !isExist {
+			newKeys = append(newKeys, key)
+		}
+	}
+	return newKeys
+}
+
+// Change EqualConditions order, by offsets array
+// offsets array is generate by prop check
+func getNewEqualConditionsByOffsets(oldEqualCond []*expression.ScalarFunction, offsets []int) []*expression.ScalarFunction {
+	newEqualCond := make([]*expression.ScalarFunction, 0, len(oldEqualCond))
+	for _, offset := range offsets {
+		newEqualCond = append(newEqualCond, oldEqualCond[offset])
+	}
+	for pos, condition := range oldEqualCond {
+		isExist := false
+		for _, p := range offsets {
+			if p == pos {
+				isExist = true
+				break
+			}
+		}
+		if !isExist {
+			newEqualCond = append(newEqualCond, condition)
+		}
+	}
+	return newEqualCond
+}
+
+func (p *LogicalJoin) getEnforcedMergeJoin(prop *requiredProp) []PhysicalPlan {
+	// Check whether SMJ can satisfy the required property
+	offsets := make([]int, 0, len(p.LeftJoinKeys))
+	for _, col := range prop.cols {
+		isExist := false
+		for joinKeyPos := 0; joinKeyPos < len(p.LeftJoinKeys); joinKeyPos++ {
+			var key *expression.Column
+			if col.Equal(p.ctx, p.LeftJoinKeys[joinKeyPos]) {
+				key = p.LeftJoinKeys[joinKeyPos]
+			}
+			if col.Equal(p.ctx, p.RightJoinKeys[joinKeyPos]) {
+				key = p.RightJoinKeys[joinKeyPos]
+			}
+			if key == nil {
+				continue
+			}
+			for i := 0; i < len(offsets); i++ {
+				if offsets[i] == joinKeyPos {
+					isExist = true
+					break
+				}
+			}
+			if !isExist {
+				offsets = append(offsets, joinKeyPos)
+			}
+			isExist = true
+			break
+		}
+		if !isExist {
+			return nil
+		}
+	}
+	// Generate the enforced sort merge join
+	leftKeys := getNewJoinKeysByOffsets(p.LeftJoinKeys, offsets)
+	rightKeys := getNewJoinKeysByOffsets(p.RightJoinKeys, offsets)
+	lProp := &requiredProp{taskTp: rootTaskType, cols: leftKeys, expectedCnt: math.MaxFloat64, enforced: true, desc: prop.desc}
+	rProp := &requiredProp{taskTp: rootTaskType, cols: rightKeys, expectedCnt: math.MaxFloat64, enforced: true, desc: prop.desc}
+	enforcedPhysicalMergeJoin := PhysicalMergeJoin{
+		JoinType:        p.JoinType,
+		LeftConditions:  p.LeftConditions,
+		RightConditions: p.RightConditions,
+		DefaultValues:   p.DefaultValues,
+		LeftKeys:        leftKeys,
+		RightKeys:       rightKeys,
+		OtherConditions: p.OtherConditions,
+	}.init(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt))
+	enforcedPhysicalMergeJoin.SetSchema(p.schema)
+	enforcedPhysicalMergeJoin.childrenReqProps = []*requiredProp{lProp, rProp}
+	return []PhysicalPlan{enforcedPhysicalMergeJoin}
 }
 
 func (p *LogicalJoin) getHashJoins(prop *requiredProp) []PhysicalPlan {
@@ -420,7 +516,7 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *requiredProp) ([]PhysicalPlan, boo
 // If the hint is not figured, we will pick all candidates.
 func (p *LogicalJoin) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan {
 	mergeJoins := p.getMergeJoin(prop)
-	if (p.preferJoinType&preferMergeJoin) > 0 && len(mergeJoins) > 0 {
+	if (p.preferJoinType & preferMergeJoin) > 0 {
 		return mergeJoins
 	}
 	joins := make([]PhysicalPlan, 0, 5)
