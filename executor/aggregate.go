@@ -144,6 +144,7 @@ type HashAggIntermData struct {
 	giveBackCh  chan<- aggCtxsMapper
 }
 
+// ToChunk converts HashAggInterData to a chunk.
 func (d *HashAggIntermData) ToChunk(sc *stmtctx.StatementContext, chk *chunk.Chunk, aggFuncs []aggregation.Aggregation, maxChunkSize int) (reachEnd bool) {
 	if d.iter == nil {
 		d.iter = d.groupSet.NewIterator()
@@ -436,7 +437,7 @@ func (w aggWorker) getContext(sc *stmtctx.StatementContext, groupKey []byte, map
 	return aggCtxs
 }
 
-func (w *HashAggFinalWorker) run(ctx sessionctx.Context, workerId int) {
+func (w *HashAggFinalWorker) run(ctx sessionctx.Context) {
 	defer func() {
 		w.WaitGroup.Done()
 	}()
@@ -591,7 +592,7 @@ func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error 
 		go e.waitPartialWorkerAndCloseOutputChs()
 		for i := range e.finalWorkers {
 			e.finalWorkerWaitGroup.Add(1)
-			go e.finalWorkers[i].run(e.ctx, i)
+			go e.finalWorkers[i].run(e.ctx)
 		}
 		go e.waitFinalWorkerAndCloseFinalOutput()
 		e.prepared = true
