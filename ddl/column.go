@@ -133,6 +133,10 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	if err = checkAddColumnTooManyColumns(len(tblInfo.Columns)); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
 
 	columnInfo := model.FindColumnInfo(tblInfo.Columns, col.Name.L)
 	if columnInfo != nil {
@@ -175,10 +179,6 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// reorganization -> public
 		// Adjust table column offset.
 		d.adjustColumnInfoInAddColumn(tblInfo, offset)
-		if err = checkAddColumnTooManyColumns(tblInfo.Columns); err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
-		}
 		columnInfo.State = model.StatePublic
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != columnInfo.State)
 		if err != nil {

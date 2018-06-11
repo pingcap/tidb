@@ -540,8 +540,8 @@ func checkTooManyColumns(colDefs []*ast.ColumnDef) error {
 	return nil
 }
 
-func checkAddColumnTooManyColumns(oldCols []*model.ColumnInfo) error {
-	if len(oldCols) > TableColumnCountLimit {
+func checkAddColumnTooManyColumns(oldCols int) error {
+	if oldCols+1 > TableColumnCountLimit {
 		return errTooManyFields
 	}
 	return nil
@@ -1129,7 +1129,9 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ti.Schema, ti.Name))
 	}
-
+	if err = checkAddColumnTooManyColumns(len(t.Cols())); err != nil {
+		return errors.Trace(err)
+	}
 	// Check whether added column has existed.
 	colName := specNewColumn.Name.Name.O
 	col := table.FindCol(t.Cols(), colName)
