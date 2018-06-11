@@ -1288,41 +1288,12 @@ const loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variab
 	variable.TiDBIndexLookupJoinConcurrency + quoteCommaQuote +
 	variable.TiDBIndexSerialScanConcurrency + quoteCommaQuote +
 	variable.TiDBHashJoinConcurrency + quoteCommaQuote +
+	variable.TiDBProjectionConcurrency + quoteCommaQuote +
 	variable.TiDBBackoffLockFast + quoteCommaQuote +
 	variable.TiDBOptInSubqUnFolding + quoteCommaQuote +
 	variable.TiDBDistSQLScanConcurrency + quoteCommaQuote +
 	variable.TiDBMaxChunkSize + quoteCommaQuote +
 	variable.TiDBRetryLimit + "')"
-
-type globalVariableCache struct {
-	sync.RWMutex
-	lastModify time.Time
-	rows       []types.Row
-	fields     []*ast.ResultField
-}
-
-var gvc globalVariableCache
-
-const globalVariableCacheExpiry time.Duration = 2 * time.Second
-
-func (gvc *globalVariableCache) Update(rows []types.Row, fields []*ast.ResultField) {
-	gvc.Lock()
-	gvc.lastModify = time.Now()
-	gvc.rows = rows
-	gvc.fields = fields
-	gvc.Unlock()
-}
-
-func (gvc *globalVariableCache) Get() (succ bool, rows []types.Row, fields []*ast.ResultField) {
-	gvc.RLock()
-	defer gvc.RUnlock()
-	if time.Now().Sub(gvc.lastModify) < globalVariableCacheExpiry {
-		succ, rows, fields = true, gvc.rows, gvc.fields
-		return
-	}
-	succ = false
-	return
-}
 
 // loadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.
 func (s *session) loadCommonGlobalVariablesIfNeeded() error {
@@ -1336,8 +1307,9 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	}
 
 	var err error
-	// Use globalVariableCache if TiDB just loaded global variables within 2 second ago.
+	// Use GlobalVariableCache if TiDB just loaded global variables within 2 second ago.
 	// When a lot of connections connect to TiDB simultaneously, it can protect TiKV meta region from overload.
+	gvc := domain.GetDomain(s).GetGlobalVarsCache()
 	succ, rows, fields := gvc.Get()
 	if !succ {
 		// Set the variable to true to prevent cyclic recursive call.

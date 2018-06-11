@@ -2115,7 +2115,6 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	c.Assert(charRecordSet, NotNil)
 	_, err = session.GetRows4Test(ctx, tk.Se, charRecordSet)
 	c.Assert(err.Error(), Equals, "unknown encoding: tidb")
-	c.Assert(rs.Close(), IsNil)
 
 	// issue 3884
 	tk.MustExec("drop table if exists t")
