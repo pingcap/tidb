@@ -1560,6 +1560,15 @@ func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
 	c.Assert(part.Definitions[2].Name, Equals, "p2")
 }
 
+func (s *testDBSuite) TestCreateTableWithFloatType(c *C) {
+	s.tk.MustExec("use test")
+	s.testErrorCode(c, "create table t (a decimal(1, 2))", tmysql.ErrMBiggerThanD)
+	s.testErrorCode(c, "create table t (a float(1, 2))", tmysql.ErrMBiggerThanD)
+	s.testErrorCode(c, "create table t (a double(1, 2))", tmysql.ErrMBiggerThanD)
+	s.mustExec(c, "create table t (a double(1, 1))")
+	s.mustExec(c, "drop table t")
+}
+
 func (s *testDBSuite) TestTruncateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

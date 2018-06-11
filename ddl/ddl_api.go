@@ -546,6 +546,19 @@ func checkAddColumnTooManyColumns(oldCols []*model.ColumnInfo) error {
 	return nil
 }
 
+// checkPointTypeColumnDigitLength checks
+func checkPointTypeColumnDigitLength(colDefs []*ast.ColumnDef) error {
+	for _, colDef := range colDefs {
+		if colDef.Tp.Tp != mysql.TypeNewDecimal && colDef.Tp.Tp != mysql.TypeFloat && colDef.Tp.Tp != mysql.TypeDouble {
+			continue
+		}
+		if colDef.Tp.Flen < colDef.Tp.Decimal {
+			return types.ErrMBiggerThanD.GenByArgs(colDef.Name)
+		}
+	}
+	return nil
+}
+
 func checkDuplicateConstraint(namesMap map[string]bool, name string, foreign bool) error {
 	if name == "" {
 		return nil
@@ -791,6 +804,10 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		return errors.Trace(err)
 	}
 	if err = checkTooManyColumns(colDefs); err != nil {
+		return errors.Trace(err)
+	}
+
+	if err = checkPointTypeColumnDigitLength(colDefs); err != nil {
 		return errors.Trace(err)
 	}
 
