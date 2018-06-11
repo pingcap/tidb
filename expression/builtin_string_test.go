@@ -545,8 +545,8 @@ func (s *testEvaluatorSuite) TestReplace(c *C) {
 		flen   int
 	}{
 		{[]interface{}{"www.mysql.com", "mysql", "pingcap"}, false, false, "www.pingcap.com", 17},
-		{[]interface{}{"www.mysql.com", "w", 1}, false, false, "111.mysql.com", 13},
-		{[]interface{}{1234, 2, 55}, false, false, "15534", -1},
+		{[]interface{}{"www.mysql.com", "w", 1}, false, false, "111.mysql.com", 260},
+		{[]interface{}{1234, 2, 55}, false, false, "15534", 20},
 		{[]interface{}{"", "a", "b"}, false, false, "", 0},
 		{[]interface{}{"abc", "", "d"}, false, false, "abc", 3},
 		{[]interface{}{"aaa", "a", ""}, false, false, "", 3},

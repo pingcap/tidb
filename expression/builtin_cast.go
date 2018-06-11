@@ -1676,7 +1676,7 @@ func WrapWithCastAsString(ctx sessionctx.Context, expr Expression) Expression {
 	}
 	argLen := expr.GetType().Flen
 	if expr.GetType().EvalType() == types.ETInt {
-		argLen = types.UnspecifiedLength
+		argLen = mysql.MaxIntWidth
 	}
 	tp := types.NewFieldType(mysql.TypeVarString)
 	tp.Charset, tp.Collate = charset.CharsetUTF8, charset.CollationUTF8
