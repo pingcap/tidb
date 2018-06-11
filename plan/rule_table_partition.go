@@ -38,20 +38,20 @@ import (
 type tablePartition struct{}
 
 func (s *tablePartition) optimize(lp LogicalPlan) (LogicalPlan, error) {
-	return rewriteDataSource(nil, lp)
+	return s.rewriteDataSource(nil, lp)
 }
 
-func rewriteDataSource(sel *LogicalSelection, lp LogicalPlan) (LogicalPlan, error) {
+func (s *tablePartition) rewriteDataSource(sel *LogicalSelection, lp LogicalPlan) (LogicalPlan, error) {
 	// Assert there will not be sel -> sel in the ast.
 	switch lp.(type) {
 	case *DataSource:
-		return prunePartition(sel, lp.(*DataSource))
+		return s.prunePartition(sel, lp.(*DataSource))
 	case *LogicalSelection:
-		return rewriteDataSource(lp.(*LogicalSelection), lp.Children()[0])
+		return s.rewriteDataSource(lp.(*LogicalSelection), lp.Children()[0])
 	default:
 		children := lp.Children()
 		for i, child := range children {
-			child1, err := rewriteDataSource(nil, child)
+			child1, err := s.rewriteDataSource(nil, child)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -59,10 +59,10 @@ func rewriteDataSource(sel *LogicalSelection, lp LogicalPlan) (LogicalPlan, erro
 		}
 	}
 
-	return selectOnSomething(sel, lp)
+	return s.selectOnSomething(sel, lp)
 }
 
-func selectOnSomething(sel *LogicalSelection, lp LogicalPlan) (LogicalPlan, error) {
+func (s *tablePartition) selectOnSomething(sel *LogicalSelection, lp LogicalPlan) (LogicalPlan, error) {
 	if sel != nil {
 		sel.SetChildren(lp)
 		return sel, nil
@@ -75,10 +75,10 @@ type partitionTable interface {
 	PartitionExprs() []expression.Expression
 }
 
-func prunePartition(sel *LogicalSelection, ds *DataSource) (LogicalPlan, error) {
+func (s *tablePartition) prunePartition(sel *LogicalSelection, ds *DataSource) (LogicalPlan, error) {
 	pi := ds.tableInfo.GetPartitionInfo()
 	if pi == nil {
-		return selectOnSomething(sel, ds)
+		return s.selectOnSomething(sel, ds)
 	}
 
 	var partitionExprs []expression.Expression
@@ -119,11 +119,11 @@ func prunePartition(sel *LogicalSelection, ds *DataSource) (LogicalPlan, error) 
 	}
 	if len(children) == 1 {
 		// No need for the union all.
-		return selectOnSomething(sel, children[0])
+		return s.selectOnSomething(sel, children[0])
 	}
 	unionAll := LogicalUnionAll{}.init(ds.context())
 	unionAll.SetChildren(children...)
-	return selectOnSomething(sel, unionAll)
+	return s.selectOnSomething(sel, unionAll)
 }
 
 // canBePrune checks if partition expression will never meets the selection condition.
