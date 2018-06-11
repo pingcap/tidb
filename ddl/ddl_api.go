@@ -539,6 +539,13 @@ func checkTooManyColumns(colDefs []*ast.ColumnDef) error {
 	return nil
 }
 
+func checkAddColumnTooManyColumns(oldCols []*model.ColumnInfo) error {
+	if len(oldCols) > TableColumnCountLimit {
+		return errTooManyFields
+	}
+	return nil
+}
+
 func checkDuplicateConstraint(namesMap map[string]bool, name string, foreign bool) error {
 	if name == "" {
 		return nil
