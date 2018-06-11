@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/ranger"
 )
 
@@ -72,7 +73,7 @@ func (s *tablePartition) selectOnSomething(sel *LogicalSelection, lp LogicalPlan
 
 // partitionTable is for those tables which implement partition.
 type partitionTable interface {
-	PartitionExprs() []expression.Expression
+	PartitionExprCache() *tables.PartitionExprCache
 }
 
 func (s *tablePartition) prunePartition(sel *LogicalSelection, ds *DataSource) (LogicalPlan, error) {
@@ -83,7 +84,7 @@ func (s *tablePartition) prunePartition(sel *LogicalSelection, ds *DataSource) (
 
 	var partitionExprs []expression.Expression
 	if itf, ok := ds.table.(partitionTable); ok {
-		partitionExprs = itf.PartitionExprs()
+		partitionExprs = itf.PartitionExprCache().PartitionPrune
 	}
 	if len(partitionExprs) == 0 {
 		return nil, errors.New("partition expression missing")

@@ -107,6 +107,7 @@ func MockTable() *model.TableInfo {
 				{
 					Name:   model.NewCIStr("f"),
 					Length: types.UnspecifiedLength,
+					Offset: 8,
 				},
 			},
 			State:  model.StatePublic,
