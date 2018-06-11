@@ -325,7 +325,7 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 }
 
 // QueryReplacer replaces new line and tab for grep result including query string.
-var QueryReplacer = strings.NewReplacer("\r", "", "\n", " ", "\t", " ")
+var QueryReplacer = strings.NewReplacer("\r", " ", "\n", " ", "\t", " ")
 
 func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
 	level := log.GetLevel()
