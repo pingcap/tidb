@@ -91,8 +91,26 @@ func (p *baseLogicalPlan) findBestTask(prop *requiredProp) (bestTask task, err e
 
 	bestTask = invalidTask
 	childTasks := make([]task, 0, len(p.children))
-	for _, pp := range p.self.exhaustPhysicalPlans(prop) {
-		// find the best child tasks firstly.
+
+	// If prop.enforced is true, cols of prop as parameter in exhaustPhysicalPlans should be nil
+	// And reset it for enforcing task prop and storing map<prop,task>
+	oldPropCols := prop.cols
+	if prop.enforced {
+		// First, get the bestTask without enforced prop
+		prop.enforced = false
+		bestTask, err = p.findBestTask(prop)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		prop.enforced = true
+		// Next, get the bestTask with enforced prop
+		prop.cols = []*expression.Column{}
+	}
+	physicalPlans := p.self.exhaustPhysicalPlans(prop)
+	prop.cols = oldPropCols
+
+	for _, pp := range physicalPlans {
+		// find best child tasks firstly.
 		childTasks = childTasks[:0]
 		for i, child := range p.children {
 			childTask, err := child.findBestTask(pp.getChildReqProps(i))
@@ -112,6 +130,11 @@ func (p *baseLogicalPlan) findBestTask(prop *requiredProp) (bestTask task, err e
 
 		// combine best child tasks with parent physical plan.
 		curTask := pp.attach2Task(childTasks...)
+
+		// enforce curTask property
+		if prop.enforced {
+			curTask = prop.enforceProperty(curTask, p.basePlan.ctx)
+		}
 
 		// get the most efficient one.
 		if curTask.cost() < bestTask.cost() {
@@ -174,7 +197,7 @@ func (ds *DataSource) tryToGetDualTask() (task, error) {
 
 // findBestTask implements the PhysicalPlan interface.
 // It will enumerate all the available indices and choose a plan with least cost.
-func (ds *DataSource) findBestTask(prop *requiredProp) (task, error) {
+func (ds *DataSource) findBestTask(prop *requiredProp) (t task, err error) {
 	// If ds is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself.
 	// So here we do nothing.
 	// TODO: Add a special prop to handle IndexJoin's inner plan.
@@ -183,25 +206,47 @@ func (ds *DataSource) findBestTask(prop *requiredProp) (task, error) {
 		return nil, nil
 	}
 
-	t := ds.getTask(prop)
+	t = ds.getTask(prop)
 	if t != nil {
-		return t, nil
+		return
 	}
-	t, err := ds.tryToGetDualTask()
-	if err != nil {
-		return nil, errors.Trace(err)
+
+	// If prop.enforced is true, the prop.cols need to be set nil for ds.findBestTask.
+	// Before function return, reset it for enforcing task prop and storing map<prop,task>.
+	oldPropCols := prop.cols
+	if prop.enforced {
+		// First, get the bestTask without enforced prop
+		prop.enforced = false
+		t, err = ds.findBestTask(prop)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		prop.enforced = true
+		if t != invalidTask {
+			ds.storeTask(prop, t)
+			return
+		}
+		// Next, get the bestTask with enforced prop
+		prop.cols = []*expression.Column{}
 	}
-	if t != nil {
+	defer func() {
+		if err != nil {
+			return
+		}
+		if prop.enforced {
+			prop.cols = oldPropCols
+			t = prop.enforceProperty(t, ds.basePlan.ctx)
+		}
 		ds.storeTask(prop, t)
-		return t, nil
+	}()
+
+	t, err = ds.tryToGetDualTask()
+	if err != nil || t != nil {
+		return t, errors.Trace(err)
 	}
 	t, err = ds.tryToGetMemTask(prop)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if t != nil {
-		ds.storeTask(prop, t)
-		return t, nil
+	if err != nil || t != nil {
+		return t, errors.Trace(err)
 	}
 
 	t = invalidTask
@@ -231,9 +276,7 @@ func (ds *DataSource) findBestTask(prop *requiredProp) (task, error) {
 			}
 		}
 	}
-
-	ds.storeTask(prop, t)
-	return t, nil
+	return
 }
 
 func isCoveringIndex(columns []*model.ColumnInfo, indexColumns []*model.IndexColumn, pkIsHandle bool) bool {
@@ -326,7 +369,6 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, path *accessPath) (
 		if prop.taskTp == copSingleReadTaskType {
 			return invalidTask, nil
 		}
-
 		// On this way, it's double read case.
 		ts := PhysicalTableScan{Columns: ds.Columns, Table: is.Table}.init(ds.ctx)
 		ts.SetSchema(ds.schema.Clone())

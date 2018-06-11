@@ -717,6 +717,7 @@ const (
 	AlterTableAlterColumn
 	AlterTableLock
 	AlterTableAlgorithm
+	AlterTableRenameIndex
 	AlterTableForce
 
 // TODO: Add more actions
@@ -748,6 +749,8 @@ type AlterTableSpec struct {
 	Position      *ColumnPosition
 	LockType      LockType
 	Comment       string
+	FromKey       model.CIStr
+	ToKey         model.CIStr
 }
 
 // Accept implements Node Accept interface.
