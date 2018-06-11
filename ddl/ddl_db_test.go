@@ -268,6 +268,29 @@ func (s *testDBSuite) TestAddIndexWithPK(c *C) {
 	s.tk.MustQuery("select * from test_add_index_with_pk2").Check(testkit.Rows("1 1 1 1", "2 2 2 2"))
 }
 
+func (s *testDBSuite) TestRenameIndex(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+	s.tk.MustExec("create table t (pk int primary key, c int default 1, c1 int default 1, unique key k1(c), key k2(c1))")
+
+	// Test rename success
+	s.tk.MustExec("alter table t rename index k1 to k3")
+	s.tk.MustExec("admin check index t k3")
+
+	// Test rename to the same name
+	s.tk.MustExec("alter table t rename index k3 to k3")
+	s.tk.MustExec("admin check index t k3")
+
+	// Test rename on non-exists keys
+	s.testErrorCode(c, "alter table t rename index x to x", mysql.ErrKeyDoesNotExist)
+
+	// Test rename on already-exists keys
+	s.testErrorCode(c, "alter table t rename index k3 to k2", mysql.ErrDupKeyName)
+
+	s.tk.MustExec("alter table t rename index k2 to K2")
+	s.testErrorCode(c, "alter table t rename key k3 to K2", mysql.ErrDupKeyName)
+}
+
 func (s *testDBSuite) testGetTable(c *C, name string) table.Table {
 	ctx := s.s.(sessionctx.Context)
 	dom := domain.GetDomain(ctx)
@@ -898,6 +921,21 @@ func (s *testDBSuite) TestColumn(c *C) {
 	s.testDropColumn(c)
 	s.testDropColumn2(c)
 	s.tk.MustExec("drop table t2")
+}
+
+func (s *testDBSuite) TestAddColumnTooMany(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+	s.tk.MustExec("create table t_column_too_many(abc int)")
+	count := ddl.TableColumnCountLimit - 1
+	var sql string
+	for i := 1; i <= count; i++ {
+		sql = "alter table t_column_too_many add column"
+		sql += fmt.Sprintf("a%d int", i)
+		s.tk.MustExec(sql)
+	}
+	sql = "alter table t_column_too_many add column a_512 int"
+	s.testErrorCode(c, sql, tmysql.ErrTooManyFields)
 }
 
 func sessionExec(c *C, s kv.Storage, sql string) {

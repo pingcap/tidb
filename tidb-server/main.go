@@ -344,6 +344,10 @@ func validateConfig() {
 		log.Errorf("\"store\" should be in [%s] only", strings.Join(nameList, ", "))
 		os.Exit(-1)
 	}
+	if cfg.Store == "mocktikv" && cfg.RunDDL == false {
+		log.Errorf("can't disable DDL on mocktikv")
+		os.Exit(-1)
+	}
 	if cfg.Log.File.MaxSize > config.MaxLogFileSize {
 		log.Errorf("log max-size should not be larger than %d MB", config.MaxLogFileSize)
 		os.Exit(-1)

@@ -25,11 +25,9 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/charset"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 func (s *testEvaluatorSuite) TestCast(c *C) {
-	defer testleak.AfterTest(c)()
 	ctx, sc := s.ctx, s.ctx.GetSessionVars().StmtCtx
 
 	// Test `cast as char[(N)]` and `cast as binary[(N)]`.
@@ -225,7 +223,6 @@ var (
 )
 
 func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
-	defer testleak.AfterTest(c)()
 	ctx, sc := s.ctx, s.ctx.GetSessionVars().StmtCtx
 	originIgnoreTruncate := sc.IgnoreTruncate
 	originTZ := sc.TimeZone
@@ -1012,7 +1009,6 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 
 // TestWrapWithCastAsTypesClasses tests WrapWithCastAsInt/Real/String/Decimal.
 func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
-	defer testleak.AfterTest(c)()
 	ctx := s.ctx
 
 	cases := []struct {
@@ -1155,7 +1151,6 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTime(c *C) {
 	save := sc.TimeZone
 	sc.TimeZone = time.UTC
 	defer func() {
-		testleak.AfterTest(c)()
 		sc.TimeZone = save
 	}()
 	cases := []struct {
@@ -1205,7 +1200,6 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTime(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestWrapWithCastAsDuration(c *C) {
-	defer testleak.AfterTest(c)()
 	cases := []struct {
 		expr Expression
 	}{
@@ -1235,4 +1229,13 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsDuration(c *C) {
 		c.Assert(isNull, Equals, false)
 		c.Assert(res.Compare(duration), Equals, 0)
 	}
+}
+
+func (s *testEvaluatorSuite) TestWrapWithCastAsJSON(c *C) {
+	input := &Column{RetType: &types.FieldType{Tp: mysql.TypeJSON}}
+	expr := WrapWithCastAsJSON(s.ctx, input)
+
+	output, ok := expr.(*Column)
+	c.Assert(ok, IsTrue)
+	c.Assert(output, Equals, input)
 }

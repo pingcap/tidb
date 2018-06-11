@@ -163,7 +163,7 @@ IndexScan_14			cop	table:rr, index:aid, dic, range:[<nil>,+inf], keep order:fals
 TableScan_15	Selection_16		cop	table:rr, keep order:false	2000.00
 Selection_16		TableScan_15	cop	eq(rr.pt, ios), gt(rr.t, 1478185592)	970.00
 IndexLookUp_17	IndexJoin_18		root	index:IndexScan_14, table:Selection_16	970.00
-IndexJoin_18	Limit_12	TableReader_42,IndexLookUp_17	root	outer:TableReader_42, inner join, outer key:dt.aid, dt.dic, inner key:rr.aid, rr.dic	428.32
+IndexJoin_18	Limit_12	TableReader_42,IndexLookUp_17	root	inner join, inner:IndexLookUp_17, outer key:dt.aid, dt.dic, inner key:rr.aid, rr.dic	428.32
 Limit_12	Projection_9	IndexJoin_18	root	offset:0, count:2000	428.32
 Projection_9		Limit_12	root	dt.id, dt.aid, dt.pt, dt.dic, dt.cm, rr.gid, rr.acd, rr.t, dt.p1, dt.p2, dt.p3, dt.p4, dt.p5, dt.p6_md5, dt.p7_md5	428.32
 explain select pc,cr,count(DISTINCT uid) as pay_users,count(oid) as pay_times,sum(am) as am from pp where ps=2  and ppt>=1478188800 and ppt<1478275200  and pi in ('510017','520017') and uid in ('18089709','18090780') group by pc,cr;
