@@ -948,7 +948,7 @@ AlterTableSpec:
 			Constraint: constraint,
 		}
 	}
-|	"DROP" ColumnKeywordOpt ColumnName
+|	"DROP" ColumnKeywordOpt ColumnName RestrictOrCascadeOpt
 	{
 		$$ = &ast.AlterTableSpec{
 			Tp: ast.AlterTableDropColumn,
