@@ -141,7 +141,7 @@ func (b *batchChecker) getKeysNeedCheck(ctx sessionctx.Context, t table.Table, r
 			if !distinct {
 				continue
 			}
-			colValStr, err1 := types.DatumsToString(colVals)
+			colValStr, err1 := types.DatumsToString(colVals, false)
 			if err1 != nil {
 				return nil, errors.Trace(err1)
 			}

@@ -366,7 +366,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef) (
 	if col.Tp == mysql.TypeYear {
 		// For Year field, it's charset is binary but does not have binary flag.
 		col.Flag &= ^mysql.BinaryFlag
-		col.Flag |= mysql.UnsignedFlag | mysql.ZerofillFlag
+		col.Flag |= mysql.ZerofillFlag
 	}
 	err := checkDefaultValue(ctx, col, hasDefaultValue)
 	if err != nil {
@@ -534,6 +534,13 @@ func checkTooLongColumn(colDefs []*ast.ColumnDef) error {
 
 func checkTooManyColumns(colDefs []*ast.ColumnDef) error {
 	if len(colDefs) > TableColumnCountLimit {
+		return errTooManyFields
+	}
+	return nil
+}
+
+func checkAddColumnTooManyColumns(oldCols []*model.ColumnInfo) error {
+	if len(oldCols) > TableColumnCountLimit {
 		return errTooManyFields
 	}
 	return nil
@@ -999,6 +1006,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			err = d.RenameTable(ctx, ident, newIdent)
 		case ast.AlterTableDropPrimaryKey:
 			err = ErrUnsupportedModifyPrimaryKey.GenByArgs("drop")
+		case ast.AlterTableRenameIndex:
+			err = d.RenameIndex(ctx, ident, spec)
 		case ast.AlterTableOption:
 			for _, opt := range spec.Options {
 				switch opt.Tp {
@@ -1567,6 +1576,41 @@ func (d *ddl) AlterTableComment(ctx sessionctx.Context, ident ast.Ident, spec *a
 		Type:       model.ActionModifyTableComment,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{spec.Comment},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+// RenameIndex renames an index.
+// In TiDB, indexes are case-insensitive (so index 'a' and 'A" are considered the same index),
+// but index names are case-sensitive (we can rename index 'a' to 'A')
+func (d *ddl) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	is := d.infoHandle.Get()
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenByArgs(ident.Schema)
+	}
+
+	tb, err := is.TableByName(ident.Schema, ident.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ident.Schema, ident.Name))
+	}
+	duplicate, err := validateRenameIndex(spec.FromKey, spec.ToKey, tb.Meta())
+	if duplicate {
+		return nil
+	}
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tb.Meta().ID,
+		Type:       model.ActionRenameIndex,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{spec.FromKey, spec.ToKey},
 	}
 
 	err = d.doDDLJob(ctx, job)

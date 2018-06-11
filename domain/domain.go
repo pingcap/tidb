@@ -58,6 +58,7 @@ type Domain struct {
 	exit            chan struct{}
 	etcdClient      *clientv3.Client
 	wg              sync.WaitGroup
+	gvc             GlobalVariableCache
 
 	MockReloadFailed MockFailure // It mocks reload failed.
 }
@@ -397,6 +398,7 @@ func (do *Domain) Close() {
 	}
 	do.sysSessionPool.Close()
 	do.wg.Wait()
+	log.Info("[domain] close")
 }
 
 type ddlCallback struct {

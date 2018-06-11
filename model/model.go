@@ -33,9 +33,9 @@ const (
 	// StateWriteOnly means we can use any write operation on this schema element,
 	// but outer can't read the changed data.
 	StateWriteOnly
-	// StateWriteReorganization means we are re-organizating whole data after write only state.
+	// StateWriteReorganization means we are re-organizing whole data after write only state.
 	StateWriteReorganization
-	// StateDeleteReorganization means we are re-organizating whole data after delete only state.
+	// StateDeleteReorganization means we are re-organizing whole data after delete only state.
 	StateDeleteReorganization
 	// StatePublic means this schema element is ok for all write and read operations.
 	StatePublic
@@ -135,6 +135,14 @@ type TableInfo struct {
 	ShardRowIDBits uint64
 
 	Partition *PartitionInfo `json:"partition"`
+}
+
+// GetPartitionInfo returns the partition information.
+func (t *TableInfo) GetPartitionInfo() *PartitionInfo {
+	if t.Partition != nil && t.Partition.Enable {
+		return t.Partition
+	}
+	return nil
 }
 
 // GetUpdateTime gets the table's updating time.

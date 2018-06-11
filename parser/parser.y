@@ -318,6 +318,7 @@ import (
 	local		"LOCAL"
 	less		"LESS"
 	level		"LEVEL"
+	master		"MASTER"
 	microsecond	"MICROSECOND"
 	minute		"MINUTE"
 	mode		"MODE"
@@ -385,6 +386,7 @@ import (
 	than		"THAN"
 	timeType	"TIME"
 	timestampType	"TIMESTAMP"
+	trace		"TRACE"
 	transaction	"TRANSACTION"
 	triggers	"TRIGGERS"
 	truncate	"TRUNCATE"
@@ -541,6 +543,7 @@ import (
 	EmptyStmt			"empty statement"
 	ExecuteStmt			"Execute statement"
 	ExplainStmt			"EXPLAIN statement"
+	ExplainableStmt			"explainable statement"
 	FlushStmt			"Flush statement"
 	GrantStmt			"Grant statement"
 	InsertIntoStmt			"INSERT INTO statement"
@@ -557,7 +560,8 @@ import (
 	SetStmt				"Set variable statement"
 	ShowStmt			"Show engines/databases/tables/columns/warnings/status statement"
 	Statement			"statement"
-	ExplainableStmt			"explainable statement"
+	TraceStmt			"TRACE statement"
+	TraceableStmt			"traceable statment"
 	TruncateTableStmt		"TRUNCATE TABLE statement"
 	UnlockTablesStmt		"Unlock tables statement"
 	UpdateStmt			"UPDATE statement"
@@ -944,7 +948,7 @@ AlterTableSpec:
 			Constraint: constraint,
 		}
 	}
-|	"DROP" ColumnKeywordOpt ColumnName
+|	"DROP" ColumnKeywordOpt ColumnName RestrictOrCascadeOpt
 	{
 		$$ = &ast.AlterTableSpec{
 			Tp: ast.AlterTableDropColumn,
@@ -1035,6 +1039,14 @@ AlterTableSpec:
 		$$ = &ast.AlterTableSpec{
 			Tp:    		ast.AlterTableRenameTable,
 			NewTable:      $3.(*ast.TableName),
+		}
+	}
+|	"RENAME" KeyOrIndex Identifier "TO" Identifier
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:    	    ast.AlterTableRenameIndex,
+			FromKey:    model.NewCIStr($3),
+			ToKey:      model.NewCIStr($5),
 		}
 	}
 |	LockClause
@@ -2129,6 +2141,15 @@ EmptyStmt:
 		$$ = nil
 	}
 
+TraceStmt:
+	"TRACE" TraceableStmt
+	{
+		$$ = &ast.TraceStmt{
+			Stmt:	$2,
+			Format: "row",
+		}
+	}
+
 ExplainSym:
 "EXPLAIN" | "DESCRIBE" | "DESC"
 
@@ -2668,8 +2689,8 @@ UnReservedKeyword:
 | "DYNAMIC"| "END" | "ENGINE" | "ENGINES" | "ENUM" | "ESCAPE" | "EXECUTE" | "FIELDS" | "FIRST" | "FIXED" | "FLUSH" | "FORMAT" | "FULL" |"GLOBAL"
 | "HASH" | "HOUR" | "LESS" | "LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "REDUNDANT"
 | "ROLLBACK" | "SESSION" | "SIGNED" | "SNAPSHOT" | "START" | "STATUS" | "TABLES" | "TEXT" | "THAN" | "TIME" %prec lowerThanStringLitToken | "TIMESTAMP" %prec lowerThanStringLitToken
-| "TRANSACTION" | "TRUNCATE" | "UNKNOWN" | "VALUE" | "WARNINGS" | "YEAR" | "MODE"  | "WEEK"  | "ANY" | "SOME" | "USER" | "IDENTIFIED"
-| "COLLATION" | "COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS"
+| "TRACE" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN" | "VALUE" | "WARNINGS" | "YEAR" | "MODE"  | "WEEK"  | "ANY" | "SOME" | "USER" | "IDENTIFIED"
+| "COLLATION" | "COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MASTER" | "MAX_ROWS"
 | "MIN_ROWS" | "NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "GRANTS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION" | "JSON"
 | "REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "INDEXES" | "PROCESSLIST"
 | "SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "MODIFY" | "EVENTS" | "PARTITIONS"
@@ -4605,7 +4626,7 @@ UnionStmt:
 	{
 		st := $4.(*ast.SelectStmt)
 		union := $1.(*ast.UnionStmt)
-		union.Distinct = union.Distinct || $3.(bool)
+		st.IsAfterUnionDistinct = $3.(bool)
 		lastSelect := union.SelectList.Selects[len(union.SelectList.Selects)-1]
 		endOffset := parser.endOffset(&yyS[yypt-5])
 		parser.setLastSelectFieldText(lastSelect, endOffset)
@@ -4616,19 +4637,24 @@ UnionStmt:
 		if $6 != nil {
 		    union.Limit = $6.(*ast.Limit)
 		}
+		if $5 == nil && $6 == nil {
+		    st.LockTp = $7.(ast.SelectLockType)
+		}
 		$$ = union
 	}
 |	UnionClauseList "UNION" UnionOpt SelectStmtFromDual SelectStmtLimit SelectLockOpt
 	{
 		st := $4.(*ast.SelectStmt)
 		union := $1.(*ast.UnionStmt)
-		union.Distinct = union.Distinct || $3.(bool)
+		st.IsAfterUnionDistinct = $3.(bool)
 		lastSelect := union.SelectList.Selects[len(union.SelectList.Selects)-1]
 		endOffset := parser.endOffset(&yyS[yypt-4])
 		parser.setLastSelectFieldText(lastSelect, endOffset)
 		union.SelectList.Selects = append(union.SelectList.Selects, st)
 		if $5 != nil {
 		    union.Limit = $5.(*ast.Limit)
+		} else {
+		    st.LockTp = $6.(ast.SelectLockType)
 		}
 		$$ = union
 	}
@@ -4637,7 +4663,7 @@ UnionStmt:
 	{
 		st := $4.(*ast.SelectStmt)
 		union := $1.(*ast.UnionStmt)
-		union.Distinct = union.Distinct || $3.(bool)
+		st.IsAfterUnionDistinct = $3.(bool)
 		lastSelect := union.SelectList.Selects[len(union.SelectList.Selects)-1]
 		endOffset := parser.endOffset(&yyS[yypt-5])
 		parser.setLastSelectFieldText(lastSelect, endOffset)
@@ -4648,16 +4674,20 @@ UnionStmt:
 		if $6 != nil {
 			union.Limit = $6.(*ast.Limit)
 		}
+		if $5 == nil && $6 == nil {
+			st.LockTp = $7.(ast.SelectLockType)
+		}
 		$$ = union
 	}
 |	UnionClauseList "UNION" UnionOpt '(' SelectStmt ')' OrderByOptional SelectStmtLimit
 	{
 		union := $1.(*ast.UnionStmt)
-		union.Distinct = union.Distinct || $3.(bool)
 		lastSelect := union.SelectList.Selects[len(union.SelectList.Selects)-1]
 		endOffset := parser.endOffset(&yyS[yypt-6])
 		parser.setLastSelectFieldText(lastSelect, endOffset)
 		st := $5.(*ast.SelectStmt)
+		st.IsInBraces = true
+		st.IsAfterUnionDistinct = $3.(bool)
 		endOffset = parser.endOffset(&yyS[yypt-2])
 		parser.setLastSelectFieldText(st, endOffset)
 		union.SelectList.Selects = append(union.SelectList.Selects, st)
@@ -4681,11 +4711,12 @@ UnionClauseList:
 |	UnionClauseList "UNION" UnionOpt UnionSelect
 	{
 		union := $1.(*ast.UnionStmt)
-		union.Distinct = union.Distinct || $3.(bool)
+		st := $4.(*ast.SelectStmt)
+		st.IsAfterUnionDistinct = $3.(bool)
 		lastSelect := union.SelectList.Selects[len(union.SelectList.Selects)-1]
 		endOffset := parser.endOffset(&yyS[yypt-2])
 		parser.setLastSelectFieldText(lastSelect, endOffset)
-		union.SelectList.Selects = append(union.SelectList.Selects, $4.(*ast.SelectStmt))
+		union.SelectList.Selects = append(union.SelectList.Selects, st)
 		$$ = union
 	}
 
@@ -4697,6 +4728,7 @@ UnionSelect:
 |	'(' SelectStmt ')'
 	{
 		st := $2.(*ast.SelectStmt)
+		st.IsInBraces = true
 		endOffset := parser.endOffset(&yyS[yypt])
 		parser.setLastSelectFieldText(st, endOffset)
 		$$ = $2
@@ -5123,6 +5155,12 @@ ShowStmt:
 			User:	$4.(*auth.UserIdentity),
 		}
 	}
+|	"SHOW" "MASTER" "STATUS"
+	{
+		$$ = &ast.ShowStmt{
+			Tp:	ast.ShowMasterStatus,
+		}
+	}
 |	"SHOW" OptFull "PROCESSLIST"
 	{
 		$$ = &ast.ShowStmt{
@@ -5172,7 +5210,7 @@ ShowStmt:
 		}
 		$$ = stmt
 	}
-|   "SHOW" "STATS_HEALTHY" ShowLikeOrWhereOpt
+|	"SHOW" "STATS_HEALTHY" ShowLikeOrWhereOpt
 	{
 		stmt := &ast.ShowStmt{
 			Tp: ast.ShowStatsHealthy,
@@ -5190,6 +5228,12 @@ ShowStmt:
 	{
 		$$ = &ast.ShowStmt{
 			Tp: ast.ShowProfiles,
+		}
+	}
+|	"SHOW" "PRIVILEGES"
+	{
+		$$ = &ast.ShowStmt{
+			Tp: ast.ShowPrivileges,
 		}
 	}
 
@@ -5365,21 +5409,13 @@ ShowDatabaseNameOpt:
 	{
 		$$ = ""
 	}
-|	"FROM" DBName
-	{
-		$$ = $2.(string)
-	}
-|	"IN" DBName
+|	FromOrIn DBName
 	{
 		$$ = $2.(string)
 	}
 
 ShowTableAliasOpt:
-	"FROM" TableName
-	{
-		$$ = $2.(*ast.TableName)
-	}
-|	"IN" TableName
+	FromOrIn TableName
 	{
 		$$ = $2.(*ast.TableName)
 	}
@@ -5486,11 +5522,20 @@ Statement:
 		// TODO: This is used to fix issue #320. There may be a better solution.
 		$$ = $1.(*ast.SubqueryExpr).Query.(ast.StmtNode)
 	}
+|	TraceStmt
 |	TruncateTableStmt
 |	UpdateStmt
 |	UseStmt
 |	UnlockTablesStmt
 |	LockTablesStmt
+
+TraceableStmt:
+	SelectStmt
+|	DeleteFromStmt
+|	UpdateStmt
+|	InsertIntoStmt
+|	ReplaceIntoStmt
+|	UnionStmt
 
 ExplainableStmt:
 	SelectStmt
