@@ -118,8 +118,7 @@ func (e *InsertExec) checkBatchLimit() error {
 
 // batchUpdateDupRows updates multi-rows in batch if they are duplicate with rows in table.
 func (e *InsertExec) batchUpdateDupRows(newRows []types.DatumRow, ignoreErr bool) error {
-	var err error
-	e.toBeCheckRows, e.dupKeyValues, err = e.batchGetInsertKeys(e.ctx, e.Table, newRows)
+	err := e.batchGetInsertKeys(e.ctx, e.Table, newRows)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -130,7 +129,7 @@ func (e *InsertExec) batchUpdateDupRows(newRows []types.DatumRow, ignoreErr bool
 		return errors.Trace(err)
 	}
 
-	for i, r := range e.toBeCheckRows {
+	for i, r := range e.toBeCheckedRows {
 		if r.handleKey != nil {
 			if _, found := e.dupKeyValues[string(r.handleKey.newKeyValue.key)]; found {
 				handle, err := tablecodec.DecodeRowKey(r.handleKey.newKeyValue.key)

@@ -496,13 +496,12 @@ func (e *InsertValues) handleLoadDataWarnings(err error, logInfo string) {
 func (e *InsertValues) batchCheckAndInsert(rows []types.DatumRow, insertOneRow func(row types.DatumRow) (int64, error)) error {
 	// all the rows will be checked, so it is safe to set BatchCheck = true
 	e.ctx.GetSessionVars().StmtCtx.BatchCheck = true
-	var err error
-	e.toBeCheckRows, e.dupKeyValues, err = e.batchGetInsertKeys(e.ctx, e.Table, rows)
+	err := e.batchGetInsertKeys(e.ctx, e.Table, rows)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// append warnings and get no duplicated error rows
-	for i, r := range e.toBeCheckRows {
+	for i, r := range e.toBeCheckedRows {
 		if r.handleKey != nil {
 			if _, found := e.dupKeyValues[string(r.handleKey.newKeyValue.key)]; found {
 				rows[i] = nil
