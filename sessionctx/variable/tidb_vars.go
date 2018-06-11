@@ -202,6 +202,7 @@ const (
 
 // Process global variables.
 var (
-	ProcessGeneralLog     uint32
-	DDLReorgWorkerCounter int32 = DefTiDBDDLReorgWorkerCount
+	ProcessGeneralLog      uint32
+	ddlReorgWorkerCounter  int32 = DefTiDBDDLReorgWorkerCount
+	maxDDLReorgWorkerCount int32 = 128
 )

@@ -27,14 +27,18 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
-// SetDDLReorgWorkerCounter sets DDLReorgWorkerCounter count.
+// SetDDLReorgWorkerCounter sets ddlReorgWorkerCounter count.
+// Max worker count is maxDDLReorgWorkerCount.
 func SetDDLReorgWorkerCounter(cnt int32) {
-	atomic.StoreInt32(&DDLReorgWorkerCounter, cnt)
+	if cnt > maxDDLReorgWorkerCount {
+		cnt = maxDDLReorgWorkerCount
+	}
+	atomic.StoreInt32(&ddlReorgWorkerCounter, cnt)
 }
 
-// GetDDLReorgWorkerCounter gets DDLReorgWorkerCounter.
+// GetDDLReorgWorkerCounter gets ddlReorgWorkerCounter.
 func GetDDLReorgWorkerCounter() int32 {
-	return atomic.LoadInt32(&DDLReorgWorkerCounter)
+	return atomic.LoadInt32(&ddlReorgWorkerCounter)
 }
 
 // GetSessionSystemVar gets a system variable.
