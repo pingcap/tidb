@@ -19,7 +19,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/codec"
 )
 
 type avgFunction struct {
@@ -104,10 +103,4 @@ func (af *avgFunction) GetResult(evalCtx *AggEvaluateContext) (d types.Datum) {
 // GetPartialResult implements Aggregation interface.
 func (af *avgFunction) GetPartialResult(evalCtx *AggEvaluateContext) []types.Datum {
 	return []types.Datum{types.NewIntDatum(evalCtx.Count), evalCtx.Value}
-}
-
-// GetInterResult implements Aggregation interface.
-func (af *avgFunction) GetInterResult(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext) (result []byte, err error) {
-	// TODO: support distinct values
-	return codec.EncodeValue(sc, result, types.NewIntDatum(evalCtx.Count), evalCtx.Value)
 }

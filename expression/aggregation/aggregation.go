@@ -40,8 +40,6 @@ type Aggregation interface {
 	// GetResult will be called when all data have been processed.
 	GetResult(evalCtx *AggEvaluateContext) types.Datum
 
-	GetInterResult(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext) ([]byte, error)
-
 	// Create a new AggEvaluateContext for the aggregation function.
 	CreateContext(sc *stmtctx.StatementContext) *AggEvaluateContext
 
@@ -206,11 +204,16 @@ func (af *aggFunction) GetFinalAggFunc(idx int) (_ int, newAggFunc Aggregation) 
 	case Partial2Mode:
 		desc := af.Clone()
 		desc.Mode = FinalMode
+		idx += len(desc.Args)
 		newAggFunc = desc.GetAggFunc()
 	case FinalMode, CompleteMode:
 		panic("GetFinalAggFunc should not be called when aggMode is FinalMode/CompleteMode.")
 	}
 	return idx, newAggFunc
+}
+
+func (af *aggFunction) GetArgs() []expression.Expression {
+	return af.Args
 }
 
 // NeedCount indicates whether the aggregate function should record count.
@@ -227,12 +230,4 @@ func NeedValue(name string) bool {
 	default:
 		return false
 	}
-}
-
-func (af *aggFunction) GetArgs() []expression.Expression {
-	return af.Args
-}
-
-func buildInterResult(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, af *Aggregation) {
-
 }

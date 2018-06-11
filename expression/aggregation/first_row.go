@@ -17,7 +17,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/codec"
 )
 
 type firstRowFunction struct {
@@ -53,10 +52,4 @@ func (ff *firstRowFunction) ResetContext(_ *stmtctx.StatementContext, evalCtx *A
 // GetPartialResult implements Aggregation interface.
 func (ff *firstRowFunction) GetPartialResult(evalCtx *AggEvaluateContext) []types.Datum {
 	return []types.Datum{ff.GetResult(evalCtx)}
-}
-
-// GetInterResult implements Aggregation interface.
-func (ff *firstRowFunction) GetInterResult(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext) (result []byte, err error) {
-	// TODO: support distinct values
-	return codec.EncodeValue(sc, result, evalCtx.Value)
 }

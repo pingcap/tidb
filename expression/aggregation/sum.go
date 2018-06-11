@@ -16,7 +16,6 @@ package aggregation
 import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/codec"
 )
 
 type sumFunction struct {
@@ -36,10 +35,4 @@ func (sf *sumFunction) GetResult(evalCtx *AggEvaluateContext) (d types.Datum) {
 // GetPartialResult implements Aggregation interface.
 func (sf *sumFunction) GetPartialResult(evalCtx *AggEvaluateContext) []types.Datum {
 	return []types.Datum{sf.GetResult(evalCtx)}
-}
-
-// GetInterResult implements Aggregation interface.
-func (sf *sumFunction) GetInterResult(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext) (result []byte, err error) {
-	// TODO: support distinct values
-	return codec.EncodeValue(sc, result, evalCtx.Value)
 }
