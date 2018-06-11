@@ -186,7 +186,7 @@ func (s *testSuite) TestUser(c *C) {
 
 	// Test drop user meet error
 	_, err = tk.Exec(dropUserSQL)
-	c.Assert(terror.ErrorEqual(err, terror.ClassExecutor.New(executor.CodeCannotUser, "")), IsTrue)
+	c.Assert(terror.ErrorEqual(err, executor.ErrCannotUser.GenByArgs("DROP USER", "")), IsTrue)
 
 	createUserSQL = `CREATE USER 'test1'@'localhost'`
 	tk.MustExec(createUserSQL)
@@ -195,7 +195,7 @@ func (s *testSuite) TestUser(c *C) {
 
 	dropUserSQL = `DROP USER 'test1'@'localhost', 'test2'@'localhost', 'test3'@'localhost';`
 	_, err = tk.Exec(dropUserSQL)
-	c.Assert(terror.ErrorEqual(err, terror.ClassExecutor.New(executor.CodeCannotUser, "")), IsTrue)
+	c.Assert(terror.ErrorEqual(err, executor.ErrCannotUser.GenByArgs("DROP USER", "")), IsTrue)
 }
 
 func (s *testSuite) TestSetPwd(c *C) {
