@@ -923,6 +923,20 @@ func (s *testDBSuite) TestColumn(c *C) {
 	s.tk.MustExec("drop table t2")
 }
 
+func (s *testDBSuite) TestAddColumnTooMany(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+	count := ddl.TableColumnCountLimit - 1
+	var cols []string
+	for i := 0; i <= count; i++ {
+		cols = append(cols, fmt.Sprintf("a%d int", i))
+	}
+	createSQL := fmt.Sprintf("create table t_column_too_many (%s)", strings.Join(cols, ","))
+	s.tk.MustExec(createSQL)
+	alterSQL := "alter table t_column_too_many add column a_512 int"
+	s.testErrorCode(c, alterSQL, tmysql.ErrTooManyFields)
+}
+
 func sessionExec(c *C, s kv.Storage, sql string) {
 	se, err := session.CreateSession4Test(s)
 	c.Assert(err, IsNil)
