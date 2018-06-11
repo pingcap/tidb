@@ -246,7 +246,7 @@ var defaultConf = Config{
 	Lease:           "45s",
 	TokenLimit:      1000,
 	OOMAction:       "log",
-	MemQuotaQuery:   5 << 30,
+	MemQuotaQuery:   32 << 30,
 	EnableStreaming: false,
 	TxnLocalLatches: TxnLocalLatches{
 		Enabled:  false,
