@@ -608,31 +608,6 @@ func init() {
 	}
 }
 
-// ProjectionExec represents a select fields executor.
-type ProjectionExec struct {
-	baseExecutor
-
-	evaluatorSuit    *expression.EvaluatorSuit
-	calculateNoDelay bool
-}
-
-// Open implements the Executor Open interface.
-func (e *ProjectionExec) Open(ctx context.Context) error {
-	if err := e.baseExecutor.Open(ctx); err != nil {
-		return errors.Trace(err)
-	}
-	return nil
-}
-
-// Next implements the Executor Next interface.
-func (e *ProjectionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
-	if err := e.children[0].Next(ctx, e.childrenResults[0]); err != nil {
-		return errors.Trace(err)
-	}
-	return errors.Trace(e.evaluatorSuit.Run(e.ctx, e.childrenResults[0], chk))
-}
-
 // TableDualExec represents a dual table executor.
 type TableDualExec struct {
 	baseExecutor

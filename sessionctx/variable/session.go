@@ -309,6 +309,7 @@ func NewSessionVars() *SessionVars {
 		IndexSerialScanConcurrency: DefIndexSerialScanConcurrency,
 		IndexLookupJoinConcurrency: DefIndexLookupJoinConcurrency,
 		HashJoinConcurrency:        DefTiDBHashJoinConcurrency,
+		ProjectionConcurrency:      DefTiDBProjectionConcurrency,
 		DistSQLScanConcurrency:     DefDistSQLScanConcurrency,
 		HashAggPartialConcurrency:  DefTiDBHashAggPartialConcurrency,
 		HashAggFinalConcurrency:    DefTiDBHashAggFinalConcurrency,
@@ -496,6 +497,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.HashAggPartialConcurrency = tidbOptPositiveInt32(val, DefTiDBHashAggPartialConcurrency)
 	case TiDBHashAggFinalConcurrency:
 		s.HashAggFinalConcurrency = tidbOptPositiveInt32(val, DefTiDBHashAggFinalConcurrency)
+	case TiDBProjectionConcurrency:
+		s.ProjectionConcurrency = tidbOptInt64(val, DefTiDBProjectionConcurrency)
 	case TiDBDistSQLScanConcurrency:
 		s.DistSQLScanConcurrency = tidbOptPositiveInt32(val, DefDistSQLScanConcurrency)
 	case TiDBIndexSerialScanConcurrency:
@@ -578,6 +581,9 @@ type Concurrency struct {
 
 	// HashAggPartialConcurrency is the number of concurrent hash aggregation final worker.
 	HashAggFinalConcurrency int
+
+	// ProjectionConcurrency is the number of concurrent projection worker.
+	ProjectionConcurrency int64
 
 	// IndexSerialScanConcurrency is the number of concurrent index serial scan worker.
 	IndexSerialScanConcurrency int

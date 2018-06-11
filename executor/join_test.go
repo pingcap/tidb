@@ -847,7 +847,7 @@ func (s *testSuite) TestMergejoinOrder(c *C) {
 		"TableReader_11 MergeJoin_15  root data:TableScan_10 10000.00",
 		"TableScan_12   cop table:t2, range:[-inf,+inf], keep order:true 10000.00",
 		"TableReader_13 MergeJoin_15  root data:TableScan_12 10000.00",
-		"MergeJoin_15  TableReader_11,TableReader_13 root left outer join, left cond:[ne(test.t1.a, 3)], left key:test.t1.a, right key:test.t2.a 12500.00",
+		"MergeJoin_15  TableReader_11,TableReader_13 root left outer join, left key:test.t1.a, right key:test.t2.a, left cond:[ne(test.t1.a, 3)] 12500.00",
 	))
 
 	tk.MustExec("set @@tidb_max_chunk_size=1")
