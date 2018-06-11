@@ -564,11 +564,11 @@ func (e *InsertValues) encodeNewRow(row types.DatumRow) ([]byte, error) {
 
 // getKeysNeedCheck gets keys converted from to-be-insert rows to record keys and unique index keys,
 // which need to be checked whether they are duplicate keys.
-func (e *InsertValues) getKeysNeedCheck(insertRows []types.DatumRow) ([][]keyWithDupError, error) {
-	numUniqueIndeices := 0
+func (e *InsertValues) getKeysNeedCheck(rows []types.DatumRow) ([][]keyWithDupError, error) {
+	nUnique := 0
 	for _, v := range e.Table.WritableIndices() {
 		if v.Meta().Unique {
-			numUniqueIndeices++
+			nUnique++
 		}
 	}
 
@@ -583,9 +583,9 @@ func (e *InsertValues) getKeysNeedCheck(insertRows []types.DatumRow) ([][]keyWit
 		}
 	}
 
-	rowWithKeys := make([][]keyWithDupError, 0, len(insertRows))
-	for _, row := range insertRows {
-		keysWithErr := make([]keyWithDupError, 0, numUniqueIndeices+1)
+	rowWithKeys := make([][]keyWithDupError, 0, len(rows))
+	for _, row := range rows {
+		keysWithErr := make([]keyWithDupError, 0, nUnique+1)
 		newRowValue, err := e.encodeNewRow(row)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -639,9 +639,9 @@ func (e *InsertValues) getKeysNeedCheck(insertRows []types.DatumRow) ([][]keyWit
 }
 
 // batchGetInsertKeys uses batch-get to fetch all key-value pairs to be checked for ignore or duplicate key update.
-func (e *InsertValues) batchGetInsertKeys(insertRows []types.DatumRow) ([][]keyWithDupError, map[string][]byte, error) {
+func (e *InsertValues) batchGetInsertKeys(rows []types.DatumRow) ([][]keyWithDupError, map[string][]byte, error) {
 	// Get keys need to be checked.
-	keysInRows, err := e.getKeysNeedCheck(insertRows)
+	keysInRows, err := e.getKeysNeedCheck(rows)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}

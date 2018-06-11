@@ -60,7 +60,7 @@ func (e *InsertExec) insertOneRow(row types.DatumRow) (int64, error) {
 	return h, nil
 }
 
-func (e *InsertExec) exec(insertRows []types.DatumRow) error {
+func (e *InsertExec) exec(rows []types.DatumRow) error {
 	// If tidb_batch_insert is ON and not in a transaction, we could use BatchInsert mode.
 	sessVars := e.ctx.GetSessionVars()
 	defer sessVars.CleanBuffers()
@@ -74,7 +74,7 @@ func (e *InsertExec) exec(insertRows []types.DatumRow) error {
 	// If `ON DUPLICATE KEY UPDATE` is specified, and no `IGNORE` keyword,
 	// the to-be-insert rows will be check on duplicate keys and update to the new rows.
 	if len(e.OnDuplicate) > 0 && !ignoreErr {
-		err := e.onDuplicateUpdate(insertRows)
+		err := e.onDuplicateUpdate(rows)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -86,12 +86,12 @@ func (e *InsertExec) exec(insertRows []types.DatumRow) error {
 			// However, if the `on duplicate update` is also specified, the duplicated row will be updated.
 			// Using BatchGet in insert ignore to mark rows as duplicated before we add records to the table.
 			var err error
-			insertRows, err = e.batchMarkDupRows(insertRows)
+			rows, err = e.batchMarkDupRows(rows)
 			if err != nil {
 				return errors.Trace(err)
 			}
 		}
-		for _, row := range insertRows {
+		for _, row := range rows {
 			// duplicate row will be marked as nil in batchMarkDupRows if
 			// IgnoreErr is true. For IgnoreErr is false, it is a protection.
 			if row == nil {
@@ -253,14 +253,14 @@ func (e *InsertExec) updateDupKeyValues(keys []keyWithDupError, oldHandle int64,
 }
 
 // onDuplicateUpdate updates multi-rows in batch if they are duplicate with rows in table.
-func (e *InsertExec) onDuplicateUpdate(insertRows []types.DatumRow) (err error) {
-	e.uniqueKeysInRows, e.dupKeyValues, err = e.batchGetInsertKeys(insertRows)
+func (e *InsertExec) onDuplicateUpdate(rows []types.DatumRow) (err error) {
+	e.uniqueKeysInRows, e.dupKeyValues, err = e.batchGetInsertKeys(rows)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	// Batch get the to-be-updated rows in storage.
-	err = e.initDupOldRowValue(insertRows)
+	err = e.initDupOldRowValue(rows)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -268,12 +268,12 @@ func (e *InsertExec) onDuplicateUpdate(insertRows []types.DatumRow) (err error) 
 	for i, keysInRow := range e.uniqueKeysInRows {
 		for _, k := range keysInRow {
 			if val, found := e.dupKeyValues[string(k.key)]; found {
-				err := e.updateDupRow(keysInRow, k, val, insertRows[i], e.OnDuplicate)
+				err := e.updateDupRow(keysInRow, k, val, rows[i], e.OnDuplicate)
 				if err != nil {
 					return errors.Trace(err)
 				}
 				// Clean up row for latest add record operation.
-				insertRows[i] = nil
+				rows[i] = nil
 				break
 			}
 		}
@@ -281,8 +281,8 @@ func (e *InsertExec) onDuplicateUpdate(insertRows []types.DatumRow) (err error) 
 		// we should do insert the row,
 		// and key-values should be filled back to dupOldRowValues for the further row check,
 		// due to there may be duplicate keys inside the insert statement.
-		if insertRows[i] != nil {
-			newHandle, err := e.insertOneRow(insertRows[i])
+		if rows[i] != nil {
+			newHandle, err := e.insertOneRow(rows[i])
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -355,17 +355,17 @@ func (e *InsertExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return errors.Trace(err)
 	}
 
-	var insertRows []types.DatumRow
+	var rows []types.DatumRow
 	if len(e.children) > 0 && e.children[0] != nil {
-		insertRows, err = e.getRowsFromSelectStmt(ctx, insertCols)
+		rows, err = e.getRowsFromSelectStmt(ctx, insertCols)
 	} else {
-		insertRows, err = e.getRows(insertCols)
+		rows, err = e.getRows(insertCols)
 	}
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	return errors.Trace(e.exec(insertRows))
+	return errors.Trace(e.exec(rows))
 }
 
 // Close implements the Executor Close interface.
