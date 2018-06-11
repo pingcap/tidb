@@ -390,7 +390,7 @@ func isOwner(ownerManager owner.Manager, id string) bool {
 	return isOwner
 }
 
-// normalWorker returns the first worker. The ddl structure only a worker before we implement the parallel worker.
+// normalWorker returns the first worker. The ddl structure only one worker before we implement the parallel worker.
 // It's used for testing.
 func (d *ddl) normalWorker() *worker {
 	if len(d.workers) == 0 {

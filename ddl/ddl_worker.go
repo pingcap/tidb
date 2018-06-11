@@ -44,7 +44,7 @@ const (
 )
 
 // worker is used for handling DDL jobs.
-// Now we have tow kinds of workers, but we only use the normalWorker.
+// Now we have two kinds of workers, but we only use the normalWorker.
 // TODO: update the comments when we support the addIdxWorker.
 type worker struct {
 	tp     workerType

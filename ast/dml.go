@@ -478,6 +478,8 @@ type SelectStmt struct {
 	TableHints []*TableOptimizerHint
 	// IsAfterUnionDistinct indicates whether it's a stmt after "union distinct".
 	IsAfterUnionDistinct bool
+	// IsInBraces indicates whether it's a stmt in brace.
+	IsInBraces bool
 }
 
 // Accept implements Node Accept interface.
@@ -962,6 +964,7 @@ const (
 	ShowStatsHealthy
 	ShowPlugins
 	ShowProfiles
+	ShowMasterStatus
 )
 
 // ShowStmt is a statement to provide information about databases, tables, columns and so on.
