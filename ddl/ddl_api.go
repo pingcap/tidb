@@ -549,11 +549,11 @@ func checkAddColumnTooManyColumns(oldCols []*model.ColumnInfo) error {
 // checkPointTypeColumnDigitLength checks
 func checkPointTypeColumnDigitLength(colDefs []*ast.ColumnDef) error {
 	for _, colDef := range colDefs {
-		if colDef.Tp.Tp != mysql.TypeNewDecimal && colDef.Tp.Tp != mysql.TypeFloat && colDef.Tp.Tp != mysql.TypeDouble {
-			continue
-		}
-		if colDef.Tp.Flen < colDef.Tp.Decimal {
-			return types.ErrMBiggerThanD.GenByArgs(colDef.Name)
+		switch colDef.Tp.Tp {
+		case mysql.TypeNewDecimal, mysql.TypeDouble, mysql.TypeFloat:
+			if colDef.Tp.Flen < colDef.Tp.Decimal {
+				return types.ErrMBiggerThanD.GenByArgs(colDef.Name)
+			}
 		}
 	}
 	return nil

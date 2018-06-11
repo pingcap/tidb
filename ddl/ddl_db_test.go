@@ -1562,6 +1562,7 @@ func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
 
 func (s *testDBSuite) TestCreateTableWithFloatType(c *C) {
 	s.tk.MustExec("use test")
+	s.tk.MustExec("drop table if exists t")
 	s.testErrorCode(c, "create table t (a decimal(1, 2))", tmysql.ErrMBiggerThanD)
 	s.testErrorCode(c, "create table t (a float(1, 2))", tmysql.ErrMBiggerThanD)
 	s.testErrorCode(c, "create table t (a double(1, 2))", tmysql.ErrMBiggerThanD)
