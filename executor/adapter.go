@@ -325,6 +325,9 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 	return e, nil
 }
 
+// QueryReplacer replaces new line and tab for grep result including query string.
+var QueryReplacer = strings.NewReplacer("\r", " ", "\n", " ", "\t", " ")
+
 func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
 	level := log.GetLevel()
 	if level < log.WarnLevel {
@@ -340,19 +343,27 @@ func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
 	if len(sql) > int(cfg.Log.QueryLogMaxLen) {
 		sql = fmt.Sprintf("%.*q(len:%d)", cfg.Log.QueryLogMaxLen, sql, len(a.Text))
 	}
-	connID := a.Ctx.GetSessionVars().ConnectionID
-	currentDB := a.Ctx.GetSessionVars().CurrentDB
-	tableIDs := strings.Replace(fmt.Sprintf("%v", a.Ctx.GetSessionVars().StmtCtx.TableIDs), " ", ",", -1)
-	indexIDs := strings.Replace(fmt.Sprintf("%v", a.Ctx.GetSessionVars().StmtCtx.IndexIDs), " ", ",", -1)
+	sql = QueryReplacer.Replace(sql)
 
+	sessVars := a.Ctx.GetSessionVars()
+	connID := sessVars.ConnectionID
+	currentDB := sessVars.CurrentDB
+	var tableIDs, indexIDs string
+	if len(sessVars.StmtCtx.TableIDs) > 0 {
+		tableIDs = strings.Replace(fmt.Sprintf("table_ids:%v ", a.Ctx.GetSessionVars().StmtCtx.TableIDs), " ", ",", -1)
+	}
+	if len(sessVars.StmtCtx.IndexIDs) > 0 {
+		indexIDs = strings.Replace(fmt.Sprintf("index_ids:%v ", a.Ctx.GetSessionVars().StmtCtx.IndexIDs), " ", ",", -1)
+	}
+	user := a.Ctx.GetSessionVars().User
 	if costTime < threshold {
 		logutil.SlowQueryLogger.Debugf(
-			"[QUERY] cost_time:%v succ:%v connection_id:%v txn_start_ts:%v database:%v table_ids:%v index_ids:%v sql:%v",
-			costTime, succ, connID, txnTS, currentDB, tableIDs, indexIDs, sql)
+			"[QUERY] cost_time:%v succ:%v con:%v user:%s txn_start_ts:%v database:%v %v%vsql:%v",
+			costTime, succ, connID, user, txnTS, currentDB, tableIDs, indexIDs, sql)
 	} else {
 		logutil.SlowQueryLogger.Warnf(
-			"[SLOW_QUERY] cost_time:%v succ:%v connection_id:%v txn_start_ts:%v database:%v table_ids:%v index_ids:%v sql:%v",
-			costTime, succ, connID, txnTS, currentDB, tableIDs, indexIDs, sql)
+			"[SLOW_QUERY] cost_time:%v succ:%v con:%v user:%s txn_start_ts:%v database:%v %v%vsql:%v",
+			costTime, succ, connID, user, txnTS, currentDB, tableIDs, indexIDs, sql)
 	}
 }
 
