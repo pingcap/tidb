@@ -287,10 +287,6 @@ func (d *ddl) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnI
 		return ver, errors.Trace(err)
 	}
 
-	if err = checkTableNameChange(t, job, tblInfo.Name.O); err != nil {
-		return ver, errors.Trace(err)
-	}
-
 	oldCol := model.FindColumnInfo(tblInfo.Columns, oldName.L)
 	if oldCol == nil || oldCol.State != model.StatePublic {
 		job.State = model.JobStateCancelled
