@@ -17,6 +17,7 @@ import (
 	"fmt"
 
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
@@ -81,6 +82,8 @@ type Context interface {
 	StmtGetMutation(int64) *binlog.TableMutation
 	// StmtAddDirtyTableOP adds the dirty table operation for current statement.
 	StmtAddDirtyTableOP(op int, tid int64, handle int64, row []types.Datum)
+	// DDLOwnerChecker returns owner.DDLOwnerChecker.
+	DDLOwnerChecker() owner.DDLOwnerChecker
 }
 
 type basicCtxType int
@@ -107,12 +110,10 @@ const (
 	LastExecuteDDL basicCtxType = 3
 )
 
-type contextKey string
-
 // ConnID is the key in context.
-const ConnID contextKey = "conn ID"
+const ConnID kv.ContextKey = "conn ID"
 
-// SetConnID2Ctx sets the connection ID to context.
-func SetConnID2Ctx(ctx context.Context, sessCtx Context) context.Context {
+// SetCommitCtx sets the variables for context before commit a transaction.
+func SetCommitCtx(ctx context.Context, sessCtx Context) context.Context {
 	return context.WithValue(ctx, ConnID, sessCtx.GetSessionVars().ConnectionID)
 }

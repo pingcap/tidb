@@ -294,14 +294,40 @@ type sqlWithErr struct {
 	expectErr error
 }
 
+type expectQuery struct {
+	sql  string
+	rows []string
+}
+
+// https://github.com/pingcap/tidb/pull/6249 fixes the following two test cases.
+func (s *testStateChangeSuite) TestWriteOnlyWriteNULL(c *C) {
+	sqls := make([]sqlWithErr, 1)
+	sqls[0] = sqlWithErr{"insert t set c1 = 'c1_new', c3 = '2019-02-12', c4 = 8 on duplicate key update c1 = values(c1)", nil}
+	addColumnSQL := "alter table t add column c5 int not null default 1 after c4"
+	expectQuery := &expectQuery{"select c4, c5 from t", []string{"8 1"}}
+	// TODO: This case should always fail in write-only state, but it doesn't. We use write-reorganization state here to keep it running stable. It need a double check.
+	s.runTestInSchemaState(c, model.StateWriteReorganization, "", addColumnSQL, sqls, expectQuery)
+}
+
+func (s *testStateChangeSuite) TestWriteOnlyOnDupUpdate(c *C) {
+	sqls := make([]sqlWithErr, 3)
+	sqls[0] = sqlWithErr{"delete from t", nil}
+	sqls[1] = sqlWithErr{"insert t set c1 = 'c1_dup', c3 = '2018-02-12', c4 = 2 on duplicate key update c1 = values(c1)", nil}
+	sqls[2] = sqlWithErr{"insert t set c1 = 'c1_new', c3 = '2019-02-12', c4 = 2 on duplicate key update c1 = values(c1)", nil}
+	addColumnSQL := "alter table t add column c5 int not null default 1 after c4"
+	expectQuery := &expectQuery{"select c4, c5 from t", []string{"2 1"}}
+	// TODO: This case should always fail in write-only state, but it doesn't. We use write-reorganization state here to keep it running stable. It need a double check.
+	s.runTestInSchemaState(c, model.StateWriteReorganization, "", addColumnSQL, sqls, expectQuery)
+}
+
 // TestWriteOnly tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
 func (s *testStateChangeSuite) TestWriteOnly(c *C) {
 	sqls := make([]sqlWithErr, 3)
 	sqls[0] = sqlWithErr{"delete from t where c1 = 'a'", nil}
 	sqls[1] = sqlWithErr{"update t use index(idx2) set c1 = 'c1_update' where c1 = 'a'", nil}
-	sqls[0] = sqlWithErr{"insert t set c1 = 'c1_insert', c3 = '2018-02-12', c4 = 1", nil}
-	addColumnSQL := "alter table t add column a int not null default 1 first"
-	s.runTestInSchemaState(c, model.StateWriteOnly, "", addColumnSQL, sqls)
+	sqls[2] = sqlWithErr{"insert t set c1 = 'c1_insert', c3 = '2018-02-12', c4 = 1", nil}
+	addColumnSQL := "alter table t add column c5 int not null default 1 first"
+	s.runTestInSchemaState(c, model.StateWriteOnly, "", addColumnSQL, sqls, nil)
 }
 
 // TestDeletaOnly tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
@@ -310,11 +336,11 @@ func (s *testStateChangeSuite) TestDeleteOnly(c *C) {
 	sqls[0] = sqlWithErr{"insert t set c1 = 'c1_insert', c3 = '2018-02-12', c4 = 1",
 		errors.Errorf("Can't find column c1")}
 	dropColumnSQL := "alter table t drop column c1"
-	s.runTestInSchemaState(c, model.StateDeleteOnly, "", dropColumnSQL, sqls)
+	s.runTestInSchemaState(c, model.StateDeleteOnly, "", dropColumnSQL, sqls, nil)
 }
 
 func (s *testStateChangeSuite) runTestInSchemaState(c *C, state model.SchemaState, tableName, alterTableSQL string,
-	sqlWithErrs []sqlWithErr) {
+	sqlWithErrs []sqlWithErr, expectQuery *expectQuery) {
 	_, err := s.se.Execute(context.Background(), `create table t (
 		c1 varchar(64),
 		c2 enum('N','Y') not null default 'N',
@@ -360,6 +386,15 @@ func (s *testStateChangeSuite) runTestInSchemaState(c *C, state model.SchemaStat
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	callback = &ddl.TestDDLCallback{}
 	d.SetHook(callback)
+
+	if expectQuery != nil {
+		tk := testkit.NewTestKit(c, s.store)
+		tk.MustExec("use test_db_state")
+		result, err := s.execQuery(tk, expectQuery.sql)
+		c.Assert(err, IsNil)
+		err = checkResult(result, testkit.Rows(expectQuery.rows...))
+		c.Assert(err, IsNil)
+	}
 }
 
 func (s *testStateChangeSuite) execQuery(tk *testkit.TestKit, sql string, args ...interface{}) (*testkit.Result, error) {
@@ -433,6 +468,47 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 }
 
 func (s *testStateChangeSuite) TestParallelAlterModifyColumn(c *C) {
+	sql := "ALTER TABLE t MODIFY COLUMN b int FIRST;"
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2, IsNil)
+		_, err := s.se.Execute(context.Background(), "select * from t")
+		c.Assert(err, IsNil)
+	}
+	s.testControlParallelExecSQL(c, sql, sql, f)
+}
+
+func (s *testStateChangeSuite) TestParallelChangeColumnName(c *C) {
+	sql1 := "ALTER TABLE t CHANGE a aa int;"
+	sql2 := "ALTER TABLE t CHANGE b aa int;"
+	f := func(c *C, err1, err2 error) {
+		// Make sure only a DDL encounters the error of 'duplicate column name'.
+		var oneErr error
+		if (err1 != nil && err2 == nil) || (err1 == nil && err2 != nil) {
+			if err1 != nil {
+				oneErr = err1
+			} else {
+				oneErr = err2
+			}
+		}
+		c.Assert(oneErr.Error(), Equals, "[schema:1060]Duplicate column name 'aa'")
+	}
+	s.testControlParallelExecSQL(c, sql1, sql2, f)
+}
+
+func (s *testStateChangeSuite) TestParallelCreateAndRename(c *C) {
+	sql1 := "create table t_exists(c int);"
+	sql2 := "alter table t rename to t_exists;"
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2.Error(), Equals, "[schema:1050]Table 't_exists' already exists")
+	}
+	s.testControlParallelExecSQL(c, sql1, sql2, f)
+}
+
+type checkRet func(c *C, err1, err2 error)
+
+func (s *testStateChangeSuite) testControlParallelExecSQL(c *C, sql1, sql2 string, f checkRet) {
 	_, err := s.se.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
 	_, err = s.se.Execute(context.Background(), "create table t(a int, b int, c int)")
@@ -478,29 +554,28 @@ func (s *testStateChangeSuite) TestParallelAlterModifyColumn(c *C) {
 	_, err = se1.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
 	wg.Add(2)
+	ch := make(chan struct{})
 	go func() {
 		defer wg.Done()
-		_, err1 = se.Execute(context.Background(), "ALTER TABLE t MODIFY COLUMN b int FIRST;")
+		close(ch)
+		_, err1 = se.Execute(context.Background(), sql1)
 	}()
-
 	go func() {
 		defer wg.Done()
-		_, err2 = se1.Execute(context.Background(), "ALTER TABLE t MODIFY COLUMN b int FIRST;")
+		<-ch
+		// Make sure sql2 is executed after the sql1.
+		time.Sleep(time.Millisecond * 10)
+		_, err2 = se1.Execute(context.Background(), sql2)
 	}()
 
-	time.Sleep(1 * time.Second)
 	wg.Wait()
-	c.Assert(err1, IsNil)
-	c.Assert(err2, IsNil)
-
-	_, err = s.se.Execute(context.Background(), "select * from t")
-	c.Assert(err, IsNil)
+	f(c, err1, err2)
 
 	callback = &ddl.TestDDLCallback{}
 	d.SetHook(callback)
 }
 
-func (s *testStateChangeSuite) testParrallelExecSQL(c *C, sql string) {
+func (s *testStateChangeSuite) testParallelExecSQL(c *C, sql string) {
 	se, err := session.CreateSession(s.store)
 	_, err = se.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
@@ -544,82 +619,11 @@ func (s *testStateChangeSuite) testParrallelExecSQL(c *C, sql string) {
 // TestCreateTableIfNotExists parallel exec create table if not exists xxx. No error returns is expected.
 func (s *testStateChangeSuite) TestCreateTableIfNotExists(c *C) {
 	defer s.se.Execute(context.Background(), "drop table test_not_exists")
-	s.testParrallelExecSQL(c, "create table if not exists test_not_exists(a int);")
+	s.testParallelExecSQL(c, "create table if not exists test_not_exists(a int);")
 }
 
 // TestCreateDBIfNotExists parallel exec create database if not exists xxx. No error returns is expected.
 func (s *testStateChangeSuite) TestCreateDBIfNotExists(c *C) {
 	defer s.se.Execute(context.Background(), "drop database test_not_exists")
-	s.testParrallelExecSQL(c, "create database if not exists test_not_exists;")
-}
-
-func (s *testStateChangeSuite) TestParallelChangeColumnName(c *C) {
-	_, err := s.se.Execute(context.Background(), "use test_db_state")
-	c.Assert(err, IsNil)
-	_, err = s.se.Execute(context.Background(), "create table t(a int, b int, c int)")
-	c.Assert(err, IsNil)
-	defer s.se.Execute(context.Background(), "drop table t")
-
-	callback := &ddl.TestDDLCallback{}
-	once := sync.Once{}
-	callback.OnJobUpdatedExported = func(job *model.Job) {
-		// Make sure the both DDL statements have entered the DDL queue before running the DDL jobs.
-		once.Do(func() {
-			var qLen int64
-			var err2 error
-			for {
-				kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
-					m := meta.NewMeta(txn)
-					qLen, err2 = m.DDLJobQueueLen()
-					if err2 != nil {
-						return err2
-					}
-					return nil
-				})
-				if qLen == 2 {
-					break
-				}
-				time.Sleep(5 * time.Millisecond)
-			}
-		})
-	}
-	d := s.dom.DDL()
-	d.SetHook(callback)
-
-	// Use two sessions to run DDL statements in parallel.
-	wg := sync.WaitGroup{}
-	var err1 error
-	var err2 error
-	se, err := session.CreateSession(s.store)
-	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "use test_db_state")
-	c.Assert(err, IsNil)
-	se1, err := session.CreateSession(s.store)
-	c.Assert(err, IsNil)
-	_, err = se1.Execute(context.Background(), "use test_db_state")
-	c.Assert(err, IsNil)
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		_, err1 = se.Execute(context.Background(), "ALTER TABLE t CHANGE a aa int;")
-	}()
-	go func() {
-		defer wg.Done()
-		_, err2 = se1.Execute(context.Background(), "ALTER TABLE t CHANGE b aa int;")
-	}()
-
-	wg.Wait()
-	// Make sure only a DDL encounters the error of 'duplicate column name'.
-	var oneErr error
-	if (err1 != nil && err2 == nil) || (err1 == nil && err2 != nil) {
-		if err1 != nil {
-			oneErr = err1
-		} else {
-			oneErr = err2
-		}
-	}
-	c.Assert(oneErr.Error(), Equals, "[schema:1060]Duplicate column name 'aa'")
-
-	callback = &ddl.TestDDLCallback{}
-	d.SetHook(callback)
+	s.testParallelExecSQL(c, "create database if not exists test_not_exists;")
 }

@@ -165,16 +165,20 @@ func createStoreAndDomain() {
 }
 
 func setupBinlogClient() {
-	if cfg.BinlogSocket == "" {
+	if cfg.Binlog.BinlogSocket == "" {
 		return
 	}
 	dialerOpt := grpc.WithDialer(func(addr string, timeout time.Duration) (net.Conn, error) {
 		return net.DialTimeout("unix", addr, timeout)
 	})
-	clientConn, err := session.DialPumpClientWithRetry(cfg.BinlogSocket, util.DefaultMaxRetries, dialerOpt)
+	clientConn, err := session.DialPumpClientWithRetry(cfg.Binlog.BinlogSocket, util.DefaultMaxRetries, dialerOpt)
 	terror.MustNil(err)
+	if cfg.Binlog.IgnoreError {
+		binloginfo.SetIgnoreError(true)
+	}
+	binloginfo.SetGRPCTimeout(parseDuration(cfg.Binlog.WriteTimeout))
 	binloginfo.SetPumpClient(binlog.NewPumpClient(clientConn))
-	log.Infof("created binlog client at %s", cfg.BinlogSocket)
+	log.Infof("created binlog client at %s, ignore error %v", cfg.Binlog.BinlogSocket, cfg.Binlog.IgnoreError)
 }
 
 // Prometheus push.
@@ -276,7 +280,7 @@ func overrideConfig() {
 		cfg.Socket = *socket
 	}
 	if actualFlags[nmBinlogSocket] {
-		cfg.BinlogSocket = *binlogSocket
+		cfg.Binlog.BinlogSocket = *binlogSocket
 	}
 	if actualFlags[nmRunDDL] {
 		cfg.RunDDL = *runDDL
@@ -338,6 +342,10 @@ func validateConfig() {
 			}
 		}
 		log.Errorf("\"store\" should be in [%s] only", strings.Join(nameList, ", "))
+		os.Exit(-1)
+	}
+	if cfg.Store == "mocktikv" && cfg.RunDDL == false {
+		log.Errorf("can't disable DDL on mocktikv")
 		os.Exit(-1)
 	}
 	if cfg.Log.File.MaxSize > config.MaxLogFileSize {
@@ -432,7 +440,7 @@ func setupSignalHandler() {
 	go func() {
 		sig := <-sc
 		log.Infof("Got signal [%s] to exit.", sig)
-		if sig == syscall.SIGTERM {
+		if sig == syscall.SIGQUIT {
 			graceful = true
 		}
 

@@ -44,6 +44,7 @@ func (s *testBootstrapSuite) SetUpSuite(c *C) {
 func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom := newStoreWithBootstrap(c, s.dbName)
+	defer store.Close()
 	defer dom.Close()
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, "USE mysql;")
@@ -100,9 +101,6 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	se, err = CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	doDMLWorks(se)
-
-	err = store.Close()
-	c.Assert(err, IsNil)
 }
 
 func globalVarsCount() int64 {
@@ -122,6 +120,7 @@ func (s *testBootstrapSuite) bootstrapWithOnlyDDLWork(store kv.Storage, c *C) {
 		parser:      parser.New(),
 		sessionVars: variable.NewSessionVars(),
 	}
+	ss.txn.init()
 	ss.mu.values = make(map[fmt.Stringer]interface{})
 	ss.SetValue(sessionctx.Initing, true)
 	dom, err := domap.Get(store)
@@ -137,23 +136,33 @@ func (s *testBootstrapSuite) bootstrapWithOnlyDDLWork(store kv.Storage, c *C) {
 // testBootstrapWithError :
 // When a session failed in bootstrap process (for example, the session is killed after doDDLWorks()).
 // We should make sure that the following session could finish the bootstrap process.
-func (s *testBootstrapSuite) testBootstrapWithError(c *C) {
+func (s *testBootstrapSuite) TestBootstrapWithError(c *C) {
 	ctx := context.Background()
 	defer testleak.AfterTest(c)()
 	store := newStore(c, s.dbNameBootstrap)
+	defer store.Close()
 	s.bootstrapWithOnlyDDLWork(store, c)
+	dom, err := domap.Get(store)
+	c.Assert(err, IsNil)
+	domap.Delete(store)
+	dom.Close()
 
-	BootstrapSession(store)
+	dom1, err := BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer dom1.Close()
+
 	se := newSession(c, store, s.dbNameBootstrap)
 	mustExecSQL(c, se, "USE mysql;")
 	r := mustExecSQL(c, se, `select * from user;`)
 	chk := r.NewChunk()
-	err := r.Next(ctx, chk)
+	err = r.Next(ctx, chk)
 	c.Assert(err, IsNil)
 	c.Assert(chk.NumRows() == 0, IsFalse)
 	row := chk.GetRow(0)
 	datums := ast.RowToDatums(row, r.Fields())
-	match(c, datums, []byte(`%`), []byte("root"), []byte(""), "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
+	match(c, datums, []byte(`%`), []byte("root"), []byte(""), "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
+	c.Assert(r.Close(), IsNil)
+
 	mustExecSQL(c, se, "USE test;")
 	// Check privilege tables.
 	mustExecSQL(c, se, "SELECT * from mysql.db;")
@@ -166,6 +175,7 @@ func (s *testBootstrapSuite) testBootstrapWithError(c *C) {
 	c.Assert(err, IsNil)
 	v := chk.GetRow(0)
 	c.Assert(v.GetInt64(0), Equals, globalVarsCount())
+	c.Assert(r.Close(), IsNil)
 
 	r = mustExecSQL(c, se, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="bootstrapped";`)
 	chk = r.NewChunk()
@@ -175,9 +185,7 @@ func (s *testBootstrapSuite) testBootstrapWithError(c *C) {
 	row = chk.GetRow(0)
 	c.Assert(row.Len(), Equals, 1)
 	c.Assert(row.GetBytes(0), BytesEquals, []byte("True"))
-
-	err = store.Close()
-	c.Assert(err, IsNil)
+	c.Assert(r.Close(), IsNil)
 }
 
 // TestUpgrade tests upgrading
@@ -198,6 +206,7 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	c.Assert(chk.NumRows() == 0, IsFalse)
 	c.Assert(row.Len(), Equals, 1)
 	c.Assert(row.GetBytes(0), BytesEquals, []byte(fmt.Sprintf("%d", currentBootstrapVersion)))
+	c.Assert(r.Close(), IsNil)
 
 	se1 := newSession(c, store, s.dbName)
 	ver, err := getBootstrapVersion(se1)
@@ -224,6 +233,7 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	err = r.Next(ctx, chk)
 	c.Assert(err, IsNil)
 	c.Assert(chk.NumRows() == 0, IsTrue)
+	c.Assert(r.Close(), IsNil)
 
 	ver, err = getBootstrapVersion(se1)
 	c.Assert(err, IsNil)
@@ -242,6 +252,7 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	row = chk.GetRow(0)
 	c.Assert(row.Len(), Equals, 1)
 	c.Assert(row.GetBytes(0), BytesEquals, []byte(fmt.Sprintf("%d", currentBootstrapVersion)))
+	c.Assert(r.Close(), IsNil)
 
 	ver, err = getBootstrapVersion(se2)
 	c.Assert(err, IsNil)
@@ -249,7 +260,6 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 }
 
 func (s *testBootstrapSuite) TestOldPasswordUpgrade(c *C) {
-	defer testleak.AfterTest(c)()
 	pwd := "abc"
 	oldpwd := fmt.Sprintf("%X", auth.Sha1Hash([]byte(pwd)))
 	newpwd, err := oldPasswordUpgrade(oldpwd)

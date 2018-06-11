@@ -16,7 +16,6 @@ package executor_test
 import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/terror"
@@ -25,14 +24,17 @@ import (
 )
 
 func (s *testSuite) TestPrepared(c *C) {
-	cfg := config.GetGlobalConfig()
-	orgEnable := cfg.PreparedPlanCache.Enabled
-	orgCapacity := cfg.PreparedPlanCache.Capacity
+	orgEnable := plan.PreparedPlanCacheEnabled
+	orgCapacity := plan.PreparedPlanCacheCapacity
+	defer func() {
+		plan.PreparedPlanCacheEnabled = orgEnable
+		plan.PreparedPlanCacheCapacity = orgCapacity
+	}()
 	flags := []bool{false, true}
 	ctx := context.Background()
 	for _, flag := range flags {
-		cfg.PreparedPlanCache.Enabled = flag
-		cfg.PreparedPlanCache.Capacity = 100
+		plan.PreparedPlanCacheEnabled = flag
+		plan.PreparedPlanCacheCapacity = 100
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists prepare_test")
@@ -100,7 +102,7 @@ func (s *testSuite) TestPrepared(c *C) {
 
 		// Check that rebuild plan works.
 		tk.Se.PrepareTxnCtx(ctx)
-		err = stmt.RebuildPlan()
+		_, err = stmt.RebuildPlan()
 		c.Assert(err, IsNil)
 		rs, err = stmt.Exec(ctx)
 		c.Assert(err, IsNil)
@@ -179,19 +181,20 @@ func (s *testSuite) TestPrepared(c *C) {
 		exec.Next(ctx, nil)
 		exec.Close()
 	}
-	cfg.PreparedPlanCache.Enabled = orgEnable
-	cfg.PreparedPlanCache.Capacity = orgCapacity
 }
 
 func (s *testSuite) TestPreparedLimitOffset(c *C) {
-	cfg := config.GetGlobalConfig()
-	orgEnable := cfg.PreparedPlanCache.Enabled
-	orgCapacity := cfg.PreparedPlanCache.Capacity
+	orgEnable := plan.PreparedPlanCacheEnabled
+	orgCapacity := plan.PreparedPlanCacheCapacity
+	defer func() {
+		plan.PreparedPlanCacheEnabled = orgEnable
+		plan.PreparedPlanCacheCapacity = orgCapacity
+	}()
 	flags := []bool{false, true}
 	ctx := context.Background()
 	for _, flag := range flags {
-		cfg.PreparedPlanCache.Enabled = flag
-		cfg.PreparedPlanCache.Capacity = 100
+		plan.PreparedPlanCacheEnabled = flag
+		plan.PreparedPlanCacheCapacity = 100
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists prepare_test")
@@ -214,24 +217,25 @@ func (s *testSuite) TestPreparedLimitOffset(c *C) {
 		_, err = tk.Se.ExecutePreparedStmt(ctx, stmtID, 1)
 		c.Assert(err, IsNil)
 	}
-	cfg.PreparedPlanCache.Enabled = orgEnable
-	cfg.PreparedPlanCache.Capacity = orgCapacity
 }
 
 func (s *testSuite) TestPreparedNullParam(c *C) {
-	cfg := config.GetGlobalConfig()
-	orgEnable := cfg.PreparedPlanCache.Enabled
-	orgCapacity := cfg.PreparedPlanCache.Capacity
+	orgEnable := plan.PreparedPlanCacheEnabled
+	orgCapacity := plan.PreparedPlanCacheCapacity
+	defer func() {
+		plan.PreparedPlanCacheEnabled = orgEnable
+		plan.PreparedPlanCacheCapacity = orgCapacity
+	}()
 	flags := []bool{false, true}
 	for _, flag := range flags {
-		cfg.PreparedPlanCache.Enabled = flag
-		cfg.PreparedPlanCache.Capacity = 100
+		plan.PreparedPlanCacheEnabled = flag
+		plan.PreparedPlanCacheCapacity = 100
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("create table t (id int, KEY id (id))")
 		tk.MustExec("insert into t values (1), (2), (3)")
-		tk.MustExec(`prepare stmt from 'select * from t where id = ?'`)
+		tk.MustExec(`prepare stmt from 'select * from t use index(id) where id = ?'`)
 
 		r := tk.MustQuery(`execute stmt using @id;`)
 		r.Check(nil)
@@ -249,8 +253,6 @@ func (s *testSuite) TestPreparedNullParam(c *C) {
 		r = tk.MustQuery(`execute stmt using @id;`)
 		r.Check(testkit.Rows("1"))
 	}
-	cfg.PreparedPlanCache.Enabled = orgEnable
-	cfg.PreparedPlanCache.Capacity = orgCapacity
 }
 
 func (s *testSuite) TestPreparedNameResolver(c *C) {
@@ -260,5 +262,5 @@ func (s *testSuite) TestPreparedNameResolver(c *C) {
 	tk.MustExec("create table t (id int, KEY id (id))")
 	tk.MustExec("prepare stmt from 'select * from t limit ? offset ?'")
 	_, err := tk.Exec("prepare stmt from 'select b from t'")
-	c.Assert(err.Error(), Equals, "[plan:1054]Unknown column 'b' in 'field list'")
+	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'b' in 'field list'")
 }

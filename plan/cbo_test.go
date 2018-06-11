@@ -264,7 +264,11 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		},
 		{
 			sql:  "select count(e) from t where t.b <= 50",
-			best: "TableReader(Table(t)->Sel([le(test.t.b, 50)])->StreamAgg)->StreamAgg",
+			best: "IndexLookUp(Index(t.b)[[-inf,50]], Table(t)->HashAgg)->HashAgg",
+		},
+		{
+			sql:  "select count(e) from t where t.b <= 100000000000",
+			best: "TableReader(Table(t)->Sel([le(test.t.b, 100000000000)])->StreamAgg)->StreamAgg",
 		},
 		{
 			sql:  "select * from t where t.b <= 40",
@@ -272,12 +276,16 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		},
 		{
 			sql:  "select * from t where t.b <= 50",
-			best: "TableReader(Table(t)->Sel([le(test.t.b, 50)]))",
+			best: "IndexLookUp(Index(t.b)[[-inf,50]], Table(t))",
+		},
+		{
+			sql:  "select * from t where t.b <= 10000000000",
+			best: "TableReader(Table(t)->Sel([le(test.t.b, 10000000000)]))",
 		},
 		// test panic
 		{
 			sql:  "select * from t where 1 and t.b <= 50",
-			best: "TableReader(Table(t)->Sel([le(test.t.b, 50)]))",
+			best: "IndexLookUp(Index(t.b)[[-inf,50]], Table(t))",
 		},
 		{
 			sql:  "select * from t where t.b <= 100 order by t.a limit 1",
@@ -495,8 +503,8 @@ func (s *testAnalyzeSuite) TestOutdatedAnalyze(c *C) {
 	testKit.MustQuery("explain select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
 		"IndexScan_8   cop table:t, index:a, range:[-inf,5], keep order:false 26.59",
 		"TableScan_9 Selection_10  cop table:t, keep order:false 26.59",
-		"Selection_10  TableScan_9 cop le(test.t.b, 5) 26.67",
-		"IndexLookUp_11   root index:IndexScan_8, table:Selection_10 26.67",
+		"Selection_10  TableScan_9 cop le(test.t.b, 5) 8.84",
+		"IndexLookUp_11   root index:IndexScan_8, table:Selection_10 8.84",
 	))
 }
 

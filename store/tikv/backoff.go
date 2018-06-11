@@ -153,19 +153,19 @@ func (t backoffType) TError() *terror.Error {
 
 // Maximum total sleep time(in ms) for kv/cop commands.
 const (
-	copBuildTaskMaxBackoff  = 5000
-	tsoMaxBackoff           = 5000
-	scannerNextMaxBackoff   = 20000
-	batchGetMaxBackoff      = 20000
-	copNextMaxBackoff       = 20000
-	getMaxBackoff           = 20000
-	prewriteMaxBackoff      = 20000
-	cleanupMaxBackoff       = 20000
-	GcOneRegionMaxBackoff   = 20000
-	GcResolveLockMaxBackoff = 100000
-	GcDeleteRangeMaxBackoff = 100000
-	rawkvMaxBackoff         = 20000
-	splitRegionBackoff      = 20000
+	copBuildTaskMaxBackoff         = 5000
+	tsoMaxBackoff                  = 5000
+	scannerNextMaxBackoff          = 20000
+	batchGetMaxBackoff             = 20000
+	copNextMaxBackoff              = 20000
+	getMaxBackoff                  = 20000
+	prewriteMaxBackoff             = 20000
+	cleanupMaxBackoff              = 20000
+	GcOneRegionMaxBackoff          = 20000
+	GcResolveLockMaxBackoff        = 100000
+	deleteRangeOneRegionMaxBackoff = 100000
+	rawkvMaxBackoff                = 20000
+	splitRegionBackoff             = 20000
 )
 
 // CommitMaxBackoff is max sleep time of the 'commit' command
@@ -173,7 +173,7 @@ var CommitMaxBackoff = 41000
 
 // Backoffer is a utility for retrying queries.
 type Backoffer struct {
-	context.Context
+	ctx context.Context
 
 	fn         map[backoffType]func(context.Context) int
 	maxSleep   int
@@ -186,7 +186,7 @@ type Backoffer struct {
 // NewBackoffer creates a Backoffer with maximum sleep time(in ms).
 func NewBackoffer(ctx context.Context, maxSleep int) *Backoffer {
 	return &Backoffer{
-		Context:  ctx,
+		ctx:      ctx,
 		maxSleep: maxSleep,
 		vars:     kv.DefaultVars,
 	}
@@ -202,7 +202,7 @@ func (b *Backoffer) WithVars(vars *kv.Variables) *Backoffer {
 // It returns a retryable error if total sleep time exceeds maxSleep.
 func (b *Backoffer) Backoff(typ backoffType, err error) error {
 	select {
-	case <-b.Context.Done():
+	case <-b.ctx.Done():
 		return errors.Trace(err)
 	default:
 	}
@@ -218,11 +218,12 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 		b.fn[typ] = f
 	}
 
-	b.totalSleep += f(b)
+	b.totalSleep += f(b.ctx)
 	b.types = append(b.types, typ)
 
 	log.Debugf("%v, retry later(totalSleep %dms, maxSleep %dms)", err, b.totalSleep, b.maxSleep)
-	b.errors = append(b.errors, err)
+
+	b.errors = append(b.errors, errors.Errorf("%s at %s", err.Error(), time.Now().Format(time.RFC3339Nano)))
 	if b.maxSleep > 0 && b.totalSleep >= b.maxSleep {
 		errMsg := fmt.Sprintf("backoffer.maxSleep %dms is exceeded, errors:", b.maxSleep)
 		for i, err := range b.errors {
@@ -249,7 +250,7 @@ func (b *Backoffer) String() string {
 // current Backoffer's context.
 func (b *Backoffer) Clone() *Backoffer {
 	return &Backoffer{
-		Context:    b.Context,
+		ctx:        b.ctx,
 		maxSleep:   b.maxSleep,
 		totalSleep: b.totalSleep,
 		errors:     b.errors,
@@ -260,9 +261,9 @@ func (b *Backoffer) Clone() *Backoffer {
 // Fork creates a new Backoffer which keeps current Backoffer's sleep time and errors, and holds
 // a child context of current Backoffer's context.
 func (b *Backoffer) Fork() (*Backoffer, context.CancelFunc) {
-	ctx, cancel := context.WithCancel(b.Context)
+	ctx, cancel := context.WithCancel(b.ctx)
 	return &Backoffer{
-		Context:    ctx,
+		ctx:        ctx,
 		maxSleep:   b.maxSleep,
 		totalSleep: b.totalSleep,
 		errors:     b.errors,

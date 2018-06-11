@@ -23,8 +23,10 @@ import (
 	"sync"
 	"time"
 
+	gofail "github.com/coreos/gofail/runtime"
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
@@ -37,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -62,6 +65,8 @@ var _ = Suite(&testDBSuite{})
 const defaultBatchSize = 2048
 
 type testDBSuite struct {
+	cluster    *mocktikv.Cluster
+	mvccStore  mocktikv.MVCCStore
 	store      kv.Storage
 	dom        *domain.Domain
 	schemaName string
@@ -83,7 +88,16 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 	s.autoIDStep = autoid.GetStep()
 	autoid.SetStep(5000)
 
-	s.store, err = mockstore.NewMockTikvStore()
+	s.cluster = mocktikv.NewCluster()
+	mocktikv.BootstrapWithSingleStore(s.cluster)
+	s.mvccStore = mocktikv.MustNewMVCCStore()
+	store, err := mockstore.NewMockTikvStore(
+		mockstore.WithCluster(s.cluster),
+		mockstore.WithMVCCStore(s.mvccStore),
+	)
+	c.Assert(err, IsNil)
+
+	s.store = store
 	c.Assert(err, IsNil)
 
 	s.dom, err = session.BootstrapSession(s.store)
@@ -162,6 +176,16 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrUnknownCharacterSet)
 	sql = "create table t1(a int) character set laitn1;"
 	s.testErrorCode(c, sql, tmysql.ErrUnknownCharacterSet)
+	sql = "create table test_error_code (a int not null ,b int not null,c int not null, d int not null, foreign key (b, c) references product(id));"
+	s.testErrorCode(c, sql, tmysql.ErrWrongFkDef)
+	sql = "create table test_error_code_2(c1 int, c2 int, c3 int, primary key(c1), primary key(c2));"
+	s.testErrorCode(c, sql, tmysql.ErrMultiplePriKey)
+	sql = "create table test_error_code_3(pt blob ,primary key (pt));"
+	s.testErrorCode(c, sql, tmysql.ErrBlobKeyWithoutLength)
+	sql = "create table test_error_code_3(a text, unique (a(3073)));"
+	s.testErrorCode(c, sql, tmysql.ErrTooLongKey)
+	sql = "create table test_error_code_3(`id` int, key `primary`(`id`));"
+	s.testErrorCode(c, sql, tmysql.ErrWrongNameForIndex)
 	sql = "create table t2(c1.c2 blob default null);"
 	s.testErrorCode(c, sql, tmysql.ErrWrongTableName)
 
@@ -172,10 +196,20 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrTooLongIdent)
 	sql = "alter table test_comment comment 'test comment'"
 	s.testErrorCode(c, sql, tmysql.ErrNoSuchTable)
+	sql = "alter table test_error_code_succ add column `a ` int ;"
+	s.testErrorCode(c, sql, tmysql.ErrWrongColumnName)
+	s.tk.MustExec("create table test_on_update (c1 int, c2 int);")
+	sql = "alter table test_on_update add column c3 int on update current_timestamp;"
+	s.testErrorCode(c, sql, tmysql.ErrInvalidOnUpdate)
+	sql = "create table test_on_update_2(c int on update current_timestamp);"
+	s.testErrorCode(c, sql, tmysql.ErrInvalidOnUpdate)
 
 	// drop column
 	sql = "alter table test_error_code_succ drop c_not_exist"
 	s.testErrorCode(c, sql, tmysql.ErrCantDropFieldOrKey)
+	s.tk.MustExec("create table test_drop_column (c1 int );")
+	sql = "alter table test_drop_column drop column c1;"
+	s.testErrorCode(c, sql, tmysql.ErrCantRemoveAllFields)
 	// add index
 	sql = "alter table test_error_code_succ add index idx (c_not_exist)"
 	s.testErrorCode(c, sql, tmysql.ErrKeyColumnDoesNotExits)
@@ -192,6 +226,10 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrWrongDBName)
 	sql = "alter table test_error_code_succ modify t.c1 bigint"
 	s.testErrorCode(c, sql, tmysql.ErrWrongTableName)
+	// insert value
+	s.tk.MustExec("create table test_error_code_null(c1 char(100) not null);")
+	sql = "insert into test_error_code_null (c1) values(null);"
+	s.testErrorCode(c, sql, tmysql.ErrBadNull)
 }
 
 func (s *testDBSuite) TestAddIndexAfterAddColumn(c *C) {
@@ -203,6 +241,8 @@ func (s *testDBSuite) TestAddIndexAfterAddColumn(c *C) {
 	s.tk.MustExec("alter table test_add_index_after_add_col add column c int not null default '0'")
 	sql := "alter table test_add_index_after_add_col add unique index cc(c) "
 	s.testErrorCode(c, sql, tmysql.ErrDupEntry)
+	sql = "alter table test_add_index_after_add_col add index idx_test(f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13,f14,f15,f16,f17);"
+	s.testErrorCode(c, sql, tmysql.ErrTooManyKeyParts)
 }
 
 func (s *testDBSuite) TestAddIndexWithPK(c *C) {
@@ -226,6 +266,29 @@ func (s *testDBSuite) TestAddIndexWithPK(c *C) {
 	s.tk.MustExec("alter table test_add_index_with_pk2 add index idx (c)")
 	s.tk.MustExec("insert into test_add_index_with_pk2 values(2, 2, 2, 2)")
 	s.tk.MustQuery("select * from test_add_index_with_pk2").Check(testkit.Rows("1 1 1 1", "2 2 2 2"))
+}
+
+func (s *testDBSuite) TestRenameIndex(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+	s.tk.MustExec("create table t (pk int primary key, c int default 1, c1 int default 1, unique key k1(c), key k2(c1))")
+
+	// Test rename success
+	s.tk.MustExec("alter table t rename index k1 to k3")
+	s.tk.MustExec("admin check index t k3")
+
+	// Test rename to the same name
+	s.tk.MustExec("alter table t rename index k3 to k3")
+	s.tk.MustExec("admin check index t k3")
+
+	// Test rename on non-exists keys
+	s.testErrorCode(c, "alter table t rename index x to x", mysql.ErrKeyDoesNotExist)
+
+	// Test rename on already-exists keys
+	s.testErrorCode(c, "alter table t rename index k3 to k2", mysql.ErrDupKeyName)
+
+	s.tk.MustExec("alter table t rename index k2 to K2")
+	s.testErrorCode(c, "alter table t rename key k3 to K2", mysql.ErrDupKeyName)
 }
 
 func (s *testDBSuite) testGetTable(c *C, name string) table.Table {
@@ -816,7 +879,7 @@ func (s *testDBSuite) TestIssue6101(c *C) {
 	s.tk.MustExec("create table t1 (quantity decimal(2) unsigned);")
 	_, err := s.tk.Exec("insert into t1 values (500), (-500), (~0), (-1);")
 	terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(tmysql.ErrDataOutOfRange))
+	c.Assert(terr.Code(), Equals, terror.ErrCode(tmysql.ErrWarnDataOutOfRange))
 	s.tk.MustExec("drop table t1")
 
 	s.tk.MustExec("set sql_mode=''")
@@ -858,6 +921,21 @@ func (s *testDBSuite) TestColumn(c *C) {
 	s.testDropColumn(c)
 	s.testDropColumn2(c)
 	s.tk.MustExec("drop table t2")
+}
+
+func (s *testDBSuite) TestAddColumnTooMany(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+	s.tk.MustExec("create table t_column_too_many(abc int)")
+	count := ddl.TableColumnCountLimit - 1
+	var sql string
+	for i := 1; i <= count; i++ {
+		sql = "alter table t_column_too_many add column"
+		sql += fmt.Sprintf("a%d int", i)
+		s.tk.MustExec(sql)
+	}
+	sql = "alter table t_column_too_many add column a_512 int"
+	s.testErrorCode(c, sql, tmysql.ErrTooManyFields)
 }
 
 func sessionExec(c *C, s kv.Storage, sql string) {
@@ -998,6 +1076,29 @@ LOOP:
 	}
 	rows = s.mustQuery(c, "select count(c4) from t2 where c4 = -1")
 	matchRows(c, rows, [][]interface{}{{count - int64(step)}})
+
+	// add timestamp type column
+	s.mustExec(c, "create table test_on_update_c (c1 int, c2 timestamp);")
+	s.mustExec(c, "alter table test_on_update_c add column c3 timestamp null default '2017-02-11' on update current_timestamp;")
+	is := domain.GetDomain(ctx).InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_on_update_c"))
+	c.Assert(err, IsNil)
+	tblInfo := tbl.Meta()
+	colC := tblInfo.Columns[2]
+	c.Assert(colC.Tp, Equals, mysql.TypeTimestamp)
+	hasNotNull := tmysql.HasNotNullFlag(colC.Flag)
+	c.Assert(hasNotNull, IsFalse)
+	// add datetime type column
+	s.mustExec(c, "create table test_on_update_d (c1 int, c2 datetime);")
+	s.mustExec(c, "alter table test_on_update_d add column c3 datetime on update current_timestamp;")
+	is = domain.GetDomain(ctx).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_on_update_d"))
+	c.Assert(err, IsNil)
+	tblInfo = tbl.Meta()
+	colC = tblInfo.Columns[2]
+	c.Assert(colC.Tp, Equals, mysql.TypeDatetime)
+	hasNotNull = tmysql.HasNotNullFlag(colC.Flag)
+	c.Assert(hasNotNull, IsFalse)
 }
 
 func (s *testDBSuite) testDropColumn(c *C) {
@@ -1535,6 +1636,7 @@ func (s *testDBSuite) testRenameTable(c *C, sql string) {
 	c.Assert(newTblInfo.Meta().ID, Equals, oldTblID)
 	s.tk.MustQuery("select * from t1").Check(testkit.Rows("1 1", "2 2"))
 	s.tk.MustExec("use test")
+
 	// Make sure t doesn't exist.
 	s.tk.MustExec("create table t (c1 int, c2 int)")
 	s.tk.MustExec("drop table t")
@@ -1554,12 +1656,19 @@ func (s *testDBSuite) testRenameTable(c *C, sql string) {
 	// for failure case
 	failSQL := fmt.Sprintf(sql, "test_not_exist.t", "test_not_exist.t")
 	s.testErrorCode(c, failSQL, tmysql.ErrFileNotFound)
+	failSQL = fmt.Sprintf(sql, "test.test_not_exist", "test.test_not_exist")
+	s.testErrorCode(c, failSQL, tmysql.ErrFileNotFound)
 	failSQL = fmt.Sprintf(sql, "test.t_not_exist", "test_not_exist.t")
 	s.testErrorCode(c, failSQL, tmysql.ErrFileNotFound)
 	failSQL = fmt.Sprintf(sql, "test1.t2", "test_not_exist.t")
 	s.testErrorCode(c, failSQL, tmysql.ErrErrorOnRename)
-	failSQL = fmt.Sprintf(sql, "test1.t2", "test1.t2")
-	s.testErrorCode(c, failSQL, tmysql.ErrTableExists)
+
+	// for the same table name
+	s.tk.MustExec("use test1")
+	s.tk.MustExec("create table if not exists t (c1 int, c2 int)")
+	s.tk.MustExec("create table if not exists t1 (c1 int, c2 int)")
+	s.tk.MustExec(fmt.Sprintf(sql, "test1.t", "t"))
+	s.tk.MustExec(fmt.Sprintf(sql, "test1.t1", "test1.t1"))
 
 	s.tk.MustExec("drop database test1")
 }
@@ -1836,6 +1945,26 @@ func (s *testDBSuite) TestRebaseAutoID(c *C) {
 	s.testErrorCode(c, "alter table tidb.test2 add column b int auto_increment key, auto_increment=10;", tmysql.ErrUnknown)
 }
 
+func (s *testDBSuite) TestYearTypeCreateTable(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+	s.tk.MustExec("drop table if exists abc;")
+	s.tk.MustExec("create table abc(y year, x int, primary key(y));")
+	is := s.dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("abc"))
+	c.Assert(err, IsNil)
+	var yearCol *model.ColumnInfo
+	for _, col := range tbl.Meta().Columns {
+		if col.Name.String() == "y" {
+			yearCol = col
+			break
+		}
+	}
+	c.Assert(yearCol, NotNil)
+	c.Assert(yearCol.Tp, Equals, mysql.TypeYear)
+	c.Assert(mysql.HasUnsignedFlag(yearCol.Flag), IsFalse)
+}
+
 func (s *testDBSuite) TestCharacterSetInColumns(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("drop database if exists varchar_test;")
@@ -1876,4 +2005,261 @@ func (s *testDBSuite) TestAddNotNullColumnWhileInsertOnDupUpdate(c *C) {
 	close(closeCh)
 	wg.Wait()
 	c.Assert(tk2Err, IsNil)
+}
+
+type testMaxTableRowIDContext struct {
+	c   *C
+	d   ddl.DDL
+	tbl table.Table
+}
+
+func newTestMaxTableRowIDContext(c *C, d ddl.DDL, tbl table.Table) *testMaxTableRowIDContext {
+	return &testMaxTableRowIDContext{
+		c:   c,
+		d:   d,
+		tbl: tbl,
+	}
+}
+
+func (s *testDBSuite) getMaxTableRowID(ctx *testMaxTableRowIDContext) (int64, bool) {
+	c := ctx.c
+	d := ctx.d
+	tbl := ctx.tbl
+	curVer, err := s.store.CurrentVersion()
+	c.Assert(err, IsNil)
+	maxID, emptyTable, err := d.GetTableMaxRowID(curVer.Ver, tbl.Meta())
+	c.Assert(err, IsNil)
+	return maxID, emptyTable
+}
+
+func (s *testDBSuite) checkGetMaxTableRowID(ctx *testMaxTableRowIDContext, expectEmpty bool, expectMaxID int64) {
+	c := ctx.c
+	maxID, emptyTable := s.getMaxTableRowID(ctx)
+	c.Assert(emptyTable, Equals, expectEmpty)
+	c.Assert(maxID, Equals, expectMaxID)
+}
+
+func (s *testDBSuite) TestGetTableEndHandle(c *C) {
+	// TestGetTableEndHandle test ddl.GetTableMaxRowID method, which will return the max row id of the table.
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop database if exists test_get_endhandle")
+	tk.MustExec("create database test_get_endhandle")
+	tk.MustExec("use test_get_endhandle")
+	// Test PK is handle.
+	tk.MustExec("create table t(a bigint PRIMARY KEY, b int)")
+
+	is := s.dom.InfoSchema()
+	d := s.dom.DDL()
+	tbl, err := is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+
+	testCtx := newTestMaxTableRowIDContext(c, d, tbl)
+	// test empty table
+	s.checkGetMaxTableRowID(testCtx, true, int64(math.MaxInt64))
+
+	tk.MustExec("insert into t values(-1, 1)")
+	s.checkGetMaxTableRowID(testCtx, false, int64(-1))
+
+	tk.MustExec("insert into t values(9223372036854775806, 1)")
+	s.checkGetMaxTableRowID(testCtx, false, int64(9223372036854775806))
+
+	tk.MustExec("insert into t values(9223372036854775807, 1)")
+	s.checkGetMaxTableRowID(testCtx, false, int64(9223372036854775807))
+
+	tk.MustExec("insert into t values(10, 1)")
+	tk.MustExec("insert into t values(102149142, 1)")
+	s.checkGetMaxTableRowID(testCtx, false, int64(9223372036854775807))
+
+	tk.MustExec("create table t1(a bigint PRIMARY KEY, b int)")
+
+	for i := 0; i < 1000; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t1 values(%v, %v)", i, i))
+	}
+	is = s.dom.InfoSchema()
+	testCtx.tbl, err = is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	s.checkGetMaxTableRowID(testCtx, false, int64(999))
+
+	// Test PK is not handle
+	tk.MustExec("create table t2(a varchar(255))")
+
+	is = s.dom.InfoSchema()
+	testCtx.tbl, err = is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t2"))
+	c.Assert(err, IsNil)
+	s.checkGetMaxTableRowID(testCtx, true, int64(math.MaxInt64))
+
+	for i := 0; i < 1000; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t2 values(%v)", i))
+	}
+
+	result := tk.MustQuery("select MAX(_tidb_rowid) from t2")
+	maxID, emptyTable := s.getMaxTableRowID(testCtx)
+	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
+	c.Assert(emptyTable, IsFalse)
+
+	tk.MustExec("insert into t2 values(100000)")
+	result = tk.MustQuery("select MAX(_tidb_rowid) from t2")
+	maxID, emptyTable = s.getMaxTableRowID(testCtx)
+	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
+	c.Assert(emptyTable, IsFalse)
+
+	tk.MustExec(fmt.Sprintf("insert into t2 values(%v)", math.MaxInt64-1))
+	result = tk.MustQuery("select MAX(_tidb_rowid) from t2")
+	maxID, emptyTable = s.getMaxTableRowID(testCtx)
+	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
+	c.Assert(emptyTable, IsFalse)
+
+	tk.MustExec(fmt.Sprintf("insert into t2 values(%v)", math.MaxInt64))
+	result = tk.MustQuery("select MAX(_tidb_rowid) from t2")
+	maxID, emptyTable = s.getMaxTableRowID(testCtx)
+	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
+	c.Assert(emptyTable, IsFalse)
+
+	tk.MustExec("insert into t2 values(100)")
+	result = tk.MustQuery("select MAX(_tidb_rowid) from t2")
+	maxID, emptyTable = s.getMaxTableRowID(testCtx)
+	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
+	c.Assert(emptyTable, IsFalse)
+}
+
+func (s *testDBSuite) TestMultiRegionGetTableEndHandle(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop database if exists test_get_endhandle")
+	tk.MustExec("create database test_get_endhandle")
+	tk.MustExec("use test_get_endhandle")
+
+	tk.MustExec("create table t(a bigint PRIMARY KEY, b int)")
+	for i := 0; i < 1000; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values(%v, %v)", i, i))
+	}
+
+	// Get table ID for split.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblID := tbl.Meta().ID
+
+	d := s.dom.DDL()
+	testCtx := newTestMaxTableRowIDContext(c, d, tbl)
+
+	// Split the table.
+	s.cluster.SplitTable(s.mvccStore, tblID, 100)
+
+	maxID, emptyTable := s.getMaxTableRowID(testCtx)
+	c.Assert(emptyTable, IsFalse)
+	c.Assert(maxID, Equals, int64(999))
+
+	tk.MustExec("insert into t values(10000, 1000)")
+	maxID, emptyTable = s.getMaxTableRowID(testCtx)
+	c.Assert(emptyTable, IsFalse)
+	c.Assert(maxID, Equals, int64(10000))
+
+	tk.MustExec("insert into t values(-1, 1000)")
+	maxID, emptyTable = s.getMaxTableRowID(testCtx)
+	c.Assert(emptyTable, IsFalse)
+	c.Assert(maxID, Equals, int64(10000))
+}
+
+func (s *testDBSuite) TestUpdateHandleFailed(c *C) {
+	gofail.Enable("github.com/pingcap/tidb/ddl/errorUpdateReorgHandle", `return(true)`)
+	defer gofail.Disable("github.com/pingcap/tidb/ddl/errorUpdateReorgHandle")
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test_handle_failed")
+	defer tk.MustExec("drop database test_handle_failed")
+	tk.MustExec("use test_handle_failed")
+	tk.MustExec("create table t(a int primary key, b int)")
+	tk.MustExec("insert into t values(-1, 1)")
+	tk.MustExec("alter table t add index idx_b(b)")
+	result := tk.MustQuery("select count(*) from t use index(idx_b)")
+	result.Check(testkit.Rows("1"))
+	tk.MustExec("admin check index t idx_b")
+}
+
+func (s *testDBSuite) getHistoryDDLJob(id int64) (*model.Job, error) {
+	var job *model.Job
+
+	err := kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		var err1 error
+		job, err1 = t.GetHistoryDDLJob(id)
+		return errors.Trace(err1)
+	})
+
+	return job, errors.Trace(err)
+}
+
+func (s *testDBSuite) TestBackwardCompatibility(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test_backward_compatibility")
+	defer tk.MustExec("drop database test_backward_compatibility")
+	tk.MustExec("use test_backward_compatibility")
+	tk.MustExec("create table t(a int primary key, b int)")
+	for i := 0; i < 200; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values(%v, %v)", i, i))
+	}
+
+	// alter table t add index idx_b(b);
+	is := s.dom.InfoSchema()
+	schemaName := model.NewCIStr("test_backward_compatibility")
+	tableName := model.NewCIStr("t")
+	schema, ok := is.SchemaByName(schemaName)
+	c.Assert(ok, IsTrue)
+	tbl, err := is.TableByName(schemaName, tableName)
+	c.Assert(err, IsNil)
+
+	// Split the table.
+	s.cluster.SplitTable(s.mvccStore, tbl.Meta().ID, 100)
+
+	unique := false
+	indexName := model.NewCIStr("idx_b")
+	idxColName := &ast.IndexColName{
+		Column: &ast.ColumnName{
+			Schema: schemaName,
+			Table:  tableName,
+			Name:   model.NewCIStr("b"),
+		},
+		Length: types.UnspecifiedLength,
+	}
+	idxColNames := []*ast.IndexColName{idxColName}
+	var indexOption *ast.IndexOption
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tbl.Meta().ID,
+		Type:       model.ActionAddIndex,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{unique, indexName, idxColNames, indexOption},
+	}
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	t := meta.NewMeta(txn)
+	job.ID, err = t.GenGlobalID()
+	c.Assert(err, IsNil)
+	job.Version = 1
+	job.StartTS = txn.StartTS()
+
+	// Simulate old TiDB init the add index job, old TiDB will not init the model.Job.ReorgMeta field,
+	// if we set job.SnapshotVer here, can simulate the behavior.
+	job.SnapshotVer = txn.StartTS()
+	err = t.EnQueueDDLJob(job)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+	ticker := time.NewTicker(s.lease)
+	for range ticker.C {
+		historyJob, err := s.getHistoryDDLJob(job.ID)
+		c.Assert(err, IsNil)
+		if historyJob == nil {
+
+			continue
+		}
+		c.Assert(historyJob.Error, IsNil)
+
+		if historyJob.IsSynced() {
+			break
+		}
+	}
+
+	// finished add index
+	tk.MustExec("admin check index t idx_b")
 }

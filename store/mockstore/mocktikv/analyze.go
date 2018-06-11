@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	tipb "github.com/pingcap/tipb/go-tipb"
+	"github.com/pingcap/tipb/go-tipb"
 	"golang.org/x/net/context"
 )
 
@@ -227,7 +227,7 @@ func (e *analyzeColumnsExec) NewChunk() *chunk.Chunk {
 	for _, field := range e.fields {
 		fields = append(fields, &field.Column.FieldType)
 	}
-	return chunk.NewChunk(fields)
+	return chunk.NewChunkWithCapacity(fields, 1)
 }
 
 // Close implements the ast.RecordSet Close interface.

@@ -377,6 +377,21 @@ func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
 	result.Check(testkit.Rows("18446744073709551615 18446744073709551616"))
 	result = tk.MustQuery("select floor(-18446744073709551617), ceil(-18446744073709551617), floor(-18446744073709551617.11), ceil(-18446744073709551617.11)")
 	result.Check(testkit.Rows("-18446744073709551617 -18446744073709551617 -18446744073709551618 -18446744073709551617"))
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a decimal(40,20) UNSIGNED);")
+	tk.MustExec("insert into t values(2.99999999900000000000), (12), (0);")
+	tk.MustQuery("select a, ceil(a) from t where ceil(a) > 1;").Check(testkit.Rows("2.99999999900000000000 3", "12.00000000000000000000 12"))
+	tk.MustQuery("select a, ceil(a) from t;").Check(testkit.Rows("2.99999999900000000000 3", "12.00000000000000000000 12", "0.00000000000000000000 0"))
+	tk.MustQuery("select ceil(-29464);").Check(testkit.Rows("-29464"))
+	tk.MustQuery("select a, floor(a) from t where floor(a) > 1;").Check(testkit.Rows("2.99999999900000000000 2", "12.00000000000000000000 12"))
+	tk.MustQuery("select a, floor(a) from t;").Check(testkit.Rows("2.99999999900000000000 2", "12.00000000000000000000 12", "0.00000000000000000000 0"))
+	tk.MustQuery("select floor(-29464);").Check(testkit.Rows("-29464"))
+
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a decimal(40,20), b bigint);`)
+	tk.MustExec(`insert into t values(-2.99999990000000000000, -1);`)
+	tk.MustQuery(`select floor(a), floor(a), floor(a) from t;`).Check(testkit.Rows(`-3 -3 -3`))
+	tk.MustQuery(`select b, floor(b) from t;`).Check(testkit.Rows(`-1 -1`))
 
 	// for cot
 	result = tk.MustQuery("select cot(1), cot(-1), cot(NULL)")
@@ -2090,7 +2105,6 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	c.Assert(charRecordSet, NotNil)
 	_, err = session.GetRows4Test(ctx, tk.Se, charRecordSet)
 	c.Assert(err.Error(), Equals, "unknown encoding: tidb")
-	c.Assert(rs.Close(), IsNil)
 
 	// issue 3884
 	tk.MustExec("drop table if exists t")
@@ -2530,10 +2544,13 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	tk.MustExec("insert into t value(1.2)")
 	result = tk.MustQuery("select * from t where a/0 > 1")
 	result.Check(testkit.Rows())
-	// TODO: tipb.StreamResponse should encode the warning fields, fix here.
-	if !tk.Se.GetSessionVars().EnableStreaming {
-		tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|Division by 0"))
-	}
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|Division by 0"))
+
+	tk.MustExec("USE test;")
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("CREATE TABLE t(a BIGINT, b DECIMAL(6, 2));")
+	tk.MustExec("INSERT INTO t VALUES(0, 1.12), (1, 1.21);")
+	tk.MustQuery("SELECT a/b FROM t;").Check(testkit.Rows("0.0000", "0.8264"))
 }
 
 func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
@@ -3217,6 +3234,29 @@ func (s *testIntegrationSuite) TestIssues(c *C) {
 	tk.MustQuery("select * from t where cast(a as binary)").Check(testkit.Rows("1"))
 }
 
+func (s *testIntegrationSuite) TestInPredicate4UnsignedInt(c *C) {
+	// for issue #6661
+	tk := testkit.NewTestKit(c, s.store)
+	defer s.cleanEnv(c)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (a bigint unsigned,key (a));")
+	tk.MustExec("INSERT INTO t VALUES (0), (4), (5), (6), (7), (8), (9223372036854775810), (18446744073709551614), (18446744073709551615);")
+	r := tk.MustQuery(`SELECT a FROM t WHERE a NOT IN (-1, -2, 18446744073709551615);`)
+	r.Check(testkit.Rows("0", "4", "5", "6", "7", "8", "9223372036854775810", "18446744073709551614"))
+	r = tk.MustQuery(`SELECT a FROM t WHERE a NOT IN (-1, -2, 4, 9223372036854775810);`)
+	r.Check(testkit.Rows("0", "5", "6", "7", "8", "18446744073709551614", "18446744073709551615"))
+	r = tk.MustQuery(`SELECT a FROM t WHERE a NOT IN (-1, -2, 0, 4, 18446744073709551614);`)
+	r.Check(testkit.Rows("5", "6", "7", "8", "9223372036854775810", "18446744073709551615"))
+
+	// for issue #4473
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t1 (some_id smallint(5) unsigned,key (some_id) )")
+	tk.MustExec("insert into t1 values (1),(2)")
+	r = tk.MustQuery(`select some_id from t1 where some_id not in(2,-1);`)
+	r.Check(testkit.Rows("1"))
+}
+
 func (s *testIntegrationSuite) TestFilterExtractFromDNF(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer s.cleanEnv(c)
@@ -3275,6 +3315,19 @@ func (s *testIntegrationSuite) TestFilterExtractFromDNF(c *C) {
 	}
 }
 
+func (s *testIntegrationSuite) testTiDBIsOwnerFunc(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer s.cleanEnv(c)
+	result := tk.MustQuery("select tidb_is_ddl_owner()")
+	ddlOwnerChecker := tk.Se.DDLOwnerChecker()
+	c.Assert(ddlOwnerChecker, NotNil)
+	var ret int64
+	if ddlOwnerChecker.IsOwner() {
+		ret = 1
+	}
+	result.Check(testkit.Rows(fmt.Sprintf("%v", ret)))
+}
+
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	store, err := mockstore.NewMockTikvStore()
 	if err != nil {
@@ -3283,4 +3336,17 @@ func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	session.SetSchemaLease(0)
 	dom, err := session.BootstrapSession(store)
 	return store, dom, errors.Trace(err)
+}
+
+func (s *testIntegrationSuite) TestTwoDecimalAssignTruncate(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer s.cleanEnv(c)
+	tk.MustExec("use test")
+	tk.MustExec("set sql_mode=''")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t1(a decimal(10,5), b decimal(10,1))")
+	tk.MustExec("insert into t1 values(123.12345, 123.12345)")
+	tk.MustExec("update t1 set b = a")
+	res := tk.MustQuery("select a, b from t1")
+	res.Check(testkit.Rows("123.12345 123.1"))
 }

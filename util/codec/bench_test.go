@@ -67,7 +67,7 @@ func BenchmarkDecodeDecimal(b *testing.B) {
 	dec := &types.MyDecimal{}
 	dec.FromFloat64(1211.1211113)
 	precision, frac := dec.PrecisionAndFrac()
-	raw := EncodeDecimal([]byte{}, dec, precision, frac)
+	raw, _ := EncodeDecimal([]byte{}, dec, precision, frac)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		DecodeDecimal(raw)
@@ -82,7 +82,7 @@ func BenchmarkDecodeOneToChunk(b *testing.B) {
 	raw = EncodeBytes(raw, str.GetBytes())
 	intType := types.NewFieldType(mysql.TypeLonglong)
 	b.ResetTimer()
-	decoder := NewDecoder(chunk.NewChunk([]*types.FieldType{intType}), nil)
+	decoder := NewDecoder(chunk.NewChunkWithCapacity([]*types.FieldType{intType}, 32), nil)
 	for i := 0; i < b.N; i++ {
 		decoder.DecodeOne(raw, 0, intType)
 	}

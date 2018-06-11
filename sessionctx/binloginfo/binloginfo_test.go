@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
@@ -52,13 +53,18 @@ type mockBinlogPump struct {
 	mu struct {
 		sync.Mutex
 		payloads [][]byte
+		mockFail bool
 	}
 }
 
 func (p *mockBinlogPump) WriteBinlog(ctx context.Context, req *binlog.WriteBinlogReq) (*binlog.WriteBinlogResp, error) {
 	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.mu.mockFail {
+		return &binlog.WriteBinlogResp{}, errors.New("mock fail")
+	}
 	p.mu.payloads = append(p.mu.payloads, req.Payload)
-	p.mu.Unlock()
 	return &binlog.WriteBinlogResp{}, nil
 }
 
@@ -361,4 +367,29 @@ func mutationRowsToRows(c *C, mutationRows [][]byte, columnValueOffsets ...int) 
 		rows = append(rows, row)
 	}
 	return rows
+}
+
+// Sometimes this test doesn't clean up fail, let the function name begin with 'Z'
+// so it runs last and would not disrupt other tests.
+func (s *testBinlogSuite) TestZIgnoreError(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.Se.GetSessionVars().BinlogClient = s.client
+	tk.MustExec("drop table if exists ignore_error")
+	tk.MustExec("create table t (id int)")
+
+	binloginfo.SetIgnoreError(true)
+	s.pump.mu.Lock()
+	s.pump.mu.mockFail = true
+	s.pump.mu.Unlock()
+
+	tk.MustExec("insert into t values (1)")
+	tk.MustExec("insert into t values (1)")
+
+	// Clean up.
+	s.pump.mu.Lock()
+	s.pump.mu.mockFail = false
+	s.pump.mu.Unlock()
+	binloginfo.DisableSkipBinlogFlag()
+	binloginfo.SetIgnoreError(false)
 }

@@ -83,12 +83,13 @@ var (
 		"unsupported drop integer primary key")
 	errUnsupportedCharset = terror.ClassDDL.New(codeUnsupportedCharset, "unsupported charset %s collate %s")
 
+	errUnsupportedShardRowIDBits = terror.ClassDDL.New(codeUnsupportedShardRowIDBits, "unsupported shard_row_id_bits for table with auto_increment column.")
+
 	errBlobKeyWithoutLength = terror.ClassDDL.New(codeBlobKeyWithoutLength, "index for BLOB/TEXT column must specify a key length")
 	errIncorrectPrefixKey   = terror.ClassDDL.New(codeIncorrectPrefixKey, "Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys")
 	errTooLongKey           = terror.ClassDDL.New(codeTooLongKey,
 		fmt.Sprintf("Specified key was too long; max key length is %d bytes", maxPrefixLength))
 	errKeyColumnDoesNotExits    = terror.ClassDDL.New(codeKeyColumnDoesNotExits, "this key column doesn't exist in table")
-	errDupKeyName               = terror.ClassDDL.New(codeDupKeyName, "duplicate key name")
 	errUnknownTypeLength        = terror.ClassDDL.New(codeUnknownTypeLength, "Unknown length for type tp %d")
 	errUnknownFractionLength    = terror.ClassDDL.New(codeUnknownFractionLength, "Unknown Length for type tp %d and fraction %d")
 	errInvalidJobVersion        = terror.ClassDDL.New(codeInvalidJobVersion, "DDL job with version %d greater than current %d")
@@ -114,6 +115,8 @@ var (
 	errBlobCantHaveDefault = terror.ClassDDL.New(codeBlobCantHaveDefault, mysql.MySQLErrName[mysql.ErrBlobCantHaveDefault])
 	errTooLongIndexComment = terror.ClassDDL.New(codeErrTooLongIndexComment, mysql.MySQLErrName[mysql.ErrTooLongIndexComment])
 
+	// ErrDupKeyName returns for duplicated key name
+	ErrDupKeyName = terror.ClassDDL.New(codeDupKeyName, "duplicate key name")
 	// ErrInvalidDBState returns for invalid database state.
 	ErrInvalidDBState = terror.ClassDDL.New(codeInvalidDBState, "invalid database state")
 	// ErrInvalidTableState returns for invalid Table state.
@@ -135,7 +138,7 @@ var (
 	// ErrCantDropFieldOrKey returns for dropping a non-existent field or key.
 	ErrCantDropFieldOrKey = terror.ClassDDL.New(codeCantDropFieldOrKey, "can't drop field; check that column/key exists")
 	// ErrInvalidOnUpdate returns for invalid ON UPDATE clause.
-	ErrInvalidOnUpdate = terror.ClassDDL.New(codeInvalidOnUpdate, "invalid ON UPDATE clause for the column")
+	ErrInvalidOnUpdate = terror.ClassDDL.New(codeInvalidOnUpdate, mysql.MySQLErrName[mysql.ErrInvalidOnUpdate])
 	// ErrTooLongIdent returns for too long name of database/table/column/index.
 	ErrTooLongIdent = terror.ClassDDL.New(codeTooLongIdent, mysql.MySQLErrName[mysql.ErrTooLongIdent])
 	// ErrWrongDBName returns for wrong database name.
@@ -191,6 +194,9 @@ type DDL interface {
 	SetHook(h Callback)
 	// GetHook gets the hook. It's exported for testing.
 	GetHook() Callback
+
+	// GetTableMaxRowID gets table max row ID. It's exported for testing.
+	GetTableMaxRowID(startTS uint64, tblInfo *model.TableInfo) (int64, bool, error)
 }
 
 // ddl represents the statements which are used to define the database structure or schema.
@@ -299,7 +305,7 @@ func newDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 	variable.RegisterStatistics(d)
 
 	log.Infof("[ddl] start DDL:%s", d.uuid)
-	metrics.DDLCounter.WithLabelValues(metrics.CreateDDL).Inc()
+	metrics.DDLCounter.WithLabelValues(metrics.CreateDDLInstance).Inc()
 	return d
 }
 
@@ -309,7 +315,7 @@ func (d *ddl) Stop() error {
 	defer d.m.Unlock()
 
 	d.close()
-	log.Infof("stop DDL:%s", d.uuid)
+	log.Infof("[ddl] stop DDL:%s", d.uuid)
 	return nil
 }
 
@@ -347,7 +353,7 @@ func (d *ddl) close() {
 	d.wait.Wait()
 
 	d.delRangeManager.clear()
-	log.Infof("close DDL:%s", d.uuid)
+	log.Infof("[ddl] close DDL:%s", d.uuid)
 }
 
 func (d *ddl) isClosed() bool {
@@ -390,7 +396,8 @@ func (d *ddl) GetLease() time.Duration {
 	return lease
 }
 
-func (d *ddl) getInformationSchema() infoschema.InfoSchema {
+// GetInformationSchema get the infoschema binding to d. It's expoted for testing.
+func (d *ddl) GetInformationSchema() infoschema.InfoSchema {
 	return d.infoHandle.Get()
 }
 
@@ -464,13 +471,13 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 			log.Errorf("[ddl] get history DDL job err %v, check again", err)
 			continue
 		} else if historyJob == nil {
-			log.Debugf("[ddl] DDL job %d is not in history, maybe not run", jobID)
+			log.Debugf("[ddl] DDL job ID:%d is not in history, maybe not run", jobID)
 			continue
 		}
 
 		// If a job is a history job, the state must be JobSynced or JobCancel.
 		if historyJob.IsSynced() {
-			log.Infof("[ddl] DDL job %d is finished", jobID)
+			log.Infof("[ddl] DDL job ID:%d is finished", jobID)
 			return nil
 		}
 
@@ -538,6 +545,7 @@ const (
 	codeUnsupportedDropPKHandle     = 204
 	codeUnsupportedCharset          = 205
 	codeUnsupportedModifyPrimaryKey = 206
+	codeUnsupportedShardRowIDBits   = 207
 
 	codeFileNotFound                 = 1017
 	codeErrorOnRename                = 1025

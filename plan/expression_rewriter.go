@@ -402,7 +402,7 @@ func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, 
 		cond = expression.ComposeDNFCondition(er.ctx, cond, nullChecker)
 	}
 
-	// TODO: Add a Projection if any argument of aggregate funcs or group by items are scala functions.
+	// TODO: Add a Projection if any argument of aggregate funcs or group by items are scalar functions.
 	// plan4Agg.buildProjectionIfNecessary()
 	if !er.asScalar {
 		// For Semi LogicalApply without aux column, the result is no matter false or null. So we can add it to join predicate.
@@ -1141,7 +1141,7 @@ func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 	column, err := er.schema.FindColumn(v)
 	if err != nil {
-		er.err = ErrAmbiguous.GenByArgs(v.Name)
+		er.err = ErrAmbiguous.GenByArgs(v.Name, clauseMsg[fieldList])
 		return
 	}
 	if column != nil {
@@ -1152,11 +1152,11 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 		outerSchema := er.b.outerSchemas[i]
 		column, err = outerSchema.FindColumn(v)
 		if column != nil {
-			er.ctxStack = append(er.ctxStack, &expression.CorrelatedColumn{Column: *column})
+			er.ctxStack = append(er.ctxStack, &expression.CorrelatedColumn{Column: *column, Data: new(types.Datum)})
 			return
 		}
 		if err != nil {
-			er.err = ErrAmbiguous.GenByArgs(v.Name)
+			er.err = ErrAmbiguous.GenByArgs(v.Name, clauseMsg[fieldList])
 			return
 		}
 	}

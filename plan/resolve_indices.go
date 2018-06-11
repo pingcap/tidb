@@ -51,9 +51,11 @@ func (p *PhysicalMergeJoin) ResolveIndices() {
 	p.physicalSchemaProducer.ResolveIndices()
 	lSchema := p.children[0].Schema()
 	rSchema := p.children[1].Schema()
-	for _, fun := range p.EqualConditions {
-		fun.GetArgs()[0].ResolveIndices(lSchema)
-		fun.GetArgs()[1].ResolveIndices(rSchema)
+	for _, col := range p.LeftKeys {
+		col.ResolveIndices(lSchema)
+	}
+	for _, col := range p.RightKeys {
+		col.ResolveIndices(rSchema)
 	}
 	for _, expr := range p.LeftConditions {
 		expr.ResolveIndices(lSchema)
@@ -159,6 +161,9 @@ func (p *PhysicalTopN) ResolveIndices() {
 // ResolveIndices implements Plan interface.
 func (p *PhysicalApply) ResolveIndices() {
 	p.PhysicalJoin.ResolveIndices()
+	for _, col := range p.schema.Columns {
+		col.ResolveIndices(p.PhysicalJoin.schema)
+	}
 	for _, col := range p.OuterSchema {
 		col.Column.ResolveIndices(p.children[0].Schema())
 	}
@@ -179,7 +184,7 @@ func (p *Insert) ResolveIndices() {
 		asgn.Col.ResolveIndices(p.tableSchema)
 		asgn.Expr.ResolveIndices(p.tableSchema)
 	}
-	for _, set := range p.Setlist {
+	for _, set := range p.SetList {
 		set.Col.ResolveIndices(p.tableSchema)
 		set.Expr.ResolveIndices(p.tableSchema)
 	}

@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	tipb "github.com/pingcap/tipb/go-tipb"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 var (
@@ -517,7 +517,14 @@ func (b *builtinCeilIntToDecSig) Clone() builtinFunc {
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_Ceil
 func (b *builtinCeilIntToDecSig) evalDecimal(row types.Row) (*types.MyDecimal, bool, error) {
 	val, isNull, err := b.args[0].EvalInt(b.ctx, row)
-	return types.NewDecFromUint(uint64(val)), isNull, errors.Trace(err)
+	if isNull || err != nil {
+		return nil, true, errors.Trace(err)
+	}
+
+	if mysql.HasUnsignedFlag(b.args[0].GetType().Flag) || val >= 0 {
+		return types.NewDecFromUint(uint64(val)), false, nil
+	}
+	return types.NewDecFromInt(val), false, nil
 }
 
 type builtinCeilDecToIntSig struct {
@@ -564,18 +571,20 @@ func (b *builtinCeilDecToDecSig) evalDecimal(row types.Row) (*types.MyDecimal, b
 	if isNull || err != nil {
 		return nil, isNull, errors.Trace(err)
 	}
-	if val.GetDigitsFrac() > 0 && !val.IsNegative() {
-		err = types.DecimalAdd(val, types.NewDecFromInt(1), val)
-		if err != nil {
-			return nil, true, errors.Trace(err)
-		}
-	}
+
 	res := new(types.MyDecimal)
-	err = val.Round(res, 0, types.ModeTruncate)
-	if err != nil {
-		return nil, true, errors.Trace(err)
+	if val.IsNegative() {
+		err = val.Round(res, 0, types.ModeTruncate)
+		return res, err != nil, errors.Trace(err)
 	}
-	return res, false, nil
+
+	err = val.Round(res, 0, types.ModeTruncate)
+	if err != nil || res.Compare(val) == 0 {
+		return res, err != nil, errors.Trace(err)
+	}
+
+	err = types.DecimalAdd(res, types.NewDecFromInt(1), res)
+	return res, err != nil, errors.Trace(err)
 }
 
 type floorFunctionClass struct {
@@ -693,7 +702,14 @@ func (b *builtinFloorIntToDecSig) Clone() builtinFunc {
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_floor
 func (b *builtinFloorIntToDecSig) evalDecimal(row types.Row) (*types.MyDecimal, bool, error) {
 	val, isNull, err := b.args[0].EvalInt(b.ctx, row)
-	return types.NewDecFromUint(uint64(val)), isNull, errors.Trace(err)
+	if isNull || err != nil {
+		return nil, true, errors.Trace(err)
+	}
+
+	if mysql.HasUnsignedFlag(b.args[0].GetType().Flag) || val >= 0 {
+		return types.NewDecFromUint(uint64(val)), false, nil
+	}
+	return types.NewDecFromInt(val), false, nil
 }
 
 type builtinFloorDecToIntSig struct {
@@ -738,20 +754,22 @@ func (b *builtinFloorDecToDecSig) Clone() builtinFunc {
 func (b *builtinFloorDecToDecSig) evalDecimal(row types.Row) (*types.MyDecimal, bool, error) {
 	val, isNull, err := b.args[0].EvalDecimal(b.ctx, row)
 	if isNull || err != nil {
-		return nil, isNull, errors.Trace(err)
-	}
-	if val.GetDigitsFrac() > 0 && val.IsNegative() {
-		err = types.DecimalSub(val, types.NewDecFromInt(1), val)
-		if err != nil {
-			return nil, true, errors.Trace(err)
-		}
-	}
-	res := new(types.MyDecimal)
-	err = val.Round(res, 0, types.ModeTruncate)
-	if err != nil {
 		return nil, true, errors.Trace(err)
 	}
-	return res, false, nil
+
+	res := new(types.MyDecimal)
+	if !val.IsNegative() {
+		err = val.Round(res, 0, types.ModeTruncate)
+		return res, err != nil, errors.Trace(err)
+	}
+
+	err = val.Round(res, 0, types.ModeTruncate)
+	if err != nil || res.Compare(val) == 0 {
+		return res, err != nil, errors.Trace(err)
+	}
+
+	err = types.DecimalSub(res, types.NewDecFromInt(1), res)
+	return res, err != nil, errors.Trace(err)
 }
 
 type logFunctionClass struct {

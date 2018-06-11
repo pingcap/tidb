@@ -19,6 +19,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
@@ -53,7 +54,7 @@ func (s *testTimeSuite) TestDateTime(c *C) {
 		{"121231113045", "2012-12-31 11:30:45"},
 		{"2012-02-29", "2012-02-29 00:00:00"},
 		{"00-00-00", "0000-00-00 00:00:00"},
-		{"00-00-00 00:00:00.123", "2000-00-00 00:00:00"},
+		{"00-00-00 00:00:00.123", "2000-00-00 00:00:00.123"},
 		{"11111111111", "2011-11-11 11:11:01"},
 	}
 
@@ -95,7 +96,6 @@ func (s *testTimeSuite) TestDateTime(c *C) {
 		"10000-01-01 00:00:00",
 		"1000-09-31 00:00:00",
 		"1001-02-29 00:00:00",
-		"2017-00-05 08:40:59.575601",
 		"20170118.999",
 	}
 
@@ -115,7 +115,7 @@ func (s *testTimeSuite) TestTimestamp(c *C) {
 	}
 
 	for _, test := range table {
-		t, err := types.ParseTimestamp(nil, test.Input)
+		t, err := types.ParseTimestamp(&stmtctx.StatementContext{TimeZone: time.UTC}, test.Input)
 		c.Assert(err, IsNil)
 		c.Assert(t.String(), Equals, test.Expect)
 	}
@@ -126,7 +126,7 @@ func (s *testTimeSuite) TestTimestamp(c *C) {
 	}
 
 	for _, test := range errTable {
-		_, err := types.ParseTimestamp(nil, test)
+		_, err := types.ParseTimestamp(&stmtctx.StatementContext{TimeZone: time.UTC}, test)
 		c.Assert(err, NotNil)
 	}
 }
@@ -408,11 +408,14 @@ func (s *testTimeSuite) getLocation(c *C) *time.Location {
 
 func (s *testTimeSuite) TestCodec(c *C) {
 	defer testleak.AfterTest(c)()
+
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+
 	// MySQL timestamp value doesn't allow month=0 or day=0.
-	t, err := types.ParseTimestamp(nil, "2016-12-00 00:00:00")
+	t, err := types.ParseTimestamp(sc, "2016-12-00 00:00:00")
 	c.Assert(err, NotNil)
 
-	t, err = types.ParseTimestamp(nil, "2010-10-10 10:11:11")
+	t, err = types.ParseTimestamp(sc, "2010-10-10 10:11:11")
 	c.Assert(err, IsNil)
 	packed, err := t.ToPackedUint()
 	c.Assert(err, IsNil)
@@ -519,7 +522,9 @@ func (s *testTimeSuite) TestParseTimeFromNum(c *C) {
 		c.Assert(t.String(), Equals, test.ExpectDateTimeValue)
 
 		// testtypes.ParseTimestampFromNum
-		t, err = types.ParseTimestampFromNum(nil, test.Input)
+		t, err = types.ParseTimestampFromNum(&stmtctx.StatementContext{
+			TimeZone: time.UTC,
+		}, test.Input)
 		if test.ExpectTimeStampError {
 			c.Assert(err, NotNil)
 		} else {
@@ -653,7 +658,7 @@ func (s *testTimeSuite) TestParseFrac(c *C) {
 func (s *testTimeSuite) TestRoundFrac(c *C) {
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
-	sc.TimeZone = time.Local
+	sc.TimeZone = time.UTC
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Input  string
@@ -924,6 +929,9 @@ func (s *testTimeSuite) TestTimeAdd(c *C) {
 		{"2017-08-21", "01:01:01.001", "2017-08-21 01:01:01.001"},
 	}
 
+	sc := &stmtctx.StatementContext{
+		TimeZone: time.UTC,
+	}
 	for _, t := range tbl {
 		v1, err := types.ParseTime(nil, t.Arg1, mysql.TypeDatetime, types.MaxFsp)
 		c.Assert(err, IsNil)
@@ -931,7 +939,7 @@ func (s *testTimeSuite) TestTimeAdd(c *C) {
 		c.Assert(err, IsNil)
 		result, err := types.ParseTime(nil, t.Ret, mysql.TypeDatetime, types.MaxFsp)
 		c.Assert(err, IsNil)
-		v2, err := v1.Add(dur)
+		v2, err := v1.Add(sc, dur)
 		c.Assert(err, IsNil)
 		c.Assert(v2.Compare(result), Equals, 0, Commentf("%v %v", v2.Time, result.Time))
 	}
@@ -967,4 +975,57 @@ func (s *testTimeSuite) TestTruncateOverflowMySQLTime(c *C) {
 	res, err = types.TruncateOverflowMySQLTime(t)
 	c.Assert(err, IsNil)
 	c.Assert(res, Equals, types.MinTime+1)
+}
+
+func (s *testTimeSuite) TestCheckTimestamp(c *C) {
+
+	shanghaiTz, _ := time.LoadLocation("Asia/Shanghai")
+
+	tests := []struct {
+		tz             *time.Location
+		input          types.MysqlTime
+		expectRetError bool
+	}{{
+		tz:             shanghaiTz,
+		input:          types.FromDate(2038, 1, 19, 11, 14, 7, 0),
+		expectRetError: false,
+	}, {
+		tz:             shanghaiTz,
+		input:          types.FromDate(1970, 1, 1, 8, 1, 1, 0),
+		expectRetError: false,
+	}, {
+		tz:             shanghaiTz,
+		input:          types.FromDate(2038, 1, 19, 12, 14, 7, 0),
+		expectRetError: true,
+	}, {
+		tz:             shanghaiTz,
+		input:          types.FromDate(1970, 1, 1, 7, 1, 1, 0),
+		expectRetError: true,
+	}, {
+		tz:             time.UTC,
+		input:          types.FromDate(2038, 1, 19, 3, 14, 7, 0),
+		expectRetError: false,
+	}, {
+		tz:             time.UTC,
+		input:          types.FromDate(1970, 1, 1, 0, 1, 1, 0),
+		expectRetError: false,
+	}, {
+		tz:             time.UTC,
+		input:          types.FromDate(2038, 1, 19, 4, 14, 7, 0),
+		expectRetError: true,
+	}, {
+		tz:             time.UTC,
+		input:          types.FromDate(1969, 1, 1, 0, 0, 0, 0),
+		expectRetError: true,
+	},
+	}
+
+	for _, t := range tests {
+		validTimestamp := types.CheckTimestampTypeForTest(&stmtctx.StatementContext{TimeZone: t.tz}, t.input)
+		if t.expectRetError {
+			c.Assert(validTimestamp, NotNil, Commentf("For %s", t.input))
+		} else {
+			c.Assert(validTimestamp, IsNil, Commentf("For %s", t.input))
+		}
+	}
 }

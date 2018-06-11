@@ -34,19 +34,19 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 20),
 		}, []string{LblType, LblResult})
 
-	BatchAddIdxHistogram = prometheus.NewHistogram(
+	BatchAddIdxHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
 			Name:      "batch_add_idx_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of batch handle data",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20),
-		})
+		}, []string{LblType})
 
-	SyncerInit    = "init"
-	SyncerRestart = "restart"
-	SyncerClear   = "clear"
-
+	SyncerInit            = "init"
+	SyncerRestart         = "restart"
+	SyncerClear           = "clear"
+	SyncerRewatch         = "rewatch"
 	DeploySyncerHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
@@ -90,16 +90,25 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20),
 		}, []string{LblType, LblResult})
 
-	CreateDDL       = "create_ddl"
-	CreateDDLWorker = "create_ddl_worker"
-	IsDDLOwner      = "is_ddl_owner"
-	DDLCounter      = prometheus.NewCounterVec(
+	CreateDDLInstance = "create_ddl_instance"
+	CreateDDLWorker   = "create_ddl_worker"
+	IsDDLOwner        = "is_ddl_owner"
+	DDLCounter        = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
 			Name:      "worker_operation_total",
 			Help:      "Counter of creating ddl/worker and isowner.",
 		}, []string{LblType})
+
+	// DDLJobErrCounter is the counter of error occured in ddl job.
+	DDLJobErrCounter = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "ddl",
+			Name:      "job_error_total",
+			Help:      "Counter of error occured in ddl job.",
+		})
 )
 
 func init() {
@@ -111,4 +120,5 @@ func init() {
 	prometheus.MustRegister(OwnerHandleSyncerHistogram)
 	prometheus.MustRegister(DDLWorkerHistogram)
 	prometheus.MustRegister(DDLCounter)
+	prometheus.MustRegister(DDLJobErrCounter)
 }

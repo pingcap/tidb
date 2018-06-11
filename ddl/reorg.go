@@ -14,17 +14,27 @@
 package ddl
 
 import (
+	"math"
 	"sync/atomic"
 	"time"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tipb/go-tipb"
 	log "github.com/sirupsen/logrus"
+	"golang.org/x/net/context"
 )
 
 // reorgCtx is for reorganization.
@@ -70,9 +80,16 @@ func (rc *reorgCtx) isReorgCanceled() bool {
 	return atomic.LoadInt32(&rc.notifyCancelReorgJob) == 1
 }
 
-func (rc *reorgCtx) setRowCountAndHandle(count, doneHandle int64) {
+func (rc *reorgCtx) setRowCount(count int64) {
 	atomic.StoreInt64(&rc.rowCount, count)
+}
+
+func (rc *reorgCtx) setNextHandle(doneHandle int64) {
 	atomic.StoreInt64(&rc.doneHandle, doneHandle)
+}
+
+func (rc *reorgCtx) increaseRowCount(count int64) {
+	atomic.AddInt64(&rc.rowCount, count)
 }
 
 func (rc *reorgCtx) getRowCountAndHandle() (int64, int64) {
@@ -82,15 +99,20 @@ func (rc *reorgCtx) getRowCountAndHandle() (int64, int64) {
 }
 
 func (rc *reorgCtx) clean() {
-	rc.setRowCountAndHandle(0, 0)
+	rc.setRowCount(0)
+	rc.setNextHandle(0)
 	rc.doneCh = nil
 }
 
-func (d *ddl) runReorgJob(t *meta.Meta, job *model.Job, f func() error) error {
+func (d *ddl) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, f func() error) error {
+	job := reorgInfo.Job
 	if d.reorgCtx.doneCh == nil {
 		// start a reorganization job
 		d.wait.Add(1)
 		d.reorgCtx.doneCh = make(chan error, 1)
+		// initial reorgCtx
+		d.reorgCtx.setRowCount(job.GetRowCount())
+		d.reorgCtx.setNextHandle(reorgInfo.StartHandle)
 		go func() {
 			defer d.wait.Done()
 			d.reorgCtx.doneCh <- f()
@@ -118,7 +140,8 @@ func (d *ddl) runReorgJob(t *meta.Meta, job *model.Job, f func() error) error {
 		return errors.Trace(err)
 	case <-d.quitCh:
 		log.Info("[ddl] run reorg job ddl quit")
-		d.reorgCtx.setRowCountAndHandle(0, 0)
+		d.reorgCtx.setNextHandle(0)
+		d.reorgCtx.setRowCount(0)
 		// We return errWaitReorgTimeout here too, so that outer loop will break.
 		return errWaitReorgTimeout
 	case <-time.After(waitTimeout):
@@ -154,18 +177,134 @@ func (d *ddl) isReorgRunnable() error {
 
 type reorgInfo struct {
 	*model.Job
-	Handle int64
-	d      *ddl
-	first  bool
+	// StartHandle is the first handle of the adding indices table.
+	StartHandle int64
+	// EndHandle is the last handle of the adding indices table.
+	EndHandle int64
+	d         *ddl
+	first     bool
 }
 
-func (d *ddl) getReorgInfo(t *meta.Meta, job *model.Job) (*reorgInfo, error) {
+func constructDescTableScanPB(tblInfo *model.TableInfo, pbColumnInfos []*tipb.ColumnInfo) *tipb.Executor {
+	tblScan := &tipb.TableScan{
+		TableId: tblInfo.ID,
+		Columns: pbColumnInfos,
+		Desc:    true,
+	}
+
+	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tblScan}
+}
+
+func constructLimitPB(count uint64) *tipb.Executor {
+	limitExec := &tipb.Limit{
+		Limit: count,
+	}
+	return &tipb.Executor{Tp: tipb.ExecType_TypeLimit, Limit: limitExec}
+}
+
+func buildDescTableScanDAG(startTS uint64, tblInfo *model.TableInfo, columns []*model.ColumnInfo, limit uint64) (*tipb.DAGRequest, error) {
+	dagReq := &tipb.DAGRequest{}
+	dagReq.StartTs = startTS
+	_, timeZoneOffset := time.Now().In(time.UTC).Zone()
+	dagReq.TimeZoneOffset = int64(timeZoneOffset)
+	for i := range columns {
+		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
+	}
+	dagReq.Flags |= model.FlagInSelectStmt
+
+	pbColumnInfos := model.ColumnsToProto(columns, tblInfo.PKIsHandle)
+	tblScanExec := constructDescTableScanPB(tblInfo, pbColumnInfos)
+	dagReq.Executors = append(dagReq.Executors, tblScanExec)
+	dagReq.Executors = append(dagReq.Executors, constructLimitPB(limit))
+	return dagReq, nil
+}
+
+func getColumnsTypes(columns []*model.ColumnInfo) []*types.FieldType {
+	colTypes := make([]*types.FieldType, 0, len(columns))
+	for _, col := range columns {
+		colTypes = append(colTypes, &col.FieldType)
+	}
+	return colTypes
+}
+
+// builds a desc table scan upon tblInfo.
+func (d *ddl) buildDescTableScan(ctx context.Context, startTS uint64, tblInfo *model.TableInfo, columns []*model.ColumnInfo, limit uint64) (distsql.SelectResult, error) {
+	dagPB, err := buildDescTableScanDAG(startTS, tblInfo, columns, limit)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	ranges := ranger.FullIntRange(false)
+	var builder distsql.RequestBuilder
+	builder.SetTableRanges(tblInfo.ID, ranges, nil).
+		SetDAGRequest(dagPB).
+		SetKeepOrder(true).
+		SetConcurrency(1).SetDesc(true)
+
+	builder.Request.NotFillCache = true
+	builder.Request.Priority = kv.PriorityLow
+	builder.Request.IsolationLevel = kv.SI
+
+	kvReq, err := builder.Build()
+	sctx := d.newContext()
+	result, err := distsql.Select(ctx, sctx, kvReq, getColumnsTypes(columns), statistics.NewQueryFeedback(0, nil, 0, false))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	result.Fetch(ctx)
+	return result, nil
+}
+
+// GetTableMaxRowID gets the last row id of the table.
+func (d *ddl) GetTableMaxRowID(startTS uint64, tblInfo *model.TableInfo) (maxRowID int64, emptyTable bool, err error) {
+	maxRowID = int64(math.MaxInt64)
+	var columns []*model.ColumnInfo
+	if tblInfo.PKIsHandle {
+		for _, col := range tblInfo.Columns {
+			if mysql.HasPriKeyFlag(col.Flag) {
+				columns = []*model.ColumnInfo{col}
+				break
+			}
+		}
+	} else {
+		columns = []*model.ColumnInfo{model.NewExtraHandleColInfo()}
+	}
+
+	ctx := context.Background()
+	// build a desc scan of tblInfo, which limit is 1, we can use it to retrive the last handle of the table.
+	result, err := d.buildDescTableScan(ctx, startTS, tblInfo, columns, 1)
+	if err != nil {
+		return maxRowID, false, errors.Trace(err)
+	}
+	defer terror.Call(result.Close)
+
+	chk := chunk.NewChunkWithCapacity(getColumnsTypes(columns), 1)
+	err = result.Next(ctx, chk)
+	if err != nil {
+		return maxRowID, false, errors.Trace(err)
+	}
+
+	if chk.NumRows() == 0 {
+		// empty table
+		return maxRowID, true, nil
+	}
+	row := chk.GetRow(0)
+	maxRowID = row.GetInt64(0)
+	return maxRowID, false, nil
+}
+
+var gofailOnceGuard bool
+
+func (d *ddl) getReorgInfo(t *meta.Meta, job *model.Job, tbl table.Table) (*reorgInfo, error) {
 	var err error
 
 	info := &reorgInfo{
-		Job:   job,
-		d:     d,
-		first: job.SnapshotVer == 0,
+		Job: job,
+		d:   d,
+		// init start handle is math.MinInt64
+		StartHandle: math.MinInt64,
+		// init end handle is math.MaxInt64
+		EndHandle: math.MaxInt64,
+		first:     job.SnapshotVer == 0,
 	}
 
 	if info.first {
@@ -178,14 +317,58 @@ func (d *ddl) getReorgInfo(t *meta.Meta, job *model.Job) (*reorgInfo, error) {
 			return nil, errInvalidStoreVer.Gen("invalid storage current version %d", ver.Ver)
 		}
 
+		// Get the first handle of this table.
+		err = iterateSnapshotRows(d.store, tbl, ver.Ver, math.MinInt64,
+			func(h int64, rowKey kv.Key, rawRecord []byte) (bool, error) {
+				info.StartHandle = h
+				return false, nil
+			})
+		if err != nil {
+			return info, errors.Trace(err)
+		}
+
+		// gofail: var errorUpdateReorgHandle bool
+		// if errorUpdateReorgHandle && !gofailOnceGuard {
+		//  // only return error once.
+		//	gofailOnceGuard = true
+		// 	return info, errors.New("occur an error when update reorg handle.")
+		// }
+		err = t.UpdateDDLReorgHandle(job, info.StartHandle)
+		if err != nil {
+			return info, errors.Trace(err)
+		}
+
 		job.SnapshotVer = ver.Ver
 	} else {
-		info.Handle, err = t.GetDDLReorgHandle(job)
+		info.StartHandle, err = t.GetDDLReorgHandle(job)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
+	// tbl set to nil is only in the tests.
+	if tbl == nil {
+		return info, errors.Trace(err)
+	}
 
+	// init the reorg meta info of job.
+	if job.ReorgMeta == nil {
+		reorgMeta := model.NewDDLReorgMeta()
+		// Gets the real table end handle, the new added row after the index being writable,
+		// has no needs to backfill.
+		endHandle, emptyTable, err1 := d.GetTableMaxRowID(job.SnapshotVer, tbl.Meta())
+		if err1 != nil {
+			return info, errors.Trace(err1)
+		}
+
+		if endHandle < info.StartHandle || emptyTable {
+			endHandle = info.StartHandle
+		}
+
+		reorgMeta.EndHandle = endHandle
+		log.Infof("[ddl] job %v get table startHandle:%v, endHandle:%v", job.ID, info.StartHandle, reorgMeta.EndHandle)
+		job.ReorgMeta = reorgMeta
+	}
+	info.EndHandle = job.ReorgMeta.EndHandle
 	return info, errors.Trace(err)
 }
 

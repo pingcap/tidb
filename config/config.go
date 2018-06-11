@@ -40,18 +40,18 @@ var (
 
 // Config contains configuration options.
 type Config struct {
-	Host            string `toml:"host" json:"host"`
-	Port            uint   `toml:"port" json:"port"`
-	Store           string `toml:"store" json:"store"`
-	Path            string `toml:"path" json:"path"`
-	Socket          string `toml:"socket" json:"socket"`
-	BinlogSocket    string `toml:"binlog-socket" json:"binlog-socket"`
-	Lease           string `toml:"lease" json:"lease"`
-	RunDDL          bool   `toml:"run-ddl" json:"run-ddl"`
-	SplitTable      bool   `toml:"split-table" json:"split-table"`
-	TokenLimit      uint   `toml:"token-limit" json:"token-limit"`
-	OOMAction       string `toml:"oom-action" json:"oom-action"`
-	EnableStreaming bool   `toml:"enable-streaming" json:"enable-streaming"`
+	Host            string          `toml:"host" json:"host"`
+	Port            uint            `toml:"port" json:"port"`
+	Store           string          `toml:"store" json:"store"`
+	Path            string          `toml:"path" json:"path"`
+	Socket          string          `toml:"socket" json:"socket"`
+	Lease           string          `toml:"lease" json:"lease"`
+	RunDDL          bool            `toml:"run-ddl" json:"run-ddl"`
+	SplitTable      bool            `toml:"split-table" json:"split-table"`
+	TokenLimit      uint            `toml:"token-limit" json:"token-limit"`
+	OOMAction       string          `toml:"oom-action" json:"oom-action"`
+	EnableStreaming bool            `toml:"enable-streaming" json:"enable-streaming"`
+	TxnLocalLatches TxnLocalLatches `toml:"txn-local-latches" json:"txn-local-latches"`
 	// Set sys variable lower-case-table-names, ref: https://dev.mysql.com/doc/refman/5.7/en/identifier-case-sensitivity.html.
 	// TODO: We actually only support mode 2, which keeps the original case, but the comparison is case-insensitive.
 	LowerCaseTableNames int `toml:"lower-case-table-names" json:"lower-case-table-names"`
@@ -66,6 +66,7 @@ type Config struct {
 	OpenTracing       OpenTracing       `toml:"opentracing" json:"opentracing"`
 	ProxyProtocol     ProxyProtocol     `toml:"proxy-protocol" json:"proxy-protocol"`
 	TiKVClient        TiKVClient        `toml:"tikv-client" json:"tikv-client"`
+	Binlog            Binlog            `toml:"binlog" json:"binlog"`
 }
 
 // Log is the log section of config.
@@ -167,6 +168,12 @@ type PlanCache struct {
 	Shards   uint `toml:"shards" json:"shards"`
 }
 
+// TxnLocalLatches is the TxnLocalLatches section of the config.
+type TxnLocalLatches struct {
+	Enabled  bool `toml:"enabled" json:"enabled"`
+	Capacity uint `toml:"capacity" json:"capacity"`
+}
+
 // PreparedPlanCache is the PreparedPlanCache section of the config.
 type PreparedPlanCache struct {
 	Enabled  bool `toml:"enabled" json:"enabled"`
@@ -219,17 +226,30 @@ type TiKVClient struct {
 	CommitTimeout string `toml:"commit-timeout" json:"commit-timeout"`
 }
 
+// Binlog is the config for binlog.
+type Binlog struct {
+	BinlogSocket string `toml:"binlog-socket" json:"binlog-socket"`
+	WriteTimeout string `toml:"write-timeout" json:"write-timeout"`
+	// If IgnoreError is true, when writting binlog meets error, TiDB would
+	// ignore the error.
+	IgnoreError bool `toml:"ignore-error" json:"ignore-error"`
+}
+
 var defaultConf = Config{
-	Host:                "0.0.0.0",
-	Port:                4000,
-	Store:               "mocktikv",
-	Path:                "/tmp/tidb",
-	RunDDL:              true,
-	SplitTable:          true,
-	Lease:               "45s",
-	TokenLimit:          1000,
-	OOMAction:           "log",
-	EnableStreaming:     false,
+	Host:            "0.0.0.0",
+	Port:            4000,
+	Store:           "mocktikv",
+	Path:            "/tmp/tidb",
+	RunDDL:          true,
+	SplitTable:      true,
+	Lease:           "45s",
+	TokenLimit:      1000,
+	OOMAction:       "log",
+	EnableStreaming: false,
+	TxnLocalLatches: TxnLocalLatches{
+		Enabled:  false,
+		Capacity: 1024000,
+	},
 	LowerCaseTableNames: 2,
 	Log: Log{
 		Level:  "info",
@@ -253,9 +273,9 @@ var defaultConf = Config{
 		StatsLease:          "3s",
 		RunAutoAnalyze:      true,
 		StmtCountLimit:      5000,
-		FeedbackProbability: 0,
+		FeedbackProbability: 0.05,
 		QueryFeedbackLimit:  1024,
-		PseudoEstimateRatio: 0.7,
+		PseudoEstimateRatio: 0.8,
 	},
 	XProtocol: XProtocol{
 		XHost: "",
@@ -285,6 +305,9 @@ var defaultConf = Config{
 	TiKVClient: TiKVClient{
 		GrpcConnectionCount: 16,
 		CommitTimeout:       "41s",
+	},
+	Binlog: Binlog{
+		WriteTimeout: "15s",
 	},
 }
 

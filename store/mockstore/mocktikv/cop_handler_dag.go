@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	mockpkg "github.com/pingcap/tidb/util/mock"
-	tipb "github.com/pingcap/tipb/go-tipb"
+	"github.com/pingcap/tipb/go-tipb"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
@@ -114,15 +114,16 @@ func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 }
 
 func (h *rpcHandler) handleCopStream(ctx context.Context, req *coprocessor.Request) (tikvpb.Tikv_CoprocessorStreamClient, error) {
-	_, e, dagReq, err := h.buildDAGExecutor(req)
+	dagCtx, e, dagReq, err := h.buildDAGExecutor(req)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	return &mockCopStreamClient{
-		exec: e,
-		req:  dagReq,
-		ctx:  ctx,
+		exec:   e,
+		req:    dagReq,
+		ctx:    ctx,
+		dagCtx: dagCtx,
 	}, nil
 }
 
@@ -427,6 +428,7 @@ type mockCopStreamClient struct {
 	req      *tipb.DAGRequest
 	exec     executor
 	ctx      context.Context
+	dagCtx   *dagContext
 	finished bool
 }
 
@@ -459,7 +461,7 @@ func (mock *mockCopStreamClient) Recv() (*coprocessor.Response, error) {
 
 	var resp coprocessor.Response
 	counts := make([]int64, len(mock.req.Executors))
-	chunk, finish, ran, counts, err := mock.readBlockFromExecutor()
+	chunk, finish, ran, counts, warnings, err := mock.readBlockFromExecutor()
 	resp.Range = ran
 	if err != nil {
 		if locked, ok := errors.Cause(err).(*ErrLocked); ok {
@@ -484,10 +486,18 @@ func (mock *mockCopStreamClient) Recv() (*coprocessor.Response, error) {
 		resp.OtherError = err.Error()
 		return &resp, nil
 	}
+	var Warnings []*tipb.Error
+	if len(warnings) > 0 {
+		Warnings = make([]*tipb.Error, 0, len(warnings))
+		for i := range warnings {
+			Warnings = append(Warnings, toPBError(warnings[i]))
+		}
+	}
 	streamResponse := tipb.StreamResponse{
 		Error:      toPBError(err),
 		EncodeType: tipb.EncodeType_TypeDefault,
 		Data:       data,
+		Warnings:   Warnings,
 	}
 	// The counts was the output count of each executor, but now it is the scan count of each range,
 	// so we need a flag to tell them apart.
@@ -503,7 +513,7 @@ func (mock *mockCopStreamClient) Recv() (*coprocessor.Response, error) {
 	return &resp, nil
 }
 
-func (mock *mockCopStreamClient) readBlockFromExecutor() (tipb.Chunk, bool, *coprocessor.KeyRange, []int64, error) {
+func (mock *mockCopStreamClient) readBlockFromExecutor() (tipb.Chunk, bool, *coprocessor.KeyRange, []int64, []error, error) {
 	var chunk tipb.Chunk
 	var ran coprocessor.KeyRange
 	var finish bool
@@ -514,7 +524,7 @@ func (mock *mockCopStreamClient) readBlockFromExecutor() (tipb.Chunk, bool, *cop
 		row, err := mock.exec.Next(mock.ctx)
 		if err != nil {
 			ran.End, _ = mock.exec.Cursor()
-			return chunk, false, &ran, nil, errors.Trace(err)
+			return chunk, false, &ran, nil, nil, errors.Trace(err)
 		}
 		if row == nil {
 			finish = true
@@ -529,7 +539,9 @@ func (mock *mockCopStreamClient) readBlockFromExecutor() (tipb.Chunk, bool, *cop
 	if desc {
 		ran.Start, ran.End = ran.End, ran.Start
 	}
-	return chunk, finish, &ran, mock.exec.Counts(), nil
+	warnings := mock.dagCtx.evalCtx.sc.GetWarnings()
+	mock.dagCtx.evalCtx.sc.SetWarnings(nil)
+	return chunk, finish, &ran, mock.exec.Counts(), warnings, nil
 }
 
 func buildResp(chunks []tipb.Chunk, counts []int64, err error, warnings []error) *coprocessor.Response {
