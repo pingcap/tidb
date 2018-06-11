@@ -66,7 +66,7 @@ func (sr *simpleRewriter) rewriteColumn(nodeColName *ast.ColumnNameExpr) (*Colum
 			}, nil
 		}
 	}
-	return nil, errBadField.Gen(nodeColName.Name.Name.O, "expression")
+	return nil, errBadField.GenByArgs(nodeColName.Name.Name.O, "expression")
 }
 
 func (sr *simpleRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
