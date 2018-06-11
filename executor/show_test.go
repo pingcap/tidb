@@ -159,6 +159,8 @@ func (s *testSuite) TestShow(c *C) {
 	row = result.Rows()[0]
 	c.Check(row, HasLen, 5)
 
+	tk.MustQuery("SHOW PRIVILEGES")
+
 	// Test show create database
 	testSQL = `create database show_test_DB`
 	tk.MustExec(testSQL)
