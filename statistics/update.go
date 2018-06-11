@@ -156,8 +156,11 @@ func (h *Handle) NewSessionStatsCollector() *SessionStatsCollector {
 	return newCollector
 }
 
+// DumpStatsDeltaRatio is the lower bound of `Modify Count / Table Count` for stats delta to be dumped.
+var DumpStatsDeltaRatio = 1 / 10000.0
+
 // DumpStatsDeltaToKV sweeps the whole list and updates the global map. Then we dumps every table that held in map to KV.
-func (h *Handle) DumpStatsDeltaToKV() error {
+func (h *Handle) DumpStatsDeltaToKV(dumpAll bool) error {
 	h.listHead.Lock()
 	for collector := h.listHead.next; collector != nil; collector = collector.next {
 		collector.tryToRemoveFromList()
@@ -165,6 +168,13 @@ func (h *Handle) DumpStatsDeltaToKV() error {
 	}
 	h.listHead.Unlock()
 	for id, item := range h.globalMap {
+		if !dumpAll {
+			tbl, ok := h.statsCache.Load().(statsCache)[id]
+			// do not dump if it only updates a small portion
+			if ok && tbl.Count > 0 && float64(item.Count)/float64(tbl.Count) < DumpStatsDeltaRatio {
+				continue
+			}
+		}
 		updated, err := h.dumpTableStatCountToKV(id, item)
 		if err != nil {
 			return errors.Trace(err)

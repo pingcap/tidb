@@ -42,22 +42,22 @@ func (s *testSuite) TestDataForTableRowsCountField(c *C) {
 	tk.MustQuery("select table_rows from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("0"))
 	tk.MustExec("insert into t(c, d) values(1, 2), (2, 3), (3, 4)")
-	h.DumpStatsDeltaToKV()
+	h.DumpStatsDeltaToKV(true)
 	h.Update(is)
 	tk.MustQuery("select table_rows from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("3"))
 	tk.MustExec("insert into t(c, d) values(4, 5)")
-	h.DumpStatsDeltaToKV()
+	h.DumpStatsDeltaToKV(true)
 	h.Update(is)
 	tk.MustQuery("select table_rows from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("4"))
 	tk.MustExec("delete from t where c >= 3")
-	h.DumpStatsDeltaToKV()
+	h.DumpStatsDeltaToKV(true)
 	h.Update(is)
 	tk.MustQuery("select table_rows from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("2"))
 	tk.MustExec("delete from t where c=3")
-	h.DumpStatsDeltaToKV()
+	h.DumpStatsDeltaToKV(true)
 	h.Update(is)
 	tk.MustQuery("select table_rows from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("2"))
