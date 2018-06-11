@@ -112,7 +112,8 @@ func (h *HistoryInfo) Clean() {
 type DDLReorgMeta struct {
 	// EndHandle is the last handle of the adding indices table.
 	// We should only backfill indices in the range [startHandle, EndHandle].
-	EndHandle int64 `json:"end_handle"`
+	EndHandle   int64 `json:"end_handle"`
+	PartitionID int64 `json:"partition_id"`
 }
 
 // NewDDLReorgMeta new a DDLReorgMeta.

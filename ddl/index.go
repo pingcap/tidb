@@ -15,6 +15,7 @@ package ddl
 
 import (
 	"context"
+	"math"
 	"time"
 
 	"github.com/juju/errors"
@@ -521,7 +522,7 @@ func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgInde
 	w.idxRecords = w.idxRecords[:0]
 	startTime := time.Now()
 	handleOutOfRange := false
-	err := iterateSnapshotRows(w.sessCtx.GetStore(), w.table, txn.StartTS(), taskRange.startHandle,
+	err := iterateSnapshotRows(w.sessCtx.GetStore(), w.table.Meta().ID, txn.StartTS(), taskRange.startHandle,
 		func(handle int64, recordKey kv.Key, rawRow []byte) (bool, error) {
 			if !taskRange.endIncluded {
 				handleOutOfRange = handle >= taskRange.endHandle
@@ -847,12 +848,67 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 	}
 	defer closeAddIndexWorkers(workers)
 
-	kvRanges, err := d.splitTableRanges(t, reorgInfo)
-	if err != nil {
-		return errors.Trace(err)
+	finish := false
+	for !finish {
+		kvRanges, err := d.splitTableRanges(t, reorgInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		err = d.backfillKVRangesIndex(t, workers, kvRanges, job, reorgInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		finish, reorgInfo, err = d.updateReorgInfo(t, reorgInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+// updateReorgInfo will find the next partition according to current reorgInfo.
+func (d *ddl) updateReorgInfo(t table.Table, reorg *reorgInfo) (bool, *reorgInfo, error) {
+	pi := t.Meta().GetPartitionInfo()
+	if pi == nil {
+		return true, reorg, nil
 	}
 
-	return d.backfillKVRangesIndex(t, workers, kvRanges, job, reorgInfo)
+	idx := -1
+	for i, def := range pi.Definitions {
+		if reorg.partitionID == def.ID {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		// Fatal error, should not run here.
+		return true, reorg, errors.Errorf("wrong reorgInfo, partition id %d not found", reorg.partitionID)
+	}
+	if idx == len(pi.Definitions)-1 {
+		// All partition done.
+		return true, reorg, nil
+	}
+	reorg.partitionID = pi.Definitions[idx+1].ID
+	// Get the StartHandle handle of the partition.
+	err := iterateSnapshotRows(d.store, reorg.partitionID, reorg.Job.SnapshotVer, math.MinInt64,
+		func(h int64, rowKey kv.Key, rawRecord []byte) (bool, error) {
+			reorg.StartHandle = h
+			return false, nil
+		})
+	if err != nil {
+		return false, reorg, errors.Trace(err)
+	}
+	// Get the EndHandle of the partition.
+	endHandle, emptyTable, err1 := d.GetTableMaxRowID(reorg.Job.SnapshotVer, t.Meta())
+	if err1 != nil {
+		return false, reorg, errors.Trace(err1)
+	}
+	if endHandle < reorg.StartHandle || emptyTable {
+		endHandle = reorg.StartHandle
+	}
+	reorg.EndHandle = endHandle
+	return false, reorg, nil
 }
 
 func findIndexByName(idxName string, indices []*model.IndexInfo) *model.IndexInfo {
@@ -872,7 +928,7 @@ func allocateIndexID(tblInfo *model.TableInfo) int64 {
 // recordIterFunc is used for low-level record iteration.
 type recordIterFunc func(h int64, rowKey kv.Key, rawRecord []byte) (more bool, err error)
 
-func iterateSnapshotRows(store kv.Storage, t table.Table, version uint64, seekHandle int64, fn recordIterFunc) error {
+func iterateSnapshotRows(store kv.Storage, partitionID int64, version uint64, seekHandle int64, fn recordIterFunc) error {
 	ver := kv.Version{Ver: version}
 
 	snap, err := store.GetSnapshot(ver)
@@ -880,15 +936,16 @@ func iterateSnapshotRows(store kv.Storage, t table.Table, version uint64, seekHa
 	if err != nil {
 		return errors.Trace(err)
 	}
-	firstKey := t.RecordKey(seekHandle)
+	firstKey := tablecodec.EncodeRowKeyWithHandle(partitionID, seekHandle)
 	it, err := snap.Seek(firstKey)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer it.Close()
 
+	recordPrefix := tablecodec.GenTablePrefix(partitionID)
 	for it.Valid() {
-		if !it.Key().HasPrefix(t.RecordPrefix()) {
+		if !it.Key().HasPrefix(recordPrefix) {
 			break
 		}
 
@@ -897,7 +954,7 @@ func iterateSnapshotRows(store kv.Storage, t table.Table, version uint64, seekHa
 		if err != nil {
 			return errors.Trace(err)
 		}
-		rk := t.RecordKey(handle)
+		rk := tablecodec.EncodeRecordKey(recordPrefix, handle)
 
 		more, err := fn(handle, rk, it.Value())
 		if !more || err != nil {

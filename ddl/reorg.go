@@ -183,6 +183,8 @@ type reorgInfo struct {
 	EndHandle int64
 	d         *ddl
 	first     bool
+	// If table partition exists, partitionID should be used to replace tableID.
+	partitionID int64
 }
 
 func constructDescTableScanPB(tblInfo *model.TableInfo, pbColumnInfos []*tipb.ColumnInfo) *tipb.Executor {
@@ -317,8 +319,14 @@ func (d *ddl) getReorgInfo(t *meta.Meta, job *model.Job, tbl table.Table) (*reor
 			return nil, errInvalidStoreVer.Gen("invalid storage current version %d", ver.Ver)
 		}
 
+		pid := tbl.Meta().ID
+		if pi := tbl.Meta().GetPartitionInfo(); pi != nil {
+			pid = pi.Definitions[0].ID
+		}
+		info.partitionID = pid
+
 		// Get the first handle of this table.
-		err = iterateSnapshotRows(d.store, tbl, ver.Ver, math.MinInt64,
+		err = iterateSnapshotRows(d.store, pid, ver.Ver, math.MinInt64,
 			func(h int64, rowKey kv.Key, rawRecord []byte) (bool, error) {
 				info.StartHandle = h
 				return false, nil
@@ -365,10 +373,14 @@ func (d *ddl) getReorgInfo(t *meta.Meta, job *model.Job, tbl table.Table) (*reor
 		}
 
 		reorgMeta.EndHandle = endHandle
+		if pi := tbl.Meta().GetPartitionInfo(); pi != nil {
+			reorgMeta.PartitionID = pi.Definitions[0].ID
+		}
 		log.Infof("[ddl] job %v get table startHandle:%v, endHandle:%v", job.ID, info.StartHandle, reorgMeta.EndHandle)
 		job.ReorgMeta = reorgMeta
 	}
 	info.EndHandle = job.ReorgMeta.EndHandle
+	info.partitionID = job.ReorgMeta.PartitionID
 	return info, errors.Trace(err)
 }
 
