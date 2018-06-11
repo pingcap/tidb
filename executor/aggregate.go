@@ -425,14 +425,13 @@ func (w aggWorker) getGroupKey(sc *stmtctx.StatementContext, row chunk.Row) ([]b
 }
 
 func (w aggWorker) getContext(sc *stmtctx.StatementContext, groupKey []byte, mapper aggCtxsMapper) []*aggregation.AggEvaluateContext {
-	groupKeyString := string(groupKey)
-	aggCtxs, ok := mapper[groupKeyString]
+	aggCtxs, ok := mapper[string(groupKey)]
 	if !ok {
 		aggCtxs = make([]*aggregation.AggEvaluateContext, 0, len(w.aggFuncs))
 		for _, af := range w.aggFuncs {
 			aggCtxs = append(aggCtxs, af.CreateContext(sc))
 		}
-		mapper[groupKeyString] = aggCtxs
+		mapper[string(groupKey)] = aggCtxs
 	}
 	return aggCtxs
 }
