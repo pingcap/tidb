@@ -90,11 +90,21 @@ type AggEvaluateContext struct {
 // AggFunctionMode stands for the aggregation function's mode.
 type AggFunctionMode int
 
+// |-----------------|--------------|--------------|
+// | AggFunctionMode | input        | output       |
+// |-----------------|--------------|--------------|
+// | CompleteMode    | origin data  | final result |
+// | FinalMode       | partial data | final result |
+// | Partial1Mode    | origin data  | partial data |
+// | Partial2Mode    | partial data | partial data |
+// | DedupMode       | origin data  | origin data  |
+// |-----------------|--------------|--------------|
 const (
-	// CompleteMode function accepts origin data.
 	CompleteMode AggFunctionMode = iota
-	// FinalMode function accepts partial data.
 	FinalMode
+	Partial1Mode
+	Partial2Mode
+	DedupMode
 )
 
 type aggFunction struct {

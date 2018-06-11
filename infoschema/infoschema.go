@@ -50,6 +50,10 @@ var (
 	ErrColumnExists = terror.ClassSchema.New(codeColumnExists, "Duplicate column name '%s'")
 	// ErrIndexExists returns for index already exists.
 	ErrIndexExists = terror.ClassSchema.New(codeIndexExists, "Duplicate Index")
+	// ErrKeyNameDuplicate returns for index duplicate when rename index.
+	ErrKeyNameDuplicate = terror.ClassSchema.New(codeKeyNameDuplicate, "Duplicate key name '%s'")
+	// ErrKeyNotExists returns for index not exists.
+	ErrKeyNotExists = terror.ClassSchema.New(codeKeyNotExists, "Key '%s' doesn't exist in table '%s'")
 	// ErrMultiplePriKey returns for multiple primary keys.
 	ErrMultiplePriKey = terror.ClassSchema.New(codeMultiplePriKey, "Multiple primary key defined")
 	// ErrTooManyKeyParts returns for too many key parts.
@@ -279,13 +283,15 @@ const (
 	codeForeignKeyNotExists = 1091
 	codeWrongFkDef          = 1239
 
-	codeDatabaseExists  = 1007
-	codeTableExists     = 1050
-	codeBadTable        = 1051
-	codeColumnExists    = 1060
-	codeIndexExists     = 1831
-	codeMultiplePriKey  = 1068
-	codeTooManyKeyParts = 1070
+	codeDatabaseExists   = 1007
+	codeTableExists      = 1050
+	codeBadTable         = 1051
+	codeColumnExists     = 1060
+	codeIndexExists      = 1831
+	codeMultiplePriKey   = 1068
+	codeTooManyKeyParts  = 1070
+	codeKeyNameDuplicate = 1061
+	codeKeyNotExists     = 1176
 )
 
 func init() {
@@ -304,6 +310,8 @@ func init() {
 		codeIndexExists:         mysql.ErrDupIndex,
 		codeMultiplePriKey:      mysql.ErrMultiplePriKey,
 		codeTooManyKeyParts:     mysql.ErrTooManyKeyParts,
+		codeKeyNameDuplicate:    mysql.ErrDupKeyName,
+		codeKeyNotExists:        mysql.ErrKeyDoesNotExist,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassSchema] = schemaMySQLErrCodes
 	initInfoSchemaDB()

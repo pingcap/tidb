@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"io"
 	"reflect"
-	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
@@ -300,7 +299,7 @@ func checkIndexAndRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table
 		vals2, err := rowWithCols(sessCtx, txn, t, h, cols)
 		if kv.ErrNotExist.Equal(err) {
 			record := &RecordData{Handle: h, Values: vals1}
-			err = errDateNotEqual.Gen("index:%v != record:%v", record, nil)
+			err = errDateNotEqual.Gen("index:%#v != record:%#v", record, nil)
 		}
 		if err != nil {
 			return errors.Trace(err)
@@ -308,7 +307,7 @@ func checkIndexAndRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table
 		if !reflect.DeepEqual(vals1, vals2) {
 			record1 := &RecordData{Handle: h, Values: vals1}
 			record2 := &RecordData{Handle: h, Values: vals2}
-			return errDateNotEqual.Gen("index:%v != record:%v", record1, record2)
+			return errDateNotEqual.Gen("index:%#v != record:%#v", record1, record2)
 		}
 	}
 
@@ -343,19 +342,19 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 		if kv.ErrKeyExists.Equal(err) {
 			record1 := &RecordData{Handle: h1, Values: vals1}
 			record2 := &RecordData{Handle: h2, Values: vals1}
-			return false, errDateNotEqual.Gen("index:%v != record:%v", record2, record1)
+			return false, errDateNotEqual.Gen("index:%#v != record:%#v", record2, record1)
 		}
 		if err != nil {
 			return false, errors.Trace(err)
 		}
 		if !isExist {
 			record := &RecordData{Handle: h1, Values: vals1}
-			return false, errDateNotEqual.Gen("index:%v != record:%v", nil, record)
+			return false, errDateNotEqual.Gen("index:%#v != record:%#v", nil, record)
 		}
 
 		return true, nil
 	}
-	err := iterRecords(txn, t, startKey, cols, filterFunc)
+	err := iterRecords(sessCtx, txn, t, startKey, cols, filterFunc)
 
 	if err != nil {
 		return errors.Trace(err)
@@ -364,7 +363,7 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 	return nil
 }
 
-func scanTableData(retriever kv.Retriever, t table.Table, cols []*table.Column, startHandle, limit int64) (
+func scanTableData(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Table, cols []*table.Column, startHandle, limit int64) (
 	[]*RecordData, int64, error) {
 	var records []*RecordData
 
@@ -382,7 +381,7 @@ func scanTableData(retriever kv.Retriever, t table.Table, cols []*table.Column, 
 
 		return false, nil
 	}
-	err := iterRecords(retriever, t, startKey, cols, filterFunc)
+	err := iterRecords(sessCtx, retriever, t, startKey, cols, filterFunc)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
@@ -400,23 +399,23 @@ func scanTableData(retriever kv.Retriever, t table.Table, cols []*table.Column, 
 // It returns data and the next startHandle until it doesn't have data, then returns data is nil and
 // the next startHandle is the handle which can't get data. If startHandle = 0 and limit = -1,
 // it returns the table data of the whole.
-func ScanTableRecord(retriever kv.Retriever, t table.Table, startHandle, limit int64) (
+func ScanTableRecord(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Table, startHandle, limit int64) (
 	[]*RecordData, int64, error) {
-	return scanTableData(retriever, t, t.Cols(), startHandle, limit)
+	return scanTableData(sessCtx, retriever, t, t.Cols(), startHandle, limit)
 }
 
 // ScanSnapshotTableRecord scans the ver version of the table data in a limited number.
 // It returns data and the next startHandle until it doesn't have data, then returns data is nil and
 // the next startHandle is the handle which can't get data. If startHandle = 0 and limit = -1,
 // it returns the table data of the whole.
-func ScanSnapshotTableRecord(store kv.Storage, ver kv.Version, t table.Table, startHandle, limit int64) (
+func ScanSnapshotTableRecord(sessCtx sessionctx.Context, store kv.Storage, ver kv.Version, t table.Table, startHandle, limit int64) (
 	[]*RecordData, int64, error) {
 	snap, err := store.GetSnapshot(ver)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
 
-	records, nextHandle, err := ScanTableRecord(snap, t, startHandle, limit)
+	records, nextHandle, err := ScanTableRecord(sessCtx, snap, t, startHandle, limit)
 
 	return records, nextHandle, errors.Trace(err)
 }
@@ -424,7 +423,7 @@ func ScanSnapshotTableRecord(store kv.Storage, ver kv.Version, t table.Table, st
 // CompareTableRecord compares data and the corresponding table data one by one.
 // It returns nil if data is equal to the data that scans from table, otherwise
 // it returns an error with a different set of records. If exact is false, only compares handle.
-func CompareTableRecord(txn kv.Transaction, t table.Table, data []*RecordData, exact bool) error {
+func CompareTableRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table.Table, data []*RecordData, exact bool) error {
 	m := make(map[int64][]types.Datum, len(data))
 	for _, r := range data {
 		if _, ok := m[r.Handle]; ok {
@@ -438,7 +437,7 @@ func CompareTableRecord(txn kv.Transaction, t table.Table, data []*RecordData, e
 		vals2, ok := m[h]
 		if !ok {
 			record := &RecordData{Handle: h, Values: vals}
-			return false, errDateNotEqual.Gen("data:%v != record:%v", nil, record)
+			return false, errDateNotEqual.Gen("data:%#v != record:%#v", nil, record)
 		}
 		if !exact {
 			delete(m, h)
@@ -448,21 +447,21 @@ func CompareTableRecord(txn kv.Transaction, t table.Table, data []*RecordData, e
 		if !reflect.DeepEqual(vals, vals2) {
 			record1 := &RecordData{Handle: h, Values: vals2}
 			record2 := &RecordData{Handle: h, Values: vals}
-			return false, errDateNotEqual.Gen("data:%v != record:%v", record1, record2)
+			return false, errDateNotEqual.Gen("data:%#v != record:%#v", record1, record2)
 		}
 
 		delete(m, h)
 
 		return true, nil
 	}
-	err := iterRecords(txn, t, startKey, t.Cols(), filterFunc)
+	err := iterRecords(sessCtx, txn, t, startKey, t.Cols(), filterFunc)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	for h, vals := range m {
 		record := &RecordData{Handle: h, Values: vals}
-		return errDateNotEqual.Gen("data:%v != record:%v", record, nil)
+		return errDateNotEqual.Gen("data:%#v != record:%#v", record, nil)
 	}
 
 	return nil
@@ -493,7 +492,7 @@ func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h 
 		}
 		colTps[col.ID] = &col.FieldType
 	}
-	row, err := tablecodec.DecodeRow(value, colTps, time.UTC)
+	row, err := tablecodec.DecodeRow(value, colTps, sessCtx.GetSessionVars().GetTimeZone())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -526,7 +525,7 @@ func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h 
 	return v, nil
 }
 
-func iterRecords(retriever kv.Retriever, t table.Table, startKey kv.Key, cols []*table.Column,
+func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Table, startKey kv.Key, cols []*table.Column,
 	fn table.RecordIterFunc) error {
 	it, err := retriever.Seek(startKey)
 	if err != nil {
@@ -554,7 +553,7 @@ func iterRecords(retriever kv.Retriever, t table.Table, startKey kv.Key, cols []
 			return errors.Trace(err)
 		}
 
-		rowMap, err := tablecodec.DecodeRow(it.Value(), colMap, time.UTC)
+		rowMap, err := tablecodec.DecodeRow(it.Value(), colMap, sessCtx.GetSessionVars().GetTimeZone())
 		if err != nil {
 			return errors.Trace(err)
 		}
