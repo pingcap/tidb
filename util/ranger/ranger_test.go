@@ -48,7 +48,7 @@ func (s *testRangerSuite) SetUpSuite(c *C) {
 	s.Parser = parser.New()
 }
 
-func newStoreWithBootstrap(c *C) (kv.Storage, error) {
+func newDomainStoreWithBootstrap(c *C) (*domain.Domain, kv.Storage, error) {
 	cluster := mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(cluster)
 	mvccStore := mocktikv.MustNewMVCCStore()
@@ -60,16 +60,19 @@ func newStoreWithBootstrap(c *C) (kv.Storage, error) {
 	session.SetSchemaLease(0)
 	session.SetStatsLease(0)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, nil, errors.Trace(err)
 	}
-	_, err = session.BootstrapSession(store)
-	return store, errors.Trace(err)
+	dom, err := session.BootstrapSession(store)
+	return dom, store, errors.Trace(err)
 }
 
 func (s *testRangerSuite) TestTableRange(c *C) {
 	defer testleak.AfterTest(c)()
-	store, err := newStoreWithBootstrap(c)
-	defer store.Close()
+	dom, store, err := newDomainStoreWithBootstrap(c)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 	c.Assert(err, IsNil)
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
@@ -320,8 +323,11 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 
 func (s *testRangerSuite) TestIndexRange(c *C) {
 	defer testleak.AfterTest(c)()
-	store, err := newStoreWithBootstrap(c)
-	defer store.Close()
+	dom, store, err := newDomainStoreWithBootstrap(c)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 	c.Assert(err, IsNil)
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
@@ -544,8 +550,11 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 // for issue #6661
 func (s *testRangerSuite) TestIndexRangeForUnsignedInt(c *C) {
 	defer testleak.AfterTest(c)()
-	store, err := newStoreWithBootstrap(c)
-	defer store.Close()
+	dom, store, err := newDomainStoreWithBootstrap(c)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 	c.Assert(err, IsNil)
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
@@ -627,8 +636,11 @@ func (s *testRangerSuite) TestIndexRangeForUnsignedInt(c *C) {
 
 func (s *testRangerSuite) TestColumnRange(c *C) {
 	defer testleak.AfterTest(c)()
-	store, err := newStoreWithBootstrap(c)
-	defer store.Close()
+	dom, store, err := newDomainStoreWithBootstrap(c)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 	c.Assert(err, IsNil)
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
