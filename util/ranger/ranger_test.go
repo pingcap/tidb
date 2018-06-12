@@ -48,7 +48,7 @@ func (s *testRangerSuite) SetUpSuite(c *C) {
 	s.Parser = parser.New()
 }
 
-func newStoreWithBootstrap(c *C) (*domain.Domain, kv.Storage, error) {
+func newDomainStoreWithBootstrap(c *C) (*domain.Domain, kv.Storage, error) {
 	cluster := mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(cluster)
 	mvccStore := mocktikv.MustNewMVCCStore()
@@ -68,7 +68,7 @@ func newStoreWithBootstrap(c *C) (*domain.Domain, kv.Storage, error) {
 
 func (s *testRangerSuite) TestTableRange(c *C) {
 	defer testleak.AfterTest(c)()
-	dom, store, err := newStoreWithBootstrap(c)
+	dom, store, err := newDomainStoreWithBootstrap(c)
 	defer func() {
 		dom.Close()
 		store.Close()
@@ -323,7 +323,7 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 
 func (s *testRangerSuite) TestIndexRange(c *C) {
 	defer testleak.AfterTest(c)()
-	dom, store, err := newStoreWithBootstrap(c)
+	dom, store, err := newDomainStoreWithBootstrap(c)
 	defer func() {
 		dom.Close()
 		store.Close()
@@ -550,7 +550,7 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 // for issue #6661
 func (s *testRangerSuite) TestIndexRangeForUnsignedInt(c *C) {
 	defer testleak.AfterTest(c)()
-	dom, store, err := newStoreWithBootstrap(c)
+	dom, store, err := newDomainStoreWithBootstrap(c)
 	defer func() {
 		dom.Close()
 		store.Close()
@@ -636,7 +636,7 @@ func (s *testRangerSuite) TestIndexRangeForUnsignedInt(c *C) {
 
 func (s *testRangerSuite) TestColumnRange(c *C) {
 	defer testleak.AfterTest(c)()
-	dom, store, err := newStoreWithBootstrap(c)
+	dom, store, err := newDomainStoreWithBootstrap(c)
 	defer func() {
 		dom.Close()
 		store.Close()
