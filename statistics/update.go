@@ -376,10 +376,14 @@ func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
 		}
 		tbl := h.GetTableStats(table.Meta()).copy()
 		if item.PkErrorRate != nil {
-			tbl.Columns[item.PkID].ErrorRate.merge(item.PkErrorRate)
+			col := *tbl.Columns[item.PkID]
+			col.ErrorRate.merge(item.PkErrorRate)
+			tbl.Columns[item.PkID] = &col
 		}
 		for key, val := range item.IdxErrorRate {
-			tbl.Indices[key].ErrorRate.merge(val)
+			idx := *tbl.Indices[key]
+			idx.ErrorRate.merge(val)
+			tbl.Indices[key] = &idx
 		}
 		tbls = append(tbls, tbl)
 		delete(h.rateMap, id)
@@ -441,7 +445,8 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 				hist, cms = nil, nil
 				continue
 			}
-			hist = &idx.Histogram
+			idxHist := idx.Histogram
+			hist = &idxHist
 			cms = idx.CMSketch.copy()
 		} else {
 			col, ok = tbl.Columns[histID]
@@ -449,7 +454,8 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 				hist, cms = nil, nil
 				continue
 			}
-			hist = &col.Histogram
+			colHist := col.Histogram
+			hist = &colHist
 			cms = nil
 		}
 		err = decodeFeedback(row.GetBytes(3), q, cms)
