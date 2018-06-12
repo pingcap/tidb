@@ -121,8 +121,8 @@ func closeAll(objs ...Closeable) error {
 // zone returns the local time zone offset in seconds.
 func zone(ctx sessionctx.Context) (string, int64) {
 	loc := ctx.GetSessionVars().Location()
-	name, offset := time.Now().In(loc).Zone()
-	return name, int64(offset)
+	_, offset := time.Now().In(loc).Zone()
+	return loc.String(), int64(offset)
 }
 
 // statementContextToFlags converts StatementContext to tipb.SelectRequest.Flags.
