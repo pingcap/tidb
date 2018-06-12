@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	log "github.com/sirupsen/logrus"
+	"strings"
 )
 
 func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -429,7 +430,7 @@ func checkTableNameChange(t *meta.Meta, job *model.Job, tableName string) error 
 		return errors.Trace(err)
 	}
 	if len(job.TableName) != 0 && len(tableName) != 0 {
-		if job.TableName != tableName {
+		if !strings.EqualFold(job.TableName,tableName) {
 			job.State = model.JobStateCancelled
 			return infoschema.ErrTableNotExists.GenByArgs(dbInfo.Name.O, job.TableName)
 		}
