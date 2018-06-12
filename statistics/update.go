@@ -78,6 +78,29 @@ func (m errorRateDeltaMap) update(tableID int64, histID int64, rate float64, isI
 	m[tableID] = item
 }
 
+func (m errorRateDeltaMap) merge(deltaMap errorRateDeltaMap) {
+	for tableID, item := range deltaMap {
+		tbl := m[tableID]
+		for histID, errorRate := range item.IdxErrorRate {
+			if tbl.IdxErrorRate == nil {
+				tbl.IdxErrorRate = make(map[int64]*ErrorRate)
+			}
+			if tbl.IdxErrorRate[histID] == nil {
+				tbl.IdxErrorRate[histID] = &ErrorRate{}
+			}
+			tbl.IdxErrorRate[histID].merge(errorRate)
+		}
+		if item.PkErrorRate != nil {
+			if tbl.PkErrorRate == nil {
+				tbl.PkID = item.PkID
+				tbl.PkErrorRate = &ErrorRate{}
+			}
+			tbl.PkErrorRate.merge(item.PkErrorRate)
+		}
+		m[tableID] = tbl
+	}
+}
+
 func (m errorRateDeltaMap) clear(tableID int64, histID int64, isIndex bool) {
 	item := m[tableID]
 	if isIndex {
@@ -94,6 +117,8 @@ func (h *Handle) merge(s *SessionStatsCollector) {
 	for id, item := range s.mapper {
 		h.globalMap.update(id, item.Delta, item.Count, &item.ColSize)
 	}
+	h.rateMap.merge(s.rateMap)
+	s.rateMap = make(errorRateDeltaMap)
 	h.feedback = mergeQueryFeedback(h.feedback, s.feedback)
 	s.mapper = make(tableDeltaMap)
 	s.feedback = s.feedback[:0]
@@ -105,6 +130,7 @@ type SessionStatsCollector struct {
 
 	mapper   tableDeltaMap
 	feedback []*QueryFeedback
+	rateMap  errorRateDeltaMap
 	prev     *SessionStatsCollector
 	next     *SessionStatsCollector
 	// deleted is set to true when a session is closed. Every time we sweep the list, we will remove the useless collector.
@@ -181,14 +207,9 @@ func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Hand
 		rate = math.Abs(expected-float64(q.actual)) / float64(q.actual)
 	}
 	metrics.StatsInaccuracyRate.Observe(rate)
-
-	if h.rateMap == nil {
-		h.rateMap = make(map[int64]errorRateDelta)
-	}
-	h.rateMap.update(q.tableID, q.hist.ID, rate, isIndex)
-
 	s.Lock()
 	defer s.Unlock()
+	s.rateMap.update(q.tableID, q.hist.ID, rate, isIndex)
 	if len(s.feedback) < MaxQueryFeedbackCount {
 		s.feedback = append(s.feedback, q)
 	}
@@ -215,9 +236,10 @@ func (h *Handle) NewSessionStatsCollector() *SessionStatsCollector {
 	h.listHead.Lock()
 	defer h.listHead.Unlock()
 	newCollector := &SessionStatsCollector{
-		mapper: make(tableDeltaMap),
-		next:   h.listHead.next,
-		prev:   h.listHead,
+		mapper:  make(tableDeltaMap),
+		rateMap: make(errorRateDeltaMap),
+		next:    h.listHead.next,
+		prev:    h.listHead,
 	}
 	if h.listHead.next != nil {
 		h.listHead.next.prev = newCollector
@@ -352,7 +374,7 @@ func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
 		if !ok {
 			continue
 		}
-		tbl := h.GetTableStats(table.Meta())
+		tbl := h.GetTableStats(table.Meta()).copy()
 		if item.PkErrorRate != nil {
 			tbl.Columns[item.PkID].ErrorRate.merge(item.PkErrorRate)
 		}
@@ -375,10 +397,11 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 	tableID, histID, isIndex := int64(-1), int64(-1), int64(-1)
 	q := &QueryFeedback{}
 	var (
-		cms  *CMSketch
-		hist *Histogram
-		col  *Column
-		idx  *Index
+		cms        *CMSketch
+		hist       *Histogram
+		col        *Column
+		idx        *Index
+		PKIsHandle bool
 	)
 	for _, row := range rows {
 		// merge into previous feedback
@@ -392,7 +415,7 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 		// dump the stats into kv
 		if hist != nil {
 			// Update the NDV of primary key column.
-			if col != nil && mysql.HasPriKeyFlag(col.Info.Flag) {
+			if col != nil && mysql.HasPriKeyFlag(col.Info.Flag) && PKIsHandle {
 				if hist.NDV < int64(hist.totalRowCount()) {
 					hist.NDV = int64(hist.totalRowCount())
 				}
@@ -410,6 +433,7 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 			hist, cms = nil, nil
 			continue
 		}
+		PKIsHandle = table.Meta().PKIsHandle
 		tbl := h.GetTableStats(table.Meta())
 		if isIndex == 1 {
 			idx, ok = tbl.Indices[histID]
@@ -434,7 +458,7 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 		}
 	}
 	// Update the NDV of primary key column.
-	if col != nil && mysql.HasPriKeyFlag(col.Info.Flag) {
+	if col != nil && mysql.HasPriKeyFlag(col.Info.Flag) && PKIsHandle {
 		if hist.NDV < int64(hist.totalRowCount()) {
 			hist.NDV = int64(hist.totalRowCount())
 		}

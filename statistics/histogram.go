@@ -635,7 +635,7 @@ func MergeHistograms(sc *stmtctx.StatementContext, lh *Histogram, rh *Histogram,
 	return lh, nil
 }
 
-// ErrorRate is the error rate of estimate row count by bucket.
+// ErrorRate is the error rate of estimate row count by bucket and cm sketch.
 type ErrorRate struct {
 	ErrorTotal float64
 	QueryTotal int64

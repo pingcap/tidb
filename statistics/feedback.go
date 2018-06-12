@@ -96,7 +96,7 @@ func (q *QueryFeedback) DecodeToRanges(isIndex bool, isPK bool) ([]*ranger.Range
 	ranges := make([]*ranger.Range, 0, len(q.feedback))
 	for _, val := range q.feedback {
 		low, high := *val.lower, *val.upper
-		if !isIndex && isPK {
+		if isPK {
 			_, lowInt, err := codec.DecodeInt(val.lower.GetBytes())
 			if err != nil {
 				return nil, errors.Trace(err)

@@ -72,7 +72,7 @@ func (h *Handle) Clear() {
 		<-h.analyzeResultCh
 	}
 	h.ctx.GetSessionVars().MaxChunkSize = 1
-	h.listHead = &SessionStatsCollector{mapper: make(tableDeltaMap)}
+	h.listHead = &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)}
 	h.globalMap = make(tableDeltaMap)
 	h.rateMap = make(errorRateDeltaMap)
 }
@@ -86,7 +86,7 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration) *Handle {
 		ctx:             ctx,
 		ddlEventCh:      make(chan *util.Event, 100),
 		analyzeResultCh: make(chan *AnalyzeResult, 100),
-		listHead:        &SessionStatsCollector{mapper: make(tableDeltaMap)},
+		listHead:        &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)},
 		globalMap:       make(tableDeltaMap),
 		Lease:           lease,
 		feedback:        make([]*QueryFeedback, 0, MaxQueryFeedbackCount),
