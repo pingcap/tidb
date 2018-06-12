@@ -500,9 +500,9 @@ func (s *session) retry(ctx context.Context, maxCnt uint) error {
 			if retryCnt == 0 {
 				// We do not have to log the query every time.
 				// We print the queries at the first try only.
-				log.Warnf("[con:%d][schema ver:%d] Retry:%d query:%d %s", connID, schemaVersion, retryCnt, i, sqlForLog(st.OriginText()))
+				log.Warnf("con:%d schema_ver:%d retry_cnt:%d query_num:%d sql:%s", connID, schemaVersion, retryCnt, i, sqlForLog(st.OriginText()))
 			} else {
-				log.Warnf("[con:%d][schema ver:%d] Retry:%d query:%d", connID, schemaVersion, retryCnt, i)
+				log.Warnf("con:%d schema_ver:%d retry_cnt:%d query_num:%d", connID, schemaVersion, retryCnt, i)
 			}
 			s.sessionVars.StmtCtx = sr.stmtCtx
 			s.sessionVars.StmtCtx.ResetForRetry()
@@ -544,9 +544,9 @@ func (s *session) retry(ctx context.Context, maxCnt uint) error {
 
 func sqlForLog(sql string) string {
 	if len(sql) > sqlLogMaxLen {
-		return sql[:sqlLogMaxLen] + fmt.Sprintf("(len:%d)", len(sql))
+		sql = sql[:sqlLogMaxLen] + fmt.Sprintf("(len:%d)", len(sql))
 	}
-	return sql
+	return executor.QueryReplacer.Replace(sql)
 }
 
 func (s *session) sysSessionPool() *pools.ResourcePool {
@@ -1295,36 +1295,6 @@ const loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variab
 	variable.TiDBMaxChunkSize + quoteCommaQuote +
 	variable.TiDBRetryLimit + "')"
 
-type globalVariableCache struct {
-	sync.RWMutex
-	lastModify time.Time
-	rows       []types.Row
-	fields     []*ast.ResultField
-}
-
-var gvc globalVariableCache
-
-const globalVariableCacheExpiry time.Duration = 2 * time.Second
-
-func (gvc *globalVariableCache) Update(rows []types.Row, fields []*ast.ResultField) {
-	gvc.Lock()
-	gvc.lastModify = time.Now()
-	gvc.rows = rows
-	gvc.fields = fields
-	gvc.Unlock()
-}
-
-func (gvc *globalVariableCache) Get() (succ bool, rows []types.Row, fields []*ast.ResultField) {
-	gvc.RLock()
-	defer gvc.RUnlock()
-	if time.Now().Sub(gvc.lastModify) < globalVariableCacheExpiry {
-		succ, rows, fields = true, gvc.rows, gvc.fields
-		return
-	}
-	succ = false
-	return
-}
-
 // loadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.
 func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	vars := s.sessionVars
@@ -1337,8 +1307,9 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	}
 
 	var err error
-	// Use globalVariableCache if TiDB just loaded global variables within 2 second ago.
+	// Use GlobalVariableCache if TiDB just loaded global variables within 2 second ago.
 	// When a lot of connections connect to TiDB simultaneously, it can protect TiKV meta region from overload.
+	gvc := domain.GetDomain(s).GetGlobalVarsCache()
 	succ, rows, fields := gvc.Get()
 	if !succ {
 		// Set the variable to true to prevent cyclic recursive call.
@@ -1458,9 +1429,9 @@ func logStmt(node ast.StmtNode, vars *variable.SessionVars) {
 		user := vars.User
 		schemaVersion := vars.TxnCtx.SchemaVersion
 		if ss, ok := node.(ast.SensitiveStmtNode); ok {
-			log.Infof("[CRUCIAL OPERATION] [con:%d][schema ver:%d] %s (by %s).", vars.ConnectionID, schemaVersion, ss.SecureText(), user)
+			log.Infof("[CRUCIAL OPERATION] con:%d schema_ver:%d %s (by %s).", vars.ConnectionID, schemaVersion, ss.SecureText(), user)
 		} else {
-			log.Infof("[CRUCIAL OPERATION] [con:%d][schema ver:%d] %s (by %s).", vars.ConnectionID, schemaVersion, stmt.Text(), user)
+			log.Infof("[CRUCIAL OPERATION] con:%d schema_ver:%d %s (by %s).", vars.ConnectionID, schemaVersion, stmt.Text(), user)
 		}
 	default:
 		logQuery(node.Text(), vars)
@@ -1469,6 +1440,7 @@ func logStmt(node ast.StmtNode, vars *variable.SessionVars) {
 
 func logQuery(query string, vars *variable.SessionVars) {
 	if atomic.LoadUint32(&variable.ProcessGeneralLog) != 0 && !vars.InRestrictedSQL {
-		log.Infof("[con:%d][schema ver:%d][txn:%d] %s", vars.ConnectionID, vars.TxnCtx.SchemaVersion, vars.TxnCtx.StartTS, query)
+		query = executor.QueryReplacer.Replace(query)
+		log.Infof("[GENERAL_LOG] con:%d user:%s schema_ver:%d start_ts:%d sql:%s", vars.ConnectionID, vars.User, vars.TxnCtx.SchemaVersion, vars.TxnCtx.StartTS, query)
 	}
 }
