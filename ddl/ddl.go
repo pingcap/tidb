@@ -312,6 +312,8 @@ func (d *ddl) Stop() error {
 	return nil
 }
 
+// start campaigns the owner and starts workers.
+// ctxPool is used for the worker's delRangeManager and creates sessions.
 func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 	log.Infof("[ddl] start DDL:%s, run worker %v", d.uuid, RunWorker)
 	d.quitCh = make(chan struct{})
@@ -324,7 +326,7 @@ func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 
 		d.workers = make([]*worker, 1)
 		// TODO: Add addIdxWorker.
-		d.workers[0] = newWorker(normalWorker, d.store, ctxPool)
+		d.workers[0] = newWorker(generalWorker, d.store, ctxPool)
 		for _, worker := range d.workers {
 			worker.wg.Add(1)
 			go worker.start(d.ddlCtx)
@@ -390,9 +392,9 @@ func isOwner(ownerManager owner.Manager, id string) bool {
 	return isOwner
 }
 
-// normalWorker returns the first worker. The ddl structure only one worker before we implement the parallel worker.
+// generalWorker returns the first worker. The ddl structure only one worker before we implement the parallel worker.
 // It's used for testing.
-func (d *ddl) normalWorker() *worker {
+func (d *ddl) generalWorker() *worker {
 	if len(d.workers) == 0 {
 		return nil
 	}

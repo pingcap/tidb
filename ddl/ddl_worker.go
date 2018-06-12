@@ -37,21 +37,21 @@ var RunWorker = true
 type workerType byte
 
 const (
-	// normalWorker is the worker who handles all DDL worker now.
+	// generalWorker is the worker who handles all DDL worker now.
 	// TODO: update the comments when we support the addIdxWorker.
-	normalWorker workerType = 0
-	addIdxWorker workerType = 1
+	generalWorker workerType = 0
+	addIdxWorker  workerType = 1
 )
 
 // worker is used for handling DDL jobs.
-// Now we have two kinds of workers, but we only use the normalWorker.
+// Now we have two kinds of workers, but we only use the generalWorker.
 // TODO: update the comments when we support the addIdxWorker.
 type worker struct {
 	tp     workerType
 	quitCh chan struct{}
 	wg     sync.WaitGroup
 
-	reorgCtx        *reorgCtx // reorgCtx is for reorganization.
+	reorgCtx        *reorgCtx // reorgCtx is used for reorganization.
 	delRangeManager delRangeManager
 }
 
@@ -78,7 +78,7 @@ func (w *worker) close() {
 	log.Infof("[ddl] close DDL worker %v", w.tp)
 }
 
-// start is for async online schema changing, it will try to become the owner firstly,
+// start is used for async online schema changing, it will try to become the owner firstly,
 // then wait or pull the job queue to handle a schema change job.
 func (w *worker) start(d *ddlCtx) {
 	log.Infof("[ddl] start DDL worker %v", w.tp)
@@ -173,7 +173,7 @@ func (d *ddl) addDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	return errors.Trace(err)
 }
 
-// getHistoryDDLJob gets a DDL job with job's ID form history queue.
+// getHistoryDDLJob gets a DDL job with job's ID from history queue.
 func (d *ddl) getHistoryDDLJob(id int64) (*model.Job, error) {
 	var job *model.Job
 

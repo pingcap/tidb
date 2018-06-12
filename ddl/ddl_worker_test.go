@@ -89,7 +89,7 @@ func (s *testDDLSuite) TestRunWorker(c *C) {
 	<-d.ddlJobCh
 	<-d.ddlJobCh
 	// Make sure the DDL worker is nil.
-	worker := d.normalWorker()
+	worker := d.generalWorker()
 	c.Assert(worker, IsNil)
 	// Make sure the DDL job can be done and exit that goroutine.
 	RunWorker = true
@@ -153,7 +153,7 @@ func (s *testDDLSuite) TestCleanJobs(c *C) {
 			lastJobID := int64(len(failedJobIDs) - 1)
 			job, err1 := t.GetDDLJob(lastJobID)
 			c.Assert(err1, IsNil)
-			_, err1 = d.normalWorker().runDDLJob(d.ddlCtx, t, job)
+			_, err1 = d.generalWorker().runDDLJob(d.ddlCtx, t, job)
 			c.Assert(err1, IsNil)
 			_, err1 = updateSchemaVersion(t, job)
 			c.Assert(err1, IsNil)
