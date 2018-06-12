@@ -430,7 +430,7 @@ func checkTableNameChange(t *meta.Meta, job *model.Job, tableName string) error 
 		return errors.Trace(err)
 	}
 	if len(job.TableName) != 0 && len(tableName) != 0 {
-		if !strings.EqualFold(job.TableName,tableName) {
+		if !strings.EqualFold(job.TableName, tableName) {
 			job.State = model.JobStateCancelled
 			return infoschema.ErrTableNotExists.GenByArgs(dbInfo.Name.O, job.TableName)
 		}
