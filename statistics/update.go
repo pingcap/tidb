@@ -156,8 +156,25 @@ func (h *Handle) NewSessionStatsCollector() *SessionStatsCollector {
 	return newCollector
 }
 
-// DumpStatsDeltaRatio is the lower bound of `Modify Count / Table Count` for stats delta to be dumped.
-var DumpStatsDeltaRatio = 1 / 10000.0
+var (
+	// DumpStatsDeltaRatio is the lower bound of `Modify Count / Table Count` for stats delta to be dumped.
+	DumpStatsDeltaRatio = 1 / 10000.0
+	// dumpStatsMaxDuration is the max duration since last update.
+	dumpStatsMaxDuration = time.Hour
+)
+
+// Do not need to dump the stats delta when it only updates a small portion of the table and the time since last update
+// do not exceed one hour.
+func needDumpStatsDelta(h *Handle, id int64, item variable.TableDelta, currentTime time.Time) bool {
+	if item.InitTime.IsZero() {
+		item.InitTime = currentTime
+	}
+	tbl, ok := h.statsCache.Load().(statsCache)[id]
+	if ok && tbl.Count > 0 && float64(item.Count)/float64(tbl.Count) < DumpStatsDeltaRatio && currentTime.Sub(item.InitTime) < dumpStatsMaxDuration {
+		return false
+	}
+	return true
+}
 
 // DumpStatsDeltaToKV sweeps the whole list and updates the global map, then we dumps every table that held in map to KV.
 // If the `dumpAll` is false, it will only dump that delta info that `Modify Count / Table Count` greater than a ratio.
@@ -168,13 +185,10 @@ func (h *Handle) DumpStatsDeltaToKV(dumpAll bool) error {
 		h.merge(collector)
 	}
 	h.listHead.Unlock()
+	currentTime := time.Now()
 	for id, item := range h.globalMap {
-		if !dumpAll {
-			tbl, ok := h.statsCache.Load().(statsCache)[id]
-			// do not dump if it only updates a small portion
-			if ok && tbl.Count > 0 && float64(item.Count)/float64(tbl.Count) < DumpStatsDeltaRatio {
-				continue
-			}
+		if !dumpAll && !needDumpStatsDelta(h, id, item, currentTime) {
+			continue
 		}
 		updated, err := h.dumpTableStatCountToKV(id, item)
 		if err != nil {
