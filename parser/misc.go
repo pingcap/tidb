@@ -327,6 +327,7 @@ var tokenMap = map[string]int{
 	"LONGBLOB":          longblobType,
 	"LONGTEXT":          longtextType,
 	"LOW_PRIORITY":      lowPriority,
+	"MASTER":            master,
 	"MAX":               max,
 	"MAX_CONNECTIONS_PER_HOUR": maxConnectionsPerHour,
 	"MAX_QUERIES_PER_HOUR":     maxQueriesPerHour,

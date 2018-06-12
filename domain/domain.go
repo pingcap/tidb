@@ -58,6 +58,7 @@ type Domain struct {
 	exit            chan struct{}
 	etcdClient      *clientv3.Client
 	wg              sync.WaitGroup
+	gvc             GlobalVariableCache
 
 	MockReloadFailed MockFailure // It mocks reload failed.
 }

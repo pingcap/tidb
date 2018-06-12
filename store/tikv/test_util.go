@@ -21,7 +21,7 @@ import (
 )
 
 // NewTestTiKVStore creates a test store with Option
-func NewTestTiKVStore(client Client, pdClient pd.Client, clientHijack func(Client) Client, pdClientHijack func(pd.Client) pd.Client) (kv.Storage, error) {
+func NewTestTiKVStore(client Client, pdClient pd.Client, clientHijack func(Client) Client, pdClientHijack func(pd.Client) pd.Client, disableTxnLocalLatches bool) (kv.Storage, error) {
 	if clientHijack != nil {
 		client = clientHijack(client)
 	}
@@ -35,7 +35,11 @@ func NewTestTiKVStore(client Client, pdClient pd.Client, clientHijack func(Clien
 	uid := uuid.NewV4().String()
 	spkv := NewMockSafePointKV()
 	tikvStore, err := newTikvStore(uid, pdCli, spkv, client, false)
-	tikvStore.EnableTxnLocalLatches(1024000)
+
+	if !disableTxnLocalLatches {
+		tikvStore.EnableTxnLocalLatches(1024000)
+	}
+
 	tikvStore.mock = true
 	return tikvStore, errors.Trace(err)
 }

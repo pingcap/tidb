@@ -324,7 +324,7 @@ func ValueToString(value *types.Datum, idxCols int) (string, error) {
 	if err != nil {
 		return "", errors.Trace(err)
 	}
-	str, err := types.DatumsToString(decodedVals)
+	str, err := types.DatumsToString(decodedVals, true)
 	if err != nil {
 		return "", errors.Trace(err)
 	}

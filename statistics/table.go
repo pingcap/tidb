@@ -482,7 +482,13 @@ func getPseudoRowCountBySignedIntRanges(intRanges []*ranger.Range, tableRowCount
 	for _, rg := range intRanges {
 		var cnt float64
 		low := rg.LowVal[0].GetInt64()
+		if rg.LowVal[0].Kind() == types.KindNull || rg.LowVal[0].Kind() == types.KindMinNotNull {
+			low = math.MinInt64
+		}
 		high := rg.HighVal[0].GetInt64()
+		if rg.HighVal[0].Kind() == types.KindMaxValue {
+			high = math.MaxInt64
+		}
 		if low == math.MinInt64 && high == math.MaxInt64 {
 			cnt = tableRowCount
 		} else if low == math.MinInt64 {
@@ -512,7 +518,13 @@ func getPseudoRowCountByUnsignedIntRanges(intRanges []*ranger.Range, tableRowCou
 	for _, rg := range intRanges {
 		var cnt float64
 		low := rg.LowVal[0].GetUint64()
+		if rg.LowVal[0].Kind() == types.KindNull || rg.LowVal[0].Kind() == types.KindMinNotNull {
+			low = 0
+		}
 		high := rg.HighVal[0].GetUint64()
+		if rg.HighVal[0].Kind() == types.KindMaxValue {
+			high = math.MaxUint64
+		}
 		if low == 0 && high == math.MaxUint64 {
 			cnt = tableRowCount
 		} else if low == 0 {
