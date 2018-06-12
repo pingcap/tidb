@@ -398,6 +398,14 @@ type DDL struct {
 	Statement ast.DDLNode
 }
 
+// Trace represents a explain plan.
+type TracePlan struct {
+	baseSchemaProducer
+
+	StmtPlan Plan
+	Rows     [][]string
+}
+
 // Explain represents a explain plan.
 type Explain struct {
 	baseSchemaProducer

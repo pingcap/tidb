@@ -118,9 +118,9 @@ func closeAll(objs ...Closeable) error {
 	return errors.Trace(err)
 }
 
-// timeZoneOffset returns the local time zone offset in seconds.
-func timeZoneOffset(ctx sessionctx.Context) (string, int64) {
-	loc := ctx.GetSessionVars().GetTimeZone()
+// zone returns the local time zone offset in seconds.
+func zone(ctx sessionctx.Context) (string, int64) {
+	loc := ctx.GetSessionVars().Location()
 	name, offset := time.Now().In(loc).Zone()
 	return name, int64(offset)
 }
