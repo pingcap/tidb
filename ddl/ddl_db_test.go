@@ -1560,13 +1560,17 @@ func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
 	c.Assert(part.Definitions[2].Name, Equals, "p2")
 }
 
-func (s *testDBSuite) TestCreateTableWithFloatType(c *C) {
+func (s *testDBSuite) TestTableDDLWithFloatType(c *C) {
 	s.tk.MustExec("use test")
 	s.tk.MustExec("drop table if exists t")
 	s.testErrorCode(c, "create table t (a decimal(1, 2))", tmysql.ErrMBiggerThanD)
 	s.testErrorCode(c, "create table t (a float(1, 2))", tmysql.ErrMBiggerThanD)
 	s.testErrorCode(c, "create table t (a double(1, 2))", tmysql.ErrMBiggerThanD)
 	s.mustExec(c, "create table t (a double(1, 1))")
+	s.testErrorCode(c, "alter table t add column b decimal(1, 2)", tmysql.ErrMBiggerThanD)
+	// add multi columns now not support, so no case.
+	s.testErrorCode(c, "alter table t modify column a float(1, 4)", tmysql.ErrMBiggerThanD)
+	s.testErrorCode(c, "alter table t change column a aa float(1, 4)", tmysql.ErrMBiggerThanD)
 	s.mustExec(c, "drop table t")
 }
 
