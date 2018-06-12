@@ -14,10 +14,9 @@
 package executor
 
 import (
-	"sync"
-	"time"
-
 	"fmt"
+	"sync"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -25,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/chunk"
@@ -45,9 +43,7 @@ type aggWorker struct {
 	groupByItems []expression.Expression
 	groupKey     []byte
 	groupVals    [][]byte
-
-	groupIterator *mvmap.Iterator
-	maxChunkSize  int
+	maxChunkSize int
 }
 
 // HashAggPartialWorker does the following things:
@@ -130,12 +126,6 @@ type HashAggExec struct {
 	isInputNull bool
 }
 
-// AfInterResult indicates the intermediate result of aggPartialWorker.
-type AfInterResult struct {
-	GroupKey    []byte
-	InterResult [][]byte
-}
-
 // HashAggIntermData indicates the intermediate data of aggregation execution.
 type HashAggIntermData struct {
 	groupSet    *mvmap.MVMap
@@ -165,27 +155,6 @@ func (d *HashAggIntermData) ToChunk(sc *stmtctx.StatementContext, chk *chunk.Chu
 		}
 	}
 	return true
-}
-
-// ToRows decodes the InterResult into []types.Row.
-func (r *AfInterResult) ToRows(fts []*types.FieldType, size int, loc *time.Location) (result []types.Row, err error) {
-	// Sql like select 11 from t order by a;
-	// If it use hash agg, the agg funcs would be nil, thus fts would be nil.
-	if len(fts) == 0 {
-		return
-	}
-	for _, interResult := range r.InterResult {
-		row, err := codec.Decode(interResult, size)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		row, err = tablecodec.UnflattenDatums(row, fts, loc)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		result = append(result, row)
-	}
-	return result, nil
 }
 
 // Close implements the Executor Close interface.

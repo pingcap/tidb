@@ -279,16 +279,10 @@ func HashChunkRow(sc *stmtctx.StatementContext, b []byte, row chunk.Row, allType
 	return encodeChunkRow(sc, b, row, allTypes, colIdx, false, true)
 }
 
-// EncodeValueForChunkRow appends the encoded values to byte slice `b`, returning the appended
-// slice. It does not guarantee the order for comparison.
-func EncodeValueForChunkRow(sc *stmtctx.StatementContext, b []byte, row chunk.Row, allTypes []*types.FieldType, colIdx []int) ([]byte, error) {
-	return encodeChunkRow(sc, b, row, allTypes, colIdx, false, false)
-}
-
 // Decode decodes values from a byte slice generated with EncodeKey or EncodeValue
 // before.
 // size is the size of decoded datum slice.
-func Decode(b []byte, size int) (types.DatumRow, error) {
+func Decode(b []byte, size int) ([]types.Datum, error) {
 	if len(b) < 1 {
 		return nil, errors.New("invalid encoded key")
 	}

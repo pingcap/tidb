@@ -86,13 +86,13 @@ func (s *testCodecSuite) TestCodecKey(c *C) {
 		c.Assert(err, IsNil, comment)
 		args, err := Decode(b, 1)
 		c.Assert(err, IsNil)
-		c.Assert([]types.Datum(args), DeepEquals, t.Expect)
+		c.Assert(args, DeepEquals, t.Expect)
 
 		b, err = EncodeValue(sc, nil, t.Input...)
 		c.Assert(err, IsNil)
 		args, err = Decode(b, 1)
 		c.Assert(err, IsNil)
-		c.Assert([]types.Datum(args), DeepEquals, t.Expect)
+		c.Assert(args, DeepEquals, t.Expect)
 	}
 }
 
@@ -579,7 +579,7 @@ func (s *testCodecSuite) TestDuration(c *C) {
 		v, err := Decode(b, 1)
 		c.Assert(err, IsNil)
 		m.Fsp = types.MaxFsp
-		c.Assert([]types.Datum(v), DeepEquals, types.MakeDatums(m))
+		c.Assert(v, DeepEquals, types.MakeDatums(m))
 	}
 
 	tblCmp := []struct {
