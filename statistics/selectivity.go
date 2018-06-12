@@ -44,8 +44,7 @@ const (
 	colType
 )
 
-// getConstantColumn receives two expressions and if one of them is column and another is constant, it returns the
-// ID of the column.
+// getConstantColumn receives two expressions and if one of them is column and another is constant, it returns the matched column.
 func getConstantColumn(e []expression.Expression) *expression.Column {
 	if len(e) != 2 {
 		return nil
