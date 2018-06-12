@@ -144,6 +144,12 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		leftCond = leftPushCond
 		rightCond = rightPushCond
 	}
+	for i := range leftCond {
+		leftCond[i] = leftCond[i].Clone()
+	}
+	for i := range rightCond {
+		rightCond[i] = rightCond[i].Clone()
+	}
 	leftRet, lCh := leftPlan.PredicatePushDown(leftCond)
 	rightRet, rCh := rightPlan.PredicatePushDown(rightCond)
 	addSelection(p, lCh, leftRet, 0)
