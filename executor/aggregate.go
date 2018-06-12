@@ -71,7 +71,7 @@ type HashAggFinalWorker struct {
 	mutableRow           chunk.MutRow
 	aggCtxsMap           aggCtxsMapper
 	groupMap             *mvmap.MVMap
-	intermDataRowsBuffer []types.Row
+	intermDataRowsBuffer []types.DatumRow
 	inputCh              chan *HashAggIntermData
 	outputCh             chan *AfFinalResult
 	finalResultHolderCh  chan *chunk.Chunk
@@ -131,7 +131,7 @@ type HashAggIntermData struct {
 }
 
 // ToRows converts HashAggInterData to Rows.
-func (d *HashAggIntermData) ToRows(sc *stmtctx.StatementContext, rows []types.Row, aggFuncs []aggregation.Aggregation, maxChunkSize int) (_ []types.Row, reachEnd bool) {
+func (d *HashAggIntermData) ToRows(sc *stmtctx.StatementContext, rows []types.DatumRow, aggFuncs []aggregation.Aggregation, maxChunkSize int) (_ []types.DatumRow, reachEnd bool) {
 	if d.iter == nil {
 		d.iter = d.groupSet.NewIterator()
 	}
@@ -415,7 +415,7 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, workerID int) {
 				return
 			case input, ok = <-w.inputCh:
 				if ok && w.intermDataRowsBuffer == nil {
-					w.intermDataRowsBuffer = make([]types.Row, 0, w.maxChunkSize)
+					w.intermDataRowsBuffer = make([]types.DatumRow, 0, w.maxChunkSize)
 				}
 			}
 		}
