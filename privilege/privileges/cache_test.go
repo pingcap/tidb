@@ -15,6 +15,7 @@ package privileges_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege/privileges"
@@ -27,6 +28,7 @@ var _ = Suite(&testCacheSuite{})
 type testCacheSuite struct {
 	store  kv.Storage
 	dbName string
+	domain *domain.Domain
 }
 
 func (s *testCacheSuite) SetUpSuite(c *C) {
@@ -34,12 +36,13 @@ func (s *testCacheSuite) SetUpSuite(c *C) {
 	session.SetSchemaLease(0)
 	session.SetStatsLease(0)
 	c.Assert(err, IsNil)
-	_, err = session.BootstrapSession(store)
+	s.domain, err = session.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	s.store = store
 }
 
 func (s *testCacheSuite) TearDown(c *C) {
+	s.domain.Close()
 	s.store.Close()
 }
 
@@ -187,9 +190,8 @@ func (s *testCacheSuite) TestAbnormalMySQLTable(c *C) {
 	session.SetSchemaLease(0)
 	session.SetStatsLease(0)
 	c.Assert(err, IsNil)
-	domain, err := session.BootstrapSession(store)
+	s.domain, err = session.BootstrapSession(store)
 	c.Assert(err, IsNil)
-	defer domain.Close()
 
 	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)

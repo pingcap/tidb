@@ -32,6 +32,9 @@ token-limit = 1000
 # Valid options: ["log", "cancel"]
 oom-action = "log"
 
+# Set the memory quota for a query in bytes. Default: 32GB
+mem-quota-query = 34359738368
+
 # Enable coprocessor streaming.
 enable-streaming = false
 

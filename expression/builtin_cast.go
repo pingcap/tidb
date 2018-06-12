@@ -1674,9 +1674,13 @@ func WrapWithCastAsString(ctx sessionctx.Context, expr Expression) Expression {
 	if expr.GetType().EvalType() == types.ETString {
 		return expr
 	}
+	argLen := expr.GetType().Flen
+	if expr.GetType().EvalType() == types.ETInt {
+		argLen = mysql.MaxIntWidth
+	}
 	tp := types.NewFieldType(mysql.TypeVarString)
 	tp.Charset, tp.Collate = charset.CharsetUTF8, charset.CollationUTF8
-	tp.Flen, tp.Decimal = expr.GetType().Flen, types.UnspecifiedLength
+	tp.Flen, tp.Decimal = argLen, types.UnspecifiedLength
 	return BuildCastFunction(ctx, expr, tp)
 }
 
