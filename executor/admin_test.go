@@ -434,4 +434,10 @@ func (s *testSuite) TestAdminCheckTable(c *C) {
 	tk.MustExec(`create table test ( a  TIMESTAMP, primary key(a) );`)
 	tk.MustExec(`insert into test set a='2015-08-10 04:18:49';`)
 	tk.MustExec(`admin check table test;`)
+
+	//test index in virtual generated column
+	tk.MustExec(`drop table if exists test`)
+	tk.MustExec(`create table test ( b json , c int as (JSON_EXTRACT(b,'$.d')) , index idxc(c));`)
+	tk.MustExec(`INSERT INTO test set b='{"d": 100}';`)
+	tk.MustExec(`admin check table test;`)
 }

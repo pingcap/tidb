@@ -438,8 +438,7 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 
 	switch as.Tp {
 	case ast.AdminCheckTable:
-		p := &CheckTable{Tables: as.Tables}
-		ret = p
+		ret = b.buildAdminCheckTable(as)
 	case ast.AdminCheckIndex:
 		dbName := as.Tables[0].Schema
 		readerPlan := b.buildCheckIndex(dbName, as)
@@ -492,6 +491,50 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 		b.err = ErrUnsupportedType.Gen("Unsupported type %T", as)
 	}
 	return ret
+}
+
+func (b *planBuilder) buildAdminCheckTable(as *ast.AdminStmt) Plan {
+	p := &CheckTable{Tables: as.Tables}
+	p.GenExprs = make(map[string]expression.Expression, 0)
+
+	mockTablePlan := LogicalTableDual{}.init(b.ctx)
+	for _, tbl := range p.Tables {
+		tableInfo := tbl.TableInfo
+		schema := expression.TableInfo2SchemaWithDBName(tbl.Schema, tableInfo)
+		table, ok := b.is.TableByID(tableInfo.ID)
+		if !ok {
+			b.err = errors.Errorf("Can't get table %s.", tableInfo.Name.O)
+			return nil
+		}
+
+		mockTablePlan.SetSchema(schema)
+
+		// Calculate generated columns.
+		columns := table.Cols()
+		for _, column := range columns {
+			if !column.IsGenerated() {
+				continue
+			}
+			columnName := &ast.ColumnName{Name: column.Name}
+			columnName.SetText(column.Name.O)
+
+			colExpr, _, err := mockTablePlan.findColumn(columnName)
+			if err != nil {
+				b.err = errors.Trace(err)
+				return p
+			}
+
+			expr, _, err := b.rewrite(column.GeneratedExpr, mockTablePlan, nil, true)
+			if err != nil {
+				b.err = errors.Trace(err)
+				return p
+			}
+			expr = expression.BuildCastFunction(b.ctx, expr, colExpr.GetType())
+			genColumnName := model.GetTableColumnID(tableInfo, column.ColumnInfo)
+			p.GenExprs[genColumnName] = expr
+		}
+	}
+	return p
 }
 
 func buildCheckIndexSchema(tn *ast.TableName, indexName string) (*expression.Schema, error) {

@@ -244,6 +244,7 @@ func (b *executorBuilder) buildCheckTable(v *plan.CheckTable) Executor {
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		tables:       v.Tables,
 		is:           b.is,
+		GenExprs:     v.GenExprs,
 	}
 	return e
 }

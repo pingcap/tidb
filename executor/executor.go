@@ -353,6 +353,8 @@ type CheckTableExec struct {
 	tables []*ast.TableName
 	done   bool
 	is     infoschema.InfoSchema
+
+	GenExprs map[string]expression.Expression
 }
 
 // Open implements the Executor Open interface.
@@ -378,7 +380,7 @@ func (e *CheckTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		}
 		for _, idx := range tb.Indices() {
 			txn := e.ctx.Txn()
-			err = admin.CompareIndexData(e.ctx, txn, tb, idx)
+			err = admin.CompareIndexData(e.ctx, txn, tb, idx, e.GenExprs)
 			if err != nil {
 				log.Warnf("%v error:%v", t.Name, errors.ErrorStack(err))
 				return errors.Errorf("%v err:%v", t.Name, err)
