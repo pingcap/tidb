@@ -100,7 +100,16 @@ func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 		return nil, nil, nil, errors.Trace(err)
 	}
 	sc := flagsToStatementContext(dagReq.Flags)
-	sc.TimeZone = time.FixedZone("UTC", int(dagReq.TimeZoneOffset))
+
+	// retrieving timezone by name first. When name is set, it means we need
+	// consider daylight saving time. If it is not, we can use offset.
+	if dagReq.TimeZoneName != "" {
+		if sc.TimeZone, err = time.LoadLocation(dagReq.TimeZoneName); err != nil {
+			return nil, nil, nil, errors.Trace(err)
+		}
+	} else {
+		sc.TimeZone = time.FixedZone("UTC", int(dagReq.TimeZoneOffset))
+	}
 	ctx := &dagContext{
 		dagReq:    dagReq,
 		keyRanges: req.Ranges,

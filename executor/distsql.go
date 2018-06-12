@@ -119,10 +119,10 @@ func closeAll(objs ...Closeable) error {
 }
 
 // timeZoneOffset returns the local time zone offset in seconds.
-func timeZoneOffset(ctx sessionctx.Context) int64 {
+func timeZoneOffset(ctx sessionctx.Context) (string, int64) {
 	loc := ctx.GetSessionVars().GetTimeZone()
-	_, offset := time.Now().In(loc).Zone()
-	return int64(offset)
+	name, offset := time.Now().In(loc).Zone()
+	return name, int64(offset)
 }
 
 // statementContextToFlags converts StatementContext to tipb.SelectRequest.Flags.

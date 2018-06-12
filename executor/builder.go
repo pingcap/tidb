@@ -1159,6 +1159,7 @@ func (b *executorBuilder) buildDelete(v *plan.Delete) Executor {
 }
 
 func (b *executorBuilder) buildAnalyzeIndexPushdown(task plan.AnalyzeIndexTask) *AnalyzeIndexExec {
+	_, offset := timeZoneOffset(b.ctx)
 	e := &AnalyzeIndexExec{
 		ctx:         b.ctx,
 		tblInfo:     task.TableInfo,
@@ -1168,7 +1169,7 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plan.AnalyzeIndexTask) 
 			Tp:             tipb.AnalyzeType_TypeIndex,
 			StartTs:        math.MaxUint64,
 			Flags:          statementContextToFlags(b.ctx.GetSessionVars().StmtCtx),
-			TimeZoneOffset: timeZoneOffset(b.ctx),
+			TimeZoneOffset: offset,
 		},
 	}
 	e.analyzePB.IdxReq = &tipb.AnalyzeIndexReq{
@@ -1189,6 +1190,8 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plan.AnalyzeColumnsTa
 		keepOrder = true
 		cols = append([]*model.ColumnInfo{task.PKInfo}, cols...)
 	}
+
+	_, offset := timeZoneOffset(b.ctx)
 	e := &AnalyzeColumnsExec{
 		ctx:         b.ctx,
 		tblInfo:     task.TableInfo,
@@ -1200,7 +1203,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plan.AnalyzeColumnsTa
 			Tp:             tipb.AnalyzeType_TypeColumn,
 			StartTs:        math.MaxUint64,
 			Flags:          statementContextToFlags(b.ctx.GetSessionVars().StmtCtx),
-			TimeZoneOffset: timeZoneOffset(b.ctx),
+			TimeZoneOffset: offset,
 		},
 	}
 	depth := int32(defaultCMSketchDepth)
@@ -1264,7 +1267,7 @@ func constructDistExec(sctx sessionctx.Context, plans []plan.PhysicalPlan) ([]*t
 func (b *executorBuilder) constructDAGReq(plans []plan.PhysicalPlan) (dagReq *tipb.DAGRequest, streaming bool, err error) {
 	dagReq = &tipb.DAGRequest{}
 	dagReq.StartTs = b.getStartTS()
-	dagReq.TimeZoneOffset = timeZoneOffset(b.ctx)
+	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeZoneOffset(b.ctx)
 	sc := b.ctx.GetSessionVars().StmtCtx
 	dagReq.Flags = statementContextToFlags(sc)
 	dagReq.Executors, streaming, err = constructDistExec(b.ctx, plans)
