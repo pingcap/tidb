@@ -719,6 +719,7 @@ const (
 	AlterTableAlgorithm
 	AlterTableRenameIndex
 	AlterTableForce
+	AlterTableAddPartitions
 
 // TODO: Add more actions
 )
@@ -739,18 +740,19 @@ const (
 type AlterTableSpec struct {
 	node
 
-	Tp            AlterTableType
-	Name          string
-	Constraint    *Constraint
-	Options       []*TableOption
-	NewTable      *TableName
-	NewColumns    []*ColumnDef
-	OldColumnName *ColumnName
-	Position      *ColumnPosition
-	LockType      LockType
-	Comment       string
-	FromKey       model.CIStr
-	ToKey         model.CIStr
+	Tp              AlterTableType
+	Name            string
+	Constraint      *Constraint
+	Options         []*TableOption
+	NewTable        *TableName
+	NewColumns      []*ColumnDef
+	OldColumnName   *ColumnName
+	Position        *ColumnPosition
+	LockType        LockType
+	Comment         string
+	FromKey         model.CIStr
+	ToKey           model.CIStr
+	PartDefinitions []*PartitionDefinition
 }
 
 // Accept implements Node Accept interface.

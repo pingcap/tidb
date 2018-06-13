@@ -391,6 +391,8 @@ func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) (ver int64, err error) {
 		ver, err = d.onModifyTableComment(t, job)
 	case model.ActionRenameIndex:
 		ver, err = d.onRenameIndex(t, job)
+	case model.ActionAddTablePartition:
+		ver, err = d.onAddTablePartition(t, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled

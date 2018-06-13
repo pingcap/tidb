@@ -1560,6 +1560,59 @@ func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
 	c.Assert(part.Definitions[2].Name, Equals, "p2")
 }
 
+func (s *testDBSuite) TestAlterTableAddPartition(c *C) {
+	s.tk.MustExec("use test")
+	s.tk.MustExec("drop table if employees")
+	s.tk.MustExec(`create table employees (
+	id int not null,
+	hired date not null
+	)
+	partition by range( year(hired) ) (
+		partition p1 values less than (1991),
+		partition p2 values less than (1996),
+		partition p3 values less than (2001)
+	);`)
+	s.tk.MustExec(`alter table employees add partition (
+    partition p4 values less than (2010),
+    partition p5 values less than maxvalue
+	);`)
+
+	ctx := s.tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().Partition, NotNil)
+	part := tbl.Meta().Partition
+	c.Assert(part.Type, Equals, model.PartitionTypeRange)
+	c.Assert(part.Expr, Equals, "`hired`")
+
+	c.Assert(part.Definitions, HasLen, 5)
+	c.Assert(part.Definitions[0].LessThan[0], Equals, "1991")
+	c.Assert(part.Definitions[0].Name, Equals, "p1")
+	c.Assert(part.Definitions[1].LessThan[0], Equals, "1996")
+	c.Assert(part.Definitions[1].Name, Equals, "p2")
+	c.Assert(part.Definitions[2].LessThan[0], Equals, "2001")
+	c.Assert(part.Definitions[2].Name, Equals, "p3")
+	c.Assert(part.Definitions[3].LessThan[0], Equals, "2010")
+	c.Assert(part.Definitions[3].Name, Equals, "p4")
+	c.Assert(part.Definitions[4].LessThan[0], Equals, "maxvalue")
+	c.Assert(part.Definitions[4].Name, Equals, "p5")
+
+	s.tk.MustExec("drop table if t1")
+	s.tk.MustExec("create table t1(a int)")
+	_, err = s.tk.Exec(`alter table t1 add partition (
+    partition p1 values less than (2010),
+    partition p2 values less than maxvalue
+	);`)
+
+	terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrPartitionMgmtOnNonpartitioned))
+
+	_, err = s.tk.Exec("alter table t1 add partition")
+	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrPartitionsMustBeDefined))
+}
+
 func (s *testDBSuite) TestTruncateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

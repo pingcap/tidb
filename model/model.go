@@ -280,6 +280,7 @@ type PartitionInfo struct {
 	Enable bool `json:"enable"`
 
 	Definitions []PartitionDefinition `json:"definitions"`
+	State       SchemaState           `json:"state"`
 }
 
 // PartitionDefinition defines a single partition.

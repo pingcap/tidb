@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	log "github.com/sirupsen/logrus"
+	"strings"
 )
 
 func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -425,4 +426,85 @@ func updateVersionAndTableInfo(t *meta.Meta, job *model.Job, tblInfo *model.Tabl
 		tblInfo.UpdateTS = t.StartTS
 	}
 	return ver, t.UpdateTable(job.SchemaID, tblInfo)
+}
+
+// TODO: If may have the issue when two clients concurrently add partitions to a table.
+func (d *ddl) onAddTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	partInfo := &model.PartitionInfo{}
+	err := job.DecodeArgs(&partInfo)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	tblInfo, err := getTableInfo(t, job, job.SchemaID)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	err = checkPartitionNotExists(tblInfo, partInfo)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	originalState := partInfo.State
+	switch partInfo.State {
+	case model.StateNone:
+		// none -> delete only
+		job.SchemaState = model.StateDeleteOnly
+		partInfo.State = model.StateDeleteOnly
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != partInfo.State)
+	case model.StateDeleteOnly:
+		// delete only -> write only
+		job.SchemaState = model.StateWriteOnly
+		partInfo.State = model.StateWriteOnly
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != partInfo.State)
+	case model.StateWriteOnly:
+		// write only -> reorganization
+		job.SchemaState = model.StateWriteReorganization
+		partInfo.State = model.StateWriteReorganization
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != partInfo.State)
+	case model.StateWriteReorganization:
+		// reorganization -> public
+		updatePartitionInfo(partInfo, tblInfo)
+		partInfo.State = model.StatePublic
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != partInfo.State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+
+		// Finish this job.
+		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	default:
+		err = ErrInvalidColumnState.Gen("invalid partition state %v", partInfo.State)
+	}
+	return ver, errors.Trace(err)
+}
+
+func updatePartitionInfo(partitionInfo *model.PartitionInfo, tblInfo *model.TableInfo) {
+	parInfo := &model.PartitionInfo{}
+	oldDefs, newDefs := tblInfo.Partition.Definitions, partitionInfo.Definitions
+	parInfo.Definitions = make([]model.PartitionDefinition, 0, len(newDefs)+len(oldDefs))
+
+	for _, oldDef := range oldDefs {
+		parInfo.Definitions = append(parInfo.Definitions, oldDef)
+	}
+	for _, newDef := range newDefs {
+		// TODO: Check that the add values must be greater than all previous values.
+		parInfo.Definitions = append(parInfo.Definitions, newDef)
+	}
+	tblInfo.Partition.Definitions = parInfo.Definitions
+}
+
+func checkPartitionNotExists(meta *model.TableInfo, part *model.PartitionInfo) error {
+	oldDefs, newDefs := meta.Partition.Definitions, part.Definitions
+	for _, oldDef := range oldDefs {
+		for _, newDef := range newDefs {
+			if strings.EqualFold(oldDef.Name, newDef.Name) {
+				return infoschema.ErrSameNamePartition.GenByArgs(newDef.Name)
+			}
+		}
+	}
+	return nil
 }

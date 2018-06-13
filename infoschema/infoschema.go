@@ -58,6 +58,14 @@ var (
 	ErrMultiplePriKey = terror.ClassSchema.New(codeMultiplePriKey, "Multiple primary key defined")
 	// ErrTooManyKeyParts returns for too many key parts.
 	ErrTooManyKeyParts = terror.ClassSchema.New(codeTooManyKeyParts, "Too many key parts specified; max %d parts allowed")
+	// ErrPartitionsMustBeDefined returns each partition must be defined.
+	ErrPartitionsMustBeDefined = terror.ClassSchema.New(codePartitionsMustBeDefined, "For RANGE partitions each partition must be defined")
+	// ErrPartitionMgmtOnNonpartitioned returns it's not a partition table.
+	ErrPartitionMgmtOnNonpartitioned = terror.ClassSchema.New(codePartitionMgmtOnNonpartitioned, "Partition management on a not partitioned table is not possible")
+	// ErrDropPartitionNonExistent returns error in list of partition.
+	ErrDropPartitionNonExistent = terror.ClassSchema.New(codeErrDropPartitionNonExistent, " Error in list of partitions to %s")
+	// ErrSameNamePartition
+	ErrSameNamePartition = terror.ClassSchema.New(codeErrSameNamePartition, "Duplicate partition name %s")
 )
 
 // InfoSchema is the interface used to retrieve the schema information.
@@ -283,35 +291,43 @@ const (
 	codeForeignKeyNotExists = 1091
 	codeWrongFkDef          = 1239
 
-	codeDatabaseExists   = 1007
-	codeTableExists      = 1050
-	codeBadTable         = 1051
-	codeColumnExists     = 1060
-	codeIndexExists      = 1831
-	codeMultiplePriKey   = 1068
-	codeTooManyKeyParts  = 1070
-	codeKeyNameDuplicate = 1061
-	codeKeyNotExists     = 1176
+	codeDatabaseExists                = 1007
+	codeTableExists                   = 1050
+	codeBadTable                      = 1051
+	codeColumnExists                  = 1060
+	codeIndexExists                   = 1831
+	codeMultiplePriKey                = 1068
+	codeTooManyKeyParts               = 1070
+	codeKeyNameDuplicate              = 1061
+	codeKeyNotExists                  = 1176
+	codePartitionsMustBeDefined       = 1492
+	codePartitionMgmtOnNonpartitioned = 1505
+	codeErrDropPartitionNonExistent   = 1507
+	codeErrSameNamePartition          = 1517
 )
 
 func init() {
 	schemaMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeDBDropExists:        mysql.ErrDBDropExists,
-		codeDatabaseNotExists:   mysql.ErrBadDB,
-		codeTableNotExists:      mysql.ErrNoSuchTable,
-		codeColumnNotExists:     mysql.ErrBadField,
-		codeCannotAddForeign:    mysql.ErrCannotAddForeign,
-		codeWrongFkDef:          mysql.ErrWrongFkDef,
-		codeForeignKeyNotExists: mysql.ErrCantDropFieldOrKey,
-		codeDatabaseExists:      mysql.ErrDBCreateExists,
-		codeTableExists:         mysql.ErrTableExists,
-		codeBadTable:            mysql.ErrBadTable,
-		codeColumnExists:        mysql.ErrDupFieldName,
-		codeIndexExists:         mysql.ErrDupIndex,
-		codeMultiplePriKey:      mysql.ErrMultiplePriKey,
-		codeTooManyKeyParts:     mysql.ErrTooManyKeyParts,
-		codeKeyNameDuplicate:    mysql.ErrDupKeyName,
-		codeKeyNotExists:        mysql.ErrKeyDoesNotExist,
+		codeDBDropExists:                  mysql.ErrDBDropExists,
+		codeDatabaseNotExists:             mysql.ErrBadDB,
+		codeTableNotExists:                mysql.ErrNoSuchTable,
+		codeColumnNotExists:               mysql.ErrBadField,
+		codeCannotAddForeign:              mysql.ErrCannotAddForeign,
+		codeWrongFkDef:                    mysql.ErrWrongFkDef,
+		codeForeignKeyNotExists:           mysql.ErrCantDropFieldOrKey,
+		codeDatabaseExists:                mysql.ErrDBCreateExists,
+		codeTableExists:                   mysql.ErrTableExists,
+		codeBadTable:                      mysql.ErrBadTable,
+		codeColumnExists:                  mysql.ErrDupFieldName,
+		codeIndexExists:                   mysql.ErrDupIndex,
+		codeMultiplePriKey:                mysql.ErrMultiplePriKey,
+		codeTooManyKeyParts:               mysql.ErrTooManyKeyParts,
+		codeKeyNameDuplicate:              mysql.ErrDupKeyName,
+		codeKeyNotExists:                  mysql.ErrKeyDoesNotExist,
+		codePartitionsMustBeDefined:       mysql.ErrPartitionsMustBeDefined,
+		codePartitionMgmtOnNonpartitioned: mysql.ErrPartitionMgmtOnNonpartitioned,
+		codeErrDropPartitionNonExistent:   mysql.ErrDropPartitionNonExistent,
+		codeErrSameNamePartition:          mysql.ErrSameNamePartition,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassSchema] = schemaMySQLErrCodes
 	initInfoSchemaDB()

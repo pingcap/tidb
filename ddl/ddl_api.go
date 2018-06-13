@@ -975,6 +975,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 				return errRunMultiSchemaChanges
 			}
 			err = d.AddColumn(ctx, ident, spec)
+		case ast.AlterTableAddPartitions:
+			err = d.AddTablePartitions(ctx, ident, spec)
 		case ast.AlterTableDropColumn:
 			err = d.DropColumn(ctx, ident, spec.OldColumnName.Name)
 		case ast.AlterTableDropIndex:
@@ -1184,6 +1186,49 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 		Type:       model.ActionAddColumn,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{col, spec.Position, 0},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+// AddTablePartitions will add a new partition to the table.
+func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	is := d.infoHandle.Get()
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return errors.Trace(infoschema.ErrDatabaseNotExists.GenByArgs(schema))
+	}
+	t, err := is.TableByName(ident.Schema, ident.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ident.Schema, ident.Name))
+	}
+	if len(spec.PartDefinitions) == 0 {
+		return errors.Trace(infoschema.ErrPartitionsMustBeDefined)
+	}
+
+	partInfo := &model.PartitionInfo{}
+	meta := t.Meta()
+	if meta.Partition == nil {
+		return errors.Trace(infoschema.ErrPartitionMgmtOnNonpartitioned)
+	}
+	partInfo, err = buildPartitionInfo(meta, d, partInfo, spec)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = checkPartitionNotExists(meta, partInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    meta.ID,
+		Type:       model.ActionAddTablePartition,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{partInfo},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -1906,4 +1951,41 @@ func validateCommentLength(vars *variable.SessionVars, comment string, maxLen in
 		return comment[:maxLen], nil
 	}
 	return comment, nil
+}
+
+func buildPartitionInfo(meta *model.TableInfo, d *ddl, part *model.PartitionInfo, spec *ast.AlterTableSpec) (*model.PartitionInfo, error) {
+	part = &model.PartitionInfo{
+		Columns: meta.Partition.Columns,
+		Type:    meta.Partition.Type,
+		Expr:    meta.Partition.Expr,
+	}
+	for _, def := range spec.PartDefinitions {
+		for _, expr := range def.LessThan {
+			tp := expr.GetType().Tp
+			if !(tp == mysql.TypeLong || tp == mysql.TypeLonglong) {
+				buf := new(bytes.Buffer)
+				expr.Format(buf)
+				if buf.String() == "MAXVALUE" {
+					continue
+				}
+				return nil, infoschema.ErrColumnNotExists.GenByArgs(buf.String(), "partition function")
+			}
+		}
+		pid, err1 := d.genGlobalID()
+		if err1 != nil {
+			return nil, errors.Trace(err1)
+		}
+		piDef := model.PartitionDefinition{
+			Name:    def.Name,
+			ID:      pid,
+			Comment: def.Comment,
+		}
+		for _, expr := range def.LessThan {
+			buf := new(bytes.Buffer)
+			expr.Format(buf)
+			piDef.LessThan = append(piDef.LessThan, buf.String())
+		}
+		part.Definitions = append(part.Definitions, piDef)
+	}
+	return part, nil
 }
