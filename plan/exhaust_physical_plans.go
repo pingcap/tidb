@@ -276,11 +276,23 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 			break
 		}
 	}
-	if tblPath != nil && len(innerJoinKeys) == 1 {
+	if pkCol := x.getPKIsHandleCol(); pkCol != nil && tblPath != nil {
+		keyOff2IdxOff := make([]int, len(innerJoinKeys))
 		pkCol := x.getPKIsHandleCol()
-		if pkCol != nil && innerJoinKeys[0].Equal(nil, pkCol) {
+		pkMatched := false
+		for i, key := range innerJoinKeys {
+			if !key.Equal(nil, pkCol) {
+				keyOff2IdxOff[i] = -1
+				continue
+			}
+			pkMatched = true
+			keyOff2IdxOff[i] = 0
+		}
+		if pkMatched {
 			innerPlan := x.forceToTableScan(pkCol)
-			return p.constructIndexJoin(prop, innerJoinKeys, outerJoinKeys, outerIdx, innerPlan, nil, []int{1})
+			// Since the primary key means one value corresponding to exact one row, this will always be a no worse one
+			// comparing to other index.
+			return p.constructIndexJoin(prop, innerJoinKeys, outerJoinKeys, outerIdx, innerPlan, nil, keyOff2IdxOff)
 		}
 	}
 	var (
