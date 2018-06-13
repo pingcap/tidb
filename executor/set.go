@@ -21,6 +21,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor/operator"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
@@ -36,20 +37,20 @@ import (
 
 // SetExecutor executes set statement.
 type SetExecutor struct {
-	baseExecutor
+	operator.BaseOperator
 
 	vars []*expression.VarAssignment
 	done bool
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *SetExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.done {
 		return nil
 	}
 	e.done = true
-	sessionVars := e.ctx.GetSessionVars()
+	sessionVars := e.Sctx.GetSessionVars()
 	for _, v := range e.vars {
 		// Variable is case insensitive, we use lower case.
 		if v.Name == ast.SetNames {
@@ -112,7 +113,7 @@ func (e *SetExecutor) getSynonyms(varName string) []string {
 }
 
 func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) error {
-	sessionVars := e.ctx.GetSessionVars()
+	sessionVars := e.Sctx.GetSessionVars()
 	sysVar := variable.GetSysVar(name)
 	if sysVar == nil {
 		return variable.UnknownSystemVar.GenByArgs(name)
@@ -159,7 +160,7 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		}
 		newSnapshotIsSet := sessionVars.SnapshotTS > 0 && sessionVars.SnapshotTS != oldSnapshotTS
 		if newSnapshotIsSet {
-			err = validateSnapshot(e.ctx, sessionVars.SnapshotTS)
+			err = validateSnapshot(e.Sctx, sessionVars.SnapshotTS)
 			if err != nil {
 				sessionVars.SnapshotTS = oldSnapshotTS
 				return errors.Trace(err)
@@ -184,7 +185,7 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 	if name == variable.TxnIsolation {
 		isoLevel, _ := sessionVars.GetSystemVar(variable.TxnIsolation)
 		if isoLevel == ast.ReadCommitted {
-			e.ctx.Txn().SetOption(kv.IsolationLevel, kv.RC)
+			e.Sctx.Txn().SetOption(kv.IsolationLevel, kv.RC)
 		}
 	}
 
@@ -222,7 +223,7 @@ func (e *SetExecutor) setCharset(cs, co string) error {
 			return errors.Trace(err)
 		}
 	}
-	sessionVars := e.ctx.GetSessionVars()
+	sessionVars := e.Sctx.GetSessionVars()
 	for _, v := range variable.SetNamesVariables {
 		terror.Log(errors.Trace(sessionVars.SetSystemVar(v, cs)))
 	}
@@ -238,7 +239,7 @@ func (e *SetExecutor) getVarValue(v *expression.VarAssignment, sysVar *variable.
 		if sysVar != nil {
 			value = types.NewStringDatum(sysVar.Value)
 		} else {
-			s, err1 := variable.GetGlobalSystemVar(e.ctx.GetSessionVars(), v.Name)
+			s, err1 := variable.GetGlobalSystemVar(e.Sctx.GetSessionVars(), v.Name)
 			if err1 != nil {
 				return value, errors.Trace(err1)
 			}
@@ -254,13 +255,13 @@ func (e *SetExecutor) loadSnapshotInfoSchemaIfNeeded(name string) error {
 	if name != variable.TiDBSnapshot {
 		return nil
 	}
-	vars := e.ctx.GetSessionVars()
+	vars := e.Sctx.GetSessionVars()
 	if vars.SnapshotTS == 0 {
 		vars.SnapshotInfoschema = nil
 		return nil
 	}
 	log.Infof("[con:%d] loadSnapshotInfoSchema, SnapshotTS:%d", vars.ConnectionID, vars.SnapshotTS)
-	dom := domain.GetDomain(e.ctx)
+	dom := domain.GetDomain(e.Sctx)
 	snapInfo, err := dom.GetSnapshotInfoSchema(vars.SnapshotTS)
 	if err != nil {
 		return errors.Trace(err)

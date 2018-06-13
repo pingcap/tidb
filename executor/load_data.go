@@ -20,6 +20,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/executor/operator"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -30,7 +31,7 @@ import (
 
 // LoadDataExec represents a load data executor.
 type LoadDataExec struct {
-	baseExecutor
+	operator.BaseOperator
 
 	IsLocal      bool
 	loadDataInfo *LoadDataInfo
@@ -38,7 +39,7 @@ type LoadDataExec struct {
 
 // NewLoadDataInfo returns a LoadDataInfo structure, and it's only used for tests now.
 func NewLoadDataInfo(ctx sessionctx.Context, row types.DatumRow, tbl table.Table, cols []*table.Column) *LoadDataInfo {
-	insertVal := &InsertValues{baseExecutor: newBaseExecutor(ctx, nil, "InsertValues"), Table: tbl}
+	insertVal := &InsertValues{BaseOperator: operator.NewBaseOperator(ctx, nil, "InsertValues"), Table: tbl}
 	return &LoadDataInfo{
 		row:          row,
 		InsertValues: insertVal,
@@ -48,7 +49,7 @@ func NewLoadDataInfo(ctx sessionctx.Context, row types.DatumRow, tbl table.Table
 	}
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *LoadDataExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	// TODO: support load data without local field.
@@ -60,7 +61,7 @@ func (e *LoadDataExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return errors.New("Load Data: don't support load data terminated is nil")
 	}
 
-	sctx := e.loadDataInfo.ctx
+	sctx := e.loadDataInfo.Sctx
 	val := sctx.Value(LoadDataVarKey)
 	if val != nil {
 		sctx.SetValue(LoadDataVarKey, nil)
@@ -74,12 +75,12 @@ func (e *LoadDataExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
-// Close implements the Executor Close interface.
+// Close implements the Operator Close interface.
 func (e *LoadDataExec) Close() error {
 	return nil
 }
 
-// Open implements the Executor Open interface.
+// Open implements the Operator Open interface.
 func (e *LoadDataExec) Open(ctx context.Context) error {
 	return nil
 }
@@ -258,7 +259,7 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 		e.insertData(row)
 	}
 	if e.lastInsertID != 0 {
-		e.ctx.GetSessionVars().SetLastInsertID(e.lastInsertID)
+		e.Sctx.GetSessionVars().SetLastInsertID(e.lastInsertID)
 	}
 
 	return curData, reachLimit, nil
@@ -285,7 +286,7 @@ func (e *LoadDataInfo) insertData(row types.DatumRow) {
 	if row == nil {
 		return
 	}
-	_, err := e.Table.AddRecord(e.ctx, row, false)
+	_, err := e.Table.AddRecord(e.Sctx, row, false)
 	if err != nil {
 		warnLog := fmt.Sprintf("Load Data: insert data:%v failed:%v", row, errors.ErrorStack(err))
 		e.handleLoadDataWarnings(err, warnLog)

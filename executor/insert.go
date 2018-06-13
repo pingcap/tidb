@@ -47,14 +47,14 @@ func (e *InsertExec) insertOneRow(row types.DatumRow) (int64, error) {
 	if err := e.checkBatchLimit(); err != nil {
 		return 0, errors.Trace(err)
 	}
-	e.ctx.Txn().SetOption(kv.PresumeKeyNotExists, nil)
-	h, err := e.Table.AddRecord(e.ctx, row, false)
-	e.ctx.Txn().DelOption(kv.PresumeKeyNotExists)
+	e.Sctx.Txn().SetOption(kv.PresumeKeyNotExists, nil)
+	h, err := e.Table.AddRecord(e.Sctx, row, false)
+	e.Sctx.Txn().DelOption(kv.PresumeKeyNotExists)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	if !e.ctx.GetSessionVars().ImportingData {
-		e.ctx.StmtAddDirtyTableOP(DirtyTableAddRow, e.Table.Meta().ID, h, row)
+	if !e.Sctx.GetSessionVars().ImportingData {
+		e.Sctx.StmtAddDirtyTableOP(DirtyTableAddRow, e.Table.Meta().ID, h, row)
 	}
 	e.rowCount++
 	return h, nil
@@ -62,13 +62,13 @@ func (e *InsertExec) insertOneRow(row types.DatumRow) (int64, error) {
 
 func (e *InsertExec) exec(rows []types.DatumRow) error {
 	// If tidb_batch_insert is ON and not in a transaction, we could use BatchInsert mode.
-	sessVars := e.ctx.GetSessionVars()
+	sessVars := e.Sctx.GetSessionVars()
 	defer sessVars.CleanBuffers()
 	ignoreErr := sessVars.StmtCtx.IgnoreErr
 
 	e.rowCount = 0
 	if !sessVars.ImportingData {
-		sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(e.ctx.Txn(), kv.TempTxnMemBufCap)
+		sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(e.Sctx.Txn(), kv.TempTxnMemBufCap)
 	}
 
 	// If `ON DUPLICATE KEY UPDATE` is specified, and no `IGNORE` keyword,
@@ -101,13 +101,13 @@ func (e *InsertExec) exec(rows []types.DatumRow) error {
 				return errors.Trace(err)
 			}
 			if len(e.OnDuplicate) == 0 && !ignoreErr {
-				e.ctx.Txn().SetOption(kv.PresumeKeyNotExists, nil)
+				e.Sctx.Txn().SetOption(kv.PresumeKeyNotExists, nil)
 			}
-			h, err := e.Table.AddRecord(e.ctx, row, false)
-			e.ctx.Txn().DelOption(kv.PresumeKeyNotExists)
+			h, err := e.Table.AddRecord(e.Sctx, row, false)
+			e.Sctx.Txn().DelOption(kv.PresumeKeyNotExists)
 			if err == nil {
 				if !sessVars.ImportingData {
-					e.ctx.StmtAddDirtyTableOP(DirtyTableAddRow, e.Table.Meta().ID, h, row)
+					e.Sctx.StmtAddDirtyTableOP(DirtyTableAddRow, e.Table.Meta().ID, h, row)
 				}
 				e.rowCount++
 				continue
@@ -115,13 +115,13 @@ func (e *InsertExec) exec(rows []types.DatumRow) error {
 			if kv.ErrKeyExists.Equal(err) {
 				// TODO: Use batch get to speed up `insert ignore on duplicate key update`.
 				if len(e.OnDuplicate) > 0 && ignoreErr {
-					data, err1 := e.Table.RowWithCols(e.ctx, h, e.Table.WritableCols())
+					data, err1 := e.Table.RowWithCols(e.Sctx, h, e.Table.WritableCols())
 					if err1 != nil {
 						return errors.Trace(err1)
 					}
 					_, _, _, err = e.doDupRowUpdate(h, data, row, e.OnDuplicate)
 					if kv.ErrKeyExists.Equal(err) {
-						e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+						e.Sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 						continue
 					}
 					if err != nil {
@@ -144,18 +144,18 @@ func (e *InsertExec) exec(rows []types.DatumRow) error {
 
 // checkBatchLimit check the batchSize limitation.
 func (e *InsertExec) checkBatchLimit() error {
-	sessVars := e.ctx.GetSessionVars()
+	sessVars := e.Sctx.GetSessionVars()
 	batchInsert := sessVars.BatchInsert && !sessVars.InTxn()
 	batchSize := sessVars.DMLBatchSize
 	if batchInsert && e.rowCount >= uint64(batchSize) {
-		e.ctx.StmtCommit()
-		if err := e.ctx.NewTxn(); err != nil {
+		e.Sctx.StmtCommit()
+		if err := e.Sctx.NewTxn(); err != nil {
 			// We should return a special error for batch insert.
 			return ErrBatchInsertFail.Gen("BatchInsert failed with error: %v", err)
 		}
 		e.rowCount = 0
 		if !sessVars.ImportingData {
-			sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(e.ctx.Txn(), kv.TempTxnMemBufCap)
+			sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(e.Sctx.Txn(), kv.TempTxnMemBufCap)
 		}
 	}
 	return nil
@@ -205,7 +205,7 @@ func (e *InsertExec) updateDupRow(keys []keyWithDupError, k keyWithDupError, val
 		return errors.NotFoundf("can not be duplicated row, due to old row not found. handle %d", oldHandle)
 	}
 	cols := e.Table.WritableCols()
-	oldRow, oldRowMap, err := tables.DecodeRawRowData(e.ctx, e.Table.Meta(), oldHandle, cols, oldValue)
+	oldRow, oldRowMap, err := tables.DecodeRawRowData(e.Sctx, e.Table.Meta(), oldHandle, cols, oldValue)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -214,7 +214,7 @@ func (e *InsertExec) updateDupRow(keys []keyWithDupError, k keyWithDupError, val
 		if col.State != model.StatePublic && oldRow[col.Offset].IsNull() {
 			_, found := oldRowMap[col.ID]
 			if !found {
-				oldRow[col.Offset], err = table.GetColOriginDefaultValue(e.ctx, col.ToInfo())
+				oldRow[col.Offset], err = table.GetColOriginDefaultValue(e.Sctx, col.ToInfo())
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -314,7 +314,7 @@ func (e *InsertExec) doDupRowUpdate(handle int64, oldRow types.DatumRow, newRow 
 	cols []*expression.Assignment) (types.DatumRow, bool, int64, error) {
 	assignFlag := make([]bool, len(e.Table.WritableCols()))
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
-	e.ctx.GetSessionVars().CurrInsertValues = types.DatumRow(newRow)
+	e.Sctx.GetSessionVars().CurrInsertValues = types.DatumRow(newRow)
 	newData := make(types.DatumRow, len(oldRow))
 	copy(newData, oldRow)
 	for _, col := range cols {
@@ -325,7 +325,7 @@ func (e *InsertExec) doDupRowUpdate(handle int64, oldRow types.DatumRow, newRow 
 		newData[col.Col.Index] = val
 		assignFlag[col.Col.Index] = true
 	}
-	_, handleChanged, newHandle, lastInsertID, err := updateRecord(e.ctx, handle, oldRow, newData, assignFlag, e.Table, true)
+	_, handleChanged, newHandle, lastInsertID, err := updateRecord(e.Sctx, handle, oldRow, newData, assignFlag, e.Table, true)
 	if err != nil {
 		return nil, false, 0, errors.Trace(err)
 	}
@@ -351,7 +351,7 @@ func (e *InsertExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 
 	var rows []types.DatumRow
-	if len(e.children) > 0 && e.children[0] != nil {
+	if len(e.Children) > 0 && e.Children[0] != nil {
 		rows, err = e.getRowsSelectChunk(ctx, cols)
 	} else {
 		rows, err = e.getRows(cols)
@@ -363,16 +363,16 @@ func (e *InsertExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	return errors.Trace(e.exec(rows))
 }
 
-// Close implements the Executor Close interface.
+// Close implements the Operator Close interface.
 func (e *InsertExec) Close() error {
-	e.ctx.GetSessionVars().CurrInsertValues = nil
+	e.Sctx.GetSessionVars().CurrInsertValues = nil
 	if e.SelectExec != nil {
 		return e.SelectExec.Close()
 	}
 	return nil
 }
 
-// Open implements the Executor Close interface.
+// Open implements the Operator Close interface.
 func (e *InsertExec) Open(ctx context.Context) error {
 	if e.SelectExec != nil {
 		return e.SelectExec.Open(ctx)

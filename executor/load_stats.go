@@ -18,17 +18,18 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor/operator"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/chunk"
 	"golang.org/x/net/context"
 )
 
-var _ Executor = &LoadStatsExec{}
+var _ operator.Operator = &LoadStatsExec{}
 
 // LoadStatsExec represents a load statistic executor.
 type LoadStatsExec struct {
-	baseExecutor
+	operator.BaseOperator
 	info *LoadStatsInfo
 }
 
@@ -49,27 +50,27 @@ func (k loadStatsVarKeyType) String() string {
 // LoadStatsVarKey is a variable key for load statistic.
 const LoadStatsVarKey loadStatsVarKeyType = 0
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *LoadStatsExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if len(e.info.Path) == 0 {
 		return errors.New("Load Stats: file path is empty")
 	}
-	val := e.ctx.Value(LoadStatsVarKey)
+	val := e.Sctx.Value(LoadStatsVarKey)
 	if val != nil {
-		e.ctx.SetValue(LoadStatsVarKey, nil)
+		e.Sctx.SetValue(LoadStatsVarKey, nil)
 		return errors.New("Load Stats: previous load stats option isn't closed normally")
 	}
-	e.ctx.SetValue(LoadStatsVarKey, e.info)
+	e.Sctx.SetValue(LoadStatsVarKey, e.info)
 	return nil
 }
 
-// Close implements the Executor Close interface.
+// Close implements the Operator Close interface.
 func (e *LoadStatsExec) Close() error {
 	return nil
 }
 
-// Open implements the Executor Open interface.
+// Open implements the Operator Open interface.
 func (e *LoadStatsExec) Open(ctx context.Context) error {
 	return nil
 }

@@ -5,6 +5,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/executor/operator"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
@@ -20,7 +21,7 @@ type pkgTestSuite struct {
 }
 
 type MockExec struct {
-	baseExecutor
+	operator.BaseOperator
 
 	Rows      []types.DatumRow
 	curRowIdx int
@@ -28,8 +29,8 @@ type MockExec struct {
 
 func (m *MockExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
-	colTypes := m.retTypes()
-	for ; m.curRowIdx < len(m.Rows) && chk.NumRows() < m.maxChunkSize; m.curRowIdx++ {
+	colTypes := m.RetTypes()
+	for ; m.curRowIdx < len(m.Rows) && chk.NumRows() < m.ChunkSize; m.curRowIdx++ {
 		curRow := m.Rows[m.curRowIdx]
 		for i := 0; i < len(curRow); i++ {
 			curDatum := curRow.GetDatum(i, colTypes[i])
@@ -57,7 +58,7 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 	con := &expression.Constant{Value: types.NewDatum(6), RetType: types.NewFieldType(mysql.TypeLong)}
 	outerSchema := expression.NewSchema(col0)
 	outerExec := &MockExec{
-		baseExecutor: newBaseExecutor(sctx, outerSchema, ""),
+		BaseOperator: operator.NewBaseOperator(sctx, outerSchema, ""),
 		Rows: []types.DatumRow{
 			types.MakeDatums(1),
 			types.MakeDatums(2),
@@ -68,7 +69,7 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 		}}
 	innerSchema := expression.NewSchema(col1)
 	innerExec := &MockExec{
-		baseExecutor: newBaseExecutor(sctx, innerSchema, ""),
+		BaseOperator: operator.NewBaseOperator(sctx, innerSchema, ""),
 		Rows: []types.DatumRow{
 			types.MakeDatums(1),
 			types.MakeDatums(2),
@@ -81,20 +82,20 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 	innerFilter := outerFilter.Clone()
 	otherFilter := expression.NewFunctionInternal(sctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), col0, col1)
 	generator := newJoinResultGenerator(sctx, plan.InnerJoin, false,
-		make([]types.Datum, innerExec.Schema().Len()), []expression.Expression{otherFilter}, outerExec.retTypes(), innerExec.retTypes())
+		make([]types.Datum, innerExec.Schema().Len()), []expression.Expression{otherFilter}, outerExec.RetTypes(), innerExec.RetTypes())
 	joinSchema := expression.NewSchema(col0, col1)
 	join := &NestedLoopApplyExec{
-		baseExecutor:    newBaseExecutor(sctx, joinSchema, ""),
+		BaseOperator:    operator.NewBaseOperator(sctx, joinSchema, ""),
 		outerExec:       outerExec,
 		innerExec:       innerExec,
 		outerFilter:     []expression.Expression{outerFilter},
 		innerFilter:     []expression.Expression{innerFilter},
 		resultGenerator: generator,
 	}
-	join.innerList = chunk.NewList(innerExec.retTypes(), innerExec.maxChunkSize)
-	join.innerChunk = innerExec.newChunk()
-	join.outerChunk = outerExec.newChunk()
-	joinChk := join.newChunk()
+	join.innerList = chunk.NewList(innerExec.RetTypes(), innerExec.ChunkSize)
+	join.innerChunk = innerExec.NewChunk()
+	join.outerChunk = outerExec.NewChunk()
+	joinChk := join.NewChunk()
 	it := chunk.NewIterator4Chunk(joinChk)
 	for rowIdx := 1; ; {
 		err := join.Next(ctx, joinChk)

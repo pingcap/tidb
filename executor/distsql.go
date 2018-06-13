@@ -25,6 +25,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/executor/operator"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -45,9 +46,9 @@ import (
 )
 
 var (
-	_ Executor = &TableReaderExecutor{}
-	_ Executor = &IndexReaderExecutor{}
-	_ Executor = &IndexLookUpExecutor{}
+	_ operator.Operator = &TableReaderExecutor{}
+	_ operator.Operator = &IndexReaderExecutor{}
+	_ operator.Operator = &IndexLookUpExecutor{}
 )
 
 // LookupTableTaskChannelSize represents the channel size of the index double read taskChan.
@@ -165,7 +166,7 @@ func handleIsExtra(col *expression.Column) bool {
 
 // TableReaderExecutor sends dag request and reads table data from kv layer.
 type TableReaderExecutor struct {
-	baseExecutor
+	operator.BaseOperator
 
 	table     table.Table
 	tableID   int64
@@ -186,9 +187,9 @@ type TableReaderExecutor struct {
 	plans      []plan.PhysicalPlan
 }
 
-// Close implements the Executor Close interface.
+// Close implements the Operator Close interface.
 func (e *TableReaderExecutor) Close() error {
-	e.ctx.StoreQueryFeedback(e.feedback)
+	e.Sctx.StoreQueryFeedback(e.feedback)
 	err := e.resultHandler.Close()
 	return errors.Trace(err)
 }
@@ -210,7 +211,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 
 	var err error
 	if e.haveCorCol {
-		e.dagPB.Executors, _, err = constructDistExec(e.ctx, e.plans)
+		e.dagPB.Executors, _, err = constructDistExec(e.Sctx, e.plans)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -246,12 +247,12 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
-		SetFromSessionVars(e.ctx.GetSessionVars()).
+		SetFromSessionVars(e.Sctx.GetSessionVars()).
 		Build()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	result, err := distsql.Select(ctx, e.ctx, kvReq, e.retTypes(), e.feedback)
+	result, err := distsql.Select(ctx, e.Sctx, kvReq, e.RetTypes(), e.feedback)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -311,7 +312,7 @@ func startSpanFollowsContext(ctx context.Context, operationName string) (opentra
 
 // IndexReaderExecutor sends dag request and reads index data from kv layer.
 type IndexReaderExecutor struct {
-	baseExecutor
+	operator.BaseOperator
 
 	table     table.Table
 	index     *model.IndexInfo
@@ -334,13 +335,13 @@ type IndexReaderExecutor struct {
 
 // Close clears all resources hold by current object.
 func (e *IndexReaderExecutor) Close() error {
-	e.ctx.StoreQueryFeedback(e.feedback)
+	e.Sctx.StoreQueryFeedback(e.feedback)
 	err := e.result.Close()
 	e.result = nil
 	return errors.Trace(err)
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *IndexReaderExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 	err := e.result.Next(ctx, chk)
 	if err != nil {
@@ -349,9 +350,9 @@ func (e *IndexReaderExecutor) Next(ctx context.Context, chk *chunk.Chunk) error 
 	return errors.Trace(err)
 }
 
-// Open implements the Executor Open interface.
+// Open implements the Operator Open interface.
 func (e *IndexReaderExecutor) Open(ctx context.Context) error {
-	kvRanges, err := distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, e.tableID, e.index.ID, e.ranges, e.feedback)
+	kvRanges, err := distsql.IndexRangesToKVRanges(e.Sctx.GetSessionVars().StmtCtx, e.tableID, e.index.ID, e.ranges, e.feedback)
 	if err != nil {
 		e.feedback.Invalidate()
 		return errors.Trace(err)
@@ -365,7 +366,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 
 	var err error
 	if e.haveCorCol {
-		e.dagPB.Executors, _, err = constructDistExec(e.ctx, e.plans)
+		e.dagPB.Executors, _, err = constructDistExec(e.Sctx, e.plans)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -377,13 +378,13 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
-		SetFromSessionVars(e.ctx.GetSessionVars()).
+		SetFromSessionVars(e.Sctx.GetSessionVars()).
 		Build()
 	if err != nil {
 		e.feedback.Invalidate()
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.Select(ctx, e.ctx, kvReq, e.retTypes(), e.feedback)
+	e.result, err = distsql.Select(ctx, e.Sctx, kvReq, e.RetTypes(), e.feedback)
 	if err != nil {
 		e.feedback.Invalidate()
 		return errors.Trace(err)
@@ -394,7 +395,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 
 // IndexLookUpExecutor implements double read for index scan.
 type IndexLookUpExecutor struct {
-	baseExecutor
+	operator.BaseOperator
 
 	table     table.Table
 	index     *model.IndexInfo
@@ -433,9 +434,9 @@ type IndexLookUpExecutor struct {
 	tblPlans        []plan.PhysicalPlan
 }
 
-// Open implements the Executor Open interface.
+// Open implements the Operator Open interface.
 func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
-	kvRanges, err := distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, e.tableID, e.index.ID, e.ranges, e.feedback)
+	kvRanges, err := distsql.IndexRangesToKVRanges(e.Sctx.GetSessionVars().StmtCtx, e.tableID, e.index.ID, e.ranges, e.feedback)
 	if err != nil {
 		e.feedback.Invalidate()
 		return errors.Trace(err)
@@ -452,8 +453,8 @@ func (e *IndexLookUpExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	// instead of in function "Open", because this "IndexLookUpExecutor" may be
 	// constructed by a "IndexLookUpJoin" and "Open" will not be called in that
 	// situation.
-	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaIndexLookupReader)
-	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	e.memTracker = memory.NewTracker(e.ExplainID, e.Sctx.GetSessionVars().MemQuotaIndexLookupReader)
+	e.memTracker.AttachTo(e.Sctx.GetSessionVars().StmtCtx.MemTracker)
 
 	span, ctx := startSpanFollowsContext(ctx, "executor.IndexLookUp.Open")
 	defer span.Finish()
@@ -463,14 +464,14 @@ func (e *IndexLookUpExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 
 	var err error
 	if e.corColInIdxSide {
-		e.dagPB.Executors, _, err = constructDistExec(e.ctx, e.idxPlans)
+		e.dagPB.Executors, _, err = constructDistExec(e.Sctx, e.idxPlans)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 
 	if e.corColInTblSide {
-		e.tableRequest.Executors, _, err = constructDistExec(e.ctx, e.tblPlans)
+		e.tableRequest.Executors, _, err = constructDistExec(e.Sctx, e.tblPlans)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -495,13 +496,13 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.indexStreaming).
-		SetFromSessionVars(e.ctx.GetSessionVars()).
+		SetFromSessionVars(e.Sctx.GetSessionVars()).
 		Build()
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// Since the first read only need handle information. So its returned col is only 1.
-	result, err := distsql.Select(ctx, e.ctx, kvReq, []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, e.feedback)
+	result, err := distsql.Select(ctx, e.Sctx, kvReq, []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, e.feedback)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -511,9 +512,9 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		finished:     e.finished,
 		resultCh:     e.resultCh,
 		keepOrder:    e.keepOrder,
-		batchSize:    e.maxChunkSize,
-		maxBatchSize: e.ctx.GetSessionVars().IndexLookupSize,
-		maxChunkSize: e.maxChunkSize,
+		batchSize:    e.ChunkSize,
+		maxBatchSize: e.Sctx.GetSessionVars().IndexLookupSize,
+		maxChunkSize: e.ChunkSize,
 	}
 	if worker.batchSize > worker.maxBatchSize {
 		worker.batchSize = worker.maxBatchSize
@@ -525,7 +526,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		if err != nil {
 			e.feedback.Invalidate()
 		}
-		e.ctx.StoreQueryFeedback(e.feedback)
+		e.Sctx.StoreQueryFeedback(e.feedback)
 		cancel()
 		if err := result.Close(); err != nil {
 			log.Error("close Select result failed:", errors.ErrorStack(err))
@@ -539,7 +540,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 
 // startTableWorker launchs some background goroutines which pick tasks from workCh and execute the task.
 func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-chan *lookupTableTask) {
-	lookupConcurrencyLimit := e.ctx.GetSessionVars().IndexLookupConcurrency
+	lookupConcurrencyLimit := e.Sctx.GetSessionVars().IndexLookupConcurrency
 	e.tblWorkerWg.Add(lookupConcurrencyLimit)
 	for i := 0; i < lookupConcurrencyLimit; i++ {
 		worker := &tableWorker{
@@ -561,9 +562,9 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 	}
 }
 
-func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []int64) (Executor, error) {
+func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []int64) (operator.Operator, error) {
 	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, &TableReaderExecutor{
-		baseExecutor: newBaseExecutor(e.ctx, e.schema, e.id+"_tableReader"),
+		BaseOperator: operator.NewBaseOperator(e.Sctx, e.Schema(), e.ExplainID+"_tableReader"),
 		table:        e.table,
 		tableID:      e.tableID,
 		dagPB:        e.tableRequest,
@@ -612,7 +613,7 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, chk *chunk.Chunk) error 
 		for resultTask.cursor < len(resultTask.rows) {
 			chk.AppendRow(resultTask.rows[resultTask.cursor])
 			resultTask.cursor++
-			if chk.NumRows() >= e.maxChunkSize {
+			if chk.NumRows() >= e.ChunkSize {
 				return nil
 			}
 		}
@@ -741,7 +742,7 @@ func (w *indexWorker) buildTableTask(handles []int64) *lookupTableTask {
 type tableWorker struct {
 	workCh         <-chan *lookupTableTask
 	finished       <-chan struct{}
-	buildTblReader func(ctx context.Context, handles []int64) (Executor, error)
+	buildTblReader func(ctx context.Context, handles []int64) (operator.Operator, error)
 	keepOrder      bool
 	handleIdx      int
 
@@ -766,7 +767,7 @@ func (w *tableWorker) pickAndExecTask(ctx context.Context) {
 		}
 	}()
 	for {
-		// Don't check ctx.Done() on purpose. If background worker get the signal and all
+		// Don't check Sctx.Done() on purpose. If background worker get the signal and all
 		// exit immediately, session's goroutine doesn't know this and still calling Next(),
 		// it may block reading task.doneCh forever.
 		select {
@@ -799,7 +800,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 	handleCnt := len(task.handles)
 	task.rows = make([]chunk.Row, 0, handleCnt)
 	for {
-		chk := tableReader.newChunk()
+		chk := tableReader.NewChunk()
 		err = tableReader.Next(ctx, chk)
 		if err != nil {
 			log.Error(err)

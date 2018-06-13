@@ -18,6 +18,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/executor/operator"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -27,11 +28,11 @@ import (
 )
 
 var (
-	_ Executor = &UpdateExec{}
-	_ Executor = &DeleteExec{}
-	_ Executor = &InsertExec{}
-	_ Executor = &ReplaceExec{}
-	_ Executor = &LoadDataExec{}
+	_ operator.Operator = &UpdateExec{}
+	_ operator.Operator = &DeleteExec{}
+	_ operator.Operator = &InsertExec{}
+	_ operator.Operator = &ReplaceExec{}
+	_ operator.Operator = &LoadDataExec{}
 )
 
 const (
@@ -75,7 +76,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData types.DatumR
 			newData[i] = v
 		}
 
-		// Rebase auto increment id if the field is changed.
+		// Rebase auto increment ExplainID if the field is changed.
 		if mysql.HasAutoIncrementFlag(col.Flag) {
 			if newData[i].IsNull() {
 				return false, handleChanged, newHandle, 0,

@@ -16,6 +16,7 @@ package executor
 import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/executor/operator"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
@@ -27,9 +28,9 @@ import (
 // DeleteExec represents a delete executor.
 // See https://dev.mysql.com/doc/refman/5.7/en/delete.html
 type DeleteExec struct {
-	baseExecutor
+	operator.BaseOperator
 
-	SelectExec Executor
+	SelectExec operator.Operator
 
 	Tables       []*ast.TableName
 	IsMultiTable bool
@@ -43,7 +44,7 @@ type DeleteExec struct {
 	finished bool
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *DeleteExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.finished {
@@ -79,7 +80,7 @@ func (e *DeleteExec) deleteOneRow(tbl table.Table, handleCol *expression.Column,
 		end--
 	}
 	handle := row[handleCol.Index].GetInt64()
-	err := e.removeRow(e.ctx, tbl, handle, row[:end])
+	err := e.removeRow(e.Sctx, tbl, handle, row[:end])
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -96,19 +97,19 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 	)
 	for i, t := range e.tblID2Table {
 		id, tbl = i, t
-		handleCol = e.children[0].Schema().TblID2Handle[id][0]
+		handleCol = e.Children[0].Schema().TblID2Handle[id][0]
 		break
 	}
 
 	// If tidb_batch_delete is ON and not in a transaction, we could use BatchDelete mode.
-	batchDelete := e.ctx.GetSessionVars().BatchDelete && !e.ctx.GetSessionVars().InTxn()
-	batchDMLSize := e.ctx.GetSessionVars().DMLBatchSize
-	fields := e.children[0].retTypes()
+	batchDelete := e.Sctx.GetSessionVars().BatchDelete && !e.Sctx.GetSessionVars().InTxn()
+	batchDMLSize := e.Sctx.GetSessionVars().DMLBatchSize
+	fields := e.Children[0].RetTypes()
 	for {
-		chk := e.children[0].newChunk()
+		chk := e.Children[0].NewChunk()
 		iter := chunk.NewIterator4Chunk(chk)
 
-		err := e.children[0].Next(ctx, chk)
+		err := e.Children[0].Next(ctx, chk)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -118,8 +119,8 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 
 		for chunkRow := iter.Begin(); chunkRow != iter.End(); chunkRow = iter.Next() {
 			if batchDelete && rowCount >= batchDMLSize {
-				e.ctx.StmtCommit()
-				if err = e.ctx.NewTxn(); err != nil {
+				e.Sctx.StmtCommit()
+				if err = e.Sctx.NewTxn(); err != nil {
 					// We should return a special error for batch insert.
 					return ErrBatchInsertFail.Gen("BatchDelete failed with error: %v", err)
 				}
@@ -147,7 +148,7 @@ func (e *DeleteExec) initialMultiTableTblMap() {
 
 func (e *DeleteExec) getColPosInfos(schema *expression.Schema) []tblColPosInfo {
 	var colPosInfos []tblColPosInfo
-	// Extract the columns' position information of this table in the delete's schema, together with the table id
+	// Extract the columns' position information of this table in the delete's schema, together with the table ExplainID
 	// and its handle's position in the schema.
 	for id, cols := range schema.TblID2Handle {
 		tbl := e.tblID2Table[id]
@@ -181,14 +182,14 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 	}
 
 	e.initialMultiTableTblMap()
-	colPosInfos := e.getColPosInfos(e.children[0].Schema())
+	colPosInfos := e.getColPosInfos(e.Children[0].Schema())
 	tblRowMap := make(tableRowMapType)
-	fields := e.children[0].retTypes()
+	fields := e.Children[0].RetTypes()
 	for {
-		chk := e.children[0].newChunk()
+		chk := e.Children[0].NewChunk()
 		iter := chunk.NewIterator4Chunk(chk)
 
-		err := e.children[0].Next(ctx, chk)
+		err := e.Children[0].Next(ctx, chk)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -208,7 +209,7 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 func (e *DeleteExec) removeRowsInTblRowMap(tblRowMap tableRowMapType) error {
 	for id, rowMap := range tblRowMap {
 		for handle, data := range rowMap {
-			err := e.removeRow(e.ctx, e.tblID2Table[id], handle, data)
+			err := e.removeRow(e.Sctx, e.tblID2Table[id], handle, data)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -236,12 +237,12 @@ func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h int64, d
 	return nil
 }
 
-// Close implements the Executor Close interface.
+// Close implements the Operator Close interface.
 func (e *DeleteExec) Close() error {
 	return e.SelectExec.Close()
 }
 
-// Open implements the Executor Open interface.
+// Open implements the Operator Open interface.
 func (e *DeleteExec) Open(ctx context.Context) error {
 	return e.SelectExec.Open(ctx)
 }

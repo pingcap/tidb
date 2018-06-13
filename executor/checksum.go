@@ -18,6 +18,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/executor/operator"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
@@ -29,23 +30,23 @@ import (
 	"golang.org/x/net/context"
 )
 
-var _ Executor = &ChecksumTableExec{}
+var _ operator.Operator = &ChecksumTableExec{}
 
 // ChecksumTableExec represents ChecksumTable executor.
 type ChecksumTableExec struct {
-	baseExecutor
+	operator.BaseOperator
 
 	tables map[int64]*checksumContext
 	done   bool
 }
 
-// Open implements the Executor Open interface.
+// Open implements the Operator Open interface.
 func (e *ChecksumTableExec) Open(ctx context.Context) error {
-	if err := e.baseExecutor.Open(ctx); err != nil {
+	if err := e.BaseOperator.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
 
-	concurrency, err := getChecksumTableConcurrency(e.ctx)
+	concurrency, err := getChecksumTableConcurrency(e.Sctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -82,7 +83,7 @@ func (e *ChecksumTableExec) Open(ctx context.Context) error {
 	return nil
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *ChecksumTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.done {
@@ -102,7 +103,7 @@ func (e *ChecksumTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 func (e *ChecksumTableExec) buildTasks() ([]*checksumTask, error) {
 	var tasks []*checksumTask
 	for id, t := range e.tables {
-		reqs, err := t.BuildRequests(e.ctx)
+		reqs, err := t.BuildRequests(e.Sctx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -128,7 +129,7 @@ func (e *ChecksumTableExec) checksumWorker(taskCh <-chan *checksumTask, resultCh
 
 func (e *ChecksumTableExec) handleChecksumRequest(req *kv.Request) (resp *tipb.ChecksumResponse, err error) {
 	ctx := context.TODO()
-	res, err := distsql.Checksum(ctx, e.ctx.GetClient(), req, e.ctx.GetSessionVars().KVVars)
+	res, err := distsql.Checksum(ctx, e.Sctx.GetClient(), req, e.Sctx.GetSessionVars().KVVars)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

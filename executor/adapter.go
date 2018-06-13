@@ -22,6 +22,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/executor/operator"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -44,7 +45,7 @@ type processinfoSetter interface {
 // recordSet wraps an executor, implements ast.RecordSet interface
 type recordSet struct {
 	fields      []*ast.ResultField
-	executor    Executor
+	executor    operator.Operator
 	stmt        *ExecStmt
 	processinfo processinfoSetter
 	lastErr     error
@@ -106,7 +107,7 @@ func (a *recordSet) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 // NewChunk create a new chunk using NewChunk function in chunk package.
 func (a *recordSet) NewChunk() *chunk.Chunk {
-	return a.executor.newChunk()
+	return a.executor.NewChunk()
 }
 
 func (a *recordSet) Close() error {
@@ -176,8 +177,8 @@ func (a *ExecStmt) RebuildPlan() (int64, error) {
 	return is.SchemaMetaVersion(), nil
 }
 
-// Exec builds an Executor from a plan. If the Executor doesn't return result,
-// like the INSERT, UPDATE statements, it executes in this function, if the Executor returns
+// Exec builds an Operator from a plan. If the Operator doesn't return result,
+// like the INSERT, UPDATE statements, it executes in this function, if the Operator returns
 // result, execution is done after this function returns, in the returned ast.RecordSet Next method.
 func (a *ExecStmt) Exec(ctx context.Context) (ast.RecordSet, error) {
 	a.startTime = time.Now()
@@ -240,7 +241,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (ast.RecordSet, error) {
 	}, nil
 }
 
-func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Context, e Executor, pi processinfoSetter) (ast.RecordSet, error) {
+func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Context, e operator.Operator, pi processinfoSetter) (ast.RecordSet, error) {
 	// Check if "tidb_snapshot" is set for the write executors.
 	// In history read mode, we can not do write operations.
 	switch e.(type) {
@@ -264,7 +265,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 		a.logSlowQuery(txnTS, err == nil)
 	}()
 
-	err = e.Next(ctx, e.newChunk())
+	err = e.Next(ctx, e.NewChunk())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -273,7 +274,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 }
 
 // buildExecutor build a executor from plan, prepared statement may need additional procedure.
-func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
+func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (operator.Operator, error) {
 	if _, ok := a.Plan.(*plan.Execute); !ok {
 		// Do not sync transaction for Execute statement, because the real optimization work is done in
 		// "ExecuteExec.Build".
@@ -310,7 +311,7 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 		return nil, errors.Trace(b.err)
 	}
 
-	// ExecuteExec is not a real Executor, we only use it to build another Executor from a prepared statement.
+	// ExecuteExec is not a real Operator, we only use it to build another Operator from a prepared statement.
 	if executorExec, ok := e.(*ExecuteExec); ok {
 		err := executorExec.Build()
 		if err != nil {
@@ -367,7 +368,7 @@ func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
 }
 
 // IsPointGetWithPKOrUniqueKeyByAutoCommit returns true when meets following conditions:
-//  1. ctx is auto commit tagged
+//  1. Sctx is auto commit tagged
 //  2. txn is nil
 //  2. plan is point get by pk or unique key
 func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p plan.Plan) bool {

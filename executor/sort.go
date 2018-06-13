@@ -18,6 +18,7 @@ import (
 	"sort"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/executor/operator"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/types"
@@ -28,7 +29,7 @@ import (
 
 // SortExec represents sorting executor.
 type SortExec struct {
-	baseExecutor
+	operator.BaseOperator
 
 	ByItems []*plan.ByItems
 	Idx     int
@@ -51,27 +52,27 @@ type SortExec struct {
 	memTracker *memory.Tracker
 }
 
-// Close implements the Executor Close interface.
+// Close implements the Operator Close interface.
 func (e *SortExec) Close() error {
 	e.memTracker.Detach()
 	e.memTracker = nil
-	return errors.Trace(e.children[0].Close())
+	return errors.Trace(e.Children[0].Close())
 }
 
-// Open implements the Executor Open interface.
+// Open implements the Operator Open interface.
 func (e *SortExec) Open(ctx context.Context) error {
 	e.fetched = false
 	e.Idx = 0
 
 	// To avoid duplicated initialization for TopNExec.
 	if e.memTracker == nil {
-		e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaSort)
-		e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+		e.memTracker = memory.NewTracker(e.ExplainID, e.Sctx.GetSessionVars().MemQuotaSort)
+		e.memTracker.AttachTo(e.Sctx.GetSessionVars().StmtCtx.MemTracker)
 	}
-	return errors.Trace(e.children[0].Open(ctx))
+	return errors.Trace(e.Children[0].Open(ctx))
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *SortExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if !e.fetched {
@@ -94,7 +95,7 @@ func (e *SortExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		}
 		e.fetched = true
 	}
-	for chk.NumRows() < e.maxChunkSize {
+	for chk.NumRows() < e.ChunkSize {
 		if e.Idx >= len(e.rowPtrs) {
 			return nil
 		}
@@ -106,13 +107,13 @@ func (e *SortExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 }
 
 func (e *SortExec) fetchRowChunks(ctx context.Context) error {
-	fields := e.retTypes()
-	e.rowChunks = chunk.NewList(fields, e.maxChunkSize)
+	fields := e.RetTypes()
+	e.rowChunks = chunk.NewList(fields, e.ChunkSize)
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 	e.rowChunks.GetMemTracker().SetLabel("rowChunks")
 	for {
-		chk := e.children[0].newChunk()
-		err := e.children[0].Next(ctx, chk)
+		chk := e.Children[0].NewChunk()
+		err := e.Children[0].Next(ctx, chk)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -171,14 +172,14 @@ func (e *SortExec) buildKeyExprsAndTypes() {
 }
 
 func (e *SortExec) buildKeyChunks() error {
-	e.keyChunks = chunk.NewList(e.keyTypes, e.maxChunkSize)
+	e.keyChunks = chunk.NewList(e.keyTypes, e.ChunkSize)
 	e.keyChunks.GetMemTracker().SetLabel("keyChunks")
 	e.keyChunks.GetMemTracker().AttachTo(e.memTracker)
 
 	for chkIdx := 0; chkIdx < e.rowChunks.NumChunks(); chkIdx++ {
 		keyChk := chunk.NewChunkWithCapacity(e.keyTypes, e.rowChunks.GetChunk(chkIdx).NumRows())
 		childIter := chunk.NewIterator4Chunk(e.rowChunks.GetChunk(chkIdx))
-		err := expression.VectorizedExecute(e.ctx, e.keyExprs, childIter, keyChk)
+		err := expression.VectorizedExecute(e.Sctx, e.keyExprs, childIter, keyChk)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -287,14 +288,14 @@ func (h *topNChunkHeap) Swap(i, j int) {
 	h.rowPtrs[i], h.rowPtrs[j] = h.rowPtrs[j], h.rowPtrs[i]
 }
 
-// Open implements the Executor Open interface.
+// Open implements the Operator Open interface.
 func (e *TopNExec) Open(ctx context.Context) error {
-	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaTopn)
-	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	e.memTracker = memory.NewTracker(e.ExplainID, e.Sctx.GetSessionVars().MemQuotaTopn)
+	e.memTracker.AttachTo(e.Sctx.GetSessionVars().StmtCtx.MemTracker)
 	return errors.Trace(e.SortExec.Open(ctx))
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *TopNExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if !e.fetched {
@@ -313,7 +314,7 @@ func (e *TopNExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if e.Idx >= len(e.rowPtrs) {
 		return nil
 	}
-	for chk.NumRows() < e.maxChunkSize && e.Idx < len(e.rowPtrs) {
+	for chk.NumRows() < e.ChunkSize && e.Idx < len(e.rowPtrs) {
 		row := e.rowChunks.GetRow(e.rowPtrs[e.Idx])
 		chk.AppendRow(row)
 		e.Idx++
@@ -323,12 +324,12 @@ func (e *TopNExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 	e.chkHeap = &topNChunkHeap{e}
-	e.rowChunks = chunk.NewList(e.retTypes(), e.maxChunkSize)
+	e.rowChunks = chunk.NewList(e.RetTypes(), e.ChunkSize)
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 	e.rowChunks.GetMemTracker().SetLabel("rowChunks")
 	for e.rowChunks.Len() < e.totalLimit {
-		srcChk := e.children[0].newChunk()
-		err := e.children[0].Next(ctx, srcChk)
+		srcChk := e.Children[0].NewChunk()
+		err := e.Children[0].Next(ctx, srcChk)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -360,11 +361,11 @@ func (e *TopNExec) executeTopN(ctx context.Context) error {
 	}
 	var childKeyChk *chunk.Chunk
 	if e.keyChunks != nil {
-		childKeyChk = chunk.NewChunkWithCapacity(e.keyTypes, e.maxChunkSize)
+		childKeyChk = chunk.NewChunkWithCapacity(e.keyTypes, e.ChunkSize)
 	}
-	childRowChk := e.children[0].newChunk()
+	childRowChk := e.Children[0].NewChunk()
 	for {
-		err := e.children[0].Next(ctx, childRowChk)
+		err := e.Children[0].Next(ctx, childRowChk)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -393,7 +394,7 @@ func (e *TopNExec) executeTopN(ctx context.Context) error {
 func (e *TopNExec) processChildChk(childRowChk, childKeyChk *chunk.Chunk) error {
 	if childKeyChk != nil {
 		childKeyChk.Reset()
-		err := expression.VectorizedExecute(e.ctx, e.keyExprs, chunk.NewIterator4Chunk(childRowChk), childKeyChk)
+		err := expression.VectorizedExecute(e.Sctx, e.keyExprs, chunk.NewIterator4Chunk(childRowChk), childKeyChk)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -425,7 +426,7 @@ func (e *TopNExec) processChildChk(childRowChk, childKeyChk *chunk.Chunk) error 
 // but we want descending top N, then we will keep all data in memory.
 // But if data is distributed randomly, this function will be called log(n) times.
 func (e *TopNExec) doCompaction() error {
-	newRowChunks := chunk.NewList(e.retTypes(), e.maxChunkSize)
+	newRowChunks := chunk.NewList(e.RetTypes(), e.ChunkSize)
 	newRowPtrs := make([]chunk.RowPtr, 0, e.rowChunks.Len())
 	for _, rowPtr := range e.rowPtrs {
 		newRowPtr := newRowChunks.AppendRow(e.rowChunks.GetRow(rowPtr))
@@ -436,7 +437,7 @@ func (e *TopNExec) doCompaction() error {
 	e.rowChunks = newRowChunks
 
 	if e.keyChunks != nil {
-		newKeyChunks := chunk.NewList(e.keyTypes, e.maxChunkSize)
+		newKeyChunks := chunk.NewList(e.keyTypes, e.ChunkSize)
 		for _, rowPtr := range e.rowPtrs {
 			newKeyChunks.AppendRow(e.keyChunks.GetRow(rowPtr))
 		}

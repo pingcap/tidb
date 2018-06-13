@@ -15,6 +15,7 @@ package executor
 
 import (
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/executor/operator"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/mysql"
@@ -32,7 +33,7 @@ type aggCtxsMapper map[string][]*aggregation.AggEvaluateContext
 // It is built from the Aggregate Plan. When Next() is called, it reads all the data from Src
 // and updates all the items in AggFuncs.
 type HashAggExec struct {
-	baseExecutor
+	operator.BaseOperator
 
 	executed      bool
 	sc            *stmtctx.StatementContext
@@ -47,9 +48,9 @@ type HashAggExec struct {
 	groupVals     [][]byte
 }
 
-// Close implements the Executor Close interface.
+// Close implements the Operator Close interface.
 func (e *HashAggExec) Close() error {
-	if err := e.baseExecutor.Close(); err != nil {
+	if err := e.BaseOperator.Close(); err != nil {
 		return errors.Trace(err)
 	}
 	e.groupMap = nil
@@ -58,23 +59,23 @@ func (e *HashAggExec) Close() error {
 	return nil
 }
 
-// Open implements the Executor Open interface.
+// Open implements the Operator Open interface.
 func (e *HashAggExec) Open(ctx context.Context) error {
-	if err := e.baseExecutor.Open(ctx); err != nil {
+	if err := e.BaseOperator.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
 	e.executed = false
 	e.groupMap = mvmap.NewMVMap()
 	e.groupIterator = e.groupMap.NewIterator()
 	e.aggCtxsMap = make(aggCtxsMapper, 0)
-	e.mutableRow = chunk.MutRowFromTypes(e.retTypes())
+	e.mutableRow = chunk.MutRowFromTypes(e.RetTypes())
 	e.rowBuffer = make([]types.Datum, 0, e.Schema().Len())
 	e.groupKey = make([]byte, 0, 8)
 	e.groupVals = make([][]byte, 0, 8)
 	return nil
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *HashAggExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	// In this stage we consider all data from src as a single group.
 	if !e.executed {
@@ -104,7 +105,7 @@ func (e *HashAggExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		}
 		e.mutableRow.SetDatums(e.rowBuffer...)
 		chk.AppendRow(e.mutableRow.ToRow())
-		if chk.NumRows() == e.maxChunkSize {
+		if chk.NumRows() == e.ChunkSize {
 			return nil
 		}
 	}
@@ -112,14 +113,14 @@ func (e *HashAggExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 // execute fetches Chunks from src and update each aggregate function for each row in Chunk.
 func (e *HashAggExec) execute(ctx context.Context) (err error) {
-	inputIter := chunk.NewIterator4Chunk(e.childrenResults[0])
+	inputIter := chunk.NewIterator4Chunk(e.ChildrenResults[0])
 	for {
-		err := e.children[0].Next(ctx, e.childrenResults[0])
+		err := e.Children[0].Next(ctx, e.ChildrenResults[0])
 		if err != nil {
 			return errors.Trace(err)
 		}
 		// no more data.
-		if e.childrenResults[0].NumRows() == 0 {
+		if e.ChildrenResults[0].NumRows() == 0 {
 			return nil
 		}
 		for row := inputIter.Begin(); row != inputIter.End(); row = inputIter.Next() {
@@ -167,7 +168,7 @@ func (e *HashAggExec) getContexts(groupKey []byte) []*aggregation.AggEvaluateCon
 	if !ok {
 		aggCtxs = make([]*aggregation.AggEvaluateContext, 0, len(e.AggFuncs))
 		for _, af := range e.AggFuncs {
-			aggCtxs = append(aggCtxs, af.CreateContext(e.ctx.GetSessionVars().StmtCtx))
+			aggCtxs = append(aggCtxs, af.CreateContext(e.Sctx.GetSessionVars().StmtCtx))
 		}
 		e.aggCtxsMap[groupKeyString] = aggCtxs
 	}
@@ -178,7 +179,7 @@ func (e *HashAggExec) getContexts(groupKey []byte) []*aggregation.AggEvaluateCon
 // It assumes all the input data is sorted by group by key.
 // When Next() is called, it will return a result for the same group.
 type StreamAggExec struct {
-	baseExecutor
+	operator.BaseOperator
 
 	executed     bool
 	hasData      bool
@@ -196,32 +197,32 @@ type StreamAggExec struct {
 	rowBuffer  []types.Datum
 }
 
-// Open implements the Executor Open interface.
+// Open implements the Operator Open interface.
 func (e *StreamAggExec) Open(ctx context.Context) error {
-	if err := e.baseExecutor.Open(ctx); err != nil {
+	if err := e.BaseOperator.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
 
 	e.executed = false
 	e.hasData = false
-	e.inputIter = chunk.NewIterator4Chunk(e.childrenResults[0])
+	e.inputIter = chunk.NewIterator4Chunk(e.ChildrenResults[0])
 	e.inputRow = e.inputIter.End()
-	e.mutableRow = chunk.MutRowFromTypes(e.retTypes())
+	e.mutableRow = chunk.MutRowFromTypes(e.RetTypes())
 	e.rowBuffer = make([]types.Datum, 0, e.Schema().Len())
 
 	e.aggCtxs = make([]*aggregation.AggEvaluateContext, 0, len(e.AggFuncs))
 	for _, agg := range e.AggFuncs {
-		e.aggCtxs = append(e.aggCtxs, agg.CreateContext(e.ctx.GetSessionVars().StmtCtx))
+		e.aggCtxs = append(e.aggCtxs, agg.CreateContext(e.Sctx.GetSessionVars().StmtCtx))
 	}
 
 	return nil
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *StreamAggExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 
-	for !e.executed && chk.NumRows() < e.maxChunkSize {
+	for !e.executed && chk.NumRows() < e.ChunkSize {
 		err := e.consumeOneGroup(ctx, chk)
 		if err != nil {
 			e.executed = true
@@ -264,12 +265,12 @@ func (e *StreamAggExec) fetchChildIfNecessary(ctx context.Context, chk *chunk.Ch
 		return nil
 	}
 
-	err := e.children[0].Next(ctx, e.childrenResults[0])
+	err := e.Children[0].Next(ctx, e.ChildrenResults[0])
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// No more data.
-	if e.childrenResults[0].NumRows() == 0 {
+	if e.ChildrenResults[0].NumRows() == 0 {
 		if e.hasData || len(e.GroupByItems) == 0 {
 			e.appendResult2Chunk(chk)
 		}
@@ -277,7 +278,7 @@ func (e *StreamAggExec) fetchChildIfNecessary(ctx context.Context, chk *chunk.Ch
 		return nil
 	}
 
-	// Reach here, "e.childrenResults[0].NumRows() > 0" is guaranteed.
+	// Reach here, "e.ChildrenResults[0].NumRows() > 0" is guaranteed.
 	e.inputRow = e.inputIter.Begin()
 	e.hasData = true
 	return nil
@@ -289,7 +290,7 @@ func (e *StreamAggExec) appendResult2Chunk(chk *chunk.Chunk) {
 	e.rowBuffer = e.rowBuffer[:0]
 	for i, af := range e.AggFuncs {
 		e.rowBuffer = append(e.rowBuffer, af.GetResult(e.aggCtxs[i]))
-		af.ResetContext(e.ctx.GetSessionVars().StmtCtx, e.aggCtxs[i])
+		af.ResetContext(e.Sctx.GetSessionVars().StmtCtx, e.aggCtxs[i])
 	}
 	e.mutableRow.SetDatums(e.rowBuffer...)
 	chk.AppendRow(e.mutableRow.ToRow())

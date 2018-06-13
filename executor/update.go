@@ -15,6 +15,7 @@ package executor
 
 import (
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/executor/operator"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -26,9 +27,9 @@ import (
 
 // UpdateExec represents a new update executor.
 type UpdateExec struct {
-	baseExecutor
+	operator.BaseOperator
 
-	SelectExec  Executor
+	SelectExec  operator.Operator
 	OrderedList []*expression.Assignment
 
 	// updatedRowKeys is a map for unique (Table, handle) pair.
@@ -72,7 +73,7 @@ func (e *UpdateExec) exec(schema *expression.Schema) (types.DatumRow, error) {
 				continue
 			}
 			// Update row
-			changed, _, _, _, err1 := updateRecord(e.ctx, handle, oldData, newTableData, flags, tbl, false)
+			changed, _, _, _, err1 := updateRecord(e.Sctx, handle, oldData, newTableData, flags, tbl, false)
 			if err1 == nil {
 				if changed {
 					e.updatedRowKeys[id][handle] = struct{}{}
@@ -80,7 +81,7 @@ func (e *UpdateExec) exec(schema *expression.Schema) (types.DatumRow, error) {
 				continue
 			}
 
-			sc := e.ctx.GetSessionVars().StmtCtx
+			sc := e.Sctx.GetSessionVars().StmtCtx
 			if kv.ErrKeyExists.Equal(err1) && sc.IgnoreErr {
 				sc.AppendWarning(err1)
 				continue
@@ -92,7 +93,7 @@ func (e *UpdateExec) exec(schema *expression.Schema) (types.DatumRow, error) {
 	return types.DatumRow{}, nil
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *UpdateExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if !e.fetched {
@@ -103,7 +104,7 @@ func (e *UpdateExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		e.fetched = true
 
 		for {
-			row, err := e.exec(e.children[0].Schema())
+			row, err := e.exec(e.Children[0].Schema())
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -120,11 +121,11 @@ func (e *UpdateExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 }
 
 func (e *UpdateExec) fetchChunkRows(ctx context.Context) error {
-	fields := e.children[0].retTypes()
+	fields := e.Children[0].RetTypes()
 	globalRowIdx := 0
 	for {
-		chk := e.children[0].newChunk()
-		err := e.children[0].Next(ctx, chk)
+		chk := e.Children[0].NewChunk()
+		err := e.Children[0].Next(ctx, chk)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -173,12 +174,12 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow types.DatumRow) (types.Dat
 	return newRowData, nil
 }
 
-// Close implements the Executor Close interface.
+// Close implements the Operator Close interface.
 func (e *UpdateExec) Close() error {
 	return e.SelectExec.Close()
 }
 
-// Open implements the Executor Open interface.
+// Open implements the Operator Open interface.
 func (e *UpdateExec) Open(ctx context.Context) error {
 	return e.SelectExec.Open(ctx)
 }

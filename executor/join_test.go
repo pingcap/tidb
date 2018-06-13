@@ -241,7 +241,7 @@ func (s *testSuite) TestJoin(c *C) {
 	result.Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
 
 	// This case is for testing:
-	// when the main thread calls Executor.Close() while the out data fetch worker and join workers are still working,
+	// when the main thread calls Operator.Close() while the out data fetch worker and join workers are still working,
 	// we need to stop the goroutines as soon as possible to avoid unexpected error.
 	tk.MustExec("set @@tidb_hash_join_concurrency=5")
 	tk.MustExec("drop table if exists t;")

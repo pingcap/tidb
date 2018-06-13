@@ -18,6 +18,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/executor/operator"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -77,7 +78,7 @@ func (s *testExecSuite) TestShowProcessList(c *C) {
 
 	// Compose executor.
 	e := &ShowExec{
-		baseExecutor: newBaseExecutor(sctx, schema, ""),
+		BaseOperator: operator.NewBaseOperator(sctx, schema, ""),
 		Tp:           ast.ShowProcessList,
 	}
 
@@ -85,7 +86,7 @@ func (s *testExecSuite) TestShowProcessList(c *C) {
 	err := e.Open(ctx)
 	c.Assert(err, IsNil)
 
-	chk := e.newChunk()
+	chk := e.NewChunk()
 	it := chunk.NewIterator4Chunk(chk)
 	// Run test and check results.
 	for _, p := range ps {

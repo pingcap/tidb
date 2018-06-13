@@ -20,6 +20,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/executor/operator"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser"
@@ -34,9 +35,9 @@ import (
 )
 
 var (
-	_ Executor = &DeallocateExec{}
-	_ Executor = &ExecuteExec{}
-	_ Executor = &PrepareExec{}
+	_ operator.Operator = &DeallocateExec{}
+	_ operator.Operator = &ExecuteExec{}
+	_ operator.Operator = &PrepareExec{}
 )
 
 type paramMarkerSorter struct {
@@ -72,7 +73,7 @@ func (e *paramMarkerExtractor) Leave(in ast.Node) (ast.Node, bool) {
 
 // PrepareExec represents a PREPARE executor.
 type PrepareExec struct {
-	baseExecutor
+	operator.BaseOperator
 
 	is      infoschema.InfoSchema
 	name    string
@@ -86,15 +87,15 @@ type PrepareExec struct {
 // NewPrepareExec creates a new PrepareExec.
 func NewPrepareExec(ctx sessionctx.Context, is infoschema.InfoSchema, sqlTxt string) *PrepareExec {
 	return &PrepareExec{
-		baseExecutor: newBaseExecutor(ctx, nil, "PrepareStmt"),
+		BaseOperator: operator.NewBaseOperator(ctx, nil, "PrepareStmt"),
 		is:           is,
 		sqlText:      sqlTxt,
 	}
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	vars := e.ctx.GetSessionVars()
+	vars := e.Sctx.GetSessionVars()
 	if e.ID != 0 {
 		// Must be the case when we retry a prepare.
 		// Make sure it is idempotent.
@@ -108,7 +109,7 @@ func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		stmts []ast.StmtNode
 		err   error
 	)
-	if sqlParser, ok := e.ctx.(sqlexec.SQLParser); ok {
+	if sqlParser, ok := e.Sctx.(sqlexec.SQLParser); ok {
 		stmts, err = sqlParser.ParseSQL(e.sqlText, charset, collation)
 	} else {
 		stmts, err = parser.New().Parse(e.sqlText, charset, collation)
@@ -125,7 +126,7 @@ func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 	var extractor paramMarkerExtractor
 	stmt.Accept(&extractor)
-	err = plan.Preprocess(e.ctx, stmt, e.is, true)
+	err = plan.Preprocess(e.Sctx, stmt, e.is, true)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -151,7 +152,7 @@ func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		prepared.Params[i].SetDatum(types.NewIntDatum(0))
 	}
 	var p plan.Plan
-	p, err = plan.BuildLogicalPlan(e.ctx, stmt, e.is)
+	p, err = plan.BuildLogicalPlan(e.Sctx, stmt, e.is)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -170,20 +171,20 @@ func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 // ExecuteExec represents an EXECUTE executor.
 // It cannot be executed by itself, all it needs to do is to build
-// another Executor from a prepared statement.
+// another Operator from a prepared statement.
 type ExecuteExec struct {
-	baseExecutor
+	operator.BaseOperator
 
 	is        infoschema.InfoSchema
 	name      string
 	usingVars []expression.Expression
 	id        uint32
-	stmtExec  Executor
+	stmtExec  operator.Operator
 	stmt      ast.StmtNode
 	plan      plan.Plan
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *ExecuteExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	return nil
 }
@@ -192,36 +193,36 @@ func (e *ExecuteExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 // After Build, e.StmtExec will be used to do the real execution.
 func (e *ExecuteExec) Build() error {
 	var err error
-	if IsPointGetWithPKOrUniqueKeyByAutoCommit(e.ctx, e.plan) {
-		err = e.ctx.InitTxnWithStartTS(math.MaxUint64)
+	if IsPointGetWithPKOrUniqueKeyByAutoCommit(e.Sctx, e.plan) {
+		err = e.Sctx.InitTxnWithStartTS(math.MaxUint64)
 	} else {
-		err = e.ctx.ActivePendingTxn()
+		err = e.Sctx.ActivePendingTxn()
 	}
 	if err != nil {
 		return errors.Trace(err)
 	}
-	b := newExecutorBuilder(e.ctx, e.is)
+	b := newExecutorBuilder(e.Sctx, e.is)
 	stmtExec := b.build(e.plan)
 	if b.err != nil {
 		return errors.Trace(b.err)
 	}
 	e.stmtExec = stmtExec
-	ResetStmtCtx(e.ctx, e.stmt)
-	CountStmtNode(e.stmt, e.ctx.GetSessionVars().InRestrictedSQL)
+	ResetStmtCtx(e.Sctx, e.stmt)
+	CountStmtNode(e.stmt, e.Sctx.GetSessionVars().InRestrictedSQL)
 	logExpensiveQuery(e.stmt, e.plan)
 	return nil
 }
 
 // DeallocateExec represent a DEALLOCATE executor.
 type DeallocateExec struct {
-	baseExecutor
+	operator.BaseOperator
 
 	Name string
 }
 
-// Next implements the Executor Next interface.
+// Next implements the Operator Next interface.
 func (e *DeallocateExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	vars := e.ctx.GetSessionVars()
+	vars := e.Sctx.GetSessionVars()
 	id, ok := vars.PreparedStmtNameToID[e.Name]
 	if !ok {
 		return errors.Trace(plan.ErrStmtNotFound)
