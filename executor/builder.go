@@ -56,10 +56,16 @@ type executorBuilder struct {
 }
 
 func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema) *executorBuilder {
-	return &executorBuilder{
+	b := &executorBuilder{
 		ctx: ctx,
 		is:  is,
 	}
+	startTS := b.ctx.GetSessionVars().SnapshotTS
+	if startTS == 0 {
+		startTS = b.ctx.Txn().StartTS()
+	}
+	b.startTS = startTS
+	return b
 }
 
 func (b *executorBuilder) build(p plan.Plan) Executor {
@@ -372,9 +378,8 @@ func (b *executorBuilder) buildChecksumTable(v *plan.ChecksumTable) Executor {
 		tables:       make(map[int64]*checksumContext),
 		done:         false,
 	}
-	startTs := b.getStartTS()
 	for _, t := range v.Tables {
-		e.tables[t.TableInfo.ID] = newChecksumContext(t.DBInfo, t.TableInfo, startTs)
+		e.tables[t.TableInfo.ID] = newChecksumContext(t.DBInfo, t.TableInfo, b.startTS)
 	}
 	return e
 }
@@ -905,20 +910,6 @@ func (b *executorBuilder) buildTableDual(v *plan.PhysicalTableDual) Executor {
 	return e
 }
 
-func (b *executorBuilder) getStartTS() uint64 {
-	if b.startTS != 0 {
-		// Return the cached value.
-		return b.startTS
-	}
-
-	startTS := b.ctx.GetSessionVars().SnapshotTS
-	if startTS == 0 {
-		startTS = b.ctx.Txn().StartTS()
-	}
-	b.startTS = startTS
-	return startTS
-}
-
 func (b *executorBuilder) buildMemTable(v *plan.PhysicalMemTable) Executor {
 	tb, _ := b.is.TableByID(v.Table.ID)
 	e := &TableScanExec{
@@ -1195,7 +1186,7 @@ func constructDistExec(sctx sessionctx.Context, plans []plan.PhysicalPlan) ([]*t
 
 func (b *executorBuilder) constructDAGReq(plans []plan.PhysicalPlan) (dagReq *tipb.DAGRequest, streaming bool, err error) {
 	dagReq = &tipb.DAGRequest{}
-	dagReq.StartTs = b.getStartTS()
+	dagReq.StartTs = b.startTS
 	dagReq.TimeZoneOffset = timeZoneOffset(b.ctx)
 	sc := b.ctx.GetSessionVars().StmtCtx
 	dagReq.Flags = statementContextToFlags(sc)
