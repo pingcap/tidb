@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -233,7 +232,6 @@ func (p *LogicalJoin) setPreferredJoinType(hintInfo *tableHintInfo) error {
 
 	lhsAlias := extractTableAlias(p.children[0])
 	rhsAlias := extractTableAlias(p.children[1])
-	logrus.Warnf("alias: %v, %v", lhsAlias, rhsAlias)
 	if hintInfo.ifPreferMergeJoin(lhsAlias, rhsAlias) {
 		p.preferJoinType |= preferMergeJoin
 	}
@@ -301,7 +299,6 @@ func (b *planBuilder) buildJoin(joinNode *ast.Join) LogicalPlan {
 	joinPlan.redundantSchema = expression.MergeSchema(lRedundant, rRedundant)
 
 	// Set preferred join algorithm if some join hints is specified by user.
-	logrus.Warnf("??????")
 	err := joinPlan.setPreferredJoinType(b.TableHints())
 	if err != nil {
 		b.err = errors.Trace(err)
