@@ -832,8 +832,6 @@ func (b *executorBuilder) buildHashAgg(v *plan.PhysicalHashAgg) Executor {
 		sc:                 sessionVars.StmtCtx,
 		AggFuncs:           make([]aggregation.Aggregation, 0, len(v.AggFuncs)),
 		GroupByItems:       v.GroupByItems,
-		partialConcurrency: sessionVars.HashAggPartialConcurrency,
-		finalConcurrency:   sessionVars.HashAggFinalConcurrency,
 	}
 	for _, aggDesc := range v.AggFuncs {
 		e.AggFuncs = append(e.AggFuncs, aggDesc.GetAggFunc())

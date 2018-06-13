@@ -45,9 +45,6 @@ type HashAggExec struct {
 	GroupByItems  []expression.Expression
 	groupKey      []byte
 	groupVals     [][]byte
-
-	partialConcurrency int
-	finalConcurrency   int
 }
 
 // Close implements the Executor Close interface.
