@@ -963,6 +963,26 @@ func (s *testSuite) TestUnion(c *C) {
 	c.Assert(err, NotNil)
 	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrWrongUsage))
+
+	_, err = tk.Exec("(select a from t order by a) union all select a from t limit 1 union all select a from t limit 1")
+	c.Assert(terror.ErrorEqual(err, plan.ErrWrongUsage), IsTrue)
+
+	_, err = tk.Exec("(select a from t limit 1) union all select a from t limit 1")
+	c.Assert(err, IsNil)
+	_, err = tk.Exec("(select a from t order by a) union all select a from t order by a")
+	c.Assert(err, IsNil)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t value(1),(2),(3)")
+
+	tk.MustQuery("(select a from t order by a limit 2) union all (select a from t order by a desc limit 2) order by a desc limit 1,2").Check(testkit.Rows("2", "2"))
+	tk.MustQuery("select a from t union all select a from t order by a desc limit 5").Check(testkit.Rows("3", "3", "2", "2", "1"))
+	tk.MustQuery("(select a from t order by a desc limit 2) union all select a from t group by a order by a").Check(testkit.Rows("1", "2", "2", "3", "3"))
+	tk.MustQuery("(select a from t order by a desc limit 2) union all select 33 as a order by a desc limit 2").Check(testkit.Rows("33", "3"))
+
+	tk.MustQuery("select 1 union select 1 union all select 1").Check(testkit.Rows("1", "1"))
+	tk.MustQuery("select 1 union all select 1 union select 1").Check(testkit.Rows("1"))
 }
 
 func (s *testSuite) TestIn(c *C) {
@@ -2151,6 +2171,10 @@ func (s *testContextOptionSuite) TestAddIndexPriority(c *C) {
 	c.Assert(err, IsNil)
 	dom, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
@@ -2173,8 +2197,6 @@ func (s *testContextOptionSuite) TestAddIndexPriority(c *C) {
 	cli.mu.Lock()
 	cli.mu.checkFlags = checkRequestOff
 	cli.mu.Unlock()
-	dom.Close()
-	store.Close()
 }
 
 func (s *testContextOptionSuite) TestAlterTableComment(c *C) {
@@ -2554,8 +2576,6 @@ func (s *testSuite) TestContainDotColumn(c *C) {
 func (s *testSuite) TestCheckIndex(c *C) {
 	s.ctx = mock.NewContext()
 	s.ctx.Store = s.store
-	dom, err := session.BootstrapSession(s.store)
-	c.Assert(err, IsNil)
 	se, err := session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 	defer se.Close()
@@ -2566,7 +2586,7 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "create table t (pk int primary key, c int default 1, c1 int default 1, unique key c(c))")
 	c.Assert(err, IsNil)
-	is := dom.InfoSchema()
+	is := s.domain.InfoSchema()
 	db := model.NewCIStr("test_admin")
 	dbInfo, ok := is.SchemaByName(db)
 	c.Assert(ok, IsTrue)

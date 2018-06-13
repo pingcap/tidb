@@ -66,7 +66,9 @@ var (
 	// ErrInvalidRecordKey returns for invalid record key.
 	ErrInvalidRecordKey = terror.ClassTable.New(codeInvalidRecordKey, "invalid record key")
 	// ErrTruncateWrongValue returns for truncate wrong value for field.
-	ErrTruncateWrongValue = terror.ClassTable.New(codeTruncateWrongValue, "Incorrect value")
+	ErrTruncateWrongValue = terror.ClassTable.New(codeTruncateWrongValue, "incorrect value")
+	// ErrTrgInvalidCreationCtx happens when inserting a value outside the table partitions.
+	ErrTrgInvalidCreationCtx = terror.ClassTable.New(codeTrgInvalidCreationCtx, "locate partition failed")
 )
 
 // RecordIterFunc is used for low-level record iteration.
@@ -166,6 +168,9 @@ const (
 	codeDuplicateColumn    = 1110
 	codeNoDefaultValue     = 1364
 	codeTruncateWrongValue = 1366
+	// MySQL error code, "Trigger creation context of table `%-.64s`.`%-.64s` is invalid".
+	// It may happen when inserting some data outside of all table partitions.
+	codeTrgInvalidCreationCtx = 1604
 )
 
 // Slice is used for table sorting.
@@ -181,11 +186,12 @@ func (s Slice) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
 
 func init() {
 	tableMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeColumnCantNull:     mysql.ErrBadNull,
-		codeUnknownColumn:      mysql.ErrBadField,
-		codeDuplicateColumn:    mysql.ErrFieldSpecifiedTwice,
-		codeNoDefaultValue:     mysql.ErrNoDefaultForField,
-		codeTruncateWrongValue: mysql.ErrTruncatedWrongValueForField,
+		codeColumnCantNull:        mysql.ErrBadNull,
+		codeUnknownColumn:         mysql.ErrBadField,
+		codeDuplicateColumn:       mysql.ErrFieldSpecifiedTwice,
+		codeNoDefaultValue:        mysql.ErrNoDefaultForField,
+		codeTruncateWrongValue:    mysql.ErrTruncatedWrongValueForField,
+		codeTrgInvalidCreationCtx: mysql.ErrTrgInvalidCreationCtx,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassTable] = tableMySQLErrCodes
 }
