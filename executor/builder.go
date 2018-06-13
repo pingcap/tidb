@@ -828,10 +828,10 @@ func (b *executorBuilder) buildHashAgg(v *plan.PhysicalHashAgg) Executor {
 	}
 	sessionVars := b.ctx.GetSessionVars()
 	e := &HashAggExec{
-		baseExecutor:       newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), src),
-		sc:                 sessionVars.StmtCtx,
-		AggFuncs:           make([]aggregation.Aggregation, 0, len(v.AggFuncs)),
-		GroupByItems:       v.GroupByItems,
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), src),
+		sc:           sessionVars.StmtCtx,
+		AggFuncs:     make([]aggregation.Aggregation, 0, len(v.AggFuncs)),
+		GroupByItems: v.GroupByItems,
 	}
 	for _, aggDesc := range v.AggFuncs {
 		e.AggFuncs = append(e.AggFuncs, aggDesc.GetAggFunc())
