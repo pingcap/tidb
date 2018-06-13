@@ -41,6 +41,7 @@ func (s *testDDLSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 	// set ReorgWaitTimeout to small value, make test to be faster.
 	ReorgWaitTimeout = 50 * time.Millisecond
+	WaitTimeWhenErrorOccured = 1 * time.Microsecond
 }
 
 func (s *testDDLSuite) TearDownSuite(c *C) {
