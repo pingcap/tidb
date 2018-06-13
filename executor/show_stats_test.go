@@ -88,3 +88,12 @@ func (s *testSuite) TestShowStatsHealthy(c *C) {
 	do.StatsHandle().Update(do.InfoSchema())
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t 0"))
 }
+
+func (s *testSuite) TestShowStatsHasNullValue(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, index idx(a))")
+	tk.MustExec("insert into t values(NULL)")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t idx 1 0 1 1 NULL NULL"))
+}

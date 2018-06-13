@@ -586,6 +586,16 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result = tk.MustQuery("select concat_ws(',','First name',NULL,'Last Name')")
 	result.Check(testkit.Rows("First name,Last Name"))
 
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a tinyint(2), b varchar(10));`)
+	tk.MustExec(`insert into t values (1, 'a'), (12, 'a'), (126, 'a'), (127, 'a')`)
+	tk.MustQuery(`select concat_ws('#', a, b) from t;`).Check(testkit.Rows(
+		`1#a`,
+		`12#a`,
+		`126#a`,
+		`127#a`,
+	))
+
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a binary(3))")
 	tk.MustExec("insert into t values('a')")
@@ -2105,7 +2115,6 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	c.Assert(charRecordSet, NotNil)
 	_, err = session.GetRows4Test(ctx, tk.Se, charRecordSet)
 	c.Assert(err.Error(), Equals, "unknown encoding: tidb")
-	c.Assert(rs.Close(), IsNil)
 
 	// issue 3884
 	tk.MustExec("drop table if exists t")

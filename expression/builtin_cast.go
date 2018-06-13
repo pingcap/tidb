@@ -1674,9 +1674,13 @@ func WrapWithCastAsString(ctx sessionctx.Context, expr Expression) Expression {
 	if expr.GetType().EvalType() == types.ETString {
 		return expr
 	}
+	argLen := expr.GetType().Flen
+	if expr.GetType().EvalType() == types.ETInt {
+		argLen = mysql.MaxIntWidth
+	}
 	tp := types.NewFieldType(mysql.TypeVarString)
 	tp.Charset, tp.Collate = charset.CharsetUTF8, charset.CollationUTF8
-	tp.Flen, tp.Decimal = expr.GetType().Flen, types.UnspecifiedLength
+	tp.Flen, tp.Decimal = argLen, types.UnspecifiedLength
 	return BuildCastFunction(ctx, expr, tp)
 }
 
@@ -1734,6 +1738,9 @@ func WrapWithCastAsDuration(ctx sessionctx.Context, expr Expression) Expression 
 // of expr is not type json,
 // otherwise, returns `expr` directly.
 func WrapWithCastAsJSON(ctx sessionctx.Context, expr Expression) Expression {
+	if expr.GetType().Tp == mysql.TypeJSON && !mysql.HasParseToJSONFlag(expr.GetType().Flag) {
+		return expr
+	}
 	tp := &types.FieldType{
 		Tp:      mysql.TypeJSON,
 		Flen:    12582912, // FIXME: Here the Flen is not trusted.

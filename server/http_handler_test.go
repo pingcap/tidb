@@ -50,7 +50,10 @@ import (
 )
 
 type HTTPHandlerTestSuite struct {
-	server *Server
+	server  *Server
+	store   kv.Storage
+	domain  *domain.Domain
+	tidbdrv *TiDBDriver
 }
 
 var _ = Suite(new(HTTPHandlerTestSuite))
@@ -235,11 +238,12 @@ func (ts *HTTPHandlerTestSuite) TestRegionsFromMeta(c *C) {
 
 func (ts *HTTPHandlerTestSuite) startServer(c *C) {
 	mvccStore := mocktikv.MustNewMVCCStore()
-	store, err := mockstore.NewMockTikvStore(mockstore.WithMVCCStore(mvccStore))
+	var err error
+	ts.store, err = mockstore.NewMockTikvStore(mockstore.WithMVCCStore(mvccStore))
 	c.Assert(err, IsNil)
-	_, err = session.BootstrapSession(store)
+	ts.domain, err = session.BootstrapSession(ts.store)
 	c.Assert(err, IsNil)
-	tidbdrv := NewTiDBDriver(store)
+	ts.tidbdrv = NewTiDBDriver(ts.store)
 
 	cfg := config.NewConfig()
 	cfg.Port = 4001
@@ -247,7 +251,7 @@ func (ts *HTTPHandlerTestSuite) startServer(c *C) {
 	cfg.Status.StatusPort = 10090
 	cfg.Status.ReportStatus = true
 
-	server, err := NewServer(cfg, tidbdrv)
+	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
 	ts.server = server
 	go server.Run()
@@ -255,6 +259,12 @@ func (ts *HTTPHandlerTestSuite) startServer(c *C) {
 }
 
 func (ts *HTTPHandlerTestSuite) stopServer(c *C) {
+	if ts.domain != nil {
+		ts.domain.Close()
+	}
+	if ts.store != nil {
+		ts.store.Close()
+	}
 	if ts.server != nil {
 		ts.server.Close()
 	}
@@ -411,7 +421,7 @@ func (ts *HTTPHandlerTestSuite) TestDecodeColumnValue(c *C) {
 		var data interface{}
 		err = decoder.Decode(&data)
 		c.Assert(err, IsNil, Commentf("url:%v\ndata%v", url, data))
-		colVal, err := types.DatumsToString([]types.Datum{row[col.id-1]})
+		colVal, err := types.DatumsToString([]types.Datum{row[col.id-1]}, false)
 		c.Assert(err, IsNil)
 		c.Assert(data, Equals, colVal, Commentf("url:%v", url))
 	}

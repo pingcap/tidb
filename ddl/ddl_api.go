@@ -539,6 +539,34 @@ func checkTooManyColumns(colDefs []*ast.ColumnDef) error {
 	return nil
 }
 
+func checkAddColumnTooManyColumns(oldCols []*model.ColumnInfo) error {
+	if len(oldCols) > TableColumnCountLimit {
+		return errTooManyFields
+	}
+	return nil
+}
+
+// checkPointTypeColumns checks multiple decimal/float/double columns.
+func checkPointTypeColumns(colDefs []*ast.ColumnDef) error {
+	for _, colDef := range colDefs {
+		if err := checkPointTypeColumn(colDef.Name.OrigColName(), colDef.Tp); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+// checkPointTypeColumn checks a decimal/float/double column.
+func checkPointTypeColumn(colName string, tp *types.FieldType) error {
+	switch tp.Tp {
+	case mysql.TypeNewDecimal, mysql.TypeDouble, mysql.TypeFloat:
+		if tp.Flen < tp.Decimal {
+			return types.ErrMBiggerThanD.GenByArgs(colName)
+		}
+	}
+	return nil
+}
+
 func checkDuplicateConstraint(namesMap map[string]bool, name string, foreign bool) error {
 	if name == "" {
 		return nil
@@ -787,6 +815,10 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		return errors.Trace(err)
 	}
 
+	if err = checkPointTypeColumns(colDefs); err != nil {
+		return errors.Trace(err)
+	}
+
 	cols, newConstraints, err := buildColumnsAndConstraints(ctx, colDefs, s.Constraints)
 	if err != nil {
 		return errors.Trace(err)
@@ -999,6 +1031,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			err = d.RenameTable(ctx, ident, newIdent)
 		case ast.AlterTableDropPrimaryKey:
 			err = ErrUnsupportedModifyPrimaryKey.GenByArgs("drop")
+		case ast.AlterTableRenameIndex:
+			err = d.RenameIndex(ctx, ident, spec)
 		case ast.AlterTableOption:
 			for _, opt := range spec.Options {
 				switch opt.Tp {
@@ -1110,6 +1144,11 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 		return errors.Trace(err)
 	}
 
+	colName := specNewColumn.Name.Name.O
+	if err = checkPointTypeColumn(colName, specNewColumn.Tp); err != nil {
+		return errors.Trace(err)
+	}
+
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
@@ -1121,7 +1160,6 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	}
 
 	// Check whether added column has existed.
-	colName := specNewColumn.Name.Name.O
 	col := table.FindCol(t.Cols(), colName)
 	if col != nil {
 		return infoschema.ErrColumnExists.GenByArgs(colName)
@@ -1394,6 +1432,10 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		return nil, errors.Trace(errUnsupportedModifyColumn)
 	}
 
+	if err := checkPointTypeColumn(specNewColumn.Name.OrigColName(), specNewColumn.Tp); err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	newCol := table.ToColumn(&model.ColumnInfo{
 		ID: col.ID,
 		// We use this PR(https://github.com/pingcap/tidb/pull/6274) as the dividing line to define whether it is a new version or an old version TiDB.
@@ -1567,6 +1609,41 @@ func (d *ddl) AlterTableComment(ctx sessionctx.Context, ident ast.Ident, spec *a
 		Type:       model.ActionModifyTableComment,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{spec.Comment},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+// RenameIndex renames an index.
+// In TiDB, indexes are case-insensitive (so index 'a' and 'A" are considered the same index),
+// but index names are case-sensitive (we can rename index 'a' to 'A')
+func (d *ddl) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	is := d.infoHandle.Get()
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenByArgs(ident.Schema)
+	}
+
+	tb, err := is.TableByName(ident.Schema, ident.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ident.Schema, ident.Name))
+	}
+	duplicate, err := validateRenameIndex(spec.FromKey, spec.ToKey, tb.Meta())
+	if duplicate {
+		return nil
+	}
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tb.Meta().ID,
+		Type:       model.ActionRenameIndex,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{spec.FromKey, spec.ToKey},
 	}
 
 	err = d.doDDLJob(ctx, job)
