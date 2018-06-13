@@ -203,7 +203,7 @@
   revision = "8d44bfdf1030639ae7130922c95df12d6d4da3b6"
 
 [[projects]]
-  branch = "master"
+  branch = "misono/upload-gc-safepoint"
   name = "github.com/pingcap/kvproto"
   packages = [
     "pkg/coprocessor",
@@ -215,13 +215,15 @@
     "pkg/raft_serverpb",
     "pkg/tikvpb"
   ]
-  revision = "5ef8fa297ea3547b015ef5069cb500bba67b0d94"
+  revision = "e4dc33117df67ed55cc324c2e734edea016bdb67"
+  source = "https://github.com/MyonKeminta/kvproto"
 
 [[projects]]
-  branch = "master"
+  branch = "misono/upload-gc-safepoint"
   name = "github.com/pingcap/pd"
   packages = ["pd-client"]
-  revision = "ea6597638eb7f3d7d50248b90e60888352ac8e85"
+  revision = "6f0b48844f15c38bcd128438322c43286114c737"
+  source = "https://github.com/MyonKeminta/pd"
 
 [[projects]]
   branch = "master"
