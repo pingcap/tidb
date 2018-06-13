@@ -132,7 +132,7 @@ var (
 	ErrUnsupportedModifyPrimaryKey = terror.ClassDDL.New(codeUnsupportedModifyPrimaryKey, "unsupported %s primary key")
 
 	// ErrColumnBadNull returns for a bad null value.
-	ErrColumnBadNull = terror.ClassDDL.New(codeBadNull, mysql.MySQLErrName[mysql.ErrBadNull])
+	ErrColumnBadNull = terror.ClassDDL.New(codeBadNull, "column cann't be null")
 	// ErrCantRemoveAllFields returns for deleting all columns.
 	ErrCantRemoveAllFields = terror.ClassDDL.New(codeCantRemoveAllFields, "can't delete all columns with ALTER TABLE")
 	// ErrCantDropFieldOrKey returns for dropping a non-existent field or key.
