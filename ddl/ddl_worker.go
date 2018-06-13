@@ -284,7 +284,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx, shouldCleanJobs bool) error {
 		)
 		err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 			// We are not owner, return and retry checking later.
-			if !isOwner(d.ownerManager, d.uuid) {
+			if !d.isOwner() {
 				return nil
 			}
 

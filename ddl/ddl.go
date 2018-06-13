@@ -215,13 +215,22 @@ type ddlCtx struct {
 	ddlJobCh     chan struct{}
 	ddlJobDoneCh chan struct{}
 	ddlEventCh   chan<- *util.Event
-	lease        time.Duration // lease is schema seconds.
+	lease        time.Duration // lease is schema lease.
 
 	// hook may be modified.
 	hook   Callback
 	hookMu sync.RWMutex
 
 	workerVars *variable.SessionVars // workerVars is used for Binlog.
+}
+
+func (dc *ddlCtx) isOwner() bool {
+	isOwner := dc.ownerManager.IsOwner()
+	log.Debugf("[ddl] it's the DDL owner %v, self ID %s", isOwner, dc.uuid)
+	if isOwner {
+		metrics.DDLCounter.WithLabelValues(metrics.IsDDLOwner).Inc()
+	}
+	return isOwner
 }
 
 // RegisterEventCh registers passed channel for ddl Event.
@@ -383,16 +392,7 @@ func (d *ddl) genGlobalID() (int64, error) {
 	return globalID, errors.Trace(err)
 }
 
-func isOwner(ownerManager owner.Manager, id string) bool {
-	isOwner := ownerManager.IsOwner()
-	log.Debugf("[ddl] it's the DDL owner %v, self ID %s", isOwner, id)
-	if isOwner {
-		metrics.DDLCounter.WithLabelValues(metrics.IsDDLOwner).Inc()
-	}
-	return isOwner
-}
-
-// generalWorker returns the first worker. The ddl structure only one worker before we implement the parallel worker.
+// generalWorker returns the first worker. The ddl structure has only one worker before we implement the parallel worker.
 // It's used for testing.
 func (d *ddl) generalWorker() *worker {
 	if len(d.workers) == 0 {

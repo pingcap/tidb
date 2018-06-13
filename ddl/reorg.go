@@ -167,7 +167,7 @@ func (w *worker) isReorgRunnable(d *ddlCtx) error {
 		return errCancelledDDLJob
 	}
 
-	if !isOwner(d.ownerManager, d.uuid) {
+	if !d.isOwner() {
 		// If it's not the owner, we will try later, so here just returns an error.
 		log.Infof("[ddl] the %s not the job owner", d.uuid)
 		return errors.Trace(errNotOwner)
