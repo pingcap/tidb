@@ -60,7 +60,7 @@ var (
 	// EnableSplitTableRegion is a flag to decide whether to split a new region for
 	// a newly created table. It takes effect only if the Storage supports split
 	// region.
-	EnableSplitTableRegion = true
+	EnableSplitTableRegion = false
 )
 
 var (

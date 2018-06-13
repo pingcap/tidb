@@ -54,6 +54,7 @@ type testStateChangeSuite struct {
 func (s *testStateChangeSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 	s.lease = 200 * time.Millisecond
+	ddl.WaitTimeWhenErrorOccured = 1 * time.Microsecond
 	var err error
 	s.store, err = mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
