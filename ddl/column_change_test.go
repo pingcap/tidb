@@ -16,6 +16,7 @@ package ddl
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
@@ -42,6 +43,7 @@ type testColumnChangeSuite struct {
 
 func (s *testColumnChangeSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
+	WaitTimeWhenErrorOccured = 1 * time.Microsecond
 	s.store = testCreateStore(c, "test_column_change")
 	s.dbInfo = &model.DBInfo{
 		Name: model.NewCIStr("test_column_change"),

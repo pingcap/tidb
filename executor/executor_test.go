@@ -2171,6 +2171,10 @@ func (s *testContextOptionSuite) TestAddIndexPriority(c *C) {
 	c.Assert(err, IsNil)
 	dom, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
@@ -2193,8 +2197,6 @@ func (s *testContextOptionSuite) TestAddIndexPriority(c *C) {
 	cli.mu.Lock()
 	cli.mu.checkFlags = checkRequestOff
 	cli.mu.Unlock()
-	dom.Close()
-	store.Close()
 }
 
 func (s *testContextOptionSuite) TestAlterTableComment(c *C) {
@@ -2574,8 +2576,6 @@ func (s *testSuite) TestContainDotColumn(c *C) {
 func (s *testSuite) TestCheckIndex(c *C) {
 	s.ctx = mock.NewContext()
 	s.ctx.Store = s.store
-	dom, err := session.BootstrapSession(s.store)
-	c.Assert(err, IsNil)
 	se, err := session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 	defer se.Close()
@@ -2586,7 +2586,7 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "create table t (pk int primary key, c int default 1, c1 int default 1, unique key c(c))")
 	c.Assert(err, IsNil)
-	is := dom.InfoSchema()
+	is := s.domain.InfoSchema()
 	db := model.NewCIStr("test_admin")
 	dbInfo, ok := is.SchemaByName(db)
 	c.Assert(ok, IsTrue)
