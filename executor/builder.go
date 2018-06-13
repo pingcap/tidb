@@ -826,11 +826,14 @@ func (b *executorBuilder) buildHashAgg(v *plan.PhysicalHashAgg) Executor {
 		b.err = errors.Trace(b.err)
 		return nil
 	}
+	sessionVars := b.ctx.GetSessionVars()
 	e := &HashAggExec{
-		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), src),
-		sc:           b.ctx.GetSessionVars().StmtCtx,
-		AggFuncs:     make([]aggregation.Aggregation, 0, len(v.AggFuncs)),
-		GroupByItems: v.GroupByItems,
+		baseExecutor:       newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), src),
+		sc:                 sessionVars.StmtCtx,
+		AggFuncs:           make([]aggregation.Aggregation, 0, len(v.AggFuncs)),
+		GroupByItems:       v.GroupByItems,
+		partialConcurrency: sessionVars.HashAggPartialConcurrency,
+		finalConcurrency:   sessionVars.HashAggFinalConcurrency,
 	}
 	for _, aggDesc := range v.AggFuncs {
 		e.AggFuncs = append(e.AggFuncs, aggDesc.GetAggFunc())
