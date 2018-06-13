@@ -222,7 +222,8 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 	b.types = append(b.types, typ)
 
 	log.Debugf("%v, retry later(totalSleep %dms, maxSleep %dms)", err, b.totalSleep, b.maxSleep)
-	b.errors = append(b.errors, err)
+
+	b.errors = append(b.errors, errors.Errorf("%s at %s", err.Error(), time.Now().Format(time.RFC3339Nano)))
 	if b.maxSleep > 0 && b.totalSleep >= b.maxSleep {
 		errMsg := fmt.Sprintf("backoffer.maxSleep %dms is exceeded, errors:", b.maxSleep)
 		for i, err := range b.errors {
@@ -232,8 +233,8 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 			}
 		}
 		log.Warn(errMsg)
-		// Use the last backoff type to generate a MySQL error.
-		return typ.TError()
+		// Use the first backoff type to generate a MySQL error.
+		return b.types[0].TError()
 	}
 	return nil
 }
