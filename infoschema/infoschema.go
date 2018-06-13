@@ -64,7 +64,7 @@ var (
 	ErrPartitionMgmtOnNonpartitioned = terror.ClassSchema.New(codePartitionMgmtOnNonpartitioned, "Partition management on a not partitioned table is not possible")
 	// ErrDropPartitionNonExistent returns error in list of partition.
 	ErrDropPartitionNonExistent = terror.ClassSchema.New(codeErrDropPartitionNonExistent, " Error in list of partitions to %s")
-	// ErrSameNamePartition
+	// ErrSameNamePartition returns duplicate partition name.
 	ErrSameNamePartition = terror.ClassSchema.New(codeErrSameNamePartition, "Duplicate partition name %s")
 )
 
