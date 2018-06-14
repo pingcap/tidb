@@ -896,9 +896,10 @@ func (b *executorBuilder) buildHashAgg(v *plan.PhysicalHashAgg) Executor {
 		return nil
 	}
 	src = b.buildProjBelowAgg(v.AggFuncs, v.GroupByItems, src)
+	sessionVars := b.ctx.GetSessionVars()
 	e := &HashAggExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), src),
-		sc:           b.ctx.GetSessionVars().StmtCtx,
+		sc:           sessionVars.StmtCtx,
 		AggFuncs:     make([]aggregation.Aggregation, 0, len(v.AggFuncs)),
 		GroupByItems: v.GroupByItems,
 	}
@@ -973,6 +974,8 @@ func (b *executorBuilder) buildTableDual(v *plan.PhysicalTableDual) Executor {
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		numDualRows:  v.RowCount,
 	}
+	// Init the startTS for later use.
+	b.getStartTS()
 	return e
 }
 
@@ -983,7 +986,7 @@ func (b *executorBuilder) getStartTS() uint64 {
 	}
 
 	startTS := b.ctx.GetSessionVars().SnapshotTS
-	if startTS == 0 {
+	if startTS == 0 && b.ctx.Txn() != nil {
 		startTS = b.ctx.Txn().StartTS()
 	}
 	b.startTS = startTS
