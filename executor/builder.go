@@ -15,6 +15,7 @@ package executor
 
 import (
 	"bytes"
+	"fmt"
 	"math"
 	"sort"
 	"strings"
@@ -820,12 +821,81 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 	return e
 }
 
+// buildProjBelowAgg builds a ProjectionExec below AggregationExec.
+// If all the args of `aggFuncs`, and all the item of `groupByItems`
+// are columns or constants, we do not need to build the `proj`.
+func (b *executorBuilder) buildProjBelowAgg(aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression, src Executor) Executor {
+	getScalarFunc := false
+	for i := 0; !getScalarFunc && i < len(aggFuncs); i++ {
+		f := aggFuncs[i]
+		for _, arg := range f.Args {
+			if _, ok := arg.(*expression.ScalarFunction); ok {
+				getScalarFunc = true
+				break
+			}
+		}
+	}
+	for _, arg := range groupByItems {
+		if _, ok := arg.(*expression.ScalarFunction); ok {
+			getScalarFunc = true
+			break
+		}
+	}
+	if !getScalarFunc {
+		return src
+	}
+
+	b.ctx.GetSessionVars().PlanID++
+	id := b.ctx.GetSessionVars().PlanID
+	projFromID := fmt.Sprintf("%s_%d", plan.TypeProj, id)
+
+	projSchemaCols := make([]*expression.Column, 0, len(aggFuncs)+len(groupByItems))
+	projExprs := make([]expression.Expression, 0, cap(projSchemaCols))
+	cursor := 0
+	for _, f := range aggFuncs {
+		for i, arg := range f.Args {
+			if _, isCnst := arg.(*expression.Constant); isCnst {
+				continue
+			}
+			projExprs = append(projExprs, arg)
+			newArg := &expression.Column{
+				RetType: arg.GetType(),
+				ColName: model.NewCIStr(fmt.Sprintf("%s_%d", f.Name, i)),
+				Index:   cursor,
+			}
+			projSchemaCols = append(projSchemaCols, newArg)
+			f.Args[i] = newArg
+			cursor++
+		}
+	}
+	for i, arg := range groupByItems {
+		if _, isCnst := arg.(*expression.Constant); isCnst {
+			continue
+		}
+		projExprs = append(projExprs, arg)
+		newArg := &expression.Column{
+			RetType: arg.GetType(),
+			ColName: model.NewCIStr(fmt.Sprintf("group_%d", i)),
+			Index:   cursor,
+		}
+		projSchemaCols = append(projSchemaCols, newArg)
+		groupByItems[i] = newArg
+		cursor++
+	}
+
+	return &ProjectionExec{
+		baseExecutor:  newBaseExecutor(b.ctx, expression.NewSchema(projSchemaCols...), projFromID, src),
+		evaluatorSuit: expression.NewEvaluatorSuit(projExprs),
+	}
+}
+
 func (b *executorBuilder) buildHashAgg(v *plan.PhysicalHashAgg) Executor {
 	src := b.build(v.Children()[0])
 	if b.err != nil {
 		b.err = errors.Trace(b.err)
 		return nil
 	}
+	src = b.buildProjBelowAgg(v.AggFuncs, v.GroupByItems, src)
 	e := &HashAggExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), src),
 		sc:           b.ctx.GetSessionVars().StmtCtx,
@@ -845,6 +915,7 @@ func (b *executorBuilder) buildStreamAgg(v *plan.PhysicalStreamAgg) Executor {
 		b.err = errors.Trace(b.err)
 		return nil
 	}
+	src = b.buildProjBelowAgg(v.AggFuncs, v.GroupByItems, src)
 	e := &StreamAggExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), src),
 		StmtCtx:      b.ctx.GetSessionVars().StmtCtx,

@@ -1645,7 +1645,7 @@ func WrapWithCastAsInt(ctx sessionctx.Context, expr Expression) Expression {
 // of expr is not type real,
 // otherwise, returns `expr` directly.
 func WrapWithCastAsReal(ctx sessionctx.Context, expr Expression) Expression {
-	if expr.GetType().EvalType() == types.ETReal {
+	if tp := expr.GetType(); tp.Tp != mysql.TypeFloat && tp.EvalType() == types.ETReal {
 		return expr
 	}
 	tp := types.NewFieldType(mysql.TypeDouble)
