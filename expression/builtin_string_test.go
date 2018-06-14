@@ -545,8 +545,8 @@ func (s *testEvaluatorSuite) TestReplace(c *C) {
 		flen   int
 	}{
 		{[]interface{}{"www.mysql.com", "mysql", "pingcap"}, false, false, "www.pingcap.com", 17},
-		{[]interface{}{"www.mysql.com", "w", 1}, false, false, "111.mysql.com", 13},
-		{[]interface{}{1234, 2, 55}, false, false, "15534", 8},
+		{[]interface{}{"www.mysql.com", "w", 1}, false, false, "111.mysql.com", 260},
+		{[]interface{}{1234, 2, 55}, false, false, "15534", 20},
 		{[]interface{}{"", "a", "b"}, false, false, "", 0},
 		{[]interface{}{"abc", "", "d"}, false, false, "abc", 3},
 		{[]interface{}{"aaa", "a", ""}, false, false, "", 3},
@@ -555,19 +555,19 @@ func (s *testEvaluatorSuite) TestReplace(c *C) {
 		{[]interface{}{"a", "b", nil}, true, false, "", 1},
 		{[]interface{}{errors.New("must err"), "a", "b"}, false, true, "", -1},
 	}
-	for _, t := range cases {
+	for i, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.Replace, s.primitiveValsToConstants(t.args)...)
-		c.Assert(err, IsNil)
-		c.Assert(f.GetType().Flen, Equals, t.flen)
+		c.Assert(err, IsNil, Commentf("test %v", i))
+		c.Assert(f.GetType().Flen, Equals, t.flen, Commentf("test %v", i))
 		d, err := f.Eval(nil)
 		if t.getErr {
-			c.Assert(err, NotNil)
+			c.Assert(err, NotNil, Commentf("test %v", i))
 		} else {
-			c.Assert(err, IsNil)
+			c.Assert(err, IsNil, Commentf("test %v", i))
 			if t.isNil {
-				c.Assert(d.Kind(), Equals, types.KindNull)
+				c.Assert(d.Kind(), Equals, types.KindNull, Commentf("test %v", i))
 			} else {
-				c.Assert(d.GetString(), Equals, t.res)
+				c.Assert(d.GetString(), Equals, t.res, Commentf("test %v", i))
 			}
 		}
 	}
