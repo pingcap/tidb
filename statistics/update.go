@@ -176,9 +176,16 @@ func needDumpStatsDelta(h *Handle, id int64, item variable.TableDelta, currentTi
 	return true
 }
 
+const (
+	// DumpAll indicates dump all the delta info in to kv
+	DumpAll = true
+	// DumpDelta indicates dump part of the delta info in to kv.
+	DumpDelta = false
+)
+
 // DumpStatsDeltaToKV sweeps the whole list and updates the global map, then we dumps every table that held in map to KV.
 // If the `dumpAll` is false, it will only dump that delta info that `Modify Count / Table Count` greater than a ratio.
-func (h *Handle) DumpStatsDeltaToKV(dumpAll bool) error {
+func (h *Handle) DumpStatsDeltaToKV(dumpMode bool) error {
 	h.listHead.Lock()
 	for collector := h.listHead.next; collector != nil; collector = collector.next {
 		collector.tryToRemoveFromList()
@@ -187,7 +194,7 @@ func (h *Handle) DumpStatsDeltaToKV(dumpAll bool) error {
 	h.listHead.Unlock()
 	currentTime := time.Now()
 	for id, item := range h.globalMap {
-		if !dumpAll && !needDumpStatsDelta(h, id, item, currentTime) {
+		if dumpMode == DumpDelta && !needDumpStatsDelta(h, id, item, currentTime) {
 			continue
 		}
 		updated, err := h.dumpTableStatCountToKV(id, item)

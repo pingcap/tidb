@@ -223,7 +223,7 @@ func (h *Handle) FlushStats() {
 			log.Debug("[stats] handle ddl event fail: ", errors.ErrorStack(err))
 		}
 	}
-	if err := h.DumpStatsDeltaToKV(true); err != nil {
+	if err := h.DumpStatsDeltaToKV(DumpAll); err != nil {
 		log.Debug("[stats] dump stats delta fail: ", errors.ErrorStack(err))
 	}
 	for len(h.analyzeResultCh) > 0 {

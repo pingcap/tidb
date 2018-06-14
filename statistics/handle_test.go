@@ -339,7 +339,7 @@ func (s *testStatsCacheSuite) TestLoadHist(c *C) {
 	for i := 0; i < rowCount; i++ {
 		testKit.MustExec("insert into t values('bb','sdfga')")
 	}
-	h.DumpStatsDeltaToKV(true)
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	h.Update(do.InfoSchema())
 	newStatsTbl := h.GetTableStats(tableInfo)
 	// The stats table is updated.

@@ -31,7 +31,7 @@ func (s *testUpdateListSuite) TestInsertAndDelete(c *C) {
 	items[0].Delete() // delete tail
 	items[2].Delete() // delete middle
 	items[4].Delete() // delete head
-	h.DumpStatsDeltaToKV(true)
+	h.DumpStatsDeltaToKV(DumpAll)
 
 	c.Assert(h.listHead.next, Equals, items[3])
 	c.Assert(items[3].next, Equals, items[1])
@@ -42,6 +42,6 @@ func (s *testUpdateListSuite) TestInsertAndDelete(c *C) {
 	// delete rest
 	items[1].Delete()
 	items[3].Delete()
-	h.DumpStatsDeltaToKV(true)
+	h.DumpStatsDeltaToKV(DumpAll)
 	c.Assert(h.listHead.next, IsNil)
 }
