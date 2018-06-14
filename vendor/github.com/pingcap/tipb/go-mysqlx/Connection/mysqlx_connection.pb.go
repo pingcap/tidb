@@ -25,8 +25,6 @@ import (
 
 	Mysqlx_Datatypes "github.com/pingcap/tipb/go-mysqlx/Datatypes"
 
-	github_com_golang_protobuf_proto "github.com/golang/protobuf/proto"
-
 	io "io"
 )
 
@@ -161,7 +159,7 @@ func (m *Capability) MarshalTo(dAtA []byte) (int, error) {
 	var l int
 	_ = l
 	if m.Name == nil {
-		return 0, new(github_com_golang_protobuf_proto.RequiredNotSetError)
+		return 0, new(proto.RequiredNotSetError)
 	} else {
 		dAtA[i] = 0xa
 		i++
@@ -169,7 +167,7 @@ func (m *Capability) MarshalTo(dAtA []byte) (int, error) {
 		i += copy(dAtA[i:], *m.Name)
 	}
 	if m.Value == nil {
-		return 0, new(github_com_golang_protobuf_proto.RequiredNotSetError)
+		return 0, new(proto.RequiredNotSetError)
 	} else {
 		dAtA[i] = 0x12
 		i++
@@ -256,7 +254,7 @@ func (m *CapabilitiesSet) MarshalTo(dAtA []byte) (int, error) {
 	var l int
 	_ = l
 	if m.Capabilities == nil {
-		return 0, new(github_com_golang_protobuf_proto.RequiredNotSetError)
+		return 0, new(proto.RequiredNotSetError)
 	} else {
 		dAtA[i] = 0xa
 		i++
@@ -491,10 +489,10 @@ func (m *Capability) Unmarshal(dAtA []byte) error {
 		}
 	}
 	if hasFields[0]&uint64(0x00000001) == 0 {
-		return new(github_com_golang_protobuf_proto.RequiredNotSetError)
+		return new(proto.RequiredNotSetError)
 	}
 	if hasFields[0]&uint64(0x00000002) == 0 {
-		return new(github_com_golang_protobuf_proto.RequiredNotSetError)
+		return new(proto.RequiredNotSetError)
 	}
 
 	if iNdEx > l {
@@ -716,7 +714,7 @@ func (m *CapabilitiesSet) Unmarshal(dAtA []byte) error {
 		}
 	}
 	if hasFields[0]&uint64(0x00000001) == 0 {
-		return new(github_com_golang_protobuf_proto.RequiredNotSetError)
+		return new(proto.RequiredNotSetError)
 	}
 
 	if iNdEx > l {
