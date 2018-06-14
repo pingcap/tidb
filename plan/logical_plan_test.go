@@ -523,7 +523,7 @@ func (s *testPlanSuite) TestTablePartition(c *C) {
 		c.Assert(err, IsNil, comment)
 		p, err := BuildLogicalPlan(s.ctx, stmt, is)
 		c.Assert(err, IsNil)
-		p, err = logicalOptimize(flagDecorrelate|flagPrunColumns|flagPredicatePushDown|flagTablePartition, p.(LogicalPlan))
+		p, err = logicalOptimize(flagDecorrelate|flagPrunColumns|flagPredicatePushDown|flagPartitionProcessor, p.(LogicalPlan))
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
 	}

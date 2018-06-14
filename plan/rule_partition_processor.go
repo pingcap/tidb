@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 )
 
-// tablePartition rewrites the ast for table partition.
+// partitionProcessor rewrites the ast for table partition.
 //
 // create table t (id int) partition by range (id)
 //   (partition
@@ -35,24 +35,25 @@ import (
 //      select * from p2 where id < 20
 //      select * from p3 where id < 30)
 //
-// tablePartition is here because it's easier to prune partition after predicate push down.
-type tablePartition struct{}
+// partitionProcessor is here because it's easier to prune partition after predicate push down.
+type partitionProcessor struct{}
 
-func (s *tablePartition) optimize(lp LogicalPlan) (LogicalPlan, error) {
-	return s.rewriteDataSource(nil, lp)
+func (s *partitionProcessor) optimize(lp LogicalPlan) (LogicalPlan, error) {
+	// NOTE: partitionProcessor will assume all filter conditions are pushed down to
+	// DataSource, there will not be a Selection->DataSource case, so the rewrite just
+	// handle the DataSource node.
+	return s.rewriteDataSource(lp)
 }
 
-func (s *tablePartition) rewriteDataSource(sel *LogicalSelection, lp LogicalPlan) (LogicalPlan, error) {
+func (s *partitionProcessor) rewriteDataSource(lp LogicalPlan) (LogicalPlan, error) {
 	// Assert there will not be sel -> sel in the ast.
 	switch lp.(type) {
 	case *DataSource:
-		return s.prunePartition(sel, lp.(*DataSource))
-	case *LogicalSelection:
-		return s.rewriteDataSource(lp.(*LogicalSelection), lp.Children()[0])
+		return s.prunePartition(lp.(*DataSource))
 	default:
 		children := lp.Children()
 		for i, child := range children {
-			child1, err := s.rewriteDataSource(nil, child)
+			child1, err := s.rewriteDataSource(child)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -60,14 +61,6 @@ func (s *tablePartition) rewriteDataSource(sel *LogicalSelection, lp LogicalPlan
 		}
 	}
 
-	return s.selectOnSomething(sel, lp)
-}
-
-func (s *tablePartition) selectOnSomething(sel *LogicalSelection, lp LogicalPlan) (LogicalPlan, error) {
-	if sel != nil {
-		sel.SetChildren(lp)
-		return sel, nil
-	}
 	return lp, nil
 }
 
@@ -76,10 +69,10 @@ type partitionTable interface {
 	PartitionExprCache() *tables.PartitionExprCache
 }
 
-func (s *tablePartition) prunePartition(sel *LogicalSelection, ds *DataSource) (LogicalPlan, error) {
+func (s *partitionProcessor) prunePartition(ds *DataSource) (LogicalPlan, error) {
 	pi := ds.tableInfo.GetPartitionInfo()
 	if pi == nil {
-		return s.selectOnSomething(sel, ds)
+		return ds, nil
 	}
 
 	var partitionExprs []expression.Expression
@@ -93,16 +86,12 @@ func (s *tablePartition) prunePartition(sel *LogicalSelection, ds *DataSource) (
 	// Rewrite data source to union all partitions, during which we may prune some
 	// partitions according to selection condition.
 	children := make([]LogicalPlan, 0, len(pi.Definitions))
-	var selConds []expression.Expression
-	if sel != nil {
-		selConds = sel.Conditions
-	}
 
 	col := partitionExprAccessColumn(partitionExprs[0])
 	for i, expr := range partitionExprs {
 		if col != nil {
 			// If the selection condition would never be satisified, prune that partition.
-			prune, err := s.canBePrune(ds.context(), col, expr, selConds, ds.pushedDownConds)
+			prune, err := s.canBePrune(ds.context(), col, expr, ds.pushedDownConds)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -120,19 +109,18 @@ func (s *tablePartition) prunePartition(sel *LogicalSelection, ds *DataSource) (
 	}
 	if len(children) == 1 {
 		// No need for the union all.
-		return s.selectOnSomething(sel, children[0])
+		return children[0], nil
 	}
 	unionAll := LogicalUnionAll{}.init(ds.context())
 	unionAll.SetChildren(children...)
-	return s.selectOnSomething(sel, unionAll)
+	return unionAll, nil
 }
 
 // canBePrune checks if partition expression will never meets the selection condition.
 // For example, partition by column a > 3, and select condition is a < 3, then canBePrune returns true.
-func (s *tablePartition) canBePrune(ctx sessionctx.Context, col *expression.Column, partitionCond expression.Expression, rootConds, copConds []expression.Expression) (bool, error) {
-	conds := make([]expression.Expression, 0, 1+len(rootConds)+len(copConds))
+func (s *partitionProcessor) canBePrune(ctx sessionctx.Context, col *expression.Column, partitionCond expression.Expression, copConds []expression.Expression) (bool, error) {
+	conds := make([]expression.Expression, 0, 1+len(copConds))
 	conds = append(conds, partitionCond)
-	conds = append(conds, rootConds...)
 	conds = append(conds, copConds...)
 	conds = expression.PropagateConstant(ctx, conds)
 

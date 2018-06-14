@@ -34,7 +34,7 @@ const (
 	flagDecorrelate
 	flagMaxMinEliminate
 	flagPredicatePushDown
-	flagTablePartition
+	flagPartitionProcessor
 	flagAggregationOptimize
 	flagPushDownTopN
 )
@@ -46,7 +46,7 @@ var optRuleList = []logicalOptRule{
 	&decorrelateSolver{},
 	&maxMinEliminator{},
 	&ppdSolver{},
-	&tablePartition{},
+	&partitionProcessor{},
 	&aggregationOptimizer{},
 	&pushDownTopNOptimizer{},
 }
