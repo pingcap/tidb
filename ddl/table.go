@@ -398,7 +398,7 @@ func updateVersionAndTableInfo(t *meta.Meta, job *model.Job, tblInfo *model.Tabl
 }
 
 // TODO: If may have the issue when two clients concurrently add partitions to a table.
-func (d *ddl) onAddTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onAddTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	partInfo := &model.PartitionInfo{}
 	err := job.DecodeArgs(&partInfo)
 	if err != nil {
