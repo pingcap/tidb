@@ -15,7 +15,7 @@ package kv
 
 // Variables defines the variables used by KV storage.
 type Variables struct {
-	// BackoffLock Fast specifies the LockFast backoff base duration in milliseconds.
+	// BackoffLockFast specifies the LockFast backoff base duration in milliseconds.
 	BackoffLockFast int
 
 	// Hook is used for test to verify the variable take effect.
