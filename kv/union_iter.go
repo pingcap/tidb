@@ -47,14 +47,14 @@ func NewUnionIter(dirtyIt Iterator, snapshotIt Iterator, reverse bool) (*UnionIt
 	return it, nil
 }
 
-// Go next and update valid status.
+// dirtyNext makes iter.dirtyIt go and update valid status.
 func (iter *UnionIter) dirtyNext() error {
 	err := iter.dirtyIt.Next()
 	iter.dirtyValid = iter.dirtyIt.Valid()
 	return errors.Trace(err)
 }
 
-// Go next and update valid status.
+// snapshotNext makes iter.snapshotIt go and update valid status.
 func (iter *UnionIter) snapshotNext() error {
 	err := iter.snapshotIt.Next()
 	iter.snapshotValid = iter.snapshotIt.Valid()

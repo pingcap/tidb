@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/model"
 )
 
-func (d *ddl) onCreateSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onCreateSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	dbInfo := &model.DBInfo{}
 	if err := job.DecodeArgs(dbInfo); err != nil {
@@ -70,7 +70,7 @@ func (d *ddl) onCreateSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) 
 	}
 }
 
-func (d *ddl) onDropSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onDropSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	dbInfo, err := t.GetDatabase(job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
