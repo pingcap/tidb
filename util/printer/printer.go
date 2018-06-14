@@ -31,7 +31,7 @@ var (
 	TiDBGitBranch = "None"
 	GoVersion     = "None"
 	// TiKVMinVersion is the minimum version of TiKV that can be compatible with the current TiDB.
-	TiKVMinVersion = "2.1.0-alpha.1-2f291dc12b0e05d71eb8873881c3ed11d343d6e6"
+	TiKVMinVersion = "2.1.0-alpha.1-c4133d3ef0f099f8716a916c198390b26293ec00"
 )
 
 // PrintTiDBInfo prints the TiDB version information.

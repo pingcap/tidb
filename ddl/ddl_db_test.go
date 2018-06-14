@@ -87,6 +87,7 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 	s.schemaName = "test_db"
 	s.autoIDStep = autoid.GetStep()
 	autoid.SetStep(5000)
+	ddl.WaitTimeWhenErrorOccured = 1 * time.Microsecond
 
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(s.cluster)
@@ -919,23 +920,21 @@ func (s *testDBSuite) TestColumn(c *C) {
 	s.tk.MustExec("create table t2 (c1 int, c2 int, c3 int)")
 	s.testAddColumn(c)
 	s.testDropColumn(c)
-	s.testDropColumn2(c)
 	s.tk.MustExec("drop table t2")
 }
 
 func (s *testDBSuite) TestAddColumnTooMany(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
-	s.tk.MustExec("create table t_column_too_many(abc int)")
 	count := ddl.TableColumnCountLimit - 1
-	var sql string
-	for i := 1; i <= count; i++ {
-		sql = "alter table t_column_too_many add column"
-		sql += fmt.Sprintf("a%d int", i)
-		s.tk.MustExec(sql)
+	var cols []string
+	for i := 0; i <= count; i++ {
+		cols = append(cols, fmt.Sprintf("a%d int", i))
 	}
-	sql = "alter table t_column_too_many add column a_512 int"
-	s.testErrorCode(c, sql, tmysql.ErrTooManyFields)
+	createSQL := fmt.Sprintf("create table t_column_too_many (%s)", strings.Join(cols, ","))
+	s.tk.MustExec(createSQL)
+	alterSQL := "alter table t_column_too_many add column a_512 int"
+	s.testErrorCode(c, alterSQL, tmysql.ErrTooManyFields)
 }
 
 func sessionExec(c *C, s kv.Storage, sql string) {
@@ -950,10 +949,10 @@ func sessionExec(c *C, s kv.Storage, sql string) {
 }
 
 func sessionExecInGoroutine(c *C, s kv.Storage, sql string, done chan error) {
-	execMultiSQLInGoroutine(c, s, []string{sql}, done)
+	execMultiSQLInGoroutine(c, s, "test_db", []string{sql}, done)
 }
 
-func execMultiSQLInGoroutine(c *C, s kv.Storage, multiSQL []string, done chan error) {
+func execMultiSQLInGoroutine(c *C, s kv.Storage, dbName string, multiSQL []string, done chan error) {
 	go func() {
 		se, err := session.CreateSession4Test(s)
 		if err != nil {
@@ -961,7 +960,7 @@ func execMultiSQLInGoroutine(c *C, s kv.Storage, multiSQL []string, done chan er
 			return
 		}
 		defer se.Close()
-		_, err = se.Execute(context.Background(), "use test_db")
+		_, err = se.Execute(context.Background(), "use "+dbName)
 		if err != nil {
 			done <- errors.Trace(err)
 			return
@@ -1155,22 +1154,25 @@ LOOP:
 	c.Assert(count, Greater, int64(0))
 }
 
-// testDropColumn2 is for inserting value with a to-be-dropped column when do drop column.
+// TestDropColumn is for inserting value with a to-be-dropped column when do drop column.
 // Column info from schema in build-insert-plan should be public only,
 // otherwise they will not be consist with Table.Col(), then the server will panic.
-func (s *testDBSuite) testDropColumn2(c *C) {
-	num := 100
+func (s *testDBSuite) TestDropColumn(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("create database drop_col_db")
+	s.tk.MustExec("use drop_col_db")
+	s.tk.MustExec("create table t2 (c1 int, c2 int, c3 int)")
+	num := 50
 	dmlDone := make(chan error, num)
 	ddlDone := make(chan error, num)
-	s.mustExec(c, "delete from t2")
 
 	multiDDL := make([]string, 0, num)
 	for i := 0; i < num/2; i++ {
 		multiDDL = append(multiDDL, "alter table t2 add column c4 int", "alter table t2 drop column c4")
 	}
-	execMultiSQLInGoroutine(c, s.store, multiDDL, ddlDone)
+	execMultiSQLInGoroutine(c, s.store, "drop_col_db", multiDDL, ddlDone)
 	for i := 0; i < num; i++ {
-		sessionExecInGoroutine(c, s.store, "insert into t2 set c1 = 1, c2 = 1, c3 = 1, c4 = 1", dmlDone)
+		execMultiSQLInGoroutine(c, s.store, "drop_col_db", []string{"insert into t2 set c1 = 1, c2 = 1, c3 = 1, c4 = 1"}, dmlDone)
 	}
 	for i := 0; i < num; i++ {
 		select {
@@ -1178,6 +1180,8 @@ func (s *testDBSuite) testDropColumn2(c *C) {
 			c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
 		}
 	}
+
+	s.tk.MustExec("drop database drop_col_db")
 }
 
 func (s *testDBSuite) TestPrimaryKey(c *C) {
@@ -1384,7 +1388,8 @@ func match(c *C, row []interface{}, expected ...interface{}) {
 
 func (s *testDBSuite) TestUpdateMultipleTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
+	s.tk.MustExec("create database umt_db")
+	tk.MustExec("use umt_db")
 	tk.MustExec("create table t1 (c1 int, c2 int)")
 	tk.MustExec("insert t1 values (1, 1), (2, 2)")
 	tk.MustExec("create table t2 (c1 int, c2 int)")
@@ -1392,9 +1397,9 @@ func (s *testDBSuite) TestUpdateMultipleTable(c *C) {
 	ctx := tk.Se.(sessionctx.Context)
 	dom := domain.GetDomain(ctx)
 	is := dom.InfoSchema()
-	db, ok := is.SchemaByName(model.NewCIStr("test"))
+	db, ok := is.SchemaByName(model.NewCIStr("umt_db"))
 	c.Assert(ok, IsTrue)
-	t1Tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	t1Tbl, err := is.TableByName(model.NewCIStr("umt_db"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	t1Info := t1Tbl.Meta()
 
@@ -1437,7 +1442,7 @@ func (s *testDBSuite) TestUpdateMultipleTable(c *C) {
 	c.Assert(err, IsNil)
 
 	tk.MustQuery("select * from t1").Check(testkit.Rows("8 1 9", "8 2 9"))
-	tk.MustExec("drop table t1, t2")
+	tk.MustExec("drop database umt_db")
 }
 
 func (s *testDBSuite) TestCreateTableTooLarge(c *C) {
@@ -1465,17 +1470,18 @@ func (s *testDBSuite) TestCreateTableTooLarge(c *C) {
 func (s *testDBSuite) TestCreateTableWithLike(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	// for the same database
-	s.tk.MustExec("use test")
+	s.tk.MustExec("create database ctwl_db")
+	s.tk.MustExec("use ctwl_db")
 	s.tk.MustExec("create table tt(id int primary key)")
 	s.tk.MustExec("create table t (c1 int not null auto_increment, c2 int, constraint cc foreign key (c2) references tt(id), primary key(c1)) auto_increment = 10")
 	s.tk.MustExec("insert into t set c2=1")
-	s.tk.MustExec("create table t1 like test.t")
+	s.tk.MustExec("create table t1 like ctwl_db.t")
 	s.tk.MustExec("insert into t1 set c2=11")
 	s.tk.MustQuery("select * from t").Check(testkit.Rows("10 1"))
 	s.tk.MustQuery("select * from t1").Check(testkit.Rows("1 11"))
 	ctx := s.tk.Se.(sessionctx.Context)
 	is := domain.GetDomain(ctx).InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl, err := is.TableByName(model.NewCIStr("ctwl_db"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	tblInfo := tbl.Meta()
 	c.Assert(tblInfo.ForeignKeys, IsNil)
@@ -1484,16 +1490,14 @@ func (s *testDBSuite) TestCreateTableWithLike(c *C) {
 	hasNotNull := tmysql.HasNotNullFlag(col.Flag)
 	c.Assert(hasNotNull, IsTrue)
 
-	s.tk.MustExec("drop table tt, t1")
-
 	// for different databases
-	s.tk.MustExec("create database test1")
-	s.tk.MustExec("use test1")
-	s.tk.MustExec("create table t1 like test.t")
+	s.tk.MustExec("create database ctwl_db1")
+	s.tk.MustExec("use ctwl_db1")
+	s.tk.MustExec("create table t1 like ctwl_db.t")
 	s.tk.MustExec("insert into t1 set c2=11")
 	s.tk.MustQuery("select * from t1").Check(testkit.Rows("1 11"))
 	is = domain.GetDomain(ctx).InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t1"))
+	tbl, err = is.TableByName(model.NewCIStr("ctwl_db1"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	c.Assert(tbl.Meta().ForeignKeys, IsNil)
 
@@ -1502,13 +1506,13 @@ func (s *testDBSuite) TestCreateTableWithLike(c *C) {
 	s.testErrorCode(c, failSQL, tmysql.ErrNoSuchTable)
 	failSQL = fmt.Sprintf("create table t1 like test.t_not_exist")
 	s.testErrorCode(c, failSQL, tmysql.ErrNoSuchTable)
-	failSQL = fmt.Sprintf("create table test_not_exis.t1 like test.t")
+	failSQL = fmt.Sprintf("create table test_not_exis.t1 like ctwl_db.t")
 	s.testErrorCode(c, failSQL, tmysql.ErrBadDB)
-	failSQL = fmt.Sprintf("create table t1 like test.t")
+	failSQL = fmt.Sprintf("create table t1 like ctwl_db.t")
 	s.testErrorCode(c, failSQL, tmysql.ErrTableExists)
 
-	s.tk.MustExec("drop database test1")
-	s.tk.MustExec("drop table test.t")
+	s.tk.MustExec("drop database ctwl_db")
+	s.tk.MustExec("drop database ctwl_db1")
 }
 
 func (s *testDBSuite) TestCreateTable(c *C) {
@@ -1559,6 +1563,20 @@ func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
 	c.Assert(part.Definitions[1].Name, Equals, "p1")
 	c.Assert(part.Definitions[2].LessThan[0], Equals, "MAXVALUE")
 	c.Assert(part.Definitions[2].Name, Equals, "p2")
+}
+
+func (s *testDBSuite) TestTableDDLWithFloatType(c *C) {
+	s.tk.MustExec("use test")
+	s.tk.MustExec("drop table if exists t")
+	s.testErrorCode(c, "create table t (a decimal(1, 2))", tmysql.ErrMBiggerThanD)
+	s.testErrorCode(c, "create table t (a float(1, 2))", tmysql.ErrMBiggerThanD)
+	s.testErrorCode(c, "create table t (a double(1, 2))", tmysql.ErrMBiggerThanD)
+	s.mustExec(c, "create table t (a double(1, 1))")
+	s.testErrorCode(c, "alter table t add column b decimal(1, 2)", tmysql.ErrMBiggerThanD)
+	// add multi columns now not support, so no case.
+	s.testErrorCode(c, "alter table t modify column a float(1, 4)", tmysql.ErrMBiggerThanD)
+	s.testErrorCode(c, "alter table t change column a aa float(1, 4)", tmysql.ErrMBiggerThanD)
+	s.mustExec(c, "drop table t")
 }
 
 func (s *testDBSuite) TestTruncateTable(c *C) {
