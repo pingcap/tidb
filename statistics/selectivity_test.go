@@ -186,12 +186,14 @@ func (s *testSelectivitySuite) TestSelectivity(c *C) {
 		c.Assert(err, IsNil, comment)
 		p, err := plan.BuildLogicalPlan(ctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for building plan, expr %s", err, tt.exprs))
-		ratio, err := statsTbl.Selectivity(ctx, p.(plan.LogicalPlan).Children()[0].(*plan.LogicalSelection).Conditions)
+		colHists, idxHists := statsTbl.Columns, statsTbl.Indices
+		cond := p.(plan.LogicalPlan).Children()[0].(*plan.LogicalSelection).Conditions
+		ratio, err := statistics.Selectivity(ctx, statsTbl.Count, colHists, idxHists, cond)
 		c.Assert(err, IsNil, comment)
 		c.Assert(math.Abs(ratio-tt.selectivity) < eps, IsTrue, Commentf("for %s, needed: %v, got: %v", tt.exprs, tt.selectivity, ratio))
 
 		statsTbl.Count *= 10
-		ratio, err = statsTbl.Selectivity(ctx, p.(plan.LogicalPlan).Children()[0].(*plan.LogicalSelection).Conditions)
+		ratio, err = statistics.Selectivity(ctx, statsTbl.Count, colHists, idxHists, cond)
 		c.Assert(err, IsNil, comment)
 		c.Assert(math.Abs(ratio-tt.selectivity) < eps, IsTrue, Commentf("for %s, needed: %v, got: %v", tt.exprs, tt.selectivity, ratio))
 		statsTbl.Count /= 10
@@ -239,10 +241,13 @@ func BenchmarkSelectivity(b *testing.B) {
 	defer file.Close()
 	pprof.StartCPUProfile(file)
 
+	colHists, idxHists := statsTbl.Columns, statsTbl.Indices
+	cond := p.(plan.LogicalPlan).Children()[0].(*plan.LogicalSelection).Conditions
+
 	b.Run("selectivity", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_, err := statsTbl.Selectivity(ctx, p.(plan.LogicalPlan).Children()[0].(*plan.LogicalSelection).Conditions)
+			_, err = statistics.Selectivity(ctx, statsTbl.Count, colHists, idxHists, cond)
 			c.Assert(err, IsNil)
 		}
 		b.ReportAllocs()

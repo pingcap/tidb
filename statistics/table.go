@@ -318,45 +318,42 @@ func (t *Table) ColumnEqualRowCount(sc *stmtctx.StatementContext, value types.Da
 }
 
 // GetRowCountByIntColumnRanges estimates the row count by a slice of IntColumnRange.
-func (t *Table) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext, colID int64, intRanges []*ranger.Range) (float64, error) {
-	if t.ColumnIsInvalid(sc, colID) {
-		if len(intRanges) == 0 {
-			return float64(t.Count), nil
+func GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext, col *Column, totalCount int64, ranges []*ranger.Range) (float64, error) {
+	if col == nil || ((col.NDV > 0 || col.NullCount == 0) && col.Histogram.Len() == 0) {
+		if len(ranges) == 0 {
+			return float64(totalCount), nil
 		}
-		if intRanges[0].LowVal[0].Kind() == types.KindInt64 {
-			return getPseudoRowCountBySignedIntRanges(intRanges, float64(t.Count)), nil
+		if ranges[0].LowVal[0].Kind() == types.KindInt64 {
+			return getPseudoRowCountBySignedIntRanges(ranges, float64(totalCount)), nil
 		}
-		return getPseudoRowCountByUnsignedIntRanges(intRanges, float64(t.Count)), nil
+		return getPseudoRowCountByUnsignedIntRanges(ranges, float64(totalCount)), nil
 	}
-	c := t.Columns[colID]
-	result, err := c.getColumnRowCount(sc, intRanges)
-	result *= c.getIncreaseFactor(t.Count)
+	result, err := col.getColumnRowCount(sc, ranges)
+	result *= col.getIncreaseFactor(totalCount)
 	return result, errors.Trace(err)
 }
 
 // GetRowCountByColumnRanges estimates the row count by a slice of Range.
-func (t *Table) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, colID int64, colRanges []*ranger.Range) (float64, error) {
-	if t.ColumnIsInvalid(sc, colID) {
-		return getPseudoRowCountByColumnRanges(sc, float64(t.Count), colRanges, 0)
+func GetRowCountByColumnRanges(sc *stmtctx.StatementContext, col *Column, totalCount int64, ranges []*ranger.Range) (float64, error) {
+	if col == nil || ((col.NDV > 0 || col.NullCount == 0) && col.Histogram.Len() == 0) {
+		return getPseudoRowCountByColumnRanges(sc, float64(totalCount), ranges, 0)
 	}
-	c := t.Columns[colID]
-	result, err := c.getColumnRowCount(sc, colRanges)
-	result *= c.getIncreaseFactor(t.Count)
+	result, err := col.getColumnRowCount(sc, ranges)
+	result *= col.getIncreaseFactor(totalCount)
 	return result, errors.Trace(err)
 }
 
 // GetRowCountByIndexRanges estimates the row count by a slice of Range.
-func (t *Table) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idxID int64, indexRanges []*ranger.Range) (float64, error) {
-	idx := t.Indices[idxID]
-	if t.Pseudo || idx == nil || idx.Len() == 0 {
+func GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idx *Index, totalCount int64, ranges []*ranger.Range) (float64, error) {
+	if idx == nil || idx.Len() == 0 {
 		colsLen := -1
 		if idx != nil && idx.Info.Unique {
 			colsLen = len(idx.Info.Columns)
 		}
-		return getPseudoRowCountByIndexRanges(sc, indexRanges, float64(t.Count), colsLen)
+		return getPseudoRowCountByIndexRanges(sc, ranges, float64(totalCount), colsLen)
 	}
-	result, err := idx.getRowCount(sc, indexRanges)
-	result *= idx.getIncreaseFactor(t.Count)
+	result, err := idx.getRowCount(sc, ranges)
+	result *= idx.getIncreaseFactor(totalCount)
 	return result, errors.Trace(err)
 }
 
