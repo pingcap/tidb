@@ -34,17 +34,18 @@ type aggCtxsMapper map[string][]*aggregation.AggEvaluateContext
 type HashAggExec struct {
 	baseExecutor
 
-	executed      bool
-	sc            *stmtctx.StatementContext
-	AggFuncs      []aggregation.Aggregation
-	aggCtxsMap    aggCtxsMapper
-	groupMap      *mvmap.MVMap
-	groupIterator *mvmap.Iterator
-	mutableRow    chunk.MutRow
-	rowBuffer     []types.Datum
-	GroupByItems  []expression.Expression
-	groupKey      []byte
-	groupVals     [][]byte
+	childrenResults []*chunk.Chunk
+	executed        bool
+	sc              *stmtctx.StatementContext
+	AggFuncs        []aggregation.Aggregation
+	aggCtxsMap      aggCtxsMapper
+	groupMap        *mvmap.MVMap
+	groupIterator   *mvmap.Iterator
+	mutableRow      chunk.MutRow
+	rowBuffer       []types.Datum
+	GroupByItems    []expression.Expression
+	groupKey        []byte
+	groupVals       [][]byte
 }
 
 // Close implements the Executor Close interface.
@@ -52,6 +53,7 @@ func (e *HashAggExec) Close() error {
 	if err := e.baseExecutor.Close(); err != nil {
 		return errors.Trace(err)
 	}
+	e.childrenResults = nil
 	e.groupMap = nil
 	e.groupIterator = nil
 	e.aggCtxsMap = nil
@@ -62,6 +64,10 @@ func (e *HashAggExec) Close() error {
 func (e *HashAggExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
+	}
+	e.childrenResults = make([]*chunk.Chunk, 0, len(e.children))
+	for _, child := range e.children {
+		e.childrenResults = append(e.childrenResults, child.newChunk())
 	}
 	e.executed = false
 	e.groupMap = mvmap.NewMVMap()
@@ -194,12 +200,19 @@ type StreamAggExec struct {
 	inputRow   chunk.Row
 	mutableRow chunk.MutRow
 	rowBuffer  []types.Datum
+
+	childrenResults []*chunk.Chunk
 }
 
 // Open implements the Executor Open interface.
 func (e *StreamAggExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
+	}
+
+	e.childrenResults = make([]*chunk.Chunk, 0, len(e.children))
+	for _, child := range e.children {
+		e.childrenResults = append(e.childrenResults, child.newChunk())
 	}
 
 	e.executed = false
@@ -214,6 +227,15 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 		e.aggCtxs = append(e.aggCtxs, agg.CreateContext(e.ctx.GetSessionVars().StmtCtx))
 	}
 
+	return nil
+}
+
+// Close implements the Executor Close interface.
+func (e *StreamAggExec) Close() error {
+	if err := e.baseExecutor.Close(); err != nil {
+		return err
+	}
+	e.childrenResults = nil
 	return nil
 }
 

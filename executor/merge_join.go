@@ -36,6 +36,8 @@ type MergeJoinExec struct {
 	compareFuncs    []chunk.CompareFunc
 	resultGenerator joinResultGenerator
 
+	childrenResults []*chunk.Chunk
+
 	prepared bool
 	outerIdx int
 
@@ -177,6 +179,7 @@ func (t *mergeJoinInnerTable) reallocReaderResult() {
 // Close implements the Executor Close interface.
 func (e *MergeJoinExec) Close() error {
 	e.memTracker.Detach()
+	e.childrenResults = nil
 	e.memTracker = nil
 
 	return errors.Trace(e.baseExecutor.Close())
@@ -209,6 +212,11 @@ func compareChunkRow(cmpFuncs []chunk.CompareFunc, lhsRow, rhsRow chunk.Row, lhs
 }
 
 func (e *MergeJoinExec) prepare(ctx context.Context, chk *chunk.Chunk) error {
+	e.childrenResults = make([]*chunk.Chunk, 0, len(e.children))
+	for _, child := range e.children {
+		e.childrenResults = append(e.childrenResults, child.newChunk())
+	}
+
 	err := e.innerTable.init(ctx, e.childrenResults[e.outerIdx^1])
 	if err != nil {
 		return errors.Trace(err)
