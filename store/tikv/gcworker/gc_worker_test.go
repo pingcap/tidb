@@ -144,6 +144,29 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 	concurrency, err = s.gcWorker.loadGCConcurrencyWithDefault()
 	c.Assert(err, IsNil)
 	c.Assert(concurrency, Equals, gcMaxConcurrency)
+
+	// Change GC Mode
+	s.oracle.AddOffset(time.Minute * 10)
+	ok, mode, _, err := s.gcWorker.prepare()
+	c.Assert(err, IsNil)
+	c.Assert(ok, IsTrue)
+	c.Assert(mode, Equals, gcModeDefault)
+
+	s.oracle.AddOffset(time.Minute * 10)
+	err = s.gcWorker.saveValueToSysTable(gcModeKey, strconv.Itoa(gcModeDistributed), s.gcWorker.session)
+	c.Assert(err, IsNil)
+	ok, mode, _, err = s.gcWorker.prepare()
+	c.Assert(err, IsNil)
+	c.Assert(ok, IsTrue)
+	c.Assert(mode, Equals, gcModeDistributed)
+
+	s.oracle.AddOffset(time.Minute * 10)
+	err = s.gcWorker.saveValueToSysTable(gcModeKey, strconv.Itoa(gcModeLegacy), s.gcWorker.session)
+	c.Assert(err, IsNil)
+	ok, mode, _, err = s.gcWorker.prepare()
+	c.Assert(err, IsNil)
+	c.Assert(ok, IsTrue)
+	c.Assert(mode, Equals, gcModeLegacy)
 }
 
 func (s *testGCWorkerSuite) TestDoGCForOneRegion(c *C) {
