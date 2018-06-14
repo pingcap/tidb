@@ -358,7 +358,7 @@ func (s *testDDLSuite) TestColumnError(c *C) {
 }
 
 func testCheckOwner(c *C, d *ddl, expectedVal bool) {
-	c.Assert(isOwner(d.ownerManager, d.uuid), Equals, expectedVal)
+	c.Assert(d.isOwner(), Equals, expectedVal)
 }
 
 func testCheckJobDone(c *C, d *ddl, job *model.Job, isAdd bool) {

@@ -335,7 +335,7 @@ func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 
 		d.workers = make([]*worker, 1)
 		// TODO: Add addIdxWorker.
-		d.workers[0] = newWorker(generalWorker, d.store, ctxPool)
+		d.workers[0] = newWorker(generalWorker, 0, d.store, ctxPool)
 		for _, worker := range d.workers {
 			worker.wg.Add(1)
 			go worker.start(d.ddlCtx)
@@ -365,7 +365,7 @@ func (d *ddl) close() {
 	for _, worker := range d.workers {
 		worker.close()
 	}
-	log.Infof("close DDL:%s take time %v", d.uuid, time.Since(startTime))
+	log.Infof("[ddl] closing DDL:%s takes time %v", d.uuid, time.Since(startTime))
 }
 
 // GetLease implements DDL.GetLease interface.

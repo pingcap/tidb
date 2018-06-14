@@ -47,6 +47,7 @@ const (
 // Now we have two kinds of workers, but we only use the generalWorker.
 // TODO: update the comments when we support the addIdxWorker.
 type worker struct {
+	id     int
 	tp     workerType
 	quitCh chan struct{}
 	wg     sync.WaitGroup
@@ -55,8 +56,9 @@ type worker struct {
 	delRangeManager delRangeManager
 }
 
-func newWorker(tp workerType, store kv.Storage, ctxPool *pools.ResourcePool) *worker {
+func newWorker(tp workerType, id int, store kv.Storage, ctxPool *pools.ResourcePool) *worker {
 	worker := &worker{
+		id:       id,
 		tp:       tp,
 		quitCh:   make(chan struct{}),
 		reorgCtx: &reorgCtx{notifyCancelReorgJob: 0},
@@ -64,7 +66,7 @@ func newWorker(tp workerType, store kv.Storage, ctxPool *pools.ResourcePool) *wo
 
 	if ctxPool != nil {
 		worker.delRangeManager = newDelRangeManager(store, ctxPool)
-		log.Infof("[ddl] start delRangeManager OK, with emulator: %t", store.SupportDeleteRange())
+		log.Infof("[ddl] start delRangeManager OK, with emulator: %t", !store.SupportDeleteRange())
 	} else {
 		worker.delRangeManager = newMockDelRangeManager()
 	}
