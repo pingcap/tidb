@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/model"
 )
 
-func (d *ddl) onCreateForeignKey(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onCreateForeignKey(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tblInfo, err := getTableInfo(t, job, schemaID)
 	if err != nil {
@@ -54,7 +54,7 @@ func (d *ddl) onCreateForeignKey(t *meta.Meta, job *model.Job) (ver int64, _ err
 	}
 }
 
-func (d *ddl) onDropForeignKey(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onDropForeignKey(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tblInfo, err := getTableInfo(t, job, schemaID)
 	if err != nil {
