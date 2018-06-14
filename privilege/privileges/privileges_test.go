@@ -58,10 +58,7 @@ type testPrivilegeSuite struct {
 func (s *testPrivilegeSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 	s.dbName = "test"
-	s.store = newStore(c, s.dbName)
-	dom, err := session.BootstrapSession(s.store)
-	c.Assert(err, IsNil)
-	s.dom = dom
+	s.dom, s.store = newStore(c, s.dbName)
 }
 
 func (s *testPrivilegeSuite) TearDownSuite(c *C) {
@@ -309,14 +306,14 @@ func mustExec(c *C, se session.Session, sql string) {
 	c.Assert(err, IsNil)
 }
 
-func newStore(c *C, dbPath string) kv.Storage {
+func newStore(c *C, dbPath string) (*domain.Domain, kv.Storage) {
 	store, err := mockstore.NewMockTikvStore()
 	session.SetSchemaLease(0)
 	session.SetStatsLease(0)
 	c.Assert(err, IsNil)
-	_, err = session.BootstrapSession(store)
+	dom, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)
-	return store
+	return dom, store
 }
 
 func newSession(c *C, store kv.Storage, dbName string) session.Session {

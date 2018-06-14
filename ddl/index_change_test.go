@@ -165,7 +165,7 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 			}
 		}
 	}
-	d.start(context.Background())
+	d.start(context.Background(), nil)
 	testDropIndex(c, ctx, d, s.dbInfo, publicTable.Meta(), "c2")
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 }

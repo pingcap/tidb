@@ -546,6 +546,27 @@ func checkAddColumnTooManyColumns(oldCols []*model.ColumnInfo) error {
 	return nil
 }
 
+// checkPointTypeColumns checks multiple decimal/float/double columns.
+func checkPointTypeColumns(colDefs []*ast.ColumnDef) error {
+	for _, colDef := range colDefs {
+		if err := checkPointTypeColumn(colDef.Name.OrigColName(), colDef.Tp); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+// checkPointTypeColumn checks a decimal/float/double column.
+func checkPointTypeColumn(colName string, tp *types.FieldType) error {
+	switch tp.Tp {
+	case mysql.TypeNewDecimal, mysql.TypeDouble, mysql.TypeFloat:
+		if tp.Flen < tp.Decimal {
+			return types.ErrMBiggerThanD.GenByArgs(colName)
+		}
+	}
+	return nil
+}
+
 func checkDuplicateConstraint(namesMap map[string]bool, name string, foreign bool) error {
 	if name == "" {
 		return nil
@@ -791,6 +812,10 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		return errors.Trace(err)
 	}
 	if err = checkTooManyColumns(colDefs); err != nil {
+		return errors.Trace(err)
+	}
+
+	if err = checkPointTypeColumns(colDefs); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -1121,6 +1146,11 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 		return errors.Trace(err)
 	}
 
+	colName := specNewColumn.Name.Name.O
+	if err = checkPointTypeColumn(colName, specNewColumn.Tp); err != nil {
+		return errors.Trace(err)
+	}
+
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
@@ -1132,7 +1162,6 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	}
 
 	// Check whether added column has existed.
-	colName := specNewColumn.Name.Name.O
 	col := table.FindCol(t.Cols(), colName)
 	if col != nil {
 		return infoschema.ErrColumnExists.GenByArgs(colName)
@@ -1446,6 +1475,10 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	if specNewColumn.Tp == nil {
 		// Make sure the column definition is simple field type.
 		return nil, errors.Trace(errUnsupportedModifyColumn)
+	}
+
+	if err := checkPointTypeColumn(specNewColumn.Name.OrigColName(), specNewColumn.Tp); err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	newCol := table.ToColumn(&model.ColumnInfo{
