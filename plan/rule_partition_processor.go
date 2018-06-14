@@ -76,8 +76,8 @@ func (s *partitionProcessor) prunePartition(ds *DataSource) (LogicalPlan, error)
 	}
 
 	var partitionExprs []expression.Expression
-	if itf, ok := ds.table.(partitionTable); ok {
-		partitionExprs = itf.PartitionExprCache().PartitionPrune
+	if table, ok := ds.table.(partitionTable); ok {
+		partitionExprs = table.PartitionExprCache().PartitionPrune
 	}
 	if len(partitionExprs) == 0 {
 		return nil, errors.New("partition expression missing")
