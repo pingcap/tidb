@@ -31,8 +31,6 @@ import (
 
 	Mysqlx_Datatypes "github.com/pingcap/tipb/go-mysqlx/Datatypes"
 
-	github_com_golang_protobuf_proto "github.com/golang/protobuf/proto"
-
 	io "io"
 )
 
@@ -394,7 +392,7 @@ func (m *Frame) MarshalTo(dAtA []byte) (int, error) {
 	var l int
 	_ = l
 	if m.Type == nil {
-		return 0, new(github_com_golang_protobuf_proto.RequiredNotSetError)
+		return 0, new(proto.RequiredNotSetError)
 	} else {
 		dAtA[i] = 0x8
 		i++
@@ -438,14 +436,14 @@ func (m *Warning) MarshalTo(dAtA []byte) (int, error) {
 		i = encodeVarintMysqlxNotice(dAtA, i, uint64(*m.Level))
 	}
 	if m.Code == nil {
-		return 0, new(github_com_golang_protobuf_proto.RequiredNotSetError)
+		return 0, new(proto.RequiredNotSetError)
 	} else {
 		dAtA[i] = 0x10
 		i++
 		i = encodeVarintMysqlxNotice(dAtA, i, uint64(*m.Code))
 	}
 	if m.Msg == nil {
-		return 0, new(github_com_golang_protobuf_proto.RequiredNotSetError)
+		return 0, new(proto.RequiredNotSetError)
 	} else {
 		dAtA[i] = 0x1a
 		i++
@@ -474,7 +472,7 @@ func (m *SessionVariableChanged) MarshalTo(dAtA []byte) (int, error) {
 	var l int
 	_ = l
 	if m.Param == nil {
-		return 0, new(github_com_golang_protobuf_proto.RequiredNotSetError)
+		return 0, new(proto.RequiredNotSetError)
 	} else {
 		dAtA[i] = 0xa
 		i++
@@ -513,7 +511,7 @@ func (m *SessionStateChanged) MarshalTo(dAtA []byte) (int, error) {
 	var l int
 	_ = l
 	if m.Param == nil {
-		return 0, new(github_com_golang_protobuf_proto.RequiredNotSetError)
+		return 0, new(proto.RequiredNotSetError)
 	} else {
 		dAtA[i] = 0x8
 		i++
@@ -747,7 +745,7 @@ func (m *Frame) Unmarshal(dAtA []byte) error {
 		}
 	}
 	if hasFields[0]&uint64(0x00000001) == 0 {
-		return new(github_com_golang_protobuf_proto.RequiredNotSetError)
+		return new(proto.RequiredNotSetError)
 	}
 
 	if iNdEx > l {
@@ -874,10 +872,10 @@ func (m *Warning) Unmarshal(dAtA []byte) error {
 		}
 	}
 	if hasFields[0]&uint64(0x00000001) == 0 {
-		return new(github_com_golang_protobuf_proto.RequiredNotSetError)
+		return new(proto.RequiredNotSetError)
 	}
 	if hasFields[0]&uint64(0x00000002) == 0 {
-		return new(github_com_golang_protobuf_proto.RequiredNotSetError)
+		return new(proto.RequiredNotSetError)
 	}
 
 	if iNdEx > l {
@@ -996,7 +994,7 @@ func (m *SessionVariableChanged) Unmarshal(dAtA []byte) error {
 		}
 	}
 	if hasFields[0]&uint64(0x00000001) == 0 {
-		return new(github_com_golang_protobuf_proto.RequiredNotSetError)
+		return new(proto.RequiredNotSetError)
 	}
 
 	if iNdEx > l {
@@ -1105,7 +1103,7 @@ func (m *SessionStateChanged) Unmarshal(dAtA []byte) error {
 		}
 	}
 	if hasFields[0]&uint64(0x00000001) == 0 {
-		return new(github_com_golang_protobuf_proto.RequiredNotSetError)
+		return new(proto.RequiredNotSetError)
 	}
 
 	if iNdEx > l {
