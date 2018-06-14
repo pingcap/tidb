@@ -47,8 +47,6 @@ import (
 
 	math "math"
 
-	github_com_golang_protobuf_proto "github.com/golang/protobuf/proto"
-
 	io "io"
 )
 
@@ -194,7 +192,7 @@ func (m *AuthenticateStart) MarshalTo(dAtA []byte) (int, error) {
 	var l int
 	_ = l
 	if m.MechName == nil {
-		return 0, new(github_com_golang_protobuf_proto.RequiredNotSetError)
+		return 0, new(proto.RequiredNotSetError)
 	} else {
 		dAtA[i] = 0xa
 		i++
@@ -235,7 +233,7 @@ func (m *AuthenticateContinue) MarshalTo(dAtA []byte) (int, error) {
 	var l int
 	_ = l
 	if m.AuthData == nil {
-		return 0, new(github_com_golang_protobuf_proto.RequiredNotSetError)
+		return 0, new(proto.RequiredNotSetError)
 	} else {
 		dAtA[i] = 0xa
 		i++
@@ -544,7 +542,7 @@ func (m *AuthenticateStart) Unmarshal(dAtA []byte) error {
 		}
 	}
 	if hasFields[0]&uint64(0x00000001) == 0 {
-		return new(github_com_golang_protobuf_proto.RequiredNotSetError)
+		return new(proto.RequiredNotSetError)
 	}
 
 	if iNdEx > l {
@@ -631,7 +629,7 @@ func (m *AuthenticateContinue) Unmarshal(dAtA []byte) error {
 		}
 	}
 	if hasFields[0]&uint64(0x00000001) == 0 {
-		return new(github_com_golang_protobuf_proto.RequiredNotSetError)
+		return new(proto.RequiredNotSetError)
 	}
 
 	if iNdEx > l {

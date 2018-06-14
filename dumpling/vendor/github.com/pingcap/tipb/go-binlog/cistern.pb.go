@@ -24,6 +24,8 @@ import (
 
 	math "math"
 
+	_ "github.com/gogo/protobuf/gogoproto"
+
 	context "golang.org/x/net/context"
 
 	grpc "google.golang.org/grpc"
