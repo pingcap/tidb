@@ -74,7 +74,7 @@ func (e *InsertExec) exec(rows []types.DatumRow) error {
 	// If `ON DUPLICATE KEY UPDATE` is specified, and no `IGNORE` keyword,
 	// the to-be-insert rows will be check on duplicate keys and update to the new rows.
 	if len(e.OnDuplicate) > 0 {
-		err := e.batchUpdateDupRows(rows, ignoreErr)
+		err := e.batchUpdateDupRows(rows)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -117,7 +117,7 @@ func (e *InsertExec) checkBatchLimit() error {
 }
 
 // batchUpdateDupRows updates multi-rows in batch if they are duplicate with rows in table.
-func (e *InsertExec) batchUpdateDupRows(newRows []types.DatumRow, ignoreErr bool) error {
+func (e *InsertExec) batchUpdateDupRows(newRows []types.DatumRow) error {
 	err := e.batchGetInsertKeys(e.ctx, e.Table, newRows)
 	if err != nil {
 		return errors.Trace(err)
@@ -131,40 +131,28 @@ func (e *InsertExec) batchUpdateDupRows(newRows []types.DatumRow, ignoreErr bool
 
 	for i, r := range e.toBeCheckedRows {
 		if r.handleKey != nil {
-			if _, found := e.dupKeyValues[string(r.handleKey.newKeyValue.key)]; found {
-				handle, err := tablecodec.DecodeRowKey(r.handleKey.newKeyValue.key)
+			if _, found := e.dupKVs[string(r.handleKey.newKV.key)]; found {
+				handle, err := tablecodec.DecodeRowKey(r.handleKey.newKV.key)
 				if err != nil {
 					return errors.Trace(err)
 				}
-				err = e.updateDupRow(handle, newRows[i], e.OnDuplicate)
-				if ignoreErr && kv.ErrKeyExists.Equal(err) {
-					e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-					continue
-				}
+				err = e.updateDupRow(r, handle, e.OnDuplicate)
 				if err != nil {
 					return errors.Trace(err)
 				}
-				delete(e.dupKeyValues, string(r.handleKey.newKeyValue.key))
-				newRows[i] = nil
 				continue
 			}
 		}
 		for _, uk := range r.uniqueKeys {
-			if val, found := e.dupKeyValues[string(uk.newKeyValue.key)]; found {
+			if val, found := e.dupKVs[string(uk.newKV.key)]; found {
 				handle, err := tables.DecodeHandle(val)
 				if err != nil {
 					return errors.Trace(err)
 				}
-				err = e.updateDupRow(handle, newRows[i], e.OnDuplicate)
-				if ignoreErr && kv.ErrKeyExists.Equal(err) {
-					e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-					newRows[i] = nil
-					break
-				}
+				err = e.updateDupRow(r, handle, e.OnDuplicate)
 				if err != nil {
 					return errors.Trace(err)
 				}
-				delete(e.dupKeyValues, string(uk.newKeyValue.key))
 				newRows[i] = nil
 				break
 			}
@@ -226,7 +214,7 @@ func (e *InsertExec) Open(ctx context.Context) error {
 }
 
 // updateDupRow updates a duplicate row to a new row.
-func (e *InsertExec) updateDupRow(handle int64, newRow types.DatumRow, onDuplicate []*expression.Assignment) (err error) {
+func (e *InsertExec) updateDupRow(row toBeCheckedRow, handle int64, onDuplicate []*expression.Assignment) (err error) {
 	// Get the table record row from storage for update.
 	oldValue, ok := e.dupOldRowValues[string(e.Table.RecordKey(handle))]
 	if !ok {
@@ -251,11 +239,15 @@ func (e *InsertExec) updateDupRow(handle int64, newRow types.DatumRow, onDuplica
 	}
 
 	// Do update row.
-	updatedRow, handleChanged, newHandle, err := e.doDupRowUpdate(handle, oldRow, newRow, onDuplicate)
+	updatedRow, handleChanged, newHandle, err := e.doDupRowUpdate(handle, oldRow, row.row, onDuplicate)
+	if e.ctx.GetSessionVars().StmtCtx.IgnoreErr && kv.ErrKeyExists.Equal(err) {
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		return nil
+	}
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return e.updateDupKeyValues(e.ctx, e.Table, handle, newHandle, handleChanged, updatedRow)
+	return e.updateDupKeyValues(row, handle, newHandle, handleChanged, updatedRow)
 }
 
 // doDupRowUpdate updates the duplicate row.
@@ -287,4 +279,23 @@ func (e *InsertExec) doDupRowUpdate(handle int64, oldRow types.DatumRow, newRow 
 		e.lastInsertID = lastInsertID
 	}
 	return newData, handleChanged, newHandle, nil
+}
+
+// updateDupKeyValues updates the dupKeyValues for further duplicate key check.
+func (e *InsertExec) updateDupKeyValues(row toBeCheckedRow, oldHandle int64,
+	newHandle int64, handleChanged bool, updatedRow types.DatumRow) error {
+	// There is only one row per update.
+	fillBackKeysInRows, err := e.getKeysNeedCheck(e.ctx, e.Table, []types.DatumRow{updatedRow})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// Delete old keys and fill back new key-values of the updated row.
+	e.deleteDupKeys(row)
+	if handleChanged {
+		delete(e.dupOldRowValues, string(e.Table.RecordKey(oldHandle)))
+		e.fillBackKeys(e.Table, fillBackKeysInRows[0], newHandle)
+	} else {
+		e.fillBackKeys(e.Table, fillBackKeysInRows[0], oldHandle)
+	}
+	return nil
 }

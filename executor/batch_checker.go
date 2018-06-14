@@ -29,12 +29,12 @@ type keyValue struct {
 }
 
 type keyValueWithDupInfo struct {
-	newKeyValue keyValue
-	oldKeyValue keyValue
-	dupErr      error
+	newKV  keyValue
+	dupErr error
 }
 
 type toBeCheckedRow struct {
+	row        types.DatumRow
 	rowValue   []byte
 	handleKey  *keyValueWithDupInfo
 	uniqueKeys []*keyValueWithDupInfo
@@ -43,7 +43,7 @@ type toBeCheckedRow struct {
 type batchChecker struct {
 	// For duplicate key update
 	toBeCheckedRows []toBeCheckedRow
-	dupKeyValues    map[string][]byte
+	dupKVs          map[string][]byte
 	dupOldRowValues map[string][]byte
 }
 
@@ -113,7 +113,7 @@ func (b *batchChecker) getKeysNeedCheck(ctx sessionctx.Context, t table.Table, r
 		if t.Meta().PKIsHandle {
 			handle := row[handleCol.Offset].GetInt64()
 			handleKey = &keyValueWithDupInfo{
-				newKeyValue: keyValue{
+				newKV: keyValue{
 					key:   t.RecordKey(handle),
 					value: newRowValue,
 				},
@@ -146,7 +146,7 @@ func (b *batchChecker) getKeysNeedCheck(ctx sessionctx.Context, t table.Table, r
 				return nil, errors.Trace(err1)
 			}
 			uniqueKeys = append(uniqueKeys, &keyValueWithDupInfo{
-				newKeyValue: keyValue{
+				newKV: keyValue{
 					key: key,
 				},
 				dupErr: kv.ErrKeyExists.FastGen("Duplicate entry '%s' for key '%s'",
@@ -154,6 +154,7 @@ func (b *batchChecker) getKeysNeedCheck(ctx sessionctx.Context, t table.Table, r
 			})
 		}
 		toBeCheckRows = append(toBeCheckRows, toBeCheckedRow{
+			row:        row,
 			rowValue:   newRowValue,
 			handleKey:  handleKey,
 			uniqueKeys: uniqueKeys,
@@ -181,13 +182,13 @@ func (b *batchChecker) batchGetInsertKeys(ctx sessionctx.Context, t table.Table,
 	batchKeys := make([]kv.Key, 0, nKeys)
 	for _, r := range b.toBeCheckedRows {
 		if r.handleKey != nil {
-			batchKeys = append(batchKeys, r.handleKey.newKeyValue.key)
+			batchKeys = append(batchKeys, r.handleKey.newKV.key)
 		}
 		for _, k := range r.uniqueKeys {
-			batchKeys = append(batchKeys, k.newKeyValue.key)
+			batchKeys = append(batchKeys, k.newKV.key)
 		}
 	}
-	b.dupKeyValues, err = kv.BatchGetValues(ctx.Txn(), batchKeys)
+	b.dupKVs, err = kv.BatchGetValues(ctx.Txn(), batchKeys)
 	return errors.Trace(err)
 }
 
@@ -196,8 +197,8 @@ func (b *batchChecker) initDupOldRowFromHandleKey() {
 		if r.handleKey == nil {
 			continue
 		}
-		k := r.handleKey.newKeyValue.key
-		if val, found := b.dupKeyValues[string(k)]; found {
+		k := r.handleKey.newKV.key
+		if val, found := b.dupKVs[string(k)]; found {
 			b.dupOldRowValues[string(k)] = val
 		}
 	}
@@ -207,7 +208,7 @@ func (b *batchChecker) initDupOldRowFromUniqueKey(ctx sessionctx.Context, t tabl
 	handles := make([]int64, 0, len(newRows))
 	for _, r := range b.toBeCheckedRows {
 		for _, uk := range r.uniqueKeys {
-			if val, found := b.dupKeyValues[string(uk.newKeyValue.key)]; found {
+			if val, found := b.dupKVs[string(uk.newKV.key)]; found {
 				handle, err := tables.DecodeHandle(val)
 				if err != nil {
 					return errors.Trace(err)
@@ -227,33 +228,24 @@ func (b *batchChecker) initDupOldRowValue(ctx sessionctx.Context, t table.Table,
 	return errors.Trace(b.initDupOldRowFromUniqueKey(ctx, t, newRows))
 }
 
-// updateDupKeyValues updates the dupKeyValues for further duplicate key check.
-func (b *batchChecker) updateDupKeyValues(ctx sessionctx.Context, t table.Table, oldHandle int64,
-	newHandle int64, handleChanged bool, updatedRow types.DatumRow) error {
-	// There is only one row per update.
-	fillBackKeysInRows, err := b.getKeysNeedCheck(ctx, t, []types.DatumRow{updatedRow})
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// Fill back new key-values of the updated row.
-	if handleChanged {
-		delete(b.dupOldRowValues, string(t.RecordKey(oldHandle)))
-		b.fillBackKeys(t, fillBackKeysInRows[0], newHandle)
-	} else {
-		b.fillBackKeys(t, fillBackKeysInRows[0], oldHandle)
-	}
-	return nil
-}
-
 // fillBackKeys fills the updated key-value pair to the dupKeyValues for further check.
 func (b *batchChecker) fillBackKeys(t table.Table, row toBeCheckedRow, handle int64) {
 	if row.rowValue != nil {
 		b.dupOldRowValues[string(t.RecordKey(handle))] = row.rowValue
 	}
 	if row.handleKey != nil {
-		b.dupKeyValues[string(row.handleKey.newKeyValue.key)] = row.handleKey.newKeyValue.value
+		b.dupKVs[string(row.handleKey.newKV.key)] = row.handleKey.newKV.value
 	}
 	for _, uk := range row.uniqueKeys {
-		b.dupKeyValues[string(uk.newKeyValue.key)] = tables.EncodeHandle(handle)
+		b.dupKVs[string(uk.newKV.key)] = tables.EncodeHandle(handle)
+	}
+}
+
+func (b *batchChecker) deleteDupKeys(row toBeCheckedRow) {
+	if row.handleKey != nil {
+		delete(b.dupKVs, string(row.handleKey.newKV.key))
+	}
+	for _, uk := range row.uniqueKeys {
+		delete(b.dupKVs, string(uk.newKV.key))
 	}
 }

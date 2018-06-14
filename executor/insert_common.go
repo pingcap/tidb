@@ -503,14 +503,14 @@ func (e *InsertValues) batchCheckAndInsert(rows []types.DatumRow, insertOneRow f
 	// append warnings and get no duplicated error rows
 	for i, r := range e.toBeCheckedRows {
 		if r.handleKey != nil {
-			if _, found := e.dupKeyValues[string(r.handleKey.newKeyValue.key)]; found {
+			if _, found := e.dupKVs[string(r.handleKey.newKV.key)]; found {
 				rows[i] = nil
 				e.ctx.GetSessionVars().StmtCtx.AppendWarning(r.handleKey.dupErr)
 				continue
 			}
 		}
 		for _, uk := range r.uniqueKeys {
-			if _, found := e.dupKeyValues[string(uk.newKeyValue.key)]; found {
+			if _, found := e.dupKVs[string(uk.newKV.key)]; found {
 				// If duplicate keys were found in BatchGet, mark row = nil.
 				rows[i] = nil
 				e.ctx.GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
@@ -526,10 +526,10 @@ func (e *InsertValues) batchCheckAndInsert(rows []types.DatumRow, insertOneRow f
 				return errors.Trace(err)
 			}
 			if r.handleKey != nil {
-				e.dupKeyValues[string(r.handleKey.newKeyValue.key)] = r.handleKey.newKeyValue.value
+				e.dupKVs[string(r.handleKey.newKV.key)] = r.handleKey.newKV.value
 			}
 			for _, uk := range r.uniqueKeys {
-				e.dupKeyValues[string(uk.newKeyValue.key)] = []byte{}
+				e.dupKVs[string(uk.newKV.key)] = []byte{}
 			}
 		}
 	}
