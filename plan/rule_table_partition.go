@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2018 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -101,8 +101,8 @@ func (s *tablePartition) prunePartition(sel *LogicalSelection, ds *DataSource) (
 	col := partitionExprAccessColumn(partitionExprs[0])
 	for i, expr := range partitionExprs {
 		if col != nil {
-			// If the selection condition would never satisify, prune that partition.
-			prune, err := canBePrune(ds.context(), col, expr, selConds, ds.pushedDownConds)
+			// If the selection condition would never be satisified, prune that partition.
+			prune, err := s.canBePrune(ds.context(), col, expr, selConds, ds.pushedDownConds)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -129,9 +129,9 @@ func (s *tablePartition) prunePartition(sel *LogicalSelection, ds *DataSource) (
 
 // canBePrune checks if partition expression will never meets the selection condition.
 // For example, partition by column a > 3, and select condition is a < 3, then canBePrune returns true.
-func canBePrune(ctx sessionctx.Context, col *expression.Column, expr expression.Expression, rootConds, copConds []expression.Expression) (bool, error) {
+func (s *tablePartition) canBePrune(ctx sessionctx.Context, col *expression.Column, partitionCond expression.Expression, rootConds, copConds []expression.Expression) (bool, error) {
 	conds := make([]expression.Expression, 0, 1+len(rootConds)+len(copConds))
-	conds = append(conds, expr)
+	conds = append(conds, partitionCond)
 	conds = append(conds, rootConds...)
 	conds = append(conds, copConds...)
 	conds = expression.PropagateConstant(ctx, conds)
@@ -145,6 +145,8 @@ func canBePrune(ctx sessionctx.Context, col *expression.Column, expr expression.
 	return len(r) == 0, nil
 }
 
+// partitionExprAccessColumn extracts the column visited from the partition expression.
+// If the partition expression is not a simple operation on one column, return nil.
 func partitionExprAccessColumn(expr expression.Expression) *expression.Column {
 	lt, ok := expr.(*expression.ScalarFunction)
 	if !ok || lt.FuncName.L != ast.LT {
