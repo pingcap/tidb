@@ -42,6 +42,8 @@ import (
 
 	Mysqlx_Datatypes "github.com/pingcap/tipb/go-mysqlx/Datatypes"
 
+	github_com_golang_protobuf_proto "github.com/golang/protobuf/proto"
+
 	io "io"
 )
 
@@ -612,7 +614,7 @@ func (m *Expr) MarshalTo(dAtA []byte) (int, error) {
 	var l int
 	_ = l
 	if m.Type == nil {
-		return 0, new(proto.RequiredNotSetError)
+		return 0, new(github_com_golang_protobuf_proto.RequiredNotSetError)
 	} else {
 		dAtA[i] = 0x8
 		i++
@@ -711,7 +713,7 @@ func (m *Identifier) MarshalTo(dAtA []byte) (int, error) {
 	var l int
 	_ = l
 	if m.Name == nil {
-		return 0, new(proto.RequiredNotSetError)
+		return 0, new(github_com_golang_protobuf_proto.RequiredNotSetError)
 	} else {
 		dAtA[i] = 0xa
 		i++
@@ -746,7 +748,7 @@ func (m *DocumentPathItem) MarshalTo(dAtA []byte) (int, error) {
 	var l int
 	_ = l
 	if m.Type == nil {
-		return 0, new(proto.RequiredNotSetError)
+		return 0, new(github_com_golang_protobuf_proto.RequiredNotSetError)
 	} else {
 		dAtA[i] = 0x8
 		i++
@@ -836,7 +838,7 @@ func (m *FunctionCall) MarshalTo(dAtA []byte) (int, error) {
 	var l int
 	_ = l
 	if m.Name == nil {
-		return 0, new(proto.RequiredNotSetError)
+		return 0, new(github_com_golang_protobuf_proto.RequiredNotSetError)
 	} else {
 		dAtA[i] = 0xa
 		i++
@@ -881,7 +883,7 @@ func (m *Operator) MarshalTo(dAtA []byte) (int, error) {
 	var l int
 	_ = l
 	if m.Name == nil {
-		return 0, new(proto.RequiredNotSetError)
+		return 0, new(github_com_golang_protobuf_proto.RequiredNotSetError)
 	} else {
 		dAtA[i] = 0xa
 		i++
@@ -955,7 +957,7 @@ func (m *Object_ObjectField) MarshalTo(dAtA []byte) (int, error) {
 	var l int
 	_ = l
 	if m.Key == nil {
-		return 0, new(proto.RequiredNotSetError)
+		return 0, new(github_com_golang_protobuf_proto.RequiredNotSetError)
 	} else {
 		dAtA[i] = 0xa
 		i++
@@ -963,7 +965,7 @@ func (m *Object_ObjectField) MarshalTo(dAtA []byte) (int, error) {
 		i += copy(dAtA[i:], *m.Key)
 	}
 	if m.Value == nil {
-		return 0, new(proto.RequiredNotSetError)
+		return 0, new(github_com_golang_protobuf_proto.RequiredNotSetError)
 	} else {
 		dAtA[i] = 0x12
 		i++
@@ -1542,7 +1544,7 @@ func (m *Expr) Unmarshal(dAtA []byte) error {
 		}
 	}
 	if hasFields[0]&uint64(0x00000001) == 0 {
-		return new(proto.RequiredNotSetError)
+		return new(github_com_golang_protobuf_proto.RequiredNotSetError)
 	}
 
 	if iNdEx > l {
@@ -1658,7 +1660,7 @@ func (m *Identifier) Unmarshal(dAtA []byte) error {
 		}
 	}
 	if hasFields[0]&uint64(0x00000001) == 0 {
-		return new(proto.RequiredNotSetError)
+		return new(github_com_golang_protobuf_proto.RequiredNotSetError)
 	}
 
 	if iNdEx > l {
@@ -1784,7 +1786,7 @@ func (m *DocumentPathItem) Unmarshal(dAtA []byte) error {
 		}
 	}
 	if hasFields[0]&uint64(0x00000001) == 0 {
-		return new(proto.RequiredNotSetError)
+		return new(github_com_golang_protobuf_proto.RequiredNotSetError)
 	}
 
 	if iNdEx > l {
@@ -2076,7 +2078,7 @@ func (m *FunctionCall) Unmarshal(dAtA []byte) error {
 		}
 	}
 	if hasFields[0]&uint64(0x00000001) == 0 {
-		return new(proto.RequiredNotSetError)
+		return new(github_com_golang_protobuf_proto.RequiredNotSetError)
 	}
 
 	if iNdEx > l {
@@ -2193,7 +2195,7 @@ func (m *Operator) Unmarshal(dAtA []byte) error {
 		}
 	}
 	if hasFields[0]&uint64(0x00000001) == 0 {
-		return new(proto.RequiredNotSetError)
+		return new(github_com_golang_protobuf_proto.RequiredNotSetError)
 	}
 
 	if iNdEx > l {
@@ -2395,10 +2397,10 @@ func (m *Object_ObjectField) Unmarshal(dAtA []byte) error {
 		}
 	}
 	if hasFields[0]&uint64(0x00000001) == 0 {
-		return new(proto.RequiredNotSetError)
+		return new(github_com_golang_protobuf_proto.RequiredNotSetError)
 	}
 	if hasFields[0]&uint64(0x00000002) == 0 {
-		return new(proto.RequiredNotSetError)
+		return new(github_com_golang_protobuf_proto.RequiredNotSetError)
 	}
 
 	if iNdEx > l {
