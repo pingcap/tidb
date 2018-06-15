@@ -829,14 +829,12 @@ func (b *executorBuilder) buildHashAgg(v *plan.PhysicalHashAgg) Executor {
 	}
 	sessionVars := b.ctx.GetSessionVars()
 	e := &HashAggExec{
-		baseExecutor:       newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), src),
-		sc:                 sessionVars.StmtCtx,
-		AggFuncs:           make([]aggregation.Aggregation, 0, len(v.AggFuncs)),
-		GroupByItems:       v.GroupByItems,
-		partialConcurrency: sessionVars.HashAggPartialConcurrency,
-		finalConcurrency:   sessionVars.HashAggFinalConcurrency,
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), src),
+		sc:           sessionVars.StmtCtx,
+		AggFuncs:     make([]aggregation.Aggregation, 0, len(v.AggFuncs)),
+		GroupByItems: v.GroupByItems,
 	}
-	if len(v.GroupByItems) != 0 || plan.IsAllFirstRow(v.AggFuncs) {
+	if len(v.GroupByItems) != 0 || aggregation.IsAllFirstRow(v.AggFuncs) {
 		e.defaultVal = nil
 	} else {
 		e.defaultVal = chunk.NewChunkWithCapacity(e.retTypes(), 1)

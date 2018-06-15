@@ -185,22 +185,12 @@ func (a *aggregationOptimizer) decompose(aggFunc *aggregation.AggFuncDesc, schem
 	return result, schema
 }
 
-// IsAllFirstRow checks whether functions in `aggFuncs` are all FirstRow.
-func IsAllFirstRow(aggFuncs []*aggregation.AggFuncDesc) bool {
-	for _, fun := range aggFuncs {
-		if fun.Name != ast.AggFuncFirstRow {
-			return false
-		}
-	}
-	return true
-}
-
 // tryToPushDownAgg tries to push down an aggregate function into a join path. If all aggFuncs are first row, we won't
 // process it temporarily. If not, We will add additional group by columns and first row functions. We make a new aggregation operator.
 // If the pushed aggregation is grouped by unique key, it's no need to push it down.
 func (a *aggregationOptimizer) tryToPushDownAgg(aggFuncs []*aggregation.AggFuncDesc, gbyCols []*expression.Column, join *LogicalJoin, childIdx int) LogicalPlan {
 	child := join.children[childIdx]
-	if IsAllFirstRow(aggFuncs) {
+	if aggregation.IsAllFirstRow(aggFuncs) {
 		return child
 	}
 	// If the join is multiway-join, we forbid pushing down.

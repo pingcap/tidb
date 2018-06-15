@@ -23,7 +23,7 @@ type sumFunction struct {
 }
 
 // Update implements Aggregation interface.
-func (sf *sumFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) (err error) {
+func (sf *sumFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
 	return sf.updateSum(sc, evalCtx, row)
 }
 

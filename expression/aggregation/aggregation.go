@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
-	tipb "github.com/pingcap/tipb/go-tipb"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // Aggregation stands for aggregate functions.
@@ -230,4 +230,14 @@ func NeedValue(name string) bool {
 	default:
 		return false
 	}
+}
+
+// IsAllFirstRow checks whether functions in `aggFuncs` are all FirstRow.
+func IsAllFirstRow(aggFuncs []*AggFuncDesc) bool {
+	for _, fun := range aggFuncs {
+		if fun.Name != ast.AggFuncFirstRow {
+			return false
+		}
+	}
+	return true
 }
