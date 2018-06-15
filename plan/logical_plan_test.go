@@ -439,8 +439,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 	}
 }
 
-func (s *testPlanSuite) TestTablePartition(c *C) {
-	defer testleak.AfterTest(c)()
+func newPartitionInfoSchema(definitions []model.PartitionDefinition) infoschema.InfoSchema {
 	tableInfo := *MockTable()
 	cols := make([]*model.ColumnInfo, 0, len(tableInfo.Columns))
 	cols = append(cols, tableInfo.Columns...)
@@ -452,76 +451,99 @@ func (s *testPlanSuite) TestTablePartition(c *C) {
 		ID:        11,
 	})
 	partition := &model.PartitionInfo{
-		Type:   model.PartitionTypeRange,
-		Expr:   "h",
-		Enable: true,
-		Definitions: []model.PartitionDefinition{
-			{
-				ID:       41,
-				Name:     "p1",
-				LessThan: []string{"16"},
-			},
-			{
-				ID:       42,
-				Name:     "p2",
-				LessThan: []string{"32"},
-			},
-			{
-				ID:       43,
-				Name:     "p3",
-				LessThan: []string{"64"},
-			},
-			{
-				ID:       44,
-				Name:     "p4",
-				LessThan: []string{"128"},
-			},
-			{
-				ID:       45,
-				Name:     "p5",
-				LessThan: []string{"maxvalue"},
-			},
-		},
+		Type:        model.PartitionTypeRange,
+		Expr:        "h",
+		Enable:      true,
+		Definitions: definitions,
 	}
 	tableInfo.Columns = cols
 	tableInfo.Partition = partition
 	is := infoschema.MockInfoSchema([]*model.TableInfo{&tableInfo})
+	return is
+}
+
+func (s *testPlanSuite) TestTablePartition(c *C) {
+	defer testleak.AfterTest(c)()
+	definitions := []model.PartitionDefinition{
+		{
+			ID:       41,
+			Name:     "p1",
+			LessThan: []string{"16"},
+		},
+		{
+			ID:       42,
+			Name:     "p2",
+			LessThan: []string{"32"},
+		},
+		{
+			ID:       43,
+			Name:     "p3",
+			LessThan: []string{"64"},
+		},
+		{
+			ID:       44,
+			Name:     "p4",
+			LessThan: []string{"128"},
+		},
+		{
+			ID:       45,
+			Name:     "p5",
+			LessThan: []string{"maxvalue"},
+		},
+	}
+	is := newPartitionInfoSchema(definitions)
+	// is1 equals to is without maxvalue partition.
+	definitions1 := make([]model.PartitionDefinition, len(definitions)-1)
+	copy(definitions1, definitions)
+	is1 := newPartitionInfoSchema(definitions1)
 
 	tests := []struct {
 		sql   string
 		first string
 		best  string
+		is    infoschema.InfoSchema
 	}{
 		{
 			sql:  "select * from t",
 			best: "UnionAll{Partition(41)->Partition(42)->Partition(43)->Partition(44)->Partition(45)}->Projection",
+			is:   is,
 		},
 		{
 			sql:  "select * from t where t.h < 31",
 			best: "UnionAll{Partition(41)->Partition(42)}->Projection",
+			is:   is,
 		},
 		{
 			sql:  "select * from t where t.h < 61",
 			best: "UnionAll{Partition(41)->Partition(42)->Partition(43)}->Projection",
+			is:   is,
 		},
 		{
 			sql:  "select * from t where t.h > 17 and t.h < 61",
 			best: "UnionAll{Partition(42)->Partition(43)}->Projection",
+			is:   is,
 		},
 		{
 			sql:  "select * from t where t.h < 8",
 			best: "Partition(41)->Projection",
+			is:   is,
 		},
 		{
 			sql:  "select * from t where t.h > 128",
 			best: "Partition(45)->Projection",
+			is:   is,
+		},
+		{
+			sql:  "select * from t where t.h > 128",
+			best: "Dual->Projection",
+			is:   is1,
 		},
 	}
 	for _, ca := range tests {
 		comment := Commentf("for %s", ca.sql)
 		stmt, err := s.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		p, err := BuildLogicalPlan(s.ctx, stmt, is)
+		p, err := BuildLogicalPlan(s.ctx, stmt, ca.is)
 		c.Assert(err, IsNil)
 		p, err = logicalOptimize(flagDecorrelate|flagPrunColumns|flagPredicatePushDown|flagPartitionProcessor, p.(LogicalPlan))
 		c.Assert(err, IsNil)

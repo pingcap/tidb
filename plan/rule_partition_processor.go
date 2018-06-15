@@ -107,6 +107,12 @@ func (s *partitionProcessor) prunePartition(ds *DataSource) (LogicalPlan, error)
 		newDataSource.partitionID = pi.Definitions[i].ID
 		children = append(children, &newDataSource)
 	}
+	if len(children) == 0 {
+		// No result after table pruning.
+		tableDual := LogicalTableDual{RowCount: 0}.init(ds.context())
+		tableDual.schema = ds.Schema()
+		return tableDual, nil
+	}
 	if len(children) == 1 {
 		// No need for the union all.
 		return children[0], nil
