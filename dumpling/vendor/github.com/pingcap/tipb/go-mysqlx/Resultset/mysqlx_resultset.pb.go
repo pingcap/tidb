@@ -23,6 +23,8 @@ import (
 
 	math "math"
 
+	github_com_golang_protobuf_proto "github.com/golang/protobuf/proto"
+
 	io "io"
 )
 
@@ -673,7 +675,7 @@ func (m *ColumnMetaData) MarshalTo(dAtA []byte) (int, error) {
 	var l int
 	_ = l
 	if m.Type == nil {
-		return 0, new(proto.RequiredNotSetError)
+		return 0, new(github_com_golang_protobuf_proto.RequiredNotSetError)
 	} else {
 		dAtA[i] = 0x8
 		i++
@@ -1397,7 +1399,7 @@ func (m *ColumnMetaData) Unmarshal(dAtA []byte) error {
 		}
 	}
 	if hasFields[0]&uint64(0x00000001) == 0 {
-		return new(proto.RequiredNotSetError)
+		return new(github_com_golang_protobuf_proto.RequiredNotSetError)
 	}
 
 	if iNdEx > l {
