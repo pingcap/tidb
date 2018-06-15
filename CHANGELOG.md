@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file. See also [Release Notes](https://github.com/pingcap/docs/blob/master/releases/rn.md), [TiKV changelog](https://github.com/pingcap/tikv/blob/master/CHANGELOG.md) and [PD changelog](https://github.com/pingcap/pd/blob/master/CHANGELOG.md).
 
+## [2.0.4] - 2018-06-15
+### New Features
+  - Support the `ALTER TABLE t DROP COLUMN a CASCADE` syntax
+  - Support configuring the value of `tidb_snapshot` to TSO
+### Improvements
+  - Refine the display of statement types in monitoring items
+  - Optimize the accuracy of query cost estimation
+  - Configure the `backoff max delay` parameter of gRPC
+  - Support cofiguring the memory threshold of a single statement in the configuration file
+### Bug Fixes
+  - Fix the side effects of the `Cast Decimal` data
+  - Fix the wrong result issue of the `Merge Join` operator in specific scenarios
+  - Fix the issue of converting the Null object to String
+  - Fix the issue of casting Json type of to Json type
+  - Refactor the error of Optimizer
+  - Fix the issue that the result order is not consistent with MySQL in the condition of `Union` + `OrderBy`
+  - Fix the compliance rules issue when the `Union` statement checks the `Limit/OrderBy` clause
+  - Fix the compatibility issue of the `Union All` result
+  - Fix a bug in predicate pushdown
+  - Fix the compatibility issue of the `Union` statement with the `For Update` clause
+  - Fix the issue that the `concat_ws` function mistakenly truncates the result
+
 ## [2.0.3] - 2018-06-01
 ### New Features
   - Support modifying the log level online
