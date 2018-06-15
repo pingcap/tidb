@@ -394,7 +394,6 @@ func (b *planBuilder) buildCheckIndex(dbName model.CIStr, as *ast.AdminStmt) Pla
 		return nil
 	}
 
-	id := 1
 	columns := make([]*model.ColumnInfo, 0, len(idx.Columns))
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(idx.Columns))...)
 	for _, idxCol := range idx.Columns {
@@ -424,7 +423,7 @@ func (b *planBuilder) buildCheckIndex(dbName model.CIStr, as *ast.AdminStmt) Pla
 	ts := PhysicalTableScan{Columns: columns, Table: is.Table}.init(b.ctx)
 	ts.SetSchema(is.dataSourceSchema)
 	cop.tablePlan = ts
-	is.initSchema(id, idx, true)
+	//is.initSchema(true)
 	t := finishCopTask(b.ctx, cop)
 
 	rootT := t.(*rootTask)
@@ -740,8 +739,8 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 		}
 		p.SetSchema(buildShowSchema(show))
 	}
-	for i, col := range p.schema.Columns {
-		col.Position = i
+	for _, col := range p.schema.Columns {
+		col.Position = p.ctx.GetSessionVars().AllocColID()
 	}
 	mockTablePlan := LogicalTableDual{}.init(b.ctx)
 	mockTablePlan.SetSchema(p.schema)
@@ -884,7 +883,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 	}
 	tableInfo := tn.TableInfo
 	// Build Schema with DBName otherwise ColumnRef with DBName cannot match any Column in Schema.
-	schema := expression.TableInfo2SchemaWithDBName(tn.Schema, tableInfo)
+	schema := expression.TableInfo2SchemaWithDBName(b.ctx, tn.Schema, tableInfo)
 	tableInPlan, ok := b.is.TableByID(tableInfo.ID)
 	if !ok {
 		b.err = errors.Errorf("Can't get table %s.", tableInfo.Name.O)
@@ -1088,7 +1087,7 @@ func (b *planBuilder) buildLoadData(ld *ast.LoadDataStmt) Plan {
 		b.err = infoschema.ErrTableNotExists.GenByArgs(db, tableInfo.Name.O)
 		return nil
 	}
-	schema := expression.TableInfo2Schema(tableInfo)
+	schema := expression.TableInfo2Schema(b.ctx, tableInfo)
 	mockTablePlan := LogicalTableDual{}.init(b.ctx)
 	mockTablePlan.SetSchema(schema)
 	p.GenCols = b.resolveGeneratedColumns(tableInPlan.Cols(), nil, mockTablePlan)

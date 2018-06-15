@@ -310,6 +310,15 @@ func (col *Column) ResolveIndices(schema *Schema) {
 	col.Index = schema.ColumnIndex(col)
 	// If col's index equals to -1, it means a internal logic error happens.
 	if col.Index == -1 {
+		fmt.Printf("col.Position=%v\n", col.Position)
+		for i := range schema.Columns {
+			fmt.Printf("schema.Columns[i].Position=%v", schema.Columns[i].Position)
+			if i+1 == len(schema.Columns) {
+				fmt.Printf("\n")
+			} else {
+				fmt.Printf(", ")
+			}
+		}
 		panic(fmt.Sprintf("Column.ResolveIndices failed: col.Position=%v", col.Position))
 		log.Errorf("Can't find column %s in schema %s", col, schema)
 	}

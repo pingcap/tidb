@@ -324,7 +324,7 @@ func (ds *DataSource) forceToIndexScan(idx *model.IndexInfo, remainedConds []exp
 		ts.SetSchema(is.dataSourceSchema)
 		cop.tablePlan = ts
 	}
-	is.initSchema(ds.id, idx, cop.tablePlan != nil)
+	is.initSchema(ds, cop.tablePlan != nil)
 	indexConds, tblConds := splitIndexFilterConditions(remainedConds, idx.Columns, ds.tableInfo)
 	path := &accessPath{indexFilters: indexConds, tableFilters: tblConds, countAfterIndex: math.MaxFloat64}
 	is.addPushedDownSelection(cop, ds, math.MaxFloat64, path)
@@ -377,7 +377,7 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, path *accessPath) (
 		// If it's parent requires double read task, return max cost.
 		return invalidTask, nil
 	}
-	is.initSchema(ds.id, idx, cop.tablePlan != nil)
+	is.initSchema(ds, cop.tablePlan != nil)
 	// Check if this plan matches the property.
 	matchProperty := false
 	if !prop.isEmpty() {
@@ -429,15 +429,29 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, path *accessPath) (
 	return task, nil
 }
 
-func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, isDoubleRead bool) {
-	indexCols := make([]*expression.Column, 0, len(idx.Columns))
-	for _ = range idx.Columns {
-		indexCols = append(indexCols, &expression.Column{Position: is.ctx.GetSessionVars().AllocColID()})
+func (is *PhysicalIndexScan) initSchema(ds *DataSource, isDoubleRead bool) {
+	colPositions := make(map[string]int)
+	for i, col := range ds.Columns {
+		colPositions[col.Name.L] = ds.schema.Columns[i].Position
 	}
+
+	is.schema = expression.NewSchema(make([]*expression.Column, 0, len(is.Index.Columns))...)
+	for _, col := range is.Index.Columns {
+		colPosition, exists := colPositions[col.Name.L]
+		if !exists {
+			colPosition = is.ctx.GetSessionVars().AllocColID()
+		}
+		is.schema.Append(&expression.Column{Position: colPosition})
+	}
+
 	setHandle := false
 	for _, col := range is.Columns {
 		if (mysql.HasPriKeyFlag(col.Flag) && is.Table.PKIsHandle) || col.ID == model.ExtraHandleID {
-			indexCols = append(indexCols, &expression.Column{ID: col.ID, Position: is.ctx.GetSessionVars().AllocColID()})
+			colPosition, exists := colPositions[col.Name.L]
+			if !exists {
+				colPosition = is.ctx.GetSessionVars().AllocColID()
+			}
+			is.schema.Append(&expression.Column{ID: col.ID, Position: colPosition})
 			setHandle = true
 			break
 		}
@@ -445,9 +459,9 @@ func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, isDoubleRe
 	// If it's double read case, the first index must return handle. So we should add extra handle column
 	// if there isn't a handle column.
 	if isDoubleRead && !setHandle {
-		indexCols = append(indexCols, &expression.Column{ID: model.ExtraHandleID, Position: is.ctx.GetSessionVars().AllocColID()})
+		colPosition := is.ctx.GetSessionVars().AllocColID()
+		is.schema.Append(&expression.Column{ID: model.ExtraHandleID, Position: colPosition})
 	}
-	is.SetSchema(expression.NewSchema(indexCols...))
 }
 
 func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSource, expectedCnt float64, path *accessPath) {
