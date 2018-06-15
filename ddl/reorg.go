@@ -184,6 +184,15 @@ type reorgInfo struct {
 	first       bool
 }
 
+// PartitionID returns the partition ID of the reorgInfo, or table ID if it's not a partition.
+func (r *reorgInfo) PartitionID() int64 {
+	ret := r.Job.ID
+	if r.Job.ReorgMeta != nil && r.Job.ReorgMeta.PartitionID != 0 {
+		ret = r.Job.ReorgMeta.PartitionID
+	}
+	return ret
+}
+
 func constructDescTableScanPB(partitionID int64, pbColumnInfos []*tipb.ColumnInfo) *tipb.Executor {
 	tblScan := &tipb.TableScan{
 		TableId: partitionID,
@@ -293,6 +302,7 @@ func (d *ddlCtx) GetTableMaxRowID(startTS uint64, tblInfo *model.TableInfo, part
 
 var gofailOnceGuard bool
 
+// getPartitionRange gets the start and end handle of a partition (or table).
 func getPartitionRange(d *ddlCtx, tblInfo *model.TableInfo, partitionID int64, snapshotVer uint64) (StartHandle, EndHandle int64, err error) {
 	// Get the start handle of this partition.
 	err = iterateSnapshotRows(d.store, partitionID, snapshotVer, math.MinInt64,

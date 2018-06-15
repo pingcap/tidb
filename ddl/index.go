@@ -707,12 +707,13 @@ func makeupIndexColFieldMap(t table.Table, indexInfo *model.IndexInfo) map[int64
 // splitTableRanges uses PD region's key ranges to split the backfilling table key range space,
 // to speed up adding index in table with disperse handle.
 func splitTableRanges(t table.Table, reorgInfo *reorgInfo) ([]kv.KeyRange, error) {
-	reorgMeta := reorgInfo.Job.ReorgMeta
+	partitionID := reorgInfo.PartitionID()
 	startHandle := reorgInfo.StartHandle
-	startRecordKey := tablecodec.EncodeRowKeyWithHandle(reorgMeta.PartitionID, startHandle)
-	endRecordKey := tablecodec.EncodeRowKeyWithHandle(reorgMeta.PartitionID, reorgMeta.EndHandle)
+	reorgMeta := reorgInfo.Job.ReorgMeta
+	startRecordKey := tablecodec.EncodeRowKeyWithHandle(partitionID, startHandle)
+	endRecordKey := tablecodec.EncodeRowKeyWithHandle(partitionID, reorgMeta.EndHandle)
 
-	log.Infof("[ddl-reorg] split handle ranges [%v, %v] from PD", startHandle, reorgMeta.EndHandle)
+	log.Infof("[ddl-reorg] split handle ranges %v [%v, %v] from PD", partitionID, startHandle, reorgMeta.EndHandle)
 	kvRange := kv.KeyRange{StartKey: startRecordKey, EndKey: endRecordKey}
 	s, ok := reorgInfo.d.store.(tikv.Storage)
 	if !ok {
@@ -823,10 +824,7 @@ func (w *worker) buildKVRangesIndex(t table.Table, workers []*addIndexWorker, kv
 	)
 	totalAddedCount := job.GetRowCount()
 	batchTasks := make([]*reorgIndexTask, 0, len(workers))
-	partitionID = t.Meta().ID
-	if reorgInfo.Job.ReorgMeta != nil {
-		partitionID = reorgInfo.Job.ReorgMeta.PartitionID
-	}
+	partitionID = reorgInfo.PartitionID()
 
 	log.Infof("[ddl-reorg] start to reorg index of %v region ranges.", len(kvRanges))
 	for i, keyRange := range kvRanges {
@@ -895,7 +893,7 @@ func (w *worker) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgI
 			return errors.Trace(err)
 		}
 
-		finish, reorgInfo, err = w.updateReorgInfo(t, reorgInfo)
+		finish, err = w.updateReorgInfo(t, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -904,32 +902,24 @@ func (w *worker) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgI
 }
 
 // updateReorgInfo will find the next partition according to current reorgInfo.
-func (w *worker) updateReorgInfo(t table.Table, reorg *reorgInfo) (bool, *reorgInfo, error) {
+func (w *worker) updateReorgInfo(t table.Table, reorg *reorgInfo) (bool, error) {
 	pi := t.Meta().GetPartitionInfo()
 	if pi == nil {
-		return true, reorg, nil
+		return true, nil
 	}
 
-	idx := -1
-	for i, def := range pi.Definitions {
-		if reorg.Job.ReorgMeta.PartitionID == def.ID {
-			idx = i
-			break
-		}
-	}
-	if idx == -1 {
+	pid, err := findNextPartitionID(reorg.PartitionID(), pi.Definitions)
+	if err != nil {
 		// Fatal error, should not run here.
-		return true, reorg, errors.Errorf("wrong reorgInfo, partition id %d not found", reorg.Job.ReorgMeta.PartitionID)
+		return false, errors.Errorf("wrong reorgInfo, partition id %d not found", reorg.PartitionID())
 	}
-	if idx == len(pi.Definitions)-1 {
-		// All partition done.
-		return true, reorg, nil
+	if pid == -1 {
+		return true, nil
 	}
-	pid := pi.Definitions[idx+1].ID
 
 	start, end, err := getPartitionRange(reorg.d, t.Meta(), pid, reorg.Job.SnapshotVer)
 	if err != nil {
-		return false, nil, errors.Trace(err)
+		return false, errors.Trace(err)
 	}
 
 	reorgMeta := model.NewDDLReorgMeta()
@@ -937,7 +927,34 @@ func (w *worker) updateReorgInfo(t table.Table, reorg *reorgInfo) (bool, *reorgI
 	reorgMeta.EndHandle = end
 	reorg.Job.ReorgMeta = reorgMeta
 	reorg.StartHandle = start
-	return false, reorg, nil
+
+	log.Infof("[ddl] job %v update reorgInfo partitionID:%v, startHandle:%v, endHandle:%v", reorg.Job.ID, pid, start, end)
+
+	// Actually, it just need to update the job.ReorgMeta.
+	err = kv.RunInNewTxn(reorg.d.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		return errors.Trace(w.updateDDLJob(t, reorg.Job, false))
+	})
+	return false, errors.Trace(err)
+}
+
+// findNextPartitionID finds the next partition ID in the PartitionDefinition.
+// Returns -1 if this partitionID is the last one.
+func findNextPartitionID(partitionID int64, defs []model.PartitionDefinition) (int64, error) {
+	idx := -1
+	for i, def := range defs {
+		if partitionID == def.ID {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		return 0, errors.New("partition id not found")
+	}
+	if idx == len(defs)-1 {
+		return -1, nil
+	}
+	return defs[idx+1].ID, nil
 }
 
 func findIndexByName(idxName string, indices []*model.IndexInfo) *model.IndexInfo {
