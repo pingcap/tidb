@@ -34,7 +34,7 @@ const (
 	flagDecorrelate
 	flagMaxMinEliminate
 	flagPredicatePushDown
-	flagPartitionProcessor
+	flagPartitionPrunner
 	flagAggregationOptimize
 	flagPushDownTopN
 )
