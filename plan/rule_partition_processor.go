@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 )
 
-// partitionPrunner rewrites the ast for table partition.
+// partitionProcessor rewrites the ast for table partition.
 //
 // create table t (id int) partition by range (id)
 //   (partition p1 values less than (10),
@@ -34,17 +34,17 @@ import (
 //      select * from p2 where id < 20
 //      select * from p3 where id < 30)
 //
-// partitionPrunner is here because it's easier to prune partition after predicate push down.
-type partitionPrunner struct{}
+// partitionProcessor is here because it's easier to prune partition after predicate push down.
+type partitionProcessor struct{}
 
-func (s *partitionPrunner) optimize(lp LogicalPlan) (LogicalPlan, error) {
-	// NOTE: partitionPrunner will assume all filter conditions are pushed down to
+func (s *partitionProcessor) optimize(lp LogicalPlan) (LogicalPlan, error) {
+	// NOTE: partitionProcessor will assume all filter conditions are pushed down to
 	// DataSource, there will not be a Selection->DataSource case, so the rewrite just
 	// handle the DataSource node.
 	return s.rewriteDataSource(lp)
 }
 
-func (s *partitionPrunner) rewriteDataSource(lp LogicalPlan) (LogicalPlan, error) {
+func (s *partitionProcessor) rewriteDataSource(lp LogicalPlan) (LogicalPlan, error) {
 	// Assert there will not be sel -> sel in the ast.
 	switch lp.(type) {
 	case *DataSource:
@@ -68,7 +68,7 @@ type partitionTable interface {
 	PartitionExprCache() *tables.PartitionExprCache
 }
 
-func (s *partitionPrunner) prune(ds *DataSource) (LogicalPlan, error) {
+func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	pi := ds.tableInfo.GetPartitionInfo()
 	if pi == nil {
 		return ds, nil
@@ -123,7 +123,7 @@ func (s *partitionPrunner) prune(ds *DataSource) (LogicalPlan, error) {
 
 // canBePrune checks if partition expression will never meets the selection condition.
 // For example, partition by column a > 3, and select condition is a < 3, then canBePrune returns true.
-func (s *partitionPrunner) canBePrune(ctx sessionctx.Context, col *expression.Column, partitionCond expression.Expression, copConds []expression.Expression) (bool, error) {
+func (s *partitionProcessor) canBePrune(ctx sessionctx.Context, col *expression.Column, partitionCond expression.Expression, copConds []expression.Expression) (bool, error) {
 	conds := make([]expression.Expression, 0, 1+len(copConds))
 	conds = append(conds, partitionCond)
 	conds = append(conds, copConds...)

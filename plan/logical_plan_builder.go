@@ -1710,7 +1710,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "")
 
 	if tableInfo.GetPartitionInfo() != nil {
-		b.optFlag = b.optFlag | flagPartitionPrunner
+		b.optFlag = b.optFlag | flagPartitionProcessor
 	}
 
 	possiblePaths, err := getPossibleAccessPaths(tn.IndexHints, tableInfo)
