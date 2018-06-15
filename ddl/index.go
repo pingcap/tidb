@@ -15,7 +15,6 @@ package ddl
 
 import (
 	"context"
-	"math"
 	"time"
 
 	"github.com/juju/errors"
@@ -472,6 +471,7 @@ type addIndexWorker struct {
 }
 
 type reorgIndexTask struct {
+	partitionID int64
 	startHandle int64
 	endHandle   int64
 	// When the last handle is math.MaxInt64, set endIncluded to true to
@@ -553,7 +553,7 @@ func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgInde
 	w.idxRecords = w.idxRecords[:0]
 	startTime := time.Now()
 	handleOutOfRange := false
-	err := iterateSnapshotRows(w.sessCtx.GetStore(), w.table.Meta().ID, txn.StartTS(), taskRange.startHandle,
+	err := iterateSnapshotRows(w.sessCtx.GetStore(), taskRange.partitionID, txn.StartTS(), taskRange.startHandle,
 		func(handle int64, recordKey kv.Key, rawRow []byte) (bool, error) {
 			if !taskRange.endIncluded {
 				handleOutOfRange = handle >= taskRange.endHandle
@@ -707,12 +707,12 @@ func makeupIndexColFieldMap(t table.Table, indexInfo *model.IndexInfo) map[int64
 // splitTableRanges uses PD region's key ranges to split the backfilling table key range space,
 // to speed up adding index in table with disperse handle.
 func splitTableRanges(t table.Table, reorgInfo *reorgInfo) ([]kv.KeyRange, error) {
+	reorgMeta := reorgInfo.Job.ReorgMeta
 	startHandle := reorgInfo.StartHandle
-	endHandle := reorgInfo.EndHandle
-	startRecordKey := t.RecordKey(startHandle)
-	endRecordKey := t.RecordKey(endHandle).Next()
+	startRecordKey := tablecodec.EncodeRowKeyWithHandle(reorgMeta.PartitionID, startHandle)
+	endRecordKey := tablecodec.EncodeRowKeyWithHandle(reorgMeta.PartitionID, reorgMeta.EndHandle)
 
-	log.Infof("[ddl-reorg] split handle ranges [%v, %v] from PD", startHandle, endHandle)
+	log.Infof("[ddl-reorg] split handle ranges [%v, %v] from PD", startHandle, reorgMeta.EndHandle)
 	kvRange := kv.KeyRange{StartKey: startRecordKey, EndKey: endRecordKey}
 	s, ok := reorgInfo.d.store.(tikv.Storage)
 	if !ok {
@@ -816,12 +816,17 @@ func (w *worker) handleReorgTasks(startTime time.Time, startHandle int64, reorgI
 func (w *worker) buildKVRangesIndex(t table.Table, workers []*addIndexWorker, kvRanges []kv.KeyRange, job *model.Job, reorgInfo *reorgInfo) error {
 	var (
 		startTime   time.Time
+		partitionID int64
 		startHandle int64
 		endHandle   int64
 		err         error
 	)
 	totalAddedCount := job.GetRowCount()
 	batchTasks := make([]*reorgIndexTask, 0, len(workers))
+	partitionID = t.Meta().ID
+	if reorgInfo.Job.ReorgMeta != nil {
+		partitionID = reorgInfo.Job.ReorgMeta.PartitionID
+	}
 
 	log.Infof("[ddl-reorg] start to reorg index of %v region ranges.", len(kvRanges))
 	for i, keyRange := range kvRanges {
@@ -836,7 +841,7 @@ func (w *worker) buildKVRangesIndex(t table.Table, workers []*addIndexWorker, kv
 		if endKey.Cmp(keyRange.EndKey) < 0 {
 			endIncluded = true
 		}
-		task := &reorgIndexTask{startHandle, endHandle, endIncluded}
+		task := &reorgIndexTask{partitionID, startHandle, endHandle, endIncluded}
 
 		batchTasks = append(batchTasks, task)
 		if len(batchTasks) >= len(workers) || i == (len(kvRanges)-1) {
@@ -881,16 +886,16 @@ func (w *worker) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgI
 
 	finish := false
 	for !finish {
-		kvRanges, err := d.splitTableRanges(t, reorgInfo)
+		kvRanges, err := splitTableRanges(t, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = w.buildKVRangesIndex(t, workers, kvRanges, job, reorgInfo)
+		err = w.buildKVRangesIndex(t, idxWorkers, kvRanges, job, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
 
-		finish, reorgInfo, err = d.updateReorgInfo(t, reorgInfo)
+		finish, reorgInfo, err = w.updateReorgInfo(t, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -907,38 +912,31 @@ func (w *worker) updateReorgInfo(t table.Table, reorg *reorgInfo) (bool, *reorgI
 
 	idx := -1
 	for i, def := range pi.Definitions {
-		if reorg.partitionID == def.ID {
+		if reorg.Job.ReorgMeta.PartitionID == def.ID {
 			idx = i
 			break
 		}
 	}
 	if idx == -1 {
 		// Fatal error, should not run here.
-		return true, reorg, errors.Errorf("wrong reorgInfo, partition id %d not found", reorg.partitionID)
+		return true, reorg, errors.Errorf("wrong reorgInfo, partition id %d not found", reorg.Job.ReorgMeta.PartitionID)
 	}
 	if idx == len(pi.Definitions)-1 {
 		// All partition done.
 		return true, reorg, nil
 	}
-	reorg.partitionID = pi.Definitions[idx+1].ID
-	// Get the StartHandle handle of the partition.
-	err := iterateSnapshotRows(d.store, reorg.partitionID, reorg.Job.SnapshotVer, math.MinInt64,
-		func(h int64, rowKey kv.Key, rawRecord []byte) (bool, error) {
-			reorg.StartHandle = h
-			return false, nil
-		})
+	pid := pi.Definitions[idx+1].ID
+
+	start, end, err := getPartitionRange(reorg.d, t.Meta(), pid, reorg.Job.SnapshotVer)
 	if err != nil {
-		return false, reorg, errors.Trace(err)
+		return false, nil, errors.Trace(err)
 	}
-	// Get the EndHandle of the partition.
-	endHandle, emptyTable, err1 := d.GetTableMaxRowID(reorg.Job.SnapshotVer, t.Meta())
-	if err1 != nil {
-		return false, reorg, errors.Trace(err1)
-	}
-	if endHandle < reorg.StartHandle || emptyTable {
-		endHandle = reorg.StartHandle
-	}
-	reorg.EndHandle = endHandle
+
+	reorgMeta := model.NewDDLReorgMeta()
+	reorgMeta.PartitionID = pid
+	reorgMeta.EndHandle = end
+	reorg.Job.ReorgMeta = reorgMeta
+	reorg.StartHandle = start
 	return false, reorg, nil
 }
 

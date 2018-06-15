@@ -180,17 +180,13 @@ type reorgInfo struct {
 
 	// StartHandle is the first handle of the adding indices table.
 	StartHandle int64
-	// EndHandle is the last handle of the adding indices table.
-	EndHandle int64
-	d         *ddlCtx
-	first     bool
-	// If table partition exists, partitionID should be used to replace tableID.
-	partitionID int64
+	d           *ddlCtx
+	first       bool
 }
 
-func constructDescTableScanPB(tblInfo *model.TableInfo, pbColumnInfos []*tipb.ColumnInfo) *tipb.Executor {
+func constructDescTableScanPB(partitionID int64, pbColumnInfos []*tipb.ColumnInfo) *tipb.Executor {
 	tblScan := &tipb.TableScan{
-		TableId: tblInfo.ID,
+		TableId: partitionID,
 		Columns: pbColumnInfos,
 		Desc:    true,
 	}
@@ -205,7 +201,7 @@ func constructLimitPB(count uint64) *tipb.Executor {
 	return &tipb.Executor{Tp: tipb.ExecType_TypeLimit, Limit: limitExec}
 }
 
-func buildDescTableScanDAG(startTS uint64, tblInfo *model.TableInfo, columns []*model.ColumnInfo, limit uint64) (*tipb.DAGRequest, error) {
+func buildDescTableScanDAG(startTS uint64, tblInfo *model.TableInfo, partitionID int64, columns []*model.ColumnInfo, limit uint64) (*tipb.DAGRequest, error) {
 	dagReq := &tipb.DAGRequest{}
 	dagReq.StartTs = startTS
 	_, timeZoneOffset := time.Now().In(time.UTC).Zone()
@@ -216,7 +212,7 @@ func buildDescTableScanDAG(startTS uint64, tblInfo *model.TableInfo, columns []*
 	dagReq.Flags |= model.FlagInSelectStmt
 
 	pbColumnInfos := model.ColumnsToProto(columns, tblInfo.PKIsHandle)
-	tblScanExec := constructDescTableScanPB(tblInfo, pbColumnInfos)
+	tblScanExec := constructDescTableScanPB(partitionID, pbColumnInfos)
 	dagReq.Executors = append(dagReq.Executors, tblScanExec)
 	dagReq.Executors = append(dagReq.Executors, constructLimitPB(limit))
 	return dagReq, nil
@@ -231,8 +227,8 @@ func getColumnsTypes(columns []*model.ColumnInfo) []*types.FieldType {
 }
 
 // builds a desc table scan upon tblInfo.
-func (d *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tblInfo *model.TableInfo, columns []*model.ColumnInfo, limit uint64) (distsql.SelectResult, error) {
-	dagPB, err := buildDescTableScanDAG(startTS, tblInfo, columns, limit)
+func (d *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tblInfo *model.TableInfo, partitionID int64, columns []*model.ColumnInfo, limit uint64) (distsql.SelectResult, error) {
+	dagPB, err := buildDescTableScanDAG(startTS, tblInfo, partitionID, columns, limit)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -258,7 +254,7 @@ func (d *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tblInfo
 }
 
 // GetTableMaxRowID gets the last row id of the table.
-func (d *ddlCtx) GetTableMaxRowID(startTS uint64, tblInfo *model.TableInfo) (maxRowID int64, emptyTable bool, err error) {
+func (d *ddlCtx) GetTableMaxRowID(startTS uint64, tblInfo *model.TableInfo, partitionID int64) (maxRowID int64, emptyTable bool, err error) {
 	maxRowID = int64(math.MaxInt64)
 	var columns []*model.ColumnInfo
 	if tblInfo.PKIsHandle {
@@ -274,7 +270,7 @@ func (d *ddlCtx) GetTableMaxRowID(startTS uint64, tblInfo *model.TableInfo) (max
 
 	ctx := context.Background()
 	// build a desc scan of tblInfo, which limit is 1, we can use it to retrive the last handle of the table.
-	result, err := d.buildDescTableScan(ctx, startTS, tblInfo, columns, 1)
+	result, err := d.buildDescTableScan(ctx, startTS, tblInfo, partitionID, columns, 1)
 	if err != nil {
 		return maxRowID, false, errors.Trace(err)
 	}
@@ -297,6 +293,28 @@ func (d *ddlCtx) GetTableMaxRowID(startTS uint64, tblInfo *model.TableInfo) (max
 
 var gofailOnceGuard bool
 
+func getPartitionRange(d *ddlCtx, tblInfo *model.TableInfo, partitionID int64, snapshotVer uint64) (StartHandle, EndHandle int64, err error) {
+	// Get the start handle of this partition.
+	err = iterateSnapshotRows(d.store, partitionID, snapshotVer, math.MinInt64,
+		func(h int64, rowKey kv.Key, rawRecord []byte) (bool, error) {
+			StartHandle = h
+			return false, nil
+		})
+	if err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+	var emptyTable bool
+	// Get the end handle of this partition.
+	EndHandle, emptyTable, err = d.GetTableMaxRowID(snapshotVer, tblInfo, partitionID)
+	if err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+	if EndHandle < StartHandle || emptyTable {
+		EndHandle = StartHandle
+	}
+	return
+}
+
 func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*reorgInfo, error) {
 	var err error
 
@@ -305,9 +323,7 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 		d:   d,
 		// init start handle is math.MinInt64
 		StartHandle: math.MinInt64,
-		// init end handle is math.MaxInt64
-		EndHandle: math.MaxInt64,
-		first:     job.SnapshotVer == 0,
+		first:       job.SnapshotVer == 0,
 	}
 
 	if info.first {
@@ -320,21 +336,25 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 			return nil, errInvalidStoreVer.Gen("invalid storage current version %d", ver.Ver)
 		}
 
-		pid := tbl.Meta().ID
+		tblInfo := tbl.Meta()
+		pid := tblInfo.ID
 		if pi := tbl.Meta().GetPartitionInfo(); pi != nil {
 			pid = pi.Definitions[0].ID
 		}
-		info.partitionID = pid
 
-		// Get the first handle of this table.
-		err = iterateSnapshotRows(d.store, pid, ver.Ver, math.MinInt64,
-			func(h int64, rowKey kv.Key, rawRecord []byte) (bool, error) {
-				info.StartHandle = h
-				return false, nil
-			})
+		start, end, err := getPartitionRange(d, tblInfo, pid, ver.Ver)
 		if err != nil {
-			return info, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
+
+		reorgMeta := model.NewDDLReorgMeta()
+		reorgMeta.EndHandle = end
+		reorgMeta.PartitionID = pid
+		job.ReorgMeta = reorgMeta
+		job.SnapshotVer = ver.Ver
+		info.StartHandle = start
+
+		log.Infof("[ddl] job %v get table startHandle:%v, endHandle:%v", job.ID, info.StartHandle, reorgMeta.EndHandle)
 
 		// gofail: var errorUpdateReorgHandle bool
 		// if errorUpdateReorgHandle && !gofailOnceGuard {
@@ -346,8 +366,6 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 		if err != nil {
 			return info, errors.Trace(err)
 		}
-
-		job.SnapshotVer = ver.Ver
 	} else {
 		info.StartHandle, err = t.GetDDLReorgHandle(job)
 		if err != nil {
@@ -358,30 +376,6 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 	if tbl == nil {
 		return info, errors.Trace(err)
 	}
-
-	// init the reorg meta info of job.
-	if job.ReorgMeta == nil {
-		reorgMeta := model.NewDDLReorgMeta()
-		// Gets the real table end handle, the new added row after the index being writable,
-		// has no needs to backfill.
-		endHandle, emptyTable, err1 := d.GetTableMaxRowID(job.SnapshotVer, tbl.Meta())
-		if err1 != nil {
-			return info, errors.Trace(err1)
-		}
-
-		if endHandle < info.StartHandle || emptyTable {
-			endHandle = info.StartHandle
-		}
-
-		reorgMeta.EndHandle = endHandle
-		if pi := tbl.Meta().GetPartitionInfo(); pi != nil {
-			reorgMeta.PartitionID = pi.Definitions[0].ID
-		}
-		log.Infof("[ddl] job %v get table startHandle:%v, endHandle:%v", job.ID, info.StartHandle, reorgMeta.EndHandle)
-		job.ReorgMeta = reorgMeta
-	}
-	info.EndHandle = job.ReorgMeta.EndHandle
-	info.partitionID = job.ReorgMeta.PartitionID
 	return info, errors.Trace(err)
 }
 
