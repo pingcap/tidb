@@ -451,7 +451,7 @@ func (is *PhysicalIndexScan) initSchema(ds *DataSource, isDoubleRead bool) {
 			if !exists {
 				colPosition = is.ctx.GetSessionVars().AllocColID()
 			}
-			is.schema.Append(&expression.Column{ID: col.ID, Position: colPosition})
+			is.schema.Append(&expression.Column{ID: model.ExtraHandleID, Position: colPosition})
 			setHandle = true
 			break
 		}
