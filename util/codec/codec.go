@@ -76,7 +76,8 @@ func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparab
 					return nil, errors.Trace(err)
 				}
 			}
-			v, err := t.ToPackedUint()
+			var v uint64
+			v, err = t.ToPackedUint()
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -91,7 +92,8 @@ func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparab
 				// If hash is true, we only consider the original value of this decimal and ignore it's precision.
 				dec := vals[i].GetMysqlDecimal()
 				precision, frac := dec.PrecisionAndFrac()
-				bin, err := dec.ToBin(precision, frac)
+				var bin []byte
+				bin, err = dec.ToBin(precision, frac)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -110,7 +112,8 @@ func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparab
 			b = encodeUnsignedInt(b, uint64(vals[i].GetMysqlSet().ToNumber()), comparable)
 		case types.KindMysqlBit, types.KindBinaryLiteral:
 			// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
-			val, err := vals[i].GetBinaryLiteral().ToInt(sc)
+			var val uint64
+			val, err = vals[i].GetBinaryLiteral().ToInt(sc)
 			terror.Log(errors.Trace(err))
 			b = encodeUnsignedInt(b, val, comparable)
 		case types.KindMysqlJSON:
@@ -220,7 +223,8 @@ func encodeChunkRow(sc *stmtctx.StatementContext, b []byte, row chunk.Row, allTy
 					return nil, errors.Trace(err)
 				}
 			}
-			v, err := t.ToPackedUint()
+			var v uint64
+			v, err = t.ToPackedUint()
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -235,7 +239,8 @@ func encodeChunkRow(sc *stmtctx.StatementContext, b []byte, row chunk.Row, allTy
 				// If hash is true, we only consider the original value of this decimal and ignore it's precision.
 				dec := row.GetMyDecimal(i)
 				precision, frac := dec.PrecisionAndFrac()
-				bin, err := dec.ToBin(precision, frac)
+				var bin []byte
+				bin, err = dec.ToBin(precision, frac)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -252,7 +257,8 @@ func encodeChunkRow(sc *stmtctx.StatementContext, b []byte, row chunk.Row, allTy
 			b = encodeUnsignedInt(b, uint64(row.GetSet(i).ToNumber()), comparable)
 		case mysql.TypeBit:
 			// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
-			val, err := types.BinaryLiteral(row.GetBytes(i)).ToInt(sc)
+			var val uint64
+			val, err = types.BinaryLiteral(row.GetBytes(i)).ToInt(sc)
 			terror.Log(errors.Trace(err))
 			b = encodeUnsignedInt(b, val, comparable)
 		case mysql.TypeJSON:
@@ -342,9 +348,11 @@ func DecodeOne(b []byte) (remain []byte, d types.Datum, err error) {
 		b, v, err = DecodeCompactBytes(b)
 		d.SetBytes(v)
 	case decimalFlag:
-		var dec *types.MyDecimal
-		b, dec, err = DecodeDecimal(b)
-		precision, frac := dec.PrecisionAndFrac()
+		var (
+			dec             *types.MyDecimal
+			precision, frac int
+		)
+		b, dec, precision, frac, err = DecodeDecimal(b)
 		d.SetMysqlDecimal(dec)
 		d.SetLength(precision)
 		d.SetFrac(frac)
@@ -565,7 +573,7 @@ func (decoder *Decoder) DecodeOne(b []byte, colIdx int, ft *types.FieldType) (re
 		chk.AppendBytes(colIdx, v)
 	case decimalFlag:
 		var dec *types.MyDecimal
-		b, dec, err = DecodeDecimal(b)
+		b, dec, _, _, err = DecodeDecimal(b)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

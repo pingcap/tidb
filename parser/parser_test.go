@@ -518,6 +518,7 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{`SHOW PLUGINS`, true},
 		{`SHOW PROFILES`, true},
 		{`SHOW MASTER STATUS`, true},
+		{`SHOW PRIVILEGES`, true},
 		// for show character set
 		{"show character set;", true},
 		{"show charset", true},
@@ -1639,6 +1640,8 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t CONVERT TO CHARSET utf8 COLLATE utf8_bin;", true},
 		{"ALTER TABLE t FORCE", true},
 		{"ALTER TABLE t DROP INDEX;", false},
+		{"ALTER TABLE t DROP COLUMN a CASCADE", true},
+
 		// For #6405
 		{"ALTER TABLE t RENAME KEY a TO b;", true},
 		{"ALTER TABLE t RENAME INDEX a TO b;", true},
