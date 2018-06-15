@@ -50,6 +50,7 @@ type Config struct {
 	SplitTable      bool   `toml:"split-table" json:"split-table"`
 	TokenLimit      uint   `toml:"token-limit" json:"token-limit"`
 	OOMAction       string `toml:"oom-action" json:"oom-action"`
+	MemQuotaQuery   int64  `toml:"mem-quota-query" json:"mem-quota-query"`
 	EnableStreaming bool   `toml:"enable-streaming" json:"enable-streaming"`
 	// Set sys variable lower-case-table-names, ref: https://dev.mysql.com/doc/refman/5.7/en/identifier-case-sensitivity.html.
 	// TODO: We actually only support mode 2, which keeps the original case, but the comparison is case-insensitive.
@@ -239,6 +240,7 @@ var defaultConf = Config{
 	Lease:               "45s",
 	TokenLimit:          1000,
 	OOMAction:           "log",
+	MemQuotaQuery:       32 << 30,
 	EnableStreaming:     false,
 	LowerCaseTableNames: 2,
 	Log: Log{

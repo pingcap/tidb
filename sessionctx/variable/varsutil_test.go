@@ -66,7 +66,7 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.DistSQLScanConcurrency, Equals, DefDistSQLScanConcurrency)
 	c.Assert(vars.MaxChunkSize, Equals, DefMaxChunkSize)
 	c.Assert(vars.DMLBatchSize, Equals, DefDMLBatchSize)
-	c.Assert(vars.MemQuotaQuery, Equals, int64(DefTiDBMemQuotaQuery))
+	c.Assert(vars.MemQuotaQuery, Equals, int64(config.GetGlobalConfig().MemQuotaQuery))
 	c.Assert(vars.MemQuotaHashJoin, Equals, int64(DefTiDBMemQuotaHashJoin))
 	c.Assert(vars.MemQuotaMergeJoin, Equals, int64(DefTiDBMemQuotaMergeJoin))
 	c.Assert(vars.MemQuotaSort, Equals, int64(DefTiDBMemQuotaSort))
