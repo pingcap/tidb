@@ -150,6 +150,16 @@ func (s *testSuite) TestShow(c *C) {
 	tk.MustQuery("SHOW PLUGINS").Check(testkit.Rows())
 	tk.MustQuery("SHOW PROFILES").Check(testkit.Rows())
 
+	// +-------------+--------------------+--------------+------------------+-------------------+
+	// | File        | Position           | Binlog_Do_DB | Binlog_Ignore_DB | Executed_Gtid_Set |
+	// +-------------+--------------------+--------------+------------------+-------------------+
+	// | tidb-binlog | 400668057259474944 |              |                  |                   |
+	// +-------------+--------------------+--------------+------------------+-------------------+
+	result = tk.MustQuery("SHOW MASTER STATUS")
+	c.Check(result.Rows(), HasLen, 1)
+	row = result.Rows()[0]
+	c.Check(row, HasLen, 5)
+
 	// Test show create database
 	testSQL = `create database show_test_DB`
 	tk.MustExec(testSQL)
