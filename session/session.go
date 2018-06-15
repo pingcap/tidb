@@ -101,9 +101,7 @@ type stmtRecord struct {
 }
 
 // StmtHistory holds all histories of statements in a txn.
-type StmtHistory struct {
-	history []*stmtRecord
-}
+type StmtHistory []*stmtRecord
 
 // Add appends a stmt to history list.
 func (h *StmtHistory) Add(stmtID uint32, st ast.Statement, stmtCtx *stmtctx.StatementContext, params ...interface{}) {
@@ -113,12 +111,12 @@ func (h *StmtHistory) Add(stmtID uint32, st ast.Statement, stmtCtx *stmtctx.Stat
 		stmtCtx: stmtCtx,
 		params:  append(([]interface{})(nil), params...),
 	}
-	h.history = append(h.history, s)
+	*h = append(*h, s)
 }
 
 // Count returns the count of the history.
 func (h *StmtHistory) Count() int {
-	return len(h.history)
+	return len(*h)
 }
 
 type session struct {
@@ -487,7 +485,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) error {
 	for {
 		s.PrepareTxnCtx(ctx)
 		s.sessionVars.RetryInfo.ResetOffset()
-		for i, sr := range nh.history {
+		for i, sr := range *nh {
 			st := sr.st
 			if st.IsReadOnly() {
 				continue
