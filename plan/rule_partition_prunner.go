@@ -21,13 +21,12 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 )
 
-// partitionProcessor rewrites the ast for table partition.
+// partitionPrunner rewrites the ast for table partition.
 //
 // create table t (id int) partition by range (id)
-//   (partition
-//      p1 values less than (10),
-//      p2 values less than (20),
-//      p3 values less than (30))
+//   (partition p1 values less than (10),
+//    partition p2 values less than (20),
+//    partition p3 values less than (30))
 //
 // select * from t is equal to
 // select * from (union all
@@ -35,29 +34,29 @@ import (
 //      select * from p2 where id < 20
 //      select * from p3 where id < 30)
 //
-// partitionProcessor is here because it's easier to prune partition after predicate push down.
-type partitionProcessor struct{}
+// partitionPrunner is here because it's easier to prune partition after predicate push down.
+type partitionPrunner struct{}
 
-func (s *partitionProcessor) optimize(lp LogicalPlan) (LogicalPlan, error) {
-	// NOTE: partitionProcessor will assume all filter conditions are pushed down to
+func (s *partitionPrunner) optimize(lp LogicalPlan) (LogicalPlan, error) {
+	// NOTE: partitionPrunner will assume all filter conditions are pushed down to
 	// DataSource, there will not be a Selection->DataSource case, so the rewrite just
 	// handle the DataSource node.
 	return s.rewriteDataSource(lp)
 }
 
-func (s *partitionProcessor) rewriteDataSource(lp LogicalPlan) (LogicalPlan, error) {
+func (s *partitionPrunner) rewriteDataSource(lp LogicalPlan) (LogicalPlan, error) {
 	// Assert there will not be sel -> sel in the ast.
 	switch lp.(type) {
 	case *DataSource:
-		return s.prunePartition(lp.(*DataSource))
+		return s.prune(lp.(*DataSource))
 	default:
 		children := lp.Children()
 		for i, child := range children {
-			child1, err := s.rewriteDataSource(child)
+			newChild, err := s.rewriteDataSource(child)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			children[i] = child1
+			children[i] = newChild
 		}
 	}
 
@@ -69,7 +68,7 @@ type partitionTable interface {
 	PartitionExprCache() *tables.PartitionExprCache
 }
 
-func (s *partitionProcessor) prunePartition(ds *DataSource) (LogicalPlan, error) {
+func (s *partitionPrunner) prune(ds *DataSource) (LogicalPlan, error) {
 	pi := ds.tableInfo.GetPartitionInfo()
 	if pi == nil {
 		return ds, nil
@@ -84,7 +83,7 @@ func (s *partitionProcessor) prunePartition(ds *DataSource) (LogicalPlan, error)
 	}
 
 	// Rewrite data source to union all partitions, during which we may prune some
-	// partitions according to selection condition.
+	// partitions according to the filter conditions pushed to the DataSource.
 	children := make([]LogicalPlan, 0, len(pi.Definitions))
 
 	col := partitionExprAccessColumn(partitionExprs[0])
@@ -124,7 +123,7 @@ func (s *partitionProcessor) prunePartition(ds *DataSource) (LogicalPlan, error)
 
 // canBePrune checks if partition expression will never meets the selection condition.
 // For example, partition by column a > 3, and select condition is a < 3, then canBePrune returns true.
-func (s *partitionProcessor) canBePrune(ctx sessionctx.Context, col *expression.Column, partitionCond expression.Expression, copConds []expression.Expression) (bool, error) {
+func (s *partitionPrunner) canBePrune(ctx sessionctx.Context, col *expression.Column, partitionCond expression.Expression, copConds []expression.Expression) (bool, error) {
 	conds := make([]expression.Expression, 0, 1+len(copConds))
 	conds = append(conds, partitionCond)
 	conds = append(conds, copConds...)

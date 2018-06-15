@@ -46,7 +46,7 @@ var optRuleList = []logicalOptRule{
 	&decorrelateSolver{},
 	&maxMinEliminator{},
 	&ppdSolver{},
-	&partitionProcessor{},
+	&partitionPrunner{},
 	&aggregationOptimizer{},
 	&pushDownTopNOptimizer{},
 }
