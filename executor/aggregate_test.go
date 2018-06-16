@@ -454,7 +454,7 @@ func (s *testSuite) TestOnlyFullGroupBy(c *C) {
 	tk.MustQuery("select -b from t group by b")
 	tk.MustQuery("select max(a+b) from t")
 	tk.MustQuery("select avg(a)+1 from t")
-	_, err = tk.Exec("select count(c), 5 from t")
+	tk.MustQuery("select count(c), 5 from t")
 	// test functinal depend on primary key
 	tk.MustQuery("select * from t group by a")
 	// test functional depend on unique not null columns
