@@ -57,9 +57,7 @@ func (s *testDDLSuite) TestCheckOwner(c *C) {
 	time.Sleep(testLease)
 	testCheckOwner(c, d1, true)
 
-	d1.SetLease(context.Background(), 1*time.Second)
-	d1.SetLease(context.Background(), 2*time.Second)
-	c.Assert(d1.GetLease(), Equals, 2*time.Second)
+	c.Assert(d1.GetLease(), Equals, testLease)
 }
 
 // TestRunWorker tests no job is handled when the value of RunWorker is false.
@@ -91,15 +89,9 @@ func (s *testDDLSuite) TestRunWorker(c *C) {
 	// The reason for doing it twice is to eliminate the operation in the start function.
 	<-d.ddlJobCh
 	<-d.ddlJobCh
-	// Make sure the DDL job doesn't be handled.
-	kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		job, err := d.getFirstDDLJob(t)
-		c.Assert(err, IsNil)
-		c.Assert(job, NotNil)
-		c.Assert(job.SchemaID, Equals, dbInfo.ID, Commentf("job %s", job))
-		return nil
-	})
+	// Make sure the DDL worker is nil.
+	worker := d.generalWorker()
+	c.Assert(worker, IsNil)
 	// Make sure the DDL job can be done and exit that goroutine.
 	RunWorker = true
 	d1 := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
@@ -162,7 +154,7 @@ func (s *testDDLSuite) TestCleanJobs(c *C) {
 			lastJobID := int64(len(failedJobIDs) - 1)
 			job, err1 := t.GetDDLJob(lastJobID)
 			c.Assert(err1, IsNil)
-			_, err1 = d.runDDLJob(t, job)
+			_, err1 = d.generalWorker().runDDLJob(d.ddlCtx, t, job)
 			c.Assert(err1, IsNil)
 			_, err1 = updateSchemaVersion(t, job)
 			c.Assert(err1, IsNil)
@@ -365,8 +357,8 @@ func (s *testDDLSuite) TestColumnError(c *C) {
 	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionDropColumn, []interface{}{model.NewCIStr("c5")}, ctx, d)
 }
 
-func testCheckOwner(c *C, d *ddl, isOwner bool) {
-	c.Assert(d.isOwner(), Equals, isOwner)
+func testCheckOwner(c *C, d *ddl, expectedVal bool) {
+	c.Assert(d.isOwner(), Equals, expectedVal)
 }
 
 func testCheckJobDone(c *C, d *ddl, job *model.Job, isAdd bool) {
