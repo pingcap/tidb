@@ -126,5 +126,7 @@ type ResultSet interface {
 	Columns() []*ColumnInfo
 	NewChunk() *chunk.Chunk
 	Next(context.Context, *chunk.Chunk) error
+	StoreFetchedRows(rows []chunk.Row)
+	GetFetchedRows() []chunk.Row
 	Close() error
 }

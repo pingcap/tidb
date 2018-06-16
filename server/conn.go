@@ -907,8 +907,8 @@ func (cc *clientConn) handleFieldList(sql string) (err error) {
 
 // writeResultset writes data into a resultset and uses rs.Next to get row data back.
 // If binary is true, the data would be encoded in BINARY format.
-// serverStatus, a flag bit represents server information
-// fetchSize, the desired number of rows to be fetched each time when client uses cursor
+// serverStatus, a flag bit represents server information.
+// fetchSize, the desired number of rows to be fetched each time when client uses cursor.
 // resultsets, it's used to support the MULTI_RESULTS capability in mysql protocol.
 func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary bool, serverStatus uint16, fetchSize int) (runErr error) {
 	defer func() {
@@ -932,7 +932,7 @@ func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary b
 	}()
 	var err error
 	if mysql.HasCursorExistsFlag(serverStatus) {
-		err = cc.writeChunksWithFetchSize(ctx, rs, binary, serverStatus, fetchSize)
+		err = cc.writeChunksWithFetchSize(ctx, rs, serverStatus, fetchSize)
 	} else {
 		err = cc.writeChunks(ctx, rs, binary, serverStatus)
 	}
@@ -988,9 +988,19 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 		if rowCount == 0 {
 			break
 		}
-		err = cc.writeRowsInChunk(chk, data, rs.Columns(), binary)
-		if err != nil {
-			return errors.Trace(err)
+		for i := 0; i < rowCount; i++ {
+			data = data[0:4]
+			if binary {
+				data, err = dumpBinaryRow(data, rs.Columns(), chk.GetRow(i))
+			} else {
+				data, err = dumpTextRow(data, rs.Columns(), chk.GetRow(i))
+			}
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if err = cc.writePacket(data); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	return errors.Trace(cc.writeEOF(serverStatus))
@@ -998,49 +1008,49 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 
 // writeChunksWithFetchSize writes data from a Chunk, which filled data by a ResultSet, into a connection.
 // binary specifies the way to dump data. It throws any error while dumping data.
-// serverStatus, a flag bit represents server information
-// fetchSize, the desired number of rows to be fetched each time when client uses cursor
-func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet, binary bool, serverStatus uint16, fetchSize int) error {
-	data := make([]byte, 4, 1024)
-	chk := rs.NewChunk()
-	fetchRows := 0
-	for {
+// serverStatus, a flag bit represents server information.
+// fetchSize, the desired number of rows to be fetched each time when client uses cursor.
+func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet, serverStatus uint16, fetchSize int) error {
+	fetchedRows := rs.GetFetchedRows()
+	var curRows []chunk.Row
+
+	// if fetchedRows is empty, getting data from recordSet.
+	if len(fetchedRows) == 0 {
+		chk := rs.NewChunk()
 		// Here server.tidbResultSet implements Next method.
 		err := rs.Next(ctx, chk)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		rowCount := chk.NumRows()
-		fetchRows += rowCount
 		if rowCount == 0 {
 			// tell the client COM_STMT_FETCH has finished by setting proper serverStatus,
-			// and close ResultSet
+			// and close ResultSet.
 			serverStatus |= mysql.ServerStatusLastRowSend
 			terror.Call(rs.Close)
-			break
+			return errors.Trace(cc.writeEOF(serverStatus))
 		}
-		err = cc.writeRowsInChunk(chk, data, rs.Columns(), binary)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		// checking whether this batch has fetched enough rows.
-		if fetchRows >= fetchSize {
-			break
+		// filling fetchedRows with chunk
+		for i := 0; i < rowCount; i++ {
+			fetchedRows = append(fetchedRows, chk.GetRow(i))
 		}
 	}
-	return errors.Trace(cc.writeEOF(serverStatus))
-}
 
-// writeRowsInChunk writes rows contained in the chunk into a connection
-func (cc *clientConn) writeRowsInChunk(chk *chunk.Chunk, data []byte, columns []*ColumnInfo, binary bool) error {
+	// construct the rows sent to the client according to fetchSize.
+	if fetchSize < len(fetchedRows) {
+		curRows = fetchedRows[:fetchSize]
+		fetchedRows = fetchedRows[fetchSize:]
+	} else {
+		curRows = fetchedRows[:]
+		fetchedRows = fetchedRows[:0]
+	}
+	rs.StoreFetchedRows(fetchedRows)
+
+	data := make([]byte, 4, 1024)
 	var err error
-	for i := 0; i < chk.NumRows(); i++ {
+	for _, row := range curRows {
 		data = data[0:4]
-		if binary {
-			data, err = dumpBinaryRow(data, columns, chk.GetRow(i))
-		} else {
-			data, err = dumpTextRow(data, columns, chk.GetRow(i))
-		}
+		data, err = dumpBinaryRow(data, rs.Columns(), row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1048,7 +1058,7 @@ func (cc *clientConn) writeRowsInChunk(chk *chunk.Chunk, data []byte, columns []
 			return errors.Trace(err)
 		}
 	}
-	return nil
+	return errors.Trace(cc.writeEOF(serverStatus))
 }
 
 func (cc *clientConn) writeMultiResultset(ctx context.Context, rss []ResultSet, binary bool) error {

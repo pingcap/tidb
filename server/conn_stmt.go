@@ -125,7 +125,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 	// 0x01 CURSOR_TYPE_READ_ONLY
 	// 0x02 CURSOR_TYPE_FOR_UPDATE
 	// 0x04 CURSOR_TYPE_SCROLLABLE
-	// Now we only support forward-only, read-only cursor
+	// Now we only support forward-only, read-only cursor.
 	var useCursor bool
 	switch flag {
 	case 0:
@@ -184,16 +184,16 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		return errors.Trace(cc.writeOK())
 	}
 
-	// if the client wants to use cursor,
+	// if the client wants to use cursor
 	// we should hold the ResultSet in PreparedStatement for next stmt_fetch, and only send back ColumnInfo.
-	// Tell the client cursor exists in server by setting proper serverStatus
+	// Tell the client cursor exists in server by setting proper serverStatus.
 	if useCursor {
 		stmt.StoreResultSet(rs)
 		err = cc.writeColumnInfo(rs.Columns(), mysql.ServerStatusCursorExists)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		// explicitly flush columnInfo to client
+		// explicitly flush columnInfo to client.
 		return errors.Trace(cc.flush())
 	}
 	return errors.Trace(cc.writeResultset(ctx, rs, true, 0, 0))

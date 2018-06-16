@@ -322,6 +322,7 @@ func (tc *TiDBContext) ShowProcess() util.ProcessInfo {
 type tidbResultSet struct {
 	recordSet ast.RecordSet
 	columns   []*ColumnInfo
+	rows      []chunk.Row
 	closed    bool
 }
 
@@ -331,6 +332,17 @@ func (trs *tidbResultSet) NewChunk() *chunk.Chunk {
 
 func (trs *tidbResultSet) Next(ctx context.Context, chk *chunk.Chunk) error {
 	return trs.recordSet.Next(ctx, chk)
+}
+
+func (trs *tidbResultSet) StoreFetchedRows(rows []chunk.Row) {
+	trs.rows = rows
+}
+
+func (trs *tidbResultSet) GetFetchedRows() []chunk.Row {
+	if trs.rows == nil {
+		trs.rows = make([]chunk.Row, 0, 1024)
+	}
+	return trs.rows
 }
 
 func (trs *tidbResultSet) Close() error {
