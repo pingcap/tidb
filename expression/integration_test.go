@@ -2723,8 +2723,13 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 	result = tk.MustQuery(`select least(cast("2017-01-01" as datetime), "123", "234", cast("2018-01-01" as date)), least(cast("2017-01-01" as date), "123", null)`)
 	result.Check(testkit.Rows("123 <nil>"))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|invalid time format: '123'", "Warning|1292|invalid time format: '234'", "Warning|1292|invalid time format: '123'"))
-
 	tk.MustQuery(`select 1 < 17666000000000000000, 1 > 17666000000000000000, 1 = 17666000000000000000`).Check(testkit.Rows("1 0 0"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a timestamp)")
+	tk.MustExec("insert into t value('1991-05-06 04:59:28')")
+	tk.MustExec("delete from t where a = '1991-05-06 04:59:28'")
+	tk.MustQuery("select * from t").Check(testkit.Rows())
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a bigint unsigned)")
