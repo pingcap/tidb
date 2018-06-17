@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
@@ -852,8 +853,16 @@ func (b *executorBuilder) buildStreamAgg(v *plan.PhysicalStreamAgg) Executor {
 		AggFuncs:     make([]aggregation.Aggregation, 0, len(v.AggFuncs)),
 		GroupByItems: v.GroupByItems,
 	}
-	for _, aggDesc := range v.AggFuncs {
+	newAggFuncs := make([]aggfuncs.AggFunc, 0, len(v.AggFuncs))
+	for i, aggDesc := range v.AggFuncs {
 		e.AggFuncs = append(e.AggFuncs, aggDesc.GetAggFunc())
+		newAggFunc := aggfuncs.Build(aggDesc, []int{i})
+		if newAggFunc != nil {
+			newAggFuncs = append(newAggFuncs, newAggFunc)
+		}
+	}
+	if len(newAggFuncs) == len(v.AggFuncs) {
+		e.newAggFuncs = newAggFuncs
 	}
 	metrics.ExecutorCounter.WithLabelValues("StreamAggExec").Inc()
 	return e
