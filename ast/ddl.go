@@ -666,8 +666,11 @@ const (
 	RowFormatCompact
 )
 
+// OnDuplicateCreateTableSelectType is the option that handle unique key values in 'CREATE TABLE ... SELECT'.
+// See https://dev.mysql.com/doc/refman/5.7/en/create-table-select.html
 type OnDuplicateCreateTableSelectType int
 
+// OnDuplicateCreateTableSelect types
 const (
 	OnDuplicateCreateTableSelectError OnDuplicateCreateTableSelectType = iota
 	OnDuplicateCreateTableSelectIgnore
