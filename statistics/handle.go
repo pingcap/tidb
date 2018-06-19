@@ -63,6 +63,7 @@ func (h *Handle) Clear() {
 	h.statsCache.Store(statsCache{})
 	h.LastVersion = 0
 	h.PrevLastVersion = 0
+	h.feedback = h.feedback[:0]
 	for len(h.ddlEventCh) > 0 {
 		<-h.ddlEventCh
 	}

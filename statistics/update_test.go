@@ -567,3 +567,57 @@ func (s *testStatsUpdateSuite) TestOutOfOrderUpdate(c *C) {
 	c.Assert(h.DumpStatsDeltaToKV(), IsNil)
 	testKit.MustQuery("select count from mysql.stats_meta").Check(testkit.Rows("0"))
 }
+
+func (s *testStatsUpdateSuite) TestUpdateStatsByLocalFeedback(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (a bigint(64), b bigint(64), primary key(a), index idx(b))")
+	testKit.MustExec("insert into t values (1,2),(2,2),(4,5)")
+	testKit.MustExec("analyze table t")
+	testKit.MustExec("insert into t values (3,4)")
+	h := s.do.StatsHandle()
+
+	oriProbability := statistics.FeedbackProbability
+	oriNumber := statistics.MaxNumberOfRanges
+	defer func() {
+		statistics.FeedbackProbability = oriProbability
+		statistics.MaxNumberOfRanges = oriNumber
+	}()
+	statistics.FeedbackProbability = 1
+
+	is := s.do.InfoSchema()
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+
+	tblInfo := table.Meta()
+	tbl := h.GetTableStats(tblInfo)
+	test := []string{
+		"column:1 ndv:2 totColSize:0\n" +
+			"num: 2\tlower_bound: \x03\x80\x00\x00\x00\x00\x00\x00\x02\tupper_bound: \x03\x80\x00\x00\x00\x00\x00\x00\x02\trepeats: 2\n" +
+			"num: 3\tlower_bound: \x03\x80\x00\x00\x00\x00\x00\x00\x05\tupper_bound: \x03\x80\x00\x00\x00\x00\x00\x00\x05\trepeats: 1",
+
+		"index:1 ndv:2\n" +
+			"num: 2\tlower_bound: 2\tupper_bound: 2\trepeats: 2\n" +
+			"num: 3\tlower_bound: 5\tupper_bound: 5\trepeats: 1",
+
+		"column:1 ndv:2 totColSize:0\n" +
+			"num: 2\tlower_bound: \x00\tupper_bound: \x03\x80\x00\x00\x00\x00\x00\x00\x02\trepeats: 0\n" +
+			"num: 4\tlower_bound: \x03\x80\x00\x00\x00\x00\x00\x00\x03\tupper_bound: \xfb\trepeats: 0",
+
+		"index:1 ndv:2\n" +
+			"num: 2\tlower_bound: NULL\tupper_bound: 2\trepeats: 0\n" +
+			"num: 4\tlower_bound: 3\tupper_bound: \trepeats: 0",
+	}
+	c.Assert(tbl.Indices[tblInfo.Columns[0].ID].ToString(0), Equals, test[0])
+	c.Assert(tbl.Indices[tblInfo.Indices[0].ID].ToString(1), Equals, test[1])
+
+	testKit.MustQuery("select * from t use index(idx) where b <= 5")
+	testKit.MustQuery("select * from t use index(idx) where a > 1")
+	c.Assert(h.UpdateStatsByLocalFeedback(s.do.InfoSchema()), IsNil)
+	h.Update(is)
+	tbl = h.GetTableStats(tblInfo)
+
+	c.Assert(tbl.Indices[tblInfo.Columns[0].ID].ToString(0), Equals, test[2])
+	c.Assert(tbl.Indices[tblInfo.Indices[0].ID].ToString(1), Equals, test[3])
+}

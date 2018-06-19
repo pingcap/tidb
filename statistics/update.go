@@ -274,6 +274,50 @@ func (h *Handle) dumpFeedbackToKV(fb *QueryFeedback) error {
 	return errors.Trace(err)
 }
 
+func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) error {
+	h.listHead.Lock()
+	for collector := h.listHead.next; collector != nil; collector = collector.next {
+		collector.tryToRemoveFromList()
+		h.merge(collector)
+	}
+	h.listHead.Unlock()
+	for _, fb := range h.feedback {
+		var (
+			cms     *CMSketch
+			hist    *Histogram
+			isIndex int
+		)
+		if fb.hist.tp.Tp == mysql.TypeBlob {
+			isIndex = 1
+		}
+		table, ok := is.TableByID(fb.tableID)
+		if !ok {
+			continue
+		}
+		tbl := h.GetTableStats(table.Meta())
+		if isIndex == 1 {
+			idx, ok := tbl.Indices[fb.hist.ID]
+			if !ok {
+				continue
+			}
+			hist = &idx.Histogram
+			cms = idx.CMSketch.copy()
+		} else {
+			col, ok := tbl.Columns[fb.hist.ID]
+			if !ok {
+				continue
+			}
+			hist = &col.Histogram
+		}
+		hist = UpdateHistogram(hist, fb)
+		err := SaveStatsToStorage(h.ctx, tbl.TableID, -1, isIndex, hist, cms)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
 // HandleUpdateStats update the stats using feedback.
 func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 	sql := "select table_id, hist_id, is_index, feedback from mysql.stats_feedback order by table_id, hist_id, is_index"
