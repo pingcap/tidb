@@ -66,7 +66,6 @@ type baseExecutor struct {
 	ctx           sessionctx.Context
 	id            string
 	schema        *expression.Schema
-	maxChunkSize  int
 	children      []Executor
 	retFieldTypes []*types.FieldType
 }
@@ -103,7 +102,7 @@ func (e *baseExecutor) Schema() *expression.Schema {
 
 // newChunk creates a new chunk to buffer current executor's result.
 func (e *baseExecutor) newChunk() *chunk.Chunk {
-	return chunk.NewChunkWithCapacity(e.retTypes(), e.maxChunkSize)
+	return chunk.NewChunkWithCapacity(e.retTypes(), e.chunkRowsPerFetch())
 }
 
 // retTypes returns all output column types.
@@ -116,13 +115,17 @@ func (e *baseExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
+// chunkRowsPerFetch returns rows per fetch in a chunk.
+func (e *baseExecutor) chunkRowsPerFetch() int {
+	return e.ctx.GetSessionVars().ChunkRowsPerFetch()
+}
+
 func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id string, children ...Executor) baseExecutor {
 	e := baseExecutor{
-		children:     children,
-		ctx:          ctx,
-		id:           id,
-		schema:       schema,
-		maxChunkSize: ctx.GetSessionVars().MaxChunkSize,
+		children: children,
+		ctx:      ctx,
+		id:       id,
+		schema:   schema,
 	}
 	if schema != nil {
 		cols := schema.Columns
@@ -169,7 +172,7 @@ func (e *CancelDDLJobsExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if e.cursor >= len(e.jobIDs) {
 		return nil
 	}
-	numCurBatch := mathutil.Min(e.maxChunkSize, len(e.jobIDs)-e.cursor)
+	numCurBatch := mathutil.Min(e.chunkRowsPerFetch(), len(e.jobIDs)-e.cursor)
 	for i := e.cursor; i < e.cursor+numCurBatch; i++ {
 		chk.AppendString(0, fmt.Sprintf("%d", e.jobIDs[i]))
 		if e.errs[i] != nil {
@@ -261,7 +264,7 @@ func (e *ShowDDLJobQueriesExec) Next(ctx context.Context, chk *chunk.Chunk) erro
 	if len(e.jobIDs) >= len(e.jobs) {
 		return nil
 	}
-	numCurBatch := mathutil.Min(e.maxChunkSize, len(e.jobs)-e.cursor)
+	numCurBatch := mathutil.Min(e.chunkRowsPerFetch(), len(e.jobs)-e.cursor)
 	for _, id := range e.jobIDs {
 		for i := e.cursor; i < e.cursor+numCurBatch; i++ {
 			if id == e.jobs[i].ID {
@@ -299,7 +302,7 @@ func (e *ShowDDLJobsExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if e.cursor >= len(e.jobs) {
 		return nil
 	}
-	numCurBatch := mathutil.Min(e.maxChunkSize, len(e.jobs)-e.cursor)
+	numCurBatch := mathutil.Min(e.chunkRowsPerFetch(), len(e.jobs)-e.cursor)
 	for i := e.cursor; i < e.cursor+numCurBatch; i++ {
 		chk.AppendInt64(0, e.jobs[i].ID)
 		chk.AppendString(1, getSchemaName(e.is, e.jobs[i].SchemaID))
@@ -696,7 +699,7 @@ func (e *SelectionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 			if !e.selected[e.inputRow.Idx()] {
 				continue
 			}
-			if chk.NumRows() == e.maxChunkSize {
+			if chk.NumRows() == e.chunkRowsPerFetch() {
 				return nil
 			}
 			chk.AppendRow(e.inputRow)
@@ -770,7 +773,7 @@ func (e *TableScanExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 
 	mutableRow := chunk.MutRowFromTypes(e.retTypes())
-	for chk.NumRows() < e.maxChunkSize {
+	for chk.NumRows() < e.chunkRowsPerFetch() {
 		row, err := e.getRow(handle)
 		if err != nil {
 			return errors.Trace(err)
@@ -785,7 +788,7 @@ func (e *TableScanExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 func (e *TableScanExec) nextChunk4InfoSchema(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.virtualTableChunkList == nil {
-		e.virtualTableChunkList = chunk.NewList(e.retTypes(), e.maxChunkSize)
+		e.virtualTableChunkList = chunk.NewList(e.retTypes(), e.chunkRowsPerFetch())
 		columns := make([]*table.Column, e.schema.Len())
 		for i, colInfo := range e.columns {
 			columns[i] = table.ToColumn(colInfo)

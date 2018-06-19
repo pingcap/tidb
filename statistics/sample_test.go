@@ -88,7 +88,7 @@ func (s *testSampleSuite) TestMergeSampleCollector(c *C) {
 		CMSketchDepth:   8,
 	}
 	s.rs.Close()
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := stmtctx.NewStatementContext(time.Local)
 	collectors, pkBuilder, err := builder.CollectColumnStats()
 	c.Assert(err, IsNil)
 	c.Assert(pkBuilder, IsNil)

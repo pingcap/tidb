@@ -581,7 +581,7 @@ func (w *Worker) flushToFile() {
 		return
 	}
 	defer terror.Call(outputFile.Close)
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := stmtctx.NewStatementContext(time.Local)
 	for _, row := range w.buf {
 		prevLen = len(outputByte)
 		outputByte = append(outputByte, w.head...)

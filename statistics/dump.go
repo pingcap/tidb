@@ -75,7 +75,7 @@ func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo) (*JS
 	}
 
 	for _, col := range tbl.Columns {
-		sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+		sc := stmtctx.NewStatementContext(time.UTC)
 		hist, err := col.ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -189,7 +189,7 @@ func (h *Handle) LoadStatsFromJSONToTable(tableInfo *model.TableInfo, jsonTbl *J
 			}
 			hist := HistogramFromProto(jsonCol.Histogram)
 			count := int64(hist.totalRowCount())
-			sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+			sc := stmtctx.NewStatementContext(time.UTC)
 			hist, err := hist.ConvertTo(sc, &colInfo.FieldType)
 			if err != nil {
 				return nil, errors.Trace(err)

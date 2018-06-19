@@ -228,7 +228,7 @@ func (e *HashJoinExec) fetchOuterChunks(ctx context.Context) {
 // fetchInnerRows fetches all rows from inner executor,
 // and append them to e.innerResult.
 func (e *HashJoinExec) fetchInnerRows(ctx context.Context) (err error) {
-	e.innerResult = chunk.NewList(e.innerExec.retTypes(), e.maxChunkSize)
+	e.innerResult = chunk.NewList(e.innerExec.retTypes(), e.chunkRowsPerFetch())
 	e.innerResult.GetMemTracker().AttachTo(e.memTracker)
 	e.innerResult.GetMemTracker().SetLabel("innerResult")
 	for {
@@ -384,7 +384,9 @@ func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID uint, outerRow chunk.R
 			joinResult.err = errors.Trace(err)
 			return false, joinResult
 		}
-		if joinResult.chk.NumRows() == e.maxChunkSize {
+		nr := joinResult.chk.NumRows()
+		fr := e.chunkRowsPerFetch()
+		if nr == fr {
 			ok := true
 			e.joinResultCh <- joinResult
 			ok, joinResult = e.getNewJoinResult(workerID)
@@ -430,7 +432,7 @@ func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, joinResu
 				return false, joinResult
 			}
 		}
-		if joinResult.chk.NumRows() == e.maxChunkSize {
+		if joinResult.chk.NumRows() == e.chunkRowsPerFetch() {
 			e.joinResultCh <- joinResult
 			ok, joinResult = e.getNewJoinResult(workerID)
 			if !ok {
@@ -553,7 +555,7 @@ func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
 	e.innerRows = e.innerRows[:0]
 	e.outerChunk = e.outerExec.newChunk()
 	e.innerChunk = e.innerExec.newChunk()
-	e.innerList = chunk.NewList(e.innerExec.retTypes(), e.maxChunkSize)
+	e.innerList = chunk.NewList(e.innerExec.retTypes(), e.chunkRowsPerFetch())
 
 	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaNestedLoopApply)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
@@ -588,7 +590,7 @@ func (e *NestedLoopApplyExec) fetchSelectedOuterRow(ctx context.Context, chk *ch
 			return &outerRow, nil
 		} else if e.outer {
 			err := e.resultGenerator.emit(outerRow, nil, chk)
-			if err != nil || chk.NumRows() == e.maxChunkSize {
+			if err != nil || chk.NumRows() == e.chunkRowsPerFetch() {
 				return nil, errors.Trace(err)
 			}
 		}
@@ -646,7 +648,7 @@ func (e *NestedLoopApplyExec) Next(ctx context.Context, chk *chunk.Chunk) (err e
 		}
 
 		err = e.resultGenerator.emit(*e.outerRow, e.innerIter, chk)
-		if err != nil || chk.NumRows() == e.maxChunkSize {
+		if err != nil || chk.NumRows() == e.chunkRowsPerFetch() {
 			return errors.Trace(err)
 		}
 	}

@@ -110,7 +110,7 @@ func (e *HashAggExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		}
 		e.mutableRow.SetDatums(e.rowBuffer...)
 		chk.AppendRow(e.mutableRow.ToRow())
-		if chk.NumRows() == e.maxChunkSize {
+		if chk.NumRows() == e.chunkRowsPerFetch() {
 			return nil
 		}
 	}
@@ -243,7 +243,7 @@ func (e *StreamAggExec) Close() error {
 func (e *StreamAggExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 
-	for !e.executed && chk.NumRows() < e.maxChunkSize {
+	for !e.executed && chk.NumRows() < e.chunkRowsPerFetch() {
 		err := e.consumeOneGroup(ctx, chk)
 		if err != nil {
 			e.executed = true

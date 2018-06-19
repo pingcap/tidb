@@ -230,7 +230,7 @@ func (e *MergeJoinExec) prepare(ctx context.Context, chk *chunk.Chunk) error {
 	// init outer table.
 	e.outerTable.chk = e.childrenResults[e.outerIdx]
 	e.outerTable.iter = chunk.NewIterator4Chunk(e.outerTable.chk)
-	e.outerTable.selected = make([]bool, 0, e.maxChunkSize)
+	e.outerTable.selected = make([]bool, 0, e.chunkRowsPerFetch())
 
 	err = e.fetchNextOuterRows(ctx)
 	if err != nil {
@@ -251,7 +251,7 @@ func (e *MergeJoinExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		}
 	}
 
-	for chk.NumRows() < e.maxChunkSize {
+	for chk.NumRows() < e.chunkRowsPerFetch() {
 		hasMore, err := e.joinToChunk(ctx, chk)
 		if err != nil || !hasMore {
 			return errors.Trace(err)
@@ -289,7 +289,7 @@ func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasM
 
 			e.outerTable.row = e.outerTable.iter.Next()
 
-			if chk.NumRows() == e.maxChunkSize {
+			if chk.NumRows() == e.chunkRowsPerFetch() {
 				return true, nil
 			}
 			continue
@@ -305,7 +305,7 @@ func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasM
 			e.innerIter4Row.Begin()
 		}
 
-		if chk.NumRows() >= e.maxChunkSize {
+		if chk.NumRows() >= e.chunkRowsPerFetch() {
 			return true, errors.Trace(err)
 		}
 	}

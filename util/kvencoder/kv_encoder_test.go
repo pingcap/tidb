@@ -494,7 +494,7 @@ func (s *testKvEncoderSuite) TestSimpleKeyEncode(c *C) {
 	handle := int64(1)
 	expectRecordKey := tablecodec.EncodeRecordKey(tablePrefix, handle)
 
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := stmtctx.NewStatementContext(time.Local)
 	indexPrefix := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
 	expectIdxKey := make([]byte, 0)
 	expectIdxKey = append(expectIdxKey, []byte(indexPrefix)...)

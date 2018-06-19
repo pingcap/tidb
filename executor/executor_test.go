@@ -2619,7 +2619,7 @@ func (s *testSuite) TestCheckIndex(c *C) {
 
 	mockCtx := mock.NewContext()
 	idx := tb.Indices()[0]
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := stmtctx.NewStatementContext(time.Local)
 
 	_, err = se.Execute(context.Background(), "admin check index t idx_inexistent")
 	c.Assert(strings.Contains(err.Error(), "not exist"), IsTrue)
@@ -2674,7 +2674,7 @@ func (s *testSuite) TestCheckIndex(c *C) {
 func setColValue(c *C, txn kv.Transaction, key kv.Key, v types.Datum) {
 	row := []types.Datum{v, {}}
 	colIDs := []int64{2, 3}
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := stmtctx.NewStatementContext(time.Local)
 	value, err := tablecodec.EncodeRow(sc, row, colIDs, nil, nil)
 	c.Assert(err, IsNil)
 	err = txn.Set(key, value)

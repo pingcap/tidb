@@ -77,7 +77,7 @@ func encodeRow(b []byte, row *comparableRow) ([]byte, error) {
 		head = make([]byte, 8)
 		body []byte
 	)
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := stmtctx.NewStatementContext(time.Local)
 	body, err = codec.EncodeKey(sc, body, row.key...)
 	if err != nil {
 		return b, errors.Trace(err)

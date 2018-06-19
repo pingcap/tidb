@@ -76,7 +76,7 @@ func (ts *HTTPHandlerTestSuite) TestRegionIndexRange(c *C) {
 		}
 		expectIndexValues = append(expectIndexValues, str)
 	}
-	encodedValue, err := codec.EncodeKey(&stmtctx.StatementContext{TimeZone: time.Local}, nil, indexValues...)
+	encodedValue, err := codec.EncodeKey(stmtctx.NewStatementContext(time.Local), nil, indexValues...)
 	c.Assert(err, IsNil)
 
 	startKey := tablecodec.EncodeIndexSeekKey(sTableID, sIndex, encodedValue)
@@ -407,7 +407,7 @@ func (ts *HTTPHandlerTestSuite) TestDecodeColumnValue(c *C) {
 	for _, col := range cols {
 		colIDs = append(colIDs, col.id)
 	}
-	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	sc := stmtctx.NewStatementContext(time.UTC)
 	bs, err := tablecodec.EncodeRow(sc, row, colIDs, nil, nil)
 	c.Assert(err, IsNil)
 	c.Assert(bs, NotNil)

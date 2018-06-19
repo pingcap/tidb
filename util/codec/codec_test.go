@@ -79,7 +79,7 @@ func (s *testCodecSuite) TestCodecKey(c *C) {
 			types.MakeDatums(uint64(1), uint64(1)),
 		},
 	}
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := stmtctx.NewStatementContext(time.Local)
 	for i, t := range table {
 		comment := Commentf("%d %v", i, t)
 		b, err := EncodeKey(sc, nil, t.Input...)
@@ -194,7 +194,7 @@ func (s *testCodecSuite) TestCodecKeyCompare(c *C) {
 			-1,
 		},
 	}
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := stmtctx.NewStatementContext(time.Local)
 	for _, t := range table {
 		b1, err := EncodeKey(sc, nil, t.Left...)
 		c.Assert(err, IsNil)
@@ -525,7 +525,7 @@ func (s *testCodecSuite) TestTime(c *C) {
 		"2011-01-01 00:00:00",
 		"0001-01-01 00:00:00",
 	}
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := stmtctx.NewStatementContext(time.Local)
 	for _, t := range tbl {
 		m := types.NewDatum(parseTime(c, t))
 
@@ -570,7 +570,7 @@ func (s *testCodecSuite) TestDuration(c *C) {
 		"00:00:00",
 		"1 11:11:11",
 	}
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := stmtctx.NewStatementContext(time.Local)
 	for _, t := range tbl {
 		m := parseDuration(c, t)
 
@@ -624,7 +624,7 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 		"-12.340",
 		"-0.1234",
 	}
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := stmtctx.NewStatementContext(time.Local)
 	for _, t := range tbl {
 		dec := new(types.MyDecimal)
 		err := dec.FromString([]byte(t))
@@ -839,7 +839,7 @@ func (s *testCodecSuite) TestCut(c *C) {
 			types.MakeDatums(types.NewDecFromInt(0), types.NewDecFromFloatForTest(-1.3)),
 		},
 	}
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := stmtctx.NewStatementContext(time.Local)
 	for i, t := range table {
 		comment := Commentf("%d %v", i, t)
 		b, err := EncodeKey(sc, nil, t.Input...)
@@ -873,7 +873,7 @@ func (s *testCodecSuite) TestCut(c *C) {
 }
 
 func (s *testCodecSuite) TestSetRawValues(c *C) {
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := stmtctx.NewStatementContext(time.Local)
 	datums := types.MakeDatums(1, "abc", 1.1, []byte("def"))
 	rowData, err := EncodeValue(sc, nil, datums...)
 	c.Assert(err, IsNil)
@@ -923,7 +923,7 @@ func (s *testCodecSuite) TestDecodeOneToChunk(c *C) {
 		{json.CreateBinary("abc"), types.NewFieldType(mysql.TypeJSON)},
 		{int64(1), types.NewFieldType(mysql.TypeYear)},
 	}
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := stmtctx.NewStatementContext(time.Local)
 
 	datums := make([]types.Datum, 0, len(table))
 	tps := make([]*types.FieldType, 0, len(table))

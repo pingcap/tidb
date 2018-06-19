@@ -66,7 +66,7 @@ func (s *testSelectivitySuite) generateIntDatum(dimension, num int) ([]types.Dat
 			ret[i] = types.NewIntDatum(int64(i))
 		}
 	} else {
-		sc := &stmtctx.StatementContext{TimeZone: time.Local}
+		sc := stmtctx.NewStatementContext(time.Local)
 		// In this way, we can guarantee the datum is in order.
 		for i := 0; i < length; i++ {
 			data := make([]types.Datum, dimension)

@@ -158,7 +158,7 @@ func (e *IndexLookUpJoin) newOuterWorker(resultCh, innerCh chan *lookUpJoinTask)
 		outerCtx:         e.outerCtx,
 		ctx:              e.ctx,
 		executor:         e.children[0],
-		executorChk:      chunk.NewChunkWithCapacity(e.outerCtx.rowTypes, e.maxChunkSize),
+		executorChk:      chunk.NewChunkWithCapacity(e.outerCtx.rowTypes, e.chunkRowsPerFetch()),
 		resultCh:         resultCh,
 		innerCh:          innerCh,
 		batchSize:        32,
@@ -179,7 +179,7 @@ func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWork
 		outerCtx:      e.outerCtx,
 		taskCh:        taskCh,
 		ctx:           e.ctx,
-		executorChk:   chunk.NewChunkWithCapacity(e.innerCtx.rowTypes, e.maxChunkSize),
+		executorChk:   chunk.NewChunkWithCapacity(e.innerCtx.rowTypes, e.chunkRowsPerFetch()),
 		indexRanges:   copiedRanges,
 		keyOff2IdxOff: e.keyOff2IdxOff,
 	}
@@ -216,7 +216,9 @@ func (e *IndexLookUpJoin) Next(ctx context.Context, chk *chunk.Chunk) error {
 		if e.innerIter.Current() == e.innerIter.End() {
 			task.cursor++
 		}
-		if chk.NumRows() == e.maxChunkSize {
+		nr := chk.NumRows()
+		fr := e.chunkRowsPerFetch()
+		if nr == fr {
 			return nil
 		}
 	}

@@ -50,7 +50,7 @@ func buildCMSketchAndMap(d, w int32, seed int64, total, imax uint64, s float64) 
 }
 
 func averageAbsoluteError(cms *CMSketch, mp map[int64]uint32) (uint64, error) {
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := stmtctx.NewStatementContext(time.Local)
 	var total uint64
 	for num, count := range mp {
 		estimate, err := cms.queryValue(sc, types.NewIntDatum(num))

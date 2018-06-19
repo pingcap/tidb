@@ -35,7 +35,7 @@ func (s *testEvaluatorSuite) TestScalarFunction(c *C) {
 		ColName:  model.NewCIStr("han"),
 		RetType:  types.NewFieldType(mysql.TypeDouble),
 	}
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := stmtctx.NewStatementContext(time.Local)
 	sf := newFunction(ast.LT, a, One)
 	res, err := sf.MarshalJSON()
 	c.Assert(err, IsNil)

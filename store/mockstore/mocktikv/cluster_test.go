@@ -55,7 +55,7 @@ func (s *testClusterSuite) TestClusterSplit(c *C) {
 	idxID := int64(2)
 	colID := int64(3)
 	handle := int64(1)
-	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	sc := stmtctx.NewStatementContext(time.UTC)
 	for i := 0; i < 1000; i++ {
 		rowKey := tablecodec.EncodeRowKeyWithHandle(tblID, handle)
 		colValue := types.NewStringDatum(strconv.Itoa(int(handle)))

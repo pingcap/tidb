@@ -1085,6 +1085,8 @@ func CreateSession4Test(store kv.Storage) (Session, error) {
 	if err == nil {
 		// initialize session variables for test.
 		s.GetSessionVars().MaxChunkSize = 2
+		s.GetSessionVars().StmtCtx.FetchChunkSize = 2
+		s.GetSessionVars().StmtCtx.DefaultFetchChunkSize = 2
 	}
 	return s, errors.Trace(err)
 }

@@ -56,12 +56,12 @@ func newJoinResultGenerator(ctx sessionctx.Context, joinType plan.JoinType,
 		ctx:          ctx,
 		conditions:   filter,
 		outerIsRight: outerIsRight,
-		maxChunkSize: ctx.GetSessionVars().MaxChunkSize,
+		maxChunkSize: ctx.GetSessionVars().ChunkRowsPerFetch(),
 	}
 	colTypes := make([]*types.FieldType, 0, len(lhsColTypes)+len(rhsColTypes))
 	colTypes = append(colTypes, lhsColTypes...)
 	colTypes = append(colTypes, rhsColTypes...)
-	base.chk = chunk.NewChunkWithCapacity(colTypes, ctx.GetSessionVars().MaxChunkSize)
+	base.chk = chunk.NewChunkWithCapacity(colTypes, ctx.GetSessionVars().ChunkRowsPerFetch())
 	base.selected = make([]bool, 0, chunk.InitialCapacity)
 	if joinType == plan.LeftOuterJoin || joinType == plan.RightOuterJoin {
 		innerColTypes := lhsColTypes

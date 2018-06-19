@@ -58,12 +58,26 @@ type StatementContext struct {
 	}
 
 	// Copied from SessionVars.TimeZone.
-	TimeZone     *time.Location
-	Priority     mysql.PriorityEnum
-	NotFillCache bool
-	MemTracker   *memory.Tracker
-	TableIDs     []int64
-	IndexIDs     []int64
+	TimeZone              *time.Location
+	Priority              mysql.PriorityEnum
+	NotFillCache          bool
+	MemTracker            *memory.Tracker
+	TableIDs              []int64
+	IndexIDs              []int64
+	FetchChunkSize        int
+	DefaultFetchChunkSize int
+}
+
+// DefaultFetchChunkSize is default value for StatementContext#FetchChunkSize.
+const DefaultFetchChunkSize = 1024
+
+// NewStatementContext creates new statementContext with timeZone and default chunk capacity
+func NewStatementContext(timezone *time.Location) *StatementContext {
+	return &StatementContext{
+		TimeZone:              timezone,
+		FetchChunkSize:        DefaultFetchChunkSize,
+		DefaultFetchChunkSize: DefaultFetchChunkSize,
+	}
 }
 
 // AddAffectedRows adds affected rows.

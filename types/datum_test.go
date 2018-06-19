@@ -68,7 +68,7 @@ func (ts *testDatumSuite) TestToBool(c *C) {
 	testDatumToBool(c, Enum{Name: "a", Value: 1}, 1)
 	testDatumToBool(c, Set{Name: "a", Value: 1}, 1)
 
-	t, err := ParseTime(&stmtctx.StatementContext{TimeZone: time.UTC}, "2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6)
+	t, err := ParseTime(stmtctx.NewStatementContext(time.UTC), "2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6)
 	c.Assert(err, IsNil)
 	testDatumToBool(c, t, 1)
 
@@ -145,9 +145,7 @@ func (ts *testTypeConvertSuite) TestToInt64(c *C) {
 	testDatumToInt64(c, Set{Name: "a", Value: 1}, int64(1))
 	testDatumToInt64(c, json.CreateBinary(int64(3)), int64(3))
 
-	t, err := ParseTime(&stmtctx.StatementContext{
-		TimeZone: time.UTC,
-	}, "2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 0)
+	t, err := ParseTime(stmtctx.NewStatementContext(time.UTC), "2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 0)
 	c.Assert(err, IsNil)
 	testDatumToInt64(c, t, int64(20111110111112))
 
@@ -194,7 +192,7 @@ func (ts *testTypeConvertSuite) TestToFloat32(c *C) {
 
 // mustParseTimeIntoDatum is similar to ParseTime but panic if any error occurs.
 func mustParseTimeIntoDatum(s string, tp byte, fsp int) (d Datum) {
-	t, err := ParseTime(&stmtctx.StatementContext{TimeZone: time.UTC}, s, tp, fsp)
+	t, err := ParseTime(stmtctx.NewStatementContext(time.UTC), s, tp, fsp)
 	if err != nil {
 		panic("ParseTime fail")
 	}
@@ -385,7 +383,7 @@ func mustParseDurationDatum(str string, fsp int) Datum {
 }
 
 func (ts *testDatumSuite) TestCoerceArithmetic(c *C) {
-	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	sc := stmtctx.NewStatementContext(time.UTC)
 	tests := []struct {
 		input  Datum
 		expect Datum
@@ -416,7 +414,7 @@ func (ts *testDatumSuite) TestCoerceArithmetic(c *C) {
 }
 
 func (ts *testDatumSuite) TestComputePlusAndMinus(c *C) {
-	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	sc := stmtctx.NewStatementContext(time.UTC)
 	tests := []struct {
 		a      Datum
 		b      Datum
@@ -450,7 +448,7 @@ func (ts *testDatumSuite) TestComputePlusAndMinus(c *C) {
 }
 
 func (ts *testDatumSuite) TestComputeMul(c *C) {
-	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	sc := stmtctx.NewStatementContext(time.UTC)
 	tests := []struct {
 		a      Datum
 		b      Datum
@@ -477,7 +475,7 @@ func (ts *testDatumSuite) TestComputeMul(c *C) {
 }
 
 func (ts *testDatumSuite) TestComputeDiv(c *C) {
-	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	sc := stmtctx.NewStatementContext(time.UTC)
 	tests := []struct {
 		a      Datum
 		b      Datum
@@ -506,7 +504,7 @@ func (ts *testDatumSuite) TestComputeDiv(c *C) {
 }
 
 func (ts *testDatumSuite) TestComputeMod(c *C) {
-	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	sc := stmtctx.NewStatementContext(time.UTC)
 	tests := []struct {
 		a      Datum
 		b      Datum
@@ -540,7 +538,7 @@ func (ts *testDatumSuite) TestComputeMod(c *C) {
 }
 
 func (ts *testDatumSuite) TestComputeIntDiv(c *C) {
-	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	sc := stmtctx.NewStatementContext(time.UTC)
 	tests := []struct {
 		a      Datum
 		b      Datum

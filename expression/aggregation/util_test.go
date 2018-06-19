@@ -16,7 +16,7 @@ type testUtilSuite struct {
 
 func (s *testUtilSuite) TestDistinct(c *check.C) {
 	defer testleak.AfterTest(c)()
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := stmtctx.NewStatementContext(time.Local)
 	dc := createDistinctChecker(sc)
 	tests := []struct {
 		vals   []interface{}

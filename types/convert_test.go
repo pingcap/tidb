@@ -163,7 +163,7 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v.(Duration).String(), Equals, "10:11:11.1")
 
-	vt, err := ParseTime(&stmtctx.StatementContext{TimeZone: time.UTC}, "2010-10-10 10:11:11.12345", mysql.TypeTimestamp, 2)
+	vt, err := ParseTime(stmtctx.NewStatementContext(time.UTC), "2010-10-10 10:11:11.12345", mysql.TypeTimestamp, 2)
 	c.Assert(vt.String(), Equals, "2010-10-10 10:11:11.12")
 	c.Assert(err, IsNil)
 	v, err = Convert(vt, ft)
@@ -330,7 +330,7 @@ func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 	testToString(c, Enum{Name: "a", Value: 1}, "a")
 	testToString(c, Set{Name: "a", Value: 1}, "a")
 
-	t, err := ParseTime(&stmtctx.StatementContext{TimeZone: time.UTC},
+	t, err := ParseTime(stmtctx.NewStatementContext(time.UTC),
 		"2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6)
 	c.Assert(err, IsNil)
 	testToString(c, t, "2011-11-10 11:11:11.999999")
@@ -701,9 +701,7 @@ func (s *testTypeConvertSuite) TestConvertTime(c *C) {
 	}
 
 	for _, timezone := range timezones {
-		sc := &stmtctx.StatementContext{
-			TimeZone: timezone,
-		}
+		sc := stmtctx.NewStatementContext(timezone)
 		testConvertTimeTimeZone(c, sc)
 	}
 }

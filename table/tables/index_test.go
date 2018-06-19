@@ -84,7 +84,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	c.Assert(getValues[1].GetInt64(), Equals, int64(2))
 	c.Assert(h, Equals, int64(1))
 	it.Close()
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := stmtctx.NewStatementContext(time.Local)
 	exist, _, err := index.Exist(sc, txn, values, 100)
 	c.Assert(err, IsNil)
 	c.Assert(exist, IsFalse)
@@ -227,7 +227,7 @@ func (s *testIndexSuite) TestCombineIndexSeek(c *C) {
 	c.Assert(err, IsNil)
 
 	index2 := tables.NewIndex(tblInfo, tblInfo.Indices[0])
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := stmtctx.NewStatementContext(time.Local)
 	iter, hit, err := index2.Seek(sc, txn, types.MakeDatums("abc", nil))
 	c.Assert(err, IsNil)
 	defer iter.Close()

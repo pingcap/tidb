@@ -164,7 +164,7 @@ func (s *testStatisticsSuite) SetUpSuite(c *C) {
 }
 
 func encodeKey(key types.Datum) types.Datum {
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := stmtctx.NewStatementContext(time.Local)
 	buf, _ := codec.EncodeKey(sc, nil, key)
 	return types.NewBytesDatum(buf)
 }

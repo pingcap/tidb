@@ -31,7 +31,7 @@ type testKeySuite struct {
 
 func (s *testKeySuite) TestPartialNext(c *C) {
 	defer testleak.AfterTest(c)()
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := stmtctx.NewStatementContext(time.Local)
 	// keyA represents a multi column index.
 	keyA, err := codec.EncodeValue(sc, nil, types.NewDatum("abc"), types.NewDatum("def"))
 	c.Check(err, IsNil)

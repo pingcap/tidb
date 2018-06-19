@@ -29,7 +29,7 @@ type MockExec struct {
 func (m *MockExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	colTypes := m.retTypes()
-	for ; m.curRowIdx < len(m.Rows) && chk.NumRows() < m.maxChunkSize; m.curRowIdx++ {
+	for ; m.curRowIdx < len(m.Rows) && chk.NumRows() < m.chunkRowsPerFetch(); m.curRowIdx++ {
 		curRow := m.Rows[m.curRowIdx]
 		for i := 0; i < len(curRow); i++ {
 			curDatum := curRow.GetDatum(i, colTypes[i])
@@ -91,7 +91,7 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 		innerFilter:     []expression.Expression{innerFilter},
 		resultGenerator: generator,
 	}
-	join.innerList = chunk.NewList(innerExec.retTypes(), innerExec.maxChunkSize)
+	join.innerList = chunk.NewList(innerExec.retTypes(), innerExec.chunkRowsPerFetch())
 	join.innerChunk = innerExec.newChunk()
 	join.outerChunk = outerExec.newChunk()
 	joinChk := join.newChunk()

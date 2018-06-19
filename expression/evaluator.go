@@ -80,7 +80,7 @@ func NewEvaluatorSuit(exprs []Expression) *EvaluatorSuit {
 		switch x := expr.(type) {
 		case *Column:
 			if e.columnEvaluator == nil {
-				e.columnEvaluator = &columnEvaluator{inputIdxToOutputIdxes: make(map[int][]int, len(exprs))}
+				e.columnEvaluator = &columnEvaluator{inputIdxToOutputIdxes: make(map[int][]int)}
 			}
 			inputIdx, outputIdx := x.Index, i
 			e.columnEvaluator.inputIdxToOutputIdxes[inputIdx] = append(e.columnEvaluator.inputIdxToOutputIdxes[inputIdx], outputIdx)

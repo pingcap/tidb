@@ -139,7 +139,7 @@ func (s *testExecSuite) TestBuildKvRangesForIndexJoin(c *C) {
 	joinKeyRows = append(joinKeyRows, generateDatumSlice(2, 3))
 
 	keyOff2IdxOff := []int{1, 3}
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := stmtctx.NewStatementContext(time.Local)
 	kvRanges, err := buildKvRangesForIndexJoin(sc, 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff)
 	c.Assert(err, IsNil)
 	// Check the kvRanges is in order.

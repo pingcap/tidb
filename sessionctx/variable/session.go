@@ -286,6 +286,15 @@ type SessionVars struct {
 	writeStmtBufs WriteStmtBufs
 }
 
+// ChunkRowsPerFetch returns chunkRows capacity for next fetch.
+func (s *SessionVars) ChunkRowsPerFetch() int {
+	chunkRows := s.StmtCtx.FetchChunkSize
+	if chunkRows > s.MaxChunkSize {
+		return s.MaxChunkSize
+	}
+	return chunkRows
+}
+
 // NewSessionVars creates a session vars object.
 func NewSessionVars() *SessionVars {
 	vars := &SessionVars{
@@ -304,6 +313,8 @@ func NewSessionVars() *SessionVars {
 		OptimizerSelectivityLevel: DefTiDBOptimizerSelectivityLevel,
 		RetryLimit:                DefTiDBRetryLimit,
 	}
+	vars.StmtCtx.DefaultFetchChunkSize = stmtctx.DefaultFetchChunkSize
+	vars.StmtCtx.FetchChunkSize = vars.StmtCtx.DefaultFetchChunkSize
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
 		IndexSerialScanConcurrency: DefIndexSerialScanConcurrency,
