@@ -262,8 +262,7 @@ func ResetStmtCtx(ctx sessionctx.Context, s ast.StmtNode) {
 	sessVars := ctx.GetSessionVars()
 	sc := new(stmtctx.StatementContext)
 	sc.TimeZone = sessVars.GetTimeZone()
-	sc.DefaultFetchChunkSize = ctx.GetSessionVars().StmtCtx.DefaultFetchChunkSize
-	sc.FetchChunkSize = ctx.GetSessionVars().StmtCtx.DefaultFetchChunkSize
+	sc.FetchChunkSize = ctx.GetSessionVars().DefaultFetchChunkSize
 	sc.MemTracker = memory.NewTracker(s.Text(), sessVars.MemQuotaQuery)
 	switch config.GetGlobalConfig().OOMAction {
 	case config.OOMActionCancel:

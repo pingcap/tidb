@@ -70,8 +70,8 @@ func (h *Handle) Clear() {
 		<-h.analyzeResultCh
 	}
 	h.ctx.GetSessionVars().MaxChunkSize = 1
+	h.ctx.GetSessionVars().DefaultFetchChunkSize = 1
 	h.ctx.GetSessionVars().StmtCtx.FetchChunkSize = 1
-	h.ctx.GetSessionVars().StmtCtx.DefaultFetchChunkSize = 1
 	h.listHead = &SessionStatsCollector{mapper: make(tableDeltaMap)}
 	h.globalMap = make(tableDeltaMap)
 }

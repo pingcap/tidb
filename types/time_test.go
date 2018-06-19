@@ -657,7 +657,7 @@ func (s *testTimeSuite) TestRoundFrac(c *C) {
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	sc.TimeZone = time.UTC
-	sc.FetchChunkSize = stmtctx.DefaultFetchChunkSize
+	sc.FetchChunkSize = stmtctx.DefFetchChunkSize
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Input  string
@@ -741,7 +741,7 @@ func (s *testTimeSuite) TestConvert(c *C) {
 
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.TimeZone = time.UTC
-	sc.FetchChunkSize = stmtctx.DefaultFetchChunkSize
+	sc.FetchChunkSize = stmtctx.DefFetchChunkSize
 	for _, t := range tblDuration {
 		v, err := types.ParseDuration(t.Input, t.Fsp)
 		c.Assert(err, IsNil)

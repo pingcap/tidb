@@ -313,8 +313,6 @@ func NewSessionVars() *SessionVars {
 		OptimizerSelectivityLevel: DefTiDBOptimizerSelectivityLevel,
 		RetryLimit:                DefTiDBRetryLimit,
 	}
-	vars.StmtCtx.DefaultFetchChunkSize = stmtctx.DefaultFetchChunkSize
-	vars.StmtCtx.FetchChunkSize = vars.StmtCtx.DefaultFetchChunkSize
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
 		IndexSerialScanConcurrency: DefIndexSerialScanConcurrency,
@@ -336,11 +334,13 @@ func NewSessionVars() *SessionVars {
 		MemQuotaNestedLoopApply:   DefTiDBMemQuotaNestedLoopApply,
 	}
 	vars.BatchSize = BatchSize{
-		IndexJoinBatchSize: DefIndexJoinBatchSize,
-		IndexLookupSize:    DefIndexLookupSize,
-		MaxChunkSize:       DefMaxChunkSize,
-		DMLBatchSize:       DefDMLBatchSize,
+		IndexJoinBatchSize:    DefIndexJoinBatchSize,
+		IndexLookupSize:       DefIndexLookupSize,
+		MaxChunkSize:          DefMaxChunkSize,
+		DMLBatchSize:          DefDMLBatchSize,
+		DefaultFetchChunkSize: stmtctx.DefFetchChunkSize,
 	}
+	vars.StmtCtx.FetchChunkSize = vars.DefaultFetchChunkSize
 	var enableStreaming string
 	if config.GetGlobalConfig().EnableStreaming {
 		enableStreaming = "1"
@@ -526,6 +526,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		return ErrReadOnly
 	case TiDBMaxChunkSize:
 		s.MaxChunkSize = tidbOptPositiveInt32(val, DefMaxChunkSize)
+	case TiDBDefaultFetchChunkSize:
+		s.DefaultFetchChunkSize = tidbOptPositiveInt32(val, stmtctx.DefFetchChunkSize)
 	case TIDBMemQuotaQuery:
 		s.MemQuotaQuery = tidbOptInt64(val, config.GetGlobalConfig().MemQuotaQuery)
 	case TIDBMemQuotaHashJoin:
@@ -634,4 +636,10 @@ type BatchSize struct {
 
 	// MaxChunkSize defines max row count of a Chunk during query execution.
 	MaxChunkSize int
+
+	// DefaultFetchChunkSize indicates default fetch chunk size.
+	// new session will use this value as start value,
+	// although statement can modify fetch chunk size,
+	// it will be reset as default after stmt finished.
+	DefaultFetchChunkSize int
 }
