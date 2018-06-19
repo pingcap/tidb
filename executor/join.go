@@ -223,13 +223,13 @@ func (e *HashJoinExec) fetchOuterChunks(ctx context.Context) {
 		}
 
 		if !hasWaitedForInner {
-			innerErr, jobFinished := e.wait4InnerOnce()
-			if jobFinished {
-				return
-			} else if innerErr != nil {
+			jobFinished, innerErr := e.wait4Inner()
+			if innerErr != nil {
 				e.joinResultCh <- &hashjoinWorkerResult{
-					err: errors.Trace(err),
+					err: errors.Trace(innerErr),
 				}
+				return
+			} else if jobFinished {
 				return
 			}
 			hasWaitedForInner = true
@@ -242,19 +242,19 @@ func (e *HashJoinExec) fetchOuterChunks(ctx context.Context) {
 	}
 }
 
-func (e *HashJoinExec) wait4InnerOnce() (err error, finished bool) {
+func (e *HashJoinExec) wait4Inner() (finished bool, err error) {
 	select {
 	case <-e.closeCh:
-		return nil, true
+		return true, nil
 	case err, _ := <-e.innerFinished:
 		if err != nil {
-			return errors.Trace(err), false
+			return false, errors.Trace(err)
 		}
 	}
 	if e.hashTable.Len() == 0 && e.joinType == plan.InnerJoin {
-		return nil, true
+		return true, nil
 	}
-	return nil, false
+	return false, nil
 }
 
 // fetchInnerRows fetches all rows from inner executor,
