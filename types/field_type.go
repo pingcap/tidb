@@ -52,6 +52,7 @@ func NewFieldType(tp byte) *FieldType {
 	}
 }
 
+// Clone does a shallow clone for FieldType.
 func (ft *FieldType) Clone() *FieldType {
 	newFt := *ft
 	return &newFt

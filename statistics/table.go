@@ -49,6 +49,7 @@ type Table struct {
 	PKIsHandle  bool
 }
 
+// HistColl is a collection of histogram.
 type HistColl struct {
 	Columns map[int64]*Column
 	Indices map[int64]*Index
