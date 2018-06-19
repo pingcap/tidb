@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"net/url"
 	"sort"
@@ -45,10 +46,14 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	log "github.com/sirupsen/logrus"
 )
 
 type HTTPHandlerTestSuite struct {
-	server *Server
+	server  *Server
+	store   kv.Storage
+	domain  *domain.Domain
+	tidbdrv *TiDBDriver
 }
 
 var _ = Suite(new(HTTPHandlerTestSuite))
@@ -65,7 +70,11 @@ func (ts *HTTPHandlerTestSuite) TestRegionIndexRange(c *C) {
 	}
 	var expectIndexValues []string
 	for _, v := range indexValues {
-		expectIndexValues = append(expectIndexValues, fmt.Sprintf("%d-%v", v.Kind(), v.GetValue()))
+		str, err := v.ToString()
+		if err != nil {
+			str = fmt.Sprintf("%d-%v", v.Kind(), v.GetValue())
+		}
+		expectIndexValues = append(expectIndexValues, str)
 	}
 	encodedValue, err := codec.EncodeKey(&stmtctx.StatementContext{TimeZone: time.Local}, nil, indexValues...)
 	c.Assert(err, IsNil)
@@ -229,11 +238,12 @@ func (ts *HTTPHandlerTestSuite) TestRegionsFromMeta(c *C) {
 
 func (ts *HTTPHandlerTestSuite) startServer(c *C) {
 	mvccStore := mocktikv.MustNewMVCCStore()
-	store, err := mockstore.NewMockTikvStore(mockstore.WithMVCCStore(mvccStore))
+	var err error
+	ts.store, err = mockstore.NewMockTikvStore(mockstore.WithMVCCStore(mvccStore))
 	c.Assert(err, IsNil)
-	_, err = session.BootstrapSession(store)
+	ts.domain, err = session.BootstrapSession(ts.store)
 	c.Assert(err, IsNil)
-	tidbdrv := NewTiDBDriver(store)
+	ts.tidbdrv = NewTiDBDriver(ts.store)
 
 	cfg := config.NewConfig()
 	cfg.Port = 4001
@@ -241,7 +251,7 @@ func (ts *HTTPHandlerTestSuite) startServer(c *C) {
 	cfg.Status.StatusPort = 10090
 	cfg.Status.ReportStatus = true
 
-	server, err := NewServer(cfg, tidbdrv)
+	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
 	ts.server = server
 	go server.Run()
@@ -249,6 +259,12 @@ func (ts *HTTPHandlerTestSuite) startServer(c *C) {
 }
 
 func (ts *HTTPHandlerTestSuite) stopServer(c *C) {
+	if ts.domain != nil {
+		ts.domain.Close()
+	}
+	if ts.store != nil {
+		ts.store.Close()
+	}
 	if ts.server != nil {
 		ts.server.Close()
 	}
@@ -405,7 +421,7 @@ func (ts *HTTPHandlerTestSuite) TestDecodeColumnValue(c *C) {
 		var data interface{}
 		err = decoder.Decode(&data)
 		c.Assert(err, IsNil, Commentf("url:%v\ndata%v", url, data))
-		colVal, err := types.DatumsToString([]types.Datum{row[col.id-1]})
+		colVal, err := types.DatumsToString([]types.Datum{row[col.id-1]}, false)
 		c.Assert(err, IsNil)
 		c.Assert(data, Equals, colVal, Commentf("url:%v", url))
 	}
@@ -587,15 +603,37 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	ts.prepareData(c)
 	defer ts.stopServer(c)
 	form := make(url.Values)
+	form.Set("log_level", "error")
 	form.Set("tidb_general_log", "1")
 	resp, err := http.PostForm("http://127.0.0.1:10090/settings", form)
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	c.Assert(log.GetLevel(), Equals, log.ErrorLevel)
+	c.Assert(config.GetGlobalConfig().Log.Level, Equals, "error")
 	c.Assert(atomic.LoadUint32(&variable.ProcessGeneralLog), Equals, uint32(1))
 	form = make(url.Values)
+	form.Set("log_level", "info")
 	form.Set("tidb_general_log", "0")
 	resp, err = http.PostForm("http://127.0.0.1:10090/settings", form)
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 	c.Assert(atomic.LoadUint32(&variable.ProcessGeneralLog), Equals, uint32(0))
+	c.Assert(log.GetLevel(), Equals, log.InfoLevel)
+	c.Assert(config.GetGlobalConfig().Log.Level, Equals, "info")
+}
+
+func (ts *HTTPHandlerTestSuite) TestPprof(c *C) {
+	ts.startServer(c)
+	defer ts.stopServer(c)
+	retryTime := 100
+	for retry := 0; retry < retryTime; retry++ {
+		resp, err := http.Get("http://127.0.0.1:10090/debug/pprof/heap")
+		if err == nil {
+			ioutil.ReadAll(resp.Body)
+			resp.Body.Close()
+			return
+		}
+		time.Sleep(time.Millisecond * 10)
+	}
+	log.Fatalf("Failed to get profile for %d retries in every 10 ms", retryTime)
 }

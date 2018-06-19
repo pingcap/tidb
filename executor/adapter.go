@@ -161,18 +161,19 @@ func (a *ExecStmt) IsReadOnly() bool {
 }
 
 // RebuildPlan rebuilds current execute statement plan.
-func (a *ExecStmt) RebuildPlan() error {
+// It returns the current information schema version that 'a' is using.
+func (a *ExecStmt) RebuildPlan() (int64, error) {
 	is := GetInfoSchema(a.Ctx)
 	a.InfoSchema = is
 	if err := plan.Preprocess(a.Ctx, a.StmtNode, is, false); err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 	p, err := plan.Optimize(a.Ctx, a.StmtNode, is)
 	if err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 	a.Plan = p
-	return nil
+	return is.SchemaMetaVersion(), nil
 }
 
 // Exec builds an Executor from a plan. If the Executor doesn't return result,
@@ -243,7 +244,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 	// Check if "tidb_snapshot" is set for the write executors.
 	// In history read mode, we can not do write operations.
 	switch e.(type) {
-	case *DeleteExec, *InsertExec, *UpdateExec, *ReplaceExec, *LoadData, *DDLExec:
+	case *DeleteExec, *InsertExec, *UpdateExec, *ReplaceExec, *LoadDataExec, *DDLExec:
 		snapshotTS := sctx.GetSessionVars().SnapshotTS
 		if snapshotTS != 0 {
 			return nil, errors.New("can not execute write statement when 'tidb_snapshot' is set")
@@ -279,10 +280,10 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 		var err error
 		isPointGet := IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, a.Plan)
 		if isPointGet {
-			log.Debugf("[%d][InitTxnWithStartTS] %s", ctx.GetSessionVars().ConnectionID, a.Text)
+			log.Debugf("[con:%d][InitTxnWithStartTS] %s", ctx.GetSessionVars().ConnectionID, a.Text)
 			err = ctx.InitTxnWithStartTS(math.MaxUint64)
 		} else {
-			log.Debugf("[%d][ActivePendingTxn] %s", ctx.GetSessionVars().ConnectionID, a.Text)
+			log.Debugf("[con:%d][ActivePendingTxn] %s", ctx.GetSessionVars().ConnectionID, a.Text)
 			err = ctx.ActivePendingTxn()
 		}
 		if err != nil {
@@ -323,6 +324,9 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 	return e, nil
 }
 
+// QueryReplacer replaces new line and tab for grep result including query string.
+var QueryReplacer = strings.NewReplacer("\r", " ", "\n", " ", "\t", " ")
+
 func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
 	level := log.GetLevel()
 	if level < log.WarnLevel {
@@ -338,19 +342,27 @@ func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
 	if len(sql) > int(cfg.Log.QueryLogMaxLen) {
 		sql = fmt.Sprintf("%.*q(len:%d)", cfg.Log.QueryLogMaxLen, sql, len(a.Text))
 	}
-	connID := a.Ctx.GetSessionVars().ConnectionID
-	currentDB := a.Ctx.GetSessionVars().CurrentDB
-	tableIDs := strings.Replace(fmt.Sprintf("%v", a.Ctx.GetSessionVars().StmtCtx.TableIDs), " ", ",", -1)
-	indexIDs := strings.Replace(fmt.Sprintf("%v", a.Ctx.GetSessionVars().StmtCtx.IndexIDs), " ", ",", -1)
+	sql = QueryReplacer.Replace(sql)
 
+	sessVars := a.Ctx.GetSessionVars()
+	connID := sessVars.ConnectionID
+	currentDB := sessVars.CurrentDB
+	var tableIDs, indexIDs string
+	if len(sessVars.StmtCtx.TableIDs) > 0 {
+		tableIDs = strings.Replace(fmt.Sprintf("table_ids:%v ", a.Ctx.GetSessionVars().StmtCtx.TableIDs), " ", ",", -1)
+	}
+	if len(sessVars.StmtCtx.IndexIDs) > 0 {
+		indexIDs = strings.Replace(fmt.Sprintf("index_ids:%v ", a.Ctx.GetSessionVars().StmtCtx.IndexIDs), " ", ",", -1)
+	}
+	user := a.Ctx.GetSessionVars().User
 	if costTime < threshold {
 		logutil.SlowQueryLogger.Debugf(
-			"[QUERY] cost_time:%v succ:%v connection_id:%v txn_start_ts:%v database:%v table_ids:%v index_ids:%v sql:%v",
-			costTime, succ, connID, txnTS, currentDB, tableIDs, indexIDs, sql)
+			"[QUERY] cost_time:%v succ:%v con:%v user:%s txn_start_ts:%v database:%v %v%vsql:%v",
+			costTime, succ, connID, user, txnTS, currentDB, tableIDs, indexIDs, sql)
 	} else {
 		logutil.SlowQueryLogger.Warnf(
-			"[SLOW_QUERY] cost_time:%v succ:%v connection_id:%v txn_start_ts:%v database:%v table_ids:%v index_ids:%v sql:%v",
-			costTime, succ, connID, txnTS, currentDB, tableIDs, indexIDs, sql)
+			"[SLOW_QUERY] cost_time:%v succ:%v con:%v user:%s txn_start_ts:%v database:%v %v%vsql:%v",
+			costTime, succ, connID, user, txnTS, currentDB, tableIDs, indexIDs, sql)
 	}
 }
 

@@ -30,6 +30,8 @@ import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/kv"
 	tmysql "github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -39,18 +41,21 @@ import (
 type TidbTestSuite struct {
 	tidbdrv *TiDBDriver
 	server  *Server
+	domain  *domain.Domain
+	store   kv.Storage
 }
 
 var suite = new(TidbTestSuite)
 var _ = Suite(suite)
 
 func (ts *TidbTestSuite) SetUpSuite(c *C) {
-	store, err := mockstore.NewMockTikvStore()
+	var err error
+	ts.store, err = mockstore.NewMockTikvStore()
 	session.SetStatsLease(0)
 	c.Assert(err, IsNil)
-	_, err = session.BootstrapSession(store)
+	ts.domain, err = session.BootstrapSession(ts.store)
 	c.Assert(err, IsNil)
-	ts.tidbdrv = NewTiDBDriver(store)
+	ts.tidbdrv = NewTiDBDriver(ts.store)
 	cfg := config.NewConfig()
 	cfg.Port = 4001
 	cfg.Status.ReportStatus = true
@@ -69,6 +74,12 @@ func (ts *TidbTestSuite) SetUpSuite(c *C) {
 }
 
 func (ts *TidbTestSuite) TearDownSuite(c *C) {
+	if ts.store != nil {
+		ts.store.Close()
+	}
+	if ts.domain != nil {
+		ts.domain.Close()
+	}
 	if ts.server != nil {
 		ts.server.Close()
 	}
@@ -93,6 +104,11 @@ func (ts *TidbTestSuite) TestSpecialType(c *C) {
 func (ts *TidbTestSuite) TestPreparedString(c *C) {
 	c.Parallel()
 	runTestPreparedString(c)
+}
+
+func (ts *TidbTestSuite) TestPreparedTimestamp(c *C) {
+	c.Parallel()
+	runTestPreparedTimestamp(c)
 }
 
 func (ts *TidbTestSuite) TestLoadData(c *C) {
@@ -145,7 +161,7 @@ func (ts *TidbTestSuite) TestMultiStatements(c *C) {
 func (ts *TidbTestSuite) TestSocket(c *C) {
 	cfg := config.NewConfig()
 	cfg.Socket = "/tmp/tidbtest.sock"
-	cfg.Status.StatusPort = 10091
+	cfg.Status.ReportStatus = false
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
@@ -277,8 +293,7 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 	}
 	cfg := config.NewConfig()
 	cfg.Port = 4002
-	cfg.Status.ReportStatus = true
-	cfg.Status.StatusPort = 10091
+	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
 	go server.Run()
@@ -295,8 +310,7 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 	}
 	cfg = config.NewConfig()
 	cfg.Port = 4003
-	cfg.Status.ReportStatus = true
-	cfg.Status.StatusPort = 10091
+	cfg.Status.ReportStatus = false
 	cfg.Security = config.Security{
 		SSLCert: "/tmp/server-cert.pem",
 		SSLKey:  "/tmp/server-key.pem",
@@ -325,8 +339,7 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 	}
 	cfg = config.NewConfig()
 	cfg.Port = 4004
-	cfg.Status.ReportStatus = true
-	cfg.Status.StatusPort = 10091
+	cfg.Status.ReportStatus = false
 	cfg.Security = config.Security{
 		SSLCA:   "/tmp/ca-cert.pem",
 		SSLCert: "/tmp/server-cert.pem",

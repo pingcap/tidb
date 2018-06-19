@@ -50,6 +50,7 @@ type Config struct {
 	SplitTable      bool            `toml:"split-table" json:"split-table"`
 	TokenLimit      uint            `toml:"token-limit" json:"token-limit"`
 	OOMAction       string          `toml:"oom-action" json:"oom-action"`
+	MemQuotaQuery   int64           `toml:"mem-quota-query" json:"mem-quota-query"`
 	EnableStreaming bool            `toml:"enable-streaming" json:"enable-streaming"`
 	TxnLocalLatches TxnLocalLatches `toml:"txn-local-latches" json:"txn-local-latches"`
 	// Set sys variable lower-case-table-names, ref: https://dev.mysql.com/doc/refman/5.7/en/identifier-case-sensitivity.html.
@@ -229,6 +230,7 @@ type TiKVClient struct {
 // Binlog is the config for binlog.
 type Binlog struct {
 	BinlogSocket string `toml:"binlog-socket" json:"binlog-socket"`
+	WriteTimeout string `toml:"write-timeout" json:"write-timeout"`
 	// If IgnoreError is true, when writting binlog meets error, TiDB would
 	// ignore the error.
 	IgnoreError bool `toml:"ignore-error" json:"ignore-error"`
@@ -244,6 +246,7 @@ var defaultConf = Config{
 	Lease:           "45s",
 	TokenLimit:      1000,
 	OOMAction:       "log",
+	MemQuotaQuery:   32 << 30,
 	EnableStreaming: false,
 	TxnLocalLatches: TxnLocalLatches{
 		Enabled:  false,
@@ -304,6 +307,9 @@ var defaultConf = Config{
 	TiKVClient: TiKVClient{
 		GrpcConnectionCount: 16,
 		CommitTimeout:       "41s",
+	},
+	Binlog: Binlog{
+		WriteTimeout: "15s",
 	},
 }
 

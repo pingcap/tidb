@@ -35,6 +35,7 @@ import (
 	"io/ioutil"
 	"math/rand"
 	"net"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -88,6 +89,7 @@ type Server struct {
 	// a supervisor automatically restart it, then new client connection will be created, but we can't server it.
 	// So we just stop the listener and store to force clients to chose other TiDB servers.
 	stopListenerCh chan struct{}
+	statusServer   *http.Server
 }
 
 // ConnectionCount gets current connection count.
@@ -111,7 +113,6 @@ func (s *Server) releaseToken(token *Token) {
 // It allocates a connection ID and random salt data for authentication.
 func (s *Server) newConn(conn net.Conn) *clientConn {
 	cc := newClientConn(s)
-	log.Infof("[%d] new connection %s", cc.connectionID, conn.RemoteAddr().String())
 	if s.cfg.Performance.TCPKeepAlive {
 		if tcpConn, ok := conn.(*net.TCPConn); ok {
 			if err := tcpConn.SetKeepAlive(true); err != nil {
@@ -287,25 +288,29 @@ func (s *Server) Close() {
 		terror.Log(errors.Trace(err))
 		s.listener = nil
 	}
+	if s.statusServer != nil {
+		err := s.statusServer.Close()
+		terror.Log(errors.Trace(err))
+		s.statusServer = nil
+	}
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventClose).Inc()
 }
 
 // onConn runs in its own goroutine, handles queries from this connection.
 func (s *Server) onConn(c net.Conn) {
 	conn := s.newConn(c)
-	defer func() {
-		log.Infof("[%d] close connection", conn.connectionID)
-	}()
-
 	if err := conn.handshake(); err != nil {
 		// Some keep alive services will send request to TiDB and disconnect immediately.
-		// So we use info log level.
-		log.Infof("handshake error %s", errors.ErrorStack(err))
+		// So we only record metrics.
+		metrics.HandShakeErrorCounter.Inc()
 		err = c.Close()
 		terror.Log(errors.Trace(err))
 		return
 	}
-
+	log.Infof("[con:%d] new connection %s", conn.connectionID, c.RemoteAddr().String())
+	defer func() {
+		log.Infof("[con:%d] close connection", conn.connectionID)
+	}()
 	s.rwlock.Lock()
 	s.clients[conn.connectionID] = conn
 	connections := len(s.clients)

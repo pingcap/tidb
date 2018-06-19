@@ -305,15 +305,17 @@ func NewSessionVars() *SessionVars {
 		RetryLimit:                DefTiDBRetryLimit,
 	}
 	vars.Concurrency = Concurrency{
-		BuildStatsConcurrencyVar:   DefBuildStatsConcurrency,
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
 		IndexSerialScanConcurrency: DefIndexSerialScanConcurrency,
 		IndexLookupJoinConcurrency: DefIndexLookupJoinConcurrency,
 		HashJoinConcurrency:        DefTiDBHashJoinConcurrency,
+		ProjectionConcurrency:      DefTiDBProjectionConcurrency,
 		DistSQLScanConcurrency:     DefDistSQLScanConcurrency,
+		HashAggPartialConcurrency:  DefTiDBHashAggPartialConcurrency,
+		HashAggFinalConcurrency:    DefTiDBHashAggFinalConcurrency,
 	}
 	vars.MemQuota = MemQuota{
-		MemQuotaQuery:             DefTiDBMemQuotaQuery,
+		MemQuotaQuery:             config.GetGlobalConfig().MemQuotaQuery,
 		MemQuotaHashJoin:          DefTiDBMemQuotaHashJoin,
 		MemQuotaMergeJoin:         DefTiDBMemQuotaMergeJoin,
 		MemQuotaSort:              DefTiDBMemQuotaSort,
@@ -491,6 +493,12 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.IndexLookupSize = tidbOptPositiveInt32(val, DefIndexLookupSize)
 	case TiDBHashJoinConcurrency:
 		s.HashJoinConcurrency = tidbOptPositiveInt32(val, DefTiDBHashJoinConcurrency)
+	case TiDBProjectionConcurrency:
+		s.ProjectionConcurrency = tidbOptInt64(val, DefTiDBProjectionConcurrency)
+	case TiDBHashAggPartialConcurrency:
+		s.HashAggPartialConcurrency = tidbOptPositiveInt32(val, DefTiDBHashAggPartialConcurrency)
+	case TiDBHashAggFinalConcurrency:
+		s.HashAggFinalConcurrency = tidbOptPositiveInt32(val, DefTiDBHashAggFinalConcurrency)
 	case TiDBDistSQLScanConcurrency:
 		s.DistSQLScanConcurrency = tidbOptPositiveInt32(val, DefDistSQLScanConcurrency)
 	case TiDBIndexSerialScanConcurrency:
@@ -508,7 +516,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBMaxChunkSize:
 		s.MaxChunkSize = tidbOptPositiveInt32(val, DefMaxChunkSize)
 	case TIDBMemQuotaQuery:
-		s.MemQuotaQuery = tidbOptInt64(val, DefTiDBMemQuotaQuery)
+		s.MemQuotaQuery = tidbOptInt64(val, config.GetGlobalConfig().MemQuotaQuery)
 	case TIDBMemQuotaHashJoin:
 		s.MemQuotaHashJoin = tidbOptInt64(val, DefTiDBMemQuotaHashJoin)
 	case TIDBMemQuotaMergeJoin:
@@ -556,9 +564,6 @@ type TableDelta struct {
 
 // Concurrency defines concurrency values.
 type Concurrency struct {
-	// BuildStatsConcurrencyVar is used to control statistics building concurrency.
-	BuildStatsConcurrencyVar int
-
 	// IndexLookupConcurrency is the number of concurrent index lookup worker.
 	IndexLookupConcurrency int
 
@@ -570,6 +575,15 @@ type Concurrency struct {
 
 	// HashJoinConcurrency is the number of concurrent hash join outer worker.
 	HashJoinConcurrency int
+
+	// ProjectionConcurrency is the number of concurrent projection worker.
+	ProjectionConcurrency int64
+
+	// HashAggPartialConcurrency is the number of concurrent hash aggregation partial worker.
+	HashAggPartialConcurrency int
+
+	// HashAggPartialConcurrency is the number of concurrent hash aggregation final worker.
+	HashAggFinalConcurrency int
 
 	// IndexSerialScanConcurrency is the number of concurrent index serial scan worker.
 	IndexSerialScanConcurrency int

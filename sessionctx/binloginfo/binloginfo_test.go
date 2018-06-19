@@ -23,7 +23,6 @@ import (
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -78,6 +77,7 @@ var _ = Suite(&testBinlogSuite{})
 
 type testBinlogSuite struct {
 	store    kv.Storage
+	domain   *domain.Domain
 	unixFile string
 	serv     *grpc.Server
 	pump     *mockBinlogPump
@@ -106,7 +106,7 @@ func (s *testBinlogSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(clientCon, NotNil)
 	tk := testkit.NewTestKit(c, s.store)
-	_, err = session.BootstrapSession(store)
+	s.domain, err = session.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	tk.MustExec("use test")
 	sessionDomain := domain.GetDomain(tk.Se.(sessionctx.Context))
@@ -121,6 +121,7 @@ func (s *testBinlogSuite) TearDownSuite(c *C) {
 	s.serv.Stop()
 	os.Remove(s.unixFile)
 	s.store.Close()
+	s.domain.Close()
 }
 
 func (s *testBinlogSuite) TestBinlog(c *C) {
@@ -370,28 +371,27 @@ func mutationRowsToRows(c *C, mutationRows [][]byte, columnValueOffsets ...int) 
 	return rows
 }
 
-func (s *testBinlogSuite) TestIgnoreError(c *C) {
+// Sometimes this test doesn't clean up fail, let the function name begin with 'Z'
+// so it runs last and would not disrupt other tests.
+func (s *testBinlogSuite) TestZIgnoreError(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.Se.GetSessionVars().BinlogClient = s.client
 	tk.MustExec("drop table if exists ignore_error")
 	tk.MustExec("create table t (id int)")
 
+	binloginfo.SetIgnoreError(true)
 	s.pump.mu.Lock()
 	s.pump.mu.mockFail = true
 	s.pump.mu.Unlock()
 
-	_, err := tk.Exec("insert into t values (1)")
-	c.Assert(err, NotNil)
-
-	cfg := config.GetGlobalConfig()
-	cfg.Binlog.IgnoreError = true
+	tk.MustExec("insert into t values (1)")
 	tk.MustExec("insert into t values (1)")
 
 	// Clean up.
 	s.pump.mu.Lock()
 	s.pump.mu.mockFail = false
 	s.pump.mu.Unlock()
-	cfg.Binlog.IgnoreError = false
-	binloginfo.ResetErrorStopFlag()
+	binloginfo.DisableSkipBinlogFlag()
+	binloginfo.SetIgnoreError(false)
 }

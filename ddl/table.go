@@ -28,7 +28,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tbInfo := &model.TableInfo{}
 	if err := job.DecodeArgs(tbInfo); err != nil {
@@ -58,18 +58,19 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			return ver, errors.Trace(err)
 		}
 		if EnableSplitTableRegion {
-			go d.splitTableRegion(tbInfo.ID)
+			// TODO: Add restrictions to this operation.
+			go splitTableRegion(d.store, tbInfo.ID)
 		}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
-		d.asyncNotifyEvent(&util.Event{Tp: model.ActionCreateTable, TableInfo: tbInfo})
+		asyncNotifyEvent(d, &util.Event{Tp: model.ActionCreateTable, TableInfo: tbInfo})
 		return ver, nil
 	default:
 		return ver, ErrInvalidTableState.Gen("invalid table state %v", tbInfo.State)
 	}
 }
 
-func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tableID := job.TableID
 
@@ -130,21 +131,23 @@ type splitableStore interface {
 	SplitRegion(splitKey kv.Key) error
 }
 
-func (d *ddl) splitTableRegion(tableID int64) error {
-	store, ok := d.store.(splitableStore)
+func splitTableRegion(store kv.Storage, tableID int64) {
+	type splitableStore interface {
+		SplitRegion(splitKey kv.Key) error
+	}
+	s, ok := store.(splitableStore)
 	if !ok {
-		return nil
+		return
 	}
 	tableStartKey := tablecodec.GenTablePrefix(tableID)
-	if err := store.SplitRegion(tableStartKey); err != nil {
+	if err := s.SplitRegion(tableStartKey); err != nil {
 		// It will be automatically splitting by TiKV later.
-		log.Warnf("[ddl] split table region failed %v", errors.ErrorStack(err))
+		log.Warnf("[ddl] splitting table region failed %v", errors.ErrorStack(err))
 	}
-	return nil
 }
 
-func (d *ddl) getTable(schemaID int64, tblInfo *model.TableInfo) (table.Table, error) {
-	alloc := autoid.NewAllocator(d.store, tblInfo.GetDBID(schemaID))
+func getTable(store kv.Storage, schemaID int64, tblInfo *model.TableInfo) (table.Table, error) {
+	alloc := autoid.NewAllocator(store, tblInfo.GetDBID(schemaID))
 	tbl, err := table.TableFromMeta(alloc, tblInfo)
 	return tbl, errors.Trace(err)
 }
@@ -179,7 +182,7 @@ func getTableInfo(t *meta.Meta, job *model.Job, schemaID int64) (*model.TableInf
 // onTruncateTable delete old table meta, and creates a new table identical to old table except for table ID.
 // As all the old data is encoded with old table ID, it can not be accessed any more.
 // A background job will be created to delete old data.
-func (d *ddl) onTruncateTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onTruncateTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tableID := job.TableID
 	var newTableID int64
@@ -215,7 +218,7 @@ func (d *ddl) onTruncateTable(t *meta.Meta, job *model.Job) (ver int64, _ error)
 	return ver, nil
 }
 
-func (d *ddl) onRebaseAutoID(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onRebaseAutoID(store kv.Storage, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	var newBase int64
 	err := job.DecodeArgs(&newBase)
@@ -229,7 +232,7 @@ func (d *ddl) onRebaseAutoID(t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		return ver, errors.Trace(err)
 	}
 	tblInfo.AutoIncID = newBase
-	tbl, err := d.getTable(schemaID, tblInfo)
+	tbl, err := getTable(store, schemaID, tblInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -251,7 +254,7 @@ func (d *ddl) onRebaseAutoID(t *meta.Meta, job *model.Job) (ver int64, _ error) 
 	return ver, nil
 }
 
-func (d *ddl) onShardRowID(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onShardRowID(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var shardRowIDBits uint64
 	err := job.DecodeArgs(&shardRowIDBits)
 	if err != nil {
@@ -273,7 +276,7 @@ func (d *ddl) onShardRowID(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return ver, nil
 }
 
-func (d *ddl) onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var oldSchemaID int64
 	var tableName model.CIStr
 	if err := job.DecodeArgs(&oldSchemaID, &tableName); err != nil {
@@ -334,7 +337,7 @@ func (d *ddl) onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return ver, nil
 }
 
-func (d *ddl) onModifyTableComment(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onModifyTableComment(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var comment string
 	if err := job.DecodeArgs(&comment); err != nil {
 		job.State = model.JobStateCancelled

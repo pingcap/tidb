@@ -173,6 +173,10 @@ func setupBinlogClient() {
 	})
 	clientConn, err := session.DialPumpClientWithRetry(cfg.Binlog.BinlogSocket, util.DefaultMaxRetries, dialerOpt)
 	terror.MustNil(err)
+	if cfg.Binlog.IgnoreError {
+		binloginfo.SetIgnoreError(true)
+	}
+	binloginfo.SetGRPCTimeout(parseDuration(cfg.Binlog.WriteTimeout))
 	binloginfo.SetPumpClient(binlog.NewPumpClient(clientConn))
 	log.Infof("created binlog client at %s, ignore error %v", cfg.Binlog.BinlogSocket, cfg.Binlog.IgnoreError)
 }
@@ -340,6 +344,10 @@ func validateConfig() {
 		log.Errorf("\"store\" should be in [%s] only", strings.Join(nameList, ", "))
 		os.Exit(-1)
 	}
+	if cfg.Store == "mocktikv" && cfg.RunDDL == false {
+		log.Errorf("can't disable DDL on mocktikv")
+		os.Exit(-1)
+	}
 	if cfg.Log.File.MaxSize > config.MaxLogFileSize {
 		log.Errorf("log max-size should not be larger than %d MB", config.MaxLogFileSize)
 		os.Exit(-1)
@@ -432,7 +440,7 @@ func setupSignalHandler() {
 	go func() {
 		sig := <-sc
 		log.Infof("Got signal [%s] to exit.", sig)
-		if sig == syscall.SIGTERM {
+		if sig == syscall.SIGQUIT {
 			graceful = true
 		}
 

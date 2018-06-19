@@ -530,6 +530,15 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			writeError(w, err)
 			return
 		}
+		if levelStr := req.Form.Get("log_level"); levelStr != "" {
+			l, err1 := log.ParseLevel(levelStr)
+			if err1 != nil {
+				writeError(w, err1)
+				return
+			}
+			log.SetLevel(l)
+			config.GetGlobalConfig().Log.Level = levelStr
+		}
 		if generalLog := req.Form.Get("tidb_general_log"); generalLog != "" {
 			switch generalLog {
 			case "0":
@@ -549,7 +558,7 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 // ServeHTTP recovers binlog service.
 func (h binlogRecover) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	binloginfo.ResetErrorStopFlag()
+	binloginfo.DisableSkipBinlogFlag()
 }
 
 // ServeHTTP handles request of list a database or table's schemas.

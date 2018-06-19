@@ -27,9 +27,6 @@ import (
 // ContextKey is the type of context's key
 type ContextKey string
 
-// Retryable is the key in context
-const Retryable ContextKey = "Retryable"
-
 // RunInNewTxn will run the f in a new transaction environment.
 func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) error {
 	var (
@@ -60,7 +57,7 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 			return errors.Trace(err)
 		}
 
-		err = txn.Commit(context.WithValue(context.Background(), Retryable, retryable))
+		err = txn.Commit(context.Background())
 		if err == nil {
 			break
 		}
@@ -77,7 +74,7 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 }
 
 var (
-	// Max retry count in RunInNewTxn
+	// maxRetryCnt represents maximum retry times in RunInNewTxn.
 	maxRetryCnt uint = 100
 	// retryBackOffBase is the initial duration, in microsecond, a failed transaction stays dormancy before it retries
 	retryBackOffBase = 1

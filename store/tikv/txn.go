@@ -195,8 +195,12 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	}
 
 	// latches enabled
-	// for transactions not retryable, commit directly.
-	if !sessionctx.GetRetryable(ctx) {
+	var forUpdate bool
+	if option := txn.us.GetOption(kv.ForUpdate); option != nil {
+		forUpdate = option.(bool)
+	}
+	// For update transaction is not retryable, commit directly.
+	if forUpdate {
 		err = committer.executeAndWriteFinishBinlog(ctx)
 		if err == nil {
 			txn.store.txnLatches.RefreshCommitTS(committer.keys, committer.commitTS)
@@ -229,12 +233,7 @@ func (txn *tikvTxn) Rollback() error {
 		return kv.ErrInvalidTxn
 	}
 	txn.close()
-	logMsg := fmt.Sprintf("[kv] Rollback txn %d", txn.StartTS())
-	if txn.store.mock {
-		log.Debug(logMsg)
-	} else {
-		log.Info(logMsg)
-	}
+	log.Debugf("[kv] Rollback txn %d", txn.StartTS())
 	metrics.TiKVTxnCmdCounter.WithLabelValues("rollback").Inc()
 
 	return nil

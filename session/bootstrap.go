@@ -185,8 +185,17 @@ const (
 		start_key VARCHAR(255) NOT NULL COMMENT "encoded in hex",
 		end_key VARCHAR(255) NOT NULL COMMENT "encoded in hex",
 		ts BIGINT NOT NULL COMMENT "timestamp in int64",
-		UNIQUE KEY (element_id),
-		KEY (job_id, element_id)
+		UNIQUE KEY delete_range_index (job_id, element_id)
+	);`
+
+	// CreateGCDeleteRangeDoneTable stores schemas which are already deleted by DeleteRange.
+	CreateGCDeleteRangeDoneTable = `CREATE TABLE IF NOT EXISTS mysql.gc_delete_range_done (
+		job_id BIGINT NOT NULL COMMENT "the DDL job ID",
+		element_id BIGINT NOT NULL COMMENT "the schema element ID",
+		start_key VARCHAR(255) NOT NULL COMMENT "encoded in hex",
+		end_key VARCHAR(255) NOT NULL COMMENT "encoded in hex",
+		ts BIGINT NOT NULL COMMENT "timestamp in int64",
+		UNIQUE KEY delete_range_done_index (job_id, element_id)
 	);`
 
 	// CreateStatsFeedbackTable stores the feedback info which is used to update stats.
@@ -243,6 +252,7 @@ const (
 	version18 = 18
 	version19 = 19
 	version20 = 20
+	version21 = 21
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -379,6 +389,10 @@ func upgrade(s Session) {
 
 	if ver < version20 {
 		upgradeToVer20(s)
+	}
+
+	if ver < version21 {
+		upgradeToVer21(s)
 	}
 
 	updateBootstrapVer(s)
@@ -607,6 +621,14 @@ func upgradeToVer20(s Session) {
 	doReentrantDDL(s, CreateStatsFeedbackTable)
 }
 
+func upgradeToVer21(s Session) {
+	mustExecute(s, CreateGCDeleteRangeDoneTable)
+
+	doReentrantDDL(s, "ALTER TABLE mysql.gc_delete_range DROP INDEX job_id", ddl.ErrCantDropFieldOrKey)
+	doReentrantDDL(s, "ALTER TABLE mysql.gc_delete_range ADD UNIQUE INDEX delete_range_index (job_id, element_id)", ddl.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.gc_delete_range DROP INDEX element_id", ddl.ErrCantDropFieldOrKey)
+}
+
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
 func updateBootstrapVer(s Session) {
 	// Update bootstrap version.
@@ -653,6 +675,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateStatsBucketsTable)
 	// Create gc_delete_range table.
 	mustExecute(s, CreateGCDeleteRangeTable)
+	// Create gc_delete_range_done table.
+	mustExecute(s, CreateGCDeleteRangeDoneTable)
 	// Create stats_feedback table.
 	mustExecute(s, CreateStatsFeedbackTable)
 }

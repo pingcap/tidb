@@ -48,6 +48,14 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 )
 
+func parseNullTermString(b []byte) (str []byte, remain []byte) {
+	off := bytes.IndexByte(b, 0)
+	if off == -1 {
+		return nil, b
+	}
+	return b[:off], b[off+1:]
+}
+
 func parseLengthEncodedInt(b []byte) (num uint64, isNull bool, n int) {
 	switch b[0] {
 	// 251: NULL

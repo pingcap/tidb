@@ -14,6 +14,8 @@
 package statistics
 
 import (
+	"time"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
@@ -71,8 +73,10 @@ func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo) (*JS
 		Count:        tbl.Count,
 		ModifyCount:  tbl.ModifyCount,
 	}
+
 	for _, col := range tbl.Columns {
-		hist, err := col.ConvertTo(new(stmtctx.StatementContext), types.NewFieldType(mysql.TypeBlob))
+		sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+		hist, err := col.ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -177,6 +181,7 @@ func (h *Handle) LoadStatsFromJSONToTable(tableInfo *model.TableInfo, jsonTbl *J
 			tbl.Indices[idx.ID] = idx
 		}
 	}
+
 	for id, jsonCol := range jsonTbl.Columns {
 		for _, colInfo := range tableInfo.Columns {
 			if colInfo.Name.L != id {
@@ -184,7 +189,8 @@ func (h *Handle) LoadStatsFromJSONToTable(tableInfo *model.TableInfo, jsonTbl *J
 			}
 			hist := HistogramFromProto(jsonCol.Histogram)
 			count := int64(hist.totalRowCount())
-			hist, err := hist.ConvertTo(new(stmtctx.StatementContext), &colInfo.FieldType)
+			sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+			hist, err := hist.ConvertTo(sc, &colInfo.FieldType)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

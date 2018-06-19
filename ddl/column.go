@@ -27,7 +27,7 @@ import (
 // 1. The added column was append at the end of tblInfo.Columns, due to ddl state was not public then.
 //    It should be moved to the correct position when the ddl state to be changed to public.
 // 2. The offset of column should also to be set to the right value.
-func (d *ddl) adjustColumnInfoInAddColumn(tblInfo *model.TableInfo, offset int) {
+func adjustColumnInfoInAddColumn(tblInfo *model.TableInfo, offset int) {
 	oldCols := tblInfo.Columns
 	newCols := make([]*model.ColumnInfo, 0, len(oldCols))
 	newCols = append(newCols, oldCols[:offset]...)
@@ -56,7 +56,7 @@ func (d *ddl) adjustColumnInfoInAddColumn(tblInfo *model.TableInfo, offset int) 
 // adjustColumnInfoInDropColumn is used to set the correct position of column info when dropping column.
 // 1. The offset of column should to be set to the last of the columns.
 // 2. The dropped column is moved to the end of tblInfo.Columns, due to it was not public any more.
-func (d *ddl) adjustColumnInfoInDropColumn(tblInfo *model.TableInfo, offset int) {
+func adjustColumnInfoInDropColumn(tblInfo *model.TableInfo, offset int) {
 	oldCols := tblInfo.Columns
 	// Adjust column offset.
 	offsetChanged := make(map[int]int)
@@ -82,7 +82,7 @@ func (d *ddl) adjustColumnInfoInDropColumn(tblInfo *model.TableInfo, offset int)
 	tblInfo.Columns = newCols
 }
 
-func (d *ddl) createColumnInfo(tblInfo *model.TableInfo, colInfo *model.ColumnInfo, pos *ast.ColumnPosition) (*model.ColumnInfo, int, error) {
+func createColumnInfo(tblInfo *model.TableInfo, colInfo *model.ColumnInfo, pos *ast.ColumnPosition) (*model.ColumnInfo, int, error) {
 	// Check column name duplicate.
 	cols := tblInfo.Columns
 	position := len(cols)
@@ -91,7 +91,7 @@ func (d *ddl) createColumnInfo(tblInfo *model.TableInfo, colInfo *model.ColumnIn
 	if pos.Tp == ast.ColumnPositionFirst {
 		position = 0
 	} else if pos.Tp == ast.ColumnPositionAfter {
-		c := findCol(cols, pos.RelativeColumn.Name.L)
+		c := model.FindColumnInfo(cols, pos.RelativeColumn.Name.L)
 		if c == nil {
 			return nil, 0, infoschema.ErrColumnNotExists.GenByArgs(pos.RelativeColumn, tblInfo.Name)
 		}
@@ -115,7 +115,7 @@ func (d *ddl) createColumnInfo(tblInfo *model.TableInfo, colInfo *model.ColumnIn
 	return colInfo, position, nil
 }
 
-func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tblInfo, err := getTableInfo(t, job, schemaID)
 	if err != nil {
@@ -125,7 +125,6 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	// if errorBeforeDecodeArgs {
 	// 	return ver, errors.New("occur an error before decode args")
 	// }
-
 	col := &model.ColumnInfo{}
 	pos := &ast.ColumnPosition{}
 	offset := 0
@@ -135,7 +134,7 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 
-	columnInfo := findCol(tblInfo.Columns, col.Name.L)
+	columnInfo := model.FindColumnInfo(tblInfo.Columns, col.Name.L)
 	if columnInfo != nil {
 		if columnInfo.State == model.StatePublic {
 			// We already have a column with the same column name.
@@ -143,7 +142,7 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			return ver, infoschema.ErrColumnExists.GenByArgs(col.Name)
 		}
 	} else {
-		columnInfo, offset, err = d.createColumnInfo(tblInfo, col, pos)
+		columnInfo, offset, err = createColumnInfo(tblInfo, col, pos)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
@@ -175,7 +174,11 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	case model.StateWriteReorganization:
 		// reorganization -> public
 		// Adjust table column offset.
-		d.adjustColumnInfoInAddColumn(tblInfo, offset)
+		adjustColumnInfoInAddColumn(tblInfo, offset)
+		if err = checkAddColumnTooManyColumns(tblInfo.Columns); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
 		columnInfo.State = model.StatePublic
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != columnInfo.State)
 		if err != nil {
@@ -184,7 +187,7 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-		d.asyncNotifyEvent(&util.Event{Tp: model.ActionAddColumn, TableInfo: tblInfo, ColumnInfo: columnInfo})
+		asyncNotifyEvent(d, &util.Event{Tp: model.ActionAddColumn, TableInfo: tblInfo, ColumnInfo: columnInfo})
 	default:
 		err = ErrInvalidColumnState.Gen("invalid column state %v", columnInfo.State)
 	}
@@ -192,7 +195,7 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return ver, errors.Trace(err)
 }
 
-func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tblInfo, err := getTableInfo(t, job, schemaID)
 	if err != nil {
@@ -206,7 +209,7 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 
-	colInfo := findCol(tblInfo.Columns, colName.L)
+	colInfo := model.FindColumnInfo(tblInfo.Columns, colName.L)
 	if colInfo == nil {
 		job.State = model.JobStateCancelled
 		return ver, ErrCantDropFieldOrKey.Gen("column %s doesn't exist", colName)
@@ -223,7 +226,7 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.SchemaState = model.StateWriteOnly
 		colInfo.State = model.StateWriteOnly
 		// Set this column's offset to the last and reset all following columns' offsets.
-		d.adjustColumnInfoInDropColumn(tblInfo, colInfo.Offset)
+		adjustColumnInfoInDropColumn(tblInfo, colInfo.Offset)
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfo.State)
 	case model.StateWriteOnly:
 		// write only -> delete only
@@ -253,7 +256,7 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return ver, errors.Trace(err)
 }
 
-func (d *ddl) onSetDefaultValue(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onSetDefaultValue(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	newCol := &model.ColumnInfo{}
 	err := job.DecodeArgs(newCol)
 	if err != nil {
@@ -261,10 +264,10 @@ func (d *ddl) onSetDefaultValue(t *meta.Meta, job *model.Job) (ver int64, _ erro
 		return ver, errors.Trace(err)
 	}
 
-	return d.updateColumn(t, job, newCol, &newCol.Name)
+	return updateColumn(t, job, newCol, &newCol.Name)
 }
 
-func (d *ddl) onModifyColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onModifyColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	newCol := &model.ColumnInfo{}
 	oldColName := &model.CIStr{}
 	pos := &ast.ColumnPosition{}
@@ -274,24 +277,24 @@ func (d *ddl) onModifyColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		return ver, errors.Trace(err)
 	}
 
-	return d.doModifyColumn(t, job, newCol, oldColName, pos)
+	return doModifyColumn(t, job, newCol, oldColName, pos)
 }
 
 // doModifyColumn updates the column information and reorders all columns.
-func (d *ddl) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldName *model.CIStr, pos *ast.ColumnPosition) (ver int64, _ error) {
+func doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldName *model.CIStr, pos *ast.ColumnPosition) (ver int64, _ error) {
 	tblInfo, err := getTableInfo(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 
-	oldCol := findCol(tblInfo.Columns, oldName.L)
+	oldCol := model.FindColumnInfo(tblInfo.Columns, oldName.L)
 	if oldCol == nil || oldCol.State != model.StatePublic {
 		job.State = model.JobStateCancelled
 		return ver, infoschema.ErrColumnNotExists.GenByArgs(oldName, tblInfo.Name)
 	}
 	// If we want to rename the column name, we need to check whether it already exists.
 	if newCol.Name.L != oldName.L {
-		c := findCol(tblInfo.Columns, newCol.Name.L)
+		c := model.FindColumnInfo(tblInfo.Columns, newCol.Name.L)
 		if c != nil {
 			job.State = model.JobStateCancelled
 			return ver, infoschema.ErrColumnExists.GenByArgs(newCol.Name)
@@ -317,7 +320,7 @@ func (d *ddl) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnI
 			return ver, infoschema.ErrColumnNotExists.GenByArgs(oldName, tblInfo.Name)
 		}
 
-		relative := findCol(tblInfo.Columns, pos.RelativeColumn.Name.L)
+		relative := model.FindColumnInfo(tblInfo.Columns, pos.RelativeColumn.Name.L)
 		if relative == nil || relative.State != model.StatePublic {
 			job.State = model.JobStateCancelled
 			return ver, infoschema.ErrColumnNotExists.GenByArgs(pos.RelativeColumn, tblInfo.Name)
@@ -376,12 +379,12 @@ func (d *ddl) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnI
 	return ver, nil
 }
 
-func (d *ddl) updateColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldColName *model.CIStr) (ver int64, _ error) {
+func updateColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldColName *model.CIStr) (ver int64, _ error) {
 	tblInfo, err := getTableInfo(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	oldCol := findCol(tblInfo.Columns, oldColName.L)
+	oldCol := model.FindColumnInfo(tblInfo.Columns, oldColName.L)
 	if oldCol == nil || oldCol.State != model.StatePublic {
 		job.State = model.JobStateCancelled
 		return ver, infoschema.ErrColumnNotExists.GenByArgs(newCol.Name, tblInfo.Name)

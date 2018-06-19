@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege"
@@ -39,6 +40,7 @@ var _ = Suite(&testPrivilegeSuite{})
 
 type testPrivilegeSuite struct {
 	store  kv.Storage
+	dom    *domain.Domain
 	dbName string
 
 	createDBSQL              string
@@ -54,14 +56,19 @@ type testPrivilegeSuite struct {
 }
 
 func (s *testPrivilegeSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
+	s.dbName = "test"
+	s.dom, s.store = newStore(c, s.dbName)
+}
+
+func (s *testPrivilegeSuite) TearDownSuite(c *C) {
+	s.dom.Close()
+	s.store.Close()
+	testleak.AfterTest(c)()
 }
 
 func (s *testPrivilegeSuite) SetUpTest(c *C) {
-	s.dbName = "test"
-	s.store = newStore(c, s.dbName)
 	se := newSession(c, s.store, s.dbName)
-	_, err := session.BootstrapSession(s.store)
-	c.Assert(err, IsNil)
 	s.createDBSQL = fmt.Sprintf("create database if not exists %s;", s.dbName)
 	s.createDB1SQL = fmt.Sprintf("create database if not exists %s1;", s.dbName)
 	s.dropDBSQL = fmt.Sprintf("drop database if exists %s;", s.dbName)
@@ -93,7 +100,6 @@ func (s *testPrivilegeSuite) TearDownTest(c *C) {
 }
 
 func (s *testPrivilegeSuite) TestCheckDBPrivilege(c *C) {
-	defer testleak.AfterTest(c)()
 	rootSe := newSession(c, s.store, s.dbName)
 	mustExec(c, rootSe, `CREATE USER 'testcheck'@'localhost';`)
 	mustExec(c, rootSe, `FLUSH PRIVILEGES;`)
@@ -114,7 +120,6 @@ func (s *testPrivilegeSuite) TestCheckDBPrivilege(c *C) {
 }
 
 func (s *testPrivilegeSuite) TestCheckTablePrivilege(c *C) {
-	defer testleak.AfterTest(c)()
 	rootSe := newSession(c, s.store, s.dbName)
 	mustExec(c, rootSe, `CREATE USER 'test1'@'localhost';`)
 	mustExec(c, rootSe, `FLUSH PRIVILEGES;`)
@@ -140,7 +145,6 @@ func (s *testPrivilegeSuite) TestCheckTablePrivilege(c *C) {
 }
 
 func (s *testPrivilegeSuite) TestShowGrants(c *C) {
-	defer testleak.AfterTest(c)()
 	se := newSession(c, s.store, s.dbName)
 	mustExec(c, se, `CREATE USER 'show'@'localhost' identified by '123';`)
 	mustExec(c, se, `GRANT Index ON *.* TO  'show'@'localhost';`)
@@ -232,7 +236,6 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 }
 
 func (s *testPrivilegeSuite) TestDropTablePriv(c *C) {
-	defer testleak.AfterTest(c)()
 	se := newSession(c, s.store, s.dbName)
 	ctx, _ := se.(sessionctx.Context)
 	mustExec(c, se, `CREATE TABLE todrop(c int);`)
@@ -259,7 +262,6 @@ func (s *testPrivilegeSuite) TestDropTablePriv(c *C) {
 }
 
 func (s *testPrivilegeSuite) TestCheckAuthenticate(c *C) {
-	defer testleak.AfterTest(c)()
 
 	se := newSession(c, s.store, s.dbName)
 	mustExec(c, se, `CREATE USER 'u1'@'localhost';`)
@@ -289,7 +291,6 @@ func (s *testPrivilegeSuite) TestCheckAuthenticate(c *C) {
 }
 
 func (s *testPrivilegeSuite) TestInformationSchema(c *C) {
-	defer testleak.AfterTest(c)()
 
 	// This test tests no privilege check for INFORMATION_SCHEMA database.
 	se := newSession(c, s.store, s.dbName)
@@ -305,14 +306,14 @@ func mustExec(c *C, se session.Session, sql string) {
 	c.Assert(err, IsNil)
 }
 
-func newStore(c *C, dbPath string) kv.Storage {
+func newStore(c *C, dbPath string) (*domain.Domain, kv.Storage) {
 	store, err := mockstore.NewMockTikvStore()
 	session.SetSchemaLease(0)
 	session.SetStatsLease(0)
 	c.Assert(err, IsNil)
-	_, err = session.BootstrapSession(store)
+	dom, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)
-	return store
+	return dom, store
 }
 
 func newSession(c *C, store kv.Storage, dbName string) session.Session {

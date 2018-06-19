@@ -87,8 +87,6 @@ type PhysicalIndexLookUpReader struct {
 type PhysicalIndexScan struct {
 	physicalSchemaProducer
 
-	// conditions stores the original conditions, when it's prepare && execute, we use it to build ranges.
-	conditions []expression.Expression
 	// AccessCondition is used to calculate range.
 	AccessCondition []expression.Expression
 	filterCondition []expression.Expression
@@ -234,15 +232,14 @@ type PhysicalMergeJoin struct {
 
 	JoinType JoinType
 
-	EqualConditions []*expression.ScalarFunction
 	LeftConditions  []expression.Expression
 	RightConditions []expression.Expression
 	OtherConditions []expression.Expression
 
 	DefaultValues []types.Datum
 
-	leftKeys  []*expression.Column
-	rightKeys []*expression.Column
+	LeftKeys  []*expression.Column
+	RightKeys []*expression.Column
 }
 
 // PhysicalLock is the physical operator of lock, which is used for `select ... for update` clause.

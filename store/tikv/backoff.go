@@ -153,19 +153,19 @@ func (t backoffType) TError() *terror.Error {
 
 // Maximum total sleep time(in ms) for kv/cop commands.
 const (
-	copBuildTaskMaxBackoff  = 5000
-	tsoMaxBackoff           = 5000
-	scannerNextMaxBackoff   = 20000
-	batchGetMaxBackoff      = 20000
-	copNextMaxBackoff       = 20000
-	getMaxBackoff           = 20000
-	prewriteMaxBackoff      = 20000
-	cleanupMaxBackoff       = 20000
-	GcOneRegionMaxBackoff   = 20000
-	GcResolveLockMaxBackoff = 100000
-	GcDeleteRangeMaxBackoff = 100000
-	rawkvMaxBackoff         = 20000
-	splitRegionBackoff      = 20000
+	copBuildTaskMaxBackoff         = 5000
+	tsoMaxBackoff                  = 5000
+	scannerNextMaxBackoff          = 20000
+	batchGetMaxBackoff             = 20000
+	copNextMaxBackoff              = 20000
+	getMaxBackoff                  = 20000
+	prewriteMaxBackoff             = 20000
+	cleanupMaxBackoff              = 20000
+	GcOneRegionMaxBackoff          = 20000
+	GcResolveLockMaxBackoff        = 100000
+	deleteRangeOneRegionMaxBackoff = 100000
+	rawkvMaxBackoff                = 20000
+	splitRegionBackoff             = 20000
 )
 
 // CommitMaxBackoff is max sleep time of the 'commit' command
@@ -222,7 +222,8 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 	b.types = append(b.types, typ)
 
 	log.Debugf("%v, retry later(totalSleep %dms, maxSleep %dms)", err, b.totalSleep, b.maxSleep)
-	b.errors = append(b.errors, err)
+
+	b.errors = append(b.errors, errors.Errorf("%s at %s", err.Error(), time.Now().Format(time.RFC3339Nano)))
 	if b.maxSleep > 0 && b.totalSleep >= b.maxSleep {
 		errMsg := fmt.Sprintf("backoffer.maxSleep %dms is exceeded, errors:", b.maxSleep)
 		for i, err := range b.errors {
@@ -232,8 +233,8 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 			}
 		}
 		log.Warn(errMsg)
-		// Use the last backoff type to generate a MySQL error.
-		return typ.TError()
+		// Use the first backoff type to generate a MySQL error.
+		return b.types[0].TError()
 	}
 	return nil
 }
