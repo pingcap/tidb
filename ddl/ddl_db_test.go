@@ -53,23 +53,6 @@ import (
 	"golang.org/x/net/context"
 )
 
-func (s *testDBSuite) BenchmarkC(c *C) {
-	c.StopTimer()
-	_, err := s.s.Execute(context.Background(), "create database test_db_b")
-	c.Assert(err, IsNil)
-	defer func() {
-		_, err := s.s.Execute(context.Background(), "drop database test_db_b")
-		c.Assert(err, IsNil)
-	}()
-	_, err = s.s.Execute(context.Background(), "use test_db_b")
-	c.Assert(err, IsNil)
-	c.StartTimer()
-	for i := 0; i < c.N; i++ {
-		_, err = s.s.Execute(context.Background(), fmt.Sprintf("create table table_%v(a int, b int)", i))
-		c.Assert(err, IsNil)
-	}
-}
-
 const (
 	// waitForCleanDataRound indicates how many times should we check data is cleaned or not.
 	waitForCleanDataRound = 150
