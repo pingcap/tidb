@@ -350,6 +350,7 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	ds.statisticTable.ColumnIsInvalid(sc, pkCol.ID)
 	path.countAfterAccess, err = ds.statisticTable.GetRowCountByIntColumnRanges(sc, pkCol.ID, path.ranges)
 	return errors.Trace(err)
 }

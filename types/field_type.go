@@ -52,6 +52,11 @@ func NewFieldType(tp byte) *FieldType {
 	}
 }
 
+func (ft *FieldType) Clone() *FieldType {
+	newFt := *ft
+	return &newFt
+}
+
 // Equal checks whether two FieldType objects are equal.
 func (ft *FieldType) Equal(other *FieldType) bool {
 	// We do not need to compare `ft.Flag == other.Flag` when wrapping cast upon an Expression.

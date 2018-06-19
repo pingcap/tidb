@@ -36,11 +36,14 @@ func initStatsMeta4Chunk(is infoschema.InfoSchema, tables statsCache, iter *chun
 			continue
 		}
 		tableInfo := table.Meta()
+		newHistColl := HistColl{
+			Count:   row.GetInt64(3),
+			Columns: make(map[int64]*Column, len(tableInfo.Columns)),
+			Indices: make(map[int64]*Index, len(tableInfo.Indices)),
+		}
 		tbl := &Table{
+			HistColl:    newHistColl,
 			TableID:     tableID,
-			Columns:     make(map[int64]*Column, len(tableInfo.Columns)),
-			Indices:     make(map[int64]*Index, len(tableInfo.Indices)),
-			Count:       row.GetInt64(3),
 			ModifyCount: row.GetInt64(2),
 			Version:     row.GetUint64(0),
 		}

@@ -41,31 +41,38 @@ const (
 
 // Table represents statistics for a table.
 type Table struct {
+	HistColl
 	TableID     int64
-	Columns     map[int64]*Column
-	Indices     map[int64]*Index
-	Count       int64 // Total row count in a table.
 	ModifyCount int64 // Total modify count in a table.
 	Version     uint64
 	Pseudo      bool
 	PKIsHandle  bool
 }
 
+type HistColl struct {
+	Columns map[int64]*Column
+	Indices map[int64]*Index
+	Count   int64
+}
+
 func (t *Table) copy() *Table {
+	newHistColl := HistColl{
+		Count:   t.Count,
+		Columns: make(map[int64]*Column),
+		Indices: make(map[int64]*Index),
+	}
+	for id, col := range t.Columns {
+		newHistColl.Columns[id] = col
+	}
+	for id, idx := range t.Indices {
+		newHistColl.Indices[id] = idx
+	}
 	nt := &Table{
+		HistColl:    newHistColl,
 		TableID:     t.TableID,
-		Count:       t.Count,
 		ModifyCount: t.ModifyCount,
 		Version:     t.Version,
 		Pseudo:      t.Pseudo,
-		Columns:     make(map[int64]*Column),
-		Indices:     make(map[int64]*Index),
-	}
-	for id, col := range t.Columns {
-		nt.Columns[id] = col
-	}
-	for id, idx := range t.Indices {
-		nt.Indices[id] = idx
 	}
 	return nt
 }
@@ -186,10 +193,13 @@ func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *
 func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, loadAll bool) (*Table, error) {
 	table, ok := h.statsCache.Load().(statsCache)[tableInfo.ID]
 	if !ok || table.Pseudo {
-		table = &Table{
-			TableID: tableInfo.ID,
+		histColl := HistColl{
 			Columns: make(map[int64]*Column, len(tableInfo.Columns)),
 			Indices: make(map[int64]*Index, len(tableInfo.Indices)),
+		}
+		table = &Table{
+			TableID:  tableInfo.ID,
+			HistColl: histColl,
 		}
 	} else {
 		// We copy it before writing to avoid race.
@@ -318,57 +328,61 @@ func (t *Table) ColumnEqualRowCount(sc *stmtctx.StatementContext, value types.Da
 }
 
 // GetRowCountByIntColumnRanges estimates the row count by a slice of IntColumnRange.
-func (t *Table) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext, colID int64, intRanges []*ranger.Range) (float64, error) {
-	if t.ColumnIsInvalid(sc, colID) {
+func (coll *HistColl) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext, colID int64, intRanges []*ranger.Range) (float64, error) {
+	c := coll.Columns[colID]
+	if c == nil || ((c.NDV > 0 || c.NullCount == 0) && c.Histogram.Len() == 0) {
 		if len(intRanges) == 0 {
-			return float64(t.Count), nil
+			return float64(coll.Count), nil
 		}
 		if intRanges[0].LowVal[0].Kind() == types.KindInt64 {
-			return getPseudoRowCountBySignedIntRanges(intRanges, float64(t.Count)), nil
+			return getPseudoRowCountBySignedIntRanges(intRanges, float64(coll.Count)), nil
 		}
-		return getPseudoRowCountByUnsignedIntRanges(intRanges, float64(t.Count)), nil
+		return getPseudoRowCountByUnsignedIntRanges(intRanges, float64(coll.Count)), nil
 	}
-	c := t.Columns[colID]
 	result, err := c.getColumnRowCount(sc, intRanges)
-	result *= c.getIncreaseFactor(t.Count)
+	result *= c.getIncreaseFactor(coll.Count)
 	return result, errors.Trace(err)
 }
 
 // GetRowCountByColumnRanges estimates the row count by a slice of Range.
-func (t *Table) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, colID int64, colRanges []*ranger.Range) (float64, error) {
-	if t.ColumnIsInvalid(sc, colID) {
-		return getPseudoRowCountByColumnRanges(sc, float64(t.Count), colRanges, 0)
+func (coll *HistColl) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, colID int64, colRanges []*ranger.Range) (float64, error) {
+	c := coll.Columns[colID]
+	// Column not exists or haven't been loaded.
+	if c == nil || ((c.NDV > 0 || c.NullCount == 0) && c.Histogram.Len() == 0) {
+		return getPseudoRowCountByColumnRanges(sc, float64(coll.Count), colRanges, 0)
 	}
-	c := t.Columns[colID]
 	result, err := c.getColumnRowCount(sc, colRanges)
-	result *= c.getIncreaseFactor(t.Count)
+	result *= c.getIncreaseFactor(coll.Count)
 	return result, errors.Trace(err)
 }
 
 // GetRowCountByIndexRanges estimates the row count by a slice of Range.
-func (t *Table) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idxID int64, indexRanges []*ranger.Range) (float64, error) {
-	idx := t.Indices[idxID]
-	if t.Pseudo || idx == nil || idx.Len() == 0 {
+func (coll *HistColl) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idxID int64, indexRanges []*ranger.Range) (float64, error) {
+	idx := coll.Indices[idxID]
+	if idx == nil || idx.Len() == 0 {
 		colsLen := -1
 		if idx != nil && idx.Info.Unique {
 			colsLen = len(idx.Info.Columns)
 		}
-		return getPseudoRowCountByIndexRanges(sc, indexRanges, float64(t.Count), colsLen)
+		return getPseudoRowCountByIndexRanges(sc, indexRanges, float64(coll.Count), colsLen)
 	}
 	result, err := idx.getRowCount(sc, indexRanges)
-	result *= idx.getIncreaseFactor(t.Count)
+	result *= idx.getIncreaseFactor(coll.Count)
 	return result, errors.Trace(err)
 }
 
 // PseudoTable creates a pseudo table statistics.
 func PseudoTable(tblInfo *model.TableInfo) *Table {
+	pseudoHistColl := HistColl{
+		Count:   pseudoRowCount,
+		Columns: make(map[int64]*Column, len(tblInfo.Columns)),
+		Indices: make(map[int64]*Index, len(tblInfo.Indices)),
+	}
 	t := &Table{
+		HistColl:   pseudoHistColl,
 		TableID:    tblInfo.ID,
 		Pseudo:     true,
-		Count:      pseudoRowCount,
 		PKIsHandle: tblInfo.PKIsHandle,
-		Columns:    make(map[int64]*Column, len(tblInfo.Columns)),
-		Indices:    make(map[int64]*Index, len(tblInfo.Indices)),
 	}
 	for _, col := range tblInfo.Columns {
 		if col.State == model.StatePublic {
