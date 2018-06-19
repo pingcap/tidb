@@ -274,6 +274,7 @@ func (h *Handle) dumpFeedbackToKV(fb *QueryFeedback) error {
 	return errors.Trace(err)
 }
 
+// UpdateStatsByLocalFeedback will update statistics by local feedback.
 func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) error {
 	h.listHead.Lock()
 	for collector := h.listHead.next; collector != nil; collector = collector.next {
