@@ -397,7 +397,7 @@ func updateVersionAndTableInfo(t *meta.Meta, job *model.Job, tblInfo *model.Tabl
 	return ver, t.UpdateTable(job.SchemaID, tblInfo)
 }
 
-// TODO: If may have the issue when two clients concurrently add partitions to a table.
+// TODO: It may have the issue when two clients concurrently add partitions to a table.
 func onAddTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	partInfo := &model.PartitionInfo{}
 	err := job.DecodeArgs(&partInfo)
@@ -417,37 +417,13 @@ func onAddTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 
-	originalState := partInfo.State
-	switch partInfo.State {
-	case model.StateNone:
-		// none -> delete only
-		job.SchemaState = model.StateDeleteOnly
-		partInfo.State = model.StateDeleteOnly
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != partInfo.State)
-	case model.StateDeleteOnly:
-		// delete only -> write only
-		job.SchemaState = model.StateWriteOnly
-		partInfo.State = model.StateWriteOnly
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != partInfo.State)
-	case model.StateWriteOnly:
-		// write only -> reorganization
-		job.SchemaState = model.StateWriteReorganization
-		partInfo.State = model.StateWriteReorganization
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != partInfo.State)
-	case model.StateWriteReorganization:
-		// reorganization -> public
-		updatePartitionInfo(partInfo, tblInfo)
-		partInfo.State = model.StatePublic
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != partInfo.State)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-
-		// Finish this job.
-		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-	default:
-		err = ErrInvalidColumnState.Gen("invalid partition state %v", partInfo.State)
+	updatePartitionInfo(partInfo, tblInfo)
+	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
 	}
+	// Finish this job.
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, errors.Trace(err)
 }
 
@@ -460,7 +436,6 @@ func updatePartitionInfo(partitionInfo *model.PartitionInfo, tblInfo *model.Tabl
 		parInfo.Definitions = append(parInfo.Definitions, oldDef)
 	}
 	for _, newDef := range newDefs {
-		// TODO: Check that the add values must be greater than all previous values.
 		parInfo.Definitions = append(parInfo.Definitions, newDef)
 	}
 	tblInfo.Partition.Definitions = parInfo.Definitions

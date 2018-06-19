@@ -1224,6 +1224,10 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 
 // AddTablePartitions will add a new partition to the table.
 func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	if len(spec.PartDefinitions) == 0 {
+		return errors.Trace(infoschema.ErrPartitionsMustBeDefined)
+	}
+
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
@@ -1233,13 +1237,10 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ident.Schema, ident.Name))
 	}
-	if len(spec.PartDefinitions) == 0 {
-		return errors.Trace(infoschema.ErrPartitionsMustBeDefined)
-	}
 
 	partInfo := &model.PartitionInfo{}
 	meta := t.Meta()
-	if meta.Partition == nil {
+	if meta.GetPartitionInfo() == nil && meta.Partition == nil {
 		return errors.Trace(infoschema.ErrPartitionMgmtOnNonpartitioned)
 	}
 	partInfo, err = buildPartitionInfo(meta, d, partInfo, spec)
@@ -1988,19 +1989,21 @@ func validateCommentLength(vars *variable.SessionVars, comment string, maxLen in
 
 func buildPartitionInfo(meta *model.TableInfo, d *ddl, part *model.PartitionInfo, spec *ast.AlterTableSpec) (*model.PartitionInfo, error) {
 	part = &model.PartitionInfo{
-		Columns: meta.Partition.Columns,
 		Type:    meta.Partition.Type,
 		Expr:    meta.Partition.Expr,
+		Columns: meta.Partition.Columns,
+		Enable:  meta.Partition.Enable,
 	}
+	buf := new(bytes.Buffer)
 	for _, def := range spec.PartDefinitions {
 		for _, expr := range def.LessThan {
 			tp := expr.GetType().Tp
 			if !(tp == mysql.TypeLong || tp == mysql.TypeLonglong) {
-				buf := new(bytes.Buffer)
 				expr.Format(buf)
-				if buf.String() == "MAXVALUE" {
+				if strings.EqualFold(buf.String(), "MAXVALUE") {
 					continue
 				}
+				buf.Reset()
 				return nil, infoschema.ErrColumnNotExists.GenByArgs(buf.String(), "partition function")
 			}
 		}
@@ -2014,9 +2017,9 @@ func buildPartitionInfo(meta *model.TableInfo, d *ddl, part *model.PartitionInfo
 			Comment: def.Comment,
 		}
 		for _, expr := range def.LessThan {
-			buf := new(bytes.Buffer)
 			expr.Format(buf)
 			piDef.LessThan = append(piDef.LessThan, buf.String())
+			buf.Reset()
 		}
 		part.Definitions = append(part.Definitions, piDef)
 	}
