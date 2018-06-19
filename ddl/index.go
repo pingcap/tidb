@@ -711,7 +711,7 @@ func splitTableRanges(t table.Table, reorgInfo *reorgInfo) ([]kv.KeyRange, error
 	startHandle := reorgInfo.StartHandle
 	reorgMeta := reorgInfo.Job.ReorgMeta
 	startRecordKey := tablecodec.EncodeRowKeyWithHandle(partitionID, startHandle)
-	endRecordKey := tablecodec.EncodeRowKeyWithHandle(partitionID, reorgMeta.EndHandle)
+	endRecordKey := tablecodec.EncodeRowKeyWithHandle(partitionID, reorgMeta.EndHandle).Next()
 
 	log.Infof("[ddl-reorg] split handle ranges %v [%v, %v] from PD", partitionID, startHandle, reorgMeta.EndHandle)
 	kvRange := kv.KeyRange{StartKey: startRecordKey, EndKey: endRecordKey}
@@ -989,7 +989,7 @@ func iterateSnapshotRows(store kv.Storage, partitionID int64, version uint64, se
 	}
 	defer it.Close()
 
-	recordPrefix := tablecodec.GenTablePrefix(partitionID)
+	recordPrefix := tablecodec.GenTableRecordPrefix(partitionID)
 	for it.Valid() {
 		if !it.Key().HasPrefix(recordPrefix) {
 			break

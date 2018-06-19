@@ -352,16 +352,15 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 			pid = pi.Definitions[0].ID
 		}
 
-		start, end, err := getPartitionRange(d, tblInfo, pid, ver.Ver)
-		if err != nil {
-			return nil, errors.Trace(err)
+		start, end, err1 := getPartitionRange(d, tblInfo, pid, ver.Ver)
+		if err1 != nil {
+			return nil, errors.Trace(err1)
 		}
 
 		reorgMeta := model.NewDDLReorgMeta()
 		reorgMeta.EndHandle = end
 		reorgMeta.PartitionID = pid
 		job.ReorgMeta = reorgMeta
-		job.SnapshotVer = ver.Ver
 		info.StartHandle = start
 
 		log.Infof("[ddl] job %v get table startHandle:%v, endHandle:%v", job.ID, info.StartHandle, reorgMeta.EndHandle)
@@ -376,6 +375,8 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 		if err != nil {
 			return info, errors.Trace(err)
 		}
+
+		job.SnapshotVer = ver.Ver
 	} else {
 		info.StartHandle, err = t.GetDDLReorgHandle(job)
 		if err != nil {
