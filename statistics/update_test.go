@@ -389,19 +389,15 @@ func (s *testStatsUpdateSuite) TestUpdateErrorRate(c *C) {
 	testKit.MustExec("create table t (a bigint(64), b bigint(64), primary key(a), index idx(b))")
 	h.HandleDDLEvent(<-h.DDLEventCh())
 
-	for i := 1; i < 1001; i++ {
-		sql := fmt.Sprintf("insert into t values (%d, %d)", i*6+500, (i/20)*30+123)
-		testKit.MustExec(sql)
-	}
+	testKit.MustExec("insert into t values (1, 3)")
 
 	c.Assert(h.DumpStatsDeltaToKV(), IsNil)
 	testKit.MustExec("analyze table t")
 
-	for i := 0; i < 705; i++ {
-		sql := fmt.Sprintf("insert into t values (%d, %d)", i*2+501, (i/82)*120+500)
-		testKit.MustExec(sql)
-	}
-
+	testKit.MustExec("insert into t values (2, 3)")
+	testKit.MustExec("insert into t values (5, 3)")
+	testKit.MustExec("insert into t values (8, 3)")
+	testKit.MustExec("insert into t values (12, 3)")
 	c.Assert(h.DumpStatsDeltaToKV(), IsNil)
 	is = s.do.InfoSchema()
 	h.Update(is)
@@ -409,45 +405,35 @@ func (s *testStatsUpdateSuite) TestUpdateErrorRate(c *C) {
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tblInfo := table.Meta()
-
 	tbl := h.GetTableStats(tblInfo)
 	aID := tblInfo.Columns[0].ID
 	bID := tblInfo.Indices[0].ID
 
-	for i := 0; i < 30; i++ {
-		sql := fmt.Sprintf("select * from t where a between %d and %d", i*3+i/2, i*4+i/2+1200)
-		testKit.MustQuery(sql)
-		c.Assert(h.DumpStatsDeltaToKV(), IsNil)
-		c.Assert(h.DumpStatsFeedbackToKV(), IsNil)
-		c.Assert(h.HandleUpdateStats(is), IsNil)
+	// The statistic table is outdated now.
+	c.Assert(tbl.Columns[aID].IsPseudo(), IsTrue)
 
-		h.UpdateErrorRate(is)
-		h.Update(is)
-		tbl = h.GetTableStats(tblInfo)
-		checker := IsTrue
-		if i > 21 {
-			checker = IsFalse
-		}
-		c.Assert(tbl.Columns[aID].IsPseudo(), checker, Commentf("when `i` is %d, in sql `%s`", i, sql))
-	}
+	testKit.MustQuery("select * from t where a between 1 and 10")
+	c.Assert(h.DumpStatsDeltaToKV(), IsNil)
+	c.Assert(h.DumpStatsFeedbackToKV(), IsNil)
+	c.Assert(h.HandleUpdateStats(is), IsNil)
+	h.UpdateErrorRate(is)
+	h.Update(is)
+	tbl = h.GetTableStats(tblInfo)
 
-	for i := 0; i < 15; i++ {
-		sql := fmt.Sprintf("select * from t where b between %d and %d", 2*i*i+555, 2*i*i+888)
-		testKit.MustQuery(sql)
-		c.Assert(h.DumpStatsDeltaToKV(), IsNil)
-		c.Assert(h.DumpStatsFeedbackToKV(), IsNil)
-		c.Assert(h.HandleUpdateStats(is), IsNil)
+	// The error rate of this column is not larger than MaxErrorRate now.
+	c.Assert(tbl.Columns[aID].IsPseudo(), IsFalse)
 
-		h.UpdateErrorRate(is)
-		h.Update(is)
-		tbl = h.GetTableStats(tblInfo)
-		checker := IsTrue
-		if i == 0 || i > 9 {
-			checker = IsFalse
-		}
-		c.Assert(tbl.Indices[bID].IsPseudo(), checker, Commentf("when `i` is %d, in sql `%s`", i, sql))
-	}
-	c.Assert(tbl.Indices[bID].QueryTotal, Equals, int64(15))
+	c.Assert(tbl.Indices[bID].IsPseudo(), IsTrue)
+	testKit.MustQuery("select * from t where b between 2 and 10")
+	c.Assert(h.DumpStatsDeltaToKV(), IsNil)
+	c.Assert(h.DumpStatsFeedbackToKV(), IsNil)
+	c.Assert(h.HandleUpdateStats(is), IsNil)
+	h.UpdateErrorRate(is)
+	h.Update(is)
+	tbl = h.GetTableStats(tblInfo)
+	c.Assert(tbl.Indices[bID].IsPseudo(), IsFalse)
+	c.Assert(tbl.Indices[bID].QueryTotal, Equals, int64(1))
+
 	testKit.MustExec("analyze table t")
 	c.Assert(h.DumpStatsDeltaToKV(), IsNil)
 	h.Update(is)

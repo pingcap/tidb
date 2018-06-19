@@ -177,9 +177,22 @@ func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Hand
 	}
 	t := h.GetTableStats(table.Meta())
 	sc := h.ctx.GetSessionVars().StmtCtx
+
+	// A pseudo statistics table will be used when table row count from statistics is zero.
+	if t.Count == 0 {
+		t = PseudoTable(table.Meta())
+	}
+
+	// The table be will pseudo when statistics is outdated.
+	if float64(t.ModifyCount)/float64(t.Count) > RatioOfPseudoEstimate {
+		tbl := *t
+		tbl.Pseudo = true
+		t = &tbl
+	}
+
 	if t.Pseudo == true {
 		var err error
-		ranges, err := q.DecodeToRanges(isIndex, mysql.HasPriKeyFlag(t.Columns[q.hist.ID].Info.Flag))
+		ranges, err := q.DecodeToRanges(isIndex)
 		if err != nil {
 			return errors.Trace(err)
 		}

@@ -92,11 +92,22 @@ func (q *QueryFeedback) CollectFeedback(numOfRanges int) bool {
 }
 
 // DecodeToRanges decode the feedback to ranges.
-func (q *QueryFeedback) DecodeToRanges(isIndex bool, isPK bool) ([]*ranger.Range, error) {
+func (q *QueryFeedback) DecodeToRanges(isIndex bool) ([]*ranger.Range, error) {
 	ranges := make([]*ranger.Range, 0, len(q.feedback))
 	for _, val := range q.feedback {
 		low, high := *val.lower, *val.upper
-		if isPK {
+		var lowVal, highVal []types.Datum
+		if isIndex {
+			var err error
+			lowVal, err = codec.Decode(low.GetBytes(), low.Length())
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			highVal, err = codec.Decode(high.GetBytes(), high.Length())
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		} else {
 			_, lowInt, err := codec.DecodeInt(val.lower.GetBytes())
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -105,11 +116,12 @@ func (q *QueryFeedback) DecodeToRanges(isIndex bool, isPK bool) ([]*ranger.Range
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			low, high = types.NewIntDatum(lowInt), types.NewIntDatum(highInt)
+			lowVal = []types.Datum{types.NewIntDatum(lowInt)}
+			highVal = []types.Datum{types.NewIntDatum(highInt)}
 		}
 		ranges = append(ranges, &(ranger.Range{
-			LowVal:  []types.Datum{low},
-			HighVal: []types.Datum{high},
+			LowVal:  lowVal,
+			HighVal: highVal,
 		}))
 	}
 	return ranges, nil

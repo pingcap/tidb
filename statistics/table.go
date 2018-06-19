@@ -284,6 +284,10 @@ func (n *neededColumnMap) delete(col tableColumnID) {
 
 var histogramNeededColumns = neededColumnMap{cols: map[tableColumnID]struct{}{}}
 
+// RatioOfPseudoEstimate means if modifyCount / statsTblCount is greater than this ratio, we think the stats is invalid
+// and use pseudo estimation.
+var RatioOfPseudoEstimate = 0.7
+
 // ColumnIsInvalid checks if this column is invalid. If this column has histogram but not loaded yet, then we mark it
 // as need histogram.
 func (t *Table) ColumnIsInvalid(sc *stmtctx.StatementContext, colID int64) bool {
