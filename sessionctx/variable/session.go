@@ -152,7 +152,8 @@ type SessionVars struct {
 	Concurrency
 	MemQuota
 	BatchSize
-	RetryLimit int64
+	RetryLimit          int64
+	DisableTxnAutoRetry bool
 	// UsersLock is a lock for user defined variables.
 	UsersLock sync.RWMutex
 	// Users are user defined variables.
@@ -303,6 +304,7 @@ func NewSessionVars() *SessionVars {
 		AllowAggPushDown:          false,
 		OptimizerSelectivityLevel: DefTiDBOptimizerSelectivityLevel,
 		RetryLimit:                DefTiDBRetryLimit,
+		DisableTxnAutoRetry:       DefTiDBDisableTxnAutoRetry,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -535,6 +537,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt32(val, DefTiDBGeneralLog)))
 	case TiDBRetryLimit:
 		s.RetryLimit = tidbOptInt64(val, DefTiDBRetryLimit)
+	case TiDBDisableTxnAutoRetry:
+		s.DisableTxnAutoRetry = TiDBOptOn(val)
 	case TiDBEnableStreaming:
 		s.EnableStreaming = TiDBOptOn(val)
 	case TiDBOptimizerSelectivityLevel:

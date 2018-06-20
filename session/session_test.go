@@ -2056,3 +2056,31 @@ func (s *testSessionSuite) TestCommitRetryCount(c *C) {
 	_, err := tk1.Se.Execute(context.Background(), "commit")
 	c.Assert(err, NotNil)
 }
+
+func (s *testSessionSuite) TestDisableTxnAutoRetry(c *C) {
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustExec("create table no_retry (id int)")
+	tk1.MustExec("insert into no_retry values (1)")
+	tk1.MustExec("set @@tidb_disable_txn_auto_retry = 1")
+
+	tk1.MustExec("begin")
+	tk1.MustExec("update no_retry set id = 2")
+
+	tk2.MustExec("begin")
+	tk2.MustExec("update no_retry set id = 3")
+	tk2.MustExec("commit")
+
+	// No auto retry because tidb_disable_txn_auto_retry is set to 1.
+	_, err := tk1.Se.Execute(context.Background(), "commit")
+	c.Assert(err, NotNil)
+
+	// session 1 starts a transaction early.
+	// execute a select statement to .
+	tk1.MustExec("select 1")
+	tk1.Se.NewTxn()
+	// session 2 update the value.
+	tk2.MustExec("update no_retry set id = 4")
+	// Non-autocommit update will retry, so it would not fail.
+	tk1.MustExec("update no_retry set id = 5")
+}
