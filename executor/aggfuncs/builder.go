@@ -79,7 +79,7 @@ func buildAvg(aggFuncDesc *aggregation.AggFuncDesc, output []int) AggFunc {
 	// partial results.
 	case aggregation.CompleteMode, aggregation.Partial1Mode:
 		switch aggFuncDesc.Args[0].GetType().Tp {
-		case mysql.TypeDecimal:
+		case mysql.TypeNewDecimal:
 			return &avgOriginal4Decimal{baseAvgDecimal{base}}
 		case mysql.TypeFloat:
 			return &avgOriginal4Float32{baseAvgFloat32{base}}
@@ -91,7 +91,7 @@ func buildAvg(aggFuncDesc *aggregation.AggFuncDesc, output []int) AggFunc {
 	// functions and update their partial results.
 	case aggregation.Partial2Mode, aggregation.FinalMode:
 		switch aggFuncDesc.Args[1].GetType().Tp {
-		case mysql.TypeDecimal:
+		case mysql.TypeNewDecimal:
 			return &avgPartial4Decimal{baseAvgDecimal{base}}
 		case mysql.TypeFloat:
 			return &avgPartial4Float32{baseAvgFloat32{base}}
