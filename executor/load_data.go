@@ -267,7 +267,13 @@ func (e *LoadDataInfo) colsToRow(cols []string) types.DatumRow {
 			e.row[i].SetString("")
 			continue
 		}
-		e.row[i].SetString(cols[i])
+		// "\N" is handled as NULL in csv.
+		// See http://dev.mysql.com/doc/refman/5.7/en/load-data.html
+		if cols[i] == "\\N" {
+			e.row[i].SetNull()
+		} else {
+			e.row[i].SetString(cols[i])
+		}
 	}
 	row, err := e.fillRowData(e.columns, e.row)
 	if err != nil {
@@ -320,14 +326,13 @@ func escapeCols(strs [][]byte) []string {
 }
 
 // escape handles escape characters when running load data statement.
-// TODO: escape need to be improved, it should support ESCAPED BY to specify
-// the escape character and handle \N escape.
 // See http://dev.mysql.com/doc/refman/5.7/en/load-data.html
 func escape(str []byte) []byte {
 	pos := 0
 	for i := 0; i < len(str); i++ {
 		c := str[i]
-		if c == '\\' && i+1 < len(str) {
+		// Do not escape "\N" here.
+		if i+1 < len(str) && str[i] == '\\' && str[i+1] != 'N' {
 			c = escapeChar(str[i+1])
 			i++
 		}

@@ -1253,11 +1253,11 @@ func (s *testSuite) TestLoadDataEscape(c *C) {
 	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
 }
 
-// TestLoadDataSpecifiedCoumns reuse TestLoadDataEscape's test case :-)
-func (s *testSuite) TestLoadDataSpecifiedCoumns(c *C) {
+// TestLoadDataSpecifiedColumns reuse TestLoadDataEscape's test case :-)
+func (s *testSuite) TestLoadDataSpecifiedColumns(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test; drop table if exists load_data_test;")
-	tk.MustExec(`create table load_data_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 varchar(255) default "def", c3 int default 0);`)
+	tk.MustExec(`create table load_data_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int default null, c2 varchar(255) default "def", c3 int default 0);`)
 	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test (c1, c2)")
 	ctx := tk.Se.(sessionctx.Context)
 	ld := makeLoadDataInfo(2, []string{"c1", "c2"}, ctx, c)
@@ -1270,6 +1270,7 @@ func (s *testSuite) TestLoadDataSpecifiedCoumns(c *C) {
 		{nil, []byte("10\tboth \\t\\n\n"), []string{"4|10|both \t\n|0"}, nil},
 		{nil, []byte("11\tstr \\\\\n"), []string{"5|11|str \\|0"}, nil},
 		{nil, []byte("12\t\\r\\t\\n\\0\\Z\\b\n"), []string{"6|12|" + string([]byte{'\r', '\t', '\n', 0, 26, '\b'}) + "|0"}, nil},
+		{nil, []byte("\\N\ta string\n"), []string{"7|<nil>|a string|0"}, nil},
 	}
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"
