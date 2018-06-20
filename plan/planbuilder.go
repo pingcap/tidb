@@ -866,7 +866,7 @@ func (b *planBuilder) resolveGeneratedColumns(columns []*table.Column, onDups ma
 		}
 		for dep := range column.Dependences {
 			if _, ok := onDups[dep]; ok {
-				assign := &expression.Assignment{Col: colExpr, Expr: expr.Clone()}
+				assign := &expression.Assignment{Col: colExpr, Expr: expr}
 				igc.OnDuplicates = append(igc.OnDuplicates, assign)
 				break
 			}

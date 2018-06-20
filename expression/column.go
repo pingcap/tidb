@@ -132,7 +132,8 @@ func (col *CorrelatedColumn) Decorrelate(schema *Schema) Expression {
 }
 
 // ResolveIndices implements Expression interface.
-func (col *CorrelatedColumn) ResolveIndices(_ *Schema) {
+func (col *CorrelatedColumn) ResolveIndices(_ *Schema) Expression {
+	return col
 }
 
 // Column represents a column.
@@ -308,19 +309,21 @@ func (col *Column) HashCode(_ *stmtctx.StatementContext) []byte {
 }
 
 // ResolveIndices implements Expression interface.
-func (col *Column) ResolveIndices(schema *Schema) {
-	col.Index = schema.ColumnIndex(col)
+func (col *Column) ResolveIndices(schema *Schema) Expression {
+	newCol := col.Clone().(*Column)
+	newCol.Index = schema.ColumnIndex(col)
 	// If col's index equals to -1, it means a internal logic error happens.
-	if col.Index == -1 {
+	if newCol.Index == -1 {
 		log.Errorf("Can't find column %s in schema %s", col, schema)
 	}
+	return newCol
 }
 
 // Column2Exprs will transfer column slice to expression slice.
 func Column2Exprs(cols []*Column) []Expression {
 	result := make([]Expression, 0, len(cols))
 	for _, col := range cols {
-		result = append(result, col.Clone())
+		result = append(result, col)
 	}
 	return result
 }

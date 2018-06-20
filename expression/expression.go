@@ -83,7 +83,7 @@ type Expression interface {
 	Decorrelate(schema *Schema) Expression
 
 	// ResolveIndices resolves indices by the given schema.
-	ResolveIndices(schema *Schema)
+	ResolveIndices(schema *Schema) Expression
 
 	// ExplainInfo returns operator information to be explained.
 	ExplainInfo() string
@@ -244,7 +244,7 @@ func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expressio
 			return FoldConstant(x)
 		}
 	}
-	return expr.Clone()
+	return expr
 }
 
 // TableInfo2Schema converts table info to schema with empty DBName.
