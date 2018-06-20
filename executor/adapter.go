@@ -232,6 +232,8 @@ func (a *ExecStmt) Exec(ctx context.Context) (ast.RecordSet, error) {
 		return a.handleNoDelayExecutor(ctx, sctx, e, pi)
 	}
 
+	a.Ctx.GetSessionVars().StmtCtx.FetchChunkSize = estimateChunkSize(a.Ctx, a.Plan)
+
 	return &recordSet{
 		executor:    e,
 		stmt:        a,

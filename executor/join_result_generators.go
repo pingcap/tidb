@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -56,12 +57,12 @@ func newJoinResultGenerator(ctx sessionctx.Context, joinType plan.JoinType,
 		ctx:          ctx,
 		conditions:   filter,
 		outerIsRight: outerIsRight,
-		maxChunkSize: ctx.GetSessionVars().ChunkRowsPerFetch(),
+		sessionVars:  ctx.GetSessionVars(),
 	}
 	colTypes := make([]*types.FieldType, 0, len(lhsColTypes)+len(rhsColTypes))
 	colTypes = append(colTypes, lhsColTypes...)
 	colTypes = append(colTypes, rhsColTypes...)
-	base.chk = chunk.NewChunkWithCapacity(colTypes, ctx.GetSessionVars().ChunkRowsPerFetch())
+	base.chk = chunk.NewChunkWithCapacity(colTypes, ctx.GetSessionVars().MaxChunkSize)
 	base.selected = make([]bool, 0, chunk.InitialCapacity)
 	if joinType == plan.LeftOuterJoin || joinType == plan.RightOuterJoin {
 		innerColTypes := lhsColTypes
@@ -98,7 +99,7 @@ type baseJoinResultGenerator struct {
 	outerIsRight bool
 	chk          *chunk.Chunk
 	selected     []bool
-	maxChunkSize int
+	sessionVars  *variable.SessionVars
 }
 
 func (outputer *baseJoinResultGenerator) initDefaultInner(innerTypes []*types.FieldType, defaultInner types.DatumRow) {
@@ -294,7 +295,7 @@ func (outputer *leftOuterJoinResultGenerator) emit(outer chunk.Row, inners chunk
 	if len(outputer.conditions) == 0 {
 		chkForJoin = chk
 	}
-	numToAppend := outputer.maxChunkSize - chk.NumRows()
+	numToAppend := outputer.sessionVars.MaxChunkSize - chk.NumRows()
 	for ; inners.Current() != inners.End() && numToAppend > 0; numToAppend-- {
 		outputer.makeJoinRowToChunk(chkForJoin, outer, inners.Current())
 		inners.Next()
@@ -333,7 +334,7 @@ func (outputer *rightOuterJoinResultGenerator) emit(outer chunk.Row, inners chun
 	if len(outputer.conditions) == 0 {
 		chkForJoin = chk
 	}
-	numToAppend := outputer.maxChunkSize - chk.NumRows()
+	numToAppend := outputer.sessionVars.MaxChunkSize - chk.NumRows()
 	for ; inners.Current() != inners.End() && numToAppend > 0; numToAppend-- {
 		outputer.makeJoinRowToChunk(chkForJoin, inners.Current(), outer)
 		inners.Next()
@@ -369,7 +370,7 @@ func (outputer *innerJoinResultGenerator) emit(outer chunk.Row, inners chunk.Ite
 	if len(outputer.conditions) == 0 {
 		chkForJoin = chk
 	}
-	inner, numToAppend := inners.Current(), outputer.maxChunkSize-chk.NumRows()
+	inner, numToAppend := inners.Current(), outputer.sessionVars.MaxChunkSize-chk.NumRows()
 	for ; inner != inners.End() && numToAppend > 0; inner, numToAppend = inners.Next(), numToAppend-1 {
 		if outputer.outerIsRight {
 			outputer.makeJoinRowToChunk(chkForJoin, inner, outer)

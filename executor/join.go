@@ -385,7 +385,7 @@ func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID uint, outerRow chunk.R
 			return false, joinResult
 		}
 		nr := joinResult.chk.NumRows()
-		fr := e.chunkRowsPerFetch()
+		fr := e.ctx.GetSessionVars().MaxChunkSize
 		if nr == fr {
 			ok := true
 			e.joinResultCh <- joinResult

@@ -24,6 +24,8 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -77,6 +79,39 @@ func logExpensiveQuery(stmtNode ast.StmtNode, finalPlan plan.Plan) (expensive bo
 	}
 	log.Warnf("[EXPENSIVE_QUERY] %s", sql)
 	return
+}
+
+func estimateChunkSize(ctx sessionctx.Context, p plan.Plan) int {
+	switch x := p.(type) {
+	case plan.PhysicalPlan:
+		return estimatePhysicalPlanChunkSize(ctx, x)
+	case *plan.Execute:
+		return estimateChunkSize(ctx, x.Plan)
+	case *plan.Insert:
+		if x.SelectPlan != nil {
+			return estimatePhysicalPlanChunkSize(ctx, x.SelectPlan)
+		}
+	case *plan.Delete:
+		if x.SelectPlan != nil {
+			return estimatePhysicalPlanChunkSize(ctx, x.SelectPlan)
+		}
+	case *plan.Update:
+		if x.SelectPlan != nil {
+			return estimatePhysicalPlanChunkSize(ctx, x.SelectPlan)
+		}
+	}
+	return stmtctx.DefFetchChunkSize
+}
+
+func estimatePhysicalPlanChunkSize(ctx sessionctx.Context, p plan.PhysicalPlan) int {
+	count := p.StatsInfo().Count()
+	if count < 1 {
+		return 1
+	}
+	if count > variable.DefMaxChunkSize {
+		return variable.DefMaxChunkSize
+	}
+	return int(count)
 }
 
 func isExpensiveQuery(p plan.Plan) bool {

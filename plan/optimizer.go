@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
-	"fmt"
 )
 
 // AllowCartesianProduct means whether tidb allows cartesian join without equal conditions.
@@ -147,15 +146,9 @@ func logicalOptimize(flag uint64, logic LogicalPlan) (LogicalPlan, error) {
 func physicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
 	logic.preparePossibleProperties()
 
-	var (
-		stats *statsInfo
-		err error
-	)
-	if stats, err = logic.deriveStats(); err != nil {
+	if _, err := logic.deriveStats(); err != nil {
 		return nil, errors.Trace(err)
 	}
-
-	fmt.Println(stats)
 
 	prop := &requiredProp{
 		taskTp:      rootTaskType,
