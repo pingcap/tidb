@@ -45,8 +45,8 @@ type Table struct {
 	TableID     int64
 	Columns     map[int64]*Column
 	Indices     map[int64]*Index
-	col2Idx     map[string]int64 // map column name to index id
-	colNameID   map[string]int64 // map column name to column id
+	colName2Idx map[string]int64 // map column name to index id
+	colName2ID  map[string]int64 // map column name to column id
 	Count       int64            // Total row count in a table.
 	ModifyCount int64            // Total modify count in a table.
 	Version     uint64
@@ -63,8 +63,8 @@ func (t *Table) copy() *Table {
 		Pseudo:      t.Pseudo,
 		Columns:     make(map[int64]*Column),
 		Indices:     make(map[int64]*Index),
-		col2Idx:     make(map[string]int64),
-		colNameID:   make(map[string]int64),
+		colName2Idx: make(map[string]int64),
+		colName2ID:  make(map[string]int64),
 	}
 	for id, col := range t.Columns {
 		nt.Columns[id] = col
@@ -72,22 +72,22 @@ func (t *Table) copy() *Table {
 	for id, idx := range t.Indices {
 		nt.Indices[id] = idx
 	}
-	for name, id := range t.col2Idx {
-		nt.col2Idx[name] = id
+	for name, id := range t.colName2Idx {
+		nt.colName2Idx[name] = id
 	}
-	for name, id := range t.colNameID {
-		nt.colNameID[name] = id
+	for name, id := range t.colName2ID {
+		nt.colName2ID[name] = id
 	}
 	return nt
 }
 
 func (t *Table) buildColNameMapper() {
 	for id, col := range t.Columns {
-		t.colNameID[col.Info.Name.L] = id
+		t.colName2ID[col.Info.Name.L] = id
 	}
 	for id, idx := range t.Indices {
 		// use this index to estimate the column stats
-		t.col2Idx[idx.Info.Columns[0].Name.L] = id
+		t.colName2Idx[idx.Info.Columns[0].Name.L] = id
 	}
 }
 
@@ -208,11 +208,11 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, loadAll bool)
 	table, ok := h.statsCache.Load().(statsCache)[tableInfo.ID]
 	if !ok || table.Pseudo {
 		table = &Table{
-			TableID:   tableInfo.ID,
-			Columns:   make(map[int64]*Column, len(tableInfo.Columns)),
-			Indices:   make(map[int64]*Index, len(tableInfo.Indices)),
-			col2Idx:   make(map[string]int64),
-			colNameID: make(map[string]int64),
+			TableID:     tableInfo.ID,
+			Columns:     make(map[int64]*Column, len(tableInfo.Columns)),
+			Indices:     make(map[int64]*Index, len(tableInfo.Indices)),
+			colName2Idx: make(map[string]int64),
+			colName2ID:  make(map[string]int64),
 		}
 	} else {
 		// We copy it before writing to avoid race.
@@ -443,10 +443,10 @@ func (t *Table) getIndexRowCount(sc *stmtctx.StatementContext, idx *Index, index
 			var err error
 			colName := idx.Info.Columns[rangePosition].Name.L
 			// prefer index stats over column stats
-			if idx, ok := t.col2Idx[colName]; ok {
+			if idx, ok := t.colName2Idx[colName]; ok {
 				count, err = t.GetRowCountByIndexRanges(sc, idx, []*ranger.Range{&rang})
 			} else {
-				count, err = t.GetRowCountByColumnRanges(sc, t.colNameID[colName], []*ranger.Range{&rang})
+				count, err = t.GetRowCountByColumnRanges(sc, t.colName2ID[colName], []*ranger.Range{&rang})
 			}
 			if err != nil {
 				return 0, errors.Trace(err)

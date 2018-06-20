@@ -158,6 +158,14 @@ const (
 	// This variable controls the worker number of projection operator.
 	TiDBProjectionConcurrency = "tidb_projection_concurrency"
 
+	// tidb_hashagg_partial_concurrency is used for hash agg executor.
+	// The hash agg executor starts multiple concurrent partial workers to do partial aggregate works.
+	TiDBHashAggPartialConcurrency = "tidb_hashagg_partial_concurrency"
+
+	// tidb_hashagg_final_concurrency is used for hash agg executor.
+	// The hash agg executor starts multiple concurrent final workers to do final aggregate works.
+	TiDBHashAggFinalConcurrency = "tidb_hashagg_final_concurrency"
+
 	// tidb_backoff_lock_fast is used for tikv backoff base time in milliseconds.
 	TiDBBackoffLockFast = "tidb_backoff_lock_fast"
 )
@@ -181,7 +189,6 @@ const (
 	DefCurretTS                      = 0
 	DefMaxChunkSize                  = 1024
 	DefDMLBatchSize                  = 20000
-	DefTiDBMemQuotaQuery             = 32 << 30 // 32GB.
 	DefTiDBMemQuotaHashJoin          = 32 << 30 // 32GB.
 	DefTiDBMemQuotaMergeJoin         = 32 << 30 // 32GB.
 	DefTiDBMemQuotaSort              = 32 << 30 // 32GB.
@@ -194,6 +201,8 @@ const (
 	DefTiDBHashJoinConcurrency       = 5
 	DefTiDBProjectionConcurrency     = 4
 	DefTiDBOptimizerSelectivityLevel = 0
+	DefTiDBHashAggPartialConcurrency = 4
+	DefTiDBHashAggFinalConcurrency   = 4
 )
 
 // Process global variables.

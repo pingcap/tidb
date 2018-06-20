@@ -24,6 +24,8 @@ import (
 	"github.com/gorilla/mux"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
@@ -32,18 +34,21 @@ import (
 type testDumpStatsSuite struct {
 	server *Server
 	sh     *StatsHandler
+	store  kv.Storage
+	domain *domain.Domain
 }
 
 var _ = Suite(new(testDumpStatsSuite))
 
 func (ds *testDumpStatsSuite) startServer(c *C) {
 	mvccStore := mocktikv.MustNewMVCCStore()
-	store, err := mockstore.NewMockTikvStore(mockstore.WithMVCCStore(mvccStore))
+	var err error
+	ds.store, err = mockstore.NewMockTikvStore(mockstore.WithMVCCStore(mvccStore))
 	c.Assert(err, IsNil)
 	session.SetStatsLease(0)
-	_, err = session.BootstrapSession(store)
+	ds.domain, err = session.BootstrapSession(ds.store)
 	c.Assert(err, IsNil)
-	tidbdrv := NewTiDBDriver(store)
+	tidbdrv := NewTiDBDriver(ds.store)
 
 	cfg := config.NewConfig()
 	cfg.Port = 4001
@@ -56,9 +61,21 @@ func (ds *testDumpStatsSuite) startServer(c *C) {
 	go server.Run()
 	waitUntilServerOnline(cfg.Status.StatusPort)
 
-	do, err := session.GetDomain(store)
+	do, err := session.GetDomain(ds.store)
 	c.Assert(err, IsNil)
 	ds.sh = &StatsHandler{do}
+}
+
+func (ds *testDumpStatsSuite) stopServer(c *C) {
+	if ds.domain != nil {
+		ds.domain.Close()
+	}
+	if ds.store != nil {
+		ds.store.Close()
+	}
+	if ds.server != nil {
+		ds.server.Close()
+	}
 }
 
 func (ds *testDumpStatsSuite) TestDumpStatsAPI(c *C) {

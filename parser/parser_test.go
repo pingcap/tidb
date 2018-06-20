@@ -462,6 +462,12 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 
 		{`ANALYZE TABLE t`, true},
 
+		// for comments
+		{`/** 20180417 **/ show databases;`, true},
+		{`/* 20180417 **/ show databases;`, true},
+		{`/** 20180417 */ show databases;`, true},
+		{`/** 20180417 ******/ show databases;`, true},
+
 		// for Binlog stmt
 		{`BINLOG '
 BxSFVw8JAAAA8QAAAPUAAAAAAAQANS41LjQ0LU1hcmlhREItbG9nAAAAAAAAAAAAAAAAAAAAAAAA
@@ -512,6 +518,7 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{`SHOW PLUGINS`, true},
 		{`SHOW PROFILES`, true},
 		{`SHOW MASTER STATUS`, true},
+		{`SHOW PRIVILEGES`, true},
 		// for show character set
 		{"show character set;", true},
 		{"show charset", true},
