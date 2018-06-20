@@ -83,7 +83,7 @@ type Expression interface {
 	Decorrelate(schema *Schema) Expression
 
 	// ResolveIndices resolves indices by the given schema.
-	ResolveIndices(schema *Schema) Expression
+	ResolveIndices(schema *Schema)
 
 	// ExplainInfo returns operator information to be explained.
 	ExplainInfo() string

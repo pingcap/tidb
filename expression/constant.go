@@ -336,6 +336,5 @@ func (c *Constant) HashCode(sc *stmtctx.StatementContext) []byte {
 }
 
 // ResolveIndices implements Expression interface.
-func (c *Constant) ResolveIndices(_ *Schema) Expression {
-	return c
+func (c *Constant) ResolveIndices(_ *Schema) {
 }
