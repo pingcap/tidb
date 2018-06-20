@@ -1012,10 +1012,9 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 // fetchSize, the desired number of rows to be fetched each time when client uses cursor.
 func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet, serverStatus uint16, fetchSize int) error {
 	fetchedRows := rs.GetFetchedRows()
-	var curRows []chunk.Row
 
-	// if fetchedRows is empty, getting data from recordSet.
-	if len(fetchedRows) == 0 {
+	// if fetchedRows is not enough, getting data from recordSet.
+	for len(fetchedRows) < fetchSize {
 		chk := rs.NewChunk()
 		// Here server.tidbResultSet implements Next method.
 		err := rs.Next(ctx, chk)
@@ -1024,11 +1023,7 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 		}
 		rowCount := chk.NumRows()
 		if rowCount == 0 {
-			// tell the client COM_STMT_FETCH has finished by setting proper serverStatus,
-			// and close ResultSet.
-			serverStatus |= mysql.ServerStatusLastRowSend
-			terror.Call(rs.Close)
-			return errors.Trace(cc.writeEOF(serverStatus))
+			break
 		}
 		// filling fetchedRows with chunk
 		for i := 0; i < rowCount; i++ {
@@ -1036,7 +1031,16 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 		}
 	}
 
+	// tell the client COM_STMT_FETCH has finished by setting proper serverStatus,
+	// and close ResultSet.
+	if len(fetchedRows) == 0 {
+		serverStatus |= mysql.ServerStatusLastRowSend
+		terror.Call(rs.Close)
+		return errors.Trace(cc.writeEOF(serverStatus))
+	}
+
 	// construct the rows sent to the client according to fetchSize.
+	var curRows []chunk.Row
 	if fetchSize < len(fetchedRows) {
 		curRows = fetchedRows[:fetchSize]
 		fetchedRows = fetchedRows[fetchSize:]
