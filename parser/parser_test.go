@@ -462,6 +462,12 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 
 		{`ANALYZE TABLE t`, true},
 
+		// for comments
+		{`/** 20180417 **/ show databases;`, true},
+		{`/* 20180417 **/ show databases;`, true},
+		{`/** 20180417 */ show databases;`, true},
+		{`/** 20180417 ******/ show databases;`, true},
+
 		// for Binlog stmt
 		{`BINLOG '
 BxSFVw8JAAAA8QAAAPUAAAAAAAQANS41LjQ0LU1hcmlhREItbG9nAAAAAAAAAAAAAAAAAAAAAAAA

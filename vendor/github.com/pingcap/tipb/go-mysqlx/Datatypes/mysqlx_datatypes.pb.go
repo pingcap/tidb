@@ -22,7 +22,9 @@ import (
 
 	math "math"
 
-	binary "encoding/binary"
+	github_com_golang_protobuf_proto "github.com/golang/protobuf/proto"
+
+	encoding_binary "encoding/binary"
 
 	io "io"
 )
@@ -387,7 +389,7 @@ func (m *Scalar) MarshalTo(dAtA []byte) (int, error) {
 	var l int
 	_ = l
 	if m.Type == nil {
-		return 0, new(proto.RequiredNotSetError)
+		return 0, new(github_com_golang_protobuf_proto.RequiredNotSetError)
 	} else {
 		dAtA[i] = 0x8
 		i++
@@ -416,13 +418,13 @@ func (m *Scalar) MarshalTo(dAtA []byte) (int, error) {
 	if m.VDouble != nil {
 		dAtA[i] = 0x31
 		i++
-		binary.LittleEndian.PutUint64(dAtA[i:], uint64(math.Float64bits(float64(*m.VDouble))))
+		encoding_binary.LittleEndian.PutUint64(dAtA[i:], uint64(math.Float64bits(float64(*m.VDouble))))
 		i += 8
 	}
 	if m.VFloat != nil {
 		dAtA[i] = 0x3d
 		i++
-		binary.LittleEndian.PutUint32(dAtA[i:], uint32(math.Float32bits(float32(*m.VFloat))))
+		encoding_binary.LittleEndian.PutUint32(dAtA[i:], uint32(math.Float32bits(float32(*m.VFloat))))
 		i += 4
 	}
 	if m.VBool != nil {
@@ -467,7 +469,7 @@ func (m *Scalar_String) MarshalTo(dAtA []byte) (int, error) {
 	var l int
 	_ = l
 	if m.Value == nil {
-		return 0, new(proto.RequiredNotSetError)
+		return 0, new(github_com_golang_protobuf_proto.RequiredNotSetError)
 	} else {
 		dAtA[i] = 0xa
 		i++
@@ -501,7 +503,7 @@ func (m *Scalar_Octets) MarshalTo(dAtA []byte) (int, error) {
 	var l int
 	_ = l
 	if m.Value == nil {
-		return 0, new(proto.RequiredNotSetError)
+		return 0, new(github_com_golang_protobuf_proto.RequiredNotSetError)
 	} else {
 		dAtA[i] = 0xa
 		i++
@@ -568,7 +570,7 @@ func (m *Object_ObjectField) MarshalTo(dAtA []byte) (int, error) {
 	var l int
 	_ = l
 	if m.Key == nil {
-		return 0, new(proto.RequiredNotSetError)
+		return 0, new(github_com_golang_protobuf_proto.RequiredNotSetError)
 	} else {
 		dAtA[i] = 0xa
 		i++
@@ -576,7 +578,7 @@ func (m *Object_ObjectField) MarshalTo(dAtA []byte) (int, error) {
 		i += copy(dAtA[i:], *m.Key)
 	}
 	if m.Value == nil {
-		return 0, new(proto.RequiredNotSetError)
+		return 0, new(github_com_golang_protobuf_proto.RequiredNotSetError)
 	} else {
 		dAtA[i] = 0x12
 		i++
@@ -642,7 +644,7 @@ func (m *Any) MarshalTo(dAtA []byte) (int, error) {
 	var l int
 	_ = l
 	if m.Type == nil {
-		return 0, new(proto.RequiredNotSetError)
+		return 0, new(github_com_golang_protobuf_proto.RequiredNotSetError)
 	} else {
 		dAtA[i] = 0x8
 		i++
@@ -978,7 +980,7 @@ func (m *Scalar) Unmarshal(dAtA []byte) error {
 			if (iNdEx + 8) > l {
 				return io.ErrUnexpectedEOF
 			}
-			v = uint64(binary.LittleEndian.Uint64(dAtA[iNdEx:]))
+			v = uint64(encoding_binary.LittleEndian.Uint64(dAtA[iNdEx:]))
 			iNdEx += 8
 			v2 := float64(math.Float64frombits(v))
 			m.VDouble = &v2
@@ -990,7 +992,7 @@ func (m *Scalar) Unmarshal(dAtA []byte) error {
 			if (iNdEx + 4) > l {
 				return io.ErrUnexpectedEOF
 			}
-			v = uint32(binary.LittleEndian.Uint32(dAtA[iNdEx:]))
+			v = uint32(encoding_binary.LittleEndian.Uint32(dAtA[iNdEx:]))
 			iNdEx += 4
 			v2 := float32(math.Float32frombits(v))
 			m.VFloat = &v2
@@ -1065,7 +1067,7 @@ func (m *Scalar) Unmarshal(dAtA []byte) error {
 		}
 	}
 	if hasFields[0]&uint64(0x00000001) == 0 {
-		return new(proto.RequiredNotSetError)
+		return new(github_com_golang_protobuf_proto.RequiredNotSetError)
 	}
 
 	if iNdEx > l {
@@ -1172,7 +1174,7 @@ func (m *Scalar_String) Unmarshal(dAtA []byte) error {
 		}
 	}
 	if hasFields[0]&uint64(0x00000001) == 0 {
-		return new(proto.RequiredNotSetError)
+		return new(github_com_golang_protobuf_proto.RequiredNotSetError)
 	}
 
 	if iNdEx > l {
@@ -1279,7 +1281,7 @@ func (m *Scalar_Octets) Unmarshal(dAtA []byte) error {
 		}
 	}
 	if hasFields[0]&uint64(0x00000001) == 0 {
-		return new(proto.RequiredNotSetError)
+		return new(github_com_golang_protobuf_proto.RequiredNotSetError)
 	}
 
 	if iNdEx > l {
@@ -1481,10 +1483,10 @@ func (m *Object_ObjectField) Unmarshal(dAtA []byte) error {
 		}
 	}
 	if hasFields[0]&uint64(0x00000001) == 0 {
-		return new(proto.RequiredNotSetError)
+		return new(github_com_golang_protobuf_proto.RequiredNotSetError)
 	}
 	if hasFields[0]&uint64(0x00000002) == 0 {
-		return new(proto.RequiredNotSetError)
+		return new(github_com_golang_protobuf_proto.RequiredNotSetError)
 	}
 
 	if iNdEx > l {
@@ -1741,7 +1743,7 @@ func (m *Any) Unmarshal(dAtA []byte) error {
 		}
 	}
 	if hasFields[0]&uint64(0x00000001) == 0 {
-		return new(proto.RequiredNotSetError)
+		return new(github_com_golang_protobuf_proto.RequiredNotSetError)
 	}
 
 	if iNdEx > l {
