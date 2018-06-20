@@ -15,6 +15,8 @@ package ddl
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ddl/util"
@@ -26,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	log "github.com/sirupsen/logrus"
-	"strings"
 )
 
 func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -431,13 +432,8 @@ func updatePartitionInfo(partitionInfo *model.PartitionInfo, tblInfo *model.Tabl
 	parInfo := &model.PartitionInfo{}
 	oldDefs, newDefs := tblInfo.Partition.Definitions, partitionInfo.Definitions
 	parInfo.Definitions = make([]model.PartitionDefinition, 0, len(newDefs)+len(oldDefs))
-
-	for _, oldDef := range oldDefs {
-		parInfo.Definitions = append(parInfo.Definitions, oldDef)
-	}
-	for _, newDef := range newDefs {
-		parInfo.Definitions = append(parInfo.Definitions, newDef)
-	}
+	parInfo.Definitions = append(parInfo.Definitions, oldDefs...)
+	parInfo.Definitions = append(parInfo.Definitions, newDefs...)
 	tblInfo.Partition.Definitions = parInfo.Definitions
 }
 
@@ -448,6 +444,42 @@ func checkPartitionNotExists(meta *model.TableInfo, part *model.PartitionInfo) e
 			if strings.EqualFold(oldDef.Name, newDef.Name) {
 				return infoschema.ErrSameNamePartition.GenByArgs(newDef.Name)
 			}
+		}
+	}
+
+	for i := 0; i < len(newDefs)-1; i++ {
+		if strings.EqualFold(newDefs[i].Name, newDefs[i+1].Name) {
+			return infoschema.ErrSameNamePartition.GenByArgs(newDefs[i].Name)
+		}
+	}
+	return nil
+}
+
+// checkAddPartitionValue values less than value must be strictly increasing for each partition.
+func checkAddPartitionValue(meta *model.TableInfo, part *model.PartitionInfo) error {
+	if meta.Partition.Type == model.PartitionTypeRange {
+		newDefs, oldDefs := part.Definitions, meta.Partition.Definitions
+		nextRangeValue := oldDefs[len(oldDefs)-1].LessThan[0]
+
+		if strings.EqualFold(nextRangeValue, "MAXVALUE") {
+			return infoschema.ErrPartitionMaxvalue
+		}
+
+		if len(newDefs) == 1 && strings.EqualFold(newDefs[0].LessThan[0], "MAXVALUE") {
+			return nil
+		}
+		for i := 0; i < len(newDefs); i++ {
+			if strings.EqualFold(newDefs[i].LessThan[0], "MAXVALUE") && i == len(newDefs)-1 {
+				return nil
+			} else if strings.EqualFold(newDefs[i].LessThan[0], "MAXVALUE") && i != len(newDefs)-1 {
+				return infoschema.ErrPartitionMaxvalue
+			}
+			currentRangeValue, _ := strconv.Atoi(newDefs[i].LessThan[0])
+			rangeValue, _ := strconv.Atoi(nextRangeValue)
+			if currentRangeValue <= rangeValue {
+				return infoschema.ErrRangeNotIncreasing
+			}
+			nextRangeValue = newDefs[i].LessThan[0]
 		}
 	}
 	return nil

@@ -63,9 +63,13 @@ var (
 	// ErrPartitionMgmtOnNonpartitioned returns it's not a partition table.
 	ErrPartitionMgmtOnNonpartitioned = terror.ClassSchema.New(codePartitionMgmtOnNonpartitioned, "Partition management on a not partitioned table is not possible")
 	// ErrDropPartitionNonExistent returns error in list of partition.
-	ErrDropPartitionNonExistent = terror.ClassSchema.New(codeErrDropPartitionNonExistent, " Error in list of partitions to %s")
+	ErrDropPartitionNonExistent = terror.ClassSchema.New(codeDropPartitionNonExistent, " Error in list of partitions to %s")
 	// ErrSameNamePartition returns duplicate partition name.
-	ErrSameNamePartition = terror.ClassSchema.New(codeErrSameNamePartition, "Duplicate partition name %s")
+	ErrSameNamePartition = terror.ClassSchema.New(codeSameNamePartition, "Duplicate partition name %s")
+	// ErrRangeNotIncreasing returns values less than value must be strictly increasing for each partition.
+	ErrRangeNotIncreasing = terror.ClassSchema.New(codeRangeNotIncreasing, "VALUES LESS THAN value must be strictly increasing for each partition")
+	// ErrPartitionMaxvalue returns maxvalue can only be used in last partition definition.
+	ErrPartitionMaxvalue = terror.ClassSchema.New(codePartitionMaxvalue, "MAXVALUE can only be used in last partition definition")
 )
 
 // InfoSchema is the interface used to retrieve the schema information.
@@ -302,8 +306,10 @@ const (
 	codeKeyNotExists                  = 1176
 	codePartitionsMustBeDefined       = 1492
 	codePartitionMgmtOnNonpartitioned = 1505
-	codeErrDropPartitionNonExistent   = 1507
-	codeErrSameNamePartition          = 1517
+	codeDropPartitionNonExistent      = 1507
+	codeSameNamePartition             = 1517
+	codeRangeNotIncreasing            = 1493
+	codePartitionMaxvalue             = 1481
 )
 
 func init() {
@@ -326,8 +332,10 @@ func init() {
 		codeKeyNotExists:                  mysql.ErrKeyDoesNotExist,
 		codePartitionsMustBeDefined:       mysql.ErrPartitionsMustBeDefined,
 		codePartitionMgmtOnNonpartitioned: mysql.ErrPartitionMgmtOnNonpartitioned,
-		codeErrDropPartitionNonExistent:   mysql.ErrDropPartitionNonExistent,
-		codeErrSameNamePartition:          mysql.ErrSameNamePartition,
+		codeDropPartitionNonExistent:      mysql.ErrDropPartitionNonExistent,
+		codeSameNamePartition:             mysql.ErrSameNamePartition,
+		codeRangeNotIncreasing:            mysql.ErrRangeNotIncreasing,
+		codePartitionMaxvalue:             mysql.ErrPartitionMaxvalue,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassSchema] = schemaMySQLErrCodes
 	initInfoSchemaDB()

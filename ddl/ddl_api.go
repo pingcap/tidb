@@ -1238,17 +1238,21 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ident.Schema, ident.Name))
 	}
 
-	partInfo := &model.PartitionInfo{}
 	meta := t.Meta()
 	if meta.GetPartitionInfo() == nil && meta.Partition == nil {
 		return errors.Trace(infoschema.ErrPartitionMgmtOnNonpartitioned)
 	}
-	partInfo, err = buildPartitionInfo(meta, d, partInfo, spec)
+	partInfo, err := buildPartitionInfo(meta, d, spec)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	err = checkPartitionNotExists(meta, partInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = checkAddPartitionValue(meta, partInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1987,8 +1991,8 @@ func validateCommentLength(vars *variable.SessionVars, comment string, maxLen in
 	return comment, nil
 }
 
-func buildPartitionInfo(meta *model.TableInfo, d *ddl, part *model.PartitionInfo, spec *ast.AlterTableSpec) (*model.PartitionInfo, error) {
-	part = &model.PartitionInfo{
+func buildPartitionInfo(meta *model.TableInfo, d *ddl, spec *ast.AlterTableSpec) (*model.PartitionInfo, error) {
+	part := &model.PartitionInfo{
 		Type:    meta.Partition.Type,
 		Expr:    meta.Partition.Expr,
 		Columns: meta.Partition.Columns,
@@ -2016,6 +2020,7 @@ func buildPartitionInfo(meta *model.TableInfo, d *ddl, part *model.PartitionInfo
 			ID:      pid,
 			Comment: def.Comment,
 		}
+		buf.Reset()
 		for _, expr := range def.LessThan {
 			expr.Format(buf)
 			piDef.LessThan = append(piDef.LessThan, buf.String())
