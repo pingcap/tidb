@@ -563,16 +563,16 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 
 	log.Debugf("startKey:%q, key:%q, value:%q", startKey, it.Key(), it.Value())
 
-	genFlag := false
+	genColFlag := false
 	colMap := make(map[int64]*types.FieldType, len(cols))
 	for _, col := range cols {
 		if col.IsGenerated() && col.GeneratedStored == false {
-			genFlag = true
+			genColFlag = true
 			break
 		}
 		colMap[col.ID] = &col.FieldType
 	}
-	if genFlag {
+	if genColFlag {
 		for _, col := range t.Cols() {
 			colMap[col.ID] = &col.FieldType
 		}
@@ -593,7 +593,7 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 			return errors.Trace(err)
 		}
 
-		if genFlag && genExprs != nil {
+		if genColFlag && genExprs != nil {
 			err = fillGenColumn(sessCtx, rowMap, t, cols, genExprs)
 			if err != nil {
 				return errors.Trace(err)
