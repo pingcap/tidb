@@ -92,8 +92,9 @@ func (c *pdClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store,
 	return store, nil
 }
 
-func (c *pdClient) UpdateGCSafePoint(ctx context.Context, safePoint uint64) error {
-	return nil
+func (c *pdClient) UpdateGCSafePoint(ctx context.Context, safePoint uint64) (uint64, error) {
+	// TODO: Implement this?
+	return safePoint, nil
 }
 
 func (c *pdClient) Close() {

@@ -343,7 +343,7 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, mode int) {
 	}
 	switch mode {
 	case gcModeDistributed:
-		err = w.uploadSafePoint(ctx, safePoint)
+		err = w.syncSafePointWithPd(ctx, safePoint)
 		if err != nil {
 			log.Errorf("[gc worker] %s failed to upload safe point to PD: %v", w.uuid, errors.ErrorStack(err))
 			w.gcIsRunning = false
@@ -548,16 +548,24 @@ func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64) error {
 	return nil
 }
 
-func (w *GCWorker) uploadSafePoint(ctx context.Context, safePoint uint64) error {
+func (w *GCWorker) syncSafePointWithPd(ctx context.Context, safePoint uint64) error {
 	// TODO: Use backoff here
+	var newSafePoint uint64
 	var err error
 	for i := 0; i < 3; i++ {
-		err = w.pdClient.UpdateGCSafePoint(ctx, safePoint)
+		newSafePoint, err = w.pdClient.UpdateGCSafePoint(ctx, safePoint)
 		if err == nil {
-			return nil
+			break
 		}
 	}
-	return errors.Trace(err)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if newSafePoint != safePoint {
+		log.Warn("[gc worker] pd rejected our safe point %d and pd's safe point is %d", safePoint, newSafePoint)
+		// TODO: If unfortunately this happened, we may need to update safe point in `mysql.tidb`.
+	}
+	return nil
 }
 
 type gcTask struct {

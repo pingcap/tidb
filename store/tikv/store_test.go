@@ -158,9 +158,9 @@ func (c *mockPDClient) GetStore(ctx context.Context, storeID uint64) (*metapb.St
 	return c.client.GetStore(ctx, storeID)
 }
 
-func (c *mockPDClient) UpdateGCSafePoint(ctx context.Context, safePoint uint64) error {
-	// TODO: Implement this
-	return nil
+func (c *mockPDClient) UpdateGCSafePoint(ctx context.Context, safePoint uint64) (uint64, error) {
+	// TODO: Implement this?
+	return safePoint, nil
 }
 
 func (c *mockPDClient) Close() {}
