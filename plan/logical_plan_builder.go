@@ -635,8 +635,9 @@ func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
 				resultTp = joinFieldType(resultTp, childTp)
 			}
 		}
-		col.RetType = resultTp
-		col.DBName = model.NewCIStr("")
+		unionSchema.Columns[i] = col.Clone().(*expression.Column)
+		unionSchema.Columns[i].RetType = resultTp
+		unionSchema.Columns[i].DBName = model.NewCIStr("")
 	}
 	// If the types of some child don't match the types of union, we add a projection with cast function.
 	for childID, child := range u.children {

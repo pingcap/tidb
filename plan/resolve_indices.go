@@ -16,7 +16,6 @@ package plan
 import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
-	"github.com/sirupsen/logrus"
 )
 
 // ResolveIndices implements Plan interface.
@@ -216,7 +215,6 @@ func (p *physicalSchemaProducer) ResolveIndices() {
 		for i, cols := range p.schema.TblID2Handle {
 			for j, col := range cols {
 				p.schema.TblID2Handle[i][j] = col.ResolveIndices(p.schema).(*expression.Column)
-				logrus.Warnf("????? index: %v", p.schema.TblID2Handle[i][j].Index)
 			}
 		}
 	}
@@ -227,7 +225,6 @@ func (p *baseSchemaProducer) ResolveIndices() {
 		for i, cols := range p.schema.TblID2Handle {
 			for j, col := range cols {
 				p.schema.TblID2Handle[i][j] = col.ResolveIndices(p.schema).(*expression.Column)
-				logrus.Warnf("????? index: %v", p.schema.TblID2Handle[i][j].Index)
 			}
 		}
 	}
