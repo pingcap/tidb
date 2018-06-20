@@ -245,6 +245,7 @@ func ScanIndexData(sc *stmtctx.StatementContext, txn kv.Transaction, kvIndex tab
 // CompareIndexData compares index data one by one.
 // It returns nil if the data from the index is equal to the data from the table columns,
 // otherwise it returns an error with a different set of records.
+// genExprs is use to calculate the virtual generate column.
 func CompareIndexData(sessCtx sessionctx.Context, txn kv.Transaction, t table.Table, idx table.Index, genExprs map[string]expression.Expression) error {
 	err := checkIndexAndRecord(sessCtx, txn, t, idx, genExprs)
 	if err != nil {
@@ -491,14 +492,18 @@ func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h 
 			}
 			continue
 		}
+		// if have virtual generate column , we need to decode all columns (maybe just need to decode the dependent columns),
+		// to calculate the virtual generate column.
 		if col.IsGenerated() && col.GeneratedStored == false {
 			genFlag = true
 			break
 		}
 		colTps[col.ID] = &col.FieldType
 	}
+	// if have virtual generate column, need to decode all columns
 	if genFlag {
 		for _, c := range t.Cols() {
+			// Whether I need to check the column.State is public?
 			colTps[c.ID] = &c.FieldType
 		}
 	}
@@ -646,9 +651,6 @@ func fillGenColumn(sessCtx sessionctx.Context, rowMap map[int64]types.Datum, t t
 			}
 			rowMap[col.ID] = val
 		}
-	}
-	if err != nil {
-		return errors.Trace(err)
 	}
 	return nil
 }

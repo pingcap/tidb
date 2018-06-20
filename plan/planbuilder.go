@@ -495,7 +495,7 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 
 func (b *planBuilder) buildAdminCheckTable(as *ast.AdminStmt) Plan {
 	p := &CheckTable{Tables: as.Tables}
-	p.GenExprs = make(map[string]expression.Expression, 0)
+	p.GenExprs = make(map[string]expression.Expression)
 
 	mockTablePlan := LogicalTableDual{}.init(b.ctx)
 	for _, tbl := range p.Tables {
@@ -503,7 +503,7 @@ func (b *planBuilder) buildAdminCheckTable(as *ast.AdminStmt) Plan {
 		schema := expression.TableInfo2SchemaWithDBName(tbl.Schema, tableInfo)
 		table, ok := b.is.TableByID(tableInfo.ID)
 		if !ok {
-			b.err = errors.Errorf("Can't get table %s.", tableInfo.Name.O)
+			b.err = infoschema.ErrTableNotExists.GenByArgs(tbl.DBInfo.Name.O, tableInfo.Name.O)
 			return nil
 		}
 
