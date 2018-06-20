@@ -40,6 +40,8 @@ func initStatsMeta4Chunk(is infoschema.InfoSchema, tables statsCache, iter *chun
 			TableID:     tableID,
 			Columns:     make(map[int64]*Column, len(tableInfo.Columns)),
 			Indices:     make(map[int64]*Index, len(tableInfo.Indices)),
+			col2Idx:     make(map[string]int64, len(tableInfo.Columns)),
+			colNameID:   make(map[string]int64, len(tableInfo.Columns)),
 			Count:       row.GetInt64(3),
 			ModifyCount: row.GetInt64(2),
 			Version:     row.GetUint64(0),
@@ -98,7 +100,7 @@ func initStatsHistograms4Chunk(is infoschema.InfoSchema, tables statsCache, iter
 				terror.Log(errors.Trace(err))
 			}
 			hist := NewHistogram(id, ndv, nullCount, version, types.NewFieldType(mysql.TypeBlob), chunk.InitialCapacity, 0)
-			table.Indices[hist.ID] = &Index{Histogram: *hist, CMSketch: cms, Info: idxInfo}
+			table.Indices[hist.ID] = &Index{Histogram: *hist, CMSketch: cms, Info: idxInfo, statsVer: row.GetInt64(8)}
 		} else {
 			var colInfo *model.ColumnInfo
 			for _, col := range tbl.Meta().Columns {
@@ -117,7 +119,7 @@ func initStatsHistograms4Chunk(is infoschema.InfoSchema, tables statsCache, iter
 }
 
 func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables statsCache) error {
-	sql := "select table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size from mysql.stats_histograms"
+	sql := "select table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver from mysql.stats_histograms"
 	rc, err := h.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	if len(rc) > 0 {
 		defer terror.Call(rc[0].Close)
@@ -223,6 +225,7 @@ func (h *Handle) initStatsBuckets(tables statsCache) error {
 			}
 			col.PreCalculateScalar()
 		}
+		table.buildColNameMapper()
 	}
 	return nil
 }

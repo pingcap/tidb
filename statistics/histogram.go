@@ -185,6 +185,12 @@ func HistogramEqual(a, b *Histogram, ignoreID bool) bool {
 	return bytes.Equal([]byte(a.ToString(0)), []byte(b.ToString(0)))
 }
 
+const (
+	// constants for stats version
+	curStatsVersion = version1
+	version1        = 1
+)
+
 // SaveStatsToStorage saves the stats to storage.
 func SaveStatsToStorage(sctx sessionctx.Context, tableID int64, count int64, isIndex int, hg *Histogram, cms *CMSketch) error {
 	ctx := context.TODO()
@@ -210,8 +216,8 @@ func SaveStatsToStorage(sctx sessionctx.Context, tableID int64, count int64, isI
 	if err != nil {
 		return errors.Trace(err)
 	}
-	replaceSQL := fmt.Sprintf("replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size) values (%d, %d, %d, %d, %d, %d, X'%X', %d)",
-		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, data, hg.TotColSize)
+	replaceSQL := fmt.Sprintf("replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver) values (%d, %d, %d, %d, %d, %d, X'%X', %d, %d)",
+		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, data, hg.TotColSize, curStatsVersion)
 	_, err = exec.Execute(ctx, replaceSQL)
 	if err != nil {
 		return errors.Trace(err)
@@ -712,7 +718,8 @@ func (c *Column) getColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 type Index struct {
 	Histogram
 	*CMSketch
-	Info *model.IndexInfo
+	statsVer int64
+	Info     *model.IndexInfo
 }
 
 func (idx *Index) String() string {
