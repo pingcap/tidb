@@ -65,7 +65,7 @@ func (s *partitionProcessor) rewriteDataSource(lp LogicalPlan) (LogicalPlan, err
 
 // partitionTable is for those tables which implement partition.
 type partitionTable interface {
-	PartitionExprCache() *tables.PartitionExprCache
+	PartitionExpr() *tables.PartitionExpr
 }
 
 func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
@@ -76,7 +76,7 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 
 	var partitionExprs []expression.Expression
 	if table, ok := ds.table.(partitionTable); ok {
-		partitionExprs = table.PartitionExprCache().PartitionPrune
+		partitionExprs = table.PartitionExpr().PartitionPrune
 	}
 	if len(partitionExprs) == 0 {
 		return nil, errors.New("partition expression missing")
@@ -138,7 +138,7 @@ func (s *partitionProcessor) canBePrune(ctx sessionctx.Context, col *expression.
 	return len(r) == 0, nil
 }
 
-// partitionExprAccessColumn extracts the column visited from the partition expression.
+// partitionExprAccessColumn extracts the column which is visited by the partition expression.
 // If the partition expression is not a simple operation on one column, return nil.
 func partitionExprAccessColumn(expr expression.Expression) *expression.Column {
 	lt, ok := expr.(*expression.ScalarFunction)

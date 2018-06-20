@@ -60,11 +60,11 @@ type Table struct {
 	alloc           autoid.Allocator
 	meta            *model.TableInfo
 
-	partitionExprCache *PartitionExprCache
+	partitionExpr *PartitionExpr
 }
 
-// PartitionExprCache caches the partition definition expressions.
-// There are two caches exist, because Locate use binary search, which requires:
+// PartitionExpr is the partition definition expressions.
+// There are two expressions exist, because Locate use binary search, which requires:
 // Given a compare function, for any partition range i, if cmp[i] > 0, then cmp[i+1] > 0.
 // While partition prune must use the accurate range to do prunning.
 // partition by range (x)
@@ -74,7 +74,7 @@ type Table struct {
 //      p3 values less than (y3))
 // PartitionPrune: (x < y1); (y1 <= x < y2); (y2 <= x < y3)
 // Locate: (x < y1); (x < y2); (x < y3)
-type PartitionExprCache struct {
+type PartitionExpr struct {
 	PartitionPrune []expression.Expression
 	Locate         []expression.Expression
 }
@@ -88,11 +88,11 @@ func MockTableFromMeta(tableInfo *model.TableInfo) table.Table {
 	}
 	t := newTable(tableInfo.ID, columns, nil)
 	t.meta = tableInfo
-	partitionExprCache, err := generatePartitionExprCache(tableInfo)
+	partitionExpr, err := generatePartitionExpr(tableInfo)
 	if err != nil {
 		return nil
 	}
-	t.partitionExprCache = partitionExprCache
+	t.partitionExpr = partitionExpr
 	return t
 }
 
@@ -141,20 +141,20 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 	}
 
 	t.meta = tblInfo
-	partitionExprCache, err := generatePartitionExprCache(tblInfo)
+	partitionExpr, err := generatePartitionExpr(tblInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	t.partitionExprCache = partitionExprCache
+	t.partitionExpr = partitionExpr
 	return t, nil
 }
 
-// PartitionExprCache returns the partition expression.
-func (t *Table) PartitionExprCache() *PartitionExprCache {
-	return t.partitionExprCache
+// PartitionExpr returns the partition expression.
+func (t *Table) PartitionExpr() *PartitionExpr {
+	return t.partitionExpr
 }
 
-func generatePartitionExprCache(tblInfo *model.TableInfo) (*PartitionExprCache, error) {
+func generatePartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil {
 		return nil, nil
@@ -197,7 +197,7 @@ func generatePartitionExprCache(tblInfo *model.TableInfo) (*PartitionExprCache, 
 		partitionPruneExprs = append(partitionPruneExprs, expr)
 		buf.Reset()
 	}
-	return &PartitionExprCache{
+	return &PartitionExpr{
 		PartitionPrune: partitionPruneExprs,
 		Locate:         locateExprs,
 	}, nil
@@ -448,16 +448,16 @@ func (t *Table) getRollbackableMemStore(ctx sessionctx.Context) kv.RetrieverMuta
 // locatePartition returns the partition ID of the input record.
 func (t *Table) locatePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int64, error) {
 	// TODO: Remove this later, when we have better way to TestPartitionAddRecord.
-	if t.partitionExprCache == nil {
-		partitionExprCache, err := generatePartitionExprCache(t.meta)
+	if t.partitionExpr == nil {
+		partitionExpr, err := generatePartitionExpr(t.meta)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		t.partitionExprCache = partitionExprCache
+		t.partitionExpr = partitionExpr
 	}
 
 	var err error
-	partitionExprs := t.partitionExprCache.Locate
+	partitionExprs := t.partitionExpr.Locate
 	idx := sort.Search(len(partitionExprs), func(i int) bool {
 		var ret int64
 		ret, _, err = partitionExprs[i].EvalInt(ctx, types.DatumRow(r))
