@@ -469,13 +469,23 @@ func checkAddPartitionValue(meta *model.TableInfo, part *model.PartitionInfo) er
 			return nil
 		}
 		for i := 0; i < len(newDefs); i++ {
-			if strings.EqualFold(newDefs[i].LessThan[0], "MAXVALUE") && i == len(newDefs)-1 {
+			ifMaxvalue := strings.EqualFold(newDefs[i].LessThan[0], "MAXVALUE")
+			if ifMaxvalue && i == len(newDefs)-1 {
 				return nil
-			} else if strings.EqualFold(newDefs[i].LessThan[0], "MAXVALUE") && i != len(newDefs)-1 {
+			} else if ifMaxvalue && i != len(newDefs)-1 {
 				return infoschema.ErrPartitionMaxvalue
 			}
-			currentRangeValue, _ := strconv.Atoi(newDefs[i].LessThan[0])
-			rangeValue, _ := strconv.Atoi(nextRangeValue)
+
+			currentRangeValue, err := strconv.Atoi(newDefs[i].LessThan[0])
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			rangeValue, nil := strconv.Atoi(nextRangeValue)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
 			if currentRangeValue <= rangeValue {
 				return infoschema.ErrRangeNotIncreasing
 			}
