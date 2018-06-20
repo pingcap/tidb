@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/mock"
@@ -48,6 +49,14 @@ func (s *testEvaluatorSuite) SetUpSuite(c *C) {
 }
 
 func (s *testEvaluatorSuite) TearDownSuite(c *C) {
+}
+
+func (s *testEvaluatorSuite) SetUpTest(c *C) {
+	testleak.BeforeTest()
+}
+
+func (s *testEvaluatorSuite) TearDownTest(c *C) {
+	testleak.AfterTest(c)()
 }
 
 func (s *testEvaluatorSuite) kindToFieldType(kind byte) types.FieldType {
@@ -113,7 +122,6 @@ func (s *testEvaluatorSuite) primitiveValsToConstants(args []interface{}) []Expr
 }
 
 func (s *testEvaluatorSuite) TestSleep(c *C) {
-	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	sessVars := ctx.GetSessionVars()
 
@@ -182,7 +190,6 @@ func (s *testEvaluatorSuite) TestSleep(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestBinopComparison(c *C) {
-	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		lhs    interface{}
 		op     string
@@ -260,7 +267,6 @@ func (s *testEvaluatorSuite) TestBinopComparison(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestBinopLogic(c *C) {
-	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		lhs interface{}
 		op  string
@@ -563,24 +569,33 @@ func (s *testEvaluatorSuite) TestRegexp(c *C) {
 		pattern string
 		input   string
 		match   int64
+		err     error
 	}{
-		{"^$", "a", 0},
-		{"a", "a", 1},
-		{"a", "b", 0},
-		{"aA", "aA", 1},
-		{".", "a", 1},
-		{"^.$", "ab", 0},
-		{"..", "b", 0},
-		{".ab", "aab", 1},
-		{".*", "abcd", 1},
+		{"^$", "a", 0, nil},
+		{"a", "a", 1, nil},
+		{"a", "b", 0, nil},
+		{"aA", "aA", 1, nil},
+		{".", "a", 1, nil},
+		{"^.$", "ab", 0, nil},
+		{"..", "b", 0, nil},
+		{".ab", "aab", 1, nil},
+		{".*", "abcd", 1, nil},
+		{"(", "", 0, ErrRegexp},
+		{"(*", "", 0, ErrRegexp},
+		{"[a", "", 0, ErrRegexp},
+		{"\\", "", 0, ErrRegexp},
 	}
 	for _, tt := range tests {
 		fc := funcs[ast.Regexp]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tt.input, tt.pattern)))
 		c.Assert(err, IsNil)
 		match, err := evalBuiltinFunc(f, nil)
-		c.Assert(err, IsNil)
-		c.Assert(match, testutil.DatumEquals, types.NewDatum(tt.match), Commentf("%v", tt))
+		if tt.err == nil {
+			c.Assert(err, IsNil)
+			c.Assert(match, testutil.DatumEquals, types.NewDatum(tt.match), Commentf("%v", tt))
+		} else {
+			c.Assert(terror.ErrorEqual(err, tt.err), IsTrue)
+		}
 	}
 }
 

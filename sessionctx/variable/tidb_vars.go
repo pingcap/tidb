@@ -29,7 +29,7 @@ package variable
 // TiDB system variable names that only in session scope.
 const (
 	// tidb_snapshot is used for reading history data, the default value is empty string.
-	// When the value is set to a datetime string like '2017-11-11 20:20:20', the session reads history data of that time.
+	// The value can be a datetime string like '2017-11-11 20:20:20' or a tso string. When this variable is set, the session reads history data of that time.
 	TiDBSnapshot = "tidb_snapshot"
 
 	// tidb_import_data is used for loading data from a dump file, to speed up the loading process.
@@ -154,6 +154,18 @@ const (
 	// The hash join outer executor starts multiple concurrent join workers to probe the hash table.
 	TiDBHashJoinConcurrency = "tidb_hash_join_concurrency"
 
+	// tidb_projection_concurrency is used for projection operator.
+	// This variable controls the worker number of projection operator.
+	TiDBProjectionConcurrency = "tidb_projection_concurrency"
+
+	// tidb_hashagg_partial_concurrency is used for hash agg executor.
+	// The hash agg executor starts multiple concurrent partial workers to do partial aggregate works.
+	TiDBHashAggPartialConcurrency = "tidb_hashagg_partial_concurrency"
+
+	// tidb_hashagg_final_concurrency is used for hash agg executor.
+	// The hash agg executor starts multiple concurrent final workers to do final aggregate works.
+	TiDBHashAggFinalConcurrency = "tidb_hashagg_final_concurrency"
+
 	// tidb_backoff_lock_fast is used for tikv backoff base time in milliseconds.
 	TiDBBackoffLockFast = "tidb_backoff_lock_fast"
 )
@@ -177,7 +189,6 @@ const (
 	DefCurretTS                      = 0
 	DefMaxChunkSize                  = 1024
 	DefDMLBatchSize                  = 20000
-	DefTiDBMemQuotaQuery             = 32 << 30 // 32GB.
 	DefTiDBMemQuotaHashJoin          = 32 << 30 // 32GB.
 	DefTiDBMemQuotaMergeJoin         = 32 << 30 // 32GB.
 	DefTiDBMemQuotaSort              = 32 << 30 // 32GB.
@@ -188,7 +199,10 @@ const (
 	DefTiDBGeneralLog                = 0
 	DefTiDBRetryLimit                = 10
 	DefTiDBHashJoinConcurrency       = 5
+	DefTiDBProjectionConcurrency     = 4
 	DefTiDBOptimizerSelectivityLevel = 0
+	DefTiDBHashAggPartialConcurrency = 4
+	DefTiDBHashAggFinalConcurrency   = 4
 )
 
 // Process global variables.

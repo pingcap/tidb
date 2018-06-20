@@ -144,6 +144,12 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		leftCond = leftPushCond
 		rightCond = rightPushCond
 	}
+	for i := range leftCond {
+		leftCond[i] = leftCond[i].Clone()
+	}
+	for i := range rightCond {
+		rightCond[i] = rightCond[i].Clone()
+	}
 	leftRet, lCh := leftPlan.PredicatePushDown(leftCond)
 	rightRet, rCh := rightPlan.PredicatePushDown(rightCond)
 	addSelection(p, lCh, leftRet, 0)
@@ -198,9 +204,11 @@ func (p *LogicalProjection) appendExpr(expr expression.Expression) *expression.C
 	}
 	expr = expression.ColumnSubstitute(expr, p.schema, p.Exprs)
 	p.Exprs = append(p.Exprs, expr)
+
+	newPosition := p.schema.Columns[p.schema.Len()-1].Position + 1
 	col := &expression.Column{
 		FromID:   p.id,
-		Position: p.schema.Len(),
+		Position: newPosition,
 		ColName:  model.NewCIStr(expr.String()),
 		RetType:  expr.GetType(),
 	}

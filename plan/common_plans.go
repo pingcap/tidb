@@ -208,11 +208,10 @@ func (e *Execute) rebuildRange(p Plan) error {
 	switch x := p.(type) {
 	case *PhysicalTableReader:
 		ts := x.TablePlans[0].(*PhysicalTableScan)
-		cols := expression.ColumnInfos2ColumnsWithDBName(ts.DBName, ts.Table.Name, ts.Columns)
 		var pkCol *expression.Column
 		if ts.Table.PKIsHandle {
 			if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
-				pkCol = expression.ColInfo2Col(cols, pkColInfo)
+				pkCol = expression.ColInfo2Col(x.schema.Columns, pkColInfo)
 			}
 		}
 		if pkCol != nil {
@@ -227,14 +226,14 @@ func (e *Execute) rebuildRange(p Plan) error {
 	case *PhysicalIndexReader:
 		is := x.IndexPlans[0].(*PhysicalIndexScan)
 		var err error
-		is.Ranges, err = e.buildRangeForIndexScan(sctx, is)
+		is.Ranges, err = e.buildRangeForIndexScan(sctx, is, x.schema)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	case *PhysicalIndexLookUpReader:
 		is := x.IndexPlans[0].(*PhysicalIndexScan)
 		var err error
-		is.Ranges, err = e.buildRangeForIndexScan(sctx, is)
+		is.Ranges, err = e.buildRangeForIndexScan(sctx, is, x.schema)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -250,9 +249,8 @@ func (e *Execute) rebuildRange(p Plan) error {
 	return nil
 }
 
-func (e *Execute) buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) ([]*ranger.Range, error) {
-	cols := expression.ColumnInfos2ColumnsWithDBName(is.DBName, is.Table.Name, is.Columns)
-	idxCols, colLengths := expression.IndexInfo2Cols(cols, is.Index)
+func (e *Execute) buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan, schema *expression.Schema) ([]*ranger.Range, error) {
+	idxCols, colLengths := expression.IndexInfo2Cols(schema.Columns, is.Index)
 	ranges := ranger.FullRange()
 	if len(idxCols) > 0 {
 		var err error
@@ -319,7 +317,7 @@ type Insert struct {
 	tableSchema *expression.Schema
 	Columns     []*ast.ColumnName
 	Lists       [][]expression.Expression
-	Setlist     []*expression.Assignment
+	SetList     []*expression.Assignment
 	OnDuplicate []*expression.Assignment
 
 	IsReplace bool

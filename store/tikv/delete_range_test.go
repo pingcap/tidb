@@ -37,7 +37,7 @@ func (s *testDeleteRangeSuite) SetUpTest(c *C) {
 	client, pdClient, err := mocktikv.NewTestClient(s.cluster, nil, "")
 	c.Assert(err, IsNil)
 
-	store, err := NewTestTiKVStore(client, pdClient, nil, nil)
+	store, err := NewTestTiKVStore(client, pdClient, nil, nil, false)
 	c.Check(err, IsNil)
 	s.store = store.(*tikvStore)
 }
@@ -82,8 +82,7 @@ func (s *testDeleteRangeSuite) checkData(c *C, expectedData map[string]string) {
 
 func (s *testDeleteRangeSuite) deleteRange(c *C, startKey []byte, endKey []byte) {
 	ctx := context.Background()
-	bo := NewBackoffer(ctx, 1000)
-	task := NewDeleteRangeTask(ctx, s.store, bo, startKey, endKey)
+	task := NewDeleteRangeTask(ctx, s.store, startKey, endKey)
 
 	err := task.Execute()
 	c.Assert(err, IsNil)

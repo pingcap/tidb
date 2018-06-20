@@ -29,7 +29,7 @@ const (
 	netWorkFactor      = 1.5
 	netWorkStartFactor = 20.0
 	scanFactor         = 2.0
-	descScanFactor     = 5 * scanFactor
+	descScanFactor     = 2 * scanFactor
 	memoryFactor       = 5.0
 	// 0.5 is the looking up agg context factor.
 	hashAggFactor      = 1.2 + 0.5
@@ -91,7 +91,25 @@ func (p *baseLogicalPlan) findBestTask(prop *requiredProp) (bestTask task, err e
 
 	bestTask = invalidTask
 	childTasks := make([]task, 0, len(p.children))
-	for _, pp := range p.self.exhaustPhysicalPlans(prop) {
+
+	// If prop.enforced is true, cols of prop as parameter in exhaustPhysicalPlans should be nil
+	// And reset it for enforcing task prop and storing map<prop,task>
+	oldPropCols := prop.cols
+	if prop.enforced {
+		// First, get the bestTask without enforced prop
+		prop.enforced = false
+		bestTask, err = p.findBestTask(prop)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		prop.enforced = true
+		// Next, get the bestTask with enforced prop
+		prop.cols = []*expression.Column{}
+	}
+	physicalPlans := p.self.exhaustPhysicalPlans(prop)
+	prop.cols = oldPropCols
+
+	for _, pp := range physicalPlans {
 		// find best child tasks firstly.
 		childTasks = childTasks[:0]
 		for i, child := range p.children {
@@ -99,11 +117,24 @@ func (p *baseLogicalPlan) findBestTask(prop *requiredProp) (bestTask task, err e
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+			if childTask != nil && childTask.invalid() {
+				break
+			}
 			childTasks = append(childTasks, childTask)
+		}
+
+		// This check makes sure that there is no invalid child task.
+		if len(childTasks) != len(p.children) {
+			continue
 		}
 
 		// combine best child tasks with parent physical plan.
 		curTask := pp.attach2Task(childTasks...)
+
+		// enforce curTask property
+		if prop.enforced {
+			curTask = prop.enforceProperty(curTask, p.basePlan.ctx)
+		}
 
 		// get the most efficient one.
 		if curTask.cost() < bestTask.cost() {
@@ -166,7 +197,7 @@ func (ds *DataSource) tryToGetDualTask() (task, error) {
 
 // findBestTask implements the PhysicalPlan interface.
 // It will enumerate all the available indices and choose a plan with least cost.
-func (ds *DataSource) findBestTask(prop *requiredProp) (task, error) {
+func (ds *DataSource) findBestTask(prop *requiredProp) (t task, err error) {
 	// If ds is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself.
 	// So here we do nothing.
 	// TODO: Add a special prop to handle IndexJoin's inner plan.
@@ -175,25 +206,47 @@ func (ds *DataSource) findBestTask(prop *requiredProp) (task, error) {
 		return nil, nil
 	}
 
-	t := ds.getTask(prop)
+	t = ds.getTask(prop)
 	if t != nil {
-		return t, nil
+		return
 	}
-	t, err := ds.tryToGetDualTask()
-	if err != nil {
-		return nil, errors.Trace(err)
+
+	// If prop.enforced is true, the prop.cols need to be set nil for ds.findBestTask.
+	// Before function return, reset it for enforcing task prop and storing map<prop,task>.
+	oldPropCols := prop.cols
+	if prop.enforced {
+		// First, get the bestTask without enforced prop
+		prop.enforced = false
+		t, err = ds.findBestTask(prop)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		prop.enforced = true
+		if t != invalidTask {
+			ds.storeTask(prop, t)
+			return
+		}
+		// Next, get the bestTask with enforced prop
+		prop.cols = []*expression.Column{}
 	}
-	if t != nil {
+	defer func() {
+		if err != nil {
+			return
+		}
+		if prop.enforced {
+			prop.cols = oldPropCols
+			t = prop.enforceProperty(t, ds.basePlan.ctx)
+		}
 		ds.storeTask(prop, t)
-		return t, nil
+	}()
+
+	t, err = ds.tryToGetDualTask()
+	if err != nil || t != nil {
+		return t, errors.Trace(err)
 	}
 	t, err = ds.tryToGetMemTask(prop)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if t != nil {
-		ds.storeTask(prop, t)
-		return t, nil
+	if err != nil || t != nil {
+		return t, errors.Trace(err)
 	}
 
 	t = invalidTask
@@ -223,9 +276,7 @@ func (ds *DataSource) findBestTask(prop *requiredProp) (task, error) {
 			}
 		}
 	}
-
-	ds.storeTask(prop, t)
-	return t, nil
+	return
 }
 
 func isCoveringIndex(columns []*model.ColumnInfo, indexColumns []*model.IndexColumn, pkIsHandle bool) bool {
@@ -314,17 +365,17 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, path *accessPath) (
 	rowCount := path.countAfterAccess
 	cop := &copTask{indexPlan: is}
 	if !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle) {
+		// If it's parent requires single read task, return max cost.
+		if prop.taskTp == copSingleReadTaskType {
+			return invalidTask, nil
+		}
 		// On this way, it's double read case.
 		ts := PhysicalTableScan{Columns: ds.Columns, Table: is.Table}.init(ds.ctx)
 		ts.SetSchema(ds.schema.Clone())
 		cop.tablePlan = ts
-		// If it's parent requires single read task, return max cost.
-		if prop.taskTp == copSingleReadTaskType {
-			return &copTask{cst: math.MaxFloat64}, nil
-		}
 	} else if prop.taskTp == copDoubleReadTaskType {
 		// If it's parent requires double read task, return max cost.
-		return &copTask{cst: math.MaxFloat64}, nil
+		return invalidTask, nil
 	}
 	is.initSchema(ds.id, idx, cop.tablePlan != nil)
 	// Check if this plan matches the property.
@@ -343,8 +394,8 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, path *accessPath) (
 	// Only use expectedCnt when it's smaller than the count we calculated.
 	// e.g. IndexScan(count1)->After Filter(count2). The `ds.statsAfterSelect.count` is count2. count1 is the one we need to calculate
 	// If expectedCnt and count2 are both zero and we go into the below `if` block, the count1 will be set to zero though it's shouldn't be.
-	if matchProperty && prop.expectedCnt < path.countAfterIndex {
-		selectivity := path.countAfterIndex / path.countAfterAccess
+	if (matchProperty || prop.isEmpty()) && prop.expectedCnt < ds.statsAfterSelect.count {
+		selectivity := ds.statsAfterSelect.count / path.countAfterAccess
 		rowCount = math.Min(prop.expectedCnt/selectivity, rowCount)
 	}
 	is.stats = ds.stats.scaleByExpectCnt(rowCount)
@@ -404,9 +455,13 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 	indexConds, tableConds := path.indexFilters, path.tableFilters
 	if indexConds != nil {
 		copTask.cst += copTask.count() * cpuFactor
-		stats := &statsInfo{count: path.countAfterIndex}
-		indexSel := PhysicalSelection{Conditions: indexConds}.init(is.ctx,
-			stats.scaleByExpectCnt(expectedCnt))
+		count := path.countAfterAccess
+		if count >= 1.0 {
+			selectivity := path.countAfterIndex / path.countAfterAccess
+			count = is.stats.count * selectivity
+		}
+		stats := &statsInfo{count: count}
+		indexSel := PhysicalSelection{Conditions: indexConds}.init(is.ctx, stats)
 		indexSel.SetChildren(is)
 		copTask.indexPlan = indexSel
 	}
@@ -502,7 +557,7 @@ func (ds *DataSource) forceToTableScan(pk *expression.Column) PhysicalPlan {
 func (ds *DataSource) convertToTableScan(prop *requiredProp, path *accessPath) (task task, err error) {
 	// It will be handled in convertToIndexScan.
 	if prop.taskTp == copDoubleReadTaskType {
-		return &copTask{cst: math.MaxFloat64}, nil
+		return invalidTask, nil
 	}
 
 	ts := PhysicalTableScan{
@@ -533,7 +588,7 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp, path *accessPath) (
 	// Only use expectedCnt when it's smaller than the count we calculated.
 	// e.g. IndexScan(count1)->After Filter(count2). The `ds.statsAfterSelect.count` is count2. count1 is the one we need to calculate
 	// If expectedCnt and count2 are both zero and we go into the below `if` block, the count1 will be set to zero though it's shouldn't be.
-	if matchProperty && prop.expectedCnt < ds.statsAfterSelect.count {
+	if (matchProperty || prop.isEmpty()) && prop.expectedCnt < ds.statsAfterSelect.count {
 		selectivity := ds.statsAfterSelect.count / rowCount
 		rowCount = math.Min(prop.expectedCnt/selectivity, rowCount)
 	}

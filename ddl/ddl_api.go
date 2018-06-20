@@ -39,7 +39,7 @@ import (
 )
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) (err error) {
-	is := d.getInformationSchema()
+	is := d.GetInformationSchema()
 	_, ok := is.SchemaByName(schema)
 	if ok {
 		return infoschema.ErrDatabaseExists.GenByArgs(schema)
@@ -81,7 +81,7 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetIn
 }
 
 func (d *ddl) DropSchema(ctx sessionctx.Context, schema model.CIStr) (err error) {
-	is := d.getInformationSchema()
+	is := d.GetInformationSchema()
 	old, ok := is.SchemaByName(schema)
 	if !ok {
 		return errors.Trace(infoschema.ErrDatabaseNotExists)
@@ -323,8 +323,12 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef) (
 				removeOnUpdateNowFlag(col)
 			case ast.ColumnOptionOnUpdate:
 				// TODO: Support other time functions.
-				if !expression.IsCurrentTimestampExpr(v.Expr) {
-					return nil, nil, ErrInvalidOnUpdate.Gen("invalid ON UPDATE for - %s", col.Name)
+				if col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime {
+					if !expression.IsCurrentTimestampExpr(v.Expr) {
+						return nil, nil, ErrInvalidOnUpdate.GenByArgs(col.Name)
+					}
+				} else {
+					return nil, nil, ErrInvalidOnUpdate.GenByArgs(col.Name)
 				}
 				col.Flag |= mysql.OnUpdateNowFlag
 				setOnUpdateNow = true
@@ -362,7 +366,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef) (
 	if col.Tp == mysql.TypeYear {
 		// For Year field, it's charset is binary but does not have binary flag.
 		col.Flag &= ^mysql.BinaryFlag
-		col.Flag |= mysql.UnsignedFlag | mysql.ZerofillFlag
+		col.Flag |= mysql.ZerofillFlag
 	}
 	err := checkDefaultValue(ctx, col, hasDefaultValue)
 	if err != nil {
@@ -531,6 +535,34 @@ func checkTooLongColumn(colDefs []*ast.ColumnDef) error {
 func checkTooManyColumns(colDefs []*ast.ColumnDef) error {
 	if len(colDefs) > TableColumnCountLimit {
 		return errTooManyFields
+	}
+	return nil
+}
+
+func checkAddColumnTooManyColumns(oldCols []*model.ColumnInfo) error {
+	if len(oldCols) > TableColumnCountLimit {
+		return errTooManyFields
+	}
+	return nil
+}
+
+// checkPointTypeColumns checks multiple decimal/float/double columns.
+func checkPointTypeColumns(colDefs []*ast.ColumnDef) error {
+	for _, colDef := range colDefs {
+		if err := checkPointTypeColumn(colDef.Name.OrigColName(), colDef.Tp); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+// checkPointTypeColumn checks a decimal/float/double column.
+func checkPointTypeColumn(colName string, tp *types.FieldType) error {
+	switch tp.Tp {
+	case mysql.TypeNewDecimal, mysql.TypeDouble, mysql.TypeFloat:
+		if tp.Flen < tp.Decimal {
+			return types.ErrMBiggerThanD.GenByArgs(colName)
+		}
 	}
 	return nil
 }
@@ -711,7 +743,7 @@ func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols 
 }
 
 func (d *ddl) CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.Ident) error {
-	is := d.getInformationSchema()
+	is := d.GetInformationSchema()
 	_, ok := is.SchemaByName(referIdent.Schema)
 	if !ok {
 		return infoschema.ErrTableNotExists.GenByArgs(referIdent.Schema, referIdent.Name)
@@ -756,7 +788,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		return d.CreateTableWithLike(ctx, ident, referIdent)
 	}
 	colDefs := s.Cols
-	is := d.getInformationSchema()
+	is := d.GetInformationSchema()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenByArgs(ident.Schema)
@@ -780,6 +812,10 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		return errors.Trace(err)
 	}
 	if err = checkTooManyColumns(colDefs); err != nil {
+		return errors.Trace(err)
+	}
+
+	if err = checkPointTypeColumns(colDefs); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -995,6 +1031,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			err = d.RenameTable(ctx, ident, newIdent)
 		case ast.AlterTableDropPrimaryKey:
 			err = ErrUnsupportedModifyPrimaryKey.GenByArgs("drop")
+		case ast.AlterTableRenameIndex:
+			err = d.RenameIndex(ctx, ident, spec)
 		case ast.AlterTableOption:
 			for _, opt := range spec.Options {
 				switch opt.Tp {
@@ -1026,7 +1064,7 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 }
 
 func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int64) error {
-	is := d.getInformationSchema()
+	is := d.GetInformationSchema()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenByArgs(ident.Schema)
@@ -1074,7 +1112,7 @@ func (d *ddl) ShardRowID(ctx sessionctx.Context, tableIdent ast.Ident, uVal uint
 }
 
 func (d *ddl) getSchemaAndTableByIdent(tableIdent ast.Ident) (dbInfo *model.DBInfo, t table.Table, err error) {
-	is := d.getInformationSchema()
+	is := d.GetInformationSchema()
 	schema, ok := is.SchemaByName(tableIdent.Schema)
 	if !ok {
 		return nil, nil, infoschema.ErrDatabaseNotExists.GenByArgs(tableIdent.Schema)
@@ -1106,6 +1144,11 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 		return errors.Trace(err)
 	}
 
+	colName := specNewColumn.Name.Name.O
+	if err = checkPointTypeColumn(colName, specNewColumn.Tp); err != nil {
+		return errors.Trace(err)
+	}
+
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
@@ -1117,7 +1160,6 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	}
 
 	// Check whether added column has existed.
-	colName := specNewColumn.Name.Name.O
 	col := table.FindCol(t.Cols(), colName)
 	if col != nil {
 		return infoschema.ErrColumnExists.GenByArgs(colName)
@@ -1320,8 +1362,12 @@ func setDefaultAndComment(ctx sessionctx.Context, col *table.Column, options []*
 			return errUnsupportedModifyColumn.Gen("unsupported modify column constraint - %v", opt.Tp)
 		case ast.ColumnOptionOnUpdate:
 			// TODO: Support other time functions.
-			if !expression.IsCurrentTimestampExpr(opt.Expr) {
-				return ErrInvalidOnUpdate.Gen("invalid ON UPDATE for - %s", col.Name)
+			if col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime {
+				if !expression.IsCurrentTimestampExpr(opt.Expr) {
+					return ErrInvalidOnUpdate.GenByArgs(col.Name)
+				}
+			} else {
+				return ErrInvalidOnUpdate.GenByArgs(col.Name)
 			}
 			col.Flag |= mysql.OnUpdateNowFlag
 			setOnUpdateNow = true
@@ -1384,6 +1430,10 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	if specNewColumn.Tp == nil {
 		// Make sure the column definition is simple field type.
 		return nil, errors.Trace(errUnsupportedModifyColumn)
+	}
+
+	if err := checkPointTypeColumn(specNewColumn.Name.OrigColName(), specNewColumn.Tp); err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	newCol := table.ToColumn(&model.ColumnInfo{
@@ -1566,9 +1616,44 @@ func (d *ddl) AlterTableComment(ctx sessionctx.Context, ident ast.Ident, spec *a
 	return errors.Trace(err)
 }
 
+// RenameIndex renames an index.
+// In TiDB, indexes are case-insensitive (so index 'a' and 'A" are considered the same index),
+// but index names are case-sensitive (we can rename index 'a' to 'A')
+func (d *ddl) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	is := d.infoHandle.Get()
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenByArgs(ident.Schema)
+	}
+
+	tb, err := is.TableByName(ident.Schema, ident.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ident.Schema, ident.Name))
+	}
+	duplicate, err := validateRenameIndex(spec.FromKey, spec.ToKey, tb.Meta())
+	if duplicate {
+		return nil
+	}
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tb.Meta().ID,
+		Type:       model.ActionRenameIndex,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{spec.FromKey, spec.ToKey},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
 // DropTable will proceed even if some table in the list does not exists.
 func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident) (err error) {
-	is := d.getInformationSchema()
+	is := d.GetInformationSchema()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenByArgs(ti.Schema)
@@ -1592,7 +1677,7 @@ func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident) (err error) {
 }
 
 func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
-	is := d.getInformationSchema()
+	is := d.GetInformationSchema()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenByArgs(ti.Schema)
@@ -1618,7 +1703,7 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 }
 
 func (d *ddl) RenameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident) error {
-	is := d.getInformationSchema()
+	is := d.GetInformationSchema()
 	oldSchema, ok := is.SchemaByName(oldIdent.Schema)
 	if !ok {
 		return errFileNotFound.GenByArgs(oldIdent.Schema, oldIdent.Name)
@@ -1819,18 +1904,6 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
-}
-
-// findCol finds column in cols by name.
-func findCol(cols []*model.ColumnInfo, name string) *model.ColumnInfo {
-	name = strings.ToLower(name)
-	for _, col := range cols {
-		if col.Name.L == name {
-			return col
-		}
-	}
-
-	return nil
 }
 
 func isDroppableColumn(tblInfo *model.TableInfo, colName model.CIStr) error {

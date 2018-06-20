@@ -281,25 +281,41 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 			best: "MergeLeftOuterSemiJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,s.a)->Projection",
 		},
 		// Test Single Merge Join.
-		// Merge Join will no longer enforce a sort. If a hint doesn't take effect, we will choose other types of join.
+		// Merge Join now enforce a sort.
 		{
 			sql:  "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.a = t2.b",
-			best: "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.b)",
+			best: "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))->Sort}(t1.a,t2.b)",
+		},
+		{
+			sql:  "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.a = t2.a",
+			best: "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)",
 		},
 		// Test Single Merge Join + Sort.
 		{
 			sql:  "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.a = t2.a order by t2.a",
 			best: "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)",
 		},
+		{
+			sql:  "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.b = t2.b order by t2.a",
+			best: "MergeInnerJoin{TableReader(Table(t))->Sort->TableReader(Table(t))->Sort}(t1.b,t2.b)->Sort",
+		},
 		// Test Single Merge Join + Sort + desc.
 		{
 			sql:  "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.a = t2.a order by t2.a desc",
-			best: "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->Sort",
+			best: "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)",
+		},
+		{
+			sql:  "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.b = t2.b order by t2.b desc",
+			best: "MergeInnerJoin{TableReader(Table(t))->Sort->TableReader(Table(t))->Sort}(t1.b,t2.b)",
 		},
 		// Test Multi Merge Join.
 		{
 			sql:  "select /*+ TIDB_SMJ(t1,t2,t3)*/ * from t t1, t t2, t t3 where t1.a = t2.a and t2.a = t3.a",
 			best: "MergeInnerJoin{MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->TableReader(Table(t))}(t2.a,t3.a)",
+		},
+		{
+			sql:  "select /*+ TIDB_SMJ(t1,t2,t3)*/ * from t t1, t t2, t t3 where t1.a = t2.b and t2.a = t3.b",
+			best: "MergeInnerJoin{MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))->Sort}(t1.a,t2.b)->Sort->TableReader(Table(t))->Sort}(t2.a,t3.b)",
 		},
 		// Test Multi Merge Join with multi keys.
 		// TODO: More tests should be added.
@@ -314,7 +330,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 		// Test Multi Merge Join + Outer Join.
 		{
 			sql:  "select /*+ TIDB_SMJ(t1,t2,t3)*/ * from t t1 left outer join t t2 on t1.a = t2.a left outer join t t3 on t2.a = t3.a",
-			best: "LeftHashJoin{MergeLeftOuterJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->TableReader(Table(t))}(t2.a,t3.a)",
+			best: "MergeLeftOuterJoin{MergeLeftOuterJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->TableReader(Table(t))}(t2.a,t3.a)",
 		},
 		{
 			sql:  "select /*+ TIDB_SMJ(t1,t2,t3)*/ * from t t1 left outer join t t2 on t1.a = t2.a left outer join t t3 on t1.a = t3.a",
@@ -429,7 +445,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSubquery(c *C) {
 		// Test Nested sub query.
 		{
 			sql:  "select * from t where exists (select s.a from t s where s.c in (select c from t as k where k.d = s.d) having sum(s.a) = t.a )",
-			best: "LeftHashJoin{TableReader(Table(t))->Projection->MergeSemiJoin{IndexReader(Index(t.c_d_e)[[<nil>,+inf]])->IndexReader(Index(t.c_d_e)[[<nil>,+inf]])}(s.d,k.d)(s.c,k.c)->StreamAgg}(cast(test.t.a),sel_agg_1)->Projection",
+			best: "LeftHashJoin{TableReader(Table(t))->Projection->MergeSemiJoin{IndexReader(Index(t.c_d_e)[[<nil>,+inf]])->IndexReader(Index(t.c_d_e)[[<nil>,+inf]])}(s.c,k.c)(s.d,k.d)->StreamAgg}(cast(test.t.a),sel_agg_1)->Projection",
 		},
 		// Test Semi Join + Order by.
 		{
@@ -553,6 +569,23 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 			best: "TableReader(Table(t))->Update",
 		},
 		// TODO: Test delete/update with join.
+		// Test join hint for delete and update
+		{
+			sql:  "delete /*+ TIDB_INLJ(t1, t2) */ t1 from t t1, t t2 where t1.c=t2.c",
+			best: "IndexJoin{TableReader(Table(t))->IndexLookUp(Index(t.c_d_e)[[<nil>,+inf]], Table(t))}(t1.c,t2.c)->Delete",
+		},
+		{
+			sql:  "delete /*+ TIDB_SMJ(t1, t2) */ from t1 using t t1, t t2 where t1.c=t2.c",
+			best: "MergeInnerJoin{IndexLookUp(Index(t.c_d_e)[[<nil>,+inf]], Table(t))->IndexLookUp(Index(t.c_d_e)[[<nil>,+inf]], Table(t))}(t1.c,t2.c)->Delete",
+		},
+		{
+			sql:  "update /*+ TIDB_SMJ(t1, t2) */ t t1, t t2 set t1.a=1, t2.a=1 where t1.a=t2.a",
+			best: "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->Update",
+		},
+		{
+			sql:  "update /*+ TIDB_HJ(t1, t2) */ t t1, t t2 set t1.a=1, t2.a=1 where t1.a=t2.a",
+			best: "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->Update",
+		},
 		// Test complex delete.
 		{
 			sql:  "delete from t where b < 1 order by d limit 1",

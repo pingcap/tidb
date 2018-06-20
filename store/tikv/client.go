@@ -114,7 +114,6 @@ func (a *connArray) Init(addr string, security config.Security) error {
 	}
 
 	for i := range a.v {
-
 		ctx, cancel := context.WithTimeout(context.Background(), dialTimeout)
 		conn, err := grpc.DialContext(
 			ctx,
@@ -126,6 +125,7 @@ func (a *connArray) Init(addr string, security config.Security) error {
 			grpc.WithStreamInterceptor(streamInterceptor),
 			grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(MaxCallMsgSize)),
 			grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(MaxSendMsgSize)),
+			grpc.WithBackoffMaxDelay(time.Second*3),
 		)
 		cancel()
 		if err != nil {

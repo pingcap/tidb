@@ -278,6 +278,8 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinArithmeticDivideRealSig{base}
 	case tipb.ScalarFuncSig_AbsInt:
 		f = &builtinAbsIntSig{base}
+	case tipb.ScalarFuncSig_AbsUInt:
+		f = &builtinAbsUIntSig{base}
 	case tipb.ScalarFuncSig_AbsReal:
 		f = &builtinAbsRealSig{base}
 	case tipb.ScalarFuncSig_AbsDecimal:
@@ -288,6 +290,8 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinCeilIntToDecSig{base}
 	case tipb.ScalarFuncSig_CeilDecToInt:
 		f = &builtinCeilDecToIntSig{base}
+	case tipb.ScalarFuncSig_CeilDecToDec:
+		f = &builtinCeilDecToDecSig{base}
 	case tipb.ScalarFuncSig_CeilReal:
 		f = &builtinCeilRealSig{base}
 	case tipb.ScalarFuncSig_FloorIntToInt:
@@ -296,6 +300,8 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinFloorIntToDecSig{base}
 	case tipb.ScalarFuncSig_FloorDecToInt:
 		f = &builtinFloorDecToIntSig{base}
+	case tipb.ScalarFuncSig_FloorDecToDec:
+		f = &builtinFloorDecToDecSig{base}
 	case tipb.ScalarFuncSig_FloorReal:
 		f = &builtinFloorRealSig{base}
 
@@ -610,9 +616,8 @@ func convertFloat(val []byte, f32 bool) (*Constant, error) {
 }
 
 func convertDecimal(val []byte) (*Constant, error) {
-	_, dec, err := codec.DecodeDecimal(val)
+	_, dec, precision, frac, err := codec.DecodeDecimal(val)
 	var d types.Datum
-	precision, frac := dec.PrecisionAndFrac()
 	d.SetMysqlDecimal(dec)
 	d.SetLength(precision)
 	d.SetFrac(frac)
