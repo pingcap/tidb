@@ -185,18 +185,18 @@ type DDL interface {
 	// OwnerManager gets the owner manager, and it's used for testing.
 	OwnerManager() owner.Manager
 
-	// WorkerVars gets the session variables for DDL worker. It's exported for testing.
-	WorkerVars() *variable.SessionVars
-	// SetHook sets the hook. It's exported for testing.
+	/*
+	   Export the following interfaces for testing.
+	*/
+	// SetBinlogClient sets the binlog client for DDL worker.
+	SetBinlogClient(interface{})
+	// SetHook sets the hook.
 	SetHook(h Callback)
-	// GetHook gets the hook. It's exported for testing.
-	GetHook() Callback
-
-	// GetTableMaxRowID gets table max row ID. It's exported for testing.
+	// GetTableMaxRowID gets table max row ID.
 	GetTableMaxRowID(startTS uint64, tblInfo *model.TableInfo) (int64, bool, error)
 }
 
-// ddl represents the statements which are used to define the database structure or schema.
+// ddl is used to handle the statements that define the structure or schema of the database.
 type ddl struct {
 	m          sync.RWMutex
 	infoHandle *infoschema.Handle
@@ -216,12 +216,11 @@ type ddlCtx struct {
 	ddlJobDoneCh chan struct{}
 	ddlEventCh   chan<- *util.Event
 	lease        time.Duration // lease is schema lease.
+	binlogCli    interface{}   // binlogCli is used for Binlog.
 
 	// hook may be modified.
 	hook   Callback
 	hookMu sync.RWMutex
-
-	workerVars *variable.SessionVars // workerVars is used for Binlog.
 }
 
 func (dc *ddlCtx) isOwner() bool {
@@ -295,14 +294,13 @@ func newDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 		ddlJobDoneCh: make(chan struct{}, 1),
 		ownerManager: manager,
 		schemaSyncer: syncer,
-		workerVars:   variable.NewSessionVars(),
+		binlogCli:    binloginfo.GetPumpClient(),
 		hook:         hook,
 	}
 	d := &ddl{
 		infoHandle: infoHandle,
 		ddlCtx:     ddlCtx,
 	}
-	d.workerVars.BinlogClient = binloginfo.GetPumpClient()
 
 	d.start(ctx, ctxPool)
 	variable.RegisterStatistics(d)
@@ -493,17 +491,9 @@ func (d *ddl) SetHook(h Callback) {
 	d.hook = h
 }
 
-// GetHook implements DDL.GetHook interface.
-func (d *ddl) GetHook() Callback {
-	d.hookMu.RLock()
-	defer d.hookMu.RUnlock()
-
-	return d.hook
-}
-
-// WorkerVars implements DDL.WorkerVars interface.
-func (d *ddl) WorkerVars() *variable.SessionVars {
-	return d.workerVars
+// SetBinlogClient implements DDL.SetBinlogClient interface.
+func (d *ddl) SetBinlogClient(binlogCli interface{}) {
+	d.binlogCli = binlogCli
 }
 
 // DDL error codes.
