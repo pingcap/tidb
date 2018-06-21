@@ -2076,11 +2076,20 @@ func (s *testSessionSuite) TestDisableTxnAutoRetry(c *C) {
 	c.Assert(err, NotNil)
 
 	// session 1 starts a transaction early.
-	// execute a select statement to .
+	// execute a select statement to clear retry history.
 	tk1.MustExec("select 1")
 	tk1.Se.NewTxn()
 	// session 2 update the value.
 	tk2.MustExec("update no_retry set id = 4")
-	// Non-autocommit update will retry, so it would not fail.
+	// Autocommit update will retry, so it would not fail.
 	tk1.MustExec("update no_retry set id = 5")
+
+	// RestrictedSQL should retry.
+	tk1.Se.GetSessionVars().InRestrictedSQL = true
+	tk1.MustExec("begin")
+
+	tk2.MustExec("update no_retry set id = 6")
+
+	tk1.MustExec("update no_retry set id = 7")
+	tk1.MustExec("commit")
 }
