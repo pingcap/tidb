@@ -361,7 +361,8 @@ func (f *field) escapeChar(c byte) byte {
 	case '\\':
 		return c
 	default:
-		panic("illegal escaped character!")
+		log.Warnf("illegal escaped character '%c'!", c)
+		return c
 	}
 }
 
