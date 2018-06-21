@@ -197,7 +197,11 @@ func (e *baseAvgFloat64) AppendPartialResult2Chunk(sctx sessionctx.Context, part
 
 func (e *baseAvgFloat64) AppendFinalResult2Chunk(sctx sessionctx.Context, partialBytes []byte, chk *chunk.Chunk) error {
 	partialResult := e.toPartialResult(partialBytes)
-	chk.AppendFloat64(e.output[0], partialResult.sum/float64(partialResult.count))
+	if partialResult.count == 0 {
+		chk.AppendNull(e.output[0])
+	} else {
+		chk.AppendFloat64(e.output[0], partialResult.sum/float64(partialResult.count))
+	}
 	return nil
 }
 
@@ -297,7 +301,11 @@ func (e *baseAvgFloat32) AppendPartialResult2Chunk(sctx sessionctx.Context, part
 
 func (e *baseAvgFloat32) AppendFinalResult2Chunk(sctx sessionctx.Context, partialBytes []byte, chk *chunk.Chunk) error {
 	partialResult := e.toPartialResult(partialBytes)
-	chk.AppendFloat32(e.output[0], partialResult.sum/float32(partialResult.count))
+	if partialResult.count == 0 {
+		chk.AppendNull(e.output[0])
+	} else {
+		chk.AppendFloat32(e.output[0], partialResult.sum/float32(partialResult.count))
+	}
 	return nil
 }
 
