@@ -132,7 +132,11 @@ func (d *HashAggIntermData) ToRows(sc *stmtctx.StatementContext, rows []types.Da
 		d.iter = chunk.NewIterator4Chunk(d.groupSet)
 		chunkRow = d.iter.Begin()
 	}
-	for ; chunkRow != d.iter.End(); chunkRow = d.iter.Next() {
+	// Append groupKey as the last element.
+	if len(rows) == maxChunkSize {
+		return rows, false
+	}
+	for chunkRow = d.iter.Current(); chunkRow != d.iter.End(); chunkRow = d.iter.Next() {
 		groupKey := chunkRow.GetString(0)
 		row := make(types.DatumRow, 0, len(aggFuncs)*2)
 		aggCtxs := d.groupCtxMap[groupKey]
@@ -141,12 +145,8 @@ func (d *HashAggIntermData) ToRows(sc *stmtctx.StatementContext, rows []types.Da
 				row = append(row, d)
 			}
 		}
-		// Append groupKey as the last element.
 		row = append(row, types.NewStringDatum(groupKey))
 		rows = append(rows, row)
-		if len(rows) == maxChunkSize {
-			return rows, false
-		}
 	}
 	return rows, true
 }
