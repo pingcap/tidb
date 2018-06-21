@@ -297,7 +297,7 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		// FIXME: a temp error noticing 'not implemented' (issue 4754)
 		p.err = errors.New("'CREATE TABLE ... SELECT' is not implemented yet")
 		return
-	} else if len(stmt.Cols) == 0 && len(stmt.Constraints) == 0 && stmt.ReferTable == nil {
+	} else if len(stmt.Cols) == 0 && stmt.ReferTable == nil {
 		p.err = ddl.ErrTableMustHaveColumns
 		return
 	}

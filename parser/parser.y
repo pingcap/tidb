@@ -600,7 +600,7 @@ import (
 	ConstraintKeywordOpt		"Constraint Keyword or empty"
 	CreateIndexStmtUnique		"CREATE INDEX optional UNIQUE clause"
 	CreateTableOptionListOpt	"create table option list opt"
-	CreateTableSelectOpt	"Select/Union statement in CREATE TABLE ... SELECT"
+	CreateTableSelectOpt	        "Select/Union statement in CREATE TABLE ... SELECT"
 	DatabaseOption			"CREATE Database specification"
 	DatabaseOptionList		"CREATE Database specification list"
 	DatabaseOptionListOpt		"CREATE Database specification list opt"
@@ -654,7 +654,7 @@ import (
 	JoinType			"join type"
 	KillOrKillTiDB			"Kill or Kill TiDB"
 	LikeEscapeOpt 			"like escape option"
-	LikeTableWithOrWithoutParen		"LIKE table_name or ( LIKE table_name )"
+	LikeTableWithOrWithoutParen	"LIKE table_name or ( LIKE table_name )"
 	LimitClause			"LIMIT clause"
 	LimitOption			"Limit option could be integer or parameter marker."
 	Lines				"Lines clause"
@@ -5676,10 +5676,6 @@ TableElementListOpt:
 			case *ast.Constraint:
 				constraints = append(constraints, te)
 			}
-		}
-		if len(columnDefs) == 0 {
-			yylex.Errorf("Column Definition List can't be empty.")
-			return 1
 		}
 		$$ = &ast.CreateTableStmt{
 			Cols:           columnDefs,
