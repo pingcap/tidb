@@ -204,7 +204,6 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte) ([]byte, []byte, bool) 
 // If the number of inserted rows reaches the batchRows, then the second return value is true.
 // If prevData isn't nil and curData is nil, there are no other data to deal with and the isEOF is true.
 func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error) {
-	// TODO: support enclosed and escape.
 	if len(prevData) == 0 && len(curData) == 0 {
 		return nil, false, nil
 	}
@@ -237,7 +236,7 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 			curData = nil
 		}
 
-		cols, err := e.GetFieldsFromLine(line)
+		cols, err := e.getFieldsFromLine(line)
 		if err != nil {
 			return nil, false, errors.Trace(err)
 		}
@@ -261,18 +260,18 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 	return curData, reachLimit, nil
 }
 
-func (e *LoadDataInfo) colsToRow(cols []string) types.DatumRow {
+func (e *LoadDataInfo) colsToRow(cols []field) types.DatumRow {
 	for i := 0; i < len(e.row); i++ {
 		if i >= len(cols) {
-			e.row[i].SetString("")
+			e.row[i].SetNull()
 			continue
 		}
-		// "\N" is handled as NULL in csv.
+		// The field with only "\N" in it is handled as NULL in the csv file.
 		// See http://dev.mysql.com/doc/refman/5.7/en/load-data.html
-		if cols[i] == "\\N" {
+		if cols[i].maybeNull && string(cols[i].str) == "N" {
 			e.row[i].SetNull()
 		} else {
-			e.row[i].SetString(cols[i])
+			e.row[i].SetString(string(cols[i].str))
 		}
 	}
 	row, err := e.fillRowData(e.columns, e.row)
@@ -296,8 +295,13 @@ func (e *LoadDataInfo) insertData(row types.DatumRow) (int64, error) {
 	return h, nil
 }
 
-// GetFieldsFromLine splits line according to fieldsInfo, this function is exported for testing.
-func (e *LoadDataInfo) GetFieldsFromLine(line []byte) ([]string, error) {
+type field struct {
+	str       []byte
+	maybeNull bool
+}
+
+// getFieldsFromLine splits line according to fieldsInfo, this function is exported for testing.
+func (e *LoadDataInfo) getFieldsFromLine(line []byte) ([]field, error) {
 	var sep []byte
 	if e.FieldsInfo.Enclosed != 0 {
 		if line[0] != e.FieldsInfo.Enclosed || line[len(line)-1] != e.FieldsInfo.Enclosed {
@@ -312,38 +316,32 @@ func (e *LoadDataInfo) GetFieldsFromLine(line []byte) ([]string, error) {
 		sep = []byte(e.FieldsInfo.Terminated)
 	}
 	rawCols := bytes.Split(line, sep)
-	cols := escapeCols(rawCols)
-	return cols, nil
-}
-
-func escapeCols(strs [][]byte) []string {
-	ret := make([]string, len(strs))
-	for i, v := range strs {
-		output := escape(v)
-		ret[i] = string(output)
+	fields := make([]field, 0, len(rawCols))
+	for _, v := range rawCols {
+		f := field{v, false}
+		fields = append(fields, f.escape())
 	}
-	return ret
+	return fields, nil
 }
 
 // escape handles escape characters when running load data statement.
 // See http://dev.mysql.com/doc/refman/5.7/en/load-data.html
-func escape(str []byte) []byte {
+func (f *field) escape() field {
 	pos := 0
-	for i := 0; i < len(str); i++ {
-		c := str[i]
-		// Do not escape "\N" here.
-		if i+1 < len(str) && str[i] == '\\' && str[i+1] != 'N' {
-			c = escapeChar(str[i+1])
+	for i := 0; i < len(f.str); i++ {
+		c := f.str[i]
+		if i+1 < len(f.str) && f.str[i] == '\\' {
+			c = f.escapeChar(f.str[i+1])
 			i++
 		}
 
-		str[pos] = c
+		f.str[pos] = c
 		pos++
 	}
-	return str[:pos]
+	return field{f.str[:pos], f.maybeNull}
 }
 
-func escapeChar(c byte) byte {
+func (f *field) escapeChar(c byte) byte {
 	switch c {
 	case '0':
 		return 0
@@ -357,10 +355,14 @@ func escapeChar(c byte) byte {
 		return '\t'
 	case 'Z':
 		return 26
+	case 'N':
+		f.maybeNull = true
+		return c
 	case '\\':
-		return '\\'
+		return c
+	default:
+		panic("illegal escaped character!")
 	}
-	return c
 }
 
 // loadDataVarKeyType is a dummy type to avoid naming collision in context.
