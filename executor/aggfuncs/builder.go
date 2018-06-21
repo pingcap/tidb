@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/types"
 )
 
 // Build is used to build AggFunc according to the aggFuncDesc
@@ -80,11 +81,20 @@ func buildAvg(aggFuncDesc *aggregation.AggFuncDesc, output []int) AggFunc {
 	case aggregation.CompleteMode, aggregation.Partial1Mode:
 		switch aggFuncDesc.Args[0].GetType().Tp {
 		case mysql.TypeNewDecimal:
-			return &avgOriginal4Decimal{baseAvgDecimal{base}}
+			if aggFuncDesc.HasDistinct {
+				return &avgOriginal4Decimal{baseAvgDecimal{base}, make(map[types.MyDecimal]bool)}
+			}
+			return &avgOriginal4Decimal{baseAvgDecimal{base}, nil}
 		case mysql.TypeFloat:
-			return &avgOriginal4Float32{baseAvgFloat32{base}}
+			if aggFuncDesc.HasDistinct {
+				return &avgOriginal4Float32{baseAvgFloat32{base}, make(map[float32]bool)}
+			}
+			return &avgOriginal4Float32{baseAvgFloat32{base}, nil}
 		case mysql.TypeDouble:
-			return &avgOriginal4Float64{baseAvgFloat64{base}}
+			if aggFuncDesc.HasDistinct {
+				return &avgOriginal4Float64{baseAvgFloat64{base}, make(map[float64]bool)}
+			}
+			return &avgOriginal4Float64{baseAvgFloat64{base}, nil}
 		}
 
 	// Build avg functions which consume the partial result of other agg

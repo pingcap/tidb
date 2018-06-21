@@ -100,6 +100,7 @@ func (e *avgDedup4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGr
 
 type avgOriginal4Decimal struct {
 	baseAvgDecimal
+	deDuper map[types.MyDecimal]bool
 }
 
 func (e *avgOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, partialBytes []byte) error {
@@ -109,7 +110,7 @@ func (e *avgOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		input, isNull, err := e.input[0].EvalDecimal(sctx, row)
 		if err != nil {
 			return errors.Trace(err)
-		} else if isNull {
+		} else if isNull || (e.deDuper != nil && e.deDuper[*input]) {
 			continue
 		}
 		err = types.DecimalAdd(&partialResult.sum, input, newSum)
@@ -118,6 +119,9 @@ func (e *avgOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		}
 		partialResult.sum = *newSum
 		partialResult.count++
+		if e.deDuper != nil {
+			e.deDuper[*input] = true
+		}
 	}
 	return nil
 }
@@ -207,6 +211,7 @@ func (e *avgDedup4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGr
 
 type avgOriginal4Float64 struct {
 	baseAvgFloat64
+	deDuper map[float64]bool
 }
 
 func (e *avgOriginal4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, partialBytes []byte) error {
@@ -215,11 +220,14 @@ func (e *avgOriginal4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		input, isNull, err := e.input[0].EvalReal(sctx, row)
 		if err != nil {
 			return errors.Trace(err)
-		} else if isNull {
+		} else if isNull || (e.deDuper != nil && e.deDuper[input]) {
 			continue
 		}
 		partialResult.sum += input
 		partialResult.count++
+		if e.deDuper != nil {
+			e.deDuper[input] = true
+		}
 	}
 	return nil
 }
@@ -303,6 +311,7 @@ func (e *avgDedup4Float32) UpdatePartialResult(sctx sessionctx.Context, rowsInGr
 
 type avgOriginal4Float32 struct {
 	baseAvgFloat32
+	deDuper map[float32]bool
 }
 
 func (e *avgOriginal4Float32) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, partialBytes []byte) error {
@@ -311,11 +320,14 @@ func (e *avgOriginal4Float32) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		input, isNull, err := e.input[0].EvalReal(sctx, row)
 		if err != nil {
 			return errors.Trace(err)
-		} else if isNull {
+		} else if isNull || (e.deDuper != nil && e.deDuper[float32(input)]) {
 			continue
 		}
 		partialResult.sum += float32(input)
 		partialResult.count++
+		if e.deDuper != nil {
+			e.deDuper[float32(input)] = true
+		}
 	}
 	return nil
 }
