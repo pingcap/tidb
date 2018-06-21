@@ -4172,6 +4172,10 @@ SelectStmtFromDual:
 		if $3 != nil {
 			st.Where = $3.(ast.ExprNode)
 		}
+
+		if $4 != nil {
+			st.OrderBy = $4.(*ast.OrderByClause)
+		}
 	}
 
 
