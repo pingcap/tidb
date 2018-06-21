@@ -718,7 +718,7 @@ func (c *Column) getColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 type Index struct {
 	Histogram
 	*CMSketch
-	statsVer int64
+	statsVer int64 // statsVer is the version of the current stats, used to maintain compatibility
 	Info     *model.IndexInfo
 }
 

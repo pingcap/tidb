@@ -390,29 +390,26 @@ func (t *Table) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idxID int
 	return result, errors.Trace(err)
 }
 
-func getRangePosition(sc *stmtctx.StatementContext, ran *ranger.Range) int {
-	rangePosition := -1
+// getOrdinalOfRangeCond gets the ordinal of the position range condition,
+// if not exist, it returns the end position.
+func getOrdinalOfRangeCond(sc *stmtctx.StatementContext, ran *ranger.Range) int {
 	for i := range ran.LowVal {
 		a, b := ran.LowVal[i], ran.HighVal[i]
 		cmp, err := a.CompareDatum(sc, &b)
 		if err != nil {
-			break
+			return 0
 		}
 		if cmp != 0 {
-			rangePosition = i
-			break
+			return i
 		}
 	}
-	if rangePosition == -1 {
-		rangePosition = len(ran.LowVal)
-	}
-	return rangePosition
+	return len(ran.LowVal)
 }
 
 func (t *Table) getIndexRowCount(sc *stmtctx.StatementContext, idx *Index, indexRanges []*ranger.Range) (float64, error) {
 	totalCount := float64(0)
 	for _, ran := range indexRanges {
-		rangePosition := getRangePosition(sc, ran)
+		rangePosition := getOrdinalOfRangeCond(sc, ran)
 		// first one is range, just use the previous way to estimate
 		if rangePosition == 0 {
 			count, err := idx.getRowCount(sc, []*ranger.Range{ran})
@@ -424,13 +421,11 @@ func (t *Table) getIndexRowCount(sc *stmtctx.StatementContext, idx *Index, index
 		}
 		selectivity := 1.0
 		// use CM Sketch to estimate the equal conditions
-		if rangePosition != 0 {
-			bytes, err := codec.EncodeKey(sc, nil, ran.LowVal[:rangePosition]...)
-			if err != nil {
-				return 0, errors.Trace(err)
-			}
-			selectivity = float64(idx.CMSketch.queryBytes(bytes)) / float64(t.Count)
+		bytes, err := codec.EncodeKey(sc, nil, ran.LowVal[:rangePosition]...)
+		if err != nil {
+			return 0, errors.Trace(err)
 		}
+		selectivity = float64(idx.CMSketch.queryBytes(bytes)) / float64(t.Count)
 		// use histogram to estimate the range condition
 		if rangePosition != len(ran.LowVal) {
 			rang := ranger.Range{
