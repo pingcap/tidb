@@ -138,11 +138,14 @@ func (s *partitionProcessor) canBePrune(ctx sessionctx.Context, col *expression.
 	return len(r) == 0, nil
 }
 
-// partitionExprAccessColumn extracts the column which is visited by the partition expression.
+// partitionExprAccessColumn extracts the column which is used by the partition expression.
 // If the partition expression is not a simple operation on one column, return nil.
 func partitionExprAccessColumn(expr expression.Expression) *expression.Column {
 	lt, ok := expr.(*expression.ScalarFunction)
 	if !ok || lt.FuncName.L != ast.LT {
+		// The partition expression is constructed by us, its format should always be
+		// expr < value, such as "id < 42", "timestamp(id) < maxvalue"
+		log.Warnf("illegal partition expr:%s", expr.String())
 		return nil
 	}
 	tmp := lt.GetArgs()[0]
