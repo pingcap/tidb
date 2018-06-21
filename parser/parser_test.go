@@ -451,6 +451,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"select 1 from dual limit 1", true},
 		{"select 1 where exists (select 2)", false},
 		{"select 1 from dual where not exists (select 2)", true},
+		{"select 1 as a from dual order by a", true},
 
 		{"select 1 order by 1", true},
 
