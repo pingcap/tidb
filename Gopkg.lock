@@ -215,14 +215,14 @@
     "pkg/raft_serverpb",
     "pkg/tikvpb"
   ]
-  revision = "5f300b07f361960053aa64de72ae23889baa7af4"
+  revision = "11e8f245581483e73bee991d7b8f8c4cc3d7f462"
   source = "https://github.com/MyonKeminta/kvproto"
 
 [[projects]]
   branch = "misono/upload-gc-safepoint"
   name = "github.com/pingcap/pd"
   packages = ["pd-client"]
-  revision = "c0e56dd16dc09e5f23c43719be83c4931e984a65"
+  revision = "b07a7cf3a779b4272c32b147d8508789482c7c41"
   source = "https://github.com/MyonKeminta/pd"
 
 [[projects]]
