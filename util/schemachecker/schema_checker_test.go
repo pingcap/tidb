@@ -34,7 +34,7 @@ type testSuite struct{}
 func (s *testSuite) TestSchemaCheckerSimple(c *C) {
 	lease := 5 * time.Millisecond
 	validator := domain.NewSchemaValidator(lease)
-	checker := &SchemaLeaseChecker{SchemaValidator: validator}
+	checker := &SchemaChecker{SchemaValidator: validator}
 
 	// Add some schema versions and delta table IDs.
 	ts := uint64(time.Now().UnixNano())

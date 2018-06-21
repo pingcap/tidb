@@ -396,15 +396,8 @@ func (d *ddl) GetLease() time.Duration {
 	return lease
 }
 
-// IsInTest is used to determine whether it is in the test.
-var IsInTest bool
-
 // GetInformationSchema gets the infoschema binding to d. It's expoted for testing.
 func (d *ddl) GetInformationSchema(ctx sessionctx.Context) infoschema.InfoSchema {
-	if !IsInTest {
-		return d.infoHandle.Get()
-	}
-
 	d.hookMu.RLock()
 	defer d.hookMu.RUnlock()
 	return d.hook.OnGetInfoSchema(ctx,
@@ -444,7 +437,7 @@ func checkJobMaxInterval(job *model.Job) time.Duration {
 }
 
 func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
-	ctx.GetSessionVars().StmtCtx.IsDDLJobDone = true
+	ctx.GetSessionVars().StmtCtx.IsDDLJobReady = true
 	// For every DDL, we must commit current transaction.
 	if err := ctx.NewTxn(); err != nil {
 		return errors.Trace(err)

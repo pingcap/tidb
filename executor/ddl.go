@@ -39,11 +39,14 @@ type DDLExec struct {
 	done bool
 }
 
+// toErr converts the error to the ErrInfoSchemaChanged when the schema is outdated.
 func (e *DDLExec) toErr(err error) error {
-	if e.ctx.GetSessionVars().StmtCtx.IsDDLJobDone {
+	if e.ctx.GetSessionVars().StmtCtx.IsDDLJobReady {
 		return err
 	}
 
+	// Before the DDL job is ready，it encouters an error that may be due to the outdated schema information.
+	// Here we distinguish the ErrInfoSchemaChanged error from other errors.
 	dom := domain.GetDomain(e.ctx)
 	checker := schemachecker.NewSchemaChecker(dom, e.is.SchemaMetaVersion(), nil)
 	schemaInfoErr := checker.Check(e.ctx.Txn().StartTS())
@@ -59,7 +62,7 @@ func (e *DDLExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 		return nil
 	}
 	e.done = true
-	defer func() { e.ctx.GetSessionVars().StmtCtx.IsDDLJobDone = false }()
+	defer func() { e.ctx.GetSessionVars().StmtCtx.IsDDLJobReady = false }()
 
 	switch x := e.stmt.(type) {
 	case *ast.TruncateTableStmt:

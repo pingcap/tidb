@@ -27,8 +27,9 @@ import (
 type StatementContext struct {
 	// Set the following variables before execution
 
-	// IsDDLJobDone is used to mark whether to enter the function of 'doDDLJob'.
-	IsDDLJobDone         bool
+	// IsDDLJobReady is used to mark whether to enter the function of 'doDDLJob'.
+	// If IsDDLJobReady is true, it means the DDL job is ready to be handled by the DDL worker.
+	IsDDLJobReady        bool
 	InInsertStmt         bool
 	InUpdateOrDeleteStmt bool
 	InSelectStmt         bool

@@ -21,23 +21,23 @@ import (
 	"github.com/pingcap/tidb/metrics"
 )
 
-// SchemaLeaseChecker is used for checking schema-validity.
-type SchemaLeaseChecker struct {
+// SchemaChecker is used for checking schema-validity.
+type SchemaChecker struct {
 	domain.SchemaValidator
 	schemaVer       int64
 	relatedTableIDs []int64
 }
 
 var (
-	// SchemaOutOfDateRetryInterval is the sleeping time when we fail to try.
+	// SchemaOutOfDateRetryInterval is the backoff time before retrying.
 	SchemaOutOfDateRetryInterval = int64(500 * time.Millisecond)
-	// SchemaOutOfDateRetryTimes is upper bound of retry times when the schema is out of date.
+	// SchemaOutOfDateRetryTimes is the max retry count when the schema is out of date.
 	SchemaOutOfDateRetryTimes = int32(10)
 )
 
 // NewSchemaChecker creates a new schema checker.
-func NewSchemaChecker(do *domain.Domain, schemaVer int64, relatedTableIDs []int64) *SchemaLeaseChecker {
-	return &SchemaLeaseChecker{
+func NewSchemaChecker(do *domain.Domain, schemaVer int64, relatedTableIDs []int64) *SchemaChecker {
+	return &SchemaChecker{
 		SchemaValidator: do.SchemaValidator,
 		schemaVer:       schemaVer,
 		relatedTableIDs: relatedTableIDs,
@@ -45,7 +45,7 @@ func NewSchemaChecker(do *domain.Domain, schemaVer int64, relatedTableIDs []int6
 }
 
 // Check checks the validity of the schema version.
-func (s *SchemaLeaseChecker) Check(txnTS uint64) error {
+func (s *SchemaChecker) Check(txnTS uint64) error {
 	schemaOutOfDateRetryInterval := atomic.LoadInt64(&SchemaOutOfDateRetryInterval)
 	schemaOutOfDateRetryTimes := int(atomic.LoadInt32(&SchemaOutOfDateRetryTimes))
 	for i := 0; i < schemaOutOfDateRetryTimes; i++ {

@@ -633,6 +633,9 @@ func (s *testStateChangeSuite) TestCreateDBIfNotExists(c *C) {
 }
 
 // TestParallelDDLBeforeRunDDLJob tests a session to execute DDL with an outdated information schema.
+// This test is used to simulate the following conditions:
+// In a cluster, TiDB "a" executes the DDL.
+// TiDB "b" fails to load schema, then TiDB "b" executes the DDL statement associated with the DDL statement executed by "a".
 func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 	defer s.se.Execute(context.Background(), "drop table test_table")
 	_, err := s.se.Execute(context.Background(), "use test_db_state")
@@ -650,8 +653,6 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 	_, err = se1.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
 
-	ddl.IsInTest = true
-	defer func() { ddl.IsInTest = false }()
 	callback := &ddl.TestDDLCallback{}
 	var (
 		testSessionCnt        int32
@@ -697,7 +698,8 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 	d := s.dom.DDL()
 	d.SetHook(callback)
 
-	// Make sure we
+	// Make sure the connection 1 executes a SQL before the connection 2.
+	// And the connection 2 executes a SQL with an outdated information schema.
 	ch := make(chan struct{})
 	wg := sync.WaitGroup{}
 	wg.Add(2)

@@ -63,6 +63,5 @@ func (c *BaseCallback) OnWatched(ctx context.Context) {
 
 // OnGetInfoSchema implements Callback.OnGetInfoSchema interface.
 func (c *BaseCallback) OnGetInfoSchema(ctx sessionctx.Context, fn GetInfoSchema) infoschema.InfoSchema {
-	// Nothing to do.
-	return nil
+	return fn()
 }

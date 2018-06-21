@@ -291,7 +291,7 @@ func (s *session) doCommit(ctx context.Context) error {
 		tableIDs = append(tableIDs, id)
 	}
 	// Set this option for 2 phase commit to validate schema lease.
-	s.txn.SetOption(kv.SchemaLeaseChecker, schemachecker.NewSchemaChecker(domain.GetDomain(s), s.sessionVars.TxnCtx.SchemaVersion, tableIDs))
+	s.txn.SetOption(kv.SchemaChecker, schemachecker.NewSchemaChecker(domain.GetDomain(s), s.sessionVars.TxnCtx.SchemaVersion, tableIDs))
 	if s.sessionVars.TxnCtx.ForUpdate {
 		s.txn.SetOption(kv.ForUpdate, true)
 	}
