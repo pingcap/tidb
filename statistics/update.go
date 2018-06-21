@@ -163,7 +163,7 @@ var (
 	dumpStatsMaxDuration = time.Hour
 )
 
-// Do not need to dump the stats delta when it only updates a small portion of the table and the time since last update
+// needDumpStatsDelta returns true when only updates a small portion of the table and the time since last update
 // do not exceed one hour.
 func needDumpStatsDelta(h *Handle, id int64, item variable.TableDelta, currentTime time.Time) bool {
 	if item.InitTime.IsZero() {
