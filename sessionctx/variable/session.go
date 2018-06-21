@@ -152,7 +152,8 @@ type SessionVars struct {
 	Concurrency
 	MemQuota
 	BatchSize
-	RetryLimit int64
+	RetryLimit          int64
+	DisableTxnAutoRetry bool
 	// UsersLock is a lock for user defined variables.
 	UsersLock sync.RWMutex
 	// Users are user defined variables.
@@ -303,6 +304,7 @@ func NewSessionVars() *SessionVars {
 		AllowAggPushDown:          false,
 		OptimizerSelectivityLevel: DefTiDBOptimizerSelectivityLevel,
 		RetryLimit:                DefTiDBRetryLimit,
+		DisableTxnAutoRetry:       DefTiDBDisableTxnAutoRetry,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -311,6 +313,8 @@ func NewSessionVars() *SessionVars {
 		HashJoinConcurrency:        DefTiDBHashJoinConcurrency,
 		ProjectionConcurrency:      DefTiDBProjectionConcurrency,
 		DistSQLScanConcurrency:     DefDistSQLScanConcurrency,
+		HashAggPartialConcurrency:  DefTiDBHashAggPartialConcurrency,
+		HashAggFinalConcurrency:    DefTiDBHashAggFinalConcurrency,
 	}
 	vars.MemQuota = MemQuota{
 		MemQuotaQuery:             config.GetGlobalConfig().MemQuotaQuery,
@@ -493,6 +497,10 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.HashJoinConcurrency = tidbOptPositiveInt32(val, DefTiDBHashJoinConcurrency)
 	case TiDBProjectionConcurrency:
 		s.ProjectionConcurrency = tidbOptInt64(val, DefTiDBProjectionConcurrency)
+	case TiDBHashAggPartialConcurrency:
+		s.HashAggPartialConcurrency = tidbOptPositiveInt32(val, DefTiDBHashAggPartialConcurrency)
+	case TiDBHashAggFinalConcurrency:
+		s.HashAggFinalConcurrency = tidbOptPositiveInt32(val, DefTiDBHashAggFinalConcurrency)
 	case TiDBDistSQLScanConcurrency:
 		s.DistSQLScanConcurrency = tidbOptPositiveInt32(val, DefDistSQLScanConcurrency)
 	case TiDBIndexSerialScanConcurrency:
@@ -529,6 +537,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt32(val, DefTiDBGeneralLog)))
 	case TiDBRetryLimit:
 		s.RetryLimit = tidbOptInt64(val, DefTiDBRetryLimit)
+	case TiDBDisableTxnAutoRetry:
+		s.DisableTxnAutoRetry = TiDBOptOn(val)
 	case TiDBEnableStreaming:
 		s.EnableStreaming = TiDBOptOn(val)
 	case TiDBOptimizerSelectivityLevel:
@@ -572,6 +582,12 @@ type Concurrency struct {
 
 	// ProjectionConcurrency is the number of concurrent projection worker.
 	ProjectionConcurrency int64
+
+	// HashAggPartialConcurrency is the number of concurrent hash aggregation partial worker.
+	HashAggPartialConcurrency int
+
+	// HashAggPartialConcurrency is the number of concurrent hash aggregation final worker.
+	HashAggFinalConcurrency int
 
 	// IndexSerialScanConcurrency is the number of concurrent index serial scan worker.
 	IndexSerialScanConcurrency int
