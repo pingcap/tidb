@@ -1416,61 +1416,6 @@ func (s *testSuite) TestNullDefault(c *C) {
 	tk.MustQuery("select * from test_null_default").Check(testkit.Rows("<nil>", "1970-01-01 08:20:34"))
 }
 
-// TODO: move these cases to a integration test.
-/*
-func (s *testSuite) TestGetFieldsFromLine(c *C) {
-	tests := []struct {
-		input    string
-		expected []string
-	}{
-		{
-			`"1","a string","100.20"`,
-			[]string{"1", "a string", "100.20"},
-		},
-		{
-			`"2","a string containing a , comma","102.20"`,
-			[]string{"2", "a string containing a , comma", "102.20"},
-		},
-		{
-			`"3","a string containing a \" quote","102.20"`,
-			[]string{"3", "a string containing a \" quote", "102.20"},
-		},
-		{
-			`"4","a string containing a \", quote and comma","102.20"`,
-			[]string{"4", "a string containing a \", quote and comma", "102.20"},
-		},
-		// Test some escape char.
-		{
-			`"\0\b\n\r\t\Z\\\  \c\'\""`,
-			[]string{string([]byte{0, '\b', '\n', '\r', '\t', 26, '\\', ' ', ' ', 'c', '\'', '"'})},
-		},
-	}
-
-	ldInfo := executor.LoadDataInfo{
-		FieldsInfo: &ast.FieldsClause{
-			Enclosed:   '"',
-			Terminated: ",",
-		},
-	}
-
-	for _, test := range tests {
-		got, err := ldInfo.getFieldsFromLine([]byte(test.input))
-		c.Assert(err, IsNil, Commentf("failed: %s", test.input))
-		assertEqualStrings(c, got, test.expected)
-	}
-
-	_, err := ldInfo.getFieldsFromLine([]byte(`1,a string,100.20`))
-	c.Assert(err, NotNil)
-}
-*/
-
-func assertEqualStrings(c *C, got []string, expect []string) {
-	c.Assert(len(got), Equals, len(expect))
-	for i := 0; i < len(got); i++ {
-		c.Assert(got[i], Equals, expect[i])
-	}
-}
-
 // TestIssue4067 Test issue https://github.com/pingcap/tidb/issues/4067
 func (s *testSuite) TestIssue4067(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
