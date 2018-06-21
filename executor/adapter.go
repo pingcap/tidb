@@ -224,12 +224,12 @@ func (a *ExecStmt) Exec(ctx context.Context) (ast.RecordSet, error) {
 	}
 	// If the executor doesn't return any result to the client, we execute it without delay.
 	if e.Schema().Len() == 0 {
-		return a.handleNoDelayExecutor(ctx, sctx, e, pi)
+		return a.handleNoDelayExecutor(ctx, sctx, e, pi, chunk.VoidChunk)
 	} else if proj, ok := e.(*ProjectionExec); ok && proj.calculateNoDelay {
 		// Currently this is only for the "DO" statement. Take "DO 1, @a=2;" as an example:
 		// the Projection has two expressions and two columns in the schema, but we should
 		// not return the result of the two expressions.
-		return a.handleNoDelayExecutor(ctx, sctx, e, pi)
+		return a.handleNoDelayExecutor(ctx, sctx, e, pi, e.newChunk())
 	}
 
 	a.Ctx.GetSessionVars().StmtCtx.FetchChunkSize = estimateChunkSize(a.Ctx, a.Plan)
@@ -242,7 +242,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (ast.RecordSet, error) {
 	}, nil
 }
 
-func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Context, e Executor, pi processinfoSetter) (ast.RecordSet, error) {
+func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Context, e Executor, pi processinfoSetter, chunk *chunk.Chunk) (ast.RecordSet, error) {
 	// Check if "tidb_snapshot" is set for the write executors.
 	// In history read mode, we can not do write operations.
 	switch e.(type) {
@@ -266,7 +266,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 		a.logSlowQuery(txnTS, err == nil)
 	}()
 
-	err = e.Next(ctx, e.newChunk())
+	err = e.Next(ctx, chunk)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

@@ -25,6 +25,14 @@ import (
 
 var _ types.Row = Row{}
 
+// VoidChunk is a void chunk.
+// just like `void` for programmer
+// it's mainly used in NoDelayExecutor for OLTP situation.
+var VoidChunk = &Chunk{
+	columns:        make([]*column, 0),
+	numVirtualRows: 0,
+}
+
 // Chunk stores multiple rows of data in Apache Arrow format.
 // See https://arrow.apache.org/docs/memory_layout.html
 // Values are appended in compact format and can be directly accessed without decoding.
