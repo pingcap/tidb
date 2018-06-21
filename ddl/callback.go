@@ -33,7 +33,7 @@ type Callback interface {
 	OnJobUpdated(job *model.Job)
 	// OnWatched is called after watching owner is completed.
 	OnWatched(ctx context.Context)
-	// OnGetInfoSchema is called in getting information schema. It's used for testing now.
+	// OnGetInfoSchema is a hook which is called in the function ddl.GetInfoSchema(). It is used in the tests.
 	OnGetInfoSchema(ctx sessionctx.Context, fn GetInfoSchema) infoschema.InfoSchema
 }
 

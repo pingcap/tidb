@@ -20,6 +20,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 func TestT(t *testing.T) {
@@ -30,6 +31,14 @@ func TestT(t *testing.T) {
 var _ = Suite(&testSuite{})
 
 type testSuite struct{}
+
+func (s *testSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
+}
+
+func (s *testSuite) TearDownSuite(c *C) {
+	testleak.AfterTest(c)()
+}
 
 func (s *testSuite) TestSchemaCheckerSimple(c *C) {
 	lease := 5 * time.Millisecond
