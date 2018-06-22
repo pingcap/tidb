@@ -1175,12 +1175,10 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plan.AnalyzeIndexTask) 
 		BucketSize: maxBucketSize,
 		NumColumns: int32(len(task.IndexInfo.Columns)),
 	}
-	if !task.IndexInfo.Unique {
-		depth := int32(defaultCMSketchDepth)
-		width := int32(defaultCMSketchWidth)
-		e.analyzePB.IdxReq.CmsketchDepth = &depth
-		e.analyzePB.IdxReq.CmsketchWidth = &width
-	}
+	depth := int32(defaultCMSketchDepth)
+	width := int32(defaultCMSketchWidth)
+	e.analyzePB.IdxReq.CmsketchDepth = &depth
+	e.analyzePB.IdxReq.CmsketchWidth = &width
 	return e
 }
 
