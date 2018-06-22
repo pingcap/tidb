@@ -1318,6 +1318,9 @@ func buildNoRangeTableReader(b *executorBuilder, v *plan.PhysicalTableReader) (*
 		haveCorCol:   b.corColInDistPlan(v.TablePlans),
 		plans:        v.TablePlans,
 	}
+	if isPartition, partitionID := ts.IsPartition(); isPartition {
+		e.tableID = partitionID
+	}
 	if containsLimit(dagReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, ts.Desc)
 	} else {
