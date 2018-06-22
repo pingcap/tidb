@@ -642,6 +642,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, TiDBHashAggFinalConcurrency, strconv.Itoa(DefTiDBHashAggFinalConcurrency)},
 	{ScopeGlobal | ScopeSession, TiDBBackoffLockFast, strconv.Itoa(kv.DefBackoffLockFast)},
 	{ScopeGlobal | ScopeSession, TiDBRetryLimit, strconv.Itoa(DefTiDBRetryLimit)},
+	{ScopeGlobal | ScopeSession, TiDBDisableTxnAutoRetry, boolToIntStr(DefTiDBDisableTxnAutoRetry)},
 	{ScopeSession, TiDBOptimizerSelectivityLevel, strconv.Itoa(DefTiDBOptimizerSelectivityLevel)},
 	/* The following variable is defined as session scope but is actually server scope. */
 	{ScopeSession, TiDBGeneralLog, strconv.Itoa(DefTiDBGeneralLog)},
