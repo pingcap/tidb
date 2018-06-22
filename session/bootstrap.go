@@ -156,13 +156,13 @@ const (
 		table_id bigint(64) NOT NULL,
 		is_index tinyint(2) NOT NULL,
 		hist_id bigint(64) NOT NULL,
-		stats_ver bigint(64) NOT NULL DEFAULT 0,
 		distinct_count bigint(64) NOT NULL,
 		null_count bigint(64) NOT NULL DEFAULT 0,
 		tot_col_size bigint(64) NOT NULL DEFAULT 0,
 		modify_count bigint(64) NOT NULL DEFAULT 0,
 		version bigint(64) unsigned NOT NULL DEFAULT 0,
 		cm_sketch blob,
+		stats_ver bigint(64) NOT NULL DEFAULT 0,
 		unique index tbl(table_id, is_index, hist_id)
 	);`
 

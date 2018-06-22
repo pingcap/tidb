@@ -14,13 +14,13 @@
 package statistics_test
 
 import (
+	"fmt"
 	"math"
 	"os"
 	"runtime/pprof"
 	"testing"
 	"time"
 
-	"fmt"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
