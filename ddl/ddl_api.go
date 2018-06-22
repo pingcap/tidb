@@ -1210,10 +1210,9 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
-		TableName:  ti.Name.O,
 		Type:       model.ActionAddColumn,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{col, spec.Position, 0},
+		Args:       []interface{}{col, spec.Position, 0, ti.Name.O},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -1251,10 +1250,9 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, colName model.CIS
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
-		TableName:  ti.Name.O,
 		Type:       model.ActionDropColumn,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{colName},
+		Args:       []interface{}{colName, ti.Name.O},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -1491,10 +1489,9 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
-		TableName:  ident.Name.O,
 		Type:       model.ActionModifyColumn,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{&newCol, originalColName, spec.Position},
+		Args:       []interface{}{&newCol, originalColName, spec.Position, ident.Name.O},
 	}
 	return job, nil
 }
@@ -1583,10 +1580,9 @@ func (d *ddl) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
-		TableName:  ident.Name.O,
 		Type:       model.ActionSetDefaultValue,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{col},
+		Args:       []interface{}{col, ident.Name.O},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -1671,9 +1667,9 @@ func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident) (err error) {
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tb.Meta().ID,
-		TableName:  ti.Name.O,
 		Type:       model.ActionDropTable,
 		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{ti.Name.O},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -1795,10 +1791,9 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, unique bool, ind
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
-		TableName:  ti.Name.O,
 		Type:       model.ActionAddIndex,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{unique, indexName, idxColNames, indexOption},
+		Args:       []interface{}{unique, indexName, idxColNames, indexOption, ti.Name.O},
 	}
 
 	err = d.doDDLJob(ctx, job)

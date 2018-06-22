@@ -125,15 +125,16 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	// if errorBeforeDecodeArgs {
 	// 	return ver, errors.New("occur an error before decode args")
 	// }
-	if err = checkTableNameChange(t, job, tblInfo.Name.O); err != nil {
-		return ver, errors.Trace(err)
-	}
 	col := &model.ColumnInfo{}
 	pos := &ast.ColumnPosition{}
+	var originalTableName string
 	offset := 0
-	err = job.DecodeArgs(col, pos, &offset)
+	err = job.DecodeArgs(col, pos, &offset, originalTableName)
 	if err != nil {
 		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	if err = checkTableNameChange(t, job, tblInfo.Name.O, originalTableName); err != nil {
 		return ver, errors.Trace(err)
 	}
 
@@ -204,14 +205,15 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	if err = checkTableNameChange(t, job, tblInfo.Name.O); err != nil {
-		return ver, errors.Trace(err)
-	}
 
 	var colName model.CIStr
-	err = job.DecodeArgs(&colName)
+	var originalTableName string
+	err = job.DecodeArgs(&colName, originalTableName)
 	if err != nil {
 		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	if err = checkTableNameChange(t, job, tblInfo.Name.O, originalTableName); err != nil {
 		return ver, errors.Trace(err)
 	}
 
@@ -264,35 +266,37 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 
 func (d *ddl) onSetDefaultValue(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	newCol := &model.ColumnInfo{}
-	err := job.DecodeArgs(newCol)
+	var originalTableName string
+	err := job.DecodeArgs(newCol, originalTableName)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
-	return d.updateColumn(t, job, newCol, &newCol.Name)
+	return d.updateColumn(t, job, newCol, &newCol.Name, originalTableName)
 }
 
 func (d *ddl) onModifyColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	newCol := &model.ColumnInfo{}
 	oldColName := &model.CIStr{}
 	pos := &ast.ColumnPosition{}
-	err := job.DecodeArgs(newCol, oldColName, pos)
+	var originalTableName string
+	err := job.DecodeArgs(newCol, oldColName, pos, originalTableName)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
-	return d.doModifyColumn(t, job, newCol, oldColName, pos)
+	return d.doModifyColumn(t, job, newCol, oldColName, pos, originalTableName)
 }
 
 // doModifyColumn updates the column information and reorders all columns.
-func (d *ddl) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldName *model.CIStr, pos *ast.ColumnPosition) (ver int64, _ error) {
+func (d *ddl) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldName *model.CIStr, pos *ast.ColumnPosition, originalTableName string) (ver int64, _ error) {
 	tblInfo, err := getTableInfo(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	if err = checkTableNameChange(t, job, tblInfo.Name.O); err != nil {
+	if err = checkTableNameChange(t, job, tblInfo.Name.O, originalTableName); err != nil {
 		return ver, errors.Trace(err)
 	}
 
@@ -388,12 +392,12 @@ func (d *ddl) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnI
 	return ver, nil
 }
 
-func (d *ddl) updateColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldColName *model.CIStr) (ver int64, _ error) {
+func (d *ddl) updateColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldColName *model.CIStr, originalTableName string) (ver int64, _ error) {
 	tblInfo, err := getTableInfo(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	if err = checkTableNameChange(t, job, tblInfo.Name.O); err != nil {
+	if err = checkTableNameChange(t, job, tblInfo.Name.O, originalTableName); err != nil {
 		return ver, errors.Trace(err)
 	}
 	oldCol := model.FindColumnInfo(tblInfo.Columns, oldColName.L)

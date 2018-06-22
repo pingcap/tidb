@@ -208,9 +208,6 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	if err = checkTableNameChange(t, job, tblInfo.Name.O); err != nil {
-		return ver, errors.Trace(err)
-	}
 
 	var (
 		unique      bool
@@ -218,9 +215,14 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 		idxColNames []*ast.IndexColName
 		indexOption *ast.IndexOption
 	)
-	err = job.DecodeArgs(&unique, &indexName, &idxColNames, &indexOption)
+	var originalTableName string
+	err = job.DecodeArgs(&unique, &indexName, &idxColNames, &indexOption, originalTableName)
 	if err != nil {
 		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	if err = checkTableNameChange(t, job, tblInfo.Name.O, originalTableName); err != nil {
 		return ver, errors.Trace(err)
 	}
 
