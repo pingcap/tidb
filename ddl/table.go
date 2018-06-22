@@ -132,16 +132,13 @@ type splitableStore interface {
 }
 
 func splitTableRegion(store kv.Storage, tableID int64) {
-	type splitableStore interface {
-		SplitRegion(splitKey kv.Key) error
-	}
 	s, ok := store.(splitableStore)
 	if !ok {
 		return
 	}
 	tableStartKey := tablecodec.GenTablePrefix(tableID)
 	if err := s.SplitRegion(tableStartKey); err != nil {
-		// It will be automatically splitting by TiKV later.
+		// It will be automatically split by TiKV later.
 		log.Warnf("[ddl] splitting table region failed %v", errors.ErrorStack(err))
 	}
 }
