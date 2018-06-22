@@ -549,3 +549,15 @@ func (s *testSuite) TestMaxMinFloatScalaFunc(c *C) {
 	tk.MustQuery(`SELECT MAX(CASE B WHEN 'val_b'  THEN C ELSE 0 END) val_b FROM T WHERE cast(A as signed) = 0 GROUP BY a;`).Check(testkit.Rows("12.190999984741211"))
 	tk.MustQuery(`SELECT MIN(CASE B WHEN 'val_b'  THEN C ELSE 0 END) val_b FROM T WHERE cast(A as signed) = 0 GROUP BY a;`).Check(testkit.Rows("12.190999984741211"))
 }
+
+func (s *testSuite) TestBuildProjBelowAgg(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (i int);")
+	tk.MustExec("insert into t values (1), (1), (1),(2),(3),(2),(3),(2),(3);")
+	rs := tk.MustQuery("select i+1, count(i+2), sum(i+3), group_concat(i+4), bit_or(i+5) from t group by i, hex(i+6)")
+	rs.Check(testkit.Rows(
+		"2 3 12 5,5,5 6",
+		"3 3 15 6,6,6 7",
+		"4 3 18 7,7,7 8"))
+}
