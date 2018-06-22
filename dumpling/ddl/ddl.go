@@ -147,6 +147,8 @@ var (
 	ErrWrongTableName = terror.ClassDDL.New(codeWrongTableName, mysql.MySQLErrName[mysql.ErrWrongTableName])
 	// ErrWrongColumnName returns for wrong column name.
 	ErrWrongColumnName = terror.ClassDDL.New(codeWrongColumnName, mysql.MySQLErrName[mysql.ErrWrongColumnName])
+	// ErrTableMustHaveColumns returns for missing column when creating a table.
+	ErrTableMustHaveColumns = terror.ClassDDL.New(codeTableMustHaveColumns, mysql.MySQLErrName[mysql.ErrTableMustHaveColumns])
 	// ErrWrongNameForIndex returns for wrong index name.
 	ErrWrongNameForIndex = terror.ClassDDL.New(codeWrongNameForIndex, mysql.MySQLErrName[mysql.ErrWrongNameForIndex])
 	// ErrUnknownCharacterSet returns unknown character set.
@@ -564,6 +566,7 @@ const (
 	codeErrTooLongIndexComment       = terror.ErrCode(mysql.ErrTooLongIndexComment)
 	codeUnknownCharacterSet          = terror.ErrCode(mysql.ErrUnknownCharacterSet)
 	codeCantCreateTable              = terror.ErrCode(mysql.ErrCantCreateTable)
+	codeTableMustHaveColumns         = terror.ErrCode(mysql.ErrTableMustHaveColumns)
 )
 
 func init() {
@@ -592,6 +595,7 @@ func init() {
 		codeWrongColumnName:              mysql.ErrWrongColumnName,
 		codeWrongKeyColumn:               mysql.ErrWrongKeyColumn,
 		codeWrongNameForIndex:            mysql.ErrWrongNameForIndex,
+		codeTableMustHaveColumns:         mysql.ErrTableMustHaveColumns,
 		codeTooManyFields:                mysql.ErrTooManyFields,
 		codeErrTooLongIndexComment:       mysql.ErrTooLongIndexComment,
 		codeUnknownCharacterSet:          mysql.ErrUnknownCharacterSet,
