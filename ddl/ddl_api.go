@@ -1225,7 +1225,7 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 // AddTablePartitions will add a new partition to the table.
 func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
 	if len(spec.PartDefinitions) == 0 {
-		return errors.Trace(infoschema.ErrPartitionsMustBeDefined)
+		return errors.Trace(ErrPartitionsMustBeDefined)
 	}
 
 	is := d.infoHandle.Get()
@@ -1240,7 +1240,7 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 
 	meta := t.Meta()
 	if meta.GetPartitionInfo() == nil && meta.Partition == nil {
-		return errors.Trace(infoschema.ErrPartitionMgmtOnNonpartitioned)
+		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
 	}
 	partInfo, err := buildPartitionInfo(meta, d, spec)
 	if err != nil {
@@ -2020,7 +2020,8 @@ func buildPartitionInfo(meta *model.TableInfo, d *ddl, spec *ast.AlterTableSpec)
 			ID:      pid,
 			Comment: def.Comment,
 		}
-		buf.Reset()
+
+		buf := new(bytes.Buffer)
 		for _, expr := range def.LessThan {
 			expr.Format(buf)
 			piDef.LessThan = append(piDef.LessThan, buf.String())

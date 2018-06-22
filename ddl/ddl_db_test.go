@@ -2322,17 +2322,14 @@ func (s *testDBSuite) TestAlterTableAddPartition(c *C) {
 
 	s.tk.MustExec("drop table if t1")
 	s.tk.MustExec("create table t1(a int)")
-	_, err = s.tk.Exec(`alter table t1 add partition (
-    partition p1 values less than (2010),
-    partition p2 values less than maxvalue
-	);`)
+	sql1 := `alter table t1 add partition (
+		partition p1 values less than (2010),
+		partition p2 values less than maxvalue
+	);`
+	s.testErrorCode(c, sql1, mysql.ErrPartitionMgmtOnNonpartitioned)
 
-	terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrPartitionMgmtOnNonpartitioned))
-
-	_, err = s.tk.Exec("alter table t1 add partition")
-	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrPartitionsMustBeDefined))
+	sql2 := "alter table t1 add partition"
+	s.testErrorCode(c, sql2, mysql.ErrPartitionsMustBeDefined)
 
 	s.tk.MustExec("drop table if t2")
 	s.tk.MustExec(`create table t2 (
@@ -2343,9 +2340,30 @@ func (s *testDBSuite) TestAlterTableAddPartition(c *C) {
 	partition p1 values less than (1991),
 	partition p2 values less than maxvalue
 	);`)
-	_, err = s.tk.Exec(`alter table t2 add partition (
+
+	sql3 := `alter table t2 add partition (
 		partition p3 values less than (2010)
+	);`
+	s.testErrorCode(c, sql3, mysql.ErrPartitionMaxvalue)
+
+	s.tk.MustExec("drop table if t3")
+	s.tk.MustExec(`create table t3 (
+	id int not null,
+	hired date not null
+	)
+	partition by range( year(hired) ) (
+	partition p1 values less than (1991),
+	partition p3 values less than (2001),
 	);`)
-	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrPartitionMaxvalue))
+
+	sql4 := `alter table t3 add partition (
+		partition p3 values less than (1993)
+	);`
+	s.testErrorCode(c, sql4, mysql.ErrRangeNotIncreasing)
+
+	sql5 := `alter table t3 add partition (
+		partition p1 values less than (1993)
+	);`
+	s.testErrorCode(c, sql5, mysql.ErrSameNamePartition)
+
 }

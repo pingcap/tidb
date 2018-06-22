@@ -442,14 +442,18 @@ func checkPartitionNotExists(meta *model.TableInfo, part *model.PartitionInfo) e
 	for _, oldDef := range oldDefs {
 		for _, newDef := range newDefs {
 			if strings.EqualFold(oldDef.Name, newDef.Name) {
-				return infoschema.ErrSameNamePartition.GenByArgs(newDef.Name)
+				return ErrSameNamePartition.GenByArgs(newDef.Name)
 			}
 		}
 	}
 
-	for i := 0; i < len(newDefs)-1; i++ {
-		if strings.EqualFold(newDefs[i].Name, newDefs[i+1].Name) {
-			return infoschema.ErrSameNamePartition.GenByArgs(newDefs[i].Name)
+	for i := 0; i < len(newDefs); i++ {
+		for j := 0; i < len(newDefs); j++ {
+			if i != j {
+				if strings.EqualFold(newDefs[i].Name, newDefs[j].Name) {
+					return ErrSameNamePartition.GenByArgs(newDefs[i].Name)
+				}
+			}
 		}
 	}
 	return nil
@@ -462,7 +466,7 @@ func checkAddPartitionValue(meta *model.TableInfo, part *model.PartitionInfo) er
 		nextRangeValue := oldDefs[len(oldDefs)-1].LessThan[0]
 
 		if strings.EqualFold(nextRangeValue, "MAXVALUE") {
-			return infoschema.ErrPartitionMaxvalue
+			return ErrPartitionMaxvalue
 		}
 
 		if len(newDefs) == 1 && strings.EqualFold(newDefs[0].LessThan[0], "MAXVALUE") {
@@ -473,7 +477,7 @@ func checkAddPartitionValue(meta *model.TableInfo, part *model.PartitionInfo) er
 			if ifMaxvalue && i == len(newDefs)-1 {
 				return nil
 			} else if ifMaxvalue && i != len(newDefs)-1 {
-				return infoschema.ErrPartitionMaxvalue
+				return ErrPartitionMaxvalue
 			}
 
 			currentRangeValue, err := strconv.Atoi(newDefs[i].LessThan[0])
@@ -487,7 +491,7 @@ func checkAddPartitionValue(meta *model.TableInfo, part *model.PartitionInfo) er
 			}
 
 			if currentRangeValue <= rangeValue {
-				return infoschema.ErrRangeNotIncreasing
+				return ErrRangeNotIncreasing
 			}
 			nextRangeValue = newDefs[i].LessThan[0]
 		}
