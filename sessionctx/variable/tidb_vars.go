@@ -150,6 +150,9 @@ const (
 	// tidb_hash_join_concurrency is used for hash join executor.
 	// The hash join outer executor starts multiple concurrent join workers to probe the hash table.
 	TiDBHashJoinConcurrency = "tidb_hash_join_concurrency"
+
+	// tidb_disable_txn_auto_retry disables transaction auto retry.
+	TiDBDisableTxnAutoRetry = "tidb_disable_txn_auto_retry"
 )
 
 // Default TiDB system variable values.
@@ -181,6 +184,7 @@ const (
 	DefTiDBGeneralLog                = 0
 	DefTiDBHashJoinConcurrency       = 5
 	DefTiDBOptimizerSelectivityLevel = 0
+	DefTiDBDisableTxnAutoRetry       = false
 )
 
 // Process global variables.

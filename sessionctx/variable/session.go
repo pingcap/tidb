@@ -327,6 +327,8 @@ type SessionVars struct {
 	EnableStreaming bool
 
 	writeStmtBufs WriteStmtBufs
+
+	DisableTxnAutoRetry bool
 }
 
 // NewSessionVars creates a session vars object.
@@ -362,6 +364,7 @@ func NewSessionVars() *SessionVars {
 		MemQuotaIndexLookupJoin:    DefTiDBMemQuotaIndexLookupJoin,
 		MemQuotaNestedLoopApply:    DefTiDBMemQuotaNestedLoopApply,
 		OptimizerSelectivityLevel:  DefTiDBOptimizerSelectivityLevel,
+		DisableTxnAutoRetry:        DefTiDBDisableTxnAutoRetry,
 	}
 	var enableStreaming string
 	if config.GetGlobalConfig().EnableStreaming {
@@ -562,6 +565,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableStreaming = TiDBOptOn(val)
 	case TiDBOptimizerSelectivityLevel:
 		s.OptimizerSelectivityLevel = tidbOptPositiveInt32(val, DefTiDBOptimizerSelectivityLevel)
+	case TiDBDisableTxnAutoRetry:
+		s.DisableTxnAutoRetry = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
