@@ -108,7 +108,7 @@ var (
 	statsLease = 3 * time.Second
 
 	// The maximum number of retries to recover from retryable errors.
-	commitRetryLimit uint = 10
+	globalCommitRetryLimit uint = 10
 )
 
 // SetSchemaLease changes the default schema lease time for DDL.
@@ -129,7 +129,7 @@ func SetStatsLease(lease time.Duration) {
 // reinstated by retry, including network interruption, transaction conflicts, and
 // so on.
 func SetCommitRetryLimit(limit uint) {
-	commitRetryLimit = limit
+	globalCommitRetryLimit = limit
 }
 
 // Parse parses a query string to raw ast.StmtNode.
