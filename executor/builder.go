@@ -829,17 +829,13 @@ func (b *executorBuilder) buildProjBelowAgg(aggFuncs []*aggregation.AggFuncDesc,
 	for i := 0; !hasScalarFunc && i < len(aggFuncs); i++ {
 		f := aggFuncs[i]
 		for _, arg := range f.Args {
-			if _, ok := arg.(*expression.ScalarFunction); ok {
-				hasScalarFunc = true
-				break
-			}
+			_, isScalarFunc := arg.(*expression.ScalarFunction)
+			hasScalarFunc = hasScalarFunc || isScalarFunc
 		}
 	}
-	for _, arg := range groupByItems {
-		if _, ok := arg.(*expression.ScalarFunction); ok {
-			hasScalarFunc = true
-			break
-		}
+	for i, isScalarFunc := 0, false; !hasScalarFunc && i < len(groupByItems); i++ {
+		_, isScalarFunc = groupByItems[i].(*expression.ScalarFunction)
+		hasScalarFunc = hasScalarFunc || isScalarFunc
 	}
 	if !hasScalarFunc {
 		return src
