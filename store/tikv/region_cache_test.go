@@ -313,8 +313,8 @@ func createClusterWithStoresAndRegions(regionCnt int) *mocktikv.Cluster {
 		// Make leaders equally distributed on the 3 stores.
 		storeID := ids[0]
 		peerIDs := ids[1:]
-		leaderPeerId := peerIDs[i%3]
-		cluster.SplitRaw(regionID, storeID, rawKey, peerIDs, leaderPeerId)
+		leaderPeerID := peerIDs[i%3]
+		cluster.SplitRaw(regionID, storeID, rawKey, peerIDs, leaderPeerID)
 		regionID = ids[0]
 	}
 	return cluster
