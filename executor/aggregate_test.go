@@ -19,7 +19,6 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/testkit"
-	"testing"
 )
 
 func (s *testSuite) TestAggregation(c *C) {
@@ -561,8 +560,4 @@ func (s *testSuite) TestBuildProjBelowAgg(c *C) {
 		"2 3 12 5,5,5 6",
 		"3 3 15 6,6,6 7",
 		"4 3 18 7,7,7 8"))
-}
-
-func BenchmarkHashAgg(b *testing.B) {
-
 }

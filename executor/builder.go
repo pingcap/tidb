@@ -825,23 +825,23 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 // If all the args of `aggFuncs`, and all the item of `groupByItems`
 // are columns or constants, we do not need to build the `proj`.
 func (b *executorBuilder) buildProjBelowAgg(aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression, src Executor) Executor {
-	getScalarFunc := false
-	for i := 0; !getScalarFunc && i < len(aggFuncs); i++ {
+	hasScalarFunc := false
+	for i := 0; !hasScalarFunc && i < len(aggFuncs); i++ {
 		f := aggFuncs[i]
 		for _, arg := range f.Args {
 			if _, ok := arg.(*expression.ScalarFunction); ok {
-				getScalarFunc = true
+				hasScalarFunc = true
 				break
 			}
 		}
 	}
 	for _, arg := range groupByItems {
 		if _, ok := arg.(*expression.ScalarFunction); ok {
-			getScalarFunc = true
+			hasScalarFunc = true
 			break
 		}
 	}
-	if !getScalarFunc {
+	if !hasScalarFunc {
 		return src
 	}
 
@@ -868,13 +868,13 @@ func (b *executorBuilder) buildProjBelowAgg(aggFuncs []*aggregation.AggFuncDesc,
 			cursor++
 		}
 	}
-	for i, arg := range groupByItems {
-		if _, isCnst := arg.(*expression.Constant); isCnst {
+	for i, item := range groupByItems {
+		if _, isCnst := item.(*expression.Constant); isCnst {
 			continue
 		}
-		projExprs = append(projExprs, arg)
+		projExprs = append(projExprs, item)
 		newArg := &expression.Column{
-			RetType: arg.GetType(),
+			RetType: item.GetType(),
 			ColName: model.NewCIStr(fmt.Sprintf("group_%d", i)),
 			Index:   cursor,
 		}
