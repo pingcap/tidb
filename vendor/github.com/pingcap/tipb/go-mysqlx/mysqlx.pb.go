@@ -22,6 +22,8 @@ import (
 
 	math "math"
 
+	github_com_golang_protobuf_proto "github.com/golang/protobuf/proto"
+
 	io "io"
 )
 
@@ -422,14 +424,14 @@ func (m *Error) MarshalTo(dAtA []byte) (int, error) {
 		i = encodeVarintMysqlx(dAtA, i, uint64(*m.Severity))
 	}
 	if m.Code == nil {
-		return 0, new(proto.RequiredNotSetError)
+		return 0, new(github_com_golang_protobuf_proto.RequiredNotSetError)
 	} else {
 		dAtA[i] = 0x10
 		i++
 		i = encodeVarintMysqlx(dAtA, i, uint64(*m.Code))
 	}
 	if m.Msg == nil {
-		return 0, new(proto.RequiredNotSetError)
+		return 0, new(github_com_golang_protobuf_proto.RequiredNotSetError)
 	} else {
 		dAtA[i] = 0x1a
 		i++
@@ -437,7 +439,7 @@ func (m *Error) MarshalTo(dAtA []byte) (int, error) {
 		i += copy(dAtA[i:], *m.Msg)
 	}
 	if m.SqlState == nil {
-		return 0, new(proto.RequiredNotSetError)
+		return 0, new(github_com_golang_protobuf_proto.RequiredNotSetError)
 	} else {
 		dAtA[i] = 0x22
 		i++
@@ -859,13 +861,13 @@ func (m *Error) Unmarshal(dAtA []byte) error {
 		}
 	}
 	if hasFields[0]&uint64(0x00000001) == 0 {
-		return new(proto.RequiredNotSetError)
+		return new(github_com_golang_protobuf_proto.RequiredNotSetError)
 	}
 	if hasFields[0]&uint64(0x00000002) == 0 {
-		return new(proto.RequiredNotSetError)
+		return new(github_com_golang_protobuf_proto.RequiredNotSetError)
 	}
 	if hasFields[0]&uint64(0x00000004) == 0 {
-		return new(proto.RequiredNotSetError)
+		return new(github_com_golang_protobuf_proto.RequiredNotSetError)
 	}
 
 	if iNdEx > l {
