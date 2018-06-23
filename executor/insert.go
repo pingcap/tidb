@@ -183,17 +183,10 @@ func (e *InsertExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return errors.Trace(err)
 	}
 
-	var rows []types.DatumRow
 	if len(e.children) > 0 && e.children[0] != nil {
-		rows, err = e.getRowsSelectChunk(ctx, cols)
-	} else {
-		rows, err = e.getRows(cols)
+		return errors.Trace(e.getRowsSelectChunk(ctx, cols, e.exec))
 	}
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	return errors.Trace(e.exec(rows))
+	return errors.Trace(e.getRows(cols, e.exec))
 }
 
 // Close implements the Executor Close interface.
