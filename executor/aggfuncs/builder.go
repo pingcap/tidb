@@ -52,6 +52,36 @@ func buildCount(aggFuncDesc *aggregation.AggFuncDesc, output []int) AggFunc {
 }
 
 func buildSum(aggFuncDesc *aggregation.AggFuncDesc, output []int) AggFunc {
+	base := baseAggFunc{
+		input:  aggFuncDesc.Args,
+		output: output,
+	}
+
+	switch aggFuncDesc.Mode {
+	// Build sum functions which consume the original data and remove the
+	// duplicated input of the same group.
+	case aggregation.DedupMode:
+		return nil
+
+	// Build sum functions which consume the original data and update their
+	// partial results.
+	case aggregation.CompleteMode, aggregation.Partial1Mode:
+		switch aggFuncDesc.Args[0].GetType().Tp {
+		case mysql.TypeNewDecimal:
+			if aggFuncDesc.HasDistinct {
+				return &sum4Decimal{base, make(map[types.MyDecimal]bool)}
+			}
+			return &sum4Decimal{base, nil}
+		}
+
+	// Build sum functions which consume the partial result of other agg
+	// functions and update their partial results.
+	case aggregation.Partial2Mode, aggregation.FinalMode:
+		switch aggFuncDesc.Args[0].GetType().Tp {
+		case mysql.TypeNewDecimal:
+			return &sum4Decimal{base, nil}
+		}
+	}
 	return nil
 }
 

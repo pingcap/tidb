@@ -23,6 +23,8 @@ import (
 var (
 	// All the AggFunc implementations for "COUNT".
 	// All the AggFunc implementations for "SUM".
+	_ AggFunc = (*sum4Decimal)(nil)
+
 	// All the AggFunc implementations for "AVG".
 	_ AggFunc = (*avgDedup4Decimal)(nil)
 	_ AggFunc = (*avgOriginal4Decimal)(nil)
