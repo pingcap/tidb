@@ -436,6 +436,8 @@ func checkTableNameChange(t *meta.Meta, job *model.Job, tableName string, origin
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// the old version of tidb will not check this error and will execute successfully,
+	// the new version of tidb checks for errors and prompts for errors and cancels job.
 	if len(originalTableName) != 0 && len(tableName) != 0 {
 		if !strings.EqualFold(originalTableName, tableName) {
 			job.State = model.JobStateCancelled
