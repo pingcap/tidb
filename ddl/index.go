@@ -216,7 +216,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 		indexOption *ast.IndexOption
 	)
 	var originalTableName string
-	err = job.DecodeArgs(&unique, &indexName, &idxColNames, &indexOption, originalTableName)
+	err = job.DecodeArgs(&unique, &indexName, &idxColNames, &indexOption, &originalTableName)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)

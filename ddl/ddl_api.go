@@ -1206,13 +1206,12 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 		(col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime) {
 		col.OriginDefaultValue = time.Now().Format(types.TimeFormat)
 	}
-
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
 		Type:       model.ActionAddColumn,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{col, spec.Position, 0, ti.Name.O},
+		Args:       []interface{}{col, spec.Position, 0, ti},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -1252,7 +1251,7 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, colName model.CIS
 		TableID:    t.Meta().ID,
 		Type:       model.ActionDropColumn,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{colName, ti.Name.O},
+		Args:       []interface{}{colName, ti},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -1491,7 +1490,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		TableID:    t.Meta().ID,
 		Type:       model.ActionModifyColumn,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{&newCol, originalColName, spec.Position, ident.Name.O},
+		Args:       []interface{}{&newCol, originalColName, spec.Position, ident},
 	}
 	return job, nil
 }

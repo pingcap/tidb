@@ -127,14 +127,15 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	// }
 	col := &model.ColumnInfo{}
 	pos := &ast.ColumnPosition{}
-	var originalTableName string
 	offset := 0
-	err = job.DecodeArgs(col, pos, &offset, originalTableName)
+	ti := &ast.Ident{}
+	err = job.DecodeArgs(col, pos, &offset, ti)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	if err = checkTableNameChange(t, job, tblInfo.Name.O, originalTableName); err != nil {
+	log.Infof("##############  tblInfo.Name.O %s originalTableName %s", tblInfo.Name.O, ti.Name.String())
+	if err = checkTableNameChange(t, job, tblInfo.Name.O, ti.Name.O); err != nil {
 		return ver, errors.Trace(err)
 	}
 
@@ -207,13 +208,13 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	}
 
 	var colName model.CIStr
-	var originalTableName string
-	err = job.DecodeArgs(&colName, originalTableName)
+	ti := &ast.Ident{}
+	err = job.DecodeArgs(&colName, ti)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	if err = checkTableNameChange(t, job, tblInfo.Name.O, originalTableName); err != nil {
+	if err = checkTableNameChange(t, job, tblInfo.Name.O, ti.Name.O); err != nil {
 		return ver, errors.Trace(err)
 	}
 
@@ -267,7 +268,7 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 func (d *ddl) onSetDefaultValue(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	newCol := &model.ColumnInfo{}
 	var originalTableName string
-	err := job.DecodeArgs(newCol, originalTableName)
+	err := job.DecodeArgs(newCol, &originalTableName)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -280,14 +281,14 @@ func (d *ddl) onModifyColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) 
 	newCol := &model.ColumnInfo{}
 	oldColName := &model.CIStr{}
 	pos := &ast.ColumnPosition{}
-	var originalTableName string
-	err := job.DecodeArgs(newCol, oldColName, pos, originalTableName)
+	ti := &ast.Ident{}
+	err := job.DecodeArgs(newCol, oldColName, pos, ti)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
-	return d.doModifyColumn(t, job, newCol, oldColName, pos, originalTableName)
+	return d.doModifyColumn(t, job, newCol, oldColName, pos, ti.Name.O)
 }
 
 // doModifyColumn updates the column information and reorders all columns.

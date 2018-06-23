@@ -105,7 +105,7 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	}
 
 	var originalTableName string
-	err = job.DecodeArgs(originalTableName)
+	err = job.DecodeArgs(&originalTableName)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
