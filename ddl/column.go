@@ -134,7 +134,6 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	log.Infof("##############  tblInfo.Name.O %s originalTableName %s", tblInfo.Name.O, ti.Name.String())
 	if err = checkTableNameChange(t, job, tblInfo.Name.O, ti.Name.O); err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -274,7 +273,7 @@ func (d *ddl) onSetDefaultValue(t *meta.Meta, job *model.Job) (ver int64, _ erro
 		return ver, errors.Trace(err)
 	}
 
-	return d.updateColumn(t, job, newCol, &newCol.Name, originalTableName)
+	return updateColumn(t, job, newCol, &newCol.Name, originalTableName)
 }
 
 func (d *ddl) onModifyColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
