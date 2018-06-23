@@ -303,7 +303,7 @@ func (e *InsertValues) getRowsSelectChunk(ctx context.Context, cols []*table.Col
 		rows := make([]types.DatumRow, 0, numRows)
 		for innerChunkRow := iter.Begin(); innerChunkRow != iter.End(); innerChunkRow = iter.Next() {
 			innerRow := innerChunkRow.GetDatumRow(fields)
-			e.rowCount++
+			e.rowCount = uint64(len(rows))
 			row, err := e.fillRowData(cols, innerRow)
 			if err != nil {
 				return errors.Trace(err)
