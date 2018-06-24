@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"fmt"
 	"strconv"
-	"strings"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -408,50 +407,44 @@ type Explain struct {
 }
 
 // prepareExplainInfo4DAGTask generates the following information for every plan:
-// ["id", "parents", "task", "operator info"].
-func (e *Explain) prepareExplainInfo4DAGTask(p PhysicalPlan, taskType string, parentID string) {
-	childrenIDs := make([]string, 0, len(p.Children()))
-	for _, ch := range p.Children() {
-		childrenIDs = append(childrenIDs, ch.ExplainID())
-	}
-	childrenInfo := strings.Join(childrenIDs, ",")
+// operator id, task type, operator info, and the estemated row count.
+func (e *Explain) prepareExplainInfo4DAGTask(p PhysicalPlan, taskType string, indent string) {
 	operatorInfo := p.ExplainInfo()
 	count := string(strconv.AppendFloat([]byte{}, p.StatsInfo().count, 'f', 2, 64))
-	row := []string{p.ExplainID(), parentID, childrenInfo, taskType, operatorInfo, count}
+	row := []string{indent + p.ExplainID(), taskType, operatorInfo, count}
 	e.Rows = append(e.Rows, row)
 }
 
 // prepareCopTaskInfo generates explain information for cop-tasks.
 // Only PhysicalTableReader, PhysicalIndexReader and PhysicalIndexLookUpReader have cop-tasks currently.
-func (e *Explain) prepareCopTaskInfo(plans []PhysicalPlan) {
-	for i, p := range plans {
-		var parentID string
-		if i+1 < len(plans) {
-			parentID = plans[i+1].ExplainID()
-		}
-		e.prepareExplainInfo4DAGTask(p, "cop", parentID)
+func (e *Explain) prepareCopTaskInfo(plans []PhysicalPlan, indent string) {
+	for i := len(plans) - 1; i >= 0; i-- {
+		e.prepareExplainInfo4DAGTask(plans[i], "cop", indent)
+		indent += "  "
 	}
 }
 
 // prepareRootTaskInfo generates explain information for root-tasks.
-func (e *Explain) prepareRootTaskInfo(p PhysicalPlan, parentID string) {
+func (e *Explain) prepareRootTaskInfo(p PhysicalPlan, indent string) {
+	e.prepareExplainInfo4DAGTask(p, "root", indent)
 	e.explainedPlans[p.ID()] = true
+
 	for _, child := range p.Children() {
 		if e.explainedPlans[child.ID()] {
 			continue
 		}
-		e.prepareRootTaskInfo(child.(PhysicalPlan), p.ExplainID())
+		e.prepareRootTaskInfo(child.(PhysicalPlan), indent+"  ")
 	}
+
 	switch copPlan := p.(type) {
 	case *PhysicalTableReader:
-		e.prepareCopTaskInfo(copPlan.TablePlans)
+		e.prepareCopTaskInfo(copPlan.TablePlans, indent+"  ")
 	case *PhysicalIndexReader:
-		e.prepareCopTaskInfo(copPlan.IndexPlans)
+		e.prepareCopTaskInfo(copPlan.IndexPlans, indent+"  ")
 	case *PhysicalIndexLookUpReader:
-		e.prepareCopTaskInfo(copPlan.IndexPlans)
-		e.prepareCopTaskInfo(copPlan.TablePlans)
+		e.prepareCopTaskInfo(copPlan.IndexPlans, indent+"  ")
+		e.prepareCopTaskInfo(copPlan.TablePlans, indent+"  ")
 	}
-	e.prepareExplainInfo4DAGTask(p, "root", parentID)
 }
 
 func (e *Explain) prepareDotInfo(p PhysicalPlan) {
