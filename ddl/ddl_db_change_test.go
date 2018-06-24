@@ -516,17 +516,6 @@ func (s *testStateChangeSuite) TestParallelDropColumn(c *C) {
 	s.testControlParallelExecSQL(c, sql, sql, f)
 }
 
-func (s *testStateChangeSuite) TestParallelDropDataBase(c *C) {
-	_, err := s.se.Execute(context.Background(), "create database if not exists test_drop_db;")
-	c.Assert(err, IsNil)
-	sql := "drop database test_drop_db;"
-	f := func(c *C, err1, err2 error) {
-		c.Assert(err1, IsNil)
-		c.Assert(err2.Error(), Equals, "[schema:1008]Can't drop database 'test_drop_db'; database doesn't exist")
-	}
-	s.testControlParallelExecSQL(c, sql, sql, f)
-}
-
 func (s *testStateChangeSuite) TestParallelCreateAndRename(c *C) {
 	sql1 := "create table t_exists(c int);"
 	sql2 := "alter table t rename to t_exists;"

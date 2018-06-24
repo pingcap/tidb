@@ -77,8 +77,7 @@ func onDropSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	}
 	if dbInfo == nil {
 		job.State = model.JobStateCancelled
-		// here job.tableName stores schemaName, the output is the schema name.
-		return ver, infoschema.ErrDatabaseDropExists.GenByArgs(job.TableName)
+		return ver, infoschema.ErrDatabaseDropExists.GenByArgs("")
 	}
 
 	ver, err = updateSchemaVersion(t, job)
