@@ -134,7 +134,7 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	if err = checkTableNameChange(t, job, tblInfo.Name.O, ti.Name.O); err != nil {
+	if err = checkTableNameChange(t, job, tblInfo.Name.L, ti); err != nil {
 		return ver, errors.Trace(err)
 	}
 
@@ -213,7 +213,7 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	if err = checkTableNameChange(t, job, tblInfo.Name.O, ti.Name.O); err != nil {
+	if err = checkTableNameChange(t, job, tblInfo.Name.L, ti); err != nil {
 		return ver, errors.Trace(err)
 	}
 
@@ -266,14 +266,14 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 
 func onSetDefaultValue(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	newCol := &model.ColumnInfo{}
-	var originalTableName string
-	err := job.DecodeArgs(newCol, &originalTableName)
+	ti := &ast.Ident{}
+	err := job.DecodeArgs(newCol, ti)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
-	return updateColumn(t, job, newCol, &newCol.Name, originalTableName)
+	return updateColumn(t, job, newCol, &newCol.Name, ti)
 }
 
 func onModifyColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -287,16 +287,16 @@ func onModifyColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 
-	return doModifyColumn(t, job, newCol, oldColName, pos, ti.Name.O)
+	return doModifyColumn(t, job, newCol, oldColName, pos, ti)
 }
 
 // doModifyColumn updates the column information and reorders all columns.
-func doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldName *model.CIStr, pos *ast.ColumnPosition, originalTableName string) (ver int64, _ error) {
+func doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldName *model.CIStr, pos *ast.ColumnPosition, ti *ast.Ident) (ver int64, _ error) {
 	tblInfo, err := getTableInfo(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	if err = checkTableNameChange(t, job, tblInfo.Name.O, originalTableName); err != nil {
+	if err = checkTableNameChange(t, job, tblInfo.Name.L, ti); err != nil {
 		return ver, errors.Trace(err)
 	}
 
@@ -392,12 +392,12 @@ func doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldN
 	return ver, nil
 }
 
-func updateColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldColName *model.CIStr, originalTableName string) (ver int64, _ error) {
+func updateColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldColName *model.CIStr, ti *ast.Ident) (ver int64, _ error) {
 	tblInfo, err := getTableInfo(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	if err = checkTableNameChange(t, job, tblInfo.Name.O, originalTableName); err != nil {
+	if err = checkTableNameChange(t, job, tblInfo.Name.L, ti); err != nil {
 		return ver, errors.Trace(err)
 	}
 	oldCol := model.FindColumnInfo(tblInfo.Columns, oldColName.L)

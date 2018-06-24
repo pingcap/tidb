@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -104,14 +105,14 @@ func onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 
-	var originalTableName string
-	err = job.DecodeArgs(&originalTableName)
+	ti := &ast.Ident{}
+	err = job.DecodeArgs(ti)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	if err = checkTableNameChange(t, job, tblInfo.Name.O, originalTableName); err != nil {
-		return ver, infoschema.ErrTableDropExists.GenByArgs(fmt.Sprintf("%s.%s", dbInfo.Name.O, originalTableName))
+	if err = checkTableNameChange(t, job, tblInfo.Name.L, ti); err != nil {
+		return ver, infoschema.ErrTableDropExists.GenByArgs(fmt.Sprintf("%s.%s", dbInfo.Name.O, ti.Name.L))
 	}
 
 	originalState := job.SchemaState
@@ -400,17 +401,17 @@ func checkTableNotExists(t *meta.Meta, job *model.Job, schemaID int64, tableName
 // if sql1 is a renameTable it may execute successfully first, and sql2 may get the old table name, then this is not the desired result,
 // executing the renameTable DDL job does not change the tableID ,sql1 and sql2 were executed successfully,the result was not expected,
 // for example: sql1: "alter table t rename to t_add;"  sql2: "alter table t add a1 int;".
-func checkTableNameChange(t *meta.Meta, job *model.Job, tableName string, originalTableName string) error {
+func checkTableNameChange(t *meta.Meta, job *model.Job, tableName string, ti *ast.Ident) error {
 	dbInfo, err := t.GetDatabase(job.SchemaID)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// the old version of tidb will not check this error and will execute successfully,
-	// the new version of tidb checks for errors and prompts for errors and cancels job.
-	if len(originalTableName) != 0 && len(tableName) != 0 {
-		if !strings.EqualFold(originalTableName, tableName) {
+
+	// the ti.Name.L will be nil when the job is enqueued by old version tidb, the new version of tidb checks for errors and prompts for errors and cancels job.
+	if len(ti.Name.L) != 0 && len(tableName) != 0 {
+		if !strings.EqualFold(ti.Name.L, tableName) {
 			job.State = model.JobStateCancelled
-			return infoschema.ErrTableNotExists.GenByArgs(dbInfo.Name.O, originalTableName)
+			return infoschema.ErrTableNotExists.GenByArgs(dbInfo.Name.O, ti.Name.L)
 		}
 	}
 	return nil

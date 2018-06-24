@@ -1581,7 +1581,7 @@ func (d *ddl) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 		TableID:    t.Meta().ID,
 		Type:       model.ActionSetDefaultValue,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{col, ident.Name.O},
+		Args:       []interface{}{col, ident},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -1668,7 +1668,7 @@ func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident) (err error) {
 		TableID:    tb.Meta().ID,
 		Type:       model.ActionDropTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{ti.Name.O},
+		Args:       []interface{}{ti},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -1792,7 +1792,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, unique bool, ind
 		TableID:    t.Meta().ID,
 		Type:       model.ActionAddIndex,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{unique, indexName, idxColNames, indexOption, ti.Name.O},
+		Args:       []interface{}{unique, indexName, idxColNames, indexOption, ti},
 	}
 
 	err = d.doDDLJob(ctx, job)

@@ -246,14 +246,14 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 		idxColNames []*ast.IndexColName
 		indexOption *ast.IndexOption
 	)
-	var originalTableName string
-	err = job.DecodeArgs(&unique, &indexName, &idxColNames, &indexOption, &originalTableName)
+	ti := &ast.Ident{}
+	err = job.DecodeArgs(&unique, &indexName, &idxColNames, &indexOption, ti)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
-	if err = checkTableNameChange(t, job, tblInfo.Name.O, originalTableName); err != nil {
+	if err = checkTableNameChange(t, job, tblInfo.Name.L, ti); err != nil {
 		return ver, errors.Trace(err)
 	}
 
