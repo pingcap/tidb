@@ -133,7 +133,7 @@ func (sc *StatementContext) SetWarnings(warns []SQLWarn) {
 	sc.mu.Unlock()
 }
 
-// AppendWarning appends a warning with level 'WARN'
+// AppendWarning appends a warning with level 'Warning'
 func (sc *StatementContext) AppendWarning(warn error) {
 	sc.mu.Lock()
 	if len(sc.mu.warnings) < math.MaxUint16 {
@@ -142,7 +142,7 @@ func (sc *StatementContext) AppendWarning(warn error) {
 	sc.mu.Unlock()
 }
 
-// AppendWarning appends a warning with level 'NOTE'.
+// AppendWarning appends a warning with level 'Note'.
 func (sc *StatementContext) AppendNote(warn error) {
 	sc.mu.Lock()
 	if len(sc.mu.warnings) < math.MaxUint16 {
