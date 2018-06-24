@@ -565,6 +565,8 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp, path *accessPath) (
 		Columns:     ds.Columns,
 		TableAsName: ds.TableAsName,
 		DBName:      ds.DBName,
+		isPartition: ds.isPartition,
+		partitionID: ds.partitionID,
 	}.init(ds.ctx)
 	ts.SetSchema(ds.schema)
 	var pkCol *expression.Column
