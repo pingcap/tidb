@@ -14,7 +14,6 @@
 package executor
 
 import (
-	"fmt"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
@@ -336,7 +335,6 @@ func (e *StreamAggExec) fetchChildIfNecessary(ctx context.Context, chk *chunk.Ch
 // result chunk, and reset the evaluation context for each aggregation.
 func (e *StreamAggExec) appendResult2Chunk(chk *chunk.Chunk) error {
 	if e.newAggFuncs != nil {
-		fmt.Printf("StreamAggExec.appendResult2Chunk: use new aggfunc\n")
 		for i, newAggFunc := range e.newAggFuncs {
 			err := newAggFunc.AppendFinalResult2Chunk(e.ctx, e.partialBytes[i], chk)
 			if err != nil {
