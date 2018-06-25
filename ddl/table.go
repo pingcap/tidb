@@ -448,7 +448,7 @@ func checkPartitionNotExists(meta *model.TableInfo, part *model.PartitionInfo) e
 	}
 
 	for i := 0; i < len(newDefs); i++ {
-		for j := 0; j < len(newDefs); j++ {
+		for j := i + 1; j < len(newDefs); j++ {
 			if i != j {
 				if strings.EqualFold(newDefs[i].Name, newDefs[j].Name) {
 					return ErrSameNamePartition.GenByArgs(newDefs[i].Name)
