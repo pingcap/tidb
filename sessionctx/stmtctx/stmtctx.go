@@ -23,9 +23,9 @@ import (
 )
 
 const (
-	// Represent level "Warning" for 'SHOW WARNINGS' syntax
+	// WarnLevelWarning represents level "Warning" for 'SHOW WARNINGS' syntax
 	WarnLevelWarning = "Warning"
-	// Represent level "Note" for 'SHOW WARNINGS' syntax
+	// WarnLevelNote represents level "Note" for 'SHOW WARNINGS' syntax
 	WarnLevelNote = "Note"
 )
 
