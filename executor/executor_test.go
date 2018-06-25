@@ -811,7 +811,6 @@ func (s *testSuite) TestIssue5055(c *C) {
 func (s *testSuite) TestUnion(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_hashagg_final_concurrency=1")
 
 	testSQL := `drop table if exists union_test; create table union_test(id int);`
 	tk.MustExec(testSQL)
@@ -823,12 +822,8 @@ func (s *testSuite) TestUnion(c *C) {
 	testSQL = `insert union_test values (1),(2)`
 	tk.MustExec(testSQL)
 
-	testSQL = `select id from union_test union select id from union_test;`
-	r := tk.MustQuery(testSQL)
-	r.Check(testkit.Rows("1", "2"))
-
 	testSQL = `select * from (select id from union_test union select id from union_test) t order by id;`
-	r = tk.MustQuery(testSQL)
+	r := tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("1", "2"))
 
 	r = tk.MustQuery("select 1 union all select 1")
@@ -1852,7 +1847,6 @@ func (s *testSuite) TestScanControlSelection(c *C) {
 func (s *testSuite) TestSimpleDAG(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_hashagg_final_concurrency=1")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int, c int)")
 	tk.MustExec("insert into t values (1, 1, 1), (2, 1, 1), (3, 1, 2), (4, 2, 3)")
@@ -1867,9 +1861,9 @@ func (s *testSuite) TestSimpleDAG(c *C) {
 	tk.MustQuery("select a from t where b > 1 and a < 3").Check(testkit.Rows())
 	tk.MustQuery("select count(*) from t where b > 1 and a < 3").Check(testkit.Rows("0"))
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("4"))
-	tk.MustQuery("select count(*), c from t group by c").Check(testkit.Rows("2 1", "1 2", "1 3"))
-	tk.MustQuery("select sum(c) from t group by b").Check(testkit.Rows("4", "3"))
-	tk.MustQuery("select avg(a) from t group by b").Check(testkit.Rows("2.0000", "4.0000"))
+	tk.MustQuery("select count(*), c from t group by c order by c").Check(testkit.Rows("2 1", "1 2", "1 3"))
+	tk.MustQuery("select sum(c) as s from t group by b order by s").Check(testkit.Rows("3", "4"))
+	tk.MustQuery("select avg(a) as s from t group by b order by s").Check(testkit.Rows("2.0000", "4.0000"))
 	tk.MustQuery("select sum(distinct c) from t group by b").Check(testkit.Rows("3", "3"))
 
 	tk.MustExec("create index i on t(c,b)")
