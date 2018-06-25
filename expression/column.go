@@ -136,6 +136,9 @@ func (col *CorrelatedColumn) ResolveIndices(_ *Schema) Expression {
 	return col
 }
 
+func (col *CorrelatedColumn) resolveIndices(_ *Schema) {
+}
+
 // Column represents a column.
 type Column struct {
 	FromID      int
@@ -310,13 +313,16 @@ func (col *Column) HashCode(_ *stmtctx.StatementContext) []byte {
 
 // ResolveIndices implements Expression interface.
 func (col *Column) ResolveIndices(schema *Schema) Expression {
-	newCol := col.Clone().(*Column)
-	newCol.Index = schema.ColumnIndex(col)
-	// If col's index equals to -1, it means a internal logic error happens.
-	if newCol.Index == -1 {
+	newCol := col.Clone()
+	newCol.resolveIndices(schema)
+	return newCol
+}
+
+func (col *Column) resolveIndices(schema *Schema) {
+	col.Index = schema.ColumnIndex(col)
+	if col.Index == -1 {
 		log.Errorf("Can't find column %s in schema %s", col, schema)
 	}
-	return newCol
 }
 
 // Column2Exprs will transfer column slice to expression slice.

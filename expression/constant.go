@@ -339,3 +339,6 @@ func (c *Constant) HashCode(sc *stmtctx.StatementContext) []byte {
 func (c *Constant) ResolveIndices(_ *Schema) Expression {
 	return c
 }
+
+func (c *Constant) resolveIndices(_ *Schema) {
+}
