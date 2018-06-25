@@ -578,7 +578,7 @@ const (
 	codeErrTooLongIndexComment        = terror.ErrCode(mysql.ErrTooLongIndexComment)
 	codeUnknownCharacterSet           = terror.ErrCode(mysql.ErrUnknownCharacterSet)
 	codeCantCreateTable               = terror.ErrCode(mysql.ErrCantCreateTable)
-    codeTableMustHaveColumns          = terror.ErrCode(mysql.ErrTableMustHaveColumns)
+	codeTableMustHaveColumns          = terror.ErrCode(mysql.ErrTableMustHaveColumns)
 	codePartitionsMustBeDefined       = terror.ErrCode(mysql.ErrPartitionsMustBeDefined)
 	codePartitionMgmtOnNonpartitioned = terror.ErrCode(mysql.ErrPartitionMgmtOnNonpartitioned)
 	codeDropPartitionNonExistent      = terror.ErrCode(mysql.ErrDropPartitionNonExistent)
