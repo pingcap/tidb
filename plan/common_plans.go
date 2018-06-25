@@ -406,44 +406,80 @@ type Explain struct {
 	explainedPlans map[int]bool
 }
 
+func (e *Explain) getIndent4Child(indent string, isLastChild bool) string {
+	if !isLastChild {
+		return indent + "| "
+	}
+	indentBytes := []rune(indent)
+	for i := len(indentBytes) - 1; i >= 0; i-- {
+		if indentBytes[i] == '|' {
+			indentBytes[i] = ' '
+			break
+		}
+	}
+	return string(indentBytes) + "| "
+}
+
+func (e *Explain) prettyIdentifier(id, indent string, isLastChild bool) string {
+	if len(indent) == 0 {
+		return id
+	}
+	indentBytes := []rune(indent)
+	for i := len(indentBytes) - 1; i >= 0; i-- {
+		if indentBytes[i] == '|' {
+			if isLastChild {
+				indentBytes[i] = '└'
+			} else {
+				indentBytes[i] = '├'
+			}
+			break
+		}
+	}
+	indentBytes[len(indentBytes)-1] = '-'
+	indent = string(indentBytes)
+	return indent + id
+}
+
 // prepareExplainInfo4DAGTask generates the following information for every plan:
 // operator id, task type, operator info, and the estemated row count.
-func (e *Explain) prepareExplainInfo4DAGTask(p PhysicalPlan, taskType string, indent string) {
+func (e *Explain) prepareExplainInfo4DAGTask(p PhysicalPlan, taskType string, indent string, isLastChild bool) {
 	operatorInfo := p.ExplainInfo()
 	count := string(strconv.AppendFloat([]byte{}, p.StatsInfo().count, 'f', 2, 64))
-	row := []string{indent + p.ExplainID(), taskType, operatorInfo, count}
+	row := []string{e.prettyIdentifier(p.ExplainID(), indent, isLastChild), taskType, operatorInfo, count}
 	e.Rows = append(e.Rows, row)
 }
 
 // prepareCopTaskInfo generates explain information for cop-tasks.
 // Only PhysicalTableReader, PhysicalIndexReader and PhysicalIndexLookUpReader have cop-tasks currently.
-func (e *Explain) prepareCopTaskInfo(plans []PhysicalPlan, indent string) {
+func (e *Explain) prepareCopTaskInfo(plans []PhysicalPlan, indent string, isLastChild bool) {
 	for i := len(plans) - 1; i >= 0; i-- {
-		e.prepareExplainInfo4DAGTask(plans[i], "cop", indent)
-		indent += "  "
+		e.prepareExplainInfo4DAGTask(plans[i], "cop", indent, isLastChild)
+		indent = e.getIndent4Child(indent, true)
+		isLastChild = true
 	}
 }
 
 // prepareRootTaskInfo generates explain information for root-tasks.
-func (e *Explain) prepareRootTaskInfo(p PhysicalPlan, indent string) {
-	e.prepareExplainInfo4DAGTask(p, "root", indent)
+func (e *Explain) prepareRootTaskInfo(p PhysicalPlan, indent string, isLastChild bool) {
+	e.prepareExplainInfo4DAGTask(p, "root", indent, isLastChild)
 	e.explainedPlans[p.ID()] = true
 
-	for _, child := range p.Children() {
+	childIndent := e.getIndent4Child(indent, isLastChild)
+	for i, child := range p.Children() {
 		if e.explainedPlans[child.ID()] {
 			continue
 		}
-		e.prepareRootTaskInfo(child.(PhysicalPlan), indent+"  ")
+		e.prepareRootTaskInfo(child.(PhysicalPlan), childIndent, i == len(p.Children())-1)
 	}
 
 	switch copPlan := p.(type) {
 	case *PhysicalTableReader:
-		e.prepareCopTaskInfo(copPlan.TablePlans, indent+"  ")
+		e.prepareCopTaskInfo(copPlan.TablePlans, childIndent, true)
 	case *PhysicalIndexReader:
-		e.prepareCopTaskInfo(copPlan.IndexPlans, indent+"  ")
+		e.prepareCopTaskInfo(copPlan.IndexPlans, childIndent, true)
 	case *PhysicalIndexLookUpReader:
-		e.prepareCopTaskInfo(copPlan.IndexPlans, indent+"  ")
-		e.prepareCopTaskInfo(copPlan.TablePlans, indent+"  ")
+		e.prepareCopTaskInfo(copPlan.IndexPlans, childIndent, false)
+		e.prepareCopTaskInfo(copPlan.TablePlans, childIndent, true)
 	}
 }
 
