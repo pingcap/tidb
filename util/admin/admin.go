@@ -104,6 +104,9 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 				errs[i] = errors.Trace(err)
 				continue
 			}
+			if job.Type == model.ActionAddIndex {
+				t.SetJobListKey(meta.AddIndexJobListKey)
+			}
 			err = t.UpdateDDLJob(int64(j), job, true)
 			if err != nil {
 				errs[i] = errors.Trace(err)
@@ -116,14 +119,11 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 	return errs, nil
 }
 
-// GetDDLJobs returns the DDL jobs and an error.
-func GetDDLJobs(txn kv.Transaction) ([]*model.Job, error) {
-	t := meta.NewMeta(txn)
+func getDDLJobsInQueue(t *meta.Meta) ([]*model.Job, error) {
 	cnt, err := t.DDLJobQueueLen()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
 	jobs := make([]*model.Job, cnt)
 	for i := range jobs {
 		jobs[i], err = t.GetDDLJob(int64(i))
@@ -132,6 +132,21 @@ func GetDDLJobs(txn kv.Transaction) ([]*model.Job, error) {
 		}
 	}
 	return jobs, nil
+}
+
+// GetDDLJobs returns the DDL jobs and an error.
+func GetDDLJobs(txn kv.Transaction) ([]*model.Job, error) {
+	t := meta.NewMeta(txn)
+	generalJobs, err := getDDLJobsInQueue(t)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	t.SetJobListKey(meta.AddIndexJobListKey)
+	addIdxJobs, err := getDDLJobsInQueue(t)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return append(generalJobs, addIdxJobs...), nil
 }
 
 // MaxHistoryJobs is exported for testing.

@@ -269,6 +269,7 @@ func (job *Job) IsDependentOn(other *Job) (bool, error) {
 		return isDependent, errors.Trace(err)
 	}
 
+	// TODO: If a job is ActionRenameTable, we need to check table name.
 	if other.TableID == job.TableID {
 		return true, nil
 	}
