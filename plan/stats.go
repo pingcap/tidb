@@ -112,9 +112,6 @@ func (ds *DataSource) getStatsByFilter(conds expression.CNFExprs) *statsInfo {
 		}
 	}
 	ds.stats = profile
-	for _, colInfo := range ds.Columns {
-		ds.statisticTable.ColumnIsInvalid(ds.ctx.GetSessionVars().StmtCtx, colInfo.ID)
-	}
 	selectivity, err := ds.statisticTable.Selectivity(ds.ctx, conds)
 	if err != nil {
 		log.Warnf("An error happened: %v, we have to use the default selectivity", err.Error())

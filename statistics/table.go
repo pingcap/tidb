@@ -51,16 +51,20 @@ type Table struct {
 
 // HistColl is a collection of histogram.
 type HistColl struct {
-	Columns map[int64]*Column
-	Indices map[int64]*Index
-	Count   int64
+	TblID    int64
+	SetTblID bool
+	Columns  map[int64]*Column
+	Indices  map[int64]*Index
+	Count    int64
 }
 
 func (t *Table) copy() *Table {
 	newHistColl := HistColl{
-		Count:   t.Count,
-		Columns: make(map[int64]*Column),
-		Indices: make(map[int64]*Index),
+		TblID:    t.TblID,
+		SetTblID: t.SetTblID,
+		Count:    t.Count,
+		Columns:  make(map[int64]*Column),
+		Indices:  make(map[int64]*Index),
 	}
 	for id, col := range t.Columns {
 		newHistColl.Columns[id] = col
@@ -195,8 +199,10 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, loadAll bool)
 	table, ok := h.statsCache.Load().(statsCache)[tableInfo.ID]
 	if !ok || table.Pseudo {
 		histColl := HistColl{
-			Columns: make(map[int64]*Column, len(tableInfo.Columns)),
-			Indices: make(map[int64]*Index, len(tableInfo.Indices)),
+			TblID:    tableInfo.ID,
+			SetTblID: true,
+			Columns:  make(map[int64]*Column, len(tableInfo.Columns)),
+			Indices:  make(map[int64]*Index, len(tableInfo.Indices)),
 		}
 		table = &Table{
 			TableID:  tableInfo.ID,
@@ -278,14 +284,16 @@ var histogramNeededColumns = neededColumnMap{cols: map[tableColumnID]struct{}{}}
 
 // ColumnIsInvalid checks if this column is invalid. If this column has histogram but not loaded yet, then we mark it
 // as need histogram.
-func (t *Table) ColumnIsInvalid(sc *stmtctx.StatementContext, colID int64) bool {
-	if t.Pseudo {
-		return true
-	}
-	col, ok := t.Columns[colID]
+func (coll *HistColl) ColumnIsInvalid(sc *stmtctx.StatementContext, colID int64) bool {
+	col, ok := coll.Columns[colID]
 	if ok && col.NDV > 0 && col.Len() == 0 {
+		// If the col haven't been loaded yet, and the coll doesn't have `TableID` to load it. Just return false.
+		if !coll.SetTblID {
+			return true
+		}
+		// Otherwise load the column.
 		sc.SetHistogramsNotLoad()
-		histogramNeededColumns.insert(tableColumnID{tableID: t.TableID, columnID: colID})
+		histogramNeededColumns.insert(tableColumnID{tableID: coll.TblID, columnID: colID})
 	}
 	return !ok || col.totalRowCount() == 0 || (col.NDV > 0 && col.Len() == 0)
 }
@@ -330,8 +338,7 @@ func (t *Table) ColumnEqualRowCount(sc *stmtctx.StatementContext, value types.Da
 
 // GetRowCountByIntColumnRanges estimates the row count by a slice of IntColumnRange.
 func (coll *HistColl) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext, colID int64, intRanges []*ranger.Range) (float64, error) {
-	c := coll.Columns[colID]
-	if c == nil || ((c.NDV > 0 || c.NullCount == 0) && c.Histogram.Len() == 0) {
+	if coll.ColumnIsInvalid(sc, colID) {
 		if len(intRanges) == 0 {
 			return float64(coll.Count), nil
 		}
@@ -340,6 +347,7 @@ func (coll *HistColl) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext,
 		}
 		return getPseudoRowCountByUnsignedIntRanges(intRanges, float64(coll.Count)), nil
 	}
+	c := coll.Columns[colID]
 	result, err := c.getColumnRowCount(sc, intRanges)
 	result *= c.getIncreaseFactor(coll.Count)
 	return result, errors.Trace(err)
@@ -347,11 +355,11 @@ func (coll *HistColl) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext,
 
 // GetRowCountByColumnRanges estimates the row count by a slice of Range.
 func (coll *HistColl) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, colID int64, colRanges []*ranger.Range) (float64, error) {
-	c := coll.Columns[colID]
 	// Column not exists or haven't been loaded.
-	if c == nil || ((c.NDV > 0 || c.NullCount == 0) && c.Histogram.Len() == 0) {
+	if coll.ColumnIsInvalid(sc, colID) {
 		return getPseudoRowCountByColumnRanges(sc, float64(coll.Count), colRanges, 0)
 	}
+	c := coll.Columns[colID]
 	result, err := c.getColumnRowCount(sc, colRanges)
 	result *= c.getIncreaseFactor(coll.Count)
 	return result, errors.Trace(err)

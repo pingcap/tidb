@@ -97,9 +97,11 @@ func mockStatsHistogram(id int64, values []types.Datum, repeat int64, tp *types.
 
 func mockStatsTable(tbl *model.TableInfo, rowCount int64) *statistics.Table {
 	histColl := statistics.HistColl{
-		Count:   rowCount,
-		Columns: make(map[int64]*statistics.Column, len(tbl.Columns)),
-		Indices: make(map[int64]*statistics.Index, len(tbl.Indices)),
+		TblID:    tbl.ID,
+		SetTblID: true,
+		Count:    rowCount,
+		Columns:  make(map[int64]*statistics.Column, len(tbl.Columns)),
+		Indices:  make(map[int64]*statistics.Index, len(tbl.Indices)),
 	}
 	statsTbl := &statistics.Table{
 		HistColl: histColl,
