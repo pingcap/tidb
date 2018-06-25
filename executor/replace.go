@@ -44,7 +44,7 @@ func (e *ReplaceExec) Open(ctx context.Context) error {
 	return nil
 }
 
-func (e *ReplaceExec) exec(rows []types.DatumRow) error {
+func (e *ReplaceExec) exec(iterable chunk.IterableDatumRow) error {
 	/*
 	 * MySQL uses the following algorithm for REPLACE (and LOAD DATA ... REPLACE):
 	 *  1. Try to insert the new row into the table
@@ -57,6 +57,24 @@ func (e *ReplaceExec) exec(rows []types.DatumRow) error {
 	 * because in this case, one row was inserted after the duplicate was deleted.
 	 * See http://dev.mysql.com/doc/refman/5.7/en/mysql-affected-rows.html
 	 */
+
+	// TODO: replace will tuning in next commit.
+	var rows []types.DatumRow
+	iter := iterable.Iterator()
+	for {
+		hasNext, err := iter.HasNextStrict()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !hasNext {
+			break
+		}
+		row, err := iter.NextStrict()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		rows = append(rows, row)
+	}
 	idx := 0
 	rowsLen := len(rows)
 	sc := e.ctx.GetSessionVars().StmtCtx
@@ -115,7 +133,7 @@ func (e *ReplaceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return errors.Trace(err)
 	}
 
-	var rows []types.DatumRow
+	var rows chunk.IterableDatumRow
 	if len(e.children) > 0 && e.children[0] != nil {
 		rows, err = e.getRowsSelectChunk(ctx, cols)
 	} else {

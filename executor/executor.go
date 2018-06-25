@@ -151,7 +151,7 @@ func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id strin
 // return a batch of rows, other than a single row in Volcano.
 // NOTE: Executors must call "chk.Reset()" before appending their results to it.
 type Executor interface {
-	Open(context.Context) error
+	Open(ctx context.Context) error
 	Next(ctx context.Context, chk *chunk.Chunk) error
 	Close() error
 	Schema() *expression.Schema
@@ -1046,4 +1046,102 @@ func (e *UnionExec) Close() error {
 	}
 	e.resourcePools = nil
 	return errors.Trace(e.baseExecutor.Close())
+}
+
+func MapExecutor2Iterable(ctx context.Context, executor Executor) chunk.Iterable {
+	return &executorIterable{
+		ctx: ctx, executor: executor,
+	}
+}
+
+type executorIterable struct {
+	ctx      context.Context
+	executor Executor
+	chunk    *chunk.Chunk
+	iterator chunk.Iterator
+}
+
+func (it *executorIterable) Iterator() chunk.Iterator {
+	return &executorIterator{it.ctx, it.executor, it.chunk, it.iterator}
+}
+
+type executorIterator struct {
+	ctx      context.Context
+	executor Executor
+	chunk    *chunk.Chunk
+	iterator chunk.Iterator
+}
+
+// Next implements the Iterator interface.
+func (it *executorIterator) Next() chunk.Row {
+	row, err := it.NextStrict()
+	if err != nil {
+		panic(err)
+	}
+	return row
+}
+
+// HasNext implements the Iterator interface.
+func (it *executorIterator) HasNext() bool {
+	hasNext, err := it.HasNextStrict()
+	if err != nil {
+		panic(err)
+	}
+	return hasNext
+}
+
+// Next implements the Iterator interface.
+func (it *executorIterator) NextStrict() (chunk.Row, error) {
+	iter, err := it.getIterator()
+	if err != nil {
+		return chunk.NoneRow, errors.Trace(err)
+	}
+	row, err := iter.NextStrict()
+	return row, errors.Trace(err)
+}
+
+// HasNext implements the Iterator interface.
+func (it *executorIterator) HasNextStrict() (bool, error) {
+	if it.iterator != nil {
+		hasNext, err := it.iterator.HasNextStrict()
+		if err != nil {
+			return false, err
+		}
+		if hasNext {
+			return true, nil
+		}
+	}
+	chk := it.executor.newChunk()
+	err := it.executor.Next(it.ctx, chk)
+	if err != nil {
+		return false, err
+	}
+	if chk.NumRows() == 0 {
+		return false, nil
+	}
+	it.iterator = chk.Iterator()
+	return true, nil
+}
+
+func (it *executorIterator) getIterator() (chunk.Iterator, error) {
+	if it.iterator != nil && it.iterator.HasNext() {
+		return it.iterator, nil
+	}
+	chk := it.executor.newChunk()
+	err := it.executor.Next(it.ctx, chk)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	it.iterator = chk.Iterator()
+	return it.iterator, nil
+}
+
+// ReachEnd implements the Iterator interface.
+func (it *executorIterator) ReachEnd() {
+	panic("unsupport operation")
+}
+
+// Len implements the Iterator interface.
+func (it *executorIterator) Len() int {
+	panic("unsupport operation")
 }
