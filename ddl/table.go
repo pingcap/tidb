@@ -443,16 +443,14 @@ func checkPartitionNotExists(meta *model.TableInfo, part *model.PartitionInfo) e
 	for _, oldPar := range oldPars {
 		if _, ok := set[strings.ToLower(oldPar.Name)]; ok {
 			return ErrSameNamePartition.GenByArgs(oldPar.Name)
-		} else {
-			set[strings.ToLower(oldPar.Name)] = true
 		}
+		set[strings.ToLower(oldPar.Name)] = true
 	}
 	for _, newPar := range newPars {
 		if _, ok := set[strings.ToLower(newPar.Name)]; ok {
 			return ErrSameNamePartition.GenByArgs(newPar.Name)
-		} else {
-			set[strings.ToLower(newPar.Name)] = true
 		}
+		set[strings.ToLower(newPar.Name)] = true
 	}
 	return nil
 }
