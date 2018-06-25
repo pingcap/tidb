@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -93,7 +92,7 @@ func (t *Table) buildColNameMapper() {
 
 func (h *Handle) cmSketchFromStorage(tblID int64, isIndex, histID int64) (*CMSketch, error) {
 	selSQL := fmt.Sprintf("select cm_sketch from mysql.stats_histograms where table_id = %d and is_index = %d and hist_id = %d", tblID, isIndex, histID)
-	rows, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, selSQL)
+	rows, _, err := h.restrictedExec.ExecRestrictedSQL(nil, selSQL)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -114,7 +113,7 @@ func (h *Handle) indexStatsFromStorage(row types.Row, table *Table, tableInfo *m
 			continue
 		}
 		if idx == nil || idx.LastUpdateVersion < histVer {
-			hg, err := histogramFromStorage(h.ctx, tableInfo.ID, histID, types.NewFieldType(mysql.TypeBlob), distinct, 1, histVer, nullCount, 0)
+			hg, err := h.histogramFromStorage(tableInfo.ID, histID, types.NewFieldType(mysql.TypeBlob), distinct, 1, histVer, nullCount, 0)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -156,7 +155,7 @@ func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *
 			(col == nil || col.Len() == 0 && col.LastUpdateVersion < histVer) &&
 			!loadAll
 		if notNeedLoad {
-			count, err := columnCountFromStorage(h.ctx, table.TableID, histID)
+			count, err := h.columnCountFromStorage(table.TableID, histID)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -175,7 +174,7 @@ func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *
 			break
 		}
 		if col == nil || col.LastUpdateVersion < histVer || loadAll {
-			hg, err := histogramFromStorage(h.ctx, tableInfo.ID, histID, &colInfo.FieldType, distinct, 0, histVer, nullCount, totColSize)
+			hg, err := h.histogramFromStorage(tableInfo.ID, histID, &colInfo.FieldType, distinct, 0, histVer, nullCount, totColSize)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -219,7 +218,7 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, loadAll bool)
 		table = table.copy()
 	}
 	selSQL := fmt.Sprintf("select table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver from mysql.stats_histograms where table_id = %d", tableInfo.ID)
-	rows, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, selSQL)
+	rows, _, err := h.restrictedExec.ExecRestrictedSQL(nil, selSQL)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
@@ -192,14 +191,16 @@ const (
 )
 
 // SaveStatsToStorage saves the stats to storage.
-func SaveStatsToStorage(sctx sessionctx.Context, tableID int64, count int64, isIndex int, hg *Histogram, cms *CMSketch) error {
+func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg *Histogram, cms *CMSketch) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	ctx := context.TODO()
-	exec := sctx.(sqlexec.SQLExecutor)
+	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 	_, err := exec.Execute(ctx, "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
-	txn := sctx.Txn()
+	txn := h.mu.ctx.Txn()
 	version := txn.StartTS()
 	var sql string
 	// If the count is less than 0, then we do not want to update the modify count and count.
@@ -227,7 +228,7 @@ func SaveStatsToStorage(sctx sessionctx.Context, tableID int64, count int64, isI
 	if err != nil {
 		return errors.Trace(err)
 	}
-	sc := sctx.GetSessionVars().StmtCtx
+	sc := h.mu.ctx.GetSessionVars().StmtCtx
 	for i := range hg.Buckets {
 		count := hg.Buckets[i].Count
 		if i > 0 {
@@ -254,15 +255,17 @@ func SaveStatsToStorage(sctx sessionctx.Context, tableID int64, count int64, isI
 }
 
 // SaveMetaToStorage will save stats_meta to storage.
-func SaveMetaToStorage(sctx sessionctx.Context, tableID, count, modifyCount int64) error {
+func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	ctx := context.TODO()
-	exec := sctx.(sqlexec.SQLExecutor)
+	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 	_, err := exec.Execute(ctx, "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
 	var sql string
-	version := sctx.Txn().StartTS()
+	version := h.mu.ctx.Txn().StartTS()
 	sql = fmt.Sprintf("replace into mysql.stats_meta (version, table_id, count, modify_count) values (%d, %d, %d, %d)", version, tableID, count, modifyCount)
 	if _, err = exec.Execute(ctx, sql); err != nil {
 		_, err1 := exec.Execute(ctx, "rollback")
@@ -273,9 +276,9 @@ func SaveMetaToStorage(sctx sessionctx.Context, tableID, count, modifyCount int6
 	return errors.Trace(err)
 }
 
-func histogramFromStorage(ctx sessionctx.Context, tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int, ver uint64, nullCount int64, totColSize int64) (*Histogram, error) {
+func (h *Handle) histogramFromStorage(tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int, ver uint64, nullCount int64, totColSize int64) (*Histogram, error) {
 	selSQL := fmt.Sprintf("select count, repeats, lower_bound, upper_bound from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d order by bucket_id", tableID, isIndex, colID)
-	rows, fields, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, selSQL)
+	rows, fields, err := h.restrictedExec.ExecRestrictedSQL(nil, selSQL)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -290,13 +293,14 @@ func histogramFromStorage(ctx sessionctx.Context, tableID int64, colID int64, tp
 			lowerBound = rows[i].GetDatum(2, &fields[2].Column.FieldType)
 			upperBound = rows[i].GetDatum(3, &fields[3].Column.FieldType)
 		} else {
+			sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 			d := rows[i].GetDatum(2, &fields[2].Column.FieldType)
-			lowerBound, err = d.ConvertTo(ctx.GetSessionVars().StmtCtx, tp)
+			lowerBound, err = d.ConvertTo(sc, tp)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			d = rows[i].GetDatum(3, &fields[3].Column.FieldType)
-			upperBound, err = d.ConvertTo(ctx.GetSessionVars().StmtCtx, tp)
+			upperBound, err = d.ConvertTo(sc, tp)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -308,9 +312,9 @@ func histogramFromStorage(ctx sessionctx.Context, tableID int64, colID int64, tp
 	return hg, nil
 }
 
-func columnCountFromStorage(ctx sessionctx.Context, tableID, colID int64) (int64, error) {
+func (h *Handle) columnCountFromStorage(tableID, colID int64) (int64, error) {
 	selSQL := fmt.Sprintf("select sum(count) from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d", tableID, 0, colID)
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, selSQL)
+	rows, _, err := h.restrictedExec.ExecRestrictedSQL(nil, selSQL)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}

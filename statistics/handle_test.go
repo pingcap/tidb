@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -248,12 +249,11 @@ func (s *testStatsCacheSuite) TestVersion(c *C) {
 	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	tableInfo1 := tbl1.Meta()
-	h := statistics.NewHandle(testKit.Se, 0)
+	h := statistics.NewHandle(testKit.Se, 1)
 	testKit.MustExec("update mysql.stats_meta set version = 2 where table_id = ?", tableInfo1.ID)
 
 	h.Update(is)
-	c.Assert(h.LastVersion, Equals, uint64(2))
-	c.Assert(h.PrevLastVersion, Equals, uint64(0))
+	c.Assert(h.LastUpdateVersion(), Equals, uint64(2))
 	statsTbl1 := h.GetTableStats(tableInfo1)
 	c.Assert(statsTbl1.Pseudo, IsFalse)
 
@@ -266,37 +266,34 @@ func (s *testStatsCacheSuite) TestVersion(c *C) {
 	// A smaller version write, and we can still read it.
 	testKit.MustExec("update mysql.stats_meta set version = 1 where table_id = ?", tableInfo2.ID)
 	h.Update(is)
-	c.Assert(h.LastVersion, Equals, uint64(2))
-	c.Assert(h.PrevLastVersion, Equals, uint64(2))
+	c.Assert(h.LastUpdateVersion(), Equals, uint64(2))
 	statsTbl2 := h.GetTableStats(tableInfo2)
 	c.Assert(statsTbl2.Pseudo, IsFalse)
 
 	testKit.MustExec("insert t1 values(1,2)")
 	testKit.MustExec("analyze table t1")
-	testKit.MustExec("update mysql.stats_meta set version = 4 where table_id = ?", tableInfo1.ID)
+	offset := oracle.ComposeTS(3*int64(h.Lease), 0)
+	testKit.MustExec("update mysql.stats_meta set version = ? where table_id = ?", offset+4, tableInfo1.ID)
 	h.Update(is)
-	c.Assert(h.LastVersion, Equals, uint64(4))
-	c.Assert(h.PrevLastVersion, Equals, uint64(2))
+	c.Assert(h.LastUpdateVersion(), Equals, offset+uint64(4))
 	statsTbl1 = h.GetTableStats(tableInfo1)
 	c.Assert(statsTbl1.Count, Equals, int64(1))
 
 	testKit.MustExec("insert t2 values(1,2)")
 	testKit.MustExec("analyze table t2")
 	// A smaller version write, and we can still read it.
-	testKit.MustExec("update mysql.stats_meta set version = 3 where table_id = ?", tableInfo2.ID)
+	testKit.MustExec("update mysql.stats_meta set version = ? where table_id = ?", offset+3, tableInfo2.ID)
 	h.Update(is)
-	c.Assert(h.LastVersion, Equals, uint64(4))
-	c.Assert(h.PrevLastVersion, Equals, uint64(4))
+	c.Assert(h.LastUpdateVersion(), Equals, offset+uint64(4))
 	statsTbl2 = h.GetTableStats(tableInfo2)
 	c.Assert(statsTbl2.Count, Equals, int64(1))
 
 	testKit.MustExec("insert t2 values(1,2)")
 	testKit.MustExec("analyze table t2")
-	// A smaller version write, and we cannot read it. Because at this time, lastTwo Version is 4.
-	testKit.MustExec("update mysql.stats_meta set version = 3 where table_id = ?", tableInfo2.ID)
+	// A smaller version write, and we cannot read it. Because at this time, lastThree Version is 4.
+	testKit.MustExec("update mysql.stats_meta set version = 1 where table_id = ?", tableInfo2.ID)
 	h.Update(is)
-	c.Assert(h.LastVersion, Equals, uint64(4))
-	c.Assert(h.PrevLastVersion, Equals, uint64(4))
+	c.Assert(h.LastUpdateVersion(), Equals, offset+uint64(4))
 	statsTbl2 = h.GetTableStats(tableInfo2)
 	c.Assert(statsTbl2.Count, Equals, int64(1))
 
