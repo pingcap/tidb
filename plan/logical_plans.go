@@ -348,8 +348,8 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath) error {
 		return nil
 	}
 	path.accessConds, path.tableFilters = ranger.DetachCondsForTableRange(ds.ctx, ds.pushedDownConds, pkCol)
-	// If there's no access cond, we try to find that whether there's expression containing correlated column that can be used
-	// for accessing data.
+	// If there's no access cond, we try to find that whether there's expression containing correlated column that
+	// can be used to access data.
 	corColInAccessConds := false
 	if len(path.accessConds) == 0 {
 		for i, filter := range path.tableFilters {
@@ -416,7 +416,7 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) error {
 	}
 	corColInAccessConds := false
 	if path.eqCondCount == len(path.accessConds) {
-		access, remained := splitCorColAccessCondFromFilters(path.idxCols, path.colLengths, path.eqCondCount, path.tableFilters)
+		access, remained := path.splitCorColAccessCondFromFilters()
 		path.accessConds = append(path.accessConds, access...)
 		path.tableFilters = remained
 		if len(access) > 0 {
@@ -443,29 +443,29 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) error {
 	return nil
 }
 
-func splitCorColAccessCondFromFilters(idxCols []*expression.Column, colLengths []int, preCount int, filters []expression.Expression) (access, remained []expression.Expression) {
-	access = make([]expression.Expression, len(idxCols)-preCount)
-	used := make([]bool, len(filters))
-	for i := preCount; i < len(idxCols); i++ {
+func (path *accessPath) splitCorColAccessCondFromFilters() (access, remained []expression.Expression) {
+	access = make([]expression.Expression, len(path.idxCols)-path.eqCondCount)
+	used := make([]bool, len(path.tableFilters))
+	for i := path.eqCondCount; i < len(path.idxCols); i++ {
 		matched := false
-		for j, filter := range filters {
-			if !isColEqCorColOrConstant(filter, idxCols[i]) {
+		for j, filter := range path.tableFilters {
+			if !isColEqCorColOrConstant(filter, path.idxCols[i]) {
 				break
 			}
 			matched = true
-			access[i-preCount] = filter
-			if colLengths[i] == types.UnspecifiedLength {
+			access[i-path.eqCondCount] = filter
+			if path.colLengths[i] == types.UnspecifiedLength {
 				used[j] = true
 			}
 		}
 		if !matched {
-			access = access[:i-preCount]
+			access = access[:i-path.eqCondCount]
 			break
 		}
 	}
 	for i, ok := range used {
 		if !ok {
-			remained = append(remained, filters[i])
+			remained = append(remained, path.tableFilters[i])
 		}
 	}
 	return access, remained

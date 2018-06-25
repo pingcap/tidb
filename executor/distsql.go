@@ -182,7 +182,9 @@ type TableReaderExecutor struct {
 	streaming     bool
 	feedback      *statistics.QueryFeedback
 
+	// corColInFilter tells whether there's correlated column in filter.
 	corColInFilter bool
+	// corColInAccess tells whether there's correlated column in access conditions.
 	corColInAccess bool
 	plans          []plan.PhysicalPlan
 }
@@ -319,6 +321,8 @@ func startSpanFollowsContext(ctx context.Context, operationName string) (opentra
 	return span, opentracing.ContextWithSpan(ctx, span)
 }
 
+// rebuildIndexRanges will be called if there's correlated column in access conditions. We will rebuild the range
+// by substitute correlated column with the constant.
 func rebuildIndexRanges(ctx sessionctx.Context, is *plan.PhysicalIndexScan, idxCols []*expression.Column, colLens []int) (ranges []*ranger.Range, err error) {
 	access := make([]expression.Expression, 0, len(is.AccessCondition))
 	for _, cond := range is.AccessCondition {

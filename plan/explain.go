@@ -51,14 +51,14 @@ func (p *PhysicalIndexScan) ExplainInfo() string {
 		}
 	}
 	if haveCorCol {
-		buffer.WriteString(", range:")
-		buffer.WriteString(fmt.Sprintf(" decided by %v", p.AccessCondition))
+		fmt.Fprint(buffer, ", range:")
+		fmt.Fprintf(buffer, " decided by %v", p.AccessCondition)
 	} else if len(p.Ranges) > 0 {
-		buffer.WriteString(", range:")
+		fmt.Fprint(buffer, ", range:")
 		for i, idxRange := range p.Ranges {
-			buffer.WriteString(idxRange.String())
+			fmt.Fprint(buffer, idxRange.String())
 			if i+1 < len(p.Ranges) {
-				buffer.WriteString(", ")
+				fmt.Fprint(buffer, ", ")
 			}
 		}
 	}
@@ -88,14 +88,14 @@ func (p *PhysicalTableScan) ExplainInfo() string {
 		}
 	}
 	if haveCorCol {
-		buffer.WriteString(", range:")
-		buffer.WriteString(fmt.Sprintf(" decided by %v", p.AccessCondition))
+		fmt.Fprint(buffer, ", range:")
+		fmt.Fprintf(buffer, " decided by %v", p.AccessCondition)
 	} else if len(p.Ranges) > 0 {
-		buffer.WriteString(", range:")
+		fmt.Fprint(buffer, ", range:")
 		for i, idxRange := range p.Ranges {
-			buffer.WriteString(idxRange.String())
+			fmt.Fprint(buffer, idxRange.String())
 			if i+1 < len(p.Ranges) {
-				buffer.WriteString(", ")
+				fmt.Fprint(buffer, ", ")
 			}
 		}
 	}

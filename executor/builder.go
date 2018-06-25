@@ -1218,6 +1218,7 @@ func (b *executorBuilder) corColInDistPlan(plans []plan.PhysicalPlan) bool {
 	return false
 }
 
+// corColInAccess checks whether there's correlated column in access conditions.
 func (b *executorBuilder) corColInAccess(p plan.PhysicalPlan) bool {
 	var access []expression.Expression
 	switch x := p.(type) {
