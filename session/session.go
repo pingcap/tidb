@@ -53,7 +53,6 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/charset"
-	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/kvcache"
 	binlog "github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
@@ -648,8 +647,8 @@ func drainRecordSet(ctx context.Context, rs ast.RecordSet) ([]types.Row, error) 
 		if err != nil || chk.NumRows() == 0 {
 			return rows, errors.Trace(err)
 		}
-		iter := chunk.NewIterator4Chunk(chk)
-		for r := iter.Begin(); r != iter.End(); r = iter.Next() {
+		for iter := chk.Iterator(); iter.HasNext(); {
+			r := iter.Next()
 			rows = append(rows, r)
 		}
 	}

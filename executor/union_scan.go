@@ -196,8 +196,8 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) (types.DatumRow, er
 		if err != nil || us.snapshotChunkBuffer.NumRows() == 0 {
 			return nil, errors.Trace(err)
 		}
-		iter := chunk.NewIterator4Chunk(us.snapshotChunkBuffer)
-		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		for iter := us.snapshotChunkBuffer.Iterator(); iter.HasNext(); {
+			row := iter.Next()
 			snapshotHandle := row.GetInt64(us.belowHandleIndex)
 			if _, ok := us.dirty.deletedRows[snapshotHandle]; ok {
 				continue

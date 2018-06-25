@@ -70,13 +70,13 @@ func (e *ShowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		iter := chunk.NewIterator4Chunk(e.result)
 		for colIdx := 0; colIdx < e.Schema().Len(); colIdx++ {
 			retType := e.Schema().Columns[colIdx].RetType
 			if !types.IsTypeVarchar(retType.Tp) {
 				continue
 			}
-			for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+			for iter := e.result.Iterator(); iter.HasNext(); {
+				row := iter.Next()
 				if valLen := len(row.GetString(colIdx)); retType.Flen < valLen {
 					retType.Flen = valLen
 				}

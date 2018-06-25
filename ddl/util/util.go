@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"golang.org/x/net/context"
 )
@@ -57,7 +56,6 @@ func LoadDeleteRanges(ctx sessionctx.Context, safePoint uint64) (ranges []DelRan
 
 	rs := rss[0]
 	chk := rs.NewChunk()
-	it := chunk.NewIterator4Chunk(chk)
 	for {
 		err = rs.Next(context.TODO(), chk)
 		if err != nil {
@@ -67,7 +65,8 @@ func LoadDeleteRanges(ctx sessionctx.Context, safePoint uint64) (ranges []DelRan
 			break
 		}
 
-		for row := it.Begin(); row != it.End(); row = it.Next() {
+		for it := chk.Iterator(); it.HasNext(); {
+			row := it.Next()
 			startKey, err := hex.DecodeString(row.GetString(2))
 			if err != nil {
 				return nil, errors.Trace(err)

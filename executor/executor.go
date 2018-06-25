@@ -483,11 +483,11 @@ func (e *SelectLockExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 	txn := e.ctx.Txn()
 	keys := make([]kv.Key, 0, chk.NumRows())
-	iter := chunk.NewIterator4Chunk(chk)
 	for id, cols := range e.Schema().TblID2Handle {
 		for _, col := range cols {
 			keys = keys[:0]
-			for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+			for iter := chk.Iterator(); iter.HasNext(); {
+				row := iter.Next()
 				keys = append(keys, tablecodec.EncodeRowKeyWithHandle(id, row.GetInt64(col.Index)))
 			}
 			err = txn.LockKeys(keys...)
@@ -599,9 +599,8 @@ func init() {
 			if chk.NumRows() == 0 {
 				return rows, nil
 			}
-			iter := chunk.NewIterator4Chunk(chk)
-			for r := iter.Begin(); r != iter.End(); r = iter.Next() {
-				row := r.GetDatumRow(exec.retTypes())
+			for iter := chk.Iterator(); iter.HasNext(); {
+				row := iter.Next().GetDatumRow(exec.retTypes())
 				rows = append(rows, row)
 			}
 		}
@@ -644,11 +643,12 @@ func (e *TableDualExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 type SelectionExec struct {
 	baseExecutor
 
-	batched   bool
-	filters   []expression.Expression
-	selected  []bool
-	inputIter *chunk.Iterator4Chunk
-	inputRow  chunk.Row
+	batched       bool
+	filters       []expression.Expression
+	selected      []bool
+	inputIterable chunk.Iterable
+	inputIterator chunk.Iterator
+	inputRow      chunk.Row
 }
 
 // Open implements the Executor Open interface.
@@ -660,8 +660,9 @@ func (e *SelectionExec) Open(ctx context.Context) error {
 	if e.batched {
 		e.selected = make([]bool, 0, chunk.InitialCapacity)
 	}
-	e.inputIter = chunk.NewIterator4Chunk(e.childrenResults[0])
-	e.inputRow = e.inputIter.End()
+	e.inputIterable = e.childrenResults[0]
+	e.inputIterator = e.inputIterable.Iterator()
+	e.inputRow = chunk.NoneRow
 	return nil
 }
 
@@ -683,7 +684,7 @@ func (e *SelectionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 
 	for {
-		for ; e.inputRow != e.inputIter.End(); e.inputRow = e.inputIter.Next() {
+		for ; e.inputRow != chunk.NoneRow; e.inputRow = e.inputIterator.Next() {
 			if !e.selected[e.inputRow.Idx()] {
 				continue
 			}
@@ -700,11 +701,12 @@ func (e *SelectionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		if e.childrenResults[0].NumRows() == 0 {
 			return nil
 		}
-		e.selected, err = expression.VectorizedFilter(e.ctx, e.filters, e.inputIter, e.selected)
+		e.selected, err = expression.VectorizedFilter(e.ctx, e.filters, e.inputIterable, e.selected)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		e.inputRow = e.inputIter.Begin()
+		e.inputIterator = e.inputIterable.Iterator()
+		e.inputRow = e.inputIterator.Next()
 	}
 }
 
@@ -713,14 +715,14 @@ func (e *SelectionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 // we have to set batch size to 1 to do the evaluation of filter and projection.
 func (e *SelectionExec) unBatchedNext(ctx context.Context, chk *chunk.Chunk) error {
 	for {
-		for ; e.inputRow != e.inputIter.End(); e.inputRow = e.inputIter.Next() {
+		for ; e.inputRow != chunk.NoneRow; e.inputRow = e.inputIterator.Next() {
 			selected, err := expression.EvalBool(e.ctx, e.filters, e.inputRow)
 			if err != nil {
 				return errors.Trace(err)
 			}
 			if selected {
 				chk.AppendRow(e.inputRow)
-				e.inputRow = e.inputIter.Next()
+				e.inputRow = e.inputIterator.Next()
 				return nil
 			}
 		}
@@ -728,7 +730,8 @@ func (e *SelectionExec) unBatchedNext(ctx context.Context, chk *chunk.Chunk) err
 		if err != nil {
 			return errors.Trace(err)
 		}
-		e.inputRow = e.inputIter.Begin()
+		e.inputIterator = e.inputIterable.Iterator()
+		e.inputRow = e.inputIterator.Next()
 		// no more data.
 		if e.childrenResults[0].NumRows() == 0 {
 			return nil

@@ -70,8 +70,8 @@ func (e *CheckIndexRangeExec) Next(ctx context.Context, chk *chunk.Chunk) error 
 		if e.srcChunk.NumRows() == 0 {
 			return nil
 		}
-		iter := chunk.NewIterator4Chunk(e.srcChunk)
-		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		for iter := e.srcChunk.Iterator(); iter.HasNext(); {
+			row := iter.Next()
 			handle := row.GetInt64(handleIdx)
 			for _, hr := range e.handleRanges {
 				if handle >= hr.Begin && handle < hr.End {
@@ -326,8 +326,8 @@ func (e *RecoverIndexExec) fetchRecoverRows(ctx context.Context, srcResult dists
 		if e.srcChunk.NumRows() == 0 {
 			break
 		}
-		iter := chunk.NewIterator4Chunk(e.srcChunk)
-		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		for iter := e.srcChunk.Iterator(); iter.HasNext(); {
+			row := iter.Next()
 			if result.scanRowCount >= int64(e.batchSize) {
 				return e.recoverRows, nil
 			}
@@ -544,8 +544,8 @@ func (e *CleanupIndexExec) fetchIndex(ctx context.Context, txn kv.Transaction) e
 		if e.idxChunk.NumRows() == 0 {
 			return nil
 		}
-		iter := chunk.NewIterator4Chunk(e.idxChunk)
-		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		for iter := e.idxChunk.Iterator(); iter.HasNext(); {
+			row := iter.Next()
 			handle := row.GetInt64(len(e.idxCols) - 1)
 			idxVals := extractIdxVals(row, e.idxValsBufs[e.scanRowCnt], e.idxColFieldTypes)
 			e.idxValsBufs[e.scanRowCnt] = idxVals

@@ -55,9 +55,9 @@ func hasUnVectorizableFunc(expr Expression) bool {
 }
 
 // VectorizedExecute evaluates a list of expressions column by column and append their results to "output" Chunk.
-func VectorizedExecute(ctx sessionctx.Context, exprs []Expression, iterator *chunk.Iterator4Chunk, output *chunk.Chunk) error {
+func VectorizedExecute(ctx sessionctx.Context, exprs []Expression, iter chunk.Iterable, output *chunk.Chunk) error {
 	for colID, expr := range exprs {
-		err := evalOneColumn(ctx, expr, iterator, output, colID)
+		err := evalOneColumn(ctx, expr, iter, output, colID)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -65,35 +65,35 @@ func VectorizedExecute(ctx sessionctx.Context, exprs []Expression, iterator *chu
 	return nil
 }
 
-func evalOneColumn(ctx sessionctx.Context, expr Expression, iterator *chunk.Iterator4Chunk, output *chunk.Chunk, colID int) (err error) {
+func evalOneColumn(ctx sessionctx.Context, expr Expression, iter chunk.Iterable, output *chunk.Chunk, colID int) (err error) {
 	switch fieldType, evalType := expr.GetType(), expr.GetType().EvalType(); evalType {
 	case types.ETInt:
-		for row := iterator.Begin(); err == nil && row != iterator.End(); row = iterator.Next() {
-			err = executeToInt(ctx, expr, fieldType, row, output, colID)
+		for iterator := iter.Iterator(); iterator.HasNext(); {
+			err = executeToInt(ctx, expr, fieldType, iterator.Next(), output, colID)
 		}
 	case types.ETReal:
-		for row := iterator.Begin(); err == nil && row != iterator.End(); row = iterator.Next() {
-			err = executeToReal(ctx, expr, fieldType, row, output, colID)
+		for iterator := iter.Iterator(); iterator.HasNext(); {
+			err = executeToReal(ctx, expr, fieldType, iterator.Next(), output, colID)
 		}
 	case types.ETDecimal:
-		for row := iterator.Begin(); err == nil && row != iterator.End(); row = iterator.Next() {
-			err = executeToDecimal(ctx, expr, fieldType, row, output, colID)
+		for iterator := iter.Iterator(); iterator.HasNext(); {
+			err = executeToDecimal(ctx, expr, fieldType, iterator.Next(), output, colID)
 		}
 	case types.ETDatetime, types.ETTimestamp:
-		for row := iterator.Begin(); err == nil && row != iterator.End(); row = iterator.Next() {
-			err = executeToDatetime(ctx, expr, fieldType, row, output, colID)
+		for iterator := iter.Iterator(); iterator.HasNext(); {
+			err = executeToDatetime(ctx, expr, fieldType, iterator.Next(), output, colID)
 		}
 	case types.ETDuration:
-		for row := iterator.Begin(); err == nil && row != iterator.End(); row = iterator.Next() {
-			err = executeToDuration(ctx, expr, fieldType, row, output, colID)
+		for iterator := iter.Iterator(); iterator.HasNext(); {
+			err = executeToDuration(ctx, expr, fieldType, iterator.Next(), output, colID)
 		}
 	case types.ETJson:
-		for row := iterator.Begin(); err == nil && row != iterator.End(); row = iterator.Next() {
-			err = executeToJSON(ctx, expr, fieldType, row, output, colID)
+		for iterator := iter.Iterator(); iterator.HasNext(); {
+			err = executeToJSON(ctx, expr, fieldType, iterator.Next(), output, colID)
 		}
 	case types.ETString:
-		for row := iterator.Begin(); err == nil && row != iterator.End(); row = iterator.Next() {
-			err = executeToString(ctx, expr, fieldType, row, output, colID)
+		for iterator := iter.Iterator(); iterator.HasNext(); {
+			err = executeToString(ctx, expr, fieldType, iterator.Next(), output, colID)
 		}
 	}
 	return errors.Trace(err)
@@ -225,9 +225,9 @@ func executeToString(ctx sessionctx.Context, expr Expression, fieldType *types.F
 // VectorizedFilter applies a list of filters to a Chunk and
 // returns a bool slice, which indicates whether a row is passed the filters.
 // Filters is executed vectorized.
-func VectorizedFilter(ctx sessionctx.Context, filters []Expression, iterator *chunk.Iterator4Chunk, selected []bool) ([]bool, error) {
+func VectorizedFilter(ctx sessionctx.Context, filters []Expression, iter chunk.Iterable, selected []bool) ([]bool, error) {
 	selected = selected[:0]
-	for i, numRows := 0, iterator.Len(); i < numRows; i++ {
+	for i, numRows := 0, iter.Iterator().Len(); i < numRows; i++ {
 		selected = append(selected, true)
 	}
 	for _, filter := range filters {
@@ -235,7 +235,8 @@ func VectorizedFilter(ctx sessionctx.Context, filters []Expression, iterator *ch
 		if filter.GetType().EvalType() != types.ETInt {
 			isIntType = false
 		}
-		for row := iterator.Begin(); row != iterator.End(); row = iterator.Next() {
+		for iterator := iter.Iterator(); iterator.HasNext(); {
+			row := iterator.Next()
 			if !selected[row.Idx()] {
 				continue
 			}

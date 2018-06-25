@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -284,7 +283,6 @@ func (e *InsertValues) getRowsSelectChunk(ctx context.Context, cols []*table.Col
 	fields := selectExec.retTypes()
 	for {
 		chk := selectExec.newChunk()
-		iter := chunk.NewIterator4Chunk(chk)
 
 		err := selectExec.Next(ctx, chk)
 		if err != nil {
@@ -294,7 +292,8 @@ func (e *InsertValues) getRowsSelectChunk(ctx context.Context, cols []*table.Col
 			break
 		}
 
-		for innerChunkRow := iter.Begin(); innerChunkRow != iter.End(); innerChunkRow = iter.Next() {
+		for iter := chk.Iterator(); iter.HasNext(); {
+			innerChunkRow := iter.Next()
 			innerRow := innerChunkRow.GetDatumRow(fields)
 			e.rowCount = uint64(len(rows))
 			row, err := e.fillRowData(cols, innerRow)

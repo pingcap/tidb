@@ -811,8 +811,8 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		memUsage = chk.MemoryUsage()
 		task.memUsage += memUsage
 		task.memTracker.Consume(memUsage)
-		iter := chunk.NewIterator4Chunk(chk)
-		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		for iter := chk.Iterator(); iter.HasNext(); {
+			row := iter.Next()
 			task.rows = append(task.rows, row)
 		}
 	}

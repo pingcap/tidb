@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
 	"golang.org/x/net/context"
@@ -86,12 +85,12 @@ func (s *testExecSuite) TestShowProcessList(c *C) {
 	c.Assert(err, IsNil)
 
 	chk := e.newChunk()
-	it := chunk.NewIterator4Chunk(chk)
 	// Run test and check results.
 	for _, p := range ps {
 		err = e.Next(context.Background(), chk)
 		c.Assert(err, IsNil)
-		for row := it.Begin(); row != it.End(); row = it.Next() {
+		for it := chk.Iterator(); it.HasNext(); {
+			row := it.Next()
 			c.Assert(row.GetUint64(0), Equals, p.ID)
 		}
 	}
