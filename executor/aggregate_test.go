@@ -555,7 +555,7 @@ func (s *testSuite) TestBuildProjBelowAgg(c *C) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (i int);")
 	tk.MustExec("insert into t values (1), (1), (1),(2),(3),(2),(3),(2),(3);")
-	rs := tk.MustQuery("select i+1, count(i+2), sum(i+3), group_concat(i+4), bit_or(i+5) from t group by i, hex(i+6)")
+	rs := tk.MustQuery("select i+1 as a, count(i+2), sum(i+3), group_concat(i+4), bit_or(i+5) from t group by i, hex(i+6) order by a")
 	rs.Check(testkit.Rows(
 		"2 3 12 5,5,5 6",
 		"3 3 15 6,6,6 7",
