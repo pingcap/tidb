@@ -240,7 +240,7 @@ func (s *testSuite) TestAggregation(c *C) {
 
 	result = tk.MustQuery("select count(*) from information_schema.columns")
 	// When adding new memory columns in information_schema, please update this variable.
-	columnCountOfAllInformationSchemaTables := "746"
+	columnCountOfAllInformationSchemaTables := "747"
 	result.Check(testkit.Rows(columnCountOfAllInformationSchemaTables))
 
 	tk.MustExec("drop table if exists t1")
@@ -425,6 +425,14 @@ func (s *testSuite) TestOnlyFullGroupBy(c *C) {
 	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
 	_, err = tk.Exec("select -b from t group by c")
 	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
+	_, err = tk.Exec("select a, max(b) from t")
+	c.Assert(terror.ErrorEqual(err, plan.ErrMixOfGroupFuncAndFields), IsTrue)
+	_, err = tk.Exec("select sum(a)+b from t")
+	c.Assert(terror.ErrorEqual(err, plan.ErrMixOfGroupFuncAndFields), IsTrue)
+	_, err = tk.Exec("select count(b), c from t")
+	c.Assert(terror.ErrorEqual(err, plan.ErrMixOfGroupFuncAndFields), IsTrue)
+	_, err = tk.Exec("select distinct a, b, count(a) from t")
+	c.Assert(terror.ErrorEqual(err, plan.ErrMixOfGroupFuncAndFields), IsTrue)
 	// test compatible with sql_mode = ONLY_FULL_GROUP_BY
 	tk.MustQuery("select a from t group by a,b,c")
 	tk.MustQuery("select b from t group by b")
@@ -444,6 +452,9 @@ func (s *testSuite) TestOnlyFullGroupBy(c *C) {
 	tk.MustQuery("select b like '%a' from t group by b")
 	tk.MustQuery("select c REGEXP '1.*' from t group by c")
 	tk.MustQuery("select -b from t group by b")
+	tk.MustQuery("select max(a+b) from t")
+	tk.MustQuery("select avg(a)+1 from t")
+	tk.MustQuery("select count(c), 5 from t")
 	// test functinal depend on primary key
 	tk.MustQuery("select * from t group by a")
 	// test functional depend on unique not null columns
@@ -548,4 +559,16 @@ func (s *testSuite) TestMaxMinFloatScalaFunc(c *C) {
 	tk.MustExec(`INSERT INTO T VALUES('0', "val_b", 12.191);`)
 	tk.MustQuery(`SELECT MAX(CASE B WHEN 'val_b'  THEN C ELSE 0 END) val_b FROM T WHERE cast(A as signed) = 0 GROUP BY a;`).Check(testkit.Rows("12.190999984741211"))
 	tk.MustQuery(`SELECT MIN(CASE B WHEN 'val_b'  THEN C ELSE 0 END) val_b FROM T WHERE cast(A as signed) = 0 GROUP BY a;`).Check(testkit.Rows("12.190999984741211"))
+}
+
+func (s *testSuite) TestBuildProjBelowAgg(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (i int);")
+	tk.MustExec("insert into t values (1), (1), (1),(2),(3),(2),(3),(2),(3);")
+	rs := tk.MustQuery("select i+1, count(i+2), sum(i+3), group_concat(i+4), bit_or(i+5) from t group by i, hex(i+6)")
+	rs.Check(testkit.Rows(
+		"2 3 12 5,5,5 6",
+		"3 3 15 6,6,6 7",
+		"4 3 18 7,7,7 8"))
 }
