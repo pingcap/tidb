@@ -302,3 +302,20 @@ func (s *testMySQLConstSuite) TestNoBackslashEscapesMode(c *C) {
 	r = tk.MustQuery("SELECT '\\\\'")
 	r.Check(testkit.Rows("\\\\"))
 }
+
+func (s *testMySQLConstSuite) TestServerStatus(c *C) {
+	tests := []struct {
+		arg            uint16
+		IsCursorExists bool
+	}{
+		{0, false},
+		{mysql.ServerStatusInTrans | mysql.ServerStatusNoBackslashEscaped, false},
+		{mysql.ServerStatusCursorExists, true},
+		{mysql.ServerStatusCursorExists | mysql.ServerStatusLastRowSend, true},
+	}
+
+	for _, t := range tests {
+		ret := mysql.HasCursorExistsFlag(t.arg)
+		c.Assert(ret, Equals, t.IsCursorExists)
+	}
+}

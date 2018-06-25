@@ -462,6 +462,12 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 
 		{`ANALYZE TABLE t`, true},
 
+		// for comments
+		{`/** 20180417 **/ show databases;`, true},
+		{`/* 20180417 **/ show databases;`, true},
+		{`/** 20180417 */ show databases;`, true},
+		{`/** 20180417 ******/ show databases;`, true},
+
 		// for Binlog stmt
 		{`BINLOG '
 BxSFVw8JAAAA8QAAAPUAAAAAAAQANS41LjQ0LU1hcmlhREItbG9nAAAAAAAAAAAAAAAAAAAAAAAA
@@ -1560,7 +1566,24 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"create table if not exists `t` (`id` int not null auto_increment comment '消息ID', primary key `pk_id` (`id`) );", true},
 		// Create table with like.
 		{"create table a like b", true},
+		{"create table a (like b)", true},
 		{"create table if not exists a like b", true},
+		{"create table if not exists a (like b)", true},
+		{"create table if not exists a like (b)", false},
+		{"create table a (t int) like b", false},
+		{"create table a (t int) like (b)", false},
+		// Create table with select statement
+		{"create table a select * from b", true},
+		{"create table a as select * from b", true},
+		{"create table a (m int, n datetime) as select * from b", true},
+		{"create table a (unique(n)) as select n from b", true},
+		{"create table a ignore as select n from b", true},
+		{"create table a replace as select n from b", true},
+		{"create table a (m int) replace as (select n as m from b union select n+1 as m from c group by 1 limit 2)", true},
+
+		// Create table with no option is valid for parser
+		{"create table a", true},
+
 		{"create table t (a timestamp default now)", false},
 		{"create table t (a timestamp default now())", true},
 		{"create table t (a timestamp default now() on update now)", false},

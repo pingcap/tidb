@@ -149,7 +149,7 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	// drop database
 	sql = "drop database db_not_exist"
 	s.testErrorCode(c, sql, tmysql.ErrDBDropExists)
-	// crate table
+	// create table
 	s.tk.MustExec("create table test_error_code_succ (c1 int, c2 int, c3 int, primary key(c3))")
 	sql = "create table test_error_code_succ (c1 int, c2 int, c3 int)"
 	s.testErrorCode(c, sql, tmysql.ErrTableExists)
@@ -179,6 +179,10 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrUnknownCharacterSet)
 	sql = "create table test_error_code (a int not null ,b int not null,c int not null, d int not null, foreign key (b, c) references product(id));"
 	s.testErrorCode(c, sql, tmysql.ErrWrongFkDef)
+	sql = "create table test_error_code_2;"
+	s.testErrorCode(c, sql, tmysql.ErrTableMustHaveColumns)
+	sql = "create table test_error_code_2 (unique(c1));"
+	s.testErrorCode(c, sql, tmysql.ErrTableMustHaveColumns)
 	sql = "create table test_error_code_2(c1 int, c2 int, c3 int, primary key(c1), primary key(c2));"
 	s.testErrorCode(c, sql, tmysql.ErrMultiplePriKey)
 	sql = "create table test_error_code_3(pt blob ,primary key (pt));"
@@ -1477,18 +1481,27 @@ func (s *testDBSuite) TestCreateTableWithLike(c *C) {
 	s.tk.MustExec("insert into t set c2=1")
 	s.tk.MustExec("create table t1 like ctwl_db.t")
 	s.tk.MustExec("insert into t1 set c2=11")
+	s.tk.MustExec("create table t2 (like ctwl_db.t1)")
+	s.tk.MustExec("insert into t2 set c2=12")
 	s.tk.MustQuery("select * from t").Check(testkit.Rows("10 1"))
 	s.tk.MustQuery("select * from t1").Check(testkit.Rows("1 11"))
+	s.tk.MustQuery("select * from t2").Check(testkit.Rows("1 12"))
 	ctx := s.tk.Se.(sessionctx.Context)
 	is := domain.GetDomain(ctx).InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("ctwl_db"), model.NewCIStr("t1"))
+	tbl1, err := is.TableByName(model.NewCIStr("ctwl_db"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
-	tblInfo := tbl.Meta()
-	c.Assert(tblInfo.ForeignKeys, IsNil)
-	c.Assert(tblInfo.PKIsHandle, Equals, true)
-	col := tblInfo.Columns[0]
+	tbl1Info := tbl1.Meta()
+	c.Assert(tbl1Info.ForeignKeys, IsNil)
+	c.Assert(tbl1Info.PKIsHandle, Equals, true)
+	col := tbl1Info.Columns[0]
 	hasNotNull := tmysql.HasNotNullFlag(col.Flag)
 	c.Assert(hasNotNull, IsTrue)
+	tbl2, err := is.TableByName(model.NewCIStr("ctwl_db"), model.NewCIStr("t2"))
+	c.Assert(err, IsNil)
+	tbl2Info := tbl2.Meta()
+	c.Assert(tbl2Info.ForeignKeys, IsNil)
+	c.Assert(tbl2Info.PKIsHandle, Equals, true)
+	c.Assert(tmysql.HasNotNullFlag(tbl2Info.Columns[0].Flag), IsTrue)
 
 	// for different databases
 	s.tk.MustExec("create database ctwl_db1")
@@ -1497,14 +1510,16 @@ func (s *testDBSuite) TestCreateTableWithLike(c *C) {
 	s.tk.MustExec("insert into t1 set c2=11")
 	s.tk.MustQuery("select * from t1").Check(testkit.Rows("1 11"))
 	is = domain.GetDomain(ctx).InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("ctwl_db1"), model.NewCIStr("t1"))
+	tbl1, err = is.TableByName(model.NewCIStr("ctwl_db1"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
-	c.Assert(tbl.Meta().ForeignKeys, IsNil)
+	c.Assert(tbl1.Meta().ForeignKeys, IsNil)
 
 	// for failure cases
 	failSQL := fmt.Sprintf("create table t1 like test_not_exist.t")
 	s.testErrorCode(c, failSQL, tmysql.ErrNoSuchTable)
 	failSQL = fmt.Sprintf("create table t1 like test.t_not_exist")
+	s.testErrorCode(c, failSQL, tmysql.ErrNoSuchTable)
+	failSQL = fmt.Sprintf("create table t1 (like test_not_exist.t)")
 	s.testErrorCode(c, failSQL, tmysql.ErrNoSuchTable)
 	failSQL = fmt.Sprintf("create table test_not_exis.t1 like ctwl_db.t")
 	s.testErrorCode(c, failSQL, tmysql.ErrBadDB)

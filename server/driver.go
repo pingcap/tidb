@@ -108,6 +108,12 @@ type PreparedStatement interface {
 	// GetParamsType returns the type for parameters.
 	GetParamsType() []byte
 
+	// StoreResultSet stores ResultSet for subsequent stmt fetching
+	StoreResultSet(rs ResultSet)
+
+	// GetResultSet gets ResultSet associated this statement
+	GetResultSet() ResultSet
+
 	// Reset removes all bound parameters.
 	Reset()
 
@@ -120,5 +126,7 @@ type ResultSet interface {
 	Columns() []*ColumnInfo
 	NewChunk() *chunk.Chunk
 	Next(context.Context, *chunk.Chunk) error
+	StoreFetchedRows(rows []chunk.Row)
+	GetFetchedRows() []chunk.Row
 	Close() error
 }

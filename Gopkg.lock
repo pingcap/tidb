@@ -87,16 +87,6 @@
   revision = "3955978caca48c1658a4bb7a9c6a0f084e326af3"
 
 [[projects]]
-  name = "github.com/gogo/protobuf"
-  packages = [
-    "gogoproto",
-    "proto",
-    "protoc-gen-gogo/descriptor"
-  ]
-  revision = "1adfc126b41513cc696b209667c8656ea7aac67c"
-  version = "v1.0.0"
-
-[[projects]]
   name = "github.com/golang/protobuf"
   packages = [
     "jsonpb",
@@ -251,7 +241,7 @@
     "go-tipb",
     "sharedbytes"
   ]
-  revision = "28677e6a434fff53a7d658b476c10d52548c5b6a"
+  revision = "015341a07dc30de16a7cca0fc77231ccacc4b397"
 
 [[projects]]
   name = "github.com/prometheus/client_golang"
