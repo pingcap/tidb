@@ -476,6 +476,8 @@ type reorgIndexTask struct {
 	// When the last handle is math.MaxInt64, set endIncluded to true to
 	// tell worker backfilling index of endHandle.
 	endIncluded bool
+	// mockTask is used for gofail testing.
+	mockTask bool
 }
 
 type addIndexResult struct {
@@ -687,6 +689,14 @@ func (w *addIndexWorker) run(d *ddlCtx) {
 		}
 
 		log.Debug("[ddl-reorg] got backfill index task:#v", task)
+
+		if task.mockTask {
+			// for gofail testing.
+			result := &addIndexResult{addedCount: 0, nextHandle: 0, err: errors.Errorf("mock add index error")}
+			w.resultCh <- result
+			continue
+		}
+
 		result := w.handleBackfillTask(d, task)
 		w.resultCh <- result
 	}
@@ -779,10 +789,17 @@ func (w *worker) waitTaskResults(workers []*addIndexWorker, taskCnt int, totalAd
 	return nextHandle, addedCount, errors.Trace(firstErr)
 }
 
+var gofailMockAddindexErrOnceGuard bool
+
 // handleReorgTasks sends tasks to workers, and waits for all the running workers to return results,
 // there are taskCnt running workers.
 func (w *worker) handleReorgTasks(startTime time.Time, startHandle int64, reorgInfo *reorgInfo, totalAddedCount *int64, workers []*addIndexWorker, batchTasks []*reorgIndexTask) error {
 	for i, task := range batchTasks {
+		// gofail: var mockAddIndexErr bool
+		// if mockAddIndexErr && !gofailMockAddindexErrOnceGuard {
+		// 	  gofailMockAddindexErrOnceGuard = true
+		//    task.mockTask = true
+		// }
 		workers[i].taskCh <- task
 	}
 
@@ -815,9 +832,7 @@ func (w *worker) handleReorgTasks(startTime time.Time, startHandle int64, reorgI
 func (w *worker) buildKVRangesIndex(t table.Table, workers []*addIndexWorker, kvRanges []kv.KeyRange, job *model.Job, reorgInfo *reorgInfo) error {
 	var (
 		startTime   time.Time
-		startHandle int64
-		endHandle   int64
-		err         error
+		firstHandle int64
 	)
 	totalAddedCount := job.GetRowCount()
 	batchTasks := make([]*reorgIndexTask, 0, len(workers))
@@ -825,22 +840,24 @@ func (w *worker) buildKVRangesIndex(t table.Table, workers []*addIndexWorker, kv
 	log.Infof("[ddl-reorg] start to reorg index of %v region ranges.", len(kvRanges))
 	for i, keyRange := range kvRanges {
 		startTime = time.Now()
-
-		startHandle, endHandle, err = decodeHandleRange(keyRange)
+		startHandle, endHandle, err := decodeHandleRange(keyRange)
 		if err != nil {
 			return errors.Trace(err)
+		}
+		if i == 0 {
+			firstHandle = startHandle
 		}
 		endKey := t.RecordKey(endHandle)
 		endIncluded := false
 		if endKey.Cmp(keyRange.EndKey) < 0 {
 			endIncluded = true
 		}
-		task := &reorgIndexTask{startHandle, endHandle, endIncluded}
+		task := &reorgIndexTask{startHandle, endHandle, endIncluded, false}
 
 		batchTasks = append(batchTasks, task)
 		if len(batchTasks) >= len(workers) || i == (len(kvRanges)-1) {
 			// Wait tasks finish.
-			err = w.handleReorgTasks(startTime, startHandle, reorgInfo, &totalAddedCount, workers, batchTasks)
+			err = w.handleReorgTasks(startTime, firstHandle, reorgInfo, &totalAddedCount, workers, batchTasks)
 			if err != nil {
 				return errors.Trace(err)
 			}
