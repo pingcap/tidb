@@ -23,10 +23,13 @@ import (
 )
 
 const (
-	WARN_LEVEL_WARN = "Warning"
-	WARN_LEVEL_NOTE = "Note"
+	// Represent level "Warning" for 'SHOW WARNINGS' syntax
+	WarnLevelWarning = "Warning"
+	// Represent level "Note" for 'SHOW WARNINGS' syntax
+	WarnLevelNote = "Note"
 )
 
+// SQLWarn relates a sql warning and it's level.
 type SQLWarn struct {
 	Level string
 	Err   error
@@ -137,16 +140,16 @@ func (sc *StatementContext) SetWarnings(warns []SQLWarn) {
 func (sc *StatementContext) AppendWarning(warn error) {
 	sc.mu.Lock()
 	if len(sc.mu.warnings) < math.MaxUint16 {
-		sc.mu.warnings = append(sc.mu.warnings, SQLWarn{WARN_LEVEL_WARN, warn})
+		sc.mu.warnings = append(sc.mu.warnings, SQLWarn{WarnLevelWarning, warn})
 	}
 	sc.mu.Unlock()
 }
 
-// AppendWarning appends a warning with level 'Note'.
+// AppendNote appends a warning with level 'Note'.
 func (sc *StatementContext) AppendNote(warn error) {
 	sc.mu.Lock()
 	if len(sc.mu.warnings) < math.MaxUint16 {
-		sc.mu.warnings = append(sc.mu.warnings, SQLWarn{WARN_LEVEL_NOTE, warn})
+		sc.mu.warnings = append(sc.mu.warnings, SQLWarn{WarnLevelNote, warn})
 	}
 	sc.mu.Unlock()
 }

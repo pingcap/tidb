@@ -113,7 +113,7 @@ func (s *testIntegrationSuite) TestCreateTableIfNotExists(c *C) {
 	c.Assert(len(warnings), GreaterEqual, 1)
 	lastWarn := warnings[len(warnings)-1]
 	c.Assert(terror.ErrorEqual(infoschema.ErrTableExists, lastWarn.Err), IsTrue)
-	c.Assert(lastWarn.Level, Equals, stmtctx.WARN_LEVEL_NOTE)
+	c.Assert(lastWarn.Level, Equals, stmtctx.WarnLevelNote)
 
 	// Test duplicate create-table without `LIKE` clause
 	tk.MustExec("create table if not exists t(b bigint, c varchar(60));")
