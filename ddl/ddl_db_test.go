@@ -2381,4 +2381,10 @@ func (s *testDBSuite) TestAlterTableAddPartition(c *C) {
 	);`
 	s.testErrorCode(c, sql5, mysql.ErrSameNamePartition)
 
+	sql6 := `alter table t3 add partition (
+		partition p1 values less than (1993),
+		partition p1 values less than (1995)
+	);`
+	s.testErrorCode(c, sql6, mysql.ErrSameNamePartition)
+
 }
