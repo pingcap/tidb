@@ -402,14 +402,13 @@ func checkTableNotExists(t *meta.Meta, job *model.Job, schemaID int64, tableName
 // executing the renameTable DDL job does not change the tableID ,sql1 and sql2 were executed successfully,the result was not expected,
 // for example: sql1: "alter table t rename to t_add;"  sql2: "alter table t add a1 int;".
 func checkTableNameChange(t *meta.Meta, job *model.Job, tableName string, ti *ast.Ident) error {
-	dbInfo, err := t.GetDatabase(job.SchemaID)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	// the ti.Name.L will be nil when the job is enqueued by old version tidb, the new version of tidb checks for errors and prompts for errors and cancels job.
 	if len(ti.Name.L) != 0 && len(tableName) != 0 {
 		if !strings.EqualFold(ti.Name.L, tableName) {
+			dbInfo, err := t.GetDatabase(job.SchemaID)
+			if err != nil {
+				return errors.Trace(err)
+			}
 			job.State = model.JobStateCancelled
 			return infoschema.ErrTableNotExists.GenByArgs(dbInfo.Name.O, ti.Name.L)
 		}
