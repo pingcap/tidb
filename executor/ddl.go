@@ -45,7 +45,9 @@ func (e *DDLExec) toErr(err error) error {
 		return err
 	}
 
-	// Before the DDL job is ready，it encouters an error that may be due to the outdated schema information.
+	// Before the DDL job is ready, it encouters an error that may be due to the outdated schema information.
+	// After the DDL job is ready, the ErrInfoSchemaChanged error won't happen because we are getting the schema directly from storage.
+	// So we needn't to consider this condition.
 	// Here we distinguish the ErrInfoSchemaChanged error from other errors.
 	dom := domain.GetDomain(e.ctx)
 	checker := schemachecker.NewSchemaChecker(dom, e.is.SchemaMetaVersion(), nil)
