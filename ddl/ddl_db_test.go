@@ -2368,7 +2368,7 @@ func (s *testDBSuite) TestAlterTableAddPartition(c *C) {
 	)
 	partition by range( year(hired) ) (
 	partition p1 values less than (1991),
-	partition p3 values less than (2001),
+	partition p3 values less than (2001)
 	);`)
 
 	sql4 := `alter table t3 add partition (
@@ -2387,4 +2387,10 @@ func (s *testDBSuite) TestAlterTableAddPartition(c *C) {
 	);`
 	s.testErrorCode(c, sql6, mysql.ErrSameNamePartition)
 
+	sql7 := `alter table t3 add partition (
+		partition p4 values less than (1993),
+		partition p1 values less than (1995)，
+		partition p5 values less than maxvalue,
+	);`
+	s.testErrorCode(c, sql7, mysql.ErrSameNamePartition)
 }

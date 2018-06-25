@@ -438,22 +438,20 @@ func updatePartitionInfo(partitionInfo *model.PartitionInfo, tblInfo *model.Tabl
 }
 
 func checkPartitionNotExists(meta *model.TableInfo, part *model.PartitionInfo) error {
-	oldDefs, newDefs := meta.Partition.Definitions, part.Definitions
-	for _, oldDef := range oldDefs {
-		for _, newDef := range newDefs {
-			if strings.EqualFold(oldDef.Name, newDef.Name) {
-				return ErrSameNamePartition.GenByArgs(newDef.Name)
-			}
+	oldPars, newPars := meta.Partition.Definitions, part.Definitions
+	set := make(map[string]bool)
+	for _, oldPar := range oldPars {
+		if _, ok := set[strings.ToLower(oldPar.Name)]; ok {
+			return ErrSameNamePartition.GenByArgs(oldPar.Name)
+		} else {
+			set[strings.ToLower(oldPar.Name)] = true
 		}
 	}
-
-	for i := 0; i < len(newDefs); i++ {
-		for j := i + 1; j < len(newDefs); j++ {
-			if i != j {
-				if strings.EqualFold(newDefs[i].Name, newDefs[j].Name) {
-					return ErrSameNamePartition.GenByArgs(newDefs[i].Name)
-				}
-			}
+	for _, newPar := range newPars {
+		if _, ok := set[strings.ToLower(newPar.Name)]; ok {
+			return ErrSameNamePartition.GenByArgs(newPar.Name)
+		} else {
+			set[strings.ToLower(newPar.Name)] = true
 		}
 	}
 	return nil
@@ -463,37 +461,32 @@ func checkPartitionNotExists(meta *model.TableInfo, part *model.PartitionInfo) e
 func checkAddPartitionValue(meta *model.TableInfo, part *model.PartitionInfo) error {
 	if meta.Partition.Type == model.PartitionTypeRange {
 		newDefs, oldDefs := part.Definitions, meta.Partition.Definitions
-		nextRangeValue := oldDefs[len(oldDefs)-1].LessThan[0]
-
-		if strings.EqualFold(nextRangeValue, "MAXVALUE") {
-			return ErrPartitionMaxvalue
+		rangeValue := oldDefs[len(oldDefs)-1].LessThan[0]
+		if strings.EqualFold(rangeValue, "MAXVALUE") {
+			return errors.Trace(ErrPartitionMaxvalue)
 		}
 
-		if len(newDefs) == 1 && strings.EqualFold(newDefs[0].LessThan[0], "MAXVALUE") {
-			return nil
+		nextRangeValue, err := strconv.Atoi(rangeValue)
+		if err != nil {
+			return errors.Trace(err)
 		}
+
 		for i := 0; i < len(newDefs); i++ {
 			ifMaxvalue := strings.EqualFold(newDefs[i].LessThan[0], "MAXVALUE")
 			if ifMaxvalue && i == len(newDefs)-1 {
 				return nil
 			} else if ifMaxvalue && i != len(newDefs)-1 {
-				return ErrPartitionMaxvalue
+				return errors.Trace(ErrPartitionMaxvalue)
 			}
 
 			currentRangeValue, err := strconv.Atoi(newDefs[i].LessThan[0])
 			if err != nil {
 				return errors.Trace(err)
 			}
-
-			rangeValue, nil := strconv.Atoi(nextRangeValue)
-			if err != nil {
-				return errors.Trace(err)
+			if currentRangeValue <= nextRangeValue {
+				return errors.Trace(ErrRangeNotIncreasing)
 			}
-
-			if currentRangeValue <= rangeValue {
-				return ErrRangeNotIncreasing
-			}
-			nextRangeValue = newDefs[i].LessThan[0]
+			nextRangeValue = currentRangeValue
 		}
 	}
 	return nil
