@@ -47,8 +47,8 @@ func newBaseHashAggWorker(finishCh <-chan struct{}, aggFuncs []aggregation.Aggre
 	}
 }
 
-// HashAggPartialWorker does the following things:
-// todo: graph to be added.
+// HashAggPartialWorker indicates the partial workers of parallel hash agg execution,
+// the number of the worker can be set by `tidb_hashagg_partial_concurrency`.
 type HashAggPartialWorker struct {
 	baseHashAggWorker
 
@@ -60,11 +60,13 @@ type HashAggPartialWorker struct {
 	groupByItems   []expression.Expression
 	groupKey       []byte
 	groupValDatums []types.Datum
-	chk            *chunk.Chunk
+	// chk stores the input data from child,
+	// and is reused by childExec and partial worker.
+	chk *chunk.Chunk
 }
 
-// HashAggFinalWorker does the following things:
-// todo: graph to be added.
+// HashAggFinalWorker indicates the final workers of parallel hash agg execution,
+// the number of the worker can be set by `tidb_hashagg_final_concurrency`.
 type HashAggFinalWorker struct {
 	baseHashAggWorker
 
@@ -287,8 +289,6 @@ func (w *HashAggPartialWorker) getChildInput() bool {
 	return true
 }
 
-// HashAggPartialWorker gets and handles origin data or partial data from inputCh,
-// then shuffle the intermediate results to corresponded final workers.
 func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup, finalConcurrency int) {
 	needShuffle, sc := false, ctx.GetSessionVars().StmtCtx
 	defer func() {
@@ -538,7 +538,11 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 	go e.waitFinalWorkerAndCloseFinalOutput(finalWorkerWaitGroup)
 }
 
-// parallelExec executes hash aggregate algorithm parallelly.
+// HashAggExec employs one input reader, M partial workers and N final workers to execute parallelly.
+// The parallel execution flow is:
+// 1. input reader reads data from child executor and send them to partial workers
+// 2. partial worker receives the input data, updates the partial results, and shuffle the partial results to the final workers.
+// 3. final worker receives partial results from all the partial workers, evaluates the final results and sends the final results to the main thread.
 func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error {
 	if !e.prepared {
 		e.prepare4ParallelExec(ctx)

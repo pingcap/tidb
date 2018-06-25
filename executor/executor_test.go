@@ -891,7 +891,7 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("insert into t (c1, c2) values (1, 1)")
 	tk.MustExec("insert into t (c1, c2) values (1, 2)")
 	tk.MustExec("insert into t (c1, c2) values (2, 3)")
-	r = tk.MustQuery("select * from t where t.c1 = 1 union select * from t where t.id = 1")
+	r = tk.MustQuery("select * from (select * from t where t.c1 = 1 union select * from t where t.id = 1) s order by s.id")
 	r.Check(testkit.Rows("1 1 1", "2 1 2"))
 
 	tk.MustExec("drop table if exists t")
