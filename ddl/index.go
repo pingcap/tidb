@@ -642,7 +642,7 @@ func (w *addIndexWorker) run() {
 		log.Debug("[ddl-reorg] got backfill index task:#v", task)
 
 		// gofail: var mockAddIndexErr bool
-		//if mockAddIndexErr && !gofailMockAddindexErrOnceGuard && w.id == 0 {
+		//if w.id == 0 && mockAddIndexErr && !gofailMockAddindexErrOnceGuard {
 		//	gofailMockAddindexErrOnceGuard = true
 		//	result := &addIndexResult{addedCount: 0, nextHandle: 0, err: errors.Errorf("mock add index error")}
 		//	w.resultCh <- result
