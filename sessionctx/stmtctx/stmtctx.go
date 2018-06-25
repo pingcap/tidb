@@ -23,9 +23,9 @@ import (
 )
 
 const (
-	// WarnLevelWarning represents level "Warning" for 'SHOW WARNINGS' syntax
+	// WarnLevelWarning represents level "Warning" for 'SHOW WARNINGS' syntax.
 	WarnLevelWarning = "Warning"
-	// WarnLevelNote represents level "Note" for 'SHOW WARNINGS' syntax
+	// WarnLevelNote represents level "Note" for 'SHOW WARNINGS' syntax.
 	WarnLevelNote = "Note"
 )
 
@@ -136,7 +136,7 @@ func (sc *StatementContext) SetWarnings(warns []SQLWarn) {
 	sc.mu.Unlock()
 }
 
-// AppendWarning appends a warning with level 'Warning'
+// AppendWarning appends a warning with level 'Warning'.
 func (sc *StatementContext) AppendWarning(warn error) {
 	sc.mu.Lock()
 	if len(sc.mu.warnings) < math.MaxUint16 {
