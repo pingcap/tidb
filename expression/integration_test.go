@@ -66,7 +66,6 @@ func (s *testIntegrationSuite) SetUpSuite(c *C) {
 	s.store, s.dom, err = newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	s.ctx = mock.NewContext()
-	s.ctx.GetSessionVars().HashAggFinalConcurrency = 1
 }
 
 func (s *testIntegrationSuite) TearDownSuite(c *C) {
@@ -136,7 +135,6 @@ func (s *testIntegrationSuite) TestMiscellaneousBuiltin(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_hashagg_final_concurrency=1")
 	// for uuid
 	r := tk.MustQuery("select uuid(), uuid(), uuid(), uuid(), uuid(), uuid();")
 	for _, it := range r.Rows() {
@@ -198,7 +196,7 @@ func (s *testIntegrationSuite) TestMiscellaneousBuiltin(c *C) {
 );`)
 	tk.MustExec("insert into t1 (a,b) values(1,10),(1,20),(2,30),(2,40);")
 	tk.MustQuery("select any_value(a), sum(b) from t1;").Check(testkit.Rows("1 100"))
-	tk.MustQuery("select a,any_value(b),sum(c) from t1 group by a;").Check(testkit.Rows("1 10 0", "2 30 0"))
+	tk.MustQuery("select a,any_value(b),sum(c) from t1 group by a order by a;").Check(testkit.Rows("1 10 0", "2 30 0"))
 
 	// for locks
 	result := tk.MustQuery(`SELECT GET_LOCK('test_lock1', 10);`)

@@ -111,6 +111,20 @@ func (a *AggFuncDesc) typeInfer(ctx sessionctx.Context) {
 // CalculateDefaultValue gets the default value when the aggregation function's input is null.
 // The input stands for the schema of Aggregation's child. If the function can't produce a default value, the second
 // return value will be false.
+//
+// According to MySQL, DefaultValue of the aggregation function can be tested as the following sql:
+//
+// mysql> CREATE TABLE `t` (
+// ->   `a` int(11) DEFAULT NULL,
+// ->   `b` int(11) DEFAULT NULL
+// -> );
+// mysql>
+// +------+--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+
+// | a    | avg(a) | sum(a) | count(a) | bit_xor(a) | bit_or(a) | bit_and(a)           | max(a) | min(a) | group_concat(a) |
+// +------+--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+
+// | NULL |   NULL |   NULL |        0 |          0 |         0 | 18446744073709551615 |   NULL |   NULL | NULL            |
+// +------+--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+
+// 1 row in set (0.01 sec)
 func (a *AggFuncDesc) CalculateDefaultValue(ctx sessionctx.Context, schema *expression.Schema) (types.Datum, bool) {
 	switch a.Name {
 	case ast.AggFuncCount:

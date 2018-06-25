@@ -156,8 +156,8 @@ const (
 
 	// tidb_projection_concurrency is used for projection operator.
 	// This variable controls the worker number of projection operator.
-
 	TiDBProjectionConcurrency = "tidb_projection_concurrency"
+
 	// tidb_hashagg_partial_concurrency is used for hash agg executor.
 	// The hash agg executor starts multiple concurrent partial workers to do partial aggregate works.
 	TiDBHashAggPartialConcurrency = "tidb_hashagg_partial_concurrency"

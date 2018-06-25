@@ -809,7 +809,7 @@ func (s *testSuite) TestIssue5055(c *C) {
 }
 
 func (s *testSuite) TestUnion(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
 	testSQL := `drop table if exists union_test; create table union_test(id int);`
@@ -1845,7 +1845,7 @@ func (s *testSuite) TestScanControlSelection(c *C) {
 }
 
 func (s *testSuite) TestSimpleDAG(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int, c int)")

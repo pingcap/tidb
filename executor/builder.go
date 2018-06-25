@@ -834,6 +834,25 @@ func (b *executorBuilder) buildHashAgg(v *plan.PhysicalHashAgg) Executor {
 		AggFuncs:     make([]aggregation.Aggregation, 0, len(v.AggFuncs)),
 		GroupByItems: v.GroupByItems,
 	}
+	// We take `create table t(a int, b int);` as example.
+	//
+	// 1. If all the aggregation functions are FIRST_ROW, we do not need to set the defaultVal for them:
+	// e.g.
+	// mysql> select distinct a, b from t;
+	// 0 rows in set (0.00 sec)
+	//
+	// 2. If there exists group by items, we do not need to set the defaultVal for them either:
+	// e.g.
+	// mysql> select avg(a) from t group by b;
+	// Empty set (0.00 sec)
+	//
+	// mysql> select avg(a) from t group by a;
+	// +--------+
+	// | avg(a) |
+	// +--------+
+	// |  NULL  |
+	// +--------+
+	// 1 row in set (0.00 sec)
 	if len(v.GroupByItems) != 0 || aggregation.IsAllFirstRow(v.AggFuncs) {
 		e.defaultVal = nil
 	} else {
@@ -843,6 +862,12 @@ func (b *executorBuilder) buildHashAgg(v *plan.PhysicalHashAgg) Executor {
 		if aggDesc.HasDistinct {
 			e.doesUnparallelExec = true
 		}
+	}
+	// When we set both tidb_hashagg_final_concurrency and tidb_hashagg_partial_concurrency to 1,
+	// we do not need to parallelly execute hash agg,
+	// and this action can be a workaround when meeting some unexpected situation using parallelExec.
+	if sessionVars.HashAggFinalConcurrency == 1 && sessionVars.HashAggPartialConcurrency == 1 {
+		e.doesUnparallelExec = true
 	}
 	for i, aggDesc := range v.AggFuncs {
 		if !e.doesUnparallelExec {
