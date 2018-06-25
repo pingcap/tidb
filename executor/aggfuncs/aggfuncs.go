@@ -14,6 +14,8 @@
 package aggfuncs
 
 import (
+	"unsafe"
+
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
@@ -33,35 +35,40 @@ var (
 // All the AggFunc implementations for "BIT_AND" are listed here.
 )
 
+// PartialResult represents data structure to store the partial result for the
+// aggregate functions. Here we use unsafe.Pointer to allow the partial result
+// to be any type.
+type PartialResult unsafe.Pointer
+
 // AggFunc is the interface to evaluate the aggregate functions.
 type AggFunc interface {
 	// AllocPartialResult allocates a specific data structure to store the
-	// partial result, initializes it, and converts it to a bype slice to return
-	// back. Aggregate operator implementation, no matter it's a hash or stream
-	// implementation, should hold this byte slice for the further operations
-	// like: "ResetPartialResult", "UpdatePartialResult".
-	AllocPartialResult() []byte
+	// partial result, initializes it, and converts it to PartialResult to
+	// return back. Aggregate operator implementation, no matter it's a hash
+	// or stream, should hold this allocated PartialResult for the further
+	// operations like: "ResetPartialResult", "UpdatePartialResult".
+	AllocPartialResult() PartialResult
 
 	// ResetPartialResult resets the partial result to the original state for a
-	// specific aggregate function. It converts the input byte slice to the
+	// specific aggregate function. It converts the input PartialResult to the
 	// specific data structure which stores the partial result and then reset
 	// every field to the proper original state.
-	ResetPartialResult(partialBytes []byte)
+	ResetPartialResult(pr PartialResult)
 
 	// UpdatePartialResult updates the specific partial result for an aggregate
 	// function using the input rows which all belonging to the same data group.
-	// It converts the input byte slice to the specific data structure which
-	// stores the partial result and then iterates on the input rows and update
-	// that partial result according to the functionality and the state of the
+	// It converts the PartialResult to the specific data structure which stores
+	// the partial result and then iterates on the input rows and update that
+	// partial result according to the functionality and the state of the
 	// aggregate function.
-	UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, partialBytes []byte) error
+	UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error
 
 	// AppendFinalResult2Chunk finalizes the partial result and append the
 	// final result to the input chunk. Like other operations, it converts the
-	// input byte slice to the specific data structure which stores the partial
-	// result and then calculates the final result and append that final result
-	// to the chunk provided.
-	AppendFinalResult2Chunk(sctx sessionctx.Context, partialBytes []byte, chk *chunk.Chunk) error
+	// input PartialResult to the specific data structure which stores the
+	// partial result and then calculates the final result and append that
+	// final result to the chunk provided.
+	AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error
 }
 
 type baseAggFunc struct {

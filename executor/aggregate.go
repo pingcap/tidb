@@ -196,9 +196,9 @@ type StreamAggExec struct {
 	rowBuffer  []types.Datum
 
 	// for the new execution framework of aggregate functions
-	newAggFuncs  []aggfuncs.AggFunc
-	partialBytes [][]byte
-	groupRows    []chunk.Row
+	newAggFuncs    []aggfuncs.AggFunc
+	partialResults []aggfuncs.PartialResult
+	groupRows      []chunk.Row
 }
 
 // Open implements the Executor Open interface.
@@ -215,9 +215,9 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 	e.rowBuffer = make([]types.Datum, 0, e.Schema().Len())
 
 	if e.newAggFuncs != nil {
-		e.partialBytes = make([][]byte, 0, len(e.newAggFuncs))
+		e.partialResults = make([]aggfuncs.PartialResult, 0, len(e.newAggFuncs))
 		for _, newAggFunc := range e.newAggFuncs {
-			e.partialBytes = append(e.partialBytes, newAggFunc.AllocPartialResult())
+			e.partialResults = append(e.partialResults, newAggFunc.AllocPartialResult())
 		}
 	} else {
 		e.aggCtxs = make([]*aggregation.AggEvaluateContext, 0, len(e.AggFuncs))
@@ -288,7 +288,7 @@ func (e *StreamAggExec) consumeGroupRows() error {
 	}
 
 	for i, newAggFunc := range e.newAggFuncs {
-		err := newAggFunc.UpdatePartialResult(e.ctx, e.groupRows, e.partialBytes[i])
+		err := newAggFunc.UpdatePartialResult(e.ctx, e.groupRows, e.partialResults[i])
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -336,11 +336,11 @@ func (e *StreamAggExec) fetchChildIfNecessary(ctx context.Context, chk *chunk.Ch
 func (e *StreamAggExec) appendResult2Chunk(chk *chunk.Chunk) error {
 	if e.newAggFuncs != nil {
 		for i, newAggFunc := range e.newAggFuncs {
-			err := newAggFunc.AppendFinalResult2Chunk(e.ctx, e.partialBytes[i], chk)
+			err := newAggFunc.AppendFinalResult2Chunk(e.ctx, e.partialResults[i], chk)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			newAggFunc.ResetPartialResult(e.partialBytes[i])
+			newAggFunc.ResetPartialResult(e.partialResults[i])
 		}
 		if len(e.newAggFuncs) == 0 {
 			chk.SetNumVirtualRows(chk.NumRows() + 1)
