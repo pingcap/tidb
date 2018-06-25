@@ -37,8 +37,8 @@ var (
 type AggFunc interface {
 	// AllocPartialResult allocates a specific data structure to store the
 	// partial result, initializes it, and converts it to a bype slice to return
-	// back. Aggregate operator implementations, no mater whether it's a hash or
-	// stream implementation, should hold this byte slice for further operations
+	// back. Aggregate operator implementation, no matter it's a hash or stream
+	// implementation, should hold this byte slice for the further operations
 	// like: "ResetPartialResult", "UpdatePartialResult".
 	AllocPartialResult() []byte
 
@@ -65,6 +65,11 @@ type AggFunc interface {
 }
 
 type baseAggFunc struct {
-	input  []expression.Expression
+	// input stores the input arguments for an aggregate function, we should
+	// call input.EvalXXX to get the actual input data for this function.
+	input []expression.Expression
+
+	// output stores the ordinal of the columns in the output chunk, which is
+	// used to append the partial or final result of this function.
 	output []int
 }

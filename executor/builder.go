@@ -928,6 +928,10 @@ func (b *executorBuilder) buildStreamAgg(v *plan.PhysicalStreamAgg) Executor {
 			newAggFuncs = append(newAggFuncs, newAggFunc)
 		}
 	}
+
+	// Once we have successfully build all the aggregate functions to the new
+	// aggregate function execution framework, we can store them to the stream
+	// aggregate operator to indicate it using the new execution framework.
 	if len(newAggFuncs) == len(v.AggFuncs) {
 		e.newAggFuncs = newAggFuncs
 	}

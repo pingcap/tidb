@@ -19,7 +19,7 @@ import (
 )
 
 // Build is used to build a specific AggFunc implementation according to the
-// input aggFuncDesc
+// input aggFuncDesc.
 func Build(aggFuncDesc *aggregation.AggFuncDesc, output []int) AggFunc {
 	switch aggFuncDesc.Name {
 	case ast.AggFuncCount:
