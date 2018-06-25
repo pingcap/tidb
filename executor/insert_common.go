@@ -281,11 +281,10 @@ func (e *InsertValues) getRowsSelectChunk(ctx context.Context, cols []*table.Col
 		return ErrWrongValueCountOnRow.GenByArgs(1)
 	}
 	fields := selectExec.retTypes()
-	maxChunkSize := e.ctx.GetSessionVars().MaxChunkSize
+	chk := selectExec.newChunk()
+	iter := chunk.NewIterator4Chunk(chk)
+	rows := make([]types.DatumRow, 0, e.ctx.GetSessionVars().MaxChunkSize)
 	for {
-		chk := selectExec.newChunk()
-		iter := chunk.NewIterator4Chunk(chk)
-
 		err := selectExec.Next(ctx, chk)
 		if err != nil {
 			return errors.Trace(err)
@@ -294,31 +293,19 @@ func (e *InsertValues) getRowsSelectChunk(ctx context.Context, cols []*table.Col
 			break
 		}
 
-		numRows := 0
-		if maxChunkSize > chk.NumRows() {
-			numRows = chk.NumRows()
-		} else {
-			numRows = maxChunkSize
-		}
-		rows := make([]types.DatumRow, 0, numRows)
 		for innerChunkRow := iter.Begin(); innerChunkRow != iter.End(); innerChunkRow = iter.Next() {
 			innerRow := innerChunkRow.GetDatumRow(fields)
-			e.rowCount = uint64(len(rows))
+			e.rowCount++
 			row, err := e.fillRowData(cols, innerRow)
 			if err != nil {
 				return errors.Trace(err)
 			}
 			rows = append(rows, row)
-			if len(rows) == maxChunkSize {
-				if err := exec(rows); err != nil {
-					return errors.Trace(err)
-				}
-				rows = rows[:0]
-			}
 		}
 		if err := exec(rows); err != nil {
 			return errors.Trace(err)
 		}
+		rows = rows[:0]
 	}
 	return nil
 }
