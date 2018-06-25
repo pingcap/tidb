@@ -92,13 +92,13 @@ func (h *rpcHandler) handleAnalyzeIndexReq(req *coprocessor.Request, analyzeReq 
 		var value []byte
 		for _, val := range values {
 			value = append(value, val...)
+			if cms != nil {
+				cms.InsertBytes(value)
+			}
 		}
 		err = statsBuilder.Iterate(types.NewBytesDatum(value))
 		if err != nil {
 			return nil, errors.Trace(err)
-		}
-		if cms != nil {
-			cms.InsertBytes(value)
 		}
 	}
 	hg := statistics.HistogramToProto(statsBuilder.Hist())

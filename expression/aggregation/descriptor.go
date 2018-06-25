@@ -226,11 +226,12 @@ func (a *AggFuncDesc) typeInfer4MaxMin(ctx sessionctx.Context) {
 	_, argIsScalaFunc := a.Args[0].(*expression.ScalarFunction)
 	if argIsScalaFunc && a.Args[0].GetType().Tp == mysql.TypeFloat {
 		// For scalar function, the result of "float32" is set to the "float64"
-		// field in the "Datum".
-		a.RetTp = new(types.FieldType)
-		*(a.RetTp) = *(a.Args[0].GetType())
-		a.RetTp.Tp = mysql.TypeDouble
-		return
+		// field in the "Datum". If we do not wrap a cast-as-double function on a.Args[0],
+		// error would happen when extracting the evaluation of a.Args[0] to a ProjectionExec.
+		tp := types.NewFieldType(mysql.TypeDouble)
+		tp.Flen, tp.Decimal = mysql.MaxRealWidth, types.UnspecifiedLength
+		types.SetBinChsClnFlag(tp)
+		a.Args[0] = expression.BuildCastFunction(ctx, a.Args[0], tp)
 	}
 	a.RetTp = a.Args[0].GetType()
 }
