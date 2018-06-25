@@ -115,6 +115,7 @@ type HashAggExec struct {
 	finalOutputCh    chan *AfFinalResult
 	partialOutputChs []chan *HashAggIntermData
 	inputCh          chan *HashAggInput
+	partialInputChs  []chan *chunk.Chunk
 	partialWorkers   []HashAggPartialWorker
 	finalWorkers     []HashAggFinalWorker
 	defaultVal       *chunk.Chunk
@@ -216,10 +217,15 @@ func (e *HashAggExec) initForParallelExec() {
 	e.inputCh = make(chan *HashAggInput, partialConcurrency)
 	e.finishCh = make(chan struct{}, 1)
 
+	e.partialInputChs = make([]chan *chunk.Chunk, partialConcurrency)
+	for i := range e.partialInputChs {
+		e.partialInputChs[i] = make(chan *chunk.Chunk, 1)
+	}
 	e.partialOutputChs = make([]chan *HashAggIntermData, finalConcurrency)
 	for i := range e.partialOutputChs {
 		e.partialOutputChs[i] = make(chan *HashAggIntermData, partialConcurrency)
 	}
+
 	e.partialWorkers = make([]HashAggPartialWorker, partialConcurrency)
 	e.finalWorkers = make([]HashAggFinalWorker, finalConcurrency)
 
@@ -227,7 +233,7 @@ func (e *HashAggExec) initForParallelExec() {
 	for i := 0; i < partialConcurrency; i++ {
 		w := HashAggPartialWorker{
 			baseHashAggWorker: newBaseHashAggWorker(e.finishCh, e.AggFuncs, e.maxChunkSize),
-			inputCh:           make(chan *chunk.Chunk, 1),
+			inputCh:           e.partialInputChs[i],
 			outputChs:         e.partialOutputChs,
 			giveBackCh:        e.inputCh,
 			globalOutputCh:    e.finalOutputCh,
@@ -482,8 +488,8 @@ func (e *HashAggExec) fetchChildData(ctx context.Context) {
 		err   error
 	)
 	defer func() {
-		for _, w := range e.partialWorkers {
-			close(w.inputCh)
+		for i := range e.partialInputChs {
+			close(e.partialInputChs[i])
 		}
 	}()
 	for {
