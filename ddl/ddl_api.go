@@ -688,6 +688,65 @@ func checkCreatePartitionValue(meta *model.TableInfo, part *model.PartitionInfo)
 	return nil
 }
 
+func buildCreateTablePartitionInfo(d *ddl, tbInfo *model.TableInfo, s *ast.CreateTableStmt, cols []*table.Column) error {
+	if s.Partition == nil {
+		return nil
+	}
+	pi := &model.PartitionInfo{
+		Type: s.Partition.Tp,
+	}
+	if s.Partition.Expr != nil {
+		buf := new(bytes.Buffer)
+		s.Partition.Expr.Format(buf)
+		pi.Expr = buf.String()
+		if s.Partition.Tp == model.PartitionTypeRange {
+			if _, ok := s.Partition.Expr.(*ast.ColumnNameExpr); ok {
+				for _, col := range cols {
+					name := strings.Replace(col.Name.String(), ".", "`.`", -1)
+					if !(col.Tp == mysql.TypeLong || col.Tp == mysql.TypeLonglong) && fmt.Sprintf("`%s`", name) == pi.Expr {
+						return errors.Trace(ErrNotAllowedTypeInPartition.GenByArgs(pi.Expr))
+					}
+				}
+			}
+		}
+	} else if s.Partition.ColumnNames != nil {
+		pi.Columns = make([]model.CIStr, 0, len(s.Partition.ColumnNames))
+		for _, cn := range s.Partition.ColumnNames {
+			pi.Columns = append(pi.Columns, cn.Name)
+		}
+	}
+	for _, def := range s.Partition.Definitions {
+		// TODO: generate multiple global ID for paritions.
+		pid, err1 := d.genGlobalID()
+		if err1 != nil {
+			return errors.Trace(err1)
+		}
+		piDef := model.PartitionDefinition{
+			Name:    def.Name,
+			ID:      pid,
+			Comment: def.Comment,
+		}
+		for _, expr := range def.LessThan {
+			buf := new(bytes.Buffer)
+			expr.Format(buf)
+			piDef.LessThan = append(piDef.LessThan, buf.String())
+		}
+		pi.Definitions = append(pi.Definitions, piDef)
+	}
+	tbInfo.Partition = pi
+
+	err := checkCreatePartitionNotExists(tbInfo, tbInfo.Partition)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = checkCreatePartitionValue(tbInfo, tbInfo.Partition)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	return nil
+}
+
 func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols []*table.Column, constraints []*ast.Constraint) (tbInfo *model.TableInfo, err error) {
 	tbInfo = &model.TableInfo{
 		Name: tableName,
@@ -890,59 +949,11 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if s.Partition != nil {
-		pi := &model.PartitionInfo{
-			Type: s.Partition.Tp,
-		}
-		if s.Partition.Expr != nil {
-			buf := new(bytes.Buffer)
-			s.Partition.Expr.Format(buf)
-			pi.Expr = buf.String()
-			if s.Partition.Tp == model.PartitionTypeRange {
-				if _, ok := s.Partition.Expr.(*ast.ColumnNameExpr); ok {
-					for _, col := range cols {
-						name := strings.Replace(col.Name.String(), ".", "`.`", -1)
-						if !(col.Tp == mysql.TypeLong || col.Tp == mysql.TypeLonglong) && fmt.Sprintf("`%s`", name) == pi.Expr {
-							return errors.Trace(ErrNotAllowedTypeInPartition.GenByArgs(pi.Expr))
-						}
-					}
-				}
-			}
-		} else if s.Partition.ColumnNames != nil {
-			pi.Columns = make([]model.CIStr, 0, len(s.Partition.ColumnNames))
-			for _, cn := range s.Partition.ColumnNames {
-				pi.Columns = append(pi.Columns, cn.Name)
-			}
-		}
-		for _, def := range s.Partition.Definitions {
-			// TODO: generate multiple global ID for paritions.
-			pid, err1 := d.genGlobalID()
-			if err1 != nil {
-				return errors.Trace(err1)
-			}
-			piDef := model.PartitionDefinition{
-				Name:    def.Name,
-				ID:      pid,
-				Comment: def.Comment,
-			}
-			for _, expr := range def.LessThan {
-				buf := new(bytes.Buffer)
-				expr.Format(buf)
-				piDef.LessThan = append(piDef.LessThan, buf.String())
-			}
-			pi.Definitions = append(pi.Definitions, piDef)
-		}
-		tbInfo.Partition = pi
-
-		err = checkCreatePartitionNotExists(tbInfo, tbInfo.Partition)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		err = checkCreatePartitionValue(tbInfo, tbInfo.Partition)
-		if err != nil {
-			return errors.Trace(err)
-		}
+	err = buildCreateTablePartitionInfo(d, tbInfo, s, cols)
+	if err != nil {
+		return errors.Trace(err)
 	}
+
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tbInfo.ID,
