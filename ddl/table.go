@@ -237,7 +237,8 @@ func onTruncateTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 func onRebaseAutoID(store kv.Storage, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	var newBase int64
-	err := job.DecodeArgs(&newBase)
+	ti := &ast.Ident{}
+	err := job.DecodeArgs(&newBase, ti)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -245,6 +246,9 @@ func onRebaseAutoID(store kv.Storage, t *meta.Meta, job *model.Job) (ver int64, 
 	tblInfo, err := getTableInfo(t, job, schemaID)
 	if err != nil {
 		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	if err = checkTableNameChange(t, job, tblInfo.Name.L, ti); err != nil {
 		return ver, errors.Trace(err)
 	}
 	tblInfo.AutoIncID = newBase

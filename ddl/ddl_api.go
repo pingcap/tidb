@@ -1083,7 +1083,7 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 		TableID:    t.Meta().ID,
 		Type:       model.ActionRebaseAutoID,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{newBase},
+		Args:       []interface{}{newBase, ident},
 	}
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)

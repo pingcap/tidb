@@ -203,7 +203,6 @@ func onRenameIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-
 	// Double check. See function `RenameIndex` in ddl_api.go
 	duplicate, err := validateRenameIndex(from, to, tblInfo)
 	if duplicate {
