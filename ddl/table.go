@@ -461,7 +461,7 @@ func checkAddPartitionValue(meta *model.TableInfo, part *model.PartitionInfo) er
 			return errors.Trace(ErrPartitionMaxvalue)
 		}
 
-		nextRangeValue, err := strconv.Atoi(rangeValue)
+		currentRangeValue, err := strconv.Atoi(rangeValue)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -474,14 +474,14 @@ func checkAddPartitionValue(meta *model.TableInfo, part *model.PartitionInfo) er
 				return errors.Trace(ErrPartitionMaxvalue)
 			}
 
-			currentRangeValue, err := strconv.Atoi(newDefs[i].LessThan[0])
+			nextRangeValue, err := strconv.Atoi(newDefs[i].LessThan[0])
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if currentRangeValue <= nextRangeValue {
+			if nextRangeValue <= currentRangeValue {
 				return errors.Trace(ErrRangeNotIncreasing)
 			}
-			nextRangeValue = currentRangeValue
+			currentRangeValue = nextRangeValue
 		}
 	}
 	return nil
