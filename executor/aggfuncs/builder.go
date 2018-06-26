@@ -20,78 +20,78 @@ import (
 
 // Build is used to build a specific AggFunc implementation according to the
 // input aggFuncDesc.
-func Build(aggFuncDesc *aggregation.AggFuncDesc, output []int) AggFunc {
+func Build(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	switch aggFuncDesc.Name {
 	case ast.AggFuncCount:
-		return buildCount(aggFuncDesc, output)
+		return buildCount(aggFuncDesc, ordinal)
 	case ast.AggFuncSum:
-		return buildSum(aggFuncDesc, output)
+		return buildSum(aggFuncDesc, ordinal)
 	case ast.AggFuncAvg:
-		return buildAvg(aggFuncDesc, output)
+		return buildAvg(aggFuncDesc, ordinal)
 	case ast.AggFuncFirstRow:
-		return buildFirstRow(aggFuncDesc, output)
+		return buildFirstRow(aggFuncDesc, ordinal)
 	case ast.AggFuncMax:
-		return buildMax(aggFuncDesc, output)
+		return buildMax(aggFuncDesc, ordinal)
 	case ast.AggFuncMin:
-		return buildMin(aggFuncDesc, output)
+		return buildMin(aggFuncDesc, ordinal)
 	case ast.AggFuncGroupConcat:
-		return buildGroupConcat(aggFuncDesc, output)
+		return buildGroupConcat(aggFuncDesc, ordinal)
 	case ast.AggFuncBitOr:
-		return buildBitOr(aggFuncDesc, output)
+		return buildBitOr(aggFuncDesc, ordinal)
 	case ast.AggFuncBitXor:
-		return buildBitXor(aggFuncDesc, output)
+		return buildBitXor(aggFuncDesc, ordinal)
 	case ast.AggFuncBitAnd:
-		return buildBitAnd(aggFuncDesc, output)
+		return buildBitAnd(aggFuncDesc, ordinal)
 	}
 	return nil
 }
 
 // buildCount builds the AggFunc implementation for function "COUNT".
-func buildCount(aggFuncDesc *aggregation.AggFuncDesc, output []int) AggFunc {
+func buildCount(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	return nil
 }
 
 // buildCount builds the AggFunc implementation for function "SUM".
-func buildSum(aggFuncDesc *aggregation.AggFuncDesc, output []int) AggFunc {
+func buildSum(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	return nil
 }
 
 // buildCount builds the AggFunc implementation for function "AVG".
-func buildAvg(aggFuncDesc *aggregation.AggFuncDesc, output []int) AggFunc {
+func buildAvg(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	return nil
 }
 
 // buildCount builds the AggFunc implementation for function "FIRST_ROW".
-func buildFirstRow(aggFuncDesc *aggregation.AggFuncDesc, output []int) AggFunc {
+func buildFirstRow(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	return nil
 }
 
 // buildCount builds the AggFunc implementation for function "MAX".
-func buildMax(aggFuncDesc *aggregation.AggFuncDesc, output []int) AggFunc {
+func buildMax(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	return nil
 }
 
 // buildCount builds the AggFunc implementation for function "MIN".
-func buildMin(aggFuncDesc *aggregation.AggFuncDesc, output []int) AggFunc {
+func buildMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	return nil
 }
 
 // buildCount builds the AggFunc implementation for function "GROUP_CONCAT".
-func buildGroupConcat(aggFuncDesc *aggregation.AggFuncDesc, output []int) AggFunc {
+func buildGroupConcat(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	return nil
 }
 
 // buildCount builds the AggFunc implementation for function "BIT_OR".
-func buildBitOr(aggFuncDesc *aggregation.AggFuncDesc, output []int) AggFunc {
+func buildBitOr(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	return nil
 }
 
 // buildCount builds the AggFunc implementation for function "BIT_XOR".
-func buildBitXor(aggFuncDesc *aggregation.AggFuncDesc, output []int) AggFunc {
+func buildBitXor(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	return nil
 }
 
 // buildCount builds the AggFunc implementation for function "BIT_AND".
-func buildBitAnd(aggFuncDesc *aggregation.AggFuncDesc, output []int) AggFunc {
+func buildBitAnd(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	return nil
 }

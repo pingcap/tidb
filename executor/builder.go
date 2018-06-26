@@ -923,7 +923,7 @@ func (b *executorBuilder) buildStreamAgg(v *plan.PhysicalStreamAgg) Executor {
 	newAggFuncs := make([]aggfuncs.AggFunc, 0, len(v.AggFuncs))
 	for i, aggDesc := range v.AggFuncs {
 		e.AggFuncs = append(e.AggFuncs, aggDesc.GetAggFunc())
-		newAggFunc := aggfuncs.Build(aggDesc, []int{i})
+		newAggFunc := aggfuncs.Build(aggDesc, i)
 		if newAggFunc != nil {
 			newAggFuncs = append(newAggFuncs, newAggFunc)
 		}

@@ -72,11 +72,11 @@ type AggFunc interface {
 }
 
 type baseAggFunc struct {
-	// input stores the input arguments for an aggregate function, we should
-	// call input.EvalXXX to get the actual input data for this function.
-	input []expression.Expression
+	// args stores the input arguments for an aggregate function, we should
+	// call arg.EvalXXX to get the actual input data for this function.
+	args []expression.Expression
 
-	// output stores the ordinal of the columns in the output chunk, which is
-	// used to append the partial or final result of this function.
-	output []int
+	// ordinal stores the ordinal of the columns in the output chunk, which is
+	// used to append the final result of this function.
+	ordinal int
 }
