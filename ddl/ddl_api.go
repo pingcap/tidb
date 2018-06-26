@@ -934,7 +934,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		}
 		tbInfo.Partition = pi
 
-		err := checkCreatePartitionNotExists(tbInfo, tbInfo.Partition)
+		err = checkCreatePartitionNotExists(tbInfo, tbInfo.Partition)
 		if err != nil {
 			return errors.Trace(err)
 		}
