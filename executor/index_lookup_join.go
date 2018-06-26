@@ -56,9 +56,10 @@ type IndexLookUpJoin struct {
 	outerCtx outerCtx
 	innerCtx innerCtx
 
-	task       *lookUpJoinTask
-	joinResult *chunk.Chunk
-	innerIter  chunk.Iterator
+	task          *lookUpJoinTask
+	joinResult    *chunk.Chunk
+	innerIterable chunk.Iterable
+	innerIterator chunk.Iterator
 
 	resultGenerator joinResultGenerator
 
@@ -198,22 +199,22 @@ func (e *IndexLookUpJoin) Next(ctx context.Context, chk *chunk.Chunk) error {
 		if task == nil {
 			return nil
 		}
-		if e.innerIter == nil || e.innerIter.Current() == e.innerIter.End() {
+		if e.innerIterator == nil || !e.innerIterator.HasNext() {
 			e.lookUpMatchedInners(task, task.cursor)
-			e.innerIter = chunk.NewIterator4Slice(task.matchedInners)
-			e.innerIter.Begin()
+			e.innerIterable = chunk.IterableRows(task.matchedInners)
+			e.innerIterator = e.innerIterable.Iterator()
 		}
 
 		outerRow := task.outerResult.GetRow(task.cursor)
-		if e.innerIter.Len() == 0 {
+		if e.innerIterator.Len() == 0 {
 			err = e.resultGenerator.emit(outerRow, nil, chk)
-		} else if e.innerIter.Current() != e.innerIter.End() {
-			err = e.resultGenerator.emit(outerRow, e.innerIter, chk)
+		} else if e.innerIterator.HasNext() {
+			err = e.resultGenerator.emit(outerRow, e.innerIterator, chk)
 		}
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if e.innerIter.Current() == e.innerIter.End() {
+		if !e.innerIterator.HasNext() {
 			task.cursor++
 		}
 		if chk.NumRows() == e.maxChunkSize {
@@ -348,7 +349,7 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 	if ow.filter != nil {
 		outerMatch := make([]bool, 0, task.outerResult.NumRows())
 		var err error
-		task.outerMatch, err = expression.VectorizedFilter(ow.ctx, ow.filter, chunk.NewIterator4Chunk(task.outerResult), outerMatch)
+		task.outerMatch, err = expression.VectorizedFilter(ow.ctx, ow.filter, task.outerResult, outerMatch)
 		if err != nil {
 			return task, errors.Trace(err)
 		}

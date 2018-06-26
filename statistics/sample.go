@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
 	"golang.org/x/net/context"
 )
@@ -156,7 +155,6 @@ func (s SampleBuilder) CollectColumnStats() ([]*SampleCollector, *SortedBuilder,
 	}
 	ctx := context.TODO()
 	chk := s.RecordSet.NewChunk()
-	it := chunk.NewIterator4Chunk(chk)
 	for {
 		err := s.RecordSet.Next(ctx, chk)
 		if err != nil {
@@ -168,7 +166,8 @@ func (s SampleBuilder) CollectColumnStats() ([]*SampleCollector, *SortedBuilder,
 		if len(s.RecordSet.Fields()) == 0 {
 			panic(fmt.Sprintf("%T", s.RecordSet))
 		}
-		for row := it.Begin(); row != it.End(); row = it.Next() {
+		for it := chk.Iterator(); it.HasNext(); {
+			row := it.Next()
 			datums := ast.RowToDatums(row, s.RecordSet.Fields())
 			if s.PkBuilder != nil {
 				err = s.PkBuilder.Iterate(datums[0])

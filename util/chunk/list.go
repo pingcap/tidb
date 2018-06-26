@@ -152,3 +152,8 @@ func (l *List) Walk(walkFunc ListWalkFunc) error {
 	}
 	return nil
 }
+
+// Iterator implements the Iterable interface.
+func (l *List) Iterator() Iterator {
+	return newIterator4List(l)
+}

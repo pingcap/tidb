@@ -106,7 +106,6 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 	fields := e.children[0].retTypes()
 	for {
 		chk := e.children[0].newChunk()
-		iter := chunk.NewIterator4Chunk(chk)
 
 		err := e.children[0].Next(ctx, chk)
 		if err != nil {
@@ -116,7 +115,8 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 			break
 		}
 
-		for chunkRow := iter.Begin(); chunkRow != iter.End(); chunkRow = iter.Next() {
+		for iter := chk.Iterator(); iter.HasNext(); {
+			chunkRow := iter.Next()
 			if batchDelete && rowCount >= batchDMLSize {
 				e.ctx.StmtCommit()
 				if err = e.ctx.NewTxn(); err != nil {
@@ -186,7 +186,6 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 	fields := e.children[0].retTypes()
 	for {
 		chk := e.children[0].newChunk()
-		iter := chunk.NewIterator4Chunk(chk)
 
 		err := e.children[0].Next(ctx, chk)
 		if err != nil {
@@ -196,7 +195,8 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 			break
 		}
 
-		for joinedChunkRow := iter.Begin(); joinedChunkRow != iter.End(); joinedChunkRow = iter.Next() {
+		for iter := chk.Iterator(); iter.HasNext(); {
+			joinedChunkRow := iter.Next()
 			joinedDatumRow := joinedChunkRow.GetDatumRow(fields)
 			e.composeTblRowMap(tblRowMap, colPosInfos, joinedDatumRow)
 		}

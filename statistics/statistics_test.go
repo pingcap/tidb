@@ -181,8 +181,8 @@ func buildPK(sctx sessionctx.Context, numBuckets, id int64, records ast.RecordSe
 		if chk.NumRows() == 0 {
 			break
 		}
-		it := chunk.NewIterator4Chunk(chk)
-		for row := it.Begin(); row != it.End(); row = it.Next() {
+		for it := chk.Iterator(); it.HasNext(); {
+			row := it.Next()
 			datums := ast.RowToDatums(row, records.Fields())
 			err = b.Iterate(datums[0])
 			if err != nil {
@@ -198,7 +198,6 @@ func buildIndex(sctx sessionctx.Context, numBuckets, id int64, records ast.Recor
 	cms := NewCMSketch(8, 2048)
 	ctx := context.Background()
 	chk := records.NewChunk()
-	it := chunk.NewIterator4Chunk(chk)
 	for {
 		err := records.Next(ctx, chk)
 		if err != nil {
@@ -207,7 +206,8 @@ func buildIndex(sctx sessionctx.Context, numBuckets, id int64, records ast.Recor
 		if chk.NumRows() == 0 {
 			break
 		}
-		for row := it.Begin(); row != it.End(); row = it.Next() {
+		for it := chk.Iterator(); it.HasNext(); {
+			row := it.Next()
 			datums := ast.RowToDatums(row, records.Fields())
 			buf, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx, nil, datums...)
 			if err != nil {

@@ -42,8 +42,9 @@ type MergeJoinExec struct {
 	innerTable *mergeJoinInnerTable
 	outerTable *mergeJoinOuterTable
 
-	innerRows     []chunk.Row
-	innerIter4Row chunk.Iterator
+	innerRows         []chunk.Row
+	innerIterable4Row chunk.Iterable
+	innerIterator4Row chunk.Iterator
 
 	memTracker *memory.Tracker
 }
@@ -56,8 +57,9 @@ type mergeJoinOuterTable struct {
 	chk      *chunk.Chunk
 	selected []bool
 
-	iter *chunk.Iterator4Chunk
-	row  chunk.Row
+	iterable chunk.Iterable
+	iterator chunk.Iterator
+	row      chunk.Row
 }
 
 // mergeJoinInnerTable represents the inner table of merge join.
@@ -74,7 +76,8 @@ type mergeJoinInnerTable struct {
 	firstRow4Key   chunk.Row
 	curRow         chunk.Row
 	curResult      *chunk.Chunk
-	curIter        *chunk.Iterator4Chunk
+	curIterable    chunk.Iterable
+	curIterator    chunk.Iterator
 	curResultInUse bool
 	resultQueue    []*chunk.Chunk
 	resourceQueue  []*chunk.Chunk
@@ -88,8 +91,9 @@ func (t *mergeJoinInnerTable) init(ctx context.Context, chk4Reader *chunk.Chunk)
 	}
 	t.ctx = ctx
 	t.curResult = chk4Reader
-	t.curIter = chunk.NewIterator4Chunk(t.curResult)
-	t.curRow = t.curIter.End()
+	t.curIterable = t.curResult
+	t.curIterator = t.curIterable.Iterator()
+	t.curRow = chunk.NoneRow
 	t.curResultInUse = false
 	t.resultQueue = append(t.resultQueue, chk4Reader)
 	t.memTracker.Consume(chk4Reader.MemoryUsage())
@@ -106,7 +110,7 @@ func (t *mergeJoinInnerTable) rowsWithSameKey() ([]chunk.Row, error) {
 	t.resourceQueue = append(t.resourceQueue, t.resultQueue[0:lastResultIdx]...)
 	t.resultQueue = t.resultQueue[lastResultIdx:]
 	// no more data.
-	if t.firstRow4Key == t.curIter.End() {
+	if t.firstRow4Key == chunk.NoneRow {
 		return nil, nil
 	}
 	t.sameKeyRows = t.sameKeyRows[:0]
@@ -114,8 +118,8 @@ func (t *mergeJoinInnerTable) rowsWithSameKey() ([]chunk.Row, error) {
 	for {
 		selectedRow, err := t.nextRow()
 		// error happens or no more data.
-		if err != nil || selectedRow == t.curIter.End() {
-			t.firstRow4Key = t.curIter.End()
+		if err != nil || selectedRow == chunk.NoneRow {
+			t.firstRow4Key = chunk.NoneRow
 			return t.sameKeyRows, errors.Trace(err)
 		}
 		compareResult := compareChunkRow(t.compareFuncs, selectedRow, t.firstRow4Key, t.joinKeys, t.joinKeys)
@@ -129,22 +133,23 @@ func (t *mergeJoinInnerTable) rowsWithSameKey() ([]chunk.Row, error) {
 }
 
 func (t *mergeJoinInnerTable) nextRow() (chunk.Row, error) {
-	if t.curRow == t.curIter.End() {
+	if t.curRow == chunk.NoneRow {
 		t.reallocReaderResult()
 		oldMemUsage := t.curResult.MemoryUsage()
 		err := t.reader.Next(t.ctx, t.curResult)
 		// error happens or no more data.
 		if err != nil || t.curResult.NumRows() == 0 {
-			t.curRow = t.curIter.End()
+			t.curRow = chunk.NoneRow
 			return t.curRow, errors.Trace(err)
 		}
 		newMemUsage := t.curResult.MemoryUsage()
 		t.memTracker.Consume(newMemUsage - oldMemUsage)
-		t.curRow = t.curIter.Begin()
+		t.curIterator = t.curIterable.Iterator()
+		t.curRow = t.curIterator.Next()
 	}
 	result := t.curRow
 	t.curResultInUse = true
-	t.curRow = t.curIter.Next()
+	t.curRow = t.curIterator.Next()
 	return result, nil
 }
 
@@ -167,7 +172,8 @@ func (t *mergeJoinInnerTable) reallocReaderResult() {
 
 	// NOTE: "t.curResult" is always the last element of "resultQueue".
 	t.curResult = t.resourceQueue[0]
-	t.curIter = chunk.NewIterator4Chunk(t.curResult)
+	t.curIterable = t.curResult
+	t.curIterator = t.curIterable.Iterator()
 	t.resourceQueue = t.resourceQueue[1:]
 	t.resultQueue = append(t.resultQueue, t.curResult)
 	t.curResult.Reset()
@@ -221,7 +227,8 @@ func (e *MergeJoinExec) prepare(ctx context.Context, chk *chunk.Chunk) error {
 
 	// init outer table.
 	e.outerTable.chk = e.childrenResults[e.outerIdx]
-	e.outerTable.iter = chunk.NewIterator4Chunk(e.outerTable.chk)
+	e.outerTable.iterable = e.outerTable.chk
+	e.outerTable.iterator = e.outerTable.iterable.Iterator()
 	e.outerTable.selected = make([]bool, 0, e.maxChunkSize)
 
 	err = e.fetchNextOuterRows(ctx)
@@ -254,7 +261,7 @@ func (e *MergeJoinExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasMore bool, err error) {
 	for {
-		if e.outerTable.row == e.outerTable.iter.End() {
+		if e.outerTable.row == chunk.NoneRow {
 			err = e.fetchNextOuterRows(ctx)
 			if err != nil || e.outerTable.chk.NumRows() == 0 {
 				return false, errors.Trace(err)
@@ -279,7 +286,7 @@ func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasM
 				return false, errors.Trace(err)
 			}
 
-			e.outerTable.row = e.outerTable.iter.Next()
+			e.outerTable.row = e.outerTable.iterator.Next()
 
 			if chk.NumRows() == e.maxChunkSize {
 				return true, nil
@@ -287,14 +294,14 @@ func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasM
 			continue
 		}
 
-		err = e.resultGenerator.emit(e.outerTable.row, e.innerIter4Row, chk)
+		err = e.resultGenerator.emit(e.outerTable.row, e.innerIterator4Row, chk)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
 
-		if e.innerIter4Row.Current() == e.innerIter4Row.End() {
-			e.outerTable.row = e.outerTable.iter.Next()
-			e.innerIter4Row.Begin()
+		if !e.innerIterator4Row.HasNext() {
+			e.outerTable.row = e.outerTable.iterator.Next()
+			e.innerIterator4Row = e.innerIterable4Row.Iterator()
 		}
 
 		if chk.NumRows() >= e.maxChunkSize {
@@ -310,8 +317,8 @@ func (e *MergeJoinExec) fetchNextInnerRows() (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.innerIter4Row = chunk.NewIterator4Slice(e.innerRows)
-	e.innerIter4Row.Begin()
+	e.innerIterable4Row = chunk.IterableRows(e.innerRows)
+	e.innerIterator4Row = e.innerIterable4Row.Iterator()
 	return nil
 }
 
@@ -324,11 +331,12 @@ func (e *MergeJoinExec) fetchNextOuterRows(ctx context.Context) (err error) {
 		return errors.Trace(err)
 	}
 
-	e.outerTable.iter.Begin()
-	e.outerTable.selected, err = expression.VectorizedFilter(e.ctx, e.outerTable.filter, e.outerTable.iter, e.outerTable.selected)
+	e.outerTable.iterator = e.outerTable.iterable.Iterator()
+	e.outerTable.selected, err = expression.VectorizedFilter(e.ctx, e.outerTable.filter, e.outerTable.iterable, e.outerTable.selected)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.outerTable.row = e.outerTable.iter.Begin()
+	e.outerTable.iterator = e.outerTable.iterable.Iterator()
+	e.outerTable.row = e.outerTable.iterator.Next()
 	return nil
 }

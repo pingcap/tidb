@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/auth"
-	"github.com/pingcap/tidb/util/chunk"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -522,10 +521,10 @@ func upgradeToVer12(s Session) {
 	sqls := make([]string, 0, 1)
 	defer terror.Call(r.Close)
 	chk := r.NewChunk()
-	it := chunk.NewIterator4Chunk(chk)
 	err = r.Next(ctx, chk)
 	for err == nil && chk.NumRows() != 0 {
-		for row := it.Begin(); row != it.End(); row = it.Next() {
+		for it := chk.Iterator(); it.HasNext(); {
+			row := it.Next()
 			user := row.GetString(0)
 			host := row.GetString(1)
 			pass := row.GetString(2)

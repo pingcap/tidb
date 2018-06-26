@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/juju/errors"
@@ -25,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 // InsertValues is the data to insert.
@@ -177,13 +177,13 @@ func (e *InsertValues) checkValueCount(insertValueCount, valueCount, genColsCoun
 	return nil
 }
 
-func (e *InsertValues) getRows(cols []*table.Column) (rows []types.DatumRow, err error) {
+func (e *InsertValues) getRows(cols []*table.Column) (iter chunk.IterableDatumRow, err error) {
 	// process `insert|replace ... set x=y...`
 	if err = e.fillValueList(); err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	rows = make([]types.DatumRow, len(e.Lists))
+	rows := make([]types.DatumRow, len(e.Lists))
 	length := len(e.Lists[0])
 	for i, list := range e.Lists {
 		if err = e.checkValueCount(length, len(list), len(e.GenColumns), i, cols); err != nil {
@@ -195,6 +195,7 @@ func (e *InsertValues) getRows(cols []*table.Column) (rows []types.DatumRow, err
 			return nil, errors.Trace(err)
 		}
 	}
+	iter = chunk.IterableDatumRows(rows)
 	return
 }
 
@@ -274,37 +275,38 @@ func (e *InsertValues) fillDefaultValues(row types.DatumRow, hasValue []bool) er
 	return nil
 }
 
-func (e *InsertValues) getRowsSelectChunk(ctx context.Context, cols []*table.Column) ([]types.DatumRow, error) {
+func (e *InsertValues) getRowsSelectChunk(ctx context.Context, cols []*table.Column) (chunk.IterableDatumRow, error) {
 	// process `insert|replace into ... select ... from ...`
 	selectExec := e.children[0]
 	if selectExec.Schema().Len() != len(cols) {
 		return nil, ErrWrongValueCountOnRow.GenByArgs(1)
 	}
-	var rows []types.DatumRow
+
 	fields := selectExec.retTypes()
-	for {
-		chk := selectExec.newChunk()
-		iter := chunk.NewIterator4Chunk(chk)
 
-		err := selectExec.Next(ctx, chk)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if chk.NumRows() == 0 {
-			break
-		}
+	innerChunkRowIter := MapExecutor2Iterable(ctx, selectExec)
 
-		for innerChunkRow := iter.Begin(); innerChunkRow != iter.End(); innerChunkRow = iter.Next() {
-			innerRow := innerChunkRow.GetDatumRow(fields)
-			e.rowCount = uint64(len(rows))
-			row, err := e.fillRowData(cols, innerRow)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			rows = append(rows, row)
-		}
+	mapScope := rowToDataRowScope{insertValues: e, cols: cols, fields: fields}
+
+	return chunk.MapIterable(ctx, innerChunkRowIter, mapScope.mapFunc), nil
+}
+
+type rowToDataRowScope struct {
+	insertValues *InsertValues
+	cols         []*table.Column
+	fields       []*types.FieldType
+	rowCount     uint64
+}
+
+func (s *rowToDataRowScope) mapFunc(ctx context.Context, innerChunkRow chunk.Row) (types.DatumRow, error) {
+	s.rowCount++
+	innerRow := innerChunkRow.GetDatumRow(s.fields)
+	s.insertValues.rowCount = s.rowCount
+	row, err := s.insertValues.fillRowData(s.cols, innerRow)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
-	return rows, nil
+	return row, nil
 }
 
 func (e *InsertValues) fillRowData(cols []*table.Column, vals types.DatumRow) (types.DatumRow, error) {

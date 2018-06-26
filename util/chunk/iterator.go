@@ -13,6 +13,11 @@
 
 package chunk
 
+import (
+	"context"
+	"github.com/pingcap/tidb/types"
+)
+
 var (
 	_ Iterator = (*Iterator4Chunk)(nil)
 	_ Iterator = (*iterator4RowPtr)(nil)
@@ -20,33 +25,39 @@ var (
 	_ Iterator = (*iterator4Slice)(nil)
 )
 
+// NoneRow indicts none row.
+var NoneRow Row
+
+// Iterable is used to iterate rows inside the object.
+type Iterable interface {
+	// Iterator returns an iterator over elements.
+	Iterator() Iterator
+}
+
 // Iterator is used to iterate a number of rows.
-//
-// for row := it.Begin(); row != it.End(); row = it.Next() {
-//     ...
-// }
 type Iterator interface {
-	// Begin resets the cursor of the iterator and returns the first Row.
-	Begin() Row
 
 	// Next returns the next Row.
 	Next() Row
 
-	// End returns the invalid end Row.
-	End() Row
+	// HasNext returns true if the iteration has more elements.
+	HasNext() bool
+
+	// Next returns the next Row.
+	NextStrict() (Row, error)
+
+	// HasNext returns true if the iteration has more elements.
+	HasNextStrict() (bool, error)
 
 	// Len returns the length.
 	Len() int
-
-	// Current returns the current Row.
-	Current() Row
 
 	// ReachEnd reaches the end of iterator.
 	ReachEnd()
 }
 
-// NewIterator4Slice returns a Iterator for Row slice.
-func NewIterator4Slice(rows []Row) Iterator {
+// newIterator4Slice returns a Iterator for Row slice.
+func newIterator4Slice(rows []Row) Iterator {
 	return &iterator4Slice{rows: rows}
 }
 
@@ -55,37 +66,38 @@ type iterator4Slice struct {
 	cursor int
 }
 
-// Begin implements the Iterator interface.
-func (it *iterator4Slice) Begin() Row {
-	if it.Len() == 0 {
-		return it.End()
-	}
-	it.cursor = 1
-	return it.rows[0]
-}
-
 // Next implements the Iterator interface.
 func (it *iterator4Slice) Next() Row {
-	if len := it.Len(); it.cursor >= len {
-		it.cursor = len + 1
-		return it.End()
+	row, err := it.NextStrict()
+	if err != nil {
+		panic(err)
 	}
-	row := it.rows[it.cursor]
-	it.cursor++
 	return row
 }
 
-// Current implements the Iterator interface.
-func (it *iterator4Slice) Current() Row {
-	if it.cursor == 0 || it.cursor > it.Len() {
-		return it.End()
+// HasNext implements the Iterator interface.
+func (it *iterator4Slice) HasNext() bool {
+	hasNext, err := it.HasNextStrict()
+	if err != nil {
+		panic(err)
 	}
-	return it.rows[it.cursor-1]
+	return hasNext
 }
 
-// End implements the Iterator interface.
-func (it *iterator4Slice) End() Row {
-	return Row{}
+// NextStrict implements the Iterator interface.
+func (it *iterator4Slice) NextStrict() (Row, error) {
+	if itLen := it.Len(); it.cursor >= itLen {
+		it.cursor = itLen + 1
+		return NoneRow, nil
+	}
+	row := it.rows[it.cursor]
+	it.cursor++
+	return row, nil
+}
+
+// HasNextStrict implements the Iterator interface.
+func (it *iterator4Slice) HasNextStrict() (bool, error) {
+	return it.cursor < it.Len(), nil
 }
 
 // ReachEnd implements the Iterator interface.
@@ -98,8 +110,8 @@ func (it *iterator4Slice) Len() int {
 	return len(it.rows)
 }
 
-// NewIterator4Chunk returns a iterator for Chunk.
-func NewIterator4Chunk(chk *Chunk) *Iterator4Chunk {
+// newIterator4Chunk returns a iterator for Chunk.
+func newIterator4Chunk(chk *Chunk) *Iterator4Chunk {
 	return &Iterator4Chunk{chk: chk}
 }
 
@@ -109,37 +121,38 @@ type Iterator4Chunk struct {
 	cursor int
 }
 
-// Begin implements the Iterator interface.
-func (it *Iterator4Chunk) Begin() Row {
-	if it.chk.NumRows() == 0 {
-		return it.End()
-	}
-	it.cursor = 1
-	return it.chk.GetRow(0)
-}
-
 // Next implements the Iterator interface.
 func (it *Iterator4Chunk) Next() Row {
-	if it.cursor >= it.chk.NumRows() {
-		it.cursor = it.chk.NumRows() + 1
-		return it.End()
+	row, err := it.NextStrict()
+	if err != nil {
+		panic(err)
 	}
-	row := it.chk.GetRow(it.cursor)
-	it.cursor++
 	return row
 }
 
-// Current implements the Iterator interface.
-func (it *Iterator4Chunk) Current() Row {
-	if it.cursor == 0 || it.cursor > it.Len() {
-		return it.End()
+// HasNext implements the Iterator interface.
+func (it *Iterator4Chunk) HasNext() bool {
+	hasNext, err := it.HasNextStrict()
+	if err != nil {
+		panic(err)
 	}
-	return it.chk.GetRow(it.cursor - 1)
+	return hasNext
 }
 
-// End implements the Iterator interface.
-func (it *Iterator4Chunk) End() Row {
-	return Row{}
+// NextStrict implements the Iterator interface.
+func (it *Iterator4Chunk) NextStrict() (Row, error) {
+	if it.cursor >= it.chk.NumRows() {
+		it.cursor = it.chk.NumRows() + 1
+		return NoneRow, nil
+	}
+	row := it.chk.GetRow(it.cursor)
+	it.cursor++
+	return row, nil
+}
+
+// HasStrictNext implements the Iterator interface.
+func (it *Iterator4Chunk) HasNextStrict() (bool, error) {
+	return it.cursor < it.chk.NumRows(), nil
 }
 
 // ReachEnd implements the Iterator interface.
@@ -152,8 +165,8 @@ func (it *Iterator4Chunk) Len() int {
 	return it.chk.NumRows()
 }
 
-// NewIterator4List returns a Iterator for List.
-func NewIterator4List(li *List) Iterator {
+// newIterator4List returns a Iterator for List.
+func newIterator4List(li *List) Iterator {
 	return &iterator4List{li: li}
 }
 
@@ -163,28 +176,29 @@ type iterator4List struct {
 	rowCursor int
 }
 
-// Begin implements the Iterator interface.
-func (it *iterator4List) Begin() Row {
-	if it.li.NumChunks() == 0 {
-		return it.End()
-	}
-	chk := it.li.GetChunk(0)
-	row := chk.GetRow(0)
-	if chk.NumRows() == 1 {
-		it.chkCursor = 1
-		it.rowCursor = 0
-	} else {
-		it.chkCursor = 0
-		it.rowCursor = 1
+// Next implements the Iterator interface.
+func (it *iterator4List) Next() Row {
+	row, err := it.NextStrict()
+	if err != nil {
+		panic(err)
 	}
 	return row
 }
 
+// HasNext implements the Iterator interface.
+func (it *iterator4List) HasNext() bool {
+	hasNext, err := it.HasNextStrict()
+	if err != nil {
+		panic(err)
+	}
+	return hasNext
+}
+
 // Next implements the Iterator interface.
-func (it *iterator4List) Next() Row {
+func (it *iterator4List) NextStrict() (Row, error) {
 	if it.chkCursor >= it.li.NumChunks() {
 		it.chkCursor = it.li.NumChunks() + 1
-		return it.End()
+		return NoneRow, nil
 	}
 	chk := it.li.GetChunk(it.chkCursor)
 	row := chk.GetRow(it.rowCursor)
@@ -193,28 +207,15 @@ func (it *iterator4List) Next() Row {
 		it.rowCursor = 0
 		it.chkCursor++
 	}
-	return row
+	return row, nil
 }
 
-// Current implements the Iterator interface.
-func (it *iterator4List) Current() Row {
-	if (it.chkCursor == 0 && it.rowCursor == 0) || it.chkCursor > it.li.NumChunks() {
-		return it.End()
-	}
-	if it.rowCursor == 0 {
-		curChk := it.li.GetChunk(it.chkCursor - 1)
-		return curChk.GetRow(curChk.NumRows() - 1)
-	}
-	curChk := it.li.GetChunk(it.chkCursor)
-	return curChk.GetRow(it.rowCursor - 1)
+// HasNextStrict implements the Iterator interface.
+func (it *iterator4List) HasNextStrict() (bool, error) {
+	return it.chkCursor < it.li.NumChunks() && it.rowCursor < it.li.GetChunk(it.chkCursor).NumRows(), nil
 }
 
-// End implements the Iterator interface.
-func (it *iterator4List) End() Row {
-	return Row{}
-}
-
-// ReachEnd implements the Iterator interface.
+// ReachEndStrict implements the Iterator interface.
 func (it *iterator4List) ReachEnd() {
 	it.chkCursor = it.li.NumChunks() + 1
 }
@@ -224,9 +225,20 @@ func (it *iterator4List) Len() int {
 	return it.li.Len()
 }
 
-// NewIterator4RowPtr returns a Iterator for RowPtrs.
-func NewIterator4RowPtr(li *List, ptrs []RowPtr) Iterator {
+// newIterator4RowPtr returns a Iterator for RowPtrs.
+func newIterator4RowPtr(li *List, ptrs []RowPtr) Iterator {
 	return &iterator4RowPtr{li: li, ptrs: ptrs}
+}
+
+// Iterable4RowPtr is an adaptor of RowPtrs that implements Iterable interface.
+type Iterable4RowPtr struct {
+	li   *List
+	ptrs []RowPtr
+}
+
+// Iterator implements the Iterable interface.
+func (it Iterable4RowPtr) Iterator() Iterator {
+	return newIterator4RowPtr(it.li, it.ptrs)
 }
 
 type iterator4RowPtr struct {
@@ -235,40 +247,41 @@ type iterator4RowPtr struct {
 	cursor int
 }
 
-// Begin implements the Iterator interface.
-func (it *iterator4RowPtr) Begin() Row {
-	if it.Len() == 0 {
-		return it.End()
-	}
-	it.cursor = 1
-	return it.li.GetRow(it.ptrs[0])
-}
-
 // Next implements the Iterator interface.
 func (it *iterator4RowPtr) Next() Row {
-	if len := it.Len(); it.cursor >= len {
-		it.cursor = len + 1
-		return it.End()
+	row, err := it.NextStrict()
+	if err != nil {
+		panic(err)
 	}
-	row := it.li.GetRow(it.ptrs[it.cursor])
-	it.cursor++
 	return row
 }
 
-// Current implements the Iterator interface.
-func (it *iterator4RowPtr) Current() Row {
-	if it.cursor == 0 || it.cursor > it.Len() {
-		return it.End()
+// HasNext implements the Iterator interface.
+func (it *iterator4RowPtr) HasNext() bool {
+	hasNext, err := it.HasNextStrict()
+	if err != nil {
+		panic(err)
 	}
-	return it.li.GetRow(it.ptrs[it.cursor-1])
+	return hasNext
 }
 
-// End implements the Iterator interface.
-func (it *iterator4RowPtr) End() Row {
-	return Row{}
+// Next implements the Iterator interface.
+func (it *iterator4RowPtr) NextStrict() (Row, error) {
+	if itLen := it.Len(); it.cursor >= itLen {
+		it.cursor = itLen + 1
+		return NoneRow, nil
+	}
+	row := it.li.GetRow(it.ptrs[it.cursor])
+	it.cursor++
+	return row, nil
 }
 
-// ReachEnd implements the Iterator interface.
+// HasNextStrict implements the Iterator interface.
+func (it *iterator4RowPtr) HasNextStrict() (bool, error) {
+	return it.cursor < it.Len(), nil
+}
+
+// ReachEndStrict implements the Iterator interface.
 func (it *iterator4RowPtr) ReachEnd() {
 	it.cursor = it.Len() + 1
 }
@@ -276,4 +289,119 @@ func (it *iterator4RowPtr) ReachEnd() {
 // Len implements the Iterator interface.
 func (it *iterator4RowPtr) Len() int {
 	return len(it.ptrs)
+}
+
+type IterableDatumRow interface {
+	Iterator() IteratorDatumRow
+}
+
+type IterableDatumRows []types.DatumRow
+
+func (it IterableDatumRows) Iterator() IteratorDatumRow {
+	var rows []types.DatumRow = it
+	return &iterator4DatumRowSlice{rows: rows}
+}
+
+type iterator4DatumRowSlice struct {
+	rows   []types.DatumRow
+	cursor int
+}
+
+// Next implements the Iterator interface.
+func (it *iterator4DatumRowSlice) NextStrict() (types.DatumRow, error) {
+	if itLen := it.Len(); it.cursor >= itLen {
+		it.cursor = itLen + 1
+		return nil, nil
+	}
+	row := it.rows[it.cursor]
+	it.cursor++
+	return row, nil
+}
+
+// Next implements the Iterator interface.
+func (it *iterator4DatumRowSlice) Next() types.DatumRow {
+	next, err := it.NextStrict()
+	if err != nil {
+		panic(err)
+	}
+	return next
+}
+
+// HasNextStrict implements the Iterator interface.
+func (it *iterator4DatumRowSlice) HasNext() bool {
+	hasNext, err := it.HasNextStrict()
+	if err != nil {
+		panic(err)
+	}
+	return hasNext
+}
+
+// HasNextStrict implements the Iterator interface.
+func (it *iterator4DatumRowSlice) HasNextStrict() (bool, error) {
+	return it.cursor < it.Len(), nil
+}
+
+// Len implements the Iterator interface.
+func (it *iterator4DatumRowSlice) Len() int {
+	return len(it.rows)
+}
+
+type IteratorDatumRow interface {
+
+	// Next returns the next DataRow.
+	Next() types.DatumRow
+
+	// HasNext returns true if the iteration has more elements.
+	HasNext() bool
+
+	// NextStrict returns the next DataRow.
+	NextStrict() (types.DatumRow, error)
+
+	// HasNextStrict returns true if the iteration has more elements.
+	HasNextStrict() (bool, error)
+}
+
+func MapIterable(ctx context.Context, iter Iterable, mapFunc func(ctx context.Context, from Row) (types.DatumRow, error)) IterableDatumRow {
+	return &mapIterable{iter, ctx, mapFunc}
+}
+
+type mapIterable struct {
+	Iterable
+	ctx     context.Context
+	mapFunc func(ctx context.Context, from Row) (types.DatumRow, error)
+}
+
+func (it *mapIterable) Iterator() IteratorDatumRow {
+	return &mapIterator{it.Iterable.Iterator(), it.ctx, it.mapFunc}
+}
+
+type mapIterator struct {
+	Iterator
+	ctx     context.Context
+	mapFunc func(ctx context.Context, from Row) (types.DatumRow, error)
+}
+
+// NextStrict implements the Iterator interface.
+func (it *mapIterator) NextStrict() (types.DatumRow, error) {
+	next, err := it.Iterator.NextStrict()
+	if err != nil {
+		return nil, err
+	}
+	if next == NoneRow {
+		return nil, err
+	}
+	mapped, err := it.mapFunc(it.ctx, next)
+	if err != nil {
+		return nil, err
+	}
+	return mapped, nil
+}
+
+// Next implements the Iterator interface.
+func (it *mapIterator) Next() types.DatumRow {
+	next, err := it.NextStrict()
+	if err != nil {
+		panic(err)
+	}
+	return next
 }

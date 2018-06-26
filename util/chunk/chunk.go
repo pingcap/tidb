@@ -312,6 +312,11 @@ func (c *Chunk) AppendDatum(colIdx int, d *types.Datum) {
 	}
 }
 
+// Iterator implements the Iterable interface.
+func (c *Chunk) Iterator() Iterator {
+	return newIterator4Chunk(c)
+}
+
 type column struct {
 	length     int
 	nullCount  int
@@ -646,4 +651,12 @@ func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 // IsNull implements the types.Row interface.
 func (r Row) IsNull(colIdx int) bool {
 	return r.c.columns[colIdx].isNull(r.idx)
+}
+
+// IterableRows is an adaptor of row array that implements Iterable interface.
+type IterableRows []Row
+
+// Iterator implements the Iterable interface.
+func (it IterableRows) Iterator() Iterator {
+	return newIterator4Slice(it)
 }

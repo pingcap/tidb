@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/chunk"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
@@ -209,7 +208,6 @@ func GetRows4Test(ctx context.Context, sctx sessionctx.Context, rs ast.RecordSet
 	for {
 		// Since we collect all the rows, we can not reuse the chunk.
 		chk := rs.NewChunk()
-		iter := chunk.NewIterator4Chunk(chk)
 
 		err := rs.Next(ctx, chk)
 		if err != nil {
@@ -219,7 +217,8 @@ func GetRows4Test(ctx context.Context, sctx sessionctx.Context, rs ast.RecordSet
 			break
 		}
 
-		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		for iter := chk.Iterator(); iter.HasNext(); {
+			row := iter.Next()
 			rows = append(rows, row)
 		}
 	}

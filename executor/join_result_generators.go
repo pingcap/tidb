@@ -115,7 +115,7 @@ func (outputer *baseJoinResultGenerator) makeJoinRowToChunk(chk *chunk.Chunk, lh
 }
 
 func (outputer *baseJoinResultGenerator) filter(input, output *chunk.Chunk) (matched bool, err error) {
-	outputer.selected, err = expression.VectorizedFilter(outputer.ctx, outputer.conditions, chunk.NewIterator4Chunk(input), outputer.selected)
+	outputer.selected, err = expression.VectorizedFilter(outputer.ctx, outputer.conditions, input, outputer.selected)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -144,7 +144,8 @@ func (outputer *semiJoinResultGenerator) emit(outer chunk.Row, inners chunk.Iter
 		return nil
 	}
 
-	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
+	for inners.HasNext() {
+		inner := inners.Next()
 		outputer.chk.Reset()
 		if outputer.outerIsRight {
 			outputer.makeJoinRowToChunk(outputer.chk, inner, outer)
@@ -178,7 +179,8 @@ func (outputer *antiSemiJoinResultGenerator) emit(outer chunk.Row, inners chunk.
 		return nil
 	}
 
-	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
+	for inners.HasNext() {
+		inner := inners.Next()
 		outputer.chk.Reset()
 		if outputer.outerIsRight {
 			outputer.makeJoinRowToChunk(outputer.chk, inner, outer)
@@ -217,7 +219,8 @@ func (outputer *leftOuterSemiJoinResultGenerator) emit(outer chunk.Row, inners c
 		return nil
 	}
 
-	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
+	for inners.HasNext() {
+		inner := inners.Next()
 		outputer.chk.Reset()
 		outputer.makeJoinRowToChunk(outputer.chk, outer, inner)
 		matched, err := expression.EvalBool(outputer.ctx, outputer.conditions, outputer.chk.GetRow(0))
@@ -256,7 +259,8 @@ func (outputer *antiLeftOuterSemiJoinResultGenerator) emit(outer chunk.Row, inne
 		return nil
 	}
 
-	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
+	for inners.HasNext() {
+		inner := inners.Next()
 		outputer.chk.Reset()
 		outputer.makeJoinRowToChunk(outputer.chk, outer, inner)
 		matched, err := expression.EvalBool(outputer.ctx, outputer.conditions, outputer.chk.GetRow(0))
@@ -295,9 +299,8 @@ func (outputer *leftOuterJoinResultGenerator) emit(outer chunk.Row, inners chunk
 		chkForJoin = chk
 	}
 	numToAppend := outputer.maxChunkSize - chk.NumRows()
-	for ; inners.Current() != inners.End() && numToAppend > 0; numToAppend-- {
-		outputer.makeJoinRowToChunk(chkForJoin, outer, inners.Current())
-		inners.Next()
+	for ; inners.HasNext() && numToAppend > 0; numToAppend-- {
+		outputer.makeJoinRowToChunk(chkForJoin, outer, inners.Next())
 	}
 	if len(outputer.conditions) == 0 {
 		return nil
@@ -334,9 +337,8 @@ func (outputer *rightOuterJoinResultGenerator) emit(outer chunk.Row, inners chun
 		chkForJoin = chk
 	}
 	numToAppend := outputer.maxChunkSize - chk.NumRows()
-	for ; inners.Current() != inners.End() && numToAppend > 0; numToAppend-- {
-		outputer.makeJoinRowToChunk(chkForJoin, inners.Current(), outer)
-		inners.Next()
+	for ; inners.HasNext() && numToAppend > 0; numToAppend-- {
+		outputer.makeJoinRowToChunk(chkForJoin, inners.Next(), outer)
 	}
 	if len(outputer.conditions) == 0 {
 		return nil
@@ -369,8 +371,9 @@ func (outputer *innerJoinResultGenerator) emit(outer chunk.Row, inners chunk.Ite
 	if len(outputer.conditions) == 0 {
 		chkForJoin = chk
 	}
-	inner, numToAppend := inners.Current(), outputer.maxChunkSize-chk.NumRows()
-	for ; inner != inners.End() && numToAppend > 0; inner, numToAppend = inners.Next(), numToAppend-1 {
+	numToAppend := outputer.maxChunkSize - chk.NumRows()
+	for ; inners.HasNext() && numToAppend > 0; numToAppend-- {
+		inner := inners.Next()
 		if outputer.outerIsRight {
 			outputer.makeJoinRowToChunk(chkForJoin, inner, outer)
 		} else {

@@ -406,8 +406,7 @@ func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID uint, outerRow chunk.R
 		matchedInner := e.innerResult.GetRow(ptr)
 		innerRows = append(innerRows, matchedInner)
 	}
-	iter := chunk.NewIterator4Slice(innerRows)
-	for iter.Begin(); iter.Current() != iter.End(); {
+	for iter := chunk.IterableRows(innerRows).Iterator(); iter.HasNext(); {
 		err = e.resultGenerators[workerID].emit(outerRow, iter, joinResult.chk)
 		if err != nil {
 			joinResult.err = errors.Trace(err)
@@ -441,7 +440,7 @@ func (e *HashJoinExec) getNewJoinResult(workerID uint) (bool, *hashjoinWorkerRes
 func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, joinResult *hashjoinWorkerResult,
 	selected []bool) (ok bool, _ *hashjoinWorkerResult) {
 	var err error
-	selected, err = expression.VectorizedFilter(e.ctx, e.outerFilter, chunk.NewIterator4Chunk(outerChk), selected)
+	selected, err = expression.VectorizedFilter(e.ctx, e.outerFilter, outerChk, selected)
 	if err != nil {
 		joinResult.err = errors.Trace(err)
 		return false, joinResult
@@ -576,7 +575,8 @@ type NestedLoopApplyExec struct {
 	innerList        *chunk.List
 	innerChunk       *chunk.Chunk
 	innerSelected    []bool
-	innerIter        chunk.Iterator
+	innerIterable    chunk.Iterable
+	innerIterator    chunk.Iterator
 	outerRow         *chunk.Row
 
 	memTracker *memory.Tracker // track memory usage.
@@ -613,7 +613,6 @@ func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
 }
 
 func (e *NestedLoopApplyExec) fetchSelectedOuterRow(ctx context.Context, chk *chunk.Chunk) (*chunk.Row, error) {
-	outerIter := chunk.NewIterator4Chunk(e.outerChunk)
 	for {
 		if e.outerChunkCursor >= e.outerChunk.NumRows() {
 			err := e.outerExec.Next(ctx, e.outerChunk)
@@ -623,7 +622,7 @@ func (e *NestedLoopApplyExec) fetchSelectedOuterRow(ctx context.Context, chk *ch
 			if e.outerChunk.NumRows() == 0 {
 				return nil, nil
 			}
-			e.outerSelected, err = expression.VectorizedFilter(e.ctx, e.outerFilter, outerIter, e.outerSelected)
+			e.outerSelected, err = expression.VectorizedFilter(e.ctx, e.outerFilter, e.outerChunk, e.outerSelected)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -651,7 +650,6 @@ func (e *NestedLoopApplyExec) fetchAllInners(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	e.innerList.Reset()
-	innerIter := chunk.NewIterator4Chunk(e.innerChunk)
 	for {
 		err := e.innerExec.Next(ctx, e.innerChunk)
 		if err != nil {
@@ -661,11 +659,12 @@ func (e *NestedLoopApplyExec) fetchAllInners(ctx context.Context) error {
 			return nil
 		}
 
-		e.innerSelected, err = expression.VectorizedFilter(e.ctx, e.innerFilter, innerIter, e.innerSelected)
+		e.innerSelected, err = expression.VectorizedFilter(e.ctx, e.innerFilter, e.innerChunk, e.innerSelected)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		for row := innerIter.Begin(); row != innerIter.End(); row = innerIter.Next() {
+		for innerIter := e.innerChunk.Iterator(); innerIter.HasNext(); {
+			row := innerIter.Next()
 			if e.innerSelected[row.Idx()] {
 				e.innerList.AppendRow(row)
 			}
@@ -677,7 +676,7 @@ func (e *NestedLoopApplyExec) fetchAllInners(ctx context.Context) error {
 func (e *NestedLoopApplyExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 	chk.Reset()
 	for {
-		if e.innerIter == nil || e.innerIter.Current() == e.innerIter.End() {
+		if e.innerIterator == nil || !e.innerIterator.HasNext() {
 			e.outerRow, err = e.fetchSelectedOuterRow(ctx, chk)
 			if e.outerRow == nil || err != nil {
 				return errors.Trace(err)
@@ -689,11 +688,11 @@ func (e *NestedLoopApplyExec) Next(ctx context.Context, chk *chunk.Chunk) (err e
 			if err != nil {
 				return errors.Trace(err)
 			}
-			e.innerIter = chunk.NewIterator4List(e.innerList)
-			e.innerIter.Begin()
+			e.innerIterable = e.innerList
+			e.innerIterator = e.innerIterable.Iterator()
 		}
 
-		err = e.resultGenerator.emit(*e.outerRow, e.innerIter, chk)
+		err = e.resultGenerator.emit(*e.outerRow, e.innerIterator, chk)
 		if err != nil || chk.NumRows() == e.maxChunkSize {
 			return errors.Trace(err)
 		}

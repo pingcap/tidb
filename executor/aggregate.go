@@ -112,7 +112,7 @@ func (e *HashAggExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 // execute fetches Chunks from src and update each aggregate function for each row in Chunk.
 func (e *HashAggExec) execute(ctx context.Context) (err error) {
-	inputIter := chunk.NewIterator4Chunk(e.childrenResults[0])
+	inputIterable := e.childrenResults[0]
 	for {
 		err := e.children[0].Next(ctx, e.childrenResults[0])
 		if err != nil {
@@ -122,7 +122,8 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 		if e.childrenResults[0].NumRows() == 0 {
 			return nil
 		}
-		for row := inputIter.Begin(); row != inputIter.End(); row = inputIter.Next() {
+		for iter := inputIterable.Iterator(); iter.HasNext(); {
+			row := iter.Next()
 			groupKey, err := e.getGroupKey(row)
 			if err != nil {
 				return errors.Trace(err)
@@ -190,10 +191,11 @@ type StreamAggExec struct {
 	tmpGroupKey  []types.Datum
 
 	// for chunk execution.
-	inputIter  *chunk.Iterator4Chunk
-	inputRow   chunk.Row
-	mutableRow chunk.MutRow
-	rowBuffer  []types.Datum
+	inputIterable chunk.Iterable
+	inputIterator chunk.Iterator
+	inputRow      chunk.Row
+	mutableRow    chunk.MutRow
+	rowBuffer     []types.Datum
 }
 
 // Open implements the Executor Open interface.
@@ -204,8 +206,8 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 
 	e.executed = false
 	e.hasData = false
-	e.inputIter = chunk.NewIterator4Chunk(e.childrenResults[0])
-	e.inputRow = e.inputIter.End()
+	e.inputIterable = e.childrenResults[0]
+	e.inputRow = chunk.NoneRow
 	e.mutableRow = chunk.MutRowFromTypes(e.retTypes())
 	e.rowBuffer = make([]types.Datum, 0, e.Schema().Len())
 
@@ -236,7 +238,7 @@ func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) e
 		if err := e.fetchChildIfNecessary(ctx, chk); err != nil {
 			return errors.Trace(err)
 		}
-		for ; e.inputRow != e.inputIter.End(); e.inputRow = e.inputIter.Next() {
+		for ; e.inputRow != chunk.NoneRow; e.inputRow = e.inputIterator.Next() {
 			meetNewGroup, err := e.meetNewGroup(e.inputRow)
 			if err != nil {
 				return errors.Trace(err)
@@ -251,7 +253,7 @@ func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) e
 				}
 			}
 			if meetNewGroup {
-				e.inputRow = e.inputIter.Next()
+				e.inputRow = e.inputIterator.Next()
 				return nil
 			}
 		}
@@ -260,7 +262,7 @@ func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) e
 }
 
 func (e *StreamAggExec) fetchChildIfNecessary(ctx context.Context, chk *chunk.Chunk) error {
-	if e.inputRow != e.inputIter.End() {
+	if e.inputRow != chunk.NoneRow {
 		return nil
 	}
 
@@ -278,7 +280,8 @@ func (e *StreamAggExec) fetchChildIfNecessary(ctx context.Context, chk *chunk.Ch
 	}
 
 	// Reach here, "e.childrenResults[0].NumRows() > 0" is guaranteed.
-	e.inputRow = e.inputIter.Begin()
+	e.inputIterator = e.inputIterable.Iterator()
+	e.inputRow = e.inputIterator.Next()
 	e.hasData = true
 	return nil
 }

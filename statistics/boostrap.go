@@ -27,8 +27,9 @@ import (
 	"golang.org/x/net/context"
 )
 
-func initStatsMeta4Chunk(is infoschema.InfoSchema, tables statsCache, iter *chunk.Iterator4Chunk) {
-	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+func initStatsMeta4Chunk(is infoschema.InfoSchema, tables statsCache, iterable chunk.Iterable) {
+	for iter := iterable.Iterator(); iter.HasNext(); {
+		row := iter.Next()
 		tableID := row.GetInt64(1)
 		table, ok := is.TableByID(tableID)
 		if !ok {
@@ -61,7 +62,6 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
 	}
 	tables := statsCache{}
 	chk := rc[0].NewChunk()
-	iter := chunk.NewIterator4Chunk(chk)
 	for {
 		err := rc[0].Next(context.TODO(), chk)
 		if err != nil {
@@ -70,13 +70,14 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
 		if chk.NumRows() == 0 {
 			break
 		}
-		initStatsMeta4Chunk(is, tables, iter)
+		initStatsMeta4Chunk(is, tables, chk)
 	}
 	return tables, nil
 }
 
-func initStatsHistograms4Chunk(is infoschema.InfoSchema, tables statsCache, iter *chunk.Iterator4Chunk) {
-	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+func initStatsHistograms4Chunk(is infoschema.InfoSchema, tables statsCache, iterable chunk.Iterable) {
+	for iter := iterable.Iterator(); iter.HasNext(); {
+		row := iter.Next()
 		table, ok := tables[row.GetInt64(0)]
 		if !ok {
 			continue
@@ -128,7 +129,6 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables statsCache
 		return errors.Trace(err)
 	}
 	chk := rc[0].NewChunk()
-	iter := chunk.NewIterator4Chunk(chk)
 	for {
 		err := rc[0].Next(context.TODO(), chk)
 		if err != nil {
@@ -137,13 +137,14 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables statsCache
 		if chk.NumRows() == 0 {
 			break
 		}
-		initStatsHistograms4Chunk(is, tables, iter)
+		initStatsHistograms4Chunk(is, tables, chk)
 	}
 	return nil
 }
 
-func initStatsBuckets4Chunk(ctx sessionctx.Context, tables statsCache, iter *chunk.Iterator4Chunk) {
-	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+func initStatsBuckets4Chunk(ctx sessionctx.Context, tables statsCache, iterable chunk.Iterable) {
+	for iter := iterable.Iterator(); iter.HasNext(); {
+		row := iter.Next()
 		tableID, isIndex, histID := row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
 		table, ok := tables[tableID]
 		if !ok {
@@ -198,7 +199,6 @@ func (h *Handle) initStatsBuckets(tables statsCache) error {
 		return errors.Trace(err)
 	}
 	chk := rc[0].NewChunk()
-	iter := chunk.NewIterator4Chunk(chk)
 	for {
 		err := rc[0].Next(context.TODO(), chk)
 		if err != nil {
@@ -207,7 +207,7 @@ func (h *Handle) initStatsBuckets(tables statsCache) error {
 		if chk.NumRows() == 0 {
 			break
 		}
-		initStatsBuckets4Chunk(h.ctx, tables, iter)
+		initStatsBuckets4Chunk(h.ctx, tables, chk)
 	}
 	for _, table := range tables {
 		if h.LastVersion < table.Version {

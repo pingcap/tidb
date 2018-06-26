@@ -55,7 +55,7 @@ func (e *InsertExec) insertOneRow(row types.DatumRow) (int64, error) {
 	return h, nil
 }
 
-func (e *InsertExec) exec(rows []types.DatumRow) error {
+func (e *InsertExec) exec(rows chunk.IterableDatumRow) error {
 	// If tidb_batch_insert is ON and not in a transaction, we could use BatchInsert mode.
 	sessVars := e.ctx.GetSessionVars()
 	defer sessVars.CleanBuffers()
@@ -74,17 +74,61 @@ func (e *InsertExec) exec(rows []types.DatumRow) error {
 	// If `ON DUPLICATE KEY UPDATE` is specified, and no `IGNORE` keyword,
 	// the to-be-insert rows will be check on duplicate keys and update to the new rows.
 	if len(e.OnDuplicate) > 0 {
-		err := e.batchUpdateDupRows(rows)
+		tmpRows := make([]types.DatumRow, 0, e.maxRowsInBatch) //FIX ME
+		iter := rows.Iterator()
+		for {
+			hasNext, err := iter.HasNextStrict()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if !hasNext {
+				break
+			}
+			row, err := iter.NextStrict()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			tmpRows = append(tmpRows, row)
+		}
+		err := e.batchUpdateDupRows(tmpRows)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	} else if ignoreErr {
-		err := e.batchCheckAndInsert(rows, e.insertOneRow)
+		tmpRows := make([]types.DatumRow, 0, e.maxRowsInBatch) //FIX ME
+		iter := rows.Iterator()
+		for {
+			hasNext, err := iter.HasNextStrict()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if !hasNext {
+				break
+			}
+			row, err := iter.NextStrict()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			tmpRows = append(tmpRows, row)
+		}
+		err := e.batchCheckAndInsert(tmpRows, e.insertOneRow)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	} else {
-		for _, row := range rows {
+		iter := rows.Iterator()
+		for {
+			hasNext, err := iter.HasNextStrict()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if !hasNext {
+				break
+			}
+			row, err := iter.NextStrict()
+			if err != nil {
+				return errors.Trace(err)
+			}
 			if _, err := e.insertOneRow(row); err != nil {
 				return errors.Trace(err)
 			}
@@ -183,7 +227,7 @@ func (e *InsertExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return errors.Trace(err)
 	}
 
-	var rows []types.DatumRow
+	var rows chunk.IterableDatumRow
 	if len(e.children) > 0 && e.children[0] != nil {
 		rows, err = e.getRowsSelectChunk(ctx, cols)
 	} else {

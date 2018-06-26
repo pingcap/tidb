@@ -165,12 +165,11 @@ func (h *benchHelper) init() {
 func BenchmarkVectorizedExecute(b *testing.B) {
 	h := benchHelper{}
 	h.init()
-	inputIter := chunk.NewIterator4Chunk(h.inputChunk)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		h.outputChunk.Reset()
-		if err := VectorizedExecute(h.ctx, h.exprs, inputIter, h.outputChunk); err != nil {
+		if err := VectorizedExecute(h.ctx, h.exprs, h.inputChunk, h.outputChunk); err != nil {
 			panic("errors happened during \"VectorizedExecute\"")
 		}
 	}

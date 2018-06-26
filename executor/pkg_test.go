@@ -95,14 +95,14 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 	join.innerChunk = innerExec.newChunk()
 	join.outerChunk = outerExec.newChunk()
 	joinChk := join.newChunk()
-	it := chunk.NewIterator4Chunk(joinChk)
 	for rowIdx := 1; ; {
 		err := join.Next(ctx, joinChk)
 		c.Check(err, IsNil)
 		if joinChk.NumRows() == 0 {
 			break
 		}
-		for row := it.Begin(); row != it.End(); row = it.Next() {
+		for it := joinChk.Iterator(); it.HasNext(); {
+			row := it.Next()
 			correctResult := fmt.Sprintf("%v %v", rowIdx, rowIdx)
 			obtainedResult := fmt.Sprintf("%v %v", row.GetInt64(0), row.GetInt64(1))
 			c.Check(obtainedResult, Equals, correctResult)

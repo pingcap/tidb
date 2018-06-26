@@ -41,74 +41,88 @@ func (s *testChunkSuite) TestIterator(c *check.C) {
 		ptrs2 = append(ptrs2, ptr2)
 	}
 
-	it := NewIterator4Slice(rows)
+	var itb Iterable = IterableRows(rows)
+	it := itb.Iterator()
 	checkIterator(c, it, expected)
-	it.Begin()
+	it = itb.Iterator()
 	for i := 0; i < 5; i++ {
-		c.Assert(it.Current(), check.Equals, rows[i])
-		it.Next()
+		c.Assert(it.Next(), check.Equals, rows[i])
 	}
 	it.ReachEnd()
-	c.Assert(it.Current(), check.Equals, it.End())
-	c.Assert(it.Begin(), check.Equals, rows[0])
+	c.Assert(it.HasNext(), check.Equals, false)
+	it = itb.Iterator()
+	c.Assert(it.Next(), check.Equals, rows[0])
 
-	it = NewIterator4Chunk(chk)
+	itb = chk
+	it = itb.Iterator()
 	checkIterator(c, it, expected)
-	it.Begin()
+	it = itb.Iterator()
 	for i := 0; i < 5; i++ {
-		c.Assert(it.Current(), check.Equals, chk.GetRow(i))
-		it.Next()
+		c.Assert(it.Next(), check.Equals, chk.GetRow(i))
 	}
 	it.ReachEnd()
-	c.Assert(it.Current(), check.Equals, it.End())
-	c.Assert(it.Begin(), check.Equals, chk.GetRow(0))
+	c.Assert(it.Next(), check.Equals, NoneRow)
+	it = itb.Iterator()
+	c.Assert(it.Next(), check.Equals, chk.GetRow(0))
 
-	it = NewIterator4List(li)
+	itb = li
+	it = itb.Iterator()
 	checkIterator(c, it, expected)
-	it.Begin()
+	it = itb.Iterator()
 	for i := 0; i < 5; i++ {
-		c.Assert(it.Current(), check.Equals, li.GetRow(ptrs[i]))
-		it.Next()
+		c.Assert(it.Next(), check.Equals, li.GetRow(ptrs[i]))
 	}
 	it.ReachEnd()
-	c.Assert(it.Current(), check.Equals, it.End())
-	c.Assert(it.Begin(), check.Equals, li.GetRow(ptrs[0]))
+	c.Assert(it.HasNext(), check.Equals, false)
+	it = itb.Iterator()
+	c.Assert(it.Next(), check.Equals, li.GetRow(ptrs[0]))
 
-	it = NewIterator4RowPtr(li, ptrs)
+	itb = Iterable4RowPtr{li, ptrs}
+	it = itb.Iterator()
 	checkIterator(c, it, expected)
-	it.Begin()
+	it = itb.Iterator()
 	for i := 0; i < 5; i++ {
-		c.Assert(it.Current(), check.Equals, li.GetRow(ptrs[i]))
-		it.Next()
+		c.Assert(it.Next(), check.Equals, li.GetRow(ptrs[i]))
 	}
 	it.ReachEnd()
-	c.Assert(it.Current(), check.Equals, it.End())
-	c.Assert(it.Begin(), check.Equals, li.GetRow(ptrs[0]))
+	c.Assert(it.HasNext(), check.Equals, false)
+	it = itb.Iterator()
+	c.Assert(it.Next(), check.Equals, li.GetRow(ptrs[0]))
 
-	it = NewIterator4RowPtr(li2, ptrs2)
+	itb = Iterable4RowPtr{li2, ptrs2}
+	it = itb.Iterator()
 	checkIterator(c, it, expected)
-	it.Begin()
+	it = itb.Iterator()
 	for i := 0; i < 5; i++ {
-		c.Assert(it.Current(), check.Equals, li2.GetRow(ptrs2[i]))
-		it.Next()
+		c.Assert(it.Next(), check.Equals, li2.GetRow(ptrs2[i]))
 	}
 	it.ReachEnd()
-	c.Assert(it.Current(), check.Equals, it.End())
-	c.Assert(it.Begin(), check.Equals, li2.GetRow(ptrs2[0]))
+	c.Assert(it.HasNext(), check.Equals, false)
+	it = itb.Iterator()
+	c.Assert(it.Next(), check.Equals, li2.GetRow(ptrs2[0]))
 
-	it = NewIterator4Slice(nil)
-	c.Assert(it.Begin(), check.Equals, it.End())
-	it = NewIterator4Chunk(new(Chunk))
-	c.Assert(it.Begin(), check.Equals, it.End())
-	it = NewIterator4List(new(List))
-	c.Assert(it.Begin(), check.Equals, it.End())
-	it = NewIterator4RowPtr(li, nil)
-	c.Assert(it.Begin(), check.Equals, it.End())
+	itb = IterableRows(nil)
+	it = itb.Iterator()
+	c.Assert(it.HasNext(), check.Equals, false)
+	c.Assert(it.Next(), check.Equals, NoneRow)
+	itb = new(Chunk)
+	it = itb.Iterator()
+	c.Assert(it.HasNext(), check.Equals, false)
+	c.Assert(it.Next(), check.Equals, NoneRow)
+	itb = new(List)
+	it = itb.Iterator()
+	c.Assert(it.HasNext(), check.Equals, false)
+	c.Assert(it.Next(), check.Equals, NoneRow)
+	itb = Iterable4RowPtr{li, nil}
+	it = itb.Iterator()
+	c.Assert(it.HasNext(), check.Equals, false)
+	c.Assert(it.Next(), check.Equals, NoneRow)
 }
 
 func checkIterator(c *check.C, it Iterator, expected []int64) {
 	var got []int64
-	for row := it.Begin(); row != it.End(); row = it.Next() {
+	for it.HasNext() {
+		row := it.Next()
 		got = append(got, row.GetInt64(0))
 	}
 	c.Assert(got, check.DeepEquals, expected)
