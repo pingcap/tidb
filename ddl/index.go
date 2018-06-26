@@ -838,7 +838,7 @@ func (w *worker) sendRangeTaskToWorkers(t table.Table, workers []*addIndexWorker
 		if endKey.Cmp(keyRange.EndKey) < 0 {
 			endIncluded = true
 		}
-		task := &reorgIndexTask{startHandle, endHandle, endIncluded, false}
+		task := &reorgIndexTask{startHandle, endHandle, endIncluded}
 		batchTasks = append(batchTasks, task)
 
 		if len(batchTasks) >= len(workers) {
