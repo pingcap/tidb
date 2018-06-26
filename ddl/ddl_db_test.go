@@ -2324,3 +2324,101 @@ func (s *testDBSuite) TestBackwardCompatibility(c *C) {
 	// finished add index
 	tk.MustExec("admin check index t idx_b")
 }
+
+func (s *testDBSuite) TestAlterTableAddPartition(c *C) {
+	s.tk.MustExec("use test")
+	s.tk.MustExec("drop table if employees")
+	s.tk.MustExec(`create table employees (
+	id int not null,
+	hired date not null
+	)
+	partition by range( year(hired) ) (
+		partition p1 values less than (1991),
+		partition p2 values less than (1996),
+		partition p3 values less than (2001)
+	);`)
+	s.tk.MustExec(`alter table employees add partition (
+    partition p4 values less than (2010),
+    partition p5 values less than maxvalue
+	);`)
+
+	ctx := s.tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().Partition, NotNil)
+	part := tbl.Meta().Partition
+	c.Assert(part.Type, Equals, model.PartitionTypeRange)
+	c.Assert(part.Expr, Equals, "`hired`")
+
+	c.Assert(part.Definitions, HasLen, 5)
+	c.Assert(part.Definitions[0].LessThan[0], Equals, "1991")
+	c.Assert(part.Definitions[0].Name, Equals, "p1")
+	c.Assert(part.Definitions[1].LessThan[0], Equals, "1996")
+	c.Assert(part.Definitions[1].Name, Equals, "p2")
+	c.Assert(part.Definitions[2].LessThan[0], Equals, "2001")
+	c.Assert(part.Definitions[2].Name, Equals, "p3")
+	c.Assert(part.Definitions[3].LessThan[0], Equals, "2010")
+	c.Assert(part.Definitions[3].Name, Equals, "p4")
+	c.Assert(part.Definitions[4].LessThan[0], Equals, "maxvalue")
+	c.Assert(part.Definitions[4].Name, Equals, "p5")
+
+	s.tk.MustExec("drop table if t1")
+	s.tk.MustExec("create table t1(a int)")
+	sql1 := `alter table t1 add partition (
+		partition p1 values less than (2010),
+		partition p2 values less than maxvalue
+	);`
+	s.testErrorCode(c, sql1, mysql.ErrPartitionMgmtOnNonpartitioned)
+
+	sql2 := "alter table t1 add partition"
+	s.testErrorCode(c, sql2, mysql.ErrPartitionsMustBeDefined)
+
+	s.tk.MustExec("drop table if t2")
+	s.tk.MustExec(`create table t2 (
+	id int not null,
+	hired date not null
+	)
+	partition by range( year(hired) ) (
+	partition p1 values less than (1991),
+	partition p2 values less than maxvalue
+	);`)
+
+	sql3 := `alter table t2 add partition (
+		partition p3 values less than (2010)
+	);`
+	s.testErrorCode(c, sql3, mysql.ErrPartitionMaxvalue)
+
+	s.tk.MustExec("drop table if t3")
+	s.tk.MustExec(`create table t3 (
+	id int not null,
+	hired date not null
+	)
+	partition by range( year(hired) ) (
+	partition p1 values less than (1991),
+	partition p3 values less than (2001)
+	);`)
+
+	sql4 := `alter table t3 add partition (
+		partition p3 values less than (1993)
+	);`
+	s.testErrorCode(c, sql4, mysql.ErrRangeNotIncreasing)
+
+	sql5 := `alter table t3 add partition (
+		partition p1 values less than (1993)
+	);`
+	s.testErrorCode(c, sql5, mysql.ErrSameNamePartition)
+
+	sql6 := `alter table t3 add partition (
+		partition p1 values less than (1993),
+		partition p1 values less than (1995)
+	);`
+	s.testErrorCode(c, sql6, mysql.ErrSameNamePartition)
+
+	sql7 := `alter table t3 add partition (
+		partition p4 values less than (1993),
+		partition p1 values less than (1995)，
+		partition p5 values less than maxvalue,
+	);`
+	s.testErrorCode(c, sql7, mysql.ErrSameNamePartition)
+}
