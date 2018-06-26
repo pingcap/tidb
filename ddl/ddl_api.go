@@ -1642,7 +1642,7 @@ func (d *ddl) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 		TableID:    tb.Meta().ID,
 		Type:       model.ActionRenameIndex,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{spec.FromKey, spec.ToKey},
+		Args:       []interface{}{spec.FromKey, spec.ToKey, ident},
 	}
 
 	err = d.doDDLJob(ctx, job)
