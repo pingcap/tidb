@@ -688,11 +688,6 @@ func checkCreatePartitionValue(meta *model.TableInfo, part *model.PartitionInfo)
 	return nil
 }
 
-//func buildCreateTablePartitionInfo(d *ddl, tbInfo *model.TableInfo, s *ast.CreateTableStmt, cols []*table.Column) error {
-//
-//
-//}
-
 func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols []*table.Column, constraints []*ast.Constraint) (tbInfo *model.TableInfo, err error) {
 	tbInfo = &model.TableInfo{
 		Name: tableName,
