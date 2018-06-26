@@ -326,6 +326,7 @@ func (e *LoadDataInfo) getFieldsFromLine(line []byte) ([]field, error) {
 
 // escape handles escape characters when running load data statement.
 // See http://dev.mysql.com/doc/refman/5.7/en/load-data.html
+// TODO: escape only support '\' as the `ESCAPED BY` character, it should support specify characters.
 func (f *field) escape() field {
 	pos := 0
 	for i := 0; i < len(f.str); i++ {
@@ -361,7 +362,7 @@ func (f *field) escapeChar(c byte) byte {
 	case '\\':
 		return c
 	default:
-		log.Warnf("illegal escaped character '%c'!", c)
+		log.Warnf("cannot escape character '\\%c'!", c)
 		return c
 	}
 }

@@ -1247,6 +1247,8 @@ func (s *testSuite) TestLoadDataEscape(c *C) {
 		{nil, []byte("4\tboth \\t\\n\n"), []string{"4|both \t\n"}, nil},
 		{nil, []byte("5\tstr \\\\\n"), []string{"5|str \\"}, nil},
 		{nil, []byte("6\t\\r\\t\\n\\0\\Z\\b\n"), []string{"6|" + string([]byte{'\r', '\t', '\n', 0, 26, '\b'})}, nil},
+		{nil, []byte("7\trtn0ZbN\n"), []string{"7|" + string([]byte{'r', 't', 'n', '0', 'Z', 'b', 'N'})}, nil},
+		{nil, []byte("8\trtn0Zb\\N\n"), []string{"8|" + string([]byte{'r', 't', 'n', '0', 'Z', 'b', 'N'})}, nil},
 	}
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"
