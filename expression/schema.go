@@ -207,6 +207,14 @@ func (s *Schema) ColumnsByIndices(offsets []int) []*Column {
 	return cols
 }
 
+func (s *Schema) PruneID2HandleMap() {
+	for k, cols := range s.TblID2Handle {
+		if s.ColumnIndex(cols[0]) == -1 {
+			delete(s.TblID2Handle, k)
+		}
+	}
+}
+
 // MergeSchema will merge two schema into one schema. We shouldn't need to consider unique keys.
 // That will be processed in build_key_info.go.
 func MergeSchema(lSchema, rSchema *Schema) *Schema {
