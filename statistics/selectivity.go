@@ -120,6 +120,26 @@ func pseudoSelectivity(t *Table, exprs []expression.Expression) float64 {
 	return minFactor
 }
 
+// getEqOrInColOffset checks if the expression is a eq function that one side is correlated column and another is column.
+// If so, it will return the column's reference. Otherwise return nil instead.
+func isColEqCorColOrConstant(filter expression.Expression) *expression.Column {
+	f, ok := filter.(*expression.ScalarFunction)
+	if !ok || f.FuncName.L != ast.EQ {
+		return nil
+	}
+	if c, ok := f.GetArgs()[0].(*expression.Column); ok {
+		if _, ok := f.GetArgs()[1].(*expression.CorrelatedColumn); ok {
+			return c
+		}
+	}
+	if c, ok := f.GetArgs()[1].(*expression.Column); ok {
+		if _, ok := f.GetArgs()[0].(*expression.CorrelatedColumn); ok {
+			return c
+		}
+	}
+	return nil
+}
+
 // Selectivity is a function calculate the selectivity of the expressions.
 // The definition of selectivity is (row count after filter / row count before filter).
 // And exprs must be CNF now, in other words, `exprs[0] and exprs[1] and ... and exprs[len - 1]` should be held when you call this.
@@ -135,15 +155,30 @@ func (t *Table) Selectivity(ctx sessionctx.Context, exprs []expression.Expressio
 	if len(exprs) > 63 || (len(t.Columns) == 0 && len(t.Indices) == 0) {
 		return pseudoSelectivity(t, exprs), nil
 	}
+	ret := 1.0
 	var sets []*exprSet
 	sc := ctx.GetSessionVars().StmtCtx
 
+	remainedExprs := make([]expression.Expression, 0, len(exprs))
+
+	// Deal with the correlated column.
+	for _, expr := range exprs {
+		if c := isColEqCorColOrConstant(expr); c != nil && !t.ColumnIsInvalid(sc, c.ID) {
+			colHist := t.Columns[c.ID]
+			if colHist.NDV > 0 {
+				ret *= 1 / float64(colHist.NDV)
+			}
+		} else {
+			remainedExprs = append(remainedExprs, expr)
+		}
+	}
+
 	extractedCols := make([]*expression.Column, 0, len(t.Columns))
-	extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, exprs, nil)
+	extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, remainedExprs, nil)
 	for _, colInfo := range t.Columns {
 		col := expression.ColInfo2Col(extractedCols, colInfo.Info)
 		if col != nil {
-			maskCovered, ranges, err := getMaskAndRanges(ctx, exprs, ranger.ColumnRangeType, nil, col)
+			maskCovered, ranges, err := getMaskAndRanges(ctx, remainedExprs, ranger.ColumnRangeType, nil, col)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
@@ -156,7 +191,7 @@ func (t *Table) Selectivity(ctx sessionctx.Context, exprs []expression.Expressio
 	for _, idxInfo := range t.Indices {
 		idxCols, lengths := expression.IndexInfo2Cols(extractedCols, idxInfo.Info)
 		if len(idxCols) > 0 {
-			maskCovered, ranges, err := getMaskAndRanges(ctx, exprs, ranger.IndexRangeType, lengths, idxCols...)
+			maskCovered, ranges, err := getMaskAndRanges(ctx, remainedExprs, ranger.IndexRangeType, lengths, idxCols...)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
@@ -164,9 +199,8 @@ func (t *Table) Selectivity(ctx sessionctx.Context, exprs []expression.Expressio
 		}
 	}
 	sets = getUsableSetsByGreedy(sets)
-	ret := 1.0
 	// Initialize the mask with the full set.
-	mask := (int64(1) << uint(len(exprs))) - 1
+	mask := (int64(1) << uint(len(remainedExprs))) - 1
 	for _, set := range sets {
 		mask ^= set.mask
 		var (
