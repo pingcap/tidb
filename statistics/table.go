@@ -310,7 +310,8 @@ var histogramNeededColumns = neededColumnMap{cols: map[tableColumnID]struct{}{}}
 // and use pseudo estimation.
 var RatioOfPseudoEstimate = 0.7
 
-func (t *Table) isOutdated() bool {
+// IsOutdated returns true if the table stats is outdated.
+func (t *Table) IsOutdated() bool {
 	if t.Count > 0 && float64(t.ModifyCount)/float64(t.Count) > RatioOfPseudoEstimate {
 		return true
 	}

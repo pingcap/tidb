@@ -176,9 +176,6 @@ func (h *Handle) copyFromOldCache() statsCache {
 func (h *Handle) UpdateTableStats(tables []*Table, deletedIDs []int64) {
 	newCache := h.copyFromOldCache()
 	for _, tbl := range tables {
-		if tbl.isOutdated() {
-			tbl.Pseudo = true
-		}
 		id := tbl.TableID
 		newCache[id] = tbl
 	}

@@ -99,11 +99,12 @@ func (q *QueryFeedback) DecodeToRanges(isIndex bool) ([]*ranger.Range, error) {
 		var lowVal, highVal []types.Datum
 		if isIndex {
 			var err error
-			lowVal, err = codec.Decode(low.GetBytes(), low.Length())
+			// As we do not know the origin length, just use a custom value here.
+			lowVal, err = codec.Decode(low.GetBytes(), 4)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			highVal, err = codec.Decode(high.GetBytes(), high.Length())
+			highVal, err = codec.Decode(high.GetBytes(), 4)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -643,6 +644,11 @@ func (q *QueryFeedback) recalculateExpectCount(h *Handle) error {
 	t, ok := h.statsCache.Load().(statsCache)[q.tableID]
 	if !ok {
 		return nil
+	}
+	if t.IsOutdated() {
+		tbl := *t
+		tbl.Pseudo = true
+		t = &tbl
 	}
 	if t.Pseudo == false {
 		return nil

@@ -1734,7 +1734,10 @@ func (b *planBuilder) getStatsTable(tblInfo *model.TableInfo) *statistics.Table 
 	}
 
 	// 3. statistics is outdated.
-	if statsTbl.Pseudo {
+	if statsTbl.IsOutdated() {
+		tbl := *statsTbl
+		tbl.Pseudo = true
+		statsTbl = &tbl
 		metrics.PseudoEstimation.Inc()
 	}
 	return statsTbl
