@@ -68,6 +68,8 @@ func (a *AggFuncDesc) Equal(ctx sessionctx.Context, other *AggFuncDesc) bool {
 // Clone copies an aggregation function signature totally.
 func (a *AggFuncDesc) Clone() *AggFuncDesc {
 	clone := *a
+	newTp := *a.RetTp
+	clone.RetTp = &newTp
 	for i := range a.Args {
 		clone.Args[i] = a.Args[i].Clone()
 	}

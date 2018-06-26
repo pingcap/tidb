@@ -231,8 +231,14 @@ func (e *HashAggExec) initForParallelExec() {
 
 	// Init partial workers.
 	for i := 0; i < partialConcurrency; i++ {
+		// Aggregation may retain some status variables,
+		// so we need to clone the AggFuncs to avoid data race on these variables.
+		newAggFuncs := make([]aggregation.Aggregation, len(e.AggFuncs))
+		for i := range newAggFuncs {
+			newAggFuncs[i] = e.AggFuncs[i].Clone()
+		}
 		w := HashAggPartialWorker{
-			baseHashAggWorker: newBaseHashAggWorker(e.finishCh, e.AggFuncs, e.maxChunkSize),
+			baseHashAggWorker: newBaseHashAggWorker(e.finishCh, newAggFuncs, e.maxChunkSize),
 			inputCh:           e.partialInputChs[i],
 			outputChs:         e.partialOutputChs,
 			giveBackCh:        e.inputCh,
@@ -250,10 +256,9 @@ func (e *HashAggExec) initForParallelExec() {
 	}
 
 	// Init final workers.
-	finalAggFuncs := e.newFinalAggFuncs()
 	for i := 0; i < finalConcurrency; i++ {
 		e.finalWorkers[i] = HashAggFinalWorker{
-			baseHashAggWorker:   newBaseHashAggWorker(e.finishCh, finalAggFuncs, e.maxChunkSize),
+			baseHashAggWorker:   newBaseHashAggWorker(e.finishCh, e.newFinalAggFuncs(), e.maxChunkSize),
 			aggCtxsMap:          make(aggCtxsMapper, 0),
 			groupSet:            mvmap.NewMVMap(),
 			groupVals:           make([][]byte, 0, 8),

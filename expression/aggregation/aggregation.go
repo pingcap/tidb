@@ -51,6 +51,9 @@ type Aggregation interface {
 
 	// GetArgs gets the args of the aggregate function.
 	GetArgs() []expression.Expression
+
+	// Clone deep copy the Aggregation.
+	Clone() Aggregation
 }
 
 // NewDistAggFunc creates new Aggregate function for mock tikv.
@@ -197,12 +200,12 @@ func (af *aggFunction) GetFinalAggFunc(idx int) (_ int, newAggFunc Aggregation) 
 				args = append(args, separator.Clone())
 			}
 		}
-		desc := af.Clone()
+		desc := af.AggFuncDesc.Clone()
 		desc.Mode = FinalMode
 		desc.Args = args
 		newAggFunc = desc.GetAggFunc()
 	case Partial2Mode:
-		desc := af.Clone()
+		desc := af.AggFuncDesc.Clone()
 		desc.Mode = FinalMode
 		idx += len(desc.Args)
 		newAggFunc = desc.GetAggFunc()
@@ -214,6 +217,11 @@ func (af *aggFunction) GetFinalAggFunc(idx int) (_ int, newAggFunc Aggregation) 
 
 func (af *aggFunction) GetArgs() []expression.Expression {
 	return af.Args
+}
+
+func (af *aggFunction) Clone() Aggregation {
+	desc := af.AggFuncDesc.Clone()
+	return desc.GetAggFunc()
 }
 
 // NeedCount indicates whether the aggregate function should record count.
