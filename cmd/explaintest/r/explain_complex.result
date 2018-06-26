@@ -115,30 +115,30 @@ Sort_8	Projection_7	HashAgg_17	root	test.dt.ds2:desc	53.00
 Projection_7		Sort_8	root	test.dt.ds, test.dt.p1, test.dt.p2, test.dt.p3, test.dt.p4, test.dt.p5, test.dt.p6_md5, test.dt.p7_md5, install_device	53.00
 explain select gad.id as gid,sdk.id as sid,gad.aid as aid,gad.cm as cm,sdk.dic as dic,sdk.ip as ip, sdk.t as t, gad.p1 as p1, gad.p2 as p2, gad.p3 as p3, gad.p4 as p4, gad.p5 as p5, gad.p6_md5 as p6, gad.p7_md5 as p7, gad.ext as ext, gad.t as gtime from st gad join (select id, aid, pt, dic, ip, t from dd where pt = 'android' and bm = 0 and t > 1478143908) sdk on  gad.aid = sdk.aid and gad.ip = sdk.ip and sdk.t > gad.t where gad.t > 1478143908 and gad.bm = 0 and gad.pt = 'android' group by gad.aid, sdk.dic limit 2500;
 id	parents	children	task	operator info	count
-IndexScan_24			cop	table:gad, index:t, range:(1478143908,+inf], keep order:false	3333.33
-TableScan_25	Selection_26		cop	table:st, keep order:false	3333.33
-Selection_26		TableScan_25	cop	eq(gad.bm, 0), eq(gad.pt, android)	0.00
-IndexLookUp_27	HashLeftJoin_19		root	index:IndexScan_24, table:Selection_26	0.00
-IndexScan_31			cop	table:dd, index:t, range:(1478143908,+inf], keep order:false	3333.33
-TableScan_32	Selection_33		cop	table:dd, keep order:false	3333.33
-Selection_33		TableScan_32	cop	eq(test.dd.pt, android), eq(test.dd.bm, 0)	0.00
-IndexLookUp_34	HashLeftJoin_19		root	index:IndexScan_31, table:Selection_33	0.00
-HashLeftJoin_19	HashAgg_18	IndexLookUp_27,IndexLookUp_34	root	inner join, inner:IndexLookUp_34, equal:[eq(gad.aid, test.dd.aid) eq(gad.ip, test.dd.ip)], other cond:gt(test.dd.t, gad.t)	0.00
-HashAgg_18	Limit_15	HashLeftJoin_19	root	group by:gad.aid, test.dd.dic, funcs:firstrow(gad.id), firstrow(gad.aid), firstrow(gad.cm), firstrow(gad.p1), firstrow(gad.p2), firstrow(gad.p3), firstrow(gad.p4), firstrow(gad.p5), firstrow(gad.p6_md5), firstrow(gad.p7_md5), firstrow(gad.ext), firstrow(gad.t), firstrow(test.dd.id), firstrow(test.dd.dic), firstrow(test.dd.ip), firstrow(test.dd.t)	1.00
+IndexScan_29			cop	table:gad, index:t, range:(1478143908,+inf], keep order:false	3333.33
+TableScan_30	Selection_31		cop	table:st, keep order:false	3333.33
+Selection_31		TableScan_30	cop	eq(gad.bm, 0), eq(gad.pt, android)	0.00
+IndexLookUp_32	IndexJoin_23		root	index:IndexScan_29, table:Selection_31	0.00
+IndexScan_19			cop	table:dd, index:aid, dic, range:[<nil>,+inf], keep order:false	10000.00
+TableScan_20	Selection_21		cop	table:dd, keep order:false	10000.00
+Selection_21		TableScan_20	cop	eq(test.dd.pt, android), eq(test.dd.bm, 0), gt(test.dd.t, 1478143908)	0.00
+IndexLookUp_22	IndexJoin_23		root	index:IndexScan_19, table:Selection_21	0.00
+IndexJoin_23	HashAgg_18	IndexLookUp_32,IndexLookUp_22	root	inner join, inner:IndexLookUp_22, outer key:gad.aid, inner key:test.dd.aid, other cond:eq(gad.ip, test.dd.ip)	0.00
+HashAgg_18	Limit_15	IndexJoin_23	root	group by:gad.aid, test.dd.dic, funcs:firstrow(gad.id), firstrow(gad.aid), firstrow(gad.cm), firstrow(gad.p1), firstrow(gad.p2), firstrow(gad.p3), firstrow(gad.p4), firstrow(gad.p5), firstrow(gad.p6_md5), firstrow(gad.p7_md5), firstrow(gad.ext), firstrow(gad.t), firstrow(test.dd.id), firstrow(test.dd.dic), firstrow(test.dd.ip), firstrow(test.dd.t)	1.00
 Limit_15	Projection_12	HashAgg_18	root	offset:0, count:2500	1.00
 Projection_12		Limit_15	root	gad.id, test.dd.id, gad.aid, gad.cm, test.dd.dic, test.dd.ip, test.dd.t, gad.p1, gad.p2, gad.p3, gad.p4, gad.p5, gad.p6_md5, gad.p7_md5, gad.ext, gad.t	1.00
 explain select gad.id as gid,sdk.id as sid,gad.aid as aid,gad.cm as cm,sdk.dic as dic,sdk.ip as ip, sdk.t as t, gad.p1 as p1, gad.p2 as p2, gad.p3 as p3, gad.p4 as p4, gad.p5 as p5, gad.p6_md5 as p6, gad.p7_md5 as p7, gad.ext as ext from st gad join dd sdk on gad.aid = sdk.aid and gad.dic = sdk.mac and gad.t < sdk.t where gad.t > 1477971479 and gad.bm = 0 and gad.pt = 'ios' and gad.dit = 'mac' and sdk.t > 1477971479 and sdk.bm = 0 and sdk.pt = 'ios' limit 3000;
 id	parents	children	task	operator info	count
-IndexScan_18			cop	table:gad, index:t, range:(1477971479,+inf], keep order:false	3333.33
-TableScan_19	Selection_20		cop	table:st, keep order:false	3333.33
-Selection_20		TableScan_19	cop	eq(gad.bm, 0), eq(gad.pt, ios), eq(gad.dit, mac)	0.00
-IndexLookUp_21	HashLeftJoin_13		root	index:IndexScan_18, table:Selection_20	0.00
-IndexScan_25			cop	table:sdk, index:t, range:(1477971479,+inf], keep order:false	3333.33
-TableScan_26	Selection_27		cop	table:dd, keep order:false	3333.33
-Selection_27		TableScan_26	cop	eq(sdk.bm, 0), eq(sdk.pt, ios)	0.00
-IndexLookUp_28	HashLeftJoin_13		root	index:IndexScan_25, table:Selection_27	0.00
-HashLeftJoin_13	Limit_12	IndexLookUp_21,IndexLookUp_28	root	inner join, inner:IndexLookUp_28, equal:[eq(gad.aid, sdk.aid) eq(gad.dic, sdk.mac)], other cond:lt(gad.t, sdk.t)	0.00
-Limit_12	Projection_9	HashLeftJoin_13	root	offset:0, count:3000	0.00
+IndexScan_23			cop	table:gad, index:t, range:(1477971479,+inf], keep order:false	3333.33
+TableScan_24	Selection_25		cop	table:st, keep order:false	3333.33
+Selection_25		TableScan_24	cop	eq(gad.bm, 0), eq(gad.pt, ios), eq(gad.dit, mac)	0.00
+IndexLookUp_26	IndexJoin_17		root	index:IndexScan_23, table:Selection_25	0.00
+IndexScan_13			cop	table:sdk, index:aid, dic, range:[<nil>,+inf], keep order:false	10000.00
+TableScan_14	Selection_15		cop	table:dd, keep order:false	10000.00
+Selection_15		TableScan_14	cop	gt(sdk.t, 1477971479), eq(sdk.bm, 0), eq(sdk.pt, ios)	0.00
+IndexLookUp_16	IndexJoin_17		root	index:IndexScan_13, table:Selection_15	0.00
+IndexJoin_17	Limit_12	IndexLookUp_26,IndexLookUp_16	root	inner join, inner:IndexLookUp_16, outer key:gad.aid, inner key:sdk.aid, other cond:eq(gad.dic, sdk.mac)	0.00
+Limit_12	Projection_9	IndexJoin_17	root	offset:0, count:3000	0.00
 Projection_9		Limit_12	root	gad.id, sdk.id, gad.aid, gad.cm, sdk.dic, sdk.ip, sdk.t, gad.p1, gad.p2, gad.p3, gad.p4, gad.p5, gad.p6_md5, gad.p7_md5, gad.ext	0.00
 explain SELECT cm, p1, p2, p3, p4, p5, p6_md5, p7_md5, count(1) as click_pv, count(DISTINCT ip) as click_ip FROM st WHERE (t between 1478188800 and 1478275200) and aid='cn.sbkcq' and pt='android' GROUP BY cm, p1, p2, p3, p4, p5, p6_md5, p7_md5;
 id	parents	children	task	operator info	count

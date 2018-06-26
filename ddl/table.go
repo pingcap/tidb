@@ -15,6 +15,8 @@ package ddl
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ddl/util"
@@ -28,7 +30,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tbInfo := &model.TableInfo{}
 	if err := job.DecodeArgs(tbInfo); err != nil {
@@ -58,22 +60,19 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			return ver, errors.Trace(err)
 		}
 		if EnableSplitTableRegion {
-			err = d.splitTableRegion(tbInfo.ID)
-			// It will be automatically splitting by TiKV later.
-			if err != nil {
-				log.Warnf("[ddl] split table region failed %v", err)
-			}
+			// TODO: Add restrictions to this operation.
+			go splitTableRegion(d.store, tbInfo.ID)
 		}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
-		d.asyncNotifyEvent(&util.Event{Tp: model.ActionCreateTable, TableInfo: tbInfo})
+		asyncNotifyEvent(d, &util.Event{Tp: model.ActionCreateTable, TableInfo: tbInfo})
 		return ver, nil
 	default:
 		return ver, ErrInvalidTableState.Gen("invalid table state %v", tbInfo.State)
 	}
 }
 
-func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tableID := job.TableID
 
@@ -130,23 +129,24 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return ver, errors.Trace(err)
 }
 
-func (d *ddl) splitTableRegion(tableID int64) error {
-	type splitableStore interface {
-		SplitRegion(splitKey kv.Key) error
-	}
-	store, ok := d.store.(splitableStore)
-	if !ok {
-		return nil
-	}
-	tableStartKey := tablecodec.GenTablePrefix(tableID)
-	if err := store.SplitRegion(tableStartKey); err != nil {
-		return errors.Trace(err)
-	}
-	return nil
+type splitableStore interface {
+	SplitRegion(splitKey kv.Key) error
 }
 
-func (d *ddl) getTable(schemaID int64, tblInfo *model.TableInfo) (table.Table, error) {
-	alloc := autoid.NewAllocator(d.store, tblInfo.GetDBID(schemaID))
+func splitTableRegion(store kv.Storage, tableID int64) {
+	s, ok := store.(splitableStore)
+	if !ok {
+		return
+	}
+	tableStartKey := tablecodec.GenTablePrefix(tableID)
+	if err := s.SplitRegion(tableStartKey); err != nil {
+		// It will be automatically split by TiKV later.
+		log.Warnf("[ddl] splitting table region failed %v", errors.ErrorStack(err))
+	}
+}
+
+func getTable(store kv.Storage, schemaID int64, tblInfo *model.TableInfo) (table.Table, error) {
+	alloc := autoid.NewAllocator(store, tblInfo.GetDBID(schemaID))
 	tbl, err := table.TableFromMeta(alloc, tblInfo)
 	return tbl, errors.Trace(err)
 }
@@ -181,7 +181,7 @@ func getTableInfo(t *meta.Meta, job *model.Job, schemaID int64) (*model.TableInf
 // onTruncateTable delete old table meta, and creates a new table identical to old table except for table ID.
 // As all the old data is encoded with old table ID, it can not be accessed any more.
 // A background job will be created to delete old data.
-func (d *ddl) onTruncateTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onTruncateTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tableID := job.TableID
 	var newTableID int64
@@ -217,7 +217,7 @@ func (d *ddl) onTruncateTable(t *meta.Meta, job *model.Job) (ver int64, _ error)
 	return ver, nil
 }
 
-func (d *ddl) onRebaseAutoID(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onRebaseAutoID(store kv.Storage, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	var newBase int64
 	err := job.DecodeArgs(&newBase)
@@ -231,7 +231,7 @@ func (d *ddl) onRebaseAutoID(t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		return ver, errors.Trace(err)
 	}
 	tblInfo.AutoIncID = newBase
-	tbl, err := d.getTable(schemaID, tblInfo)
+	tbl, err := getTable(store, schemaID, tblInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -253,7 +253,7 @@ func (d *ddl) onRebaseAutoID(t *meta.Meta, job *model.Job) (ver int64, _ error) 
 	return ver, nil
 }
 
-func (d *ddl) onShardRowID(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onShardRowID(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var shardRowIDBits uint64
 	err := job.DecodeArgs(&shardRowIDBits)
 	if err != nil {
@@ -275,7 +275,7 @@ func (d *ddl) onShardRowID(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return ver, nil
 }
 
-func (d *ddl) onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var oldSchemaID int64
 	var tableName model.CIStr
 	if err := job.DecodeArgs(&oldSchemaID, &tableName); err != nil {
@@ -336,7 +336,7 @@ func (d *ddl) onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return ver, nil
 }
 
-func (d *ddl) onModifyTableComment(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onModifyTableComment(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var comment string
 	if err := job.DecodeArgs(&comment); err != nil {
 		job.State = model.JobStateCancelled
@@ -351,37 +351,6 @@ func (d *ddl) onModifyTableComment(t *meta.Meta, job *model.Job) (ver int64, _ e
 	tblInfo.Comment = comment
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
-		return ver, errors.Trace(err)
-	}
-	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-	return ver, nil
-}
-
-func (d *ddl) onRenameIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	var from, to model.CIStr
-	if err := job.DecodeArgs(&from, &to); err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-	tblInfo, err := getTableInfo(t, job, job.SchemaID)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-
-	// Double check. See function `RenameIndex` in ddl_api.go
-	duplicate, err := validateRenameIndex(from, to, tblInfo)
-	if duplicate {
-		return ver, nil
-	}
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-	idx := findIndexByName(from.L, tblInfo.Indices)
-	idx.Name = to
-	if ver, err = updateVersionAndTableInfo(t, job, tblInfo, true); err != nil {
-		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
@@ -425,4 +394,93 @@ func updateVersionAndTableInfo(t *meta.Meta, job *model.Job, tblInfo *model.Tabl
 		tblInfo.UpdateTS = t.StartTS
 	}
 	return ver, t.UpdateTable(job.SchemaID, tblInfo)
+}
+
+// TODO: It may have the issue when two clients concurrently add partitions to a table.
+func onAddTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	partInfo := &model.PartitionInfo{}
+	err := job.DecodeArgs(&partInfo)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	tblInfo, err := getTableInfo(t, job, job.SchemaID)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	err = checkPartitionNotExists(tblInfo, partInfo)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	updatePartitionInfo(partInfo, tblInfo)
+	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	// Finish this job.
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	return ver, errors.Trace(err)
+}
+
+func updatePartitionInfo(partitionInfo *model.PartitionInfo, tblInfo *model.TableInfo) {
+	parInfo := &model.PartitionInfo{}
+	oldDefs, newDefs := tblInfo.Partition.Definitions, partitionInfo.Definitions
+	parInfo.Definitions = make([]model.PartitionDefinition, 0, len(newDefs)+len(oldDefs))
+	parInfo.Definitions = append(parInfo.Definitions, oldDefs...)
+	parInfo.Definitions = append(parInfo.Definitions, newDefs...)
+	tblInfo.Partition.Definitions = parInfo.Definitions
+}
+
+func checkPartitionNotExists(meta *model.TableInfo, part *model.PartitionInfo) error {
+	oldPars, newPars := meta.Partition.Definitions, part.Definitions
+	set := make(map[string]bool)
+	for _, oldPar := range oldPars {
+		set[strings.ToLower(oldPar.Name)] = true
+	}
+	for _, newPar := range newPars {
+		if _, ok := set[strings.ToLower(newPar.Name)]; ok {
+			return ErrSameNamePartition.GenByArgs(newPar.Name)
+		}
+		set[strings.ToLower(newPar.Name)] = true
+	}
+	return nil
+}
+
+// checkAddPartitionValue values less than value must be strictly increasing for each partition.
+func checkAddPartitionValue(meta *model.TableInfo, part *model.PartitionInfo) error {
+	if meta.Partition.Type == model.PartitionTypeRange {
+		newDefs, oldDefs := part.Definitions, meta.Partition.Definitions
+		rangeValue := oldDefs[len(oldDefs)-1].LessThan[0]
+		if strings.EqualFold(rangeValue, "MAXVALUE") {
+			return errors.Trace(ErrPartitionMaxvalue)
+		}
+
+		currentRangeValue, err := strconv.Atoi(rangeValue)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		for i := 0; i < len(newDefs); i++ {
+			ifMaxvalue := strings.EqualFold(newDefs[i].LessThan[0], "MAXVALUE")
+			if ifMaxvalue && i == len(newDefs)-1 {
+				return nil
+			} else if ifMaxvalue && i != len(newDefs)-1 {
+				return errors.Trace(ErrPartitionMaxvalue)
+			}
+
+			nextRangeValue, err := strconv.Atoi(newDefs[i].LessThan[0])
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if nextRangeValue <= currentRangeValue {
+				return errors.Trace(ErrRangeNotIncreasing)
+			}
+			currentRangeValue = nextRangeValue
+		}
+	}
+	return nil
 }

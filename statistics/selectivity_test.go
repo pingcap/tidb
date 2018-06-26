@@ -14,6 +14,7 @@
 package statistics_test
 
 import (
+	"fmt"
 	"math"
 	"os"
 	"runtime/pprof"
@@ -96,7 +97,7 @@ func mockStatsHistogram(id int64, values []types.Datum, repeat int64, tp *types.
 }
 
 func mockStatsTable(tbl *model.TableInfo, rowCount int64) *statistics.Table {
-	histColl := statistics.HistColl{
+	histColl := &statistics.HistColl{
 		TblID:    tbl.ID,
 		SetTblID: true,
 		Count:    rowCount,
@@ -217,6 +218,25 @@ func (s *testSelectivitySuite) TestPseudoSelectivity(c *C) {
 		"TableScan_5   cop table:t1, range:[1,1], keep order:false 1.00",
 		"TableReader_6 Projection_4  root data:TableScan_5 1.00",
 		"Projection_4  TableReader_6 root test.t1.b 1.00"))
+}
+
+// TestDiscreteDistribution tests the estimation for discrete data distribution. This is more common when the index
+// consists several columns, and the first column has small NDV.
+func (s *testSelectivitySuite) TestDiscreteDistribution(c *C) {
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a char(10), b int, key idx(a, b))")
+	for i := 0; i < 499; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values ('cn', %d)", i))
+	}
+	for i := 0; i < 10; i++ {
+		testKit.MustExec("insert into t values ('tw', 0)")
+	}
+	testKit.MustExec("analyze table t")
+	testKit.MustQuery("explain select * from t where a = 'tw' and b < 0").Check(testkit.Rows(
+		"IndexScan_8   cop table:t, index:a, b, range:[tw -inf,tw 0), keep order:false 0.00",
+		"IndexReader_9   root index:IndexScan_8 0.00"))
 }
 
 func BenchmarkSelectivity(b *testing.B) {
