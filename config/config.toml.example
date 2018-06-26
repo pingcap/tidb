@@ -32,6 +32,9 @@ token-limit = 1000
 # Valid options: ["log", "cancel"]
 oom-action = "log"
 
+# Set the memory quota for a query in bytes. Default: 32GB
+mem-quota-query = 34359738368
+
 # Enable coprocessor streaming.
 enable-streaming = false
 
@@ -215,7 +218,7 @@ commit-timeout = "41s"
 [txn-local-latches]
 # Enable local latches for transactions. Enable it when
 # there are lots of conflicts between transactions.
-enabled = false
+enabled = true
 capacity = 1024000
 
 [binlog]

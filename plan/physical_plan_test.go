@@ -302,7 +302,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 		// Test Single Merge Join + Sort + desc.
 		{
 			sql:  "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.a = t2.a order by t2.a desc",
-			best: "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->Sort",
+			best: "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)",
 		},
 		{
 			sql:  "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.b = t2.b order by t2.b desc",
@@ -394,6 +394,18 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 		{
 			sql:  "select /*+ TIDB_INLJ(t2) */ * from t t1 where t1.a in (select a from t t2)",
 			best: "MergeSemiJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)",
+		},
+		{
+			sql:  "select /*+ TIDB_INLJ(t1) */ * from t t1 join t t2 where t1.c=t2.c and t1.f=t2.f",
+			best: "IndexJoin{TableReader(Table(t))->IndexLookUp(Index(t.c_d_e)[[<nil>,+inf]], Table(t))}(t1.c,t2.c)",
+		},
+		{
+			sql:  "select /*+ TIDB_INLJ(t1) */ * from t t1 join t t2 where t1.a = t2.a and t1.f=t2.f",
+			best: "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)",
+		},
+		{
+			sql:  "select /*+ TIDB_INLJ(t1) */ * from t t1 join t t2 where t1.f=t2.f and t1.a=t2.a",
+			best: "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)",
 		},
 	}
 	for i, tt := range tests {
