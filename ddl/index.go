@@ -671,6 +671,8 @@ func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *ad
 	return result
 }
 
+var gofailMockAddindexErrOnceGuard bool
+
 func (w *addIndexWorker) run(d *ddlCtx) {
 	log.Infof("[ddl-reorg] worker[%v] start", w.id)
 	defer func() {
@@ -689,13 +691,13 @@ func (w *addIndexWorker) run(d *ddlCtx) {
 		}
 
 		log.Debug("[ddl-reorg] got backfill index task:#v", task)
-
-		if task.mockTask {
-			// for gofail testing.
-			result := &addIndexResult{addedCount: 0, nextHandle: 0, err: errors.Errorf("mock add index error")}
-			w.resultCh <- result
-			continue
-		}
+		// gofail: var mockAddIndexErr bool
+		//if w.id == 0 && mockAddIndexErr && !gofailMockAddindexErrOnceGuard {
+		//	gofailMockAddindexErrOnceGuard = true
+		//	result := &addIndexResult{addedCount: 0, nextHandle: 0, err: errors.Errorf("mock add index error")}
+		//	w.resultCh <- result
+		//	continue
+		//}
 
 		result := w.handleBackfillTask(d, task)
 		w.resultCh <- result
@@ -787,17 +789,10 @@ func (w *worker) waitTaskResults(workers []*addIndexWorker, taskCnt int, totalAd
 	return nextHandle, addedCount, errors.Trace(firstErr)
 }
 
-var gofailMockAddindexErrOnceGuard bool
-
 // handleReorgTasks sends tasks to workers, and waits for all the running workers to return results,
 // there are taskCnt running workers.
 func (w *worker) handleReorgTasks(reorgInfo *reorgInfo, totalAddedCount *int64, workers []*addIndexWorker, batchTasks []*reorgIndexTask) error {
 	for i, task := range batchTasks {
-		// gofail: var mockAddIndexErr bool
-		// if mockAddIndexErr && !gofailMockAddindexErrOnceGuard {
-		// 	  gofailMockAddindexErrOnceGuard = true
-		//    task.mockTask = true
-		// }
 		workers[i].taskCh <- task
 	}
 
@@ -850,6 +845,7 @@ func (w *worker) sendRangeTaskToWorkers(t table.Table, workers []*addIndexWorker
 
 		if len(batchTasks) >= len(workers) {
 			break
+
 		}
 	}
 
