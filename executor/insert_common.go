@@ -177,7 +177,7 @@ func (e *InsertValues) checkValueCount(insertValueCount, valueCount, genColsCoun
 	return nil
 }
 
-func (e *InsertValues) getRows(cols []*table.Column, exec func(rows []types.DatumRow) error) (err error) {
+func (e *InsertValues) insertRows(cols []*table.Column, exec func(rows []types.DatumRow) error) (err error) {
 	// process `insert|replace ... set x=y...`
 	if err = e.fillValueList(); err != nil {
 		return errors.Trace(err)
@@ -274,7 +274,7 @@ func (e *InsertValues) fillDefaultValues(row types.DatumRow, hasValue []bool) er
 	return nil
 }
 
-func (e *InsertValues) getRowsSelectChunk(ctx context.Context, cols []*table.Column, exec func(rows []types.DatumRow) error) error {
+func (e *InsertValues) insertRowsFromSelect(ctx context.Context, cols []*table.Column, exec func(rows []types.DatumRow) error) error {
 	// process `insert|replace into ... select ... from ...`
 	selectExec := e.children[0]
 	if selectExec.Schema().Len() != len(cols) {

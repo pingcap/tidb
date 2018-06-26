@@ -184,9 +184,9 @@ func (e *InsertExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 
 	if len(e.children) > 0 && e.children[0] != nil {
-		return errors.Trace(e.getRowsSelectChunk(ctx, cols, e.exec))
+		return errors.Trace(e.insertRowsFromSelect(ctx, cols, e.exec))
 	}
-	return errors.Trace(e.getRows(cols, e.exec))
+	return errors.Trace(e.insertRows(cols, e.exec))
 }
 
 // Close implements the Executor Close interface.
