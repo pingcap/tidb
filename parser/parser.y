@@ -955,6 +955,17 @@ AlterTableSpec:
 			Constraint: constraint,
 		}
 	}
+|	"ADD" "PARTITION" PartitionDefinitionListOpt
+	{
+		var defs []*ast.PartitionDefinition
+		if $3 != nil {
+			defs = $3.([]*ast.PartitionDefinition)
+		}
+		$$ = &ast.AlterTableSpec{
+			Tp: ast.AlterTableAddPartitions,
+			PartDefinitions: defs,
+		}
+	}
 |	"DROP" ColumnKeywordOpt ColumnName RestrictOrCascadeOpt
 	{
 		$$ = &ast.AlterTableSpec{
