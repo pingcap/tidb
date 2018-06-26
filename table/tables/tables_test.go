@@ -338,7 +338,9 @@ PARTITION BY RANGE ( id ) (
 		PARTITION p3 VALUES LESS THAN (21)
 )`
 
-	_, err := ts.se.Execute(context.Background(), createTable1)
+	_, err := ts.se.Execute(context.Background(), "set @@session.tidb_enable_table_partition=1")
+	c.Assert(err, IsNil)
+	_, err = ts.se.Execute(context.Background(), createTable1)
 	c.Assert(err, IsNil)
 	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	tbInfo := tb.Meta()

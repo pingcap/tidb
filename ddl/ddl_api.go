@@ -843,6 +843,9 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 			Type:   s.Partition.Tp,
 			Enable: true,
 		}
+		if ctx.GetSessionVars().EnableTablePartition {
+			pi.Enable = true
+		}
 		if s.Partition.Expr != nil {
 			buf := new(bytes.Buffer)
 			s.Partition.Expr.Format(buf)
