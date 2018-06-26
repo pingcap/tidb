@@ -476,6 +476,8 @@ type reorgIndexTask struct {
 	// When the last handle is math.MaxInt64, set endIncluded to true to
 	// tell worker backfilling index of endHandle.
 	endIncluded bool
+	// mockTask is used for gofail testing.
+	mockTask bool
 }
 
 type addIndexResult struct {
@@ -687,6 +689,14 @@ func (w *addIndexWorker) run(d *ddlCtx) {
 		}
 
 		log.Debug("[ddl-reorg] got backfill index task:#v", task)
+
+		if task.mockTask {
+			// for gofail testing.
+			result := &addIndexResult{addedCount: 0, nextHandle: 0, err: errors.Errorf("mock add index error")}
+			w.resultCh <- result
+			continue
+		}
+
 		result := w.handleBackfillTask(d, task)
 		w.resultCh <- result
 	}
@@ -705,15 +715,13 @@ func makeupIndexColFieldMap(t table.Table, indexInfo *model.IndexInfo) map[int64
 
 // splitTableRanges uses PD region's key ranges to split the backfilling table key range space,
 // to speed up adding index in table with disperse handle.
-func splitTableRanges(t table.Table, reorgInfo *reorgInfo) ([]kv.KeyRange, error) {
-	startHandle := reorgInfo.StartHandle
-	endHandle := reorgInfo.EndHandle
+func splitTableRanges(t table.Table, store kv.Storage, startHandle, endHandle int64) ([]kv.KeyRange, error) {
 	startRecordKey := t.RecordKey(startHandle)
 	endRecordKey := t.RecordKey(endHandle).Next()
 
 	log.Infof("[ddl-reorg] split handle ranges [%v, %v] from PD", startHandle, endHandle)
 	kvRange := kv.KeyRange{StartKey: startRecordKey, EndKey: endRecordKey}
-	s, ok := reorgInfo.d.store.(tikv.Storage)
+	s, ok := store.(tikv.Storage)
 	if !ok {
 		// Only support split ranges in tikv.Storage now.
 		return []kv.KeyRange{kvRange}, nil
@@ -779,14 +787,23 @@ func (w *worker) waitTaskResults(workers []*addIndexWorker, taskCnt int, totalAd
 	return nextHandle, addedCount, errors.Trace(firstErr)
 }
 
+var gofailMockAddindexErrOnceGuard bool
+
 // handleReorgTasks sends tasks to workers, and waits for all the running workers to return results,
 // there are taskCnt running workers.
-func (w *worker) handleReorgTasks(startTime time.Time, startHandle int64, reorgInfo *reorgInfo, totalAddedCount *int64, workers []*addIndexWorker, batchTasks []*reorgIndexTask) error {
+func (w *worker) handleReorgTasks(reorgInfo *reorgInfo, totalAddedCount *int64, workers []*addIndexWorker, batchTasks []*reorgIndexTask) error {
 	for i, task := range batchTasks {
+		// gofail: var mockAddIndexErr bool
+		// if mockAddIndexErr && !gofailMockAddindexErrOnceGuard {
+		// 	  gofailMockAddindexErrOnceGuard = true
+		//    task.mockTask = true
+		// }
 		workers[i].taskCh <- task
 	}
 
+	startHandle := batchTasks[0].startHandle
 	taskCnt := len(batchTasks)
+	startTime := time.Now()
 	nextHandle, taskAddedCount, err := w.waitTaskResults(workers, taskCnt, totalAddedCount, startHandle)
 	elapsedTime := time.Since(startTime).Seconds()
 	if err == nil {
@@ -812,42 +829,69 @@ func (w *worker) handleReorgTasks(startTime time.Time, startHandle int64, reorgI
 	return nil
 }
 
-func (w *worker) buildKVRangesIndex(t table.Table, workers []*addIndexWorker, kvRanges []kv.KeyRange, job *model.Job, reorgInfo *reorgInfo) error {
-	var (
-		startTime   time.Time
-		startHandle int64
-		endHandle   int64
-		err         error
-	)
-	totalAddedCount := job.GetRowCount()
+// sendRangeTaskToWorkers send tasks to workers, and return remaining kvRanges that is not handled.
+func (w *worker) sendRangeTaskToWorkers(t table.Table, workers []*addIndexWorker, reorgInfo *reorgInfo, totalAddedCount *int64, kvRanges []kv.KeyRange) ([]kv.KeyRange, error) {
 	batchTasks := make([]*reorgIndexTask, 0, len(workers))
 
-	log.Infof("[ddl-reorg] start to reorg index of %v region ranges.", len(kvRanges))
-	for i, keyRange := range kvRanges {
-		startTime = time.Now()
-
-		startHandle, endHandle, err = decodeHandleRange(keyRange)
+	// Build reorg indices tasks.
+	for _, keyRange := range kvRanges {
+		startHandle, endHandle, err := decodeHandleRange(keyRange)
 		if err != nil {
-			return errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
+
 		endKey := t.RecordKey(endHandle)
 		endIncluded := false
 		if endKey.Cmp(keyRange.EndKey) < 0 {
 			endIncluded = true
 		}
-		task := &reorgIndexTask{startHandle, endHandle, endIncluded}
-
+		task := &reorgIndexTask{startHandle, endHandle, endIncluded, false}
 		batchTasks = append(batchTasks, task)
-		if len(batchTasks) >= len(workers) || i == (len(kvRanges)-1) {
-			// Wait tasks finish.
-			err = w.handleReorgTasks(startTime, startHandle, reorgInfo, &totalAddedCount, workers, batchTasks)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			batchTasks = batchTasks[:0]
+
+		if len(batchTasks) >= len(workers) {
+			break
 		}
 	}
 
+	// Wait tasks finish.
+	err := w.handleReorgTasks(reorgInfo, totalAddedCount, workers, batchTasks)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if len(batchTasks) < len(kvRanges) {
+		// there are kvRanges not handled.
+		remains := kvRanges[len(batchTasks):]
+		return remains, nil
+	}
+
+	return nil, nil
+}
+
+func (w *worker) buildKVRangesIndex(t table.Table, workers []*addIndexWorker, job *model.Job, reorgInfo *reorgInfo) error {
+	totalAddedCount := job.GetRowCount()
+
+	startHandle, endHandle := reorgInfo.StartHandle, reorgInfo.EndHandle
+	for {
+		kvRanges, err := splitTableRanges(t, reorgInfo.d.store, startHandle, endHandle)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		log.Infof("[ddl-reorg] start to reorg index of %v region ranges, handle range:[%v, %v).", len(kvRanges), startHandle, endHandle)
+		remains, err := w.sendRangeTaskToWorkers(t, workers, reorgInfo, &totalAddedCount, kvRanges)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		if remains == nil || len(remains) == 0 {
+			break
+		}
+		startHandle, _, err = decodeHandleRange(remains[0])
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 	return nil
 }
 
@@ -878,12 +922,7 @@ func (w *worker) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgI
 	}
 	defer closeAddIndexWorkers(idxWorkers)
 
-	kvRanges, err := splitTableRanges(t, reorgInfo)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	return w.buildKVRangesIndex(t, idxWorkers, kvRanges, job, reorgInfo)
+	return w.buildKVRangesIndex(t, idxWorkers, job, reorgInfo)
 }
 
 func findIndexByName(idxName string, indices []*model.IndexInfo) *model.IndexInfo {
