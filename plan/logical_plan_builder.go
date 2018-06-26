@@ -1338,6 +1338,14 @@ func checkExprInGroupBy(p LogicalPlan, expr ast.ExprNode, offset int, loc string
 }
 
 func (b *planBuilder) checkOnlyFullGroupBy(p LogicalPlan, fields []*ast.SelectField, orderBy *ast.OrderByClause, gby *ast.GroupByClause, from ast.ResultSetNode, where ast.ExprNode) {
+	if gby != nil {
+		b.checkOnlyFullGroupByWithGroupClause(p, fields, orderBy, gby, from, where)
+		return
+	}
+	b.checkOnlyFullGroupByWithOutGroupClause(p, fields)
+}
+
+func (b *planBuilder) checkOnlyFullGroupByWithGroupClause(p LogicalPlan, fields []*ast.SelectField, orderBy *ast.OrderByClause, gby *ast.GroupByClause, from ast.ResultSetNode, where ast.ExprNode) {
 	gbyCols := make(map[*expression.Column]struct{}, len(fields))
 	gbyExprs := make([]ast.ExprNode, 0, len(fields))
 	schema := p.Schema()
@@ -1392,6 +1400,52 @@ func (b *planBuilder) checkOnlyFullGroupBy(p LogicalPlan, fields []*ast.SelectFi
 		}
 		return
 	}
+}
+
+func (b *planBuilder) checkOnlyFullGroupByWithOutGroupClause(p LogicalPlan, fields []*ast.SelectField) {
+	resolver := colResolverForOnlyFullGroupBy{}
+	for idx, field := range fields {
+		resolver.exprIdx = idx
+		field.Accept(&resolver)
+		if err := resolver.Check(); err != nil {
+			b.err = errors.Trace(err)
+			return
+		}
+	}
+}
+
+// colResolverForOnlyFullGroupBy visits Expr tree to find out if an Expr tree is an aggregation function.
+// If so, find out the first column name that not in an aggregation function.
+type colResolverForOnlyFullGroupBy struct {
+	firstNonAggCol    *ast.ColumnName
+	exprIdx           int
+	firstNonAggColIdx int
+	hasAggFunc        bool
+}
+
+func (c *colResolverForOnlyFullGroupBy) Enter(node ast.Node) (ast.Node, bool) {
+	switch t := node.(type) {
+	case *ast.AggregateFuncExpr:
+		c.hasAggFunc = true
+		return node, true
+	case *ast.ColumnNameExpr:
+		if c.firstNonAggCol == nil {
+			c.firstNonAggCol, c.firstNonAggColIdx = t.Name, c.exprIdx
+		}
+		return node, true
+	}
+	return node, false
+}
+
+func (c *colResolverForOnlyFullGroupBy) Leave(node ast.Node) (ast.Node, bool) {
+	return node, true
+}
+
+func (c *colResolverForOnlyFullGroupBy) Check() error {
+	if c.hasAggFunc && c.firstNonAggCol != nil {
+		return ErrMixOfGroupFuncAndFields.GenByArgs(c.firstNonAggColIdx+1, c.firstNonAggCol.Name.O)
+	}
+	return nil
 }
 
 type colResolver struct {
@@ -1564,10 +1618,11 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 		if b.err != nil {
 			return nil
 		}
-		if b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy() {
-			b.checkOnlyFullGroupBy(p, sel.Fields.Fields, sel.OrderBy, sel.GroupBy, sel.From.TableRefs, sel.Where)
-		}
 	}
+	if b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy() && sel.From != nil {
+		b.checkOnlyFullGroupBy(p, sel.Fields.Fields, sel.OrderBy, sel.GroupBy, sel.From.TableRefs, sel.Where)
+	}
+
 	// We must resolve having and order by clause before build projection,
 	// because when the query is "select a+1 as b from t having sum(b) < 0", we must replace sum(b) to sum(a+1),
 	// which only can be done before building projection and extracting Agg functions.
@@ -1703,6 +1758,10 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	tableInfo := tbl.Meta()
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "")
 
+	if tableInfo.GetPartitionInfo() != nil {
+		b.optFlag = b.optFlag | flagPartitionProcessor
+	}
+
 	possiblePaths, err := getPossibleAccessPaths(tn.IndexHints, tableInfo)
 	if err != nil {
 		b.err = errors.Trace(err)
@@ -1718,6 +1777,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 
 	ds := DataSource{
 		DBName:              dbName,
+		table:               tbl,
 		tableInfo:           tableInfo,
 		statisticTable:      b.getStatsTable(tableInfo),
 		indexHints:          tn.IndexHints,

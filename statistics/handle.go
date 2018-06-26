@@ -218,3 +218,27 @@ func (h *Handle) LoadNeededHistograms() error {
 func (h *Handle) LoadMetaCh() chan *LoadMeta {
 	return h.loadMetaCh
 }
+
+// FlushStats flushes the cached stats update into store.
+func (h *Handle) FlushStats() {
+	for len(h.ddlEventCh) > 0 {
+		e := <-h.ddlEventCh
+		if err := h.HandleDDLEvent(e); err != nil {
+			log.Debug("[stats] handle ddl event fail: ", errors.ErrorStack(err))
+		}
+	}
+	if err := h.DumpStatsDeltaToKV(DumpAll); err != nil {
+		log.Debug("[stats] dump stats delta fail: ", errors.ErrorStack(err))
+	}
+	for len(h.analyzeResultCh) > 0 {
+		t := <-h.analyzeResultCh
+		for i, hg := range t.Hist {
+			if err := SaveStatsToStorage(h.ctx, t.TableID, t.Count, t.IsIndex, hg, t.Cms[i], 1); err != nil {
+				log.Debug("[stats] save histogram to storage fail: ", errors.ErrorStack(err))
+			}
+		}
+	}
+	if err := h.DumpStatsFeedbackToKV(); err != nil {
+		log.Debug("[stats] dump stats feedback fail: ", errors.ErrorStack(err))
+	}
+}

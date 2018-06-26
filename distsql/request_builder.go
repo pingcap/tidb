@@ -69,7 +69,7 @@ func (builder *RequestBuilder) SetTableHandles(tid int64, handles []int64) *Requ
 	return builder
 }
 
-// SetDAGRequest sets the request type to "ReqTypeDAG" and cosntruct request data.
+// SetDAGRequest sets the request type to "ReqTypeDAG" and construct request data.
 func (builder *RequestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *RequestBuilder {
 	if builder.err != nil {
 		return builder

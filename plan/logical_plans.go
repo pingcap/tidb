@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
 	log "github.com/sirupsen/logrus"
@@ -285,6 +286,7 @@ type DataSource struct {
 	logicalSchemaProducer
 
 	indexHints []*ast.IndexHint
+	table      table.Table
 	tableInfo  *model.TableInfo
 	Columns    []*model.ColumnInfo
 	DBName     model.CIStr
@@ -306,6 +308,10 @@ type DataSource struct {
 
 	// possibleAccessPaths stores all the possible access path for physical plan, including table scan.
 	possibleAccessPaths []*accessPath
+
+	// The data source may be a partition, rather than a real table.
+	isPartition bool
+	partitionID int64
 }
 
 // accessPath tells how we access one index or just access table.

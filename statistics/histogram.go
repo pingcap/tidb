@@ -185,6 +185,19 @@ func HistogramEqual(a, b *Histogram, ignoreID bool) bool {
 	return bytes.Equal([]byte(a.ToString(0)), []byte(b.ToString(0)))
 }
 
+const (
+	// constants for stats version
+	curStatsVersion = version1
+	version1        = 1
+
+	// constants for column flag
+	analyzeFlag = 1
+)
+
+func isAnalyzed(flag int64) bool {
+	return (flag & analyzeFlag) > 0
+}
+
 // SaveStatsToStorage saves the stats to storage.
 func SaveStatsToStorage(sctx sessionctx.Context, tableID int64, count int64, isIndex int, hg *Histogram, cms *CMSketch, isAnalyzed int64) error {
 	ctx := context.TODO()
@@ -210,8 +223,12 @@ func SaveStatsToStorage(sctx sessionctx.Context, tableID int64, count int64, isI
 	if err != nil {
 		return errors.Trace(err)
 	}
-	replaceSQL := fmt.Sprintf("replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, is_analyzed) values (%d, %d, %d, %d, %d, %d, X'%X', %d, %d)",
-		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, data, hg.TotColSize, isAnalyzed)
+	flag := 0
+	if isAnalyzed == 1 {
+		flag = analyzeFlag
+	}
+	replaceSQL := fmt.Sprintf("replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, flag) values (%d, %d, %d, %d, %d, %d, X'%X', %d, %d, %d)",
+		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, data, hg.TotColSize, curStatsVersion, flag)
 	_, err = exec.Execute(ctx, replaceSQL)
 	if err != nil {
 		return errors.Trace(err)
@@ -743,8 +760,9 @@ func (c *Column) getColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 type Index struct {
 	Histogram
 	*CMSketch
-	Info *model.IndexInfo
 	ErrorRate
+	statsVer int64 // statsVer is the version of the current stats, used to maintain compatibility
+	Info     *model.IndexInfo
 }
 
 func (idx *Index) String() string {
