@@ -94,7 +94,7 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 
 	warnings := sc.GetWarnings()
 	lastWarn := warnings[len(warnings)-1]
-	c.Assert(terror.ErrorEqual(types.ErrTruncatedWrongVal, lastWarn), IsTrue)
+	c.Assert(terror.ErrorEqual(types.ErrTruncatedWrongVal, lastWarn.Err), IsTrue)
 
 	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum("-1"), RetType: types.NewFieldType(mysql.TypeString)}, tp1)
 	res, err = f.Eval(nil)
@@ -103,7 +103,7 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 
 	warnings = sc.GetWarnings()
 	lastWarn = warnings[len(warnings)-1]
-	c.Assert(terror.ErrorEqual(types.ErrCastNegIntAsUnsigned, lastWarn), IsTrue)
+	c.Assert(terror.ErrorEqual(types.ErrCastNegIntAsUnsigned, lastWarn.Err), IsTrue)
 
 	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum("-18446744073709551616"), RetType: types.NewFieldType(mysql.TypeString)}, tp1)
 	res, err = f.Eval(nil)
@@ -114,7 +114,7 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 
 	warnings = sc.GetWarnings()
 	lastWarn = warnings[len(warnings)-1]
-	c.Assert(terror.ErrorEqual(types.ErrTruncatedWrongVal, lastWarn), IsTrue)
+	c.Assert(terror.ErrorEqual(types.ErrTruncatedWrongVal, lastWarn.Err), IsTrue)
 
 	// cast('18446744073709551616' as signed);
 	mask := ^mysql.UnsignedFlag
@@ -126,7 +126,7 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 
 	warnings = sc.GetWarnings()
 	lastWarn = warnings[len(warnings)-1]
-	c.Assert(terror.ErrorEqual(types.ErrTruncatedWrongVal, lastWarn), IsTrue)
+	c.Assert(terror.ErrorEqual(types.ErrTruncatedWrongVal, lastWarn.Err), IsTrue)
 
 	// cast('18446744073709551614' as signed);
 	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum("18446744073709551614"), RetType: types.NewFieldType(mysql.TypeString)}, tp1)
@@ -136,7 +136,7 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 
 	warnings = sc.GetWarnings()
 	lastWarn = warnings[len(warnings)-1]
-	c.Assert(terror.ErrorEqual(types.ErrCastAsSignedOverflow, lastWarn), IsTrue)
+	c.Assert(terror.ErrorEqual(types.ErrCastAsSignedOverflow, lastWarn.Err), IsTrue)
 
 	// create table t1(s1 time);
 	// insert into t1 values('11:11:11');
@@ -158,7 +158,7 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 
 	warnings = sc.GetWarnings()
 	lastWarn = warnings[len(warnings)-1]
-	c.Assert(terror.ErrorEqual(types.ErrOverflow, lastWarn), IsTrue)
+	c.Assert(terror.ErrorEqual(types.ErrOverflow, lastWarn.Err), IsTrue)
 	sc = origSc
 
 	// cast(bad_string as decimal)
