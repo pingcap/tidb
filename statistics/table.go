@@ -311,7 +311,7 @@ var histogramNeededColumns = neededColumnMap{cols: map[tableColumnID]struct{}{}}
 func (coll *HistColl) ColumnIsInvalid(sc *stmtctx.StatementContext, colID int64) bool {
 	col, ok := coll.Columns[colID]
 	if ok && col.NDV > 0 && col.Len() == 0 {
-		// If the col haven't been loaded yet, and the coll doesn't have `TableID` to load it. Just return false.
+		// If the col haven't been loaded yet, and the coll doesn't have `TableID` to load it. Just return true.
 		if !coll.SetTblID {
 			return true
 		}
