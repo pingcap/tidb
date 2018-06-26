@@ -406,62 +406,78 @@ type Explain struct {
 	explainedPlans map[int]bool
 }
 
+const (
+	// treeBody indicates the operator tree is not finished.
+	treeBody rune = '│'
+	// treeMiddleNode indicates this operator is in the middle the operator tree.
+	treeMiddleNode rune = '├'
+	// treeLastNode indicates this operator is the last child of the operator tree.
+	treeLastNode rune = '└'
+	// treeGap is used to represents the gap between the branches of the tree.
+	treeGap rune = ' '
+	// treeNodeIdentifier is used to replace the treeGap once we want to attach
+	// a node to a branch.
+	treeNodeIdentifier rune = '─'
+)
+
 func (e *Explain) getIndent4Child(indent string, isLastChild bool) string {
 	if !isLastChild {
-		return indent + "| "
+		return string(append([]rune(indent), treeBody, treeGap))
 	}
+
+	// If the current node is the last node of the current operator tree, we
+	// need to end this sub-tree by changing the closest treeBody to a treeGap.
 	indentBytes := []rune(indent)
 	for i := len(indentBytes) - 1; i >= 0; i-- {
-		if indentBytes[i] == '|' {
-			indentBytes[i] = ' '
+		if indentBytes[i] == treeBody {
+			indentBytes[i] = treeGap
 			break
 		}
 	}
-	return string(indentBytes) + "| "
+
+	// The child belongs to a new sub-tree, which is rooted by this node.
+	return string(append(indentBytes, treeBody, treeGap))
 }
 
 func (e *Explain) prettyIdentifier(id, indent string, isLastChild bool) string {
 	if len(indent) == 0 {
 		return id
 	}
+
+	// Here we attach a new node to the current operator sub-tree by changing
+	// the closest treeBody to a:
+	// 1. treeLastNode, if this node is the last node.
+	// 2. treeMiddleNode, if this node is not the last node.
 	indentBytes := []rune(indent)
 	for i := len(indentBytes) - 1; i >= 0; i-- {
-		if indentBytes[i] == '|' {
+		if indentBytes[i] == treeBody {
 			if isLastChild {
-				indentBytes[i] = '└'
+				indentBytes[i] = treeLastNode
 			} else {
-				indentBytes[i] = '├'
+				indentBytes[i] = treeMiddleNode
 			}
 			break
 		}
 	}
-	indentBytes[len(indentBytes)-1] = '-'
-	indent = string(indentBytes)
-	return indent + id
+
+	// Do not forget to replace the treeGap between the treeBody and the node
+	// to a treeNodeIdentifier.
+	indentBytes[len(indentBytes)-1] = treeNodeIdentifier
+	return string(indentBytes) + id
 }
 
-// prepareExplainInfo4DAGTask generates the following information for every plan:
+// prepareOperatorInfo generates the following information for every plan:
 // operator id, task type, operator info, and the estemated row count.
-func (e *Explain) prepareExplainInfo4DAGTask(p PhysicalPlan, taskType string, indent string, isLastChild bool) {
+func (e *Explain) prepareOperatorInfo(p PhysicalPlan, taskType string, indent string, isLastChild bool) {
 	operatorInfo := p.ExplainInfo()
 	count := string(strconv.AppendFloat([]byte{}, p.StatsInfo().count, 'f', 2, 64))
 	row := []string{e.prettyIdentifier(p.ExplainID(), indent, isLastChild), taskType, operatorInfo, count}
 	e.Rows = append(e.Rows, row)
 }
 
-// prepareCopTaskInfo generates explain information for cop-tasks.
-// Only PhysicalTableReader, PhysicalIndexReader and PhysicalIndexLookUpReader have cop-tasks currently.
-func (e *Explain) prepareCopTaskInfo(plans []PhysicalPlan, indent string, isLastChild bool) {
-	for i := len(plans) - 1; i >= 0; i-- {
-		e.prepareExplainInfo4DAGTask(plans[i], "cop", indent, isLastChild)
-		indent = e.getIndent4Child(indent, true)
-		isLastChild = true
-	}
-}
-
-// prepareRootTaskInfo generates explain information for root-tasks.
-func (e *Explain) prepareRootTaskInfo(p PhysicalPlan, indent string, isLastChild bool) {
-	e.prepareExplainInfo4DAGTask(p, "root", indent, isLastChild)
+// explainPlanInRowFormat generates explain information for root-tasks.
+func (e *Explain) explainPlanInRowFormat(p PhysicalPlan, taskType, indent string, isLastChild bool) {
+	e.prepareOperatorInfo(p, taskType, indent, isLastChild)
 	e.explainedPlans[p.ID()] = true
 
 	childIndent := e.getIndent4Child(indent, isLastChild)
@@ -469,17 +485,17 @@ func (e *Explain) prepareRootTaskInfo(p PhysicalPlan, indent string, isLastChild
 		if e.explainedPlans[child.ID()] {
 			continue
 		}
-		e.prepareRootTaskInfo(child.(PhysicalPlan), childIndent, i == len(p.Children())-1)
+		e.explainPlanInRowFormat(child.(PhysicalPlan), taskType, childIndent, i == len(p.Children())-1)
 	}
 
 	switch copPlan := p.(type) {
 	case *PhysicalTableReader:
-		e.prepareCopTaskInfo(copPlan.TablePlans, childIndent, true)
+		e.explainPlanInRowFormat(copPlan.tablePlan, "cop", childIndent, true)
 	case *PhysicalIndexReader:
-		e.prepareCopTaskInfo(copPlan.IndexPlans, childIndent, true)
+		e.explainPlanInRowFormat(copPlan.indexPlan, "cop", childIndent, true)
 	case *PhysicalIndexLookUpReader:
-		e.prepareCopTaskInfo(copPlan.IndexPlans, childIndent, false)
-		e.prepareCopTaskInfo(copPlan.TablePlans, childIndent, true)
+		e.explainPlanInRowFormat(copPlan.indexPlan, "cop", childIndent, false)
+		e.explainPlanInRowFormat(copPlan.tablePlan, "cop", childIndent, true)
 	}
 }
 
