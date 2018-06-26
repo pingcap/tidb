@@ -213,6 +213,9 @@ func (h *Handle) initStatsBuckets(tables statsCache) error {
 		if h.LastVersion < table.Version {
 			h.LastVersion = table.Version
 		}
+		if table.isOutdated() {
+			table.Pseudo = true
+		}
 		for _, idx := range table.Indices {
 			for i := 1; i < idx.Len(); i++ {
 				idx.Buckets[i].Count += idx.Buckets[i-1].Count

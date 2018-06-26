@@ -637,3 +637,42 @@ func (q *QueryFeedback) Equal(rq *QueryFeedback) bool {
 	}
 	return true
 }
+
+// recalculateExpectCount recalculates the expect row count if the origin row count is estimated by pseudo.
+func (q *QueryFeedback) recalculateExpectCount(h *Handle) error {
+	t, ok := h.statsCache.Load().(statsCache)[q.tableID]
+	if !ok {
+		return nil
+	}
+	if t.Pseudo == false {
+		return nil
+	}
+	isIndex := q.hist.tp.Tp == mysql.TypeBlob
+	if isIndex && t.Indices[q.hist.ID].IsPseudo() == false {
+		return nil
+	}
+	if !isIndex && t.Columns[q.hist.ID].IsPseudo() == false {
+		return nil
+	}
+
+	sc := h.ctx.GetSessionVars().StmtCtx
+	ranges, err := q.DecodeToRanges(isIndex)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	expected := 0.0
+	if isIndex {
+		idx := t.Indices[q.hist.ID]
+		expected, err = idx.getRowCount(sc, ranges)
+		expected *= idx.getIncreaseFactor(t.Count)
+	} else {
+		c := t.Columns[q.hist.ID]
+		expected, err = c.getColumnRowCount(sc, ranges)
+		expected *= c.getIncreaseFactor(t.Count)
+	}
+	if err != nil {
+		return errors.Trace(err)
+	}
+	q.expected = int64(expected)
+	return nil
+}

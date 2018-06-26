@@ -310,6 +310,13 @@ var histogramNeededColumns = neededColumnMap{cols: map[tableColumnID]struct{}{}}
 // and use pseudo estimation.
 var RatioOfPseudoEstimate = 0.7
 
+func (t *Table) isOutdated() bool {
+	if t.Count > 0 && float64(t.ModifyCount)/float64(t.Count) > RatioOfPseudoEstimate {
+		return true
+	}
+	return false
+}
+
 // ColumnIsInvalid checks if this column is invalid. If this column has histogram but not loaded yet, then we mark it
 // as need histogram.
 func (t *Table) ColumnIsInvalid(sc *stmtctx.StatementContext, colID int64) bool {

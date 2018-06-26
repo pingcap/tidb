@@ -234,7 +234,7 @@ func (s *session) StoreQueryFeedback(feedback interface{}) {
 			metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblError).Inc()
 			return
 		}
-		err = s.statsCollector.StoreQueryFeedback(feedback, do.StatsHandle(), do.InfoSchema())
+		err = s.statsCollector.StoreQueryFeedback(feedback, do.StatsHandle())
 		if err != nil {
 			log.Debug("store query feedback error: ", err)
 			metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblError).Inc()

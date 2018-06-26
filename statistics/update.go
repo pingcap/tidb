@@ -162,53 +162,17 @@ func mergeQueryFeedback(lq []*QueryFeedback, rq []*QueryFeedback) []*QueryFeedba
 }
 
 // StoreQueryFeedback will merges the feedback into stats collector.
-func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Handle, is infoschema.InfoSchema) error {
+func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Handle) error {
 	q := feedback.(*QueryFeedback)
 	// TODO: If the error rate is small or actual scan count is small, we do not need to store the feed back.
 	if !q.valid || q.hist == nil {
 		return nil
 	}
+	err := q.recalculateExpectCount(h)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	expected := float64(q.expected)
-	isIndex := q.hist.tp.Tp == mysql.TypeBlob
-
-	table, ok := is.TableByID(q.tableID)
-	if !ok {
-		return nil
-	}
-	t := h.GetTableStats(table.Meta())
-	sc := h.ctx.GetSessionVars().StmtCtx
-
-	// A pseudo statistics table will be used when table row count from statistics is zero.
-	if t.Count == 0 {
-		t = PseudoTable(table.Meta())
-	}
-
-	// The table be will pseudo when statistics is outdated.
-	if float64(t.ModifyCount)/float64(t.Count) > RatioOfPseudoEstimate {
-		tbl := *t
-		tbl.Pseudo = true
-		t = &tbl
-	}
-
-	if t.Pseudo == true {
-		var err error
-		ranges, err := q.DecodeToRanges(isIndex)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if isIndex {
-			idx := t.Indices[q.hist.ID]
-			expected, err = idx.getRowCount(sc, ranges)
-			expected *= idx.getIncreaseFactor(t.Count)
-		} else {
-			c := t.Columns[q.hist.ID]
-			expected, err = c.getColumnRowCount(sc, ranges)
-			expected *= c.getIncreaseFactor(t.Count)
-		}
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
 	var rate float64
 	if q.actual == 0 {
 		if expected == 0 {
@@ -222,6 +186,7 @@ func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Hand
 	metrics.StatsInaccuracyRate.Observe(rate)
 	s.Lock()
 	defer s.Unlock()
+	isIndex := q.hist.tp.Tp == mysql.TypeBlob
 	s.rateMap.update(q.tableID, q.hist.ID, rate, isIndex)
 	if len(s.feedback) < MaxQueryFeedbackCount {
 		s.feedback = append(s.feedback, q)
