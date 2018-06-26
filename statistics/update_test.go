@@ -75,7 +75,7 @@ func (s *testStatsUpdateSuite) TestSingleSessionInsert(c *C) {
 	h.HandleDDLEvent(<-h.DDLEventCh())
 	h.HandleDDLEvent(<-h.DDLEventCh())
 
-	h.DumpStatsDeltaToKV()
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	h.Update(is)
 	stats1 := h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(rowCount1))
@@ -91,7 +91,7 @@ func (s *testStatsUpdateSuite) TestSingleSessionInsert(c *C) {
 	for i := 0; i < rowCount1; i++ {
 		testKit.MustExec("insert into t1 values(1, 2)")
 	}
-	h.DumpStatsDeltaToKV()
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	h.Update(is)
 	stats1 = h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(rowCount1*2))
@@ -106,7 +106,7 @@ func (s *testStatsUpdateSuite) TestSingleSessionInsert(c *C) {
 		testKit.MustExec("insert into t1 values(1, 2)")
 	}
 	testKit.MustExec("commit")
-	h.DumpStatsDeltaToKV()
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	h.Update(is)
 	stats1 = h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(rowCount1*3))
@@ -122,7 +122,7 @@ func (s *testStatsUpdateSuite) TestSingleSessionInsert(c *C) {
 		testKit.MustExec("update t2 set c2 = c1")
 	}
 	testKit.MustExec("commit")
-	h.DumpStatsDeltaToKV()
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	h.Update(is)
 	stats1 = h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(rowCount1*3))
@@ -132,7 +132,7 @@ func (s *testStatsUpdateSuite) TestSingleSessionInsert(c *C) {
 	testKit.MustExec("begin")
 	testKit.MustExec("delete from t1")
 	testKit.MustExec("commit")
-	h.DumpStatsDeltaToKV()
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	h.Update(is)
 	stats1 = h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(0))
@@ -142,6 +142,33 @@ func (s *testStatsUpdateSuite) TestSingleSessionInsert(c *C) {
 
 	rs = testKit.MustQuery("select tot_col_size from mysql.stats_histograms")
 	rs.Check(testkit.Rows("0", "0", "10", "10"))
+
+	// test dump delta only when `modify count / count` is greater than the ratio.
+	originValue := statistics.DumpStatsDeltaRatio
+	statistics.DumpStatsDeltaRatio = 0.5
+	defer func() {
+		statistics.DumpStatsDeltaRatio = originValue
+	}()
+	statistics.DumpStatsDeltaRatio = 0.5
+	for i := 0; i < rowCount1; i++ {
+		testKit.MustExec("insert into t1 values (1,2)")
+	}
+	h.DumpStatsDeltaToKV(statistics.DumpDelta)
+	h.Update(is)
+	stats1 = h.GetTableStats(tableInfo1)
+	c.Assert(stats1.Count, Equals, int64(rowCount1))
+
+	// not dumped
+	testKit.MustExec("insert into t1 values (1,2)")
+	h.DumpStatsDeltaToKV(statistics.DumpDelta)
+	h.Update(is)
+	stats1 = h.GetTableStats(tableInfo1)
+	c.Assert(stats1.Count, Equals, int64(rowCount1))
+
+	h.FlushStats()
+	h.Update(is)
+	stats1 = h.GetTableStats(tableInfo1)
+	c.Assert(stats1.Count, Equals, int64(rowCount1+1))
 }
 
 func (s *testStatsUpdateSuite) TestRollback(c *C) {
@@ -159,7 +186,7 @@ func (s *testStatsUpdateSuite) TestRollback(c *C) {
 	tableInfo := tbl.Meta()
 	h := s.do.StatsHandle()
 	h.HandleDDLEvent(<-h.DDLEventCh())
-	h.DumpStatsDeltaToKV()
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	h.Update(is)
 
 	stats := h.GetTableStats(tableInfo)
@@ -194,7 +221,7 @@ func (s *testStatsUpdateSuite) TestMultiSession(c *C) {
 
 	h.HandleDDLEvent(<-h.DDLEventCh())
 
-	h.DumpStatsDeltaToKV()
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	h.Update(is)
 	stats1 := h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(rowCount1))
@@ -214,7 +241,7 @@ func (s *testStatsUpdateSuite) TestMultiSession(c *C) {
 	testKit.Se.Close()
 	testKit2.Se.Close()
 
-	h.DumpStatsDeltaToKV()
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	h.Update(is)
 	stats1 = h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(rowCount1*2))
@@ -243,14 +270,14 @@ func (s *testStatsUpdateSuite) TestTxnWithFailure(c *C) {
 	for i := 0; i < rowCount1; i++ {
 		testKit.MustExec("insert into t1 values(?, 2)", i)
 	}
-	h.DumpStatsDeltaToKV()
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	h.Update(is)
 	stats1 := h.GetTableStats(tableInfo1)
 	// have not commit
 	c.Assert(stats1.Count, Equals, int64(0))
 	testKit.MustExec("commit")
 
-	h.DumpStatsDeltaToKV()
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	h.Update(is)
 	stats1 = h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(rowCount1))
@@ -258,13 +285,13 @@ func (s *testStatsUpdateSuite) TestTxnWithFailure(c *C) {
 	_, err = testKit.Exec("insert into t1 values(0, 2)")
 	c.Assert(err, NotNil)
 
-	h.DumpStatsDeltaToKV()
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	h.Update(is)
 	stats1 = h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(rowCount1))
 
 	testKit.MustExec("insert into t1 values(-1, 2)")
-	h.DumpStatsDeltaToKV()
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	h.Update(is)
 	stats1 = h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(rowCount1+1))
@@ -297,7 +324,7 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 
 	_, err = testKit.Exec("insert into t values ('ss')")
 	c.Assert(err, IsNil)
-	h.DumpStatsDeltaToKV()
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	h.Update(is)
 	err = h.HandleAutoAnalyze(is)
 	c.Assert(err, IsNil)
@@ -313,7 +340,7 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 
 	_, err = testKit.Exec("insert into t values ('fff')")
 	c.Assert(err, IsNil)
-	c.Assert(h.DumpStatsDeltaToKV(), IsNil)
+	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
 	err = h.HandleAutoAnalyze(is)
 	c.Assert(err, IsNil)
@@ -324,7 +351,7 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 
 	_, err = testKit.Exec("insert into t values ('fff')")
 	c.Assert(err, IsNil)
-	c.Assert(h.DumpStatsDeltaToKV(), IsNil)
+	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
 	err = h.HandleAutoAnalyze(is)
 	c.Assert(err, IsNil)
@@ -335,7 +362,7 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 
 	_, err = testKit.Exec("insert into t values ('eee')")
 	c.Assert(err, IsNil)
-	h.DumpStatsDeltaToKV()
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	h.Clear()
 	// We set `Lease` here so that `Update` will use load by need strategy.
 	h.Lease = time.Second
@@ -482,7 +509,7 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	for i, t := range tests {
 		testKit.MustQuery(t.sql)
-		c.Assert(h.DumpStatsDeltaToKV(), IsNil)
+		c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
 		c.Assert(h.DumpStatsFeedbackToKV(), IsNil)
 		c.Assert(h.HandleUpdateStats(s.do.InfoSchema()), IsNil)
 		c.Assert(err, IsNil)
@@ -498,7 +525,7 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 
 	// Feedback from limit executor may not be accurate.
 	testKit.MustQuery("select * from t where t.a <= 2 limit 1")
-	h.DumpStatsDeltaToKV()
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	feedback := h.GetQueryFeedback()
 	c.Assert(len(feedback), Equals, 0)
 
@@ -506,7 +533,7 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 	statistics.MaxNumberOfRanges = 0
 	for _, t := range tests {
 		testKit.MustQuery(t.sql)
-		h.DumpStatsDeltaToKV()
+		h.DumpStatsDeltaToKV(statistics.DumpAll)
 		feedback := h.GetQueryFeedback()
 		c.Assert(len(feedback), Equals, 0)
 	}
@@ -516,7 +543,7 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 	statistics.MaxNumberOfRanges = oriNumber
 	for _, t := range tests {
 		testKit.MustQuery(t.sql)
-		h.DumpStatsDeltaToKV()
+		h.DumpStatsDeltaToKV(statistics.DumpAll)
 		feedback := h.GetQueryFeedback()
 		c.Assert(len(feedback), Equals, 0)
 	}
@@ -554,17 +581,17 @@ func (s *testStatsUpdateSuite) TestOutOfOrderUpdate(c *C) {
 
 	// Simulate the case that another tidb has inserted some value, but delta info has not been dumped to kv yet.
 	testKit.MustExec("insert into t values (2,2),(4,5)")
-	c.Assert(h.DumpStatsDeltaToKV(), IsNil)
+	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
 	testKit.MustExec(fmt.Sprintf("update mysql.stats_meta set count = 1 where table_id = %d", tableInfo.ID))
 
 	testKit.MustExec("delete from t")
-	c.Assert(h.DumpStatsDeltaToKV(), IsNil)
+	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
 	testKit.MustQuery("select count from mysql.stats_meta").Check(testkit.Rows("1"))
 
 	// Now another tidb has updated the delta info.
 	testKit.MustExec(fmt.Sprintf("update mysql.stats_meta set count = 3 where table_id = %d", tableInfo.ID))
 
-	c.Assert(h.DumpStatsDeltaToKV(), IsNil)
+	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
 	testKit.MustQuery("select count from mysql.stats_meta").Check(testkit.Rows("0"))
 }
 
