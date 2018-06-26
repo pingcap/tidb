@@ -1746,7 +1746,8 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		}
 
 		if tableInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
-			newCol.RetType = newCol.RetType.Clone()
+			newTp := *newCol.RetType
+			newCol.RetType = &newTp
 			newCol.RetType.Flag |= mysql.UniqueKeyFlag
 			handleCol = newCol
 		}
