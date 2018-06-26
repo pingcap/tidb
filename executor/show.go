@@ -696,14 +696,14 @@ func (e *ShowExec) fetchShowPlugins() error {
 
 func (e *ShowExec) fetchShowWarnings() error {
 	warns := e.ctx.GetSessionVars().StmtCtx.GetWarnings()
-	for _, warn := range warns {
-		warn = errors.Cause(warn)
+	for _, w := range warns {
+		warn := errors.Cause(w.Err)
 		switch x := warn.(type) {
 		case *terror.Error:
 			sqlErr := x.ToSQLError()
-			e.appendRow([]interface{}{"Warning", int64(sqlErr.Code), sqlErr.Message})
+			e.appendRow([]interface{}{w.Level, int64(sqlErr.Code), sqlErr.Message})
 		default:
-			e.appendRow([]interface{}{"Warning", int64(mysql.ErrUnknown), warn.Error()})
+			e.appendRow([]interface{}{w.Level, int64(mysql.ErrUnknown), warn.Error()})
 		}
 	}
 	return nil
