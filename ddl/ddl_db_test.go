@@ -1578,6 +1578,51 @@ func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
 	c.Assert(part.Definitions[1].Name, Equals, "p1")
 	c.Assert(part.Definitions[2].LessThan[0], Equals, "MAXVALUE")
 	c.Assert(part.Definitions[2].Name, Equals, "p2")
+
+	s.tk.MustExec("drop table if employees")
+	sql1 := `create table employees (
+	id int not null,
+	hired date not null
+	)
+	partition by range( year(hired) ) (
+		partition p1 values less than (1991),
+		partition p2 values less than (1996),
+		partition p2 values less than (2001)
+	);`
+	s.testErrorCode(c, sql1, mysql.ErrSameNamePartition)
+
+	sql2 := `create table employees (
+	id int not null,
+	hired date not null
+	)
+	partition by range( year(hired) ) (
+		partition p1 values less than (1998),
+		partition p2 values less than (1996),
+		partition p2 values less than (2001)
+	);`
+	s.testErrorCode(c, sql2, mysql.ErrRangeNotIncreasing)
+
+	sql3 := `create table employees (
+	id int not null,
+	hired date not null
+	)
+	partition by range( year(hired) ) (
+		partition p1 values less than (1998),
+		partition p2 values less than maxvalue,
+		partition p3 values less than (2001)
+	);`
+	s.testErrorCode(c, sql3, mysql.ErrPartitionMaxvalue)
+
+	sql4 := `create table employees (
+	id int not null,
+	hired date not null
+	)
+	partition by range( year(hired) ) (
+		partition p1 values less than maxvalue，
+		partition p3 values less than (1998)
+		partition p3 values less than (2001)
+	);`
+	s.testErrorCode(c, sql4, mysql.ErrPartitionMaxvalue)
 }
 
 func (s *testDBSuite) TestTableDDLWithFloatType(c *C) {

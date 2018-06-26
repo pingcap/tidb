@@ -20,6 +20,7 @@ package ddl
 import (
 	"bytes"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -636,6 +637,62 @@ func checkConstraintNames(constraints []*ast.Constraint) error {
 	return nil
 }
 
+func checkCreatePartitionNotExists(meta *model.TableInfo, part *model.PartitionInfo) error {
+	if meta.Partition.Type == model.PartitionTypeRange {
+		newPars := part.Definitions
+		set := make(map[string]bool)
+		for _, newPar := range newPars {
+			if _, ok := set[strings.ToLower(newPar.Name)]; ok {
+				return ErrSameNamePartition.GenByArgs(newPar.Name)
+			}
+			set[strings.ToLower(newPar.Name)] = true
+		}
+	}
+	return nil
+}
+
+// checkCreatePartitionValue values less than value must be strictly increasing for each partition.
+func checkCreatePartitionValue(meta *model.TableInfo, part *model.PartitionInfo) error {
+	if meta.Partition.Type == model.PartitionTypeRange {
+		newDefs := part.Definitions
+		rangeValue := newDefs[0].LessThan[0]
+		ifMaxvalue := strings.EqualFold(rangeValue, "MAXVALUE")
+		if ifMaxvalue && len(newDefs) > 1 {
+			return errors.Trace(ErrPartitionMaxvalue)
+		} else if ifMaxvalue && len(newDefs) == 1 {
+			return nil
+		}
+		currentRangeValue, err := strconv.Atoi(rangeValue)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		for i := 1; i < len(newDefs); i++ {
+			ifMaxvalue := strings.EqualFold(newDefs[i].LessThan[0], "MAXVALUE")
+			if ifMaxvalue && i == len(newDefs)-1 {
+				return nil
+			} else if ifMaxvalue && i != len(newDefs)-1 {
+				return errors.Trace(ErrPartitionMaxvalue)
+			}
+
+			nextRangeValue, err := strconv.Atoi(newDefs[i].LessThan[0])
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if nextRangeValue <= currentRangeValue {
+				return errors.Trace(ErrRangeNotIncreasing)
+			}
+			currentRangeValue = nextRangeValue
+		}
+	}
+	return nil
+}
+
+//func buildCreateTablePartitionInfo(d *ddl, tbInfo *model.TableInfo, s *ast.CreateTableStmt, cols []*table.Column) error {
+//
+//
+//}
+
 func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols []*table.Column, constraints []*ast.Constraint) (tbInfo *model.TableInfo, err error) {
 	tbInfo = &model.TableInfo{
 		Name: tableName,
@@ -881,8 +938,16 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 			pi.Definitions = append(pi.Definitions, piDef)
 		}
 		tbInfo.Partition = pi
-	}
 
+		err := checkCreatePartitionNotExists(tbInfo, tbInfo.Partition)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		err = checkCreatePartitionValue(tbInfo, tbInfo.Partition)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tbInfo.ID,
