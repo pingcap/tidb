@@ -57,7 +57,7 @@ func (e *RevokeExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 	e.done = true
 
-	// Revoke for each user
+	// Revoke for each user.
 	for _, user := range e.Users {
 		// Check if user exists.
 		exists, err := userExists(e.ctx, user.User.Username, user.User.Hostname)

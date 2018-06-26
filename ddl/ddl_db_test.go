@@ -149,7 +149,7 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	// drop database
 	sql = "drop database db_not_exist"
 	s.testErrorCode(c, sql, tmysql.ErrDBDropExists)
-	// crate table
+	// create table
 	s.tk.MustExec("create table test_error_code_succ (c1 int, c2 int, c3 int, primary key(c3))")
 	sql = "create table test_error_code_succ (c1 int, c2 int, c3 int)"
 	s.testErrorCode(c, sql, tmysql.ErrTableExists)
@@ -179,6 +179,10 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrUnknownCharacterSet)
 	sql = "create table test_error_code (a int not null ,b int not null,c int not null, d int not null, foreign key (b, c) references product(id));"
 	s.testErrorCode(c, sql, tmysql.ErrWrongFkDef)
+	sql = "create table test_error_code_2;"
+	s.testErrorCode(c, sql, tmysql.ErrTableMustHaveColumns)
+	sql = "create table test_error_code_2 (unique(c1));"
+	s.testErrorCode(c, sql, tmysql.ErrTableMustHaveColumns)
 	sql = "create table test_error_code_2(c1 int, c2 int, c3 int, primary key(c1), primary key(c2));"
 	s.testErrorCode(c, sql, tmysql.ErrMultiplePriKey)
 	sql = "create table test_error_code_3(pt blob ,primary key (pt));"
@@ -1477,18 +1481,27 @@ func (s *testDBSuite) TestCreateTableWithLike(c *C) {
 	s.tk.MustExec("insert into t set c2=1")
 	s.tk.MustExec("create table t1 like ctwl_db.t")
 	s.tk.MustExec("insert into t1 set c2=11")
+	s.tk.MustExec("create table t2 (like ctwl_db.t1)")
+	s.tk.MustExec("insert into t2 set c2=12")
 	s.tk.MustQuery("select * from t").Check(testkit.Rows("10 1"))
 	s.tk.MustQuery("select * from t1").Check(testkit.Rows("1 11"))
+	s.tk.MustQuery("select * from t2").Check(testkit.Rows("1 12"))
 	ctx := s.tk.Se.(sessionctx.Context)
 	is := domain.GetDomain(ctx).InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("ctwl_db"), model.NewCIStr("t1"))
+	tbl1, err := is.TableByName(model.NewCIStr("ctwl_db"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
-	tblInfo := tbl.Meta()
-	c.Assert(tblInfo.ForeignKeys, IsNil)
-	c.Assert(tblInfo.PKIsHandle, Equals, true)
-	col := tblInfo.Columns[0]
+	tbl1Info := tbl1.Meta()
+	c.Assert(tbl1Info.ForeignKeys, IsNil)
+	c.Assert(tbl1Info.PKIsHandle, Equals, true)
+	col := tbl1Info.Columns[0]
 	hasNotNull := tmysql.HasNotNullFlag(col.Flag)
 	c.Assert(hasNotNull, IsTrue)
+	tbl2, err := is.TableByName(model.NewCIStr("ctwl_db"), model.NewCIStr("t2"))
+	c.Assert(err, IsNil)
+	tbl2Info := tbl2.Meta()
+	c.Assert(tbl2Info.ForeignKeys, IsNil)
+	c.Assert(tbl2Info.PKIsHandle, Equals, true)
+	c.Assert(tmysql.HasNotNullFlag(tbl2Info.Columns[0].Flag), IsTrue)
 
 	// for different databases
 	s.tk.MustExec("create database ctwl_db1")
@@ -1497,14 +1510,16 @@ func (s *testDBSuite) TestCreateTableWithLike(c *C) {
 	s.tk.MustExec("insert into t1 set c2=11")
 	s.tk.MustQuery("select * from t1").Check(testkit.Rows("1 11"))
 	is = domain.GetDomain(ctx).InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("ctwl_db1"), model.NewCIStr("t1"))
+	tbl1, err = is.TableByName(model.NewCIStr("ctwl_db1"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
-	c.Assert(tbl.Meta().ForeignKeys, IsNil)
+	c.Assert(tbl1.Meta().ForeignKeys, IsNil)
 
 	// for failure cases
 	failSQL := fmt.Sprintf("create table t1 like test_not_exist.t")
 	s.testErrorCode(c, failSQL, tmysql.ErrNoSuchTable)
 	failSQL = fmt.Sprintf("create table t1 like test.t_not_exist")
+	s.testErrorCode(c, failSQL, tmysql.ErrNoSuchTable)
+	failSQL = fmt.Sprintf("create table t1 (like test_not_exist.t)")
 	s.testErrorCode(c, failSQL, tmysql.ErrNoSuchTable)
 	failSQL = fmt.Sprintf("create table test_not_exis.t1 like ctwl_db.t")
 	s.testErrorCode(c, failSQL, tmysql.ErrBadDB)
@@ -2198,6 +2213,34 @@ func (s *testDBSuite) TestUpdateHandleFailed(c *C) {
 	tk.MustExec("admin check index t idx_b")
 }
 
+func (s *testDBSuite) TestAddIndexFailed(c *C) {
+	gofail.Enable("github.com/pingcap/tidb/ddl/mockAddIndexErr", `return(true)`)
+	defer gofail.Disable("github.com/pingcap/tidb/ddl/mockAddIndexErr")
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test_add_index_failed")
+	defer tk.MustExec("drop database test_add_index_failed")
+	tk.MustExec("use test_add_index_failed")
+
+	tk.MustExec("create table t(a bigint PRIMARY KEY, b int)")
+	for i := 0; i < 1000; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values(%v, %v)", i, i))
+	}
+
+	// Get table ID for split.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test_add_index_failed"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblID := tbl.Meta().ID
+
+	// Split the table.
+	s.cluster.SplitTable(s.mvccStore, tblID, 100)
+
+	tk.MustExec("alter table t add index idx_b(b)")
+	tk.MustExec("admin check index t idx_b")
+	tk.MustExec("admin check table t")
+}
+
 func (s *testDBSuite) getHistoryDDLJob(id int64) (*model.Job, error) {
 	var job *model.Job
 
@@ -2284,4 +2327,102 @@ func (s *testDBSuite) TestBackwardCompatibility(c *C) {
 
 	// finished add index
 	tk.MustExec("admin check index t idx_b")
+}
+
+func (s *testDBSuite) TestAlterTableAddPartition(c *C) {
+	s.tk.MustExec("use test")
+	s.tk.MustExec("drop table if employees")
+	s.tk.MustExec(`create table employees (
+	id int not null,
+	hired date not null
+	)
+	partition by range( year(hired) ) (
+		partition p1 values less than (1991),
+		partition p2 values less than (1996),
+		partition p3 values less than (2001)
+	);`)
+	s.tk.MustExec(`alter table employees add partition (
+    partition p4 values less than (2010),
+    partition p5 values less than maxvalue
+	);`)
+
+	ctx := s.tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().Partition, NotNil)
+	part := tbl.Meta().Partition
+	c.Assert(part.Type, Equals, model.PartitionTypeRange)
+	c.Assert(part.Expr, Equals, "`hired`")
+
+	c.Assert(part.Definitions, HasLen, 5)
+	c.Assert(part.Definitions[0].LessThan[0], Equals, "1991")
+	c.Assert(part.Definitions[0].Name, Equals, "p1")
+	c.Assert(part.Definitions[1].LessThan[0], Equals, "1996")
+	c.Assert(part.Definitions[1].Name, Equals, "p2")
+	c.Assert(part.Definitions[2].LessThan[0], Equals, "2001")
+	c.Assert(part.Definitions[2].Name, Equals, "p3")
+	c.Assert(part.Definitions[3].LessThan[0], Equals, "2010")
+	c.Assert(part.Definitions[3].Name, Equals, "p4")
+	c.Assert(part.Definitions[4].LessThan[0], Equals, "maxvalue")
+	c.Assert(part.Definitions[4].Name, Equals, "p5")
+
+	s.tk.MustExec("drop table if t1")
+	s.tk.MustExec("create table t1(a int)")
+	sql1 := `alter table t1 add partition (
+		partition p1 values less than (2010),
+		partition p2 values less than maxvalue
+	);`
+	s.testErrorCode(c, sql1, mysql.ErrPartitionMgmtOnNonpartitioned)
+
+	sql2 := "alter table t1 add partition"
+	s.testErrorCode(c, sql2, mysql.ErrPartitionsMustBeDefined)
+
+	s.tk.MustExec("drop table if t2")
+	s.tk.MustExec(`create table t2 (
+	id int not null,
+	hired date not null
+	)
+	partition by range( year(hired) ) (
+	partition p1 values less than (1991),
+	partition p2 values less than maxvalue
+	);`)
+
+	sql3 := `alter table t2 add partition (
+		partition p3 values less than (2010)
+	);`
+	s.testErrorCode(c, sql3, mysql.ErrPartitionMaxvalue)
+
+	s.tk.MustExec("drop table if t3")
+	s.tk.MustExec(`create table t3 (
+	id int not null,
+	hired date not null
+	)
+	partition by range( year(hired) ) (
+	partition p1 values less than (1991),
+	partition p3 values less than (2001)
+	);`)
+
+	sql4 := `alter table t3 add partition (
+		partition p3 values less than (1993)
+	);`
+	s.testErrorCode(c, sql4, mysql.ErrRangeNotIncreasing)
+
+	sql5 := `alter table t3 add partition (
+		partition p1 values less than (1993)
+	);`
+	s.testErrorCode(c, sql5, mysql.ErrSameNamePartition)
+
+	sql6 := `alter table t3 add partition (
+		partition p1 values less than (1993),
+		partition p1 values less than (1995)
+	);`
+	s.testErrorCode(c, sql6, mysql.ErrSameNamePartition)
+
+	sql7 := `alter table t3 add partition (
+		partition p4 values less than (1993),
+		partition p1 values less than (1995)，
+		partition p5 values less than maxvalue,
+	);`
+	s.testErrorCode(c, sql7, mysql.ErrSameNamePartition)
 }

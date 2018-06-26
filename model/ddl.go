@@ -48,6 +48,7 @@ const (
 	ActionShardRowID         ActionType = 16
 	ActionModifyTableComment ActionType = 17
 	ActionRenameIndex        ActionType = 18
+	ActionAddTablePartition  ActionType = 19
 )
 
 var actionMap = map[ActionType]string{
@@ -69,6 +70,7 @@ var actionMap = map[ActionType]string{
 	ActionShardRowID:         "shard row ID",
 	ActionModifyTableComment: "modify table comment",
 	ActionRenameIndex:        "rename index",
+	ActionAddTablePartition:  "add partition",
 }
 
 // String return current ddl action in string
