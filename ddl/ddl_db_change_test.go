@@ -586,8 +586,6 @@ func (s *testStateChangeSuite) TestParallelRenameRebaseAutoID(c *C) {
 }
 
 func (s *testStateChangeSuite) TestParallelRenameTableRenameIndex(c *C) {
-	_, err := s.se.Execute(context.Background(), "alter table t add index a_index (a);")
-	c.Assert(err, IsNil)
 	sql1 := "alter table t rename to t_add;"
 	sql2 := "alter table t rename index a_index to k_index;"
 	defer s.se.Execute(context.Background(), "drop table t_add;")
@@ -604,6 +602,8 @@ func (s *testStateChangeSuite) testControlParallelExecSQL(c *C, sql1, sql2 strin
 	_, err := s.se.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
 	_, err = s.se.Execute(context.Background(), "create table t(a int, b int, c int)")
+	c.Assert(err, IsNil)
+	_, err = s.se.Execute(context.Background(), "alter table t add index a_index (a);")
 	c.Assert(err, IsNil)
 	defer s.se.Execute(context.Background(), "drop table t")
 
