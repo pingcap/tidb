@@ -170,10 +170,19 @@ func needDumpStatsDelta(h *Handle, id int64, item variable.TableDelta, currentTi
 		item.InitTime = currentTime
 	}
 	tbl, ok := h.statsCache.Load().(statsCache)[id]
-	if ok && tbl.Count > 0 && float64(item.Count)/float64(tbl.Count) < DumpStatsDeltaRatio && currentTime.Sub(item.InitTime) < dumpStatsMaxDuration {
+	if !ok {
+		// No need to dump if the stats is invalid.
 		return false
 	}
-	return true
+	if currentTime.Sub(item.InitTime) > dumpStatsMaxDuration {
+		// Dump the stats to kv at least once an hour.
+		return true
+	}
+	if tbl.Count == 0 || float64(item.Count)/float64(tbl.Count) > DumpStatsDeltaRatio {
+		// Dump the stats when there are many modifications.
+		return true
+	}
+	return false
 }
 
 const (

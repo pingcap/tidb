@@ -554,7 +554,7 @@ type TableDelta struct {
 	Delta    int64
 	Count    int64
 	ColSize  map[int64]int64
-	InitTime time.Time
+	InitTime time.Time // InitTime is the time that this delta is generated.
 }
 
 // Concurrency defines concurrency values.
