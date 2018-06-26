@@ -476,8 +476,6 @@ type reorgIndexTask struct {
 	// When the last handle is math.MaxInt64, set endIncluded to true to
 	// tell worker backfilling index of endHandle.
 	endIncluded bool
-	// mockTask is used for gofail testing.
-	mockTask bool
 }
 
 type addIndexResult struct {
