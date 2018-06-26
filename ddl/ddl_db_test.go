@@ -2426,3 +2426,25 @@ func (s *testDBSuite) TestAlterTableAddPartition(c *C) {
 	);`
 	s.testErrorCode(c, sql7, mysql.ErrSameNamePartition)
 }
+
+func (s *testDBSuite) TestPartitionAddIndex(c *C) {
+	s.tk.MustExec("use test")
+	s.tk.MustExec(`create table t (
+	id int not null,
+	hired date not null
+	)
+	partition by range( year(hired) ) (
+	partition p1 values less than (1991),
+	partition p3 values less than (2001),
+	partition p3 values less than (2004),
+	partition p3 values less than (2008),
+	partition p3 values less than (2012),
+	partition p3 values less than (2018)
+	);`)
+	for i := 0; i < 500; i++ {
+		s.tk.MustExec(fmt.Sprintf("insert into t values (%d, '%d-01-01')", i, 1988+rand.Intn(30)))
+	}
+
+	s.tk.MustExec("alter table t add index idx (hired)")
+	s.tk.MustExec("admin check table t")
+}
