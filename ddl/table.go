@@ -441,9 +441,6 @@ func checkPartitionNotExists(meta *model.TableInfo, part *model.PartitionInfo) e
 	oldPars, newPars := meta.Partition.Definitions, part.Definitions
 	set := make(map[string]bool)
 	for _, oldPar := range oldPars {
-		if _, ok := set[strings.ToLower(oldPar.Name)]; ok {
-			return ErrSameNamePartition.GenByArgs(oldPar.Name)
-		}
 		set[strings.ToLower(oldPar.Name)] = true
 	}
 	for _, newPar := range newPars {
