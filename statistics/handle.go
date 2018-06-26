@@ -226,3 +226,19 @@ func (h *Handle) SetLastUpdateVersion(version uint64) {
 	defer h.mu.Unlock()
 	h.mu.lastVersion = version
 }
+
+// FlushStats flushes the cached stats update into store.
+func (h *Handle) FlushStats() {
+	for len(h.ddlEventCh) > 0 {
+		e := <-h.ddlEventCh
+		if err := h.HandleDDLEvent(e); err != nil {
+			log.Debug("[stats] handle ddl event fail: ", errors.ErrorStack(err))
+		}
+	}
+	if err := h.DumpStatsDeltaToKV(DumpAll); err != nil {
+		log.Debug("[stats] dump stats delta fail: ", errors.ErrorStack(err))
+	}
+	if err := h.DumpStatsFeedbackToKV(); err != nil {
+		log.Debug("[stats] dump stats feedback fail: ", errors.ErrorStack(err))
+	}
+}

@@ -155,15 +155,56 @@ func (h *Handle) NewSessionStatsCollector() *SessionStatsCollector {
 	return newCollector
 }
 
-// DumpStatsDeltaToKV sweeps the whole list and updates the global map. Then we dumps every table that held in map to KV.
-func (h *Handle) DumpStatsDeltaToKV() error {
+var (
+	// DumpStatsDeltaRatio is the lower bound of `Modify Count / Table Count` for stats delta to be dumped.
+	DumpStatsDeltaRatio = 1 / 10000.0
+	// dumpStatsMaxDuration is the max duration since last update.
+	dumpStatsMaxDuration = time.Hour
+)
+
+// needDumpStatsDelta returns true when only updates a small portion of the table and the time since last update
+// do not exceed one hour.
+func needDumpStatsDelta(h *Handle, id int64, item variable.TableDelta, currentTime time.Time) bool {
+	if item.InitTime.IsZero() {
+		item.InitTime = currentTime
+	}
+	tbl, ok := h.statsCache.Load().(statsCache)[id]
+	if !ok {
+		// No need to dump if the stats is invalid.
+		return false
+	}
+	if currentTime.Sub(item.InitTime) > dumpStatsMaxDuration {
+		// Dump the stats to kv at least once an hour.
+		return true
+	}
+	if tbl.Count == 0 || float64(item.Count)/float64(tbl.Count) > DumpStatsDeltaRatio {
+		// Dump the stats when there are many modifications.
+		return true
+	}
+	return false
+}
+
+const (
+	// DumpAll indicates dump all the delta info in to kv
+	DumpAll = true
+	// DumpDelta indicates dump part of the delta info in to kv.
+	DumpDelta = false
+)
+
+// DumpStatsDeltaToKV sweeps the whole list and updates the global map, then we dumps every table that held in map to KV.
+// If the `dumpAll` is false, it will only dump that delta info that `Modify Count / Table Count` greater than a ratio.
+func (h *Handle) DumpStatsDeltaToKV(dumpMode bool) error {
 	h.listHead.Lock()
 	for collector := h.listHead.next; collector != nil; collector = collector.next {
 		collector.tryToRemoveFromList()
 		h.merge(collector)
 	}
 	h.listHead.Unlock()
+	currentTime := time.Now()
 	for id, item := range h.globalMap {
+		if dumpMode == DumpDelta && !needDumpStatsDelta(h, id, item, currentTime) {
+			continue
+		}
 		updated, err := h.dumpTableStatCountToKV(id, item)
 		if err != nil {
 			return errors.Trace(err)

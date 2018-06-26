@@ -660,6 +660,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 				log.Debug("[stats] update stats info fail: ", errors.ErrorStack(err))
 			}
 		case <-do.exit:
+			statsHandle.FlushStats()
 			do.wg.Done()
 			return
 			// This channel is sent only by ddl owner.
@@ -669,7 +670,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 				log.Debug("[stats] handle ddl event fail: ", errors.ErrorStack(err))
 			}
 		case <-deltaUpdateTicker.C:
-			err = statsHandle.DumpStatsDeltaToKV()
+			err = statsHandle.DumpStatsDeltaToKV(statistics.DumpDelta)
 			if err != nil {
 				log.Debug("[stats] dump stats delta fail: ", errors.ErrorStack(err))
 			}

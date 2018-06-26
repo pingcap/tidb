@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -53,7 +54,7 @@ func (s *testAnalyzeSuite) TestCBOWithoutAnalyze(c *C) {
 	c.Assert(h.HandleDDLEvent(<-h.DDLEventCh()), IsNil)
 	testKit.MustExec("insert into t1 values (1), (2), (3), (4), (5), (6)")
 	testKit.MustExec("insert into t2 values (1), (2), (3), (4), (5), (6)")
-	h.DumpStatsDeltaToKV()
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	testKit.MustQuery("explain select * from t1, t2 where t1.a = t2.a").Check(testkit.Rows(
 		"TableScan_10   cop table:t1, range:[-inf,+inf], keep order:false 6.00",
@@ -139,7 +140,7 @@ func (s *testAnalyzeSuite) TestTableDual(c *C) {
 	testKit.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10)")
 	c.Assert(h.HandleDDLEvent(<-h.DDLEventCh()), IsNil)
 
-	h.DumpStatsDeltaToKV()
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 
 	testKit.MustQuery(`explain select * from t where 1 = 0`).Check(testkit.Rows(
@@ -170,12 +171,12 @@ func (s *testAnalyzeSuite) TestEstimation(c *C) {
 	testKit.MustExec("insert into t select * from t")
 	h := dom.StatsHandle()
 	h.HandleDDLEvent(<-h.DDLEventCh())
-	h.DumpStatsDeltaToKV()
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	testKit.MustExec("analyze table t")
 	for i := 1; i <= 8; i++ {
 		testKit.MustExec("delete from t where a = ?", i)
 	}
-	h.DumpStatsDeltaToKV()
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	testKit.MustQuery("explain select count(*) from t group by a").Check(testkit.Rows(
 		"TableScan_8 HashAgg_5  cop table:t, range:[-inf,+inf], keep order:false 8.00",
@@ -486,12 +487,12 @@ func (s *testAnalyzeSuite) TestOutdatedAnalyze(c *C) {
 	}
 	h := dom.StatsHandle()
 	h.HandleDDLEvent(<-h.DDLEventCh())
-	h.DumpStatsDeltaToKV()
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	testKit.MustExec("analyze table t")
 	testKit.MustExec("insert into t select * from t")
 	testKit.MustExec("insert into t select * from t")
 	testKit.MustExec("insert into t select * from t")
-	h.DumpStatsDeltaToKV()
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	plan.RatioOfPseudoEstimate = 10.0
 	testKit.MustQuery("explain select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
