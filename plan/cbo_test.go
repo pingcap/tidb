@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -53,7 +54,7 @@ func (s *testAnalyzeSuite) TestCBOWithoutAnalyze(c *C) {
 	c.Assert(h.HandleDDLEvent(<-h.DDLEventCh()), IsNil)
 	testKit.MustExec("insert into t1 values (1), (2), (3), (4), (5), (6)")
 	testKit.MustExec("insert into t2 values (1), (2), (3), (4), (5), (6)")
-	h.DumpStatsDeltaToKV()
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	testKit.MustQuery("explain select * from t1, t2 where t1.a = t2.a").Check(testkit.Rows(
 		"HashLeftJoin_8 root inner join, inner:TableReader_13, equal:[eq(test.t1.a, test.t2.a)] 7.50",
@@ -139,7 +140,7 @@ func (s *testAnalyzeSuite) TestTableDual(c *C) {
 	testKit.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10)")
 	c.Assert(h.HandleDDLEvent(<-h.DDLEventCh()), IsNil)
 
-	h.DumpStatsDeltaToKV()
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 
 	testKit.MustQuery(`explain select * from t where 1 = 0`).Check(testkit.Rows(
@@ -160,9 +161,9 @@ func (s *testAnalyzeSuite) TestEstimation(c *C) {
 	defer func() {
 		dom.Close()
 		store.Close()
-		plan.RatioOfPseudoEstimate = 0.7
+		statistics.RatioOfPseudoEstimate = 0.7
 	}()
-	plan.RatioOfPseudoEstimate = 10.0
+	statistics.RatioOfPseudoEstimate = 10.0
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a int)")
 	testKit.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10)")
@@ -170,12 +171,12 @@ func (s *testAnalyzeSuite) TestEstimation(c *C) {
 	testKit.MustExec("insert into t select * from t")
 	h := dom.StatsHandle()
 	h.HandleDDLEvent(<-h.DDLEventCh())
-	h.DumpStatsDeltaToKV()
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	testKit.MustExec("analyze table t")
 	for i := 1; i <= 8; i++ {
 		testKit.MustExec("delete from t where a = ?", i)
 	}
-	h.DumpStatsDeltaToKV()
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	testKit.MustQuery("explain select count(*) from t group by a").Check(testkit.Rows(
 		"HashAgg_9 root group by:col_1, funcs:count(col_0) 2.00",
@@ -486,20 +487,20 @@ func (s *testAnalyzeSuite) TestOutdatedAnalyze(c *C) {
 	}
 	h := dom.StatsHandle()
 	h.HandleDDLEvent(<-h.DDLEventCh())
-	h.DumpStatsDeltaToKV()
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	testKit.MustExec("analyze table t")
 	testKit.MustExec("insert into t select * from t")
 	testKit.MustExec("insert into t select * from t")
 	testKit.MustExec("insert into t select * from t")
-	h.DumpStatsDeltaToKV()
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
-	plan.RatioOfPseudoEstimate = 10.0
+	statistics.RatioOfPseudoEstimate = 10.0
 	testKit.MustQuery("explain select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
 		"TableReader_7 root data:Selection_6 28.80",
 		"└─Selection_6 cop le(test.t.a, 5), le(test.t.b, 5) 28.80",
 		"  └─TableScan_5 cop table:t, range:[-inf,+inf], keep order:false 80.00",
 	))
-	plan.RatioOfPseudoEstimate = 0.7
+	statistics.RatioOfPseudoEstimate = 0.7
 	testKit.MustQuery("explain select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
 		"IndexLookUp_11 root index:IndexScan_8, table:Selection_10 8.84",
 		"├─IndexScan_8 cop table:t, index:a, range:[-inf,5], keep order:false 26.59",
@@ -588,6 +589,34 @@ func (s *testAnalyzeSuite) TestNullCount(c *C) {
 		"└─Selection_6 cop lt(test.t.b, 1) 0.00",
 		"  └─TableScan_5 cop table:t, range:[-inf,+inf], keep order:false 2.00",
 	))
+}
+
+func (s *testAnalyzeSuite) TestCorrelatedEstimation(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int)")
+	tk.MustExec("insert into t values(1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5), (6,6,6), (7,7,7), (8,8,8), (9,9,9),(10,10,10)")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("explain select t.c in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t;").
+		Check(testkit.Rows("TableScan_14   cop table:t, range:[-inf,+inf], keep order:false 10.00",
+			"TableReader_15 Apply_13  root data:TableScan_14 10.00",
+			"TableScan_23 Selection_24  cop table:s, range:[-inf,+inf], keep order:false 10.00",
+			"Selection_24  TableScan_23 cop eq(s.a, test.t.a) 1.00",
+			"TableReader_25 HashRightJoin_22  root data:Selection_24 1.00",
+			"TableScan_26   cop table:t1, range:[-inf,+inf], keep order:false 10.00",
+			"TableReader_27 HashRightJoin_22  root data:TableScan_26 10.00",
+			"HashRightJoin_22 StreamAgg_20 TableReader_25,TableReader_27 root inner join, inner:TableReader_25, equal:[eq(s.a, t1.a)] 1.00",
+			"StreamAgg_20 Apply_13 HashRightJoin_22 root funcs:count(1) 1.00",
+			"Apply_13 Projection_11 TableReader_15,StreamAgg_20 root left outer semi join, inner:StreamAgg_20, equal:[eq(test.t.c, count(*))] 10.00",
+			"Projection_11  Apply_13 root 9_aux_0 10.00",
+		))
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
