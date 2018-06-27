@@ -206,13 +206,13 @@ func (s *testSelectivitySuite) TestPseudoSelectivity(c *C) {
 	testKit.MustExec("create table t(a int, b int, unique key idx(a,b))")
 	testKit.MustQuery("explain select * from t where a = 1 and b = 1").Check(testkit.Rows(
 		"IndexReader_9 root index:IndexScan_8 1.00",
-		"  IndexScan_8 cop table:t, index:a, b, range:[1 1,1 1], keep order:false 1.00"))
+		"└─IndexScan_8 cop table:t, index:a, b, range:[1 1,1 1], keep order:false 1.00"))
 
 	testKit.MustExec("create table t1(a int, b int, primary key(a))")
 	testKit.MustQuery("explain select b from t1 where a = 1").Check(testkit.Rows(
 		"Projection_4 root test.t1.b 1.00",
-		"  TableReader_6 root data:TableScan_5 1.00",
-		"    TableScan_5 cop table:t1, range:[1,1], keep order:false 1.00"))
+		"└─TableReader_6 root data:TableScan_5 1.00",
+		"  └─TableScan_5 cop table:t1, range:[1,1], keep order:false 1.00"))
 }
 
 // TestDiscreteDistribution tests the estimation for discrete data distribution. This is more common when the index
@@ -231,7 +231,7 @@ func (s *testSelectivitySuite) TestDiscreteDistribution(c *C) {
 	testKit.MustExec("analyze table t")
 	testKit.MustQuery("explain select * from t where a = 'tw' and b < 0").Check(testkit.Rows(
 		"IndexReader_9 root index:IndexScan_8 0.00",
-		"  IndexScan_8 cop table:t, index:a, b, range:[tw -inf,tw 0), keep order:false 0.00"))
+		"└─IndexScan_8 cop table:t, index:a, b, range:[tw -inf,tw 0), keep order:false 0.00"))
 }
 
 func BenchmarkSelectivity(b *testing.B) {

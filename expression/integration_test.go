@@ -2690,8 +2690,8 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 	result = tk.MustQuery("desc select a = a from t")
 	result.Check(testkit.Rows(
 		"Projection_3 root eq(test.t.a, test.t.a) 10000.00",
-		"  TableReader_5 root data:TableScan_4 10000.00",
-		"    TableScan_4 cop table:t, range:[-inf,+inf], keep order:false 10000.00",
+		"└─TableReader_5 root data:TableScan_4 10000.00",
+		"  └─TableScan_4 cop table:t, range:[-inf,+inf], keep order:false 10000.00",
 	))
 
 	// for interval
