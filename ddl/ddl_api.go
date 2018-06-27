@@ -840,10 +840,8 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	}
 	if s.Partition != nil {
 		pi := &model.PartitionInfo{
-			Type: s.Partition.Tp,
-		}
-		if ctx.GetSessionVars().EnableTablePartition {
-			pi.Enable = true
+			Type:   s.Partition.Tp,
+			Enable: ctx.GetSessionVars().EnableTablePartition,
 		}
 		if s.Partition.Expr != nil {
 			buf := new(bytes.Buffer)
