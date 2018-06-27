@@ -52,7 +52,6 @@ func (p *PhysicalIndexScan) ExplainInfo() string {
 	}
 	if haveCorCol {
 		fmt.Fprintf(buffer, ", range: decided by %v", p.AccessCondition)
-		fmt.Fprint(buffer, ", range:")
 	} else if len(p.Ranges) > 0 {
 		fmt.Fprint(buffer, ", range:")
 		for i, idxRange := range p.Ranges {
