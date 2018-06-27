@@ -50,6 +50,7 @@ type HashJoinExec struct {
 	prepared        bool
 	concurrency     uint // concurrency is number of concurrent channels and join workers.
 	hashTable       *mvmap.MVMap
+	innerFinished   chan error
 	hashJoinBuffers []*hashJoinBuffer
 	workerWaitGroup sync.WaitGroup // workerWaitGroup is for sync multiple join workers.
 	finished        atomic.Value
@@ -196,6 +197,8 @@ func (e *HashJoinExec) fetchOuterChunks(ctx context.Context) {
 		}
 		e.workerWaitGroup.Done()
 	}()
+
+	hasWaitedForInner := false
 	for {
 		if e.finished.Load().(bool) {
 			return
@@ -218,11 +221,40 @@ func (e *HashJoinExec) fetchOuterChunks(ctx context.Context) {
 			}
 			return
 		}
+
+		if !hasWaitedForInner {
+			jobFinished, innerErr := e.wait4Inner()
+			if innerErr != nil {
+				e.joinResultCh <- &hashjoinWorkerResult{
+					err: errors.Trace(innerErr),
+				}
+				return
+			} else if jobFinished {
+				return
+			}
+			hasWaitedForInner = true
+		}
+
 		if outerResult.NumRows() == 0 {
 			return
 		}
 		outerResource.dest <- outerResult
 	}
+}
+
+func (e *HashJoinExec) wait4Inner() (finished bool, err error) {
+	select {
+	case <-e.closeCh:
+		return true, nil
+	case err, _ := <-e.innerFinished:
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+	}
+	if e.hashTable.Len() == 0 && e.joinType == plan.InnerJoin {
+		return true, nil
+	}
+	return false, nil
 }
 
 // fetchInnerRows fetches all rows from inner executor,
@@ -276,9 +308,6 @@ func (e *HashJoinExec) initializeForProbe() {
 }
 
 func (e *HashJoinExec) fetchOuterAndProbeHashTable(ctx context.Context) {
-	if e.hashTable.Len() == 0 && e.joinType == plan.InnerJoin {
-		return
-	}
 	e.initializeForProbe()
 	e.workerWaitGroup.Add(1)
 	go e.fetchOuterChunks(ctx)
@@ -447,12 +476,8 @@ func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, joinResu
 // step 2. fetch data from outer child in a background goroutine and probe the hash table in multiple join workers.
 func (e *HashJoinExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 	if !e.prepared {
-		if err = e.fetchInnerRows(ctx); err != nil {
-			return errors.Trace(err)
-		}
-		if err = e.buildHashTableForList(); err != nil {
-			return errors.Trace(err)
-		}
+		e.innerFinished = make(chan error, 1)
+		go e.fetchInnerAndBuildHashTable(ctx)
 		e.fetchOuterAndProbeHashTable(ctx)
 		e.prepared = true
 	}
@@ -471,6 +496,29 @@ func (e *HashJoinExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 	chk.SwapColumns(result.chk)
 	result.src <- result.chk
 	return nil
+}
+
+func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
+	defer func() {
+		if r := recover(); r != nil {
+			buf := make([]byte, 4096)
+			stackSize := runtime.Stack(buf, false)
+			buf = buf[:stackSize]
+			log.Errorf("HashJoinExec.fetchInnerAndBuildHashTable paniced, stack is:\n%s", buf)
+			e.innerFinished <- errors.Errorf("%v", r)
+		}
+		close(e.innerFinished)
+	}()
+
+	if err := e.fetchInnerRows(ctx); err != nil {
+		e.innerFinished <- errors.Trace(err)
+		return
+	}
+
+	if err := e.buildHashTableForList(); err != nil {
+		e.innerFinished <- errors.Trace(err)
+		return
+	}
 }
 
 // buildHashTableForList builds hash table from `list`.

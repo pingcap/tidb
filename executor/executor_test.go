@@ -2895,3 +2895,13 @@ func (s *testSuite) TestUnsignedDecimalOverflow(c *C) {
 	r := tk.MustQuery("select a from t limit 1")
 	r.Check(testkit.Rows("0.00"))
 }
+
+func (s *testSuite) TestIndexJoinTableDualPanic(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table a (f1 int, f2 varchar(32), primary key (f1))")
+	tk.MustExec("insert into a (f1,f2) values (1,'a'), (2,'b'), (3,'c')")
+	tk.MustQuery("select a.* from a inner join (select 1 as k1,'k2-1' as k2) as k on a.f1=k.k1;").
+		Check(testkit.Rows("1 a"))
+}

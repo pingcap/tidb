@@ -476,7 +476,7 @@ func (mock *mockCopStreamClient) Recv() (*coprocessor.Response, error) {
 	if len(warnings) > 0 {
 		Warnings = make([]*tipb.Error, 0, len(warnings))
 		for i := range warnings {
-			Warnings = append(Warnings, toPBError(warnings[i]))
+			Warnings = append(Warnings, toPBError(warnings[i].Err))
 		}
 	}
 	streamResponse := tipb.StreamResponse{
@@ -499,7 +499,7 @@ func (mock *mockCopStreamClient) Recv() (*coprocessor.Response, error) {
 	return &resp, nil
 }
 
-func (mock *mockCopStreamClient) readBlockFromExecutor() (tipb.Chunk, bool, *coprocessor.KeyRange, []int64, []error, error) {
+func (mock *mockCopStreamClient) readBlockFromExecutor() (tipb.Chunk, bool, *coprocessor.KeyRange, []int64, []stmtctx.SQLWarn, error) {
 	var chunk tipb.Chunk
 	var ran coprocessor.KeyRange
 	var finish bool
@@ -530,7 +530,7 @@ func (mock *mockCopStreamClient) readBlockFromExecutor() (tipb.Chunk, bool, *cop
 	return chunk, finish, &ran, mock.exec.Counts(), warnings, nil
 }
 
-func buildResp(chunks []tipb.Chunk, counts []int64, err error, warnings []error) *coprocessor.Response {
+func buildResp(chunks []tipb.Chunk, counts []int64, err error, warnings []stmtctx.SQLWarn) *coprocessor.Response {
 	resp := &coprocessor.Response{}
 	selResp := &tipb.SelectResponse{
 		Error:        toPBError(err),
@@ -540,7 +540,7 @@ func buildResp(chunks []tipb.Chunk, counts []int64, err error, warnings []error)
 	if len(warnings) > 0 {
 		selResp.Warnings = make([]*tipb.Error, 0, len(warnings))
 		for i := range warnings {
-			selResp.Warnings = append(selResp.Warnings, toPBError(warnings[i]))
+			selResp.Warnings = append(selResp.Warnings, toPBError(warnings[i].Err))
 		}
 	}
 	if err != nil {

@@ -590,6 +590,13 @@ commit;`
 	INSERT t1 VALUES (1) ON DUPLICATE KEY UPDATE f1 = 1;`
 	tk.MustExec(testSQL)
 	tk.MustQuery(`SELECT * FROM t1;`).Check(testkit.Rows("1"))
+
+	testSQL = `DROP TABLE IF EXISTS t1;
+	CREATE TABLE t1 (f1 INT PRIMARY KEY, f2 INT UNIQUE);
+	INSERT t1 VALUES (1, 1);`
+	tk.MustExec(testSQL)
+	tk.MustExec(`INSERT t1 VALUES (1, 1), (1, 1) ON DUPLICATE KEY UPDATE f1 = 2, f2 = 2;`)
+	tk.MustQuery(`SELECT * FROM t1 order by f1;`).Check(testkit.Rows("1 1", "2 2"))
 }
 
 func (s *testSuite) TestInsertIgnoreOnDup(c *C) {
