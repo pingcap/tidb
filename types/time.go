@@ -2354,7 +2354,7 @@ func dayOfMonthNumeric(t *MysqlTime, input string, ctx map[string]int) (string, 
 
 	v, ok := parseDigits(input, length)
 
-	if !ok || v >= 32 {
+	if !ok || v > 31 {
 		return input, false
 	}
 	t.day = uint8(v)
