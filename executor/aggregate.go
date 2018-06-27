@@ -391,23 +391,33 @@ func (w baseHashAggWorker) getContext(sc *stmtctx.StatementContext, groupKey []b
 	return aggCtxs
 }
 
-func (w *HashAggFinalWorker) fetchIntermData(sc *stmtctx.StatementContext) (err error) {
+func (w *HashAggFinalWorker) getPartialInput() (input *HashAggIntermData, ok bool) {
+	select {
+	case <-w.finishCh:
+		return nil, false
+	case input, ok = <-w.inputCh:
+		if !ok {
+			return nil, false
+		}
+	}
+	return
+}
+
+func (w *HashAggFinalWorker) consumeIntermData(sc *stmtctx.StatementContext) (err error) {
 	var (
 		input *HashAggIntermData
 		ok    bool
 	)
 	for {
-		if input == nil {
-			select {
-			case <-w.finishCh:
-				return
-			case input, ok = <-w.inputCh:
-				if ok && w.intermDataRowsBuffer == nil {
-					w.intermDataRowsBuffer = make([]types.DatumRow, 0, w.maxChunkSize)
-				}
-			}
+		if input, ok = w.getPartialInput(); !ok {
+			return nil
 		}
-		if !ok || len(w.intermDataRowsBuffer) == w.maxChunkSize {
+		if w.intermDataRowsBuffer == nil {
+			w.intermDataRowsBuffer = make([]types.DatumRow, 0, w.maxChunkSize)
+		}
+		// Consume input in batches, size of every batch is less than w.maxChunkSize.
+		for reachEnd := false; !reachEnd; {
+			w.intermDataRowsBuffer, reachEnd = input.ToRows(sc, w.intermDataRowsBuffer, w.aggFuncs, w.maxChunkSize)
 			for _, row := range w.intermDataRowsBuffer {
 				groupKey := row.GetBytes(row.Len() - 1)
 				if len(w.groupSet.Get(groupKey, w.groupVals[:0])) == 0 {
@@ -421,13 +431,6 @@ func (w *HashAggFinalWorker) fetchIntermData(sc *stmtctx.StatementContext) (err 
 				}
 			}
 			w.intermDataRowsBuffer = w.intermDataRowsBuffer[:0]
-			if !ok {
-				return
-			}
-		}
-		var reachEnd bool
-		if w.intermDataRowsBuffer, reachEnd = input.ToRows(sc, w.intermDataRowsBuffer, w.aggFuncs, w.maxChunkSize); reachEnd {
-			input = nil
 		}
 	}
 }
@@ -470,7 +473,7 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 		waitGroup.Done()
 	}()
 	sc := ctx.GetSessionVars().StmtCtx
-	if err := w.fetchIntermData(sc); err != nil {
+	if err := w.consumeIntermData(sc); err != nil {
 		w.outputCh <- &AfFinalResult{err: errors.Trace(err)}
 	}
 	w.getFinalResult(sc)
