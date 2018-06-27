@@ -14,418 +14,225 @@
 package plan
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 )
 
 // ResolveIndices implements Plan interface.
-func (p *PhysicalProjection) ResolveIndices() (err error) {
-	err = p.physicalSchemaProducer.ResolveIndices()
-	if err != nil {
-		return errors.Trace(err)
-	}
+func (p *PhysicalProjection) ResolveIndices() {
+	p.physicalSchemaProducer.ResolveIndices()
 	for i, expr := range p.Exprs {
-		p.Exprs[i], err = expr.ResolveIndices(p.children[0].Schema())
-		if err != nil {
-			return errors.Trace(err)
-		}
+		p.Exprs[i] = expr.ResolveIndices(p.children[0].Schema())
 	}
-	return nil
 }
 
 // ResolveIndices implements Plan interface.
-func (p *PhysicalHashJoin) ResolveIndices() (err error) {
-	err = p.physicalSchemaProducer.ResolveIndices()
-	if err != nil {
-		return errors.Trace(err)
-	}
+func (p *PhysicalHashJoin) ResolveIndices() {
+	p.physicalSchemaProducer.ResolveIndices()
 	lSchema := p.children[0].Schema()
 	rSchema := p.children[1].Schema()
 	for i, fun := range p.EqualConditions {
-		lArg, err := fun.GetArgs()[0].ResolveIndices(lSchema)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		rArg, err := fun.GetArgs()[1].ResolveIndices(rSchema)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		lArg := fun.GetArgs()[0].ResolveIndices(lSchema)
+		rArg := fun.GetArgs()[1].ResolveIndices(rSchema)
 		p.EqualConditions[i] = expression.NewFunctionInternal(fun.GetCtx(), fun.FuncName.L, fun.GetType(), lArg, rArg).(*expression.ScalarFunction)
 	}
 	for i, expr := range p.LeftConditions {
-		p.LeftConditions[i], err = expr.ResolveIndices(lSchema)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		p.LeftConditions[i] = expr.ResolveIndices(lSchema)
 	}
 	for i, expr := range p.RightConditions {
-		p.RightConditions[i], err = expr.ResolveIndices(rSchema)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		p.RightConditions[i] = expr.ResolveIndices(rSchema)
 	}
 	for i, expr := range p.OtherConditions {
-		p.OtherConditions[i], err = expr.ResolveIndices(expression.MergeSchema(lSchema, rSchema))
-		if err != nil {
-			return errors.Trace(err)
-		}
+		p.OtherConditions[i] = expr.ResolveIndices(expression.MergeSchema(lSchema, rSchema))
 	}
-	return nil
 }
 
 // ResolveIndices implements Plan interface.
-func (p *PhysicalMergeJoin) ResolveIndices() (err error) {
-	err = p.physicalSchemaProducer.ResolveIndices()
-	if err != nil {
-		return errors.Trace(err)
-	}
+func (p *PhysicalMergeJoin) ResolveIndices() {
+	p.physicalSchemaProducer.ResolveIndices()
 	lSchema := p.children[0].Schema()
 	rSchema := p.children[1].Schema()
 	for i, col := range p.LeftKeys {
-		newKey, err := col.ResolveIndices(lSchema)
-		p.LeftKeys[i] = newKey.(*expression.Column)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		p.LeftKeys[i] = col.ResolveIndices(lSchema).(*expression.Column)
 	}
 	for i, col := range p.RightKeys {
-		newKey, err := col.ResolveIndices(rSchema)
-		p.RightKeys[i] = newKey.(*expression.Column)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		p.RightKeys[i] = col.ResolveIndices(rSchema).(*expression.Column)
 	}
 	for i, expr := range p.LeftConditions {
-		p.LeftConditions[i], err = expr.ResolveIndices(lSchema)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		p.LeftConditions[i] = expr.ResolveIndices(lSchema)
 	}
 	for i, expr := range p.RightConditions {
-		p.RightConditions[i], err = expr.ResolveIndices(rSchema)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		p.RightConditions[i] = expr.ResolveIndices(rSchema)
 	}
 	for i, expr := range p.OtherConditions {
-		p.OtherConditions[i], err = expr.ResolveIndices(expression.MergeSchema(lSchema, rSchema))
-		if err != nil {
-			return errors.Trace(err)
-		}
+		p.OtherConditions[i] = expr.ResolveIndices(expression.MergeSchema(lSchema, rSchema))
 	}
-	return nil
 }
 
 // ResolveIndices implements Plan interface.
-func (p *PhysicalIndexJoin) ResolveIndices() (err error) {
-	err = p.physicalSchemaProducer.ResolveIndices()
-	if err != nil {
-		return errors.Trace(err)
-	}
+func (p *PhysicalIndexJoin) ResolveIndices() {
+	p.physicalSchemaProducer.ResolveIndices()
 	lSchema := p.children[0].Schema()
 	rSchema := p.children[1].Schema()
 	for i := range p.InnerJoinKeys {
-		newKey, err := p.OuterJoinKeys[i].ResolveIndices(p.children[p.OuterIndex].Schema())
-		if err != nil {
-			return errors.Trace(err)
-		}
-		p.OuterJoinKeys[i] = newKey.(*expression.Column)
-		newKey, err = p.InnerJoinKeys[i].ResolveIndices(p.children[1-p.OuterIndex].Schema())
-		if err != nil {
-			return errors.Trace(err)
-		}
-		p.InnerJoinKeys[i] = newKey.(*expression.Column)
+		p.OuterJoinKeys[i] = p.OuterJoinKeys[i].ResolveIndices(p.children[p.OuterIndex].Schema()).(*expression.Column)
+		p.InnerJoinKeys[i] = p.InnerJoinKeys[i].ResolveIndices(p.children[1-p.OuterIndex].Schema()).(*expression.Column)
 	}
 	for i, expr := range p.LeftConditions {
-		p.LeftConditions[i], err = expr.ResolveIndices(lSchema)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		p.LeftConditions[i] = expr.ResolveIndices(lSchema)
 	}
 	for i, expr := range p.RightConditions {
-		p.RightConditions[i], err = expr.ResolveIndices(rSchema)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		p.RightConditions[i] = expr.ResolveIndices(rSchema)
 	}
 	for i, expr := range p.OtherConditions {
-		p.OtherConditions[i], err = expr.ResolveIndices(expression.MergeSchema(lSchema, rSchema))
-		if err != nil {
-			return errors.Trace(err)
-		}
+		p.OtherConditions[i] = expr.ResolveIndices(expression.MergeSchema(lSchema, rSchema))
 	}
-	return nil
 }
 
 // ResolveIndices implements Plan interface.
-func (p *PhysicalUnionScan) ResolveIndices() (err error) {
-	err = p.basePhysicalPlan.ResolveIndices()
-	if err != nil {
-		return errors.Trace(err)
-	}
+func (p *PhysicalUnionScan) ResolveIndices() {
+	p.basePhysicalPlan.ResolveIndices()
 	for i, expr := range p.Conditions {
-		p.Conditions[i], err = expr.ResolveIndices(p.children[0].Schema())
-		if err != nil {
-			return errors.Trace(err)
-		}
+		p.Conditions[i] = expr.ResolveIndices(p.children[0].Schema())
 	}
-	return nil
 }
 
 // ResolveIndices implements Plan interface.
-func (p *PhysicalTableReader) ResolveIndices() (err error) {
-	return errors.Trace(p.tablePlan.ResolveIndices())
+func (p *PhysicalTableReader) ResolveIndices() {
+	p.tablePlan.ResolveIndices()
 }
 
 // ResolveIndices implements Plan interface.
-func (p *PhysicalIndexReader) ResolveIndices() (err error) {
-	err = p.physicalSchemaProducer.ResolveIndices()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = p.indexPlan.ResolveIndices()
-	if err != nil {
-		return errors.Trace(err)
-	}
+func (p *PhysicalIndexReader) ResolveIndices() {
+	p.physicalSchemaProducer.ResolveIndices()
+	p.indexPlan.ResolveIndices()
 	for i, col := range p.OutputColumns {
 		if col.ID != model.ExtraHandleID {
-			newCol, err := col.ResolveIndices(p.indexPlan.Schema())
-			if err != nil {
-				return errors.Trace(err)
-			}
-			p.OutputColumns[i] = newCol.(*expression.Column)
+			p.OutputColumns[i] = col.ResolveIndices(p.indexPlan.Schema()).(*expression.Column)
 		} else {
 			p.OutputColumns[i] = col.Clone().(*expression.Column)
 			// If this is extra handle, then it must be the tail.
 			p.OutputColumns[i].Index = len(p.OutputColumns) - 1
 		}
 	}
-	return nil
 }
 
 // ResolveIndices implements Plan interface.
-func (p *PhysicalIndexLookUpReader) ResolveIndices() (err error) {
-	err = p.tablePlan.ResolveIndices()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return errors.Trace(p.indexPlan.ResolveIndices())
+func (p *PhysicalIndexLookUpReader) ResolveIndices() {
+	p.tablePlan.ResolveIndices()
+	p.indexPlan.ResolveIndices()
 }
 
 // ResolveIndices implements Plan interface.
-func (p *PhysicalSelection) ResolveIndices() (err error) {
-	err = p.basePhysicalPlan.ResolveIndices()
-	if err != nil {
-		return errors.Trace(err)
-	}
+func (p *PhysicalSelection) ResolveIndices() {
+	p.basePhysicalPlan.ResolveIndices()
 	for i, expr := range p.Conditions {
-		p.Conditions[i], err = expr.ResolveIndices(p.children[0].Schema())
-		if err != nil {
-			return errors.Trace(err)
-		}
+		p.Conditions[i] = expr.ResolveIndices(p.children[0].Schema())
 	}
-	return nil
 }
 
 // ResolveIndices implements Plan interface.
-func (p *basePhysicalAgg) ResolveIndices() (err error) {
-	err = p.physicalSchemaProducer.ResolveIndices()
-	if err != nil {
-		return errors.Trace(err)
-	}
+func (p *basePhysicalAgg) ResolveIndices() {
+	p.physicalSchemaProducer.ResolveIndices()
 	for _, aggFun := range p.AggFuncs {
 		for i, arg := range aggFun.Args {
-			aggFun.Args[i], err = arg.ResolveIndices(p.children[0].Schema())
-			if err != nil {
-				return errors.Trace(err)
-			}
+			aggFun.Args[i] = arg.ResolveIndices(p.children[0].Schema())
 		}
 	}
 	for i, item := range p.GroupByItems {
-		p.GroupByItems[i], err = item.ResolveIndices(p.children[0].Schema())
-		if err != nil {
-			return errors.Trace(err)
-		}
+		p.GroupByItems[i] = item.ResolveIndices(p.children[0].Schema())
 	}
-	return nil
 }
 
 // ResolveIndices implements Plan interface.
-func (p *PhysicalSort) ResolveIndices() (err error) {
-	err = p.basePhysicalPlan.ResolveIndices()
-	if err != nil {
-		return errors.Trace(err)
-	}
+func (p *PhysicalSort) ResolveIndices() {
+	p.basePhysicalPlan.ResolveIndices()
 	for _, item := range p.ByItems {
-		item.Expr, err = item.Expr.ResolveIndices(p.children[0].Schema())
-		if err != nil {
-			return errors.Trace(err)
-		}
+		item.Expr = item.Expr.ResolveIndices(p.children[0].Schema())
 	}
-	return nil
 }
 
 // ResolveIndices implements Plan interface.
-func (p *PhysicalTopN) ResolveIndices() (err error) {
-	err = p.basePhysicalPlan.ResolveIndices()
-	if err != nil {
-		return errors.Trace(err)
-	}
+func (p *PhysicalTopN) ResolveIndices() {
+	p.basePhysicalPlan.ResolveIndices()
 	for _, item := range p.ByItems {
-		item.Expr, err = item.Expr.ResolveIndices(p.children[0].Schema())
-		if err != nil {
-			return errors.Trace(err)
-		}
+		item.Expr = item.Expr.ResolveIndices(p.children[0].Schema())
 	}
-	return nil
 }
 
 // ResolveIndices implements Plan interface.
-func (p *PhysicalApply) ResolveIndices() (err error) {
-	err = p.physicalSchemaProducer.ResolveIndices()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = p.PhysicalJoin.ResolveIndices()
-	if err != nil {
-		return errors.Trace(err)
-	}
+func (p *PhysicalApply) ResolveIndices() {
+	p.physicalSchemaProducer.ResolveIndices()
+	p.PhysicalJoin.ResolveIndices()
 	for i, col := range p.schema.Columns {
-		newCol, err := col.ResolveIndices(p.PhysicalJoin.schema)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		p.schema.Columns[i] = newCol.(*expression.Column)
+		p.schema.Columns[i] = col.ResolveIndices(p.PhysicalJoin.schema).(*expression.Column)
 	}
 	for _, col := range p.OuterSchema {
-		newCol, err := col.Column.ResolveIndices(p.children[0].Schema())
-		if err != nil {
-			return errors.Trace(err)
-		}
-		col.Column = *newCol.(*expression.Column)
+		col.Column = *col.Column.ResolveIndices(p.children[0].Schema()).(*expression.Column)
 	}
-	return nil
 }
 
 // ResolveIndices implements Plan interface.
-func (p *Update) ResolveIndices() (err error) {
-	err = p.baseSchemaProducer.ResolveIndices()
-	if err != nil {
-		return errors.Trace(err)
-	}
+func (p *Update) ResolveIndices() {
+	p.baseSchemaProducer.ResolveIndices()
 	schema := p.SelectPlan.Schema()
 	for _, assign := range p.OrderedList {
-		newCol, err := assign.Col.ResolveIndices(schema)
-		assign.Col = newCol.(*expression.Column)
-		assign.Expr, err = assign.Expr.ResolveIndices(schema)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		assign.Col = assign.Col.ResolveIndices(schema).(*expression.Column)
+		assign.Expr = assign.Expr.ResolveIndices(schema)
 	}
-	return nil
 }
 
 // ResolveIndices implements Plan interface.
-func (p *Insert) ResolveIndices() (err error) {
-	err = p.baseSchemaProducer.ResolveIndices()
-	if err != nil {
-		return errors.Trace(err)
-	}
+func (p *Insert) ResolveIndices() {
+	p.baseSchemaProducer.ResolveIndices()
 	for _, asgn := range p.OnDuplicate {
-		newCol, err := asgn.Col.ResolveIndices(p.tableSchema)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		asgn.Col = newCol.(*expression.Column)
-		asgn.Expr, err = asgn.Expr.ResolveIndices(p.tableSchema)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		asgn.Col = asgn.Col.ResolveIndices(p.tableSchema).(*expression.Column)
+		asgn.Expr = asgn.Expr.ResolveIndices(p.tableSchema)
 	}
 	for _, set := range p.SetList {
-		newCol, err := set.Col.ResolveIndices(p.tableSchema)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		set.Col = newCol.(*expression.Column)
-		set.Expr, err = set.Expr.ResolveIndices(p.tableSchema)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		set.Col = set.Col.ResolveIndices(p.tableSchema).(*expression.Column)
+		set.Expr = set.Expr.ResolveIndices(p.tableSchema)
 	}
 	for i, expr := range p.GenCols.Exprs {
-		p.GenCols.Exprs[i], err = expr.ResolveIndices(p.tableSchema)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		p.GenCols.Exprs[i] = expr.ResolveIndices(p.tableSchema)
 	}
 	for _, asgn := range p.GenCols.OnDuplicates {
-		newCol, err := asgn.Col.ResolveIndices(p.tableSchema)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		asgn.Col = newCol.(*expression.Column)
-		asgn.Expr, err = asgn.Expr.ResolveIndices(p.tableSchema)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		asgn.Col = asgn.Col.ResolveIndices(p.tableSchema).(*expression.Column)
+		asgn.Expr = asgn.Expr.ResolveIndices(p.tableSchema)
 	}
-	return errors.Trace(err)
 }
 
 // ResolveIndices implements Plan interface.
-func (p *Show) ResolveIndices() (err error) {
+func (p *Show) ResolveIndices() {
 	for i, expr := range p.Conditions {
-		p.Conditions[i], err = expr.ResolveIndices(p.schema)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		p.Conditions[i] = expr.ResolveIndices(p.schema)
 	}
-	return nil
 }
 
-func (p *physicalSchemaProducer) ResolveIndices() (err error) {
-	err = p.basePhysicalPlan.ResolveIndices()
-	if err != nil {
-		return errors.Trace(err)
-	}
+func (p *physicalSchemaProducer) ResolveIndices() {
+	p.basePhysicalPlan.ResolveIndices()
 	if p.schema != nil {
 		for i, cols := range p.schema.TblID2Handle {
 			for j, col := range cols {
-				newCol, err := col.ResolveIndices(p.schema)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				p.schema.TblID2Handle[i][j] = newCol.(*expression.Column)
+				p.schema.TblID2Handle[i][j] = col.ResolveIndices(p.schema).(*expression.Column)
 			}
 		}
 	}
-	return nil
 }
 
-func (p *baseSchemaProducer) ResolveIndices() (err error) {
+func (p *baseSchemaProducer) ResolveIndices() {
 	if p.schema != nil {
 		for i, cols := range p.schema.TblID2Handle {
 			for j, col := range cols {
-				newCol, err := col.ResolveIndices(p.schema)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				p.schema.TblID2Handle[i][j] = newCol.(*expression.Column)
+				p.schema.TblID2Handle[i][j] = col.ResolveIndices(p.schema).(*expression.Column)
 			}
 		}
 	}
-	return nil
 }
 
 // ResolveIndices implements Plan interface.
-func (p *basePhysicalPlan) ResolveIndices() (err error) {
+func (p *basePhysicalPlan) ResolveIndices() {
 	for _, child := range p.children {
-		err = child.ResolveIndices()
-		if err != nil {
-			return errors.Trace(err)
-		}
+		child.ResolveIndices()
 	}
-	return nil
 }

@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/codec"
+	log "github.com/sirupsen/logrus"
 )
 
 // CorrelatedColumn stands for a column in a correlated sub query.
@@ -131,12 +132,11 @@ func (col *CorrelatedColumn) Decorrelate(schema *Schema) Expression {
 }
 
 // ResolveIndices implements Expression interface.
-func (col *CorrelatedColumn) ResolveIndices(_ *Schema) (Expression, error) {
-	return col, nil
+func (col *CorrelatedColumn) ResolveIndices(_ *Schema) Expression {
+	return col
 }
 
-func (col *CorrelatedColumn) resolveIndices(_ *Schema) error {
-	return nil
+func (col *CorrelatedColumn) resolveIndices(_ *Schema) {
 }
 
 // Column represents a column.
@@ -312,18 +312,17 @@ func (col *Column) HashCode(_ *stmtctx.StatementContext) []byte {
 }
 
 // ResolveIndices implements Expression interface.
-func (col *Column) ResolveIndices(schema *Schema) (Expression, error) {
+func (col *Column) ResolveIndices(schema *Schema) Expression {
 	newCol := col.Clone()
-	err := newCol.resolveIndices(schema)
-	return newCol, errors.Trace(err)
+	newCol.resolveIndices(schema)
+	return newCol
 }
 
-func (col *Column) resolveIndices(schema *Schema) error {
+func (col *Column) resolveIndices(schema *Schema) {
 	col.Index = schema.ColumnIndex(col)
 	if col.Index == -1 {
-		return errors.Errorf("Can't find column %s in schema %s", col, schema)
+		log.Errorf("Can't find column %s in schema %s", col, schema)
 	}
-	return nil
 }
 
 // Column2Exprs will transfer column slice to expression slice.
