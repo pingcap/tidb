@@ -50,12 +50,75 @@ func (m tableDeltaMap) update(id int64, delta int64, count int64, colSize *map[i
 	m[id] = item
 }
 
+type errorRateDelta struct {
+	PkID         int64
+	PkErrorRate  *ErrorRate
+	IdxErrorRate map[int64]*ErrorRate
+}
+
+type errorRateDeltaMap map[int64]errorRateDelta
+
+func (m errorRateDeltaMap) update(tableID int64, histID int64, rate float64, isIndex bool) {
+	item := m[tableID]
+	if isIndex {
+		if item.IdxErrorRate == nil {
+			item.IdxErrorRate = make(map[int64]*ErrorRate)
+		}
+		if item.IdxErrorRate[histID] == nil {
+			item.IdxErrorRate[histID] = &ErrorRate{}
+		}
+		item.IdxErrorRate[histID].update(rate)
+	} else {
+		if item.PkErrorRate == nil {
+			item.PkID = histID
+			item.PkErrorRate = &ErrorRate{}
+		}
+		item.PkErrorRate.update(rate)
+	}
+	m[tableID] = item
+}
+
+func (m errorRateDeltaMap) merge(deltaMap errorRateDeltaMap) {
+	for tableID, item := range deltaMap {
+		tbl := m[tableID]
+		for histID, errorRate := range item.IdxErrorRate {
+			if tbl.IdxErrorRate == nil {
+				tbl.IdxErrorRate = make(map[int64]*ErrorRate)
+			}
+			if tbl.IdxErrorRate[histID] == nil {
+				tbl.IdxErrorRate[histID] = &ErrorRate{}
+			}
+			tbl.IdxErrorRate[histID].merge(errorRate)
+		}
+		if item.PkErrorRate != nil {
+			if tbl.PkErrorRate == nil {
+				tbl.PkID = item.PkID
+				tbl.PkErrorRate = &ErrorRate{}
+			}
+			tbl.PkErrorRate.merge(item.PkErrorRate)
+		}
+		m[tableID] = tbl
+	}
+}
+
+func (m errorRateDeltaMap) clear(tableID int64, histID int64, isIndex bool) {
+	item := m[tableID]
+	if isIndex {
+		delete(item.IdxErrorRate, histID)
+	} else {
+		item.PkErrorRate = nil
+	}
+	m[tableID] = item
+}
+
 func (h *Handle) merge(s *SessionStatsCollector) {
 	s.Lock()
 	defer s.Unlock()
 	for id, item := range s.mapper {
 		h.globalMap.update(id, item.Delta, item.Count, &item.ColSize)
 	}
+	h.rateMap.merge(s.rateMap)
+	s.rateMap = make(errorRateDeltaMap)
 	h.feedback = mergeQueryFeedback(h.feedback, s.feedback)
 	s.mapper = make(tableDeltaMap)
 	s.feedback = s.feedback[:0]
@@ -67,6 +130,7 @@ type SessionStatsCollector struct {
 
 	mapper   tableDeltaMap
 	feedback []*QueryFeedback
+	rateMap  errorRateDeltaMap
 	prev     *SessionStatsCollector
 	next     *SessionStatsCollector
 	// deleted is set to true when a session is closed. Every time we sweep the list, we will remove the useless collector.
@@ -98,31 +162,36 @@ func mergeQueryFeedback(lq []*QueryFeedback, rq []*QueryFeedback) []*QueryFeedba
 }
 
 // StoreQueryFeedback will merges the feedback into stats collector.
-func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}) {
+func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Handle) error {
 	q := feedback.(*QueryFeedback)
 	// TODO: If the error rate is small or actual scan count is small, we do not need to store the feed back.
 	if !q.valid || q.hist == nil {
-		return
+		return nil
 	}
-
+	err := q.recalculateExpectCount(h)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	expected := float64(q.expected)
 	var rate float64
 	if q.actual == 0 {
-		if q.expected == 0 {
+		if expected == 0 {
 			rate = 0
 		} else {
 			rate = 1
 		}
 	} else {
-		rate = math.Abs(float64(q.expected-q.actual) / float64(q.actual))
+		rate = math.Abs(expected-float64(q.actual)) / float64(q.actual)
 	}
 	metrics.StatsInaccuracyRate.Observe(rate)
-
 	s.Lock()
 	defer s.Unlock()
-	if len(s.feedback) >= MaxQueryFeedbackCount {
-		return
+	isIndex := q.hist.tp.Tp == mysql.TypeBlob
+	s.rateMap.update(q.tableID, q.hist.ID, rate, isIndex)
+	if len(s.feedback) < MaxQueryFeedbackCount {
+		s.feedback = append(s.feedback, q)
 	}
-	s.feedback = append(s.feedback, q)
+	return nil
 }
 
 // tryToRemoveFromList will remove this collector from the list if it's deleted flag is set.
@@ -145,9 +214,10 @@ func (h *Handle) NewSessionStatsCollector() *SessionStatsCollector {
 	h.listHead.Lock()
 	defer h.listHead.Unlock()
 	newCollector := &SessionStatsCollector{
-		mapper: make(tableDeltaMap),
-		next:   h.listHead.next,
-		prev:   h.listHead,
+		mapper:  make(tableDeltaMap),
+		rateMap: make(errorRateDeltaMap),
+		next:    h.listHead.next,
+		prev:    h.listHead,
 	}
 	if h.listHead.next != nil {
 		h.listHead.next.prev = newCollector
@@ -315,6 +385,34 @@ func (h *Handle) dumpFeedbackToKV(fb *QueryFeedback) error {
 	return errors.Trace(err)
 }
 
+// UpdateErrorRate updates the error rate of columns from h.rateMap to cache.
+func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
+	tbls := make([]*Table, 0, len(h.rateMap))
+	for id, item := range h.rateMap {
+		table, ok := is.TableByID(id)
+		if !ok {
+			continue
+		}
+		tbl := h.GetTableStats(table.Meta()).copy()
+		if item.PkErrorRate != nil && tbl.Columns[item.PkID] != nil {
+			col := *tbl.Columns[item.PkID]
+			col.ErrorRate.merge(item.PkErrorRate)
+			tbl.Columns[item.PkID] = &col
+		}
+		for key, val := range item.IdxErrorRate {
+			if tbl.Indices[key] == nil {
+				continue
+			}
+			idx := *tbl.Indices[key]
+			idx.ErrorRate.merge(val)
+			tbl.Indices[key] = &idx
+		}
+		tbls = append(tbls, tbl)
+		delete(h.rateMap, id)
+	}
+	h.UpdateTableStats(tbls, nil)
+}
+
 // HandleUpdateStats update the stats using feedback.
 func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 	sql := "select table_id, hist_id, is_index, feedback from mysql.stats_feedback order by table_id, hist_id, is_index"
@@ -325,8 +423,11 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 	tableID, histID, isIndex := int64(-1), int64(-1), int64(-1)
 	q := &QueryFeedback{}
 	var (
-		cms  *CMSketch
-		hist *Histogram
+		cms        *CMSketch
+		hist       *Histogram
+		col        *Column
+		idx        *Index
+		PKIsHandle bool
 	)
 	for _, row := range rows {
 		// merge into previous feedback
@@ -339,6 +440,11 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 		}
 		// dump the stats into kv
 		if hist != nil {
+			// Update the NDV of primary key column.
+			if col != nil && mysql.HasPriKeyFlag(col.Info.Flag) && PKIsHandle {
+				hist.NDV = int64(hist.totalRowCount())
+				col = nil
+			}
 			err = h.dumpStatsUpdateToKV(tableID, int(isIndex), q, hist, cms)
 			if err != nil {
 				return errors.Trace(err)
@@ -351,28 +457,35 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 			hist, cms = nil, nil
 			continue
 		}
+		PKIsHandle = table.Meta().PKIsHandle
 		tbl := h.GetTableStats(table.Meta())
 		if isIndex == 1 {
-			idx, ok := tbl.Indices[histID]
+			idx, ok = tbl.Indices[histID]
 			if !ok {
 				hist, cms = nil, nil
 				continue
 			}
-			hist = &idx.Histogram
+			idxHist := idx.Histogram
+			hist = &idxHist
 			cms = idx.CMSketch.copy()
 		} else {
-			col, ok := tbl.Columns[histID]
+			col, ok = tbl.Columns[histID]
 			if !ok {
 				hist, cms = nil, nil
 				continue
 			}
-			hist = &col.Histogram
+			colHist := col.Histogram
+			hist = &colHist
 			cms = nil
 		}
 		err = decodeFeedback(row.GetBytes(3), q, cms)
 		if err != nil {
 			log.Debugf("decode feedback failed, err: %v", errors.ErrorStack(err))
 		}
+	}
+	// Update the NDV of primary key column.
+	if col != nil && mysql.HasPriKeyFlag(col.Info.Flag) && PKIsHandle {
+		hist.NDV = int64(hist.totalRowCount())
 	}
 	// dump the last feedback into kv
 	err = h.dumpStatsUpdateToKV(tableID, int(isIndex), q, hist, cms)
@@ -388,7 +501,7 @@ func (h *Handle) dumpStatsUpdateToKV(tableID int64, isIndex int, q *QueryFeedbac
 		}
 	}()
 	hist = UpdateHistogram(hist, q)
-	err = SaveStatsToStorage(h.ctx, tableID, -1, isIndex, hist, cms)
+	err = SaveStatsToStorage(h.ctx, tableID, -1, isIndex, hist, cms, 0)
 	if err != nil {
 		return errors.Trace(err)
 	}

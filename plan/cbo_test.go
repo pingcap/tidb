@@ -161,9 +161,9 @@ func (s *testAnalyzeSuite) TestEstimation(c *C) {
 	defer func() {
 		dom.Close()
 		store.Close()
-		plan.RatioOfPseudoEstimate = 0.7
+		statistics.RatioOfPseudoEstimate = 0.7
 	}()
-	plan.RatioOfPseudoEstimate = 10.0
+	statistics.RatioOfPseudoEstimate = 10.0
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a int)")
 	testKit.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10)")
@@ -494,13 +494,13 @@ func (s *testAnalyzeSuite) TestOutdatedAnalyze(c *C) {
 	testKit.MustExec("insert into t select * from t")
 	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
-	plan.RatioOfPseudoEstimate = 10.0
+	statistics.RatioOfPseudoEstimate = 10.0
 	testKit.MustQuery("explain select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
 		"TableScan_5 Selection_6  cop table:t, range:[-inf,+inf], keep order:false 80.00",
 		"Selection_6  TableScan_5 cop le(test.t.a, 5), le(test.t.b, 5) 28.80",
 		"TableReader_7   root data:Selection_6 28.80",
 	))
-	plan.RatioOfPseudoEstimate = 0.7
+	statistics.RatioOfPseudoEstimate = 0.7
 	testKit.MustQuery("explain select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
 		"IndexScan_8   cop table:t, index:a, range:[-inf,5], keep order:false 26.59",
 		"TableScan_9 Selection_10  cop table:t, keep order:false 26.59",
@@ -589,6 +589,34 @@ func (s *testAnalyzeSuite) TestNullCount(c *C) {
 		"Selection_6  TableScan_5 cop lt(test.t.b, 1) 0.00",
 		"TableReader_7   root data:Selection_6 0.00",
 	))
+}
+
+func (s *testAnalyzeSuite) TestCorrelatedEstimation(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int)")
+	tk.MustExec("insert into t values(1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5), (6,6,6), (7,7,7), (8,8,8), (9,9,9),(10,10,10)")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("explain select t.c in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t;").
+		Check(testkit.Rows("TableScan_14   cop table:t, range:[-inf,+inf], keep order:false 10.00",
+			"TableReader_15 Apply_13  root data:TableScan_14 10.00",
+			"TableScan_23 Selection_24  cop table:s, range:[-inf,+inf], keep order:false 10.00",
+			"Selection_24  TableScan_23 cop eq(s.a, test.t.a) 1.00",
+			"TableReader_25 HashRightJoin_22  root data:Selection_24 1.00",
+			"TableScan_26   cop table:t1, range:[-inf,+inf], keep order:false 10.00",
+			"TableReader_27 HashRightJoin_22  root data:TableScan_26 10.00",
+			"HashRightJoin_22 StreamAgg_20 TableReader_25,TableReader_27 root inner join, inner:TableReader_25, equal:[eq(s.a, t1.a)] 1.00",
+			"StreamAgg_20 Apply_13 HashRightJoin_22 root funcs:count(1) 1.00",
+			"Apply_13 Projection_11 TableReader_15,StreamAgg_20 root left outer semi join, inner:StreamAgg_20, equal:[eq(test.t.c, count(*))] 10.00",
+			"Projection_11  Apply_13 root 9_aux_0 10.00",
+		))
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
