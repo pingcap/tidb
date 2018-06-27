@@ -2110,7 +2110,7 @@ type dateFormatParser func(t *MysqlTime, date string, ctx map[string]int) (remai
 var dateFormatParserTable = map[string]dateFormatParser{
 	"%b": abbreviatedMonth,      // Abbreviated month name (Jan..Dec)
 	"%c": monthNumeric,          // Month, numeric (0..12)
-	"%d": dayOfMonthNumeric,     // Day of the month, numeric (00..31)
+	"%d": dayOfMonthNumeric,     // Day of the month, numeric (0..31)
 	"%e": dayOfMonthNumeric,     // Day of the month, numeric (0..31)
 	"%f": microSeconds,          // Microseconds (000000..999999)
 	"%h": hour24TwoDigits,       // Hour (01..12)
@@ -2362,23 +2362,40 @@ func dayOfMonthNumeric(t *MysqlTime, input string, ctx map[string]int) (string, 
 }
 
 func hour24Numeric(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
-	// 0..23
-	v, remain := parseTwoNumeric(input)
-	if len(remain) == len(input) || v > 23 {
+
+	result := digitRegex.FindString(input) // 0..23
+	length := len(result)
+
+	// Some time the input is a consecutive digital string. Ex: 20181120
+	if length > 2 {
+		length = 2
+	}
+	v, ok := parseDigits(input, length)
+
+	if !ok || v > 23 {
 		return input, false
 	}
 	t.hour = v
-	return remain, true
+	return input[length:], true
 }
 
 func hour12Numeric(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
-	// 1..12
-	v, remain := parseTwoNumeric(input)
-	if len(remain) == len(input) || v > 12 || v == 0 {
+
+	result := digitRegex.FindString(input) // 1..12
+	length := len(result)
+
+	// Some time the input is a consecutive digital string. Ex: 20181120
+	if length > 2 {
+		length = 2
+	}
+
+	v, ok := parseDigits(input, length)
+
+	if !ok || v > 12 || v == 0 {
 		return input, false
 	}
 	t.hour = v
-	return remain, true
+	return input[length:], true
 }
 
 func microSeconds(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
