@@ -15,22 +15,30 @@ package server
 
 // ColumnInfo contains information of a column
 type ColumnInfo struct {
-	Schema             string
-	Table              string
-	OrgTable           string
-	Name               string
-	OrgName            string
-	ColumnLength       uint32
-	Charset            uint16
-	Flag               uint16
-	Decimal            uint8
-	Type               uint8
-	DefaultValueLength uint64
-	DefaultValue       []byte
+	Schema       string
+	Table        string
+	OrgTable     string
+	Name         string
+	OrgName      string
+	ColumnLength uint32
+	Charset      uint16
+	Flag         uint16
+	Decimal      uint8
+	Type         uint8
 }
 
+// DumpOpt is used to control dump execution.
+type DumpOpt int
+
+const (
+	// Normal option indicts that dump with normal steps.
+	Normal DumpOpt = 1 << iota
+	// WithDefaultValue option indicts that dump with an addition defaultValues step.
+	WithDefaultValue
+)
+
 // Dump dumps ColumnInfo to bytes.
-func (column *ColumnInfo) Dump(buffer []byte) []byte {
+func (column *ColumnInfo) Dump(buffer []byte, flags DumpOpt) []byte {
 	buffer = dumpLengthEncodedString(buffer, []byte("def"))
 	buffer = dumpLengthEncodedString(buffer, []byte(column.Schema))
 	buffer = dumpLengthEncodedString(buffer, []byte(column.Table))
@@ -47,9 +55,10 @@ func (column *ColumnInfo) Dump(buffer []byte) []byte {
 	buffer = append(buffer, column.Decimal)
 	buffer = append(buffer, 0, 0)
 
-	if column.DefaultValue != nil {
-		buffer = dumpUint64(buffer, uint64(len(column.DefaultValue)))
-		buffer = append(buffer, column.DefaultValue...)
+	if flags&WithDefaultValue > 0 {
+		// Current we doesn't output defaultValue but reserve defaultValue length bit to make mariadb client happy.
+		// https://dev.mysql.com/doc/internals/en/com-query-response.html#column-definition
+		buffer = dumpUint64(buffer, 0)
 	}
 
 	return buffer

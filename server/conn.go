@@ -900,7 +900,7 @@ func (cc *clientConn) handleFieldList(sql string) (err error) {
 	data := make([]byte, 4, 1024)
 	for _, v := range columns {
 		data = data[0:4]
-		data = v.Dump(data)
+		data = v.Dump(data, WithDefaultValue)
 		if err := cc.writePacket(data); err != nil {
 			return errors.Trace(err)
 		}
@@ -956,7 +956,7 @@ func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16
 	}
 	for _, v := range columns {
 		data = data[0:4]
-		data = v.Dump(data)
+		data = v.Dump(data, Normal)
 		if err := cc.writePacket(data); err != nil {
 			return errors.Trace(err)
 		}
