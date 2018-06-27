@@ -91,6 +91,44 @@ func (q *QueryFeedback) CollectFeedback(numOfRanges int) bool {
 	return true
 }
 
+// DecodeToRanges decode the feedback to ranges.
+func (q *QueryFeedback) DecodeToRanges(isIndex bool) ([]*ranger.Range, error) {
+	ranges := make([]*ranger.Range, 0, len(q.feedback))
+	for _, val := range q.feedback {
+		low, high := *val.lower, *val.upper
+		var lowVal, highVal []types.Datum
+		if isIndex {
+			var err error
+			// As we do not know the origin length, just use a custom value here.
+			lowVal, err = codec.Decode(low.GetBytes(), 4)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			highVal, err = codec.Decode(high.GetBytes(), 4)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		} else {
+			_, lowInt, err := codec.DecodeInt(val.lower.GetBytes())
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			_, highInt, err := codec.DecodeInt(val.upper.GetBytes())
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			lowVal = []types.Datum{types.NewIntDatum(lowInt)}
+			highVal = []types.Datum{types.NewIntDatum(highInt)}
+		}
+		ranges = append(ranges, &(ranger.Range{
+			LowVal:      lowVal,
+			HighVal:     highVal,
+			HighExclude: true,
+		}))
+	}
+	return ranges, nil
+}
+
 // StoreRanges stores the ranges for update.
 func (q *QueryFeedback) StoreRanges(ranges []*ranger.Range) {
 	q.feedback = make([]feedback, 0, len(ranges))
@@ -553,22 +591,17 @@ func decodeFeedback(val []byte, q *QueryFeedback, c *CMSketch) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// decode feedback for index
-	if len(pb.IndexRanges) > 0 {
-		// decode the index range feedback
-		for i := 0; i < len(pb.IndexRanges); i += 2 {
-			lower, upper := types.NewBytesDatum(pb.IndexRanges[i]), types.NewBytesDatum(pb.IndexRanges[i+1])
-			q.feedback = append(q.feedback, feedback{&lower, &upper, pb.Counts[i/2], 0})
-		}
-		if c == nil {
-			return nil
-		}
+	// decode the index range feedback
+	for i := 0; i < len(pb.IndexRanges); i += 2 {
+		lower, upper := types.NewBytesDatum(pb.IndexRanges[i]), types.NewBytesDatum(pb.IndexRanges[i+1])
+		q.feedback = append(q.feedback, feedback{&lower, &upper, pb.Counts[i/2], 0})
+	}
+	if c != nil {
 		// decode the index point feedback, just set value count in CM Sketch
 		start := len(pb.IndexRanges) / 2
 		for i := 0; i < len(pb.HashValues); i += 2 {
 			c.setValue(pb.HashValues[i], pb.HashValues[i+1], uint32(pb.Counts[start+i/2]))
 		}
-		return nil
 	}
 	// decode feedback for primary key
 	for i := 0; i < len(pb.IntRanges); i += 2 {
@@ -605,4 +638,45 @@ func (q *QueryFeedback) Equal(rq *QueryFeedback) bool {
 		}
 	}
 	return true
+}
+
+// recalculateExpectCount recalculates the expect row count if the origin row count is estimated by pseudo.
+func (q *QueryFeedback) recalculateExpectCount(h *Handle) error {
+	t, ok := h.statsCache.Load().(statsCache)[q.tableID]
+	if !ok {
+		return nil
+	}
+	tablePseudo := t.Pseudo || t.IsOutdated()
+	if tablePseudo == false {
+		return nil
+	}
+	isIndex := q.hist.tp.Tp == mysql.TypeBlob
+	id := q.hist.ID
+	if isIndex && (t.Indices[id] == nil || t.Indices[id].IsPseudo() == false) {
+		return nil
+	}
+	if !isIndex && (t.Columns[id] == nil || t.Columns[id].IsPseudo() == false) {
+		return nil
+	}
+
+	sc := h.ctx.GetSessionVars().StmtCtx
+	ranges, err := q.DecodeToRanges(isIndex)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	expected := 0.0
+	if isIndex {
+		idx := t.Indices[id]
+		expected, err = idx.getRowCount(sc, ranges)
+		expected *= idx.getIncreaseFactor(t.Count)
+	} else {
+		c := t.Columns[id]
+		expected, err = c.getColumnRowCount(sc, ranges)
+		expected *= c.getIncreaseFactor(t.Count)
+	}
+	if err != nil {
+		return errors.Trace(err)
+	}
+	q.expected = int64(expected)
+	return nil
 }

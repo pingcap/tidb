@@ -50,6 +50,8 @@ type Handle struct {
 	listHead *SessionStatsCollector
 	// globalMap contains all the delta map from collectors when we dump them to KV.
 	globalMap tableDeltaMap
+	// rateMap contains the error rate delta from feedback.
+	rateMap errorRateDeltaMap
 	// feedback is used to store query feedback info.
 	feedback []*QueryFeedback
 
@@ -70,8 +72,9 @@ func (h *Handle) Clear() {
 		<-h.analyzeResultCh
 	}
 	h.ctx.GetSessionVars().MaxChunkSize = 1
-	h.listHead = &SessionStatsCollector{mapper: make(tableDeltaMap)}
+	h.listHead = &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)}
 	h.globalMap = make(tableDeltaMap)
+	h.rateMap = make(errorRateDeltaMap)
 }
 
 // MaxQueryFeedbackCount is the max number of feedback that cache in memory.
@@ -83,11 +86,12 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration) *Handle {
 		ctx:             ctx,
 		ddlEventCh:      make(chan *util.Event, 100),
 		analyzeResultCh: make(chan *AnalyzeResult, 100),
-		listHead:        &SessionStatsCollector{mapper: make(tableDeltaMap)},
+		listHead:        &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)},
 		globalMap:       make(tableDeltaMap),
 		Lease:           lease,
 		feedback:        make([]*QueryFeedback, 0, MaxQueryFeedbackCount),
 		loadMetaCh:      make(chan *LoadMeta, 1),
+		rateMap:         make(errorRateDeltaMap),
 	}
 	handle.statsCache.Store(statsCache{})
 	return handle
@@ -229,7 +233,7 @@ func (h *Handle) FlushStats() {
 	for len(h.analyzeResultCh) > 0 {
 		t := <-h.analyzeResultCh
 		for i, hg := range t.Hist {
-			if err := SaveStatsToStorage(h.ctx, t.TableID, t.Count, t.IsIndex, hg, t.Cms[i]); err != nil {
+			if err := SaveStatsToStorage(h.ctx, t.TableID, t.Count, t.IsIndex, hg, t.Cms[i], 1); err != nil {
 				log.Debug("[stats] save histogram to storage fail: ", errors.ErrorStack(err))
 			}
 		}
