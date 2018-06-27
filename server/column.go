@@ -46,7 +46,7 @@ func (column *ColumnInfo) Dump(buffer []byte, outputDefaultValue bool) []byte {
 	buffer = append(buffer, 0, 0)
 
 	if outputDefaultValue {
-		// Current we doesn't output defaultValue but reserve defaultValue length bit to make mariadb client happy.
+		// Current we doesn't output defaultValue but reserve defaultValue length byte to make mariadb client happy.
 		// https://dev.mysql.com/doc/internals/en/com-query-response.html#column-definition
 		buffer = dumpUint64(buffer, 0)
 	}
