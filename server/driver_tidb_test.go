@@ -28,18 +28,16 @@ var _ = Suite(tidbResultSetTestSuite{})
 
 func createColumnByTypeAndLen(tp byte, len uint32) *ColumnInfo {
 	return &ColumnInfo{
-		Schema:             "test",
-		Table:              "dual",
-		OrgTable:           "",
-		Name:               "a",
-		OrgName:            "a",
-		ColumnLength:       len,
-		Charset:            uint16(mysql.CharsetIDs[charset.CharsetUTF8]),
-		Flag:               uint16(mysql.UnsignedFlag),
-		Decimal:            uint8(0),
-		Type:               tp,
-		DefaultValueLength: uint64(0),
-		DefaultValue:       nil,
+		Schema:       "test",
+		Table:        "dual",
+		OrgTable:     "",
+		Name:         "a",
+		OrgName:      "a",
+		ColumnLength: len,
+		Charset:      uint16(mysql.CharsetIDs[charset.CharsetUTF8]),
+		Flag:         uint16(mysql.UnsignedFlag),
+		Decimal:      uint8(0),
+		Type:         tp,
 	}
 }
 func (ts tidbResultSetTestSuite) TestConvertColumnInfo(c *C) {
