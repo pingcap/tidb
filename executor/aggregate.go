@@ -70,15 +70,14 @@ type HashAggPartialWorker struct {
 type HashAggFinalWorker struct {
 	baseHashAggWorker
 
-	rowBuffer            []types.Datum
-	mutableRow           chunk.MutRow
-	aggCtxsMap           aggCtxsMapper
-	groupSet             *mvmap.MVMap
-	groupVals            [][]byte
-	intermDataRowsBuffer []types.DatumRow
-	inputCh              chan *HashAggIntermData
-	outputCh             chan *AfFinalResult
-	finalResultHolderCh  chan *chunk.Chunk
+	rowBuffer           []types.Datum
+	mutableRow          chunk.MutRow
+	aggCtxsMap          aggCtxsMapper
+	groupSet            *mvmap.MVMap
+	groupVals           [][]byte
+	inputCh             chan *HashAggIntermData
+	outputCh            chan *AfFinalResult
+	finalResultHolderCh chan *chunk.Chunk
 }
 
 // AfFinalResult indicates aggregation functions final result.
@@ -405,20 +404,21 @@ func (w *HashAggFinalWorker) getPartialInput() (input *HashAggIntermData, ok boo
 
 func (w *HashAggFinalWorker) consumeIntermData(sc *stmtctx.StatementContext) (err error) {
 	var (
-		input *HashAggIntermData
-		ok    bool
+		input                *HashAggIntermData
+		ok                   bool
+		intermDataRowsBuffer []types.DatumRow
 	)
 	for {
 		if input, ok = w.getPartialInput(); !ok {
 			return nil
 		}
-		if w.intermDataRowsBuffer == nil {
-			w.intermDataRowsBuffer = make([]types.DatumRow, 0, w.maxChunkSize)
+		if intermDataRowsBuffer == nil {
+			intermDataRowsBuffer = make([]types.DatumRow, 0, w.maxChunkSize)
 		}
 		// Consume input in batches, size of every batch is less than w.maxChunkSize.
 		for reachEnd := false; !reachEnd; {
-			w.intermDataRowsBuffer, reachEnd = input.ToRows(sc, w.intermDataRowsBuffer, w.aggFuncs, w.maxChunkSize)
-			for _, row := range w.intermDataRowsBuffer {
+			intermDataRowsBuffer, reachEnd = input.ToRows(sc, intermDataRowsBuffer[:0], w.aggFuncs, w.maxChunkSize)
+			for _, row := range intermDataRowsBuffer {
 				groupKey := row.GetBytes(row.Len() - 1)
 				if len(w.groupSet.Get(groupKey, w.groupVals[:0])) == 0 {
 					w.groupSet.Put(groupKey, []byte{})
@@ -430,7 +430,6 @@ func (w *HashAggFinalWorker) consumeIntermData(sc *stmtctx.StatementContext) (er
 					}
 				}
 			}
-			w.intermDataRowsBuffer = w.intermDataRowsBuffer[:0]
 		}
 	}
 }
