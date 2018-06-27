@@ -41,12 +41,12 @@ func (d MockDriver) Open(path string) (kv.Storage, error) {
 }
 
 type mockOptions struct {
-	cluster                *mocktikv.Cluster
-	mvccStore              mocktikv.MVCCStore
-	clientHijack           func(tikv.Client) tikv.Client
-	pdClientHijack         func(pd.Client) pd.Client
-	path                   string
-	disableTxnLocalLatches bool
+	cluster         *mocktikv.Cluster
+	mvccStore       mocktikv.MVCCStore
+	clientHijack    func(tikv.Client) tikv.Client
+	pdClientHijack  func(pd.Client) pd.Client
+	path            string
+	txnLocalLatches int
 }
 
 // MockTiKVStoreOption is used to control some behavior of mock tikv.
@@ -81,10 +81,10 @@ func WithPath(path string) MockTiKVStoreOption {
 	}
 }
 
-// WithTxnLocalLatches enable or disble txnLocalLatches.
-func WithTxnLocalLatches(enable bool) MockTiKVStoreOption {
+// WithTxnLocalLatches enable txnLocalLatches, when capacity > 0.
+func WithTxnLocalLatches(capacity int) MockTiKVStoreOption {
 	return func(c *mockOptions) {
-		c.disableTxnLocalLatches = !enable
+		c.txnLocalLatches = capacity
 	}
 }
 
@@ -101,5 +101,5 @@ func NewMockTikvStore(options ...MockTiKVStoreOption) (kv.Storage, error) {
 		return nil, errors.Trace(err)
 	}
 
-	return tikv.NewTestTiKVStore(client, pdClient, opt.clientHijack, opt.pdClientHijack, opt.disableTxnLocalLatches)
+	return tikv.NewTestTiKVStore(client, pdClient, opt.clientHijack, opt.pdClientHijack, opt.txnLocalLatches)
 }

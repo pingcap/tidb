@@ -329,7 +329,7 @@ func (s *session) doCommit(ctx context.Context) error {
 		relatedTableIDs: tableIDs,
 	})
 	if s.sessionVars.TxnCtx.ForUpdate {
-		s.txn.SetOption(kv.ForUpdate, true)
+		s.txn.SetOption(kv.BypassLatch, true)
 	}
 
 	if err := s.txn.Commit(sessionctx.SetCommitCtx(ctx, s)); err != nil {
