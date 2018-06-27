@@ -495,9 +495,9 @@ func (s *session) retry(ctx context.Context, maxCnt uint) error {
 			if retryCnt == 0 {
 				// We do not have to log the query every time.
 				// We print the queries at the first try only.
-				log.Warnf("[con:%d] Retry:%d query:%d %s", connID, retryCnt, i, sqlForLog(st.OriginText()))
+				log.Warnf("con:%d retry_cnt:%d query_num:%d sql:%s", connID, retryCnt, i, sqlForLog(st.OriginText()))
 			} else {
-				log.Warnf("[con:%d] Retry:%d query:%d", connID, retryCnt, i)
+				log.Warnf("con:%d retry_cnt:%d query_num:%d", connID, retryCnt, i)
 			}
 			s.sessionVars.StmtCtx = sr.stmtCtx
 			s.sessionVars.StmtCtx.ResetForRetry()
@@ -539,9 +539,9 @@ func (s *session) retry(ctx context.Context, maxCnt uint) error {
 
 func sqlForLog(sql string) string {
 	if len(sql) > sqlLogMaxLen {
-		return sql[:sqlLogMaxLen] + fmt.Sprintf("(len:%d)", len(sql))
+		sql = sql[:sqlLogMaxLen] + fmt.Sprintf("(len:%d)", len(sql))
 	}
-	return sql
+	return executor.QueryReplacer.Replace(sql)
 }
 
 func (s *session) sysSessionPool() *pools.ResourcePool {
@@ -1405,9 +1405,9 @@ func logStmt(node ast.StmtNode, vars *variable.SessionVars) {
 		*ast.DropDatabaseStmt, *ast.DropIndexStmt, *ast.DropTableStmt, *ast.RenameTableStmt, *ast.TruncateTableStmt:
 		user := vars.User
 		if ss, ok := node.(ast.SensitiveStmtNode); ok {
-			log.Infof("[CRUCIAL OPERATION] [con:%v] %s (by %s).", vars.ConnectionID, ss.SecureText(), user)
+			log.Infof("[CRUCIAL OPERATION] con:%d %s (by %s).", vars.ConnectionID, ss.SecureText(), user)
 		} else {
-			log.Infof("[CRUCIAL OPERATION] [con:%v] %s (by %s).", vars.ConnectionID, stmt.Text(), user)
+			log.Infof("[CRUCIAL OPERATION] con:%d %s (by %s).", vars.ConnectionID, stmt.Text(), user)
 		}
 	default:
 		logQuery(node.Text(), vars)
@@ -1416,6 +1416,7 @@ func logStmt(node ast.StmtNode, vars *variable.SessionVars) {
 
 func logQuery(query string, vars *variable.SessionVars) {
 	if atomic.LoadUint32(&variable.ProcessGeneralLog) != 0 && !vars.InRestrictedSQL {
-		log.Infof("[con:%d][txn:%d] %s", vars.ConnectionID, vars.TxnCtx.StartTS, query)
+		query = executor.QueryReplacer.Replace(query)
+		log.Infof("[GENERAL_LOG] con:%d user:%s schema_ver:%d start_ts:%d sql:%s", vars.ConnectionID, vars.User, vars.TxnCtx.SchemaVersion, vars.TxnCtx.StartTS, query)
 	}
 }
