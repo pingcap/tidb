@@ -70,14 +70,14 @@ func (e *AnalyzeExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		result := <-resultCh
 		if result.Err != nil {
 			err = result.Err
-			log.Debug(errors.ErrorStack(err))
+			log.Error(errors.ErrorStack(err))
 			continue
 		}
 		for i, hg := range result.Hist {
-			err1 := statsHandle.SaveStatsToStorage(result.TableID, result.Count, result.IsIndex, hg, result.Cms[i])
+			err1 := statsHandle.SaveStatsToStorage(result.TableID, result.Count, result.IsIndex, hg, result.Cms[i], 1)
 			if err1 != nil {
 				err = err1
-				log.Debug(errors.ErrorStack(err))
+				log.Error(errors.ErrorStack(err))
 				continue
 			}
 		}

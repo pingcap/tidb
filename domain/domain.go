@@ -674,6 +674,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			if err != nil {
 				log.Debug("[stats] dump stats delta fail: ", errors.ErrorStack(err))
 			}
+			statsHandle.UpdateErrorRate(do.InfoSchema())
 		case <-loadHistogramTicker.C:
 			err = statsHandle.LoadNeededHistograms()
 			if err != nil {

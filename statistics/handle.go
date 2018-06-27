@@ -50,6 +50,8 @@ type Handle struct {
 	listHead *SessionStatsCollector
 	// globalMap contains all the delta map from collectors when we dump them to KV.
 	globalMap tableDeltaMap
+	// rateMap contains the error rate delta from feedback.
+	rateMap errorRateDeltaMap
 	// feedback is used to store query feedback info.
 	feedback []*QueryFeedback
 
@@ -64,8 +66,9 @@ func (h *Handle) Clear() {
 		<-h.ddlEventCh
 	}
 	h.mu.ctx.GetSessionVars().MaxChunkSize = 1
-	h.listHead = &SessionStatsCollector{mapper: make(tableDeltaMap)}
+	h.listHead = &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)}
 	h.globalMap = make(tableDeltaMap)
+	h.rateMap = make(errorRateDeltaMap)
 }
 
 // MaxQueryFeedbackCount is the max number of feedback that cache in memory.
@@ -75,10 +78,11 @@ var MaxQueryFeedbackCount = 1 << 10
 func NewHandle(ctx sessionctx.Context, lease time.Duration) *Handle {
 	handle := &Handle{
 		ddlEventCh: make(chan *util.Event, 100),
-		listHead:   &SessionStatsCollector{mapper: make(tableDeltaMap)},
+		listHead:   &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)},
 		globalMap:  make(tableDeltaMap),
 		Lease:      lease,
 		feedback:   make([]*QueryFeedback, 0, MaxQueryFeedbackCount),
+		rateMap:    make(errorRateDeltaMap),
 	}
 	// It is safe to use it concurrently because the exec won't touch the ctx.
 	if exec, ok := ctx.(sqlexec.RestrictedSQLExecutor); ok {

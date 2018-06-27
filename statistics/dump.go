@@ -101,13 +101,13 @@ func (h *Handle) LoadStatsFromJSON(is infoschema.InfoSchema, jsonTbl *JSONTable)
 	}
 
 	for _, col := range tbl.Columns {
-		err = h.SaveStatsToStorage(tbl.TableID, tbl.Count, 0, &col.Histogram, col.CMSketch)
+		err = h.SaveStatsToStorage(tbl.TableID, tbl.Count, 0, &col.Histogram, col.CMSketch, 1)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 	for _, idx := range tbl.Indices {
-		err = h.SaveStatsToStorage(tbl.TableID, tbl.Count, 1, &idx.Histogram, idx.CMSketch)
+		err = h.SaveStatsToStorage(tbl.TableID, tbl.Count, 1, &idx.Histogram, idx.CMSketch, 1)
 		if err != nil {
 			return errors.Trace(err)
 		}
