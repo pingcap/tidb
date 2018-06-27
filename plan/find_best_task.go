@@ -354,7 +354,7 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, path *accessPath) (
 		Columns:          ds.Columns,
 		Index:            idx,
 		IdxCols:          path.idxCols,
-		ColLens:          path.colLengths,
+		IdxColLens:       path.idxColLens,
 		AccessCondition:  path.accessConds,
 		Ranges:           path.ranges,
 		filterCondition:  path.indexFilters,

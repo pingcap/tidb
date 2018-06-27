@@ -318,7 +318,7 @@ type DataSource struct {
 type accessPath struct {
 	index      *model.IndexInfo
 	idxCols    []*expression.Column
-	colLengths []int
+	idxColLens []int
 	ranges     []*ranger.Range
 	// countAfterAccess is the row count after we apply range seek and before we use other filter to filter data.
 	countAfterAccess float64
@@ -407,9 +407,9 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) error {
 	sc := ds.ctx.GetSessionVars().StmtCtx
 	path.ranges = ranger.FullRange()
 	path.countAfterAccess = float64(ds.statisticTable.Count)
-	path.idxCols, path.colLengths = expression.IndexInfo2Cols(ds.schema.Columns, path.index)
+	path.idxCols, path.idxColLens = expression.IndexInfo2Cols(ds.schema.Columns, path.index)
 	if len(path.idxCols) != 0 {
-		path.ranges, path.accessConds, path.tableFilters, path.eqCondCount, err = ranger.DetachCondAndBuildRangeForIndex(ds.ctx, ds.pushedDownConds, path.idxCols, path.colLengths)
+		path.ranges, path.accessConds, path.tableFilters, path.eqCondCount, err = ranger.DetachCondAndBuildRangeForIndex(ds.ctx, ds.pushedDownConds, path.idxCols, path.idxColLens)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -460,7 +460,7 @@ func (path *accessPath) splitCorColAccessCondFromFilters() (access, remained []e
 			}
 			matched = true
 			access[i-path.eqCondCount] = filter
-			if path.colLengths[i] == types.UnspecifiedLength {
+			if path.idxColLens[i] == types.UnspecifiedLength {
 				used[j] = true
 			}
 		}

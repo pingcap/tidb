@@ -51,8 +51,8 @@ func (p *PhysicalIndexScan) ExplainInfo() string {
 		}
 	}
 	if haveCorCol {
+		fmt.Fprintf(buffer, ", range: decided by %v", p.AccessCondition)
 		fmt.Fprint(buffer, ", range:")
-		fmt.Fprintf(buffer, " decided by %v", p.AccessCondition)
 	} else if len(p.Ranges) > 0 {
 		fmt.Fprint(buffer, ", range:")
 		for i, idxRange := range p.Ranges {
@@ -88,8 +88,7 @@ func (p *PhysicalTableScan) ExplainInfo() string {
 		}
 	}
 	if haveCorCol {
-		fmt.Fprint(buffer, ", range:")
-		fmt.Fprintf(buffer, " decided by %v", p.AccessCondition)
+		fmt.Fprintf(buffer, ", range: decided by %v", p.AccessCondition)
 	} else if len(p.Ranges) > 0 {
 		fmt.Fprint(buffer, ", range:")
 		for i, idxRange := range p.Ranges {

@@ -1453,7 +1453,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plan.PhysicalIndexReader) (*
 		corColInFilter: b.corColInDistPlan(v.IndexPlans),
 		corColInAccess: b.corColInAccess(v.IndexPlans[0]),
 		idxCols:        is.IdxCols,
-		colLens:        is.ColLens,
+		colLens:        is.IdxColLens,
 		plans:          v.IndexPlans,
 	}
 	if containsLimit(dagReq.Executors) {
@@ -1519,7 +1519,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plan.PhysicalIndexLook
 		corColInTblSide:   b.corColInDistPlan(v.TablePlans),
 		corColInAccess:    b.corColInAccess(v.IndexPlans[0]),
 		idxCols:           is.IdxCols,
-		colLens:           is.ColLens,
+		colLens:           is.IdxColLens,
 		idxPlans:          v.IndexPlans,
 		tblPlans:          v.TablePlans,
 	}
