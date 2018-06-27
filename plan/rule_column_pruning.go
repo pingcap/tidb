@@ -69,7 +69,6 @@ func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column) {
 			p.Exprs = append(p.Exprs[:i], p.Exprs[i+1:]...)
 		}
 	}
-	p.schema.PruneID2HandleMap()
 	selfUsedCols := make([]*expression.Column, 0, len(p.Exprs))
 	selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, p.Exprs, nil)
 	child.PruneColumns(selfUsedCols)
@@ -92,7 +91,6 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 			la.AggFuncs = append(la.AggFuncs[:i], la.AggFuncs[i+1:]...)
 		}
 	}
-	la.schema.PruneID2HandleMap()
 	var selfUsedCols []*expression.Column
 	for _, aggrFunc := range la.AggFuncs {
 		selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, aggrFunc.Args, nil)
@@ -153,13 +151,17 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) {
 			ds.Columns = append(ds.Columns[:i], ds.Columns[i+1:]...)
 		}
 	}
+	for k, cols := range ds.schema.TblID2Handle {
+		if ds.schema.ColumnIndex(cols[0]) == -1 {
+			delete(ds.schema.TblID2Handle, k)
+		}
+	}
 	// For SQL like `select 1 from t`, tikv's response will be empty if no column is in schema.
 	// So we'll force to push one if schema doesn't have any column.
 	if ds.schema.Len() == 0 && !infoschema.IsMemoryDB(ds.DBName.L) {
 		ds.Columns = append(ds.Columns, model.NewExtraHandleColInfo())
 		ds.schema.Append(ds.newExtraHandleSchemaCol())
 	}
-	ds.schema.PruneID2HandleMap()
 }
 
 // PruneColumns implements LogicalPlan interface.
