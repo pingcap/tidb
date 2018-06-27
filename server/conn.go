@@ -899,8 +899,15 @@ func (cc *clientConn) handleFieldList(sql string) (err error) {
 	}
 	data := make([]byte, 4, 1024)
 	for _, v := range columns {
+		// Current we doesn't output defaultValue but reserve defaultValue length byte to make mariadb client happy.
+		// https://dev.mysql.com/doc/internals/en/com-query-response.html#column-definition
+		// TODO: fill the right DefaultValues.
+		column := v
+		column.DefaultValueLength = 0
+		column.DefaultValue = []byte{}
+
 		data = data[0:4]
-		data = v.Dump(data, true)
+		data = column.Dump(data)
 		if err := cc.writePacket(data); err != nil {
 			return errors.Trace(err)
 		}
@@ -956,7 +963,7 @@ func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16
 	}
 	for _, v := range columns {
 		data = data[0:4]
-		data = v.Dump(data, false)
+		data = v.Dump(data)
 		if err := cc.writePacket(data); err != nil {
 			return errors.Trace(err)
 		}
