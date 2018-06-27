@@ -645,12 +645,8 @@ func (q *QueryFeedback) recalculateExpectCount(h *Handle) error {
 	if !ok {
 		return nil
 	}
-	if t.IsOutdated() {
-		tbl := *t
-		tbl.Pseudo = true
-		t = &tbl
-	}
-	if t.Pseudo == false {
+	tablePseudo := t.Pseudo || t.IsOutdated()
+	if tablePseudo == false {
 		return nil
 	}
 	isIndex := q.hist.tp.Tp == mysql.TypeBlob
