@@ -439,9 +439,7 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 		if hist != nil {
 			// Update the NDV of primary key column.
 			if col != nil && mysql.HasPriKeyFlag(col.Info.Flag) && PKIsHandle {
-				if hist.NDV < int64(hist.totalRowCount()) {
-					hist.NDV = int64(hist.totalRowCount())
-				}
+				hist.NDV = int64(hist.totalRowCount())
 				col = nil
 			}
 			err = h.dumpStatsUpdateToKV(tableID, int(isIndex), q, hist, cms)
@@ -484,9 +482,7 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 	}
 	// Update the NDV of primary key column.
 	if col != nil && mysql.HasPriKeyFlag(col.Info.Flag) && PKIsHandle {
-		if hist.NDV < int64(hist.totalRowCount()) {
-			hist.NDV = int64(hist.totalRowCount())
-		}
+		hist.NDV = int64(hist.totalRowCount())
 	}
 	// dump the last feedback into kv
 	err = h.dumpStatsUpdateToKV(tableID, int(isIndex), q, hist, cms)
