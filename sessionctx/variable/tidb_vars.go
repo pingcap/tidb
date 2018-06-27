@@ -153,6 +153,9 @@ const (
 
 	// tidb_disable_txn_auto_retry disables transaction auto retry.
 	TiDBDisableTxnAutoRetry = "tidb_disable_txn_auto_retry"
+
+	// tidb_ddl_reorg_worker_cnt defines the count of ddl reorg workers.
+	TiDBDDLReorgWorkerCount = "tidb_ddl_reorg_worker_cnt"
 )
 
 // Default TiDB system variable values.
@@ -185,11 +188,14 @@ const (
 	DefTiDBHashJoinConcurrency       = 5
 	DefTiDBOptimizerSelectivityLevel = 0
 	DefTiDBDisableTxnAutoRetry       = false
+	DefTiDBDDLReorgWorkerCount       = 16
 )
 
 // Process global variables.
 var (
 	ProcessGeneralLog uint32
 	// DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
-	DDLSlowOprThreshold uint32 = 300
+	DDLSlowOprThreshold    uint32 = 300
+	ddlReorgWorkerCounter  int32  = DefTiDBDDLReorgWorkerCount
+	maxDDLReorgWorkerCount int32  = 128
 )

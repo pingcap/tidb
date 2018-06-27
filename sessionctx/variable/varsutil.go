@@ -27,6 +27,20 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
+// SetDDLReorgWorkerCounter sets ddlReorgWorkerCounter count.
+// Max worker count is maxDDLReorgWorkerCount.
+func SetDDLReorgWorkerCounter(cnt int32) {
+	if cnt > maxDDLReorgWorkerCount {
+		cnt = maxDDLReorgWorkerCount
+	}
+	atomic.StoreInt32(&ddlReorgWorkerCounter, cnt)
+}
+
+// GetDDLReorgWorkerCounter gets ddlReorgWorkerCounter.
+func GetDDLReorgWorkerCounter() int32 {
+	return atomic.LoadInt32(&ddlReorgWorkerCounter)
+}
+
 // GetSessionSystemVar gets a system variable.
 // If it is a session only variable, use the default value defined in code.
 // Returns error if there is no such variable.
