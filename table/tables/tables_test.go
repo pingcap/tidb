@@ -344,7 +344,6 @@ PARTITION BY RANGE ( id ) (
 	c.Assert(err, IsNil)
 	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	tbInfo := tb.Meta()
-	tbInfo.Partition.Enable = true
 	p0 := tbInfo.Partition.Definitions[0]
 	c.Assert(p0.Name, Equals, "p0")
 
@@ -352,7 +351,7 @@ PARTITION BY RANGE ( id ) (
 	rid, err := tb.AddRecord(ts.se, types.MakeDatums(1), false)
 	c.Assert(err, IsNil)
 
-	// Check the add record is write to the partition, rather than table.
+	// Check that add record writes to the partition, rather than the table.
 	txn := ts.se.Txn()
 	val, err := txn.Get(tables.PartitionRecordKey(p0.ID, rid))
 	c.Assert(err, IsNil)
@@ -383,7 +382,6 @@ PARTITION BY RANGE ( id ) (
 	c.Assert(ts.se.NewTxn(), IsNil)
 	tb, err = ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
 	tbInfo = tb.Meta()
-	tbInfo.Partition.Enable = true
 	_, err = tb.AddRecord(ts.se, types.MakeDatums(22), false)
 	c.Assert(err, IsNil) // Insert into maxvalue partition.
 }
