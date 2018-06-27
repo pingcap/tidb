@@ -682,11 +682,11 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 				log.Debug("[stats] save meta to storage fail: ", errors.ErrorStack(err))
 			}
 		case <-deltaUpdateTicker.C:
-			statsHandle.UpdateErrorRate(do.InfoSchema())
 			err = statsHandle.DumpStatsDeltaToKV(statistics.DumpDelta)
 			if err != nil {
 				log.Debug("[stats] dump stats delta fail: ", errors.ErrorStack(err))
 			}
+			statsHandle.UpdateErrorRate(do.InfoSchema())
 		case <-loadHistogramTicker.C:
 			err = statsHandle.LoadNeededHistograms()
 			if err != nil {

@@ -121,8 +121,9 @@ func (q *QueryFeedback) DecodeToRanges(isIndex bool) ([]*ranger.Range, error) {
 			highVal = []types.Datum{types.NewIntDatum(highInt)}
 		}
 		ranges = append(ranges, &(ranger.Range{
-			LowVal:  lowVal,
-			HighVal: highVal,
+			LowVal:      lowVal,
+			HighVal:     highVal,
+			HighExclude: true,
 		}))
 	}
 	return ranges, nil
@@ -650,10 +651,11 @@ func (q *QueryFeedback) recalculateExpectCount(h *Handle) error {
 		return nil
 	}
 	isIndex := q.hist.tp.Tp == mysql.TypeBlob
-	if isIndex && t.Indices[q.hist.ID].IsPseudo() == false {
+	id := q.hist.ID
+	if isIndex && (t.Indices[id] == nil || t.Indices[id].IsPseudo() == false) {
 		return nil
 	}
-	if !isIndex && t.Columns[q.hist.ID].IsPseudo() == false {
+	if !isIndex && (t.Columns[id] == nil || t.Columns[id].IsPseudo() == false) {
 		return nil
 	}
 
@@ -664,11 +666,11 @@ func (q *QueryFeedback) recalculateExpectCount(h *Handle) error {
 	}
 	expected := 0.0
 	if isIndex {
-		idx := t.Indices[q.hist.ID]
+		idx := t.Indices[id]
 		expected, err = idx.getRowCount(sc, ranges)
 		expected *= idx.getIncreaseFactor(t.Count)
 	} else {
-		c := t.Columns[q.hist.ID]
+		c := t.Columns[id]
 		expected, err = c.getColumnRowCount(sc, ranges)
 		expected *= c.getIncreaseFactor(t.Count)
 	}

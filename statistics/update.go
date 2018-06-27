@@ -394,12 +394,15 @@ func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
 			continue
 		}
 		tbl := h.GetTableStats(table.Meta()).copy()
-		if item.PkErrorRate != nil {
+		if item.PkErrorRate != nil && tbl.Columns[item.PkID] != nil {
 			col := *tbl.Columns[item.PkID]
 			col.ErrorRate.merge(item.PkErrorRate)
 			tbl.Columns[item.PkID] = &col
 		}
 		for key, val := range item.IdxErrorRate {
+			if tbl.Indices[key] == nil {
+				continue
+			}
 			idx := *tbl.Indices[key]
 			idx.ErrorRate.merge(val)
 			tbl.Indices[key] = &idx
