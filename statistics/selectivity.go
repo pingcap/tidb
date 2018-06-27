@@ -120,7 +120,7 @@ func pseudoSelectivity(t *Table, exprs []expression.Expression) float64 {
 	return minFactor
 }
 
-// getEqOrInColOffset checks if the expression is a eq function that one side is correlated column and another is column.
+// isColEqCorColOrConstant checks if the expression is a eq function that one side is correlated column and another is column.
 // If so, it will return the column's reference. Otherwise return nil instead.
 func isColEqCorColOrConstant(filter expression.Expression) *expression.Column {
 	f, ok := filter.(*expression.ScalarFunction)

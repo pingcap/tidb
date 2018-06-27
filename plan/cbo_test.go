@@ -592,9 +592,13 @@ func (s *testAnalyzeSuite) TestNullCount(c *C) {
 
 func (s *testAnalyzeSuite) TestCorrelatedEstimation(c *C) {
 	defer testleak.AfterTest(c)()
-	store, _, err := newStoreWithBootstrap()
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, c int)")
 	tk.MustExec("insert into t values(1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5), (6,6,6), (7,7,7), (8,8,8), (9,9,9),(10,10,10)")
