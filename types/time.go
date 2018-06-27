@@ -2318,7 +2318,10 @@ func isAMOrPM(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
 	return input[2:], true
 }
 
+// digitRegex: it was used to scan a variable-length monthly day or month in the string. Ex:  "01" or "1" or "30"
 var digitRegex = regexp.MustCompile("^[0-9]+")
+
+// twoDigitRegex: it was just for two digit number string. Ex: "01" or "12"
 var twoDigitRegex = regexp.MustCompile("^[1-9][0-9]?")
 
 // parseTwoNumeric is used for pattens 0..31 0..24 0..60 and so on.
@@ -2345,7 +2348,6 @@ func dayOfMonthNumeric(t *MysqlTime, input string, ctx map[string]int) (string, 
 	length := len(result)
 
 	if length > 2 {
-		result = result[2:]
 		length = 2
 	}
 
@@ -2447,7 +2449,6 @@ func monthNumeric(t *MysqlTime, input string, ctx map[string]int) (string, bool)
 
 	// Some time the input is a consecutive digital string. Ex: 20181120
 	if length > 2 {
-		result = result[2:]
 		length = 2
 	}
 
