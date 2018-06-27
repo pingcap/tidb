@@ -15,6 +15,7 @@ package executor
 
 import (
 	"bytes"
+	"fmt"
 	"math"
 	"sort"
 	"strings"
@@ -820,15 +821,81 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 	return e
 }
 
+// buildProjBelowAgg builds a ProjectionExec below AggregationExec.
+// If all the args of `aggFuncs`, and all the item of `groupByItems`
+// are columns or constants, we do not need to build the `proj`.
+func (b *executorBuilder) buildProjBelowAgg(aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression, src Executor) Executor {
+	hasScalarFunc := false
+	for i := 0; !hasScalarFunc && i < len(aggFuncs); i++ {
+		f := aggFuncs[i]
+		for _, arg := range f.Args {
+			_, isScalarFunc := arg.(*expression.ScalarFunction)
+			hasScalarFunc = hasScalarFunc || isScalarFunc
+		}
+	}
+	for i, isScalarFunc := 0, false; !hasScalarFunc && i < len(groupByItems); i++ {
+		_, isScalarFunc = groupByItems[i].(*expression.ScalarFunction)
+		hasScalarFunc = hasScalarFunc || isScalarFunc
+	}
+	if !hasScalarFunc {
+		return src
+	}
+
+	b.ctx.GetSessionVars().PlanID++
+	id := b.ctx.GetSessionVars().PlanID
+	projFromID := fmt.Sprintf("%s_%d", plan.TypeProj, id)
+
+	projSchemaCols := make([]*expression.Column, 0, len(aggFuncs)+len(groupByItems))
+	projExprs := make([]expression.Expression, 0, cap(projSchemaCols))
+	cursor := 0
+	for _, f := range aggFuncs {
+		for i, arg := range f.Args {
+			if _, isCnst := arg.(*expression.Constant); isCnst {
+				continue
+			}
+			projExprs = append(projExprs, arg)
+			newArg := &expression.Column{
+				RetType: arg.GetType(),
+				ColName: model.NewCIStr(fmt.Sprintf("%s_%d", f.Name, i)),
+				Index:   cursor,
+			}
+			projSchemaCols = append(projSchemaCols, newArg)
+			f.Args[i] = newArg
+			cursor++
+		}
+	}
+	for i, item := range groupByItems {
+		if _, isCnst := item.(*expression.Constant); isCnst {
+			continue
+		}
+		projExprs = append(projExprs, item)
+		newArg := &expression.Column{
+			RetType: item.GetType(),
+			ColName: model.NewCIStr(fmt.Sprintf("group_%d", i)),
+			Index:   cursor,
+		}
+		projSchemaCols = append(projSchemaCols, newArg)
+		groupByItems[i] = newArg
+		cursor++
+	}
+
+	return &ProjectionExec{
+		baseExecutor:  newBaseExecutor(b.ctx, expression.NewSchema(projSchemaCols...), projFromID, src),
+		evaluatorSuit: expression.NewEvaluatorSuit(projExprs),
+	}
+}
+
 func (b *executorBuilder) buildHashAgg(v *plan.PhysicalHashAgg) Executor {
 	src := b.build(v.Children()[0])
 	if b.err != nil {
 		b.err = errors.Trace(b.err)
 		return nil
 	}
+	src = b.buildProjBelowAgg(v.AggFuncs, v.GroupByItems, src)
+	sessionVars := b.ctx.GetSessionVars()
 	e := &HashAggExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), src),
-		sc:           b.ctx.GetSessionVars().StmtCtx,
+		sc:           sessionVars.StmtCtx,
 		AggFuncs:     make([]aggregation.Aggregation, 0, len(v.AggFuncs)),
 		GroupByItems: v.GroupByItems,
 	}
@@ -845,6 +912,7 @@ func (b *executorBuilder) buildStreamAgg(v *plan.PhysicalStreamAgg) Executor {
 		b.err = errors.Trace(b.err)
 		return nil
 	}
+	src = b.buildProjBelowAgg(v.AggFuncs, v.GroupByItems, src)
 	e := &StreamAggExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), src),
 		StmtCtx:      b.ctx.GetSessionVars().StmtCtx,
@@ -902,6 +970,8 @@ func (b *executorBuilder) buildTableDual(v *plan.PhysicalTableDual) Executor {
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		numDualRows:  v.RowCount,
 	}
+	// Init the startTS for later use.
+	b.getStartTS()
 	return e
 }
 
@@ -912,7 +982,7 @@ func (b *executorBuilder) getStartTS() uint64 {
 	}
 
 	startTS := b.ctx.GetSessionVars().SnapshotTS
-	if startTS == 0 {
+	if startTS == 0 && b.ctx.Txn() != nil {
 		startTS = b.ctx.Txn().StartTS()
 	}
 	b.startTS = startTS
@@ -1105,12 +1175,10 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plan.AnalyzeIndexTask) 
 		BucketSize: maxBucketSize,
 		NumColumns: int32(len(task.IndexInfo.Columns)),
 	}
-	if !task.IndexInfo.Unique {
-		depth := int32(defaultCMSketchDepth)
-		width := int32(defaultCMSketchWidth)
-		e.analyzePB.IdxReq.CmsketchDepth = &depth
-		e.analyzePB.IdxReq.CmsketchWidth = &width
-	}
+	depth := int32(defaultCMSketchDepth)
+	width := int32(defaultCMSketchWidth)
+	e.analyzePB.IdxReq.CmsketchDepth = &depth
+	e.analyzePB.IdxReq.CmsketchWidth = &width
 	return e
 }
 
@@ -1332,6 +1400,9 @@ func buildNoRangeTableReader(b *executorBuilder, v *plan.PhysicalTableReader) (*
 		corColInFilter: b.corColInDistPlan(v.TablePlans),
 		corColInAccess: b.corColInAccess(v.TablePlans[0]),
 		plans:          v.TablePlans,
+	}
+	if isPartition, partitionID := ts.IsPartition(); isPartition {
+		e.tableID = partitionID
 	}
 	if containsLimit(dagReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, ts.Desc)

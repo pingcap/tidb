@@ -218,7 +218,7 @@ commit-timeout = "41s"
 [txn-local-latches]
 # Enable local latches for transactions. Enable it when
 # there are lots of conflicts between transactions.
-enabled = false
+enabled = true
 capacity = 1024000
 
 [binlog]
