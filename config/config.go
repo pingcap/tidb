@@ -249,7 +249,7 @@ var defaultConf = Config{
 	MemQuotaQuery:   32 << 30,
 	EnableStreaming: false,
 	TxnLocalLatches: TxnLocalLatches{
-		Enabled:  false,
+		Enabled:  true,
 		Capacity: 1024000,
 	},
 	LowerCaseTableNames: 2,

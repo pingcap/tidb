@@ -92,6 +92,9 @@ const (
 	// tidb_retry_limit is the maximun number of retries when committing a transaction.
 	TiDBRetryLimit = "tidb_retry_limit"
 
+	// tidb_disable_txn_auto_retry disables transaction auto retry.
+	TiDBDisableTxnAutoRetry = "tidb_disable_txn_auto_retry"
+
 	// tidb_enable_streaming enables TiDB to use streaming API for coprocessor requests.
 	TiDBEnableStreaming = "tidb_enable_streaming"
 
@@ -201,6 +204,7 @@ const (
 	DefTiDBMemQuotaNestedLoopApply   = 32 << 30 // 32GB.
 	DefTiDBGeneralLog                = 0
 	DefTiDBRetryLimit                = 10
+	DefTiDBDisableTxnAutoRetry       = false
 	DefTiDBHashJoinConcurrency       = 5
 	DefTiDBProjectionConcurrency     = 4
 	DefTiDBOptimizerSelectivityLevel = 0
