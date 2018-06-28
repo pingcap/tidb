@@ -156,7 +156,7 @@ func (sc *StatementContext) AppendNote(warn error) {
 	sc.mu.Unlock()
 }
 
-// AppendNote appends a warning with level 'Error'.
+// AppendError appends a warning with level 'Error'.
 func (sc *StatementContext) AppendError(warn error) {
 	sc.mu.Lock()
 	if len(sc.mu.warnings) < math.MaxUint16 {
