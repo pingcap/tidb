@@ -177,25 +177,25 @@ func (e *InsertValues) checkValueCount(insertValueCount, valueCount, genColsCoun
 	return nil
 }
 
-func (e *InsertValues) getRows(cols []*table.Column) (rows []types.DatumRow, err error) {
+func (e *InsertValues) insertRows(cols []*table.Column, exec func(rows []types.DatumRow) error) (err error) {
 	// process `insert|replace ... set x=y...`
 	if err = e.fillValueList(); err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 
-	rows = make([]types.DatumRow, len(e.Lists))
+	rows := make([]types.DatumRow, len(e.Lists))
 	length := len(e.Lists[0])
 	for i, list := range e.Lists {
 		if err = e.checkValueCount(length, len(list), len(e.GenColumns), i, cols); err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 		e.rowCount = uint64(i)
 		rows[i], err = e.getRow(cols, list, i)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 	}
-	return
+	return errors.Trace(exec(rows))
 }
 
 func (e *InsertValues) handleErr(col *table.Column, rowIdx int, err error) error {
@@ -274,21 +274,20 @@ func (e *InsertValues) fillDefaultValues(row types.DatumRow, hasValue []bool) er
 	return nil
 }
 
-func (e *InsertValues) getRowsSelectChunk(ctx context.Context, cols []*table.Column) ([]types.DatumRow, error) {
+func (e *InsertValues) insertRowsFromSelect(ctx context.Context, cols []*table.Column, exec func(rows []types.DatumRow) error) error {
 	// process `insert|replace into ... select ... from ...`
 	selectExec := e.children[0]
 	if selectExec.Schema().Len() != len(cols) {
-		return nil, ErrWrongValueCountOnRow.GenByArgs(1)
+		return ErrWrongValueCountOnRow.GenByArgs(1)
 	}
-	var rows []types.DatumRow
 	fields := selectExec.retTypes()
+	chk := selectExec.newChunk()
+	iter := chunk.NewIterator4Chunk(chk)
+	rows := make([]types.DatumRow, 0, e.ctx.GetSessionVars().MaxChunkSize)
 	for {
-		chk := selectExec.newChunk()
-		iter := chunk.NewIterator4Chunk(chk)
-
 		err := selectExec.Next(ctx, chk)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 		if chk.NumRows() == 0 {
 			break
@@ -296,15 +295,19 @@ func (e *InsertValues) getRowsSelectChunk(ctx context.Context, cols []*table.Col
 
 		for innerChunkRow := iter.Begin(); innerChunkRow != iter.End(); innerChunkRow = iter.Next() {
 			innerRow := innerChunkRow.GetDatumRow(fields)
-			e.rowCount = uint64(len(rows))
+			e.rowCount++
 			row, err := e.fillRowData(cols, innerRow)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return errors.Trace(err)
 			}
 			rows = append(rows, row)
 		}
+		if err := exec(rows); err != nil {
+			return errors.Trace(err)
+		}
+		rows = rows[:0]
 	}
-	return rows, nil
+	return nil
 }
 
 func (e *InsertValues) fillRowData(cols []*table.Column, vals types.DatumRow) (types.DatumRow, error) {
