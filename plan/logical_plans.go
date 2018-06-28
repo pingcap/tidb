@@ -389,7 +389,7 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath) (bool, error) {
 	}
 	if corColInAccessConds {
 		path.countAfterAccess = 1
-		return nil
+		return true, nil
 	}
 	path.ranges, err = ranger.BuildTableRange(path.accessConds, sc, pkCol.RetType)
 	if err != nil {
