@@ -228,7 +228,19 @@ func (s *session) GetSessionManager() util.SessionManager {
 
 func (s *session) StoreQueryFeedback(feedback interface{}) {
 	if s.statsCollector != nil {
-		s.statsCollector.StoreQueryFeedback(feedback)
+		do, err := GetDomain(s.store)
+		if err != nil {
+			log.Debug("domain not found: ", err)
+			metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblError).Inc()
+			return
+		}
+		err = s.statsCollector.StoreQueryFeedback(feedback, do.StatsHandle())
+		if err != nil {
+			log.Debug("store query feedback error: ", err)
+			metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblError).Inc()
+			return
+		}
+		metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblOK).Inc()
 	}
 }
 
@@ -1235,7 +1247,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 22
+	currentBootstrapVersion = 23
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -1301,6 +1313,7 @@ const loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variab
 	variable.TiDBHashAggPartialConcurrency + quoteCommaQuote +
 	variable.TiDBHashAggFinalConcurrency + quoteCommaQuote +
 	variable.TiDBBackoffLockFast + quoteCommaQuote +
+	variable.TiDBDDLReorgWorkerCount + quoteCommaQuote +
 	variable.TiDBOptInSubqUnFolding + quoteCommaQuote +
 	variable.TiDBDistSQLScanConcurrency + quoteCommaQuote +
 	variable.TiDBMaxChunkSize + quoteCommaQuote +

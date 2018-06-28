@@ -671,7 +671,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			}
 		case t := <-statsHandle.AnalyzeResultCh():
 			for i, hg := range t.Hist {
-				err = statistics.SaveStatsToStorage(ctx, t.TableID, t.Count, t.IsIndex, hg, t.Cms[i])
+				err = statistics.SaveStatsToStorage(ctx, t.TableID, t.Count, t.IsIndex, hg, t.Cms[i], 1)
 				if err != nil {
 					log.Debug("[stats] save histogram to storage fail: ", errors.ErrorStack(err))
 				}
@@ -686,6 +686,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			if err != nil {
 				log.Debug("[stats] dump stats delta fail: ", errors.ErrorStack(err))
 			}
+			statsHandle.UpdateErrorRate(do.InfoSchema())
 		case <-loadHistogramTicker.C:
 			err = statsHandle.LoadNeededHistograms()
 			if err != nil {
