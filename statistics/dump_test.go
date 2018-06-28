@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -54,7 +55,7 @@ func (s *testDumpStatsSuite) TestConversion(c *C) {
 	tk.MustExec("insert into t(a,b) values (1, 1),(3, 1),(5, 10)")
 	is := s.do.InfoSchema()
 	h := s.do.StatsHandle()
-	h.DumpStatsDeltaToKV()
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	h.Update(is)
 
 	tableInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))

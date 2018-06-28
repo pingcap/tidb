@@ -451,7 +451,8 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"select 1 from dual limit 1", true},
 		{"select 1 where exists (select 2)", false},
 		{"select 1 from dual where not exists (select 2)", true},
-
+		{"select 1 as a from dual order by a", true},
+		{"select 1 as a from dual where 1 < any (select 2) order by a", true},
 		{"select 1 order by 1", true},
 
 		// for https://github.com/pingcap/tidb/issues/320
@@ -1603,6 +1604,13 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED", true},
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED FIRST", true},
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED AFTER b", true},
+		{"ALTER TABLE employees ADD PARTITION", true},
+		{"ALTER TABLE employees ADD PARTITION ( PARTITION P1 VALUES LESS THAN (2010))", true},
+		{"ALTER TABLE employees ADD PARTITION ( PARTITION P2 VALUES LESS THAN MAXVALUE)", true},
+		{`ALTER TABLE employees ADD PARTITION (
+				PARTITION P1 VALUES LESS THAN (2010),
+				PARTITION P2 VALUES LESS THAN (2015),
+				PARTITION P3 VALUES LESS THAN MAXVALUE)`, true},
 		{"ALTER TABLE t DISABLE KEYS", true},
 		{"ALTER TABLE t ENABLE KEYS", true},
 		{"ALTER TABLE t MODIFY COLUMN a varchar(255)", true},
