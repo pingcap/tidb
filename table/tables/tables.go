@@ -447,15 +447,6 @@ func (t *Table) getRollbackableMemStore(ctx sessionctx.Context) kv.RetrieverMuta
 
 // locatePartition returns the partition ID of the input record.
 func (t *Table) locatePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int64, error) {
-	// TODO: Remove this later, when we have better way to TestPartitionAddRecord.
-	if t.partitionExpr == nil {
-		partitionExpr, err := generatePartitionExpr(t.meta)
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-		t.partitionExpr = partitionExpr
-	}
-
 	var err error
 	partitionExprs := t.partitionExpr.Locate
 	idx := sort.Search(len(partitionExprs), func(i int) bool {
