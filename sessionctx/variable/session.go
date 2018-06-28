@@ -280,6 +280,9 @@ type SessionVars struct {
 	// OptimizerSelectivityLevel defines the level of the selectivity estimation in planner.
 	OptimizerSelectivityLevel int
 
+	// EnableTablePartition enables table partition feature.
+	EnableTablePartition bool
+
 	// EnableStreaming indicates whether the coprocessor request can use streaming API.
 	// TODO: remove this after tidb-server configuration "enable-streaming' removed.
 	EnableStreaming bool
@@ -543,6 +546,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableStreaming = TiDBOptOn(val)
 	case TiDBOptimizerSelectivityLevel:
 		s.OptimizerSelectivityLevel = tidbOptPositiveInt32(val, DefTiDBOptimizerSelectivityLevel)
+	case TiDBEnableTablePartition:
+		s.EnableTablePartition = TiDBOptOn(val)
 	case TiDBDDLReorgWorkerCount:
 		workerCnt := tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)
 		SetDDLReorgWorkerCounter(int32(workerCnt))
