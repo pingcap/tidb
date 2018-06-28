@@ -16,6 +16,7 @@ package mocktikv
 import (
 	"bytes"
 	"io"
+	"sync"
 	"time"
 
 	"github.com/golang/protobuf/proto"
@@ -42,6 +43,35 @@ import (
 )
 
 var dummySlice = make([]byte, 0)
+
+type locCache struct {
+	sync.RWMutex
+	// locMap
+	locMap map[string]*time.Location
+}
+
+func init() {
+	LocCache = &locCache{}
+	LocCache.locMap = make(map[string]*time.Location)
+}
+
+// LocCache is a simple cache policy to improve the performance of 'time.LoadLocation'.
+var LocCache *locCache
+
+func (lm *locCache) getLoc(name string) (*time.Location, error) {
+	if v, ok := lm.locMap[name]; ok {
+		return v, nil
+	}
+
+	if loc, err := time.LoadLocation(name); err == nil {
+		lm.Lock()
+		lm.locMap[name] = loc
+		lm.Unlock()
+		return loc, nil
+	}
+
+	return nil, errors.New("invalid name for timezone")
+}
 
 type dagContext struct {
 	dagReq    *tipb.DAGRequest
@@ -104,7 +134,7 @@ func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 	// retrieving timezone by name first. When name is set, it means we need
 	// consider daylight saving time. If it is not, we can use offset.
 	if dagReq.TimeZoneName != "" {
-		if sc.TimeZone, err = time.LoadLocation(dagReq.TimeZoneName); err != nil {
+		if sc.TimeZone, err = LocCache.getLoc(dagReq.TimeZoneName); err != nil {
 			return nil, nil, nil, errors.Trace(err)
 		}
 	} else {
