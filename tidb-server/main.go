@@ -137,10 +137,10 @@ func main() {
 	setupTracing() // Should before createServer and after setup config.
 	printInfo()
 	setupBinlogClient()
+	setupMetrics()
 	createStoreAndDomain()
 	createServer()
 	setupSignalHandler()
-	setupMetrics()
 	runServer()
 	cleanup()
 	os.Exit(0)

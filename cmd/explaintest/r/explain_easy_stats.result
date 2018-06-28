@@ -9,119 +9,119 @@ load stats 's/explain_easy_stats_t3.json';
 set @@session.tidb_opt_insubquery_unfold = 1;
 set @@session.tidb_opt_agg_push_down = 1;
 explain select * from t3 where exists (select s.a from t3 s having sum(s.a) = t3.a );
-id	parents	children	task	operator info	count
-TableScan_16			cop	table:t3, range:[-inf,+inf], keep order:false	2000.00
-TableReader_17	Projection_15		root	data:TableScan_16	2000.00
-Projection_15	HashLeftJoin_14	TableReader_17	root	test.t3.a, test.t3.b, test.t3.c, test.t3.d, cast(test.t3.a)	2000.00
-TableScan_29	StreamAgg_22		cop	table:s, range:[-inf,+inf], keep order:false	2000.00
-StreamAgg_22		TableScan_29	cop	funcs:sum(s.a)	1.00
-TableReader_31	StreamAgg_30		root	data:StreamAgg_22	1.00
-StreamAgg_30	HashLeftJoin_14	TableReader_31	root	funcs:sum(col_0)	1.00
-HashLeftJoin_14	Projection_13	Projection_15,StreamAgg_30	root	semi join, inner:StreamAgg_30, equal:[eq(cast(test.t3.a), sel_agg_1)]	1600.00
-Projection_13		HashLeftJoin_14	root	test.t3.a, test.t3.b, test.t3.c, test.t3.d	1600.00
+id	task	operator info	count
+Projection_13	root	test.t3.a, test.t3.b, test.t3.c, test.t3.d	1600.00
+└─HashLeftJoin_14	root	semi join, inner:StreamAgg_30, equal:[eq(cast(test.t3.a), sel_agg_1)]	1600.00
+  ├─Projection_15	root	test.t3.a, test.t3.b, test.t3.c, test.t3.d, cast(test.t3.a)	2000.00
+  │ └─TableReader_17	root	data:TableScan_16	2000.00
+  │   └─TableScan_16	cop	table:t3, range:[-inf,+inf], keep order:false	2000.00
+  └─StreamAgg_30	root	funcs:sum(col_0)	1.00
+    └─TableReader_31	root	data:StreamAgg_22	1.00
+      └─StreamAgg_22	cop	funcs:sum(s.a)	1.00
+        └─TableScan_29	cop	table:s, range:[-inf,+inf], keep order:false	2000.00
 explain select * from t1;
-id	parents	children	task	operator info	count
-TableScan_4			cop	table:t1, range:[-inf,+inf], keep order:false	1999.00
-TableReader_5			root	data:TableScan_4	1999.00
+id	task	operator info	count
+TableReader_5	root	data:TableScan_4	1999.00
+└─TableScan_4	cop	table:t1, range:[-inf,+inf], keep order:false	1999.00
 explain select * from t1 order by c2;
-id	parents	children	task	operator info	count
-IndexScan_11			cop	table:t1, index:c2, range:[<nil>,+inf], keep order:true	1999.00
-TableScan_12			cop	table:t1, keep order:false	1999.00
-IndexLookUp_13			root	index:IndexScan_11, table:TableScan_12	1999.00
+id	task	operator info	count
+IndexLookUp_13	root	index:IndexScan_11, table:TableScan_12	1999.00
+├─IndexScan_11	cop	table:t1, index:c2, range:[<nil>,+inf], keep order:true	1999.00
+└─TableScan_12	cop	table:t1, keep order:false	1999.00
 explain select * from t2 order by c2;
-id	parents	children	task	operator info	count
-TableScan_7			cop	table:t2, range:[-inf,+inf], keep order:false	1985.00
-TableReader_8	Sort_4		root	data:TableScan_7	1985.00
-Sort_4		TableReader_8	root	test.t2.c2:asc	1985.00
+id	task	operator info	count
+Sort_4	root	test.t2.c2:asc	1985.00
+└─TableReader_8	root	data:TableScan_7	1985.00
+  └─TableScan_7	cop	table:t2, range:[-inf,+inf], keep order:false	1985.00
 explain select * from t1 where t1.c1 > 0;
-id	parents	children	task	operator info	count
-TableScan_5			cop	table:t1, range:(0,+inf], keep order:false	1999.00
-TableReader_6			root	data:TableScan_5	1999.00
+id	task	operator info	count
+TableReader_6	root	data:TableScan_5	1999.00
+└─TableScan_5	cop	table:t1, range:(0,+inf], keep order:false	1999.00
 explain select t1.c1, t1.c2 from t1 where t1.c2 = 1;
-id	parents	children	task	operator info	count
-IndexScan_8			cop	table:t1, index:c2, range:[1,1], keep order:false	0.00
-IndexReader_9			root	index:IndexScan_8	0.00
+id	task	operator info	count
+IndexReader_9	root	index:IndexScan_8	0.00
+└─IndexScan_8	cop	table:t1, index:c2, range:[1,1], keep order:false	0.00
 explain select * from t1 left join t2 on t1.c2 = t2.c1 where t1.c1 > 1;
-id	parents	children	task	operator info	count
-IndexScan_14	Selection_16		cop	table:t1, index:c2, range:[<nil>,+inf], keep order:true	1999.00
-Selection_16		IndexScan_14	cop	gt(test.t1.c1, 1)	1998.00
-TableScan_15			cop	table:t1, keep order:false	1998.00
-IndexLookUp_17	MergeJoin_7		root	index:Selection_16, table:TableScan_15	1998.00
-IndexScan_19			cop	table:t2, index:c1, range:[<nil>,+inf], keep order:true	1985.00
-TableScan_20			cop	table:t2, keep order:false	1985.00
-IndexLookUp_21	MergeJoin_7		root	index:IndexScan_19, table:TableScan_20	1985.00
-MergeJoin_7	Projection_6	IndexLookUp_17,IndexLookUp_21	root	left outer join, left key:test.t1.c2, right key:test.t2.c1	2481.25
-Projection_6		MergeJoin_7	root	test.t1.c1, test.t1.c2, test.t1.c3, test.t2.c1, test.t2.c2	2481.25
+id	task	operator info	count
+Projection_6	root	test.t1.c1, test.t1.c2, test.t1.c3, test.t2.c1, test.t2.c2	2481.25
+└─MergeJoin_7	root	left outer join, left key:test.t1.c2, right key:test.t2.c1	2481.25
+  ├─IndexLookUp_17	root	index:Selection_16, table:TableScan_15	1998.00
+  │ ├─Selection_16	cop	gt(test.t1.c1, 1)	1998.00
+  │ │ └─IndexScan_14	cop	table:t1, index:c2, range:[<nil>,+inf], keep order:true	1999.00
+  │ └─TableScan_15	cop	table:t1, keep order:false	1998.00
+  └─IndexLookUp_21	root	index:IndexScan_19, table:TableScan_20	1985.00
+    ├─IndexScan_19	cop	table:t2, index:c1, range:[<nil>,+inf], keep order:true	1985.00
+    └─TableScan_20	cop	table:t2, keep order:false	1985.00
 explain update t1 set t1.c2 = 2 where t1.c1 = 1;
-id	parents	children	task	operator info	count
-TableScan_4			cop	table:t1, range:[1,1], keep order:false	1.00
-TableReader_5			root	data:TableScan_4	1.00
+id	task	operator info	count
+TableReader_5	root	data:TableScan_4	1.00
+└─TableScan_4	cop	table:t1, range:[1,1], keep order:false	1.00
 explain delete from t1 where t1.c2 = 1;
-id	parents	children	task	operator info	count
-IndexScan_7			cop	table:t1, index:c2, range:[1,1], keep order:false	0.00
-TableScan_8			cop	table:t1, keep order:false	0.00
-IndexLookUp_9			root	index:IndexScan_7, table:TableScan_8	0.00
+id	task	operator info	count
+IndexLookUp_9	root	index:IndexScan_7, table:TableScan_8	0.00
+├─IndexScan_7	cop	table:t1, index:c2, range:[1,1], keep order:false	0.00
+└─TableScan_8	cop	table:t1, keep order:false	0.00
 explain select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1;
-id	parents	children	task	operator info	count
-TableScan_12			cop	table:a, range:[-inf,+inf], keep order:false	1999.00
-TableReader_13	IndexJoin_14		root	data:TableScan_12	1999.00
-TableScan_20	HashAgg_17		cop	table:b, range:[-inf,+inf], keep order:false	1985.00
-HashAgg_17		TableScan_20	cop	group by:b.c2, funcs:count(b.c2), firstrow(b.c2)	1985.00
-TableReader_22	HashAgg_21		root	data:HashAgg_17	1985.00
-HashAgg_21	IndexJoin_14	TableReader_22	root	group by:col_2, funcs:count(col_0), firstrow(col_1)	1985.00
-IndexJoin_14	Projection_11	TableReader_13,HashAgg_21	root	inner join, inner:TableReader_13, outer key:b.c2, inner key:a.c1	1985.00
-Projection_11		IndexJoin_14	root	cast(join_agg_0)	1985.00
+id	task	operator info	count
+Projection_11	root	cast(join_agg_0)	1985.00
+└─IndexJoin_14	root	inner join, inner:TableReader_13, outer key:b.c2, inner key:a.c1	1985.00
+  ├─TableReader_13	root	data:TableScan_12	1999.00
+  │ └─TableScan_12	cop	table:a, range:[-inf,+inf], keep order:false	1999.00
+  └─HashAgg_21	root	group by:col_2, funcs:count(col_0), firstrow(col_1)	1985.00
+    └─TableReader_22	root	data:HashAgg_17	1985.00
+      └─HashAgg_17	cop	group by:b.c2, funcs:count(b.c2), firstrow(b.c2)	1985.00
+        └─TableScan_20	cop	table:b, range:[-inf,+inf], keep order:false	1985.00
 explain select * from t2 order by t2.c2 limit 0, 1;
-id	parents	children	task	operator info	count
-TableScan_13	TopN_14		cop	table:t2, range:[-inf,+inf], keep order:false	1985.00
-TopN_14		TableScan_13	cop	test.t2.c2:asc, offset:0, count:1	1.00
-TableReader_15	TopN_7		root	data:TopN_14	1.00
-TopN_7		TableReader_15	root	test.t2.c2:asc, offset:0, count:1	1.00
+id	task	operator info	count
+TopN_7	root	test.t2.c2:asc, offset:0, count:1	1.00
+└─TableReader_15	root	data:TopN_14	1.00
+  └─TopN_14	cop	test.t2.c2:asc, offset:0, count:1	1.00
+    └─TableScan_13	cop	table:t2, range:[-inf,+inf], keep order:false	1985.00
 explain select * from t1 where c1 > 1 and c2 = 1 and c3 < 1;
-id	parents	children	task	operator info	count
-IndexScan_8	Selection_10		cop	table:t1, index:c2, range:[1,1], keep order:false	0.00
-Selection_10		IndexScan_8	cop	gt(test.t1.c1, 1)	0.00
-TableScan_9	Selection_11		cop	table:t1, keep order:false	0.00
-Selection_11		TableScan_9	cop	lt(test.t1.c3, 1)	0.00
-IndexLookUp_12			root	index:Selection_10, table:Selection_11	0.00
+id	task	operator info	count
+IndexLookUp_12	root	index:Selection_10, table:Selection_11	0.00
+├─Selection_10	cop	gt(test.t1.c1, 1)	0.00
+│ └─IndexScan_8	cop	table:t1, index:c2, range:[1,1], keep order:false	0.00
+└─Selection_11	cop	lt(test.t1.c3, 1)	0.00
+  └─TableScan_9	cop	table:t1, keep order:false	0.00
 explain select * from t1 where c1 = 1 and c2 > 1;
-id	parents	children	task	operator info	count
-TableScan_5	Selection_6		cop	table:t1, range:[1,1], keep order:false	1.00
-Selection_6		TableScan_5	cop	gt(test.t1.c2, 1)	0.50
-TableReader_7			root	data:Selection_6	0.50
+id	task	operator info	count
+TableReader_7	root	data:Selection_6	0.50
+└─Selection_6	cop	gt(test.t1.c2, 1)	0.50
+  └─TableScan_5	cop	table:t1, range:[1,1], keep order:false	1.00
 explain select c1 from t1 where c1 in (select c2 from t2);
-id	parents	children	task	operator info	count
-TableDual_11	Projection_10		root	rows:0	0.00
-Projection_10		TableDual_11	root	test.t1.c1	0.00
+id	task	operator info	count
+Projection_10	root	test.t1.c1	0.00
+└─TableDual_11	root	rows:0	0.00
 explain select * from information_schema.columns;
-id	parents	children	task	operator info	count
-MemTableScan_4			root		10000.00
+id	task	operator info	count
+MemTableScan_4	root		10000.00
 explain select c2 = (select c2 from t2 where t1.c1 = t2.c1 order by c1 limit 1) from t1;
-id	parents	children	task	operator info	count
-TableScan_15			cop	table:t1, range:[-inf,+inf], keep order:false	1999.00
-TableReader_16	Apply_14		root	data:TableScan_15	1999.00
-IndexScan_45			cop	table:t2, index:c1, range: decided by [eq(test.t1.c1, test.t2.c1)], keep order:true	0.00
-TableScan_46			cop	table:t2, keep order:false	0.00
-IndexLookUp_47	Limit_22		root	index:IndexScan_45, table:TableScan_46	0.00
-Limit_22	Apply_14	IndexLookUp_47	root	offset:0, count:1	1.00
-Apply_14	Projection_12	TableReader_16,Limit_22	root	left outer join, inner:Limit_22	1999.00
-Projection_12		Apply_14	root	eq(test.t1.c2, test.t2.c2)	1999.00
+id	task	operator info	count
+Projection_12	root	eq(test.t1.c2, test.t2.c2)	1999.00
+└─Apply_14	root	left outer join, inner:Limit_22	1999.00
+  ├─TableReader_16	root	data:TableScan_15	1999.00
+  │ └─TableScan_15	cop	table:t1, range:[-inf,+inf], keep order:false	1999.00
+  └─Limit_22	root	offset:0, count:1	1.00
+    └─IndexLookUp_47	root	index:IndexScan_45, table:TableScan_46	0.00
+      ├─IndexScan_45	cop	table:t2, index:c1, range: decided by [eq(test.t1.c1, test.t2.c1)], keep order:true	0.00
+      └─TableScan_46	cop	table:t2, keep order:false	0.00
 explain select * from t1 order by c1 desc limit 1;
-id	parents	children	task	operator info	count
-TableScan_18	Limit_20		cop	table:t1, range:[-inf,+inf], keep order:true, desc	1.00
-Limit_20		TableScan_18	cop	offset:0, count:1	1.00
-TableReader_21	Limit_10		root	data:Limit_20	1.00
-Limit_10		TableReader_21	root	offset:0, count:1	1.00
+id	task	operator info	count
+Limit_10	root	offset:0, count:1	1.00
+└─TableReader_21	root	data:Limit_20	1.00
+  └─Limit_20	cop	offset:0, count:1	1.00
+    └─TableScan_18	cop	table:t1, range:[-inf,+inf], keep order:true, desc	1.00
 set @@session.tidb_opt_insubquery_unfold = 0;
 explain select 1 in (select c2 from t2) from t1;
-id	parents	children	task	operator info	count
-TableScan_8			cop	table:t1, range:[-inf,+inf], keep order:false	1999.00
-TableReader_9	HashLeftJoin_7		root	data:TableScan_8	1999.00
-TableScan_10	Selection_11		cop	table:t2, range:[-inf,+inf], keep order:false	1985.00
-Selection_11		TableScan_10	cop	eq(1, test.t2.c2)	0.00
-TableReader_12	HashLeftJoin_7		root	data:Selection_11	0.00
-HashLeftJoin_7	Projection_6	TableReader_9,TableReader_12	root	left outer semi join, inner:TableReader_12	1999.00
-Projection_6		HashLeftJoin_7	root	5_aux_0	1999.00
+id	task	operator info	count
+Projection_6	root	5_aux_0	1999.00
+└─HashLeftJoin_7	root	left outer semi join, inner:TableReader_12	1999.00
+  ├─TableReader_9	root	data:TableScan_8	1999.00
+  │ └─TableScan_8	cop	table:t1, range:[-inf,+inf], keep order:false	1999.00
+  └─TableReader_12	root	data:Selection_11	0.00
+    └─Selection_11	cop	eq(1, test.t2.c2)	0.00
+      └─TableScan_10	cop	table:t2, range:[-inf,+inf], keep order:false	1985.00
 explain format="dot" select 1 in (select c2 from t2) from t1;
 dot contents
 
