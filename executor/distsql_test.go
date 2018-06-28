@@ -167,3 +167,18 @@ func (s *testSuite) TestBigIntPK(c *C) {
 	tk.MustExec("insert into t values(1, 1, 1), (9223372036854775807, 2, 2)")
 	tk.MustQuery("select * from t use index(idx) order by a").Check(testkit.Rows("1 1 1", "9223372036854775807 2 2"))
 }
+
+func (s *testSuite) TestCorColToRanges(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b int, c int, index idx(b))")
+	tk.MustExec("insert into t values(1, 1, 1), (2, 2 ,2), (3, 3, 3), (4, 4, 4), (5, 5, 5), (6, 6, 6), (7, 7, 7), (8, 8, 8), (9, 9, 9)")
+	tk.MustExec("analyze table t")
+	// Test single read on table.
+	tk.MustQuery("select t.c in (select count(*) from t s ignore index(idx), t t1 where s.a = t.a and s.a = t1.a) from t").Check(testkit.Rows("1", "0", "0", "0", "0", "0", "0", "0", "0"))
+	// Test single read on index.
+	tk.MustQuery("select t.c in (select count(*) from t s use index(idx), t t1 where s.b = t.a and s.a = t1.a) from t").Check(testkit.Rows("1", "0", "0", "0", "0", "0", "0", "0", "0"))
+	// Test IndexLookUpReader.
+	tk.MustQuery("select t.c in (select count(*) from t s use index(idx), t t1 where s.b = t.a and s.c = t1.a) from t").Check(testkit.Rows("1", "0", "0", "0", "0", "0", "0", "0", "0"))
+}
