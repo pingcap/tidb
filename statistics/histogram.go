@@ -189,10 +189,17 @@ const (
 	// constants for stats version
 	curStatsVersion = version1
 	version1        = 1
+
+	// constants for column flag
+	analyzeFlag = 1
 )
 
+func isAnalyzed(flag int64) bool {
+	return (flag & analyzeFlag) > 0
+}
+
 // SaveStatsToStorage saves the stats to storage.
-func SaveStatsToStorage(sctx sessionctx.Context, tableID int64, count int64, isIndex int, hg *Histogram, cms *CMSketch) error {
+func SaveStatsToStorage(sctx sessionctx.Context, tableID int64, count int64, isIndex int, hg *Histogram, cms *CMSketch, isAnalyzed int64) error {
 	ctx := context.TODO()
 	exec := sctx.(sqlexec.SQLExecutor)
 	_, err := exec.Execute(ctx, "begin")
@@ -216,8 +223,12 @@ func SaveStatsToStorage(sctx sessionctx.Context, tableID int64, count int64, isI
 	if err != nil {
 		return errors.Trace(err)
 	}
-	replaceSQL := fmt.Sprintf("replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver) values (%d, %d, %d, %d, %d, %d, X'%X', %d, %d)",
-		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, data, hg.TotColSize, curStatsVersion)
+	flag := 0
+	if isAnalyzed == 1 {
+		flag = analyzeFlag
+	}
+	replaceSQL := fmt.Sprintf("replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, flag) values (%d, %d, %d, %d, %d, %d, X'%X', %d, %d, %d)",
+		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, data, hg.TotColSize, curStatsVersion, flag)
 	_, err = exec.Execute(ctx, replaceSQL)
 	if err != nil {
 		return errors.Trace(err)
@@ -464,12 +475,12 @@ func (hg *Histogram) mergeBuckets(bucketIdx int) {
 
 // getIncreaseFactor will return a factor of data increasing after the last analysis.
 func (hg *Histogram) getIncreaseFactor(totalCount int64) float64 {
-	columnCount := int64(hg.totalRowCount())
+	columnCount := hg.totalRowCount()
 	if columnCount == 0 {
 		// avoid dividing by 0
 		return 1.0
 	}
-	return float64(totalCount) / float64(columnCount)
+	return float64(totalCount) / columnCount
 }
 
 // validRange checks if the range is valid, it is used by `SplitRange` to remove the invalid range,
@@ -641,12 +652,43 @@ func MergeHistograms(sc *stmtctx.StatementContext, lh *Histogram, rh *Histogram,
 	return lh, nil
 }
 
+// ErrorRate is the error rate of estimate row count by bucket and cm sketch.
+type ErrorRate struct {
+	ErrorTotal float64
+	QueryTotal int64
+}
+
+// MaxErrorRate is the max error rate of estimate row count of a not pseudo column.
+// If the table is pseudo, but the average error rate is less than MaxErrorRate,
+// then the column is not pseudo.
+const MaxErrorRate = 0.25
+
+// IsPseudo is true when the total of query is zero or the average error
+// rate is greater than MaxErrorRate.
+func (e *ErrorRate) IsPseudo() bool {
+	if e.QueryTotal == 0 {
+		return true
+	}
+	return e.ErrorTotal/float64(e.QueryTotal) > MaxErrorRate
+}
+
+func (e *ErrorRate) update(rate float64) {
+	e.QueryTotal++
+	e.ErrorTotal += rate
+}
+
+func (e *ErrorRate) merge(rate *ErrorRate) {
+	e.QueryTotal += rate.QueryTotal
+	e.ErrorTotal += rate.ErrorTotal
+}
+
 // Column represents a column histogram.
 type Column struct {
 	Histogram
 	*CMSketch
 	Count int64
 	Info  *model.ColumnInfo
+	ErrorRate
 }
 
 func (c *Column) String() string {
@@ -718,6 +760,7 @@ func (c *Column) getColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 type Index struct {
 	Histogram
 	*CMSketch
+	ErrorRate
 	statsVer int64 // statsVer is the version of the current stats, used to maintain compatibility
 	Info     *model.IndexInfo
 }

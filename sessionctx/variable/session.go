@@ -106,7 +106,7 @@ func (tc *TransactionContext) UpdateDeltaForTable(tableID int64, delta int64, co
 		tc.TableDeltaMap = make(map[int64]TableDelta)
 	}
 	item := tc.TableDeltaMap[tableID]
-	if item.ColSize == nil {
+	if item.ColSize == nil && colSize != nil {
 		item.ColSize = make(map[int64]int64)
 	}
 	item.Delta += delta
@@ -548,6 +548,9 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.OptimizerSelectivityLevel = tidbOptPositiveInt32(val, DefTiDBOptimizerSelectivityLevel)
 	case TiDBEnableTablePartition:
 		s.EnableTablePartition = TiDBOptOn(val)
+	case TiDBDDLReorgWorkerCount:
+		workerCnt := tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)
+		SetDDLReorgWorkerCounter(int32(workerCnt))
 	}
 	s.systems[name] = val
 	return nil

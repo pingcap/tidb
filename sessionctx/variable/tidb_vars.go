@@ -174,6 +174,9 @@ const (
 
 	// tidb_backoff_lock_fast is used for tikv backoff base time in milliseconds.
 	TiDBBackoffLockFast = "tidb_backoff_lock_fast"
+
+	// tidb_ddl_reorg_worker_cnt defines the count of ddl reorg workers.
+	TiDBDDLReorgWorkerCount = "tidb_ddl_reorg_worker_cnt"
 )
 
 // Default TiDB system variable values.
@@ -208,11 +211,14 @@ const (
 	DefTiDBHashJoinConcurrency       = 5
 	DefTiDBProjectionConcurrency     = 4
 	DefTiDBOptimizerSelectivityLevel = 0
+	DefTiDBDDLReorgWorkerCount       = 16
 	DefTiDBHashAggPartialConcurrency = 4
 	DefTiDBHashAggFinalConcurrency   = 4
 )
 
 // Process global variables.
 var (
-	ProcessGeneralLog uint32
+	ProcessGeneralLog      uint32
+	ddlReorgWorkerCounter  int32 = DefTiDBDDLReorgWorkerCount
+	maxDDLReorgWorkerCount int32 = 128
 )
