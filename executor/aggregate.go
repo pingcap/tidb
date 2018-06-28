@@ -91,6 +91,44 @@ type AfFinalResult struct {
 // HashAggExec deals with all the aggregate functions.
 // It is built from the Aggregate Plan. When Next() is called, it reads all the data from Src
 // and updates all the items in AggFuncs.
+// The parallel execution flow is as the following graph shows:
+//
+//                            +-------------+
+//                            | Main Thread |
+//                            +------+------+
+//                                   ^
+//                                   |
+//                                   +
+//                              +-+-            +-+
+//                              | |    ......   | |  finalOutputCh
+//                              +++-            +-+
+//                               ^
+//                               |
+//                               +---------------+
+//                               |               |
+//                 +--------------+             +--------------+
+//                 | final worker |     ......  | final worker |
+//                 +------------+-+             +-+------------+
+//                              ^                 ^
+//                              |                 |
+//                             +-+  +-+  ......  +-+
+//                             | |  | |          | |
+//                             ...  ...          ...    partialOutputChs
+//                             | |  | |          | |
+//                             +++  +++          +++
+//                              ^    ^            ^
+//          +-+                 |    |            |
+//          | |        +-------------+            |
+// inputCh  +-+        |        +-----------------+---+
+//          | |        |                              |
+//          ...    +---+------------+            +----+-----------+
+//          | |    | partial worker |   ......   | partial worker |
+//          +++    +--------------+-+            +-+--------------+
+//           |                     ^                ^
+//           |                     |                |
+//      +----v---------+          +++ +-+          +++
+//      | data fetcher | +------> | | | |  ......  | |   partialInputChs
+//      +--------------+          +-+ +-+          +-+
 type HashAggExec struct {
 	baseExecutor
 
@@ -124,7 +162,10 @@ type HashAggExec struct {
 
 // HashAggInput indicates the input of hash agg exec.
 type HashAggInput struct {
-	chk        *chunk.Chunk
+	chk *chunk.Chunk
+	// giveBackCh is bound with specific partial worker,
+	// it's used to reuse the `chk`,
+	// and tell the data-fetcher which partial worker it should send data to.
 	giveBackCh chan<- *chunk.Chunk
 }
 
@@ -567,7 +608,6 @@ func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error 
 			if result != nil {
 				return errors.Trace(result.err)
 			}
-			// When
 			if e.isChildExecReturnEmpty && e.defaultVal != nil {
 				chk.Append(e.defaultVal, 0, 1)
 			}

@@ -932,7 +932,7 @@ func (b *executorBuilder) buildHashAgg(v *plan.PhysicalHashAgg) Executor {
 	// When we set both tidb_hashagg_final_concurrency and tidb_hashagg_partial_concurrency to 1,
 	// we do not need to parallelly execute hash agg,
 	// and this action can be a workaround when meeting some unexpected situation using parallelExec.
-	if sessionVars.HashAggFinalConcurrency == 1 && sessionVars.HashAggPartialConcurrency == 1 {
+	if finalCon, partialCon := sessionVars.HashAggFinalConcurrency, sessionVars.HashAggPartialConcurrency; finalCon <= 0 || partialCon <= 0 || finalCon == 1 && partialCon == 1 {
 		e.doesUnparallelExec = true
 	}
 	for i, aggDesc := range v.AggFuncs {
