@@ -688,12 +688,13 @@ func checkCreatePartitionValue(meta *model.TableInfo, part *model.PartitionInfo)
 	return nil
 }
 
-func buildCreateTablePartitionInfo(d *ddl, tbInfo *model.TableInfo, s *ast.CreateTableStmt, cols []*table.Column) error {
+func buildCreateTablePartitionInfo(ctx sessionctx.Context, d *ddl, tbInfo *model.TableInfo, s *ast.CreateTableStmt, cols []*table.Column) error {
 	if s.Partition == nil {
 		return nil
 	}
 	pi := &model.PartitionInfo{
-		Type: s.Partition.Tp,
+		Type:   s.Partition.Tp,
+		Enable: ctx.GetSessionVars().EnableTablePartition,
 	}
 	if s.Partition.Expr != nil {
 		buf := new(bytes.Buffer)
@@ -950,7 +951,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		return errors.Trace(err)
 	}
 
-	err = buildCreateTablePartitionInfo(d, tbInfo, s, cols)
+	err = buildCreateTablePartitionInfo(ctx, d, tbInfo, s, cols)
 	if err != nil {
 		return errors.Trace(err)
 	}
