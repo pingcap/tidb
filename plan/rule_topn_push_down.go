@@ -109,8 +109,10 @@ func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int) LogicalPla
 
 	for _, by := range topN.ByItems {
 		cols := expression.ExtractColumns(by.Expr)
-		if len(p.children[1-idx].Schema().ColumnsIndices(cols)) != 0 {
-			return p.children[idx].pushDownTopN(nil)
+		for _, col := range cols {
+			if p.children[1-idx].Schema().Contains(col) {
+				return p.children[idx].pushDownTopN(nil)
+			}
 		}
 	}
 
