@@ -59,17 +59,21 @@ func init() {
 var LocCache *locCache
 
 func (lm *locCache) getLoc(name string) (*time.Location, error) {
+	lm.RLock()
 	if v, ok := lm.locMap[name]; ok {
+		lm.RUnlock()
 		return v, nil
 	}
 
 	if loc, err := time.LoadLocation(name); err == nil {
+		lm.RUnlock()
 		lm.Lock()
 		lm.locMap[name] = loc
 		lm.Unlock()
 		return loc, nil
 	}
 
+	lm.RUnlock()
 	return nil, errors.New("invalid name for timezone")
 }
 
