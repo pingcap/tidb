@@ -1713,10 +1713,6 @@ func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
 	}
 }
 
-// RatioOfPseudoEstimate means if modifyCount / statsTblCount is greater than this ratio, we think the stats is invalid
-// and use pseudo estimation.
-var RatioOfPseudoEstimate = 0.7
-
 // getStatsTable gets statistics information for a table specified by "tableID".
 // A pseudo statistics table is returned in any of the following scenario:
 // 1. tidb-server started and statistics handle has not been initialized.
@@ -1738,12 +1734,10 @@ func (b *planBuilder) getStatsTable(tblInfo *model.TableInfo) *statistics.Table 
 	}
 
 	// 3. statistics is outdated.
-	if float64(statsTbl.ModifyCount)/float64(statsTbl.Count) > RatioOfPseudoEstimate {
-		countFromStats := statsTbl.Count
-		statsTbl = statistics.PseudoTable(tblInfo)
-		// Table row count from statistics is more meaningful than the
-		// pseudo row count in most cases.
-		statsTbl.Count = countFromStats
+	if statsTbl.IsOutdated() {
+		tbl := *statsTbl
+		tbl.Pseudo = true
+		statsTbl = &tbl
 		metrics.PseudoEstimation.Inc()
 	}
 	return statsTbl

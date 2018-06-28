@@ -2052,6 +2052,28 @@ func (s *testDBSuite) TestCharacterSetInColumns(c *C) {
 	s.tk.MustExec("create table t (c1 int, s1 varchar(10), s2 text)")
 	s.tk.MustQuery("select count(*) from information_schema.columns where table_schema = 'varchar_test' and character_set_name != 'utf8'").Check(testkit.Rows("0"))
 	s.tk.MustQuery("select count(*) from information_schema.columns where table_schema = 'varchar_test' and character_set_name = 'utf8'").Check(testkit.Rows("2"))
+
+	s.tk.MustExec("drop table if exists t5")
+	s.tk.MustExec("create table t5(id int) charset=UTF8;")
+	s.tk.MustExec("drop table if exists t5")
+	s.tk.MustExec("create table t5(id int) charset=BINARY;")
+	s.tk.MustExec("drop table if exists t5")
+	s.tk.MustExec("create table t5(id int) charset=LATIN1;")
+	s.tk.MustExec("drop table if exists t5")
+	s.tk.MustExec("create table t5(id int) charset=ASCII;")
+	s.tk.MustExec("drop table if exists t5")
+	s.tk.MustExec("create table t5(id int) charset=UTF8MB4;")
+
+	s.tk.MustExec("drop table if exists t6")
+	s.tk.MustExec("create table t6(id int) charset=utf8;")
+	s.tk.MustExec("drop table if exists t6")
+	s.tk.MustExec("create table t6(id int) charset=binary;")
+	s.tk.MustExec("drop table if exists t6")
+	s.tk.MustExec("create table t6(id int) charset=latin1;")
+	s.tk.MustExec("drop table if exists t6")
+	s.tk.MustExec("create table t6(id int) charset=ascii;")
+	s.tk.MustExec("drop table if exists t6")
+	s.tk.MustExec("create table t6(id int) charset=utf8mb4;")
 }
 
 func (s *testDBSuite) TestAddNotNullColumnWhileInsertOnDupUpdate(c *C) {
