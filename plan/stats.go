@@ -128,24 +128,24 @@ func (ds *DataSource) deriveStats() (*statsInfo, error) {
 	ds.statsAfterSelect = ds.getStatsByFilter(ds.pushedDownConds)
 	for _, path := range ds.possibleAccessPaths {
 		if path.isTablePath {
-			onlyPoint, err := ds.deriveTablePathStats(path)
+			noIntervalRanges, err := ds.deriveTablePathStats(path)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			// If there's only point range. Just remove other possible paths.
-			if onlyPoint {
+			if noIntervalRanges {
 				ds.possibleAccessPaths[0] = path
 				ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
 				break
 			}
 			continue
 		}
-		onlyPoint, err := ds.deriveIndexPathStats(path)
+		noIntervalRanges, err := ds.deriveIndexPathStats(path)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		// If there's only point range and this index is unique key. Just remove other possible paths.
-		if onlyPoint && path.index.Unique {
+		if noIntervalRanges && path.index.Unique {
 			ds.possibleAccessPaths[0] = path
 			ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
 			break
