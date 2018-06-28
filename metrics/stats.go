@@ -68,6 +68,14 @@ var (
 			Name:      "update_stats_total",
 			Help:      "Counter of updating stats using feedback.",
 		}, []string{LblType})
+
+	StoreQueryFeedbackCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "statistics",
+			Name:      "store_query_feedback_total",
+			Help:      "Counter of storing query feedback.",
+		}, []string{LblType})
 )
 
 func init() {
@@ -77,4 +85,5 @@ func init() {
 	prometheus.MustRegister(PseudoEstimation)
 	prometheus.MustRegister(DumpFeedbackCounter)
 	prometheus.MustRegister(UpdateStatsCounter)
+	prometheus.MustRegister(StoreQueryFeedbackCounter)
 }
