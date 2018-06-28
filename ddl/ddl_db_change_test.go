@@ -174,7 +174,7 @@ func (s *testStateChangeSuite) test(c *C, tableName, alterTableSQL string, testI
 		}
 	}
 	d := s.dom.DDL()
-	d.SetHook(callback)
+	d.(ddl.DDLForTest).SetHook(callback)
 	_, err = s.se.Execute(context.Background(), alterTableSQL)
 	c.Assert(err, IsNil)
 	err = testInfo.compileSQL(4)
@@ -186,7 +186,7 @@ func (s *testStateChangeSuite) test(c *C, tableName, alterTableSQL string, testI
 	c.Assert(err, IsNil)
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	callback = &ddl.TestDDLCallback{}
-	d.SetHook(callback)
+	d.(ddl.DDLForTest).SetHook(callback)
 }
 
 type stateCase struct {
@@ -381,12 +381,12 @@ func (s *testStateChangeSuite) runTestInSchemaState(c *C, state model.SchemaStat
 		}
 	}
 	d := s.dom.DDL()
-	d.SetHook(callback)
+	d.(ddl.DDLForTest).SetHook(callback)
 	_, err = s.se.Execute(context.Background(), alterTableSQL)
 	c.Assert(err, IsNil)
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	callback = &ddl.TestDDLCallback{}
-	d.SetHook(callback)
+	d.(ddl.DDLForTest).SetHook(callback)
 
 	if expectQuery != nil {
 		tk := testkit.NewTestKit(c, s.store)
@@ -454,7 +454,7 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 	}
 
 	d := s.dom.DDL()
-	d.SetHook(callback)
+	d.(ddl.DDLForTest).SetHook(callback)
 	alterTableSQL := `alter table t add index c2(c2)`
 	_, err = s.se.Execute(context.Background(), alterTableSQL)
 	c.Assert(err, IsNil)
@@ -465,7 +465,7 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 	err = checkResult(result, testkit.Rows("t 0 PRIMARY 1 c1 A 0 <nil> <nil>  BTREE  ", "t 1 c2 1 c2 A 0 <nil> <nil> YES BTREE  "))
 	c.Assert(err, IsNil)
 	callback = &ddl.TestDDLCallback{}
-	d.SetHook(callback)
+	d.(ddl.DDLForTest).SetHook(callback)
 }
 
 func (s *testStateChangeSuite) TestParallelAlterModifyColumn(c *C) {
@@ -541,7 +541,7 @@ func (s *testStateChangeSuite) testControlParallelExecSQL(c *C, sql1, sql2 strin
 		times++
 	}
 	d := s.dom.DDL()
-	d.SetHook(callback)
+	d.(ddl.DDLForTest).SetHook(callback)
 
 	wg := sync.WaitGroup{}
 	var err1 error
@@ -573,7 +573,7 @@ func (s *testStateChangeSuite) testControlParallelExecSQL(c *C, sql1, sql2 strin
 	f(c, err1, err2)
 
 	callback = &ddl.TestDDLCallback{}
-	d.SetHook(callback)
+	d.(ddl.DDLForTest).SetHook(callback)
 }
 
 func (s *testStateChangeSuite) testParallelExecSQL(c *C, sql string) {
@@ -598,7 +598,7 @@ func (s *testStateChangeSuite) testParallelExecSQL(c *C, sql string) {
 	}
 
 	d := s.dom.DDL()
-	d.SetHook(callback)
+	d.(ddl.DDLForTest).SetHook(callback)
 
 	wg.Add(2)
 	go func() {
@@ -614,7 +614,7 @@ func (s *testStateChangeSuite) testParallelExecSQL(c *C, sql string) {
 	c.Assert(err2, IsNil)
 	c.Assert(err3, IsNil)
 	callback = &ddl.TestDDLCallback{}
-	d.SetHook(callback)
+	d.(ddl.DDLForTest).SetHook(callback)
 }
 
 // TestCreateTableIfNotExists parallel exec create table if not exists xxx. No error returns is expected.

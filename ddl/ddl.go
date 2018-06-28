@@ -182,18 +182,13 @@ type DDL interface {
 	RegisterEventCh(chan<- *util.Event)
 	// SchemaSyncer gets the schema syncer.
 	SchemaSyncer() SchemaSyncer
-	// OwnerManager gets the owner manager, and it's used for testing.
+	// OwnerManager gets the owner manager.
 	OwnerManager() owner.Manager
-
-	/*
-	   Export the following interfaces for testing.
-	*/
-	// SetBinlogClient sets the binlog client for DDL worker.
-	SetBinlogClient(interface{})
-	// SetHook sets the hook.
-	SetHook(h Callback)
 	// GetTableMaxRowID gets table max row ID.
 	GetTableMaxRowID(startTS uint64, tblInfo *model.TableInfo) (int64, bool, error)
+
+	// SetBinlogClient sets the binlog client for DDL worker. It's exported for testing.
+	SetBinlogClient(interface{})
 }
 
 // ddl is used to handle the statements that define the structure or schema of the database.
@@ -481,14 +476,6 @@ func (d *ddl) callHookOnChanged(err error) error {
 
 	err = d.hook.OnChanged(err)
 	return errors.Trace(err)
-}
-
-// SetHook implements DDL.SetHook interface.
-func (d *ddl) SetHook(h Callback) {
-	d.hookMu.Lock()
-	defer d.hookMu.Unlock()
-
-	d.hook = h
 }
 
 // SetBinlogClient implements DDL.SetBinlogClient interface.
