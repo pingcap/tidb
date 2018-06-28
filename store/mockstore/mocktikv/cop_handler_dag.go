@@ -46,7 +46,7 @@ var dummySlice = make([]byte, 0)
 
 type locCache struct {
 	sync.RWMutex
-	// locMap
+	// locMap stores locations used in past and can be retrieved by a timezone's name.
 	locMap map[string]*time.Location
 }
 
