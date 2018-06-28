@@ -390,7 +390,7 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath) error {
 		if ok && !ds.statisticTable.Pseudo {
 			path.countAfterAccess = pkHist.AvgCountPerValue(ds.statisticTable.Count)
 		} else {
-			path.countAfterAccess = ds.statisticTable.PseudoAvgCountPerCount()
+			path.countAfterAccess = 1
 		}
 		return nil
 	}

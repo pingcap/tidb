@@ -270,8 +270,8 @@ explain select t.c in (select count(*) from t s ignore index(idx), t t1 where s.
 id	parents	children	task	operator info	count
 TableScan_14			cop	table:t, range:[-inf,+inf], keep order:false	10000.00
 TableReader_15	Apply_13		root	data:TableScan_14	10000.00
-TableScan_50			cop	table:s, range: decided by [eq(s.a, test.t.a)], keep order:false	10.00
-TableReader_51	IndexJoin_43		root	data:TableScan_50	10.00
+TableScan_50			cop	table:s, range: decided by [eq(s.a, test.t.a)], keep order:false	1.00
+TableReader_51	IndexJoin_43		root	data:TableScan_50	1.00
 TableScan_41			cop	table:t1, range:[-inf,+inf], keep order:false	10000.00
 TableReader_42	IndexJoin_43		root	data:TableScan_41	10000.00
 IndexJoin_43	StreamAgg_20	TableReader_51,TableReader_42	root	inner join, inner:TableReader_42, outer key:s.a, inner key:t1.a	10000.00
