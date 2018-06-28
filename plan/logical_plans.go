@@ -332,6 +332,8 @@ type accessPath struct {
 	forced bool
 }
 
+// deriveTablePathStats will fulfill the information that the accessPath need.
+// And it will check whether the primary key is covered only by point query.
 func (ds *DataSource) deriveTablePathStats(path *accessPath) (bool, error) {
 	var err error
 	sc := ds.ctx.GetSessionVars().StmtCtx
@@ -357,6 +359,7 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath) (bool, error) {
 		return false, errors.Trace(err)
 	}
 	path.countAfterAccess, err = ds.statisticTable.GetRowCountByIntColumnRanges(sc, pkCol.ID, path.ranges)
+	// Check whether the primary key is covered by point query.
 	noIntervalRange := true
 	for _, ran := range path.ranges {
 		if !ran.IsPoint(sc) {
@@ -367,6 +370,9 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath) (bool, error) {
 	return noIntervalRange, errors.Trace(err)
 }
 
+// deriveIndexPathStats will fulfill the information that the accessPath need.
+// And it will check whether this index is unique key and full matched by point query. We will use this check to
+// determine whether we remove other paths or not.
 func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 	var err error
 	sc := ds.ctx.GetSessionVars().StmtCtx
