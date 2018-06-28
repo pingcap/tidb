@@ -386,12 +386,7 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath) error {
 		}
 	}
 	if corColInAccessConds {
-		pkHist, ok := ds.statisticTable.Columns[pkCol.ID]
-		if ok && !ds.statisticTable.Pseudo {
-			path.countAfterAccess = pkHist.AvgCountPerValue(ds.statisticTable.Count)
-		} else {
-			path.countAfterAccess = 1
-		}
+		path.countAfterAccess = 1
 		return nil
 	}
 	path.ranges, err = ranger.BuildTableRange(path.accessConds, sc, pkCol.RetType)
