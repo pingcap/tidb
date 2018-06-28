@@ -163,3 +163,26 @@ func (ts ConnTestSuite) TestParseStmtArgs(c *C) {
 		c.Assert(tt.args.args[0], Equals, tt.expect)
 	}
 }
+
+func (ts ConnTestSuite) TestParseStmtFetchCmd(c *C) {
+	tests := []struct {
+		arg       []byte
+		stmtID    uint32
+		fetchSize uint32
+		err       error
+	}{
+		{[]byte{3, 0, 0, 0, 50, 0, 0, 0}, 3, 50, nil},
+		{[]byte{5, 0, 0, 0, 232, 3, 0, 0}, 5, 1000, nil},
+		{[]byte{5, 0, 0, 0, 0, 8, 0, 0}, 5, maxFetchSize, nil},
+		{[]byte{5, 0, 0}, 0, 0, mysql.ErrMalformPacket},
+		{[]byte{1, 0, 0, 0, 3, 2, 0, 0, 3, 5, 6}, 0, 0, mysql.ErrMalformPacket},
+		{[]byte{}, 0, 0, mysql.ErrMalformPacket},
+	}
+
+	for _, t := range tests {
+		stmtID, fetchSize, err := parseStmtFetchCmd([]byte(t.arg))
+		c.Assert(stmtID, Equals, t.stmtID)
+		c.Assert(fetchSize, Equals, t.fetchSize)
+		c.Assert(err, Equals, t.err)
+	}
+}
