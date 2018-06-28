@@ -371,7 +371,7 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath) (bool, error) {
 }
 
 // deriveIndexPathStats will fulfill the information that the accessPath need.
-// And it will check whether this index is unique key and full matched by point query. We will use this check to
+// And it will check whether this index is full matched by point query. We will use this check to
 // determine whether we remove other paths or not.
 func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 	var err error
@@ -401,7 +401,16 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 		}
 		path.countAfterIndex = math.Max(path.countAfterAccess*selectivity, ds.statsAfterSelect.count)
 	}
-	return path.index.Unique && path.eqCondCount == len(path.index.Columns), nil
+	// Check whether there's only point query.
+	noIntervalRanges := true
+	for _, ran := range path.ranges {
+		// Not point or the not full matched.
+		if !ran.IsPoint(sc) || len(ran.HighVal) != len(path.index.Columns) {
+			noIntervalRanges = false
+			break
+		}
+	}
+	return noIntervalRanges, nil
 }
 
 func (ds *DataSource) getPKIsHandleCol() *expression.Column {
