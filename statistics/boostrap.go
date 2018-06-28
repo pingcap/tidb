@@ -38,7 +38,7 @@ func initStatsMeta4Chunk(is infoschema.InfoSchema, tables statsCache, iter *chun
 		tableInfo := table.Meta()
 		newHistColl := &HistColl{
 			TblID:       tableInfo.ID,
-			SetTblID:    true,
+			HaveTblID:   true,
 			Count:       row.GetInt64(3),
 			Columns:     make(map[int64]*Column, len(tableInfo.Columns)),
 			Indices:     make(map[int64]*Index, len(tableInfo.Indices)),

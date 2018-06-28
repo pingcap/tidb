@@ -50,10 +50,10 @@ type Table struct {
 	PKIsHandle  bool
 }
 
-// HistColl is a collection of histogram.
+// HistColl is a collection of histogram. It collects enough information for plan to calculate the selectivity.
 type HistColl struct {
 	TblID       int64
-	SetTblID    bool
+	HaveTblID   bool
 	Columns     map[int64]*Column
 	Indices     map[int64]*Index
 	colName2Idx map[string]int64 // map column name to index id
@@ -64,7 +64,7 @@ type HistColl struct {
 func (t *Table) copy() *Table {
 	newHistColl := &HistColl{
 		TblID:       t.TblID,
-		SetTblID:    t.SetTblID,
+		HaveTblID:   t.HaveTblID,
 		Count:       t.Count,
 		Columns:     make(map[int64]*Column),
 		Indices:     make(map[int64]*Index),
@@ -221,7 +221,7 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, loadAll bool)
 	if !ok || table.Pseudo {
 		histColl := &HistColl{
 			TblID:       tableInfo.ID,
-			SetTblID:    true,
+			HaveTblID:   true,
 			Columns:     make(map[int64]*Column, len(tableInfo.Columns)),
 			Indices:     make(map[int64]*Index, len(tableInfo.Indices)),
 			colName2Idx: make(map[string]int64),
@@ -312,7 +312,7 @@ func (coll *HistColl) ColumnIsInvalid(sc *stmtctx.StatementContext, colID int64)
 	col, ok := coll.Columns[colID]
 	if ok && col.NDV > 0 && col.Len() == 0 {
 		// If the col haven't been loaded yet, and the coll doesn't have `TableID` to load it. Just return true.
-		if !coll.SetTblID {
+		if !coll.HaveTblID {
 			return true
 		}
 		// Otherwise load the column.
