@@ -180,5 +180,5 @@ func (s *testSuite) TestCorColToRanges(c *C) {
 	// Test single read on index.
 	tk.MustQuery("select t.c in (select count(*) from t s use index(idx), t t1 where s.b = t.a and s.a = t1.a) from t").Check(testkit.Rows("1", "0", "0", "0", "0", "0", "0", "0", "0"))
 	// Test IndexLookUpReader.
-	tk.MustQuery("select t.c in (select count(*) from t s use index(idx), t t1 where s.a = t.a and s.c = t1.a) from t").Check(testkit.Rows("1", "0", "0", "0", "0", "0", "0", "0", "0"))
+	tk.MustQuery("select t.c in (select count(*) from t s use index(idx), t t1 where s.b = t.a and s.c = t1.a) from t").Check(testkit.Rows("1", "0", "0", "0", "0", "0", "0", "0", "0"))
 }
