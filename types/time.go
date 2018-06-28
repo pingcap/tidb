@@ -2319,7 +2319,7 @@ func isAMOrPM(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
 }
 
 // digitRegex: it was used to scan a variable-length monthly day or month in the string. Ex:  "01" or "1" or "30"
-var digitRegex = regexp.MustCompile("^[0-9]+")
+var oneOrTwoDigitRegex = regexp.MustCompile("^[0-9]{1,2}")
 
 // twoDigitRegex: it was just for two digit number string. Ex: "01" or "12"
 var twoDigitRegex = regexp.MustCompile("^[1-9][0-9]?")
@@ -2344,7 +2344,7 @@ func parseTwoNumeric(input string) (int, string) {
 }
 
 func dayOfMonthNumeric(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
-	result := digitRegex.FindString(input) // 0..31
+	result := oneOrTwoDigitRegex.FindString(input) // 0..31
 	length := len(result)
 
 	// Some time the input is a consecutive digital string. Ex: 20181120
@@ -2362,14 +2362,9 @@ func dayOfMonthNumeric(t *MysqlTime, input string, ctx map[string]int) (string, 
 }
 
 func hour24Numeric(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
-
-	result := digitRegex.FindString(input) // 0..23
+	result := oneOrTwoDigitRegex.FindString(input) // 0..23
 	length := len(result)
 
-	// Some time the input is a consecutive digital string. Ex: 20181120
-	if length > 2 {
-		length = 2
-	}
 	v, ok := parseDigits(input, length)
 
 	if !ok || v > 23 {
@@ -2380,14 +2375,8 @@ func hour24Numeric(t *MysqlTime, input string, ctx map[string]int) (string, bool
 }
 
 func hour12Numeric(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
-
-	result := digitRegex.FindString(input) // 1..12
+	result := oneOrTwoDigitRegex.FindString(input) // 1..12
 	length := len(result)
-
-	// Some time the input is a consecutive digital string. Ex: 20181120
-	if length > 2 {
-		length = 2
-	}
 
 	v, ok := parseDigits(input, length)
 
@@ -2461,14 +2450,8 @@ func fullNameMonth(t *MysqlTime, input string, ctx map[string]int) (string, bool
 }
 
 func monthNumeric(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
-
-	result := digitRegex.FindString(input) // 1..12
+	result := oneOrTwoDigitRegex.FindString(input) // 1..12
 	length := len(result)
-
-	// Some time the input is a consecutive digital string. Ex: 20181120
-	if length > 2 {
-		length = 2
-	}
 
 	v, ok := parseDigits(input, length)
 
