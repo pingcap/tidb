@@ -21,7 +21,7 @@ import (
 )
 
 // NewTestTiKVStore creates a test store with Option
-func NewTestTiKVStore(client Client, pdClient pd.Client, clientHijack func(Client) Client, pdClientHijack func(pd.Client) pd.Client, txnLocalLatches int) (kv.Storage, error) {
+func NewTestTiKVStore(client Client, pdClient pd.Client, clientHijack func(Client) Client, pdClientHijack func(pd.Client) pd.Client, txnLocalLatches uint) (kv.Storage, error) {
 	if clientHijack != nil {
 		client = clientHijack(client)
 	}

@@ -46,7 +46,7 @@ type mockOptions struct {
 	clientHijack    func(tikv.Client) tikv.Client
 	pdClientHijack  func(pd.Client) pd.Client
 	path            string
-	txnLocalLatches int
+	txnLocalLatches uint
 }
 
 // MockTiKVStoreOption is used to control some behavior of mock tikv.
@@ -82,7 +82,7 @@ func WithPath(path string) MockTiKVStoreOption {
 }
 
 // WithTxnLocalLatches enable txnLocalLatches, when capacity > 0.
-func WithTxnLocalLatches(capacity int) MockTiKVStoreOption {
+func WithTxnLocalLatches(capacity uint) MockTiKVStoreOption {
 	return func(c *mockOptions) {
 		c.txnLocalLatches = capacity
 	}
