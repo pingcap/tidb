@@ -2347,11 +2347,6 @@ func dayOfMonthNumeric(t *MysqlTime, input string, ctx map[string]int) (string, 
 	result := oneOrTwoDigitRegex.FindString(input) // 0..31
 	length := len(result)
 
-	// Some time the input is a consecutive digital string. Ex: 20181120
-	if length > 2 {
-		length = 2
-	}
-
 	v, ok := parseDigits(input, length)
 
 	if !ok || v > 31 {
