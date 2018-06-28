@@ -199,7 +199,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	if option := txn.us.GetOption(kv.BypassLatch); option != nil {
 		bypassLatch = option.(bool)
 	}
-	// For update transaction is not retryable, commit directly.
+	// When bypassLatch flag is true, commit directly.
 	if bypassLatch {
 		err = committer.executeAndWriteFinishBinlog(ctx)
 		if err == nil {
