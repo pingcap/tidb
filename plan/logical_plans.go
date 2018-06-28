@@ -316,8 +316,10 @@ type DataSource struct {
 
 // accessPath tells how we access one index or just access table.
 type accessPath struct {
-	index  *model.IndexInfo
-	ranges []*ranger.Range
+	index      *model.IndexInfo
+	idxCols    []*expression.Column
+	idxColLens []int
+	ranges     []*ranger.Range
 	// countAfterAccess is the row count after we apply range seek and before we use other filter to filter data.
 	countAfterAccess float64
 	// countAfterIndex is the row count after we apply filters on index and before we apply the table filters.
@@ -354,6 +356,41 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath) (bool, error) {
 		return false, nil
 	}
 	path.accessConds, path.tableFilters = ranger.DetachCondsForTableRange(ds.ctx, ds.pushedDownConds, pkCol)
+	// If there's no access cond, we try to find that whether there's expression containing correlated column that
+	// can be used to access data.
+	corColInAccessConds := false
+	if len(path.accessConds) == 0 {
+		for i, filter := range path.tableFilters {
+			eqFunc, ok := filter.(*expression.ScalarFunction)
+			if !ok || eqFunc.FuncName.L != ast.EQ {
+				continue
+			}
+			lCol, lOk := eqFunc.GetArgs()[0].(*expression.Column)
+			if lOk && lCol.Equal(ds.ctx, pkCol) {
+				_, rOk := eqFunc.GetArgs()[1].(*expression.CorrelatedColumn)
+				if rOk {
+					path.accessConds = append(path.accessConds, filter)
+					path.tableFilters = append(path.tableFilters[:i], path.tableFilters[i+1:]...)
+					corColInAccessConds = true
+					break
+				}
+			}
+			rCol, rOk := eqFunc.GetArgs()[1].(*expression.Column)
+			if rOk && rCol.Equal(ds.ctx, pkCol) {
+				_, lOk := eqFunc.GetArgs()[0].(*expression.CorrelatedColumn)
+				if lOk {
+					path.accessConds = append(path.accessConds, filter)
+					path.tableFilters = append(path.tableFilters[:i], path.tableFilters[i+1:]...)
+					corColInAccessConds = true
+					break
+				}
+			}
+		}
+	}
+	if corColInAccessConds {
+		path.countAfterAccess = 1
+		return nil
+	}
 	path.ranges, err = ranger.BuildTableRange(path.accessConds, sc, pkCol.RetType)
 	if err != nil {
 		return false, errors.Trace(err)
@@ -378,9 +415,9 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 	sc := ds.ctx.GetSessionVars().StmtCtx
 	path.ranges = ranger.FullRange()
 	path.countAfterAccess = float64(ds.statisticTable.Count)
-	idxCols, lengths := expression.IndexInfo2Cols(ds.schema.Columns, path.index)
-	if len(idxCols) != 0 {
-		path.ranges, path.accessConds, path.indexFilters, path.eqCondCount, err = ranger.DetachCondAndBuildRangeForIndex(ds.ctx, ds.pushedDownConds, idxCols, lengths)
+	path.idxCols, path.idxColLens = expression.IndexInfo2Cols(ds.schema.Columns, path.index)
+	if len(path.idxCols) != 0 {
+		path.ranges, path.accessConds, path.tableFilters, path.eqCondCount, err = ranger.DetachCondAndBuildRangeForIndex(ds.ctx, ds.pushedDownConds, path.idxCols, path.idxColLens)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -388,11 +425,27 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 		if err != nil {
 			return false, errors.Trace(err)
 		}
-		path.indexFilters, path.tableFilters = splitIndexFilterConditions(path.indexFilters, path.index.Columns, ds.tableInfo)
 	} else {
-		path.indexFilters, path.tableFilters = splitIndexFilterConditions(ds.pushedDownConds, path.index.Columns, ds.tableInfo)
+		path.tableFilters = ds.pushedDownConds
 	}
-	path.countAfterIndex = path.countAfterAccess
+	corColInAccessConds := false
+	if path.eqCondCount == len(path.accessConds) {
+		access, remained := path.splitCorColAccessCondFromFilters()
+		path.accessConds = append(path.accessConds, access...)
+		path.tableFilters = remained
+		if len(access) > 0 {
+			corColInAccessConds = true
+		}
+	}
+	path.indexFilters, path.tableFilters = splitIndexFilterConditions(path.tableFilters, path.index.Columns, ds.tableInfo)
+	if corColInAccessConds {
+		idxHist, ok := ds.statisticTable.Indices[path.index.ID]
+		if ok && !ds.statisticTable.Pseudo {
+			path.countAfterAccess = idxHist.AvgCountPerValue(ds.statisticTable.Count)
+		} else {
+			path.countAfterAccess = ds.statisticTable.PseudoAvgCountPerCount()
+		}
+	}
 	if path.indexFilters != nil {
 		selectivity, err := ds.statisticTable.Selectivity(ds.ctx, path.indexFilters)
 		if err != nil {
@@ -411,6 +464,68 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 		}
 	}
 	return noIntervalRanges, nil
+}
+
+func (path *accessPath) splitCorColAccessCondFromFilters() (access, remained []expression.Expression) {
+	access = make([]expression.Expression, len(path.idxCols)-path.eqCondCount)
+	used := make([]bool, len(path.tableFilters))
+	for i := path.eqCondCount; i < len(path.idxCols); i++ {
+		matched := false
+		for j, filter := range path.tableFilters {
+			if !isColEqCorColOrConstant(filter, path.idxCols[i]) {
+				break
+			}
+			matched = true
+			access[i-path.eqCondCount] = filter
+			if path.idxColLens[i] == types.UnspecifiedLength {
+				used[j] = true
+			}
+		}
+		if !matched {
+			access = access[:i-path.eqCondCount]
+			break
+		}
+	}
+	for i, ok := range used {
+		if !ok {
+			remained = append(remained, path.tableFilters[i])
+		}
+	}
+	return access, remained
+}
+
+// getEqOrInColOffset checks if the expression is a eq function that one side is constant or correlated column
+// and another is column.
+func isColEqCorColOrConstant(filter expression.Expression, col *expression.Column) bool {
+	f, ok := filter.(*expression.ScalarFunction)
+	if !ok || f.FuncName.L != ast.EQ {
+		return false
+	}
+	if c, ok := f.GetArgs()[0].(*expression.Column); ok {
+		if _, ok := f.GetArgs()[1].(*expression.Constant); ok {
+			if col.Equal(nil, c) {
+				return true
+			}
+		}
+		if _, ok := f.GetArgs()[1].(*expression.CorrelatedColumn); ok {
+			if col.Equal(nil, c) {
+				return true
+			}
+		}
+	}
+	if c, ok := f.GetArgs()[1].(*expression.Column); ok {
+		if _, ok := f.GetArgs()[0].(*expression.Constant); ok {
+			if col.Equal(nil, c) {
+				return true
+			}
+		}
+		if _, ok := f.GetArgs()[0].(*expression.CorrelatedColumn); ok {
+			if col.Equal(nil, c) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (ds *DataSource) getPKIsHandleCol() *expression.Column {
