@@ -1578,6 +1578,11 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 			sql:  "select * from t union all (select * from t s order by a) limit 5",
 			best: "UnionAll{DataScan(t)->Limit->Projection->DataScan(s)->TopN([s.a],0,5)->Projection}->Limit",
 		},
+		// Test `ByItem` containing column from both sides.
+		{
+			sql:  "select ifnull(t1.b, t2.a) from t t1 left join t t2 on t1.e=t2.e order by ifnull(t1.b, t2.a) limit 5",
+			best: "Join{DataScan(t1)->DataScan(t2)}(t1.e,t2.e)->TopN([ifnull(t1.b, t2.a)],0,5)->Projection->Projection",
+		},
 	}
 	for i, tt := range tests {
 		comment := Commentf("case:%v sql:%s", i, tt.sql)
