@@ -331,7 +331,7 @@ func ResetStmtCtx(ctx sessionctx.Context, s ast.StmtNode) {
 		sc.IgnoreTruncate = true
 		sc.OverflowAsWarning = false
 		if show, ok := s.(*ast.ShowStmt); ok {
-			if show.Tp == ast.ShowWarnings {
+			if show.Tp == ast.ShowWarnings || show.Tp == ast.ShowErrors {
 				sc.InShowWarning = true
 				sc.SetWarnings(sessVars.StmtCtx.GetWarnings())
 			}
