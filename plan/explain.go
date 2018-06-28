@@ -149,11 +149,13 @@ func (p *basePhysicalAgg) ExplainInfo() string {
 		fmt.Fprintf(buffer, "group by:%s, ",
 			expression.ExplainExpressionList(p.GroupByItems))
 	}
-	buffer.WriteString("funcs:")
-	for i, agg := range p.AggFuncs {
-		buffer.WriteString(aggregation.ExplainAggFunc(agg))
-		if i+1 < len(p.AggFuncs) {
-			buffer.WriteString(", ")
+	if len(p.AggFuncs) > 0 {
+		buffer.WriteString("funcs:")
+		for i, agg := range p.AggFuncs {
+			buffer.WriteString(aggregation.ExplainAggFunc(agg))
+			if i+1 < len(p.AggFuncs) {
+				buffer.WriteString(", ")
+			}
 		}
 	}
 	return buffer.String()
