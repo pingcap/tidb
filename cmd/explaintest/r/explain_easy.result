@@ -112,15 +112,13 @@ MemTableScan_4	root		10000.00
 explain select c2 = (select c2 from t2 where t1.c1 = t2.c1 order by c1 limit 1) from t1;
 id	task	operator info	count
 Projection_12	root	eq(test.t1.c2, test.t2.c2)	10000.00
-└─Apply_14	root	left outer join, inner:Limit_21	10000.00
+└─Apply_14	root	left outer join, inner:Limit_22	10000.00
   ├─TableReader_16	root	data:TableScan_15	10000.00
   │ └─TableScan_15	cop	table:t1, range:[-inf,+inf], keep order:false	10000.00
-  └─Limit_21	root	offset:0, count:1	1.00
-    └─IndexLookUp_36	root	index:Limit_35, table:TableScan_33	1.00
-      ├─Limit_35	cop	offset:0, count:1	1.00
-      │ └─Selection_34	cop	eq(test.t1.c1, test.t2.c1)	1.00
-      │   └─IndexScan_32	cop	table:t2, index:c1, range:[<nil>,+inf], keep order:true	1.25
-      └─TableScan_33	cop	table:t2, keep order:false	1.00
+  └─Limit_22	root	offset:0, count:1	1.00
+    └─IndexLookUp_47	root	index:IndexScan_45, table:TableScan_46	0.00
+      ├─IndexScan_45	cop	table:t2, index:c1, range: decided by [eq(test.t1.c1, test.t2.c1)], keep order:true	0.00
+      └─TableScan_46	cop	table:t2, keep order:false	0.00
 explain select * from t1 order by c1 desc limit 1;
 id	task	operator info	count
 Limit_10	root	offset:0, count:1	1.00
@@ -266,3 +264,42 @@ label = "cop"
 }
 
 drop table if exists t1, t2, t3, t4;
+drop table if exists t;
+create table t(a int primary key, b int, c int, index idx(b));
+explain select t.c in (select count(*) from t s ignore index(idx), t t1 where s.a = t.a and s.a = t1.a) from t;
+id	task	operator info	count
+Projection_11	root	9_aux_0	10000.00
+└─Apply_13	root	left outer semi join, inner:StreamAgg_20, equal:[eq(test.t.c, count(*))]	10000.00
+  ├─TableReader_15	root	data:TableScan_14	10000.00
+  │ └─TableScan_14	cop	table:t, range:[-inf,+inf], keep order:false	10000.00
+  └─StreamAgg_20	root	funcs:count(1)	1.00
+    └─IndexJoin_43	root	inner join, inner:TableReader_42, outer key:s.a, inner key:t1.a	10000.00
+      ├─TableReader_51	root	data:TableScan_50	1.00
+      │ └─TableScan_50	cop	table:s, range: decided by [eq(s.a, test.t.a)], keep order:false	1.00
+      └─TableReader_42	root	data:TableScan_41	10000.00
+        └─TableScan_41	cop	table:t1, range:[-inf,+inf], keep order:false	10000.00
+explain select t.c in (select count(*) from t s use index(idx), t t1 where s.b = t.a and s.a = t1.a) from t;
+id	task	operator info	count
+Projection_11	root	9_aux_0	10000.00
+└─Apply_13	root	left outer semi join, inner:StreamAgg_20, equal:[eq(test.t.c, count(*))]	10000.00
+  ├─TableReader_15	root	data:TableScan_14	10000.00
+  │ └─TableScan_14	cop	table:t, range:[-inf,+inf], keep order:false	10000.00
+  └─StreamAgg_20	root	funcs:count(1)	1.00
+    └─IndexJoin_32	root	inner join, inner:TableReader_31, outer key:s.a, inner key:t1.a	10000.00
+      ├─IndexReader_36	root	index:IndexScan_35	10.00
+      │ └─IndexScan_35	cop	table:s, index:b, range: decided by [eq(s.b, test.t.a)], keep order:false	10.00
+      └─TableReader_31	root	data:TableScan_30	10000.00
+        └─TableScan_30	cop	table:t1, range:[-inf,+inf], keep order:false	10000.00
+explain select t.c in (select count(*) from t s use index(idx), t t1 where s.b = t.a and s.c = t1.a) from t;
+id	task	operator info	count
+Projection_11	root	9_aux_0	10000.00
+└─Apply_13	root	left outer semi join, inner:StreamAgg_20, equal:[eq(test.t.c, count(*))]	10000.00
+  ├─TableReader_15	root	data:TableScan_14	10000.00
+  │ └─TableScan_14	cop	table:t, range:[-inf,+inf], keep order:false	10000.00
+  └─StreamAgg_20	root	funcs:count(1)	1.00
+    └─IndexJoin_33	root	inner join, inner:TableReader_32, outer key:s.c, inner key:t1.a	10000.00
+      ├─IndexLookUp_38	root	index:IndexScan_36, table:TableScan_37	10.00
+      │ ├─IndexScan_36	cop	table:s, index:b, range: decided by [eq(s.b, test.t.a)], keep order:false	10.00
+      │ └─TableScan_37	cop	table:t, keep order:false	10.00
+      └─TableReader_32	root	data:TableScan_31	10000.00
+        └─TableScan_31	cop	table:t1, range:[-inf,+inf], keep order:false	10000.00
