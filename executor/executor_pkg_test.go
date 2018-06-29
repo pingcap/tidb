@@ -165,3 +165,55 @@ func generateDatumSlice(vals ...int64) []types.Datum {
 	}
 	return datums
 }
+
+func (s *testExecSuite) TestGetFieldsFromLine(c *C) {
+	tests := []struct {
+		input    string
+		expected []string
+	}{
+		{
+			`"1","a string","100.20"`,
+			[]string{"1", "a string", "100.20"},
+		},
+		{
+			`"2","a string containing a , comma","102.20"`,
+			[]string{"2", "a string containing a , comma", "102.20"},
+		},
+		{
+			`"3","a string containing a \" quote","102.20"`,
+			[]string{"3", "a string containing a \" quote", "102.20"},
+		},
+		{
+			`"4","a string containing a \", quote and comma","102.20"`,
+			[]string{"4", "a string containing a \", quote and comma", "102.20"},
+		},
+		// Test some escape char.
+		{
+			`"\0\b\n\r\t\Z\\\  \c\'\""`,
+			[]string{string([]byte{0, '\b', '\n', '\r', '\t', 26, '\\', ' ', ' ', 'c', '\'', '"'})},
+		},
+	}
+
+	ldInfo := LoadDataInfo{
+		FieldsInfo: &ast.FieldsClause{
+			Enclosed:   '"',
+			Terminated: ",",
+		},
+	}
+
+	for _, test := range tests {
+		got, err := ldInfo.getFieldsFromLine([]byte(test.input))
+		c.Assert(err, IsNil, Commentf("failed: %s", test.input))
+		assertEqualStrings(c, got, test.expected)
+	}
+
+	_, err := ldInfo.getFieldsFromLine([]byte(`1,a string,100.20`))
+	c.Assert(err, NotNil)
+}
+
+func assertEqualStrings(c *C, got []field, expect []string) {
+	c.Assert(len(got), Equals, len(expect))
+	for i := 0; i < len(got); i++ {
+		c.Assert(string(got[i].str), Equals, expect[i])
+	}
+}
