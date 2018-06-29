@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -53,14 +54,14 @@ func (s *testAnalyzeSuite) TestCBOWithoutAnalyze(c *C) {
 	c.Assert(h.HandleDDLEvent(<-h.DDLEventCh()), IsNil)
 	testKit.MustExec("insert into t1 values (1), (2), (3), (4), (5), (6)")
 	testKit.MustExec("insert into t2 values (1), (2), (3), (4), (5), (6)")
-	h.DumpStatsDeltaToKV()
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	testKit.MustQuery("explain select * from t1, t2 where t1.a = t2.a").Check(testkit.Rows(
-		"TableScan_10   cop table:t1, range:[-inf,+inf], keep order:false 6.00",
-		"TableReader_11 HashLeftJoin_8  root data:TableScan_10 6.00",
-		"TableScan_12   cop table:t2, range:[-inf,+inf], keep order:false 6.00",
-		"TableReader_13 HashLeftJoin_8  root data:TableScan_12 6.00",
-		"HashLeftJoin_8  TableReader_11,TableReader_13 root inner join, inner:TableReader_13, equal:[eq(test.t1.a, test.t2.a)] 7.50",
+		"HashLeftJoin_8 root inner join, inner:TableReader_13, equal:[eq(test.t1.a, test.t2.a)] 7.50",
+		"├─TableReader_11 root data:TableScan_10 6.00",
+		"│ └─TableScan_10 cop table:t1, range:[-inf,+inf], keep order:false 6.00",
+		"└─TableReader_13 root data:TableScan_12 6.00",
+		"  └─TableScan_12 cop table:t2, range:[-inf,+inf], keep order:false 6.00",
 	))
 }
 
@@ -81,45 +82,45 @@ func (s *testAnalyzeSuite) TestStraightJoin(c *C) {
 	}
 
 	testKit.MustQuery("explain select straight_join * from t1, t2, t3, t4").Check(testkit.Rows(
-		"TableScan_16   cop table:t1, range:[-inf,+inf], keep order:false 10000.00",
-		"TableReader_17 HashLeftJoin_14  root data:TableScan_16 10000.00",
-		"TableScan_18   cop table:t2, range:[-inf,+inf], keep order:false 10000.00",
-		"TableReader_19 HashLeftJoin_14  root data:TableScan_18 10000.00",
-		"HashLeftJoin_14 HashLeftJoin_12 TableReader_17,TableReader_19 root inner join, inner:TableReader_19 100000000.00",
-		"TableScan_20   cop table:t3, range:[-inf,+inf], keep order:false 10000.00",
-		"TableReader_21 HashLeftJoin_12  root data:TableScan_20 10000.00",
-		"HashLeftJoin_12 HashLeftJoin_10 HashLeftJoin_14,TableReader_21 root inner join, inner:TableReader_21 1000000000000.00",
-		"TableScan_22   cop table:t4, range:[-inf,+inf], keep order:false 10000.00",
-		"TableReader_23 HashLeftJoin_10  root data:TableScan_22 10000.00",
-		"HashLeftJoin_10  HashLeftJoin_12,TableReader_23 root inner join, inner:TableReader_23 10000000000000000.00",
+		"HashLeftJoin_10 root inner join, inner:TableReader_23 10000000000000000.00",
+		"├─HashLeftJoin_12 root inner join, inner:TableReader_21 1000000000000.00",
+		"│ ├─HashLeftJoin_14 root inner join, inner:TableReader_19 100000000.00",
+		"│ │ ├─TableReader_17 root data:TableScan_16 10000.00",
+		"│ │ │ └─TableScan_16 cop table:t1, range:[-inf,+inf], keep order:false 10000.00",
+		"│ │ └─TableReader_19 root data:TableScan_18 10000.00",
+		"│ │   └─TableScan_18 cop table:t2, range:[-inf,+inf], keep order:false 10000.00",
+		"│ └─TableReader_21 root data:TableScan_20 10000.00",
+		"│   └─TableScan_20 cop table:t3, range:[-inf,+inf], keep order:false 10000.00",
+		"└─TableReader_23 root data:TableScan_22 10000.00",
+		"  └─TableScan_22 cop table:t4, range:[-inf,+inf], keep order:false 10000.00",
 	))
 
 	testKit.MustQuery("explain select * from t1 straight_join t2 straight_join t3 straight_join t4").Check(testkit.Rows(
-		"TableScan_16   cop table:t1, range:[-inf,+inf], keep order:false 10000.00",
-		"TableReader_17 HashLeftJoin_14  root data:TableScan_16 10000.00",
-		"TableScan_18   cop table:t2, range:[-inf,+inf], keep order:false 10000.00",
-		"TableReader_19 HashLeftJoin_14  root data:TableScan_18 10000.00",
-		"HashLeftJoin_14 HashLeftJoin_12 TableReader_17,TableReader_19 root inner join, inner:TableReader_19 100000000.00",
-		"TableScan_20   cop table:t3, range:[-inf,+inf], keep order:false 10000.00",
-		"TableReader_21 HashLeftJoin_12  root data:TableScan_20 10000.00",
-		"HashLeftJoin_12 HashLeftJoin_10 HashLeftJoin_14,TableReader_21 root inner join, inner:TableReader_21 1000000000000.00",
-		"TableScan_22   cop table:t4, range:[-inf,+inf], keep order:false 10000.00",
-		"TableReader_23 HashLeftJoin_10  root data:TableScan_22 10000.00",
-		"HashLeftJoin_10  HashLeftJoin_12,TableReader_23 root inner join, inner:TableReader_23 10000000000000000.00",
+		"HashLeftJoin_10 root inner join, inner:TableReader_23 10000000000000000.00",
+		"├─HashLeftJoin_12 root inner join, inner:TableReader_21 1000000000000.00",
+		"│ ├─HashLeftJoin_14 root inner join, inner:TableReader_19 100000000.00",
+		"│ │ ├─TableReader_17 root data:TableScan_16 10000.00",
+		"│ │ │ └─TableScan_16 cop table:t1, range:[-inf,+inf], keep order:false 10000.00",
+		"│ │ └─TableReader_19 root data:TableScan_18 10000.00",
+		"│ │   └─TableScan_18 cop table:t2, range:[-inf,+inf], keep order:false 10000.00",
+		"│ └─TableReader_21 root data:TableScan_20 10000.00",
+		"│   └─TableScan_20 cop table:t3, range:[-inf,+inf], keep order:false 10000.00",
+		"└─TableReader_23 root data:TableScan_22 10000.00",
+		"  └─TableScan_22 cop table:t4, range:[-inf,+inf], keep order:false 10000.00",
 	))
 
 	testKit.MustQuery("explain select straight_join * from t1, t2, t3, t4 where t1.a=t4.a;").Check(testkit.Rows(
-		"TableScan_17   cop table:t1, range:[-inf,+inf], keep order:false 10000.00",
-		"TableReader_18 HashLeftJoin_15  root data:TableScan_17 10000.00",
-		"TableScan_19   cop table:t2, range:[-inf,+inf], keep order:false 10000.00",
-		"TableReader_20 HashLeftJoin_15  root data:TableScan_19 10000.00",
-		"HashLeftJoin_15 HashLeftJoin_13 TableReader_18,TableReader_20 root inner join, inner:TableReader_20 100000000.00",
-		"TableScan_21   cop table:t3, range:[-inf,+inf], keep order:false 10000.00",
-		"TableReader_22 HashLeftJoin_13  root data:TableScan_21 10000.00",
-		"HashLeftJoin_13 HashLeftJoin_11 HashLeftJoin_15,TableReader_22 root inner join, inner:TableReader_22 1000000000000.00",
-		"TableScan_23   cop table:t4, range:[-inf,+inf], keep order:false 10000.00",
-		"TableReader_24 HashLeftJoin_11  root data:TableScan_23 10000.00",
-		"HashLeftJoin_11  HashLeftJoin_13,TableReader_24 root inner join, inner:TableReader_24, equal:[eq(test.t1.a, test.t4.a)] 1250000000000.00",
+		"HashLeftJoin_11 root inner join, inner:TableReader_24, equal:[eq(test.t1.a, test.t4.a)] 1250000000000.00",
+		"├─HashLeftJoin_13 root inner join, inner:TableReader_22 1000000000000.00",
+		"│ ├─HashLeftJoin_15 root inner join, inner:TableReader_20 100000000.00",
+		"│ │ ├─TableReader_18 root data:TableScan_17 10000.00",
+		"│ │ │ └─TableScan_17 cop table:t1, range:[-inf,+inf], keep order:false 10000.00",
+		"│ │ └─TableReader_20 root data:TableScan_19 10000.00",
+		"│ │   └─TableScan_19 cop table:t2, range:[-inf,+inf], keep order:false 10000.00",
+		"│ └─TableReader_22 root data:TableScan_21 10000.00",
+		"│   └─TableScan_21 cop table:t3, range:[-inf,+inf], keep order:false 10000.00",
+		"└─TableReader_24 root data:TableScan_23 10000.00",
+		"  └─TableScan_23 cop table:t4, range:[-inf,+inf], keep order:false 10000.00",
 	))
 }
 
@@ -139,16 +140,16 @@ func (s *testAnalyzeSuite) TestTableDual(c *C) {
 	testKit.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10)")
 	c.Assert(h.HandleDDLEvent(<-h.DDLEventCh()), IsNil)
 
-	h.DumpStatsDeltaToKV()
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 
 	testKit.MustQuery(`explain select * from t where 1 = 0`).Check(testkit.Rows(
-		`TableDual_6 Projection_5  root rows:0 0.00`,
-		`Projection_5  TableDual_6 root test.t.a 0.00`,
+		`Projection_5 root test.t.a 0.00`,
+		`└─TableDual_6 root rows:0 0.00`,
 	))
 
 	testKit.MustQuery(`explain select * from t where 1 = 1 limit 0`).Check(testkit.Rows(
-		`TableDual_5   root rows:0 0.00`,
+		`TableDual_5 root rows:0 0.00`,
 	))
 }
 
@@ -160,9 +161,9 @@ func (s *testAnalyzeSuite) TestEstimation(c *C) {
 	defer func() {
 		dom.Close()
 		store.Close()
-		plan.RatioOfPseudoEstimate = 0.7
+		statistics.RatioOfPseudoEstimate = 0.7
 	}()
-	plan.RatioOfPseudoEstimate = 10.0
+	statistics.RatioOfPseudoEstimate = 10.0
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a int)")
 	testKit.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10)")
@@ -170,18 +171,18 @@ func (s *testAnalyzeSuite) TestEstimation(c *C) {
 	testKit.MustExec("insert into t select * from t")
 	h := dom.StatsHandle()
 	h.HandleDDLEvent(<-h.DDLEventCh())
-	h.DumpStatsDeltaToKV()
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	testKit.MustExec("analyze table t")
 	for i := 1; i <= 8; i++ {
 		testKit.MustExec("delete from t where a = ?", i)
 	}
-	h.DumpStatsDeltaToKV()
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	testKit.MustQuery("explain select count(*) from t group by a").Check(testkit.Rows(
-		"TableScan_8 HashAgg_5  cop table:t, range:[-inf,+inf], keep order:false 8.00",
-		"HashAgg_5  TableScan_8 cop group by:test.t.a, funcs:count(1) 2.00",
-		"TableReader_10 HashAgg_9  root data:HashAgg_5 2.00",
-		"HashAgg_9  TableReader_10 root group by:col_1, funcs:count(col_0) 2.00",
+		"HashAgg_9 root group by:col_1, funcs:count(col_0) 2.00",
+		"└─TableReader_10 root data:HashAgg_5 2.00",
+		"  └─HashAgg_5 cop group by:test.t.a, funcs:count(1) 2.00",
+		"    └─TableScan_8 cop table:t, range:[-inf,+inf], keep order:false 8.00",
 	))
 }
 
@@ -486,25 +487,25 @@ func (s *testAnalyzeSuite) TestOutdatedAnalyze(c *C) {
 	}
 	h := dom.StatsHandle()
 	h.HandleDDLEvent(<-h.DDLEventCh())
-	h.DumpStatsDeltaToKV()
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	testKit.MustExec("analyze table t")
 	testKit.MustExec("insert into t select * from t")
 	testKit.MustExec("insert into t select * from t")
 	testKit.MustExec("insert into t select * from t")
-	h.DumpStatsDeltaToKV()
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
-	plan.RatioOfPseudoEstimate = 10.0
+	statistics.RatioOfPseudoEstimate = 10.0
 	testKit.MustQuery("explain select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
-		"TableScan_5 Selection_6  cop table:t, range:[-inf,+inf], keep order:false 80.00",
-		"Selection_6  TableScan_5 cop le(test.t.a, 5), le(test.t.b, 5) 28.80",
-		"TableReader_7   root data:Selection_6 28.80",
+		"TableReader_7 root data:Selection_6 28.80",
+		"└─Selection_6 cop le(test.t.a, 5), le(test.t.b, 5) 28.80",
+		"  └─TableScan_5 cop table:t, range:[-inf,+inf], keep order:false 80.00",
 	))
-	plan.RatioOfPseudoEstimate = 0.7
+	statistics.RatioOfPseudoEstimate = 0.7
 	testKit.MustQuery("explain select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
-		"IndexScan_8   cop table:t, index:a, range:[-inf,5], keep order:false 26.59",
-		"TableScan_9 Selection_10  cop table:t, keep order:false 26.59",
-		"Selection_10  TableScan_9 cop le(test.t.b, 5) 8.84",
-		"IndexLookUp_11   root index:IndexScan_8, table:Selection_10 8.84",
+		"IndexLookUp_11 root index:IndexScan_8, table:Selection_10 8.84",
+		"├─IndexScan_8 cop table:t, index:a, range:[-inf,5], keep order:false 26.59",
+		"└─Selection_10 cop le(test.t.b, 5) 8.84",
+		"  └─TableScan_9 cop table:t, keep order:false 26.59",
 	))
 }
 
@@ -564,14 +565,14 @@ func (s *testAnalyzeSuite) TestNullCount(c *C) {
 	testKit.MustExec("insert into t values (null, null), (null, null)")
 	testKit.MustExec("analyze table t")
 	testKit.MustQuery("explain select * from t where a is null").Check(testkit.Rows(
-		"TableScan_5 Selection_6  cop table:t, range:[-inf,+inf], keep order:false 2.00",
-		"Selection_6  TableScan_5 cop isnull(test.t.a) 2.00",
-		"TableReader_7   root data:Selection_6 2.00",
+		"TableReader_7 root data:Selection_6 2.00",
+		"└─Selection_6 cop isnull(test.t.a) 2.00",
+		"  └─TableScan_5 cop table:t, range:[-inf,+inf], keep order:false 2.00",
 	))
 	testKit.MustQuery("explain select * from t use index(idx) where a is null").Check(testkit.Rows(
-		"IndexScan_5   cop table:t, index:a, range:[<nil>,<nil>], keep order:false 2.00",
-		"TableScan_6   cop table:t, keep order:false 2.00",
-		"IndexLookUp_7   root index:IndexScan_5, table:TableScan_6 2.00",
+		"IndexLookUp_7 root index:IndexScan_5, table:TableScan_6 2.00",
+		"├─IndexScan_5 cop table:t, index:a, range:[<nil>,<nil>], keep order:false 2.00",
+		"└─TableScan_6 cop table:t, keep order:false 2.00",
 	))
 	h := dom.StatsHandle()
 	h.Clear()
@@ -579,15 +580,44 @@ func (s *testAnalyzeSuite) TestNullCount(c *C) {
 	defer func() { h.Lease = 0 }()
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	testKit.MustQuery("explain select * from t where b = 1").Check(testkit.Rows(
-		"TableScan_5 Selection_6  cop table:t, range:[-inf,+inf], keep order:false 2.00",
-		"Selection_6  TableScan_5 cop eq(test.t.b, 1) 0.00",
-		"TableReader_7   root data:Selection_6 0.00",
+		"TableReader_7 root data:Selection_6 0.00",
+		"└─Selection_6 cop eq(test.t.b, 1) 0.00",
+		"  └─TableScan_5 cop table:t, range:[-inf,+inf], keep order:false 2.00",
 	))
 	testKit.MustQuery("explain select * from t where b < 1").Check(testkit.Rows(
-		"TableScan_5 Selection_6  cop table:t, range:[-inf,+inf], keep order:false 2.00",
-		"Selection_6  TableScan_5 cop lt(test.t.b, 1) 0.00",
-		"TableReader_7   root data:Selection_6 0.00",
+		"TableReader_7 root data:Selection_6 0.00",
+		"└─Selection_6 cop lt(test.t.b, 1) 0.00",
+		"  └─TableScan_5 cop table:t, range:[-inf,+inf], keep order:false 2.00",
 	))
+}
+
+func (s *testAnalyzeSuite) TestCorrelatedEstimation(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int)")
+	tk.MustExec("insert into t values(1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5), (6,6,6), (7,7,7), (8,8,8), (9,9,9),(10,10,10)")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("explain select t.c in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t;").
+		Check(testkit.Rows(
+			"Projection_11 root 9_aux_0 10.00",
+			"└─Apply_13 root left outer semi join, inner:StreamAgg_20, equal:[eq(test.t.c, count(*))] 10.00",
+			"  ├─TableReader_15 root data:TableScan_14 10.00",
+			"  │ └─TableScan_14 cop table:t, range:[-inf,+inf], keep order:false 10.00",
+			"  └─StreamAgg_20 root funcs:count(1) 1.00",
+			"    └─HashRightJoin_22 root inner join, inner:TableReader_25, equal:[eq(s.a, t1.a)] 1.00",
+			"      ├─TableReader_25 root data:Selection_24 1.00",
+			"      │ └─Selection_24 cop eq(s.a, test.t.a) 1.00",
+			"      │   └─TableScan_23 cop table:s, range:[-inf,+inf], keep order:false 10.00",
+			"      └─TableReader_27 root data:TableScan_26 10.00",
+			"        └─TableScan_26 cop table:t1, range:[-inf,+inf], keep order:false 10.00",
+		))
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
