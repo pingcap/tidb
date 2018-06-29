@@ -131,13 +131,13 @@ func (sc *StatementContext) WarningCount() uint16 {
 // hand, `NumWarnings` always return number of warnings(or errors if `errOnly`
 // is set).
 func (sc *StatementContext) NumWarnings(errOnly bool) uint16 {
-	var wc uint16 = 0
+	var wc uint16
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	if errOnly {
 		for _, warn := range sc.mu.warnings {
 			if warn.Level == WarnLevelError {
-				wc += 1
+				wc++
 			}
 		}
 	} else {
