@@ -2452,7 +2452,7 @@ func (s *testDBSuite) TestAlterTableAddPartition(c *C) {
 func (s *testDBSuite) TestPartitionAddIndex(c *C) {
 	s.tk.MustExec("use test")
 	s.tk.MustExec("set @@tidb_enable_table_partition = 1")
-	s.tk.MustExec(`create table t (
+	s.tk.MustExec(`create table partition_add_idx (
 	id int not null,
 	hired date not null
 	)
@@ -2465,10 +2465,11 @@ func (s *testDBSuite) TestPartitionAddIndex(c *C) {
 	partition p3 values less than (2018)
 	);`)
 	for i := 0; i < 500; i++ {
-		s.tk.MustExec(fmt.Sprintf("insert into t values (%d, '%d-01-01')", i, 1988+rand.Intn(30)))
+		s.tk.MustExec(fmt.Sprintf("insert into partition_add_idx values (%d, '%d-01-01')", i, 1988+rand.Intn(30)))
 	}
 
 	s.tk.MustExec("alter table t add index idx (hired)")
 	// TODO: Make admin check table work for partition.
 	s.tk.MustExec("admin check table t")
+	s.tk.MustExec("drop table partition_add_idx")
 }
