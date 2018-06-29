@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -443,7 +444,6 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 
 const (
 	defaultTaskHandleCnt = 128
-	defaultIndexWorkers  = 16
 )
 
 // indexRecord is the record information of an index.
@@ -876,10 +876,10 @@ func (w *worker) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgI
 	log.Infof("[ddl-reorg] addTableIndex, job:%s, reorgInfo:%#v", job, reorgInfo)
 	colFieldMap := makeupIndexColFieldMap(t, indexInfo)
 
-	// TODO: make workerCnt can be modified by system variable.
-	workerCnt := defaultIndexWorkers
+	// variable.ddlReorgWorkerCounter can be modified by system variable "tidb_ddl_reorg_worker_cnt".
+	workerCnt := variable.GetDDLReorgWorkerCounter()
 	idxWorkers := make([]*addIndexWorker, workerCnt)
-	for i := 0; i < workerCnt; i++ {
+	for i := 0; i < int(workerCnt); i++ {
 		sessCtx := newContext(reorgInfo.d.store)
 		idxWorkers[i] = newAddIndexWorker(sessCtx, w, i, t, indexInfo, colFieldMap)
 		go idxWorkers[i].run(reorgInfo.d)
