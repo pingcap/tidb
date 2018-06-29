@@ -258,8 +258,9 @@ func (t *testExecInfo) compileSQL(idx int) (err error) {
 		ctx := context.TODO()
 		se.PrepareTxnCtx(ctx)
 		sctx := se.(sessionctx.Context)
-		executor.ResetStmtCtx(sctx, c.rawStmt)
-
+		if err = executor.ResetStmtCtx(sctx, c.rawStmt); err != nil {
+			return errors.Trace(err)
+		}
 		c.stmt, err = compiler.Compile(ctx, c.rawStmt)
 		if err != nil {
 			return errors.Trace(err)
