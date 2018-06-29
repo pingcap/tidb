@@ -75,11 +75,17 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData types.DatumR
 			newData[i] = v
 		}
 
+		if mysql.HasNotNullFlag(col.Flag) && newData[i].IsNull() && sc.BadNullAsWarning {
+			var err error
+			newData[i], err = table.GetColDefaultValue(ctx, col.ToInfo())
+			if err != nil {
+				return false, handleChanged, newHandle, 0, errors.Trace(err)
+			}
+		}
 		// Rebase auto increment id if the field is changed.
 		if mysql.HasAutoIncrementFlag(col.Flag) {
 			if newData[i].IsNull() {
-				return false, handleChanged, newHandle, 0,
-					errors.Errorf("Column '%v' cannot be null", col.Name.O)
+				return false, handleChanged, newHandle, 0, table.ErrColumnCantNull.GenByArgs(col.Name)
 			}
 			val, errTI := newData[i].ToInt64(sc)
 			if errTI != nil {
@@ -139,7 +145,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData types.DatumR
 
 	if handleChanged {
 		skipHandleCheck := false
-		if sc.IgnoreErr {
+		if sc.DupKeyAsWarning {
 			// if the new handle exists. `UPDATE IGNORE` will avoid removing record, and do nothing.
 			if err = tables.CheckHandleExists(ctx, t, newHandle); err != nil {
 				return false, handleChanged, newHandle, 0, errors.Trace(err)
