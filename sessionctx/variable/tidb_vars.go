@@ -100,6 +100,9 @@ const (
 
 	// tidb_optimizer_selectivity_level is used to control the selectivity estimation level.
 	TiDBOptimizerSelectivityLevel = "tidb_optimizer_selectivity_level"
+
+	// tidb_enable_table_partition is used to enable table partition feature.
+	TiDBEnableTablePartition = "tidb_enable_table_partition"
 )
 
 // TiDB system variable names that both in session and global scope.

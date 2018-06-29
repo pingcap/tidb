@@ -463,6 +463,14 @@ commit;`
 	testSQL = `select * from test order by i;`
 	r = tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("1 3", "2 2"))
+
+	testSQL = `create table badnull (i int not null)`
+	tk.MustExec(testSQL)
+	testSQL = `insert ignore into badnull values (null)`
+	tk.MustExec(testSQL)
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'i' cannot be null"))
+	testSQL = `select * from badnull`
+	tk.MustQuery(testSQL).Check(testkit.Rows("0"))
 }
 
 func (s *testSuite) TestInsertOnDup(c *C) {
@@ -782,7 +790,7 @@ func (s *testSuite) TestUpdate(c *C) {
 	tk.MustExec("insert into update_test(name) values ('aa')")
 	_, err := tk.Exec("update update_test set id = null where name = 'aa'")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), DeepEquals, "Column 'id' cannot be null")
+	c.Assert(err.Error(), DeepEquals, "[table:1048]Column 'id' cannot be null")
 
 	tk.MustExec("drop table update_test")
 	tk.MustExec("create table update_test(id int)")
@@ -1095,9 +1103,9 @@ func (s *testSuite) TestLoadData(c *C) {
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"
 	// data1 = nil, data2 = nil, fields and lines is default
-	ctx.GetSessionVars().StmtCtx.IgnoreErr = true
+	ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
+	ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
 	_, reachLimit, err := ld.InsertData(nil, nil)
-	ctx.GetSessionVars().StmtCtx.IgnoreErr = false
 	c.Assert(err, IsNil)
 	c.Assert(reachLimit, IsFalse)
 	r := tk.MustQuery(selectSQL)
