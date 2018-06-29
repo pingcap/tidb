@@ -412,7 +412,7 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 				ColName:  model.NewCIStr(fmt.Sprintf("col_%d", partialCursor)),
 				RetType:  ft,
 			})
-			args = append(args, partialSchema.Columns[partialCursor].Clone())
+			args = append(args, partialSchema.Columns[partialCursor])
 			partialCursor++
 		}
 		if needValue(finalAggFunc) {
@@ -422,7 +422,7 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 				ColName:  model.NewCIStr(fmt.Sprintf("col_%d", partialCursor)),
 				RetType:  finalSchema.Columns[i].GetType(),
 			})
-			args = append(args, partialSchema.Columns[partialCursor].Clone())
+			args = append(args, partialSchema.Columns[partialCursor])
 			partialCursor++
 		}
 		finalAggFunc.Args = args
@@ -441,7 +441,7 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 			RetType:  gbyExpr.GetType(),
 		}
 		partialSchema.Append(gbyCol)
-		groupByItems = append(groupByItems, gbyCol.Clone())
+		groupByItems = append(groupByItems, gbyCol)
 	}
 
 	// Create physical "final" aggregation.
