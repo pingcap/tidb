@@ -81,7 +81,7 @@ func (e *UpdateExec) exec(schema *expression.Schema) (types.DatumRow, error) {
 			}
 
 			sc := e.ctx.GetSessionVars().StmtCtx
-			if kv.ErrKeyExists.Equal(err1) && sc.IgnoreErr {
+			if kv.ErrKeyExists.Equal(err1) && sc.DupKeyAsWarning {
 				sc.AppendWarning(err1)
 				continue
 			}
