@@ -300,7 +300,7 @@ type field struct {
 	maybeNull bool
 }
 
-// getFieldsFromLine splits line according to fieldsInfo, this function is exported for testing.
+// getFieldsFromLine splits line according to fieldsInfo.
 func (e *LoadDataInfo) getFieldsFromLine(line []byte) ([]field, error) {
 	var sep []byte
 	if e.FieldsInfo.Enclosed != 0 {
