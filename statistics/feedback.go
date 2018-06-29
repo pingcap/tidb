@@ -301,17 +301,17 @@ func (b *BucketFeedback) getBoundaries(num int) []types.Datum {
 
 type bucket = feedback
 
-// updateBucket split the bucket according to feedback.
-func (b *BucketFeedback) splitBucket(newBktNum int, totalCount float64, count float64) []bucket {
+// splitBucket split the bucket according to feedback.
+func (b *BucketFeedback) splitBucket(newNumBkts int, totalCount float64, originBucketCount float64) []bucket {
 	// Split the bucket.
-	bounds := b.getBoundaries(newBktNum + 1)
+	bounds := b.getBoundaries(newNumBkts + 1)
 	bkts := make([]bucket, 0, len(bounds)-1)
 	for i := 1; i < len(bounds); i++ {
 		bkt := bucket{&bounds[i-1], bounds[i].Copy(), 0, 0}
 		// get bucket count
-		_, ratio := getOverlapFraction(feedback{b.lower, b.upper, int64(count), 0}, bkt)
-		bucketCount := count * ratio
-		bucketCount = b.bucketCount(bkt, bucketCount)
+		_, ratio := getOverlapFraction(feedback{b.lower, b.upper, int64(originBucketCount), 0}, bkt)
+		bucketCount := originBucketCount * ratio
+		bucketCount = b.refineBucketCount(bkt, bucketCount)
 		// do not split if the count of result bucket is too small.
 		if bucketCount < minBucketFraction*totalCount {
 			bounds[i] = bounds[i-1]
@@ -347,7 +347,7 @@ func getFraction4Index(minValue, maxValue, lower, upper *types.Datum, prefixLen 
 }
 
 // getOverlapFraction gets the overlap fraction of feedback and bucket range. In order to get the bucket count, it also
-// returns the ratio between feedback fraction and bucket fraction.
+// returns the ratio between bucket fraction and feedback fraction.
 func getOverlapFraction(fb feedback, bkt bucket) (float64, float64) {
 	datums := make([]types.Datum, 0, 4)
 	datums = append(datums, *fb.lower, *fb.upper)
@@ -379,7 +379,9 @@ func getOverlapFraction(fb feedback, bkt bucket) (float64, float64) {
 	return overlap, ratio
 }
 
-func (b *BucketFeedback) bucketCount(bkt bucket, defaultCount float64) float64 {
+// refineBucketCount refine the newly split bucket count. It uses the feedback that overlaps most
+// with the bucket to get the bucket count.
+func (b *BucketFeedback) refineBucketCount(bkt bucket, defaultCount float64) float64 {
 	bestFraction := minBucketFraction
 	count := defaultCount
 	for _, fb := range b.feedback {
@@ -393,11 +395,18 @@ func (b *BucketFeedback) bucketCount(bkt bucket, defaultCount float64) float64 {
 	return count
 }
 
-// Get the split count for the histogram.
-func getSplitCount(count, remainBuckets int) int {
-	remainBuckets = mathutil.Max(remainBuckets, 10)
+const (
+	defaultSplitCount = 10
+	splitPerFeedback  = 10
+)
+
+// getSplitCount gets the split count for the histogram. It is based on the intuition that:
+// 1: If we have more remaining unused buckets, we can split more.
+// 2: We cannot split too aggressive, thus we make it split every `splitPerFeedback`.
+func getSplitCount(numFeedbacks, remainBuckets int) int {
 	// Split more if have more buckets available.
-	return mathutil.Min(remainBuckets, count/10)
+	splitCount := mathutil.Max(remainBuckets, defaultSplitCount)
+	return mathutil.Min(splitCount, numFeedbacks/splitPerFeedback)
 }
 
 type bucketScore struct {
@@ -483,11 +492,12 @@ func mergeBuckets(bkts []bucket, isNewBuckets []bool, totalCount float64) []buck
 	return bkts
 }
 
+// splitBuckets split the histogram buckets according to the feedback.
 func splitBuckets(h *Histogram, feedback *QueryFeedback) ([]bucket, []bool, int64) {
-	bktID2FB, fbNum := buildBucketFeedback(h, feedback)
+	bktID2FB, totalNumFBs := buildBucketFeedback(h, feedback)
 	buckets := make([]bucket, 0, h.Len())
 	isNewBuckets := make([]bool, 0, h.Len())
-	splitCount := getSplitCount(fbNum, defaultBucketCount-h.Len())
+	splitCount := getSplitCount(totalNumFBs, defaultBucketCount-h.Len())
 	for i := 0; i < h.Len(); i++ {
 		bkt, ok := bktID2FB[i]
 		// No feedback, just use the original one.
@@ -496,7 +506,9 @@ func splitBuckets(h *Histogram, feedback *QueryFeedback) ([]bucket, []bool, int6
 			isNewBuckets = append(isNewBuckets, false)
 			continue
 		}
-		bkts := bkt.splitBucket(splitCount*len(bkt.feedback)/fbNum, h.totalRowCount(), float64(h.bucketCount(i)))
+		// distribute the total split count to bucket based on number of bucket feedback
+		newBktNums := splitCount * len(bkt.feedback) / totalNumFBs
+		bkts := bkt.splitBucket(newBktNums, h.totalRowCount(), float64(h.bucketCount(i)))
 		buckets = append(buckets, bkts...)
 		if len(bkts) == 1 {
 			isNewBuckets = append(isNewBuckets, false)
