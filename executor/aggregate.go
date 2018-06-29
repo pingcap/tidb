@@ -411,7 +411,7 @@ func (w *HashAggPartialWorker) getGroupKey(sc *stmtctx.StatementContext, row chu
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		// This check is used to avoid panic during the execution of `EncodeDecimal`.
+		// This check is used to avoid error during the execution of `EncodeDecimal`.
 		if item.GetType().Tp == mysql.TypeNewDecimal {
 			v.SetLength(0)
 		}
