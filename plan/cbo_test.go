@@ -503,9 +503,9 @@ func (s *testAnalyzeSuite) TestOutdatedAnalyze(c *C) {
 	statistics.RatioOfPseudoEstimate = 0.7
 	testKit.MustQuery("explain select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
 		"IndexLookUp_11 root index:IndexScan_8, table:Selection_10 8.84",
-		"├─IndexScan_8 cop table:t, index:a, range:[-inf,5], keep order:false 26.59",
-		"└─Selection_10 cop le(test.t.b, 5) 8.84",
-		"  └─TableScan_9 cop table:t, keep order:false 26.59",
+		"├─Selection_10 cop le(test.t.b, 5) 8.84",
+		"│ └─TableScan_9 cop table:t, keep order:false 26.59",
+		"└─IndexScan_8 cop table:t, index:a, range:[-inf,5], keep order:false 26.59",
 	))
 }
 
@@ -571,8 +571,8 @@ func (s *testAnalyzeSuite) TestNullCount(c *C) {
 	))
 	testKit.MustQuery("explain select * from t use index(idx) where a is null").Check(testkit.Rows(
 		"IndexLookUp_7 root index:IndexScan_5, table:TableScan_6 2.00",
-		"├─IndexScan_5 cop table:t, index:a, range:[<nil>,<nil>], keep order:false 2.00",
-		"└─TableScan_6 cop table:t, keep order:false 2.00",
+		"├─TableScan_6 cop table:t, keep order:false 2.00",
+		"└─IndexScan_5 cop table:t, index:a, range:[<nil>,<nil>], keep order:false 2.00",
 	))
 	h := dom.StatsHandle()
 	h.Clear()

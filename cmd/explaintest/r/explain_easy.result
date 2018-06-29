@@ -25,8 +25,8 @@ TableReader_5	root	data:TableScan_4	10000.00
 explain select * from t1 order by c2;
 id	task	operator info	count
 IndexLookUp_13	root	index:IndexScan_11, table:TableScan_12	10000.00
-├─IndexScan_11	cop	table:t1, index:c2, range:[<nil>,+inf], keep order:true	10000.00
-└─TableScan_12	cop	table:t1, keep order:false	10000.00
+├─TableScan_12	cop	table:t1, keep order:false	10000.00
+└─IndexScan_11	cop	table:t1, index:c2, range:[<nil>,+inf], keep order:true	10000.00
 explain select * from t2 order by c2;
 id	task	operator info	count
 Sort_4	root	test.t2.c2:asc	10000.00
@@ -46,8 +46,8 @@ IndexJoin_11	root	left outer join, inner:IndexLookUp_10, outer key:test.t1.c2, i
 ├─TableReader_23	root	data:TableScan_22	3333.33
 │ └─TableScan_22	cop	table:t1, range:(1,+inf], keep order:false	3333.33
 └─IndexLookUp_10	root	index:IndexScan_8, table:TableScan_9	10000.00
-  ├─IndexScan_8	cop	table:t2, index:c1, range:[<nil>,+inf], keep order:false	10000.00
-  └─TableScan_9	cop	table:t2, keep order:false	10000.00
+  ├─TableScan_9	cop	table:t2, keep order:false	10000.00
+  └─IndexScan_8	cop	table:t2, index:c1, range:[<nil>,+inf], keep order:false	10000.00
 explain update t1 set t1.c2 = 2 where t1.c1 = 1;
 id	task	operator info	count
 TableReader_5	root	data:TableScan_4	1.00
@@ -55,8 +55,8 @@ TableReader_5	root	data:TableScan_4	1.00
 explain delete from t1 where t1.c2 = 1;
 id	task	operator info	count
 IndexLookUp_9	root	index:IndexScan_7, table:TableScan_8	10.00
-├─IndexScan_7	cop	table:t1, index:c2, range:[1,1], keep order:false	10.00
-└─TableScan_8	cop	table:t1, keep order:false	10.00
+├─TableScan_8	cop	table:t1, keep order:false	10.00
+└─IndexScan_7	cop	table:t1, index:c2, range:[1,1], keep order:false	10.00
 explain select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1;
 id	task	operator info	count
 Projection_11	root	cast(join_agg_0)	10000.00
@@ -76,10 +76,10 @@ TopN_7	root	test.t2.c2:asc, offset:0, count:1	1.00
 explain select * from t1 where c1 > 1 and c2 = 1 and c3 < 1;
 id	task	operator info	count
 IndexLookUp_12	root	index:Selection_10, table:Selection_11	1.11
-├─Selection_10	cop	gt(test.t1.c1, 1)	3.33
-│ └─IndexScan_8	cop	table:t1, index:c2, range:[1,1], keep order:false	10.00
-└─Selection_11	cop	lt(test.t1.c3, 1)	1.11
-  └─TableScan_9	cop	table:t1, keep order:false	3.33
+├─Selection_11	cop	lt(test.t1.c3, 1)	1.11
+│ └─TableScan_9	cop	table:t1, keep order:false	3.33
+└─Selection_10	cop	gt(test.t1.c1, 1)	3.33
+  └─IndexScan_8	cop	table:t1, index:c2, range:[1,1], keep order:false	10.00
 explain select * from t1 where c1 = 1 and c2 > 1;
 id	task	operator info	count
 TableReader_7	root	data:Selection_6	0.33
@@ -117,8 +117,8 @@ Projection_12	root	eq(test.t1.c2, test.t2.c2)	10000.00
   │ └─TableScan_15	cop	table:t1, range:[-inf,+inf], keep order:false	10000.00
   └─Limit_22	root	offset:0, count:1	1.00
     └─IndexLookUp_47	root	index:IndexScan_45, table:TableScan_46	0.00
-      ├─IndexScan_45	cop	table:t2, index:c1, range: decided by [eq(test.t1.c1, test.t2.c1)], keep order:true	0.00
-      └─TableScan_46	cop	table:t2, keep order:false	0.00
+      ├─TableScan_46	cop	table:t2, keep order:false	0.00
+      └─IndexScan_45	cop	table:t2, index:c1, range: decided by [eq(test.t1.c1, test.t2.c1)], keep order:true	0.00
 explain select * from t1 order by c1 desc limit 1;
 id	task	operator info	count
 Limit_10	root	offset:0, count:1	1.00
@@ -129,11 +129,11 @@ explain select * from t4 use index(idx) where a > 1 and b > 1 and c > 1 limit 1;
 id	task	operator info	count
 Limit_9	root	offset:0, count:1	1.00
 └─IndexLookUp_17	root	index:Selection_14, table:Limit_16	1.00
-  ├─Selection_14	cop	gt(test.t4.b, 1)	3.00
-  │ └─IndexScan_12	cop	table:t4, index:a, b, range:(1 +inf,+inf +inf], keep order:false	9.00
-  └─Limit_16	cop	offset:0, count:1	1.00
-    └─Selection_15	cop	gt(test.t4.c, 1)	1.00
-      └─TableScan_13	cop	table:t4, keep order:false	3.00
+  ├─Limit_16	cop	offset:0, count:1	1.00
+  │ └─Selection_15	cop	gt(test.t4.c, 1)	1.00
+  │   └─TableScan_13	cop	table:t4, keep order:false	3.00
+  └─Selection_14	cop	gt(test.t4.b, 1)	3.00
+    └─IndexScan_12	cop	table:t4, index:a, b, range:(1 +inf,+inf +inf], keep order:false	9.00
 explain select * from t4 where a > 1 and c > 1 limit 1;
 id	task	operator info	count
 Limit_8	root	offset:0, count:1	1.00
@@ -299,7 +299,7 @@ Projection_11	root	9_aux_0	10000.00
   └─StreamAgg_20	root	funcs:count(1)	1.00
     └─IndexJoin_33	root	inner join, inner:TableReader_32, outer key:s.c, inner key:t1.a	10000.00
       ├─IndexLookUp_38	root	index:IndexScan_36, table:TableScan_37	10.00
-      │ ├─IndexScan_36	cop	table:s, index:b, range: decided by [eq(s.b, test.t.a)], keep order:false	10.00
-      │ └─TableScan_37	cop	table:t, keep order:false	10.00
+      │ ├─TableScan_37	cop	table:t, keep order:false	10.00
+      │ └─IndexScan_36	cop	table:s, index:b, range: decided by [eq(s.b, test.t.a)], keep order:false	10.00
       └─TableReader_32	root	data:TableScan_31	10000.00
         └─TableScan_31	cop	table:t1, range:[-inf,+inf], keep order:false	10000.00

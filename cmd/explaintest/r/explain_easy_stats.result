@@ -28,8 +28,8 @@ TableReader_5	root	data:TableScan_4	1999.00
 explain select * from t1 order by c2;
 id	task	operator info	count
 IndexLookUp_13	root	index:IndexScan_11, table:TableScan_12	1999.00
-├─IndexScan_11	cop	table:t1, index:c2, range:[<nil>,+inf], keep order:true	1999.00
-└─TableScan_12	cop	table:t1, keep order:false	1999.00
+├─TableScan_12	cop	table:t1, keep order:false	1999.00
+└─IndexScan_11	cop	table:t1, index:c2, range:[<nil>,+inf], keep order:true	1999.00
 explain select * from t2 order by c2;
 id	task	operator info	count
 Sort_4	root	test.t2.c2:asc	1985.00
@@ -48,12 +48,12 @@ id	task	operator info	count
 Projection_6	root	test.t1.c1, test.t1.c2, test.t1.c3, test.t2.c1, test.t2.c2	2481.25
 └─MergeJoin_7	root	left outer join, left key:test.t1.c2, right key:test.t2.c1	2481.25
   ├─IndexLookUp_17	root	index:Selection_16, table:TableScan_15	1998.00
-  │ ├─Selection_16	cop	gt(test.t1.c1, 1)	1998.00
-  │ │ └─IndexScan_14	cop	table:t1, index:c2, range:[<nil>,+inf], keep order:true	1999.00
-  │ └─TableScan_15	cop	table:t1, keep order:false	1998.00
+  │ ├─TableScan_15	cop	table:t1, keep order:false	1998.00
+  │ └─Selection_16	cop	gt(test.t1.c1, 1)	1998.00
+  │   └─IndexScan_14	cop	table:t1, index:c2, range:[<nil>,+inf], keep order:true	1999.00
   └─IndexLookUp_21	root	index:IndexScan_19, table:TableScan_20	1985.00
-    ├─IndexScan_19	cop	table:t2, index:c1, range:[<nil>,+inf], keep order:true	1985.00
-    └─TableScan_20	cop	table:t2, keep order:false	1985.00
+    ├─TableScan_20	cop	table:t2, keep order:false	1985.00
+    └─IndexScan_19	cop	table:t2, index:c1, range:[<nil>,+inf], keep order:true	1985.00
 explain update t1 set t1.c2 = 2 where t1.c1 = 1;
 id	task	operator info	count
 TableReader_5	root	data:TableScan_4	1.00
@@ -61,8 +61,8 @@ TableReader_5	root	data:TableScan_4	1.00
 explain delete from t1 where t1.c2 = 1;
 id	task	operator info	count
 IndexLookUp_9	root	index:IndexScan_7, table:TableScan_8	0.00
-├─IndexScan_7	cop	table:t1, index:c2, range:[1,1], keep order:false	0.00
-└─TableScan_8	cop	table:t1, keep order:false	0.00
+├─TableScan_8	cop	table:t1, keep order:false	0.00
+└─IndexScan_7	cop	table:t1, index:c2, range:[1,1], keep order:false	0.00
 explain select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1;
 id	task	operator info	count
 Projection_11	root	cast(join_agg_0)	1985.00
@@ -82,10 +82,10 @@ TopN_7	root	test.t2.c2:asc, offset:0, count:1	1.00
 explain select * from t1 where c1 > 1 and c2 = 1 and c3 < 1;
 id	task	operator info	count
 IndexLookUp_12	root	index:Selection_10, table:Selection_11	0.00
-├─Selection_10	cop	gt(test.t1.c1, 1)	0.00
-│ └─IndexScan_8	cop	table:t1, index:c2, range:[1,1], keep order:false	0.00
-└─Selection_11	cop	lt(test.t1.c3, 1)	0.00
-  └─TableScan_9	cop	table:t1, keep order:false	0.00
+├─Selection_11	cop	lt(test.t1.c3, 1)	0.00
+│ └─TableScan_9	cop	table:t1, keep order:false	0.00
+└─Selection_10	cop	gt(test.t1.c1, 1)	0.00
+  └─IndexScan_8	cop	table:t1, index:c2, range:[1,1], keep order:false	0.00
 explain select * from t1 where c1 = 1 and c2 > 1;
 id	task	operator info	count
 TableReader_7	root	data:Selection_6	0.50
@@ -106,8 +106,8 @@ Projection_12	root	eq(test.t1.c2, test.t2.c2)	1999.00
   │ └─TableScan_15	cop	table:t1, range:[-inf,+inf], keep order:false	1999.00
   └─Limit_22	root	offset:0, count:1	1.00
     └─IndexLookUp_47	root	index:IndexScan_45, table:TableScan_46	0.00
-      ├─IndexScan_45	cop	table:t2, index:c1, range: decided by [eq(test.t1.c1, test.t2.c1)], keep order:true	0.00
-      └─TableScan_46	cop	table:t2, keep order:false	0.00
+      ├─TableScan_46	cop	table:t2, keep order:false	0.00
+      └─IndexScan_45	cop	table:t2, index:c1, range: decided by [eq(test.t1.c1, test.t2.c1)], keep order:true	0.00
 explain select * from t1 order by c1 desc limit 1;
 id	task	operator info	count
 Limit_10	root	offset:0, count:1	1.00
@@ -156,7 +156,7 @@ explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085
 id	task	operator info	count
 Limit_9	root	offset:0, count:1	1.00
 └─IndexLookUp_15	root	index:Limit_14, table:TableScan_13	1.00
-  ├─Limit_14	cop	offset:0, count:1	1.00
-  │ └─IndexScan_12	cop	table:index_prune, index:a, b, range:[1010010404050976781 26467085526790,1010010404050976781 26467085526790], keep order:false	1.00
-  └─TableScan_13	cop	table:index_prune, keep order:false	1.00
+  ├─TableScan_13	cop	table:index_prune, keep order:false	1.00
+  └─Limit_14	cop	offset:0, count:1	1.00
+    └─IndexScan_12	cop	table:index_prune, index:a, b, range:[1010010404050976781 26467085526790,1010010404050976781 26467085526790], keep order:false	1.00
 drop table if exists t1, t2, t3, index_prune;
