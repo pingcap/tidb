@@ -66,7 +66,7 @@ func newContext(store kv.Storage) sessionctx.Context {
 const defaultWaitReorgTimeout = 10 * time.Second
 
 // ReorgWaitTimeout is the timeout that wait ddl in write reorganization stage.
-var ReorgWaitTimeout = 1 * time.Second
+var ReorgWaitTimeout = 5 * time.Second
 
 func (rc *reorgCtx) notifyReorgCancel() {
 	atomic.StoreInt32(&rc.notifyCancelReorgJob, 1)
