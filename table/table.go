@@ -40,7 +40,8 @@ const (
 )
 
 var (
-	errColumnCantNull  = terror.ClassTable.New(codeColumnCantNull, "column can not be null")
+	// ErrColumnCantNull is used for inserting null to a not null column.
+	ErrColumnCantNull  = terror.ClassTable.New(codeColumnCantNull, mysql.MySQLErrName[mysql.ErrBadNull])
 	errUnknownColumn   = terror.ClassTable.New(codeUnknownColumn, "unknown column")
 	errDuplicateColumn = terror.ClassTable.New(codeDuplicateColumn, "duplicate column")
 
@@ -163,7 +164,7 @@ const (
 	codeIndexStateCantNone   = 8
 	codeInvalidRecordKey     = 9
 
-	codeColumnCantNull     = 1048
+	codeColumnCantNull     = mysql.ErrBadNull
 	codeUnknownColumn      = 1054
 	codeDuplicateColumn    = 1110
 	codeNoDefaultValue     = 1364
