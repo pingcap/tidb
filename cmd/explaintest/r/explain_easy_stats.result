@@ -6,6 +6,8 @@ create table t2 (c1 int unique, c2 int);
 load stats 's/explain_easy_stats_t2.json';
 create table t3 (a bigint, b bigint, c bigint, d bigint);
 load stats 's/explain_easy_stats_t3.json';
+create table index_prune(a bigint(20) NOT NULL, b bigint(20) NOT NULL, c tinyint(4) NOT NULL, primary key(a, b), index idx_b_c_a(b, c, a));
+load stats 's/explain_easy_stats_index_prune.json';
 set @@session.tidb_opt_insubquery_unfold = 1;
 set @@session.tidb_opt_agg_push_down = 1;
 explain select * from t3 where exists (select s.a from t3 s having sum(s.a) = t3.a );
@@ -150,4 +152,11 @@ label = "cop"
 "TableReader_12" -> "Selection_11"
 }
 
-drop table if exists t1, t2, t3;
+explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 1;
+id	task	operator info	count
+Limit_9	root	offset:0, count:1	1.00
+└─IndexLookUp_15	root	index:Limit_14, table:TableScan_13	1.00
+  ├─Limit_14	cop	offset:0, count:1	1.00
+  │ └─IndexScan_12	cop	table:index_prune, index:a, b, range:[1010010404050976781 26467085526790,1010010404050976781 26467085526790], keep order:false	1.00
+  └─TableScan_13	cop	table:index_prune, keep order:false	1.00
+drop table if exists t1, t2, t3, index_prune;
