@@ -203,22 +203,22 @@ func (e *HashAggExec) Close() error {
 		e.groupMap = nil
 		e.groupIterator = nil
 		e.aggCtxsMap = nil
-	} else {
-		// `Close` may be called after `Open` without calling `Next` in test.
-		if !e.prepared {
-			close(e.inputCh)
-			for _, ch := range e.partialOutputChs {
-				close(ch)
-			}
-			close(e.finalOutputCh)
-		}
-		close(e.finishCh)
+		return nil
+	}
+	// `Close` may be called after `Open` without calling `Next` in test.
+	if !e.prepared {
+		close(e.inputCh)
 		for _, ch := range e.partialOutputChs {
-			for range ch {
-			}
+			close(ch)
 		}
-		for range e.finalOutputCh {
+		close(e.finalOutputCh)
+	}
+	close(e.finishCh)
+	for _, ch := range e.partialOutputChs {
+		for range ch {
 		}
+	}
+	for range e.finalOutputCh {
 	}
 	return errors.Trace(e.baseExecutor.Close())
 }
@@ -371,7 +371,7 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *s
 		}
 		aggEvalCtxs := w.getContext(sc, groupKey, w.aggCtxsMap)
 		for i, af := range w.aggFuncs {
-			if af.Update(aggEvalCtxs[i], sc, row) != nil {
+			if err = af.Update(aggEvalCtxs[i], sc, row); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -408,11 +408,12 @@ func (w *HashAggPartialWorker) getGroupKey(sc *stmtctx.StatementContext, row chu
 	w.groupValDatums = w.groupValDatums[:0]
 	for _, item := range w.groupByItems {
 		v, err := item.Eval(row)
-		if item.GetType().Tp == mysql.TypeNewDecimal {
-			v.SetLength(0)
-		}
 		if err != nil {
 			return nil, errors.Trace(err)
+		}
+		// This check is used to avoid panic during the execution of `EncodeDecimal`.
+		if item.GetType().Tp == mysql.TypeNewDecimal {
+			v.SetLength(0)
 		}
 		w.groupValDatums = append(w.groupValDatums, v)
 	}
