@@ -456,14 +456,25 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 	}
 	// Check whether there's only point query.
 	noIntervalRanges := true
+	haveNullVal := false
 	for _, ran := range path.ranges {
 		// Not point or the not full matched.
 		if !ran.IsPoint(sc) || len(ran.HighVal) != len(path.index.Columns) {
 			noIntervalRanges = false
 			break
 		}
+		// Check whether there's null value.
+		for i := 0; i < len(path.index.Columns); i++ {
+			if ran.HighVal[i].IsNull() {
+				haveNullVal = true
+				break
+			}
+		}
+		if haveNullVal {
+			break
+		}
 	}
-	return noIntervalRanges, nil
+	return noIntervalRanges && !haveNullVal, nil
 }
 
 func (path *accessPath) splitCorColAccessCondFromFilters() (access, remained []expression.Expression) {
