@@ -637,23 +637,23 @@ func checkConstraintNames(constraints []*ast.Constraint) error {
 	return nil
 }
 
-func checkCreatePartitionNotExists(meta *model.TableInfo, part *model.PartitionInfo) error {
-	if meta.Partition.Type == model.PartitionTypeRange {
+func checkCreatePartitionNameUnique(part *model.PartitionInfo) error {
+	if part.Type == model.PartitionTypeRange {
 		newPars := part.Definitions
-		set := make(map[string]bool)
+		set := make(map[string]struct{})
 		for _, newPar := range newPars {
 			if _, ok := set[strings.ToLower(newPar.Name)]; ok {
 				return ErrSameNamePartition.GenByArgs(newPar.Name)
 			}
-			set[strings.ToLower(newPar.Name)] = true
+			set[strings.ToLower(newPar.Name)] = struct{}{}
 		}
 	}
 	return nil
 }
 
-// checkCreatePartitionValue values less than value must be strictly increasing for each partition.
-func checkCreatePartitionValue(meta *model.TableInfo, part *model.PartitionInfo) error {
-	if meta.Partition.Type == model.PartitionTypeRange {
+// checkCreatePartitionValue checks 'less than value' must be strictly increasing for each partition.
+func checkCreatePartitionValue(part *model.PartitionInfo) error {
+	if part.Type == model.PartitionTypeRange {
 		newDefs := part.Definitions
 		rangeValue := newDefs[0].LessThan[0]
 		ifMaxvalue := strings.EqualFold(rangeValue, "MAXVALUE")
@@ -688,9 +688,9 @@ func checkCreatePartitionValue(meta *model.TableInfo, part *model.PartitionInfo)
 	return nil
 }
 
-func buildCreateTablePartitionInfo(ctx sessionctx.Context, d *ddl, tbInfo *model.TableInfo, s *ast.CreateTableStmt, cols []*table.Column) error {
+func buildCreateTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableStmt, cols []*table.Column) ( *model.PartitionInfo, error) {
 	if s.Partition == nil {
-		return nil
+		return nil, nil
 	}
 	pi := &model.PartitionInfo{
 		Type:   s.Partition.Tp,
@@ -705,7 +705,7 @@ func buildCreateTablePartitionInfo(ctx sessionctx.Context, d *ddl, tbInfo *model
 				for _, col := range cols {
 					name := strings.Replace(col.Name.String(), ".", "`.`", -1)
 					if !(col.Tp == mysql.TypeLong || col.Tp == mysql.TypeLonglong) && fmt.Sprintf("`%s`", name) == pi.Expr {
-						return errors.Trace(ErrNotAllowedTypeInPartition.GenByArgs(pi.Expr))
+						return nil, errors.Trace(ErrNotAllowedTypeInPartition.GenByArgs(pi.Expr))
 					}
 				}
 			}
@@ -720,32 +720,22 @@ func buildCreateTablePartitionInfo(ctx sessionctx.Context, d *ddl, tbInfo *model
 		// TODO: generate multiple global ID for paritions.
 		pid, err1 := d.genGlobalID()
 		if err1 != nil {
-			return errors.Trace(err1)
+			return nil, errors.Trace(err1)
 		}
 		piDef := model.PartitionDefinition{
 			Name:    def.Name,
 			ID:      pid,
 			Comment: def.Comment,
 		}
+		buf := new(bytes.Buffer)
 		for _, expr := range def.LessThan {
-			buf := new(bytes.Buffer)
 			expr.Format(buf)
 			piDef.LessThan = append(piDef.LessThan, buf.String())
+			buf.Reset()
 		}
 		pi.Definitions = append(pi.Definitions, piDef)
 	}
-	tbInfo.Partition = pi
-
-	err := checkCreatePartitionNotExists(tbInfo, tbInfo.Partition)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = checkCreatePartitionValue(tbInfo, tbInfo.Partition)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	return nil
+	return pi, nil
 }
 
 func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols []*table.Column, constraints []*ast.Constraint) (tbInfo *model.TableInfo, err error) {
@@ -951,9 +941,21 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		return errors.Trace(err)
 	}
 
-	err = buildCreateTablePartitionInfo(ctx, d, tbInfo, s, cols)
+	part, err := buildCreateTablePartitionInfo(ctx, d, s, cols)
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	if part != nil {
+		tbInfo.Partition = part
+		err = checkCreatePartitionNameUnique(tbInfo.Partition)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		err = checkCreatePartitionValue(tbInfo.Partition)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	job := &model.Job{
