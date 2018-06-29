@@ -206,6 +206,9 @@ type SessionVars struct {
 	// PlanID is the unique id of logical and physical plan.
 	PlanID int
 
+	// ColID is the unique id of columns in the schema of logical and physical plan.
+	ColID int
+
 	// PlanCacheEnabled stores the global config "plan-cache-enabled", and it will be only updated in tests.
 	PlanCacheEnabled bool
 
@@ -288,6 +291,12 @@ type SessionVars struct {
 	EnableStreaming bool
 
 	writeStmtBufs WriteStmtBufs
+}
+
+func (sv *SessionVars) AllocColID() int {
+	colId := sv.ColID
+	sv.ColID++
+	return colId
 }
 
 // NewSessionVars creates a session vars object.

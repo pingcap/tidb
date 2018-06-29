@@ -38,7 +38,7 @@ func TestT(t *testing.T) {
 	logLevel := os.Getenv("log_level")
 	logutil.InitLogger(&logutil.LogConfig{
 		Level:  logLevel,
-		Format: "highlight",
+		Format: "text",
 	})
 	TestingT(t)
 }

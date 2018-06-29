@@ -13,6 +13,7 @@
 
 package plan
 
+import "fmt"
 import "github.com/pingcap/tidb/sessionctx"
 
 const (
@@ -345,6 +346,9 @@ func (p PhysicalIndexReader) init(ctx sessionctx.Context) *PhysicalIndexReader {
 		p.schema = is.dataSourceSchema
 	}
 	p.OutputColumns = p.schema.Clone().Columns
+	for i, outputCol := range p.OutputColumns {
+		fmt.Printf("outputCol.Position=%v, p.schema.Columns[i].Position=%v\n", outputCol.Position, p.schema.Columns[i].Position)
+	}
 	return &p
 }
 

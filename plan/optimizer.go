@@ -60,6 +60,7 @@ type logicalOptRule interface {
 // The node must be prepared first.
 func Optimize(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error) {
 	ctx.GetSessionVars().PlanID = 0
+	ctx.GetSessionVars().ColID = 0
 	builder := &planBuilder{
 		ctx:       ctx,
 		is:        is,
@@ -91,6 +92,7 @@ func Optimize(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (
 // BuildLogicalPlan used to build logical plan from ast.Node.
 func BuildLogicalPlan(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error) {
 	ctx.GetSessionVars().PlanID = 0
+	ctx.GetSessionVars().ColID = 0
 	builder := &planBuilder{
 		ctx:       ctx,
 		is:        is,
@@ -120,6 +122,7 @@ func doOptimize(flag uint64, logic LogicalPlan) (PhysicalPlan, error) {
 	if !AllowCartesianProduct && existsCartesianProduct(logic) {
 		return nil, errors.Trace(ErrCartesianProductUnsupported)
 	}
+	printLogicalPlanSchema(logic, "")
 	physical, err := physicalOptimize(logic)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -165,6 +168,7 @@ func physicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
 		return nil, ErrInternal.GenByArgs("Can't find a proper physical plan for this query")
 	}
 
+	printPhysicalPlanSchema(t.plan(), "")
 	t.plan().ResolveIndices()
 	return t.plan(), nil
 }

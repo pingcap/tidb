@@ -117,16 +117,17 @@ func checkCoverIndex(idx *model.IndexInfo, ranges []*ranger.Range) bool {
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalIndexScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
 	columns := make([]*model.ColumnInfo, 0, p.schema.Len())
-	tableColumns := p.Table.Cols()
+	tableColumns, idxInSchema := p.Table.Cols(), 0
 	for _, col := range p.schema.Columns {
-		if col.ID == model.ExtraHandleID {
-			columns = append(columns, &model.ColumnInfo{
-				ID:   model.ExtraHandleID,
-				Name: model.ExtraHandleName,
-			})
-		} else {
-			columns = append(columns, tableColumns[col.Position])
+		if col.ID != model.ExtraHandleID {
+			columns = append(columns, tableColumns[idxInSchema])
+			idxInSchema++
+			continue
 		}
+		columns = append(columns, &model.ColumnInfo{
+			ID:   model.ExtraHandleID,
+			Name: model.ExtraHandleName,
+		})
 	}
 	idxExec := &tipb.IndexScan{
 		TableId: p.Table.ID,

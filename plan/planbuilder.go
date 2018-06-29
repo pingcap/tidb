@@ -201,8 +201,7 @@ func (b *planBuilder) buildDo(v *ast.DoStmt) Plan {
 		}
 		p.Exprs = append(p.Exprs, expr)
 		schema.Append(&expression.Column{
-			FromID:   p.id,
-			Position: schema.Len() + 1,
+			Position: b.ctx.GetSessionVars().AllocColID(),
 			RetType:  expr.GetType(),
 		})
 	}
@@ -395,7 +394,6 @@ func (b *planBuilder) buildCheckIndex(dbName model.CIStr, as *ast.AdminStmt) Pla
 		return nil
 	}
 
-	id := 1
 	columns := make([]*model.ColumnInfo, 0, len(idx.Columns))
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(idx.Columns))...)
 	for _, idxCol := range idx.Columns {
@@ -403,8 +401,7 @@ func (b *planBuilder) buildCheckIndex(dbName model.CIStr, as *ast.AdminStmt) Pla
 			if idxCol.Name.L == col.Name.L {
 				columns = append(columns, col)
 				schema.Append(&expression.Column{
-					FromID:   id,
-					Position: schema.Len() + 1,
+					Position: b.ctx.GetSessionVars().AllocColID(),
 					RetType:  &col.FieldType,
 				})
 			}
@@ -426,7 +423,7 @@ func (b *planBuilder) buildCheckIndex(dbName model.CIStr, as *ast.AdminStmt) Pla
 	ts := PhysicalTableScan{Columns: columns, Table: is.Table}.init(b.ctx)
 	ts.SetSchema(is.dataSourceSchema)
 	cop.tablePlan = ts
-	is.initSchema(id, idx, true)
+	//is.initSchema(true)
 	t := finishCopTask(b.ctx, cop)
 
 	rootT := t.(*rootTask)
@@ -477,7 +474,7 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 		ret = p
 	case ast.AdminCheckIndexRange:
 		p := &CheckIndexRange{Table: as.Tables[0], IndexName: as.Index, HandleRanges: as.HandleRanges}
-		schema, err := buildCheckIndexSchema(as.Tables[0], as.Index)
+		schema, err := b.buildCheckIndexSchema(as.Tables[0], as.Index)
 		if err != nil {
 			b.err = errors.Trace(err)
 			break
@@ -494,7 +491,7 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 	return ret
 }
 
-func buildCheckIndexSchema(tn *ast.TableName, indexName string) (*expression.Schema, error) {
+func (b *planBuilder) buildCheckIndexSchema(tn *ast.TableName, indexName string) (*expression.Schema, error) {
 	schema := expression.NewSchema()
 	indexName = strings.ToLower(indexName)
 	indicesInfo := tn.TableInfo.Indices
@@ -503,24 +500,22 @@ func buildCheckIndexSchema(tn *ast.TableName, indexName string) (*expression.Sch
 		if idxInfo.Name.L != indexName {
 			continue
 		}
-		for i, idxCol := range idxInfo.Columns {
+		for _, idxCol := range idxInfo.Columns {
 			col := cols[idxCol.Offset]
 			schema.Append(&expression.Column{
-				FromID:   1,
 				ColName:  idxCol.Name,
 				TblName:  tn.Name,
 				DBName:   tn.Schema,
 				RetType:  &col.FieldType,
-				Position: i,
+				Position: b.ctx.GetSessionVars().AllocColID(),
 				ID:       col.ID})
 		}
 		schema.Append(&expression.Column{
-			FromID:   1,
 			ColName:  model.NewCIStr("extra_handle"),
 			TblName:  tn.Name,
 			DBName:   tn.Schema,
 			RetType:  types.NewFieldType(mysql.TypeLonglong),
-			Position: len(idxInfo.Columns),
+			Position: b.ctx.GetSessionVars().AllocColID(),
 			ID:       -1,
 		})
 	}
@@ -744,8 +739,8 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 		}
 		p.SetSchema(buildShowSchema(show))
 	}
-	for i, col := range p.schema.Columns {
-		col.Position = i
+	for _, col := range p.schema.Columns {
+		col.Position = p.ctx.GetSessionVars().AllocColID()
 	}
 	mockTablePlan := LogicalTableDual{}.init(b.ctx)
 	mockTablePlan.SetSchema(p.schema)
@@ -888,7 +883,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 	}
 	tableInfo := tn.TableInfo
 	// Build Schema with DBName otherwise ColumnRef with DBName cannot match any Column in Schema.
-	schema := expression.TableInfo2SchemaWithDBName(tn.Schema, tableInfo)
+	schema := expression.TableInfo2SchemaWithDBName(b.ctx, tn.Schema, tableInfo)
 	tableInPlan, ok := b.is.TableByID(tableInfo.ID)
 	if !ok {
 		b.err = errors.Errorf("Can't get table %s.", tableInfo.Name.O)
@@ -1092,7 +1087,7 @@ func (b *planBuilder) buildLoadData(ld *ast.LoadDataStmt) Plan {
 		b.err = infoschema.ErrTableNotExists.GenByArgs(db, tableInfo.Name.O)
 		return nil
 	}
-	schema := expression.TableInfo2Schema(tableInfo)
+	schema := expression.TableInfo2Schema(b.ctx, tableInfo)
 	mockTablePlan := LogicalTableDual{}.init(b.ctx)
 	mockTablePlan.SetSchema(schema)
 	p.GenCols = b.resolveGeneratedColumns(tableInPlan.Cols(), nil, mockTablePlan)
