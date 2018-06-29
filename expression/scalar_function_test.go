@@ -60,8 +60,8 @@ func (s *testEvaluatorSuite) TestScalarFuncs2Exprs(c *C) {
 		Position: 1,
 		RetType:  types.NewFieldType(mysql.TypeDouble),
 	}
-	sf0, _ := newFunction(ast.LT, a.Clone(), Zero).(*ScalarFunction)
-	sf1, _ := newFunction(ast.LT, a.Clone(), One).(*ScalarFunction)
+	sf0, _ := newFunction(ast.LT, a, Zero).(*ScalarFunction)
+	sf1, _ := newFunction(ast.LT, a, One).(*ScalarFunction)
 
 	funcs := []*ScalarFunction{sf0, sf1}
 	exprs := ScalarFuncs2Exprs(funcs)
