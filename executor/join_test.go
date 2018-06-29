@@ -266,6 +266,17 @@ func (s *testSuite) TestJoin(c *C) {
 	tk.MustExec(`insert into t values (1);`)
 	tk.MustQuery(`select t2.a, t1.a from t t1 inner join (select "1" as a) t2 on t2.a = t1.a;`).Check(testkit.Rows("1 1"))
 	tk.MustQuery(`select t2.a, t1.a from t t1 inner join (select "2" as b, "1" as a) t2 on t2.a = t1.a;`).Check(testkit.Rows("1 1"))
+
+	tk.MustExec("drop table if exists t1, t2, t3, t4")
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustExec("create table t2(a int, b int)")
+	tk.MustExec("create table t3(a int, b int)")
+	tk.MustExec("create table t4(a int, b int)")
+	tk.MustExec("insert into t1 values(1, 1)")
+	tk.MustExec("insert into t2 values(1, 1)")
+	tk.MustExec("insert into t3 values(1, 1)")
+	tk.MustExec("insert into t4 values(1, 1)")
+	tk.MustQuery("select min(t2.b) from t1 right join t2 on t2.a=t1.a right join t3 on t2.a=t3.a left join t4 on t3.a=t4.a").Check(testkit.Rows("1"))
 }
 
 func (s *testSuite) TestJoinCast(c *C) {
@@ -842,11 +853,11 @@ func (s *testSuite) TestMergejoinOrder(c *C) {
 	tk.MustExec("insert into t2 select a*100, b*100 from t1;")
 
 	tk.MustQuery("explain select /*+ TIDB_SMJ(t2) */ * from t1 left outer join t2 on t1.a=t2.a and t1.a!=3 order by t1.a;").Check(testkit.Rows(
-		"TableScan_10   cop table:t1, range:[-inf,+inf], keep order:true 10000.00",
-		"TableReader_11 MergeJoin_15  root data:TableScan_10 10000.00",
-		"TableScan_12   cop table:t2, range:[-inf,+inf], keep order:true 10000.00",
-		"TableReader_13 MergeJoin_15  root data:TableScan_12 10000.00",
-		"MergeJoin_15  TableReader_11,TableReader_13 root left outer join, left key:test.t1.a, right key:test.t2.a, left cond:[ne(test.t1.a, 3)] 12500.00",
+		"MergeJoin_15 root left outer join, left key:test.t1.a, right key:test.t2.a, left cond:[ne(test.t1.a, 3)] 12500.00",
+		"├─TableReader_11 root data:TableScan_10 10000.00",
+		"│ └─TableScan_10 cop table:t1, range:[-inf,+inf], keep order:true 10000.00",
+		"└─TableReader_13 root data:TableScan_12 10000.00",
+		"  └─TableScan_12 cop table:t2, range:[-inf,+inf], keep order:true 10000.00",
 	))
 
 	tk.MustExec("set @@tidb_max_chunk_size=1")

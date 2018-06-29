@@ -18,11 +18,15 @@
 package tables
 
 import (
+	"bytes"
 	"encoding/binary"
+	"fmt"
 	"math"
+	"sort"
 	"strings"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
@@ -35,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/mock"
 	binlog "github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
 	"github.com/spaolacci/murmur3"
@@ -54,6 +59,24 @@ type Table struct {
 	indexPrefix     kv.Key
 	alloc           autoid.Allocator
 	meta            *model.TableInfo
+
+	partitionExpr *PartitionExpr
+}
+
+// PartitionExpr is the partition definition expressions.
+// There are two expressions exist, because Locate use binary search, which requires:
+// Given a compare function, for any partition range i, if cmp[i] > 0, then cmp[i+1] > 0.
+// While partition prune must use the accurate range to do prunning.
+// partition by range (x)
+//   (partition
+//      p1 values less than (y1)
+//      p2 values less than (y2)
+//      p3 values less than (y3))
+// PartitionPrune: (x < y1); (y1 <= x < y2); (y2 <= x < y3)
+// Locate: (x < y1); (x < y2); (x < y3)
+type PartitionExpr struct {
+	PartitionPrune []expression.Expression
+	Locate         []expression.Expression
 }
 
 // MockTableFromMeta only serves for test.
@@ -65,6 +88,11 @@ func MockTableFromMeta(tableInfo *model.TableInfo) table.Table {
 	}
 	t := newTable(tableInfo.ID, columns, nil)
 	t.meta = tableInfo
+	partitionExpr, err := generatePartitionExpr(tableInfo)
+	if err != nil {
+		return nil
+	}
+	t.partitionExpr = partitionExpr
 	return t
 }
 
@@ -113,7 +141,66 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 	}
 
 	t.meta = tblInfo
+	partitionExpr, err := generatePartitionExpr(tblInfo)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	t.partitionExpr = partitionExpr
 	return t, nil
+}
+
+// PartitionExpr returns the partition expression.
+func (t *Table) PartitionExpr() *PartitionExpr {
+	return t.partitionExpr
+}
+
+func generatePartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
+	pi := tblInfo.GetPartitionInfo()
+	if pi == nil {
+		return nil, nil
+	}
+	// TODO: Support other partition method.
+	if pi.Type != model.PartitionTypeRange {
+		// To be compatible with the old code, don't return error here.
+		return nil, nil
+	}
+
+	ctx := mock.NewContext()
+	partitionPruneExprs := make([]expression.Expression, 0, len(pi.Definitions))
+	locateExprs := make([]expression.Expression, 0, len(pi.Definitions))
+	var buf bytes.Buffer
+	for i := 0; i < len(pi.Definitions); i++ {
+		if strings.EqualFold(pi.Definitions[i].LessThan[0], "MAXVALUE") {
+			// Expr less than maxvalue is always true.
+			fmt.Fprintf(&buf, "true")
+		} else {
+			fmt.Fprintf(&buf, "((%s) < (%s))", pi.Expr, pi.Definitions[i].LessThan[0])
+		}
+		expr, err := expression.ParseSimpleExpr(ctx, buf.String(), tblInfo)
+		if err != nil {
+			// If it got an error here, ddl may hang forever, so this error log is important.
+			log.Error("wrong table partition expression:", errors.ErrorStack(err), buf.String())
+			return nil, errors.Trace(err)
+		}
+		locateExprs = append(locateExprs, expr)
+
+		if i > 0 {
+			fmt.Fprintf(&buf, " and ((%s) >= (%s))", pi.Expr, pi.Definitions[i-1].LessThan[0])
+		}
+
+		expr, err = expression.ParseSimpleExpr(ctx, buf.String(), tblInfo)
+		if err != nil {
+			// If it got an error here, ddl may hang forever, so this error log is important.
+			log.Error("wrong table partition expression:", errors.ErrorStack(err), buf.String())
+			return nil, errors.Trace(err)
+		}
+		partitionPruneExprs = append(partitionPruneExprs, expr)
+		buf.Reset()
+	}
+	return &PartitionExpr{
+		PartitionPrune: partitionPruneExprs,
+		Locate:         locateExprs,
+	}, nil
 }
 
 // newTable constructs a Table instance.
@@ -214,6 +301,11 @@ func (t *Table) IndexPrefix() kv.Key {
 // RecordKey implements table.Table RecordKey interface.
 func (t *Table) RecordKey(h int64) kv.Key {
 	return tablecodec.EncodeRecordKey(t.recordPrefix, h)
+}
+
+func partitionRecordKey(pid int64, handle int64) kv.Key {
+	recordPrefix := tablecodec.GenTableRecordPrefix(pid)
+	return tablecodec.EncodeRecordKey(recordPrefix, handle)
 }
 
 // FirstKey implements table.Table FirstKey interface.
@@ -353,6 +445,28 @@ func (t *Table) getRollbackableMemStore(ctx sessionctx.Context) kv.RetrieverMuta
 	return bs
 }
 
+// locatePartition returns the partition ID of the input record.
+func (t *Table) locatePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int64, error) {
+	var err error
+	partitionExprs := t.partitionExpr.Locate
+	idx := sort.Search(len(partitionExprs), func(i int) bool {
+		var ret int64
+		ret, _, err = partitionExprs[i].EvalInt(ctx, types.DatumRow(r))
+		if err != nil {
+			return true // Break the search.
+		}
+		return ret > 0
+	})
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if idx < 0 || idx >= len(partitionExprs) {
+		// The data does not belong to any of the partition?
+		return 0, errors.Trace(table.ErrTrgInvalidCreationCtx)
+	}
+	return pi.Definitions[idx].ID, nil
+}
+
 // AddRecord implements table.Table AddRecord interface.
 func (t *Table) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
 	var hasRecordID bool
@@ -372,6 +486,14 @@ func (t *Table) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleChe
 	}
 	if !hasRecordID {
 		recordID, err = t.AllocAutoID(ctx)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+	}
+
+	pid := t.ID
+	if partitionInfo := t.meta.GetPartitionInfo(); partitionInfo != nil {
+		pid, err = t.locatePartition(ctx, partitionInfo, r)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -416,7 +538,13 @@ func (t *Table) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleChe
 	}
 	writeBufs := sessVars.GetWriteStmtBufs()
 	adjustRowValuesBuf(writeBufs, len(row))
-	key := t.RecordKey(recordID)
+	// key may be a partition ID or a table ID.
+	var key kv.Key
+	if pid == t.ID {
+		key = t.RecordKey(recordID)
+	} else {
+		key = partitionRecordKey(pid, recordID)
+	}
 	writeBufs.RowValBuf, err = tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues)
 	if err != nil {
 		return 0, errors.Trace(err)

@@ -55,9 +55,9 @@ type reorgCtx struct {
 }
 
 // newContext gets a context. It is only used for adding column in reorganization state.
-func (d *ddl) newContext() sessionctx.Context {
+func newContext(store kv.Storage) sessionctx.Context {
 	c := mock.NewContext()
-	c.Store = d.store
+	c.Store = store
 	c.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, false)
 	c.GetSessionVars().StmtCtx.TimeZone = time.UTC
 	return c
@@ -66,7 +66,7 @@ func (d *ddl) newContext() sessionctx.Context {
 const defaultWaitReorgTimeout = 10 * time.Second
 
 // ReorgWaitTimeout is the timeout that wait ddl in write reorganization stage.
-var ReorgWaitTimeout = 1 * time.Second
+var ReorgWaitTimeout = 5 * time.Second
 
 func (rc *reorgCtx) notifyReorgCancel() {
 	atomic.StoreInt32(&rc.notifyCancelReorgJob, 1)
@@ -104,48 +104,48 @@ func (rc *reorgCtx) clean() {
 	rc.doneCh = nil
 }
 
-func (d *ddl) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, f func() error) error {
+func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, lease time.Duration, f func() error) error {
 	job := reorgInfo.Job
-	if d.reorgCtx.doneCh == nil {
+	if w.reorgCtx.doneCh == nil {
 		// start a reorganization job
-		d.wait.Add(1)
-		d.reorgCtx.doneCh = make(chan error, 1)
+		w.wg.Add(1)
+		w.reorgCtx.doneCh = make(chan error, 1)
 		// initial reorgCtx
-		d.reorgCtx.setRowCount(job.GetRowCount())
-		d.reorgCtx.setNextHandle(reorgInfo.StartHandle)
+		w.reorgCtx.setRowCount(job.GetRowCount())
+		w.reorgCtx.setNextHandle(reorgInfo.StartHandle)
 		go func() {
-			defer d.wait.Done()
-			d.reorgCtx.doneCh <- f()
+			defer w.wg.Done()
+			w.reorgCtx.doneCh <- f()
 		}()
 	}
 
 	waitTimeout := defaultWaitReorgTimeout
-	// if d.lease is 0, we are using a local storage,
+	// if lease is 0, we are using a local storage,
 	// and we can wait the reorganization to be done here.
-	// if d.lease > 0, we don't need to wait here because
+	// if lease > 0, we don't need to wait here because
 	// we should update some job's progress context and try checking again,
 	// so we use a very little timeout here.
-	if d.lease > 0 {
+	if lease > 0 {
 		waitTimeout = ReorgWaitTimeout
 	}
 
 	// wait reorganization job done or timeout
 	select {
-	case err := <-d.reorgCtx.doneCh:
-		rowCount, _ := d.reorgCtx.getRowCountAndHandle()
+	case err := <-w.reorgCtx.doneCh:
+		rowCount, _ := w.reorgCtx.getRowCountAndHandle()
 		log.Infof("[ddl] run reorg job done, handled %d rows", rowCount)
 		// Update a job's RowCount.
 		job.SetRowCount(rowCount)
-		d.reorgCtx.clean()
+		w.reorgCtx.clean()
 		return errors.Trace(err)
-	case <-d.quitCh:
+	case <-w.quitCh:
 		log.Info("[ddl] run reorg job ddl quit")
-		d.reorgCtx.setNextHandle(0)
-		d.reorgCtx.setRowCount(0)
+		w.reorgCtx.setNextHandle(0)
+		w.reorgCtx.setRowCount(0)
 		// We return errWaitReorgTimeout here too, so that outer loop will break.
 		return errWaitReorgTimeout
 	case <-time.After(waitTimeout):
-		rowCount, doneHandle := d.reorgCtx.getRowCountAndHandle()
+		rowCount, doneHandle := w.reorgCtx.getRowCountAndHandle()
 		// Update a job's RowCount.
 		job.SetRowCount(rowCount)
 		// Update a reorgInfo's handle.
@@ -156,13 +156,13 @@ func (d *ddl) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, f func() error) er
 	}
 }
 
-func (d *ddl) isReorgRunnable() error {
-	if d.isClosed() {
+func (w *worker) isReorgRunnable(d *ddlCtx) error {
+	if isChanClosed(w.quitCh) {
 		// Worker is closed. So it can't do the reorganizational job.
 		return errInvalidWorker.Gen("worker is closed")
 	}
 
-	if d.reorgCtx.isReorgCanceled() {
+	if w.reorgCtx.isReorgCanceled() {
 		// Job is cancelled. So it can't be done.
 		return errCancelledDDLJob
 	}
@@ -177,11 +177,12 @@ func (d *ddl) isReorgRunnable() error {
 
 type reorgInfo struct {
 	*model.Job
+
 	// StartHandle is the first handle of the adding indices table.
 	StartHandle int64
 	// EndHandle is the last handle of the adding indices table.
 	EndHandle int64
-	d         *ddl
+	d         *ddlCtx
 	first     bool
 }
 
@@ -228,7 +229,7 @@ func getColumnsTypes(columns []*model.ColumnInfo) []*types.FieldType {
 }
 
 // builds a desc table scan upon tblInfo.
-func (d *ddl) buildDescTableScan(ctx context.Context, startTS uint64, tblInfo *model.TableInfo, columns []*model.ColumnInfo, limit uint64) (distsql.SelectResult, error) {
+func (d *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tblInfo *model.TableInfo, columns []*model.ColumnInfo, limit uint64) (distsql.SelectResult, error) {
 	dagPB, err := buildDescTableScanDAG(startTS, tblInfo, columns, limit)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -245,7 +246,7 @@ func (d *ddl) buildDescTableScan(ctx context.Context, startTS uint64, tblInfo *m
 	builder.Request.IsolationLevel = kv.SI
 
 	kvReq, err := builder.Build()
-	sctx := d.newContext()
+	sctx := newContext(d.store)
 	result, err := distsql.Select(ctx, sctx, kvReq, getColumnsTypes(columns), statistics.NewQueryFeedback(0, nil, 0, false))
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -255,7 +256,7 @@ func (d *ddl) buildDescTableScan(ctx context.Context, startTS uint64, tblInfo *m
 }
 
 // GetTableMaxRowID gets the last row id of the table.
-func (d *ddl) GetTableMaxRowID(startTS uint64, tblInfo *model.TableInfo) (maxRowID int64, emptyTable bool, err error) {
+func (d *ddlCtx) GetTableMaxRowID(startTS uint64, tblInfo *model.TableInfo) (maxRowID int64, emptyTable bool, err error) {
 	maxRowID = int64(math.MaxInt64)
 	var columns []*model.ColumnInfo
 	if tblInfo.PKIsHandle {
@@ -294,7 +295,7 @@ func (d *ddl) GetTableMaxRowID(startTS uint64, tblInfo *model.TableInfo) (maxRow
 
 var gofailOnceGuard bool
 
-func (d *ddl) getReorgInfo(t *meta.Meta, job *model.Job, tbl table.Table) (*reorgInfo, error) {
+func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*reorgInfo, error) {
 	var err error
 
 	info := &reorgInfo{

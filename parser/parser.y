@@ -600,6 +600,7 @@ import (
 	ConstraintKeywordOpt		"Constraint Keyword or empty"
 	CreateIndexStmtUnique		"CREATE INDEX optional UNIQUE clause"
 	CreateTableOptionListOpt	"create table option list opt"
+	CreateTableSelectOpt	        "Select/Union statement in CREATE TABLE ... SELECT"
 	DatabaseOption			"CREATE Database specification"
 	DatabaseOptionList		"CREATE Database specification list"
 	DatabaseOptionListOpt		"CREATE Database specification list opt"
@@ -653,6 +654,7 @@ import (
 	JoinType			"join type"
 	KillOrKillTiDB			"Kill or Kill TiDB"
 	LikeEscapeOpt 			"like escape option"
+	LikeTableWithOrWithoutParen	"LIKE table_name or ( LIKE table_name )"
 	LimitClause			"LIMIT clause"
 	LimitOption			"Limit option could be integer or parameter marker."
 	Lines				"Lines clause"
@@ -663,6 +665,7 @@ import (
 	NoWriteToBinLogAliasOpt 	"NO_WRITE_TO_BINLOG alias LOCAL or empty"
 	ObjectType			"Grant statement object type"
 	OnDuplicateKeyUpdate		"ON DUPLICATE KEY UPDATE value list"
+	DuplicateOpt			"[IGNORE|REPLACE] in CREATE TABLE ... SELECT statement"
 	OptFull				"Full or empty"
 	Order				"ORDER BY clause optional collation specification"
 	OrderBy				"ORDER BY clause"
@@ -719,6 +722,7 @@ import (
 	TableAsNameOpt 			"table alias name optional"
 	TableElement			"table definition element"
 	TableElementList		"table definition element list"
+	TableElementListOpt		"table definition element list optional"
 	TableFactor 			"table factor"
 	TableLock			"Table name and lock type"
 	TableLockList			"Table lock list"
@@ -799,6 +803,7 @@ import (
 	TableOptimizerHintList	"Table level optimizer hint list"
 
 %type	<ident>
+	AsOpt			"AS or EmptyString"
 	KeyOrIndex		"{KEY|INDEX}"
 	ColumnKeywordOpt	"Column keyword or empty"
 	PrimaryOpt		"Optional primary keyword"
@@ -855,6 +860,8 @@ import (
 %precedence set
 %precedence lowerThanInsertValues
 %precedence insertValues
+%precedence lowerThanCreateTableSelect
+%precedence createTableSelect
 %precedence lowerThanKey
 %precedence key
 
@@ -948,7 +955,18 @@ AlterTableSpec:
 			Constraint: constraint,
 		}
 	}
-|	"DROP" ColumnKeywordOpt ColumnName
+|	"ADD" "PARTITION" PartitionDefinitionListOpt
+	{
+		var defs []*ast.PartitionDefinition
+		if $3 != nil {
+			defs = $3.([]*ast.PartitionDefinition)
+		}
+		$$ = &ast.AlterTableSpec{
+			Tp: ast.AlterTableAddPartitions,
+			PartDefinitions: defs,
+		}
+	}
+|	"DROP" ColumnKeywordOpt ColumnName RestrictOrCascadeOpt
 	{
 		$$ = &ast.AlterTableSpec{
 			Tp: ast.AlterTableDropColumn,
@@ -1727,42 +1745,26 @@ DatabaseOptionList:
  *          PRIMARY KEY (P_Id)
  *      )
  *******************************************************************/
+
 CreateTableStmt:
-	"CREATE" "TABLE" IfNotExists TableName '(' TableElementList ')' CreateTableOptionListOpt PartitionOpt
+	"CREATE" "TABLE" IfNotExists TableName TableElementListOpt CreateTableOptionListOpt PartitionOpt DuplicateOpt AsOpt CreateTableSelectOpt
 	{
-		tes := $6.([]interface {})
-		var columnDefs []*ast.ColumnDef
-		var constraints []*ast.Constraint
-		for _, te := range tes {
-			switch te := te.(type) {
-			case *ast.ColumnDef:
-				columnDefs = append(columnDefs, te)
-			case *ast.Constraint:
-				constraints = append(constraints, te)
-			}
+		stmt := $5.(*ast.CreateTableStmt)
+		stmt.Table = $4.(*ast.TableName)
+		stmt.IfNotExists = $3.(bool)
+		stmt.Options = $6.([]*ast.TableOption)
+		if $7 != nil {
+			stmt.Partition = $7.(*ast.PartitionOptions)
 		}
-		if len(columnDefs) == 0 {
-			yylex.Errorf("Column Definition List can't be empty.")
-			return 1
-		}
-		var part *ast.PartitionOptions
-		if $9 != nil {
-			part = $9.(*ast.PartitionOptions)
-		}
-		$$ = &ast.CreateTableStmt{
-			Table:          $4.(*ast.TableName),
-			IfNotExists:    $3.(bool),
-			Cols:           columnDefs,
-			Constraints:    constraints,
-			Options:        $8.([]*ast.TableOption),
-			Partition:	part,
-		}
+		stmt.OnDuplicate = $8.(ast.OnDuplicateCreateTableSelectType)
+		stmt.Select = $10.(*ast.CreateTableStmt).Select
+		$$ = stmt
 	}
-|	"CREATE" "TABLE" IfNotExists TableName "LIKE" TableName
+|	"CREATE" "TABLE" IfNotExists TableName LikeTableWithOrWithoutParen
 	{
 		$$ = &ast.CreateTableStmt{
 			Table:          $4.(*ast.TableName),
-			ReferTable:	$6.(*ast.TableName),
+			ReferTable:	$5.(*ast.TableName),
 			IfNotExists:    $3.(bool),
 		}
 	}
@@ -1814,6 +1816,7 @@ PartitionNumOpt:
 	{}
 
 PartitionDefinitionListOpt:
+	/* empty */ %prec lowerThanCreateTableSelect
 	{
 		$$ = nil
 	}
@@ -1875,6 +1878,57 @@ PartDefStorageOpt:
 	{}
 |	"ENGINE" eq Identifier
 	{}
+
+DuplicateOpt:
+	{
+		$$ = ast.OnDuplicateCreateTableSelectError
+	}
+|   "IGNORE"
+	{
+		$$ = ast.OnDuplicateCreateTableSelectIgnore
+	}
+|   "REPLACE"
+	{
+		$$ = ast.OnDuplicateCreateTableSelectReplace
+	}
+
+AsOpt:
+	{}
+|	"AS"
+	{}
+
+CreateTableSelectOpt:
+	/* empty */
+	{
+		$$ = &ast.CreateTableStmt{}
+	}
+|
+	SelectStmt
+	{
+		$$ = &ast.CreateTableStmt{Select: $1}
+	}
+|
+	UnionStmt
+	{
+		$$ = &ast.CreateTableStmt{Select: $1}
+	}
+|
+	SubSelect %prec createTableSelect
+	// TODO: We may need better solution as issue #320.
+	{
+		$$ = &ast.CreateTableStmt{Select: $1}
+	}
+
+LikeTableWithOrWithoutParen:
+	"LIKE" TableName
+	{
+		$$ = $2
+	}
+|
+	'(' "LIKE" TableName ')'
+	{
+		$$ = $3
+	}
 
 /*******************************************************************
  *
@@ -4107,16 +4161,20 @@ SelectStmtBasic:
 	}
 
 SelectStmtFromDual:
-	SelectStmtBasic FromDual WhereClauseOptional
+	SelectStmtBasic FromDual WhereClauseOptional OrderByOptional
 	{
 		st := $1.(*ast.SelectStmt)
 		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
 		if lastField.Expr != nil && lastField.AsName.O == "" {
-			lastEnd := yyS[yypt-1].offset-1
+			lastEnd := yyS[yypt-2].offset-1	
 			lastField.SetText(parser.src[lastField.Offset:lastEnd])
 		}
 		if $3 != nil {
 			st.Where = $3.(ast.ExprNode)
+		}
+
+		if $4 != nil {
+			st.OrderBy = $4.(*ast.OrderByClause)
 		}
 	}
 
@@ -5230,6 +5288,12 @@ ShowStmt:
 			Tp: ast.ShowProfiles,
 		}
 	}
+|	"SHOW" "PRIVILEGES"
+	{
+		$$ = &ast.ShowStmt{
+			Tp: ast.ShowPrivileges,
+		}
+	}
 
 ShowIndexKwd:
 	"INDEX"
@@ -5604,6 +5668,36 @@ TableElementList:
 		}
 	}
 
+TableElementListOpt:
+	/* empty */ %prec lowerThanCreateTableSelect
+	{
+		var columnDefs []*ast.ColumnDef
+		var constraints []*ast.Constraint
+		$$ = &ast.CreateTableStmt{
+			Cols:           columnDefs,
+			Constraints:    constraints,
+		}
+	}
+|
+	'(' TableElementList ')'
+	{
+		tes := $2.([]interface {})
+		var columnDefs []*ast.ColumnDef
+		var constraints []*ast.Constraint
+		for _, te := range tes {
+			switch te := te.(type) {
+			case *ast.ColumnDef:
+				columnDefs = append(columnDefs, te)
+			case *ast.Constraint:
+				constraints = append(constraints, te)
+			}
+		}
+		$$ = &ast.CreateTableStmt{
+			Cols:           columnDefs,
+			Constraints:    constraints,
+		}
+	}
+
 TableOption:
 	"ENGINE" StringName
 	{
@@ -5696,6 +5790,7 @@ AlterTableOptionListOpt:
 |	TableOptionList %prec higherThanComma
 
 CreateTableOptionListOpt:
+	/* empty */ %prec lowerThanCreateTableSelect
 	{
 		$$ = []*ast.TableOption{}
 	}
