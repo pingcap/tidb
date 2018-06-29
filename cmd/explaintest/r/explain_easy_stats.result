@@ -6,6 +6,8 @@ create table t2 (c1 int unique, c2 int);
 load stats 's/explain_easy_stats_t2.json';
 create table t3 (a bigint, b bigint, c bigint, d bigint);
 load stats 's/explain_easy_stats_t3.json';
+create table index_prune(a bigint(20) NOT NULL, b bigint(20) NOT NULL, c tinyint(4) NOT NULL, primary key(a, b), index idx_b_c_a(b, c, a));
+load stats 's/explain_easy_stats_index_prune.json';
 set @@session.tidb_opt_insubquery_unfold = 1;
 set @@session.tidb_opt_agg_push_down = 1;
 explain select * from t3 where exists (select s.a from t3 s having sum(s.a) = t3.a );
@@ -99,15 +101,13 @@ MemTableScan_4	root		10000.00
 explain select c2 = (select c2 from t2 where t1.c1 = t2.c1 order by c1 limit 1) from t1;
 id	task	operator info	count
 Projection_12	root	eq(test.t1.c2, test.t2.c2)	1999.00
-└─Apply_14	root	left outer join, inner:Limit_21	1999.00
+└─Apply_14	root	left outer join, inner:Limit_22	1999.00
   ├─TableReader_16	root	data:TableScan_15	1999.00
   │ └─TableScan_15	cop	table:t1, range:[-inf,+inf], keep order:false	1999.00
-  └─Limit_21	root	offset:0, count:1	1.00
-    └─IndexLookUp_36	root	index:Limit_35, table:TableScan_33	1.00
-      ├─Limit_35	cop	offset:0, count:1	1.00
-      │ └─Selection_34	cop	eq(test.t1.c1, test.t2.c1)	1.00
-      │   └─IndexScan_32	cop	table:t2, index:c1, range:[<nil>,+inf], keep order:true	1.25
-      └─TableScan_33	cop	table:t2, keep order:false	1.00
+  └─Limit_22	root	offset:0, count:1	1.00
+    └─IndexLookUp_47	root	index:IndexScan_45, table:TableScan_46	0.00
+      ├─IndexScan_45	cop	table:t2, index:c1, range: decided by [eq(test.t1.c1, test.t2.c1)], keep order:true	0.00
+      └─TableScan_46	cop	table:t2, keep order:false	0.00
 explain select * from t1 order by c1 desc limit 1;
 id	task	operator info	count
 Limit_10	root	offset:0, count:1	1.00
@@ -152,4 +152,11 @@ label = "cop"
 "TableReader_12" -> "Selection_11"
 }
 
-drop table if exists t1, t2, t3;
+explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 1;
+id	task	operator info	count
+Limit_9	root	offset:0, count:1	1.00
+└─IndexLookUp_15	root	index:Limit_14, table:TableScan_13	1.00
+  ├─Limit_14	cop	offset:0, count:1	1.00
+  │ └─IndexScan_12	cop	table:index_prune, index:a, b, range:[1010010404050976781 26467085526790,1010010404050976781 26467085526790], keep order:false	1.00
+  └─TableScan_13	cop	table:index_prune, keep order:false	1.00
+drop table if exists t1, t2, t3, index_prune;

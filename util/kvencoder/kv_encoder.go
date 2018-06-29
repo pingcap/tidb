@@ -192,7 +192,7 @@ func (e *kvEncoder) GetSystemVariable(name string) (string, bool) {
 }
 
 func newMockTikvWithBootstrap() (kv.Storage, *domain.Domain, error) {
-	store, err := mockstore.NewMockTikvStore(mockstore.WithTxnLocalLatches(0))
+	store, err := mockstore.NewMockTikvStore()
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
