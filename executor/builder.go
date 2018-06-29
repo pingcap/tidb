@@ -1060,11 +1060,9 @@ func (b *executorBuilder) buildApply(apply *plan.PhysicalApply) *NestedLoopApply
 		return nil
 	}
 	joinSchema := expression.MergeSchema(leftChild.Schema(), rightChild.Schema())
-	for _, cond := range v.EqualConditions {
-		col0 := cond.GetArgs()[0].(*expression.Column)
-		col0.ResolveIndices(joinSchema)
-		col1 := cond.GetArgs()[1].(*expression.Column)
-		col1.ResolveIndices(joinSchema)
+	// TODO: remove this. Do this in Apply's ResolveIndices.
+	for i, cond := range v.EqualConditions {
+		v.EqualConditions[i] = cond.ResolveIndices(joinSchema).(*expression.ScalarFunction)
 	}
 	otherConditions := append(expression.ScalarFuncs2Exprs(v.EqualConditions), v.OtherConditions...)
 	defaultValues := v.DefaultValues
