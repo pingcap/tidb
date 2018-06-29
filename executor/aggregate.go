@@ -118,7 +118,7 @@ type AfFinalResult struct {
 //                             +++  +++          +++
 //                              ^    ^            ^
 //          +-+                 |    |            |
-//          | |        +-------------+            |
+//          | |        +--------o----+            |
 // inputCh  +-+        |        +-----------------+---+
 //          | |        |                              |
 //          ...    +---+------------+            +----+-----------+
@@ -146,7 +146,7 @@ type HashAggExec struct {
 
 	// After we support parallel execution for aggregation functions with distinct,
 	// we can remove this attribute.
-	doesUnparallelExec bool
+	isUnparallelExec bool
 
 	finishCh         chan struct{}
 	finalOutputCh    chan *AfFinalResult
@@ -199,7 +199,7 @@ func (d *HashAggIntermData) ToRows(sc *stmtctx.StatementContext, rows []types.Da
 
 // Close implements the Executor Close interface.
 func (e *HashAggExec) Close() error {
-	if e.doesUnparallelExec {
+	if e.isUnparallelExec {
 		e.groupMap = nil
 		e.groupIterator = nil
 		e.aggCtxsMap = nil
@@ -230,7 +230,7 @@ func (e *HashAggExec) Open(ctx context.Context) error {
 	}
 	e.prepared = false
 
-	if e.doesUnparallelExec {
+	if e.isUnparallelExec {
 		e.initForUnparallelExec()
 		return nil
 	}
@@ -356,6 +356,8 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 			w.globalOutputCh <- &AfFinalResult{err: errors.Trace(err)}
 			return
 		}
+		// The intermData can be promised to be not empty if reaching here,
+		// so we set needShuffle to be true.
 		needShuffle = true
 	}
 }
@@ -522,7 +524,7 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 // Next implements the Executor Next interface.
 func (e *HashAggExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
-	if e.doesUnparallelExec {
+	if e.isUnparallelExec {
 		return errors.Trace(e.unparallelExec(ctx, chk))
 	}
 	return errors.Trace(e.parallelExec(ctx, chk))
