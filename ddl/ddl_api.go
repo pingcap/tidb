@@ -1356,7 +1356,21 @@ func modifiable(origin *types.FieldType, to *types.FieldType) error {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 			return nil
 		}
-	case mysql.TypeEnum:
+	case mysql.TypeEnum, mysql.TypeSet:
+		if origin.Tp == to.Tp {
+			if len(to.Elems) < len(origin.Elems) {
+				msg := fmt.Sprintf("elem length %d is less than origin %d", len(to.Elems), len(origin.Elems))
+				return errUnsupportedModifyColumn.GenByArgs(msg)
+			}
+			for index, originElem := range origin.Elems {
+				toElem := to.Elems[index]
+				if originElem != toElem {
+					msg := fmt.Sprintf("cannot modify value %s to %s", originElem, toElem)
+					return errUnsupportedModifyColumn.GenByArgs(msg)
+				}
+			}
+			return nil
+		}
 		return errUnsupportedModifyColumn.GenByArgs("modify enum column is not supported")
 	default:
 		if origin.Tp == to.Tp {

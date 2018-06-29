@@ -1244,6 +1244,7 @@ func (s *testDBSuite) TestChangeColumn(c *C) {
 	c.Assert(hasNotNull, IsFalse)
 	// for enum
 	s.mustExec(c, "alter table t3 add column en enum('a', 'b', 'c') not null default 'a'")
+	s.mustExec(c, "alter table t3 modify column en enum('a', 'b', 'c', 'd') not null default 'a'")
 
 	// for failing tests
 	sql := "alter table t3 change aa a bigint default ''"
@@ -1254,7 +1255,9 @@ func (s *testDBSuite) TestChangeColumn(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrWrongTableName)
 	sql = "alter table t3 change aa a bigint not null"
 	s.testErrorCode(c, sql, tmysql.ErrUnknown)
-	sql = "alter table t3 modify en enum('a', 'z', 'b', 'c') not null default 'a'"
+	sql = "alter table t3 modify en enum('a', 'b', 'c') not null default 'a'"
+	s.testErrorCode(c, sql, tmysql.ErrUnknown)
+	sql = "alter table t3 modify en enum('a', 'z', 'b', 'c', 'd') not null default 'a'"
 	s.testErrorCode(c, sql, tmysql.ErrUnknown)
 	// Rename to an existing column.
 	s.mustExec(c, "alter table t3 add column a bigint")
