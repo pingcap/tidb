@@ -748,9 +748,14 @@ func ProduceFloatWithSpecifiedTp(f float64, target *FieldType, sc *stmtctx.State
 	// If no D is set, we will handle it like origin float whether M is set or not.
 	if target.Flen != UnspecifiedLength && target.Decimal != UnspecifiedLength {
 		f, err = TruncateFloat(f, target.Flen, target.Decimal)
-		err = sc.HandleOverflow(err, err)
+		if err = sc.HandleOverflow(err, err); err != nil {
+			return f, errors.Trace(err)
+		}
 	}
-	return f, errors.Trace(err)
+	if mysql.HasUnsignedFlag(target.Flag) && f < 0 {
+		return 0, overflow(f, target.Tp)
+	}
+	return f, nil
 }
 
 func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
