@@ -15,6 +15,7 @@ package executor
 
 import (
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/mysql"
@@ -189,11 +190,15 @@ type StreamAggExec struct {
 	curGroupKey  []types.Datum
 	tmpGroupKey  []types.Datum
 
-	// for chunk execution.
 	inputIter  *chunk.Iterator4Chunk
 	inputRow   chunk.Row
 	mutableRow chunk.MutRow
 	rowBuffer  []types.Datum
+
+	// for the new execution framework of aggregate functions
+	newAggFuncs    []aggfuncs.AggFunc
+	partialResults []aggfuncs.PartialResult
+	groupRows      []chunk.Row
 }
 
 // Open implements the Executor Open interface.
@@ -209,9 +214,16 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 	e.mutableRow = chunk.MutRowFromTypes(e.retTypes())
 	e.rowBuffer = make([]types.Datum, 0, e.Schema().Len())
 
-	e.aggCtxs = make([]*aggregation.AggEvaluateContext, 0, len(e.AggFuncs))
-	for _, agg := range e.AggFuncs {
-		e.aggCtxs = append(e.aggCtxs, agg.CreateContext(e.ctx.GetSessionVars().StmtCtx))
+	if e.newAggFuncs != nil {
+		e.partialResults = make([]aggfuncs.PartialResult, 0, len(e.newAggFuncs))
+		for _, newAggFunc := range e.newAggFuncs {
+			e.partialResults = append(e.partialResults, newAggFunc.AllocPartialResult())
+		}
+	} else {
+		e.aggCtxs = make([]*aggregation.AggEvaluateContext, 0, len(e.AggFuncs))
+		for _, agg := range e.AggFuncs {
+			e.aggCtxs = append(e.aggCtxs, agg.CreateContext(e.ctx.GetSessionVars().StmtCtx))
+		}
 	}
 
 	return nil
@@ -242,12 +254,23 @@ func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) e
 				return errors.Trace(err)
 			}
 			if meetNewGroup {
-				e.appendResult2Chunk(chk)
-			}
-			for i, af := range e.AggFuncs {
-				err := af.Update(e.aggCtxs[i], e.StmtCtx, e.inputRow)
+				err := e.consumeGroupRows()
 				if err != nil {
 					return errors.Trace(err)
+				}
+				err = e.appendResult2Chunk(chk)
+				if err != nil {
+					return errors.Trace(err)
+				}
+			}
+			if e.newAggFuncs != nil {
+				e.groupRows = append(e.groupRows, e.inputRow)
+			} else {
+				for i, af := range e.AggFuncs {
+					err := af.Update(e.aggCtxs[i], e.StmtCtx, e.inputRow)
+					if err != nil {
+						return errors.Trace(err)
+					}
 				}
 			}
 			if meetNewGroup {
@@ -255,7 +278,28 @@ func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) e
 				return nil
 			}
 		}
+		if e.newAggFuncs != nil {
+			err := e.consumeGroupRows()
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
 	}
+	return nil
+}
+
+func (e *StreamAggExec) consumeGroupRows() error {
+	if len(e.groupRows) == 0 {
+		return nil
+	}
+
+	for i, newAggFunc := range e.newAggFuncs {
+		err := newAggFunc.UpdatePartialResult(e.ctx, e.groupRows, e.partialResults[i])
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	e.groupRows = e.groupRows[:0]
 	return nil
 }
 
@@ -271,7 +315,10 @@ func (e *StreamAggExec) fetchChildIfNecessary(ctx context.Context, chk *chunk.Ch
 	// No more data.
 	if e.childrenResults[0].NumRows() == 0 {
 		if e.hasData || len(e.GroupByItems) == 0 {
-			e.appendResult2Chunk(chk)
+			err := e.appendResult2Chunk(chk)
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 		e.executed = true
 		return nil
@@ -285,7 +332,20 @@ func (e *StreamAggExec) fetchChildIfNecessary(ctx context.Context, chk *chunk.Ch
 
 // appendResult2Chunk appends result of all the aggregation functions to the
 // result chunk, and reset the evaluation context for each aggregation.
-func (e *StreamAggExec) appendResult2Chunk(chk *chunk.Chunk) {
+func (e *StreamAggExec) appendResult2Chunk(chk *chunk.Chunk) error {
+	if e.newAggFuncs != nil {
+		for i, newAggFunc := range e.newAggFuncs {
+			err := newAggFunc.AppendFinalResult2Chunk(e.ctx, e.partialResults[i], chk)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			newAggFunc.ResetPartialResult(e.partialResults[i])
+		}
+		if len(e.newAggFuncs) == 0 {
+			chk.SetNumVirtualRows(chk.NumRows() + 1)
+		}
+		return nil
+	}
 	e.rowBuffer = e.rowBuffer[:0]
 	for i, af := range e.AggFuncs {
 		e.rowBuffer = append(e.rowBuffer, af.GetResult(e.aggCtxs[i]))
@@ -293,6 +353,7 @@ func (e *StreamAggExec) appendResult2Chunk(chk *chunk.Chunk) {
 	}
 	e.mutableRow.SetDatums(e.rowBuffer...)
 	chk.AppendRow(e.mutableRow.ToRow())
+	return nil
 }
 
 // meetNewGroup returns a value that represents if the new group is different from last group.
