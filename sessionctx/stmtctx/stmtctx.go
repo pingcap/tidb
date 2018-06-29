@@ -23,6 +23,8 @@ import (
 )
 
 const (
+	// WarnLevelError represents level "Error" for 'SHOW WARNINGS' syntax.
+	WarnLevelError = "Error"
 	// WarnLevelWarning represents level "Warning" for 'SHOW WARNINGS' syntax.
 	WarnLevelWarning = "Warning"
 	// WarnLevelNote represents level "Note" for 'SHOW WARNINGS' syntax.
@@ -144,6 +146,15 @@ func (sc *StatementContext) AppendNote(warn error) {
 	sc.mu.Lock()
 	if len(sc.mu.warnings) < math.MaxUint16 {
 		sc.mu.warnings = append(sc.mu.warnings, SQLWarn{WarnLevelNote, warn})
+	}
+	sc.mu.Unlock()
+}
+
+// AppendError appends a warning with level 'Error'.
+func (sc *StatementContext) AppendError(warn error) {
+	sc.mu.Lock()
+	if len(sc.mu.warnings) < math.MaxUint16 {
+		sc.mu.warnings = append(sc.mu.warnings, SQLWarn{WarnLevelError, warn})
 	}
 	sc.mu.Unlock()
 }

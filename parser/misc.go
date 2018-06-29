@@ -498,6 +498,7 @@ var tokenMap = map[string]int{
 	"VIEW":                     view,
 	"VIRTUAL":                  virtual,
 	"WARNINGS":                 warnings,
+	"ERRORS":                   identSQLErrors,
 	"WEEK":                     week,
 	"WHEN":                     when,
 	"WHERE":                    where,
