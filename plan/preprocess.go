@@ -293,6 +293,14 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 			}
 		}
 	}
+	if stmt.Select != nil {
+		// FIXME: a temp error noticing 'not implemented' (issue 4754)
+		p.err = errors.New("'CREATE TABLE ... SELECT' is not implemented yet")
+		return
+	} else if len(stmt.Cols) == 0 && stmt.ReferTable == nil {
+		p.err = ddl.ErrTableMustHaveColumns
+		return
+	}
 }
 
 func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {

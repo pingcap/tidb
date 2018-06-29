@@ -250,12 +250,9 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 			break
 		}
 	}
-	rows, err := e.batchMarkDupRows(rows)
+	err := e.batchCheckAndInsert(rows, e.insertData)
 	if err != nil {
 		return nil, reachLimit, errors.Trace(err)
-	}
-	for _, row := range rows {
-		e.insertData(row)
 	}
 	if e.lastInsertID != 0 {
 		e.ctx.GetSessionVars().SetLastInsertID(e.lastInsertID)
@@ -274,22 +271,23 @@ func (e *LoadDataInfo) colsToRow(cols []string) types.DatumRow {
 	}
 	row, err := e.fillRowData(e.columns, e.row)
 	if err != nil {
-		warnLog := fmt.Sprintf("Load Data: insert data:%v failed:%v", e.row, errors.ErrorStack(err))
-		e.handleLoadDataWarnings(err, warnLog)
+		e.handleWarning(err,
+			fmt.Sprintf("Load Data: insert data:%v failed:%v", e.row, errors.ErrorStack(err)))
 		return nil
 	}
 	return row
 }
 
-func (e *LoadDataInfo) insertData(row types.DatumRow) {
+func (e *LoadDataInfo) insertData(row types.DatumRow) (int64, error) {
 	if row == nil {
-		return
+		return 0, nil
 	}
-	_, err := e.Table.AddRecord(e.ctx, row, false)
+	h, err := e.Table.AddRecord(e.ctx, row, false)
 	if err != nil {
-		warnLog := fmt.Sprintf("Load Data: insert data:%v failed:%v", row, errors.ErrorStack(err))
-		e.handleLoadDataWarnings(err, warnLog)
+		e.handleWarning(err,
+			fmt.Sprintf("Load Data: insert data:%v failed:%v", e.row, errors.ErrorStack(err)))
 	}
+	return h, nil
 }
 
 // GetFieldsFromLine splits line according to fieldsInfo, this function is exported for testing.

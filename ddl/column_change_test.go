@@ -16,6 +16,7 @@ package ddl
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
@@ -42,6 +43,7 @@ type testColumnChangeSuite struct {
 
 func (s *testColumnChangeSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
+	WaitTimeWhenErrorOccured = 1 * time.Microsecond
 	s.store = testCreateStore(c, "test_column_change")
 	s.dbInfo = &model.DBInfo{
 		Name: model.NewCIStr("test_column_change"),
@@ -183,7 +185,7 @@ func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx sessionctx.Cont
 		}
 	}
 	d.SetHook(tc)
-	d.start(context.Background())
+	d.start(context.Background(), nil)
 	job := testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, nil)
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	testCheckJobDone(c, d, job, true)
@@ -212,7 +214,7 @@ func (s *testColumnChangeSuite) testColumnDrop(c *C, ctx sessionctx.Context, d *
 		}
 	}
 	d.SetHook(tc)
-	d.start(context.Background())
+	d.start(context.Background(), nil)
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
 	testDropColumn(c, ctx, d, s.dbInfo, tbl.Meta(), dropCol.Name.L, false)
 }

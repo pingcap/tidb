@@ -258,9 +258,9 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 	c *C, tk *testkit.TestKit, ctx sessionctx.Context, selectSQL, deleteSQL string) {
 	for _, tt := range tests {
 		c.Assert(ctx.NewTxn(), IsNil)
-		ctx.GetSessionVars().StmtCtx.IgnoreErr = true
+		ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
+		ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
 		data, reachLimit, err1 := ld.InsertData(tt.data1, tt.data2)
-		ctx.GetSessionVars().StmtCtx.IgnoreErr = false
 		c.Assert(err1, IsNil)
 		c.Assert(reachLimit, IsFalse)
 		if tt.restData == nil {
@@ -2171,6 +2171,10 @@ func (s *testContextOptionSuite) TestAddIndexPriority(c *C) {
 	c.Assert(err, IsNil)
 	dom, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
@@ -2193,8 +2197,6 @@ func (s *testContextOptionSuite) TestAddIndexPriority(c *C) {
 	cli.mu.Lock()
 	cli.mu.checkFlags = checkRequestOff
 	cli.mu.Unlock()
-	dom.Close()
-	store.Close()
 }
 
 func (s *testContextOptionSuite) TestAlterTableComment(c *C) {
@@ -2574,8 +2576,6 @@ func (s *testSuite) TestContainDotColumn(c *C) {
 func (s *testSuite) TestCheckIndex(c *C) {
 	s.ctx = mock.NewContext()
 	s.ctx.Store = s.store
-	dom, err := session.BootstrapSession(s.store)
-	c.Assert(err, IsNil)
 	se, err := session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 	defer se.Close()
@@ -2586,7 +2586,7 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "create table t (pk int primary key, c int default 1, c1 int default 1, unique key c(c))")
 	c.Assert(err, IsNil)
-	is := dom.InfoSchema()
+	is := s.domain.InfoSchema()
 	db := model.NewCIStr("test_admin")
 	dbInfo, ok := is.SchemaByName(db)
 	c.Assert(ok, IsTrue)
@@ -2894,4 +2894,14 @@ func (s *testSuite) TestUnsignedDecimalOverflow(c *C) {
 	tk.MustExec("insert into t values (?)", -1)
 	r := tk.MustQuery("select a from t limit 1")
 	r.Check(testkit.Rows("0.00"))
+}
+
+func (s *testSuite) TestIndexJoinTableDualPanic(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table a (f1 int, f2 varchar(32), primary key (f1))")
+	tk.MustExec("insert into a (f1,f2) values (1,'a'), (2,'b'), (3,'c')")
+	tk.MustQuery("select a.* from a inner join (select 1 as k1,'k2-1' as k2) as k on a.f1=k.k1;").
+		Check(testkit.Rows("1 a"))
 }
