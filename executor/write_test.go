@@ -224,6 +224,15 @@ func (s *testSuite) TestInsert(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("17:37:09.055870", "17:37:09.055000", "17:37:09.055870"))
 	_, err = tk.Exec("insert into t value(-20070219173709.055870)")
 	c.Assert(err.Error(), Equals, "[types:1292]Incorrect time value '-20070219173709.055870'")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@sql_mode=''")
+	tk.MustExec("create table t(a float unsigned, b double unsigned)")
+	tk.MustExec("insert into t value(-1.1, -1.1), (-2.1, -2.1), (0, 0), (1.1, 1.1)")
+	tk.MustQuery("show warnings").
+		Check(testkit.Rows("Warning 1690 constant -1.1 overflows float", "Warning 1690 constant -1.1 overflows double",
+			"Warning 1690 constant -2.1 overflows float", "Warning 1690 constant -2.1 overflows double"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("0 0", "0 0", "0 0", "1.1 1.1"))
 }
 
 func (s *testSuite) TestInsertAutoInc(c *C) {

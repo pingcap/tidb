@@ -334,7 +334,9 @@ type accessPath struct {
 	forced bool
 }
 
-func (ds *DataSource) deriveTablePathStats(path *accessPath) error {
+// deriveTablePathStats will fulfill the information that the accessPath need.
+// And it will check whether the primary key is covered only by point query.
+func (ds *DataSource) deriveTablePathStats(path *accessPath) (bool, error) {
 	var err error
 	sc := ds.ctx.GetSessionVars().StmtCtx
 	path.countAfterAccess = float64(ds.statisticTable.Count)
@@ -347,11 +349,11 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath) error {
 	}
 	if pkCol == nil {
 		path.ranges = ranger.FullIntRange(false)
-		return nil
+		return false, nil
 	}
 	path.ranges = ranger.FullIntRange(mysql.HasUnsignedFlag(pkCol.RetType.Flag))
 	if len(ds.pushedDownConds) == 0 {
-		return nil
+		return false, nil
 	}
 	path.accessConds, path.tableFilters = ranger.DetachCondsForTableRange(ds.ctx, ds.pushedDownConds, pkCol)
 	// If there's no access cond, we try to find that whether there's expression containing correlated column that
@@ -387,17 +389,28 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath) error {
 	}
 	if corColInAccessConds {
 		path.countAfterAccess = 1
-		return nil
+		return true, nil
 	}
 	path.ranges, err = ranger.BuildTableRange(path.accessConds, sc, pkCol.RetType)
 	if err != nil {
-		return errors.Trace(err)
+		return false, errors.Trace(err)
 	}
 	path.countAfterAccess, err = ds.statisticTable.GetRowCountByIntColumnRanges(sc, pkCol.ID, path.ranges)
-	return errors.Trace(err)
+	// Check whether the primary key is covered by point query.
+	noIntervalRange := true
+	for _, ran := range path.ranges {
+		if !ran.IsPoint(sc) {
+			noIntervalRange = false
+			break
+		}
+	}
+	return noIntervalRange, errors.Trace(err)
 }
 
-func (ds *DataSource) deriveIndexPathStats(path *accessPath) error {
+// deriveIndexPathStats will fulfill the information that the accessPath need.
+// And it will check whether this index is full matched by point query. We will use this check to
+// determine whether we remove other paths or not.
+func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 	var err error
 	sc := ds.ctx.GetSessionVars().StmtCtx
 	path.ranges = ranger.FullRange()
@@ -406,11 +419,11 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) error {
 	if len(path.idxCols) != 0 {
 		path.ranges, path.accessConds, path.tableFilters, path.eqCondCount, err = ranger.DetachCondAndBuildRangeForIndex(ds.ctx, ds.pushedDownConds, path.idxCols, path.idxColLens)
 		if err != nil {
-			return errors.Trace(err)
+			return false, errors.Trace(err)
 		}
 		path.countAfterAccess, err = ds.statisticTable.GetRowCountByIndexRanges(sc, path.index.ID, path.ranges)
 		if err != nil {
-			return errors.Trace(err)
+			return false, errors.Trace(err)
 		}
 	} else {
 		path.tableFilters = ds.pushedDownConds
@@ -441,7 +454,27 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) error {
 		}
 		path.countAfterIndex = math.Max(path.countAfterAccess*selectivity, ds.statsAfterSelect.count)
 	}
-	return nil
+	// Check whether there's only point query.
+	noIntervalRanges := true
+	haveNullVal := false
+	for _, ran := range path.ranges {
+		// Not point or the not full matched.
+		if !ran.IsPoint(sc) || len(ran.HighVal) != len(path.index.Columns) {
+			noIntervalRanges = false
+			break
+		}
+		// Check whether there's null value.
+		for i := 0; i < len(path.index.Columns); i++ {
+			if ran.HighVal[i].IsNull() {
+				haveNullVal = true
+				break
+			}
+		}
+		if haveNullVal {
+			break
+		}
+	}
+	return noIntervalRanges && !haveNullVal, nil
 }
 
 func (path *accessPath) splitCorColAccessCondFromFilters() (access, remained []expression.Expression) {
