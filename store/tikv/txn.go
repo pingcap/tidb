@@ -245,6 +245,7 @@ func (txn *tikvTxn) LockKeys(keys ...kv.Key) error {
 	for _, key := range keys {
 		txn.lockKeys = append(txn.lockKeys, key)
 	}
+	txn.dirty = true
 	txn.mu.Unlock()
 	return nil
 }

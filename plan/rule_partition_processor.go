@@ -41,7 +41,7 @@ type partitionProcessor struct{}
 func (s *partitionProcessor) optimize(lp LogicalPlan) (LogicalPlan, error) {
 	// NOTE: partitionProcessor will assume all filter conditions are pushed down to
 	// DataSource, there will not be a Selection->DataSource case, so the rewrite just
-	// handle the DataSource node.
+	// Handle the DataSource node.
 	return s.rewriteDataSource(lp)
 }
 

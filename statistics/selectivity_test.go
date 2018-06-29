@@ -205,14 +205,11 @@ func (s *testSelectivitySuite) TestPseudoSelectivity(c *C) {
 	testKit.MustExec("drop table if exists t, t1")
 	testKit.MustExec("create table t(a int, b int, unique key idx(a,b))")
 	testKit.MustQuery("explain select * from t where a = 1 and b = 1").Check(testkit.Rows(
-		"IndexReader_6 1.00 root index:IndexScan_5",
-		"└─IndexScan_5 1.00 cop table:t, index:a, b, range:[1 1,1 1], keep order:false"))
+		"Point_Select_1 1.00 root Point_Select"))
 
 	testKit.MustExec("create table t1(a int, b int, primary key(a))")
 	testKit.MustQuery("explain select b from t1 where a = 1").Check(testkit.Rows(
-		"Projection_4 1.00 root test.t1.b",
-		"└─TableReader_6 1.00 root data:TableScan_5",
-		"  └─TableScan_5 1.00 cop table:t1, range:[1,1], keep order:false"))
+		"Point_Select_1 1.00 root Point_Select"))
 }
 
 // TestDiscreteDistribution tests the estimation for discrete data distribution. This is more common when the index
