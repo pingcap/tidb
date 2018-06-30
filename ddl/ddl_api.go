@@ -688,7 +688,7 @@ func checkCreatePartitionValue(part *model.PartitionInfo) error {
 	return nil
 }
 
-func buildCreateTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableStmt, cols []*table.Column) ( *model.PartitionInfo, error) {
+func buildCreateTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableStmt, cols []*table.Column) (*model.PartitionInfo, error) {
 	if s.Partition == nil {
 		return nil, nil
 	}
