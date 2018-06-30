@@ -328,6 +328,14 @@ func MustNil(err error) {
 	}
 }
 
+// CleanNotNil cleans up and fatals if err is not nil.
+func CleanNotNil(err error, closeFun func()) {
+	if err != nil {
+		closeFun()
+		log.Fatalf(errors.ErrorStack(err))
+	}
+}
+
 // Call executes a function and checks the returned err.
 func Call(fn func() error) {
 	err := fn()
