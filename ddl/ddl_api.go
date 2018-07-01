@@ -665,9 +665,11 @@ func checkCreatePartitionValue(part *model.PartitionInfo) error {
 		currentRangeValue, err := strconv.Atoi(rangeValue)
 		if err != nil {
 			return errors.Trace(err)
+		} else {
+			newDefs = newDefs[1 : len(newDefs)-1]
 		}
 
-		for i := 1; i < len(newDefs); i++ {
+		for i := 0; i < len(newDefs); i++ {
 			ifMaxvalue := strings.EqualFold(newDefs[i].LessThan[0], "MAXVALUE")
 			if ifMaxvalue && i == len(newDefs)-1 {
 				return nil
@@ -701,14 +703,18 @@ func buildCreateTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.Create
 		s.Partition.Expr.Format(buf)
 		pi.Expr = buf.String()
 		if s.Partition.Tp == model.PartitionTypeRange {
-			if _, ok := s.Partition.Expr.(*ast.ColumnNameExpr); ok {
-				for _, col := range cols {
-					name := strings.Replace(col.Name.String(), ".", "`.`", -1)
+			for _, col := range cols {
+				name := strings.Replace(col.Name.String(), ".", "`.`", -1)
+				if _, ok := s.Partition.Expr.(*ast.ColumnNameExpr); ok {
+					// TODO check that the expression returns an integer.
+				}
+				if _, ok := s.Partition.Expr.(ast.ExprNode); ok {
 					if !(col.Tp == mysql.TypeLong || col.Tp == mysql.TypeLonglong) && fmt.Sprintf("`%s`", name) == pi.Expr {
 						return nil, errors.Trace(ErrNotAllowedTypeInPartition.GenByArgs(pi.Expr))
 					}
 				}
 			}
+
 		}
 	} else if s.Partition.ColumnNames != nil {
 		pi.Columns = make([]model.CIStr, 0, len(s.Partition.ColumnNames))
