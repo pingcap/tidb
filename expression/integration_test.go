@@ -2726,10 +2726,16 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 	tk.MustQuery(`select 1 < 17666000000000000000, 1 > 17666000000000000000, 1 = 17666000000000000000`).Check(testkit.Rows("1 0 0"))
 
 	tk.MustExec("drop table if exists t")
+	// insert value at utc timezone
+	tk.MustExec("set time_zone = '+00:00'")
 	tk.MustExec("create table t(a timestamp)")
 	tk.MustExec("insert into t value('1991-05-06 04:59:28')")
-	tk.MustExec("delete from t where a = '1991-05-06 04:59:28'")
-	tk.MustQuery("select * from t").Check(testkit.Rows())
+	// check daylight saving time in Asia/Shanghai
+	tk.MustExec("set time_zone='Asia/Shanghai'")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1991-05-06 13:59:28"))
+	// reset timezone to a +8 offset
+	tk.MustExec("set time_zone = '+08:00'")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1991-05-06 12:59:28"))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a bigint unsigned)")
