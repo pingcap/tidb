@@ -642,10 +642,10 @@ func checkCreatePartitionNameUnique(part *model.PartitionInfo) error {
 		newPars := part.Definitions
 		set := make(map[string]struct{})
 		for _, newPar := range newPars {
-			if _, ok := set[strings.ToLower(newPar.Name)]; ok {
+			if _, ok := set[newPar.Name]; ok {
 				return ErrSameNamePartition.GenByArgs(newPar.Name)
 			}
-			set[strings.ToLower(newPar.Name)] = struct{}{}
+			set[newPar.Name] = struct{}{}
 		}
 	}
 	return nil
@@ -656,27 +656,21 @@ func checkCreatePartitionValue(part *model.PartitionInfo) error {
 	if part.Type == model.PartitionTypeRange {
 		newDefs := part.Definitions
 		rangeValue := newDefs[0].LessThan[0]
-		ifMaxvalue := strings.EqualFold(rangeValue, "MAXVALUE")
-		if ifMaxvalue && len(newDefs) > 1 {
+		if strings.EqualFold(rangeValue, "MAXVALUE") && len(newDefs) > 1 {
 			return errors.Trace(ErrPartitionMaxvalue)
-		} else if ifMaxvalue && len(newDefs) == 1 {
-			return nil
 		}
 		currentRangeValue, err := strconv.Atoi(rangeValue)
 		if err != nil {
 			return errors.Trace(err)
-		} else {
-			newDefs = newDefs[1 : len(newDefs)-1]
+		}
+		if strings.EqualFold(newDefs[len(newDefs)-1].LessThan[0], "MAXVALUE") {
+			newDefs = newDefs[:len(newDefs)-1]
 		}
 
-		for i := 0; i < len(newDefs); i++ {
-			ifMaxvalue := strings.EqualFold(newDefs[i].LessThan[0], "MAXVALUE")
-			if ifMaxvalue && i == len(newDefs)-1 {
-				return nil
-			} else if ifMaxvalue && i != len(newDefs)-1 {
+		for i := 1; i < len(newDefs); i++ {
+			if strings.EqualFold(newDefs[i].LessThan[0], "MAXVALUE") && i != len(newDefs)-1 {
 				return errors.Trace(ErrPartitionMaxvalue)
 			}
-
 			nextRangeValue, err := strconv.Atoi(newDefs[i].LessThan[0])
 			if err != nil {
 				return errors.Trace(err)

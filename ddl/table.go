@@ -450,15 +450,15 @@ func updatePartitionInfo(partitionInfo *model.PartitionInfo, tblInfo *model.Tabl
 
 func checkPartitionNotExists(meta *model.TableInfo, part *model.PartitionInfo) error {
 	oldPars, newPars := meta.Partition.Definitions, part.Definitions
-	set := make(map[string]bool)
+	set := make(map[string]struct{})
 	for _, oldPar := range oldPars {
-		set[strings.ToLower(oldPar.Name)] = true
+		set[oldPar.Name] = struct{}{}
 	}
 	for _, newPar := range newPars {
-		if _, ok := set[strings.ToLower(newPar.Name)]; ok {
+		if _, ok := set[newPar.Name]; ok {
 			return ErrSameNamePartition.GenByArgs(newPar.Name)
 		}
-		set[strings.ToLower(newPar.Name)] = true
+		set[newPar.Name] = struct{}{}
 	}
 	return nil
 }
