@@ -833,7 +833,9 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []ast.Rec
 		}
 
 		s.PrepareTxnCtx(ctx)
-		executor.ResetStmtCtx(s, stmtNode)
+		if err = executor.ResetStmtCtx(s, stmtNode); err != nil {
+			return nil, errors.Trace(err)
+		}
 		if recordSets, err = s.executeStatement(ctx, connID, stmtNode, stmt, recordSets); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -862,7 +864,9 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []ast.Rec
 			// Step2: Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
 			startTS = time.Now()
 			// Some executions are done in compile stage, so we reset them before compile.
-			executor.ResetStmtCtx(s, stmtNode)
+			if err := executor.ResetStmtCtx(s, stmtNode); err != nil {
+				return nil, errors.Trace(err)
+			}
 			stmt, err := compiler.Compile(ctx, stmtNode)
 			if err != nil {
 				s.rollbackOnError(ctx)
