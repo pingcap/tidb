@@ -18,7 +18,6 @@ import (
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -27,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -63,39 +61,6 @@ func (s *testIntegrationSuite) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
 	testleak.AfterTest(c)()
-}
-
-func (s *testIntegrationSuite) TestInvalidDefault(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-
-	tk.MustExec("USE test;")
-
-	_, err := tk.Exec("create table t(c1 decimal default 1.7976931348623157E308)")
-	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, types.ErrInvalidDefault), IsTrue)
-
-	_, err = tk.Exec("create table t( c1 varchar(2) default 'TiDB');")
-	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, types.ErrInvalidDefault), IsTrue)
-}
-
-// for issue #3848
-func (s *testIntegrationSuite) TestInvalidNameWhenCreateTable(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-
-	tk.MustExec("USE test;")
-
-	_, err := tk.Exec("create table t(xxx.t.a bigint)")
-	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, ddl.ErrWrongDBName), IsTrue)
-
-	_, err = tk.Exec("create table t(test.tttt.a bigint)")
-	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, ddl.ErrWrongTableName), IsTrue)
-
-	_, err = tk.Exec("create table t(t.tttt.a bigint)")
-	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, ddl.ErrWrongDBName), IsTrue)
 }
 
 // for issue #6879
