@@ -24,11 +24,18 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
 )
+
+type testBypassSuite struct{}
+
+func (s *testBypassSuite) SetUpSuite(c *C) {
+}
 
 func (s *testSuite) TestInsert(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -1433,6 +1440,53 @@ func (s *testSuite) TestNullDefault(c *C) {
 	tk.MustQuery("select * from test_null_default").Check(testkit.Rows("<nil>"))
 	tk.MustExec("insert into test_null_default values ()")
 	tk.MustQuery("select * from test_null_default").Check(testkit.Rows("<nil>", "1970-01-01 08:20:34"))
+}
+
+func (s *testBypassSuite) TestBypassLatch(c *C) {
+	store, err := mockstore.NewMockTikvStore(
+		// Small latch slot size to make conflicts.
+		mockstore.WithTxnLocalLatches(64),
+	)
+	c.Assert(err, IsNil)
+	defer store.Close()
+
+	dom, err1 := session.BootstrapSession(store)
+	c.Assert(err1, IsNil)
+	defer dom.Close()
+
+	tk1 := testkit.NewTestKit(c, store)
+	tk1.MustExec("use test")
+	tk1.MustExec("drop table if exists t")
+	tk1.MustExec("create table t (id int)")
+	tk1.MustExec("set @@tidb_disable_txn_auto_retry = true")
+
+	tk2 := testkit.NewTestKit(c, store)
+	tk2.MustExec("use test")
+	tk1.MustExec("set @@tidb_disable_txn_auto_retry = true")
+
+	fn := func() {
+		tk1.MustExec("begin")
+		for i := 0; i < 100; i++ {
+			tk1.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+		}
+		tk2.MustExec("begin")
+		for i := 100; i < 200; i++ {
+			tk1.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+		}
+		tk2.MustExec("commit")
+	}
+
+	// txn1 and txn2 data range do not overlap, but using latches result in txn conflict.
+	fn()
+	_, err = tk1.Exec("commit")
+	c.Assert(err, NotNil)
+
+	tk1.MustExec("truncate table t")
+	fn()
+	txn := tk1.Se.Txn()
+	txn.SetOption(kv.BypassLatch, true)
+	// Bypass latch, there will be no conflicts.
+	tk1.MustExec("commit")
 }
 
 // TestIssue4067 Test issue https://github.com/pingcap/tidb/issues/4067
