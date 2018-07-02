@@ -217,7 +217,7 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 						join := &apply.LogicalJoin
 						join.EqualConditions = append(join.EqualConditions, eqCondWithCorCol...)
 						for _, eqCond := range eqCondWithCorCol {
-							clonedCol := eqCond.GetArgs()[1].Clone()
+							clonedCol := eqCond.GetArgs()[1]
 							// If the join key is not in the aggregation's schema, add first row function.
 							if agg.schema.ColumnIndex(eqCond.GetArgs()[1].(*expression.Column)) == -1 {
 								newFunc := aggregation.NewAggFuncDesc(apply.ctx, ast.AggFuncFirstRow, []expression.Expression{clonedCol}, false)
@@ -243,7 +243,7 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 						proj.Exprs = expression.Column2Exprs(apply.schema.Columns)
 						for i, val := range defaultValueMap {
 							pos := proj.schema.ColumnIndex(agg.schema.Columns[i])
-							ifNullFunc := expression.NewFunctionInternal(agg.ctx, ast.Ifnull, types.NewFieldType(mysql.TypeLonglong), agg.schema.Columns[i].Clone(), val)
+							ifNullFunc := expression.NewFunctionInternal(agg.ctx, ast.Ifnull, types.NewFieldType(mysql.TypeLonglong), agg.schema.Columns[i], val)
 							proj.Exprs[pos] = ifNullFunc
 						}
 						proj.SetChildren(apply)

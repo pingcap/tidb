@@ -341,7 +341,7 @@ func (s *session) doCommit(ctx context.Context) error {
 		relatedTableIDs: tableIDs,
 	})
 	if s.sessionVars.TxnCtx.ForUpdate {
-		s.txn.SetOption(kv.ForUpdate, true)
+		s.txn.SetOption(kv.BypassLatch, true)
 	}
 
 	if err := s.txn.Commit(sessionctx.SetCommitCtx(ctx, s)); err != nil {
@@ -790,6 +790,14 @@ func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode 
 }
 
 func (s *session) Execute(ctx context.Context, sql string) (recordSets []ast.RecordSet, err error) {
+	if recordSets, err = s.execute(ctx, sql); err != nil {
+		err = errors.Trace(err)
+		s.sessionVars.StmtCtx.AppendError(err)
+	}
+	return
+}
+
+func (s *session) execute(ctx context.Context, sql string) (recordSets []ast.RecordSet, err error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil {
 		span, ctx = opentracing.StartSpanFromContext(ctx, "session.Execute")
 		defer span.Finish()
