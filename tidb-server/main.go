@@ -418,7 +418,7 @@ func createServer() {
 	var err error
 	svr, err = server.NewServer(cfg, driver)
 	// Both domain and storage have started, so we have to clean them before exiting.
-	terror.CleanNotNil(err, close)
+	terror.MustNil(err, closeDomainAndStorage)
 	if cfg.XProtocol.XServer {
 		xcfg := &xserver.Config{
 			Addr:       fmt.Sprintf("%s:%d", cfg.XProtocol.XHost, cfg.XProtocol.XPort),
@@ -426,7 +426,7 @@ func createServer() {
 			TokenLimit: cfg.TokenLimit,
 		}
 		xsvr, err = xserver.NewServer(xcfg)
-		terror.CleanNotNil(err, close)
+		terror.MustNil(err, closeDomainAndStorage)
 	}
 }
 
@@ -488,7 +488,7 @@ func runServer() {
 	}
 }
 
-func close() {
+func closeDomainAndStorage() {
 	dom.Close()
 	err := storage.Close()
 	terror.Log(errors.Trace(err))
@@ -498,5 +498,5 @@ func cleanup() {
 	if graceful {
 		svr.GracefulDown()
 	}
-	close()
+	closeDomainAndStorage()
 }

@@ -321,17 +321,12 @@ func ErrorNotEqual(err1, err2 error) bool {
 	return !ErrorEqual(err1, err2)
 }
 
-// MustNil fatals if err is not nil.
-func MustNil(err error) {
+// MustNil cleans up and fatals if err is not nil.
+func MustNil(err error, closeFuns ...func()) {
 	if err != nil {
-		log.Fatalf(errors.ErrorStack(err))
-	}
-}
-
-// CleanNotNil cleans up and fatals if err is not nil.
-func CleanNotNil(err error, closeFun func()) {
-	if err != nil {
-		closeFun()
+		for _, f := range closeFuns {
+			f()
+		}
 		log.Fatalf(errors.ErrorStack(err))
 	}
 }
