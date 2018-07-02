@@ -69,7 +69,7 @@ const (
 var (
 	UnknownStatusVar   = terror.ClassVariable.New(CodeUnknownStatusVar, "unknown status variable")
 	UnknownSystemVar   = terror.ClassVariable.New(CodeUnknownSystemVar, "unknown system variable '%s'")
-	ErrIncorrectScope  = terror.ClassVariable.New(CodeIncorrectScope, "Incorrect variable scope")
+	ErrIncorrectScope  = terror.ClassVariable.New(CodeIncorrectScope, "Variable '%s' is a %s variable")
 	ErrUnknownTimeZone = terror.ClassVariable.New(CodeUnknownTimeZone, "unknown or incorrect time zone: %s")
 	ErrReadOnly        = terror.ClassVariable.New(CodeReadOnly, "variable is read only")
 )

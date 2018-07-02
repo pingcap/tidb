@@ -944,6 +944,8 @@ type VariableExpr struct {
 	IsGlobal bool
 	// IsSystem indicates whether this variable is a system variable in current session.
 	IsSystem bool
+	// ExplicitScope indicates whether this variable scope is explicit set.
+	ExplicitScope bool
 	// Value is the variable value.
 	Value ExprNode
 }
