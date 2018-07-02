@@ -403,7 +403,7 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 	for i, aggFun := range p.AggFuncs {
 		finalAggFunc := &aggregation.AggFuncDesc{Name: aggFun.Name, HasDistinct: false}
 		args := make([]expression.Expression, 0, len(aggFun.Args))
-		if needCount(finalAggFunc) {
+		if aggregation.NeedCount(finalAggFunc.Name) {
 			ft := types.NewFieldType(mysql.TypeLonglong)
 			ft.Flen, ft.Charset, ft.Collate = 21, charset.CharsetBin, charset.CollationBin
 			partialSchema.Append(&expression.Column{
@@ -415,7 +415,7 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 			args = append(args, partialSchema.Columns[partialCursor])
 			partialCursor++
 		}
-		if needValue(finalAggFunc) {
+		if aggregation.NeedValue(finalAggFunc.Name) {
 			partialSchema.Append(&expression.Column{
 				FromID:   p.ID(),
 				Position: partialCursor,

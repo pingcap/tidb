@@ -326,9 +326,9 @@ func startSpanFollowsContext(ctx context.Context, operationName string) (opentra
 func rebuildIndexRanges(ctx sessionctx.Context, is *plan.PhysicalIndexScan, idxCols []*expression.Column, colLens []int) (ranges []*ranger.Range, err error) {
 	access := make([]expression.Expression, 0, len(is.AccessCondition))
 	for _, cond := range is.AccessCondition {
-		newCond, err := expression.SubstituteCorCol2Constant(cond)
-		if err != nil {
-			return nil, errors.Trace(err)
+		newCond, err1 := expression.SubstituteCorCol2Constant(cond)
+		if err1 != nil {
+			return nil, errors.Trace(err1)
 		}
 		access = append(access, newCond)
 	}

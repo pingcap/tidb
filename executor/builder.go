@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"golang.org/x/net/context"
@@ -900,9 +901,58 @@ func (b *executorBuilder) buildHashAgg(v *plan.PhysicalHashAgg) Executor {
 		AggFuncs:     make([]aggregation.Aggregation, 0, len(v.AggFuncs)),
 		GroupByItems: v.GroupByItems,
 	}
-	for _, aggDesc := range v.AggFuncs {
-		e.AggFuncs = append(e.AggFuncs, aggDesc.GetAggFunc())
+	// We take `create table t(a int, b int);` as example.
+	//
+	// 1. If all the aggregation functions are FIRST_ROW, we do not need to set the defaultVal for them:
+	// e.g.
+	// mysql> select distinct a, b from t;
+	// 0 rows in set (0.00 sec)
+	//
+	// 2. If there exists group by items, we do not need to set the defaultVal for them either:
+	// e.g.
+	// mysql> select avg(a) from t group by b;
+	// Empty set (0.00 sec)
+	//
+	// mysql> select avg(a) from t group by a;
+	// +--------+
+	// | avg(a) |
+	// +--------+
+	// |  NULL  |
+	// +--------+
+	// 1 row in set (0.00 sec)
+	if len(v.GroupByItems) != 0 || aggregation.IsAllFirstRow(v.AggFuncs) {
+		e.defaultVal = nil
+	} else {
+		e.defaultVal = chunk.NewChunkWithCapacity(e.retTypes(), 1)
 	}
+	for _, aggDesc := range v.AggFuncs {
+		if aggDesc.HasDistinct {
+			e.isUnparallelExec = true
+		}
+	}
+	// When we set both tidb_hashagg_final_concurrency and tidb_hashagg_partial_concurrency to 1,
+	// we do not need to parallelly execute hash agg,
+	// and this action can be a workaround when meeting some unexpected situation using parallelExec.
+	if finalCon, partialCon := sessionVars.HashAggFinalConcurrency, sessionVars.HashAggPartialConcurrency; finalCon <= 0 || partialCon <= 0 || finalCon == 1 && partialCon == 1 {
+		e.isUnparallelExec = true
+	}
+	for i, aggDesc := range v.AggFuncs {
+		if !e.isUnparallelExec {
+			if aggDesc.Mode == aggregation.CompleteMode {
+				aggDesc.Mode = aggregation.Partial1Mode
+			} else {
+				aggDesc.Mode = aggregation.Partial2Mode
+			}
+		}
+		e.AggFuncs = append(e.AggFuncs, aggDesc.GetAggFunc())
+		if e.defaultVal != nil {
+			value, existsDefaultValue := aggDesc.CalculateDefaultValue(e.ctx, e.children[0].Schema())
+			if existsDefaultValue {
+				e.defaultVal.AppendDatum(i, &value)
+			}
+		}
+	}
+
 	metrics.ExecutorCounter.WithLabelValues("HashAggExec").Inc()
 	return e
 }
