@@ -17,6 +17,7 @@ import (
 	"math"
 	"sort"
 
+	"fmt"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/config"
@@ -206,7 +207,9 @@ func (e *ExecuteExec) Build() error {
 		return errors.Trace(b.err)
 	}
 	e.stmtExec = stmtExec
-	ResetStmtCtx(e.ctx, e.stmt)
+	if err = ResetStmtCtx(e.ctx, e.stmt); err != nil {
+		return err
+	}
 	CountStmtNode(e.stmt, e.ctx.GetSessionVars().InRestrictedSQL)
 	logExpensiveQuery(e.stmt, e.plan)
 	return nil
@@ -258,7 +261,7 @@ func CompileExecutePreparedStmt(ctx sessionctx.Context, ID uint32, args ...inter
 
 // ResetStmtCtx resets the StmtContext.
 // Before every execution, we must clear statement context.
-func ResetStmtCtx(ctx sessionctx.Context, s ast.StmtNode) {
+func ResetStmtCtx(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sessVars := ctx.GetSessionVars()
 	sc := new(stmtctx.StatementContext)
 	sc.TimeZone = sessVars.GetTimeZone()
@@ -340,6 +343,15 @@ func ResetStmtCtx(ctx sessionctx.Context, s ast.StmtNode) {
 		sessVars.LastInsertID = 0
 	}
 	sessVars.ResetPrevAffectedRows()
+	err = sessVars.SetSystemVar("warning_count", fmt.Sprintf("%d", sessVars.StmtCtx.NumWarnings(false)))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = sessVars.SetSystemVar("error_count", fmt.Sprintf("%d", sessVars.StmtCtx.NumWarnings(true)))
+	if err != nil {
+		return errors.Trace(err)
+	}
 	sessVars.InsertID = 0
 	sessVars.StmtCtx = sc
+	return
 }
