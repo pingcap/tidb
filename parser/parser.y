@@ -5008,7 +5008,7 @@ SystemVariable:
 	{
 		v := strings.ToLower($1)
 		var isGlobal bool
-	    explicitScope := true
+		explicitScope := true
 		if strings.HasPrefix(v, "@@global.") {
 			isGlobal = true
 			v = strings.TrimPrefix(v, "@@global.")
