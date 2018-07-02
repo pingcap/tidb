@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
@@ -125,7 +126,9 @@ func (e *ShowExec) fetchAll() error {
 	case ast.ShowVariables:
 		return e.fetchShowVariables()
 	case ast.ShowWarnings:
-		return e.fetchShowWarnings()
+		return e.fetchShowWarnings(false)
+	case ast.ShowErrors:
+		return e.fetchShowWarnings(true)
 	case ast.ShowProcessList:
 		return e.fetchShowProcessList()
 	case ast.ShowEvents:
@@ -746,9 +749,12 @@ func (e *ShowExec) fetchShowPlugins() error {
 	return nil
 }
 
-func (e *ShowExec) fetchShowWarnings() error {
+func (e *ShowExec) fetchShowWarnings(errOnly bool) error {
 	warns := e.ctx.GetSessionVars().StmtCtx.GetWarnings()
 	for _, w := range warns {
+		if errOnly && w.Level != stmtctx.WarnLevelError {
+			continue
+		}
 		warn := errors.Cause(w.Err)
 		switch x := warn.(type) {
 		case *terror.Error:

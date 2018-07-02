@@ -327,7 +327,7 @@ func ResetStmtCtx(ctx sessionctx.Context, s ast.StmtNode) {
 	case *ast.ShowStmt:
 		sc.IgnoreTruncate = true
 		sc.IgnoreZeroInDate = true
-		if stmt.Tp == ast.ShowWarnings {
+		if stmt.Tp == ast.ShowWarnings || stmt.Tp == ast.ShowErrors {
 			sc.InShowWarning = true
 			sc.SetWarnings(sessVars.StmtCtx.GetWarnings())
 		}
