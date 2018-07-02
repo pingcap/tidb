@@ -29,6 +29,7 @@ func (s *testSuite) TestDataForTableRowsCountField(c *C) {
 	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
+	session.SetStatsLease(0)
 	do, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	defer do.Close()
@@ -40,6 +41,7 @@ func (s *testSuite) TestDataForTableRowsCountField(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c int, d int)")
+	h.HandleDDLEvent(<-h.DDLEventCh())
 	tk.MustQuery("select table_rows from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("0"))
 	tk.MustExec("insert into t(c, d) values(1, 2), (2, 3), (3, 4)")
