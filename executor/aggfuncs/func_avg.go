@@ -20,15 +20,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
-// All the AggFunc implementations for "AVG" are listed here.
-var (
-	_ AggFunc = (*avgOriginal4Decimal)(nil)
-	_ AggFunc = (*avgPartial4Decimal)(nil)
-
-	_ AggFunc = (*avgOriginal4Float64)(nil)
-	_ AggFunc = (*avgPartial4Float64)(nil)
-)
-
 // All the following avg function implementations return the decimal result,
 // which store the partial results in "partialResult4AvgDecimal".
 //
