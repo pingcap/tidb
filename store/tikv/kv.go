@@ -200,6 +200,11 @@ func (s *tikvStore) EnableTxnLocalLatches(size uint) {
 	s.txnLatches = latch.NewScheduler(size)
 }
 
+// IsLatchEnabled is used by mockstore.TestConfig.
+func (s *tikvStore) IsLatchEnabled() bool {
+	return s.txnLatches != nil
+}
+
 func (s *tikvStore) EtcdAddrs() []string {
 	return s.etcdAddrs
 }

@@ -63,6 +63,7 @@ for details on submitting patches and the contribution workflow.
 
 ## Connect with us
 
+- [**Contact PingCAP Team**](http://bit.ly/contact_us_via_github)
 - **Twitter**: [@PingCAP](https://twitter.com/PingCAP)
 - **Reddit**: https://www.reddit.com/r/TiDB/
 - **Stack Overflow**: https://stackoverflow.com/questions/tagged/tidb

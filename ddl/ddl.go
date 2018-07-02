@@ -529,7 +529,7 @@ const (
 
 	codeFileNotFound                  = 1017
 	codeErrorOnRename                 = 1025
-	codeBadNull                       = 1048
+	codeBadNull                       = mysql.ErrBadNull
 	codeBadField                      = 1054
 	codeTooLongIdent                  = 1059
 	codeDupKeyName                    = 1061
