@@ -27,9 +27,6 @@ var (
 
 	_ AggFunc = (*avgOriginal4Float64)(nil)
 	_ AggFunc = (*avgPartial4Float64)(nil)
-
-	_ AggFunc = (*avgOriginal4Float32)(nil)
-	_ AggFunc = (*avgPartial4Float32)(nil)
 )
 
 // All the following avg function implementations return the decimal result,
@@ -204,87 +201,6 @@ func (e *avgPartial4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 			continue
 		}
 		p.sum += inputSum
-		p.count += inputCount
-	}
-	return nil
-}
-
-// All the following avg function implementations return the float32 result,
-// which store the partial results in "partialResult4AvgFloat32".
-//
-// "baseAvgFloat32" is wrapped by:
-// - "avgOriginal4Float32"
-// - "avgPartial4Float32"
-type baseAvgFloat32 struct {
-	baseAggFunc
-}
-
-type partialResult4AvgFloat32 struct {
-	sum   float32
-	count int64
-}
-
-func (e *baseAvgFloat32) AllocPartialResult() PartialResult {
-	return (PartialResult)(&partialResult4AvgFloat32{})
-}
-
-func (e *baseAvgFloat32) ResetPartialResult(pr PartialResult) {
-	p := (*partialResult4AvgFloat32)(pr)
-	p.sum = 0
-	p.count = 0
-}
-
-func (e *baseAvgFloat32) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
-	p := (*partialResult4AvgFloat32)(pr)
-	if p.count == 0 {
-		chk.AppendNull(e.ordinal)
-	} else {
-		chk.AppendFloat32(e.ordinal, p.sum/float32(p.count))
-	}
-	return nil
-}
-
-type avgOriginal4Float32 struct {
-	baseAvgFloat32
-}
-
-func (e *avgOriginal4Float32) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
-	p := (*partialResult4AvgFloat32)(pr)
-	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalReal(sctx, row)
-		if err != nil {
-			return errors.Trace(err)
-		} else if isNull {
-			continue
-		}
-
-		p.sum += float32(input)
-		p.count++
-	}
-	return nil
-}
-
-type avgPartial4Float32 struct {
-	baseAvgFloat32
-}
-
-func (e *avgPartial4Float32) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
-	p := (*partialResult4AvgFloat32)(pr)
-	for _, row := range rowsInGroup {
-		inputSum, isNull, err := e.args[1].EvalReal(sctx, row)
-		if err != nil {
-			return errors.Trace(err)
-		} else if isNull {
-			continue
-		}
-
-		inputCount, isNull, err := e.args[0].EvalInt(sctx, row)
-		if err != nil {
-			return errors.Trace(err)
-		} else if isNull {
-			continue
-		}
-		p.sum += float32(inputSum)
 		p.count += inputCount
 	}
 	return nil

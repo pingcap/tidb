@@ -78,12 +78,7 @@ func buildAvg(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 				return nil // not implemented yet.
 			}
 			return &avgOriginal4Decimal{baseAvgDecimal{base}}
-		case mysql.TypeFloat:
-			if aggFuncDesc.HasDistinct {
-				return nil // not implemented yet.
-			}
-			return &avgOriginal4Float32{baseAvgFloat32{base}}
-		case mysql.TypeDouble:
+		case mysql.TypeFloat, mysql.TypeDouble:
 			if aggFuncDesc.HasDistinct {
 				return nil // not implemented yet.
 			}
@@ -96,8 +91,6 @@ func buildAvg(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 		switch aggFuncDesc.Args[1].GetType().Tp {
 		case mysql.TypeNewDecimal:
 			return &avgPartial4Decimal{baseAvgDecimal{base}}
-		case mysql.TypeFloat:
-			return &avgPartial4Float32{baseAvgFloat32{base}}
 		case mysql.TypeDouble:
 			return &avgPartial4Float64{baseAvgFloat64{base}}
 		}

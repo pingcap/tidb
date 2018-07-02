@@ -32,9 +32,6 @@ var (
 	_ AggFunc = (*avgOriginal4Float64)(nil)
 	_ AggFunc = (*avgPartial4Float64)(nil)
 
-	_ AggFunc = (*avgOriginal4Float32)(nil)
-	_ AggFunc = (*avgPartial4Float32)(nil)
-
 // All the AggFunc implementations for "FIRSTROW" are listed here.
 // All the AggFunc implementations for "MAX" are listed here.
 // All the AggFunc implementations for "MIN" are listed here.
