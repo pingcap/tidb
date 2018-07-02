@@ -113,7 +113,7 @@ func (s *testBinlogSuite) SetUpSuite(c *C) {
 	s.ddl = sessionDomain.DDL()
 
 	s.client = binlog.NewPumpClient(clientCon)
-	s.ddl.WorkerVars().BinlogClient = s.client
+	s.ddl.SetBinlogClient(s.client)
 }
 
 func (s *testBinlogSuite) TearDownSuite(c *C) {
