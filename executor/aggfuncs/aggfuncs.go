@@ -27,7 +27,10 @@ var (
 	// All the AggFunc implementations for "SUM" are listed here.
 	// All the AggFunc implementations for "FIRSTROW" are listed here.
 	// All the AggFunc implementations for "MAX"/"MIN" are listed here.
+	_ AggFunc = (*maxMin4Int)(nil)
 	_ AggFunc = (*maxMin4Float32)(nil)
+	_ AggFunc = (*maxMin4Float64)(nil)
+	_ AggFunc = (*maxMin4Decimal)(nil)
 
 	// All the AggFunc implementations for "AVG" are listed here.
 	_ AggFunc = (*avgOriginal4Decimal)(nil)
