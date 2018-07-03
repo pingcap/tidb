@@ -22,6 +22,19 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 )
 
+const (
+	// WarnLevelWarning represents level "Warning" for 'SHOW WARNINGS' syntax.
+	WarnLevelWarning = "Warning"
+	// WarnLevelNote represents level "Note" for 'SHOW WARNINGS' syntax.
+	WarnLevelNote = "Note"
+)
+
+// SQLWarn relates a sql warning and it's level.
+type SQLWarn struct {
+	Level string
+	Err   error
+}
+
 // StatementContext contains variables for a statement.
 // It should be reset before executing a statement.
 type StatementContext struct {
@@ -45,7 +58,7 @@ type StatementContext struct {
 		sync.Mutex
 		affectedRows      uint64
 		foundRows         uint64
-		warnings          []error
+		warnings          []SQLWarn
 		histogramsNotLoad bool
 	}
 
@@ -89,9 +102,9 @@ func (sc *StatementContext) AddFoundRows(rows uint64) {
 }
 
 // GetWarnings gets warnings.
-func (sc *StatementContext) GetWarnings() []error {
+func (sc *StatementContext) GetWarnings() []SQLWarn {
 	sc.mu.Lock()
-	warns := make([]error, len(sc.mu.warnings))
+	warns := make([]SQLWarn, len(sc.mu.warnings))
 	copy(warns, sc.mu.warnings)
 	sc.mu.Unlock()
 	return warns
@@ -109,17 +122,26 @@ func (sc *StatementContext) WarningCount() uint16 {
 }
 
 // SetWarnings sets warnings.
-func (sc *StatementContext) SetWarnings(warns []error) {
+func (sc *StatementContext) SetWarnings(warns []SQLWarn) {
 	sc.mu.Lock()
 	sc.mu.warnings = warns
 	sc.mu.Unlock()
 }
 
-// AppendWarning appends a warning.
+// AppendWarning appends a warning with level 'Warning'.
 func (sc *StatementContext) AppendWarning(warn error) {
 	sc.mu.Lock()
 	if len(sc.mu.warnings) < math.MaxUint16 {
-		sc.mu.warnings = append(sc.mu.warnings, warn)
+		sc.mu.warnings = append(sc.mu.warnings, SQLWarn{WarnLevelWarning, warn})
+	}
+	sc.mu.Unlock()
+}
+
+// AppendNote appends a warning with level 'Note'.
+func (sc *StatementContext) AppendNote(warn error) {
+	sc.mu.Lock()
+	if len(sc.mu.warnings) < math.MaxUint16 {
+		sc.mu.warnings = append(sc.mu.warnings, SQLWarn{WarnLevelNote, warn})
 	}
 	sc.mu.Unlock()
 }
