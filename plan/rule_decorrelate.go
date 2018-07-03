@@ -220,16 +220,16 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 					join := &apply.LogicalJoin
 					join.EqualConditions = append(join.EqualConditions, eqCondWithCorCol...)
 					for _, eqCond := range eqCondWithCorCol {
-						clonedCol := eqCond.GetArgs()[1]
+						col := eqCond.GetArgs()[1]
 						// If the join key is not in the aggregation's schema, add first row function.
 						if agg.schema.ColumnIndex(eqCond.GetArgs()[1].(*expression.Column)) == -1 {
-							newFunc := aggregation.NewAggFuncDesc(apply.ctx, ast.AggFuncFirstRow, []expression.Expression{clonedCol}, false)
+							newFunc := aggregation.NewAggFuncDesc(apply.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
 							agg.AggFuncs = append(agg.AggFuncs, newFunc)
-							agg.schema.Append(clonedCol.(*expression.Column))
+							agg.schema.Append(col.(*expression.Column))
 						}
 						// If group by cols don't contain the join key, add it into this.
 						if agg.getGbyColIndex(eqCond.GetArgs()[1].(*expression.Column)) == -1 {
-							agg.GroupByItems = append(agg.GroupByItems, clonedCol)
+							agg.GroupByItems = append(agg.GroupByItems, col)
 						}
 					}
 					agg.collectGroupByColumns()
