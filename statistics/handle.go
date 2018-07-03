@@ -60,6 +60,7 @@ type Handle struct {
 
 // Clear the statsCache, only for test.
 func (h *Handle) Clear() {
+	h.mu.Lock()
 	h.statsCache.Store(statsCache{})
 	h.mu.lastVersion = 0
 	for len(h.ddlEventCh) > 0 {
@@ -69,6 +70,7 @@ func (h *Handle) Clear() {
 	h.listHead = &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)}
 	h.globalMap = make(tableDeltaMap)
 	h.rateMap = make(errorRateDeltaMap)
+	h.mu.Unlock()
 }
 
 // MaxQueryFeedbackCount is the max number of feedback that cache in memory.
