@@ -554,7 +554,7 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte) ([]byte, []byte, bool) 
 // If the number of inserted rows reaches the batchRows, then the second return value is true.
 // If prevData isn't nil and curData is nil, there are no other data to deal with and the isEOF is true.
 func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error) {
-	// TODO: support enclosed and escape.
+	// TODO: support escape.
 	if len(prevData) == 0 && len(curData) == 0 {
 		return nil, false, nil
 	}
@@ -587,7 +587,7 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 			curData = nil
 		}
 
-		cols, err := GetFieldsFromLine(line, e.FieldsInfo)
+		cols, err := e.getFieldsFromLine(line)
 		if err != nil {
 			return nil, false, errors.Trace(err)
 		}
@@ -614,55 +614,54 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 	return curData, reachLimit, nil
 }
 
-// GetFieldsFromLine splits line according to fieldsInfo, this function is exported for testing.
-func GetFieldsFromLine(line []byte, fieldsInfo *ast.FieldsClause) ([]string, error) {
-	var sep []byte
-	if fieldsInfo.Enclosed != 0 {
-		if line[0] != fieldsInfo.Enclosed || line[len(line)-1] != fieldsInfo.Enclosed {
-			return nil, errors.Errorf("line %s should begin and end with %c", string(line), fieldsInfo.Enclosed)
-		}
-		line = line[1 : len(line)-1]
-		sep = make([]byte, 0, len(fieldsInfo.Terminated)+2)
-		sep = append(sep, fieldsInfo.Enclosed)
-		sep = append(sep, fieldsInfo.Terminated...)
-		sep = append(sep, fieldsInfo.Enclosed)
-	} else {
-		sep = []byte(fieldsInfo.Terminated)
-	}
-	rawCols := bytes.Split(line, sep)
-	cols := escapeCols(rawCols)
-	return cols, nil
+type field struct {
+	str       []byte
+	maybeNull bool
 }
 
-func escapeCols(strs [][]byte) []string {
-	ret := make([]string, len(strs))
-	for i, v := range strs {
-		output := escape(v)
-		ret[i] = string(output)
+// getFieldsFromLine splits line according to fieldsInfo.
+func (e *LoadDataInfo) getFieldsFromLine(line []byte) ([]field, error) {
+	var sep []byte
+	if e.FieldsInfo.Enclosed != 0 {
+		if line[0] != e.FieldsInfo.Enclosed || line[len(line)-1] != e.FieldsInfo.Enclosed {
+			return nil, errors.Errorf("line %s should begin and end with %c", string(line), e.FieldsInfo.Enclosed)
+		}
+		line = line[1 : len(line)-1]
+		sep = make([]byte, 0, len(e.FieldsInfo.Terminated)+2)
+		sep = append(sep, e.FieldsInfo.Enclosed)
+		sep = append(sep, e.FieldsInfo.Terminated...)
+		sep = append(sep, e.FieldsInfo.Enclosed)
+	} else {
+		sep = []byte(e.FieldsInfo.Terminated)
 	}
-	return ret
+	rawCols := bytes.Split(line, sep)
+	fields := make([]field, 0, len(rawCols))
+	for _, v := range rawCols {
+		f := field{v, false}
+		fields = append(fields, f.escape())
+	}
+	return fields, nil
 }
 
 // escape handles escape characters when running load data statement.
-// TODO: escape need to be improved, it should support ESCAPED BY to specify
-// the escape character and handle \N escape.
 // See http://dev.mysql.com/doc/refman/5.7/en/load-data.html
-func escape(str []byte) []byte {
+// TODO: escape only support '\' as the `ESCAPED BY` character, it should support specify characters.
+func (f *field) escape() field {
 	pos := 0
-	for i := 0; i < len(str); i++ {
-		c := str[i]
-		if c == '\\' && i+1 < len(str) {
-			c = escapeChar(str[i+1])
+	for i := 0; i < len(f.str); i++ {
+		c := f.str[i]
+		if c == '\\' && i+1 < len(f.str) {
+			c = f.escapeChar(f.str[i+1])
 			i++
 		}
 
-		str[pos] = c
+		f.str[pos] = c
 		pos++
 	}
-	return str[:pos]
+	return field{f.str[:pos], f.maybeNull}
 }
 
-func escapeChar(c byte) byte {
+func (f *field) escapeChar(c byte) byte {
 	switch c {
 	case '0':
 		return 0
@@ -676,19 +675,27 @@ func escapeChar(c byte) byte {
 		return '\t'
 	case 'Z':
 		return 26
-	case '\\':
-		return '\\'
+	case 'N':
+		f.maybeNull = true
+		return c
+	default:
+		return c
 	}
-	return c
 }
 
-func (e *LoadDataInfo) colsToRow(cols []string) types.DatumRow {
+func (e *LoadDataInfo) colsToRow(cols []field) types.DatumRow {
 	for i := 0; i < len(e.row); i++ {
 		if i >= len(cols) {
-			e.row[i].SetString("")
+			e.row[i].SetNull()
 			continue
 		}
-		e.row[i].SetString(cols[i])
+		// The field with only "\N" in it is handled as NULL in the csv file.
+		// See http://dev.mysql.com/doc/refman/5.7/en/load-data.html
+		if cols[i].maybeNull && string(cols[i].str) == "N" {
+			e.row[i].SetNull()
+		} else {
+			e.row[i].SetString(string(cols[i].str))
+		}
 	}
 	row, err := e.insertVal.fillRowData(e.columns, e.row, true)
 	if err != nil {
