@@ -16,6 +16,8 @@ package aggfuncs
 import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/types"
 )
 
 // Build is used to build a specific AggFunc implementation according to the
@@ -31,9 +33,9 @@ func Build(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	case ast.AggFuncFirstRow:
 		return buildFirstRow(aggFuncDesc, ordinal)
 	case ast.AggFuncMax:
-		return buildMax(aggFuncDesc, ordinal)
+		return buildMaxMin(aggFuncDesc, ordinal, true)
 	case ast.AggFuncMin:
-		return buildMin(aggFuncDesc, ordinal)
+		return buildMaxMin(aggFuncDesc, ordinal, false)
 	case ast.AggFuncGroupConcat:
 		return buildGroupConcat(aggFuncDesc, ordinal)
 	case ast.AggFuncBitOr:
@@ -51,47 +53,65 @@ func buildCount(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	return nil
 }
 
-// buildCount builds the AggFunc implementation for function "SUM".
+// buildSum builds the AggFunc implementation for function "SUM".
 func buildSum(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	return nil
 }
 
-// buildCount builds the AggFunc implementation for function "AVG".
+// buildAvg builds the AggFunc implementation for function "AVG".
 func buildAvg(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	return nil
 }
 
-// buildCount builds the AggFunc implementation for function "FIRST_ROW".
+// buildFirstRow builds the AggFunc implementation for function "FIRST_ROW".
 func buildFirstRow(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	return nil
 }
 
-// buildCount builds the AggFunc implementation for function "MAX".
-func buildMax(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+// buildMaxMin builds the AggFunc implementation for function "MAX" and "MIN".
+func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) AggFunc {
+	base := baseAggFunc{
+		args:    aggFuncDesc.Args,
+		ordinal: ordinal,
+	}
+
+	evalType, fieldType := aggFuncDesc.RetTp.EvalType(), aggFuncDesc.RetTp
+	switch aggFuncDesc.Mode {
+	case aggregation.DedupMode:
+	default:
+		switch evalType {
+		case types.ETInt:
+			return &maxMin4Int{base, isMax, mysql.HasUnsignedFlag(fieldType.Flag)}
+		case types.ETReal:
+			switch fieldType.Tp {
+			case mysql.TypeFloat:
+				return &maxMin4Float32{base, isMax}
+			case mysql.TypeDouble:
+				return &maxMin4Float64{base, isMax}
+			}
+		case types.ETDecimal:
+			return &maxMin4Decimal{base, isMax}
+		}
+	}
 	return nil
 }
 
-// buildCount builds the AggFunc implementation for function "MIN".
-func buildMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
-	return nil
-}
-
-// buildCount builds the AggFunc implementation for function "GROUP_CONCAT".
+// buildGroupConcat builds the AggFunc implementation for function "GROUP_CONCAT".
 func buildGroupConcat(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	return nil
 }
 
-// buildCount builds the AggFunc implementation for function "BIT_OR".
+// buildBitOr builds the AggFunc implementation for function "BIT_OR".
 func buildBitOr(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	return nil
 }
 
-// buildCount builds the AggFunc implementation for function "BIT_XOR".
+// buildBitXor builds the AggFunc implementation for function "BIT_XOR".
 func buildBitXor(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	return nil
 }
 
-// buildCount builds the AggFunc implementation for function "BIT_AND".
+// buildBitAnd builds the AggFunc implementation for function "BIT_AND".
 func buildBitAnd(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	return nil
 }

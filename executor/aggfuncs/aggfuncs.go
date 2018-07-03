@@ -23,12 +23,13 @@ import (
 
 // All the AggFunc implementations are listed here for navigation.
 var (
-// All the AggFunc implementations for "COUNT" are listed here.
-// All the AggFunc implementations for "SUM" are listed here.
-// All the AggFunc implementations for "AVG" are listed here.
-// All the AggFunc implementations for "FIRSTROW" are listed here.
-// All the AggFunc implementations for "MAX" are listed here.
-// All the AggFunc implementations for "MIN" are listed here.
+	// All the AggFunc implementations for "COUNT" are listed here.
+	// All the AggFunc implementations for "SUM" are listed here.
+	// All the AggFunc implementations for "AVG" are listed here.
+	// All the AggFunc implementations for "FIRSTROW" are listed here.
+	// All the AggFunc implementations for "MAX"/"MIN" are listed here.
+	_ AggFunc = (*maxMin4Float32)(nil)
+
 // All the AggFunc implementations for "GROUP_CONCAT" are listed here.
 // All the AggFunc implementations for "BIT_OR" are listed here.
 // All the AggFunc implementations for "BIT_XOR" are listed here.
