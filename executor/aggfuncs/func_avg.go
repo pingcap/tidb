@@ -72,9 +72,11 @@ func (e *avgOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		input, isNull, err := e.args[0].EvalDecimal(sctx, row)
 		if err != nil {
 			return errors.Trace(err)
-		} else if isNull {
+		}
+		if isNull {
 			continue
 		}
+
 		err = types.DecimalAdd(&p.sum, input, newSum)
 		if err != nil {
 			return errors.Trace(err)
@@ -96,14 +98,16 @@ func (e *avgPartial4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 		inputSum, isNull, err := e.args[1].EvalDecimal(sctx, row)
 		if err != nil {
 			return errors.Trace(err)
-		} else if isNull {
+		}
+		if isNull {
 			continue
 		}
 
 		inputCount, isNull, err := e.args[0].EvalInt(sctx, row)
 		if err != nil {
 			return errors.Trace(err)
-		} else if isNull {
+		}
+		if isNull {
 			continue
 		}
 
@@ -162,9 +166,11 @@ func (e *avgOriginal4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		input, isNull, err := e.args[0].EvalReal(sctx, row)
 		if err != nil {
 			return errors.Trace(err)
-		} else if isNull {
+		}
+		if isNull {
 			continue
 		}
+
 		p.sum += input
 		p.count++
 	}
@@ -181,16 +187,19 @@ func (e *avgPartial4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 		inputSum, isNull, err := e.args[1].EvalReal(sctx, row)
 		if err != nil {
 			return errors.Trace(err)
-		} else if isNull {
+		}
+		if isNull {
 			continue
 		}
 
 		inputCount, isNull, err := e.args[0].EvalInt(sctx, row)
 		if err != nil {
 			return errors.Trace(err)
-		} else if isNull {
+		}
+		if isNull {
 			continue
 		}
+
 		p.sum += inputSum
 		p.count += inputCount
 	}
