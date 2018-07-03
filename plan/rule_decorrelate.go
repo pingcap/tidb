@@ -214,9 +214,10 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 						remainedExpr = append(remainedExpr, cond)
 					}
 				}
+				originalExpr := sel.Conditions
+				sel.Conditions = remainedExpr
 				// There's no other correlated column.
 				if apply.extractCorColumnsBySchema(); len(eqCondWithCorCol) > 0 && len(apply.corCols) == 0 {
-					sel.Conditions = remainedExpr
 					join := &apply.LogicalJoin
 					join.EqualConditions = append(join.EqualConditions, eqCondWithCorCol...)
 					for _, eqCond := range eqCondWithCorCol {
@@ -253,6 +254,8 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 					}
 					return s.optimize(p)
 				}
+				sel.Conditions = originalExpr
+				apply.extractCorColumnsBySchema()
 			}
 		}
 	}
