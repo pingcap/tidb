@@ -640,7 +640,7 @@ func getFieldsFromLine(line []byte, fieldsInfo *ast.FieldsClause) ([]field, erro
 		f := field{v, false}
 		fields = append(fields, f.escape())
 	}
-	return cols, nil
+	return fields, nil
 }
 
 // escape handles escape characters when running load data statement.
