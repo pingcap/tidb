@@ -638,15 +638,16 @@ func checkConstraintNames(constraints []*ast.Constraint) error {
 }
 
 func checkCreatePartitionNameUnique(part *model.PartitionInfo) error {
-	if part.Type == model.PartitionTypeRange {
-		newPars := part.Definitions
-		set := make(map[string]struct{})
-		for _, newPar := range newPars {
-			if _, ok := set[newPar.Name]; ok {
-				return ErrSameNamePartition.GenByArgs(newPar.Name)
-			}
-			set[newPar.Name] = struct{}{}
+	if part.Type != model.PartitionTypeRange {
+		return nil
+	}
+	newPars := part.Definitions
+	set := make(map[string]struct{})
+	for _, newPar := range newPars {
+		if _, ok := set[strings.ToLower(newPar.Name)]; ok {
+			return ErrSameNamePartition.GenByArgs(newPar.Name)
 		}
+		set[strings.ToLower(newPar.Name)] = struct{}{}
 	}
 	return nil
 }
