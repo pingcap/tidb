@@ -202,35 +202,37 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 			// We can pull up the equal conditions below the aggregation as the join key of the apply, if only
 			// the equal conditions contain the correlated column of this apply.
 			if sel, ok := agg.children[0].(*LogicalSelection); ok && apply.JoinType == LeftOuterJoin {
-				var eqCondWithCorCol []*expression.ScalarFunction
+				var (
+					eqCondWithCorCol []*expression.ScalarFunction
+					remainedExpr     []expression.Expression
+				)
 				// Extract the equal condition.
-				for i := len(sel.Conditions) - 1; i >= 0; i-- {
-					if expr := apply.deCorColFromEqExpr(sel.Conditions[i]); expr != nil {
+				for _, cond := range sel.Conditions {
+					if expr := apply.deCorColFromEqExpr(cond); expr != nil {
 						eqCondWithCorCol = append(eqCondWithCorCol, expr.(*expression.ScalarFunction))
-						sel.Conditions = append(sel.Conditions[:i], sel.Conditions[i+1:]...)
+					} else {
+						remainedExpr = append(remainedExpr, cond)
 					}
 				}
-				if len(eqCondWithCorCol) > 0 {
-					apply.extractCorColumnsBySchema()
-					// There's no other correlated column.
-					if len(apply.corCols) == 0 {
-						join := &apply.LogicalJoin
-						join.EqualConditions = append(join.EqualConditions, eqCondWithCorCol...)
-						for _, eqCond := range eqCondWithCorCol {
-							clonedCol := eqCond.GetArgs()[1]
-							// If the join key is not in the aggregation's schema, add first row function.
-							if agg.schema.ColumnIndex(eqCond.GetArgs()[1].(*expression.Column)) == -1 {
-								newFunc := aggregation.NewAggFuncDesc(apply.ctx, ast.AggFuncFirstRow, []expression.Expression{clonedCol}, false)
-								agg.AggFuncs = append(agg.AggFuncs, newFunc)
-								agg.schema.Append(clonedCol.(*expression.Column))
-							}
-							// If group by cols don't contain the join key, add it into this.
-							if agg.getGbyColIndex(eqCond.GetArgs()[1].(*expression.Column)) == -1 {
-								agg.GroupByItems = append(agg.GroupByItems, clonedCol)
-							}
+				// There's no other correlated column.
+				if apply.extractCorColumnsBySchema(); len(eqCondWithCorCol) > 0 && len(apply.corCols) == 0 {
+					sel.Conditions = remainedExpr
+					join := &apply.LogicalJoin
+					join.EqualConditions = append(join.EqualConditions, eqCondWithCorCol...)
+					for _, eqCond := range eqCondWithCorCol {
+						clonedCol := eqCond.GetArgs()[1]
+						// If the join key is not in the aggregation's schema, add first row function.
+						if agg.schema.ColumnIndex(eqCond.GetArgs()[1].(*expression.Column)) == -1 {
+							newFunc := aggregation.NewAggFuncDesc(apply.ctx, ast.AggFuncFirstRow, []expression.Expression{clonedCol}, false)
+							agg.AggFuncs = append(agg.AggFuncs, newFunc)
+							agg.schema.Append(clonedCol.(*expression.Column))
 						}
-						agg.collectGroupByColumns()
+						// If group by cols don't contain the join key, add it into this.
+						if agg.getGbyColIndex(eqCond.GetArgs()[1].(*expression.Column)) == -1 {
+							agg.GroupByItems = append(agg.GroupByItems, clonedCol)
+						}
 					}
+					agg.collectGroupByColumns()
 					// The selection may be useless, check and remove it.
 					if len(sel.Conditions) == 0 {
 						agg.SetChildren(sel.children[0])
