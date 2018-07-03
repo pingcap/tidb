@@ -18,15 +18,11 @@
 package tables
 
 import (
-	"bytes"
 	"encoding/binary"
-	"fmt"
 	"math"
-	"sort"
 	"strings"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
@@ -39,44 +35,29 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/mock"
 	binlog "github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
 	"github.com/spaolacci/murmur3"
 )
 
-// Table implements table.Table interface.
-type Table struct {
-	ID      int64
-	Name    model.CIStr
-	Columns []*table.Column
-
+// tableCommon is shared by both Table and Partition.
+type tableCommon struct {
+	Columns         []*table.Column
 	publicColumns   []*table.Column
 	writableColumns []*table.Column
 	writableIndices []table.Index
 	indices         []table.Index
-	recordPrefix    kv.Key
-	indexPrefix     kv.Key
-	alloc           autoid.Allocator
 	meta            *model.TableInfo
-
-	partitionExpr *PartitionExpr
+	alloc           autoid.Allocator
 }
 
-// PartitionExpr is the partition definition expressions.
-// There are two expressions exist, because Locate use binary search, which requires:
-// Given a compare function, for any partition range i, if cmp[i] > 0, then cmp[i+1] > 0.
-// While partition prune must use the accurate range to do prunning.
-// partition by range (x)
-//   (partition
-//      p1 values less than (y1)
-//      p2 values less than (y2)
-//      p3 values less than (y3))
-// PartitionPrune: (x < y1); (y1 <= x < y2); (y2 <= x < y3)
-// Locate: (x < y1); (x < y2); (x < y3)
-type PartitionExpr struct {
-	PartitionPrune []expression.Expression
-	Locate         []expression.Expression
+// Table implements table.Table interface.
+type Table struct {
+	tableCommon
+	tableID  int64
+	regionID int64
+
+	table.RegionKeyProvider
 }
 
 // MockTableFromMeta only serves for test.
@@ -88,12 +69,18 @@ func MockTableFromMeta(tableInfo *model.TableInfo) table.Table {
 	}
 	t := newTable(tableInfo.ID, columns, nil)
 	t.meta = tableInfo
+	if tableInfo.GetPartitionInfo() == nil {
+		return t
+	}
+
 	partitionExpr, err := generatePartitionExpr(tableInfo)
 	if err != nil {
 		return nil
 	}
-	t.partitionExpr = partitionExpr
-	return t
+	return &PartitionTable{
+		Table:         *t,
+		partitionExpr: partitionExpr,
+	}
 }
 
 // TableFromMeta creates a Table instance from model.TableInfo.
@@ -141,91 +128,44 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 	}
 
 	t.meta = tblInfo
+	if tblInfo.GetPartitionInfo() == nil {
+		return t, nil
+	}
+
 	partitionExpr, err := generatePartitionExpr(tblInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	t.partitionExpr = partitionExpr
-	return t, nil
-}
-
-// PartitionExpr returns the partition expression.
-func (t *Table) PartitionExpr() *PartitionExpr {
-	return t.partitionExpr
-}
-
-func generatePartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
-	pi := tblInfo.GetPartitionInfo()
-	if pi == nil {
-		return nil, nil
-	}
-	// TODO: Support other partition method.
-	if pi.Type != model.PartitionTypeRange {
-		// To be compatible with the old code, don't return error here.
-		return nil, nil
-	}
-
-	ctx := mock.NewContext()
-	partitionPruneExprs := make([]expression.Expression, 0, len(pi.Definitions))
-	locateExprs := make([]expression.Expression, 0, len(pi.Definitions))
-	var buf bytes.Buffer
-	for i := 0; i < len(pi.Definitions); i++ {
-		if strings.EqualFold(pi.Definitions[i].LessThan[0], "MAXVALUE") {
-			// Expr less than maxvalue is always true.
-			fmt.Fprintf(&buf, "true")
-		} else {
-			fmt.Fprintf(&buf, "((%s) < (%s))", pi.Expr, pi.Definitions[i].LessThan[0])
-		}
-		expr, err := expression.ParseSimpleExpr(ctx, buf.String(), tblInfo)
-		if err != nil {
-			// If it got an error here, ddl may hang forever, so this error log is important.
-			log.Error("wrong table partition expression:", errors.ErrorStack(err), buf.String())
-			return nil, errors.Trace(err)
-		}
-		locateExprs = append(locateExprs, expr)
-
-		if i > 0 {
-			fmt.Fprintf(&buf, " and ((%s) >= (%s))", pi.Expr, pi.Definitions[i-1].LessThan[0])
-		}
-
-		expr, err = expression.ParseSimpleExpr(ctx, buf.String(), tblInfo)
-		if err != nil {
-			// If it got an error here, ddl may hang forever, so this error log is important.
-			log.Error("wrong table partition expression:", errors.ErrorStack(err), buf.String())
-			return nil, errors.Trace(err)
-		}
-		partitionPruneExprs = append(partitionPruneExprs, expr)
-		buf.Reset()
-	}
-	return &PartitionExpr{
-		PartitionPrune: partitionPruneExprs,
-		Locate:         locateExprs,
+	return &PartitionTable{
+		Table:         *t,
+		partitionExpr: partitionExpr,
 	}, nil
 }
 
 // newTable constructs a Table instance.
 func newTable(tableID int64, cols []*table.Column, alloc autoid.Allocator) *Table {
-	t := &Table{
-		ID:           tableID,
+	var t Table
+	t.tableID = tableID
+	t.regionID = tableID
+	t.RegionKeyProvider = &regionKey{
 		recordPrefix: tablecodec.GenTableRecordPrefix(tableID),
 		indexPrefix:  tablecodec.GenTableIndexPrefix(tableID),
-		alloc:        alloc,
-		Columns:      cols,
 	}
-
+	t.alloc = alloc
+	t.Columns = cols
 	t.publicColumns = t.Cols()
 	t.writableColumns = t.WritableCols()
 	t.writableIndices = t.WritableIndices()
-	return t
+	return &t
 }
 
 // Indices implements table.Table Indices interface.
-func (t *Table) Indices() []table.Index {
+func (t *tableCommon) Indices() []table.Index {
 	return t.indices
 }
 
 // WritableIndices implements table.Table WritableIndices interface.
-func (t *Table) WritableIndices() []table.Index {
+func (t *tableCommon) WritableIndices() []table.Index {
 	if len(t.writableIndices) > 0 {
 		return t.writableIndices
 	}
@@ -240,18 +180,18 @@ func (t *Table) WritableIndices() []table.Index {
 }
 
 // DeletableIndices implements table.Table DeletableIndices interface.
-func (t *Table) DeletableIndices() []table.Index {
+func (t *tableCommon) DeletableIndices() []table.Index {
 	// All indices are deletable because we don't need to check StateNone.
 	return t.indices
 }
 
 // Meta implements table.Table Meta interface.
-func (t *Table) Meta() *model.TableInfo {
+func (t *tableCommon) Meta() *model.TableInfo {
 	return t.meta
 }
 
 // Cols implements table.Table Cols interface.
-func (t *Table) Cols() []*table.Column {
+func (t *tableCommon) Cols() []*table.Column {
 	if len(t.publicColumns) > 0 {
 		return t.publicColumns
 	}
@@ -270,7 +210,7 @@ func (t *Table) Cols() []*table.Column {
 }
 
 // WritableCols implements table WritableCols interface.
-func (t *Table) WritableCols() []*table.Column {
+func (t *tableCommon) WritableCols() []*table.Column {
 	if len(t.writableColumns) > 0 {
 		return t.writableColumns
 	}
@@ -288,28 +228,28 @@ func (t *Table) WritableCols() []*table.Column {
 	return writableColumns[0 : maxOffset+1]
 }
 
-// RecordPrefix implements table.Table RecordPrefix interface.
-func (t *Table) RecordPrefix() kv.Key {
+type regionKey struct {
+	recordPrefix kv.Key
+	indexPrefix  kv.Key
+}
+
+// RecordPrefix implements table.RegionKeyProvider interface.
+func (t *regionKey) RecordPrefix() kv.Key {
 	return t.recordPrefix
 }
 
-// IndexPrefix implements table.Table IndexPrefix interface.
-func (t *Table) IndexPrefix() kv.Key {
+// IndexPrefix implements table.RegionKeyProvider interface.
+func (t *regionKey) IndexPrefix() kv.Key {
 	return t.indexPrefix
 }
 
-// RecordKey implements table.Table RecordKey interface.
-func (t *Table) RecordKey(h int64) kv.Key {
+// RecordKey implements table.RegionKeyProvider interface.
+func (t *regionKey) RecordKey(h int64) kv.Key {
 	return tablecodec.EncodeRecordKey(t.recordPrefix, h)
 }
 
-func partitionRecordKey(pid int64, handle int64) kv.Key {
-	recordPrefix := tablecodec.GenTableRecordPrefix(pid)
-	return tablecodec.EncodeRecordKey(recordPrefix, handle)
-}
-
-// FirstKey implements table.Table FirstKey interface.
-func (t *Table) FirstKey() kv.Key {
+// FirstKey implements table.RegionKeyProvider interface.
+func (t *regionKey) FirstKey() kv.Key {
 	return t.RecordKey(math.MinInt64)
 }
 
@@ -318,6 +258,7 @@ func (t *Table) FirstKey() kv.Key {
 // Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
 func (t *Table) UpdateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
 	txn := ctx.Txn()
+
 	// TODO: reuse bs, like AddRecord does.
 	bs := kv.NewBufferStore(txn, kv.DefaultTxnMembufCap)
 
@@ -445,28 +386,6 @@ func (t *Table) getRollbackableMemStore(ctx sessionctx.Context) kv.RetrieverMuta
 	return bs
 }
 
-// locatePartition returns the partition ID of the input record.
-func (t *Table) locatePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int64, error) {
-	var err error
-	partitionExprs := t.partitionExpr.Locate
-	idx := sort.Search(len(partitionExprs), func(i int) bool {
-		var ret int64
-		ret, _, err = partitionExprs[i].EvalInt(ctx, types.DatumRow(r))
-		if err != nil {
-			return true // Break the search.
-		}
-		return ret > 0
-	})
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	if idx < 0 || idx >= len(partitionExprs) {
-		// The data does not belong to any of the partition?
-		return 0, errors.Trace(table.ErrTrgInvalidCreationCtx)
-	}
-	return pi.Definitions[idx].ID, nil
-}
-
 // AddRecord implements table.Table AddRecord interface.
 func (t *Table) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
 	var hasRecordID bool
@@ -486,14 +405,6 @@ func (t *Table) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleChe
 	}
 	if !hasRecordID {
 		recordID, err = t.AllocAutoID(ctx)
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-	}
-
-	pid := t.ID
-	if partitionInfo := t.meta.GetPartitionInfo(); partitionInfo != nil {
-		pid, err = t.locatePartition(ctx, partitionInfo, r)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -538,13 +449,7 @@ func (t *Table) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleChe
 	}
 	writeBufs := sessVars.GetWriteStmtBufs()
 	adjustRowValuesBuf(writeBufs, len(row))
-	// key may be a partition ID or a table ID.
-	var key kv.Key
-	if pid == t.ID {
-		key = t.RecordKey(recordID)
-	} else {
-		key = partitionRecordKey(pid, recordID)
-	}
+	key := t.RecordKey(recordID)
 	writeBufs.RowValBuf, err = tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -575,12 +480,12 @@ func (t *Table) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleChe
 			colSize[col.ID] = val
 		}
 	}
-	sessVars.TxnCtx.UpdateDeltaForTable(t.ID, 1, 1, colSize)
+	sessVars.TxnCtx.UpdateDeltaForTable(t.tableID, 1, 1, colSize)
 	return recordID, nil
 }
 
 // genIndexKeyStr generates index content string representation.
-func (t *Table) genIndexKeyStr(colVals []types.Datum) (string, error) {
+func (t *tableCommon) genIndexKeyStr(colVals []types.Datum) (string, error) {
 	// Pass pre-composed error to txn.
 	strVals := make([]string, 0, len(colVals))
 	for _, cv := range colVals {
@@ -918,7 +823,7 @@ func GetColDefaultValue(ctx sessionctx.Context, col *table.Column, defaultVals [
 
 // AllocAutoID implements table.Table AllocAutoID interface.
 func (t *Table) AllocAutoID(ctx sessionctx.Context) (int64, error) {
-	rowID, err := t.Allocator(ctx).Alloc(t.ID)
+	rowID, err := t.Allocator(ctx).Alloc(t.tableID)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -933,7 +838,7 @@ func (t *Table) AllocAutoID(ctx sessionctx.Context) (int64, error) {
 	return rowID, nil
 }
 
-func (t *Table) calcShard(startTS uint64) int64 {
+func (t *tableCommon) calcShard(startTS uint64) int64 {
 	var buf [8]byte
 	binary.LittleEndian.PutUint64(buf[:], startTS)
 	hashVal := int64(murmur3.Sum32(buf[:]))
@@ -941,7 +846,7 @@ func (t *Table) calcShard(startTS uint64) int64 {
 }
 
 // Allocator implements table.Table Allocator interface.
-func (t *Table) Allocator(ctx sessionctx.Context) autoid.Allocator {
+func (t *tableCommon) Allocator(ctx sessionctx.Context) autoid.Allocator {
 	if ctx != nil {
 		sessAlloc := ctx.GetSessionVars().IDAllocator
 		if sessAlloc != nil {
@@ -953,12 +858,12 @@ func (t *Table) Allocator(ctx sessionctx.Context) autoid.Allocator {
 
 // RebaseAutoID implements table.Table RebaseAutoID interface.
 func (t *Table) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool) error {
-	return t.Allocator(ctx).Rebase(t.ID, newBase, isSetStep)
+	return t.Allocator(ctx).Rebase(t.tableID, newBase, isSetStep)
 }
 
 // Seek implements table.Table Seek interface.
 func (t *Table) Seek(ctx sessionctx.Context, h int64) (int64, bool, error) {
-	seekKey := tablecodec.EncodeRowKeyWithHandle(t.ID, h)
+	seekKey := tablecodec.EncodeRowKeyWithHandle(t.regionID, h)
 	iter, err := ctx.Txn().Seek(seekKey)
 	if !iter.Valid() || !iter.Key().HasPrefix(t.RecordPrefix()) {
 		// No more records in the table, skip to the end.
@@ -984,7 +889,7 @@ func shouldWriteBinlog(ctx sessionctx.Context) bool {
 }
 
 func (t *Table) getMutation(ctx sessionctx.Context) *binlog.TableMutation {
-	return ctx.StmtGetMutation(t.ID)
+	return ctx.StmtGetMutation(t.tableID)
 }
 
 func (t *Table) canSkip(col *table.Column, value types.Datum) bool {
