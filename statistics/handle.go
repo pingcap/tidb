@@ -107,6 +107,9 @@ func (h *Handle) GetQueryFeedback() []*QueryFeedback {
 func (h *Handle) Update(is infoschema.InfoSchema) error {
 	lastVersion := h.LastUpdateVersion()
 	// We need this because for two tables, the smaller version may write later than the one with larger version.
+	// Consider the case that there are two tables A and B, their version and commit time is (A0, A1) and (B0, B1),
+	// and A0 < B0 < B1 < A1. We will first read the stats of B, and update the lastVersion to B0, but we cannot read
+	// the table stats of A0 if we read stats that greater than lastVersion which is B0.
 	// We can read the stats if the diff between commit time and version is less than three lease.
 	offset := oracle.ComposeTS(3*int64(h.Lease), 0)
 	if lastVersion >= offset {
