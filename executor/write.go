@@ -587,7 +587,7 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 			curData = nil
 		}
 
-		cols, err := getFieldsFromLine(line, e.FieldsInfo)
+		cols, err := e.getFieldsFromLine(line)
 		if err != nil {
 			return nil, false, errors.Trace(err)
 		}
@@ -620,19 +620,19 @@ type field struct {
 }
 
 // getFieldsFromLine splits line according to fieldsInfo.
-func getFieldsFromLine(line []byte, fieldsInfo *ast.FieldsClause) ([]field, error) {
+func (e *LoadDataInfo) getFieldsFromLine(line []byte) ([]field, error) {
 	var sep []byte
-	if fieldsInfo.Enclosed != 0 {
-		if line[0] != fieldsInfo.Enclosed || line[len(line)-1] != fieldsInfo.Enclosed {
-			return nil, errors.Errorf("line %s should begin and end with %c", string(line), fieldsInfo.Enclosed)
+	if e.FieldsInfo.Enclosed != 0 {
+		if line[0] != e.FieldsInfo.Enclosed || line[len(line)-1] != e.FieldsInfo.Enclosed {
+			return nil, errors.Errorf("line %s should begin and end with %c", string(line), e.FieldsInfo.Enclosed)
 		}
 		line = line[1 : len(line)-1]
-		sep = make([]byte, 0, len(fieldsInfo.Terminated)+2)
-		sep = append(sep, fieldsInfo.Enclosed)
-		sep = append(sep, fieldsInfo.Terminated...)
-		sep = append(sep, fieldsInfo.Enclosed)
+		sep = make([]byte, 0, len(e.FieldsInfo.Terminated)+2)
+		sep = append(sep, e.FieldsInfo.Enclosed)
+		sep = append(sep, e.FieldsInfo.Terminated...)
+		sep = append(sep, e.FieldsInfo.Enclosed)
 	} else {
-		sep = []byte(fieldsInfo.Terminated)
+		sep = []byte(e.FieldsInfo.Terminated)
 	}
 	rawCols := bytes.Split(line, sep)
 	fields := make([]field, 0, len(rawCols))
