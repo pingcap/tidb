@@ -137,7 +137,7 @@ func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) erro
 	return vars.SetSystemVar(name, sVal)
 }
 
-// ValidateGetSystemVar check if system variable exists and validate it's scope when get system variable.
+// ValidateGetSystemVar checks if system variable exists and validates its scope when get system variable.
 func ValidateGetSystemVar(name string, isGlobal bool) error {
 	sysVar, exists := SysVars[name]
 	if !exists {
