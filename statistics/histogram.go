@@ -656,6 +656,15 @@ func MergeHistograms(sc *stmtctx.StatementContext, lh *Histogram, rh *Histogram,
 	return lh, nil
 }
 
+// AvgCountPerValue gets the average row count per value by the data of histogram.
+func (hg *Histogram) AvgCountPerValue(totalCount int64) float64 {
+	curNDV := float64(hg.NDV) * hg.getIncreaseFactor(totalCount)
+	if curNDV == 0 {
+		curNDV = 1
+	}
+	return float64(totalCount) / curNDV
+}
+
 // ErrorRate is the error rate of estimate row count by bucket and cm sketch.
 type ErrorRate struct {
 	ErrorTotal float64

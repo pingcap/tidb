@@ -418,6 +418,11 @@ func (t *Table) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idxID int
 	return result, errors.Trace(err)
 }
 
+// PseudoAvgCountPerCount gets a pseudo average count if histogram not exists.
+func (t *Table) PseudoAvgCountPerCount() float64 {
+	return float64(t.Count) / pseudoEqualRate
+}
+
 // getOrdinalOfRangeCond gets the ordinal of the position range condition,
 // if not exist, it returns the end position.
 func getOrdinalOfRangeCond(sc *stmtctx.StatementContext, ran *ranger.Range) int {

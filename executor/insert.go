@@ -60,7 +60,7 @@ func (e *InsertExec) exec(rows []types.DatumRow) error {
 	// If tidb_batch_insert is ON and not in a transaction, we could use BatchInsert mode.
 	sessVars := e.ctx.GetSessionVars()
 	defer sessVars.CleanBuffers()
-	ignoreErr := sessVars.StmtCtx.IgnoreErr
+	ignoreErr := sessVars.StmtCtx.DupKeyAsWarning
 
 	if !sessVars.ImportingData {
 		sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(e.ctx.Txn(), kv.TempTxnMemBufCap)
@@ -233,7 +233,7 @@ func (e *InsertExec) updateDupRow(row toBeCheckedRow, handle int64, onDuplicate 
 
 	// Do update row.
 	updatedRow, handleChanged, newHandle, err := e.doDupRowUpdate(handle, oldRow, row.row, onDuplicate)
-	if e.ctx.GetSessionVars().StmtCtx.IgnoreErr && kv.ErrKeyExists.Equal(err) {
+	if e.ctx.GetSessionVars().StmtCtx.DupKeyAsWarning && kv.ErrKeyExists.Equal(err) {
 		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		return nil
 	}
