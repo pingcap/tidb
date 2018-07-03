@@ -37,7 +37,7 @@ func (s *testDeleteRangeSuite) SetUpTest(c *C) {
 	client, pdClient, err := mocktikv.NewTestClient(s.cluster, nil, "")
 	c.Assert(err, IsNil)
 
-	store, err := NewTestTiKVStore(client, pdClient, nil, nil, false)
+	store, err := NewTestTiKVStore(client, pdClient, nil, nil, 0)
 	c.Check(err, IsNil)
 	s.store = store.(*tikvStore)
 }

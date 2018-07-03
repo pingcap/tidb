@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
@@ -125,7 +126,9 @@ func (e *ShowExec) fetchAll() error {
 	case ast.ShowVariables:
 		return e.fetchShowVariables()
 	case ast.ShowWarnings:
-		return e.fetchShowWarnings()
+		return e.fetchShowWarnings(false)
+	case ast.ShowErrors:
+		return e.fetchShowWarnings(true)
 	case ast.ShowProcessList:
 		return e.fetchShowProcessList()
 	case ast.ShowEvents:
@@ -145,6 +148,8 @@ func (e *ShowExec) fetchAll() error {
 		// empty result
 	case ast.ShowMasterStatus:
 		return e.fetchShowMasterStatus()
+	case ast.ShowPrivileges:
+		return e.fetchShowPrivileges()
 	}
 	return nil
 }
@@ -696,6 +701,42 @@ func (e *ShowExec) fetchShowGrants() error {
 	return nil
 }
 
+func (e *ShowExec) fetchShowPrivileges() error {
+	e.appendRow([]interface{}{"Alter", "Tables", "To alter the table"})
+	e.appendRow([]interface{}{"Alter", "Tables", "To alter the table"})
+	e.appendRow([]interface{}{"Alter routine", "Functions,Procedures", "To alter or drop stored functions/procedures"})
+	e.appendRow([]interface{}{"Create", "Databases,Tables,Indexes", "To create new databases and tables"})
+	e.appendRow([]interface{}{"Create routine", "Databases", "To use CREATE FUNCTION/PROCEDURE"})
+	e.appendRow([]interface{}{"Create temporary tables", "Databases", "To use CREATE TEMPORARY TABLE"})
+	e.appendRow([]interface{}{"Create view", "Tables", "To create new views"})
+	e.appendRow([]interface{}{"Create user", "Server Admin", "To create new users"})
+	e.appendRow([]interface{}{"Delete", "Tables", "To delete existing rows"})
+	e.appendRow([]interface{}{"Drop", "Databases,Tables", "To drop databases, tables, and views"})
+	e.appendRow([]interface{}{"Event", "Server Admin", "To create, alter, drop and execute events"})
+	e.appendRow([]interface{}{"Execute", "Functions,Procedures", "To execute stored routines"})
+	e.appendRow([]interface{}{"File", "File access on server", "To read and write files on the server"})
+	e.appendRow([]interface{}{"Grant option", "Databases,Tables,Functions,Procedures", "To give to other users those privileges you possess"})
+	e.appendRow([]interface{}{"Index", "Tables", "To create or drop indexes"})
+	e.appendRow([]interface{}{"Insert", "Tables", "To insert data into tables"})
+	e.appendRow([]interface{}{"Lock tables", "Databases", "To use LOCK TABLES (together with SELECT privilege)"})
+	e.appendRow([]interface{}{"Process", "Server Admin", "To view the plain text of currently executing queries"})
+	e.appendRow([]interface{}{"Proxy", "Server Admin", "To make proxy user possible"})
+	e.appendRow([]interface{}{"References", "Databases,Tables", "To have references on tables"})
+	e.appendRow([]interface{}{"Reload", "Server Admin", "To reload or refresh tables, logs and privileges"})
+	e.appendRow([]interface{}{"Replication client", "Server Admin", "To ask where the slave or master servers are"})
+	e.appendRow([]interface{}{"Replication slave", "Server Admin", "To read binary log events from the master"})
+	e.appendRow([]interface{}{"Select", "Tables", "To retrieve rows from table"})
+	e.appendRow([]interface{}{"Show databases", "Server Admin", "To see all databases with SHOW DATABASES"})
+	e.appendRow([]interface{}{"Show view", "Tables", "To see views with SHOW CREATE VIEW"})
+	e.appendRow([]interface{}{"Shutdown", "Server Admin", "To shut down the server"})
+	e.appendRow([]interface{}{"Super", "Server Admin", "To use KILL thread, SET GLOBAL, CHANGE MASTER, etc."})
+	e.appendRow([]interface{}{"Trigger", "Tables", "To use triggers"})
+	e.appendRow([]interface{}{"Create tablespace", "Server Admin", "To create/alter/drop tablespaces"})
+	e.appendRow([]interface{}{"Update", "Tables", "To update existing rows"})
+	e.appendRow([]interface{}{"Usage", "Server Admin", "No privileges - allow connect only"})
+	return nil
+}
+
 func (e *ShowExec) fetchShowTriggers() error {
 	return nil
 }
@@ -708,16 +749,19 @@ func (e *ShowExec) fetchShowPlugins() error {
 	return nil
 }
 
-func (e *ShowExec) fetchShowWarnings() error {
+func (e *ShowExec) fetchShowWarnings(errOnly bool) error {
 	warns := e.ctx.GetSessionVars().StmtCtx.GetWarnings()
-	for _, warn := range warns {
-		warn = errors.Cause(warn)
+	for _, w := range warns {
+		if errOnly && w.Level != stmtctx.WarnLevelError {
+			continue
+		}
+		warn := errors.Cause(w.Err)
 		switch x := warn.(type) {
 		case *terror.Error:
 			sqlErr := x.ToSQLError()
-			e.appendRow([]interface{}{"Warning", int64(sqlErr.Code), sqlErr.Message})
+			e.appendRow([]interface{}{w.Level, int64(sqlErr.Code), sqlErr.Message})
 		default:
-			e.appendRow([]interface{}{"Warning", int64(mysql.ErrUnknown), warn.Error()})
+			e.appendRow([]interface{}{w.Level, int64(mysql.ErrUnknown), warn.Error()})
 		}
 	}
 	return nil

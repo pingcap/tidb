@@ -965,6 +965,8 @@ const (
 	ShowPlugins
 	ShowProfiles
 	ShowMasterStatus
+	ShowPrivileges
+	ShowErrors
 )
 
 // ShowStmt is a statement to provide information about databases, tables, columns and so on.

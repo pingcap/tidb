@@ -77,6 +77,7 @@ var _ = Suite(&testBinlogSuite{})
 
 type testBinlogSuite struct {
 	store    kv.Storage
+	domain   *domain.Domain
 	unixFile string
 	serv     *grpc.Server
 	pump     *mockBinlogPump
@@ -105,14 +106,14 @@ func (s *testBinlogSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(clientCon, NotNil)
 	tk := testkit.NewTestKit(c, s.store)
-	_, err = session.BootstrapSession(store)
+	s.domain, err = session.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	tk.MustExec("use test")
 	sessionDomain := domain.GetDomain(tk.Se.(sessionctx.Context))
 	s.ddl = sessionDomain.DDL()
 
 	s.client = binlog.NewPumpClient(clientCon)
-	s.ddl.WorkerVars().BinlogClient = s.client
+	s.ddl.SetBinlogClient(s.client)
 }
 
 func (s *testBinlogSuite) TearDownSuite(c *C) {
@@ -120,6 +121,7 @@ func (s *testBinlogSuite) TearDownSuite(c *C) {
 	s.serv.Stop()
 	os.Remove(s.unixFile)
 	s.store.Close()
+	s.domain.Close()
 }
 
 func (s *testBinlogSuite) TestBinlog(c *C) {

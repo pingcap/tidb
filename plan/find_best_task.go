@@ -29,7 +29,7 @@ const (
 	netWorkFactor      = 1.5
 	netWorkStartFactor = 20.0
 	scanFactor         = 2.0
-	descScanFactor     = 5 * scanFactor
+	descScanFactor     = 2 * scanFactor
 	memoryFactor       = 5.0
 	// 0.5 is the looking up agg context factor.
 	hashAggFactor      = 1.2 + 0.5
@@ -353,15 +353,17 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, path *accessPath) (
 		DBName:           ds.DBName,
 		Columns:          ds.Columns,
 		Index:            idx,
+		IdxCols:          path.idxCols,
+		IdxColLens:       path.idxColLens,
+		AccessCondition:  path.accessConds,
+		Ranges:           path.ranges,
+		filterCondition:  path.indexFilters,
 		dataSourceSchema: ds.schema,
 	}.init(ds.ctx)
 	statsTbl := ds.statisticTable
 	if statsTbl.Indices[idx.ID] != nil {
 		is.Hist = &statsTbl.Indices[idx.ID].Histogram
 	}
-	is.Ranges = ranger.FullRange()
-	eqCount := 0
-	is.AccessCondition, is.Ranges, is.filterCondition, eqCount = path.accessConds, path.ranges, path.indexFilters, path.eqCondCount
 	rowCount := path.countAfterAccess
 	cop := &copTask{indexPlan: is}
 	if !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle) {
@@ -386,7 +388,7 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, path *accessPath) (
 			if col.Name.L == prop.cols[0].ColName.L {
 				matchProperty = matchIndicesProp(idx.Columns[i:], prop.cols)
 				break
-			} else if i >= eqCount {
+			} else if i >= path.eqCondCount {
 				break
 			}
 		}
@@ -565,6 +567,8 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp, path *accessPath) (
 		Columns:     ds.Columns,
 		TableAsName: ds.TableAsName,
 		DBName:      ds.DBName,
+		isPartition: ds.isPartition,
+		partitionID: ds.partitionID,
 	}.init(ds.ctx)
 	ts.SetSchema(ds.schema)
 	var pkCol *expression.Column
