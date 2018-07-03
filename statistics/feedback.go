@@ -299,26 +299,31 @@ func (b *BucketFeedback) getBoundaries(num int) []types.Datum {
 	return vals[:total]
 }
 
+// There are only two types of datum in bucket: one is `Blob`, which is for index; the other one
+// is `Int`, which is for primary key.
 type bucket = feedback
 
-// splitBucket split the bucket according to feedback.
+// splitBucket firstly splits this "BucketFeedback" to "newNumBkts" new buckets,
+// calculates the count for each new bucket, merge the new bucket whose count
+// is smaller than "minBucketFraction*totalCount" with the next new bucket
+// until the last new bucket.
 func (b *BucketFeedback) splitBucket(newNumBkts int, totalCount float64, originBucketCount float64) []bucket {
 	// Split the bucket.
 	bounds := b.getBoundaries(newNumBkts + 1)
 	bkts := make([]bucket, 0, len(bounds)-1)
 	for i := 1; i < len(bounds); i++ {
-		bkt := bucket{&bounds[i-1], bounds[i].Copy(), 0, 0}
+		newBkt := bucket{&bounds[i-1], bounds[i].Copy(), 0, 0}
 		// get bucket count
-		_, ratio := getOverlapFraction(feedback{b.lower, b.upper, int64(originBucketCount), 0}, bkt)
-		bucketCount := originBucketCount * ratio
-		bucketCount = b.refineBucketCount(bkt, bucketCount)
+		_, ratio := getOverlapFraction(feedback{b.lower, b.upper, int64(originBucketCount), 0}, newBkt)
+		countInNewBkt := originBucketCount * ratio
+		countInNewBkt = b.refineBucketCount(newBkt, countInNewBkt)
 		// do not split if the count of result bucket is too small.
-		if bucketCount < minBucketFraction*totalCount {
+		if countInNewBkt < minBucketFraction*totalCount {
 			bounds[i] = bounds[i-1]
 			continue
 		}
-		bkt.count = int64(bucketCount)
-		bkts = append(bkts, bkt)
+		newBkt.count = int64(countInNewBkt)
+		bkts = append(bkts, newBkt)
 		// To guarantee that each bucket's range will not overlap.
 		if bounds[i].Kind() == types.KindBytes {
 			bounds[i].SetBytes(kv.Key(bounds[i].GetBytes()).PrefixNext())
@@ -494,21 +499,21 @@ func mergeBuckets(bkts []bucket, isNewBuckets []bool, totalCount float64) []buck
 
 // splitBuckets split the histogram buckets according to the feedback.
 func splitBuckets(h *Histogram, feedback *QueryFeedback) ([]bucket, []bool, int64) {
-	bktID2FB, totalNumFBs := buildBucketFeedback(h, feedback)
+	bktID2FB, numTotalFBs := buildBucketFeedback(h, feedback)
 	buckets := make([]bucket, 0, h.Len())
 	isNewBuckets := make([]bool, 0, h.Len())
-	splitCount := getSplitCount(totalNumFBs, defaultBucketCount-h.Len())
+	splitCount := getSplitCount(numTotalFBs, defaultBucketCount-h.Len())
 	for i := 0; i < h.Len(); i++ {
-		bkt, ok := bktID2FB[i]
+		bktFB, ok := bktID2FB[i]
 		// No feedback, just use the original one.
 		if !ok {
 			buckets = append(buckets, bucket{h.GetLower(i), h.GetUpper(i), h.bucketCount(i), h.Buckets[i].Repeat})
 			isNewBuckets = append(isNewBuckets, false)
 			continue
 		}
-		// distribute the total split count to bucket based on number of bucket feedback
-		newBktNums := splitCount * len(bkt.feedback) / totalNumFBs
-		bkts := bkt.splitBucket(newBktNums, h.totalRowCount(), float64(h.bucketCount(i)))
+		// Distribute the total split count to bucket based on number of bucket feedback.
+		newBktNums := splitCount * len(bktFB.feedback) / numTotalFBs
+		bkts := bktFB.splitBucket(newBktNums, h.totalRowCount(), float64(h.bucketCount(i)))
 		buckets = append(buckets, bkts...)
 		if len(bkts) == 1 {
 			isNewBuckets = append(isNewBuckets, false)
