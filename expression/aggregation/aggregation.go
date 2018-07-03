@@ -15,12 +15,16 @@ package aggregation
 
 import (
 	"bytes"
+	"fmt"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -41,6 +45,15 @@ type Aggregation interface {
 
 	// Reset the content of the evaluate context.
 	ResetContext(sc *stmtctx.StatementContext, evalCtx *AggEvaluateContext)
+
+	// GetFinalAggFunc constructs the final agg functions, only used in parallel execution.
+	GetFinalAggFunc(idx int) (int, Aggregation)
+
+	// GetArgs gets the args of the aggregate function.
+	GetArgs() []expression.Expression
+
+	// Clone deep copy the Aggregation.
+	Clone() Aggregation
 }
 
 // NewDistAggFunc creates new Aggregate function for mock tikv.
@@ -159,4 +172,80 @@ func (af *aggFunction) updateSum(sc *stmtctx.StatementContext, evalCtx *AggEvalu
 	}
 	evalCtx.Count++
 	return nil
+}
+
+func (af *aggFunction) GetFinalAggFunc(idx int) (_ int, newAggFunc Aggregation) {
+	switch af.Mode {
+	case DedupMode:
+		panic("DedupMode is not supported now.")
+	case Partial1Mode:
+		args := make([]expression.Expression, 0, 2)
+		if NeedCount(af.Name) {
+			args = append(args, &expression.Column{
+				ColName: model.NewCIStr(fmt.Sprintf("col_%d", idx)),
+				Index:   idx,
+				RetType: &types.FieldType{Tp: mysql.TypeLonglong, Flen: 21, Charset: charset.CharsetBin, Collate: charset.CollationBin},
+			})
+			idx++
+		}
+		if NeedValue(af.Name) {
+			args = append(args, &expression.Column{
+				ColName: model.NewCIStr(fmt.Sprintf("col_%d", idx)),
+				Index:   idx,
+				RetType: af.RetTp,
+			})
+			idx++
+			if af.Name == ast.AggFuncGroupConcat {
+				separator := af.Args[len(af.Args)-1]
+				args = append(args, separator.Clone())
+			}
+		}
+		desc := af.AggFuncDesc.Clone()
+		desc.Mode = FinalMode
+		desc.Args = args
+		newAggFunc = desc.GetAggFunc()
+	case Partial2Mode:
+		desc := af.AggFuncDesc.Clone()
+		desc.Mode = FinalMode
+		idx += len(desc.Args)
+		newAggFunc = desc.GetAggFunc()
+	case FinalMode, CompleteMode:
+		panic("GetFinalAggFunc should not be called when aggMode is FinalMode/CompleteMode.")
+	}
+	return idx, newAggFunc
+}
+
+func (af *aggFunction) GetArgs() []expression.Expression {
+	return af.Args
+}
+
+func (af *aggFunction) Clone() Aggregation {
+	desc := af.AggFuncDesc.Clone()
+	return desc.GetAggFunc()
+}
+
+// NeedCount indicates whether the aggregate function should record count.
+func NeedCount(name string) bool {
+	return name == ast.AggFuncCount || name == ast.AggFuncAvg
+}
+
+// NeedValue indicates whether the aggregate function should record value.
+func NeedValue(name string) bool {
+	switch name {
+	case ast.AggFuncSum, ast.AggFuncAvg, ast.AggFuncFirstRow, ast.AggFuncMax, ast.AggFuncMin,
+		ast.AggFuncGroupConcat, ast.AggFuncBitOr, ast.AggFuncBitAnd, ast.AggFuncBitXor:
+		return true
+	default:
+		return false
+	}
+}
+
+// IsAllFirstRow checks whether functions in `aggFuncs` are all FirstRow.
+func IsAllFirstRow(aggFuncs []*AggFuncDesc) bool {
+	for _, fun := range aggFuncs {
+		if fun.Name != ast.AggFuncFirstRow {
+			return false
+		}
+	}
+	return true
 }

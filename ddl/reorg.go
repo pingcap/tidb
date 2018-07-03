@@ -139,7 +139,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, lease time.Dura
 		w.reorgCtx.clean()
 		return errors.Trace(err)
 	case <-w.quitCh:
-		log.Info("[ddl] run reorg job ddl quit")
+		log.Info("[ddl] run reorg job quit")
 		w.reorgCtx.setNextHandle(0)
 		w.reorgCtx.setRowCount(0)
 		// We return errWaitReorgTimeout here too, so that outer loop will break.
