@@ -24,6 +24,7 @@ type partialResult4MaxMinInt int64
 type partialResult4MaxMinDecimal *types.MyDecimal
 type partialResult4MaxMinFloat32 float32
 type partialResult4MaxMinFloat64 float64
+
 // Todo
 type partialResult4MaxMinString string
 type partialResult4MaxMinDatetime types.Time
