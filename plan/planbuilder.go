@@ -730,7 +730,7 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 		p.SetSchema(buildShowTriggerSchema())
 	case ast.ShowEvents:
 		p.SetSchema(buildShowEventsSchema())
-	case ast.ShowWarnings:
+	case ast.ShowWarnings, ast.ShowErrors:
 		p.SetSchema(buildShowWarningsSchema())
 	default:
 		switch showTp {
@@ -866,7 +866,7 @@ func (b *planBuilder) resolveGeneratedColumns(columns []*table.Column, onDups ma
 		}
 		for dep := range column.Dependences {
 			if _, ok := onDups[dep]; ok {
-				assign := &expression.Assignment{Col: colExpr, Expr: expr.Clone()}
+				assign := &expression.Assignment{Col: colExpr, Expr: expr}
 				igc.OnDuplicates = append(igc.OnDuplicates, assign)
 				break
 			}
@@ -1318,7 +1318,7 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 			mysql.TypeVarchar, mysql.TypeVarchar}
 	case ast.ShowColumns:
 		names = table.ColDescFieldNames(s.Full)
-	case ast.ShowWarnings:
+	case ast.ShowWarnings, ast.ShowErrors:
 		names = []string{"Level", "Code", "Message"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar}
 	case ast.ShowCharset:
