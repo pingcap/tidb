@@ -23,27 +23,27 @@ type bitOrUint64 struct {
 	baseAggFunc
 }
 
-type result4BitOrUint64 struct {
+type partialResult4BitFunc struct {
 	value uint64
 }
 
 func (e *bitOrUint64) AllocPartialResult() PartialResult {
-	return PartialResult(&result4BitOrUint64{})
+	return PartialResult(&partialResult4BitFunc{})
 }
 
 func (e *bitOrUint64) ResetPartialResult(pr PartialResult) {
-	p := (*result4BitOrUint64)(pr)
+	p := (*partialResult4BitFunc)(pr)
 	p.value = 0
 }
 
 func (e *bitOrUint64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
-	p := (*result4BitOrUint64)(pr)
+	p := (*partialResult4BitFunc)(pr)
 	chk.AppendUint64(e.ordinal, p.value)
 	return nil
 }
 
 func (e *bitOrUint64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
-	p := (*result4BitOrUint64)(pr)
+	p := (*partialResult4BitFunc)(pr)
 	for _, row := range rowsInGroup {
 		inputValue, isNull, err := e.args[0].EvalInt(sctx, row)
 		if err != nil {
