@@ -781,6 +781,13 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 	}
 	var val string
 	var err error
+	if v.ExplicitScope {
+		err = variable.ValidateGetSystemVar(name, v.IsGlobal)
+		if err != nil {
+			er.err = errors.Trace(err)
+			return
+		}
+	}
 	if v.IsGlobal {
 		val, err = variable.GetGlobalSystemVar(sessionVars, name)
 	} else {

@@ -67,15 +67,17 @@ func (s *testFeedbackSuite) TestUpdateHistogram(c *C) {
 	q := NewQueryFeedback(0, genHistogram(), 0, false)
 	q.feedback = feedbacks
 	originBucketCount := defaultBucketCount
-	defaultBucketCount = 5
+	defaultBucketCount = 7
 	defer func() { defaultBucketCount = originBucketCount }()
 	c.Assert(UpdateHistogram(q.Hist(), q).ToString(0), Equals,
 		"column:0 ndv:0 totColSize:0\n"+
 			"num: 10000\tlower_bound: 0\tupper_bound: 1\trepeats: 0\n"+
-			"num: 10003\tlower_bound: 2\tupper_bound: 3\trepeats: 0\n"+
-			"num: 10021\tlower_bound: 4\tupper_bound: 20\trepeats: 0\n"+
-			"num: 10046\tlower_bound: 21\tupper_bound: 46\trepeats: 0\n"+
-			"num: 10059\tlower_bound: 47\tupper_bound: 60\trepeats: 0")
+			"num: 10008\tlower_bound: 2\tupper_bound: 7\trepeats: 0\n"+
+			"num: 10019\tlower_bound: 8\tupper_bound: 19\trepeats: 0\n"+
+			"num: 10019\tlower_bound: 20\tupper_bound: 20\trepeats: 0\n"+
+			"num: 10037\tlower_bound: 21\tupper_bound: 39\trepeats: 0\n"+
+			"num: 10055\tlower_bound: 40\tupper_bound: 58\trepeats: 0\n"+
+			"num: 10057\tlower_bound: 59\tupper_bound: 60\trepeats: 0")
 }
 
 func (s *testFeedbackSuite) TestSplitBuckets(c *C) {
@@ -93,10 +95,10 @@ func (s *testFeedbackSuite) TestSplitBuckets(c *C) {
 			"num: 1\tlower_bound: 2\tupper_bound: 3\trepeats: 0\n"+
 			"num: 1\tlower_bound: 5\tupper_bound: 7\trepeats: 0\n"+
 			"num: 6\tlower_bound: 10\tupper_bound: 15\trepeats: 0\n"+
-			"num: 10\tlower_bound: 16\tupper_bound: 20\trepeats: 0\n"+
-			"num: 10\tlower_bound: 30\tupper_bound: 50\trepeats: 0")
+			"num: 6\tlower_bound: 16\tupper_bound: 20\trepeats: 0\n"+
+			"num: 6\tlower_bound: 30\tupper_bound: 50\trepeats: 0")
 	c.Assert(isNewBuckets, DeepEquals, []bool{false, false, false, true, true, false})
-	c.Assert(totalCount, Equals, int64(11))
+	c.Assert(totalCount, Equals, int64(6))
 
 	// test do not split if the bucket count is too small
 	feedbacks = []feedback{newFeedback(0, 1, 100000)}
@@ -111,26 +113,45 @@ func (s *testFeedbackSuite) TestSplitBuckets(c *C) {
 			"num: 100000\tlower_bound: 0\tupper_bound: 1\trepeats: 0\n"+
 			"num: 100000\tlower_bound: 2\tupper_bound: 3\trepeats: 0\n"+
 			"num: 100000\tlower_bound: 5\tupper_bound: 7\trepeats: 0\n"+
-			"num: 100002\tlower_bound: 10\tupper_bound: 20\trepeats: 0\n"+
-			"num: 100002\tlower_bound: 30\tupper_bound: 50\trepeats: 0")
-	c.Assert(isNewBuckets, DeepEquals, []bool{false, false, false, false, false})
-	c.Assert(totalCount, Equals, int64(100002))
+			"num: 100001\tlower_bound: 10\tupper_bound: 15\trepeats: 0\n"+
+			"num: 100001\tlower_bound: 16\tupper_bound: 20\trepeats: 0\n"+
+			"num: 100001\tlower_bound: 30\tupper_bound: 50\trepeats: 0")
+	c.Assert(isNewBuckets, DeepEquals, []bool{false, false, false, true, true, false})
+	c.Assert(totalCount, Equals, int64(100001))
 
 	// test do not split if the result bucket count is too small
 	h := NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeLong), 5, 0)
 	appendBucket(h, 0, 1000000)
+	h.Buckets[0].Count = 1000000
 	feedbacks = feedbacks[:0]
 	for i := 0; i < 100; i++ {
-		feedbacks = append(feedbacks, newFeedback(0, 101, 1))
+		feedbacks = append(feedbacks, newFeedback(0, 10, 1))
 	}
 	q = NewQueryFeedback(0, h, 0, false)
 	q.feedback = feedbacks
 	buckets, isNewBuckets, totalCount = splitBuckets(q.Hist(), q)
 	c.Assert(buildNewHistogram(q.Hist(), buckets).ToString(0), Equals,
 		"column:0 ndv:0 totColSize:0\n"+
-			"num: 9900\tlower_bound: 0\tupper_bound: 1000000\trepeats: 0")
+			"num: 1000000\tlower_bound: 0\tupper_bound: 1000000\trepeats: 0")
 	c.Assert(isNewBuckets, DeepEquals, []bool{false})
-	c.Assert(totalCount, Equals, int64(9900))
+	c.Assert(totalCount, Equals, int64(1000000))
+
+	// test split even if the feedback range is too small
+	h = NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeLong), 5, 0)
+	appendBucket(h, 0, 1000000)
+	feedbacks = feedbacks[:0]
+	for i := 0; i < 100; i++ {
+		feedbacks = append(feedbacks, newFeedback(0, 10, 1))
+	}
+	q = NewQueryFeedback(0, h, 0, false)
+	q.feedback = feedbacks
+	buckets, isNewBuckets, totalCount = splitBuckets(q.Hist(), q)
+	c.Assert(buildNewHistogram(q.Hist(), buckets).ToString(0), Equals,
+		"column:0 ndv:0 totColSize:0\n"+
+			"num: 1\tlower_bound: 0\tupper_bound: 10\trepeats: 0\n"+
+			"num: 1\tlower_bound: 11\tupper_bound: 1000000\trepeats: 0")
+	c.Assert(isNewBuckets, DeepEquals, []bool{true, true})
+	c.Assert(totalCount, Equals, int64(1))
 }
 
 func (s *testFeedbackSuite) TestMergeBuckets(c *C) {
