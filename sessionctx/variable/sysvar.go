@@ -59,18 +59,18 @@ func GetSysVar(name string) *SysVar {
 // Variable error codes.
 const (
 	CodeUnknownStatusVar terror.ErrCode = 1
-	CodeUnknownSystemVar terror.ErrCode = 1193
-	CodeIncorrectScope   terror.ErrCode = 1238
-	CodeUnknownTimeZone  terror.ErrCode = 1298
-	CodeReadOnly         terror.ErrCode = 1621
+	CodeUnknownSystemVar terror.ErrCode = mysql.ErrUnknownSystemVariable
+	CodeIncorrectScope   terror.ErrCode = mysql.ErrIncorrectGlobalLocalVar
+	CodeUnknownTimeZone  terror.ErrCode = mysql.ErrUnknownTimeZone
+	CodeReadOnly         terror.ErrCode = mysql.ErrVariableIsReadonly
 )
 
 // Variable errors
 var (
 	UnknownStatusVar   = terror.ClassVariable.New(CodeUnknownStatusVar, "unknown status variable")
-	UnknownSystemVar   = terror.ClassVariable.New(CodeUnknownSystemVar, "unknown system variable '%s'")
-	ErrIncorrectScope  = terror.ClassVariable.New(CodeIncorrectScope, "Incorrect variable scope")
-	ErrUnknownTimeZone = terror.ClassVariable.New(CodeUnknownTimeZone, "unknown or incorrect time zone: %s")
+	UnknownSystemVar   = terror.ClassVariable.New(CodeUnknownSystemVar, mysql.MySQLErrName[mysql.ErrUnknownSystemVariable])
+	ErrIncorrectScope  = terror.ClassVariable.New(CodeIncorrectScope, mysql.MySQLErrName[mysql.ErrIncorrectGlobalLocalVar])
+	ErrUnknownTimeZone = terror.ClassVariable.New(CodeUnknownTimeZone, mysql.MySQLErrName[mysql.ErrUnknownTimeZone])
 	ErrReadOnly        = terror.ClassVariable.New(CodeReadOnly, "variable is read only")
 )
 
@@ -606,6 +606,8 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "min_examined_row_limit", "0"},
 	{ScopeGlobal, "sync_frm", "ON"},
 	{ScopeGlobal, "innodb_online_alter_log_max_size", "134217728"},
+	{ScopeSession, "warning_count", "0"},
+	{ScopeSession, "error_count", "0"},
 	/* TiDB specific variables */
 	{ScopeSession, TiDBSnapshot, ""},
 	{ScopeSession, TiDBImportingData, "0"},
