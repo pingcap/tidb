@@ -184,7 +184,7 @@ func (p *MySQLPrivilege) loadTable(sctx sessionctx.Context, sql string,
 
 	fs := rs.Fields()
 	for {
-		// WARNNING: decodeTableRow decodes data from a chunk Row, that is a shallow copy.
+		// NOTE: decodeTableRow decodes data from a chunk Row, that is a shallow copy.
 		// The result will reference memory in the chunk, so the chunk must not be reused
 		// here, otherwise some werid bug will happen!
 		chk := rs.NewChunk()
