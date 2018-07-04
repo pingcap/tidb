@@ -120,6 +120,7 @@ func buildGroupConcat(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc
 
 // buildCount builds the AggFunc implementation for function "BIT_OR".
 func buildBitOr(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	// BIT_OR doesn't need to handle the distinct property.
 	base := baseAggFunc{
 		args:    aggFuncDesc.Args,
 		ordinal: ordinal,
