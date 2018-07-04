@@ -844,7 +844,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		return errors.Trace(err)
 	}
 
-	if part != nil {
+	if part != nil && part.Type == model.PartitionTypeRange {
 		tbInfo.Partition = part
 		err = checkCreatePartitionNameUnique(tbInfo.Partition)
 		if err != nil {

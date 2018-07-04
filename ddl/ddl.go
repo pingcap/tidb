@@ -168,6 +168,8 @@ var (
 	ErrRangeNotIncreasing = terror.ClassSchema.New(codeRangeNotIncreasing, "VALUES LESS THAN value must be strictly increasing for each partition")
 	// ErrPartitionMaxvalue returns maxvalue can only be used in last partition definition.
 	ErrPartitionMaxvalue = terror.ClassSchema.New(codePartitionMaxvalue, "MAXVALUE can only be used in last partition definition")
+	// ErrTooManyValues returns cannot have more than one value for this type of partitioning.
+	ErrTooManyValues = terror.ClassSchema.New(codeErrTooManyValues, mysql.MySQLErrName[mysql.ErrTooManyValues])
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -585,6 +587,7 @@ const (
 	codeSameNamePartition             = terror.ErrCode(mysql.ErrSameNamePartition)
 	codeRangeNotIncreasing            = terror.ErrCode(mysql.ErrRangeNotIncreasing)
 	codePartitionMaxvalue             = terror.ErrCode(mysql.ErrPartitionMaxvalue)
+	codeErrTooManyValues              = terror.ErrCode(mysql.ErrTooManyValues)
 )
 
 func init() {
@@ -623,6 +626,7 @@ func init() {
 		codeSameNamePartition:             mysql.ErrSameNamePartition,
 		codeRangeNotIncreasing:            mysql.ErrRangeNotIncreasing,
 		codePartitionMaxvalue:             mysql.ErrPartitionMaxvalue,
+		codeErrTooManyValues:              mysql.ErrTooManyValues,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }

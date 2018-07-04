@@ -69,21 +69,24 @@ func buildCreateTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.Create
 			ID:      pid,
 			Comment: def.Comment,
 		}
-		buf := new(bytes.Buffer)
-		for _, expr := range def.LessThan {
-			expr.Format(buf)
-			piDef.LessThan = append(piDef.LessThan, buf.String())
-			buf.Reset()
+
+		if s.Partition.Tp == model.PartitionTypeRange {
+			if s.Partition.ColumnNames == nil && len(def.LessThan) != 1 {
+				return nil, ErrTooManyValues.GenByArgs("RANGE")
+			}
+			buf := new(bytes.Buffer)
+			for _, expr := range def.LessThan {
+				expr.Format(buf)
+				piDef.LessThan = append(piDef.LessThan, buf.String())
+				buf.Reset()
+			}
+			pi.Definitions = append(pi.Definitions, piDef)
 		}
-		pi.Definitions = append(pi.Definitions, piDef)
 	}
 	return pi, nil
 }
 
 func checkCreatePartitionNameUnique(part *model.PartitionInfo) error {
-	if part.Type != model.PartitionTypeRange {
-		return nil
-	}
 	newPars := part.Definitions
 	set := make(map[string]struct{})
 	for _, newPar := range newPars {
@@ -95,35 +98,33 @@ func checkCreatePartitionNameUnique(part *model.PartitionInfo) error {
 	return nil
 }
 
-// checkCreatePartitionValue check whether `less than value` is strictly increasing for each partition.
+// checkCreatePartitionValue checks whether `less than value` is strictly increasing for each partition.
 func checkCreatePartitionValue(part *model.PartitionInfo) error {
-	if part.Type == model.PartitionTypeRange {
-		defs := part.Definitions
-		rangeValue := defs[0].LessThan[0]
-		if strings.EqualFold(rangeValue, "MAXVALUE") && len(defs) > 1 {
+	defs := part.Definitions
+	rangeValue := defs[0].LessThan[0]
+	if strings.EqualFold(rangeValue, "MAXVALUE") && len(defs) > 1 {
+		return errors.Trace(ErrPartitionMaxvalue)
+	}
+	prevRangeValue, err := strconv.Atoi(rangeValue)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if strings.EqualFold(defs[len(defs)-1].LessThan[0], "MAXVALUE") {
+		defs = defs[:len(defs)-1]
+	}
+
+	for i := 1; i < len(defs); i++ {
+		if strings.EqualFold(defs[i].LessThan[0], "MAXVALUE") && i != len(defs)-1 {
 			return errors.Trace(ErrPartitionMaxvalue)
 		}
-		currentRangeValue, err := strconv.Atoi(rangeValue)
+		currentRangeValue, err := strconv.Atoi(defs[i].LessThan[0])
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if strings.EqualFold(defs[len(defs)-1].LessThan[0], "MAXVALUE") {
-			defs = defs[:len(defs)-1]
+		if currentRangeValue <= prevRangeValue {
+			return errors.Trace(ErrRangeNotIncreasing)
 		}
-
-		for i := 1; i < len(defs); i++ {
-			if strings.EqualFold(defs[i].LessThan[0], "MAXVALUE") && i != len(defs)-1 {
-				return errors.Trace(ErrPartitionMaxvalue)
-			}
-			nextRangeValue, err := strconv.Atoi(defs[i].LessThan[0])
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if nextRangeValue <= currentRangeValue {
-				return errors.Trace(ErrRangeNotIncreasing)
-			}
-			currentRangeValue = nextRangeValue
-		}
+		prevRangeValue = currentRangeValue
 	}
 	return nil
 }
