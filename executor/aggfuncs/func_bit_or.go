@@ -19,8 +19,12 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
-type bitOrUint64 struct {
+type baseBitAggFunc struct {
 	baseAggFunc
+}
+
+type bitOrUint64 struct {
+	baseBitAggFunc
 }
 
 type partialResult4BitFunc = uint64

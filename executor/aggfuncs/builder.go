@@ -125,7 +125,7 @@ func buildBitOr(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 		args:    aggFuncDesc.Args,
 		ordinal: ordinal,
 	}
-	return &bitOrUint64{base}
+	return &bitOrUint64{baseBitAggFunc{base}}
 }
 
 // buildCount builds the AggFunc implementation for function "BIT_XOR".
