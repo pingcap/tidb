@@ -186,8 +186,8 @@ type reorgInfo struct {
 
 // PartitionID returns the partition ID of the reorgInfo, or table ID if it's not a partition.
 func (r *reorgInfo) PartitionID() int64 {
-	ret := r.Job.ID
-	if r.Job.ReorgMeta != nil && r.Job.ReorgMeta.PartitionID != 0 {
+	ret := r.Job.TableID
+	if r.Job.ReorgMeta != nil && ret != r.Job.ReorgMeta.PartitionID {
 		ret = r.Job.ReorgMeta.PartitionID
 	}
 	return ret
