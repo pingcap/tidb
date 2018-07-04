@@ -16,6 +16,7 @@ package ddl
 import (
 	"bytes"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/juju/errors"
@@ -24,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
-	"strconv"
 )
 
 func buildCreateTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableStmt, cols []*table.Column) (*model.PartitionInfo, error) {
@@ -46,7 +46,7 @@ func buildCreateTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.Create
 					// TODO: check that the expression returns an integer.
 				}
 				if _, ok := s.Partition.Expr.(ast.ExprNode); ok {
-					if !(col.Tp == mysql.TypeLong || col.Tp == mysql.TypeLonglong) && fmt.Sprintf("`%s`", name) == pi.Expr {
+					if col.Tp != mysql.TypeLong && col.Tp != mysql.TypeLonglong && fmt.Sprintf("`%s`", name) == pi.Expr {
 						return nil, errors.Trace(ErrNotAllowedTypeInPartition.GenByArgs(pi.Expr))
 					}
 				}
