@@ -1623,6 +1623,15 @@ func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
 		partition p3 values less than (2001)
 	);`
 	s.testErrorCode(c, sql4, mysql.ErrPartitionMaxvalue)
+
+	sql5 := `create table employees (
+	id int not null,
+	hired date not null
+	)
+	partition by range( year(hired) ) (
+		 PARTITION p0 VALUES LESS THAN (6 , 10)
+	);`
+	s.testErrorCode(c, sql5, mysql.ErrTooManyValues)
 }
 
 func (s *testDBSuite) TestTableDDLWithFloatType(c *C) {
