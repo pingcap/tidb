@@ -481,8 +481,8 @@ func (w *HashAggFinalWorker) consumeIntermData(sc *stmtctx.StatementContext) (er
 
 func (w *HashAggFinalWorker) getFinalResult(sc *stmtctx.StatementContext) {
 	groupIter := w.groupSet.NewIterator()
-	result, ok := <-w.finalResultHolderCh
-	if !ok {
+	result, finished := w.receiveFinalResultHolder()
+	if finished {
 		return
 	}
 	result.Reset()
@@ -503,12 +503,21 @@ func (w *HashAggFinalWorker) getFinalResult(sc *stmtctx.StatementContext) {
 		result.AppendRow(w.mutableRow.ToRow())
 		if result.NumRows() == w.maxChunkSize {
 			w.outputCh <- &AfFinalResult{chk: result, giveBackCh: w.finalResultHolderCh}
-			result, ok = <-w.finalResultHolderCh
-			if !ok {
+			result, finished = w.receiveFinalResultHolder()
+			if finished {
 				return
 			}
 			result.Reset()
 		}
+	}
+}
+
+func (w *HashAggFinalWorker) receiveFinalResultHolder() (*chunk.Chunk, bool) {
+	select {
+	case <-w.finishCh:
+		return nil, true
+	case result, ok := <-w.finalResultHolderCh:
+		return result, !ok
 	}
 }
 
