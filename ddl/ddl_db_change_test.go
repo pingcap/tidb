@@ -596,6 +596,17 @@ func (s *testStateChangeSuite) TestParallelRenameTableRenameIndex(c *C) {
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
 
+func (s *testStateChangeSuite) TestParallelRenameTableModifyTableComment(c *C) {
+	sql1 := "alter table t rename to t_add;"
+	sql2 := "alter table t comment 'table_t';"
+	defer s.se.Execute(context.Background(), "drop table t_add;")
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2.Error(), Equals, "[schema:1146]Table 'test_db_state.t' doesn't exist")
+	}
+	s.testControlParallelExecSQL(c, sql1, sql2, f)
+}
+
 type checkRet func(c *C, err1, err2 error)
 
 func (s *testStateChangeSuite) testControlParallelExecSQL(c *C, sql1, sql2 string, f checkRet) {

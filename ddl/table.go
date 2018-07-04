@@ -358,13 +358,17 @@ func onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 
 func onModifyTableComment(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var comment string
-	if err := job.DecodeArgs(&comment); err != nil {
+	ti := &ast.Ident{}
+	if err := job.DecodeArgs(&comment, ti); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
 	tblInfo, err := getTableInfo(t, job, job.SchemaID)
 	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	if err = checkTableNameChange(t, job, tblInfo.Name.L, ti); err != nil {
 		return ver, errors.Trace(err)
 	}
 
