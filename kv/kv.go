@@ -42,8 +42,9 @@ const (
 	NotFillCache
 	// SyncLog decides whether the WAL(write-ahead log) of this request should be synchronized.
 	SyncLog
-	// ForUpdate option would be set to true in 'select for update' transaction.
-	ForUpdate
+	// BypassLatch option tells 2PC commit to bypass latches, it would be true when the
+	// transaction is not conflict-retryable, for example: 'select for update', 'load data'.
+	BypassLatch
 )
 
 // Priority value for transaction priority.

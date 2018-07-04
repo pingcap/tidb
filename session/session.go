@@ -229,7 +229,19 @@ func (s *session) GetSessionManager() util.SessionManager {
 
 func (s *session) StoreQueryFeedback(feedback interface{}) {
 	if s.statsCollector != nil {
-		s.statsCollector.StoreQueryFeedback(feedback)
+		do, err := GetDomain(s.store)
+		if err != nil {
+			log.Debug("domain not found: ", err)
+			metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblError).Inc()
+			return
+		}
+		err = s.statsCollector.StoreQueryFeedback(feedback, do.StatsHandle())
+		if err != nil {
+			log.Debug("store query feedback error: ", err)
+			metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblError).Inc()
+			return
+		}
+		metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblOK).Inc()
 	}
 }
 
@@ -293,7 +305,7 @@ func (s *session) doCommit(ctx context.Context) error {
 	// Set this option for 2 phase commit to validate schema lease.
 	s.txn.SetOption(kv.SchemaChecker, schemachecker.NewSchemaChecker(domain.GetDomain(s), s.sessionVars.TxnCtx.SchemaVersion, tableIDs))
 	if s.sessionVars.TxnCtx.ForUpdate {
-		s.txn.SetOption(kv.ForUpdate, true)
+		s.txn.SetOption(kv.BypassLatch, true)
 	}
 
 	if err := s.txn.Commit(sessionctx.SetCommitCtx(ctx, s)); err != nil {
@@ -310,6 +322,15 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	err := s.doCommit(ctx)
 	if err != nil {
 		commitRetryLimit := s.sessionVars.RetryLimit
+		if s.sessionVars.DisableTxnAutoRetry && !s.sessionVars.InRestrictedSQL {
+			// Do not retry non-autocommit transactions.
+			// For autocommit single statement transactions, the history count is always 1.
+			// For explicit transactions, the statement count is more than 1.
+			history := GetHistory(s)
+			if history.Count() > 1 {
+				commitRetryLimit = 0
+			}
+		}
 		// Don't retry in BatchInsert mode. As a counter-example, insert into t1 select * from t2,
 		// BatchInsert already commit the first batch 1000 rows, then it commit 1000-2000 and retry the statement,
 		// Finally t1 will have more data than t2, with no errors return to user!
@@ -733,6 +754,14 @@ func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode 
 }
 
 func (s *session) Execute(ctx context.Context, sql string) (recordSets []ast.RecordSet, err error) {
+	if recordSets, err = s.execute(ctx, sql); err != nil {
+		err = errors.Trace(err)
+		s.sessionVars.StmtCtx.AppendError(err)
+	}
+	return
+}
+
+func (s *session) execute(ctx context.Context, sql string) (recordSets []ast.RecordSet, err error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil {
 		span, ctx = opentracing.StartSpanFromContext(ctx, "session.Execute")
 		defer span.Finish()
@@ -768,7 +797,9 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []ast.Rec
 		}
 
 		s.PrepareTxnCtx(ctx)
-		executor.ResetStmtCtx(s, stmtNode)
+		if err = executor.ResetStmtCtx(s, stmtNode); err != nil {
+			return nil, errors.Trace(err)
+		}
 		if recordSets, err = s.executeStatement(ctx, connID, stmtNode, stmt, recordSets); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -797,7 +828,9 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []ast.Rec
 			// Step2: Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
 			startTS = time.Now()
 			// Some executions are done in compile stage, so we reset them before compile.
-			executor.ResetStmtCtx(s, stmtNode)
+			if err := executor.ResetStmtCtx(s, stmtNode); err != nil {
+				return nil, errors.Trace(err)
+			}
 			stmt, err := compiler.Compile(ctx, stmtNode)
 			if err != nil {
 				s.rollbackOnError(ctx)
@@ -1190,7 +1223,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 21
+	currentBootstrapVersion = 23
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -1253,11 +1286,15 @@ const loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variab
 	variable.TiDBIndexSerialScanConcurrency + quoteCommaQuote +
 	variable.TiDBHashJoinConcurrency + quoteCommaQuote +
 	variable.TiDBProjectionConcurrency + quoteCommaQuote +
+	variable.TiDBHashAggPartialConcurrency + quoteCommaQuote +
+	variable.TiDBHashAggFinalConcurrency + quoteCommaQuote +
 	variable.TiDBBackoffLockFast + quoteCommaQuote +
+	variable.TiDBDDLReorgWorkerCount + quoteCommaQuote +
 	variable.TiDBOptInSubqUnFolding + quoteCommaQuote +
 	variable.TiDBDistSQLScanConcurrency + quoteCommaQuote +
 	variable.TiDBMaxChunkSize + quoteCommaQuote +
-	variable.TiDBRetryLimit + "')"
+	variable.TiDBRetryLimit + quoteCommaQuote +
+	variable.TiDBDisableTxnAutoRetry + "')"
 
 // loadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.
 func (s *session) loadCommonGlobalVariablesIfNeeded() error {

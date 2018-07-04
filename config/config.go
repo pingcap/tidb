@@ -250,7 +250,7 @@ var defaultConf = Config{
 	EnableStreaming: false,
 	TxnLocalLatches: TxnLocalLatches{
 		Enabled:  false,
-		Capacity: 1024000,
+		Capacity: 10240000,
 	},
 	LowerCaseTableNames: 2,
 	Log: Log{

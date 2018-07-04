@@ -92,11 +92,17 @@ const (
 	// tidb_retry_limit is the maximun number of retries when committing a transaction.
 	TiDBRetryLimit = "tidb_retry_limit"
 
+	// tidb_disable_txn_auto_retry disables transaction auto retry.
+	TiDBDisableTxnAutoRetry = "tidb_disable_txn_auto_retry"
+
 	// tidb_enable_streaming enables TiDB to use streaming API for coprocessor requests.
 	TiDBEnableStreaming = "tidb_enable_streaming"
 
 	// tidb_optimizer_selectivity_level is used to control the selectivity estimation level.
 	TiDBOptimizerSelectivityLevel = "tidb_optimizer_selectivity_level"
+
+	// tidb_enable_table_partition is used to enable table partition feature.
+	TiDBEnableTablePartition = "tidb_enable_table_partition"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -158,8 +164,19 @@ const (
 	// This variable controls the worker number of projection operator.
 	TiDBProjectionConcurrency = "tidb_projection_concurrency"
 
+	// tidb_hashagg_partial_concurrency is used for hash agg executor.
+	// The hash agg executor starts multiple concurrent partial workers to do partial aggregate works.
+	TiDBHashAggPartialConcurrency = "tidb_hashagg_partial_concurrency"
+
+	// tidb_hashagg_final_concurrency is used for hash agg executor.
+	// The hash agg executor starts multiple concurrent final workers to do final aggregate works.
+	TiDBHashAggFinalConcurrency = "tidb_hashagg_final_concurrency"
+
 	// tidb_backoff_lock_fast is used for tikv backoff base time in milliseconds.
 	TiDBBackoffLockFast = "tidb_backoff_lock_fast"
+
+	// tidb_ddl_reorg_worker_cnt defines the count of ddl reorg workers.
+	TiDBDDLReorgWorkerCount = "tidb_ddl_reorg_worker_cnt"
 )
 
 // Default TiDB system variable values.
@@ -190,12 +207,18 @@ const (
 	DefTiDBMemQuotaNestedLoopApply   = 32 << 30 // 32GB.
 	DefTiDBGeneralLog                = 0
 	DefTiDBRetryLimit                = 10
+	DefTiDBDisableTxnAutoRetry       = false
 	DefTiDBHashJoinConcurrency       = 5
 	DefTiDBProjectionConcurrency     = 4
 	DefTiDBOptimizerSelectivityLevel = 0
+	DefTiDBDDLReorgWorkerCount       = 16
+	DefTiDBHashAggPartialConcurrency = 4
+	DefTiDBHashAggFinalConcurrency   = 4
 )
 
 // Process global variables.
 var (
-	ProcessGeneralLog uint32
+	ProcessGeneralLog      uint32
+	ddlReorgWorkerCounter  int32 = DefTiDBDDLReorgWorkerCount
+	maxDDLReorgWorkerCount int32 = 128
 )

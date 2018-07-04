@@ -68,6 +68,8 @@ func (a *AggFuncDesc) Equal(ctx sessionctx.Context, other *AggFuncDesc) bool {
 // Clone copies an aggregation function signature totally.
 func (a *AggFuncDesc) Clone() *AggFuncDesc {
 	clone := *a
+	newTp := *a.RetTp
+	clone.RetTp = &newTp
 	for i := range a.Args {
 		clone.Args[i] = a.Args[i].Clone()
 	}
@@ -111,14 +113,27 @@ func (a *AggFuncDesc) typeInfer(ctx sessionctx.Context) {
 // CalculateDefaultValue gets the default value when the aggregation function's input is null.
 // The input stands for the schema of Aggregation's child. If the function can't produce a default value, the second
 // return value will be false.
+//
+// According to MySQL, DefaultValue of the aggregation function can be tested as the following sql:
+//
+// mysql> CREATE TABLE `t` (
+// ->   `a` int(11) DEFAULT NULL,
+// ->   `b` int(11) DEFAULT NULL
+// -> );
+// mysql>
+// +------+--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+
+// | a    | avg(a) | sum(a) | count(a) | bit_xor(a) | bit_or(a) | bit_and(a)           | max(a) | min(a) | group_concat(a) |
+// +------+--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+
+// | NULL |   NULL |   NULL |        0 |          0 |         0 | 18446744073709551615 |   NULL |   NULL | NULL            |
+// +------+--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+
+// 1 row in set (0.01 sec)
 func (a *AggFuncDesc) CalculateDefaultValue(ctx sessionctx.Context, schema *expression.Schema) (types.Datum, bool) {
 	switch a.Name {
 	case ast.AggFuncCount:
 		return a.calculateDefaultValue4Count(ctx, schema)
-	case ast.AggFuncSum, ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncFirstRow:
+	case ast.AggFuncSum, ast.AggFuncMax, ast.AggFuncMin,
+		ast.AggFuncFirstRow, ast.AggFuncAvg, ast.AggFuncGroupConcat:
 		return a.calculateDefaultValue4Sum(ctx, schema)
-	case ast.AggFuncAvg, ast.AggFuncGroupConcat:
-		return types.Datum{}, false
 	case ast.AggFuncBitAnd:
 		return a.calculateDefaultValue4BitAnd(ctx, schema)
 	case ast.AggFuncBitOr, ast.AggFuncBitXor:
@@ -213,11 +228,12 @@ func (a *AggFuncDesc) typeInfer4MaxMin(ctx sessionctx.Context) {
 	_, argIsScalaFunc := a.Args[0].(*expression.ScalarFunction)
 	if argIsScalaFunc && a.Args[0].GetType().Tp == mysql.TypeFloat {
 		// For scalar function, the result of "float32" is set to the "float64"
-		// field in the "Datum".
-		a.RetTp = new(types.FieldType)
-		*(a.RetTp) = *(a.Args[0].GetType())
-		a.RetTp.Tp = mysql.TypeDouble
-		return
+		// field in the "Datum". If we do not wrap a cast-as-double function on a.Args[0],
+		// error would happen when extracting the evaluation of a.Args[0] to a ProjectionExec.
+		tp := types.NewFieldType(mysql.TypeDouble)
+		tp.Flen, tp.Decimal = mysql.MaxRealWidth, types.UnspecifiedLength
+		types.SetBinChsClnFlag(tp)
+		a.Args[0] = expression.BuildCastFunction(ctx, a.Args[0], tp)
 	}
 	a.RetTp = a.Args[0].GetType()
 }
@@ -231,14 +247,7 @@ func (a *AggFuncDesc) typeInfer4BitFuncs(ctx sessionctx.Context) {
 }
 
 func (a *AggFuncDesc) calculateDefaultValue4Count(ctx sessionctx.Context, schema *expression.Schema) (types.Datum, bool) {
-	for _, arg := range a.Args {
-		result := expression.EvaluateExprWithNull(ctx, schema, arg)
-		con, ok := result.(*expression.Constant)
-		if !ok || con.Value.IsNull() {
-			return types.Datum{}, ok
-		}
-	}
-	return types.NewDatum(1), true
+	return types.NewDatum(0), true
 }
 
 func (a *AggFuncDesc) calculateDefaultValue4Sum(ctx sessionctx.Context, schema *expression.Schema) (types.Datum, bool) {
